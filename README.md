@@ -3,7 +3,7 @@
 A small, fast text editor. It shows text, scrolls it smoothly, does the
 standard edits, keeps several files open in tabs, colours code with
 tree-sitter, talks to language servers, runs scripts and plugins in Lua,
-and works on another machine's files over ssh.
+profiles programs, and works on another machine's files over ssh.
 C++26 (GCC); SDL3 for the window and input, and a renderer of its own on
 Metal (the Vulkan side, for other systems, is not written yet).
 
@@ -875,15 +875,50 @@ next time something is opened or saved there, after a few seconds).
 
 What it needs:
 
-- ssh with keys or an agent: blit runs `ssh -T -o BatchMode=yes`, so it
-  never stops to ask for a password or a passphrase. A host that asks for
-  one fails to connect, and the status bar shows ssh's reason. (A
-  `ControlMaster` in `~/.ssh/config` makes connecting again quicker.)
+- ssh. Without a key, what ssh asks (a password, a key's passphrase,
+  whether to trust a new host) is asked in a box in blit, the typing
+  hidden for secrets; Esc cancels connecting. (A `ControlMaster` in
+  `~/.ssh/config` makes connecting again quicker.)
 - A Linux machine (x86-64 or ARM64) or a Mac of the same kind as this one.
   The Linux agents are built with GCC 16 in Docker by `src/agent/build.sh`
   and kept in `src/agent/bin/`; blit carries them inside itself (`#embed`).
   The Mac's own is built with blit.
 - `/bin/sh`, `uname`, `head` and `mkdir` there, which every such machine has.
+
+## Profiling
+
+The side panel's **Profile** tab records a program with the system's
+sampling profiler and shows where its time went:
+
+- **perf** on Linux, **xctrace** (Instruments' Time Profiler) on macOS.
+  Nothing else is needed; on a Mac, xctrace comes with Xcode.
+- **Program**: chosen in the box that opens files. An `ssh://host/path`
+  program is recorded on that machine, with that machine's profiler (see
+  [Working on another machine](#working-on-another-machine)).
+- **Arguments** and **Working directory** (the program's folder unless
+  set), then **Record**. **Stop** ends the recording early and keeps what
+  was recorded.
+- **Call stack**: frame pointers (the default) or DWARF, for perf and
+  programs built without frame pointers.
+- **Inline performance labels**: on or off.
+
+Each recording opens in a tab of its own:
+
+- A **flame graph**: each function above what called it, as wide as its
+  share of the time. Click a frame to zoom into it; Esc zooms back out.
+  The line at the bottom names the frame under the mouse with its total
+  and self time.
+- The **functions**, by self time, with total time and source line. Up
+  and Down choose one (its frames light up in the graph); Enter or a
+  double click opens its source.
+
+The profile shown also labels the code: a function that took time gets
+`◆ 52% total, 48% self` after its definition, and a line that took more
+than half a percent gets `● 52%`. Labels need debug information (build
+with `-g`); without it the tab still shows the functions.
+
+perf records user-space call stacks only (`--user-callchains`), which
+works at the default `perf_event_paranoid` of 2 without root.
 
 ## How it is fast
 
@@ -1065,6 +1100,8 @@ src/appstatus.cpp  the status bar: the repository, the file, the cursor, problem
 src/appstart.cpp   the start screen, and the files and folders opened lately
 src/remote.*       another machine's files over ssh: the connection, starting blit's agent there, its calls
 src/appremote.cpp  files from another machine in the editor: read on a thread, the tab there at once
+src/profile.*      profiles: recording with perf or xctrace (here or on another machine), reading what they record
+src/appprofile.cpp the Profile tab, a profile's tab (flame graph, functions), inline performance labels
 src/agent/         the agent: what it and blit say to one another, the program, its build for Linux (Docker), the builds
 src/keymap.*    key mappings: Vim's key notation, the table of mappings, what keys typed so far add up to
 src/job.*       programs run in the background for scripts, on threads of their own
@@ -1143,6 +1180,7 @@ tests/find.sh build-debug/blit     # finding files and text, opening, saving and
 tests/lua.sh build-debug/blit      # scripts: settings, mappings, commands, events, programs, pickers, plugins
 tests/start.sh build-debug/blit    # the start screen and the list of what was opened lately (a scratch one)
 tests/remote.sh build-debug/blit   # another machine's files, git and language server, through tests/fake-ssh.sh
+tests/profile.sh build-debug/blit  # profiling tests/profile/spin.c here and through tests/fake-ssh.sh (skipped with no profiler)
 ```
 
 The tests never connect to a real host: `$BLIT_SSH` names the program used
@@ -1196,13 +1234,17 @@ does not finish and takes all the memory the machine has.
   actions, find references, inlay hints or semantic colours; snippets are
   inserted as plain text. Problems are shown for the open file only. Not
   available on Windows yet. Only tried with clangd and the test server.
-- Another machine: over ssh only, with keys (no password prompts), to
+- Another machine: over ssh only, to
   Linux on x86-64 or ARM64 or a Mac like this one. Files up to 1 GB. The
   finder lists the whole folder again each time it is opened, across the
   connection. A language server's own output there is not kept
   (`BLIT_LSP_LOG` is for local ones). Programs a script starts run on this
   machine, not that one. The project folder for a file opened there on its
   own is its own folder (opening the project's folder sets it).
+- Profiling: CPU time only (no memory, no off-CPU waits), one run at a
+  time, all threads merged in one flame graph. A function's label goes on
+  the line above its hottest line that names it with a bracket after it,
+  or on that line if none does. Profiles are not saved.
 - Git: what is listed above and no more. No stash, rebase, cherry-pick,
   tags or submodules, no staging of part of a file, no side-by-side diff,
   one line for the commit message, and no way to answer a question git asks

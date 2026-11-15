@@ -51,6 +51,10 @@ check "recorded here: its tab, then the hottest function's source (at its defini
     "1 profiles; spin by $tool, 1 thread, over 10%: inner@spin.c outer@spin.c; tab: zoom all ;; 1 profiles; spin by $tool, 1 thread, over 10%: inner@spin.c outer@spin.c; times on lines 8F 16F 24F ;; Ln 8, Col 1"
 run "prof:program=$dir/here/spin;prof:args=40;prof:annotate=off;profrecord;profwait;frame;open:$dir/here/spin.c;frame;profdump"
 check "inline performance labels turned off" "1 profiles; spin by $tool, 1 thread, over 10%: inner@spin.c outer@spin.c"
+run "prof:program=$dir/here/spin;prof:args=20;profrecord;profwait;frame;open:$dir/here/spin.c;frame;dump:tabs;click:200,12;drag:300,100;drag:760,250;release;frame;dump:moved"
+got=$(printf '%s' "$got" | sed -e 's/[0-9][0-9]:[0-9][0-9]:[0-9][0-9]/hh:mm:ss/g')
+check "a profile's tab is a tab like a file's: dragged into a split of its own" \
+    "tabs: >[untitled Profile: spin hh:mm:ss spin.c*] ;; moved: H([untitled spin.c*] | >[Profile: spin hh:mm:ss*])0.50"
 run "prof:program=$dir/here/no-such-program;profrecord;profwait;frame;profdump"
 case "$got" in *"failed: "*"0 profiles") got="failed, 0 profiles" ;; esac
 check "a program that is not there: why, and no profile" "failed, 0 profiles"

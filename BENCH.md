@@ -1686,6 +1686,45 @@ learn its `PATH`, starting the agent); the walk and the search take the
 same time there as here, and only names and the lines found cross the
 connection.
 
+### Round 25: profiling, and ssh's questions in a box
+
+The side panel's Profile tab records a program with perf (Linux) or
+xctrace (macOS), here or on another machine through blit's agent, and
+opens the profile in an editor tab: a flame graph over the functions by
+self time (`src/profile.*`, `src/appprofile.cpp`). The profile shown
+labels the code it has times for. The flame graph is one box whose lit
+cells each name one of seven tones (`Popup::tones`, bits 21-23 of a cell),
+which grows the uniforms each draw is given from 832 to 960 bytes. ssh's
+questions (a password, a passphrase, a new host's key) are asked in
+blit's box through `SSH_ASKPASS`, which is blit itself.
+
+What it costs the editor with no profile open: the build before this round
+(`main`) against this one, turn about, 4 runs each:
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling back to back, frames a second (the GPU's limit) | 15,586 | 15,474 |
+| … everything on | 17,507 | 17,155 |
+| Scrolling at 160 Hz: CPU per frame, p50 | 84.2 µs | 75.1 µs |
+| … everything on | 101.8 µs | 109.4 µs |
+| Typing: the frame's CPU, p50 | 50.7 µs | 50.8 µs |
+| A key press after a pause, to its frame handed to the GPU, p50 | 417 µs | 427 µs |
+| … everything on | 270 µs | 260 µs |
+| A paced frame, p50 (14 runs each, the new build first) | 141 µs | 118 µs |
+
+All within the sitting's spread. The paced frame is bimodal on this
+machine (about 100 µs, or about 620 µs when it lands on a slow core): in
+a first run, 8 each and the old build first, the new one landed on the
+slow mode more often (313 against 117 µs); run again, 14 each and the new
+build first, neither did.
+
+Recording `tests/profile/spin.c`: xctrace takes about 4 s more than the
+program's one second (starting Instruments' recorder, saving and exporting
+the trace); perf on the Arch machine (Ryzen 9 9950X3D) 5 to 20 ms more
+than its half second, and `perf script` 7 to 18 ms. Reading either's
+output into a profile (the test fixtures, about 200 KB each) takes 0.4 ms
+for perf's and 0.7 ms for xctrace's.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
