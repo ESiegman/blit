@@ -24,6 +24,7 @@
 #include "finder.hpp"
 #include "font.hpp"
 #include "git.hpp"
+#include "profile.hpp"
 #include "remote.hpp"
 #include "grammars.hpp"
 #include "grid.hpp"
@@ -1447,6 +1448,104 @@ void script_test() {
 
 // Another machine's files, through blit's agent, over a stand-in for ssh
 // (tests/fake-ssh.sh) that runs it here, in a home folder of its own.
+// The profilers' output, as recorded from tests/profile/burn.c (perf on
+// Linux x86-64, xctrace on macOS): the same call tree comes out of both.
+void profile_test() {
+#if defined(BLIT_PROFILE_DATA)
+    auto slurp = [](const char* name) {
+        std::string s;
+        if (FILE* f = std::fopen((std::string(BLIT_PROFILE_DATA) + "/" + name).c_str(), "rb")) {
+            char buf[65536];
+            for (size_t k; (k = std::fread(buf, 1, sizeof buf, f)) > 0;) s.append(buf, k);
+            std::fclose(f);
+        }
+        return s;
+    };
+    int failures = 0;
+    auto check = [&](bool ok, const std::string& what) {
+        if (!ok) {
+            std::fprintf(stderr, "FAIL: profile: %s\n", what.c_str());
+            ++failures;
+        }
+    };
+    auto find = [](const blit::Profile& p, std::string_view name) -> const blit::ProfileFunc* {
+        for (const blit::ProfileFunc& f : p.funcs)
+            if (f.name == name) return &f;
+        return nullptr;
+    };
+    // The path from the root through these functions, in order (ignoring what comes before the first).
+    auto path_weight = [](const blit::Profile& p, std::initializer_list<std::string_view> names) -> blit::u64 {
+        blit::u64 sum = 0;
+        for (blit::u32 n = 1; n < p.nodes.size(); ++n) {
+            if (p.funcs[p.nodes[n].func].name != *(names.end() - 1)) continue;
+            blit::u32 at = n;
+            bool ok = true;
+            for (auto it = names.end(); it != names.begin();) {
+                --it;
+                if (at == 0 || p.funcs[p.nodes[at].func].name != *it) {
+                    ok = false;
+                    break;
+                }
+                at = p.nodes[at].parent;
+            }
+            if (ok) sum += p.nodes[n].total;
+        }
+        return sum;
+    };
+    auto common = [&](const blit::Profile& p, const char* what, const std::string& file) {
+        const blit::ProfileFunc* a = find(p, "leaf_a");
+        const blit::ProfileFunc* b = find(p, "leaf_b");
+        const blit::ProfileFunc* mid = find(p, "middle");
+        const blit::ProfileFunc* top = find(p, "top");
+        check(a && b && mid && top, std::string(what) + ": the functions are there");
+        if (!a || !b || !mid || !top) return;
+        check(a->self > p.weight / 4 && b->self > p.weight / 8, std::string(what) + ": the leaves have most of the time");
+        check(mid->total >= a->total + b->total - p.weight / 100 && top->total >= mid->total, std::string(what) + ": totals include callees");
+        check(a->file == file && a->line == 3 && b->line == 4, std::string(what) + ": the leaves' source lines (" + a->file + ":" + std::to_string(a->line) + ")");
+        check(a->own && top->own, std::string(what) + ": the program's own functions are its own");
+        check(path_weight(p, {"main", "top", "middle", "leaf_a"}) >= a->total * 9 / 10, std::string(what) + ": main > top > middle > leaf_a in the call tree");
+        auto lit = p.lines.find(file);
+        check(lit != p.lines.end() && lit->second.count(3) && lit->second.at(3).self > 0, std::string(what) + ": time on line 3");
+        blit::u64 kids = 0;
+        for (const blit::u32 k : p.nodes[0].kids) kids += p.nodes[k].total;
+        check(kids + p.nodes[0].self == p.nodes[0].total && p.nodes[0].total == p.weight, std::string(what) + ": the root's weight is its children's");
+        const std::vector<blit::u32> order = p.by_self();
+        check(!order.empty() && (p.funcs[order[0]].name == "leaf_a" || p.funcs[order[0]].name == "leaf_b"), std::string(what) + ": the heaviest first");
+    };
+    {
+        blit::Profile p;
+        p.program = "/work/burn";
+        std::string err;
+        const std::string text = slurp("perf-script.txt");
+        check(blit::parse_perf_script(text, "", &p, &err), "perf: parsed (" + err + ")");
+        p.finish();
+        check(p.samples == 477 && p.threads == 1, "perf: 477 samples on 1 thread, got " + std::to_string(p.samples) + " on " + std::to_string(p.threads));
+        common(p, "perf", "/work/burn.c");
+        blit::Profile q;
+        q.program = "/work/burn";
+        check(blit::parse_perf_script(text, "ssh://box", &q, &err), "perf, another machine's: parsed");
+        q.finish();
+        check(q.lines.count("ssh://box/work/burn.c") == 1, "perf: another machine's paths have its host");
+    }
+    {
+        blit::Profile p;
+        p.program = "/work/burn";
+        std::string err;
+        check(blit::parse_xctrace(slurp("xctrace-time-profile.xml"), "", &p, &err), "xctrace: parsed (" + err + ")");
+        p.finish();
+        check(p.samples == 934 && p.threads == 1 && p.weight == 934ull * 1000000, "xctrace: 934 samples of 1 ms on 1 thread, got " + std::to_string(p.samples));
+        common(p, "xctrace", "/work/burn.c");
+    }
+    {
+        blit::Profile p;
+        std::string err;
+        check(!blit::parse_perf_script("", "", &p, &err) && !err.empty(), "perf: nothing recorded is an error");
+        check(!blit::parse_xctrace("<trace-query-result></trace-query-result>", "", &p, &err), "xctrace: nothing recorded is an error");
+    }
+    if (failures) std::exit(1);
+#endif
+}
+
 void remote_test() {
 #if defined(BLIT_FAKE_SSH)
     auto check = [](bool ok, const char* what) {
@@ -2766,6 +2865,7 @@ int main(int argc, char** argv) {
     vim_test();
     find_test();
     script_test();
+    profile_test();
     remote_test();
     git_test(seeds);
     tree_test();

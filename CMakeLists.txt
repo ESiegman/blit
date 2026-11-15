@@ -135,7 +135,7 @@ if(NOT WIN32)
     target_compile_options(blit-agent PRIVATE -mcpu=apple-m1)
   endif()
   blit_static_runtime(blit-agent)
-  target_sources(blit_core PRIVATE src/remote.cpp)
+  target_sources(blit_core PRIVATE src/remote.cpp src/profile.cpp)
   add_dependencies(blit_core blit-agent)
   set_property(SOURCE src/remote.cpp APPEND PROPERTY COMPILE_DEFINITIONS BLIT_AGENT_HERE="${CMAKE_BINARY_DIR}/blit-agent")
   set_source_files_properties(src/remote.cpp PROPERTIES OBJECT_DEPENDS
@@ -198,7 +198,7 @@ if(BLIT_DEV)
   add_executable(blit_fuzz tests/fuzz_buffer.cpp src/tree.cpp src/git.cpp)
   target_link_libraries(blit_fuzz PRIVATE blit_view blit_syntax blit_lsp SDL3::SDL3)
   if(NOT WIN32)
-    target_compile_definitions(blit_fuzz PRIVATE BLIT_FAKE_SSH="${CMAKE_SOURCE_DIR}/tests/fake-ssh.sh")
+    target_compile_definitions(blit_fuzz PRIVATE BLIT_FAKE_SSH="${CMAKE_SOURCE_DIR}/tests/fake-ssh.sh" BLIT_PROFILE_DATA="${CMAKE_SOURCE_DIR}/tests/profile")
   endif()
 
   # A language server that answers predictably, for the tests and benchmarks
