@@ -447,10 +447,11 @@ void mark_runs(u32* cells, u32 cols, u32 rows) {
         u32* row = cells + static_cast<size_t>(r) * cols;
         u32 before = 0;
         for (u32 c = 0; c < cols; ++c) {
-            const u32 lit = row[c] & kLit;
+            // (A lit cell that names another tone, see Popup::tones, starts a run of that tone.)
+            const u32 lit = row[c] & kLit ? row[c] & (kLit | kCellDecoMask) : 0;
             if (lit) {
                 if (lit != before) row[c] |= kCellRunStart;
-                if (c + 1 == cols || (row[c + 1] & kLit) != lit) row[c] |= kCellRunEnd;
+                if (c + 1 == cols || (row[c + 1] & kLit ? row[c + 1] & (kLit | kCellDecoMask) : 0) != lit) row[c] |= kCellRunEnd;
             }
             before = lit;
         }

@@ -48,6 +48,7 @@ layout(std140, set = 3, binding = 0) uniform Frame {
                        // selected, z pixels to a point
     vec4 palette[32];  // ink colours; a cell picks one with bits 16-20. 0 is plain text,
                        // 24-27 are the four kinds of diagnostic
+    vec4 tones[8];     // a popup's other backgrounds for selected cells: a cell names one with bits 21-23 (0: none)
 };
 
 // How far a point is outside a box with rounded corners (negative: inside).
@@ -94,7 +95,7 @@ void main() {
         a = textureLod(atlas, (slot_xy * cell + in_cell + 0.5) * inv_atlas, 0.0).r;
     }
 
-    vec3 back = (v & 0x80000000u) != 0u ? sel.rgb : bg.rgb;
+    vec3 back = (v & 0x80000000u) != 0u ? (((v >> 21) & 7u) != 0u ? tones[(v >> 21) & 7u].rgb : sel.rgb) : bg.rgb;
     vec3 col = mix(back, palette[(v >> 16) & 31u].rgb, a);
 
     // The outline.
@@ -143,6 +144,7 @@ void main() {
     uint lit = v & 0x81000000u;
     if (lit != 0u) {
         vec3 tone = (v & 0x80000000u) != 0u ? sel.rgb : cur_color.rgb;
+        if ((v & 0x80000000u) != 0u && ((v >> 21) & 7u) != 0u) tone = tones[(v >> 21) & 7u].rgb;  // (one of the popup's other tones)
         float r = radii.y;
         if (r <= 0.0) {
             if (in_grid) back = tone;

@@ -203,6 +203,7 @@ bool App::init(std::string* err) {
     bool file_ok = true;
     std::jthread loader;
     remote_start();  // (a file on another machine is opened once the window is up)
+    prof_start();
     const bool remote_file = opt_.file && is_remote(opt_.file);
     if (opt_.file && !remote_file)
         loader = std::jthread([&] {
@@ -619,7 +620,7 @@ bool App::open_path(const char* p) {
     if (!remote && SDL_GetPathInfo(p, nullptr)) recent_add(p, false);  // (one that is there: a new one is not, yet)
     if (!remote) fresh->disk_stamp = file_stamp(p);
     fresh->id = next_doc_id_++;
-    const bool reuse = pane_->doc->ed.path.empty() && !pane_->doc->ed.modified() && pane_->doc->ed.buf.size() == 0;
+    const bool reuse = pane_->doc->ed.path.empty() && !pane_->doc->ed.modified() && pane_->doc->ed.buf.size() == 0 && !pane_->doc->read_only;  // (not a profile's tab)
     size_t at = pane_->tab + 1;
     if (reuse) {
         stop_lsp();
@@ -1005,6 +1006,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     fx_begin_layout();
     splits_layout(w, h, fd);
     start_layout(fd);
+    prof_layout(fd);  // (a profile's tab, over its pane's text area)
     vim_layout(w, h, fd);
     panel_layout(w, std::max(1, h - status_px()), fd);  // (above the status bar)
     status_layout(w, h, fd);
@@ -1012,6 +1014,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     git_note(fd);
     vim_marks(fd);
     if (script_) script_layout(w, h, fd);  // marks, boxes and messages of the scripts'
+    prof_marks(fd);  // the times a profile found, in the code (after a server's and the scripts' notes)
     panel_menu_layout(w, h, fd);
     if (find_open_) find_layout(w, h, fd);
     splits_carry_layout(w, h, fd);
@@ -1262,6 +1265,7 @@ void App::handle(const SDL_Event& e) {
             if (status_mouse_down(e.button)) break;
             if (panel_mouse_down(e.button)) break;
             if (start_mouse_down(e.button)) break;
+            if (prof_mouse_down(e.button)) break;  // a profile's tab
             if (splits_mouse_down(e.button)) break;  // a divider
             // The split under the mouse gets the click, and with it the keyboard.
             if (Pane* over = pane_at(static_cast<int>(e.button.x * density_), static_cast<int>(e.button.y * density_))) focus_pane(over);
@@ -1284,7 +1288,8 @@ void App::handle(const SDL_Event& e) {
             if (find_open_ && find_mouse_motion(e.motion)) break;
             hover_update(static_cast<int>(e.motion.x * density_), static_cast<int>(e.motion.y * density_));
             if (!dragging_ && !dragging_thumb_ &&
-                (splits_mouse_motion(e.motion) || tabs_mouse_motion(e.motion) || panel_mouse_motion(e.motion) || start_mouse_motion(e.motion)))
+                (splits_mouse_motion(e.motion) || tabs_mouse_motion(e.motion) || panel_mouse_motion(e.motion) || start_mouse_motion(e.motion) ||
+                 prof_mouse_motion(e.motion)))
                 break;
             on_mouse_motion(e.motion);
             break;
@@ -1334,6 +1339,10 @@ void App::handle(const SDL_Event& e) {
                 remote_sync();
                 break;
             }
+            if (e.user.code == 13) {  // a recording of a program has news (or has run a while longer)
+                prof_sync();
+                break;
+            }
             break;
         }
         default:
@@ -1356,6 +1365,7 @@ void App::on_text(const char* text) {
 void App::on_key(const SDL_KeyboardEvent& k) {
     script_drop_text_ = false;
     if (start_key(k)) return;  // the start screen is showing (appstart.cpp)
+    if (prof_key(k)) return;   // a profile's tab is in front (appprofile.cpp)
     if (script_keys_ && script_key(k)) return;  // a mapping of a script's has it (applua.cpp)
     const bool shift = k.mod & SDL_KMOD_SHIFT;
     const bool cmd = k.mod & kCmd;
@@ -1498,6 +1508,7 @@ void App::on_key(const SDL_KeyboardEvent& k) {
 void App::on_wheel(const SDL_MouseWheelEvent& w) {
     if (find_open_ && find_wheel(w)) return;   // the box that finds things is open: its list turns
     if (panel_wheel(w)) return;  // the mouse is over the side panel
+    if (prof_wheel(w)) return;   // or over a profile's tab
     Pane* const focused = pane_;
     if (mouse_x_ >= 0)
         if (Pane* over = pane_at(static_cast<int>(mouse_x_ * density_), static_cast<int>(mouse_y_ * density_))) pane_ = over;

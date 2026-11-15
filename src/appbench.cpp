@@ -754,6 +754,25 @@ void App::run_script(const char* script) {
                 if ((!loading && !connecting && !remote_busy()) || now_ns() > until) break;
                 SDL_Delay(2);
             }
+        } else if (verb == "prof") {  // prof:what=value (program, args, cwd, dwarf, annotate)
+            const size_t eq = arg.find('=');
+            prof_set(arg.substr(0, eq), eq == std::string::npos ? std::string() : arg.substr(eq + 1));
+        } else if (verb == "profpanel") {  // the side panel's Profile tab
+            if (!panel_px()) panel_toggle();
+            panel_show_profile();
+        } else if (verb == "profrecord") {
+            prof_record();
+        } else if (verb == "profstop") {
+            prof_stop();
+        } else if (verb == "profwait") {  // the recording has finished (two minutes at most)
+            const u64 until = now_ns() + 120'000'000'000ull;
+            while (prof_busy() && now_ns() < until) {
+                prof_sync();
+                SDL_Delay(5);
+            }
+            prof_sync();
+        } else if (verb == "profdump") {
+            std::fprintf(stderr, "%s\n", prof_dump().c_str());
         } else if (verb == "remotedump") {  // each connection, and how it is
             std::string out;
             for (const std::shared_ptr<Remote>& r : Remote::all()) {

@@ -3,7 +3,7 @@
 
 using namespace metal;
 
-struct _21
+struct _23
 {
     float4 _m0;
     float4 _m1;
@@ -31,82 +31,92 @@ struct _21
     float4 _m23;
     float4 _m24;
     float4 _m25[32];
+    float4 _m26[8];
 };
 
-struct _88
+struct _90
 {
     uint _m0[1];
 };
 
 struct main0_out
 {
-    float4 m_217 [[color(0)]];
+    float4 m_237 [[color(0)]];
 };
 
-fragment main0_out main0(constant _21& _23 [[buffer(0)]], const device _88& _90 [[buffer(1)]], texture2d<float> _135 [[texture(0)]], sampler _135Smplr [[sampler(0)]], float4 gl_FragCoord [[position]])
+fragment main0_out main0(constant _23& _25 [[buffer(0)]], const device _90& _92 [[buffer(1)]], texture2d<float> _137 [[texture(0)]], sampler _137Smplr [[sampler(0)]], float4 gl_FragCoord [[position]])
 {
     main0_out out = {};
     float2 _9 = floor(gl_FragCoord.xy);
-    float2 _16 = _9 + _23._m9;
-    float2 _30 = floor((_16 + float2(0.5)) * _23._m8);
-    float2 _40 = _16 - (_30 * _23._m7);
-    uint _49 = 0u;
-    bool _56 = _16.x >= 0.0;
-    bool _63;
-    if (_56)
+    float2 _16 = _9 + _25._m9;
+    float2 _32 = floor((_16 + float2(0.5)) * _25._m8);
+    float2 _42 = _16 - (_32 * _25._m7);
+    uint _51 = 0u;
+    bool _58 = _16.x >= 0.0;
+    bool _65;
+    if (_58)
     {
-        _63 = _16.y >= 0.0;
+        _65 = _16.y >= 0.0;
     }
     else
     {
-        _63 = _56;
+        _65 = _58;
     }
-    bool _74;
-    if (_63)
+    bool _76;
+    if (_65)
     {
-        _74 = _30.x < float(_23._m11);
+        _76 = _32.x < float(_25._m11);
     }
     else
     {
-        _74 = _63;
+        _76 = _65;
     }
-    bool _84;
-    if (_74)
+    bool _86;
+    if (_76)
     {
-        _84 = _30.y < float(_23._m12);
+        _86 = _32.y < float(_25._m12);
     }
     else
     {
-        _84 = _74;
+        _86 = _76;
     }
-    if (_84)
+    if (_86)
     {
-        _49 = _90._m0[(_23._m14 + (uint(_30.y) * _23._m11)) + uint(_30.x)];
+        _51 = _92._m0[(_25._m14 + (uint(_32.y) * _25._m11)) + uint(_32.x)];
     }
-    uint _108 = _49 & 65535u;
-    float _112 = 0.0;
-    if (_108 > 32u)
+    uint _110 = _51 & 65535u;
+    float _114 = 0.0;
+    if (_110 > 32u)
     {
-        float2 _117 = float2(float(_108 & ((1u << _23._m13) - 1u)), float(_108 >> _23._m13));
-        _112 = _135.sample(_135Smplr, ((((_117 * _23._m7) + _40) + float2(0.5)) * _23._m10), level(0.0)).x;
+        float2 _119 = float2(float(_110 & ((1u << _25._m13) - 1u)), float(_110 >> _25._m13));
+        _114 = _137.sample(_137Smplr, ((((_119 * _25._m7) + _42) + float2(0.5)) * _25._m10), level(0.0)).x;
     }
-    float3 _158;
-    if ((_49 & 2147483648u) != 0u)
+    float3 _160;
+    if ((_51 & 2147483648u) != 0u)
     {
-        _158 = _23._m2.xyz;
+        float3 _169;
+        if (((_51 >> uint(21)) & 7u) != 0u)
+        {
+            _169 = _25._m26[(_51 >> uint(21)) & 7u].xyz;
+        }
+        else
+        {
+            _169 = _25._m2.xyz;
+        }
+        _160 = _169;
     }
     else
     {
-        _158 = _23._m0.xyz;
+        _160 = _25._m0.xyz;
     }
-    float3 _153 = _158;
-    float3 _171 = mix(_153, _23._m25[(_49 >> uint(16)) & 31u].xyz, float3(_112));
-    float2 _185 = fast::min(_9 - _23._m15.xy, (_23._m15.zw - float2(1.0)) - _9);
-    if (fast::min(_185.x, _185.y) < _23._m16.w)
+    float3 _155 = _160;
+    float3 _191 = mix(_155, _25._m25[(_51 >> uint(16)) & 31u].xyz, float3(_114));
+    float2 _205 = fast::min(_9 - _25._m15.xy, (_25._m15.zw - float2(1.0)) - _9);
+    if (fast::min(_205.x, _205.y) < _25._m16.w)
     {
-        _171 = _23._m16.xyz;
+        _191 = _25._m16.xyz;
     }
-    out.m_217 = float4(_171, 1.0);
+    out.m_237 = float4(_191, 1.0);
     return out;
 }
 

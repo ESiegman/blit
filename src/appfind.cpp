@@ -139,6 +139,9 @@ struct App::Find {
     // typed, and the box that was open before it (to open again after).
     u64 ask_id = 0;
     std::string ask_host;
+    // Asked for by blit itself (the Profile tab): what is chosen or typed
+    // goes here instead of being opened (a path) or to a script (a line).
+    std::function<void(const std::string&)> chose;
     bool secret = false;
     int back_mode = -1;
     std::string back_typed;
@@ -175,6 +178,7 @@ static void wipe(std::string& s) {
 void App::find_open(int mode, const std::string& typed) {
     Find& f = *find_;
     if (find_open_ && f.script() && !(mode == f.mode && f.script())) find_close(false);  // (a script's picker is answered "nothing")
+    f.chose = nullptr;  // (see find_choose)
     if (find_open_ && f.mode == kFindAsk && mode != kFindAsk) {  // (ssh's question waits, and comes back when this box shuts)
         wipe(f.typed);
         f.ask_id = 0;
@@ -239,6 +243,17 @@ void App::find_ask(u64 id, const std::string& host, const std::string& prompt, b
     find_open(kFindAsk);
 }
 
+// The box, for a path or a line that comes back to `chose` (kFindOpen: a
+// file, kFindFolder: a folder, kFindInput: what is typed after `prompt`).
+void App::find_choose(int mode, const std::string& prompt, const std::string& typed, std::function<void(const std::string&)> chose) {
+    Find& f = *find_;
+    if (find_open_ && f.script()) find_close(false);
+    f.items.clear();
+    f.prompt = prompt;
+    find_open(mode, typed);
+    f.chose = std::move(chose);
+}
+
 u64 App::find_ask_id() const { return find_open_ && find_->mode == kFindAsk ? find_->ask_id : 0; }
 
 // The question went unanswered (the connection ended): the box goes.
@@ -271,7 +286,8 @@ void App::find_close(bool chosen) {
     if (!chosen && f.mode == kFindSave) quit_after_save_ = close_after_save_ = false;  // no name: what was to follow the save does not
     pane_->cache_rev = ~0ull;
     dirty_ = true;
-    if (!chosen && f.script()) script_chose(false, -1, {});  // (the script hears that nothing was chosen)
+    if (!chosen && f.script() && !f.chose) script_chose(false, -1, {});  // (the script hears that nothing was chosen)
+    f.chose = nullptr;
     remote_asks();  // (a question ssh asked while this box was open)
 }
 
@@ -445,6 +461,16 @@ void App::find_accept() {
         find_close(true);
         return;
     }
+    if (f.mode == kFindInput && f.chose) {
+        auto chose = std::move(f.chose);
+        const std::string typed = f.typed;
+        f.chose = nullptr;
+        find_open_ = false;  // (shut without a script hearing of it)
+        pane_->cache_rev = ~0ull;
+        dirty_ = true;
+        chose(typed);
+        return;
+    }
     if (f.script()) {
         if (f.mode == kFindPick && f.sel >= f.entries.size()) return;
         const int index = f.mode == kFindPick ? static_cast<int>(f.entries[f.sel].index) : -1;
@@ -487,6 +513,10 @@ void App::find_accept() {
         return find_query();
     }
     if (e.kind == Find::Entry::kHere) {
+        if (auto chose = std::move(f.chose)) {
+            find_close(true);
+            return chose(here);
+        }
         find_close(true);
         recent_add(here, true);
         return panel_set_workdir(here);
@@ -496,6 +526,11 @@ void App::find_accept() {
         return find_query();
     }
     const std::string path = f.dir + e.name;
+    if (f.mode == kFindOpen && f.chose) {
+        auto chose = std::move(f.chose);
+        find_close(true);
+        return chose(path);
+    }
     if (f.mode == kFindOpen) {
         find_close(true);
         remember_place();
@@ -720,7 +755,7 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
         // What is typed, after a word that says what the box is for; the
         // cell after it is lit, as a cursor.
         static const char* const kLabel[] = {"Files", "Text", "Open", "Save as", "Folder", "Pick", "Input", "ssh"};
-        u32 c = box.put(font, 0, 0, (f.script() || f.mode == kFindAsk) && !f.prompt.empty() ? std::string_view(f.prompt) : std::string_view(kLabel[f.mode]), kInkAccent, Font::kBold) + 2;
+        u32 c = box.put(font, 0, 0, (f.script() || f.mode == kFindAsk || f.chose) && !f.prompt.empty() ? std::string_view(f.prompt) : std::string_view(kLabel[f.mode]), kInkAccent, Font::kBold) + 2;
         std::string hidden;  // (a secret shows as a dot for each letter)
         if (f.mode == kFindAsk && f.secret)
             for (size_t i = 0; i < f.typed.size(); ++i)

@@ -63,6 +63,10 @@ std::string parent_of(const std::string& path);
 std::string full_path(const std::string& path);
 
 // One open file: its text, its colours, and where its view was left.
+struct Profile;      // (profile.hpp)
+struct ProfileFunc;
+struct ProfView;     // a profile's tab (appprofile.cpp)
+
 struct Doc {
     Editor ed;
     Syntax syntax;  // after ed: it must let go of the buffer first
@@ -108,6 +112,7 @@ struct Doc {
     bool loading = false;  // a file on another machine, on its way (read only until it is here: see appremote.cpp)
     u64 goto_line = ~0ull;  // and where the cursor goes when it is (a line from 0, and a byte in it)
     u32 goto_col = 0;
+    std::shared_ptr<ProfView> prof;  // a profile's tab: drawn over the text area (appprofile.cpp)
     std::unique_ptr<Highlights> marks;
 
     // (Git's worker may be reading the text: it lets go first.)
@@ -295,6 +300,7 @@ private:
     void find_ask(u64 id, const std::string& host, const std::string& prompt, bool secret);
     u64 find_ask_id() const;
     void find_drop_ask();
+    void find_choose(int mode, const std::string& prompt, const std::string& typed, std::function<void(const std::string&)> chose);
     void remote_asks();
     void save_named(const std::string& path, u64 doc);
     void remember_place();  // where the cursor is now is somewhere to come back to
@@ -363,6 +369,32 @@ private:
     void find_remote_ready();
     void remote_opened(Pane& p, Doc& d, bool fresh);
     void remote_reconnect();
+
+    // Profiling (appprofile.cpp): the side panel's Profile tab, a tab for
+    // each profile (a flame graph and the functions), the times in the code.
+    struct ProfUi;
+    void prof_start();
+    void prof_record();
+    void prof_stop();
+    void prof_sync();
+    void prof_open(std::shared_ptr<Profile> p);
+    void prof_do(u32 row);
+    void prof_panel_draw(struct TextBox& box, bool focused);
+    void prof_panel_click(int row, int col, const SDL_MouseButtonEvent& b);
+    bool prof_panel_key(const SDL_KeyboardEvent& k);
+    void prof_layout(FrameDesc& fd);
+    void prof_marks(FrameDesc& fd);
+    bool prof_hit(int px, int py, Pane** pane, u32* row, u32* col);
+    bool prof_mouse_down(const SDL_MouseButtonEvent& b);
+    bool prof_mouse_motion(const SDL_MouseMotionEvent& m);
+    bool prof_wheel(const SDL_MouseWheelEvent& w);
+    bool prof_key(const SDL_KeyboardEvent& k);
+    void prof_go_to(const Profile& p, u32 func);
+    u64 prof_definition(const Doc& d, const ProfileFunc& f) const;
+    void prof_set(const std::string& what, const std::string& value);
+    bool prof_busy() const;
+    std::string prof_dump();
+    void panel_show_profile();
     void lsp_forget_failed(const std::string& suffix);  // (applsp.cpp) servers that failed there may be tried again
 
     // The status bar along the bottom (appstatus.cpp).
@@ -560,6 +592,8 @@ private:
     std::shared_ptr<VimUi> vimui_;
     std::shared_ptr<StatusUi> status_;
     std::shared_ptr<StartUi> start_;
+    std::shared_ptr<ProfUi> profui_;  // (before remote_: a recording on another machine ends when its connection does)
+    u64 prof_gen_ = 1;                // counts up whenever what the Profile tab shows may have changed
     std::shared_ptr<RemoteUi> remote_;
     u64 remote_gen_ = 0;      // counts up whenever a connection or a file on its way has news
     u64 git_gen_ = 1;         // counts up whenever what the Git tab shows may have changed

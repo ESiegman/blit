@@ -93,8 +93,9 @@ struct Uniforms {
     float tint_rect[4], tint_color[4];
     float radii[4], shadow[4], inset[4], fx[4];
     float palette[32][4];
+    float tones[8][4];  // a popup's: the backgrounds of lit cells that name one of them (bits 21-23; 0 names none)
 };
-static_assert(sizeof(Uniforms) == 832);
+static_assert(sizeof(Uniforms) == 960);
 
 // Where compiled pipelines are kept from one run to the next.
 std::string cache_dir() {
@@ -397,6 +398,7 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
             Uniforms pu = u;
             std::memcpy(pu.bg, p.bg ? p.bg : fd.theme.popup_bg, sizeof pu.bg);
             if (p.sel) std::memcpy(pu.sel, p.sel, sizeof pu.sel);
+            if (p.tones) std::memcpy(pu.tones, p.tones, sizeof pu.tones);
             std::memcpy(pu.cur_color, fd.theme.hover, sizeof pu.cur_color);  // (a popup has no cursor: the slot carries the colour of cells under the mouse)
             pu.radii[0] = std::min(p.radius, static_cast<float>(std::min(p.w, p.h)) * 0.5f);
             pu.radii[1] = p.pill;
