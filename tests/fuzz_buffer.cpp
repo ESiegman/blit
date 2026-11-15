@@ -1,0 +1,2780 @@
+// Model check: random edits applied to both blit::Buffer and a std::string,
+// with contents, line index and structure compared along the way.
+#include <fcntl.h>
+#include <dirent.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
+#include <atomic>
+#include <cctype>
+#include <climits>
+#include <chrono>
+#include <cstdio>
+#include <cstdlib>
+#include <cstring>
+#include <random>
+#include <stop_token>
+#include <string>
+#include <thread>
+#include <vector>
+
+#include "buffer.hpp"
+#include "config.hpp"
+#include "editor.hpp"
+#include "finder.hpp"
+#include "font.hpp"
+#include "git.hpp"
+#include "remote.hpp"
+#include "grammars.hpp"
+#include "grid.hpp"
+#include "highlight.hpp"
+#include "job.hpp"
+#include "json.hpp"
+#include "keymap.hpp"
+#include "lsp.hpp"
+#include "match.hpp"
+#include "syntax.hpp"
+#include "tree.hpp"
+#include "utf8.hpp"
+#include "vim.hpp"
+
+using namespace blit;
+
+namespace {
+
+std::mt19937_64 rng;
+
+u64 rnd(u64 n) { return n ? rng() % n : 0; }
+
+std::string random_text(size_t n) {
+    static const char* const bits[] = {"a", "b", "z", " ", "\n", "\n", "\t", "x", "é", "日本", "😀", "\r\n", "0"};
+    std::string s;
+    while (s.size() < n) s += bits[rnd(std::size(bits))];
+    return s;
+}
+
+[[noreturn]] void fail(const char* what, u64 seed, int step) {
+    std::fprintf(stderr, "FAIL: %s (seed %llu, step %d)\n", what, (unsigned long long)seed, step);
+    std::exit(1);
+}
+
+void compare(const Buffer& b, const std::string& m, u64 seed, int step, bool full) {
+    if (b.size() != m.size()) fail("size", seed, step);
+    if (!full) return;
+    b.verify();
+    if (b.text(0, b.size()) != m) fail("content", seed, step);
+
+    std::vector<u64> starts{0};
+    for (size_t i = 0; i < m.size(); ++i)
+        if (m[i] == '\n') starts.push_back(i + 1);
+    if (b.line_count() != starts.size()) fail("line_count", seed, step);
+    for (int t = 0; t < 40; ++t) {
+        u64 line = rnd(starts.size());
+        if (b.line_start(line) != starts[line]) fail("line_start", seed, step);
+        u64 off = rnd(m.size() + 1);
+        u64 want = std::upper_bound(starts.begin(), starts.end(), off) - starts.begin() - 1;
+        if (b.line_of(off) != want) fail("line_of", seed, step);
+        // line_reader lands on the same bytes as the model.
+        auto r = b.line_reader(line);
+        std::string_view c = r.chunk();
+        if (starts[line] < m.size()) {
+            if (c.empty() || c[0] != m[starts[line]]) fail("line_reader", seed, step);
+        } else if (!c.empty()) {
+            fail("line_reader at end", seed, step);
+        }
+    }
+    if (b.line_start(starts.size() + 5) != m.size()) fail("line_start past end", seed, step);
+    // Partial read from a random offset.
+    u64 off = rnd(m.size() + 1), n = rnd(9000);
+    if (b.text(off, n) != m.substr(off, n)) fail("read", seed, step);
+}
+
+void run(u64 seed, int steps) {
+    rng.seed(seed);
+    Buffer b;
+    std::string m;
+    std::string original;  // must outlive the buffer view
+    if (seed % 3 == 0) {
+        original = random_text(rnd(300000));
+        b.load_view(original.data(), original.size());
+        m = original;
+    }
+    std::vector<Piece> removed;
+    u64 type_at = 0;
+
+    for (int step = 0; step < steps; ++step) {
+        switch (rnd(10)) {
+            case 0:
+            case 1: {  // insert
+                size_t len = rnd(8) == 0 ? rnd(20000) : rnd(40) + 1;
+                std::string s = random_text(len);
+                u64 off = rnd(m.size() + 1);
+                b.insert(off, s);
+                m.insert(off, s);
+                break;
+            }
+            case 2:
+            case 3:
+            case 4: {  // typing run
+                if (rnd(4) == 0 || type_at > m.size()) type_at = rnd(m.size() + 1);
+                int n = static_cast<int>(rnd(30)) + 1;
+                for (int i = 0; i < n; ++i) {
+                    char c = rnd(12) == 0 ? '\n' : static_cast<char>('a' + rnd(26));
+                    b.insert(type_at, std::string_view(&c, 1));
+                    m.insert(type_at, 1, c);
+                    ++type_at;
+                }
+                break;
+            }
+            case 5:
+            case 6: {  // erase
+                if (m.empty()) break;
+                u64 off = rnd(m.size());
+                u64 len = rnd(6) == 0 ? rnd(m.size() / 2 + 1) : rnd(60) + 1;
+                b.erase(off, len);
+                m.erase(off, len);
+                break;
+            }
+            case 7: {  // erase, then put the pieces back (undo)
+                if (m.empty()) break;
+                u64 off = rnd(m.size());
+                u64 len = rnd(5) == 0 ? rnd(m.size() + 1) : rnd(5000) + 1;
+                removed.clear();
+                std::string cut = m.substr(off, len);
+                b.erase(off, len, &removed);
+                m.erase(off, len);
+                u64 total = 0;
+                for (const Piece& p : removed) total += p.len;
+                if (total != cut.size()) fail("removed length", seed, step);
+                compare(b, m, seed, step, rnd(4) == 0);
+                u64 to = rnd(3) == 0 ? rnd(m.size() + 1) : off;
+                b.insert_pieces(to, removed);
+                m.insert(to, cut);
+                break;
+            }
+            case 8: {  // backspace run
+                u64 off = rnd(m.size() + 1);
+                int n = static_cast<int>(rnd(50));
+                while (n-- > 0 && off > 0) {
+                    --off;
+                    b.erase(off, 1);
+                    m.erase(off, 1);
+                }
+                break;
+            }
+            case 9: {  // occasionally wipe almost everything
+                if (rnd(40) != 0 || m.empty()) break;
+                u64 keep = rnd(3);
+                u64 off = rnd(keep + 1);
+                u64 len = m.size() > keep ? m.size() - keep : m.size();
+                b.erase(off, len);
+                m.erase(off, len);
+                break;
+            }
+        }
+        compare(b, m, seed, step, step % 16 == 0 || step == steps - 1);
+    }
+}
+
+// Editor level: edits, selection replacement and undo/redo against a model.
+// ASCII only, so one character is one byte and the model stays trivial.
+void run_editor(u64 seed, int steps) {
+    rng.seed(seed * 7919);
+    Editor e;
+    std::string m, initial;
+    if (seed % 2 == 0) {
+        initial = "first line\nsecond line\n\tindented\nlast";
+        e.buf.insert(0, initial);
+        m = initial;
+    }
+    u64 cur = 0, anc = 0;  // model cursor and anchor
+    int last_op = -1;
+    auto ascii = [](size_t n) {
+        std::string s;
+        for (size_t i = 0; i < n; ++i) s += rnd(9) == 0 ? '\n' : static_cast<char>('a' + rnd(26));
+        return s;
+    };
+    auto replace_sel = [&](const std::string& with) {
+        u64 lo = std::min(cur, anc), hi = std::max(cur, anc);
+        m.replace(lo, hi - lo, with);
+        cur = anc = lo + with.size();
+    };
+    auto check = [&](int step, const char* what) {
+        if (e.buf.size() != m.size() || e.cursor() != cur || e.anchor() != anc) {
+            std::fprintf(stderr, "size %llu/%zu cursor %llu/%llu anchor %llu/%llu op %d\n",
+                         (unsigned long long)e.buf.size(), m.size(), (unsigned long long)e.cursor(),
+                         (unsigned long long)cur, (unsigned long long)e.anchor(), (unsigned long long)anc, last_op);
+            fail(what, seed, step);
+        }
+        if (step % 8 == 0) {
+            e.buf.verify();
+            if (e.buf.text(0, e.buf.size()) != m) fail(what, seed, step);
+        }
+    };
+    for (int step = 0; step < steps; ++step) {
+        switch (last_op = static_cast<int>(rnd(9))) {
+            case 0: {
+                cur = rnd(m.size() + 1);
+                bool sel = rnd(4) == 0;
+                if (!sel) anc = cur;
+                e.move_to(cur, sel);
+                break;
+            }
+            case 1: {
+                std::string s = ascii(rnd(12) == 0 ? rnd(9000) : rnd(20) + 1);
+                e.insert(s);
+                replace_sel(s);
+                break;
+            }
+            case 2:
+            case 3: {  // typing run
+                for (int n = static_cast<int>(rnd(25)) + 1; n > 0; --n) {
+                    std::string s = ascii(1);
+                    if (s == "\n") e.newline();
+                    else e.insert(s);
+                    replace_sel(s);
+                }
+                break;
+            }
+            case 4:
+            case 5: {  // backspace run
+                for (int n = static_cast<int>(rnd(40)) + 1; n > 0; --n) {
+                    e.backspace();
+                    if (cur != anc) replace_sel("");
+                    else if (cur > 0) {
+                        m.erase(cur - 1, 1);
+                        cur = anc = cur - 1;
+                    }
+                }
+                break;
+            }
+            case 6: {  // forward delete run
+                for (int n = static_cast<int>(rnd(40)) + 1; n > 0; --n) {
+                    e.del();
+                    if (cur != anc) replace_sel("");
+                    else if (cur < m.size()) m.erase(cur, 1);
+                }
+                break;
+            }
+            case 7: {  // undo some, redo them: text must come back
+                int k = static_cast<int>(rnd(6)) + 1, undone = 0;
+                while (undone < k && e.undo()) ++undone;
+                for (int i = 0; i < undone; ++i)
+                    if (!e.redo()) fail("redo missing", seed, step);
+                if (e.buf.text(0, e.buf.size()) != m) fail("undo/redo round trip", seed, step);
+                if (undone) cur = anc = e.cursor();
+                break;
+            }
+            case 8: {  // undo everything: back to the starting text
+                if (rnd(25) != 0) break;
+                int undone = 0;
+                while (e.undo()) ++undone;
+                e.buf.verify();
+                if (e.buf.text(0, e.buf.size()) != initial) fail("undo all", seed, step);
+                for (int i = 0; i < undone; ++i) e.redo();
+                if (e.buf.text(0, e.buf.size()) != m) fail("redo all", seed, step);
+                if (undone) cur = anc = e.cursor();
+                break;
+            }
+        }
+        check(step, "editor state");
+    }
+}
+
+// A mapped file shrinks underneath the buffer: reads must not crash.
+void truncated_file_test() {
+#if !defined(_WIN32)
+    std::string path = "/tmp/blit-truncate-test.txt";
+    if (const char* t = std::getenv("TMPDIR")) path = std::string(t) + "/blit-truncate-test.txt";
+    std::string body;
+    for (int i = 0; body.size() < (1u << 20); ++i) body += "line " + std::to_string(i) + "\n";
+    FILE* f = std::fopen(path.c_str(), "wb");
+    std::fwrite(body.data(), 1, body.size(), f);
+    std::fclose(f);
+    Buffer b;
+    std::string err;
+    if (!b.load_file(path.c_str(), &err)) fail("load for truncate test", 0, 0);
+    f = std::fopen(path.c_str(), "wb");  // truncates to zero
+    std::fclose(f);
+    std::string now = b.text(0, b.size());
+    if (now.size() != body.size()) fail("size after truncate", 0, 0);
+    std::remove(path.c_str());
+#endif
+}
+
+// Settings as init.lua makes them: one key and one value at a time.
+Config settings(std::initializer_list<std::pair<const char*, const char*>> kv) {
+    std::vector<ConfigSetting> s;
+    for (const auto& [k, v] : kv) s.push_back({k, v, "test"});
+    return make_config(s);
+}
+
+// The settings: values, warnings, themes.
+void config_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    Config d = make_config();
+    check(d.warnings.empty() && d.font_size == 13 && !d.ligatures && d.theme_dark == "blit-dark", "config defaults");
+
+    Config c = settings({{"font.family", "\"Victor Mono\""},
+                         {"font.size", "14.5"},
+                         {"font.ligatures", "true"},
+                         {"font.features", "[\"ss01\", 'zero']"},
+                         {"theme.dark", "\"rose-pine\""},
+                         {"theme.light", "'mine'"},
+                         {"themes.mine.background", "\"#fff\""},
+                         {"themes.mine.cursor", "\"#102030\""},
+                         {"themes.rose-pine.cursor", "\"#ff0000\""},
+                         {"editor.tab_width", "8"}});
+    check(c.warnings.empty(), "clean config has no warnings");
+    check(c.font_family == "Victor Mono" && c.font_size == 14.5f && c.ligatures, "font settings");
+    check(c.font_features.size() == 2 && c.font_features[0] == "ss01" && c.font_features[1] == "zero", "feature list");
+    check(c.theme_dark == "rose-pine" && c.theme_light == "mine" && c.tab_width == 8, "theme and editor settings");
+    check(c.theme(false).background.r == 1.0f && c.theme(false).cursor.g == 0x20 / 255.0f, "custom theme colours");
+    // Changing one colour of a built-in theme keeps the rest of it.
+    check(c.theme(true).cursor.r == 1.0f && c.theme(true).background.r == 0x19 / 255.0f, "built-in theme override");
+
+    Config bad = settings({{"font.size", "\"big\""}, {"font.ligatures", "yes"}, {"font.nonsense", "1"}, {"theme.dark", "\"nope\""}});
+    int lines = 0;
+    for (char ch : bad.warnings) lines += ch == '\n';
+    check(lines == 4 && bad.font_size == 13 && !bad.ligatures && bad.warnings.starts_with("test: "), "bad values warn, with where, and keep defaults");
+    check(bad.theme(true).background.r == make_config().theme(true).background.r, "unknown theme falls back");
+    check(!settings({{"git.blame", "true"}}).warnings.empty(), "blame is no setting");
+
+    Config pc = settings({{"panel.open", "true"}, {"panel.width", "40"}});
+    check(pc.warnings.empty() && pc.panel_open && pc.panel_width == 40 && !d.panel_open && d.panel_width == 32, "panel settings");
+    check(!settings({{"panel.width", "3"}}).warnings.empty(), "a panel too narrow to use warns");
+
+    Config one = settings({{"theme", "\"rose-pine-dawn\""}});
+    check(one.theme_dark == "rose-pine-dawn" && one.theme_light == "rose-pine-dawn" && one.warnings.empty(), "single theme");
+
+    Rgb rgb;
+    check(parse_color("#1a2B3c", &rgb) && rgb.b == 0x3c / 255.0f, "colour parse");
+    check(!parse_color("1a2b3c", &rgb) && !parse_color("#12345", &rgb) && !parse_color("#gggggg", &rgb), "colour reject");
+
+    // Token styles: colour, italic and bold each come from the nearest
+    // capture that sets them. syntax.styles is for every theme, and a
+    // theme's own wins over it wherever the two were set.
+    std::vector<ConfigSetting> styled = {{"theme.dark", "\"mine\"", ""},
+                                         {"theme.light", "\"mine\"", ""},
+                                         {"themes.mine.syntax.comment", "\"#808080 italic\"", ""},
+                                         {"themes.mine.syntax.keyword", "\"#0000ff\"", ""},
+                                         {"themes.mine.syntax.keyword.return", "\"bold\"", ""},
+                                         {"themes.mine.syntax.keyword.return.plain", "\"regular\"", ""},
+                                         {"themes.mine.syntax.keyword.import", "\"italic bold #ff0000\"", ""},
+                                         {"themes.mine.syntax.string", "\"#00ff00 regular\"", ""},
+                                         {"syntax.styles.keyword", "\"italic\"", ""},
+                                         {"syntax.styles.string", "\"bold\"", ""}};
+    Config ts = make_config(styled);
+    check(ts.warnings.empty(), "token styles parse cleanly");
+    const ThemeColors& mine = ts.theme(true);
+    auto is = [&](const char* capture, float r, float g, float b, bool italic, bool bold) {
+        const TokenStyle t = mine.syntax_style(capture);
+        return t.color.r == r && t.color.g == g && t.color.b == b && t.italic == italic && t.bold == bold;
+    };
+    const float grey = 0x80 / 255.0f;
+    check(is("comment", grey, grey, grey, true, false) && is("comment.documentation", grey, grey, grey, true, false),
+          "style and its children");
+    check(is("keyword", 0, 0, 1, true, false), "style from syntax.styles joins the theme's colour");
+    check(is("keyword.return", 0, 0, 1, true, true), "bold added to an inherited colour and italic");
+    check(is("keyword.return.plain", 0, 0, 1, false, false), "regular switches both off");
+    check(is("keyword.import", 1, 0, 0, true, true), "colour and both styles in one entry");
+    check(is("string", 0, 1, 0, false, false), "a theme's own entry wins over syntax.styles, set before it or after");
+    check(mine.syntax_style("nothing").color.r == mine.foreground.r && !mine.syntax_style("nothing").italic, "no entry: plain");
+    check(ts.themes.find("rose-pine")->second.syntax_style("keyword.repeat").italic, "syntax.styles reaches every theme");
+    // (A new theme starts as a copy of blit-dark, whose headings are bold.)
+    check(ts.font_styles() == ((1u << 1) | (1u << 2) | (1u << 3)), "font styles the themes use");
+    styled.push_back({"syntax.italic", "false", ""});
+    Config upright = make_config(styled);
+    check(upright.warnings.empty() && upright.font_styles() == (1u << 2), "italics switched off everywhere");
+    check(!settings({{"syntax.styles.comment", "\"#808080 wavy\""}}).warnings.empty(), "unknown style word warns");
+
+    // Names other queries use for the same things follow the usual ones,
+    // including what the settings change about them.
+    check(mine.syntax_style("repeat").italic && mine.syntax_style("repeat").color.b == 1 && mine.syntax_style("conditional.ternary").italic,
+          "other names for keywords follow keyword");
+    check(mine.syntax_style("field").color.r == mine.syntax_style("property").color.r &&
+              mine.syntax_style("delimiter").color.g == mine.syntax_style("punctuation").color.g,
+          "other names for properties and punctuation");
+
+    // Grammars: where they come from, and what the settings change.
+    Config gc = settings({{"syntax.install", "[\"cpp\", \"python\"]"},
+                          {"syntax.auto_install", "true"},
+                          {"syntax.grammars.cpp.rev", "\"abc123\""},
+                          {"syntax.grammars.mylang.repo", "\"me/tree-sitter-mylang\""},
+                          {"syntax.grammars.mylang.rev", "\"v1.0\""},
+                          {"syntax.grammars.mylang.path", "\"grammar\""},
+                          {"syntax.grammars.mylang.inherits", "[\"c\"]"}});
+    check(gc.warnings.empty() && gc.syntax_install.size() == 2 && gc.syntax_auto_install && gc.grammars.size() == 2, "grammar settings");
+    const std::vector<GrammarSource> gl = grammar_list(gc.grammars);
+    const GrammarSource* gcpp = find_grammar(gl, "cpp");
+    const GrammarSource* mylang = find_grammar(gl, "mylang");
+    check(gcpp && gcpp->rev == "abc123" && gcpp->repo == "tree-sitter/tree-sitter-cpp" && gcpp->inherits.size() == 1,
+          "a grammar named like a built-in one inherits what it does not set");
+    check(mylang && mylang->repo == "me/tree-sitter-mylang" && mylang->path == "grammar" && mylang->inherits[0] == "c", "a grammar of one's own");
+    check(gl.size() == builtin_grammars().size() + 1 && find_grammar(gl, "python") && !find_grammar(gl, "nope"), "the rest of the built-in list");
+    check(!settings({{"syntax.auto_install", "false"}}).syntax_auto_install && make_config().syntax_install.empty() &&
+              !settings({{"syntax.install", "\"cpp\""}}).warnings.empty(),
+          "nothing is installed unless asked for");
+    // Asking for a grammar nobody knows fails at once, without fetching anything.
+    std::string gerr;
+    check(!install_grammar(gl, "no-such-language", &gerr) && gerr.find("does not know") != std::string::npos, "unknown grammar");
+    GrammarSource odd = *mylang;
+    odd.name = "bad name; rm -rf";
+    check(!install_grammar({odd}, odd.name, &gerr), "a grammar name that is not a plain word is refused");
+    check(grammar_state(*mylang) == GrammarState::kMissing, "a grammar that was never installed is missing");
+
+    const ThemeColors& pine = d.themes.find("rose-pine")->second;
+    check(pine.syntax_style("variable").italic && !pine.syntax_style("variable.member").italic, "rose pine italics");
+    const TokenStyle self = pine.syntax_style("variable.builtin");
+    check(self.italic && self.bold && pine.syntax_style("type.builtin").bold && !pine.syntax_style("type").bold, "rose pine bold");
+    check(d.font_styles() == ((1u << 1) | (1u << 2)), "the default themes use italic and bold");
+}
+
+// Italic and bold: styled glyph slots, and what the grid makes of them.
+// What the view needs to know about a text: its widest line (the limit of
+// sideways scrolling), its indentation step, and where indent lines go.
+void view_test(int seeds) {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    // The widest line, against a plain walk over a copy of the text. The
+    // text is put together from many edits, so lines cross piece borders.
+    for (int seed = 0; seed < seeds; ++seed) {
+        rng.seed(static_cast<u64>(seed) * 7919 + 5);
+        Editor ed;
+        ed.tab_width = 1 + static_cast<u32>(rnd(8));
+        std::string model;
+        for (int k = 0; k < 40; ++k) {
+            const std::string piece = random_text(rnd(60));
+            const u64 at = rnd(model.size() + 1);
+            // Not inside a character: the walk and the editor would then disagree about a broken one.
+            if (at < model.size() && is_cont(static_cast<u8>(model[at]))) continue;
+            if (at < model.size() && at > 0 && model[at - 1] == '\r') continue;
+            ed.move_to(at, false);
+            ed.insert(piece);
+            model.insert(at, piece);
+        }
+        u64 want = 0;
+        for (size_t at = 0; at <= model.size();) {
+            size_t nl = model.find('\n', at);
+            if (nl == std::string::npos) nl = model.size();
+            std::string_view line(model.data() + at, nl - at);
+            if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+            u64 col = 0;
+            const u8* p = reinterpret_cast<const u8*>(line.data());
+            for (size_t i = 0; i < line.size();) {
+                if (p[i] == '\t') {
+                    col = (col / ed.tab_width + 1) * ed.tab_width;
+                    ++i;
+                } else if (p[i] < 0x80) {
+                    ++col;
+                    ++i;
+                } else {
+                    const Decoded d = decode_utf8(p + i, line.size() - i);
+                    col += cp_width(d.cp);
+                    i += d.len;
+                }
+            }
+            want = std::max(want, col);
+            at = nl + 1;
+        }
+        std::vector<Piece> pieces;
+        ed.buf.snapshot(&pieces);
+        const u64 got = Editor::widest_columns(pieces, ed.tab_width);
+        if (got != want) fail("widest line", static_cast<u64>(seed), got);
+    }
+    {
+        Editor ed;
+        ed.insert("short\n" + std::string(300000, 'x') + "\tend\nlast");
+        std::vector<Piece> pieces;
+        ed.buf.snapshot(&pieces);
+        check(Editor::widest_columns(pieces, 4) == 300007, "a line longer than one slice is measured whole");
+        std::stop_source stop;
+        stop.request_stop();
+        check(Editor::widest_columns(pieces, 4, stop.get_token()) <= 300007, "a stopped measurement returns");
+    }
+
+    // The indentation step.
+    auto step_of = [](const std::string& text, u32 tab) {
+        Editor ed;
+        ed.tab_width = tab;
+        ed.insert(text);
+        return ed.guess_indent();
+    };
+    check(step_of("a {\n  b {\n    c\n  }\n}\n", 4) == 2, "two-space indentation is found");
+    check(step_of("a {\n    b {\n        c\n    }\n}\n", 8) == 4, "four-space indentation is found");
+    check(step_of("a {\n\tb {\n\t\tc\n\t}\n}\n", 8) == 8, "tab indentation uses the tab width");
+    check(step_of("no indentation at all\nnone\n", 4) == 4, "a flat file falls back on the tab width");
+    check(step_of("", 3) == 3, "so does an empty one");
+    check(step_of("a\n   b\n      c\n\n   d\n         continued\n", 4) == 3, "the commonest step wins over an odd continuation line");
+
+    // Indent lines in the grid.
+    Font font;
+    FontSpec spec;
+    spec.px = 20;
+    std::string err;
+    if (!font.init(spec, &err)) {
+        std::printf("indent line test skipped: %s\n", err.c_str());
+        return;
+    }
+    Editor ed;
+    ed.insert("a {\n    b {\n        c\n\n        d\n    }\n\n}\n\tt\n");
+    GridSpec g;
+    g.cols = 20;
+    g.rows = 12;
+    g.tab_width = 4;
+    g.guide_step = 4;
+    g.guide_inks = 3;
+    std::vector<u32> cells(static_cast<size_t>(g.cols) * g.rows);
+    auto lines_at = [&](u32 row) {  // the columns of a row that carry an indent line, as a bit set
+        u32 bits = 0;
+        for (u32 c = 0; c < g.cols; ++c)
+            if (((cells[static_cast<size_t>(row) * g.cols + c] & kCellDecoMask) >> kCellDecoShift) == kDecoGuide) bits |= 1u << c;
+        return bits;
+    };
+    GuideCache cache;
+    fill_grid(ed.buf, font, g, cells.data());
+    guide_grid(ed.buf, g, cells.data(), cache);
+    check(lines_at(0) == 0, "a line that is not indented has no indent line");
+    check(lines_at(1) == 1, "one level: a line at column 0");
+    check(lines_at(2) == 0b10001, "two levels: lines at columns 0 and 4");
+    check(lines_at(3) == 0b10001, "a blank line inside a block carries the block's lines on");
+    check(lines_at(5) == 1 && lines_at(6) == 1, "a blank line between two depths takes the shallower one's, plus one");
+    check(lines_at(7) == 0, "back at the left edge");
+    check(lines_at(8) == 1, "a tab indents like the spaces it stands for");
+    check(lines_at(10) == 0, "nothing past the end of the text");
+    const u32 first = cells[static_cast<size_t>(2) * g.cols], second = cells[static_cast<size_t>(2) * g.cols + 4];
+    check(((first >> kCellInkShift) & 31) == kInkGuide && ((second >> kCellInkShift) & 31) == kInkGuide + 1 && (first & kCellOverlay),
+          "each level has its own ink");
+    // Scrolled sideways, the lines stay on their columns.
+    g.first_col = 2;
+    fill_grid(ed.buf, font, g, cells.data());
+    guide_grid(ed.buf, g, cells.data(), cache);
+    check(lines_at(2) == 0b100 && lines_at(3) == 0b100 && lines_at(1) == 0, "scrolled two columns right: column 4 is the third cell");
+    // An underline takes a cell with an indent line over.
+    g.first_col = 0;
+    const GridDeco deco{2, 0, 2, 1};
+    g.decos = {&deco, 1};
+    fill_grid(ed.buf, font, g, cells.data());
+    guide_grid(ed.buf, g, cells.data(), cache);
+    decorate_grid(g, cells.data());
+    check(lines_at(2) == 0b10000, "an underline replaces the indent line in its cells");
+    // Off: nothing is marked.
+    g.decos = {};
+    g.guide_step = 0;
+    fill_grid(ed.buf, font, g, cells.data());
+    guide_grid(ed.buf, g, cells.data(), cache);
+    check(lines_at(2) == 0, "no indent lines when they are off");
+}
+
+void styles_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    Font font;
+    FontSpec spec;
+    spec.px = 20;
+    spec.styles = 1u << Font::kItalic;
+    std::string err;
+    if (!font.init(spec, &err)) {  // no usable font on this machine
+        std::printf("styles test skipped: %s\n", err.c_str());
+        return;
+    }
+    check(font.has_style(Font::kItalic) && !font.has_style(Font::kBold), "styles asked for up front are ready");
+    check(font.ensure_style(Font::kBold) && font.ensure_style(Font::kItalic | Font::kBold) && font.has_style(3),
+          "styles load on demand");
+    check(font.glyph('a', 3) == ('a' | 3u << Font::kStyleShift), "styled ASCII slot");
+    const u32 e = font.glyph(0xE9, 1);
+    check((e & (Font::kWide - 1)) >= Font::kStyles * 128 && e == font.glyph(0xE9, 1), "styled non-ASCII slot");
+    check(font.glyph(0x65E5, 1) == font.glyph(0x65E5), "a character the styled face lacks comes back regular");
+
+    // One row of mixed text, all in one style. ASCII carries the style in
+    // its slot number; tabs, accents and wide characters must not.
+    Buffer buf;
+    const std::string text = "ab\t\xC3\xA9\xE6\x97\xA5x -> y\n";
+    buf.insert(0, text);
+    Highlights h;
+    h.end = text.size();
+    h.off = {0};
+    h.style = {1};
+    h.seal();
+    u32 lut[256] = {};
+    const u32 ink = 5u << kCellInkShift;
+    for (u32 fs = 0; fs < Font::kStyles; ++fs) {
+        const u32 block = fs << Font::kStyleShift;
+        lut[1] = ink | block;
+        GridSpec g;
+        g.cols = 24;
+        g.rows = 1;
+        g.highlights = &h;
+        g.style_bits = lut;
+        u32 cells[24];
+        fill_grid(buf, font, g, cells);
+        const u32 accent = font.glyph(0xE9, fs) & (Font::kWide - 1), wide = font.glyph(0x65E5, fs) & (Font::kWide - 1);
+        check(cells[0] == ('a' | block | ink) && cells[1] == ('b' | block | ink), "styled ASCII cells");
+        check(cells[2] == (' ' | ink) && cells[3] == (' ' | ink), "tab cells are plain blanks");
+        check(cells[4] == (accent | ink), "styled accent cell");
+        check(cells[5] == (wide | ink) && cells[6] == ((wide + 1) | ink), "wide character in a style");
+        check(cells[7] == ('x' | block | ink), "ASCII after other characters");
+        check(cells[14] == 0, "past the end of the line");
+    }
+}
+
+// The two pattern matchers used by highlight queries, on the patterns those
+// queries actually contain.
+void match_test() {
+    auto lua = [](const char* text, const char* pat, bool want) {
+        if (lua_match(text, pat) != want) {
+            std::fprintf(stderr, "lua_match(\"%s\", \"%s\") should be %d\n", text, pat, want);
+            fail("lua pattern", 0, 0);
+        }
+    };
+    auto re = [](const char* text, const char* pat, bool want) {
+        if (regex_match(text, pat) != want) {
+            std::fprintf(stderr, "regex_match(\"%s\", \"%s\") should be %d\n", text, pat, want);
+            fail("regex", 0, 0);
+        }
+    };
+    lua("FOO_BAR", "^[A-Z][A-Z_0-9]*$", true);
+    lua("Foo", "^[A-Z][A-Z_0-9]*$", false);
+    lua("Foo", "^%u", true);
+    lua("foo", "^%u", false);
+    lua("m_value", "^m_.*$", true);
+    lua("value", "^m_.*$", false);
+    lua("__init__", "^__[a-zA-Z0-9_]*__$", true);
+    lua("_FOO1", "^_*[A-Z][A-Z%d_]*$", true);
+    lua("_foo", "^_*[A-Z][A-Z%d_]*$", false);
+    lua("/** doc */", "^/[*][*][^*].*[*]/$", true);
+    lua("/* doc */", "^/[*][*][^*].*[*]/$", false);
+    lua("3.14", "^[-]?%d*%.%d*$", true);
+    lua("3", "^[-]?%d*%.%d*$", false);
+    lua("-- @param", "^[-][-](%s?)@", true);
+    lua("; format-ignore", "^;+%s*format%-ignore%s*$", true);
+    lua("xfooy", "foo", true);
+    lua("aaa", "^a-$", true);
+    lua("", "^$", true);
+    lua("x", "%f[%w]", false);  // frontier patterns are not supported: never match
+    re("continue", "\\c^(continue|break)$", true);
+    re("BREAK", "\\c^(continue|break)$", true);
+    re("breaks", "\\c^(continue|break)$", false);
+    re("Foo-NOTFOUND", "\\c^(1|on|yes|true|y|0|off|no|false|n|ignore|notfound|.*-notfound)$", true);
+    re("maybe", "\\c^(1|on|yes|true|y|0|off|no|false|n|ignore|notfound|.*-notfound)$", false);
+    re("-12.5", "^[-+]?[0-9]+(.[0-9]+)?$", true);
+    re("1a", "^[-+]?[0-9]+(.[0-9]+)?$", false);
+    re("FOO_BAR9", "^[A-Z][A-Z\\d_]+$", true);
+    re("acbcbd", "^a(b|c)*d$", true);
+    re("acbxd", "^a(b|c)*d$", false);
+    re("a.b", "a\\.b", true);
+    re("axb", "a\\.b", false);
+    re("x", "(", false);  // malformed patterns match nothing
+    re("x", "[abc", false);
+}
+
+// Highlights::edit against a plain per-byte model: a style for every byte,
+// with bytes inserted and removed directly.
+void highlights_test() {
+    for (u64 seed = 1; seed <= 300; ++seed) {
+        rng.seed(seed * 31);
+        const u64 base = rnd(500);
+        std::vector<u8> model(200 + rnd(3000));
+        u8 cur = 0;
+        for (u8& b : model) {
+            if (rnd(9) == 0) cur = static_cast<u8>(rnd(6));
+            b = cur;
+        }
+        Highlights h;
+        h.base = base;
+        h.end = base + model.size();
+        for (size_t i = 0; i < model.size(); ++i)
+            if (i == 0 || model[i] != model[i - 1]) {
+                h.off.push_back(static_cast<u32>(i));
+                h.style.push_back(model[i]);
+            }
+        h.seal();
+        u64 lo = base;  // where the model's first byte sits in the document
+        bool alive = true;
+        for (int step = 0; step < 60 && alive; ++step) {
+            // Edits cluster, as typing does, with the odd jump elsewhere.
+            const u64 doc_end = lo + model.size();
+            const u64 start = rnd(8) == 0 ? rnd(doc_end + 20) : std::min(doc_end, lo + rnd(model.size() + 1));
+            const u64 old_len = rnd(3) == 0 ? rnd(12) : 0, new_len = rnd(3) == 0 ? 0 : rnd(6) + 1;
+            h.edit(start, old_len, new_len);
+            if (start >= doc_end) continue;  // after the range: nothing moves
+            if (start + old_len <= lo) {
+                lo = lo + new_len - old_len;
+            } else if (start < lo || start + old_len > doc_end) {
+                if (!h.empty()) fail("edit across the edge should drop the highlights", seed, step);
+                alive = false;
+                continue;
+            } else {
+                const size_t at = static_cast<size_t>(start - lo);
+                const u8 fill = at > 0 ? model[at - 1] : 0;
+                model.erase(model.begin() + static_cast<ptrdiff_t>(at), model.begin() + static_cast<ptrdiff_t>(at + old_len));
+                model.insert(model.begin() + static_cast<ptrdiff_t>(at), new_len, fill);
+            }
+            if (h.empty()) fail("highlights dropped unexpectedly", seed, step);
+            if (h.base != lo || h.end != lo + model.size()) fail("highlight range after edit", seed, step);
+            // Read every byte's style back through the cursor, as the renderer does.
+            u32 lut[8];
+            for (u32 i = 0; i < 8; ++i) lut[i] = i;
+            StyleCursor sc(&h, lut);
+            for (size_t i = 0; i < model.size(); ++i) {
+                sc.advance(lo + i);
+                if (sc.bits != model[i]) {
+                    std::fprintf(stderr, "byte %zu: cursor %u, model %u\n", i, sc.bits, model[i]);
+                    fail("highlight style after edit", seed, step);
+                }
+            }
+            sc.advance(lo + model.size() + 5);
+            if (sc.bits != 0) fail("style past the range", seed, step);
+        }
+    }
+}
+
+// End to end, when a C++ grammar is installed: colours kept up to date
+// across edits must equal colours computed from scratch for the same text,
+// and the sliced query must give the same answer as the whole one.
+void syntax_test() {
+    SyntaxOptions opt;
+    if (!Syntax::installed("cpp", opt)) {
+        std::printf("(no C++ grammar installed: syntax test skipped)\n");
+        return;
+    }
+    static const char* const snippets[] = {
+        "int x = 42;\n", "/* note", " */", "// line\n", "\"str\\n\"", "struct S { int a; };\n", "if (a->b != c) {\n",
+        "}\n", "auto f = [](int v) -> bool { return v > 0; };\n", "#define MAX_N 10\n", " ", "x", "template <class T>\n",
+    };
+    auto fresh = [&](const std::string& text, SyntaxOptions::Compile mode, Highlights* out) {
+        Buffer b;
+        b.insert(0, text);
+        SyntaxOptions o = opt;
+        o.compile = mode;
+        o.margin_lines = 100000;  // the whole file
+        Syntax s;
+        if (!s.attach(b, "cpp", o)) fail("attach", 0, 0);
+        s.want(b, 0, 10);
+        s.wait_idle();
+        s.poll();
+        *out = s.highlights();
+        s.detach();
+    };
+    for (u64 seed = 1; seed <= 6; ++seed) {
+        rng.seed(seed * 101);
+        Editor e;
+        std::string m = "#include <vector>\nnamespace n {\nint main(int argc, char** argv) {\n    return argc;\n}\n}\n";
+        e.buf.insert(0, m);
+        SyntaxOptions o = opt;
+        o.margin_lines = 100000;
+        Syntax syn;
+        if (!syn.attach(e.buf, "cpp", o)) fail("attach", seed, 0);
+        e.listen(&syn);
+        for (int step = 0; step < 40; ++step) {
+            const u64 at = rnd(m.size() + 1);
+            if (rnd(3) == 0 && !m.empty()) {
+                const u64 from = rnd(m.size()), len = std::min<u64>(rnd(20) + 1, m.size() - from);
+                e.move_to(from, false);
+                e.move_to(from + len, true);
+                e.backspace();
+                m.erase(from, len);
+            } else {
+                const std::string s = snippets[rnd(std::size(snippets))];
+                e.move_to(at, false);
+                e.insert(s);
+                m.insert(at, s);
+            }
+            if (rnd(4) == 0 && e.undo()) m = e.buf.text(0, e.buf.size());
+            if (e.buf.text(0, e.buf.size()) != m) fail("syntax test text", seed, step);
+            syn.want(e.buf, 0, 10);
+            if (rnd(3) != 0) continue;  // let several edits pile up before looking
+            syn.wait_idle();
+            syn.poll();
+            Highlights live = syn.highlights(), whole, parts;
+            fresh(m, SyntaxOptions::kWholeOnly, &whole);
+            fresh(m, SyntaxOptions::kPartsOnly, &parts);
+            if (!whole.same_as(parts)) fail("sliced query differs from whole query", seed, step);
+            if (!live.same_as(whole)) fail("incremental highlights differ from fresh ones", seed, step);
+        }
+        e.unlisten(&syn);
+        syn.detach();
+    }
+}
+
+// The JSON reader and writer.
+void json_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    json::Doc d;
+    check(d.parse(R"( {"a": 1, "b": [true, false, null, -2.5e2, "x\ty"],
+                       "s": "caf\u00e9 \ud83d\ude00 \"q\" \\ \/", "o": {"k": {"deep": [1, [2, [3]]]}}, "e": [], "eo": {} } )"),
+          "json parses");
+    const json::Value v = d.root();
+    check(v.is_object() && v.size() == 6 && v["a"].integer() == 1 && v["a"].number() == 1.0, "json numbers");
+    check(v["b"].size() == 5 && v["b"].at(0).boolean() && !v["b"].at(1).boolean(true) && v["b"].at(2).exists() && !v["b"].at(2),
+          "json booleans and null");
+    check(v["b"].at(3).number() == -250.0 && v["b"].at(4).str() == "x\ty" && !v["b"].at(5).exists(), "json array access");
+    check(v["s"].str() == "caf\xC3\xA9 \xF0\x9F\x98\x80 \"q\" \\ /", "json string escapes and surrogate pairs");
+    check(v["o"]["k"]["deep"].at(1).at(1).at(0).integer() == 3, "json nesting");
+    check(!v["nope"].exists() && v["nope"]["deeper"].str().empty() && v["a"]["x"].integer(7) == 7 && v["nope"].size() == 0,
+          "json: asking for what is not there is harmless");
+    check(v["e"].is_array() && v["e"].size() == 0 && v["eo"].is_object() && v["eo"].size() == 0, "json empty containers");
+    std::string keys;
+    for (json::Value m : v) keys += std::string(m.key()) + ",";
+    check(keys == "a,b,s,o,e,eo,", "json members in order");
+    int sum = 0;
+    for (json::Value e : v["o"]["k"]["deep"]) sum += static_cast<int>(e.integer());
+    check(sum == 1, "json array iteration");
+
+    for (const char* bad : {"", "{", "[1,]", "{\"a\":}", "{\"a\" 1}", "\"open", "tru", "[1] x", "{\"a\":1,}", "nan", "[\"\\u12\"]"})
+        check(!json::Doc().parse(bad), "json rejects malformed text");
+    std::string deep(500, '[');
+    deep += std::string(500, ']');
+    check(!json::Doc().parse(deep), "json refuses absurd nesting");
+
+    json::Writer w;
+    w.begin_object().member("n", 42).member("neg", static_cast<i64>(-7)).member("t", true).key("list").begin_array();
+    w.value("a\"b\\c\n\x01").value(1.5).null().begin_object().end_object().end_array();
+    w.member("u", "\xC3\xA9\xFFx").end_object();
+    check(w.out == "{\"n\":42,\"neg\":-7,\"t\":true,\"list\":[\"a\\\"b\\\\c\\n\\u0001\",1.5,null,{}],\"u\":\"\xC3\xA9\xEF\xBF\xBDx\"}",
+          "json writer");
+    json::Doc back;
+    check(back.parse(w.out) && back.root()["list"].at(0).str() == "a\"b\\c\n\x01" && back.root()["u"].str() == "\xC3\xA9\xEF\xBF\xBDx",
+          "json round trip");
+    std::string dumped;
+    json::dump(dumped, back.root());
+    check(dumped == w.out, "json dump reproduces the text");
+
+    std::vector<InfoLine> lines;
+    Lsp::markdown_lines("### Title\n\nSome **bold** and `code` and a [link](http://x) \\_ok\\_ &lt;T&gt;\n\n\n```cpp\nint  x;\n\ty();\n```\n---\nlast\n\n",
+                        true, &lines);
+    check(lines.size() == 8, "markdown line count");
+    check(lines[0].text == "Title" && lines[0].kind == InfoLine::kHeading && lines[1].text.empty(), "markdown heading");
+    check(lines[2].text == "Some bold and code and a link _ok_ <T>", "markdown inline marks");
+    check(lines[3].text.empty() && lines[4].text == "int  x;" && lines[4].kind == InfoLine::kCode && lines[5].text == "    y();",
+          "markdown code block");
+    check(lines[6].kind == InfoLine::kRule && lines[7].text == "last", "markdown rule and no trailing blank");
+    lines.clear();
+    Lsp::markdown_lines("### function `add`\n\n---\n\nAdds.\n\n---\n```cpp\nint add()\n```", true, &lines);
+    check(lines.size() == 5 && lines[1].kind == InfoLine::kRule && lines[2].text == "Adds." && lines[3].kind == InfoLine::kRule &&
+              lines[4].text == "int add()",
+          "markdown: no blank lines around rules");
+
+    // Matching what was typed against completions.
+    std::vector<u32> at;
+    check(lsp_match("", "anything") == 0 && lsp_match("xyz", "getValue") < 0 && lsp_match("toolong", "to") < 0, "match: empty and none");
+    check(lsp_match("get", "getValue") > lsp_match("get", "get_width_of_everything"), "match: shorter completions first");
+    check(lsp_match("get", "getValue") > lsp_match("GET", "getValue") && lsp_match("GET", "getValue") > 0, "match: case counts, a little");
+    check(lsp_match("gv", "getValue", &at) > 0 && at.size() == 2 && at[0] == 0 && at[1] == 3, "match: letters found, positions reported");
+    check(lsp_match("gw", "get_width") > lsp_match("gw", "aligned_window"), "match: word starts beat the middle of words");
+    check(lsp_match("val", "getValue") > 0 && lsp_match("get", "getValue") > lsp_match("val", "getValue"), "match: a prefix beats the middle");
+
+    // Servers from the settings come first and inherit from built-in
+    // servers of the same name.
+    Config lc = settings({{"lsp.max_file_mb", "2"},
+                          {"lsp.completion", "false"},
+                          {"lsp.hover_ms", "100"},
+                          {"lsp.servers.clangd.command", "[\"clangd\", \"--background-index\"]"},
+                          {"lsp.servers.clangd.init_options", "'{\"fallbackFlags\": [\"-std=c++23\"]}'"},
+                          {"lsp.servers.mine.command", "[\"my-server\", \"--stdio\"]"},
+                          {"lsp.servers.mine.languages", "[\"toml\"]"},
+                          {"lsp.servers.mine.roots", "[\".git\"]"},
+                          {"lsp.servers.gopls.enabled", "false"}});
+    check(lc.warnings.empty() && lc.lsp && lc.lsp_max_mb == 2 && !lc.lsp_completion && lc.lsp_inline && lc.lsp_hover_ms == 100,
+          "lsp settings");
+    check(lc.lsp_servers.size() == 3 && lc.lsp_servers[0].name == "clangd" && lc.lsp_servers[0].command.size() == 2 &&
+              lc.lsp_servers[0].init_options == "{\"fallbackFlags\": [\"-std=c++23\"]}",
+          "lsp server from settings");
+    const std::vector<LspServer> servers = lsp_server_list(lc.lsp_servers);
+    check(servers[0].name == "clangd" && servers[0].command[1] == "--background-index" && servers[0].languages.size() == 3 &&
+              !servers[0].roots.empty(),
+          "a server named like a built-in one inherits what it does not set");
+    check(servers[1].name == "mine" && servers[1].languages[0] == "toml" && servers[2].name == "gopls" && !servers[2].enabled,
+          "own servers and switched-off ones");
+    size_t clangds = 0;
+    for (const LspServer& s : servers) clangds += s.name == "clangd";
+    check(clangds == 1 && servers.size() == builtin_lsp_servers().size() + 1, "built-in servers are not listed twice");
+    check(Lsp::pick(servers, "go", nullptr) == nullptr, "a switched-off server is never picked");
+    check(!settings({{"lsp.enabled", "false"}}).lsp && !settings({{"lsp.servers.x.command", "\"x\""}}).warnings.empty(),
+          "lsp off, and a bad server entry warns");
+    const Config themed = settings({{"themes.rose-pine.error", "\"#ff0000\""}});
+    const ThemeColors& rp = themed.themes.find("rose-pine")->second;
+    check(rp.error.r == 1.0f && rp.error.g == 0 && rp.warning.r == 0xf6 / 255.0f && rp.popup.r == 0x1f / 255.0f, "theme colours for diagnostics and popups");
+}
+
+// The side panel's file tree: reading folders, and new, rename and trash.
+void tree_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    const char* tmp = std::getenv("TMPDIR");
+    std::string base = std::string(tmp && *tmp ? tmp : "/tmp");
+    while (base.size() > 1 && base.back() == '/') base.pop_back();
+    const std::string top = base + "/blit_tree_test", bin = base + "/blit_tree_test_trash";
+    auto sh = [](const std::string& cmd) { return std::system(cmd.c_str()); };
+    sh("rm -rf '" + top + "' '" + bin + "'");
+    sh("mkdir -p '" + top + "/src/deep' '" + top + "/docs' '" + top + "/.git' '" + bin + "'");
+    for (const char* f : {"/zeta.txt", "/Alpha.md", "/beta.cpp", "/.hidden", "/.DS_Store", "/src/main.cpp", "/src/deep/x.h", "/.git/HEAD"})
+        sh("touch '" + top + f + "'");
+    setenv("BLIT_TRASH_DIR", bin.c_str(), 1);
+
+    FileTree tree;
+    // Folders are read on another thread; this waits for the tree to settle.
+    auto settle = [&] {
+        for (int quiet = 0, i = 0; quiet < 25 && i < 2000; ++i) {
+            quiet = tree.poll() ? 0 : quiet + 1;
+            std::this_thread::sleep_for(std::chrono::milliseconds(2));
+        }
+    };
+    auto names = [&] {
+        std::string out;
+        for (const FileTree::Row& r : tree.rows()) out += std::string(r.depth * 2, ' ') + r.node->name + (r.node->dir ? "/" : "") + "\n";
+        return out;
+    };
+    tree.set_root(top + "/");
+    check(tree.root() == top && tree.rows().empty(), "the tree starts empty and reads in the background");
+    settle();
+    // Folders first, then names without regard to case; .git and .DS_Store left out.
+    check(names() == "docs/\nsrc/\n.hidden\nAlpha.md\nbeta.cpp\nzeta.txt\n", "top folder listing");
+    FileTree::Node* src = tree.find(top + "/src");
+    check(src && src->dir && !src->open && tree.path_of(src) == top + "/src" && !tree.find(top + "/nope"), "finding nodes by path");
+    tree.toggle(src);
+    settle();
+    check(names() == "docs/\nsrc/\n  deep/\n  main.cpp\n.hidden\nAlpha.md\nbeta.cpp\nzeta.txt\n", "an opened folder shows its contents");
+    tree.toggle(tree.find(top + "/src/deep"));
+    settle();
+    check(names().find("    x.h\n") != std::string::npos, "nested folders");
+
+    // New things, with the checks that keep a typo from doing damage.
+    std::string err;
+    check(tree.create(tree.find(top + "/src"), "new.py", false, &err) && tree.create(tree.find(top + "/src"), "pkg", true, &err), "new file and folder");
+    check(!tree.create(tree.find(top + "/src"), "new.py", false, &err) && err.find("already") != std::string::npos, "nothing is overwritten");
+    check(!tree.create(tree.find(top + "/src"), "a/b", false, &err) && !tree.create(tree.find(top + "/src"), "..", true, &err) &&
+              !tree.create(tree.find(top + "/src"), "", false, &err),
+          "names that are not one plain name are refused");
+    settle();
+    check(names().find("  deep/\n    x.h\n  pkg/\n  main.cpp\n  new.py\n") != std::string::npos, "new things appear in order, open folders stay open");
+
+    check(tree.rename(tree.find(top + "/src/new.py"), "renamed.py", &err) && !tree.find(top + "/src/new.py"), "rename");
+    check(!tree.rename(tree.find(top + "/src/renamed.py"), "main.cpp", &err) && err.find("already") != std::string::npos, "rename onto another file is refused");
+    check(tree.rename(tree.find(top + "/Alpha.md"), "alpha.md", &err), "rename that only changes case");
+    settle();
+    check(tree.find(top + "/src/renamed.py") && tree.find(top + "/alpha.md") && tree.find(top + "/src/deep/x.h"), "the tree after renames");
+    FILE* moved = std::fopen((top + "/src/renamed.py").c_str(), "rb");
+    check(moved != nullptr, "the renamed file is on disk");
+    if (moved) std::fclose(moved);
+
+    // Trash: gone from the folder, there in the Trash, twice without a clash.
+    check(tree.trash(tree.find(top + "/zeta.txt"), &err), "trash a file");
+    sh("touch '" + top + "/zeta.txt'");
+    tree.refresh();
+    settle();
+    check(tree.find(top + "/zeta.txt") && tree.trash(tree.find(top + "/zeta.txt"), &err), "trash a second file of the same name");
+    check(tree.trash(tree.find(top + "/src/deep"), &err), "trash a folder with things in it");
+    settle();
+    check(!tree.find(top + "/zeta.txt") && !tree.find(top + "/src/deep"), "trashed things leave the tree");
+    FILE* t1 = std::fopen((bin + "/zeta.txt").c_str(), "rb");
+    FILE* t2 = std::fopen((bin + "/zeta 2.txt").c_str(), "rb");
+    FILE* t3 = std::fopen((bin + "/deep/x.h").c_str(), "rb");
+    check(t1 && t2 && t3, "and can be found in the Trash");
+    for (FILE* f : {t1, t2, t3})
+        if (f) std::fclose(f);
+    check(!tree.trash(tree.find(top), &err), "the working directory itself cannot be trashed");
+
+    // Changes made elsewhere show after a refresh.
+    sh("touch '" + top + "/docs/guide.md' && rm '" + top + "/beta.cpp'");
+    tree.toggle(tree.find(top + "/docs"));
+    tree.refresh();
+    settle();
+    check(tree.find(top + "/docs/guide.md") && !tree.find(top + "/beta.cpp"), "refresh picks up outside changes");
+
+    // Icons by kind.
+    check(file_icon("x", true, false).drawn == Font::kIconFolder && file_icon("x", true, true).drawn == Font::kIconFolderOpen, "folder icons");
+    check(file_icon("main.CPP", false, false).drawn == Font::kIconCode && file_icon("notes.txt", false, false).drawn == Font::kIconText &&
+              file_icon("a.json", false, false).drawn == Font::kIconData && file_icon("p.PNG", false, false).drawn == Font::kIconImage &&
+              file_icon("a.tar", false, false).drawn == Font::kIconArchive && file_icon("x.o", false, false).drawn == Font::kIconBinary &&
+              file_icon("Makefile", false, false).drawn == Font::kIconData && file_icon("whatever", false, false).drawn == Font::kIconFile,
+          "file icons by type");
+    check(file_icon("a.py", false, false).nerd != file_icon("a.rs", false, false).nerd, "languages have icons of their own");
+
+    unsetenv("BLIT_TRASH_DIR");
+    sh("rm -rf '" + top + "' '" + bin + "'");
+}
+
+#if defined(BLIT_FAKE_LSP)
+u32 lsp_wait(Lsp& lsp, u32 want, int ms = 8000) {
+    u32 got = 0;
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    for (;;) {
+        got |= lsp.poll();
+        if ((got & want) || std::chrono::steady_clock::now() >= until) return got;
+        lsp.wait(20);
+    }
+}
+
+std::string text_hash(const std::string& text) {
+    unsigned long long h = 1469598103934665603ull;
+    for (const char c : text) h = (h ^ static_cast<unsigned char>(c)) * 1099511628211ull;
+    char hex[32];
+    std::snprintf(hex, sizeof hex, "text:%016llx", h);
+    return hex;
+}
+
+// Waits until the server's diagnostics are for the text as it is now, and
+// checks them: the hash of the server's copy of the document, and that each
+// diagnostic sits exactly on the word it is about.
+void lsp_check_diagnostics(Lsp& lsp, Editor& ed, const char* what) {
+    const std::string text = ed.buf.text(0, ed.buf.size());
+    const std::string want = text_hash(text);
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    for (;;) {
+        lsp.poll();
+        bool hash_ok = false;
+        for (const Diagnostic& d : lsp.diagnostics()) hash_ok |= d.message == want;
+        if (hash_ok) break;
+        if (std::chrono::steady_clock::now() >= until) fail(what, 0, 1);
+        lsp.wait(20);
+    }
+    size_t found = 0, expected = 0;
+    for (const char* word : {"ERROR", "WARN", "INFO", "HINT"})
+        for (size_t at = text.find(word); at != std::string::npos; at = text.find(word, at + std::strlen(word))) ++expected;
+    for (const Diagnostic& d : lsp.diagnostics()) {
+        if (d.message.starts_with("text:")) continue;
+        ++found;
+        const std::string under = text.substr(d.start, d.end - d.start);
+        if (d.message != "found " + under + "\nsecond line") fail(what, 0, 2);
+        const int sev = under == "ERROR" ? 1 : under == "WARN" ? 2 : under == "INFO" ? 3 : 4;
+        if (d.severity != sev || d.source != "fake" || d.code != "F" + std::to_string(sev)) fail(what, 0, 3);
+    }
+    if (found != expected) fail(what, 0, 4);
+}
+
+void lsp_case(bool utf8, bool full, u64 seed) {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    rng.seed(seed);
+    const char* tmp = std::getenv("TMPDIR");
+    const std::string path = std::string(tmp && *tmp ? tmp : "/tmp") + "/blit_lsp_test_" + std::to_string(seed) + ".cpp";
+    const std::string initial = "int alpha = 1; // \xC3\xA9\xE6\x97\xA5 ERROR here\nWARN: \xF0\x9F\x98\x80 HINT\ncall(1, 2);\nconfig alpha\n";
+    if (FILE* f = std::fopen(path.c_str(), "wb")) {
+        std::fwrite(initial.data(), 1, initial.size(), f);
+        std::fclose(f);
+    }
+    Editor ed;
+    std::string err;
+    check(ed.open(path.c_str(), &err), "lsp test file opens");
+
+    LspServer fake;
+    fake.name = "fake";
+    fake.command = {BLIT_FAKE_LSP};
+    if (utf8) fake.command.push_back("--utf8");
+    if (full) fake.command.push_back("--full");
+    fake.languages = {"cpp"};
+    fake.settings = R"({"fake":{"level":7}})";
+    Lsp lsp;
+    check(!lsp.attach(ed.buf, path, "python", {fake}) && !lsp.attached(), "no server for another language");
+    check(lsp.attach(ed.buf, path, "cpp", {fake}) && lsp.attached() && !lsp.ready(), "server starts without waiting");
+    ed.listen(&lsp);
+    check(lsp_wait(lsp, Lsp::kState) & Lsp::kState, "server becomes ready");
+    check(lsp.ready() && lsp.can_complete() && lsp.can_hover() && lsp.can_signature() && lsp.can_define(), "server capabilities");
+    check(lsp.completion_trigger('.') && !lsp.completion_trigger('x') && lsp.signature_trigger('('), "trigger characters");
+    lsp_check_diagnostics(lsp, ed, "diagnostics on open");
+
+    // Random edits: the server's copy of the text must follow exactly, in
+    // either column encoding and either way of sending changes.
+    static const char* const bits[] = {"a", " ", "\n", "ERROR", "WARN ", "x\xC3\xA9", "\xE6\x97\xA5", "\xF0\x9F\x98\x80", "(", ", ", "\t", "HINT\n"};
+    auto boundary = [&](u64 off) {
+        char b;
+        while (off > 0 && off < ed.buf.size() && ed.buf.read(off, &b, 1) == 1 && is_cont(static_cast<u8>(b))) --off;
+        return off;
+    };
+    for (int step = 0; step < 150; ++step) {
+        const u64 at = boundary(rnd(ed.buf.size() + 1));
+        switch (rnd(6)) {
+            case 0:
+            case 1:
+                ed.move_to(at, false);
+                ed.insert(bits[rnd(std::size(bits))]);
+                break;
+            case 2: ed.replace(at, boundary(std::min<u64>(ed.buf.size(), at + rnd(12))), ""); break;
+            case 3: ed.replace(at, boundary(std::min<u64>(ed.buf.size(), at + rnd(6))), bits[rnd(std::size(bits))]); break;
+            case 4: ed.undo(); break;
+            case 5:
+                ed.move_to(at, false);
+                ed.backspace();
+                break;
+        }
+        if (step % 50 == 49) lsp_check_diagnostics(lsp, ed, "diagnostics follow edits");
+    }
+    lsp_check_diagnostics(lsp, ed, "diagnostics after the last edit");
+
+    // A paste too big to be worth copying goes over as the whole document.
+    ed.move_to(boundary(ed.buf.size() / 2), false);
+    ed.insert(std::string(300000, 'p') + " ERROR\n");
+    lsp_check_diagnostics(lsp, ed, "diagnostics after a large paste");
+    ed.undo();
+    lsp_check_diagnostics(lsp, ed, "diagnostics after undoing it");
+
+    // Diagnostics move with the text until the server catches up.
+    ed.replace(0, ed.buf.size(), "one\ntwo ERROR three\n");
+    lsp_check_diagnostics(lsp, ed, "diagnostics after replacing everything");
+    ed.move_to(0, false);
+    ed.insert("12345");
+    bool moved = false;
+    for (const Diagnostic& d : lsp.diagnostics()) moved |= d.start == 13 && d.end == 18;
+    check(moved, "a diagnostic shifts with an edit before it");
+    lsp_check_diagnostics(lsp, ed, "diagnostics after the shift");
+
+    // Completion.
+    ed.replace(0, ed.buf.size(), "alpha gamma_ray \xC3\xA9 call(1, 2);\nconfig\n  al");
+    const u64 at = ed.buf.size();
+    lsp.complete(at, 0);
+    check(lsp_wait(lsp, Lsp::kCompletion) & Lsp::kCompletion, "completion arrives");
+    const std::vector<CompletionItem>& items = lsp.completions();
+    check(items.size() == 13 && items[0].label == "alpha" && items[1].label == "alphabet" && items[12].label == "r\xC3\xA9sum\xC3\xA9",
+          "completion items in the server's order");
+    check(items[0].replace_from == at - 2 && items[0].insert == "alpha" && items[0].detail == "int" && items[0].kind == 6 &&
+              items[0].doc == "About alpha.",
+          "completion item fields");
+    const CompletionItem* vec = nullptr;
+    const CompletionItem* loop = nullptr;
+    for (const CompletionItem& it : items) {
+        if (it.label == "vector") vec = &it;
+        if (it.label == "for_loop") loop = &it;
+    }
+    check(vec && vec->extra.size() == 1 && vec->extra[0].start == 0 && vec->extra[0].end == 0 && vec->extra[0].text == "#include <vector>\n",
+          "completion with an edit elsewhere");
+    check(loop && loop->insert == "for (i = 0; i < n; ++i) {}" && loop->replace_from == ~0ull, "snippet marks are stripped");
+    // Typing on while the answer is under way keeps its positions good...
+    lsp.complete(at, '.');
+    ed.insert("p");
+    check(lsp_wait(lsp, Lsp::kCompletion) & Lsp::kCompletion, "second completion arrives");
+    vec = nullptr;
+    for (const CompletionItem& it : lsp.completions())
+        if (it.label == "vector") vec = &it;
+    check(lsp.completions()[0].replace_from == at - 2 && vec && vec->extra.size() == 1, "positions before later typing are still used");
+    ed.backspace();
+    // ...but a change earlier in the text does not.
+    lsp.complete(at, 0);
+    ed.move_to(0, false);
+    ed.insert("x");
+    check(lsp_wait(lsp, Lsp::kCompletion) & Lsp::kCompletion, "third completion arrives");
+    vec = nullptr;
+    for (const CompletionItem& it : lsp.completions())
+        if (it.label == "vector") vec = &it;
+    // (The import still goes in at the very start, which no change can move.)
+    check(lsp.completions()[0].replace_from == ~0ull && vec && vec->extra.size() == 1, "positions after an earlier change are not used");
+    ed.backspace();
+
+    // Hover.
+    lsp.hover(2);
+    check(lsp_wait(lsp, Lsp::kHover) & Lsp::kHover, "hover arrives");
+    const std::vector<InfoLine>& h = lsp.hover_lines();
+    check(h.size() == 3 && h[0].text == "int alpha" && h[0].kind == InfoLine::kCode && h[1].kind == InfoLine::kRule &&
+              h[2].text == "About alpha: see the docs.",
+          "hover text");
+    const std::string doc = ed.buf.text(0, ed.buf.size());
+    lsp.hover(doc.find("config") + 1);
+    check(lsp_wait(lsp, Lsp::kHover) & Lsp::kHover, "second hover arrives");
+    bool config = false;
+    for (const InfoLine& l : lsp.hover_lines()) config |= l.text == "config=7";
+    check(config, "the server got the setting it asked for");
+    lsp.hover(doc.rfind("  al"));  // in the indentation: no word there
+    check((lsp_wait(lsp, Lsp::kHover) & Lsp::kHover) && lsp.hover_lines().empty(), "hover over nothing is empty");
+
+    // Signature help: the argument after the accented character, so the
+    // column has to be converted correctly.
+    lsp.signature(doc.find("2);"));
+    check(lsp_wait(lsp, Lsp::kSignature) & Lsp::kSignature, "signature arrives");
+    const SignatureInfo& sig = lsp.signature_info();
+    check(sig.label == "void call(int first, const char* second, double third)" && sig.count == 1, "signature label");
+    check(sig.label.substr(sig.param_start, sig.param_end - sig.param_start) == "const char* second", "active parameter");
+    check(sig.doc.size() == 1 && sig.doc[0].text == "Calls it.", "signature documentation");
+    lsp.signature(doc.find("alpha"));
+    check((lsp_wait(lsp, Lsp::kSignature) & Lsp::kSignature) && lsp.signature_info().empty(), "no signature outside a call");
+
+    // Definition.
+    lsp.definition(doc.find("call") + 1);
+    check(lsp_wait(lsp, Lsp::kDefinition) & Lsp::kDefinition, "definition arrives");
+    const LspLocation& loc = lsp.definition_target();
+    check(loc.valid() && loc.path.ends_with(path.substr(path.rfind('/'))), "definition file");
+    check(lsp.offset_at(ed.buf, loc.line, loc.character) == doc.find("call"), "definition position");
+
+    ed.unlisten(&lsp);
+    lsp.detach();
+    check(!lsp.attached() && lsp.diagnostics().empty(), "detached");
+    std::remove(path.c_str());
+}
+
+// A change of tab: the document goes, the server stays, the next document
+// is opened on it.
+void lsp_tabs_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    const char* tmp = std::getenv("TMPDIR");
+    const std::string dir = std::string(tmp && *tmp ? tmp : "/tmp");
+    const std::string path_a = dir + "/blit_lsp_tab_a.cpp", path_b = dir + "/blit_lsp_tab_b.cpp";
+    auto write = [](const std::string& path, const std::string& text) {
+        if (FILE* f = std::fopen(path.c_str(), "wb")) {
+            std::fwrite(text.data(), 1, text.size(), f);
+            std::fclose(f);
+        }
+    };
+    write(path_a, "int first = 1; // ERROR in the first\n");
+    write(path_b, "WARN in the second\nand a HINT\n");
+    Editor a, b;
+    std::string err;
+    check(a.open(path_a.c_str(), &err) && b.open(path_b.c_str(), &err), "tab test files open");
+    LspServer fake;
+    fake.name = "fake";
+    fake.command = {BLIT_FAKE_LSP, "--utf8"};
+    fake.languages = {"cpp"};
+    Lsp lsp;
+    check(lsp.attach(a.buf, path_a, "cpp", {fake}), "server starts for the first document");
+    a.listen(&lsp);
+    check(lsp_wait(lsp, Lsp::kState) & Lsp::kState, "server becomes ready");
+    lsp_check_diagnostics(lsp, a, "diagnostics for the first document");
+
+    a.unlisten(&lsp);
+    lsp.release();
+    check(lsp.attached() && lsp.idle() && lsp.ready() && lsp.diagnostics().empty() && !lsp.can_complete(),
+          "let go of: the server runs on, with no document");
+    check(lsp.attach(b.buf, path_b, "cpp", {fake}) && lsp.ready() && !lsp.idle(), "the next document goes to the server that is running");
+    b.listen(&lsp);
+    lsp_check_diagnostics(lsp, b, "diagnostics for the second document");
+    b.move_to(0, false);
+    b.insert("ERROR ");
+    lsp_check_diagnostics(lsp, b, "the second document's edits reach the server");
+
+    // And back, this time without letting go first.
+    b.unlisten(&lsp);
+    check(lsp.attach(a.buf, path_a, "cpp", {fake}) && lsp.ready(), "back to the first document");
+    a.listen(&lsp);
+    a.move_to(a.buf.size(), false);
+    a.insert("WARN\n");
+    lsp_check_diagnostics(lsp, a, "the first document again, edited");
+
+    a.unlisten(&lsp);
+    lsp.release();
+    check(!lsp.attach(a.buf, path_a, "python", {fake}) && !lsp.attached(), "no server for the next file: the one running is let go");
+    std::remove(path_a.c_str());
+    std::remove(path_b.c_str());
+}
+
+// Modal editing. Each case is a text, keys in Vim's notation, and the text
+// they should leave; a "|" in either stands before the character the cursor
+// is on (it is no part of the text).
+// Finding files and text: the fuzzy matcher, .gitignore's patterns, the
+// list of files under a folder, lines found in files, and the worker that
+// puts them together.
+// What scripts stand on: key notation and mappings, every setting a script
+// can read (and set back), one setting at a time, and programs run in the
+// background.
+void script_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    auto keys = [](std::string_view n, std::string_view leader = "\\") {
+        std::vector<MapKey> k;
+        if (!parse_keys(n, leader, &k)) k.clear();
+        return k;
+    };
+    // Notation.
+    check(keys("gx").size() == 2 && keys("gx")[1].ch == 'x' && keys("gx")[1].mods == 0, "plain keys");
+    check(key_notation(keys("<leader>ff", " ")) == "<Space>ff" && key_notation(keys("<Leader>w")) == "<Bslash>w", "<leader>, the default and another");
+    check(keys("<C-s>") == keys("<c-S>") && keys("<C-s>")[0].mods == MapKey::kCtrl && keys("<C-s>")[0].ch == 's', "Ctrl: a capital is the same letter");
+    check(keys("<M-J>") == keys("<M-S-j>") && keys("<M-J>") != keys("<M-j>") && keys("<D-K>")[0].mods == (MapKey::kCmd | MapKey::kShift), "Alt or Cmd: a capital is Shift");
+    check(keys("<C-S-p>")[0].mods == (MapKey::kCtrl | MapKey::kShift) && keys("<C-S-p>") != keys("<C-p>"), "Shift with Ctrl is its own");
+    check(keys("<S-a>") == keys("A") && keys("<S-Tab>")[0].kind == MapKey::kTab && keys("<S-Tab>")[0].mods == MapKey::kShift, "Shift and a letter is the capital; with Tab it stays");
+    check(keys("<D-k>")[0].mods == MapKey::kCmd && keys("<M-j>") == keys("<A-j>") && keys("<F12>")[0].kind == MapKey::kFn && keys("<F12>")[0].ch == 12, "Cmd, Alt or Meta, function keys");
+    check(keys("<lt>a>").size() == 3 && keys("<lt>a>")[0].ch == '<' && keys("<Space>")[0].ch == ' ' && keys("<CR>")[0].kind == MapKey::kEnter, "<lt>, <Space>, <CR>");
+    check(keys("a\nb")[1].kind == MapKey::kEnter && keys("<").size() == 1 && keys("<>").size() == 2, "a line break, a < alone");
+    std::string err;
+    std::vector<MapKey> bad;
+    check(!parse_keys("<Nope>", "\\", &bad, &err) && err.find("<Nope>") != std::string::npos && !parse_keys("<C-F99>", "\\", &bad), "a name that is no key's");
+    for (const char* n : {"<C-x><C-o>", "<D-S-k>", "<M-Left>", "gc<Space>", "<F5>x", "\xC3\xA9t\xC3\xA9"}) check(keys(key_notation(keys(n))) == keys(n), "notation there and back");
+    // Mappings.
+    Keymaps km;
+    check(Keymaps::modes_of("") == (Keymaps::kNormal | Keymaps::kVisual | Keymaps::kPending) && Keymaps::modes_of("nx") == (Keymaps::kNormal | Keymaps::kVisual) &&
+              Keymaps::modes_of("q") == 0,
+          "modes by letter");
+    auto map = [&](const char* lhs, u8 modes, int fn) {
+        Keymaps::Map m;
+        m.lhs = keys(lhs);
+        m.modes = modes;
+        m.fn = fn;
+        return km.set(std::move(m));
+    };
+    map("gx", Keymaps::kNormal, 1);
+    map("gxy", Keymaps::kNormal, 2);
+    map("jk", Keymaps::kInsert, 3);
+    const Keymaps::Map* hit = nullptr;
+    check(km.match(Keymaps::kNormal, keys("g")) == Keymaps::kPrefix && km.match(Keymaps::kNormal, keys("gx"), &hit) == Keymaps::kBoth && hit && hit->fn == 1 &&
+              km.match(Keymaps::kNormal, keys("gxy")) == Keymaps::kExact && km.match(Keymaps::kNormal, keys("gz")) == Keymaps::kNone,
+          "prefix, both, exact, none");
+    check(km.match(Keymaps::kInsert, keys("gx")) == Keymaps::kNone && km.match(Keymaps::kInsert, keys("jk")) == Keymaps::kExact, "a mapping is of its modes only");
+    check(km.starts(Keymaps::kNormal, keys("g")[0]) && !km.starts(Keymaps::kNormal, keys("j")[0]) && km.starts(Keymaps::kInsert, keys("j")[0]) &&
+              !km.starts(Keymaps::kNormal, keys("<C-g>")[0]),
+          "the first keys of each mode");
+    check(map("gx", Keymaps::kNormal, 9) == std::vector<int>{1} && km.all().size() == 3, "the same keys again: the old function is let go");
+    check(km.remove(Keymaps::kNormal, keys("gxy")) == std::vector<int>{2} && km.match(Keymaps::kNormal, keys("gx")) == Keymaps::kExact, "remove");
+    map("Q", Keymaps::kNormal | Keymaps::kVisual, -1);
+    check(km.remove(Keymaps::kNormal, keys("Q")).empty() && km.match(Keymaps::kVisual, keys("Q")) == Keymaps::kExact && km.match(Keymaps::kNormal, keys("Q")) == Keymaps::kNone,
+          "remove from one mode of two");
+    map("<C-a>", Keymaps::kCommand, 4);
+    check(km.starts(Keymaps::kCommand, keys("<C-b>")[0]) && km.clear().size() == 3 && km.empty() && !km.starts(Keymaps::kNormal, keys("g")[0]), "other keys; clear");
+
+    // Every setting a script can read is one it can set, and setting what
+    // it reads changes nothing.
+    const Config base = make_config();
+    for (const char* k : config_keys()) {
+        const ConfigValue v = config_get(base, k);
+        check(v.kind != ConfigValue::kNone, "every key has a value");
+        std::string toml;
+        switch (v.kind) {
+            case ConfigValue::kBool: toml = v.flag ? "true" : "false"; break;
+            case ConfigValue::kNumber: {
+                char buf[64];
+                std::snprintf(buf, sizeof buf, "%.17g", v.number);
+                toml = buf;
+                break;
+            }
+            case ConfigValue::kText: toml = toml_quote(v.text); break;
+            default:
+                toml = "[";
+                for (const std::string& x : v.list) toml += (toml.size() > 1 ? ", " : "") + toml_quote(x);
+                toml += "]";
+                break;
+        }
+        Config c = base;
+        const std::string said = config_set(c, {k, toml, "test"});
+        if (!said.empty()) std::fprintf(stderr, "%s = %s: %s", k, toml.c_str(), said.c_str());
+        check(said.empty(), "a setting set to what it reads");
+    }
+    check(config_get(base, "font").kind == ConfigValue::kNone && config_get(base, "themes.blit-dark.background").kind == ConfigValue::kNone, "sections and colours are not one value");
+    // One setting at a time: checked, and what is wrong leaves the rest.
+    Config c = base;
+    check(config_set(c, {"editor.tab_width", "2", "init.lua:3"}).empty() && c.tab_width == 2, "one setting");
+    const std::string wrong = config_set(c, {"editor.tab_width", "\"two\"", "init.lua:4"});
+    check(wrong.starts_with("init.lua:4: editor.tab_width") && c.tab_width == 2 && c.warnings.empty(), "a wrong one says where, and changes nothing");
+    check(!config_set(c, {"theme", "\"nope\"", "x"}).empty() && config_set(c, {"theme", "\"rose-pine\"", "x"}).empty() && c.theme_dark == "rose-pine", "a theme that is not there");
+    check(config_set(c, {"themes.mine.background", "\"#102030\"", "x"}).empty() && config_set(c, {"theme.dark", "\"mine\"", "x"}).empty() &&
+              std::fabs(c.theme(true).background.g - 0x20 / 255.0f) < 1e-3f,
+          "a theme made one colour at a time");
+    check(config_set(c, {"keys.leader", "\" \"", "x"}).empty() && c.key_leader == " " && toml_quote("a\"b\\c\n") == "\"a\\\"b\\\\c\\n\"", "the leader; quoting");
+    // The same key twice: the last one counts.
+    const Config twice = make_config(std::vector<ConfigSetting>{{"editor.tab_width", "8", "init.lua:1"}, {"editor.tab_width", "3", "init.lua:2"}});
+    check(twice.tab_width == 3 && twice.warnings.empty(), "the last of a key counts");
+
+    // Programs in the background.
+    Jobs jobs;
+    std::atomic<int> told{0};
+    jobs.set_notify([&] { ++told; });
+    JobSpec a;
+    a.argv = {"sh", "-c", "read x; printf '%s' \"$x$GREETING\"; printf oops >&2; exit 7"};
+    a.input = "fed\n";
+    a.env = {"GREETING= hello"};
+    const u64 ida = jobs.start(a);
+    JobSpec b;
+    b.argv = {"sh", "-c", "pwd; printf one; sleep 0.05; printf two"};
+    b.cwd = "/";
+    b.stream_out = true;
+    const u64 idb = jobs.start(b);
+    JobSpec c2;
+    c2.argv = {"sleep", "10"};
+    const u64 idc = jobs.start(c2);
+    check(jobs.stop(idc), "stop a running job");
+    JobSpec d;
+    d.argv = {"blit-no-such-program"};
+    const u64 idd = jobs.start(d);
+    std::string out_b;
+    int code_a = -9, code_b = -9, code_c = -9, code_d = -9;
+    std::string out_a, err_a, err_d;
+    int runs = 0;  // takes that had something: each was told of (once for a run of events, not once each)
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+    while ((code_a == -9 || code_b == -9 || code_c == -9 || code_d == -9) && std::chrono::steady_clock::now() < until) {
+        std::vector<JobEvent> got = jobs.take();
+        runs += !got.empty();
+        for (JobEvent& e : got) {
+            if (e.id == idb && e.kind == JobEvent::kOut) out_b += e.out;
+            if (e.kind != JobEvent::kExit) continue;
+            if (e.id == ida) code_a = e.code, out_a = e.out, err_a = e.err;
+            if (e.id == idb) code_b = e.code;
+            if (e.id == idc) code_c = e.code;
+            if (e.id == idd) code_d = e.code, err_d = e.err;
+        }
+        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+    check(code_a == 7 && out_a == "fed hello" && err_a == "oops", "input, environment, output, errors, exit status");
+    check(code_b == 0 && out_b == "/\nonetwo", "a folder to run in; output as it comes");
+    {
+        // What this process has open (here a pipe that would be passed on)
+        // stays out of a program: another thread's pipes might be among it.
+        int made[2], stray[2];
+        check(pipe(made) == 0, "a pipe");
+        for (int k = 0; k < 2; ++k) {  // (numbered high: "ls" itself has 3 open, to read the folder)
+            stray[k] = fcntl(made[k], F_DUPFD, 200 + k);
+            close(made[k]);
+        }
+        JobSpec e;
+        e.argv = {"sh", "-c", "ls /dev/fd"};
+        const u64 ide = jobs.start(e);
+        std::string listed;
+        bool ended = false;
+        const auto deadline = std::chrono::steady_clock::now() + std::chrono::seconds(10);
+        while (!ended && std::chrono::steady_clock::now() < deadline) {
+            for (JobEvent& ev : jobs.take())
+                if (ev.id == ide && ev.kind == JobEvent::kExit) ended = true, listed = ev.out;
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        bool leaked = false;
+        for (size_t at = 0; at < listed.size();) {
+            const size_t nl = listed.find('\n', at);
+            const std::string fd = listed.substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+            leaked = leaked || fd == std::to_string(stray[0]) || fd == std::to_string(stray[1]);
+            at = nl == std::string::npos ? listed.size() : nl + 1;
+        }
+        check(ended && !listed.empty() && !leaked, "a program gets none of what this process has open");
+        close(stray[0]);
+        close(stray[1]);
+    }
+    check(code_c == 128 + 15 && code_d != 0 && code_d != -9 && runs >= 1 && told.load() >= runs && jobs.running() == 0,
+          "stopped; not there to run; told whenever there is something to take");
+}
+
+// Another machine's files, through blit's agent, over a stand-in for ssh
+// (tests/fake-ssh.sh) that runs it here, in a home folder of its own.
+void remote_test() {
+#if defined(BLIT_FAKE_SSH)
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    check(is_remote("ssh://box/home/a") && !is_remote("/home/a") && remote_path("box", "/x/y") == "ssh://box/x/y", "remote paths");
+    std::string host, there;
+    check(split_remote("ssh://box/home/a", &host, &there) && host == "box" && there == "/home/a" && split_remote("ssh://box", &host, &there) && there == "/",
+          "a remote path in its parts");
+    const char* tmp = std::getenv("TMPDIR");
+    char base[] = "/tmp/blit-remote-XXXXXX";
+    std::string top = tmp && *tmp ? std::string(tmp) + "/blit-remote-XXXXXX" : base;
+    if (!mkdtemp(top.data())) return fail("remote: a scratch folder", 0, 0);
+    char real[PATH_MAX];
+    if (realpath(top.c_str(), real)) top = real;
+    const std::string home = top + "/home", work = top + "/work";
+    mkdir(home.c_str(), 0755);
+    mkdir(work.c_str(), 0755);
+    setenv("BLIT_SSH", BLIT_FAKE_SSH, 1);
+    setenv("BLIT_FAKE_HOME", home.c_str(), 1);
+    std::shared_ptr<Remote> r = Remote::get("box");
+    check(r->wait_ready(60'000), ("remote: connected (" + r->error() + ")").c_str());
+    check(r->home() == home && r->system().starts_with("Darwin"), "remote: the agent says where home is, and what the machine is");
+    DIR* cache = opendir((home + "/.cache/blit").c_str());
+    int agents = 0;
+    if (cache) {
+        while (const dirent* e = readdir(cache)) agents += std::string_view(e->d_name).starts_with("blit-agent-");
+        closedir(cache);
+    }
+    check(agents == 1, "remote: the agent was copied there");
+    // Files.
+    std::string err;
+    check(r->write(work + "/a.txt", "one\ntwo\n", &err), "remote: write");
+    std::string got;
+    i64 when = 0;
+    check(r->read(work + "/a.txt", 1 << 20, &got, &when) == 0 && got == "one\ntwo\n" && when > 0, "remote: read");
+    check(r->read(work + "/none.txt", 1 << 20, &got) == 1 && r->read(work, 1 << 20, &got) == 2 && r->read(work + "/a.txt", 3, &got) == 3,
+          "remote: reading what is not there, a folder, too much");
+    RemoteStat st;
+    check(r->stat(work + "/a.txt", &st) && st.kind == 1 && st.size == 8 && r->stat(work, &st) && st.kind == 2 && r->stat(work + "/x", &st) && st.kind == 0,
+          "remote: stat");
+    check(r->make_dir(work + "/src/deep", true, &err) && r->create(work + "/src/b.cpp", &err) && !r->create(work + "/src/b.cpp", &err) &&
+              r->rename(work + "/src/b.cpp", work + "/src/c.cpp", &err),
+          "remote: folders, a new file, rename");
+    std::vector<RemoteEntry> items;
+    check(r->list(work, &items) && items.size() == 2, "remote: list");
+    r->write(work + "/src/c.cpp", "int needle = 1;\nint other;\n", &err);
+    r->write(work + "/src/deep/d.txt", "a needle here\n", &err);
+    FinderOptions o;
+    FileIndex ix;
+    u32 walk = 0;
+    check(r->walk(work, o, &ix, &walk) && ix.size() == 3 && ix.root == "ssh://box" + work && ix.path(1) == "src/c.cpp", "remote: the finder's walk");
+    std::vector<FindHit> hits;
+    std::vector<u32> files;
+    bool capped = true;
+    check(r->grep(walk, nullptr, "needle", 8 << 20, 100, &hits, &files, &capped) && hits.size() == 2 && files.size() == 2 && !capped && hits[0].line == 0 &&
+              hits[1].text == "a needle here",
+          "remote: the finder's search");
+    const std::vector<u32> only = {2};
+    check(r->grep(walk, &only, "needle", 8 << 20, 100, &hits, &files, &capped) && hits.size() == 1 && hits[0].file == 2, "remote: a search in some files");
+    check(r->trash(work + "/src/deep/d.txt", &err) && r->stat(work + "/src/deep/d.txt", &st) && st.kind == 0 &&
+              r->stat(home + "/.local/share/Trash/files/d.txt", &st) && st.kind == 1,
+          "remote: into the trash");
+    check(!r->which("sh").empty() && r->which("blit-no-such-program").empty() && r->realpath(work + "/src/../a.txt") == work + "/a.txt", "remote: which, realpath");
+    // A program: input in, output and its exit status out.
+    RemoteProc p;
+    check(r->spawn({"sh", "-c", "cat; echo done >&2; pwd; exit 3"}, work, {"GREETING=hi"}, &p, &err), ("remote: spawn (" + err + ")").c_str());
+    (void)!::write(p.in, "fed\n", 4);
+    ::close(p.in);
+    std::string out, errs;
+    char buf[256];
+    for (ssize_t k; (k = ::read(p.out, buf, sizeof buf)) > 0;) out.append(buf, static_cast<size_t>(k));
+    for (ssize_t k; (k = ::read(p.err, buf, sizeof buf)) > 0;) errs.append(buf, static_cast<size_t>(k));
+    ::close(p.out);
+    ::close(p.err);
+    const int status = r->wait(p.id);
+    check(out == "fed\n" + work + "\n" && errs == "done\n" && status == 3, "remote: a program's input, output, errors, folder and exit status");
+    check(!r->spawn({"blit-no-such-program"}, work, {}, &p, &err) || r->wait(p.id) == 127, "remote: a program that is not there");
+    // Again: the agent is there already, and is not copied a second time.
+    Remote::close_all();
+    r = Remote::get("box");
+    check(r->wait_ready(60'000) && r->read(work + "/a.txt", 1 << 20, &got) == 0, "remote: connected again, the agent already there");
+    // A host that cannot be reached: ssh's own reason.
+    Remote::close_all();
+    setenv("BLIT_FAKE_FAIL", "Connection refused", 1);
+    r = Remote::get("nowhere");
+    check(!r->wait_ready(30'000) && r->state() == Remote::kFailed && r->error().find("Connection refused") != std::string::npos,
+          ("remote: a host that cannot be reached (" + r->error() + ")").c_str());
+    unsetenv("BLIT_FAKE_FAIL");
+    Remote::close_all();
+    std::system(("rm -rf '" + top + "'").c_str());
+#endif
+}
+
+void find_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    auto term = [](const char* s) { return fuzzy_terms(s).at(0); };
+    // One term against one text.
+    check(fuzzy_score(term("abc"), "xyz") < 0 && fuzzy_score(term("abc"), "acb") < 0, "letters that are not there, or not in that order, do not match");
+    check(fuzzy_score(term("abc"), "abc") > fuzzy_score(term("abc"), "a_b_c") && fuzzy_score(term("abc"), "a_b_c") > fuzzy_score(term("abc"), "xaxbxc"),
+          "letters together beat letters at the starts of words, which beat letters scattered");
+    check(fuzzy_score(term("abc"), "ABC") >= 0 && fuzzy_score(term("Abc"), "abc") < 0 && fuzzy_score(term("Abc"), "xAbc") >= 0,
+          "small letters match either case, a capital only itself");
+    check(fuzzy_score(term("gw"), "getWidth") > fuzzy_score(term("gw"), "glowing"), "a capital after a small letter starts a word");
+    {
+        std::vector<u32> at;
+        fuzzy_score(term("fb"), "xfoo_bar", &at);
+        check(at.size() == 2 && at[0] == 1 && at[1] == 5, "where the matched letters are");
+    }
+    // Paths.
+    {
+        auto score = [](const char* typed, const char* path) {
+            const std::vector<FuzzyTerm> t = fuzzy_terms(typed);
+            return fuzzy_path_score(t, path);
+        };
+        check(score("grid", "src/grid.cpp") > score("grid", "shaders/gen/grid.frag.spv"), "of two names that match alike, the shorter path wins");
+        check(score("vimcpp", "src/vim.cpp") > score("vimcpp", "src/appvim.cpp"), "a match from the start of the name beats one inside it");
+        check(score("render", "src/render.cpp") > score("render", "render/notes.txt"), "a match in the file's name beats one in a folder's");
+        check(score("src render", "src/render.cpp") >= 0 && score("render zzz", "src/render.cpp") < 0, "every word typed has to match");
+        check(score("s/r", "src/render.cpp") >= 0 && score("s/r", "render.cpp") < 0, "a slash typed is a slash in the path");
+        std::vector<u32> at;
+        const std::vector<FuzzyTerm> t = fuzzy_terms("rcpp");
+        fuzzy_path_score(t, "src/render.cpp", &at);
+        check(at.size() == 4 && at[0] == 4 && at[1] == 11 && at[3] == 13, "positions are in the whole path");
+    }
+    check(find_term("int Main() {}", term("main")) == 4 && find_term("int main", term("Main")) == std::string_view::npos &&
+              find_term("aXa xa", term("xa"), 2) == 4 && find_term("abc", term("abcd")) == std::string_view::npos && find_term("aab", term("ab")) == 1,
+          "a word found in a text as it stands");
+    // .gitignore's patterns.
+    check(Finder::glob("*.o", "a.o") && !Finder::glob("*.o", "dir/a.o") && Finder::glob("build-*", "build-bench") && !Finder::glob("build-*", "build"),
+          "a star stops at a slash");
+    check(Finder::glob("**/x", "a/b/x") && Finder::glob("**/x", "x") && !Finder::glob("**/x", "a/bx") && Finder::glob("a/**", "a/b/c") && Finder::glob("a/**/c", "a/c") &&
+              Finder::glob("a/**/c", "a/b/b/c"),
+          "two stars are any number of folders");
+    check(Finder::glob("doc/*.txt", "doc/a.txt") && !Finder::glob("doc/*.txt", "doc/sub/a.txt") && Finder::glob("[a-c]?", "bz") && !Finder::glob("[a-c]?", "dz") &&
+              Finder::glob("[!a]x", "bx") && !Finder::glob("?", "/") && Finder::glob("a\\*", "a*") && !Finder::glob("a\\*", "ab"),
+          "sets, single characters and escapes");
+
+    // A folder to read.
+    char tmpl[] = "/tmp/blit-find-XXXXXX";
+    const char* made = mkdtemp(tmpl);
+    check(made != nullptr, "a scratch folder");
+    const std::string root = made;
+    auto put = [&](const char* rel, const char* text) {
+        const std::string path = root + "/" + rel;
+        for (size_t i = root.size() + 1; i < path.size(); ++i)
+            if (path[i] == '/') mkdir(path.substr(0, i).c_str(), 0755);
+        FILE* f = std::fopen(path.c_str(), "wb");
+        check(f != nullptr, "a scratch file");
+        std::fwrite(text, 1, std::strlen(text), f);
+        std::fclose(f);
+    };
+    put(".gitignore", "ignored.txt\n/top_only\nlogs/\n*.log\n!keep.log\n# a comment\n");
+    put("a.txt", "one two\nthree One\nfour\n");
+    put(".hidden", "x");
+    put("ignored.txt", "x");
+    put("top_only", "x");
+    put("x.log", "x");
+    put("keep.log", "x");
+    put("logs/l.txt", "x");
+    put("sub/b.cpp", "int three();\n// one more\n");
+    put("sub/c.o", "x");
+    put("sub/top_only", "x");
+    put("sub2/.gitignore", "secret*\n");
+    put("sub2/secret.txt", "three");
+    put("sub2/open.txt", "nothing here\n");
+    put("build/out.txt", "three");
+    put("node_modules/m.js", "three");
+    put("bin.dat", "three");
+    {  // (a zero byte in it: not text)
+        FILE* f = std::fopen((root + "/bin.dat").c_str(), "ab");
+        std::fwrite("\0three", 1, 6, f);
+        std::fclose(f);
+    }
+    auto list = [](const FileIndex& ix) {
+        std::string all;
+        for (size_t i = 0; i < ix.size(); ++i) all += std::string(ix.path(i)) + " ";
+        return all;
+    };
+    FinderOptions opt;
+    check(list(*Finder::walk(root, opt)) == ".gitignore .hidden a.txt bin.dat keep.log sub/b.cpp sub/top_only sub2/.gitignore sub2/open.txt ",
+          "the files of a folder, without what .gitignore files and the usual rules leave out");
+    opt.hidden = false;
+    check(list(*Finder::walk(root, opt)) == "a.txt bin.dat keep.log sub/b.cpp sub/top_only sub2/open.txt ", "and without the ones that start with a dot");
+    opt.hidden = true;
+    opt.gitignore = false;
+    opt.ignore = {"sub2/", "*.txt"};
+    check(list(*Finder::walk(root, opt)) == ".gitignore .hidden bin.dat keep.log sub/b.cpp sub/top_only top_only x.log ", "the settings' own rules, with .gitignore files not heeded");
+    opt = FinderOptions{};
+    opt.max_files = 3;
+    check(Finder::walk(root, opt)->size() == 3 && Finder::walk(root, opt)->truncated, "a folder with more files than the limit is listed that far");
+
+    // Lines in a text.
+    {
+        std::vector<FindHit> hits;
+        const std::string_view text = "one two\nthree One\nfour\r\nlast one";
+        std::vector<FuzzyTerm> t = fuzzy_terms("one");
+        check(Finder::grep(text, t, 7, 100, &hits) && hits.size() == 3 && hits[0].line == 0 && hits[0].col == 0 && hits[1].line == 1 && hits[1].col == 6 &&
+                  hits[1].text == "three One" && hits[2].line == 3 && hits[0].file == 7,
+              "the lines a word is on");
+        hits.clear();
+        t = fuzzy_terms("One");
+        check(Finder::grep(text, t, 0, 100, &hits) && hits.size() == 1 && hits[0].line == 1, "a capital typed is a capital found");
+        hits.clear();
+        t = fuzzy_terms("one three");
+        check(Finder::grep(text, t, 0, 100, &hits) && hits.size() == 1 && hits[0].line == 1 && hits[0].col == 0, "every word has to be on the line, in any order");
+        hits.clear();
+        t = fuzzy_terms("four");
+        check(Finder::grep(text, t, 0, 100, &hits) && hits.size() == 1 && hits[0].text == "four", "a carriage return is no part of the line");
+        hits.clear();
+        t = fuzzy_terms("one");
+        check(Finder::grep(text, t, 0, 2, &hits) && hits.size() == 2, "no more lines than there is room for");
+        hits.clear();
+        check(!Finder::grep(std::string_view("ab\0cd one", 9), t, 0, 100, &hits) && hits.empty(), "a file with a zero byte in it is not text");
+    }
+
+    // The worker: the folder read in the background, then searches.
+    {
+        Finder f;
+        std::atomic<int> told{0};
+        f.set_notify([&] { ++told; });
+        f.index(root);
+        const u64 first = f.find_names("bcpp");
+        f.wait_idle();
+        std::shared_ptr<const FindResults> r = f.results();
+        check(r && r->serial == first && !r->hits.empty() && r->index->path(r->hits[0].file) == "sub/b.cpp" && r->matched == 1 && told.load() > 0,
+              "a search for a name, asked for before the folder had been read");
+        f.find_names("");
+        f.wait_idle();
+        r = f.results();
+        check(r->hits.size() == 9 && r->matched == 9 && !r->text, "nothing typed: all the files");
+        const u64 second = f.find_text("three");
+        f.wait_idle();
+        r = f.results();
+        check(r->serial == second && r->text && !r->searching && r->hits.size() == 2 && r->files_hit == 2 && r->index->path(r->hits[0].file) == "a.txt" &&
+                  r->hits[0].line == 1 && r->index->path(r->hits[1].file) == "sub/b.cpp" && r->hits[1].line == 0 && r->hits[1].col == 4,
+              "a search for text: the lines, in the order of the files, and not the ones in files left out or not text");
+        f.find_text("t");
+        f.wait_idle();
+        check(f.results()->hits.empty(), "one letter is not searched for");
+        // A new file shows after the folder is read again, in the search that was asked for last.
+        put("sub/new_three.txt", "three again\n");
+        f.find_text("three");
+        f.index(root);
+        f.wait_idle();
+        check(f.results()->hits.size() == 3, "the folder read again: the last search is answered again");
+        f.cancel();
+        check(f.idle(), "a search given up");
+    }
+    const std::string rm = "rm -rf '" + root + "'";
+    check(std::system(rm.c_str()) == 0, "the scratch folder taken away");
+}
+
+void vim_test() {
+    struct Case {
+        const char* before;
+        const char* keys;
+        const char* after;
+    };
+    static const Case cases[] = {
+        // Moving.
+        {"|one two three", "w", "one |two three"},
+        {"|one two three", "2w", "one two |three"},
+        {"|one two three", "e", "on|e two three"},
+        {"one two |three", "b", "one |two three"},
+        {"one |two", "ge", "on|e two"},
+        {"|one, two", "w", "one|, two"},
+        {"|one, two", "W", "one, |two"},
+        {"|one two three", "$", "one two thre|e"},
+        {"one two |three", "0", "|one two three"},
+        {"|    x y", "^", "    |x y"},
+        {"|a.b.c.d", "f.", "a|.b.c.d"},
+        {"|a.b.c.d", "f.;", "a.b|.c.d"},
+        {"|a.b.c.d", "2f.", "a.b|.c.d"},
+        {"|a.b.c.d", "f.;,", "a|.b.c.d"},
+        {"|ab.cd.ef", "t.", "a|b.cd.ef"},
+        {"|ab.cd.ef", "t.;", "ab.c|d.ef"},
+        {"ab.cd.e|f", "F.", "ab.cd|.ef"},
+        {"abc|def\nx\nabcdefg", "j", "abcdef\n|x\nabcdefg"},
+        {"abc|def\nx\nabcdefg", "jj", "abcdef\nx\nabc|defg"},
+        {"abc|def\nx\nabcdefg", "jjk", "abcdef\n|x\nabcdefg"},
+        {"one\ntw|o\nthree", "gg", "on|e\ntwo\nthree"},
+        {"one\ntw|o\nthree\n", "G", "one\ntwo\nth|ree\n"},
+        {"|one\ntwo\nthree", "2G", "one\n|two\nthree"},
+        {"|one\ntwo\nthree", ":3<CR>", "one\ntwo\n|three"},
+        {"|(a [b] c)", "%", "(a [b] c|)"},
+        {"(a [b] c|)", "%", "|(a [b] c)"},
+        {"(a |[b] c)", "%", "(a [b|] c)"},
+        {"|a\nb\n\nc\nd\n\ne", "}", "a\nb\n|\nc\nd\n\ne"},
+        {"a\nb\n\nc\n|d\n\ne", "{", "a\nb\n|\nc\nd\n\ne"},
+        {"|a\r\nb\r\n\r\nc", "}", "a\r\nb\r\n|\r\nc"},
+        {"|a\nb", "}", "a\n|b"},
+        {"|a\nb\n", "}", "a\n|b\n"},
+        {"|a\n\nb\n\nc", "2}", "a\n\nb\n|\nc"},
+        {"a\n|\n\nb\n\nc", "}", "a\n\n\nb\n|\nc"},
+        {"a\n|b", "{", "|a\nb"},
+        {"a\n\nb\n|\nc", "{", "a\n|\nb\n\nc"},
+        {"a\n\n\nb\n|c", "{", "a\n\n|\nb\nc"},
+        {"|a\nb\n\nc", "d}", "|\nc"},
+        {"|a\n{\nb\n{\n", "]]", "a\n|{\nb\n{\n"},
+        {"|a\n{\nb\n{\nc", "2]]", "a\n{\nb\n|{\nc"},
+        {"{\na\n{\n|b", "[[", "{\na\n|{\nb"},
+        {"{\na\n|{\nb", "[[", "|{\na\n{\nb"},
+        {"|a\n}\nb", "][", "a\n|}\nb"},
+        {"|a\nb\nc", "]]", "a\nb\n|c"},
+        {"a\nb\n|c", "[[", "|a\nb\nc"},
+        {"one |two", "l", "one t|wo"},
+        {"one tw|o", "l", "one tw|o"},
+        {"|one two", "h", "|one two"},
+        {"|one\n  two", "+", "one\n  |two"},
+        // Deleting, changing, yanking.
+        {"|one two three", "dw", "|two three"},
+        {"|one two three", "d2w", "|three"},
+        {"|one two three", "2dw", "|three"},
+        {"one |two\nthree", "dw", "one| \nthree"},
+        {"one |two three", "de", "one | three"},
+        {"one two |three", "db", "one |three"},
+        {"one |two three", "d$", "one| "},
+        {"one |two three", "D", "one| "},
+        {"one |two three", "d0", "|two three"},
+        {"one\n|two\nthree", "dd", "one\n|three"},
+        {"|one\ntwo\nthree", "2dd", "|three"},
+        {"one\n|two", "dd", "|one"},
+        {"one\n|two\n", "dd", "|one\n"},
+        {"|one\ntwo\nthree", "dj", "|three"},
+        {"one\n  |two\nthree", "dk", "th|ree"},
+        {"one\n|two\nthree\nfour", "dG", "|one"},
+        {"a|bc", "x", "a|c"},
+        {"|abcdef", "3x", "|def"},
+        {"ab|c", "xx", "|a"},
+        {"ab|c", "X", "a|c"},
+        {"|one two", "cwONE<Esc>", "ON|E two"},
+        {"|one two", "cw<Esc>", "| two"},
+        {"one |two three", "CX<Esc>", "one |X"},
+        {"  one\n  |two\nthree", "ccx<Esc>", "  one\n  |x\nthree"},
+        {"a|bc", "sX<Esc>", "a|Xc"},
+        {"  on|e", "Sx<Esc>", "  |x"},
+        {"|one\ntwo", "yyp", "one\n|one\ntwo"},
+        {"one\n|two", "yyP", "one\n|two\ntwo"},
+        {"one\n|two", "yyp", "one\ntwo\n|two"},
+        {"|one two", "ywP", "one| one two"},
+        {"|one two", "yw$p", "one twoone| "},
+        {"|one two", "yeep", "oneon|e two"},
+        {"one\n|two\nthree", "ddp", "one\nthree\n|two"},
+        {"|one\ntwo", "Yp", "oon|ene\ntwo"},
+        // Text objects.
+        {"one t|wo three", "diw", "one | three"},
+        {"one t|wo three", "daw", "one |three"},
+        {"one two thr|ee", "daw", "one tw|o"},
+        {"f(a, |b)", "ci(x<Esc>", "f(|x)"},
+        {"f(a, |b) + 1", "da(", "f| + 1"},
+        {"f(a, (b|), c)", "dib", "f(a, (|), c)"},
+        {"x = [1, |2]", "di[", "x = [|]"},
+        {"say \"he|llo\" now", "di\"", "say \"|\" now"},
+        {"say \"he|llo\" now", "da\"", "say |now"},
+        {"|say 'hi' now", "ci'x<Esc>", "say '|x' now"},
+        {"f {\n    |a;\n    b;\n}", "di{", "f {\n|}"},
+        {"f {\n    |a;\n    b;\n}", "ci{x<Esc>", "f {\n    |x\n}"},
+        {"a\nb\n\n|c\nd\n\ne", "dip", "a\nb\n\n|\ne"},
+        {"a\nb\n\n|c\nd\n\ne", "dap", "a\nb\n\n|e"},
+        {"one t|wo three", "yiwP", "one tw|otwo three"},
+        // Other changes.
+        {"|one\ntwo", ">>", "|    one\ntwo"},
+        {"    |one\ntwo", "<<", "on|e\ntwo"},
+        {"|one\ntwo\nthree", ">j", "|    one\n    two\nthree"},
+        {"|one\ntwo\nthree", "2>>", "|    one\n    two\nthree"},
+        {"|one\n  two", "J", "one| two"},
+        {"|one\ntwo\nthree", "3J", "one two| three"},
+        {"|one two", "~", "O|ne two"},
+        {"|one two", "g~w", "|ONE two"},
+        {"|One Two", "guu", "|one two"},
+        {"|one two", "gUiw", "|ONE two"},
+        {"|abc", "rx", "|xbc"},
+        {"|abc", "3rx", "xx|x"},
+        {"|abc", "5rx", "|abc"},
+        {"|abc", "Rxy<Esc>", "x|yc"},
+        {"|x 9", "<C-a>", "x 1|0"},
+        {"|x 10", "3<C-x>", "x |7"},
+        // Insert mode.
+        {"|x", "ihello<Esc>", "hell|ox"},
+        {"|x", "ahello<Esc>", "xhell|o"},
+        {"one |two", "I> <Esc>", ">| one two"},
+        {"|one two", "A!<Esc>", "one two|!"},
+        {"|x", "3ia<Esc>", "aa|ax"},
+        {"    |x", "oy<Esc>", "    x\n    |y"},
+        {"    |x", "Oy<Esc>", "    |y\n    x"},
+        {"|", "iab<BS>c<Esc>", "a|c"},
+        {"|", "ifoo bar<C-w>x<Esc>", "foo |x"},
+        {"|", "ione<CR>two<Esc>", "one\ntw|o"},
+        {"|", "i  one<CR>two<Esc>", "  one\n  tw|o"},
+        {"|ab", "i<Right>X<Esc>", "a|Xb"},
+        // Undo, redo, repeat.
+        {"one\n|two\nthree", "ddu", "one\n|two\nthree"},
+        {"one\n|two\nthree", "ddu<C-r>", "one\n|three"},
+        {"|x", "ihello<Esc>u", "|x"},
+        {"|one\ntwo\nthree", ">ju", "|one\ntwo\nthree"},
+        {"|one two three four", "dw.", "|three four"},
+        {"|one two three four", "dw2.", "|four"},
+        {"|one\ntwo", "A!<Esc>j.", "one!\ntwo|!"},
+        {"|one two three", "cwX<Esc>w.", "X |X three"},
+        {"|a b c", "x..", "| c"},
+        // Visual mode.
+        {"|one two", "ved", "| two"},
+        {"one |two three", "vey", "one |two three"},
+        {"one\n|two\nthree", "Vd", "one\n|three"},
+        {"|one\ntwo\nthree", "Vjd", "|three"},
+        {"|one\ntwo\nthree", "vjd", "|wo\nthree"},
+        {"|one two", "vey$p", "one twoon|e"},
+        {"|one two", "viwyW" "viwp", "one |one"},
+        {"|one\ntwo", "Vj>", "|    one\n    two"},
+        {"|one two", "veU", "|ONE two"},
+        {"|one two", "vex", "| two"},
+        {"one |two three", "vbd", "|wo three"},
+        {"|one two three", "vwwohd", "|hree"},
+        {"|abc def", "vecX<Esc>", "|X def"},
+        {"|one two", "verx", "|xxx two"},
+        {"|one\ntwo\nthree", "VjJ", "one| two\nthree"},
+        {"f(a, |b)", "vi(d", "f(|)"},
+        // Registers.
+        {"|one two", "\"ayw\"bdwx\"aP", "one| wo"},
+        {"one\n|two", "yy\"_ddP", "|two\none"},
+        {"|one two", "yiwwviwp", "one |one"},
+        {"|a\nb", "\"qyyj\"Qyy\"qp", "a\nb\n|a\nb"},
+        // Searching and the command line.
+        {"|a foo b foo c", "/foo<CR>", "a |foo b foo c"},
+        {"|a foo b foo c", "/foo<CR>n", "a foo b |foo c"},
+        {"|a foo b foo c", "/foo<CR>nn", "a |foo b foo c"},
+        {"|a foo b foo c", "/foo<CR>nN", "a |foo b foo c"},
+        {"a foo b foo |c", "?foo<CR>", "a foo b |foo c"},
+        {"a |foo b food foo", "*", "a foo b food |foo"},
+        {"a foo b food |foo", "#", "a |foo b food foo"},
+        {"|a Foo foo", "/foo\\c<CR>", "a |Foo foo"},
+        {"|a foo b", "/nothere<CR>", "|a foo b"},
+        {"|a foo b", "/fo<Esc>", "|a foo b"},
+        {"|a a a", ":s/a/b/<CR>", "|b a a"},
+        {"|a a a", ":s/a/b/g<CR>", "|b b b"},
+        {"|x1\nx2\nx3", ":%s/x/y/<CR>", "y1\ny2\n|y3"},
+        {"|x1\nx2\nx3", ":2,3s/x/[&]/<CR>", "x1\n[x]2\n|[x]3"},
+        {"|a/b", ":s/\\//-/<CR>", "|a-b"},
+        {"|one\ntwo\nthree", ":2d<CR>", "one\n|three"},
+        {"|one\ntwo\nthree", "Vj:s/o/0/g<CR>", "0ne\n|tw0\nthree"},
+        {"|aa\naa", ":%s/a/b/<CR>", "ba\n|ba"},
+        {"|xA xa", ":s/a/[&]/gi<CR>", "|x[A] x[a]"},
+        {"|a\nb\nc", ":%s/\\n/-/g<CR>", "|a-b-c"},
+        {"|a\nb\nc\n", ":1,2s/\\n//<CR>", "|abc\n"},
+        {"|a b\nc", ":%s/b/x/<CR>", "|a x\nc"},
+        {"|ab\nab\nab", ":2,3s/b/\\r/<CR>", "ab\na\n\n|a\n"},
+        {"|aaaa", ":s/aa/b/g<CR>", "|bb"},
+        {"|a foo food", ":s/\\<foo\\>/x/g<CR>", "|a x food"},
+        {"|one\ntwo\nthree", ":2,3><CR>", "one\n    |two\n    three"},
+        // Macros, marks, the rest.
+        {"|1\n1\n1", "qa<C-a>jq", "2\n|1\n1"},
+        {"|1\n1\n1", "qa<C-a>jq@a", "2\n2\n|1"},
+        {"|1\n1\n1", "qa<C-a>jq@a@@", "2\n2\n|2"},
+        {"|1\n1\n1\n1", "qa<C-a>jq2@a", "2\n2\n2\n|1"},
+        {"o|ne\ntwo\nthree", "maG`a", "o|ne\ntwo\nthree"},
+        {"  o|ne\ntwo\nthree", "maG'a", "  |one\ntwo\nthree"},
+        {"one\ntwo\nth|ree", "maggd`a", "on|ree"},
+        {"|one two", "vwh<Esc>gvd", "|two"},
+        {"|one", "<C-o>", "|one"},
+        // Visual Block mode.
+        {"|abcd\nefgh\nijkl", "<C-v>jld", "|cd\ngh\nijkl"},
+        {"a|bcd\nefgh\nijkl", "<C-v>jjlx", "a|d\neh\nil"},
+        {"|abcd\nefgh", "<C-v>jly$p", "abcd|ab\nefghef"},
+        {"|ab\ncd\nx", "<C-v>jlyjj$p", "ab\ncd\nx|ab\n cd"},
+        {"|ab\ncd", "<C-v>jyP", "|aab\nccd"},
+        {"|ab\ncd\n", "<C-v>jyGp", "ab\nc|ad\n c\n"},
+        {"|abc\ndef\nghi", "<C-v>jjIX<Esc>", "|Xabc\nXdef\nXghi"},
+        {"|abc\ndef\nghi", "<C-v>jlAX<Esc>", "|abXc\ndeXf\nghi"},
+        {"|a\nbcd\nef", "<C-v>jj$AX<Esc>", "|aX\nbcdX\nefX"},
+        {"|abcd\nx\nefgh", "<C-v>jjlllAZ<Esc>", "|abcdZ\nx   Z\nefghZ"},
+        {"abc|d\nx\nefgh", "<C-v>jjIZ<Esc>", "abc|Zd\nx\nefgZh"},
+        {"|abcd\nefgh", "<C-v>jlcXY<Esc>", "X|Ycd\nXYgh"},
+        {"a|bcd\nefgh", "<C-v>jCX<Esc>", "a|X\neX"},
+        {"a|bcd\nefgh", "<C-v>jD", "|a\ne"},
+        {"|abc\ndef", "<C-v>jlrx", "|xxc\nxxf"},
+        {"|abc\ndef", "<C-v>jl~", "|ABc\nDEf"},
+        {"|abc\ndef", "<C-v>jlU", "|ABc\nDEf"},
+        {"a|b\ncdef\ngh", "<C-v>jj$d", "|a\nc\ng"},
+        {"a|bcd\nefgh", "<C-v>jlOhd", "|d\nh"},
+        {"a|bcd\nefgh", "<C-v>jlohd", "|d\nh"},
+        {"|ab\ncd", "<C-v>j>", "|    ab\n    cd"},
+        {"|    ab\n    cd", "<C-v>j<lt>", "|ab\ncd"},
+        {"|abcd\nefgh", "<C-v>jl<Esc>gvd", "|cd\ngh"},
+        {"|abcd\nefgh", "vjl<C-v>d", "|cd\ngh"},
+        {"|abcd\nefgh", "<C-v>jlvd", "|gh"},
+        {"|abcd\nefgh", "<C-v>jl<C-v>x", "abcd\ne|gh"},
+        {"|ab\ncd", "<C-v>jyl<C-v>jp", "a|a\ncc"},
+        {"|abc\ndef", "<C-v>jIX<Esc>u", "|abc\ndef"},
+        {"|abc\ndef\nghi", "<C-v>jIX<Esc>j.", "Xabc\n|XXdef\nXghi"},
+        {"|a\tb\nc\td", "<C-v>jld", "|b\nd"},
+        {"|abc\ndef", "<C-v>jlJ", "abc| def"},
+        {"|ab\ncd\nef", "<C-v>jS!<Esc>", "|!\nef"},
+        // The jump list, and the marks Vim keeps.
+        {"|one\ntwo\nthree", "G<C-o>", "|one\ntwo\nthree"},
+        {"|one\ntwo\nthree", "G<C-o><Tab>", "one\ntwo\n|three"},
+        {"|one\ntwo\nthree", "Ggg<C-o><C-o>", "one\ntwo\n|three"},
+        {"|one\ntwo\nthree", "Ggg<C-o><C-i>", "|one\ntwo\nthree"},
+        {"|a\nfoo b\nfoo", "/foo<CR>n<C-o><C-o>", "|a\nfoo b\nfoo"},
+        {"|a\nfoo b\nfoo", "/foo<CR>n2<C-o>", "|a\nfoo b\nfoo"},
+        {"o|ne\ntwo\nthree", "G``", "o|ne\ntwo\nthree"},
+        {"  o|ne\ntwo\nthree", "G''", "  |one\ntwo\nthree"},
+        {"o|ne\ntwo\nthree", "G''''", "one\ntwo\n|three"},
+        {"|(a\nb)", "%``", "|(a\nb)"},
+        {"|one\ntwo", "jxgg`.", "one\n|wo"},
+        {"|one\ntwo", "jxggg;", "one\n|wo"},
+        {"|one two", "wiX<Esc>0giY<Esc>", "one X|Ytwo"},
+        {"one |two three", "ve<Esc>0`>", "one tw|o three"},
+        {"one |two three", "ve<Esc>$`<lt>", "one |two three"},
+        {"one\nt|wo", "maggOzero<Esc>`a", "zero\none\nt|wo"},
+        {"one\ntwo\nth|ree", "maggdd`a", "two\nth|ree"},
+        {"one\nt|wo\nthree", "majddk'a", "one\n|two"},
+        // Registers: deleted lines in "1 to "9, less than a line in "-, what was typed in ".
+        {"|a\nb\nc\nd", "dddd\"2p", "c\n|a\nd"},
+        {"|a\nb\nc\nd", "dddddd\"3p\"1p", "d\na\n|c"},
+        {"|ab cd", "xdw\"-P", "b| cd"},
+        {"|one two", "yiwwdiw\"0P", "oneon|e "},
+        {"|x", "ifoo<Esc>\".p", "foofo|ox"},
+        {"|a b", "/b<CR>0i<C-r>/<Esc>", "|ba b"},
+        // Insert mode's keys.
+        {"|ab", "i<C-t>x<Esc>", "    |xab"},
+        {"    a|b", "i<C-d>x<Esc>", "a|xb"},
+        {"|", "ifoo<Esc>o<C-a><Esc>", "foo\nfo|o"},
+        {"|", "i<C-v><Tab>x<Esc>", "\t|x"},
+        {"one |two", "i<C-o>0X<Esc>", "|Xone two"},
+        {"one |two three", "i<C-o>dwX<Esc>", "one |Xthree"},
+        {"|ab", "A<C-o>Ix<Esc>u", "|ab"},
+        {"|ab", "Ax<C-o>0y<Esc>uix<Esc>u", "|ab"},
+        {"abc\n|x", "i<C-y><C-y><Esc>", "abc\na|bx"},
+        {"|\nabc", "i<C-e><C-e><Esc>", "a|b\nabc"},
+        {"|abcd", "Rxy<BS><BS><Esc>", "|abcd"},
+        {"|abcd", "Rxy<BS>z<Esc>", "x|zcd"},
+        {"|a", "3ox<Esc>", "a\nx\nx\n|x"},
+        {"|a", "2Ox<Esc>", "x\n|x\na"},
+        {"  |a", "2ox<Esc>", "  a\n  x\n  |x"},
+        {"|a", "3ox<Esc>u", "|a"},
+        // Visual mode: the keys for whole lines, and the rest.
+        {"one\nt|wo\nthree", "vD", "one\nt|hree"},
+        {"one\nt|wo\nthree", "vjX", "o|ne"},
+        {"one\nt|wo\nthree", "vYp", "one\ntwo\n|two\nthree"},
+        {"a\n  b|c\nd", "vSx<Esc>", "a\n  |x\nd"},
+        {"a\n  b|c\nd", "vRx<Esc>", "a\n  |x\nd"},
+        {"a\nb|c d\ne", "vCx<Esc>", "a\n|x\ne"},
+        {"ab|c\ndef", "vjIX<Esc>", "|Xabc\ndef"},
+        {"ab|c\ndef", "vjAX<Esc>", "abc\ndef|X"},
+        {"|ab cd ab", "ve*", "ab cd |ab"},
+        {"ab cd |ab", "ve#", "|ab cd ab"},
+        {"|a\nb", "Vj2>", "|        a\n        b"},
+        {"|a\n  b", "VjgJ", "a|  b"},
+        {"|one two three", "v/th<CR>d", "|hree"},
+        {"|one two three", "viwiwiwd", "| three"},
+        {"|one two three", "vawawd", "|three"},
+        {"(a (b |c) d)", "vi(i(d", "(|)"},
+        {"(a (b |c) d)", "va(a(d", "|"},
+        {"|a\nb\n\nc\nd\n\ne", "vipipipd", "|\ne"},
+        // Text objects with counts, sentences, tags; the bracket moves.
+        {"|one two three four", "d2aw", "|three four"},
+        {"|one two three", "d3iw", "| three"},
+        {"f(a, (b|, c))", "d2i(", "f(|)"},
+        {"|a\nb\n\nc\n\nd", "d2ap", "|d"},
+        {"|One two. Three four. Five.", ")", "One two. |Three four. Five."},
+        {"|One two. Three four. Five.", "2)", "One two. Three four. |Five."},
+        {"One two. Three |four. Five.", "(", "One two. |Three four. Five."},
+        {"One two. |Three four. Five.", "(", "|One two. Three four. Five."},
+        {"|One two.\n\nThree.", "))", "One two.\n\n|Three."},
+        {"One two. Three |four. Five.", "das", "One two. |Five."},
+        {"One two. Three |four. Five.", "dis", "One two. | Five."},
+        {"One. Two |three! Four.", "cisX<Esc>", "One. |X Four."},
+        {"<a><b>x|y</b></a>", "dit", "<a><b>|</b></a>"},
+        {"<a><b>x|y</b></a>", "dat", "<a>|</a>"},
+        {"<a><b>x|y</b></a>", "d2it", "<a>|</a>"},
+        {"<p>a<br/>b|c</p>", "cit!<Esc>", "<p>|!</p>"},
+        {"<div class=\"x\">a|b</div>", "yitP", "<div class=\"x\">a|bab</div>"},
+        {"<a><b>x|y</b></a>", "vitatd", "<a>|</a>"},
+        {"f(a, (b|, c))", "[(", "f(a, |(b, c))"},
+        {"f(a, (b|, c))", "2[(", "f|(a, (b, c))"},
+        {"f(a, (b|, c))", "])", "f(a, (b, c|))"},
+        {"f(a, (b|, c))", "d])", "f(a, (b|))"},
+        {"{\n  a;\n  |b;\n}", "[{", "|{\n  a;\n  b;\n}"},
+        {"{\n  |a;\n  b;\n}", "]}", "{\n  a;\n  b;\n|}"},
+        {"|int a;\n{\n}\nint b;\n{\n}", "]]", "int a;\n|{\n}\nint b;\n{\n}"},
+        {"|int a;\n{\n}\nint b;\n{\n}", "2]]", "int a;\n{\n}\nint b;\n|{\n}"},
+        {"int a;\n{\n}\nint b;\n{\n|}", "[[", "int a;\n{\n}\nint b;\n|{\n}"},
+        {"|int a;\n{\n}\nint b;\n{\n}", "][", "int a;\n{\n|}\nint b;\n{\n}"},
+        // More of Normal mode.
+        {"|Hello", "g??", "|Uryyb"},
+        {"|Hello you", "g?w", "|Uryyb you"},
+        {"|Hello", "veg?", "|Uryyb"},
+        {"|a foo b foo", "/foo<CR>ggcgnX<Esc>.", "a X b |X"},
+        {"|a foo b", "/foo<CR>0dgn", "a | b"},
+        {"|a foo b", "/foo<CR>0gnd", "a | b"},
+        {"a foo b fo|o", "/foo<CR>$dgN", "a foo b| "},
+        {"|one two three", "d/th<CR>", "|three"},
+        {"|a b a b a", "d/b<CR>.", "|b a"},
+        {"|one two", "c/two<CR>X <Esc>", "X| two"},
+        {"one two |three", "d?two<CR>", "one |three"},
+        {"|a a\na a", ":s/a/b/<CR>j&", "b a\n|b a"},
+        {"|a a\na a", ":s/a/b/g<CR>ug&", "b b\n|b b"},
+        {"|a a\na a", ":s/a/b/<CR>j:s<CR>", "b a\n|b a"},
+        {"|1\n1\n1", "qa<C-a>jqQ", "2\n2\n|1"},
+        {"|ab", "ylgp", "aa|b"},
+        {"|a\nb", "yygp", "a\na\n|b"},
+        {"a\n|b", "yygP", "a\nb\n|b"},
+        {"|foo foobar", "g*", "foo |foobar"},
+        {"|foo foobar foo", "*", "foo foobar |foo"},
+        // Corners: empty lines in a block, rows of unequal length, repeats, undo.
+        {"|ab\n\ncd", "<C-v>jjld", "|\n\n"},
+        {"|ab\n\ncd", "<C-v>jjIX<Esc>", "|Xab\nX\nXcd"},
+        {"|abcd\nefgh", "<C-v>jldu", "|abcd\nefgh"},
+        {"|abc\ndef", "<C-v>j$cX<Esc>", "|X\nX"},
+        {"a|bc\ndef", "<C-v>jy$p", "abc|b\ndefe"},
+        {"|abcd\nefgh\nijkl", "<C-v>jdj.", "bcd\n|gh\njkl"},
+        {"|ab\ncd", "<C-v>jy2P", "|aaab\ncccd"},
+        {"|abc\nd\nxyz", "<C-v>j$yjjP", "abc\nd\n|abcxyz\nd"},
+        {"|abc\nd\nxyz\nxyz", "<C-v>j$yjjP", "abc\nd\n|abcxyz\nd  xyz"},
+        {"one\ntwo\nth|ree", "ggd''", "|"},
+        {"One. T|wo", ")", "One. Tw|o"},
+        {"<a>x</|a>", "dit", "<a>|</a>"},
+        {"|ab cd", "A<C-o>vbd!<Esc>", "ab |!"},
+        {"|a\nb\nc", "jmajmbgg'a'b<C-o><C-o>", "|a\nb\nc"},
+        // Neovim's defaults that differ from Vim's: the column is kept where Vim
+        // would go to the start of the text ('startofline' is off), Space and
+        // Backspace go on to other lines, & keeps the flags.
+        {"abc|d\nx\nabcdef", "G", "abcd\nx\nabc|def"},
+        {"abcd\nx\nabc|def", "gg", "abc|d\nx\nabcdef"},
+        {"abc|d\nx\nabcdef", "2G", "abcd\n|x\nabcdef"},
+        {"abc|d\nx\nabcdef", "2GG", "abcd\nx\nabc|def"},
+        {"abc|d\nx\nabcdef", "$G", "abcd\nx\nabcde|f"},
+        {"abc|d\nx\nabcdef", ":3<CR>", "abcd\nx\nabc|def"},
+        {"ab|cd\nefgh\nij", "dd", "ef|gh\nij"},
+        {"abcd\nef|gh\nij", "ddp", "abcd\nij\n|efgh"},
+        {"ab|cd\nefgh", ">>", "  |  abcd\nefgh"},
+        {"    ab|cd", "<lt><lt>", "abc|d"},
+        {"ab|c\ndef", "<Space>", "abc\n|def"},
+        {"ab|c\ndef", "2<Space>", "abc\nd|ef"},
+        {"abc\n|def", "<BS>", "ab|c\ndef"},
+        {"abc\nd|ef", "3<BS>", "a|bc\ndef"},
+        {"abc\n|def", "<C-h>", "ab|c\ndef"},
+        {"ab|c\ndef", "l", "ab|c\ndef"},
+        {"abc\n|def", "h", "abc\n|def"},
+        {"ab|c\ndef", "d<Space>", "a|b\ndef"},
+        {"|a a\na a", ":s/a/b/g<CR>j&", "b b\n|b b"},
+        // Visual mode after $ takes the end of the line with it; P there keeps the register.
+        {"ab|c\ndef", "v$d", "ab|def"},
+        {"|abc\ndef", "v$y$p", "abc|abc\n\ndef"},
+        {"ab|c\ndef", "$vd", "a|b\ndef"},
+        {"a|bc\ndef\nghi", "v$jd", "a|ghi"},
+        {"a|bc\ndef", "v$hd", "|a\ndef"},
+        {"|one two three", "yiwwviwPwviwP", "one one |one"},
+        {"|one two three", "yiwwviwpwviwp", "one one |two"},
+        // Numbers: hexadecimal and binary, and zeros in front stay.
+        {"|x 0x0f", "<C-a>", "x 0x1|0"},
+        {"|0xFF", "<C-a>", "0x10|0"},
+        {"|0xfe", "2<C-a>", "0x10|0"},
+        {"0x1|0", "<C-x>", "0x0|f"},
+        {"|0b101", "<C-a>", "0b11|0"},
+        {"|007", "<C-a>", "00|8"},
+        {"|009", "<C-a>", "01|0"},
+        {"|a -1", "<C-a>", "a |0"},
+        {"|a 1", "2<C-x>", "a -|1"},
+        {"|12 34", "w<C-a>", "12 3|5"},
+        // Neovim's bracket keys and Visual Line's @ and Q.
+        {"a\n|b\nc", "[<Space>", "a\n\n|b\nc"},
+        {"a\n|b\nc", "2]<Space>", "a\n|b\n\n\nc"},
+        {"a\n|b", "]<Space>.", "a\n|b\n\n"},
+        {"|1\n1\n1\n1", "qa<C-a>qjVj@a", "2\n2\n|2\n1"},
+        {"|1\n1\n1\n1", "qa<C-a>qjVjQ", "2\n2\n|2\n1"},
+        {"|ab\ncd\nef", "qaAx<Esc>quggVG@a", "abx\ncdx\nef|x"},
+        // <C-u> and <C-w> in Insert mode are an undo step of their own from there on.
+        {"|x", "ifoo <C-u>bar<Esc>u", "|foo x"},
+        {"|x", "ifoo bar<C-w>baz<Esc>u", "foo |barx"},
+        {"|x", "ifoo <C-u>bar<Esc>uu", "|x"},
+    };
+    int wrong = 0;
+    for (const Case& c : cases) {
+        std::string text = c.before, want = c.after;
+        const size_t cur = text.find('|'), want_cur = want.find('|');
+        text.erase(cur, 1);
+        want.erase(want_cur, 1);
+        Editor ed;
+        ed.insert(text);
+        ed.move_to(cur, false);
+        ed.mark_saved();
+        Vim vim;
+        vim.resume(ed);
+        ed.watch = &vim;
+        vim.keys(ed, c.keys);
+        const std::string got = ed.buf.text(0, ed.buf.size());
+        if (got != want || ed.cursor() != want_cur) {
+            std::string shown = got;
+            shown.insert(std::min<size_t>(ed.cursor(), shown.size()), "|");
+            std::fprintf(stderr, "vim: \"%s\" then %s\n  wanted \"%s\"\n  got    \"%s\"\n", c.before, c.keys, c.after, shown.c_str());
+            ++wrong;
+        }
+    }
+    if (wrong) fail("modal editing", static_cast<u64>(wrong), 0);
+    // Searching a document of many small pieces (so that matches run from
+    // one into the next), against a plain search of the same text.
+    {
+        u64 seed = 0x5eed;
+        auto rnd = [&] {
+            seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+            return seed >> 33;
+        };
+        auto wordish = [](char ch) { return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_' || static_cast<unsigned char>(ch) >= 0x80; };
+        static const char kAlphabet[] = "abAB \n_x";
+        u64 bad = 0;
+        for (int round = 0; round < 60; ++round) {
+            Buffer b;
+            std::string flat;
+            for (int i = 0, n = 20 + static_cast<int>(rnd() % 400); i < n; ++i) {
+                std::string piece;
+                for (u64 k = 1 + rnd() % 5; k > 0; --k) piece += kAlphabet[rnd() % 8];
+                const u64 at = rnd() % (flat.size() + 1);
+                b.insert(at, piece);
+                flat.insert(at, piece);
+            }
+            for (int q = 0; q < 200; ++q) {
+                Vim::Pattern p;
+                const size_t len = 1 + rnd() % 4;
+                p.text = rnd() % 4 ? flat.substr(rnd() % flat.size(), len) : std::string(len, kAlphabet[rnd() % 8]);
+                p.ignore_case = rnd() % 2;
+                p.word = rnd() % 4 == 0;
+                const bool forward = rnd() % 2, wrap = rnd() % 2;
+                const u64 from = rnd() % 8 == 0 ? ~0ull : rnd() % (flat.size() + 1);
+                const u64 reach = rnd() % 3 == 0 ? rnd() % (flat.size() + 2) : ~0ull;
+                std::vector<u64> all;
+                const size_t m = p.text.size();
+                for (size_t at = 0; at + m <= flat.size(); ++at) {
+                    bool same = true;
+                    for (size_t k = 0; k < m && same; ++k) {
+                        const char x = flat[at + k], y = p.text[k];
+                        same = p.ignore_case ? std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y)) : x == y;
+                    }
+                    if (same && p.word && ((at > 0 && wordish(flat[at - 1])) || (at + m < flat.size() && wordish(flat[at + m])))) same = false;
+                    if (same) all.push_back(at);
+                }
+                const u64 size = flat.size();
+                auto first_in = [&](u64 lo, u64 hi) {
+                    for (u64 at : all)
+                        if (at >= lo && at < hi) return at;
+                    return ~0ull;
+                };
+                auto last_in = [&](u64 lo, u64 hi) {
+                    u64 best = ~0ull;
+                    for (u64 at : all)
+                        if (at >= lo && at < hi) best = at;
+                    return best;
+                };
+                u64 want;
+                if (forward) {
+                    const u64 lo = from + 1, span = lo < size ? size - lo : 0;
+                    want = first_in(lo, span > reach ? lo + reach : size);
+                    if (want == ~0ull && wrap && reach > span) want = first_in(0, std::min(lo, reach - span));
+                } else {
+                    const u64 to = std::min(from, size);
+                    want = last_in(to > reach ? to - reach : 0, to);
+                    if (want == ~0ull && wrap && reach > to) want = last_in(size - to > reach - to ? size - (reach - to) : to, size);
+                }
+                const u64 got = Vim::find(b, p, from, forward, wrap, nullptr, reach);
+                if (got != want && bad++ < 5)
+                    std::fprintf(stderr, "find \"%s\" case %d word %d from %llu %s wrap %d reach %llu: got %lld wanted %lld\n", p.text.c_str(), p.ignore_case, p.word,
+                                 static_cast<unsigned long long>(from), forward ? "on" : "back", wrap, static_cast<unsigned long long>(reach), static_cast<long long>(got),
+                                 static_cast<long long>(want));
+            }
+        }
+        if (bad) fail("searching across pieces", bad, 0);
+        // A long document, which is looked through on several threads.
+        std::string big(40u << 20, '.');
+        for (u64 i = 0; i < big.size(); i += 1 + rnd() % 200) big[i] = '\n';
+        Buffer lb;
+        lb.load_view(big.data(), big.size());
+        std::string flat = big;
+        for (u64 at : {u64{3} << 20, u64{9} << 20, u64{17} << 20, (u64{25} << 20) + 7, (u64{39} << 20) + 5}) {
+            lb.insert(at, "nee");
+            lb.insert(at + 3, "dle");
+            flat.insert(at, "needle");
+        }
+        Vim::Pattern np;
+        np.text = "needle";
+        for (int q = 0; q < 40; ++q) {
+            const u64 from = q == 0 ? ~0ull : rnd() % (flat.size() + 1);
+            const bool forward = q % 2 == 0;
+            u64 want;
+            if (forward) {
+                const size_t a = flat.find("needle", from + 1);
+                want = a != std::string::npos ? a : flat.find("needle");
+            } else {
+                const size_t a = from == 0 ? std::string::npos : flat.rfind("needle", std::min<u64>(from, flat.size()) - 1);
+                want = a != std::string::npos ? a : flat.rfind("needle");
+            }
+            const u64 got = Vim::find(lb, np, from, forward, true);
+            if (got != want && bad++ < 5)
+                std::fprintf(stderr, "long find from %llu %s: got %lld wanted %lld\n", static_cast<unsigned long long>(from), forward ? "on" : "back",
+                             static_cast<long long>(got), static_cast<long long>(want));
+        }
+        np.text = "nothere";
+        if (Vim::find(lb, np, 5, true, true) != ~0ull || Vim::find(lb, np, 5, false, true) != ~0ull) ++bad;
+        if (bad) fail("searching a long document", bad, 0);
+    }
+    // Operations on many lines are made as few edits (vim.cpp, kManyLines):
+    // the text they leave, and where the cursor ends up, are those of the
+    // same work done a few lines at a time (one edit a line).
+    {
+        u64 seed = 0xB16;
+        auto rnd = [&] {
+            seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+            return seed >> 33;
+        };
+        static const char* const kinds[] = {"", "   ", "\t", "  foo bar x", ")x and y", "\tindented x", "a x\r", "  \r", "word x y", "xx", "  (x)"};
+        std::string doc;
+        for (int i = 0; i < 6000; ++i) {
+            if (i == 3000) doc += std::string(1536 * 1024, 'x') + "  tail";  // a line longer than an edit's most
+            else doc += kinds[rnd() % std::size(kinds)];
+            doc += '\n';
+        }
+        auto run = [&](const std::vector<std::string>& keys, u64* cursor) {
+            Editor ed;
+            ed.insert(doc);
+            ed.move_to(0, false);
+            ed.mark_saved();
+            Vim vim;
+            vim.resume(ed);
+            ed.watch = &vim;
+            for (const std::string& k : keys) vim.keys(ed, k.c_str());
+            *cursor = ed.cursor();
+            return ed.buf.text(0, ed.buf.size());
+        };
+        struct Pair {
+            const char* what;
+            std::vector<std::string> many, few;
+            bool cursor = true;  // (:> done in pieces leaves the cursor on the last piece's first line)
+        };
+        const Pair pairs[] = {
+            {">", {":1,6000><CR>"}, {":1,1500><CR>", ":1501,3000><CR>", ":3001,4500><CR>", ":4501,6000><CR>"}, false},
+            {"<", {":1,6000<<CR>"}, {":1,1500<<CR>", ":1501,3000<<CR>", ":3001,4500<<CR>", ":4501,6000<<CR>"}, false},
+            // (No \\r here: lines it made would move the pieces' line numbers.)
+            {":s with g, & and \\t", {":%s/x/[&]\\ty/g<CR>"}, {":1,1500s/x/[&]\\ty/g<CR>", ":1501,3000s/x/[&]\\ty/g<CR>", ":3001,4500s/x/[&]\\ty/g<CR>", ":4501,6000s/x/[&]\\ty/g<CR>"}},
+            {":s without g", {":%s/x/Q/<CR>"}, {":1,1500s/x/Q/<CR>", ":1501,3000s/x/Q/<CR>", ":3001,4500s/x/Q/<CR>", ":4501,6000s/x/Q/<CR>"}},
+            {"J", {"5000J"}, {"1800J", "1800J", "1402J"}},
+            {"gJ", {"5000gJ"}, {"1800gJ", "1800gJ", "1402gJ"}},
+        };
+        for (const Pair& pr : pairs) {
+            u64 c_many = 0, c_few = 0;
+            const std::string a = run(pr.many, &c_many), b = run(pr.few, &c_few);
+            const bool same_text = a == b;
+            if (!same_text || (pr.cursor && c_many != c_few)) {
+                size_t at = 0;
+                while (at < a.size() && at < b.size() && a[at] == b[at]) ++at;
+                std::fprintf(stderr, "%s on many lines: %s (first difference at byte %zu of %zu/%zu), cursor %llu against %llu\n", pr.what,
+                             same_text ? "same text" : "different text", at, a.size(), b.size(), static_cast<unsigned long long>(c_many),
+                             static_cast<unsigned long long>(c_few));
+                fail("operations on many lines", 0, 0);
+            }
+        }
+    }
+    // Comments: gc with the markers of a language set (as the application sets them for the file in front).
+    {
+        struct Comment {
+            const char* left;
+            const char* right;
+            const char* before;
+            const char* keys;
+            const char* after;
+        };
+        static const Comment comments[] = {
+            {"// ", "", "|int a;\nint b;", "gcc", "|// int a;\nint b;"},
+            {"// ", "", "|// int a;\nint b;", "gcc", "|int a;\nint b;"},
+            {"// ", "", "|//int a;", "gcc", "|int a;"},
+            {"// ", "", "    in|t a;", "gcc", "    //| int a;"},
+            {"// ", "", "|int a;\nint b;\nint c;", "2gcc", "|// int a;\n// int b;\nint c;"},
+            {"// ", "", "|int a;\nint b;\nint c;", "gcj", "|// int a;\n// int b;\nint c;"},
+            {"// ", "", "|int a;\nint b;\nint c;", "gcG", "|// int a;\n// int b;\n// int c;"},
+            {"// ", "", "|if (x) {\n    y();\n\n    z();\n}", "gcG", "|// if (x) {\n//     y();\n//\n//     z();\n// }"},
+            {"// ", "", "    |a();\n        b();", "gcj", "    |// a();\n    //     b();"},
+            {"// ", "", "|// a\nb\n// c", "gcG", "|// // a\n// b\n// // c"},
+            {"// ", "", "|// a\n\n// c", "gcG", "|a\n\nc"},
+            {"// ", "", "|// a\n//\n// c", "gcG", "|a\n\nc"},
+            {"// ", "", "|a\nb\nc", "gcc.j.", "a\n|// b\nc"},
+            {"// ", "", "|a\nb\nc", "Vjgc", "|// a\n// b\nc"},
+            {"// ", "", "a\n|b\nc", "vgc", "a\n|// b\nc"},
+            {"// ", "", "|a\nb\nc", "gcip", "|// a\n// b\n// c"},
+            {"// ", "", "x\n// a\n|// b\n// c\ny", "gcgc", "x\n|a\nb\nc\ny"},
+            {"// ", "", "x\n// a\n|// b\n// c\ny", "dgc", "x\n|y"},
+            {"// ", "", "x\n|a\ny", "dgc", "x\n|a\ny"},
+            {"# ", "", "|x = 1\n  y = 2", "gcj", "|# x = 1\n#   y = 2"},
+            {"<!-- ", " -->", "|<p>hi</p>", "gcc", "|<!-- <p>hi</p> -->"},
+            {"<!-- ", " -->", "|<!-- <p>hi</p> -->", "gcc", "|<p>hi</p>"},
+            {"/* ", " */", "  |a { }", "gccgcc", "  |a { }"},
+            {"", "", "|plain text", "gcc", "|plain text"},
+        };
+        int bad = 0;
+        for (const Comment& c : comments) {
+            std::string text = c.before, want = c.after;
+            const size_t cur = text.find('|'), want_cur = want.find('|');
+            text.erase(cur, 1);
+            want.erase(want_cur, 1);
+            Editor ed;
+            ed.insert(text);
+            ed.move_to(cur, false);
+            Vim vim;
+            vim.comment_left = c.left;
+            vim.comment_right = c.right;
+            vim.resume(ed);
+            ed.watch = &vim;
+            vim.keys(ed, c.keys);
+            const std::string got = ed.buf.text(0, ed.buf.size());
+            if (got != want || ed.cursor() != want_cur) {
+                std::string shown = got;
+                shown.insert(std::min<size_t>(ed.cursor(), shown.size()), "|");
+                std::fprintf(stderr, "vim comments: \"%s\" then %s\n  wanted \"%s\"\n  got    \"%s\"\n", c.before, c.keys, c.after, shown.c_str());
+                ++bad;
+            }
+        }
+        if (bad) fail("comments (gc)", static_cast<u64>(bad), 0);
+    }
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    // Modes, messages, and what is asked of the application.
+    {
+        Editor ed;
+        ed.insert("one two\nthree\n");
+        ed.move_to(0, false);
+        Vim vim;
+        vim.resume(ed);
+        check(vim.mode() == Vim::kNormal && vim.status().empty(), "starts in Normal mode");
+        vim.keys(ed, "i");
+        check(vim.mode() == Vim::kInsert && vim.status() == "-- INSERT --", "i: Insert mode");
+        vim.keys(ed, "<Esc>v");
+        check(vim.mode() == Vim::kVisual && vim.status() == "-- VISUAL --", "v: Visual mode");
+        u64 lo = 9, hi = 9;
+        vim.keys(ed, "e");
+        vim.visual_range(ed, &lo, &hi);
+        check(lo == 0 && hi == 3, "the selection includes the character under the cursor");
+        vim.keys(ed, "V");
+        vim.visual_range(ed, &lo, &hi);
+        check(vim.mode() == Vim::kVisualLine && lo == 0 && hi == 8, "V: whole lines");
+        {
+            u64 l0 = 9, l1 = 9;
+            u32 c0 = 9, c1 = 9;
+            check(!vim.block(ed, &l0, &l1, &c0, &c1), "no rectangle outside Visual Block mode");
+            vim.keys(ed, "<Esc>gg0l<C-v>jl");
+            check(vim.mode() == Vim::kVisualBlock && vim.visual() && vim.status() == "-- VISUAL BLOCK --", "<C-v>: Visual Block mode");
+            check(vim.block(ed, &l0, &l1, &c0, &c1) && l0 == 0 && l1 == 1 && c0 == 1 && c1 == 3, "the rectangle between where it began and the cursor");
+            vim.keys(ed, "$");
+            check(vim.block(ed, &l0, &l1, &c0, &c1) && c0 == 1 && c1 > 1000, "after $ it reaches the end of every line");
+            vim.keys(ed, "h");
+            check(vim.block(ed, &l0, &l1, &c0, &c1) && c0 == 1 && c1 == 4, "and no longer after another move");
+        }
+        vim.keys(ed, "<Esc>gg0e2d");
+        check(vim.pending() && vim.showcmd() == "2d", "an operator waiting for its motion");
+        vim.keys(ed, "<Esc>:w");
+        check(vim.mode() == Vim::kCommand && vim.status() == ":w" && vim.status_cursor() == 2, "the command line");
+        vim.keys(ed, "<CR>");
+        std::vector<VimRequest> asked = vim.take();
+        check(asked.size() == 1 && asked[0].kind == VimRequest::kSave && !asked[0].then_close, ":w asks for a save");
+        vim.keys(ed, ":q!<CR>ZZ:wqa<CR>:e other.txt<CR><C-w>v<C-w>l:noh<CR>gt");
+        asked = vim.take();
+        check(asked.size() == 8 && asked[0].kind == VimRequest::kClose && asked[0].force && asked[1].kind == VimRequest::kSave && asked[1].then_close &&
+                  asked[2].kind == VimRequest::kSaveAll && asked[2].then_close && asked[3].kind == VimRequest::kOpen && asked[3].arg == "other.txt" &&
+                  asked[4].kind == VimRequest::kSplit && asked[4].n == 0 && asked[5].kind == VimRequest::kFocus && asked[5].n == 1 &&
+                  asked[6].kind == VimRequest::kNoHighlight && asked[7].kind == VimRequest::kTab && asked[7].n == 1,
+              "closing, saving, opening, splits and tabs are asked of the application");
+        vim.keys(ed, "]b2[b]B[B]d3[d]D<C-t>");
+        asked = vim.take();
+        check(asked.size() == 8 && asked[0].kind == VimRequest::kTab && asked[0].n == 1 && asked[1].kind == VimRequest::kTab && asked[1].n == -2 &&
+                  asked[2].kind == VimRequest::kTab && asked[2].arg == "last" && asked[3].arg == "first" && asked[4].kind == VimRequest::kDiagnostic && asked[4].n == 1 &&
+                  asked[5].kind == VimRequest::kDiagnostic && asked[5].n == -3 && asked[6].kind == VimRequest::kDiagnostic && asked[6].arg == "last" &&
+                  asked[7].kind == VimRequest::kBack,
+              "Neovim's bracket keys for tabs and diagnostics, and <C-t>, are asked of the application");
+        vim.keys(ed, ":nonsense<CR>");
+        check(vim.status() == "E492: Not an editor command: nonsense", "an unknown command says so");
+        vim.keys(ed, "/two<CR>");
+        check(vim.highlight().text == "two" && ed.cursor() == 4, "a search is remembered for highlighting");
+        vim.keys(ed, "qq");
+        check(vim.status() == "recording @q", "recording a macro shows");
+        vim.keys(ed, "q");
+        vim.read_only = true;
+        vim.keys(ed, "ddx");
+        check(ed.buf.text(0, ed.buf.size()) == "one two\nthree\n" && vim.status().starts_with("E21"), "a document that is not to be changed is not");
+        std::string clip;
+        vim.read_only = false;
+        vim.clipboard_set = [&](const std::string& t) { clip = t; };
+        vim.clipboard_get = [&] { return std::string("PASTED"); };
+        vim.keys(ed, "gg0\"+yiw");
+        check(clip == "one", "the + register is the clipboard");
+        vim.keys(ed, "\"+P");
+        check(ed.buf.text(0, 9) == "PASTEDone", "and pastes from it");
+        // A selection made with the mouse.
+        ed.move_to(0, false);
+        ed.move_to(6, true);
+        vim.adopt_selection(ed);
+        vim.visual_range(ed, &lo, &hi);
+        check(vim.mode() == Vim::kVisual && lo == 0 && hi == 6 && ed.cursor() == 5 && !ed.has_selection(), "a dragged selection becomes Visual mode");
+        vim.keys(ed, "d");
+        check(ed.buf.text(0, 3) == "one", "and can be operated on");
+    }
+    // Searching a text bigger than one window of the scan, both ways and around the ends.
+    {
+        Editor ed;
+        std::string big;
+        for (int i = 0; i < 9000; ++i) big += "filler line of text\n";
+        ed.insert("needle at the top\n" + big + "a needle near the end\n" + big.substr(0, 400));
+        const Vim::Pattern p = Vim::parse_pattern("needle");
+        const u64 far = 18 + big.size() + 2;
+        bool wrapped = false;
+        check(Vim::find(ed.buf, p, 0, true, true, &wrapped) == far && !wrapped, "forward across many windows");
+        check(Vim::find(ed.buf, p, far, true, true, &wrapped) == 0 && wrapped, "forward wraps to the top");
+        check(Vim::find(ed.buf, p, ed.buf.size(), false, true, &wrapped) == far && !wrapped, "backward from the end");
+        check(Vim::find(ed.buf, p, far, false, true, &wrapped) == 0 && !wrapped, "backward across many windows");
+        check(Vim::find(ed.buf, p, 0, false, true, &wrapped) == far && wrapped, "backward wraps to the bottom");
+        check(Vim::find(ed.buf, Vim::parse_pattern("\\<need\\>"), 0, true, true) == ~0ull, "a whole word is not part of a longer one");
+        check(Vim::find(ed.buf, Vim::parse_pattern("NEEDLE"), 0, true, true) == ~0ull && Vim::find(ed.buf, Vim::parse_pattern("NEEDLE\\c"), 0, true, true) == far,
+              "case matters unless told otherwise");
+    }
+}
+
+// Git: reading what git prints, comparing lines, and the real thing against
+// a repository made for the purpose.
+std::vector<Git::Result> git_wait(Git& git, u32 kind, int ms = 15000) {
+    std::vector<Git::Result> all;
+    const auto until = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+    for (;;) {
+        for (Git::Result& r : git.poll()) all.push_back(std::move(r));
+        for (const Git::Result& r : all)
+            if (r.kind == kind) return all;
+        if (std::chrono::steady_clock::now() >= until) return all;
+        std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    }
+}
+
+void git_test(int seeds) {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    // Status, as `git status --porcelain=v2 --branch -z` prints it.
+    {
+        using namespace std::string_literals;
+        const std::string z = "# branch.oid 0123456789abcdef0123456789abcdef01234567\0# branch.head main\0# branch.upstream origin/main\0"
+                              "# branch.ab +2 -1\0"
+                              "1 .M N... 100644 100644 100644 aaaa bbbb src/a file.cpp\0"
+                              "1 A. N... 000000 100644 100644 aaaa bbbb new.txt\0"
+                              "2 R. N... 100644 100644 100644 aaaa bbbb R100 after.txt\0before.txt\0"
+                              "u UU N... 100644 100644 100644 100644 aaaa bbbb cccc both.txt\0"
+                              "? notes.txt\0"s;
+        const GitStatus st = parse_status(z);
+        check(st.repo && st.branch == "main" && st.upstream == "origin/main" && st.head == "01234567" && st.ahead == 2 && st.behind == 1,
+              "status: the branch lines");
+        check(st.entries.size() == 5, "status: five entries");
+        check(st.entries[0].path == "src/a file.cpp" && st.entries[0].unstaged() && !st.entries[0].staged(), "status: a modified file, with a space in its name");
+        check(st.entries[1].path == "new.txt" && st.entries[1].staged() && !st.entries[1].unstaged(), "status: an added file");
+        check(st.entries[2].path == "after.txt" && st.entries[2].from == "before.txt" && st.entries[2].index == 'R', "status: a rename");
+        check(st.entries[3].conflict && st.entries[3].path == "both.txt" && !st.entries[3].staged(), "status: a conflict");
+        check(st.entries[4].path == "notes.txt" && st.entries[4].unstaged() && st.entries[4].index == '?', "status: an untracked file");
+        const GitStatus fresh = parse_status("# branch.oid (initial)\0# branch.head master\0"s);
+        check(fresh.head.empty() && fresh.branch == "master", "status: a repository with no commit yet");
+        const GitStatus loose = parse_status("# branch.oid 0123456789abcdef0123456789abcdef01234567\0# branch.head (detached)\0"s);
+        check(loose.branch.empty() && loose.head == "01234567", "status: no branch checked out");
+    }
+    {
+        const std::vector<GitBranch> b = parse_branches("*\trefs/heads/main\n \trefs/heads/feature/x\n \trefs/remotes/origin/HEAD\n \trefs/remotes/origin/main\n");
+        check(b.size() == 3 && b[0].name == "main" && b[0].current && !b[0].remote && b[1].name == "feature/x" && !b[1].current &&
+                  b[2].name == "origin/main" && b[2].remote,
+              "branches");
+        const std::vector<GitCommit> log = parse_log("abc1234\x1f" "Ada\x1f" "2 days ago\x1f" "Fix the thing\ndef5678\x1f" "Bo\x1f" "3 weeks ago\x1f" "Start\n");
+        check(log.size() == 2 && log[0].hash == "abc1234" && log[0].author == "Ada" && log[0].when == "2 days ago" && log[0].subject == "Fix the thing" &&
+                  log[1].subject == "Start",
+              "history");
+        GitBlame blame;
+        const std::string a(40, 'a'), zero(40, '0');
+        const std::string porcelain = a + " 1 1 2\nauthor Ada\nauthor-time 1700000000\nsummary First\nfilename f\n\tline one\n" + a + " 2 2\n\tline two\n" +
+                                      zero + " 3 3 1\nauthor Not Committed Yet\nauthor-time 1700000500\nsummary x\n\tline three\n";
+        check(parse_blame(porcelain, &blame) && blame.lines.size() == 3 && blame.commits.size() == 2, "blame: three lines of two commits");
+        check(blame.lines[0] == 0 && blame.lines[1] == 0 && blame.lines[2] == 1 && blame.commits[0].author == "Ada" && blame.commits[0].time == 1700000000 &&
+                  blame.commits[0].summary == "First" && blame.commits[1].time == 0,
+              "blame: who and when, and a line not committed yet");
+        check(relative_age(1000, 1030) == "just now" && relative_age(0, 3 * 86400) == "3 days ago" && relative_age(0, 3600) == "an hour ago" &&
+                  relative_age(0, 800 * 86400) == "2 years ago",
+              "ages");
+    }
+    // Lines: the same text in one piece and cut anywhere gives the same numbers.
+    {
+        const std::string text = "one\ntwo\n\nthree and more\nlast without newline";
+        const std::vector<u64> whole = line_hashes(std::string_view(text));
+        check(whole.size() == 5, "line hashes: five lines");
+        for (size_t cut = 0; cut <= text.size(); ++cut) {
+            const Piece parts[] = {{text.data(), static_cast<u32>(cut), 0}, {text.data() + cut, static_cast<u32>(text.size() - cut), 0}};
+            if (line_hashes(std::span<const Piece>(parts)) != whole) fail("line hashes across a piece border", cut, 0);
+        }
+        check(line_hashes(std::string_view("a\nb\n")).size() == 2 && line_hashes(std::string_view("")).empty(), "line hashes: a final newline ends the last line");
+    }
+    // The comparison: what is not in a run of changed lines must be, in
+    // order, lines of the old text; and the number of lines changed must be
+    // the fewest possible (checked against the longest common subsequence).
+    for (int seed = 0; seed < seeds; ++seed) {
+        rng.seed(static_cast<u64>(seed) * 104729 + 11);
+        std::vector<u64> base(rnd(60));
+        for (u64& x : base) x = rnd(12);
+        std::vector<u64> now = base;
+        for (int k = static_cast<int>(rnd(6)); k > 0; --k) {
+            const size_t at = rnd(now.size() + 1);
+            switch (rnd(3)) {
+                case 0: now.insert(now.begin() + static_cast<std::ptrdiff_t>(at), rnd(4) + 1, rnd(12)); break;
+                case 1: now.erase(now.begin() + static_cast<std::ptrdiff_t>(at), now.begin() + static_cast<std::ptrdiff_t>(std::min<size_t>(now.size(), at + rnd(4)))); break;
+                default:
+                    if (at < now.size()) now[at] = 100 + rnd(5);
+            }
+        }
+        const std::vector<GitHunk> hunks = diff_lines(base, now);
+        std::vector<u64> kept;
+        size_t line = 0, changed = 0;
+        for (const GitHunk& h : hunks) {
+            if (h.line < line || h.line + h.count > now.size() || (h.kind == GitHunk::kDeleted) != (h.count == 0)) fail("diff: runs in order and in range", static_cast<u64>(seed), h.line);
+            for (; line < h.line; ++line) kept.push_back(now[line]);
+            line += h.count;
+            changed += h.count;
+        }
+        for (; line < now.size(); ++line) kept.push_back(now[line]);
+        size_t at = 0;
+        for (const u64 x : kept) {
+            while (at < base.size() && base[at] != x) ++at;
+            if (at == base.size()) fail("diff: unchanged lines are the old text's, in order", static_cast<u64>(seed), 0);
+            ++at;
+        }
+        std::vector<std::vector<u32>> lcs(base.size() + 1, std::vector<u32>(now.size() + 1, 0));
+        for (size_t i = 1; i <= base.size(); ++i)
+            for (size_t j = 1; j <= now.size(); ++j)
+                lcs[i][j] = base[i - 1] == now[j - 1] ? lcs[i - 1][j - 1] + 1 : std::max(lcs[i - 1][j], lcs[i][j - 1]);
+        if (kept.size() != lcs[base.size()][now.size()] || changed != now.size() - kept.size()) fail("diff: the fewest changes", static_cast<u64>(seed), kept.size());
+    }
+    {
+        const std::vector<u64> a = {1, 2, 3, 4, 5}, b = {1, 2, 9, 4, 5}, c = {1, 2, 4, 5}, d = {1, 2, 3, 7, 8, 4, 5};
+        auto one = [](const std::vector<GitHunk>& h, u32 line, u32 count, u8 kind) {
+            return h.size() == 1 && h[0].line == line && h[0].count == count && h[0].kind == kind;
+        };
+        check(diff_lines(a, a).empty(), "diff: nothing changed");
+        check(one(diff_lines(a, b), 2, 1, GitHunk::kModified), "diff: one line modified");
+        check(one(diff_lines(a, c), 2, 0, GitHunk::kDeleted), "diff: one line deleted, marked where it was");
+        check(one(diff_lines(a, d), 3, 2, GitHunk::kAdded), "diff: two lines added");
+        check(one(diff_lines({}, a), 0, 5, GitHunk::kAdded) && one(diff_lines(a, {}), 0, 0, GitHunk::kDeleted), "diff: from nothing, to nothing");
+        std::vector<u64> big(5000), other(5000);
+        for (size_t i = 0; i < big.size(); ++i) big[i] = i, other[i] = 100000 + i;
+        check(one(diff_lines(big, other), 0, 5000, GitHunk::kModified), "diff: texts with nothing in common are one modified run");
+    }
+
+#if !defined(_WIN32)
+    // The real thing, if there is a git to run.
+    if (Lsp::find_program("git").empty()) {
+        std::printf("git test skipped: no git\n");
+        return;
+    }
+    const char* tmp = std::getenv("TMPDIR");
+    const std::string dir = std::string(tmp && *tmp ? tmp : "/tmp") + "/blit_git_test";
+    auto sh = [&](const std::string& cmd) { return std::system(("cd '" + dir + "' && " + cmd + " >/dev/null 2>&1").c_str()) == 0; };
+    std::system(("rm -rf '" + dir + "' && mkdir -p '" + dir + "'").c_str());
+    auto write = [&](const std::string& name, const std::string& text) {
+        if (FILE* f = std::fopen((dir + "/" + name).c_str(), "wb")) {
+            std::fwrite(text.data(), 1, text.size(), f);
+            std::fclose(f);
+        }
+    };
+    write("a.txt", "one\ntwo\nthree\nfour\n");
+    check(sh("git init -q -b main . && git config user.name Tester && git config user.email tester@example.invalid && git config commit.gpgsign false && "
+             "git add a.txt && git commit -q -m First"),
+          "a repository for the git test");
+    {
+        Git git;
+        git.open(dir + "/");
+        std::vector<Git::Result> got = git_wait(git, Git::kStatus);
+        check(!got.empty() && got.back().ok && got.back().status.repo && got.back().status.branch == "main" && got.back().status.entries.empty() &&
+                  got.back().log.size() == 1 && got.back().log[0].subject == "First" && got.back().branches.size() == 1 && got.back().branches[0].current,
+              "git: a clean repository with one commit");
+
+        // The text as an editor would hold it, changed: line two modified, one added at the end.
+        Editor ed;
+        std::string err;
+        check(ed.open((dir + "/a.txt").c_str(), &err), "git test file opens");
+        ed.move_to(ed.buf.line_start(1), false);
+        ed.insert("2 ");
+        ed.move_to(ed.buf.size(), false);
+        ed.insert("five\n");
+        std::vector<Piece> pieces;
+        ed.buf.snapshot(&pieces);
+        git.hunks(7, 42, dir + "/a.txt", pieces);
+        got = git_wait(git, Git::kHunks);
+        check(!got.empty() && got.back().ok && got.back().tracked && got.back().doc == 7 && got.back().revision == 42 && got.back().hunks.size() == 2 &&
+                  got.back().hunks[0].line == 1 && got.back().hunks[0].kind == GitHunk::kModified && got.back().hunks[1].line == 4 &&
+                  got.back().hunks[1].kind == GitHunk::kAdded,
+              "git: the lines changed since the commit");
+        git.blame(7, 42, dir + "/a.txt", pieces);
+        got = git_wait(git, Git::kBlame);
+        check(!got.empty() && got.back().ok && got.back().blame && got.back().blame->lines.size() == 5, "git: blame of the text as it is");
+        if (!got.empty() && got.back().blame) {
+            const GitBlame& bl = *got.back().blame;
+            check(bl.commits[bl.lines[0]].author == "Tester" && bl.commits[bl.lines[0]].summary == "First" && bl.commits[bl.lines[1]].time == 0 &&
+                      bl.commits[bl.lines[4]].time == 0 && bl.commits[bl.lines[2]].time > 0,
+                  "git: committed lines have an author, changed ones are not committed yet");
+        }
+        // Save, stage, commit; a new file stays untracked.
+        check(ed.save(&err), "git test file saves");
+        write("b.txt", "new\n");
+        git.refresh();
+        got = git_wait(git, Git::kStatus);
+        check(!got.empty() && got.back().status.entries.size() == 2, "git: one modified file and one untracked");
+        git.run({"add", "--", "a.txt"}, "Stage");
+        got = git_wait(git, Git::kStatus);
+        bool staged = false;
+        for (const GitEntry& e : got.empty() ? std::vector<GitEntry>{} : got.back().status.entries) staged |= e.path == "a.txt" && e.staged() && !e.unstaged();
+        check(staged, "git: staged");
+        git.run({"commit", "-q", "-F", "-"}, "Commit", "Second\n\nWith a body.\n");
+        got = git_wait(git, Git::kStatus);
+        check(got.size() >= 2 && got[got.size() - 2].kind == Git::kAction && got[got.size() - 2].ok && got.back().log.size() == 2 &&
+                  got.back().log[0].subject == "Second" && got.back().status.entries.size() == 1,
+              "git: committed, with the message from standard input");
+        git.hunks(7, 43, dir + "/a.txt", pieces);
+        got = git_wait(git, Git::kHunks);
+        check(!got.empty() && got.back().tracked && got.back().hunks.empty(), "git: nothing differs from the new commit");
+        git.hunks(8, 1, dir + "/b.txt", {});
+        got = git_wait(git, Git::kHunks);
+        check(!got.empty() && got.back().ok && !got.back().tracked, "git: a file with no committed version");
+        // A branch, a commit on it, and a merge back.
+        git.run({"switch", "-q", "-c", "side"}, "New branch");
+        got = git_wait(git, Git::kStatus);
+        check(!got.empty() && got.back().status.branch == "side" && got.back().branches.size() == 2, "git: a new branch, checked out");
+        write("b.txt", "new\nmore\n");
+        git.run({"add", "-A"}, "Stage all");
+        git_wait(git, Git::kStatus);
+        git.run({"commit", "-q", "-m", "On the side"}, "Commit");
+        git_wait(git, Git::kStatus);
+        git.run({"switch", "-q", "main"}, "Switch");
+        git_wait(git, Git::kStatus);
+        git.run({"merge", "--no-edit", "side"}, "Merge");
+        got = git_wait(git, Git::kStatus);
+        check(!got.empty() && got.back().status.branch == "main" && !got.back().status.merging && got.back().log.size() == 3 &&
+                  got.back().log[0].subject == "On the side",
+              "git: merged");
+        git.run({"no-such-command"}, "Nonsense");
+        got = git_wait(git, Git::kAction);
+        check(!got.empty() && !got[0].ok && !got[0].text.empty(), "git: a command that fails says why");
+        git.text(9, {"show", "--stat", "HEAD"}, "show");
+        got = git_wait(git, Git::kText);
+        check(!got.empty() && got.back().ok && got.back().doc == 9 && got.back().text.find("On the side") != std::string::npos, "git: a command's output");
+    }
+    {
+        Git git;
+        git.open("/");
+        const std::vector<Git::Result> got = git_wait(git, Git::kStatus);
+        check(!got.empty() && got.back().ok && !got.back().status.repo, "git: a folder that is in no repository");
+    }
+    std::system(("rm -rf '" + dir + "'").c_str());
+#endif
+}
+
+void lsp_test() {
+    u64 seed = 1;
+    for (const bool utf8 : {false, true})
+        for (const bool full : {false, true}) lsp_case(utf8, full, seed++);
+    lsp_tabs_test();
+
+    // A server that dies is reported and let go of.
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    const char* tmp = std::getenv("TMPDIR");
+    const std::string path = std::string(tmp && *tmp ? tmp : "/tmp") + "/blit_lsp_test_dies.cpp";
+    if (FILE* f = std::fopen(path.c_str(), "wb")) {
+        std::fputs("int x;\n", f);
+        std::fclose(f);
+    }
+    Editor ed;
+    std::string err;
+    check(ed.open(path.c_str(), &err), "second lsp test file opens");
+    LspServer fake;
+    fake.name = "fake";
+    fake.command = {BLIT_FAKE_LSP, "--die-after", "3"};
+    fake.languages = {"cpp"};
+    Lsp lsp;
+    check(lsp.attach(ed.buf, path, "cpp", {fake}), "doomed server starts");
+    ed.listen(&lsp);
+    check(lsp_wait(lsp, Lsp::kState) & Lsp::kState, "doomed server becomes ready");
+    ed.insert("a");
+    ed.insert("b");
+    u32 got = 0;
+    for (int i = 0; i < 400 && lsp.attached(); ++i) {
+        got |= lsp.poll();
+        lsp.wait(10);
+    }
+    check(!lsp.attached() && (got & Lsp::kState) && lsp.take_message() == "language server: fake stopped", "a dead server is noticed");
+    ed.insert("still typing");  // must be harmless
+    ed.unlisten(&lsp);
+
+    LspServer missing;
+    missing.name = "missing";
+    missing.command = {"blit-no-such-language-server"};
+    missing.languages = {"cpp"};
+    check(!lsp.attach(ed.buf, path, "cpp", {missing}), "a server that is not installed is skipped");
+    check(Lsp::pick(builtin_lsp_servers(), "no-such-language", nullptr) == nullptr, "no server for an unknown language");
+    std::remove(path.c_str());
+}
+#else
+void lsp_test() {}
+#endif
+
+}  // namespace
+
+int main(int argc, char** argv) {
+    int seeds = argc > 1 ? std::atoi(argv[1]) : 200;
+    int steps = argc > 2 ? std::atoi(argv[2]) : 600;
+    for (int s = 1; s <= seeds; ++s) run(static_cast<u64>(s), steps);
+    for (int s = 1; s <= seeds; ++s) run_editor(static_cast<u64>(s), steps);
+    truncated_file_test();
+    config_test();
+    view_test(seeds);
+    vim_test();
+    find_test();
+    script_test();
+    remote_test();
+    git_test(seeds);
+    tree_test();
+    json_test();
+    lsp_test();
+    styles_test();
+    match_test();
+    highlights_test();
+    syntax_test();
+    std::printf("fuzz ok: %d seeds x %d steps\n", seeds, steps);
+    return 0;
+}

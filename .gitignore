@@ -1,0 +1,7 @@
+build/
+bench/data/
+compile_commands.json
+*.blit-tmp
+.DS_Store
+build-bench/
+build-*/

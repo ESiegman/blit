@@ -1,0 +1,618 @@
+// Splits: the window divided into panes, side by side or one above the
+// other, each with its own tabs. How they are arranged is a small tree
+// (SplitNode); this file places the panes, moves the dividers, and carries
+// tabs, whole groups of tabs and files from the tree from one pane to
+// another, or to a new pane at the side of one.
+#include <algorithm>
+#include <cmath>
+#include <cstring>
+
+#include "app.hpp"
+#include "tabbar.hpp"
+#include "textbox.hpp"
+
+namespace blit {
+
+namespace {
+
+constexpr float kEdgeZone = 0.28f;  // this share of a pane, in from each side, is "split here"
+constexpr u32 kBlankCell = 0;
+
+SplitNode* find_leaf(SplitNode* n, const Pane* p, SplitNode** parent = nullptr) {
+    if (!n) return nullptr;
+    if (n->pane) return n->pane == p ? n : nullptr;
+    for (SplitNode* half : {n->a.get(), n->b.get()}) {
+        if (half->pane == p) {
+            if (parent) *parent = n;
+            return half;
+        }
+        if (SplitNode* hit = find_leaf(half, p, parent)) return hit;
+    }
+    return nullptr;
+}
+
+Pane* first_pane(SplitNode* n) {
+    while (n && !n->pane) n = n->a.get();
+    return n ? n->pane : nullptr;
+}
+
+// Puts a pane beside the one a leaf shows: the leaf becomes two halves.
+void attach(SplitNode* leaf, Pane* fresh, bool side_by_side, bool first) {
+    auto old_half = std::make_unique<SplitNode>();
+    old_half->pane = leaf->pane;
+    auto new_half = std::make_unique<SplitNode>();
+    new_half->pane = fresh;
+    leaf->pane = nullptr;
+    leaf->side_by_side = side_by_side;
+    leaf->share = 0.5f;
+    leaf->a = std::move(first ? new_half : old_half);
+    leaf->b = std::move(first ? old_half : new_half);
+}
+
+// Takes a pane out of the arrangement: what was its other half has the
+// room of both. (Not for the last pane.)
+void detach(SplitNode* root, const Pane* p) {
+    SplitNode* parent = nullptr;
+    SplitNode* leaf = find_leaf(root, p, &parent);
+    if (!leaf || !parent) return;
+    std::unique_ptr<SplitNode> rest = std::move(parent->a.get() == leaf ? parent->b : parent->a);
+    std::unique_ptr<SplitNode> a = std::move(rest->a), b = std::move(rest->b);
+    parent->pane = rest->pane;
+    parent->side_by_side = rest->side_by_side;
+    parent->share = rest->share;
+    parent->a = std::move(a);  // (lets go of the leaf)
+    parent->b = std::move(b);
+}
+
+// The node whose divider is under a point, if any.
+SplitNode* divider_at(SplitNode* n, int px, int py, int grab) {
+    if (!n || n->pane) return nullptr;
+    const bool inside = px >= n->x0 && px < n->x1 && py >= n->y0 && py < n->y1;
+    if (inside && (n->side_by_side ? std::abs(px - n->b->x0) <= grab : std::abs(py - n->b->y0) <= grab)) return n;
+    if (SplitNode* hit = divider_at(n->a.get(), px, py, grab)) return hit;
+    return divider_at(n->b.get(), px, py, grab);
+}
+
+std::string_view file_name(std::string_view path) {
+    const size_t slash = path.find_last_of("/\\");
+    return slash == std::string_view::npos ? path : path.substr(slash + 1);
+}
+
+}  // namespace
+
+struct App::Drag {
+    DragKind kind = kDragNone;
+    bool moving = false;  // the mouse has gone far enough for this to be a drag and not a click
+    bool away = false;    // it has left where it was picked up (its own tab bar, the side panel)
+    float press_x = 0, press_y = 0, x = 0, y = 0;  // window coordinates
+    u64 doc = 0;               // a tab: the document
+    u64 pane = 0;              // a tab or a group: the pane it came from
+    std::string path;          // a file from the tree
+    SplitNode* node = nullptr; // a divider: whose
+    // Where it would land if let go now: in a pane (among its tabs), or
+    // as a new split along one edge of it. 0: nowhere.
+    u64 over = 0;
+    Edge edge = kEdgeNone;
+    bool on_bar = false;
+    size_t bar_index = 0;
+    // What is carried along under the mouse.
+    TextBox ghost;
+    std::string label;
+    u32 ghost_font = ~0u;
+    // The mouse pointer over a divider.
+    SDL_Cursor* across = nullptr;
+    SDL_Cursor* updown = nullptr;
+    int cursor = 0;  // 0 the usual one, 1 across, 2 up and down
+};
+
+// ---------------------------------------------------------------- arrangement
+
+void App::splits_create() { drag_ = std::make_shared<Drag>(); }
+
+void App::for_each_pane(std::function_ref<void()> fn) {
+    Pane* const focused = pane_;
+    for (const std::unique_ptr<Pane>& p : panes_) {
+        if (!p->doc) continue;
+        pane_ = p.get();
+        fn();
+    }
+    pane_ = focused;
+}
+
+// Gives every pane its rectangle: the window right of the side panel,
+// divided the way the tree says.
+void App::place_panes(int w, int h) {
+    if (!split_ || !font_) return;
+    place_node(*split_, std::min(panel_px(), w), 0, w, std::max(1, h - vim_px() - status_px()));  // (the bottom lines are the command line's and the status bar's)
+    for_each_pane([this] {  // (never past the pane's own edges, however little room it has)
+        pane_->text_y = std::min(pane_->y0 + tabs_px(), pane_->y1);
+        pane_->text_x = std::min(pane_->x0 + gutter_px(), pane_->x1);
+    });
+}
+
+void App::place_node(SplitNode& n, int x0, int y0, int x1, int y1) {
+    n.x0 = x0;
+    n.y0 = y0;
+    n.x1 = x1;
+    n.y1 = y1;
+    if (n.pane) {
+        n.pane->x0 = x0;
+        n.pane->y0 = y0;
+        n.pane->x1 = x1;
+        n.pane->y1 = y1;
+        return;
+    }
+    // Neither half gets less than a few cells, while there is room for that.
+    if (n.side_by_side) {
+        const int size = x1 - x0, least = std::min(12 * font_->cell_w(), size / 2);
+        const int mid = x0 + std::clamp(static_cast<int>(std::lround(size * n.share)), least, size - least);
+        place_node(*n.a, x0, y0, mid, y1);
+        place_node(*n.b, mid, y0, x1, y1);
+    } else {
+        const int size = y1 - y0, least = std::min(tabs_px() + 3 * font_->cell_h(), size / 2);
+        const int mid = y0 + std::clamp(static_cast<int>(std::lround(size * n.share)), least, size - least);
+        place_node(*n.a, x0, y0, x1, mid);
+        place_node(*n.b, x0, mid, x1, y1);
+    }
+}
+
+Pane* App::pane_at(int px, int py) const {
+    for (const std::unique_ptr<Pane>& p : panes_)
+        if (px >= p->x0 && px < p->x1 && py >= p->y0 && py < p->y1) return p.get();
+    return nullptr;
+}
+
+// Gives a pane the keyboard. The language server goes with it, to the file
+// in front there.
+void App::focus_pane(Pane* p) {
+    if (!p || p == pane_) return;
+    stop_lsp(true);
+    pane_ = p;
+    dragging_ = dragging_thumb_ = false;
+    lsp_pending_ = true;
+    grammars_pending_ = true;
+    dirty_ = true;
+    if (pane_->doc) vim_attach();
+}
+
+void App::forget_doc(const Doc* d) {
+    if (lsp_doc_ == d) stop_lsp();
+    if (script_) script_closed(*d);  // (BufDelete, at the next tick)
+}
+
+Pane* App::split_pane(Pane* target, Edge edge) {
+    if (!target || edge == kEdgeNone || panes_.size() >= kMaxViews) return nullptr;
+    SplitNode* leaf = find_leaf(split_.get(), target);
+    if (!leaf) return nullptr;
+    if (drag_->kind == kDragDivider) drag_->kind = kDragNone;  // the tree is about to change under it
+    Pane* fresh = add_pane();
+    attach(leaf, fresh, edge == kEdgeLeft || edge == kEdgeRight, edge == kEdgeLeft || edge == kEdgeTop);
+    place_panes(px_w_, px_h_);
+    dirty_ = true;
+    return fresh;
+}
+
+void App::remove_pane(Pane* p) {
+    if (!p || panes_.size() < 2) return;
+    if (drag_->kind == kDragDivider) drag_->kind = kDragNone;
+    for (const std::unique_ptr<Doc>& d : p->docs) forget_doc(d.get());
+    // Its neighbour takes the room, and the keyboard if this pane had it.
+    SplitNode* parent = nullptr;
+    SplitNode* leaf = find_leaf(split_.get(), p, &parent);
+    Pane* heir = leaf && parent ? first_pane(parent->a.get() == leaf ? parent->b.get() : parent->a.get()) : nullptr;
+    detach(split_.get(), p);
+    const bool focused = p == pane_;
+    std::erase_if(panes_, [p](const std::unique_ptr<Pane>& x) { return x.get() == p; });
+    if (!heir || std::none_of(panes_.begin(), panes_.end(), [heir](const auto& x) { return x.get() == heir; })) heir = panes_.front().get();
+    if (focused) {
+        pane_ = heir;
+        dragging_ = dragging_thumb_ = false;
+        lsp_pending_ = true;
+        grammars_pending_ = true;
+    }
+    place_panes(px_w_, px_h_);
+    pick_theme();
+    dirty_ = true;
+}
+
+// Moves a tab from one pane to another (or to another place in its own),
+// where it comes to the front. A pane left with no tabs goes.
+void App::move_doc(Pane* from, size_t index, Pane* to, size_t at) {
+    if (!from || !to || index >= from->docs.size()) return;
+    stop_lsp(true);  // whichever file it was following may be about to move or step back
+    lsp_pending_ = true;
+    std::unique_ptr<Doc> d = std::move(from->docs[index]);
+    const bool was_front = from->doc == d.get();
+    if (was_front) {  // its view goes with it
+        d->scroll_x = from->target_x;
+        d->scroll_y = from->target_y;
+    }
+    from->docs.erase(from->docs.begin() + static_cast<std::ptrdiff_t>(index));
+    if (from == to && at > index) --at;
+    auto bring_front = [](Pane* p, size_t i) {
+        p->doc = p->docs[i].get();
+        p->tab = i;
+        p->scroll_x = p->target_x = p->doc->scroll_x;
+        p->scroll_y = p->target_y = p->doc->scroll_y;
+        p->cache_rev = ~0ull;
+        p->bar->reveal = true;
+    };
+    if (from->docs.empty()) {
+        from->doc = nullptr;
+    } else if (was_front) {
+        bring_front(from, std::min(index, from->docs.size() - 1));
+    } else if (index < from->tab) {
+        --from->tab;
+    }
+    if (to->doc) {
+        to->doc->scroll_x = to->target_x;
+        to->doc->scroll_y = to->target_y;
+    }
+    at = std::min(at, to->docs.size());
+    to->docs.insert(to->docs.begin() + static_cast<std::ptrdiff_t>(at), std::move(d));
+    bring_front(to, at);
+    if (from->docs.empty() && from != to) remove_pane(from);
+    pick_theme();
+    dirty_ = true;
+}
+
+// The pane next to the focused one on that side gets the keyboard.
+void App::focus_towards(Edge edge) {
+    const Pane& p = *pane_;
+    const int cx = (p.x0 + p.x1) / 2, cy = (p.y0 + p.y1) / 2;
+    Pane* next = edge == kEdgeLeft    ? pane_at(p.x0 - 4, cy)
+                 : edge == kEdgeRight ? pane_at(p.x1 + 4, cy)
+                 : edge == kEdgeTop   ? pane_at(cx, p.y0 - 4)
+                                      : pane_at(cx, p.y1 + 4);
+    if (next) {
+        focus_pane(next);
+        panel_focus(false);
+    }
+}
+
+// ---------------------------------------------------------------- input
+
+bool App::splits_key(const SDL_KeyboardEvent& k) {
+    const bool cmd = k.mod & kPrimaryMod, shift = k.mod & SDL_KMOD_SHIFT, alt = k.mod & SDL_KMOD_ALT;
+    if (k.key == SDLK_ESCAPE && drag_->kind != kDragNone && drag_->moving) {  // changed my mind: put it back
+        drag_->kind = kDragNone;
+        drag_->moving = drag_->away = false;
+        drag_->over = 0;
+        for (const std::unique_ptr<Pane>& p : panes_) p->bar->drop = -1, p->bar->pressed = p->bar->dragging = false;
+        dirty_ = true;
+        return true;
+    }
+    if (cmd && k.key == SDLK_BACKSLASH) {  // a new split to the right (with Shift: below), holding a new file
+        if (Pane* fresh = split_pane(pane_, shift ? kEdgeBottom : kEdgeRight)) {
+            focus_pane(fresh);
+            add_doc(0);
+            tab_show(0);
+            panel_focus(false);
+        }
+        return true;
+    }
+    if (cmd && alt) {
+        switch (k.key) {
+            case SDLK_LEFT: focus_towards(kEdgeLeft); return true;
+            case SDLK_RIGHT: focus_towards(kEdgeRight); return true;
+            case SDLK_UP: focus_towards(kEdgeTop); return true;
+            case SDLK_DOWN: focus_towards(kEdgeBottom); return true;
+            default: break;
+        }
+    }
+    return false;
+}
+
+void App::drag_arm(DragKind kind, u64 doc, const std::string& path, float x, float y) {
+    Drag& d = *drag_;
+    d.kind = kind;
+    d.moving = d.away = d.on_bar = false;
+    d.doc = doc;
+    d.pane = pane_->id;
+    d.path = path;
+    d.press_x = d.x = x;
+    d.press_y = d.y = y;
+    d.over = 0;
+    d.edge = kEdgeNone;
+    d.ghost_font = ~0u;  // the label is drawn afresh
+    d.label.clear();
+    if (kind == kDragTab) {
+        if (const Doc* held = find_doc(doc)) d.label = held->ed.path.empty() ? "untitled" : std::string(file_name(held->ed.path));
+    } else if (kind == kDragGroup) {
+        d.label = std::to_string(pane_->docs.size()) + (pane_->docs.size() == 1 ? " tab" : " tabs");
+    } else if (kind == kDragFile) {
+        d.label = std::string(file_name(path));
+    }
+}
+
+// A press on a divider takes hold of it.
+bool App::splits_mouse_down(const SDL_MouseButtonEvent& b) {
+    if (b.button != SDL_BUTTON_LEFT) return false;
+    const int px = static_cast<int>(b.x * density_), py = static_cast<int>(b.y * density_);
+    SplitNode* n = divider_at(split_.get(), px, py, std::max(3, static_cast<int>(3 * scale_)));
+    if (!n) return false;
+    Drag& d = *drag_;
+    d.kind = kDragDivider;
+    d.moving = d.away = false;
+    d.over = 0;
+    d.node = n;
+    return true;
+}
+
+bool App::splits_mouse_motion(const SDL_MouseMotionEvent& m) {
+    Drag& d = *drag_;
+    const int px = static_cast<int>(m.x * density_), py = static_cast<int>(m.y * density_);
+    if (d.kind == kDragNone) {
+        // Over a divider the pointer says which way it moves.
+        if (win_ && !dragging_ && !dragging_thumb_) {
+            const SplitNode* n = divider_at(split_.get(), px, py, std::max(3, static_cast<int>(3 * scale_)));
+            const int want = !n ? 0 : n->side_by_side ? 1 : 2;
+            if (want != d.cursor) {
+                if (!d.across) d.across = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_EW_RESIZE);
+                if (!d.updown) d.updown = SDL_CreateSystemCursor(SDL_SYSTEM_CURSOR_NS_RESIZE);
+                SDL_SetCursor(want == 1 ? d.across : want == 2 ? d.updown : SDL_GetDefaultCursor());
+                d.cursor = want;
+            }
+        }
+        return false;
+    }
+    d.x = m.x;
+    d.y = m.y;
+    if (d.kind == kDragDivider) {
+        SplitNode& n = *d.node;
+        const float size = static_cast<float>(n.side_by_side ? n.x1 - n.x0 : n.y1 - n.y0);
+        const float at = static_cast<float>(n.side_by_side ? px - n.x0 : py - n.y0);
+        if (size > 0) n.share = std::clamp(at / size, 0.05f, 0.95f);
+        for (const std::unique_ptr<Pane>& p : panes_) p->cache_rev = ~0ull;
+        dirty_ = true;
+        return true;
+    }
+    if (!d.moving) {
+        if (std::hypot(m.x - d.press_x, m.y - d.press_y) < 5) return false;
+        d.moving = true;
+    }
+    // Still where it was picked up? A tab inside its own bar is being put
+    // in order there (see tabs_mouse_motion); a file over the side panel is
+    // going nowhere yet.
+    auto nowhere = [&] {
+        d.away = false;
+        d.over = 0;
+        for (const std::unique_ptr<Pane>& p : panes_) p->bar->drop = -1;
+        dirty_ = true;
+    };
+    Pane* src = nullptr;
+    for (const std::unique_ptr<Pane>& p : panes_)
+        if (p->id == d.pane) src = p.get();
+    if (d.kind == kDragFile) {
+        if (px < panel_px()) {
+            nowhere();
+            return true;
+        }
+    } else {
+        const int slack = font_->cell_h() / 2;
+        if (!src) {  // its pane has gone meanwhile
+            d.kind = kDragNone;
+            nowhere();
+            return true;
+        }
+        if (px >= src->x0 && px < src->x1 && py >= src->y0 - slack && py < src->text_y + slack) {
+            nowhere();
+            return d.kind == kDragGroup;
+        }
+    }
+    d.away = true;
+
+    // Where would it land?
+    d.over = 0;
+    d.edge = kEdgeNone;
+    d.on_bar = false;
+    if (Pane* over = pane_at(px, py)) {
+        d.over = over->id;
+        if (py < over->text_y) {  // among that pane's tabs: before the one whose middle is right of the mouse
+            const int cw = font_->cell_w();
+            const double col = static_cast<double>(px - over->x0 - (cw / 2 + 1)) / cw + over->bar->scroll;
+            d.on_bar = true;
+            d.bar_index = 0;
+            for (const TabBar::Span& s : over->bar->spans)
+                if (col >= (s.x0 + s.x1) * 0.5) ++d.bar_index;
+        } else {
+            const float rx = static_cast<float>(px - over->x0) / static_cast<float>(std::max(1, over->x1 - over->x0));
+            const float ry = static_cast<float>(py - over->text_y) / static_cast<float>(std::max(1, over->y1 - over->text_y));
+            const float near[4] = {rx, 1 - rx, ry, 1 - ry};  // left, right, top, bottom
+            int best = 0;
+            for (int i = 1; i < 4; ++i)
+                if (near[i] < near[best]) best = i;
+            if (near[best] < kEdgeZone) d.edge = static_cast<Edge>(best);
+        }
+        // A new split needs room for one more pane, unless what is carried
+        // is a pane already (a group, or a pane's only tab).
+        const bool whole_pane = d.kind == kDragGroup || (d.kind == kDragTab && src->docs.size() == 1);
+        if (d.edge != kEdgeNone && !whole_pane && panes_.size() >= kMaxViews) d.edge = kEdgeNone;
+        // Letting go where nothing would change is letting go nowhere.
+        if (d.kind != kDragFile && over == src && (d.edge == kEdgeNone || whole_pane)) d.over = 0;
+    }
+    for (const std::unique_ptr<Pane>& p : panes_) p->bar->drop = d.over == p->id && d.on_bar ? static_cast<int>(d.bar_index) : -1;
+    dirty_ = true;
+    return true;
+}
+
+bool App::splits_mouse_up(const SDL_MouseButtonEvent& b) {
+    Drag& d = *drag_;
+    if (b.button != SDL_BUTTON_LEFT || d.kind == kDragNone) return false;
+    const bool was_drag = d.kind == kDragDivider || d.moving;
+    if (d.kind == kDragFile && !d.moving) {
+        // A plain click on a file in the tree: open it.
+        const std::string path = d.path;
+        d.kind = kDragNone;
+        panel_activate(path);
+        return true;
+    }
+    if (d.kind != kDragDivider && d.moving && d.away && d.over) drag_drop();
+    d.kind = kDragNone;
+    d.moving = d.away = false;
+    d.over = 0;
+    for (const std::unique_ptr<Pane>& p : panes_) p->bar->drop = -1;
+    dirty_ = true;
+    return was_drag;
+}
+
+// Lets go of what is being carried, where the last mouse movement said.
+void App::drag_drop() {
+    const Drag d = *drag_;  // (what follows may clear the real one)
+    Pane* target = nullptr;
+    Pane* src = nullptr;
+    for (const std::unique_ptr<Pane>& p : panes_) {
+        if (p->id == d.over) target = p.get();
+        if (p->id == d.pane) src = p.get();
+    }
+    if (!target) return;
+    const bool side_by_side = d.edge == kEdgeLeft || d.edge == kEdgeRight, first = d.edge == kEdgeLeft || d.edge == kEdgeTop;
+    // Takes a whole pane to an edge of another: out of the tree, back in there.
+    auto move_pane = [&](Pane* p) {
+        if (p == target) return;
+        stop_lsp(true);
+        lsp_pending_ = true;
+        detach(split_.get(), p);
+        attach(find_leaf(split_.get(), target), p, side_by_side, first);
+        place_panes(px_w_, px_h_);
+    };
+    switch (d.kind) {
+        case kDragTab: {
+            size_t index = 0;
+            Pane* where = nullptr;
+            if (!src || !find_doc(d.doc, &where, &index) || where != src) return;
+            if (d.edge != kEdgeNone && src->docs.size() == 1) {
+                move_pane(src);  // a pane's only tab is the pane
+                focus_pane(src);
+            } else if (d.edge != kEdgeNone) {
+                Pane* fresh = split_pane(target, d.edge);
+                if (!fresh) return;
+                move_doc(src, index, fresh, 0);
+                focus_pane(fresh);
+            } else if (target != src) {
+                move_doc(src, index, target, d.on_bar ? d.bar_index : target->docs.size());
+                focus_pane(target);
+            }
+            break;
+        }
+        case kDragGroup: {
+            if (!src || src == target) return;
+            if (d.edge != kEdgeNone) {
+                move_pane(src);
+                focus_pane(src);
+            } else {
+                // Into the other pane's tabs, in their order, the one that was in front staying in front.
+                const u64 front = src->doc ? src->doc->id : 0;
+                size_t at = d.on_bar ? std::min(d.bar_index, target->docs.size()) : target->docs.size();
+                const u64 target_id = target->id;
+                for (size_t n = src->docs.size(); n > 0; --n) move_doc(src, 0, target, at++);  // (the last move lets go of src)
+                for (const std::unique_ptr<Pane>& p : panes_)
+                    if (p->id == target_id) {
+                        focus_pane(p.get());
+                        for (size_t i = 0; i < p->docs.size(); ++i)
+                            if (p->docs[i]->id == front) tab_show(i);
+                    }
+            }
+            break;
+        }
+        case kDragFile: {
+            Pane* dest = d.edge != kEdgeNone ? split_pane(target, d.edge) : target;
+            if (!dest) dest = target;
+            Pane* where = nullptr;
+            size_t index = 0;
+            if (find_open(full_path(d.path), &where, &index)) {
+                // Open already, and a file shows in one place: its tab moves here.
+                if (where != dest) move_doc(where, index, dest, dest->docs.size());
+                focus_pane(dest);
+                if (where == dest) tab_show(index);
+            } else {
+                focus_pane(dest);
+                if (dest->docs.empty()) {  // a new split: a new file, which the one opened takes the place of
+                    add_doc(0);
+                    tab_show(0);
+                }
+                open_path(d.path.c_str());
+            }
+            panel_focus(false);
+            break;
+        }
+        default: break;
+    }
+    pick_theme();
+    dirty_ = true;
+}
+
+// ---------------------------------------------------------------- drawing
+
+// Adds to a frame the lines between panes and, while something is being
+// carried, a wash over where it would land and its name under the mouse.
+void App::splits_layout(int w, int h, FrameDesc& fd) {
+    (void)w;
+    (void)h;
+    Drag& d = *drag_;
+    const int line = std::max(1, static_cast<int>(std::lround(scale_)));
+    auto divider = [&](auto&& self, const SplitNode* n) -> void {
+        if (!n || n->pane) return;
+        if (fd.popup_count < std::size(fd.popups)) {
+            Popup& p = fd.popups[fd.popup_count++];
+            p.x = n->side_by_side ? n->b->x0 : n->x0;
+            p.y = n->side_by_side ? n->y0 : n->b->y0;
+            p.w = n->side_by_side ? line : n->x1 - n->x0;
+            p.h = n->side_by_side ? n->y1 - n->y0 : line;
+            p.cols = p.rows = 1;
+            p.pad_x = p.w;  // no cell shows: the box is all margin, in the border's colour
+            p.cells = &kBlankCell;
+            p.border_px = 0;
+            p.bg = theme_.popup_border;
+        }
+        self(self, n->a.get());
+        self(self, n->b.get());
+    };
+    divider(divider, split_.get());
+
+    if (d.kind == kDragNone || d.kind == kDragDivider || !d.moving || !d.away) return;
+    for (const std::unique_ptr<Pane>& p : panes_) {
+        if (p->id != d.over || d.on_bar || p->view >= fd.view_count) continue;
+        float* t = fd.views[p->view].tint;
+        // (Over the text, not the line numbers: the wash is drawn with the text, and its corners are round.)
+        const float x0 = static_cast<float>(p->text_x), x1 = static_cast<float>(p->x1), y0 = static_cast<float>(p->text_y), y1 = static_cast<float>(p->y1);
+        const float mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
+        t[0] = d.edge == kEdgeRight ? mx : x0;
+        t[1] = d.edge == kEdgeBottom ? my : y0;
+        t[2] = d.edge == kEdgeLeft ? mx : x1;
+        t[3] = d.edge == kEdgeTop ? my : y1;
+    }
+}
+
+// The name of what is being carried, by the mouse: a small box that floats
+// over everything else, so it is added after everything else.
+void App::splits_carry_layout(int w, int h, FrameDesc& fd) {
+    (void)w;
+    (void)h;
+    Drag& d = *drag_;
+    const int line = std::max(1, static_cast<int>(std::lround(scale_)));
+    if (d.kind == kDragNone || d.kind == kDragDivider || !d.moving || !d.away) return;
+    if (!d.label.empty() && fd.popup_count < std::size(fd.popups)) {
+        if (d.ghost_font != font_->generation()) {
+            d.ghost_font = font_->generation();
+            d.ghost.resize(width_of(d.label), 1);
+            d.ghost.put(*font_, 0, 0, d.label, 0, Font::kBold);
+        }
+        const int cw = font_->cell_w(), ch = font_->cell_h();
+        Popup& p = fd.popups[fd.popup_count++];
+        p.pad_x = cw / 2 + 1;
+        p.pad_y = ch / 4;
+        p.cols = d.ghost.cols;
+        p.rows = 1;
+        p.w = static_cast<int>(p.cols) * cw + 2 * p.pad_x;
+        p.h = ch + 2 * p.pad_y;
+        p.x = std::clamp(static_cast<int>(d.x * density_) + cw, 0, std::max(0, px_w_ - p.w));
+        p.y = std::clamp(static_cast<int>(d.y * density_) + ch / 2, 0, std::max(0, px_h_ - p.h));
+        p.cells = d.ghost.cells.data();
+        p.border_px = static_cast<float>(line);
+        fx_float(p, kFxGhost);
+        if (look().box > 0) p.opacity *= 0.94f;  // (what it is over shows through a little)
+    }
+}
+
+}  // namespace blit

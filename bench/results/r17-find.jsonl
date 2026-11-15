@@ -1,0 +1,47 @@
+{"file":"code-100m.txt","bench":"find_names_paths","unit":"count","value":200000.000}
+{"file":"code-100m.txt","bench":"find_names_bytes","unit":"bytes","value":6940637.000}
+{"file":"code-100m.txt","bench":"find_names_2_letters_ms","unit":"ms","value":8.206}
+{"file":"code-100m.txt","bench":"find_names_2_letters_ms_matched","unit":"count","value":11123.000}
+{"file":"code-100m.txt","bench":"find_names_7_letters_ms","unit":"ms","value":8.402}
+{"file":"code-100m.txt","bench":"find_names_7_letters_ms_matched","unit":"count","value":1392.000}
+{"file":"code-100m.txt","bench":"find_names_4_words_ms","unit":"ms","value":12.198}
+{"file":"code-100m.txt","bench":"find_names_4_words_ms_matched","unit":"count","value":348.000}
+{"file":"code-100m.txt","bench":"find_names_no_match_ms","unit":"ms","value":8.242}
+{"file":"code-100m.txt","bench":"find_names_no_match_ms_matched","unit":"count","value":0.000}
+{"file":"code-100m.txt","bench":"find_text_absent_rare_letters_gb_per_s","unit":"GB/s","value":23.000}
+{"file":"code-100m.txt","bench":"find_text_absent_common_letters_gb_per_s","unit":"GB/s","value":2.594}
+{"file":"code-100m.txt","bench":"find_text_absent_exact_case_gb_per_s","unit":"GB/s","value":62.842}
+{"file":"code-100m.txt","bench":"find_text_absent_two_words_gb_per_s","unit":"GB/s","value":2.675}
+{"file":"code-100m.txt","bench":"find_text_common_word_gb_per_s","unit":"GB/s","value":2.438}
+{"file":"code-100m.txt","bench":"find_text_common_word_lines","unit":"count","value":421115.000}
+{"file":"code-100m.txt","bench":"find_text_common_word_ns_per_line","unit":"ns","value":95.112}
+{"file":"MacOSX.sdk","bench":"tree_files","unit":"count","value":37757.000}
+{"file":"MacOSX.sdk","bench":"tree_read_ms","unit":"ms","value":216.016}
+{"file":"MacOSX.sdk","bench":"tree_names_bytes","unit":"bytes","value":2506188.000}
+{"file":"MacOSX.sdk","bench":"tree_names_ms stdio","unit":"ms","value":3.774}
+{"file":"MacOSX.sdk","bench":"tree_names_matched stdio","unit":"count","value":9503.000}
+{"file":"MacOSX.sdk","bench":"tree_names_ms nsstr h","unit":"ms","value":3.989}
+{"file":"MacOSX.sdk","bench":"tree_names_matched nsstr h","unit":"count","value":5902.000}
+{"file":"MacOSX.sdk","bench":"tree_names_ms zqzqzq","unit":"ms","value":2.220}
+{"file":"MacOSX.sdk","bench":"tree_names_matched zqzqzq","unit":"count","value":0.000}
+{"file":"MacOSX.sdk","bench":"tree_text_ms xyzzyplugh","unit":"ms","value":273.224}
+{"file":"MacOSX.sdk","bench":"tree_text_lines xyzzyplugh","unit":"count","value":0.000}
+{"file":"MacOSX.sdk","bench":"tree_text_ms CFRunLoopObserverCreateWithHandler","unit":"ms","value":284.631}
+{"file":"MacOSX.sdk","bench":"tree_text_lines CFRunLoopObserverCreateWithHandler","unit":"count","value":3.000}
+{"file":"MacOSX.sdk","bench":"tree_text_ms kern_return_t","unit":"ms","value":45.358}
+{"file":"MacOSX.sdk","bench":"tree_text_lines kern_return_t","unit":"count","value":3000.000}
+{"file":"MacOSX.sdk","bench":"tree_text_ms return","unit":"ms","value":8.924}
+{"file":"MacOSX.sdk","bench":"tree_text_lines return","unit":"count","value":3000.000}
+{"file":".","bench":"tree_files","unit":"count","value":115.000}
+{"file":".","bench":"tree_read_ms","unit":"ms","value":0.372}
+{"file":".","bench":"tree_names_bytes","unit":"bytes","value":2043.000}
+{"file":".","bench":"tree_names_ms stdio","unit":"ms","value":0.009}
+{"file":".","bench":"tree_names_matched stdio","unit":"count","value":0.000}
+{"file":".","bench":"tree_names_ms nsstr h","unit":"ms","value":0.009}
+{"file":".","bench":"tree_names_matched nsstr h","unit":"count","value":0.000}
+{"file":".","bench":"tree_names_ms zqzqzq","unit":"ms","value":0.008}
+{"file":".","bench":"tree_names_matched zqzqzq","unit":"count","value":0.000}
+{"file":".","bench":"tree_text_ms fuzzy_score","unit":"ms","value":0.789}
+{"file":".","bench":"tree_text_lines fuzzy_score","unit":"count","value":11.000}
+{"file":".","bench":"tree_text_ms round_selection","unit":"ms","value":0.794}
+{"file":".","bench":"tree_text_lines round_selection","unit":"count","value":6.000}

@@ -1,0 +1,242 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct _51
+{
+    float4 _m0;
+    float4 _m1;
+    float4 _m2;
+    float4 _m3;
+    float4 _m4;
+    float4 _m5;
+    float4 _m6;
+    float2 _m7;
+    float2 _m8;
+    float2 _m9;
+    float2 _m10;
+    uint _m11;
+    uint _m12;
+    uint _m13;
+    uint _m14;
+    float4 _m15;
+    float4 _m16;
+    float4 _m17;
+    float4 _m18;
+    float4 _m19;
+    float4 _m20;
+    float4 _m21;
+    float4 _m22;
+    float4 _m23;
+    float4 _m24;
+    float4 _m25[32];
+};
+
+struct _283
+{
+    uint _m0[1];
+};
+
+struct main0_out
+{
+    float4 m_190 [[color(0)]];
+};
+
+static inline __attribute__((always_inline))
+float _14(thread const float2& _11, thread const float2& _12, thread const float& _13)
+{
+    float2 _21 = (abs(_11) - _12) + float2(_13);
+    return (length(fast::max(_21, float2(0.0))) + fast::min(fast::max(_21.x, _21.y), 0.0)) - _13;
+}
+
+static inline __attribute__((always_inline))
+float _19(thread const float2& _16, thread const float2& _17, thread const float& _18, constant _51& _53)
+{
+    if (_53._m22.y <= 0.0)
+    {
+        return 0.0;
+    }
+    float2 _79 = _16 - _53._m22.zw;
+    float2 _80 = _17 - float2(_53._m22.x * 0.25);
+    float _81 = _53._m21.x;
+    float _64 = _14(_79, _80, _81);
+    float _85 = 1.0 - smoothstep((-0.60000002384185791015625) * _53._m22.x, 0.60000002384185791015625 * _53._m22.x, _64);
+    float _98 = 1.0 - smoothstep(0.0, fast::max(2.0, _53._m22.x * 0.119999997317790985107421875), _18);
+    return _53._m22.y * (1.0 - ((1.0 - _85) * (1.0 - (0.449999988079071044921875 * _98))));
+}
+
+fragment main0_out main0(constant _51& _53 [[buffer(0)]], const device _283& _285 [[buffer(1)]], texture2d<float> _332 [[texture(0)]], sampler _332Smplr [[sampler(0)]], float4 gl_FragCoord [[position]])
+{
+    main0_out out = {};
+    float2 _121 = floor(gl_FragCoord.xy);
+    bool _131 = _53._m21.x > 0.0;
+    bool _138;
+    if (!_131)
+    {
+        _138 = _53._m22.y > 0.0;
+    }
+    else
+    {
+        _138 = _131;
+    }
+    bool _147;
+    if (!_138)
+    {
+        _147 = _53._m16.w > 0.0;
+    }
+    else
+    {
+        _147 = _138;
+    }
+    bool _128 = _147;
+    float2 _148 = (_53._m15.zw - _53._m15.xy) * 0.5;
+    float2 _159 = (_121 + float2(0.5)) - ((_53._m15.xy + _53._m15.zw) * 0.5);
+    float _172 = -10000.0;
+    if (_128)
+    {
+        float2 _177 = _159;
+        float2 _179 = _148;
+        float _181 = _53._m21.x;
+        _172 = _14(_177, _179, _181);
+        if (_172 >= 0.5)
+        {
+            float2 _191 = _159;
+            float2 _193 = _148;
+            float _195 = _172;
+            out.m_190 = float4(0.0, 0.0, 0.0, _19(_191, _193, _195, _53)) * _53._m23.z;
+            return out;
+        }
+    }
+    float2 _205 = _121 + _53._m9;
+    float2 _212 = float2(float(_53._m11), float(_53._m12)) * _53._m7;
+    float2 _227 = fast::clamp(floor((_205 + float2(0.5)) * _53._m8), float2(0.0), float2(float(_53._m11), float(_53._m12)) - float2(1.0));
+    float2 _247 = _205 - (_227 * _53._m7);
+    bool _257 = _205.x >= 0.0;
+    bool _263;
+    if (_257)
+    {
+        _263 = _205.y >= 0.0;
+    }
+    else
+    {
+        _263 = _257;
+    }
+    bool _271;
+    if (_263)
+    {
+        _271 = _205.x < _212.x;
+    }
+    else
+    {
+        _271 = _263;
+    }
+    bool _279;
+    if (_271)
+    {
+        _279 = _205.y < _212.y;
+    }
+    else
+    {
+        _279 = _271;
+    }
+    bool _254 = _279;
+    uint _281 = _285._m0[(_53._m14 + (uint(_227.y) * _53._m11)) + uint(_227.x)];
+    uint _303 = _281 & 65535u;
+    float _307 = 0.0;
+    if (_254 && (_303 > 32u))
+    {
+        float2 _314 = float2(float(_303 & ((1u << _53._m13) - 1u)), float(_303 >> _53._m13));
+        _307 = _332.sample(_332Smplr, ((((_314 * _53._m7) + _247) + float2(0.5)) * _53._m10), level(0.0)).x;
+    }
+    float3 _350 = _53._m0.xyz;
+    uint _354 = _281 & 2164260864u;
+    if (_354 != 0u)
+    {
+        float3 _367;
+        if ((_281 & 2147483648u) != 0u)
+        {
+            _367 = _53._m2.xyz;
+        }
+        else
+        {
+            _367 = _53._m3.xyz;
+        }
+        float3 _362 = _367;
+        float _380 = _53._m21.y;
+        if (_380 <= 0.0)
+        {
+            if (_254)
+            {
+                _350 = _362;
+            }
+        }
+        else
+        {
+            int2 _394 = int2(_227);
+            bool _397 = (_281 & 33554432u) == 0u;
+            bool _402 = (_281 & 67108864u) == 0u;
+            float _409;
+            if (_397)
+            {
+                _409 = -10000.0;
+            }
+            else
+            {
+                float _417;
+                if (_394.x == 0)
+                {
+                    _417 = -_53._m23.w;
+                }
+                else
+                {
+                    _417 = _53._m23.x;
+                }
+                _409 = _417;
+            }
+            float2 _407 = float2(_409, _53._m23.y);
+            float _433;
+            if (_402)
+            {
+                _433 = 10000.0;
+            }
+            else
+            {
+                float _448;
+                if (_394.x == (int(_53._m11) - 1))
+                {
+                    _448 = _53._m23.w;
+                }
+                else
+                {
+                    _448 = -_53._m23.x;
+                }
+                _433 = _53._m7.x + _448;
+            }
+            float2 _431 = float2(_433, _53._m7.y - _53._m23.y);
+            float2 _466 = _247 + float2(0.5);
+            float2 _470 = fast::max(fast::max((_407 + float2(_380)) - _466, _466 - (_431 - float2(_380))), float2(0.0));
+            _350 = mix(_350, _362, float3(fast::clamp((_380 - length(_470)) + 0.5, 0.0, 1.0)));
+        }
+    }
+    float3 _496 = mix(_350, _53._m25[(_281 >> uint(16)) & 31u].xyz, float3(_307));
+    float _509 = 1.0;
+    if (_128)
+    {
+        if (_53._m16.w > 0.0)
+        {
+            _496 = mix(_496, _53._m16.xyz, float3(fast::clamp((_172 + _53._m16.w) + 0.5, 0.0, 1.0)));
+        }
+        float _530 = fast::clamp(0.5 - _172, 0.0, 1.0);
+        _496 *= _530;
+        float2 _540 = _159;
+        float2 _542 = _148;
+        float _544 = _172;
+        _509 = _530 + ((1.0 - _530) * _19(_540, _542, _544, _53));
+    }
+    out.m_190 = float4(_496, _509) * _53._m23.z;
+    return out;
+}
+

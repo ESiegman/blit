@@ -1,0 +1,112 @@
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct _21
+{
+    float4 _m0;
+    float4 _m1;
+    float4 _m2;
+    float4 _m3;
+    float4 _m4;
+    float4 _m5;
+    float4 _m6;
+    float2 _m7;
+    float2 _m8;
+    float2 _m9;
+    float2 _m10;
+    uint _m11;
+    uint _m12;
+    uint _m13;
+    uint _m14;
+    float4 _m15;
+    float4 _m16;
+    float4 _m17;
+    float4 _m18;
+    float4 _m19;
+    float4 _m20;
+    float4 _m21;
+    float4 _m22;
+    float4 _m23;
+    float4 _m24;
+    float4 _m25[32];
+};
+
+struct _88
+{
+    uint _m0[1];
+};
+
+struct main0_out
+{
+    float4 m_217 [[color(0)]];
+};
+
+fragment main0_out main0(constant _21& _23 [[buffer(0)]], const device _88& _90 [[buffer(1)]], texture2d<float> _135 [[texture(0)]], sampler _135Smplr [[sampler(0)]], float4 gl_FragCoord [[position]])
+{
+    main0_out out = {};
+    float2 _9 = floor(gl_FragCoord.xy);
+    float2 _16 = _9 + _23._m9;
+    float2 _30 = floor((_16 + float2(0.5)) * _23._m8);
+    float2 _40 = _16 - (_30 * _23._m7);
+    uint _49 = 0u;
+    bool _56 = _16.x >= 0.0;
+    bool _63;
+    if (_56)
+    {
+        _63 = _16.y >= 0.0;
+    }
+    else
+    {
+        _63 = _56;
+    }
+    bool _74;
+    if (_63)
+    {
+        _74 = _30.x < float(_23._m11);
+    }
+    else
+    {
+        _74 = _63;
+    }
+    bool _84;
+    if (_74)
+    {
+        _84 = _30.y < float(_23._m12);
+    }
+    else
+    {
+        _84 = _74;
+    }
+    if (_84)
+    {
+        _49 = _90._m0[(_23._m14 + (uint(_30.y) * _23._m11)) + uint(_30.x)];
+    }
+    uint _108 = _49 & 65535u;
+    float _112 = 0.0;
+    if (_108 > 32u)
+    {
+        float2 _117 = float2(float(_108 & ((1u << _23._m13) - 1u)), float(_108 >> _23._m13));
+        _112 = _135.sample(_135Smplr, ((((_117 * _23._m7) + _40) + float2(0.5)) * _23._m10), level(0.0)).x;
+    }
+    float3 _158;
+    if ((_49 & 2147483648u) != 0u)
+    {
+        _158 = _23._m2.xyz;
+    }
+    else
+    {
+        _158 = _23._m0.xyz;
+    }
+    float3 _153 = _158;
+    float3 _171 = mix(_153, _23._m25[(_49 >> uint(16)) & 31u].xyz, float3(_112));
+    float2 _185 = fast::min(_9 - _23._m15.xy, (_23._m15.zw - float2(1.0)) - _9);
+    if (fast::min(_185.x, _185.y) < _23._m16.w)
+    {
+        _171 = _23._m16.xyz;
+    }
+    out.m_217 = float4(_171, 1.0);
+    return out;
+}
+

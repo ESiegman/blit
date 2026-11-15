@@ -1,0 +1,178 @@
+-- blit's settings, mappings and the rest, in Lua.
+--
+-- This file lives at ~/.config/blit/init.lua (or under $XDG_CONFIG_HOME).
+-- Every setting below is commented out and shows its default: take away
+-- the "--" in front and change the value. Saving this file in blit runs it
+-- again at once; edits made elsewhere apply the next time a blit window gets
+-- focus. A setting that is wrong is reported with its line number, and the
+-- default stays.
+--
+-- `blit --info` prints what blit ended up using. README.md, "Scripts and
+-- plugins", lists everything else this file can do: mappings, commands,
+-- events, timers, programs, boxes, plugins.
+
+---------------------------------------------------------------- the font
+-- A family name ("JetBrains Mono") or the path of a font file. It has to be
+-- a monospace font. Empty means a monospace font that ships with the system.
+-- blit.opt.font.family = ""
+-- blit.opt.font.style = "Regular"     -- "Italic", "Medium", "Bold", "Light Italic", ...
+--                                     -- (italic and bold tokens use the matching faces of the same family)
+-- blit.opt.font.size = 13             -- points
+-- blit.opt.font.line_height = 1.0     -- 1.2 adds 20% to the font's own line spacing
+-- blit.opt.font.ligatures = false     -- draw -> != => <= and friends joined, if the font can
+-- blit.opt.font.features = {}         -- OpenType features, for example { "ss01", "zero" }
+
+---------------------------------------------------------------- the theme
+-- Built in: "blit-dark", "blit-light", "rose-pine", "rose-pine-moon",
+-- "rose-pine-dawn". One is used while the system is in dark mode, the other
+-- while it is in light mode. blit.opt.theme = "NAME" sets both.
+-- blit.opt.theme.dark = "blit-dark"
+-- blit.opt.theme.light = "blit-light"
+
+-- A theme of your own. Naming a built-in theme changes just the colours
+-- listed. Colours are "#rrggbb".
+-- blit.opt.themes.mine = {
+--   background = "#191724",
+--   foreground = "#e0def4",
+--   selection = "#403d52",
+--   cursor = "#ebbcba",
+--   scrollbar = "#6e6a86",
+--   -- What a language server reports, by kind, and the popups it fills:
+--   error = "#eb6f92",
+--   warning = "#f6c177",
+--   info = "#9ccfd8",
+--   hint = "#c4a7e7",
+--   muted = "#6e6a86",        -- quiet text in popups
+--   accent = "#ebbcba",       -- matched letters, the argument being typed
+--   popup = "#1f1d2e",        -- popup background
+--   popup_border = "#524f67",
+--   -- The lines down each level of indentation: the first level's colour,
+--   -- the second's, and so on, starting over after the last. One to six.
+--   guides = { "#786168", "#7c6449", "#546a75", "#66587c", "#244154", "#783f56" },
+--   -- How each kind of token is drawn: a colour, "italic", "bold", or
+--   -- "regular" (neither), in any combination. The names are the capture
+--   -- names of tree-sitter highlight queries. A dotted name takes whatever it
+--   -- does not set itself from its parent: "keyword.return" is bold in the
+--   -- colour of "keyword". Anything not listed is plain foreground text.
+--   syntax = {
+--     comment = "#908caa italic",
+--     keyword = "#31748f",
+--     ["keyword.return"] = "bold",
+--     string = "#f6c177",
+--     number = "#f6c177",
+--     ["function"] = "#ebbcba",
+--     type = "#9ccfd8",
+--     ["type.builtin"] = "bold",
+--     ["variable.parameter"] = "#c4a7e7 italic",
+--     operator = "#908caa",
+--     punctuation = "#908caa",
+--   },
+-- }
+-- blit.opt.theme = "mine"
+
+---------------------------------------------------------------- syntax colours
+-- Code is coloured with tree-sitter when a grammar for the file type is
+-- installed. blit fetches and builds grammars itself, from each grammar's
+-- own repository on GitHub at a fixed commit, and keeps them under
+-- ~/.local/share/blit. Nothing is fetched unless asked for: by
+-- `blit --install-grammar NAME` on the command line, or by the two settings
+-- below. `blit --grammars` lists the grammars blit knows and which are
+-- installed.
+-- blit.opt.syntax.install = {}           -- grammars to have installed, e.g. { "cpp", "python" }
+-- blit.opt.syntax.auto_install = false   -- true: also fetch the grammar of any file that is opened
+-- blit.opt.syntax.enabled = true
+-- blit.opt.syntax.max_file_mb = 32       -- larger files stay plain
+-- blit.opt.syntax.parser_dirs = {}       -- more folders with grammars, searched first
+-- blit.opt.syntax.query_dirs = {}        -- more folders with queries, searched first
+-- blit.opt.syntax.italic = true          -- false: nothing is drawn in italics, whatever a theme says
+-- blit.opt.syntax.bold = true            -- the same for bold
+
+-- A grammar blit does not know, or another revision of one it does (same
+-- name: only what is listed changes). `repo` is "owner/name" on GitHub,
+-- `rev` a commit or tag, `path` the folder in the repository that holds
+-- src/parser.c when that is not the top, `inherits` the languages whose
+-- highlight queries come before its own.
+-- blit.opt.syntax.grammars.mylang = { repo = "someone/tree-sitter-mylang", rev = "v1.2.0", path = "", inherits = {} }
+
+-- Token styles for every theme at once, written like a theme's syntax table
+-- above. A theme's own wins over these. For example, the colours of whatever
+-- theme is on, but italic comments and keywords and upright names:
+-- blit.opt.syntax.styles = { comment = "italic", keyword = "italic", variable = "regular", property = "regular" }
+
+---------------------------------------------------------------- language servers
+-- A language server is started when one for the file type is installed:
+-- problems are underlined, completions appear while typing, and resting the
+-- mouse on a name describes it. blit knows how to start the common servers
+-- (clangd, rust-analyzer, gopls, pyright, typescript-language-server, ...)
+-- and looks for them on PATH. `blit --info FILE` says which one it would use.
+-- blit.opt.lsp.enabled = true
+-- blit.opt.lsp.max_file_mb = 8              -- larger files get no server
+-- blit.opt.lsp.completion = true            -- offer completions while typing; Ctrl+Space always asks
+-- blit.opt.lsp.inline_diagnostics = true    -- show the problem on the cursor's line in words at its end
+-- blit.opt.lsp.hover_ms = 350               -- how long the mouse rests before a description appears
+
+-- A server of your own, or changes to a built-in one (same name: only what
+-- is listed changes). `languages` are blit's names for file types, the ones
+-- `blit --info FILE` shows after "syntax". `roots` are files that mark the
+-- top folder of a project. `init_options` and `settings` are JSON, as the
+-- server's documentation gives them.
+-- blit.opt.lsp.servers.clangd = { command = { "clangd", "--background-index", "--clang-tidy" }, init_options = '{"fallbackFlags": ["-std=c++23"]}' }
+-- blit.opt.lsp.servers.mylang = { command = { "mylang-lsp", "--stdio" }, languages = { "toml" }, roots = { "mylang.toml", ".git" }, settings = '{"mylang": {"lint": true}}' }
+-- blit.opt.lsp.servers.gopls = { enabled = false }   -- never start this one
+
+---------------------------------------------------------------- git
+-- Git's view of the files, by way of the git program: marks beside lines
+-- changed since the last commit, and the Git tab of the side panel (commit,
+-- push, pull, branches, history, diffs). Blame shows in a file when
+-- Cmd+Option+B or the Git tab's Blame turns it on.
+-- blit.opt.git.enabled = true
+
+---------------------------------------------------------------- the side panel
+-- The side panel (Cmd+B): tabs along its top, the first of them a tree of
+-- the files in the working directory.
+-- blit.opt.panel.open = false     -- true: show it when blit starts
+-- blit.opt.panel.width = 32       -- in characters
+
+---------------------------------------------------------------- editing
+-- blit.opt.editor.modal = true          -- Vim's modes and keys (Normal, Insert, Visual, the : line); false: typing types
+-- blit.opt.editor.tab_width = 4         -- columns between tab stops
+-- blit.opt.editor.tab_bar = true        -- the row of open files along the top
+-- blit.opt.editor.status_bar = true     -- the row across the bottom: the repository, the file, the cursor, problems
+-- blit.opt.editor.start_screen = true   -- started with no file: what to do first, and what was opened lately
+-- blit.opt.editor.line_numbers = true   -- a column of line numbers left of the text
+-- blit.opt.editor.relative_numbers = true  -- as Vim's relativenumber: the cursor's line its number, the others how far away they are
+-- blit.opt.editor.indent_guides = true  -- a coloured line down each level of indentation
+-- blit.opt.editor.indent_width = 0      -- columns per level for those lines; 0 = worked out from each file
+
+---------------------------------------------------------------- scrolling
+-- blit.opt.scroll.lines = 3         -- lines per mouse wheel notch
+-- blit.opt.scroll.ease_ms = 45      -- how quickly a wheel scroll settles; 0 jumps
+-- blit.opt.scroll.momentum = true   -- macOS: a touchpad flick glides to a stop (takes effect at the next start)
+-- blit.opt.scroll.bounce = true     -- pulled past an end with a touchpad, the view stretches and springs back
+
+---------------------------------------------------------------- finding
+-- blit.opt.search.ignore = {}       -- more to leave out of Cmd+P and Cmd+Shift+F, in .gitignore's syntax: { "*.log", "/dist/" }
+-- blit.opt.search.gitignore = true  -- leave out what .gitignore files say (build folders and compiled files are left out anyway)
+-- blit.opt.search.hidden = true     -- show files and folders whose names start with a dot
+
+---------------------------------------------------------------- the look
+-- blit.opt.look.rounding = 6          -- corner radius in points: popups, tabs, highlights and what is selected; 0 = square
+-- blit.opt.look.shadows = true        -- popups and menus cast a shadow; so do the tab bar and line numbers over text slid under them
+-- blit.opt.look.animations = true     -- popups fade in, the scroll thumb fades away when left alone
+-- blit.opt.look.cursor_glide_ms = 60  -- how long the cursor takes from one place to the next; 0 = it jumps
+-- blit.opt.look.dim_inactive = 0      -- how far a split without the keyboard is dimmed toward the background (0 to 0.6)
+
+---------------------------------------------------------------- the window
+-- blit.opt.window.width = 1100    -- size of a new window, in points
+-- blit.opt.window.height = 760
+
+---------------------------------------------------------------- keys and scripts
+-- blit.opt.keys.leader = "\\"         -- what <leader> in a mapping stands for (" " for the space bar)
+-- blit.opt.keys.timeout_ms = 1000     -- how long the first keys of a mapping wait for the rest
+-- blit.opt.script.timeout_ms = 3000   -- a script that runs longer than this in one go is stopped
+
+-- Mappings, commands and events. For example:
+-- blit.map("i", "jk", "<Esc>")
+-- blit.map("n", "<leader>w", ":w<CR>")
+-- blit.command("Hello", function(a) print("Hello " .. a.args) end)
+-- blit.on("BufWritePost", { pattern = "*.lua" }, function(e) print("saved " .. e.file) end)

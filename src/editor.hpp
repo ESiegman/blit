@@ -1,0 +1,201 @@
+#pragma once
+// Cursor, selection, movement, edits and undo on top of a Buffer.
+// Knows nothing about windows, pixels or the GPU.
+#include <span>
+#include <stop_token>
+#include <string>
+#include <string_view>
+#include <vector>
+
+#include "buffer.hpp"
+
+namespace blit {
+
+// One change to the text, in the terms an incremental parser wants: byte
+// offsets, plus (row, column) with the column counted in bytes.
+struct TextEdit {
+    u64 start = 0, old_end = 0, new_end = 0;
+    u32 start_row = 0, start_col = 0;
+    u32 old_end_row = 0, old_end_col = 0;
+    u32 new_end_row = 0, new_end_col = 0;
+};
+
+// Told about every edit: before it is applied (while the text to be removed
+// can still be read) if it cares to know, and after.
+struct EditListener {
+    virtual void before_edit(u64 /*off*/, u64 /*remove_len*/) {}
+    virtual void on_edit(const TextEdit& e) = 0;
+
+protected:
+    ~EditListener() = default;
+};
+
+// Told where the text changed, after every edit and every undo: the bytes
+// [start, old_end) became [start, new_end). For whoever keeps places in
+// the text (marks) that are to move with it.
+struct EditWatch {
+    virtual void edited(u64 start, u64 old_end, u64 new_end) = 0;
+
+protected:
+    ~EditWatch() = default;
+};
+
+class Editor {
+public:
+    Buffer buf;
+    std::string path;
+    u32 tab_width = 4;  // columns between tab stops
+    EditWatch* watch = nullptr;
+
+    // Up to two listeners hear about edits (syntax highlighting and the
+    // language server).
+    void listen(EditListener* l) {
+        unlisten(l);
+        for (EditListener*& slot : listeners_)
+            if (!slot) {
+                slot = l;
+                return;
+            }
+    }
+    void unlisten(EditListener* l) {
+        for (EditListener*& slot : listeners_)
+            if (slot == l) slot = nullptr;
+        if (!listeners_[0]) std::swap(listeners_[0], listeners_[1]);  // the first slot is filled whenever any is
+    }
+
+    bool open(const char* file, std::string* err);
+    // The file's bytes, read already (from another machine: see remote.hpp).
+    void open_bytes(const std::string& file, std::string_view bytes);
+    // (*modified_ns: when the file was written, for one on another machine.)
+    bool save(std::string* err, i64* modified_ns = nullptr);
+    bool modified() const { return state_id() != saved_id_; }
+    bool crlf() const { return crlf_; }  // its lines end in "\r\n" (as its first line did)
+    // Calls the text as it is now the saved state (for text that was put
+    // there to be shown, not typed).
+    void mark_saved() {
+        if (!undo_.empty()) undo_.back().sealed = true;
+        saved_id_ = state_id();
+    }
+    // Changes whenever the text changes; the renderer keys its caches on it.
+    u64 revision() const { return revision_; }
+
+    u64 cursor() const { return cursor_; }
+    u64 anchor() const { return anchor_; }
+    bool has_selection() const { return cursor_ != anchor_; }
+    u64 sel_min() const { return cursor_ < anchor_ ? cursor_ : anchor_; }
+    u64 sel_max() const { return cursor_ < anchor_ ? anchor_ : cursor_; }
+
+    // Geometry in display columns (tabs expand, wide characters take two).
+    u64 line_end(u64 line) const;  // offset of the line terminator, or size()
+    u32 col_between(u64 line_start, u64 off) const;
+    // The widest line of a text given as its pieces, in display columns.
+    // Safe on another thread (the text behind a piece never changes); it
+    // gives up early, with what it has, when asked to stop.
+    static u64 widest_columns(std::span<const Piece> pieces, u32 tab_width, std::stop_token stop = {});
+    // Columns per level of indentation, guessed from the first few thousand
+    // lines: the tab width if lines start with tabs, else the commonest
+    // step by which the leading spaces of one line exceed the last one's.
+    // *tabs: whether lines are indented with tabs (also said of a text
+    // with no indentation to go by: a tab is what the Tab key puts in).
+    u32 guess_indent(bool* tabs = nullptr) const;
+    u32 col_of(u64 off) const;
+    u64 off_at(u64 line, u32 col, bool nearest = false) const;
+    u64 next_char(u64 off) const;
+    u64 prev_char(u64 off) const;
+
+    // Movement. `select` keeps the anchor in place.
+    void move_to(u64 off, bool select);
+    void left(bool select);
+    void right(bool select);
+    void up(bool select) { vertical(-1, select); }
+    void down(bool select) { vertical(1, select); }
+    void vertical(i64 lines, bool select);
+    void word_left(bool select);
+    void word_right(bool select);
+    void home(bool select);
+    void end(bool select);
+    void doc_start(bool select) { move_to(0, select); }
+    void doc_end(bool select) { move_to(buf.size(), select); }
+    void select_all();
+    void select_word(u64 off);
+    void select_line(u64 off);
+
+    // Edits. All of them replace the selection when there is one.
+    void insert(std::string_view text);
+    // Replaces [start, end) with text, as one undo step.
+    void replace(u64 start, u64 end, std::string_view text) {
+        move_to(start, false);
+        move_to(end, true);
+        insert(text);
+    }
+    void newline();
+    void backspace();
+    void del();
+    void backspace_word();
+    void delete_word();
+    std::string selection_text() const { return buf.text(sel_min(), sel_max() - sel_min()); }
+    bool undo();
+    bool redo();
+    // Where the text changed in the last undo() or redo(): the first place, if there were several.
+    u64 changed_at() const { return changed_at_; }
+    // Edits made between begin_group() and end_group() are undone and
+    // redone together, as one step (a command that changes several places,
+    // everything typed in one go). The calls nest.
+    void begin_group() {
+        if (group_depth_++ > 0) return;
+        group_from_ = undo_.size();
+        if (!undo_.empty()) undo_.back().sealed = true;
+    }
+    void end_group() {
+        if (group_depth_ == 0 || --group_depth_ > 0) return;
+        if (undo_.size() > group_from_ + 1) {
+            const u64 g = next_group_++;
+            for (size_t i = group_from_; i < undo_.size(); ++i) undo_[i].group = g;
+        }
+        if (!undo_.empty()) undo_.back().sealed = true;
+    }
+
+private:
+    void opened(const std::string& file);  // (after loading: the cursor and history start again)
+    enum Kind : u8 { kOther, kTyping, kBackspace, kDelete };
+    // One undo step: `cur_len` bytes at `off` are what this step put in the
+    // document; `stash` is what it took out. Undo and redo both swap the two.
+    struct Edit {
+        u64 off = 0;
+        u64 cur_len = 0;
+        std::vector<Piece> stash;
+        u64 cursor0 = 0, anchor0 = 0, cursor1 = 0;
+        u64 id = 0;
+        u64 group = 0;  // edits with the same number (not 0) are one undo step
+        Kind kind = kOther;
+        bool sealed = false;
+        bool reversed = false;  // stash holds its pieces last-to-first
+    };
+
+    void apply(u64 off, u64 remove_len, std::string_view text, Kind kind);
+    void swap_edit(Edit& e);
+    TextEdit begin_edit(u64 off, u64 remove_len) const;
+    void end_edit(TextEdit& e, u64 insert_len);
+    u64 word_edge(u64 off, int dir) const;
+    u64 state_id() const { return undo_.empty() ? 0 : undo_.back().id; }
+    u32 tab_stop(u32 col) const { return (col / tab_width + 1) * tab_width; }
+
+    bool listening() const { return listeners_[0] != nullptr; }
+
+    EditListener* listeners_[2] = {};
+    u64 cursor_ = 0;
+    u64 anchor_ = 0;
+    u32 want_col_ = ~0u;  // column kept across vertical moves
+    u64 revision_ = 0;
+    u64 next_id_ = 1;
+    u64 saved_id_ = 0;
+    bool crlf_ = false;
+    std::vector<Edit> undo_;
+    std::vector<Edit> redo_;
+    u64 changed_at_ = 0;
+    size_t group_from_ = 0;
+    u64 next_group_ = 1;
+    int group_depth_ = 0;
+};
+
+}  // namespace blit
