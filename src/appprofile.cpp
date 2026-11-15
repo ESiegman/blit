@@ -1,7 +1,7 @@
 // Profiling in the editor: the side panel's Profile tab (the program, its
 // arguments and folder, recording, the profiles made), a tab for each
 // profile (a flame graph, and its functions by their own time), and the
-// times in the code: at each function that took time, and on lines that
+// inline performance labels: at each function that took time, and on lines that
 // took much (profile.hpp records and reads).
 #include <SDL3/SDL.h>
 
@@ -147,7 +147,7 @@ struct App::ProfUi {
     std::vector<Row> rows;
     u32 sel = 0;
     float tones[8][4] = {};  // the frames' colours (Popup::tones)
-    // The times in the code, for each document: made again when its text,
+    // The inline performance labels, for each document: made again when its text,
     // the profile shown or the font change.
     struct Notes {
         u64 rev = ~0ull, font = ~0ull;
@@ -282,8 +282,7 @@ void App::prof_panel_draw(TextBox& box, bool focused) {
         tool = "perf";
 #endif
     }
-    box.put(font, 1, 0, (tool.empty() ? std::string("Sampling profiler") : tool == "perf" ? "perf" : "Time Profiler (xctrace)") + (remote ? " on " + host : " on this machine"),
-            kInkMuted);
+    box.put(font, 1, 0, (tool.empty() ? std::string("Profiler") : tool == "perf" ? "perf" : "xctrace") + (remote ? " on " + host : ", local"), kInkMuted);
     u32 r = 2;
     auto field = [&](const char* label, const std::string& value, const char* none, ProfUi::Act act) {
         if (r + 1 >= rows) return;
@@ -301,9 +300,9 @@ void App::prof_panel_draw(TextBox& box, bool focused) {
         box.put(font, r + 1, 2, value.empty() ? none : shown, value.empty() ? kInkMuted : 0, value.empty() ? Font::kItalic : 0);
         r += 2;
     };
-    field("Program", u.program, "choose one to profile", ProfUi::kProgram);
-    field("Arguments", u.args, "none", ProfUi::kArgs);
-    field("Runs in", u.cwd, "its own folder", ProfUi::kCwd);
+    field("Program", u.program, "Choose a program\xE2\x80\xA6", ProfUi::kProgram);
+    field("Arguments", u.args, "None", ProfUi::kArgs);
+    field("Working directory", u.cwd, "The program's folder", ProfUi::kCwd);
     ++r;
     if (r < rows) {  // record, or stop
         const bool running = u.job != nullptr;
@@ -315,7 +314,7 @@ void App::prof_panel_draw(TextBox& box, bool focused) {
             const ProfileJob::State st = u.job->state();
             box.put(font, r, c, st == ProfileJob::kRecording ? std::string(t) : "  " + u.job->status() + "\xE2\x80\xA6", kInkMuted);
         } else if (u.program.empty()) {
-            box.put(font, r, c, "  (no program yet)", kInkMuted);
+            box.put(font, r, c, "  (choose a program first)", kInkMuted);
         }
         ++r;
     }
@@ -323,11 +322,13 @@ void App::prof_panel_draw(TextBox& box, bool focused) {
     ++r;
     if (r < rows) {
         u.rows[r] = {ProfUi::kDwarf, 0};
-        box.put(font, r++, 1, std::string(u.dwarf ? "\xE2\x97\x89" : "\xE2\x97\x8B") + " Stacks from DWARF (perf)", u.dwarf ? 0 : kInkMuted);
+        // (How perf walks the stack: frame pointers, or DWARF for code built without them.)
+        const u32 c = box.put(font, r, 1, "Call stack", 0);
+        box.put(font, r++, c + 2, u.dwarf ? "DWARF" : "Frame pointers", kInkMuted);
     }
     if (r < rows) {
         u.rows[r] = {ProfUi::kAnnotate, 0};
-        box.put(font, r++, 1, std::string(u.annotate ? "\xE2\x97\x89" : "\xE2\x97\x8B") + " Times in the code", u.annotate ? 0 : kInkMuted);
+        box.put(font, r++, 1, std::string(u.annotate ? "\xE2\x97\x89" : "\xE2\x97\x8B") + " Inline performance labels", u.annotate ? 0 : kInkMuted);
     }
     ++r;
     if (r < rows && !u.done.empty()) box.put(font, r++, 0, "Profiles", kInkMuted);
@@ -391,7 +392,7 @@ void App::prof_do(u32 row) {
         case ProfUi::kCwd: {
             std::string start = u.cwd.empty() ? (u.program.empty() ? default_workdir() : parent_of(u.program)) + "/" : u.cwd + "/";
             if (const char* home = SDL_getenv("HOME"); home && *home && start.starts_with(home)) start = "~" + start.substr(std::strlen(home));
-            find_choose(kFindFolder, "Runs in", start, [this](const std::string& dir) {
+            find_choose(kFindFolder, "Working directory", start, [this](const std::string& dir) {
                 profui_->cwd = dir;
                 ++prof_gen_;
                 dirty_ = true;
@@ -516,7 +517,7 @@ void App::prof_layout(FrameDesc& fd) {
                 std::string crumbs = "all";
                 for (size_t k = path.size(); k-- > 0;) crumbs += " \xE2\x80\xBA " + std::string(short_name(p.funcs[p.nodes[path[k]].func].name));
                 c = box.put(font, 2, 1, clip(crumbs, cols / 2), v.zoom ? 0 : kInkMuted);
-                if (v.zoom) box.put(font, 2, c + 2, "(Esc goes back out)", kInkMuted);
+                if (v.zoom) box.put(font, 2, c + 2, "Esc: zoom out", kInkMuted);
             }
 
             // The flame graph: the root at the bottom, each function above
@@ -626,8 +627,8 @@ void App::prof_layout(FrameDesc& fd) {
                     total = f->total, self = f->self;
                 }
                 if (f) {
-                    about = f->name + "  \xC2\xB7  " + percent(total, p.weight) + " in all, " + percent(self, p.weight) + " in itself";
-                    if (!f->file.empty()) about += "  \xC2\xB7  " + short_path(f->file) + ":" + std::to_string(f->line) + "  (Enter opens it)";
+                    about = f->name + "  \xC2\xB7  " + percent(total, p.weight) + " total, " + percent(self, p.weight) + " self";
+                    if (!f->file.empty()) about += "  \xC2\xB7  " + short_path(f->file) + ":" + std::to_string(f->line) + "  \xC2\xB7  Enter: open source";
                 }
                 box.put(font, rows - 1, 1, clip(about, cols - 2), kInkMuted);
             }
@@ -784,7 +785,7 @@ bool App::prof_key(const SDL_KeyboardEvent& k) {
     return true;
 }
 
-// ---------------------------------------------------------------- the times in the code
+// ---------------------------------------------------------------- inline performance labels
 
 // The line (from 0) a function's definition starts on: looking up from
 // the first line with time on it for its name and a bracket after it;
@@ -848,15 +849,15 @@ void App::prof_marks(FrameDesc& fd) {
                 const ProfileFunc& f = p.funcs[fi];
                 if (f.file != path || f.total <= min_func) continue;
                 const u64 l = prof_definition(*d, f);
-                std::string text = "\xE2\x97\x86 " + percent(f.total, p.weight) + " in all";
-                if (f.self) text += ", " + percent(f.self, p.weight) + " in itself";
+                std::string text = "\xE2\x97\x86 " + percent(f.total, p.weight) + " total";
+                if (f.self) text += ", " + percent(f.self, p.weight) + " self";
                 if (by_line.contains(l)) by_line[l].first = text + " \xC2\xB7 " + by_line[l].first;
                 else by_line[l] = {text, kInkAccent};
             }
             for (const auto& [line, w] : lit->second) {
                 if (w.self <= min_line || line == 0) continue;
                 const u64 l = line - 1;
-                const std::string text = "\xE2\x97\x8F " + percent(w.self, p.weight) + " here";
+                const std::string text = "\xE2\x97\x8F " + percent(w.self, p.weight);
                 if (by_line.contains(l)) by_line[l].first += "  " + text;
                 else by_line[l] = {text, static_cast<u32>(w.self * 20 > p.weight ? kInkDiagnostic + 1 : kInkMuted)};
             }

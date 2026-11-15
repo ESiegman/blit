@@ -160,6 +160,12 @@ bool parse_perf_script(std::string_view text, const std::string& prefix, Profile
         // An inlined frame is in the module of the frame it was inlined into (the next one out).
         for (size_t k = frames.size(); k-- > 0;)
             if (frames[k].module.empty() && k + 1 < frames.size()) frames[k].module = frames[k + 1].module;
+        // One perf has no name for is named after where it is ("[libc.so.6]").
+        for (F& f : frames)
+            if (f.name == "[unknown]" && !f.module.empty()) {
+                files.push_back("[" + std::string(base_name(f.module)) + "]");
+                f.name = files.back();
+            }
         pf.clear();
         for (const F& f : frames) pf.push_back({f.name, f.module, f.file, f.line});
         out->add(pf, period);

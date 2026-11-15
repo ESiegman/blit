@@ -1014,7 +1014,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     git_note(fd);
     vim_marks(fd);
     if (script_) script_layout(w, h, fd);  // marks, boxes and messages of the scripts'
-    prof_marks(fd);  // the times a profile found, in the code (after a server's and the scripts' notes)
+    prof_marks(fd);  // inline performance labels (after a server's and the scripts' notes)
     panel_menu_layout(w, h, fd);
     if (find_open_) find_layout(w, h, fd);
     splits_carry_layout(w, h, fd);

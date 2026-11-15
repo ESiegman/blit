@@ -371,7 +371,7 @@ private:
     void remote_reconnect();
 
     // Profiling (appprofile.cpp): the side panel's Profile tab, a tab for
-    // each profile (a flame graph and the functions), the times in the code.
+    // each profile (a flame graph and the functions), inline performance labels.
     struct ProfUi;
     void prof_start();
     void prof_record();
