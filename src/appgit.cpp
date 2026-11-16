@@ -335,6 +335,7 @@ void App::reload_changed() {
             reread(*p, *d, nullptr);
         }
     }
+    picture_recheck();  // (and pictures, for their tabs and the Markdown preview)
     pick_theme();
     dirty_ = true;
 }

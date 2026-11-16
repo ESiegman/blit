@@ -1180,8 +1180,19 @@ It draws headings (the top two underlined), **bold**, *italic*, `code`,
 `[name]: url`), lists (nested, numbered from any number, `- [ ]` tasks),
 quotes (nested), tables (aligned as their `:--:` says, cells wrapped to
 fit), fenced and indented code (on a tinted band, the language at its
-top right), rules, line breaks, HTML (as it is, quieter), and leaves out
-front matter. Pictures cannot be drawn in cells: their alt text shows.
+top right), rules, line breaks, HTML (its text without the tags; comments
+left out), and leaves out front matter.
+
+**Pictures** that are a paragraph of their own (`![alt](file.png)`, or a
+row of them; one inside a link too) and HTML's `<img src=... width=...>`
+are drawn, from files beside the Markdown file or anywhere on its machine
+(another machine's, for a file opened over ssh): one pixel of the picture
+to a point, or the size `width`/`height` ask for, made smaller to fit
+across the preview and within its height, in the middle where the HTML
+says `align="center"`. A click opens the picture in its own tab (or
+follows the link it is in). Pictures on the web are not fetched: their alt
+text shows, as a link. So does a picture in the middle of a sentence, and
+one that cannot be read.
 
 **Mermaid diagrams** (` ```mermaid ` blocks) are drawn in box-drawing
 characters, laid out by blit itself (no browser, no JavaScript):
@@ -1201,6 +1212,30 @@ characters, laid out by blit itself (no browser, no JavaScript):
 - `pie`: as bars, with each slice's share.
 
 Other kinds show as code, with a line that says so.
+
+## Pictures
+
+An image file (PNG, JPEG, GIF, BMP, TIFF, WebP, HEIC, AVIF, ICO, PSD and
+the other kinds macOS reads) opens in a tab of its own, from the side
+panel, the finder, a drop, the command line or a link in the Markdown
+preview, here or on another machine. The picture is fitted to the tab,
+never made larger than its own size; see-through parts show over a
+checkerboard; the row at the bottom says what it is, how large, and how
+far it is zoomed.
+
+| | |
+|---|---|
+| Zoom in / out | `+` / `-` (or Cmd+= / Cmd+-), a pinch, Cmd+wheel (about the mouse) |
+| Fit it to the tab / its own size | `0` (or Cmd+0) / `1`; a double click switches between them |
+| Move it (zoomed in) | drag it, the wheel, the arrows or `h` `j` `k` `l` |
+
+Zoomed in far, its pixels show as squares. Pictures are read on a thread
+of their own (the system's ImageIO), turned the right way up as the camera
+says, and drawn by the GPU from textures of their own, with smaller copies
+for when they are drawn small. A picture whose file changes is read again
+when blit comes back to the front. A picture larger than 4096 pixels on a
+side is read at 4096 (the row at the bottom says its own size), and one
+not drawn for a minute is let go.
 
 ## How it is fast
 
@@ -1397,7 +1432,9 @@ src/libraries.*    where libraries are looked up: vcpkg's ports and usage notes,
 src/fsio.*         files and small commands, here or on another machine
 src/markdown.*     Markdown parsed and laid out as rows of styled cells (blocks, inline styles, tables, lists)
 src/mermaid.*      Mermaid diagrams drawn in box-drawing characters: flowcharts and state diagrams laid out in ranks, sequence diagrams, pies
-src/appmarkdown.cpp the Markdown preview's tab: drawn again as the file changes, following its cursor, links
+src/appmarkdown.cpp the Markdown preview's tab: drawn again as the file changes, following its cursor, links, pictures
+src/appimage.cpp   pictures: read on threads of their own and put on the GPU; an image file's tab (zoom, move)
+src/picture.h      image files read into pixels (C); src/picture_mac.m does it with macOS's ImageIO
 src/agent/         the agent: what it and blit say to one another, the program, its build for Linux (Docker), the builds
 src/keymap.*    key mappings: Vim's key notation, the table of mappings, what keys typed so far add up to
 src/job.*       programs run in the background for scripts, on threads of their own
@@ -1405,7 +1442,7 @@ src/applua.cpp  scripts: the Lua state, mappings, commands, events, timers, plug
 src/luaapi.cpp  the functions scripts call (the table `blit`, all of it C++: blit ships no Lua of its own)
 src/applua.hpp  what those two share: helpers, the events, the state kept for scripts
 src/appbench.cpp  in-app benchmarks, scripted input, screenshots (Debug builds)
-shaders/        GLSL sources (grid: the text; popup: boxes over it), build script, compiled blobs (gen/)
+shaders/        GLSL sources (grid: the text; popup: boxes over it; image: pictures), build script, compiled blobs (gen/)
 bench/          benchmark tools; see BENCH.md (Debug builds)
 tests/          fuzz and unit tests, and a language server that answers predictably (Debug builds)
 ```
@@ -1415,7 +1452,7 @@ tests/          fuzz and unit tests, and a language server that answers predicta
 blit draws through a GPU interface of its own (`src/gpu.h`): a window or
 an offscreen image, the glyph atlas, the frame's cells, and a list of
 draws, each the one triangle that covers the window cut to a rectangle,
-through one of six pipelines. SDL has the window, the keyboard, the mouse
+through one of eight pipelines, and pictures, each a texture of its own. SDL has the window, the keyboard, the mouse
 and input methods.
 
 - **Metal** (macOS, `src/gpu_metal.m`): Objective-C, compiled by Apple's
@@ -1445,6 +1482,9 @@ built more than once from the one source: the text's as it stands, with
 shadows, rounded highlights). A view or a box is drawn by the build that
 does no more than it asks for, because on a shader this small every
 operation a pixel does not need can be measured in the frame rate. The
+picture shader is one pipeline blended over what is there and one written
+straight, for a picture with nothing see-through: the GPU then leaves out
+the pixels under it, which blending would have it draw. The
 results are checked in and baked into the binary with `#embed`, so a
 normal build needs no shader tools.
 
@@ -1482,6 +1522,7 @@ tests/keys.sh build-debug/blit     # the command search, the new keys, and every
 tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger)
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running) and new projects (a stand-in vcpkg)
 tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md against what they should draw, Mermaid, typing, Cmd+Shift+V
+tests/images.sh build-debug/blit   # pictures (tests/images): the tab, its pixels, zoom and moving, too large, broken, changed, over ssh, in the preview
 ```
 
 The tests never connect to a real host: `$BLIT_SSH` names the program used
@@ -1546,6 +1587,8 @@ does not finish and takes all the memory the machine has.
   stopped); no conditional breakpoints, watch list, or breakpoints that
   move with the lines when the file is edited while debugging. With gdb
   the program's output reaches the Debug tab when it flushes it.
+- Pictures: macOS only so far (no reader elsewhere yet); the first frame
+  of an animated GIF; no SVG or PDF; none fetched from the web.
 - Terminal: no mouse reporting to programs (a click in htop does nothing),
   no underline or strikethrough drawn, no images (sixel, kitty), no
   ligatures. A screen with more than 32 text colours or 6 background

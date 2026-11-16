@@ -25,8 +25,9 @@ extern "C" {
 typedef struct BlitGpu BlitGpu;
 
 /* The pipelines: the text view's shader and its two other builds, the
- * boxes' shader, its other build, and that one blended over what is
- * there. */
+ * boxes' shader, its other build, that one blended over what is there, and
+ * pictures, each from a colour image of its own: blended, and written
+ * straight (one with nothing see-through, which hides what is under it). */
 enum {
     BLIT_PIPE_TEXT,
     BLIT_PIPE_TEXT_FX,
@@ -34,6 +35,8 @@ enum {
     BLIT_PIPE_POPUP,
     BLIT_PIPE_POPUP_FX,
     BLIT_PIPE_POPUP_BLEND,
+    BLIT_PIPE_IMAGE,
+    BLIT_PIPE_IMAGE_SOLID,
     BLIT_PIPE_COUNT
 };
 
@@ -48,16 +51,19 @@ typedef struct BlitGpuShader {
 } BlitGpuShader;
 
 /* The vertex shader, then the fragment shaders of BLIT_PIPE_TEXT to
- * BLIT_PIPE_POPUP_FX (BLIT_PIPE_POPUP_BLEND uses BLIT_PIPE_POPUP_FX's). */
+ * BLIT_PIPE_POPUP_FX (BLIT_PIPE_POPUP_BLEND uses BLIT_PIPE_POPUP_FX's), and
+ * BLIT_PIPE_IMAGE's (BLIT_PIPE_IMAGE_SOLID's too). */
 typedef struct BlitGpuShaders {
     BlitGpuShader vertex;
     BlitGpuShader fragment[BLIT_PIPE_POPUP_FX + 1];
+    BlitGpuShader image;
 } BlitGpuShaders;
 
 typedef struct BlitGpuDraw {
     uint32_t pipeline;
     uint32_t uniforms;         /* which of the frame's uniform blocks */
     int32_t x, y, w, h;        /* the rectangle it is cut to, in pixels */
+    uint32_t image;            /* BLIT_PIPE_IMAGE(_SOLID): which picture (blit_gpu_image_add()) */
 } BlitGpuDraw;
 
 typedef struct BlitGpuTimes {
@@ -89,6 +95,14 @@ int blit_gpu_set_atlas(BlitGpu* g, int w, int h);
 /* Rows y0 to y1 (not y1) of the atlas have changed; pixels is all of it,
  * one byte a pixel. They reach the GPU with the next frame. */
 void blit_gpu_atlas_rows(BlitGpu* g, const uint8_t* pixels, int y0, int y1);
+
+/* A picture, for BLIT_PIPE_IMAGE draws: w * h pixels of 4 bytes, RGBA,
+ * the colours already multiplied by their alpha. It is on the GPU from the
+ * next frame on (smaller copies of it too, for when it is drawn smaller).
+ * Returns its id (above 0), or 0 if it could not be made. */
+uint32_t blit_gpu_image_add(BlitGpu* g, const uint8_t* rgba, int w, int h);
+/* Done with: frames under way that draw it still have it. */
+void blit_gpu_image_drop(BlitGpu* g, uint32_t id);
 
 /* want_w, want_h: the window's size in pixels (ignored offscreen). Returns
  * BLIT_FRAME_DRAWN with the target's size, BLIT_FRAME_SKIPPED when there is

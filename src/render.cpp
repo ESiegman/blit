@@ -20,7 +20,8 @@ namespace {
 #if defined(__APPLE__)
 #if __has_embed("../shaders/gen/grid.vert.metallib") && __has_embed("../shaders/gen/grid.frag.metallib") && \
     __has_embed("../shaders/gen/grid_fx.frag.metallib") && __has_embed("../shaders/gen/grid_dim.frag.metallib") && \
-    __has_embed("../shaders/gen/popup.frag.metallib") && __has_embed("../shaders/gen/popup_fx.frag.metallib")
+    __has_embed("../shaders/gen/popup.frag.metallib") && __has_embed("../shaders/gen/popup_fx.frag.metallib") && \
+    __has_embed("../shaders/gen/image.frag.metallib")
 #define BLIT_SHADERS_COMPILED 1
 const u8 kVert[] = {
 #embed "../shaders/gen/grid.vert.metallib"
@@ -39,6 +40,9 @@ const u8 kPopup[] = {
 };
 const u8 kPopupFx[] = {
 #embed "../shaders/gen/popup_fx.frag.metallib"
+};
+const u8 kImage[] = {
+#embed "../shaders/gen/image.frag.metallib"
 };
 #else
 #define BLIT_SHADERS_COMPILED 0
@@ -59,6 +63,9 @@ const u8 kPopup[] = {
 };
 const u8 kPopupFx[] = {
 #embed "../shaders/gen/popup_fx.frag.msl"
+};
+const u8 kImage[] = {
+#embed "../shaders/gen/image.frag.msl"
 };
 #endif
 #else
@@ -81,6 +88,9 @@ const u8 kPopup[] = {
 const u8 kPopupFx[] = {
 #embed "../shaders/gen/popup_fx.frag.spv"
 };
+const u8 kImage[] = {
+#embed "../shaders/gen/image.frag.spv"
+};
 #endif
 
 // Mirrors the std140 block in shaders/grid.frag.
@@ -96,6 +106,12 @@ struct Uniforms {
     float tones[8][4];  // a popup's: the backgrounds of lit cells that name one of them (bits 21-23; 0 names none)
 };
 static_assert(sizeof(Uniforms) == 960);
+
+// Mirrors the block in shaders/image.frag (at the start of a Uniforms' room).
+struct PictureUniforms {
+    float rect[4], fx[4], check_a[4], check_b[4];
+};
+static_assert(sizeof(PictureUniforms) <= sizeof(Uniforms));
 
 // Where compiled pipelines are kept from one run to the next.
 std::string cache_dir() {
@@ -139,6 +155,7 @@ bool Renderer::init(SDL_Window* win, int frames_in_flight, bool debug, std::stri
     sh.fragment[BLIT_PIPE_TEXT_DIM] = {kTextDim, sizeof kTextDim, src};
     sh.fragment[BLIT_PIPE_POPUP] = {kPopup, sizeof kPopup, src};
     sh.fragment[BLIT_PIPE_POPUP_FX] = {kPopupFx, sizeof kPopupFx, src};
+    sh.image = {kImage, sizeof kImage, src};
     const std::string cache = cache_dir();
     char why[512] = "";
     // Frames under way at once: two for a window (the display sets the pace,
@@ -164,6 +181,12 @@ bool Renderer::set_present_mode(int mode) {
 void Renderer::set_images(int n) {
     if (!gpu_ || !win_ || n == images_) return;
     if (blit_gpu_set_images(gpu_, n)) images_ = n;
+}
+
+u32 Renderer::image_add(const u8* rgba, int w, int h) { return gpu_ ? blit_gpu_image_add(gpu_, rgba, w, h) : 0; }
+
+void Renderer::image_drop(u32 id) {
+    if (gpu_ && id) blit_gpu_image_drop(gpu_, id);
 }
 
 bool Renderer::set_font(const Font& font, std::string* err) {
@@ -336,7 +359,39 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
     };
     auto draw_in = [&](int left, int top, int right, int bottom) {
         if (right <= left || bottom <= top) return;
-        draws_.push_back({bound, pushed, left, top, right - left, bottom - top});
+        draws_.push_back({bound, pushed, left, top, right - left, bottom - top, 0});
+    };
+    // The pictures to go over what is drawn so far: those after `popups` popups.
+    const u32 pictures = std::min(fd.picture_count, kMaxPictures);
+    u32 next_picture = 0;
+    auto pictures_after = [&](u32 popups) {
+        for (; next_picture < pictures && fd.pictures[next_picture].after <= popups; ++next_picture) {
+            const PictureDraw& pd = fd.pictures[next_picture];
+            if (!pd.image) continue;
+            int left = static_cast<int>(std::floor(pd.rect[0])), top = static_cast<int>(std::floor(pd.rect[1]));
+            int right = static_cast<int>(std::ceil(pd.rect[2])), bottom = static_cast<int>(std::ceil(pd.rect[3]));
+            left = std::max({left, pd.clip[0], 0}), top = std::max({top, pd.clip[1], 0});
+            right = std::min({right, pd.clip[2], static_cast<int>(w)}), bottom = std::min({bottom, pd.clip[3], static_cast<int>(h)});
+            if (right <= left || bottom <= top) continue;
+            PictureUniforms pu{};
+            std::memcpy(pu.rect, pd.rect, sizeof pu.rect);
+            pu.fx[0] = pd.radius;
+            pu.fx[1] = pd.opacity;
+            pu.fx[2] = pd.sharp ? 1.0f : 0.0f;
+            pu.fx[3] = pd.checker;
+            std::memcpy(pu.check_a, pd.check_a, sizeof pu.check_a);
+            std::memcpy(pu.check_b, pd.check_b, sizeof pu.check_b);
+            const size_t at = uniforms_.size();
+            uniforms_.resize(at + sizeof(Uniforms));
+            std::memset(uniforms_.data() + at, 0, sizeof(Uniforms));
+            std::memcpy(uniforms_.data() + at, &pu, sizeof pu);
+            // Written straight where nothing of it is see-through and it fills
+            // its rectangle to the pixel: the GPU then leaves out what is under
+            // it (the tab's box), which blending would make it draw.
+            const bool whole = std::floor(pd.rect[0]) == pd.rect[0] && std::floor(pd.rect[1]) == pd.rect[1] && std::floor(pd.rect[2]) == pd.rect[2] && std::floor(pd.rect[3]) == pd.rect[3];
+            const bool solid = whole && pd.opacity >= 1 && pd.radius <= 0 && (!pd.clear || pd.checker > 0);
+            draws_.push_back({solid ? BLIT_PIPE_IMAGE_SOLID : BLIT_PIPE_IMAGE, static_cast<u32>(at / sizeof(Uniforms)), left, top, right - left, bottom - top, pd.image});
+        }
     };
     // Each text view is the one triangle, cut to the view's rectangle: a
     // side panel, tab bars and line numbers have the rest of the window, and
@@ -375,8 +430,12 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
     // over the text under it) is written straight too, and just its shadow
     // is laid over what is around it, in up to four strips: blending all of
     // a box that hides what is under it anyway would be paid for per pixel.
+    // (Pictures are in the order they are drawn; one is put after the popups
+    // before it, under the ones after.)
+    std::stable_sort(fd.pictures, fd.pictures + pictures, [](const PictureDraw& a, const PictureDraw& b) { return a.after < b.after; });
     u32 base = text_total;
     for (u32 i = 0; i < fd.popup_count; ++i) {
+        pictures_after(i);
         const Popup& p = fd.popups[i];
         const u32 n = p.cols * p.rows;
         const bool shadowed = p.shadow > 0 && p.shadow_alpha > 0 && fd.theme.shadow > 0;
@@ -464,6 +523,7 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
         }
         base += n;
     }
+    pictures_after(~0u);
     if (blit_gpu_end(gpu_, uniforms_.data(), sizeof(Uniforms), uniforms_.size() / sizeof(Uniforms), draws_.data(), static_cast<u32>(draws_.size()), &gt) != BLIT_FRAME_DRAWN)
         return kFailed;
     if (stats) {

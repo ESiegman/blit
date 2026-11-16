@@ -1768,6 +1768,57 @@ with profiling) against this one, turn about, 4 runs each:
 All within the sitting's spread (the frames a second overlap: 14,918 to
 16,272 before, 15,437 to 15,900 after).
 
+### Round 27: pictures
+
+Image files open in a tab of their own, and pictures are drawn in the
+Markdown preview (`src/appimage.cpp`, `src/picture_mac.m`,
+`shaders/image.frag`). A picture is read on a thread of its own by macOS's
+ImageIO (at most 4096 pixels on a side), put on the GPU as a texture of its
+own with its mipmaps (made by the GPU, not waited for), and drawn as one
+more draw over the popup it belongs to: the same full-screen triangle cut
+to the picture, sampling its texture.
+
+What it costs with no picture on show: the build before (`main` at
+5f3c7d5) against this one, turn about, 4 runs each, offscreen at
+2560x1600, medians:
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling back to back, frames a second (the GPU's limit) | 17,240 | 19,315 |
+| … tab bar, line numbers, indent lines | 17,852 | 18,016 |
+| Scrolling: CPU per frame, p50 | 35.8 µs | 35.9 µs |
+| … tab bar, line numbers, indent lines | 39.7 µs | 39.7 µs |
+| Typing: frames a second | 19,573 | 19,207 |
+| Typing: CPU per frame, p50 | 35.2 µs | 35.3 µs |
+
+All within the sitting's spread (the "before" scrolling runs went from
+16,303 to 19,276).
+
+Scrolling a file in one split with a 3000x2000 picture in the other (3
+runs each, against the same file beside a second text file):
+
+| | Frames a second | CPU per frame, p50 | Layout |
+|---|---:|---:|---:|
+| A text file beside it | 16,460 to 17,626 | 31.0 µs | 0.67 µs |
+| The picture, blended over its tab's box | 13,381 to 13,473 | 48.7 µs | 1.36 µs |
+| The picture, written straight | 16,456 to 17,102 | 33.1 µs | 0.69 µs |
+
+Blended, the picture cost 15 µs of GPU time a frame (the CPU waited for
+it: 37.5 µs of "begin" against 22): the GPU drew the tab's box under the
+picture and then the picture over it. A picture with nothing see-through
+(or with the checkerboard behind it, which makes every pixel solid) now
+goes through a second pipeline that writes it straight, and Apple's GPU
+leaves out the box's pixels under it: the frame costs what a text view in
+that split costs. Blending stays for pictures with see-through pixels in
+the Markdown preview, and for any not on whole pixels. The tab's bottom
+row was also made again every frame (its text built and hashed: 0.7 µs);
+now only when what it says changes. The 2 µs of CPU left is the one more
+draw, with its texture switched in and the atlas switched back.
+
+From opening to the picture on screen: a 3000x2000 PNG (9.9 MB) about 30 ms
+more than a run that reads nothing (181 to 201 ms against 152 to 163 for
+the whole run), the same picture as a JPEG (538 KB) about 10 ms.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

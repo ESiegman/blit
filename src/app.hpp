@@ -70,6 +70,22 @@ struct ProfileFunc;
 struct ProfView;     // a profile's tab (appprofile.cpp)
 struct TermView;     // a terminal's tab (appterm.cpp)
 struct MdView;       // a Markdown preview's tab (appmarkdown.cpp)
+struct ImageView;    // an image file's tab (appimage.cpp)
+
+// A picture read from its file and put on the GPU (appimage.cpp).
+struct PictureInfo {
+    enum : u8 { kReading, kReady, kFailed };
+    u8 state = kReading;
+    bool clear = false;   // some of it is see-through
+    bool again = false;   // being read again (its file changed); what is here stays until then
+    u32 gpu = 0;          // the renderer's id for it
+    int w = 0, h = 0;     // as read (smaller than it is, if it is very large)
+    int full_w = 0, full_h = 0, frames = 1;
+    std::string kind, error;
+    u64 bytes = 0;        // the file's size
+    i64 stamp = 0;        // its change time when it was read (a file here)
+    u64 used_ns = 0;      // when it was last drawn or asked about
+};
 
 struct Doc {
     Editor ed;
@@ -119,6 +135,7 @@ struct Doc {
     std::shared_ptr<ProfView> prof;  // a profile's tab: drawn over the text area (appprofile.cpp)
     std::shared_ptr<TermView> term;  // a terminal's tab: drawn over it too (appterm.cpp)
     std::shared_ptr<MdView> md;      // a Markdown preview's tab: drawn over it too (appmarkdown.cpp)
+    std::shared_ptr<ImageView> image;  // an image file's tab: drawn over it too (appimage.cpp)
     bool term_closed = false;        // (its program has ended, and that has been seen to)
     std::unique_ptr<Highlights> marks;
 
@@ -427,6 +444,27 @@ private:
     bool md_mouse_down(const SDL_MouseButtonEvent& b);
     std::string md_dump();
 
+    // Pictures (appimage.cpp): image files read on a thread of their own and
+    // put on the GPU, for an image file's tab and the Markdown preview.
+    struct Pictures;
+    static bool is_picture_path(std::string_view path);
+    const PictureInfo* picture(const std::string& path);
+    void picture_sync();
+    void picture_recheck();
+    void picture_tidy();
+    void picture_wait();
+    bool pictures_busy() const;
+    bool image_open(const std::string& full);
+    void image_layout(FrameDesc& fd);
+    bool image_hit(int px, int py, Pane** pane);
+    bool image_key(const SDL_KeyboardEvent& k);
+    bool image_wheel(const SDL_MouseWheelEvent& w);
+    bool image_pinch(float by);
+    bool image_mouse_down(const SDL_MouseButtonEvent& b);
+    bool image_mouse_motion(const SDL_MouseMotionEvent& m);
+    void image_mouse_up();
+    std::string image_dump();
+
     // Terminals (appterm.cpp): a tab running a shell, here or on another machine.
     // A terminal tab in dir (the working folder when none): a login shell, or
     // `command` run by sh, whose tab stays when it ends and says how (and
@@ -707,6 +745,8 @@ private:
     Options opt_;
     SDL_Window* win_ = nullptr;
     Renderer gpu_;
+    std::shared_ptr<Pictures> pictures_;  // (after gpu_: its reader stops first)
+    u64 pictures_gen_ = 0;  // counts up whenever a picture has been read (or could not be)
     std::unique_ptr<Font> font_;
     // The splits of the window, how they are arranged, and the one with
     // the keyboard. There is always at least one, and every one has at

@@ -1,8 +1,10 @@
 #pragma once
 // Markdown, drawn as cells: headings, paragraphs with their emphasis, code
 // and links, lists (and task lists), quotes, tables, code blocks, rules, and
-// Mermaid diagrams (mermaid.hpp), laid out to a width. What blit's preview
-// tab shows (appmarkdown.cpp); nothing here knows about the window.
+// Mermaid diagrams (mermaid.hpp), laid out to a width, with room left for
+// pictures. What blit's preview tab shows (appmarkdown.cpp); nothing here
+// knows about the window, or reads a picture.
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -45,15 +47,30 @@ struct MdRun {
     MdRun() = default;
     MdRun(std::string t, u8 i = kMdText, u8 s = 0, u8 tn = kMdNoTone, std::string l = {}) : text(std::move(t)), ink(i), style(s), tone(tn), link(std::move(l)) {}
 };
+// A picture: the room it takes, in cells, and its size in pixels in that room.
+struct MdPic {
+    std::string src;   // the file, as the text names it
+    std::string link;  // where a click on it goes
+    u32 col = 0;       // its first column
+    u32 part = 0;      // which of its rows a row is (from 0)
+    u32 cols = 0, rows = 0, w = 0, h = 0;
+};
 struct MdRow {
     std::vector<MdRun> runs;
     u32 line = 0;          // the line of the source it comes from (from 0)
     u8 fill = kMdNoTone;   // a background for the rest of the row (a code block's)
     u32 fill_from = 0, fill_to = 0;  // the columns it covers, [from, to)
+    std::vector<MdPic> pics;  // the pictures over it, each a row of its own
 };
 
+// The size of a picture that is a paragraph of its own (or one of a row
+// of them), at most `room` columns wide; want_w and want_h are what the
+// text asks for (<img width=...>, in points; 0: nothing). False if it is
+// not known (not there, not read yet): it is shown as text then.
+using MdPictureFn = std::function<bool(const std::string& src, u32 room, u32 want_w, u32 want_h, MdPic* out)>;
+
 // The text drawn `width` columns wide.
-std::vector<MdRow> md_render(std::string_view text, u32 width);
+std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn& picture = {});
 // A row as plain text (for the tests): what its runs say.
 std::string md_row_text(const MdRow& r);
 

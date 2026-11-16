@@ -78,6 +78,7 @@ endif()
 # Apple's framework headers); it talks to the rest through a C interface,
 # so the two compilers' C++ libraries never meet. It is left out of
 # link-time optimization: the two compilers' LTO objects do not mix.
+# Image files are read there too, by the system's ImageIO (src/picture.h).
 if(APPLE)
   if(NOT CMAKE_OBJC_COMPILER)
     set(CMAKE_OBJC_COMPILER /usr/bin/clang)
@@ -86,9 +87,9 @@ if(APPLE)
   if(BLIT_DEV AND BLIT_OPTIMIZE_DEBUG)
     set(CMAKE_OBJC_FLAGS_DEBUG "${CMAKE_OBJC_FLAGS_RELEASE}")
   endif()
-  add_library(blit_gpu STATIC src/gpu_metal.m)
+  add_library(blit_gpu STATIC src/gpu_metal.m src/picture_mac.m)
   target_compile_options(blit_gpu PRIVATE -fobjc-arc -Wall -Wextra)
-  target_link_libraries(blit_gpu PUBLIC "-framework Metal" "-framework QuartzCore" "-framework Foundation" "-framework CoreGraphics")
+  target_link_libraries(blit_gpu PUBLIC "-framework Metal" "-framework QuartzCore" "-framework Foundation" "-framework CoreGraphics" "-framework ImageIO")
 else()
   add_library(blit_gpu STATIC src/gpu_vulkan.cpp)
 endif()
@@ -183,7 +184,7 @@ target_link_libraries(blit_lsp PUBLIC blit_core)
 
 # The editor. Shaders are compiled offline by shaders/build.sh and the results
 # are checked in under shaders/gen, so this needs no shader tools.
-add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src/apptabs.cpp src/appsplit.cpp src/appgit.cpp src/appvim.cpp src/appfx.cpp src/appfind.cpp src/appstatus.cpp src/appstart.cpp src/appremote.cpp src/appprofile.cpp src/appterm.cpp src/appcommands.cpp src/appdebug.cpp src/appbuild.cpp src/appmarkdown.cpp src/build.cpp src/fsio.cpp src/project.cpp src/libraries.cpp src/markdown.cpp src/mermaid.cpp src/dap.cpp src/applua.cpp src/luaapi.cpp src/git.cpp src/tree.cpp src/render.cpp)
+add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src/apptabs.cpp src/appsplit.cpp src/appgit.cpp src/appvim.cpp src/appfx.cpp src/appfind.cpp src/appstatus.cpp src/appstart.cpp src/appremote.cpp src/appprofile.cpp src/appterm.cpp src/appcommands.cpp src/appdebug.cpp src/appbuild.cpp src/appmarkdown.cpp src/appimage.cpp src/build.cpp src/fsio.cpp src/project.cpp src/libraries.cpp src/markdown.cpp src/mermaid.cpp src/dap.cpp src/applua.cpp src/luaapi.cpp src/git.cpp src/tree.cpp src/render.cpp)
 target_include_directories(blit PRIVATE ${LUA_INCLUDE_DIR})
 target_link_libraries(blit PRIVATE blit_view blit_syntax blit_lsp blit_gpu SDL3::SDL3 ${LUA_LIBRARY})
 
@@ -229,6 +230,7 @@ if(BLIT_DEV)
     add_test(NAME start COMMAND sh ${CMAKE_SOURCE_DIR}/tests/start.sh $<TARGET_FILE:blit>)
     add_test(NAME build COMMAND sh ${CMAKE_SOURCE_DIR}/tests/build.sh $<TARGET_FILE:blit>)
     add_test(NAME markdown COMMAND sh ${CMAKE_SOURCE_DIR}/tests/markdown.sh $<TARGET_FILE:blit>)
+    add_test(NAME images COMMAND sh ${CMAKE_SOURCE_DIR}/tests/images.sh $<TARGET_FILE:blit>)
     add_test(NAME remote COMMAND sh ${CMAKE_SOURCE_DIR}/tests/remote.sh $<TARGET_FILE:blit>)
     add_test(NAME profile COMMAND sh ${CMAKE_SOURCE_DIR}/tests/profile.sh $<TARGET_FILE:blit>)
     add_test(NAME term COMMAND sh ${CMAKE_SOURCE_DIR}/tests/term.sh $<TARGET_FILE:blit>)

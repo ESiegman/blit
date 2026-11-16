@@ -6,7 +6,8 @@
 // go into the commands themselves (setFragmentBytes). The glyph atlas
 // lives in GPU memory and is copied to only on the frames that add glyphs.
 // Compiled pipelines are kept in a cache folder (a binary archive), so a
-// run after the first does not compile them again.
+// run after the first does not compile them again. Pictures are textures of
+// their own, with their smaller copies (mipmaps), sampled smoothly.
 //
 // Objective-C with automatic reference counting; built by Apple's
 // compiler, which can read Apple's framework headers (GCC cannot).
@@ -40,6 +41,9 @@ static void say(char* err, size_t size, NSString* what, NSError* why) {
     MTLPixelFormat format;
     id<MTLRenderPipelineState> pipes[BLIT_PIPE_COUNT];
     id<MTLSamplerState> sampler;
+    id<MTLSamplerState> smooth;  // (pictures')
+    NSMutableDictionary<NSNumber*, id<MTLTexture>>* pictures;
+    uint32_t next_picture;
     MTLRenderPassDescriptor* pass;  // the same one each frame, with that frame's image put in
     id<MTLTexture> atlas;
     id<MTLTexture> offscreen;
@@ -120,6 +124,10 @@ BlitGpu* blit_gpu_create(void* view, const BlitGpuShaders* shaders, int frames, 
         sd.mipFilter = MTLSamplerMipFilterNotMipmapped;
         sd.sAddressMode = sd.tAddressMode = sd.rAddressMode = MTLSamplerAddressModeClampToEdge;
         m->sampler = [m->device newSamplerStateWithDescriptor:sd];
+        sd.minFilter = sd.magFilter = MTLSamplerMinMagFilterLinear;
+        sd.mipFilter = MTLSamplerMipFilterLinear;
+        m->smooth = [m->device newSamplerStateWithDescriptor:sd];
+        m->pictures = [NSMutableDictionary dictionary];
 
         // The shaders.
         NSError* e = nil;
@@ -130,9 +138,9 @@ BlitGpu* blit_gpu_create(void* view, const BlitGpuShaders* shaders, int frames, 
             say(err, err_size, @"the vertex shader", e);
             return NULL;
         }
-        id<MTLFunction> ffn[BLIT_PIPE_POPUP_FX + 1];
-        for (int i = 0; i <= BLIT_PIPE_POPUP_FX; ++i) {
-            id<MTLLibrary> lib = library(m->device, shaders->fragment[i], &e);
+        id<MTLFunction> ffn[BLIT_PIPE_POPUP_FX + 2];
+        for (int i = 0; i <= BLIT_PIPE_POPUP_FX + 1; ++i) {
+            id<MTLLibrary> lib = library(m->device, i <= BLIT_PIPE_POPUP_FX ? shaders->fragment[i] : shaders->image, &e);
             ffn[i] = [lib newFunctionWithName:@"main0"];
             if (!ffn[i]) {
                 say(err, err_size, @"a fragment shader", e);
@@ -146,6 +154,7 @@ BlitGpu* blit_gpu_create(void* view, const BlitGpuShaders* shaders, int frames, 
         uint64_t key = 1469598103934665603ull;
         key = mix(key, shaders->vertex.code, shaders->vertex.size);
         for (int i = 0; i <= BLIT_PIPE_POPUP_FX; ++i) key = mix(key, shaders->fragment[i].code, shaders->fragment[i].size);
+        key = mix(key, shaders->image.code, shaders->image.size);
         const char* dev = m->device.name.UTF8String;
         key = mix(key, dev, strlen(dev));
         NSString* os = [NSProcessInfo processInfo].operatingSystemVersionString;
@@ -170,11 +179,11 @@ BlitGpu* blit_gpu_create(void* view, const BlitGpuShaders* shaders, int frames, 
         for (int p = 0; p < BLIT_PIPE_COUNT; ++p) {
             MTLRenderPipelineDescriptor* pd = [MTLRenderPipelineDescriptor new];
             pd.vertexFunction = vfn;
-            pd.fragmentFunction = ffn[p == BLIT_PIPE_POPUP_BLEND ? BLIT_PIPE_POPUP_FX : p];
+            pd.fragmentFunction = ffn[p == BLIT_PIPE_POPUP_BLEND ? BLIT_PIPE_POPUP_FX : p >= BLIT_PIPE_IMAGE ? BLIT_PIPE_POPUP_FX + 1 : p];
             pd.inputPrimitiveTopology = MTLPrimitiveTopologyClassTriangle;
             MTLRenderPipelineColorAttachmentDescriptor* ca = pd.colorAttachments[0];
             ca.pixelFormat = m->format;
-            if (p == BLIT_PIPE_POPUP_BLEND) {  // the shader gives colour times alpha: added to what is there, which keeps 1 - alpha
+            if (p == BLIT_PIPE_POPUP_BLEND || p == BLIT_PIPE_IMAGE) {  // the shader gives colour times alpha: added to what is there, which keeps 1 - alpha
                 ca.blendingEnabled = YES;
                 ca.sourceRGBBlendFactor = ca.sourceAlphaBlendFactor = MTLBlendFactorOne;
                 ca.destinationRGBBlendFactor = ca.destinationAlphaBlendFactor = MTLBlendFactorOneMinusSourceAlpha;
@@ -268,6 +277,42 @@ int blit_gpu_set_atlas(BlitGpu* g, int w, int h) {
     m->atlas_h = h;
     m->atlas_pending = NO;
     return m->atlas != nil;
+}
+
+uint32_t blit_gpu_image_add(BlitGpu* g, const uint8_t* rgba, int w, int h) {
+    BlitMetal* m = M(g);
+    if (!rgba || w <= 0 || h <= 0) return 0;
+    @autoreleasepool {
+        // Its copies, each half the size of the one before, down to a pixel.
+        NSUInteger levels = 1;
+        for (int side = w > h ? w : h; side > 1; side >>= 1) ++levels;
+        MTLTextureDescriptor* td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:(NSUInteger)w height:(NSUInteger)h mipmapped:YES];
+        td.mipmapLevelCount = levels;
+        td.usage = MTLTextureUsageShaderRead;
+        td.storageMode = MTLStorageModePrivate;
+        id<MTLTexture> tex = [m->device newTextureWithDescriptor:td];
+        const NSUInteger row = (NSUInteger)w * 4, bytes = row * (NSUInteger)h;
+        id<MTLBuffer> src = tex ? [m->device newBufferWithBytes:rgba length:bytes options:MTLResourceStorageModeShared] : nil;
+        if (!src) return 0;
+        // Copied, and its copies made, by the GPU ahead of the frames that
+        // draw it (one queue: they come after this). Not waited for.
+        id<MTLCommandBuffer> cb = [m->queue commandBuffer];
+        id<MTLBlitCommandEncoder> b = [cb blitCommandEncoder];
+        [b copyFromBuffer:src sourceOffset:0 sourceBytesPerRow:row sourceBytesPerImage:bytes sourceSize:MTLSizeMake((NSUInteger)w, (NSUInteger)h, 1)
+                toTexture:tex destinationSlice:0 destinationLevel:0 destinationOrigin:MTLOriginMake(0, 0, 0)];
+        if (levels > 1) [b generateMipmapsForTexture:tex];
+        [b endEncoding];
+        [cb commit];
+        m->last = cb;
+        const uint32_t id = ++m->next_picture;
+        m->pictures[@(id)] = tex;
+        return id;
+    }
+}
+
+void blit_gpu_image_drop(BlitGpu* g, uint32_t id) {
+    BlitMetal* m = M(g);
+    [m->pictures removeObjectForKey:@(id)];
 }
 
 static id<MTLBuffer> buffer_at_least(BlitMetal* m, id<MTLBuffer> have, NSUInteger bytes) {
@@ -413,6 +458,8 @@ int blit_gpu_end(BlitGpu* g, const void* uniforms, size_t stride, size_t blocks,
         const NSInteger tw = (NSInteger)m->target.width, th = (NSInteger)m->target.height;
         uint32_t bound = ~0u;
         size_t given = (size_t)-1;  // the uniform block the last draw was given: the next with the same one is not given it again
+        uint32_t shown_picture = 0;  // the picture in the atlas's place (0: the atlas is there)
+        NSMutableArray<id<MTLTexture>>* drawn = nil;  // the pictures this frame draws, kept until it is done
         const uint8_t* u = (const uint8_t*)uniforms;
         for (uint32_t i = 0; i < count; ++i) {
             const BlitGpuDraw* d = &draws[i];
@@ -422,6 +469,21 @@ int blit_gpu_end(BlitGpu* g, const void* uniforms, size_t stride, size_t blocks,
             if (x1 > tw) x1 = tw;
             if (y1 > th) y1 = th;
             if (x1 <= x0 || y1 <= y0 || d->pipeline >= BLIT_PIPE_COUNT || d->uniforms >= blocks) continue;
+            const uint32_t picture = d->pipeline == BLIT_PIPE_IMAGE || d->pipeline == BLIT_PIPE_IMAGE_SOLID ? d->image : 0;
+            if (picture != shown_picture) {
+                if (picture) {
+                    id<MTLTexture> tex = m->pictures[@(picture)];
+                    if (!tex) continue;
+                    if (!drawn) drawn = [NSMutableArray array];
+                    [drawn addObject:tex];
+                    [e setFragmentTexture:tex atIndex:0];
+                    if (!shown_picture) [e setFragmentSamplerState:m->smooth atIndex:0];
+                } else {
+                    [e setFragmentTexture:m->atlas atIndex:0];
+                    [e setFragmentSamplerState:m->sampler atIndex:0];
+                }
+                shown_picture = picture;
+            }
             if (d->pipeline != bound) {
                 bound = d->pipeline;
                 [e setRenderPipelineState:m->pipes[bound]];
@@ -444,7 +506,7 @@ int blit_gpu_end(BlitGpu* g, const void* uniforms, size_t stride, size_t blocks,
         id<MTLTexture> atlas = m->atlas, target = m->target;
         [cb addCompletedHandler:^(id<MTLCommandBuffer> c) {
             (void)c;
-            (void)shown, (void)cells, (void)staged, (void)atlas, (void)target;
+            (void)shown, (void)cells, (void)staged, (void)atlas, (void)target, (void)drawn;
             dispatch_semaphore_signal(done);
         }];
         [cb commit];

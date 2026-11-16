@@ -804,6 +804,26 @@ void App::run_script(const char* script) {
             md_open();
         } else if (verb == "mddump") {  // the preview's rows, as text
             std::fputs(md_dump().c_str(), stderr);
+        } else if (verb == "imagewait") {  // every picture asked for has been read (10 s at most)
+            picture_wait();
+        } else if (verb == "imagedump") {  // the image tab in front: what it shows, and how
+            std::fprintf(stderr, "%s\n", image_dump().c_str());
+        } else if (verb == "pixel") {  // pixel:X,Y, the colour of the last frame there (pixels, not points)
+            int x = 0, y = 0, w = 0, h = 0;
+            std::sscanf(arg.c_str(), "%d,%d", &x, &y);
+            std::vector<u8> rgba;
+            if (gpu_.read_pixels(rgba, &w, &h) && x >= 0 && y >= 0 && x < w && y < h) {
+                const u8* p = rgba.data() + (static_cast<size_t>(y) * static_cast<size_t>(w) + static_cast<size_t>(x)) * 4;
+                std::fprintf(stderr, "pixel %d,%d: %d %d %d\n", x, y, p[0], p[1], p[2]);
+            } else {
+                std::fprintf(stderr, "pixel %d,%d: none\n", x, y);
+            }
+        } else if (verb == "reload") {  // what coming back to the window does: files changed on disk read again
+            reload_changed();
+        } else if (verb == "pinch") {  // pinch:SCALE, a touchpad's pinch (over where the mouse was put)
+            e.type = SDL_EVENT_PINCH_UPDATE;
+            e.pinch.scale = static_cast<float>(std::atof(arg.c_str()));
+            handle(e);
         } else if (verb == "buildpanel") {  // the side panel's Build tab
             if (!panel_px()) panel_toggle();
             panel_show_build();

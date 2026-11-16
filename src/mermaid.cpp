@@ -1184,7 +1184,10 @@ bool draw_pie(const std::vector<std::string>& st, u32 width, std::vector<MdRow>*
         *err = "no slices";
         return false;
     }
-    if (!title.empty()) rows->push_back({{{title, kMdText, kMdBold}}});
+    if (!title.empty()) {
+        rows->emplace_back();
+        rows->back().runs.push_back({title, kMdText, kMdBold});
+    }
     const int bar_room = std::max(8, static_cast<int>(width) - name_w - 16);
     static const u8 kInks[] = {kMdSlice0, kMdSlice1, kMdSlice2, kMdSlice3, kMdHeading1, kMdHeading2, kMdHeading3, kMdAccent};
     for (size_t k = 0; k < slices.size(); ++k) {

@@ -90,6 +90,21 @@ struct TextView {
 
 inline constexpr u32 kMaxViews = 8;
 inline constexpr u32 kMaxPopups = 48;
+inline constexpr u32 kMaxPictures = 64;
+
+// A picture drawn in a frame (one Renderer::image_add() was given).
+struct PictureDraw {
+    u32 image = 0;
+    float rect[4] = {};  // where all of it is: x0 y0 x1 y1, px (it may go past the clip)
+    int clip[4] = {};    // what of the window it may draw in: x0 y0 x1 y1, px
+    u32 after = 0;       // drawn after this many of the frame's popups (0: over the text, under every popup)
+    float radius = 0;    // its corners, px
+    float opacity = 1;
+    bool sharp = false;  // each of its pixels a square (drawn much larger than it is), not smoothed
+    bool clear = false;  // some of its pixels are see-through
+    float checker = 0;   // squares of this size (px) behind its clear pixels; 0: none
+    float check_a[4] = {}, check_b[4] = {};
+};
 
 // Everything the renderer needs for one frame besides the text itself.
 struct FrameDesc {
@@ -102,6 +117,8 @@ struct FrameDesc {
     float squiggle[4] = {8, 2, 1.5f, 3.5f};
     Popup popups[kMaxPopups];
     u32 popup_count = 0;
+    PictureDraw pictures[kMaxPictures];
+    u32 picture_count = 0;
     Theme theme{};
 };
 
@@ -148,6 +165,11 @@ public:
     Result acquire();
     bool acquired() const { return acquired_; }
     void release();  // a frame acquired and not to be drawn after all
+
+    // A picture (RGBA, colours multiplied by alpha) for PictureDraw: its id,
+    // or 0 if it could not be made. Dropped when it is not wanted any more.
+    u32 image_add(const u8* rgba, int w, int h);
+    void image_drop(u32 id);
 
     // Blocks until the GPU has finished everything submitted so far.
     void wait_idle();

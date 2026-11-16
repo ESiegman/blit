@@ -1,0 +1,101 @@
+#pragma clang diagnostic ignored "-Wmissing-prototypes"
+
+#include <metal_stdlib>
+#include <simd/simd.h>
+
+using namespace metal;
+
+struct _45
+{
+    float4 _m0;
+    float4 _m1;
+    float4 _m2;
+    float4 _m3;
+};
+
+struct main0_out
+{
+    float4 m_201 [[color(0)]];
+};
+
+static inline __attribute__((always_inline))
+float _14(thread const float2& _11, thread const float2& _12, thread const float& _13)
+{
+    float2 _16 = (abs(_11) - _12) + float2(_13);
+    return (length(fast::max(_16, float2(0.0))) + fast::min(fast::max(_16.x, _16.y), 0.0)) - _13;
+}
+
+fragment main0_out main0(constant _45& _47 [[buffer(0)]], texture2d<float> _86 [[texture(0)]], sampler _86Smplr [[sampler(0)]], float4 gl_FragCoord [[position]])
+{
+    main0_out out = {};
+    float2 _43 = _47._m0.zw - _47._m0.xy;
+    float2 _58 = gl_FragCoord.xy - _47._m0.xy;
+    float2 _67 = _58 / _43;
+    float4 _91;
+    if (_47._m1.z > 0.0)
+    {
+        int2 _82 = int2(_86.get_width(), _86.get_height());
+        _91 = _86.read(uint2(clamp(int2(_67 * float2(_82)), int2(0), _82 - int2(1))), 0);
+    }
+    else
+    {
+        _91 = _86.sample(_86Smplr, _67);
+    }
+    if (_47._m1.w > 0.0)
+    {
+        int2 _115 = int2(floor(_58 / float2(_47._m1.w)));
+        float4 _131;
+        if (((_115.x + _115.y) & 1) == 0)
+        {
+            _131 = _47._m2;
+        }
+        else
+        {
+            _131 = _47._m3;
+        }
+        _91 += (_131 * (1.0 - _91.w));
+    }
+    float _149 = _47._m1.y;
+    if (_47._m1.x > 0.0)
+    {
+        float2 _164 = _58 - (_43 * 0.5);
+        float2 _165 = _43 * 0.5;
+        float _166 = _47._m1.x;
+        _149 *= fast::clamp(0.5 - _14(_164, _165, _166), 0.0, 1.0);
+    }
+    bool _176 = _67.x < 0.0;
+    bool _183;
+    if (!_176)
+    {
+        _183 = _67.y < 0.0;
+    }
+    else
+    {
+        _183 = _176;
+    }
+    bool _190;
+    if (!_183)
+    {
+        _190 = _67.x > 1.0;
+    }
+    else
+    {
+        _190 = _183;
+    }
+    bool _197;
+    if (!_190)
+    {
+        _197 = _67.y > 1.0;
+    }
+    else
+    {
+        _197 = _190;
+    }
+    if (_197)
+    {
+        _149 = 0.0;
+    }
+    out.m_201 = _91 * _149;
+    return out;
+}
+

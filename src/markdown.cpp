@@ -140,7 +140,38 @@ struct Span {
     u8 style = 0, ink = kMdText, tone = kMdNoTone;
     std::string link;
     bool brk = false;  // a line break, not text
+    std::string image;          // a picture's file (the text is what stands for it, if it cannot be drawn)
+    u32 image_w = 0, image_h = 0;  // the size it asks for (<img width=...>; 0: none)
 };
+
+// The value of an HTML tag's attribute (`name="v"`, `name='v'`, `name=v`), or "".
+std::string attribute(std::string_view tag, std::string_view name) {
+    for (size_t at = 0; (at = tag.find(name, at)) != std::string_view::npos; at += name.size()) {
+        const bool starts = at > 0 && (tag[at - 1] == ' ' || tag[at - 1] == '\t' || tag[at - 1] == '\n');
+        size_t k = at + name.size();
+        while (k < tag.size() && tag[k] == ' ') ++k;
+        if (!starts || k >= tag.size() || tag[k] != '=') continue;
+        ++k;
+        while (k < tag.size() && tag[k] == ' ') ++k;
+        if (k >= tag.size()) return {};
+        if (tag[k] == '"' || tag[k] == '\'') {
+            const size_t end = tag.find(tag[k], k + 1);
+            return std::string(tag.substr(k + 1, end == std::string_view::npos ? std::string_view::npos : end - k - 1));
+        }
+        const size_t end = tag.find_first_of(" \t\n/>", k);
+        return std::string(tag.substr(k, end == std::string_view::npos ? std::string_view::npos : end - k));
+    }
+    return {};
+}
+
+// A size an attribute gives in pixels ("200", "200px"); 0 for none or a percentage.
+u32 attribute_px(std::string_view tag, std::string_view name) {
+    const std::string v = attribute(tag, name);
+    u32 n = 0;
+    size_t k = 0;
+    for (; k < v.size() && std::isdigit(static_cast<unsigned char>(v[k])) && n < 100000; ++k) n = n * 10 + static_cast<u32>(v[k] - '0');
+    return k < v.size() && v[k] == '%' ? 0 : n;
+}
 
 using Refs = std::map<std::string, std::string>;  // a link's label (lower case) -> where it goes
 
@@ -291,6 +322,23 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
                     i = end + 1;
                     continue;
                 }
+                // A picture: <img src="..." alt="..." width="...">.
+                if (tag.starts_with("img") && (tag.size() == 3 || tag[3] == ' ' || tag[3] == '\t' || tag[3] == '\n' || tag[3] == '/')) {
+                    const std::string src = attribute(inner, "src"), alt = attribute(inner, "alt");
+                    if (!src.empty()) {
+                        flush();
+                        Span pic = as;
+                        pic.text = "\xE2\x96\xA3 " + (alt.empty() ? std::string("image") : alt);
+                        pic.ink = kMdLink;
+                        pic.link = as.link.empty() ? src : as.link;
+                        pic.image = src;
+                        pic.image_w = attribute_px(inner, "width");
+                        pic.image_h = attribute_px(inner, "height");
+                        out.push_back(std::move(pic));
+                    }
+                    i = end + 1;
+                    continue;
+                }
                 // Inline HTML (<kbd>, <sup>, </b> ...): its tags go, its text stays.
                 if (!inner.empty() && (std::isalpha(static_cast<unsigned char>(inner[0])) || inner[0] == '/') && inner.find('<') == std::string_view::npos) {
                     i = end + 1;
@@ -339,12 +387,13 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
                     }
                 }
                 if (next != std::string_view::npos) {
-                    if (image) {  // (pictures are not drawn: what it shows, and where it is)
+                    if (image) {  // (what stands for it where it is not drawn: what it shows; a click opens it, or follows the link it is in)
                         flush();
                         Span pic = as;
                         pic.text = "\xE2\x96\xA3 " + (text.empty() ? std::string("image") : std::string(text));
                         pic.ink = kMdLink;
-                        pic.link = url;
+                        pic.link = as.link.empty() ? url : as.link;
+                        pic.image = url;
                         out.push_back(std::move(pic));
                     } else {
                         link_span(text, url);
@@ -872,11 +921,22 @@ struct Level {
     bool list = false;  // a list item's (how deep lists are, for their bullets)
 };
 
+// Whether these spans are pictures and nothing else (but space).
+bool pictures_only(const std::vector<Span>& spans) {
+    bool any = false;
+    for (const Span& sp : spans) {
+        if (!sp.image.empty()) any = true;
+        else if (!sp.brk && sp.text.find_first_not_of(" \t") != std::string::npos) return false;
+    }
+    return any;
+}
+
 struct Layout {
     std::vector<MdRow>& rows;
     u32 width;
     const Refs& refs;
     std::vector<Level> levels;
+    const MdPictureFn* picture = nullptr;
 
     u32 indent() const {
         u32 n = 0;
@@ -923,12 +983,60 @@ struct Layout {
         }
     }
 
+    // Pictures, side by side as far as they fit (in the middle, if
+    // `centre`); one that cannot be drawn is its text, on a row of its own.
+    void pictures(const std::vector<Span>& spans, u32 line, bool centre) {
+        std::vector<MdPic> strip;
+        u32 used = 0;
+        auto flush = [&] {
+            if (strip.empty()) return;
+            u32 tall = 0;
+            for (const MdPic& p : strip) tall = std::max(tall, p.rows);
+            const u32 shift = indent() + (centre && room() > used ? (room() - used) / 2 : 0);
+            for (u32 r = 0; r < tall; ++r) {
+                MdRow& at = row({}, line);
+                for (const MdPic& p : strip)
+                    if (r < p.rows) {
+                        at.pics.push_back(p);
+                        at.pics.back().col += shift;
+                        at.pics.back().part = r;
+                    }
+            }
+            strip.clear();
+            used = 0;
+        };
+        for (const Span& sp : spans) {
+            if (sp.image.empty()) continue;
+            MdPic p;
+            if (picture && *picture && (*picture)(sp.image, room(), sp.image_w, sp.image_h, &p) && p.cols && p.rows) {
+                p.src = sp.image;
+                p.link = sp.link;
+                if (!strip.empty() && used + 1 + p.cols > room()) flush();
+                p.col = strip.empty() ? 0 : used + 1;
+                used = p.col + p.cols;
+                strip.push_back(std::move(p));
+            } else {
+                flush();
+                std::vector<MdRun> runs;
+                const u32 w = cols_of(sp.text);
+                if (centre && room() > w) runs.push_back({std::string((room() - w) / 2, ' ')});
+                runs.push_back({sp.text, sp.ink, sp.style, sp.tone, sp.link});
+                row(std::move(runs), line);
+            }
+        }
+        flush();
+    }
+
     void paragraph(const std::vector<std::string>& text, const std::vector<u32>& nos, u32 line, u8 ink, u8 style) {
         std::vector<Span> spans;
         Span as;
         as.ink = ink;
         as.style = style;
         parse_inline(joined(text), as, refs, spans);
+        if (picture && *picture && pictures_only(spans)) {
+            pictures(spans, line, false);
+            return;
+        }
         const auto lines = wrap(spans, room());
         // (each row's source line: the paragraph's lines, as far as rows go)
         for (size_t k = 0; k < lines.size(); ++k) row(lines[k], nos.empty() ? line : nos[std::min(k * nos.size() / std::max<size_t>(1, lines.size()), nos.size() - 1)]);
@@ -1042,6 +1150,48 @@ struct Layout {
         border("\xE2\x94\x94", "\xE2\x94\xB4", "\xE2\x94\x98", b.nos.empty() ? b.line : b.nos.back());
     }
 
+    // HTML: its text, without the tags (and comments); its pictures drawn,
+    // in the middle if it says align="center" (as a README's top often does).
+    void html(const Block& b, u8 ink) {
+        std::string all;
+        for (const std::string& l : b.text) all += l + "\n";
+        for (size_t c; (c = all.find("<!--")) != std::string::npos;) {
+            const size_t e = all.find("-->", c + 4);
+            all.erase(c, e == std::string::npos ? std::string::npos : e + 3 - c);
+        }
+        const std::string low = lower(all);
+        const bool centre = low.find("align=\"center\"") != std::string::npos || low.find("align=center") != std::string::npos || low.find("align='center'") != std::string::npos;
+        std::vector<Span> pics;  // pictures on lines of their own, gathered (a row of them across lines)
+        size_t k = 0;
+        for (size_t at = 0; at < all.size(); ++k) {
+            const size_t nl = all.find('\n', at);
+            const std::string_view l = std::string_view(all).substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+            at = nl == std::string::npos ? all.size() : nl + 1;
+            const u32 line = k < b.nos.size() ? b.nos[k] : b.line;
+            Span as;
+            as.ink = ink;
+            std::vector<Span> spans;
+            parse_inline(l, as, refs, spans);
+            if (pictures_only(spans)) {
+                for (Span& sp : spans)
+                    if (!sp.image.empty()) pics.push_back(std::move(sp));
+                continue;
+            }
+            bool text = false;
+            for (const Span& sp : spans) text = text || (!sp.brk && sp.text.find_first_not_of(" \t") != std::string::npos);
+            if (!text) continue;  // (nothing but tags)
+            if (!pics.empty()) pictures(pics, line, centre), pics.clear();
+            for (std::vector<MdRun>& r : wrap(spans, room())) {
+                if (centre) {
+                    const u32 w = cols_of_runs(r);
+                    if (room() > w) r.insert(r.begin(), MdRun(std::string((room() - w) / 2, ' ')));
+                }
+                row(std::move(r), line);
+            }
+        }
+        if (!pics.empty()) pictures(pics, b.nos.empty() ? b.line : b.nos.back(), centre);
+    }
+
     void block(const Block& b, bool tight, u8 ink) {
         switch (b.kind) {
             case Block::kPara: paragraph(b.text, b.nos, b.line, ink, 0); break;
@@ -1062,16 +1212,7 @@ struct Layout {
                 row({{rule, kMdMuted}}, b.line);
                 break;
             }
-            case Block::kHtml:
-                for (size_t k = 0; k < b.text.size(); ++k) {
-                    std::string_view rest = b.text[k];
-                    do {
-                        const size_t cut = std::max<size_t>(1, fit(rest, room()));
-                        row({{std::string(rest.substr(0, cut)), kMdMuted}}, k < b.nos.size() ? b.nos[k] : b.line);
-                        rest.remove_prefix(std::min(cut, rest.size()));
-                    } while (!rest.empty());
-                }
-                break;
+            case Block::kHtml: html(b, ink); break;
             case Block::kQuote:
                 levels.push_back({{{"\xE2\x96\x8E ", kMdAccent}}, {{"\xE2\x96\x8E ", kMdAccent}}, false});
                 blocks(b.kids, false, kMdQuote);
@@ -1113,7 +1254,7 @@ struct Layout {
 
 }  // namespace
 
-std::vector<MdRow> md_render(std::string_view text, u32 width) {
+std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn& picture) {
     width = std::max<u32>(width, 12);
     std::vector<Line> lines;
     u32 no = 0;
@@ -1145,7 +1286,7 @@ std::vector<MdRow> md_render(std::string_view text, u32 width) {
     }
     const std::vector<Block> blocks = parse_blocks(lines, refs);
     std::vector<MdRow> rows;
-    Layout layout{rows, width, refs, {}};
+    Layout layout{rows, width, refs, {}, &picture};
     layout.blocks(blocks, false, kMdText);
     return rows;
 }
@@ -1153,6 +1294,8 @@ std::vector<MdRow> md_render(std::string_view text, u32 width) {
 std::string md_row_text(const MdRow& r) {
     std::string out;
     for (const MdRun& run : r.runs) out += run.text;
+    for (const MdPic& p : r.pics)
+        if (p.part == 0) out += "picture: " + p.src + " " + std::to_string(p.cols) + "x" + std::to_string(p.rows);
     while (!out.empty() && out.back() == ' ') out.pop_back();
     return out;
 }

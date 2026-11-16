@@ -32,8 +32,9 @@ compile_spv() { # stage, source, output
     fi
 }
 
-# grid.vert draws the full-screen triangle for both fragment shaders:
-# grid.frag is the text view, popup.frag the boxes drawn over it.
+# grid.vert draws the full-screen triangle for every fragment shader:
+# grid.frag is the text view, popup.frag the boxes drawn over it, image.frag
+# a picture.
 # The fragment shaders are each built again with BLIT_FX defined, and the
 # text view's once more with BLIT_DIM as well: grid_fx.frag, grid_dim.frag
 # and popup_fx.frag are made here from the one source of each.
@@ -42,7 +43,7 @@ for shader in grid.frag popup.frag; do
 done
 awk 'NR == 1 { print; print "#define BLIT_FX 1"; print "#define BLIT_DIM 1"; next } { print }' grid.frag >grid_dim.frag
 trap 'rm -rf "$tmp" grid_fx.frag grid_dim.frag popup_fx.frag' EXIT
-for shader in grid.vert grid.frag popup.frag grid_fx.frag grid_dim.frag popup_fx.frag; do
+for shader in grid.vert grid.frag popup.frag grid_fx.frag grid_dim.frag popup_fx.frag image.frag; do
     stage=${shader##*.}
     compile_spv "$stage" "$shader" "gen/$shader.spv"
     spirv-cross --msl --msl-version 20100 --msl-decoration-binding \

@@ -34,9 +34,7 @@ break.
 │ x|y   │ z │
 └───────┴───┘
 
-<details>
-<summary>More</summary>
-</details>
+More
 
 Third level
 

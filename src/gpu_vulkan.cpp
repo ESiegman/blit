@@ -39,6 +39,8 @@ int blit_gpu_set_images(BlitGpu*, int) { return 0; }
 int blit_gpu_set_offscreen(BlitGpu*, int, int) { return 0; }
 int blit_gpu_set_atlas(BlitGpu*, int, int) { return 0; }
 void blit_gpu_atlas_rows(BlitGpu*, const uint8_t*, int, int) {}
+uint32_t blit_gpu_image_add(BlitGpu*, const uint8_t*, int, int) { return 0; }
+void blit_gpu_image_drop(BlitGpu*, uint32_t) {}
 int blit_gpu_begin(BlitGpu*, int, int, int*, int*, BlitGpuTimes*) { return BLIT_FRAME_FAILED; }
 uint32_t* blit_gpu_cells(BlitGpu*, uint32_t) { return nullptr; }
 int blit_gpu_end(BlitGpu*, const void*, size_t, size_t, const BlitGpuDraw*, uint32_t, BlitGpuTimes*) { return BLIT_FRAME_FAILED; }

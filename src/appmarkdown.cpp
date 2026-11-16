@@ -1,7 +1,9 @@
 // The Markdown preview: a tab beside a Markdown file that shows it drawn
 // (headings, emphasis, lists, tables, code, Mermaid diagrams: markdown.cpp,
-// mermaid.cpp), kept up to date as it is typed in, and scrolled to where
-// the file's cursor is. Cmd+Shift+V opens it; it is read only.
+// mermaid.cpp; pictures: appimage.cpp), kept up to date as it is typed in,
+// and scrolled to where the file's cursor is. Cmd+Shift+V opens it; it is
+// read only. Pictures are read from files beside it (or anywhere on its
+// machine), never from the web: those stay a link.
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -10,6 +12,7 @@
 
 #include "app.hpp"
 #include "markdown.hpp"
+#include "remote.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
 
@@ -18,8 +21,10 @@ namespace blit {
 struct MdView {
     u64 source = 0;  // the document it shows
     std::vector<MdRow> rows;
-    u64 rev = ~0ull;  // the text's revision, and the width, they were drawn at
-    u32 width = 0;
+    u64 rev = ~0ull;  // the text's revision, the width and height, and the pictures, they were drawn at
+    u32 width = 0, tall = 0;
+    u64 pictures = ~0ull;
+    u64 renders = 0;
     u32 top = 0;           // the first row shown
     u64 followed = ~0ull;  // the source's line it was last scrolled to
     double wheel = 0;      // a touchpad's fractions of a row, kept
@@ -40,6 +45,31 @@ struct MdView {
 namespace {
 
 constexpr u32 kMargin = 2;  // columns kept clear at either side
+
+// The file a picture in the text is (relative to the folder of the file
+// the text is in, `base`), or "" if it is not one to read: on the web, or
+// in the text itself (data:).
+std::string picture_source(const std::string& base, std::string_view src) {
+    if (src.starts_with("http://") || src.starts_with("https://") || src.starts_with("data:") || src.starts_with("//")) return {};
+    if (src.starts_with("file://")) src.remove_prefix(7);
+    src = src.substr(0, src.find_first_of("?#"));
+    std::string path;
+    for (size_t k = 0; k < src.size(); ++k) {  // (%20 and the like)
+        if (src[k] == '%' && k + 2 < src.size() && std::isxdigit(static_cast<unsigned char>(src[k + 1])) && std::isxdigit(static_cast<unsigned char>(src[k + 2]))) {
+            path += static_cast<char>(std::stoi(std::string(src.substr(k + 1, 2)), nullptr, 16));
+            k += 2;
+        } else {
+            path += src[k];
+        }
+    }
+    if (path.empty()) return {};
+    std::string host, there;
+    const bool remote = split_remote(base, &host, &there);
+    if (path.starts_with('/')) return remote ? remote_path(host, path) : path;
+    if (base.empty()) return {};
+    while (path.starts_with("./")) path.erase(0, 2);
+    return base + "/" + path;
+}
 
 // The theme's colour for the first of these captures it gives one to (else `otherwise`).
 Rgb pick(const ThemeColors& tc, std::initializer_list<const char*> captures, Rgb otherwise) {
@@ -143,11 +173,34 @@ void App::md_layout(FrameDesc& fd) {
         size_t src_at = 0;
         Doc* src = find_doc(v.source, &src_pane, &src_at);
         const u32 width = cols > 2 * kMargin + 12 ? cols - 2 * kMargin : cols;
+        const std::string base = src && !src->ed.path.empty() ? parent_of(full_path(src->ed.path)) : std::string();
         bool fresh = false;
-        if (src && (src->ed.revision() != v.rev || width != v.width)) {
-            v.rows = md_render(src->ed.buf.text(0, src->ed.buf.size()), width);
+        if (src && (src->ed.revision() != v.rev || width != v.width || rows != v.tall || pictures_gen_ != v.pictures)) {
+            // A picture's size: one of its pixels to a point (or the size the
+            // text asks for), made smaller to fit across, and to fit in the view.
+            const MdPictureFn size = [&](const std::string& s, u32 room, u32 want_w, u32 want_h, MdPic* out) {
+                const std::string path = picture_source(base, s);
+                if (path.empty()) return false;
+                const PictureInfo* p = picture(path);
+                if (p->state != PictureInfo::kReady || p->full_w <= 0 || p->full_h <= 0) return false;
+                double pw = p->full_w, ph = p->full_h;
+                if (want_w && want_h) pw = want_w, ph = want_h;
+                else if (want_w) ph = ph * want_w / pw, pw = want_w;
+                else if (want_h) pw = pw * want_h / ph, ph = want_h;
+                pw *= density_, ph *= density_;
+                const double k = std::min({1.0, static_cast<double>(room) * cw / pw, static_cast<double>(std::max<u32>(rows, 4) - 2) * ch / ph});
+                out->w = static_cast<u32>(std::max(1.0, std::round(pw * k)));
+                out->h = static_cast<u32>(std::max(1.0, std::round(ph * k)));
+                out->cols = (out->w + static_cast<u32>(cw) - 1) / static_cast<u32>(cw);
+                out->rows = (out->h + static_cast<u32>(ch) - 1) / static_cast<u32>(ch);
+                return true;
+            };
+            v.pictures = pictures_gen_;  // (before: asking may read one at once)
+            v.rows = md_render(src->ed.buf.text(0, src->ed.buf.size()), width, size);
             v.rev = src->ed.revision();
             v.width = width;
+            v.tall = rows;
+            ++v.renders;
             fresh = true;
         }
         // Scrolled to where the file's cursor is, while the file is being worked on (not the preview).
@@ -167,7 +220,7 @@ void App::md_layout(FrameDesc& fd) {
 
         u64 key = 1469598103934665603ull;
         auto mix = [&](u64 k) { key = (key ^ k) * 1099511628211ull; };
-        mix(cols), mix(rows), mix(font.generation()), mix(v.top), mix(v.rev), mix(v.width), mix(src ? 1 : 0);
+        mix(cols), mix(rows), mix(font.generation()), mix(v.top), mix(v.renders), mix(src ? 1 : 0);
         for (int c = 0; c < 3; ++c) mix(static_cast<u64>(v.palette[kMdText][c] * 1000));
         if (key != v.key) {
             v.key = key;
@@ -188,6 +241,8 @@ void App::md_layout(FrameDesc& fd) {
                     if (!run.link.empty()) v.hits.push_back({r, c, end, run.link});
                     c = end;
                 }
+                for (const MdPic& pic : row.pics)
+                    if (!pic.link.empty()) v.hits.push_back({r, kMargin + pic.col, kMargin + pic.col + pic.cols, pic.link});
             }
         }
         Popup& q = fd.popups[fd.popup_count++];
@@ -200,6 +255,27 @@ void App::md_layout(FrameDesc& fd) {
         q.bg = theme_.bg;
         q.palette = &v.palette[0][0];
         q.tones = &v.tones[0][0];
+        // The pictures on show, over the rows kept for them (each from its
+        // first row, or the first row shown if that is above the view).
+        for (u32 r = 0; src && r < rows && v.top + r < v.rows.size(); ++r)
+            for (const MdPic& pic : v.rows[v.top + r].pics) {
+                if ((pic.part != 0 && r != 0) || fd.picture_count >= std::size(fd.pictures)) continue;
+                const std::string path = picture_source(base, pic.src);
+                if (path.empty()) continue;
+                const PictureInfo* p = picture(path);
+                if (p->state != PictureInfo::kReady) continue;
+                PictureDraw& d = fd.pictures[fd.picture_count++];
+                d = PictureDraw{};
+                d.image = p->gpu;
+                const int left = x + v.pad_x + static_cast<int>(kMargin + pic.col) * cw;
+                const int top = y + v.pad_y + (static_cast<int>(r) - static_cast<int>(pic.part)) * ch;
+                d.rect[0] = static_cast<float>(left), d.rect[1] = static_cast<float>(top);
+                d.rect[2] = static_cast<float>(left + static_cast<int>(pic.w)), d.rect[3] = static_cast<float>(top + static_cast<int>(pic.h));
+                d.clip[0] = x, d.clip[1] = y + v.pad_y, d.clip[2] = x + w, d.clip[3] = y + v.pad_y + static_cast<int>(rows) * ch;
+                d.after = fd.popup_count;
+                d.sharp = static_cast<double>(pic.w) / p->w >= 3;
+                d.clear = p->clear;
+            }
     }
 }
 
