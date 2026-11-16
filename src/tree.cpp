@@ -256,6 +256,7 @@ std::string FileTree::path_of(const Node* n) const {
 FileTree::Node* FileTree::node_at(const std::string& path) {
     if (!root_ || !path.starts_with(root_path_)) return nullptr;
     if (path.size() == root_path_.size()) return root_.get();
+    if (root_path_ != "/" && path[root_path_.size()] != '/') return nullptr;
     Node* at = root_.get();
     std::string_view rest = std::string_view(path).substr(root_path_.size());
     while (!rest.empty() && at) {
@@ -404,7 +405,12 @@ bool FileTree::rename(Node* node, const std::string& new_name, std::string* err)
     bool same_but_for_case = new_name.size() == node->name.size();
     for (size_t i = 0; same_but_for_case && i < new_name.size(); ++i)
         same_but_for_case = std::tolower(static_cast<unsigned char>(new_name[i])) == std::tolower(static_cast<unsigned char>(node->name[i]));
-    if (exists(to) && !same_but_for_case) {
+    bool same_file = false;
+    if (same_but_for_case && !is_remote(from)) {
+        struct stat a, b;
+        same_file = stat(from.c_str(), &a) == 0 && stat(to.c_str(), &b) == 0 && a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+    }
+    if (exists(to) && !(same_but_for_case && (same_file || is_remote(from)))) {
         *err = "\"" + new_name + "\" is already there";
         return false;
     }

@@ -116,6 +116,19 @@ u64 first_nonblank(const Editor& ed, u64 line) {
     return at;
 }
 
+// The rule for an exclusive motion that ends in the first column of a later
+// line (:help exclusive): it ends at the end of the line before instead; and
+// if it began at or before that line's first non-blank, it is for whole lines
+// (true: those from lo's line to hi's). This is why "d}" leaves the empty line
+// the paragraph ends at.
+bool exclusive_trim(const Editor& ed, u64* lo, u64* hi) {
+    if (*hi <= *lo || *hi >= ed.buf.size()) return false;
+    const u64 end_line = ed.buf.line_of(*hi), start_line = ed.buf.line_of(*lo);
+    if (end_line <= start_line || *hi != ed.buf.line_start(end_line)) return false;
+    *hi = ed.line_end(end_line - 1);
+    return *lo <= first_nonblank(ed, start_line);
+}
+
 std::string indent_of(const Editor& ed, u64 line) {
     const u64 s = ed.buf.line_start(line);
     return ed.buf.text(s, first_nonblank(ed, line) - s);
@@ -543,9 +556,20 @@ void Vim::store(char name, std::string text, bool linewise, bool yank, bool bloc
     } else if (name >= 'A' && name <= 'Z') {
         std::shared_ptr<const Register>& into = regs_[lower(name)];
         Register more = into ? *into : Register{};
-        more.text += r->text;
+        if (more.text.empty()) {
+            more = *r;
+        } else if (linewise && !more.linewise) {  // lines added to characters: a line of their own
+            more.text += '\n';
+            more.text += r->text;
+        } else if (!linewise && more.linewise) {  // characters added to lines: a line of their own, so the register stays well-formed
+            more.text += r->text;
+            if (more.text.back() != '\n') more.text += '\n';
+        } else {
+            more.text += r->text;
+        }
         more.linewise = more.linewise || linewise;
         into = std::make_shared<const Register>(std::move(more));
+        r = into;  // (what "" holds is the whole register)
     } else if (name) {
         regs_[name] = r;
     }
@@ -563,7 +587,12 @@ std::shared_ptr<const Vim::Register> Vim::fetch(char name) {
     }
     if (name == '.') return made(last_inserted_);
     if (name == '/') return made(pattern_.text);
-    if (name == ':') return made(history_.empty() ? std::string() : history_.back().substr(1));
+    if (name == ':') {
+        // (The history holds searches too: the last one that is a command.)
+        for (auto it = history_.rbegin(); it != history_.rend(); ++it)
+            if (!it->empty() && (*it)[0] == ':') return made(it->substr(1));
+        return made({});
+    }
     const auto it = regs_.find(name ? lower(name) : '"');
     if (it != regs_.end() && it->second) return it->second;
     static const auto none = std::make_shared<const Register>();
@@ -620,6 +649,8 @@ void Vim::forget() {
     prev_jump_ = last_insert_at_ = last_vstart_ = last_vend_ = 0;
     last_change_ = kNone;
     last_vmode_ = kVisual;
+    lines_buf_ = nullptr;
+    lines_rev_ = lines_size_ = kNone;
 }
 
 // A place at the end of the jump list. A line is in the list once: one
@@ -1008,17 +1039,40 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
             const bool flip = c == ',';
             const bool forward = (find_key_ == 'f' || find_key_ == 't') != flip, till = find_key_ == 't' || find_key_ == 'T';
             const u64 start = ed.buf.line_start(line), end = ed.line_end(line);
-            const std::string want = utf8_of(find_char_), text = ed.buf.text(start, end - start);
-            size_t at = static_cast<size_t>(cur - start);
+            const std::string want = utf8_of(find_char_);
+            // The line is looked through a piece at a time, from the cursor outward: on a very long line a key must not cost the whole of it.
+            constexpr u64 kPiece = 4096;
+            auto scan_forward = [&](u64 from) {  // where the character first is at or after `from`
+                for (u64 a = from; a < end; a += kPiece) {
+                    const u64 b = std::min(end, a + kPiece + want.size() - 1);
+                    const size_t hit = ed.buf.text(a, b - a).find(want);
+                    if (hit != std::string::npos) return a + hit;
+                    if (b == end) break;
+                }
+                return kNone;
+            };
+            auto scan_back = [&](u64 upto) {  // where it last is at or before `upto`
+                for (u64 b = std::min(end, upto + want.size()); b > start;) {
+                    const u64 a = b - start > kPiece + want.size() - 1 ? b - (kPiece + want.size() - 1) : start;
+                    const size_t hit = ed.buf.text(a, b - a).rfind(want);
+                    if (hit != std::string::npos) return a + hit;
+                    if (a == start) break;
+                    b = a + want.size() - 1;
+                }
+                return kNone;
+            };
+            u64 at = cur;
             for (u32 i = 0; i < count; ++i) {
                 // (A repeated "t" already stands before one: look past it.)
-                size_t from = at;
-                if (till && repeat_find_ && i == 0) from = forward ? std::min(text.size(), at + 1) : (at > 0 ? at - 1 : 0);
-                const size_t hit = forward ? text.find(want, std::min(text.size(), from + 1)) : (from == 0 ? std::string::npos : text.rfind(want, from - 1));
-                if (hit == std::string::npos) return m.ok = false, true;
+                u64 from = at;
+                if (till && repeat_find_ && i == 0) from = forward ? std::min(end, at + 1) : (at > start ? at - 1 : start);
+                u64 hit = kNone;
+                if (forward) hit = scan_forward(std::min(end, from + 1));
+                else if (from > start) hit = scan_back(from - 1);
+                if (hit == kNone) return m.ok = false, true;
                 at = hit;
             }
-            u64 to = start + at;
+            u64 to = at;
             if (till) to = forward ? ed.prev_char(to) : ed.next_char(to);
             m.to = to;
             m.inclusive = forward;
@@ -1648,7 +1702,7 @@ void Vim::put(Editor& ed, bool before, u32 count, bool then_after) {
         const u64 rows = static_cast<u64>(std::count(text.begin(), text.end(), '\n'));
         u64 at = before ? ed.buf.line_start(line) : (line + 1 < ed.buf.line_count() ? ed.buf.line_start(line + 1) : size);
         if (!before && at == size) {
-            char last = '\n';
+            char last = size > 0 ? '\n' : 0;  // (nothing in the buffer: its one empty line comes first, as if it had no newline)
             if (size > 0) ed.buf.read(size - 1, &last, 1);
             if (last != '\n') {  // after a last line that has no newline: one before the text instead of after it
                 std::string moved;
@@ -1741,7 +1795,7 @@ u32 Vim::insert_key(Editor& ed, const VimKey& k) {
     if (await_ == kInsertRegister) {  // <C-r> and a register's name: its text, as if typed
         await_ = kNothing;
         if (k.kind != VimKey::kChar) return kHandled;
-        typed_ = fetch(static_cast<char>(k.ch))->text;
+        typed_ = k.ch < 128 ? fetch(static_cast<char>(k.ch))->text : std::string();
         if (!typed_.empty()) ed.insert(typed_);
         return typed_.empty() ? static_cast<u32>(kHandled) : static_cast<u32>(kHandled) | static_cast<u32>(kTyped);
     }
@@ -1856,11 +1910,14 @@ u32 Vim::insert_key(Editor& ed, const VimKey& k) {
             const u64 line = ed.buf.line_of(ed.cursor());
             const u64 start = ed.buf.line_start(line), text = std::min(first_nonblank(ed, line), ed.cursor());
             typed_ = "\n";
+            // (Replace mode: the line break and each character of the indent go over nothing, so Backspace takes them back out one at a time.)
+            if (mode_ == kReplace) replaced_.resize(replaced_.size() + 1 + (text - start));
             ed.insert("\n" + ed.buf.text(start, text - start));
             return kHandled | kTyped;
         }
         case VimKey::kTab:
             typed_ = "\t";
+            if (mode_ == kReplace) replaced_.emplace_back();
             ed.insert(typed_);
             return kHandled | kTyped;
         case VimKey::kBackspace:
@@ -1943,6 +2000,10 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
         clear_pending();
         return static_cast<u32>(kHandled);
     };
+    auto fail = [&] {  // the command did not work: a macro running it stops here
+        failed_ = true;
+        return done();
+    };
     auto lines_from = [&](u64 l0, u64 count, u64* lo, u64* hi) {  // `count` whole lines from l0
         const u64 l1 = std::min(l0 + count - 1, n - 1);
         *lo = ed.buf.line_start(l0);
@@ -1964,7 +2025,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
     };
     // Carries out a motion: under an operator, on the text it passes over.
     auto apply = [&](const Motion& m) {
-        if (!m.ok) return done();
+        if (!m.ok) return fail();
         if (!op_) {
             if (m.jump && m.to != cur) remember_jump(ed, cur);
             go(ed, m.to, m.keep_column);
@@ -1972,10 +2033,15 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
             return done();
         }
         u64 lo = std::min(cur, m.to), hi = std::max(cur, m.to);
-        if (m.linewise) lines_from(ed.buf.line_of(lo), ed.buf.line_of(hi) - ed.buf.line_of(lo) + 1, &lo, &hi);
+        bool linewise = m.linewise;
+        if (linewise) lines_from(ed.buf.line_of(lo), ed.buf.line_of(hi) - ed.buf.line_of(lo) + 1, &lo, &hi);
         else if (m.inclusive) hi = std::min(ed.next_char(hi), ed.buf.size());
+        else if (exclusive_trim(ed, &lo, &hi)) {
+            linewise = true;
+            lines_from(ed.buf.line_of(lo), ed.buf.line_of(hi) - ed.buf.line_of(lo) + 1, &lo, &hi);
+        }
         const char op = op_;
-        operate(ed, op, lo, hi, m.linewise);
+        operate(ed, op, lo, hi, linewise);
         return settle();
     };
     // The same for an operator in Visual mode: on what is selected (`lines`: on the lines it is in, whole).
@@ -2010,18 +2076,23 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
         const u64 l0 = ed.buf.line_of(lo), l1 = ed.buf.line_of(hi > lo ? hi - 1 : lo);
         leave_visual(ed);
         clear_pending();
+        failed_ = false;
         if (macros_.find(name) == macros_.end()) return static_cast<u32>(kHandled);
         ed.begin_group();
         for (u64 l = l0; l <= l1 && l < lines_of(ed); ++l) {
             go(ed, ed.buf.line_start(l));
             ++macro_depth_;  // (its keys are no part of a macro being recorded, nor of ".")
             const std::vector<VimKey> keys_of = macros_[name];
-            for (const VimKey& key : keys_of) feed(ed, key);
+            for (const VimKey& key : keys_of) {
+                feed(ed, key);
+                if (failed_) break;
+            }
             --macro_depth_;
             if (mode_ == kInsert || mode_ == kReplace) leave_insert(ed);
             else if (visual()) leave_visual(ed);
             mode_ = kNormal;
             clear_pending();
+            if (failed_) break;  // (the lines after it are left alone, as the rest of a macro is)
         }
         ed.end_group();
         macro_last_ = name;
@@ -2045,14 +2116,20 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
     };
     auto play = [&](char name, u32 times) {  // a recorded macro, so many times
         clear_pending();
+        failed_ = false;
         const auto it = macros_.find(name);
         if (it == macros_.end() || macro_depth_ > 20) return static_cast<u32>(kHandled);
         macro_last_ = name;
         const std::vector<VimKey> keys_of = it->second;
         ++macro_depth_;
         ed.begin_group();
-        for (u32 i = 0; i < times; ++i)
-            for (const VimKey& key : keys_of) feed(ed, key);
+        // A command in it that failed ends it, and so every further time (and an outer macro it is part of).
+        for (u32 i = 0; i < times && !failed_; ++i) {
+            for (const VimKey& key : keys_of) {
+                feed(ed, key);
+                if (failed_) break;
+            }
+        }
         ed.end_group();
         --macro_depth_;
         return static_cast<u32>(kHandled);
@@ -2097,9 +2174,11 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
                     const u64 limit = ed.line_end(line);
                     u32 have = 0;
                     for (; have < times && end < limit; ++have) end = ed.next_char(end);
-                    if (have < times) return done();  // not that many characters on the line
+                    if (have < times) return fail();  // not that many characters on the line
                     std::string out;
-                    for (u32 i = 0; i < times; ++i) out += with;
+                    if (c == '\r') out = with;  // (one line break takes the place of all of them)
+                    else
+                        for (u32 i = 0; i < times; ++i) out += with;
                     ed.replace(cur, end, out);
                     go(ed, c == '\r' ? cur + 1 : ed.prev_char(cur + out.size()));
                 }
@@ -2107,9 +2186,11 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
                 return done();
             }
             case kRegisterName:
+                if (c >= 128) return done();  // (a register is named by an ASCII character)
                 reg_ = static_cast<char>(c);
                 return kHandled;
             case kMarkSet:
+                if (c >= 128) return done();  // (a mark is named by an ASCII character)
                 if (c == '\'' || c == '`') prev_jump_ = cur;
                 else marks_[buffer_id * 256 + (c & 0xFF)] = cur;
                 return done();
@@ -2123,10 +2204,10 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
                 else if (c == '^') at = last_insert_at_;
                 else if (c == '<') at = std::min(last_vstart_, last_vend_);
                 else if (c == '>') at = std::max(last_vstart_, last_vend_);
-                else if (const auto it = marks_.find(buffer_id * 256 + (c & 0xFF)); it != marks_.end()) at = it->second;
-                if (at == kNone) {
+                else if (const auto it = marks_.find(buffer_id * 256 + (c & 0xFF)); c < 128 && it != marks_.end()) at = it->second;
+                if (at == kNone || c >= 128) {
                     message_ = "E20: Mark not set";
-                    return done();
+                    return fail();
                 }
                 Motion m;
                 at = std::min(at, ed.buf.size());
@@ -2136,12 +2217,14 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
                 return apply(m);
             }
             case kMacroStart:
-                if (std::isalnum(static_cast<int>(c))) {
+                if (c < 128 && std::isalnum(static_cast<int>(c))) {
                     macro_into_ = lower(static_cast<char>(c));
+                    macro_append_ = c >= 'A' && c <= 'Z';  // "qA": on the end of what "qa" recorded
                     macro_keys_.clear();
                 }
                 return done();
             case kMacroPlay: {
+                if (c >= 128) return done();
                 const char name = c == '@' ? macro_last_ : lower(static_cast<char>(c));
                 return mode_ == kVisualLine ? play_on_lines(name) : play(name, total());
             }
@@ -2179,7 +2262,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
                     go(ed, hi > lo ? ed.prev_char(hi) : lo);
                     return done();
                 }
-                if (!text_object(ed, c, around, total(), &lo, &hi, &linewise)) return done();
+                if (!text_object(ed, c, around, total(), &lo, &hi, &linewise)) return fail();
                 const char op = op_;
                 operate(ed, op, lo, hi, linewise);
                 return settle();
@@ -2301,7 +2384,8 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
         search_forward_ = c == '*';
         leave_visual(ed);
         ed.move_to(lo, false);
-        if (search(ed, search_forward_, times) && ed.cursor() != cur) remember_jump(ed, cur);
+        if (!search(ed, search_forward_, times)) return fail();
+        if (ed.cursor() != cur) remember_jump(ed, cur);
         return done();
     }
 
@@ -2309,14 +2393,30 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
     Motion m;
     repeat_find_ = (c == ';' || c == ',') && !found_now;
     if (op_ == 'c' && (c == 'w' || c == 'W') && kind_of(Peek(ed.buf).at(cur), c == 'W') != 0) {
-        // "cw" on a word changes to the end of the word, like "ce".
-        if (!motion(ed, c == 'w' ? 'e' : 'E', false, times, counted, &m)) return done();
+        // "cw" on a word changes to the end of the word, like "ce" (but on a
+        // word's last character the first step stays where it is).
+        Peek pk(ed.buf);
+        const u64 next = ed.next_char(cur);
+        const bool big = c == 'W', last = next >= ed.buf.size() || kind_of(pk.at(next), big) != kind_of(pk.at(cur), big);
+        if (last && times == 1) {
+            m.to = cur;
+            m.inclusive = true;
+            return apply(m);
+        }
+        if (!motion(ed, c == 'w' ? 'e' : 'E', false, last ? times - 1 : times, counted, &m)) return done();
         return apply(m);
     }
     if (motion(ed, c, ctrl, times, counted, &m)) {
-        if (op_ && (c == 'w' || c == 'W') && m.ok && ed.buf.line_of(m.to) > line && times == 1) {
-            // "dw" on the last word of a line stops at the end of the line.
-            m.to = ed.line_end(line);
+        if (op_ && (c == 'w' || c == 'W') && m.ok && ed.buf.line_of(m.to) > line) {
+            // "dw" with the last word it passes over at the end of a line stops
+            // at the end of that line, not in the next one. (On an empty line
+            // there is no word to stop after: the motion is the whole line.)
+            Peek pk(ed.buf);
+            u64 e = m.to;
+            while (e > cur && kind_of(pk.at(e - 1), false) == 0) --e;
+            bool crossed = false;
+            for (u64 i = e; i < m.to && !crossed; ++i) crossed = pk.at(i) == '\n';
+            if (crossed && !(e == cur && ed.line_end(line) == ed.buf.line_start(line))) m.to = ed.line_end(ed.buf.line_of(e));
         }
         return apply(m);
     }
@@ -2332,7 +2432,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
         const u64 hit = c == (kG | 'n') ? find(ed.buf, pattern_, (cur >= len - 1 ? cur - (len - 1) : 0) - 1, true, true) : find(ed.buf, pattern_, cur + 1, false, true);
         if (hit == kNone) {
             message_ = "E486: Pattern not found: " + pattern_.text;
-            return done();
+            return fail();
         }
         highlight_on_ = true;
         const u64 end = std::min(hit + len, ed.buf.size());
@@ -2774,10 +2874,30 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
         case '.': {
             if (dot_.empty() || replaying_) return done();
             clear_pending();
-            const std::vector<VimKey> again = dot_;
+            std::vector<VimKey> again = dot_;
+            u32 repeats = times;
+            if (counted) {
+                // A count here takes the place of the count the command had (before or after its operator), and is kept for the next ".".
+                auto digit = [&](size_t i, char lo) { return i < again.size() && again[i].kind == VimKey::kChar && !again[i].ctrl && again[i].ch >= static_cast<u32>(lo) && again[i].ch <= '9'; };
+                auto skip_count = [&](size_t i) {
+                    if (!digit(i, '1')) return i;
+                    while (digit(i, '0')) ++i;
+                    return i;
+                };
+                size_t at = 0;
+                std::vector<VimKey> out;
+                if (again.size() > 1 && again[0].kind == VimKey::kChar && again[0].ch == '"') out.assign(again.begin(), again.begin() + 2), at = 2;
+                for (const char d : std::to_string(times)) out.push_back(VimKey{VimKey::kChar, static_cast<u32>(d), false});
+                at = skip_count(at);
+                if (at < again.size() && again[at].kind == VimKey::kChar && !again[at].ctrl && again[at].ch < 128 && again[at].ch && std::strchr("dcy<>", static_cast<int>(again[at].ch))) out.push_back(again[at++]), at = skip_count(at);
+                out.insert(out.end(), again.begin() + static_cast<std::ptrdiff_t>(at), again.end());
+                again = out;
+                dot_ = again;
+                repeats = 1;
+            }
             replaying_ = true;
             ed.begin_group();
-            for (u32 i = 0; i < times; ++i)
+            for (u32 i = 0; i < repeats; ++i)
                 for (const VimKey& key : again) feed(ed, key);
             ed.end_group();
             replaying_ = false;
@@ -2797,7 +2917,8 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
         case 'q':
             if (macro_into_) {  // stop recording (this "q" is no part of it)
                 if (!macro_keys_.empty()) macro_keys_.pop_back();
-                macros_[macro_into_] = macro_keys_;
+                if (macro_append_) macros_[macro_into_].insert(macros_[macro_into_].end(), macro_keys_.begin(), macro_keys_.end());
+                else macros_[macro_into_] = macro_keys_;
                 macro_last_ = macro_rec_ = macro_into_;
                 macro_into_ = 0;
                 return done();
@@ -2872,11 +2993,19 @@ u32 Vim::command_key(Editor& ed, const VimKey& k) {
             search_forward_ = cmd_kind_ == '/';
             ed.move_to(cmd_origin_, false);
             const bool found = search(ed, search_forward_, 1);
+            if (!found) failed_ = true;
             const u64 to = ed.cursor();
             if (found && op) {  // "d/word": from where the cursor was to where the word is
                 ed.move_to(cmd_origin_, false);
                 reg_ = op_reg;
-                operate(ed, op, std::min(cmd_origin_, to), std::max(cmd_origin_, to), false);
+                u64 lo = std::min(cmd_origin_, to), hi = std::max(cmd_origin_, to);
+                const bool linewise = exclusive_trim(ed, &lo, &hi);
+                if (linewise) {  // (the lines from lo's to hi's, whole)
+                    const u64 last = ed.buf.line_of(hi);
+                    lo = ed.buf.line_start(ed.buf.line_of(lo));
+                    hi = last + 1 < ed.buf.line_count() ? ed.buf.line_start(last + 1) : ed.buf.size();
+                }
+                operate(ed, op, lo, hi, linewise);
                 if (mode_ == kNormal) clear_pending();
                 else reg_ = 0;
             } else if (found && to != cmd_origin_) {
@@ -3199,6 +3328,7 @@ void Vim::run_command(Editor& ed, std::string line) {
 u32 Vim::feed(Editor& ed, const VimKey& k) {
     typed_.clear();
     const bool idle = mode_ == kNormal && !op_ && !counted_ && !reg_ && await_ == kNothing;
+    if (idle) failed_ = false;
     if (macro_into_ && macro_depth_ == 0 && !replaying_) macro_keys_.push_back(k);
     if (!replaying_ && macro_depth_ == 0) {
         if (idle) {  // this key starts a command: what it changes, "." will do again

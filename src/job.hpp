@@ -54,6 +54,7 @@ private:
     struct Job {
         u64 id = 0;
         std::atomic<int> pid{0};
+        std::mutex pid_mu;  // held to signal the program, and to reap it (so a pid is never signalled once it is free to be another's)
         std::atomic<bool> done{false};
         int wake[2] = {-1, -1};  // a pipe that stop() writes to: the thread is waiting on the program's pipes
         std::jthread thread;

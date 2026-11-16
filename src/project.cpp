@@ -108,6 +108,14 @@ std::string target_name(const std::string& name) {
     return out.empty() ? "app" : out;
 }
 
+// CMake keeps some target names for itself (CMP0037): a project called that
+// has its target named otherwise, and its output is what it was called.
+std::string cmake_target(const std::string& real) {
+    for (const char* reserved : {"all", "clean", "help", "install", "package", "test", "edit_cache", "rebuild_cache", "list_install_components", "package_source", "install/local", "install/strip"})
+        if (real == reserved) return real + "_app";
+    return real;
+}
+
 std::string lower(std::string s) {
     for (char& c : s) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
     return s;
@@ -288,7 +296,7 @@ std::string warning_flags(Lang lang, const std::string& level) {
 ProjectPlan cmake_plan(const ProjectValues& values, Lang lang) {
     const Get v{values};
     ProjectPlan p;
-    const std::string name = v["name"], t = target_name(name), id = project_ident(name);
+    const std::string name = v["name"], real = target_name(name), t = cmake_target(real), id = project_ident(name);
     const bool hip = lang == Lang::kHip, c_lang = lang == Lang::kC;
     const std::string lang_cmake = c_lang ? "C" : "CXX", ext = c_lang ? "c" : "cpp", hdr = c_lang ? "h" : "hpp";
     const std::string target = v["target"];
@@ -421,6 +429,7 @@ ProjectPlan cmake_plan(const ProjectValues& values, Lang lang) {
              " PUBLIC $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include> $<INSTALL_INTERFACE:include>)\n";
         c += "target_link_libraries(" + t + " PRIVATE $<BUILD_INTERFACE:" + flags + ">)\n";
     }
+    if (t != real && !header_only) c += "set_target_properties(" + t + " PROPERTIES OUTPUT_NAME " + real + ")  # (" + real + " is a name CMake keeps for itself)\n";
     if (!uses.empty() || !unknown.empty()) {
         c += "\n# The libraries.\n";
         for (const std::string& u : uses) c += u + "\n";
@@ -532,7 +541,7 @@ ProjectPlan cmake_plan(const ProjectValues& values, Lang lang) {
     if (hip && v.on("profiling"))
         p.files.push_back({"scripts/profile.sh", "#!/bin/sh\n# The program, profiled with rocprofv3: each kernel's times, into profile/.\nset -e\ncd \"$(dirname \"$0\")/..\"\n"
                                                  "cmake --build --preset release\nrocprofv3 --kernel-trace --stats -d profile -o run -- ./build/release/" +
-                                                     t + " \"$@\"\n"});
+                                                     real + " \"$@\"\n"});
     if (v.on("git"))
         p.files.push_back({".gitignore", std::string("build/\n.cache/\ncompile_commands.json\nCMakeUserPresets.json\n") + (vcpkg ? "vcpkg_installed/\n" : "") +
                                              (hip && v.on("profiling") ? "profile/\n" : "")});
@@ -623,7 +632,11 @@ ProjectPlan make_plan(const ProjectValues& values) {
         const std::string mods = joined(modules, " ");
         m += "\n# Libraries, by pkg-config.\nCFLAGS += $(shell pkg-config --cflags " + mods + ")\nLDLIBS += $(shell pkg-config --libs " + mods + ")\n";
     }
-    m += "\nifeq ($(BUILD),release)\n  CFLAGS += -O2 -DNDEBUG" + std::string(native ? " -march=native" : "") +
+    m += "\nifeq ($(BUILD),release)\n" +
+         std::string(native ? "  # This machine's processor, with whichever of the flags the compiler has.\n"
+                              "  NATIVE := $(shell for f in -march=native -mcpu=native; do $(CC) $$f -x c -fsyntax-only /dev/null >/dev/null 2>&1 && echo $$f && break; done)\n"
+                            : "") +
+         "  CFLAGS += -O2 -DNDEBUG" + std::string(native ? " $(NATIVE)" : "") +
          (v.on("hardening") ? "\n  CPPFLAGS += -D_FORTIFY_SOURCE=3\n  CFLAGS += -fstack-protector-strong" : "") + "\nelse\n  CFLAGS += -O0 -g" +
          (san.empty() ? "" : " " + san + " -fno-omit-frame-pointer") + "\n" + (san.empty() ? "" : "  LDFLAGS += " + san + "\n") + "endif\n";
     m += "\nOUT := build/$(BUILD)\nSRC := $(wildcard src/*.c)\nOBJ := $(SRC:src/%.c=$(OUT)/%.o)\nCORE := $(filter-out $(OUT)/main.o,$(OBJ))\n";
@@ -702,6 +715,8 @@ ProjectPlan python_plan(const ProjectValues& values) {
         return out;
     };
     const std::string run_py = uv ? "uv run" : ".venv/bin/python";
+    // Under src/ with nothing to install it, the package is found by the path.
+    const std::string path_env = src && !packaged ? "PYTHONPATH=src " : "";
 
     if (script) {
         // One file, with what it needs written in it (PEP 723): `uv run` reads that.
@@ -712,7 +727,7 @@ ProjectPlan python_plan(const ProjectValues& values) {
     } else {
         std::string t;
         t += "[project]\nname = \"" + name + "\"\nversion = \"0.1.0\"\ndescription = \"\"\n" + std::string(v.on("readme") ? "readme = \"README.md\"\n" : "") +
-             "requires-python = \">=" + py + "\"\ndependencies = [" + (uv ? std::string() : quoted_list(deps)) + "]\n";
+             "requires-python = \">=" + py + "\"\ndependencies = [" + quoted_list(deps) + "]\n";
         if (cli) t += "\n[project.scripts]\n" + name + " = \"" + pkg + ".__main__:main\"\n";
         if (packaged) {
             if (backend == "uv_build") {
@@ -731,7 +746,7 @@ ProjectPlan python_plan(const ProjectValues& values) {
                 t += "\n[build-system]\nrequires = [\"setuptools>=77\"]\nbuild-backend = \"setuptools.build_meta\"\n";
             }
         }
-        if (!uv) {
+        {
             std::vector<std::string> dev = tools;
             dev.insert(dev.end(), dev_deps.begin(), dev_deps.end());
             if (!dev.empty()) t += "\n[dependency-groups]\ndev = [" + quoted_list(dev) + "]\n";
@@ -772,11 +787,11 @@ ProjectPlan python_plan(const ProjectValues& values) {
         }
     }
     if (v.on("git")) p.files.push_back({".gitignore", "__pycache__/\n*.egg-info/\n.venv/\ndist/\nbuild/\n.pytest_cache/\n.ruff_cache/\n.mypy_cache/\n"});
-    const std::string test_cmd = tests == "pytest" ? run_py + (uv ? " pytest -q" : " -m pytest -q") : tests == "unittest" ? run_py + (uv ? " python" : "") + " -m unittest" : "";
+    const std::string test_cmd = tests == "pytest" ? run_py + (uv ? " pytest -q" : " -m pytest -q") : tests == "unittest" ? path_env + run_py + (uv ? " python" : "") + " -m unittest" : "";
     if (v.on("readme")) {
         std::string how;
         if (script) how = uv ? "uv run " + pkg + ".py" : ".venv/bin/python " + pkg + ".py";
-        else how = (cli ? (uv ? "uv run " : ".venv/bin/") + name : run_py + (uv ? " python" : "") + " -m " + pkg) + (test_cmd.empty() ? "" : "\n" + test_cmd);
+        else how = (cli ? (uv ? "uv run " : ".venv/bin/") + name : path_env + run_py + (uv ? " python" : "") + " -m " + pkg) + (test_cmd.empty() ? "" : "\n" + test_cmd);
         p.files.push_back({"README.md", "# " + name + "\n\n```sh\n" + how + "\n```\n"});
     }
 
@@ -785,11 +800,7 @@ ProjectPlan python_plan(const ProjectValues& values) {
     const bool install = v.on("install");
     if (uv) {
         if (install && !script) {
-            if (!deps.empty()) then.push_back("uv add " + joined(deps, " "));
-            std::vector<std::string> dev = tools;
-            dev.insert(dev.end(), dev_deps.begin(), dev_deps.end());
-            if (!dev.empty()) then.push_back("uv add --dev " + joined(dev, " "));
-            if (deps.empty() && dev.empty()) then.push_back("uv sync");
+            then.push_back("uv sync");
             if (!test_cmd.empty()) then.push_back(test_cmd);
         }
     } else {

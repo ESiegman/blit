@@ -232,7 +232,10 @@ void App::panel_show_git() {
 // Takes in folders the tree has finished reading.
 void App::sync_panel() {
     Side& s = *side_;
-    if (s.tree.poll()) dirty_ = dirty_ || s.open;
+    if (s.tree.poll()) {
+        dirty_ = dirty_ || s.open;
+        find_stale();  // (a folder read: it may have news)
+    }
 }
 
 // ---------------------------------------------------------------- the file tree
@@ -661,6 +664,7 @@ bool App::panel_mouse_motion(const SDL_MouseMotionEvent& m) {
     Side& s = *side_;
     if (!s.open) return false;
     const int px = static_cast<int>(m.x * density_), cw = font_->cell_w();
+    if (s.resizing && !(m.state & SDL_BUTTON_LMASK)) s.resizing = false;  // (the button went up where this window did not see it)
     if (s.resizing) {
         const int cols = std::clamp((px - 2 * (cw / 2 + 1)) / cw, 12, std::max(12, (px_w_ - 12 * cw) / cw));
         if (cols != s.cols) {

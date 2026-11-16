@@ -239,7 +239,8 @@ std::string Dap::errors() const {
     return errors_;
 }
 
-void Dap::stop() {
+void Dap::stop(int grace_ms) {
+    for (int waited = 0; waited < grace_ms && !ended_; waited += 10) ::usleep(10'000);
     if (pid_ > 0 && !ended_) ::kill(pid_, SIGTERM);
     if (conn_ && proc_.id && !ended_) conn_->kill(proc_.id, SIGTERM);
 }

@@ -26,6 +26,13 @@ u32 cols_of(std::string_view s) {
     return w;
 }
 
+// The bytes of the first character of s (at least 1 if there is any).
+size_t first_char(std::string_view s) {
+    if (s.empty()) return 0;
+    const size_t len = decode_utf8(reinterpret_cast<const u8*>(s.data()), s.size()).len;
+    return std::clamp<size_t>(len, 1, s.size());
+}
+
 // The bytes of s that fit in n columns.
 size_t fit(std::string_view s, u32 n) {
     u32 w = 0;
@@ -175,6 +182,8 @@ u32 attribute_px(std::string_view tag, std::string_view name) {
 
 using Refs = std::map<std::string, std::string>;  // a link's label (lower case) -> where it goes
 
+constexpr int kMostDepth = 32;  // quotes, lists, emphasis and links nested deeper than this are taken as text
+
 std::string entity(std::string_view s, size_t* len) {
     static const std::pair<const char*, const char*> kNamed[] = {{"&amp;", "&"},  {"&lt;", "<"},       {"&gt;", ">"},       {"&quot;", "\""},
                                                                  {"&#39;", "'"},  {"&apos;", "'"},     {"&nbsp;", "\xC2\xA0"}, {"&copy;", "\xC2\xA9"},
@@ -246,6 +255,18 @@ size_t bracket_end(std::string_view s, size_t i, char open, char close) {
 }
 
 void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vector<Span>& out) {
+    static thread_local int depth = 0;
+    if (depth >= kMostDepth) {  // (nested deeper than anyone writes: as it is)
+        Span sp = as;
+        sp.text = std::string(s);
+        out.push_back(std::move(sp));
+        return;
+    }
+    struct Deeper {
+        int& d;
+        explicit Deeper(int& x) : d(++x) {}
+        ~Deeper() { --d; }
+    } deeper(depth);
     std::string buf;
     auto flush = [&] {
         if (buf.empty()) return;
@@ -781,10 +802,20 @@ void parse_into(const std::vector<Line>& lines, Refs& refs, std::vector<Block>& 
             Block b;
             b.kind = Block::kHtml;
             b.line = no;
-            while (i < n && !blank(lines[i].text)) {
+            // A comment, and <script>, <style> and <pre>, run to their end,
+            // blank lines and all; anything else to a blank line.
+            const std::string head = lower(s.substr(0, 8));
+            std::string end;
+            if (head.starts_with("<!--")) end = "-->";
+            else if (head.starts_with("<script")) end = "</script>";
+            else if (head.starts_with("<style")) end = "</style>";
+            else if (head.starts_with("<pre")) end = "</pre>";
+            while (i < n && (!end.empty() || !blank(lines[i].text))) {
                 b.text.emplace_back(trim(lines[i].text));
                 b.nos.push_back(lines[i].no);
+                const bool closed = !end.empty() && lower(lines[i].text).find(end) != std::string::npos;
                 ++i;
+                if (closed) break;
             }
             out.push_back(std::move(b));
             continue;
@@ -830,8 +861,21 @@ void parse_into(const std::vector<Line>& lines, Refs& refs, std::vector<Block>& 
 }
 
 std::vector<Block> parse_blocks(const std::vector<Line>& lines, Refs& refs) {
+    // Nested deeper than anyone writes (a line of a thousand >): the rest is
+    // a paragraph, so that the stack and the time stay small.
+    static thread_local int depth = 0;
     std::vector<Block> out;
+    if (depth >= kMostDepth) {
+        Block b;
+        b.line = lines.empty() ? 0 : lines[0].no;
+        for (const Line& l : lines)
+            if (!blank(l.text)) b.text.emplace_back(trim(l.text)), b.nos.push_back(l.no);
+        if (!b.text.empty()) out.push_back(std::move(b));
+        return out;
+    }
+    ++depth;
     parse_into(lines, refs, out);
+    --depth;
     return out;
 }
 
@@ -900,7 +944,8 @@ std::vector<std::vector<MdRun>> wrap(const std::vector<Span>& spans, u32 width) 
             if (w > width) {  // longer than a line: cut
                 std::string_view rest = word;
                 while (!rest.empty()) {
-                    const size_t cut = std::max<size_t>(1, fit(rest, width - at));
+                    size_t cut = fit(rest, width - at);
+                    if (cut == 0) cut = first_char(rest);  // (a wide character in one column: over the edge, whole)
                     add(rest.substr(0, cut), sp);
                     rest.remove_prefix(cut);
                     if (!rest.empty()) newline();
@@ -1073,7 +1118,8 @@ struct Layout {
             const u32 line = k < b.nos.size() ? b.nos[k] : b.line;
             std::string_view rest = l;
             do {  // (long lines wrap)
-                const size_t cut = room_cols > 2 ? fit(rest, room_cols - 2) : rest.size();
+                size_t cut = room_cols > 2 ? fit(rest, room_cols - 2) : rest.size();
+                if (cut == 0) cut = first_char(rest);  // (a wide character in one column: over the edge, whole)
                 fill(row({{" " + std::string(rest.substr(0, cut)), kMdCode, 0, kMdCodeTone}}, line));
                 rest.remove_prefix(std::min(cut, rest.size()));
             } while (!rest.empty());
@@ -1155,10 +1201,19 @@ struct Layout {
     void html(const Block& b, u8 ink) {
         std::string all;
         for (const std::string& l : b.text) all += l + "\n";
-        for (size_t c; (c = all.find("<!--")) != std::string::npos;) {
-            const size_t e = all.find("-->", c + 4);
-            all.erase(c, e == std::string::npos ? std::string::npos : e + 3 - c);
-        }
+        // Comments, scripts and styles go, the lines they were on staying
+        // (as blank ones), so that each line keeps its place in the file.
+        auto cut = [&](std::string_view open, std::string_view close) {
+            for (size_t c; (c = lower(all).find(open)) != std::string::npos;) {
+                size_t e = lower(all).find(close, c + open.size());
+                e = e == std::string::npos ? all.size() : e + close.size();
+                const auto lines = std::count(all.begin() + static_cast<std::ptrdiff_t>(c), all.begin() + static_cast<std::ptrdiff_t>(e), '\n');
+                all.replace(c, e - c, static_cast<size_t>(lines), '\n');
+            }
+        };
+        cut("<!--", "-->");
+        cut("<script", "</script>");
+        cut("<style", "</style>");
         const std::string low = lower(all);
         const bool centre = low.find("align=\"center\"") != std::string::npos || low.find("align=center") != std::string::npos || low.find("align='center'") != std::string::npos;
         std::vector<Span> pics;  // pictures on lines of their own, gathered (a row of them across lines)
@@ -1266,13 +1321,19 @@ std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn
         if (nl == std::string_view::npos) break;
         at = nl + 1;
     }
-    // Front matter (--- at the very top, to the next ---) is not shown.
+    // Front matter (--- at the very top, to the next ---) is not shown: when
+    // what is between looks like it (keys and values, list items, comments),
+    // not a rule at the top and another further down.
     if (!lines.empty() && trim(lines[0].text) == "---")
-        for (size_t k = 1; k < lines.size(); ++k)
-            if (trim(lines[k].text) == "---" || trim(lines[k].text) == "...") {
+        for (size_t k = 1; k < lines.size(); ++k) {
+            const std::string_view t = trim(lines[k].text);
+            if (t == "---" || t == "...") {
                 lines.erase(lines.begin(), lines.begin() + static_cast<std::ptrdiff_t>(k + 1));
                 break;
             }
+            const bool yaml = t.empty() || t.starts_with('#') || t.starts_with("- ") || t.find(':') != std::string_view::npos || indent_of(lines[k].text) > 0;
+            if (!yaml) break;
+        }
     Refs refs;
     // (links can be defined after they are used: their definitions are gathered first)
     for (const Line& l : lines) {

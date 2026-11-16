@@ -411,6 +411,8 @@ struct Lsp::Conn {
         u32 id = 0;                                      // of a request; 0 for a notification
         u8 kind = 0;                                     // what its answer will be
         bool whole = false;                              // a whole-document change, superseding an unsent older one
+        bool dead = false;                               // superseded while queued: not to be sent
+        u64 epoch = 0;                                   // the Conn's epoch when the text was taken
     };
     struct In {
         u8 kind = 0;
@@ -429,6 +431,12 @@ struct Lsp::Conn {
     std::mutex mu;
     std::condition_variable arrived;
     std::vector<Out> out;  // main thread -> worker
+    // The pieces of a document point into its buffer, which is gone (or
+    // read again) when the document is closed. Closing raises the epoch
+    // while holding text_mu, which the worker holds while it copies pieces:
+    // text queued before is never read after, and one being read is waited for.
+    std::mutex text_mu;
+    std::atomic<u64> epoch{0};
     std::vector<In> in;    // worker -> main thread
     bool stop = false;
     int wake_r = -1, wake_w = -1;  // a byte written here wakes the worker
@@ -1014,20 +1022,37 @@ struct Lsp::Conn::Worker {
             std::lock_guard lock(c.mu);
             out.swap(c.out);
         }
+        // Of several whole-document changes with nothing between that
+        // needs the older one, only the newest is worth sending.
+        bool later_whole = false;
+        for (size_t i = out.size(); i-- > 0;) {
+            Out& o = out[i];
+            if (o.whole) {
+                if (later_whole) o.dead = true;
+                later_whole = true;
+            } else if (o.id || o.text || o.head.find("didClose") != std::string::npos) {
+                later_whole = false;
+            }
+        }
         std::string body;
         for (Out& o : out) {
+            if (o.dead) continue;
             if (o.id) waiting[o.id] = o.kind;
             if (!o.text) {
                 frame(o.head);
                 continue;
             }
-            body = std::move(o.head);
             // The document's text, as one JSON string made piece by piece.
             std::string text;
-            size_t total = 0;
-            for (const Piece& p : *o.text) total += p.len;
-            text.reserve(total);
-            for (const Piece& p : *o.text) text.append(p.p, p.len);
+            {
+                std::lock_guard lock(c.text_mu);
+                if (o.epoch != c.epoch.load(std::memory_order_relaxed)) continue;  // its document has been closed: the pieces may be gone
+                size_t total = 0;
+                for (const Piece& p : *o.text) total += p.len;
+                text.reserve(total);
+                for (const Piece& p : *o.text) text.append(p.p, p.len);
+            }
+            body = std::move(o.head);
             json::quote(body, text);
             body += o.tail;
             frame(body);
@@ -1333,6 +1358,10 @@ void Lsp::name_document(const std::string& full, const std::string& language) {
 // it. Answers still on their way are for questions nobody is asking any more.
 void Lsp::close_document() {
 #if !defined(_WIN32)
+    if (conn_) {  // (the text still queued is of a buffer about to go: the worker is to let go of it, and is waited for if it is reading it)
+        std::lock_guard lock(conn_->text_mu);
+        conn_->epoch.fetch_add(1, std::memory_order_relaxed);
+    }
     if (conn_ && opened_) {
         std::string m = R"({"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":)";
         json::quote(m, uri_);
@@ -1413,6 +1442,7 @@ void Lsp::send_document(std::string head, std::string tail, bool replaces_unsent
         o.tail = std::move(tail);
         o.text = std::move(pieces);
         o.whole = replaces_unsent;
+        o.epoch = conn_->epoch.load(std::memory_order_relaxed);
         if (replaces_unsent && !conn_->out.empty() && conn_->out.back().whole) conn_->out.back() = std::move(o);
         else conn_->out.push_back(std::move(o));
     }
@@ -1622,7 +1652,7 @@ u32 Lsp::poll() {
                 detach();
                 return news | kState | kDiagnostics;
             case kInDiagnostics: {
-                if (m.text != path_ || (m.version >= 0 && m.version != version_)) break;
+                if (!buf_ || path_.empty() || m.text != path_ || (m.version >= 0 && m.version != version_)) break;
                 diags_.clear();
                 diags_.reserve(m.diags.size());
                 for (RawDiag& r : m.diags) {

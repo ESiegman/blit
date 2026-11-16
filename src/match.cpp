@@ -17,6 +17,10 @@ struct Lua {
     const char* text_end;
     const char* pat_end;
     int depth = 0;
+    // A pattern like ".-.-.-x" can take time exponential in the text, so the
+    // work is capped; running out ends the search as no match.
+    static constexpr long kBudget = 1 << 18;
+    long steps = 0;
     bool unsupported = false;
 
     static bool in_class(int c, int cl) {
@@ -45,7 +49,10 @@ struct Lua {
         if (c == '[') {
             if (p < pat_end && *p == '^') ++p;
             do {  // the first character after [ or [^ is always literal
-                if (p >= pat_end) return p;
+                if (p >= pat_end) {  // no closing ]
+                    unsupported = true;
+                    return pat_end;
+                }
                 if (*p++ == '%' && p < pat_end) ++p;
             } while (p >= pat_end || *p != ']');
             return p + 1;
@@ -87,6 +94,10 @@ struct Lua {
     // Matches the pattern from p against the text from s; returns where the
     // match ends, or null.
     const char* match(const char* s, const char* p) {
+        if (unsupported || ++steps > kBudget) {
+            unsupported = true;
+            return nullptr;
+        }
         if (++depth > 200) {
             --depth;
             return nullptr;
@@ -109,7 +120,12 @@ struct Lua {
                 unsupported = true;
                 break;
             }
+            if (*p == '%' && p + 1 >= pat_end) {  // a pattern cannot end in a lone %
+                unsupported = true;
+                break;
+            }
             const char* ep = item_end(p);
+            if (unsupported) break;
             const char q = ep < pat_end ? *ep : '\0';
             if (q == '?') {
                 if (single(s, p, ep)) {

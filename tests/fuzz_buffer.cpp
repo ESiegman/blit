@@ -2363,6 +2363,23 @@ void vim_test() {
         {"|x", "ifoo <C-u>bar<Esc>u", "|foo x"},
         {"|x", "ifoo bar<C-w>baz<Esc>u", "foo |barx"},
         {"|x", "ifoo <C-u>bar<Esc>uu", "|x"},
+        // A macro stops at the first command that fails (j on the last line).
+        {"|a\nb\nc", "qaA;<Esc>jq5@a", "a;\nb;\nc|;"},
+        // cw on a word's last character (or a word of one) changes just that.
+        {"fo|o bar", "cwX<Esc>", "fo|X bar"},
+        {"|a bcd", "cwX<Esc>", "|X bcd"},
+        // An exclusive motion that ends at the start of a line stops at the end of the one before.
+        {"abc |def\nghi\n\nxyz", "d}", "abc| \n\nxyz"},
+        // A count before . takes the place of the one the change had.
+        {"|1\n2\n3\n4\n5\n6\n7", "2dd3.", "|6\n7"},
+        // A whole line put into an empty file goes below its one empty line.
+        {"|x", "yyddp", "\n|x"},
+        // Appending to a register with its capital letter, then putting it.
+        {"|a\nb", "\"ayyj\"Ayy\"ap", "a\nb\n|a\nb"},
+        // In Replace mode Backspace takes back a line break that was typed.
+        {"|abc", "Rx<CR><BS><Esc>", "|xbc"},
+        // r with a count and Enter: the characters become one line break.
+        {"|abcd", "2r<CR>", "\n|cd"},
     };
     int wrong = 0;
     for (const Case& c : cases) {

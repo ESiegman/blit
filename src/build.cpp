@@ -1,6 +1,7 @@
 #include "build.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <functional>
 #include <string_view>
 
@@ -247,19 +248,26 @@ void python(Look& c) {
         }
     });
     std::replace(package.begin(), package.end(), '-', '_');
-    std::string runs;
+    // (A name that is not a plain module path is not put in a command.)
+    for (const char ch : package)
+        if (!std::isalnum(static_cast<unsigned char>(ch)) && ch != '_' && ch != '.') package.clear();
+    std::string runs, env;
     if (c.file("main.py")) runs = "main.py";
-    else if (!package.empty() && (fs_kind(c.root + "/src/" + package + "/__main__.py") == 1 || fs_kind(c.root + "/" + package + "/__main__.py") == 1))
-        runs = "-m " + package;
+    else if (!package.empty() && fs_kind(c.root + "/src/" + package + "/__main__.py") == 1) {
+        runs = "-m " + sh_quote(package);
+        // Under src/ with no build system to install it: found by the path.
+        if (pyproject.find("[build-system]") == std::string::npos && !c.file("setup.py") && !c.file("setup.cfg")) env = "PYTHONPATH=src ";
+    } else if (!package.empty() && fs_kind(c.root + "/" + package + "/__main__.py") == 1)
+        runs = "-m " + sh_quote(package);
     const bool tests = c.dir("tests") || c.dir("test") || c.file("conftest.py") || c.file("pytest.ini") || pyproject.find("pytest") != std::string::npos;
     if (c.file("uv.lock") || pyproject.find("uv_build") != std::string::npos || pyproject.find("[tool.uv") != std::string::npos) {
-        if (!runs.empty()) c.add("Run", "uv run python " + runs, true);
+        if (!runs.empty()) c.add("Run", env + "uv run python " + runs, true);
         if (tests) c.add("Test", "uv run pytest", runs.empty());
         c.add("Sync", "uv sync", runs.empty() && !tests);
         return;
     }
     const std::string py = c.dir(".venv") ? ".venv/bin/python" : c.dir("venv") ? "venv/bin/python" : "python3";
-    if (!runs.empty()) c.add("Run", py + " " + runs, true);
+    if (!runs.empty()) c.add("Run", env + py + " " + runs, true);
     if (tests) c.add("Test", py + " -m pytest", runs.empty());
     if (project) c.add("Install (editable)", py + " -m pip install -e .", runs.empty() && !tests);
     if (c.file("requirements.txt")) c.add("Install requirements", py + " -m pip install -r requirements.txt", runs.empty() && !tests && !project);

@@ -43,7 +43,6 @@ struct App::BuildUi {
         std::vector<FsEntry> files;
         std::vector<BuildTask> tasks;
     };
-    std::jthread worker;
     std::mutex mu;
     std::optional<Found> found;  // (mu)
     bool looking = false;
@@ -64,6 +63,8 @@ struct App::BuildUi {
     TextBox box;
     int reserve = 0;  // its width and margin: the top right tab bar ends before it
     int bx0 = 0, by0 = 0, bx1 = 0, by1 = 0;
+    // Last, so that it is joined first, while all it uses is still there.
+    std::jthread worker;
 };
 
 void App::build_create() { buildui_ = std::make_shared<BuildUi>(); }

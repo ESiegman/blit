@@ -221,6 +221,7 @@ bool App::tab_close(size_t i, bool force, bool quit_if_last) {
             if (quit_if_last) running_ = false;
             return true;
         }
+        forget_doc(pane_->doc);
         stop_lsp();
         pane_->doc = nullptr;
         pane_->docs.clear();
@@ -228,6 +229,7 @@ bool App::tab_close(size_t i, bool force, bool quit_if_last) {
         tab_show(0);
         return true;
     }
+    forget_doc(pane_->docs[i].get());
     if (front) {
         stop_lsp();
         pane_->doc = nullptr;

@@ -68,6 +68,12 @@ struct App::StartUi {
     bool on = false;
     u64 doc = 0;  // the empty document it stands in front of
     std::vector<Recent> recent;  // the latest first (all that are kept; those still there are shown)
+    // Which of them are still there, asked once for each change of the list
+    // (a file system call each), and the lit rows as last put in the cells.
+    std::vector<Recent> live;
+    bool live_known = false;
+    size_t lit_sel = ~size_t{0};
+    int lit_hover = -2;
     // What is on it: each thing that can be chosen, and the row it is on.
     struct Item {
         Act act;
@@ -124,6 +130,11 @@ struct App::StartUi {
     Facts facts;  // (facts_mu while the worker runs)
     std::jthread facts_worker;
     std::vector<VcpkgPort> pypi;  // PyPI's most downloaded packages, once looked up
+    // Its list comes from a thread of its own (a download); one that failed is not tried again this session.
+    std::mutex pypi_mu;
+    std::vector<VcpkgPort> pypi_got;  // (pypi_mu) what the thread found
+    bool pypi_ready = false;          // (pypi_mu) it has finished
+    bool pypi_loading = false, pypi_failed = false, pypi_wanted = false;  // wanted: the list is to open when it comes
     std::vector<std::string> touched;  // "kind\tkey": set by hand, so what is found leaves it alone
 
     const ProjectKind* chosen() const { return kind < kinds.size() ? &kinds[kind] : nullptr; }
@@ -190,6 +201,7 @@ void App::recent_add(const std::string& path, bool dir) {
     if (slash != std::string::npos) SDL_CreateDirectory(file.substr(0, slash).c_str());
     const std::string tmp = file + ".tmp";
     if (SDL_SaveFile(tmp.c_str(), out.data(), out.size())) std::rename(tmp.c_str(), file.c_str());
+    s.live_known = false;
     s.key = 0;  // (shown afresh)
 }
 
@@ -424,8 +436,6 @@ void App::start_layout(FrameDesc& fd) {
     mix(cols);
     mix(rows);
     mix(font.generation());
-    mix(s.sel);
-    mix(static_cast<u64>(s.hover + 1));
     mix(std::hash<std::string>{}(root));
     mix(s.recent.size());
     mix(static_cast<u64>(s.page));
@@ -434,12 +444,14 @@ void App::start_layout(FrameDesc& fd) {
         std::lock_guard lock(s.facts_mu);
         mix(s.facts.done);
     }
+    bool rebuilt = false;
     if (s.page == 1 && (key != s.key || s.items.empty())) {
         s.key = key;
         s.box.resize(cols, rows);
         project_cells(cols, rows);
     } else if (key != s.key || s.items.empty()) {
         s.key = key;
+        rebuilt = true;
         const bool apple = kPrimaryMod == SDL_KMOD_GUI;
         const bool glyphs = apple && font.has(0x2318) && font.has(0x21E7);  // (⌘ and ⇧, or their names)
         const std::string cmd = glyphs ? "\xE2\x8C\x98" : apple ? "Cmd+" : "Ctrl+", shift = glyphs ? "\xE2\x87\xA7" : "Shift+";
@@ -454,12 +466,16 @@ void App::start_layout(FrameDesc& fd) {
         s.items.push_back({kSettings, "Settings (init.lua)", "c", cmd + ",", {}});
         s.items.push_back({kQuit, "Quit", "q", cmd + "Q", {}});
         const size_t actions = s.items.size();
-        u32 shown = 0;
-        for (const Recent& r : s.recent) {
-            if (shown == 9) break;
-            if (!exists(r.path, r.dir)) continue;
-            s.items.push_back({kRecent, "", std::to_string(++shown), "", r});
+        if (!s.live_known) {  // (asked when the list changes, not as the mouse moves)
+            s.live.clear();
+            for (const Recent& r : s.recent) {
+                if (s.live.size() == 9) break;
+                if (exists(r.path, r.dir)) s.live.push_back(r);
+            }
+            s.live_known = true;
         }
+        u32 shown = 0;
+        for (const Recent& r : s.live) s.items.push_back({kRecent, "", std::to_string(++shown), "", r});
         s.sel = std::min(s.sel, s.items.size() - 1);
 
         // How it is laid out, top to bottom, and what goes when there is not room.
@@ -543,9 +559,6 @@ void App::start_layout(FrameDesc& fd) {
                 s.box.put(font, r, key_col, it.key, kInkAccent);
                 if (with_cuts && !it.shortcut.empty()) s.box.put(font, r, cut_col, it.shortcut, kInkMuted);
             }
-            const u32 lit = i == s.sel ? kCellSelected : static_cast<int>(i) == s.hover ? kCellHover : 0;
-            if (lit)
-                for (u32 c = s.left; c < s.left + s.width && c < cols; ++c) s.box.cells[static_cast<size_t>(r) * cols + c] |= lit;
             ++r;
         }
         if (footer) {  // the folder and the settings file, shortened from the start of the folder's path if need be
@@ -563,6 +576,19 @@ void App::start_layout(FrameDesc& fd) {
             }
             centred(r + 1, "folder " + folder + (with_settings ? settings : std::string()), kInkMuted);
         }
+    }
+    if (s.page == 0 && s.box.cols == cols && !s.items.empty() && (rebuilt || s.lit_sel != s.sel || s.lit_hover != s.hover)) {  // the lit rows: the one chosen, the one under the mouse
+        for (size_t i = 0; i < s.items.size(); ++i) {
+            const u32 row = s.items[i].row;
+            if (row >= rows) continue;
+            const u32 lit = i == s.sel ? kCellSelected : static_cast<int>(i) == s.hover ? kCellHover : 0;
+            for (u32 c = s.left; c < s.left + s.width && c < cols; ++c) {
+                u32& cell = s.box.cells[static_cast<size_t>(row) * cols + c];
+                cell = (cell & ~(kCellSelected | kCellHover)) | lit;
+            }
+        }
+        s.lit_sel = s.sel;
+        s.lit_hover = s.hover;
     }
     if (s.box.cols == cols && rows > 2) {  // the tabs, along the top
         const char* const names[2] = {"Start", "New project"};
@@ -765,12 +791,42 @@ void App::project_facts(bool wait) {
             }
             SDL_Event ev{};
             ev.type = SDL_EVENT_USER;
-            ev.user.code = 16;  // (a frame: the form says what was found)
+            ev.user.code = 19;  // (the form takes what was found: start_sync)
             SDL_PushEvent(&ev);
         });
     }
     if (wait && s.facts_worker.joinable()) s.facts_worker.join();
     ++s.gen;
+}
+
+// Something a thread of the start screen has found: the facts become
+// defaults, and PyPI's list opens if it was asked for.
+void App::start_sync() {
+    if (!start_) return;
+    StartUi& s = *start_;
+    project_facts_apply();
+    std::vector<VcpkgPort> got;
+    bool arrived = false;
+    {
+        std::lock_guard lock(s.pypi_mu);
+        if (s.pypi_ready) {
+            got = std::move(s.pypi_got);
+            s.pypi_ready = false;
+            arrived = true;
+        }
+    }
+    if (arrived) {
+        s.pypi_loading = false;
+        if (got.empty()) s.pypi_failed = true;
+        else s.pypi = std::move(got);
+        if (s.pypi_wanted) {
+            s.pypi_wanted = false;
+            s.error.clear();
+            if (start_shown()) project_libraries();
+        }
+    }
+    ++s.gen;
+    dirty_ = true;
 }
 
 // What was found, as defaults: the GPUs there, uv if it is there (for the
@@ -810,7 +866,28 @@ void App::project_libraries(const std::string& typed) {
         list = &s.facts.pkgconfig, prompt = "pkg-config module";
         if (list->empty()) missing = "pkg-config has no modules there (or is not installed).";
     } else if (source == "pypi") {
-        if (s.pypi.empty()) s.pypi = pypi_top(grammar_dir() + "/cache");
+        if (s.pypi.empty() && !s.pypi_failed) {  // (fetched on a thread: the list opens when it comes)
+            if (!s.pypi_loading) {
+                s.pypi_loading = true;
+                std::thread([sp = start_, cache = grammar_dir() + "/cache"] {
+                    std::vector<VcpkgPort> got = pypi_top(cache);
+                    {
+                        std::lock_guard lock(sp->pypi_mu);
+                        sp->pypi_got = std::move(got);
+                        sp->pypi_ready = true;
+                    }
+                    SDL_Event ev{};
+                    ev.type = SDL_EVENT_USER;
+                    ev.user.code = 19;
+                    SDL_PushEvent(&ev);
+                }).detach();
+            }
+            s.pypi_wanted = true;
+            s.error = "Fetching PyPI's most downloaded packages\xE2\x80\xA6";
+            s.key = 0;
+            dirty_ = true;
+            return;
+        }
         list = &s.pypi, prompt = "PyPI package";
     }
     if (!list || !missing.empty()) {

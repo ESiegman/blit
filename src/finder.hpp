@@ -100,9 +100,10 @@ public:
     static bool grep(std::string_view text, std::span<const FuzzyTerm> terms, u32 file, size_t room, std::vector<FindHit>* out);
 
 private:
-    void run(std::stop_token stop);
-    void search_names(u64 serial, const std::string& typed, std::shared_ptr<const FileIndex> ix);
-    void search_text(u64 serial, const std::string& typed, std::shared_ptr<const FileIndex> ix);
+    void run(std::stop_token stop);       // the searches
+    void run_walk(std::stop_token stop);  // the reading of the folder
+    void search_names(u64 serial, const std::string& typed, std::shared_ptr<const FileIndex> ix, u64 epoch);
+    void search_text(u64 serial, const std::string& typed, std::shared_ptr<const FileIndex> ix, u64 epoch);
     void publish(std::shared_ptr<FindResults> r);
 
     mutable std::mutex mu_;
@@ -141,7 +142,7 @@ private:
         void add(Base b);
     };
     Bases names_bases_, text_bases_;
-    std::jthread worker_;
+    std::jthread worker_, walker_;  // (last: they stop before anything they use is gone)
 };
 
 }  // namespace blit

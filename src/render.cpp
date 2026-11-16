@@ -294,10 +294,15 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
                 // Rectangles are in window pixels; the grid starts at the view's corner.
                 const float left = static_cast<float>(v.x), top = static_cast<float>(v.y);
                 if (r[2] <= left || r[3] <= top) return;
-                const u32 c0 = static_cast<u32>((std::max(r[0] - left, 0.0f) + v.origin[0]) / cw);
-                const u32 c1 = std::min(v.grid.cols - 1, static_cast<u32>((r[2] - left - 1 + v.origin[0]) / cw));
-                const u32 r0 = static_cast<u32>((std::max(r[1] - top, 0.0f) + v.origin[1]) / ch);
-                const u32 r1 = std::min(v.grid.rows - 1, static_cast<u32>((r[3] - top - 1 + v.origin[1]) / ch));
+                // Cell index of a pixel offset, clamped before it becomes unsigned. The end is
+                // exclusive and rounded up, so a rectangle that ends part way into a pixel
+                // still flags the cell under that last, half covered pixel.
+                if ((r[0] - left + v.origin[0]) / cw >= static_cast<float>(v.grid.cols) || (r[1] - top + v.origin[1]) / ch >= static_cast<float>(v.grid.rows)) return;
+                auto cell_at = [](float px, float size, u32 last) { return static_cast<u32>(std::clamp(px / size, 0.0f, static_cast<float>(last))); };
+                const u32 c0 = cell_at(r[0] - left + v.origin[0], cw, v.grid.cols - 1);
+                const u32 c1 = cell_at(std::ceil(r[2] - left + v.origin[0]) - 1, cw, v.grid.cols - 1);
+                const u32 r0 = cell_at(r[1] - top + v.origin[1], ch, v.grid.rows - 1);
+                const u32 r1 = cell_at(std::ceil(r[3] - top + v.origin[1]) - 1, ch, v.grid.rows - 1);
                 for (u32 y = r0; y <= r1; ++y)
                     for (u32 x = c0; x <= c1; ++x) view_cells[static_cast<size_t>(y) * v.grid.cols + x] |= kCellOverlay;
             };
@@ -438,6 +443,7 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
         pictures_after(i);
         const Popup& p = fd.popups[i];
         const u32 n = p.cols * p.rows;
+        const bool has_cells = n > 0;  // (an empty popup has no cells to read)
         const bool shadowed = p.shadow > 0 && p.shadow_alpha > 0 && fd.theme.shadow > 0;
         const bool laid_over = p.radius > 0 || p.opacity < 1;
         // How far the shadow shows on each side: the wide one fades out
@@ -453,7 +459,7 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
             ox0 = std::max(ox0, p.clip[0]), oy0 = std::max(oy0, p.clip[1]);
             ox1 = std::min(ox1, p.clip[2]), oy1 = std::min(oy1, p.clip[3]);
         }
-        if (p.opacity > 0 && (laid_over ? ox1 > ox0 && oy1 > oy0 : ix1 > ix0 && iy1 > iy0)) {
+        if (p.opacity > 0 && has_cells && (laid_over ? ox1 > ox0 && oy1 > oy0 : ix1 > ix0 && iy1 > iy0)) {
             Uniforms pu = u;
             std::memcpy(pu.bg, p.bg ? p.bg : fd.theme.popup_bg, sizeof pu.bg);
             if (p.sel) std::memcpy(pu.sel, p.sel, sizeof pu.sel);

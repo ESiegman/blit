@@ -57,6 +57,11 @@ struct App::DebugUi {
     std::string program, args, cwd;
     // Breakpoints: by file (its full path, ssh:// for another machine's), lines from 0.
     std::map<std::string, std::set<u32>> breaks;
+    // The file whose gutter was drawn last: its full path and breakpoints, kept
+    // while debug_gen_ stands (the gutter asks about each line).
+    std::string gutter_of, gutter_full;
+    const std::set<u32>* gutter_breaks = nullptr;
+    u64 gutter_gen = 0;
     // The session.
     std::unique_ptr<Dap> dap;
     enum State : u8 { kIdle, kStarting, kRunning, kStopped } state = kIdle;
@@ -147,10 +152,16 @@ u32 App::debug_gutter(const Doc& d, u64 line) {
     if (!debugui_ || d.ed.path.empty()) return 0;
     DebugUi& u = *debugui_;
     if (u.breaks.empty() && u.state != DebugUi::kStopped) return 0;
-    const std::string path = full_path(d.ed.path);
-    if (u.state == DebugUi::kStopped && u.frame < u.frames.size() && u.frames[u.frame].path == path && u.frames[u.frame].line == line + 1)
+    if (u.gutter_gen != debug_gen_ || u.gutter_of != d.ed.path) {
+        u.gutter_of = d.ed.path;
+        u.gutter_full = full_path(d.ed.path);
+        const auto it = u.breaks.find(u.gutter_full);
+        u.gutter_breaks = it == u.breaks.end() ? nullptr : &it->second;
+        u.gutter_gen = debug_gen_;
+    }
+    if (u.state == DebugUi::kStopped && u.frame < u.frames.size() && u.frames[u.frame].line == line + 1 && u.frames[u.frame].path == u.gutter_full)
         return (font_->glyph(0x25B6) & (Font::kWide - 1)) | (kInkAccent << kCellInkShift);
-    if (auto it = u.breaks.find(path); it != u.breaks.end() && it->second.contains(static_cast<u32>(line)))
+    if (u.gutter_breaks && u.gutter_breaks->contains(static_cast<u32>(line)))
         return (font_->glyph(0x25CF) & (Font::kWide - 1)) | (kInkDiagnostic << kCellInkShift);
     return 0;
 }
@@ -244,7 +255,7 @@ void App::debug_end() {
     DebugUi& u = *debugui_;
     if (u.dap && !u.dap->ended()) {
         u.dap->request("disconnect", "{\"terminateDebuggee\":true}");
-        u.dap->stop();
+        u.dap->stop(300);  // (the adapter lets go of the program as it ends)
     }
     u.dap.reset();
     u.state = DebugUi::kIdle;

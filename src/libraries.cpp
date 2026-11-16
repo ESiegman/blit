@@ -28,6 +28,16 @@ std::string trim(std::string_view s) {
     return std::string(s);
 }
 
+// For sh: in single quotes, with any single quote in it closed and written out.
+std::string sh_quote(std::string_view s) {
+    std::string out = "'";
+    for (const char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out += c;
+    }
+    return out + "'";
+}
+
 }  // namespace
 
 std::string vcpkg_root(const std::string& where) {
@@ -203,7 +213,7 @@ std::string rocm_usage(const std::string& root, const std::string& package) {
 std::string gpu_targets(const std::string& where, const std::string& rocm) {
     std::string out;
     const std::string bin = rocm.empty() ? std::string("/opt/rocm") : rocm;
-    if (!fs_run(where, "rocm_agent_enumerator 2>/dev/null || '" + bin + "/bin/rocm_agent_enumerator'", &out, 8000) && out.empty()) return {};
+    if (!fs_run(where, "rocm_agent_enumerator 2>/dev/null || " + sh_quote(bin + "/bin/rocm_agent_enumerator"), &out, 8000) && out.empty()) return {};
     std::vector<std::string> seen;
     for (size_t at = 0; at < out.size();) {
         const size_t nl = out.find('\n', at);

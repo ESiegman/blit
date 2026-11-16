@@ -23,6 +23,7 @@ namespace blit {
 namespace {
 
 constexpr u32 kMaxRows = 14;  // results shown at once
+constexpr u64 kWalkAgainNs = 2'000'000'000;  // the folder is read again at most this often (unless something says it changed)
 constexpr u32 kHeadRows = 2;  // what is typed, and a line that says what is being shown
 
 std::string home_dir() {
@@ -115,6 +116,12 @@ struct App::Find {
     std::string root;
     u64 serial = 0;
     std::shared_ptr<const FindResults> shown;
+    // The folder is read again only when it may have changed: another one,
+    // other settings, the window came back to the front, or the last reading
+    // is a while old. Until then the list there is is searched at once.
+    u64 walked_ns = 0;
+    bool stale = true;
+    FinderOptions walked_opt;
 
     // A path: the folder typed so far (in full, with its slash), what is
     // in it, and of that what the rest of what is typed matches.
@@ -183,6 +190,9 @@ static void wipe(std::string& s) {
     s.clear();
 }
 
+// Files come and go: the next time the box opens it reads the folder again.
+void App::find_stale() { find_->stale = true; }
+
 void App::find_open(int mode, const std::string& typed) {
     Find& f = *find_;
     if (find_open_ && f.script() && !(mode == f.mode && f.script())) find_close(false);  // (a script's picker is answered "nothing")
@@ -215,10 +225,18 @@ void App::find_open(int mode, const std::string& typed) {
         o.ignore = cfg_.search_ignore;
         o.hidden = cfg_.search_hidden;
         o.gitignore = cfg_.search_gitignore;
+        const bool other = f.root != workdir || o.ignore != f.walked_opt.ignore || o.hidden != f.walked_opt.hidden || o.gitignore != f.walked_opt.gitignore;
+        const u64 now = SDL_GetTicksNS();
+        const bool walk = other || f.stale || !f.walked_ns || now - f.walked_ns > kWalkAgainNs;
+        f.walked_opt = o;
         f.engine->set_options(std::move(o));
         if (f.root != workdir) f.shown = nullptr;
         f.root = workdir;
-        f.engine->index(workdir);  // read again every time: files come and go
+        if (walk) {  // (in the background: what is typed is searched for in the list there is, and again when the new one is in)
+            f.walked_ns = now;
+            f.stale = false;
+            f.engine->index(workdir);
+        }
     } else if (f.path() && f.typed.empty()) {
         f.typed = tilde(workdir) + "/";  // a path starts in the working directory
     }
@@ -663,6 +681,9 @@ void App::find_tab() {
 
 void App::find_move(i64 by) {
     Find& f = *find_;
+    // (A key pressed just after typing moves in what was typed's results:
+    // they are waited for a moment if they are not in yet. Once they are,
+    // nothing is waited for, however fast the key repeats.)
     find_current(100);
     const i64 n = static_cast<i64>(f.count());
     if (n == 0) return;
@@ -926,8 +947,8 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
         } else if (f.mode == kFindPick) {
             status = std::to_string(n) + " of " + std::to_string(f.items.size());
         } else if (f.mode == kFindCommand) {
-            status = f.capture ? "Press the keys to look up Â· Tab: back to typing"
-                               : std::to_string(n) + " of " + std::to_string(f.items.size()) + " Â· Enter runs it Â· Tab: press keys to look them up";
+            status = f.capture ? "Press the keys to look up \xC2\xB7 Tab: back to typing"
+                               : std::to_string(n) + " of " + std::to_string(f.items.size()) + " \xC2\xB7 Enter runs it \xC2\xB7 Tab: press keys to look them up";
         } else if (f.mode == kFindInput) {
             status = "Enter accepts \xC2\xB7 Esc cancels";
         } else if (f.mode == kFindAsk) {

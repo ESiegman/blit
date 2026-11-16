@@ -426,8 +426,8 @@ void Term::escape(u8 final) {
 void Term::csi(u8 final) {
     const int n1 = std::max(1, param(0, 1));
     if (private_ == '?' && (final == 'h' || final == 'l')) return set_mode(final == 'h');
-    if (private_ == '>' || private_ == '=') {
-        if (final == 'c') reply_ += "\x1b[>0;0;0c";  // (secondary device attributes)
+    if (private_) {  // (a marked sequence is not the plain one of the same final: what is not handled here is dropped)
+        if (final == 'c' && (private_ == '>' || private_ == '=')) reply_ += "\x1b[>0;0;0c";  // (secondary device attributes)
         return;
     }
     switch (intermediate_) {

@@ -100,8 +100,12 @@ int64_t mtime_ns(const struct stat& st) {
 uint8_t read_file(const std::string& path, uint64_t most, std::string* out, int64_t* modified, bool text_only = false) {
     const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
     if (fd < 0) return errno == ENOENT ? 1 : 4;
-    struct stat st;
-    if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode) || static_cast<uint64_t>(st.st_size) > most) {
+    struct stat st{};
+    if (::fstat(fd, &st) != 0) {
+        ::close(fd);
+        return 4;
+    }
+    if (!S_ISREG(st.st_mode) || static_cast<uint64_t>(st.st_size) > most) {
         const bool file = S_ISREG(st.st_mode);
         ::close(fd);
         return file ? 3 : 2;
@@ -133,11 +137,14 @@ bool write_file(std::string path, std::string_view data, std::string* err, int64
     char real[PATH_MAX];
     if (::realpath(path.c_str(), real)) path = real;
     const std::string tmp = path + ".blit-tmp";
-    const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, 0644);
+    struct stat st{};
+    const bool had = ::stat(path.c_str(), &st) == 0;
+    const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, had ? 0600 : 0644);
     if (fd < 0) {
         *err = std::format("cannot write {}: {}", tmp, std::strerror(errno));
         return false;
     }
+    if (had) ::fchmod(fd, st.st_mode & 07777);  // (the mode it is to have, before any of its text is in it)
     bool ok = true;
     for (size_t done = 0; done < data.size();) {
         const ssize_t n = ::write(fd, data.data() + done, data.size() - done);
@@ -148,8 +155,6 @@ bool write_file(std::string path, std::string_view data, std::string* err, int64
             break;
         }
     }
-    struct stat st;
-    if (ok && ::stat(path.c_str(), &st) == 0) ::fchmod(fd, st.st_mode & 07777);
     ok = ::close(fd) == 0 && ok;
     ok = ok && ::rename(tmp.c_str(), path.c_str()) == 0;
     if (!ok) {

@@ -208,7 +208,7 @@ void App::hover_update(int px, int py) {
             changed = true;
         }
         // By the right edge of the text: the scroll thumb comes back.
-        if (fx_live_ && cfg_.look_animations && px >= p->x1 - static_cast<int>(std::lround(14 * scale_)) && px < p->x1 && py >= p->text_y && py < p->y1) {
+        if (fx_live_ && cfg_.look_animations && p->has_thumb && px >= p->x1 - static_cast<int>(std::lround(14 * scale_)) && px < p->x1 && py >= p->text_y && py < p->y1) {
             changed = changed || p->thumb_alpha < 1;
             p->thumb_alpha = 1;
             p->thumb_until_ns = now_ns() + kThumbRestNs;

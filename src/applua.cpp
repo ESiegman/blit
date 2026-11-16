@@ -245,6 +245,7 @@ bool App::script_call(int nargs, int nres, const char* what) {
     if (s.depth++ == 0) s.deadline = now_ns() + static_cast<u64>(std::max(100.0f, cfg_.script_timeout_ms)) * 1'000'000;
     const int rc = lua_pcall(L, nargs, nres, base);
     if (--s.depth == 0) {
+        if (s.deadline && now_ns() > s.deadline) lua_sethook(L, count_hook, LUA_MASKCOUNT, 10000);  // (the timeout's hook at every instruction, back to its usual pace)
         s.deadline = 0;
         for (const u64 id : s.grouped)
             if (Doc* d = find_doc(id)) d->ed.end_group();
@@ -1058,7 +1059,12 @@ void App::script_ex(const VimRequest& q) {
         return;
     }
     if (is({"se", "set", "setl", "setlocal"})) return script_set_command(q.arg);
-    if (name.ends_with("map") || name.starts_with("no") || name.ends_with("noremap")) {
+    const bool is_map = [&] {
+        std::string_view rest = name;
+        if (rest != "map" && rest != "noremap" && rest != "unmap" && !rest.empty() && std::strchr("nivxoc", rest[0])) rest.remove_prefix(1);
+        return rest == "map" || rest == "noremap" || rest == "unmap";
+    }();
+    if (is_map) {
         // :map, :nnoremap and the like: lhs rhs (and with nothing, the mappings there are).
         if (!script_ensure()) return;
         ScriptUi& s = *script_;
@@ -1195,9 +1201,15 @@ void App::script_ex(const VimRequest& q) {
     }
     if (c->fn == LUA_NOREF) {
         std::string ex = c->ex;
-        for (size_t at; (at = ex.find("<args>")) != std::string::npos;) ex.replace(at, 6, q.arg);
+        for (size_t at = 0; (at = ex.find("<args>", at)) != std::string::npos; at += q.arg.size()) ex.replace(at, 6, q.arg);
+        if (s.expanding > 20) {
+            vim_.say("E169: Command too recursive: " + name);
+            return;
+        }
+        ++s.expanding;  // (what the command runs is carried out in vim_after: the count covers both)
         vim_.ex(pane_->doc->ed, ex);
         vim_after(Vim::kHandled);
+        if (script_) --script_->expanding;
         return;
     }
     lua_State* L = s.L;

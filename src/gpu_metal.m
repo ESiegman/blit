@@ -51,7 +51,6 @@ static void say(char* err, size_t size, NSString* what, NSError* why) {
     // Per frame under way: its cells, and the atlas rows it carries to the GPU.
     id<MTLBuffer> cells[kMaxFrames];
     id<MTLBuffer> staging[kMaxFrames];
-    NSUInteger cells_used;
     int frames, slot;
     dispatch_semaphore_t free_frames;
     BOOL begun;
@@ -222,6 +221,10 @@ void blit_gpu_destroy(BlitGpu* g) {
     if (!g) return;
     blit_gpu_cancel(g);
     blit_gpu_wait_idle(g);
+    // Every frame's completion handler must have signalled before the semaphore
+    // goes: libdispatch aborts on one released below its starting value.
+    for (int i = 0; i < M(g)->frames; ++i) dispatch_semaphore_wait(M(g)->free_frames, DISPATCH_TIME_FOREVER);
+    for (int i = 0; i < M(g)->frames; ++i) dispatch_semaphore_signal(M(g)->free_frames);
     if (M(g)->caching) dispatch_group_wait(M(g)->caching, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC));  // (the cache, written)
     BlitMetal* m = (__bridge_transfer BlitMetal*)(void*)g;  // (let go of here)
     (void)m;
@@ -380,7 +383,6 @@ int blit_gpu_begin(BlitGpu* g, int want_w, int want_h, int* w, int* h, BlitGpuTi
         return BLIT_FRAME_FAILED;
     }
     m->begun = YES;
-    m->cells_used = 0;
     *w = (int)m->target.width;
     *h = (int)m->target.height;
     if (t) t->free_ns = t1 - t0, t->target_ns = t2 - t1;
@@ -393,7 +395,6 @@ uint32_t* blit_gpu_cells(BlitGpu* g, uint32_t count) {
     const NSUInteger bytes = (NSUInteger)(count ? count : 1) * sizeof(uint32_t);
     m->cells[m->slot] = buffer_at_least(m, m->cells[m->slot], bytes);
     if (!m->cells[m->slot]) return NULL;
-    m->cells_used = bytes;
     return (uint32_t*)m->cells[m->slot].contents;
 }
 

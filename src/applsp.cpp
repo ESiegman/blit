@@ -917,7 +917,8 @@ void App::lsp_layout(int w, int h, FrameDesc& fd) {
         int x, y;
         at_offset(a.hover_at_cursor ? pane_->doc->ed.cursor() : a.hover_w0, &x, &y);
         if (!place(a.hover_box, x, y, !a.sig_open, &a.hover_rect, kFxHover)) a.hover_rect = {};
-    }    popups_drawn_ = fd.popup_count;
+    }
+    popups_drawn_ = fd.popup_count;
 }
 
 u32 App::lsp_popups_open() const { return popups_drawn_; }

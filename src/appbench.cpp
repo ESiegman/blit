@@ -467,12 +467,24 @@ struct Bench {
             return 1;
         }
         // A new window keeps getting events for a moment (the window manager
-        // places and sizes it). Let that pass, then measure true idle.
-        const u64 settle_until = now_ns() + 1'500'000'000;
-        while (now_ns() < settle_until) {
+        // places and sizes it), and a scroll thumb fades away once it has
+        // rested. Let all that pass (but for five seconds at most), then
+        // measure true idle.
+        const u64 settle_from = now_ns() + 1'500'000'000, give_up = now_ns() + 5'000'000'000;
+        for (;;) {
             SDL_Event e;
             while (SDL_PollEvent(&e)) a.handle(e);
+            a.fx_tick();
+            if (a.animating_ || a.fx_moving_) {
+                const u64 now = now_ns();
+                const double dt = std::min(static_cast<double>(now - a.last_step_ns_) * 1e-9, 0.05);
+                if (a.animating_) a.step_scroll(dt);
+                if (a.fx_moving_) a.step_fx(dt);
+                a.last_step_ns_ = now;
+            }
             if (a.dirty_) a.frame();
+            const u64 now = now_ns();
+            if (now >= give_up || (now >= settle_from && !a.dirty_ && !a.animating_ && !a.fx_moving_ && a.fx_wait_ms() < 0)) break;
             SDL_Delay(5);
         }
         const double seconds = a.opt_.frames > 0 ? a.opt_.frames : 3;
@@ -643,6 +655,7 @@ void App::run_script(const char* script) {
                 e.type = SDL_EVENT_MOUSE_MOTION;
                 e.motion.x = x;
                 e.motion.y = y;
+                if (verb == "drag") e.motion.state = SDL_BUTTON_LMASK;  // (as a real drag says: the button is held)
             }
             handle(e);
         } else if (verb == "release") {
@@ -802,6 +815,8 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s\n", project_dump().c_str());
         } else if (verb == "mdpreview") {  // the Markdown preview of the file in front
             md_open();
+        } else if (verb == "mdwait") {  // every preview drawn as its text is now (they are drawn on a thread)
+            md_wait();
         } else if (verb == "mddump") {  // the preview's rows, as text
             std::fputs(md_dump().c_str(), stderr);
         } else if (verb == "imagewait") {  // every picture asked for has been read (10 s at most)

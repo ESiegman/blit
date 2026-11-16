@@ -447,8 +447,7 @@ void Finder::Bases::add(Base b) {
     if (kept.size() > kMost) kept.erase(kept.begin());  // (the shortest)
 }
 
-void Finder::search_names(u64 serial, const std::string& typed, std::shared_ptr<const FileIndex> ix) {
-    const u64 mine = search_epoch_.load();
+void Finder::search_names(u64 serial, const std::string& typed, std::shared_ptr<const FileIndex> ix, u64 mine) {
     auto r = std::make_shared<FindResults>();
     r->index = ix;
     r->serial = serial;
@@ -461,8 +460,7 @@ void Finder::search_names(u64 serial, const std::string& typed, std::shared_ptr<
     publish(std::move(r));
 }
 
-void Finder::search_text(u64 serial, const std::string& typed, std::shared_ptr<const FileIndex> ix) {
-    const u64 mine = search_epoch_.load();
+void Finder::search_text(u64 serial, const std::string& typed, std::shared_ptr<const FileIndex> ix, u64 mine) {
     const std::vector<FuzzyTerm> terms = fuzzy_terms(typed);
     size_t longest = 0;
     for (const FuzzyTerm& t : terms) longest = std::max(longest, t.text.size());
@@ -584,10 +582,11 @@ void Finder::search_text(u64 serial, const std::string& typed, std::shared_ptr<c
 
 // ---------------------------------------------------------------- the worker
 
-Finder::Finder() : worker_([this](std::stop_token stop) { run(stop); }) {}
+Finder::Finder() : worker_([this](std::stop_token stop) { run(stop); }), walker_([this](std::stop_token stop) { run_walk(stop); }) {}
 
 Finder::~Finder() {
     worker_.request_stop();
+    walker_.request_stop();
     ++index_epoch_;
     ++search_epoch_;
     wake_.notify_all();
@@ -663,17 +662,23 @@ std::shared_ptr<const FileIndex> Finder::files() const {
 
 bool Finder::idle() const {
     std::lock_guard lock(mu_);
-    return !busy_ && !want_index_ && want_serial_ == done_serial_;
+    return !busy_ && !want_index_ && !indexing_ && want_serial_ == done_serial_;
 }
 
 void Finder::wait_idle() const {
     std::unique_lock lock(mu_);
-    settled_.wait(lock, [&] { return !busy_ && !want_index_ && want_serial_ == done_serial_; });
+    settled_.wait(lock, [&] { return !busy_ && !want_index_ && !indexing_ && want_serial_ == done_serial_; });
 }
 
 bool Finder::wait_idle_for(int ms) const {
     std::unique_lock lock(mu_);
-    return settled_.wait_for(lock, std::chrono::milliseconds(ms), [&] { return !busy_ && !want_index_ && want_serial_ == done_serial_; });
+    // The search; and the reading of the folder too while there is no list
+    // of it to search yet (a search of nothing is no answer). A folder
+    // already listed is searched as it was while it is read again.
+    return settled_.wait_for(lock, std::chrono::milliseconds(ms), [&] {
+        const bool listed = index_ && index_->root == want_root_ && index_->size() > 0;
+        return !busy_ && want_serial_ == done_serial_ && (listed || (!want_index_ && !indexing_));
+    });
 }
 
 void Finder::publish(std::shared_ptr<FindResults> r) {
@@ -687,44 +692,57 @@ void Finder::publish(std::shared_ptr<FindResults> r) {
     if (tell) tell();
 }
 
+// Searches are answered at once from the list there is. Reading the folder
+// again goes on in the background on a thread of its own (a search never
+// waits behind it), and when it is done what was searched for is searched
+// for again in the new list.
 void Finder::run(std::stop_token stop) {
     thread_soon(Soon::kWaitedFor);
     std::unique_lock lock(mu_);
     for (;;) {
-        wake_.wait(lock, stop, [&] { return want_index_ || want_serial_ != done_serial_; });
+        wake_.wait(lock, stop, [&] { return want_serial_ != done_serial_; });
         if (stop.stop_requested()) return;
         busy_ = true;
-        if (want_index_) {
-            want_index_ = false;
-            indexing_ = true;
-            const std::string root = want_root_;
-            const FinderOptions o = opt_;
-            const u64 mine = index_epoch_.load();
+        const u64 serial = want_serial_;
+        const bool text = want_text_;
+        const std::string typed = want_typed_;
+        const std::shared_ptr<const FileIndex> ix = index_;
+        const u64 mine = search_epoch_.load();  // (under the lock that gave the serial: a search started after it overtakes this one)
+        lock.unlock();
+        if (text) search_text(serial, typed, ix, mine);
+        else search_names(serial, typed, ix, mine);
+        lock.lock();
+        if (want_serial_ == serial && index_ == ix) done_serial_ = serial;  // (a new list came meanwhile: it is searched again)
+        busy_ = false;
+        if (want_serial_ == done_serial_) settled_.notify_all();
+    }
+}
+
+void Finder::run_walk(std::stop_token stop) {
+    thread_soon(Soon::kWaitedFor);
+    std::unique_lock lock(mu_);
+    for (;;) {
+        wake_.wait(lock, stop, [&] { return want_index_; });
+        if (stop.stop_requested()) return;
+        want_index_ = false;
+        indexing_ = true;
+        const std::string root = want_root_;
+        const FinderOptions o = opt_;
+        const u64 mine = index_epoch_.load();
+        lock.unlock();
+        std::shared_ptr<FileIndex> ix = walk(root, o, &index_epoch_, mine);
+        lock.lock();
+        indexing_ = false;
+        if (index_epoch_.load() == mine) {
+            index_ = std::move(ix);
+            if (live_) done_serial_ = 0;  // what was searched for is searched for again, in the new list
+            const std::function<void()> tell = notify_;
             lock.unlock();
-            std::shared_ptr<FileIndex> ix = walk(root, o, &index_epoch_, mine);
+            wake_.notify_all();
+            if (tell) tell();
             lock.lock();
-            indexing_ = false;
-            if (index_epoch_.load() == mine) {
-                index_ = std::move(ix);
-                if (live_) done_serial_ = 0;  // what was searched for is searched for again, in the new list
-                const std::function<void()> tell = notify_;
-                lock.unlock();
-                if (tell) tell();
-                lock.lock();
-            }
-        } else {
-            const u64 serial = want_serial_;
-            const bool text = want_text_;
-            const std::string typed = want_typed_;
-            const std::shared_ptr<const FileIndex> ix = index_;
-            lock.unlock();
-            if (text) search_text(serial, typed, ix);
-            else search_names(serial, typed, ix);
-            lock.lock();
-            if (want_serial_ == serial) done_serial_ = serial;
         }
-        busy_ = want_index_ || want_serial_ != done_serial_;
-        if (!busy_) settled_.notify_all();
+        if (!busy_ && !want_index_ && !indexing_ && want_serial_ == done_serial_) settled_.notify_all();
     }
 }
 

@@ -608,8 +608,10 @@ struct ProfileJob::Impl {
     std::function<void()> notify;
     std::chrono::steady_clock::time_point started{};
     bool recording = false;
-    Run run;  // the recording, while it is under way (to stop it)
+    bool reading = false;  // (the profiler's output is being read: run is that)
+    Run run;  // the recording, or the reading of it, while it is under way (to stop it)
     std::atomic<bool> stop{false};
+    std::atomic<bool> quit{false};  // the job is going away: no more waiting on anything
     std::jthread thread;
 
     void set(State s, std::string what) {
@@ -663,7 +665,9 @@ struct ProfileJob::Impl {
         {
             const std::time_t now = std::time(nullptr);
             char when[32];
-            std::strftime(when, sizeof when, "%H:%M:%S", std::localtime(&now));
+            std::tm local{};
+            ::localtime_r(&now, &local);
+            std::strftime(when, sizeof when, "%H:%M:%S", &local);
             p->when = when;
         }
 
@@ -759,12 +763,27 @@ struct ProfileJob::Impl {
         }
         Run r;
         std::string text, err;
+        if (quit) {
+            clean();
+            return fail("Stopped");
+        }
         if (!start(remote, read, cwd, &r, &err)) {
             clean();
             return fail(err);
         }
+        {
+            std::lock_guard lock(mu);
+            run = r;
+            reading = true;
+            if (quit) r.signal(SIGTERM);
+        }
         const int code = finish(r, &text, &err);
+        {
+            std::lock_guard lock(mu);
+            reading = false;
+        }
         clean();
+        if (quit) return fail("Stopped");
         if (code != 0 && text.empty()) {
             const std::string why = last_line(rec_err.empty() ? err : rec_err);
             return fail(tool + " could not record it" + (why.empty() ? std::string() : ": " + why));
@@ -794,7 +813,13 @@ ProfileJob::ProfileJob(ProfileRequest r, std::function<void()> notify) : req_(st
 }
 
 ProfileJob::~ProfileJob() {
+    impl_->quit = true;
     stop();
+    {
+        // (Reading what was recorded can take long: it ends too.)
+        std::lock_guard lock(impl_->mu);
+        if (impl_->reading) impl_->run.signal(SIGTERM);
+    }
     if (impl_->thread.joinable()) impl_->thread.join();
 }
 

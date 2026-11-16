@@ -4,11 +4,20 @@
 // and scrolled to where the file's cursor is. Cmd+Shift+V opens it; it is
 // read only. Pictures are read from files beside it (or anywhere on its
 // machine), never from the web: those stay a link.
+//
+// The text is drawn into rows on a thread of its own (MdWorker): a key
+// typed in the file only copies the text and hands it over, and the
+// preview takes the new rows on a frame soon after. (Drawn in the frame, a
+// README of 1,600 lines made each key cost 1.7 ms instead of 41 µs.)
 #include <SDL3/SDL.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <condition_variable>
+#include <map>
+#include <mutex>
+#include <thread>
 
 #include "app.hpp"
 #include "markdown.hpp"
@@ -21,10 +30,18 @@ namespace blit {
 struct MdView {
     u64 source = 0;  // the document it shows
     std::vector<MdRow> rows;
-    u64 rev = ~0ull;  // the text's revision, the width and height, and the pictures, they were drawn at
-    u32 width = 0, tall = 0;
-    u64 pictures = ~0ull;
+    // What the text was last handed to the worker at: its revision, the
+    // width and height, and the pictures' generation (asked again when one
+    // of them changes); how many times rows have come; whether they have
+    // just come.
+    u64 asked_rev = ~0ull, asked_pictures = ~0ull;
+    u32 asked_width = 0, asked_tall = 0;
     u64 renders = 0;
+    bool fresh = false;
+    std::string base;               // the folder its pictures are found from
+    std::vector<std::string> pics;  // the pictures its text names (their files)
+    const ThemeColors* coloured = nullptr;  // the theme its colours were taken from
+    float coloured_bg[3] = {-1, -1, -1};
     u32 top = 0;           // the first row shown
     u64 followed = ~0ull;  // the source's line it was last scrolled to
     double wheel = 0;      // a touchpad's fractions of a row, kept
@@ -112,7 +129,153 @@ void colours(const ThemeColors& tc, const float* bg, MdView& v) {
     tone(kMdNodeTone, 0.05f);
 }
 
+// The size of a picture known to the worker: read (and its own size), or not to be shown.
+struct PicSize {
+    bool ready = false;
+    int w = 0, h = 0;
+};
+
+void wake() {
+    SDL_Event ev{};
+    ev.type = SDL_EVENT_USER;
+    ev.user.code = 20;
+    SDL_PushEvent(&ev);
+}
+
 }  // namespace
+
+struct App::MdWorker {
+    struct Job {
+        u64 view = 0;  // the preview's document
+        u64 rev = 0, pictures = 0;
+        u32 width = 0, tall = 0;
+        std::string text, base;
+        double density = 1;
+        int cw = 1, ch = 1;
+        std::map<std::string, PicSize> known;  // pictures asked about before
+    };
+    struct Done {
+        u64 view = 0, rev = 0, pictures = 0;
+        u32 width = 0, tall = 0;
+        std::vector<MdRow> rows;
+        std::vector<std::string> wanted;  // pictures it names that were not known yet
+    };
+    std::mutex mu;
+    std::condition_variable_any cv;
+    std::map<u64, Job> todo;  // the newest for each preview (an older one not drawn yet is not drawn at all)
+    u64 busy = 0;             // the preview being drawn (0: none)
+    u64 posted = 0;           // how many have been handed over (for md_wait)
+    std::vector<Done> done;
+    std::jthread worker;
+
+    MdWorker() {
+        worker = std::jthread([this](std::stop_token st) { run(st); });
+    }
+    ~MdWorker() {
+        worker.request_stop();
+        cv.notify_all();
+        if (worker.joinable()) worker.join();
+    }
+    // The rows of a job's text. A picture's size: one of its pixels to a
+    // point (or the size the text asks for), made smaller to fit across,
+    // and to fit in the view.
+    static Done draw(Job& j) {
+        Done d;
+        d.view = j.view, d.rev = j.rev, d.pictures = j.pictures, d.width = j.width, d.tall = j.tall;
+        const MdPictureFn size = [&](const std::string& s, u32 room, u32 want_w, u32 want_h, MdPic* out) {
+            const std::string path = picture_source(j.base, s);
+            if (path.empty()) return false;
+            const auto it = j.known.find(path);
+            if (it == j.known.end()) {
+                d.wanted.push_back(path);
+                j.known[path] = {};
+                return false;
+            }
+            if (!it->second.ready || it->second.w <= 0 || it->second.h <= 0) return false;
+            double pw = it->second.w, ph = it->second.h;
+            if (want_w && want_h) pw = want_w, ph = want_h;
+            else if (want_w) ph = ph * want_w / pw, pw = want_w;
+            else if (want_h) pw = pw * want_h / ph, ph = want_h;
+            pw *= j.density, ph *= j.density;
+            const double k = std::min({1.0, static_cast<double>(room) * j.cw / pw, static_cast<double>(std::max<u32>(j.tall, 4) - 2) * j.ch / ph});
+            out->w = static_cast<u32>(std::max(1.0, std::round(pw * k)));
+            out->h = static_cast<u32>(std::max(1.0, std::round(ph * k)));
+            out->cols = (out->w + static_cast<u32>(j.cw) - 1) / static_cast<u32>(j.cw);
+            out->rows = (out->h + static_cast<u32>(j.ch) - 1) / static_cast<u32>(j.ch);
+            return true;
+        };
+        d.rows = md_render(j.text, j.width, size);
+        return d;
+    }
+    void run(std::stop_token st) {
+        for (;;) {
+            Job j;
+            {
+                std::unique_lock l(mu);
+                if (!cv.wait(l, st, [&] { return !todo.empty(); })) return;
+                const auto it = todo.begin();
+                j = std::move(it->second);
+                todo.erase(it);
+                busy = j.view;
+            }
+            Done d = draw(j);
+            {
+                std::lock_guard l(mu);
+                busy = 0;
+                done.push_back(std::move(d));
+            }
+            wake();
+        }
+    }
+};
+
+// Rows the worker has drawn, into their previews; pictures they name, asked for.
+void App::md_sync() {
+    if (!md_worker_) return;
+    std::vector<MdWorker::Done> done;
+    {
+        std::lock_guard l(md_worker_->mu);
+        done.swap(md_worker_->done);
+    }
+    for (MdWorker::Done& d : done) {
+        Doc* doc = find_doc(d.view);
+        if (!doc || !doc->md) continue;
+        MdView& v = *doc->md;
+        v.rows = std::move(d.rows);
+        ++v.renders;
+        v.fresh = true;
+        for (const std::string& path : d.wanted) {
+            if (std::ranges::find(v.pics, path) != v.pics.end()) continue;
+            v.pics.push_back(path);
+            // (one read already, by another preview or a tab: drawn again with it now)
+            if (picture(path)->state != PictureInfo::kReading) v.asked_pictures = ~0ull;
+        }
+        dirty_ = true;
+    }
+}
+
+// For the tests: frames until every preview's text has been drawn as it is now (10 s at most).
+void App::md_wait() {
+    const u64 until = now_ns() + 10'000'000'000ull;
+    while (now_ns() < until) {
+        const u64 posted = md_worker_ ? md_worker_->posted : 0;
+        frame();
+        bool idle = true;
+        if (md_worker_) {
+            for (;;) {
+                {
+                    std::lock_guard l(md_worker_->mu);
+                    idle = md_worker_->todo.empty() && !md_worker_->busy;
+                }
+                if (idle || now_ns() >= until) break;
+                SDL_Delay(1);
+            }
+        }
+        md_sync();
+        if (!md_worker_ || md_worker_->posted == posted) break;
+    }
+    frame();  // (the rows that came, put in the cells: what a click lands on)
+}
 
 // The front file shown drawn, in a tab in a split to its right (or that
 // tab brought to the front, if there is one); from the preview, back to its file.
@@ -167,42 +330,45 @@ void App::md_layout(FrameDesc& fd) {
         v.x = x, v.y = y, v.cols = cols, v.shown = rows;
         v.pad_x = (w - static_cast<int>(cols) * cw) / 2;
         v.pad_y = (h - static_cast<int>(rows) * ch) / 2;
-        colours(tc, theme_.bg, v);
+        if (v.coloured != &tc || !std::equal(theme_.bg, theme_.bg + 3, v.coloured_bg)) {  // (the theme's colours, looked up when it changes)
+            colours(tc, theme_.bg, v);
+            v.coloured = &tc;
+            std::copy(theme_.bg, theme_.bg + 3, v.coloured_bg);
+        }
         // Drawn again when the text or the width changes.
         Pane* src_pane = nullptr;
         size_t src_at = 0;
         Doc* src = find_doc(v.source, &src_pane, &src_at);
         const u32 width = cols > 2 * kMargin + 12 ? cols - 2 * kMargin : cols;
-        const std::string base = src && !src->ed.path.empty() ? parent_of(full_path(src->ed.path)) : std::string();
-        bool fresh = false;
-        if (src && (src->ed.revision() != v.rev || width != v.width || rows != v.tall || pictures_gen_ != v.pictures)) {
-            // A picture's size: one of its pixels to a point (or the size the
-            // text asks for), made smaller to fit across, and to fit in the view.
-            const MdPictureFn size = [&](const std::string& s, u32 room, u32 want_w, u32 want_h, MdPic* out) {
-                const std::string path = picture_source(base, s);
-                if (path.empty()) return false;
+        // Its text handed to the worker when it, the width or the height change, or a picture comes.
+        if (src && (src->ed.revision() != v.asked_rev || width != v.asked_width || rows != v.asked_tall || pictures_gen_ != v.asked_pictures)) {
+            if (!md_worker_) md_worker_ = std::make_shared<MdWorker>();
+            v.base = !src->ed.path.empty() ? parent_of(full_path(src->ed.path)) : std::string();
+            MdWorker::Job j;
+            j.view = pane->doc->id;
+            j.rev = src->ed.revision(), j.pictures = pictures_gen_, j.width = width, j.tall = rows;
+            j.text = src->ed.buf.text(0, src->ed.buf.size());
+            j.base = v.base;
+            j.density = density_, j.cw = cw, j.ch = ch;
+            for (const std::string& path : v.pics) {
                 const PictureInfo* p = picture(path);
-                if (p->state != PictureInfo::kReady || p->full_w <= 0 || p->full_h <= 0) return false;
-                double pw = p->full_w, ph = p->full_h;
-                if (want_w && want_h) pw = want_w, ph = want_h;
-                else if (want_w) ph = ph * want_w / pw, pw = want_w;
-                else if (want_h) pw = pw * want_h / ph, ph = want_h;
-                pw *= density_, ph *= density_;
-                const double k = std::min({1.0, static_cast<double>(room) * cw / pw, static_cast<double>(std::max<u32>(rows, 4) - 2) * ch / ph});
-                out->w = static_cast<u32>(std::max(1.0, std::round(pw * k)));
-                out->h = static_cast<u32>(std::max(1.0, std::round(ph * k)));
-                out->cols = (out->w + static_cast<u32>(cw) - 1) / static_cast<u32>(cw);
-                out->rows = (out->h + static_cast<u32>(ch) - 1) / static_cast<u32>(ch);
-                return true;
-            };
-            v.pictures = pictures_gen_;  // (before: asking may read one at once)
-            v.rows = md_render(src->ed.buf.text(0, src->ed.buf.size()), width, size);
-            v.rev = src->ed.revision();
-            v.width = width;
-            v.tall = rows;
-            ++v.renders;
-            fresh = true;
+                j.known[path] = {p->state == PictureInfo::kReady, p->full_w, p->full_h};
+            }
+            v.asked_rev = j.rev, v.asked_width = width, v.asked_tall = rows, v.asked_pictures = j.pictures;
+            if (v.renders == 0 && v.rows.empty()) {  // (the first time: at once, so that it opens drawn)
+                MdWorker::Done d = MdWorker::draw(j);
+                std::lock_guard l(md_worker_->mu);
+                md_worker_->done.push_back(std::move(d));
+            } else {
+                std::lock_guard l(md_worker_->mu);
+                md_worker_->todo[j.view] = std::move(j);
+                ++md_worker_->posted;
+                md_worker_->cv.notify_all();
+            }
+            if (v.renders == 0) md_sync();
         }
+        const bool fresh = v.fresh;
+        v.fresh = false;
         // Scrolled to where the file's cursor is, while the file is being worked on (not the preview).
         if (src && src_pane && src_pane->doc == src && pane.get() != pane_) {
             const u64 line = src->ed.buf.line_of(src->ed.cursor());
@@ -260,7 +426,7 @@ void App::md_layout(FrameDesc& fd) {
         for (u32 r = 0; src && r < rows && v.top + r < v.rows.size(); ++r)
             for (const MdPic& pic : v.rows[v.top + r].pics) {
                 if ((pic.part != 0 && r != 0) || fd.picture_count >= std::size(fd.pictures)) continue;
-                const std::string path = picture_source(base, pic.src);
+                const std::string path = picture_source(v.base, pic.src);
                 if (path.empty()) continue;
                 const PictureInfo* p = picture(path);
                 if (p->state != PictureInfo::kReady) continue;
@@ -381,6 +547,7 @@ bool App::md_mouse_down(const SDL_MouseButtonEvent& b) {
 
 // The preview in front (the first there is), its rows as text (for the tests).
 std::string App::md_dump() {
+    md_wait();
     for (const std::unique_ptr<Pane>& p : panes_) {
         if (!p->doc || !p->doc->md) continue;
         const MdView& v = *p->doc->md;

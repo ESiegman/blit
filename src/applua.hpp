@@ -352,6 +352,7 @@ struct App::ScriptUi {
     u64 pending_until = 0;
     int unmapped = 0;        // keys being put through as they are, not looked at again
     int feeding = 0;         // how deep mappings that type mappings have gone
+    int expanding = 0;       // how deep commands that run commands have gone
     u32 count = 0;           // the count typed before the mapping being run
 
     // Commands, events, timers, programs.

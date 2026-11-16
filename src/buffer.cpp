@@ -31,13 +31,13 @@ T* Pool<T>::alloc() {
     if (free_) {
         void* p = free_;
         free_ = *reinterpret_cast<void**>(p);
-        return new (p) T();
+        return new (p) T;
     }
     if (bump_ == bump_end_) {
         reserve(next_slab_);
         if (next_slab_ < 4096) next_slab_ *= 2;
     }
-    return new (static_cast<void*>(bump_++)) T();
+    return new (static_cast<void*>(bump_++)) T;
 }
 
 template <class T>
@@ -383,12 +383,26 @@ bool Buffer::save_file(const char* path, std::string* err) const {
 #if !defined(_WIN32)
     struct stat st;
     if (ok && stat(path, &st) == 0) fchmod(fileno(f), st.st_mode & 07777);
+    // The data must be on disk before the rename, or a crash could leave an
+    // empty file where the original was.
+    if (ok) ok = fsync(fileno(f)) == 0;
 #endif
     ok = (std::fclose(f) == 0) && ok;
 #if defined(_WIN32)
     if (ok) std::remove(path);
 #endif
     if (ok) ok = std::rename(tmp.c_str(), path) == 0;
+#if !defined(_WIN32)
+    if (ok) {
+        // Make the rename itself durable. A failure here is not worth failing the save.
+        const std::string dir = std::string(path).substr(0, std::string(path).find_last_of('/') + 1);
+        const int dfd = open(dir.empty() ? "." : dir.c_str(), O_RDONLY);
+        if (dfd >= 0) {
+            fsync(dfd);
+            close(dfd);
+        }
+    }
+#endif
     if (!ok) {
         std::remove(tmp.c_str());
         if (err) *err = std::string("cannot save: ") + path;

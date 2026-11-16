@@ -183,6 +183,7 @@ struct Pane {
     // has been still a while), when it starts to fade, and where the view
     // was when it last showed fully.
     float thumb_alpha = 1;
+    bool has_thumb = false;  // there is something to scroll (set when it is laid out)
     u64 thumb_until_ns = 0;
     double thumb_x = -1, thumb_y = -1;
 };
@@ -225,6 +226,7 @@ private:
     void refresh_cursor_cache();
     void update_title();
     bool load_font(std::string* err);
+    void rescale_scroll(int old_cw, int old_ch);  // every view keeps its place when the cells change size
     bool adopt_font(std::unique_ptr<Font> f, std::string* err);
     FontSpec font_spec(float scale) const;
     void pick_theme();
@@ -300,6 +302,7 @@ private:
     enum : int { kFindNames, kFindText, kFindOpen, kFindSave, kFindFolder, kFindPick, kFindInput, kFindAsk, kFindCommand };
     void find_create();
     bool find_is_open() const;
+    void find_stale();  // the files may have changed: the finder reads the folder again when it opens
     void find_open(int mode, const std::string& typed = {});
     void find_close(bool chosen);
     void find_query();
@@ -396,6 +399,7 @@ private:
     void project_cells(u32 cols, u32 rows);
     void project_facts(bool wait);  // what the machine the project goes on has: vcpkg, ROCm, GPUs, uv, pkg-config
     void project_facts_apply();
+    void start_sync();  // a thread of the start screen has found something (user event 19)
     void project_libraries(const std::string& typed = {});
     void recent_add(const std::string& path, bool dir);
 
@@ -445,6 +449,9 @@ private:
     bool md_wheel(const SDL_MouseWheelEvent& w);
     bool md_mouse_down(const SDL_MouseButtonEvent& b);
     std::string md_dump();
+    struct MdWorker;  // draws previews on a thread of its own, so that typing never waits for one
+    void md_sync();   // (event 20: a preview has been drawn)
+    void md_wait();   // (for the tests: until every preview asked for is drawn)
 
     // Pictures (appimage.cpp): image files read on a thread of their own and
     // put on the GPU, for an image file's tab and the Markdown preview.
@@ -650,6 +657,7 @@ private:
     enum DragKind : u8 { kDragNone, kDragDivider, kDragTab, kDragGroup, kDragFile };
     void drag_arm(DragKind kind, u64 doc, const std::string& path, float x, float y);
     void drag_drop();
+    void drag_cancel();  // every drag ends where it is, nothing dropped
     void wheel_pane(const SDL_MouseWheelEvent& w);
     void forget_doc(const Doc* d);  // a document is about to go: nothing may still point at it
     void layout_pane(FrameDesc& fd, bool focused);
@@ -769,6 +777,7 @@ private:
     std::shared_ptr<Pictures> pictures_;  // (after gpu_: its reader stops first)
     u64 pictures_gen_ = 0;  // counts up whenever a picture has been read (or could not be)
     std::shared_ptr<Pdfs> pdfs_;  // (after gpu_ too)
+    std::shared_ptr<MdWorker> md_worker_;
     std::unique_ptr<Font> font_;
     // The splits of the window, how they are arranged, and the one with
     // the keyboard. There is always at least one, and every one has at
@@ -833,6 +842,7 @@ private:
     bool find_open_ = false;  // the box that finds things is up (here, not in its own state: every key and every frame asks)
     bool dragging_ = false;
     bool dragging_thumb_ = false;
+    bool text_press_ = false;  // the text area took the left-button press that is held
     u32 guide_inks_ = 0;  // how many colours the theme has for indent lines
     bool quit_after_save_ = false;
     bool close_after_save_ = false;  // the tab whose new file is being named closes once it is saved

@@ -165,8 +165,10 @@ bool fs_run(const std::string& dir, const std::string& command, std::string* out
     ::fcntl(pipe_out[0], F_SETFD, FD_CLOEXEC);
     posix_spawn_file_actions_t fa;
     posix_spawn_file_actions_init(&fa);
+    posix_spawn_file_actions_addopen(&fa, 0, "/dev/null", O_RDONLY, 0);
     posix_spawn_file_actions_adddup2(&fa, pipe_out[1], 1);
     posix_spawn_file_actions_addclose(&fa, pipe_out[1]);
+    posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
     if (!dir.empty()) {
 #if defined(__APPLE__) && defined(__MAC_26_0) && __MAC_OS_X_VERSION_MIN_REQUIRED >= __MAC_26_0
         posix_spawn_file_actions_addchdir(&fa, dir.c_str());
@@ -178,8 +180,16 @@ bool fs_run(const std::string& dir, const std::string& command, std::string* out
     std::vector<char*> args;
     for (std::string& w : words) args.push_back(w.data());
     args.push_back(nullptr);
+    // Nothing else this process has open goes into the command: not the pipes of a language server
+    // being started on another thread (whose reader would then wait for this command to end).
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+#if defined(POSIX_SPAWN_CLOEXEC_DEFAULT)
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
+#endif
     pid_t pid = -1;
-    const int rc = ::posix_spawn(&pid, args[0], &fa, nullptr, args.data(), environ);
+    const int rc = ::posix_spawn(&pid, args[0], &fa, &attr, args.data(), environ);
+    posix_spawnattr_destroy(&attr);
     posix_spawn_file_actions_destroy(&fa);
     ::close(pipe_out[1]);
     if (rc != 0) {

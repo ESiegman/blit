@@ -51,7 +51,9 @@ public:
     std::vector<Message> poll();
     bool ended() const { return ended_; }
     std::string errors() const;  // the last of what the adapter wrote as errors
-    void stop();                 // the adapter is told to end, then made to
+    // The adapter is made to end: given up to grace_ms first to end of itself
+    // (after a disconnect, so that it can let go of the program it ran).
+    void stop(int grace_ms = 0);
 
 private:
     void read_loop(std::stop_token stop);

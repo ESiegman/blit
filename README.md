@@ -459,8 +459,11 @@ panel](#side-panel) shows). Files a `.gitignore` leaves out are left out,
 and so, whatever `.gitignore` says, are `.git`, `node_modules`, `target`,
 `build`, `build-*` and compiled files; `blit.opt.search.ignore` adds more, in
 `.gitignore`'s syntax. A search for text also passes over files that are
-not text and files over 8 MB. The folder is read again each time the box is
-opened, in the background: the list as it was is searched meanwhile.
+not text and files over 8 MB. The folder is read again in the background
+when the box opens, if the last reading is more than 2 seconds old, the
+window has come back to the front since, or the file tree has seen a
+change; the list as it was is searched meanwhile, and again when the new
+one is in (switching between names and text reads nothing).
 
 In the box: Up and Down (or Ctrl-P and Ctrl-N, Ctrl-K and Ctrl-J) choose,
 Page Up and Page Down go by a page, Enter opens, Esc (or a click beside the
@@ -1602,7 +1605,7 @@ does not finish and takes all the memory the machine has.
   available on Windows yet. Only tried with clangd and the test server.
 - Another machine: over ssh only, to
   Linux on x86-64 or ARM64 or a Mac like this one. Files up to 1 GB. The
-  finder lists the whole folder again each time it is opened, across the
+  finder lists the whole folder again when it opens (as above), across the
   connection. A language server's own output there is not kept
   (`BLIT_LSP_LOG` is for local ones). Programs a script starts run on this
   machine, not that one. The project folder for a file opened there on its

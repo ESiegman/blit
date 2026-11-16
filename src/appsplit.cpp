@@ -341,6 +341,7 @@ bool App::splits_mouse_down(const SDL_MouseButtonEvent& b) {
 
 bool App::splits_mouse_motion(const SDL_MouseMotionEvent& m) {
     Drag& d = *drag_;
+    if (d.kind != kDragNone && !(m.state & SDL_BUTTON_LMASK)) drag_cancel();  // (the button went up where this window did not see it)
     const int px = static_cast<int>(m.x * density_), py = static_cast<int>(m.y * density_);
     if (d.kind == kDragNone) {
         // Over a divider the pointer says which way it moves.
@@ -454,6 +455,21 @@ bool App::splits_mouse_up(const SDL_MouseButtonEvent& b) {
     for (const std::unique_ptr<Pane>& p : panes_) p->bar->drop = -1;
     dirty_ = true;
     return was_drag;
+}
+
+// Lets go of every drag with nothing dropped: the mouse-up was lost, or the
+// window lost the keyboard in the middle of one.
+void App::drag_cancel() {
+    Drag& d = *drag_;
+    if (d.kind != kDragNone) {
+        d.kind = kDragNone;
+        d.moving = d.away = false;
+        d.over = 0;
+        for (const std::unique_ptr<Pane>& p : panes_) p->bar->drop = -1;
+    }
+    panel_mouse_up();  // (a resize of the side panel too)
+    dragging_ = dragging_thumb_ = false;
+    dirty_ = true;
 }
 
 // Lets go of what is being carried, where the last mouse movement said.

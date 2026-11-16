@@ -156,6 +156,13 @@ struct App::ProfUi {
         std::vector<char> kinds;                               // 'F' a function's line, 'L' a hot line
     };
     std::unordered_map<u64, Notes> notes;
+    // Where each document's file is in the profile shown (looked for once, not each frame).
+    struct Where {
+        std::string raw, full;  // the path the document has, and its full path
+        const std::map<u32, ProfileLine>* lines = nullptr;  // the file's lines in the profile shown; none: it has none
+        bool known = false;
+    };
+    std::unordered_map<u64, Where> where;
     std::vector<GridNote> view_notes[kMaxViews];
     ~ProfUi() {
         if (timer) SDL_RemoveTimer(timer);
@@ -237,6 +244,8 @@ void App::prof_open(std::shared_ptr<Profile> p) {
     ProfUi& u = *profui_;
     u.shown = p;
     u.notes.clear();
+    u.where.clear();
+    panel_focus(false);  // (the profile's tab, in front, has the keyboard: the panel's Profile tab had it to start the recording)
     for (const std::unique_ptr<Pane>& pane : panes_)
         for (size_t i = 0; i < pane->docs.size(); ++i)
             if (pane->docs[i]->prof && pane->docs[i]->prof->p == p) {
@@ -842,9 +851,16 @@ void App::prof_marks(FrameDesc& fd) {
         GridSpec& g = fd.views[vi].grid;
         Doc* d = find_doc(g.doc);
         if (!d || d->ed.path.empty() || d->loading) continue;
-        const std::string path = full_path(d->ed.path);
-        const auto lit = p.lines.find(path);
-        if (lit == p.lines.end()) continue;
+        ProfUi::Where& at = u.where[d->id];
+        if (!at.known || at.raw != d->ed.path) {
+            at.raw = d->ed.path;
+            at.full = full_path(d->ed.path);
+            const auto found = p.lines.find(at.full);
+            at.lines = found == p.lines.end() ? nullptr : &found->second;
+            at.known = true;
+        }
+        if (!at.lines) continue;
+        const std::string& path = at.full;
         ProfUi::Notes& nt = u.notes[d->id];
         if (nt.rev != d->ed.revision() || nt.p != &p || nt.font != font.generation()) {
             nt.rev = d->ed.revision();
@@ -863,7 +879,7 @@ void App::prof_marks(FrameDesc& fd) {
                 if (by_line.contains(l)) by_line[l].first = text + " \xC2\xB7 " + by_line[l].first;
                 else by_line[l] = {text, kInkAccent};
             }
-            for (const auto& [line, w] : lit->second) {
+            for (const auto& [line, w] : *at.lines) {
                 if (w.self <= min_line || line == 0) continue;
                 const u64 l = line - 1;
                 const std::string text = "\xE2\x97\x8F " + percent(w.self, p.weight);

@@ -37,6 +37,15 @@ struct Recorder {
     return font.glyph(d.cp, (bits & Font::kStyleMask) >> Font::kStyleShift) & (Font::kWide - 1);
 }
 
+// True when the CR that ends the reader's chunk is followed by a newline, or
+// by nothing: the next piece is looked at, so a CRLF cut in two still counts.
+bool cr_ends_line(const Buffer::Reader& rd, size_t n) {
+    Buffer::Reader next = rd;
+    next.advance(static_cast<u32>(n));
+    const std::string_view c = next.chunk();
+    return c.empty() || c[0] == '\n';
+}
+
 // Fills one grid row. The reader sits on the line at display column `col`
 // and byte offset `off`, which is left at the start of the next line when
 // the row reaches it. With a style cursor, each cell also gets its colour
@@ -106,7 +115,7 @@ u32 fill_row(Buffer::Reader& rd, Font& font, u32 first_col, u32 cols, u32* row, 
             if (b == '\t') {
                 w = (col / tab_width + 1) * tab_width - col;
                 slot = ' ';
-            } else if (b == '\r' && (i + 1 >= n || p[i + 1] == '\n')) {
+            } else if (b == '\r' && (i + 1 < n ? p[i + 1] == '\n' : cr_ends_line(rd, n))) {
                 ++i;  // the CR of a CRLF takes no space
                 continue;
             } else if (b >= 0x80) {
@@ -149,10 +158,11 @@ u32 fill_row(Buffer::Reader& rd, Font& font, u32 first_col, u32 cols, u32* row, 
 
 }  // namespace
 
-void AnchorCache::sync(u64 doc, u64 revision) {
-    if (revision == revision_ && doc == doc_) return;
+void AnchorCache::sync(u64 doc, u64 revision, u32 tab_width) {
+    if (revision == revision_ && doc == doc_ && tab_width == tab_width_) return;
     revision_ = revision;
     doc_ = doc;
+    tab_width_ = tab_width;
     for (LineAnchors& l : lines_) l = LineAnchors{};
 }
 
@@ -182,7 +192,7 @@ void fill_grid(const Buffer& buf, Font& font, const GridSpec& g, u32* cells, Anc
     const u32 cols = g.cols - lead;  // columns that show text
     const u32 tab = std::max<u32>(1, g.tab_width);
     const bool far = anchors && g.first_col >= LineAnchors::kStep;
-    if (anchors) anchors->sync(g.doc, g.revision);
+    if (anchors) anchors->sync(g.doc, g.revision, tab);
 
     // With ligatures a row is filled a little wider than the window, so a
     // ligature that straddles the window edge is shaped whole, then the

@@ -89,12 +89,24 @@ struct TermView {
         if (conn && proc.id) conn->kill(proc.id, SIGHUP);  // (started meanwhile)
         if (in >= 0 && in != out) ::close(in);
         if (out >= 0) ::close(out);
-        if (pty.pid > 0) {
+        if (pty.pid > 0 && !ended) {  // (not one the reader has seen end and reaped)
             int st = 0;
             if (::waitpid(pty.pid, &st, WNOHANG) == 0) {
+                // A shell that ignores the hangup does not get to keep the tab, or its programs, alive.
+                ::kill(-pty.pid, SIGKILL);
                 ::kill(pty.pid, SIGKILL);
                 ::waitpid(pty.pid, &st, 0);
             }
+        }
+        if (conn && proc.id && !ended) {
+            // The program there is reaped, on a thread of its own: the connection keeps a record
+            // and descriptors for it until it is, and it may be slow to end.
+            std::thread([c = conn, id = proc.id] {
+                if (c->wait(id, 2000) == -2) {
+                    c->kill(id, SIGKILL);
+                    c->wait(id, 3000);
+                }
+            }).detach();
         }
     }
 
@@ -161,10 +173,16 @@ struct TermView {
         char buf[65536];
         bool first = true;
         while (!stop.stop_requested()) {
-            pollfd p{out, POLLIN, 0};
-            const int r = ::poll(&p, 1, 100);
+            // (What the program has not yet taken of what was written to it is offered again whenever it can.)
+            const bool backed_up = backed.load();
+            const int wi = in == out ? 0 : 1;
+            pollfd p[2] = {{out, POLLIN, 0}, {in, 0, 0}};
+            if (backed_up) p[wi].events |= POLLOUT;
+            const int r = ::poll(p, wi + 1, 100);
             if (r < 0 && errno != EINTR) break;
             if (r <= 0) continue;
+            if (backed_up && (p[wi].revents & (POLLOUT | POLLERR | POLLHUP))) flush_backlog();
+            if (!(p[0].revents & ~POLLOUT)) continue;
             const ssize_t k = ::read(out, buf, sizeof buf);
             if (k > 0 && first && pty.fd >= 0) {
                 // (The tab's size again, now the program has its terminal
@@ -189,9 +207,21 @@ struct TermView {
         if (stop.stop_requested()) return;
         int st = 0;
         if (conn) {
-            st = conn->wait(proc.id);
+            while ((st = conn->wait(proc.id, 100)) == -2) {  // (as below: the tab closing is not held up)
+                if (stop.stop_requested()) return;
+            }
         } else if (pty.pid > 0) {
-            while (::waitpid(pty.pid, &st, 0) < 0 && errno == EINTR) {}
+            // (Looked at now and then: a program that outlives its terminal must not hold up closing the tab.)
+            for (;;) {
+                const pid_t r = ::waitpid(pty.pid, &st, WNOHANG);
+                if (r == pty.pid) break;
+                if (r < 0 && errno != EINTR) {
+                    st = 0;
+                    break;
+                }
+                if (stop.stop_requested()) return;
+                ::usleep(20'000);
+            }
             st = WIFEXITED(st) ? WEXITSTATUS(st) : 128 + (WIFSIGNALED(st) ? WTERMSIG(st) : 0);
         }
         status = st;
@@ -199,21 +229,56 @@ struct TermView {
         wake();
     }
 
-    // Bytes to the program (a key, a paste), all of them even if it is slow to take them.
+    // Bytes to the program (a key, a paste): what it takes now is written
+    // now, the rest is kept for the reader's thread to hand over as it can,
+    // so a long paste never holds up the one that draws.
+    std::mutex out_mu;
+    std::string backlog;
+    size_t backlog_at = 0;
+    std::atomic<bool> backed{false};
+
     void send(std::string_view s) {
         const int fd = in;
         if (fd < 0 || ended) return;
+        std::lock_guard lock(out_mu);
+        if (backlog_at < backlog.size()) {  // (what is waiting goes first)
+            backlog.append(s);
+            return;
+        }
         while (!s.empty()) {
             const ssize_t k = ::write(fd, s.data(), s.size());
             if (k > 0) {
                 s.remove_prefix(static_cast<size_t>(k));
-            } else if (k < 0 && (errno == EAGAIN || errno == EINTR)) {
-                pollfd p{fd, POLLOUT, 0};
-                if (::poll(&p, 1, 1000) <= 0) return;
+            } else if (k < 0 && errno == EINTR) {
+                continue;
+            } else if (k < 0 && errno == EAGAIN) {
+                backlog.assign(s);
+                backlog_at = 0;
+                backed = true;
+                return;
             } else {
                 return;
             }
         }
+    }
+
+    void flush_backlog() {
+        std::lock_guard lock(out_mu);
+        while (backlog_at < backlog.size()) {
+            const ssize_t k = ::write(in, backlog.data() + backlog_at, backlog.size() - backlog_at);
+            if (k > 0) {
+                backlog_at += static_cast<size_t>(k);
+            } else if (k < 0 && errno == EINTR) {
+                continue;
+            } else if (k < 0 && errno == EAGAIN) {
+                return;
+            } else {
+                break;  // it does not take input any more
+            }
+        }
+        backlog.clear();
+        backlog_at = 0;
+        backed = false;
     }
 };
 

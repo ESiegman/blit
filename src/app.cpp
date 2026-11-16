@@ -575,9 +575,9 @@ void App::apply_config(Config next) {
     panel_apply_config(false);
     if (font_changed) {
         if (cfg_.font_size != old_size && opt_.pt <= 0) pt_ = cfg_.font_size;
-        const int old_ch = font_->cell_h();
+        const int old_cw = font_->cell_w(), old_ch = font_->cell_h();
         std::string err;
-        if (load_font(&err)) pane_->scroll_y = pane_->target_y = std::floor(pane_->scroll_y / old_ch) * font_->cell_h();
+        if (load_font(&err)) rescale_scroll(old_cw, old_ch);
         else std::fprintf(stderr, "blit: %s\n", err.c_str());
     }
     pick_theme();
@@ -586,16 +586,33 @@ void App::apply_config(Config next) {
 
 void App::zoom(float dpt) {
     const float old_pt = pt_;
-    const int old_ch = font_->cell_h();
+    const int old_cw = font_->cell_w(), old_ch = font_->cell_h();
     pt_ = std::clamp(dpt == 0 ? (opt_.pt > 0 ? opt_.pt : cfg_.font_size) : pt_ + dpt, 6.0f, 96.0f);
     std::string err;
     if (!load_font(&err)) {
         pt_ = old_pt;
         return;
     }
-    pane_->scroll_y = pane_->target_y = std::floor(pane_->scroll_y / old_ch) * font_->cell_h();
+    rescale_scroll(old_cw, old_ch);
     pick_theme();
     dirty_ = true;
+}
+
+// Scroll positions are in pixels: when the cells change size, every view
+// keeps its place in the text (the rows stay whole).
+void App::rescale_scroll(int old_cw, int old_ch) {
+    if (old_cw <= 0 || old_ch <= 0) return;
+    const double kx = static_cast<double>(font_->cell_w()) / old_cw;
+    const int ch = font_->cell_h();
+    for (const std::unique_ptr<Pane>& p : panes_) {
+        p->scroll_y = p->target_y = std::floor(p->scroll_y / old_ch) * ch;
+        p->scroll_x *= kx;
+        p->target_x *= kx;
+        for (const std::unique_ptr<Doc>& d : p->docs) {
+            d->scroll_y = std::floor(d->scroll_y / old_ch) * ch;
+            d->scroll_x *= kx;
+        }
+    }
 }
 
 // ---------------------------------------------------------------- files
@@ -636,6 +653,7 @@ bool App::open_path(const char* p) {
     size_t at = pane_->tab + 1;
     if (reuse) {
         stop_lsp();
+        forget_doc(pane_->doc);  // (before it goes: nothing may still point at it)
         at = pane_->tab;
         pane_->docs[pane_->tab] = std::move(fresh);
         pane_->doc = nullptr;
@@ -717,7 +735,7 @@ void App::save() {
     else lsp_pending_ = true;  // a new file has a name now: a server can have it
     if (is_remote(pane_->doc->ed.path)) {
         if (saved) pane_->doc->disk_stamp = there_stamp;
-    } else {
+    } else if (saved) {
         pane_->doc->disk_stamp = file_stamp(pane_->doc->ed.path);
     }
     if (cfg_.git) git_.refresh();  // git has something new to say about it
@@ -1135,6 +1153,11 @@ void App::layout_pane(FrameDesc& fd, bool focused) {
         v.thumb[2] = static_cast<float>(p.x1 - std::lround(2 * scale_));
         v.thumb[3] = static_cast<float>(std::floor(ty + bar));
     }
+    p.has_thumb = my > 0;
+    if (!p.has_thumb) {  // (nothing to fade: no frames are spent on it; it starts again when there is something to scroll)
+        p.thumb_alpha = 0;
+        p.thumb_x = p.thumb_y = -1;
+    }
     gutter_layout(px_w_, px_h_, fd);
     tabs_layout(px_w_, px_h_, fd, focused);
 }
@@ -1249,7 +1272,11 @@ void App::handle(const SDL_Event& e) {
             if (s > 0 && s != scale_ && opt_.scale == 0) {
                 scale_ = s;
                 std::string err;
-                if (load_font(&err)) pick_theme();
+                const int old_cw = font_->cell_w(), old_ch = font_->cell_h();
+                if (load_font(&err)) {
+                    rescale_scroll(old_cw, old_ch);
+                    pick_theme();
+                }
             }
             dirty_ = true;
             break;
@@ -1259,11 +1286,14 @@ void App::handle(const SDL_Event& e) {
             break;
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
             panel_refresh();  // files that came or went
+            find_stale();
             reload_changed(); // and open files that were written
             if (cfg_.git) git_.refresh();
             script_focus(true);  // and init.lua, if it was changed in another program
             break;
         case SDL_EVENT_WINDOW_FOCUS_LOST:
+            drag_cancel();
+            text_press_ = false;
             if (script_) script_focus(false);
             break;
         case SDL_EVENT_KEY_DOWN:
@@ -1279,6 +1309,7 @@ void App::handle(const SDL_Event& e) {
             if (!image_pinch(e.pinch.scale)) pdf_pinch(e.pinch.scale);  // (a picture or a PDF is zoomed)
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
+            if (e.button.button == SDL_BUTTON_LEFT) text_press_ = false;
             mouse_x_ = e.button.x;
             mouse_y_ = e.button.y;
             if (find_open_ && find_mouse_down(e.button)) break;  // on the box that finds things, or beside it (which shuts it)
@@ -1305,7 +1336,10 @@ void App::handle(const SDL_Event& e) {
             term_mouse_up();
             image_mouse_up();
             pdf_mouse_up();
-            if (e.button.button == SDL_BUTTON_LEFT) vim_mouse();  // a click or a drag in the text, as Vim sees it
+            if (e.button.button == SDL_BUTTON_LEFT) {
+                if (text_press_) vim_mouse();  // a click or a drag in the text, as Vim sees it
+                text_press_ = false;
+            }
             break;
         case SDL_EVENT_WINDOW_MOUSE_LEAVE:
             hover_update(-1, -1);
@@ -1393,6 +1427,14 @@ void App::handle(const SDL_Event& e) {
                 pdf_sync();
                 break;
             }
+            if (e.user.code == 19) {  // the start screen's facts, or PyPI's list, have been found
+                start_sync();
+                break;
+            }
+            if (e.user.code == 20) {  // a Markdown preview has been drawn
+                md_sync();
+                break;
+            }
             break;
         }
         default:
@@ -1417,16 +1459,19 @@ void App::on_key(const SDL_KeyboardEvent& k) {
     script_drop_text_ = false;
     term_drop_text_ = false;  // (only the text a key itself brings is dropped)
     if (start_key(k)) return;  // the start screen is showing (appstart.cpp)
-    if (prof_key(k)) return;   // a profile's tab is in front (appprofile.cpp)
-    if (md_key(k)) return;     // a Markdown preview's (appmarkdown.cpp)
-    if (image_key(k)) return;  // an image file's (appimage.cpp)
-    if (pdf_key(k)) return;    // a PDF's (apppdf.cpp)
-    if (k.key == SDLK_GRAVE && (k.mod & SDL_KMOD_CTRL) && !(k.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI))) {  // Ctrl+`: a terminal, in the folder being worked in
-        term_open();
-        term_drop_text_ = true;
-        return;
+    const bool boxed = find_open_ || panel_has_keyboard();  // the finder box or the side panel has the keyboard: a tab in front does not
+    if (!boxed) {
+        if (prof_key(k)) return;   // a profile's tab is in front (appprofile.cpp)
+        if (md_key(k)) return;     // a Markdown preview's (appmarkdown.cpp)
+        if (image_key(k)) return;  // an image file's (appimage.cpp)
+        if (pdf_key(k)) return;    // a PDF's (apppdf.cpp)
+        if (k.key == SDLK_GRAVE && (k.mod & SDL_KMOD_CTRL) && !(k.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI))) {  // Ctrl+`: a terminal, in the folder being worked in
+            term_open();
+            term_drop_text_ = true;
+            return;
+        }
+        if (term_key(k)) return;   // a terminal's tab is in front (appterm.cpp)
     }
-    if (term_key(k)) return;   // a terminal's tab is in front (appterm.cpp)
     if (script_keys_ && script_key(k)) return;  // a mapping of a script's has it (applua.cpp)
     if (!find_open_ && command_key(k)) return;  // the keys of the commands added in appcommands.cpp
     const bool shift = k.mod & SDL_KMOD_SHIFT;
@@ -1633,6 +1678,7 @@ void App::on_mouse_down(const SDL_MouseButtonEvent& b) {
         drag_thumb(b.y);
         return;
     }
+    text_press_ = true;
     const u64 off = offset_at_point(b.x, b.y);
     if (b.x * density_ < pane_->text_x) {  // on a line's number: the whole line
         pane_->doc->ed.select_line(off);

@@ -29,6 +29,9 @@ inline int spawn_chdir(posix_spawn_file_actions_t* fa, const char* dir) {
 
 namespace blit {
 
+// The most of a program's output that is kept when it is not passed on as it comes (each of stdout and stderr).
+static constexpr size_t kMaxOutput = 64u << 20;
+
 Jobs::Jobs() = default;
 
 Jobs::Job::~Job() {
@@ -94,7 +97,10 @@ bool Jobs::stop(u64 id) {
         if (j->id == id && !j->done.load()) {
             j->thread.request_stop();
 #if !defined(_WIN32)
-            if (const int pid = j->pid.load(); pid > 0) kill(pid, SIGTERM);
+            {
+                std::lock_guard lock(j->pid_mu);
+                if (const int pid = j->pid.load(); pid > 0) kill(pid, SIGTERM);
+            }
             if (j->wake[1] >= 0) (void)!write(j->wake[1], "x", 1);
 #endif
             return true;
@@ -253,7 +259,10 @@ void Jobs::run(Job* job, JobSpec spec) {
                         e.out.assign(buf, static_cast<size_t>(r));
                         push(std::move(e));
                     } else {
-                        into.append(buf, static_cast<size_t>(r));
+                        if (into.size() < kMaxOutput) {
+                            into.append(buf, std::min<size_t>(static_cast<size_t>(r), kMaxOutput - into.size()));
+                            if (into.size() >= kMaxOutput) into += "\n[blit: output cut at 64 MB]\n";
+                        }
                     }
                 } else if (r == 0 || (errno != EAGAIN && errno != EINTR)) {
                     close(fd);
@@ -271,8 +280,14 @@ void Jobs::run(Job* job, JobSpec spec) {
     if (out_open) close(out[0]);
     if (err_open) close(err[0]);
     int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-    job->pid = 0;
+    // Waited for without letting go of it, so that stop() can still signal it; then reaped, and forgotten, under the lock.
+    siginfo_t info{};
+    while (waitid(P_PID, static_cast<id_t>(pid), &info, WEXITED | WNOWAIT) < 0 && errno == EINTR) {}
+    {
+        std::lock_guard lock(job->pid_mu);
+        while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+        job->pid = 0;
+    }
     last.code = WIFEXITED(status) ? WEXITSTATUS(status) : WIFSIGNALED(status) ? 128 + WTERMSIG(status) : -1;
     finish();
 }

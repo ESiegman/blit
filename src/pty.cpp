@@ -7,6 +7,7 @@
 #include <termios.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdlib>
 #include <cstring>
@@ -78,6 +79,7 @@ bool pty_spawn(const std::vector<std::string>& argv, const std::string& cwd, con
     for (std::string& e : envs) envp.push_back(e.data());
     envp.push_back(nullptr);
 
+    const int max_fd = static_cast<int>(std::clamp<long>(::sysconf(_SC_OPEN_MAX), 256, 4096));
     const pid_t pid = ::fork();
     if (pid < 0) {
         ::close(master);
@@ -99,6 +101,7 @@ bool pty_spawn(const std::vector<std::string>& argv, const std::string& cwd, con
         ::dup2(slave, 2);
         if (slave > 2) ::close(slave);
         ::close(master);
+        for (int fd = 3; fd < max_fd; ++fd) ::close(fd);  // (nothing of blit's is the shell's)
         if (!cwd.empty()) (void)::chdir(cwd.c_str());
         // (Signals the parent ignores are not the program's to ignore.)
         ::signal(SIGPIPE, SIG_DFL);

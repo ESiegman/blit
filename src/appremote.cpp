@@ -83,7 +83,7 @@ void App::remote_start() {
             } else if (RemoteStat st; j.reload && (!r->stat(there, &st) || st.kind != 1 || st.modified_ns == j.known)) {
                 keep = false;  // the same as when it was read
             } else {
-                constexpr u64 kMost = 1ull << 30;
+                constexpr u64 kMost = (1ull << 30) - 4096;  // (the connection drops a frame over 1 GiB: the reply, with its header, must fit)
                 d.status = r->read(there, kMost, &d.bytes, &d.modified);
                 if (d.status == 2 && r->stat(there, &st) && st.kind == 2) d.status = 6;
             }

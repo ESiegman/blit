@@ -88,7 +88,7 @@ got=$(printf '%s' "$got" | sed -e 's/\( ;; \)*$//' -e 's/\( ;; \)\{2,\}/ ;; /g')
 check "pictures in the Markdown preview" "Pictures ;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ;; picture: quad.png 8x4 ;; Text with ▣ an inline one in it. ;; picture: quad.png 4x2 ;; ▣ on the web ;; ▣ not there ;; picture: quad.png 8x4"
 
 # A click on a picture there opens it, in a tab of its own.
-run 1400x1000 "frame;mdpreview;frame;imagewait;frame;click:400,95;frame;imagewait;frame;dump;imagedump" "$pics/pics.md"
+run 1400x1000 "frame;mdpreview;frame;imagewait;frame;mdwait;click:400,95;frame;imagewait;frame;dump;imagedump" "$pics/pics.md"
 check "a picture in the preview, clicked: its file opened" "H([pics.md*] | >[Preview: pics.md quad.png*])0.50 ;; quad.png: ready PNG 64x48 read 64x48 clear zoom 100% middle 0.50,0.50"
 
 # A PDF: its pages, fitted to the width of the widest, the first one's colours.

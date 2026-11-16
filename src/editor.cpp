@@ -20,6 +20,15 @@ int char_class(u8 c) {
     return 2;
 }
 
+// True when the CR that ends the reader's chunk is followed by a newline, or
+// by nothing: the next piece is looked at, so a CRLF cut in two still counts.
+bool cr_ends_line(const Buffer::Reader& rd, size_t n) {
+    Buffer::Reader next = rd;
+    next.advance(static_cast<u32>(n));
+    const std::string_view c = next.chunk();
+    return c.empty() || c[0] == '\n';
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------- files
@@ -286,7 +295,9 @@ u64 Editor::off_at(u64 line, u32 want, bool nearest) const {
             u8 b = p[i];
             u32 w, len = 1;
             if (b == '\n') return off;
-            if (b == '\r' && (i + 1 < c.size() ? p[i + 1] == '\n' : true)) return off;
+            if (b == '\r') {
+                if (i + 1 < c.size() ? p[i + 1] == '\n' : cr_ends_line(r, c.size())) return off;
+            }
             if (b == '\t') {
                 w = tab_stop(col) - col;
             } else if (b < 0x80) {
@@ -387,8 +398,25 @@ void Editor::select_word(u64 off) {
     }
     int cls = char_class(static_cast<u8>(c));
     u64 lo = off, hi = off + 1;
-    while (lo > 0 && buf.read(lo - 1, &c, 1) == 1 && c != '\n' && char_class(static_cast<u8>(c)) == cls) --lo;
-    while (buf.read(hi, &c, 1) == 1 && c != '\n' && char_class(static_cast<u8>(c)) == cls) ++hi;
+    char win[256];
+    for (bool going = true; going && lo > 0;) {
+        const u64 n = buf.read(lo - std::min<u64>(lo, sizeof win), win, std::min<u64>(lo, sizeof win));
+        going = false;
+        for (u64 k = n; k > 0; --k) {
+            if (win[k - 1] == '\n' || char_class(static_cast<u8>(win[k - 1])) != cls) break;
+            --lo;
+            going = k == 1;
+        }
+    }
+    for (bool going = true; going;) {
+        const u64 n = buf.read(hi, win, sizeof win);
+        going = false;
+        for (u64 k = 0; k < n; ++k) {
+            if (win[k] == '\n' || char_class(static_cast<u8>(win[k])) != cls) break;
+            ++hi;
+            going = k + 1 == n;
+        }
+    }
     anchor_ = lo;
     cursor_ = hi;
     want_col_ = ~0u;

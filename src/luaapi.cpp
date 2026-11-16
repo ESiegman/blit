@@ -31,7 +31,11 @@ struct ScriptApi {
     static void hook(lua_State* L, lua_Debug*) {
         App::ScriptUi& s = ui(L);
         if (s.deadline && now_ns() > s.deadline) {
-            s.deadline = now_ns() + 50'000'000;  // (what catches the error has a moment to say so)
+            // From now on at every instruction (script_call puts the usual
+            // count back): a pcall that catches this is left at its very next
+            // instruction with the same error, and so on out to blit's own
+            // call, however many pcalls the script has round its loop.
+            lua_sethook(L, hook, LUA_MASKCOUNT, 1);
             lua_Debug ar;
             if (lua_getstack(L, 0, &ar) && lua_getinfo(L, "Sl", &ar) && ar.currentline > 0)
                 lua_pushfstring(L, "%s:%d: stopped: a script ran for longer than script.timeout_ms", ar.short_src, ar.currentline);
@@ -49,9 +53,13 @@ struct ScriptApi {
         if (id == 0) return a.pane_->doc;
         return a.find_doc(static_cast<u64>(id));
     }
+    // How many lines the text has as Vim counts them: one that ends in a line break has no empty line after it.
+    static i64 text_lines(const Editor& ed) {
+        const u64 n = ed.buf.line_count();
+        return static_cast<i64>(n > 1 && ed.buf.line_start(n - 1) == ed.buf.size() ? n - 1 : n);
+    }
     // A line number of a script's (from 1; negative from the end, -1 the last) as one from 0.
-    static bool line_at(const Editor& ed, i64 n, bool past_end, u64* out) {
-        const i64 count = static_cast<i64>(ed.buf.line_count());
+    static bool line_at(i64 count, i64 n, bool past_end, u64* out) {
         if (n < 0) n = count + 1 + n;
         if (n < 1 || n > count + (past_end ? 1 : 0)) return false;
         *out = static_cast<u64>(n - 1);
@@ -123,7 +131,8 @@ struct ScriptApi {
         return 1;
     }
     // A setting set: a table of fields (not a list) sets each, by its name under this one.
-    static int opt_put(lua_State* L, const std::string& key, int value, const std::string& where) {
+    static int opt_put(lua_State* L, const std::string& key, int value, const std::string& where, int depth = 0) {
+        if (depth > 16 || !lua_checkstack(L, 8)) return fail("%s: settings are nested too deeply", key.c_str());
         value = lua_absindex(L, value);
         if (lua_istable(L, value)) {
             const bool list = lua_rawgeti(L, value, 1) != LUA_TNIL;
@@ -137,7 +146,7 @@ struct ScriptApi {
                     lua_pushvalue(L, -2);
                     const std::string sub = key + "." + std::string(str_at(L, -1));
                     lua_pop(L, 1);
-                    if (opt_put(L, sub, -1, where) < 0) return -1;
+                    if (opt_put(L, sub, -1, where, depth + 1) < 0) return -1;
                     lua_pop(L, 1);
                 }
                 return 0;
@@ -990,7 +999,7 @@ struct ScriptApi {
         lua_setfield(L, -2, "modified");
         lua_pushboolean(L, d->read_only);
         lua_setfield(L, -2, "readonly");
-        lua_pushinteger(L, static_cast<lua_Integer>(d->ed.buf.line_count()));
+        lua_pushinteger(L, static_cast<lua_Integer>(text_lines(d->ed)));
         lua_setfield(L, -2, "lines");
         lua_pushinteger(L, static_cast<lua_Integer>(d->ed.buf.size()));
         lua_setfield(L, -2, "bytes");
@@ -1007,7 +1016,7 @@ struct ScriptApi {
         if (!opt_int(L, 2, 1, &first) || !opt_int(L, 3, -1, &last)) return fail("blit.lines: line numbers are whole numbers");
         const Editor& ed = d->ed;
         u64 l0, l1;
-        if (!line_at(ed, first, true, &l0) || !line_at(ed, last, false, &l1)) {
+        if (!line_at(text_lines(ed), first, true, &l0) || !line_at(text_lines(ed), last, false, &l1)) {
             lua_newtable(L);  // (out of the text: nothing)
             return 1;
         }
@@ -1032,7 +1041,7 @@ struct ScriptApi {
         if (d->read_only) return fail("blit.set_lines: this buffer is for reading");
         App& a = app(L);
         Editor& ed = d->ed;
-        const i64 count = static_cast<i64>(ed.buf.line_count());
+        const i64 count = text_lines(ed);
         if (first < 0) first = count + 1 + first;
         if (last < 0) last = count + 1 + last;
         if (first < 1 || first > count + 1 || last < first - 1 || last > count) return fail("blit.set_lines: lines %lld to %lld are not in a text of %lld lines", static_cast<long long>(first), static_cast<long long>(last), static_cast<long long>(count));
@@ -1131,7 +1140,7 @@ struct ScriptApi {
         App& a = app(L);
         Editor& ed = a.pane_->doc->ed;
         u64 l;
-        if (!line_at(ed, line, false, &l)) return fail("blit.set_cursor: there is no line %lld", static_cast<long long>(line));
+        if (!line_at(static_cast<i64>(ed.buf.line_count()), line, false, &l)) return fail("blit.set_cursor: there is no line %lld", static_cast<long long>(line));
         const u64 start = ed.buf.line_start(l), end = ed.line_end(l);
         u64 at = start + static_cast<u64>(std::max<i64>(col, 1) - 1);
         at = std::min(at, end);
@@ -1241,8 +1250,10 @@ struct ScriptApi {
     // blit.fs.mkdir(path) -> true, or nil and why. (Another machine's paths too: ssh://host/...)
     static int fs_read(lua_State* L) {
         if (!is_str(L, 1)) return fail("blit.fs.read: a path is wanted");
+        i64 limit = 16 << 20;
+        if (!opt_int(L, 2, limit, &limit)) return fail("blit.fs.read: the most to read is a whole number");
+        const u64 most = static_cast<u64>(std::max<i64>(1, limit));
         const std::string path(str_at(L, 1));
-        const u64 most = static_cast<u64>(std::max<lua_Integer>(1, luaL_optinteger(L, 2, 16 << 20)));
         std::string text;
         if (!::blit::fs_read(path, &text, most)) {
             lua_pushnil(L);
@@ -1483,7 +1494,7 @@ struct ScriptApi {
         App& a = app(L);
         App::ScriptUi& s = ui(L);
         u64 l;
-        if (!line_at(d->ed, line, false, &l)) return fail("blit.mark: there is no line %lld", static_cast<long long>(line));
+        if (!line_at(static_cast<i64>(d->ed.buf.line_count()), line, false, &l)) return fail("blit.mark: there is no line %lld", static_cast<long long>(line));
         App::ScriptUi::Mark m;
         m.ns = static_cast<u32>(std::max<i64>(ns, 0));
         m.line = l;

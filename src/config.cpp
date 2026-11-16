@@ -234,9 +234,14 @@ struct Parser {
     }
     void number(std::string_view key, std::string_view v, double lo, double hi, auto* out) {
         double d;
-        if (!as_number(v, &d) || d < lo || d > hi) {
-            warn(std::string(key) + " should be a number from " + std::to_string(static_cast<long>(lo)) + " to " +
-                 std::to_string(static_cast<long>(hi)));
+        if (!as_number(v, &d) || !(d >= lo && d <= hi)) {
+            // (Whole numbers as they are, others with no trailing zeros.)
+            auto shown = [](double x) {
+                char b[32];
+                std::snprintf(b, sizeof b, "%g", x);
+                return std::string(b);
+            };
+            warn(std::string(key) + " should be a number from " + shown(lo) + " to " + shown(hi));
             return;
         }
         *out = static_cast<std::remove_pointer_t<decltype(out)>>(d);

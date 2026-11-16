@@ -1153,6 +1153,7 @@ bool draw_pie(const std::vector<std::string>& st, u32 width, std::vector<MdRow>*
     std::string title;
     std::vector<std::pair<std::string, double>> slices;
     bool show = lower(st[0]).find("showdata") != std::string::npos;
+    if (const size_t t = lower(st[0]).find(" title "); t != std::string::npos) title = std::string(trim(std::string_view(st[0]).substr(t + 7)));  // (pie title Pets: on the header's line)
     for (size_t k = 1; k < st.size(); ++k) {
         const std::string_view s = st[k];
         const std::string l = lower(s);
@@ -1171,7 +1172,7 @@ bool draw_pie(const std::vector<std::string>& st, u32 width, std::vector<MdRow>*
         const std::string num(trim(s.substr(colon + 1)));
         char* end = nullptr;
         const double v = std::strtod(num.c_str(), &end);
-        if (!end || *end || v < 0) {
+        if (!end || *end || !(v >= 0 && v < 1e300)) {  // (nan and inf too)
             *err = "line " + std::to_string(k + 1) + ": a slice is \"name\" : number";
             return false;
         }
@@ -1214,12 +1215,15 @@ bool mermaid_draw(std::string_view source, u32 width, std::vector<MdRow>* rows, 
     rows->clear();
     note->clear();
     // (front matter and directives: --- ... --- and %%{ }%% at the top)
-    std::vector<std::string> st = statements(source, false);
-    if (!st.empty() && st[0] == "---") {
-        size_t k = 1;
-        while (k < st.size() && st[k] != "---") ++k;
-        st.erase(st.begin(), st.begin() + static_cast<std::ptrdiff_t>(std::min(k + 1, st.size())));
-    }
+    auto without_front = [](std::vector<std::string> st) {
+        if (!st.empty() && st[0] == "---") {
+            size_t k = 1;
+            while (k < st.size() && st[k] != "---") ++k;
+            st.erase(st.begin(), st.begin() + static_cast<std::ptrdiff_t>(std::min(k + 1, st.size())));
+        }
+        return st;
+    };
+    std::vector<std::string> st = without_front(statements(source, false));
     if (st.empty()) {
         *note = "empty";
         return false;
@@ -1229,7 +1233,7 @@ bool mermaid_draw(std::string_view source, u32 width, std::vector<MdRow>* rows, 
     Canvas cv;
     if (kind == "graph" || kind == "flowchart" || kind == "flowchart-elk") {
         Graph g;
-        const std::vector<std::string> parts = statements(source.substr(source.find(st[0])), true);
+        const std::vector<std::string> parts = without_front(statements(source, true));  // (split at ;s too: the same statements, from the same header)
         if (!parse_flowchart(parts, g, &err)) {
             *note = err;
             return false;

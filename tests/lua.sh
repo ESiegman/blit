@@ -132,7 +132,7 @@ blit.map("n", "Y", "X", { remap = true })
 blit.map("n", "Z", "X")
 EOF
 run "text:Y;lua:print(blit.info().lines);text:llZ;vimdump"
-check "remap: keys that are mappings; not: Vim's own" '3 ; NORMAL |  | 1:2 | to'
+check "remap: keys that are mappings; not: Vim's own" '2 ; NORMAL |  | 1:2 | to'
 fresh
 init <<'EOF'
 blit.map("n", "g1", function() print("g1") end)
@@ -285,23 +285,23 @@ blit.map("n", "<leader>t", function()
   blit.set_lines(0, 2, 2, { "TWO", "two and a half" })
   blit.set_lines(0, 1, 0, { "zero" })
   blit.set_lines(0, -1, -1, {})
-  blit.set_lines(0, 6, 5, { "last" })
+  blit.set_lines(0, 5, 4, { "last" })
   print((blit.text():gsub("\n", "|")))
   local i = blit.info()
   print(i.name, i.lines, i.modified, i.language)
 end)
 EOF
 run "text:\\t;text:u;lua:print((blit.text():gsub('\\n', '|')))"
-check "set_lines: replace, before, take away, after; one undo step" 'zero|one|TWO|two and a half|three|last ; a.txt	6	true	 ; one|two|three|'
+check "set_lines: replace, before, take away, after; one undo step" 'zero|one|TWO|two and a half|last| ; a.txt	5	true	 ; one|two|three|'
 fresh
 run "lua:blit.set_cursor(2, 3) print(blit.cursor());lua:print(blit.lines(0, 9, 9)[1], #blit.lines(0, 2, 3), blit.lines(0, -2, -2)[1]);lua:local b = blit.open('$W/b.md') print(#blit.bufs(), blit.info(b).language, blit.buf() == b)"
-check "the cursor, lines that are not there, another file" '2	3 ; nil	2	three ; 2	markdown	true'
+check "the cursor, lines that are not there, another file" '2	3 ; nil	2	two ; 2	markdown	true'
 fresh
-run "lua:blit.set_cursor(3, 4);lua:blit.set_lines(0, 1, 3, { 'one', 'TWO', 'three' }) print(blit.cursor());lua:blit.set_lines(0, 1, 3, { 'one', 'TWO', 'three' }) blit.cmd('w') blit.set_lines(0, 1, -1, { 'one', 'TWO', 'three', '' }) print(blit.info().modified)"
+run "lua:blit.set_cursor(3, 4);lua:blit.set_lines(0, 1, 3, { 'one', 'TWO', 'three' }) print(blit.cursor());lua:blit.set_lines(0, 1, 3, { 'one', 'TWO', 'three' }) blit.cmd('w') blit.set_lines(0, 1, -1, { 'one', 'TWO', 'three' }) print(blit.info().modified)"
 check "set_lines changes only what differs: the cursor stays; the same lines again are no change" '3	4 ; false'
 fresh
 run "lua:blit.set_cursor(9);lua:blit.set_lines(0, 7, 7, {});lua:blit.info(99)"
-check "lines and buffers that are not there" 'script:1: blit.set_cursor: there is no line 9 ; script:1: blit.set_lines: lines 7 to 7 are not in a text of 4 lines ; script:1: blit.info: no such buffer'
+check "lines and buffers that are not there" 'script:1: blit.set_cursor: there is no line 9 ; script:1: blit.set_lines: lines 7 to 7 are not in a text of 3 lines ; script:1: blit.info: no such buffer'
 
 # ---------------------------------------------------------------- pickers and boxes
 fresh
@@ -460,6 +460,32 @@ blit.map("n", "R", function() blit.feed("R", true) end)
 EOF
 run "text:E;text:R;text::messages;key:Return;luadump"
 check "a mapping that fails, one that types itself" 'mapping E: init.lua:1: on purpose ; mapping R: init.lua:2: blit.feed: mappings that type mappings, more than 20 deep ; lua | maps 2 | commands 4 | handlers 0 | timers 0 | floats 1 [mapping E: init.lua:1: on purpose] | toasts 2'
+
+# Commands named like :map commands, <args> in what a command runs, a
+# command that runs itself, lines counted as Vim does (a final newline is no
+# line of its own, and stays), a wrong argument that fails cleanly, and a
+# script that catches its own timeout.
+fresh
+init <<'EOF'
+blit.opt.script.timeout_ms = 300
+blit.command("Heatmap", function() print("hot") end)
+blit.command("Say", "lua print('<args>')", { nargs = "*" })
+blit.command("Again", "Again")
+EOF
+run "lua:blit.cmd('Heatmap');lua:blit.cmd('Say <args>');lua:print(pcall(blit.cmd, 'Again'))"
+got=$(printf '%s' "$got" | sed -e 's/	.*E169.*/	E169/')
+check "a command named like a mapping, <args> in its argument, one that runs itself" 'hot ; <args> ; false	E169'
+fresh
+run "lua:print(blit.info(0).lines, #blit.lines(0, 1, -1));lua:blit.set_lines(0, 2, -1, { 'x' });lua:print((blit.text(0):gsub(string.char(10), '|')))"
+check "lines as Vim counts them; the final newline kept" '3	3 ; one|x|'
+fresh
+run "lua:print((pcall(blit.fs.read, '$W/a.txt', 'many')))"
+check "a wrong argument fails, it does not crash" 'false'
+fresh
+printf 'blit.opt.lsp.enabled = false blit.opt.script.timeout_ms = 300\n' >"$C/init.lua"
+run "lua:while true do pcall(function() while true do end end) end;lua:print('after')"
+got=$(printf '%s' "$got" | sed -e 's/.*stopped: .*script.timeout_ms/stopped/')
+check "a script that catches its own timeout is stopped all the same" 'stopped ; after'
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "lua ok"
 exit $failed

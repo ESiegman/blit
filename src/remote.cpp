@@ -101,7 +101,7 @@ constexpr std::string_view kBootstrap =
     "[ -n \"$p\" ] && PATH=\"$p\" && export PATH; "
     "d=\"$HOME/.cache/blit\"; echo \"BLIT $(uname -s) $(uname -m)\"; read f; f=\"$d/$f\"; "
     "if [ -x \"$f\" ]; then echo BLIT-HAVE; else echo BLIT-NEED; read n; "
-    "mkdir -p \"$d\" && head -c \"$n\" > \"$f.tmp\" && chmod +x \"$f.tmp\" && mv \"$f.tmp\" \"$f\" || { echo BLIT-FAILED; exit 1; }; fi; "
+    "mkdir -p \"$d\" && head -c \"$n\" > \"$f.tmp.$$\" && chmod +x \"$f.tmp.$$\" && mv \"$f.tmp.$$\" \"$f\" || { rm -f \"$f.tmp.$$\"; echo BLIT-FAILED; exit 1; }; fi; "
     "echo BLIT-START; exec \"$f\"";
 
 std::mutex registry_mu;

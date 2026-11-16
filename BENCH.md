@@ -1819,6 +1819,68 @@ From opening to the picture on screen: a 3000x2000 PNG (9.9 MB) about 30 ms
 more than a run that reads nothing (181 to 201 ms against 152 to 163 for
 the whole run), the same picture as a JPEG (538 KB) about 10 ms.
 
+### Round 28: a review of all of it, and realistic work
+
+PDFs in a tab of their own (`src/apppdf.cpp`: pages drawn by CoreGraphics on
+a thread as they come into view). A 300-page text-heavy PDF at 2560x1600:
+its first pages on screen about 40 ms after the program's own start (179 to
+224 ms in all, against about 150 for a run that opens nothing), and each
+page turn, with its pages drawn, about 5 ms.
+
+Then the whole program was reviewed by five reviewers (one model, Sonnet,
+each with one part and no notes but the README) and what they found that
+held up was fixed: crashes and hangs (the language server reading a closed
+document's text, closing a terminal whose shell ignores SIGHUP, the
+preview's code blocks a few columns wide, quotes nested thousands deep,
+a recursive user command), Vim's (macros that stop at a failing command,
+`cw` on a word's last letter, the exclusive-motion rule, `3.`, appending
+registers, Replace mode's Backspace), files (fsync before a save's rename,
+a rename that differed only in case overwriting another file), and the
+project generator (Python `src/` layouts, uv's dependencies, CMake's
+reserved target names). The full suite before (5f3c7d5 plus PDFs, a build
+of `main` at 536b074) and after was run, and anything that moved more than
+the sitting's spread was run again turn about with the two builds side by
+side, 3 runs each:
+
+| | Before | After |
+|---|---:|---:|
+| Typing in README.md (1,600 lines) with its preview open: the frame's CPU, p50 | 1,826 µs | 53 µs |
+| … p99 | 2,129 µs | 1,089 µs |
+| … the layout's part, p50 | 1,807 µs | 24 µs |
+| Idle (3 s after the window has settled): frames drawn | 49, 50 | 0, 0 |
+| … CPU | 0.53%, 0.74% | 0.02%, 0.02% |
+| A key press, to its frame handed to the GPU, p50 | 185, 194 µs | 187, 191 µs |
+| Save, code-1m.txt (1 MB) | 0.38 to 0.42 ms | 0.80 to 0.98 ms |
+| Save, utf8-16m.txt (16 MB) | 1.9 to 2.1 ms | 2.7 to 3.4 ms |
+| Paste, code-100m.txt | 27.2 to 28.7 MB/ms | 26.9 to 28.8 MB/ms (one run 20) |
+
+- **The Markdown preview is drawn on a thread of its own.** Each key typed
+  in a file with its preview open parsed and laid out the whole document in
+  the frame (1.8 ms for this README). The file's text is now copied and
+  handed to a worker (the newest for each preview; one not started yet is
+  dropped), and the rows are taken when they come. The p99 left is the
+  frame that takes them and puts the rows on show into cells. The first
+  drawing of a preview is still done at once, so that it opens drawn.
+- **Idle is idle again.** The scroll thumb fades away 1.2 s after the view
+  last moved, and a split with nothing to scroll ran that fade (0.3 s of
+  frames) for a thumb that is never drawn, at startup and for each new
+  split. It has no thumb now. The idle benchmark also waits until nothing
+  is moving before it measures, as Round 3 meant it to.
+- **A save waits for the disk.** The new file is flushed (`fsync`) before
+  it takes the old one's place, and its folder after, so that a crash
+  cannot leave an empty file where the old one was: 0.5 to 1 ms more a
+  save, kept.
+- **The finder reads the folder again only when it may have changed**
+  (opened more than 2 s after the last reading, the window back in front,
+  or the file tree having seen a change), in the background, searching the
+  list it has meanwhile. 14,551 files take 32 ms to read; a Cmd+P after
+  another no longer waits for that, and switching between names and text
+  never does.
+
+Everything else that moved between the two full runs (taken hours apart)
+moved the same way in code that was not touched, and did not move when
+run turn about.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

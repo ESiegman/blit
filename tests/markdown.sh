@@ -54,5 +54,26 @@ check "what is typed in the file is in the preview" "Typed"
 got=$("$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;key:cmd+shift+v;frame;key:cmd+shift+v;frame;dump" "$here/markdown/edge.md" 2>&1 >/dev/null | grep -v '^\[' | tail -1)
 check "Cmd+Shift+V: beside it, once" "H(>[edge.md*] | [Preview: edge.md*])0.50"
 
+# Odd text: wide characters in a code block a few columns wide (it once
+# drew rows forever), quotes nested thousands deep, a comment with blank
+# lines in it, a pie's title on its first line, and a rule at the top that
+# is not front matter.
+printf '```\n\346\274\242\345\255\227\346\274\242\345\255\227\n```\n' >"$dir/wide.md"
+got=$(timeout 20 "$blit" --offscreen 420x600 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mddump" "$dir/wide.md" 2>&1 >/dev/null | grep -c '漢')
+[ "$got" -ge 1 ] && got=drawn
+check "wide characters in a very narrow preview" "drawn"
+awk 'BEGIN { s = ""; for (i = 0; i < 5000; i++) s = s ">"; print s " deep" }' >"$dir/deep.md"
+got=$(timeout 20 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mddump" "$dir/deep.md" 2>&1 >/dev/null | grep -c '>')
+[ "$got" -ge 1 ] && got=drawn
+check "quotes nested 5,000 deep: drawn (the deepest as text), no crash" "drawn"
+printf '<!--\nhidden\n\nstill hidden\n-->\nshown\n\n```mermaid\npie title Pets\n  "Dogs" : 3\n  "Cats" : 1\n```\n' >"$dir/odd.md"
+run 1600x1100 "$dir/odd.md" ""
+got=$(printf '%s\n' "$got" | grep -c 'hidden'),$(printf '%s\n' "$got" | grep -c 'shown'),$(printf '%s\n' "$got" | grep -c 'Pets')
+check "a comment over blank lines, gone; a pie's title on its first line" "0,1,1"
+printf -- '---\nA rule above this line\n\nsome text\n\n---\n\nmore\n' >"$dir/rule.md"
+run 1600x1100 "$dir/rule.md" ""
+got=$(printf '%s\n' "$got" | grep -c 'A rule above this line')
+check "a rule at the top is not front matter" "1"
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "markdown ok"
 exit $failed

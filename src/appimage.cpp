@@ -282,6 +282,7 @@ bool App::image_open(const std::string& full) {
     size_t at = pane_->tab + 1;
     if (reuse) {
         stop_lsp();
+        forget_doc(pane_->doc);  // (the empty file it takes the place of: nothing may still point at it)
         at = pane_->tab;
         pane_->docs[pane_->tab] = std::move(fresh);
         pane_->doc = pane_->docs[at].get();

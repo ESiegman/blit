@@ -102,14 +102,16 @@ struct LineAnchors {
 class AnchorCache {
 public:
     // Anchors hold absolute offsets, so any edit drops them all, and so
-    // does another document.
-    void sync(u64 doc, u64 revision);
+    // does another document. Anchors hold display columns, so a different
+    // tab width drops them too.
+    void sync(u64 doc, u64 revision, u32 tab_width);
     LineAnchors* find(u64 line);
     LineAnchors& claim(u64 line);  // finds, or recycles the stalest entry
 
 private:
     static constexpr int kLines = 128;
     u64 revision_ = ~0ull, doc_ = ~0ull;
+    u32 tab_width_ = 0;
     u64 clock_ = 0;
     LineAnchors lines_[kLines];
 };
