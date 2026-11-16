@@ -416,6 +416,29 @@ private:
     void project_libraries(const std::string& typed = {});
     void recent_add(const std::string& path, bool dir);
 
+    // Sessions (appsession.cpp): what was open in each project folder (the
+    // tabs and splits, each file's cursor and view, the side panel, the
+    // Build tab's task), kept beside `recent` and brought back when the
+    // folder is opened again. Files are read and written on threads.
+    struct SessionUi;
+    struct Session;
+    void session_create();     // init: the Recent folders' tab counts, read on a thread meanwhile
+    bool project_open(const std::string& dir);  // a folder opened to work in: the last one's session kept, this one's back (true: it came back)
+    void session_save();       // the project folder's, as things are now (on quit, and when the folder changes)
+    int session_tabs(const std::string& dir, bool wait = false);  // how many tabs its session brings back; -1: none
+    bool session_arrived(Pane& p, Doc& d);      // a file from another machine is in its tab (true: one a session opened)
+    bool session_dropped(u64 doc, const std::string& why);  // one that could not be read (why: "" not there): a session's goes quietly
+    std::string session_dump();
+    std::string session_text();
+    void session_apply(Session& st);
+    void panel_session(bool* open, std::string* tab, int* cols) const;  // (apppanel.cpp)
+    void panel_session_set(bool open, const std::string& tab, int cols);
+    std::string build_chosen() const;  // (appbuild.cpp) the Run button's task
+    void build_choose(const std::string& key);
+    std::shared_ptr<SessionUi> session_;
+    bool restoring_ = false;  // files opened by a session do not go into `recent`
+    u64 session_gen_ = 0;     // counts up whenever a Recent folder's tab count may have changed
+
     // Files on other machines (appremote.cpp): read on a thread of their
     // own, while their tab is already there.
     struct RemoteUi;
@@ -657,6 +680,9 @@ private:
     void split_grow(bool across, int by);
     Pane* split_pane(Pane* target, Edge edge);  // a new pane with no files yet, on that side of target
     void remove_pane(Pane* p);                  // takes it out of the arrangement and lets it go
+    std::unique_ptr<Pane> take_pane(Pane* p, float* room);  // takes it out and keeps it whole (room: the share it had)
+    bool put_pane(std::unique_ptr<Pane>& p, Pane* target, Edge edge, float room);  // puts it back beside target
+    void split_room(Pane* p, float room);       // the share of the room it and its other half have that it gets
     void move_doc(Pane* from, size_t index, Pane* to, size_t at);
     void focus_towards(Edge edge);
     bool splits_key(const SDL_KeyboardEvent& k);

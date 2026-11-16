@@ -238,6 +238,21 @@ void App::build_run(int index) {
     u.last_key = u.current;  // (how it goes shows on its row)
 }
 
+// The Run button's task, as a session keeps it; and one a session brings
+// back. One for a folder not looked at yet waits there: build_sync() keeps
+// it if the folder has it, and chooses as it always does if not.
+std::string App::build_chosen() const { return buildui_ ? buildui_->current : std::string(); }
+
+void App::build_choose(const std::string& key) {
+    BuildUi& u = *buildui_;
+    if (key.empty() || key == u.current) return;
+    if (u.looked && u.root == build_root() && std::ranges::none_of(u.tasks, [&](const BuildTask& t) { return task_key(t) == key; })) return;
+    u.current = key;
+    u.sel = ~0u;
+    ++build_gen_;
+    dirty_ = true;
+}
+
 bool App::build_run_named(const std::string& name) {
     BuildUi& u = *buildui_;
     build_settle();

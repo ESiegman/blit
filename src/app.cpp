@@ -8,6 +8,7 @@
 
 #if !defined(_WIN32)
 #include <signal.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include "qos.hpp"
@@ -181,6 +182,7 @@ int App::run(const Options& opt) {
 #endif
     watch_quit_signals();
     loop();
+    session_save();  // (written on its own thread, which is waited for as blit goes)
     script_stop();  // (VimLeavePre for the scripts' handlers)
     return 0;
 }
@@ -191,6 +193,7 @@ bool App::init(std::string* err) {
     const u64 t_script = now_ns();
     script_start();  // init.lua and the plugins, if there are any: settings, keys, commands (applua.cpp)
     if (script_) t_script_ns_ = now_ns() - t_script;
+    session_create();  // (the start screen's Recent: how many tabs each folder brings back, read meanwhile)
     pane_->doc->ed.tab_width = cfg_.tab_width;
     pt_ = opt_.pt > 0 ? opt_.pt : cfg_.font_size;
 
@@ -205,8 +208,13 @@ bool App::init(std::string* err) {
     commands_create();
     // (A file on another machine, a picture or a PDF is opened once the window is up.)
     const bool later_file = opt_.file && (is_remote(opt_.file) || is_picture_path(opt_.file) || is_pdf_path(opt_.file));
+    bool folder = false;  // blit DIR: a folder to work in, and its session (see appsession.cpp)
     if (opt_.file && !later_file)
         loader = std::jthread([&] {
+            if (struct stat st; ::stat(opt_.file, &st) == 0 && S_ISDIR(st.st_mode)) {  // (a folder reads as an empty file)
+                folder = true;
+                return;
+            }
             file_ok = pane_->doc->ed.open(opt_.file, &file_err);
             // Parsing starts right away, so colours are usually ready before
             // the window is.
@@ -288,7 +296,7 @@ bool App::init(std::string* err) {
     t_font_ = now_ns();
 
     if (loader.joinable()) loader.join();
-    if (!file_ok) {
+    if (!file_ok && !folder) {
         SDL_PathInfo info;
         if (SDL_GetPathInfo(opt_.file, &info)) {
             *err = file_err;
@@ -316,8 +324,9 @@ bool App::init(std::string* err) {
     }
     start_init();  // (shown if no file was given)
     if (file_ok && !pane_->doc->ed.path.empty()) recent_add(pane_->doc->ed.path, false);
-    script_started(!file_ok);
+    script_started(!file_ok && !folder);
     if (later_file) open_path(opt_.file);
+    if (folder && !project_open(opt_.file) && !panel_px()) panel_toggle();  // (the folder, shown)
     return true;
 }
 

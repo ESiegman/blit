@@ -1906,6 +1906,48 @@ names when the tab or the width changes, the picker's field has a tone,
 and keys are turned into symbols once each time a box opens, not each
 frame. Every box still rebuilds its cells only when its cache key changes.
 
+### Round 30: sessions
+
+A folder opened to work in comes back as it was left: its tabs, splits,
+cursors and views, the side panel and the Build tab's task
+(`src/appsession.cpp`, one small text file per folder in `sessions` beside
+`recent`). Nothing happens per frame: the start screen looks up each folder's
+tab count when its cells are made again, from a map. Files are written on a
+thread of their own; the counts Recent shows are read on a thread started
+before SDL is, while the window is made, and taken in before the first
+frame. `blit DIR` used to open the folder as an empty file; now it opens it
+to work in.
+
+Startup, turn about with `main` at 88c9ca6 (a real window, 9 launches of
+each, the first frame done, median; the same launch spread from 141 to
+515 ms this sitting, so the medians are within it;
+`bench/results/r30-sessions-startup.jsonl`):
+
+| | Before | After |
+|---|---:|---:|
+| A file given (`code-1m.txt`) | 157.6 ms | 156.0 ms |
+| The start screen, with 30 in Recent (10 folders with sessions of 7 tabs) | 155.4 ms | 148.8 ms |
+| `blit DIR`, bringing back 7 C++ files in two splits | (an empty file) | 174.3 ms |
+
+What the feature itself takes on the main thread, timed around each call
+in a copy of the build with timers in it (not committed):
+
+| | |
+|---|---:|
+| Started with a file: the sessions' state made | 4 µs |
+| Start screen: the thread that reads Recent's counts started | 17 to 45 µs |
+| … its answer taken in at the first frame (it was long done) | 10 to 25 µs |
+| `blit DIR` with 7 files: read, placed, cursors and views set | 0.8 to 1.5 ms |
+| A session written (the text made; the file is the thread's) | 16 to 64 µs |
+| Another folder opened, from one with 7 tabs to one with 7 | 3.3 to 6.1 ms |
+
+Found and left: of a folder switch, 3.5 to 4.6 ms is closing the 7 files
+it leaves, about 0.5 ms each, which closing any coloured tab costs (each
+document's syntax worker is joined and its parser, tree and query freed on
+the main thread). Once per switch, and under a frame at 120 Hz; moving the
+freeing to a thread would touch every way a tab closes, so it was not done
+here.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

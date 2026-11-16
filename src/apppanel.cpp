@@ -254,6 +254,30 @@ void App::panel_show_git() {
     dirty_ = true;
 }
 
+// Whether the panel shows, its tab (by name: a session outlives the order
+// of the tabs) and its width in cells, as a session keeps them; and the
+// same brought back. It comes back without the keyboard.
+void App::panel_session(bool* open, std::string* tab, int* cols) const {
+    const Side& s = *side_;
+    *open = s.open;
+    *tab = kTabs[s.tab < kTabCount ? s.tab : kTabFiles];
+    *cols = s.cols;
+}
+
+void App::panel_session_set(bool open, const std::string& tab, int cols) {
+    Side& s = *side_;
+    for (u32 i = 0; i < kTabCount; ++i)
+        if (tab == kTabs[i]) s.tab = i;
+    if (cols > 0) s.cols = std::clamp(cols, 12, 200);
+    s.focus = s.menu = false;
+    if (open && !s.rooted) panel_set_workdir(default_workdir());
+    s.open = open;  // (not panel_toggle(): the views stay where the session put them)
+    if (s.tab == kTabGit) git_.refresh();
+    s.touch();
+    pane_->cache_rev = ~0ull;
+    dirty_ = true;
+}
+
 // Takes in folders the tree has finished reading.
 void App::sync_panel() {
     Side& s = *side_;

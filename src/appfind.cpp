@@ -854,8 +854,8 @@ void App::find_accept() {
             return chose(here);
         }
         find_close(true);
-        recent_add(here, true);
-        return panel_set_workdir(here);
+        project_open(here);  // (its session, if it has one)
+        return;
     }
     if (e.dir) {  // into it (a machine: its home folder)
         f.typed = f.dir == "ssh://" ? f.dir + e.name + "/~/" : tilde(f.dir + e.name) + "/";

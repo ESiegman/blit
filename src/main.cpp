@@ -12,6 +12,7 @@ namespace {
 void usage() {
     std::puts(
         "usage: blit [options] [file]\n"
+        "       blit [options] folder             (a folder to work in: its session, if it has one)\n"
         "       blit [options] ssh://host/path    (a file or a folder on another machine)\n"
         "  --config FILE      init.lua to run: settings, mappings, plugins (default: ~/.config/blit/init.lua)\n"
         "  --font NAME        font family or font file; overrides the config\n"

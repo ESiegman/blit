@@ -339,10 +339,11 @@ void App::start_init() {
     }
     s.on = cfg_.start_screen && !opt_.file && !opt_.info;
     s.doc = pane_->doc->id;
+    if (s.on) session_tabs({}, true);  // (the folders' tab counts, read while the window started)
 }
 
 void App::recent_add(const std::string& path, bool dir) {
-    if (!start_ || path.empty()) return;
+    if (!start_ || path.empty() || restoring_) return;  // (the files a session brings back are not opened by hand)
     const std::string file = recent_file(opt_, win_ != nullptr);
     if (file.empty()) return;
     StartUi& s = *start_;
@@ -406,10 +407,9 @@ void App::start_do(size_t i) {
         case kQuit: request_quit(); break;
         case kRecent:
             if (it.recent.dir) {
-                panel_set_workdir(it.recent.path);
-                recent_add(it.recent.path, true);
+                const bool back = project_open(it.recent.path);  // (its session, if it has one)
                 s.sel = static_cast<size_t>(kRecent);  // (it is the first of those opened lately now; the actions come before it)
-                if (!panel_px()) panel_toggle();  // (the folder chosen, shown)
+                if (!back && !panel_px()) panel_toggle();  // (the folder chosen, shown)
             } else {
                 open_path(it.recent.path.c_str());
             }
@@ -617,6 +617,7 @@ void App::start_layout(FrameDesc& fd) {
     mix(static_cast<u64>(s.page));
     mix(s.gen);
     mix(cfg_.modal);  // (the line saying it starts in Normal mode)
+    mix(session_gen_);  // (the tabs each folder brings back)
     if (s.page == 1) {  // (what the machine has, once it is found)
         std::lock_guard lock(s.facts_mu);
         mix(s.facts.done);
@@ -726,7 +727,9 @@ void App::start_layout(FrameDesc& fd) {
                 const size_t slash = path.find_last_of('/');
                 std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
                 if (name.empty()) name = path;
-                const std::string where = home_short(slash == std::string::npos ? std::string() : path.substr(0, std::max<size_t>(slash, 1)));
+                std::string where = home_short(slash == std::string::npos ? std::string() : path.substr(0, std::max<size_t>(slash, 1)));
+                if (const int tabs = it.recent.dir ? session_tabs(path) : 0; tabs > 0)  // (what opening it brings back)
+                    where += " \xC2\xB7 " + std::to_string(tabs) + (tabs == 1 ? " tab" : " tabs");
                 icon(r, label_col, file_icon(name, it.recent.dir, false));
                 const u32 name_col = label_col + 3;
                 const u32 end = put(s.box, font, r, name_col, fit_text(name, right > name_col ? right - name_col : 0), ink::kText);
@@ -1225,9 +1228,7 @@ bool App::project_create() {
     }
     if (s.git) then = "git init -q" + (then.empty() ? std::string() : "; " + then);
     s.made = dir;
-    panel_set_workdir(dir);
-    recent_add(dir, true);
-    if (!panel_px()) panel_toggle();
+    if (!project_open(dir) && !panel_px()) panel_toggle();  // (the window's session is the new project's from here)
     if (!open.empty()) open_path(open.c_str());
     s.on = false;
     if (!then.empty()) build_command(dir, then, "Setting up " + s.name);
@@ -1493,6 +1494,7 @@ std::string App::start_dump() {
     for (size_t i = 0; i < s.items.size(); ++i) {
         const StartUi::Item& it = s.items[i];
         out += std::string(i == s.sel ? " >" : " ") + it.key + ":" + (it.act == kRecent ? home_short(it.recent.path) + (it.recent.dir ? "/" : "") : it.label);
+        if (const int tabs = it.act == kRecent && it.recent.dir ? session_tabs(it.recent.path) : 0; tabs > 0) out += "(" + std::to_string(tabs) + ")";
     }
     return out;
 }

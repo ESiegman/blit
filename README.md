@@ -48,6 +48,23 @@ opened. The files and folders opened lately (up to 30) are kept in
 empty file instead. Ctrl+Tab goes between its two tabs, Start and New
 project.
 
+**Sessions.** A folder opened to work in (from Recent, with `d` or
+Cmd+Shift+O, by `blit DIR`, or made by New project) comes back as it was
+left when it is opened again: the tabs of each split in their order, the
+splits and their sizes, each file's cursor and view, the side panel (shown
+or not, its tab, its width) and the Build tab's task. A folder's row in
+Recent says what will come back (`blit  ~/Dev · 7 tabs`). The session is
+written when blit quits and when another folder is opened, one small file
+per folder in `sessions` beside `recent`. A file that is gone is left out
+(and a split left with nothing goes); a folder on another machine
+(`ssh://`) gets its tabs at once and their text when the connection is up,
+as any file there does. Opening another folder takes the window over:
+tabs it already has keep their changes and undo, and a file with changes
+not saved, a terminal still running or a profile stays, in the split with
+the keyboard; the rest close (they are in the last folder's session). A
+file opened on its own (`blit FILE`) leaves the sessions alone.
+`blit.opt.editor.restore = false` turns all of it off.
+
 Everything blit does can be done from the keyboard. **Cmd+Shift+P**
 (Ctrl+Shift+P elsewhere) searches every command by its name or its keys,
 shows the keys of each, and runs the one chosen; typing `cmd+b` finds what
@@ -1484,6 +1501,7 @@ src/finder.*    the list of files under a folder (.gitignore heeded), names rank
 src/appfind.cpp the box that finds files and text, and the path typed where file dialogs used to be
 src/appstatus.cpp  the status bar: the repository, the file, the cursor, problems, the language
 src/appstart.cpp   the start screen, and the files and folders opened lately
+src/appsession.cpp sessions: each project folder's tabs, splits, cursors and side panel, kept and brought back
 src/remote.*       another machine's files over ssh: the connection, starting blit's agent there, its calls
 src/appremote.cpp  files from another machine in the editor: read on a thread, the tab there at once
 src/profile.*      profiles: recording with perf or xctrace (here or on another machine), reading what they record
@@ -1585,6 +1603,7 @@ tests/look.sh build-debug/blit     # the looks and the motion: frames compared p
 tests/find.sh build-debug/blit     # finding files and text, opening, saving and choosing a folder by a typed path
 tests/lua.sh build-debug/blit      # scripts: settings, mappings, commands, events, programs, pickers, plugins
 tests/start.sh build-debug/blit    # the start screen and the list of what was opened lately (a scratch one)
+tests/session.sh build-debug/blit  # sessions: kept on quit and when the folder changes, brought back by each way of opening a folder
 tests/remote.sh build-debug/blit   # another machine's files, git and language server, through tests/fake-ssh.sh
 tests/profile.sh build-debug/blit  # profiling tests/profile/spin.c here and through tests/fake-ssh.sh (skipped with no profiler)
 tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, copy and paste, here and through tests/fake-ssh.sh

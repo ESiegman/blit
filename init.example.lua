@@ -146,6 +146,7 @@
 -- blit.opt.editor.tab_bar = true        -- the row of open files along the top
 -- blit.opt.editor.status_bar = true     -- the row across the bottom: the repository, the file, the cursor, problems
 -- blit.opt.editor.start_screen = true   -- started with no file: what to do first, and what was opened lately
+-- blit.opt.editor.restore = true        -- a project folder opened again: its tabs, splits, cursors and side panel as left
 -- blit.opt.editor.line_numbers = true   -- a column of line numbers left of the text
 -- blit.opt.editor.relative_numbers = true  -- as Vim's relativenumber: the cursor's line its number, the others how far away they are
 -- blit.opt.editor.indent_guides = true  -- a coloured line down each level of indentation

@@ -142,7 +142,7 @@ void App::remote_opened(Pane& p, Doc& d, bool fresh) {
         lsp_pending_ = true;
         grammars_pending_ = true;
     }
-    if (!fresh) recent_add(d.ed.path, false);
+    if (!session_arrived(p, d) && !fresh) recent_add(d.ed.path, false);  // (one a session opened: its view as it was left, and not opened by hand)
     if (script_) script_opened(d.id, fresh);
 }
 
@@ -208,6 +208,13 @@ void App::remote_sync() {
             continue;
         }
         if (!d->loading) continue;
+        if (x.status != 0 && session_dropped(x.doc, x.status == 5 ? x.error : x.status == 1 || x.status == 6 ? std::string() : "cannot read " + x.path)) {
+            Pane* const focused = pane_;  // (a session's: it goes quietly if it is no longer there)
+            pane_ = where;
+            tab_close(at, true);
+            pane_ = focused;
+            continue;
+        }
         switch (x.status) {
             case 0:
                 d->ed.open_bytes(x.path, x.bytes);
@@ -226,9 +233,7 @@ void App::remote_sync() {
                 tab_close(at, true);
                 pane_ = focused;
                 if (x.status == 6) {
-                    panel_set_workdir(x.path);
-                    recent_add(x.path, true);
-                    if (!panel_px()) panel_toggle();  // (the folder, shown)
+                    if (!project_open(x.path) && !panel_px()) panel_toggle();  // (the folder, shown; its session, if it has one)
                     break;
                 }
                 const std::string why = x.status == 5 ? x.error

@@ -105,6 +105,7 @@ struct Config {
     bool tab_bar = true;        // the row of open files along the top
     bool status_bar = true;     // the row across the bottom: the repository, the file, the cursor, problems
     bool start_screen = true;   // started with no file: the start screen (what to do first, what was opened lately)
+    bool restore = true;        // a project folder opened again: its tabs, splits, cursors and side panel as they were left
     bool modal = true;          // Vim's modes and keys; false: an editor where typing types
 
     // [syntax]

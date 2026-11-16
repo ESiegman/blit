@@ -556,6 +556,9 @@ int App::run_bench() {
 //   panel                  wait for the side panel's file tree to finish reading folders
 //   open:PATH              open a file (in a tab of its own)
 //   workdir:PATH           make a folder the working directory (the one the side panel shows)
+//   folder:PATH            open a folder to work in (its session comes back; see appsession.cpp)
+//   quit                   what Cmd+Q does; the session is written as the run ends
+//   sessiondump            print the session the project folder would be written with now
 //   vim:KEYS               keys in Vim's notation (dw, <Esc>, <C-r>); vimdump prints the mode, the bottom line,
 //                          the cursor's line:column and the text of its line
 //   dump[:LABEL]           print how the window is split, and the tabs of each split
@@ -678,6 +681,12 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s\n", status_dump().c_str());
         } else if (verb == "workdir") {  // what choosing a folder in the side panel does
             panel_set_workdir(arg);
+        } else if (verb == "folder") {  // a folder opened to work in, as the start screen's Recent opens one
+            project_open(arg);
+        } else if (verb == "quit") {  // what Cmd+Q does (the session is written when the run ends)
+            request_quit();
+        } else if (verb == "sessiondump") {
+            std::fprintf(stderr, "%s\n", session_dump().c_str());
         } else if (verb == "git" || verb == "gitwait" || verb == "gitdump") {
             // git:ACTION[:ARGUMENT] does what the Git tab would do, by name.
             // Around it, and for gitwait and gitdump, git is waited for (20 s
@@ -924,6 +933,7 @@ void App::run_script(const char* script) {
 int App::run_shot() {
     if (opt_.off_w == 0 && !gpu_.set_offscreen(px_w_, px_h_)) return 1;
     if (opt_.script) run_script(opt_.script);
+    if (!running_) session_save();  // (it quit: as loop() ending does)
     settle_syntax();  // the picture should not depend on how fast the worker was
     if (frame() != Renderer::kDrawn) return 1;
     std::vector<u8> rgba;
