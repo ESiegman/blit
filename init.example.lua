@@ -148,7 +148,6 @@
 -- blit.opt.scroll.lines = 3         -- lines per mouse wheel notch
 -- blit.opt.scroll.ease_ms = 45      -- how quickly a wheel scroll settles; 0 jumps
 -- blit.opt.scroll.momentum = true   -- macOS: a touchpad flick glides to a stop (takes effect at the next start)
--- blit.opt.scroll.bounce = true     -- pulled past an end with a touchpad, the view stretches and springs back
 
 ---------------------------------------------------------------- finding
 -- blit.opt.search.ignore = {}       -- more to leave out of Cmd+P and Cmd+Shift+F, in .gitignore's syntax: { "*.log", "/dist/" }

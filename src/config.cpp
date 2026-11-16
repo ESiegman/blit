@@ -287,7 +287,7 @@ struct Parser {
         if (key == "editor.tab_width") return number(key, v, 1, 32, &c.tab_width);
         if (key == "editor.indent_width") return number(key, v, 0, 32, &c.indent_width);
         if (key == "editor.line_numbers" || key == "editor.relative_numbers" || key == "editor.indent_guides" || key == "editor.tab_bar" || key == "editor.status_bar" || key == "editor.start_screen" ||
-            key == "scroll.momentum" || key == "scroll.bounce" || key == "editor.modal") {
+            key == "scroll.momentum" || key == "editor.modal") {
             bool* out = key == "editor.modal"          ? &c.modal
                         : key == "editor.line_numbers" ? &c.line_numbers
                         : key == "editor.relative_numbers" ? &c.relative_numbers
@@ -295,8 +295,7 @@ struct Parser {
                         : key == "editor.tab_bar"       ? &c.tab_bar
                         : key == "editor.status_bar"    ? &c.status_bar
                         : key == "editor.start_screen"  ? &c.start_screen
-                        : key == "scroll.momentum"      ? &c.scroll_momentum
-                                                        : &c.scroll_bounce;
+                                                        : &c.scroll_momentum;
             if (!as_bool(v, out)) warn(std::string(key) + " should be true or false");
             return;
         }
@@ -690,7 +689,6 @@ const Getter kGetters[] = {
     BLIT_GET("scroll.lines", num(c.scroll_lines)),
     BLIT_GET("scroll.ease_ms", num(c.scroll_ease_ms)),
     BLIT_GET("scroll.momentum", flag(c.scroll_momentum)),
-    BLIT_GET("scroll.bounce", flag(c.scroll_bounce)),
     BLIT_GET("search.ignore", list(c.search_ignore)),
     BLIT_GET("search.gitignore", flag(c.search_gitignore)),
     BLIT_GET("search.hidden", flag(c.search_hidden)),

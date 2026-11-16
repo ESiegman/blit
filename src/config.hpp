@@ -136,7 +136,6 @@ struct Config {
     float scroll_lines = 3;     // lines per mouse wheel notch
     float scroll_ease_ms = 45;  // how quickly a wheel scroll settles; 0 jumps
     bool scroll_momentum = true;  // a touchpad flick keeps gliding and slows to a stop
-    bool scroll_bounce = true;    // pulled past an end, the view stretches and springs back
 
     // [search]
     std::vector<std::string> search_ignore;  // more to leave out of searches, in .gitignore's syntax

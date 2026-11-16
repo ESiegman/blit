@@ -25,10 +25,6 @@ const char kInitTemplate[] = {
 #embed "../init.example.lua" suffix(, )
     0};
 constexpr float kThumbOpacity = 0.55f;
-// Pulled past an end by a touchpad, the view stretches at most about this
-// share of its height, and comes back with this time constant (seconds).
-constexpr double kBounceReach = 0.15;
-constexpr double kBounceBackS = 0.085;
 
 constexpr SDL_Keymod kCmd = kPrimaryMod;
 constexpr SDL_Keymod kWord = kWordMod;
@@ -880,17 +876,15 @@ u32 App::indent_step() {
     return d.indent_step ? d.indent_step : std::max<u32>(1, d.ed.tab_width);
 }
 
-// Keeps where the view is headed inside the text. With bounce on, the view
-// itself may be past an end for a moment (pulled there by a touchpad); it is
-// then on its way back, see step_scroll().
+// Keeps the view, and where it is headed, inside the text (it never goes
+// past an end), and sets it on its way there if it is not there yet.
 void App::clamp_scroll() {
     const double my = max_scroll_y(), mx = max_scroll_x();
     pane_->target_y = std::clamp(pane_->target_y, 0.0, my);
     pane_->target_x = std::clamp(pane_->target_x, 0.0, mx);
-    if (!cfg_.scroll_bounce) {
-        pane_->scroll_y = std::clamp(pane_->scroll_y, 0.0, my);
-        pane_->scroll_x = std::clamp(pane_->scroll_x, 0.0, mx);
-    } else if ((pane_->scroll_x != pane_->target_x || pane_->scroll_y != pane_->target_y) && !animating_) {
+    pane_->scroll_y = std::clamp(pane_->scroll_y, 0.0, my);
+    pane_->scroll_x = std::clamp(pane_->scroll_x, 0.0, mx);
+    if ((pane_->scroll_x != pane_->target_x || pane_->scroll_y != pane_->target_y) && !animating_) {
         last_step_ns_ = now_ns() - 8'000'000;
         animating_ = true;
     }
@@ -899,11 +893,10 @@ void App::clamp_scroll() {
 // Eases the scroll position toward its target. Returns true while moving.
 bool App::step_scroll(double dt) {
     bool moving = false;
-    auto ease = [&](double& pos, double target, double limit) {
+    auto ease = [&](double& pos, double target) {
         const double d = target - pos;
         if (d == 0) return;
-        // Coming back from past an end goes at a spring's pace, not a wheel's.
-        const double tau = pos < 0 || pos > limit ? kBounceBackS : cfg_.scroll_ease_ms * 1e-3;
+        const double tau = cfg_.scroll_ease_ms * 1e-3;
         const double k = tau > 0 ? 1.0 - std::exp(-dt / tau) : 1.0;
         if (std::fabs(d) < 0.5) {
             pos = target;
@@ -914,8 +907,8 @@ bool App::step_scroll(double dt) {
         dirty_ = true;
     };
     for_each_pane([&] {
-        ease(pane_->scroll_x, pane_->target_x, max_scroll_x());
-        ease(pane_->scroll_y, pane_->target_y, max_scroll_y());
+        ease(pane_->scroll_x, pane_->target_x);
+        ease(pane_->scroll_y, pane_->target_y);
     });
     animating_ = moving;
     return moving;
@@ -1561,31 +1554,13 @@ void App::wheel_pane(const SDL_MouseWheelEvent& w) {
     if (w.x != std::floor(w.x) || w.y != std::floor(w.y)) precise_until_ns_ = now + kPreciseWindowNs;
     if (now < precise_until_ns_) {
         // The view follows the fingers exactly (and, on a Mac, the glide
-        // the system adds after they lift). Pulled past an end it gives
-        // less and less the further it is out, and step_scroll() draws it
-        // back: it stretches, then settles.
+        // the system adds after they lift), and stops at the text's edges.
         const double unit = 10.0 * scale_;
-        auto move = [&](double& pos, double& target, double delta, double limit, double room, bool elastic) {
-            if (delta == 0) return;
-            if (!elastic || limit <= 0) {  // nothing to scroll this way: nothing to stretch either
-                pos = target = std::clamp(target + delta, 0.0, limit);
-                return;
-            }
-            const double over = pos < 0 ? -pos : pos > limit ? pos - limit : 0;
-            if ((pos <= 0 && delta < 0) || (pos >= limit && delta > 0)) {
-                const double f = 1.0 + over / (kBounceReach * room);
-                delta /= f * f;
-            }
-            // (However hard the pull, never further out than the stretch
-            // tends to: one huge step must not throw the text off screen.)
-            pos = std::clamp(pos + delta, -kBounceReach * room, limit + kBounceReach * room);
-            target = std::clamp(pos, 0.0, limit);
+        auto move = [&](double& pos, double& target, double delta, double limit) {
+            if (delta != 0) pos = target = std::clamp(target + delta, 0.0, limit);
         };
-        // A mostly vertical stroke always wanders a little sideways; that
-        // is not a pull on the left or right end.
-        const bool sideways = std::fabs(w.x) > std::fabs(w.y);
-        move(pane_->scroll_y, pane_->target_y, -w.y * unit, max_scroll_y(), view_h(), cfg_.scroll_bounce);
-        move(pane_->scroll_x, pane_->target_x, w.x * unit, max_scroll_x(), view_w(), cfg_.scroll_bounce && sideways);
+        move(pane_->scroll_y, pane_->target_y, -w.y * unit, max_scroll_y());
+        move(pane_->scroll_x, pane_->target_x, w.x * unit, max_scroll_x());
         animating_ = pane_->scroll_x != pane_->target_x || pane_->scroll_y != pane_->target_y;
         if (animating_) last_step_ns_ = now;
     } else {

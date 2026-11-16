@@ -491,9 +491,8 @@ blit.opt.search.hidden = true                   -- false: names that start with 
 A wheel notch moves three lines (`blit.opt.scroll.lines`) and eases into place. A
 touchpad moves the text exactly with the fingers; on macOS a flick then
 glides on and slows to a stop, as it does in other applications
-(`momentum = false` turns that off, at the next start). Pulled past the top
-or bottom with a touchpad, the view stretches a little and springs back
-(`bounce = false` makes it stop dead instead).
+(`momentum = false` turns that off, at the next start). The view stops at
+the text's edges.
 
 Sideways, the view goes as far as the widest line in the file and no
 further. With no line wider than the window it does not move sideways at
