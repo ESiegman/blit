@@ -98,7 +98,7 @@ The [side panel](#side-panel):
 | New file / new folder | Cmd+N / Cmd+Shift+N | Ctrl+N / Ctrl+Shift+N |
 | Rename | F2 | F2 |
 | Move to Trash | Delete or Cmd+Backspace | Delete |
-| Read the folders again | F5 or Cmd+R | F5 or Ctrl+R |
+| Read the folders again | Cmd+R | Ctrl+R |
 | The menu a right click opens (then Up/Down, Enter) | Shift+F10 or the Menu key | same |
 | The folder above the working folder | Cmd+Up | Ctrl+Up |
 | Next tab of the panel (while it has the keyboard) | Ctrl+Tab | Ctrl+Tab |
@@ -962,6 +962,37 @@ It is a tab like a file's: reorder it, close it, or drag it into a split
   closes when the shell exits; if it exits with an error, the tab stays
   and says so.
 
+## Debugging
+
+**F9** puts a breakpoint on the cursor's line (a red dot in the gutter),
+or takes it away. **F5** starts debugging: the first time it asks which
+program, and the side panel's **Debug** tab (Cmd+Shift+D) keeps it, with
+its arguments and working directory.
+
+| | |
+|---|---|
+| Start, or continue | F5 |
+| Stop | Shift+F5 |
+| Pause | F6 |
+| Step over / into / out | F10 / F11 / Shift+F11 |
+| Breakpoint on this line, or not | F9 |
+| Evaluate an expression where it stopped | Cmd+Shift+Y |
+| The Debug tab | Cmd+Shift+D |
+
+Where it stops, the line has an arrow in the gutter and says why, and its
+file comes to the front. The Debug tab shows the call stack (Enter on a
+frame shows its source and its variables), the variables (Right or Enter
+opens one a level, Left shuts it), the breakpoints (Delete takes one
+away), and what the program printed.
+
+The debugger is the one the machine has: Xcode's `lldb-dap` on a Mac
+(full Xcode), gdb 14 or later (which speaks the Debug Adapter Protocol
+itself) or `lldb-dap` on Linux, and debugpy for a `.py` program (`pip
+install debugpy`). A program on another machine (`ssh://host/...`) is
+debugged there, with that machine's debugger, its source opened from
+there. Build what is debugged with `-g` (and `-O0` to step through it as
+written).
+
 ## How it is fast
 
 **Text is never copied.** The file is memory mapped and the document is a
@@ -1147,6 +1178,9 @@ src/appprofile.cpp the Profile tab, a profile's tab (flame graph, functions), in
 src/term.*         a terminal's screen: an xterm-compatible parser, colours, the history
 src/pty.*          programs under a pseudo-terminal (built into the agent too)
 src/appterm.cpp    terminal tabs: the shell (here or remote), drawing, keys, selection, scrollback
+src/appcommands.cpp every command and its keys: the command search, the keys for what had none
+src/dap.*          the Debug Adapter Protocol: the debugger's process (here or remote) and its messages
+src/appdebug.cpp   debugging: breakpoints, the session, the Debug tab, the stopped line
 src/agent/         the agent: what it and blit say to one another, the program, its build for Linux (Docker), the builds
 src/keymap.*    key mappings: Vim's key notation, the table of mappings, what keys typed so far add up to
 src/job.*       programs run in the background for scripts, on threads of their own
@@ -1227,6 +1261,8 @@ tests/start.sh build-debug/blit    # the start screen and the list of what was o
 tests/remote.sh build-debug/blit   # another machine's files, git and language server, through tests/fake-ssh.sh
 tests/profile.sh build-debug/blit  # profiling tests/profile/spin.c here and through tests/fake-ssh.sh (skipped with no profiler)
 tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, copy and paste, here and through tests/fake-ssh.sh
+tests/keys.sh build-debug/blit     # the command search, the new keys, and every command run from the search
+tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger)
 ```
 
 The tests never connect to a real host: `$BLIT_SSH` names the program used
@@ -1287,6 +1323,10 @@ does not finish and takes all the memory the machine has.
   (`BLIT_LSP_LOG` is for local ones). Programs a script starts run on this
   machine, not that one. The project folder for a file opened there on its
   own is its own folder (opening the project's folder sets it).
+- Debugging: one session at a time, one thread's stack (the one that
+  stopped); no conditional breakpoints, watch list, or breakpoints that
+  move with the lines when the file is edited while debugging. With gdb
+  the program's output reaches the Debug tab when it flushes it.
 - Terminal: no mouse reporting to programs (a click in htop does nothing),
   no underline or strikethrough drawn, no images (sixel, kitty), no
   ligatures. A screen with more than 32 text colours or 6 background
@@ -1322,7 +1362,7 @@ does not finish and takes all the memory the machine has.
   elsewhere a touchpad stops when the fingers do, unless the system adds a
   glide of its own.
 - The side panel: names too long for it are cut off; the tree does not
-  watch the disk, it reads folders again when the window gets focus, on F5,
+  watch the disk, it reads folders again when the window gets focus, on Cmd+R,
   and after its own changes; no drag and drop, no multiple selection, and
   hidden files other than `.git` and `.DS_Store` are always shown.
 - A line longer than 4 billion columns will not display correctly.

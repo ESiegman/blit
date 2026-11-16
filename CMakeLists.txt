@@ -231,6 +231,7 @@ if(BLIT_DEV)
     add_test(NAME profile COMMAND sh ${CMAKE_SOURCE_DIR}/tests/profile.sh $<TARGET_FILE:blit>)
     add_test(NAME term COMMAND sh ${CMAKE_SOURCE_DIR}/tests/term.sh $<TARGET_FILE:blit>)
     add_test(NAME keys COMMAND sh ${CMAKE_SOURCE_DIR}/tests/keys.sh $<TARGET_FILE:blit>)
+    add_test(NAME debug COMMAND sh ${CMAKE_SOURCE_DIR}/tests/debug.sh $<TARGET_FILE:blit>)
   endif()
 
   # Benchmark tools (POSIX only). See bench/run.sh.

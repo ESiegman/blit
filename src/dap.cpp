@@ -115,15 +115,41 @@ void Dap::read_loop(std::stop_token stop) {
         if (k < 0) continue;
         in.append(buf, static_cast<size_t>(k));
         bool any = false;
+        // Text that is not a message is the program's own (gdb lets the
+        // program write where its messages go): it is told as output.
+        auto program_wrote = [&](std::string text) {
+            std::string json = "{\"type\":\"event\",\"event\":\"output\",\"body\":{\"category\":\"stdout\",\"output\":";
+            json::quote(json, text);
+            json += "}}";
+            auto doc = std::make_shared<json::Doc>();
+            if (!doc->parse(std::move(json))) return;
+            Message m;
+            m.type = "event";
+            m.name = "output";
+            m.doc = std::move(doc);
+            std::lock_guard lock(mu_);
+            queue_.push_back(std::move(m));
+            any = true;
+        };
         for (;;) {
+            const size_t at = in.find("Content-Length:");
+            if (at == std::string::npos) {  // (no header yet: what can not be the start of one is the program's)
+                const size_t keep = std::min<size_t>(in.size(), 15);
+                if (in.size() > keep && in.find('\n') != std::string::npos) {
+                    const size_t cut = in.rfind('\n') + 1;
+                    program_wrote(in.substr(0, cut));
+                    in.erase(0, cut);
+                }
+                break;
+            }
+            if (at > 0) {
+                program_wrote(in.substr(0, at));
+                in.erase(0, at);
+                continue;
+            }
             const size_t head_end = in.find("\r\n\r\n");
             if (head_end == std::string::npos) break;
             size_t length = 0;
-            const size_t at = in.find("Content-Length:");
-            if (at == std::string::npos || at > head_end) {  // (not a header: dropped, up to it)
-                in.erase(0, head_end + 4);
-                continue;
-            }
             size_t num = at + 15;
             while (num < head_end && in[num] == ' ') ++num;
             std::from_chars(in.data() + num, in.data() + head_end, length);

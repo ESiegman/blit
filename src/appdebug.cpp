@@ -81,6 +81,7 @@ struct App::DebugUi {
     std::vector<std::string> output;
     std::string partial;
     int exit_code = -1;
+    bool end_soon = false;  // (the session ends once the debugger's answers have been run: not inside one)
     // The panel: a row for each thing shown, and the one chosen.
     enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kFrame, kVar, kBreak };
     struct Row {
@@ -93,7 +94,8 @@ struct App::DebugUi {
     u32 sel = 0, top = 0;
 
     void print(std::string_view text) {
-        partial += text;
+        for (const char c : text)
+            if (c != '\r') partial += c;  // (a program on a terminal ends its lines with \r\n)
         size_t nl;
         while ((nl = partial.find('\n')) != std::string::npos) {
             output.push_back(partial.substr(0, nl));
@@ -229,7 +231,7 @@ void App::debug_start() {
                        v.dap->request("launch", launch, [this](const Dap::Message& r) {
                            if (!r.success) {
                                debugui_->error = "cannot launch it: " + (r.message.empty() ? std::string("the debugger said no") : r.message);
-                               debug_end();
+                               debugui_->end_soon = true;
                            }
                        });
                    });
@@ -389,9 +391,13 @@ void App::debug_sync() {
             u.exit_code = static_cast<int>(b["exitCode"].integer(-1));
             u.print("[exited with " + std::to_string(u.exit_code) + "]\n");
         } else if (m.name == "terminated") {
-            debug_end();
-            return;
+            u.end_soon = true;
         }
+    }
+    if (u.end_soon) {
+        u.end_soon = false;
+        debug_end();
+        return;
     }
     if (u.dap && u.dap->ended()) {  // the debugger itself went
         if (u.state == DebugUi::kStarting || u.exit_code < 0) {
@@ -414,7 +420,7 @@ void App::debug_evaluate() {
         DebugUi& v = *debugui_;
         if (!v.dap || e.empty()) return;
         const std::string frame = v.frame < v.frames.size() ? ",\"frameId\":" + std::to_string(v.frames[v.frame].id) : std::string();
-        v.dap->request("evaluate", "{\"expression\":" + quoted(e) + frame + ",\"context\":\"repl\"}", [this, e](const Dap::Message& m) {
+        v.dap->request("evaluate", "{\"expression\":" + quoted(e) + frame + ",\"context\":\"watch\"}", [this, e](const Dap::Message& m) {
             DebugUi& w = *debugui_;
             w.print(e + " = " + (m.success ? std::string(m.body()["result"].str()) : "(" + m.message + ")") + "\n");
             ++debug_gen_;
@@ -698,14 +704,17 @@ std::string App::debug_dump() {
     if (!u.error.empty()) out += " error: " + u.error;
     if (!u.frames.empty()) {
         out += "; stack:";
-        for (size_t i = 0; i < u.frames.size() && i < 3; ++i) out += " " + u.frames[i].name + (u.frames[i].path.empty() ? "" : "@" + std::to_string(u.frames[i].line));
+        for (size_t i = 0; i < u.frames.size() && i < 2; ++i) out += " " + u.frames[i].name + (u.frames[i].path.empty() ? "" : "@" + std::to_string(u.frames[i].line));
     }
     if (!u.vars.empty()) {
         out += "; vars:";
         for (const DebugUi::Var& v : u.vars)
             if (v.depth > 0) out += " " + v.name + "=" + v.value.substr(0, v.value.find("  ("));
     }
-    if (!u.output.empty()) out += "; output: " + u.output.back();
+    if (!u.output.empty()) {  // (its last four lines)
+        out += "; output:";
+        for (size_t i = u.output.size() > 4 ? u.output.size() - 4 : 0; i < u.output.size(); ++i) out += " " + u.output[i] + (i + 1 < u.output.size() ? " |" : "");
+    }
     return out;
 }
 
