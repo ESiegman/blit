@@ -371,6 +371,7 @@ private:
     void project_set(const std::string& key, const std::string& value);
     bool project_create();
     std::string project_dump();
+    std::string project_facts_dump();
     void project_cells(u32 cols, u32 rows);
     void project_facts(bool wait);  // what the machine the project goes on has: vcpkg, ROCm, GPUs, uv, pkg-config
     void project_facts_apply();

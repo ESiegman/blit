@@ -230,13 +230,15 @@ u64 App::term_open(const std::string& dir_given, const std::string& command, con
     // A login shell, the user's own (there: the one ssh would start), with
     // UTF-8 text when nothing says which (a program started from the Dock
     // has no LANG).
-    std::vector<std::string> argv = {"/bin/sh", "-c",
-                                     remote ? "[ -z \"$LANG$LC_ALL$LC_CTYPE\" ] && LANG=C.UTF-8 && export LANG; exec \"${SHELL:-/bin/sh}\" -l"
-                                            : "[ -z \"$LANG$LC_ALL$LC_CTYPE\" ] && LANG=en_US.UTF-8 && export LANG; exec \"${SHELL:-/bin/sh}\" -l"};
+    const std::string lang = remote ? "[ -z \"$LANG$LC_ALL$LC_CTYPE\" ] && LANG=C.UTF-8 && export LANG; "
+                                    : "[ -z \"$LANG$LC_ALL$LC_CTYPE\" ] && LANG=en_US.UTF-8 && export LANG; ";
+    std::vector<std::string> argv = {"/bin/sh", "-c", lang + "exec \"${SHELL:-/bin/sh}\" -l"};
 #if BLIT_DEV
-    if (const char* sh = SDL_getenv("BLIT_TERM_SHELL"); sh && *sh) argv = {"/bin/sh", "-c", std::string(argv[2].substr(0, argv[2].find("exec"))) + sh};  // (tests: a shell that is the same everywhere)
+    if (const char* sh = SDL_getenv("BLIT_TERM_SHELL"); sh && *sh) argv = {"/bin/sh", "-c", lang + sh};  // (tests: a shell that is the same everywhere)
 #endif
-    if (!command.empty()) argv = {"/bin/sh", "-c", std::string(argv[2].substr(0, argv[2].find("exec"))) + command};  // (a build's: the command, not a shell)
+    // A build's: the command, run by the user's login shell (its PATH is a
+    // terminal's, where a blit started from the Dock has little).
+    if (!command.empty()) argv = {"/bin/sh", "-c", lang + "exec \"${SHELL:-/bin/sh}\" -lc \"$1\"", "sh", command};
     v->keep = !command.empty();
     v->title = title;
     v->started_ns = now_ns();

@@ -1145,6 +1145,16 @@ void App::project_cells(u32 cols, u32 rows) {
     if (y + 1 < rows) box.put(font, y + 1, cols > kw ? (cols - kw) / 2 : 0, cut(keys, cols), kInkMuted);
 }
 
+// What the machine the project goes on was found to have (for the tests).
+std::string App::project_facts_dump() {
+    StartUi& s = *start_;
+    if (s.kinds.empty()) project_page(true);
+    project_facts(true);
+    const StartUi::Facts& f = s.facts;
+    return "vcpkg=" + home_short(f.vcpkg_root) + " ports=" + std::to_string(f.vcpkg_ports.size()) + " baseline=" + f.vcpkg_baseline.substr(0, 10) +
+           " rocm=" + f.rocm_root + " gpus=" + f.gpus + " uv=" + f.uv_version + " pkg-config=" + std::to_string(f.pkgconfig.size());
+}
+
 // What the New project tab holds, on one line (for the tests).
 std::string App::project_dump() {
     StartUi& s = *start_;

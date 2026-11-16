@@ -796,6 +796,8 @@ void App::run_script(const char* script) {
             project_set(arg.substr(0, eq), eq == std::string::npos ? std::string() : arg.substr(eq + 1));
         } else if (verb == "projectcreate") {
             project_create();
+        } else if (verb == "projectfacts") {
+            std::fprintf(stderr, "%s\n", project_facts_dump().c_str());
         } else if (verb == "projectdump") {
             std::fprintf(stderr, "%s\n", project_dump().c_str());
         } else if (verb == "buildpanel") {  // the side panel's Build tab

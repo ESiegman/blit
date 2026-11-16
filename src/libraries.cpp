@@ -22,8 +22,9 @@ namespace {
 bool is_root(const std::string& dir) { return fs_kind(dir + "/scripts/buildsystems/vcpkg.cmake") == 1 && fs_kind(dir + "/ports") == 2; }
 
 std::string trim(std::string_view s) {
-    while (!s.empty() && (s.front() == ' ' || s.front() == '\t' || s.front() == '\r')) s.remove_prefix(1);
-    while (!s.empty() && (s.back() == ' ' || s.back() == '\t' || s.back() == '\r')) s.remove_suffix(1);
+    auto space = [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '\n'; };
+    while (!s.empty() && space(s.front())) s.remove_prefix(1);
+    while (!s.empty() && space(s.back())) s.remove_suffix(1);
     return std::string(s);
 }
 
