@@ -274,7 +274,7 @@ private:
 
     // Finding files, text and paths (appfind.cpp).
     struct Find;
-    enum : int { kFindNames, kFindText, kFindOpen, kFindSave, kFindFolder, kFindPick, kFindInput, kFindAsk };
+    enum : int { kFindNames, kFindText, kFindOpen, kFindSave, kFindFolder, kFindPick, kFindInput, kFindAsk, kFindCommand };
     void find_create();
     bool find_is_open() const;
     void find_open(int mode, const std::string& typed = {});
@@ -415,6 +415,22 @@ private:
     std::string term_dump();
     bool term_wait(const std::string& text);
     void term_end();
+
+    // Every command and its keys (appcommands.cpp): the command search, and
+    // the keys for what had none.
+    struct Commands;
+    struct PaletteItem {
+        std::string title, keys;
+        u32 id = 0;
+    };
+    void commands_create();
+    bool command_key(const SDL_KeyboardEvent& k);
+    std::vector<PaletteItem> palette_items();
+    void palette_open();
+    void palette_run(u32 id);
+    static std::string chord_text(SDL_Keycode key, SDL_Keymod mod);
+    void tab_shift(int by);
+    void prof_toggle_labels();
     void lsp_forget_failed(const std::string& suffix);  // (applsp.cpp) servers that failed there may be tried again
 
     // The status bar along the bottom (appstatus.cpp).
@@ -471,6 +487,8 @@ private:
     Pane* pane_at(int px, int py) const;
     void focus_pane(Pane* p);
     enum Edge : u8 { kEdgeLeft, kEdgeRight, kEdgeTop, kEdgeBottom, kEdgeNone };
+    void tab_to_split(Edge edge);
+    void split_grow(bool across, int by);
     Pane* split_pane(Pane* target, Edge edge);  // a new pane with no files yet, on that side of target
     void remove_pane(Pane* p);                  // takes it out of the arrangement and lets it go
     void move_doc(Pane* from, size_t index, Pane* to, size_t at);
@@ -612,6 +630,7 @@ private:
     std::shared_ptr<VimUi> vimui_;
     std::shared_ptr<StatusUi> status_;
     std::shared_ptr<StartUi> start_;
+    std::shared_ptr<Commands> commands_;
     std::shared_ptr<ProfUi> profui_;  // (before remote_: a recording on another machine ends when its connection does)
     u64 prof_gen_ = 1;                // counts up whenever what the Profile tab shows may have changed
     bool term_drop_text_ = false;     // the text a key sent to a terminal as itself also brings is not typed again

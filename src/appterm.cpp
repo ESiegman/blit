@@ -525,6 +525,14 @@ bool App::term_key(const SDL_KeyboardEvent& k) {
     if (cmd && kPrimaryMod == SDL_KMOD_GUI) {
         if (k.key == SDLK_C) return term_copy(v), true;
         if (k.key == SDLK_V) return term_paste(v), true;
+        if (k.key == SDLK_A) {  // everything, the history too (then Cmd+C)
+            std::lock_guard lock(v.mu);
+            v.selected = true;
+            v.sel_line0 = 0, v.sel_col0 = 0;
+            v.sel_line1 = v.term.history() + v.term.rows() - 1, v.sel_col1 = v.term.cols();
+            dirty_ = true;
+            return true;
+        }
         if (k.key == SDLK_K) {  // the history goes, and the shell draws its prompt again
             {
                 std::lock_guard lock(v.mu);
@@ -537,10 +545,10 @@ bool App::term_key(const SDL_KeyboardEvent& k) {
         }
         return false;
     }
-    if (ctrl && shift && (k.key == SDLK_C || k.key == SDLK_V)) {  // (where Ctrl is the editor's key)
-        if (k.key == SDLK_C) term_copy(v);
-        else term_paste(v);
-        return true;
+    if (kPrimaryMod == SDL_KMOD_CTRL && ctrl && shift) {  // (where Ctrl is the editor's key: Ctrl+Shift is the editor's, as in other terminals)
+        if (k.key == SDLK_C) return term_copy(v), true;
+        if (k.key == SDLK_V) return term_paste(v), true;
+        if (k.key != SDLK_PAGEUP && k.key != SDLK_PAGEDOWN) return false;
     }
     if (shift && (k.key == SDLK_PAGEUP || k.key == SDLK_PAGEDOWN)) {  // the history
         std::lock_guard lock(v.mu);
@@ -594,7 +602,7 @@ bool App::term_key(const SDL_KeyboardEvent& k) {
         case SDLK_F11: s = tilde(23); break;
         case SDLK_F12: s = tilde(24); break;
         default:
-            if (ctrl && !cmd) {  // Ctrl+letter and the like: the control characters
+            if (ctrl && !(k.mod & SDL_KMOD_GUI)) {  // Ctrl+letter and the like: the control characters
                 const SDL_Keycode key = k.key;
                 if (key >= SDLK_A && key <= SDLK_Z) s = std::string(1, static_cast<char>(key - SDLK_A + 1));
                 else if (key == SDLK_SPACE || key == SDLK_2) s = std::string(1, '\0');

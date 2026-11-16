@@ -204,6 +204,7 @@ bool App::init(std::string* err) {
     std::jthread loader;
     remote_start();  // (a file on another machine is opened once the window is up)
     prof_start();
+    commands_create();
     const bool remote_file = opt_.file && is_remote(opt_.file);
     if (opt_.file && !remote_file)
         loader = std::jthread([&] {
@@ -1383,6 +1384,7 @@ void App::on_key(const SDL_KeyboardEvent& k) {
     }
     if (term_key(k)) return;   // a terminal's tab is in front (appterm.cpp)
     if (script_keys_ && script_key(k)) return;  // a mapping of a script's has it (applua.cpp)
+    if (!find_open_ && command_key(k)) return;  // the keys of the commands added in appcommands.cpp
     const bool shift = k.mod & SDL_KMOD_SHIFT;
     const bool cmd = k.mod & kCmd;
     const bool word = k.mod & kWord;

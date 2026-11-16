@@ -458,6 +458,12 @@ bool App::panel_key(const SDL_KeyboardEvent& k) {
     const std::vector<FileTree::Row>& rows = s.tree.rows();
     const int at = row_of(rows, s.tree, s.selected), page = std::max(1, static_cast<int>(s.body_rows) - 1);
     FileTree::Node* node = at >= 0 ? rows[static_cast<size_t>(at)].node : nullptr;
+    if (cmd && k.key == SDLK_UP) {  // the folder above the working directory
+        s.menu_target = s.tree.root();
+        panel_menu_do(kMenuParent);
+        return true;
+    }
+    const int cw = font_->cell_w(), ch = font_->cell_h();
     switch (k.key) {
         case SDLK_UP: panel_select(at < 0 ? 0 : at - 1); return true;
         case SDLK_DOWN: panel_select(at + 1); return true;
@@ -494,6 +500,20 @@ bool App::panel_key(const SDL_KeyboardEvent& k) {
             if (cmd) return s.tree.refresh(), true;
             break;
         case SDLK_F5: s.tree.refresh(); return true;
+        case SDLK_F10:
+        case SDLK_APPLICATION:  // the menu a right click opens, for the row chosen (Shift+F10, or the Menu key)
+            if (k.key == SDLK_F10 && !shift) break;
+            {
+                const int row = at >= 0 ? at - static_cast<int>(s.top) + static_cast<int>(kHeadRows) : static_cast<int>(kHeadRows);
+                s.menu_target = node ? s.selected : s.tree.root();
+                s.menu = true;
+                s.menu_sel = 0;
+                s.menu_x = cw * 4;
+                s.menu_y = std::max(0, row + 1) * ch + ch / 4;
+                s.touch();
+                dirty_ = true;
+            }
+            return true;
         default: break;
     }
     // Other shortcuts (save, quit, zoom) still reach the editor; plain keys

@@ -44,6 +44,12 @@ opened. The files and folders opened lately (up to 30) are kept in
 `$XDG_DATA_HOME`). `blit.opt.editor.start_screen = false` starts with an
 empty file instead.
 
+Everything blit does can be done from the keyboard. **Cmd+Shift+P**
+(Ctrl+Shift+P elsewhere) searches every command by its name or its keys,
+shows the keys of each, and runs the one chosen; typing `cmd+b` finds what
+Cmd+B does, and Tab, then any keys, looks those keys up. The scripts'
+commands are there too.
+
 blit is a modal editor: it starts in Normal mode, where keys are commands,
 and `i` is what makes typing type. The modes and keys are Neovim's defaults;
 [Modal editing](#modal-editing) says what is there. `blit.opt.editor.modal = false`
@@ -64,13 +70,19 @@ and everything in it that has Cmd in it (Ctrl elsewhere) works in every mode.
 | Undo / redo | Cmd+Z / Shift+Cmd+Z | Ctrl+Z / Ctrl+Y |
 | Select all | Cmd+A | Ctrl+A |
 | Save / open (in a new tab) | Cmd+S / Cmd+O | Ctrl+S / Ctrl+O |
+| Open a folder | Cmd+Shift+O | Ctrl+Shift+O |
+| Search commands and keys | Cmd+Shift+P | Ctrl+Shift+P |
 | Find a file by name / text in files | Cmd+P / Cmd+Shift+F | Ctrl+P / Ctrl+Shift+F |
 | New tab / close tab | Cmd+T / Cmd+W | Ctrl+T / Ctrl+W |
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab, or Cmd+Shift+] / [ | Ctrl+Tab / Ctrl+Shift+Tab, or Ctrl+PageDown / PageUp |
 | Tab 1 to 8, last tab | Cmd+1 ... Cmd+8, Cmd+9 | Ctrl+1 ... Ctrl+8, Ctrl+9 |
+| Move the tab left / right | Ctrl+Shift+PageUp / PageDown | |
 | Split right / split down | Cmd+\ / Cmd+Shift+\ | Ctrl+\ / Ctrl+Shift+\ |
 | Keyboard to the split on that side | Cmd+Option+arrow | Ctrl+Alt+arrow |
-| The Git tab of the side panel | Cmd+Shift+G | Ctrl+Shift+G |
+| The tab to the split on that side (a new one if there is none) | Cmd+Option+Shift+arrow | Ctrl+Alt+Shift+arrow |
+| The split wider / narrower, taller / shorter | Cmd+Ctrl+Right / Left, Down / Up | |
+| A terminal, in the working folder | Ctrl+` | Ctrl+` |
+| The Problems / Git / Profile tab of the side panel | Cmd+Shift+M / G / R | Ctrl+Shift+M / G / R |
 | Blame column on or off | Cmd+Option+B | Ctrl+Alt+B |
 | Font size | Cmd+= / Cmd+- / Cmd+0 | Ctrl+= / Ctrl+- / Ctrl+0 |
 | Open init.lua (the settings) | Cmd+, | Ctrl+, |
@@ -87,6 +99,8 @@ The [side panel](#side-panel):
 | Rename | F2 | F2 |
 | Move to Trash | Delete or Cmd+Backspace | Delete |
 | Read the folders again | F5 or Cmd+R | F5 or Ctrl+R |
+| The menu a right click opens (then Up/Down, Enter) | Shift+F10 or the Menu key | same |
+| The folder above the working folder | Cmd+Up | Ctrl+Up |
 | Next tab of the panel (while it has the keyboard) | Ctrl+Tab | Ctrl+Tab |
 
 With a [language server](#language-servers) running:
@@ -100,6 +114,10 @@ With a [language server](#language-servers) running:
 | Go to definition | F12 or Cmd+click | F12 or Ctrl+click |
 | Back to where the jump came from | Ctrl+- | Alt+Left |
 | Close popups | Esc | Esc |
+
+In a profile's tab: Up/Down choose a function, Enter opens its source,
+Space zooms the flame graph into it (again: back out), Esc zooms out. In a
+terminal: Cmd+A selects all of it, history included, for Cmd+C.
 
 Scroll with the wheel or touchpad, or drag the bar at the right edge. Drop a
 file on the window to open it in a tab. `blit --help` lists the options

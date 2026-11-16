@@ -779,6 +779,15 @@ bool App::prof_key(const SDL_KeyboardEvent& k) {
             if (v.zoom == 0) return false;
             v.zoom = p.nodes[v.zoom].parent;
             break;
+        case SDLK_SPACE: {  // the graph zooms into the chosen function: where it took the most time
+            if (v.sel >= n) break;
+            const u32 func = v.order[v.sel];
+            u32 best = 0;
+            for (u32 node = 1; node < p.nodes.size(); ++node)
+                if (p.nodes[node].func == func && (best == 0 || p.nodes[node].total > p.nodes[best].total)) best = node;
+            v.zoom = v.zoom == best ? p.nodes[best].parent : best;  // (again: back out)
+            break;
+        }
         default: return false;
     }
     dirty_ = true;
@@ -899,6 +908,13 @@ void App::prof_set(const std::string& what, const std::string& value) {
 }
 
 bool App::prof_busy() const { return profui_ && profui_->job; }
+
+void App::prof_toggle_labels() {
+    profui_->annotate = !profui_->annotate;
+    for (const std::unique_ptr<Pane>& p : panes_) p->cache_rev = ~0ull;
+    ++prof_gen_;
+    dirty_ = true;
+}
 
 // What the profiling shows, on one line: the recording's state, the
 // profile in front (its heaviest functions, alphabetically, and which of

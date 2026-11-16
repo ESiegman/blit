@@ -778,6 +778,19 @@ void App::run_script(const char* script) {
         } else if (verb == "termwait") {  // the terminal in front shows this text (10 s at most)
             if (!term_wait(arg)) std::fprintf(stderr, "termwait: no \"%s\" on the screen\n", arg.c_str());
             term_sync();
+        } else if (verb == "commands") {  // every command, a line each: its name, a tab, its keys
+            for (const PaletteItem& it : palette_items()) std::fprintf(stderr, "%s\t%s\n", it.title.c_str(), it.keys.c_str());
+        } else if (verb == "command") {  // command:name runs that command, as the command search would
+            bool ran = false;
+            const std::vector<PaletteItem> items = palette_items();
+            for (int pass = 0; pass < 2 && !ran; ++pass)  // (the name whole, else the first that starts so: a script's can have a ; in it)
+                for (const PaletteItem& it : items)
+                    if (pass == 0 ? it.title == arg : it.title.starts_with(arg)) {
+                        palette_run(it.id);
+                        ran = true;
+                        break;
+                    }
+            if (!ran) std::fprintf(stderr, "command: no \"%s\"\n", arg.c_str());
         } else if (verb == "termend") {  // the terminal's program has ended (10 s at most)
             term_end();
         } else if (verb == "termdump") {

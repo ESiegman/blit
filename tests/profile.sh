@@ -49,6 +49,9 @@ run "prof:program=$dir/here/spin;prof:args=40;profpanel;profrecord;profwait;fram
 got=$(printf '%s' "$got" | sed -e 's#;; [^;]*spin.c | \(Ln [0-9]*, Col [0-9]*\).*#;; \1#')
 check "recorded here: its tab, then the hottest function's source (at its definition) with the times in it" \
     "1 profiles; spin by $tool, 1 thread, over 10%: inner@spin.c outer@spin.c; tab: zoom all ;; 1 profiles; spin by $tool, 1 thread, over 10%: inner@spin.c outer@spin.c; times on lines 8F 16F 24F ;; Ln 8, Col 1"
+run "prof:program=$dir/here/spin;prof:args=40;profrecord;profwait;frame;key:space;frame;profdump;key:Escape;frame;profdump"
+got=$(printf '%s' "$got" | grep -o 'zoom [a-z]*' | tr '\n' ' ' | sed -e 's/ $//')
+check "the flame graph from the keyboard: Space zooms into the chosen function, Esc back out a level" "zoom inner zoom outer"
 run "prof:program=$dir/here/spin;prof:args=40;prof:annotate=off;profrecord;profwait;frame;open:$dir/here/spin.c;frame;profdump"
 check "inline performance labels turned off" "1 profiles; spin by $tool, 1 thread, over 10%: inner@spin.c outer@spin.c"
 run "prof:program=$dir/here/spin;prof:args=20;profrecord;profwait;frame;open:$dir/here/spin.c;frame;dump:tabs;click:200,12;drag:300,100;drag:760,250;release;frame;dump:moved"

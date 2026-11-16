@@ -142,6 +142,13 @@ struct App::Find {
     // Asked for by blit itself (the Profile tab): what is chosen or typed
     // goes here instead of being opened (a path) or to a script (a line).
     std::function<void(const std::string&)> chose;
+    // The command search (kFindCommand): each command's keys and what is
+    // searched (its name and its keys, in words), and whether the next keys
+    // pressed are to be looked up rather than acted on.
+    std::vector<std::string> item_keys, item_search;
+    std::vector<u32> item_ids;
+    bool capture = false, chord_query = false;  // (and whether what is typed is keys pressed)
+    bool drop_text = false;  // (the text a key looked up brings is not typed too)
     bool secret = false;
     int back_mode = -1;
     std::string back_typed;
@@ -243,6 +250,27 @@ void App::find_ask(u64 id, const std::string& host, const std::string& prompt, b
     find_open(kFindAsk);
 }
 
+// The command search: every command, with its keys.
+void App::palette_open() {
+    Find& f = *find_;
+    if (find_open_ && f.script()) find_close(false);
+    f.items.clear();
+    f.item_keys.clear();
+    f.item_search.clear();
+    f.item_ids.clear();
+    for (PaletteItem& it : palette_items()) {
+        std::string words = it.title + " " + it.keys;
+        for (char& ch : words)
+            if (ch == '+') ch = ' ';
+        f.items.push_back(std::move(it.title));
+        f.item_keys.push_back(std::move(it.keys));
+        f.item_search.push_back(std::move(words));
+        f.item_ids.push_back(it.id);
+    }
+    f.capture = f.chord_query = false;
+    find_open(kFindCommand);
+}
+
 // The box, for a path or a line that comes back to `chose` (kFindOpen: a
 // file, kFindFolder: a folder, kFindInput: what is typed after `prompt`).
 void App::find_choose(int mode, const std::string& prompt, const std::string& typed, std::function<void(const std::string&)> chose) {
@@ -308,6 +336,46 @@ void App::find_query() {
     }
     if (f.mode == kFindAsk) {
         f.entries.clear();
+        return;
+    }
+    if (f.mode == kFindCommand) {  // the commands whose name or keys have every word typed, the best first
+        f.entries.clear();
+        // Keys (pressed after Tab, or typed with a +): the commands with exactly those keys.
+        auto lower = [](std::string t) {
+            for (char& ch : t) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            return t;
+        };
+        if (f.chord_query || f.typed.find('+') != std::string::npos) {
+            const std::string want = lower(f.typed);
+            for (u32 i = 0; i < f.items.size(); ++i) {
+                const std::string keys = lower(f.item_keys[i]);
+                for (size_t at = 0; at <= keys.size();) {
+                    const size_t gap = keys.find("  ", at);
+                    if (keys.substr(at, gap == std::string::npos ? std::string::npos : gap - at) == want) {
+                        f.entries.push_back({f.items[i], false, Find::Entry::kPlain, 0, i});
+                        break;
+                    }
+                    if (gap == std::string::npos) break;
+                    at = gap + 2;
+                }
+            }
+            if (!f.entries.empty() || f.chord_query) return;
+        }
+        const std::vector<FuzzyTerm> terms = fuzzy_terms(f.typed);
+        for (u32 i = 0; i < f.items.size(); ++i) {
+            int score = 0;
+            bool all = true;
+            for (const FuzzyTerm& t : terms) {
+                const int one = fuzzy_score(t, f.item_search[i]);
+                if (one < 0) {
+                    all = false;
+                    break;
+                }
+                score += one;
+            }
+            if (all) f.entries.push_back({f.items[i], false, Find::Entry::kPlain, score, i});
+        }
+        if (!terms.empty()) std::stable_sort(f.entries.begin(), f.entries.end(), [](const Find::Entry& a, const Find::Entry& b) { return a.score > b.score; });
         return;
     }
     if (f.script()) {
@@ -455,6 +523,13 @@ void App::save_named(const std::string& path, u64 doc) {
 // name typed.
 void App::find_accept() {
     Find& f = *find_;
+    if (f.mode == kFindCommand) {
+        if (f.sel >= f.entries.size()) return;
+        const u32 id = f.item_ids[f.entries[f.sel].index];
+        find_close(true);
+        palette_run(id);
+        return;
+    }
     if (f.mode == kFindAsk) {  // the answer, to ssh
         const u64 id = std::exchange(f.ask_id, 0);
         Remote::answer(id, &f.typed);
@@ -591,6 +666,31 @@ bool App::find_key(const SDL_KeyboardEvent& k) {
         return true;
     }
     if (!find_open_) return false;
+    f.drop_text = false;
+    if (f.mode == kFindCommand && f.capture) {  // keys to look up: what they are is what is searched for
+        const SDL_Keycode key = k.key;
+        if (key == SDLK_LSHIFT || key == SDLK_RSHIFT || key == SDLK_LCTRL || key == SDLK_RCTRL || key == SDLK_LALT || key == SDLK_RALT || key == SDLK_LGUI ||
+            key == SDLK_RGUI)
+            return true;
+        f.capture = false;
+        f.typed = chord_text(k.key, k.mod);
+        f.chord_query = true;
+        f.drop_text = true;
+        find_query();
+        return true;
+    }
+    if (f.mode == kFindCommand && f.chord_query && k.key == SDLK_BACKSPACE) {  // (keys looked up go whole)
+        f.chord_query = false;
+        f.typed.clear();
+        find_query();
+        return true;
+    }
+    if (f.mode == kFindCommand && k.key == SDLK_TAB) {  // Tab: the next keys pressed are looked up
+        f.capture = !f.capture;
+        f.touch();
+        dirty_ = true;
+        return true;
+    }
     const i64 page = std::max<i64>(1, static_cast<i64>(f.list_rows) - 1);
     switch (k.key) {
         case SDLK_ESCAPE: find_close(false); break;
@@ -640,6 +740,14 @@ bool App::find_key(const SDL_KeyboardEvent& k) {
 
 // Typed text goes into the box while it is open.
 bool App::find_typed(const char* text) {
+    if (find_open_ && find_->drop_text) {
+        find_->drop_text = false;
+        return true;
+    }
+    if (find_open_ && find_->chord_query) {  // (typing after keys looked up starts a search of its own)
+        find_->chord_query = false;
+        find_->typed.clear();
+    }
     Find& f = *find_;
     if (!find_open_) return false;
     f.typed += text;
@@ -754,7 +862,7 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
 
         // What is typed, after a word that says what the box is for; the
         // cell after it is lit, as a cursor.
-        static const char* const kLabel[] = {"Files", "Text", "Open", "Save as", "Folder", "Pick", "Input", "ssh"};
+        static const char* const kLabel[] = {"Files", "Text", "Open", "Save as", "Folder", "Pick", "Input", "ssh", "Commands"};
         u32 c = box.put(font, 0, 0, (f.script() || f.mode == kFindAsk || f.chose) && !f.prompt.empty() ? std::string_view(f.prompt) : std::string_view(kLabel[f.mode]), kInkAccent, Font::kBold) + 2;
         std::string hidden;  // (a secret shows as a dot for each letter)
         if (f.mode == kFindAsk && f.secret)
@@ -794,6 +902,9 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
             right = tilde(f.root);
         } else if (f.mode == kFindPick) {
             status = std::to_string(n) + " of " + std::to_string(f.items.size());
+        } else if (f.mode == kFindCommand) {
+            status = f.capture ? "Press the keys to look up Â· Tab: back to typing"
+                               : std::to_string(n) + " of " + std::to_string(f.items.size()) + " Â· Enter runs it Â· Tab: press keys to look them up";
         } else if (f.mode == kFindInput) {
             status = "Enter accepts \xC2\xB7 Esc cancels";
         } else if (f.mode == kFindAsk) {
@@ -857,11 +968,14 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
                     for (size_t from = 0, found; (found = find_term(line, t, from)) != std::string_view::npos; from = found + t.text.size())
                         for (size_t k = 0; k < t.text.size(); ++k) at.push_back(static_cast<u32>(found + k));
                 marked(row, col, line, at, 0, 0);
-            } else if (f.mode == kFindPick) {
+            } else if (f.mode == kFindPick || f.mode == kFindCommand) {
                 const Find::Entry& e = f.entries[i];
                 at.clear();
                 for (const FuzzyTerm& t : terms) fuzzy_score(t, e.name, &at);
-                marked(row, 1, e.name, at, 0, 0);
+                const std::string& keys = f.mode == kFindCommand ? f.item_keys[e.index] : std::string();
+                const u32 kw = width_of(keys);
+                const u32 after = marked(row, 1, e.name, at, 0, 0);
+                if (kw && cols > after + kw + 2) box.put(font, row, cols - kw - 1, keys, kInkAccent);
             } else {
                 const Find::Entry& e = f.entries[i];
                 icon(row, 0, file_icon(e.kind == Find::Entry::kHere || e.kind == Find::Entry::kParent ? std::string_view() : std::string_view(e.name), e.dir, false));
@@ -908,7 +1022,7 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
 // chosen one marked.
 std::string App::find_dump() {
     Find& f = *find_;
-    static const char* const kMode[] = {"names", "text", "open", "save", "folder", "pick", "input", "ask"};
+    static const char* const kMode[] = {"names", "text", "open", "save", "folder", "pick", "input", "ask", "commands"};
     if (!find_open_) return "closed";
     std::string typed = f.typed;
     if (f.mode == kFindAsk) {  // (never a secret in a dump)
@@ -922,6 +1036,7 @@ std::string App::find_dump() {
         out += i == f.sel ? " >" : " ";
         if (f.mode == kFindNames) out += std::string(f.shown->index->path(f.shown->hits[i].file));
         else if (f.mode == kFindText) out += std::string(f.shown->index->path(f.shown->hits[i].file)) + ":" + std::to_string(f.shown->hits[i].line + 1) + ":" + std::to_string(f.shown->hits[i].col + 1);
+        else if (f.mode == kFindCommand) out += f.entries[i].name + (f.item_keys[f.entries[i].index].empty() ? "" : " (" + f.item_keys[f.entries[i].index] + ")");
         else out += f.entries[i].kind == Find::Entry::kNew ? "+" + f.entries[i].name : f.entries[i].name + (f.entries[i].dir ? "/" : "");
     }
     return out;
