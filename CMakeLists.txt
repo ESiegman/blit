@@ -136,6 +136,7 @@ if(NOT WIN32)
   endif()
   blit_static_runtime(blit-agent)
   target_sources(blit_core PRIVATE src/remote.cpp src/profile.cpp)
+  target_sources(blit_core PRIVATE src/term.cpp)
   add_dependencies(blit_core blit-agent)
   set_property(SOURCE src/remote.cpp APPEND PROPERTY COMPILE_DEFINITIONS BLIT_AGENT_HERE="${CMAKE_BINARY_DIR}/blit-agent")
   set_source_files_properties(src/remote.cpp PROPERTIES OBJECT_DEPENDS

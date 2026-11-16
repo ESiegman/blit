@@ -26,6 +26,7 @@
 #include "git.hpp"
 #include "profile.hpp"
 #include "remote.hpp"
+#include "term.hpp"
 #include "grammars.hpp"
 #include "grid.hpp"
 #include "highlight.hpp"
@@ -1448,6 +1449,108 @@ void script_test() {
 
 // Another machine's files, through blit's agent, over a stand-in for ssh
 // (tests/fake-ssh.sh) that runs it here, in a home folder of its own.
+// The terminal: what programs write, on its screen (term.hpp).
+void term_test(int seeds) {
+    int failures = 0;
+    auto check = [&](bool ok, const std::string& what) {
+        if (!ok) {
+            std::fprintf(stderr, "FAIL: terminal: %s\n", what.c_str());
+            ++failures;
+        }
+    };
+    auto screen = [](const blit::Term& t) {
+        std::string s;
+        for (blit::u32 r = 0; r < t.rows(); ++r) s += (r ? "|" : "") + t.row_text(r);
+        return s;
+    };
+    {
+        blit::Term t(10, 3);
+        t.feed("hello\r\nworld");
+        check(screen(t) == "hello|world|" && t.cursor_row() == 1 && t.cursor_col() == 5, "text, and a new line: " + screen(t));
+        t.feed("\x1b[2;3Hx\x1b[1;1H\x1b[K");
+        check(screen(t) == "|woxld|", "the cursor moved, a line erased: " + screen(t));
+        t.feed("\x1b[3;1Habc\x1b[2D\x1b[@Z\x1b[P");
+        check(t.row_text(2) == "aZc", "a character inserted and one deleted: " + t.row_text(2));
+        t.feed("\x1b[2J");
+        check(screen(t) == "||", "the screen erased");
+    }
+    {
+        blit::Term t(5, 3);
+        t.feed("abcdefg");
+        check(screen(t) == "abcde|fg|", "a long line wraps: " + screen(t));
+        t.feed("\r\n1\r\n2\r\n3");
+        check(screen(t) == "1|2|3" && t.history() == 2 && blit::Term::line_text(t.history_line(0).data(), 5) == "abcde", "lines scrolled off the top are kept: " + screen(t));
+        t.resize(5, 2);
+        check(screen(t) == "2|3" && t.history() == 3 && t.cursor_row() == 1, "fewer rows: the top one goes into the history: " + screen(t));
+        t.resize(8, 4);
+        check(t.rows() == 4 && t.cols() == 8 && t.row_text(1) == "3", "more rows and columns");
+    }
+    {
+        blit::Term t(20, 2);
+        t.feed("\x1b[31mR\x1b[1;38;5;200mP\x1b[22;38;2;1;2;3mT\x1b[48:2::4:5:6mU\x1b[0;7;94mV\x1b[0m");
+        check(t.at(0, 0).fg == (blit::kTermIndexed | 1), "SGR 31: red");
+        check(t.at(0, 1).fg == (blit::kTermIndexed | 200) && (t.at(0, 1).attr & blit::TermCell::kBold), "SGR 38;5;200, bold");
+        check(t.at(0, 2).fg == (blit::kTermRgb | 0x010203) && !(t.at(0, 2).attr & blit::TermCell::kBold), "SGR 38;2;r;g;b, bold ended");
+        check(t.at(0, 3).bg == (blit::kTermRgb | 0x040506), "SGR 48:2::r:g:b");
+        check(t.at(0, 4).fg == (blit::kTermIndexed | 12) && (t.at(0, 4).attr & blit::TermCell::kInverse), "SGR 94 and 7");
+        check(t.at(0, 5).fg == blit::kTermDefault && t.at(0, 5).attr == 0, "SGR 0 resets");
+    }
+    {
+        blit::Term t(10, 3);
+        t.feed("main");
+        t.feed("\x1b[?1049h\x1b[2JX\x1b[2;2HY");
+        check(t.alt_screen() && screen(t) == "    X| Y|", "the alternate screen (the cursor where it was): " + screen(t));
+        t.feed("\x1b[?1049l");
+        check(!t.alt_screen() && screen(t) == "main||" && t.cursor_col() == 4, "and back, the main screen as it was: " + screen(t));
+    }
+    {
+        blit::Term t(10, 2);
+        t.feed("\xe6\x97\xa5\xe6\x9c\xac!");  // two wide characters, then one that is not
+        check(t.row_text(0) == "\xe6\x97\xa5\xe6\x9c\xac!" && t.cursor_col() == 5 && (t.at(0, 0).attr & blit::TermCell::kWide) && (t.at(0, 1).attr & blit::TermCell::kWideTail),
+              "wide characters take two columns");
+        t.feed("\x1b[1;2Hx");
+        check(t.row_text(0) == " x\xe6\x9c\xac!", "half of a wide character overwritten: the other half goes blank: " + t.row_text(0));
+    }
+    {
+        blit::Term t(10, 5);
+        t.feed("1\r\n2\r\n3\r\n4\r\n5\x1b[2;4r\x1b[4;1H\n\x1b[r");
+        check(screen(t) == "1|3|4||5" && t.history() == 0, "a scrolling region scrolls only itself: " + screen(t));
+        t.feed("\x1b[6n\x1b[c");
+        check(t.take_reply() == "\x1b[1;1R\x1b[?62;22c" && t.take_reply().empty(), "answers: the cursor's place, the kind of terminal");
+        t.feed("\x1b]0;my title\x07\x1b]7;file://host/home/me/a%20b\x1b\\");
+        check(t.title() == "my title" && t.cwd() == "/home/me/a b", "OSC 0 and 7: the title and the folder");
+        t.feed("\x1b(0qx\x1b(Bq");
+        check(t.row_text(0) == "\xe2\x94\x80\xe2\x94\x82q", "DEC line drawing: " + t.row_text(0));
+        t.feed("\x1b[?2004h\x1b[?1h\x1b[?25l");
+        check(t.bracketed_paste() && t.app_cursor_keys() && !t.cursor_visible(), "modes: bracketed paste, cursor keys, cursor hidden");
+    }
+    {
+        // Whatever comes, nothing breaks, and the cursor stays on the screen.
+        std::mt19937 gen(7);
+        for (int s = 0; s < seeds * 4; ++s) {
+            blit::Term t(1 + gen() % 40, 1 + gen() % 12, 50);
+            static const char* const pieces[] = {"\x1b[", "\x1b]", "\x1b(0", "\x1bM", "\x1b" "7", "\x1b" "8", ";", ":", "?", "1049h", "1049l", "r", "J", "K", "L", "M",
+                                                 "P", "@", "S", "T", "m", "38;2;", "5", "H", "\r\n", "\t", "\b", "\xe6\x97\xa5", "\xf0\x9f\x98\x80", "\x07", "x"};
+            std::string bytes;
+            for (int k = 0; k < 400; ++k) {
+                if (gen() % 3 == 0) bytes += static_cast<char>(gen() % 256);
+                else bytes += pieces[gen() % std::size(pieces)];
+                if (gen() % 50 == 0) t.resize(1 + gen() % 40, 1 + gen() % 12);
+            }
+            for (size_t at = 0; at < bytes.size();) {
+                const size_t n = 1 + gen() % 30;
+                t.feed(std::string_view(bytes).substr(at, n));
+                at += n;
+            }
+            if (t.cursor_row() >= t.rows() || t.cursor_col() >= t.cols()) {
+                check(false, "the cursor left the screen (seed " + std::to_string(s) + ")");
+                break;
+            }
+        }
+    }
+    if (failures) std::exit(1);
+}
+
 // The profilers' output, as recorded from tests/profile/burn.c (perf on
 // Linux x86-64, xctrace on macOS): the same call tree comes out of both.
 void profile_test() {
@@ -2865,6 +2968,7 @@ int main(int argc, char** argv) {
     vim_test();
     find_test();
     script_test();
+    term_test(seeds);
     profile_test();
     remote_test();
     git_test(seeds);
