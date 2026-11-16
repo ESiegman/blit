@@ -40,6 +40,7 @@
 
 #include "finder.hpp"
 #include "protocol.hpp"
+#include "pty.hpp"
 
 extern char** environ;
 
@@ -225,7 +226,8 @@ uint32_t next_walk = 1;
 
 struct Child {
     pid_t pid = -1;
-    int in = -1, out = -1, err = -1;
+    int in = -1, out = -1, err = -1;  // (on a pseudo-terminal, in and out are one descriptor)
+    bool pty = false;
     std::string pending;    // input not written yet
     bool close_in = false;  // and then its input closes
     bool exited = false;
@@ -505,6 +507,29 @@ void handle(uint8_t op, uint32_t id, std::string_view body) {
             w.u8(ok).str(err);
             return reply(id, w);
         }
+        case kSpawnPty: {
+            const uint32_t proc = r.u32();
+            const std::string cwd = r.str();
+            const uint32_t rows = r.u32(), cols = r.u32();
+            std::vector<std::string> argv(r.u32());
+            for (std::string& a : argv) a = r.str();
+            std::vector<std::string> env(r.u32());
+            for (std::string& e : env) e = r.str();
+            blit::Pty p;
+            std::string err;
+            const bool ok = blit::pty_spawn(argv, cwd, env, rows, cols, &p, &err);
+            if (ok) {
+                Child& c = children[proc];
+                c.pid = p.pid, c.in = p.fd, c.out = p.fd, c.pty = true;
+            }
+            w.u8(ok).str(err);
+            return reply(id, w);
+        }
+        case kResize: {
+            const uint32_t proc = r.u32(), rows = r.u32(), cols = r.u32();
+            if (auto it = children.find(proc); it != children.end() && it->second.pty && it->second.out >= 0) blit::pty_resize(it->second.out, rows, cols);
+            return;
+        }
         case kStdin: {
             const uint32_t proc = r.u32();
             const std::string data = r.str();
@@ -544,7 +569,7 @@ int main() {
             if (c.out >= 0) fds.push_back({c.out, POLLIN, 0}), who.emplace_back(pid, 1);
             if (c.err >= 0) fds.push_back({c.err, POLLIN, 0}), who.emplace_back(pid, 2);
             if (c.in >= 0 && !c.pending.empty()) fds.push_back({c.in, POLLOUT, 0}), who.emplace_back(pid, 0);
-            else if (c.in >= 0 && c.close_in) ::close(c.in), c.in = -1;
+            else if (c.in >= 0 && c.close_in && !c.pty) ::close(c.in), c.in = -1;  // (a terminal's input is its output: it stays)
         }
         if (fds.empty()) {
             ::usleep(10'000);
@@ -561,8 +586,15 @@ int main() {
                         in.append(buf, static_cast<size_t>(got));
                     } else if (got == 0) {
                         open = false;  // blit has gone: the programs it started go too
-                        for (auto& [pid, c] : children)
-                            if (c.pid > 0 && !c.exited) ::kill(c.pid, SIGTERM);
+                        for (auto& [pid, c] : children) {
+                            if (c.pid <= 0 || c.exited) continue;
+                            if (c.pty) {  // (a shell does not end on SIGTERM; a terminal that hangs up ends it)
+                                ::kill(-c.pid, SIGHUP);
+                                ::kill(c.pid, SIGHUP);
+                            } else {
+                                ::kill(c.pid, SIGTERM);
+                            }
+                        }
                         break;
                     } else {
                         break;
@@ -590,7 +622,7 @@ int main() {
             if (who[i].second == 0) {
                 const ssize_t put = ::write(c.in, c.pending.data(), c.pending.size());
                 if (put > 0) c.pending.erase(0, static_cast<size_t>(put));
-                else if (put < 0 && errno != EAGAIN && errno != EINTR) c.pending.clear(), c.close_in = true;
+                else if (put < 0 && errno != EAGAIN && errno != EINTR) c.pending.clear(), c.close_in = !c.pty;
                 continue;
             }
             int& fd = who[i].second == 1 ? c.out : c.err;
@@ -603,6 +635,7 @@ int main() {
             } else if (got == 0 || (errno != EAGAIN && errno != EINTR)) {
                 ::close(fd);
                 fd = -1;
+                if (c.pty) c.in = -1, c.pending.clear();  // (the same descriptor)
             }
         }
         finish_children();

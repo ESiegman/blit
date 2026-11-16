@@ -206,7 +206,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
             if (slash != std::string::npos) u.left.push_back({path.substr(0, slash + 1), kInkMuted, 0, kNone, gap, 0, true});
             u.left.push_back({slash == std::string::npos ? path : path.substr(slash + 1), 0, Font::kBold, kNone, slash == std::string::npos ? gap : 0});
             if (d.loading) u.left.push_back({"loading\xE2\x80\xA6", kInkMuted, 0, kNone, 2});
-            else if (d.read_only) u.left.push_back({"read only", kInkMuted, 0, kNone, 2});
+            else if (d.read_only && !d.term && !d.prof) u.left.push_back({"read only", kInkMuted, 0, kNone, 2});
             else if (ed.modified()) u.left.push_back({font.has(0x25CF) ? "\xE2\x97\x8F" : "*", kInkAccent, 0, kNone, 1});
         }
 
@@ -226,7 +226,8 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
             u.right.push_back({err + count_text(u.errors), u.errors ? kInkDiagnostic : kInkMuted, 0, kProblemsTab, 2, 4});
             u.right.push_back({warn + count_text(u.warnings), u.warnings ? kInkDiagnostic + 1 : kInkMuted, 0, kProblemsTab, 1, 4});
         }
-        {
+        const bool text = !d.term && !d.prof;  // (a terminal's tab and a profile's have no lines and columns of their own)
+        if (text) {
             std::string at = "Ln " + count_text(pane_->cur_line + 1) + ", Col " + count_text(static_cast<u64>(pane_->cur_col) + 1);
             u64 lo = visual ? vlo : std::min(ed.anchor(), ed.cursor()), hi = visual ? vhi : std::max(ed.anchor(), ed.cursor());
             if (hi > lo) {
@@ -244,15 +245,15 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
             }
             u.right.push_back({std::move(at), kInkMuted, 0, kNone, 2, 5});
         }
-        const u32 step = indent_step();
-        u.right.push_back({d.indent_tabs ? std::string("Tabs") : "Spaces: " + count_text(step), kInkMuted, 0, kNone, 2, 2});
-        u.right.push_back({ed.crlf() ? "CRLF" : "LF", kInkMuted, 0, kNone, 2, 2});
+        const u32 step = text ? indent_step() : 0;
+        if (text) u.right.push_back({d.indent_tabs ? std::string("Tabs") : "Spaces: " + count_text(step), kInkMuted, 0, kNone, 2, 2});
+        if (text) u.right.push_back({ed.crlf() ? "CRLF" : "LF", kInkMuted, 0, kNone, 2, 2});
         if (u.lang_doc != d.id || u.lang_path != ed.path) {
             u.lang_doc = d.id;
             u.lang_path = ed.path;
             u.lang = file_language();
         }
-        {
+        if (text) {
             std::string lang = u.lang.empty() ? std::string("Plain text") : language_name(u.lang);
             if (lsp_.attached() && !lsp_.server_name().empty()) lang += " \xC2\xB7 " + lsp_.server_name() + (lsp_.ready() ? "" : "\xE2\x80\xA6");
             u.right.push_back({std::move(lang), kInkMuted, 0, kNone, 2, 3});

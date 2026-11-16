@@ -1007,6 +1007,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     splits_layout(w, h, fd);
     start_layout(fd);
     prof_layout(fd);  // (a profile's tab, over its pane's text area)
+    term_layout(fd);  // (and a terminal's)
     vim_layout(w, h, fd);
     panel_layout(w, std::max(1, h - status_px()), fd);  // (above the status bar)
     status_layout(w, h, fd);
@@ -1266,6 +1267,7 @@ void App::handle(const SDL_Event& e) {
             if (panel_mouse_down(e.button)) break;
             if (start_mouse_down(e.button)) break;
             if (prof_mouse_down(e.button)) break;  // a profile's tab
+            if (term_mouse_down(e.button)) break;  // a terminal's
             if (splits_mouse_down(e.button)) break;  // a divider
             // The split under the mouse gets the click, and with it the keyboard.
             if (Pane* over = pane_at(static_cast<int>(e.button.x * density_), static_cast<int>(e.button.y * density_))) focus_pane(over);
@@ -1277,6 +1279,7 @@ void App::handle(const SDL_Event& e) {
             splits_mouse_up(e.button);  // lets go of whatever was being carried
             panel_mouse_up();
             tabs_mouse_up();
+            term_mouse_up();
             if (e.button.button == SDL_BUTTON_LEFT) vim_mouse();  // a click or a drag in the text, as Vim sees it
             break;
         case SDL_EVENT_WINDOW_MOUSE_LEAVE:
@@ -1286,6 +1289,7 @@ void App::handle(const SDL_Event& e) {
             mouse_x_ = e.motion.x;
             mouse_y_ = e.motion.y;
             if (find_open_ && find_mouse_motion(e.motion)) break;
+            if (term_mouse_motion(e.motion)) break;  // choosing text in a terminal
             hover_update(static_cast<int>(e.motion.x * density_), static_cast<int>(e.motion.y * density_));
             if (!dragging_ && !dragging_thumb_ &&
                 (splits_mouse_motion(e.motion) || tabs_mouse_motion(e.motion) || panel_mouse_motion(e.motion) || start_mouse_motion(e.motion) ||
@@ -1343,6 +1347,10 @@ void App::handle(const SDL_Event& e) {
                 prof_sync();
                 break;
             }
+            if (e.user.code == 14) {  // a terminal's program has written something, or ended
+                term_sync();
+                break;
+            }
             break;
         }
         default:
@@ -1352,6 +1360,7 @@ void App::handle(const SDL_Event& e) {
 
 // Typed text into the document: Vim's, or typed as it is.
 void App::on_text(const char* text) {
+    if (term_text(text)) return;  // (to a terminal in front)
     if (cfg_.modal) {  // text, or commands: Vim knows which
         vim_text(text);
         return;
@@ -1364,8 +1373,15 @@ void App::on_text(const char* text) {
 
 void App::on_key(const SDL_KeyboardEvent& k) {
     script_drop_text_ = false;
+    term_drop_text_ = false;  // (only the text a key itself brings is dropped)
     if (start_key(k)) return;  // the start screen is showing (appstart.cpp)
     if (prof_key(k)) return;   // a profile's tab is in front (appprofile.cpp)
+    if (k.key == SDLK_GRAVE && (k.mod & SDL_KMOD_CTRL) && !(k.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI))) {  // Ctrl+`: a terminal, in the folder being worked in
+        term_open();
+        term_drop_text_ = true;
+        return;
+    }
+    if (term_key(k)) return;   // a terminal's tab is in front (appterm.cpp)
     if (script_keys_ && script_key(k)) return;  // a mapping of a script's has it (applua.cpp)
     const bool shift = k.mod & SDL_KMOD_SHIFT;
     const bool cmd = k.mod & kCmd;
@@ -1509,6 +1525,7 @@ void App::on_wheel(const SDL_MouseWheelEvent& w) {
     if (find_open_ && find_wheel(w)) return;   // the box that finds things is open: its list turns
     if (panel_wheel(w)) return;  // the mouse is over the side panel
     if (prof_wheel(w)) return;   // or over a profile's tab
+    if (term_wheel(w)) return;   // or a terminal's
     Pane* const focused = pane_;
     if (mouse_x_ >= 0)
         if (Pane* over = pane_at(static_cast<int>(mouse_x_ * density_), static_cast<int>(mouse_y_ * density_))) pane_ = over;

@@ -45,6 +45,8 @@ struct Popup {
     // (kCellDecoShift) hold 1 to 7 is that colour of these eight (rgba each;
     // the first is not used). A profile's flame graph is drawn this way.
     const float* tones = nullptr;
+    // Its own ink colours, in place of the theme's (32, rgba): a terminal's.
+    const float* palette = nullptr;
     // Its looks. A box with none of these is drawn as it always was.
     float radius = 0;                     // of its corners
     float shadow = 0;                     // how far its shadow reaches; 0: it casts none

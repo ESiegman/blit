@@ -66,6 +66,7 @@ std::string full_path(const std::string& path);
 struct Profile;      // (profile.hpp)
 struct ProfileFunc;
 struct ProfView;     // a profile's tab (appprofile.cpp)
+struct TermView;     // a terminal's tab (appterm.cpp)
 
 struct Doc {
     Editor ed;
@@ -113,6 +114,8 @@ struct Doc {
     u64 goto_line = ~0ull;  // and where the cursor goes when it is (a line from 0, and a byte in it)
     u32 goto_col = 0;
     std::shared_ptr<ProfView> prof;  // a profile's tab: drawn over the text area (appprofile.cpp)
+    std::shared_ptr<TermView> term;  // a terminal's tab: drawn over it too (appterm.cpp)
+    bool term_closed = false;        // (its program has ended, and that has been seen to)
     std::unique_ptr<Highlights> marks;
 
     // (Git's worker may be reading the text: it lets go first.)
@@ -395,6 +398,23 @@ private:
     bool prof_busy() const;
     std::string prof_dump();
     void panel_show_profile();
+
+    // Terminals (appterm.cpp): a tab running a shell, here or on another machine.
+    void term_open(const std::string& dir = {});
+    void term_sync();
+    void term_layout(FrameDesc& fd);
+    void term_copy(TermView& v);
+    void term_paste(TermView& v);
+    bool term_key(const SDL_KeyboardEvent& k);
+    bool term_text(const char* text);
+    bool term_hit(int px, int py, Pane** pane, u64* line, u32* col);
+    bool term_mouse_down(const SDL_MouseButtonEvent& b);
+    bool term_mouse_motion(const SDL_MouseMotionEvent& m);
+    void term_mouse_up();
+    bool term_wheel(const SDL_MouseWheelEvent& w);
+    std::string term_dump();
+    bool term_wait(const std::string& text);
+    void term_end();
     void lsp_forget_failed(const std::string& suffix);  // (applsp.cpp) servers that failed there may be tried again
 
     // The status bar along the bottom (appstatus.cpp).
@@ -594,6 +614,7 @@ private:
     std::shared_ptr<StartUi> start_;
     std::shared_ptr<ProfUi> profui_;  // (before remote_: a recording on another machine ends when its connection does)
     u64 prof_gen_ = 1;                // counts up whenever what the Profile tab shows may have changed
+    bool term_drop_text_ = false;     // the text a key sent to a terminal as itself also brings is not typed again
     std::shared_ptr<RemoteUi> remote_;
     u64 remote_gen_ = 0;      // counts up whenever a connection or a file on its way has news
     u64 git_gen_ = 1;         // counts up whenever what the Git tab shows may have changed

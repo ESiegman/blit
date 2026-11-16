@@ -399,6 +399,7 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
             std::memcpy(pu.bg, p.bg ? p.bg : fd.theme.popup_bg, sizeof pu.bg);
             if (p.sel) std::memcpy(pu.sel, p.sel, sizeof pu.sel);
             if (p.tones) std::memcpy(pu.tones, p.tones, sizeof pu.tones);
+            if (p.palette) std::memcpy(pu.palette, p.palette, sizeof pu.palette);
             std::memcpy(pu.cur_color, fd.theme.hover, sizeof pu.cur_color);  // (a popup has no cursor: the slot carries the colour of cells under the mouse)
             pu.radii[0] = std::min(p.radius, static_cast<float>(std::min(p.w, p.h)) * 0.5f);
             pu.radii[1] = p.pill;

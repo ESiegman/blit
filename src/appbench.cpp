@@ -773,6 +773,16 @@ void App::run_script(const char* script) {
             prof_sync();
         } else if (verb == "profdump") {
             std::fprintf(stderr, "%s\n", prof_dump().c_str());
+        } else if (verb == "term") {  // a terminal (term:folder, or in the folder being worked in)
+            term_open(arg);
+        } else if (verb == "termwait") {  // the terminal in front shows this text (10 s at most)
+            if (!term_wait(arg)) std::fprintf(stderr, "termwait: no \"%s\" on the screen\n", arg.c_str());
+            term_sync();
+        } else if (verb == "termend") {  // the terminal's program has ended (10 s at most)
+            term_end();
+        } else if (verb == "termdump") {
+            term_sync();
+            std::fprintf(stderr, "%s\n", term_dump().c_str());
         } else if (verb == "remotedump") {  // each connection, and how it is
             std::string out;
             for (const std::shared_ptr<Remote>& r : Remote::all()) {

@@ -886,7 +886,8 @@ bool Remote::grep(u32 walk_id, const std::vector<u32>* only, const std::string& 
 
 // ---------------------------------------------------------------- programs
 
-bool Remote::spawn(const std::vector<std::string>& argv, const std::string& cwd, const std::vector<std::string>& env, RemoteProc* out, std::string* err) {
+bool Remote::spawn(const std::vector<std::string>& argv, const std::string& cwd, const std::vector<std::string>& env, RemoteProc* out, std::string* err,
+                   unsigned rows, unsigned cols) {
     Impl& m = *impl_;
     int in[2], o[2], e[2];
     if (::pipe(in) || ::pipe(o) || ::pipe(e)) {
@@ -903,12 +904,14 @@ bool Remote::spawn(const std::vector<std::string>& argv, const std::string& cwd,
         m.procs[id] = std::move(p);
     }
     Writer w;
-    w.u32(id).str(cwd).u32(static_cast<u32>(argv.size()));
+    w.u32(id).str(cwd);
+    if (rows) w.u32(rows).u32(cols);
+    w.u32(static_cast<u32>(argv.size()));
     for (const std::string& a : argv) w.str(a);
     w.u32(static_cast<u32>(env.size()));
     for (const std::string& v : env) w.str(v);
     std::string a;
-    bool ok = m.call(kSpawn, w.b, &a);
+    bool ok = m.call(rows ? kSpawnPty : kSpawn, w.b, &a);
     std::string why = std::format("no connection to {}", host_);
     if (ok) {
         Reader r(a.data(), a.size());
@@ -989,6 +992,12 @@ int Remote::wait(u32 id, int ms) {
     if (p->pump_in.joinable()) p->pump_in.join();
     ::close(p->in_r);
     return p->status;
+}
+
+void Remote::resize(u32 proc, unsigned rows, unsigned cols) {
+    Writer w;
+    w.u32(proc).u32(rows).u32(cols);
+    impl_->send(kResize, w.b);
 }
 
 void Remote::kill(u32 proc, int sig) {

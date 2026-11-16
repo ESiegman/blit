@@ -17,7 +17,7 @@ namespace blit_wire {
 
 // Bumped when a message changes: blit and an agent of another version do
 // not talk (an agent is kept per version anyway, see remote.cpp).
-constexpr uint32_t kVersion = 1;
+constexpr uint32_t kVersion = 2;
 
 enum Op : uint8_t {
     // Asked by blit, answered with kReply and the same number.
@@ -38,6 +38,9 @@ enum Op : uint8_t {
     kStdin,      // u32 process, bytes (none: its input is closed) -> nothing
     kKill,       // u32 process, i32 signal -> nothing
     kWhich,      // str program -> str path (empty: not found on the agent's PATH)
+    kSpawnPty,   // u32 process, str folder, u32 rows, u32 columns, u32 argc, * str, u32 envc, * str -> u8 ok, str error
+                 //   (on a pseudo-terminal: its output comes as stream 1, its input goes in with kStdin)
+    kResize,     // u32 process, u32 rows, u32 columns -> nothing (its pseudo-terminal's size)
     // Sent by the agent.
     kReply = 100,  // the answer to a request
     kOutput,       // u32 process, u8 stream (1 output, 2 errors), bytes
