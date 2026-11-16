@@ -336,6 +336,7 @@ void App::reload_changed() {
         }
     }
     picture_recheck();  // (and pictures, for their tabs and the Markdown preview)
+    pdf_recheck();      // (and PDFs)
     pick_theme();
     dirty_ = true;
 }

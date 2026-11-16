@@ -1237,6 +1237,29 @@ when blit comes back to the front. A picture larger than 4096 pixels on a
 side is read at 4096 (the row at the bottom says its own size), and one
 not drawn for a minute is let go.
 
+## PDFs
+
+A PDF opens in a tab of its own too (here or on another machine): its
+pages one under another, fitted to the width of the widest, on the
+theme's background. The row at the bottom says which page is in the
+middle of the view, of how many, and the zoom.
+
+| | |
+|---|---|
+| Scroll | the wheel or touchpad, `j` `k` and the arrows, Space and `b` (or Page Down and Page Up) a screen, `g` / `G` (or Home / End) the start and the end |
+| The next / previous page | `n` / `p` |
+| Zoom in / out | `+` / `-` (or Cmd+= / Cmd+-), a pinch, Cmd+wheel (about the mouse) |
+| Fit the width / the whole page / its own size | `0` (or Cmd+0) / `9` / `1` |
+| Move it | drag it; `h` `l` and Left / Right sideways when it is wider than the tab |
+
+A thread of its own reads the document and draws the pages as they come
+into view, at the size they are shown (macOS's own PDF drawing): a page
+not drawn yet is white, and one drawn at another zoom stands in, stretched,
+until it is drawn again. A page is drawn whole up to 4096 pixels on a side;
+zoomed in further, the part of it on show is drawn again, sharp, over it.
+Pages more than three away from the view are let go. A PDF whose file
+changes is read again (keeping the page) when blit comes back to the front.
+
 ## How it is fast
 
 **Text is never copied.** The file is memory mapped and the document is a
@@ -1434,7 +1457,8 @@ src/markdown.*     Markdown parsed and laid out as rows of styled cells (blocks,
 src/mermaid.*      Mermaid diagrams drawn in box-drawing characters: flowcharts and state diagrams laid out in ranks, sequence diagrams, pies
 src/appmarkdown.cpp the Markdown preview's tab: drawn again as the file changes, following its cursor, links, pictures
 src/appimage.cpp   pictures: read on threads of their own and put on the GPU; an image file's tab (zoom, move)
-src/picture.h      image files read into pixels (C); src/picture_mac.m does it with macOS's ImageIO
+src/picture.h      image files and PDF pages read into pixels (C); src/picture_mac.m does it with macOS's ImageIO and CoreGraphics
+src/apppdf.cpp     a PDF's tab: pages drawn on a thread of their own as they come into view, zoomed, scrolled
 src/agent/         the agent: what it and blit say to one another, the program, its build for Linux (Docker), the builds
 src/keymap.*    key mappings: Vim's key notation, the table of mappings, what keys typed so far add up to
 src/job.*       programs run in the background for scripts, on threads of their own
@@ -1522,7 +1546,7 @@ tests/keys.sh build-debug/blit     # the command search, the new keys, and every
 tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger)
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running) and new projects (a stand-in vcpkg)
 tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md against what they should draw, Mermaid, typing, Cmd+Shift+V
-tests/images.sh build-debug/blit   # pictures (tests/images): the tab, its pixels, zoom and moving, too large, broken, changed, over ssh, in the preview
+tests/images.sh build-debug/blit   # pictures and PDFs (tests/images): the tabs, their pixels, zoom, pages, too large, broken, changed, over ssh, in the preview
 ```
 
 The tests never connect to a real host: `$BLIT_SSH` names the program used
@@ -1588,7 +1612,9 @@ does not finish and takes all the memory the machine has.
   move with the lines when the file is edited while debugging. With gdb
   the program's output reaches the Debug tab when it flushes it.
 - Pictures: macOS only so far (no reader elsewhere yet); the first frame
-  of an animated GIF; no SVG or PDF; none fetched from the web.
+  of an animated GIF; no SVG; none fetched from the web.
+- PDFs: macOS only so far; for reading: no text to choose, copy or search
+  yet, links in them are not followed, no outline, and no password.
 - Terminal: no mouse reporting to programs (a click in htop does nothing),
   no underline or strikethrough drawn, no images (sixel, kitty), no
   ligatures. A screen with more than 32 text colours or 6 background

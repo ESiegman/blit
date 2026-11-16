@@ -71,6 +71,7 @@ struct ProfView;     // a profile's tab (appprofile.cpp)
 struct TermView;     // a terminal's tab (appterm.cpp)
 struct MdView;       // a Markdown preview's tab (appmarkdown.cpp)
 struct ImageView;    // an image file's tab (appimage.cpp)
+struct PdfView;      // a PDF's tab (apppdf.cpp)
 
 // A picture read from its file and put on the GPU (appimage.cpp).
 struct PictureInfo {
@@ -136,6 +137,7 @@ struct Doc {
     std::shared_ptr<TermView> term;  // a terminal's tab: drawn over it too (appterm.cpp)
     std::shared_ptr<MdView> md;      // a Markdown preview's tab: drawn over it too (appmarkdown.cpp)
     std::shared_ptr<ImageView> image;  // an image file's tab: drawn over it too (appimage.cpp)
+    std::shared_ptr<PdfView> pdf;      // a PDF's tab: drawn over it too (apppdf.cpp)
     bool term_closed = false;        // (its program has ended, and that has been seen to)
     std::unique_ptr<Highlights> marks;
 
@@ -465,6 +467,25 @@ private:
     void image_mouse_up();
     std::string image_dump();
 
+    // PDFs (apppdf.cpp): in a tab of their own, pages drawn on a thread of their own.
+    struct Pdfs;
+    static bool is_pdf_path(std::string_view path);
+    bool pdf_open(const std::string& full);
+    void pdf_sync();
+    void pdf_recheck();
+    void pdf_layout(FrameDesc& fd);
+    bool pdf_hit(int px, int py, Pane** pane);
+    bool pdf_key(const SDL_KeyboardEvent& k);
+    bool pdf_wheel(const SDL_MouseWheelEvent& w);
+    bool pdf_pinch(float by);
+    bool pdf_mouse_down(const SDL_MouseButtonEvent& b);
+    bool pdf_mouse_motion(const SDL_MouseMotionEvent& m);
+    void pdf_mouse_up();
+    bool pdfs_busy() const;
+    void pdf_wait();
+    std::string pdf_dump();
+    std::string pdf_page_rect(int page);
+
     // Terminals (appterm.cpp): a tab running a shell, here or on another machine.
     // A terminal tab in dir (the working folder when none): a login shell, or
     // `command` run by sh, whose tab stays when it ends and says how (and
@@ -747,6 +768,7 @@ private:
     Renderer gpu_;
     std::shared_ptr<Pictures> pictures_;  // (after gpu_: its reader stops first)
     u64 pictures_gen_ = 0;  // counts up whenever a picture has been read (or could not be)
+    std::shared_ptr<Pdfs> pdfs_;  // (after gpu_ too)
     std::unique_ptr<Font> font_;
     // The splits of the window, how they are arranged, and the one with
     // the keyboard. There is always at least one, and every one has at

@@ -808,6 +808,12 @@ void App::run_script(const char* script) {
             picture_wait();
         } else if (verb == "imagedump") {  // the image tab in front: what it shows, and how
             std::fprintf(stderr, "%s\n", image_dump().c_str());
+        } else if (verb == "pdfwait") {  // the PDFs read, and their pages on show drawn (20 s at most)
+            pdf_wait();
+        } else if (verb == "pdfdump") {  // the PDF tab in front: what it shows, and how
+            std::fprintf(stderr, "%s\n", pdf_dump().c_str());
+        } else if (verb == "pdfpage") {  // pdfpage:N, where its page N is drawn
+            std::fprintf(stderr, "page %s at %s\n", arg.c_str(), pdf_page_rect(std::atoi(arg.c_str())).c_str());
         } else if (verb == "pixel") {  // pixel:X,Y, the colour of the last frame there (pixels, not points)
             int x = 0, y = 0, w = 0, h = 0;
             std::sscanf(arg.c_str(), "%d,%d", &x, &y);

@@ -203,8 +203,8 @@ bool App::init(std::string* err) {
     debug_create();
     build_create();
     commands_create();
-    // (A file on another machine, or a picture, is opened once the window is up.)
-    const bool later_file = opt_.file && (is_remote(opt_.file) || is_picture_path(opt_.file));
+    // (A file on another machine, a picture or a PDF is opened once the window is up.)
+    const bool later_file = opt_.file && (is_remote(opt_.file) || is_picture_path(opt_.file) || is_pdf_path(opt_.file));
     if (opt_.file && !later_file)
         loader = std::jthread([&] {
             file_ok = pane_->doc->ed.open(opt_.file, &file_err);
@@ -613,6 +613,7 @@ bool App::open_path(const char* p) {
         return true;
     }
     if (is_picture_path(full)) return image_open(full);  // a picture: in a tab of its own (appimage.cpp)
+    if (is_pdf_path(full)) return pdf_open(full);        // a PDF too (apppdf.cpp)
     auto fresh = std::make_unique<Doc>();
     fresh->ed.tab_width = cfg_.tab_width;
     std::string err;
@@ -1019,6 +1020,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     term_layout(fd);  // (and a terminal's)
     md_layout(fd);    // (and a Markdown preview's)
     image_layout(fd);  // (and an image file's)
+    pdf_layout(fd);    // (and a PDF's)
     build_layout(w, fd);  // the Run button, over the top right tab bar's end
     vim_layout(w, h, fd);
     panel_layout(w, std::max(1, h - status_px()), fd);  // (above the status bar)
@@ -1274,7 +1276,7 @@ void App::handle(const SDL_Event& e) {
             on_wheel(e.wheel);
             break;
         case SDL_EVENT_PINCH_UPDATE:
-            image_pinch(e.pinch.scale);  // (a picture is zoomed)
+            if (!image_pinch(e.pinch.scale)) pdf_pinch(e.pinch.scale);  // (a picture or a PDF is zoomed)
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             mouse_x_ = e.button.x;
@@ -1287,6 +1289,7 @@ void App::handle(const SDL_Event& e) {
             if (prof_mouse_down(e.button)) break;  // a profile's tab
             if (md_mouse_down(e.button)) break;    // a Markdown preview
             if (image_mouse_down(e.button)) break;  // an image file's tab
+            if (pdf_mouse_down(e.button)) break;    // a PDF's
             if (term_mouse_down(e.button)) break;  // a terminal's
             if (splits_mouse_down(e.button)) break;  // a divider
             // The split under the mouse gets the click, and with it the keyboard.
@@ -1301,6 +1304,7 @@ void App::handle(const SDL_Event& e) {
             tabs_mouse_up();
             term_mouse_up();
             image_mouse_up();
+            pdf_mouse_up();
             if (e.button.button == SDL_BUTTON_LEFT) vim_mouse();  // a click or a drag in the text, as Vim sees it
             break;
         case SDL_EVENT_WINDOW_MOUSE_LEAVE:
@@ -1311,7 +1315,7 @@ void App::handle(const SDL_Event& e) {
             mouse_y_ = e.motion.y;
             if (find_open_ && find_mouse_motion(e.motion)) break;
             if (term_mouse_motion(e.motion)) break;  // choosing text in a terminal
-            if (image_mouse_motion(e.motion)) break;  // a picture being dragged
+            if (image_mouse_motion(e.motion) || pdf_mouse_motion(e.motion)) break;  // a picture or a PDF's pages being dragged
             hover_update(static_cast<int>(e.motion.x * density_), static_cast<int>(e.motion.y * density_));
             if (!dragging_ && !dragging_thumb_ &&
                 (splits_mouse_motion(e.motion) || tabs_mouse_motion(e.motion) || panel_mouse_motion(e.motion) || start_mouse_motion(e.motion) ||
@@ -1385,6 +1389,10 @@ void App::handle(const SDL_Event& e) {
                 picture_sync();
                 break;
             }
+            if (e.user.code == 18) {  // a PDF has been read, or a page of one drawn
+                pdf_sync();
+                break;
+            }
             break;
         }
         default:
@@ -1412,6 +1420,7 @@ void App::on_key(const SDL_KeyboardEvent& k) {
     if (prof_key(k)) return;   // a profile's tab is in front (appprofile.cpp)
     if (md_key(k)) return;     // a Markdown preview's (appmarkdown.cpp)
     if (image_key(k)) return;  // an image file's (appimage.cpp)
+    if (pdf_key(k)) return;    // a PDF's (apppdf.cpp)
     if (k.key == SDLK_GRAVE && (k.mod & SDL_KMOD_CTRL) && !(k.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI))) {  // Ctrl+`: a terminal, in the folder being worked in
         term_open();
         term_drop_text_ = true;
@@ -1564,6 +1573,7 @@ void App::on_wheel(const SDL_MouseWheelEvent& w) {
     if (prof_wheel(w)) return;   // or over a profile's tab
     if (md_wheel(w)) return;     // or a Markdown preview
     if (image_wheel(w)) return;  // or an image file's tab
+    if (pdf_wheel(w)) return;    // or a PDF's
     if (term_wheel(w)) return;   // or a terminal's
     Pane* const focused = pane_;
     if (mouse_x_ >= 0)

@@ -203,7 +203,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
             if (slash != std::string::npos) u.left.push_back({path.substr(0, slash + 1), kInkMuted, 0, kNone, gap, 0, true});
             u.left.push_back({slash == std::string::npos ? path : path.substr(slash + 1), 0, Font::kBold, kNone, slash == std::string::npos ? gap : 0});
             if (d.loading) u.left.push_back({"loading\xE2\x80\xA6", kInkMuted, 0, kNone, 2});
-            else if (d.read_only && !d.term && !d.prof && !d.image) u.left.push_back({"read only", kInkMuted, 0, kNone, 2});
+            else if (d.read_only && !d.term && !d.prof && !d.image && !d.pdf) u.left.push_back({"read only", kInkMuted, 0, kNone, 2});
             else if (ed.modified()) u.left.push_back({font.has(0x25CF) ? "\xE2\x97\x8F" : "*", kInkAccent, 0, kNone, 1});
         }
 
@@ -223,7 +223,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
             u.right.push_back({err + count_text(u.errors), u.errors ? kInkDiagnostic : kInkMuted, 0, kProblemsTab, 2, 4});
             u.right.push_back({warn + count_text(u.warnings), u.warnings ? kInkDiagnostic + 1 : kInkMuted, 0, kProblemsTab, 1, 4});
         }
-        const bool text = !d.term && !d.prof && !d.image;  // (a terminal's tab, a profile's and a picture's have no lines and columns of their own)
+        const bool text = !d.term && !d.prof && !d.image && !d.pdf;  // (a terminal's tab, a profile's, a picture's and a PDF's have no lines and columns of their own)
         if (text) {
             std::string at = "Ln " + count_text(pane_->cur_line + 1) + ", Col " + count_text(static_cast<u64>(pane_->cur_col) + 1);
             u64 lo = visual ? vlo : std::min(ed.anchor(), ed.cursor()), hi = visual ? vhi : std::max(ed.anchor(), ed.cursor());

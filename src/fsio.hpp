@@ -2,6 +2,7 @@
 // Files and folders, here or on another machine (ssh://host/path, through
 // blit's agent): what the build systems are found from and new projects
 // are written with.
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -21,6 +22,11 @@ std::vector<FsEntry> fs_list(const std::string& dir);
 int fs_kind(const std::string& path);
 // The file's text (at most `most` bytes); false if it cannot be read.
 bool fs_read(const std::string& path, std::string* text, u64 most = 4u << 20);
+// A whole file, as large as `most` bytes (a picture, a PDF), here or on
+// another machine, whose connection is waited for a while (it may be coming
+// up; not past `stop`, so that quitting does not wait). False, and why, if
+// it cannot be read or is larger.
+bool fs_read_whole(const std::string& path, std::string* bytes, std::string* why, u64 most, std::stop_token stop);
 bool fs_write(const std::string& path, std::string_view text, std::string* err);
 // The folder and those above it that are not there yet.
 bool fs_mkdirs(const std::string& path, std::string* err);

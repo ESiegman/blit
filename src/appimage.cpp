@@ -36,6 +36,14 @@ extern "C" int blit_picture_read(const void*, size_t, int, BlitPicture* out, cha
 extern "C" void blit_picture_free(BlitPicture* p) {
     if (p) std::free(p->rgba), p->rgba = nullptr;
 }
+extern "C" BlitPdf* blit_pdf_open(const void*, size_t, char* err, size_t err_size) {
+    if (err && err_size) std::snprintf(err, err_size, "PDFs are not read on this system yet");
+    return nullptr;
+}
+extern "C" void blit_pdf_close(BlitPdf*) {}
+extern "C" int blit_pdf_pages(const BlitPdf*) { return 0; }
+extern "C" void blit_pdf_page_size(const BlitPdf*, int, double* w, double* h) { *w = 612, *h = 792; }
+extern "C" int blit_pdf_render(const BlitPdf*, int, double, int, int, int, int, BlitPicture*) { return 0; }
 #endif
 
 namespace blit {
@@ -64,29 +72,6 @@ std::string size_text(u64 bytes) {
     else if (bytes < 1024 * 1024) std::snprintf(b, sizeof b, "%.1f KB", static_cast<double>(bytes) / 1024);
     else std::snprintf(b, sizeof b, "%.1f MB", static_cast<double>(bytes) / (1024 * 1024));
     return b;
-}
-
-// The file's bytes, here or on another machine (the connection to it
-// waited for a while: it may be coming up; not past `st`, so that quitting
-// does not wait). False, and why, if not.
-bool read_file(const std::string& path, std::string* bytes, std::string* why, std::stop_token st) {
-    if (is_remote(path)) {
-        std::string there;
-        std::shared_ptr<Remote> r;
-        for (int waited = 0; !r && waited < 30000 && !st.stop_requested(); waited += 200) r = remote_for(path, &there, 200);
-        if (!r) return *why = remote_error(path), false;
-        switch (r->read(there, kMostBytes, bytes)) {
-            case 0: return true;
-            case 1: *why = "there is no such file"; break;
-            case 2: *why = "it is not a file"; break;
-            case 3: *why = "the file is too big (over " + size_text(kMostBytes) + ")"; break;
-            default: *why = remote_error(path); break;
-        }
-        return false;
-    }
-    if (!fs_read(path, bytes, kMostBytes)) return *why = fs_kind(path) == 0 ? "there is no such file" : "the file could not be read", false;
-    if (bytes->size() >= kMostBytes) return *why = "the file is too big (over " + size_text(kMostBytes) + ")", false;
-    return true;
 }
 
 std::string leaf_of(const std::string& path) {
@@ -145,7 +130,7 @@ struct App::Pictures {
             d.path = path;
             d.stamp = stamp_of(path);
             std::string bytes;
-            if (read_file(path, &bytes, &d.error, st)) {
+            if (fs_read_whole(path, &bytes, &d.error, kMostBytes, st)) {
                 char why[160] = "";
                 if (!blit_picture_read(bytes.data(), bytes.size(), kMostSide, &d.pic, why, sizeof why)) d.error = why;
                 for (size_t k = 3; d.pic.rgba && k < static_cast<size_t>(d.pic.w) * static_cast<size_t>(d.pic.h) * 4 && !d.clear; k += 4) d.clear = d.pic.rgba[k] != 255;
@@ -489,9 +474,10 @@ bool App::image_wheel(const SDL_MouseWheelEvent& w) {
     if (SDL_GetModState() & (SDL_KMOD_GUI | SDL_KMOD_CTRL)) {
         zoom_at(v, *p, std::pow(1.1, w.y), mx, my);
     } else {
+        // (As the text scrolls: a touchpad's fractions 10 points a unit, a wheel's notches some lines.)
         const bool precise = w.y != std::floor(w.y) || w.x != std::floor(w.x);
-        const double step = precise ? 1.0 : static_cast<double>(font_->cell_h()) * 3;
-        v.cx -= w.x * step / (p->full_w * v.scale);
+        const double step = precise ? 10.0 * scale_ : cfg_.scroll_lines * font_->cell_h();
+        v.cx += w.x * step / (p->full_w * v.scale);
         v.cy -= w.y * step / (p->full_h * v.scale);
         keep_in(v, *p, v.scale);
     }

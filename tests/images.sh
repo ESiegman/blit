@@ -4,7 +4,11 @@
 # a pinch, moved by keys and by dragging), a very large one read smaller,
 # one that is not a picture, one whose file changes, one on another machine
 # (tests/fake-ssh.sh stands in for ssh), and pictures in the Markdown
-# preview (tests/images/pics.md), one of which a click opens.
+# preview (tests/images/pics.md), one of which a click opens. And PDFs
+# (tests/images/pages.pdf: a red and blue page, a green one, and one turned
+# on its side): pages drawn where they should be, the pages and zoom keys,
+# zoomed in far (the part on show drawn again), one that is not a PDF, and
+# one on another machine.
 #
 #   tests/images.sh path/to/blit            run the cases
 #   tests/images.sh path/to/blit --print    show what each case gives
@@ -87,12 +91,44 @@ check "pictures in the Markdown preview" "Pictures ;; ━━━━━━━━�
 run 1400x1000 "frame;mdpreview;frame;imagewait;frame;click:400,95;frame;imagewait;frame;dump;imagedump" "$pics/pics.md"
 check "a picture in the preview, clicked: its file opened" "H([pics.md*] | >[Preview: pics.md quad.png*])0.50 ;; quad.png: ready PNG 64x48 read 64x48 clear zoom 100% middle 0.50,0.50"
 
+# A PDF: its pages, fitted to the width of the widest, the first one's colours.
+pdf="$pics/pages.pdf"
+run 1200x900 "frame;pdfwait;frame;pdfdump" "$pdf"
+got=$(printf '%s' "$got" | sed -e 's/, drawn.*//')
+check "a PDF, in its tab" "pages.pdf: ready, 3 pages, page 1, zoom 74%"
+WHERE=1 run 1200x900 "frame;pdfwait;frame;pdfpage:1" "$pdf"
+set -- $(printf '%s\n' "$got" | sed -e 's/.* at //' -e 's/,/ /g')
+run 1200x900 "frame;pdfwait;frame;pixel:$(($1 + 40)),$(($2 + 40));pixel:$(($1 + 40)),$((($2 + $4) / 2 + 40))" "$pdf"
+got=$(printf '%s' "$got" | sed -e 's/pixel [0-9,]*: //g')
+check "its first page drawn: red at the top, blue at the bottom" "255 0 0 ;; 0 0 255"
+
+# n, n: the third page, turned on its side (what was its bottom left is at the top left).
+WHERE=1 run 1200x900 "frame;pdfwait;key:n;key:n;frame;pdfwait;pdfpage:3" "$pdf"
+set -- $(printf '%s\n' "$got" | sed -e 's/.* at //' -e 's/,/ /g')
+run 1200x900 "frame;pdfwait;key:n;key:n;frame;pdfwait;frame;pdfdump;pixel:$(($1 + 20)),$(($2 + 20));pixel:$(($3 - 20)),$(($2 + 20))" "$pdf"
+got=$(printf '%s' "$got" | sed -e 's/, top [0-9]*//' -e 's/, drawn [0-9+,]*//' -e 's/pixel [0-9,]*: //g')
+check "the next page twice: the third, turned" "pages.pdf: ready, 3 pages, page 3, zoom 74% ;; 255 0 0 ;; 255 255 255"
+
+# Zoomed in far: the part on show drawn again (the + after the page); 0 fits it again; G the end.
+run 1200x900 "frame;pdfwait;key:=;key:=;key:=;key:=;key:=;key:=;key:=;key:=;frame;pdfwait;pdfdump;key:0;frame;pdfwait;pdfdump;key:shift+g;frame;pdfwait;pdfdump" "$pdf"
+got=$(printf '%s' "$got" | sed -e 's/, top [0-9]*//g' -e 's/, drawn \([0-9]*\)+[0-9+,]*/, drawn \1+/' -e 's/, drawn [0-9,]*\([ ;]\)/\1/g' -e 's/, drawn [0-9,]*$//')
+check "zoomed in far, fitted again, the end" "pages.pdf: ready, 3 pages, page 1, zoom 440%, drawn 1+ ;; pages.pdf: ready, 3 pages, page 1, zoom 74% ;; pages.pdf: ready, 3 pages, page 3, zoom 74%"
+
+# Not a PDF.
+printf 'not a PDF\n' >"$dir/bad.pdf"
+run 800x600 "frame;pdfwait;frame;pdfdump" "$dir/bad.pdf"
+check "a file that is not a PDF" "bad.pdf: failed (not a PDF this system can read)"
+
 # On another machine: read there, by blit's agent.
 T="$dir/there"
 mkdir -p "$T/work"
-cp "$pics/quad.png" "$T/work/"
-BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T" run 800x600 "remotewait;frame;imagewait;frame;imagedump" "ssh://box$T/work/quad.png"
+cp "$pics/quad.png" "$pics/pages.pdf" "$T/work/"
+export BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T"
+run 800x600 "remotewait;frame;imagewait;frame;imagedump" "ssh://box$T/work/quad.png"
 check "a picture on another machine" "quad.png: ready PNG 64x48 read 64x48 clear zoom 100% middle 0.50,0.50"
+run 1200x900 "remotewait;frame;pdfwait;frame;pdfdump" "ssh://box$T/work/pages.pdf"
+got=$(printf '%s' "$got" | sed -e 's/, drawn.*//')
+check "a PDF on another machine" "pages.pdf: ready, 3 pages, page 1, zoom 74%"
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "images ok"
 exit $failed
