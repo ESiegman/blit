@@ -323,6 +323,8 @@ void App::Find::go(App& a, u64 line, u64 col) {
     a.dirty_ = true;
 }
 
+void App::show_place(u64 line, u64 col) { Find::go(*this, line, col); }
+
 // Opens a file in the split to the right of the one with the keyboard (a
 // new one if there is none there), which gets the keyboard. A file shows in
 // one place: one open elsewhere moves there.

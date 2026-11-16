@@ -1947,6 +1947,54 @@ document's syntax worker is joined and its parser, tree and query freed on
 the main thread). Once per switch, and under a frame at 120 Hz; moving the
 freeing to a thread would touch every way a tab closes, so it was not done
 here.
+### Round 31: build problems
+
+A build's output feeds the Problems tab (`src/buildscan.*`): GCC's,
+Clang's, CMake's, make's and Python's problems are read from the Run
+button's terminal as they come, on the thread that already reads it, and
+handed to the main thread with the screen's own wake-up; F8 goes through
+them, the status bar counts them, the Run button says how many, and
+Cmd+click opens a `path:line` in any terminal. Nothing is parsed per frame:
+the main thread takes a batch when one comes (each merged in after the
+others of its file) and the panel, the status bar and the Run button
+rebuild their cells only when the count of changes (`build_prob_gen_`)
+moves.
+
+What the reading thread does with each 64 KB (`blit_bench run FILE term`:
+a 200 by 50 screen; a 32 MB build log made up in the bench, GCC's coloured
+errors with their source lines, Ninja's progress written over itself, make
+going into folders, CMake's and Python's; two runs):
+
+| | The screen alone | The screen and the scan | The scan alone |
+|---|---:|---:|---:|
+| `code-100m.txt` | 69.5, 69.3 MB/s | 59.3, 58.1 MB/s | 346, 341 MB/s |
+| The build log (5,000 problems kept: the most a run keeps) | 146, 148 MB/s | 121, 119 MB/s | 740, 735 MB/s |
+
+Instruments' Time Profiler on the same (`code-1m.txt`): the screen 80% of
+the time, the scan 15% (7% its walk over the bytes, 4% the lines). A
+build that prints 10 MB costs the scan 15 to 30 ms on a thread nobody waits
+for.
+
+Then the build before (`main` at 88c9ca6, built from a clean copy) against
+this one, turn about, offscreen at 2560x1600. The machine was busy with
+other builds (load average 8 to 15), so the frame rates are not this
+machine's quiet ones:
+
+| | Before | After |
+|---|---:|---:|
+| A 32 MB build log through the Run button's terminal, start to end, median of 8 | 0.564 s (0.697 in a first sitting) | 0.550 s (0.684) |
+| The screen alone (`Term`, which now marks rows a line wrapped from), median of 6: code / the build log | 69.2 / 182 MB/s | 69.5 / 190 MB/s |
+| Typing: the frame's layout, p50, median of 6 | 2.15 µs | 2.00 µs |
+| Scrolling with the tab bar, line numbers and indent lines: layout, p50 | 1.31 µs | 1.27 µs |
+| … frames a second (GPU-bound, and loaded) | 9,611 | 10,728 |
+
+Nothing measurable. A first version read the build's counts for the status
+bar from behind the build's pointer (`buildui_`), which the status bar does
+at every key; that run put typing's layout 0.2 to 0.3 µs above the build
+before, so the counts are `App` members now (Round 17's lesson), and the
+difference went. Under this load that is a lead, not a finding. The Run
+button's cells, made every frame before, are now made only when what it
+shows changes.
 
 ### Tried and dropped
 

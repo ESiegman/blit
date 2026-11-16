@@ -97,6 +97,7 @@ and everything in it that has Cmd in it (Ctrl elsewhere) works in every mode.
 | Go to file / Search in files | Cmd+P / Cmd+Shift+F | Ctrl+P / Ctrl+Shift+F |
 | Find in this file; the next / previous match | Cmd+F; Cmd+G / Cmd+Shift+G | Ctrl+F; F3 / Shift+F3 |
 | The next / previous hit of Search in files | F4 / Shift+F4 | F4 / Shift+F4 |
+| The next / previous problem: the last build's, across files (else the open file's) | F8 / Shift+F8 | F8 / Shift+F8 |
 | New file / close tab | Cmd+N (or Cmd+T) / Cmd+W | Ctrl+N (or Ctrl+T) / Ctrl+W |
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab, or Cmd+Shift+] / [ | Ctrl+Tab / Ctrl+Shift+Tab, or Ctrl+PageDown / PageUp |
 | Tab 1 to 8, last tab | Cmd+1 ... Cmd+8, Cmd+9 | Ctrl+1 ... Ctrl+8, Ctrl+9 |
@@ -330,8 +331,9 @@ lines added, changed and taken out since the last commit (`+3 ~4 −1`, as
 the marks beside the line numbers count them, saved or not), how many files
 differ from the last commit (saved ones: what git sees), then the file's
 path in the repository, with a dot while it has unsaved changes. On its
-right: what a script put there (`blit.ui.status`), the language server's
-errors and warnings, the cursor's line and column (and what is selected:
+right: what a script put there (`blit.ui.status`), the errors and warnings
+(the language server's in the open file and the last build's in all of
+them), the cursor's line and column (and what is selected:
 characters, or lines), the indentation, the line endings, and the language
 with its server. A click on the repository part opens the side panel's Git
 tab, one on the problems its Problems tab. When the window is narrow a
@@ -878,7 +880,15 @@ Deleting moves to the system's Trash (macOS and Linux), so it can be undone
 from there. `.git` and `.DS_Store` are not shown.
 
 **Problems** lists what the language server reports for the open file;
-click one to go to it.
+click one to go to it. While a build runs (see [Building](#building)) the
+problems its output reports come in at the top, in a **Build** section:
+each file with its icon and folder, and under it its errors (`E`) and
+warnings (`W`) by line, the files in the order the build came to them.
+Enter or a click goes to one, in its file; the open file's own follow
+under its name. **F8** and **Shift+F8** go to the next and the previous
+problem from anywhere: the build's, across files, while there are any,
+else the open file's, from the cursor; the tab picks the one gone to and
+the bottom line says which of how many it is.
 
 Icons come from the font when it is a [Nerd Font](https://www.nerdfonts.com);
 with any other font blit draws a small set of its own.
@@ -1133,7 +1143,28 @@ the text, used again by the next run (a run still going there is ended),
 and the keyboard stays where it was. When it ends the tab says how, and
 the folder is looked at again (a configure makes a build folder, whose
 tasks then show). Each task's row says how its last run went ("running…",
-"done", "failed: exited with code 2"), and Cmd+. stops a run. Cmd+R in the
+"done", "failed: exited with code 2"), and Cmd+. stops a run.
+
+What the build prints is read for problems as it comes, on the terminal's
+own reading thread (nothing per frame): GCC's and Clang's
+`path:line:col: error: message` (and `warning`, `fatal error`), CMake's
+`CMake Error at path:line (command):` with the paragraph under it, make's
+`path:line: *** message`, Python's tracebacks (the innermost frame in a
+file of the program's own, with the exception) and its warnings, and
+pytest's `path.py:line: AssertionError`. Colours are no matter, nor
+Ninja's progress line written over itself; the same problem twice (a
+header's, from each file that includes it) is one. A relative path is
+taken from the folder the task runs in, or one make or Ninja says it
+entered, or one `make -C` was told to go into: the one the file is in.
+They fill the **Build** section of the side panel's Problems tab (above),
+F8 goes through them, the status bar counts them, and the Run button says
+how many: `▶ Build (debug) · 3 errors` (warnings, when there are no
+errors). The next run starts with none. Notes (`note:`) and problems with
+no place (a linker's `undefined reference`) are not listed. **Cmd+click**
+on a `path:line` (or `path:line:col`, or Python's `File "path", line N`)
+in any terminal tab opens the file there, in a split with text: a
+relative path from the shell's folder, the folders the build went into,
+or the one the terminal started in. Cmd+R in the
 tab looks again by hand; with nothing found the tab says so, and how to
 add a system (below). On another
 machine (`ssh://`) the folder is looked at, and the tasks run, there.
@@ -1609,7 +1640,7 @@ tests/profile.sh build-debug/blit  # profiling tests/profile/spin.c here and thr
 tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, copy and paste, here and through tests/fake-ssh.sh
 tests/keys.sh build-debug/blit     # the command search, the new keys, and every command run from the search
 tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger)
-tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running) and new projects (a stand-in vcpkg)
+tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running), a fake build's problems (F8, Cmd+click) and new projects (a stand-in vcpkg)
 tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md against what they should draw, Mermaid, typing, Cmd+Shift+V
 tests/images.sh build-debug/blit   # pictures and PDFs (tests/images): the tabs, their pixels, zoom, pages, too large, broken, changed, over ssh, in the preview
 ```

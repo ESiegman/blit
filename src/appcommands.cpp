@@ -282,6 +282,8 @@ void App::commands_create() {
     sent("Show what this is", {key(SDLK_I, kP)});
     sent("Go to the definition", {key(SDLK_F12)});
     sent("Go back", {mac ? key(SDLK_MINUS, kC) : key(SDLK_LEFT, kA)});
+    own("Go to the next problem", {key(SDLK_F8)}, [this] { problem_step(1); });
+    own("Go to the previous problem", {key(SDLK_F8, kS)}, [this] { problem_step(-1); });
     // Markdown.
     own("Preview Markdown beside the file", {key(SDLK_V, kP | kS)}, [this] { md_open(); });
     // Terminals.

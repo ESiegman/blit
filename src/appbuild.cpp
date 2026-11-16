@@ -11,6 +11,7 @@
 #include <mutex>
 #include <optional>
 #include <thread>
+#include <unordered_map>
 
 #include "app.hpp"
 #include "look.hpp"
@@ -76,6 +77,12 @@ struct App::BuildUi {
     int last_status = -1;
     std::string last_name;
     std::string last_key;  // the task it ran (task_key), when it was one of the tab's
+    // What its output said was wrong: a file's problems together, the files
+    // in the order they came; how many of each kind; the one F8 last went to.
+    std::vector<BuildProblem> problems;
+    std::unordered_map<std::string, u32> groups;  // a file's place in that order
+    u32 seq = 0;
+    i64 at = -1;
     // The Build tab: a row for each system and for each task, and the one chosen.
     struct Row {
         int task = -1;  // -1: a system's heading
@@ -85,8 +92,9 @@ struct App::BuildUi {
     std::vector<Row> rows;
     u32 sel = 0, top = 0;
     u32 body = 0;  // the rows of tasks the tab last had room for
-    // The Run button, where it was drawn.
+    // The Run button, where it was drawn, and what its cells were made from.
     TextBox box;
+    u64 drawn = 0;
     int reserve = 0;  // its width and margin: the top right tab bar ends before it
     int bx0 = 0, by0 = 0, bx1 = 0, by1 = 0;
     // Last, so that it is joined first, while all it uses is still there.
@@ -216,6 +224,11 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     u.last_status = -1;
     u.last_name = title;
     u.last_key.clear();
+    u.problems.clear();  // (the last run's go: this one's come as it goes)
+    u.groups.clear();
+    build_errors_ = build_warnings_ = 0;
+    u.at = -1;
+    ++build_prob_gen_;
     ++build_gen_;
     dirty_ = true;
     return doc;
@@ -300,6 +313,79 @@ void App::build_ended(u64 doc, int status) {
     git_command("look", {});
     ++build_gen_;
     dirty_ = true;
+}
+
+// ---------------------------------------------------------------- problems
+
+// Problems the run's output reported (found on its terminal's reading
+// thread): each after the others of its file, the files in the order they
+// came, as the Problems tab lists them and F8 goes through them.
+void App::build_found(u64 doc, std::vector<BuildProblem> found) {
+    BuildUi& u = *buildui_;
+    if (doc != u.doc || found.empty()) return;
+    const u32 was = u.at >= 0 ? u.problems[static_cast<size_t>(u.at)].seq : 0;
+    const size_t had = u.problems.size();
+    for (BuildProblem& p : found) {
+        p.group = u.groups.try_emplace(p.path, static_cast<u32>(u.groups.size())).first->second;
+        p.seq = u.seq++;
+        (p.severity == 1 ? build_errors_ : build_warnings_) += 1;
+        u.problems.push_back(std::move(p));
+    }
+    // (The new ones in order, then merged in: a step through them, not a sort of them all for each piece of output.)
+    const auto by_file = [](const BuildProblem& a, const BuildProblem& b) { return a.group < b.group; };
+    const auto mid = u.problems.begin() + static_cast<std::ptrdiff_t>(had);
+    std::stable_sort(mid, u.problems.end(), by_file);
+    std::inplace_merge(u.problems.begin(), mid, u.problems.end(), by_file);
+    if (u.at >= 0)  // (F8 goes on from the one it went to)
+        for (size_t i = 0; i < u.problems.size(); ++i)
+            if (u.problems[i].seq == was) u.at = static_cast<i64>(i);
+    ++build_prob_gen_;
+    ++build_gen_;
+    dirty_ = true;
+}
+
+const std::vector<BuildProblem>& App::build_problems() const { return buildui_->problems; }
+
+void App::build_go(size_t i) {
+    BuildUi& u = *buildui_;
+    if (i >= u.problems.size()) return;
+    u.at = static_cast<i64>(i);
+    const BuildProblem p = u.problems[i];  // (opening a file may run init.lua's handlers)
+    panel_problem_seen(i);
+    go_to_place(p.path, p.line, p.col);
+}
+
+// F8 (Shift+F8, back): the next of the build's problems, round the ends,
+// and which of how many it is on the bottom line.
+bool App::build_step(int by) {
+    BuildUi& u = *buildui_;
+    const i64 n = static_cast<i64>(u.problems.size());
+    if (!n) return false;
+    const i64 at = u.at < 0 ? (by < 0 ? n - 1 : 0) : ((u.at + by) % n + n) % n;
+    build_go(static_cast<size_t>(at));
+    const std::string& m = u.problems[static_cast<size_t>(at)].message;
+    notify("Problem " + std::to_string(at + 1) + " of " + std::to_string(n) + ": " + m.substr(0, m.find('\n')));
+    return true;
+}
+
+// A file at a line and column, in a split that shows text: the one with
+// the keyboard, unless that is a terminal's (the build's output), then the
+// first that is not. Where the cursor was is somewhere to come back to.
+bool App::go_to_place(const std::string& path, u32 line, u32 col) {
+    if (!is_remote(path) && !SDL_GetPathInfo(path.c_str(), nullptr)) {  // (opening it would make a new, empty one)
+        notify("No file " + path, 1);
+        return false;
+    }
+    if (pane_->doc->term)
+        for (const std::unique_ptr<Pane>& p : panes_)
+            if (p->doc && !p->doc->term) {
+                focus_pane(p.get());
+                break;
+            }
+    remember_place();
+    if (!open_path(path.c_str())) return false;
+    show_place(line ? line - 1 : 0, col ? col - 1 : 0);
+    return true;
 }
 
 // ---------------------------------------------------------------- the Build tab
@@ -452,6 +538,22 @@ bool App::build_panel_key(const SDL_KeyboardEvent& k) {
 
 // ---------------------------------------------------------------- the Run button
 
+// Its words: the task (or Stop, while it runs), and how many errors its
+// output has reported, else warnings ("\xE2\x96\xB6 Build (debug) \xC2\xB7 3 errors").
+std::string App::build_label() const {
+    const BuildUi& u = *buildui_;
+    std::string name = u.current.substr(u.current.find('\t') + 1);
+    if (width_of(name) > 24) {
+        size_t at = 0;
+        for (u32 k = 0; k < 23 && at < name.size(); ++k) at += decode_utf8(reinterpret_cast<const u8*>(name.data()) + at, name.size() - at).len;
+        name = name.substr(0, at) + "\xE2\x80\xA6";
+    }
+    std::string label = u.running ? "\xE2\x96\xA0 Stop" : "\xE2\x96\xB6 " + name;
+    if (build_errors_) label += " \xC2\xB7 " + std::to_string(build_errors_) + (build_errors_ == 1 ? " error" : " errors");
+    else if (build_warnings_) label += " \xC2\xB7 " + std::to_string(build_warnings_) + (build_warnings_ == 1 ? " warning" : " warnings");
+    return label;
+}
+
 // At the window's top right, at the end of the tab bar there: the task
 // chosen, to run it (or, while it runs, to stop it). Made before the
 // splits are laid out, so the tab bar there knows to end before it.
@@ -461,18 +563,17 @@ void App::build_measure() {
     if (u.current.empty() || !font_ || !tabs_px() || start_shown()) return;
     Font& font = *font_;
     const int cw = font.cell_w();
-    std::string name = u.current.substr(u.current.find('\t') + 1);
-    if (width_of(name) > 24) {
-        size_t at = 0;
-        for (u32 k = 0; k < 23 && at < name.size(); ++k) at += decode_utf8(reinterpret_cast<const u8*>(name.data()) + at, name.size() - at).len;
-        name = name.substr(0, at) + "\xE2\x80\xA6";
+    // (Its cells made again only when what they show has changed.)
+    const u64 key = build_gen_ * 1000003ull ^ font.generation() * 31 ^ 1;
+    if (key != u.drawn) {
+        u.drawn = key;
+        const std::string label = build_label();
+        const u32 cols = width_of(label) + 2;
+        u.box.resize(cols, 1);
+        u.box.put(font, 0, 1, label, u.running || u.last_status > 0 || build_errors_ ? kInkDiagnostic : kInkAccent, Font::kBold);
+        for (u32 c = 0; c < cols; ++c) u.box.cells[c] |= kCellHover;
     }
-    const std::string label = u.running ? "\xE2\x96\xA0 Stop" : "\xE2\x96\xB6 " + name;
-    const u32 cols = width_of(label) + 2;
-    u.box.resize(cols, 1);
-    u.box.put(font, 0, 1, label, u.running || u.last_status > 0 ? kInkDiagnostic : kInkAccent, Font::kBold);
-    for (u32 c = 0; c < cols; ++c) u.box.cells[c] |= kCellHover;
-    u.reserve = static_cast<int>(cols) * cw + cw;
+    u.reserve = static_cast<int>(u.box.cols) * cw + cw;
 }
 
 int App::build_reserve(const Pane& p) const {

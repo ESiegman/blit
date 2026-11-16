@@ -64,7 +64,7 @@ while IFS= read -r c; do
     fi
 done <"$dir/commands"
 got="$n commands, $bad failed"
-case "$got" in [6-9][0-9]" commands, 0 failed") got="every command runs" ;; esac
+case "$got" in [6-9][0-9]" commands, 0 failed" | [1-9][0-9][0-9]" commands, 0 failed") got="every command runs" ;; esac
 check "every command runs from the search" "every command runs"
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "keys ok"

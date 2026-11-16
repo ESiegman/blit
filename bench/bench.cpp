@@ -11,6 +11,7 @@
 #include <string>
 #include <vector>
 
+#include "buildscan.hpp"
 #include "editor.hpp"
 #include "finder.hpp"
 #include "font.hpp"
@@ -20,6 +21,9 @@
 #include "lsp.hpp"
 #include "scan.hpp"
 #include "syntax.hpp"
+#if !defined(_WIN32)
+#include "term.hpp"
+#endif
 
 using namespace blit;
 
@@ -319,6 +323,68 @@ int run(const char* file, const char* only) {
     // Finding files and text (finder.cpp). All of it runs on the finder's
     // own threads; these are the pieces, one thread each, so the numbers say
     // what a search costs, not how many cores there are.
+#if !defined(_WIN32)
+    // What a terminal's reading thread does with a program's output: the
+    // screen (200 by 50, fed 64 KB at a time), and for a build's output the
+    // problems read from it as well (buildscan.cpp); on this file, and on a
+    // build's output made up here (32 MB: Ninja's progress written over
+    // itself, GCC's coloured errors and warnings with their source lines,
+    // make going into folders, CMake's and Python's).
+    if (want("term")) {
+        std::string text;
+        if (FILE* f = std::fopen(file, "rb")) {
+            char buf[1 << 16];
+            size_t k;
+            while ((k = std::fread(buf, 1, sizeof buf, f)) > 0) text.append(buf, k);
+            std::fclose(f);
+        }
+        std::string log;
+        for (u32 i = 0; log.size() < (32u << 20); ++i) {
+            const std::string n = std::to_string(i), dir = "src/module" + std::to_string(i % 41);
+            log += "\r[" + n + "/90000] Building CXX object CMakeFiles/app.dir/" + dir + "/file" + n + ".cpp.o\x1b[K";
+            if (i % 7 == 0) {
+                log += "\r\nFAILED: CMakeFiles/app.dir/" + dir + "/file" + n + ".cpp.o\r\n/usr/bin/c++ -O2 -std=c++23 -Iinclude -c ../" + dir + "/file" + n + ".cpp\r\n";
+                log += "\x1b[01m\x1b[K../" + dir + "/file" + n + ".cpp:" + std::to_string(i % 900 + 1) + ":17:\x1b[m\x1b[K \x1b[01;31m\x1b[Kerror: \x1b[m\x1b[K'\x1b[01m\x1b[Kvalue" + n +
+                       "\x1b[m\x1b[K' was not declared in this scope\r\n";
+                log += "  " + std::to_string(i % 900 + 1) + " |     return value" + n + " + 1;\r\n      |            \x1b[01;31m\x1b[K^~~~~~\x1b[m\x1b[K\r\n";
+                log += "../include/common.hpp:" + std::to_string(i % 50 + 1) + ":5: warning: unused variable 'x' [-Wunused-variable]\r\n";
+            }
+            if (i % 101 == 0) log += "make[2]: Entering directory '/home/me/project/" + dir + "'\r\n";
+            if (i % 997 == 0) log += "CMake Warning at cmake/deps.cmake:12 (message):\r\n  Dependency " + n + " not found\r\n\r\n";
+            if (i % 499 == 0) log += "Traceback (most recent call last):\r\n  File \"/home/me/project/tools/gen.py\", line 40, in <module>\r\n    main()\r\nKeyError: '" + n + "'\r\n";
+        }
+        auto rate = [&](const std::string& in, bool screen, bool problems, size_t* found) {
+            double best = 1e30;
+            for (int run = 0; run < 3; ++run) {
+                Term t(200, 50);
+                BuildScan scan("/home/me/project/build");  // (no file looked for: as on another machine)
+                size_t count = 0;
+                const u64 t0 = now_ns();
+                for (size_t at = 0; at < in.size(); at += 65536) {
+                    const std::string_view piece = std::string_view(in).substr(at, 65536);
+                    if (screen) t.feed(piece);
+                    if (problems) {
+                        scan.feed(piece);
+                        count += scan.found().size();
+                        scan.found().clear();
+                    }
+                }
+                best = std::min(best, static_cast<double>(now_ns() - t0) * 1e-9);
+                if (found) *found = count;
+            }
+            return static_cast<double>(in.size()) / (1u << 20) / best;
+        };
+        size_t found = 0;
+        emit(file, "term_feed_mb_per_s", "MB/s", rate(text, true, false, nullptr));
+        emit(file, "term_feed_scan_mb_per_s", "MB/s", rate(text, true, true, nullptr));
+        emit(file, "build_scan_mb_per_s", "MB/s", rate(text, false, true, nullptr));
+        emit("build-log-32m", "term_feed_mb_per_s", "MB/s", rate(log, true, false, nullptr));
+        emit("build-log-32m", "term_feed_scan_mb_per_s", "MB/s", rate(log, true, true, nullptr));
+        emit("build-log-32m", "build_scan_mb_per_s", "MB/s", rate(log, false, true, &found));
+        emit("build-log-32m", "build_scan_problems", "count", static_cast<double>(found));
+    }
+#endif
+
     if (want("find")) {
         // Names: 200,000 paths of the usual shape, ranked against what might be typed.
         FileIndex ix;

@@ -1,0 +1,106 @@
+#pragma once
+// What a build says is wrong, read from its output as it comes: GCC's and
+// Clang's "path:line:col: error: message" (and warning, fatal error),
+// CMake's "CMake Error at path:line (command):" with the lines under it,
+// make's "path:line: *** message", and Python's tracebacks (the innermost
+// frame of the program's own, and the exception), its warnings and
+// pytest's "path.py:line: AssertionError". The bytes are a terminal's: the
+// escape sequences are dropped, and a line a carriage return goes back
+// over (Ninja's progress) is the line written over it.
+//
+// Relative paths are the folder the build runs in, or one make or Ninja
+// says it entered ("Entering directory"): the one the file is in. It runs
+// on the thread that reads the build's output (appterm.cpp); nothing here
+// knows about windows.
+#include <functional>
+#include <string>
+#include <string_view>
+#include <unordered_map>
+#include <unordered_set>
+#include <vector>
+
+#include "common.hpp"
+
+namespace blit {
+
+struct BuildProblem {
+    std::string path;   // the file: a full path, where one could be made
+    u32 line = 1;       // from 1
+    u32 col = 0;        // from 1; 0: not said
+    u8 severity = 1;    // 1 an error, 2 a warning (the language server's numbers)
+    std::string message;
+    u32 group = 0, seq = 0;  // (the editor's: its file, by the order the files came in, and its own place in that order)
+};
+
+class BuildScan {
+public:
+    // dir: the folder the build runs in, a path here or "ssh://host/path"
+    // there. exists: whether a file is there, for a relative path that
+    // could be from more than one folder (none: the latest folder entered).
+    explicit BuildScan(std::string dir, std::function<bool(const std::string&)> exists = {});
+
+    void feed(std::string_view bytes);
+    void finish();  // the end: the last line, and what waited on lines after it
+
+    // What was found since this was last emptied (the caller takes them).
+    std::vector<BuildProblem>& found() { return found_; }
+    // The folders entered, as full paths, the latest last; and a count that
+    // goes up when they change.
+    const std::vector<std::string>& dirs() const { return seen_; }
+    u64 dirs_gen() const { return dirs_gen_; }
+    u64 lines() const { return lines_; }
+
+    static constexpr size_t kMaxProblems = 5000;  // a run's, at most
+    static constexpr size_t kMaxLine = 4096;      // bytes of a line looked at
+
+private:
+    void line(std::string_view text);
+    bool cmake_line(std::string_view text);
+    bool python_line(std::string_view text);
+    bool compiler_line(std::string_view text);
+    void entered(std::string_view text);
+    void add(std::string_view path, u32 line, u32 col, u8 severity, std::string_view message);
+    std::string resolve(std::string_view path);
+
+    std::string prefix_;  // "ssh://host" for a folder there; empty here
+    std::string base_;    // the folder the build runs in (a path, after the prefix)
+    std::function<bool(const std::string&)> exists_;
+    std::vector<std::string> dirs_;  // entered and not yet left
+    std::vector<std::string> seen_;  // every folder entered, with the prefix
+    std::vector<std::string> hints_; // folders "make -C" was told to go into
+    u64 dirs_gen_ = 0;
+    std::unordered_map<std::string, std::string> resolved_;  // (for the folders as they are now)
+
+    // The bytes: a line being put together, and where in an escape sequence they are.
+    enum : u8 { kText, kEsc, kEscMore, kCsi, kString, kStringEsc } esc_ = kText;
+    bool cr_ = false;  // a carriage return: what comes next is written over the line
+    std::string line_;
+    u64 lines_ = 0;
+
+    // CMake's problem, whose message is the lines under it.
+    bool cmake_ = false;
+    BuildProblem cmake_problem_;
+    // Python's traceback: its innermost frame of a file's own, so far.
+    bool py_ = false;
+    std::string py_path_;
+    u32 py_line_ = 0;
+
+    std::vector<BuildProblem> found_;
+    size_t count_ = 0;
+    std::unordered_set<std::string> seen_problems_;  // (the same one again is not: a header's error, from each file that includes it)
+};
+
+// A place named in a line of text around byte `at`: "path:line[:col]" as
+// compilers, CMake and make write them, or Python's File "path", line N.
+// begin and end: the bytes it takes.
+struct TextPlace {
+    std::string path;
+    u32 line = 0, col = 0;
+    size_t begin = 0, end = 0;
+};
+bool place_in_text(std::string_view text, size_t at, TextPlace* out);
+
+// "a/./b/../c" as "a/c"; a leading "/" kept.
+std::string tidy_path(std::string_view path);
+
+}  // namespace blit

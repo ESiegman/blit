@@ -40,6 +40,7 @@ struct TermCell {
         kStrike = 64,
         kWide = 128,      // the left half of a character two columns wide
         kWideTail = 256,  // and its right half (no character of its own)
+        kWrapped = 512,   // (a row's last cell) the line went on into the next row: one line, not two
     };
     bool operator==(const TermCell&) const = default;
 };

@@ -10,6 +10,7 @@
 #include <vector>
 
 #include "build.hpp"
+#include "buildscan.hpp"
 #include "config.hpp"
 #include "editor.hpp"
 #include "font.hpp"
@@ -547,6 +548,8 @@ private:
     bool term_wheel(const SDL_MouseWheelEvent& w);
     std::string term_dump();
     bool term_wait(const std::string& text);
+    bool term_go_place(TermView& v, u64 line, u32 col);  // Cmd+click: the path:line there opened
+    bool term_click_text(const std::string& text);       // (tests) Cmd+click on this text in a terminal on show
     void term_end();
 
     // Every command and its keys (appcommands.cpp): the command search, and
@@ -615,6 +618,19 @@ private:
     std::string build_dump();
     void build_wait();
     void panel_show_build();
+    // What the last run's output said was wrong (buildscan.hpp): taken from
+    // its terminal as it comes (term_sync), shown in the Problems tab's
+    // Build section, counted on the Run button and in the status bar.
+    void build_found(u64 doc, std::vector<BuildProblem> found);
+    const std::vector<BuildProblem>& build_problems() const;
+    std::string build_label() const;  // the Run button's words
+    void build_go(size_t i);    // that one's file, at its line
+    bool build_step(int by);    // the next (1) or previous (-1) of them; false: there are none
+    void problem_step(int by);  // F8 / Shift+F8 (apppanel.cpp): the build's problems, else the open file's
+    void panel_problem_seen(size_t i);  // (apppanel.cpp) the Problems tab's row for the one gone to, picked
+    bool go_to_place(const std::string& path, u32 line, u32 col);  // a file at a line (from 1) and column (from 1; 0: none), in a split with text
+    void show_place(u64 line, u64 col);  // (appfind.cpp) the file in front at a line and a byte in it (from 0), the line in the middle of the view
+    std::string problems_dump();         // (apppanel.cpp) the Run button's words and the Problems tab's rows
     // What init.lua adds (applua.cpp).
     std::vector<std::string> script_hidden_builds() const;
     void script_build(const std::string& root, const std::vector<FsEntry>& files, std::vector<BuildTask>* tasks);
@@ -839,6 +855,8 @@ private:
     std::shared_ptr<DebugUi> debugui_;
     std::shared_ptr<BuildUi> buildui_;
     u64 build_gen_ = 1;  // counts up whenever what the Build tab or the Run button shows may have changed
+    u64 build_prob_gen_ = 1;  // counts up whenever the build's problems change
+    u32 build_errors_ = 0, build_warnings_ = 0;  // how many of each (the status bar asks at every key: not behind a pointer)
     u64 debug_gen_ = 1;  // counts up whenever breakpoints, the Debug tab or the stopped line may have changed
     std::vector<GridNote> debug_notes_[kMaxViews];
     std::vector<u32> debug_note_cells_[kMaxViews];

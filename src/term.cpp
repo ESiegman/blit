@@ -121,6 +121,7 @@ void Term::feed(std::string_view bytes) {
             for (; i < j; ++i) {
                 if (wrap_next_) {
                     if (autowrap_) {
+                        line(row_)[cols_ - 1].attr |= TermCell::kWrapped;
                         col_ = 0;
                         index();
                     }
@@ -295,6 +296,7 @@ void Term::print(u32 cp) {
     if (w == 2 && cols_ < 2) w = 1;  // (a screen one column wide has no room for both halves)
     if (wrap_next_) {
         if (autowrap_) {
+            line(row_)[cols_ - 1].attr |= TermCell::kWrapped;
             col_ = 0;
             index();
         }
@@ -303,6 +305,7 @@ void Term::print(u32 cp) {
     if (w == 2 && col_ + 1 >= cols_) {  // (no room for both halves: on the next line)
         if (autowrap_) {
             erase(row_, col_, cols_);
+            line(row_)[cols_ - 1].attr |= TermCell::kWrapped;
             col_ = 0;
             index();
         } else {

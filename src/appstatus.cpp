@@ -164,6 +164,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
     mix(git_gen_);
     mix(d.hunks_gen);
     mix(lsp_.attached() ? lsp_.diagnostics_generation() * 4 + (lsp_.ready() ? 2 : 1) : 0);
+    mix(build_prob_gen_);
     mix(std::hash<std::string>{}(script_status_));
     mix(d.indent_tabs ? indent_step() + 1000 : indent_step());
     mix(cols);
@@ -300,6 +301,9 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
 
             // On the right, what is least needed first to go.
             if (!script_status_.empty()) u.right.push_back({script_status_, ink::kText, kNone, 2, 4});  // (the user's own: kept over the indentation and line ends)
+            // The problems: the language server's in the open file, and the
+            // last build's across files.
+            u32 errors = build_errors_, warnings = build_warnings_;
             if (lsp_.attached()) {
                 if (u.diag_gen != lsp_.diagnostics_generation()) {
                     u.diag_gen = lsp_.diagnostics_generation();
@@ -309,13 +313,14 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                         else if (x.severity == 2) ++u.warnings;
                     }
                 }
-                // (Nothing, while there is nothing to tell.)
-                if (u.errors || u.warnings) {
-                    const char* err = font.has(0x2715) ? "\xE2\x9C\x95 " : "\xC3\x97 ";                                       // ✕, or ×
-                    const char* warn = font.has(0x26A0) ? "\xE2\x9A\xA0 " : font.has(0x25B2) ? "\xE2\x96\xB2 " : "! ";  // ⚠, or ▲
-                    u.right.push_back({err + count_text(u.errors), u.errors ? ink::kError : ink::kMuted, kProblemsTab, 2, 4});
-                    u.right.push_back({warn + count_text(u.warnings), u.warnings ? ink::kWarning : ink::kMuted, kProblemsTab, 1, 4});
-                }
+                errors += static_cast<u32>(u.errors), warnings += static_cast<u32>(u.warnings);
+            }
+            // (Nothing, while there is nothing to tell.)
+            if (errors || warnings) {
+                const char* err = font.has(0x2715) ? "\xE2\x9C\x95 " : "\xC3\x97 ";                                       // ✕, or ×
+                const char* warn = font.has(0x26A0) ? "\xE2\x9A\xA0 " : font.has(0x25B2) ? "\xE2\x96\xB2 " : "! ";  // ⚠, or ▲
+                u.right.push_back({err + count_text(errors), errors ? ink::kError : ink::kMuted, kProblemsTab, 2, 4});
+                u.right.push_back({warn + count_text(warnings), warnings ? ink::kWarning : ink::kMuted, kProblemsTab, 1, 4});
             }
             if (text) {
                 std::string at = "Ln " + count_text(pane_->cur_line + 1) + ", Col " + count_text(static_cast<u64>(pane_->cur_col) + 1);

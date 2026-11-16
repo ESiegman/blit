@@ -864,6 +864,11 @@ void App::run_script(const char* script) {
             if (!build_run_named(arg)) std::fprintf(stderr, "buildrun: no \"%s\"\n", arg.c_str());
         } else if (verb == "buildwait") {  // the task run has ended (60 s at most)
             build_wait();
+        } else if (verb == "problemsdump") {  // the Run button's words and the Problems tab's rows (> the one picked)
+            std::fprintf(stderr, "%s\n", problems_dump().c_str());
+        } else if (verb == "termclick") {  // termclick:TEXT, Cmd+click on that text in a terminal on show
+            term_sync();
+            if (!term_click_text(arg)) std::fprintf(stderr, "termclick: no \"%s\" on show\n", arg.c_str());
         } else if (verb == "commands") {  // every command, a line each: its name, a tab, its keys
             for (const PaletteItem& it : palette_items()) std::fprintf(stderr, "%s\t%s\n", it.title.c_str(), it.keys.c_str());
         } else if (verb == "command") {  // command:name runs that command, as the command search would

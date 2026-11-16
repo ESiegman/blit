@@ -106,6 +106,59 @@ check "a task that fails: its status, and it is the Run button's now" 'Make: mak
 run "$dir/mk" "lua:print(blit.build.run('make clean'), blit.build.run('no such'));buildwait;builddump"
 check "blit.build.run" 'Make: make make all make test make install >make clean make fail (last: 0)'
 
+# Problems a build reports: a fake one printing what compilers, CMake,
+# Ninja, make and Python print (GCC's colours, Ninja's progress written over
+# itself, a header's warning twice), its files there to go to.
+F="$dir/fb"
+mkdir -p "$F/src" "$F/lib" "$F/sub" "$F/cmake"
+printf 'int a;\nint b;\nint c = x;\nint d;\nint e;\nint f;\nint g = y;\n' >"$F/src/a.c"
+printf '#pragma once\nint unused;\n' >"$F/src/b.h"
+printf '\n\n\n  bad();\n' >"$F/lib/c.c"
+printf 'one\ntwo\n' >"$F/sub/d.c"
+printf 'cmake_minimum_required(VERSION 3.20)\nmessage(WARNING "look here")\n' >"$F/cmake/x.cmake"
+printf 'import sys\nraise ValueError("boom")\n' >"$F/tool.py"
+cat >"$F/errs.sh" <<'EOF'
+sleep 0.2  # (the output split laid out first, as a window does at once: a terminal is 80 columns until then)
+e=$(printf '\033')
+printf '%s[01m%s[Ksrc/a.c:3:9:%s[m%s[K %s[01;31m%s[Kerror: %s[m%s[K'"'"'x'"'"' undeclared\n' $e $e $e $e $e $e $e $e
+printf '    3 | int c = x;\n      |         ^\n'
+printf 'src/b.h:2:5: warning: unused [-Wunused]\nsrc/b.h:2:5: warning: unused [-Wunused]\n'
+printf 'src/a.c:3:9: note: each undeclared identifier is reported only once\ng++: error: no input files\n'
+printf '\r[1/2] Building C object a.o\033[K\r[2/2] Linking C executable p\033[K\r\n'
+printf 'ninja: Entering directory `lib'"'"'\nFAILED: c.o\nc.c:4:3: error: bad\n'
+printf 'make -C sub\nd.c:2:1: warning: in a folder make went into\n'
+printf 'CMake Warning at cmake/x.cmake:2 (message):\n  look here\n\n\n'
+printf 'Traceback (most recent call last):\n  File "%s/tool.py", line 2, in <module>\n    raise ValueError("boom")\nValueError: boom\n' "$(pwd -P)"
+printf 'src/a.c:7:9: error: second\n'
+exit 2
+EOF
+printf 'errors:\n\tsh errs.sh\nok:\n\techo fine\n' >"$F/Makefile"
+run "$F" "buildrun:make errors;buildwait;problemsdump"
+check "a build's problems: a file's together, in the order the files came" 'button: ▶ make errors · 4 errors | Build 7 | file src/a.c | >E 3:9 '"'"'x'"'"' undeclared | E 7:9 second | file src/b.h | W 2:5 unused [-Wunused] | file lib/c.c | E 4:3 bad | file sub/d.c | W 2:1 in a folder make went into | file cmake/x.cmake | W 2 look here | file tool.py | E 2 ValueError: boom'
+run "$F" "buildrun:make errors;buildwait;frame;statusdump"
+check "counted in the status bar" 'NORMAL untitled | × 4 ▲ 3 Ln 1, Col 1 LF Plain text'
+run "$F" "buildrun:make errors;buildwait;key:F8;key:F8;key:F8;frame;statusdump"
+check "F8: the next problem, across files" 'NORMAL src/b.h | × 4 ▲ 3 Ln 2, Col 5 Tabs LF C++'
+run "$F" "buildrun:make errors;buildwait;key:F8;key:F8;key:F8;problemsdump"
+got=${got#*| Build 7 | }
+check "and the Problems tab picks it" 'file src/a.c | E 3:9 '"'"'x'"'"' undeclared | E 7:9 second | file src/b.h | >W 2:5 unused [-Wunused] | file lib/c.c | E 4:3 bad | file sub/d.c | W 2:1 in a folder make went into | file cmake/x.cmake | W 2 look here | file tool.py | E 2 ValueError: boom'
+run "$F" "buildrun:make errors;buildwait;key:shift+F8;frame;statusdump"
+check "Shift+F8 from the start: the last" 'NORMAL tool.py | × 4 ▲ 3 Ln 2, Col 1 Tabs LF Python'
+run "$F" "buildrun:make errors;frame;buildwait;frame;termclick:c.c:4:3;frame;statusdump"
+check "Cmd+click on a path:line in the output: from the folder Ninja went into" 'NORMAL lib/c.c | × 4 ▲ 3 Ln 4, Col 3 Spaces: 2 LF C'
+run "$F" "buildrun:make errors;frame;buildwait;frame;termclick:tool.py\", line 2;frame;statusdump"
+check "and on Python's File \"path\", line N (a long line, wrapped)" 'NORMAL tool.py | × 4 ▲ 3 Ln 2, Col 1 Tabs LF Python'
+run "$F" "buildrun:make errors;frame;buildwait;frame;termclick:Linking;frame;statusdump"
+check "Cmd+click on what is not a place: nothing opens (the click is the terminal's)" 'make errors | × 4 ▲ 3'
+run "$F" "buildrun:make errors;buildwait;buildrun:make ok;buildwait;problemsdump"
+check "the next run starts with none" 'button: ▶ make ok | file 0'
+printf 'one\ntwo\n' >"$dir/notes.txt"
+export BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i"
+run "$dir/none" "open:$dir/notes.txt;frame;term;frame;text:echo ../notes.txt:2:3: here;key:Return;termwait:here;frame;termclick:notes.txt:2;frame;statusdump"
+unset BLIT_TERM_SHELL
+got=$(printf '%s' "$got" | sed 's#NORMAL [^ ]*notes.txt#NORMAL notes.txt#')
+check "Cmd+click in any terminal (a shell's)" 'NORMAL notes.txt | Ln 2, Col 3 Tabs LF Plain text'
+
 # New projects.
 P="$dir/projects"
 mkdir -p "$P/taken"

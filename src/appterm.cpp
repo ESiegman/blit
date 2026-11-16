@@ -8,6 +8,7 @@
 #include <fcntl.h>
 #include <poll.h>
 #include <signal.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -19,6 +20,7 @@
 #include <thread>
 
 #include "app.hpp"
+#include "buildscan.hpp"
 #include "pty.hpp"
 #include "remote.hpp"
 #include "term.hpp"
@@ -61,6 +63,15 @@ struct TermView {
     std::atomic<bool> told{false}, ended{false};
     bool keep = false;    // a command's (a build's): the tab stays when it ends, and says how it went
     std::string title;    // the tab's name, whatever the program calls itself
+    std::string dir;      // the folder it was started in
+    // A build's: its output read for problems, on the reader's thread, and
+    // what that found, for the main thread to take (term_sync).
+    std::unique_ptr<BuildScan> scan;
+    std::mutex scan_mu;
+    std::vector<BuildProblem> scanned;   // (scan_mu)
+    std::vector<std::string> scan_dirs;  // (scan_mu) the folders the build said it went into
+    u64 scan_dirs_gen = 0;
+    std::atomic<bool> scan_news{false};
     u64 started_ns = 0;
     std::atomic<int> status{0};
     // Drawn as.
@@ -162,6 +173,19 @@ struct TermView {
         return true;
     }
 
+    // What the scan has found, handed over (on the reader's thread).
+    void scan_hand_over() {
+        if (scan->found().empty() && scan->dirs_gen() == scan_dirs_gen) return;
+        {
+            std::lock_guard lock(scan_mu);
+            for (BuildProblem& p : scan->found()) scanned.push_back(std::move(p));
+            if (scan->dirs_gen() != scan_dirs_gen) scan_dirs = scan->dirs();
+        }
+        scan->found().clear();
+        scan_dirs_gen = scan->dirs_gen();
+        scan_news = true;
+    }
+
     // What the program writes, onto the screen; what the screen answers, back to it.
     void read_loop(std::stop_token stop) {
         if (!remote_dir.empty() && !start_remote(stop)) {
@@ -199,12 +223,20 @@ struct TermView {
                     reply = term.take_reply();
                 }
                 if (!reply.empty()) send(reply);
+                if (scan) {  // (before the main thread is told: it takes what was found when it is)
+                    scan->feed(std::string_view(buf, static_cast<size_t>(k)));
+                    scan_hand_over();
+                }
                 if (!told.exchange(true)) wake();
             } else if (k == 0 || (errno != EAGAIN && errno != EINTR)) {
                 break;  // (it has ended: a pseudo-terminal says EIO, a pipe its end)
             }
         }
         if (stop.stop_requested()) return;
+        if (scan) {
+            scan->finish();
+            scan_hand_over();
+        }
         int st = 0;
         if (conn) {
             while ((st = conn->wait(proc.id, 100)) == -2) {  // (as below: the tab closing is not held up)
@@ -306,6 +338,12 @@ u64 App::term_open(const std::string& dir_given, const std::string& command, con
     if (!command.empty()) argv = {"/bin/sh", "-c", lang + "exec \"${SHELL:-/bin/sh}\" -lc \"$1\"", "sh", command};
     v->keep = !command.empty();
     v->title = title;
+    v->dir = dir;
+    if (v->keep)  // (a file is looked for there when a relative path could be from more than one folder; not on another machine: a round trip each)
+        v->scan = std::make_unique<BuildScan>(dir, remote ? std::function<bool(const std::string&)>{} : [](const std::string& p) {
+            struct stat st;
+            return ::stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+        });
     v->started_ns = now_ns();
     const std::vector<std::string> env = {"TERM=xterm-256color", "COLORTERM=truecolor", "TERM_PROGRAM=blit"};
     std::string err;
@@ -347,6 +385,14 @@ void App::term_sync() {
             if (!d.term) continue;
             TermView& v = *d.term;
             v.told = false;
+            if (v.scan && v.scan_news.exchange(false)) {  // problems the build reported (before it is seen to end: the last ones count)
+                std::vector<BuildProblem> found;
+                {
+                    std::lock_guard lock(v.scan_mu);
+                    found.swap(v.scanned);
+                }
+                if (!found.empty()) build_found(d.id, std::move(found));
+            }
             // The tab's name: the program's title for itself, else the folder it is in.
             std::string title;
             {
@@ -605,6 +651,7 @@ bool App::term_key(const SDL_KeyboardEvent& k) {
     if (!pane_->doc->term) return false;
     TermView& v = *pane_->doc->term;
     const bool cmd = k.mod & kPrimaryMod, ctrl = k.mod & SDL_KMOD_CTRL, alt = k.mod & SDL_KMOD_ALT, shift = k.mod & SDL_KMOD_SHIFT;
+    if (v.keep && k.key == SDLK_F8 && !ctrl && !alt && !(k.mod & SDL_KMOD_GUI)) return false;  // (a build's output: F8 is the editor's, its problems)
     // The editor's own shortcuts stay its (Cmd+W, Cmd+T, Cmd+1 ...), but for copying and pasting.
     if (cmd && kPrimaryMod == SDL_KMOD_GUI) {
         if (k.key == SDLK_C) return term_copy(v), true;
@@ -749,6 +796,7 @@ bool App::term_mouse_down(const SDL_MouseButtonEvent& b) {
     if (!term_hit(static_cast<int>(b.x * density_), static_cast<int>(b.y * density_), &pane, &line, &col)) return false;
     focus_pane(pane);
     TermView& v = *pane->doc->term;
+    if (b.button == SDL_BUTTON_LEFT && (SDL_GetModState() & kPrimaryMod) && term_go_place(v, line, col)) return true;  // Cmd+click on a path:line
     if (b.button == SDL_BUTTON_LEFT) {
         v.selecting = true;
         v.selected = false;
@@ -776,6 +824,76 @@ bool App::term_mouse_down(const SDL_MouseButtonEvent& b) {
         term_paste(v);
     }
     dirty_ = true;
+    return true;
+}
+
+// Cmd+click: a "path:line[:col]" (or Python's File "path", line N) where
+// the click was opens there, in a split with text. A relative path is from
+// the shell's folder (as it tells it), a folder the build said it went
+// into, or the folder the tab started in: the first it is in.
+bool App::term_go_place(TermView& v, u64 line, u32 col) {
+    std::string text, cwd;
+    size_t at = std::string::npos;
+    std::vector<std::string> dirs;
+    {
+        std::lock_guard lock(v.mu);
+        const Term& t = v.term;
+        const u64 hist = t.history(), end = hist + t.rows();
+        if (line >= end) return false;
+        auto row = [&](u64 l, u32* n) {
+            *n = l < hist ? static_cast<u32>(t.history_line(l).size()) : t.cols();
+            return l < hist ? t.history_line(l).data() : &t.at(static_cast<u32>(l - hist), 0);
+        };
+        auto wrapped = [&](u64 l) {  // (it goes on into the next row)
+            u32 n = 0;
+            const TermCell* cells = row(l, &n);
+            return n > 0 && (cells[n - 1].attr & TermCell::kWrapped);
+        };
+        // The whole line, from the row it starts on to the one it ends on
+        // (a long one wraps), and the byte the clicked cell is.
+        u64 first = line, last = line;
+        while (first > 0 && line - first < 64 && wrapped(first - 1)) --first;
+        while (last + 1 < end && last - line < 64 && wrapped(last)) ++last;
+        for (u64 l = first; l <= last; ++l) {
+            u32 n = 0;
+            const TermCell* cells = row(l, &n);
+            if (l < last) n = std::min(n, t.cols());
+            for (u32 c = 0; c < n; ++c) {
+                if (l == line && c == col) at = text.size();
+                if (cells[c].attr & TermCell::kWideTail) continue;
+                if (cells[c].cp <= ' ') text += ' ';  // (line_text drops a blank at the end: one cell alone would be nothing)
+                else text += Term::line_text(cells + c, 1);
+            }
+        }
+        cwd = t.cwd();
+    }
+    TextPlace place;
+    if (at == std::string::npos || !place_in_text(text, at, &place)) return false;
+
+    // The machine it is on: here, or "ssh://host" for one there.
+    std::string prefix, there;
+    std::string host;
+    if (split_remote(v.dir, &host, &there)) prefix = v.dir.substr(0, v.dir.size() - there.size());
+    if (!cwd.empty()) dirs.push_back(prefix + cwd);
+    {
+        std::lock_guard lock(v.scan_mu);
+        for (size_t i = v.scan_dirs.size(); i-- > 0;) dirs.push_back(v.scan_dirs[i]);
+    }
+    dirs.push_back(v.dir);
+    std::string path;
+    if (place.path.starts_with('/')) {
+        path = prefix + tidy_path(place.path);
+    } else {
+        for (const std::string& d : dirs) {
+            const std::string full = prefix + tidy_path(d.substr(std::min(prefix.size(), d.size())) + "/" + place.path);
+            if (!prefix.empty() || SDL_GetPathInfo(full.c_str(), nullptr)) {
+                path = full;
+                break;
+            }
+        }
+    }
+    if (path.empty() || (prefix.empty() && !SDL_GetPathInfo(path.c_str(), nullptr))) return false;  // (not a file: the click is a click)
+    go_to_place(path, place.line, place.col);
     return true;
 }
 
@@ -852,6 +970,47 @@ void App::term_end() {
     const u64 until = now_ns() + 10'000'000'000ull;
     while (pane_->doc->term && !pane_->doc->term->ended && now_ns() < until) SDL_Delay(5);
     term_sync();
+}
+
+// Cmd+click on the first place this text shows in a terminal on show (in
+// front in its split), its first letter, as a real click would be: on the
+// screen, else in the history, scrolled to the top of the view.
+bool App::term_click_text(const std::string& text) {
+    for (const std::unique_ptr<Pane>& p : panes_) {
+        if (!p->doc || !p->doc->term) continue;
+        TermView& v = *p->doc->term;
+        u32 row = 0, col = 0;
+        bool found = false;
+        {
+            std::lock_guard lock(v.mu);
+            v.scroll = 0;
+            for (u32 r = 0; r < v.term.rows() && !found; ++r) {
+                const std::string t = v.term.row_text(r);
+                if (const size_t at = t.find(text); at != std::string::npos) row = r, col = static_cast<u32>(at), found = true;  // (ASCII before it: a byte a column)
+            }
+            const size_t hist = v.term.history();
+            for (size_t i = 0; i < hist && !found; ++i) {
+                const std::vector<TermCell>& l = v.term.history_line(i);
+                const std::string t = Term::line_text(l.data(), static_cast<u32>(l.size()));
+                if (const size_t at = t.find(text); at != std::string::npos) row = 0, col = static_cast<u32>(at), found = true, v.scroll = hist - i;
+            }
+        }
+        if (!found || !v.cols) continue;
+        SDL_Event e{};
+        e.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+        e.button.button = SDL_BUTTON_LEFT;
+        e.button.clicks = 1;
+        e.button.x = static_cast<float>(v.x + v.pad_x + static_cast<int>(col) * font_->cell_w() + font_->cell_w() / 2) / density_;
+        e.button.y = static_cast<float>(v.y + v.pad_y + static_cast<int>(row) * font_->cell_h() + font_->cell_h() / 2) / density_;
+        const SDL_Keymod was = SDL_GetModState();
+        SDL_SetModState(kPrimaryMod);
+        handle(e);
+        e.type = SDL_EVENT_MOUSE_BUTTON_UP;
+        handle(e);
+        SDL_SetModState(was);
+        return true;
+    }
+    return false;
 }
 
 // Waits (10 s at most) until the screen of the terminal in front shows this text.
