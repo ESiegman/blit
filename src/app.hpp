@@ -431,6 +431,30 @@ private:
     static std::string chord_text(SDL_Keycode key, SDL_Keymod mod);
     void tab_shift(int by);
     void prof_toggle_labels();
+
+    // Debugging (appdebug.cpp, dap.hpp): breakpoints, a session, the Debug tab.
+    struct DebugUi;
+    void debug_create();
+    bool debug_running() const;
+    void debug_toggle_break();
+    void debug_send_breaks(const std::string& path);
+    u32 debug_gutter(const Doc& d, u64 line);
+    void debug_start();
+    void debug_end();
+    void debug_command(const std::string& what);
+    void debug_frame(u32 i, bool show);
+    void debug_expand(u32 i);
+    void debug_sync();
+    void debug_evaluate();
+    void debug_panel_draw(struct TextBox& box, bool focused);
+    void debug_do(u32 i);
+    void debug_panel_click(int row, int col, const SDL_MouseButtonEvent& b);
+    bool debug_panel_key(const SDL_KeyboardEvent& k);
+    void debug_marks(FrameDesc& fd);
+    void debug_set(const std::string& what, const std::string& value);
+    void debug_wait(const std::string& state);
+    std::string debug_dump();
+    void panel_show_debug();
     void lsp_forget_failed(const std::string& suffix);  // (applsp.cpp) servers that failed there may be tried again
 
     // The status bar along the bottom (appstatus.cpp).
@@ -631,6 +655,10 @@ private:
     std::shared_ptr<StatusUi> status_;
     std::shared_ptr<StartUi> start_;
     std::shared_ptr<Commands> commands_;
+    std::shared_ptr<DebugUi> debugui_;
+    u64 debug_gen_ = 1;  // counts up whenever breakpoints, the Debug tab or the stopped line may have changed
+    std::vector<GridNote> debug_notes_[kMaxViews];
+    std::vector<u32> debug_note_cells_[kMaxViews];
     std::shared_ptr<ProfUi> profui_;  // (before remote_: a recording on another machine ends when its connection does)
     u64 prof_gen_ = 1;                // counts up whenever what the Profile tab shows may have changed
     bool term_drop_text_ = false;     // the text a key sent to a terminal as itself also brings is not typed again

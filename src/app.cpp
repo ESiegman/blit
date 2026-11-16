@@ -204,6 +204,7 @@ bool App::init(std::string* err) {
     std::jthread loader;
     remote_start();  // (a file on another machine is opened once the window is up)
     prof_start();
+    debug_create();
     commands_create();
     const bool remote_file = opt_.file && is_remote(opt_.file);
     if (opt_.file && !remote_file)
@@ -1017,6 +1018,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     vim_marks(fd);
     if (script_) script_layout(w, h, fd);  // marks, boxes and messages of the scripts'
     prof_marks(fd);  // inline performance labels (after a server's and the scripts' notes)
+    debug_marks(fd);  // and where the program being debugged has stopped
     panel_menu_layout(w, h, fd);
     if (find_open_) find_layout(w, h, fd);
     splits_carry_layout(w, h, fd);
@@ -1350,6 +1352,10 @@ void App::handle(const SDL_Event& e) {
             }
             if (e.user.code == 14) {  // a terminal's program has written something, or ended
                 term_sync();
+                break;
+            }
+            if (e.user.code == 15) {  // the debugger has said something
+                debug_sync();
                 break;
             }
             break;

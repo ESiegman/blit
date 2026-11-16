@@ -152,6 +152,19 @@ void App::commands_create() {
     sent("Go back", {kPrimaryMod == SDL_KMOD_GUI ? key(SDLK_MINUS, kC) : key(SDLK_LEFT, kA)});
     // Terminals.
     own("New terminal", {key(SDLK_GRAVE, kPrimaryMod == SDL_KMOD_GUI ? kC : kP)}, [this] { term_open(); });
+    // Debugging.
+    own("Start or continue debugging", {key(SDLK_F5)}, [this] { debug_start(); });
+    own("Stop debugging", {key(SDLK_F5, kS)}, [this] { debug_command("stop"); });
+    own("Pause the program being debugged", {key(SDLK_F6)}, [this] { debug_command("pause"); });
+    own("Breakpoint on this line, or not", {key(SDLK_F9)}, [this] { debug_toggle_break(); });
+    own("Step over", {key(SDLK_F10)}, [this] { debug_command("next"); });
+    own("Step into", {key(SDLK_F11)}, [this] { debug_command("stepIn"); });
+    own("Step out", {key(SDLK_F11, kS)}, [this] { debug_command("stepOut"); });
+    own("Evaluate an expression (while stopped)\xE2\x80\xA6", {key(SDLK_Y, kP | kS)}, [this] { debug_evaluate(); });
+    own("Debug (the side panel)", {key(SDLK_D, kP | kS)}, [this] {
+        if (!panel_px()) panel_toggle();
+        panel_show_debug();
+    });
     // Profiling.
     own("Record a profile (the Profile tab's program)", {}, [this] {
         if (!panel_px()) panel_toggle();

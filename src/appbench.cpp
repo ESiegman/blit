@@ -778,6 +778,17 @@ void App::run_script(const char* script) {
         } else if (verb == "termwait") {  // the terminal in front shows this text (10 s at most)
             if (!term_wait(arg)) std::fprintf(stderr, "termwait: no \"%s\" on the screen\n", arg.c_str());
             term_sync();
+        } else if (verb == "debug") {  // debug:what=value (program, args, cwd)
+            const size_t eq = arg.find('=');
+            debug_set(arg.substr(0, eq), eq == std::string::npos ? std::string() : arg.substr(eq + 1));
+        } else if (verb == "break") {  // break:N, a breakpoint on line N of the file in front (F9 there)
+            Editor& ed = pane_->doc->ed;
+            ed.move_to(ed.buf.line_start(std::min<u64>(static_cast<u64>(std::max(1, std::atoi(arg.c_str()))) - 1, ed.buf.line_count() - 1)), false);
+            debug_toggle_break();
+        } else if (verb == "debugwait") {  // debugwait:stopped, or debugwait:idle
+            debug_wait(arg);
+        } else if (verb == "debugdump") {
+            std::fprintf(stderr, "%s\n", debug_dump().c_str());
         } else if (verb == "commands") {  // every command, a line each: its name, a tab, its keys
             for (const PaletteItem& it : palette_items()) std::fprintf(stderr, "%s\t%s\n", it.title.c_str(), it.keys.c_str());
         } else if (verb == "command") {  // command:name runs that command, as the command search would
