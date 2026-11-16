@@ -334,6 +334,12 @@ private:
     void remote_asks();
     void save_named(const std::string& path, u64 doc);
     void remember_place();  // where the cursor is now is somewhere to come back to
+    // (The overhaul's entry points; each is implemented by the part named.)
+    void find_step(int by);                      // appfind.cpp: the next (1) or previous (-1) hit of the last search in files
+    std::vector<std::string> recent_files(size_t most) const;  // appstart.cpp: files opened lately, the latest first, that are still there
+    void save_as();                              // app.cpp: the file in front, under a name asked for
+    void save_all();                             // app.cpp: every file with changes that has a name
+    void find_in_file();                         // appcommands.cpp: a search in the file in front (Vim's /, or a box without modes), from the word or selection
     std::shared_ptr<Find> find_;
 
     // Looks and motion (appfx.cpp).
@@ -343,6 +349,13 @@ private:
         // what is selected in the text, of a search match, of the cursor.
         // And how far a floating box's shadow reaches (0: no shadows).
         float box = 0, pill = 0, sel = 0, match = 0, cursor = 0, shadow = 0;
+        // Spacing, in pixels (set in points, so the same on any display; see
+        // look.hpp): from a box's edge, or the window's, to its text; from a
+        // box's edge to the rounded bar behind a lit row (so that box and bar
+        // are rounded about the same centre); above the first row of a box
+        // and below its last; from a floating box to what it belongs to; an
+        // outline or a rule.
+        int edge = 0, inset = 0, pad_y = 0, gap = 0, hair = 1;
     };
     enum : int { kFxCompletion, kFxDoc, kFxHover, kFxSignature, kFxMenu, kFxGhost, kFxFinder, kFxScript, kFxToast, kFxKinds };
     void fx_create();

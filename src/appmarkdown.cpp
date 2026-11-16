@@ -62,6 +62,7 @@ struct MdView {
 namespace {
 
 constexpr u32 kMargin = 2;  // columns kept clear at either side
+constexpr u32 kTop = 1;     // rows kept clear above the text (it does not start against the tab bar)
 
 // The file a picture in the text is (relative to the folder of the file
 // the text is in, `base`), or "" if it is not one to read: on the web, or
@@ -326,10 +327,12 @@ void App::md_layout(FrameDesc& fd) {
         MdView& v = *pane->doc->md;
         const int x = pane->x0, y = pane->text_y, w = pane->x1 - pane->x0, h = pane->y1 - pane->text_y;
         if (w < cw * 8 || h < ch * 2) continue;
-        const u32 cols = static_cast<u32>(w / cw), rows = static_cast<u32>(h / ch);
+        const u32 cols = static_cast<u32>(w / cw), all_rows = static_cast<u32>(h / ch);
+        const u32 rows = all_rows > kTop + 1 ? all_rows - kTop : all_rows;  // (the text's, under the clear row)
+        const u32 top_row = all_rows - rows;
         v.x = x, v.y = y, v.cols = cols, v.shown = rows;
         v.pad_x = (w - static_cast<int>(cols) * cw) / 2;
-        v.pad_y = (h - static_cast<int>(rows) * ch) / 2;
+        v.pad_y = (h - static_cast<int>(all_rows) * ch) / 2;
         if (v.coloured != &tc || !std::equal(theme_.bg, theme_.bg + 3, v.coloured_bg)) {  // (the theme's colours, looked up when it changes)
             colours(tc, theme_.bg, v);
             v.coloured = &tc;
@@ -390,11 +393,12 @@ void App::md_layout(FrameDesc& fd) {
         for (int c = 0; c < 3; ++c) mix(static_cast<u64>(v.palette[kMdText][c] * 1000));
         if (key != v.key) {
             v.key = key;
-            v.box.resize(cols, rows);
+            v.box.resize(cols, all_rows);
             v.hits.clear();
-            if (!src) v.box.put(font, 1, kMargin, "The file this showed has been closed.", kMdMuted, Font::kItalic);
-            for (u32 r = 0; src && r < rows && v.top + r < v.rows.size(); ++r) {
-                const MdRow& row = v.rows[v.top + r];
+            if (!src) v.box.put(font, top_row, kMargin, "The file this showed has been closed.", kMdMuted, 0);
+            for (u32 k = 0; src && k < rows && v.top + k < v.rows.size(); ++k) {
+                const MdRow& row = v.rows[v.top + k];
+                const u32 r = k + top_row;  // (its row in the box)
                 u32* line = v.box.cells.data() + static_cast<size_t>(r) * cols;
                 if (row.fill)
                     for (u32 c = kMargin + row.fill_from; c < std::min(cols, kMargin + row.fill_to); ++c) line[c] |= kCellSelected | static_cast<u32>(row.fill) << kCellDecoShift;
@@ -403,7 +407,7 @@ void App::md_layout(FrameDesc& fd) {
                     const u32 style = (run.style & kMdBold ? Font::kBold : 0) | (run.style & kMdItalic ? Font::kItalic : 0);
                     const u32 end = v.box.put(font, r, c, run.text, run.ink, style);
                     if (run.tone)
-                        for (u32 k = c; k < end; ++k) line[k] = (line[k] & ~kCellDecoMask) | kCellSelected | static_cast<u32>(run.tone) << kCellDecoShift;
+                        for (u32 cell = c; cell < end; ++cell) line[cell] = (line[cell] & ~kCellDecoMask) | kCellSelected | static_cast<u32>(run.tone) << kCellDecoShift;
                     if (!run.link.empty()) v.hits.push_back({r, c, end, run.link});
                     c = end;
                 }
@@ -423,9 +427,10 @@ void App::md_layout(FrameDesc& fd) {
         q.tones = &v.tones[0][0];
         // The pictures on show, over the rows kept for them (each from its
         // first row, or the first row shown if that is above the view).
-        for (u32 r = 0; src && r < rows && v.top + r < v.rows.size(); ++r)
-            for (const MdPic& pic : v.rows[v.top + r].pics) {
-                if ((pic.part != 0 && r != 0) || fd.picture_count >= std::size(fd.pictures)) continue;
+        for (u32 k = 0; src && k < rows && v.top + k < v.rows.size(); ++k)
+            for (const MdPic& pic : v.rows[v.top + k].pics) {
+                if ((pic.part != 0 && k != 0) || fd.picture_count >= std::size(fd.pictures)) continue;
+                const u32 r = k + top_row;
                 const std::string path = picture_source(v.base, pic.src);
                 if (path.empty()) continue;
                 const PictureInfo* p = picture(path);
@@ -437,7 +442,7 @@ void App::md_layout(FrameDesc& fd) {
                 const int top = y + v.pad_y + (static_cast<int>(r) - static_cast<int>(pic.part)) * ch;
                 d.rect[0] = static_cast<float>(left), d.rect[1] = static_cast<float>(top);
                 d.rect[2] = static_cast<float>(left + static_cast<int>(pic.w)), d.rect[3] = static_cast<float>(top + static_cast<int>(pic.h));
-                d.clip[0] = x, d.clip[1] = y + v.pad_y, d.clip[2] = x + w, d.clip[3] = y + v.pad_y + static_cast<int>(rows) * ch;
+                d.clip[0] = x, d.clip[1] = y + v.pad_y + static_cast<int>(top_row) * ch, d.clip[2] = x + w, d.clip[3] = y + v.pad_y + static_cast<int>(all_rows) * ch;
                 d.after = fd.popup_count;
                 d.sharp = static_cast<double>(pic.w) / p->w >= 3;
                 d.clear = p->clear;

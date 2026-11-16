@@ -6,6 +6,7 @@
 #include <cmath>
 
 #include "app.hpp"
+#include "look.hpp"
 #include "tabbar.hpp"
 
 namespace blit {
@@ -41,8 +42,16 @@ App::Look App::look() const {
     Look l;
     const float r = cfg_.look_rounding * scale_;
     const float cw = font_ ? static_cast<float>(font_->cell_w()) : 16, ch = font_ ? static_cast<float>(font_->cell_h()) : 31;
-    l.box = std::round(r * 1.3f);
-    l.pill = std::min(std::round(r * 0.85f), std::floor(ch / 2) - 1);
+    // Spacing in points (look.hpp), here in pixels.
+    l.edge = static_cast<int>(std::lround(kLookEdgePt * scale_));
+    l.inset = static_cast<int>(std::lround(kLookInsetPt * scale_));
+    l.gap = static_cast<int>(std::lround(kLookGapPt * scale_));
+    l.pad_y = static_cast<int>(ch) / 4;
+    l.hair = std::max(1, static_cast<int>(std::lround(scale_)));
+    // A lit row's bar is rounded by the setting, and a box round it by that
+    // and the inset: the two curves keep the same centre.
+    l.pill = std::max(0.0f, std::min(std::round(r), std::floor(ch / 2) - 1));
+    l.box = l.pill > 0 ? l.pill + static_cast<float>(l.inset) : 0.0f;
     // (What is selected in the text is rounded cell by cell: no more than half a cell.)
     l.sel = std::min(std::round(r * 0.55f), std::floor(std::min(cw, ch) / 2) - 1);
     l.match = std::min(std::round(r * 0.4f), std::floor(std::min(cw, ch) / 2) - 1);
@@ -66,7 +75,7 @@ void App::fx_float(Popup& p, int kind) {
     p.pill = l.pill;
     if (l.pill > 0) {
         p.pill_dy = std::round(0.5f * scale_);
-        p.pill_out = std::max(0.0f, static_cast<float>(p.pad_x) - std::round(3 * scale_));
+        p.pill_out = std::max(0.0f, static_cast<float>(p.pad_x - l.inset));  // (a lit row reaches to the inset from the box's edge)
     }
     p.shadow = l.shadow;
     p.shadow_dy = std::round(l.shadow * 0.3f);
@@ -198,7 +207,7 @@ void App::hover_update(int px, int py) {
         TabBar& t = *p->bar;
         int hover = -1;
         if (bar && !carrying && !t.pressed && px >= p->x0 && px < p->x1 && py >= p->y0 && py < p->y0 + bar) {
-            const int col = static_cast<int>(std::floor(static_cast<double>(px - p->x0 - (cw / 2 + 1)) / cw)) + t.scroll;
+            const int col = static_cast<int>(std::floor(static_cast<double>(px - p->x0 - look().edge) / cw)) + t.scroll;  // (the tab bar's text starts at the edge)
             for (size_t i = 0; i < t.spans.size(); ++i)
                 if (col >= t.spans[i].x0 && col < t.spans[i].x1) hover = static_cast<int>(i);
             if (hover < 0 && col >= t.plus - 1 && col <= t.plus + 1) hover = static_cast<int>(t.spans.size());  // the "+"

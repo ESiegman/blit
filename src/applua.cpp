@@ -27,6 +27,7 @@
 #include <cstring>
 
 #include "finder.hpp"
+#include "look.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
 
@@ -159,11 +160,12 @@ void App::script_plugins() {
 
 namespace {
 
-std::string said_of(const std::string& out, const std::string& err) {
+// What a program that failed said, or else how it ended.
+std::string said_of(const std::string& out, const std::string& err, int code) {
     std::string t = err.empty() ? out : err;
     while (!t.empty() && (t.back() == '\n' || t.back() == ' ' || t.back() == '\r')) t.pop_back();
     while (!t.empty() && (t.front() == '\n' || t.front() == ' ')) t.erase(0, 1);
-    return t;
+    return t.empty() ? "exited with code " + std::to_string(code) : t;
 }
 
 }  // namespace
@@ -178,13 +180,13 @@ void App::plug_install() {
         if (kind_of(dir)) continue;
         ++wanted;
         script_run({"git", "clone", "--quiet", p.url, dir}, {}, [this, p, dir](int code, const std::string& out, const std::string& err) {
-            if (code != 0) return notify(p.name + ": " + said_of(out, err), kError);
+            if (code != 0) return notify(p.name + ": " + said_of(out, err, code), kError);
             if (p.rev.empty()) {
                 plugin_load(p.name);
                 return notify("Installed " + p.name);
             }
             script_run({"git", "checkout", "--quiet", p.rev}, dir, [this, p](int code2, const std::string& out2, const std::string& err2) {
-                if (code2 != 0) return notify(p.name + ": " + said_of(out2, err2), kError);
+                if (code2 != 0) return notify(p.name + ": " + said_of(out2, err2, code2), kError);
                 plugin_load(p.name);
                 notify("Installed " + p.name + " at " + p.rev);
             });
@@ -204,7 +206,7 @@ void App::plug_update() {
         any = true;
         const std::string name = e.name;
         script_run({"git", "pull", "--ff-only", "--quiet"}, dir, [this, name](int code, const std::string& out, const std::string& err) {
-            notify(name + (code == 0 ? ": up to date" : ": " + said_of(out, err)), code == 0 ? kInfo : kError);
+            notify(name + (code == 0 ? ": up to date" : ": " + said_of(out, err, code)), code == 0 ? kInfo : kError);
         });
     }
     if (!any) notify("No plugins to update");
@@ -1595,8 +1597,9 @@ void App::script_replace(Doc& d, u64 start, u64 end, std::string_view text) {
 void App::script_layout(int w, int h, FrameDesc& fd) {
     ScriptUi& s = *script_;
     Font& font = *font_;
-    const int cw = font.cell_w(), ch = font.cell_h(), pad_x = cw / 2 + 1, pad_y = ch / 4;
-    const float border = static_cast<float>(std::max(1, static_cast<int>(std::lround(scale_))));
+    const Look lk = look();
+    const int cw = font.cell_w(), ch = font.cell_h(), pad_x = lk.edge, pad_y = lk.pad_y, gap = lk.gap;
+    const float border = static_cast<float>(lk.hair);
 
     // Marks in each view of a document that has them.
     if (!s.marks.empty())
@@ -1634,9 +1637,11 @@ void App::script_layout(int w, int h, FrameDesc& fd) {
                     if (taken) continue;
                     if (m.font != font.generation()) {
                         m.font = font.generation();
+                        // (Upright: an italic face may be a script hand.)
+                        const std::string text = fit_text(m.note, 200);
                         TextBox box;
-                        box.resize(std::min<u32>(width_of(m.note), 200), 1);
-                        box.put(font, 0, 0, m.note, m.note_ink, Font::kItalic);
+                        box.resize(std::max<u32>(width_of(text), 1), 1);
+                        box.put(font, 0, 0, text, m.note_ink);
                         m.cells = std::move(box.cells);
                     }
                     notes.push_back({m.line, ed.col_between(start, end) + 3, m.cells.data(), static_cast<u32>(m.cells.size())});
@@ -1663,8 +1668,10 @@ void App::script_layout(int w, int h, FrameDesc& fd) {
             f.made_cols = cols;
             f.made_rows = rows;
             f.box.resize(cols, rows);
-            if (title_rows) f.box.put(font, 0, 0, f.title, kInkAccent, Font::kBold);
-            for (u32 r = title_rows; r < rows && r - title_rows < f.lines.size(); ++r) f.box.put(font, r, 0, f.lines[r - title_rows], f.ink);
+            // (What is wider than the box ends in an ellipsis.)
+            auto fit = [cols](const std::string& t) { return width_of(t) > cols ? fit_text(t, cols) : t; };
+            if (title_rows) put(f.box, font, 0, 0, fit(f.title), ink::kHeading);
+            for (u32 r = title_rows; r < rows && r - title_rows < f.lines.size(); ++r) f.box.put(font, r, 0, fit(f.lines[r - title_rows]), f.ink);
         }
         Popup& p = fd.popups[fd.popup_count++];
         p.cols = cols;
@@ -1686,20 +1693,20 @@ void App::script_layout(int w, int h, FrameDesc& fd) {
                 p.y = f.row >= 0 ? f.row * ch : h + f.row * ch - p.h;
                 break;
             case kAtTopRight:
-                p.x = w - p.w - cw;
-                p.y = tabs_px() + ch / 2;
+                p.x = w - p.w - gap;
+                p.y = tabs_px() + gap;
                 break;
             case kAtBottomRight:
-                p.x = w - p.w - cw;
-                p.y = bottom - p.h - ch / 2;
+                p.x = w - p.w - gap;
+                p.y = bottom - p.h - gap;
                 break;
             default: {  // under the cursor (over it if there is no room below)
                 const Pane& pn = *pane_;
                 const int cx = pn.text_x + pad_x_ + static_cast<int>(pn.cur_col) * cw - static_cast<int>(std::lround(pn.scroll_x));
                 const int cy = pn.text_y + static_cast<int>(pn.cur_line) * ch - static_cast<int>(std::lround(pn.scroll_y));
                 p.x = cx - pad_x;
-                p.y = cy + ch + std::max(2, ch / 6);
-                if (p.y + p.h > bottom && cy - p.h - 2 >= 0) p.y = cy - p.h - 2;
+                p.y = cy + ch + gap;
+                if (p.y + p.h > bottom && cy - p.h - gap >= 0) p.y = cy - p.h - gap;
                 break;
             }
         }
@@ -1709,7 +1716,7 @@ void App::script_layout(int w, int h, FrameDesc& fd) {
     }
 
     // Messages, from the bottom right upward.
-    int y = h - vim_px() - status_px() - ch / 2;
+    int y = h - vim_px() - status_px() - gap;
     const u64 now = now_ns();
     for (size_t i = s.toasts.size(); i-- > 0;) {
         if (fd.popup_count >= kMaxPopups) break;
@@ -1717,9 +1724,15 @@ void App::script_layout(int w, int h, FrameDesc& fd) {
         if (!t.until) t.until = now + (t.level == kError ? 10'000'000'000ull : t.level == kWarn ? 6'000'000'000ull : 4'000'000'000ull);
         if (t.font != font.generation()) {
             t.font = font.generation();
-            // Wrapped at 60 columns; at most 12 lines.
+            // Wrapped at 60 columns; at most 12 lines, the last ending in an
+            // ellipsis if there was more.
             std::vector<std::string> lines;
+            bool more = false;
             for (const std::string& line : split_lines(t.text)) {
+                if (lines.size() >= 12) {
+                    more = more || !line.empty();
+                    continue;
+                }
                 std::string_view rest = line;
                 while (width_of(rest) > 60 && lines.size() < 12) {
                     size_t cut = 0;
@@ -1735,8 +1748,10 @@ void App::script_layout(int w, int h, FrameDesc& fd) {
                     rest.remove_prefix(cut);
                 }
                 if (lines.size() < 12) lines.emplace_back(rest);
+                else more = more || !rest.empty();
             }
             while (lines.size() > 1 && lines.back().empty()) lines.pop_back();
+            if (more) lines.back() += "\xE2\x80\xA6";
             u32 widest = 1;
             for (const std::string& l : lines) widest = std::max(widest, width_of(l));
             t.box.resize(widest, static_cast<u32>(lines.size()));
@@ -1751,10 +1766,10 @@ void App::script_layout(int w, int h, FrameDesc& fd) {
         p.pad_y = pad_y;
         p.w = static_cast<int>(p.cols) * cw + 2 * pad_x;
         p.h = static_cast<int>(p.rows) * ch + 2 * pad_y;
-        p.x = std::max(0, w - p.w - cw);
+        p.x = std::max(0, w - p.w - gap);
         y -= p.h;
         p.y = std::max(0, y);
-        y -= ch / 3;
+        y -= gap;
         p.border_px = border;
         fx_float(p, kFxToast);
     }

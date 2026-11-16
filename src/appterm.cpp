@@ -380,7 +380,7 @@ void App::term_sync() {
                     return term_sync();  // (the tabs moved: from the start)
                 }
                 std::lock_guard lock(v.mu);
-                v.term.feed("\r\n\x1b[2m[ended with " + std::to_string(v.status.load()) + "]\x1b[0m");
+                v.term.feed("\r\n\x1b[2m[exited with code " + std::to_string(v.status.load()) + "]\x1b[0m");
             }
         }
     }

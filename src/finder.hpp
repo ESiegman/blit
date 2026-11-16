@@ -75,6 +75,9 @@ public:
     // Called on the worker thread whenever results() has something new.
     void set_notify(std::function<void()> fn);
     void set_options(FinderOptions o);
+    // Files that come first among those a search for names finds as good as
+    // each other (the ones open, and those opened lately): paths from the folder.
+    void set_preferred(std::vector<std::string> paths);
     // Reads the folder (again). Searches made meanwhile are answered from
     // the list as it was, and once more when the new one is there.
     void index(const std::string& root);
@@ -94,8 +97,9 @@ public:
     static std::shared_ptr<FileIndex> walk(const std::string& root, const FinderOptions& o, const std::atomic<u64>* epoch = nullptr, u64 mine = 0);
     static bool glob(std::string_view pattern, std::string_view text);
     // `among`, if given: only these files (in the order of the list) are looked at. `matched`, if given, gets every file that matched, in that order.
+    // `preferred` (in order): files that come first among equals.
     static void rank_names(const FileIndex& ix, std::span<const FuzzyTerm> terms, FindResults* out, const std::atomic<u64>* epoch = nullptr, u64 mine = 0,
-                           const std::vector<u32>* among = nullptr, std::vector<u32>* matched = nullptr);
+                           const std::vector<u32>* among = nullptr, std::vector<u32>* matched = nullptr, std::span<const u32> preferred = {});
     // Lines of `text` that have every term in them, appended to `out` (at most `room` of them). Returns false for a binary file.
     static bool grep(std::string_view text, std::span<const FuzzyTerm> terms, u32 file, size_t room, std::vector<FindHit>* out);
 
@@ -119,6 +123,12 @@ private:
     bool busy_ = false, indexing_ = false;
     bool live_ = false;  // somebody still wants the answer to the last search (it is made again when the folder has been read again)
     std::atomic<u64> index_epoch_{0}, search_epoch_{0};  // a newer request than the one being worked on has come
+    // set_preferred's paths (under mu_), and, kept by the worker thread,
+    // those files as places in the list they were looked for in.
+    std::vector<std::string> pref_;
+    u64 pref_gen_ = 0, pref_done_ = ~0ull;
+    std::shared_ptr<const FileIndex> pref_ix_;
+    std::vector<u32> pref_files_;
     std::shared_ptr<const FileIndex> index_;
     std::shared_ptr<const FindResults> results_;
     // Searches of each kind that were made to the end, kept by the worker

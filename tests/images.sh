@@ -42,9 +42,9 @@ run() {
     WHERE=
 }
 
-# The tab: what it is, fitted (no larger than its own size).
+# The tab: what it is, fitted (a small one drawn larger by whole steps, to about half the room).
 run 800x600 "frame;imagewait;frame;imagedump" "$pics/quad.png"
-check "an image file, in its tab" "quad.png: ready PNG 64x48 read 64x48 clear zoom 100% middle 0.50,0.50"
+check "an image file, in its tab" "quad.png: ready PNG 64x48 read 64x48 clear zoom 200% middle 0.50,0.50"
 
 # Its pixels: each quarter's colour in the middle of it, and the clear
 # quarter a checkerboard (two squares side by side differ).
@@ -62,7 +62,7 @@ check "the clear quarter: a checkerboard behind it" "checkerboard"
 
 # Zoomed: + and -, a pinch (about the mouse), 0 to fit it again.
 run 800x600 "frame;imagewait;frame;key:=;frame;imagedump;key:-;frame;imagedump;mouse:200,150;pinch:2;frame;imagedump;key:0;frame;imagedump" "$pics/quad.png"
-check "zoomed by keys and a pinch, and fitted again" "quad.png: ready PNG 64x48 read 64x48 clear zoom 125% middle 0.50,0.50 ;; quad.png: ready PNG 64x48 read 64x48 clear zoom 100% middle 0.50,0.50 ;; quad.png: ready PNG 64x48 read 64x48 clear zoom 200% middle 0.50,0.50 ;; quad.png: ready PNG 64x48 read 64x48 clear zoom 100% middle 0.50,0.50"
+check "zoomed by keys and a pinch, and fitted again" "quad.png: ready PNG 64x48 read 64x48 clear zoom 250% middle 0.50,0.50 ;; quad.png: ready PNG 64x48 read 64x48 clear zoom 200% middle 0.50,0.50 ;; quad.png: ready PNG 64x48 read 64x48 clear zoom 400% middle 0.50,0.50 ;; quad.png: ready PNG 64x48 read 64x48 clear zoom 200% middle 0.50,0.50"
 
 # A picture wider than the GPU is asked to hold is read smaller; at its
 # own size (1) it is moved by the keys and by dragging it.
@@ -78,7 +78,7 @@ check "a picture that is not there" "gone.png: failed (there is no such file)"
 # Its file changes (written by another program): read again when blit comes back to the front.
 cp "$pics/quad.png" "$dir/live.png"
 run 800x600 "frame;imagewait;frame;imagedump;lua:blit.fs.write('$dir/live.png', blit.fs.read('$pics/wide.png'));reload;imagewait;frame;imagedump" "$dir/live.png"
-check "its file written again: read again" "live.png: ready PNG 64x48 read 64x48 clear zoom 100% middle 0.50,0.50 ;; live.png: ready PNG 5000x20 read 4096x16 zoom 8% middle 0.50,0.50"
+check "its file written again: read again" "live.png: ready PNG 64x48 read 64x48 clear zoom 200% middle 0.50,0.50 ;; live.png: ready PNG 5000x20 read 4096x16 zoom 8% middle 0.50,0.50"
 
 # The Markdown preview: pictures beside the file drawn (one in the middle,
 # at the width its <img> asks for), one on the web and one not there as
@@ -89,7 +89,7 @@ check "pictures in the Markdown preview" "Pictures ;; ━━━━━━━━�
 
 # A click on a picture there opens it, in a tab of its own.
 run 1400x1000 "frame;mdpreview;frame;imagewait;frame;mdwait;click:400,95;frame;imagewait;frame;dump;imagedump" "$pics/pics.md"
-check "a picture in the preview, clicked: its file opened" "H([pics.md*] | >[Preview: pics.md quad.png*])0.50 ;; quad.png: ready PNG 64x48 read 64x48 clear zoom 100% middle 0.50,0.50"
+check "a picture in the preview, clicked: its file opened" "H([pics.md*] | >[Preview: pics.md quad.png*])0.50 ;; quad.png: ready PNG 64x48 read 64x48 clear zoom 200% middle 0.50,0.50"
 
 # A PDF: its pages, fitted to the width of the widest, the first one's colours.
 pdf="$pics/pages.pdf"
@@ -125,7 +125,7 @@ mkdir -p "$T/work"
 cp "$pics/quad.png" "$pics/pages.pdf" "$T/work/"
 export BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T"
 run 800x600 "remotewait;frame;imagewait;frame;imagedump" "ssh://box$T/work/quad.png"
-check "a picture on another machine" "quad.png: ready PNG 64x48 read 64x48 clear zoom 100% middle 0.50,0.50"
+check "a picture on another machine" "quad.png: ready PNG 64x48 read 64x48 clear zoom 200% middle 0.50,0.50"
 run 1200x900 "remotewait;frame;pdfwait;frame;pdfdump" "ssh://box$T/work/pages.pdf"
 got=$(printf '%s' "$got" | sed -e 's/, drawn.*//')
 check "a PDF on another machine" "pages.pdf: ready, 3 pages, page 1, zoom 74%"

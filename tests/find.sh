@@ -45,7 +45,9 @@ run() {
 
 # Files by name.
 run "key:cmd+P;finddump"
-check "Cmd+P lists the files, without what .gitignore and the usual rules leave out" 'names [] 6 of 6 : >.gitignore README.md docs/notes.md src/deep/inner.txt src/helper.hpp src/main.cpp'
+check "Cmd+P with nothing typed: the files open, then those opened lately" 'names [] 1 of 6 : Open: >README.md'
+run "key:cmd+P;text:.;finddump"
+check "Cmd+P finds the files, without what .gitignore and the usual rules leave out" 'names [.] 6 of 6 : >.gitignore README.md docs/notes.md src/helper.hpp src/main.cpp src/deep/inner.txt'
 run "key:cmd+P;text:main;finddump"
 check "what is typed narrows it" 'names [main] 1 of 1 : >src/main.cpp'
 run "key:cmd+P;text:hlp;finddump"
@@ -131,8 +133,8 @@ check "Esc: no name, nothing saved" '>[README.md untitled*] / '
 # Choosing the folder to work in.
 run "find:folder;finddump"
 check "a folder to work in: folders only, and this one first" "folder [$W/] 6 : >./ ../ build/ docs/ node_modules/ src/"
-run "find:folder;text:sr;key:Return;key:Return;key:cmd+P;finddump"
-check "going into a folder and taking it makes it the working directory" 'names [] 3 of 3 : >deep/inner.txt helper.hpp main.cpp'
+run "find:folder;text:sr;key:Return;key:Return;key:cmd+P;text:.;finddump"
+check "going into a folder and taking it makes it the working directory" 'names [.] 3 of 3 : >deep/inner.txt helper.hpp main.cpp'
 
 # With Vim's modes off it is all the same.
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/init.lua"

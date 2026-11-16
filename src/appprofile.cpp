@@ -14,6 +14,7 @@
 #include <unordered_map>
 
 #include "app.hpp"
+#include "look.hpp"
 #include "profile.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
@@ -81,6 +82,14 @@ std::string clip(std::string_view s, u32 n) {
 std::string short_path(std::string_view path) {
     const size_t slash = path.find_last_of('/');
     return std::string(slash == std::string_view::npos ? path : path.substr(slash + 1));
+}
+
+// A row that is picked: lit as selected while the panel has the keyboard,
+// in the quieter tone of the mouse's while it does not.
+void light_row(TextBox& box, u32 row, bool focused) {
+    if (focused) return box.select_row(row);
+    if (row >= box.rows) return;
+    for (u32 c = 0; c < box.cols; ++c) box.cells[static_cast<size_t>(row) * box.cols + c] |= kCellHover;
 }
 
 u32 hash_of(std::string_view s) {
@@ -291,65 +300,68 @@ void App::prof_panel_draw(TextBox& box, bool focused) {
         tool = "perf";
 #endif
     }
-    box.put(font, 1, 0, (tool.empty() ? std::string("Profiler") : tool == "perf" ? "perf" : "xctrace") + (remote ? " on " + host : ", local"), kInkMuted);
+    put(box, font, 1, 0, fit_text((tool.empty() ? std::string("Profiler") : tool == "perf" ? "perf" : "xctrace") + (remote ? " on " + host : ", local"), cols), ink::kMuted);
     u32 r = 2;
+    // A field: its heading, and under it its value, or (quietly) what it is when not set.
     auto field = [&](const char* label, const std::string& value, const char* none, ProfUi::Act act) {
         if (r + 1 >= rows) return;
-        box.put(font, r, 0, label, kInkMuted);
+        put(box, font, r, 0, label, ink::kHeading);
         u.rows[r] = {act, 0};
         u.rows[r + 1] = {act, 0};
         std::string shown = value;
         if (const char* home = SDL_getenv("HOME"); home && *home && shown.starts_with(home)) shown = "~" + shown.substr(std::strlen(home));
-        // (a long path loses its start)
-        if (width_of(shown) + 2 > cols && cols > 4) {
-            size_t at = 0;
-            for (u32 cut = width_of(shown) + 3 - cols; cut > 0 && at < shown.size(); --cut) at += decode_utf8(reinterpret_cast<const u8*>(shown.data()) + at, shown.size() - at).len;
-            shown = "\xE2\x80\xA6" + shown.substr(at);
-        }
-        box.put(font, r + 1, 2, value.empty() ? none : shown, value.empty() ? kInkMuted : 0, value.empty() ? Font::kItalic : 0);
+        const u32 room = cols > 2 ? cols - 2 : 1;
+        if (value.empty()) put(box, font, r + 1, 2, fit_text(none, room), ink::kMuted);
+        else put(box, font, r + 1, 2, fit_text(shown, room, true), ink::kText);  // (a long path loses its start)
         r += 2;
     };
     field("Program", u.program, "Choose a program\xE2\x80\xA6", ProfUi::kProgram);
     field("Arguments", u.args, "None", ProfUi::kArgs);
     field("Working directory", u.cwd, "The program's folder", ProfUi::kCwd);
     ++r;
-    if (r < rows) {  // record, or stop
+    if (r < rows) {  // record, or stop: the button, with its key on the right
         const bool running = u.job != nullptr;
         u.rows[r] = {running ? ProfUi::kStop : ProfUi::kRecord, 0};
-        u32 c = box.put(font, r, 1, running ? "\xE2\x96\xA0 Stop" : "\xE2\x97\x8F Record", running ? kInkDiagnostic : kInkAccent, Font::kBold);
+        const u32 room = cols > 3 ? cols - 3 : 1;
+        u32 c = put(box, font, r, 0, running ? "\xE2\x96\xA0 Stop" : "\xE2\x97\x8F Record", running ? ink::kText : ink::kAccentStrong);
+        std::string after;
         if (running) {
             char t[64];
-            std::snprintf(t, sizeof t, "  %.1f s", u.job->elapsed());
-            const ProfileJob::State st = u.job->state();
-            box.put(font, r, c, st == ProfileJob::kRecording ? std::string(t) : "  " + u.job->status() + "\xE2\x80\xA6", kInkMuted);
+            std::snprintf(t, sizeof t, "%.1f s", u.job->elapsed());
+            after = u.job->state() == ProfileJob::kRecording ? std::string(t) : u.job->status() + "\xE2\x80\xA6";
         } else if (u.program.empty()) {
-            box.put(font, r, c, "  (choose a program first)", kInkMuted);
+            after = "choose a program first";
         }
+        if (!after.empty() && c + 4 < room) put(box, font, r, c + 2, fit_text(after, room - c - 2), ink::kMuted);
+        if (cols > 3) put(box, font, r, cols - 1, "r", ink::kMuted);
         ++r;
     }
-    if (!u.error.empty() && r < rows) box.put(font, r++, 1, clip(u.error, cols - 1), kInkDiagnostic, Font::kItalic);
+    if (!u.error.empty() && r < rows) put(box, font, r++, 0, fit_text(u.error, cols), ink::kError);
     ++r;
     if (r < rows) {
         u.rows[r] = {ProfUi::kDwarf, 0};
         // (How perf walks the stack: frame pointers, or DWARF for code built without them.)
-        const u32 c = box.put(font, r, 1, "Call stack", 0);
-        box.put(font, r++, c + 2, u.dwarf ? "DWARF" : "Frame pointers", kInkMuted);
+        const u32 c = put(box, font, r, 0, "Call stack", ink::kText);
+        put(box, font, r++, c + 2, u.dwarf ? "DWARF" : "Frame pointers", ink::kMuted);
     }
     if (r < rows) {
         u.rows[r] = {ProfUi::kAnnotate, 0};
-        box.put(font, r++, 1, std::string(u.annotate ? "\xE2\x97\x89" : "\xE2\x97\x8B") + " Inline performance labels", u.annotate ? 0 : kInkMuted);
+        put(box, font, r++, 0, fit_text(std::string(u.annotate ? "\xE2\x97\x89" : "\xE2\x97\x8B") + " Inline performance labels", cols), u.annotate ? ink::kText : ink::kMuted);
     }
     ++r;
-    if (r < rows && !u.done.empty()) box.put(font, r++, 0, "Profiles", kInkMuted);
+    if (r < rows && !u.done.empty()) {
+        const u32 c = put(box, font, r, 0, "Profiles", ink::kHeading);
+        put(box, font, r++, c + 1, std::to_string(u.done.size()), ink::kMuted);
+    }
     for (u32 i = 0; i < u.done.size() && r < rows; ++i, ++r) {
         const Profile& p = *u.done[i];
         u.rows[r] = {ProfUi::kOpen, i};
         const bool on = u.shown == u.done[i];
-        u32 c = box.put(font, r, 1, on ? "\xE2\x96\xB8 " : "  ", kInkAccent);
-        c = box.put(font, r, c, short_path(p.program), 0, on ? Font::kBold : 0);
+        if (on) put(box, font, r, 0, "\xE2\x96\xB8", ink::kAccent);  // (the one shown)
+        const u32 c = put(box, font, r, 2, fit_text(short_path(p.program), cols > 2 ? cols - 2 : 1), on ? ink::kStrong : ink::kText);
         char t[96];
-        std::snprintf(t, sizeof t, "  %s  %.1f s", p.when.c_str(), p.seconds);
-        box.put(font, r, c, t, kInkMuted);
+        std::snprintf(t, sizeof t, "%s  %.1f s", p.when.c_str(), p.seconds);
+        if (c + 4 < cols) put(box, font, r, c + 2, fit_text(t, cols - c - 2), ink::kMuted);
     }
     // The row chosen (with the keyboard): the nearest one that does something.
     if (u.sel >= rows || u.rows[u.sel].act == ProfUi::kNone) {
@@ -360,10 +372,10 @@ void App::prof_panel_draw(TextBox& box, bool focused) {
                 break;
             }
     }
-    if (focused && u.sel < rows && u.rows[u.sel].act != ProfUi::kNone) {
+    if (u.sel < rows && u.rows[u.sel].act != ProfUi::kNone) {
         const ProfUi::Act a = u.rows[u.sel].act;
         for (u32 k = 0; k < rows; ++k)  // (both rows of a field)
-            if (u.rows[k].act == a && u.rows[k].index == u.rows[u.sel].index && (k == u.sel || (a == ProfUi::kProgram || a == ProfUi::kArgs || a == ProfUi::kCwd))) box.select_row(k);
+            if (u.rows[k].act == a && u.rows[k].index == u.rows[u.sel].index && (k == u.sel || (a == ProfUi::kProgram || a == ProfUi::kArgs || a == ProfUi::kCwd))) light_row(box, k, focused);
     }
 }
 
@@ -443,6 +455,12 @@ bool App::prof_panel_key(const SDL_KeyboardEvent& k) {
     switch (k.key) {
         case SDLK_UP: step(-1); break;
         case SDLK_DOWN: step(1); break;
+        case SDLK_HOME:  // the first row that does something, or the last
+        case SDLK_END:
+            if (!n) return false;
+            u.sel = k.key == SDLK_HOME ? n - 1 : 0;
+            step(k.key == SDLK_HOME ? 1 : -1);
+            break;
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
         case SDLK_SPACE: prof_do(u.sel); return true;
@@ -516,7 +534,7 @@ void App::prof_layout(FrameDesc& fd) {
             char sum[160];
             std::snprintf(sum, sizeof sum, "%s samples \xC2\xB7 %.2f s \xC2\xB7 %u thread%s", with_commas(p.samples).c_str(), p.seconds, p.threads, p.threads == 1 ? "" : "s");
             c = box.put(font, 1, 1, sum, kInkMuted);
-            if (!p.note.empty()) box.put(font, 1, c + 3, clip(p.note, cols > c + 4 ? cols - c - 4 : 1), kInkDiagnostic + 1, Font::kItalic);
+            if (!p.note.empty()) put(box, font, 1, c + 3, clip(p.note, cols > c + 4 ? cols - c - 4 : 1), ink::kWarning);
 
             // Where in the graph the view is: the frames above the one zoomed into.
             const u32 top_rows = 3;
@@ -889,7 +907,7 @@ void App::prof_marks(FrameDesc& fd) {
             for (const auto& [l, t] : by_line) {
                 TextBox box;
                 box.resize(std::min<u32>(width_of(t.first), 160), 1);
-                box.put(font, 0, 0, t.first, t.second, Font::kItalic);
+                box.put(font, 0, 0, t.first, t.second);  // (upright: the font's italic may be a script)
                 nt.lines.push_back({l, std::move(box.cells)});
                 nt.kinds.push_back(t.first.starts_with("\xE2\x97\x86") ? 'F' : 'L');
             }

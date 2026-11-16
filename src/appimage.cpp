@@ -22,6 +22,7 @@
 
 #include "app.hpp"
 #include "fsio.hpp"
+#include "look.hpp"
 #include "picture.h"
 #include "remote.hpp"
 #include "textbox.hpp"
@@ -302,9 +303,16 @@ namespace {
 
 // The scale that fits the picture into the area, never larger than one
 // pixel of it to a point.
+// The scale that fits the picture into the area. One that is small (an
+// icon, pixel art) is drawn larger by whole steps, so that its pixels stay
+// sharp squares, until it takes about half the room; one larger than the
+// room is made smaller to fit.
 double fit_scale(const PictureInfo& p, int aw, int ah, double density) {
     if (p.full_w <= 0 || p.full_h <= 0) return 1;
-    return std::min({density, static_cast<double>(aw) / p.full_w, static_cast<double>(ah) / p.full_h});
+    const double fit = std::min(static_cast<double>(aw) / p.full_w, static_cast<double>(ah) / p.full_h);
+    if (fit < density) return fit;
+    const double half = std::min(aw / 2.0 / p.full_w, ah / 2.0 / p.full_h);
+    return density * std::max(1.0, std::floor(half / density));
 }
 
 // The middle kept where the picture still covers the area (or in the middle, where it does not).
@@ -367,17 +375,20 @@ void App::image_layout(FrameDesc& fd) {
                 info = "Cannot show it: " + p->error;
                 info_ink = kInkDiagnostic;
             } else {
-                info = p->kind + " · " + std::to_string(p->full_w) + " × " + std::to_string(p->full_h) + " · " + size_text(p->bytes);
-                if (p->frames > 1) info += " · " + std::to_string(p->frames) + " frames (the first shown)";
-                info += " · " + std::to_string(percent) + "%";
-                keys = "+ − zoom   0 fit   1 its own size";
+                info = p->kind + "   " + std::to_string(p->full_w) + " × " + std::to_string(p->full_h) + "   " + size_text(p->bytes);
+                if (p->frames > 1) info += "   " + std::to_string(p->frames) + " frames, the first shown";
+                info += "   " + std::to_string(percent) + "%";
+                keys = "1";
             }
             v.box.resize(cols, rows);
             const u32 r = rows - 1;
-            u32 c = v.box.put(font, r, 1, leaf_of(v.path), 0, Font::kBold);
-            c = v.box.put(font, r, c + 2, info, info_ink);
-            const u32 kw = width_of(keys);
-            if (!keys.empty() && c + 3 + kw < cols) v.box.put(font, r, cols - 1 - kw, keys, kInkMuted);
+            // (From the text edge, as every bar: the name, what it is, and on the right the keys.)
+            const u32 edge = static_cast<u32>(std::max(1, (look().edge - pad_x + cw - 1) / cw));
+            u32 c = put(v.box, font, r, edge, leaf_of(v.path), ink::kStrong);
+            c = v.box.put(font, r, c + 3, info, info_ink);
+            static constexpr Hint kHints[] = {{"+ -", "zoom"}, {"0", "fit"}, {"1", "actual size"}};
+            const u32 kw = hints_width(kHints, font);
+            if (!keys.empty() && c + 3 + kw + edge < cols) put_hints(v.box, font, r, cols - edge - kw, kHints);
         }
         Popup& q = fd.popups[fd.popup_count++];
         q = Popup{};
@@ -404,8 +415,8 @@ void App::image_layout(FrameDesc& fd) {
             d.checker = std::round(8 * density_);
             for (int c = 0; c < 3; ++c) {
                 const float fg = c == 0 ? tc.foreground.r : c == 1 ? tc.foreground.g : tc.foreground.b;
-                d.check_a[c] = theme_.bg[c] + (fg - theme_.bg[c]) * 0.06f;
-                d.check_b[c] = theme_.bg[c] + (fg - theme_.bg[c]) * 0.12f;
+                d.check_a[c] = theme_.bg[c] + (fg - theme_.bg[c]) * 0.08f;  // (two tones far enough apart that the picture's edge shows)
+                d.check_b[c] = theme_.bg[c] + (fg - theme_.bg[c]) * 0.18f;
             }
             d.check_a[3] = d.check_b[3] = 1;
         }

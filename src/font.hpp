@@ -92,6 +92,8 @@ public:
     // True if the font itself (not a fallback) has this character. Used to
     // see whether it carries the icon glyphs of a "Nerd Font".
     bool has(u32 cp) const;
+    // True if it can be drawn at all: by the font, or one of the fallbacks.
+    bool can_draw(u32 cp);
 
     // Icons blit draws itself, for fonts that bring none. Each is two cells
     // wide: the slot of its left half comes back, the right half is the

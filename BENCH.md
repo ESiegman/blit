@@ -1881,6 +1881,31 @@ Everything else that moved between the two full runs (taken hours apart)
 moved the same way in code that was not touched, and did not move when
 run turn about.
 
+### Round 29: a UI/UX overhaul
+
+Three audits (a visual one from screenshots, one of keys, flows and wording,
+and a map of where each box's looks were set) became one set of rules in
+`src/look.hpp` (spacing in points, the inks of each role, keys as macOS
+writes them, hint lines, ellipses), and five implementers applied them to
+the pickers, the side panel, the status bar and chrome, the start screen
+and New project, and the keys and messages. What it costs, turn about with
+the build before it (`main` at 84189c9), 2560x1600:
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling, all chrome on: frames a second (this sitting switched between two states) | 15,917 to 17,011; 9,053 to 9,144 | 16,893 to 17,122; 8,772 to 10,101 |
+| … layout, p50 (in the faster state) | 0.79 to 0.83 µs | 0.88 µs |
+| Typing: layout, p50, without / with the side panel | 18.0 to 19.5 / 16.6 to 20.0 µs | 18.2 to 20.8 / 17.3 to 20.2 µs |
+| Idle in a window: frames, CPU | 0, 0.03% | 0, 0.03% |
+| A key press to its frame handed to the GPU, p50 | 139 µs | 142 µs |
+
+Nothing measurable. What could have cost: the status bar's mode is a lit
+run with a tone of its own (its tones are worked out each frame from the
+theme: a few multiplications), the side panel's tab strip measures its
+names when the tab or the width changes, the picker's field has a tone,
+and keys are turned into symbols once each time a box opens, not each
+frame. Every box still rebuilds its cells only when its cache key changes.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

@@ -19,6 +19,7 @@
 
 #include "app.hpp"
 #include "fsio.hpp"
+#include "look.hpp"
 #include "picture.h"
 #include "remote.hpp"
 #include "textbox.hpp"
@@ -391,15 +392,18 @@ void App::pdf_layout(FrameDesc& fd) {
                 info = "Cannot show it: " + v.error;
                 info_ink = kInkDiagnostic;
             } else {
-                info = "PDF · page " + std::to_string(now + 1) + " of " + std::to_string(v.pages.size()) + " · " + size_text(v.bytes) + " · " + std::to_string(percent) + "%";
-                keys = "+ − zoom   0 width   9 page   n p pages";
+                info = "Page " + std::to_string(now + 1) + " of " + std::to_string(v.pages.size()) + "   " + size_text(v.bytes) + "   " + std::to_string(percent) + "%";
+                keys = "1";
             }
             v.box.resize(cols, rows);
             const u32 r = rows - 1;
-            u32 c = v.box.put(font, r, 1, leaf_of(v.path), 0, Font::kBold);
-            c = v.box.put(font, r, c + 2, info, info_ink);
-            const u32 kw = width_of(keys);
-            if (!keys.empty() && c + 3 + kw < cols) v.box.put(font, r, cols - 1 - kw, keys, kInkMuted);
+            // (From the text edge, as every bar: the name, where in it, and on the right the keys.)
+            const u32 edge = static_cast<u32>(std::max(1, (look().edge - pad_x + cw - 1) / cw));
+            u32 c = put(v.box, font, r, edge, leaf_of(v.path), ink::kStrong);
+            c = v.box.put(font, r, c + 3, info, info_ink);
+            static constexpr Hint kHints[] = {{"n p", "page"}, {"+ -", "zoom"}, {"0", "width"}, {"9", "whole page"}};
+            const u32 kw = hints_width(kHints, font);
+            if (!keys.empty() && c + 3 + kw + edge < cols) put_hints(v.box, font, r, cols - edge - kw, kHints);
         }
         Popup& q = fd.popups[fd.popup_count++];
         q = Popup{};

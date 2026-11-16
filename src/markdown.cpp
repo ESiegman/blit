@@ -1023,7 +1023,11 @@ struct Layout {
 
     void blocks(const std::vector<Block>& bs, bool tight, u8 ink) {
         for (size_t i = 0; i < bs.size(); ++i) {
-            if (i > 0 && !tight) gap(bs[i].line);
+            // (A heading of the top two levels is underlined: what follows
+            // starts right under its line, so that it belongs to the heading,
+            // with the blank row above the heading setting it off.)
+            const bool under_rule = i > 0 && bs[i - 1].kind == Block::kHeading && bs[i - 1].level <= 2;
+            if (i > 0 && !tight && !under_rule) gap(bs[i].line);
             block(bs[i], tight, ink);
         }
     }
@@ -1111,7 +1115,7 @@ struct Layout {
         // The language, at the top on the right.
         const std::string lang = b.info.substr(0, b.info.find(' '));
         std::vector<MdRun> top;
-        if (!lang.empty() && room_cols > cols_of(lang) + 2) top.push_back({std::string(room_cols - cols_of(lang) - 1, ' ') + lang, kMdMuted, kMdItalic, kMdCodeTone});
+        if (!lang.empty() && room_cols > cols_of(lang) + 2) top.push_back({std::string(room_cols - cols_of(lang) - 1, ' ') + lang, kMdMuted, 0, kMdCodeTone});
         fill(row(std::move(top), b.line));
         for (size_t k = 0; k < b.text.size(); ++k) {
             std::string l = expand_tabs(b.text[k]);

@@ -54,7 +54,7 @@ check "F5 goes on to the next stop; what the program printed is there" 'stopped 
 run "$P;break:8;key:F5;debugwait:stopped;key:cmd+shift+y;text:x*10+y;key:Return;debugwait:stopped;debugdump"
 check "an expression evaluated where it stopped" 'stopped (breakpoint); stack: square@8 main@15; vars: x=1 y=1; output: x*10+y = 11'
 run "$P;break:8;key:F5;debugwait:stopped;key:F9;key:F5;debugwait:idle;debugdump"
-case "$got" in "idle; output: "*"i=3 total=14"*"exited with 0"*) got="ran to its end" ;; esac
+case "$got" in "idle; output: "*"i=3 total=14"*"exited with code 0"*) got="ran to its end" ;; esac
 check "F9 takes the breakpoint away; F5 runs it to its end" "ran to its end"
 run "$P;break:16;key:F5;debugwait:stopped;key:shift+F5;debugwait:idle;debugdump"
 check "Shift+F5 stops it" 'idle'

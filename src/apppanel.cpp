@@ -1,6 +1,6 @@
 // The side panel: a strip down the left of the window with a row of tabs at
 // the top and, below it, whatever the chosen tab shows. "Files" is a tree of
-// the working directory; "Problems" lists what the language server reports.
+// the project folder; "Problems" lists what the language server reports.
 //
 // The panel is one more grid of cells, drawn like a popup. Its cells are
 // rebuilt only when something it shows has changed, and the text view is
@@ -11,6 +11,7 @@
 #include <cstring>
 
 #include "app.hpp"
+#include "look.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
 #include "tree.hpp"
@@ -21,13 +22,29 @@ namespace {
 
 const char* const kTabs[] = {"Files", "Problems", "Git", "Profile", "Debug", "Build"};
 constexpr u32 kTabFiles = 0, kTabProblems = 1, kTabGit = 2, kTabProfile = 3, kTabDebug = 4, kTabBuild = 5, kTabCount = 6;
-constexpr u32 kHeadRows = 2;  // the tab bar and the line under it that names the working directory
+// What a tab shrinks to when the names do not all fit: its icon in a Nerd
+// Font (a folder, a warning, a branch, a chart, a bug, a wrench), else a
+// mark of its own.
+const u32 kTabIcons[] = {0xE5FF, 0xF071, 0xE725, 0xF080, 0xF188, 0xF0AD};
+const char* const kTabIconText[] = {"\xEE\x97\xBF", "\xEF\x81\xB1", "\xEE\x9C\xA5", "\xEF\x82\x80", "\xEF\x86\x88", "\xEF\x82\xAD"};
+const char* const kTabMarks[] = {"F", "!", "G", "P", "D", "B"};
+constexpr u32 kHeadRows = 2;  // the tab bar and the line under it that names the project folder
 
-const char* const kMenu[] = {"New File", "New Folder", "Rename", "Move to Trash", "Set as Working Directory",
-                             "Go to Parent Folder", "Choose Folder...", "Refresh"};
+const char* const kMenu[] = {"New file", "New folder", "Rename", "Move to Trash", "Make it the project folder",
+                             "Go to the parent folder", "Choose a folder\xE2\x80\xA6", "Refresh"};
+const char* const kMenuKeys[] = {"Cmd+N", "Cmd+Shift+N", "F2", "Cmd+Backspace", "", "Cmd+Up", "", "Cmd+R"};
 enum : u32 { kMenuNewFile, kMenuNewFolder, kMenuRename, kMenuTrash, kMenuSetRoot, kMenuParent, kMenuChoose, kMenuRefresh, kMenuCount };
 
 constexpr u32 kNoCell = 0;  // the one cell of a box that is all margin (a line)
+constexpr u32 kFieldTone = 1;  // the background of a field typed into (Popup::tones; the Git tab's message)
+
+// A row that is picked: lit as selected while the panel has the keyboard,
+// in the quieter tone of the mouse's while it does not.
+void light_row(TextBox& box, u32 row, bool focused) {
+    if (focused) return box.select_row(row);
+    if (row >= box.rows) return;
+    for (u32 c = 0; c < box.cols; ++c) box.cells[static_cast<size_t>(row) * box.cols + c] |= kCellHover;
+}
 
 }  // namespace
 
@@ -37,6 +54,12 @@ struct App::Side {
     u32 tab = kTabFiles;
     int tab_scroll = 0;  // cells the tab bar is scrolled left by
     int tabs_width = 0;  // cells all the tab labels take
+    // Where each tab's label starts and how wide it is, as last drawn (cells,
+    // before the scroll); and the tab and width the bar was last scrolled
+    // for, so that the tab shown is brought into view when either changes.
+    int tab_x[kTabCount] = {}, tab_w[kTabCount] = {};
+    u32 tab_seen = ~0u, tab_cols = 0;
+    bool g_pending = false;  // a g was pressed: another goes to the top of the list
 
     FileTree tree;
     bool rooted = false;   // a working directory has been chosen
@@ -55,6 +78,7 @@ struct App::Side {
     u32 menu_sel = 0;
     std::string menu_target;
     TextBox menu_box;
+    u64 menu_drawn = ~0ull;  // what the menu's cells were made for (the row chosen, the font)
     SDL_Rect menu_rect{};
 
     u32 problem = 0, problem_top = 0;
@@ -64,6 +88,7 @@ struct App::Side {
 
     // The cells as last drawn, and what they were drawn from.
     TextBox box;
+    float tones[8][4] = {};  // Popup::tones: [kFieldTone] the fields'
     u64 state = 1, drawn_state = 0, drawn_tree = ~0ull, drawn_diag = ~0ull, drawn_git = 0, drawn_prof = 0, drawn_debug = 0, drawn_build = 0;
     u32 drawn_font = ~0u, drawn_rows = 0, drawn_cols = 0;
     std::string drawn_file;
@@ -90,7 +115,7 @@ int App::panel_px() const {
     const Side& s = *side_;
     if (!s.open || !font_) return 0;
     const int cw = font_->cell_w();
-    return std::min(s.cols * cw + 2 * (cw / 2 + 1), std::max(0, px_w_ - 8 * cw));
+    return std::min(s.cols * cw + 2 * look().edge, std::max(0, px_w_ - 8 * cw));
 }
 
 // The settings decide the width, and at startup whether the panel shows;
@@ -187,7 +212,7 @@ bool App::panel_has_keyboard() const { return side_->open && side_->focus; }
 // until the panel has been opened or a folder chosen.
 const std::string* App::panel_root() const { return side_->rooted ? &side_->tree.root() : nullptr; }
 
-// Shows the Git tab and gives it the keyboard.
+// Shows the Problems tab and gives it the keyboard.
 void App::panel_show_problems() {
     Side& s = *side_;
     s.tab = kTabProblems;
@@ -437,17 +462,38 @@ bool App::panel_key(const SDL_KeyboardEvent& k) {
         dirty_ = true;
         return true;
     }
-    if (s.tab == kTabGit && git_panel_key(k)) return true;  // (first: Esc there may mean "not this message")
+    if (s.tab == kTabGit && git_panel_key(k)) return true;  // (first: Esc there may mean "not this message", and letters are the message's)
     if (k.key == SDLK_ESCAPE) {
         panel_focus(false);
         return true;
     }
-    if (k.key == SDLK_TAB && (k.mod & SDL_KMOD_CTRL)) {
-        s.tab = (s.tab + 1) % kTabCount;
+    if (k.key == SDLK_TAB && (k.mod & SDL_KMOD_CTRL)) {  // the panel's next tab, or with Shift the one before
+        s.tab = (s.tab + (shift ? kTabCount - 1 : 1)) % kTabCount;
         if (s.tab == kTabGit) git_.refresh();
         s.touch();
         dirty_ = true;
         return true;
+    }
+    // Every list here also goes down and up with j and k, and to its top
+    // and bottom with gg and G, as with Down, Up, Home and End. (Not while a
+    // name or a message is typed: those took the keys above.)
+    if (!(k.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI | SDL_KMOD_ALT))) {
+        const bool g_before = s.g_pending;
+        s.g_pending = false;
+        SDL_KeyboardEvent to = k;
+        to.mod = 0;
+        switch (k.key) {
+            case SDLK_J: to.key = SDLK_DOWN; return panel_key(to);
+            case SDLK_K: to.key = SDLK_UP; return panel_key(to);
+            case SDLK_G:
+                if (!shift && !g_before) {
+                    s.g_pending = true;
+                    return true;
+                }
+                to.key = shift ? SDLK_END : SDLK_HOME;
+                return panel_key(to);
+            default: break;
+        }
     }
     if (s.tab == kTabGit) return !cmd;
     if (s.tab == kTabProfile) return prof_panel_key(k) || !cmd;
@@ -460,6 +506,8 @@ bool App::panel_key(const SDL_KeyboardEvent& k) {
         switch (k.key) {
             case SDLK_UP: s.problem = s.problem ? s.problem - 1 : 0; break;
             case SDLK_DOWN: s.problem = n ? std::min(s.problem + 1, n - 1) : 0; break;
+            case SDLK_HOME: s.problem = 0; break;
+            case SDLK_END: s.problem = n ? n - 1 : 0; break;
             case SDLK_RETURN:
             case SDLK_KP_ENTER:
                 if (s.problem < n) {
@@ -519,7 +567,6 @@ bool App::panel_key(const SDL_KeyboardEvent& k) {
         case SDLK_R:
             if (cmd) return s.tree.refresh(), true;
             break;
-        case SDLK_F5: s.tree.refresh(); return true;
         case SDLK_F10:
         case SDLK_APPLICATION:  // the menu a right click opens, for the row chosen (Shift+F10, or the Menu key)
             if (k.key == SDLK_F10 && !shift) break;
@@ -559,12 +606,13 @@ bool App::panel_mouse_down(const SDL_MouseButtonEvent& b) {
     if (!s.open) return false;
     const int px = static_cast<int>(b.x * density_), py = static_cast<int>(b.y * density_);
     const int cw = font_->cell_w(), ch = font_->cell_h(), width = panel_px();
+    const Look l = look();
 
     if (s.menu) {
         const bool inside = px >= s.menu_rect.x && px < s.menu_rect.x + s.menu_rect.w && py >= s.menu_rect.y &&
                             py < s.menu_rect.y + s.menu_rect.h;
         if (inside && b.button == SDL_BUTTON_LEFT) {
-            const int row = (py - s.menu_rect.y - ch / 4) / ch;
+            const int row = (py - s.menu_rect.y - l.pad_y) / ch;
             if (row >= 0 && row < static_cast<int>(kMenuCount)) panel_menu_do(static_cast<u32>(row));
             return true;
         }
@@ -593,15 +641,12 @@ bool App::panel_mouse_down(const SDL_MouseButtonEvent& b) {
         panel_commit_input();
         return true;
     }
-    const int row = (py - ch / 4) / ch, col = (px - (cw / 2 + 1)) / cw;
+    const int row = (py - l.pad_y) / ch, col = static_cast<int>(std::floor(static_cast<double>(px - l.edge) / cw));
 
-    if (row == 0 && b.button == SDL_BUTTON_LEFT) {  // the tab bar
-        int at = -s.tab_scroll;
-        for (u32 t = 0; t < kTabCount; ++t) {
-            const int w = static_cast<int>(std::strlen(kTabs[t])) + 2;
-            if (col >= at && col < at + w) s.tab = t;
-            at += w;
-        }
+    if (row == 0 && b.button == SDL_BUTTON_LEFT) {  // the tab bar: a tab is as wide as its rounded bar
+        const int at = col + s.tab_scroll;
+        for (u32 t = 0; t < kTabCount; ++t)
+            if (at >= s.tab_x[t] - 1 && at <= s.tab_x[t] + s.tab_w[t]) s.tab = t;
         if (s.tab == kTabGit) git_.refresh();
         return true;
     }
@@ -666,7 +711,7 @@ bool App::panel_mouse_motion(const SDL_MouseMotionEvent& m) {
     const int px = static_cast<int>(m.x * density_), cw = font_->cell_w();
     if (s.resizing && !(m.state & SDL_BUTTON_LMASK)) s.resizing = false;  // (the button went up where this window did not see it)
     if (s.resizing) {
-        const int cols = std::clamp((px - 2 * (cw / 2 + 1)) / cw, 12, std::max(12, (px_w_ - 12 * cw) / cw));
+        const int cols = std::clamp((px - 2 * look().edge) / cw, 12, std::max(12, (px_w_ - 12 * cw) / cw));
         if (cols != s.cols) {
             s.cols = cols;
             s.touch();
@@ -676,7 +721,7 @@ bool App::panel_mouse_motion(const SDL_MouseMotionEvent& m) {
         return true;
     }
     if (s.menu && px >= s.menu_rect.x && px < s.menu_rect.x + s.menu_rect.w) {
-        const int row = (static_cast<int>(m.y * density_) - s.menu_rect.y - font_->cell_h() / 4) / font_->cell_h();
+        const int row = (static_cast<int>(m.y * density_) - s.menu_rect.y - look().pad_y) / font_->cell_h();
         if (row >= 0 && row < static_cast<int>(kMenuCount) && static_cast<u32>(row) != s.menu_sel) {
             s.menu_sel = static_cast<u32>(row);
             s.touch();
@@ -695,11 +740,11 @@ bool App::panel_wheel(const SDL_MouseWheelEvent& w) {
     if (mouse_x_ < 0) return false;
     const int px = static_cast<int>(mouse_x_ * density_), py = static_cast<int>(mouse_y_ * density_);
     if (px >= panel_px()) return false;
-    const int row = (py - font_->cell_h() / 4) / font_->cell_h();
+    const int row = (py - look().pad_y) / font_->cell_h();
     if (row == 0) {
         // Over the tab bar either wheel direction slides the tabs.
         const float d = std::fabs(w.x) > std::fabs(w.y) ? w.x : -w.y;
-        s.tab_scroll = std::clamp(s.tab_scroll + static_cast<int>(std::lround(d * 3)), 0, std::max(0, s.tabs_width - s.cols));
+        s.tab_scroll = std::clamp(s.tab_scroll + static_cast<int>(std::lround(d * 3)), 0, std::max(0, s.tabs_width - static_cast<int>(s.box.cols)));
     } else if (s.tab == kTabGit) {
         git_panel_wheel(w.y);
     } else if (s.tab == kTabFiles) {
@@ -725,7 +770,8 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
     (void)w;
     if (!s.open || fd.popup_count >= std::size(fd.popups)) return;
     const int cw = font_->cell_w(), ch = font_->cell_h();
-    const int pad_x = cw / 2 + 1, pad_y = ch / 4, width = panel_px();
+    const Look lk = look();
+    const int pad_x = lk.edge, pad_y = lk.pad_y, width = panel_px();
     const u32 cols = static_cast<u32>(std::max(1, (width - 2 * pad_x) / cw)), rows = static_cast<u32>(std::max(1, (h - 2 * pad_y) / ch));
     s.body_rows = rows > kHeadRows ? rows - kHeadRows : 0;
 
@@ -755,27 +801,58 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
         box.resize(cols, rows);
         Font& font = *font_;
 
-        // The tabs. The chosen one stands out; when they do not all fit
-        // they slide, and a mark at either end says there is more.
-        s.tabs_width = 0;
-        for (const char* t : kTabs) s.tabs_width += static_cast<int>(std::strlen(t)) + 2;
-        s.tab_scroll = std::clamp(s.tab_scroll, 0, std::max(0, s.tabs_width - static_cast<int>(cols)));
-        int at = -s.tab_scroll;
-        for (u32 t = 0; t < kTabCount; ++t) {
-            const int len = static_cast<int>(std::strlen(kTabs[t]));
-            if (at + len > 0 && at < static_cast<int>(cols)) {
-                const std::string_view label(kTabs[t]);
-                const size_t skip = at < 0 ? static_cast<size_t>(-at) : 0;
-                box.put(font, 0, static_cast<u32>(std::max(at, 0)), label.substr(std::min(skip, label.size())), t == s.tab ? kInkAccent : kInkMuted,
-                        t == s.tab ? Font::kBold : 0);
-                // The chosen one on a rounded box, and the one under the mouse on a fainter one.
-                if (t == s.tab || static_cast<int>(t) == s.hover_tab)
-                    for (int c = std::max(at - 1, 0); c <= at + len && c < static_cast<int>(cols); ++c) box.cells[static_cast<size_t>(c)] |= t == s.tab ? kCellSelected : kCellHover;
-            }
-            at += len + 2;
+        // The tabs, the one shown on a rounded bar. When their names do not
+        // all fit, the others shrink to an icon (or a mark); when even that
+        // is too wide they slide, the one shown is kept in view, and a mark
+        // at either end says there are more.
+        const int room = static_cast<int>(cols);
+        int names = -2;
+        for (const char* t : kTabs) names += static_cast<int>(std::strlen(t)) + 2;
+        const bool compact = names > room;
+        bool icons = true;
+        for (const u32 cp : kTabIcons) icons = icons && font.has(cp);
+        std::string labels[kTabCount];
+        for (u32 t = 0, x = 0; t < kTabCount; ++t) {
+            if (!compact) labels[t] = kTabs[t];
+            else if (t != s.tab) labels[t] = icons ? kTabIconText[t] : kTabMarks[t];
+            else labels[t] = icons ? std::string(kTabIconText[t]) + " " + kTabs[t] : std::string(kTabs[t]);
+            s.tab_x[t] = static_cast<int>(x);
+            s.tab_w[t] = static_cast<int>(width_of(labels[t]));
+            x += static_cast<u32>(s.tab_w[t]) + 2;
         }
-        if (s.tab_scroll > 0) box.put(font, 0, 0, "\xE2\x80\xB9", kInkMuted);  // a left-pointing mark
-        if (s.tabs_width - s.tab_scroll > static_cast<int>(cols)) box.put(font, 0, cols - 1, "\xE2\x80\xBA", kInkMuted);
+        s.tabs_width = s.tab_x[kTabCount - 1] + s.tab_w[kTabCount - 1];
+        if (s.tab != s.tab_seen || cols != s.tab_cols) {  // (a cell to spare at either end, for the marks)
+            s.tab_seen = s.tab;
+            s.tab_cols = cols;
+            const int a0 = s.tab_x[s.tab], a1 = a0 + s.tab_w[s.tab];
+            if (a0 - s.tab_scroll < 1) s.tab_scroll = a0 - 1;
+            if (a1 - s.tab_scroll > room - 1) s.tab_scroll = a1 - room + 1;
+        }
+        s.tab_scroll = std::clamp(s.tab_scroll, 0, std::max(0, s.tabs_width - room));
+        for (u32 t = 0; t < kTabCount; ++t) {
+            const int at = s.tab_x[t] - s.tab_scroll, len = s.tab_w[t];
+            if (at + len <= 0 || at >= room) continue;
+            const Ink in = t == s.tab ? ink::kAccentStrong : ink::kMuted;
+            std::string_view label = labels[t];
+            int col = at;
+            if (compact && icons) {  // (the icon one cell wide, as the file tree's are)
+                if (col >= 0) box.cells[static_cast<size_t>(col)] = (font.glyph(kTabIcons[t]) & (Font::kWide - 1)) | (in.ink << kCellInkShift);
+                label.remove_prefix(std::strlen(kTabIconText[t]));
+                ++col;
+            }
+            // (Cut at the left edge by whole characters.)
+            while (col < 0 && !label.empty()) {
+                const Decoded d = decode_utf8(reinterpret_cast<const u8*>(label.data()), label.size());
+                col += static_cast<int>(cp_width(d.cp));
+                label.remove_prefix(std::max<size_t>(d.len, 1));
+            }
+            if (!label.empty() && col < room) put(box, font, 0, static_cast<u32>(std::max(col, 0)), label, in);
+            // The one shown on a rounded bar, and the one under the mouse on a fainter one.
+            if (t == s.tab || static_cast<int>(t) == s.hover_tab)
+                for (int c = std::max(at - 1, 0); c <= at + len && c < room; ++c) box.cells[static_cast<size_t>(c)] |= t == s.tab ? kCellSelected : kCellHover;
+        }
+        if (s.tab_scroll > 0) put(box, font, 0, 0, "\xE2\x80\xB9", ink::kMuted);  // a left-pointing mark
+        if (s.tabs_width - s.tab_scroll > room) put(box, font, 0, cols - 1, "\xE2\x80\xBA", ink::kMuted);
 
         const bool nerd = font.has(0xE5FF) && font.has(0xE61D);  // the font brings file icons of its own
         auto icon = [&](u32 row, u32 col, const FileIcon& ic) {
@@ -795,7 +872,7 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
             const std::string& root = s.tree.root();
             const size_t slash = root.find_last_of('/');
             icon(1, 0, file_icon("", true, true));
-            box.put(font, 1, 3, slash == std::string::npos || root.size() == 1 ? root : root.substr(slash + 1), 0, Font::kBold);
+            put(box, font, 1, 3, fit_text(slash == std::string::npos || root.size() == 1 ? root : root.substr(slash + 1), cols > 3 ? cols - 3 : 0), ink::kStrong);
 
             const std::vector<FileTree::Row>& tree_rows = s.tree.rows();
             // A name being typed for something new takes a line of its own,
@@ -836,15 +913,18 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
                     input_line(r, depth, n->dir);
                 } else {
                     const bool is_open = open_node && n == open_node;
-                    if (n->dir) box.put(font, r, c0, n->open ? "\xE2\x96\xBE" : "\xE2\x96\xB8", kInkMuted);  // a small triangle, down or right
+                    if (n->dir) put(box, font, r, c0, n->open ? "\xE2\x96\xBE" : "\xE2\x96\xB8", ink::kMuted);  // a small triangle, down or right
                     icon(r, c0 + 2, file_icon(n->name, n->dir, n->open));
-                    box.put(font, r, c0 + 5, n->name, is_open ? kInkAccent : 0, is_open ? Font::kBold : 0);
-                    if (static_cast<int>(i) == selected) box.select_row(r);
+                    const u32 fits = cols > c0 + 5 ? cols - c0 - 5 : 0;
+                    const Ink in = is_open ? ink::kAccentStrong : ink::kText;
+                    if (width_of(n->name) <= fits) put(box, font, r, c0 + 5, n->name, in);
+                    else put(box, font, r, c0 + 5, fit_text(n->name, fits), in);
+                    if (static_cast<int>(i) == selected) light_row(box, r, s.focus);
                 }
                 ++r;
                 if (input_after == static_cast<int>(i) && r < rows) input_line(r++, input_depth, s.input == Side::kNewFolder);
             }
-            if (tree_rows.empty() && s.input == Side::kNoInput && rows > kHeadRows) box.put(font, kHeadRows, 2, "(empty)", kInkMuted);
+            if (tree_rows.empty() && s.input == Side::kNoInput && rows > kHeadRows) put(box, font, kHeadRows, 0, "This folder is empty", ink::kMuted);
         } else if (s.tab == kTabGit) {
             git_panel_draw(box, s.focus);
         } else if (s.tab == kTabProfile) {
@@ -854,10 +934,20 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
         } else if (s.tab == kTabBuild) {
             build_panel_draw(box, s.focus);
         } else {
-            // What the language server reports about the open file.
+            // What the language server reports about the open file: the
+            // file's name as the heading, with how many.
             const std::vector<Diagnostic>& d = lsp_.diagnostics();
-            box.put(font, 1, 0, d.empty() ? (lsp_.attached() ? "No problems" : "No language server") : std::to_string(d.size()) + (d.size() == 1 ? " problem" : " problems"),
-                    kInkMuted);
+            const size_t slash = open_file.find_last_of('/');
+            const std::string name = open_file.empty() ? std::string() : open_file.substr(slash == std::string::npos ? 0 : slash + 1);
+            if (d.empty() && !lsp_.attached()) {
+                put(box, font, 1, 0, fit_text("No language server for this file", cols), ink::kMuted);
+            } else if (d.empty()) {
+                put(box, font, 1, 0, fit_text(name.empty() ? std::string("No problems") : "No problems in " + name, cols), ink::kMuted);
+            } else {
+                const std::string count = std::to_string(d.size());
+                const u32 c = put(box, font, 1, 0, fit_text(name.empty() ? std::string("Problems") : name, cols > count.size() + 1 ? cols - static_cast<u32>(count.size()) - 1 : 0), ink::kHeading);
+                put(box, font, 1, c + 1, count, ink::kMuted);
+            }
             s.problem = d.empty() ? 0 : std::min<u32>(s.problem, static_cast<u32>(d.size()) - 1);
             s.problem_top = std::min(s.problem_top, last_top(d.size(), s.body_rows));
             if (s.focus && !d.empty()) {  // the chosen one stays in view
@@ -870,9 +960,10 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
                 static const char* const letter[] = {"E", "W", "I", "H"};
                 box.put(font, r, 0, letter[d[i].severity - 1], ink, Font::kBold);
                 const u64 line = pane_->doc->ed.buf.line_of(std::min<u64>(d[i].start, pane_->doc->ed.buf.size()));
-                const u32 c = box.put(font, r, 2, std::to_string(line + 1), kInkMuted);
-                box.put(font, r, c + 1, std::string_view(d[i].message).substr(0, d[i].message.find('\n')), 0);
-                if (i == s.problem && s.focus) box.select_row(r);
+                const u32 c = put(box, font, r, 2, std::to_string(line + 1), ink::kMuted);
+                const std::string_view message = std::string_view(d[i].message).substr(0, d[i].message.find('\n'));
+                put(box, font, r, c + 1, fit_text(message, cols > c + 1 ? cols - c - 1 : 0), ink::kText);
+                if (i == s.problem) light_row(box, r, s.focus);
             }
         }
         // The row under the mouse, if there is something on it and it is not the selected one.
@@ -896,16 +987,22 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
     p.rows = s.box.rows;
     p.cells = s.box.cells.data();
     p.border_px = 0;
-    // Lit rows and tabs are rounded bars that reach a little into the
-    // margin; the panel casts a soft shadow on what is beside it, and a
-    // line marks its edge.
-    const Look lk = look();
-    const int line = std::max(1, static_cast<int>(std::lround(scale_)));
+    // A field typed into is a tone of its own: the text's background, where
+    // that is not the panel's; else a little of the way to the text's colour.
+    float apart = 0;
+    for (int c = 0; c < 3; ++c) apart += std::fabs(theme_.bg[c] - theme_.popup_bg[c]);
+    for (int c = 0; c < 3; ++c) s.tones[kFieldTone][c] = apart > 0.03f ? theme_.bg[c] : theme_.popup_bg[c] + (theme_.fg[c] - theme_.popup_bg[c]) * 0.05f;
+    s.tones[kFieldTone][3] = 1;
+    p.tones = &s.tones[0][0];
+    // Lit rows and tabs are rounded bars that reach into the margin, to the
+    // inset from the panel's edge; the panel casts a soft shadow on what is
+    // beside it, and a line marks its edge.
+    const int line = lk.hair;
     if (lk.pill > 0) {
         p.pill = lk.pill;
         p.pill_dx = static_cast<float>(line);
         p.pill_dy = std::round(0.5f * scale_);
-        p.pill_out = std::max(0.0f, static_cast<float>(pad_x) - std::round(3 * scale_));
+        p.pill_out = std::max(0.0f, static_cast<float>(pad_x - lk.inset));
     }
     if (lk.shadow > 0) {
         p.shadow = std::round(lk.shadow * 0.55f);
@@ -930,26 +1027,40 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
 void App::panel_menu_layout(int w, int h, FrameDesc& fd) {
     Side& s = *side_;
     if (!s.open || !s.menu || fd.popup_count >= std::size(fd.popups)) return;
-    const int cw = font_->cell_w(), ch = font_->cell_h(), pad_x = cw / 2 + 1, pad_y = ch / 4;
-    u32 widest = 0;
-    for (const char* item : kMenu) widest = std::max<u32>(widest, static_cast<u32>(std::strlen(item)));
-    s.menu_box.resize(widest + 2, kMenuCount);
-    for (u32 i = 0; i < kMenuCount; ++i) {
-        const char* label = i == kMenuTrash && !FileTree::has_trash() ? "Delete" : kMenu[i];
-        s.menu_box.put(*font_, i, 1, label, 0);
-        if (i == s.menu_sel) s.menu_box.select_row(i);
+    Font& font = *font_;
+    const Look l = look();
+    const int cw = font.cell_w(), ch = font.cell_h();
+    // What each item does, and on the right its key. The cells are made
+    // again only when the item chosen or the font has changed.
+    const u64 key = (static_cast<u64>(font.generation()) << 32) | s.menu_sel;
+    if (key != s.menu_drawn) {
+        s.menu_drawn = key;
+        std::string keys[kMenuCount];
+        u32 widest = 0, widest_key = 0;
+        for (u32 i = 0; i < kMenuCount; ++i) {
+            keys[i] = key_symbols(kMenuKeys[i], font);
+            widest = std::max(widest, width_of(i == kMenuTrash && !FileTree::has_trash() ? "Delete" : kMenu[i]));
+            widest_key = std::max(widest_key, width_of(keys[i]));
+        }
+        const u32 cols = widest + (widest_key ? 3 + widest_key : 0);
+        s.menu_box.resize(cols, kMenuCount);
+        for (u32 i = 0; i < kMenuCount; ++i) {
+            put(s.menu_box, font, i, 0, i == kMenuTrash && !FileTree::has_trash() ? "Delete" : kMenu[i], ink::kText);
+            put(s.menu_box, font, i, cols - width_of(keys[i]), keys[i], ink::kMuted);
+            if (i == s.menu_sel) s.menu_box.select_row(i);
+        }
     }
     Popup& p = fd.popups[fd.popup_count++];
     p.cols = s.menu_box.cols;
     p.rows = s.menu_box.rows;
     p.cells = s.menu_box.cells.data();
-    p.pad_x = pad_x;
-    p.pad_y = pad_y;
-    p.w = static_cast<int>(p.cols) * cw + 2 * pad_x;
-    p.h = static_cast<int>(p.rows) * ch + 2 * pad_y;
+    p.pad_x = l.edge;
+    p.pad_y = l.pad_y;
+    p.w = static_cast<int>(p.cols) * cw + 2 * p.pad_x;
+    p.h = static_cast<int>(p.rows) * ch + 2 * p.pad_y;
     p.x = std::clamp(s.menu_x, 0, std::max(0, w - p.w));
     p.y = std::clamp(s.menu_y, 0, std::max(0, h - p.h));
-    p.border_px = static_cast<float>(std::max(1, static_cast<int>(std::lround(scale_))));
+    p.border_px = static_cast<float>(l.hair);
     s.menu_rect = {p.x, p.y, p.w, p.h};
     fx_float(p, kFxMenu);
 }
@@ -960,16 +1071,14 @@ bool App::panel_hover(int px, int py) {
     Side& s = *side_;
     int row = -1, tab = -1;
     if (s.open && px >= 0 && px < panel_px() && !s.menu && !s.resizing && font_) {
+        const Look l = look();
         const int cw = font_->cell_w(), ch = font_->cell_h();
-        const int r = (py - ch / 4) / ch, col = (px - (cw / 2 + 1)) / cw;
-        if (py >= ch / 4 && r == 0) {
-            int at = -s.tab_scroll;
-            for (u32 t = 0; t < kTabCount; ++t) {
-                const int len = static_cast<int>(std::strlen(kTabs[t]));
-                if (col >= at - 1 && col <= at + len) tab = static_cast<int>(t);
-                at += len + 2;
-            }
-        } else if (py >= ch / 4 && r >= static_cast<int>(kHeadRows)) {
+        const int r = (py - l.pad_y) / ch, col = static_cast<int>(std::floor(static_cast<double>(px - l.edge) / cw));
+        if (py >= l.pad_y && r == 0) {
+            const int at = col + s.tab_scroll;
+            for (u32 t = 0; t < kTabCount; ++t)
+                if (at >= s.tab_x[t] - 1 && at <= s.tab_x[t] + s.tab_w[t]) tab = static_cast<int>(t);
+        } else if (py >= l.pad_y && r >= static_cast<int>(kHeadRows)) {
             row = r;
         }
     }

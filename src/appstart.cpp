@@ -29,8 +29,10 @@
 #include "fsio.hpp"
 #include "grammars.hpp"
 #include "libraries.hpp"
+#include "look.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
+#include "tree.hpp"
 #include "utf8.hpp"
 
 namespace blit {
@@ -42,9 +44,153 @@ enum Act : u8 { kNew, kProject, kOpen, kFind, kSearch, kFolder, kRemote, kSettin
 // The New project tab's rows.
 enum Form : u8 { kFormKind, kFormName, kFormWhere, kFormGit, kFormField, kFormCreate };
 
+// The New project tab's sections, in the order they are shown. Each of a
+// kind's fields goes in one by what it is about (by the keys project.cpp
+// gives them); one about none of these (init.lua's own) goes under
+// Options, right after the project's own rows.
+enum Section : u8 { kSecProject, kSecOptions, kSecBuild, kSecChecks, kSecFiles, kSecAfter, kSections };
+constexpr std::string_view kSectionNames[kSections] = {"Project", "Options", "Build", "Checks", "Files", "After"};
+
+Section section_of(const ProjectField& f) {
+    if (f.label.find("once made") != std::string::npos) return kSecAfter;  // (configuring, installing the packages)
+    if (f.kind == ProjectField::kLibraries) return kSecBuild;
+    static constexpr std::string_view checks[] = {"warnings", "sanitizers", "hardening", "tuning", "lto", "ruff", "types"};
+    static constexpr std::string_view files[] = {"presets", "clangd", "tidy", "format", "readme", "profiling"};
+    static constexpr std::string_view build[] = {"build",  "manager",    "type",        "target", "gpu",   "std",       "python",
+                                                 "layout", "backend_uv", "backend_pip", "cli",    "tests", "generator", "install"};
+    for (const std::string_view k : checks)
+        if (f.key == k) return kSecChecks;
+    for (const std::string_view k : files)
+        if (f.key == k) return kSecFiles;
+    for (const std::string_view k : build)
+        if (f.key == k) return kSecBuild;
+    return kSecOptions;
+}
+
+// What a field is for, on the line above the keys while its row is the
+// chosen one: those of project.cpp's kinds by their keys, libraries by
+// where they come from, and a choice of init.lua's by its choices.
+std::string field_note(const ProjectField& f, Font& font) {
+    if (f.kind == ProjectField::kLibraries) {
+        const std::string enter = key_symbols("Enter", font);
+        if (f.source == "vcpkg") return enter + " searches vcpkg's ports: each one chosen goes in vcpkg.json";
+        if (f.source == "rocm") return enter + " searches the ROCm packages installed, linked to the GPU code";
+        if (f.source == "pkg-config") return enter + " searches pkg-config's modules";
+        if (f.source == "pypi") return enter + " searches PyPI's most downloaded packages, or any by its name";
+        return enter + " searches them";
+    }
+    if (f.key == "install" && section_of(f) == kSecAfter) return "Makes its environment and installs into it once made (network)";
+    static constexpr std::pair<std::string_view, std::string_view> notes[] = {
+        {"build", "The build system that builds it"},
+        {"manager", "What makes its environment and installs its packages"},
+        {"type", "An application, a library, or a script of one file (PEP 723)"},
+        {"target", "A program is a library and a small main, so its tests can link it"},
+        {"gpu", "The GPUs to compile for: this machine's, from rocm_agent_enumerator"},
+        {"std", "The language standard it is compiled as"},
+        {"python", "The oldest Python it runs on"},
+        {"layout", "Its package in src/, or at the top of the folder"},
+        {"backend_uv", "What builds it into a package (pyproject.toml's build-system)"},
+        {"backend_pip", "What builds it into a package (pyproject.toml's build-system)"},
+        {"cli", "A command that runs it, and python -m"},
+        {"tests", "A first test, and how the tests are run"},
+        {"generator", "What CMake writes the build in"},
+        {"install", "Rules for cmake --install: the library, its headers, a CMake package"},
+        {"warnings", "How much the compiler warns of"},
+        {"sanitizers", "Run-time checks built into the debug build"},
+        {"hardening", "_FORTIFY_SOURCE and the stack protector in optimized builds"},
+        {"tuning", "Release builds for any machine, or for this one alone (-march=native)"},
+        {"lto", "Link-time optimization for release builds, where the compiler has it"},
+        {"ruff", "Ruff, set up to lint and format it"},
+        {"types", "The type checker it is set up for"},
+        {"presets", "Presets for debug, release and ci (where warnings are errors)"},
+        {"clangd", "So that clangd knows how each file is compiled"},
+        {"tidy", "A .clang-tidy with bugprone, cert, performance and other checks"},
+        {"format", "A .clang-format in this style"},
+        {"readme", "A README.md with the commands that build and test it"},
+        {"profiling", "scripts/profile.sh: the program profiled with rocprofv3"},
+        {"configure", "Configures it in the Build tab's terminal once the files are written"},
+    };
+    for (const auto& [key, note] : notes)
+        if (f.key == key) return std::string(note);
+    std::string choices;
+    if (f.kind == ProjectField::kChoice)
+        for (const std::string& c : f.choices) choices += (choices.empty() ? "" : ", ") + c;
+    return choices;
+}
+
+// The column both tabs are laid out in: kLookPageCols wide (less in a
+// narrow window), in the middle, the same for both so that going from one
+// to the other does not move it. A lit row's bar reaches a column further
+// each way (see in_column).
+void page_column(u32 cols, u32& left, u32& width) {
+    width = std::min<u32>(kLookPageCols, cols > 4 ? cols - 4 : cols);
+    left = (cols - width) / 2;
+}
+
+// A list ("a, b, c") in at most `most` lines of `room` columns, broken
+// between its items; what does not fit is counted at the end ("+3 more").
+std::vector<std::string> listed(const std::vector<std::string>& items, u32 room, size_t most) {
+    std::vector<std::string> lines;
+    size_t i = 0;
+    while (i < items.size() && lines.size() < most) {
+        const bool last = lines.size() + 1 == most;
+        std::string line;
+        u32 w = 0;
+        while (i < items.size()) {
+            const u32 sep = line.empty() ? 0 : 2, iw = width_of(items[i]);
+            // (Room kept for what ends the line: a comma, or the count of the rest.)
+            const size_t after = items.size() - i - 1;
+            const u32 tail = after == 0 ? 0 : last ? 2 + width_of("+" + std::to_string(after) + " more") : 1;
+            if (w + sep + iw + tail > room) break;
+            if (sep) line += ", ";
+            line += items[i++];
+            w += sep + iw;
+        }
+        if (line.empty() && !last) line = fit_text(items[i++], room > 1 ? room - 1 : room);  // (one longer than a line)
+        if (i < items.size()) {
+            if (last) line += (line.empty() ? "+" : ", +") + std::to_string(items.size() - i) + " more";
+            else line += ",";
+        }
+        lines.push_back(std::move(line));
+    }
+    return lines;
+}
+
+// Text in at most `most` lines of `room` columns, broken at spaces; the
+// last cut with an ellipsis if there is more still.
+std::vector<std::string> wrapped(std::string_view text, u32 room, size_t most) {
+    std::vector<std::string> lines;
+    if (room == 0) return lines;
+    while (!text.empty() && lines.size() < most) {
+        if (width_of(text) <= room || lines.size() + 1 == most) {
+            lines.push_back(fit_text(text, room));
+            break;
+        }
+        const u8* p = reinterpret_cast<const u8*>(text.data());
+        size_t at = 0, cut = std::string_view::npos;
+        u32 w = 0;
+        while (at < text.size()) {
+            const Decoded d = decode_utf8(p + at, text.size() - at);
+            const u32 dw = cp_width(d.cp);
+            if (w + dw > room) break;
+            if (d.cp == ' ') cut = at;
+            w += dw;
+            at += d.len ? d.len : 1;
+        }
+        if (cut == std::string_view::npos || cut == 0) cut = at > 0 ? at : std::max<size_t>(decode_utf8(p, text.size()).len, 1);  // (no space to break at)
+        lines.emplace_back(text.substr(0, cut));
+        text.remove_prefix(cut);
+        while (!text.empty() && text.front() == ' ') text.remove_prefix(1);
+    }
+    return lines;
+}
+
 struct Recent {
     bool dir = false;
     std::string path;
+    // Whether it is still there: asked of the file system once for each
+    // change of the list (-1: not yet), not as the mouse moves.
+    std::int8_t there = -1;
 };
 
 std::string home_short(const std::string& path) {
@@ -62,16 +208,18 @@ bool exists(const std::string& path, bool dir) {
     return ::stat(path.c_str(), &st) == 0 && (dir ? S_ISDIR(st.st_mode) : S_ISREG(st.st_mode));
 }
 
+bool still_there(Recent& r) {
+    if (r.there < 0) r.there = exists(r.path, r.dir) ? 1 : 0;
+    return r.there > 0;
+}
+
 }  // namespace
 
 struct App::StartUi {
     bool on = false;
     u64 doc = 0;  // the empty document it stands in front of
     std::vector<Recent> recent;  // the latest first (all that are kept; those still there are shown)
-    // Which of them are still there, asked once for each change of the list
-    // (a file system call each), and the lit rows as last put in the cells.
-    std::vector<Recent> live;
-    bool live_known = false;
+    // The lit rows as last put in the cells.
     size_t lit_sel = ~size_t{0};
     int lit_hover = -2;
     // What is on it: each thing that can be chosen, and the row it is on.
@@ -84,15 +232,19 @@ struct App::StartUi {
     std::vector<Item> items;
     size_t sel = 0;
     int hover = -1;
-    u32 left = 0, width = 0;  // the columns the items take
+    u32 left = 0, width = 0;  // the page's column (page_column): where its text starts, and how wide it is
+    // A column a lit row takes: the page's, and one more each side.
+    bool in_column(u32 col) const { return col + 1 >= left && col < left + width + 1; }
     // Its cells, and what they were made for.
     TextBox box;
     u64 key = 0;
     int x = 0, y = 0, pad_x = 0, pad_y = 0;
     bool folder_asked = false;  // the folder box was opened from here: the panel shows the folder chosen
     bool summoned = false;      // shown again later (the New project command), in a tab of its own
-    std::string root_seen;
+    std::string root_seen;      // the working directory as last seen ("" while there is none)
+    bool root_known = false;
     u32 tabs_row = 0, tab_c[4] = {};  // the tabs Start and New project: their row, and their columns [c0, c1) each
+    u32 create_c[2] = {};             // the Create button's columns [c0, c1)
 
     // The New project tab: the kinds of project, the one chosen, what was
     // set for each, and the rows of the form.
@@ -107,8 +259,9 @@ struct App::StartUi {
         u32 field = 0;  // kFormField: which of the kind's
         u32 row = 0;    // on the screen (~0: scrolled out of sight)
     };
-    std::vector<Row> form;
-    size_t form_sel = 0, form_top = 0;
+    std::vector<Row> form;  // section by section (each field in its kind's order), Create last
+    size_t form_sel = 0;
+    size_t form_top = 0;  // the first line of the form shown, the sections' headings and the blank lines counted
     std::string error, made;
     u64 gen = 1;  // counts up whenever the form changes
     // What the machine the project is to go on has, found on a thread of its
@@ -139,13 +292,15 @@ struct App::StartUi {
 
     const ProjectKind* chosen() const { return kind < kinds.size() ? &kinds[kind] : nullptr; }
     ProjectValues& kind_values() { return values[kinds[kind].name]; }
-    // The rows there are now (a field may be shown only for some values of another).
+    // The rows there are now (a field may be shown only for some values of
+    // another), in the order they are shown: section by section.
     void rows_again() {
         std::vector<Row> rows = {{kFormKind}, {kFormName}, {kFormWhere}, {kFormGit}};
         if (const ProjectKind* k = chosen()) {
             const ProjectValues& v = values[k->name];
-            for (u32 i = 0; i < k->fields.size(); ++i)
-                if (k->fields[i].shown(v)) rows.push_back({kFormField, i});
+            for (u32 sec = kSecOptions; sec < kSections; ++sec)
+                for (u32 i = 0; i < k->fields.size(); ++i)
+                    if (section_of(k->fields[i]) == sec && k->fields[i].shown(v)) rows.push_back({kFormField, i});
         }
         rows.push_back({kFormCreate});
         const Row was = form_sel < form.size() ? form[form_sel] : Row{kFormKind};
@@ -201,8 +356,22 @@ void App::recent_add(const std::string& path, bool dir) {
     if (slash != std::string::npos) SDL_CreateDirectory(file.substr(0, slash).c_str());
     const std::string tmp = file + ".tmp";
     if (SDL_SaveFile(tmp.c_str(), out.data(), out.size())) std::rename(tmp.c_str(), file.c_str());
-    s.live_known = false;
+    for (Recent& r : s.recent) r.there = -1;  // (the list has changed: each is asked about again when next wanted)
     s.key = 0;  // (shown afresh)
+}
+
+// The files (not folders) opened lately that are still there, the latest
+// first, their full paths: Go to file shows them before anything is typed.
+// Whether each is there comes from the start screen's answers, so the file
+// system is asked once for each change of the list, not on every call.
+std::vector<std::string> App::recent_files(size_t most) const {
+    std::vector<std::string> out;
+    if (!start_) return out;
+    for (Recent& r : start_->recent) {
+        if (out.size() >= most) break;
+        if (!r.dir && still_there(r)) out.push_back(r.path);
+    }
+    return out;
 }
 
 bool App::start_shown() {
@@ -263,7 +432,7 @@ bool App::start_key(const SDL_KeyboardEvent& k) {
             return true;
         }
         if (cmd && !(ctrl && (k.key == SDLK_N || k.key == SDLK_P))) return false;
-        const size_t n = s.form.size();
+        const size_t n = s.form.size();  // (in the order shown, section by section: rows_again)
         auto move = [&](i64 by) {
             if (n) s.form_sel = static_cast<size_t>(((static_cast<i64>(s.form_sel) + by) % static_cast<i64>(n) + static_cast<i64>(n)) % static_cast<i64>(n));
             ++s.gen;
@@ -307,6 +476,11 @@ bool App::start_key(const SDL_KeyboardEvent& k) {
                 break;
             default: break;  // (letters: start_text())
         }
+        return true;
+    }
+    if (kPrimaryMod == SDL_KMOD_GUI && (k.mod & SDL_KMOD_GUI) && !(k.mod & (SDL_KMOD_SHIFT | SDL_KMOD_ALT)) && k.key == SDLK_N) {  // (where Ctrl is the shortcut key, Ctrl+N moves down the list)  // (Cmd+N here is the page's own New file: the empty file it stands in front of)
+        s.on = false;
+        dirty_ = true;
         return true;
     }
     if ((k.mod & kPrimaryMod) && !(ctrl && (k.key == SDLK_N || k.key == SDLK_P))) return false;  // the application's shortcuts
@@ -366,7 +540,7 @@ int App::start_item_at(int px, int py) const {
     const int cw = font_->cell_w(), ch = font_->cell_h();
     if (px < s.x + s.pad_x || py < s.y + s.pad_y) return -1;
     const u32 col = static_cast<u32>((px - s.x - s.pad_x) / cw), row = static_cast<u32>((py - s.y - s.pad_y) / ch);
-    if (col < s.left || col >= s.left + s.width) return -1;
+    if (!s.in_column(col)) return -1;
     for (size_t i = 0; i < s.items.size(); ++i)
         if (s.items[i].row == row) return static_cast<int>(i);
     return -1;
@@ -384,7 +558,8 @@ bool App::start_mouse_down(const SDL_MouseButtonEvent& b) {
         else if (row == s.tabs_row && col >= s.tab_c[2] && col < s.tab_c[3]) project_page(true);
         else if (s.page == 1) {
             for (size_t i = 0; i < s.form.size(); ++i)
-                if (s.form[i].row == row && col >= s.left && col < s.left + s.width) {
+                if (s.form[i].row == row && s.in_column(col)) {
+                    if (s.form[i].what == kFormCreate && (col < s.create_c[0] || col >= s.create_c[1])) break;  // (the button, not the row)
                     s.form_sel = i;
                     ++s.gen;
                     if (s.form[i].what == kFormCreate) project_create();
@@ -423,23 +598,25 @@ void App::start_layout(FrameDesc& fd) {
     const int w = p.x1 - p.x0, h = p.y1 - p.y0;
     if (w < cw * 8 || h < ch * 4) return;
     const u32 cols = static_cast<u32>(w / cw), rows = static_cast<u32>(h / ch);
-    const std::string* panel_root_now = panel_root();
-    const std::string root = panel_root_now ? *panel_root_now : default_workdir();
-    if (s.folder_asked && root != s.root_seen && !s.root_seen.empty() && !find_open_) {  // a folder was chosen in the box opened from here: shown
+    // A folder chosen in the box opened from here: the side panel shows it.
+    // (The working directory is looked at, not copied, frame by frame.)
+    const std::string* root_now = panel_root();
+    const std::string_view root = root_now ? std::string_view(*root_now) : std::string_view();
+    if (s.folder_asked && s.root_known && root != s.root_seen && !find_open_) {
         s.folder_asked = false;
         if (!panel_px()) panel_toggle();
     }
-    s.root_seen = root;
+    if (!s.root_known || root != s.root_seen) s.root_seen.assign(root), s.root_known = true;
 
     u64 key = 1469598103934665603ull;
     auto mix = [&](u64 v) { key = (key ^ v) * 1099511628211ull; };
     mix(cols);
     mix(rows);
     mix(font.generation());
-    mix(std::hash<std::string>{}(root));
     mix(s.recent.size());
     mix(static_cast<u64>(s.page));
     mix(s.gen);
+    mix(cfg_.modal);  // (the line saying it starts in Normal mode)
     if (s.page == 1) {  // (what the machine has, once it is found)
         std::lock_guard lock(s.facts_mu);
         mix(s.facts.done);
@@ -452,137 +629,128 @@ void App::start_layout(FrameDesc& fd) {
     } else if (key != s.key || s.items.empty()) {
         s.key = key;
         rebuilt = true;
-        const bool apple = kPrimaryMod == SDL_KMOD_GUI;
-        const bool glyphs = apple && font.has(0x2318) && font.has(0x21E7);  // (⌘ and ⇧, or their names)
-        const std::string cmd = glyphs ? "\xE2\x8C\x98" : apple ? "Cmd+" : "Ctrl+", shift = glyphs ? "\xE2\x87\xA7" : "Shift+";
+        // Each thing to do, its key, and its shortcut from anywhere (as
+        // the command search and the README write it, in the platform's
+        // symbols).
+        auto chord = [&](SDL_Keycode k, int mods) { return key_symbols(chord_text(k, static_cast<SDL_Keymod>(kPrimaryMod | mods)), font); };
         s.items.clear();
-        s.items.push_back({kNew, "New file", "n", "", {}});
-        s.items.push_back({kProject, "New project\xE2\x80\xA6", "p", "", {}});
-        s.items.push_back({kOpen, "Open a file\xE2\x80\xA6", "o", cmd + "O", {}});
-        s.items.push_back({kFind, "Find a file in the folder", "f", cmd + "P", {}});
-        s.items.push_back({kSearch, "Search the folder's files", "s", cmd + shift + "F", {}});
-        s.items.push_back({kFolder, "Open a folder\xE2\x80\xA6", "d", "", {}});
+        s.items.push_back({kNew, "New file", "n", chord(SDLK_N, 0), {}});
+        s.items.push_back({kProject, "New project\xE2\x80\xA6", "p", chord(SDLK_N, SDL_KMOD_ALT), {}});
+        s.items.push_back({kOpen, "Open a file\xE2\x80\xA6", "o", chord(SDLK_O, 0), {}});
+        s.items.push_back({kFind, "Go to file", "f", chord(SDLK_P, 0), {}});
+        s.items.push_back({kSearch, "Search in files", "s", chord(SDLK_F, SDL_KMOD_SHIFT), {}});
+        s.items.push_back({kFolder, "Open a folder\xE2\x80\xA6", "d", chord(SDLK_O, SDL_KMOD_SHIFT), {}});
         s.items.push_back({kRemote, "Connect to a server\xE2\x80\xA6", "r", "", {}});
-        s.items.push_back({kSettings, "Settings (init.lua)", "c", cmd + ",", {}});
-        s.items.push_back({kQuit, "Quit", "q", cmd + "Q", {}});
+        s.items.push_back({kSettings, "Settings (init.lua)", "c", chord(SDLK_COMMA, 0), {}});
+        s.items.push_back({kQuit, "Quit", "q", chord(SDLK_Q, 0), {}});
         const size_t actions = s.items.size();
-        if (!s.live_known) {  // (asked when the list changes, not as the mouse moves)
-            s.live.clear();
-            for (const Recent& r : s.recent) {
-                if (s.live.size() == 9) break;
-                if (exists(r.path, r.dir)) s.live.push_back(r);
-            }
-            s.live_known = true;
-        }
         u32 shown = 0;
-        for (const Recent& r : s.live) s.items.push_back({kRecent, "", std::to_string(++shown), "", r});
-        s.sel = std::min(s.sel, s.items.size() - 1);
+        for (Recent& r : s.recent) {
+            if (shown == 9) break;
+            if (still_there(r)) s.items.push_back({kRecent, "", std::to_string(++shown), "", r});
+        }
 
-        // How it is laid out, top to bottom, and what goes when there is not room.
-        const bool logo = font.has(0x2588) && font.has(0x2580) && font.has(0x2584);
-        const u32 recent_rows = shown ? static_cast<u32>(shown) + 2 : 0;  // (a blank row and a heading before them)
-        u32 need = (logo ? 3 : 1) + 2 + static_cast<u32>(actions) + recent_rows + 2;
-        bool tagline = true, footer = true;
+        // How it is laid out, top to bottom: the name, what it is, how it
+        // starts with Vim's modes on, what to do, what was opened lately;
+        // and the keys along the bottom of the column. What goes when
+        // there is not room, the least useful first: that line about the
+        // modes, what it is, the name in large letters (it is written
+        // small), the keys, and last the oldest of what was opened lately.
+        bool logo = font.has(0x2588) && font.has(0x2580) && font.has(0x2584);
+        bool tagline = true, note = cfg_.modal, hint = true;
         u32 recent_room = shown;
-        const u32 below = rows > 3 ? rows - 3 : 0;  // (below the tabs)
-        if (need > below && footer) footer = false, need -= 2;
-        if (need > below && tagline) tagline = false, need -= 2;
-        while (need > below && recent_room > 0) --recent_room, --need;
+        auto need = [&] { return (logo ? 3 : 1) + (tagline ? 2 : 0) + (note ? 1 : 0) + 1 + static_cast<u32>(actions) + (recent_room ? recent_room + 2 : 0); };
+        u32 room = rows > 6 ? rows - 6 : 0;  // (below the tabs and a blank row; above a blank row, the keys and a blank row)
+        if (need() > room) note = false;
+        if (need() > room) tagline = false;
+        if (need() > room) logo = false;
+        if (need() > room) hint = false, room = rows > 4 ? rows - 4 : 0;
+        while (need() > room && recent_room > 0) --recent_room;
         s.items.resize(actions + recent_room);
         s.sel = std::min(s.sel, s.items.size() - 1);
-        s.width = std::min<u32>(cols > 4 ? cols - 4 : cols, 64);
-        s.left = (cols - s.width) / 2;
+        page_column(cols, s.left, s.width);
         s.box.resize(cols, rows);
-        u32 r = 3 + (below > need ? (below - need) / 2 : 0);
-        auto centred = [&](u32 row, std::string_view text, u32 ink, u32 style = 0) {
+        u32 r = 3 + (room > need() ? (room - need()) / 2 : 0);
+        auto centred = [&](u32 row, std::string_view text, Ink in) {
             const u32 n = width_of(text);
-            s.box.put(font, row, cols > n ? (cols - n) / 2 : 0, text, ink, style);
+            put(s.box, font, row, cols > n ? (cols - n) / 2 : 0, text, in);
         };
         if (logo) {  // the name, in blocks of half a cell
-            centred(r++, "\u2588   \u2588 \u2580 \u2584\u2588\u2584", kInkAccent);  // █   █ ▀ ▄█▄
-            centred(r++, "\u2588\u2580\u2584 \u2588 \u2588  \u2588 ", kInkAccent);    // █▀▄ █ █  █
-            centred(r++, "\u2588\u2584\u2580 \u2588 \u2588  \u2588\u2584", kInkAccent);  // █▄▀ █ █  █▄
+            centred(r++, "█   █ ▀ ▄█▄", ink::kAccent);  // █   █ ▀ ▄█▄
+            centred(r++, "█▀▄ █ █  █ ", ink::kAccent);    // █▀▄ █ █  █
+            centred(r++, "█▄▀ █ █  █▄", ink::kAccent);  // █▄▀ █ █  █▄
         } else {
-            centred(r++, "blit", kInkAccent, Font::kBold);
+            centred(r++, "blit", ink::kAccentStrong);
         }
         if (tagline) {
-            centred(r + 1, "a fast text editor", kInkMuted);
+            centred(r + 1, "a fast text editor", ink::kMuted);
             r += 2;
         }
+        if (note) centred(r++, fit_text("Starts in Normal mode: i to type, Esc to stop (editor.modal in Settings)", cols > 2 ? cols - 2 : cols), ink::kMuted);
         r += 1;
-        // The columns: the labels from the left, the keys and then the
-        // shortcuts against the right; with too little room the shortcuts
-        // go, and then the labels are cut.
+        // One left column for every row: the key that does it, then what it
+        // is (a file or folder with its icon, as in the side panel), and the
+        // shortcut against the right of the column; with too little room the
+        // shortcuts go, and then the labels are cut.
+        const u32 key_col = s.left, label_col = s.left + 3, right = s.left + s.width;
         u32 label_w = 0, cut_w = 0;
         for (size_t i = 0; i < actions; ++i) {
             label_w = std::max(label_w, width_of(s.items[i].label));
             cut_w = std::max(cut_w, width_of(s.items[i].shortcut));
         }
-        const u32 right = s.left + s.width - 2;  // (two blank columns inside each end of a lit row)
-        const bool with_cuts = s.left + 2 + label_w + 3 + 1 + 3 + cut_w <= right;
-        const u32 cut_col = with_cuts ? right - cut_w : right, key_col = with_cuts ? cut_col - 3 : right - 1;
-        const u32 label_room = key_col > s.left + 4 ? key_col - s.left - 4 : 1;
-        auto clipped = [&](const std::string& text, u32 n) {
-            if (width_of(text) <= n) return text;
-            size_t at = 0;
-            for (u32 k = 0; k + 1 < n && at < text.size(); ++k) at += decode_utf8(reinterpret_cast<const u8*>(text.data()) + at, text.size() - at).len;
-            return text.substr(0, at) + "\xE2\x80\xA6";
+        const bool with_cuts = label_col + label_w + 3 + cut_w <= right;
+        const u32 label_room = (with_cuts ? right - cut_w - 3 : right) - label_col;
+        const bool nerd = font.has(0xE5FF) && font.has(0xE61D);  // the font brings file icons of its own
+        auto icon = [&](u32 row, u32 col, const FileIcon& ic) {
+            if (row >= rows || col + 2 > cols) return;
+            u32* cell = s.box.cells.data() + static_cast<size_t>(row) * cols + col;
+            if (nerd) {
+                cell[0] = (font.glyph(ic.nerd) & (Font::kWide - 1)) | (ic.ink << kCellInkShift);
+            } else {
+                const u32 slot = font.icon(ic.drawn);
+                cell[0] = slot | (ic.ink << kCellInkShift);
+                cell[1] = (slot + 1) | (ic.ink << kCellInkShift);
+            }
         };
         for (size_t i = 0; i < s.items.size(); ++i) {
             StartUi::Item& it = s.items[i];
             if (i == actions) {  // the heading of those opened lately
-                s.box.put(font, r + 1, s.left + 2, "Opened lately", kInkMuted);
+                put(s.box, font, r + 1, key_col, "Recent", ink::kHeading);
                 r += 2;
             }
             it.row = r;
+            put(s.box, font, r, key_col, it.key, ink::kAccent);
             if (it.act == kRecent) {
-                s.box.put(font, r, s.left + 2, it.key, kInkAccent);
+                // Its name, and the folder it is in (cut from its start if it is long).
                 const std::string& path = it.recent.path;
                 const size_t slash = path.find_last_of('/');
-                const std::string name = (slash == std::string::npos ? path : path.substr(slash + 1)) + (it.recent.dir ? "/" : "");
+                std::string name = slash == std::string::npos ? path : path.substr(slash + 1);
+                if (name.empty()) name = path;
                 const std::string where = home_short(slash == std::string::npos ? std::string() : path.substr(0, std::max<size_t>(slash, 1)));
-                const u32 end = s.box.put(font, r, s.left + 5, name, 0, it.recent.dir ? Font::kBold : 0);
-                if (end + 2 < s.left + s.width) {
-                    // (the folder it is in, cut from its start if it is long)
-                    const u32 room = s.left + s.width - end - 3;
-                    std::string shown_where = where;
-                    if (width_of(shown_where) > room && room > 1) {
-                        size_t at = 0;
-                        for (u32 cut = width_of(shown_where) - room + 1; cut > 0 && at < shown_where.size(); --cut)
-                            at += decode_utf8(reinterpret_cast<const u8*>(shown_where.data()) + at, shown_where.size() - at).len;
-                        shown_where = "\xE2\x80\xA6" + shown_where.substr(at);
-                    }
-                    s.box.put(font, r, end + 2, shown_where, kInkMuted);
-                }
+                icon(r, label_col, file_icon(name, it.recent.dir, false));
+                const u32 name_col = label_col + 3;
+                const u32 end = put(s.box, font, r, name_col, fit_text(name, right > name_col ? right - name_col : 0), ink::kText);
+                if (!where.empty() && end + 2 + 4 <= right) put(s.box, font, r, end + 2, fit_text(where, right - end - 2, true), ink::kMuted);
             } else {
-                s.box.put(font, r, s.left + 2, clipped(it.label, label_room), 0);
-                s.box.put(font, r, key_col, it.key, kInkAccent);
-                if (with_cuts && !it.shortcut.empty()) s.box.put(font, r, cut_col, it.shortcut, kInkMuted);
+                put(s.box, font, r, label_col, fit_text(it.label, label_room), ink::kText);
+                if (with_cuts && !it.shortcut.empty()) put(s.box, font, r, right - width_of(it.shortcut), it.shortcut, ink::kMuted);
             }
             ++r;
         }
-        if (footer) {  // the folder and the settings file, shortened from the start of the folder's path if need be
-            std::string folder = home_short(root);
-            const std::string settings = "   \xC2\xB7   settings " + home_short(init_path_);
-            const u32 room = cols > 2 ? cols - 2 : cols;
-            const bool with_settings = 7 + 20 + width_of(settings) <= room;
-            const u32 most = room - 7 - (with_settings ? width_of(settings) : 0);
-            if (width_of(folder) > most && most > 2) {
-                size_t at = 0;
-                for (u32 cut = width_of(folder) - most + 1; cut > 0 && at < folder.size(); --cut)
-                    at += decode_utf8(reinterpret_cast<const u8*>(folder.data()) + at, folder.size() - at).len;
-                if (const size_t slash = folder.find('/', at); slash != std::string::npos) at = slash;  // (whole folders go)
-                folder = "\xE2\x80\xA6" + folder.substr(at);
-            }
-            centred(r + 1, "folder " + folder + (with_settings ? settings : std::string()), kInkMuted);
+        if (hint) {  // the keys, as many as there is room for
+            static constexpr Hint hints[] = {{"Enter", "open"}, {"j k", "move"}, {"Ctrl+Tab", "new project"}};
+            size_t n = std::size(hints);
+            while (n > 0 && hints_width(std::span(hints, n), font) > s.width) --n;
+            put_hints(s.box, font, rows - 2, s.left, std::span(hints, n));
         }
     }
     if (s.page == 0 && s.box.cols == cols && !s.items.empty() && (rebuilt || s.lit_sel != s.sel || s.lit_hover != s.hover)) {  // the lit rows: the one chosen, the one under the mouse
+        const u32 c0 = s.left > 0 ? s.left - 1 : 0, c1 = std::min(cols, s.left + s.width + 1);
         for (size_t i = 0; i < s.items.size(); ++i) {
             const u32 row = s.items[i].row;
             if (row >= rows) continue;
             const u32 lit = i == s.sel ? kCellSelected : static_cast<int>(i) == s.hover ? kCellHover : 0;
-            for (u32 c = s.left; c < s.left + s.width && c < cols; ++c) {
+            for (u32 c = c0; c < c1; ++c) {
                 u32& cell = s.box.cells[static_cast<size_t>(row) * cols + c];
                 cell = (cell & ~(kCellSelected | kCellHover)) | lit;
             }
@@ -598,7 +766,7 @@ void App::start_layout(FrameDesc& fd) {
         for (int t = 0; t < 2; ++t) {
             const u32 n = width_of(names[t]);
             for (u32 x = c > 0 ? c - 1 : 0; x < c + n + 1 && x < cols; ++x) s.box.cells[cols + x] &= ~(kCellSelected | kCellHover);
-            s.box.put(font, 1, c, names[t], t == s.page ? kInkAccent : kInkMuted, t == s.page ? Font::kBold : 0);
+            put(s.box, font, 1, c, names[t], t == s.page ? ink::kAccentStrong : ink::kMuted);
             if (t == s.page)
                 for (u32 x = c > 0 ? c - 1 : 0; x < c + n + 1 && x < cols; ++x) s.box.cells[cols + x] |= kCellSelected;
             s.tab_c[2 * t] = c > 0 ? c - 1 : 0;
@@ -625,7 +793,11 @@ void App::start_layout(FrameDesc& fd) {
     const Look lk = look();
     if (lk.pill > 0) {  // (the lit row a rounded bar, as in the side panel)
         q.pill = lk.pill;
-        q.pill_dx = static_cast<float>(std::max(1, static_cast<int>(std::lround(scale_))));
+        // A lit row is lit from the column before its text: its bar starts
+        // inside that column, as far before the text as in a floating box
+        // (the edge less the inset), or at the column's start if that is
+        // nearer.
+        q.pill_dx = static_cast<float>(std::max(0, cw - (lk.edge - lk.inset)));
         q.pill_dy = std::round(0.5f * scale_);
     }
 }
@@ -1063,21 +1235,23 @@ bool App::project_create() {
     return true;
 }
 
-// The New project tab's cells (start_layout).
+// The New project tab's cells (start_layout): the form, section by
+// section; under it, what it writes and what it runs then; along the
+// bottom, what the chosen row is for (or what went wrong), and the keys.
 void App::project_cells(u32 cols, u32 rows) {
     StartUi& s = *start_;
     project_facts_apply();
     Font& font = *font_;
     TextBox& box = s.box;
-    s.width = std::min<u32>(cols > 4 ? cols - 4 : cols, 76);
-    s.left = (cols - s.width) / 2;
+    page_column(cols, s.left, s.width);
     const ProjectKind* k = s.chosen();
     if (!k) {
-        box.put(font, 3, s.left + 2, "No kinds of project (init.lua removed them all).", kInkMuted);
+        put(box, font, 3, s.left, "No kinds of project (init.lua removed them all).", ink::kMuted);
         return;
     }
     const ProjectValues& v = s.values[k->name];
     const bool dots = font.has(0x25CF) && font.has(0x25CB), quotes = font.has(0x2039) && font.has(0x203A);
+    const std::string enter = key_symbols("Enter", font), create_keys = chord_text(SDLK_RETURN, kPrimaryMod), create = key_symbols(create_keys, font);
     auto label_of = [&](const StartUi::Row& r) -> std::string {
         switch (r.what) {
             case kFormKind: return "Kind";
@@ -1085,35 +1259,45 @@ void App::project_cells(u32 cols, u32 rows) {
             case kFormWhere: return "Location";
             case kFormGit: return "Git repository";
             case kFormField: return k->fields[r.field].label;
-            case kFormCreate: return "Create";
+            case kFormCreate: return {};
         }
         return {};
     };
-    u32 label_w = 0;
-    for (const StartUi::Row& r : s.form) label_w = std::max(label_w, width_of(label_of(r)));
-    label_w = std::min(label_w, s.width / 2);
-    const u32 value_col = s.left + 2 + label_w + 3, right = s.left + s.width - 1;
-    auto cut = [&](const std::string& text, u32 n) {
-        if (width_of(text) <= n) return text;
-        size_t at = 0;
-        for (u32 c = 0; c + 1 < n && at < text.size(); ++c) at += decode_utf8(reinterpret_cast<const u8*>(text.data()) + at, text.size() - at).len;
-        return text.substr(0, at) + "\xE2\x80\xA6";
-    };
-    auto put_switch = [&](u32 row, bool on) {
-        box.put(font, row, value_col, dots ? (on ? "\xE2\x97\x8F on" : "\xE2\x97\x8B off") : (on ? "[x] on" : "[ ] off"), on ? kInkAccent : kInkMuted);
-    };
-    auto put_choice = [&](u32 row, const std::string& value) {
-        u32 c = box.put(font, row, value_col, quotes ? "\xE2\x80\xB9 " : "< ", kInkMuted);
-        c = box.put(font, row, c, value, 0, Font::kBold);
-        return box.put(font, row, c, quotes ? " \xE2\x80\xBA" : " >", kInkMuted);
+    auto section_of_row = [&](const StartUi::Row& r) -> int {
+        return r.what == kFormCreate ? -1 : r.what == kFormField ? static_cast<int>(section_of(k->fields[r.field])) : static_cast<int>(kSecProject);
     };
 
-    // What will be made, for the lines under the form.
+    // The columns: the labels from the page's left edge (taking a little
+    // over half of it at most), then one column where every value starts,
+    // after room for the chooser's mark, so that no value moves when its
+    // row is chosen.
+    const u32 right = s.left + s.width;
+    u32 label_w = 0;
+    for (const StartUi::Row& r : s.form) label_w = std::max(label_w, width_of(label_of(r)));
+    label_w = std::min(label_w, s.width * 11 / 20);
+    const u32 chooser_col = s.left + label_w + 2, value_col = chooser_col + 2;
+    const u32 value_room = right > value_col ? right - value_col : 0;
+    // A value that Left and Right change is between ‹ and ›, on the chosen row alone.
+    const std::string_view lq = quotes ? "\xE2\x80\xB9" : "<", rq = quotes ? "\xE2\x80\xBA" : ">";
+    auto marks = [&](u32 row, u32 end) {
+        put(box, font, row, chooser_col, lq, ink::kMuted);
+        put(box, font, row, end + 1, rq, ink::kMuted);
+    };
+    auto put_switch = [&](u32 row, bool on, bool chosen) {
+        const u32 end = put(box, font, row, value_col, dots ? (on ? "\xE2\x97\x8F on" : "\xE2\x97\x8B off") : (on ? "[x] on" : "[ ] off"), on ? ink::kText : ink::kMuted);
+        if (chosen) marks(row, end);
+    };
+    auto put_choice = [&](u32 row, const std::string& value, bool chosen) {
+        const u32 end = put(box, font, row, value_col, fit_text(value, value_room > 2 ? value_room - 2 : 0), ink::kText);
+        if (chosen) marks(row, end);
+    };
+
+    // What will be made, for the lines under the form: the files listed
+    // between their names (and counted past two lines), the commands broken
+    // between words.
     std::vector<std::string> writes;
     std::string then;
-    if (k->scripted) {
-        writes.push_back("what init.lua's create function writes");
-    } else {
+    if (!k->scripted) {
         ProjectValues full = v;
         full["name"] = s.name.empty() ? "name" : s.name;
         full["git"] = s.git ? "true" : "false";
@@ -1122,104 +1306,151 @@ void App::project_cells(u32 cols, u32 rows) {
         then = plan.then;
     }
     if (s.git) then = "git init -q" + (then.empty() ? std::string() : "; " + then);
+    const u32 text_col = s.left + 8, text_room = right > text_col ? right - text_col : 1;
+    const std::vector<std::string> write_lines = k->scripted ? std::vector<std::string>{"What init.lua's create function writes"} : listed(writes, text_room, 2);
+    const std::vector<std::string> run_lines = wrapped(then, text_room, 2);
+    const u32 summary_h = static_cast<u32>(std::max<size_t>(write_lines.size(), 1) + std::max<size_t>(run_lines.size(), 1));
 
-    // The rows, with as many as fit shown (the chosen one always).
-    const u32 foot = 7;  // a blank, what it writes (2), what it runs, a blank, an error, the keys
-    const u32 top = 3, body = rows > top + foot + 2 ? rows - top - foot : 2;
-    const size_t n = s.form.size();
-    if (s.form_sel < s.form_top) s.form_top = s.form_sel;
-    if (s.form_sel >= s.form_top + body) s.form_top = s.form_sel - body + 1;
+    // Where it goes: the form under the tabs, then a blank row and what it
+    // writes and runs; along the bottom a blank row, the line about the
+    // chosen row, the keys, and a blank row under them. In a window too
+    // short for that, what it writes and runs goes first, then the bottom.
+    const u32 top = 3;
+    const bool foot = rows >= top + 9;
+    const u32 msg_row = rows - 3, hint_row = rows - 2;
+    const u32 end = foot ? msg_row - 1 : rows;  // (the form and what is under it stay above this row)
+    bool summary = true;
+    u32 body = end > top + 1 + summary_h ? end - top - 1 - summary_h : 0;
+    if (body < 4) summary = false, body = end > top ? end - top : 1;
+
+    // The form's lines: each section's heading over its rows, a blank line
+    // between sections, and one before Create.
+    enum : u8 { kLineBlank, kLineHeading, kLineRow };
+    struct Line {
+        u8 what;
+        u32 at;  // kLineHeading: the section; kLineRow: the row of the form
+    };
+    std::vector<Line> lines;
+    lines.reserve(s.form.size() + 2 * kSections + 2);
+    size_t sel_line = 0;
+    int section = -2;
+    for (size_t i = 0; i < s.form.size(); ++i) {
+        if (const int sec = section_of_row(s.form[i]); sec != section) {
+            if (!lines.empty()) lines.push_back({kLineBlank, 0});
+            if (sec >= 0) lines.push_back({kLineHeading, static_cast<u32>(sec)});
+            section = sec;
+        }
+        if (i == s.form_sel) sel_line = lines.size();
+        lines.push_back({kLineRow, static_cast<u32>(i)});
+    }
+    // As many lines as fit, the chosen row's always (and its section's
+    // heading, when that is just above it).
+    const size_t n = lines.size();
+    const size_t first = sel_line > 0 && lines[sel_line - 1].what == kLineHeading ? sel_line - 1 : sel_line;
+    if (first < s.form_top) s.form_top = first;
+    if (sel_line >= s.form_top + body) s.form_top = sel_line - body + 1;
     if (s.form_top + body > n) s.form_top = n > body ? n - body : 0;
     for (StartUi::Row& r : s.form) r.row = ~0u;
+    const u32 lit0 = s.left > 0 ? s.left - 1 : 0, lit1 = std::min(cols, right + 1);
     u32 y = top;
-    for (size_t i = s.form_top; i < n && y < top + body; ++i, ++y) {
+    for (size_t li = s.form_top; li < n && y < top + body; ++li, ++y) {
+        const Line& line = lines[li];
+        if (line.what == kLineHeading) put(box, font, y, s.left, kSectionNames[line.at], ink::kHeading);
+        if (line.what != kLineRow) continue;
+        const size_t i = line.at;
         StartUi::Row& r = s.form[i];
         r.row = y;
-        const std::string label = cut(label_of(r), label_w);
-        if (r.what == kFormCreate) {
-            box.put(font, y, s.left + 2, label, kInkAccent, Font::kBold);
-            box.put(font, y, value_col, cut(home_short(s.where + "/" + (s.name.empty() ? std::string("\xE2\x80\xA6") : s.name)), right - value_col), kInkMuted);
-        } else {
-            box.put(font, y, s.left + 2, label, 0);
-            switch (r.what) {
-                case kFormKind: {
-                    const u32 c = put_choice(y, k->name);
-                    if (c + 3 < right && !k->description.empty()) box.put(font, y, c + 2, cut(k->description, right - c - 2), kInkMuted);
-                    break;
-                }
-                case kFormName:
-                    if (s.name.empty()) box.put(font, y, value_col, "type a name", kInkMuted);
-                    else box.put(font, y, value_col, cut(s.name, right - value_col), 0, Font::kBold);
-                    break;
-                case kFormWhere: box.put(font, y, value_col, cut(home_short(s.where), right - value_col), 0); break;
-                case kFormGit: put_switch(y, s.git); break;
-                case kFormField: {
-                    const ProjectField& f = k->fields[r.field];
-                    const auto it = v.find(f.key);
-                    const std::string val = it == v.end() ? std::string() : it->second;
-                    if (f.kind == ProjectField::kSwitch) {
-                        put_switch(y, val == "true");
-                    } else if (f.kind == ProjectField::kChoice) {
-                        put_choice(y, val);
-                    } else if (f.kind == ProjectField::kLibraries) {
-                        std::string shown;
-                        for (const char c : val) shown += c == ' ' ? std::string(", ") : std::string(1, c);
-                        std::lock_guard lock(s.facts_mu);
-                        const StartUi::Facts& fa = s.facts;
-                        const char* none = f.source == "vcpkg" && fa.vcpkg_root.empty()   ? "vcpkg not found (VCPKG_ROOT)"
-                                           : f.source == "rocm" && fa.rocm_root.empty()   ? "ROCm not found (ROCM_PATH)"
-                                           : f.source == "pkg-config" && fa.pkgconfig.empty() ? "pkg-config not found"
+        const bool chosen = i == s.form_sel;
+        if (r.what == kFormCreate) {  // a button, in the value column, on a bar of its own: lit when it is chosen
+            u32 c = put(box, font, y, value_col, "Create", ink::kAccentStrong);
+            c = put(box, font, y, c + 2, create, ink::kAccent);
+            s.create_c[0] = value_col - 1;
+            s.create_c[1] = std::min(cols, c + 1);
+            for (u32 x = s.create_c[0]; x < s.create_c[1]; ++x) box.cells[static_cast<size_t>(y) * cols + x] |= chosen ? kCellSelected : kCellHover;
+            continue;
+        }
+        put(box, font, y, s.left, fit_text(label_of(r), label_w), ink::kText);
+        switch (r.what) {
+            case kFormKind: put_choice(y, k->name, chosen); break;
+            case kFormName:
+                if (s.name.empty()) put(box, font, y, value_col, "Type a name", ink::kMuted);
+                else put(box, font, y, value_col, fit_text(s.name, value_room), ink::kText);
+                break;
+            case kFormWhere: put(box, font, y, value_col, fit_text(home_short(s.where), value_room, true), ink::kText); break;
+            case kFormGit: put_switch(y, s.git, chosen); break;
+            case kFormField: {
+                const ProjectField& f = k->fields[r.field];
+                const auto it = v.find(f.key);
+                const std::string val = it == v.end() ? std::string() : it->second;
+                if (f.kind == ProjectField::kSwitch) {
+                    put_switch(y, val == "true", chosen);
+                } else if (f.kind == ProjectField::kChoice) {
+                    put_choice(y, val, chosen);
+                } else if (f.kind == ProjectField::kLibraries) {
+                    std::string names;
+                    for (const char c : val) names += c == ' ' ? std::string(", ") : std::string(1, c);
+                    std::lock_guard lock(s.facts_mu);
+                    const StartUi::Facts& fa = s.facts;
+                    const char* none = f.source == "vcpkg" && fa.vcpkg_root.empty()       ? "vcpkg not found (VCPKG_ROOT)"
+                                       : f.source == "rocm" && fa.rocm_root.empty()       ? "ROCm not found (ROCM_PATH)"
+                                       : f.source == "pkg-config" && fa.pkgconfig.empty() ? "pkg-config not found"
                                                                                            : nullptr;
-                        if (f.source == "pypi") none = nullptr;
-                        if (!shown.empty()) box.put(font, y, value_col, cut(shown, right - value_col), 0, Font::kBold);
-                        else if (!fa.done && f.source != "pypi") box.put(font, y, value_col, "looking\xE2\x80\xA6", kInkMuted);
-                        else box.put(font, y, value_col, none ? none : "none (Enter looks them up)", none ? kInkDiagnostic : kInkMuted);
-                    }
-                    else if (val.empty()) box.put(font, y, value_col, "none", kInkMuted);
-                    else box.put(font, y, value_col, cut(val, right - value_col), 0);
-                    break;
+                    if (f.source == "pypi") none = nullptr;
+                    if (!names.empty()) put(box, font, y, value_col, fit_text(names, value_room), ink::kText);
+                    else if (!fa.done && f.source != "pypi") put(box, font, y, value_col, "Looking\xE2\x80\xA6", ink::kMuted);
+                    else if (none) put(box, font, y, value_col, fit_text(none, value_room), ink::kError);
+                    else put(box, font, y, value_col, fit_text("None (" + enter + " looks them up)", value_room), ink::kMuted);
+                } else if (val.empty()) {
+                    put(box, font, y, value_col, "None", ink::kMuted);
+                } else {
+                    put(box, font, y, value_col, fit_text(val, value_room), ink::kText);
                 }
-                default: break;
+                break;
             }
+            default: break;
         }
-        const u32 lit = i == s.form_sel ? kCellSelected : 0;
-        if (lit)
-            for (u32 c = s.left; c < s.left + s.width && c < cols; ++c) box.cells[static_cast<size_t>(y) * cols + c] |= lit;
+        if (chosen)
+            for (u32 c = lit0; c < lit1; ++c) box.cells[static_cast<size_t>(y) * cols + c] |= kCellSelected;
     }
-    if (s.form_top > 0) box.put(font, top, right, "\xE2\x86\x91", kInkMuted);
-    if (s.form_top + body < n) box.put(font, top + body - 1, right, "\xE2\x86\x93", kInkMuted);
+    if (right < cols) {  // (more above, more below: in the margin, past the values)
+        if (s.form_top > 0) put(box, font, top, right, "\xE2\x86\x91", ink::kMuted);
+        if (s.form_top + body < n) put(box, font, top + body - 1, right, "\xE2\x86\x93", ink::kMuted);
+    }
 
-    // Under it: what it writes, what it runs then, what went wrong, the keys.
-    y = top + body + 1;
-    const u32 text_col = s.left + 2 + 7, room = right > text_col ? right - text_col : 1;
-    std::string list;
-    for (const std::string& w : writes) list += (list.empty() ? "" : ", ") + w;
-    box.put(font, y, s.left + 2, "Writes", kInkMuted);
-    std::vector<std::string> lines;
-    while (!list.empty() && lines.size() < 2) {
-        if (width_of(list) <= room || lines.size() == 1) {
-            lines.push_back(cut(list, room));
-            break;
-        }
-        size_t at = 0, last_break = 0;
-        for (u32 c = 0; c < room && at < list.size(); ++c) {
-            if (list[at] == ' ') last_break = at;
-            at += decode_utf8(reinterpret_cast<const u8*>(list.data()) + at, list.size() - at).len;
-        }
-        if (last_break == 0) last_break = at;
-        lines.push_back(list.substr(0, last_break));
-        list.erase(0, std::min(list.size(), last_break + 1));
+    // Under the form, after a blank row: what it writes, what it runs then.
+    if (summary) {
+        y += 1;
+        put(box, font, y, s.left, "Writes", ink::kMuted);
+        if (write_lines.empty()) put(box, font, y++, text_col, "Nothing", ink::kMuted);
+        for (const std::string& line : write_lines) put(box, font, y++, text_col, line, k->scripted ? ink::kMuted : ink::kText);
+        put(box, font, y, s.left, "Runs", ink::kMuted);
+        if (run_lines.empty()) put(box, font, y, text_col, "Nothing", ink::kMuted);
+        for (const std::string& line : run_lines) put(box, font, y++, text_col, line, ink::kText);
     }
-    for (size_t i = 0; i < lines.size(); ++i) box.put(font, y + static_cast<u32>(i), text_col, lines[i], 0);
-    y += 2;
-    box.put(font, y, s.left + 2, "Runs", kInkMuted);
-    box.put(font, y, text_col, then.empty() ? std::string("nothing") : cut(then, room), then.empty() ? kInkMuted : 0);
-    y += 2;
-    if (!s.error.empty()) box.put(font, y, s.left + 2, cut(s.error, s.width - 2), kInkDiagnostic);
-    const std::string keys = "\xE2\x86\x91\xE2\x86\x93 moves \xC2\xB7 \xE2\x86\x90\xE2\x86\x92 changes \xC2\xB7 Enter edits \xC2\xB7 " +
-                             std::string(kPrimaryMod == SDL_KMOD_GUI ? "Cmd" : "Ctrl") + "+Enter creates \xC2\xB7 Esc back";
-    const u32 kw = width_of(keys);
-    if (y + 1 < rows) box.put(font, y + 1, cols > kw ? (cols - kw) / 2 : 0, cut(keys, cols), kInkMuted);
+
+    if (!foot) return;
+    // What the chosen row is for, in full (or what went wrong, or what is
+    // being waited for), then the keys, as many as there is room for.
+    if (!s.error.empty()) {
+        const bool waiting = s.pypi_loading && s.pypi_wanted;  // (PyPI's list on its way: not a problem)
+        put(box, font, msg_row, s.left, fit_text(s.error, s.width), waiting ? ink::kMuted : ink::kError);
+    } else if (s.form_sel < s.form.size()) {
+        const StartUi::Row& r = s.form[s.form_sel];
+        std::string note;
+        switch (r.what) {
+            case kFormKind: note = k->description; break;
+            case kFormName: note = "The name of its folder and targets: letters, digits, '-', '_' and '.'"; break;
+            case kFormWhere: note = "The folder it goes in; ssh://host/\xE2\x80\xA6 makes it on another machine"; break;
+            case kFormGit: note = "Runs git init once the files are written, with a .gitignore"; break;
+            case kFormField: note = field_note(k->fields[r.field], font); break;
+            case kFormCreate: note = "Makes " + home_short(s.where + "/" + (s.name.empty() ? std::string("\xE2\x80\xA6") : s.name)) + " and opens its main file"; break;
+        }
+        put(box, font, msg_row, s.left, fit_text(note, s.width), ink::kMuted);
+    }
+    const Hint hints[] = {{"Up Down", "move"}, {"Left Right", "change"}, {"Enter", "edit"}, {create_keys, "create"}, {"Esc", "back"}};
+    size_t shown = std::size(hints);
+    while (shown > 0 && hints_width(std::span(hints, shown), font) > s.width) --shown;
+    put_hints(box, font, hint_row, s.left, std::span(hints, shown));
 }
 
 // What the machine the project goes on was found to have (for the tests).
@@ -1232,7 +1463,9 @@ std::string App::project_facts_dump() {
            " rocm=" + f.rocm_root + " gpus=" + f.gpus + " uv=" + f.uv_version + " pkg-config=" + std::to_string(f.pkgconfig.size());
 }
 
-// What the New project tab holds, on one line (for the tests).
+// What the New project tab holds, on one line (for the tests): the fields
+// shown, in their kind's order (not the sections' order the form has),
+// and which row of the form is chosen.
 std::string App::project_dump() {
     StartUi& s = *start_;
     project_facts_apply();
@@ -1240,11 +1473,10 @@ std::string App::project_dump() {
     if (!k) return "no kinds";
     std::string out = "kind=" + k->name + " name=" + s.name + " where=" + home_short(s.where) + " git=" + (s.git ? "on" : "off") + " |";
     const ProjectValues& v = s.values[k->name];
-    for (const StartUi::Row& r : s.form)
-        if (r.what == kFormField) {
-            const std::string& key = k->fields[r.field].key;
-            const auto it = v.find(key);
-            out += " " + key + "=" + (it == v.end() ? std::string() : it->second);
+    for (const ProjectField& f : k->fields)
+        if (f.shown(v)) {
+            const auto it = v.find(f.key);
+            out += " " + f.key + "=" + (it == v.end() ? std::string() : it->second);
         }
     if (s.form_sel < s.form.size()) out += " | at " + std::to_string(s.form_sel);
     if (!s.error.empty()) out += " | error: " + s.error;

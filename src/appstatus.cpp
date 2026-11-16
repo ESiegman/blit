@@ -1,22 +1,26 @@
 // The status bar: a row across the bottom of the window, under the splits
-// and the side panel. On the left the repository (the branch, how far it is
-// ahead of and behind the one it follows, the lines of this file changed
-// since the last commit, how many files are changed) and the file (its path
-// in the repository, unsaved or read only); on the right what a script put
-// there (blit.ui.status), the language server's problems, the cursor's line
-// and column, the indentation, the line endings, the language and its
-// server. A click on the repository opens the Git tab of the side panel, one
-// on the problems the Problems tab.
+// and the side panel. On the left Vim's mode (with modal editing), the
+// repository (the branch, how far it is ahead of and behind the one it
+// follows, the lines of this file changed since the last commit, how many
+// files are changed) and the file (its path in the project folder, unsaved
+// or read only); on the right what a script put there (blit.ui.status), the
+// language server's problems, the cursor's line and column, the
+// indentation, the line endings, the language and its server. A click on
+// the repository opens the Git tab of the side panel, one on the problems
+// the Problems tab. On the start screen it names the project folder and the
+// settings file instead.
 //
 // Its cells are made again only when something it shows has changed; a
 // frame that changes nothing in it costs a comparison of a few numbers.
 #include <algorithm>
+#include <cmath>
 #include <utility>
 #include <cstdio>
 #include <string>
 #include <vector>
 
 #include "app.hpp"
+#include "look.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
@@ -25,19 +29,24 @@ namespace blit {
 
 namespace {
 
-enum Action : u8 { kNone, kGitTab, kProblemsTab, kReconnect };
+enum Action : u8 { kNone, kGitTab, kProblemsTab, kReconnect, kSettings };
 
-// One part of the bar: its text, how it is drawn, what a click on it does,
-// how many blank columns come before it (after the first), and (on the
-// right) how soon it goes when there is not room for all: the lowest first.
+// The bar's tones (Popup::tones), behind Vim's mode: the muted ink's in
+// Normal and Command mode, the accent's in the modes that change the text.
+enum : u32 { kToneMuted = 1, kToneAccent = 2 };
+
+// One part of the bar: its text, its ink, what a click on it does, how many
+// blank columns come before it (after the first), and (on the right) how
+// soon it goes when there is not room for all: the lowest first.
 struct Seg {
     std::string text;
-    u32 ink = kInkMuted;
-    u32 style = 0;
+    Ink in = ink::kMuted;
     Action action = kNone;
     u32 gap = 2;
     int keep = 0;
     bool shrink = false;  // a path's folders: shortened from the start before anything goes
+    u32 tone = 0;         // a lit run behind it, in this of the bar's tones (0: none)
+    u32 least = 0;        // the columns it takes at the least (the mode's: the longest name's, so that what follows stays put)
 };
 
 // A language's name as people write it ("C++" for "cpp"); one not listed
@@ -63,6 +72,29 @@ std::string count_text(u64 n) {
     return b;
 }
 
+// Vim's mode as the bar names it.
+const char* mode_name(Vim::Mode m) {
+    switch (m) {
+        case Vim::kInsert: return "INSERT";
+        case Vim::kReplace: return "REPLACE";
+        case Vim::kVisual: return "VISUAL";
+        case Vim::kVisualLine: return "V-LINE";
+        case Vim::kVisualBlock: return "V-BLOCK";
+        case Vim::kCommand: return "COMMAND";
+        default: return "NORMAL";
+    }
+}
+constexpr u32 kModeCols = 7;  // the longest of those names
+
+// A path on this machine with the home folder written "~".
+void home_short(std::string& path) {
+    const char* home = SDL_getenv("HOME");
+    if (!home || !*home) return;
+    const std::string_view h(home);
+    if (path == h) path = "~";
+    else if (path.size() > h.size() + 1 && path.starts_with(h) && path[h.size()] == '/') path.replace(0, h.size(), "~");
+}
+
 }  // namespace
 
 struct App::StatusUi {
@@ -78,9 +110,15 @@ struct App::StatusUi {
     // The language of a file, kept for it (it looks at the file's name and first line).
     u64 lang_doc = ~0ull;
     std::string lang_path, lang;
+    // The project folder a file is shown in while the side panel has none:
+    // the one the panel would open at, kept for the file (finding it looks
+    // at the disk).
+    u64 base_doc = ~0ull;
+    std::string base_path, base;
     // The language server's problems, counted once for each set of them.
     u64 diag_gen = ~0ull;
     size_t errors = 0, warnings = 0;
+    float tones[8][4] = {};  // (Popup::tones)
 };
 
 int App::status_px() const {
@@ -94,10 +132,18 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
     if (!status_) status_ = std::make_shared<StatusUi>();
     StatusUi& u = *status_;
     Font& font = *font_;
-    const int cw = font.cell_w(), ch = font.cell_h(), pad_x = cw / 2 + 1;
+    const Look l = look();
+    const int cw = font.cell_w(), ch = font.cell_h(), pad_x = l.edge;
     const u32 cols = static_cast<u32>(std::max(1, (w - 2 * pad_x) / cw));
     Doc& d = *pane_->doc;
     const Editor& ed = d.ed;
+    // (A terminal's tab, a profile's, a picture's and a PDF's have no lines
+    // and columns of their own, and nothing for Vim's modes to do.)
+    const bool text = !d.term && !d.prof && !d.image && !d.pdf;
+    const bool start = start_shown();  // the start screen, or its New project tab: the project folder and the settings file
+    const bool modal = cfg_.modal && text && !start;
+    const bool round = l.pill > 0;
+    const std::string* root = panel_root();
 
     // Everything it shows, in a few numbers: when they are as they were, so are the cells.
     u64 key = 1469598103934665603ull;
@@ -122,150 +168,197 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
     mix(d.indent_tabs ? indent_step() + 1000 : indent_step());
     mix(cols);
     mix(font.generation());
+    mix(start ? 1 : 0);
+    mix(modal ? vim_.mode() + 1u : 0);
+    mix(round ? 1 : 0);
+    mix(root ? std::hash<std::string>{}(*root) : 0);
     if (key != u.key) {
         u.key = key;
         u.left.clear();
         u.right.clear();
-        const GitSummary g = git_summary();  // (git_gen_ above says when this changes)
+        // A path as its folders (muted, and shortened from their start first
+        // when there is not room) and its name.
+        auto add_path = [&](const std::string& path, u32 gap) {
+            const size_t slash = path.rfind('/');
+            if (slash == std::string::npos || slash + 1 == path.size()) {
+                u.left.push_back({path, ink::kStrong, kNone, gap});
+                return;
+            }
+            u.left.push_back({path.substr(0, slash + 1), ink::kMuted, kNone, gap, 0, true});
+            u.left.push_back({path.substr(slash + 1), ink::kStrong, kNone, 0});
+        };
 
-        // The machine, when the file or the folder is on another one, and how its connection is.
-        {
-            const std::string* root = panel_root();
-            std::string host, there;
-            if (split_remote(ed.path, &host, &there) || (root && split_remote(*root, &host, &there))) {
-                std::shared_ptr<Remote> r;
-                for (const std::shared_ptr<Remote>& c : Remote::all())
-                    if (c->host() == host) r = c;
-                const Remote::State st = r ? r->state() : Remote::kConnecting;
-                const char* icon = font.has(0x21C4) ? "\xE2\x87\x84 " : "";
-                Seg s;
-                s.action = kNone;
-                if (st == Remote::kReady) {
-                    s.text = icon + host;
-                    s.ink = kInkAccent;
-                } else if (st == Remote::kFailed) {
-                    s.text = icon + host + ": not connected (connect again)";
-                    s.ink = kInkDiagnostic;
-                    s.action = kReconnect;
-                } else {
-                    const std::string doing = r ? r->progress() : std::string();
-                    s.text = icon + (doing.empty() ? "connecting to " + host : doing) + "\xE2\x80\xA6";
-                    s.ink = kInkMuted;
-                }
+        if (start) {
+            // The start screen has no file: the folder it opens things in,
+            // and the settings file (a click opens it).
+            std::string folder = root ? *root : default_workdir();
+            home_short(folder);
+            add_path(folder, 2);
+            std::string settings = init_path_;
+            home_short(settings);
+            u.right.push_back({std::move(settings), ink::kMuted, kSettings, 2, 1});
+        } else {
+            const GitSummary g = git_summary();  // (git_gen_ above says when this changes)
+
+            // Vim's mode, first, on a lit run of its own.
+            if (modal) {
+                const Vim::Mode m = vim_.mode();
+                const bool resting = m == Vim::kNormal || m == Vim::kCommand;
+                Seg s{mode_name(m), resting ? ink::kHeading : ink::kAccentStrong};
+                s.tone = resting ? kToneMuted : kToneAccent;
+                s.least = kModeCols + (round ? 1 : 0);
                 u.left.push_back(std::move(s));
             }
-        }
 
-        // The repository.
-        if (g.repo) {
-            const char* branch_icon = font.has(0xE0A0) ? "\xEE\x82\xA0 " : font.has(0x2387) ? "\xE2\x8E\x87 " : "";
-            Seg s;
-            s.text = std::string(branch_icon) + (g.branch.empty() ? "(" + g.head + ")" : g.branch);
-            s.ink = kInkAccent;
-            s.action = kGitTab;
-            if (g.ahead > 0) s.text += std::string(font.has(0x2191) ? " \xE2\x86\x91" : " +") + count_text(static_cast<u64>(g.ahead));
-            if (g.behind > 0) s.text += std::string(font.has(0x2193) ? " \xE2\x86\x93" : " -") + count_text(static_cast<u64>(g.behind));
-            if (g.merging) s.text += " merging";
-            u.left.push_back(std::move(s));
-            // This file's lines that differ from the last commit.
-            u64 added = 0, changed = 0, removed = 0;
-            for (const GitHunk& k : d.hunks) {
-                if (k.kind == GitHunk::kAdded) added += k.count;
-                else if (k.kind == GitHunk::kModified) changed += k.count;
-                else removed += k.removed;
-            }
-            u32 gap = 2;  // (one between the counts)
-            if (added) u.left.push_back({"+" + count_text(added), kInkAdded, 0, kGitTab, std::exchange(gap, 1u)});
-            if (changed) u.left.push_back({"~" + count_text(changed), kInkChanged, 0, kGitTab, std::exchange(gap, 1u)});
-            if (removed) u.left.push_back({(font.has(0x2212) ? "\xE2\x88\x92" : "-") + count_text(removed), kInkDiagnostic, 0, kGitTab, std::exchange(gap, 1u)});
-            if (g.changed) u.left.push_back({count_text(g.changed) + (g.changed == 1 ? " file changed" : " files changed"), kInkMuted, 0, kGitTab});
-        }
-        // The file: its path in the repository (or the working directory).
-        {
-            std::string path = ed.path.empty() ? (d.title.empty() ? std::string("untitled") : d.title) : full_path(ed.path);
-            const std::string* root = panel_root();
-            const std::string base = g.repo ? g.root : root ? *root : std::string();
-            std::string host, there;
-            if (!ed.path.empty() && !base.empty() && path.size() > base.size() + 1 && path.starts_with(base) && path[base.size()] == '/') {
-                path = path.substr(base.size() + 1);
-            } else if (split_remote(path, &host, &there)) {  // (on another machine, whose name is shown already: ~ for the home folder there)
-                path = there;
-                for (const std::shared_ptr<Remote>& c : Remote::all())
-                    if (const std::string home_dir = c->host() == host ? c->home() : std::string();
-                        !home_dir.empty() && path.size() > home_dir.size() + 1 && path.starts_with(home_dir) && path[home_dir.size()] == '/')
-                        path = "~" + path.substr(home_dir.size());
-            } else if (const char* home = SDL_getenv("HOME"); !ed.path.empty() && home && *home) {  // (elsewhere: ~ for the home folder)
-                const std::string home_dir(home);
-                if (path.size() > home_dir.size() + 1 && path.starts_with(home_dir) && path[home_dir.size()] == '/') path = "~" + path.substr(home_dir.size());
-            }
-            const size_t slash = path.rfind('/');
-            const u32 gap = g.repo ? 3 : 2;  // (a little more between the repository and the file)
-            if (slash != std::string::npos) u.left.push_back({path.substr(0, slash + 1), kInkMuted, 0, kNone, gap, 0, true});
-            u.left.push_back({slash == std::string::npos ? path : path.substr(slash + 1), 0, Font::kBold, kNone, slash == std::string::npos ? gap : 0});
-            if (d.loading) u.left.push_back({"loading\xE2\x80\xA6", kInkMuted, 0, kNone, 2});
-            else if (d.read_only && !d.term && !d.prof && !d.image && !d.pdf) u.left.push_back({"read only", kInkMuted, 0, kNone, 2});
-            else if (ed.modified()) u.left.push_back({font.has(0x25CF) ? "\xE2\x97\x8F" : "*", kInkAccent, 0, kNone, 1});
-        }
-
-        // On the right, what is least needed first to go.
-        if (!script_status_.empty()) u.right.push_back({script_status_, 0, 0, kNone, 2, 1});
-        if (lsp_.attached()) {
-            if (u.diag_gen != lsp_.diagnostics_generation()) {
-                u.diag_gen = lsp_.diagnostics_generation();
-                u.errors = u.warnings = 0;
-                for (const Diagnostic& x : lsp_.diagnostics()) {
-                    if (x.severity == 1) ++u.errors;
-                    else if (x.severity == 2) ++u.warnings;
+            // The machine, when the file or the folder is on another one, and how its connection is.
+            {
+                std::string host, there;
+                if (split_remote(ed.path, &host, &there) || (root && split_remote(*root, &host, &there))) {
+                    std::shared_ptr<Remote> r;
+                    for (const std::shared_ptr<Remote>& c : Remote::all())
+                        if (c->host() == host) r = c;
+                    const Remote::State st = r ? r->state() : Remote::kConnecting;
+                    const char* icon = font.has(0x21C4) ? "\xE2\x87\x84 " : "";
+                    Seg s;
+                    s.action = kNone;
+                    if (st == Remote::kReady) {
+                        s.text = icon + host;
+                        s.in = ink::kText;
+                    } else if (st == Remote::kFailed) {
+                        s.text = icon + host + ": not connected (connect again)";
+                        s.in = ink::kError;
+                        s.action = kReconnect;
+                    } else {
+                        const std::string doing = r ? r->progress() : std::string();
+                        s.text = icon + (doing.empty() ? "connecting to " + host : doing) + "\xE2\x80\xA6";
+                        s.in = ink::kMuted;
+                    }
+                    u.left.push_back(std::move(s));
                 }
             }
-            const char* err = font.has(0x2715) ? "\xE2\x9C\x95 " : "\xC3\x97 ";                                       // ✕, or ×
-            const char* warn = font.has(0x26A0) ? "\xE2\x9A\xA0 " : font.has(0x25B2) ? "\xE2\x96\xB2 " : "! ";  // ⚠, or ▲
-            u.right.push_back({err + count_text(u.errors), u.errors ? kInkDiagnostic : kInkMuted, 0, kProblemsTab, 2, 4});
-            u.right.push_back({warn + count_text(u.warnings), u.warnings ? kInkDiagnostic + 1 : kInkMuted, 0, kProblemsTab, 1, 4});
-        }
-        const bool text = !d.term && !d.prof && !d.image && !d.pdf;  // (a terminal's tab, a profile's, a picture's and a PDF's have no lines and columns of their own)
-        if (text) {
-            std::string at = "Ln " + count_text(pane_->cur_line + 1) + ", Col " + count_text(static_cast<u64>(pane_->cur_col) + 1);
-            u64 lo = visual ? vlo : std::min(ed.anchor(), ed.cursor()), hi = visual ? vhi : std::max(ed.anchor(), ed.cursor());
-            if (hi > lo) {
-                const u64 l0 = ed.buf.line_of(lo), l1 = ed.buf.line_of(hi);
-                if (l1 > l0) {
-                    at += " (" + count_text(l1 - l0 + 1) + " lines)";
-                } else if (hi - lo <= 65536) {  // (characters, counted; a longer stretch is told in bytes)
-                    const std::string t = ed.buf.text(lo, hi - lo);
-                    u64 chars = 0;
-                    for (const char c : t) chars += (static_cast<u8>(c) & 0xC0) != 0x80;
-                    at += " (" + count_text(chars) + " selected)";
-                } else {
-                    at += " (" + count_text((hi - lo) >> 10) + " KB selected)";
+
+            // The repository: the branch, and how it stands with the one it follows.
+            if (g.repo) {
+                const char* branch_icon = font.has(0xE0A0) ? "\xEE\x82\xA0 " : font.has(0x2387) ? "\xE2\x8E\x87 " : "";
+                u.left.push_back({std::string(branch_icon) + (g.branch.empty() ? "(" + g.head + ")" : g.branch), ink::kText, kGitTab});
+                std::string how;
+                auto also = [&](const std::string& part) {
+                    if (!how.empty()) how += ' ';
+                    how += part;
+                };
+                if (g.ahead > 0) also((font.has(0x2191) ? "\xE2\x86\x91" : "+") + count_text(static_cast<u64>(g.ahead)));
+                if (g.behind > 0) also((font.has(0x2193) ? "\xE2\x86\x93" : "-") + count_text(static_cast<u64>(g.behind)));
+                if (g.merging) also("merging");
+                if (!how.empty()) u.left.push_back({std::move(how), ink::kMuted, kGitTab, 1});
+                // This file's lines that differ from the last commit.
+                u64 added = 0, changed = 0, removed = 0;
+                for (const GitHunk& k : d.hunks) {
+                    if (k.kind == GitHunk::kAdded) added += k.count;
+                    else if (k.kind == GitHunk::kModified) changed += k.count;
+                    else removed += k.removed;
+                }
+                u32 gap = 2;  // (one between the counts)
+                if (added) u.left.push_back({"+" + count_text(added), ink::kAdded, kGitTab, std::exchange(gap, 1u)});
+                if (changed) u.left.push_back({"~" + count_text(changed), ink::kChanged, kGitTab, std::exchange(gap, 1u)});
+                if (removed) u.left.push_back({(font.has(0x2212) ? "\xE2\x88\x92" : "-") + count_text(removed), ink::kRemoved, kGitTab, std::exchange(gap, 1u)});
+                if (g.changed) u.left.push_back({count_text(g.changed) + (g.changed == 1 ? " file changed" : " files changed"), ink::kMuted, kGitTab});
+            }
+            // The file: its path in the project folder when it is in it, else
+            // with ~ for the home folder. The project folder is the side
+            // panel's, or, before it has one, the one it would open at for
+            // this file (the same whether git has answered or not); a file on
+            // another machine has none until a folder there is opened (finding
+            // one would ask that machine).
+            {
+                std::string path = ed.path.empty() ? (d.title.empty() ? std::string("untitled") : d.title) : full_path(ed.path);
+                const std::string* base = root;
+                if (!base && !ed.path.empty() && !is_remote(path)) {
+                    if (u.base_doc != d.id || u.base_path != ed.path) {
+                        u.base_doc = d.id;
+                        u.base_path = ed.path;
+                        u.base = default_workdir();
+                    }
+                    base = &u.base;
+                }
+                std::string host, there;
+                if (!ed.path.empty() && base && !base->empty() && path.size() > base->size() + 1 && path.starts_with(*base) && path[base->size()] == '/') {
+                    path.erase(0, base->size() + 1);
+                } else if (split_remote(path, &host, &there)) {  // (on another machine, whose name is shown already: ~ for the home folder there)
+                    path = there;
+                    for (const std::shared_ptr<Remote>& c : Remote::all())
+                        if (const std::string home_dir = c->host() == host ? c->home() : std::string();
+                            !home_dir.empty() && path.size() > home_dir.size() + 1 && path.starts_with(home_dir) && path[home_dir.size()] == '/')
+                            path = "~" + path.substr(home_dir.size());
+                } else if (!ed.path.empty()) {
+                    home_short(path);
+                }
+                add_path(path, g.repo ? 3 : 2);  // (a little more between the repository and the file)
+                if (d.loading) u.left.push_back({"loading\xE2\x80\xA6", ink::kMuted, kNone, 2});
+                else if (d.read_only && !d.term && !d.prof && !d.image && !d.pdf) u.left.push_back({"read only", ink::kMuted, kNone, 2});
+                else if (ed.modified()) u.left.push_back({font.has(0x25CF) ? "\xE2\x97\x8F" : "*", ink::kAccent, kNone, 1});
+            }
+
+            // On the right, what is least needed first to go.
+            if (!script_status_.empty()) u.right.push_back({script_status_, ink::kText, kNone, 2, 4});  // (the user's own: kept over the indentation and line ends)
+            if (lsp_.attached()) {
+                if (u.diag_gen != lsp_.diagnostics_generation()) {
+                    u.diag_gen = lsp_.diagnostics_generation();
+                    u.errors = u.warnings = 0;
+                    for (const Diagnostic& x : lsp_.diagnostics()) {
+                        if (x.severity == 1) ++u.errors;
+                        else if (x.severity == 2) ++u.warnings;
+                    }
+                }
+                // (Nothing, while there is nothing to tell.)
+                if (u.errors || u.warnings) {
+                    const char* err = font.has(0x2715) ? "\xE2\x9C\x95 " : "\xC3\x97 ";                                       // ✕, or ×
+                    const char* warn = font.has(0x26A0) ? "\xE2\x9A\xA0 " : font.has(0x25B2) ? "\xE2\x96\xB2 " : "! ";  // ⚠, or ▲
+                    u.right.push_back({err + count_text(u.errors), u.errors ? ink::kError : ink::kMuted, kProblemsTab, 2, 4});
+                    u.right.push_back({warn + count_text(u.warnings), u.warnings ? ink::kWarning : ink::kMuted, kProblemsTab, 1, 4});
                 }
             }
-            u.right.push_back({std::move(at), kInkMuted, 0, kNone, 2, 5});
-        }
-        const u32 step = text ? indent_step() : 0;
-        if (text) u.right.push_back({d.indent_tabs ? std::string("Tabs") : "Spaces: " + count_text(step), kInkMuted, 0, kNone, 2, 2});
-        if (text) u.right.push_back({ed.crlf() ? "CRLF" : "LF", kInkMuted, 0, kNone, 2, 2});
-        if (u.lang_doc != d.id || u.lang_path != ed.path) {
-            u.lang_doc = d.id;
-            u.lang_path = ed.path;
-            u.lang = file_language();
-        }
-        if (text) {
-            std::string lang = u.lang.empty() ? std::string("Plain text") : language_name(u.lang);
-            if (lsp_.attached() && !lsp_.server_name().empty()) lang += " \xC2\xB7 " + lsp_.server_name() + (lsp_.ready() ? "" : "\xE2\x80\xA6");
-            u.right.push_back({std::move(lang), kInkMuted, 0, kNone, 2, 3});
+            if (text) {
+                std::string at = "Ln " + count_text(pane_->cur_line + 1) + ", Col " + count_text(static_cast<u64>(pane_->cur_col) + 1);
+                u64 lo = visual ? vlo : std::min(ed.anchor(), ed.cursor()), hi = visual ? vhi : std::max(ed.anchor(), ed.cursor());
+                if (hi > lo) {
+                    const u64 l0 = ed.buf.line_of(lo), l1 = ed.buf.line_of(hi);
+                    if (l1 > l0) {
+                        at += " (" + count_text(l1 - l0 + 1) + " lines)";
+                    } else if (hi - lo <= 65536) {  // (characters, counted; a longer stretch is told in bytes)
+                        const std::string t = ed.buf.text(lo, hi - lo);
+                        u64 chars = 0;
+                        for (const char c : t) chars += (static_cast<u8>(c) & 0xC0) != 0x80;
+                        at += " (" + count_text(chars) + " selected)";
+                    } else {
+                        at += " (" + count_text((hi - lo) >> 10) + " KB selected)";
+                    }
+                }
+                u.right.push_back({std::move(at), ink::kMuted, kNone, 2, 5});
+            }
+            const u32 step = text ? indent_step() : 0;
+            if (text) u.right.push_back({d.indent_tabs ? std::string("Tabs") : "Spaces: " + count_text(step), ink::kMuted, kNone, 2, 2});
+            if (text) u.right.push_back({ed.crlf() ? "CRLF" : "LF", ink::kMuted, kNone, 2, 2});
+            if (u.lang_doc != d.id || u.lang_path != ed.path) {
+                u.lang_doc = d.id;
+                u.lang_path = ed.path;
+                u.lang = file_language();
+            }
+            if (text) {
+                std::string lang = u.lang.empty() ? std::string("Plain text") : language_name(u.lang);
+                if (lsp_.attached() && !lsp_.server_name().empty()) lang += " \xC2\xB7 " + lsp_.server_name() + (lsp_.ready() ? "" : " (starting)");
+                u.right.push_back({std::move(lang), ink::kMuted, kNone, 2, 3});
+            }
         }
 
         // Laid out: the left from the start, the right against the end. What
-        // does not fit goes: the right's least needed parts first (the
-        // left is then cut off at the end of the bar).
+        // does not fit goes: the right's least needed parts first (and what
+        // of the left still does not fit is cut, with an ellipsis).
         auto width = [](const std::vector<Seg>& v) {
             u32 n = 0;
-            for (size_t i = 0; i < v.size(); ++i) n += width_of(v[i].text) + (i ? v[i].gap : 0);
+            for (size_t i = 0; i < v.size(); ++i) n += std::max(width_of(v[i].text), v[i].least) + (i ? v[i].gap : 0);
             return n;
         };
-        const u32 room = cols > 2 ? cols - 2 : cols;  // (a blank column at either end)
-        auto over = [&] { return static_cast<i64>(width(u.left)) + static_cast<i64>(width(u.right)) + 3 - static_cast<i64>(room); };
+        auto over = [&] { return static_cast<i64>(width(u.left)) + static_cast<i64>(width(u.right)) + 3 - static_cast<i64>(cols); };
         // First the path's folders, from their start ("…/src/"), and if
         // that is not enough, all of them.
         for (size_t i = 0; i < u.left.size() && over() > 0; ++i) {
@@ -289,21 +382,29 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
         }
         u.box.resize(cols, 1);
         u.spots.clear();
-        u32 c = 1;
+        u32 c = 0;
         for (size_t i = 0; i < u.left.size(); ++i) {
             const Seg& s = u.left[i];
             if (i > 0) c += s.gap;
-            const u32 c0 = c;
-            c = u.box.put(font, 0, c, s.text, s.ink, s.style);
+            if (c >= cols) break;
+            const u32 c0 = c, room = cols - c;
+            c = width_of(s.text) <= room ? put(u.box, font, 0, c, s.text, s.in) : put(u.box, font, 0, c, fit_text(s.text, room, s.shrink), s.in);
+            if (s.tone) {
+                // A lit run, with a column after the text for its rounded end.
+                const u32 end = std::min(cols, c + (round ? 1u : 0u));
+                for (u32 k = c0; k < end; ++k) u.box.cells[k] |= kCellSelected | (s.tone << kCellDecoShift);
+                c = end;
+            }
+            c = std::max(c, std::min(cols, c0 + s.least));
             if (s.action != kNone) u.spots.push_back({c0, c, s.action});
         }
         const u32 right_w = width(u.right);
-        c = cols > right_w + 1 ? cols - 1 - right_w : 0;
+        c = cols > right_w ? cols - right_w : 0;
         for (size_t i = 0; i < u.right.size(); ++i) {
             const Seg& s = u.right[i];
             if (i > 0) c += s.gap;
             const u32 c0 = c;
-            c = u.box.put(font, 0, c, s.text, s.ink, s.style);
+            c = put(u.box, font, 0, c, s.text, s.in);
             if (s.action != kNone) u.spots.push_back({c0, c, s.action});
         }
     }
@@ -318,6 +419,24 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
     p.rows = 1;
     p.cells = u.box.cells.data();
     p.border_px = 0;
+    if (modal) {
+        // The mode's tones: the bar's background washed with an ink's colour
+        // (worked out each frame: the theme changes with the file in front).
+        const float* bg = theme_.popup_bg;
+        auto wash = [&](float* out, const float* in, float k) {
+            for (int i = 0; i < 3; ++i) out[i] = bg[i] + (in[i] - bg[i]) * k;
+            out[3] = 1;
+        };
+        wash(u.tones[kToneMuted], theme_.palette[kInkMuted], 0.18f);
+        wash(u.tones[kToneAccent], theme_.palette[kInkAccent], 0.22f);
+        p.tones = &u.tones[0][0];
+        // Rounded, it reaches out into the margin to the inset, as a lit row does.
+        if (round) {
+            p.pill = l.pill;
+            p.pill_out = static_cast<float>(std::max(0, pad_x - l.inset));
+            p.pill_dy = std::round(scale_);
+        }
+    }
 }
 
 bool App::status_mouse_down(const SDL_MouseButtonEvent& b) {
@@ -326,13 +445,14 @@ bool App::status_mouse_down(const SDL_MouseButtonEvent& b) {
     const int px = static_cast<int>(b.x * density_), py = static_cast<int>(b.y * density_);
     if (py < px_h_ - tall) return false;
     if (b.button == SDL_BUTTON_LEFT) {
-        const int cw = font_->cell_w(), pad_x = cw / 2 + 1;
+        const int cw = font_->cell_w(), pad_x = look().edge;
         const u32 col = px > pad_x ? static_cast<u32>((px - pad_x) / cw) : 0;
         for (const StatusUi::Spot& s : status_->spots)
             if (col >= s.c0 && col < s.c1) {
                 if (s.action == kGitTab) panel_show_git();
                 else if (s.action == kProblemsTab) panel_show_problems();
                 else if (s.action == kReconnect) remote_reconnect();
+                else if (s.action == kSettings) open_config();
                 break;
             }
     }

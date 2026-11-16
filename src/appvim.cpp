@@ -1,12 +1,15 @@
 // Modal editing in the application: keys and typed text on their way to Vim
 // (vim.cpp), what Vim asks for in return (save, close, another split), the
-// line at the bottom of the window that shows the mode and the command
-// being typed, and the search matches lit up in the text.
+// line at the bottom of the window that shows the command being typed and
+// Vim's messages (and the mode, when there is no status bar to show it),
+// and the search matches lit up in the text.
 #include <algorithm>
 #include <cmath>
 #include <cstring>
 
 #include "app.hpp"
+#include "look.hpp"
+#include "remote.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
 
@@ -201,30 +204,23 @@ void App::vim_after(u32 result) {
     for (const VimRequest& q : vim_.take()) {
         switch (q.kind) {
             case VimRequest::kSave:
-                if (!q.arg.empty()) {
-                    vim_.say("Saving under another name is not there yet: :w saves, Cmd+S on a new file asks for a name");
+                if (!q.arg.empty()) {  // :w NAME, from the project folder when it is not a whole path
+                    std::string path = q.arg;
+                    if (path[0] == '~' && SDL_getenv("HOME")) path = std::string(SDL_getenv("HOME")) + path.substr(1);
+                    if (path[0] != '/' && !is_remote(path)) {
+                        const std::string* root = panel_root();
+                        path = (root ? *root : default_workdir()) + "/" + path;
+                    }
+                    save_named(path, pane_->doc->id);
                     break;
                 }
                 save();
                 if (q.then_close && !pane_->doc->ed.modified()) tab_close(pane_->tab);
                 break;
-            case VimRequest::kSaveAll: {
-                Pane* const focused = pane_;
-                const u64 front = pane_->doc->id;
-                for (const std::unique_ptr<Pane>& p : panes_)
-                    for (size_t i = 0; i < p->docs.size(); ++i)
-                        if (p->docs[i]->ed.modified() && !p->docs[i]->ed.path.empty() && !p->docs[i]->read_only) {
-                            focus_pane(p.get());
-                            tab_show(i);
-                            save();
-                        }
-                focus_pane(focused);
-                size_t at = 0;
-                Pane* where = nullptr;
-                if (find_doc(front, &where, &at) && where == pane_) tab_show(at);
+            case VimRequest::kSaveAll:
+                save_all();
                 if (q.then_close) request_quit();
                 break;
-            }
             case VimRequest::kClose: tab_close(pane_->tab, q.force, true); break;  // (:q in the last window quits, as in Vim)
             case VimRequest::kQuitAll:
                 if (q.force) running_ = false;
@@ -298,7 +294,10 @@ void App::vim_after(u32 result) {
             }
             case VimRequest::kFind: find_open(q.n == 0 ? kFindNames : kFindText, q.arg); break;
             case VimRequest::kEx: script_ex(q); break;  // :lua, :set, :map, a script's command (applua.cpp)
-            case VimRequest::kDefinition: goto_definition(); break;
+            case VimRequest::kDefinition:  // (asked for, as F12 asks: the jump comes with the answer)
+                if (lsp_.ready()) lsp_.definition(pane_->doc->ed.cursor());
+                else goto_definition();  // (which says why there is nobody to ask)
+                break;
             case VimRequest::kHover: show_hover(pane_->doc->ed.cursor(), true); break;
             case VimRequest::kBack: go_back(); break;
             default: break;
@@ -326,17 +325,25 @@ int App::vim_px() const {
     return font_->cell_h() + font_->cell_h() / 4;
 }
 
-// The line at the bottom of the window: the mode or the command line on
-// the left, the keys of a command under way and the cursor's place on the
-// right.
+// The line at the bottom of the window, just above the status bar and
+// coloured as it is, so that the two read as one: the command line or a
+// message on the left (and the mode, when there is no status bar to show
+// it), the keys of a command under way and the cursor's place on the right.
 void App::vim_layout(int w, int h, FrameDesc& fd) {
     const int tall = vim_px();
     if (!tall || fd.popup_count >= std::size(fd.popups)) return;
     VimUi& u = *vimui_;
     const int cw = font_->cell_w(), ch = font_->cell_h();
-    const int x = std::min(panel_px(), w), width = std::max(1, w - x), pad_x = cw / 2 + 1;
+    const int x = std::min(panel_px(), w), width = std::max(1, w - x), pad_x = look().edge;
     const u32 cols = static_cast<u32>(std::max(1, (width - 2 * pad_x) / cw));
-    const std::string status = vim_.status();
+    const bool command = vim_.mode() == Vim::kCommand;
+    std::string status = vim_.status();
+    // The status bar names the mode: "-- INSERT --" is not said again here
+    // (what else there is, "recording @q", stays).
+    if (status_px() && !command && vim_.message().empty() && status.starts_with("-- ")) {
+        const size_t end = status.find(" --", 3);
+        if (end != std::string::npos) status.erase(0, status.find_first_not_of(' ', end + 3));
+    }
     std::string right = vim_.showcmd();
     // (With the status bar, the cursor's place and a script's text are there.)
     if (!status_px()) {
@@ -351,11 +358,18 @@ void App::vim_layout(int w, int h, FrameDesc& fd) {
         u.cursor = cursor;
         u.font = font_->generation();
         u.line.resize(cols, 1);
-        const bool error = status.size() > 2 && status[0] == 'E' && std::isdigit(static_cast<unsigned char>(status[1]));
-        const bool mode = status.starts_with("-- ");
-        u.line.put(*font_, 0, 0, status, error ? kInkDiagnostic : 0, mode ? Font::kBold : 0);
-        const u32 need = width_of(right) + 1;
-        if (cols > need + width_of(status) + 2) u.line.put(*font_, 0, cols - need, right, kInkMuted);
+        Font& font = *font_;
+        const std::string_view said(status);
+        if (command && !said.empty()) {
+            // The command line: what kind it is (":", "/" or "?") in the accent, what is typed plain.
+            put(u.line, font, 0, put(u.line, font, 0, 0, said.substr(0, 1), ink::kAccent), said.substr(1), ink::kText);
+        } else {
+            const bool error = status.size() > 2 && status[0] == 'E' && std::isdigit(static_cast<unsigned char>(status[1]));
+            const bool mode = status.starts_with("-- ");
+            put(u.line, font, 0, 0, said, error ? ink::kError : mode ? ink::kStrong : ink::kText);
+        }
+        const u32 need = width_of(right);
+        if (cols > need + width_of(status) + 2) put(u.line, font, 0, cols - need, right, ink::kMuted);
         if (cursor >= 0 && static_cast<u32>(cursor) < cols) u.line.cells[static_cast<size_t>(cursor)] |= kCellSelected;
     }
     Popup& p = fd.popups[fd.popup_count++];
@@ -369,7 +383,10 @@ void App::vim_layout(int w, int h, FrameDesc& fd) {
     p.rows = 1;
     p.cells = u.line.cells.data();
     p.border_px = 0;
-    p.bg = theme_.bg;
+    // With something to show (the command line, a message, a recording) it
+    // has the status bar's colour, one block with it; empty, the text's, so
+    // that no empty band sits over the status bar.
+    if (status.empty() && right.empty()) p.bg = theme_.bg;
 }
 
 // Lights up the matches of the last search in the split that has the

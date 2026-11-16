@@ -13,6 +13,7 @@
 
 #include "app.hpp"
 #include "dap.hpp"
+#include "look.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
@@ -37,6 +38,14 @@ std::string quoted(std::string_view s) {
 std::string base_name(const std::string& p) {
     const size_t slash = p.find_last_of('/');
     return slash == std::string::npos ? p : p.substr(slash + 1);
+}
+
+// A row that is picked: lit as selected while the panel has the keyboard,
+// in the quieter tone of the mouse's while it does not.
+void light_row(TextBox& box, u32 row, bool focused) {
+    if (focused) return box.select_row(row);
+    if (row >= box.rows) return;
+    for (u32 c = 0; c < box.cols; ++c) box.cells[static_cast<size_t>(row) * box.cols + c] |= kCellHover;
 }
 
 // The debugger for a machine, chosen there: Xcode's lldb-dap on a Mac; gdb
@@ -89,11 +98,16 @@ struct App::DebugUi {
     bool end_soon = false;  // (the session ends once the debugger's answers have been run: not inside one)
     // The panel: a row for each thing shown, and the one chosen.
     enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kFrame, kVar, kBreak };
+    // A row: a mark (a triangle, an arrow) before its text, in an ink of its
+    // own; the text; something quieter after it; and on the right its key.
     struct Row {
         Act act = kNone;
         u32 index = 0;
         std::string text;
-        u32 ink = 0, style = 0, indent = 0;
+        Ink ink = ink::kText;
+        u32 indent = 0;
+        std::string mark, after, key;
+        Ink mark_ink = ink::kMuted;
     };
     std::vector<Row> rows;
     u32 sel = 0, top = 0;
@@ -400,7 +414,7 @@ void App::debug_sync() {
             if (cat != "telemetry" && cat != "important") u.print(b["output"].str());
         } else if (m.name == "exited") {
             u.exit_code = static_cast<int>(b["exitCode"].integer(-1));
-            u.print("[exited with " + std::to_string(u.exit_code) + "]\n");
+            u.print("[exited with code " + std::to_string(u.exit_code) + "]\n");
         } else if (m.name == "terminated") {
             u.end_soon = true;
         }
@@ -449,69 +463,91 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
     using Row = DebugUi::Row;
     std::vector<Row>& out = u.rows;
     out.clear();
-    auto add = [&](DebugUi::Act act, u32 index, std::string text, u32 ink = 0, u32 style = 0, u32 indent = 0) { out.push_back({act, index, std::move(text), ink, style, indent}); };
+    auto add = [&](DebugUi::Act act, u32 index, std::string text, Ink in = ink::kText, u32 indent = 0) -> Row& {
+        out.push_back({act, index, std::move(text), in, indent, {}, {}, {}, ink::kMuted});
+        return out.back();
+    };
     // What it is doing.
     static const char* const kState[] = {"Not running", "Starting\xE2\x80\xA6", "Running", "Stopped"};
     std::string status = kState[u.state];
     if (u.state == DebugUi::kStopped && !u.reason.empty()) status += " (" + u.reason + ")";
-    if (u.state == DebugUi::kIdle && u.exit_code >= 0) status += ": it exited with " + std::to_string(u.exit_code);
-    box.put(font, 1, 0, status, u.state == DebugUi::kStopped ? kInkAccent : kInkMuted);
+    if (u.state == DebugUi::kIdle && u.exit_code >= 0) status += ": exited with code " + std::to_string(u.exit_code);
+    put(box, font, 1, 0, fit_text(status, cols), u.state == DebugUi::kStopped ? ink::kStrong : ink::kMuted);
     auto shown = [](const std::string& p) {
         std::string s = p;
         if (const char* home = SDL_getenv("HOME"); home && *home && s.starts_with(home)) s = "~" + s.substr(std::strlen(home));
         return s;
     };
-    add(DebugUi::kProgram, 0, "Program", kInkMuted);
-    add(DebugUi::kProgram, 0, u.program.empty() ? "Choose a program\xE2\x80\xA6" : shown(u.program), u.program.empty() ? kInkMuted : 0, u.program.empty() ? Font::kItalic : 0, 2);
-    add(DebugUi::kArgs, 0, "Arguments", kInkMuted);
-    add(DebugUi::kArgs, 0, u.args.empty() ? "None" : u.args, u.args.empty() ? kInkMuted : 0, u.args.empty() ? Font::kItalic : 0, 2);
-    add(DebugUi::kCwd, 0, "Working directory", kInkMuted);
-    add(DebugUi::kCwd, 0, u.cwd.empty() ? "The program's folder" : shown(u.cwd), u.cwd.empty() ? kInkMuted : 0, u.cwd.empty() ? Font::kItalic : 0, 2);
+    // The program, its arguments and its working directory: each a heading
+    // and its value, or (quietly) what it is when not set.
+    add(DebugUi::kProgram, 0, "Program", ink::kHeading);
+    add(DebugUi::kProgram, 0, u.program.empty() ? "Choose a program\xE2\x80\xA6" : fit_text(shown(u.program), cols > 2 ? cols - 2 : 1, true), u.program.empty() ? ink::kMuted : ink::kText, 2);
+    add(DebugUi::kArgs, 0, "Arguments", ink::kHeading);
+    add(DebugUi::kArgs, 0, u.args.empty() ? "None" : u.args, u.args.empty() ? ink::kMuted : ink::kText, 2);
+    add(DebugUi::kCwd, 0, "Working directory", ink::kHeading);
+    add(DebugUi::kCwd, 0, u.cwd.empty() ? "The program's folder" : fit_text(shown(u.cwd), cols > 2 ? cols - 2 : 1, true), u.cwd.empty() ? ink::kMuted : ink::kText, 2);
     add(DebugUi::kNone, 0, "");
-    if (!u.error.empty()) add(DebugUi::kNone, 0, u.error, kInkDiagnostic, Font::kItalic, 1);
+    if (!u.error.empty()) add(DebugUi::kNone, 0, u.error, ink::kError);
+    // The controls, each with its key; starting (or going on) is the button.
+    auto control = [&](DebugUi::Act act, const char* mark, const char* label, const char* key, Ink in = ink::kText) {
+        Row& r = add(act, 0, label, in);
+        r.mark = mark;
+        r.mark_ink = in.ink == ink::kText.ink ? ink::kMuted : in;
+        r.key = key_symbols(key, font);
+    };
     if (u.state == DebugUi::kIdle) {
-        add(DebugUi::kStart, 0, "\xE2\x96\xB6 Start  (F5)", kInkAccent, Font::kBold, 1);
+        control(DebugUi::kStart, "\xE2\x96\xB6", "Start", "F5", ink::kAccentStrong);
     } else if (u.state == DebugUi::kStopped) {
-        add(DebugUi::kContinue, 0, "\xE2\x96\xB6 Continue  (F5)", kInkAccent, Font::kBold, 1);
-        add(DebugUi::kOver, 0, "\xE2\x86\xB7 Step over  (F10)", 0, 0, 1);
-        add(DebugUi::kInto, 0, "\xE2\x86\x93 Step into  (F11)", 0, 0, 1);
-        add(DebugUi::kOut, 0, "\xE2\x86\x91 Step out  (Shift+F11)", 0, 0, 1);
-        add(DebugUi::kStop, 0, "\xE2\x96\xA0 Stop  (Shift+F5)", kInkDiagnostic, 0, 1);
+        control(DebugUi::kContinue, "\xE2\x96\xB6", "Continue", "F5", ink::kAccentStrong);
+        control(DebugUi::kOver, "\xE2\x86\xB7", "Step over", "F10");
+        control(DebugUi::kInto, "\xE2\x86\x93", "Step into", "F7");
+        control(DebugUi::kOut, "\xE2\x86\x91", "Step out", "Shift+F11");
+        control(DebugUi::kStop, "\xE2\x96\xA0", "Stop", "Shift+F5");
     } else {
-        add(DebugUi::kPause, 0, "\xE2\x9D\x9A\xE2\x9D\x9A Pause  (F6)", 0, 0, 1);
-        add(DebugUi::kStop, 0, "\xE2\x96\xA0 Stop  (Shift+F5)", kInkDiagnostic, 0, 1);
+        control(DebugUi::kPause, "\xE2\x80\x96", "Pause", "F6");
+        control(DebugUi::kStop, "\xE2\x96\xA0", "Stop", "Shift+F5");
     }
-    if (!u.frames.empty()) {
+    // A section: its heading, with a count where it is a list.
+    auto heading = [&](const char* title, size_t count) {
         add(DebugUi::kNone, 0, "");
-        add(DebugUi::kNone, 0, "Call stack", kInkMuted);
+        Row& r = add(DebugUi::kNone, 0, title, ink::kHeading);
+        if (count) r.after = std::to_string(count);
+    };
+    if (!u.frames.empty()) {
+        heading("Call stack", u.frames.size());
         for (u32 i = 0; i < u.frames.size(); ++i) {
             const DebugUi::Frame& f = u.frames[i];
-            add(DebugUi::kFrame, i, (i == u.frame ? "\xE2\x96\xB8 " : "  ") + f.name + (f.path.empty() ? "" : "  " + base_name(f.path) + ":" + std::to_string(f.line)),
-                f.path.empty() ? kInkMuted : 0, i == u.frame ? Font::kBold : 0, 1);
+            Row& r = add(DebugUi::kFrame, i, f.name, i == u.frame ? ink::kStrong : f.path.empty() ? ink::kMuted : ink::kText);
+            r.mark = i == u.frame ? "\xE2\x96\xB8" : " ";  // (the one shown: where you are)
+            r.mark_ink = ink::kAccent;
+            if (!f.path.empty()) r.after = base_name(f.path) + ":" + std::to_string(f.line);
         }
     }
     if (!u.vars.empty()) {
-        add(DebugUi::kNone, 0, "");
-        add(DebugUi::kNone, 0, "Variables", kInkMuted);
+        heading("Variables", 0);
         for (u32 i = 0; i < u.vars.size(); ++i) {
             const DebugUi::Var& v = u.vars[i];
-            const std::string mark = v.ref > 0 ? (v.open ? "\xE2\x96\xBE " : "\xE2\x96\xB8 ") : "  ";
-            add(DebugUi::kVar, i, mark + v.name + (v.value.empty() ? "" : " = " + v.value), v.depth == 0 ? kInkMuted : 0, 0, 1 + 2 * v.depth);
+            Row& r = add(DebugUi::kVar, i, v.name + (v.value.empty() ? "" : " = " + v.value), v.depth == 0 ? ink::kMuted : ink::kText, 2 * v.depth);
+            r.mark = v.ref > 0 ? (v.open ? "\xE2\x96\xBE" : "\xE2\x96\xB8") : " ";  // a small triangle, down or right
         }
     }
     if (!u.breaks.empty()) {
-        add(DebugUi::kNone, 0, "");
-        add(DebugUi::kNone, 0, "Breakpoints", kInkMuted);
+        size_t count = 0;
+        for (const auto& [path, lines] : u.breaks) count += lines.size();
+        heading("Breakpoints", count);
         u32 n = 0;
         for (const auto& [path, lines] : u.breaks)
-            for (const u32 l : lines) add(DebugUi::kBreak, n++, "\xE2\x97\x8F " + base_name(path) + ":" + std::to_string(l + 1), 0, 0, 1);
+            for (const u32 l : lines) {
+                Row& r = add(DebugUi::kBreak, n++, base_name(path) + ":" + std::to_string(l + 1));
+                r.mark = "\xE2\x97\x8F";  // (the gutter's dot)
+                r.mark_ink = ink::kError;
+            }
     }
     if (!u.output.empty() || !u.partial.empty()) {
-        add(DebugUi::kNone, 0, "");
-        add(DebugUi::kNone, 0, "Output", kInkMuted);
+        heading("Output", 0);
         const size_t from = u.output.size() > 200 ? u.output.size() - 200 : 0;
-        for (size_t i = from; i < u.output.size(); ++i) add(DebugUi::kNone, 0, u.output[i], 0, 0, 1);
-        if (!u.partial.empty()) add(DebugUi::kNone, 0, u.partial, 0, 0, 1);
+        for (size_t i = from; i < u.output.size(); ++i) add(DebugUi::kNone, 0, u.output[i]);
+        if (!u.partial.empty()) add(DebugUi::kNone, 0, u.partial);
     }
     // The chosen row: one that does something.
     if (u.sel >= out.size() || out[u.sel].act == DebugUi::kNone) {
@@ -526,17 +562,19 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
     if (u.sel < u.top) u.top = u.sel;
     if (body && u.sel >= u.top + body) u.top = u.sel - body + 1;
     if (out.size() <= body) u.top = 0;
+    // (A field's heading and value are lit together.)
+    const DebugUi::Act chosen = u.sel < out.size() ? out[u.sel].act : DebugUi::kNone;
+    const bool field = chosen == DebugUi::kProgram || chosen == DebugUi::kArgs || chosen == DebugUi::kCwd;
     for (u32 r = 0; r < body && u.top + r < out.size(); ++r) {
         const Row& row = out[u.top + r];
-        std::string text = row.text;
-        const u32 room = cols > row.indent ? cols - row.indent : 1;
-        if (width_of(text) > room) {
-            size_t at = 0;
-            for (u32 k = 0; k + 1 < room && at < text.size(); ++k) at += decode_utf8(reinterpret_cast<const u8*>(text.data()) + at, text.size() - at).len;
-            text = text.substr(0, at) + "\xE2\x80\xA6";
-        }
-        box.put(font, 2 + r, row.indent, text, row.ink, row.style);
-        if (focused && u.top + r == u.sel) box.select_row(2 + r);
+        u32 c = row.indent;
+        if (!row.mark.empty()) c = put(box, font, 2 + r, c, row.mark, row.mark_ink) + 1;
+        const u32 key_w = row.key.empty() ? 0 : width_of(row.key) + 2;
+        const u32 room = cols > c + key_w ? cols - c - key_w : 0;
+        c = put(box, font, 2 + r, c, fit_text(row.text, room), row.ink);
+        if (!row.after.empty() && c + 3 < cols - key_w) put(box, font, 2 + r, c + 1, fit_text(row.after, cols - key_w - c - 1), ink::kMuted);
+        if (key_w && key_w < cols) put(box, font, 2 + r, cols - key_w + 2, row.key, ink::kMuted);
+        if (u.top + r == u.sel || (field && row.act == chosen)) light_row(box, 2 + r, focused);
     }
 }
 
@@ -612,6 +650,11 @@ bool App::debug_panel_key(const SDL_KeyboardEvent& k) {
     switch (k.key) {
         case SDLK_UP: step(-1); break;
         case SDLK_DOWN: step(1); break;
+        case SDLK_HOME:  // the first row that does something, or the last
+        case SDLK_END:
+            u.sel = k.key == SDLK_HOME ? n - 1 : 0;
+            step(k.key == SDLK_HOME ? 1 : -1);
+            break;
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
         case SDLK_SPACE: debug_do(u.sel); return true;
@@ -663,7 +706,7 @@ void App::debug_marks(FrameDesc& fd) {
         TextBox box;
         const std::string text = "\xE2\x97\x80 stopped" + (u.reason.empty() ? std::string() : ": " + u.reason);
         box.resize(std::min<u32>(width_of(text), 80), 1);
-        box.put(font, 0, 0, text, kInkAccent, Font::kItalic);
+        put(box, font, 0, 0, text, ink::kAccent);  // (upright: the font's italic may be a script)
         debug_note_cells_[vi] = std::move(box.cells);
         std::vector<GridNote>& notes = debug_notes_[vi];
         notes.clear();

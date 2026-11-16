@@ -125,6 +125,20 @@ bool read_file(const std::string& path, u64 max_bytes, std::string* into, bool t
     return ok;
 }
 
+// The places in a list of the files with these paths, in order. (One pass
+// over the list, comparing only the paths as long as one of these.)
+std::vector<u32> files_named(const FileIndex& ix, const std::vector<std::string>& paths) {
+    std::vector<u32> out;
+    u64 lengths = 0;
+    for (const std::string& p : paths) lengths |= 1ull << (p.size() & 63);
+    for (size_t i = 0; i < ix.size() && out.size() < paths.size(); ++i) {
+        const std::string_view p = ix.path(i);
+        if (!((lengths >> (p.size() & 63)) & 1)) continue;
+        if (std::ranges::find(paths, p) != paths.end()) out.push_back(static_cast<u32>(i));
+    }
+    return out;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------- patterns
@@ -353,7 +367,7 @@ std::shared_ptr<FileIndex> Finder::walk(const std::string& root, const FinderOpt
 // ---------------------------------------------------------------- searching
 
 void Finder::rank_names(const FileIndex& ix, std::span<const FuzzyTerm> terms, FindResults* out, const std::atomic<u64>* epoch, u64 mine, const std::vector<u32>* among,
-                        std::vector<u32>* matched) {
+                        std::vector<u32>* matched, std::span<const u32> preferred) {
     out->hits.clear();
     out->matched = 0;
     if (matched) matched->clear();
@@ -378,10 +392,16 @@ void Finder::rank_names(const FileIndex& ix, std::span<const FuzzyTerm> terms, F
     out->matched = all.size();
     if (matched)
         for (const Scored& x : all) matched->push_back(x.file);
-    // The best first; of equals, the one earlier in the list.
+    // The best first; of equals, one of the preferred, then the one earlier in the list.
     const size_t keep = std::min(all.size(), kMaxNames);
-    std::partial_sort(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(keep), all.end(),
-                      [](const Scored& a, const Scored& b) { return a.score != b.score ? a.score > b.score : a.file < b.file; });
+    std::partial_sort(all.begin(), all.begin() + static_cast<std::ptrdiff_t>(keep), all.end(), [&](const Scored& a, const Scored& b) {
+        if (a.score != b.score) return a.score > b.score;
+        if (!preferred.empty()) {
+            const bool pa = std::ranges::binary_search(preferred, a.file), pb = std::ranges::binary_search(preferred, b.file);
+            if (pa != pb) return pa;
+        }
+        return a.file < b.file;
+    });
     for (size_t i = 0; i < keep; ++i) out->hits.push_back(FindHit{all[i].file, 0, 0, all[i].score, {}});
 }
 
@@ -453,8 +473,26 @@ void Finder::search_names(u64 serial, const std::string& typed, std::shared_ptr<
     r->serial = serial;
     const std::vector<FuzzyTerm> terms = fuzzy_terms(typed);
     const Base* b = terms.empty() ? nullptr : names_bases_.under(typed, ix, 0, ~0ull);
+    // The files to put first among equals, found in this list once (again
+    // when they or the list change).
+    if (ix && !terms.empty()) {
+        std::vector<std::string> paths;
+        bool again = false;
+        {
+            std::lock_guard lock(mu_);
+            again = pref_done_ != pref_gen_ || pref_ix_ != ix;
+            if (again) {
+                paths = pref_;
+                pref_done_ = pref_gen_;
+            }
+        }
+        if (again) {
+            pref_ix_ = ix;
+            pref_files_ = files_named(*ix, paths);
+        }
+    }
     std::vector<u32> matched;
-    if (ix) rank_names(*ix, terms, r.get(), &search_epoch_, mine, b ? &b->files : nullptr, &matched);
+    if (ix) rank_names(*ix, terms, r.get(), &search_epoch_, mine, b ? &b->files : nullptr, &matched, pref_ix_ == ix ? std::span<const u32>(pref_files_) : std::span<const u32>());
     if (search_epoch_.load() != mine) return;  // overtaken: its answer is no longer wanted
     if (ix && !terms.empty()) names_bases_.add({typed, ix, std::move(matched), 0});
     publish(std::move(r));
@@ -600,6 +638,13 @@ void Finder::set_notify(std::function<void()> fn) {
 void Finder::set_options(FinderOptions o) {
     std::lock_guard lock(mu_);
     opt_ = std::move(o);
+}
+
+void Finder::set_preferred(std::vector<std::string> paths) {
+    std::lock_guard lock(mu_);
+    if (paths == pref_) return;  // (nothing to look for again)
+    pref_ = std::move(paths);
+    ++pref_gen_;
 }
 
 void Finder::index(const std::string& root) {

@@ -13,6 +13,7 @@
 #include <thread>
 
 #include "app.hpp"
+#include "look.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
@@ -29,6 +30,28 @@ void wake() {
 }
 
 std::string task_key(const BuildTask& t) { return t.system + "\t" + t.name; }
+
+// A row that is picked: lit as selected while the panel has the keyboard,
+// in the quieter tone of the mouse's while it does not.
+void light_row(TextBox& box, u32 row, bool focused) {
+    if (focused) return box.select_row(row);
+    if (row >= box.rows) return;
+    for (u32 c = 0; c < box.cols; ++c) box.cells[static_cast<size_t>(row) * box.cols + c] |= kCellHover;
+}
+
+// Text in lines of at most `cols` columns, broken between words.
+std::vector<std::string> wrapped(std::string_view text, u32 cols) {
+    std::vector<std::string> out(1);
+    while (!text.empty()) {
+        const size_t space = text.find(' ');
+        const std::string_view word = text.substr(0, space);
+        text = space == std::string_view::npos ? std::string_view{} : text.substr(space + 1);
+        if (!out.back().empty() && width_of(out.back()) + 1 + width_of(word) > cols) out.emplace_back();
+        if (!out.back().empty()) out.back() += ' ';
+        out.back() += fit_text(word, cols);
+    }
+    return out;
+}
 
 }  // namespace
 
@@ -52,13 +75,16 @@ struct App::BuildUi {
     bool running = false;
     int last_status = -1;
     std::string last_name;
+    std::string last_key;  // the task it ran (task_key), when it was one of the tab's
     // The Build tab: a row for each system and for each task, and the one chosen.
     struct Row {
         int task = -1;  // -1: a system's heading
         std::string text;
+        u32 count = 0;  // a heading's: its tasks
     };
     std::vector<Row> rows;
     u32 sel = 0, top = 0;
+    u32 body = 0;  // the rows of tasks the tab last had room for
     // The Run button, where it was drawn.
     TextBox box;
     int reserve = 0;  // its width and margin: the top right tab bar ends before it
@@ -189,6 +215,7 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     u.running = doc != 0;
     u.last_status = -1;
     u.last_name = title;
+    u.last_key.clear();
     ++build_gen_;
     dirty_ = true;
     return doc;
@@ -208,6 +235,7 @@ void App::build_run(int index) {
     const BuildTask t = u.tasks[static_cast<size_t>(index)];
     u.current = task_key(t);
     build_command(t.cwd.empty() ? u.root : u.root + "/" + t.cwd, t.cmd, t.name);
+    u.last_key = u.current;  // (how it goes shows on its row)
 }
 
 bool App::build_run_named(const std::string& name) {
@@ -245,13 +273,16 @@ void App::build_stop() {
 }
 
 // The build's program has ended (term_sync tells): what it made may change
-// what the folder builds with (a build folder configured), so it is looked at again.
+// what the folder builds with (a build folder configured), so it is looked
+// at again; and what git sees there (files written, or a repository made by
+// a new project's git init).
 void App::build_ended(u64 doc, int status) {
     BuildUi& u = *buildui_;
     if (doc != u.doc) return;
     u.running = false;
     u.last_status = status;
     u.looked = false;
+    git_command("look", {});
     ++build_gen_;
     dirty_ = true;
 }
@@ -262,26 +293,51 @@ void App::build_panel_draw(TextBox& box, bool focused) {
     BuildUi& u = *buildui_;
     Font& font = *font_;
     const u32 cols = box.cols, rows = box.rows;
-    std::string where = u.looked ? u.root : u.looking_at;
+    // The folder: the one looked at, or being looked at, or (before the
+    // first look, made after the first frame) the one that will be.
+    std::string where = u.looked ? u.root : u.looking ? u.looking_at : build_root();
     if (const char* home = SDL_getenv("HOME"); home && *home && where.starts_with(home)) where = "~" + where.substr(std::strlen(home));
     const bool looking = !u.looked || u.looking;
-    box.put(font, 1, 0, looking && u.tasks.empty() ? "Looking at " + where + "\xE2\x80\xA6" : u.tasks.empty() ? "Nothing to build in " + where : "In " + where, kInkMuted);
     u.rows.clear();
-    std::string system;
+    u.body = 0;
+    size_t heading = 0;
     for (size_t i = 0; i < u.tasks.size(); ++i) {
         const BuildTask& t = u.tasks[i];
-        if (t.system != system) {
-            system = t.system;
-            u.rows.push_back({-1, t.system});
+        if (i == 0 || u.tasks[i - 1].system != t.system) {
+            heading = u.rows.size();
+            u.rows.push_back({-1, t.system, 0});
         }
-        u.rows.push_back({static_cast<int>(i), t.name});
+        ++u.rows[heading].count;
+        u.rows.push_back({static_cast<int>(i), t.name, 0});
     }
     if (u.tasks.empty()) {
-        if (looking) return;
-        static const char* const kHelp[] = {"Found from the folder's files: CMake,", "Meson, make, autotools and Ninja", "(C, C++, HIP), and uv and pip (Python).",
-                                            "", "Others can be added in init.lua", "with blit.build.add.", "", "Cmd+R looks again."};
-        for (u32 r = 0; r < std::size(kHelp) && 3 + r < rows; ++r) box.put(font, 3 + r, 1, kHelp[r], kInkMuted);
+        if (looking) {
+            put(box, font, 1, 0, "Looking at " + fit_text(where, cols > 12 ? cols - 12 : 1, true) + "\xE2\x80\xA6", ink::kMuted);
+            return;
+        }
+        // Nothing found: where, and how to add what was not looked for.
+        u32 r = 1;
+        for (const std::string& line : wrapped("No build files in " + where + ".", cols))
+            if (r < rows) put(box, font, r++, 0, line, ink::kMuted);
+        ++r;
+        for (const std::string& line : wrapped("A build system can be added in init.lua: blit.build.add(\xE2\x80\xA6)", cols))
+            if (r < rows) put(box, font, r++, 0, line, ink::kMuted);
+        static constexpr Hint kAgain[] = {{"Cmd+R", "look again"}};
+        if (rows > r + 1 && hints_width(kAgain, font) <= cols) put_hints(box, font, rows - 1, 0, kAgain);
         return;
+    }
+    put(box, font, 1, 0, "In " + fit_text(where, cols > 3 ? cols - 3 : 1, true), ink::kMuted);
+    // At the bottom, the keys: on one line where they fit, else on two (the
+    // second said more briefly where the panel is narrow).
+    Hint keys[2] = {{"Enter", "run"}, {"space", "make it the Run button's task"}};
+    std::string brief;
+    u32 foot = 1;
+    if (hints_width(keys, font) > cols) {
+        foot = 2;
+        if (hints_width({keys + 1, 1}, font) > cols) {
+            keys[1].second = "choose for the Run button";
+            if (hints_width({keys + 1, 1}, font) > cols) keys[1].second = brief = fit_text(keys[1].second, cols > 6 ? cols - 6 : 1);
+        }
     }
     // The chosen row: a task (the Run button's, after the folder was looked at).
     if (u.sel >= u.rows.size() || u.rows[u.sel].task < 0) {
@@ -290,46 +346,46 @@ void App::build_panel_draw(TextBox& box, bool focused) {
             if (u.rows[i].task >= 0 && task_key(u.tasks[static_cast<size_t>(u.rows[i].task)]) == u.current) u.sel = i;
         if (u.rows[u.sel].task < 0 && u.sel + 1 < u.rows.size()) ++u.sel;
     }
-    const u32 body = rows > 4 ? rows - 4 : 0;
+    u.body = rows > 3 + foot ? rows - 3 - foot : 0;  // (between the folder's line and a blank one above the keys)
     if (u.sel < u.top) u.top = u.sel;
-    if (body && u.sel >= u.top + body) u.top = u.sel - body + 1;
-    for (u32 r = 0; r < body && u.top + r < u.rows.size(); ++r) {
+    if (u.body && u.sel >= u.top + u.body) u.top = u.sel - u.body + 1;
+    for (u32 r = 0; r < u.body && u.top + r < u.rows.size(); ++r) {
         const BuildUi::Row& row = u.rows[u.top + r];
         const u32 y = 2 + r;
         if (row.task < 0) {
-            box.put(font, y, 0, row.text, kInkMuted, Font::kBold);
+            const std::string count = std::to_string(row.count);
+            const u32 c = put(box, font, y, 0, fit_text(row.text, cols > count.size() + 1 ? cols - static_cast<u32>(count.size()) - 1 : 1), ink::kHeading);
+            put(box, font, y, c + 1, count, ink::kMuted);
             continue;
         }
+        // The Run button's task marked, its name, and then how its last run
+        // went (in words, not only colour), else its command.
         const BuildTask& t = u.tasks[static_cast<size_t>(row.task)];
         const bool cur = task_key(t) == u.current;
-        u32 c = box.put(font, y, 1, cur ? "\xE2\x96\xB6 " : "  ", kInkAccent);
-        c = box.put(font, y, c, t.name, 0, cur ? Font::kBold : 0);
-        if (c + 4 < cols) {  // the command, as much of it as fits
-            std::string cmd = t.cmd;
-            const u32 room = cols - c - 2;
-            if (width_of(cmd) > room) {
-                size_t at = 0;
-                for (u32 k = 0; k + 1 < room && at < cmd.size(); ++k) at += decode_utf8(reinterpret_cast<const u8*>(cmd.data()) + at, cmd.size() - at).len;
-                cmd = cmd.substr(0, at) + "\xE2\x80\xA6";
-            }
-            box.put(font, y, c + 2, cmd, kInkMuted);
+        if (cur) put(box, font, y, 0, "\xE2\x96\xB6", ink::kAccent);
+        const u32 c = put(box, font, y, 2, fit_text(t.name, cols > 2 ? cols - 2 : 1), cur ? ink::kStrong : ink::kText);
+        std::string after = t.cmd;
+        Ink in = ink::kMuted;
+        if (!u.last_key.empty() && task_key(t) == u.last_key) {
+            if (u.running) after = "running\xE2\x80\xA6";
+            else if (u.last_status == 0) after = "done";
+            else if (u.last_status > 0) after = "failed: exited with code " + std::to_string(u.last_status), in = ink::kError;
         }
-        if (focused && u.top + r == u.sel) box.select_row(y);
+        if (c + 4 < cols) put(box, font, y, c + 2, fit_text(after, cols - c - 2), in);
+        if (u.top + r == u.sel) light_row(box, y, focused);
     }
-    if (rows > 2) {
-        std::string last;
-        if (u.running) last = u.last_name + ": running";
-        else if (u.last_status == 0) last = u.last_name + ": done";
-        else if (u.last_status > 0) last = u.last_name + ": failed (" + std::to_string(u.last_status) + ")";
-        if (!last.empty()) box.put(font, rows - 2, 0, last, u.last_status > 0 ? kInkDiagnostic : kInkMuted);
-        box.put(font, rows - 1, 0, "Enter runs \xC2\xB7 Space sets \xE2\x96\xB6", kInkMuted);
+    if (foot == 1) {
+        put_hints(box, font, rows - 1, 0, keys);
+    } else if (rows > 3) {
+        put_hints(box, font, rows - 2, 0, {keys, 1});
+        put_hints(box, font, rows - 1, 0, {keys + 1, 1});
     }
 }
 
 void App::build_panel_click(int row, int col, const SDL_MouseButtonEvent& b) {
     (void)col;
     BuildUi& u = *buildui_;
-    if (b.button != SDL_BUTTON_LEFT || row < 2) return;
+    if (b.button != SDL_BUTTON_LEFT || row < 2 || static_cast<u32>(row - 2) >= u.body) return;
     const u32 i = u.top + static_cast<u32>(row - 2);
     if (i >= u.rows.size() || u.rows[i].task < 0) return;
     u.sel = i;
@@ -360,6 +416,11 @@ bool App::build_panel_key(const SDL_KeyboardEvent& k) {
     switch (k.key) {
         case SDLK_UP: step(-1); break;
         case SDLK_DOWN: step(1); break;
+        case SDLK_HOME:  // the first task, or the last
+        case SDLK_END:
+            u.sel = k.key == SDLK_HOME ? n - 1 : 0;
+            step(k.key == SDLK_HOME ? 1 : -1);
+            break;
         case SDLK_SPACE:
             if (u.sel < n && u.rows[u.sel].task >= 0) u.current = task_key(u.tasks[static_cast<size_t>(u.rows[u.sel].task)]);
             break;

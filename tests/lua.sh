@@ -353,7 +353,7 @@ init <<'EOF'
 blit.ui.status("on the right")
 EOF
 run "workdir:$W;frame;statusdump"
-check "blit.ui.status: in the status bar" 'a.txt | on the right Ln 1, Col 1 Tabs LF Plain text'
+check "blit.ui.status: in the status bar (kept over the indentation, where there is not room for all)" 'NORMAL a.txt | on the right Ln 1, Col 1 LF Plain text'
 # Marks put in out of order are drawn as the same marks put in in order.
 fresh
 init <<'EOF'

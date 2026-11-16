@@ -747,8 +747,55 @@ void App::save() {
     dirty_ = true;
 }
 
+// Cmd+Shift+S: the file in front, under a name asked for in the box that
+// finds things, which starts at the name it has (save_named() saves it).
+void App::save_as() {
+    const Doc& d = *pane_->doc;
+    if (d.read_only || d.term || d.prof || d.md || d.image || d.pdf) return;  // (no text of its own to write)
+    std::string typed = d.ed.path;
+    if (const char* home = SDL_getenv("HOME"); home && *home && !is_remote(typed)) {  // (shown as the box shows paths: ~ for the home folder)
+        const std::string h = home;
+        if (typed.starts_with(h + "/")) typed = "~" + typed.substr(h.size());
+    }
+    find_open(kFindSave, typed);
+    find_save_for(d.id);
+}
+
+// Cmd+Option+S: every file with changes that has a name (a new one is left
+// alone: each would ask for its own). The tab in front of each split stays
+// in front.
+void App::save_all() {
+    std::vector<u64> wanted, fronts;
+    for (const std::unique_ptr<Pane>& p : panes_) {
+        fronts.push_back(p->doc ? p->doc->id : 0);
+        for (const std::unique_ptr<Doc>& d : p->docs)
+            if (d->ed.modified() && !d->ed.path.empty() && !d->read_only) wanted.push_back(d->id);
+    }
+    if (wanted.empty()) return;
+    const u64 focused = pane_->doc->id;
+    Pane* where = nullptr;
+    size_t at = 0;
+    // (By id, not by place: a script's handler may close a tab or open one while a file is saved.)
+    for (const u64 id : wanted)
+        if (find_doc(id, &where, &at)) {
+            focus_pane(where);
+            tab_show(at);
+            save();
+        }
+    for (const u64 id : fronts)
+        if (find_doc(id, &where, &at)) {
+            focus_pane(where);
+            tab_show(at);
+        }
+    if (find_doc(focused, &where, &at)) {
+        focus_pane(where);
+        tab_show(at);
+    }
+}
+
 void App::request_quit() {
-    size_t unsaved = 0;
+    size_t unsaved = 0, unnamed = 0;
+    std::vector<std::string> names;  // of the files with changes, in the order of their tabs
     Pane* first_pane = nullptr;
     size_t first = 0;
     for (size_t k = panes_.size(); k-- > 0;)
@@ -758,10 +805,27 @@ void App::request_quit() {
         running_ = false;
         return;
     }
+    for (const std::unique_ptr<Pane>& p : panes_)
+        for (const std::unique_ptr<Doc>& d : p->docs) {
+            if (!d->ed.modified()) continue;
+            if (d->ed.path.empty()) {
+                ++unnamed;
+                continue;
+            }
+            const size_t slash = d->ed.path.find_last_of('/');
+            names.push_back(d->ed.path.substr(slash == std::string::npos ? 0 : slash + 1));
+        }
     focus_pane(first_pane);
     tab_show(first);  // what the question is about
-    const std::string what = unsaved == 1 ? "Save changes before closing?"
-                                          : std::to_string(unsaved) + " files have changes that are not saved. Save them before closing?";
+    // The question names the files, as closing a tab does ("a.txt, b.cpp
+    // and 3 more files"); new files are counted.
+    constexpr size_t kNamed = 3;
+    std::vector<std::string> parts(names.begin(), names.begin() + static_cast<std::ptrdiff_t>(std::min(names.size(), kNamed)));
+    if (names.size() > kNamed) parts.push_back(std::to_string(names.size() - kNamed) + " more file" + (names.size() - kNamed == 1 ? "" : "s"));
+    if (unnamed) parts.push_back(unnamed == 1 ? std::string("a new file") : std::to_string(unnamed) + " new files");
+    std::string list;
+    for (size_t i = 0; i < parts.size(); ++i) list += (i == 0 ? "" : i + 1 == parts.size() ? " and " : ", ") + parts[i];
+    const std::string what = "Save the changes to " + list + " before quitting?";
     const SDL_MessageBoxButtonData buttons[] = {
         {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, unsaved == 1 ? "Save" : "Save All"},
         {0, 2, "Don't Save"},
@@ -1470,6 +1534,10 @@ void App::on_key(const SDL_KeyboardEvent& k) {
             term_drop_text_ = true;
             return;
         }
+        // Ctrl+Shift+G, the Git tab, is not the terminal's either (appcommands.cpp).
+        if (kMac && k.key == SDLK_G && (k.mod & SDL_KMOD_CTRL) && (k.mod & SDL_KMOD_SHIFT) && !(k.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI)) && pane_->doc->term &&
+            command_key(k))
+            return;
         if (term_key(k)) return;   // a terminal's tab is in front (appterm.cpp)
     }
     if (script_keys_ && script_key(k)) return;  // a mapping of a script's has it (applua.cpp)
@@ -1490,7 +1558,6 @@ void App::on_key(const SDL_KeyboardEvent& k) {
         if (vim_key(k)) return;
     }
     if (lsp_key(k)) return;    // a popup, or a language-server command, took it
-    if (cmd && shift && k.key == SDLK_G) return panel_show_git();
     if (cmd && (k.mod & SDL_KMOD_ALT) && k.key == SDLK_B) return git_command("blame", {});
     if (cfg_.modal) {
         // The application's shortcuts for the clipboard, undo and select
@@ -1550,6 +1617,10 @@ void App::on_key(const SDL_KeyboardEvent& k) {
                 if (pane_->doc->ed.redo()) scroll_to_cursor();
                 return;
             case SDLK_S: save(); return;
+            case SDLK_N:  // a new file (the file tree, with the keyboard, has had Cmd+N first: a new file there)
+                if (shift || (k.mod & SDL_KMOD_ALT)) break;
+                tab_new();
+                return;
             case SDLK_Q: request_quit(); return;
             case SDLK_COMMA: open_config(); return;
             case SDLK_EQUALS: zoom(1); return;

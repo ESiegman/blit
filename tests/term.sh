@@ -53,7 +53,7 @@ check "a word chosen with a double click, copied, and pasted after the prompt" "
 run "term;frame;termwait:\$;text:exit;key:Return;termend;frame;dump"
 check "the shell ends: its tab goes" '>[untitled*]'
 run "term;frame;termwait:\$;text:exit 3;key:Return;termend;frame;termdump"
-case "$got" in *"[ended with 3] "*" ended 3") got="ended 3, tab kept" ;; esac
+case "$got" in *"[exited with code 3]"*" ended 3") got="ended 3, tab kept" ;; esac
 check "a shell that ends badly: the tab stays and says so" "ended 3, tab kept"
 run "lua:blit.opt.editor.modal = true;term;frame;termwait:\$;text:dd;text:i;text::wq;termwait:ddi:wq;termdump"
 check "with Vim's keys on, keys typed go to the shell" '$ ddi:wq @0,8 15x74'

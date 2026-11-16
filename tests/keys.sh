@@ -32,11 +32,11 @@ run() {
 }
 
 run "key:cmd+shift+p;text:split right;finddump"
-check "the search: commands by name, with their keys, the best first" 'commands [split right] 5 : >Split to the right (Cmd+\) To the split on the right (Cmd+Option+Right) Move the tab to the split on the right (Cmd+Option+Shift+Right) Make the split wider (Cmd+Ctrl+Right) The function'"'"'s parameters (signature help) (Ctrl+Shift+Space)'
+check "the search: commands by name, with their keys, the best first" 'commands [split right] 4 : >Split to the right (Cmd+\) Go to the split on the right (Cmd+Option+Right) Move the tab to the split on the right (Cmd+Option+Shift+Right) Make the split wider (Cmd+Ctrl+Right)'
 run "key:cmd+shift+p;text:cmd+b;finddump"
 check "keys typed: the command they are" 'commands [cmd+b] 1 : >Show or hide the side panel (Cmd+B)'
 run "key:cmd+shift+p;key:Tab;key:ctrl+Tab;finddump"
-check "Tab, then keys pressed: looked up" 'commands [Ctrl+Tab] 1 : >Next tab (Ctrl+Tab  Cmd+Shift+])'
+check "Tab, then keys pressed: looked up" 'commands [Ctrl+Tab] 1 : >Go to the next tab (Ctrl+Tab  Cmd+Shift+])'
 run "key:cmd+shift+p;text:split below;key:Return;frame;dump"
 check "a command run from the search: as its keys would" 'V([notes.txt*] / >[untitled*])0.50'
 run 'key:cmd+\;key:cmd+ctrl+right;key:cmd+ctrl+right;frame;dump'

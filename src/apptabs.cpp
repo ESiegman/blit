@@ -7,6 +7,7 @@
 #include <ctime>
 
 #include "app.hpp"
+#include "look.hpp"
 #include "remote.hpp"
 #include "tabbar.hpp"
 #include "textbox.hpp"
@@ -307,7 +308,7 @@ bool App::tabs_mouse_down(const SDL_MouseButtonEvent& b) {
     const int px = static_cast<int>(b.x * density_), py = static_cast<int>(b.y * density_);
     if (!bar || py < pane_->y0 || py >= pane_->y0 + bar || px < pane_->x0 || px >= pane_->x1) return false;
     const int cw = font_->cell_w();
-    const int col = static_cast<int>(std::floor(static_cast<double>(px - pane_->x0 - (cw / 2 + 1)) / cw)) + t.scroll;
+    const int col = static_cast<int>(std::floor(static_cast<double>(px - pane_->x0 - look().edge) / cw)) + t.scroll;
     panel_focus(false);
     lsp_close(kPopAll);
     dirty_ = true;
@@ -356,7 +357,7 @@ bool App::tabs_mouse_motion(const SDL_MouseMotionEvent& m) {
     Pane* where = nullptr;
     if (!find_doc(t.held, &where, &from) || where != pane_ || from >= t.spans.size()) return true;
     const int cw = font_->cell_w();
-    const double col = static_cast<double>(px - pane_->x0 - (cw / 2 + 1)) / cw + t.scroll;
+    const double col = static_cast<double>(px - pane_->x0 - look().edge) / cw + t.scroll;
     size_t to = from;
     while (to + 1 < t.spans.size() && col >= (t.spans[to + 1].x0 + t.spans[to + 1].x1) * 0.5) ++to;
     while (to > 0 && to <= from && col < (t.spans[to - 1].x0 + t.spans[to - 1].x1) * 0.5) --to;
@@ -409,8 +410,11 @@ void App::tabs_layout(int w, int h, FrameDesc& fd, bool focused) {
     if (!bar || fd.popup_count >= std::size(fd.popups)) return;
     const int cw = font_->cell_w(), ch = font_->cell_h();
     (void)w;
-    const int pad_x = cw / 2 + 1, width = std::max(1, pane_->x1 - pane_->x0 - build_reserve(*pane_));  // (the Run button's room taken)
+    const Look lk = look();
+    const int pad_x = lk.edge, width = std::max(1, pane_->x1 - pane_->x0 - build_reserve(*pane_));  // (the Run button's room taken)
     const u32 cols = static_cast<u32>(std::max(1, (width - 2 * pad_x) / cw));
+    // Whether this split has the keyboard: not while the side panel has it.
+    const bool keys = focused && !panel_has_keyboard();
 
     // One number that changes whenever any of that does.
     auto signature = [&] {
@@ -424,7 +428,7 @@ void App::tabs_layout(int w, int h, FrameDesc& fd, bool focused) {
         mix(t.reveal);
         mix(static_cast<u64>(t.drop + 1));
         mix(static_cast<u64>(t.hover + 1));
-        mix(focused);
+        mix(keys);
         for (const std::unique_ptr<Doc>& d : pane_->docs) {
             mix(d->id);
             mix(d->ed.modified());
@@ -516,8 +520,11 @@ void App::tabs_layout(int w, int h, FrameDesc& fd, bool focused) {
                     *b = (slot + 1) | (ic.ink << kCellInkShift);
                 }
             }
-            // (Bold in the split that has the keyboard: that is how to tell which one does.)
-            text(s.x0 + 4, labels[i], front ? 0 : kInkMuted, front && focused ? Font::kBold : 0);
+            // (The tab in front is strong in the split that has the keyboard
+            // and muted, like the others, in the rest: that is how to tell
+            // which one has it.)
+            const Ink name = front && keys ? ink::kStrong : ink::kMuted;
+            text(s.x0 + 4, labels[i], name.ink, name.style);
             // A file with unsaved changes shows a dot; the tab in front and
             // the one under the mouse show the cross that closes them.
             const bool under = static_cast<int>(i) == t.hover;
@@ -537,8 +544,8 @@ void App::tabs_layout(int w, int h, FrameDesc& fd, bool focused) {
             text(mark, "\xE2\x94\x82", kInkAccent, 0);
         }
         // A mark at either end says there are more tabs that way.
-        if (t.scroll > 0) box.put(font, 0, 0, "\xE2\x80\xB9", kInkAccent);
-        if (t.width - t.scroll > static_cast<int>(cols)) box.put(font, 0, cols - 1, "\xE2\x80\xBA", kInkAccent);
+        if (t.scroll > 0) put(box, font, 0, 0, "\xE2\x80\xB9", ink::kMuted);
+        if (t.width - t.scroll > static_cast<int>(cols)) put(box, font, 0, cols - 1, "\xE2\x80\xBA", ink::kMuted);
 
         t.drawn = signature();  // (after the scroll was settled: it is part of it)
     }
@@ -556,9 +563,9 @@ void App::tabs_layout(int w, int h, FrameDesc& fd, bool focused) {
     p.border_px = 0;
     p.sel = theme_.bg;  // the tab in front is the colour of the text under it
     // Each lit tab is a rounded box, a little taller than its letters and
-    // with a gap to the next. And once text has slid up under the bar, the
-    // bar casts a shadow on it.
-    const Look lk = look();
+    // with a gap to the next. (Not reaching out into the margin, as a lit
+    // row does: a tab has blank cells of its own either side.) And once text
+    // has slid up under the bar, the bar casts a shadow on it.
     if (lk.pill > 0) {
         p.pill = lk.pill;
         p.pill_dy = -std::max(0.0f, static_cast<float>(p.pad_y) - std::round(2 * scale_));

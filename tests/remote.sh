@@ -76,8 +76,8 @@ check "asked while the box that opens folders is open: that box comes back" "ask
 # Folders, the finder and the box that opens files.
 run "remotewait;lua:local t = blit.fs.list('$R') table.sort(t, function(a, b) return a.name < b.name end) for _, e in ipairs(t) do print(e.name, e.type) end;lua:print(blit.fs.exists('$R/src'), blit.fs.exists('$R/gone'))" "$R"
 check "blit.fs, there" 'blit: fresh.txt	file ;; blit: notes.txt	file ;; blit: src	dir ;; blit: dir	nil'
-run "remotewait;find:names;findwait;finddump" "$R"
-check "files found by name there" 'names [] 3 of 3 : >fresh.txt notes.txt src/main.cpp'
+run "remotewait;find:names;text:.;findwait;finddump" "$R"
+check "files found by name there (the one opened lately first)" 'names [.] 3 of 3 : >notes.txt fresh.txt src/main.cpp'
 run "remotewait;find:text;text:main;findwait;finddump;key:Return;remotewait;frame;statusdump" "$R"
 check "text searched for there, and a line found opened" 'text [main] 1 of 1 : >src/main.cpp:1:5 ;; box src/main.cpp | Ln 1, Col 5 Tabs LF C++'
 run "remotewait;find:open;finddump;text:src/;finddump" "$R"

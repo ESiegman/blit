@@ -121,7 +121,7 @@ check "no name" 'kind=C++ name= where=~/Dev git=on | target=Program std=23 libra
 run "$dir/none" "newproject;project:where=$P;project:name=taken;projectcreate;startdump"
 check "a folder that is there" 'new project: kind=C++ name=taken where=~/projects git=on | target=Program std=23 libraries= tests=CTest warnings=Standard sanitizers=Address + undefined tuning=Portable lto=false generator=Ninja presets=true clangd=true tidy=false format=None readme=true configure=true | at 0 | error: ~/projects/taken is there already.'
 run "$dir/none" "newproject;project:where=$P;project:libraries=fmt zlib;project:configure=false;project:git=false;project:name=app;projectcreate;frame;statusdump"
-check "made: the start screen goes, its main file is open" 'src/main.cpp | Ln 1, Col 1 Spaces: 4 LF C++'
+check "made: the start screen goes, its main file is open" 'NORMAL src/main.cpp | Ln 1, Col 1 Spaces: 4 LF C++'
 got=$(cd "$P/app" && find . -type f | sort | tr '\n' ' ')
 check "the files: headers in include/, sources in src/" './.clangd ./CMakeLists.txt ./CMakePresets.json ./README.md ./include/app/app.hpp ./src/app.cpp ./src/main.cpp ./tests/test_app.cpp ./vcpkg.json '
 got=$(grep -E 'fmt|zlib|TOOLCHAIN_FILE "' "$P/app/CMakeLists.txt" | tr '\n' '|')
@@ -161,7 +161,7 @@ run "$dir/none" "newproject;project:where=$P;project:kind=Python;projectdump"
 check "a kind taken away is not there" 'kind=C++ name= where=~/projects git=on | target=Program std=23 libraries= tests=CTest warnings=Standard sanitizers=Address + undefined tuning=Portable lto=false generator=Ninja presets=true clangd=true tidy=false format=None readme=true configure=true | at 0'
 INIT="$dir/kind.lua"
 run "$dir/none" "newproject;project:where=$P;project:kind=Notes;project:title=Ideas;project:git=false;project:name=notes;projectcreate;frame;statusdump"
-check "blit.project.add: its create made it, and its file is open" 'notes.md | Ln 1, Col 1 Tabs LF Markdown'
+check "blit.project.add: its create made it, and its file is open" 'NORMAL notes.md | Ln 1, Col 1 Tabs LF Markdown'
 got=$(tr '\n' '|' <"$P/notes/notes.md")
 check "with the values set" '# Ideas||[TOC]|'
 

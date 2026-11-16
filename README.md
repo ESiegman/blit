@@ -32,14 +32,16 @@ build; see [Testing](#testing).
 ## Using it
 
 Started with no file, blit shows its start screen: its name, what can be
-done first, and the files and folders opened lately. Each has a key:
-`n` a new file, `p` a new project (the New project tab: see
-[New projects](#new-projects)), `o` a file opened by its path, `f` a file found by name in
-the working folder, `s` a search of the folder's files, `d` a folder to
-work in, `c` the settings (init.lua), `q` quit, and `1` to `9` what was
-opened lately (a folder becomes the working folder and the side panel
-shows it). The arrows (or `j` and `k`) and Enter, or the mouse, do the
-same; Esc leaves an empty file to type into. It goes once something is
+done first, and the files and folders opened lately (Recent, with their
+icons). Each has a key, in one column at the left, and its shortcut at the
+right: `n` a new file (or Cmd+N), `p` a new project (the New project tab:
+see [New projects](#new-projects)), `o` a file opened by its path, `f` Go
+to file, `s` Search in files, `d` a folder to work in, `r` a server to
+connect to, `c` the settings (init.lua), `q` quit, and `1` to `9` what was
+opened lately (a folder becomes the project folder and the side panel shows
+it). The arrows (or `j` and `k`) and Enter, or the mouse, do the same; Esc
+leaves an empty file to type into. The status bar shows the project folder
+and the settings file (a click opens it). It goes once something is
 opened. The files and folders opened lately (up to 30) are kept in
 `recent` in blit's data folder (`~/.local/share/blit`, or under
 `$XDG_DATA_HOME`). `blit.opt.editor.start_screen = false` starts with an
@@ -72,10 +74,13 @@ and everything in it that has Cmd in it (Ctrl elsewhere) works in every mode.
 | Undo / redo | Cmd+Z / Shift+Cmd+Z | Ctrl+Z / Ctrl+Y |
 | Select all | Cmd+A | Ctrl+A |
 | Save / open (in a new tab) | Cmd+S / Cmd+O | Ctrl+S / Ctrl+O |
+| Save as… / save all | Cmd+Shift+S / Cmd+Option+S | Ctrl+Shift+S / Ctrl+Alt+S |
 | Open a folder | Cmd+Shift+O | Ctrl+Shift+O |
-| Search commands and keys | Cmd+Shift+P | Ctrl+Shift+P |
-| Find a file by name / text in files | Cmd+P / Cmd+Shift+F | Ctrl+P / Ctrl+Shift+F |
-| New tab / close tab | Cmd+T / Cmd+W | Ctrl+T / Ctrl+W |
+| Command search: every command, by its name or its keys | Cmd+Shift+P | Ctrl+Shift+P |
+| Go to file / Search in files | Cmd+P / Cmd+Shift+F | Ctrl+P / Ctrl+Shift+F |
+| Find in this file; the next / previous match | Cmd+F; Cmd+G / Cmd+Shift+G | Ctrl+F; F3 / Shift+F3 |
+| The next / previous hit of Search in files | F4 / Shift+F4 | F4 / Shift+F4 |
+| New file / close tab | Cmd+N (or Cmd+T) / Cmd+W | Ctrl+N (or Ctrl+T) / Ctrl+W |
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab, or Cmd+Shift+] / [ | Ctrl+Tab / Ctrl+Shift+Tab, or Ctrl+PageDown / PageUp |
 | Tab 1 to 8, last tab | Cmd+1 ... Cmd+8, Cmd+9 | Ctrl+1 ... Ctrl+8, Ctrl+9 |
 | Move the tab left / right | Ctrl+Shift+PageUp / PageDown | |
@@ -84,8 +89,8 @@ and everything in it that has Cmd in it (Ctrl elsewhere) works in every mode.
 | The tab to the split on that side (a new one if there is none) | Cmd+Option+Shift+arrow | Ctrl+Alt+Shift+arrow |
 | The split wider / narrower, taller / shorter | Cmd+Ctrl+Right / Left, Down / Up | |
 | A terminal, in the working folder | Ctrl+` | Ctrl+` |
-| The Problems / Git / Profile tab of the side panel | Cmd+Shift+M / G / R | Ctrl+Shift+M / G / R |
-| The Build tab; run its chosen task (the Run button) | Cmd+Shift+U; Cmd+Shift+B | Ctrl+Shift+U; Ctrl+Shift+B |
+| The Problems / Git / Profile tab of the side panel (again: the keyboard back to the text) | Cmd+Shift+M / Ctrl+Shift+G / Cmd+Shift+R | Ctrl+Shift+M / G / R |
+| The Build tab; run its chosen task (the Run button); stop it | Cmd+Shift+U; Cmd+Shift+B; Cmd+. | Ctrl+Shift+U; Ctrl+Shift+B |
 | A new project (the start screen's New project tab, in a tab of its own) | Cmd+Option+N | Ctrl+Alt+N |
 | Markdown preview, beside the file | Cmd+Shift+V | Ctrl+Shift+V |
 | Blame column on or off | Cmd+Option+B | Ctrl+Alt+B |
@@ -133,9 +138,10 @@ file on the window to open it in a tab. `blit --help` lists the options
 ![Visual Line mode, with the matches of a search lit up and the mode on the bottom line](screenshot-modal.png)
 
 Normal, Insert, Replace, Visual, Visual Line and Visual Block modes and a
-command line, with the keys Neovim has out of the box. The bottom line of
-the window shows the mode (`-- INSERT --`), the command line while one is
-typed (`:`, `/`, `?`), messages, the keys of a command under way, and the
+command line, with the keys Neovim has out of the box. The status bar
+starts with the mode (NORMAL, INSERT, VISUAL…; without the status bar the
+bottom line says `-- INSERT --`), and the bottom line of the window shows
+the command line while one is typed (`:`, `/`, `?`), messages, the keys of a command under way, and the
 cursor's line and column. The cursor is a block on a character in Normal and
 Visual mode, a bar in Insert mode, and a line under the character in Replace
 mode or while an operator waits for its motion.
@@ -382,7 +388,7 @@ off. It is a column beside the line numbers (commit, author and age, once
 for each run of lines from one commit) and, quietly at the end of the
 cursor's line, who last changed it and when, with the commit's summary.
 
-**The Git tab** (Cmd+Shift+G, or click "Git" at the top of the side panel)
+**The Git tab** (Ctrl+Shift+G, or click "Git" at the top of the side panel)
 is for the repository the working directory is in: the folder the Files tab
 shows. Choose another folder there and git follows. (Before the panel has
 ever been opened, that is the project of the file in front.) A file open
@@ -390,18 +396,20 @@ from outside that repository gets no marks and no blame. From the top:
 
 - The branch, with how many commits it is ahead (↑) of and behind (↓) the
   branch it follows.
-- A line for the commit message. Typing anywhere in the tab goes there;
-  Enter commits. With files staged, the commit is of those; with none
-  staged, of every change to files git already knows.
-- **Commit, Pull, Push, Fetch.** While one of them runs its name shows
-  there, with Cancel. A branch that follows nothing yet is pushed to
+- The commit message, a field that has the keyboard when the tab opens;
+  Tab goes between it and the list below, and Cmd+Enter commits.
+- **Commit**, which says what it will commit: "Commit 3 staged" with files
+  staged, "Commit all 54 changes" with none (every change to files git
+  already knows). Then **Pull, Push, Fetch, Stage all, New branch…** and
+  **Blame**, each a row that Up and Down reach. While one runs its name
+  shows there, with Cancel. A branch that follows nothing yet is pushed to
   `origin` under its own name and follows that from then on. How it went
-  (or git's complaint, if it did not) appears on the line below.
-- A row of things to do with whatever is picked below, and **Stage all**,
-  **New branch** and **Blame**.
+  (or git's complaint, if it did not) appears on the line below. A folder
+  that is not a repository gets a row that makes it one.
 - **Conflicts**, **Staged** and **Changes**: the files, each with git's
-  letter for what happened to it. Click `+` at the end of a row to stage the
-  file and `−` to unstage it. Pick a file to get **Stage / Unstage**,
+  letter for what happened to it, in git's colours (changed, added,
+  removed). Click `+` at the end of the row picked or under the mouse to
+  stage the file and `−` to unstage it. Pick a file to get **Stage / Unstage**,
   **Discard** (throws away what is not staged, after asking), **Diff** and
   **Open**; a double click opens its diff.
 - **Branches**: the one checked out is starred. Pick another for **Switch**,
@@ -411,10 +419,14 @@ from outside that repository gets no marks and no blame. From the top:
 - **History**: the last forty commits. A double click shows one, with its
   diff.
 
-From the keyboard: Up and Down pick, Enter does the usual thing with what is
-picked (a file's diff, switch to a branch, show a commit), Right stages and
+From the keyboard: Up and Down (or `j` and `k`) pick, Enter does the usual
+thing with what is picked (a file's diff, switch to a branch, show a
+commit), `o` opens the file and `m` merges the branch, Right stages and
 Left unstages, Delete discards a file's changes or deletes a branch,
-Cmd+Enter commits, Esc goes back to the text.
+Cmd+Enter commits, Cmd+R looks again, Esc goes back to the text. The line
+at the bottom says the keys for what is picked. The command search has
+them too: "Git: Commit", "Git: Pull", "Git: Push", "Git: Fetch", "Git:
+Stage all", "Git: New branch…", "Git: Switch branch…".
 
 **Diffs** open in a tab of their own, coloured, to read and copy from. A
 merge or pull that conflicts leaves the files under Conflicts and "merging"
@@ -434,20 +446,29 @@ blit.opt.git.enabled = false   -- no git at all
 
 ![Cmd+P: files whose names have the letters typed, the best match first](screenshot-find.png)
 
-**Cmd+P** finds a file by name. Type some of its letters, in order but not
-necessarily together (`appcp` finds `app.cpp`, `rcpp` finds `render.cpp`):
+**Cmd+P**, Go to file, finds a file by name. With nothing typed it lists
+the files open (Open, the one in front last) and those opened lately
+(Recent). Type some of its letters, in order but not necessarily together (`appcp` finds `app.cpp`, `rcpp` finds `render.cpp`):
 the list narrows as you type and the best match is first. Letters that
 follow one another, and letters at the start of a word (after a slash, a
 dot, an underscore, a capital after a small letter) count for more than
 letters scattered about; a match in the file's own name counts for more
 than one that needs its folders. Several words may be typed, separated by
 spaces, and every one has to match (`src grid`). Small letters match
-either case; a capital matches only itself.
+either case; a capital matches only itself. Among matches as good as each
+other, files open or opened lately come first. `name:120` (or `name:120:5`)
+opens the file at that line (and column); `:120` alone goes to line 120 of
+the file in front. Enter opens the file chosen, Cmd+Enter opens it in the
+split to the right (making one if there is none).
 
 ![Cmd+Shift+F: the lines in the project that have both words on them](screenshot-search.png)
 
-**Cmd+Shift+F** finds text in files: the lines that have every word typed
-on them, in any order, with the file and line number of each. The words
+**Cmd+Shift+F**, Search in files, finds text in files: the lines that have
+every word typed on them, in any order, with the file and line number of
+each. It opens with what was searched for last (or what is selected),
+selected, so that typing replaces it; F4 and Shift+F4 then go to the next
+and the previous hit without the box, and the bottom line says which ("Hit
+4 of 37"). The words
 are looked for as they stand, not as patterns; small letters match either
 case, and one letter alone is not searched for. Enter opens the file at
 that line with the cursor on the first of the words, and Ctrl-O (or
@@ -506,6 +527,21 @@ all.
 ## Looks
 
 ![the side panel with a row lit under the mouse, and its menu: round corners, a shadow, the item under the mouse as a rounded bar](screenshot-panel.png)
+
+Every box is laid out by the same rules (`src/look.hpp`): text starts 11
+points from the edge of its box or of the window, in every box and bar; a
+lit row's rounded bar reaches to 4 points from its box's edge, and a
+floating box is rounded by that bar's radius and those 4 points, so the two
+curves share a centre. The accent colour means "you are here, or yours":
+the caret, matched letters, the item in front, the active tab of a panel,
+the one button that does it. Headings are muted and bold, secondary text
+muted, and keys are written as macOS writes them (⇧⌘P) where the font, or a
+fallback, has the symbols; a box's hints are a line of keys and what they
+do. Nothing is cut off without an ellipsis, and the chrome has no italics.
+
+The status bar starts with the mode, while Vim's modes are on: NORMAL on a
+quiet tone, INSERT, VISUAL and REPLACE on the accent. The line above it, the
+command line, takes the bar's colour while it shows something.
 
 Everything that floats (completion lists, hover text, the side panel's
 menu, the name of a tab being dragged) has round corners and casts a soft
@@ -800,16 +836,19 @@ faces come from. A setting that is wrong is reported with the line of
 
 Cmd+B opens a panel down the left side of the window (pictured under
 [Looks](#looks), with its menu open). A row of tabs runs
-along its top; when they do not all fit they slide (turn the wheel over
-them), and a mark at either end says there are more. Drag the panel's edge
-to change its width.
+along its top; when their names do not all fit, the others shrink to their
+icons and the active one keeps its name, always in view. Ctrl+Tab and
+Ctrl+Shift+Tab go to the next and the previous tab. Every list in it moves
+with Up and Down, `j` and `k`, Home and End (`gg` and `G`), and the row
+picked stays lit, more quietly, while the panel does not have the keyboard.
+Drag the panel's edge to change its width.
 
 **Files** is a tree of the working directory. Folders come first, each kind
 of file has its icon, and the file in front is picked out. Click a file to
 open it in a tab (or go to the tab it already has); click a folder to open
-or close it. A right click offers New File, New
-Folder, Rename, Move to Trash, Set as Working Directory, Go to Parent Folder,
-Choose Folder and Refresh; the keys above do the same from the keyboard.
+or close it. A right click offers New file, New folder, Rename, Move to
+Trash, Make it the project folder, Go to the parent folder, Choose a
+folder… and Refresh, each with its key.
 A new name is typed right in the tree: Enter keeps it, Esc gives up.
 
 The working directory starts as the project the open file belongs to: the
@@ -1040,7 +1079,7 @@ its arguments and working directory.
 | Start, or continue | F5 |
 | Stop | Shift+F5 |
 | Pause | F6 |
-| Step over / into / out | F10 / F11 / Shift+F11 |
+| Step over / into / out | F10 / F7 or F11 / Shift+F11 (F11 is macOS's Show Desktop unless that is turned off) |
 | Breakpoint on this line, or not | F9 |
 | Evaluate an expression where it stopped | Cmd+Shift+Y |
 | The Debug tab | Cmd+Shift+D |
@@ -1076,7 +1115,10 @@ that one from anywhere. The output is in a terminal tab in a split below
 the text, used again by the next run (a run still going there is ended),
 and the keyboard stays where it was. When it ends the tab says how, and
 the folder is looked at again (a configure makes a build folder, whose
-tasks then show). Cmd+R in the tab looks again by hand. On another
+tasks then show). Each task's row says how its last run went ("running…",
+"done", "failed: exited with code 2"), and Cmd+. stops a run. Cmd+R in the
+tab looks again by hand; with nothing found the tab says so, and how to
+add a system (below). On another
 machine (`ssh://`) the folder is looked at, and the tasks run, there.
 
 ```lua
@@ -1221,15 +1263,16 @@ Other kinds show as code, with a line that says so.
 An image file (PNG, JPEG, GIF, BMP, TIFF, WebP, HEIC, AVIF, ICO, PSD and
 the other kinds macOS reads) opens in a tab of its own, from the side
 panel, the finder, a drop, the command line or a link in the Markdown
-preview, here or on another machine. The picture is fitted to the tab,
-never made larger than its own size; see-through parts show over a
+preview, here or on another machine. The picture is fitted to the tab; a
+small one (an icon, pixel art) is drawn larger by whole steps, its pixels
+sharp squares, to about half the room; see-through parts show over a
 checkerboard; the row at the bottom says what it is, how large, and how
 far it is zoomed.
 
 | | |
 |---|---|
 | Zoom in / out | `+` / `-` (or Cmd+= / Cmd+-), a pinch, Cmd+wheel (about the mouse) |
-| Fit it to the tab / its own size | `0` (or Cmd+0) / `1`; a double click switches between them |
+| Fit it to the tab / its actual size | `0` (or Cmd+0) / `1`; a double click switches between them |
 | Move it (zoomed in) | drag it, the wheel, the arrows or `h` `j` `k` `l` |
 
 Zoomed in far, its pixels show as squares. Pictures are read on a thread
@@ -1636,8 +1679,8 @@ does not finish and takes all the memory the machine has.
   Windows yet.
 - Text is found as it stands, in the file (`/`, with Vim's modes on) and
   in all files (Cmd+Shift+F): there are no regular expressions, and no
-  replacing across files. With `modal = false` there is no search within
-  the file. A file shows in one split at a time (two views of the same file
+  replacing across files. With `modal = false`, Cmd+F finds in the file
+  and Cmd+G goes on, but nothing replaces. A file shows in one split at a time (two views of the same file
   are not possible yet), and there are at most eight splits. Tabs and
   splits are not remembered from one run to the next.
 - Only macOS has a renderer: the Vulkan side, for Windows and Linux, is

@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "app.hpp"
+#include "look.hpp"
 #include "tabbar.hpp"
 #include "textbox.hpp"
 
@@ -411,7 +412,7 @@ bool App::splits_mouse_motion(const SDL_MouseMotionEvent& m) {
         d.over = over->id;
         if (py < over->text_y) {  // among that pane's tabs: before the one whose middle is right of the mouse
             const int cw = font_->cell_w();
-            const double col = static_cast<double>(px - over->x0 - (cw / 2 + 1)) / cw + over->bar->scroll;
+            const double col = static_cast<double>(px - over->x0 - look().edge) / cw + over->bar->scroll;
             d.on_bar = true;
             d.bar_index = 0;
             for (const TabBar::Span& s : over->bar->spans)
@@ -560,13 +561,14 @@ void App::drag_drop() {
 
 // ---------------------------------------------------------------- drawing
 
-// Adds to a frame the lines between panes and, while something is being
-// carried, a wash over where it would land and its name under the mouse.
+// Adds to a frame the lines between panes (a hairline in the colour of a
+// box's outline) and, while something is being carried, a wash over where
+// it would land and its name under the mouse.
 void App::splits_layout(int w, int h, FrameDesc& fd) {
     (void)w;
     (void)h;
     Drag& d = *drag_;
-    const int line = std::max(1, static_cast<int>(std::lround(scale_)));
+    const int line = look().hair;
     auto divider = [&](auto&& self, const SplitNode* n) -> void {
         if (!n || n->pane) return;
         if (fd.popup_count < std::size(fd.popups)) {
@@ -606,18 +608,18 @@ void App::splits_carry_layout(int w, int h, FrameDesc& fd) {
     (void)w;
     (void)h;
     Drag& d = *drag_;
-    const int line = std::max(1, static_cast<int>(std::lround(scale_)));
     if (d.kind == kDragNone || d.kind == kDragDivider || !d.moving || !d.away) return;
     if (!d.label.empty() && fd.popup_count < std::size(fd.popups)) {
         if (d.ghost_font != font_->generation()) {
             d.ghost_font = font_->generation();
             d.ghost.resize(width_of(d.label), 1);
-            d.ghost.put(*font_, 0, 0, d.label, 0, Font::kBold);
+            put(d.ghost, *font_, 0, 0, d.label, ink::kStrong);
         }
         const int cw = font_->cell_w(), ch = font_->cell_h();
+        const Look l = look();
         Popup& p = fd.popups[fd.popup_count++];
-        p.pad_x = cw / 2 + 1;
-        p.pad_y = ch / 4;
+        p.pad_x = l.edge;
+        p.pad_y = l.pad_y;
         p.cols = d.ghost.cols;
         p.rows = 1;
         p.w = static_cast<int>(p.cols) * cw + 2 * p.pad_x;
@@ -625,9 +627,9 @@ void App::splits_carry_layout(int w, int h, FrameDesc& fd) {
         p.x = std::clamp(static_cast<int>(d.x * density_) + cw, 0, std::max(0, px_w_ - p.w));
         p.y = std::clamp(static_cast<int>(d.y * density_) + ch / 2, 0, std::max(0, px_h_ - p.h));
         p.cells = d.ghost.cells.data();
-        p.border_px = static_cast<float>(line);
+        p.border_px = static_cast<float>(l.hair);
         fx_float(p, kFxGhost);
-        if (look().box > 0) p.opacity *= 0.94f;  // (what it is over shows through a little)
+        if (l.box > 0) p.opacity *= 0.94f;  // (what it is over shows through a little)
     }
 }
 

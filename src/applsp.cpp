@@ -10,6 +10,7 @@
 #include <cstring>
 
 #include "app.hpp"
+#include "look.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
@@ -20,14 +21,18 @@ namespace {
 
 bool word_byte(u8 b) { return std::isalnum(b) || b == '_' || b >= 0x80; }
 
-// One letter for a completion's kind, and the ink it is drawn in.
+// The widest an information box (hover, signature help) grows, in cells.
+constexpr u32 kInfoCols = 72;
+
+// One letter for a completion's kind, and the ink it is drawn in: what can
+// be called stands out, the rest is quiet (the problems' inks are for problems).
 struct KindTag {
     char letter;
     u32 ink;
 };
 
 KindTag kind_tag(u8 kind) {
-    const u32 fn = kInkDiagnostic + 2, type = kInkDiagnostic + 1, var = kInkDiagnostic + 3, key = kInkAccent;
+    const u32 fn = ink::kAccent.ink, type = ink::kMuted.ink, var = ink::kMuted.ink, key = ink::kMuted.ink;
     switch (kind) {
         case 2: return {'m', fn};     // method
         case 3: return {'f', fn};     // function
@@ -61,7 +66,7 @@ struct Line {
 };
 
 // Breaks lines that are wider than `width`, at spaces where there are any.
-// At most max_rows lines come back; a last line of "..." says there was more.
+// At most max_rows lines come back; a last line of "…" says there was more.
 std::vector<Line> wrap(const std::vector<Line>& in, u32 width, size_t max_rows) {
     std::vector<Line> out;
     for (const Line& l : in) {
@@ -100,7 +105,7 @@ std::vector<Line> wrap(const std::vector<Line>& in, u32 width, size_t max_rows) 
     }
     if (out.size() > max_rows) {
         out.resize(max_rows);
-        out.back() = Line{"...", kInkMuted, 0, false, 0, 0, 0, 0};
+        out.back() = Line{"\xE2\x80\xA6", kInkMuted, 0, false, 0, 0, 0, 0};
     }
     return out;
 }
@@ -126,6 +131,43 @@ void set_lines(TextBox& box, Font& font, const std::vector<Line>& lines, u32 min
 
 const char* severity_word(u8 s) {
     return s == 1 ? "error" : s == 2 ? "warning" : s == 3 ? "info" : "hint";
+}
+
+// A tab whose text a language server could follow (not a diff, a
+// terminal, a profile, a preview, a picture or a PDF).
+bool server_text(const Doc& d) { return !d.read_only && !d.term && !d.prof && !d.md && !d.image && !d.pdf; }
+
+// Why a key that asks the language server for something (completion,
+// hover, definition) got nothing, in words for the bottom line: the server
+// that would serve the file and what keeps it, where that is known.
+std::string why_no_server(const Config& cfg, const Lsp& lsp, bool following, const std::vector<std::string>& failed, const Doc& d) {
+    if (following && lsp.attached() && !lsp.ready()) return lsp.server_name() + " is still starting";
+    const std::string why = "No language server for this file: ";
+    if (!cfg.lsp) return why + "language servers are off (lsp.enabled in Settings)";
+    if (d.ed.path.empty()) return why + "it has no name yet";
+    if (static_cast<double>(d.ed.buf.size()) > static_cast<double>(cfg.lsp_max_mb) * 1048576.0) return why + "it is larger than lsp.max_file_mb (Settings)";
+    if (is_remote(d.ed.path)) return why + "none started on its machine";
+    char head[128];
+    const u64 n = d.ed.buf.read(0, head, sizeof head);
+    const std::string_view first(head, static_cast<size_t>(std::min<u64>(n, std::string_view(head, n).find('\n'))));
+    const std::string lang = Syntax::language_for(d.ed.path, first, cfg.grammars);
+    if (lang.empty()) return why + "its language is not one blit knows";
+    const std::vector<LspServer> servers = lsp_server_list(cfg.lsp_servers);
+    const LspServer *missing = nullptr, *broke = nullptr;
+    for (const LspServer& s : servers) {
+        if (!s.enabled || s.command.empty() || std::find(s.languages.begin(), s.languages.end(), lang) == s.languages.end()) continue;
+        if (Lsp::find_program(s.command[0]).empty()) {
+            if (!missing) missing = &s;
+        } else if (std::find(failed.begin(), failed.end(), s.name) != failed.end()) {
+            if (!broke) broke = &s;
+        } else {
+            return s.name + " has not started yet";
+        }
+        if (missing && broke) break;
+    }
+    if (broke) return why + broke->name + " would not start (lsp.servers in Settings)";
+    if (missing) return why + missing->name + " is not installed (lsp.servers in Settings)";
+    return why + "none is set up for " + lang + " (lsp.servers in Settings)";
 }
 
 }  // namespace
@@ -173,7 +215,7 @@ struct App::Assist {
     std::vector<GridNote> notes;
     std::vector<u32> note_cells;
     u64 deco_gen = ~0ull, deco_top = ~0ull, deco_rev = ~0ull, deco_line = ~0ull;
-    u32 deco_rows = 0, deco_font = ~0u;
+    u32 deco_rows = 0, deco_font = ~0u, deco_edge = ~0u;
 
     // Servers that would not start, or died, since the settings were last
     // read. They are not tried again; the next one for the language is.
@@ -305,8 +347,8 @@ void App::sync_lsp() {
                 out.text = l.text;
                 out.rule = l.kind == InfoLine::kRule;
                 if (l.kind == InfoLine::kHeading) {
-                    out.ink = kInkAccent;
-                    out.style = Font::kBold;
+                    out.ink = ink::kHeading.ink;
+                    out.style = ink::kHeading.style;
                 }
                 a.hover_lines.push_back(std::move(out));
             }
@@ -411,6 +453,10 @@ void App::accept_completion() {
 // away, and the server's description when it arrives.
 void App::show_hover(u64 off, bool at_cursor) {
     Assist& a = *assist_;
+    if (at_cursor && !lsp_.ready() && server_text(*pane_->doc)) {  // (Vim's K, with nobody to ask)
+        notify(why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
+        return;
+    }
     u64 w0 = off, w1 = off;
     char b;
     while (w0 > 0 && off - w0 < 200 && pane_->doc->ed.buf.read(w0 - 1, &b, 1) == 1 && word_byte(static_cast<u8>(b))) --w0;
@@ -505,6 +551,10 @@ void App::lsp_mouse(float x, float y) {
 
 void App::goto_definition() {
     Assist& a = *assist_;
+    if (!lsp_.ready()) {  // (Vim's gd, with nobody to ask)
+        if (server_text(*pane_->doc)) notify(why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
+        return;
+    }
     const LspLocation loc = lsp_.definition_target();
     if (!loc.valid()) return;
     const bool utf16 = lsp_.counts_utf16();
@@ -604,7 +654,13 @@ bool App::lsp_key(const SDL_KeyboardEvent& k) {
             default: break;
         }
     }
-    if (!lsp_.ready()) return false;
+    if (!lsp_.ready()) {
+        // The keys that ask a server for something say why nothing comes of them.
+        const bool asks = (ctrl && k.key == SDLK_SPACE) || (alt && k.key == SDLK_ESCAPE) || (cmd && k.key == SDLK_I) || k.key == SDLK_F12;
+        if (!asks || !server_text(*pane_->doc)) return false;
+        notify(why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
+        return true;
+    }
     // Ctrl+Space, or Option+Escape as macOS has it: complete here.
     if ((ctrl && k.key == SDLK_SPACE && !shift) || (alt && k.key == SDLK_ESCAPE)) {
         request_completion(0);
@@ -692,8 +748,11 @@ void App::lsp_decorate(const GridSpec& g) {
         a.deco_gen = ~0ull;
         return;
     }
+    // The first column the view's right edge cuts (a message stops short of it).
+    const i64 right = std::llround(pane_->scroll_x) - pad_x_ + (pane_->x1 - pane_->text_x);
+    const u32 edge = right > 0 ? static_cast<u32>(right / font_->cell_w()) : 0;
     if (a.deco_gen == lsp_.diagnostics_generation() && a.deco_top == g.top_line && a.deco_rows == g.rows &&
-        a.deco_rev == pane_->doc->ed.revision() && a.deco_line == pane_->cur_line && a.deco_font == font_->generation())
+        a.deco_rev == pane_->doc->ed.revision() && a.deco_line == pane_->cur_line && a.deco_font == font_->generation() && a.deco_edge == edge)
         return;
     a.deco_gen = lsp_.diagnostics_generation();
     a.deco_top = g.top_line;
@@ -701,6 +760,7 @@ void App::lsp_decorate(const GridSpec& g) {
     a.deco_rev = pane_->doc->ed.revision();
     a.deco_line = pane_->cur_line;
     a.deco_font = font_->generation();
+    a.deco_edge = edge;
     a.decos.clear();
     a.notes.clear();
     a.note_cells.clear();
@@ -735,20 +795,26 @@ void App::lsp_decorate(const GridSpec& g) {
             if (deco.col1 <= deco.col0) deco.col1 = deco.col0 + 1;  // a problem at a point still shows
             a.decos.push_back(deco);
         }
-        // The cursor's line shows its most serious problem in words.
-        if (cfg_.lsp_inline && b.line_of(d.start) <= pane_->cur_line && b.line_of(d.end) >= pane_->cur_line && pane_->cur_line >= first && pane_->cur_line < last &&
-            (!note || d.severity < note->severity))
+        // The cursor's line shows its first error in words. (Warnings and
+        // hints keep to their underline: the hover and the Problems tab say them.)
+        if (cfg_.lsp_inline && !note && d.severity == 1 && b.line_of(d.start) <= pane_->cur_line && b.line_of(d.end) >= pane_->cur_line &&
+            pane_->cur_line >= first && pane_->cur_line < last)
             note = &d;
     }
     if (note) {
-        TextBox box;
-        const std::string_view first_line = std::string_view(note->message).substr(0, note->message.find('\n'));
-        box.resize(std::min<u32>(width_of(first_line), 300), 1);
-        box.put(*font_, 0, 0, first_line, kInkDiagnostic + note->severity - 1);
-        a.note_cells = std::move(box.cells);
+        // Three columns after the code, and cut short of the view's edge; with
+        // only a few columns left there, not at all.
         const u64 ls = b.line_start(pane_->cur_line);
-        a.notes.push_back({pane_->cur_line, pane_->doc->ed.col_between(ls, pane_->doc->ed.line_end(pane_->cur_line)) + 2, a.note_cells.data(),
-                           static_cast<u32>(a.note_cells.size())});
+        const u32 col = pane_->doc->ed.col_between(ls, pane_->doc->ed.line_end(pane_->cur_line)) + 3;
+        const u32 room = edge > col + 1 ? edge - col - 1 : 0;
+        if (room >= 8) {
+            const std::string text = fit_text(std::string_view(note->message).substr(0, note->message.find('\n')), room);
+            TextBox box;
+            box.resize(std::max<u32>(width_of(text), 1), 1);
+            put(box, *font_, 0, 0, text, ink::kError);
+            a.note_cells = std::move(box.cells);
+            a.notes.push_back({pane_->cur_line, col, a.note_cells.data(), static_cast<u32>(a.note_cells.size())});
+        }
     }
 }
 
@@ -775,10 +841,9 @@ void App::lsp_layout(int w, int h, FrameDesc& fd) {
 
     const int cw = font_->cell_w(), ch = font_->cell_h();
     const i64 sx = std::llround(pane_->scroll_x), sy = std::llround(pane_->scroll_y);
-    const int pad_x = cw / 2 + 1, pad_y = ch / 4, hair = std::max(1, static_cast<int>(std::lround(scale_)));
-    const float border = static_cast<float>(hair);
-    // (Boxes with round corners and shadows want a little air between them and what they belong to.)
-    const int gap = look().box > 0 ? static_cast<int>(std::lround(3 * scale_)) : hair;
+    const Look lk = look();
+    const int pad_x = lk.edge, pad_y = lk.pad_y, gap = lk.gap;
+    const float border = static_cast<float>(lk.hair);
     // Pixel position of the top-left of the character cell at an offset.
     auto at_offset = [&](u64 off, int* x, int* y) {
         const u64 line = pane_->doc->ed.buf.line_of(off);
@@ -818,15 +883,15 @@ void App::lsp_layout(int w, int h, FrameDesc& fd) {
         l.text = sig.label;
         l.mark0 = sig.param_start;
         l.mark1 = sig.param_end;
-        l.mark_ink = kInkAccent;
-        l.mark_style = Font::kBold;
+        l.mark_ink = ink::kAccentStrong.ink;  // (the argument being typed: where the cursor is)
+        l.mark_style = ink::kAccentStrong.style;
         if (sig.count > 1) l.text += "   " + std::to_string(sig.index + 1) + "/" + std::to_string(sig.count);
         lines.push_back(std::move(l));
         for (const InfoLine& d : sig.doc) {
             if (lines.size() >= 4) break;
             lines.push_back({d.text, kInkMuted, 0, false, 0, 0, 0, 0});
         }
-        set_lines(a.sig_box, *font_, wrap(lines, std::min<u32>(max_cols, 100), 6));
+        set_lines(a.sig_box, *font_, wrap(lines, std::min<u32>(max_cols, kInfoCols), 6));
         int x, y;
         at_offset(pane_->doc->ed.cursor(), &x, &y);
         place(a.sig_box, x, y, true, nullptr, kFxSignature);
@@ -868,10 +933,10 @@ void App::lsp_layout(int w, int h, FrameDesc& fd) {
                 const Decoded d = decode_utf8(p + i, it.label.size() - i);
                 while (hit < hits.size() && hits[hit] < i) ++hit;
                 const bool matched = hit < hits.size() && hits[hit] == i;
-                c = a.comp_box.put(*font_, r, c, std::string_view(it.label).substr(i, d.len), matched ? kInkAccent : 0, matched ? Font::kBold : 0);
+                c = put(a.comp_box, *font_, r, c, std::string_view(it.label).substr(i, d.len), matched ? ink::kAccentStrong : ink::kText);
                 i += d.len;
             }
-            if (detail_w) a.comp_box.put(*font_, r, 2 + label_w + 2, it.detail, kInkMuted);
+            if (detail_w) put(a.comp_box, *font_, r, 2 + label_w + 2, it.detail, ink::kMuted);
             if (a.top + r == a.sel) a.comp_box.select_row(r);
         }
         int x, y;
@@ -913,7 +978,7 @@ void App::lsp_layout(int w, int h, FrameDesc& fd) {
     }
 
     if (a.hover_open && !a.hover_lines.empty()) {
-        set_lines(a.hover_box, *font_, wrap(a.hover_lines, std::min<u32>(max_cols, 90), 18));
+        set_lines(a.hover_box, *font_, wrap(a.hover_lines, std::min<u32>(max_cols, kInfoCols), 18));
         int x, y;
         at_offset(a.hover_at_cursor ? pane_->doc->ed.cursor() : a.hover_w0, &x, &y);
         if (!place(a.hover_box, x, y, !a.sig_open, &a.hover_rect, kFxHover)) a.hover_rect = {};

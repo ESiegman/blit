@@ -682,6 +682,11 @@ u32 Font::lookup_styled(u32 cp, u32 s) {
 
 bool Font::has(u32 cp) const { return FT_Get_Char_Index(face_, cp) != 0; }
 
+bool Font::can_draw(u32 cp) {
+    u32 gi = 0;
+    return face_for(cp, &gi) != nullptr;
+}
+
 u32 Font::icon(u32 id) {
     const u32 key = 0x7F000000u | id;  // above every character and style
     u32 mask = static_cast<u32>(map_.size()) - 1;
