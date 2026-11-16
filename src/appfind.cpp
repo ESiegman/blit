@@ -461,6 +461,9 @@ void App::find_query() {
         exact = exact || e.name == f.leaf;
     }
     std::stable_sort(some.begin(), some.end(), [](const Find::Entry& a, const Find::Entry& b) { return a.score > b.score; });
+    // A machine ~/.ssh/config does not name (user@host, an address): it as typed, first.
+    if (f.dir == "ssh://" && !exact && f.leaf.find_first_of(" \t/") == std::string::npos && f.leaf.front() != '-')
+        some.insert(some.begin(), {f.leaf, true, Find::Entry::kPlain, 0});
     // A name that is not there yet: one to save under, or a new file to open.
     if (!exact && !folders_only && (f.mode == kFindSave || some.empty())) f.entries.push_back({f.leaf, false, Find::Entry::kNew, 0});
     for (Find::Entry& e : some) f.entries.push_back(std::move(e));
@@ -596,8 +599,8 @@ void App::find_accept() {
         recent_add(here, true);
         return panel_set_workdir(here);
     }
-    if (e.dir) {  // into it
-        f.typed = tilde(f.dir + e.name) + "/";
+    if (e.dir) {  // into it (a machine: its home folder)
+        f.typed = f.dir == "ssh://" ? f.dir + e.name + "/~/" : tilde(f.dir + e.name) + "/";
         return find_query();
     }
     const std::string path = f.dir + e.name;
@@ -634,7 +637,7 @@ void App::find_tab() {
     if (f.script() || f.sel >= f.entries.size()) return;
     const Find::Entry& e = f.entries[f.sel];
     if (e.kind != Find::Entry::kPlain) return;
-    f.typed = tilde(f.dir + e.name) + (e.dir ? "/" : "");
+    f.typed = f.dir == "ssh://" ? f.dir + e.name + "/~/" : tilde(f.dir + e.name) + (e.dir ? "/" : "");
     find_query();
 }
 

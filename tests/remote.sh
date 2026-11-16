@@ -85,6 +85,9 @@ check "the box that opens files, in a folder there" 'open [ssh://box~/work/] 4 :
 HOME="$dir/home" run "find:folder;text:ssh://;finddump"
 got=$(printf '%s' "$got" | sed -e 's#\[.*ssh://#[ssh://#')
 check "ssh:// typed: the hosts ~/.ssh/config names (not its patterns)" 'folder [ssh://] 5 : >./ ../ box/ other/ second/'
+HOME="$dir/home" run "find:folder;text:ssh://tester@box;finddump;key:Return;remotewait;finddump;key:Return;lua:print(blit.workdir())"
+got=$(printf '%s' "$got" | sed -e 's#\[[^]]*ssh://#[ssh://#g')
+check "a host it does not name, typed: offered as it is, and Enter goes to its home folder" 'folder [ssh://tester@box] 1 : >tester@box/ ;; folder [ssh://tester@box/~/] 3 : >./ ../ work/ ;; blit: ssh://tester@box~'
 
 # Git, run there.
 mkdir -p "$dir/repo/src" && printf 'one\ntwo\nthree\n' >"$dir/repo/notes.txt"
