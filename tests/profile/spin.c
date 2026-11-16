@@ -1,5 +1,6 @@
 // A program for the profiling tests: most of its time in two functions,
-// one called from the other, each over several lines.
+// one called from the other, each over several lines (the inner one twice
+// the work of the outer one's own, so that which is heavier is never in doubt).
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -8,7 +9,7 @@ static volatile double sink;
 __attribute__((noinline)) static double inner(int n)
 {
     volatile double s = 0;
-    for (int i = 0; i < n; ++i)
+    for (int i = 0; i < 2 * n; ++i)
         s += (double)i * 0.5;
     return s;
 }

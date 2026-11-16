@@ -48,7 +48,7 @@ run() {
 run "prof:program=$dir/here/spin;prof:args=40;profpanel;profrecord;profwait;frame;profdump;key:Return;frame;frame;profdump;statusdump"
 got=$(printf '%s' "$got" | sed -e 's#;; [^;]*spin.c | \(Ln [0-9]*, Col [0-9]*\).*#;; \1#')
 check "recorded here: its tab, then the hottest function's source (at its definition) with the times in it" \
-    "1 profiles; spin by $tool, 1 thread, over 10%: inner@spin.c outer@spin.c; tab: zoom all ;; 1 profiles; spin by $tool, 1 thread, over 10%: inner@spin.c outer@spin.c; times on lines 8F 16F 24F ;; Ln 8, Col 1"
+    "1 profiles; spin by $tool, 1 thread, over 10%: inner@spin.c outer@spin.c; tab: zoom all ;; 1 profiles; spin by $tool, 1 thread, over 10%: inner@spin.c outer@spin.c; times on lines 9F 17F 25F ;; Ln 9, Col 1"
 run "prof:program=$dir/here/spin;prof:args=40;profrecord;profwait;frame;key:space;frame;profdump;key:Escape;frame;profdump"
 got=$(printf '%s' "$got" | grep -o 'zoom [a-z]*' | tr '\n' ' ' | sed -e 's/ $//')
 check "the flame graph from the keyboard: Space zooms into the chosen function, Esc back out a level" "zoom inner zoom outer"
@@ -63,7 +63,7 @@ case "$got" in *"failed: "*"0 profiles") got="failed, 0 profiles" ;; esac
 check "a program that is not there: why, and no profile" "failed, 0 profiles"
 run "prof:program=ssh://box$T/spin;prof:args=40;profrecord;profwait;frame;profdump;key:Return;remotewait;frame;frame;profdump"
 check "recorded on another machine: its source opened from there, with the times" \
-    "1 profiles; spin by $tool on box, 1 thread, over 10%: inner@spin.c outer@spin.c; tab: zoom all ;; 1 profiles; spin by $tool on box, 1 thread, over 10%: inner@spin.c outer@spin.c; times on lines 8F 16F 24F"
+    "1 profiles; spin by $tool on box, 1 thread, over 10%: inner@spin.c outer@spin.c; tab: zoom all ;; 1 profiles; spin by $tool on box, 1 thread, over 10%: inner@spin.c outer@spin.c; times on lines 9F 17F 25F"
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "profile ok"
 exit $failed
