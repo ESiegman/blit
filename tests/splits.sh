@@ -99,6 +99,8 @@ check "a file that is open already: its tab moves to the new split" "$panel;clic
     "H([a.txt*] | V([c.txt*] / >[b.txt*])0.50)0.50"
 check "tabs: new, next, close, and the last one closed leaves a new file" 'key:cmd+T;key:cmd+T;key:ctrl+Tab;key:cmd+W;key:cmd+W;key:cmd+W' \
     ">[untitled*]"
+check "Cmd+W on that empty file, and on a last terminal tab: blit stays, an empty file left" 'key:cmd+W;key:cmd+W;key:cmd+W;term;key:cmd+W;key:cmd+W' \
+    ">[untitled*]"
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "splits ok"
 exit $failed

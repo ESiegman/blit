@@ -261,7 +261,7 @@ private:
     bool find_open(const std::string& full, Pane** pane, size_t* index) const;  // the tab showing a file, if any
     void tab_show(size_t i);
     void tab_new();
-    bool tab_close(size_t i, bool force = false);  // false: the user said no (force: without asking)
+    bool tab_close(size_t i, bool force = false, bool quit_if_last = false);  // false: the user said no (force: without asking)
     void tab_move(size_t from, size_t to);
     void tab_step(int by);
     void for_each_doc(std::function_ref<void()> fn);  // runs fn with each document in front in turn

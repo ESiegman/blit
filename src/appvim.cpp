@@ -225,7 +225,7 @@ void App::vim_after(u32 result) {
                 if (q.then_close) request_quit();
                 break;
             }
-            case VimRequest::kClose: tab_close(pane_->tab, q.force); break;
+            case VimRequest::kClose: tab_close(pane_->tab, q.force, true); break;  // (:q in the last window quits, as in Vim)
             case VimRequest::kQuitAll:
                 if (q.force) running_ = false;
                 else request_quit();

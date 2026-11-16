@@ -288,7 +288,8 @@ empty part of the bar, starts a new file. When the tabs do not all fit, the
 bar slides: turn the wheel over it. Two files with the same name show their
 folders too. Opening a file that is already open goes to its tab. Each tab
 keeps its own undo history, selection and place in the file. Closing the
-last tab leaves a new empty file; closing that closes blit.
+last tab leaves a new empty file; Cmd+W never closes blit itself (Cmd+Q
+does, and Vim's `:q` in the last window).
 
 Line numbers run down the left of the text, with the cursor's line picked
 out; a click on a number selects its line. As Vim has them with `number`

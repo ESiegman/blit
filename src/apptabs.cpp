@@ -169,8 +169,10 @@ void App::tab_move(size_t from, size_t to) {
 }
 
 // Closes a tab, asking first about changes that are not saved. The last
-// tab closed leaves a new, empty file behind; closing that one closes blit.
-bool App::tab_close(size_t i, bool force) {
+// tab closed leaves a new, empty file behind, and closing that one does
+// nothing: blit quits only when asked to (Cmd+Q), or by Vim's :q there
+// (quit_if_last).
+bool App::tab_close(size_t i, bool force, bool quit_if_last) {
     if (i >= pane_->docs.size()) return true;
     if (pane_->docs[i]->ed.modified() && !force) {
         tab_show(i);  // what the question is about
@@ -214,8 +216,9 @@ bool App::tab_close(size_t i, bool force) {
         return true;
     }
     if (pane_->docs.size() == 1) {
-        if (pane_->doc->ed.path.empty() && pane_->doc->ed.buf.size() == 0) {
-            running_ = false;
+        const Doc& d = *pane_->doc;
+        if (d.ed.path.empty() && d.ed.buf.size() == 0 && !d.term && !d.prof && d.title.empty()) {  // (an empty file already)
+            if (quit_if_last) running_ = false;
             return true;
         }
         stop_lsp();
