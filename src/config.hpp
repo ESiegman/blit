@@ -62,6 +62,7 @@ struct GrammarSource {
     std::string rev;                    // the commit (or tag) to fetch
     std::string path;                   // folder in the repository that holds src/parser.c; "" = the top
     std::vector<std::string> inherits;  // languages whose highlight queries come before its own
+    std::vector<std::string> extensions;  // file endings that are this language: "rs" (settings only)
     bool operator==(const GrammarSource&) const = default;
 };
 

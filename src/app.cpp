@@ -156,7 +156,7 @@ int App::run(const Options& opt) {
         for (u32 fs = 1; fs < Font::kStyles; ++fs)
             if (font_->has_style(fs)) std::printf("%-11s %s\n", style_names[fs], font_->style_source(fs).c_str());
         settle_syntax();
-        const std::string lang = Syntax::language_for(pane_->doc->ed.path, "");
+        const std::string lang = Syntax::language_for(pane_->doc->ed.path, "", cfg_.grammars);
         std::printf("syntax      %s\n", pane_->doc->syntax.active() ? (pane_->doc->syntax.language() + ", " + std::to_string(pane_->doc->syntax.style_names().size() - 1) + " kinds of token").c_str()
                                         : !cfg_.syntax       ? "off"
                                         : pane_->doc->ed.path.empty()   ? "no file"
@@ -434,7 +434,7 @@ void App::start_syntax(u64 first_line, bool at_launch) {
         ev.user.code = 3;
         SDL_PushEvent(&ev);
     });
-    if (!pane_->doc->syntax.attach(pane_->doc->ed.buf, Syntax::language_for(pane_->doc->ed.path, first), so)) return;
+    if (!pane_->doc->syntax.attach(pane_->doc->ed.buf, Syntax::language_for(pane_->doc->ed.path, first, cfg_.grammars), so)) return;
     pane_->doc->ed.listen(&pane_->doc->syntax);
     pane_->doc->syntax.want(pane_->doc->ed.buf, first_line, first_line + 200);
 }
@@ -445,7 +445,7 @@ std::string App::file_language() const {
     char head[128];
     const u64 n = pane_->doc->ed.buf.read(0, head, sizeof head);
     const std::string_view first(head, static_cast<size_t>(std::min<u64>(n, std::string_view(head, n).find('\n'))));
-    return Syntax::language_for(pane_->doc->ed.path, first);
+    return Syntax::language_for(pane_->doc->ed.path, first, cfg_.grammars);
 }
 
 // Asks for the grammars the settings want installed and that are not: the
@@ -537,11 +537,21 @@ void App::apply_config(Config next) {
                               next.font_size != cfg_.font_size || next.line_height != cfg_.line_height ||
                               next.ligatures != cfg_.ligatures || next.font_features != cfg_.font_features;
     const float old_size = cfg_.font_size;
+    // Which file endings the settings give to which language: a change can
+    // make an open file another language, for its colours and its server.
+    auto endings = [](const Config& c) {
+        std::vector<std::pair<std::string, std::vector<std::string>>> out;
+        for (const GrammarSource& g : c.grammars)
+            if (!g.extensions.empty()) out.emplace_back(g.name, g.extensions);
+        return out;
+    };
+    const bool types_changed = endings(next) != endings(cfg_);
     const bool syntax_changed = next.syntax != cfg_.syntax || next.syntax_max_mb != cfg_.syntax_max_mb ||
-                                next.parser_dirs != cfg_.parser_dirs || next.query_dirs != cfg_.query_dirs;
+                                next.parser_dirs != cfg_.parser_dirs || next.query_dirs != cfg_.query_dirs || types_changed;
     const bool grammars_changed = next.syntax_install != cfg_.syntax_install || next.syntax_auto_install != cfg_.syntax_auto_install ||
                                   next.grammars != cfg_.grammars;
-    const bool lsp_changed = next.lsp != cfg_.lsp || next.lsp_max_mb != cfg_.lsp_max_mb || next.lsp_servers != cfg_.lsp_servers;
+    const bool lsp_changed =
+        next.lsp != cfg_.lsp || next.lsp_max_mb != cfg_.lsp_max_mb || next.lsp_servers != cfg_.lsp_servers || types_changed;
     cfg_ = std::move(next);
     for (const std::unique_ptr<Pane>& p : panes_) {
         for (const std::unique_ptr<Doc>& d : p->docs) d->ed.tab_width = cfg_.tab_width;

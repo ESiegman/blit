@@ -234,7 +234,7 @@ void App::start_lsp() {
         const std::string name = remote ? s.name + "@" + host : s.name;  // (another machine's are its own)
         return std::find(assist_->failed.begin(), assist_->failed.end(), name) != assist_->failed.end();
     });
-    if (lsp_.attach(pane_->doc->ed.buf, pane_->doc->ed.path, Syntax::language_for(pane_->doc->ed.path, first), servers)) {
+    if (lsp_.attach(pane_->doc->ed.buf, pane_->doc->ed.path, Syntax::language_for(pane_->doc->ed.path, first, cfg_.grammars), servers)) {
         lsp_doc_ = pane_->doc;
         lsp_doc_->ed.listen(&lsp_);
     }

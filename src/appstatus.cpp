@@ -46,11 +46,8 @@ std::string language_name(const std::string& id) {
     static const struct {
         const char* id;
         const char* name;
-    } names[] = {{"cpp", "C++"}, {"c", "C"}, {"c_sharp", "C#"}, {"cuda", "CUDA"}, {"objc", "Objective-C"}, {"javascript", "JavaScript"},
-                 {"typescript", "TypeScript"}, {"tsx", "TSX"}, {"json", "JSON"}, {"json5", "JSON5"}, {"html", "HTML"}, {"css", "CSS"},
-                 {"scss", "SCSS"}, {"php", "PHP"}, {"sql", "SQL"}, {"toml", "TOML"}, {"yaml", "YAML"}, {"xml", "XML"}, {"bash", "Shell"},
-                 {"cmake", "CMake"}, {"make", "Makefile"}, {"glsl", "GLSL"}, {"hlsl", "HLSL"}, {"wgsl", "WGSL"}, {"graphql", "GraphQL"},
-                 {"ocaml", "OCaml"}, {"latex", "LaTeX"}, {"dtd", "DTD"}, {"systemverilog", "SystemVerilog"}};
+    } names[] = {{"cpp", "C++"},   {"c", "C"},         {"json", "JSON"},   {"toml", "TOML"},
+                 {"yaml", "YAML"}, {"bash", "Shell"},  {"cmake", "CMake"}, {"make", "Makefile"}};
     for (const auto& n : names)
         if (id == n.id) return n.name;
     std::string out = id;

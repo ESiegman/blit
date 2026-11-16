@@ -800,7 +800,7 @@ void Syntax::Engine::marks(Highlights* out) const {
 
 // ---------------------------------------------------------------- languages
 
-std::string Syntax::language_for(std::string_view path, std::string_view first_line) {
+std::string Syntax::language_for(std::string_view path, std::string_view first_line, std::span<const GrammarSource> own) {
     const size_t slash = path.find_last_of("/\\");
     const std::string_view name = slash == std::string_view::npos ? path : path.substr(slash + 1);
     const size_t dot = name.rfind('.');
@@ -808,24 +808,25 @@ std::string Syntax::language_for(std::string_view path, std::string_view first_l
     if (dot != std::string_view::npos)
         for (char c : name.substr(dot + 1)) ext += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
+    // The settings first, so that they can add a language or take an
+    // ending from a built-in one.
+    if (!ext.empty())
+        for (const GrammarSource& g : own)
+            if (std::ranges::find(g.extensions, ext) != g.extensions.end()) return g.name;
+
+    // Built in: C, C++ and HIP, Python, and the files around them (build
+    // files, settings, notes, scripts). Any other language comes from the
+    // settings, as above.
     static const struct {
         const char* ext;
         const char* lang;
     } by_ext[] = {
         {"c", "c"}, {"h", "cpp"}, {"cc", "cpp"}, {"cpp", "cpp"}, {"cxx", "cpp"}, {"hpp", "cpp"}, {"hh", "cpp"},
-        {"hxx", "cpp"}, {"ipp", "cpp"}, {"inl", "cpp"}, {"cu", "cuda"}, {"cuh", "cuda"},
-        {"py", "python"}, {"pyi", "python"}, {"lua", "lua"}, {"rs", "rust"}, {"go", "go"}, {"zig", "zig"},
-        {"java", "java"}, {"kt", "kotlin"}, {"swift", "swift"}, {"rb", "ruby"}, {"cs", "c_sharp"},
-        {"js", "javascript"}, {"mjs", "javascript"}, {"cjs", "javascript"}, {"jsx", "javascript"},
-        {"ts", "typescript"}, {"mts", "typescript"}, {"cts", "typescript"}, {"tsx", "tsx"},
-        {"json", "json"}, {"jsonc", "json"}, {"json5", "json5"}, {"toml", "toml"}, {"yaml", "yaml"}, {"yml", "yaml"},
-        {"xml", "xml"}, {"svg", "xml"}, {"html", "html"}, {"htm", "html"}, {"css", "css"}, {"scss", "scss"},
-        {"vue", "vue"}, {"svelte", "svelte"}, {"astro", "astro"}, {"php", "php"}, {"sql", "sql"},
-        {"graphql", "graphql"}, {"gql", "graphql"},
-        {"sh", "bash"}, {"bash", "bash"}, {"zsh", "bash"}, {"md", "markdown"}, {"markdown", "markdown"},
-        {"vim", "vim"}, {"cmake", "cmake"}, {"mk", "make"}, {"scm", "query"},
-        {"sv", "systemverilog"}, {"svh", "systemverilog"}, {"v", "systemverilog"}, {"vh", "systemverilog"},
-        {"glsl", "glsl"}, {"vert", "glsl"}, {"frag", "glsl"}, {"hlsl", "hlsl"}, {"dtd", "dtd"},
+        {"hxx", "cpp"}, {"ipp", "cpp"}, {"inl", "cpp"}, {"hip", "cpp"},
+        {"py", "python"}, {"pyi", "python"},
+        {"cmake", "cmake"}, {"mk", "make"}, {"json", "json"}, {"jsonc", "json"}, {"toml", "toml"},
+        {"yaml", "yaml"}, {"yml", "yaml"}, {"md", "markdown"}, {"markdown", "markdown"},
+        {"sh", "bash"}, {"bash", "bash"}, {"zsh", "bash"}, {"lua", "lua"},
     };
     for (const auto& e : by_ext)
         if (ext == e.ext) return e.lang;
@@ -836,7 +837,6 @@ std::string Syntax::language_for(std::string_view path, std::string_view first_l
     } by_name[] = {
         {"CMakeLists.txt", "cmake"}, {"Makefile", "make"}, {"makefile", "make"}, {"GNUmakefile", "make"},
         {".bashrc", "bash"}, {".zshrc", "bash"}, {".zprofile", "bash"}, {".bash_profile", "bash"}, {".profile", "bash"},
-        {".vimrc", "vim"},
     };
     for (const auto& e : by_name)
         if (name == e.name) return e.lang;
@@ -845,8 +845,7 @@ std::string Syntax::language_for(std::string_view path, std::string_view first_l
         static const struct {
             const char* word;
             const char* lang;
-        } by_shebang[] = {{"python", "python"}, {"bash", "bash"}, {"zsh", "bash"}, {"/sh", "bash"}, {"env sh", "bash"},
-                          {"node", "javascript"}, {"lua", "lua"}, {"php", "php"}, {"ruby", "ruby"}};
+        } by_shebang[] = {{"python", "python"}, {"bash", "bash"}, {"zsh", "bash"}, {"/sh", "bash"}, {"env sh", "bash"}, {"lua", "lua"}};
         for (const auto& e : by_shebang)
             if (first_line.find(e.word) != std::string_view::npos) return e.lang;
     }

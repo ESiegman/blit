@@ -87,12 +87,16 @@
 -- blit.opt.syntax.italic = true          -- false: nothing is drawn in italics, whatever a theme says
 -- blit.opt.syntax.bold = true            -- the same for bold
 
--- A grammar blit does not know, or another revision of one it does (same
--- name: only what is listed changes). `repo` is "owner/name" on GitHub,
--- `rev` a commit or tag, `path` the folder in the repository that holds
+-- Built in are only C, C++ (HIP files too) and Python, and CMake, Make,
+-- JSON, TOML, YAML, Markdown, shell scripts and Lua. Any other language is
+-- added here, and so is another revision of a built-in grammar (same name:
+-- only what is listed changes). `repo` is "owner/name" on GitHub, `rev` a
+-- commit or tag, `path` the folder in the repository that holds
 -- src/parser.c when that is not the top, `inherits` the languages whose
--- highlight queries come before its own.
--- blit.opt.syntax.grammars.mylang = { repo = "someone/tree-sitter-mylang", rev = "v1.2.0", path = "", inherits = {} }
+-- highlight queries come before its own, `extensions` the file endings that
+-- are this language (these win over the built-in ones).
+-- blit.opt.syntax.grammars.rust = { repo = "tree-sitter/tree-sitter-rust", rev = "v0.24.2", path = "", inherits = {}, extensions = { "rs" } }
+-- blit.opt.syntax.grammars.c = { extensions = { "h" } }   -- .h files as C rather than C++
 
 -- Token styles for every theme at once, written like a theme's syntax table
 -- above. A theme's own wins over these. For example, the colours of whatever
@@ -102,9 +106,10 @@
 ---------------------------------------------------------------- language servers
 -- A language server is started when one for the file type is installed:
 -- problems are underlined, completions appear while typing, and resting the
--- mouse on a name describes it. blit knows how to start the common servers
--- (clangd, rust-analyzer, gopls, pyright, typescript-language-server, ...)
--- and looks for them on PATH. `blit --info FILE` says which one it would use.
+-- mouse on a name describes it. blit knows how to start the servers for the
+-- languages it has built in (clangd, pyright, basedpyright, pylsp,
+-- neocmakelsp, taplo, lua-language-server, ...) and looks for them on PATH.
+-- `blit --info FILE` says which one it would use.
 -- blit.opt.lsp.enabled = true
 -- blit.opt.lsp.max_file_mb = 8              -- larger files get no server
 -- blit.opt.lsp.completion = true            -- offer completions while typing; Ctrl+Space always asks
@@ -113,12 +118,14 @@
 
 -- A server of your own, or changes to a built-in one (same name: only what
 -- is listed changes). `languages` are blit's names for file types, the ones
--- `blit --info FILE` shows after "syntax". `roots` are files that mark the
--- top folder of a project. `init_options` and `settings` are JSON, as the
--- server's documentation gives them.
+-- `blit --info FILE` shows after "syntax"; a language blit does not have
+-- built in is named under blit.opt.syntax.grammars above, with its
+-- `extensions`. `roots` are files that mark the top folder of a project.
+-- `init_options` and `settings` are JSON, as the server's documentation
+-- gives them.
 -- blit.opt.lsp.servers.clangd = { command = { "clangd", "--background-index", "--clang-tidy" }, init_options = '{"fallbackFlags": ["-std=c++23"]}' }
--- blit.opt.lsp.servers.mylang = { command = { "mylang-lsp", "--stdio" }, languages = { "toml" }, roots = { "mylang.toml", ".git" }, settings = '{"mylang": {"lint": true}}' }
--- blit.opt.lsp.servers.gopls = { enabled = false }   -- never start this one
+-- blit.opt.lsp.servers["rust-analyzer"] = { command = { "rust-analyzer" }, languages = { "rust" }, roots = { "Cargo.toml", ".git" }, settings = '{"rust-analyzer": {"check": {"command": "clippy"}}}' }
+-- blit.opt.lsp.servers.pylsp = { enabled = false }   -- never start this one
 
 ---------------------------------------------------------------- git
 -- Git's view of the files, by way of the git program: marks beside lines

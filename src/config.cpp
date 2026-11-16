@@ -1,5 +1,6 @@
 #include "config.hpp"
 
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 #include <type_traits>
@@ -401,6 +402,20 @@ struct Parser {
             if (field == "path") return text(key, v, &g->path);
             if (field == "inherits") {
                 if (!as_string_array(v, &g->inherits)) warn(std::string(key) + " should be a list like [\"c\"]");
+                return;
+            }
+            if (field == "extensions") {
+                // Kept as file endings in small letters, without the dot,
+                // the way the file's name is looked up.
+                std::vector<std::string> list;
+                if (!as_string_array(v, &list)) return warn(std::string(key) + " should be a list like [\"rs\"]");
+                for (std::string& e : list) {
+                    if (e.starts_with('.')) e.erase(0, 1);
+                    for (char& ch : e) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+                    if (e.empty() || e.find_first_of("./\\ ") != std::string::npos)
+                        return warn(std::string(key) + ": \"" + e + "\" is not a file ending like \"rs\"");
+                }
+                g->extensions = std::move(list);
                 return;
             }
         }

@@ -893,7 +893,7 @@ std::string App::doc_language(const Doc& d) const {
     char head[128];
     const u64 n = d.ed.buf.read(0, head, sizeof head);
     const std::string_view first(head, static_cast<size_t>(std::min<u64>(n, std::string_view(head, n).find('\n'))));
-    return Syntax::language_for(d.ed.path, first);
+    return Syntax::language_for(d.ed.path, first, cfg_.grammars);
 }
 
 // An event for the next tick (it happened in the middle of something).

@@ -124,8 +124,7 @@ std::string App::default_workdir() const {
     if (!pane_->doc->ed.path.empty()) {
         const std::string dir = parent_of(full_path(pane_->doc->ed.path));
         if (is_remote(dir)) return dir;  // (another machine's: its own folder, without a round trip for each one above it)
-        static const char* const build_files[] = {"CMakeLists.txt", "Makefile", "Cargo.toml", "package.json", "pyproject.toml",
-                                                  "go.mod",         "build.zig", "meson.build"};
+        static const char* const build_files[] = {"CMakeLists.txt", "meson.build", "Makefile", "configure.ac", "pyproject.toml", "setup.py"};
         std::string by_build_file;
         std::string at = dir;
         for (int up = 0; up < 40 && at.size() > 1 && at != home; ++up) {

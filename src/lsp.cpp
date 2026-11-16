@@ -41,40 +41,23 @@ const std::vector<LspServer>& builtin_lsp_servers() {
     static const std::vector<LspServer> list = {
         // (clangd would otherwise index the whole project in the background,
         // on every core; an editor for one file at a time has little use for
-        // that. [lsp.servers.clangd] in the settings can turn it back on.)
-        {"clangd", {"clangd", "--background-index=false"}, {"c", "cpp", "cuda"},
+        // that. blit.opt.lsp.servers.clangd in init.lua can turn it back on.)
+        {"clangd", {"clangd", "--background-index=false"}, {"c", "cpp"},
          {"compile_commands.json", "compile_flags.txt", ".clangd", ".git"}, "", "", true},
-        {"rust-analyzer", {"rust-analyzer"}, {"rust"}, {"Cargo.toml", "rust-project.json", ".git"}, "", "", true},
-        {"gopls", {"gopls"}, {"go"}, {"go.work", "go.mod", ".git"}, "", "", true},
         {"pyright", {"pyright-langserver", "--stdio"}, {"python"},
          {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "pyrightconfig.json", ".git"}, "", "", true},
         {"basedpyright", {"basedpyright-langserver", "--stdio"}, {"python"},
          {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "pyrightconfig.json", ".git"}, "", "", true},
         {"pylsp", {"pylsp"}, {"python"}, {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", ".git"}, "", "", true},
-        {"typescript-language-server", {"typescript-language-server", "--stdio"}, {"javascript", "typescript", "tsx"},
-         {"tsconfig.json", "jsconfig.json", "package.json", ".git"}, "", "", true},
-        {"lua-language-server", {"lua-language-server"}, {"lua"}, {".luarc.json", ".luarc.jsonc", ".git"}, "", "", true},
-        {"zls", {"zls"}, {"zig"}, {"build.zig", ".git"}, "", "", true},
-        {"bash-language-server", {"bash-language-server", "start"}, {"bash"}, {".git"}, "", "", true},
-        {"vscode-json-language-server", {"vscode-json-language-server", "--stdio"}, {"json", "json5"}, {".git"}, "", "", true},
-        {"vscode-css-language-server", {"vscode-css-language-server", "--stdio"}, {"css", "scss"}, {"package.json", ".git"}, "", "", true},
-        {"vscode-html-language-server", {"vscode-html-language-server", "--stdio"}, {"html"}, {"package.json", ".git"}, "", "", true},
-        {"taplo", {"taplo", "lsp", "stdio"}, {"toml"}, {".git"}, "", "", true},
-        {"yaml-language-server", {"yaml-language-server", "--stdio"}, {"yaml"}, {".git"}, "", "", true},
+        // For those projects' other files (init.lua too).
         {"neocmakelsp", {"neocmakelsp", "stdio"}, {"cmake"}, {".git"}, "", "", true},
         {"cmake-language-server", {"cmake-language-server"}, {"cmake"}, {".git"}, "", "", true},
-        {"intelephense", {"intelephense", "--stdio"}, {"php"}, {"composer.json", ".git"}, "", "", true},
-        {"sourcekit-lsp", {"sourcekit-lsp"}, {"swift"}, {"Package.swift", ".git"}, "", "", true},
-        {"jdtls", {"jdtls"}, {"java"}, {"pom.xml", "build.gradle", "build.gradle.kts", ".git"}, "", "", true},
-        {"kotlin-language-server", {"kotlin-language-server"}, {"kotlin"}, {"build.gradle", "build.gradle.kts", "pom.xml", ".git"}, "", "", true},
-        {"ruby-lsp", {"ruby-lsp"}, {"ruby"}, {"Gemfile", ".git"}, "", "", true},
-        {"solargraph", {"solargraph", "stdio"}, {"ruby"}, {"Gemfile", ".git"}, "", "", true},
-        {"csharp-ls", {"csharp-ls"}, {"c_sharp"}, {".git"}, "", "", true},
+        {"vscode-json-language-server", {"vscode-json-language-server", "--stdio"}, {"json"}, {".git"}, "", "", true},
+        {"taplo", {"taplo", "lsp", "stdio"}, {"toml"}, {".git"}, "", "", true},
+        {"yaml-language-server", {"yaml-language-server", "--stdio"}, {"yaml"}, {".git"}, "", "", true},
         {"marksman", {"marksman", "server"}, {"markdown"}, {".marksman.toml", ".git"}, "", "", true},
-        {"verible", {"verible-verilog-ls"}, {"systemverilog"}, {"verible.filelist", ".git"}, "", "", true},
-        {"svelte-language-server", {"svelteserver", "--stdio"}, {"svelte"}, {"package.json", ".git"}, "", "", true},
-        {"vue-language-server", {"vue-language-server", "--stdio"}, {"vue"}, {"package.json", ".git"}, "", "", true},
-        {"glsl_analyzer", {"glsl_analyzer"}, {"glsl"}, {".git"}, "", "", true},
+        {"bash-language-server", {"bash-language-server", "start"}, {"bash"}, {".git"}, "", "", true},
+        {"lua-language-server", {"lua-language-server"}, {"lua"}, {".luarc.json", ".luarc.jsonc", ".git"}, "", "", true},
     };
     return list;
 }
@@ -114,12 +97,8 @@ inline int spawn_chdir(posix_spawn_file_actions_t* fa, const char* dir) {
 
 
 // The protocol's name for a language, where it differs from blit's.
-std::string language_id(const std::string& language, const std::string& path) {
+std::string language_id(const std::string& language) {
     if (language == "bash") return "shellscript";
-    if (language == "tsx") return "typescriptreact";
-    if (language == "c_sharp") return "csharp";
-    if (language == "cuda") return "cuda-cpp";
-    if (language == "javascript" && path.ends_with(".jsx")) return "javascriptreact";
     return language;
 }
 
@@ -1339,7 +1318,7 @@ void Lsp::name_document(const std::string& full, const std::string& language) {
     path_ = full;
     std::string host, there;
     uri_ = path_to_uri(split_remote(full, &host, &there) ? there : full);  // (another machine's: the path there)
-    language_id_ = language_id(language, full);
+    language_id_ = language_id(language);
     change_head_ = R"({"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":)";
     json::quote(change_head_, uri_);
     change_head_ += R"(,"version":)";

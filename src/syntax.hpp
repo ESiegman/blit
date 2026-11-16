@@ -17,12 +17,14 @@
 #include <condition_variable>
 #include <functional>
 #include <mutex>
+#include <span>
 #include <string>
 #include <string_view>
 #include <thread>
 #include <vector>
 
 #include "buffer.hpp"
+#include "config.hpp"
 #include "editor.hpp"
 #include "highlight.hpp"
 
@@ -68,8 +70,12 @@ public:
     void set_notify(Notify fn) { notify_ = std::move(fn); }
 
     // Language name for a file ("cpp", "python", ...), or "" if unknown.
-    // first_line is used for "#!" lines when the name says nothing.
-    static std::string language_for(std::string_view path, std::string_view first_line);
+    // first_line is used for "#!" lines when the name says nothing. `own`
+    // are the grammars from the settings: a file ending one of them lists
+    // (blit.opt.syntax.grammars.NAME.extensions) is that language, before
+    // anything built in. Built in are only C, C++ (HIP too), Python and
+    // what their projects' other files are written in.
+    static std::string language_for(std::string_view path, std::string_view first_line, std::span<const GrammarSource> own = {});
     // True if a grammar for the language is installed.
     static bool installed(const std::string& lang, const SyntaxOptions& opt);
 

@@ -31,33 +31,20 @@ const std::vector<GrammarSource>& builtin_grammars() {
     // when this list was written (the tag is in the comment). A commit
     // names exact contents, so what gets compiled is what was looked at.
     static const std::vector<GrammarSource> list = {
-        {"c", "tree-sitter/tree-sitter-c", "b780e47fc780ddc8da13afa35a3f4ed5c157823d", "", {}},                    // v0.24.2
-        {"cpp", "tree-sitter/tree-sitter-cpp", "f41e1a044c8a84ea9fa8577fdd2eab92ec96de02", "", {"c"}},             // v0.23.4
-        {"python", "tree-sitter/tree-sitter-python", "293fdc02038ee2bf0e2e206711b69c90ac0d413f", "", {}},          // v0.25.0
-        {"rust", "tree-sitter/tree-sitter-rust", "77a3747266f4d621d0757825e6b11edcbf991ca5", "", {}},              // v0.24.2
-        {"go", "tree-sitter/tree-sitter-go", "1547678a9da59885853f5f5cc8a99cc203fa2e2c", "", {}},                  // v0.25.0
-        {"javascript", "tree-sitter/tree-sitter-javascript", "44c892e0be055ac465d5eeddae6d3e194424e7de", "", {}},  // v0.25.0
-        {"typescript", "tree-sitter/tree-sitter-typescript", "f975a621f4e7f532fe322e13c4f79495e0a7b2e7", "typescript",
-         {"javascript"}},                                                                                           // v0.23.2
-        {"tsx", "tree-sitter/tree-sitter-typescript", "f975a621f4e7f532fe322e13c4f79495e0a7b2e7", "tsx", {"javascript"}},
-        {"json", "tree-sitter/tree-sitter-json", "ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24", "", {}},              // v0.24.8
-        {"bash", "tree-sitter/tree-sitter-bash", "a06c2e4415e9bc0346c6b86d401879ffb44058f7", "", {}},              // v0.25.1
-        {"html", "tree-sitter/tree-sitter-html", "5a5ca8551a179998360b4a4ca2c0f366a35acc03", "", {}},              // v0.23.2
-        {"css", "tree-sitter/tree-sitter-css", "dda5cfc5722c429eaba1c910ca32c2c0c5bb1a3f", "", {}},                // v0.25.0
-        {"java", "tree-sitter/tree-sitter-java", "94703d5a6bed02b98e438d7cad1136c01a60ba2c", "", {}},              // v0.23.5
-        {"ruby", "tree-sitter/tree-sitter-ruby", "71bd32fb7607035768799732addba884a37a6210", "", {}},              // v0.23.1
-        {"php", "tree-sitter/tree-sitter-php", "58d5643086ae60e93a3746cca648363ee97c8761", "php", {}},             // v0.25.1
-        {"c_sharp", "tree-sitter/tree-sitter-c-sharp", "cac6d5fb595f5811a076336682d5d595ac1c9e85", "", {}},        // v0.23.5
-        {"lua", "tree-sitter-grammars/tree-sitter-lua", "10fe0054734eec83049514ea2e718b2a56acd0c9", "", {}},       // v0.5.0
-        {"toml", "tree-sitter-grammars/tree-sitter-toml", "64b56832c2cffe41758f28e05c756a3a98d16f41", "", {}},     // v0.7.0
-        {"yaml", "tree-sitter-grammars/tree-sitter-yaml", "7708026449bed86239b1cd5bce6e3c34dbca6415", "", {}},     // v0.7.2
+        // The languages blit has built in: C, C++ (HIP files too) and Python.
+        {"c", "tree-sitter/tree-sitter-c", "b780e47fc780ddc8da13afa35a3f4ed5c157823d", "", {}, {}},                    // v0.24.2
+        {"cpp", "tree-sitter/tree-sitter-cpp", "f41e1a044c8a84ea9fa8577fdd2eab92ec96de02", "", {"c"}, {}},             // v0.23.4
+        {"python", "tree-sitter/tree-sitter-python", "293fdc02038ee2bf0e2e206711b69c90ac0d413f", "", {}, {}},          // v0.25.0
+        // What those projects' other files are written in (init.lua too).
+        {"cmake", "uyha/tree-sitter-cmake", "a3ec2b2144daf7132e7ee824d8cab9610523d10f", "", {}, {}},                   // v0.7.6
+        {"make", "tree-sitter-grammars/tree-sitter-make", "5e9e8f8ff3387b0edcaa90f46ddf3629f4cfeb1d", "", {}, {}},     // v1.1.1
+        {"json", "tree-sitter/tree-sitter-json", "ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24", "", {}, {}},              // v0.24.8
+        {"toml", "tree-sitter-grammars/tree-sitter-toml", "64b56832c2cffe41758f28e05c756a3a98d16f41", "", {}, {}},     // v0.7.0
+        {"yaml", "tree-sitter-grammars/tree-sitter-yaml", "7708026449bed86239b1cd5bce6e3c34dbca6415", "", {}, {}},     // v0.7.2
         {"markdown", "tree-sitter-grammars/tree-sitter-markdown", "41ff24a6c775492c543b09228aeb98d1cd2b3a0f",
-         "tree-sitter-markdown", {}},                                                                               // v0.5.4
-        {"zig", "tree-sitter-grammars/tree-sitter-zig", "b670c8df85a1568f498aa5c8cae42f51a90473c0", "", {}},       // v1.1.2
-        {"make", "tree-sitter-grammars/tree-sitter-make", "5e9e8f8ff3387b0edcaa90f46ddf3629f4cfeb1d", "", {}},     // v1.1.1
-        {"xml", "tree-sitter-grammars/tree-sitter-xml", "4b64dd3a03ec002258d6268d712fd93716d6ab57", "xml", {}},    // v0.7.0
-        {"cmake", "uyha/tree-sitter-cmake", "a3ec2b2144daf7132e7ee824d8cab9610523d10f", "", {}},                   // v0.7.6
-        {"glsl", "tree-sitter-grammars/tree-sitter-glsl", "e47b8b62b59d0e3529f1c31b03e025d6bd475044", "", {"c"}},  // v0.2.0
+         "tree-sitter-markdown", {}, {}},                                                                               // v0.5.4
+        {"bash", "tree-sitter/tree-sitter-bash", "a06c2e4415e9bc0346c6b86d401879ffb44058f7", "", {}, {}},              // v0.25.1
+        {"lua", "tree-sitter-grammars/tree-sitter-lua", "10fe0054734eec83049514ea2e718b2a56acd0c9", "", {}, {}},       // v0.5.0
     };
     return list;
 }
@@ -332,7 +319,7 @@ bool install_with_parents(const std::vector<GrammarSource>& list, const std::str
 #else
     const GrammarSource* g = find_grammar(list, name);
     if (!g) {
-        *err = "blit does not know where to get a grammar for " + name + "; [syntax.grammars." + name + "] in the settings can say";
+        *err = "blit does not know where to get a grammar for " + name + "; blit.opt.syntax.grammars." + name + " in init.lua can say";
         return false;
     }
     if (depth > 4) {

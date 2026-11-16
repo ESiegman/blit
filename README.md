@@ -738,22 +738,49 @@ the file when the grammar arrives:
 ```lua
 blit.opt.syntax.install = { "cpp", "python", "lua" }   -- have these installed
 blit.opt.syntax.auto_install = true                    -- and the grammar of any file that is opened
--- A grammar blit does not know, or another revision of one it does:
-blit.opt.syntax.grammars.mylang = { repo = "someone/tree-sitter-mylang", rev = "v1.2.0" }
 ```
 
-Nothing is fetched unless one of these asks for it. blit knows 25 grammars
-(C, C++, Python, Rust, Go, JavaScript, TypeScript, TSX, JSON, Bash, HTML,
-CSS, Java, Ruby, PHP, C#, Lua, TOML, YAML, Markdown, Zig, Make, XML, CMake,
-GLSL). Installing all of them takes about 20 seconds and 22 MB. It needs
-`curl`, `tar` and a C compiler (`cc`), which macOS has once the command line
-tools are installed.
+Nothing is fetched unless one of these asks for it. It needs `curl`, `tar`
+and a C compiler (`cc`), which macOS has once the command line tools are
+installed.
+
+Built in are only C, C++, HIP and Python, and what the files around them
+are written in: CMake, Make, JSON, TOML, YAML, Markdown, shell scripts
+(Bash) and Lua (init.lua). These are the 11 grammars blit knows where to
+get (`c`, `cpp`, `python`, `cmake`, `make`, `json`, `toml`, `yaml`,
+`markdown`, `bash`, `lua`) and the only file types it recognises by itself.
+HIP files (`.hip`) are C++ to blit. A file of any other type, a `.rs` or a
+`.ts` say, opens as plain text.
+
+Any other language is added in init.lua: where its grammar comes from, and
+which file endings are that language.
+
+```lua
+blit.opt.syntax.grammars.rust = {
+  repo = "tree-sitter/tree-sitter-rust",   -- "owner/name" on GitHub
+  rev = "v0.24.2",                         -- a commit or a tag
+  extensions = { "rs" },                   -- files ending in .rs are Rust
+}
+-- Two more fields when a grammar needs them: path, the folder in the
+-- repository that holds src/parser.c when it is not the top, and inherits,
+-- the languages whose highlight queries come before its own.
+blit.opt.syntax.grammars.c = { extensions = { "h" } }   -- .h files as C rather than C++
+```
+
+The name (`rust`) is the language's name everywhere in blit: a language
+server's `languages` use it, and `blit --install-grammar rust` gets the
+grammar. A grammar named like a built-in one changes only what it
+lists. Endings from init.lua win over the built-in ones. Once init.lua
+names a language, `extensions` alone is enough to have its files picked
+out, even with no grammar: that is all a language server needs.
 
 Grammars put by hand into `~/.config/blit/parsers` (`LANGUAGE.so`) and
 `~/.config/blit/queries` (`LANGUAGE/highlights.scm`), beside `init.lua`, or
 into folders listed in `blit.opt.syntax.parser_dirs` and `query_dirs`, are
-found too. The language is picked from the file name
-(or a `#!` line). `blit --info FILE` shows what was found.
+found too; for a language that is not built in, `extensions` in init.lua
+still say which files it is for. The language is picked from the file name
+(or a `#!` line for Python, shell and Lua scripts). `blit --info FILE` shows
+what was found.
 
 The colours come from each grammar's own `queries/highlights.scm`. Queries
 may use `; inherits:` lines, the `#eq?`, `#any-of?`, `#match?`,
@@ -784,7 +811,8 @@ A new name is typed right in the tree: Enter keeps it, Esc gives up.
 
 The working directory starts as the project the open file belongs to: the
 nearest folder above it under version control, else the nearest one with a
-build file (`CMakeLists.txt`, `Cargo.toml`, `package.json`, ...), else the
+build file (`CMakeLists.txt`, `meson.build`, `Makefile`, `configure.ac`,
+`pyproject.toml` or `setup.py`), else the
 file's own folder. The home folder is never picked this way. Click its
 name at the top of the tree, or use the right-click menu, to choose another.
 Deleting moves to the system's Trash (macOS and Linux), so it can be undone
@@ -820,12 +848,28 @@ shows what it says:
 - **Go to definition** with F12 or Cmd+click, and Ctrl+- to come back. A
   definition in another file opens that file.
 
-blit knows the usual command line of some thirty servers (clangd,
-rust-analyzer, gopls, pyright, basedpyright, typescript-language-server,
-lua-language-server, zls, taplo, ...) and uses the first one for the file's
-language that it finds on `PATH` or in `/opt/homebrew/bin`,
-`/usr/local/bin`, `~/.local/bin`, `~/.cargo/bin` or `~/go/bin`.
-`blit --info FILE` says which. Nothing is downloaded or installed.
+blit knows how to start the servers for the languages it has built in, and
+uses the first one for the file's language that it finds on `PATH` or in
+`/opt/homebrew/bin`, `/usr/local/bin`, `~/.local/bin`, `~/.cargo/bin` or
+`~/go/bin`. `blit --info FILE` says which. Nothing is downloaded or
+installed.
+
+| Language | Servers, the first one found is used |
+|---|---|
+| C, C++, HIP | `clangd` |
+| Python | `pyright`, `basedpyright`, `pylsp` |
+| CMake | `neocmakelsp`, `cmake-language-server` |
+| JSON | `vscode-json-language-server` |
+| TOML | `taplo` |
+| YAML | `yaml-language-server` |
+| Markdown | `marksman` |
+| Shell | `bash-language-server` |
+| Lua | `lua-language-server` |
+
+In init.lua a built-in server can be changed or switched off, and a server
+for any other language described. That language is named in
+`blit.opt.syntax.grammars` (see [Syntax highlighting](#syntax-highlighting)),
+which also says which files are that language:
 
 ```lua
 -- blit.opt.lsp.enabled = false   -- no language servers at all
@@ -834,12 +878,21 @@ blit.opt.lsp.servers.clangd = {   -- change a built-in server: only what is list
   command = { "clangd", "--background-index", "--clang-tidy" },
   init_options = '{"fallbackFlags": ["-std=c++23"]}',
 }
-blit.opt.lsp.servers.mylang = {   -- or describe one of your own
-  command = { "mylang-lsp", "--stdio" },
-  languages = { "toml" },
-  roots = { "mylang.toml", ".git" },
+blit.opt.lsp.servers.marksman = { enabled = false }   -- never start this one
+
+-- A language blit does not have built in: its files, then its server.
+blit.opt.syntax.grammars.rust = { extensions = { "rs" } }   -- (add repo and rev for colours too)
+blit.opt.lsp.servers["rust-analyzer"] = {
+  command = { "rust-analyzer" },
+  languages = { "rust" },
+  roots = { "Cargo.toml", ".git" },
 }
 ```
+
+The server is told the language by that name, so name a language the way
+the protocol does when the server cares (`typescript`, `typescriptreact`,
+`javascript`, `csharp`, ...); blit's one translation is `bash` to
+`shellscript`.
 
 The project folder handed to the server is the nearest one above the file
 that holds one of the server's `roots`. clangd is started with
