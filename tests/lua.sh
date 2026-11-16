@@ -95,6 +95,23 @@ fresh
 run "text::set nonsense=1;key:Return;vimdump"
 check ":set with a name that is no setting's" 'NORMAL | E518: Unknown option: nonsense | 1:1 | one'
 
+# ---------------------------------------------------------------- blit's helpers, settings set by tables
+fresh
+run "lua:print(blit.inspect({ 1, 'two', x = true, [3.5] = { y = 'z' } }));lua:local t = {} t.self = t print(blit.inspect(t));lua:print(blit.inspect({ a = { b = { c = 1 } } }, 2))"
+check "blit.inspect: a list, names, a key that is not a name, a cycle, a depth" '{ 1, "two", [3.5] = { y = "z" }, x = true } ; { self = <cycle> } ; { a = { b = {...} } }'
+run "lua:print(blit.inspect({ alpha = 'aaaaaaaaaaaaaaaa', beta = 'bbbbbbbbbbbbbbbbbbbb', gamma = { 'cccccccccccccccccccc' } }))"
+check "blit.inspect: on lines of their own when one would be long" '{ ;   alpha = "aaaaaaaaaaaaaaaa", ;   beta = "bbbbbbbbbbbbbbbbbbbb", ;   gamma = { "cccccccccccccccccccc" } ; }'
+run "lua:print(table.concat(blit.split(' a  b c '), '|'));lua:print(table.concat(blit.split('a.b..c', '.', true), '|'));lua:print(table.concat(blit.split('k1=v1,k2=v2', '[=,]'), '|'));lua:print('[' .. blit.trim('  hi there ') .. ']')"
+check "blit.split (white space, plain text, a pattern) and blit.trim" '|a|b|c| ; a|b||c ; k1|v1|k2|v2 ; [hi there]'
+run "lua:print(1, nil, true, setmetatable({}, { __tostring = function() return 'T' end }))"
+check "print: each as tostring writes it, tabs between" "$(printf '1\tnil\ttrue\tT')"
+init <<'EOF'
+blit.opt.font = { size = 18, ligatures = false }
+blit.opt.editor = { tab_width = "wide" }
+EOF
+run "lua:print(blit.opt.font.size, blit.opt.font.ligatures)"
+check "blit.opt: a table of fields sets each; an error in one says where" 'init.lua:2: editor.tab_width should be a number from 1 to 32 ; 18	false'
+
 # ---------------------------------------------------------------- keys
 fresh
 init <<'EOF'

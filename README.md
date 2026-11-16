@@ -1304,7 +1304,7 @@ src/agent/         the agent: what it and blit say to one another, the program, 
 src/keymap.*    key mappings: Vim's key notation, the table of mappings, what keys typed so far add up to
 src/job.*       programs run in the background for scripts, on threads of their own
 src/applua.cpp  scripts: the Lua state, mappings, commands, events, timers, plugins, boxes and messages
-src/luaapi.cpp  the functions scripts call (the table `blit`), and the part of it written in Lua
+src/luaapi.cpp  the functions scripts call (the table `blit`, all of it C++: blit ships no Lua of its own)
 src/applua.hpp  what those two share: helpers, the events, the state kept for scripts
 src/appbench.cpp  in-app benchmarks, scripted input, screenshots (Debug builds)
 shaders/        GLSL sources (grid: the text; popup: boxes over it), build script, compiled blobs (gen/)

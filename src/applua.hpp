@@ -359,6 +359,7 @@ struct App::ScriptUi {
         std::string name, ex, desc, nargs = "*";
         int fn = LUA_NOREF;
         bool bang = false, range = false;
+        std::function<void(const std::string& args)> native;  // blit's own (:PlugInstall ...)
     };
     std::vector<Command> commands;
     struct Handler {
@@ -391,6 +392,16 @@ struct App::ScriptUi {
         int out = LUA_NOREF, err = LUA_NOREF, exit = LUA_NOREF;
     };
     std::unordered_map<u64, JobCalls> job_calls;
+    // Programs blit itself started (git, for the plugins): what to do when each ends.
+    std::unordered_map<u64, std::function<void(int code, const std::string& out, const std::string& err)>> native_jobs;
+    // blit.opt's tables, one for each section, by its name ("" for blit.opt itself).
+    int opt_sections = LUA_NOREF;
+    // Plugins: those blit.plug() names, and those loaded.
+    struct Plugin {
+        std::string name, url, rev;
+    };
+    std::vector<Plugin> declared;
+    std::vector<std::string> loaded;
     std::vector<JobEvent> backlog;  // what other jobs said while one was being waited for
 
     // What scripts show.
@@ -494,12 +505,12 @@ inline int traceback(lua_State* L) {
 }
 
 
-// The API, put into a Lua state: the functions of `blit`, of blit.ui and of
-// blit.fs, the part of it written in Lua, and the hook that stops a script
-// that runs too long (src/luaapi.cpp).
+// The API, put into a Lua state: the table `blit` (and blit.opt, blit.ui,
+// blit.fs, blit.build, blit.project in it) left on the stack, print and
+// os.exit made blit's; and the hook that stops a script that runs too long
+// (src/luaapi.cpp).
 extern const luaL_Reg kTop[], kUi[], kFs[], kBuild[], kProject[];
-extern const char kBoot[];
-extern const size_t kBootSize;
+void open_api(lua_State* L);
 void count_hook(lua_State* L, lua_Debug* ar);
 
 }  // namespace script

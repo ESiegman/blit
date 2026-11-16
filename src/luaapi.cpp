@@ -18,6 +18,12 @@ namespace blit {
 
 // ---------------------------------------------------------------- the API
 
+namespace {
+template <int (*F)(lua_State*)>
+int api(lua_State* L);
+int noop(lua_State*) { return 0; }
+}  // namespace
+
 struct ScriptApi {
     static App& app(lua_State* L) { return *app_of(L); }
     static App::ScriptUi& ui(lua_State* L) { return *app_of(L)->script_; }
@@ -58,37 +64,533 @@ struct ScriptApi {
         return 0;
     }
 
-    // blit._opt_keys()
-    static int opt_keys(lua_State* L) {
-        const auto keys = config_keys();
-        lua_createtable(L, static_cast<int>(keys.size()), 0);
-        for (size_t i = 0; i < keys.size(); ++i) {
-            lua_pushstring(L, keys[i]);
-            lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+    // ------------------------------------------------ blit.opt
+    // Every setting of the settings file, by the same names: blit.opt.font.size.
+    // A name some setting's goes on from is a section, a table of its own (and
+    // a few are open-ended: their names are the user's, as lsp.servers.NAME).
+    static bool opt_is_key(std::string_view key) {
+        for (const char* k : config_keys())
+            if (key == k) return true;
+        return false;
+    }
+    static bool opt_is_section(std::string_view key) {
+        for (const char* k : config_keys()) {
+            const std::string_view name(k);
+            if (name.size() > key.size() && name.starts_with(key) && name[key.size()] == '.') return true;
         }
+        for (const std::string_view open : {"themes", "lsp.servers", "syntax.grammars", "syntax.styles"})
+            if (key == open || (key.size() > open.size() && key.starts_with(open) && key[open.size()] == '.')) return true;
+        return false;
+    }
+    // The table of a section (made once), on the stack.
+    static void push_section(lua_State* L, std::string_view prefix) {
+        App::ScriptUi& s = ui(L);
+        lua_rawgeti(L, LUA_REGISTRYINDEX, s.opt_sections);
+        lua_pushlstring(L, prefix.data(), prefix.size());
+        if (lua_rawget(L, -2) == LUA_TTABLE) {
+            lua_remove(L, -2);
+            return;
+        }
+        lua_pop(L, 1);
+        lua_newtable(L);
+        lua_createtable(L, 0, 2);
+        lua_pushlstring(L, prefix.data(), prefix.size());
+        lua_pushcclosure(L, api<opt_index>, 1);
+        lua_setfield(L, -2, "__index");
+        lua_pushlstring(L, prefix.data(), prefix.size());
+        lua_pushcclosure(L, api<opt_newindex>, 1);
+        lua_setfield(L, -2, "__newindex");
+        lua_setmetatable(L, -2);
+        lua_pushlstring(L, prefix.data(), prefix.size());
+        lua_pushvalue(L, -2);
+        lua_rawset(L, -4);
+        lua_remove(L, -2);
+    }
+    // The setting's whole name: the section's, a dot, the field's.
+    static std::string opt_name(lua_State* L, int field) {
+        const std::string_view prefix = str_at(L, lua_upvalueindex(1));
+        lua_pushvalue(L, field);  // (a copy: a number made a string in place would not do)
+        std::string name = (prefix.empty() ? std::string() : std::string(prefix) + ".") + std::string(str_at(L, -1));
+        lua_pop(L, 1);
+        return name;
+    }
+    static int opt_index(lua_State* L) {
+        if (!is_str(L, 2) && lua_type(L, 2) != LUA_TNUMBER) return 0;
+        const std::string key = opt_name(L, 2);
+        if (opt_is_key(key)) push_value(L, config_get(app(L).cfg_, key));
+        else if (opt_is_section(key)) push_section(L, key);
+        else lua_pushnil(L);
         return 1;
     }
-    // blit._opt_get(key)
-    static int opt_get(lua_State* L) {
-        if (!is_str(L, 1)) return fail("a setting's name is wanted");
-        push_value(L, config_get(app(L).cfg_, str_at(L, 1)));
-        return 1;
-    }
-    // blit._opt_set(key, value, where)
-    static int opt_set(lua_State* L) {
-        if (!is_str(L, 1)) return fail("a setting's name is wanted");
-        std::string value;
-        if (!toml_of(L, 2, &value)) return fail("%s: a setting is true or false, a number, a string or a list of strings", lua_tostring(L, 1));
-        const std::string wrong = app(L).script_set(std::string(str_at(L, 1)), value, is_str(L, 3) ? std::string(str_at(L, 3)) : std::string("script"));
+    // A setting set: a table of fields (not a list) sets each, by its name under this one.
+    static int opt_put(lua_State* L, const std::string& key, int value, const std::string& where) {
+        value = lua_absindex(L, value);
+        if (lua_istable(L, value)) {
+            const bool list = lua_rawgeti(L, value, 1) != LUA_TNIL;
+            lua_pop(L, 1);
+            lua_pushnil(L);
+            const bool any = lua_next(L, value);
+            if (any) lua_pop(L, 2);
+            if (!list && any) {
+                lua_pushnil(L);
+                while (lua_next(L, value)) {
+                    lua_pushvalue(L, -2);
+                    const std::string sub = key + "." + std::string(str_at(L, -1));
+                    lua_pop(L, 1);
+                    if (opt_put(L, sub, -1, where) < 0) return -1;
+                    lua_pop(L, 1);
+                }
+                return 0;
+            }
+        }
+        std::string text;
+        if (!toml_of(L, value, &text)) return fail("%s: a setting is true or false, a number, a string or a list of strings", key.c_str());
+        const std::string wrong = app(L).script_set(key, text, where);
         if (!wrong.empty()) {
             std::string said = wrong.substr(0, wrong.size() - (wrong.ends_with('\n') ? 1 : 0));
-            const std::string from = is_str(L, 3) ? std::string(str_at(L, 3)) + ": " : std::string();
-            if (!from.empty() && said.starts_with(from)) said.erase(0, from.size());  // (the error is raised with its place)
+            if (said.starts_with(where + ": ")) said.erase(0, where.size() + 2);  // (the error is raised with its place)
             return fail("%s", said.c_str());
         }
         return 0;
     }
+    static int opt_newindex(lua_State* L) {
+        if (!is_str(L, 2)) return fail("blit.opt: a setting's name is a string");
+        // Where it was set: the first place on the stack that is Lua's.
+        std::string where = "script";
+        lua_Debug ar;
+        for (int level = 1; lua_getstack(L, level, &ar); ++level) {
+            lua_getinfo(L, "Sl", &ar);
+            if (ar.currentline > 0) {
+                where = std::string(ar.short_src) + ":" + std::to_string(ar.currentline);
+                break;
+            }
+        }
+        return opt_put(L, opt_name(L, 2), 3, where);
+    }
 
+    // ------------------------------------------------ text, for showing
+
+    // tostring(v), protected (its __tostring may fail): "?" if it does.
+    static int tostring_raw(lua_State* L) {
+        luaL_tolstring(L, 1, nullptr);
+        return 1;
+    }
+    static std::string shown_plain(lua_State* L, int i) {
+        i = lua_absindex(L, i);
+        lua_pushcfunction(L, tostring_raw);
+        lua_pushvalue(L, i);
+        if (lua_pcall(L, 1, 1, 0) != LUA_OK) {
+            lua_pop(L, 1);
+            return "?";
+        }
+        std::string out(str_at(L, -1));
+        lua_pop(L, 1);
+        return out;
+    }
+    static std::string quoted_lua(std::string_view s) {
+        std::string out = "\"";
+        for (const char c : s) {
+            switch (c) {
+                case '"': out += "\\\""; break;
+                case '\\': out += "\\\\"; break;
+                case '\n': out += "\\n"; break;
+                case '\r': out += "\\r"; break;
+                case '\t': out += "\\t"; break;
+                case '\0': out += "\\0"; break;
+                default: out += c;
+            }
+        }
+        return out + "\"";
+    }
+    // blit.inspect: a value as Lua would write it; tables by their fields,
+    // on one line when that is short, a level deeper each.
+    static std::string inspected(lua_State* L, int i, const std::string& indent, int level, int depth, std::vector<const void*>& seen) {
+        i = lua_absindex(L, i);
+        const int type = lua_type(L, i);
+        if (type == LUA_TSTRING) return quoted_lua(str_at(L, i));
+        if (type != LUA_TTABLE) return shown_plain(L, i);
+        const void* const at = lua_topointer(L, i);
+        if (std::find(seen.begin(), seen.end(), at) != seen.end()) return "<cycle>";
+        if (level > depth || !lua_checkstack(L, 8)) return "{...}";
+        seen.push_back(at);
+        std::vector<std::string> parts;
+        const lua_Integer n = static_cast<lua_Integer>(lua_rawlen(L, i));
+        for (lua_Integer k = 1; k <= n; ++k) {
+            lua_rawgeti(L, i, k);
+            parts.push_back(inspected(L, -1, indent + "  ", level + 1, depth, seen));
+            lua_pop(L, 1);
+        }
+        // The other fields, by their names (as text): the keys kept in a table of their own meanwhile.
+        lua_newtable(L);
+        const int keys = lua_gettop(L);
+        std::vector<std::pair<std::string, int>> names;
+        lua_pushnil(L);
+        while (lua_next(L, i)) {
+            lua_pop(L, 1);
+            lua_Integer as_int = 0;
+            if (lua_isinteger(L, -1) && (as_int = lua_tointeger(L, -1)) >= 1 && as_int <= n) continue;
+            lua_pushvalue(L, -1);
+            const int slot = static_cast<int>(names.size()) + 1;
+            lua_rawseti(L, keys, slot);
+            names.emplace_back(shown_plain(L, -1), slot);
+        }
+        std::sort(names.begin(), names.end());
+        for (const auto& [name, slot] : names) {
+            lua_rawgeti(L, keys, slot);
+            const bool plain_name = lua_type(L, -1) == LUA_TSTRING && !name.empty() && (std::isalpha(static_cast<u8>(name[0])) || name[0] == '_') &&
+                                    std::all_of(name.begin(), name.end(), [](char c) { return std::isalnum(static_cast<u8>(c)) || c == '_'; });
+            std::string part = plain_name ? name : "[" + inspected(L, -1, indent, level + 1, depth, seen) + "]";
+            lua_rawget(L, i);
+            part += " = " + inspected(L, -1, indent + "  ", level + 1, depth, seen);
+            lua_pop(L, 1);
+            parts.push_back(std::move(part));
+        }
+        lua_pop(L, 1);  // (the keys)
+        seen.pop_back();
+        if (parts.empty()) return "{}";
+        std::string one = "{ ";
+        for (size_t k = 0; k < parts.size(); ++k) one += (k ? ", " : "") + parts[k];
+        one += " }";
+        if (one.size() <= 72 && one.find('\n') == std::string::npos) return one;
+        std::string many = "{\n";
+        for (size_t k = 0; k < parts.size(); ++k) many += indent + "  " + parts[k] + (k + 1 < parts.size() ? ",\n" : "\n");
+        return many + indent + "}";
+    }
+    // blit.inspect(value, depth)
+    static int inspect(lua_State* L) {
+        const lua_Integer depth = luaL_optinteger(L, 2, 6);
+        lua_settop(L, 1);
+        std::vector<const void*> seen;
+        const std::string out = inspected(L, 1, "", 1, static_cast<int>(depth), seen);
+        lua_pushlstring(L, out.data(), out.size());
+        return 1;
+    }
+    // print(...): to blit's messages, as tostring writes each, tabs between.
+    static int print(lua_State* L) {
+        const int n = lua_gettop(L);
+        luaL_Buffer b;
+        luaL_buffinit(L, &b);
+        for (int i = 1; i <= n; ++i) {
+            if (i > 1) luaL_addchar(&b, '\t');
+            luaL_tolstring(L, i, nullptr);
+            luaL_addvalue(&b);
+        }
+        luaL_pushresult(&b);
+        app(L).notify(std::string(str_at(L, -1)));
+        return 0;
+    }
+    // os.exit(): blit quits (as :qa does) rather than going without a word.
+    static int os_exit(lua_State* L) {
+        lua_settop(L, 0);
+        lua_pushliteral(L, "qa");
+        return cmd(L);
+    }
+    // blit.split(s, sep, plain): the pieces between each sep (a Lua pattern, or plain text).
+    static int split(lua_State* L) {
+        size_t len = 0;
+        const char* text = luaL_checklstring(L, 1, &len);
+        if (lua_isnoneornil(L, 2)) {
+            lua_settop(L, 1);
+            lua_pushliteral(L, "%s+");
+        }
+        luaL_checkstring(L, 2);
+        const bool plain = lua_toboolean(L, 3);
+        lua_settop(L, 2);
+        lua_newtable(L);  // 3: the pieces
+        lua_getglobal(L, "string");
+        lua_getfield(L, -1, "find");
+        lua_remove(L, -2);  // 4: string.find
+        lua_Integer at = 1, count = 0;
+        for (;;) {
+            lua_pushvalue(L, 4);
+            lua_pushvalue(L, 1);
+            lua_pushvalue(L, 2);
+            lua_pushinteger(L, at);
+            lua_pushboolean(L, plain);
+            lua_call(L, 4, 2);
+            if (lua_isnil(L, -2)) {
+                lua_pop(L, 2);
+                const size_t from = static_cast<size_t>(std::min<lua_Integer>(at - 1, static_cast<lua_Integer>(len)));
+                lua_pushlstring(L, text + from, len - from);
+                lua_rawseti(L, 3, ++count);
+                break;
+            }
+            const lua_Integer i = lua_tointeger(L, -2);
+            lua_Integer j = lua_tointeger(L, -1);
+            lua_pop(L, 2);
+            if (j < i) j = i;
+            const size_t from = static_cast<size_t>(std::min<lua_Integer>(at - 1, static_cast<lua_Integer>(len)));
+            const size_t to = static_cast<size_t>(std::clamp<lua_Integer>(i - 1, static_cast<lua_Integer>(from), static_cast<lua_Integer>(len)));
+            lua_pushlstring(L, text + from, to - from);
+            lua_rawseti(L, 3, ++count);
+            at = j + 1;
+        }
+        lua_settop(L, 3);
+        return 1;
+    }
+    // blit.trim(s): without the white space at either end.
+    static int trim(lua_State* L) {
+        size_t len = 0;
+        const char* text = luaL_checklstring(L, 1, &len);
+        auto space = [](char c) { return c == ' ' || c == '\t' || c == '\n' || c == '\r' || c == '\v' || c == '\f'; };
+        size_t a = 0, b = len;
+        while (a < b && space(text[a])) ++a;
+        while (b > a && space(text[b - 1])) --b;
+        lua_pushlstring(L, text + a, b - a);
+        return 1;
+    }
+    // :lua and := : an expression's values shown, or the code run.
+    static int eval(lua_State* L) {
+        size_t len = 0;
+        const char* code = luaL_checklstring(L, 1, &len);
+        lua_settop(L, 1);
+        lua_pushliteral(L, "return ");
+        lua_pushvalue(L, 1);
+        lua_concat(L, 2);
+        size_t n = 0;
+        const char* expr = lua_tolstring(L, 2, &n);
+        if (luaL_loadbufferx(L, expr, n, "=(:lua)", "t") == LUA_OK) {
+            lua_call(L, 0, LUA_MULTRET);
+            const int results = lua_gettop(L) - 2;
+            if (results > 0) {
+                std::string out;
+                std::vector<const void*> seen;
+                for (int i = 3; i <= lua_gettop(L); ++i) out += (i > 3 ? "\t" : "") + inspected(L, i, "", 1, 6, seen);
+                app(L).notify(out);
+            }
+            return 0;
+        }
+        lua_settop(L, 1);
+        if (luaL_loadbufferx(L, code, len, "=(:lua)", "t") != LUA_OK) return lua_error(L);  // (its message as it is)
+        lua_call(L, 0, 0);
+        return 0;
+    }
+
+    // ------------------------------------------------ keys, commands, events, timers, as scripts call them
+
+    // A mode, or a list of them ({"n", "v"}), as one string ("nv").
+    static void push_modes(lua_State* L, int i) {
+        if (is_str(L, i)) {
+            lua_pushvalue(L, i);
+        } else if (lua_istable(L, i)) {
+            luaL_Buffer b;
+            luaL_buffinit(L, &b);
+            const lua_Integer n = static_cast<lua_Integer>(lua_rawlen(L, i));
+            for (lua_Integer k = 1; k <= n; ++k)
+                if (lua_rawgeti(L, i, k) == LUA_TSTRING) luaL_addvalue(&b);
+                else lua_pop(L, 1);
+            luaL_pushresult(&b);
+        } else {
+            lua_pushliteral(L, "");
+        }
+    }
+    // A list of names ({"BufEnter", "BufLeave"}) as one ("BufEnter,BufLeave"), in place.
+    static void join_in_place(lua_State* L, int i) {
+        if (!lua_istable(L, i)) return;
+        i = lua_absindex(L, i);
+        luaL_Buffer b;
+        luaL_buffinit(L, &b);
+        const lua_Integer n = static_cast<lua_Integer>(lua_rawlen(L, i));
+        for (lua_Integer k = 1; k <= n; ++k) {
+            if (k > 1) luaL_addchar(&b, ',');
+            if (lua_rawgeti(L, i, k) == LUA_TSTRING) luaL_addvalue(&b);
+            else lua_pop(L, 1);
+        }
+        luaL_pushresult(&b);
+        lua_replace(L, i);
+    }
+    // blit.map(mode, lhs, rhs, opts): opts are remap (or noremap) and desc.
+    static int map_keys(lua_State* L) {
+        lua_settop(L, 4);
+        push_modes(L, 1);
+        lua_replace(L, 1);
+        bool remap = false;
+        if (field(L, 4, "remap") != LUA_TNIL) {
+            remap = lua_toboolean(L, -1);
+        } else if (field(L, 4, "noremap") != LUA_TNIL) {
+            remap = !lua_toboolean(L, -1);
+            lua_pop(L, 1);
+        } else {
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        field(L, 4, "desc");
+        lua_pushboolean(L, remap);
+        lua_replace(L, 4);  // (modes, lhs, rhs, remap, desc)
+        return map(L);
+    }
+    static int unmap_keys(lua_State* L) {
+        lua_settop(L, 2);
+        push_modes(L, 1);
+        lua_replace(L, 1);
+        return unmap(L);
+    }
+    // blit.on(events, opts, fn), or blit.on(events, fn): opts are pattern, once, group.
+    static int on_events(lua_State* L) {
+        lua_settop(L, 3);
+        if (lua_isfunction(L, 2)) {
+            lua_pushvalue(L, 2);
+            lua_replace(L, 3);
+            lua_newtable(L);
+            lua_replace(L, 2);
+        }
+        join_in_place(L, 1);
+        field(L, 2, "pattern");
+        join_in_place(L, -1);
+        field(L, 2, "once");
+        lua_pushboolean(L, lua_toboolean(L, -1));
+        lua_replace(L, -2);
+        field(L, 2, "group");
+        lua_pushvalue(L, 3);
+        lua_remove(L, 3);
+        lua_remove(L, 2);  // (events, pattern, once, group, fn)
+        return on(L);
+    }
+    // blit.group(name): the handlers of that group gone, and its name.
+    static int group(lua_State* L) {
+        lua_settop(L, 1);
+        if (const int r = off(L); r < 0) return r;
+        lua_settop(L, 1);
+        return 1;
+    }
+    static int defer(lua_State* L) {  // blit.defer(ms, fn)
+        lua_settop(L, 2);
+        lua_pushinteger(L, 0);
+        lua_insert(L, 2);
+        return timer(L);
+    }
+    static int every(lua_State* L) {  // blit.every(ms, fn)
+        lua_settop(L, 2);
+        lua_pushvalue(L, 1);
+        lua_insert(L, 2);
+        return timer(L);
+    }
+    static int schedule(lua_State* L) {  // blit.schedule(fn)
+        lua_settop(L, 1);
+        lua_pushinteger(L, 0);
+        lua_insert(L, 1);
+        lua_pushinteger(L, 0);
+        lua_insert(L, 1);
+        return timer(L);
+    }
+    // blit.ui.select(items, opts, fn), or (items, fn): opts are prompt and format.
+    static int ui_select(lua_State* L) {
+        lua_settop(L, 3);
+        if (lua_isfunction(L, 2)) {
+            lua_pushvalue(L, 2);
+            lua_replace(L, 3);
+            lua_newtable(L);
+            lua_replace(L, 2);
+        }
+        if (!lua_istable(L, 1)) return fail("blit.ui.select: a list of items is wanted");
+        const lua_Integer n = static_cast<lua_Integer>(lua_rawlen(L, 1));
+        lua_createtable(L, static_cast<int>(n), 0);  // 4: what is shown of each
+        field(L, 2, "format");                       // 5
+        for (lua_Integer k = 1; k <= n; ++k) {
+            if (lua_isfunction(L, 5)) {
+                lua_pushvalue(L, 5);
+                lua_rawgeti(L, 1, k);
+                lua_call(L, 1, 1);
+            } else {
+                lua_rawgeti(L, 1, k);
+            }
+            luaL_tolstring(L, -1, nullptr);
+            lua_rawseti(L, 4, k);
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        if (field(L, 2, "prompt") != LUA_TSTRING) {
+            lua_pop(L, 1);
+            lua_pushliteral(L, "Pick");
+        }
+        if (lua_isfunction(L, 3)) lua_pushvalue(L, 3);
+        else lua_pushcfunction(L, noop);
+        lua_pushvalue(L, 1);
+        lua_insert(L, -4);  // (..., items, shown, prompt, fn)
+        lua_rotate(L, 1, 4);
+        lua_settop(L, 4);
+        return select(L);
+    }
+    // blit.ui.input(opts, fn), or (fn): opts are prompt and default.
+    static int ui_input(lua_State* L) {
+        lua_settop(L, 2);
+        if (lua_isfunction(L, 1)) {
+            lua_pushvalue(L, 1);
+            lua_replace(L, 2);
+            lua_newtable(L);
+            lua_replace(L, 1);
+        }
+        if (field(L, 1, "prompt") != LUA_TSTRING) {
+            lua_pop(L, 1);
+            lua_pushliteral(L, "Input");
+        }
+        if (field(L, 1, "default") != LUA_TSTRING) {
+            lua_pop(L, 1);
+            lua_pushliteral(L, "");
+        }
+        if (lua_isfunction(L, 2)) lua_pushvalue(L, 2);
+        else lua_pushcfunction(L, noop);
+        lua_rotate(L, 1, 3);
+        lua_settop(L, 3);  // (prompt, default, fn)
+        return input(L);
+    }
+
+    // The table `blit`, made (left on the stack); print and os.exit made blit's.
+    static void open_table(lua_State* L) {
+        App::ScriptUi& s = ui(L);
+        lua_newtable(L);
+        luaL_setfuncs(L, kTop, 0);
+        const std::pair<const char*, const luaL_Reg*> tables[] = {{"ui", kUi}, {"fs", kFs}, {"build", kBuild}, {"project", kProject}};
+        for (const auto& [name, funcs] : tables) {
+            lua_newtable(L);
+            luaL_setfuncs(L, funcs, 0);
+            lua_setfield(L, -2, name);
+        }
+        lua_newtable(L);
+        s.opt_sections = luaL_ref(L, LUA_REGISTRYINDEX);
+        ScriptApi::push_section(L, "");
+        lua_setfield(L, -2, "opt");
+        lua_newtable(L);
+        lua_setfield(L, -2, "g");
+        lua_pushcfunction(L, api<ScriptApi::print>);
+        lua_setglobal(L, "print");
+        lua_getglobal(L, "os");
+        lua_pushcfunction(L, api<ScriptApi::os_exit>);
+        lua_setfield(L, -2, "exit");
+        lua_pop(L, 1);
+    }
+
+    // ------------------------------------------------ plugins
+
+    // blit.plug("owner/name"), or blit.plug({"owner/name" or url, name =, rev =}) -> its name.
+    static int plug(lua_State* L) {
+        if (!is_str(L, 1) && !lua_istable(L, 1)) return fail("blit.plug: a plugin is \"owner/name\" (on GitHub) or a git URL");
+        std::string src, name, rev;
+        if (is_str(L, 1)) {
+            src = std::string(str_at(L, 1));
+        } else {
+            if (lua_rawgeti(L, 1, 1) == LUA_TSTRING) src = std::string(str_at(L, -1));
+            lua_pop(L, 1);
+            if (src.empty()) src = field_str(L, 1, "url");
+            name = field_str(L, 1, "name");
+            rev = field_str(L, 1, "rev");
+        }
+        if (src.empty()) return fail("blit.plug: a plugin is \"owner/name\" (on GitHub) or a git URL");
+        std::string url = src;
+        const size_t scheme = src.find("://");
+        const bool has_scheme = scheme != std::string::npos && scheme > 0 && std::isalpha(static_cast<u8>(src[0]));
+        if (!has_scheme && !src.starts_with("git@") && !src.starts_with("/") && !src.starts_with("~")) url = "https://github.com/" + src + ".git";
+        if (name.empty()) {
+            std::string base = src;
+            while (base.size() > 1 && base.back() == '/') base.pop_back();
+            const size_t cut = base.find_last_of("/:");
+            name = cut == std::string::npos ? base : base.substr(cut + 1);
+            if (name.ends_with(".git")) name.resize(name.size() - 4);
+        }
+        ui(L).declared.push_back({name, url, rev});
+        lua_pushlstring(L, name.data(), name.size());
+        return 1;
+    }
     // blit.notify(message, level)
     static int notify(lua_State* L) {
         size_t n = 0;
@@ -1127,21 +1629,13 @@ struct ScriptApi {
         ui(L).reload = true;
         return 0;
     }
-    // blit._load(path): runs a file now (for plugins), errors shown and not raised.
-    static int load(lua_State* L) {
-        if (!is_str(L, 1)) return fail("a file is wanted");
-        App& a = app(L);
-        lua_pushboolean(L, a.script_file(std::string(str_at(L, 1))));
-        return 1;
-    }
 };
 
 namespace {
 
 
 // Calls F, and raises the error it found (once F's variables are gone),
-// with the place in the script that called: the first one on the stack that
-// is not blit's own Lua.
+// with the place in the script that called: the first Lua on the stack.
 template <int (*F)(lua_State*)>
 int api(lua_State* L) {
     const int n = F(L);
@@ -1149,7 +1643,7 @@ int api(lua_State* L) {
     lua_Debug ar;
     for (int level = 1; lua_getstack(L, level, &ar); ++level) {
         lua_getinfo(L, "Sl", &ar);
-        if (ar.currentline > 0 && std::strcmp(ar.source, "=blit") != 0) {
+        if (ar.currentline > 0) {
             lua_pushfstring(L, "%s:%d: %s", ar.short_src, ar.currentline, g_err);
             return lua_error(L);
         }
@@ -1163,309 +1657,32 @@ int api(lua_State* L) {
 namespace script {
 
 const luaL_Reg kTop[] = {
-    {"_opt_keys", api<ScriptApi::opt_keys>}, {"_opt_get", api<ScriptApi::opt_get>}, {"_opt_set", api<ScriptApi::opt_set>},
-    {"notify", api<ScriptApi::notify>},      {"cmd", api<ScriptApi::cmd>},          {"normal", api<ScriptApi::normal>},
-    {"feed", api<ScriptApi::feed>},          {"mode", api<ScriptApi::mode>},        {"count", api<ScriptApi::count>},
-    {"_map", api<ScriptApi::map>},           {"_unmap", api<ScriptApi::unmap>},     {"_maps", api<ScriptApi::maps>},
-    {"_command", api<ScriptApi::command>},   {"delcommand", api<ScriptApi::delcommand>}, {"_on", api<ScriptApi::on>},
-    {"off", api<ScriptApi::off>},            {"emit", api<ScriptApi::emit>},        {"_timer", api<ScriptApi::timer>},
-    {"stop", api<ScriptApi::stop>},          {"system", api<ScriptApi::system>},    {"kill", api<ScriptApi::kill>},
-    {"buf", api<ScriptApi::buf>},            {"bufs", api<ScriptApi::bufs>},        {"info", api<ScriptApi::info>},
-    {"lines", api<ScriptApi::lines>},        {"set_lines", api<ScriptApi::set_lines>}, {"text", api<ScriptApi::text>},
-    {"insert", api<ScriptApi::insert>},      {"cursor", api<ScriptApi::cursor>},    {"set_cursor", api<ScriptApi::set_cursor>},
-    {"selection", api<ScriptApi::selection>}, {"open", api<ScriptApi::open>},       {"save", api<ScriptApi::save>},
-    {"close", api<ScriptApi::close>},        {"workdir", api<ScriptApi::workdir>},  {"set_workdir", api<ScriptApi::set_workdir>},
-    {"ns", api<ScriptApi::ns>},              {"mark", api<ScriptApi::mark>},        {"clear_marks", api<ScriptApi::clear_marks>},
-    {"messages", api<ScriptApi::messages>},  {"reload", api<ScriptApi::reload>},    {"_load", api<ScriptApi::load>},
-    {"_select", api<ScriptApi::select>},     {"_input", api<ScriptApi::input>},     {nullptr, nullptr}};
-const luaL_Reg kUi[] = {{"float", api<ScriptApi::float_open>}, {"set", api<ScriptApi::float_set>}, {"close", api<ScriptApi::float_close>},
-                        {"status", api<ScriptApi::status>},    {nullptr, nullptr}};
+    {"notify", api<ScriptApi::notify>},       {"cmd", api<ScriptApi::cmd>},              {"normal", api<ScriptApi::normal>},
+    {"feed", api<ScriptApi::feed>},           {"mode", api<ScriptApi::mode>},            {"count", api<ScriptApi::count>},
+    {"map", api<ScriptApi::map_keys>},        {"unmap", api<ScriptApi::unmap_keys>},     {"maps", api<ScriptApi::maps>},
+    {"command", api<ScriptApi::command>},     {"delcommand", api<ScriptApi::delcommand>}, {"on", api<ScriptApi::on_events>},
+    {"off", api<ScriptApi::off>},             {"group", api<ScriptApi::group>},          {"emit", api<ScriptApi::emit>},
+    {"defer", api<ScriptApi::defer>},         {"every", api<ScriptApi::every>},          {"schedule", api<ScriptApi::schedule>},
+    {"stop", api<ScriptApi::stop>},           {"system", api<ScriptApi::system>},        {"kill", api<ScriptApi::kill>},
+    {"buf", api<ScriptApi::buf>},             {"bufs", api<ScriptApi::bufs>},            {"info", api<ScriptApi::info>},
+    {"lines", api<ScriptApi::lines>},         {"set_lines", api<ScriptApi::set_lines>},  {"text", api<ScriptApi::text>},
+    {"insert", api<ScriptApi::insert>},       {"cursor", api<ScriptApi::cursor>},        {"set_cursor", api<ScriptApi::set_cursor>},
+    {"selection", api<ScriptApi::selection>}, {"open", api<ScriptApi::open>},            {"save", api<ScriptApi::save>},
+    {"close", api<ScriptApi::close>},         {"workdir", api<ScriptApi::workdir>},      {"set_workdir", api<ScriptApi::set_workdir>},
+    {"ns", api<ScriptApi::ns>},               {"mark", api<ScriptApi::mark>},            {"clear_marks", api<ScriptApi::clear_marks>},
+    {"messages", api<ScriptApi::messages>},   {"reload", api<ScriptApi::reload>},        {"inspect", api<ScriptApi::inspect>},
+    {"split", api<ScriptApi::split>},         {"trim", api<ScriptApi::trim>},            {"plug", api<ScriptApi::plug>},
+    {"_eval", api<ScriptApi::eval>},          {nullptr, nullptr}};
+const luaL_Reg kUi[] = {{"float", api<ScriptApi::float_open>}, {"set", api<ScriptApi::float_set>},  {"close", api<ScriptApi::float_close>},
+                        {"status", api<ScriptApi::status>},    {"select", api<ScriptApi::ui_select>}, {"input", api<ScriptApi::ui_input>},
+                        {nullptr, nullptr}};
 const luaL_Reg kFs[] = {{"list", api<ScriptApi::fs_list>},   {"exists", api<ScriptApi::fs_exists>}, {"read", api<ScriptApi::fs_read>},
                         {"write", api<ScriptApi::fs_write>}, {"mkdir", api<ScriptApi::fs_mkdir>},   {nullptr, nullptr}};
 const luaL_Reg kBuild[] = {{"add", api<ScriptApi::build_add>},           {"remove", api<ScriptApi::build_remove>}, {"systems", api<ScriptApi::build_list_systems>},
                            {"tasks", api<ScriptApi::build_list_tasks>},  {"run", api<ScriptApi::build_run>},       {nullptr, nullptr}};
 const luaL_Reg kProject[] = {{"add", api<ScriptApi::project_add>}, {"remove", api<ScriptApi::project_remove>}, {nullptr, nullptr}};
 
-// The part of the API written in Lua. It is run with the table `blit` as
-// its argument, before anything of the user's.
-const char kBoot[] = R"LUA(
-local blit = ...
-local getinfo, traceback = debug.getinfo, debug.traceback
-
--- Where a setting was set: the first place on the stack that is not here.
-local function where()
-  for level = 3, 40 do
-    local info = getinfo(level, "Sl")
-    if not info then break end
-    if info.source ~= "=blit" and info.what ~= "C" then
-      return info.short_src .. ":" .. (info.currentline or 0)
-    end
-  end
-  return "script"
-end
-
--- blit.opt: every setting of the settings file, by the same names.
-local keys, sections = {}, {}
-for _, k in ipairs(blit._opt_keys()) do
-  keys[k] = true
-  local s = k:match("^(.*)%.[^.]+$")
-  while s do sections[s] = true; s = s:match("^(.*)%.[^.]+$") end
-end
-local open_ended = { themes = true, ["lsp.servers"] = true, ["syntax.grammars"] = true, ["syntax.styles"] = true }
-local function is_section(key)
-  if sections[key] or open_ended[key] then return true end
-  for prefix in pairs(open_ended) do
-    if key:sub(1, #prefix + 1) == prefix .. "." then return true end
-  end
-  return false
-end
-local function set_value(key, value, at)
-  if type(value) == "table" and value[1] == nil and next(value) ~= nil then
-    for k, v in pairs(value) do set_value(key .. "." .. k, v, at) end
-    return
-  end
-  blit._opt_set(key, value, at)
-end
-local made = {}
-local function section(prefix)
-  if prefix and made[prefix] then return made[prefix] end
-  local t = setmetatable({}, {
-    __index = function(_, k)
-      local key = prefix and (prefix .. "." .. k) or k
-      if keys[key] then return blit._opt_get(key) end
-      if is_section(key) then return section(key) end
-      return nil
-    end,
-    __newindex = function(_, k, v)
-      set_value(prefix and (prefix .. "." .. k) or k, v, where())
-    end,
-  })
-  if prefix then made[prefix] = t end
-  return t
-end
-blit.opt = section(nil)
-blit.g = {}
-
--- Text, for showing.
-function blit.inspect(value, depth)
-  local seen = {}
-  local function show(v, indent, level)
-    local t = type(v)
-    if t == "string" then return string.format("%q", v) end
-    if t ~= "table" then return tostring(v) end
-    if seen[v] then return "<cycle>" end
-    if level > (depth or 6) then return "{...}" end
-    seen[v] = true
-    local keys, n = {}, #v
-    for k in pairs(v) do
-      if not (math.type(k) == "integer" and k >= 1 and k <= n) then keys[#keys + 1] = k end
-    end
-    table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
-    local parts = {}
-    for i = 1, n do parts[#parts + 1] = show(v[i], indent .. "  ", level + 1) end
-    for _, k in ipairs(keys) do
-      local name = type(k) == "string" and k:match("^[%a_][%w_]*$") and k or "[" .. show(k, indent, level + 1) .. "]"
-      parts[#parts + 1] = name .. " = " .. show(v[k], indent .. "  ", level + 1)
-    end
-    seen[v] = nil
-    if #parts == 0 then return "{}" end
-    local one = "{ " .. table.concat(parts, ", ") .. " }"
-    if #one <= 72 and not one:find("\n") then return one end
-    return "{\n" .. indent .. "  " .. table.concat(parts, ",\n" .. indent .. "  ") .. "\n" .. indent .. "}"
-  end
-  return show(value, "", 1)
-end
-
-print = function(...)
-  local parts = {}
-  for i = 1, select("#", ...) do parts[i] = tostring((select(i, ...))) end
-  blit.notify(table.concat(parts, "\t"))
-end
-
-os.exit = function() blit.cmd("qa") end
-
-function blit.split(s, sep, plain)
-  sep = sep or "%s+"
-  local out, at = {}, 1
-  while true do
-    local i, j = s:find(sep, at, plain)
-    if not i then out[#out + 1] = s:sub(at); break end
-    if j < i then j = i end
-    out[#out + 1] = s:sub(at, i - 1)
-    at = j + 1
-  end
-  return out
-end
-
-function blit.trim(s) return (s:gsub("^%s+", ""):gsub("%s+$", "")) end
-
--- :lua and :=
-function blit._eval(code)
-  local f = load("return " .. code, "=(:lua)")
-  if f then
-    local r = table.pack(f())
-    if r.n > 0 then
-      local out = {}
-      for i = 1, r.n do out[i] = blit.inspect(r[i]) end
-      print(table.concat(out, "\t"))
-    end
-    return
-  end
-  local g, err = load(code, "=(:lua)")
-  if not g then error(err, 0) end
-  g()
-end
-
--- Keys, commands, events, timers.
-local function modes_of(mode)
-  if type(mode) == "table" then return table.concat(mode) end
-  return mode or ""
-end
-function blit.map(mode, lhs, rhs, opts)
-  opts = opts or {}
-  local remap = opts.remap
-  if remap == nil and opts.noremap ~= nil then remap = not opts.noremap end
-  blit._map(modes_of(mode), lhs, rhs, remap or false, opts.desc)
-end
-function blit.unmap(mode, lhs) blit._unmap(modes_of(mode), lhs) end
-function blit.maps() return blit._maps() end
-function blit.command(name, rhs, opts) blit._command(name, rhs, opts or {}) end
-function blit.on(events, opts, fn)
-  if type(opts) == "function" then opts, fn = {}, opts end
-  opts = opts or {}
-  if type(events) == "table" then events = table.concat(events, ",") end
-  local pattern = opts.pattern
-  if type(pattern) == "table" then pattern = table.concat(pattern, ",") end
-  return blit._on(events, pattern, opts.once or false, opts.group, fn)
-end
-function blit.group(name)
-  blit.off(name)
-  return name
-end
-function blit.defer(ms, fn) return blit._timer(ms, 0, fn) end
-function blit.every(ms, fn) return blit._timer(ms, ms, fn) end
-function blit.schedule(fn) return blit._timer(0, 0, fn) end
-
-blit.ui = blit.ui or {}
-function blit.ui.select(items, opts, on_choice)
-  if type(opts) == "function" then opts, on_choice = {}, opts end
-  opts = opts or {}
-  local shown = {}
-  for i, item in ipairs(items) do
-    shown[i] = opts.format and tostring(opts.format(item)) or tostring(item)
-  end
-  blit._select(items, shown, opts.prompt or "Pick", on_choice or function() end)
-end
-function blit.ui.input(opts, on_confirm)
-  if type(opts) == "function" then opts, on_confirm = {}, opts end
-  opts = opts or {}
-  blit._input(opts.prompt or "Input", opts.default or "", on_confirm or function() end)
-end
-
--- Where modules are found: lua/ beside init.lua, then each plugin's lua/.
-local plugdir = blit.data_dir .. "/plugins"
-local paths = { blit.config_dir .. "/lua/?.lua", blit.config_dir .. "/lua/?/init.lua" }
-for _, e in ipairs(blit.fs.list(plugdir)) do
-  if e.type == "dir" then
-    paths[#paths + 1] = plugdir .. "/" .. e.name .. "/lua/?.lua"
-    paths[#paths + 1] = plugdir .. "/" .. e.name .. "/lua/?/init.lua"
-  end
-end
-package.path = table.concat(paths, ";") .. ";" .. package.path
-
--- Plugins: folders under the data folder, each with plugin/*.lua run once
--- init.lua has been, and lua/ to require from. blit.plug() names the ones
--- :PlugInstall fetches (with git) and :PlugUpdate brings up to date.
-local declared, loaded = {}, {}
-local function run_dir(dir)
-  for _, e in ipairs(blit.fs.list(dir)) do
-    if e.type == "file" and e.name:match("%.lua$") then blit._load(dir .. "/" .. e.name) end
-  end
-end
-local function load_plugin(name)
-  if loaded[name] then return end
-  loaded[name] = true
-  local dir = plugdir .. "/" .. name
-  local lua = dir .. "/lua"
-  if blit.fs.exists(lua) == "dir" and not package.path:find(lua, 1, true) then
-    package.path = lua .. "/?.lua;" .. lua .. "/?/init.lua;" .. package.path
-  end
-  run_dir(dir .. "/plugin")
-end
-function blit._plugins()
-  run_dir(blit.config_dir .. "/plugin")
-  for _, e in ipairs(blit.fs.list(plugdir)) do
-    if e.type == "dir" then load_plugin(e.name) end
-  end
-end
-function blit.plug(spec)
-  if type(spec) == "string" then spec = { spec } end
-  local src = spec[1] or spec.url
-  if type(src) ~= "string" or src == "" then error("blit.plug: a plugin is \"owner/name\" (on GitHub) or a git URL", 2) end
-  local url = src
-  if not (src:match("^%a[%w+.-]*://") or src:match("^git@") or src:match("^/") or src:match("^~")) then
-    url = "https://github.com/" .. src .. ".git"
-  end
-  local name = spec.name or src:gsub("/+$", ""):match("([^/:]+)$"):gsub("%.git$", "")
-  declared[#declared + 1] = { name = name, url = url, rev = spec.rev }
-  return name
-end
-local function git(args, cwd, done)
-  blit.system(args, { cwd = cwd }, function(r) done(r.code == 0, blit.trim(r.stderr ~= "" and r.stderr or r.stdout)) end)
-end
-blit.command("PlugInstall", function()
-  local wanted = 0
-  for _, p in ipairs(declared) do
-    local dir = plugdir .. "/" .. p.name
-    if not blit.fs.exists(dir) then
-      wanted = wanted + 1
-      git({ "git", "clone", "--quiet", p.url, dir }, nil, function(ok, said)
-        if ok and p.rev then
-          git({ "git", "checkout", "--quiet", p.rev }, dir, function(ok2, said2)
-            if ok2 then load_plugin(p.name); blit.notify("Installed " .. p.name .. " at " .. p.rev)
-            else blit.notify(p.name .. ": " .. said2, "error") end
-          end)
-        elseif ok then
-          load_plugin(p.name)
-          blit.notify("Installed " .. p.name)
-        else
-          blit.notify(p.name .. ": " .. said, "error")
-        end
-      end)
-    end
-  end
-  if wanted == 0 then blit.notify("Every plugin named with blit.plug() is installed") end
-end, { desc = "Fetch the plugins named with blit.plug() that are not there yet" })
-blit.command("PlugUpdate", function()
-  local any = false
-  for _, e in ipairs(blit.fs.list(plugdir)) do
-    local dir = plugdir .. "/" .. e.name
-    if e.type == "dir" and blit.fs.exists(dir .. "/.git") then
-      any = true
-      git({ "git", "pull", "--ff-only", "--quiet" }, dir, function(ok, said)
-        blit.notify(e.name .. (ok and ": up to date" or (": " .. said)), ok and "info" or "error")
-      end)
-    end
-  end
-  if not any then blit.notify("No plugins to update") end
-end, { desc = "Bring every plugin up to date (git pull); :Reload then uses them" })
-blit.command("PlugList", function()
-  local lines, seen = {}, {}
-  for _, p in ipairs(declared) do
-    seen[p.name] = true
-    lines[#lines + 1] = (blit.fs.exists(plugdir .. "/" .. p.name) and "  " or "- ") .. p.name .. "  " .. p.url
-  end
-  for _, e in ipairs(blit.fs.list(plugdir)) do
-    if e.type == "dir" and not seen[e.name] then lines[#lines + 1] = "  " .. e.name end
-  end
-  if #lines == 0 then lines[1] = "No plugins (blit.plug() names them; they go in " .. plugdir .. ")" end
-  blit.ui.float(lines, { title = "Plugins (- not installed: :PlugInstall)", at = "center" })
-end, { desc = "The plugins, and which are installed" })
-blit.command("Reload", function() blit.reload() end, { desc = "Run init.lua and the plugins again from the start" })
-)LUA";
-
-
-const size_t kBootSize = sizeof kBoot - 1;
+void open_api(lua_State* L) { ScriptApi::open_table(L); }
 
 void count_hook(lua_State* L, lua_Debug* ar) { ScriptApi::hook(L, ar); }
 

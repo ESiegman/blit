@@ -5,7 +5,8 @@
 // commands (blit.command), events (blit.on), the open files (blit.lines and
 // the like), floating boxes, pickers and messages (blit.ui, blit.notify),
 // timers (blit.defer) and programs run in the background (blit.system).
-// README.md lists it all; the part written in Lua is kBoot below.
+// README.md lists it all. All of it is C++ (src/luaapi.cpp): the Lua is the
+// user's alone.
 //
 // None of this exists until there is a script to run: without init.lua and
 // plugins there is no Lua at all, and a key costs what it did.
@@ -49,20 +50,7 @@ bool App::script_ensure() {
     *static_cast<App**>(lua_getextraspace(L)) = this;
     luaL_openlibs(L);
     lua_sethook(L, count_hook, LUA_MASKCOUNT, 10000);
-    lua_newtable(L);
-    luaL_setfuncs(L, kTop, 0);
-    lua_newtable(L);
-    luaL_setfuncs(L, kUi, 0);
-    lua_setfield(L, -2, "ui");
-    lua_newtable(L);
-    luaL_setfuncs(L, kFs, 0);
-    lua_setfield(L, -2, "fs");
-    lua_newtable(L);
-    luaL_setfuncs(L, kBuild, 0);
-    lua_setfield(L, -2, "build");
-    lua_newtable(L);
-    luaL_setfuncs(L, kProject, 0);
-    lua_setfield(L, -2, "project");
+    open_api(L);
     lua_pushlstring(L, s.config_dir.data(), s.config_dir.size());
     lua_setfield(L, -2, "config_dir");
     lua_pushlstring(L, s.data_dir.data(), s.data_dir.size());
@@ -78,14 +66,171 @@ bool App::script_ensure() {
             if (c.name == name) return true;
         return false;
     };
-    if (luaL_loadbufferx(L, kBoot, kBootSize, "=blit", "t") != LUA_OK) {
-        notify(std::string("blit's own Lua: ") + lua_tostring(L, -1), kError);
-        lua_pop(L, 1);
-        return true;
-    }
-    lua_rawgeti(L, LUA_REGISTRYINDEX, s.api);
-    script_call(1, 0, "blit's own Lua");
+    // Where modules are found: lua/ beside init.lua, then each plugin's lua/.
+    std::string paths = s.config_dir + "/lua/?.lua;" + s.config_dir + "/lua/?/init.lua;";
+    const std::string plugdir = s.data_dir + "/plugins";
+    for (const DirEntry& e : list_dir(plugdir))
+        if (e.dir) paths += plugdir + "/" + e.name + "/lua/?.lua;" + plugdir + "/" + e.name + "/lua/?/init.lua;";
+    lua_getglobal(L, "package");
+    lua_getfield(L, -1, "path");
+    paths += str_at(L, -1);
+    lua_pop(L, 1);
+    lua_pushlstring(L, paths.data(), paths.size());
+    lua_setfield(L, -2, "path");
+    lua_pop(L, 1);
+    // blit's own commands.
+    auto own = [&](const char* name, const char* desc, std::function<void(const std::string&)> run) {
+        ScriptUi::Command c;
+        c.name = name;
+        c.desc = desc;
+        c.nargs = "0";
+        c.native = std::move(run);
+        s.commands.push_back(std::move(c));
+    };
+    own("PlugInstall", "Fetch the plugins named with blit.plug() that are not there yet", [this](const std::string&) { plug_install(); });
+    own("PlugUpdate", "Bring every plugin up to date (git pull); :Reload then uses them", [this](const std::string&) { plug_update(); });
+    own("PlugList", "The plugins, and which are installed", [this](const std::string&) { plug_list(); });
+    own("Reload", "Run init.lua and the plugins again from the start", [this](const std::string&) {
+        if (script_) script_->reload = true;
+    });
     return true;
+}
+
+// ---------------------------------------------------------------- plugins
+
+// A program of blit's own run in the background (git, for the plugins);
+// `done` hears how it ended, on the main thread.
+void App::script_run(std::vector<std::string> argv, std::string cwd, std::function<void(int, const std::string&, const std::string&)> done) {
+    if (!script_ensure()) return;
+    ScriptUi& s = *script_;
+    if (!s.jobs) {
+        s.jobs = std::make_unique<Jobs>();
+        s.jobs->set_notify([] {
+            SDL_Event ev{};
+            ev.type = SDL_EVENT_USER;
+            ev.user.code = 11;
+            SDL_PushEvent(&ev);
+        });
+    }
+    JobSpec spec;
+    spec.argv = std::move(argv);
+    spec.cwd = std::move(cwd);
+    s.native_jobs[s.jobs->start(std::move(spec))] = std::move(done);
+}
+
+// Each .lua file in a folder, run now (in order of name).
+void App::script_run_dir(const std::string& dir) {
+    for (const DirEntry& e : list_dir(dir))
+        if (!e.dir && e.name.ends_with(".lua")) script_file(dir + "/" + e.name);
+}
+
+// A plugin (a folder under blit's data folder): its lua/ to require from,
+// and its plugin/*.lua run. Once.
+void App::plugin_load(const std::string& name) {
+    if (!script_ || !script_->L) return;
+    ScriptUi& s = *script_;
+    if (std::find(s.loaded.begin(), s.loaded.end(), name) != s.loaded.end()) return;
+    s.loaded.push_back(name);
+    const std::string dir = s.data_dir + "/plugins/" + name;
+    const std::string lua = dir + "/lua";
+    if (const char* kind = kind_of(lua); kind && std::string_view(kind) == "dir") {
+        lua_State* L = s.L;
+        lua_getglobal(L, "package");
+        lua_getfield(L, -1, "path");
+        std::string path(str_at(L, -1));
+        lua_pop(L, 1);
+        if (path.find(lua) == std::string::npos) {
+            path = lua + "/?.lua;" + lua + "/?/init.lua;" + path;
+            lua_pushlstring(L, path.data(), path.size());
+            lua_setfield(L, -2, "path");
+        }
+        lua_pop(L, 1);
+    }
+    script_run_dir(dir + "/plugin");
+}
+
+// After init.lua: plugin/ beside it, then every plugin.
+void App::script_plugins() {
+    if (!script_ || !script_->L) return;
+    script_run_dir(script_->config_dir + "/plugin");
+    for (const DirEntry& e : list_dir(script_->data_dir + "/plugins"))
+        if (e.dir) plugin_load(e.name);
+}
+
+namespace {
+
+std::string said_of(const std::string& out, const std::string& err) {
+    std::string t = err.empty() ? out : err;
+    while (!t.empty() && (t.back() == '\n' || t.back() == ' ' || t.back() == '\r')) t.pop_back();
+    while (!t.empty() && (t.front() == '\n' || t.front() == ' ')) t.erase(0, 1);
+    return t;
+}
+
+}  // namespace
+
+// :PlugInstall: each plugin blit.plug() named that is not there yet, fetched with git (at its rev, if it has one).
+void App::plug_install() {
+    if (!script_) return;
+    const std::string plugdir = script_->data_dir + "/plugins";
+    int wanted = 0;
+    for (const ScriptUi::Plugin& p : script_->declared) {
+        const std::string dir = plugdir + "/" + p.name;
+        if (kind_of(dir)) continue;
+        ++wanted;
+        script_run({"git", "clone", "--quiet", p.url, dir}, {}, [this, p, dir](int code, const std::string& out, const std::string& err) {
+            if (code != 0) return notify(p.name + ": " + said_of(out, err), kError);
+            if (p.rev.empty()) {
+                plugin_load(p.name);
+                return notify("Installed " + p.name);
+            }
+            script_run({"git", "checkout", "--quiet", p.rev}, dir, [this, p](int code2, const std::string& out2, const std::string& err2) {
+                if (code2 != 0) return notify(p.name + ": " + said_of(out2, err2), kError);
+                plugin_load(p.name);
+                notify("Installed " + p.name + " at " + p.rev);
+            });
+        });
+    }
+    if (wanted == 0) notify("Every plugin named with blit.plug() is installed");
+}
+
+// :PlugUpdate: git pull in each plugin's folder.
+void App::plug_update() {
+    if (!script_) return;
+    const std::string plugdir = script_->data_dir + "/plugins";
+    bool any = false;
+    for (const DirEntry& e : list_dir(plugdir)) {
+        const std::string dir = plugdir + "/" + e.name;
+        if (!e.dir || !kind_of(dir + "/.git")) continue;
+        any = true;
+        const std::string name = e.name;
+        script_run({"git", "pull", "--ff-only", "--quiet"}, dir, [this, name](int code, const std::string& out, const std::string& err) {
+            notify(name + (code == 0 ? ": up to date" : ": " + said_of(out, err)), code == 0 ? kInfo : kError);
+        });
+    }
+    if (!any) notify("No plugins to update");
+}
+
+// :PlugList: those named, and whether each is there (- if not), and the others there.
+void App::plug_list() {
+    if (!script_ensure()) return;
+    ScriptUi& s = *script_;
+    const std::string plugdir = s.data_dir + "/plugins";
+    ScriptUi::Float f;
+    f.id = s.next_float++;
+    std::vector<std::string> seen;
+    for (const ScriptUi::Plugin& p : s.declared) {
+        seen.push_back(p.name);
+        f.lines.push_back(std::string(kind_of(plugdir + "/" + p.name) ? "  " : "- ") + p.name + "  " + p.url);
+    }
+    for (const DirEntry& e : list_dir(plugdir))
+        if (e.dir && std::find(seen.begin(), seen.end(), e.name) == seen.end()) f.lines.push_back("  " + e.name);
+    if (f.lines.empty()) f.lines.push_back("No plugins (blit.plug() names them; they go in " + plugdir + ")");
+    f.title = "Plugins (- not installed: :PlugInstall)";
+    f.at = kAtCenter;
+    f.doc = pane_->doc->id;
+    f.cursor = pane_->doc->ed.cursor();
+    s.floats.push_back(std::move(f));
+    dirty_ = true;
 }
 
 // Calls the function under nargs arguments on the stack, protected and
@@ -293,7 +438,7 @@ void App::script_start() {
     s.starting = true;
     s.init_stamp = stamp_of(s.init_path);
     if (kind_of(s.init_path)) script_file(s.init_path);
-    if (script_api("_plugins")) script_call(0, 0, "plugins");
+    script_plugins();
     s.starting = false;
     if (!script_settings_.empty()) cfg_ = make_config(script_settings_);  // (all of them as one: see make_config())
 }
@@ -341,6 +486,7 @@ void App::script_shutdown() {
     if (s.jobs) s.jobs->stop_all();
     s.jobs.reset();
     s.job_calls.clear();
+    s.native_jobs.clear();
     s.backlog.clear();
     s.maps.clear();
     s.pending.clear();
@@ -984,10 +1130,10 @@ void App::script_ex(const VimRequest& q) {
         for (ScriptUi::Command& c : s.commands)
             if (c.name == cname) {
                 s.unref(c.fn);
-                c = {cname, ex, {}, "*", LUA_NOREF, false, false};
+                c = {cname, ex, {}, "*", LUA_NOREF, false, false, {}};
                 return;
             }
-        s.commands.push_back({cname, ex, {}, "*", LUA_NOREF, false, false});
+        s.commands.push_back({cname, ex, {}, "*", LUA_NOREF, false, false, {}});
         return;
     }
     if (is({"delcommand", "delc"})) {
@@ -1039,6 +1185,12 @@ void App::script_ex(const VimRequest& q) {
     const std::string& n = c->nargs;
     if ((n == "0" && !fargs.empty()) || (n == "1" && q.arg.empty()) || (n == "+" && fargs.empty()) || (n == "?" && fargs.size() > 1)) {
         vim_.say("E471: " + name + (n == "0" ? " takes no arguments" : n == "1" || n == "+" ? " needs an argument" : " takes one argument at most"));
+        return;
+    }
+    if (c->native) {
+        const auto run = c->native;
+        run(q.arg);
+        vim_after(Vim::kHandled);
         return;
     }
     if (c->fn == LUA_NOREF) {
@@ -1350,6 +1502,13 @@ void App::script_jobs() {
         for (JobEvent& e : s.jobs->take()) events.push_back(std::move(e));
     for (JobEvent& e : events) {
         if (!script_ || !script_->L) return;
+        if (auto mine = s.native_jobs.find(e.id); mine != s.native_jobs.end()) {  // (blit's own: only how it ended)
+            if (e.kind != JobEvent::kExit) continue;
+            auto done = std::move(mine->second);
+            s.native_jobs.erase(mine);
+            done(e.code, e.out, e.err);
+            continue;
+        }
         auto it = s.job_calls.find(e.id);
         if (it == s.job_calls.end()) continue;
         ScriptUi::JobCalls calls = it->second;
@@ -1592,7 +1751,7 @@ void App::script_layout(int w, int h, FrameDesc& fd) {
 bool App::script_busy() const {
     if (!script_ || !script_->L) return false;
     const ScriptUi& s = *script_;
-    if (!s.pending.empty() || !s.queue.empty() || !s.backlog.empty() || (s.jobs && s.jobs->running() > 0) || !s.job_calls.empty()) return true;
+    if (!s.pending.empty() || !s.queue.empty() || !s.backlog.empty() || (s.jobs && s.jobs->running() > 0) || !s.job_calls.empty() || !s.native_jobs.empty()) return true;
     for (const ScriptUi::Timer& t : s.timers)
         if (!t.every) return true;
     return false;

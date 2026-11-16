@@ -627,6 +627,13 @@ private:
     bool script_string(std::string_view code, const char* name);
     bool script_api(const char* name);
     bool script_lib(const char* table, const char* name);  // blit[table][name], a function, on the stack
+    void script_plugins();
+    void plugin_load(const std::string& name);
+    void script_run_dir(const std::string& dir);
+    void script_run(std::vector<std::string> argv, std::string cwd, std::function<void(int, const std::string&, const std::string&)> done);
+    void plug_install();
+    void plug_update();
+    void plug_list();
     std::string script_set(const std::string& key, const std::string& value, const std::string& from);
     void script_set_command(const std::string& arg);
     // 0 information, 1 a warning, 2 an error; `detail` (a traceback) goes to :messages and the standard error, not the box.
