@@ -920,6 +920,30 @@ with `-g`); without it the tab still shows the functions.
 perf records user-space call stacks only (`--user-callchains`), which
 works at the default `perf_event_paranoid` of 2 without root.
 
+## Terminal
+
+**Ctrl+`** opens a terminal in a new tab, in the folder being worked in.
+It is a tab like a file's: reorder it, close it, or drag it into a split
+(a terminal along the bottom is a split there).
+
+- The shell is your login shell. When the folder is on another machine
+  (`ssh://host/...`), the terminal runs there, through blit's agent, on
+  the same connection as the files; it connects by itself if it has to.
+- Programs see an xterm (`TERM=xterm-256color`, 24-bit colour): full-screen
+  programs (vim, htop, less) work, and the tab's size follows the split.
+  `LANG` is set to UTF-8 when nothing sets it.
+- Keys go to the program, Vim's keys included. The editor keeps its Cmd
+  shortcuts (switching tabs, closing one), except: **Cmd+C** copies what is
+  selected, **Cmd+V** pastes, **Cmd+K** clears the history. (On Linux:
+  Ctrl+Shift+C and Ctrl+Shift+V.)
+- Drag to select; double-click a word, triple-click a line; middle or
+  right click pastes.
+- The wheel and **Shift+PageUp/PageDown** scroll back through the last
+  10,000 lines. In a full-screen program the wheel is its arrow keys.
+- The tab is named after the program's title (or the shell's folder), and
+  closes when the shell exits; if it exits with an error, the tab stays
+  and says so.
+
 ## How it is fast
 
 **Text is never copied.** The file is memory mapped and the document is a
@@ -1102,6 +1126,9 @@ src/remote.*       another machine's files over ssh: the connection, starting bl
 src/appremote.cpp  files from another machine in the editor: read on a thread, the tab there at once
 src/profile.*      profiles: recording with perf or xctrace (here or on another machine), reading what they record
 src/appprofile.cpp the Profile tab, a profile's tab (flame graph, functions), inline performance labels
+src/term.*         a terminal's screen: an xterm-compatible parser, colours, the history
+src/pty.*          programs under a pseudo-terminal (built into the agent too)
+src/appterm.cpp    terminal tabs: the shell (here or remote), drawing, keys, selection, scrollback
 src/agent/         the agent: what it and blit say to one another, the program, its build for Linux (Docker), the builds
 src/keymap.*    key mappings: Vim's key notation, the table of mappings, what keys typed so far add up to
 src/job.*       programs run in the background for scripts, on threads of their own
@@ -1181,6 +1208,7 @@ tests/lua.sh build-debug/blit      # scripts: settings, mappings, commands, even
 tests/start.sh build-debug/blit    # the start screen and the list of what was opened lately (a scratch one)
 tests/remote.sh build-debug/blit   # another machine's files, git and language server, through tests/fake-ssh.sh
 tests/profile.sh build-debug/blit  # profiling tests/profile/spin.c here and through tests/fake-ssh.sh (skipped with no profiler)
+tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, copy and paste, here and through tests/fake-ssh.sh
 ```
 
 The tests never connect to a real host: `$BLIT_SSH` names the program used
@@ -1241,6 +1269,11 @@ does not finish and takes all the memory the machine has.
   (`BLIT_LSP_LOG` is for local ones). Programs a script starts run on this
   machine, not that one. The project folder for a file opened there on its
   own is its own folder (opening the project's folder sets it).
+- Terminal: no mouse reporting to programs (a click in htop does nothing),
+  no underline or strikethrough drawn, no images (sixel, kitty), no
+  ligatures. A screen with more than 32 text colours or 6 background
+  colours at once draws the rest in the nearest of those. Lines are not
+  re-wrapped when the tab's width changes.
 - Profiling: CPU time only (no memory, no off-CPU waits), one run at a
   time, all threads merged in one flame graph. A function's label goes on
   the line above its hottest line that names it with a bracket after it,

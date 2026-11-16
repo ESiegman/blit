@@ -35,8 +35,9 @@ run() {
 }
 
 # (The tab is 15 rows of 74 columns at this size: its first frame tells the shell.)
-run "term;frame;termwait:\$;text:echo hello;key:Return;termwait:hello;termdump"
-check "a shell in the folder being worked in: what it is told, it does" '$ echo hello|hello|$ @2,2 15x74'
+# (What is waited for is what the shell prints, not what is typed: hel''lo, then hello.)
+run "term;frame;termwait:\$;text:echo hel''lo;key:Return;termwait:hello;termdump"
+check "a shell in the folder being worked in: what it is told, it does" "\$ echo hel''lo|hello|\$ @2,2 15x74"
 run "term;frame;termwait:\$;text:basename \$PWD;key:Return;termwait:work;text:stty size;key:Return;termwait:15 74;termdump"
 check "it runs in the working folder, and knows the tab's size" '$ basename $PWD|work|$ stty size|15 74|$ @4,2 15x74'
 run "term;frame;termwait:\$;text:sleep 30;key:Return;termwait:sleep;key:ctrl+c;text:echo after-\$((1+1));key:Return;termwait:after-2;termdump"
@@ -47,8 +48,8 @@ check "the alternate screen (the cursor on the row it was on)" 'FULLSCREEN$ @1,1
 run "term;frame;termwait:\$;text:printf '\\033[?1049h\\033[2J%s%s' FULL SCREEN;key:Return;termwait:FULLSCREEN;text:printf '\\033[?1049l%s%s' BA CK;key:Return;termwait:BACK;termdump"
 case "$got" in *"FULL SCREEN|BACK\$ "*) got="the shell's screen as it was" ;; esac
 check "and back from it" "the shell's screen as it was"
-run "term;frame;termwait:\$;text:echo copy-me;key:Return;termwait:copy-me;click:24,52,2;release;key:cmd+c;key:cmd+v;termwait:\$ copy-me;termdump"
-check "a word chosen with a double click, copied, and pasted after the prompt" '$ echo copy-me|copy-me|$ copy-me @2,9 15x74'
+run "term;frame;termwait:\$;text:echo copy-m''e;key:Return;termwait:copy-me;click:24,52,2;release;key:cmd+c;key:cmd+v;termwait:\$ copy-me;termdump"
+check "a word chosen with a double click, copied, and pasted after the prompt" "\$ echo copy-m''e|copy-me|\$ copy-me @2,9 15x74"
 run "term;frame;termwait:\$;text:exit;key:Return;termend;frame;dump"
 check "the shell ends: its tab goes" '>[untitled*]'
 run "term;frame;termwait:\$;text:exit 3;key:Return;termend;frame;termdump"

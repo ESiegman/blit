@@ -1725,6 +1725,49 @@ than its half second, and `perf script` 7 to 18 ms. Reading either's
 output into a profile (the test fixtures, about 200 KB each) takes 0.4 ms
 for perf's and 0.7 ms for xctrace's.
 
+### Round 26: a terminal
+
+Terminal tabs (`src/term.*`, `src/pty.*`, `src/appterm.cpp`): an
+xterm-compatible screen fed by a shell under a pseudo-terminal, here or
+through blit's agent. The program's output is read and parsed on a thread
+of the tab's own; the main thread only draws the screen when it has changed.
+
+Reading what programs write (the parser and the screen alone, a 200 by 50
+screen, fed 64 KB at a time):
+
+| | First version | Rows moved whole, plain text written straight |
+|---|---:|---:|
+| `bench/data/code-100m.txt` (105 MB of code) | 11 MB/s | 137 MB/s |
+| `bench/data/utf8-16m.txt` (17 MB of UTF-8 text) | | 206 MB/s |
+
+The first version scrolled by copying every cell of the screen up a row
+(160 KB a line at 200 by 50) and copied each line into the history; now a
+screen is its rows, scrolling moves them, and a row scrolled off goes into
+the history whole, the oldest one making the new blank row once 10,000 are
+kept. A run of plain ASCII is written without going through the parser
+(127 to 137 MB/s).
+
+From the shell to the screen: `cat` of that 105 MB file in a terminal tab
+takes about 0.9 s here and 1.0 s through the agent (the stand-in ssh: no
+network), the time to the next prompt.
+
+What it costs the editor with no terminal open: the build before (`main`,
+with profiling) against this one, turn about, 4 runs each:
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling back to back, frames a second (the GPU's limit) | 15,974 | 15,617 |
+| … everything on | 16,084 | 15,457 |
+| Scrolling at 160 Hz: CPU per frame, p50 | 82.2 µs | 81.8 µs |
+| … everything on | 107.8 µs | 101.1 µs |
+| Typing: the frame's CPU, p50 | 50.2 µs | 50.2 µs |
+| A key press after a pause, to its frame handed to the GPU, p50 | 424 µs | 434 µs |
+| … everything on | 282 µs | 286 µs |
+| A paced frame, p50 (10 runs each, the new build first) | 140 µs | 135 µs |
+
+All within the sitting's spread (the frames a second overlap: 14,918 to
+16,272 before, 15,437 to 15,900 after).
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
