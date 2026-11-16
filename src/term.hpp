@@ -57,7 +57,7 @@ public:
     u32 cols() const { return cols_; }
     u32 rows() const { return rows_; }
     // The screen, row 0 at the top.
-    const TermCell& at(u32 row, u32 col) const { return screen()[static_cast<size_t>(row) * cols_ + col]; }
+    const TermCell& at(u32 row, u32 col) const { return screen()[row][col]; }
     // The lines scrolled off its top, the oldest first (none on the alternate screen).
     size_t history() const { return alt_ ? 0 : history_.size(); }
     const std::vector<TermCell>& history_line(size_t i) const { return history_[i]; }
@@ -79,10 +79,13 @@ public:
     static std::string line_text(const TermCell* cells, u32 n);
 
 private:
-    std::vector<TermCell>& screen() { return alt_ ? alt_cells_ : cells_; }
-    const std::vector<TermCell>& screen() const { return alt_ ? alt_cells_ : cells_; }
+    // A screen is its rows, each a line of cells of its own: scrolling moves
+    // rows, not cells, and a row scrolled into the history goes there whole.
+    using Rows = std::vector<std::vector<TermCell>>;
+    Rows& screen() { return alt_ ? alt_cells_ : cells_; }
+    const Rows& screen() const { return alt_ ? alt_cells_ : cells_; }
     TermCell blank() const;  // an erased cell: the current background
-    TermCell* line(u32 r) { return screen().data() + static_cast<size_t>(r) * cols_; }
+    TermCell* line(u32 r) { return screen()[r].data(); }
 
     void print(u32 cp);
     void control(u8 c);
@@ -102,7 +105,7 @@ private:
 
     u32 cols_, rows_;
     size_t scrollback_;
-    std::vector<TermCell> cells_, alt_cells_;
+    Rows cells_, alt_cells_;
     std::deque<std::vector<TermCell>> history_;
     bool alt_ = false;
 

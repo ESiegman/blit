@@ -34,7 +34,7 @@ u32 graphics_char(u32 c) {
 }  // namespace
 
 Term::Term(u32 cols, u32 rows, size_t scrollback) : cols_(std::max(cols, 1u)), rows_(std::max(rows, 1u)), scrollback_(scrollback) {
-    cells_.assign(static_cast<size_t>(cols_) * rows_, TermCell{});
+    cells_.assign(rows_, std::vector<TermCell>(cols_));
     alt_cells_ = cells_;
     bottom_ = rows_ - 1;
     tabs_.assign(cols_, false);
@@ -56,8 +56,8 @@ void Term::reset() {
     graphics_ = insert_ = origin_ = app_cursor_ = bracketed_paste_ = false;
     autowrap_ = cursor_visible_ = true;
     if (alt_) alt_ = false;
-    std::ranges::fill(cells_, TermCell{});
-    std::ranges::fill(alt_cells_, TermCell{});
+    for (std::vector<TermCell>& r : cells_) std::ranges::fill(r, TermCell{});
+    for (std::vector<TermCell>& r : alt_cells_) std::ranges::fill(r, TermCell{});
     tabs_.assign(cols_, false);
     for (u32 c = 8; c < cols_; c += 8) tabs_[c] = true;
     ++generation_;
@@ -67,17 +67,19 @@ void Term::resize(u32 cols, u32 rows) {
     cols = std::max(cols, 1u);
     rows = std::max(rows, 1u);
     if (cols == cols_ && rows == rows_) return;
-    auto remake = [&](std::vector<TermCell>& cells, bool keep_history) {
-        std::vector<TermCell> out(static_cast<size_t>(cols) * rows, TermCell{});
+    auto remake = [&](Rows& cells, bool keep_history) {
         // Fewer rows: the top ones go (into the history on the main
         // screen), so that the cursor's line stays on show.
-        u32 drop = rows < rows_ && row_ >= rows ? row_ - rows + 1 : 0;
+        const u32 drop = rows < rows_ && row_ >= rows ? row_ - rows + 1 : 0;
         for (u32 r = 0; r < drop && keep_history; ++r) {
-            history_.emplace_back(cells.begin() + static_cast<std::ptrdiff_t>(r) * cols_, cells.begin() + static_cast<std::ptrdiff_t>(r + 1) * cols_);
+            history_.push_back(std::move(cells[r]));
             if (history_.size() > scrollback_) history_.pop_front();
         }
-        for (u32 r = 0; r + drop < rows_ && r < rows; ++r)
-            for (u32 c = 0; c < std::min(cols, cols_); ++c) out[static_cast<size_t>(r) * cols + c] = cells[static_cast<size_t>(r + drop) * cols_ + c];
+        Rows out;
+        out.reserve(rows);
+        for (u32 r = drop; r < rows_ && out.size() < rows; ++r) out.push_back(std::move(cells[r]));
+        while (out.size() < rows) out.emplace_back(cols);
+        for (std::vector<TermCell>& r : out) r.resize(cols);
         cells = std::move(out);
         return drop;
     };
@@ -107,8 +109,38 @@ std::string Term::take_reply() {
 
 void Term::feed(std::string_view bytes) {
     ++generation_;
-    for (const char ch : bytes) {
-        const u8 b = static_cast<u8>(ch);
+    for (size_t i = 0; i < bytes.size(); ++i) {
+        const u8 b = static_cast<u8>(bytes[i]);
+        // A run of plain characters (most of what programs write): straight
+        // onto the line, without the parser.
+        if (state_ == kGround && utf8_left_ == 0 && b >= 0x20 && b < 0x7F && !graphics_ && !insert_) {
+            size_t j = i;
+            while (j < bytes.size() && static_cast<u8>(bytes[j]) >= 0x20 && static_cast<u8>(bytes[j]) < 0x7F) ++j;
+            TermCell c = pen_;
+            c.attr = static_cast<u16>(pen_.attr & ~(TermCell::kWide | TermCell::kWideTail));
+            for (; i < j; ++i) {
+                if (wrap_next_) {
+                    if (autowrap_) {
+                        col_ = 0;
+                        index();
+                    }
+                    wrap_next_ = false;
+                }
+                TermCell* l = line(row_);
+                if (l[col_].attr & (TermCell::kWide | TermCell::kWideTail)) {  // (half of a wide one: the careful way)
+                    print(static_cast<u8>(bytes[i]));
+                    continue;
+                }
+                c.cp = static_cast<u8>(bytes[i]);
+                l[col_] = c;
+                if (++col_ >= cols_) {
+                    col_ = cols_ - 1;
+                    wrap_next_ = true;
+                }
+            }
+            --i;
+            continue;
+        }
         // Strings (a title, and what is not understood) run to BEL or ESC \.
         if (state_ == kOsc || state_ == kString) {
             if (b == 0x07) {
@@ -319,23 +351,36 @@ void Term::reverse_index() {
 
 void Term::scroll_up(u32 top, u32 bottom, u32 n) {
     n = std::min(n, bottom - top + 1);
-    std::vector<TermCell>& s = screen();
-    // Lines off the top of the whole main screen are kept.
-    if (!alt_ && top == 0)
-        for (u32 r = 0; r < n; ++r) {
-            history_.emplace_back(s.begin() + static_cast<std::ptrdiff_t>(r) * cols_, s.begin() + static_cast<std::ptrdiff_t>(r + 1) * cols_);
-            if (history_.size() > scrollback_) history_.pop_front();
+    Rows& s = screen();
+    const TermCell b = blank();
+    for (u32 k = 0; k < n; ++k) {
+        std::vector<TermCell> gone = std::move(s[top]);
+        std::move(s.begin() + top + 1, s.begin() + bottom + 1, s.begin() + top);
+        // A line off the top of the whole main screen is kept; the oldest
+        // kept, when there are as many as are kept, makes the new blank line.
+        if (!alt_ && top == 0) {
+            history_.push_back(std::move(gone));
+            gone = {};
+            if (history_.size() > scrollback_) {
+                gone = std::move(history_.front());
+                history_.pop_front();
+            }
         }
-    std::move(s.begin() + static_cast<std::ptrdiff_t>(top + n) * cols_, s.begin() + static_cast<std::ptrdiff_t>(bottom + 1) * cols_, s.begin() + static_cast<std::ptrdiff_t>(top) * cols_);
-    std::fill(s.begin() + static_cast<std::ptrdiff_t>(bottom + 1 - n) * cols_, s.begin() + static_cast<std::ptrdiff_t>(bottom + 1) * cols_, blank());
+        gone.assign(cols_, b);
+        s[bottom] = std::move(gone);
+    }
 }
 
 void Term::scroll_down(u32 top, u32 bottom, u32 n) {
     n = std::min(n, bottom - top + 1);
-    std::vector<TermCell>& s = screen();
-    std::move_backward(s.begin() + static_cast<std::ptrdiff_t>(top) * cols_, s.begin() + static_cast<std::ptrdiff_t>(bottom + 1 - n) * cols_,
-                       s.begin() + static_cast<std::ptrdiff_t>(bottom + 1) * cols_);
-    std::fill(s.begin() + static_cast<std::ptrdiff_t>(top) * cols_, s.begin() + static_cast<std::ptrdiff_t>(top + n) * cols_, blank());
+    Rows& s = screen();
+    const TermCell b = blank();
+    for (u32 k = 0; k < n; ++k) {
+        std::vector<TermCell> gone = std::move(s[bottom]);
+        std::move_backward(s.begin() + top, s.begin() + bottom, s.begin() + bottom + 1);
+        gone.assign(cols_, b);
+        s[top] = std::move(gone);
+    }
 }
 
 void Term::erase(u32 r, u32 c0, u32 c1) {
@@ -436,10 +481,14 @@ void Term::csi(u8 final) {
             if (row_ >= top_ && row_ <= bottom_) {
                 // (Deleting lines inside the region never feeds the history.)
                 const u32 n = std::min<u32>(static_cast<u32>(n1), bottom_ - row_ + 1);
-                std::vector<TermCell>& s = screen();
-                std::move(s.begin() + static_cast<std::ptrdiff_t>(row_ + n) * cols_, s.begin() + static_cast<std::ptrdiff_t>(bottom_ + 1) * cols_,
-                          s.begin() + static_cast<std::ptrdiff_t>(row_) * cols_);
-                std::fill(s.begin() + static_cast<std::ptrdiff_t>(bottom_ + 1 - n) * cols_, s.begin() + static_cast<std::ptrdiff_t>(bottom_ + 1) * cols_, blank());
+                Rows& s = screen();
+                const TermCell b = blank();
+                for (u32 k = 0; k < n; ++k) {
+                    std::vector<TermCell> gone = std::move(s[row_]);
+                    std::move(s.begin() + row_ + 1, s.begin() + bottom_ + 1, s.begin() + row_);
+                    gone.assign(cols_, b);
+                    s[bottom_] = std::move(gone);
+                }
             }
             col_ = 0;
             break;
@@ -521,7 +570,8 @@ void Term::set_mode(bool on) {
                 if (on == alt_) break;
                 if (params_[i] == 1049 && on) alt_saved_ = {row_, col_, pen_, graphics_};
                 alt_ = on;
-                if (on) std::ranges::fill(alt_cells_, TermCell{});
+                if (on)
+                    for (std::vector<TermCell>& r : alt_cells_) std::ranges::fill(r, TermCell{});
                 if (params_[i] == 1049 && !on) {
                     row_ = std::min(alt_saved_.row, rows_ - 1);
                     col_ = std::min(alt_saved_.col, cols_ - 1);
@@ -638,6 +688,6 @@ std::string Term::line_text(const TermCell* cells, u32 n) {
     return out;
 }
 
-std::string Term::row_text(u32 row) const { return line_text(screen().data() + static_cast<size_t>(row) * cols_, cols_); }
+std::string Term::row_text(u32 row) const { return line_text(screen()[row].data(), cols_); }
 
 }  // namespace blit
