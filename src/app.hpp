@@ -365,6 +365,7 @@ private:
     std::string start_dump();
     // The start screen's New project tab (appstart.cpp, project.cpp).
     void project_page(bool on);
+    void project_anywhere();
     void project_change(int by);  // the chosen row's value, a step along (a choice, a switch)
     void project_edit(const std::string& typed = {});
     void project_set(const std::string& key, const std::string& value);

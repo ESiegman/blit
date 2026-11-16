@@ -89,6 +89,7 @@ void App::commands_create() {
     sent("New file (a new tab)", {key(SDLK_T, kP)});
     sent("Open a file\xE2\x80\xA6", {key(SDLK_O, kP)});
     own("Open a folder\xE2\x80\xA6", {key(SDLK_O, kP | kS)}, [this] { find_open(kFindFolder); });
+    own("New project\xE2\x80\xA6", {key(SDLK_N, kP | kA)}, [this] { project_anywhere(); });
     own("Connect to a server\xE2\x80\xA6", {}, [this] { find_open(kFindFolder, "ssh://"); });
     own("Reconnect to the servers that dropped", {}, [this] { remote_reconnect(); });
     sent("Save", {key(SDLK_S, kP)});

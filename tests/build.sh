@@ -137,6 +137,13 @@ check "and it builds, and its test passes" 'Make: make make all make run >make t
 run "$dir/none" "newproject;project:where=$P;project:kind=Python;project:manager=pip;project:type=Script;project:install=false;project:name=tool;projectcreate;projectdump"
 check "Python: a script with pip" 'kind=Python name=tool where=~/projects git=on | manager=pip type=Script python=3.13 backend_pip=hatchling deps= ruff=true types=mypy readme=true install=false | at 0 | made ~/projects/tool'
 
+printf 'notes\n' >"$dir/notes.txt"
+run "$dir/none" "open:$dir/notes.txt;frame;key:cmd+alt+n;frame;startdump"
+check "New project (Cmd+Option+N) once a file is open: the form, in a tab of its own" 'new project: kind=C++ name= where=~/Dev git=on | target=Program std=23 libraries= tests=CTest warnings=Standard sanitizers=Address + undefined tuning=Portable lto=false generator=Ninja presets=true clangd=true tidy=false format=None readme=true configure=true | at 0'
+run "$dir/none" "open:$dir/notes.txt;frame;key:cmd+alt+n;frame;key:Escape;frame;startdump"
+got=${got%% o:*}
+check "and Esc there: the start screen's Start tab" 'start >n:New file p:New project…'
+
 # init.lua's own kinds, and one taken away.
 cat >"$dir/kind.lua" <<'EOF'
 blit.opt.lsp.enabled = false

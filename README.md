@@ -86,6 +86,7 @@ and everything in it that has Cmd in it (Ctrl elsewhere) works in every mode.
 | A terminal, in the working folder | Ctrl+` | Ctrl+` |
 | The Problems / Git / Profile tab of the side panel | Cmd+Shift+M / G / R | Ctrl+Shift+M / G / R |
 | The Build tab; run its chosen task (the Run button) | Cmd+Shift+U; Cmd+Shift+B | Ctrl+Shift+U; Ctrl+Shift+B |
+| A new project (the start screen's New project tab, in a tab of its own) | Cmd+Option+N | Ctrl+Alt+N |
 | Blame column on or off | Cmd+Option+B | Ctrl+Alt+B |
 | Font size | Cmd+= / Cmd+- / Cmd+0 | Ctrl+= / Ctrl+- / Ctrl+0 |
 | Open init.lua (the settings) | Cmd+, | Ctrl+, |
@@ -1042,7 +1043,9 @@ task's `cwd` (relative to the folder) is where it runs.
 ## New projects
 
 The start screen's **New project** tab (`p`, or Ctrl+Tab) makes a project
-from a form: its kind, name, location (any folder, or `ssh://host/...` to
+from a form; once the start screen has gone, Cmd+Option+N (or "New
+project…" in the command search) brings it back in a tab of its own. The
+form has its kind, name, location (any folder, or `ssh://host/...` to
 make it on another machine), whether it is a git repository, and the
 kind's own choices. Up and Down move, Left and Right (or Space) change a
 choice or a switch, Enter types into a line or looks up libraries, and

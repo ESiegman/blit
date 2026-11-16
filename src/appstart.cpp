@@ -84,6 +84,7 @@ struct App::StartUi {
     u64 key = 0;
     int x = 0, y = 0, pad_x = 0, pad_y = 0;
     bool folder_asked = false;  // the folder box was opened from here: the panel shows the folder chosen
+    bool summoned = false;      // shown again later (the New project command), in a tab of its own
     std::string root_seen;
     u32 tabs_row = 0, tab_c[4] = {};  // the tabs Start and New project: their row, and their columns [c0, c1) each
 
@@ -196,7 +197,7 @@ bool App::start_shown() {
     if (!start_ || !start_->on) return false;
     StartUi& s = *start_;
     const Doc& d = *pane_->doc;
-    if (d.id != s.doc || !d.ed.path.empty() || d.ed.buf.size() > 0 || d.ed.modified() || panes_.size() != 1) s.on = false;  // (for good)
+    if (d.id != s.doc || !d.ed.path.empty() || d.ed.buf.size() > 0 || d.ed.modified() || (panes_.size() != 1 && !s.summoned)) s.on = false;  // (for good)
     return s.on;
 }
 
@@ -604,6 +605,19 @@ void App::start_layout(FrameDesc& fd) {
 }
 
 // ---------------------------------------------------------------- the New project tab
+
+// The New project tab from anywhere (Cmd+Option+N): the start screen again,
+// in a new empty tab, at that tab.
+void App::project_anywhere() {
+    if (!start_) return;
+    StartUi& s = *start_;
+    if (!start_shown()) {
+        tab_new();
+        s.doc = pane_->doc->id;
+        s.on = s.summoned = true;
+    }
+    project_page(true);
+}
 
 void App::project_page(bool on) {
     StartUi& s = *start_;
