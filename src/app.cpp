@@ -1005,6 +1005,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     start_layout(fd);
     prof_layout(fd);  // (a profile's tab, over its pane's text area)
     term_layout(fd);  // (and a terminal's)
+    md_layout(fd);    // (and a Markdown preview's)
     build_layout(w, fd);  // the Run button, over the top right tab bar's end
     vim_layout(w, h, fd);
     panel_layout(w, std::max(1, h - status_px()), fd);  // (above the status bar)
@@ -1268,6 +1269,7 @@ void App::handle(const SDL_Event& e) {
             if (start_mouse_down(e.button)) break;
             if (build_mouse_down(e.button)) break;  // the Run button
             if (prof_mouse_down(e.button)) break;  // a profile's tab
+            if (md_mouse_down(e.button)) break;    // a Markdown preview
             if (term_mouse_down(e.button)) break;  // a terminal's
             if (splits_mouse_down(e.button)) break;  // a divider
             // The split under the mouse gets the click, and with it the keyboard.
@@ -1385,6 +1387,7 @@ void App::on_key(const SDL_KeyboardEvent& k) {
     term_drop_text_ = false;  // (only the text a key itself brings is dropped)
     if (start_key(k)) return;  // the start screen is showing (appstart.cpp)
     if (prof_key(k)) return;   // a profile's tab is in front (appprofile.cpp)
+    if (md_key(k)) return;     // a Markdown preview's (appmarkdown.cpp)
     if (k.key == SDLK_GRAVE && (k.mod & SDL_KMOD_CTRL) && !(k.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI))) {  // Ctrl+`: a terminal, in the folder being worked in
         term_open();
         term_drop_text_ = true;
@@ -1535,6 +1538,7 @@ void App::on_wheel(const SDL_MouseWheelEvent& w) {
     if (find_open_ && find_wheel(w)) return;   // the box that finds things is open: its list turns
     if (panel_wheel(w)) return;  // the mouse is over the side panel
     if (prof_wheel(w)) return;   // or over a profile's tab
+    if (md_wheel(w)) return;     // or a Markdown preview
     if (term_wheel(w)) return;   // or a terminal's
     Pane* const focused = pane_;
     if (mouse_x_ >= 0)

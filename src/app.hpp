@@ -69,6 +69,7 @@ struct Profile;      // (profile.hpp)
 struct ProfileFunc;
 struct ProfView;     // a profile's tab (appprofile.cpp)
 struct TermView;     // a terminal's tab (appterm.cpp)
+struct MdView;       // a Markdown preview's tab (appmarkdown.cpp)
 
 struct Doc {
     Editor ed;
@@ -117,6 +118,7 @@ struct Doc {
     u32 goto_col = 0;
     std::shared_ptr<ProfView> prof;  // a profile's tab: drawn over the text area (appprofile.cpp)
     std::shared_ptr<TermView> term;  // a terminal's tab: drawn over it too (appterm.cpp)
+    std::shared_ptr<MdView> md;      // a Markdown preview's tab: drawn over it too (appmarkdown.cpp)
     bool term_closed = false;        // (its program has ended, and that has been seen to)
     std::unique_ptr<Highlights> marks;
 
@@ -414,6 +416,16 @@ private:
     bool prof_busy() const;
     std::string prof_dump();
     void panel_show_profile();
+
+    // The Markdown preview (appmarkdown.cpp, markdown.cpp, mermaid.cpp): a tab
+    // beside a Markdown file that shows it drawn, Mermaid diagrams and all.
+    void md_open();
+    void md_layout(FrameDesc& fd);
+    bool md_hit(int px, int py, Pane** pane, u32* row, u32* col);
+    bool md_key(const SDL_KeyboardEvent& k);
+    bool md_wheel(const SDL_MouseWheelEvent& w);
+    bool md_mouse_down(const SDL_MouseButtonEvent& b);
+    std::string md_dump();
 
     // Terminals (appterm.cpp): a tab running a shell, here or on another machine.
     // A terminal tab in dir (the working folder when none): a login shell, or

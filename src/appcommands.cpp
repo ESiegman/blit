@@ -151,6 +151,8 @@ void App::commands_create() {
     sent("What this is (hover)", {key(SDLK_I, kP)});
     sent("Go to the definition", {key(SDLK_F12)});
     sent("Go back", {kPrimaryMod == SDL_KMOD_GUI ? key(SDLK_MINUS, kC) : key(SDLK_LEFT, kA)});
+    // Markdown.
+    own("Preview Markdown (beside it)", {key(SDLK_V, kP | kS)}, [this] { md_open(); });
     // Terminals.
     own("New terminal", {key(SDLK_GRAVE, kPrimaryMod == SDL_KMOD_GUI ? kC : kP)}, [this] { term_open(); });
     // Debugging.

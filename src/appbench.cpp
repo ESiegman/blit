@@ -800,6 +800,10 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s\n", project_facts_dump().c_str());
         } else if (verb == "projectdump") {
             std::fprintf(stderr, "%s\n", project_dump().c_str());
+        } else if (verb == "mdpreview") {  // the Markdown preview of the file in front
+            md_open();
+        } else if (verb == "mddump") {  // the preview's rows, as text
+            std::fputs(md_dump().c_str(), stderr);
         } else if (verb == "buildpanel") {  // the side panel's Build tab
             if (!panel_px()) panel_toggle();
             panel_show_build();

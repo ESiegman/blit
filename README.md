@@ -87,6 +87,7 @@ and everything in it that has Cmd in it (Ctrl elsewhere) works in every mode.
 | The Problems / Git / Profile tab of the side panel | Cmd+Shift+M / G / R | Ctrl+Shift+M / G / R |
 | The Build tab; run its chosen task (the Run button) | Cmd+Shift+U; Cmd+Shift+B | Ctrl+Shift+U; Ctrl+Shift+B |
 | A new project (the start screen's New project tab, in a tab of its own) | Cmd+Option+N | Ctrl+Alt+N |
+| Markdown preview, beside the file | Cmd+Shift+V | Ctrl+Shift+V |
 | Blame column on or off | Cmd+Option+B | Ctrl+Alt+B |
 | Font size | Cmd+= / Cmd+- / Cmd+0 | Ctrl+= / Ctrl+- / Ctrl+0 |
 | Open init.lua (the settings) | Cmd+, | Ctrl+, |
@@ -1110,6 +1111,44 @@ blit.project.remove("Python")
 A field's `kind` is `text` (the default), `switch`, `choice`, or
 `libraries` with a `source` (`vcpkg`, `rocm`, `pkg-config`, `pypi`).
 
+## Markdown preview
+
+**Cmd+Shift+V** in a Markdown file opens its preview in a split to the
+right: the file drawn, in the theme's colours. It is drawn again as the
+file is typed in, and scrolls to where the file's cursor is. Cmd+Shift+V
+again brings it to the front; from the preview, it (or Esc) goes back to
+the file. In the preview the arrows, `j` and `k`, Page Up and Page Down
+(or Space and `b`), Home and End (or `g` and `G`) and the wheel scroll it;
+a click on a link opens a web address in the browser, another file beside
+this one in a tab, and `#heading` goes to that heading.
+
+It draws headings (the top two underlined), **bold**, *italic*, `code`,
+~~struck~~ text, links and autolinks (and links defined elsewhere with
+`[name]: url`), lists (nested, numbered from any number, `- [ ]` tasks),
+quotes (nested), tables (aligned as their `:--:` says, cells wrapped to
+fit), fenced and indented code (on a tinted band, the language at its
+top right), rules, line breaks, HTML (as it is, quieter), and leaves out
+front matter. Pictures cannot be drawn in cells: their alt text shows.
+
+**Mermaid diagrams** (` ```mermaid ` blocks) are drawn in box-drawing
+characters, laid out by blit itself (no browser, no JavaScript):
+
+- `graph` / `flowchart`, in any direction (TD, BT, LR, RL): every node
+  shape (`[ ]`, `( )`, `{ }` as a slanted box, `[[ ]]` doubled, `(( ))`
+  ...), arrows plain, dotted (`-.->`), thick (`==>`), without heads
+  (`---`), with circles or crosses, both ways (`<-->`), with text
+  (`-->|yes|`, `-- yes -->`), chains (`A --> B --> C`) and `&`. Nodes go
+  in ranks, ordered to cross as little as they can; an arrow back up a
+  loop is drawn back up. One too wide across for the view is drawn down.
+- `stateDiagram`: states, `[*]` as start and end dots, transitions with
+  what they say, `state "..." as X`, choices.
+- `sequenceDiagram`: participants (and `as` names), messages (`->>`,
+  `-->>`, `->`, `-x`), to oneself, notes (left of, right of, over),
+  `loop`/`alt`/`opt`/`par` blocks, `autonumber`.
+- `pie`: as bars, with each slice's share.
+
+Other kinds show as code, with a line that says so.
+
 ## How it is fast
 
 **Text is never copied.** The file is memory mapped and the document is a
@@ -1303,6 +1342,9 @@ src/appbuild.cpp   the Build tab, the Run button, the output terminal; the folde
 src/project.*      new projects: the kinds (C++, HIP, C, Python), their fields, the files and commands they make
 src/libraries.*    where libraries are looked up: vcpkg's ports and usage notes, ROCm's packages, pkg-config, PyPI
 src/fsio.*         files and small commands, here or on another machine
+src/markdown.*     Markdown parsed and laid out as rows of styled cells (blocks, inline styles, tables, lists)
+src/mermaid.*      Mermaid diagrams drawn in box-drawing characters: flowcharts and state diagrams laid out in ranks, sequence diagrams, pies
+src/appmarkdown.cpp the Markdown preview's tab: drawn again as the file changes, following its cursor, links
 src/agent/         the agent: what it and blit say to one another, the program, its build for Linux (Docker), the builds
 src/keymap.*    key mappings: Vim's key notation, the table of mappings, what keys typed so far add up to
 src/job.*       programs run in the background for scripts, on threads of their own
@@ -1386,6 +1428,7 @@ tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, co
 tests/keys.sh build-debug/blit     # the command search, the new keys, and every command run from the search
 tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger)
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running) and new projects (a stand-in vcpkg)
+tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md against what they should draw, Mermaid, typing, Cmd+Shift+V
 ```
 
 The tests never connect to a real host: `$BLIT_SSH` names the program used
