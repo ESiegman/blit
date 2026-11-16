@@ -308,11 +308,13 @@ void Term::print(u32 cp) {
 void Term::index() {
     if (row_ == bottom_) scroll_up(top_, bottom_, 1);
     else if (row_ + 1 < rows_) ++row_;
+    wrap_next_ = false;  // (a line filled to its end and then a new line is one line, not two)
 }
 
 void Term::reverse_index() {
     if (row_ == top_) scroll_down(top_, bottom_, 1);
     else if (row_ > 0) --row_;
+    wrap_next_ = false;
 }
 
 void Term::scroll_up(u32 top, u32 bottom, u32 n) {

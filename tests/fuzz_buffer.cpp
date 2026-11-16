@@ -1475,6 +1475,11 @@ void term_test(int seeds) {
         check(screen(t) == "||", "the screen erased");
     }
     {
+        blit::Term t(5, 4);
+        t.feed("abcde\r\nfghij\nk");
+        check(screen(t) == "abcde|fghij|    k|", "a line filled to its end, then a new line: no blank line between: " + screen(t));
+    }
+    {
         blit::Term t(5, 3);
         t.feed("abcdefg");
         check(screen(t) == "abcde|fg|", "a long line wraps: " + screen(t));
