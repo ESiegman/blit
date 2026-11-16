@@ -142,6 +142,7 @@ struct App::Find {
     // Asked for by blit itself (the Profile tab): what is chosen or typed
     // goes here instead of being opened (a path) or to a script (a line).
     std::function<void(const std::string&)> chose;
+    std::function<void(int)> chose_item;  // (a list of blit's own, kFindPick: which of the items)
     // The command search (kFindCommand): each command's keys and what is
     // searched (its name and its keys, in words), and whether the next keys
     // pressed are to be looked up rather than acted on.
@@ -186,6 +187,7 @@ void App::find_open(int mode, const std::string& typed) {
     Find& f = *find_;
     if (find_open_ && f.script() && !(mode == f.mode && f.script())) find_close(false);  // (a script's picker is answered "nothing")
     f.chose = nullptr;  // (see find_choose)
+    f.chose_item = nullptr;
     if (find_open_ && f.mode == kFindAsk && mode != kFindAsk) {  // (ssh's question waits, and comes back when this box shuts)
         wipe(f.typed);
         f.ask_id = 0;
@@ -282,6 +284,16 @@ void App::find_choose(int mode, const std::string& prompt, const std::string& ty
     f.chose = std::move(chose);
 }
 
+// The box, with a list of blit's own to choose from: `chose` hears which (its index in items).
+void App::find_choose_item(const std::string& prompt, std::vector<std::string> items, std::function<void(int)> chose, const std::string& typed) {
+    Find& f = *find_;
+    if (find_open_ && f.script()) find_close(false);
+    f.items = std::move(items);
+    f.prompt = prompt;
+    find_open(kFindPick, typed);
+    f.chose_item = std::move(chose);
+}
+
 u64 App::find_ask_id() const { return find_open_ && find_->mode == kFindAsk ? find_->ask_id : 0; }
 
 // The question went unanswered (the connection ended): the box goes.
@@ -314,8 +326,9 @@ void App::find_close(bool chosen) {
     if (!chosen && f.mode == kFindSave) quit_after_save_ = close_after_save_ = false;  // no name: what was to follow the save does not
     pane_->cache_rev = ~0ull;
     dirty_ = true;
-    if (!chosen && f.script() && !f.chose) script_chose(false, -1, {});  // (the script hears that nothing was chosen)
+    if (!chosen && f.script() && !f.chose && !f.chose_item) script_chose(false, -1, {});  // (the script hears that nothing was chosen)
     f.chose = nullptr;
+    f.chose_item = nullptr;
     remote_asks();  // (a question ssh asked while this box was open)
 }
 
@@ -553,6 +566,13 @@ void App::find_accept() {
         if (f.mode == kFindPick && f.sel >= f.entries.size()) return;
         const int index = f.mode == kFindPick ? static_cast<int>(f.entries[f.sel].index) : -1;
         const std::string typed = f.typed;
+        if (f.chose_item) {  // blit's own list
+            auto chose = std::move(f.chose_item);
+            f.chose_item = nullptr;
+            find_close(true);
+            chose(index);
+            return;
+        }
         find_close(true);
         script_chose(true, index, typed);
         return;

@@ -57,6 +57,12 @@ bool App::script_ensure() {
     lua_newtable(L);
     luaL_setfuncs(L, kFs, 0);
     lua_setfield(L, -2, "fs");
+    lua_newtable(L);
+    luaL_setfuncs(L, kBuild, 0);
+    lua_setfield(L, -2, "build");
+    lua_newtable(L);
+    luaL_setfuncs(L, kProject, 0);
+    lua_setfield(L, -2, "project");
     lua_pushlstring(L, s.config_dir.data(), s.config_dir.size());
     lua_setfield(L, -2, "config_dir");
     lua_pushlstring(L, s.data_dir.data(), s.data_dir.size());
@@ -162,6 +168,115 @@ bool App::script_api(const char* name) {
     lua_rawget(L, -2);
     lua_remove(L, -2);
     if (lua_isfunction(L, -1)) return true;
+    lua_pop(L, 1);
+    return false;
+}
+
+// ---------------------------------------------------------------- blit.build and blit.project
+
+std::vector<std::string> App::script_hidden_builds() const { return script_ ? script_->build_hidden : std::vector<std::string>(); }
+
+// The systems init.lua added (blit.build.add) that the folder has, and their tasks.
+void App::script_build(const std::string& root, const std::vector<FsEntry>& files, std::vector<BuildTask>* tasks) {
+    if (!script_ || !script_->L || script_->build_hooks.empty()) return;
+    lua_State* const L = script_->L;
+    auto push_args = [&] {
+        lua_pushlstring(L, root.data(), root.size());
+        lua_createtable(L, static_cast<int>(files.size()), 0);
+        for (size_t i = 0; i < files.size(); ++i) {
+            lua_createtable(L, 0, 2);
+            lua_pushlstring(L, files[i].name.data(), files[i].name.size());
+            lua_setfield(L, -2, "name");
+            lua_pushstring(L, files[i].dir ? "dir" : "file");
+            lua_setfield(L, -2, "type");
+            lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+        }
+    };
+    std::vector<BuildTask> first;
+    const size_t n = script_->build_hooks.size();
+    for (size_t i = 0; i < n; ++i) {
+        if (!script_ || script_->L != L || i >= script_->build_hooks.size()) break;  // (a call started everything afresh, or took systems away)
+        const ScriptUi::BuildHook h = script_->build_hooks[i];
+        bool found = false;
+        for (const std::string& f : h.files)
+            for (const FsEntry& e : files) found |= e.name == f;
+        const std::string what = "blit.build.add(\"" + h.name + "\")";
+        if (!found && h.detect != LUA_NOREF) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, h.detect);
+            push_args();
+            if (script_call(2, 1, what.c_str())) {
+                found = lua_toboolean(L, -1);
+                lua_pop(L, 1);
+            }
+        }
+        if (!found || !script_ || script_->L != L) continue;
+        std::vector<BuildTask> got = h.tasks;
+        if (h.tasks_fn != LUA_NOREF) {
+            lua_rawgeti(L, LUA_REGISTRYINDEX, h.tasks_fn);
+            push_args();
+            if (script_call(2, 1, what.c_str())) {
+                got = script::tasks_at(L, -1, h.name);
+                lua_pop(L, 1);
+            }
+        }
+        for (BuildTask& t : got) t.system = h.name;
+        (h.first ? first : *tasks).insert((h.first ? first : *tasks).end(), got.begin(), got.end());
+    }
+    tasks->insert(tasks->begin(), first.begin(), first.end());
+}
+
+std::vector<ProjectKind> App::script_project_kinds() {
+    std::vector<ProjectKind> out;
+    const ScriptUi* s = script_ && script_->L ? script_.get() : nullptr;
+    for (const ProjectKind& k : project_kinds())
+        if (!s || std::find(s->project_hidden.begin(), s->project_hidden.end(), k.name) == s->project_hidden.end()) out.push_back(k);
+    if (s)
+        for (const ScriptUi::ProjectHook& h : s->project_hooks) {
+            ProjectKind k;
+            k.name = h.name;
+            k.description = h.description;
+            k.fields = h.fields;
+            k.scripted = true;
+            std::erase_if(out, [&](const ProjectKind& o) { return o.name == k.name; });
+            out.push_back(std::move(k));
+        }
+    return out;
+}
+
+// init.lua's kind of project made in dir (there already): create(dir, values) -> the file to open, a command to run.
+bool App::script_project_create(const std::string& kind, const std::string& dir, const ProjectValues& values, std::string* open, std::string* then, std::string* err) {
+    if (!script_ || !script_->L) return *err = "init.lua is not running", false;
+    lua_State* const L = script_->L;
+    int fn = LUA_NOREF;
+    for (const ScriptUi::ProjectHook& h : script_->project_hooks)
+        if (h.name == kind) fn = h.create;
+    if (fn == LUA_NOREF) return *err = "no kind of project called " + kind, false;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, fn);
+    lua_pushlstring(L, dir.data(), dir.size());
+    lua_createtable(L, 0, static_cast<int>(values.size()));
+    for (const auto& [k, v] : values) {
+        if (v == "true" || v == "false") lua_pushboolean(L, v == "true");
+        else lua_pushlstring(L, v.data(), v.size());
+        lua_setfield(L, -2, k.c_str());
+    }
+    if (!script_call(2, 2, ("blit.project.add(\"" + kind + "\")").c_str())) return *err = "its create function failed (:messages says why)", false;
+    if (lua_type(L, -2) == LUA_TSTRING) *open = std::string(script::str_at(L, -2));
+    if (lua_type(L, -1) == LUA_TSTRING) *then = std::string(script::str_at(L, -1));
+    lua_pop(L, 2);
+    return true;
+}
+
+// blit[table][name] on the stack, if it is a function (as script_api).
+bool App::script_lib(const char* table, const char* name) {
+    lua_State* L = script_->L;
+    lua_rawgeti(L, LUA_REGISTRYINDEX, script_->api);
+    lua_getfield(L, -1, table);
+    lua_remove(L, -2);
+    if (lua_istable(L, -1)) {
+        lua_getfield(L, -1, name);
+        lua_remove(L, -2);
+        if (lua_isfunction(L, -1)) return true;
+    }
     lua_pop(L, 1);
     return false;
 }

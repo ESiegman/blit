@@ -183,7 +183,7 @@ target_link_libraries(blit_lsp PUBLIC blit_core)
 
 # The editor. Shaders are compiled offline by shaders/build.sh and the results
 # are checked in under shaders/gen, so this needs no shader tools.
-add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src/apptabs.cpp src/appsplit.cpp src/appgit.cpp src/appvim.cpp src/appfx.cpp src/appfind.cpp src/appstatus.cpp src/appstart.cpp src/appremote.cpp src/appprofile.cpp src/appterm.cpp src/appcommands.cpp src/appdebug.cpp src/dap.cpp src/applua.cpp src/luaapi.cpp src/git.cpp src/tree.cpp src/render.cpp)
+add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src/apptabs.cpp src/appsplit.cpp src/appgit.cpp src/appvim.cpp src/appfx.cpp src/appfind.cpp src/appstatus.cpp src/appstart.cpp src/appremote.cpp src/appprofile.cpp src/appterm.cpp src/appcommands.cpp src/appdebug.cpp src/appbuild.cpp src/build.cpp src/fsio.cpp src/project.cpp src/libraries.cpp src/dap.cpp src/applua.cpp src/luaapi.cpp src/git.cpp src/tree.cpp src/render.cpp)
 target_include_directories(blit PRIVATE ${LUA_INCLUDE_DIR})
 target_link_libraries(blit PRIVATE blit_view blit_syntax blit_lsp blit_gpu SDL3::SDL3 ${LUA_LIBRARY})
 
@@ -227,6 +227,7 @@ if(BLIT_DEV)
     add_test(NAME find COMMAND sh ${CMAKE_SOURCE_DIR}/tests/find.sh $<TARGET_FILE:blit>)
     add_test(NAME lua COMMAND sh ${CMAKE_SOURCE_DIR}/tests/lua.sh $<TARGET_FILE:blit>)
     add_test(NAME start COMMAND sh ${CMAKE_SOURCE_DIR}/tests/start.sh $<TARGET_FILE:blit>)
+    add_test(NAME build COMMAND sh ${CMAKE_SOURCE_DIR}/tests/build.sh $<TARGET_FILE:blit>)
     add_test(NAME remote COMMAND sh ${CMAKE_SOURCE_DIR}/tests/remote.sh $<TARGET_FILE:blit>)
     add_test(NAME profile COMMAND sh ${CMAKE_SOURCE_DIR}/tests/profile.sh $<TARGET_FILE:blit>)
     add_test(NAME term COMMAND sh ${CMAKE_SOURCE_DIR}/tests/term.sh $<TARGET_FILE:blit>)

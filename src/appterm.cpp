@@ -59,6 +59,9 @@ struct TermView {
     int out = -1;
     std::jthread reader;
     std::atomic<bool> told{false}, ended{false};
+    bool keep = false;    // a command's (a build's): the tab stays when it ends, and says how it went
+    std::string title;    // the tab's name, whatever the program calls itself
+    u64 started_ns = 0;
     std::atomic<int> status{0};
     // Drawn as.
     TextBox box;
@@ -218,7 +221,7 @@ struct TermView {
 
 // A terminal in a new tab, in `dir` (the folder being worked in when none
 // is given): a shell there, or on the machine that folder is on.
-void App::term_open(const std::string& dir_given) {
+u64 App::term_open(const std::string& dir_given, const std::string& command, const std::string& title) {
     const std::string* root = panel_root();
     const std::string dir = !dir_given.empty() ? dir_given : root ? *root : default_workdir();
     auto v = std::make_shared<TermView>();
@@ -233,6 +236,10 @@ void App::term_open(const std::string& dir_given) {
 #if BLIT_DEV
     if (const char* sh = SDL_getenv("BLIT_TERM_SHELL"); sh && *sh) argv = {"/bin/sh", "-c", std::string(argv[2].substr(0, argv[2].find("exec"))) + sh};  // (tests: a shell that is the same everywhere)
 #endif
+    if (!command.empty()) argv = {"/bin/sh", "-c", std::string(argv[2].substr(0, argv[2].find("exec"))) + command};  // (a build's: the command, not a shell)
+    v->keep = !command.empty();
+    v->title = title;
+    v->started_ns = now_ns();
     const std::vector<std::string> env = {"TERM=xterm-256color", "COLORTERM=truecolor", "TERM_PROGRAM=blit"};
     std::string err;
     const u32 rows = 24, cols = 80;  // (the tab's own size follows at its first frame)
@@ -244,7 +251,7 @@ void App::term_open(const std::string& dir_given) {
     } else {
         if (!pty_spawn(argv, dir, env, rows, cols, &v->pty, &err)) {
             tell(SDL_MESSAGEBOX_ERROR, ("Cannot start a terminal: " + err).c_str());
-            return;
+            return 0;
         }
         v->in = v->out = v->pty.fd;
     }
@@ -255,12 +262,13 @@ void App::term_open(const std::string& dir_given) {
     TermView* raw = v.get();
     v->reader = std::jthread([raw](std::stop_token stop) { raw->read_loop(stop); });
     Doc* d = add_doc(pane_->tab + 1);
-    d->title = remote ? "Terminal: " + host : "Terminal";
+    d->title = !title.empty() ? title : remote ? "Terminal: " + host : "Terminal";
     d->read_only = true;  // (its text is the program's: saving it is no saving)
     d->term = v;
     tab_show(pane_->tab + 1);
     panel_focus(false);
     dirty_ = true;
+    return d->id;
 }
 
 // The program has written something, or ended: its tab draws again; one
@@ -278,13 +286,22 @@ void App::term_sync() {
                 std::lock_guard lock(v.mu);
                 title = !v.term.title().empty() ? v.term.title() : v.term.cwd();
             }
-            if (!title.empty()) {
+            if (!title.empty() && v.title.empty()) {
                 if (title.size() > 60) title = "\xE2\x80\xA6" + title.substr(title.size() - 59);
                 const std::string named = v.host.empty() ? title : title + " (" + v.host + ")";
                 if (d.title != named) d.title = named;
             }
             if (v.ended && !d.term_closed) {
                 d.term_closed = true;
+                if (v.keep) {  // (a build's: how it went, and the time it took)
+                    char took[48];
+                    std::snprintf(took, sizeof took, "%.1f s", static_cast<double>(now_ns() - v.started_ns) * 1e-9);
+                    std::lock_guard lock(v.mu);
+                    v.term.feed(v.status == 0 ? std::string("\r\n\x1b[32m[done in ") + took + "]\x1b[0m"
+                                              : "\r\n\x1b[31m[failed with " + std::to_string(v.status.load()) + " after " + took + "]\x1b[0m");
+                    build_ended(d.id, v.status);
+                    continue;
+                }
                 if (v.status == 0) {  // (exit: the tab goes, as a terminal window would)
                     Pane* const focused = pane_;
                     pane_ = p.get();

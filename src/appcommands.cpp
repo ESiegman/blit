@@ -165,6 +165,14 @@ void App::commands_create() {
         if (!panel_px()) panel_toggle();
         panel_show_debug();
     });
+    // Building.
+    own("Run the build task (the Run button's)", {key(SDLK_B, kP | kS)}, [this] { build_run(-1); });
+    own("Stop the build", {}, [this] { build_stop(); });
+    own("Build (the side panel)", {key(SDLK_U, kP | kS)}, [this] {
+        if (!panel_px()) panel_toggle();
+        panel_show_build();
+    });
+    own("Look for build systems again", {}, [this] { build_changed(); });
     // Profiling.
     own("Record a profile (the Profile tab's program)", {}, [this] {
         if (!panel_px()) panel_toggle();

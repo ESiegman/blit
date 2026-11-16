@@ -789,6 +789,25 @@ void App::run_script(const char* script) {
             debug_wait(arg);
         } else if (verb == "debugdump") {
             std::fprintf(stderr, "%s\n", debug_dump().c_str());
+        } else if (verb == "newproject") {  // the start screen's New project tab
+            project_page(true);
+        } else if (verb == "project") {  // project:key=value (kind, name, where, git, or a field of the kind's)
+            const size_t eq = arg.find('=');
+            project_set(arg.substr(0, eq), eq == std::string::npos ? std::string() : arg.substr(eq + 1));
+        } else if (verb == "projectcreate") {
+            project_create();
+        } else if (verb == "projectdump") {
+            std::fprintf(stderr, "%s\n", project_dump().c_str());
+        } else if (verb == "buildpanel") {  // the side panel's Build tab
+            if (!panel_px()) panel_toggle();
+            panel_show_build();
+        } else if (verb == "builddump") {  // the tasks found (by system; > the Run button's), and how the last run went
+            std::fprintf(stderr, "%s\n", build_dump().c_str());
+        } else if (verb == "buildrun") {  // buildrun:name runs that task (buildrun alone: the Run button's)
+            build_settle();
+            if (!build_run_named(arg)) std::fprintf(stderr, "buildrun: no \"%s\"\n", arg.c_str());
+        } else if (verb == "buildwait") {  // the task run has ended (60 s at most)
+            build_wait();
         } else if (verb == "commands") {  // every command, a line each: its name, a tab, its keys
             for (const PaletteItem& it : palette_items()) std::fprintf(stderr, "%s\t%s\n", it.title.c_str(), it.keys.c_str());
         } else if (verb == "command") {  // command:name runs that command, as the command search would

@@ -17,9 +17,11 @@
 
 #include "remote.hpp"
 #include "app.hpp"
+#include "build.hpp"
 #include "finder.hpp"
 #include "job.hpp"
 #include "keymap.hpp"
+#include "project.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
 
@@ -207,6 +209,29 @@ inline std::vector<std::string> strings_at(lua_State* L, int t) {
         const int type = lua_rawgeti(L, t, static_cast<lua_Integer>(i));
         if (type == LUA_TSTRING || type == LUA_TNUMBER) out.emplace_back(str_at(L, -1));
         lua_pop(L, 1);
+    }
+    return out;
+}
+// Tasks from a list: {name =, cmd =, cwd =, default =} each, or a command alone.
+inline std::vector<BuildTask> tasks_at(lua_State* L, int t, const std::string& system) {
+    std::vector<BuildTask> out;
+    if (!lua_istable(L, t)) return out;
+    t = lua_absindex(L, t);
+    const lua_Unsigned n = lua_rawlen(L, t);
+    for (lua_Unsigned i = 1; i <= n; ++i) {
+        const int type = lua_rawgeti(L, t, static_cast<lua_Integer>(i));
+        BuildTask task;
+        task.system = system;
+        if (type == LUA_TSTRING) {
+            task.name = task.cmd = std::string(str_at(L, -1));
+        } else if (type == LUA_TTABLE) {
+            task.cmd = field_str(L, -1, "cmd");
+            task.name = field_str(L, -1, "name", task.cmd);
+            task.cwd = field_str(L, -1, "cwd");
+            task.def = field_bool(L, -1, "default", false);
+        }
+        lua_pop(L, 1);
+        if (!task.cmd.empty()) out.push_back(std::move(task));
     }
     return out;
 }
@@ -419,6 +444,27 @@ struct App::ScriptUi {
     // What init.lua asked for that needs the window (commands, keys, files to open): done once blit has started.
     std::vector<std::pair<char, std::string>> later;
 
+    // What init.lua adds to the Build tab (blit.build.add) and to the start
+    // screen's New project tab (blit.project.add), and the built-in ones it
+    // took away.
+    struct BuildHook {
+        std::string name;
+        std::vector<std::string> files;  // found when any of these is in the folder,
+        int detect = LUA_NOREF;          // or when detect(root, files) says so
+        std::vector<BuildTask> tasks;    // these, or what tasks(root, files) gives
+        int tasks_fn = LUA_NOREF;
+        bool first = false;              // before the built-in systems
+    };
+    std::vector<BuildHook> build_hooks;
+    std::vector<std::string> build_hidden;
+    struct ProjectHook {
+        std::string name, description;
+        std::vector<ProjectField> fields;
+        int create = LUA_NOREF;  // create(dir, values) -> the file to open, a command to run there
+    };
+    std::vector<ProjectHook> project_hooks;
+    std::vector<std::string> project_hidden;
+
     void unref(int& r) {
         if (L && r != LUA_NOREF && r != LUA_REFNIL) luaL_unref(L, LUA_REGISTRYINDEX, r);
         r = LUA_NOREF;
@@ -451,7 +497,7 @@ inline int traceback(lua_State* L) {
 // The API, put into a Lua state: the functions of `blit`, of blit.ui and of
 // blit.fs, the part of it written in Lua, and the hook that stops a script
 // that runs too long (src/luaapi.cpp).
-extern const luaL_Reg kTop[], kUi[], kFs[];
+extern const luaL_Reg kTop[], kUi[], kFs[], kBuild[], kProject[];
 extern const char kBoot[];
 extern const size_t kBootSize;
 void count_hook(lua_State* L, lua_Debug* ar);

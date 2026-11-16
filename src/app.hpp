@@ -9,6 +9,7 @@
 #include <thread>
 #include <vector>
 
+#include "build.hpp"
 #include "config.hpp"
 #include "editor.hpp"
 #include "font.hpp"
@@ -16,6 +17,7 @@
 #include "grammars.hpp"
 #include "keymap.hpp"
 #include "lsp.hpp"
+#include "project.hpp"
 #include "render.hpp"
 #include "syntax.hpp"
 #include "vim.hpp"
@@ -304,6 +306,7 @@ private:
     u64 find_ask_id() const;
     void find_drop_ask();
     void find_choose(int mode, const std::string& prompt, const std::string& typed, std::function<void(const std::string&)> chose);
+    void find_choose_item(const std::string& prompt, std::vector<std::string> items, std::function<void(int)> chose, const std::string& typed = {});
     void remote_asks();
     void save_named(const std::string& path, u64 doc);
     void remember_place();  // where the cursor is now is somewhere to come back to
@@ -360,6 +363,17 @@ private:
     bool start_mouse_motion(const SDL_MouseMotionEvent& m);
     void start_layout(FrameDesc& fd);
     std::string start_dump();
+    // The start screen's New project tab (appstart.cpp, project.cpp).
+    void project_page(bool on);
+    void project_change(int by);  // the chosen row's value, a step along (a choice, a switch)
+    void project_edit(const std::string& typed = {});
+    void project_set(const std::string& key, const std::string& value);
+    bool project_create();
+    std::string project_dump();
+    void project_cells(u32 cols, u32 rows);
+    void project_facts(bool wait);  // what the machine the project goes on has: vcpkg, ROCm, GPUs, uv, pkg-config
+    void project_facts_apply();
+    void project_libraries(const std::string& typed = {});
     void recent_add(const std::string& path, bool dir);
 
     // Files on other machines (appremote.cpp): read on a thread of their
@@ -400,7 +414,10 @@ private:
     void panel_show_profile();
 
     // Terminals (appterm.cpp): a tab running a shell, here or on another machine.
-    void term_open(const std::string& dir = {});
+    // A terminal tab in dir (the working folder when none): a login shell, or
+    // `command` run by sh, whose tab stays when it ends and says how (and
+    // keeps `title`). Its document's id; 0 if it could not start.
+    u64 term_open(const std::string& dir = {}, const std::string& command = {}, const std::string& title = {});
     void term_sync();
     void term_layout(FrameDesc& fd);
     void term_copy(TermView& v);
@@ -455,6 +472,38 @@ private:
     void debug_wait(const std::string& state);
     std::string debug_dump();
     void panel_show_debug();
+
+    // Building (appbuild.cpp, build.cpp): what the working folder builds
+    // with, the Build tab, the Run button at the top right, and the output
+    // terminal below the text that runs a task.
+    struct BuildUi;
+    void build_create();
+    std::string build_root() const;
+    void build_follow();   // after each frame: the folder looked at, when it changed
+    void build_sync();     // what the worker that looked found
+    void build_changed();  // look again (init.lua's systems changed, or Cmd+R)
+    void build_settle();   // looked at now, and waited for
+    std::vector<BuildTask> build_tasks();
+    u64 build_command(const std::string& dir, const std::string& cmd, const std::string& title);
+    void build_run(int index);  // a task of the Build tab's (-1: the Run button's)
+    bool build_run_named(const std::string& name);
+    void build_stop();
+    void build_ended(u64 doc, int status);
+    void build_panel_draw(struct TextBox& box, bool focused);
+    void build_panel_click(int row, int col, const SDL_MouseButtonEvent& b);
+    bool build_panel_key(const SDL_KeyboardEvent& k);
+    void build_measure();
+    int build_reserve(const Pane& p) const;  // the room the Run button takes from p's tab bar
+    void build_layout(int w, FrameDesc& fd);
+    bool build_mouse_down(const SDL_MouseButtonEvent& b);
+    std::string build_dump();
+    void build_wait();
+    void panel_show_build();
+    // What init.lua adds (applua.cpp).
+    std::vector<std::string> script_hidden_builds() const;
+    void script_build(const std::string& root, const std::vector<FsEntry>& files, std::vector<BuildTask>* tasks);
+    std::vector<ProjectKind> script_project_kinds();  // the built-in kinds it kept, and its own
+    bool script_project_create(const std::string& kind, const std::string& dir, const ProjectValues& values, std::string* open, std::string* then, std::string* err);
     void lsp_forget_failed(const std::string& suffix);  // (applsp.cpp) servers that failed there may be tried again
 
     // The status bar along the bottom (appstatus.cpp).
@@ -577,6 +626,7 @@ private:
     bool script_file(const std::string& path);
     bool script_string(std::string_view code, const char* name);
     bool script_api(const char* name);
+    bool script_lib(const char* table, const char* name);  // blit[table][name], a function, on the stack
     std::string script_set(const std::string& key, const std::string& value, const std::string& from);
     void script_set_command(const std::string& arg);
     // 0 information, 1 a warning, 2 an error; `detail` (a traceback) goes to :messages and the standard error, not the box.
@@ -656,6 +706,8 @@ private:
     std::shared_ptr<StartUi> start_;
     std::shared_ptr<Commands> commands_;
     std::shared_ptr<DebugUi> debugui_;
+    std::shared_ptr<BuildUi> buildui_;
+    u64 build_gen_ = 1;  // counts up whenever what the Build tab or the Run button shows may have changed
     u64 debug_gen_ = 1;  // counts up whenever breakpoints, the Debug tab or the stopped line may have changed
     std::vector<GridNote> debug_notes_[kMaxViews];
     std::vector<u32> debug_note_cells_[kMaxViews];

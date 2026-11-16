@@ -2,6 +2,7 @@
 // scripts are run, and why nothing here lets Lua raise an error while one
 // of its variables is alive, is in src/applua.cpp.
 #include "applua.hpp"
+#include "fsio.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -734,6 +735,224 @@ struct ScriptApi {
         }
         return 1;
     }
+    // blit.fs.read(path [, most]) -> text, or nil and why; blit.fs.write(path, text) and
+    // blit.fs.mkdir(path) -> true, or nil and why. (Another machine's paths too: ssh://host/...)
+    static int fs_read(lua_State* L) {
+        if (!is_str(L, 1)) return fail("blit.fs.read: a path is wanted");
+        const std::string path(str_at(L, 1));
+        const u64 most = static_cast<u64>(std::max<lua_Integer>(1, luaL_optinteger(L, 2, 16 << 20)));
+        std::string text;
+        if (!::blit::fs_read(path, &text, most)) {
+            lua_pushnil(L);
+            lua_pushstring(L, ("cannot read " + path).c_str());
+            return 2;
+        }
+        lua_pushlstring(L, text.data(), text.size());
+        return 1;
+    }
+    static int fs_write(lua_State* L) {
+        if (!is_str(L, 1) || !is_str(L, 2)) return fail("blit.fs.write: a path and the text are wanted");
+        const std::string path(str_at(L, 1));
+        std::string err;
+        if (!::blit::fs_write(path, str_at(L, 2), &err)) {
+            lua_pushnil(L);
+            lua_pushstring(L, ("cannot write " + path + ": " + err).c_str());
+            return 2;
+        }
+        lua_pushboolean(L, 1);
+        return 1;
+    }
+    static int fs_mkdir(lua_State* L) {
+        if (!is_str(L, 1)) return fail("blit.fs.mkdir: a path is wanted");
+        const std::string path(str_at(L, 1));
+        std::string err;
+        if (!fs_mkdirs(path, &err)) {
+            lua_pushnil(L);
+            lua_pushstring(L, ("cannot make " + path + ": " + err).c_str());
+            return 2;
+        }
+        lua_pushboolean(L, 1);
+        return 1;
+    }
+
+    // ------------------------------------------------ blit.build
+
+    static void push_task(lua_State* L, const BuildTask& t) {
+        lua_createtable(L, 0, 5);
+        lua_pushlstring(L, t.system.data(), t.system.size());
+        lua_setfield(L, -2, "system");
+        lua_pushlstring(L, t.name.data(), t.name.size());
+        lua_setfield(L, -2, "name");
+        lua_pushlstring(L, t.cmd.data(), t.cmd.size());
+        lua_setfield(L, -2, "cmd");
+        lua_pushlstring(L, t.cwd.data(), t.cwd.size());
+        lua_setfield(L, -2, "cwd");
+        lua_pushboolean(L, t.def);
+        lua_setfield(L, -2, "default");
+    }
+    // blit.build.add(name, {detect = file(s) | function(root, files), tasks = list | function(root, files), first = bool})
+    static int build_add(lua_State* L) {
+        if (!is_str(L, 1) || !lua_istable(L, 2)) return fail("blit.build.add: a name and a table are wanted");
+        App::ScriptUi& s = ui(L);
+        App::ScriptUi::BuildHook h;
+        h.name = std::string(str_at(L, 1));
+        const int dt = field(L, 2, "detect");
+        if (dt == LUA_TFUNCTION) {
+            h.detect = luaL_ref(L, LUA_REGISTRYINDEX);
+        } else {
+            if (dt == LUA_TSTRING) h.files.emplace_back(str_at(L, -1));
+            else if (dt == LUA_TTABLE) h.files = strings_at(L, -1);
+            lua_pop(L, 1);
+        }
+        const int tt = field(L, 2, "tasks");
+        if (tt == LUA_TFUNCTION) {
+            h.tasks_fn = luaL_ref(L, LUA_REGISTRYINDEX);
+        } else {
+            h.tasks = tasks_at(L, -1, h.name);
+            lua_pop(L, 1);
+        }
+        h.first = field_bool(L, 2, "first", false);
+        const char* wrong = h.detect == LUA_NOREF && h.files.empty() ? "blit.build.add: detect is a file's name, a list of them, or a function"
+                            : h.tasks_fn == LUA_NOREF && h.tasks.empty() ? "blit.build.add: tasks is a list ({name =, cmd =} each) or a function"
+                                                                         : nullptr;
+        if (wrong) {
+            s.unref(h.detect);
+            s.unref(h.tasks_fn);
+            return fail("%s", wrong);
+        }
+        std::erase(s.build_hidden, h.name);
+        bool replaced = false;
+        for (App::ScriptUi::BuildHook& have : s.build_hooks)
+            if (have.name == h.name) {
+                s.unref(have.detect);
+                s.unref(have.tasks_fn);
+                have = std::move(h);
+                replaced = true;
+                break;
+            }
+        if (!replaced) s.build_hooks.push_back(std::move(h));
+        app(L).build_changed();
+        return 0;
+    }
+    // blit.build.remove(name): one of init.lua's, or a built-in system, no longer looked for.
+    static int build_remove(lua_State* L) {
+        if (!is_str(L, 1)) return fail("blit.build.remove: a name is wanted");
+        App::ScriptUi& s = ui(L);
+        const std::string name(str_at(L, 1));
+        for (size_t i = 0; i < s.build_hooks.size(); ++i)
+            if (s.build_hooks[i].name == name) {
+                s.unref(s.build_hooks[i].detect);
+                s.unref(s.build_hooks[i].tasks_fn);
+                s.build_hooks.erase(s.build_hooks.begin() + static_cast<std::ptrdiff_t>(i));
+                break;
+            }
+        if (std::find(s.build_hidden.begin(), s.build_hidden.end(), name) == s.build_hidden.end()) s.build_hidden.push_back(name);
+        app(L).build_changed();
+        return 0;
+    }
+    // blit.build.systems() -> the names of the systems looked for.
+    static int build_list_systems(lua_State* L) {
+        App::ScriptUi& s = ui(L);
+        lua_newtable(L);
+        lua_Integer i = 0;
+        for (const App::ScriptUi::BuildHook& h : s.build_hooks)
+            if (h.first) lua_pushlstring(L, h.name.data(), h.name.size()), lua_rawseti(L, -2, ++i);
+        for (const std::string& n : build_systems())
+            if (std::find(s.build_hidden.begin(), s.build_hidden.end(), n) == s.build_hidden.end()) lua_pushlstring(L, n.data(), n.size()), lua_rawseti(L, -2, ++i);
+        for (const App::ScriptUi::BuildHook& h : s.build_hooks)
+            if (!h.first) lua_pushlstring(L, h.name.data(), h.name.size()), lua_rawseti(L, -2, ++i);
+        return 1;
+    }
+    // blit.build.tasks() -> the Build tab's tasks ({system, name, cmd, cwd, default} each).
+    static int build_list_tasks(lua_State* L) {
+        const std::vector<BuildTask> tasks = app(L).build_tasks();
+        lua_createtable(L, static_cast<int>(tasks.size()), 0);
+        for (size_t i = 0; i < tasks.size(); ++i) {
+            push_task(L, tasks[i]);
+            lua_rawseti(L, -2, static_cast<lua_Integer>(i + 1));
+        }
+        return 1;
+    }
+    // blit.build.run([name]): the task of that name ("Build", or "CMake: Build"), or the one the Run button runs.
+    static int build_run(lua_State* L) {
+        const std::string name = is_str(L, 1) ? std::string(str_at(L, 1)) : std::string();
+        lua_pushboolean(L, app(L).build_run_named(name));
+        return 1;
+    }
+
+    // ------------------------------------------------ blit.project
+
+    // blit.project.add(name, {description =, fields = {...}, create = function(dir, values)})
+    static int project_add(lua_State* L) {
+        if (!is_str(L, 1) || !lua_istable(L, 2)) return fail("blit.project.add: a name and a table are wanted");
+        App::ScriptUi& s = ui(L);
+        App::ScriptUi::ProjectHook h;
+        h.name = std::string(str_at(L, 1));
+        h.description = field_str(L, 2, "description");
+        if (field(L, 2, "fields") == LUA_TTABLE) {
+            const int t = lua_gettop(L);
+            const lua_Unsigned n = lua_rawlen(L, t);
+            for (lua_Unsigned i = 1; i <= n; ++i) {
+                if (lua_rawgeti(L, t, static_cast<lua_Integer>(i)) == LUA_TTABLE) {
+                    ProjectField f;
+                    f.key = field_str(L, -1, "key");
+                    f.label = field_str(L, -1, "label", f.key);
+                    const std::string kind = field_str(L, -1, "kind", "text");
+                    f.kind = kind == "switch" || kind == "bool" ? ProjectField::kSwitch : kind == "choice" ? ProjectField::kChoice : ProjectField::kText;
+                    if (field(L, -1, "choices") == LUA_TTABLE) f.choices = strings_at(L, -1);
+                    lua_pop(L, 1);
+                    const int dt = field(L, -1, "default");
+                    if (dt == LUA_TBOOLEAN) f.def = lua_toboolean(L, -1) ? "true" : "false";
+                    else if (dt == LUA_TSTRING || dt == LUA_TNUMBER) f.def = std::string(str_at(L, -1));
+                    lua_pop(L, 1);
+                    if (f.kind == ProjectField::kSwitch && f.def != "true") f.def = "false";
+                    if (f.kind == ProjectField::kChoice && f.def.empty() && !f.choices.empty()) f.def = f.choices[0];
+                    if (field(L, -1, "when") == LUA_TTABLE) {
+                        lua_pushnil(L);
+                        if (lua_next(L, -2)) {  // (its first pair: key = value, or key = {values})
+                            if (lua_type(L, -2) == LUA_TSTRING) f.when_key = std::string(str_at(L, -2));
+                            if (lua_type(L, -1) == LUA_TTABLE) f.when_values = strings_at(L, -1);
+                            else if (lua_type(L, -1) == LUA_TBOOLEAN) f.when_values = {lua_toboolean(L, -1) ? "true" : "false"};
+                            else if (lua_type(L, -1) == LUA_TSTRING) f.when_values = {std::string(str_at(L, -1))};
+                            lua_pop(L, 2);
+                        }
+                    }
+                    lua_pop(L, 1);
+                    if (!f.key.empty() && (f.kind != ProjectField::kChoice || !f.choices.empty())) h.fields.push_back(std::move(f));
+                }
+                lua_pop(L, 1);
+            }
+        }
+        lua_pop(L, 1);
+        if (field(L, 2, "create") != LUA_TFUNCTION) {
+            lua_pop(L, 1);
+            return fail("blit.project.add: create = function(dir, values) is wanted");
+        }
+        h.create = luaL_ref(L, LUA_REGISTRYINDEX);
+        std::erase(s.project_hidden, h.name);
+        for (App::ScriptUi::ProjectHook& have : s.project_hooks)
+            if (have.name == h.name) {
+                s.unref(have.create);
+                have = std::move(h);
+                return 0;
+            }
+        s.project_hooks.push_back(std::move(h));
+        return 0;
+    }
+    // blit.project.remove(name): one of init.lua's, or a built-in kind, no longer offered.
+    static int project_remove(lua_State* L) {
+        if (!is_str(L, 1)) return fail("blit.project.remove: a name is wanted");
+        App::ScriptUi& s = ui(L);
+        const std::string name(str_at(L, 1));
+        for (size_t i = 0; i < s.project_hooks.size(); ++i)
+            if (s.project_hooks[i].name == name) {
+                s.unref(s.project_hooks[i].create);
+                s.project_hooks.erase(s.project_hooks.begin() + static_cast<std::ptrdiff_t>(i));
+                break;
+            }
+        if (std::find(s.project_hidden.begin(), s.project_hidden.end(), name) == s.project_hidden.end()) s.project_hidden.push_back(name);
+        return 0;
+    }
     static int fs_exists(lua_State* L) {
         if (!is_str(L, 1)) return fail("blit.fs.exists: a path is wanted");
         const char* k = kind_of(std::string(str_at(L, 1)));
@@ -961,7 +1180,11 @@ const luaL_Reg kTop[] = {
     {"_select", api<ScriptApi::select>},     {"_input", api<ScriptApi::input>},     {nullptr, nullptr}};
 const luaL_Reg kUi[] = {{"float", api<ScriptApi::float_open>}, {"set", api<ScriptApi::float_set>}, {"close", api<ScriptApi::float_close>},
                         {"status", api<ScriptApi::status>},    {nullptr, nullptr}};
-const luaL_Reg kFs[] = {{"list", api<ScriptApi::fs_list>}, {"exists", api<ScriptApi::fs_exists>}, {nullptr, nullptr}};
+const luaL_Reg kFs[] = {{"list", api<ScriptApi::fs_list>},   {"exists", api<ScriptApi::fs_exists>}, {"read", api<ScriptApi::fs_read>},
+                        {"write", api<ScriptApi::fs_write>}, {"mkdir", api<ScriptApi::fs_mkdir>},   {nullptr, nullptr}};
+const luaL_Reg kBuild[] = {{"add", api<ScriptApi::build_add>},           {"remove", api<ScriptApi::build_remove>}, {"systems", api<ScriptApi::build_list_systems>},
+                           {"tasks", api<ScriptApi::build_list_tasks>},  {"run", api<ScriptApi::build_run>},       {nullptr, nullptr}};
+const luaL_Reg kProject[] = {{"add", api<ScriptApi::project_add>}, {"remove", api<ScriptApi::project_remove>}, {nullptr, nullptr}};
 
 // The part of the API written in Lua. It is run with the table `blit` as
 // its argument, before anything of the user's.

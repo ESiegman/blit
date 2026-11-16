@@ -404,7 +404,7 @@ void App::tabs_layout(int w, int h, FrameDesc& fd, bool focused) {
     if (!bar || fd.popup_count >= std::size(fd.popups)) return;
     const int cw = font_->cell_w(), ch = font_->cell_h();
     (void)w;
-    const int pad_x = cw / 2 + 1, width = std::max(1, pane_->x1 - pane_->x0);
+    const int pad_x = cw / 2 + 1, width = std::max(1, pane_->x1 - pane_->x0 - build_reserve(*pane_));  // (the Run button's room taken)
     const u32 cols = static_cast<u32>(std::max(1, (width - 2 * pad_x) / cw));
 
     // One number that changes whenever any of that does.
@@ -541,7 +541,7 @@ void App::tabs_layout(int w, int h, FrameDesc& fd, bool focused) {
     Popup& p = fd.popups[fd.popup_count++];
     p.x = pane_->x0;
     p.y = pane_->y0;
-    p.w = width;
+    p.w = std::max(1, pane_->x1 - pane_->x0);  // (all of it: the Run button, if it is here, is drawn over its end)
     p.h = std::min(bar, pane_->y1 - pane_->y0);
     p.pad_x = pad_x;
     p.pad_y = (bar - ch) / 2;

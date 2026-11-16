@@ -33,7 +33,8 @@ build; see [Testing](#testing).
 
 Started with no file, blit shows its start screen: its name, what can be
 done first, and the files and folders opened lately. Each has a key:
-`n` a new file, `o` a file opened by its path, `f` a file found by name in
+`n` a new file, `p` a new project (the New project tab: see
+[New projects](#new-projects)), `o` a file opened by its path, `f` a file found by name in
 the working folder, `s` a search of the folder's files, `d` a folder to
 work in, `c` the settings (init.lua), `q` quit, and `1` to `9` what was
 opened lately (a folder becomes the working folder and the side panel
@@ -42,7 +43,8 @@ same; Esc leaves an empty file to type into. It goes once something is
 opened. The files and folders opened lately (up to 30) are kept in
 `recent` in blit's data folder (`~/.local/share/blit`, or under
 `$XDG_DATA_HOME`). `blit.opt.editor.start_screen = false` starts with an
-empty file instead.
+empty file instead. Ctrl+Tab goes between its two tabs, Start and New
+project.
 
 Everything blit does can be done from the keyboard. **Cmd+Shift+P**
 (Ctrl+Shift+P elsewhere) searches every command by its name or its keys,
@@ -83,6 +85,7 @@ and everything in it that has Cmd in it (Ctrl elsewhere) works in every mode.
 | The split wider / narrower, taller / shorter | Cmd+Ctrl+Right / Left, Down / Up | |
 | A terminal, in the working folder | Ctrl+` | Ctrl+` |
 | The Problems / Git / Profile tab of the side panel | Cmd+Shift+M / G / R | Ctrl+Shift+M / G / R |
+| The Build tab; run its chosen task (the Run button) | Cmd+Shift+U; Cmd+Shift+B | Ctrl+Shift+U; Ctrl+Shift+B |
 | Blame column on or off | Cmd+Option+B | Ctrl+Alt+B |
 | Font size | Cmd+= / Cmd+- / Cmd+0 | Ctrl+= / Ctrl+- / Ctrl+0 |
 | Open init.lua (the settings) | Cmd+, | Ctrl+, |
@@ -671,6 +674,9 @@ front):
 | `blit.cursor()`, `blit.set_cursor(line, col)`, `blit.selection()`, `blit.insert(text)` | |
 | `blit.open(path)`, `blit.save(buf)`, `blit.close(buf, force)` | |
 | `blit.workdir()`, `blit.set_workdir(dir)`, `blit.fs.list(dir)`, `blit.fs.exists(path)` | |
+| `blit.fs.read(path, most)`, `blit.fs.write(path, text)`, `blit.fs.mkdir(path)` | a file's text, written, a folder made (with those above it); here or `ssh://`; nil and why when they cannot |
+| `blit.build.add(name, spec)`, `blit.build.remove(name)`, `blit.build.systems()`, `blit.build.tasks()`, `blit.build.run(name)` | build systems for the Build tab; see [Building](#building) |
+| `blit.project.add(name, spec)`, `blit.project.remove(name)` | kinds of project for the New project tab; see [New projects](#new-projects) |
 | `blit.defer(ms, fn)`, `blit.every(ms, fn)`, `blit.schedule(fn)`, `blit.stop(id)` | timers |
 | `blit.system(argv, opts, on_exit)`, `blit.kill(id)` | a program in the background; opts: `cwd`, `stdin`, `env`, `stdout` and `stderr` (functions: output as it comes), `timeout`; on_exit gets `code`, `stdout`, `stderr`. Without on_exit it is waited for and that is returned |
 | `blit.notify(text, level)`, `print(...)`, `blit.messages()` | levels `info`, `warn`, `error`; `:messages` shows the last ones |
@@ -995,6 +1001,112 @@ debugged there, with that machine's debugger, its source opened from
 there. Build what is debugged with `-g` (and `-O0` to step through it as
 written).
 
+## Building
+
+The side panel's **Build** tab (Cmd+Shift+U) lists what the working
+folder builds with, found from its files: CMake (its presets, and each
+folder it was configured in: `build*`, `cmake-build-*`, `out`), Meson,
+make (with its targets), autotools and Ninja for C, C++ and HIP, and uv
+or pip for Python (its `.venv`, `pytest` when there are tests, `python -m`
+for a package with a `__main__`). Other languages' build systems are
+init.lua's to add, with `blit.build.add` (below).
+
+Each task is a command run by the shell. Enter runs the one chosen; Space
+makes it the one the **Run button** at the window's top right runs
+(`▶ Build (debug)`, or `■ Stop` while it runs), and **Cmd+Shift+B** runs
+that one from anywhere. The output is in a terminal tab in a split below
+the text, used again by the next run (a run still going there is ended),
+and the keyboard stays where it was. When it ends the tab says how, and
+the folder is looked at again (a configure makes a build folder, whose
+tasks then show). Cmd+R in the tab looks again by hand. On another
+machine (`ssh://`) the folder is looked at, and the tasks run, there.
+
+```lua
+-- In init.lua: a system of your own (files that say it is there, its tasks).
+blit.build.add("Cargo", {
+  detect = {"Cargo.toml"},             -- or function(root, files) return true end
+  tasks = {
+    {name = "Build", cmd = "cargo build", default = true},
+    {name = "Test", cmd = "cargo test"},
+    "cargo clippy",                     -- a command alone is its own name
+  },                                    -- or function(root, files) return {...} end
+  first = false,                        -- true: before the built-in ones
+})
+blit.build.remove("Autotools")          -- a built-in one (or your own) not looked for
+blit.map("n", "<leader>t", function() blit.build.run("Test") end)
+```
+
+`files` is the folder's entries (`{name =, type = "file" | "dir"}`). A
+task's `cwd` (relative to the folder) is where it runs.
+
+## New projects
+
+The start screen's **New project** tab (`p`, or Ctrl+Tab) makes a project
+from a form: its kind, name, location (any folder, or `ssh://host/...` to
+make it on another machine), whether it is a git repository, and the
+kind's own choices. Up and Down move, Left and Right (or Space) change a
+choice or a switch, Enter types into a line or looks up libraries, and
+Cmd+Enter (or Enter on Create) makes it. Under the form it says which
+files it writes and what it runs once they are written.
+
+| Kind | What it is | Its choices |
+|---|---|---|
+| C++ | CMake | program or library (static, shared, header-only), standard, libraries from vcpkg, tests (CTest, Catch2, GoogleTest, doctest), warnings, sanitizers, release tuning, link-time optimization, generator, presets, install rules, clangd, clang-tidy, clang-format |
+| HIP | CMake with `LANGUAGES HIP` | program or library, GPU targets (those of the machine's GPUs, from `rocm_agent_enumerator`), standard, ROCm libraries (those installed), host libraries from vcpkg, GPU tests (skipped where there is no GPU), sanitizers, a rocprofv3 script |
+| C | CMake, Meson or make | program or library, standard, libraries from vcpkg (CMake) or pkg-config, tests, warnings, sanitizers, hardening |
+| Python | uv or pip | application, library or script (PEP 723), Python version, layout, build backend, dependencies and dev dependencies from PyPI, a command, pytest or unittest, Ruff, a type checker |
+
+Headers go in `include/NAME/`, sources in `src/`; a program is a library
+of what it does and a small `main`, so its tests have something to link.
+Flags are a target's own (never global), and a CMake project has presets
+(debug with the sanitizers, release, and ci with warnings as errors).
+Once the files are written blit runs `git init` and the configure (or
+the venv, or `uv add`) in the Build tab's output terminal, opens the main
+file, and makes the folder the working folder.
+
+**Libraries are looked up, not ticked from a list of a few.** Enter on a
+Libraries row opens a search of them; choosing one adds it (or takes it
+away) and the search comes back for the next. Where they come from:
+
+- **vcpkg**: its ports, from its folder (`VCPKG_ROOT`, or `~/vcpkg`,
+  `~/Dev/vcpkg`, `/opt/vcpkg`, the one on the `PATH`). Each chosen port
+  goes in `vcpkg.json` (with the commit vcpkg is at as its baseline), and
+  its `find_package` and `target_link_libraries` come from the port's
+  usage notes; a port without them gets a line saying vcpkg will say what
+  to write when it installs it. The CMakeLists uses vcpkg's toolchain when
+  `VCPKG_ROOT` is set.
+- **ROCm**: the packages in its `lib/cmake` (`ROCM_PATH`, `/opt/rocm`, the
+  newest `/opt/rocm-*`), each linked by the targets its targets file
+  makes, to the GPU code alone.
+- **pkg-config**: its modules (`pkg-config --list-all`), as
+  `pkg_check_modules`, Meson's `dependency()`, or make's flags.
+- **PyPI**: its 15,000 most downloaded packages (fetched once a week into
+  blit's data folder), and any other by its exact name.
+
+On another machine all of this is that machine's: its vcpkg, ROCm, GPUs,
+uv and pkg-config.
+
+```lua
+-- In init.lua: a kind of your own, and a built-in one taken away.
+blit.project.add("Notes", {
+  description = "Markdown notes",
+  fields = {
+    {key = "title", label = "Title", default = "untitled"},
+    {key = "toc", label = "Contents", kind = "switch", default = true},
+    {key = "style", label = "Style", kind = "choice", choices = {"plain", "fancy"},
+     when = {toc = true}},              -- shown only while Contents is on
+  },
+  create = function(dir, values)        -- dir is made already; values.name, values.git too
+    blit.fs.write(dir .. "/notes.md", "# " .. values.title .. "\n")
+    return "notes.md", "echo made"      -- the file to open, a command to run there
+  end,
+})
+blit.project.remove("Python")
+```
+
+A field's `kind` is `text` (the default), `switch`, `choice`, or
+`libraries` with a `source` (`vcpkg`, `rocm`, `pkg-config`, `pypi`).
+
 ## How it is fast
 
 **Text is never copied.** The file is memory mapped and the document is a
@@ -1183,6 +1295,11 @@ src/appterm.cpp    terminal tabs: the shell (here or remote), drawing, keys, sel
 src/appcommands.cpp every command and its keys: the command search, the keys for what had none
 src/dap.*          the Debug Adapter Protocol: the debugger's process (here or remote) and its messages
 src/appdebug.cpp   debugging: breakpoints, the session, the Debug tab, the stopped line
+src/build.*        what a folder builds with: CMake, Meson, make, autotools, Ninja, uv and pip, and their tasks
+src/appbuild.cpp   the Build tab, the Run button, the output terminal; the folder looked at on a thread
+src/project.*      new projects: the kinds (C++, HIP, C, Python), their fields, the files and commands they make
+src/libraries.*    where libraries are looked up: vcpkg's ports and usage notes, ROCm's packages, pkg-config, PyPI
+src/fsio.*         files and small commands, here or on another machine
 src/agent/         the agent: what it and blit say to one another, the program, its build for Linux (Docker), the builds
 src/keymap.*    key mappings: Vim's key notation, the table of mappings, what keys typed so far add up to
 src/job.*       programs run in the background for scripts, on threads of their own
@@ -1265,6 +1382,7 @@ tests/profile.sh build-debug/blit  # profiling tests/profile/spin.c here and thr
 tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, copy and paste, here and through tests/fake-ssh.sh
 tests/keys.sh build-debug/blit     # the command search, the new keys, and every command run from the search
 tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger)
+tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running) and new projects (a stand-in vcpkg)
 ```
 
 The tests never connect to a real host: `$BLIT_SSH` names the program used

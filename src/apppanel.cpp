@@ -19,8 +19,8 @@ namespace blit {
 
 namespace {
 
-const char* const kTabs[] = {"Files", "Problems", "Git", "Profile", "Debug"};
-constexpr u32 kTabFiles = 0, kTabProblems = 1, kTabGit = 2, kTabProfile = 3, kTabDebug = 4, kTabCount = 5;
+const char* const kTabs[] = {"Files", "Problems", "Git", "Profile", "Debug", "Build"};
+constexpr u32 kTabFiles = 0, kTabProblems = 1, kTabGit = 2, kTabProfile = 3, kTabDebug = 4, kTabBuild = 5, kTabCount = 6;
 constexpr u32 kHeadRows = 2;  // the tab bar and the line under it that names the working directory
 
 const char* const kMenu[] = {"New File", "New Folder", "Rename", "Move to Trash", "Set as Working Directory",
@@ -64,7 +64,7 @@ struct App::Side {
 
     // The cells as last drawn, and what they were drawn from.
     TextBox box;
-    u64 state = 1, drawn_state = 0, drawn_tree = ~0ull, drawn_diag = ~0ull, drawn_git = 0, drawn_prof = 0, drawn_debug = 0;
+    u64 state = 1, drawn_state = 0, drawn_tree = ~0ull, drawn_diag = ~0ull, drawn_git = 0, drawn_prof = 0, drawn_debug = 0, drawn_build = 0;
     u32 drawn_font = ~0u, drawn_rows = 0, drawn_cols = 0;
     std::string drawn_file;
     // The open file's full path, worked out when the file changes rather
@@ -200,6 +200,14 @@ void App::panel_show_problems() {
 void App::panel_show_debug() {
     Side& s = *side_;
     s.tab = kTabDebug;
+    panel_focus(true);
+    s.touch();
+    dirty_ = true;
+}
+
+void App::panel_show_build() {
+    Side& s = *side_;
+    s.tab = kTabBuild;
     panel_focus(true);
     s.touch();
     dirty_ = true;
@@ -442,6 +450,7 @@ bool App::panel_key(const SDL_KeyboardEvent& k) {
     if (s.tab == kTabGit) return !cmd;
     if (s.tab == kTabProfile) return prof_panel_key(k) || !cmd;
     if (s.tab == kTabDebug) return debug_panel_key(k) || !cmd;
+    if (s.tab == kTabBuild) return build_panel_key(k) || !cmd;
 
     if (s.tab == kTabProblems) {
         const std::vector<Diagnostic>& d = lsp_.diagnostics();
@@ -606,6 +615,10 @@ bool App::panel_mouse_down(const SDL_MouseButtonEvent& b) {
         debug_panel_click(row, col, b);
         return true;
     }
+    if (s.tab == kTabBuild) {
+        build_panel_click(row, col, b);
+        return true;
+    }
     if (s.tab == kTabProblems) {
         const u32 i = s.problem_top + static_cast<u32>(std::max(0, row - static_cast<int>(kHeadRows)));
         if (row >= static_cast<int>(kHeadRows) && i < lsp_.diagnostics().size()) {
@@ -721,7 +734,8 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
     const bool stale = s.drawn_state != s.state || s.drawn_tree != s.tree.generation() || s.drawn_font != font_->generation() ||
                        s.drawn_rows != rows || s.drawn_cols != cols || s.drawn_file != open_file ||
                        (s.tab == kTabProblems && s.drawn_diag != lsp_.diagnostics_generation()) || (s.tab == kTabGit && s.drawn_git != git_gen_) ||
-                       (s.tab == kTabProfile && s.drawn_prof != prof_gen_) || (s.tab == kTabDebug && s.drawn_debug != debug_gen_);
+                       (s.tab == kTabProfile && s.drawn_prof != prof_gen_) || (s.tab == kTabDebug && s.drawn_debug != debug_gen_) ||
+                       (s.tab == kTabBuild && s.drawn_build != build_gen_);
     if (stale) {
         s.drawn_state = s.state;
         s.drawn_tree = s.tree.generation();
@@ -733,6 +747,7 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
         s.drawn_git = git_gen_;
         s.drawn_prof = prof_gen_;
         s.drawn_debug = debug_gen_;
+        s.drawn_build = build_gen_;
         TextBox& box = s.box;
         box.resize(cols, rows);
         Font& font = *font_;
@@ -833,6 +848,8 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
             prof_panel_draw(box, s.focus);
         } else if (s.tab == kTabDebug) {
             debug_panel_draw(box, s.focus);
+        } else if (s.tab == kTabBuild) {
+            build_panel_draw(box, s.focus);
         } else {
             // What the language server reports about the open file.
             const std::vector<Diagnostic>& d = lsp_.diagnostics();

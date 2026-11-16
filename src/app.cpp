@@ -205,6 +205,7 @@ bool App::init(std::string* err) {
     remote_start();  // (a file on another machine is opened once the window is up)
     prof_start();
     debug_create();
+    build_create();
     commands_create();
     const bool remote_file = opt_.file && is_remote(opt_.file);
     if (opt_.file && !remote_file)
@@ -989,6 +990,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     px_w_ = w;
     px_h_ = h;
     place_panes(w, h);
+    build_measure();  // (the Run button: the tab bar under it ends before it)
     Pane* const focused = pane_;
     for (const std::unique_ptr<Pane>& p : panes_) {
         if (fd.view_count >= kMaxViews) break;
@@ -1010,6 +1012,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     start_layout(fd);
     prof_layout(fd);  // (a profile's tab, over its pane's text area)
     term_layout(fd);  // (and a terminal's)
+    build_layout(w, fd);  // the Run button, over the top right tab bar's end
     vim_layout(w, h, fd);
     panel_layout(w, std::max(1, h - status_px()), fd);  // (above the status bar)
     status_layout(w, h, fd);
@@ -1187,6 +1190,7 @@ Renderer::Result App::frame(FrameStats* st) {
         want_grammars();
     }
     git_follow();  // and git, about the file in front
+    build_follow();  // and what the working folder builds with
     if (r != Renderer::kDrawn) {
         // Nothing to present to (minimized): settle instead of spinning.
         for (const std::unique_ptr<Pane>& p : panes_) {
@@ -1269,6 +1273,7 @@ void App::handle(const SDL_Event& e) {
             if (status_mouse_down(e.button)) break;
             if (panel_mouse_down(e.button)) break;
             if (start_mouse_down(e.button)) break;
+            if (build_mouse_down(e.button)) break;  // the Run button
             if (prof_mouse_down(e.button)) break;  // a profile's tab
             if (term_mouse_down(e.button)) break;  // a terminal's
             if (splits_mouse_down(e.button)) break;  // a divider
@@ -1356,6 +1361,10 @@ void App::handle(const SDL_Event& e) {
             }
             if (e.user.code == 15) {  // the debugger has said something
                 debug_sync();
+                break;
+            }
+            if (e.user.code == 16) {  // what the working folder builds with has been found
+                build_sync();
                 break;
             }
             break;
