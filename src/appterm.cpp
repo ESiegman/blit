@@ -1,6 +1,7 @@
 // Terminals in the editor: a tab running a shell, here or on another
 // machine through blit's agent, which moves among tabs and splits as a
-// file's does (Ctrl+` opens one in the folder being worked in). Its
+// file's does. Ctrl+` shows them in a split along the bottom, the one the
+// build's output uses, and hides it again (its programs keep running). Its
 // program runs under a pseudo-terminal (pty.hpp); what it writes is read
 // on a thread of its own and drawn by term.hpp's screen; keys and text go
 // to it as a terminal sends them.
@@ -11,6 +12,9 @@
 #include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
+#if defined(__APPLE__)
+#include <sys/sysctl.h>
+#endif
 
 #include <algorithm>
 #include <cerrno>
@@ -21,6 +25,7 @@
 
 #include "app.hpp"
 #include "buildscan.hpp"
+#include "look.hpp"
 #include "pty.hpp"
 #include "remote.hpp"
 #include "term.hpp"
@@ -62,6 +67,7 @@ struct TermView {
     std::jthread reader;
     std::atomic<bool> told{false}, ended{false};
     bool keep = false;    // a command's (a build's): the tab stays when it ends, and says how it went
+    std::string command;  // (that command)
     std::string title;    // the tab's name, whatever the program calls itself
     std::string dir;      // the folder it was started in
     // A build's: its output read for problems, on the reader's thread, and
@@ -314,11 +320,25 @@ struct TermView {
     }
 };
 
+// The split along the bottom where Ctrl+` shows the terminals and the
+// build's output runs (below). Hidden, it is out of the arrangement but
+// whole, here: its terminals keep running, and it comes back as it was.
+struct App::TermDock {
+    u64 id = 0;      // its pane (0: none made yet)
+    u64 below = 0;   // the pane it is below, to go back below
+    u64 back = 0;    // the pane the keyboard came from, to give it back to
+    u64 term = 0;    // the terminal it last had the keyboard on
+    std::unique_ptr<Pane> away;  // while hidden
+    float room = 0.3f;           // its share of the height
+    static void enter(App& a, bool fresh);
+};
+
 // ---------------------------------------------------------------- opening one
 
 // A terminal in a new tab, in `dir` (the folder being worked in when none
-// is given): a shell there, or on the machine that folder is on.
-u64 App::term_open(const std::string& dir_given, const std::string& command, const std::string& title) {
+// is given): a shell there, or on the machine that folder is on. A hint
+// shows dimmed on its first line, above what the shell writes.
+u64 App::term_open(const std::string& dir_given, const std::string& command, const std::string& title, std::string_view hint) {
     const std::string* root = panel_root();
     const std::string dir = !dir_given.empty() ? dir_given : root ? *root : default_workdir();
     auto v = std::make_shared<TermView>();
@@ -337,6 +357,7 @@ u64 App::term_open(const std::string& dir_given, const std::string& command, con
     // terminal's, where a blit started from the Dock has little).
     if (!command.empty()) argv = {"/bin/sh", "-c", lang + "exec \"${SHELL:-/bin/sh}\" -lc \"$1\"", "sh", command};
     v->keep = !command.empty();
+    v->command = command;
     v->title = title;
     v->dir = dir;
     if (v->keep)  // (a file is looked for there when a relative path could be from more than one folder; not on another machine: a round trip each)
@@ -363,14 +384,16 @@ u64 App::term_open(const std::string& dir_given, const std::string& command, con
     {
         std::lock_guard lock(v->mu);
         v->term.resize(cols, rows);
+        if (!hint.empty()) v->term.feed("\x1b[2m" + std::string(hint) + "\x1b[0m\r\n");  // (before the reader: the shell's first line comes after it)
     }
     TermView* raw = v.get();
     v->reader = std::jthread([raw](std::stop_token stop) { raw->read_loop(stop); });
-    Doc* d = add_doc(pane_->tab + 1);
+    const size_t at = std::min(pane_->tab + 1, pane_->docs.size());  // (after the tab in front; first in a split with none yet)
+    Doc* d = add_doc(at);
     d->title = !title.empty() ? title : remote ? "Terminal: " + host : "Terminal";
     d->read_only = true;  // (its text is the program's: saving it is no saving)
     d->term = v;
-    tab_show(pane_->tab + 1);
+    tab_show(at);
     panel_focus(false);
     dirty_ = true;
     return d->id;
@@ -378,8 +401,11 @@ u64 App::term_open(const std::string& dir_given, const std::string& command, con
 
 // The program has written something, or ended: its tab draws again; one
 // whose shell has ended goes (or says how it ended, if that was not well).
+// The terminals of the hidden split too.
 void App::term_sync() {
-    for (const std::unique_ptr<Pane>& p : panes_) {
+    for (size_t k = 0; k <= panes_.size(); ++k) {
+        Pane* const p = k < panes_.size() ? panes_[k].get() : dock_ ? dock_->away.get() : nullptr;  // (the hidden one last)
+        if (!p) continue;
         for (size_t i = 0; i < p->docs.size(); ++i) {
             Doc& d = *p->docs[i];
             if (!d.term) continue;
@@ -416,8 +442,21 @@ void App::term_sync() {
                     continue;
                 }
                 if (v.status == 0) {  // (exit: the tab goes, as a terminal window would)
+                    if (dock_ && p == dock_->away.get()) {  // (hidden: and the split, with its last)
+                        forget_doc(p->docs[i].get());
+                        const bool front = p->docs[i].get() == p->doc;
+                        p->docs.erase(p->docs.begin() + static_cast<std::ptrdiff_t>(i));
+                        if (p->docs.empty()) {
+                            dock_->away.reset();
+                        } else {
+                            if (front) p->tab = std::min(i, p->docs.size() - 1);
+                            else if (i < p->tab) --p->tab;
+                            p->doc = p->docs[p->tab].get();
+                        }
+                        return term_sync();
+                    }
                     Pane* const focused = pane_;
-                    pane_ = p.get();
+                    pane_ = p;
                     tab_close(i, true);
                     bool still = false;
                     for (const std::unique_ptr<Pane>& q : panes_) still |= q.get() == focused;
@@ -431,6 +470,230 @@ void App::term_sync() {
         }
     }
     dirty_ = true;
+}
+
+// ---------------------------------------------------------------- the terminals' split
+
+namespace {
+
+constexpr std::string_view kDockHint = "Ctrl+` back to the file";
+
+}  // namespace
+
+App::TermDock& App::term_dock() {
+    if (!dock_) dock_ = std::make_shared<TermDock>();
+    return *dock_;
+}
+
+Pane* App::dock_pane() const {
+    if (!dock_ || !dock_->id || panes_.size() < 2) return nullptr;  // (the only split left is not along the bottom of anything)
+    for (const std::unique_ptr<Pane>& p : panes_)
+        if (p->id == dock_->id) return p.get();
+    return nullptr;
+}
+
+Pane* App::dock_show(Pane* above) {
+    TermDock& k = term_dock();
+    if (Pane* p = dock_pane()) return p;
+    Pane* below = nullptr;
+    for (const std::unique_ptr<Pane>& p : panes_)
+        if (p->id == k.below) below = p.get();
+    if (!below) below = above ? above : pane_;
+    if (k.away) {
+        Pane* const p = k.away.get();
+        if (!put_pane(k.away, below, kEdgeBottom, k.room)) return nullptr;
+        k.below = below->id;
+        return p;
+    }
+    Pane* const p = split_pane(below, kEdgeBottom);  // (with no tabs yet: the caller gives it one)
+    if (!p) return nullptr;
+    split_room(p, 0.3f);
+    k.id = p->id;
+    k.below = below->id;
+    return p;
+}
+
+// Out of the way, with what runs in it; the keyboard goes back to the split
+// it came from. (A file's tab dragged into it stays on show, above.)
+void App::dock_hide() {
+    TermDock& k = term_dock();
+    Pane* p = dock_pane();
+    if (!p) return;
+    Pane *back = nullptr, *above = nullptr, *other = nullptr;
+    for (const std::unique_ptr<Pane>& q : panes_) {
+        if (q.get() == p) continue;
+        if (!other) other = q.get();
+        if (q->id == k.back) back = q.get();
+        if (q->id == k.below) above = q.get();
+    }
+    if (!above) above = back ? back : other;
+    for (size_t i = p->docs.size(); i-- > 0 && above;) {
+        if (p->docs[i]->term) continue;
+        const bool last = p->docs.size() == 1;
+        move_doc(p, i, above, above->docs.size());
+        if (last) {  // (and the split went with it)
+            p = nullptr;
+            break;
+        }
+    }
+    if (p) k.away = take_pane(p, &k.room);
+    if (back) focus_pane(back);
+    dirty_ = true;
+}
+
+// The split on show with the keyboard on a terminal there: a new one
+// (fresh), else the one it last had the keyboard on, else a shell there,
+// else a new one.
+void App::TermDock::enter(App& a, bool fresh) {
+    TermDock& k = a.term_dock();
+    Pane* const from = a.pane_;
+    const bool from_dock = from == a.dock_pane();
+    const std::string* root = a.panel_root();
+    const std::string dir = root ? *root : a.default_workdir();  // (the folder being worked in: found from the split with the keyboard)
+    Pane* const p = a.dock_show(from);
+    if (!p) {  // (no room for another split: a terminal tab here)
+        a.term_open();
+        return;
+    }
+    if (!from_dock) k.back = from->id;
+    size_t at = SIZE_MAX;
+    if (!fresh) {
+        for (size_t i = 0; i < p->docs.size(); ++i) {
+            const Doc& d = *p->docs[i];
+            if (d.id == k.term && d.term && (d.term->keep || !d.term->ended)) at = i;
+        }
+        for (size_t i = p->docs.size(); at == SIZE_MAX && i-- > 0;) {
+            const Doc& d = *p->docs[i];
+            if (d.term && !d.term->keep && !d.term->ended) at = i;
+        }
+    }
+    a.pane_ = p;
+    const bool opened = at != SIZE_MAX ? (a.tab_show(at), true) : a.term_open(dir, {}, {}, kDockHint) != 0;
+    a.pane_ = from;
+    if (!opened && p->docs.empty()) {  // (it could not start, and said why)
+        a.remove_pane(p);
+        return;
+    }
+    a.focus_pane(p);
+    a.panel_focus(false);
+    k.term = p->doc ? p->doc->id : 0;
+    a.dirty_ = true;
+}
+
+// Ctrl+`: the terminal with the keyboard; from there, the text again.
+void App::term_toggle() {
+    Pane* const p = dock_pane();
+    if (p && p == pane_ && !panel_has_keyboard() && !find_open_) {
+        if (p->doc && p->doc->term) term_dock().term = p->doc->id;
+        dock_hide();
+        return;
+    }
+    TermDock::enter(*this, false);
+}
+
+// Ctrl+Shift+`: another terminal there.
+void App::term_new() { TermDock::enter(*this, true); }
+
+// ---------------------------------------------------------------- what runs in one
+
+namespace {
+
+// A program's arguments, as it was started (none: it is gone, or not ours to see).
+std::vector<std::string> args_of(pid_t pid) {
+    std::vector<std::string> out;
+#if defined(__APPLE__)
+    int max = 0;
+    size_t size = sizeof max;
+    int which[2] = {CTL_KERN, KERN_ARGMAX};
+    if (::sysctl(which, 2, &max, &size, nullptr, 0) != 0 || max <= 0) return out;
+    std::string buf(static_cast<size_t>(max), '\0');
+    int mib[3] = {CTL_KERN, KERN_PROCARGS2, pid};
+    size = buf.size();
+    if (::sysctl(mib, 3, buf.data(), &size, nullptr, 0) != 0 || size < sizeof(int)) return out;
+    buf.resize(size);
+    int argc = 0;
+    std::memcpy(&argc, buf.data(), sizeof argc);
+    size_t at = buf.find('\0', sizeof argc);  // (after the program's path, and the padding after it)
+    while (at < buf.size() && buf[at] == '\0') ++at;
+    for (int i = 0; i < argc && at < buf.size(); ++i) {
+        const size_t end = std::min(buf.find('\0', at), buf.size());
+        out.emplace_back(buf, at, end - at);
+        at = end + 1;
+    }
+#elif defined(__linux__)
+    const int fd = ::open(("/proc/" + std::to_string(pid) + "/cmdline").c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return out;
+    std::string buf;
+    char chunk[4096];
+    for (ssize_t k; (k = ::read(fd, chunk, sizeof chunk)) > 0;) buf.append(chunk, static_cast<size_t>(k));
+    ::close(fd);
+    for (size_t at = 0; at < buf.size();) {
+        const size_t end = std::min(buf.find('\0', at), buf.size());
+        out.emplace_back(buf, at, end - at);
+        at = end + 1;
+    }
+#else
+    (void)pid;
+#endif
+    return out;
+}
+
+// A program in words, as it would have been typed: a script by its own
+// name, not its interpreter's (node .../bin/npm run dev is "npm run dev").
+std::string named(std::vector<std::string> argv) {
+    auto base = [](const std::string& s) {
+        std::string b = s.substr(s.find_last_of('/') == std::string::npos ? 0 : s.find_last_of('/') + 1);
+        if (b.starts_with('-')) b.erase(0, 1);  // (a login shell's)
+        return b;
+    };
+    static constexpr std::string_view kInterpreters[] = {"node", "nodejs", "python", "ruby", "perl", "php", "sh", "bash", "zsh", "dash", "ksh", "fish", "lua", "luajit"};
+    if (argv.size() > 1 && !argv[1].starts_with('-')) {
+        std::string first = base(argv[0]);
+        if (first.starts_with("python")) first = "python";  // (python3, python3.12 ...)
+        if (std::ranges::find(kInterpreters, first) != std::end(kInterpreters)) argv.erase(argv.begin());
+    }
+    if (argv.empty()) return {};
+    std::string out = base(argv[0]);
+    for (size_t i = 1; i < argv.size(); ++i) out += " " + argv[i];
+    return fit_text(out, 48);
+}
+
+// Whether a terminal runs something besides its shell, and what, in
+// words: a build's command until it ends; in a shell here, the program in
+// the foreground (the one the terminal's keys go to). What a shell on
+// another machine runs cannot be seen from here. `what` stays empty when
+// the program's name cannot be read.
+bool busy_with(const TermView& v, std::string* what) {
+    if (v.ended) return false;
+    if (v.keep) return *what = fit_text(v.command, 48), true;
+    if (v.pty.fd < 0 || v.pty.pid <= 0) return false;
+    const pid_t fg = ::tcgetpgrp(v.pty.fd);
+    if (fg <= 0 || fg == v.pty.pid) return false;
+    *what = named(args_of(fg));
+    return true;
+}
+
+}  // namespace
+
+// Closing a terminal whose program still runs ends it: asked first.
+bool App::term_may_close(size_t i) {
+    if (i >= pane_->docs.size() || !pane_->docs[i]->term) return true;
+    std::string what;
+    if (!busy_with(*pane_->docs[i]->term, &what)) return true;
+    tab_show(i);  // what the question is about
+    return confirm((what.empty() ? std::string("A program") : "'" + what + "'") + " is still running in this terminal. Close it?", "Close");
+}
+
+size_t App::term_busy_count() {
+    size_t n = 0;
+    std::string what;
+    auto count = [&](const Pane& p) {
+        for (const std::unique_ptr<Doc>& d : p.docs)
+            if (d->term && busy_with(*d->term, &what)) ++n;
+    };
+    for (const std::unique_ptr<Pane>& p : panes_) count(*p);
+    if (dock_ && dock_->away) count(*dock_->away);
+    return n;
 }
 
 // ---------------------------------------------------------------- drawing
@@ -760,11 +1023,11 @@ bool App::term_key(const SDL_KeyboardEvent& k) {
 }
 
 bool App::term_text(const char* text) {
-    if (!pane_->doc->term) return false;
-    if (term_drop_text_) {
+    if (term_drop_text_) {  // (a key the terminal took as itself, or Ctrl+`: its text is not typed, wherever the keyboard went)
         term_drop_text_ = false;
         return true;
     }
+    if (!pane_->doc->term) return false;
     TermView& v = *pane_->doc->term;
     v.scroll = 0;
     v.selected = false;

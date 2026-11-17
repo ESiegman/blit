@@ -206,7 +206,7 @@ bool App::confirm(const std::string& what, const char* yes) {
     box.buttons = buttons;
     int hit = 0;
 #if BLIT_DEV
-    if (!win_) return true;  // scripted runs have nobody to ask
+    if (!win_) return asked_ = what, true;  // scripted runs have nobody to ask (the tests read what was asked)
 #endif
     SDL_ShowMessageBox(&box, &hit);
     return hit == 1;

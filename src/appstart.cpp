@@ -484,6 +484,7 @@ bool App::start_key(const SDL_KeyboardEvent& k) {
         return true;
     }
     if ((k.mod & kPrimaryMod) && !(ctrl && (k.key == SDLK_N || k.key == SDLK_P))) return false;  // the application's shortcuts
+    if (k.key == SDLK_GRAVE && ctrl && !(k.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI))) return false;  // and Ctrl+`, the terminals (appterm.cpp)
     const size_t n = s.items.size();
     auto move = [&](i64 by) {
         if (n) s.sel = static_cast<size_t>(((static_cast<i64>(s.sel) + by) % static_cast<i64>(n) + static_cast<i64>(n)) % static_cast<i64>(n));

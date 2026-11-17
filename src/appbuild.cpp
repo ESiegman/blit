@@ -183,26 +183,20 @@ std::vector<BuildTask> App::build_tasks() {
     return buildui_->tasks;
 }
 
-// A command run in the build's output terminal: in a split below the
-// text, made the first time and used again after (a run still going there
-// is ended). The keyboard stays where it was.
+// A command run in the build's output terminal: in the terminals' split
+// below the text (appterm.cpp: shown again if it was hidden, made the first
+// time), used again after (a run still going there is ended). The keyboard
+// stays where it was.
 u64 App::build_command(const std::string& dir, const std::string& cmd, const std::string& title) {
     BuildUi& u = *buildui_;
     Pane* const editing = pane_;
     Pane* into = nullptr;
-    size_t old_at = 0;
-    const u64 old = u.doc && find_doc(u.doc, &into, &old_at) ? u.doc : 0;
-    if (!into) {
-        into = split_pane(editing, kEdgeBottom);
-        if (!into) {
-            into = editing;  // (no room for another split)
-        } else {
-            pane_ = into;
-            for (int k = 0; k < 4; ++k) split_grow(false, -1);  // (the output a third of the height)
-        }
-    }
+    if (!u.doc || !find_doc(u.doc, &into)) into = dock_show(editing);  // (the last run's split, wherever it was moved to)
+    if (!into) into = editing;  // (no room for another split)
+    const u64 old = u.doc && find_doc(u.doc) ? u.doc : 0;
     pane_ = into;
     const u64 doc = term_open(dir, cmd, title);
+    if (!doc && into->docs.empty()) remove_pane(into);  // (a split made for it, and it could not start)
     if (old) {
         Pane* p = nullptr;
         size_t at = 0;

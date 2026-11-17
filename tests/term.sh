@@ -58,6 +58,48 @@ check "a shell that ends badly: the tab stays and says so" "ended 3, tab kept"
 run "lua:blit.opt.editor.modal = true;term;frame;termwait:\$;text:dd;text:i;text::wq;termwait:ddi:wq;termdump"
 check "with Vim's keys on, keys typed go to the shell" '$ ddi:wq @0,8 15x74'
 
+# Ctrl+`: the terminals' split along the bottom (the build's output's too).
+# (key:space before typing: a window sends a key before its text, and the
+# text Ctrl+` itself might bring is dropped until then. The program says
+# "running" once it runs, in the terminal's foreground; what is typed says
+# run''ning.)
+open="key:ctrl+\`;frame;termwait:\$;key:space"
+busy="sh -c 'echo run''ning && exec sleep 30'"
+run "$open;dump"
+check "Ctrl+\`: a terminal in a split below the text, with the keyboard" 'V([untitled*] / >[Terminal*])0.70'
+run "$open;termdump"
+check "the hint once, above the shell's first line" 'Ctrl+` back to the file|$ @1,2 3x74'
+run "$open;key:ctrl+\`;frame;dump"
+check "again: the keyboard back to the text, and the split out of the way" '>[untitled*]'
+run "$open;key:ctrl+\`;frame;key:ctrl+\`;frame;dump"
+check "and again: the split back as it was" 'V([untitled*] / >[Terminal*])0.70'
+run "$open;text:echo hel''lo;key:Return;termwait:hello;key:ctrl+\`;frame;key:ctrl+\`;frame;termdump"
+check "with the same terminal, its shell still there" "\$ echo hel''lo|hello|\$ @2,2 3x74"
+run "$open;click:300,100;release;frame;key:ctrl+\`;frame;dump"
+check "on show with the keyboard in the text: Ctrl+\` gives the terminal the keyboard" 'V([untitled*] / >[Terminal*])0.70'
+run "$open;key:ctrl+shift+\`;frame;termwait:\$;dump"
+check "Ctrl+Shift+\`: another terminal there" 'V([untitled*] / >[Terminal Terminal*])0.70'
+run "$open;text:sleep 1 && exit;key:Return;key:ctrl+\`;wait:2500;termdump;key:ctrl+\`;frame;termwait:\$;dump"
+check "a shell that exits while hidden goes; Ctrl+\` then opens a new one" 'V([untitled*] / >[Terminal*])0.70'
+run "$open;key:cmd+W;asked"
+check "closing a terminal with only its shell: nothing asked" 'nothing asked'
+run "$open;text:$busy;key:Return;termwait:running;key:cmd+W;asked"
+check "closing one whose program still runs: asked first" "'sleep 30' is still running in this terminal. Close it?"
+run "$open;text:$busy;key:Return;termwait:running;key:ctrl+shift+\`;frame;termwait:\$;key:space;text:$busy;key:Return;termwait:running;key:ctrl+\`;key:cmd+Q;asked"
+check "quitting: the programs still running counted, hidden ones too" '2 programs are still running in terminals. Quit and end them?'
+run "key:Escape;text:i;text:x;$open;text:$busy;key:Return;termwait:running;key:ctrl+\`;key:cmd+Q;asked"
+check "and after the files to save" 'Save the changes to a new file before quitting? 1 program is still running in a terminal.'
+# (With no working folder chosen, the terminal's folder is found from the file in front, not from the new split.)
+printf 'x\n' >"$dir/work/a.txt"
+got=$("$blit" --offscreen 1200x600 --shot "$dir/shot.bmp" --script "open:$dir/work/a.txt;$open;text:basename \$PWD;key:Return;termwait:work;dump;termdump" 2>&1 >/dev/null | sed -e "s#$dir#@#g" | tail -2 | tr '\n' ' ')
+check "no working folder: Ctrl+\` in the file's folder" 'V([a.txt*] / >[Terminal*])0.70 $ basename $PWD|work|$ @2,2 3x74 '
+mkdir -p "$dir/mk"
+printf 'all:\n\t@echo built\n' >"$dir/mk/Makefile"
+run "workdir:$dir/mk;buildrun;buildwait;key:ctrl+\`;frame;termwait:\$;dump"
+check "the build's output and the terminal share the split" 'V([untitled*] / >[make Terminal*])0.70'
+run "workdir:$dir/mk;$open;key:ctrl+\`;frame;buildrun;buildwait;dump"
+check "a build brings the hidden split back, the keyboard staying in the text" 'V(>[untitled*] / [Terminal make*])0.70'
+
 # On another machine: the connection is made by the terminal itself.
 run "workdir:ssh://box$T/proj;term;frame;termwait:\$;text:echo \$(basename \$PWD)-\$(basename \$HOME);key:Return;termwait:proj-;termdump"
 check "a terminal on another machine, in the folder there, at home there" '$ echo $(basename $PWD)-$(basename $HOME)|proj-there|$ @2,2 15x74'

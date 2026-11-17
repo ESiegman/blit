@@ -534,7 +534,20 @@ private:
     // A terminal tab in dir (the working folder when none): a login shell, or
     // `command` run by sh, whose tab stays when it ends and says how (and
     // keeps `title`). Its document's id; 0 if it could not start.
-    u64 term_open(const std::string& dir = {}, const std::string& command = {}, const std::string& title = {});
+    u64 term_open(const std::string& dir = {}, const std::string& command = {}, const std::string& title = {}, std::string_view hint = {});
+    // The terminals' split along the bottom, the one the build's output
+    // uses too: Ctrl+` shows it with the keyboard on its terminal, and
+    // with the keyboard there hides it and gives the keyboard back to the
+    // text (its programs keep running); Ctrl+Shift+` opens another there.
+    struct TermDock;
+    TermDock& term_dock();
+    void term_toggle();
+    void term_new();
+    Pane* dock_show(Pane* above);  // on show, brought back, or made below `above` (nullptr: no room)
+    Pane* dock_pane() const;       // on show: the split; else nullptr
+    void dock_hide();
+    bool term_may_close(size_t i);  // the tab's program still running: asked first (false: the user said no)
+    size_t term_busy_count();       // programs still running in terminals, hidden ones too
     void term_sync();
     void term_layout(FrameDesc& fd);
     void term_copy(TermView& v);
@@ -840,6 +853,7 @@ private:
     // document's text before the document goes.)
     std::vector<std::unique_ptr<Pane>> panes_;
     std::unique_ptr<SplitNode> split_;
+    std::shared_ptr<TermDock> dock_;  // (after panes_: a hidden terminals' split goes first)
     Pane* pane_ = nullptr;
     u64 next_doc_id_ = 1, next_pane_id_ = 1;
     Lsp lsp_;
@@ -863,6 +877,7 @@ private:
     std::shared_ptr<ProfUi> profui_;  // (before remote_: a recording on another machine ends when its connection does)
     u64 prof_gen_ = 1;                // counts up whenever what the Profile tab shows may have changed
     bool term_drop_text_ = false;     // the text a key sent to a terminal as itself also brings is not typed again
+    std::string asked_;               // (scripted runs: the last question there was nobody to ask, for the tests)
     std::shared_ptr<RemoteUi> remote_;
     u64 remote_gen_ = 0;      // counts up whenever a connection or a file on its way has news
     u64 git_gen_ = 1;         // counts up whenever what the Git tab shows may have changed

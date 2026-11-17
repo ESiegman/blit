@@ -216,6 +216,64 @@ void App::remove_pane(Pane* p) {
     dirty_ = true;
 }
 
+// Takes a pane out of the arrangement as remove_pane does, but keeps it
+// whole, its tabs and what runs in them, for put_pane to bring back.
+// `room`: the share of the space it had with its other half.
+std::unique_ptr<Pane> App::take_pane(Pane* p, float* room) {
+    if (!p || panes_.size() < 2) return nullptr;
+    SplitNode* parent = nullptr;
+    SplitNode* leaf = find_leaf(split_.get(), p, &parent);
+    if (!leaf || !parent) return nullptr;
+    if (drag_->kind == kDragDivider) drag_->kind = kDragNone;
+    const bool first = parent->a.get() == leaf;
+    if (room) *room = first ? parent->share : 1 - parent->share;
+    Pane* heir = first_pane(first ? parent->b.get() : parent->a.get());
+    detach(split_.get(), p);
+    std::unique_ptr<Pane> out;
+    for (std::unique_ptr<Pane>& x : panes_)
+        if (x.get() == p) out = std::move(x);
+    std::erase_if(panes_, [](const std::unique_ptr<Pane>& x) { return !x; });
+    if (!heir || std::none_of(panes_.begin(), panes_.end(), [heir](const auto& x) { return x.get() == heir; })) heir = panes_.front().get();
+    if (p == pane_) {
+        pane_ = heir;
+        dragging_ = dragging_thumb_ = false;
+        lsp_pending_ = true;
+        grammars_pending_ = true;
+        if (pane_->doc) vim_attach();
+    }
+    place_panes(px_w_, px_h_);
+    pick_theme();
+    dirty_ = true;
+    return out;
+}
+
+// Puts a pane take_pane kept back in, on that side of `target`, with
+// `room` of the space they share. False: there is no room for another
+// split (it stays out).
+bool App::put_pane(std::unique_ptr<Pane>& p, Pane* target, Edge edge, float room) {
+    if (!p || !target || edge == kEdgeNone || panes_.size() >= kMaxViews) return false;
+    SplitNode* leaf = find_leaf(split_.get(), target);
+    if (!leaf) return false;
+    if (drag_->kind == kDragDivider) drag_->kind = kDragNone;
+    Pane* raw = p.get();
+    panes_.push_back(std::move(p));
+    attach(leaf, raw, edge == kEdgeLeft || edge == kEdgeRight, edge == kEdgeLeft || edge == kEdgeTop);
+    raw->cache_rev = ~0ull;
+    split_room(raw, room);
+    pick_theme();
+    return true;
+}
+
+void App::split_room(Pane* p, float room) {
+    SplitNode* parent = nullptr;
+    SplitNode* leaf = find_leaf(split_.get(), p, &parent);
+    if (!leaf || !parent) return;
+    parent->share = std::clamp(parent->a.get() == leaf ? room : 1 - room, 0.1f, 0.9f);
+    place_panes(px_w_, px_h_);
+    for (const std::unique_ptr<Pane>& q : panes_) q->cache_rev = ~0ull;
+    dirty_ = true;
+}
+
 // Moves a tab from one pane to another (or to another place in its own),
 // where it comes to the front. A pane left with no tabs goes.
 void App::move_doc(Pane* from, size_t index, Pane* to, size_t at) {

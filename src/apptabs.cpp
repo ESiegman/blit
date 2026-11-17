@@ -169,12 +169,13 @@ void App::tab_move(size_t from, size_t to) {
     dirty_ = true;
 }
 
-// Closes a tab, asking first about changes that are not saved. The last
-// tab closed leaves a new, empty file behind, and closing that one does
-// nothing: blit quits only when asked to (Cmd+Q), or by Vim's :q there
-// (quit_if_last).
+// Closes a tab, asking first about changes that are not saved, or about a
+// program still running in a terminal. The last tab closed leaves a new,
+// empty file behind, and closing that one does nothing: blit quits only
+// when asked to (Cmd+Q), or by Vim's :q there (quit_if_last).
 bool App::tab_close(size_t i, bool force, bool quit_if_last) {
     if (i >= pane_->docs.size()) return true;
+    if (!force && pane_->docs[i]->term && !term_may_close(i)) return false;  // a program still running there (appterm.cpp)
     if (pane_->docs[i]->ed.modified() && !force) {
         tab_show(i);  // what the question is about
         const std::string name(pane_->doc->ed.path.empty() ? std::string_view("this new file") : base_name(pane_->doc->ed.path));

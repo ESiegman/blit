@@ -106,7 +106,8 @@ and everything in it that has Cmd in it (Ctrl elsewhere) works in every mode.
 | Keyboard to the split on that side | Cmd+Option+arrow | Ctrl+Alt+arrow |
 | The tab to the split on that side (a new one if there is none) | Cmd+Option+Shift+arrow | Ctrl+Alt+Shift+arrow |
 | The split wider / narrower, taller / shorter | Cmd+Ctrl+Right / Left, Down / Up | |
-| A terminal, in the working folder | Ctrl+` | Ctrl+` |
+| The terminal along the bottom, with the keyboard; from there, back to the text (it hides, still running) | Ctrl+\` | Ctrl+\` |
+| Another terminal there | Ctrl+Shift+\` | Ctrl+Shift+\` |
 | The Problems / Git / Profile tab of the side panel (again: the keyboard back to the text) | Cmd+Shift+M / Ctrl+Shift+G / Cmd+Shift+R | Ctrl+Shift+M / G / R |
 | The Build tab; run its chosen task (the Run button); stop it | Cmd+Shift+U; Cmd+Shift+B; Cmd+. | Ctrl+Shift+U; Ctrl+Shift+B |
 | A new project (the start screen's New project tab, in a tab of its own) | Cmd+Option+N | Ctrl+Alt+N |
@@ -1072,10 +1073,22 @@ works at the default `perf_event_paranoid` of 2 without root.
 
 ## Terminal
 
-**Ctrl+`** opens a terminal in a new tab, in the folder being worked in.
-It is a tab like a file's: reorder it, close it, or drag it into a split
-(a terminal along the bottom is a split there).
+**Ctrl+\`** opens a terminal in a split along the bottom (the one the
+[Build tab](#building)'s output uses), in the folder being worked in, with
+the keyboard; its first line says "Ctrl+\` back to the file". Pressed there
+again, it gives the keyboard back to the text and the split goes out of the
+way, its programs still running; the next press brings it back as it was,
+the same terminal in it. With the split on show and the keyboard in the
+text, Ctrl+\` gives the terminal the keyboard. **Ctrl+Shift+\`** opens
+another terminal there. Each is a tab like a file's: reorder it, close it,
+or drag it into a split of its own.
 
+- Closing a terminal whose program is still running asks first ("'npm run
+  dev' is still running in this terminal. Close it?"), and so does quitting
+  ("2 programs are still running in terminals."), counting the hidden ones.
+  A shell at its prompt is closed without asking. What a shell on another
+  machine runs cannot be seen from here, so only a build's command counts
+  there.
 - The shell is your login shell. When the folder is on another machine
   (`ssh://host/...`), the terminal runs there, through blit's agent, on
   the same connection as the files; it connects by itself if it has to.
@@ -1138,9 +1151,10 @@ init.lua's to add, with `blit.build.add` (below).
 Each task is a command run by the shell. Enter runs the one chosen; Space
 makes it the one the **Run button** at the window's top right runs
 (`▶ Build (debug)`, or `■ Stop` while it runs), and **Cmd+Shift+B** runs
-that one from anywhere. The output is in a terminal tab in a split below
-the text, used again by the next run (a run still going there is ended),
-and the keyboard stays where it was. When it ends the tab says how, and
+that one from anywhere. The output is in a terminal tab in the
+[terminals' split](#terminal) below the text (brought back if Ctrl+\` hid
+it), used again by the next run (a run still going there is ended), and the
+keyboard stays where it was. When it ends the tab says how, and
 the folder is looked at again (a configure makes a build folder, whose
 tasks then show). Each task's row says how its last run went ("running…",
 "done", "failed: exited with code 2"), and Cmd+. stops a run.
@@ -1539,7 +1553,7 @@ src/profile.*      profiles: recording with perf or xctrace (here or on another 
 src/appprofile.cpp the Profile tab, a profile's tab (flame graph, functions), inline performance labels
 src/term.*         a terminal's screen: an xterm-compatible parser, colours, the history
 src/pty.*          programs under a pseudo-terminal (built into the agent too)
-src/appterm.cpp    terminal tabs: the shell (here or remote), drawing, keys, selection, scrollback
+src/appterm.cpp    terminal tabs: the shell (here or remote), drawing, keys, selection, scrollback; the split along the bottom
 src/appcommands.cpp every command and its keys: the command search, the keys for what had none
 src/dap.*          the Debug Adapter Protocol: the debugger's process (here or remote) and its messages
 src/appdebug.cpp   debugging: breakpoints, the session, the Debug tab, the stopped line
@@ -1637,7 +1651,8 @@ tests/start.sh build-debug/blit    # the start screen and the list of what was o
 tests/session.sh build-debug/blit  # sessions: kept on quit and when the folder changes, brought back by each way of opening a folder
 tests/remote.sh build-debug/blit   # another machine's files, git and language server, through tests/fake-ssh.sh
 tests/profile.sh build-debug/blit  # profiling tests/profile/spin.c here and through tests/fake-ssh.sh (skipped with no profiler)
-tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, copy and paste, here and through tests/fake-ssh.sh
+tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, copy and paste, here and through tests/fake-ssh.sh;
+                                   # the split Ctrl+` shows and hides, and the questions about programs still running
 tests/keys.sh build-debug/blit     # the command search, the new keys, and every command run from the search
 tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger)
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running), a fake build's problems (F8, Cmd+click) and new projects (a stand-in vcpkg)

@@ -1996,6 +1996,38 @@ difference went. Under this load that is a lead, not a finding. The Run
 button's cells, made every frame before, are now made only when what it
 shows changes.
 
+### Round 32: the terminals' split
+
+Ctrl+` shows a terminal in the split along the bottom that the build's
+output uses, and with the keyboard there hides the split again
+(`src/appterm.cpp`: the split is taken out of the arrangement whole and kept,
+its programs still running, and put back as it was); Ctrl+Shift+` opens
+another there. Closing a terminal whose program still runs asks first, and
+so does quitting, with the count. Nothing of it runs per frame: the split's
+state is looked at only on Ctrl+`, a build's run, closing a terminal tab and
+quitting. `term_sync`, which runs when a terminal has written something,
+looks at the hidden split too, with no allocation (an index past the
+splits on show).
+
+Turn about with `main` at 6276f5c, 6 runs of each, alternating, offscreen at
+2560x1600 (the medians of the runs; each run's own p50 for the frame's CPU
+was 35.0 to 37.1 µs on both sides):
+
+| | Before | After |
+|---|---:|---:|
+| Typing: layout, p50 | 1.25 µs | 1.23 µs |
+| … the frame's CPU, p50 / p99 | 36.6 / 117.5 µs | 36.6 / 116.8 µs |
+| Keys (moving): layout, p50 | 1.21 µs | 1.21 µs |
+| … the frame's CPU, p50 / p99 | 35.3 / 108.0 µs | 35.2 / 102.6 µs |
+| Scrolling: layout, p50 | 0.38 µs | 0.38 µs |
+| … frames a second (the GPU's limit) | 18,358 | 18,198 |
+
+Nothing measurable. What asking costs, once a close or a quit: whether a
+terminal's shell is running something is the terminal's foreground process
+group (`tcgetpgrp` on its side of the pseudo-terminal: 5.6 to 6.0 µs here),
+and the program's name its arguments (`sysctl(KERN_PROCARGS2)`: 7.4 to 7.6
+µs).
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

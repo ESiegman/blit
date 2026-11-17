@@ -568,6 +568,7 @@ int App::run_bench() {
 //   ready                  wait for the language server to be up (10 s at most)
 //   diag                   wait for the server's next set of diagnostics (10 s at most)
 //   wait:MS                let MS milliseconds pass, taking in whatever the server sends
+//   asked                  print the last question a box would have asked (scripted runs answer yes, or Don't Save)
 // Scrolling is settled instantly, so the next event sees the final view.
 void App::run_script(const char* script) {
     std::string_view rest = script;
@@ -884,6 +885,9 @@ void App::run_script(const char* script) {
             if (!ran) std::fprintf(stderr, "command: no \"%s\"\n", arg.c_str());
         } else if (verb == "termend") {  // the terminal's program has ended (10 s at most)
             term_end();
+        } else if (verb == "asked") {  // the last question there was nobody to ask (a box would have asked it)
+            std::fprintf(stderr, "%s\n", asked_.empty() ? "nothing asked" : asked_.c_str());
+            asked_.clear();
         } else if (verb == "termdump") {
             term_sync();
             std::fprintf(stderr, "%s\n", term_dump().c_str());

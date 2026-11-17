@@ -810,7 +810,12 @@ void App::request_quit() {
     for (size_t k = panes_.size(); k-- > 0;)
         for (size_t i = panes_[k]->docs.size(); i-- > 0;)
             if (panes_[k]->docs[i]->ed.modified()) ++unsaved, first_pane = panes_[k].get(), first = i;
+    // Programs still running in terminals end with blit: the question counts them.
+    const size_t busy = term_busy_count();
+    const std::string running = busy == 1 ? "1 program is still running in a terminal."
+                                          : std::to_string(busy) + " programs are still running in terminals.";
     if (!unsaved) {
+        if (busy && !confirm(running + (busy == 1 ? " Quit and end it?" : " Quit and end them?"), "Quit")) return;
         running_ = false;
         return;
     }
@@ -834,7 +839,7 @@ void App::request_quit() {
     if (unnamed) parts.push_back(unnamed == 1 ? std::string("a new file") : std::to_string(unnamed) + " new files");
     std::string list;
     for (size_t i = 0; i < parts.size(); ++i) list += (i == 0 ? "" : i + 1 == parts.size() ? " and " : ", ") + parts[i];
-    const std::string what = "Save the changes to " + list + " before quitting?";
+    const std::string what = "Save the changes to " + list + " before quitting?" + (busy ? " " + running : "");
     const SDL_MessageBoxButtonData buttons[] = {
         {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, unsaved == 1 ? "Save" : "Save All"},
         {0, 2, "Don't Save"},
@@ -849,7 +854,7 @@ void App::request_quit() {
     box.buttons = buttons;
     int hit = 0;
 #if BLIT_DEV
-    if (!win_) hit = 2;  // scripted runs have nobody to ask
+    if (!win_) hit = 2, asked_ = what;  // scripted runs have nobody to ask (the tests read what was asked)
     else
 #endif
     SDL_ShowMessageBox(&box, &hit);
@@ -1538,8 +1543,8 @@ void App::on_key(const SDL_KeyboardEvent& k) {
         if (md_key(k)) return;     // a Markdown preview's (appmarkdown.cpp)
         if (image_key(k)) return;  // an image file's (appimage.cpp)
         if (pdf_key(k)) return;    // a PDF's (apppdf.cpp)
-        if (k.key == SDLK_GRAVE && (k.mod & SDL_KMOD_CTRL) && !(k.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI))) {  // Ctrl+`: a terminal, in the folder being worked in
-            term_open();
+        // Ctrl+` and Ctrl+Shift+`, the terminals' split (appcommands.cpp), are never a terminal's own keys.
+        if (k.key == SDLK_GRAVE && (k.mod & SDL_KMOD_CTRL) && !(k.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI)) && command_key(k)) {
             term_drop_text_ = true;
             return;
         }
