@@ -257,6 +257,68 @@ void Renderer::release() {
     blit_gpu_cancel(gpu_);
 }
 
+// The colour emoji on show (see Font::Colour): each glyph's picture,
+// made once, over its cells, in the text views (only rows the fill saw a
+// pictograph in) and in the boxes (a row whose largest slot is below every
+// colour one is passed over), each kept to its view or box.
+void Renderer::find_emoji(Font& font, const FrameDesc& fd, const u32* cells, const u32* view_base, const u32* row_base) {
+    emoji_.clear();
+    if (!font.has_colour()) return;
+    if (font.generation() != emoji_gen_) {  // (the atlas started over: other glyphs in those slots now)
+        for (const auto& [slot, id] : emoji_images_) image_drop(id);
+        emoji_images_.clear();
+        emoji_gen_ = font.generation();
+    }
+    const float cw = static_cast<float>(font.cell_w()), ch = static_cast<float>(font.cell_h());
+    const u32 lowest = font.colour_lowest();
+    auto add = [&](u32 slot, float x, float y, const int clip[4], u32 after, float opacity) {
+        if (font.colour_mark(slot) == 2) --slot, x -= cw;  // (the second cell of one whose first is out of view)
+        const Font::Colour* c = font.colour(slot);
+        if (!c) return;
+        u32& id = emoji_images_[slot];
+        if (!id) id = image_add(c->rgba.data(), c->w, c->h);
+        if (!id) return;
+        PictureDraw pd;
+        pd.image = id;
+        pd.rect[0] = x, pd.rect[1] = y, pd.rect[2] = x + static_cast<float>(c->w), pd.rect[3] = y + static_cast<float>(c->h);
+        std::memcpy(pd.clip, clip, sizeof pd.clip);
+        pd.after = after;
+        pd.opacity = opacity;
+        pd.clear = true;
+        emoji_.push_back(pd);
+    };
+    auto row = [&](const u32* r, u32 cols, float x0, float y, const int clip[4], u32 after, float opacity) {
+        for (u32 c = 0; c < cols; ++c) {
+            const u32 slot = r[c] & 0xFFFF;
+            if (slot < lowest) continue;
+            const u8 m = font.colour_mark(slot);
+            if (!m || (m == 2 && c > 0 && font.colour_mark(r[c - 1] & 0xFFFF) == 1)) continue;  // (a second cell: its first drew it)
+            add(slot, x0 + static_cast<float>(c) * cw, y, clip, after, opacity);
+        }
+    };
+    for (u32 i = 0; i < fd.view_count; ++i) {
+        const TextView& v = fd.views[i];
+        if (!v.buf || !v.grid.cols) continue;
+        const int clip[4] = {v.x, v.y, v.x + v.w, v.y + v.h};
+        for (u32 r = 0; r < v.grid.rows; ++r)
+            if (pict_rows_[row_base[i] + r])
+                row(cells + view_base[i] + static_cast<size_t>(r) * v.grid.cols, v.grid.cols, static_cast<float>(v.x) - v.origin[0],
+                    static_cast<float>(v.y) + static_cast<float>(r) * ch - v.origin[1], clip, 0, 1 - v.dim);
+    }
+    for (u32 i = 0; i < fd.popup_count; ++i) {
+        const Popup& p = fd.popups[i];
+        if (!p.cells || p.opacity <= 0) continue;
+        const int clip[4] = {p.x, p.y, p.x + p.w, p.y + p.h};
+        for (u32 r = 0; r < p.rows; ++r) {
+            const u32* cells_row = p.cells + static_cast<size_t>(r) * p.cols;
+            u32 top = 0;
+            for (u32 c = 0; c < p.cols; ++c) top = std::max(top, cells_row[c] & 0xFFFF);
+            if (top >= lowest)
+                row(cells_row, p.cols, static_cast<float>(p.x + p.pad_x), static_cast<float>(p.y + p.pad_y) + static_cast<float>(r) * ch, clip, i + 1, p.opacity);
+        }
+    }
+}
+
 Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) {
     const u64 t0 = now_ns();
     if (!gpu_) return kFailed;
@@ -288,6 +350,7 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
     u32 text_total = 0, total = 0;
     u32* cells = nullptr;  // the frame's cells, in the memory the GPU reads them from
     u32 view_base[kMaxViews] = {};  // where each view's cells start in the buffer
+    u32 row_base[kMaxViews] = {};   // and its rows in pict_rows_
     u64 fill_ns = 0, layout_ns = 0;
     for (int attempt = 0; attempt < 2; ++attempt) {
         if (attempt > 0) font.hold_atlas(true);
@@ -298,10 +361,14 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
         layout_ns += now_ns() - l0;
         fd.view_count = std::min(fd.view_count, kMaxViews);
         text_total = 0;
+        u32 rows_total = 0;
         for (u32 i = 0; i < fd.view_count; ++i) {
             view_base[i] = text_total;
             text_total += fd.views[i].grid.cols * fd.views[i].grid.rows;
+            row_base[i] = rows_total;
+            rows_total += fd.views[i].grid.rows;
         }
+        pict_rows_.assign(rows_total, 0);
         total = text_total;
         for (u32 i = 0; i < fd.popup_count; ++i) total += fd.popups[i].cols * fd.popups[i].rows;
         if (text_total == 0 || !(cells = blit_gpu_cells(gpu_, total))) {
@@ -319,6 +386,7 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
             const u32 blank = std::min(v.blank_rows, text.rows);
             text.rows -= blank;
             u32* const text_cells = view_cells + static_cast<size_t>(blank) * text.cols;
+            text.pict_rows = pict_rows_.data() + row_base[i] + blank;
             std::memset(view_cells, 0, static_cast<size_t>(blank) * text.cols * sizeof(u32));
             fill_grid(*v.buf, font, text, text_cells, v.anchors ? v.anchors : &anchors_);
             if (text.guide_step) guide_grid(*v.buf, text, text_cells, v.guides ? *v.guides : guides_);
@@ -360,6 +428,7 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
         if (font.generation() == gen) break;
     }
     font.hold_atlas(false);
+    find_emoji(font, fd, cells, view_base, row_base);
     const u64 t2 = now_ns();
 
     // The cells are where the GPU reads them already. Glyphs drawn into the
@@ -405,12 +474,18 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
         if (right <= left || bottom <= top) return;
         draws_.push_back({bound, pushed, left, top, right - left, bottom - top, 0});
     };
-    // The pictures to go over what is drawn so far: those after `popups` popups.
+    // The pictures to go over what is drawn so far: those after `popups`
+    // popups (the frame's own, and the colour emoji in the text and boxes).
     const u32 pictures = std::min(fd.picture_count, kMaxPictures);
     u32 next_picture = 0;
+    size_t next_emoji = 0;
     auto pictures_after = [&](u32 popups) {
-        for (; next_picture < pictures && fd.pictures[next_picture].after <= popups; ++next_picture) {
-            const PictureDraw& pd = fd.pictures[next_picture];
+        for (;;) {
+            const PictureDraw* next = nullptr;
+            if (next_picture < pictures && fd.pictures[next_picture].after <= popups) next = &fd.pictures[next_picture++];
+            else if (next_emoji < emoji_.size() && emoji_[next_emoji].after <= popups) next = &emoji_[next_emoji++];
+            else break;
+            const PictureDraw& pd = *next;
             if (!pd.image) continue;
             int left = static_cast<int>(std::floor(pd.rect[0])), top = static_cast<int>(std::floor(pd.rect[1]));
             int right = static_cast<int>(std::ceil(pd.rect[2])), bottom = static_cast<int>(std::ceil(pd.rect[3]));

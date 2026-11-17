@@ -6,6 +6,7 @@
 #include <SDL3/SDL.h>
 
 #include <functional>
+#include <unordered_map>
 #include <string>
 #include <vector>
 
@@ -178,12 +179,24 @@ public:
     // Reads back the offscreen target as RGBA bytes.
     bool read_pixels(std::vector<u8>& rgba, int* w, int* h);
 
+    // The colour emoji the last frame drew (see Font::Colour), for the tests.
+    const std::vector<PictureDraw>& emoji_drawn() const { return emoji_; }
+
     const char* driver() const;
     // What making the GPU device took: compiling or loading the shaders,
     // making the pipelines, and whether those came from the cache.
     void setup_times(u64* library_ns, u64* pipelines_ns, bool* cached) const;
 
 private:
+    // Colour emoji (see Font::Colour): each glyph's picture on the GPU by
+    // its first slot, for the atlas generation it was made in; the text
+    // views' rows a pictograph is in; this frame's pictures of them, drawn
+    // with the frame's own pictures.
+    std::unordered_map<u32, u32> emoji_images_;
+    u32 emoji_gen_ = ~0u;
+    std::vector<u8> pict_rows_;
+    std::vector<PictureDraw> emoji_;
+    void find_emoji(Font& font, const FrameDesc& fd, const u32* cells, const u32* view_base, const u32* row_base);
     SDL_Window* win_ = nullptr;
     void* view_ = nullptr;  // the window's Metal view (Apple), made by SDL; Vulkan has none
     BlitGpu* gpu_ = nullptr;

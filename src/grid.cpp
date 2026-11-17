@@ -55,6 +55,7 @@ struct Cluster {
     size_t n = 0, i = 0;
     u64 at = 0;
     u32 col = 0;
+    bool pict = false;  // a pictograph was in the row (see GridSpec::pict_rows)
 };
 // The glyph bits that send a character to no_cell().
 constexpr u32 kAttention = Font::kJoin | Font::kPict;
@@ -82,6 +83,7 @@ bool wide_before(Font& font, const u8* p, size_t i) {
 // no cell; false for an ordinary character after all.
 [[gnu::noinline]] bool no_cell(Font& font, Cluster& cl, u32 cp, u32 g, u64 at, u32 len, const u8* p, size_t i, u32* row, u32 col,
                                u32 first_col) {
+    cl.pict |= (g & Font::kPict) != 0;
     const bool after = at == cl.join;
     cl.join = ~0ull;
     if ((g & (Font::kWide | Font::kJoin)) == (Font::kWide | Font::kJoin)) {  // a regional indicator
@@ -381,6 +383,10 @@ void fill_grid(const Buffer& buf, Font& font, const GridSpec& g, u32* cells, Anc
         }
         std::memset(row + filled, 0, static_cast<size_t>(cols - filled) * sizeof(u32));
 
+        if (cl.pict) {
+            if (g.pict_rows) g.pict_rows[r] = 1;
+            cl.pict = false;
+        }
         if (g.has_sel && line >= g.sel_line0 && line <= g.sel_line1) {
             // Past the last character, one extra cell stands for the newline.
             u64 c0 = line == g.sel_line0 ? g.sel_col0 : 0;

@@ -597,6 +597,7 @@ int App::run_bench() {
 //                          the cursor's line:column and the text of its line
 //   dump[:LABEL]           print how the window is split, and the tabs of each split
 //   views                  print each split's view of the file in front: its document, its own cursor and that line
+//   emojidump              print the colour emoji the last frame drew: how many, the cells of each, in the text or a box
 //   git:ACTION[:ARG]       a git action by name (stage:PATH, commit:MESSAGE, push, switch:BRANCH, ...)
 //   gitwait                wait for git to finish; gitdump[:LABEL] also prints what it has told the editor
 //   gitview[:LABEL]        print the diff tab in front: its hunks, and its lines with what is coloured added or taken away
@@ -817,6 +818,13 @@ void App::run_script(const char* script) {
             up.type = SDL_EVENT_MOUSE_BUTTON_UP;
             up.button.button = SDL_BUTTON_LEFT;
             handle(up);
+        } else if (verb == "emojidump") {
+            // The colour emoji the last frame drew as pictures: how many, and
+            // the cells each covers ("t" in the text, "b" in a box).
+            std::string out = "emoji " + std::to_string(gpu_.emoji_drawn().size()) + ":";
+            for (const PictureDraw& pd : gpu_.emoji_drawn())
+                out += " " + std::to_string(static_cast<int>(std::lround((pd.rect[2] - pd.rect[0]) / font_->cell_w()))) + (pd.after ? "b" : "t");
+            std::fprintf(stderr, "%s\n", out.c_str());
         } else if (verb == "views") {
             // Each split's view of the file in front, on one line, in the
             // order the splits were made: its name and document (the same

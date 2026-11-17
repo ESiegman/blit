@@ -2498,6 +2498,38 @@ cursor, undo, one view of a changed file closed with nothing asked, Cmd+Shift+W
 into a split that shows the file, a view closed from the other split) and
 session.sh one (both views back, each where it was).
 
+### Round 48: colour emoji
+
+An emoji is a picture: the font finds no glyph in its faces (or, past
+U+1F000, does not look), asks the system's colour font for one (CoreText
+and Apple Color Emoji on a Mac, through a small C file Clang compiles;
+FreeType and the colour font fontconfig names elsewhere), leaves the
+slots empty and keeps the picture. The fill marks the rows a pictograph
+is in (in no_cell(), which emoji went through already: nothing on the
+hot path); the renderer looks through those rows, and through the boxes
+(a row whose largest slot is below every colour one is passed over), and
+draws each colour slot's picture over its cells, with the frame's own
+pictures. Each glyph's picture is made once, until the atlas starts over.
+
+Turn about, five rounds, 2560x1600, against the build before:
+
+| | Before (a box each) | After (in colour) |
+|---|---:|---:|
+| code-100m.txt, no emoji: frames a second / CPU p50 / fill p50 | 19,293 / 36.00 µs / 1.17 µs | 19,278 / 36.00 µs / 1.17 µs |
+| A screen packed with emoji (about 210 on show): the same | 19,182 / 12.75 µs / 4.08 µs | 10,492 / 58.58 µs / 3.92 µs |
+
+- **No emoji, no change.** With none on show (or none seen since the
+  atlas last started over) the renderer does not look.
+- **About 0.22 µs an emoji on show**, nearly all of it the draw each one
+  is (its uniforms, its texture bound, its rectangle): 46 µs for a screen
+  packed with them, a few µs for the usual handful. The way to none is a
+  colour atlas the text shader reads (PLAN 4.11).
+- unicode.sh: a case that the emoji in the text and in the Markdown
+  preview are pictures over two cells each, and a heart is text; the
+  screenshot comparisons (a family and its first person, a flag and its
+  first letter, a thumb with and without its skin tone) still match. The
+  same on Linux with Noto Color Emoji.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

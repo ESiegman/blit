@@ -160,5 +160,15 @@ shot selected "${CHECK}${VS16}a${ZWSP}b"
 shot unselected "${CHECK}ab"
 same selected unselected "a variation selector or a zero width space was drawn"
 
+# Colour emoji: a picture each, from the system's colour font, over its two
+# cells, in the text and in a box (the Markdown preview); a heart stays text.
+# (Skipped where there is no colour emoji font.)
+printf '%s\n' "Smile $(printf '\360\237\230\200') party $(printf '\360\237\216\211') heart $(printf '\342\235\244') go $(printf '\360\237\232\200')" >"$dir/e.md"
+got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;frame;emojidump;keyof:Preview beside the file;frame;frame;frame;emojidump" "$dir/e.md" 2>&1 >/dev/null | grep '^emoji' | tr '\n' ' ' | sed -e 's/ $//')
+case $got in
+    "emoji 0: emoji 0:") echo "colour emoji skipped: no colour emoji font here" ;;
+    *) check "colour emoji are pictures over their cells, in the text and in a box" "emoji 3: 2t 2t 2t emoji 6: 2t 2t 2t 2b 2b 2b" ;;
+esac
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "unicode ok"
 exit $failed

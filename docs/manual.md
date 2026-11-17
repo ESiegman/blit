@@ -2280,8 +2280,14 @@ does not finish and takes all the memory the machine has.
   parse finishes (about 13 MB of C++ a second).
 - Ligatures form between ASCII characters only, and are not split apart
   where the cursor sits.
-- Characters missing from the font fall back to a few system fonts; colour
-  emoji draw as a box. A character is what Unicode says one is to the eye:
+- Characters missing from the font fall back to a few system fonts. Emoji
+  draw in colour, from the system's colour font (Apple Color Emoji on a
+  Mac, the one fontconfig names for emoji elsewhere, such as Noto Color
+  Emoji), over their two cells, in the text and in boxes alike; past
+  U+1F000 the colour font is asked first, and an older pictograph (a
+  heart, an aeroplane) stays text where a font has it. Each emoji on show
+  is a picture of its own: a screen packed with them (about 210) takes
+  some 45 µs more a frame. A character is what Unicode says one is to the eye:
   a letter with its accents, an emoji with its skin tone or variation
   selector, a sequence joined by zero-width joiners, a flag, a Hangul
   syllable written in jamo, an Indic conjunct (consonants joined by a
@@ -2289,7 +2295,8 @@ does not finish and takes all the memory the machine has.
   The arrows, Backspace and Delete take it whole, and so do Vim's
   commands; it takes the cells Unicode's widths say (an accent none, drawn
   over its letter and lifted clear of a capital; an emoji two). An emoji
-  sequence or a flag draws as its first emoji; a syllable in jamo and a
+  sequence draws as its first emoji (a family as its first person, a skin
+  tone not shown), and a flag as a box; a syllable in jamo and a
   conjunct draw part by part, each in its own cells (blit does not shape
   text beyond ligatures).
 - Language servers: underlines and completions show in the split that

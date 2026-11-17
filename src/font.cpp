@@ -20,6 +20,10 @@
 #include <fontconfig/fontconfig.h>
 #endif
 
+#if defined(__APPLE__)
+#include "emoji_mac.h"
+#endif
+
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_MULTIPLE_MASTERS_H
@@ -385,6 +389,9 @@ bool find_font(const std::string& family, const std::string& style, std::string*
 // ---------------------------------------------------------------- setup
 
 Font::~Font() {
+#if !defined(__APPLE__)
+    if (colour_face_) FT_Done_Face(colour_face_);
+#endif
     for (Style& st : styles_)
         if (st.own && st.face) FT_Done_Face(st.face);
     for (FT_Face f : fallbacks_) FT_Done_Face(f);
@@ -758,6 +765,12 @@ void Font::reset_atlas() {
     long_runs_.clear();
     std::memset(bmp_, 0, 0x10000 * sizeof(u16));
     map_used_ = slices_used_ = short_used_ = marks_used_ = 0;
+    if (colour_used_) {
+        colour_.clear();
+        std::fill(colour_marks_.begin(), colour_marks_.end(), u8{0});
+        colour_used_ = 0;
+        colour_lowest_ = ~0u;
+    }
     next_slot_ = first_slot_;
     ++generation_;
 }
@@ -807,13 +820,110 @@ u32 Font::lookup(u32 cp) {
         map_[h] = {cp, packed};
         ++map_used_;
     }
+    // An emoji past U+1F000 is drawn in colour, before any font has a
+    // plain one; another pictograph (a heart, an aeroplane) is text unless
+    // only a colour font has it.
+    const bool colour_first = width > 0 && cp >= 0x1F000 && cp_pictographic(cp);
+    if (colour_first && colour_glyph(cp, slot, width)) return packed;
     u32 gi;
     FT_Face f = face_for(cp, &gi);
     if (f) blit_glyph(f, gi, slot, std::max(width, 1u), f != face_ || width == 0);
+    else if (width && !colour_first && cp_pictographic(cp) && colour_glyph(cp, slot, width)) {}
     else if (width) draw_tofu(slot, width);
     else clear_slot(slot);  // (a joiner, a selector: nothing to see)
     return packed;
 }
+
+// A colour font's picture of a character, the size of its cells together,
+// for the renderer to draw over them; the slots are left empty.
+bool Font::colour_glyph(u32 cp, u32 slot, u32 width) {
+    Colour c;
+    c.cells = width;
+    c.w = cell_w_ * static_cast<int>(width);
+    c.h = cell_h_;
+    if (c.w <= 0 || c.h <= 0 || !colour_pixels(cp, c.w, c.h, &c.rgba)) return false;
+    for (u32 k = 0; k < width; ++k) {
+        clear_slot(slot + k);
+        colour_marks_[(slot + k) & 0xFFFF] = static_cast<u8>(k + 1);
+    }
+    colour_lowest_ = std::min(colour_lowest_, slot);
+    colour_[slot] = std::move(c);
+    ++colour_used_;
+    return true;
+}
+
+#if defined(__APPLE__)
+bool Font::colour_pixels(u32 cp, int w, int h, std::vector<u8>* out) {
+    out->assign(static_cast<size_t>(w) * static_cast<size_t>(h) * 4, 0);
+    return blit_emoji_rgba(cp, w, h, out->data());  // (Apple Color Emoji: emoji_mac.m)
+}
+#else
+// The colour font fontconfig names for emoji (Noto Color Emoji, mostly):
+// its glyph as FreeType gives it, a colour bitmap of a size of its own,
+// made as large as fits the box with a little room, in the middle of it.
+bool Font::colour_pixels(u32 cp, int w, int h, std::vector<u8>* out) {
+#if BLIT_FONTCONFIG
+    if (!colour_tried_) {
+        colour_tried_ = true;
+        if (FcPattern* want = FcNameParse(reinterpret_cast<const FcChar8*>("emoji:color=true"))) {
+            FcConfigSubstitute(nullptr, want, FcMatchPattern);
+            FcDefaultSubstitute(want);
+            FcResult result;
+            FcPattern* got = FcFontMatch(nullptr, want, &result);
+            FcChar8* file = nullptr;
+            FcBool colour = FcFalse;
+            int index = 0;
+            if (got && FcPatternGetString(got, FC_FILE, 0, &file) == FcResultMatch && FcPatternGetBool(got, FC_COLOR, 0, &colour) == FcResultMatch && colour) {
+                FcPatternGetInteger(got, FC_INDEX, 0, &index);
+                FT_Face face = nullptr;
+                if (!FT_New_Face(lib_, reinterpret_cast<const char*>(file), index, &face)) {
+                    bool sized = false;
+                    if (face->num_fixed_sizes > 0) {  // (a bitmap font: its largest size, made smaller here)
+                        int best = 0;
+                        for (int i = 1; i < face->num_fixed_sizes; ++i)
+                            if (face->available_sizes[i].height > face->available_sizes[best].height) best = i;
+                        sized = !FT_Select_Size(face, best);
+                    } else {
+                        sized = !FT_Set_Pixel_Sizes(face, 0, static_cast<FT_UInt>(std::max(h, 8)));
+                    }
+                    if (sized && FT_HAS_COLOR(face)) colour_face_ = face;
+                    else FT_Done_Face(face);
+                }
+            }
+            if (got) FcPatternDestroy(got);
+            FcPatternDestroy(want);
+        }
+    }
+#endif
+    if (!colour_face_) return false;
+    const FT_UInt gi = FT_Get_Char_Index(colour_face_, cp);
+    if (!gi || FT_Load_Glyph(colour_face_, gi, FT_LOAD_COLOR | FT_LOAD_RENDER)) return false;
+    const FT_Bitmap& bm = colour_face_->glyph->bitmap;
+    if (bm.pixel_mode != FT_PIXEL_MODE_BGRA || !bm.width || !bm.rows) return false;
+    const double k = std::min(w * 0.94 / bm.width, h * 0.94 / bm.rows);
+    const int tw = std::max(1, static_cast<int>(bm.width * k)), th = std::max(1, static_cast<int>(bm.rows * k));
+    const int x0 = (w - tw) / 2, y0 = (h - th) / 2;
+    out->assign(static_cast<size_t>(w) * static_cast<size_t>(h) * 4, 0);
+    // Each pixel the average of what it covers of the bitmap (premultiplied
+    // BGRA there, premultiplied RGBA here).
+    for (int y = 0; y < th; ++y) {
+        const int sy0 = static_cast<int>(y / k), sy1 = std::max(sy0 + 1, std::min(static_cast<int>(bm.rows), static_cast<int>((y + 1) / k)));
+        for (int x = 0; x < tw; ++x) {
+            const int sx0 = static_cast<int>(x / k), sx1 = std::max(sx0 + 1, std::min(static_cast<int>(bm.width), static_cast<int>((x + 1) / k)));
+            u32 sum[4] = {}, n = 0;
+            for (int sy = sy0; sy < sy1; ++sy) {
+                const u8* row = bm.buffer + static_cast<ptrdiff_t>(sy) * bm.pitch;
+                for (int sx = sx0; sx < sx1; ++sx, ++n)
+                    for (int c = 0; c < 4; ++c) sum[c] += row[sx * 4 + c];
+            }
+            if (!n) continue;
+            u8* px = out->data() + (static_cast<size_t>(y0 + y) * static_cast<size_t>(w) + static_cast<size_t>(x0 + x)) * 4;
+            px[0] = static_cast<u8>(sum[2] / n), px[1] = static_cast<u8>(sum[1] / n), px[2] = static_cast<u8>(sum[0] / n), px[3] = static_cast<u8>(sum[3] / n);
+        }
+    }
+    return true;
+}
+#endif
 
 u32 Font::lookup_styled(u32 cp, u32 s) {
     if (s >= kStyles || !styles_[s].ready) return glyph(cp);

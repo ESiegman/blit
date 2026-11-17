@@ -85,6 +85,10 @@ struct GridSpec {
     // render.cpp): the text after each moves right to make room. Sorted by
     // line, then column.
     std::span<const GridNote> inserts;
+    // One byte a row, set by fill_grid() for a row a pictograph is in (an
+    // emoji, perhaps a colour one the renderer draws over its cells); null:
+    // not asked. (A row with none is left as it was: zero it first.)
+    u8* pict_rows = nullptr;
     // Selection as (line, display column) pairs; has_sel false when empty.
     bool has_sel = false;
     u64 sel_line0 = 0, sel_line1 = 0;

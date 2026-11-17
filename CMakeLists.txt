@@ -198,6 +198,14 @@ endif()
 # Glyph atlas, shaping and text -> cell grid: CPU only.
 add_library(blit_view STATIC src/font.cpp src/shape.cpp src/grid.cpp)
 target_link_libraries(blit_view PUBLIC blit_core Freetype::Freetype ${CMAKE_DL_LIBS})
+if(APPLE)
+  # Colour emoji through CoreText (emoji_mac.m), whose headers only Clang
+  # reads: a library of its own, without link-time optimization, as blit_gpu.
+  add_library(blit_emoji STATIC src/emoji_mac.m)
+  set_target_properties(blit_emoji PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+  target_link_libraries(blit_emoji PUBLIC "-framework CoreText" "-framework CoreGraphics" "-framework CoreFoundation")
+  target_link_libraries(blit_view PUBLIC blit_emoji)
+endif()
 # Away from Apple's systems fontconfig says which font is the system's
 # monospace one, where a family is, and which fonts have a character the
 # others lack. (Public: font.hpp has what it needs only where it is used.)

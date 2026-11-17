@@ -159,6 +159,24 @@ public:
         }
     }
 
+    // Colour emoji. A character only a colour font has (an emoji, mostly;
+    // those past U+1F000 are asked of it first) gets slots that are empty
+    // in the atlas, and a picture of it in colour, the size of its cells
+    // together, which the renderer draws over them. colour_mark() says, of
+    // a slot, 1: the first of such a glyph's cells, 2: its second; 0: none.
+    struct Colour {
+        std::vector<u8> rgba;  // premultiplied, w * h * 4
+        int w = 0, h = 0;
+        u32 cells = 1;
+    };
+    bool has_colour() const { return colour_used_ > 0; }
+    u32 colour_lowest() const { return colour_lowest_; }  // (no colour glyph's slot is below this)
+    u8 colour_mark(u32 slot) const { return colour_marks_[slot & 0xFFFF]; }
+    const Colour* colour(u32 slot) const {
+        const auto it = colour_.find(slot);
+        return it == colour_.end() ? nullptr : &it->second;
+    }
+
     // Bumps whenever previously returned slots became invalid.
     u32 generation() const { return generation_; }
     // A frame's last try (render.cpp): the atlas starts over first, and may
@@ -194,6 +212,8 @@ private:
     // A cell's low 16 bits are its slot; higher bits (colour) ride along.
     bool joins(u32 cell) const { return (cell & 0xFFFF) < kAsciiSlots && joins_[cell & (kAsciiSlots - 1)]; }
     u32 lookup(u32 cp);
+    bool colour_glyph(u32 cp, u32 slot, u32 width);  // a colour font's picture of it, for those slots
+    bool colour_pixels(u32 cp, int w, int h, std::vector<u8>* out);  // (the system's: CoreText on a Mac, FreeType elsewhere)
     u32 lookup_styled(u32 cp, u32 style);
     u32 lookup_lined(u32 cp, u32 style);   // (a style with a line under or through)
     void draw_lines(u32 slot, u32 width, u32 lines);
@@ -266,6 +286,16 @@ private:
     u32 map_used_ = 0;
     std::vector<MarkEnt> marks_;  // (base, mark) -> slot, see mark()
     u32 marks_used_ = 0;
+
+    // Colour emoji (see Colour): each glyph's picture, by its first slot;
+    // every slot's mark; and the colour font, looked for once.
+    std::unordered_map<u32, Colour> colour_;
+    std::vector<u8> colour_marks_ = std::vector<u8>(0x10000, 0);
+    u32 colour_used_ = 0, colour_lowest_ = ~0u;
+#if !defined(__APPLE__)
+    bool colour_tried_ = false;
+    FT_Face colour_face_ = nullptr;
+#endif
 
     Style styles_[kStyles];
     std::vector<std::string> features_;
