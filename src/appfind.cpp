@@ -240,6 +240,8 @@ struct App::Find {
     // goes here instead of being opened (a path) or to a script (a line).
     std::function<void(const std::string&)> chose;
     std::function<void(int)> chose_item;  // (a list of blit's own, kFindPick: which of the items)
+    std::function<void(const std::string&)> typed_changed;  // (one whose rows come as it is typed: find_live_items)
+    std::string typed_asked;
     // A list of blit's own whose rows are tried out as the choice moves
     // (find_preview_item): the row last tried, and what Esc puts back.
     std::function<void(int)> moved;
@@ -780,6 +782,7 @@ void App::find_open(int mode, const std::string& typed) {
     if (find_open_ && f.script() && !(mode == f.mode && f.script())) find_close(false);  // (a script's picker is answered "nothing")
     f.chose = nullptr;  // (see find_choose)
     f.chose_item = nullptr;
+    f.typed_changed = nullptr;
     f.moved = nullptr;
     if (auto back = std::exchange(f.cancelled, nullptr)) back();  // (what a list tried out is put back)
     if (mode != kFindNames && mode != kFindText) f.into_pane = 0;  // (Tab between those two keeps it)
@@ -926,8 +929,24 @@ void App::find_choose_item(const std::string& prompt, std::vector<std::string> i
     if (find_open_ && f.script()) find_close(false);
     f.items = std::move(items);
     f.prompt = prompt;
+    f.typed_changed = {};
     find_open(kFindPick, typed);
     f.chose_item = std::move(chose);
+}
+
+void App::find_live_items(const std::string& prompt, std::function<void(const std::string&)> typed, std::function<void(int)> chose) {
+    find_choose_item(prompt, {}, std::move(chose));
+    Find& f = *find_;
+    f.typed_changed = std::move(typed);
+    f.typed_asked = f.typed;
+    f.typed_changed(f.typed);
+}
+
+void App::find_set_items(std::vector<std::string> items) {
+    Find& f = *find_;
+    if (!find_open_ || f.mode != kFindPick || !f.typed_changed) return;
+    f.items = std::move(items);
+    find_query();  // (the rows that have what is typed, the best first)
 }
 
 // The same, with each row tried out as the choice comes to it, from the
@@ -1002,6 +1021,7 @@ void App::find_close(bool chosen) {
     if (!chosen && f.script() && !f.chose && !f.chose_item) script_chose(false, -1, {});  // (the script hears that nothing was chosen)
     f.chose = nullptr;
     f.chose_item = nullptr;
+    f.typed_changed = nullptr;
     f.moved = nullptr;
     f.into_pane = 0;
     if (auto back = std::exchange(f.cancelled, nullptr); back && !chosen) back();  // (Esc: what was tried out is put back)
@@ -1078,6 +1098,10 @@ void App::find_query() {
         // A script's items, those that have every word typed in them, the best first.
         f.entries.clear();
         if (f.mode == kFindInput) return;
+        if (f.typed_changed && f.typed != f.typed_asked) {  // (rows that come from elsewhere: asked for again)
+            f.typed_asked = f.typed;
+            f.typed_changed(f.typed);
+        }
         const std::vector<FuzzyTerm> terms = fuzzy_terms(f.typed);
         for (u32 i = 0; i < f.items.size(); ++i) {
             int score = 0;

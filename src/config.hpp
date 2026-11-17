@@ -130,6 +130,7 @@ struct Config {
     bool lsp_format_on_save = false; // the server formats a file before it is written
     bool lsp_inlay_hints = false;    // parameter names and deduced types between the characters, as the server gives them
     bool lsp_semantic = true;        // the server's colours (semantic tokens) over tree-sitter's, where it says more
+    bool lsp_uses = true;            // the other uses of the symbol at the cursor marked, once it has rested
     std::vector<LspServer> lsp_servers;  // [lsp.servers.NAME], tried before the built-in ones
 
     // [git]

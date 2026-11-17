@@ -397,7 +397,7 @@ struct RawHint {
 enum : u8 {
     kInReady = 1, kInFailed, kInStopped, kInDiagnostics, kInCompletion, kInHover, kInSignature, kInDefinition,
     kInReferences, kInPrepareRename, kInRename, kInFormat, kInActions, kInResolve, kInHints, kInTokens,
-    kInPull, kInWorkspacePull, kInApplyEdit, kInRefresh, kInIgnore,
+    kInPull, kInWorkspacePull, kInApplyEdit, kInRefresh, kInIgnore, kInPlaces, kInHighlight, kInOutline, kInSymbols, kInSwitch,
 };
 // What a server asks to have asked again (kInRefresh).
 enum : u8 { kRefreshTokens = 1, kRefreshHints = 2, kRefreshDiagnostics = 4 };
@@ -443,6 +443,7 @@ struct Caps {
     bool references = false, rename = false, prepare_rename = false, formatting = false, range_formatting = false;
     bool actions = false, resolve = false, hints = false, tokens = false, tokens_delta = false, pull = false, workspace_pull = false;
     bool execute = false;
+    bool implementation = false, type_definition = false, declaration = false, highlight = false, outline = false, symbols = false;
     std::string completion_triggers, signature_triggers;
     std::vector<std::string> token_types, token_mods;
 };
@@ -471,6 +472,7 @@ struct In {
     std::vector<RawHint> hints;
     std::vector<u32> tokens;
     std::string result_id;
+    std::vector<LspSymbol> symbols;
 };
 
 }  // namespace
@@ -872,6 +874,12 @@ struct Lsp::Conn::Worker {
         triggers(sp["retriggerCharacters"], &caps.signature_triggers);
         caps.definition = truthy(sc["definitionProvider"]);
         caps.references = truthy(sc["referencesProvider"]);
+        caps.implementation = truthy(sc["implementationProvider"]);
+        caps.type_definition = truthy(sc["typeDefinitionProvider"]);
+        caps.declaration = truthy(sc["declarationProvider"]);
+        caps.highlight = truthy(sc["documentHighlightProvider"]);
+        caps.outline = truthy(sc["documentSymbolProvider"]);
+        caps.symbols = truthy(sc["workspaceSymbolProvider"]);
         const Value rp = sc["renameProvider"];
         caps.rename = truthy(rp);
         caps.prepare_rename = rp["prepareProvider"].boolean(false);
@@ -1157,18 +1165,27 @@ struct Lsp::Conn::Worker {
     // Found references, each with its line's text: read here, from the
     // files on this machine (a file open in a tab gets its own text from
     // the main thread instead).
-    void on_references(u32 id, Value result) {
+    void on_references(u32 id, Value result, u8 kind = kInReferences) {
         In m;
-        m.kind = kInReferences;
+        m.kind = kind;
         m.id = id;
         std::string file_path, file_text;
         std::vector<size_t> line_starts;
         bool readable = false;
-        for (Value loc : result) {
+        // (A Location, a list of them, or of LocationLinks: implementations
+        // and the like come in any of those shapes.)
+        std::vector<Value> locs;
+        if (result.is_array()) {
+            for (Value loc : result) locs.push_back(loc);
+        } else if (result.is_object()) {
+            locs.push_back(result);
+        }
+        for (Value loc : locs) {
             LspPlace p;
-            p.path = from_uri(loc["uri"].str());
+            const bool link = loc["targetUri"].exists();
+            p.path = from_uri((link ? loc["targetUri"] : loc["uri"]).str());
             if (p.path.empty()) continue;
-            const RawRange r = range_of(loc["range"]);
+            const RawRange r = range_of(link ? (loc["targetSelectionRange"].exists() ? loc["targetSelectionRange"] : loc["targetRange"]) : loc["range"]);
             m.ranges.push_back(r);
             p.line = r.l0;
             if (p.path != file_path) {
@@ -1288,6 +1305,63 @@ struct Lsp::Conn::Worker {
         return out;
     }
 
+    // The uses of a symbol in one document: their ranges.
+    void on_highlight(u32 id, Value result) {
+        In m;
+        m.kind = kInHighlight;
+        m.id = id;
+        for (Value h : result) m.ranges.push_back(range_of(h["range"]));
+        c.push(std::move(m));
+    }
+
+    // A document's symbols: nested DocumentSymbols (each with its children),
+    // or SymbolInformation, flat, from older servers.
+    void on_outline(u32 id, Value result) {
+        In m;
+        m.kind = kInOutline;
+        m.id = id;
+        auto add = [&](auto&& self, Value v, u32 depth) -> void {
+            LspSymbol y;
+            y.name = v["name"].str();
+            y.detail = v["detail"].str();
+            y.container = v["containerName"].str();
+            y.kind = static_cast<u8>(v["kind"].integer());
+            y.depth = depth;
+            const Value at = v["selectionRange"].exists() ? v["selectionRange"] : v["range"].exists() ? v["range"] : v["location"]["range"];
+            const RawRange r = range_of(at);
+            y.line = r.l0;
+            y.character = r.c0;
+            m.symbols.push_back(std::move(y));
+            for (Value kid : v["children"]) self(self, kid, depth + 1);
+        };
+        for (Value v : result) add(add, v, 0);
+        c.push(std::move(m));
+    }
+
+    // The project's symbols that match: SymbolInformation, or WorkspaceSymbols
+    // (whose place may be a file alone).
+    void on_symbols(u32 id, Value result) {
+        In m;
+        m.kind = kInSymbols;
+        m.id = id;
+        for (Value v : result) {
+            LspSymbol y;
+            y.name = v["name"].str();
+            y.container = v["containerName"].str();
+            y.kind = static_cast<u8>(v["kind"].integer());
+            const Value loc = v["location"];
+            y.path = from_uri(loc["uri"].str());
+            if (y.path.empty()) continue;
+            if (loc["range"].exists()) {
+                const RawRange r = range_of(loc["range"]);
+                y.line = r.l0;
+                y.character = r.c0;
+            }
+            m.symbols.push_back(std::move(y));
+        }
+        c.push(std::move(m));
+    }
+
     void on_actions(u32 id, Value result, bool resolved) {
         In m;
         m.kind = resolved ? kInResolve : kInActions;
@@ -1397,6 +1471,18 @@ struct Lsp::Conn::Worker {
             case kInSignature: on_signature(n, result); break;
             case kInDefinition: on_definition(n, result); break;
             case kInReferences: on_references(n, result); break;
+            case kInPlaces: on_references(n, result, kInPlaces); break;
+            case kInHighlight: on_highlight(n, result); break;
+            case kInOutline: on_outline(n, result); break;
+            case kInSymbols: on_symbols(n, result); break;
+            case kInSwitch: {  // (clangd's: the other file's URI, or null)
+                In m;
+                m.kind = kInSwitch;
+                m.id = n;
+                m.text = result.is_string() ? from_uri(result.str()) : std::string();
+                c.push(std::move(m));
+                break;
+            }
             case kInPrepareRename: {
                 In m;
                 m.kind = kInPrepareRename;
@@ -1934,6 +2020,9 @@ void Lsp::drop_document(Document* d, bool tell) {
     if (front_ == d) {
         front_ = nullptr;
         complete_id_ = hover_id_ = sig_id_ = def_id_ = refs_id_ = prepare_id_ = rename_id_ = actions_id_ = resolve_id_ = 0;
+        place_id_ = highlight_id_ = outline_id_ = switch_id_ = 0;
+        highlights_.clear();
+        outline_.clear();
         complete_first_edit_ = ~0ull;
         items_.clear();
         ++items_serial_;
@@ -2112,6 +2201,9 @@ void Lsp::follow(u64 key) {
     materialize(was);
     // What was asked about the one in front is for nobody now.
     complete_id_ = hover_id_ = sig_id_ = def_id_ = refs_id_ = prepare_id_ = rename_id_ = actions_id_ = resolve_id_ = 0;
+    place_id_ = highlight_id_ = outline_id_ = switch_id_ = 0;
+    highlights_.clear();
+    outline_.clear();
     complete_first_edit_ = ~0ull;
     items_.clear();
     ++items_serial_;
@@ -2349,6 +2441,15 @@ bool Lsp::can_hover() const { return front_ready() && front_->server->caps.hover
 bool Lsp::can_signature() const { return front_ready() && front_->server->caps.signature; }
 bool Lsp::can_define() const { return front_ready() && front_->server->caps.definition; }
 bool Lsp::can_references() const { return front_ready() && front_->server->caps.references; }
+bool Lsp::can_place(PlaceKind kind) const {
+    if (!front_ready()) return false;
+    const Caps& c = front_->server->caps;
+    return kind == kImplementation ? c.implementation : kind == kTypeDefinition ? c.type_definition : c.declaration;
+}
+bool Lsp::can_highlight() const { return front_ready() && front_->server->caps.highlight; }
+bool Lsp::can_outline() const { return front_ready() && front_->server->caps.outline; }
+bool Lsp::can_find_symbols() const { return front_ready() && front_->server->caps.symbols; }
+bool Lsp::can_switch() const { return front_ready() && front_->server->shown.find("clangd") != std::string::npos; }
 bool Lsp::can_rename() const { return front_ready() && front_->server->caps.rename; }
 bool Lsp::can_format(bool range) const { return front_ready() && (range ? front_->server->caps.range_formatting || front_->server->caps.formatting : front_->server->caps.formatting); }
 bool Lsp::can_act() const { return front_ready() && front_->server->caps.actions; }
@@ -2427,6 +2528,67 @@ void Lsp::definition(u64 offset) {
 void Lsp::references(u64 offset) {
     if (!can_references()) return;
     ask(front_, "textDocument/references", offset, kInReferences, R"(,"context":{"includeDeclaration":true})", &refs_id_);
+}
+
+void Lsp::places(u64 offset, PlaceKind kind) {
+    if (!can_place(kind)) return;
+    static const char* const kMethods[] = {"textDocument/implementation", "textDocument/typeDefinition", "textDocument/declaration"};
+    place_kind_ = kind;
+    ask(front_, kMethods[kind], offset, kInPlaces, {}, &place_id_);
+}
+
+void Lsp::highlight(u64 offset) {
+    if (!can_highlight()) return;
+    highlight_at_ = offset;
+    highlight_doc_ = front_;
+    ask(front_, "textDocument/documentHighlight", offset, kInHighlight, {}, &highlight_id_);
+}
+
+// A question whose parameters are not a document and a place.
+u32 Lsp::ask_with(Server* s, const char* method, const std::string& params, u8 kind, u32* latest) {
+    cancel(asked_ ? asked_ : s, latest);
+    asked_ = s;
+    const u32 id = next_id_++;
+    std::string m = R"({"jsonrpc":"2.0","id":)" + std::to_string(id) + R"(,"method":")" + method + R"(","params":)" + params + "}";
+    send(*s->conn, std::move(m), id, kind);
+    ++sent_;
+    *latest = id;
+    return id;
+}
+
+void Lsp::outline() {
+    if (!can_outline()) return;
+    outline_doc_ = front_;
+    std::string p = R"({"textDocument":{"uri":)";
+    json::quote(p, front_->uri);
+    p += "}}";
+    ask_with(front_->server, "textDocument/documentSymbol", p, kInOutline, &outline_id_);
+}
+
+void Lsp::find_symbols(const std::string& query) {
+    if (!can_find_symbols()) return;
+    found_asked_ = query;
+    std::string p = R"({"query":)";
+    json::quote(p, query);
+    p += "}";
+    ask_with(front_->server, "workspace/symbol", p, kInSymbols, &found_id_);
+}
+
+void Lsp::switch_header() {
+    if (!can_switch()) return;
+    switch_.clear();
+    std::string p = R"({"uri":)";
+    json::quote(p, front_->uri);
+    p += "}";
+    ask_with(front_->server, "textDocument/switchSourceHeader", p, kInSwitch, &switch_id_);
+}
+
+const char* symbol_kind_name(u8 kind) {
+    static const char* const kNames[] = {"",          "file",     "module",   "namespace", "package",  "class",       "method",
+                                         "property",  "field",    "constructor", "enum",   "interface", "function",   "variable",
+                                         "constant",  "string",   "number",   "boolean",   "array",    "object",      "key",
+                                         "null",      "enum member", "struct", "event",    "operator", "type parameter"};
+    return kind < std::size(kNames) ? kNames[kind] : "";
 }
 
 // The word at a place, as a rename starts from when the server does not
@@ -2844,13 +3006,16 @@ u32 Lsp::poll() {
                 def_ = std::move(m.loc);
                 news |= kDefinition;
                 break;
-            case kInReferences: {
-                if (m.id != refs_id_ || !front_asked) break;
-                refs_id_ = 0;
-                refs_ = std::move(m.places);
+            case kInReferences:
+            case kInPlaces: {
+                const bool refs = m.kind == kInReferences;
+                if (m.id != (refs ? refs_id_ : place_id_) || !front_asked) break;
+                (refs ? refs_id_ : place_id_) = 0;
+                std::vector<LspPlace>& list = refs ? refs_ : places_;
+                list = std::move(m.places);
                 // Lines in files that are open come from their tabs, as they are now.
-                for (size_t i = 0; i < refs_.size() && i < m.ranges.size(); ++i) {
-                    LspPlace& p = refs_[i];
+                for (size_t i = 0; i < list.size() && i < m.ranges.size(); ++i) {
+                    LspPlace& p = list[i];
                     const RawRange& r = m.ranges[i];
                     const Document* d = doc_by_path(p.path);
                     if (!d || p.line >= d->buf->line_count()) continue;
@@ -2863,9 +3028,41 @@ u32 Lsp::poll() {
                     if (line.size() > 400) line.resize(400);
                     p.text = std::move(line);
                 }
-                news |= kReferences;
+                news |= refs ? kReferences : kPlaces;
                 break;
             }
+            case kInHighlight: {
+                if (m.id != highlight_id_ || !front_asked || front_ != highlight_doc_) break;
+                highlight_id_ = 0;
+                highlights_.clear();
+                for (const RawRange& r : m.ranges) {
+                    const u64 a = offset_at(*front_->buf, r.l0, r.c0, s->caps.utf16), b = offset_at(*front_->buf, r.l1, r.c1, s->caps.utf16);
+                    if (b > a) highlights_.push_back({a, b});
+                }
+                news |= kHighlights;
+                break;
+            }
+            case kInOutline: {
+                if (m.id != outline_id_ || !front_asked || front_ != outline_doc_) break;
+                outline_id_ = 0;
+                outline_ = std::move(m.symbols);
+                for (LspSymbol& y : outline_) y.offset = offset_at(*front_->buf, y.line, y.character, s->caps.utf16);
+                news |= kOutline;
+                break;
+            }
+            case kInSymbols:
+                if (m.id != found_id_) break;
+                found_id_ = 0;
+                found_ = std::move(m.symbols);
+                found_query_ = found_asked_;
+                news |= kSymbols;
+                break;
+            case kInSwitch:
+                if (m.id != switch_id_ || !front_asked) break;
+                switch_id_ = 0;
+                switch_ = std::move(m.text);
+                news |= kSwitch;
+                break;
             case kInPrepareRename: {
                 if (m.id != prepare_id_ || !front_asked) break;
                 prepare_id_ = 0;

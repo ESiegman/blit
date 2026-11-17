@@ -348,6 +348,18 @@ private:
     // list; F4 / Shift+F4 step through them while it is the last list made.
     void lsp_references();
     bool lsp_step(int by);
+    // Finding one's way (applsp.cpp): implementations, type definitions and
+    // declarations (one gone to, several listed as references are); the
+    // header for a source file or the source for a header; the file's
+    // outline; the project's symbols, asked for as they are typed.
+    void lsp_places(Lsp::PlaceKind kind);
+    void lsp_show_places(std::vector<LspPlace> list, const std::string& word);
+    void lsp_switch_header();
+    std::string other_half(const std::string& path) const;
+    void lsp_outline();
+    void lsp_find_symbols();
+    bool lsp_uses_shown() const;
+    std::string lsp_uses_dump();  // (the tests: the uses marked in the split in front, as line:column ranges)
     void lsp_rename();   // F2
     // Option+Shift+F: the selection's lines, or the whole file (Vim's gq: lines l0 to l1).
     void lsp_format();
@@ -437,6 +449,11 @@ private:
     // `cancelled` (appfind.cpp; the theme picker's).
     void find_preview_item(const std::string& prompt, std::vector<std::string> items, size_t at, std::function<void(int)> moved,
                            std::function<void(int)> chose, std::function<void()> cancelled);
+    // A list of blit's own whose items come from elsewhere as what is typed
+    // changes (the project's symbols): `typed` is told each new text, and
+    // find_set_items() brings the rows for it.
+    void find_live_items(const std::string& prompt, std::function<void(const std::string&)> typed, std::function<void(int)> chose);
+    void find_set_items(std::vector<std::string> items);
     // The places jumps started from, across files, for Ctrl+- (back) and
     // Ctrl+Shift+- (forward), and Vim's Ctrl-O and Ctrl-I (app.cpp).
     struct Jumps;

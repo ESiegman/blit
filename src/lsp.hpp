@@ -99,6 +99,18 @@ struct LspPlace {
     std::string text;
 };
 
+// A symbol of a document (its outline) or of the whole project.
+struct LspSymbol {
+    std::string name, detail, container;  // its name, what the server adds (a signature, a type), what it is inside
+    std::string path;                     // its file (the project's; a document's symbols are the document's)
+    u8 kind = 0;                          // LSP's SymbolKind (12 a function, 5 a class, 23 a struct, ...)
+    u32 depth = 0;                        // how deep in a document's outline (0: at the top)
+    u32 line = 0, character = 0;          // where its name starts, as the server counts
+    u64 offset = ~0ull;                   // and, for the outline of the document in front, as a byte offset
+};
+// A SymbolKind in a word ("function", "class"; "" for one LSP does not have).
+const char* symbol_kind_name(u8 kind);
+
 // Changes to files, as a rename or a fix sends them. Positions are as the
 // server counts (see utf16); they become byte offsets only against the text
 // they are applied to (Lsp::offset_in).
@@ -175,7 +187,14 @@ public:
         kHints = 2048,        // some document's inlay hints
         kTokens = 4096,       // some document's semantic tokens
         kApplyEdit = 8192,    // a server asks for an edit to be made (see take_apply())
+        kPlaces = 16384,      // implementations, type definitions or declarations (see places())
+        kHighlights = 32768,  // the uses of the symbol at a place, in the document in front
+        kOutline = 65536,     // the document in front's symbols
+        kSymbols = 131072,    // the project's symbols that match what was asked
+        kSwitch = 262144,     // the header for a source file, or the source for a header
     };
+    // What places() asks for.
+    enum PlaceKind : u8 { kImplementation, kTypeDefinition, kDeclaration };
 
     Lsp();
     Lsp(const Lsp&) = delete;
@@ -261,6 +280,11 @@ public:
     bool can_rename() const;
     bool can_format(bool range) const;
     bool can_act() const;
+    bool can_place(PlaceKind kind) const;
+    bool can_highlight() const;
+    bool can_outline() const;
+    bool can_find_symbols() const;
+    bool can_switch() const;  // (clangd's own question)
     bool completion_trigger(char c) const;
     bool signature_trigger(char c) const;
     void complete(u64 offset, char trigger);  // trigger: the character that set it off, or 0
@@ -268,6 +292,11 @@ public:
     void signature(u64 offset);
     void definition(u64 offset);
     void references(u64 offset);
+    void places(u64 offset, PlaceKind kind);    // the answer, place_list(), comes as kPlaces
+    void highlight(u64 offset);                 // highlights(), as kHighlights
+    void outline();                             // outline_list(), as kOutline
+    void find_symbols(const std::string& query);  // found_symbols(), as kSymbols
+    void switch_header();                       // switch_target(), as kSwitch
     // Asks whether the name at offset can be renamed, and which bytes it is.
     // A server that does not say answers at once: renamable, the word there.
     void prepare_rename(u64 offset);
@@ -302,6 +331,15 @@ public:
     const SignatureInfo& signature_info() const { return sig_; }
     const LspLocation& definition_target() const { return def_; }
     const std::vector<LspPlace>& reference_list() const { return refs_; }
+    const std::vector<LspPlace>& place_list() const { return places_; }
+    PlaceKind place_kind() const { return place_kind_; }
+    // Byte ranges in the document in front, and the place they were asked about.
+    const std::vector<std::pair<u64, u64>>& highlights() const { return highlights_; }
+    u64 highlight_offset() const { return highlight_at_; }
+    const std::vector<LspSymbol>& outline_list() const { return outline_; }
+    const std::vector<LspSymbol>& found_symbols() const { return found_; }
+    const std::string& found_query() const { return found_query_; }  // what found_symbols() answers
+    const std::string& switch_target() const { return switch_; }     // the other file's path (empty: none)
     // prepare_rename's answer: the bytes of the name (lo == hi: it cannot be
     // renamed; rename_error() may say why) and what to start the new name from.
     u64 rename_lo() const { return rename_lo_; }
@@ -398,7 +436,7 @@ private:
     u64 items_serial_ = 0;
     bool items_incomplete_ = false;
     u32 complete_id_ = 0, hover_id_ = 0, sig_id_ = 0, def_id_ = 0, refs_id_ = 0, prepare_id_ = 0, rename_id_ = 0, format_id_ = 0,
-        actions_id_ = 0, resolve_id_ = 0;
+        actions_id_ = 0, resolve_id_ = 0, place_id_ = 0, highlight_id_ = 0, outline_id_ = 0, found_id_ = 0, switch_id_ = 0;
     Server* asked_ = nullptr;  // the server the front's questions went to
     u64 complete_at_ = 0, hover_at_ = 0;
     u64 complete_first_edit_ = ~0ull;  // the earliest place the text changed since completion was asked for
@@ -406,6 +444,15 @@ private:
     SignatureInfo sig_;
     LspLocation def_;
     std::vector<LspPlace> refs_;
+    std::vector<LspPlace> places_;
+    PlaceKind place_kind_ = kImplementation;
+    std::vector<std::pair<u64, u64>> highlights_;
+    u64 highlight_at_ = 0;
+    std::vector<LspSymbol> outline_, found_;
+    const void* highlight_doc_ = nullptr;  // (the documents those were asked about: an answer for another is dropped)
+    const void* outline_doc_ = nullptr;
+    std::string found_query_, found_asked_, switch_;
+    u32 ask_with(Server* s, const char* method, const std::string& params, u8 kind, u32* latest);
     u64 rename_lo_ = 0, rename_hi_ = 0, rename_at_ = 0;
     std::string rename_text_, rename_error_;
     LspWorkspaceEdit rename_edit_;

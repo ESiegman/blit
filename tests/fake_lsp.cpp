@@ -27,6 +27,16 @@
 //   definition   the first place the word appears
 //   references   every place the word appears, in the open documents and in
 //                the files of the project's folder that are not open
+//   implementation  every place after the first, as LocationLinks
+//   type definition the last place the word appears, as one Location (not a list)
+//   declaration  the first place, as a list of one
+//   highlight    every place the word appears in the document
+//   symbols      a line starting "struct NAME" or "class NAME", with the
+//                functions inside it as its children; a line "TYPE NAME(...) {"
+//                is a function (the outline nested, the project's flat, those
+//                whose name has what was asked in it, ignoring case)
+//   switch       clangd's other half: .cpp and .hpp swapped, src/ and
+//                include/ too (null when the file is neither)
 //   rename       those places, renamed (not ERROR, which cannot be)
 //   formatting   blanks at the ends of lines go, and runs of blanks in them
 //                become one
@@ -399,6 +409,186 @@ void references(Value id, Value params) {
     reply(id, r);
 }
 
+// Implementations, type definitions and declarations, each in another of
+// the shapes a location answer can have.
+void places(Value id, Value params, std::string_view method) {
+    const std::string w = word_at(offset_of(params["position"]));
+    const std::vector<size_t> at = places_of(text, w);
+    if (at.empty()) return reply(id, "null");
+    std::string r;
+    auto location = [&](size_t a, bool link) {
+        r += link ? "{\"targetUri\":" : "{\"uri\":";
+        json::quote(r, uri);
+        if (link) {
+            r += ",\"targetRange\":";
+            range_json(r, a, a + w.size());
+            r += ",\"targetSelectionRange\":";
+        } else {
+            r += ",\"range\":";
+        }
+        range_json(r, a, a + w.size());
+        r += "}";
+    };
+    if (method == "textDocument/typeDefinition") {
+        location(at.back(), false);
+    } else if (method == "textDocument/declaration") {
+        r = "[";
+        location(at.front(), false);
+        r += "]";
+    } else {
+        r = "[";
+        for (size_t i = 1; i < at.size(); ++i) {
+            if (i > 1) r += ',';
+            location(at[i], true);
+        }
+        r += "]";
+    }
+    reply(id, r);
+}
+
+void highlight(Value id, Value params) {
+    const std::string w = word_at(offset_of(params["position"]));
+    std::string r = "[";
+    bool first = true;
+    for (const size_t a : places_of(text, w)) {
+        if (!first) r += ',';
+        first = false;
+        r += "{\"range\":";
+        range_json(r, a, a + w.size());
+        r += ",\"kind\":1}";
+    }
+    r += "]";
+    reply(id, r);
+}
+
+// A document's symbols: structs and classes (5, 23) with the functions
+// (6 inside them, 12 outside) whose lines are indented under them.
+struct FakeSymbol {
+    std::string name, container;
+    int kind = 12;
+    size_t at = 0;
+    std::vector<FakeSymbol> kids;
+};
+std::vector<FakeSymbol> symbols_of(const std::string& t) {
+    std::vector<FakeSymbol> out;
+    size_t ls = 0;
+    while (ls < t.size()) {
+        size_t le = t.find('\n', ls);
+        if (le == std::string::npos) le = t.size();
+        const std::string line = t.substr(ls, le - ls);
+        size_t ind = 0;
+        while (ind < line.size() && (line[ind] == ' ' || line[ind] == '\t')) ++ind;
+        const std::string body = line.substr(ind);
+        auto word_after = [&](size_t p) {
+            size_t e = p;
+            while (e < body.size() && (std::isalnum(static_cast<unsigned char>(body[e])) || body[e] == '_')) ++e;
+            return body.substr(p, e - p);
+        };
+        if (body.rfind("struct ", 0) == 0 || body.rfind("class ", 0) == 0) {
+            const size_t p = body.find(' ') + 1;
+            FakeSymbol s;
+            s.name = word_after(p);
+            s.kind = body[0] == 's' ? 23 : 5;
+            s.at = ls + ind + p;
+            if (!s.name.empty()) out.push_back(s);
+        } else if (const size_t open = body.find('('); open != std::string::npos && open > 0 && !body.empty() && body.back() == '{') {
+            size_t b = open;
+            while (b > 0 && (std::isalnum(static_cast<unsigned char>(body[b - 1])) || body[b - 1] == '_')) --b;
+            const std::string name = body.substr(b, open - b);
+            if (!name.empty() && b > 0 && body.find(' ') < b) {  // (a type before the name: not a call)
+                FakeSymbol f;
+                f.name = name;
+                f.at = ls + ind + b;
+                if (ind > 0 && !out.empty() && out.back().kind != 12) {
+                    f.kind = 6;
+                    f.container = out.back().name;
+                    out.back().kids.push_back(f);
+                } else {
+                    out.push_back(f);
+                }
+            }
+        }
+        ls = le + 1;
+    }
+    return out;
+}
+
+void outline(Value id) {
+    std::string r = "[";
+    auto add = [&](auto&& self, const FakeSymbol& s, bool first) -> void {
+        if (!first) r += ',';
+        r += "{\"name\":";
+        json::quote(r, s.name);
+        r += ",\"detail\":\"" + std::string(s.kind == 12 || s.kind == 6 ? "()" : "") + "\",\"kind\":" + std::to_string(s.kind) + ",\"range\":";
+        range_json(r, s.at, s.at + s.name.size());
+        r += ",\"selectionRange\":";
+        range_json(r, s.at, s.at + s.name.size());
+        r += ",\"children\":[";
+        for (size_t i = 0; i < s.kids.size(); ++i) self(self, s.kids[i], i == 0);
+        r += "]}";
+    };
+    const std::vector<FakeSymbol> all = symbols_of(text);
+    for (size_t i = 0; i < all.size(); ++i) add(add, all[i], i == 0);
+    r += "]";
+    reply(id, r);
+}
+
+void workspace_symbols(Value id, Value params) {
+    std::string q(params["query"].str());
+    for (char& ch : q) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+    std::string r = "[";
+    bool first = true;
+    for (const auto& [u, d] : docs) {
+        auto add = [&](const FakeSymbol& s) {
+            std::string low = s.name;
+            for (char& ch : low) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
+            if (low.find(q) == std::string::npos) return;
+            if (!first) r += ',';
+            first = false;
+            r += "{\"name\":";
+            json::quote(r, s.name);
+            r += ",\"kind\":" + std::to_string(s.kind);
+            if (!s.container.empty()) {
+                r += ",\"containerName\":";
+                json::quote(r, s.container);
+            }
+            r += ",\"location\":{\"uri\":";
+            json::quote(r, u);
+            r += ",\"range\":";
+            range_json(r, s.at, s.at + s.name.size(), d.text);
+            r += "}}";
+        };
+        for (const FakeSymbol& s : symbols_of(d.text)) {
+            add(s);
+            for (const FakeSymbol& k : s.kids) add(k);
+        }
+    }
+    r += "]";
+    reply(id, r);
+}
+
+void switch_header(Value id, Value params) {
+    std::string u(params["uri"].str());
+    auto swap = [&](std::string_view from, std::string_view to) {
+        const size_t at = u.rfind(from);
+        if (at == std::string::npos) return false;
+        u.replace(at, from.size(), to);
+        return true;
+    };
+    if (u.ends_with(".cpp")) {
+        swap("/src/", "/include/");
+        u.replace(u.size() - 4, 4, ".hpp");
+    } else if (u.ends_with(".hpp")) {
+        swap("/include/", "/src/");
+        u.replace(u.size() - 4, 4, ".cpp");
+    } else {
+        return reply(id, "null");
+    }
+    std::string r;
+    json::quote(r, u);
+    reply(id, r);
+}
+
 void prepare_rename(Value id, Value params) {
     size_t start = 0;
     const std::string w = word_at(offset_of(params["position"]), &start);
@@ -726,7 +916,9 @@ int main(int argc, char** argv) {
                                (prepare ? R"({"prepareProvider":true})" : "true") +
                                R"(,"documentFormattingProvider":true,"documentRangeFormattingProvider":true,)"
                                R"("codeActionProvider":{"resolveProvider":true},"executeCommandProvider":{"commands":["fake.comment"]},)"
-                               R"("inlayHintProvider":true,)"
+                               R"("inlayHintProvider":true,"implementationProvider":true,"typeDefinitionProvider":true,)"
+                               R"("declarationProvider":true,"documentHighlightProvider":true,"documentSymbolProvider":true,)"
+                               R"("workspaceSymbolProvider":true,)"
                                R"("semanticTokensProvider":{"legend":{"tokenTypes":["type","parameter","function","macro"],)"
                                R"("tokenModifiers":["readonly"]},"full":{"delta":true}})";
             if (pull) caps += std::string(R"(,"diagnosticProvider":{"interFileDependencies":false,"workspaceDiagnostics":)") + (workspace ? "true" : "false") + "}";
@@ -779,6 +971,16 @@ int main(int argc, char** argv) {
             definition(id, params);
         } else if (method == "textDocument/references") {
             references(id, params);
+        } else if (method == "textDocument/implementation" || method == "textDocument/typeDefinition" || method == "textDocument/declaration") {
+            places(id, params, method);
+        } else if (method == "textDocument/documentHighlight") {
+            highlight(id, params);
+        } else if (method == "textDocument/documentSymbol") {
+            outline(id);
+        } else if (method == "workspace/symbol") {
+            workspace_symbols(id, params);
+        } else if (method == "textDocument/switchSourceHeader") {
+            switch_header(id, params);
         } else if (method == "textDocument/prepareRename") {
             prepare_rename(id, params);
         } else if (method == "textDocument/rename") {

@@ -2554,6 +2554,38 @@ three quarters and small() a quarter; waits of 300 ms (a sleep) and
 each kind (fuzz_buffer.cpp), perf's waits on one written in its format.
 Nothing here is on the editor's paths: no benchmark.
 
+### Round 50: where else a name leads
+
+Implementations, type definitions and declarations (one answer gone to,
+several listed as references are), the header or the source (clangd's
+answer, else a search beside the file, up its folders and through the
+project), the file's outline and the project's symbols in the finder, and
+the other uses of the name under the cursor, asked for once it has rested
+120 ms and marked as matches. Each is an answer the main thread reads
+when it comes; only the uses touch a frame.
+
+The uses arrive in order (sorted once) and a frame binary-searches to the
+first on show, so a name used thousands of times costs what the few on
+the screen cost. The cursor's check is a comparison when it has not
+moved. Turn about, five rounds, 2560x1600, real-200k.cpp with the test
+server and everything on, against the build before:
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling with the cursor on `return` (3,624 uses in the file): frames a second / CPU p50 / layout p50 | 16,336 / 40.54 µs / 3.58 µs | 16,697 / 41.29 µs / 4.29 µs |
+| Typing: the same | 18,407 / 39.04 µs / 1.79 µs | 18,412 / 38.71 µs / 1.79 µs |
+
+- **0.7 µs a frame while uses are marked**, for the handful on show; none
+  while typing, when there are none.
+- lsp.sh has 25 cases more: one implementation gone to and several
+  listed, Enter on one, a type definition given as a Location, Vim's `gD`,
+  `gy` and `gd`, none found; the header up the folders and back, one beside
+  it first, clangd's answer over the search, none; the outline nested,
+  narrowed, Enter and Esc, Vim's `gO`; the project's symbols as typed and
+  Enter; the uses marked, with the cursor just after the name, gone off
+  the name and with a selection, none for a name used once or with
+  `lsp.highlight_uses` off. All 20 suites pass.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

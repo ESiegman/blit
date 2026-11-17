@@ -3388,10 +3388,18 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
         case kG | 'T': requests_.push_back({VimRequest::kTab, {}, -1}); return done();
         case kG | 'r': requests_.push_back({VimRequest::kReferences, {}}); return done();
         case kG | 'd':
-        case kG | 'D':
             remember_jump(ed, cur);
             requests_.push_back({VimRequest::kDefinition, {}});
             return done();
+        case kG | 'D':  // (Vim's own gD: the declaration, here the server's)
+            remember_jump(ed, cur);
+            requests_.push_back({VimRequest::kPlaces, {}, 2});
+            return done();
+        case kG | 'y':
+            remember_jump(ed, cur);
+            requests_.push_back({VimRequest::kPlaces, {}, 1});
+            return done();
+        case kG | 'O': requests_.push_back({VimRequest::kOutline, {}}); return done();
         case 'K': requests_.push_back({VimRequest::kHover, {}}); return done();
         default: return done();
     }

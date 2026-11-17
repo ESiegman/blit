@@ -283,6 +283,12 @@ void App::commands_create() {
     sent("Show what this is", also({key(SDLK_I, kP)}, {key(SDLK_I, kP | kS)}));
     sent("Go to the definition", {key(SDLK_F12)});
     sent("Find references", {key(SDLK_F12, kS)});
+    own("Go to the implementation", {key(SDLK_F12, kP)}, [this] { lsp_places(Lsp::kImplementation); });
+    own("Go to the type definition", {key(SDLK_F12, kP | kS)}, [this] { lsp_places(Lsp::kTypeDefinition); });
+    own("Go to the declaration", {}, [this] { lsp_places(Lsp::kDeclaration); });
+    own("Switch between header and source", {key(SDLK_F12, kA)}, [this] { lsp_switch_header(); });
+    own("Show the file's outline", {key(SDLK_O, kP | kA)}, [this] { lsp_outline(); });
+    own("Go to a symbol in the project", {key(SDLK_P, kP | kA)}, [this] { lsp_find_symbols(); });
     sent("Rename the symbol\xE2\x80\xA6", {key(SDLK_F2)});
     sent("Format the file, or the selected lines", {key(SDLK_F, kA | kS)});
     sent("Fixes and refactorings here (code actions)", {key(SDLK_RETURN, kA)});  // (Cmd+. stops the build)

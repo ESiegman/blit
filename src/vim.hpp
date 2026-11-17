@@ -47,6 +47,8 @@ struct VimRequest {
         kFind,        // :find NAME (n 0) and :grep WORDS (n 1): the box that finds files and text, with that typed
         kEx,          // a command that is not Vim's own (:lua, :set, a script's): name, arg, force for "!", the lines if ranged
         kReferences,  // gr: the references to the name at the cursor
+        kPlaces,      // gD (n 2: the declaration), gy (n 1: the type definition)
+        kOutline,     // gO: the file's outline
         kFormat,      // gq: the lines line0 to line1, formatted by the language server
     };
     u8 kind = 0;

@@ -12,6 +12,10 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <filesystem>
+#include <span>
+
+#include <sys/stat.h>
 
 #include "app.hpp"
 #include "fsio.hpp"
@@ -23,6 +27,12 @@
 namespace blit {
 
 namespace {
+
+// A path's last part, its name.
+std::string_view base_name(std::string_view path) {
+    const size_t slash = path.rfind('/');
+    return slash == std::string_view::npos ? path : path.substr(slash + 1);
+}
 
 bool word_byte(u8 b) { return std::isalnum(b) || b == '_' || b >= 0x80; }
 
@@ -260,6 +270,20 @@ struct App::Assist {
     std::vector<LspPlace> refs;
     i64 refs_at = -1;
     bool refs_pending = false, refs_live = false, refs_picker = false;
+    std::string refs_word = "Reference";  // what F4 says each is ("Implementation 2 of 3")
+    // Implementations, type definitions or declarations asked for; the other
+    // half of a header and source pair; the outline; the project's symbols
+    // shown as they come.
+    bool places_pending = false, switch_pending = false, outline_pending = false, symbols_live = false;
+    std::vector<LspSymbol> symbol_rows;
+    // The uses of the symbol at the cursor: asked once the cursor has rested,
+    // drawn while it stays on one of them and the text is as it was.
+    u64 uses_due_ns = 0;
+    u64 uses_seen_doc = 0, uses_seen_rev = ~0ull, uses_seen_cur = ~0ull;  // (the cursor as the last frame had it)
+    u64 uses_doc = 0, uses_rev = ~0ull;                                   // (what the uses shown are of)
+    u64 uses_ask_doc = 0, uses_ask_rev = ~0ull;                           // (what the last asked were of)
+    std::vector<std::pair<u64, u64>> uses;                                // (in order)
+    std::vector<GridDeco> decos_all;  // (the problems' marks and the uses', together)
     // A rename under way: asked where the name is, then for the new name.
     bool rename_pending = false;
     u64 rename_doc = 0, rename_off = 0;
@@ -495,28 +519,91 @@ void App::sync_lsp() {
     // References: in a list, the file, the line and its text, as Search in files has them.
     if ((news & Lsp::kReferences) && a.refs_pending) {
         a.refs_pending = false;
-        a.refs = lsp_.reference_list();
-        a.refs_at = -1;
-        if (a.refs.empty()) {
-            a.refs_live = false;
-            notify("No references found");
+        lsp_show_places(lsp_.reference_list(), "Reference");
+        dirty_ = true;
+    }
+
+    // Implementations and the like: one gone to, several listed.
+    if ((news & Lsp::kPlaces) && a.places_pending) {
+        a.places_pending = false;
+        static const char* const kWords[] = {"Implementation", "Type definition", "Declaration"};
+        lsp_show_places(lsp_.place_list(), kWords[lsp_.place_kind()]);
+    }
+    if ((news & Lsp::kSwitch) && a.switch_pending) {
+        a.switch_pending = false;
+        std::string other = lsp_.switch_target();
+        if (other.empty()) other = other_half(pane_->doc->ed.path);  // (clangd did not know: looked for beside it)
+        if (other.empty()) notify("No header or source found for " + std::string(base_name(pane_->doc->ed.path)));
+        else if (remember_place(), !open_path(other.c_str())) notify("Cannot open " + other);
+    }
+    if ((news & Lsp::kOutline) && a.outline_pending) {
+        a.outline_pending = false;
+        const std::vector<LspSymbol>& all = lsp_.outline_list();
+        if (all.empty()) {
+            notify("No symbols in " + std::string(base_name(pane_->doc->ed.path)));
         } else {
+            // Each with its kind and the server's detail, indented as nested;
+            // the one the cursor is in chosen to start with.
+            std::vector<std::string> items;
+            size_t at = 0;
+            const u64 cur = pane_->doc->ed.cursor();
+            for (size_t i = 0; i < all.size(); ++i) {
+                const LspSymbol& y = all[i];
+                std::string row(2 * std::min<u32>(y.depth, 8), ' ');
+                row += y.name;
+                if (!y.detail.empty() && y.detail.size() < 60) row += (y.detail.front() == '(' ? "" : " ") + y.detail;
+                if (const char* k = symbol_kind_name(y.kind); *k) row += std::string("  \xC2\xB7 ") + k;
+                items.push_back(std::move(row));
+                if (y.offset <= cur) at = i;
+            }
+            const u64 back_off = cur;
+            const double back_y = pane_->target_y;
+            find_preview_item("Outline of " + std::string(base_name(pane_->doc->ed.path)), std::move(items), at,
+                              [this](int i) {  // (the view follows the choice; the cursor stays until Enter)
+                                  const std::vector<LspSymbol>& list = lsp_.outline_list();
+                                  if (i < 0 || static_cast<size_t>(i) >= list.size()) return;
+                                  const Editor& ed = pane_->doc->ed;
+                                  const u64 line = ed.buf.line_of(std::min(list[static_cast<size_t>(i)].offset, ed.buf.size()));
+                                  const double ch = font_->cell_h(), vh = view_h();
+                                  pane_->target_y = std::clamp(static_cast<double>(line) * ch - vh / 3, 0.0, std::max(0.0, max_scroll_y()));
+                                  dirty_ = true;
+                              },
+                              [this](int i) {
+                                  const std::vector<LspSymbol>& list = lsp_.outline_list();
+                                  if (i < 0 || static_cast<size_t>(i) >= list.size()) return;
+                                  remember_place();
+                                  pane_->doc->ed.move_to(std::min(list[static_cast<size_t>(i)].offset, pane_->doc->ed.buf.size()), false);
+                                  scroll_to_cursor();
+                              },
+                              [this, back_off, back_y] {
+                                  pane_->doc->ed.move_to(std::min(back_off, pane_->doc->ed.buf.size()), false);
+                                  pane_->target_y = back_y;
+                                  dirty_ = true;
+                              });
+        }
+    }
+    if ((news & Lsp::kSymbols) && a.symbols_live) {
+        if (!find_open_) {
+            a.symbols_live = false;
+        } else {
+            a.symbol_rows = lsp_.found_symbols();
             std::vector<std::string> items;
             const std::string* root = panel_root();
-            for (const LspPlace& p : a.refs) {
-                std::string_view text = p.text;
-                while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
-                items.push_back(shown_name(p.path, root) + ":" + std::to_string(p.line + 1) + "  " + std::string(text));
+            for (const LspSymbol& y : a.symbol_rows) {
+                std::string row = y.name;
+                if (const char* k = symbol_kind_name(y.kind); *k) row += std::string("  \xC2\xB7 ") + k;
+                if (!y.container.empty()) row += "  in " + y.container;
+                row += "  \xC2\xB7 " + shown_name(y.path, root) + ":" + std::to_string(y.line + 1);
+                items.push_back(std::move(row));
             }
-            const std::string title = "References (" + std::to_string(a.refs.size()) + ")";
-            find_choose_item(title, std::move(items), [this](int i) {
-                Assist& x = *assist_;
-                if (i < 0 || static_cast<size_t>(i) >= x.refs.size()) return;
-                x.refs_at = i - 1;
-                lsp_step(1);
-            });
-            a.refs_live = a.refs_picker = true;
+            find_set_items(std::move(items));
         }
+    }
+    if (news & Lsp::kHighlights) {
+        a.uses = lsp_.highlights();
+        std::ranges::sort(a.uses);
+        a.uses_doc = a.uses_ask_doc;  // (an answer to text since changed is never shown)
+        a.uses_rev = a.uses_ask_rev;
         dirty_ = true;
     }
 
@@ -754,8 +841,203 @@ bool App::lsp_step(int by) {
     } else if (!go_to_place(p.path, p.line + 1, p.col + 1)) {
         return true;
     }
-    notify("Reference " + std::to_string(a.refs_at + 1) + " of " + std::to_string(n));
+    notify(a.refs_word + " " + std::to_string(a.refs_at + 1) + " of " + std::to_string(n));
     return true;
+}
+
+// Places a server found, in the list References has (F4 then steps through
+// them): with one, it is gone to straight away (references are always listed).
+void App::lsp_show_places(std::vector<LspPlace> list, const std::string& word) {
+    Assist& a = *assist_;
+    a.refs = std::move(list);
+    a.refs_at = -1;
+    a.refs_word = word;
+    std::string lower = word;
+    lower[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(lower[0])));
+    if (a.refs.empty()) {
+        a.refs_live = false;
+        notify(word == "Reference" ? std::string("No references found") : "No " + lower + " found");
+        return;
+    }
+    if (a.refs.size() == 1 && word != "Reference") {
+        a.refs_live = true;
+        a.refs_picker = false;
+        lsp_step(1);
+        a.refs_live = false;
+        return;
+    }
+    std::vector<std::string> items;
+    const std::string* root = panel_root();
+    for (const LspPlace& p : a.refs) {
+        std::string_view text = p.text;
+        while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
+        items.push_back(shown_name(p.path, root) + ":" + std::to_string(p.line + 1) + "  " + std::string(text));
+    }
+    const std::string title = (word == "Type definition" ? std::string("Type definitions") : word + "s") + " (" + std::to_string(a.refs.size()) + ")";
+    find_choose_item(title, std::move(items), [this](int i) {
+        Assist& x = *assist_;
+        if (i < 0 || static_cast<size_t>(i) >= x.refs.size()) return;
+        x.refs_at = i - 1;
+        lsp_step(1);
+    });
+    a.refs_live = a.refs_picker = true;
+}
+
+void App::lsp_places(Lsp::PlaceKind kind) {
+    Assist& a = *assist_;
+    static const char* const kWhat[] = {"implementations", "type definitions", "declarations"};
+    if (!lsp_.ready() || lsp_doc_ != pane_->doc) {
+        if (server_text(*pane_->doc)) notify(why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
+        return;
+    }
+    if (!lsp_.can_place(kind)) {
+        if (kind == Lsp::kDeclaration && lsp_.can_define()) {  // (a server with no declarations: the definition)
+            lsp_.definition(pane_->doc->ed.cursor());
+            return;
+        }
+        notify(lsp_.server_name() + " does not find " + kWhat[kind]);
+        return;
+    }
+    lsp_close(kPopAll);
+    a.places_pending = true;
+    lsp_.places(pane_->doc->ed.cursor(), kind);
+}
+
+// The file of the same name with the other kind of extension: beside it;
+// then in the include and source folders of the folders above it; then
+// anywhere in the project (the nearest to it), a few thousand entries at most.
+std::string App::other_half(const std::string& path) const {
+    if (path.empty() || is_remote(path)) return {};
+    static constexpr std::string_view kHeaders[] = {".h", ".hpp", ".hh", ".hxx", ".inl", ".cuh"};
+    static constexpr std::string_view kSources[] = {".cpp", ".cc", ".cxx", ".c", ".cu", ".hip", ".m", ".mm"};
+    const std::string full = full_path(path);
+    const size_t slash = full.rfind('/'), dot = full.rfind('.');
+    if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) return {};
+    const std::string dir = full.substr(0, slash), stem = full.substr(slash + 1, dot - slash - 1), ext = full.substr(dot);
+    const bool header = std::ranges::find(kHeaders, std::string_view(ext)) != std::end(kHeaders);
+    const bool source = std::ranges::find(kSources, std::string_view(ext)) != std::end(kSources);
+    if (!header && !source) return {};
+    auto exts = [&]() -> std::span<const std::string_view> { return header ? std::span<const std::string_view>(kSources) : std::span<const std::string_view>(kHeaders); };
+    auto is_file = [](const std::string& p) {
+        struct stat st;
+        return ::stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+    };
+    for (const std::string_view e : exts())
+        if (const std::string p = dir + "/" + stem + std::string(e); is_file(p)) return p;
+    // include/ and src/ beside each folder up from it (as far as the project's).
+    const std::string* root = panel_root();
+    std::string up = dir;
+    for (int levels = 0; levels < 4 && !up.empty(); ++levels) {
+        for (const char* sub : {"/include/", "/src/", "/source/", "/inc/", "/lib/"})
+            for (const std::string_view e : exts())
+                if (const std::string p = up + sub + stem + std::string(e); is_file(p)) return p;
+        if (root && up == *root) break;
+        const size_t s = up.rfind('/');
+        if (s == std::string::npos || s == 0) break;
+        up.resize(s);
+    }
+    // Anywhere in the project: the one whose folder shares most of the path.
+    if (!root) return {};
+    std::string best;
+    size_t best_common = 0, seen = 0;
+    std::error_code ec;
+    for (auto it = std::filesystem::recursive_directory_iterator(*root, std::filesystem::directory_options::skip_permission_denied, ec);
+         it != std::filesystem::recursive_directory_iterator() && seen < 20000; it.increment(ec), ++seen) {
+        if (ec) break;
+        const std::string name = it->path().filename().string();
+        if (it->is_directory(ec)) {
+            if (name.starts_with(".") || name.starts_with("build") || name == "node_modules" || name == "out") it.disable_recursion_pending();
+            continue;
+        }
+        const size_t d = name.rfind('.');
+        if (d == std::string::npos || name.substr(0, d) != stem) continue;
+        if (std::ranges::find(exts(), std::string_view(name).substr(d)) == exts().end()) continue;
+        const std::string p = it->path().string();
+        size_t common = 0;
+        while (common < p.size() && common < full.size() && p[common] == full[common]) ++common;
+        if (common > best_common) best = p, best_common = common;
+    }
+    return best;
+}
+
+void App::lsp_switch_header() {
+    Assist& a = *assist_;
+    const std::string& path = pane_->doc->ed.path;
+    if (path.empty()) return notify("This file has no name yet");
+    if (lsp_.ready() && lsp_doc_ == pane_->doc && lsp_.can_switch()) {  // (clangd knows, from what includes what)
+        a.switch_pending = true;
+        lsp_.switch_header();
+        return;
+    }
+    const std::string other = other_half(path);
+    if (other.empty()) return notify("No header or source found for " + std::string(base_name(path)));
+    remember_place();
+    if (!open_path(other.c_str())) notify("Cannot open " + other);
+}
+
+void App::lsp_outline() {
+    Assist& a = *assist_;
+    if (!lsp_.ready() || lsp_doc_ != pane_->doc || !lsp_.can_outline()) {
+        if (server_text(*pane_->doc))
+            notify(lsp_.ready() && lsp_doc_ == pane_->doc ? lsp_.server_name() + " gives no outline" : why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
+        return;
+    }
+    lsp_close(kPopAll);
+    a.outline_pending = true;
+    lsp_.outline();
+}
+
+// Whether the uses found are to be shown: of this text as it is, two or
+// more, the cursor on one of them and nothing selected.
+bool App::lsp_uses_shown() const {
+    const Assist& a = *assist_;
+    const Editor& ed = pane_->doc->ed;
+    if (a.uses.size() < 2 || a.uses_doc != pane_->doc->id || a.uses_rev != ed.revision() || ed.has_selection()) return false;
+    const u64 cur = ed.cursor();
+    auto after = std::ranges::upper_bound(a.uses, cur, {}, &std::pair<u64, u64>::first);
+    return after != a.uses.begin() && cur <= std::prev(after)->second;
+}
+
+std::string App::lsp_uses_dump() {
+    Assist& a = *assist_;
+    const Editor& ed = pane_->doc->ed;
+    if (!lsp_uses_shown()) return "uses: none";
+    std::string out = "uses:";
+    for (const auto& [lo, hi] : a.uses) {
+        const u64 line = ed.buf.line_of(lo), start = ed.buf.line_start(line);
+        out += " " + std::to_string(line + 1) + ":" + std::to_string(lo - start + 1) + "-" + std::to_string(hi - start + 1);
+    }
+    return out;
+}
+
+void App::lsp_find_symbols() {
+    Assist& a = *assist_;
+    if (!lsp_.ready() || !lsp_.can_find_symbols()) {
+        if (server_text(*pane_->doc))
+            notify(lsp_.ready() ? lsp_.server_name() + " does not find the project's symbols" : why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
+        return;
+    }
+    lsp_close(kPopAll);
+    a.symbol_rows.clear();
+    find_live_items("Symbols in the project", [this](const std::string& typed) { lsp_.find_symbols(typed); },
+                    [this](int i) {
+                        Assist& x = *assist_;
+                        if (i < 0 || static_cast<size_t>(i) >= x.symbol_rows.size()) return;
+                        const LspSymbol y = x.symbol_rows[static_cast<size_t>(i)];
+                        const u64 key = lsp_.key_of(y.path);
+                        Pane* where = nullptr;
+                        size_t at = 0;
+                        remember_place();
+                        if (key && find_doc(key, &where, &at)) {
+                            focus_pane(where);
+                            tab_show(at);
+                            pane_->doc->ed.move_to(Lsp::offset_at(pane_->doc->ed.buf, y.line, y.character, lsp_.counts_utf16()), false);
+                            scroll_to_cursor();
+                        } else {
+                            go_to_place(y.path, y.line + 1, y.character + 1);
+                        }
+                    });
+    a.symbols_live = true;
 }
 
 void App::lsp_rename() {
@@ -1041,6 +1323,7 @@ int App::lsp_wait_ms() const {
     u64 due = a.hover_due_ns;
     if (const u64 stop = lsp_.next_tick_ns(); stop && (!due || stop < due)) due = stop;
     if (a.extras_due_ns && (!due || a.extras_due_ns < due)) due = a.extras_due_ns;
+    if (a.uses_due_ns && (!due || a.uses_due_ns < due)) due = a.uses_due_ns;
     if (!due) return -1;
     const u64 now = now_ns();
     return due <= now ? 0 : static_cast<int>(std::min<u64>((due - now) / 1'000'000 + 1, 1u << 30));
@@ -1052,6 +1335,22 @@ void App::lsp_tick() {
     if (a.extras_due_ns && now_ns() >= a.extras_due_ns) {  // (a frame asks for the hints and colours now due)
         a.extras_due_ns = 0;
         dirty_ = true;
+    }
+    if (a.uses_due_ns && now_ns() >= a.uses_due_ns) {  // (the cursor has rested: the uses of what it is on)
+        a.uses_due_ns = 0;
+        const Editor& ed = pane_->doc->ed;
+        auto word = [&](u64 at) {  // (on a name, or just after one)
+            char c = 0;
+            return at < ed.buf.size() && ed.buf.read(at, &c, 1) == 1 &&
+                   (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || static_cast<unsigned char>(c) >= 0x80);
+        };
+        const u64 cur = ed.cursor();
+        if (cfg_.lsp_uses && lsp_.ready() && lsp_doc_ == pane_->doc && lsp_.can_highlight() && !ed.has_selection() &&
+            (word(cur) || (cur > 0 && word(cur - 1)))) {
+            a.uses_ask_doc = pane_->doc->id;
+            a.uses_ask_rev = ed.revision();
+            lsp_.highlight(cur);
+        }
     }
     if (!a.hover_due_ns || now_ns() < a.hover_due_ns) return;
     a.hover_due_ns = 0;
@@ -1220,7 +1519,7 @@ bool App::lsp_key(const SDL_KeyboardEvent& k) {
     }
     if (!lsp_.ready()) {
         // The keys that ask a server for something say why nothing comes of them.
-        const bool asks = (ctrl && k.key == SDLK_SPACE) || (alt && k.key == SDLK_ESCAPE) || (cmd && k.key == SDLK_I) || k.key == SDLK_F12;
+        const bool asks = (ctrl && k.key == SDLK_SPACE) || (alt && k.key == SDLK_ESCAPE) || (cmd && k.key == SDLK_I) || (k.key == SDLK_F12 && !cmd && !alt);
         if (!asks || !server_text(*pane_->doc)) return false;
         notify(why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
         return true;
@@ -1241,7 +1540,7 @@ bool App::lsp_key(const SDL_KeyboardEvent& k) {
         else show_hover(pane_->doc->ed.cursor(), true);
         return true;
     }
-    if (k.key == SDLK_F12) {
+    if (k.key == SDLK_F12 && !shift && !alt && !cmd && !ctrl) {
         lsp_.definition(pane_->doc->ed.cursor());
         return true;
     }
@@ -1408,6 +1707,29 @@ void App::lsp_layout(int w, int h, FrameDesc& fd) {
         lsp_decorate(grid);
         grid.decos = a.decos;
         grid.notes = a.notes;
+        // The uses of the symbol at the cursor: asked for once it has rested
+        // (lsp_tick), shown while it stays on one of them and the text is
+        // as it was when they were found.
+        const Editor& ed = pane_->doc->ed;
+        const u64 cur = ed.cursor();
+        if (cur != a.uses_seen_cur || pane_->doc->id != a.uses_seen_doc || ed.revision() != a.uses_seen_rev) {
+            a.uses_seen_cur = cur, a.uses_seen_doc = pane_->doc->id, a.uses_seen_rev = ed.revision();
+            a.uses_due_ns = cfg_.lsp_uses ? now_ns() + 120'000'000 : 0;
+        }
+        if (lsp_uses_shown()) {
+            a.decos_all.assign(a.decos.begin(), a.decos.end());
+            const u64 lines = ed.buf.line_count(), bottom = std::min<u64>(grid.top_line + grid.rows, lines);
+            const u64 from = ed.buf.line_start(std::min(grid.top_line, lines ? lines - 1 : 0)), to = bottom < lines ? ed.buf.line_start(bottom) : ed.buf.size() + 1;
+            for (auto it = std::ranges::lower_bound(a.uses, from, {}, &std::pair<u64, u64>::first); it != a.uses.end() && it->first < to; ++it) {  // (those on show alone)
+                const auto [lo, hi] = *it;
+                const u64 line = ed.buf.line_of(lo);
+                if (ed.buf.line_of(hi) != line) continue;
+                const u64 start = ed.buf.line_start(line);
+                const u32 c0 = ed.col_between(start, lo), c1 = ed.col_between(start, hi);
+                a.decos_all.push_back({line, c0, std::max(c1, c0 + 1), kDecoMatch});
+            }
+            grid.decos = a.decos_all;
+        }
     }
 
     const int cw = font_->cell_w(), ch = font_->cell_h();

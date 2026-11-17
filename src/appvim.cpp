@@ -339,6 +339,8 @@ void App::vim_after(u32 result) {
                 break;
             case VimRequest::kHover: show_hover(pane_->doc->ed.cursor(), true); break;
             case VimRequest::kReferences: lsp_references(); break;
+            case VimRequest::kPlaces: lsp_places(static_cast<Lsp::PlaceKind>(q.n)); break;
+            case VimRequest::kOutline: lsp_outline(); break;
             case VimRequest::kFormat: lsp_format_lines(q.line0, q.line1); break;
             case VimRequest::kBack: jump_walk(q.n ? q.n : -1); break;  // (<C-o> and <C-i>: the jumps across files, app.cpp)
             default: break;

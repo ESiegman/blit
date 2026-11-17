@@ -198,6 +198,8 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | The next / previous hit of Search in files (or of the references found, after them) | F4 / Shift+F4 | F4 / Shift+F4 |
 | The next / previous problem: the last build's, across files (else the language servers', across files) | F8 / Shift+F8 | F8 / Shift+F8 |
 | Go to the definition; find references; rename | F12; Shift+F12; F2 | F12; Shift+F12; F2 |
+| Go to the implementation / the type definition; the header or source | Cmd+F12 / Cmd+Shift+F12; Option+F12 | Ctrl+F12 / Ctrl+Shift+F12; Alt+F12 |
+| The file's outline / a symbol in the project | Cmd+Option+O / Cmd+Option+P | Ctrl+Alt+O / Ctrl+Alt+P |
 | Format the file (or the lines selected); fixes and refactorings here | Option+Shift+F; Option+Enter | Alt+Shift+F; Alt+Enter |
 | New file / close tab | Cmd+N (or Cmd+T) / Cmd+W | Ctrl+N (or Ctrl+T) / Ctrl+W (or Ctrl+F4) |
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab, or Cmd+Shift+] / [ | Ctrl+Tab / Ctrl+Shift+Tab, or Ctrl+PageDown / PageUp |
@@ -215,7 +217,7 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | A new project (the start screen's New project tab, in a tab of its own) | Cmd+Option+N | Ctrl+Alt+N |
 | Markdown preview, or an SVG's picture, beside the file | Cmd+Shift+V | Ctrl+Alt+V (Ctrl+Shift+V pastes) |
 | Blame column on or off | Cmd+Option+B | Ctrl+Alt+B |
-| Back / forward through the places jumps started from (Go to file, Search in files, a problem, a definition, Vim's G, a search, a mark) | Ctrl+- / Ctrl+Shift+- | Alt+Left / Alt+Right |
+| Back / forward through the places jumps started from (Go to file, Search in files, a problem, a definition or any place a name leads, Vim's G, a search, a mark) | Ctrl+- / Ctrl+Shift+- | Alt+Left / Alt+Right |
 | Font size | Cmd+= / Cmd+- / Cmd+0 | Ctrl+= / Ctrl+- / Ctrl+0 |
 | Open init.lua (the settings) | Cmd+, | Ctrl+, |
 | Quit | Cmd+Q | Ctrl+Q |
@@ -387,7 +389,8 @@ file named under the cursor), `[<Space>` and `]<Space>` (an empty line
 above or below), `ZZ ZQ`, Ctrl-D Ctrl-U Ctrl-F Ctrl-B Ctrl-E Ctrl-Y,
 `zz zt zb`, Ctrl-L (as `:noh`), Ctrl-W with `h j k l w` (to another split),
 `v s` (split) and `c q` (close), and with a language server `gd` (or
-Ctrl-], and Ctrl-T back), `K`, `gr` (the references, in a list), `gq` with
+Ctrl-], and Ctrl-T back), `gD` (the declaration), `gy` (the type
+definition), `gO` (the file's outline), `K`, `gr` (the references, in a list), `gq` with
 a motion (`gqq` a line; on a Visual selection, its lines) to format, and
 `]d [d` to the next and the previous diagnostic (`]D [D` the last and
 first), going round at the ends of the file.
@@ -488,10 +491,11 @@ Insert mode (completion is the language server's); Select mode and
 on a selection; some seldom used `g` and `z` commands (`gI`, `ga`, `g,`,
 `gx`, `zh`, `zl`); Ctrl-W beyond the keys named above. Of the keys newer
 versions of Neovim set up by default, those that need something blit does
-not have are missing: `grn gra grr gri grt gO` (references are `gr`;
-renaming and code actions are F2 and Option+Enter), `[q ]q [l ]l [t ]t [a ]a` (there are no quickfix, location, tag or
+not have are missing: `grn gra grr gri grt` (references are `gr` and
+type definitions `gy`; renaming, code actions and implementations are F2,
+Option+Enter and Cmd+F12), `[q ]q [l ]l [t ]t [a ]a` (there are no quickfix, location, tag or
 argument lists), Ctrl-W `d`, and the tree-sitter selections `an in`. `gd`
-asks the language server; Neovim's looks for a declaration in the file.
+and `gD` ask the language server; Neovim's look for a declaration in the file.
 On the command line the cursor stays at the end (no moving back into what
 was typed, no Tab completion). A block that cuts through a tab or a wide character takes
 the whole character. Marks with capital letters belong to their file like
@@ -1251,6 +1255,24 @@ A server whose last file has been closed stops half a minute later.
   the name is used, each with its file, line and text, as Search in files
   shows them. Enter goes to one; afterwards F4 and Shift+F4 go to the next
   and the previous, until another list is made.
+- **Implementations, type definitions and declarations** with Cmd+F12,
+  Cmd+Shift+F12 and "Go to the declaration" in the command search (Vim's
+  `gy` and `gD`). One place is gone to; several are listed as references
+  are. A server that has no declarations gives the definition.
+- **The header or the source** with Option+F12: clangd's answer, which it
+  knows from what includes what; otherwise a file of the same name beside
+  this one, then in an `include`, `src`, `source`, `inc` or `lib` folder
+  beside each of the four folders above it, then the one anywhere in the
+  project whose path is most like this one's.
+- **The file's outline** with Cmd+Option+O (Vim's `gO`): its classes,
+  functions and the rest, nested, each with its kind, starting at the one
+  the cursor is in. Typing narrows them, moving through them shows each,
+  Enter goes there and Esc goes back.
+- **A symbol in the project** with Cmd+Option+P: the server is asked again
+  as the name is typed.
+- **The other uses** of the name under the cursor are marked in the file
+  once the cursor has stopped on it for a moment (not while there is a
+  selection, nor for a name used once).
 - **Rename** with F2: the new name is typed in the box, then the box shows
   how many changes that makes in which files, and Enter makes them. A file
   open in a tab is changed there (one undo takes the whole change back);
@@ -1276,6 +1298,7 @@ of a second, for what is on show.
 blit.opt.lsp.format_on_save = true   -- the server formats a file before it is saved (off)
 blit.opt.lsp.inlay_hints = true      -- parameter names and deduced types between the characters (off)
 blit.opt.lsp.semantic_colors = false -- tree-sitter's colours alone (on)
+blit.opt.lsp.highlight_uses = false  -- no marks on the other uses of the name under the cursor (on)
 ```
 
 The server's colours use the theme's colour for what tree-sitter calls the
@@ -2082,7 +2105,7 @@ src/font.*      finding fonts, FreeType glyph atlas, italic/bold faces, ligature
 src/shape.*     HarfBuzz, loaded on demand
 src/json.*      JSON reader and writer
 src/lsp.*       language server client: processes, messages, every open document's sync
-src/applsp.cpp  squiggles, completion list, popups, references, rename, formatting, code actions, hints, colours
+src/applsp.cpp  squiggles, completion list, popups, references and the other places a name leads, the outline, project symbols, uses, header/source, rename, formatting, code actions, hints, colours
 src/tree.*      the file tree: reading folders in the background, new, rename, trash, icons
 src/apppanel.cpp  the side panel: tabs, the tree, the problems list
 src/apptabs.cpp   the open files: the tab bar, switching, closing, reordering; line numbers

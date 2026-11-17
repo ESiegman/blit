@@ -1,8 +1,11 @@
 #!/bin/sh
 # Language servers through the editor, against the predictable test server
 # (tests/fake_lsp.cpp): several at once, every tab's file open on one, the
-# Problems tab across files, references, rename, formatting, code actions,
-# inlay hints and the servers' colours, by their keys and Vim's.
+# Problems tab across files, references, the other places a name leads to
+# (implementations, type definitions, declarations, the header or source,
+# the file's outline, the project's symbols, its other uses in the file),
+# rename, formatting, code actions, inlay hints and the servers' colours,
+# by their keys and Vim's.
 #
 #   tests/lsp.sh path/to/blit            run the cases
 #   tests/lsp.sh path/to/blit --print    show what each case gives
@@ -25,6 +28,8 @@ printf '%s\nblit.opt.editor.modal = false\nblit.opt.lsp.format_on_save = true\n'
 printf '%s\nblit.opt.editor.modal = false\nblit.opt.lsp.inlay_hints = true\n' "$servers" >"$dir/hints.lua"
 printf '%s\nblit.opt.editor.modal = false\nblit.opt.lsp.semantic_colors = false\n' "$servers" >"$dir/plain.lua"
 printf '%s\nblit.opt.editor.modal = false\nblit.opt.syntax.styles["lsp.parameter"] = "#ff0000 italic"\n' "$servers" >"$dir/themed.lua"
+printf 'blit.opt.lsp.servers.clangd = { command = { "%s", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/clangd.lua"
+printf '%s\nblit.opt.editor.modal = false\nblit.opt.lsp.highlight_uses = false\n' "$servers" >"$dir/nouses.lua"
 printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--workspace", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/pull.lua"
 export BLIT_RECENT_FILE="$dir/recent"
 init=
@@ -37,6 +42,13 @@ fresh() {
     printf 'int c; // WARN\n' >"$P/c.cpp"
     printf 'shared in d, not open\n' >"$P/d.cpp"
     printf 'int x;\ncall(1, 2, 3);\nauto width = p_size;\nWidget w; MAX_SIZE\n' >"$P/h.cpp"
+    printf 'int one = 1;\nint two = one;\nint three = one + two;\n' >"$P/e.cpp"
+    mkdir -p "$P/src" "$P/include"
+    printf 'struct Widget {\n    int size;\n    void draw() {\n    }\n};\nint total(int n) {\n    return n;\n}\n' >"$P/src/app.cpp"
+    printf 'struct Widget;\n' >"$P/include/app.hpp"
+    printf 'int util() {\n    return 1;\n}\n' >"$P/src/util.cpp"
+    printf '// beside\n' >"$P/src/util.hpp"
+    printf '// included\n' >"$P/include/util.hpp"
 }
 
 failed=0
@@ -111,6 +123,68 @@ check "Vim's gr lists them too" 'pick [] 4 : >a.cpp:1  int shared = 1; // ERROR 
 run "key:Down;key:End;key:shift+F12;wait:200;finddump"
 got="$got / $said"
 check "nothing there: it says so" 'closed / blit: No references found'
+
+# Where else a name leads: one answer is gone to, several are listed.
+run "key:Right;key:Right;key:Right;key:Right;key:Right;key:cmd+F12;wait:200;vimdump"
+check "Cmd+F12 goes to the one implementation" 'NORMAL |  | 3:6 | WARN shared  '
+run "key:Right;key:Right;key:Right;key:Right;key:Right;key:cmd+F12;wait:200;finddump" "$P/e.cpp"
+check "several are listed: file, line, text" 'pick [] 2 : >e.cpp:2  int two = one; e.cpp:3  int three = one + two;'
+run "key:Right;key:Right;key:Right;key:Right;key:Right;key:cmd+F12;wait:200;key:Down;key:Return;vimdump" "$P/e.cpp"
+check "Enter goes to the one chosen" 'NORMAL |  | 3:13 | int three = one + two;'
+run "key:Right;key:Right;key:Right;key:Right;key:Right;key:cmd+shift+F12;wait:200;vimdump" "$P/e.cpp"
+check "Cmd+Shift+F12, the type definition (a Location, not a list)" 'NORMAL |  | 3:13 | int three = one + two;'
+with vim "text:G;text:w;text:w;text:w;text:gD;wait:200;vimdump" "$P/e.cpp"
+check "Vim's gD, the declaration" 'NORMAL |  | 1:5 | int one = 1;'
+with vim "text:w;text:gy;wait:200;vimdump" "$P/e.cpp"
+check "gy, the type definition" 'NORMAL |  | 3:13 | int three = one + two;'
+with vim "text:G;text:w;text:w;text:w;text:gd;wait:200;vimdump" "$P/e.cpp"
+check "gd is still the definition" 'NORMAL |  | 1:5 | int one = 1;'
+run "key:Down;key:End;key:cmd+F12;wait:200;finddump"
+got="$got / $said"
+check "nothing there: it says so" 'closed / blit: No implementation found'
+
+# The header for a source and the other way round: beside it, then up the
+# folders; clangd, which knows from what includes what, asked first.
+run "key:alt+F12;wait:100;dump" "$P/src/app.cpp"
+check "Option+F12 finds the header up the folders" '>[app.cpp app.hpp*]'
+run "key:alt+F12;wait:100;key:alt+F12;wait:100;dump" "$P/src/app.cpp"
+check "and back, to the tab it came from" '>[app.cpp* app.hpp]'
+run "key:alt+F12;wait:100;vimdump" "$P/src/util.cpp"
+check "one beside it first" 'NORMAL |  | 1:1 | // beside'
+with clangd "key:alt+F12;wait:200;vimdump" "$P/src/util.cpp"
+check "clangd's answer where there is one" 'NORMAL |  | 1:1 | // included'
+run "key:alt+F12;wait:100;dump" "$P/e.cpp"
+got="$got / $said"
+check "none: it says so" '>[e.cpp*] / blit: No header or source found for e.cpp'
+
+# The file's outline, and the project's symbols as they are typed.
+run "key:cmd+alt+O;wait:200;finddump" "$P/src/app.cpp"
+check "Cmd+Option+O lists the file's symbols, nested" 'pick [] 3 : >Widget  · struct   draw()  · method total()  · function'
+run "key:cmd+alt+O;wait:200;text:dr;key:Return;vimdump" "$P/src/app.cpp"
+check "typing narrows them; Enter goes there" 'NORMAL |  | 3:10 |     void draw() {'
+run "key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:cmd+alt+O;wait:200;key:Up;key:Up;frame;key:Escape;vimdump" "$P/src/app.cpp"
+check "Escape leaves the cursor where it was" 'NORMAL |  | 7:1 |     return n;'
+with vim "text:gO;wait:200;finddump" "$P/src/app.cpp"
+check "Vim's gO" 'pick [] 3 : >Widget  · struct   draw()  · method total()  · function'
+run "key:cmd+alt+P;frame;text:tot;frame;wait:200;frame;finddump" "$P/src/app.cpp"
+check "Cmd+Option+P asks the server as it is typed" 'pick [tot] 1 : >total  · function  · src/app.cpp:6'
+run "key:cmd+alt+P;frame;text:tot;frame;wait:200;frame;key:Return;vimdump" "$P/src/app.cpp"
+check "Enter goes there" 'NORMAL |  | 6:5 | int total(int n) {'
+
+# The other uses of the name under the cursor, a moment after it stops.
+uses="key:Right;key:Right;key:Right;key:Right;key:Right;frame;wait:250;frame;wait:100;frame"
+run "$uses;usesdump" "$P/e.cpp"
+check "the name's uses in the file, marked" 'uses: 1:5-8 2:11-14 3:13-16'
+run "key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;frame;wait:250;frame;wait:100;frame;usesdump" "$P/e.cpp"
+check "with the cursor just after it too" 'uses: 1:5-8 2:11-14 3:13-16'
+run "$uses;key:Right;key:Right;key:Right;frame;usesdump" "$P/e.cpp"
+check "gone when the cursor leaves the name" 'uses: none'
+run "$uses;key:shift+Right;frame;usesdump" "$P/e.cpp"
+check "and with a selection" 'uses: none'
+run "key:Down;key:Down;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;frame;wait:250;frame;wait:100;frame;usesdump" "$P/h.cpp"
+check "none for a name used once" 'uses: none'
+with nouses "$uses;usesdump" "$P/e.cpp"
+check "none with lsp.highlight_uses off" 'uses: none'
 
 # Rename: where the name is, the new name in the box, what it changes, then the change.
 run "key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;finddump"

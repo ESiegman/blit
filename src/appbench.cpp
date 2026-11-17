@@ -598,6 +598,7 @@ int App::run_bench() {
 //   dump[:LABEL]           print how the window is split, and the tabs of each split
 //   views                  print each split's view of the file in front: its document, its own cursor and that line
 //   emojidump              print the colour emoji the last frame drew: how many, the cells of each, in the text or a box
+//   usesdump               print the uses of the symbol at the cursor that are marked (line:column ranges, from 1)
 //   git:ACTION[:ARG]       a git action by name (stage:PATH, commit:MESSAGE, push, switch:BRANCH, ...)
 //   gitwait                wait for git to finish; gitdump[:LABEL] also prints what it has told the editor
 //   gitview[:LABEL]        print the diff tab in front: its hunks, and its lines with what is coloured added or taken away
@@ -818,6 +819,8 @@ void App::run_script(const char* script) {
             up.type = SDL_EVENT_MOUSE_BUTTON_UP;
             up.button.button = SDL_BUTTON_LEFT;
             handle(up);
+        } else if (verb == "usesdump") {  // the uses of the symbol at the cursor, as they are marked
+            std::fprintf(stderr, "%s\n", lsp_uses_dump().c_str());
         } else if (verb == "emojidump") {
             // The colour emoji the last frame drew as pictures: how many, and
             // the cells each covers ("t" in the text, "b" in a box).

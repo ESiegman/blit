@@ -17,7 +17,8 @@ clangd, pyright and any other language server, several at once (each file
 to the server of its language and project): completions with their types,
 problems underlined with their messages, parameter names and deduced types
 between the code, colours from the server over tree-sitter's, rename across
-files, references, formatting and fixes.
+files, references, implementations, the file's outline, the project's
+symbols, header and source, formatting and fixes.
 
 ![completions from clangd, a problem underlined, inlay hints and the server's colours](docs/media/lsp.png)
 

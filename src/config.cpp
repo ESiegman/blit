@@ -325,12 +325,13 @@ struct Parser {
             return;
         }
         if (key == "lsp.enabled" || key == "lsp.completion" || key == "lsp.inline_diagnostics" || key == "lsp.format_on_save" ||
-            key == "lsp.inlay_hints" || key == "lsp.semantic_colors") {
+            key == "lsp.inlay_hints" || key == "lsp.semantic_colors" || key == "lsp.highlight_uses") {
             bool* out = key == "lsp.enabled"          ? &c.lsp
                         : key == "lsp.completion"     ? &c.lsp_completion
                         : key == "lsp.format_on_save" ? &c.lsp_format_on_save
                         : key == "lsp.inlay_hints"    ? &c.lsp_inlay_hints
                         : key == "lsp.semantic_colors" ? &c.lsp_semantic
+                        : key == "lsp.highlight_uses" ? &c.lsp_uses
                                                       : &c.lsp_inline;
             if (!as_bool(v, out)) warn(std::string(key) + " should be true or false");
             return;
@@ -732,6 +733,7 @@ const Getter kGetters[] = {
     BLIT_GET("lsp.format_on_save", flag(c.lsp_format_on_save)),
     BLIT_GET("lsp.inlay_hints", flag(c.lsp_inlay_hints)),
     BLIT_GET("lsp.semantic_colors", flag(c.lsp_semantic)),
+    BLIT_GET("lsp.highlight_uses", flag(c.lsp_uses)),
     BLIT_GET("git.enabled", flag(c.git)),
     BLIT_GET("panel.open", flag(c.panel_open)),
     BLIT_GET("panel.width", num(c.panel_width)),
