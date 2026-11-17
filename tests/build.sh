@@ -175,7 +175,7 @@ run "$dir/none" "newproject;project:where=$P;project:name=taken;projectcreate;pr
 check "a folder that is there" 'new project: kind=C++ name=taken where=~/projects git=on | target=Program std=23 libraries= tests=CTest warnings=Standard sanitizers=Address + undefined tuning=Portable lto=false generator=Ninja presets=true clangd=true tidy=false format=None readme=true configure=true | at 0 | error: ~/projects/taken is there already.'
 run "$dir/none" "newproject;project:where=$P;project:libraries=fmt zlib;project:configure=false;project:git=false;project:name=app;projectcreate;projectwait;frame;statusdump"
 check "made: the start screen goes, its main file is open" 'NORMAL src/main.cpp | Ln 1, Col 1 Spaces: 4 LF C++'
-got=$(cd "$P/app" && find . -type f | sort | tr '\n' ' ')
+got=$(cd "$P/app" && find . -type f | LC_ALL=C sort | tr '\n' ' ')
 check "the files: headers in include/, sources in src/" './.clangd ./CMakeLists.txt ./CMakePresets.json ./README.md ./include/app/app.hpp ./src/app.cpp ./src/main.cpp ./tests/test_app.cpp ./vcpkg.json '
 got=$(grep -E 'fmt|zlib|TOOLCHAIN_FILE "' "$P/app/CMakeLists.txt" | tr '\n' '|')
 check "vcpkg: the toolchain, fmt by its usage notes (the first way), zlib by none" '  set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "vcpkg'"'"'s toolchain")|find_package(fmt CONFIG REQUIRED)|target_link_libraries(app_core PUBLIC fmt::fmt)|# zlib: vcpkg says what to find_package and link (target_link_libraries(app_core PUBLIC ...)) when it installs it.|'

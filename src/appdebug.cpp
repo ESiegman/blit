@@ -459,8 +459,10 @@ void App::debug_evaluate() {
         DebugUi& v = *debugui_;
         if (!v.dap || e.empty()) return;
         const std::string frame = v.frame < v.frames.size() ? ",\"frameId\":" + std::to_string(v.frames[v.frame].id) : std::string();
+        ++v.asking;  // (debug_wait waits for the answer too)
         v.dap->request("evaluate", "{\"expression\":" + quoted(e) + frame + ",\"context\":\"watch\"}", [this, e](const Dap::Message& m) {
             DebugUi& w = *debugui_;
+            if (w.asking) --w.asking;
             w.print(e + " = " + (m.success ? std::string(m.body()["result"].str()) : "(" + m.message + ")") + "\n");
             ++debug_gen_;
             dirty_ = true;
