@@ -260,6 +260,10 @@ if(BLIT_DEV)
     add_test(NAME debug COMMAND sh ${CMAKE_SOURCE_DIR}/tests/debug.sh $<TARGET_FILE:blit>)
     # Characters of more than one code point (marks, emoji sequences, flags) and of other widths.
     add_test(NAME unicode COMMAND sh ${CMAKE_SOURCE_DIR}/tests/unicode.sh $<TARGET_FILE:blit>)
+    # Every suite sees the dark appearance, whatever the machine is set to
+    # (GitHub's machines are light).
+    get_property(blit_tests DIRECTORY PROPERTY TESTS)
+    set_tests_properties(${blit_tests} PROPERTIES ENVIRONMENT BLIT_APPEARANCE=dark)
   endif()
 
   # Benchmark tools (POSIX only). See bench/run.sh.

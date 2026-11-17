@@ -879,6 +879,7 @@ private:
     bool panel_mouse_motion(const SDL_MouseMotionEvent& m);
     void panel_mouse_up();
     bool panel_wheel(const SDL_MouseWheelEvent& w);
+    bool dark() const;  // the system in its dark appearance (app.cpp)
     void tell(SDL_MessageBoxFlags kind, const char* what);
     void panel_layout(int w, int h, FrameDesc& fd);
     void panel_menu_layout(int w, int h, FrameDesc& fd);

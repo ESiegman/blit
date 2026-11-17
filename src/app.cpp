@@ -4,6 +4,8 @@
 #include <cmath>
 #include <array>
 #include <cstdio>
+#include <cstdlib>
+#include <cstring>
 #include <thread>
 
 #if !defined(_WIN32)
@@ -144,7 +146,7 @@ int App::run(const Options& opt) {
         return 1;
     }
     if (opt_.info) {
-        const bool dark = SDL_GetSystemTheme() != SDL_SYSTEM_THEME_LIGHT;
+        const bool dark = App::dark();
         std::printf("init.lua    %s%s\n", init_path_.c_str(), file_stamp(init_path_) ? "" : "  (not there: the defaults)");
         std::printf("theme       %s  (dark: %s, light: %s)\n", (dark ? cfg_.theme_dark : cfg_.theme_light).c_str(),
                     cfg_.theme_dark.c_str(), cfg_.theme_light.c_str());
@@ -387,7 +389,7 @@ bool App::load_font(std::string* err) {
 // A cell can pick one of 32 inks, of which 24 are for syntax; themes use far
 // fewer distinct colours than that. Must run again after the font changes: the faces belong to it.
 void App::pick_theme() {
-    const ThemeColors& tc = cfg_.theme(SDL_GetSystemTheme() != SDL_SYSTEM_THEME_LIGHT);
+    const ThemeColors& tc = cfg_.theme(dark());
     theme_ = make_theme(tc);
     guide_inks_ = static_cast<u32>(std::min<size_t>(tc.guides.size(), kInkGuides));
     // The documents on show (the one in front in each split) share the
@@ -735,6 +737,16 @@ bool App::open_path(const char* p) {
     if (remote) remote_load(*pane_->docs[at], false);  // (the scripts hear of it when it is here)
     else if (script_) script_opened(pane_->doc->id, pane_->doc->disk_stamp == 0);  // (BufReadPost or BufNewFile, and FileType, at the next tick)
     return true;
+}
+
+// Whether the system is in its dark appearance. A Debug build's tests pin
+// it with BLIT_APPEARANCE=dark or light, so that what they see does not
+// depend on the machine's setting.
+bool App::dark() const {
+#if BLIT_DEV
+    if (const char* a = std::getenv("BLIT_APPEARANCE"); a && *a) return std::strcmp(a, "light") != 0;
+#endif
+    return SDL_GetSystemTheme() != SDL_SYSTEM_THEME_LIGHT;
 }
 
 // A dialog with one thing to say.

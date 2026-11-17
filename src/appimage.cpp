@@ -658,7 +658,7 @@ void App::image_layout(FrameDesc& fd) {
     picture_tidy();
     Font& font = *font_;
     const int cw = font.cell_w(), ch = font.cell_h();
-    const ThemeColors& tc = cfg_.theme(SDL_GetSystemTheme() != SDL_SYSTEM_THEME_LIGHT);
+    const ThemeColors& tc = cfg_.theme(dark());
     for (const std::unique_ptr<Pane>& pane : panes_) {
         if (!pane->doc || !pane->doc->image || fd.popup_count >= std::size(fd.popups)) continue;
         ImageView& v = *pane->doc->image;

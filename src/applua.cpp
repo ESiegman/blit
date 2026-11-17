@@ -1361,7 +1361,7 @@ bool App::set_complete(int by) {
 // chosen (as :set would, until init.lua runs again) and writes it into
 // init.lua, for the system's appearance as it is now.
 void App::theme_choose() {
-    const bool dark = SDL_GetSystemTheme() != SDL_SYSTEM_THEME_LIGHT;
+    const bool dark = App::dark();
     const std::string was = dark ? cfg_.theme_dark : cfg_.theme_light;
     std::vector<std::string> names;
     size_t at = 0;

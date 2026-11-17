@@ -17,6 +17,7 @@ C="$dir/config"  # the settings file, init.lua, lua/ and plugin/
 D="$dir/data"    # blit's data folder: plugins/ is in it
 W="$dir/work"
 export BLIT_INIT="$C/init.lua"
+export BLIT_APPEARANCE=dark  # (the theme cases write the dark one)
 export XDG_DATA_HOME="$D"
 P="$D/blit/plugins"
 
