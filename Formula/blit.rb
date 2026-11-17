@@ -4,6 +4,7 @@
 class Blit < Formula
   desc "Fast GPU text editor"
   homepage "https://github.com/ESiegman/blit"
+  license "GPL-3.0-or-later"
   head "https://github.com/ESiegman/blit.git", branch: "main"
 
   depends_on "cmake" => :build

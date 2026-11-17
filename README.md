@@ -132,3 +132,11 @@ round since the first.
 - [PLAN.md](PLAN.md): what comes next.
 - [docs/media/make.sh](docs/media/make.sh) makes every picture above from a
   Debug build, on the demo project beside it.
+
+## License
+
+blit is free software under the [GNU General Public License, version 3 or
+later](LICENSE), with one added term ([NOTICE](NOTICE)): forks and modified
+versions keep the line "Based on blit by Eren Siegman" and say what they
+changed. The libraries the releases carry keep their own licenses, listed in
+[THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).

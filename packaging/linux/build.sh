@@ -89,7 +89,12 @@ for f in AppDir/usr/lib/*; do
         libSDL3.so* | libpng16.so* | libgif.so* | libturbojpeg.so* | libwebp.so* | libwebpdemux.so*) ;;
         *) echo "not meant to be carried: ${f##*/}" >&2; exit 1 ;;
     esac
+    # (and each with its license in the notices)
+    stem=${f##*/}
+    stem=${stem%%.so*}
+    grep -q "\`$stem\`" "$top/THIRD_PARTY_NOTICES.md" || { echo "carried without its notice in THIRD_PARTY_NOTICES.md: $stem" >&2; exit 1; }
 done
+ls AppDir/usr/share/doc/blit/LICENSE AppDir/usr/share/doc/blit/NOTICE AppDir/usr/share/doc/blit/THIRD_PARTY_NOTICES.md >/dev/null
 
 mkdir -p "$top/out"
 dir="blit-$version-linux-x86_64"

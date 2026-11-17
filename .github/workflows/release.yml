@@ -65,6 +65,12 @@ jobs:
               done
             done
           done
+          # Each library inside with its license in the notices.
+          for f in "$app"/Contents/Frameworks/*.dylib; do
+            stem=$(basename "$f"); stem=${stem%%.*}
+            grep -q "\`$stem\`" THIRD_PARTY_NOTICES.md || { echo "carried without its notice in THIRD_PARTY_NOTICES.md: $stem" >&2; exit 1; }
+          done
+          ls "$app"/Contents/Resources/LICENSE "$app"/Contents/Resources/NOTICE "$app"/Contents/Resources/THIRD_PARTY_NOTICES.md
           codesign --force --deep --sign - "$app"
           codesign --verify --strict --verbose "$app"
           otool -L "$app/Contents/MacOS/blit"
@@ -207,6 +213,12 @@ jobs:
           kept while its modes are on (docs/manual.md, "Keys without Cmd").
           Syntax colours come from grammars blit builds itself
           (\`blit --install-grammar all\`), which needs a C compiler.
+
+          blit is free software under the GNU GPL, version 3 or later, with
+          an attribution term (NOTICE): forks and modified versions keep
+          "Based on blit by Eren Siegman". The libraries the packages carry
+          are listed, with their licenses, in THIRD_PARTY_NOTICES.md (inside
+          blit.app's Contents/Resources, and share/doc/blit on Linux).
 
           SHA-256:
 

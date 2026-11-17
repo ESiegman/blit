@@ -1,0 +1,36 @@
+blit
+Copyright (C) 2026 Eren Siegman
+
+This program is free software: you can redistribute it and/or modify it
+under the terms of the GNU General Public License as published by the Free
+Software Foundation, either version 3 of the License, or (at your option)
+any later version.
+
+This program is distributed in the hope that it will be useful, but WITHOUT
+ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+FITNESS FOR A PARTICULAR PURPOSE. See the GNU General Public License for
+more details.
+
+You should have received a copy of the GNU General Public License along
+with this program, in the file LICENSE. If not, see
+<https://www.gnu.org/licenses/>.
+
+
+Additional terms, under section 7 of the GNU General Public License
+
+These terms apply to blit and to every work based on it, in source or
+object form, and may not be removed from it (section 7(b) and 7(c)):
+
+1. Attribution. Every copy, fork and modified version must preserve this
+   NOTICE file, and must preserve the following attribution, unaltered,
+   in its README (or in whatever main documentation takes the README's
+   place) and in its Appropriate Legal Notices, if it displays any:
+
+       Based on blit by Eren Siegman (https://github.com/ESiegman/blit).
+
+2. Origin. A modified version must be marked, in reasonable ways, as
+   different from the original (as section 5(a) also asks), and must not
+   present its changes, or itself, as the original author's work.
+
+The libraries that blit's releases carry are under their own licenses:
+see THIRD_PARTY_NOTICES.md.

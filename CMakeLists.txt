@@ -7,7 +7,9 @@ cmake_minimum_required(VERSION 3.28)
 if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET AND NOT DEFINED ENV{MACOSX_DEPLOYMENT_TARGET})
   execute_process(COMMAND sw_vers -productVersion OUTPUT_VARIABLE BLIT_MACOS OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
   if(BLIT_MACOS MATCHES "^([0-9]+\\.[0-9]+)")
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "${CMAKE_MATCH_1}" CACHE STRING "The macOS version the build is for")
+    # (FORCE: a build folder made before this has the entry, empty, and a
+    # cache entry is otherwise never set over. Only an empty one gets here.)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "${CMAKE_MATCH_1}" CACHE STRING "The macOS version the build is for" FORCE)
   endif()
 endif()
 project(blit VERSION 0.2.0 LANGUAGES CXX)
@@ -253,8 +255,8 @@ blit_static_runtime(blit)
 
 target_compile_definitions(blit PRIVATE BLIT_DEV=$<BOOL:${BLIT_DEV}>)
 # blit.app, beside the program, in a Release build: the Dock, Spotlight,
-# "Open With" for text, pictures, PDFs and folders (res/Info.plist.in), and
-# the icon (res/icon.py). Signed for this machine only (ad hoc). Put it in
+# "Open With" for text, pictures, PDFs and folders (res/Info.plist.in), the
+# icon (res/icon.py), and the license with the libraries' notices. Signed for this machine only (ad hoc). Put it in
 # Applications with `cmake --install build --prefix /Applications`, or drag
 # it there.
 if(APPLE AND NOT BLIT_DEV)
@@ -264,6 +266,7 @@ if(APPLE AND NOT BLIT_DEV)
     COMMAND ${CMAKE_COMMAND} -E make_directory ${BLIT_APP}/Contents/MacOS ${BLIT_APP}/Contents/Resources
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_BINARY_DIR}/Info.plist ${BLIT_APP}/Contents/Info.plist
     COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/res/blit.icns ${BLIT_APP}/Contents/Resources/blit.icns
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/LICENSE ${CMAKE_SOURCE_DIR}/NOTICE ${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md ${BLIT_APP}/Contents/Resources
     COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:blit> ${BLIT_APP}/Contents/MacOS/blit
     COMMAND codesign --force --sign - ${BLIT_APP}
     COMMENT "blit.app"
@@ -271,7 +274,8 @@ if(APPLE AND NOT BLIT_DEV)
   install(DIRECTORY ${BLIT_APP} DESTINATION . USE_SOURCE_PERMISSIONS)
 endif()
 # Elsewhere, what a package puts in place: the program, its entry in the
-# desktop's list of applications (res/blit.desktop) and its icon.
+# desktop's list of applications (res/blit.desktop), its icon, and the
+# license with the libraries' notices (share/doc/blit).
 if(NOT APPLE AND NOT BLIT_DEV)
   include(GNUInstallDirs)
   install(TARGETS blit RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
@@ -279,6 +283,7 @@ if(NOT APPLE AND NOT BLIT_DEV)
   foreach(size 256 512)
     install(FILES ${CMAKE_SOURCE_DIR}/res/blit-${size}.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${size}x${size}/apps RENAME blit.png)
   endforeach()
+  install(FILES ${CMAKE_SOURCE_DIR}/LICENSE ${CMAKE_SOURCE_DIR}/NOTICE ${CMAKE_SOURCE_DIR}/THIRD_PARTY_NOTICES.md DESTINATION ${CMAKE_INSTALL_DOCDIR})
 endif()
 
 if(BLIT_DEV)
