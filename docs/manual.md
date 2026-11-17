@@ -1781,6 +1781,67 @@ blit.map("n", "<leader>t", function() blit.build.run("Test") end)
 `files` is the folder's entries (`{name =, type = "file" | "dir"}`). A
 task's `cwd` (relative to the folder) is where it runs.
 
+### Run configurations
+
+What to run, with what, lives beside the project in `.blit/run.json`
+(made with one to fill in by "Edit the run configurations"; saving it
+reads it again):
+
+```json
+{ "configurations": [
+  { "name": "orbits", "program": "build/orbits",
+    "args": ["--steps", "100"],
+    "env": { "ORBITS_LOG": "debug" },
+    "cwd": ".",
+    "build": "Build" }
+] }
+```
+
+`program` and `cwd` are from the project's folder; `args` may also be one
+line (`"--steps 100"`), split as a shell splits it; `build`, a task of
+the Build tab's to run first, may be left out.
+
+They are the Build tab's first tasks, under **Run**, and the first is the
+Run button's: Cmd+Shift+B runs its `build` task, then, if that went well,
+the program, in the output terminal. The one chosen is also what
+**Debug** (F5) and **Profile** run, with its arguments, folder and
+environment (given to the debugger, which the program inherits; to perf
+through `env`, to Instruments with `--env`), and the environment the
+tests run with.
+
+## Tests
+
+The side panel's **Tests** tab lists the project's tests, found on a
+thread: CTest's in every build folder that has been configured (so the
+GoogleTest, Catch2 and doctest tests registered with it too:
+`ctest --show-only=json-v1`), and pytest's (`--collect-only`; through `uv
+run` in a uv project, else the `pytest` on the PATH, else `python3 -m
+pytest`). They are grouped by build folder and by file, each with how its
+last run went: a tick, a cross with the failure's message, a dash for one
+skipped, a dot for one not run.
+
+Enter runs the test chosen (a heading: all under it), **a** all of them,
+**f** the failed ones again, **d** debugs a CTest test (its own command,
+as CTest has it), **c** runs them all with coverage, and Cmd+R looks for
+them again. The commands "Run the tests", "Run the failed tests again",
+"Run the test at the cursor" and "Debug the test at the cursor" do the
+same from anywhere. A run goes to the output terminal, where its output
+shows; each runner writes a JUnit report, read when it ends. Where a test
+is defined (`TEST(A, B)`, `TEST_F`, `TEST_CASE("x")`, `SCENARIO`; `def
+test_x`, in a `Test` class or not) its mark beside the line number shows
+how it went, and a click on it runs it (Option-click debugs it). A run
+asked for before the tests are found runs once they are; opening a file
+with tests in it looks for them.
+
+**Coverage**: "Run the tests with coverage" runs them, then reads what
+they ran. For C and C++ that is GCC's gcov, over a build folder built
+with `--coverage` (`-DCMAKE_CXX_FLAGS=--coverage`; its old `.gcda` files
+are cleared first, and the gcov is the one beside the compiler CMake
+chose); for Python, coverage.py. Lines that ran have green numbers and
+lines that did not red, while the file is as it was then; the Tests tab
+lists each file's share, Enter opening it, and "Show or hide coverage"
+switches it.
+
 ## New projects
 
 The start screen's **New project** tab (`p`, or Ctrl+Tab) makes a project

@@ -2729,6 +2729,39 @@ milestone (d111647), which had both:
   the setting off, Vim's Insert mode). tests/shape.sh: the scroll bar's
   marks.
 
+### Round 55: run configurations, a test explorer, coverage
+
+Run configurations (`.blit/run.json`: a program, its arguments,
+environment and folder, a task built first) are the Build tab's first
+tasks, and what Debug and Profile run. The Tests tab finds a project's
+tests on a thread (`ctest --show-only=json-v1` in each configured build
+folder, `pytest --collect-only`), runs them in the output terminal, and
+reads how each went from the JUnit report each runner writes; a mark
+where each is defined shows its result and runs it. A run with coverage
+reads GCC's gcov (`--json-format`) or coverage.py, and colours the line
+numbers of the lines run and missed.
+
+Nothing of it is on a frame's path but the gutter's marks, looked up when
+the gutter is made again (a file's test definitions found once a change,
+in files up to 256 KB, none in a project with no tests). Turn about, five
+rounds, 2560x1600, against the build before the milestone (046cae9):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 18,097 / 54.00 µs / 1.79 µs | 18,105 / 53.79 µs / 1.92 µs |
+| Typing, everything on: the same | 18,774 / 48.38 µs / 3.58 µs | 18,611 / 48.42 µs / 3.71 µs |
+| Scrolling code-100m.txt, plain: the same | 19,887 / 49.54 µs / 0.67 µs | 19,679 / 49.46 µs / 0.67 µs |
+
+No change (this sitting's numbers run higher than the last round's, both
+builds alike). Tests: build.sh's run configurations (the order, what
+Debug and Profile take, a run with its build first, another chosen, a
+broken file said, the file made); a new suite, tests/testing.sh (tests
+found, run all, one, the failed ones, the marks, the test at the cursor;
+pytest's where it is installed; coverage with GCC: lines run and missed,
+hidden, not on a file changed since); fuzz_buffer.cpp checks of CTest's
+JSON, pytest's list, JUnit reports, gcov's and coverage.py's JSON, and
+finding test definitions in C++ and Python.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
