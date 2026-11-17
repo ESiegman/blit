@@ -2181,6 +2181,60 @@ code-100m.txt at 2560x1600 measured the same within noise (16,449 to
 17,302 against 16,354 to 17,255 frames a second, fill p50 1.88 to 1.92
 µs in both).
 
+### Round 37: back-references and look-around; Vim by whole characters
+
+Made in a copy of `main` at 5b61450 by an agent of its own, merged into
+main at 532fa9b (one conflict, two includes side by side). Patterns with
+back-references, look-around, `\&` or `\%#=1` go to a backtracker of
+their own (lines ruled out first by the text every match must have, or by
+the DFA run on a relaxed program; a budget of 2^25 steps and 64 a byte);
+every other pattern keeps the same code. The merged build against
+532fa9b, code-100m.txt, three runs each, alternating, on a machine that
+was building five other copies at the time:
+
+| | Before | After |
+|---|---:|---:|
+| Search in files, a class / an alternation | 0.547 to 0.552 / 0.552 to 0.557 GB/s | 0.688 to 0.693 / 0.690 to 0.698 GB/s |
+| … numbers | 0.280 to 0.292 GB/s | 0.329 to 0.331 GB/s |
+| Vim `/`, a class | 43.9 to 48.5 ms | 35.4 to 43.8 ms |
+
+(One run of the new build fell to 0.46 GB/s while the others built: the
+medians are the ones above.) The gain is inlining: the backtracker's search
+also calls the DFA's line search, and GCC stopped inlining it there until
+it was forced (`[[gnu::always_inline]]`); the agent's first version was
+2.5% slower for that reason. New cases, code-100m.txt: a doubled word
+(`\<\(\w\+\)\s\+\1\>`) 0.104 GB/s in a string, 0.084 GB/s in the
+document (0.037 before the capture slots were set once a search, the
+search skipped to word starts, and the piece in hand walked instead of the
+tree); `\(\w\+\) = \1` 0.089 GB/s; `\(return \)\@<=\w\+` 0.262 GB/s.
+Frames, the modal key step and Visual `r` over 13 MB were the same within
+noise.
+
+### Round 38: Hangul jamo, Indic conjuncts and prepended signs as one character
+
+The cluster rules (`Joiner`, utf8.hpp) gained Unicode 18.0's Prepend,
+Hangul's L, V, T, LV and LVT, and Indic_Conjunct_Break's consonants and
+linkers. They move where the cursor stops, never a width. The first
+version slowed the widest-line walk on utf8-16m.txt from 0.76 to 0.32
+GB/s, and taking it apart showed why, a step at a time:
+
+| widest_line, utf8-16m.txt (GB/s, the base 0.74 to 0.79 each time) | |
+|---|---:|
+| Every character past U+0600 looked up in the consonant table | 0.32 |
+| Only the blocks those scripts are in looked at | 0.49 |
+| A bitmap of 4096-character blocks; the rare path out of line | 0.51 |
+| The rare state in one byte, passed by value (no `this` in memory) | 0.52 |
+| `width()` forced inline | 0.56 |
+| `width()` looking only at the two rules that change a width | 0.78 to 0.86 |
+
+The last is the answer: widths are counted a whole file at a time, and only
+an emoji's joiner and a flag's pair change one, so `width()` is the code it
+was; the new rules run where the cursor steps or a click lands (a character
+at a time). In isolation the joiner had cost 0.82 ns a character before and
+1.37 after; Korean text (5.6% of this file's characters past ASCII) took
+the out-of-line path on every syllable until a syllable written whole got
+a path of its own.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

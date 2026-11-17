@@ -455,6 +455,10 @@ int run(const char* file, const char* only) {
         const double many_ms = pattern("\\<\\d\\+\\>", true, "find_text_regex_numbers");
         emit(file, "find_text_regex_numbers_lines", "count", static_cast<double>(hits.size()));
         emit(file, "find_text_regex_numbers_ns_per_line", "ns", hits.empty() ? 0.0 : many_ms * 1e6 / static_cast<double>(hits.size()));
+        // And with a back-reference (the backtracker): a word said twice,
+        // which no plain text narrows down, so every line goes through it.
+        pattern("\\<\\(\\w\\+\\)\\s\\+\\1\\>", true, "find_text_regex_backref_doubled_word");
+        emit(file, "find_text_regex_backref_doubled_word_lines", "count", static_cast<double>(hits.size()));
 
         // Vim's / in the document itself (Vim::find, where the pieces lie,
         // on as many threads as it takes past the first 8 MB): a word that
@@ -486,6 +490,11 @@ int run(const char* file, const char* only) {
         every("return", "find_vim_all_word");
         every("\\<\\d\\+\\>", "find_vim_all_regex_numbers");
         every("[A-Z]\\{3}[0-9]\\{4}", "find_vim_all_regex_class");
+        // On the backtracker: a word said twice (every line through it), one
+        // narrowed down by its plain text, and look-behind.
+        every("\\<\\(\\w\\+\\)\\s\\+\\1\\>", "find_vim_all_regex_backref_doubled_word");
+        every("\\(\\w\\+\\) = \\1", "find_vim_all_regex_backref_with_text");
+        every("\\(return \\)\\@<=\\w\\+", "find_vim_all_regex_lookbehind");
     }
 
     // Syntax highlighting: what the worker thread spends, how long colours

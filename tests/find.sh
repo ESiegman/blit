@@ -110,6 +110,10 @@ run "key:cmd+shift+F;key:alt+C;text:needle;findwait;finddump"
 check "Option+C: case as typed" 'text [needle] Aa 2 of 2 : >src/deep/inner.txt:2:14 src/main.cpp:2:5'
 run "key:cmd+shift+F;key:alt+R;text:\\(;findwait;finddump"
 check "what is not a pattern says why" 'text [\(] .* (E54: Unmatched \() 0 of 0 :'
+run "key:cmd+shift+F;key:alt+R;text:n\\(e\\)\\1d;findwait;finddump"
+check "a back-reference" 'text [n\(e\)\1d] .* 3 of 3 : >src/deep/inner.txt:2:14 src/helper.hpp:2:12 src/main.cpp:2:5'
+run "key:cmd+shift+F;key:alt+R;text:\\(the \\)\\@<=needle;findwait;finddump"
+check "look-behind" 'text [\(the \)\@<=needle] .* 1 of 1 : >src/main.cpp:2:5'
 run "key:cmd+shift+F;key:alt+R;text:\\(\\w\\+\\) \\(is\\);key:Tab;text:\\2 \\u\\1;findwait;finddump"
 check "groups in what it becomes" 'text [\(\w\+\) \(is\)] with> [\2 \u\1] .* 1 of 1 : >src/main.cpp:2:5=the is Needle here'
 run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;finddump"

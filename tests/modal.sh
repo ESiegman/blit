@@ -14,7 +14,7 @@ dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/init.lua"
 export BLIT_INIT="$dir/init.lua"
-fresh() { printf 'hello world\nsecond line\n    third\n' >"$dir/a.txt"; printf 'other\n' >"$dir/b.txt"; printf 'int x;\n    int y;\n' >"$dir/c.c"; printf 'x = 1\n' >"$dir/d.py"; printf 'a.b axb [a.b]\n' >"$dir/e.txt"; }
+fresh() { printf 'hello world\nsecond line\n    third\n' >"$dir/a.txt"; printf 'other\n' >"$dir/b.txt"; printf 'int x;\n    int y;\n' >"$dir/c.c"; printf 'x = 1\n' >"$dir/d.py"; printf 'a.b axb [a.b]\n' >"$dir/e.txt"; printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b\n' >"$dir/f.txt"; }
 
 failed=0
 check() {
@@ -79,6 +79,12 @@ run "frame;text:/;text:s\\w\\+d;key:Return;vimdump"
 check "a regular expression" 'NORMAL |  | 2:1 | second line'
 run "frame;text::;text:%s/\\(\\w\\+\\) \\(\\w\\+\\)/\\2 \\1/;key:Return;text:g;text:g;vimdump"
 check ":s with groups" 'NORMAL |  | 1:1 | world hello'
+run "frame;text:/;text:\\(l\\)\\1;key:Return;vimdump"
+check "a back-reference" 'NORMAL |  | 1:3 | hello world'
+run "frame;text::;text:s/\\(hello \\)\\@<=world/there/;key:Return;vimdump"
+check ":s with a look-behind" 'NORMAL |  | 1:1 | hello there'
+run "frame;open:$dir/f.txt;text:/;text:\\(a*\\)*\\1b;key:Return;vimdump"
+check "a pattern that takes the backtracker too long says so" 'NORMAL | E363: The pattern took too long here and was stopped (back-references and look-around are tried one way at a time) | 1:1 | aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b'
 run "frame;key:cmd+alt+F;text:o;key:Tab;text:0;key:cmd+Return;vimdump"
 check "Cmd+Option+F, with modes too: replaced, in one step" 'NORMAL | Replaced 3 matches | 1:5 | hell0 w0rld'
 run "frame;key:cmd+alt+F;text:o;key:Tab;text:0;key:cmd+Return;key:Escape;text:u;vimdump"

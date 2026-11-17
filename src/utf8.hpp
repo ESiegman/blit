@@ -348,6 +348,44 @@ inline constexpr u32 kPictographic[][2] = {
     {0x1F947, 0x1F9FF}, {0x1FA58, 0x1FA5F}, {0x1FA6E, 0x1FAFF}, {0x1FC00, 0x1FFFD},
 };
 
+// Grapheme_Cluster_Break Prepend (Unicode 18.0): a sign that goes with the
+// character after it, as an Arabic number sign goes with its digits.
+inline constexpr u32 kPrepend[][2] = {
+    {0x0600, 0x0605}, {0x06DD, 0x06DD}, {0x070F, 0x070F}, {0x0890, 0x0891}, {0x08E2, 0x08E2},
+    {0x0D4E, 0x0D4E}, {0x110BD, 0x110BD}, {0x110CD, 0x110CD}, {0x111C2, 0x111C3},
+    {0x113D1, 0x113D1}, {0x1193F, 0x1193F}, {0x11941, 0x11941}, {0x11A84, 0x11A89},
+    {0x11D46, 0x11D46}, {0x11F02, 0x11F02},
+};
+// Indic_Conjunct_Break Consonant and Linker (Unicode 18.0, from
+// DerivedCoreProperties): a consonant, a linker (a virama) and a consonant
+// are one character, a conjunct, as in Devanagari's "क्ष".
+inline constexpr u32 kConsonant[][2] = {
+    {0x0915, 0x0939}, {0x0958, 0x095F}, {0x0978, 0x097F}, {0x0995, 0x09A8}, {0x09AA, 0x09B0},
+    {0x09B2, 0x09B2}, {0x09B6, 0x09B9}, {0x09DC, 0x09DD}, {0x09DF, 0x09DF}, {0x09F0, 0x09F1},
+    {0x0A95, 0x0AA8}, {0x0AAA, 0x0AB0}, {0x0AB2, 0x0AB3}, {0x0AB5, 0x0AB9}, {0x0AF9, 0x0AF9},
+    {0x0B15, 0x0B28}, {0x0B2A, 0x0B30}, {0x0B32, 0x0B33}, {0x0B35, 0x0B39}, {0x0B5C, 0x0B5D},
+    {0x0B5F, 0x0B5F}, {0x0B71, 0x0B71}, {0x0C15, 0x0C28}, {0x0C2A, 0x0C39}, {0x0C58, 0x0C5A},
+    {0x0D15, 0x0D3A}, {0x1000, 0x102A}, {0x103F, 0x103F}, {0x1050, 0x1055}, {0x105A, 0x105D},
+    {0x1061, 0x1061}, {0x1065, 0x1066}, {0x106E, 0x1070}, {0x1075, 0x1081}, {0x108E, 0x108E},
+    {0x1780, 0x17B3}, {0x1A20, 0x1A54}, {0x1B0B, 0x1B0C}, {0x1B13, 0x1B33}, {0x1B45, 0x1B4C},
+    {0x1B83, 0x1BA0}, {0x1BAE, 0x1BAF}, {0x1BBB, 0x1BBD}, {0xA989, 0xA98B}, {0xA98F, 0xA9B2},
+    {0xA9E0, 0xA9E4}, {0xA9E7, 0xA9EF}, {0xA9FA, 0xA9FE}, {0xAA60, 0xAA6F}, {0xAA71, 0xAA73},
+    {0xAA7A, 0xAA7A}, {0xAA7E, 0xAA7F}, {0xAAE0, 0xAAEA}, {0xABC0, 0xABDA}, {0x10A00, 0x10A00},
+    {0x10A10, 0x10A13}, {0x10A15, 0x10A17}, {0x10A19, 0x10A35}, {0x11103, 0x11126},
+    {0x11144, 0x11144}, {0x11147, 0x11147}, {0x11380, 0x11389}, {0x1138B, 0x1138B},
+    {0x1138E, 0x1138E}, {0x11390, 0x113B5}, {0x11900, 0x11906}, {0x11909, 0x11909},
+    {0x1190C, 0x11913}, {0x11915, 0x11916}, {0x11918, 0x1192F}, {0x11A00, 0x11A00},
+    {0x11A0B, 0x11A32}, {0x11A50, 0x11A50}, {0x11A5C, 0x11A83}, {0x11B0A, 0x11B0A},
+    {0x11DF1, 0x11DF1}, {0x11F04, 0x11F10}, {0x11F12, 0x11F33},
+};
+inline constexpr u32 kLinker[][2] = {
+    {0x094D, 0x094D}, {0x09CD, 0x09CD}, {0x0ACD, 0x0ACD}, {0x0B4D, 0x0B4D}, {0x0C4D, 0x0C4D},
+    {0x0D4D, 0x0D4D}, {0x1039, 0x1039}, {0x17D2, 0x17D2}, {0x1A60, 0x1A60}, {0x1B44, 0x1B44},
+    {0x1BAB, 0x1BAB}, {0x1CF5, 0x1CF6}, {0xA9C0, 0xA9C0}, {0xAAF6, 0xAAF6}, {0x10A3F, 0x10A3F},
+    {0x11133, 0x11133}, {0x113D0, 0x113D0}, {0x1193E, 0x1193E}, {0x11A3A, 0x11A3A},
+    {0x11A47, 0x11A47}, {0x11A99, 0x11A99}, {0x11F42, 0x11F42},
+};
+
 template <size_t N>
 bool in_ranges(const u32 (&r)[N][2], u32 cp) {
     size_t lo = 0, hi = N;
@@ -389,25 +427,132 @@ inline bool cp_extends(u32 cp) {
 inline bool cp_pictographic(u32 cp) { return cp >= 0xA9 && ucd::in_ranges(ucd::kPictographic, cp); }
 inline bool cp_regional(u32 cp) { return cp - 0x1F1E6 < 26; }  // a regional indicator: two of them are a flag
 
+// Hangul's jamo and syllables, as the cluster rules have them
+// (Grapheme_Cluster_Break L, V, T, LV and LVT).
+enum : u8 { kJamoNone, kJamoL, kJamoV, kJamoT, kJamoLV, kJamoLVT };
+inline u8 hangul_kind(u32 cp) {
+    if (cp - 0x1100 < 0x60 || cp - 0xA960 < 0x1D) return kJamoL;
+    if (cp - 0x1160 < 0x48 || cp - 0xD7B0 < 0x17 || cp == 0x16D63 || cp - 0x16D67 < 4) return kJamoV;
+    if (cp - 0x11A8 < 0x58 || cp - 0xD7CB < 0x31) return kJamoT;
+    if (cp - 0xAC00 < 11172) return (cp - 0xAC00) % 28 == 0 ? kJamoLV : kJamoLVT;
+    return kJamoNone;
+}
+// Whether a jamo or syllable of kind b goes on with one of kind a (a
+// syllable written in its parts: a leading consonant, a vowel, a trailing
+// consonant).
+inline bool hangul_joins(u8 a, u8 b) {
+    if (a == kJamoL) return b == kJamoL || b == kJamoV || b == kJamoLV || b == kJamoLVT;
+    if (a == kJamoV || a == kJamoLV) return b == kJamoV || b == kJamoT;
+    if (a == kJamoT || a == kJamoLVT) return b == kJamoT;
+    return false;
+}
+
+// A prepended sign (Grapheme_Cluster_Break Prepend).
+inline bool cp_prepend(u32 cp) {
+    if (cp < 0x10000) return cp - 0x600 < 6 || cp == 0x6DD || cp == 0x70F || cp - 0x890 < 2 || cp == 0x8E2 || cp == 0xD4E;
+    return cp - 0x110BD < 0x11F03 - 0x110BD && ucd::in_ranges(ucd::kPrepend, cp);
+}
+// Whether cp is in a block that has conjunct consonants or linkers (the
+// tables need looking at only there).
+inline bool cp_conjunct_block(u32 cp) { return cp - 0x900 < 0x1D00 - 0x900 || cp - 0xA980 < 0xAC00 - 0xA980 || cp - 0x10A00 < 0x11F43 - 0x10A00; }
+
+// How a character goes on with the cluster before it, by the rules Joiner
+// keeps: not at all; joined with no width of its own (an emoji after a
+// zero width joiner, a flag's second half: the cluster is drawn as its
+// first); or joined keeping its width (a syllable's jamo, a conjunct's
+// next consonant, what follows a prepended sign: each is drawn in its own
+// cells, and only where the cursor stops changes).
+enum : u8 { kJoinNone, kJoinZeroWidth, kJoinKeepsWidth };
+
 // The cluster rules that look past the character before: an emoji after a
 // zero width joiner joins the one before it (a family, a profession: one
-// cluster, drawn as its first emoji), and regional indicators pair up into
-// flags. Fed a line's characters in order (or reset() where one is ASCII).
+// cluster, drawn as its first emoji), regional indicators pair up into
+// flags, Hangul's jamo make syllables, a consonant after a linker (a
+// virama) makes a conjunct with the consonant before it, and a prepended
+// sign goes with what follows. Fed a line's characters in order (or
+// reset() where one is ASCII).
 struct Joiner {
     u8 after = 0;  // 1: the last character was a joiner; 2: a regional indicator that has no pair yet
+    // The rarer rules' state, in one byte (so that it stays in a register
+    // through a line's loop): the last character's Hangul kind (bits 0 to
+    // 2), a conjunct under way (bits 3 and 4: 1 a consonant, with zero-width
+    // marks after it; 2 and a linker since), a prepended sign (bit 5).
+    u8 rare = 0;
 
-    void reset() { after = 0; }
-    // True when cp joins the cluster before it by one of these rules.
-    bool joins(u32 cp) {
+    void reset() { after = rare = 0; }
+    // How cp goes on with the cluster before it (kJoin*; 0, false, when it starts one).
+    [[gnu::always_inline]] u8 joins(u32 cp) {
         const u8 was = after;
         after = cp == 0x200D ? 1 : cp_regional(cp) && was != 2 ? 2 : 0;
-        if (!was) [[likely]] return false;
-        return was == 1 ? cp_pictographic(cp) : cp_regional(cp);
+        u8 how = kJoinNone;
+        if (was) [[unlikely]] how = (was == 1 ? cp_pictographic(cp) : cp_regional(cp)) ? kJoinZeroWidth : kJoinNone;
+        // Outside the blocks of the scripts these rules are for (Latin,
+        // Greek, Cyrillic, Hebrew, CJK, symbols, emoji) nothing is looked
+        // up, and nothing is done unless one of them came just before.
+        if (rare_block(cp)) [[unlikely]] {
+            // A Hangul syllable written whole, after anything but a leading
+            // jamo, a conjunct or a prepended sign (Korean text, nearly
+            // always): it starts a cluster, and is all there is to keep.
+            if (cp - 0xAC00 < 11172 && rare <= kJamoLVT && rare != kJamoL) {
+                rare = (cp - 0xAC00) % 28 == 0 ? kJamoLV : kJamoLVT;
+                return how;
+            }
+            const u32 r = rare_step(rare, cp, how);
+            rare = static_cast<u8>(r >> 8);
+            return static_cast<u8>(r);
+        }
+        if (rare) [[unlikely]] rare = rare & kConjunctBits ? rare_leave(rare, cp) : 0;
+        return how;
     }
-    // The columns cp adds to a line: none for one joined to the emoji or flag before it.
-    u32 width(u32 cp) { return joins(cp) ? 0 : cp_width(cp); }
+    // The columns cp adds to a line: none for one joined to the emoji or
+    // flag before it. Only those two rules change a width, so only they are
+    // looked at (widths are counted a whole file at a time: the rarer rules
+    // would cost a third of that, and change nothing there).
+    [[gnu::always_inline]] u32 width(u32 cp) {
+        const u8 was = after;
+        after = cp == 0x200D ? 1 : cp_regional(cp) && was != 2 ? 2 : 0;
+        if (!was) [[likely]] return cp_width(cp);
+        return (was == 1 ? cp_pictographic(cp) : cp_regional(cp)) ? 0 : cp_width(cp);
+    }
     // Whether cp goes on with the cluster before it, by any rule.
-    bool extends(u32 cp) { return joins(cp) || cp_extends(cp); }
+    [[gnu::always_inline]] bool extends(u32 cp) { return joins(cp) != kJoinNone || cp_extends(cp); }
+
+private:
+    static constexpr u8 kJamoBits = 7, kConjunctShift = 3, kConjunctBits = 3 << kConjunctShift, kPrependBit = 1 << 5;
+    // (A bit for each 4096 code points that has any of them: one test for
+    // most text, Latin's below U+0600 and CJK's among them.)
+    static constexpr u64 kRareBlocks = 1ull << 0x0 | 1ull << 0x1 | 1ull << 0xA | 1ull << 0xB | 1ull << 0xC | 1ull << 0xD |
+                                       1ull << 0x10 | 1ull << 0x11 | 1ull << 0x16;
+    static bool rare_block(u32 cp) {
+        if (cp < 0x600 || cp >= 0x17000 || !(kRareBlocks >> (cp >> 12) & 1)) [[likely]] return false;
+        return cp - 0x600 < 0x1D00 - 0x600 || cp - 0xA960 < 0xD7FC - 0xA960 || cp - 0x10A00 < 0x11F43 - 0x10A00 || cp - 0x16D63 < 8;
+    }
+    // A character of none of those scripts after one of them: only a
+    // conjunct goes on, through zero-width marks and joiners.
+    [[gnu::noinline]] static u8 rare_leave(u8 r, u32 cp) {
+        return (r & kConjunctBits) && cp_extends(cp) && cp_width(cp) == 0 ? r & kConjunctBits : 0;
+    }
+    // A character of one of them: the new state (above bit 8) and how cp joins.
+    [[gnu::noinline]] static u32 rare_step(u8 r, u32 cp, u8 how) {
+        if ((r & kPrependBit) && how == kJoinNone) how = kJoinKeepsWidth;
+        const u8 a = r & kJamoBits, jamo = hangul_kind(cp);
+        if (a && jamo && hangul_joins(a, jamo) && how == kJoinNone) how = kJoinKeepsWidth;
+        u8 conjunct = (r & kConjunctBits) >> kConjunctShift;
+        bool decided = false;
+        if (cp_conjunct_block(cp)) {
+            if (ucd::in_ranges(ucd::kConsonant, cp)) {
+                if (conjunct == 2 && how == kJoinNone) how = kJoinKeepsWidth;
+                conjunct = 1;
+                decided = true;
+            } else if (ucd::in_ranges(ucd::kLinker, cp)) {
+                if (conjunct) conjunct = 2;
+                decided = true;
+            }
+        }
+        if (!decided && conjunct && !(cp_extends(cp) && cp_width(cp) == 0)) conjunct = 0;
+        const u8 next = static_cast<u8>(jamo | conjunct << kConjunctShift | (cp_prepend(cp) ? kPrependBit : 0));
+        return static_cast<u32>(next) << 8 | how;
+    }
 };
 
 }  // namespace blit

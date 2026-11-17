@@ -299,11 +299,35 @@ u64 Editor::prev_char(u64 off) const {
             if (run % 2) at = from;
             break;
         }
+        if (cp >= 0x600 && joins_back(from, before, cp)) {
+            at = from;
+            cp = before;
+            continue;
+        }
         if (!cp_extends(cp) && !(before == 0x200D && cp_pictographic(cp))) break;
         at = from;
         cp = before;
     }
     return at;
+}
+
+// The rules of Joiner that look back, from cp (after the character
+// `before`, which starts at `from`): a prepended sign before it, Hangul's
+// jamo making a syllable, or a consonant that a linker (with zero-width
+// marks around it) joins to the consonant before.
+bool Editor::joins_back(u64 from, u32 before, u32 cp) const {
+    if (cp_prepend(before)) return true;
+    if (hangul_joins(hangul_kind(before), hangul_kind(cp))) return true;
+    if (!cp_conjunct_block(cp) || !ucd::in_ranges(ucd::kConsonant, cp)) return false;
+    bool linker = false;
+    u64 q = from;
+    for (u32 c = before, steps = 0; steps < 32; ++steps) {
+        if (ucd::in_ranges(ucd::kLinker, c)) linker = true;
+        else if (!(cp_extends(c) && cp_width(c) == 0)) return linker && ucd::in_ranges(ucd::kConsonant, c);
+        if (q == 0) return false;
+        q = point_before(buf, q, &c);
+    }
+    return false;
 }
 
 u32 Editor::col_between(u64 line_start, u64 off) const {
@@ -378,9 +402,9 @@ u64 Editor::off_at(u64 line, u32 want, bool nearest) const {
                 join.reset();
             } else {
                 Decoded d = decode_utf8(p + i, c.size() - i);
-                const bool joined = join.joins(d.cp);
-                goes_on = joined || cp_extends(d.cp);
-                w = joined ? 0 : cp_width(d.cp);
+                const u8 how = join.joins(d.cp);
+                goes_on = how != kJoinNone || cp_extends(d.cp);
+                w = how == kJoinZeroWidth ? 0 : cp_width(d.cp);
                 len = d.len;
             }
             if (!goes_on) {

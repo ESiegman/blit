@@ -84,7 +84,7 @@ public:
     // command under way.
     std::string status() const;
     std::string showcmd() const;
-    // Where the command line's cursor is, in characters of status(); -1 when no command line is open.
+    // Where the command line's cursor is, in the cells status() takes up (a wide character two, a mark none); -1 when no command line is open.
     int status_cursor() const;
     const std::string& typed() const { return typed_; }
     // A count typed before the keys of a mapping (0: none), and dropping it

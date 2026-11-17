@@ -72,10 +72,70 @@ std::string utf8_of(u32 cp) {
 
 char lower(char c) { return c >= 'A' && c <= 'Z' ? static_cast<char>(c + 32) : c; }
 
-size_t chars_in(std::string_view s) {
-    size_t n = 0;
-    for (const char c : s) n += !is_cont(static_cast<u8>(c));
-    return n;
+// The display columns text takes from column `col` on: a tab to the next
+// stop, a wide character two, a mark or what is joined to an emoji none
+// (as Editor::col_between counts them in the document).
+u32 columns_in(std::string_view s, u32 col, u32 tab_width) {
+    const u32 from = col;
+    Joiner join;
+    for (size_t i = 0; i < s.size();) {
+        const u8 b = static_cast<u8>(s[i]);
+        if (b == '\t') {
+            col = (col / std::max<u32>(1, tab_width) + 1) * std::max<u32>(1, tab_width);
+            join.reset();
+            ++i;
+        } else if (b < 0x80) {
+            ++col;
+            join.reset();
+            ++i;
+        } else {
+            const Decoded d = decode_utf8(reinterpret_cast<const u8*>(s.data()) + i, s.size() - i);
+            col += join.width(d.cp);
+            i += d.len;
+        }
+    }
+    return col - from;
+}
+
+// White space taken off up to k in s: one fewer if a mark is on the last
+// space (it stays, with its mark, a character of its own).
+size_t keep_marked(std::string_view s, size_t k) {
+    if (k == 0 || k >= s.size() || static_cast<u8>(s[k]) < 0x80) return k;
+    const Decoded d = decode_utf8(reinterpret_cast<const u8*>(s.data()) + k, s.size() - k);
+    return cp_extends(d.cp) || d.cp == 0x200D ? k - 1 : k;
+}
+
+// Where the character (a grapheme cluster, as Editor::next_char has them)
+// that starts at i in a piece of text ends: "\r\n" is one, any other
+// control character ends one, and nothing in ASCII goes on with one.
+size_t char_end_in(std::string_view s, size_t i) {
+    const u8* q = reinterpret_cast<const u8*>(s.data());
+    if (i >= s.size()) return s.size();
+    if (q[i] == '\r' && i + 1 < s.size() && q[i + 1] == '\n') return i + 2;
+    if (q[i] < 0x20 || q[i] == 0x7F) return i + 1;
+    Decoded d = decode_utf8(q + i, s.size() - i);
+    Joiner join;
+    join.joins(d.cp);
+    for (i += d.len; i < s.size() && q[i] >= 0x80; i += d.len) {
+        d = decode_utf8(q + i, s.size() - i);
+        if (!join.extends(d.cp)) break;
+    }
+    return i;
+}
+
+// Where the last character (a grapheme cluster, as Editor has them) of a
+// piece of text starts.
+size_t last_char_start(std::string_view s) {
+    size_t last = 0;
+    Joiner join;
+    for (size_t i = 0; i < s.size();) {
+        const Decoded d = decode_utf8(reinterpret_cast<const u8*>(s.data()) + i, s.size() - i);
+        const bool goes_on = i > 0 && ((d.cp == '\n' && s[i - 1] == '\r') || (d.cp >= 0x80 && join.extends(d.cp)));
+        if (d.cp < 0x80) join.reset();
+        if (!goes_on) last = i;
+        i += d.len;
+    }
+    return last;
 }
 
 // ~ u U and g?: letters to the other case, to lower, to upper, or thirteen along the alphabet.
@@ -109,11 +169,30 @@ u64 line_last(const Editor& ed, u64 line) {  // the last character of a line; it
     return e > s ? ed.prev_char(e) : s;
 }
 
+// A character (a grapheme cluster) starts at `at`: not in the middle of
+// one, as a mark on a space, the second half of a flag, or an emoji joined
+// to the one before are. (ASCII stands alone, but for the "\n" of "\r\n".)
+bool at_char(const Editor& ed, Peek& p, u64 at) {
+    if (at == 0 || at >= ed.buf.size()) return true;
+    const u8 b = p.at(at);
+    if (b < 0x80) return b != '\n' || p.at(at - 1) != '\r';
+    return ed.prev_char(ed.next_char(at)) == at;
+}
+
+// The character after the one at `at`, and where the one before `at`
+// starts: a byte at a time through ASCII, where they are bytes, as Vim's
+// own loops through white space went; Editor's clusters elsewhere (so that
+// a mark on a space goes with it).
+u64 char_after(const Editor& ed, Peek& p, u64 at) { return p.at(at) < 0x80 && p.at(at + 1) < 0x80 ? at + 1 : ed.next_char(at); }
+u64 char_before(const Editor& ed, Peek& p, u64 at) { return p.at(at - 1) < 0x80 ? at - 1 : ed.prev_char(at); }
+
 u64 first_nonblank(const Editor& ed, u64 line) {
     Peek p(ed.buf);
     u64 at = ed.buf.line_start(line);
     const u64 e = ed.line_end(line);
     while (at < e && (p.at(at) == ' ' || p.at(at) == '\t')) ++at;
+    // (A mark on the last space makes it a character that is not blank: the cursor goes on to it, not into it.)
+    if (at < e && p.at(at) >= 0x80) at = ed.prev_char(ed.next_char(at));
     return at;
 }
 
@@ -141,7 +220,14 @@ std::pair<u64, u64> columns_of(const Editor& ed, u64 line, u32 col0, u32 col1) {
     const u64 start = ed.buf.line_start(line), end = ed.line_end(line);
     const u32 width = ed.col_between(start, end);
     if (width <= col0) return {end, end};
-    const u64 a = ed.off_at(line, col0);
+    u64 a = ed.off_at(line, col0);
+    // (A character of no width just before, a mark alone or a zero width
+    // space, stands at the same column: it is in the block too.)
+    for (Peek p(ed.buf); a > start && p.at(a - 1) >= 0x80;) {
+        const u64 before = ed.prev_char(a);
+        if (ed.col_between(start, before) != ed.col_between(start, a)) break;
+        a = before;
+    }
     const u64 b = col1 > width ? end : std::min(end, ed.next_char(ed.off_at(line, col1 - 1)));
     return {a, std::max(a, b)};
 }
@@ -359,6 +445,11 @@ Vim::Pattern compiled(std::string_view typed, const VimRegex::Options& o) {
     p.re = re;
     return p;
 }
+
+// How many searches with p have given up so far (see VimRegex::overruns):
+// a search that finds nothing says why by comparing this with what it was.
+u32 overruns(const Vim::Pattern& p) { return p.re ? p.re->overruns() : 0; }
+std::string not_found(const Vim::Pattern& p, u32 before) { return overruns(p) != before ? std::string(VimRegex::kTooSlow) : "E486: Pattern not found: " + p.text; }
 
 RegexMatch plain_match(u64 at, u64 len) {
     RegexMatch m;
@@ -669,12 +760,13 @@ u64 Vim::replace_all(Editor& ed, const Pattern& p, std::string_view with, bool r
     const bool same = !rules || regex_replacement_plain(with);
     auto text = [&](u64 a, u64 b) { return ed.buf.text(a, b > a ? b - a : 0); };
     if (same) replacement(plain_match(0, 0), with, rules, text, &made);
+    const u32 runs = overruns(p);
     each_whole(ed.buf, p, lo, hi, per_line, [&](const RegexMatch& m) {
         found.push_back({m.start, m.end, same ? 0 : made.size()});
         if (!same) replacement(m, with, rules, text, &made);
         return true;
     });
-    if (found.empty()) return 0;
+    if (found.empty() || overruns(p) != runs) return 0;  // (one that gave up part of the way changes nothing)
     auto made_of = [&](size_t i) {
         if (same) return std::string_view(made);
         const u64 to = i + 1 < found.size() ? found[i + 1].off : made.size();
@@ -769,11 +861,12 @@ bool Vim::search(Editor& ed, bool forward, u32 count) {
     }
     u64 at = ed.cursor();
     bool wrapped_any = false;
+    const u32 runs = overruns(pattern_);
     for (u32 i = 0; i < std::max<u32>(1, count); ++i) {
         bool wrapped = false;
         const u64 hit = find(ed.buf, pattern_, at, forward, true, &wrapped);
         if (hit == kNone) {
-            message_ = "E486: Pattern not found: " + pattern_.text;
+            message_ = not_found(pattern_, runs);
             return false;
         }
         wrapped_any |= wrapped;
@@ -915,9 +1008,7 @@ std::string Vim::showcmd() const { return shown_; }
 
 int Vim::status_cursor() const {
     if (mode_ != kCommand) return -1;
-    int n = 1;
-    for (const char c : cmd_) n += !is_cont(static_cast<u8>(c));
-    return n;
+    return 1 + static_cast<int>(columns_in(cmd_, 1, 8));  // (in cells: a wide character two, a mark none)
 }
 
 void Vim::suspend(Editor& ed) {
@@ -1008,7 +1099,7 @@ bool Vim::block(const Editor& ed, u64* line0, u64* line1, u32* col0, u32* col1) 
     auto span = [&](u64 off, u64 line, u32* from, u32* to) {
         const u64 start = ed.buf.line_start(line), end = ed.line_end(line);
         *from = ed.col_between(start, off);
-        *to = off < end ? ed.col_between(start, ed.next_char(off)) : *from + 1;
+        *to = off < end ? std::max(ed.col_between(start, ed.next_char(off)), *from + 1) : *from + 1;  // (a mark alone, no wider than nothing, still has its column)
     };
     u32 a0, a1, b0, b1;
     span(a, la, &a0, &a1);
@@ -1099,8 +1190,15 @@ void Vim::block_do(Editor& ed, char what, u32 arg) {
                 const std::string old = ed.buf.text(rows[i].first, rows[i].second - rows[i].first);
                 std::string now;
                 if (what == 'r') {
+                    // As in Vim, every column of the block: a wide character
+                    // gives two, a tab as many as it takes up (and a wide
+                    // one put in fills two, a space making up an odd one).
                     const std::string with = utf8_of(arg);
-                    for (size_t k = chars_in(old); k-- > 0;) now += with;
+                    const u64 start = ed.buf.line_start(line0 + i);
+                    const u32 cols = ed.col_between(start, rows[i].second) - ed.col_between(start, rows[i].first);
+                    const u32 w = std::max<u32>(1, columns_in(with, 0, ed.tab_width));
+                    for (u32 k = cols / w; k > 0; --k) now += with;
+                    now.append(cols % w, ' ');
                 } else {
                     now = recase(old, what);
                 }
@@ -1128,6 +1226,7 @@ void Vim::block_do(Editor& ed, char what, u32 arg) {
                     const u32 width = (shift == "\t" ? ed.tab_width : static_cast<u32>(shift.size())) * levels;
                     u64 b = at;
                     for (u32 cols = 0; b < end && cols < width && (p.at(b) == ' ' || p.at(b) == '\t'); ++b) cols += p.at(b) == '\t' ? ed.tab_width : 1;
+                    if (b > at && b < end && p.at(b) >= 0x80) b = ed.prev_char(ed.next_char(b));  // (a space with a mark on it stays, with its mark)
                     if (b > at) ed.replace(at, b, "");
                 }
             }
@@ -1190,18 +1289,18 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
                     while (at < size && kind_of(p.at(at), big) == k) at = ed.next_char(at);
                 while (at < size && kind_of(p.at(at), big) == 0) {
                     if (p.at(at) == '\n' && at > from && (at == 0 || p.at(at - 1) == '\n')) break;  // an empty line is a word
-                    ++at;
+                    at = char_after(ed, p, at);
                 }
             } else if (how == 1) {
                 if (at < size) at = ed.next_char(at);
-                while (at < size && kind_of(p.at(at), big) == 0) ++at;
+                while (at < size && kind_of(p.at(at), big) == 0) at = char_after(ed, p, at);
                 const int k = kind_of(p.at(at), big);
                 while (at < size && ed.next_char(at) < size && kind_of(p.at(ed.next_char(at)), big) == k) at = ed.next_char(at);
             } else if (how == 2) {
                 if (at > 0) at = ed.prev_char(at);
                 while (at > 0 && kind_of(p.at(at), big) == 0) {
                     if (p.at(at) == '\n' && p.at(at - 1) == '\n') break;
-                    --at;
+                    at = char_before(ed, p, at);
                 }
                 const int k = kind_of(p.at(at), big);
                 while (k != 0 && at > 0 && kind_of(p.at(ed.prev_char(at)), big) == k) at = ed.prev_char(at);
@@ -1211,7 +1310,7 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
                     while (at > 0 && kind_of(p.at(at), big) == k) at = ed.prev_char(at);
                 while (at > 0 && kind_of(p.at(at), big) == 0) {
                     if (p.at(at) == '\n' && p.at(at - 1) == '\n') break;
-                    --at;
+                    at = char_before(ed, p, at);
                 }
             }
         }
@@ -1334,11 +1433,15 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
             const std::string want = utf8_of(find_char_);
             // The line is looked through a piece at a time, from the cursor outward: on a very long line a key must not cost the whole of it.
             constexpr u64 kPiece = 4096;
+            // (Only where a character starts: the second emoji of a family or
+            // a mark on a letter is no character of its own to stop on. A
+            // letter with marks on it is found by the letter, as in Vim.)
             auto scan_forward = [&](u64 from) {  // where the character first is at or after `from`
                 for (u64 a = from; a < end; a += kPiece) {
                     const u64 b = std::min(end, a + kPiece + want.size() - 1);
-                    const size_t hit = ed.buf.text(a, b - a).find(want);
-                    if (hit != std::string::npos) return a + hit;
+                    const std::string piece = ed.buf.text(a, b - a);
+                    for (size_t hit = piece.find(want); hit != std::string::npos; hit = piece.find(want, hit + 1))
+                        if (a + hit < std::min(end, a + kPiece) && at_char(ed, p, a + hit)) return a + hit;
                     if (b == end) break;
                 }
                 return kNone;
@@ -1346,8 +1449,9 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
             auto scan_back = [&](u64 upto) {  // where it last is at or before `upto`
                 for (u64 b = std::min(end, upto + want.size()); b > start;) {
                     const u64 a = b - start > kPiece + want.size() - 1 ? b - (kPiece + want.size() - 1) : start;
-                    const size_t hit = ed.buf.text(a, b - a).rfind(want);
-                    if (hit != std::string::npos) return a + hit;
+                    const std::string piece = ed.buf.text(a, b - a);
+                    for (size_t hit = piece.rfind(want); hit != std::string::npos; hit = hit > 0 ? piece.rfind(want, hit - 1) : std::string::npos)
+                        if (a + hit <= upto && at_char(ed, p, a + hit)) return a + hit;
                     if (a == start) break;
                     b = a + want.size() - 1;
                 }
@@ -1357,7 +1461,7 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
             for (u32 i = 0; i < count; ++i) {
                 // (A repeated "t" already stands before one: look past it.)
                 u64 from = at;
-                if (till && repeat_find_ && i == 0) from = forward ? std::min(end, at + 1) : (at > start ? at - 1 : start);
+                if (till && repeat_find_ && i == 0) from = forward ? std::min(end, ed.next_char(at)) : (at > start ? ed.prev_char(at) : start);
                 u64 hit = kNone;
                 if (forward) hit = scan_forward(std::min(end, from + 1));
                 else if (from > start) hit = scan_back(from - 1);
@@ -1444,12 +1548,13 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
             u64 at = cur;
             for (u32 i = 0; i < count; ++i) {
                 u64 steps = 0;
+                // (Where a character starts: a mark on the space before a sentence is no start of one.)
                 if (c == ')') {
-                    for (++at; at < size && steps < kFar && !sentence_start(p, at, size); ++at) ++steps;
+                    for (++at; at < size && steps < kFar && !(sentence_start(p, at, size) && at_char(ed, p, at)); ++at) ++steps;
                     at = std::min(at, size);
                 } else {
                     while (at > 0 && steps++ < kFar)
-                        if (sentence_start(p, --at, size)) break;
+                        if (sentence_start(p, --at, size) && at_char(ed, p, at)) break;
                 }
             }
             m.to = at;
@@ -1529,6 +1634,9 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
                 u64 lo = at, hi = at;
                 while (lo > ed.buf.line_start(line) && kind_of(p.at(lo - 1), false) == 2) --lo;
                 while (hi < end && kind_of(p.at(hi), false) == 2) ++hi;
+                // (A mark on the sign or space before the word is that character's, not the word's.)
+                if (!at_char(ed, p, lo)) lo = ed.next_char(ed.prev_char(lo));
+                if (lo >= hi) return m.ok = false, true;
                 pattern_ = Pattern{ed.buf.text(lo, hi - lo), false, c == key, nullptr, {}};  // (g* and g#: also as part of a longer word)
                 search_forward_ = key == '*';
                 ed.move_to(lo, false);
@@ -1566,11 +1674,11 @@ bool Vim::text_object(Editor& ed, u32 c, bool around, u32 count, u64* lo, u64* h
                 // The white space after it; if there is none, the white space before.
                 const u64 b0 = b;
                 if (k != 0)
-                    while (b < le && kind_of(p.at(b), big) == 0) ++b;
+                    while (b < le && kind_of(p.at(b), big) == 0) b = char_after(ed, p, b);
                 else
                     while (b < le && kind_of(p.at(b), big) != 0 && kind_of(p.at(b), big) == kind_of(p.at(b0), big)) b = ed.next_char(b);
                 if (b == b0 && k != 0)
-                    while (a > ls && kind_of(p.at(a - 1), big) == 0) --a;
+                    while (a > ls && kind_of(p.at(char_before(ed, p, a)), big) == 0) a = char_before(ed, p, a);
             }
             for (u32 i = 1; i < count && b < le; ++i) {  // "3aw": and the two after it
                 const int next = kind_of(p.at(b), big);
@@ -1589,16 +1697,17 @@ bool Vim::text_object(Editor& ed, u32 c, bool around, u32 count, u64* lo, u64* h
             // character, and for "as" the spaces after it as well.
             constexpr u64 kFar = 1 << 20;
             u64 a = cur, b = cur + 1, steps = 0;
-            while (a > 0 && !sentence_start(p, a, size) && steps++ < kFar) --a;
+            auto starts = [&](u64 at) { return sentence_start(p, at, size) && at_char(ed, p, at); };
+            while (a > 0 && !starts(a) && steps++ < kFar) --a;
             for (u32 i = 0; i < count; ++i) {
                 if (i) ++b;
-                for (steps = 0; b < size && !sentence_start(p, b, size) && steps < kFar; ++b) ++steps;
+                for (steps = 0; b < size && !starts(b) && steps < kFar; ++b) ++steps;
             }
             b = std::min(b, size);
             u64 e = b;
             while (e > a && (p.at(e - 1) == ' ' || p.at(e - 1) == '\t' || p.at(e - 1) == '\n')) --e;
             if (around)
-                while (e < b && (p.at(e) == ' ' || p.at(e) == '\t')) ++e;
+                while (e < b && (p.at(e) == ' ' || p.at(e) == '\t')) e = std::min(b, char_after(ed, p, e));
             *lo = a;
             *hi = e;
             return e > a;
@@ -1725,6 +1834,7 @@ bool Vim::text_object(Editor& ed, u32 c, bool around, u32 count, u64* lo, u64* h
             if (around) {
                 size_t e = b + 1;
                 while (e < text.size() && (text[e] == ' ' || text[e] == '\t')) ++e;
+                e = std::max(b + 1, keep_marked(text, e));
                 if (e == b + 1)
                     while (a > 0 && (text[a - 1] == ' ' || text[a - 1] == '\t')) --a;
                 *lo = ls + a;
@@ -1845,6 +1955,7 @@ void Vim::operate_lines(Editor& ed, char op, u64 line0, u64 line1, bool keep_col
             else if (line[0] == '\t') k = 1;  // one tab, or as many spaces as a level is wide
             else
                 while (k < line.size() && k < width && line[k] == ' ') ++k;
+            k = keep_marked(line, k);
             out += line.substr(k);
         });
     }
@@ -1860,6 +1971,7 @@ void Vim::operate_lines(Editor& ed, char op, u64 line0, u64 line1, bool keep_col
             if (p.at(at) == '\t') ++at;
             else
                 while (at < end && at - start < width && p.at(at) == ' ') ++at;
+            if (at > start && at < end && p.at(at) >= 0x80) at = ed.prev_char(ed.next_char(at));  // (a space with a mark on it stays, with its mark)
             if (at > start) ed.replace(start, at, "");
         }
     }
@@ -1969,10 +2081,11 @@ void Vim::put(Editor& ed, bool before, u32 count, bool then_after) {
             if (e == std::string::npos) break;
             i = e + 1;
         }
-        size_t width = 0;
-        for (const std::string_view row : rows) width = std::max(width, chars_in(row));
         const u64 start0 = ed.buf.line_start(line);
         const u32 col = ed.col_between(start0, before || ed.line_end(line) == start0 ? cur : ed.next_char(cur));
+        // (The rows are made as wide as the widest on the screen: a wide character counts two, a mark nothing.)
+        u32 width = 0;
+        for (const std::string_view row : rows) width = std::max(width, columns_in(row, col, ed.tab_width));
         u64 first = cur;
         for (size_t i = 0; i < rows.size(); ++i) {
             const u64 l = line + i;
@@ -1984,7 +2097,7 @@ void Vim::put(Editor& ed, bool before, u32 count, bool then_after) {
             std::string piece(pad, ' ');
             for (u32 k = 0; k < count; ++k) {
                 piece += rows[i];
-                if (k + 1 < count || at < end) piece.append(width - chars_in(rows[i]), ' ');  // (nothing after it: no need to fill it out)
+                if (k + 1 < count || at < end) piece.append(width - columns_in(rows[i], col, ed.tab_width), ' ');  // (nothing after it: no need to fill it out)
             }
             ed.replace(at, at, piece);
             if (i == 0) first = at + pad;
@@ -2155,6 +2268,7 @@ u32 Vim::insert_key(Editor& ed, const VimKey& k) {
                     if (p.at(at) == '\t') ++at;
                     else
                         while (at < cur && at - start < width && p.at(at) == ' ') ++at;
+                    if (at > start && at < cur && p.at(at) >= 0x80) at = ed.prev_char(ed.next_char(at));  // (a space with a mark on it stays)
                     if (at > start) {
                         ed.replace(start, at, "");
                         ed.move_to(cur - (at - start), false);
@@ -2449,14 +2563,16 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
                     block_do(ed, 'r', c);
                     return done();
                 }
-                if (visual()) {  // every character selected
+                if (visual()) {  // every character selected (a letter and its marks, a flag: one), the line breaks kept
                     u64 lo, hi;
                     visual_range(ed, &lo, &hi);
-                    std::string text = ed.buf.text(lo, hi - lo), out;
+                    const std::string text = ed.buf.text(lo, hi - lo);
+                    std::string out;
                     for (size_t i = 0; i < text.size();) {
-                        const Decoded d = decode_utf8(reinterpret_cast<const u8*>(text.data()) + i, text.size() - i);
-                        out += text[i] == '\n' ? "\n" : with;
-                        i += d.len;
+                        const size_t next = char_end_in(text, i);
+                        if (text[i] == '\n' || (text[i] == '\r' && next == i + 2)) out.append(text, i, next - i);
+                        else out += with;
+                        i = next;
                     }
                     leave_visual(ed);
                     ed.replace(lo, hi, out);
@@ -2727,6 +2843,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
         }
         RegexMatch mm;
         u64 hit;
+        const u32 runs = overruns(pattern_);
         if (c == (kG | 'n')) {
             // The first match from the cursor's line on that ends after the
             // cursor (or is an empty one at it); else from the top.
@@ -2738,7 +2855,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
             hit = find(ed.buf, pattern_, cur + 1, false, true, nullptr, ~0ull, &mm);
         }
         if (hit == kNone) {
-            message_ = "E486: Pattern not found: " + pattern_.text;
+            message_ = not_found(pattern_, runs);
             return fail();
         }
         highlight_on_ = true;
@@ -3099,7 +3216,9 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
                         std::string_view next(was.data() + from, stop - from);
                         at = e + out.size();
                         if (c == 'J') {
-                            while (!next.empty() && (next[0] == ' ' || next[0] == '\t')) next.remove_prefix(1);
+                            size_t lead = 0;
+                            while (lead < next.size() && (next[lead] == ' ' || next[lead] == '\t')) ++lead;
+                            next.remove_prefix(keep_marked(next, lead));
                             if (before != ' ' && before != '\t' && !next.empty() && next[0] != ')') out += ' ';
                             if (!next.empty()) before = next.back();
                         }
@@ -3389,8 +3508,7 @@ u32 Vim::command_key(Editor& ed, const VimKey& k) {
             if (searching) pattern_ = saved_pattern_, go(ed, cmd_origin_);
             return kHandled;
         }
-        while (!cmd_.empty() && is_cont(static_cast<u8>(cmd_.back()))) cmd_.pop_back();
-        cmd_.pop_back();
+        cmd_.resize(last_char_start(cmd_));  // (a letter with its marks, an emoji with what is joined to it: one)
         edited = true;
     } else if (k.ctrl && k.ch == 'u') {
         cmd_.clear();
@@ -3498,6 +3616,7 @@ void Vim::substitute(Editor& ed, u64 line0, u64 line1, std::string_view rest, bo
     if (line0 > last) return;
     // Matches start on the lines (their ends included, for "$" and "\n"); they may run on past them.
     const u64 lo = ed.buf.line_start(line0), hi = ed.line_end(last) + 1;
+    const u32 runs = overruns(p);
     if (count_only) {
         u64 count = 0, lines = 0, line_was = kNone;
         NextLines lines_after(ed.buf);
@@ -3509,6 +3628,10 @@ void Vim::substitute(Editor& ed, u64 line0, u64 line1, std::string_view rest, bo
             }
             return true;
         });
+        if (overruns(p) != runs) {
+            message_ = VimRegex::kTooSlow;
+            return;
+        }
         if (count == 0) {
             if (!quiet) message_ = "E486: Pattern not found: " + p.text;
             return;
@@ -3527,13 +3650,13 @@ void Vim::substitute(Editor& ed, u64 line0, u64 line1, std::string_view rest, bo
         ed.begin_group();
         confirm_next(ed);
         if (confirm_.on || confirm_.count) return;
-        if (!quiet) message_ = "E486: Pattern not found: " + p.text;
+        if (!quiet || overruns(p) != runs) message_ = not_found(p, runs);
         return;
     }
     u64 lines = 0, at = 0;
     const u64 count = replace_all(ed, p, with, true, lo, hi, !all, &lines, &at);
     if (count == 0) {
-        if (!quiet) message_ = "E486: Pattern not found: " + p.text;
+        if (!quiet || overruns(p) != runs) message_ = not_found(p, runs);
         return;
     }
     go(ed, first_nonblank(ed, std::min(ed.buf.line_of(at), lines_of(ed) - 1)));

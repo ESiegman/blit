@@ -73,6 +73,9 @@ struct App::VimUi {
     // whatever else underlines the text.
     std::vector<GridDeco> marks, block, all;
     u64 marks_key = 0;
+    // A pattern that took the backtracker past its budget while lighting
+    // its matches: not looked for again on every frame.
+    std::shared_ptr<const VimRegex> marks_gave_up;
 };
 
 void App::vim_create() {
@@ -433,9 +436,18 @@ void App::vim_marks(FrameDesc& fd) {
     mix(std::hash<std::string>{}(pat.text));
     mix(reinterpret_cast<u64>(pat.re.get()));
     mix((pat.ignore_case ? 1u : 0u) | (pat.word ? 2u : 0u));
-    if (key != u.marks_key) {
+    if (key != u.marks_key && pat.re && pat.re == u.marks_gave_up) {
         u.marks_key = key;
         u.marks.clear();
+    } else if (key != u.marks_key) {
+        u.marks_key = key;
+        u.marks.clear();
+        const u32 runs = pat.re ? pat.re->overruns() : 0;
+        auto gave_up = [&] {
+            if (!pat.re || pat.re->overruns() == runs) return false;
+            u.marks_gave_up = pat.re;
+            return true;
+        };
         constexpr u64 kLineBytes = 8192;  // a longer line is looked at this far
         constexpr size_t kMost = 4000;
         const u64 lines = ed.buf.line_count(), bottom = std::min<u64>(grid.top_line + grid.rows, lines);
@@ -462,7 +474,7 @@ void App::vim_marks(FrameDesc& fd) {
                 }
             }
         } else if (!pat.re->multiline()) {  // line by line, a very long one as far as kLineBytes
-            for (u64 line = grid.top_line; line < bottom && u.marks.size() < kMost; ++line) {
+            for (u64 line = grid.top_line; line < bottom && u.marks.size() < kMost && !gave_up(); ++line) {
                 const u64 start = ed.buf.line_start(line), len = ed.line_end(line) - start;
                 Vim::each_whole(ed.buf, pat, start, start + std::min(len, kLineBytes) + 1, false, [&](const RegexMatch& m) {
                     mark(m.start, m.end);
@@ -475,6 +487,7 @@ void App::vim_marks(FrameDesc& fd) {
                 mark(m.start, m.end);
                 return u.marks.size() < kMost;
             });
+            gave_up();
         }
     }
     if (u.marks.empty() && u.block.empty()) return;

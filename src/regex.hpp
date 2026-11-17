@@ -6,7 +6,12 @@
 // A pattern is compiled to a program for a Pike VM, which runs all the ways
 // a match could go at once, a character at a time, so no pattern takes time
 // exponential in the text (there is no backtracking): at worst the text's
-// length times the program's. Three things make the usual cases fast. A
+// length times the program's. A pattern that asks what no automaton can
+// follow (a back-reference, look-around, "\&", a line's number) runs on a
+// backtracker instead, one way at a time, with a budget of steps: one that
+// would take exponential time stops, and overruns() says so. Its lines are
+// narrowed down first in the same ways as below (the DFA running a program
+// with those things left out). Three things make the usual cases fast. A
 // pattern with nothing special in it is not run here at all: plain() says
 // so, and the caller looks for it as text, as it always has. A pattern that
 // cannot take in a line break and has a piece of plain text that every
@@ -15,6 +20,7 @@
 // is passed over the text by a DFA built as it goes (a state for each set
 // of the VM's places that turns up), and only a line it says has a match is
 // run through the VM, to find where.
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <string>
@@ -58,6 +64,14 @@ public:
     // A piece of plain text every match has (for a search elsewhere to
     // narrow the files down): empty if there is none.
     const std::string& required() const;
+    // It runs on the backtracker (back-references, look-around and the
+    // like, or "\%#=1" first, Vim's way to ask for its old engine).
+    bool backtracks() const;
+    // How many searches with it have given up, the backtracker's budget
+    // spent (a search that did returned no match): whoever searched
+    // compares this before and after, and says kTooSlow.
+    u32 overruns() const { return overruns_.load(std::memory_order_relaxed); }
+    static constexpr const char* kTooSlow = "E363: The pattern took too long here and was stopped (back-references and look-around are tried one way at a time)";
 
     // Looks for matches: the first whose start (before any \zs) is in [from,
     // to), the leftmost and, of those that start there, the one Vim's rules
@@ -73,6 +87,8 @@ public:
         Searcher& operator=(const Searcher&) = delete;
         bool next(const Buffer& buf, u64 from, u64 to, RegexMatch* m);
         bool next(std::string_view text, u64 from, u64 to, RegexMatch* m);
+        // The last next() gave up, its budget spent.
+        bool overran() const;
 
         struct State;
 
@@ -92,6 +108,7 @@ private:
     bool plain_ = false, plain_word_ = false, icase_ = false;
     std::string plain_text_;
     std::unique_ptr<RegexProgram> prog_;
+    mutable std::atomic<u32> overruns_{0};
 };
 
 // What a match becomes, by the rules of Vim's :s: "&" and "\0" are the

@@ -1,7 +1,8 @@
 #!/bin/sh
 # Characters made of more than one code point, and characters of other
 # widths: a letter with combining marks, emoji joined by zero width joiners,
-# flags, skin tones, variation selectors, a spacing mark. Each is one
+# flags, skin tones, variation selectors, a spacing mark, Indic conjuncts,
+# Hangul syllables written in jamo, a prepended sign. Each is one
 # character to the cursor (the arrows, Backspace and Delete, words, the
 # lines above and below) and takes the cells it should: none for a mark,
 # which is drawn over its letter, or for what joins an emoji.
@@ -31,6 +32,12 @@ VS16=$(printf '\357\270\217')
 KA=$(printf '\340\244\225\340\244\276')                                        # Devanagari ka, and the vowel sign aa (a spacing mark)
 ZWSP=$(printf '\342\200\213')
 WIDE=$(printf '\342\234\205\342\255\220\342\214\232')                          # U+2705 U+2B50 U+231A, two cells each
+KSSA=$(printf '\340\244\225\340\245\215\340\244\267')                          # Devanagari ka, virama, ssa: a conjunct
+KSSMA=$(printf '\340\244\225\340\245\215\340\244\267\340\245\215\340\244\256')  # ka, virama, ssa, virama, ma: one conjunct
+KASSA=$(printf '\340\244\225\340\244\267')                                       # ka and ssa with no virama: two characters
+GAK=$(printf '\341\204\200\341\205\241\341\206\250')                          # Hangul's G, A, K jamo: one syllable written in its parts
+GAPLUSK=$(printf '\352\260\200\341\206\250')                                      # the syllable GA, and a trailing K jamo
+NUMSIGN=$(printf '\330\200\331\241\331\242')                                      # the Arabic number sign (prepended), and two Arabic-Indic digits
 
 failed=0
 check() {
@@ -73,6 +80,20 @@ run "$KA." "key:Right;$AT"
 check "a spacing mark goes with its letter" "1:7"
 run "a${ZWSP}b" "key:Right;$AT;key:Right;$AT;key:Right;$AT"
 check "a zero width space is a character of its own" "1:2 1:5 1:6"
+run "$KSSA." "key:Right;$AT;key:Left;$AT"
+check "a consonant, a virama and a consonant are one character (a conjunct)" "1:10 1:1"
+run "$KSSMA." "key:Right;$AT;key:Right;$AT;key:Left;$AT"
+check "so are three consonants joined by viramas" "1:16 1:17 1:16"
+run "$KASSA." "key:Right;$AT;key:Right;$AT"
+check "two consonants with no virama are two characters" "1:4 1:7"
+run "$GAK." "key:Right;$AT;key:Left;$AT"
+check "a Hangul syllable written in its jamo is one character" "1:10 1:1"
+run "$GAPLUSK." "key:Right;$AT"
+check "a syllable and a trailing jamo are one character" "1:7"
+run "$NUMSIGN." "key:Right;$AT;key:Right;$AT;key:Left;$AT"
+check "a prepended sign goes with the character after it" "1:5 1:7 1:5"
+run "a$KSSA" "key:End;key:Backspace;$LINE"
+check "Backspace takes a conjunct whole" "a"
 
 # Backspace and Delete take the whole character.
 run "caf$E x" "key:End;key:Left;key:Left;key:Backspace;$LINE;$AT"
@@ -104,6 +125,10 @@ col "$WIDE." "key:End"
 check "emoji shown as emoji (U+2705, U+2B50, U+231A) take two cells each" "Ln 1, Col 8"
 col "$THUMB$CHECK$VS16${ZWSP}x" "key:End"
 check "a skin tone, a variation selector and a zero width space take none" "Ln 1, Col 6"
+col "$GAK|" "key:End"
+check "jamo keep their cells (a syllable in its parts is drawn part by part)" "Ln 1, Col 6"
+col "$KSSA|" "key:End"
+check "a conjunct's consonants keep their cells, the virama takes none" "Ln 1, Col 4"
 
 # What is drawn. Frames are compared pixel for pixel: the same file name,
 # the cursor where it was.

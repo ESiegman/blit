@@ -95,13 +95,29 @@ struct CharClass {
     void add(u32 a, u32 b) { ranges.push_back({a, b}); }
 };
 
-enum Op : u8 { kChar, kCharI, kAny, kClass, kNl, kMatch, kSplit, kJmp, kSave, kAssert };
-enum Assert : u8 { kBol, kEol, kBow, kEow, kBof, kEof };
+// The last five are the backtracker's alone (a program for the Pike VM or
+// the DFA never has them): \1 to \9, look-around and \@>, and the check
+// that a turn of a "*" took something.
+enum Op : u8 { kChar, kCharI, kAny, kClass, kNl, kMatch, kSplit, kJmp, kSave, kAssert, kBackref, kLook, kLookEnd, kMark, kCheck };
+// After kEof, the backtracker's alone too: a line or a column by number
+// (\%23l, \%<23l, \%>23l, \%23c and the like).
+enum Assert : u8 { kBol, kEol, kBow, kEow, kBof, kEof, kLineIs, kColIs };
+enum Compare : u8 { kAt, kBefore, kAfter };
+enum LookKind : u8 { kAhead, kNotAhead, kBehind, kNotBehind, kAtomic };
 
 struct Inst {
     Op op;
     u8 a = 0;  // kAny: 1 if it takes a line break too; kAssert: which
     u32 x = 0, y = 0;
+};
+
+// A look-around (\@= \@! \@<= \@<! \@>) in the backtracker's program: its
+// own program runs from the kLook to its kLookEnd; `end` is just after that.
+struct Look {
+    u8 kind = kAhead;
+    u32 end = 0;
+    u32 bytes = 0;                // \@123<=: no further back than that (0: no limit)
+    u32 least = 0, most = 0;      // the characters it can take (most: kInf, any number)
 };
 
 }  // namespace
@@ -110,12 +126,36 @@ struct RegexProgram {
     std::vector<Inst> code;
     std::vector<CharClass> classes;
     u32 groups = 0;  // the highest \( \) group (0 to 9)
-    u32 slots = 3;   // start, end, the groups' two each, where the thread began
+    u32 slots = 3;   // start, end, the groups' two each, where the thread began (and the backtracker's marks)
     bool icase = false, multiline = false, zs = false, empty = false, cr = false;
     std::string required;  // plain text every match has (ASCII, if the case is ignored)
     bool first[256] = {};  // the bytes a match can start at
     bool skip = false;     // and they are few enough to be worth looking for
-    u32 anchor_slot() const { return slots - 1; }
+    u32 anchor_slot() const { return anchor; }
+    u32 anchor = 2;  // where the thread began: the slot after the groups'
+    // A pattern with back-references, look-around, \& or a line's number
+    // runs on the backtracker. Its lines are found first by `relaxed`, a
+    // program for the DFA whose matches take in all of this one's (what
+    // those things ask is left out), when there is one.
+    bool backtrack = false;
+    std::vector<Look> looks;
+    std::unique_ptr<RegexProgram> relaxed;
+    // With no back-reference, what is ahead of the backtracker at a place
+    // in the program and the text does not depend on how it got there: the
+    // places it has tried (at each kSplit) are remembered and not tried
+    // again, as RE2's BitState does. That makes it find just what the Pike
+    // VM would (which never runs two threads at one place), in time the
+    // text's length times the program's. split_of: each kSplit's number
+    // (kNoChar elsewhere); scope_of: for each, 0 or the look-around it is
+    // in, plus one (what a look-behind finds depends on where it must end,
+    // so its places are forgotten each time it is asked).
+    bool memo = false;
+    std::vector<u32> split_of, scope_of;
+    // What the backtracker's program asks first, before any choice: a
+    // match then starts only at a line's start or a word's, and the places
+    // between are passed over without a try.
+    enum Lead : u8 { kLeadAny, kLeadLine, kLeadWord };
+    u8 lead = kLeadAny;
 };
 
 namespace {
@@ -123,18 +163,22 @@ namespace {
 // ---------------------------------------------------------------- reading a pattern
 
 struct Node {
-    enum Kind : u8 { kEmpty, kLit, kAnyN, kClassN, kNlN, kCat, kAlt, kRep, kGroup, kAssertN, kZsN, kZeN } kind = kEmpty;
-    u32 c = 0;  // kLit: the character; kClassN: which class; kAssertN: which; kGroup: the group (0: one that catches nothing)
+    enum Kind : u8 { kEmpty, kLit, kAnyN, kClassN, kNlN, kCat, kAlt, kRep, kGroup, kAssertN, kZsN, kZeN, kBackrefN, kLookN } kind = kEmpty;
+    // kLit: the character; kClassN: which class; kAssertN: which; kGroup:
+    // the group (0: one that catches nothing); kBackrefN: the group it
+    // stands for; kLookN: its LookKind.
+    u32 c = 0;
     bool nl = false;
-    u32 min = 0, max = 0;
+    u32 min = 0, max = 0;  // kRep: how many; kLookN: min is \@123<='s 123; kAssertN: min the number, max its Compare
     bool greedy = true;
     std::vector<u32> kids;
 };
 
 struct Tok {
-    enum K : u8 { kEnd, kChar, kMagic, kClassT, kNlT, kZs, kZe, kBof, kEof, kBol, kEol, kOpenPlain, kCollection } k = kEnd;
+    enum K : u8 { kEnd, kChar, kMagic, kClassT, kNlT, kZs, kZe, kBof, kEof, kBol, kEol, kOpenPlain, kCollection, kBackrefT, kOptional, kLineT, kColT } k = kEnd;
     u32 c = 0;
     bool nl = false;  // \_x
+    u32 n = 0;        // kLineT, kColT: the number
 };
 
 class Parser {
@@ -145,9 +189,16 @@ public:
     std::vector<CharClass> classes;
     u32 groups = 0;
     bool set_icase = false, set_noicase = false;
+    bool backtrack = false;  // something in it only the backtracker can do
+    bool backref = false;    // a back-reference in particular
+    int engine = 0;          // \%#=1 first: the backtracker for it all (as Vim's old engine); \%#=2, \%#=0: as it comes
     std::string error;
 
     u32 parse() {
+        if (s_.size() >= 5 && s_.starts_with("\\%#=") && s_[4] >= '0' && s_[4] <= '2') {
+            engine = s_[4] - '0';
+            i_ = 5;
+        }
         const u32 root = alternation();
         if (error.empty() && tok().k != Tok::kEnd) {
             if (tok().k == Tok::kMagic && tok().c == ')') error = level_ == 3 ? "E54: Unmatched )" : "E54: Unmatched \\)";
@@ -165,6 +216,7 @@ private:
     bool have_ = false;
     Tok tok_;
     int depth_ = 0;
+    bool closed_[10] = {};  // the groups whose "\)" has been read (a back-reference may only come after it)
 
     u32 node(Node n) {
         nodes.push_back(std::move(n));
@@ -338,7 +390,7 @@ private:
             case '6':
             case '7':
             case '8':
-            case '9': error = "Back-references (\\1 in a pattern) are not supported"; return t;
+            case '9': t.k = Tok::kBackrefT, t.c = static_cast<u32>(n - '0'); return t;
             case '/':
             case '\\':
             case '?': t.k = Tok::kChar, t.c = static_cast<u8>(n); return t;
@@ -376,9 +428,29 @@ private:
             error = "E71: Invalid character after \\%";
             return t;
         }
+        // A line or a column by number: "\%23l", before it "\%<23l", after it "\%>23l" (and "c").
+        {
+            size_t k = i_;
+            const u32 cmp = s_[k] == '<' ? kBefore : s_[k] == '>' ? kAfter : kAt;
+            if (cmp != kAt) ++k;
+            if (k < s_.size() && s_[k] >= '0' && s_[k] <= '9') {
+                u64 v = 0;
+                while (k < s_.size() && s_[k] >= '0' && s_[k] <= '9') v = std::min<u64>(v * 10 + static_cast<u64>(s_[k++] - '0'), 0xFFFFFFFFu);
+                if (k < s_.size() && (s_[k] == 'l' || s_[k] == 'c')) {
+                    t.k = s_[k] == 'l' ? Tok::kLineT : Tok::kColT;
+                    t.c = cmp;
+                    t.n = static_cast<u32>(v);
+                    i_ = k + 1;
+                    return t;
+                }
+                error = "E71: Invalid character after \\%: of the numbered kinds, a line (l) and a column (c) are known here";
+                return t;
+            }
+        }
         const char x = s_[i_++];
         switch (x) {
             case '(': t.k = Tok::kOpenPlain; return t;
+            case '[': t.k = Tok::kOptional; return t;
             case '^': t.k = Tok::kBof; return t;
             case '$': t.k = Tok::kEof; return t;
             case 'd': t.k = Tok::kChar, t.c = number(10, 10); return t;
@@ -405,19 +477,43 @@ private:
     }
 
     u32 alternation() {
-        std::vector<u32> branches{concat()};
-        while (error.empty() && tok().k == Tok::kMagic && (tok_.c == '|' || tok_.c == '&')) {
-            if (tok_.c == '&') {
-                error = "\\& is not supported";
-                break;
-            }
+        std::vector<u32> branches{branch()};
+        while (error.empty() && tok().k == Tok::kMagic && tok_.c == '|') {
             take();
-            branches.push_back(concat());
+            branches.push_back(branch());
         }
         if (branches.size() == 1) return branches[0];
         Node n;
         n.kind = Node::kAlt;
         n.kids = std::move(branches);
+        return node(std::move(n));
+    }
+
+    u32 look(u32 kind, u32 of, u32 bytes = 0) {
+        Node n;
+        n.kind = Node::kLookN;
+        n.c = kind;
+        n.min = bytes;
+        n.kids = {of};
+        backtrack = true;
+        return node(std::move(n));
+    }
+
+    // "a\&b\&c": c, where a and b match as well (each a look-ahead, as Vim
+    // has it: "foobar\&foo" is "\(foobar\)\@=foo").
+    u32 branch() {
+        u32 last = concat();
+        if (!(error.empty() && tok().k == Tok::kMagic && tok_.c == '&')) return last;
+        std::vector<u32> parts;
+        while (error.empty() && tok().k == Tok::kMagic && tok_.c == '&') {
+            take();
+            parts.push_back(look(kAhead, last));
+            last = concat();
+        }
+        parts.push_back(last);
+        Node n;
+        n.kind = Node::kCat;
+        n.kids = std::move(parts);
         return node(std::move(n));
     }
 
@@ -454,21 +550,94 @@ private:
         while (error.empty() && is_multi(tok())) {
             const u32 c = tok_.c;
             take();
+            if (c == '@') {
+                a = look_around(a);
+                if (a == kNoChar) return kNoChar;
+                continue;
+            }
             Node r;
             r.kind = Node::kRep;
             r.kids = {a};
             if (c == '*') r.min = 0, r.max = kInf;
             else if (c == '+') r.min = 1, r.max = kInf;
             else if (c == '=' || c == '?') r.min = 0, r.max = 1;
-            else if (c == '@') {
-                error = "Look-behind and look-ahead (\\@) are not supported";
-                return kNoChar;
-            } else if (!brace(&r)) {
-                return kNoChar;
-            }
+            else if (!brace(&r)) return kNoChar;
             a = node(std::move(r));
         }
         return a;
+    }
+
+    // After "\@": "=" "!" ">" "<=" "<!", with a number of bytes first for
+    // the last two ("\@12<=": no further back than that).
+    u32 look_around(u32 of) {
+        u64 bytes = 0;
+        while (i_ < s_.size() && s_[i_] >= '0' && s_[i_] <= '9') bytes = std::min<u64>(bytes * 10 + static_cast<u64>(s_[i_++] - '0'), 1u << 30);
+        const char k = i_ < s_.size() ? s_[i_++] : 0;
+        const char k2 = k == '<' && i_ < s_.size() ? s_[i_++] : 0;
+        u32 kind;
+        if (k == '=') kind = kAhead;
+        else if (k == '!') kind = kNotAhead;
+        else if (k == '>') kind = kAtomic;
+        else if (k == '<' && k2 == '=') kind = kBehind;
+        else if (k == '<' && k2 == '!') kind = kNotBehind;
+        else {
+            error = "E59: Invalid character after \\@";
+            return kNoChar;
+        }
+        return look(kind, of, static_cast<u32>(bytes));
+    }
+
+    // "\%[abc]": as much of a, then b, then c as is there ("r\%[ead]" is r,
+    // re, rea or read): each an optional atom inside the one before.
+    u32 optional_seq() {
+        std::vector<u32> items;
+        for (;;) {
+            const Tok& t = tok();
+            if (!error.empty()) return kNoChar;
+            if (t.k == Tok::kEnd) {
+                error = "E69: Missing ] after \\%[";
+                return kNoChar;
+            }
+            if (t.k == Tok::kChar && t.c == ']') {
+                take();
+                break;
+            }
+            if ((t.k == Tok::kMagic && std::strchr("()|&", static_cast<char>(t.c))) || is_multi(t) || t.k == Tok::kOpenPlain || t.k == Tok::kOptional) {
+                error = "E369: Invalid item in \\%[]";
+                return kNoChar;
+            }
+            const u32 a = atom();
+            if (!error.empty() || a == kNoChar) return kNoChar;
+            items.push_back(a);
+        }
+        if (items.empty()) {
+            error = "E70: Empty \\%[]";
+            return kNoChar;
+        }
+        u32 inner = kNoChar;
+        for (size_t k = items.size(); k-- > 0;) {
+            u32 body = items[k];
+            if (inner != kNoChar) {
+                Node c;
+                c.kind = Node::kCat;
+                c.kids = {items[k], inner};
+                body = node(std::move(c));
+            }
+            Node r;
+            r.kind = Node::kRep;
+            r.min = 0, r.max = 1;
+            r.kids = {body};
+            inner = node(std::move(r));
+        }
+        return inner;
+    }
+
+    // Is there a look-behind further on? (Vim lets a back-reference come
+    // before its group then, the group being in the look-behind.)
+    bool behind_later() const {
+        for (size_t k = i_; k + 2 < s_.size(); ++k)
+            if (s_[k] == '@' && s_[k + 1] == '<' && (s_[k + 2] == '=' || s_[k + 2] == '!')) return true;
+        return false;
     }
 
     // "\{n,m}" and its kinds, after the "{": "-" first for as few as may be.
@@ -683,6 +852,20 @@ private:
             case Tok::kEol: n.kind = Node::kAssertN, n.c = kEol; return node(std::move(n));
             case Tok::kBof: n.kind = Node::kAssertN, n.c = kBof; return node(std::move(n));
             case Tok::kEof: n.kind = Node::kAssertN, n.c = kEof; return node(std::move(n));
+            case Tok::kLineT:
+            case Tok::kColT:
+                n.kind = Node::kAssertN, n.c = t.k == Tok::kLineT ? kLineIs : kColIs, n.min = t.n, n.max = t.c;
+                backtrack = true;
+                return node(std::move(n));
+            case Tok::kBackrefT:
+                if (!closed_[t.c] && !behind_later()) {
+                    error = "E65: Illegal back reference";
+                    return kNoChar;
+                }
+                n.kind = Node::kBackrefN, n.c = t.c;
+                backtrack = backref = true;
+                return node(std::move(n));
+            case Tok::kOptional: return optional_seq();
             case Tok::kOpenPlain: return group(0);
             case Tok::kMagic:
                 switch (t.c) {
@@ -728,6 +911,7 @@ private:
             return kNoChar;
         }
         take();
+        if (number) closed_[number] = true;
         Node n;
         n.kind = Node::kGroup;
         n.c = number;
@@ -738,9 +922,77 @@ private:
 
 // ---------------------------------------------------------------- the program from the pattern
 
+// What the tree says about every match: can it be empty, and a run of
+// plain text it must have (the longest one found).
+bool nullable(const std::vector<Node>& ns, u32 at) {
+    const Node& n = ns[at];
+    switch (n.kind) {
+        case Node::kLit:
+        case Node::kAnyN:
+        case Node::kClassN:
+        case Node::kNlN: return false;
+        case Node::kCat:
+            for (const u32 k : n.kids)
+                if (!nullable(ns, k)) return false;
+            return true;
+        case Node::kAlt:
+            for (const u32 k : n.kids)
+                if (nullable(ns, k)) return true;
+            return false;
+        case Node::kRep: return n.min == 0 || nullable(ns, n.kids[0]);
+        case Node::kGroup: return nullable(ns, n.kids[0]);
+        case Node::kLookN: return n.c != kAtomic || nullable(ns, n.kids[0]);
+        default: return true;  // (assertions, \zs, a back-reference: its group may have taken nothing)
+    }
+}
+
+// The characters a node can take: at least, and at most (kInf: no limit).
+// For a look-behind, which then need be tried only that far back.
+std::pair<u32, u32> span_of(const std::vector<Node>& ns, u32 at) {
+    const Node& n = ns[at];
+    auto add = [](u32 a, u32 b) { return a >= kInf - b ? kInf : a + b; };
+    auto mul = [](u32 a, u32 b) { return a == 0 || b == 0 ? 0u : a >= kInf / b ? kInf : a * b; };
+    switch (n.kind) {
+        case Node::kLit:
+        case Node::kAnyN:
+        case Node::kClassN: return {1, 1};
+        case Node::kNlN: return {1, 2};  // ("\r\n")
+        case Node::kCat: {
+            std::pair<u32, u32> s{0, 0};
+            for (const u32 k : n.kids) {
+                const auto [lo, hi] = span_of(ns, k);
+                s = {add(s.first, lo), add(s.second, hi)};
+            }
+            return s;
+        }
+        case Node::kAlt: {
+            std::pair<u32, u32> s{kInf, 0};
+            for (const u32 k : n.kids) {
+                const auto [lo, hi] = span_of(ns, k);
+                s = {std::min(s.first, lo), std::max(s.second, hi)};
+            }
+            return s;
+        }
+        case Node::kRep: {
+            const auto [lo, hi] = span_of(ns, n.kids[0]);
+            return {mul(n.min, lo), n.max == kInf ? (hi == 0 ? 0 : kInf) : mul(n.max, hi)};
+        }
+        case Node::kGroup: return span_of(ns, n.kids[0]);
+        case Node::kLookN: return n.c == kAtomic ? span_of(ns, n.kids[0]) : std::pair<u32, u32>{0, 0};
+        case Node::kBackrefN: return {0, kInf};
+        default: return {0, 0};
+    }
+}
+
 class Compiler {
 public:
-    Compiler(const std::vector<Node>& nodes, RegexProgram& p) : n_(nodes), p_(p) {}
+    // kPike: for the Pike VM and the DFA. kBacktrack: for the backtracker,
+    // with the back-references and look-around. kRelaxed: for the DFA, the
+    // same with those left out, so that it finds every line the pattern
+    // could match on (a back-reference takes any text on the line, a
+    // look-around and a line's number always hold).
+    enum Mode : u8 { kPike, kBacktrack, kRelaxed };
+    Compiler(const std::vector<Node>& nodes, RegexProgram& p, Mode mode = kPike, bool checks = false) : n_(nodes), p_(p), mode_(mode), checks_(checks) {}
     bool emit(u32 at) {
         if (p_.code.size() > kMostCode) return false;
         const Node& n = n_[at];
@@ -753,9 +1005,36 @@ public:
             case Node::kAnyN: add({kAny, static_cast<u8>(n.nl ? 1 : 0), 0, 0}); return true;
             case Node::kClassN: add({kClass, 0, n.c, 0}); return true;
             case Node::kNlN: add({kNl, 0, 0, 0}); return true;
-            case Node::kAssertN: add({kAssert, static_cast<u8>(n.c), 0, 0}); return true;
+            case Node::kAssertN:
+                if (n.c == kLineIs || n.c == kColIs) {
+                    if (mode_ == kBacktrack) add({kAssert, static_cast<u8>(n.c), n.min, n.max});
+                    return true;
+                }
+                add({kAssert, static_cast<u8>(n.c), 0, 0});
+                return true;
             case Node::kZsN: add({kSave, 0, 0, 0}); return true;
             case Node::kZeN: add({kSave, 0, 1, 0}); return true;
+            case Node::kBackrefN:
+                if (mode_ == kBacktrack) {
+                    add({kBackref, 0, n.c, 0});
+                } else {  // any text on the line: L: split body, out; body: any; jmp L
+                    const size_t split = add({kSplit, 0, 0, 0});
+                    add({kAny, 0, 0, 0});
+                    add({kJmp, 0, static_cast<u32>(split), 0});
+                    branch(split, static_cast<u32>(split + 1), static_cast<u32>(p_.code.size()), true);
+                }
+                return true;
+            case Node::kLookN: {
+                if (mode_ != kBacktrack) return n.c == kAtomic ? emit(n.kids[0]) : true;
+                const auto [least, most] = span_of(n_, n.kids[0]);
+                const u32 idx = static_cast<u32>(p_.looks.size());
+                p_.looks.push_back({static_cast<u8>(n.c), 0, n.min, least, most});
+                add({kLook, 0, idx, 0});
+                if (!emit(n.kids[0])) return false;
+                add({kLookEnd, 0, 0, 0});
+                p_.looks[idx].end = static_cast<u32>(p_.code.size());
+                return true;
+            }
             case Node::kCat:
                 for (const u32 k : n.kids)
                     if (!emit(k)) return false;
@@ -787,7 +1066,16 @@ public:
                 if (n.max == kInf) {  // L: split body, out; body; jmp L
                     const size_t split = add({kSplit, 0, 0, 0});
                     const u32 body = static_cast<u32>(p_.code.size());
+                    // (The backtracker would go round a body that took
+                    // nothing for ever: a turn must take something. The
+                    // Pike VM never comes back to a place in one step, nor
+                    // does the backtracker where it remembers the places
+                    // it has been: see RegexProgram::memo.)
+                    const bool check = mode_ == kBacktrack && checks_ && nullable(n_, n.kids[0]);
+                    const u32 mark = check ? p_.slots++ : 0;
+                    if (check) add({kMark, 0, mark, 0});
                     if (!emit(n.kids[0])) return false;
+                    if (check) add({kCheck, 0, mark, 0});
                     add({kJmp, 0, static_cast<u32>(split), 0});
                     branch(split, body, static_cast<u32>(p_.code.size()), n.greedy);
                     return true;
@@ -809,6 +1097,8 @@ public:
 private:
     const std::vector<Node>& n_;
     RegexProgram& p_;
+    Mode mode_;
+    bool checks_;
     size_t add(Inst i) {
         p_.code.push_back(i);
         return p_.code.size() - 1;
@@ -818,29 +1108,6 @@ private:
         p_.code[split].y = greedy ? out : body;
     }
 };
-
-// What the tree says about every match: can it be empty, and a run of
-// plain text it must have (the longest one found).
-bool nullable(const std::vector<Node>& ns, u32 at) {
-    const Node& n = ns[at];
-    switch (n.kind) {
-        case Node::kLit:
-        case Node::kAnyN:
-        case Node::kClassN:
-        case Node::kNlN: return false;
-        case Node::kCat:
-            for (const u32 k : n.kids)
-                if (!nullable(ns, k)) return false;
-            return true;
-        case Node::kAlt:
-            for (const u32 k : n.kids)
-                if (nullable(ns, k)) return true;
-            return false;
-        case Node::kRep: return n.min == 0 || nullable(ns, n.kids[0]);
-        case Node::kGroup: return nullable(ns, n.kids[0]);
-        default: return true;
-    }
-}
 
 // The plain text a node always takes in, if all of it is plain (else
 // nothing, and *best gets the longest run found inside it).
@@ -858,12 +1125,33 @@ bool literal_of(const std::vector<Node>& ns, u32 at, bool icase, std::string* wh
         case Node::kZsN:
         case Node::kZeN:
         case Node::kEmpty: return true;
+        case Node::kLookN:  // (takes nothing, but for \@>: so the text either side of it is one run)
+            if (n.c == kAtomic) return literal_of(ns, n.kids[0], icase, whole, best);
+            return true;
         case Node::kGroup: return literal_of(ns, n.kids[0], icase, whole, best);
         case Node::kCat: {
             std::string run;
             bool all = true;
             for (const u32 k : n.kids) {
                 std::string part;
+                const Node& kid = ns[k];
+                if (kid.kind == Node::kLookN && (kid.c == kAhead || kid.c == kBehind)) {
+                    // What a look-ahead finds goes on from the text before
+                    // it; what a look-behind finds runs into the text after
+                    // it. (On the match's line either way, unless it takes
+                    // a line break, and then nothing here is used.)
+                    const bool plain = literal_of(ns, kid.kids[0], icase, &part, best);
+                    if (kid.c == kAhead) {
+                        if (plain) run += part;
+                        keep(run);
+                        run.clear();
+                    } else {
+                        keep(run);
+                        run = plain ? part : std::string();
+                    }
+                    all = false;
+                    continue;
+                }
                 if (literal_of(ns, k, icase, &part, best)) {
                     run += part;
                 } else {
@@ -873,7 +1161,6 @@ bool literal_of(const std::vector<Node>& ns, u32 at, bool icase, std::string* wh
                     // (A piece repeated at least once still has its own text,
                     // and one repeated an exact number of times starts a run.)
                     std::string inner, inner_best;
-                    const Node& kid = ns[k];
                     if (kid.kind == Node::kRep && kid.min >= 1 && literal_of(ns, kid.kids[0], icase, &inner, &inner_best)) {
                         keep(inner);
                         if (kid.min == kid.max)
@@ -920,12 +1207,33 @@ public:
         if (pos < base_ || pos >= base_ + len_) load(pos);
         return p_[pos - base_];
     }
+    // The bytes from pos to the end of the piece they are in (the piece
+    // kept to hand, so a walk on through the text costs no lookups).
+    std::string_view here(u64 pos) {
+        if (pos >= size_) return {};
+        if (pos < base_ || pos >= base_ + len_) load(pos);
+        return {reinterpret_cast<const char*>(p_) + (pos - base_), static_cast<size_t>(len_ - (pos - base_))};
+    }
     u32 before(u64 pos) {
         if (pos == 0 || pos > size_) return kNoChar;
+        if (pos > base_ && pos <= base_ + len_) {  // (in the piece to hand: the backtracker asks this all the time)
+            const u8* q = p_ + (pos - base_);
+            if (q[-1] < 0x80) return q[-1];
+            if (pos - base_ >= 4) return last_char(q - 4, 4);
+        }
         u8 tmp[4];
         const u64 a = pos >= 4 ? pos - 4 : 0;
         const u64 got = b_.read(a, reinterpret_cast<char*>(tmp), pos - a);
         return last_char(tmp, got);
+    }
+    // Where the character before `pos` starts.
+    u64 back(u64 pos) {
+        if (pos == 0) return 0;
+        if (pos > base_ && pos <= base_ + len_ && (p_[pos - base_ - 1] < 0x80 || pos - base_ >= 4))
+            return pos - last_len(p_ + (pos - base_) - std::min<u64>(pos - base_, 4), std::min<u64>(pos - base_, 4));
+        u8 tmp[4];
+        const u64 a = pos >= 4 ? pos - 4 : 0;
+        return pos - last_len(tmp, b_.read(a, reinterpret_cast<char*>(tmp), pos - a));
     }
     template <class Fn>
     void chunks(u64 from, Fn&& fn) {
@@ -939,6 +1247,7 @@ public:
     }
     u64 read(u64 off, char* dst, u64 n) { return b_.read(off, dst, n); }
     u64 line_start(u64 pos) { return b_.line_start(b_.line_of(pos)); }
+    u64 line_of(u64 pos) { return b_.line_of(std::min(pos, size_)); }
 
     static u32 last_char(const u8* tmp, u64 got) {
         if (got == 0) return kNoChar;
@@ -946,6 +1255,15 @@ public:
         while (k > 0 && is_cont(tmp[k])) --k;
         const Decoded d = decode_utf8(tmp + k, static_cast<size_t>(got - k));
         return k + d.len == got ? d.cp : 0xFFFD;
+    }
+    // The bytes of the last character in tmp (a broken one is a byte, as
+    // reading forward takes it).
+    static u64 last_len(const u8* tmp, u64 got) {
+        if (got == 0) return 0;
+        u64 k = got - 1;
+        while (k > 0 && is_cont(tmp[k])) --k;
+        const Decoded d = decode_utf8(tmp + k, static_cast<size_t>(got - k));
+        return k + d.len == got ? got - k : 1;
     }
 
 private:
@@ -981,11 +1299,18 @@ public:
         return {d.cp, d.len};
     }
     u8 byte(u64 pos) const { return pos < s_.size() ? static_cast<u8>(s_[pos]) : 0; }
+    std::string_view here(u64 pos) const { return pos < s_.size() ? s_.substr(pos) : std::string_view(); }
     u32 before(u64 pos) const {
         if (pos == 0 || pos > s_.size()) return kNoChar;
         const u64 a = pos >= 4 ? pos - 4 : 0;
         return BufText::last_char(reinterpret_cast<const u8*>(s_.data()) + a, pos - a);
     }
+    u64 back(u64 pos) const {
+        if (pos == 0) return 0;
+        const u64 a = pos >= 4 ? pos - 4 : 0;
+        return pos - BufText::last_len(reinterpret_cast<const u8*>(s_.data()) + a, pos - a);
+    }
+    u64 line_of(u64 pos) const { return static_cast<u64>(std::count(s_.begin(), s_.begin() + static_cast<std::ptrdiff_t>(std::min<u64>(pos, s_.size())), '\n')); }
     template <class Fn>
     void chunks(u64 from, Fn&& fn) const {
         if (from < s_.size()) fn(s_.substr(from), from);
@@ -1076,8 +1401,11 @@ u64 find_literal(Text& t, std::string_view lit, bool icase, u64 from, u64 to) {
 // ---------------------------------------------------------------- running it
 
 struct VimRegex::Searcher::State {
+    // What the Pike VM and the DFA run: the pattern's program, or for one
+    // the backtracker runs, the relaxed one that finds its lines.
     const RegexProgram& p;
-    explicit State(const RegexProgram& prog) : p(prog) {
+    explicit State(const RegexProgram& prog) : p(prog.backtrack && prog.relaxed ? *prog.relaxed : prog) {
+        bt = prog.backtrack ? &prog : nullptr;
         const size_t n = p.code.size();
         for (List* l : {&a, &b}) {
             l->sparse.assign(n, 0);
@@ -1086,6 +1414,7 @@ struct VimRegex::Searcher::State {
         }
         work.assign(p.slots, 0);
         mark.assign(n, 0);
+        if (bt) held.assign(bt->slots, RegexMatch::kUnset);
     }
 
     // The VM's threads at one place in the text: each a place in the
@@ -1391,8 +1720,10 @@ struct VimRegex::Searcher::State {
     // The start of the first line, from `from` on (and starting before
     // `to`), that has a match starting at or after `from`: kNone if none,
     // `from` itself for the first line. *gave_up: the DFA grew too large.
+    // (Inlined where it is used: as a function of its own, called from the
+    // backtracker's search as well, it ran 2.5% slower in a string.)
     template <class Text>
-    u64 dfa_line(Text& t, u64 from, u64 to, bool* gave_up) {
+    [[gnu::always_inline]] u64 dfa_line(Text& t, u64 from, u64 to, bool* gave_up) {
         *gave_up = false;
         const std::vector<u32> none;
         u32 s = state(none, prev_kind(t.before(from)));
@@ -1490,9 +1821,478 @@ struct VimRegex::Searcher::State {
         if (!ended && ls < to && ends(s, true)) return ls;
         return kNone;
     }
+
+    // ------------------------------------------------------------ the backtracker
+    //
+    // For a pattern with back-references or look-around, which no automaton
+    // can follow: one way at a time, in the order the program prefers (so
+    // the match is the one the Pike VM would give), going back to the last
+    // choice when a way fails. That can take time exponential in the text,
+    // so steps are counted: past a budget the search stops (overran), and
+    // whoever asked says so.
+    const RegexProgram* bt = nullptr;  // the program for the backtracker, if it is one
+    static constexpr u64 kBudget = 1ull << 25;  // steps a search may take, whatever it covers (some 0.1 s)
+    static constexpr u64 kBudgetPerByte = 64;   // and more for each byte its starts go over
+    struct Choice {
+        u32 pc;
+        u32 slot;  // kNoChar: a way not yet tried, from pc at `v`; else put `v` back in that slot
+        u64 v;
+    };
+    std::vector<Choice> trail;
+    std::vector<u64> held;  // the slots: \zs, \ze, the groups, where it began, the marks
+    u64 steps = 0, budget = 0;
+    bool overran = false;
+    // The line the backtracker last asked the number of: [start, end) and its number.
+    u64 line_lo = kNone, line_hi = 0, line_no = 0;
+
+    // The places tried (RegexProgram::memo): a table by kSplit and
+    // position, each with the number its scope had then. A scope gets a new
+    // number when what was found in it no longer holds (a new search; a
+    // look-behind asked to end somewhere else; a look-around that held,
+    // whose way through is marked too), which forgets its places at once.
+    std::vector<u64> memo_keys;
+    std::vector<u32> memo_marks;
+    size_t memo_used = 0;
+    std::vector<u32> scope_mark;
+    u32 mark_next = 0;
+    static constexpr u64 kMemoEmpty = ~0ull;
+    static constexpr size_t kMemoMost = 1 << 20;  // (past that the table starts again: more work, never a wrong answer)
+
+    void forget_scope(u32 scope) {
+        if (++mark_next == 0) {  // (once in four billion: every mark goes)
+            std::fill(memo_keys.begin(), memo_keys.end(), kMemoEmpty);
+            memo_used = 0;
+            mark_next = 1;
+        }
+        scope_mark[scope] = mark_next;
+    }
+    void forget_all() {
+        scope_mark.resize(bt->looks.size() + 1);
+        for (u32 k = 0; k < scope_mark.size(); ++k) forget_scope(k);
+    }
+    // False if the kSplit at pc has been tried at pos already (in its scope as it is now); else it is now.
+    bool first_visit(u32 pc, u64 pos) {
+        const u32 split = bt->split_of[pc];
+        const u32 mark_now = scope_mark[bt->scope_of[split]];
+        if (memo_used * 2 >= memo_keys.size()) {
+            const size_t grown = memo_keys.empty() ? 1024 : memo_keys.size() * 2;
+            std::vector<u64> keys(std::min(grown, kMemoMost), kMemoEmpty);
+            std::vector<u32> marks(keys.size(), 0);
+            size_t used = 0;
+            if (grown <= kMemoMost)
+                for (size_t i = 0; i < memo_keys.size(); ++i) {
+                    if (memo_keys[i] == kMemoEmpty) continue;
+                    size_t at = static_cast<size_t>((memo_keys[i] * 0x9E3779B97F4A7C15ull) >> 40) & (keys.size() - 1);
+                    while (keys[at] != kMemoEmpty) at = (at + 1) & (keys.size() - 1);
+                    keys[at] = memo_keys[i], marks[at] = memo_marks[i];
+                    ++used;
+                }
+            memo_keys = std::move(keys);
+            memo_marks = std::move(marks);
+            memo_used = used;
+        }
+        const u64 k = (pos << 18) | split;  // (a program has fewer than 1 << 18 instructions: see kMostCode)
+        const size_t mask = memo_keys.size() - 1;
+        for (size_t at = static_cast<size_t>((k * 0x9E3779B97F4A7C15ull) >> 40) & mask;; at = (at + 1) & mask) {
+            if (memo_keys[at] == k) {
+                if (memo_marks[at] == mark_now) return false;
+                memo_marks[at] = mark_now;
+                return true;
+            }
+            if (memo_keys[at] == kMemoEmpty) {
+                memo_keys[at] = k;
+                memo_marks[at] = mark_now;
+                ++memo_used;
+                return true;
+            }
+        }
+    }
+
+    static bool takes_in(const RegexProgram& q, const Inst& in, u32 cur, u32 next) {
+        const bool crlf = cur == '\r' && next == '\n';
+        switch (in.op) {
+            case kChar: return cur == in.x;
+            case kCharI: return cur != kNoChar && fold(cur) == in.x;
+            case kAny: return cur != kNoChar && ((cur != '\n' && !crlf) || in.a);
+            case kClass: {
+                const CharClass& c = q.classes[in.x];
+                if (crlf) return c.cr || c.newline;
+                return cur != kNoChar && c.test(cur, q.icase);
+            }
+            default: return false;
+        }
+    }
+
+    // The line `pos` is on (from 0), and where it starts. Asked mostly of
+    // the line the last answer was about, or the next.
+    template <class Text>
+    u64 line_at(Text& t, u64 pos, u64* start) {
+        if (line_lo == kNone || pos < line_lo) {
+            line_no = t.line_of(pos);
+            line_lo = t.line_start(pos);
+            line_hi = line_end(t, line_lo) + 1;
+        } else if (pos >= line_hi) {  // (on from the line known: the line breaks after it counted)
+            u64 n = 0;
+            t.chunks(line_hi, [&](std::string_view c, u64 base) {
+                n += static_cast<u64>(std::count(c.data(), c.data() + std::min<u64>(c.size(), pos - base), '\n'));
+                return base + c.size() < pos;
+            });
+            line_no += 1 + n;
+            line_lo = t.line_start(pos);
+            line_hi = line_end(t, line_lo) + 1;
+        }
+        *start = line_lo;
+        return line_no;
+    }
+
+    template <class Text>
+    bool holds_at(Text& t, const Inst& in, u64 pos) {
+        switch (in.a) {
+            case kBol: {
+                const u32 prev = t.before(pos);
+                return prev == '\n' || prev == kNoChar;
+            }
+            case kEol: {
+                const u32 cur = t.at(pos).cp;
+                return cur == '\n' || cur == kNoChar || (cur == '\r' && t.at(pos + 1).cp == '\n');
+            }
+            case kBow: return !word_char(t.before(pos)) && word_char(t.at(pos).cp);
+            case kEow: return word_char(t.before(pos)) && !word_char(t.at(pos).cp);
+            case kBof: return pos == 0;
+            case kEof: return pos >= t.size();
+            case kLineIs:
+            case kColIs: {
+                u64 start;
+                const u64 line = line_at(t, pos, &start);
+                const u64 v = (in.a == kLineIs ? line : pos - start) + 1;  // (Vim counts both from 1; a column in bytes)
+                return in.y == kAt ? v == in.x : in.y == kBefore ? v < in.x : v > in.x;
+            }
+            default: return false;
+        }
+    }
+
+    // Does the text at `pos` say again what [lo, hi) says? (In either case
+    // if the case is ignored.) *len: how much it took.
+    template <class Text>
+    bool same_text(Text& t, u64 lo, u64 hi, u64 pos, u64* len) {
+        const u64 size = t.size();
+        if (!bt->icase) {
+            if (pos + (hi - lo) > size) return false;
+            for (u64 k = 0; k < hi - lo; ++k)
+                if (t.byte(lo + k) != t.byte(pos + k)) return false;
+            *len = hi - lo;
+            return true;
+        }
+        u64 i = lo, j = pos;
+        while (i < hi) {
+            const Ch x = t.at(i), y = t.at(j);
+            if (y.cp == kNoChar || fold(x.cp) != fold(y.cp)) return false;
+            i += x.len, j += y.len;
+        }
+        *len = j - pos;
+        return true;
+    }
+
+    // Puts back what the ways tried since `base` changed, and forgets them.
+    void undo_to(size_t base) {
+        while (trail.size() > base) {
+            const Choice c = trail.back();
+            trail.pop_back();
+            if (c.slot != kNoChar) held[c.slot] = c.v;
+        }
+    }
+    // A look-around that held is not gone back into: the ways not tried in
+    // it are forgotten, what it caught stays (to be put back if the way it
+    // is on fails).
+    void keep_caught(size_t base) {
+        size_t k = base;
+        for (size_t i = base; i < trail.size(); ++i)
+            if (trail[i].slot != kNoChar) trail[k++] = trail[i];
+        trail.resize(k);
+    }
+
+    // Runs the program from pc at pos to its kMatch, or (a look-around's)
+    // to the kLookEnd, which must then be at `target` unless that is kNone.
+    // *out: where it ended. The ways not tried stay on the trail.
+    template <class Text>
+    bool run(Text& t, u32 pc, u64 pos, u64 target, u64* out) {
+        const RegexProgram& q = *bt;
+        const size_t base = trail.size();
+        for (;;) {
+            if (++steps > budget) {
+                overran = true;
+                return false;
+            }
+            const Inst& in = q.code[pc];
+            switch (in.op) {
+                case kChar:
+                case kCharI:
+                case kAny:
+                case kClass: {
+                    const Ch c = t.at(pos);
+                    if (!takes_in(q, in, c.cp, c.cp == '\r' ? t.at(pos + 1).cp : kNoChar)) goto fail;
+                    pos += c.len;
+                    ++pc;
+                    continue;
+                }
+                case kNl: {
+                    const u32 c = t.at(pos).cp;
+                    if (c == '\n') pos += 1;
+                    else if (c == '\r' && t.at(pos + 1).cp == '\n') pos += 2;
+                    else goto fail;
+                    ++pc;
+                    continue;
+                }
+                case kSplit:
+                    if (q.memo && !first_visit(pc, pos)) goto fail;
+                    trail.push_back({in.y, kNoChar, pos});
+                    pc = in.x;
+                    continue;
+                case kJmp: pc = in.x; continue;
+                case kSave:
+                case kMark:
+                    trail.push_back({0, in.x, held[in.x]});
+                    held[in.x] = pos;
+                    ++pc;
+                    continue;
+                case kCheck:
+                    if (held[in.x] == pos) goto fail;
+                    ++pc;
+                    continue;
+                case kAssert:
+                    if (!holds_at(t, in, pos)) goto fail;
+                    ++pc;
+                    continue;
+                case kBackref: {
+                    const u64 lo = held[2 * in.x], hi = held[2 * in.x + 1];
+                    if (lo != RegexMatch::kUnset && hi != RegexMatch::kUnset && hi > lo) {  // (a group that took nothing, or none yet: nothing)
+                        u64 len = 0;
+                        if (!same_text(t, lo, hi, pos, &len)) goto fail;
+                        pos += len;
+                    }
+                    ++pc;
+                    continue;
+                }
+                case kLook: {
+                    const Look& lk = q.looks[in.x];
+                    const size_t at_look = trail.size();
+                    u64 end = pos;
+                    const bool back = lk.kind == kBehind || lk.kind == kNotBehind;
+                    if (q.memo && back) forget_scope(in.x + 1);
+                    const bool hit = back ? behind(t, pc + 1, pos, lk, &end) : run(t, pc + 1, pos, kNone, &end);
+                    if (overran) return false;
+                    if (q.memo && hit) forget_scope(in.x + 1);
+                    const bool want = lk.kind == kAhead || lk.kind == kBehind || lk.kind == kAtomic;
+                    if (hit != want) {
+                        undo_to(at_look);
+                        goto fail;
+                    }
+                    keep_caught(at_look);
+                    if (lk.kind == kAtomic) pos = end;
+                    pc = lk.end;
+                    continue;
+                }
+                case kLookEnd:
+                    if (target != kNone && pos != target) goto fail;
+                    *out = pos;
+                    return true;
+                case kMatch: *out = pos; return true;
+            }
+        fail:
+            for (;;) {
+                if (trail.size() == base) return false;
+                const Choice c = trail.back();
+                trail.pop_back();
+                if (c.slot != kNoChar) {
+                    held[c.slot] = c.v;
+                    continue;
+                }
+                pc = c.pc;
+                pos = c.v;
+                break;
+            }
+        }
+    }
+
+    // A look-behind: its program from each place before `pos`, nearest
+    // first, to end at `pos`. As in Vim, no further back than the start of
+    // the line before, nor than its byte limit ("\@12<="; past a line's
+    // start, counted from that line's end), nor than it can take
+    // characters.
+    template <class Text>
+    bool behind(Text& t, u32 pc, u64 pos, const Look& lk, u64* out) {
+        u64 s = pos, from = pos;
+        u32 chars = 0, lines = 0;
+        for (;;) {
+            if (chars >= lk.least) {
+                if (run(t, pc, s, pos, out)) return true;
+                if (overran) return false;
+            }
+            if (chars >= lk.most || s == 0) return false;
+            const u64 was = t.back(s);
+            if (t.byte(was) == '\n') {
+                if (++lines == 2) return false;
+                from = was;
+            }
+            if (lk.bytes && from - was > lk.bytes) return false;
+            s = was;
+            ++chars;
+            if (++steps > budget) {
+                overran = true;
+                return false;
+            }
+        }
+    }
+
+    // These walk on through the piece kept to hand (Text::here), where
+    // skip_to() and line_end() start a new walk down the Buffer's tree: the
+    // backtracker asks them at every start.
+    template <class Text>
+    static u64 skip_near(Text& t, u64 pos, u64 end, const bool* table) {
+        for (std::string_view c; pos < end && !(c = t.here(pos)).empty();) {
+            const u8* q = reinterpret_cast<const u8*>(c.data());
+            const size_t n = static_cast<size_t>(std::min<u64>(c.size(), end - pos));
+            for (size_t i = 0; i < n; ++i)
+                if (table[q[i]]) return pos + i;
+            pos += n;
+        }
+        return end;
+    }
+    template <class Text>
+    static u64 line_end_near(Text& t, u64 pos) {
+        for (std::string_view c; !(c = t.here(pos)).empty(); pos += c.size())
+            if (const void* q = std::memchr(c.data(), '\n', c.size())) return pos + static_cast<u64>(static_cast<const char*>(q) - c.data());
+        return t.size();
+    }
+    // The first place at or after pos where a line starts (the text's
+    // size + 1 if none), and where a word does.
+    template <class Text>
+    static u64 line_start_from(Text& t, u64 pos) {
+        if (pos == 0 || t.before(pos) == '\n') return pos;
+        const u64 e = line_end_near(t, pos);
+        return e < t.size() ? e + 1 : t.size() + 1;
+    }
+    template <class Text>
+    static u64 word_start_from(Text& t, u64 pos) {
+        bool was_word = word_char(t.before(pos));
+        for (std::string_view c; !(c = t.here(pos)).empty();) {
+            const u8* q = reinterpret_cast<const u8*>(c.data());
+            size_t i = 0;
+            while (i < c.size()) {
+                u32 cp = q[i], len = 1;
+                if (cp >= 0x80) {  // (one that runs on into the next piece is read whole)
+                    const Ch ch = t.at(pos + i);
+                    cp = ch.cp, len = ch.len;
+                }
+                const bool w = word_char(cp);
+                if (w && !was_word) return pos + i;
+                was_word = w;
+                i += len;
+            }
+            pos += i;
+        }
+        return t.size() + 1;
+    }
+
+    // The first match whose start is in [from, to): each start in turn.
+    template <class Text>
+    bool backtrack(Text& t, u64 from, u64 to, RegexMatch* m) {
+        const RegexProgram& q = *bt;
+        const u64 size = t.size();
+        to = std::min(to, size + 1);
+        // (A try that fails puts back every slot it set: they are cleared once.)
+        std::fill(held.begin(), held.end(), RegexMatch::kUnset);
+        for (u64 pos = from; pos < to;) {
+            if (q.skip) {  // (to the next place a match can start: such a pattern never matches nothing)
+                const u64 end = std::min(to, size);
+                const u64 at = pos < end ? skip_near(t, pos, end, q.first) : end;
+                if (at >= end) return false;
+                budget += kBudgetPerByte * (at - pos);
+                pos = at;
+            }
+            if (q.lead != RegexProgram::kLeadAny) {
+                const u64 at = q.lead == RegexProgram::kLeadLine ? line_start_from(t, pos) : word_start_from(t, pos);
+                if (at >= to) return false;
+                budget += kBudgetPerByte * (at - pos);
+                pos = at;
+            }
+            held[0] = held[q.anchor] = pos;
+            trail.clear();
+            u64 end = pos;
+            if (run(t, 0, pos, kNone, &end)) {
+                m->anchor = held[q.anchor];
+                m->start = held[0];
+                m->end = held[1] == RegexMatch::kUnset ? end : held[1];
+                if (m->end < m->start) m->end = m->start;
+                m->group[0][0] = m->start;
+                m->group[0][1] = m->end;
+                for (u32 g = 1; g < 10; ++g) {
+                    const bool set = g <= q.groups && held[2 * g] != RegexMatch::kUnset && held[2 * g + 1] != RegexMatch::kUnset;
+                    m->group[g][0] = set ? held[2 * g] : RegexMatch::kUnset;
+                    m->group[g][1] = set ? held[2 * g + 1] : RegexMatch::kUnset;
+                }
+                return true;
+            }
+            if (overran) return false;
+            const u32 len = t.at(pos).len;
+            if (len == 0) return false;  // (the end of the text)
+            pos += len;
+            budget += kBudgetPerByte * len;
+        }
+        return false;
+    }
 };
 
 namespace {
+
+// The same for a pattern the backtracker runs: the lines are found as
+// before, by the plain text every match has or else by the DFA (on the
+// relaxed program), and the backtracker tried only on them.
+template <class Text>
+[[gnu::noinline]] bool search_bt(VimRegex::Searcher::State& st, Text& t, u64 from, u64 to, RegexMatch* m) {
+    using State = VimRegex::Searcher::State;
+    const RegexProgram& q = *st.bt;
+    const u64 size = t.size();
+    to = std::min(to, size + 1);
+    if (from >= to) return false;
+    st.budget = st.steps + VimRegex::Searcher::State::kBudget;
+    st.line_lo = kNone;
+    if (q.memo) st.forget_all();
+    if (!q.multiline && q.required.size() >= 2) {
+        const u64 lim = to > size ? size : line_end(t, to > from ? to - 1 : to);
+        // (Looked for from the start of the line: the text a look-behind
+        // finds is before where the match starts.)
+        for (u64 at = from, look = q.looks.empty() ? from : t.line_start(from); at < to; look = at) {
+            const u64 hit = find_literal(t, q.required, q.icase, look, lim + 1);
+            if (hit == kNone) return false;
+            const u64 ls = std::max(at, t.line_start(hit)), le = State::line_end_near(t, hit);
+            if (ls >= to) return false;
+            if (st.backtrack(t, ls, std::min(to, le + 1), m)) return true;
+            if (st.overran) return false;
+            at = le + 1;
+        }
+        return false;
+    }
+    if (!q.multiline && !q.cr && q.relaxed && !st.p.empty && !st.dfa_failed && to - from >= 256) {
+        // (Where the DFA lets nearly every line through, it is left out for
+        // the rest: the backtracker goes on through the text by itself.)
+        u64 lines = 0, passed = 0;
+        for (u64 at = from; at < to;) {
+            bool gave_up = false;
+            const u64 ls = st.dfa_line(t, at, to, &gave_up);
+            if (gave_up) return st.backtrack(t, at, to, m);
+            if (ls == kNone || ls >= to) return false;
+            const u64 le = State::line_end_near(t, ls);
+            if (st.backtrack(t, ls, std::min(to, le + 1), m)) return true;
+            if (st.overran) return false;
+            passed += ls == at;
+            at = le + 1;
+            if (++lines == 256 && passed * 4 > lines * 3) return st.backtrack(t, at, to, m);
+        }
+        return false;
+    }
+    return st.backtrack(t, from, to, m);
+}
 
 template <class Text>
 bool search_in(VimRegex::Searcher::State& st, Text& t, u64 from, u64 to, RegexMatch* m) {
@@ -1532,6 +2332,113 @@ bool search_in(VimRegex::Searcher::State& st, Text& t, u64 from, u64 to, RegexMa
 
 }  // namespace
 
+namespace {
+
+// A program for the pattern's tree, made in one of the Compiler's ways,
+// with what is known of its matches beforehand; null if it is too large.
+std::unique_ptr<RegexProgram> make_program(const std::vector<Node>& nodes, u32 root, u32 groups, bool icase, const std::vector<CharClass>& classes, Compiler::Mode mode,
+                                           bool backref = false) {
+    auto prog = std::make_unique<RegexProgram>();
+    prog->icase = icase;
+    prog->groups = groups;
+    prog->anchor = 2 + 2 * groups;
+    prog->slots = prog->anchor + 1;  // (the backtracker's marks come after it)
+    prog->classes = classes;
+    Compiler cc(nodes, *prog, mode, backref);
+    if (!cc.emit(root) || prog->code.size() > kMostCode) return nullptr;
+    prog->code.push_back({kMatch, 0, 0, 0});
+    if (mode == Compiler::kBacktrack) {
+        u32 pc = 0;
+        while (prog->code[pc].op == kSave || prog->code[pc].op == kMark) ++pc;
+        if (prog->code[pc].op == kAssert && prog->code[pc].a == kBol) prog->lead = RegexProgram::kLeadLine;
+        if (prog->code[pc].op == kAssert && prog->code[pc].a == kBow) prog->lead = RegexProgram::kLeadWord;
+    }
+    if (mode == Compiler::kBacktrack && !backref) {
+        prog->memo = true;
+        prog->split_of.assign(prog->code.size(), kNoChar);
+        std::vector<u32> scope(prog->code.size(), 0);
+        for (u32 i = 0; i < prog->looks.size(); ++i) {  // (in the order they start: one inside another comes after it)
+            u32 at = 0;
+            while (!(prog->code[at].op == kLook && prog->code[at].x == i)) ++at;
+            for (u32 pc = at + 1; pc < prog->looks[i].end; ++pc) scope[pc] = i + 1;
+        }
+        for (u32 pc = 0; pc < prog->code.size(); ++pc)
+            if (prog->code[pc].op == kSplit) {
+                prog->split_of[pc] = static_cast<u32>(prog->scope_of.size());
+                prog->scope_of.push_back(scope[pc]);
+            }
+    }
+    for (const Inst& in : prog->code) {
+        if (in.op == kNl || (in.op == kAny && in.a) || (in.op == kClass && prog->classes[in.x].newline)) prog->multiline = true;
+        if (in.op == kSave && in.x == 0) prog->zs = true;
+        if ((in.op == kChar && in.x == '\r') || (in.op == kClass && prog->classes[in.x].cr)) prog->cr = true;
+    }
+    prog->empty = nullable(nodes, root);
+    {
+        std::string whole, best;
+        if (literal_of(nodes, root, icase, &whole, &best)) best = whole;
+        if (icase)
+            for (const char ch : best)
+                if (static_cast<u8>(ch) >= 0x80) best.clear();
+        if (best.find('\n') != std::string::npos) best.clear();
+        prog->required = std::move(best);
+    }
+    // The bytes a match can start at: those the first characters it can take start with.
+    if (!prog->empty) {
+        std::vector<u32> todo{0};
+        std::vector<bool> seen(prog->code.size());
+        bool all = false;
+        auto lead = [&](u32 cp) {
+            std::string s;
+            put_utf8(s, cp);
+            prog->first[static_cast<u8>(s[0])] = true;
+        };
+        while (!todo.empty() && !all) {
+            const u32 pc = todo.back();
+            todo.pop_back();
+            if (seen[pc]) continue;
+            seen[pc] = true;
+            const Inst& in = prog->code[pc];
+            switch (in.op) {
+                case kJmp: todo.push_back(in.x); break;
+                case kSplit: todo.push_back(in.x), todo.push_back(in.y); break;
+                case kSave:
+                case kAssert:
+                case kMark:
+                case kCheck:
+                case kLookEnd: todo.push_back(pc + 1); break;
+                case kLook:  // (one that takes nothing: what comes after it; \@>: what it takes)
+                    todo.push_back(prog->looks[in.x].kind == kAtomic ? pc + 1 : prog->looks[in.x].end);
+                    break;
+                case kChar: lead(in.x); break;
+                case kCharI:
+                    lead(in.x);
+                    lead(upper(in.x));
+                    break;
+                case kNl: prog->first[static_cast<u8>('\n')] = prog->first[static_cast<u8>('\r')] = true; break;
+                case kClass: {
+                    const CharClass& c = prog->classes[in.x];
+                    for (u32 b = 0; b < 128; ++b)
+                        if (c.test(b, icase)) prog->first[b] = true;
+                    if (c.cr) prog->first[static_cast<u8>('\r')] = true;
+                    bool wide = c.negate;
+                    for (const auto& r : c.ranges) wide = wide || r.second >= 0x80;
+                    if (wide)
+                        for (u32 b = 0x80; b < 256; ++b) prog->first[b] = true;
+                    break;
+                }
+                default: all = true; break;  // (kAny, kMatch, kBackref)
+            }
+        }
+        size_t count = 0;
+        for (const bool f : prog->first) count += f;
+        prog->skip = !all && count <= 96;
+    }
+    return prog;
+}
+
+}  // namespace
+
 // ---------------------------------------------------------------- the outside
 
 VimRegex::~VimRegex() = default;
@@ -1539,6 +2446,7 @@ VimRegex::~VimRegex() = default;
 bool VimRegex::multiline() const { return prog_ && prog_->multiline; }
 bool VimRegex::has_zs() const { return prog_ && prog_->zs; }
 bool VimRegex::can_be_empty() const { return prog_ && prog_->empty; }
+bool VimRegex::backtracks() const { return prog_ && prog_->backtrack; }
 const std::string& VimRegex::required() const {
     static const std::string none;
     return prog_ ? prog_->required : plain_text_.empty() ? none : plain_text_;
@@ -1602,77 +2510,18 @@ std::shared_ptr<const VimRegex> VimRegex::compile(std::string_view pattern, cons
         }
     }
 
-    auto prog = std::make_unique<RegexProgram>();
-    prog->icase = icase;
-    prog->groups = ps.groups;
-    prog->slots = 2 + 2 * ps.groups + 1;
     for (CharClass& c : ps.classes) c.finish(icase);
-    prog->classes = std::move(ps.classes);
-    Compiler cc(ps.nodes, *prog);
-    if (!cc.emit(root) || prog->code.size() > kMostCode) {
+    const bool bt = ps.backtrack || ps.engine == 1;
+    std::unique_ptr<RegexProgram> prog = make_program(ps.nodes, root, ps.groups, icase, ps.classes, bt ? Compiler::kBacktrack : Compiler::kPike, ps.backref);
+    if (!prog) {
         if (error) *error = "E363: The pattern is too large";
         return nullptr;
     }
-    prog->code.push_back({kMatch, 0, 0, 0});
-    for (const Inst& in : prog->code) {
-        if (in.op == kNl || (in.op == kAny && in.a) || (in.op == kClass && prog->classes[in.x].newline)) prog->multiline = true;
-        if (in.op == kSave && in.x == 0) prog->zs = true;
-        if ((in.op == kChar && in.x == '\r') || (in.op == kClass && prog->classes[in.x].cr)) prog->cr = true;
-    }
-    prog->empty = nullable(ps.nodes, root);
-    {
-        std::string whole, best;
-        if (literal_of(ps.nodes, root, icase, &whole, &best)) best = whole;
-        if (icase)
-            for (const char ch : best)
-                if (static_cast<u8>(ch) >= 0x80) best.clear();
-        if (best.find('\n') != std::string::npos) best.clear();
-        prog->required = std::move(best);
-    }
-    // The bytes a match can start at: those the first characters it can take start with.
-    if (!prog->empty) {
-        std::vector<u32> todo{0};
-        std::vector<bool> seen(prog->code.size());
-        bool all = false;
-        auto lead = [&](u32 cp) {
-            std::string s;
-            put_utf8(s, cp);
-            prog->first[static_cast<u8>(s[0])] = true;
-        };
-        while (!todo.empty() && !all) {
-            const u32 pc = todo.back();
-            todo.pop_back();
-            if (seen[pc]) continue;
-            seen[pc] = true;
-            const Inst& in = prog->code[pc];
-            switch (in.op) {
-                case kJmp: todo.push_back(in.x); break;
-                case kSplit: todo.push_back(in.x), todo.push_back(in.y); break;
-                case kSave:
-                case kAssert: todo.push_back(pc + 1); break;
-                case kChar: lead(in.x); break;
-                case kCharI:
-                    lead(in.x);
-                    lead(upper(in.x));
-                    break;
-                case kNl: prog->first[static_cast<u8>('\n')] = prog->first[static_cast<u8>('\r')] = true; break;
-                case kClass: {
-                    const CharClass& c = prog->classes[in.x];
-                    for (u32 b = 0; b < 128; ++b)
-                        if (c.test(b, icase)) prog->first[b] = true;
-                    if (c.cr) prog->first[static_cast<u8>('\r')] = true;
-                    bool wide = c.negate;
-                    for (const auto& r : c.ranges) wide = wide || r.second >= 0x80;
-                    if (wide)
-                        for (u32 b = 0x80; b < 256; ++b) prog->first[b] = true;
-                    break;
-                }
-                default: all = true; break;  // (kAny, kMatch)
-            }
-        }
-        size_t count = 0;
-        for (const bool f : prog->first) count += f;
-        prog->skip = !all && count <= 96;
+    if (bt) {
+        prog->backtrack = true;
+        // (Too large, or one that matches nothing everywhere: the backtracker goes through all of it.)
+        prog->relaxed = make_program(ps.nodes, root, ps.groups, icase, ps.classes, Compiler::kRelaxed);
+        if (prog->relaxed) prog->relaxed->required = prog->required;
     }
     re->prog_ = std::move(prog);
     return re;
@@ -1687,14 +2536,24 @@ VimRegex::Searcher::~Searcher() = default;
 bool VimRegex::Searcher::next(const Buffer& buf, u64 from, u64 to, RegexMatch* m) {
     BufText t(buf);
     if (!st_) return false;
-    return search_in(*st_, t, from, to, m);
+    if (!st_->bt) return search_in(*st_, t, from, to, m);
+    st_->overran = false;
+    const bool hit = search_bt(*st_, t, from, to, m);
+    if (st_->overran) re_.overruns_.fetch_add(1, std::memory_order_relaxed);
+    return hit;
 }
 
 bool VimRegex::Searcher::next(std::string_view text, u64 from, u64 to, RegexMatch* m) {
     StrText t(text);
     if (!st_) return false;
-    return search_in(*st_, t, from, to, m);
+    if (!st_->bt) return search_in(*st_, t, from, to, m);
+    st_->overran = false;
+    const bool hit = search_bt(*st_, t, from, to, m);
+    if (st_->overran) re_.overruns_.fetch_add(1, std::memory_order_relaxed);
+    return hit;
 }
+
+bool VimRegex::Searcher::overran() const { return st_ && st_->overran; }
 
 bool VimRegex::search(const Buffer& buf, u64 from, u64 to, RegexMatch* m) const {
     Searcher s(*this);

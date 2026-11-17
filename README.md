@@ -202,6 +202,13 @@ cursor's line and column. The cursor is a block on a character in Normal and
 Visual mode, a bar in Insert mode, and a line under the character in Replace
 mode or while an operator waits for its motion.
 
+Commands take a character as it is drawn: a letter and its marks, an emoji
+sequence, a flag, a Hangul syllable written in jamo or an Indic conjunct
+is one character to `x`, `r`, `~`, `f` and `t`, the word and sentence
+motions and Visual `r`. A block counts columns: a wide character is two,
+and a block `r` fills each column. The command line's cursor and Backspace
+go by whole characters.
+
 **Where Neovim's defaults are not Vim's**, blit follows Neovim. `G`, `gg`,
 `H M L` and `:{number}` keep the cursor's column, and so do `dd`, `>>` and
 `<<` (Neovim's `'startofline'` is off; Vim goes to the first character of
@@ -323,11 +330,20 @@ where the match is said to start and end; `\%^` `\%$` are the file's start
 and end, `\%d123` `\%x2a` `\%u20AC` a character by number; `\c` and `\C`
 anywhere ignore case or not (there is no 'ignorecase': as Vim's default,
 case counts). `.` and the classes take a character, not a byte (`é` is
-one). A pattern with nothing special in it is looked for as text, the
+one). Back-references (`\1` to `\9` in the pattern: `\(\w\+\) \1` finds
+a word said twice), look-ahead and look-behind (`\@=` `\@!` `\@<=` `\@<!`,
+`\@12<=` to look no further back than 12 bytes, `\@>`), `\&`
+(`foobeep\&...` finds "foo" in "foobeep"), `\%[...]` (`fu\%[nction]`),
+and a line or column by number (`\%23l`, `\%<23l`, `\%>23l`, `\%5c`) work
+as in Vim. A pattern with nothing special in it is looked for as text, the
 fastest way (about 5 ms for something not there in 1 GB, on several
 threads); any other runs on blit's own engine, where the text lies: a DFA
-built as it goes finds the lines (about half a gigabyte a second a core),
-and a Pike VM where on them, so no pattern can take exponential time.
+built as it goes finds the lines (about 0.7 GB a second a core), and a
+Pike VM where on them, so no pattern can take exponential time. Those with
+back-references or look-around (and any after `\%#=1`) run on a
+backtracker, with lines ruled out first by the text every match must have
+or by the DFA; it has a budget of steps, and a pattern that would take too
+long stops with E363 instead of holding the editor.
 
 **The command line**: `:w`, `:q` (closes the tab), `:q!`, `:wq`, `:x`, `:wa`,
 `:qa`, `:wqa`, `:e FILE`, `:bn :bp :bd`, `:tabnew`, `:sp`, `:vs`, `:noh`,
@@ -344,10 +360,9 @@ only the lines it matched, all in one undo step. Lines are
 given as numbers, `.`, `$`, `%` or `'<,'>` (which `:` in Visual mode fills
 in). Up and Down recall earlier lines.
 
-What Neovim has and this does not, yet: in patterns, back-references
-(`\1` in what is looked for), look-ahead and look-behind (`\@=`, `\@<=` and
-the rest), `\&`, `\%[...]`, `\z(`, and the `\%` items that are about the
-cursor, lines, columns or marks (`\%#`, `\%23l`, `\%V`); 'ignorecase' and
+What Neovim has and this does not, yet: in patterns, `\z(`, and the `\%`
+items that are about the cursor, the Visual area, marks or display columns
+(`\%#`, `\%V`, `\%'m`, `\%23v`); 'ignorecase' and
 'smartcase'; Ctrl-E and Ctrl-Y while `:s///c` asks; `=`, `!`, `gq` and `gw`; folds; `:g`, `:normal`; the change list beyond its last entry
 (`g;` goes to the last change only); `U`; digraphs and Ctrl-X completion in
 Insert mode (completion is the language server's); Select mode and
@@ -1831,13 +1846,15 @@ does not finish and takes all the memory the machine has.
 - Characters missing from the font fall back to a few system fonts; colour
   emoji draw as a box. A character is what Unicode says one is to the eye:
   a letter with its accents, an emoji with its skin tone or variation
-  selector, a sequence joined by zero-width joiners, a flag. The arrows,
-  Backspace and Delete take it whole, and it takes the cells Unicode's
-  widths say (an accent none, drawn over its letter and lifted clear of a
-  capital; an emoji two). An emoji sequence or a flag draws as its first
-  emoji. Hangul jamo sequences and Indic conjuncts are not joined yet, and
-  Vim's own motions in a few places (Visual `r`, block widths) still count
-  code points.
+  selector, a sequence joined by zero-width joiners, a flag, a Hangul
+  syllable written in jamo, an Indic conjunct (consonants joined by a
+  virama), a prepended sign with what follows it (Unicode 18.0's rules).
+  The arrows, Backspace and Delete take it whole, and so do Vim's
+  commands; it takes the cells Unicode's widths say (an accent none, drawn
+  over its letter and lifted clear of a capital; an emoji two). An emoji
+  sequence or a flag draws as its first emoji; a syllable in jamo and a
+  conjunct draw part by part, each in its own cells (blit does not shape
+  text beyond ligatures).
 - Language servers: one server at a time, for the file in front in the
   split that has the keyboard, so problems and completions show there and
   not in the other splits (moving to a file of the same language in the
@@ -1877,9 +1894,12 @@ does not finish and takes all the memory the machine has.
   ssh agent, as for any program that runs git for you. The changed-line
   marks compare with the last commit, not with what is staged. Not on
   Windows yet.
-- Regular expressions: Vim's, without back-references in the pattern,
-  look-around, `\&` and the `\%` items about the cursor, lines and marks
-  (see [Modal editing](#modal-editing)). Search in files reads a line at a
+- Regular expressions: Vim's, without `\z(` and the `\%` items about the
+  cursor, the Visual area, marks and display columns (see [Modal
+  editing](#modal-editing)); a pattern that would take more steps than its
+  budget (64 a byte, as `\(.*\)\1` on long lines can) stops with E363, and
+  search in files says so when it found nothing. On another machine a
+  look-behind that reaches into the line before is not checked. Search in files reads a line at a
   time for words, and the whole file for a phrase or a pattern; a pattern
   on another machine is asked of it by the plain text every match must
   have (two letters or more; a pattern without such text is not looked for

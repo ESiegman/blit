@@ -568,6 +568,7 @@ void Finder::search_text(u64 serial, const std::string& typed, TextQuery how, st
         pat = Vim::make_pattern(typed, how.regex, how.exact);
         longest = pat.bad() || pat.empty() ? 0 : how.regex ? std::max<size_t>(typed.size(), 2) : typed.size();
     }
+    const u32 runs = pat.re ? pat.re->overruns() : 0;
 #endif
     // What a search made to the end is kept by: what was typed, read how.
     const std::string key = std::string(1, words ? 'w' : how.phrase ? 'p' : 'r') + (how.exact ? 'x' : 's') + typed;
@@ -645,6 +646,11 @@ void Finder::search_text(u64 serial, const std::string& typed, TextQuery how, st
         r->files_hit = files;
         r->searching = searching;
         r->hits = std::move(some);
+#if !defined(BLIT_AGENT)
+        // (Back-references and look-around are tried one way at a time,
+        // with a budget for each file: one that ran out found what it had.)
+        if (pat.re && pat.re->overruns() != runs) r->note = "The pattern took too long in some files and was stopped there";
+#endif
         publish(std::move(r));
     };
 #if !defined(BLIT_AGENT)

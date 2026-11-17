@@ -14,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <functional>
 #include <mutex>
 #include <random>
 #include <stop_token>
@@ -1948,6 +1949,11 @@ void find_test() {
     check(std::system(rm.c_str()) == 0, "the scratch folder taken away");
 }
 
+// A family (man, woman, girl: three emoji and two joiners) and a flag (two
+// regional indicators), each one character.
+#define FAM "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7"
+#define FLAG "\xF0\x9F\x87\xAB\xF0\x9F\x87\xB7"
+
 void vim_test() {
     struct Case {
         const char* before;
@@ -2326,7 +2332,39 @@ void vim_test() {
         {"|a x12 b", "/x\\d\\+<CR>0dgn", "a | b"},
         {"|a x1 b x22", "/x\\d\\+<CR>ggcgnY<Esc>.", "a Y b |Y"},
         {"|a x1 b x22", "/x\\d\\+<CR>$gNd", "a x1 b| "},
-        {"|ab ab", "/\\(a\\)\\@=<CR>", "|ab ab"},
+        {"|ab ab", "/\\(a\\)\\@=<CR>", "ab |ab"},
+        // Back-references, look-around, \& and \%[] (on the backtracker).
+        {"|x the the", "/\\(\\w\\+\\) \\1<CR>", "x |the the"},
+        {"|x the the cat cat", "/\\v<(\\w+)\\s+\\1><CR>n", "x the the |cat cat"},
+        {"|x Abc aBC", "/\\c\\(abc\\) \\1<CR>", "x |Abc aBC"},
+        {"|x abc aBC", "/\\(abc\\) \\1<CR>", "|x abc aBC"},
+        {"|baab aa", ":s/\\(a\\)\\1/x/<CR>", "|bxb aa"},
+        {"|baab aa", ":s/\\(a\\)\\1/[\\1]/g<CR>", "|b[a]b [a]"},
+        {"|ab\nab", ":%s/\\(a\\)\\(b\\)\\n\\1\\2/X/<CR>", "|X"},
+        {"|a=a b=c", ":s/\\(\\w\\)=\\1/same/g<CR>", "|same b=c"},
+        {"|foobaz foobar", "/foo\\(bar\\)\\@=<CR>", "foobaz |foobar"},
+        {"|foobaz foobar", ":s/foo\\(bar\\)\\@=/X/g<CR>", "|foobaz Xbar"},
+        {"|foobar foobaz", "/foo\\(bar\\)\\@!<CR>", "foobar |foobaz"},
+        {"|foobar xbar", "/\\(foo\\)\\@<!bar<CR>", "foobar x|bar"},
+        {"|xbar foobar", "/\\(foo\\)\\@<=bar<CR>", "xbar foo|bar"},
+        {"|foo x", "/\\(foo\\)\\@!<CR>", "f|oo x"},
+        {"|aaa", ":s/a\\@<=a/b/g<CR>", "|abb"},
+        {"|a <span> span", ":s/<\\@1<=span/X/g<CR>", "|a <X> span"},
+        {"|ab\ncd", "/\\(b\\n\\)\\@<=c<CR>", "ab\n|cd"},
+        {"|if x then\nif y", "/if \\(\\(then\\)\\@!.\\)*$<CR>", "if x then\n|if y"},
+        {"|foobar foobeep", "/foobeep\\&...<CR>", "foobar |foobeep"},
+        {"|foobar foobeep", ":s/foobeep\\&.../X/<CR>", "|foobar Xbeep"},
+        {"|xaaa", "/\\(a*\\)\\@>a<CR>", "|xaaa"},
+        {"|xaaab", "/\\(a*\\)\\@>b<CR>", "x|aaab"},
+        {"|x fu fun func f", ":s/\\<fu\\%[nction]\\>/F/g<CR>", "|x F F F f"},
+        {"|x r re ro road rod", ":s/\\<r\\%[[eo]ad]\\>/R/g<CR>", "|x R R R R rod"},
+        {"|a1", "/\\1\\(a\\)<CR>", "|a1"},
+        {"|a\nb\nc", "/\\%2l.<CR>", "a\n|b\nc"},
+        {"|c\nc\nc", ":%s/\\%3lc/X/<CR>", "c\nc\n|X"},
+        {"|a\na\na", ":%s/\\%>1l\\%<3la/X/<CR>", "a\n|X\na"},
+        {"|abcabc", ":s/\\%4ca/X/<CR>", "|abcXbc"},
+        {"|abab", "/\\%#=1ab<CR>", "ab|ab"},
+        {"|x aa ab", "/\\%#=1\\(a\\)b<CR>", "x aa |ab"},
         // :s with them: groups, & \0 ~ \u \U \r in what it becomes; the flags.
         {"|foo(1) bar(22)", ":s/\\(\\w\\+\\)(\\(\\d\\+\\))/\\2:\\1/g<CR>", "|1:foo 22:bar"},
         {"|ab cd", ":s/\\v(\\w)(\\w)/\\2\\1/g<CR>", "|ba dc"},
@@ -2447,6 +2485,48 @@ void vim_test() {
         {"|abc", "Rx<CR><BS><Esc>", "|xbc"},
         // r with a count and Enter: the characters become one line break.
         {"|abcd", "2r<CR>", "\n|cd"},
+        // Whole characters: "é" as e and U+0301, a family (three emoji and
+        // two joiners), a flag (two regional indicators), CJK two columns
+        // wide. A command takes each as one character and never stops inside one.
+        {"|ae\xCC\x81" "b", "v2lrx", "|xxx"},
+        {"|" FAM FLAG "z", "vlrx", "|xxz"},
+        {"|e\xCC\x81" "e\xCC\x81z", "2rx", "x|xz"},
+        {"|" FLAG FAM "z", "2rx", "x|xz"},
+        {"|e\xCC\x81" FAM "z", "2x", "|z"},
+        {"a" FLAG "|" FAM "b", "X", "a|" FAM "b"},
+        {"|e\xCC\x81" "b", "~", "E\xCC\x81|b"},
+        {"|e\xCC\x81" "bc", "3~", "E\xCC\x81" "B|C"},
+        {"|e\xCC\x81" "b c", "g~iw", "|E\xCC\x81" "B c"},
+        {"|e\xCC\x81" "b", "gUl", "|E\xCC\x81" "b"},
+        {"|e\xCC\x81" "b", "g??", "|r\xCC\x81o"},
+        {"|ab e\xCC\x81", "fe", "ab |e\xCC\x81"},
+        {"|a " FAM " \xF0\x9F\x91\xA9 b", "f\xF0\x9F\x91\xA9", "a " FAM " |\xF0\x9F\x91\xA9 b"},
+        {"|a " FLAG " b", "fb", "a " FLAG " |b"},
+        {"|a " FLAG " b", "tb", "a " FLAG "| b"},
+        {"a " FLAG " |b", "Ta", "a|" " " FLAG " b"},
+        {"|e\xCC\x81xyze\xCC\x81x", "tx;", "e\xCC\x81xyz|e\xCC\x81x"},
+        {"|ab \xCC\x81" "cd ef", "w", "ab \xCC\x81|cd ef"},
+        {"|ab \xCC\x81" "cd ef", "e", "a|b \xCC\x81" "cd ef"},
+        {"ab \xCC\x81|cd", "b", "|ab \xCC\x81" "cd"},
+        {"ab \xCC\x81" "c|d", "ge", "a|b \xCC\x81" "cd"},
+        {"|ab \xCC\x81" "cd ef", "daw", "|cd ef"},
+        {" \xCC\x81|x", "^", "| \xCC\x81x"},
+        {"|Hi. \xCC\x81Yo", ")", "Hi. \xCC\x81Y|o"},
+        {"|-\xCC\x81" "ab x ab", "*", "-\xCC\x81" "ab x |ab"},
+        {"|" FAM "x" FAM, "lD", "|" FAM},
+        {"|\xE6\x97\xA5x\nabx", "<C-v>jly0P", "|\xE6\x97\xA5\xE6\x97\xA5x\nababx"},
+        {"|\xE6\x97\xA5x\nabx", "<C-v>jlrz", "|zzx\nzzx"},
+        {"|\xE6\x97\xA5x\nabx", "<C-v>jlr\xE6\x9C\xAC", "|\xE6\x9C\xACx\n\xE6\x9C\xACx"},
+        {"|\xCC\x81x", "<C-v>d", "|"},
+        {"|a\xE2\x80\x8B" "bc", "l<C-v>d", "a|c"},
+        {"|\xE6\x97\xA5\xE6\x9C\xAC\nabcd", "<C-v>jld", "|\xE6\x9C\xAC\ncd"},
+        {"|x", "iab e\xCC\x81" "f<C-w><Esc>", "ab| x"},
+        {"|x", "iab \xCC\x81" "cd<C-w><Esc>", "ab| \xCC\x81x"},
+        {"|x", "ie\xCC\x81 " FAM "<C-u><Esc>", "|x"},
+        {"|x", "i" FAM FLAG "<BS><Esc>", "|" FAM "x"},
+        {"  \xCC\x81|x", "<<", " \xCC\x81|x"},
+        {"|a\n   \xCC\x81x", "J", "a|  \xCC\x81x"},
+        {"|\"a\"  \xCC\x81x", "da\"", "| \xCC\x81x"},
     };
     int wrong = 0;
     for (const Case& c : cases) {
@@ -2471,6 +2551,44 @@ void vim_test() {
         }
     }
     if (wrong) fail("modal editing", static_cast<u64>(wrong), 0);
+    // The command line's cursor stands after what is typed, in columns (a
+    // wide character two, a mark none), and Backspace takes a whole character.
+    {
+        Editor ed;
+        Vim vim;
+        vim.resume(ed);
+        ed.watch = &vim;
+        vim.keys(ed, ":\xE6\x97\xA5\xE6\x9C\xAC");
+        const int wide = vim.status_cursor();
+        vim.keys(ed, "e\xCC\x81");
+        const int marked = vim.status_cursor();
+        vim.keys(ed, FAM "<BS><BS>");
+        if (wide != 5 || marked != 6 || vim.status() != ":\xE6\x97\xA5\xE6\x9C\xAC") {
+            std::fprintf(stderr, "vim: the command line: cursor %d and %d, then \"%s\"\n", wide, marked, vim.status().c_str());
+            fail("the command line's cursor and Backspace by whole characters", 0, 0);
+        }
+    }
+    // A pattern that would take time exponential in the line on the
+    // backtracker (every way of cutting forty "a"s into runs, each then
+    // said again) stops, says so, and changes nothing.
+    {
+        Editor ed;
+        ed.insert(std::string(40, 'a') + " b\n");
+        ed.move_to(0, false);
+        Vim vim;
+        vim.resume(ed);
+        ed.watch = &vim;
+        const u64 t0 = now_ns();
+        vim.keys(ed, "/\\(a*\\)*\\1b<CR>");
+        const bool said = vim.status() == VimRegex::kTooSlow && ed.cursor() == 0;
+        vim.keys(ed, ":%s/\\(a*\\)*\\1b/x/<CR>");
+        const bool kept = vim.status() == VimRegex::kTooSlow && ed.buf.text(0, ed.buf.size()) == std::string(40, 'a') + " b\n";
+        const u64 ms = (now_ns() - t0) / 1000000;
+        if (!said || !kept || ms > 5000) {
+            std::fprintf(stderr, "vim: a pattern past the budget: \"%s\" after %llu ms\n", vim.status().c_str(), static_cast<unsigned long long>(ms));
+            fail("a pattern past the backtracker's budget stops and says so", 0, 0);
+        }
+    }
     // Searching a document of many small pieces (so that matches run from
     // one into the next), against a plain search of the same text.
     {
@@ -2581,7 +2699,9 @@ void vim_test() {
     // found in the same text as one string; and for a pattern that stays on
     // a line, those found line by line, each line on its own (short: there
     // only the VM runs, never the DFA or the plain-text prefilter that a
-    // whole text goes through).
+    // whole text goes through). Some have look-around in them, which the
+    // backtracker runs; and every one is run on the backtracker as well
+    // ("\%#=1" first), which must find what the Pike VM finds, groups and all.
     {
         u64 seed = 0x2e6e;
         auto rnd = [&](u64 n) {
@@ -2595,7 +2715,8 @@ void vim_test() {
             return kAtoms[rnd(std::size(kAtoms))];
         };
         auto concat = [&](int depth, bool lines) {
-            static const char* const kMulti[] = {"", "", "", "*", "\\+", "\\=", "\\{1,2}", "\\{-}", "\\{2}"};
+            static const char* const kMulti[] = {"", "", "", "", "", "", "*", "\\+", "\\=", "\\{1,2}", "\\{-}", "\\{2}", "*", "\\+", "\\=", "\\{1,2}", "\\{-}", "\\{2}",
+                                                 "\\@=", "\\@!", "\\@<=", "\\@<!", "\\@>", "\\@1<="};
             std::string out = rnd(6) == 0 ? "^" : rnd(8) == 0 ? "\\<" : "";
             for (u64 k = 1 + rnd(4); k > 0; --k) {
                 out += atom(depth) + kMulti[rnd(std::size(kMulti))];
@@ -2610,7 +2731,7 @@ void vim_test() {
             while (rnd(4) == 0) out += "\\|" + concat(depth, lines_only);
             return out;
         };
-        u64 bad = 0, checked = 0;
+        u64 bad = 0, checked = 0, forced_checked = 0, overran = 0, with_refs = 0;
         for (int round = 0; round < 40 && bad < 5; ++round) {
             std::string flat;
             static const char* const kText[] = {"a", "a", "b", "b", "\xC3\xA9", " ", "\n", "aab"};
@@ -2623,7 +2744,25 @@ void vim_test() {
             }
             for (int q = 0; q < 40 && bad < 5; ++q) {
                 lines_only = rnd(3) != 0;
-                const std::string typed = alt(0);
+                std::string typed = alt(0);
+                // Now and then a back-reference after a group's "\)".
+                if (rnd(3) == 0) {
+                    std::string with;
+                    std::vector<int> open;
+                    int groups = 0;
+                    for (size_t k = 0; k < typed.size(); ++k) {
+                        with += typed[k];
+                        if (typed[k] != '\\' || k + 1 >= typed.size()) continue;
+                        with += typed[++k];
+                        if (typed[k] == '(') open.push_back(++groups);
+                        if (typed[k] == ')' && !open.empty()) {
+                            if (rnd(3) == 0 && open.back() <= 9) with += "\\" + std::to_string(open.back());
+                            open.pop_back();
+                        }
+                    }
+                    if (groups > 9) continue;  // (Vim has nine)
+                    typed = with;
+                }
                 const Vim::Pattern p = Vim::parse_pattern(typed);
                 if (p.bad() || p.empty()) {
                     if (p.bad() && bad++ < 5) std::fprintf(stderr, "regex: \"%s\" not read: %s\n", typed.c_str(), p.error.c_str());
@@ -2640,6 +2779,25 @@ void vim_test() {
                     return true;
                 });
                 bool same = in_doc == in_text;
+                if (same && p.re && !p.re->backtracks()) {  // (the backtracker on the same pattern)
+                    const Vim::Pattern forced = Vim::parse_pattern("\\%#=1" + typed);
+                    std::vector<RegexMatch> vm, bt;
+                    Vim::each_whole(b, p, 0, b.size() + 1, false, [&](const RegexMatch& m) {
+                        vm.push_back(m);
+                        return true;
+                    });
+                    Vim::each_whole(b, forced, 0, b.size() + 1, false, [&](const RegexMatch& m) {
+                        bt.push_back(m);
+                        return true;
+                    });
+                    // (One that took the backtracker past its budget stopped early: nothing to compare.)
+                    if (forced.re && forced.re->overruns() == 0) {
+                        same = forced.re->backtracks() && vm.size() == bt.size();
+                        for (size_t i = 0; same && i < vm.size(); ++i) same = std::memcmp(&vm[i], &bt[i], sizeof(RegexMatch)) == 0;
+                        if (!same && bad < 5) std::fprintf(stderr, "regex: \"%s\": %zu matches by the Pike VM, %zu by the backtracker\n", typed.c_str(), vm.size(), bt.size());
+                        ++forced_checked;
+                    }
+                }
                 if (same && (p.re ? !p.re->multiline() : p.text.find('\n') == std::string::npos)) {
                     for (size_t ls = 0; ls < flat.size() || (ls == flat.size() && (flat.empty() || flat.back() != '\n'));) {
                         size_t le = flat.find('\n', ls);
@@ -2669,12 +2827,275 @@ void vim_test() {
                     }
                     same = on == want_on && Vim::find(b, p, from, false, false) == want_back;
                 }
+                if (p.re && p.re->overruns()) {  // (the backtracker's budget spent somewhere: what it found is not all there is)
+                    ++overran;
+                    continue;
+                }
                 ++checked;
+                for (size_t k = 0; k + 1 < typed.size(); ++k)
+                    if (typed[k] == '\\' && typed[k + 1] >= '1' && typed[k + 1] <= '9') {
+                        ++with_refs;
+                        break;
+                    }
                 if (!same && bad++ < 5) std::fprintf(stderr, "regex: \"%s\" in %zu bytes: %zu matches in pieces, %zu in the string, %zu line by line\n", typed.c_str(),
                                                      flat.size(), in_doc.size(), in_text.size(), by_line.size());
             }
         }
-        if (bad || checked < 1000) fail("regular expressions across pieces and lines", bad, static_cast<int>(checked));
+        if (bad || checked < 1000 || forced_checked < 300 || with_refs < 50 || overran > checked / 20) fail("regular expressions across pieces and lines", bad, static_cast<int>(checked));
+    }
+    // Back-references and look-around against a plain backtracker written
+    // here from Vim's rules (each way in turn, the first that works, "*" as
+    // many as may be, a back-reference to a group that took part in nothing
+    // matching nothing), on patterns made up at random as trees and short
+    // texts: the first match from each place, and its groups.
+    {
+        u64 seed = 0xb4c7;
+        auto rnd = [&](u64 n) {
+            seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+            return (seed >> 33) % n;
+        };
+        struct R {
+            enum K : u8 { kLit, kAny, kCls, kCat, kAlt, kStar, kLazy, kPlus, kOpt, kGroup, kRef, kAhead, kNotAhead, kBehind, kNotBehind, kAtomic, kBol, kEol, kBow, kEow } k;
+            char c = 0;
+            int n = 0;  // kGroup, kRef: the group
+            std::vector<int> kids;
+        };
+        std::vector<R> tree;
+        int groups = 0;
+        std::vector<int> closed;
+        std::function<bool(int)> nullable = [&](int at) -> bool {
+            const R& n = tree[static_cast<size_t>(at)];
+            switch (n.k) {
+                case R::kLit:
+                case R::kAny:
+                case R::kCls: return false;
+                case R::kCat:
+                    for (const int k : n.kids)
+                        if (!nullable(k)) return false;
+                    return true;
+                case R::kAlt: return nullable(n.kids[0]) || nullable(n.kids[1]);
+                case R::kPlus:
+                case R::kGroup:
+                case R::kAtomic: return nullable(n.kids[0]);
+                default: return true;
+            }
+        };
+        std::function<int(int)> make = [&](int depth) -> int {
+            const u64 r = rnd(depth > 2 ? 7 : 22);
+            R n{R::kLit, 0, 0, {}};
+            if (r < 3) {
+                n.c = "abA "[rnd(4)];
+            } else if (r == 3) {
+                n.k = R::kAny;
+            } else if (r == 4) {
+                n.k = R::kCls;
+            } else if (r < 7) {
+                if (closed.empty()) n.c = 'a';
+                else n.k = R::kRef, n.n = closed[rnd(closed.size())];
+            } else if (r < 10) {
+                n.k = R::kCat;
+                for (u64 k = 2 + rnd(2); k > 0; --k) n.kids.push_back(make(depth + 1));
+            } else if (r == 10) {
+                n.k = R::kAlt;
+                n.kids = {make(depth + 1), make(depth + 1)};
+            } else if (r < 14) {
+                n.k = static_cast<R::K>(R::kStar + rnd(4));
+                n.kids = {make(depth + 1)};
+                // (A loop whose body can take nothing is where a plain
+                // backtracker and the Pike VM part ways: one never comes
+                // back to a place, the other only refuses a turn that took
+                // nothing. Vim's own two engines differ there too.)
+                if (n.k != R::kOpt && nullable(n.kids[0])) n.k = R::kOpt;
+            } else if (r < 17 && groups < 9) {
+                n.k = R::kGroup;
+                n.n = ++groups;
+                n.kids = {make(depth + 1)};
+                closed.push_back(n.n);
+            } else if (r < 20) {
+                n.k = static_cast<R::K>(R::kAhead + rnd(5));
+                n.kids = {make(depth + 1)};
+            } else {
+                n.k = static_cast<R::K>(R::kBol + rnd(4));
+            }
+            tree.push_back(n);
+            return static_cast<int>(tree.size() - 1);
+        };
+        std::function<std::string(int)> show = [&](int at) -> std::string {
+            const R& n = tree[static_cast<size_t>(at)];
+            auto atom = [&](int kid) {
+                const R::K k = tree[static_cast<size_t>(kid)].k;
+                const std::string s = show(kid);
+                return k == R::kLit || k == R::kAny || k == R::kCls || k == R::kGroup || k == R::kRef ? s : "\\%(" + s + "\\)";
+            };
+            switch (n.k) {
+                case R::kLit: return std::string(1, n.c);
+                case R::kAny: return ".";
+                case R::kCls: return "[ab]";
+                case R::kCat: {
+                    std::string s;
+                    for (const int k : n.kids) s += show(k);
+                    return s;
+                }
+                case R::kAlt: return "\\%(" + show(n.kids[0]) + "\\|" + show(n.kids[1]) + "\\)";
+                case R::kStar: return atom(n.kids[0]) + "*";
+                case R::kLazy: return atom(n.kids[0]) + "\\{-}";
+                case R::kPlus: return atom(n.kids[0]) + "\\+";
+                case R::kOpt: return atom(n.kids[0]) + "\\=";
+                case R::kGroup: return "\\(" + show(n.kids[0]) + "\\)";
+                case R::kRef: return "\\" + std::to_string(n.n);
+                case R::kAhead: return atom(n.kids[0]) + "\\@=";
+                case R::kNotAhead: return atom(n.kids[0]) + "\\@!";
+                case R::kBehind: return atom(n.kids[0]) + "\\@<=";
+                case R::kNotBehind: return atom(n.kids[0]) + "\\@<!";
+                case R::kAtomic: return atom(n.kids[0]) + "\\@>";
+                case R::kBol: return "\\_^";
+                case R::kEol: return "\\_$";
+                case R::kBow: return "\\<";
+                case R::kEow: return "\\>";
+            }
+            return {};
+        };
+        std::string T;
+        bool icase = false;
+        std::pair<int, int> cap[10];
+        auto same_ch = [&](char x, char y) { return icase ? std::tolower(static_cast<unsigned char>(x)) == std::tolower(static_cast<unsigned char>(y)) : x == y; };
+        auto word = [&](int at) { return at >= 0 && at < static_cast<int>(T.size()) && (std::isalnum(static_cast<unsigned char>(T[static_cast<size_t>(at)])) || T[static_cast<size_t>(at)] == '_'); };
+        using K = std::function<bool(int)>;
+        std::function<bool(int, int, const K&)> m;
+        std::function<bool(int, int, const K&, bool)> star = [&](int kid, int pos, const K& k, bool greedy) {
+            const K more = [&](int p) { return p != pos && star(kid, p, k, greedy); };
+            if (!greedy && k(pos)) return true;
+            if (m(kid, pos, more)) return true;
+            return greedy && k(pos);
+        };
+        m = [&](int at, int pos, const K& k) -> bool {
+            const R& n = tree[static_cast<size_t>(at)];
+            const int len = static_cast<int>(T.size());
+            const char here = pos < len ? T[static_cast<size_t>(pos)] : 0;
+            switch (n.k) {
+                case R::kLit: return pos < len && same_ch(here, n.c) && k(pos + 1);
+                case R::kAny: return pos < len && here != '\n' && k(pos + 1);
+                case R::kCls: return pos < len && here != '\n' && (same_ch(here, 'a') || same_ch(here, 'b')) && k(pos + 1);
+                case R::kCat: {
+                    std::function<bool(size_t, int)> from = [&](size_t i, int p) { return i == n.kids.size() ? k(p) : m(n.kids[i], p, [&](int q) { return from(i + 1, q); }); };
+                    return from(0, pos);
+                }
+                case R::kAlt: return m(n.kids[0], pos, k) || m(n.kids[1], pos, k);
+                case R::kStar: return star(n.kids[0], pos, k, true);
+                case R::kLazy: return star(n.kids[0], pos, k, false);
+                case R::kPlus: return m(n.kids[0], pos, [&](int p) { return star(n.kids[0], p, k, true); });
+                case R::kOpt: return m(n.kids[0], pos, k) || k(pos);
+                case R::kGroup:
+                    return m(n.kids[0], pos, [&](int p) {
+                        const auto was = cap[n.n];
+                        cap[n.n] = {pos, p};
+                        if (k(p)) return true;
+                        cap[n.n] = was;
+                        return false;
+                    });
+                case R::kRef: {
+                    const auto [a, b] = cap[n.n];
+                    if (a < 0 || b <= a) return k(pos);
+                    if (pos + (b - a) > len) return false;
+                    for (int i = 0; i < b - a; ++i)
+                        if (!same_ch(T[static_cast<size_t>(a + i)], T[static_cast<size_t>(pos + i)])) return false;
+                    return k(pos + (b - a));
+                }
+                case R::kAhead:
+                case R::kNotAhead:
+                case R::kBehind:
+                case R::kNotBehind:
+                case R::kAtomic: {
+                    std::pair<int, int> was[10];
+                    std::copy(std::begin(cap), std::end(cap), was);
+                    bool hit = false;
+                    int end = pos;
+                    if (n.k == R::kBehind || n.k == R::kNotBehind) {
+                        for (int s = pos; s >= 0 && !hit; --s) hit = m(n.kids[0], s, [&](int p) { return p == pos; });
+                    } else {
+                        hit = m(n.kids[0], pos, [&](int p) {
+                            end = p;
+                            return true;
+                        });
+                    }
+                    const bool want = n.k == R::kAhead || n.k == R::kBehind || n.k == R::kAtomic;
+                    if (hit != want || !hit) std::copy(std::begin(was), std::end(was), cap);
+                    if (hit != want) return false;
+                    if (k(n.k == R::kAtomic ? end : pos)) return true;
+                    std::copy(std::begin(was), std::end(was), cap);
+                    return false;
+                }
+                case R::kBol: return (pos == 0 || T[static_cast<size_t>(pos - 1)] == '\n') && k(pos);
+                case R::kEol: return (pos == len || here == '\n') && k(pos);
+                case R::kBow: return !word(pos - 1) && word(pos) && k(pos);
+                case R::kEow: return word(pos - 1) && !word(pos) && k(pos);
+            }
+            return false;
+        };
+        u64 bad = 0, checked = 0, refs = 0;
+        for (int round = 0; round < 20000 && bad < 5; ++round) {
+            tree.clear();
+            groups = 0;
+            closed.clear();
+            int root;
+            if (round % 2) {  // (half of them a group first, so that something can refer to it)
+                const int number = ++groups;  // (numbered before the groups inside it, as Vim numbers them by their "\(")
+                const int inner = make(1);
+                tree.push_back(R{R::kGroup, 0, number, {inner}});
+                const int g = static_cast<int>(tree.size() - 1);
+                closed.push_back(number);
+                const int a = make(1), b = make(1);
+                tree.push_back(R{R::kCat, 0, 0, {g, a, b}});
+                root = static_cast<int>(tree.size() - 1);
+            } else {
+                root = make(0);
+            }
+            icase = rnd(5) == 0;
+            const std::string typed = (icase ? "\\c" : "") + show(root);
+            const Vim::Pattern p = Vim::parse_pattern(typed);
+            if (p.bad()) {
+                if (bad++ < 5) std::fprintf(stderr, "regex: \"%s\" not read: %s\n", typed.c_str(), p.error.c_str());
+                continue;
+            }
+            if (p.empty()) continue;
+            for (size_t k = 0; k + 1 < typed.size(); ++k)
+                if (typed[k] == '\\' && typed[k + 1] >= '1' && typed[k + 1] <= '9') {
+                    ++refs;
+                    break;
+                }
+            T.clear();
+            for (u64 n = rnd(15); n > 0; --n) T += "aabbA \n"[rnd(7)];
+            const int top = static_cast<int>(T.size()) - (!T.empty() && T.back() == '\n' ? 1 : 0);
+            for (int from = 0; from <= top && bad < 5; ++from) {
+                int want = -1, want_end = -1;
+                std::pair<int, int> want_cap[10];
+                for (int s = from; s <= top && want < 0; ++s) {
+                    for (auto& c : cap) c = {-1, -1};
+                    if (m(root, s, [&](int e) {
+                            want_end = e;
+                            return true;
+                        })) {
+                        want = s;
+                        std::copy(std::begin(cap), std::end(cap), want_cap);
+                    }
+                }
+                RegexMatch got;
+                const size_t at = Vim::match_in(T, p, static_cast<size_t>(from), &got);
+                bool same = want < 0 ? at == std::string::npos : at == static_cast<size_t>(want) && got.end == static_cast<u64>(want_end);
+                for (int g = 1; same && want >= 0 && g <= 9 && p.re; ++g) {
+                    const bool set = want_cap[g].first >= 0;
+                    same = set ? got.group[g][0] == static_cast<u64>(want_cap[g].first) && got.group[g][1] == static_cast<u64>(want_cap[g].second) : got.group[g][0] == RegexMatch::kUnset;
+                }
+                ++checked;
+                if (!same && bad++ < 5) {
+                    std::string shown = T;
+                    for (char& ch : shown) ch = ch == '\n' ? '/' : ch;
+                    std::fprintf(stderr, "regex: \"%s\" in \"%s\" from %d: got %lld to %lld, wanted %d to %d\n", typed.c_str(), shown.c_str(), from,
+                                 at == std::string::npos ? -1ll : static_cast<long long>(at), at == std::string::npos ? -1ll : static_cast<long long>(got.end), want, want_end);
+                }
+            }
+        }
+        if (bad || checked < 100000 || refs < 3000) fail("back-references and look-around against a plain backtracker", bad, static_cast<int>(refs));
     }
     // Cmd+F with modes: the command line opened with the word on it,
     // selected; the first character typed takes its place, Backspace

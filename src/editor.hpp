@@ -113,6 +113,7 @@ public:
     // and the marks on it, or an emoji and what is joined to it, are one.
     u64 next_char(u64 off) const;
     u64 prev_char(u64 off) const;
+    bool joins_back(u64 from, u32 before, u32 cp) const;  // (prev_char's rules that look back past one character)
 
     // Movement. `select` keeps the anchor in place.
     void move_to(u64 off, bool select);
