@@ -1947,6 +1947,13 @@ document's syntax worker is joined and its parser, tree and query freed on
 the main thread). Once per switch, and under a frame at 120 Hz; moving the
 freeing to a thread would touch every way a tab closes, so it was not done
 here.
+
+Afterwards, with the terminals' split along the bottom on `main` (Round
+32): a restore puts that split away whole and back below the split with
+the keyboard, so its shells keep running where they were. That is two moves
+of one split in the tree when a folder is opened, nothing at startup or per
+frame, and it was not timed on its own.
+
 ### Round 31: build problems
 
 A build's output feeds the Problems tab (`src/buildscan.*`): GCC's,
