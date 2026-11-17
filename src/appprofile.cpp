@@ -158,6 +158,7 @@ struct ProfView {
 struct App::ProfUi {
     // What the next recording is of.
     std::string program, args, cwd;
+    std::vector<std::string> env;  // ("NAME=value": a run configuration's)
     u32 frequency = 999;
     bool dwarf = false;
     bool annotate = true;
@@ -215,6 +216,24 @@ struct App::ProfUi {
 
 void App::prof_start() { profui_ = std::make_shared<ProfUi>(); }
 
+// A run configuration chosen: what it runs is what is recorded.
+void App::prof_take(const std::string& program, const std::string& args, const std::string& cwd, const std::vector<std::string>& env) {
+    ProfUi& u = *profui_;
+    u.program = program;
+    u.args = args;
+    u.cwd = cwd;
+    u.env = env;
+    dirty_ = true;
+}
+
+std::string App::prof_target() const {
+    const ProfUi& u = *profui_;
+    auto last = [](const std::string& path) { return path.substr(path.find_last_of('/') + 1); };  // (a file's name, a folder's)
+    std::string out = last(u.program) + (u.args.empty() ? "" : " " + u.args) + " in " + last(u.cwd);
+    for (const std::string& e : u.env) out += " " + e;
+    return out;
+}
+
 // ---------------------------------------------------------------- recording
 
 void App::prof_record() {
@@ -223,6 +242,7 @@ void App::prof_record() {
     ProfileRequest r;
     r.program = u.program;
     r.cwd = u.cwd;
+    r.env = u.env;
     r.frequency = u.frequency;
     r.dwarf = u.dwarf;
     r.kind = u.kind;

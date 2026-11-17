@@ -895,6 +895,7 @@ void App::save() {
     if (cfg_.git) git_.refresh();  // git has something new to say about it
     const std::string path = pane_->doc->ed.path;
     if (saved) {
+        if (path.ends_with(kRunConfigs)) build_changed();  // (the run configurations: the Build tab reads them again)
         script_saved(path);  // or one of the scripts (they run again)
         if (script_) script_write(true, id);
     }

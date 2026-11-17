@@ -977,7 +977,9 @@ struct ProfileJob::Impl {
             const char* what = req.kind == ProfileRequest::kMemory ? "Virtual Memory Trace" : req.kind == ProfileRequest::kWaiting ? "System Call Trace" : nullptr;
             if (what) argv.insert(argv.end(), {"record", "--instrument", what});
             else argv.insert(argv.end(), {"record", "--template", "Time Profiler"});
-            argv.insert(argv.end(), {"--no-prompt", "--output", dir + "/profile.trace", "--target-stdout", "-", "--launch"});
+            argv.insert(argv.end(), {"--no-prompt", "--output", dir + "/profile.trace", "--target-stdout", "-"});
+            for (const std::string& e : req.env) argv.insert(argv.end(), {"--env", e});
+            argv.push_back("--launch");
         }
         argv.push_back("--");
 #if defined(__linux__)
@@ -985,6 +987,10 @@ struct ProfileJob::Impl {
         // of one would count as a single page), through this blit.
         if (tool == "perf" && req.kind == ProfileRequest::kMemory && !remote) argv.insert(argv.end(), {program_path(), "--exec-without-huge-pages"});
 #endif
+        if (tool == "perf" && !req.env.empty()) {  // (through env, which perf follows into the program)
+            argv.push_back("env");
+            argv.insert(argv.end(), req.env.begin(), req.env.end());
+        }
         argv.push_back(there);
         argv.insert(argv.end(), req.args.begin(), req.args.end());
         std::string output, rec_err;

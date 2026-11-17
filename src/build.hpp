@@ -17,7 +17,24 @@ struct BuildTask {
     std::string cmd;     // run by sh in the folder
     std::string cwd;     // relative to the folder; empty: the folder itself
     bool def = false;    // the one the Run button runs, until another is chosen
+    // A run configuration's (.blit/run.json): what it runs, for Debug,
+    // Profile and the tests to take as theirs.
+    bool config = false;
+    std::string program;           // its full path (from the folder's, when written relative)
+    std::string args;              // as one line, as a shell splits it
+    std::vector<std::string> env;  // "NAME=value"
+    std::string before;            // a task of the Build tab's to run first (its name)
 };
+
+// Where a folder's run configurations are, from the folder.
+inline constexpr const char* kRunConfigs = ".blit/run.json";
+// The run configurations in root's .blit/run.json: { "configurations": [ {
+// "name", "program", "args" (a list, or one line), "env" (an object),
+// "cwd" (from the folder), "build" (a task to run first) } ] }. `problem`
+// says what is wrong with the file, if anything is.
+std::vector<BuildTask> read_run_configs(const std::string& root, std::string* problem);
+// A word as sh reads it back (in single quotes when it needs them).
+std::string sh_word(std::string_view word);
 
 // The built-in systems' names, in the order they are looked for.
 const std::vector<std::string>& build_systems();

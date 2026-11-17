@@ -218,4 +218,36 @@ check "blit.project.add: its create made it, and its file is open" 'NORMAL notes
 got=$(tr '\n' '|' <"$P/notes/notes.md")
 check "with the values set" '# Ideas||[TOC]|'
 
+# Run configurations: .blit/run.json beside the project, run by the Run
+# button (its build first), and what Debug and Profile run.
+R="$dir/rc"
+mkdir -p "$R/.blit" "$R/build"
+cat >"$R/Makefile" <<'EOF'
+all:
+	@printf '#!/bin/sh\necho args: "$$*" greeting: "$$GREETING" in: "$$(pwd)"\n' > build/hello && chmod +x build/hello && echo built
+EOF
+cat >"$R/.blit/run.json" <<'EOF'
+{ "configurations": [
+  { "name": "hello", "program": "build/hello", "args": ["one", "two words"], "env": { "GREETING": "hi there" }, "cwd": "build", "build": "make" },
+  { "name": "plain", "program": "build/hello", "args": "x y" } ] }
+EOF
+INIT=
+run "$R" "builddump"
+check "run configurations, before what the folder builds with; the first is the Run button's" 'Run: >hello plain | Make: make make all'
+run "$R" "runconfdump"
+check "Debug and Profile take its program, arguments, folder and environment" "hello | debug: hello one 'two words' in build GREETING=hi there | profile: hello one 'two words' in build GREETING=hi there"
+run "$R" "buildrun;buildwait;builddump"
+check "Run: its build, then it" 'Run: >hello plain | Make: make make all (last: 0)'
+if test -x "$R/build/hello"; then got=built; else got=missing; fi
+check "(the build ran first)" 'built'
+run "$R" "buildrun:plain;buildwait;runconfdump"
+check "another chosen: theirs too" 'plain | debug: hello x y in rc | profile: hello x y in rc'
+printf '{ "configurations": [ { "name": "x" } ] }\n' >"$R/.blit/run.json"
+got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$R;frame;builddump" 2>&1 >/dev/null | grep '^blit: ' | tail -1)
+check "a configuration without its program: said" 'blit: .blit/run.json: a configuration needs a "name" and a "program"'
+mkdir -p "$dir/fresh"
+printf 'all:\n\ttrue\n' >"$dir/fresh/Makefile"
+run "$dir/fresh" "command:Edit the run configurations;frame;lsptext"
+check "Edit the run configurations: made, with one to fill in" '{ /   "configurations": [ /     { /       "name": "fresh", /       "program": "build/fresh", /       "args": [], /       "env": {}, /       "cwd": "." /     } /   ] / } / '
+
 exit $failed

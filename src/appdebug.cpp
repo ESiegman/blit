@@ -99,6 +99,7 @@ std::string trimmed(std::string_view s) {
 struct App::DebugUi {
     // What to debug.
     std::string program, args, cwd;
+    std::vector<std::string> env;  // ("NAME=value": a run configuration's, given the debugger and so the program)
     // Breakpoints: by file (its full path, ssh:// for another machine's), by
     // line (from 0), each with what it waits for, if anything.
     struct Break {
@@ -359,6 +360,25 @@ std::vector<u64> App::debug_break_lines(const Doc& d) {
     return out;
 }
 
+// A run configuration chosen: what it runs is what is debugged.
+void App::debug_take(const std::string& program, const std::string& args, const std::string& cwd, const std::vector<std::string>& env) {
+    DebugUi& u = *debugui_;
+    u.program = program;
+    u.args = args;
+    u.cwd = cwd;
+    u.env = env;
+    ++debug_gen_;
+    dirty_ = true;
+}
+
+std::string App::debug_target() const {
+    const DebugUi& u = *debugui_;
+    auto last = [](const std::string& path) { return path.substr(path.find_last_of('/') + 1); };  // (a file's name, a folder's)
+    std::string out = last(u.program) + (u.args.empty() ? "" : " " + u.args) + " in " + last(u.cwd);
+    for (const std::string& e : u.env) out += " " + e;
+    return out;
+}
+
 // ---------------------------------------------------------------- a session
 
 void App::debug_start() {
@@ -398,7 +418,9 @@ void App::debug_start() {
     // there on the Dap's own thread: the tab says Starting… meanwhile, and what
     // is asked of it below is sent once it has started.)
     std::string err;
-    if (!u.dap->start({"/bin/sh", "-c", python ? kPython : kNative}, dir, wake, &err)) {
+    std::string exports;  // (the debugger has them, and the program it starts)
+    for (const std::string& e : u.env) exports += "export " + sh_word(e) + "; ";
+    if (!u.dap->start({"/bin/sh", "-c", exports + (python ? kPython : kNative)}, dir, wake, &err)) {
         u.error = err;
         u.dap.reset();
         ++debug_gen_;

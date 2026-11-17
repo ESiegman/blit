@@ -324,6 +324,15 @@ private:
     // Lines moved up (-1) or down (+1), and copied (appedit.cpp).
     void lines_move(int dir);
     void lines_copy(int dir);
+    // Run configurations (.blit/run.json, appbuild.cpp): the one chosen,
+    // its program taken by Debug and Profile, and the file made or opened.
+    const BuildTask* run_config() const;
+    void run_config_take();
+    void run_config_edit();
+    void debug_take(const std::string& program, const std::string& args, const std::string& cwd, const std::vector<std::string>& env);
+    void prof_take(const std::string& program, const std::string& args, const std::string& cwd, const std::vector<std::string>& env);
+    std::string debug_target() const;  // (the tests: what Debug and Profile would run: program, arguments, folder, environment)
+    std::string prof_target() const;
     // Brackets and quotes closed as they are typed (appedit.cpp): a key or a
     // character taken (true), and the closers put in, kept in step with what
     // is typed between them.

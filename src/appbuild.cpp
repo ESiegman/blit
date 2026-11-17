@@ -61,11 +61,13 @@ struct App::BuildUi {
     std::string root;          // the folder they were found in
     bool looked = false;       // tasks are root's (else: look, when the window is free to)
     std::string current;       // the task the Run button runs (task_key)
+    std::string taken;         // the run configuration Debug and Profile last took (and its command)
     // The worker looking at a folder, and what it found.
     struct Found {
         std::string root;
         std::vector<FsEntry> files;
         std::vector<BuildTask> tasks;
+        std::string problem;  // what is wrong with .blit/run.json, if anything
     };
     std::mutex mu;
     std::optional<Found> found;  // (mu)
@@ -122,7 +124,9 @@ void App::build_follow() {
         BuildUi::Found f;
         f.root = root;
         f.files = fs_list(root);
-        f.tasks = detect_builds(root, f.files, hidden);
+        f.tasks = read_run_configs(root, &f.problem);  // (the folder's own run configurations first: the first is the Run button's)
+        std::vector<BuildTask> found = detect_builds(root, f.files, hidden);
+        f.tasks.insert(f.tasks.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
         {
             std::lock_guard lock(u.mu);
             u.found = std::move(f);
@@ -158,8 +162,46 @@ void App::build_sync() {
         if (u.current.empty() && !u.tasks.empty()) u.current = task_key(u.tasks[0]);
     }
     u.sel = ~0u;  // (the chosen one, when the tab is drawn)
+    if (!f->problem.empty()) notify(f->problem);
+    run_config_take();
     ++build_gen_;
     dirty_ = true;
+}
+
+// The run configuration the Run button runs, if one is: its program,
+// arguments, folder and environment are Debug's and Profile's too.
+const BuildTask* App::run_config() const {
+    if (!buildui_) return nullptr;
+    for (const BuildTask& t : buildui_->tasks)
+        if (t.config && task_key(t) == buildui_->current) return &t;
+    return nullptr;
+}
+
+void App::run_config_take() {
+    const BuildTask* t = run_config();
+    if (!t || buildui_->taken == buildui_->current + "\n" + t->cmd) return;
+    buildui_->taken = buildui_->current + "\n" + t->cmd;
+    const std::string cwd = t->cwd.empty() ? buildui_->root : buildui_->root + "/" + t->cwd;
+    debug_take(t->program, t->args, cwd, t->env);
+    prof_take(t->program, t->args, cwd, t->env);
+}
+
+// The folder's run configurations in a tab: .blit/run.json, made the first
+// time with one to fill in (the folder's name for its program, built first
+// by the Build tab's Build when there is one).
+void App::run_config_edit() {
+    const std::string root = build_root();
+    if (root.empty()) return notify("Open a folder first");
+    const std::string path = root + "/" + kRunConfigs;
+    if (fs_kind(path) != 1) {
+        const std::string name = std::string(root.substr(root.find_last_of('/') + 1));
+        const bool build = buildui_ && std::ranges::any_of(buildui_->tasks, [](const BuildTask& t) { return !t.config && t.name == "Build"; });
+        const std::string text = "{\n  \"configurations\": [\n    {\n      \"name\": \"" + name + "\",\n      \"program\": \"build/" + name +
+                                 "\",\n      \"args\": [],\n      \"env\": {},\n      \"cwd\": \".\"" + (build ? ",\n      \"build\": \"Build\"" : "") + "\n    }\n  ]\n}\n";
+        std::string why;
+        if (!fs_mkdirs(root + "/.blit", &why) || !fs_write(path, text, &why)) return notify("Cannot write " + path + ": " + why);
+    }
+    open_path(path.c_str());
 }
 
 void App::build_changed() {
@@ -241,8 +283,16 @@ void App::build_run(int index) {
     }
     const BuildTask t = u.tasks[static_cast<size_t>(index)];
     u.current = task_key(t);
-    build_command(t.cwd.empty() ? u.root : u.root + "/" + t.cwd, t.cmd, t.name);
+    std::string cmd = t.cmd;
+    if (!t.before.empty()) {  // a run configuration's build first: then, if it went well, the program
+        const auto it = std::ranges::find_if(u.tasks, [&](const BuildTask& b) { return !b.config && (b.name == t.before || b.system + ": " + b.name == t.before); });
+        if (it == u.tasks.end()) return notify("No task called " + t.before + " to run before " + t.name);
+        const std::string first = it->cwd.empty() ? u.root : u.root + "/" + it->cwd, then = t.cwd.empty() ? u.root : u.root + "/" + t.cwd;
+        cmd = "cd " + sh_word(first) + " && " + it->cmd + " && cd " + sh_word(then) + " && " + t.cmd;
+    }
+    build_command(t.cwd.empty() || !t.before.empty() ? u.root : u.root + "/" + t.cwd, cmd, t.name);
     u.last_key = u.current;  // (how it goes shows on its row)
+    run_config_take();
 }
 
 // The Run button's task, as a session keeps it; and one a session brings
@@ -256,6 +306,7 @@ void App::build_choose(const std::string& key) {
     if (u.looked && u.root == build_root() && std::ranges::none_of(u.tasks, [&](const BuildTask& t) { return task_key(t) == key; })) return;
     u.current = key;
     u.sel = ~0u;
+    run_config_take();
     ++build_gen_;
     dirty_ = true;
 }

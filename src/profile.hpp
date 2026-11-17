@@ -123,6 +123,7 @@ std::string perf_waits_as_samples(std::string_view text);
 struct ProfileRequest {
     std::string program;            // its full path; another machine's: ssh://host/path
     std::vector<std::string> args;
+    std::vector<std::string> env;   // "NAME=value", given it on top of what it would have
     std::string cwd;                // where it runs (another machine's: ssh://host/path); empty: the program's folder
     u32 frequency = 999;            // samples a second
     bool dwarf = false;             // perf: walk stacks with DWARF (for code built without frame pointers)

@@ -74,7 +74,13 @@ struct Look {
     void add(std::string name, std::string cmd, bool def = false, std::string cwd = {}) {
         for (const BuildTask& t : out)
             if (t.system == system && t.name == name) return;
-        out.push_back({system, std::move(name), std::move(cmd), std::move(cwd), def});
+        BuildTask t;
+        t.system = system;
+        t.name = std::move(name);
+        t.cmd = std::move(cmd);
+        t.cwd = std::move(cwd);
+        t.def = def;
+        out.push_back(std::move(t));
     }
 };
 
@@ -290,6 +296,56 @@ const std::vector<std::string>& build_systems() {
         return v;
     }();
     return names;
+}
+
+std::string sh_word(std::string_view word) { return sh_quote(word); }
+
+std::vector<BuildTask> read_run_configs(const std::string& root, std::string* problem) {
+    std::vector<BuildTask> out;
+    std::string text;
+    if (!fs_read(root + "/" + kRunConfigs, &text)) return out;
+    json::Doc doc;
+    if (!doc.parse(text)) {
+        *problem = std::string(kRunConfigs) + " is not JSON";
+        return out;
+    }
+    const json::Value list = doc.root()["configurations"];
+    if (!list.is_array()) {
+        *problem = std::string(kRunConfigs) + " has no \"configurations\" list";
+        return out;
+    }
+    for (const json::Value c : list) {
+        BuildTask t;
+        t.system = "Run";
+        t.config = true;
+        t.name = std::string(c["name"].str());
+        std::string program(c["program"].str());
+        if (t.name.empty() || program.empty()) {
+            *problem = std::string(kRunConfigs) + ": a configuration needs a \"name\" and a \"program\"";
+            continue;
+        }
+        t.program = program[0] == '/' || program.starts_with("ssh://") ? program : root + "/" + program;
+        if (c["args"].is_array()) {
+            for (const json::Value a : c["args"]) t.args += (t.args.empty() ? "" : " ") + sh_quote(a.str());
+        } else {
+            t.args = std::string(c["args"].str());
+        }
+        for (const json::Value e : c["env"]) t.env.push_back(std::string(e.key()) + "=" + std::string(e.str()));
+        const std::string_view cwd = c["cwd"].str();
+        t.cwd = cwd == "." ? std::string() : std::string(cwd);
+        t.before = std::string(c["build"].str());
+        // What the Run button runs: the program, in its folder, with what it is given.
+        std::string cmd;
+        if (!t.env.empty()) {
+            cmd = "env";
+            for (const std::string& e : t.env) cmd += " " + sh_quote(e);
+            cmd += " ";
+        }
+        t.cmd = cmd + sh_quote(t.program) + (t.args.empty() ? "" : " " + t.args);
+        out.push_back(std::move(t));
+    }
+    if (!out.empty()) out.front().def = true;
+    return out;
 }
 
 std::vector<BuildTask> detect_builds(const std::string& root, const std::vector<FsEntry>& files, const std::vector<std::string>& hidden) {
