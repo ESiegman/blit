@@ -130,6 +130,8 @@ round since the first.
   section.
 - [BENCH.md](BENCH.md): every speed decision, with its numbers.
 - [PLAN.md](PLAN.md): what comes next.
+- [docs/review.md](docs/review.md): blit against JetBrains and Visual Studio, and
+  what is worth adding.
 - [docs/media/make.sh](docs/media/make.sh) makes every picture above from a
   Debug build, on the demo project beside it.
 

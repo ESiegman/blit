@@ -2293,7 +2293,7 @@ does not finish and takes all the memory the machine has.
 
 ## Limits
 
-- Monospace fonts only. No line wrap. No underline or strikethrough.
+- Monospace fonts only. No line wrap, and no code folding.
 - A character the italic or bold face lacks is drawn upright in the regular
   face (or a fallback font).
 - Highlighting covers one language per file: code blocks inside Markdown
@@ -2336,9 +2336,8 @@ does not finish and takes all the memory the machine has.
   (`BLIT_LSP_LOG` is for local ones). Programs a script starts run on this
   machine, not that one. The project folder for a file opened there on its
   own is its own folder (opening the project's folder sets it).
-- Debugging: one session at a time, one thread's stack (the one that
-  stopped); no conditional breakpoints, watch list, or breakpoints that
-  move with the lines when the file is edited while debugging. With gdb
+- Debugging: one session at a time, started by blit (no attaching to a
+  running process, no core files), and no disassembly or memory view. With gdb
   the program's output reaches the Debug tab a line at a time where
   `stdbuf` (coreutils) is there, and when it flushes it where not.
 - Pictures: on Linux PNG, JPEG, GIF and WebP only (no BMP, TIFF, HEIC or
@@ -2348,16 +2347,13 @@ does not finish and takes all the memory the machine has.
   not turned (a turned page's links may be off). Find ignores case for A to Z only;
   choosing text does not scroll the view past its edge; the outline box
   is for the mouse and the wheel.
-- Terminal: no mouse reporting to programs (a click in htop does nothing),
-  no underline or strikethrough drawn, no images (sixel, kitty), no
-  ligatures. A screen with more than 32 text colours or 6 background
-  colours at once draws the rest in the nearest of those. Lines are not
-  re-wrapped when the tab's width changes.
+- Terminal: no ligatures. A screen with more than 32 text colours or 6
+  background colours at once draws the rest in the nearest of those.
 - Profiling: one run at a time. Memory is the pages first touched, not
   every allocation (blocks reused from the heap do not show), and waiting
   on Linux needs `kernel.perf_event_paranoid` at 1 or lower. A function's label goes on
   the line above its hottest line that names it with a bracket after it,
-  or on that line if none does. Profiles are not saved.
+  or on that line if none does.
 - Git: what is listed above and no more. No interactive rebase, no
   submodules, no editing of a hunk before it is staged, and no way to
   answer a question git asks on a terminal (a password, a passphrase): set
@@ -2379,7 +2375,8 @@ does not finish and takes all the memory the machine has.
   lines a search keeps, and passes over a file over 8 MB. The count in the
   in-file box ("3 of 12") is left out in a file over 64 MB (8 MB with
   regular expressions on). There are at most sixteen splits. Tabs and
-  splits are not remembered from one run to the next.
+  splits are remembered for a folder opened to work in (its session), not
+  for files opened on their own.
 - Linux: the Vulkan renderer and the keys above; no momentum after a
   flick (as below), and the blit started from a
   desktop's launcher has the PATH the desktop has (no login shell is asked,
