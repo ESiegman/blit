@@ -1447,6 +1447,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     lsp_layout(w, h, fd);
     shape_marks(fd);  // (the bracket that pairs with the cursor's)
     fold_notes(fd);   // (how many lines each folded one has under it)
+    ruler_notes(fd);  // (the marks along the scroll bar)
     git_note(fd);
     vim_marks(fd);
     if (script_) script_layout(w, h, fd);  // marks, boxes and messages of the scripts'
@@ -1577,6 +1578,7 @@ void App::layout_pane(FrameDesc& fd, bool focused) {
     tabs_layout(px_w_, px_h_, fd, focused);
     crumbs_layout(fd, focused);
     sticky_layout(fd, v);
+    ruler_layout(v);
 }
 
 // The display's refresh rate decides how often a frame may be drawn.

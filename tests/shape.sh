@@ -207,5 +207,15 @@ check "zR" 'folds none | rows 1 2 3 4 5 6 7 8 9 10 11 12'
 run "key:Down;$fold;frame;folddump" "$dir/indent.txt"
 check "no grammar: by indentation" 'folds 1-4 | rows 1 5 6'
 
+# The scroll bar's marks: where the cursor, the matches and the rest are.
+run "workdir:$dir/proj;frame;rulerdump" "$S"
+check "the cursor's place, at the top" '0:>'
+run "workdir:$dir/proj;frame;key:cmd+F;text:return;frame;wait:100;frame;rulerdump" "$S"
+check "Find in this file's matches (the cursor on the first)" '3:> 7:f'
+run "workdir:$dir/proj;frame;key:cmd+P;text::70;key:Return;frame;rulerdump" "$S"
+check "the cursor near the end" '60:>'
+run "frame;rulerdump" "$dir/plain.txt"
+check "a file shorter than the view: none" 'none'
+
 [ "$failed" = 0 ] && echo "shape: all passed"
 exit "$failed"

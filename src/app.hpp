@@ -203,6 +203,7 @@ struct Doc {
 struct TabBar;  // a pane's tab bar and line numbers, as cells (apptabs.cpp)
 struct Crumbs;  // a pane's breadcrumbs under its tabs, as cells (appshape.cpp)
 struct Sticky;  // the scope lines pinned at the top of a pane's view (appshape.cpp)
+struct Ruler;   // the marks along a pane's scroll bar (appshape.cpp)
 struct ScriptKey;  // a key held back for the mappings (applua.cpp)
 
 // One split of the window: a group of tabs, and the view of the one in
@@ -250,6 +251,7 @@ struct Pane {
     std::shared_ptr<TabBar> bar;
     std::shared_ptr<Crumbs> crumbs;  // (appshape.cpp)
     std::shared_ptr<Sticky> sticky;  // (appshape.cpp)
+    std::shared_ptr<Ruler> ruler;    // (appshape.cpp)
     // Its scroll thumb: how strongly it shows (it fades away when the view
     // has been still a while), when it starts to fade, and where the view
     // was when it last showed fully.
@@ -373,6 +375,13 @@ private:
     void fold_all(bool close);
     void fold_reveal();
     void fold_notes(FrameDesc& fd);
+    // The marks along the scroll bar (appshape.cpp): problems, matches,
+    // changes, breakpoints and the cursor, where they are in the file.
+    void ruler_layout(const TextView& v);
+    void ruler_notes(FrameDesc& fd);
+    std::string ruler_dump();  // (the tests: the marks of the split in front, row:kind)
+    // Find in this file's matches, while its box is open on that document (appfind.cpp).
+    const std::vector<u64>* find_file_matches(u64 doc);
     bool fold_mouse_down(const SDL_MouseButtonEvent& b);  // a click on a folded line's mark or note opens it
     std::string fold_dump();  // (the tests: what is folded in the file in front, and the rows on show)
     void measure_widest();  // finds out how wide the widest line is, if that is not known
@@ -861,6 +870,7 @@ private:
     void debug_edit_break();
     void debug_send_breaks(const std::string& path);
     u32 debug_gutter(const Doc& d, u64 line);
+    std::vector<u64> debug_break_lines(const Doc& d);  // (the file's breakpoints' lines, from 0: the scroll bar's marks)
     void debug_start();
     void debug_end();
     void debug_command(const std::string& what);

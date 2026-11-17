@@ -349,6 +349,15 @@ u32 App::debug_gutter(const Doc& d, u64 line) {
     return 0;
 }
 
+std::vector<u64> App::debug_break_lines(const Doc& d) {
+    std::vector<u64> out;
+    if (!debugui_ || d.ed.path.empty()) return out;
+    const DebugUi& u = *debugui_;
+    if (const auto it = u.breaks.find(full_path(d.ed.path)); it != u.breaks.end())
+        for (const auto& [line, b] : it->second) out.push_back(line);
+    return out;
+}
+
 // ---------------------------------------------------------------- a session
 
 void App::debug_start() {

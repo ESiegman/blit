@@ -705,4 +705,116 @@ std::string App::fold_dump() {
     return out;
 }
 
+// ---------------------------------------------------------------- the scroll bar's marks
+
+// Down the right edge of a view whose text is longer than it: where the
+// problems, the matches of Find in this file, the lines changed since the
+// last commit, the breakpoints and the cursor are, each a thin bar at its
+// place in the whole file (three places to a cell). Where several fall
+// together the one that matters most shows: the cursor, an error, a
+// breakpoint, a warning, a match, a change.
+struct Ruler {
+    TextBox box;  // one column: a bar in a row's cell, or nothing
+    u64 key = 0;
+    u64 col = 0;  // the display column the view's right edge is in
+    std::vector<GridNote> notes;  // (the view's other notes, and a cell of these on the line each row shows)
+    std::vector<std::pair<u32, char>> marks;  // (for the tests: each place's row third and kind)
+};
+
+void App::ruler_layout(const TextView& v) {
+    Pane& p = *pane_;
+    const Doc& d = *p.doc;
+    if (d.term || d.image || d.pdf || d.md || d.prof) return;
+    const int ch = font_->cell_h(), cw = font_->cell_w();
+    const u32 rows = static_cast<u32>(std::max(0, v.h / ch));
+    const u64 total = view_line_count();
+    if (!rows || max_scroll_y() <= 0 || total == 0) {
+        if (p.ruler) p.ruler->marks.clear();
+        return;
+    }
+    if (!p.ruler) p.ruler = std::make_shared<Ruler>();
+    Ruler& r = *p.ruler;
+    const std::vector<Diagnostic>* diags = lsp_.diagnostics_of(d.id);
+    const std::vector<u64>* matches = find_file_matches(d.id);
+    u64 key = 1469598103934665603ull;
+    auto mix = [&](u64 x) { key = (key ^ x) * 1099511628211ull; };
+    mix(d.id);
+    mix(d.ed.revision());
+    mix(p.cur_line);
+    mix(rows);
+    mix(total);
+    mix(d.folds.generation());
+    mix(lsp_.diagnostics_generation());
+    mix(diags ? diags->size() : 0);
+    mix(d.hunks_gen);
+    mix(debug_gen_);
+    mix(matches ? matches->size() * 31 + (matches->empty() ? 0 : matches->front()) : ~0ull);
+    mix(font_->generation());
+    if (key != r.key) {
+        r.key = key;
+        const u32 places = rows * 3;
+        std::vector<u8> prio(places, 0);
+        std::vector<u32> ink(places, 0);
+        auto mark = [&](u64 line, u8 pr, u32 in) {
+            const u64 row = row_of_line(line);
+            const u32 at = static_cast<u32>(std::min<u64>(places - 1, row * places / total));
+            if (pr > prio[at]) prio[at] = pr, ink[at] = in;
+        };
+        const Buffer& b = d.ed.buf;
+        for (const GitHunk& h : d.hunks) {
+            const u32 in = h.kind == GitHunk::kAdded ? kInkAdded : h.kind == GitHunk::kModified ? kInkChanged : kInkDiagnostic;
+            const u64 n = std::max<u32>(h.count, 1);
+            for (u64 l = h.line; l < h.line + n && l < b.line_count(); l += std::max<u64>(1, total / places)) mark(l, 1, in);
+        }
+        if (matches)
+            for (const u64 m : *matches) mark(b.line_of(std::min(m, b.size())), 2, kInkDiagnostic + 2);
+        if (diags)
+            for (const Diagnostic& g : *diags)
+                if (g.severity <= 2) mark(b.line_of(std::min(g.start, b.size())), g.severity == 1 ? 5 : 3, kInkDiagnostic + g.severity - 1);
+        for (const u64 l : debug_break_lines(d)) mark(l, 4, kInkDiagnostic);
+        mark(p.cur_line, 6, kInkAccent);
+        r.box.resize(1, rows);
+        r.marks.clear();
+        static constexpr u32 kBars[] = {0x2594, 0x2501, 0x2581};  // (a third of a cell each: its top, its middle, its foot)
+        static constexpr char kKinds[] = {0, 'c', 'f', 'w', 'b', 'e', '>'};
+        for (u32 row = 0; row < rows; ++row) {  // (a cell, one bar: of its three places, the one that matters most)
+            u32 at = row * 3;
+            for (u32 k = 1; k < 3; ++k)
+                if (prio[row * 3 + k] > prio[at]) at = row * 3 + k;
+            if (!prio[at]) continue;
+            r.box.cells[row] = (font_->glyph(kBars[at % 3]) & (Font::kWide - 1)) | (ink[at] << kCellInkShift);
+            r.marks.emplace_back(at, kKinds[prio[at]]);
+        }
+    }
+    // The text's last column on show, right of which nothing is: the marks
+    // are put there, over the text (ruler_notes()).
+    const i64 last = (static_cast<i64>(v.w) + static_cast<i64>(v.origin[0])) / cw - 1 - static_cast<i64>(v.grid.lead);
+    r.col = v.grid.first_col + static_cast<u64>(std::max<i64>(0, last));
+}
+
+// The marks, as one cell each on the line their row shows, with the
+// view's other notes (after the language server's are set).
+void App::ruler_notes(FrameDesc& fd) {
+    for (const std::unique_ptr<Pane>& up : panes_) {
+        Pane& p = *up;
+        if (!p.doc || !p.ruler || p.ruler->marks.empty() || p.view >= fd.view_count) continue;
+        Ruler& r = *p.ruler;
+        GridSpec& g = fd.views[p.view].grid;
+        const u64 lines = p.doc->ed.buf.line_count();
+        r.notes.assign(g.notes.begin(), g.notes.end());
+        for (u32 row = 0; row < r.box.rows && row < g.rows; ++row) {
+            const u64 line = g.line_at(row);
+            if (r.box.cells[row] && line < lines) r.notes.push_back({line, static_cast<u32>(r.col), &r.box.cells[row], 1});
+        }
+        g.notes = r.notes;
+    }
+}
+
+std::string App::ruler_dump() {
+    if (!pane_->ruler || pane_->ruler->marks.empty()) return "none";
+    std::string out;
+    for (const auto& [at, kind] : pane_->ruler->marks) out += (out.empty() ? "" : " ") + std::to_string(at) + ":" + kind;
+    return out;
+}
+
 }  // namespace blit

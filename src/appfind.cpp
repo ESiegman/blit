@@ -1105,6 +1105,13 @@ void App::find_for_split(Pane* p) {
     find_->into_pane = p ? p->id : 0;
 }
 
+const std::vector<u64>* App::find_file_matches(u64 doc) {
+    Find& f = *find_;
+    if (!find_open_ || f.mode != kFindFile || f.file_doc != doc || f.pattern.empty() || f.pattern.bad()) return nullptr;
+    Find::file_count(*this);
+    return f.counted ? &f.starts : nullptr;
+}
+
 u64 App::find_ask_id() const { return find_open_ && find_->mode == kFindAsk ? find_->ask_id : 0; }
 
 // The question went unanswered (the connection ended): the box goes.
