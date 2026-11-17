@@ -44,6 +44,10 @@ jobs:
           build-debug/blit --install-grammar all
           build-debug/blit --grammars
 
+      - name: Instruments
+        # (Its first recording on a fresh machine sets itself up for minutes:
+        # done here, not in the profile suite's time.)
+        run: xcrun xctrace record --template 'Time Profiler' --time-limit 1s --no-prompt --output /tmp/warm.trace --launch -- /bin/sleep 2 || true
       - name: Test
         run: ctest --test-dir build-debug -j 2 --timeout 900 --output-on-failure
 

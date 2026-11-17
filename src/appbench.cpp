@@ -1032,8 +1032,8 @@ void App::run_script(const char* script) {
             prof_record();
         } else if (verb == "profstop") {
             prof_stop();
-        } else if (verb == "profwait") {  // the recording has finished (two minutes at most)
-            const u64 until = now_ns() + 120'000'000'000ull;
+        } else if (verb == "profwait") {  // the recording has finished (five minutes at most: a fresh machine's first xctrace takes its time)
+            const u64 until = now_ns() + 300'000'000'000ull;
             while (prof_busy() && now_ns() < until) {
                 prof_sync();
                 SDL_Delay(5);

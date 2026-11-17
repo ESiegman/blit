@@ -96,8 +96,8 @@ runall() {
 pics="term;frame;termwait:\$;text:cat red.six && cat kit.txt && echo do''ne;key:Return;termwait:done;frame"
 runall "$pics;termdump;pixel:20,90;pixel:60,90"
 check "pictures in the terminal, sixel's and kitty's" "\$ cat red.six && cat kit.txt && echo do''ne|    done|\$ @3,2 15x74 picture 40x12@1,0 picture 2x1@2,0 ;; pixel 20,90: red ;; pixel 60,90: not red"
-runall "$pics;text:seq 1 20;key:Return;termwait:20;frame;termdump;pixel:20,90;key:shift+PageUp;frame;pixel:20,90"
-check "they scroll with the text" '7|8|9|10|11|12|13|14|15|16|17|18|19|20|$ @14,2 15x74 picture 40x12@-9,0 picture 2x1@-8,0 ;; pixel 20,90: not red ;; pixel 20,90: red'
+runall "$pics;text:seq 1 20 && echo fin''ished;key:Return;termwait:finished;frame;termdump;pixel:20,90;key:shift+PageUp;frame;pixel:20,90"
+check "they scroll with the text" '8|9|10|11|12|13|14|15|16|17|18|19|20|finished|$ @14,2 15x74 picture 40x12@-10,0 picture 2x1@-9,0 ;; pixel 20,90: not red ;; pixel 20,90: red'
 # (A PNG, in parts of 4096 bytes, as kitty's protocol has them sent: blit's own icon, 1024 pixels square, in eight columns.)
 perl -MMIME::Base64 -e 'local $/; open my $f, "<", $ARGV[0] or die; my @c = unpack("(A4096)*", encode_base64(<$f>, ""));
     printf "\e_G%s;%s\e\\", ($_ == 0 ? "a=T,f=100,i=9,q=2,c=8," : "") . "m=" . ($_ < $#c ? 1 : 0), $c[$_] for 0 .. $#c' "$here/../res/blit.png" >"$dir/work/png.txt"
