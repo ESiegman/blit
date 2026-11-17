@@ -319,6 +319,17 @@ private:
     // and shrink it back: the nodes asked for at the first press, kept while
     // the text and the selection stay as these left them.
     void select_grow(bool grow);
+    // Lines moved up (-1) or down (+1), and copied (appedit.cpp).
+    void lines_move(int dir);
+    void lines_copy(int dir);
+    // Brackets and quotes closed as they are typed (appedit.cpp): a key or a
+    // character taken (true), and the closers put in, kept in step with what
+    // is typed between them.
+    bool pair_text(const char* text);
+    bool pair_key(const SDL_KeyboardEvent& k);
+    void pairs_follow(u64 cursor_before, u64 size_before, u64 rev_before);
+    std::vector<u64> pair_closers_;
+    u64 pair_doc_ = 0, pair_rev_ = ~0ull;
     // The breadcrumbs under a split's tabs: how tall (none for a tab that is
     // not a file's text), drawn, clicked.
     int crumbs_px(const Pane& p) const;

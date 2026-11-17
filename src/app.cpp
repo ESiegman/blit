@@ -1873,12 +1873,18 @@ void App::handle(const SDL_Event& e) {
 void App::on_text(const char* text) {
     if (term_text(text)) return;  // (to a terminal in front)
     if (pdf_text(text)) return;   // (a PDF's password, or what to find in it: apppdf.cpp)
+    const Editor& ed = pane_->doc->ed;
+    const u64 cursor = ed.cursor(), size = ed.buf.size(), rev = ed.revision();
     if (cfg_.modal) {  // text, or commands: Vim knows which
+        if (vim_.mode() == Vim::kInsert && pair_text(text)) return;
         vim_text(text);
+        pairs_follow(cursor, size, rev);
         return;
     }
     if (pane_->doc->read_only) return;  // a diff is for reading
+    if (pair_text(text)) return;
     pane_->doc->ed.insert(text);
+    pairs_follow(cursor, size, rev);
     scroll_to_cursor();
     lsp_typed(text);
 }
@@ -1905,6 +1911,7 @@ void App::on_key(const SDL_KeyboardEvent& k) {
         if (term_key(k)) return;   // a terminal's tab is in front (appterm.cpp)
     }
     if (script_keys_ && script_key(k)) return;  // a mapping of a script's has it (applua.cpp)
+    if (!find_open_ && !panel_has_keyboard() && pair_key(k)) return;  // Backspace or Enter between a pair
     if (vim_owns_key(k)) {  // (Ctrl+W, Ctrl+V, Ctrl+O ... in the text, with modes on: Vim's before the editor's, where Ctrl is both)
         vim_key(k);
         return;

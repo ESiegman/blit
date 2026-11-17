@@ -304,7 +304,7 @@ struct Parser {
         if (key == "editor.tab_width") return number(key, v, 1, 32, &c.tab_width);
         if (key == "editor.indent_width") return number(key, v, 0, 32, &c.indent_width);
         if (key == "editor.line_numbers" || key == "editor.relative_numbers" || key == "editor.indent_guides" || key == "editor.tab_bar" || key == "editor.status_bar" || key == "editor.start_screen" ||
-            key == "editor.restore" || key == "scroll.momentum" || key == "editor.modal" || key == "editor.breadcrumbs" || key == "editor.sticky_scroll") {
+            key == "editor.restore" || key == "scroll.momentum" || key == "editor.modal" || key == "editor.breadcrumbs" || key == "editor.sticky_scroll" || key == "editor.close_pairs") {
             bool* out = key == "editor.modal"          ? &c.modal
                         : key == "editor.line_numbers" ? &c.line_numbers
                         : key == "editor.relative_numbers" ? &c.relative_numbers
@@ -315,6 +315,7 @@ struct Parser {
                         : key == "editor.restore"       ? &c.restore
                         : key == "editor.breadcrumbs"   ? &c.breadcrumbs
                         : key == "editor.sticky_scroll" ? &c.sticky_scroll
+                        : key == "editor.close_pairs"   ? &c.close_pairs
                                                         : &c.scroll_momentum;
             if (!as_bool(v, out)) warn(std::string(key) + " should be true or false");
             return;
@@ -735,6 +736,7 @@ const Getter kGetters[] = {
     BLIT_GET("editor.start_screen", flag(c.start_screen)),
     BLIT_GET("editor.breadcrumbs", flag(c.breadcrumbs)),
     BLIT_GET("editor.sticky_scroll", flag(c.sticky_scroll)),
+    BLIT_GET("editor.close_pairs", flag(c.close_pairs)),
     BLIT_GET("editor.restore", flag(c.restore)),
     BLIT_GET("editor.modal", flag(c.modal)),
     BLIT_GET("syntax.enabled", flag(c.syntax)),

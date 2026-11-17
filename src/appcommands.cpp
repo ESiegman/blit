@@ -291,6 +291,10 @@ void App::commands_create() {
     own("Go to a symbol in the project", {key(SDLK_P, kP | kA)}, [this] { lsp_find_symbols(); });
     own("Search everywhere", {key(SDLK_K, kP)}, [this] { find_everywhere(); });
     own("Expand the selection", {mac ? key(SDLK_RIGHT, kP | kS | kC) : key(SDLK_RIGHT, kA | kS)}, [this] { select_grow(true); });
+    own("Move the lines up", {key(SDLK_UP, kA)}, [this] { lines_move(-1); });
+    own("Move the lines down", {key(SDLK_DOWN, kA)}, [this] { lines_move(1); });
+    own("Copy the lines down", mac ? std::vector<Chord>{key(SDLK_DOWN, kA | kS)} : std::vector<Chord>{}, [this] { lines_copy(1); });  // (elsewhere Alt+Shift+Down makes the split taller)
+    own("Copy the lines up", mac ? std::vector<Chord>{key(SDLK_UP, kA | kS)} : std::vector<Chord>{}, [this] { lines_copy(-1); });
     own("Fold the block at the cursor", {key(SDLK_LEFTBRACKET, kP | kA)}, [this] { fold_close(); });
     own("Unfold the block at the cursor", {key(SDLK_RIGHTBRACKET, kP | kA)}, [this] { fold_open(); });
     own("Fold or unfold the block at the cursor", {}, [this] { fold_toggle(); });
