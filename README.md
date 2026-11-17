@@ -40,6 +40,15 @@ none of Homebrew's programs; it takes the PATH your login shell has instead
 (kept in `~/Library/Caches/blit/login-path` and asked for again in the
 background each time, so only the first start waits for the shell).
 
+**From the Releases page.** Each version tag (`v0.1.0`) builds blit.app on
+GitHub (`.github/workflows/release.yml`), with the libraries Homebrew gave
+the build copied inside it, so it runs on a Mac without them, and attaches
+`blit-VERSION-macos-arm64.zip` and its SHA-256 to the release. It is signed
+ad hoc, so macOS stops the first start of a downloaded copy: right-click it
+and choose Open, or `xattr -dr com.apple.quarantine /Applications/blit.app`.
+Ligatures need Homebrew's HarfBuzz there too. A release can also be made by
+hand: `gh workflow run release.yml -f tag=v0.2.0`.
+
 **From Homebrew.** This repository is a tap of its own:
 
 ```bash
@@ -1999,7 +2008,7 @@ src/loginpath.*    started from the Dock: the PATH a login shell has, kept from 
 src/macapp.*       the application around blit on macOS: coming to the front (Objective-C)
 res/               blit.app: Info.plist, the icon and the script that draws it (icon.py)
 Formula/           the Homebrew formula (this repository is its own tap)
-.github/workflows/ tests on every push (macOS), and the formula built and installed when it changes
+.github/workflows/ tests on every push (macOS), the formula built and installed when it changes, blit.app on the Releases page for a tag
 shaders/        GLSL sources (grid: the text; popup: boxes over it; image: pictures), build script, compiled blobs (gen/)
 bench/          benchmark tools; see BENCH.md (Debug builds)
 tests/          fuzz and unit tests, and a language server that answers predictably (Debug builds)

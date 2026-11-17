@@ -1,0 +1,96 @@
+name: release
+
+# blit.app on the Releases page: built when a version tag (v1.2.3) is
+# pushed, or by hand with the tag to make (from main, if it is new). The
+# libraries Homebrew gave the build are copied into the app, so it runs on a
+# Mac without them; it is signed for no one in particular (ad hoc), so
+# macOS asks once before the first start.
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Tag to release (made from main if it does not exist yet), as v0.1.0
+        required: true
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref_name }}
+
+jobs:
+  app:
+    runs-on: macos-26
+    timeout-minutes: 75
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag && 'main' || github.ref }}
+
+      - name: Libraries
+        run: |
+          brew update --quiet || true
+          brew install sdl3 freetype tree-sitter lua harfbuzz gcc ninja dylibbundler
+
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=g++-16 -DCMAKE_BUILD_TYPE=Release -DBLIT_NATIVE=OFF
+          cmake --build build -j 3
+
+      - name: Libraries inside the app
+        run: |
+          app=build/blit.app
+          dylibbundler -od -b -x "$app/Contents/MacOS/blit" -d "$app/Contents/Frameworks" -p @executable_path/../Frameworks/
+          codesign --force --deep --sign - "$app"
+          codesign --verify --strict --verbose "$app"
+          otool -L "$app/Contents/MacOS/blit"
+          if otool -L "$app/Contents/MacOS/blit" "$app"/Contents/Frameworks/*.dylib | grep -q '/opt/homebrew'; then
+            echo "a library still points into Homebrew" >&2
+            exit 1
+          fi
+
+      - name: It starts
+        run: |
+          build/blit.app/Contents/MacOS/blit --help | head -1
+          build/blit.app/Contents/MacOS/blit --info
+
+      - name: Package
+        run: |
+          version="${TAG#v}"
+          name="blit-$version-macos-arm64.zip"
+          ditto -c -k --keepParent build/blit.app "$name"
+          shasum -a 256 "$name" > "$name.sha256"
+          echo "NAME=$name" >> "$GITHUB_ENV"
+          echo "VERSION=$version" >> "$GITHUB_ENV"
+
+      - name: Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          cat > notes.md <<EOF
+          blit $VERSION for Apple silicon Macs (macOS 13 or later).
+
+          1. Unzip it and move **blit.app** to Applications.
+          2. It is signed ad hoc, not by a developer Apple knows, so macOS
+             stops the first start of a downloaded copy. Either right-click
+             it, choose Open and confirm, or run
+             \`xattr -dr com.apple.quarantine /Applications/blit.app\`.
+          3. For \`blit\` in a terminal, run "Put the blit command on the PATH"
+             from the command search (Cmd+Shift+P).
+
+          Ligatures need HarfBuzz (\`brew install harfbuzz\`); without it
+          everything else works. Syntax colours come from grammars blit
+          builds itself (\`blit --install-grammar all\`), which needs Apple's
+          Command Line Tools (\`xcode-select --install\`).
+
+          SHA-256: $(cut -d' ' -f1 "$NAME.sha256")
+          EOF
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" "$NAME" "$NAME.sha256" --clobber
+          else
+            gh release create "$TAG" "$NAME" "$NAME.sha256" --target main --title "blit $VERSION" --notes-file notes.md
+          fi
