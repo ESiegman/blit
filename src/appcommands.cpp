@@ -303,6 +303,21 @@ void App::commands_create() {
     git("Git: Stage all", "stageall");
     git_named("Git: New branch\xE2\x80\xA6", "New branch", "branch");
     git_named("Git: Switch branch\xE2\x80\xA6", "Switch to branch", "switch");
+    git("Git: Stash", "stash");
+    git("Git: Pop the latest stash", "pop");
+    git_named("Git: Rebase onto branch\xE2\x80\xA6", "Rebase onto branch", "rebase");
+    git_named("Git: Cherry-pick a commit\xE2\x80\xA6", "Cherry-pick commit", "pick");
+    git("Git: Continue the rebase or cherry-pick", "continue");
+    git_named("Git: New tag\xE2\x80\xA6", "New tag", "tag");
+    // (In a diff tab, Enter stages the hunk or the lines chosen, or
+    // unstages them; in a file, these take the change the cursor is on.)
+    own("Git: Stage the change at the cursor", {}, [this] {
+        if (Commands::git_ready(*this)) git_stage_here(true);
+    });
+    own("Git: Unstage the change at the cursor", {}, [this] {
+        if (Commands::git_ready(*this)) git_stage_here(false);
+    });
+    own("Git: Diffs in two columns or one", {}, [this] { git_view_toggle(); });
 }
 
 // Cmd+F: a search in the file in front, starting from the selection (its
@@ -336,6 +351,7 @@ void App::find_in_file(bool replace) {
 // The commands' keys this file handles (the others are their owners').
 bool App::command_key(const SDL_KeyboardEvent& k) {
     if (!commands_) return false;
+    if (git_view_key(k)) return true;  // a diff tab's own keys, and those of what a change's mark offers (appgit.cpp)
     const u8 m = mods_of(k.mod);
     // (The panel's own keys for another of its tabs: which tab a command
     // showed last no longer says which has the keyboard.)

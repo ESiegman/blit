@@ -480,7 +480,11 @@ editor: a push that takes ten seconds takes them on a thread of its own.
 **In the text.** Lines changed since the last commit have a mark beside
 their number: one colour for added lines, one for changed ones, and a dash
 where lines were taken out. The marks follow the text as you type; nothing
-has to be saved first. Blame is shown only when asked for: Cmd+Option+B
+has to be saved first. A click on a mark offers **Stage this change** (or,
+once it is staged, **Unstage this change**) and **Show the diff**, which
+opens the file's diff at that change; Up, Down and Enter pick, Esc or a
+click elsewhere puts the offer away. What is staged is the text as it is in
+the editor, saved or not. Blame is shown only when asked for: Cmd+Option+B
 (or Blame in the Git tab) turns it on for the file in front, and again
 off. It is a column beside the line numbers (commit, author and age, once
 for each run of lines from one commit) and, quietly at the end of the
@@ -495,11 +499,17 @@ from outside that repository gets no marks and no blame. From the top:
 - The branch, with how many commits it is ahead (↑) of and behind (↓) the
   branch it follows.
 - The commit message, a field that has the keyboard when the tab opens;
-  Tab goes between it and the list below, and Cmd+Enter commits.
+  Tab goes between it and the list below. Enter starts a new line and
+  Cmd+Enter commits. The field grows with the message (to a third of the
+  tab, then it scrolls), and the arrows, Home and End move about in it.
+  Past the 50th column of the first line, and the 72nd of the others, the
+  text is muted: git's usual widths for a summary and a body.
 - **Commit**, which says what it will commit: "Commit 3 staged" with files
   staged, "Commit all 54 changes" with none (every change to files git
-  already knows). Then **Pull, Push, Fetch, Stage all, New branch…** and
-  **Blame**, each a row that Up and Down reach. While one runs its name
+  already knows). Then **Pull, Push, Fetch, Stage all, Stash, New branch…,
+  New tag…** and **Blame**, each a row that Up and Down reach. **Stash**
+  puts the changes to files git knows away (files it does not know stay);
+  a new tag is made on the commit checked out. While one runs its name
   shows there, with Cancel. A branch that follows nothing yet is pushed to
   `origin` under its own name and follows that from then on. How it went
   (or git's complaint, if it did not) appears on the line below. A folder
@@ -510,26 +520,58 @@ from outside that repository gets no marks and no blame. From the top:
   stage the file and `−` to unstage it. Pick a file to get **Stage / Unstage**,
   **Discard** (throws away what is not staged, after asking), **Diff** and
   **Open**; a double click opens its diff.
+- **Stashes**, when there are any: newest first. Pick one to **Show** it
+  (its diff, in a tab), **Pop** it (`p`: back into the files, and gone from
+  the list), **Apply** it (`a`: back, and kept) or **Drop** it (Delete,
+  after asking). One that does not go back cleanly leaves its conflicts
+  under Conflicts, as a merge does, and is kept.
 - **Branches**: the one checked out is starred. Pick another for **Switch**,
-  **Merge** (into the one checked out) and **Delete**; a double click
-  switches. Switching to a branch on the server makes a local one that
-  follows it.
+  **Merge** (into the one checked out), **Rebase onto** (`r`: the branch
+  checked out is rebased onto it, after asking) and **Delete**; a double
+  click switches. Switching to a branch on the server makes a local one that
+  follows it. `h` on a branch shows its commits under History instead
+  (History then says whose they are), and `h` again goes back.
+- **Tags**, when there are any, folded to start with (click the heading):
+  newest version first ("v1.10" before "v1.9"). Pick one to **Show** it, **Push** it (`p`: to the server the
+  branch follows, or `origin`) or **Delete** it here (after asking).
 - **History**: the last forty commits. A double click shows one, with its
-  diff.
+  diff. While History shows another branch's commits, `c` cherry-picks the
+  one picked onto the branch checked out.
 
 From the keyboard: Up and Down (or `j` and `k`) pick, Enter does the usual
 thing with what is picked (a file's diff, switch to a branch, show a
-commit), `o` opens the file and `m` merges the branch, Right stages and
-Left unstages, Delete discards a file's changes or deletes a branch,
-Cmd+Enter commits, Cmd+R looks again, Esc goes back to the text. The line
-at the bottom says the keys for what is picked. The command search has
-them too: "Git: Commit", "Git: Pull", "Git: Push", "Git: Fetch", "Git:
-Stage all", "Git: New branch…", "Git: Switch branch…".
+commit, a stash or a tag), `o` opens the file and `m` merges the branch,
+Right stages and Left unstages, Delete discards a file's changes or deletes
+a branch, a stash or a tag, Cmd+Enter commits, Cmd+R looks again, Esc goes
+back to the text. The line at the bottom says the keys for what is picked.
+The command search has them too: "Git: Commit", "Git: Pull", "Git: Push",
+"Git: Fetch", "Git: Stage all", "Git: Stash", "Git: Pop the latest stash",
+"Git: New branch…", "Git: Switch branch…", "Git: New tag…", "Git: Rebase
+onto branch…", "Git: Cherry-pick a commit…", "Git: Continue the rebase or
+cherry-pick", "Git: Stage the change at the cursor", "Git: Unstage the
+change at the cursor" and "Git: Diffs in two columns or one".
 
-**Diffs** open in a tab of their own, coloured, to read and copy from. A
-merge or pull that conflicts leaves the files under Conflicts and "merging"
-beside the branch: open each, settle it, stage it and commit; or **Abort
-merge**.
+**Diffs** open in a tab of their own, coloured, to read and copy from, with
+the cursor on the first hunk. A file's diff is staged from there a hunk or
+a line at a time: in the diff of its changes, Enter (or `s`) stages the hunk
+the cursor is in, or with lines selected (Visual mode's, with Vim), just
+those lines; in the diff of what is staged of it, Enter (or `u`) unstages
+them. After the heading of the hunk the cursor is in, the key that does it
+is shown. `]` and `[` go to the next hunk and the one before; the tab is
+read again as what is staged changes, and after a hunk goes the cursor is
+on the next. `|` shows any diff in two columns, the old lines on the left
+and each beside the line it became on the right, with their numbers and
+within a changed line what stayed the same muted; lines too long for a
+column go on in the rows below. `|` again goes back to one column, and
+diffs open the way the last one was turned. Two columns stage the same way:
+a row selected is both its lines.
+
+A merge or pull that conflicts leaves the files under Conflicts and
+"merging" beside the branch: open each, settle it, stage it and commit; or
+**Abort merge**. A rebase or a cherry-pick that conflicts stops the same
+way, with "rebasing" or "cherry-picking" beside the branch: settle and
+stage the files, then **Continue rebase** (or **Continue cherry-pick**), or
+give it up with **Abort rebase** (**Abort cherry-pick**).
 
 **Files that change on disk** under an open tab (git switched branches,
 pulled, merged or discarded; or another program wrote them) are read again
@@ -1956,13 +1998,13 @@ does not finish and takes all the memory the machine has.
   time, all threads merged in one flame graph. A function's label goes on
   the line above its hottest line that names it with a bracket after it,
   or on that line if none does. Profiles are not saved.
-- Git: what is listed above and no more. No stash, rebase, cherry-pick,
-  tags or submodules, no staging of part of a file, no side-by-side diff,
-  one line for the commit message, and no way to answer a question git asks
-  on a terminal (a password, a passphrase): set up a credential helper or an
-  ssh agent, as for any program that runs git for you. The changed-line
-  marks compare with the last commit, not with what is staged. Not on
-  Windows yet.
+- Git: what is listed above and no more. No interactive rebase, no
+  submodules, no editing of a hunk before it is staged, and no way to
+  answer a question git asks on a terminal (a password, a passphrase): set
+  up a credential helper or an ssh agent, as for any program that runs git
+  for you. The changed-line marks compare with the last commit, not with
+  what is staged (a staged change's mark looks the same; its offer is to
+  unstage it). Not on Windows yet.
 - Regular expressions: Vim's, without `\z(` and the `\%` items about the
   cursor, the Visual area, marks and display columns (see [Modal
   editing](#modal-editing)); a pattern that would take more steps than its

@@ -147,6 +147,136 @@ printf 'alone\n' >"$dir/alone.txt"
 run "$dir/alone.txt" "frame;gitdump"
 check "a file in no repository" 'no repository'
 
+# Staging part of a file. A file of fourteen lines, changed in two places
+# far enough apart to be two hunks: the second line, and three lines added
+# after the tenth.
+fresh
+printf 'one\ntwo\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\neleven\ntwelve\nthirteen\nfourteen\n' >"$dir/ada/long.txt"
+git -C "$dir/ada" add long.txt && git -C "$dir/ada" commit -q -m "Long"
+changed() { printf 'one\nTWO\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\nA\nB\nC\neleven\ntwelve\nthirteen\nfourteen\n' >"$dir/ada/long.txt"; git -C "$dir/ada" reset -q; }
+staged() { git -C "$dir/ada" diff --cached | grep '^[-+@][^-+]' | tr '\n' ' '; }
+summary() { printf '%s' "$got" | sed 's| / .*||'; }
+# view FILE SCRIPT: the dump of the diff tab (gitview), the lines after the first joined with " / ".
+view() {
+    got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "$2" "$1" 2>&1 >/dev/null | grep -v '^blit: git' | awk '/^(changes|staged|other) /{on=1} on{printf "%s%s", n++ ? " / " : "", $0}')
+}
+changed
+view "$dir/ada/long.txt" "frame;gitwait;git:diff:long.txt;gitwait;gitview"
+check "a file's diff in a tab, the cursor on its first hunk" 'changes long.txt, one column: 2 hunks, cursor in 1 / diff --git a/long.txt b/long.txt / index 1d1b431..eb3ad39 100644 / --- a/long.txt / +++ b/long.txt / @@ -1,5 +1,5 @@ /  one / [--two-] / {++TWO+} /  three /  four /  five / @@ -8,6 +8,9 @@ seven /  eight /  nine /  ten / {++A+} / {++B+} / {++C+} /  eleven /  twelve /  thirteen'
+view "$dir/ada/long.txt" "frame;gitwait;git:diff:long.txt;gitwait;key:Return;gitwait;gitview"
+got="$(summary) / $(staged)"
+check "Enter stages the hunk the cursor is in, and the cursor goes on to the next" 'changes long.txt, one column: 1 hunks, cursor in 1 / @@ -1,5 +1,5 @@ -two +TWO '
+changed
+view "$dir/ada/long.txt" "frame;gitwait;git:diff:long.txt;gitwait;key:];key:Down;key:Down;key:Down;key:Down;key:shift+Down;key:Return;gitwait;gitview"
+got="$(summary) / $(staged)"
+check "a line selected (] to the next hunk), and Enter stages that line alone" 'changes long.txt, one column: 2 hunks, cursor in 2 / @@ -8,6 +8,7 @@ seven +A '
+view "$dir/ada/long.txt" "frame;gitwait;git:staged:long.txt;gitwait;key:u;gitwait;gitview"
+got="$(summary) / $(staged)"
+check "and from what is staged of it, u unstages it again" 'staged long.txt, one column: 0 hunks, cursor in none / '
+printf 'blit.opt.lsp.enabled = false\nblit.opt.editor.modal = true\n' >"$dir/vim.lua"
+got=$(BLIT_INIT="$dir/vim.lua" "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;gitwait;git:diff:long.txt;gitwait;key:];vim:jjjjjV;key:s;gitwait" "$dir/ada/long.txt" 2>&1 >/dev/null | grep -v '^blit: git' | tail -1)
+got="$got$(staged)"
+check "with Vim: Visual mode's lines, and s stages them" '@@ -8,6 +8,7 @@ seven +B '
+changed
+view "$dir/ada/long.txt" "frame;gitwait;git:diff:long.txt;gitwait;key:shift+\\;gitwait;gitview"
+check "| shows it in two columns, each line beside the one it became" 'changes long.txt, two columns: 2 hunks, cursor in 1 / diff --git a/long.txt b/long.txt / index 1d1b431..eb3ad39 100644 / --- a/long.txt / +++ b/long.txt / @@ -1,5 +1,5 @@ /   1 one                           │   1 one /   2 [-two-]                           │   2 {+TWO+} /   3 three                         │   3 three /   4 four                          │   4 four /   5 five                          │   5 five / @@ -8,6 +8,9 @@ seven /   8 eight                         │   8 eight /   9 nine                          │   9 nine /  10 ten                           │  10 ten /                                   │  11 {+A+} /                                   │  12 {+B+} /                                   │  13 {+C+} /  11 eleven                        │  14 eleven /  12 twelve                        │  15 twelve /  13 thirteen                      │  16 thirteen'
+view "$dir/ada/long.txt" "frame;gitwait;git:diff:long.txt;gitwait;git:columns;gitwait;key:];key:Down;key:Down;key:Down;key:Down;key:Down;key:shift+Down;key:Return;gitwait;git:columns;gitwait;gitview"
+got="$(summary) / $(staged)"
+check "a row of two columns staged; and | again, one column" 'changes long.txt, one column: 2 hunks, cursor in 2 / @@ -8,6 +8,7 @@ seven +B '
+changed
+printf 'int parse(const char* s, int n) {\n    return n;\n}\n' >"$dir/ada/code.c"
+git -C "$dir/ada" add code.c && git -C "$dir/ada" commit -q -m "Code"
+printf 'int parse(const char* text, int n) {\n    return n;\n}\n' >"$dir/ada/code.c"
+view "$dir/ada/code.c" "frame;gitwait;git:diff:code.c;gitwait;git:columns;gitwait;gitview"
+got=$(printf '%s' "$got" | sed 's/.* \/ @@ -1,3 +1,3 @@ \/ //; s/ \/ .*//')
+check "within a line that changed, only what changed is marked" '  1 int parse(const char* [-s-], int  │   1 int parse(const char* {+text+}, i'
+git -C "$dir/ada" checkout -q code.c
+
+# A change's mark beside the line numbers: a click on it offers to stage
+# it, and once it is, to unstage it; and the diff, at that change.
+changed
+run "$dir/ada/long.txt" "frame;gitwait;gutterclick:12;gitdump"
+check "a click on a change's mark offers to stage it, or to show the diff there" 'main +2 | changes M:long.txt | branches *main origin/main | commits 3 "Code" | lines 2~ 11+3 | offer stage, diff'
+run "$dir/ada/long.txt" "frame;gitwait;gutterclick:12;key:Return;gitwait;gitdump"
+got="$got / $(staged)"
+check "Enter stages it, and it is marked staged" 'main +2 | staged M:long.txt | changes M:long.txt | branches *main origin/main | commits 3 "Code" | lines 2~ 11+3s | note Stage: done / @@ -8,6 +8,9 @@ seven +A +B +C '
+run "$dir/ada/long.txt" "frame;gitwait;gutterclick:11;gitdump"
+check "a staged change's mark offers to unstage it" 'main +2 | staged M:long.txt | changes M:long.txt | branches *main origin/main | commits 3 "Code" | lines 2~ 11+3s | offer unstage, diff'
+run "$dir/ada/long.txt" "frame;gitwait;gutterclick:11;key:Return;gitwait;gitdump"
+check "and does" 'main +2 | changes M:long.txt | branches *main origin/main | commits 3 "Code" | lines 2~ 11+3 | note Unstage: done'
+view "$dir/ada/long.txt" "frame;gitwait;gutterclick:12;key:Down;key:Return;gitwait;gitview"
+got=$(summary)
+check "or shows the diff, at that change" 'changes long.txt, one column: 2 hunks, cursor in 2'
+run "$dir/ada/long.txt" "frame;gitwait;gutterclick:5;gitdump;gutterclick:2;key:Escape;gitdump"
+check "a click beside an unchanged line, or Esc, offers nothing" 'main +2 | changes M:long.txt | branches *main origin/main | commits 3 "Code" | lines 2~ 11+3'
+run "$dir/ada/long.txt" "frame;gitwait;key:Down;key:End;text: and more;command:Git: Stage the change at the cursor;gitwait;gitdump"
+got="$got / $(git -C "$dir/ada" show :long.txt | sed -n 2p)"
+check "the change at the cursor staged from the command search, as the text is, saved or not" 'main +2 | staged M:long.txt | changes M:long.txt | branches *main origin/main | commits 3 "Code" | lines 2~s 11+3 | note Stage: done / TWO and more'
+
+# Stashes: made, listed, shown, popped, applied, dropped.
+changed
+run "$dir/ada/long.txt" "frame;gitwait;git:stash;gitdump"
+check "stashed: the changes put away, and listed" 'main +2 | stashes "WIP on main: '"$(git -C "$dir/ada" rev-parse --short HEAD)"' Code" | branches *main origin/main | commits 3 "Code" | lines | note Stash: done'
+run "$dir/ada/long.txt" "frame;gitwait;git:showstash:stash@{0};gitwait;dump"
+check "a stash shown in a tab" '>[long.txt stash@{0}*]'
+run "$dir/ada/long.txt" "frame;gitwait;git:pop;gitdump"
+check "popped: the changes back, the stash gone" 'main +2 | changes M:long.txt | branches *main origin/main | commits 3 "Code" | lines 2~ 11+3 | note Pop stash: done'
+run "$dir/ada/long.txt" "frame;gitwait;git:stash;git:apply;gitdump:applied;git:drop;asked;gitdump"
+check "applied, then dropped (after asking)" 'main +2 | changes M:long.txt | branches *main origin/main | commits 3 "Code" | lines 2~ 11+3 | note Drop stash: done'
+git -C "$dir/ada" checkout -q long.txt
+
+# Another branch's history, a commit of it cherry-picked; tags made, in
+# order, pushed and deleted.
+git -C "$dir/ada" switch -q -c side && printf 'side\n' >"$dir/ada/side.txt" && git -C "$dir/ada" add side.txt && git -C "$dir/ada" commit -q -m "On the side" && git -C "$dir/ada" switch -q main
+run "$dir/ada/poem.txt" "frame;gitwait;git:history:side;gitdump"
+check "History shows the branch picked" 'main +2 | branches *main side origin/main | commits 4 of side "On the side" | lines'
+run "$dir/ada/poem.txt" "frame;gitwait;git:history:side;git:pick:$(git -C "$dir/ada" rev-parse --short side);git:history;gitdump"
+check "a commit of it cherry-picked; then History is the branch checked out's again" 'main +3 | branches *main side origin/main | commits 4 "On the side" | lines | note Cherry-pick: done'
+run "$dir/ada/poem.txt" "frame;gitwait;git:tag:v1.9;git:tag:v1.10;git:tag:v1.0;git:pushtag:v1.10;gitdump"
+got="$got / $(git -C "$dir/server.git" tag | tr '\n' ' ')"
+check "tags made, newest first; one pushed" 'main +3 | branches *main side origin/main | tags v1.10 v1.9 v1.0 | commits 4 "On the side" | lines | note Push tag: done / v1.10 '
+run "$dir/ada/poem.txt" "frame;gitwait;git:deletetag:v1.0;asked;gitdump"
+check "a tag deleted (after asking)" 'main +3 | branches *main side origin/main | tags v1.10 v1.9 | commits 4 "On the side" | lines | note Delete tag: Deleted tag '"'"'v1.0'"'"' (was '"$(git -C "$dir/ada" rev-parse --short HEAD)"')'
+
+# Rebase onto a branch: it stops at a conflict, settled as a merge's are
+# (the file fixed and staged), and is continued. A cherry-pick that
+# conflicts is given up.
+git -C "$dir/ada" switch -q side
+sed -i.bak 's/three/three on the side/' "$dir/ada/poem.txt" && rm "$dir/ada/poem.txt.bak" && git -C "$dir/ada" commit -q -a -m "Side three"
+git -C "$dir/ada" switch -q main
+sed -i.bak 's/three/three on main/' "$dir/ada/poem.txt" && rm "$dir/ada/poem.txt.bak" && git -C "$dir/ada" commit -q -a -m "Main three"
+git -C "$dir/ada" switch -q side
+run "$dir/ada/poem.txt" "frame;gitwait;git:rebase:main;asked;gitdump"
+got=$(printf '%s' "$got" | sed 's/ | note .*//')
+check "a rebase that stops for a conflict" '(no branch) rebasing | conflicts U:poem.txt | branches main side origin/main | tags v1.10 v1.9 | commits 5 "Main three" | lines 3+ 5+3'
+printf 'one\ntwo\nthree on both\nfour\nfive\n' >"$dir/ada/poem.txt"
+run "$dir/ada/poem.txt" "frame;gitwait;git:stage:poem.txt;git:continue;gitdump"
+got="$got / $(git -C "$dir/ada" log --format=%s | tr '\n' ',')"
+check "settled, staged, continued: the branch's commits on top of the other's" 'side | branches main *side origin/main | tags v1.10 v1.9 | commits 6 "Side three" | lines | note Continue rebase: done / Side three,Main three,On the side,Code,Long,Start,'
+git -C "$dir/ada" switch -q main
+root=$(git -C "$dir/ada" rev-list --max-parents=0 HEAD)
+git -C "$dir/ada" switch -q -c clash "$root" && sed -i.bak 's/three/three clashing/' "$dir/ada/poem.txt" && rm "$dir/ada/poem.txt.bak" && git -C "$dir/ada" commit -q -a -m "Clash" && git -C "$dir/ada" switch -q main
+run "$dir/ada/poem.txt" "frame;gitwait;git:pick:$(git -C "$dir/ada" rev-parse --short clash);gitdump"
+got=$(printf '%s' "$got" | sed 's/ | note .*//')
+check "a cherry-pick that stops for a conflict" 'main +4 cherry-picking | conflicts U:poem.txt | branches clash *main side origin/main | tags v1.10 v1.9 | commits 5 "Main three" | lines 3+ 5+3'
+run "$dir/ada/poem.txt" "frame;gitwait;git:abortpick;gitdump"
+check "a cherry-pick that conflicts, given up" 'main +4 | branches clash *main side origin/main | tags v1.10 v1.9 | commits 5 "Main three" | lines | note Abort cherry-pick: done'
+
+# The commit message: Enter makes a new line, Cmd+Enter commits. The
+# field grows with the message; past the 50th column of the first line
+# the text is muted (the "|"), and so past the 72nd of the others.
+fresh
+printf 'one\nTWO\nthree\nfour\nfive\n' >"$dir/ada/poem.txt"
+long='Make the parser accept a trailing comma in lists of arguments'
+run "$dir/ada/poem.txt" "frame;gitwait;key:ctrl+shift+G;frame;text:$long;key:Return;key:Return;text:A body line.;gitfield"
+check "a message of three lines: the field grows, and the guide mutes the summary past 50" 'field 5 of 5: Make the parser accept a  / trailing comma in lists o|f  / arguments /  / A body line.^'
+run "$dir/ada/poem.txt" "frame;gitwait;key:ctrl+shift+G;frame;text:Fix;key:Return;key:Return;text:Why.;key:Up;key:Up;key:End;text:ed it;key:cmd+Return;gitwait;gitfield"
+got="$got / $(git -C "$dir/ada" log -1 --format=%B | tr '\n' '/')"
+check "the caret goes up and back; Cmd+Enter commits all of it, and the field is empty again" 'field 1 of 1: ^ / Fixed it//Why.//'
+got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;gitwait;key:ctrl+shift+G;frame;text:x;key:Return;gitwait;gitfield" "$dir/ada/poem.txt" 2>&1 >/dev/null | tail -1)
+got="$got / $(git -C "$dir/ada" log --format=%s | wc -l | tr -d ' ')"
+check "Enter alone commits nothing" 'field 2 of 2: x / ^ / 2'
+
 # The status bar along the bottom: the branch and how it stands, this
 # file's changed lines, the files changed, the file, the cursor.
 fresh

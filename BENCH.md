@@ -2296,6 +2296,26 @@ machine building four other copies:
   16,931 frames a second against 16,799 to 16,931, CPU p50 41.8 to 42.4
   against 41.7 to 42.9 µs.
 
+### Round 41: Git in depth (part of a file, stash, rebase, cherry-pick, tags, two columns, long messages)
+
+Made in a copy of `main` at 532fa9b by an agent of its own; merged with
+one conflict (the README's limits, both sides kept). Every new git command
+runs on the git thread. Medians, alternating with 532fa9b:
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling a 1 MB file with changes, CPU per frame p50 (5 rounds) | 31.2 µs | 30.9 µs |
+| `--bench keys` / `type` | 28.1 / 29.3 µs | 27.9 / 27.7 µs |
+| A 45,803-line diff tab, opened until filled (6 rounds) | 31.1 ms | 30.2 ms |
+| … 200 Page Downs and a frame each, one column / two | 20.1 ms / — | 19.8 / 19.8 ms |
+| … switched to two columns (on the git thread) | — | 25.9 ms |
+| 300 keys and frames in a 2,000-character message | 27.9 ms | 27.9 ms |
+
+A diff tab is laid out and coloured on the git thread now, not the main
+one. What git's thread does more: one comparison of the text with the
+index for each hunks request (about 18 µs a MB), and one `git cat-file` a
+file after each status.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

@@ -1,10 +1,14 @@
 // Git in the editor: the Git tab of the side panel (what has changed, a
-// commit message, push and pull, branches, history), the marks in the line
-// numbers for lines changed since the last commit, blame, and tabs that
-// show a diff. git itself runs on its own thread (git.cpp); this file asks
-// it things and puts the answers on screen.
+// commit message, push and pull, stashes, branches, tags, history), the
+// marks in the line numbers for lines changed since the last commit (and
+// what a click on one offers), blame, and tabs that show a diff, in one
+// column or two, whose hunks and lines can be staged. git itself runs on
+// its own thread (git.cpp); this file asks it things and puts the answers
+// on screen.
 #include <algorithm>
+#include <climits>
 #include <cmath>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 
@@ -19,6 +23,8 @@ namespace {
 
 constexpr u64 kBlameAfterNs = 400'000'000;  // a blame is asked for this long after the text last changed
 constexpr u64 kGitMaxBytes = 16u << 20;     // files larger than this are not compared or blamed
+constexpr size_t kMessageMost = 10000;      // bytes a commit message may have
+constexpr u32 kFieldMost = 8;               // rows the message field grows to (then it scrolls)
 
 enum : u32 {
     kActNone,
@@ -43,18 +49,44 @@ enum : u32 {
     kActRefresh,
     kActInit,  // git init in the folder, which is not a repository yet
     kActLook,  // the folder looked at afresh for a repository (one may have been made there)
+    kActStash,
+    kActPop,
+    kActApply,
+    kActDrop,
+    kActShowStash,
+    kActRebase,     // the branch checked out, onto the one picked
+    kActContinue,   // a rebase or a cherry-pick that stopped for conflicts, once they are settled
+    kActAbortRebase,
+    kActPick,       // a commit cherry-picked onto the branch checked out
+    kActAbortPick,
+    kActNewTag,
+    kActShowTag,
+    kActPushTag,
+    kActDeleteTag,
+    kActHistory,    // History shows the picked branch's commits (or, again, the checked out one's)
+    kActStageHere,  // the change at the cursor (or the lines chosen), staged; in a diff tab or a file
+    kActUnstageHere,
+    kActShowHere,   // the diff of the file, at that change
 };
 
 // The Git tab's rows: the message field, a row for each thing to do, how the
-// last command went, and the sections of files, branches and commits.
-enum : u8 { kRowMessage, kRowAction, kRowNote, kRowHeader, kRowEntry, kRowBranch, kRowCommit, kRowBlank };
-enum : u32 { kSecConflicts, kSecStaged, kSecChanges, kSecBranches, kSecHistory, kSecCount };
-const char* const kSections[] = {"Conflicts", "Staged", "Changes", "Branches", "History"};
+// last command went, and the sections of files, stashes, branches, tags and
+// commits.
+enum : u8 { kRowMessage, kRowAction, kRowNote, kRowHeader, kRowEntry, kRowBranch, kRowCommit, kRowBlank, kRowStash, kRowTag };
+enum : u32 { kSecConflicts, kSecStaged, kSecChanges, kSecStashes, kSecBranches, kSecTags, kSecHistory, kSecCount };
+const char* const kSections[] = {"Conflicts", "Staged", "Changes", "Stashes", "Branches", "Tags", "History"};
 constexpr u32 kStagedBit = 0x80000000u;  // an entry row: the file's staged side
 constexpr u32 kFieldTone = 1;            // the panel's tone for a field typed into (see panel_layout)
 
+// What a diff tab shows: a file's changes not staged yet, what of it is
+// staged (both can be staged or unstaged a hunk or a line at a time), or
+// something else (a commit, a stash), only to read.
+enum : u8 { kViewChanges, kViewStaged, kViewOther };
+
 // Rows Up and Down go to (the message field is reached with Tab).
-bool pickable(u8 kind) { return kind == kRowAction || kind == kRowEntry || kind == kRowBranch || kind == kRowCommit; }
+bool pickable(u8 kind) {
+    return kind == kRowAction || kind == kRowEntry || kind == kRowBranch || kind == kRowCommit || kind == kRowStash || kind == kRowTag;
+}
 
 // A row that is picked: lit as selected while the list has the keyboard,
 // in the quieter tone of the mouse's while it does not.
@@ -78,7 +110,14 @@ std::vector<std::string> wrapped(std::string_view text, u32 cols) {
     return out;
 }
 
-std::string first_line(const std::string& s) { return s.substr(0, s.find('\n')); }
+// The first line of what git said; of a line it wrote over (its progress,
+// ended by a carriage return), the last of what it wrote.
+std::string first_line(const std::string& s) {
+    std::string line = s.substr(0, s.find('\n'));
+    while (line.ends_with('\r')) line.pop_back();
+    const size_t cr = line.rfind('\r');
+    return cr == std::string::npos ? line : line.substr(cr + 1);
+}
 
 std::string_view name_of(std::string_view path) {
     while (path.size() > 1 && path.back() == '/') path.remove_suffix(1);
@@ -91,41 +130,128 @@ i64 stamp_of(const std::string& path) {
     return SDL_GetPathInfo(path.c_str(), &info) ? static_cast<i64>(info.modify_time) : 0;
 }
 
-// Colours for the text of a diff, by what each line starts with.
-std::unique_ptr<Highlights> diff_marks(const std::string& text) {
-    auto h = std::make_unique<Highlights>();
-    h->base = 0;
-    h->end = text.size();
-    u8 last = 0;
-    for (size_t at = 0; at < text.size();) {
-        size_t nl = text.find('\n', at);
-        if (nl == std::string::npos) nl = text.size();
-        const std::string_view line(text.data() + at, nl - at);
-        u8 style = 0;
-        if (line.starts_with("+++") || line.starts_with("---") || line.starts_with("diff ") || line.starts_with("index ") ||
-            line.starts_with("commit ") || line.starts_with("Author:") || line.starts_with("Date:") || line.starts_with("new file") ||
-            line.starts_with("deleted file") || line.starts_with("rename ") || line.starts_with("similarity "))
-            style = 4;
-        else if (line.starts_with("@@")) style = 3;
-        else if (line.starts_with("+")) style = 1;
-        else if (line.starts_with("-")) style = 2;
-        if (style != last || at == 0) {
-            h->off.push_back(static_cast<u32>(at));
-            h->style.push_back(style);
-            last = style;
-        }
-        at = nl + 1;
+// A row of the commit message as the field shows it: its bytes of the
+// message, the line of the message it is part of, and the column of that
+// line it starts at.
+struct MsgRow {
+    u32 b0 = 0, b1 = 0;
+    u32 line = 0, col = 0;
+};
+
+// The message's rows: each of its lines broken, between words where it
+// can be, into rows of at most `room` columns. An empty line is a row.
+void wrap_message(const std::string& m, u32 room, std::vector<MsgRow>* out) {
+    out->clear();
+    room = std::max<u32>(room, 1);
+    const u8* p = reinterpret_cast<const u8*>(m.data());
+    u32 line = 0;
+    for (size_t at = 0;;) {
+        size_t end = m.find('\n', at);
+        if (end == std::string::npos) end = m.size();
+        size_t b0 = at;
+        u32 col = 0;
+        do {
+            size_t i = b0, gap = std::string::npos;
+            u32 w = 0;
+            while (i < end) {
+                const Decoded d = decode_utf8(p + i, end - i);
+                const u32 cw = cp_width(d.cp);
+                if (w + cw > room && i > b0) break;
+                w += cw;
+                i += d.len;
+                if (d.cp == ' ') gap = i;
+            }
+            if (i < end && gap != std::string::npos && gap > b0) i = gap;  // (after the last space that fits)
+            out->push_back({static_cast<u32>(b0), static_cast<u32>(i), line, col});
+            col += width_of(std::string_view(m).substr(b0, i - b0));
+            b0 = i;
+        } while (b0 < end);
+        if (end >= m.size()) break;
+        at = end + 1;
+        ++line;
     }
-    h->seal();
-    return h;
+}
+
+// The row the caret is on: the last that starts at or before it (so at the
+// place a line is broken, the row after).
+u32 caret_row(const std::vector<MsgRow>& rows, size_t caret) {
+    u32 r = 0;
+    for (u32 i = 0; i < rows.size(); ++i)
+        if (rows[i].b0 <= caret) r = i;
+    return r;
+}
+
+// What a file's diff tab shows: what is staged of it, or what is not. (The
+// prefixes are spelt out: a patch of it goes back to git apply, whatever
+// the user's settings for diffs.)
+std::vector<std::string> diff_args(const std::string& rel, bool staged) {
+    std::vector<std::string> args = {"diff", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/"};
+    if (staged) args.push_back("--cached");
+    args.insert(args.end(), {"--", rel});
+    return args;
+}
+
+// The file a path names, from the top of a repository; empty if it is not
+// in it. (Git names the top by its real path: so is a file here.)
+std::string in_repo(const std::string& root, std::string full) {
+    char real[PATH_MAX];
+    if (!is_remote(full) && realpath(full.c_str(), real)) full = real;
+    if (root.empty() || !full.starts_with(root + "/")) return {};
+    return full.substr(root.size() + 1);
 }
 
 }  // namespace
+
+// A diff tab's own state (see Doc::gitview).
+struct GitView {
+    u8 kind = kViewOther;
+    std::string path;               // the file, from the top of the repository (changes and staged)
+    std::vector<std::string> args;  // the git command whose output it shows
+    bool two = false;               // in two columns
+    u32 cols = 0;                   // the room those were laid out for
+    bool asked = false;             // its text has been asked for, and is not here yet
+    u32 goto_line = 0;              // when it comes: the cursor to the hunk with this line of the file (from 1)
+    int keep_hunk = -1;             // or to this hunk (after one was staged, the one after it is in its place)
+    std::shared_ptr<const std::string> source;  // the diff as git printed it
+    std::shared_ptr<const GitDiff> diff;
+    std::vector<u32> left, right;   // two columns: the diff's lines each line of the tab shows
+    // The keys for the hunk the cursor is in, after its heading.
+    std::vector<u32> note_cells;
+    GridNote note;
+    u64 note_key = 0;
+
+    // The line of the diff a line of the tab shows (in two columns the
+    // left's, else the right's), or ~0u.
+    u32 diff_line(u64 row) const {
+        if (left.empty()) return row < (diff ? diff->lines() : 0) ? static_cast<u32>(row) : ~0u;
+        if (row >= left.size()) return ~0u;
+        return left[row] != ~0u ? left[row] : right[row];
+    }
+    // The first line of the tab that shows this line of the diff, or one
+    // after it. (In two columns those lines go up as the tab's do.)
+    u64 row_of(u32 line) const {
+        if (left.empty()) return line;
+        size_t lo = 0, hi = left.size();
+        while (lo < hi) {
+            const size_t mid = (lo + hi) / 2;
+            if (diff_line(mid) < line) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo;
+    }
+    int hunk_at_row(u64 row) const {
+        const u32 l = diff_line(row);
+        return diff && l != ~0u ? diff->hunk_at(l) : -1;
+    }
+};
 
 struct App::GitUi {
     GitStatus status;
     std::vector<GitBranch> branches;
     std::vector<GitCommit> log;
+    std::string log_of;  // the branch History shows (empty: the one checked out)
+    std::vector<std::string> tags;
+    std::vector<GitStash> stashes;
     // Where git was last pointed: the working directory, or while there
     // is none, the project of this document. `known`: git has answered.
     std::string dir;
@@ -134,6 +260,7 @@ struct App::GitUi {
     std::string busy;   // the command that is running
     std::string note;   // how the last one went
     bool note_bad = false;
+    bool two_columns = false;  // diff tabs open in two columns (as the last one was turned to)
 
     // The Git tab.
     struct Row {
@@ -158,6 +285,8 @@ struct App::GitUi {
         if (r.kind == kRowEntry) return i < status.entries.size() ? status.entries[i].path : std::string();
         if (r.kind == kRowBranch) return i < branches.size() ? branches[i].name : std::string();
         if (r.kind == kRowCommit) return i < log.size() ? log[i].hash : std::string();
+        if (r.kind == kRowStash) return i < stashes.size() ? stashes[i].name : std::string();
+        if (r.kind == kRowTag) return i < tags.size() ? tags[i] : std::string();
         if (r.kind == kRowAction) return std::to_string(r.index);
         return {};
     }
@@ -178,16 +307,36 @@ struct App::GitUi {
     }
     u32 top = 0, body_rows = 0;
     u32 foot_row = 0;  // the panel's row the keys for what is picked are on (the last)
-    bool fold[kSecCount] = {};
+    // Sections folded away. Tags to start with: a repository may have hundreds.
+    bool fold[kSecCount] = {false, false, false, false, false, true, false};
     // What has the keyboard while the tab does: 0 the list, 1 the commit
-    // message (to start with), 2 a new branch's name.
+    // message (to start with), 2 a new branch's name, 3 a new tag's.
     u8 input = 1;
-    std::string message, branch_name;
+    std::string message, branch_name, tag_name;
+    // The message: where the next letter goes, its rows as the field shows
+    // them (broken at `wrap` columns), and which of them are on show.
+    size_t caret = 0;
+    std::vector<MsgRow> segs;
+    u32 wrap = 0, field_most = kFieldMost, field_top = 0, field_rows = 1;
 
     // Blame of the cursor's line, as cells.
     std::vector<u32> note_cells;
     GridNote blame_note;
     u64 note_key = 0;
+
+    // What a click on a change's mark in the gutter offers: its actions in
+    // a small box beside it.
+    struct Offer {
+        bool open = false;
+        u64 doc = 0;
+        GitHunk hunk;
+        u32 items[3] = {};
+        u32 count = 0, sel = 0;
+        int x = 0, y = 0;  // where it goes, in pixels
+        TextBox box;
+        u64 drawn = ~0ull;
+        SDL_Rect rect{};
+    } offer;
 };
 
 void App::git_create() { gitui_ = std::make_shared<GitUi>(); }
@@ -234,10 +383,19 @@ void App::sync_git() {
                 g.status = std::move(r.status);
                 g.branches = std::move(r.branches);
                 g.log = std::move(r.log);
+                g.log_of = std::move(r.log_of);
+                g.tags = std::move(r.tags);
+                g.stashes = std::move(r.stashes);
                 shows |= panel_px() > 0;
                 if (moved)  // another commit to compare with: ask again
                     for (const std::unique_ptr<Pane>& p : panes_)
                         for (const std::unique_ptr<Doc>& d : p->docs) d->hunks_asked = d->hunks_rev = d->blame_asked = d->blame_rev = ~0ull;
+                // What is staged and what is not may be other than it was:
+                // the diff tabs of files are read again (and change only if
+                // their text does).
+                for (const std::unique_ptr<Pane>& p : panes_)
+                    for (const std::unique_ptr<Doc>& d : p->docs)
+                        if (d->gitview && d->gitview->kind != kViewOther && !d->gitview->asked) git_view_ask(*d, false);
                 break;
             }
             case Git::kAction: {
@@ -245,7 +403,13 @@ void App::sync_git() {
                 if (r.ok && !r.text.empty() && r.text.size() < 120 && r.text.find('\n') == std::string::npos) g.note = r.label + ": " + r.text;
                 g.note_bad = !r.ok;
                 if (!r.ok) std::fprintf(stderr, "blit: git %s: %s\n", r.label.c_str(), r.text.c_str());
-                if (r.ok && r.label == "Commit") g.message.clear();
+                if (r.ok && r.label == "Commit") {
+                    g.message.clear();
+                    g.caret = 0;
+                    g.field_top = 0;
+                    wrap_message(g.message, g.wrap ? g.wrap : 40, &g.segs);
+                    g.field_rows = 1;
+                }
                 shows = true;
                 reload_changed();  // a pull, a merge, a change of branch: files may be other files now
                 for (const std::unique_ptr<Pane>& p : panes_)
@@ -279,9 +443,15 @@ void App::sync_git() {
                 d->ed.insert(r.ok ? r.text : "git: " + r.text + "\n");
                 d->ed.move_to(0, false);
                 d->ed.mark_saved();
-                if (r.ok) d->marks = diff_marks(r.text);
                 where->cache_rev = ~0ull;
-                pick_theme();
+                shows = true;
+                break;
+            }
+            case Git::kView: {
+                Pane* where = nullptr;
+                Doc* d = find_doc(r.doc, &where);
+                if (!d || !d->gitview) break;
+                git_view_set(*where, *d, r);
                 shows = true;
                 break;
             }
@@ -317,6 +487,7 @@ App::GitSummary App::git_summary() const {
 
 void App::git_want(Doc& d) {
     const GitUi& g = *gitui_;
+    if (d.gitview) return git_view_want(d);
     if (!cfg_.git || !g.status.repo || d.ed.path.empty() || d.read_only || d.ed.buf.size() > kGitMaxBytes) return;
     const u64 rev = d.ed.revision();
     const u64 now = now_ns();
@@ -417,16 +588,456 @@ void App::reread(Pane& p, Doc& d, const std::string* bytes) {
     dirty_ = true;
 }
 
-// A new tab holding what a git command prints (a diff, a commit). The text
-// arrives in a moment, see sync_git().
-void App::git_open_text(std::vector<std::string> args, const std::string& title) {
+// A new tab holding what a git command prints (a commit, a stash). The
+// text arrives in a moment, see sync_git().
+void App::git_open_text(std::vector<std::string> args, const std::string& title) { git_open_view(std::move(args), title, kViewOther, {}); }
+
+// ---------------------------------------------------------------- diff tabs
+
+namespace {
+
+// The columns of text a split shows, for laying a diff out in two. (Less
+// one: the scroll bar's strip is over the last.)
+u32 text_cols(const Pane& p, int cell_w) { return static_cast<u32>(std::max(1, (p.x1 - p.text_x) / std::max(1, cell_w) - 1)); }
+
+}  // namespace
+
+// A tab for a diff (or a commit, or a stash). One already open for the
+// same is shown instead, and read again. `goto_line`: when it comes, the
+// cursor goes to the hunk with that line of the file in it.
+void App::git_open_view(std::vector<std::string> args, const std::string& title, u8 kind, const std::string& path, u32 goto_line) {
+    GitUi& g = *gitui_;
+    for (const std::unique_ptr<Pane>& p : panes_)
+        for (size_t i = 0; i < p->docs.size(); ++i) {
+            Doc& d = *p->docs[i];
+            if (!d.gitview || d.gitview->args != args) continue;
+            focus_pane(p.get());
+            tab_show(i);
+            panel_focus(false);
+            d.gitview->goto_line = goto_line;
+            git_view_ask(d, false);
+            return;
+        }
     Doc* d = add_doc(pane_->tab + 1);
     d->title = title;
     d->read_only = true;
-    const u64 id = d->id;
+    d->gitview = std::make_shared<GitView>();
+    GitView& v = *d->gitview;
+    v.kind = kind;
+    v.path = path;
+    v.args = std::move(args);
+    v.two = g.two_columns;
+    v.goto_line = goto_line;
     tab_show(pane_->tab + 1);
     panel_focus(false);
-    git_.text(id, std::move(args), title);
+    git_view_ask(*d, false);
+}
+
+// Asks for a diff tab's text: from git (again), or with `again` the diff it
+// has laid out once more (in one column or two, or for another width).
+void App::git_view_ask(Doc& d, bool again) {
+    GitView& v = *d.gitview;
+    Pane* where = nullptr;
+    find_doc(d.id, &where);
+    v.asked = true;
+    const u32 cols = v.two ? text_cols(where ? *where : *pane_, font_->cell_w()) : 0;
+    git_.view(d.id, v.args, again ? v.source : nullptr, cols, d.ed.tab_width);
+}
+
+// A diff tab's text has come: it takes the place of what the tab showed (if
+// it is another), with the cursor on the hunk it was on, or the one asked for.
+void App::git_view_set(Pane& p, Doc& d, Git::Result& r) {
+    GitView& v = *d.gitview;
+    v.asked = false;
+    if (!r.ok || !r.view) {
+        if (v.source || d.ed.buf.size()) return;  // (it showed something: that stays)
+        d.ed.insert("git: " + r.text + "\n");
+        d.ed.move_to(0, false);
+        d.ed.mark_saved();
+        p.cache_rev = ~0ull;
+        return;
+    }
+    GitDiffView& view = *r.view;
+    const bool same = v.source && *v.source == *r.source && v.cols == view.cols && v.two == (view.cols > 0);
+    if (!v.source && v.keep_hunk < 0 && !v.goto_line) v.keep_hunk = 0;  // (opened: at the first hunk)
+    if (same && !v.goto_line && v.keep_hunk < 0) return;  // (nothing to show that is not shown)
+    // Where the cursor was: in which hunk, or on which line.
+    const bool front = p.doc == &d && pane_ == &p;
+    u64 row = d.ed.buf.line_of(d.ed.cursor());
+    int hunk = v.keep_hunk >= 0 ? v.keep_hunk : v.hunk_at_row(row);
+    v.keep_hunk = -1;
+    if (!same) {
+        if (front && cfg_.modal) {  // (Visual mode's ends are in the text that goes)
+            vim_attach();
+            if (vim_.visual()) {
+                vim_.keys(d.ed, "<Esc>");
+                vim_after(Vim::kHandled);
+            }
+        }
+        d.measurer = {};  // (it may be reading the text that goes)
+        d.ed.open_bytes({}, view.text);
+        d.ed.mark_saved();
+        auto h = std::make_unique<Highlights>();
+        h->base = 0;
+        h->end = view.text.size();
+        h->off = std::move(view.off);
+        h->style = std::move(view.style);
+        h->seal();
+        d.marks = std::move(h);
+        d.widest_rev = d.indent_rev = ~0ull;
+        v.source = r.source;
+        v.diff = r.diff;
+        v.left = std::move(view.left);
+        v.right = std::move(view.right);
+        v.cols = view.cols;
+        v.two = view.cols > 0;
+        v.note_key = 0;
+    }
+    const std::vector<GitDiff::Hunk>& hunks = v.diff->hunks;
+    if (v.goto_line) {  // the hunk with that line of the file, or the first after it
+        hunk = -1;
+        for (size_t k = 0; k < hunks.size() && hunk < 0; ++k)
+            if (hunks[k].new_start + hunks[k].new_count >= v.goto_line) hunk = static_cast<int>(k);
+        if (hunk < 0 && !hunks.empty()) hunk = static_cast<int>(hunks.size()) - 1;
+        v.goto_line = 0;
+    }
+    if (hunk >= 0 && !hunks.empty()) row = v.row_of(hunks[static_cast<size_t>(std::min<size_t>(static_cast<size_t>(hunk), hunks.size() - 1))].first);
+    row = std::min<u64>(row, d.ed.buf.line_count() - 1);
+    if (!same || d.ed.buf.line_of(d.ed.cursor()) != row) d.ed.move_to(d.ed.buf.line_start(row), false);
+    p.cache_rev = ~0ull;
+    if (p.doc == &d) {
+        Pane* const keep = pane_;
+        pane_ = &p;
+        scroll_to_cursor();
+        pane_ = keep;
+    }
+    pick_theme();
+}
+
+// Once a frame for a diff tab on show: two columns are laid out again when
+// the split has become narrower than they are, or a good deal wider.
+void App::git_view_want(Doc& d) {
+    GitView& v = *d.gitview;
+    if (!v.two || !v.source || v.asked) return;
+    const u32 now = text_cols(*pane_, font_->cell_w());
+    if (now < v.cols || now > v.cols + 2) git_view_ask(d, true);
+}
+
+// A diff tab in two columns, or back in one; and the tabs opened from now on too.
+void App::git_view_toggle() {
+    Doc& d = *pane_->doc;
+    if (!d.gitview) return;
+    GitView& v = *d.gitview;
+    v.two = !v.two;
+    gitui_->two_columns = v.two;
+    v.keep_hunk = v.hunk_at_row(d.ed.buf.line_of(d.ed.cursor()));
+    if (v.source) git_view_ask(d, true);
+    dirty_ = true;
+}
+
+// Stages (or unstages) what is chosen at the cursor. In a diff tab: the
+// lines selected, or with none, the hunk the cursor is in, through a patch
+// of them (git apply --cached). In a file: the run of changed lines the
+// cursor is on, as the text is now.
+void App::git_stage_here(bool stage) {
+    GitUi& g = *gitui_;
+    if (!cfg_.git || !g.status.repo) return;
+    Doc& d = *pane_->doc;
+    const char* label = stage ? "Stage" : "Unstage";
+    if (!d.gitview) {
+        const u64 line = d.ed.buf.line_of(d.ed.cursor());
+        for (const GitHunk& h : d.hunks)
+            if ((h.kind == GitHunk::kDeleted && h.line == line) || (h.kind != GitHunk::kDeleted && line >= h.line && line < u64(h.line) + h.count)) {
+                std::vector<Piece> pieces;
+                d.ed.buf.snapshot(&pieces);
+                d.git = &git_;
+                g.busy = label;
+                g.note.clear();
+                git_.stage(d.id, full_path(d.ed.path), std::move(pieces), h.line, h.line + h.count, stage, label);
+                ++git_gen_;
+                dirty_ = true;
+                return;
+            }
+        notify(std::string("No change at the cursor to ") + (stage ? "stage" : "unstage"));
+        return;
+    }
+    GitView& v = *d.gitview;
+    if (!v.diff || v.kind == kViewOther || (v.kind == kViewChanges) != stage) return;
+    // The lines chosen: those selected (with Vim, Visual mode's), else the
+    // hunk the cursor is in.
+    std::vector<u8> chosen(v.diff->lines(), 0);
+    u64 lo = d.ed.sel_min(), hi = d.ed.sel_max();
+    if (cfg_.modal) {
+        vim_attach();
+        if (vim_selection(&lo, &hi)) {
+            vim_.keys(d.ed, "<Esc>");
+            vim_after(Vim::kHandled);
+        } else {
+            lo = hi = d.ed.cursor();
+        }
+    }
+    const u64 r0 = d.ed.buf.line_of(lo);
+    int hunk = v.hunk_at_row(r0);
+    if (hi > lo) {
+        u64 r1 = d.ed.buf.line_of(hi);
+        if (r1 > r0 && d.ed.buf.line_start(r1) == hi) --r1;  // (a selection that ends at a line's start is of the lines before)
+        for (u64 r = r0; r <= r1; ++r) {
+            if (v.left.empty()) {
+                if (r < chosen.size()) chosen[r] = 1;
+                continue;
+            }
+            for (const u32 l : {v.left[r], v.right[r]})
+                if (l < chosen.size()) chosen[l] = 1;
+            if (hunk < 0) hunk = v.hunk_at_row(r);
+        }
+    } else if (hunk >= 0) {
+        const GitDiff::Hunk& h = v.diff->hunks[static_cast<size_t>(hunk)];
+        std::fill(chosen.begin() + h.first, chosen.begin() + h.last, 1);
+    }
+    const std::string patch = diff_patch(*v.source, *v.diff, chosen, !stage);
+    if (patch.empty()) {
+        notify(std::string("No change there to ") + (stage ? "stage" : "unstage"));
+        return;
+    }
+    v.keep_hunk = std::max(hunk, 0);
+    std::vector<std::string> args = {"apply", "--cached", "--recount", "--whitespace=nowarn"};
+    if (!stage) args.push_back("-R");
+    args.push_back("-");
+    g.busy = label;
+    g.note.clear();
+    git_.run(std::move(args), label, patch);
+    ++git_gen_;
+    dirty_ = true;
+}
+
+// The keys of a diff tab in front, and of the box a change's mark offers.
+bool App::git_view_key(const SDL_KeyboardEvent& k) {
+    GitUi& g = *gitui_;
+    if (g.offer.open) {
+        GitUi::Offer& o = g.offer;
+        dirty_ = true;
+        switch (k.key) {
+            case SDLK_UP: o.sel = (o.sel + o.count - 1) % o.count; return true;
+            case SDLK_DOWN: o.sel = (o.sel + 1) % o.count; return true;
+            case SDLK_RETURN:
+            case SDLK_KP_ENTER: {
+                o.open = false;
+                const u32 a = o.items[o.sel];
+                if (Doc* d = find_doc(o.doc); d && d == pane_->doc) {
+                    const GitHunk h = o.hunk;
+                    if (a == kActShowHere) {
+                        const std::string rel = in_repo(g.status.root, full_path(d->ed.path));
+                        if (!rel.empty())
+                            git_open_view(diff_args(rel, h.staged), std::string(name_of(rel)) + (h.staged ? " (staged)" : " (changes)"), h.staged ? kViewStaged : kViewChanges,
+                                          rel, h.line + 1);
+                    } else {
+                        std::vector<Piece> pieces;
+                        d->ed.buf.snapshot(&pieces);
+                        d->git = &git_;
+                        const bool stage = a == kActStageHere;
+                        g.busy = stage ? "Stage" : "Unstage";
+                        g.note.clear();
+                        git_.stage(d->id, full_path(d->ed.path), std::move(pieces), h.line, h.line + h.count, stage, g.busy);
+                        ++git_gen_;
+                    }
+                }
+                term_drop_text_ = true;
+                return true;
+            }
+            case SDLK_ESCAPE: o.open = false; return true;
+            default: o.open = false; break;  // (any other key: the box goes, and the key does what it does)
+        }
+    }
+    if (!cfg_.git || find_open_ || panel_has_keyboard() || !pane_->doc->gitview) return false;
+    if (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI | SDL_KMOD_ALT)) return false;
+    if (cfg_.modal) {  // (not while a command or a search is typed)
+        vim_attach();
+        const Vim::Mode m = vim_.mode();
+        if (m == Vim::kCommand || m == Vim::kInsert || m == Vim::kReplace || vim_.awaiting_char() || !vim_.showcmd().empty()) return false;
+    }
+    Doc& d = *pane_->doc;
+    GitView& v = *d.gitview;
+    const bool shift = k.mod & SDL_KMOD_SHIFT;
+    switch (k.key) {
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER:
+            if (v.kind == kViewOther) return false;
+            git_stage_here(v.kind == kViewChanges);
+            break;
+        case SDLK_S:
+            if (shift || v.kind != kViewChanges) return false;
+            git_stage_here(true);
+            break;
+        case SDLK_U:
+            if (shift || v.kind != kViewStaged) return false;
+            git_stage_here(false);
+            break;
+        case SDLK_RIGHTBRACKET:
+        case SDLK_LEFTBRACKET: {  // to the next hunk, or the one before
+            if (!v.diff || v.diff->hunks.empty() || shift) return false;
+            const u64 row = d.ed.buf.line_of(d.ed.cursor());
+            const std::vector<GitDiff::Hunk>& hs = v.diff->hunks;
+            u64 to = row;
+            if (k.key == SDLK_RIGHTBRACKET) {
+                for (const GitDiff::Hunk& h : hs)
+                    if (v.row_of(h.first) > row) {
+                        to = v.row_of(h.first);
+                        break;
+                    }
+            } else {
+                for (size_t i = hs.size(); i-- > 0;)
+                    if (v.row_of(hs[i].first) < row) {
+                        to = v.row_of(hs[i].first);
+                        break;
+                    }
+            }
+            if (cfg_.modal && vim_.visual()) {
+                vim_.keys(d.ed, "<Esc>");
+                vim_after(Vim::kHandled);
+            }
+            d.ed.move_to(d.ed.buf.line_start(to), false);
+            scroll_to_cursor();
+            break;
+        }
+        case SDLK_PIPE:
+        case SDLK_BACKSLASH:
+            if (k.key == SDLK_BACKSLASH && !shift) return false;
+            git_view_toggle();
+            break;
+        default: return false;
+    }
+    term_drop_text_ = true;  // (the letter is not typed after it)
+    dirty_ = true;
+    return true;
+}
+
+// A click on a change's mark beside the line numbers: a small box beside it
+// offers to stage the change (or unstage it, if it is staged) and to show
+// the file's diff there. A click anywhere else puts the box away.
+bool App::git_gutter_click(const SDL_MouseButtonEvent& b) {
+    GitUi& g = *gitui_;
+    const int px = static_cast<int>(b.x * density_), py = static_cast<int>(b.y * density_);
+    if (g.offer.open) {
+        GitUi::Offer& o = g.offer;
+        o.open = false;
+        dirty_ = true;
+        const SDL_Rect& r = o.rect;
+        if (b.button == SDL_BUTTON_LEFT && px >= r.x && px < r.x + r.w && py >= r.y && py < r.y + r.h) {
+            const int row = (py - r.y - look().pad_y) / font_->cell_h();
+            if (row >= 0 && static_cast<u32>(row) < o.count) {
+                o.sel = static_cast<u32>(row);
+                o.open = true;
+                SDL_KeyboardEvent enter{};
+                enter.key = SDLK_RETURN;
+                git_view_key(enter);
+            }
+            return true;
+        }
+    }
+    if (b.button != SDL_BUTTON_LEFT || !cfg_.git || !cfg_.line_numbers || !g.status.repo) return false;
+    Doc& d = *pane_->doc;
+    if (d.hunks.empty() || d.read_only || d.ed.path.empty()) return false;
+    const int cw = font_->cell_w(), ch = font_->cell_h();
+    if (px < pane_->text_x - cw || px >= pane_->text_x || py < pane_->text_y || py >= pane_->y1) return false;
+    const i64 y = py - pane_->text_y + std::llround(pane_->scroll_y);
+    if (y < 0) return false;
+    const u64 line = static_cast<u64>(y / ch), lines = d.ed.buf.line_count();
+    if (line >= lines) return false;
+    // The run of lines the mark there is for (as the gutter draws them).
+    const GitHunk* hit = nullptr;
+    for (const GitHunk& h : d.hunks) {
+        if (h.kind == GitHunk::kDeleted ? (h.line == line || (h.line >= lines && line + 1 == lines)) : line >= h.line && line < u64(h.line) + h.count) hit = &h;
+        if (hit) break;
+    }
+    if (!hit) return false;
+    GitUi::Offer& o = g.offer;
+    o.open = true;
+    o.doc = d.id;
+    o.hunk = *hit;
+    o.count = 0;
+    o.items[o.count++] = hit->staged ? kActUnstageHere : kActStageHere;
+    o.items[o.count++] = kActShowHere;
+    o.sel = 0;
+    o.drawn = ~0ull;
+    o.x = pane_->text_x;
+    o.y = pane_->text_y + static_cast<int>(static_cast<i64>(line + 1) * ch - std::llround(pane_->scroll_y));
+    lsp_close(kPopAll);
+    dirty_ = true;
+    return true;
+}
+
+// The box a change's mark offers, under the line it was clicked on.
+void App::git_offer_layout(FrameDesc& fd) {
+    GitUi::Offer& o = gitui_->offer;
+    if (!o.open) return;
+    if (pane_->doc->id != o.doc || fd.popup_count >= std::size(fd.popups)) {
+        o.open = false;
+        return;
+    }
+    Font& font = *font_;
+    const Look l = look();
+    const int cw = font.cell_w(), ch = font.cell_h();
+    const u64 key = (static_cast<u64>(font.generation()) << 32) | (o.sel << 4) | o.items[0];
+    if (key != o.drawn) {
+        o.drawn = key;
+        auto label = [](u32 a) {
+            return a == kActStageHere ? "Stage this change" : a == kActUnstageHere ? "Unstage this change" : "Show the diff";
+        };
+        const std::string enter = key_symbols("Enter", font);
+        u32 widest = 0;
+        for (u32 i = 0; i < o.count; ++i) widest = std::max(widest, width_of(label(o.items[i])));
+        const u32 cols = widest + 3 + width_of(enter);
+        o.box.resize(cols, o.count);
+        for (u32 i = 0; i < o.count; ++i) {
+            put(o.box, font, i, 0, label(o.items[i]), i == 0 ? ink::kText : ink::kText);
+            if (i == o.sel) {
+                put(o.box, font, i, cols - width_of(enter), enter, ink::kMuted);
+                o.box.select_row(i);
+            }
+        }
+    }
+    Popup& p = fd.popups[fd.popup_count++];
+    p.cols = o.box.cols;
+    p.rows = o.box.rows;
+    p.cells = o.box.cells.data();
+    p.pad_x = l.edge;
+    p.pad_y = l.pad_y;
+    p.w = static_cast<int>(p.cols) * cw + 2 * p.pad_x;
+    p.h = static_cast<int>(p.rows) * ch + 2 * p.pad_y;
+    p.x = std::clamp(o.x, 0, std::max(0, px_w_ - p.w));
+    p.y = std::clamp(o.y + l.gap, 0, std::max(0, px_h_ - p.h));
+    p.border_px = static_cast<float>(l.hair);
+    o.rect = {p.x, p.y, p.w, p.h};
+    fx_float(p, kFxMenu);
+}
+
+// In a diff tab whose changes can be staged: after the heading of the hunk
+// the cursor is in, the key that stages it (or unstages it).
+void App::git_view_note(FrameDesc& fd) {
+    Doc& d = *pane_->doc;
+    if (!d.gitview || focus_view_ >= fd.view_count || panel_has_keyboard()) return;
+    GitView& v = *d.gitview;
+    if (!v.diff || v.kind == kViewOther) return;
+    GridSpec& grid = fd.views[focus_view_].grid;
+    if (!grid.notes.empty()) return;
+    const int hunk = v.hunk_at_row(pane_->cur_line);
+    if (hunk < 0) return;
+    const bool lines = pane_->has_sel;
+    const u64 head = v.row_of(v.diff->hunks[static_cast<size_t>(hunk)].first);
+    if (head >= d.ed.buf.line_count()) return;
+    const u64 key = ((static_cast<u64>(hunk) * 4 + (lines ? 2 : 0) + v.kind) << 16) ^ (static_cast<u64>(font_->generation()) << 48) ^ d.id;
+    if (key != v.note_key) {
+        v.note_key = key;
+        const char* what = v.kind == kViewChanges ? (lines ? "stage the lines" : "stage") : (lines ? "unstage the lines" : "unstage");
+        const Hint hint{"Enter", what};
+        TextBox box;
+        box.resize(hints_width({&hint, 1}, *font_), 1);
+        put_hints(box, *font_, 0, 0, {&hint, 1});
+        v.note_cells = std::move(box.cells);
+    }
+    const u64 start = d.ed.buf.line_start(head);
+    v.note = {head, d.ed.col_between(start, d.ed.line_end(head)) + 4, v.note_cells.data(), static_cast<u32>(v.note_cells.size())};
+    grid.notes = {&v.note, 1};
 }
 
 // ---------------------------------------------------------------- doing things
@@ -452,8 +1063,10 @@ void App::git_do(u32 action, const std::string& arg) {
         return;
     }
     if (!g.status.repo) return;
-    // What the action is about: its argument, or the row picked in the Git tab.
+    // What the action is about: its argument, or the row picked in the Git
+    // tab (when that is a row of the kind the action is for).
     const GitUi::Row* row = g.sel >= 0 && static_cast<size_t>(g.sel) < g.rows.size() ? &g.rows[static_cast<size_t>(g.sel)] : nullptr;
+    const u8 kind = row ? row->kind : static_cast<u8>(kRowBlank);
     const GitEntry* entry = nullptr;
     bool staged_side = false;
     std::string name = arg;
@@ -464,27 +1077,30 @@ void App::git_do(u32 action, const std::string& arg) {
         entry = &g.status.entries[row->index & ~kStagedBit];
         staged_side = row->index & kStagedBit;
         name = entry->path;
-    } else if (row && row->kind == kRowBranch) {
-        name = g.branches[row->index].name;
-    } else if (row && row->kind == kRowCommit) {
-        name = g.log[row->index].hash;
+    } else if (row && (row->kind == kRowBranch || row->kind == kRowCommit || row->kind == kRowStash || row->kind == kRowTag)) {
+        name = g.name_of_row(*row);
     }
     auto run = [&](std::vector<std::string> args, const char* label, std::string input = {}) {
         g.busy = label;
         g.note.clear();
         git_.run(std::move(args), label, std::move(input));
     };
+    // The stash an action is about: the one named, the one picked, or the latest.
+    auto stash = [&] { return !arg.empty() ? arg : kind == kRowStash ? name : g.stashes.empty() ? std::string() : g.stashes[0].name; };
+    auto of_kind = [&](u8 k) { return !arg.empty() || kind == k ? name : std::string(); };
+    // Where tags go: the server the branch follows, or else origin.
+    const std::string server = g.status.upstream.find('/') != std::string::npos ? g.status.upstream.substr(0, g.status.upstream.find('/')) : "origin";
     const std::string full = g.status.root + "/" + name;
     switch (action) {
         case kActCommit: {
             std::string text = arg.empty() ? g.message : arg;
-            while (!text.empty() && text.back() == ' ') text.pop_back();
+            while (!text.empty() && (text.back() == ' ' || text.back() == '\n' || text.back() == '\t' || text.back() == '\r')) text.pop_back();
             if (text.empty()) {  // it needs saying what the commit is: the message field, in view
                 panel_show_git();
                 g.input = 1;
                 g.pick(g.first(kRowMessage, 0));
                 g.top = 0;
-                g.note = "Type a message for the commit, then Enter";
+                g.note = "Type a message for the commit, then Cmd+Enter";
                 g.note_bad = false;
                 break;
             }
@@ -536,14 +1152,13 @@ void App::git_do(u32 action, const std::string& arg) {
                 open_path(full.c_str());
             } else {
                 const bool cached = arg.empty() ? staged_side : !entry->unstaged();
-                git_open_text(cached ? std::vector<std::string>{"diff", "--cached", "--", name} : std::vector<std::string>{"diff", "--", name},
-                              std::string(name_of(name)) + (cached ? " (staged)" : " (changes)"));
+                git_open_view(diff_args(name, cached), std::string(name_of(name)) + (cached ? " (staged)" : " (changes)"), cached ? kViewStaged : kViewChanges, name);
             }
             break;
         case kActSwitch:
             if (name.empty()) break;
             // A branch on a server gets a local one of the same name that follows it.
-            if (row && arg.empty() && g.branches[row->index].remote) run({"switch", "-q", "--track", name}, "Switch");
+            if (row && arg.empty() && kind == kRowBranch && g.branches[row->index].remote) run({"switch", "-q", "--track", name}, "Switch");
             else run({"switch", "-q", name}, "Switch");
             break;
         case kActMerge:
@@ -553,25 +1168,99 @@ void App::git_do(u32 action, const std::string& arg) {
             if (!name.empty() && confirm("Delete the branch " + name + "?", "Delete")) run({"branch", "-d", name}, "Delete branch");
             break;
         case kActNewBranch:
+        case kActNewTag: {
+            const bool tag = action == kActNewTag;
             if (arg.empty()) {  // its name, typed in its row
                 panel_show_git();
-                g.input = 2;
-                g.branch_name.clear();
-                g.pick(g.first(kRowAction, kActNewBranch));
+                g.input = tag ? 3 : 2;
+                (tag ? g.tag_name : g.branch_name).clear();
+                g.pick(g.first(kRowAction, action));
                 g.top = 0;
             } else {
-                run({"switch", "-q", "-c", arg}, "New branch");
+                if (tag && arg[0] != '-') run({"tag", arg}, "New tag");
+                else run({"switch", "-q", "-c", arg}, "New branch");
                 g.input = 0;
             }
             break;
+        }
         case kActShowCommit:
-            if (!name.empty()) git_open_text({"show", "--stat", "--patch", name}, name);
+            if (!name.empty()) git_open_view({"show", "--stat", "--patch", "--no-ext-diff", name}, name, kViewOther, {});
             break;
         case kActBlame:
             pane_->doc->blame_on = !pane_->doc->blame_on;
             pane_->cache_rev = ~0ull;
             break;
         case kActRefresh: git_.refresh(); break;
+        // Stashes: what has changed put away (files git does not know stay),
+        // and brought back. One that does not go back cleanly leaves its
+        // conflicts, as a merge does, and is kept.
+        case kActStash: run({"stash", "push", "-q"}, "Stash"); break;
+        case kActPop:
+        case kActApply: {
+            const std::string which = stash();
+            if (which.empty()) break;
+            if (action == kActPop) run({"stash", "pop", "-q", which}, "Pop stash");
+            else run({"stash", "apply", "-q", which}, "Apply stash");
+            break;
+        }
+        case kActDrop: {
+            const std::string which = stash();
+            if (!which.empty() && confirm("Drop " + which + "? Its changes are gone with it.", "Drop")) run({"stash", "drop", "-q", which}, "Drop stash");
+            break;
+        }
+        case kActShowStash: {
+            const std::string which = stash();
+            if (!which.empty()) git_open_view({"stash", "show", "-p", "--no-ext-diff", which}, which, kViewOther, {});
+            break;
+        }
+        // The branch checked out rebased onto another (it asks: the commits
+        // are made anew), a commit cherry-picked from another branch's
+        // history. Either stops at conflicts for them to be settled, staged,
+        // and then continued (or given up).
+        case kActRebase: {
+            const std::string onto = of_kind(kRowBranch);
+            if (onto.empty() || onto == g.status.branch) break;
+            const std::string what = g.status.branch.empty() ? std::string("what is checked out") : g.status.branch;
+            if (confirm("Rebase " + what + " onto " + onto + "? Its commits are made again on top of " + onto + ".", "Rebase")) run({"rebase", onto}, "Rebase");
+            break;
+        }
+        case kActContinue:
+            if (g.status.rebasing) run({"rebase", "--continue"}, "Continue rebase");
+            else if (g.status.picking) run({"cherry-pick", "--continue"}, "Continue cherry-pick");
+            break;
+        case kActAbortRebase: run({"rebase", "--abort"}, "Abort rebase"); break;
+        case kActPick: {
+            const std::string commit = of_kind(kRowCommit);
+            if (!commit.empty()) run({"cherry-pick", commit}, "Cherry-pick");
+            break;
+        }
+        case kActAbortPick: run({"cherry-pick", "--abort"}, "Abort cherry-pick"); break;
+        case kActShowTag: {
+            const std::string tag = of_kind(kRowTag);
+            if (!tag.empty()) git_open_view({"show", "--stat", "--patch", "--no-ext-diff", tag}, tag, kViewOther, {});
+            break;
+        }
+        case kActPushTag: {
+            const std::string tag = of_kind(kRowTag);
+            if (!tag.empty()) run({"push", server, "refs/tags/" + tag}, "Push tag");
+            break;
+        }
+        case kActDeleteTag: {
+            const std::string tag = of_kind(kRowTag);
+            if (!tag.empty() && confirm("Delete the tag " + tag + " here? (One pushed stays on the server.)", "Delete")) run({"tag", "-d", tag}, "Delete tag");
+            break;
+        }
+        case kActHistory: {
+            // The picked branch's commits in History; that branch again (or
+            // the one checked out), the checked out one's.
+            std::string branch = of_kind(kRowBranch);
+            if (branch == g.log_of || (row && arg.empty() && kind == kRowBranch && g.branches[row->index].current)) branch.clear();
+            g.log_of = branch;
+            git_.log_of(branch);
+            break;
+        }
+        case kActStageHere: git_stage_here(true); break;
+        case kActUnstageHere: git_stage_here(false); break;
         default: break;
     }
     ++git_gen_;
@@ -580,9 +1269,13 @@ void App::git_do(u32 action, const std::string& arg) {
 
 // ---------------------------------------------------------------- in the text view
 
-// Who last changed the cursor's line, after the end of that line.
+// Who last changed the cursor's line, after the end of that line. (And in
+// a diff tab, the key for the hunk the cursor is in; and the box a change's
+// mark offers.)
 void App::git_note(FrameDesc& fd) {
     GitUi& g = *gitui_;
+    git_offer_layout(fd);
+    git_view_note(fd);
     const Doc& d = *pane_->doc;
     if (!blame_shown(d) || focus_view_ >= fd.view_count || !d.blame || d.blame_rev != d.ed.revision() || panel_has_keyboard()) return;
     GridSpec& grid = fd.views[focus_view_].grid;
@@ -605,6 +1298,20 @@ void App::git_note(FrameDesc& fd) {
 
 // ---------------------------------------------------------------- the Git tab
 
+// The message field's rows, broken again (the message or the room for it
+// has changed), and the caret's kept in view.
+void App::git_message_changed() {
+    GitUi& g = *gitui_;
+    g.caret = std::min(g.caret, g.message.size());
+    wrap_message(g.message, g.wrap ? g.wrap : 40, &g.segs);
+    g.field_rows = std::min<u32>(static_cast<u32>(g.segs.size()), std::max<u32>(1, g.field_most));
+    const u32 at = caret_row(g.segs, g.caret);
+    if (at < g.field_top) g.field_top = at;
+    if (at >= g.field_top + g.field_rows) g.field_top = at - g.field_rows + 1;
+    g.field_top = std::min<u32>(g.field_top, static_cast<u32>(g.segs.size()) - g.field_rows);
+    git_rows();
+}
+
 // The rows of the Git tab, from what git last said. Made again whenever
 // that changes, so that a row never points at something that has gone.
 void App::git_rows() {
@@ -614,11 +1321,16 @@ void App::git_rows() {
     if (!g.status.repo) {
         if (g.known && cfg_.git) g.rows.push_back({kRowAction, kActInit});  // (the one thing to do: make it one)
     } else {
-        // The message, then a row for each thing to do (reached with Up and
-        // Down like the files), then how the last of them went.
-        g.rows.push_back({kRowMessage, 0});
-        for (const u32 a : {kActCommit, kActPull, kActPush, kActFetch, kActStageAll, kActNewBranch, kActBlame}) g.rows.push_back({kRowAction, a});
+        // The message (a row for each of its rows on show), then a row for
+        // each thing to do (reached with Up and Down like the files), then
+        // how the last of them went.
+        for (u32 k = 0; k < std::max<u32>(1, g.field_rows); ++k) g.rows.push_back({kRowMessage, k});
+        for (const u32 a : {kActCommit, kActPull, kActPush, kActFetch, kActStageAll, kActStash, kActNewBranch, kActNewTag, kActBlame})
+            g.rows.push_back({kRowAction, a});
         if (g.status.merging) g.rows.push_back({kRowAction, kActAbortMerge});
+        if (g.status.rebasing || g.status.picking) g.rows.push_back({kRowAction, kActContinue});
+        if (g.status.rebasing) g.rows.push_back({kRowAction, kActAbortRebase});
+        if (g.status.picking) g.rows.push_back({kRowAction, kActAbortPick});
         if (!g.busy.empty() || !g.note.empty()) g.rows.push_back({kRowNote, 0});
         if (!g.busy.empty()) g.rows.push_back({kRowAction, kActCancel});
         auto section = [&](u32 sec, auto&& wanted, bool staged) {
@@ -630,17 +1342,20 @@ void App::git_rows() {
             for (u32 i = 0; i < g.status.entries.size(); ++i)
                 if (wanted(g.status.entries[i])) g.rows.push_back({kRowEntry, i | (staged ? kStagedBit : 0)});
         };
+        // A list of its own: its heading, and unless it is folded, its rows.
+        auto list = [&](u32 sec, u8 kind, size_t n, bool always) {
+            if (!n && !always) return;
+            g.rows.push_back({kRowHeader, sec});
+            if (!g.fold[sec])
+                for (u32 i = 0; i < n; ++i) g.rows.push_back({kind, i});
+        };
         section(kSecConflicts, [](const GitEntry& e) { return e.conflict; }, false);
         section(kSecStaged, [](const GitEntry& e) { return e.staged(); }, true);
         section(kSecChanges, [](const GitEntry& e) { return e.unstaged(); }, false);
-        g.rows.push_back({kRowHeader, kSecBranches});
-        if (!g.fold[kSecBranches])
-            for (u32 i = 0; i < g.branches.size(); ++i) g.rows.push_back({kRowBranch, i});
-        if (!g.log.empty()) {
-            g.rows.push_back({kRowHeader, kSecHistory});
-            if (!g.fold[kSecHistory])
-                for (u32 i = 0; i < g.log.size(); ++i) g.rows.push_back({kRowCommit, i});
-        }
+        list(kSecStashes, kRowStash, g.stashes.size(), false);
+        list(kSecBranches, kRowBranch, g.branches.size(), true);
+        list(kSecTags, kRowTag, g.tags.size(), false);
+        list(kSecHistory, kRowCommit, g.log.size(), false);
     }
     // (What was picked stays picked if it is still there.)
     g.sel = -1;
@@ -667,7 +1382,21 @@ void App::git_panel_draw(TextBox& box, bool focused) {
         put(box, font, 1, 0, fit_text("Git is switched off in the settings", cols), ink::kMuted);
         return;
     }
-    if (g.rows_gen != git_gen_) git_rows();
+    // The message is broken into rows as wide as the field (its key shows
+    // at the right of the first while there is room for it there), and the
+    // field grows to a third of the tab before it scrolls.
+    const Hint commit_key{"Cmd+Enter", "commit"};
+    const u32 commit_w = hints_width({&commit_key, 1}, font);
+    const u32 room = cols >= commit_w + 11 ? cols - commit_w - 3 : cols;
+    const u32 wrap = cols > 1 ? cols - 1 : 1;
+    const u32 most = std::clamp<u32>(g.body_rows / 3, 1, kFieldMost);
+    if (wrap != g.wrap || most != g.field_most) {
+        g.wrap = wrap;
+        g.field_most = most;
+        git_message_changed();
+    } else if (g.rows_gen != git_gen_) {
+        git_rows();
+    }
     if (!g.status.repo && !g.known) {
         put(box, font, 1, 0, "Looking\xE2\x80\xA6", ink::kMuted);
         return;
@@ -678,16 +1407,18 @@ void App::git_panel_draw(TextBox& box, bool focused) {
         const u32 c = put(box, font, 1, 0, "Not a git repository: ", ink::kMuted);
         put(box, font, 1, c, fit_text(name_of(g.dir), cols > c ? cols - c : 0), ink::kText);
     } else {
-        // The branch, and how far it is from the one it follows.
+        // The branch, and how far it is from the one it follows; and what is
+        // under way, if something stopped for conflicts.
         std::string counts;
         if (g.status.ahead) counts = "\xE2\x86\x91" + std::to_string(g.status.ahead);
         if (g.status.behind) counts += (counts.empty() ? "\xE2\x86\x93" : " \xE2\x86\x93") + std::to_string(g.status.behind);
-        const u32 tail = (counts.empty() ? 0 : width_of(counts) + 1) + (g.status.merging ? 8 : 0);
+        const char* state = g.status.rebasing ? "rebasing" : g.status.picking ? "cherry-picking" : g.status.merging ? "merging" : nullptr;
+        const u32 tail = (counts.empty() ? 0 : width_of(counts) + 1) + (state ? width_of(state) + 1 : 0);
         u32 c = put(box, font, 1, 0, "\xE2\x8E\x87 ", ink::kMuted);  // a branch sign
         const std::string branch = g.status.branch.empty() ? "(no branch) " + g.status.head : g.status.branch;
         c = put(box, font, 1, c, fit_text(branch, cols > c + tail ? cols - c - tail : 1), ink::kText);
         if (!counts.empty()) c = put(box, font, 1, c + 1, counts, ink::kMuted);
-        if (g.status.merging) put(box, font, 1, c + 1, "merging", ink::kWarning);
+        if (state) put(box, font, 1, c + 1, state, ink::kWarning);
     }
 
     g.top = std::min<u32>(g.top, g.rows.size() > g.body_rows ? static_cast<u32>(g.rows.size()) - g.body_rows : 0);
@@ -700,19 +1431,63 @@ void App::git_panel_draw(TextBox& box, bool focused) {
     }
     u32 staged = 0, tracked = 0;  // (what a commit takes: the staged files, else every change to a file git knows)
     for (const GitEntry& e : g.status.entries) staged += e.staged(), tracked += e.unstaged() && e.index != '?';
-    // A field: the text typed (its end, where the next letter goes, while it
-    // is typed), or what it is for; on the right the key that does it; all
-    // on a tone of its own.
-    auto field = [&](u32 r, const std::string& text, const char* empty, bool typing, Hint key) {
-        const u32 key_w = hints_width({&key, 1}, font);
-        const u32 room = cols >= key_w + 11 ? cols - key_w - 3 : cols;
-        u32 end = 0;
-        if (text.empty()) put(box, font, r, 0, fit_text(empty, room), ink::kMuted);
-        else end = put(box, font, r, 0, typing ? fit_text(text, room > 1 ? room - 1 : 0, true) : fit_text(text, room), ink::kText);
-        if (room < cols) put_hints(box, font, r, cols - key_w, {&key, 1});
+    // A field's tone, along a whole row.
+    auto tone = [&](u32 r) {
         u32* line = box.cells.data() + static_cast<size_t>(r) * cols;
         for (u32 c = 0; c < cols; ++c) line[c] |= kCellSelected | kFieldTone << kCellDecoShift;
+        return line;
+    };
+    // A field of one line: the text typed (its end, where the next letter
+    // goes, while it is typed), or what it is for; on the right the key
+    // that does it; all on a tone of its own.
+    auto field = [&](u32 r, const std::string& text, const char* empty, bool typing, Hint key) {
+        const u32 key_w = hints_width({&key, 1}, font);
+        const u32 fits = cols >= key_w + 11 ? cols - key_w - 3 : cols;
+        u32 end = 0;
+        if (text.empty()) put(box, font, r, 0, fit_text(empty, fits), ink::kMuted);
+        else end = put(box, font, r, 0, typing ? fit_text(text, fits > 1 ? fits - 1 : 0, true) : fit_text(text, fits), ink::kText);
+        if (fits < cols) put_hints(box, font, r, cols - key_w, {&key, 1});
+        u32* line = tone(r);
         if (typing && end < cols) line[end] = (line[end] & ~kCellDecoMask) | kCellSelected;  // where the next letter goes
+    };
+    // A row of the commit message. Past the 50th column of its first line,
+    // and the 72nd of the others, the text is muted: git's guides for a
+    // summary and a body, shown without a word about them.
+    auto message_row = [&](u32 r, u32 k) {
+        const bool typing = focused && g.input == 1;
+        const u32 at = g.field_top + k;
+        u32 caret_col = ~0u;
+        if (g.message.empty()) {
+            if (k == 0) put(box, font, r, 0, fit_text("Message", room), ink::kMuted);
+            caret_col = 0;
+        } else if (at < g.segs.size()) {
+            const MsgRow& m = g.segs[at];
+            const std::string_view text(g.message.data() + m.b0, m.b1 - m.b0);
+            const u32 limit = m.line == 0 ? 50 : 72;
+            size_t split = text.size();
+            if (m.col >= limit) {
+                split = 0;
+            } else {
+                u32 w = m.col;
+                const u8* p = reinterpret_cast<const u8*>(text.data());
+                for (size_t i = 0; i < text.size();) {
+                    const Decoded d = decode_utf8(p + i, text.size() - i);
+                    if (w + cp_width(d.cp) > limit) {
+                        split = i;
+                        break;
+                    }
+                    w += cp_width(d.cp);
+                    i += d.len;
+                }
+            }
+            const u32 c = put(box, font, r, 0, text.substr(0, split), ink::kText);
+            put(box, font, r, c, text.substr(split), ink::kMuted);
+            if (caret_row(g.segs, g.caret) == at) caret_col = width_of(std::string_view(g.message).substr(m.b0, g.caret - m.b0));
+        }
+        if (k == 0 && room < cols && g.field_top == 0 && (g.segs.empty() || width_of(std::string_view(g.message).substr(g.segs[0].b0, g.segs[0].b1 - g.segs[0].b0)) < room))
+            put_hints(box, font, r, cols - commit_w, {&commit_key, 1});
+        u32* line = tone(r);
+        if (typing && caret_col < cols) line[caret_col] = (line[caret_col] & ~kCellDecoMask) | kCellSelected;  // where the next letter goes
     };
     // An action's row: what it does (the commit says what it will take), and
     // on the right its key, if it has one.
@@ -733,9 +1508,14 @@ void App::git_panel_draw(TextBox& box, bool focused) {
             case kActPush: label = g.status.upstream.empty() ? "Push to origin" : "Push"; break;
             case kActFetch: label = "Fetch"; break;
             case kActStageAll: label = "Stage all"; break;
+            case kActStash: label = "Stash"; break;
             case kActNewBranch: label = "New branch\xE2\x80\xA6"; break;
+            case kActNewTag: label = "New tag\xE2\x80\xA6"; break;
             case kActBlame: label = "Blame"; key = "Cmd+Option+B"; break;
             case kActAbortMerge: label = "Abort merge"; break;
+            case kActContinue: label = g.status.rebasing ? "Continue rebase" : "Continue cherry-pick"; break;
+            case kActAbortRebase: label = "Abort rebase"; break;
+            case kActAbortPick: label = "Abort cherry-pick"; break;
             case kActCancel: label = "Cancel"; break;
             case kActInit: label = "Make it a repository"; key = "git init"; break;
             default: break;
@@ -751,12 +1531,15 @@ void App::git_panel_draw(TextBox& box, bool focused) {
         bool lit = static_cast<int>(i) == g.sel;
         switch (row.kind) {
             case kRowMessage:
-                field(r, g.message, "Message", focused && g.input == 1, {"Cmd+Enter", "commit"});
+                message_row(r, row.index);
                 lit = false;  // (the field is lit by its tone, and its caret while typed into)
                 break;
             case kRowAction:
                 if (row.index == kActNewBranch && g.input == 2) {
                     field(r, g.branch_name, "Branch name", focused, {"Enter", "make it"});
+                    lit = false;
+                } else if (row.index == kActNewTag && g.input == 3) {
+                    field(r, g.tag_name, "Tag name", focused, {"Enter", "make it"});
                     lit = false;
                 } else {
                     action(r, row.index);
@@ -770,10 +1553,13 @@ void App::git_panel_draw(TextBox& box, bool focused) {
                 u32 n = 0;
                 if (row.index == kSecBranches) n = static_cast<u32>(g.branches.size());
                 else if (row.index == kSecHistory) n = static_cast<u32>(g.log.size());
+                else if (row.index == kSecStashes) n = static_cast<u32>(g.stashes.size());
+                else if (row.index == kSecTags) n = static_cast<u32>(g.tags.size());
                 else
                     for (const GitEntry& e : g.status.entries) n += row.index == kSecConflicts ? e.conflict : row.index == kSecStaged ? e.staged() : e.unstaged();
                 put(box, font, r, 0, g.fold[row.index] ? "\xE2\x96\xB8" : "\xE2\x96\xBE", ink::kMuted);  // a small triangle, right or down
-                const u32 c = put(box, font, r, 2, kSections[row.index], ink::kHeading);
+                u32 c = put(box, font, r, 2, kSections[row.index], ink::kHeading);
+                if (row.index == kSecHistory && !g.log_of.empty()) c = put(box, font, r, c + 1, fit_text(g.log_of, cols > c + 6 ? cols - c - 6 : 1), ink::kText);
                 put(box, font, r, c + 1, std::to_string(n), ink::kMuted);
                 break;
             }
@@ -787,11 +1573,11 @@ void App::git_panel_draw(TextBox& box, bool focused) {
                 // picked row and the one under the mouse, at the end, the
                 // sign that stages or unstages it.
                 const bool sign = cols > 8 && (lit || static_cast<int>(r) == hover);
-                const u32 room = cols > 4 + (sign ? 2 : 0) ? cols - 4 - (sign ? 2 : 0) : 0;
+                const u32 fits = cols > 4 + (sign ? 2 : 0) ? cols - 4 - (sign ? 2 : 0) : 0;
                 const std::string_view name = name_of(e.path);
-                const u32 c = put(box, font, r, 4, fit_text(name, room), ink::kText);
-                if (name.size() < e.path.size() && c + 2 < 4 + room)
-                    put(box, font, r, c + 1, fit_text(std::string_view(e.path).substr(0, e.path.size() - name.size()), 4 + room - c - 1, true), ink::kMuted);
+                const u32 c = put(box, font, r, 4, fit_text(name, fits), ink::kText);
+                if (name.size() < e.path.size() && c + 2 < 4 + fits)
+                    put(box, font, r, c + 1, fit_text(std::string_view(e.path).substr(0, e.path.size() - name.size()), 4 + fits - c - 1, true), ink::kMuted);
                 if (sign) {
                     put(box, font, r, cols - 1, is_staged ? "\xE2\x88\x92" : "+", ink::kText);
                     g.words.push_back({r, cols - 2, cols, is_staged ? static_cast<u32>(kActUnstage) : static_cast<u32>(kActStage)});
@@ -810,6 +1596,14 @@ void App::git_panel_draw(TextBox& box, bool focused) {
                 put(box, font, r, at + 1, fit_text(c.subject, cols > at + 1 ? cols - at - 1 : 0), ink::kText);
                 break;
             }
+            case kRowStash: {  // its number, and what git called it
+                const GitStash& st = g.stashes[row.index];
+                const std::string_view n = std::string_view(st.name).substr(std::min<size_t>(st.name.size(), 6));  // ("stash@{0}": "{0}")
+                const u32 at = put(box, font, r, 2, n, ink::kMuted);
+                put(box, font, r, at + 1, fit_text(st.subject, cols > at + 1 ? cols - at - 1 : 0), ink::kText);
+                break;
+            }
+            case kRowTag: put(box, font, r, 2, fit_text(g.tags[row.index], cols > 2 ? cols - 2 : 0), ink::kText); break;
             default: break;
         }
         if (lit) light_row(box, r, list);
@@ -831,14 +1625,14 @@ void App::git_panel_draw(TextBox& box, bool focused) {
         const char* what;
         u32 action;
     };
-    Key keys[4];
+    Key keys[6];
     u32 n = 0;
     auto add = [&](const char* k, const char* what, u32 a = kActNone) { keys[n++] = {k, what, a}; };
     const GitUi::Row* picked = g.sel >= 0 && static_cast<size_t>(g.sel) < g.rows.size() ? &g.rows[static_cast<size_t>(g.sel)] : nullptr;
     if (!g.status.repo) {
         add("Enter", "make it one", kActInit);
         add("Cmd+R", "look again", kActLook);
-    } else if (g.input == 2) {
+    } else if (g.input == 2 || g.input == 3) {
         add("Enter", "make it");
         add("Esc", "cancel");
     } else if (g.input == 1) {
@@ -859,13 +1653,28 @@ void App::git_panel_draw(TextBox& box, bool focused) {
             add("Backspace", "discard", kActDiscard);
             add("o", "open", kActOpenFile);
         }
-    } else if (picked && picked->kind == kRowBranch && !g.branches[picked->index].current) {
-        add("Enter", "switch", kActSwitch);
-        add("m", "merge", kActMerge);
-        if (!g.branches[picked->index].remote) add("Backspace", "delete", kActDeleteBranch);
+    } else if (picked && picked->kind == kRowBranch) {
+        const GitBranch& b = g.branches[picked->index];
+        if (!b.current) {
+            add("Enter", "switch", kActSwitch);
+            add("m", "merge", kActMerge);
+            add("r", "rebase onto", kActRebase);
+        }
+        add("h", b.name == g.log_of || (b.current && !g.log_of.empty()) ? "back" : "history", kActHistory);
+        if (!b.current && !b.remote) add("Backspace", "delete", kActDeleteBranch);
     } else if (picked && picked->kind == kRowCommit) {
         add("Enter", "show", kActShowCommit);
+        if (!g.log_of.empty() && g.log_of != g.status.branch) add("c", "cherry-pick", kActPick);
         add("Tab", "message");
+    } else if (picked && picked->kind == kRowStash) {
+        add("Enter", "show", kActShowStash);
+        add("p", "pop", kActPop);
+        add("a", "apply", kActApply);
+        add("Backspace", "drop", kActDrop);
+    } else if (picked && picked->kind == kRowTag) {
+        add("Enter", "show", kActShowTag);
+        add("p", "push", kActPushTag);
+        add("Backspace", "delete", kActDeleteTag);
     } else {
         add("Tab", "message");
         add("Cmd+R", "refresh", kActRefresh);
@@ -884,8 +1693,17 @@ void App::git_panel_draw(TextBox& box, bool focused) {
 bool App::git_panel_text(std::string_view text) {
     GitUi& g = *gitui_;
     if (!g.status.repo || !g.input) return true;  // (the list's letters are keys, not text)
-    std::string& into = g.input == 2 ? g.branch_name : g.message;
-    if (into.size() < 500) into += text;
+    if (g.input == 1) {  // the message: where the caret is
+        g.caret = std::min(g.caret, g.message.size());
+        if (g.message.size() + text.size() <= kMessageMost) {
+            g.message.insert(g.caret, text);
+            g.caret += text.size();
+        }
+        git_message_changed();
+    } else {
+        std::string& into = g.input == 2 ? g.branch_name : g.tag_name;
+        if (into.size() < 500) into += text;
+    }
     ++git_gen_;
     dirty_ = true;
     return true;
@@ -922,27 +1740,96 @@ bool App::git_panel_key(const SDL_KeyboardEvent& k) {
             step(1);
         }
     };
-    if (g.input && g.status.repo) {
-        std::string& text = g.input == 2 ? g.branch_name : g.message;
+    if (g.input == 1 && g.status.repo) {
+        // The message: Enter makes a new line, Cmd+Enter commits; the caret
+        // goes by characters and by rows as the field shows them.
+        std::string& m = g.message;
+        size_t& c = g.caret;
+        c = std::min(c, m.size());
+        auto before = [&](size_t i) {
+            if (i == 0) return i;
+            --i;
+            while (i > 0 && is_cont(static_cast<u8>(m[i]))) --i;
+            return i;
+        };
+        auto after = [&](size_t i) {
+            if (i >= m.size()) return i;
+            ++i;
+            while (i < m.size() && is_cont(static_cast<u8>(m[i]))) ++i;
+            return i;
+        };
+        // To row r of the field, as near the column the caret is at as it has.
+        auto to_row = [&](u32 r) {
+            const MsgRow& from = g.segs[caret_row(g.segs, c)];
+            const u32 col = width_of(std::string_view(m).substr(from.b0, c - from.b0));
+            const MsgRow& to = g.segs[r];
+            const bool broken = r + 1 < g.segs.size() && g.segs[r + 1].line == to.line && to.b1 > to.b0;  // (its end is the next row's start)
+            const size_t end = broken ? before(to.b1) : to.b1;
+            size_t i = to.b0;
+            for (u32 w = 0; i < end;) {
+                const size_t j = after(i);
+                w += width_of(std::string_view(m).substr(i, j - i));
+                if (w > col) break;
+                i = j;
+            }
+            c = i;
+        };
+        auto edited = [&] {
+            git_message_changed();
+            return changed();
+        };
         switch (k.key) {
             case SDLK_RETURN:
             case SDLK_KP_ENTER:
-                if (g.input == 2) {
-                    if (!text.empty()) git_do(kActNewBranch, text);
-                    g.input = 0;
-                } else {
+                if (cmd) {
                     git_do(kActCommit);
+                    return changed();
                 }
+                if (m.size() < kMessageMost) m.insert(c++, 1, '\n');
+                return edited();
+            case SDLK_ESCAPE:
+            case SDLK_TAB: to_list(); return changed();
+            case SDLK_UP: {
+                const u32 r = caret_row(g.segs, c);
+                if (r > 0) to_row(r - 1);
+                return edited();
+            }
+            case SDLK_DOWN: {
+                const u32 r = caret_row(g.segs, c);
+                if (r + 1 >= g.segs.size()) to_list();
+                else to_row(r + 1);
+                return edited();
+            }
+            case SDLK_LEFT: c = before(c); return edited();
+            case SDLK_RIGHT: c = after(c); return edited();
+            case SDLK_HOME: {
+                const size_t nl = c ? m.rfind('\n', c - 1) : std::string::npos;
+                c = nl == std::string::npos ? 0 : nl + 1;
+                return edited();
+            }
+            case SDLK_END: c = std::min(m.size(), m.find('\n', c)); return edited();
+            case SDLK_BACKSPACE: {
+                const size_t b = before(c);
+                m.erase(b, c - b);
+                c = b;
+                return edited();
+            }
+            case SDLK_DELETE: m.erase(c, after(c) - c); return edited();
+            default: return !cmd;
+        }
+    }
+    if ((g.input == 2 || g.input == 3) && g.status.repo) {  // a new branch's name, or a tag's
+        std::string& text = g.input == 2 ? g.branch_name : g.tag_name;
+        switch (k.key) {
+            case SDLK_RETURN:
+            case SDLK_KP_ENTER:
+                if (!text.empty()) git_do(g.input == 2 ? kActNewBranch : kActNewTag, text);
+                g.input = 0;
                 return changed();
             case SDLK_ESCAPE:
-            case SDLK_TAB:
-                if (g.input == 2) g.input = 0;  // (the branch's name given up; the New branch row stays picked)
-                else to_list();
-                return changed();
-            case SDLK_DOWN:
-                if (g.input == 1) to_list();
-                return changed();
-            case SDLK_UP: return true;
+            case SDLK_TAB: g.input = 0; return changed();  // (the name given up; its row stays picked)
+            case SDLK_UP:
+            case SDLK_DOWN: return true;
             case SDLK_BACKSPACE:
                 while (!text.empty() && is_cont(static_cast<u8>(text.back()))) text.pop_back();
                 if (!text.empty()) text.pop_back();
@@ -951,7 +1838,9 @@ bool App::git_panel_key(const SDL_KeyboardEvent& k) {
         }
     }
     const GitUi::Row* row = g.sel >= 0 && static_cast<size_t>(g.sel) < g.rows.size() ? &g.rows[static_cast<size_t>(g.sel)] : nullptr;
+    const u8 kind = row ? row->kind : static_cast<u8>(kRowBlank);
     const bool plain = !(k.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI | SDL_KMOD_ALT));
+    const bool other = kind == kRowBranch && !g.branches[row->index].current;  // a branch not checked out
     switch (k.key) {
         case SDLK_UP: step(-1); return changed();
         case SDLK_DOWN: step(1); return changed();
@@ -972,27 +1861,54 @@ bool App::git_panel_key(const SDL_KeyboardEvent& k) {
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
             if (cmd) git_do(kActCommit);
-            else if (row && row->kind == kRowAction) git_do(row->index);
-            else if (row && pickable(row->kind)) git_do(row->kind == kRowEntry ? kActOpenDiff : row->kind == kRowBranch ? kActSwitch : kActShowCommit);
+            else if (kind == kRowAction) git_do(row->index);
+            else if (kind == kRowEntry) git_do(kActOpenDiff);
+            else if (kind == kRowBranch) git_do(kActSwitch);
+            else if (kind == kRowCommit) git_do(kActShowCommit);
+            else if (kind == kRowStash) git_do(kActShowStash);
+            else if (kind == kRowTag) git_do(kActShowTag);
             return changed();
         case SDLK_RIGHT:  // towards "staged"
-            if (row && row->kind == kRowEntry && !(row->index & kStagedBit)) git_do(kActStage);
+            if (kind == kRowEntry && !(row->index & kStagedBit)) git_do(kActStage);
             return changed();
         case SDLK_LEFT:
-            if (row && row->kind == kRowEntry && (row->index & kStagedBit)) git_do(kActUnstage);
+            if (kind == kRowEntry && (row->index & kStagedBit)) git_do(kActUnstage);
             return changed();
         case SDLK_DELETE:
         case SDLK_BACKSPACE:
-            if (row && row->kind == kRowEntry && !(row->index & kStagedBit)) git_do(kActDiscard);
-            else if (row && row->kind == kRowBranch && !g.branches[row->index].current && !g.branches[row->index].remote) git_do(kActDeleteBranch);
+            if (kind == kRowEntry && !(row->index & kStagedBit)) git_do(kActDiscard);
+            else if (other && !g.branches[row->index].remote) git_do(kActDeleteBranch);
+            else if (kind == kRowStash) git_do(kActDrop);
+            else if (kind == kRowTag) git_do(kActDeleteTag);
             return changed();
-        case SDLK_O:  // the picked file itself
-            if (!plain) break;
-            if (row && row->kind == kRowEntry) git_do(kActOpenFile);
+        default: break;
+    }
+    if (!plain) return false;
+    // Letters for what is picked: a file opened; a branch merged, rebased
+    // onto, or its history; a commit cherry-picked; a stash popped or
+    // applied; a tag pushed.
+    switch (k.key) {
+        case SDLK_O:
+            if (kind == kRowEntry) git_do(kActOpenFile);
             return changed();
-        case SDLK_M:  // the picked branch merged into the one checked out
-            if (!plain) break;
-            if (row && row->kind == kRowBranch && !g.branches[row->index].current) git_do(kActMerge);
+        case SDLK_M:
+            if (other) git_do(kActMerge);
+            return changed();
+        case SDLK_R:
+            if (other) git_do(kActRebase);
+            return changed();
+        case SDLK_H:
+            if (kind == kRowBranch) git_do(kActHistory);
+            return changed();
+        case SDLK_C:
+            if (kind == kRowCommit && !g.log_of.empty() && g.log_of != g.status.branch) git_do(kActPick);
+            return changed();
+        case SDLK_P:
+            if (kind == kRowStash) git_do(kActPop);
+            else if (kind == kRowTag) git_do(kActPushTag);
+            return changed();
+        case SDLK_A:
+            if (kind == kRowStash) git_do(kActApply);
             return changed();
         default: break;
     }
@@ -1012,7 +1928,7 @@ void App::git_panel_click(int row, int col, const SDL_MouseButtonEvent& b) {
     for (const GitUi::Word& w : g.words)
         if (w.row == static_cast<u32>(row) && col >= 0 && static_cast<u32>(col) >= w.c0 && static_cast<u32>(col) < w.c1) {
             if (on_row && pickable(g.rows[i].kind)) g.pick(static_cast<int>(i));
-            if (on_row || g.input == 2) g.input = 0;  // (a row's sign: the list has the keyboard; a key below leaves the message its own)
+            if (on_row || g.input >= 2) g.input = 0;  // (a row's sign: the list has the keyboard; a key below leaves the message its own)
             git_do(w.action);
             return;
         }
@@ -1023,12 +1939,28 @@ void App::git_panel_click(int row, int col, const SDL_MouseButtonEvent& b) {
     }
     const GitUi::Row r = g.rows[i];
     switch (r.kind) {
-        case kRowMessage:
+        case kRowMessage: {  // the caret to where it was clicked
             g.input = 1;
             g.pick(static_cast<int>(i));
+            const u32 at = g.field_top + r.index;
+            if (at < g.segs.size() && col >= 0) {
+                const MsgRow& m = g.segs[at];
+                size_t c = m.b0;
+                u32 w = 0;
+                while (c < m.b1) {
+                    size_t j = c + 1;
+                    while (j < m.b1 && is_cont(static_cast<u8>(g.message[j]))) ++j;
+                    w += width_of(std::string_view(g.message).substr(c, j - c));
+                    if (w > static_cast<u32>(col)) break;
+                    c = j;
+                }
+                g.caret = c;
+                git_message_changed();
+            }
             break;
+        }
         case kRowAction:  // a row that does something is a button
-            if (g.input == 2 && r.index == kActNewBranch) break;  // (its name is being typed there)
+            if ((g.input == 2 && r.index == kActNewBranch) || (g.input == 3 && r.index == kActNewTag)) break;  // (its name is being typed there)
             g.input = 0;
             g.pick(static_cast<int>(i));
             git_do(r.index);
@@ -1046,9 +1978,11 @@ void App::git_panel_click(int row, int col, const SDL_MouseButtonEvent& b) {
             if (b.clicks >= 2 && !g.branches[r.index].current) git_do(kActSwitch);
             break;
         case kRowCommit:
+        case kRowStash:
+        case kRowTag:
             g.input = 0;
             g.pick(static_cast<int>(i));
-            if (b.clicks >= 2) git_do(kActShowCommit);
+            if (b.clicks >= 2) git_do(r.kind == kRowCommit ? kActShowCommit : r.kind == kRowStash ? kActShowStash : kActShowTag);
             break;
         default: break;
     }
@@ -1097,12 +2031,21 @@ void App::git_command(std::string_view name, const std::string& arg) {
     static const struct {
         const char* name;
         u32 action;
-    } known[] = {{"commit", kActCommit},   {"pull", kActPull},         {"push", kActPush},       {"fetch", kActFetch},
-                 {"stage", kActStage},     {"unstage", kActUnstage},   {"discard", kActDiscard}, {"diff", kActOpenDiff},
-                 {"open", kActOpenFile},   {"switch", kActSwitch},     {"merge", kActMerge},     {"delete", kActDeleteBranch},
-                 {"branch", kActNewBranch}, {"stageall", kActStageAll}, {"abort", kActAbortMerge}, {"show", kActShowCommit},
-                 {"blame", kActBlame},     {"refresh", kActRefresh},   {"cancel", kActCancel},   {"init", kActInit},
-                 {"look", kActLook}};
+    } known[] = {{"commit", kActCommit},       {"pull", kActPull},           {"push", kActPush},           {"fetch", kActFetch},
+                 {"stage", kActStage},         {"unstage", kActUnstage},     {"discard", kActDiscard},     {"diff", kActOpenDiff},
+                 {"open", kActOpenFile},       {"switch", kActSwitch},       {"merge", kActMerge},         {"delete", kActDeleteBranch},
+                 {"branch", kActNewBranch},    {"stageall", kActStageAll},   {"abort", kActAbortMerge},    {"show", kActShowCommit},
+                 {"blame", kActBlame},         {"refresh", kActRefresh},     {"cancel", kActCancel},       {"init", kActInit},
+                 {"look", kActLook},           {"stash", kActStash},         {"pop", kActPop},             {"apply", kActApply},
+                 {"drop", kActDrop},           {"showstash", kActShowStash}, {"rebase", kActRebase},       {"continue", kActContinue},
+                 {"abortrebase", kActAbortRebase}, {"pick", kActPick},       {"abortpick", kActAbortPick}, {"tag", kActNewTag},
+                 {"showtag", kActShowTag},     {"pushtag", kActPushTag},     {"deletetag", kActDeleteTag}, {"history", kActHistory},
+                 {"stagehere", kActStageHere}, {"unstagehere", kActUnstageHere}};
+    if (name == "columns") return git_view_toggle();
+    if (name == "staged") {  // (what is staged of a file, in a diff tab)
+        if (gitui_->status.repo) git_open_view(diff_args(arg, true), std::string(name_of(arg)) + " (staged)", kViewStaged, arg);
+        return;
+    }
     for (const auto& k : known)
         if (name == k.name) return git_do(k.action, arg);
     std::fprintf(stderr, "blit: no git action called %.*s\n", static_cast<int>(name.size()), name.data());
@@ -1116,6 +2059,8 @@ std::string App::git_dump() {
     if (g.status.ahead) out += " +" + std::to_string(g.status.ahead);
     if (g.status.behind) out += " -" + std::to_string(g.status.behind);
     if (g.status.merging) out += " merging";
+    if (g.status.rebasing) out += " rebasing";
+    if (g.status.picking) out += " cherry-picking";
     auto list = [&](const char* label, auto&& wanted, auto&& letter) {
         std::string s;
         for (const GitEntry& e : g.status.entries)
@@ -1125,22 +2070,100 @@ std::string App::git_dump() {
     list("conflicts", [](const GitEntry& e) { return e.conflict; }, [](const GitEntry&) { return 'U'; });
     list("staged", [](const GitEntry& e) { return e.staged(); }, [](const GitEntry& e) { return e.index; });
     list("changes", [](const GitEntry& e) { return e.unstaged(); }, [](const GitEntry& e) { return e.index == '?' ? '?' : e.work; });
+    if (!g.stashes.empty()) {
+        out += " | stashes";
+        for (const GitStash& st : g.stashes) out += " \"" + st.subject + "\"";
+    }
     out += " | branches";
     for (const GitBranch& b : g.branches) out += std::string(" ") + (b.current ? "*" : "") + b.name;
+    if (!g.tags.empty()) {
+        out += " | tags";
+        for (const std::string& t : g.tags) out += " " + t;
+    }
     out += " | commits " + std::to_string(g.log.size());
+    if (!g.log_of.empty()) out += " of " + g.log_of;
     if (!g.log.empty()) out += " \"" + g.log[0].subject + "\"";
     const Doc& d = *pane_->doc;
     if (!d.ed.path.empty()) {
         out += " | lines";
         for (const GitHunk& h : d.hunks)
-            out += " " + std::to_string(h.line + 1) + (h.kind == GitHunk::kAdded ? "+" : h.kind == GitHunk::kModified ? "~" : "-") + (h.count > 1 ? std::to_string(h.count) : "");
+            out += " " + std::to_string(h.line + 1) + (h.kind == GitHunk::kAdded ? "+" : h.kind == GitHunk::kModified ? "~" : "-") + (h.count > 1 ? std::to_string(h.count) : "") +
+                   (h.staged ? "s" : "");
         if (blame_shown(d) && d.blame && pane_->cur_line < d.blame->lines.size()) {  // (what shows: the note and the column)
             const GitBlame::Commit& c = d.blame->commits[d.blame->lines[pane_->cur_line]];
             out += " | blame " + (c.time ? c.author + ": " + c.summary : c.author);
         }
     }
     if (!g.note.empty()) out += " | note " + g.note;
+    if (g.offer.open) {
+        out += " | offer";
+        for (u32 i = 0; i < g.offer.count; ++i)
+            out += std::string(i ? ", " : " ") + (g.offer.items[i] == kActStageHere ? "stage" : g.offer.items[i] == kActUnstageHere ? "unstage" : "diff");
+    }
     return out;
+}
+
+// The diff tab in front (for the tests): what it is, the hunk the cursor is
+// in, then its lines, with what is coloured as added {+so+} and as taken
+// away [-so-] (in two columns, within a changed line only what changed).
+std::string App::git_view_dump() {
+    const Doc& d = *pane_->doc;
+    if (!d.gitview) return "no diff tab";
+    const GitView& v = *d.gitview;
+    const char* kinds[] = {"changes", "staged", "other"};
+    std::string out = std::string(kinds[v.kind]) + " " + (v.path.empty() ? d.title : v.path) + (v.two ? ", two columns" : ", one column");
+    const int hunk = v.hunk_at_row(d.ed.buf.line_of(d.ed.cursor()));
+    out += ": " + std::to_string(v.diff ? v.diff->hunks.size() : 0) + " hunks, cursor " + (hunk < 0 ? std::string("in none") : "in " + std::to_string(hunk + 1));
+    const std::string text = d.ed.buf.text(0, d.ed.buf.size());
+    size_t m = 0;
+    u8 now = 0, open = 0;  // the style here, and the colour open in the line
+    std::string line;
+    auto set = [&](u8 st) {
+        if (st == open) return;
+        if (open) {
+            while (line.ends_with(' ')) line.pop_back();
+            line += open == 1 ? "+}" : "-]";
+        }
+        if (st) line += st == 1 ? "{+" : "[-";
+        open = st;
+    };
+    for (size_t i = 0; i <= text.size(); ++i) {
+        while (d.marks && m < d.marks->size() && d.marks->at(m) <= i) now = d.marks->style[m++];
+        if (i == text.size() || text[i] == '\n') {
+            set(0);
+            while (line.ends_with(' ')) line.pop_back();
+            out += "\n" + line;
+            line.clear();
+            continue;
+        }
+        set(now == 1 || now == 2 ? now : 0);
+        line += text[i];
+    }
+    while (out.ends_with("\n")) out.pop_back();
+    return out;
+}
+
+// The commit message as the field shows it (for the tests): its rows on
+// show, a "|" where the guide mutes what follows, "^" at the caret.
+std::string App::git_field_dump() {
+    const GitUi& g = *gitui_;
+    std::string out;
+    const u32 caret = caret_row(g.segs, g.caret);
+    for (u32 k = 0; k < g.field_rows && g.field_top + k < g.segs.size(); ++k) {
+        const MsgRow& m = g.segs[g.field_top + k];
+        const u32 limit = m.line == 0 ? 50 : 72;
+        std::string row;
+        u32 col = m.col;
+        for (size_t i = m.b0; i <= m.b1; ++i) {
+            if (g.field_top + k == caret && i == g.caret) row += '^';
+            if (i == m.b1) break;
+            if (col == limit && !is_cont(static_cast<u8>(g.message[i]))) row += '|';
+            row += g.message[i];
+            if (!is_cont(static_cast<u8>(g.message[i]))) ++col;
+        }
+        out += (k ? " / " : "") + row;
+    }
+    return "field " + std::to_string(g.field_rows) + " of " + std::to_string(g.segs.size()) + ": " + out;
 }
 
 }  // namespace blit

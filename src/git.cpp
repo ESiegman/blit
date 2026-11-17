@@ -18,6 +18,7 @@
 
 #include "lsp.hpp"
 #include "qos.hpp"
+#include "utf8.hpp"
 
 #if !defined(_WIN32)
 #include <fcntl.h>
@@ -97,7 +98,35 @@ GitStatus parse_status(std::string_view z) {
     return st;
 }
 
-std::vector<GitBranch> parse_branches(std::string_view text) {
+namespace {
+
+// Names in the order a person counts them: "v1.10" after "v1.9", the runs
+// of digits compared as numbers.
+bool version_less(std::string_view a, std::string_view b) {
+    size_t i = 0, j = 0;
+    while (i < a.size() && j < b.size()) {
+        const bool da = std::isdigit(static_cast<unsigned char>(a[i])), db = std::isdigit(static_cast<unsigned char>(b[j]));
+        if (da && db) {
+            size_t i1 = i, j1 = j;
+            while (i1 < a.size() && std::isdigit(static_cast<unsigned char>(a[i1]))) ++i1;
+            while (j1 < b.size() && std::isdigit(static_cast<unsigned char>(b[j1]))) ++j1;
+            std::string_view x = a.substr(i, i1 - i), y = b.substr(j, j1 - j);
+            while (x.size() > 1 && x[0] == '0') x.remove_prefix(1);
+            while (y.size() > 1 && y[0] == '0') y.remove_prefix(1);
+            if (x.size() != y.size()) return x.size() < y.size();
+            if (x != y) return x < y;
+            i = i1, j = j1;
+        } else {
+            if (a[i] != b[j]) return a[i] < b[j];
+            ++i, ++j;
+        }
+    }
+    return a.size() - i < b.size() - j;
+}
+
+}  // namespace
+
+std::vector<GitBranch> parse_branches(std::string_view text, std::vector<std::string>* tags) {
     std::vector<GitBranch> out;
     while (!text.empty()) {
         const size_t nl = text.find('\n');
@@ -115,10 +144,30 @@ std::vector<GitBranch> parse_branches(std::string_view text) {
             b.remote = true;
             if (ref.ends_with("/HEAD")) continue;  // a pointer to another branch, not one itself
         } else {
+            if (tags && ref.starts_with("refs/tags/")) tags->emplace_back(ref.substr(10));
             continue;
         }
         b.name = ref;
         out.push_back(std::move(b));
+    }
+    if (tags) std::sort(tags->begin(), tags->end(), [](const std::string& a, const std::string& b) { return version_less(b, a); });
+    return out;
+}
+
+std::vector<GitStash> parse_stashes(std::string_view text) {
+    std::vector<GitStash> out;
+    while (!text.empty()) {
+        const size_t nl = text.find('\n');
+        std::string_view line = text.substr(0, nl);
+        text = nl == std::string_view::npos ? std::string_view{} : text.substr(nl + 1);
+        GitStash s;
+        std::string* const fields[] = {&s.name, &s.when, &s.subject};
+        for (std::string* f : fields) {
+            const size_t sep = line.find('\x1f');
+            *f = line.substr(0, sep);
+            line = sep == std::string_view::npos ? std::string_view{} : line.substr(sep + 1);
+        }
+        if (s.name.starts_with("stash@{")) out.push_back(std::move(s));
     }
     return out;
 }
@@ -320,6 +369,469 @@ std::vector<GitHunk> diff_lines(std::span<const u64> base, std::span<const u64> 
         else ++b1;
     }
     if (open) emit(a0, a1, b0, b1);
+    return out;
+}
+
+// ---------------------------------------------------------------- diffs, read and laid out
+
+namespace {
+
+// A line of a text whose line starts are known, without its end.
+std::string_view line_of(std::string_view text, const GitDiff& d, u32 i) {
+    std::string_view l = text.substr(d.line_off[i], d.line_off[i + 1] - d.line_off[i]);
+    if (l.ends_with('\n')) l.remove_suffix(1);
+    return l;
+}
+
+// "@@ -12,3 +12,4 @@ ...": where a hunk is in either text, and how long it is.
+bool hunk_head(std::string_view l, GitDiff::Hunk* h) {
+    if (!l.starts_with("@@ -")) return false;
+    const std::string s(l.substr(0, std::min<size_t>(l.size(), 80)));
+    unsigned a = 0, b = 1, c = 0, d = 1;
+    if (std::sscanf(s.c_str(), "@@ -%u,%u +%u,%u @@", &a, &b, &c, &d) == 4 || std::sscanf(s.c_str(), "@@ -%u +%u,%u @@", &a, &c, &d) == 3 ||
+        std::sscanf(s.c_str(), "@@ -%u,%u +%u @@", &a, &b, &c) == 3 || std::sscanf(s.c_str(), "@@ -%u +%u @@", &a, &c) == 2) {
+        h->old_start = a, h->old_count = b, h->new_start = c, h->new_count = d;
+        return true;
+    }
+    return false;
+}
+
+// Whether two runs of lines [a0, a1) and [b0, b1) meet. An empty run is a
+// place between two lines: it meets a run it is in or at either end of.
+bool touches(u32 a0, u32 a1, u32 b0, u32 b1) {
+    if (a0 == a1 && b0 == b1) return a0 == b0;
+    if (a0 == a1) return b0 <= a0 && a0 <= b1;
+    if (b0 == b1) return a0 <= b0 && b0 <= a1;
+    return a0 < b1 && b0 < a1;
+}
+
+// Whole lines, each with its end; and a number for each that is equal for
+// equal lines (the end counts: a last line without one differs).
+std::vector<std::string_view> whole_lines(std::string_view s) {
+    std::vector<std::string_view> out;
+    for (size_t at = 0; at < s.size();) {
+        const size_t nl = s.find('\n', at);
+        const size_t end = nl == std::string_view::npos ? s.size() : nl + 1;
+        out.push_back(s.substr(at, end - at));
+        at = end;
+    }
+    return out;
+}
+std::vector<u64> hashes_of(const std::vector<std::string_view>& lines) {
+    std::vector<u64> out;
+    out.reserve(lines.size());
+    const std::hash<std::string_view> hash;
+    for (const std::string_view l : lines) out.push_back(hash(l));
+    return out;
+}
+
+// Where a run of changed lines starts in the old text: the runs before it
+// moved everything along by what they added less what they took away.
+struct Spans {
+    u32 old0, old1, new0, new1;
+};
+std::vector<Spans> spans_of(const std::vector<GitHunk>& hunks) {
+    std::vector<Spans> out;
+    i64 shift = 0;
+    for (const GitHunk& h : hunks) {
+        const u32 o = static_cast<u32>(static_cast<i64>(h.line) - shift);
+        out.push_back({o, o + h.removed, h.line, h.line + h.count});
+        shift += static_cast<i64>(h.count) - static_cast<i64>(h.removed);
+    }
+    return out;
+}
+
+}  // namespace
+
+int GitDiff::hunk_at(u32 line) const {
+    auto it = std::upper_bound(hunks.begin(), hunks.end(), line, [](u32 l, const Hunk& h) { return l < h.first; });
+    if (it == hunks.begin()) return -1;
+    --it;
+    return line < it->last ? static_cast<int>(it - hunks.begin()) : -1;
+}
+
+GitDiff parse_diff(std::string_view text) {
+    GitDiff d;
+    for (size_t at = 0; at < text.size();) {
+        d.line_off.push_back(at);
+        const size_t nl = text.find('\n', at);
+        at = nl == std::string_view::npos ? text.size() : nl + 1;
+    }
+    d.line_off.push_back(text.size());
+    const u32 n = d.lines();
+    u32 head0 = 0, head1 = 0;
+    bool have = false, first = false;
+    for (u32 i = 0; i < n;) {
+        const std::string_view l = line_of(text, d, i);
+        if (l.starts_with("diff ")) {
+            head0 = i;
+            have = first = true;
+            ++i;
+            continue;
+        }
+        GitDiff::Hunk h;
+        if (!have || !hunk_head(l, &h)) {
+            ++i;
+            continue;
+        }
+        if (first) head1 = i, first = false;
+        h.first = i;
+        h.head0 = head0;
+        h.head1 = head1;
+        // Its lines: as many as the heading says of each text.
+        u32 olds = h.old_count, news = h.new_count, j = i + 1;
+        while (j < n && (olds || news)) {
+            const std::string_view b = line_of(text, d, j);
+            const char c = b.empty() ? ' ' : b[0];
+            if (c == ' ') {
+                if (!olds || !news) break;
+                --olds, --news;
+            } else if (c == '-') {
+                if (!olds) break;
+                --olds;
+            } else if (c == '+') {
+                if (!news) break;
+                --news;
+            } else if (c != '\\') {
+                break;
+            }
+            ++j;
+        }
+        while (j < n && line_of(text, d, j).starts_with("\\")) ++j;  // "\ No newline at end of file"
+        h.last = j;
+        d.hunks.push_back(h);
+        i = j;
+    }
+    return d;
+}
+
+std::string diff_patch(std::string_view text, const GitDiff& diff, std::span<const u8> chosen, bool reverse) {
+    std::string out;
+    u32 file = ~0u;
+    i64 shift = 0;  // in this file: what the hunks put in the patch so far added, less what they took away
+    auto picked = [&](u32 i) { return i < chosen.size() && chosen[i]; };
+    for (const GitDiff::Hunk& h : diff.hunks) {
+        bool any = false;
+        for (u32 i = h.first + 1; i < h.last && !any; ++i) {
+            const std::string_view l = line_of(text, diff, i);
+            any = !l.empty() && (l[0] == '+' || l[0] == '-') && picked(i);
+        }
+        if (!any) continue;
+        if (h.head0 != file) {
+            file = h.head0;
+            shift = 0;
+            for (u32 i = h.head0; i < h.head1; ++i) out.append(line_of(text, diff, i)).push_back('\n');
+        }
+        std::string body;
+        u32 olds = 0, news = 0;
+        bool kept = false;  // the line before was kept (a "\ No newline" goes with it)
+        for (u32 i = h.first + 1; i < h.last; ++i) {
+            const std::string_view l = line_of(text, diff, i);
+            const char c = l.empty() ? ' ' : l[0];
+            const std::string_view rest = l.empty() ? l : l.substr(1);
+            if (c == '\\') {
+                if (kept) body.append(l).push_back('\n');
+                continue;
+            }
+            kept = true;
+            if ((c == '+' || c == '-') && !picked(i)) {
+                if ((c == '+') != reverse) {  // not there before (or, backwards, after): left out
+                    kept = false;
+                    continue;
+                }
+                body.append(" ").append(rest).push_back('\n');  // there both before and after: context
+                ++olds, ++news;
+                continue;
+            }
+            if (c == '+') ++news;
+            else if (c == '-') ++olds;
+            else ++olds, ++news;
+            body.append(1, c).append(rest).push_back('\n');
+        }
+        // One side is as git printed it; the other moved by the hunks before
+        // it. (A run of no lines is numbered by the line before it.)
+        u32 os = h.old_start, ns = h.new_start;
+        if (!reverse) {
+            const i64 before = (h.old_count ? h.old_start - 1 : h.old_start) + shift;
+            ns = static_cast<u32>(std::max<i64>(0, news ? before + 1 : before));
+        } else {
+            const i64 before = (h.new_count ? h.new_start - 1 : h.new_start) - shift;
+            os = static_cast<u32>(std::max<i64>(0, olds ? before + 1 : before));
+        }
+        shift += static_cast<i64>(news) - static_cast<i64>(olds);
+        out += "@@ -" + std::to_string(os) + "," + std::to_string(olds) + " +" + std::to_string(ns) + "," + std::to_string(news) + " @@\n";
+        out += body;
+    }
+    return out;
+}
+
+namespace {
+
+// How a line of a diff is coloured: in a hunk, by its first character;
+// outside one, git's headings (and a commit's) are muted.
+u8 diff_style(std::string_view l, bool in_hunk) {
+    if (l.starts_with("@@")) return 3;
+    if (in_hunk) return l.starts_with("+") ? 1 : l.starts_with("-") ? 2 : l.starts_with("\\") ? 4 : 0;
+    for (const char* head : {"diff ", "index ", "--- ", "+++ ", "commit ", "Author:", "Date:", "Merge:", "new file", "deleted file", "rename ", "similarity ",
+                             "old mode", "new mode", "Binary files"})
+        if (l.starts_with(head)) return 4;
+    return 0;
+}
+
+// A line as cells: its characters (bytes [b0, b1) of `text`), each one or
+// two columns wide, tabs made spaces and other control characters too.
+struct Cells {
+    std::string text;
+    struct Ch {
+        u32 b0, b1;
+        u8 w;
+        bool changed;
+    };
+    std::vector<Ch> ch;
+    void set(std::string_view s, u32 tab_width) {
+        text.clear();
+        ch.clear();
+        if (s.ends_with('\r')) s.remove_suffix(1);
+        u32 col = 0;
+        const u8* p = reinterpret_cast<const u8*>(s.data());
+        for (size_t i = 0; i < s.size();) {
+            const Decoded d = decode_utf8(p + i, s.size() - i);
+            const u32 b0 = static_cast<u32>(text.size());
+            if (d.cp == '\t') {
+                const u32 n = tab_width - col % std::max<u32>(tab_width, 1);
+                for (u32 k = 0; k < n; ++k) ch.push_back({b0 + k, b0 + k + 1, 1, false}), text.push_back(' ');
+                col += n;
+            } else if (d.cp < 0x20 || d.cp == 0x7F) {
+                ch.push_back({b0, b0 + 1, 1, false});
+                text.push_back(' ');
+                ++col;
+            } else {
+                const u32 w = cp_width(d.cp);
+                text.append(s.substr(i, d.len));
+                if (w == 0 && !ch.empty()) ch.back().b1 = static_cast<u32>(text.size());  // (a mark: with the character before it)
+                else ch.push_back({b0, static_cast<u32>(text.size()), static_cast<u8>(w ? w : 1), false}), col += w ? w : 1;
+            }
+            i += d.len;
+        }
+    }
+};
+
+// What changed within a line that became another: the words, spaces and
+// signs of each are compared. False when so little stayed the same that it
+// is clearer to call the whole line changed.
+bool mark_changes(Cells& a, Cells& b) {
+    auto words = [](const Cells& c, std::vector<u32>* starts, std::vector<u64>* hashes) {
+        const std::hash<std::string_view> hash;
+        for (u32 i = 0; i < c.ch.size();) {
+            const u8 first = static_cast<u8>(c.text[c.ch[i].b0]);
+            auto kind = [](u8 x) { return std::isalnum(x) || x == '_' || x >= 0x80 ? 0 : x == ' ' ? 1 : 2; };
+            u32 j = i + 1;
+            if (kind(first) != 2)
+                while (j < c.ch.size() && kind(static_cast<u8>(c.text[c.ch[j].b0])) == kind(first)) ++j;
+            starts->push_back(i);
+            hashes->push_back(hash(std::string_view(c.text).substr(c.ch[i].b0, c.ch[j - 1].b1 - c.ch[i].b0)));
+            i = j;
+        }
+        starts->push_back(static_cast<u32>(c.ch.size()));
+    };
+    std::vector<u32> sa, sb;
+    std::vector<u64> ha, hb;
+    words(a, &sa, &ha);
+    words(b, &sb, &hb);
+    if (ha.size() > 4000 || hb.size() > 4000) return false;
+    const std::vector<GitHunk> hunks = diff_lines(ha, hb);
+    for (const Spans& s : spans_of(hunks)) {
+        for (u32 w = s.old0; w < s.old1; ++w)
+            for (u32 k = sa[w]; k < sa[w + 1]; ++k) a.ch[k].changed = true;
+        for (u32 w = s.new0; w < s.new1; ++w)
+            for (u32 k = sb[w]; k < sb[w + 1]; ++k) b.ch[k].changed = true;
+    }
+    // What is left the same, not counting spaces, against what there is.
+    u32 same = 0, all = 0;
+    for (const Cells* c : {&a, &b})
+        for (const Cells::Ch& x : c->ch)
+            if (c->text[x.b0] != ' ') ++all, same += !x.changed;
+    return same * 3 >= all;
+}
+
+}  // namespace
+
+void diff_view(std::string_view text, const GitDiff& diff, u32 cols, u32 tab_width, GitDiffView* out) {
+    out->text.clear();
+    out->off.clear();
+    out->style.clear();
+    out->left.clear();
+    out->right.clear();
+    out->cols = cols;
+    std::string& s = out->text;
+    auto mark = [&](u8 st) {
+        const u32 at = static_cast<u32>(s.size());
+        if (!out->style.empty() && out->style.back() == st) return;
+        if (!out->off.empty() && out->off.back() == at) {
+            out->style.back() = st;
+            if (out->style.size() >= 2 && out->style[out->style.size() - 2] == st) out->off.pop_back(), out->style.pop_back();
+            return;
+        }
+        out->off.push_back(at);
+        out->style.push_back(st);
+    };
+    const u32 n = diff.lines();
+    if (cols == 0) {  // one column: the diff as it is, coloured line by line
+        s.assign(text);
+        size_t h = 0;
+        for (u32 i = 0; i < n; ++i) {
+            while (h < diff.hunks.size() && diff.hunks[h].last <= i) ++h;
+            const bool in = h < diff.hunks.size() && diff.hunks[h].first < i;
+            const u32 at = static_cast<u32>(diff.line_off[i]);
+            const u8 st = diff_style(line_of(text, diff, i), in);
+            if (out->style.empty() || out->style.back() != st) out->off.push_back(at), out->style.push_back(st);
+        }
+        return;
+    }
+
+    // Two columns: the old text's line numbers and lines on the left, the
+    // new text's on the right, each column as wide as half the room, and
+    // lines too long for it carried on in the rows below.
+    u32 most = 1;
+    for (const GitDiff::Hunk& h : diff.hunks) most = std::max({most, h.old_start + h.old_count, h.new_start + h.new_count});
+    u32 numw = 1;
+    for (u32 k = most; k >= 10; k /= 10) ++numw;
+    numw = std::max<u32>(numw, 3);
+    const u32 w = std::max<u32>(20, cols > 2 * numw + 5 ? (cols - 2 * numw - 5) / 2 : 0);
+    auto full = [&](u32 i, u8 st) {  // a line across the whole width
+        mark(st);
+        s.append(line_of(text, diff, i)).push_back('\n');
+        out->left.push_back(i);
+        out->right.push_back(i);
+    };
+    auto number = [&](u32 k, bool show) {
+        mark(4);
+        std::string d = show ? std::to_string(k) : std::string();
+        s.append(numw > d.size() ? numw - d.size() : 0, ' ').append(d).push_back(' ');
+    };
+    Cells a, b;
+    // A line of each text beside each other (either may be missing): `ai`
+    // and `bi` their lines in the diff, `ak` and `bk` their numbers; `sa`
+    // and `sb` their colours, and those of what stayed the same within them.
+    auto beside = [&](u32 ai, u32 bi, u32 ak, u32 bk, u8 sa, u8 sb, u8 same_a, u8 same_b) {
+        const bool has_a = ai != ~0u, has_b = bi != ~0u;
+        size_t ka = 0, kb = 0;  // the next character of each
+        bool first = true;
+        while (first || ka < a.ch.size() || kb < b.ch.size()) {
+            number(ak, has_a && first);
+            u32 used = 0;
+            if (has_a)
+                for (; ka < a.ch.size() && used + a.ch[ka].w <= w; ++ka) {
+                    mark(a.ch[ka].changed ? sa : same_a);
+                    s.append(std::string_view(a.text).substr(a.ch[ka].b0, a.ch[ka].b1 - a.ch[ka].b0));
+                    used += a.ch[ka].w;
+                }
+            mark(0);
+            s.append(w - used + 1, ' ');
+            mark(4);
+            s.append("\xE2\x94\x82 ");  // a line down between the two
+            number(bk, has_b && first);
+            used = 0;
+            if (has_b)
+                for (; kb < b.ch.size() && used + b.ch[kb].w <= w; ++kb) {
+                    mark(b.ch[kb].changed ? sb : same_b);
+                    s.append(std::string_view(b.text).substr(b.ch[kb].b0, b.ch[kb].b1 - b.ch[kb].b0));
+                    used += b.ch[kb].w;
+                }
+            mark(0);
+            s.push_back('\n');
+            out->left.push_back(ai);
+            out->right.push_back(bi);
+            first = false;
+            if (!has_a) ka = a.ch.size();
+            if (!has_b) kb = b.ch.size();
+        }
+    };
+    auto body = [&](u32 i) { return line_of(text, diff, i).substr(1); };
+    size_t h = 0;
+    for (u32 i = 0; i < n;) {
+        if (h >= diff.hunks.size() || i < diff.hunks[h].first) {
+            full(i, diff_style(line_of(text, diff, i), false));
+            ++i;
+            continue;
+        }
+        const GitDiff::Hunk& hk = diff.hunks[h++];
+        full(i, 3);
+        u32 ok = hk.old_start, nk = hk.new_start;
+        std::vector<u32> minus, plus;
+        // Lines taken away and the lines put in their place, paired off.
+        auto flush = [&] {
+            for (size_t k = 0; k < std::max(minus.size(), plus.size()); ++k) {
+                const u32 ai = k < minus.size() ? minus[k] : ~0u, bi = k < plus.size() ? plus[k] : ~0u;
+                a.set(ai != ~0u ? body(ai) : std::string_view{}, tab_width);
+                b.set(bi != ~0u ? body(bi) : std::string_view{}, tab_width);
+                const bool within = ai != ~0u && bi != ~0u && mark_changes(a, b);
+                beside(ai, bi, ok, nk, 2, 1, within ? 4 : 2, within ? 4 : 1);
+                if (ai != ~0u) ++ok;
+                if (bi != ~0u) ++nk;
+            }
+            minus.clear();
+            plus.clear();
+        };
+        for (i = hk.first + 1; i < hk.last; ++i) {
+            const std::string_view l = line_of(text, diff, i);
+            const char c = l.empty() ? ' ' : l[0];
+            if (c == '-') {
+                if (!plus.empty()) flush();
+                minus.push_back(i);
+            } else if (c == '+') {
+                plus.push_back(i);
+            } else if (c != '\\') {
+                flush();
+                a.set(l.empty() ? l : l.substr(1), tab_width);
+                b.ch = a.ch, b.text = a.text;
+                beside(i, i, ok++, nk++, 0, 0, 0, 0);
+            }
+        }
+        flush();
+        i = hk.last;
+    }
+}
+
+std::string stage_lines(std::string_view head, std::string_view index, std::string_view now, u32 line0, u32 line1, bool stage) {
+    const std::vector<std::string_view> idx = whole_lines(index), cur = whole_lines(now);
+    const std::vector<Spans> iw = spans_of(diff_lines(hashes_of(idx), hashes_of(cur)));
+    std::string out;
+    if (stage) {
+        // The index's lines, but where they differ from the text now in a
+        // run that meets the lines asked for, the text's.
+        u32 i = 0;
+        for (const Spans& sp : iw) {
+            if (!touches(sp.new0, sp.new1, line0, line1)) continue;
+            for (; i < sp.old0; ++i) out += idx[i];
+            for (u32 k = sp.new0; k < sp.new1; ++k) out += cur[k];
+            i = sp.old1;
+        }
+        for (; i < idx.size(); ++i) out += idx[i];
+        return out;
+    }
+    // Where those lines are in the index (they are staged, so the same there),
+    // and then the index's lines, but where they differ from the committed
+    // text in a run that meets those, the committed text's.
+    auto in_index = [&](u32 line) {
+        i64 shift = 0;
+        for (const Spans& sp : iw) {
+            if (line < sp.new0) break;
+            if (line < sp.new1) return sp.old0 + std::min(line - sp.new0, sp.old1 - sp.old0);
+            shift = static_cast<i64>(sp.new1) - static_cast<i64>(sp.old1);
+        }
+        return static_cast<u32>(std::max<i64>(0, static_cast<i64>(line) - shift));
+    };
+    const u32 i0 = in_index(line0), i1 = std::max(i0, in_index(line1));
+    const std::vector<std::string_view> old = whole_lines(head);
+    u32 i = 0;
+    for (const Spans& sp : spans_of(diff_lines(hashes_of(old), hashes_of(idx)))) {
+        if (!touches(sp.new0, sp.new1, i0, i1)) continue;
+        for (; i < sp.new0; ++i) out += idx[i];
+        for (u32 k = sp.old0; k < sp.old1; ++k) out += old[k];
+        i = sp.new1;
+    }
+    for (; i < idx.size(); ++i) out += idx[i];
     return out;
 }
 
@@ -539,7 +1051,13 @@ struct Git::Worker {
         std::string label, input, path;
         u64 doc = 0, revision = 0;
         std::vector<Piece> pieces;
+        std::shared_ptr<const std::string> source;  // kView: a diff to lay out again
+        u32 cols = 0, tab = 4;                      // kView: how
+        u32 line0 = 0, line1 = 0;                   // kStage: the lines
+        bool stage = true;
     };
+    // (kStage: staging lines of a document is an action, but its own job.)
+    static constexpr u32 kStage = 100;
     std::mutex mu;
     std::condition_variable cv;
     std::deque<Job> jobs;
@@ -547,6 +1065,7 @@ struct Git::Worker {
     std::function<void()> notify;
     std::string dir;       // where to look for a repository; changed by open()
     bool look = false;     // dir has changed since the repository was last looked for
+    std::string log_ref;   // whose commits a status lists (empty: the branch checked out)
     std::string busy;
     bool working = false;  // a job is being done
     u64 working_doc = 0;   // and it is about this document
@@ -565,8 +1084,9 @@ struct Git::Worker {
     // The worker's own.
     std::string program, root, gitdir, head;
     // The committed text of files compared so far, as line hashes; a null
-    // entry is a file with no committed version.
-    std::unordered_map<std::string, std::shared_ptr<std::vector<u64>>> bases;
+    // entry is a file with no committed version. And the same of what is
+    // staged of them (read again whenever the status is).
+    std::unordered_map<std::string, std::shared_ptr<std::vector<u64>>> bases, staged;
 
 #if !defined(_WIN32)
     Ran git(const std::vector<std::string>& args, std::string_view input = {}, bool action = false) {
@@ -621,6 +1141,7 @@ struct Git::Worker {
         root.clear();
         gitdir.clear();
         bases.clear();
+        staged.clear();
         std::string host, there;
         const bool remote = split_remote(where, &host, &there);  // (another machine's: its own git, found there)
         if (!remote && program.empty()) program = Lsp::find_program("git");
@@ -640,16 +1161,30 @@ struct Git::Worker {
         res.kind = kStatus;
         res.ok = true;
         if (root.empty()) return;
-        // The branches and the latest commits are asked for at the same
-        // time as the status, by programs of their own (the status is the
-        // slow one in a big repository).
-        Child refs_child, log_child;
-        Ran refs, log;
-        std::jthread refs_thread([&] { refs = run_git(refs_child, program, root, {"for-each-ref", "--format=%(HEAD)%09%(refname)", "refs/heads", "refs/remotes"}, {}); });
-        std::jthread log_thread([&] { log = run_git(log_child, program, root, {"log", "-n", "40", "--format=%h%x1f%an%x1f%ar%x1f%s"}, {}); });
+        // The branches and tags, the latest commits and the stashes are
+        // asked for at the same time as the status, by programs of their
+        // own (the status is the slow one in a big repository).
+        std::string of;
+        {
+            std::lock_guard lock(mu);
+            of = log_ref;
+        }
+        Child refs_child, log_child, stash_child;
+        Ran refs, log, stashes;
+        std::jthread refs_thread([&] {
+            refs = run_git(refs_child, program, root, {"for-each-ref", "--format=%(HEAD)%09%(refname)", "refs/heads", "refs/remotes", "refs/tags"}, {});
+        });
+        std::jthread log_thread([&] {
+            std::vector<std::string> args = {"log", "-n", "40", "--format=%h%x1f%an%x1f%ar%x1f%s"};
+            if (!of.empty()) args.insert(args.end(), {of, "--"});
+            log = run_git(log_child, program, root, args, {});
+        });
+        std::jthread stash_thread([&] { stashes = run_git(stash_child, program, root, {"stash", "list", "--format=%gd%x1f%cr%x1f%gs"}, {}); });
         const Ran st = git({"status", "--porcelain=v2", "--branch", "-z"});
         refs_thread.join();
         log_thread.join();
+        stash_thread.join();
+        staged.clear();  // (the index may have changed)
         if (st.code != 0) {
             res.ok = false;
             res.text = trimmed(st.err);
@@ -658,12 +1193,74 @@ struct Git::Worker {
         res.status = parse_status(st.out);
         res.status.root = root;
         res.status.merging = exists(gitdir + "/MERGE_HEAD");
+        res.status.picking = exists(gitdir + "/CHERRY_PICK_HEAD");
+        // (A rebase that has stopped has no branch checked out.)
+        res.status.rebasing = res.status.branch.empty() && (exists(gitdir + "/rebase-merge") || exists(gitdir + "/rebase-apply"));
         if (res.status.head != head) {  // another commit is checked out: what files are compared with has changed
             head = res.status.head;
             bases.clear();
         }
-        res.branches = parse_branches(refs.out);
-        if (!res.status.head.empty() && log.code == 0) res.log = parse_log(log.out);
+        res.branches = parse_branches(refs.out, &res.tags);
+        if (!of.empty() && log.code != 0) {  // (the branch has gone: the one checked out, then)
+            {
+                std::lock_guard lock(mu);
+                if (log_ref == of) log_ref.clear();
+            }
+            of.clear();
+            log = git({"log", "-n", "40", "--format=%h%x1f%an%x1f%ar%x1f%s"});
+        }
+        res.log_of = of;
+        if ((!res.status.head.empty() || !of.empty()) && log.code == 0) res.log = parse_log(log.out);
+        if (stashes.code == 0) res.stashes = parse_stashes(stashes.out);
+    }
+
+    // The text of a file in the index (":path") or a commit ("HEAD:path"),
+    // as it would be in the working tree. False if it has none.
+    bool blob(u64 doc, const std::string& spec, std::string* out) {
+        Ran r = doc ? git_for(doc, {"cat-file", "--filters", spec}) : git({"cat-file", "--filters", spec});
+        if (r.code != 0) return false;
+        *out = std::move(r.out);
+        return true;
+    }
+
+    // Lines of a document staged, or put back as they were committed.
+    void stage_job(Job& job, Result& res) {
+        res.kind = kAction;
+        const std::string rel = inside(job.path);
+        if (root.empty() || rel.empty()) {
+            res.text = root.empty() ? "not in a git repository" : "not in the repository";
+            return;
+        }
+        if (!reading(job.doc)) return;
+        const std::string now = joined(job.pieces);
+        done_reading();
+        const Ran ls = git({"ls-files", "-s", "--", rel});
+        std::string mode = "100644";
+        if (ls.code == 0 && !ls.out.empty()) {
+            mode = ls.out.substr(0, ls.out.find(' '));
+            const size_t tab = ls.out.find('\t');
+            if (tab != std::string::npos && tab >= 2 && ls.out[tab - 1] != '0') {
+                res.text = rel + " is in conflict";
+                return;
+            }
+        }
+        std::string index, committed;
+        blob(0, ":" + rel, &index);
+        if (!job.stage) blob(0, "HEAD:" + rel, &committed);
+        const std::string next = stage_lines(committed, index, now, job.line0, job.line1, job.stage);
+        if (next == index) {
+            res.text = job.stage ? "nothing there to stage" : "nothing there to unstage";
+            return;
+        }
+        const Ran h = git({"hash-object", "-w", "--stdin", "--path=" + rel}, next, true);
+        const std::string sha = trimmed(h.out);
+        if (h.code != 0 || sha.empty()) {
+            res.text = trimmed(h.err);
+            return;
+        }
+        const Ran u = git({"update-index", "--add", "--cacheinfo", mode + "," + sha + "," + rel}, {}, true);
+        res.ok = u.code == 0;
+        if (!res.ok) res.text = trimmed(u.err);
     }
 
     void work(Job& job, std::vector<Result>& out) {
@@ -701,9 +1298,26 @@ struct Git::Worker {
                 res.ok = true;
                 res.tracked = it->second != nullptr;
                 if (res.tracked) {
+                    // And what of it is staged: a run of changed lines is,
+                    // when the index has those lines as they are now.
+                    auto in = staged.find(rel);
+                    if (in == staged.end()) {
+                        std::string text;
+                        const bool known = blob(job.doc, ":" + rel, &text);
+                        if (let_go()) return;
+                        in = staged.emplace(rel, known ? std::make_shared<std::vector<u64>>(line_hashes(std::string_view(text))) : nullptr).first;
+                    }
                     if (!reading(job.doc)) return;
-                    res.hunks = diff_lines(*it->second, line_hashes(std::span<const Piece>(job.pieces)));
+                    const std::vector<u64> now = line_hashes(std::span<const Piece>(job.pieces));
                     done_reading();
+                    res.hunks = diff_lines(*it->second, now);
+                    if (in->second) {
+                        const std::vector<GitHunk> unstaged = diff_lines(*in->second, now);
+                        for (GitHunk& h : res.hunks) {
+                            h.staged = true;
+                            for (const GitHunk& u : unstaged) h.staged = h.staged && !touches(h.line, h.line + h.count, u.line, u.line + u.count);
+                        }
+                    }
                 }
                 break;
             }
@@ -731,6 +1345,38 @@ struct Git::Worker {
                 res.text = res.ok ? r.out : trimmed(r.err);
                 break;
             }
+            case kView: {
+                std::shared_ptr<const std::string> source = job.source;
+                if (!source) {
+                    if (root.empty()) {
+                        res.text = "not in a git repository";
+                        break;
+                    }
+                    Ran r = git(job.args);
+                    if (r.code != 0) {
+                        res.text = trimmed(r.err);
+                        break;
+                    }
+                    source = std::make_shared<const std::string>(std::move(r.out));
+                }
+                auto diff = std::make_shared<GitDiff>(parse_diff(*source));
+                auto view = std::make_shared<GitDiffView>();
+                diff_view(*source, *diff, job.cols, job.tab, view.get());
+                res.ok = true;
+                res.source = std::move(source);
+                res.diff = std::move(diff);
+                res.view = std::move(view);
+                break;
+            }
+            case kStage: {
+                stage_job(job, res);
+                if (let_go()) return;
+                bases.clear();
+                out.push_back(std::move(res));
+                res = Result{};
+                read_status(res);
+                break;
+            }
             default: break;
         }
         out.push_back(std::move(res));
@@ -753,8 +1399,8 @@ struct Git::Worker {
                 jobs.pop_front();
                 working = true;
                 dropped = false;
-                if (job.kind == kHunks || job.kind == kBlame) working_doc = job.doc;
-                if (job.kind == kAction) busy = job.label;
+                if (job.kind == kHunks || job.kind == kBlame || job.kind == kStage) working_doc = job.doc;
+                if (job.kind == kAction || job.kind == kStage) busy = job.label;
                 if (look) {
                     look = false;
                     const std::string where = dir;
@@ -783,7 +1429,7 @@ struct Git::Worker {
             for (Job& queued : jobs) {
                 if (queued.kind != job.kind) continue;
                 if (job.kind == kStatus) return;
-                if ((job.kind == kHunks || job.kind == kBlame) && queued.doc == job.doc) {
+                if ((job.kind == kHunks || job.kind == kBlame || job.kind == kView) && queued.doc == job.doc) {
                     queued = std::move(job);
                     return;
                 }
@@ -878,9 +1524,44 @@ void Git::text(u64 doc, std::vector<std::string> args, std::string label) {
     w_->push(std::move(job));
 }
 
+void Git::view(u64 doc, std::vector<std::string> args, std::shared_ptr<const std::string> source, u32 cols, u32 tab_width) {
+    Worker::Job job;
+    job.kind = kView;
+    job.doc = doc;
+    job.args = std::move(args);
+    job.source = std::move(source);
+    job.cols = cols;
+    job.tab = tab_width;
+    w_->push(std::move(job));
+}
+
+void Git::stage(u64 doc, const std::string& path, std::vector<Piece> pieces, u32 line0, u32 line1, bool stage, std::string label) {
+    Worker::Job job;
+    job.kind = Worker::kStage;
+    job.doc = doc;
+    job.path = path;
+    job.pieces = std::move(pieces);
+    job.line0 = line0;
+    job.line1 = line1;
+    job.stage = stage;
+    job.label = std::move(label);
+    w_->push(std::move(job));
+}
+
+void Git::log_of(const std::string& branch) {
+    {
+        std::lock_guard lock(w_->mu);
+        if (w_->log_ref == branch) return;
+        w_->log_ref = branch;
+    }
+    refresh();
+}
+
 void Git::forget(u64 doc) {
     std::unique_lock lock(w_->mu);
-    std::erase_if(w_->jobs, [doc](const Worker::Job& j) { return (j.kind == kHunks || j.kind == kBlame) && j.doc == doc; });
+    std::erase_if(w_->jobs, [doc](const Worker::Job& j) {
+        return (j.kind == kHunks || j.kind == kBlame || j.kind == kView || j.kind == Worker::kStage) && j.doc == doc;
+    });
     if (w_->working_doc != doc) return;
     // The job under way for it: its git is stopped rather than waited for
     // (a blame of a long file, or one on a slow connection, can take a

@@ -306,6 +306,7 @@ bool App::tabs_key(const SDL_KeyboardEvent& k) {
 }
 
 bool App::tabs_mouse_down(const SDL_MouseButtonEvent& b) {
+    if (git_gutter_click(b)) return true;  // a change's mark beside the line numbers, or what it offers (appgit.cpp)
     TabBar& t = *pane_->bar;
     const int bar = tabs_px();
     const int px = static_cast<int>(b.x * density_), py = static_cast<int>(b.y * density_);

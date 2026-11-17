@@ -3619,6 +3619,102 @@ void git_test(int seeds) {
         for (size_t i = 0; i < big.size(); ++i) big[i] = i, other[i] = 100000 + i;
         check(one(diff_lines(big, other), 0, 5000, GitHunk::kModified), "diff: texts with nothing in common are one modified run");
     }
+    // A diff as git prints it, read; patches of the lines chosen from it, to
+    // stage (forwards) and unstage (backwards); and the same in two columns.
+    {
+        const std::string diff =
+            "diff --git a/f.txt b/f.txt\n"
+            "index 1111111..2222222 100644\n"
+            "--- a/f.txt\n"
+            "+++ b/f.txt\n"
+            "@@ -1,4 +1,4 @@\n"
+            " one\n"
+            "-two\n"
+            "+TWO\n"
+            " three\n"
+            " four\n"
+            "@@ -10,3 +10,5 @@ nine\n"
+            " ten\n"
+            "+A\n"
+            "+B\n"
+            " eleven\n"
+            " twelve\n";
+        const std::string head = "diff --git a/f.txt b/f.txt\nindex 1111111..2222222 100644\n--- a/f.txt\n+++ b/f.txt\n";
+        const GitDiff d = parse_diff(diff);
+        check(d.lines() == 16 && d.hunks.size() == 2 && d.hunks[0].first == 4 && d.hunks[0].last == 10 && d.hunks[1].first == 10 && d.hunks[1].last == 16 &&
+                  d.hunks[1].head0 == 0 && d.hunks[1].head1 == 4 && d.hunks[1].old_start == 10 && d.hunks[1].new_count == 5,
+              "diff read: two hunks of one file");
+        check(d.hunk_at(3) == -1 && d.hunk_at(4) == 0 && d.hunk_at(9) == 0 && d.hunk_at(12) == 1 && d.hunk_at(16) == -1, "diff read: the hunk a line is in");
+        auto pick = [&](std::initializer_list<u32> lines) {
+            std::vector<u8> c(d.lines(), 0);
+            for (const u32 l : lines) c[l] = 1;
+            return c;
+        };
+        check(diff_patch(diff, d, pick({}), false).empty() && diff_patch(diff, d, pick({5, 8}), false).empty(), "patch: nothing chosen, or only context: nothing");
+        check(diff_patch(diff, d, pick({13}), false) == head + "@@ -10,3 +10,4 @@\n ten\n+B\n eleven\n twelve\n", "patch: one line of two added, staged");
+        check(diff_patch(diff, d, pick({6}), false) == head + "@@ -1,4 +1,3 @@\n one\n-two\n three\n four\n", "patch: a line taken away, staged without the one put in its place");
+        check(diff_patch(diff, d, pick({7, 12}), false) == head + "@@ -1,4 +1,5 @@\n one\n two\n+TWO\n three\n four\n@@ -10,3 +11,4 @@\n ten\n+A\n eleven\n twelve\n",
+              "patch: a line kept as context moves the next hunk along");
+        check(diff_patch(diff, d, pick({7}), true) == head + "@@ -1,3 +1,4 @@\n one\n+TWO\n three\n four\n", "patch: backwards, a line added unstaged alone");
+        std::vector<u8> all(d.lines(), 1);
+        std::string whole = diff;
+        whole.replace(whole.find(" @@ nine"), 8, " @@");
+        check(diff_patch(diff, d, all, false) == whole, "patch: everything chosen is the diff itself (its hunks' headings without their context)");
+
+        GitDiffView v;
+        diff_view(diff, d, 0, 4, &v);
+        check(v.text == diff && v.left.empty() && v.style.size() >= 4, "one column: the diff as it is");
+        diff_view(diff, d, 60, 4, &v);
+        check(v.left.size() == 15 && v.right.size() == 15 && v.cols == 60, "two columns: a row for each pair of lines, heading and hunk heading");
+        size_t rows = 0;
+        for (const char c : v.text) rows += c == '\n';
+        check(rows == 15, "two columns: as many lines of text");
+        check(v.left[6] == 6 && v.right[6] == 7 && v.left[11] == ~0u && v.right[11] == 12 && v.left[10] == 11 && v.right[10] == 11,
+              "two columns: a line beside the one it became, an added one beside nothing");
+        // Every row that has both columns has its divider at the same column.
+        size_t at = 0, bar = std::string::npos;
+        bool level = true;
+        for (u32 r = 0; r < 15; ++r) {
+            const size_t nl = v.text.find('\n', at);
+            const std::string line = v.text.substr(at, nl - at);
+            at = nl + 1;
+            const size_t b = line.find("\xE2\x94\x82");
+            if (b == std::string::npos) continue;
+            if (bar == std::string::npos) bar = b;
+            level = level && b == bar;
+        }
+        check(bar != std::string::npos && level, "two columns: lines aligned");
+        // Within a changed line, what stayed the same is muted and what changed is not.
+        const std::string small = "diff --git a/c b/c\n--- a/c\n+++ b/c\n@@ -1 +1 @@\n-int x = 1;\n+int x = 2;\n";
+        const GitDiff sd = parse_diff(small);
+        diff_view(small, sd, 60, 4, &v);
+        auto style_at = [&](size_t off) {
+            u8 st = 0;
+            for (size_t k = 0; k < v.off.size() && v.off[k] <= off; ++k) st = v.style[k];
+            return st;
+        };
+        const size_t row = v.text.find("int x");
+        const size_t one_at = v.text.find('1', row + 5), two_at = v.text.find("= 2;");
+        check(row != std::string::npos && style_at(row) == 4 && style_at(one_at) == 2 && style_at(two_at) == 4 && style_at(two_at + 2) == 1,
+              "two columns: changes within a line marked");
+    }
+    // Lines of a text staged and unstaged, as the index is written.
+    {
+        const std::string committed = "a\nb\nc\nd\ne\n", now = "a\nB\nc\nd\nE\nf\n";
+        check(stage_lines(committed, committed, now, 1, 2, true) == "a\nB\nc\nd\ne\n", "stage lines: one changed line");
+        check(stage_lines(committed, committed, now, 4, 6, true) == "a\nb\nc\nd\nE\nf\n", "stage lines: a changed line and one added");
+        check(stage_lines(committed, "a\nB\nc\nd\ne\n", now, 1, 2, false) == committed, "unstage lines: back as committed");
+        check(stage_lines(committed, "a\nB\nc\nd\nE\nf\n", now, 4, 6, false) == "a\nB\nc\nd\ne\n", "unstage lines: only those");
+        check(stage_lines(committed, committed, "a\nc\nd\ne\n", 1, 1, true) == "a\nc\nd\ne\n", "stage lines: lines taken out");
+        check(stage_lines(committed, committed, "a\nb\nc\nd\ne", 4, 5, true) == "a\nb\nc\nd\ne", "stage lines: the last line's end taken away");
+    }
+    {
+        const std::vector<GitStash> st = parse_stashes("stash@{0}\x1f" "2 hours ago\x1f" "WIP on main: abc Start\nstash@{1}\x1f" "3 days ago\x1f" "On main: tidy\n");
+        check(st.size() == 2 && st[0].name == "stash@{0}" && st[0].when == "2 hours ago" && st[1].subject == "On main: tidy", "stashes");
+        std::vector<std::string> tags;
+        const std::vector<GitBranch> b = parse_branches("*\trefs/heads/main\n \trefs/tags/v1.9\n \trefs/tags/v1.10\n \trefs/tags/v1.0\n \trefs/tags/alpha\n", &tags);
+        check(b.size() == 1 && tags.size() == 4 && tags[0] == "v1.10" && tags[1] == "v1.9" && tags[2] == "v1.0" && tags[3] == "alpha", "tags, newest version first");
+    }
 
 #if !defined(_WIN32)
     // The real thing, if there is a git to run.
@@ -3717,6 +3813,113 @@ void git_test(int seeds) {
         git.text(9, {"show", "--stat", "HEAD"}, "show");
         got = git_wait(git, Git::kText);
         check(!got.empty() && got.back().ok && got.back().doc == 9 && got.back().text.find("On the side") != std::string::npos, "git: a command's output");
+        git.view(10, {"show", "HEAD"}, nullptr, 80, 4);
+        got = git_wait(git, Git::kView);
+        check(!got.empty() && got.back().ok && got.back().view && got.back().diff && got.back().diff->hunks.size() == 1 && got.back().view->cols == 80 &&
+                  !got.back().view->left.empty(),
+              "git: a diff read and laid out in two columns");
+
+        // Lines of an editor's text staged, and unstaged, without a patch.
+        write("a.txt", "one\n2 two\nthree\nfour\nfive\n");
+        Editor e2;
+        check(e2.open((dir + "/a.txt").c_str(), &err), "git test file opens again");
+        e2.move_to(0, false);
+        e2.insert("zero\n");
+        std::vector<Piece> now;
+        e2.buf.snapshot(&now);
+        git.stage(11, dir + "/a.txt", now, 0, 1, true, "Stage");
+        got = git_wait(git, Git::kStatus);
+        check(got.size() >= 2 && got[got.size() - 2].kind == Git::kAction && got[got.size() - 2].ok, "git: lines staged");
+        git.hunks(11, 1, dir + "/a.txt", now);
+        got = git_wait(git, Git::kHunks);
+        check(!got.empty() && got.back().hunks.size() == 1 && got.back().hunks[0].line == 0 && got.back().hunks[0].staged, "git: the change staged is marked so");
+        git.stage(11, dir + "/a.txt", now, 0, 1, false, "Unstage");
+        git_wait(git, Git::kStatus);
+        git.hunks(11, 2, dir + "/a.txt", now);
+        got = git_wait(git, Git::kHunks);
+        check(!got.empty() && got.back().hunks.size() == 1 && !got.back().hunks[0].staged, "git: and unstaged");
+    }
+    // Patches of lines picked at random from what git printed, applied by
+    // git itself: what is staged is those changes and no others; and the
+    // same backwards, unstaging some of them again.
+    {
+        auto out = [&](const std::string& cmd) {
+            std::string text;
+            if (FILE* f = popen(("cd '" + dir + "' && " + cmd + " 2>/dev/null").c_str(), "r")) {
+                char buf[4096];
+                for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+                pclose(f);
+            }
+            return text;
+        };
+        auto lines_of = [](const std::string& t) {
+            std::vector<std::string> v;
+            for (size_t at = 0; at < t.size();) {
+                const size_t nl = t.find('\n', at);
+                v.push_back(t.substr(at, nl - at));
+                at = nl + 1;
+            }
+            return v;
+        };
+        // What the patch should leave: the side it is applied to, with the
+        // chosen changes made (forwards: lines taken away go, lines added
+        // come; backwards the other way about).
+        auto expect = [](const std::string& text, const GitDiff& d, const std::vector<u8>& chosen, const std::vector<std::string>& from, bool reverse) {
+            std::string r;
+            u32 next = 1;
+            for (const GitDiff::Hunk& h : d.hunks) {
+                const u32 start = reverse ? (h.new_count ? h.new_start : h.new_start + 1) : (h.old_count ? h.old_start : h.old_start + 1);
+                for (; next < start; ++next) r += from[next - 1] + "\n";
+                for (u32 i = h.first + 1; i < h.last; ++i) {
+                    const std::string l = text.substr(d.line_off[i], d.line_off[i + 1] - d.line_off[i] - 1);
+                    const char c = l[0];
+                    const bool gone = c == (reverse ? '+' : '-'), comes = c == (reverse ? '-' : '+');
+                    if (c == ' ') r += from[next++ - 1] + "\n";
+                    else if (gone) r += chosen[i] ? (++next, std::string()) : from[next++ - 1] + "\n";
+                    else if (comes && chosen[i]) r += l.substr(1) + "\n";
+                }
+            }
+            for (; next <= from.size(); ++next) r += from[next - 1] + "\n";
+            return r;
+        };
+        for (int seed = 0; seed < std::min(seeds, 16); ++seed) {
+            rng.seed(static_cast<u64>(seed) * 7919 + 5);
+            std::vector<std::string> base;
+            for (int i = 0; i < 40; ++i) base.push_back("line " + std::to_string(i));
+            std::vector<std::string> now = base;
+            for (int k = 2 + static_cast<int>(rnd(6)); k > 0; --k) {
+                const size_t at = rnd(now.size());
+                switch (rnd(3)) {
+                    case 0: now.insert(now.begin() + static_cast<std::ptrdiff_t>(at), "new " + std::to_string(rnd(1000))); break;
+                    case 1: now.erase(now.begin() + static_cast<std::ptrdiff_t>(at)); break;
+                    default: now[at] = "changed " + std::to_string(rnd(1000));
+                }
+            }
+            auto joined = [](const std::vector<std::string>& v) {
+                std::string t;
+                for (const std::string& l : v) t += l + "\n";
+                return t;
+            };
+            write("p.txt", joined(base));
+            sh("git add p.txt && git commit -q -m p");
+            write("p.txt", joined(now));
+            for (const bool reverse : {false, true}) {
+                if (reverse) sh("git add p.txt");  // (now all of it is staged, to unstage some of)
+                const std::string text = out(std::string("git diff --no-ext-diff --src-prefix=a/ --dst-prefix=b/") + (reverse ? " --cached" : "") + " -- p.txt");
+                const GitDiff d = parse_diff(text);
+                std::vector<u8> chosen(d.lines(), 0);
+                for (u8& c : chosen) c = rnd(2);
+                const std::string want = expect(text, d, chosen, reverse ? now : base, reverse);
+                const std::string patch = diff_patch(text, d, chosen, reverse);
+                write("patch.diff", patch);
+                const bool applied = patch.empty() || sh(std::string("git apply --cached --recount --whitespace=nowarn") + (reverse ? " -R" : "") + " patch.diff");
+                const std::string staged = out("git show :p.txt");
+                if (!applied || staged != want) fail(reverse ? "patch backwards, applied by git" : "patch forwards, applied by git", static_cast<u64>(seed), d.hunks.size());
+                (void)lines_of;
+                sh("git reset -q p.txt");
+            }
+            sh("git checkout -q p.txt");
+        }
     }
     {
         Git git;

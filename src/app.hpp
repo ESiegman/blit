@@ -147,6 +147,7 @@ struct Doc {
     std::shared_ptr<GitBlame> blame;
     u64 blame_rev = ~0ull, blame_asked = ~0ull, blame_gen = 0;
     bool blame_on = false;
+    std::shared_ptr<struct GitView> gitview;  // a diff tab's: what it shows, how it was asked for, its hunks
     u64 seen_rev = ~0ull, changed_ns = 0;  // when its text was last seen to have changed
     i64 disk_stamp = 0;                    // the file's change time when it was last read or written
     // A tab that shows something made and not a file (a diff, a commit):
@@ -758,6 +759,21 @@ private:
     const std::string* panel_root() const;  // the working directory, once there is one; else null
     std::string git_dump();
     void git_command(std::string_view name, const std::string& arg);  // an action by its name ("stage", "push")
+    // Diff tabs whose changes can be staged a hunk or a line at a time, in
+    // one column or two; and the offer a change's mark in the gutter makes.
+    void git_open_view(std::vector<std::string> args, const std::string& title, u8 kind, const std::string& path, u32 goto_line = 0);
+    void git_view_ask(Doc& d, bool again);
+    void git_view_set(Pane& p, Doc& d, Git::Result& r);
+    void git_view_want(Doc& d);
+    void git_view_note(FrameDesc& fd);
+    void git_offer_layout(FrameDesc& fd);
+    bool git_view_key(const SDL_KeyboardEvent& k);  // (appcommands.cpp's command_key asks first)
+    bool git_gutter_click(const SDL_MouseButtonEvent& b);  // (apptabs.cpp's tabs_mouse_down asks first)
+    void git_stage_here(bool stage);  // the hunk or the lines chosen at the cursor, in a diff tab or a file
+    void git_view_toggle();           // a diff tab in two columns, or back in one
+    void git_message_changed();
+    std::string git_view_dump();
+    std::string git_field_dump();
 
     // Splits (appsplit.cpp).
     struct Drag;

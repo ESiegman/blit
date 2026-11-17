@@ -567,6 +567,9 @@ int App::run_bench() {
 //   dump[:LABEL]           print how the window is split, and the tabs of each split
 //   git:ACTION[:ARG]       a git action by name (stage:PATH, commit:MESSAGE, push, switch:BRANCH, ...)
 //   gitwait                wait for git to finish; gitdump[:LABEL] also prints what it has told the editor
+//   gitview[:LABEL]        print the diff tab in front: its hunks, and its lines with what is coloured added or taken away
+//   gitfield               print the rows of the commit message as its field shows them
+//   gutterclick:N          a click on the change's mark beside line N of the file in front
 //   pan:DX,DY              a touchpad stroke; step:MS lets MS milliseconds of scrolling pass
 //   ready                  wait for the language server to be up (10 s at most)
 //   diag                   wait for the server's next set of diagnostics (10 s at most)
@@ -728,6 +731,23 @@ void App::run_script(const char* script) {
                 settle();
             }
             if (verb == "gitdump") std::fprintf(stderr, "%s%s\n", arg.empty() ? "" : (arg + ": ").c_str(), git_dump().c_str());
+        } else if (verb == "gitview") {
+            std::fprintf(stderr, "%s%s\n", arg.empty() ? "" : (arg + ": ").c_str(), git_view_dump().c_str());
+        } else if (verb == "gitfield") {
+            std::fprintf(stderr, "%s\n", git_field_dump().c_str());
+        } else if (verb == "gutterclick") {  // (where the gutter last drew that line's mark: its last cell)
+            const double ch = font_->cell_h(), cw = font_->cell_w();
+            const double py = pane_->text_y + (std::atof(arg.c_str()) - 1) * ch - pane_->scroll_y + ch / 2, px = pane_->text_x - cw / 2;
+            e.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+            e.button.button = SDL_BUTTON_LEFT;
+            e.button.x = static_cast<float>(px / density_);
+            e.button.y = static_cast<float>(py / density_);
+            e.button.clicks = 1;
+            handle(e);
+            SDL_Event up{};
+            up.type = SDL_EVENT_MOUSE_BUTTON_UP;
+            up.button.button = SDL_BUTTON_LEFT;
+            handle(up);
         } else if (verb == "dump") {
             // How the window is split, on one line: a split is its tabs in
             // brackets, the one in front starred and the split with the
