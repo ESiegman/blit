@@ -45,7 +45,7 @@ run() {
 # (What is waited for is what the shell prints, not what is typed: hel''lo, then hello.)
 run "term;frame;termwait:\$;text:echo hel''lo;key:Return;termwait:hello;termdump"
 check "a shell in the folder being worked in: what it is told, it does" "\$ echo hel''lo|hello|\$ @2,2 15x74"
-run "term;frame;termwait:\$;text:basename \$PWD;key:Return;termwait:work;text:stty size;key:Return;termwait:15 74;termdump"
+run "term;frame;termwait:\$;text:basename \$PWD;key:Return;termwait:work;text:stty size;key:Return;termwait:15 74;wait:300;termdump"
 check "it runs in the working folder, and knows the tab's size" '$ basename $PWD|work|$ stty size|15 74|$ @4,2 15x74'
 run "term;frame;termwait:\$;text:sleep 30;key:Return;termwait:sleep;key:ctrl+c;text:echo after-\$((1+1));key:Return;termwait:after-2;termdump"
 case "$got" in *'after-2|$ @'*) got="interrupted" ;; esac
@@ -133,7 +133,7 @@ run "$open;text:sleep 1 && exit;key:Return;key:ctrl+\`;wait:2500;termdump;key:ct
 check "a shell that exits while hidden goes; Ctrl+\` then opens a new one" 'V([untitled*] / >[Terminal*])0.70'
 run "$open;key:$close;asked"
 check "closing a terminal with only its shell: nothing asked" 'nothing asked'
-run "$open;text:$busy;key:Return;termwait:running;key:$close;asked"
+run "$open;text:$busy;key:Return;termwait:running;wait:500;key:$close;asked"  # (the shell execs sleep just after it prints "running")
 check "closing one whose program still runs: asked first" "'sleep 30' is still running in this terminal. Close it?"
 run "$open;text:$busy;key:Return;termwait:running;key:ctrl+shift+\`;frame;termwait:\$;key:space;text:$busy;key:Return;termwait:running;key:ctrl+\`;key:cmd+Q;asked"
 check "quitting: the programs still running counted, hidden ones too" '2 programs are still running in terminals. Quit and end them?'
@@ -153,7 +153,7 @@ check "a build brings the hidden split back, the keyboard staying in the text" '
 # On another machine: the connection is made by the terminal itself.
 run "workdir:ssh://box$T/proj;term;frame;termwait:\$;text:echo \$(basename \$PWD)-\$(basename \$HOME);key:Return;termwait:proj-;termdump"
 check "a terminal on another machine, in the folder there, at home there" '$ echo $(basename $PWD)-$(basename $HOME)|proj-there|$ @2,2 15x74'
-run "workdir:ssh://box$T/proj;term;frame;termwait:\$;text:stty size;key:Return;termwait:15 74;termdump"
+run "workdir:ssh://box$T/proj;term;frame;termwait:\$;text:stty size;key:Return;termwait:15 74;wait:300;termdump"  # (the next prompt comes just after)
 check "and it knows the tab's size too" '$ stty size|15 74|$ @2,2 15x74'
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "term ok"
