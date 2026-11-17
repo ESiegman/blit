@@ -321,7 +321,7 @@ App::App() : assist_(std::make_unique<Assist>()) {
 // document needs to tell it anything on the way out.)
 App::~App() {
     for (const std::unique_ptr<Pane>& p : panes_)
-        for (const std::unique_ptr<Doc>& d : p->docs) d->git = nullptr;
+        for (const std::shared_ptr<Doc>& d : p->docs) d->git = nullptr;
 }
 
 // ---------------------------------------------------------------- lifecycle
@@ -345,8 +345,7 @@ void App::lsp_reconcile() {
     for (const LspServer& s : all)
         if (std::find(a.failed.begin(), a.failed.end(), s.name) == a.failed.end()) here.push_back(s);
     const double most = static_cast<double>(cfg_.lsp_max_mb) * 1048576.0;
-    for (const std::unique_ptr<Pane>& p : panes_)
-        for (const std::unique_ptr<Doc>& dp : p->docs) {
+    for (Doc* dp : open_docs()) {  // (each once, however many splits show it)
             Doc& d = *dp;
             const bool wanted = server_text(d) && !d.loading && !d.ed.path.empty() && static_cast<double>(d.ed.buf.size()) <= most;
             if (const std::string* as = lsp_.opened_as(d.id)) {
@@ -893,8 +892,7 @@ std::string App::lsp_extras_dump() {
 
 std::string App::lsp_dump() {
     std::string out = lsp_.servers_dump() + " |";
-    for (const std::unique_ptr<Pane>& p : panes_)
-        for (const std::unique_ptr<Doc>& d : p->docs) {
+    for (Doc* d : open_docs()) {
             if (d->ed.path.empty()) continue;
             const size_t slash = d->ed.path.rfind('/');
             out += " " + d->ed.path.substr(slash == std::string::npos ? 0 : slash + 1) + (lsp_.is_open(d->id) ? "+" : "-");

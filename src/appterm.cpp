@@ -716,7 +716,7 @@ size_t App::term_busy_count() {
     size_t n = 0;
     std::string what;
     auto count = [&](const Pane& p) {
-        for (const std::unique_ptr<Doc>& d : p.docs)
+        for (const std::shared_ptr<Doc>& d : p.docs)
             if (d->term && busy_with(*d->term, &what)) ++n;
     };
     for (const std::unique_ptr<Pane>& p : panes_) count(*p);

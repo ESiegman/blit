@@ -604,8 +604,14 @@ back.
 - **A file from the tree** in the side panel can be dragged onto a split to
   open it there, or onto an edge to open it in a new split.
 
-A file shows in one split at a time: opening or dropping one that is
-already open moves to its tab, or moves its tab.
+**One file in two splits.** A file can show in several splits at once,
+the same text in each: what is typed in one shows in the others, and each
+split keeps its own cursor, selection and scroll in it (a change above
+another split's cursor moves that cursor along with its line). Choosing a
+file that another split shows (Go to file, Cmd+\, the tree, a drop) shows
+it in the split with the keyboard too; closing one of its tabs asks
+nothing while another split still shows it. A terminal, a profile, a
+preview, a picture or a PDF has one view: choosing it goes to its tab.
 
 ## Git
 
@@ -2341,8 +2347,7 @@ does not finish and takes all the memory the machine has.
   across lines is not found there. Replacing in files stops at the 3,000
   lines a search keeps, and passes over a file over 8 MB. The count in the
   in-file box ("3 of 12") is left out in a file over 64 MB (8 MB with
-  regular expressions on). A file shows in one split at a time (two views of the same file
-  are not possible yet), and there are at most sixteen splits. Tabs and
+  regular expressions on). There are at most sixteen splits. Tabs and
   splits are not remembered from one run to the next.
 - Linux: the Vulkan renderer and the keys above; no momentum after a
   flick (as below), and the blit started from a

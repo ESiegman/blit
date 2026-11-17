@@ -563,7 +563,7 @@ void App::picture_tidy() {
     if (now - pictures_->tidied_ns < 5'000'000'000ull) return;
     pictures_->tidied_ns = now;
     for (const std::unique_ptr<Pane>& pane : panes_)
-        for (const std::unique_ptr<Doc>& d : pane->docs)
+        for (const std::shared_ptr<Doc>& d : pane->docs)
             if (d->image)
                 if (auto it = pictures_->known.find(d->image->path); it != pictures_->known.end()) it->second.used_ns = now;
     std::erase_if(pictures_->known, [&](auto& kv) {
@@ -586,7 +586,7 @@ bool App::pictures_busy() const {
 // a document with the file's path, for the tab and for finding it again,
 // with no text.
 bool App::image_open(const std::string& full) {
-    auto fresh = std::make_unique<Doc>();
+    auto fresh = std::make_shared<Doc>();
     fresh->ed.path = full;
     fresh->read_only = true;
     fresh->image = std::make_shared<ImageView>();

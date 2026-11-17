@@ -584,7 +584,7 @@ bool App::is_pdf_path(std::string_view path) {
 // A PDF in a tab of its own (open_path() sends it here).
 bool App::pdf_open(const std::string& full) {
     if (!pdfs_) pdfs_ = std::make_shared<Pdfs>();
-    auto fresh = std::make_unique<Doc>();
+    auto fresh = std::make_shared<Doc>();
     fresh->ed.path = full;
     fresh->read_only = true;
     fresh->pdf = std::make_shared<PdfView>();
@@ -756,7 +756,7 @@ void App::pdf_sync() {
 void App::pdf_recheck() {
     if (!pdfs_) return;
     for (const std::unique_ptr<Pane>& pane : panes_)
-        for (const std::unique_ptr<Doc>& d : pane->docs) {
+        for (const std::shared_ptr<Doc>& d : pane->docs) {
             if (!d->pdf || d->pdf->again || d->pdf->state == PictureInfo::kReading || is_remote(d->pdf->path)) continue;
             if (stamp_of(d->pdf->path) == d->pdf->stamp) continue;
             d->pdf->again = true;
@@ -1377,7 +1377,7 @@ void App::pdf_mouse_up() {
 bool App::pdfs_busy() const {
     if (!pdfs_) return false;
     for (const std::unique_ptr<Pane>& pane : panes_)
-        for (const std::unique_ptr<Doc>& d : pane->docs)
+        for (const std::shared_ptr<Doc>& d : pane->docs)
             if (d->pdf && (d->pdf->state == PictureInfo::kReading || d->pdf->again)) return true;
     std::lock_guard l(pdfs_->mu);
     return !pdfs_->reads.empty() || !pdfs_->draws.empty() || !pdfs_->finds.empty() || pdfs_->working || !pdfs_->done.empty();

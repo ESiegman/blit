@@ -379,7 +379,7 @@ void App::Find::list_near(App& a) {
     size_t from = f.near.size();
     f.near.emplace_back();
     for (const std::unique_ptr<Pane>& p : a.panes_)
-        for (const std::unique_ptr<Doc>& d : p->docs)
+        for (const std::shared_ptr<Doc>& d : p->docs)
             if (d.get() != a.pane_->doc && !d->ed.path.empty() && d->title.empty()) add(full_path(d->ed.path));
     if (!a.pane_->doc->ed.path.empty() && a.pane_->doc->title.empty()) add(full_path(a.pane_->doc->ed.path));
     section("Open", from);
@@ -416,8 +416,8 @@ void App::Find::go(App& a, u64 line, u64 col) {
 void App::show_place(u64 line, u64 col) { Find::go(*this, line, col); }
 
 // Opens a file in the split to the right of the one with the keyboard (a
-// new one if there is none there), which gets the keyboard. A file shows in
-// one place: one open elsewhere moves there.
+// new one if there is none there), which gets the keyboard; a file
+// another split shows is shown there too.
 bool App::Find::open_beside(App& a, const std::string& path) {
     const Pane& here = *a.pane_;
     Pane* dest = a.pane_at(here.x1 + 4, (here.y0 + here.y1) / 2);
@@ -426,40 +426,56 @@ bool App::Find::open_beside(App& a, const std::string& path) {
     return open_in(a, dest, path, false);
 }
 
-// Opens a file in a split, which gets the keyboard; one open elsewhere
-// moves there. drop_blank: the split was made for it (Cmd+\), and the new
-// file it was made with goes if nothing was typed in it.
+// Opens a file in a split, which gets the keyboard: in its tab there if
+// it has one; a file another split shows, as a second view of the same
+// text (a picture, a PDF or the like moves there instead). drop_blank: the
+// split was made for it (Cmd+\), and the new file it was made with goes if
+// nothing was typed in it.
 bool App::Find::open_in(App& a, Pane* dest, const std::string& path, bool drop_blank) {
+    const std::string full = full_path(path);
+    auto done = [&] {
+        a.panel_focus(false);
+        a.pick_theme();
+        a.dirty_ = true;
+        return true;
+    };
+    for (size_t i = 0; i < dest->docs.size(); ++i)
+        if (!dest->docs[i]->ed.path.empty() && full_path(dest->docs[i]->ed.path) == full) {
+            a.focus_pane(dest);
+            a.tab_show(i);
+            return done();
+        }
     Pane* where = nullptr;
     size_t index = 0;
-    if (a.find_open(full_path(path), &where, &index)) {
-        const bool moved = where != dest;
-        u64 id = 0;
-        if (moved) {
-            id = where->docs[index]->id;
-            a.move_doc(where, index, dest, dest->docs.size());
-        }
+    if (a.find_open(full, &where, &index) && where != dest && a.shareable(*where->docs[index])) {
         a.focus_pane(dest);
-        if (!moved) a.tab_show(index);
-        for (size_t i = 0; drop_blank && moved && i < a.pane_->docs.size() && a.pane_->docs.size() > 1; ++i) {
+        if (dest->docs.empty()) {
+            a.add_doc(0);
+            a.tab_show(0);
+        }
+        a.show_also(where, index);  // (in place of the split's new file, if nothing was typed in it)
+        return done();
+    }
+    if (a.find_open(full, &where, &index)) {
+        const u64 id = where->docs[index]->id;
+        a.move_doc(where, index, dest, dest->docs.size());
+        a.focus_pane(dest);
+        for (size_t i = 0; drop_blank && i < a.pane_->docs.size() && a.pane_->docs.size() > 1; ++i) {
             const Doc& d = *a.pane_->docs[i];
             if (d.id != id && d.ed.path.empty() && !d.ed.modified() && d.ed.buf.size() == 0 && d.title.empty() && !d.term && !d.prof) {
                 a.tab_close(i, true);
                 break;
             }
         }
-    } else {
-        a.focus_pane(dest);
-        if (dest->docs.empty()) {  // a new split: a new file, which the one opened takes the place of
-            a.add_doc(0);
-            a.tab_show(0);
-        }
-        if (!a.open_path(path.c_str())) return false;
+        return done();
     }
-    a.panel_focus(false);
-    a.pick_theme();
-    a.dirty_ = true;
-    return true;
+    a.focus_pane(dest);
+    if (dest->docs.empty()) {  // a new split: a new file, which the one opened takes the place of
+        a.add_doc(0);
+        a.tab_show(0);
+    }
+    if (!a.open_path(path.c_str())) return false;
+    return done();
 }
 
 // A word on the bottom line: Vim's, with its modes on; else a message box.

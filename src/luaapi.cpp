@@ -976,8 +976,7 @@ struct ScriptApi {
         App& a = app(L);
         lua_newtable(L);
         int i = 0;
-        for (const std::unique_ptr<Pane>& p : a.panes_)
-            for (const std::unique_ptr<Doc>& d : p->docs) {
+        for (Doc* d : a.open_docs()) {  // (each once, however many splits show it)
                 lua_pushinteger(L, static_cast<lua_Integer>(d->id));
                 lua_rawseti(L, -2, ++i);
             }

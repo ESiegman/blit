@@ -168,7 +168,16 @@ Pane* App::pane_at(int px, int py) const {
 void App::focus_pane(Pane* p) {
     if (!p || p == pane_) return;
     stop_lsp(true);
+    // The same file in both: Vim leaves the view it was in (Insert mode
+    // ends there, at that view's cursor) and takes up the other's.
+    if (cfg_.modal && pane_ && pane_->doc && p->doc == pane_->doc && vim_doc_ == pane_->doc->id) {
+        place_view(pane_);
+        vim_.suspend(pane_->doc->ed);
+        pane_->doc->ed.watch = nullptr;
+        vim_doc_ = 0;
+    }
     pane_ = p;
+    place_view(pane_);
     dragging_ = dragging_thumb_ = false;
     lsp_pending_ = true;
     grammars_pending_ = true;
@@ -223,7 +232,7 @@ void App::split_close() {
     if (!heir || heir == p) return;
     const u64 front = p->doc ? p->doc->id : 0, heir_id = heir->id, heir_front = heir->doc ? heir->doc->id : 0;
     std::vector<u64> blanks;
-    for (const std::unique_ptr<Doc>& d : p->docs)
+    for (const std::shared_ptr<Doc>& d : p->docs)
         if (blank(*d)) blanks.push_back(d->id);
     for (size_t n = p->docs.size(); n > 0; --n) move_doc(p, 0, heir, heir->docs.size());  // (the last move lets go of p)
     for (const std::unique_ptr<Pane>& q : panes_) {
@@ -235,7 +244,7 @@ void App::split_close() {
             if (pane_->docs.size() > 1 && find_doc(id, &where, &i) && where == pane_) tab_close(i, true);
         }
         // (Its front tab in front; if that was a new file that went, the one that was in front here.)
-        const bool kept = std::ranges::any_of(pane_->docs, [&](const std::unique_ptr<Doc>& d) { return d->id == front; });
+        const bool kept = std::ranges::any_of(pane_->docs, [&](const std::shared_ptr<Doc>& d) { return d->id == front; });
         for (size_t i = 0; i < pane_->docs.size(); ++i)
             if (pane_->docs[i]->id == (kept ? front : heir_front)) tab_show(i);
         break;
@@ -248,7 +257,10 @@ void App::split_close() {
 void App::remove_pane(Pane* p) {
     if (!p || panes_.size() < 2) return;
     if (drag_->kind == kDragDivider) drag_->kind = kDragNone;
-    for (const std::unique_ptr<Doc>& d : p->docs) forget_doc(d.get());
+    for (const std::shared_ptr<Doc>& d : p->docs) {
+        if (views_of(d.get()) == 1) forget_doc(d.get());  // (one another split shows stays, with its place there)
+        else if (d->placed == p->id) d->placed = 0;
+    }
     // Its neighbour takes the room, and the keyboard if this pane had it.
     SplitNode* parent = nullptr;
     SplitNode* leaf = find_leaf(split_.get(), p, &parent);
@@ -259,6 +271,7 @@ void App::remove_pane(Pane* p) {
     if (!heir || std::none_of(panes_.begin(), panes_.end(), [heir](const auto& x) { return x.get() == heir; })) heir = panes_.front().get();
     if (focused) {
         pane_ = heir;
+        place_view(pane_);
         dragging_ = dragging_thumb_ = false;
         lsp_pending_ = true;
         grammars_pending_ = true;
@@ -288,6 +301,7 @@ std::unique_ptr<Pane> App::take_pane(Pane* p, float* room) {
     if (!heir || std::none_of(panes_.begin(), panes_.end(), [heir](const auto& x) { return x.get() == heir; })) heir = panes_.front().get();
     if (p == pane_) {
         pane_ = heir;
+        place_view(pane_);
         dragging_ = dragging_thumb_ = false;
         lsp_pending_ = true;
         grammars_pending_ = true;
@@ -332,7 +346,34 @@ void App::move_doc(Pane* from, size_t index, Pane* to, size_t at) {
     if (!from || !to || index >= from->docs.size()) return;
     stop_lsp(true);  // whichever file it was following may be about to move or step back
     lsp_pending_ = true;
-    std::unique_ptr<Doc> d = std::move(from->docs[index]);
+    if (from != to) {
+        const Doc* moving = from->docs[index].get();
+        for (size_t k = 0; k < to->docs.size(); ++k)
+            if (to->docs[k].get() == moving) {  // it shows there already: that tab comes to the front, this one goes
+                Pane* const keep = pane_;
+                pane_ = from;
+                tab_close(index, true);
+                const bool still = std::ranges::any_of(panes_, [&](const std::unique_ptr<Pane>& q) { return q.get() == to; });
+                if (still) {
+                    pane_ = to;
+                    for (size_t j = 0; j < to->docs.size(); ++j)
+                        if (to->docs[j].get() == moving) tab_show(j);
+                }
+                const bool kept = std::ranges::any_of(panes_, [&](const std::unique_ptr<Pane>& q) { return q.get() == keep; });
+                pane_ = kept ? keep : (still ? to : panes_.front().get());
+                place_view(pane_);
+                pick_theme();
+                dirty_ = true;
+                return;
+            }
+        // (Its place goes with it.)
+        if (const auto it = from->places.find(moving->id); it != from->places.end()) {
+            to->places[moving->id] = it->second;
+            from->places.erase(it);
+        }
+        if (moving->placed == from->id) const_cast<Doc*>(moving)->placed = to->id;
+    }
+    std::shared_ptr<Doc> d = std::move(from->docs[index]);
     const bool was_front = from->doc == d.get();
     if (was_front) {  // its view goes with it
         d->scroll_x = from->target_x;
@@ -652,11 +693,21 @@ void App::drag_drop() {
             if (!dest) dest = target;
             Pane* where = nullptr;
             size_t index = 0;
-            if (find_open(full_path(d.path), &where, &index)) {
-                // Open already, and a file shows in one place: its tab moves here.
-                if (where != dest) move_doc(where, index, dest, dest->docs.size());
+            const std::string full = full_path(d.path);
+            const auto in_dest = std::ranges::find_if(dest->docs, [&](const std::shared_ptr<Doc>& x) { return !x->ed.path.empty() && full_path(x->ed.path) == full; });
+            if (in_dest != dest->docs.end()) {  // shown there already: to its tab
                 focus_pane(dest);
-                if (where == dest) tab_show(index);
+                tab_show(static_cast<size_t>(in_dest - dest->docs.begin()));
+            } else if (find_open(full, &where, &index) && shareable(*where->docs[index])) {  // another split's: shown here too
+                focus_pane(dest);
+                if (dest->docs.empty()) {
+                    add_doc(0);
+                    tab_show(0);
+                }
+                show_also(where, index);
+            } else if (find_open(full, &where, &index)) {  // (a picture, a PDF: its tab moves here)
+                move_doc(where, index, dest, dest->docs.size());
+                focus_pane(dest);
             } else {
                 focus_pane(dest);
                 if (dest->docs.empty()) {  // a new split: a new file, which the one opened takes the place of

@@ -127,6 +127,13 @@ run "folder:$V;key:ctrl+\`;frame;termwait:\$;key:space;text:echo kep''t;key:Retu
 check "the terminals' split along the bottom stays as it was, its shell still running" \
     'H(V(>[notes.txt long.txt*]@282 / [Terminal*])0.70 | [main.cpp*])0.50 ;; H(V([notes.txt long.txt*]@282 / >[Terminal*])0.70 | [main.cpp*])0.50'
 
+# One file in two splits: both views come back, each where it was.
+rm -f "$S"/*
+run "folder:$W;open:$W/long.txt;key:Down;key:Down;key:cmd+\\;text:long.txt;findwait;key:Return;key:Down;key:Down;key:Down;quit"
+run "folder:$W;frame;dump;views"
+check "a file two splits showed: two views of it again, each with its own cursor" \
+    'H([long.txt*] | >[long.txt*])0.50 ;; views: [long.txt#3 2:0 line 3] [long.txt#3 5:0 line 6]<'
+
 # Another machine's folder: its files come back when the connection is up.
 run "folder:$R;open:$R/a.txt;remotewait;key:Down;key:Right;quit"
 run "remotewait;frame;dump;statusdump" "$R"

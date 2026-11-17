@@ -73,7 +73,7 @@ Pane* App::add_pane() {
 // ---------------------------------------------------------------- documents
 
 Doc* App::add_doc(size_t at) {
-    auto d = std::make_unique<Doc>();
+    auto d = std::make_shared<Doc>();
     d->ed.tab_width = cfg_.tab_width;
     d->id = next_doc_id_++;
     Doc* raw = d.get();
@@ -83,42 +83,160 @@ Doc* App::add_doc(size_t at) {
     return raw;
 }
 
+// (The focused split's first: a file it shows is shown there.)
 Doc* App::find_doc(u64 id, Pane** pane, size_t* index) {
-    for (const std::unique_ptr<Pane>& p : panes_)
+    auto look = [&](Pane* p) -> Doc* {
         for (size_t i = 0; i < p->docs.size(); ++i)
             if (p->docs[i]->id == id) {
-                if (pane) *pane = p.get();
+                if (pane) *pane = p;
                 if (index) *index = i;
                 return p->docs[i].get();
             }
+        return nullptr;
+    };
+    if (pane_)
+        if (Doc* d = look(pane_)) return d;
+    for (const std::unique_ptr<Pane>& p : panes_)
+        if (p.get() != pane_)
+            if (Doc* d = look(p.get())) return d;
     return nullptr;
 }
 
 bool App::find_open(const std::string& full, Pane** pane, size_t* index) const {
-    for (const std::unique_ptr<Pane>& p : panes_)
+    auto look = [&](Pane* p) {
         for (size_t i = 0; i < p->docs.size(); ++i)
             if (!p->docs[i]->ed.path.empty() && full_path(p->docs[i]->ed.path) == full) {
-                *pane = p.get();
+                *pane = p;
                 *index = i;
                 return true;
             }
+        return false;
+    };
+    if (pane_ && look(pane_)) return true;
+    for (const std::unique_ptr<Pane>& p : panes_)
+        if (p.get() != pane_ && look(p.get())) return true;
     return false;
 }
 
-// Runs fn once for every open file, in every split, with that file standing
-// as the one in front of the focused split while it runs.
+// Runs fn once for every open file (once, however many splits show it),
+// with that file standing as the one in front of the focused split while
+// it runs.
 void App::for_each_doc(std::function_ref<void()> fn) {
     Pane* const focused = pane_;
+    std::vector<const Doc*> seen;
     for (const std::unique_ptr<Pane>& p : panes_) {
         Doc* const front = p->doc;
         pane_ = p.get();
-        for (const std::unique_ptr<Doc>& d : p->docs) {
+        for (const std::shared_ptr<Doc>& d : p->docs) {
+            if (std::ranges::find(seen, d.get()) != seen.end()) continue;
+            seen.push_back(d.get());
             p->doc = d.get();
             fn();
         }
         p->doc = front;
     }
     pane_ = focused;
+}
+
+// ---------------------------------------------------------------- two views of one file
+
+int App::views_of(const Doc* d) const {
+    int n = 0;
+    for (const std::unique_ptr<Pane>& p : panes_)
+        n += std::ranges::any_of(p->docs, [d](const std::shared_ptr<Doc>& x) { return x.get() == d; });
+    return n;
+}
+
+std::vector<Doc*> App::open_docs() const {
+    std::vector<Doc*> out;
+    for (const std::unique_ptr<Pane>& p : panes_)
+        for (const std::shared_ptr<Doc>& d : p->docs)
+            if (std::ranges::find(out, d.get()) == out.end()) out.push_back(d.get());
+    return out;
+}
+
+// A document's editor has one cursor. Shown in several splits, it holds
+// the place of the one last drawn or given the keyboard, and the others
+// keep theirs (Pane::places) until it is their turn: the one that had it
+// leaves its place there, the one that takes it finds its own.
+void App::place_view(Pane* p) {
+    if (!p || !p->doc) return;
+    Doc& d = *p->doc;
+    if (d.placed == p->id) return;
+    if (d.placed)
+        for (const std::unique_ptr<Pane>& q : panes_)
+            if (q->id == d.placed) {
+                if (std::ranges::any_of(q->docs, [&](const std::shared_ptr<Doc>& x) { return x.get() == &d; })) q->places[d.id].caret = d.ed.caret();
+                break;
+            }
+    if (const auto it = p->places.find(d.id); it != p->places.end()) d.ed.set_caret(it->second.caret);
+    d.placed = p->id;
+}
+
+Editor::Caret App::caret_in(const Pane& p, const Doc& d) const {
+    if (d.placed != p.id)
+        if (const auto it = p.places.find(d.id); it != p.places.end()) return it->second.caret;
+    return d.ed.caret();
+}
+
+void OtherViews::edited(u64 start, u64 old_end, u64 new_end) {
+    if (app && doc) app->views_edited(*doc, start, old_end, new_end);
+}
+
+// The text changed through one split's place: the others' move with it, as
+// marks do (after the change, along by its length; in what went, to its end).
+void App::views_edited(Doc& d, u64 start, u64 old_end, u64 new_end) {
+    auto move = [&](u64& at) {
+        if (at >= old_end) at = at - old_end + new_end;
+        else if (at > start) at = std::min(at, new_end);
+    };
+    for (const std::unique_ptr<Pane>& p : panes_) {
+        if (p->id == d.placed) continue;
+        if (const auto it = p->places.find(d.id); it != p->places.end()) {
+            move(it->second.caret.cursor);
+            move(it->second.caret.anchor);
+        }
+    }
+}
+
+// What can show in two splits at once: a file's text. (A terminal, a
+// profile, a preview, a picture or a PDF has one view, with state of its own.)
+bool App::shareable(const Doc& d) const {
+    return !d.term && !d.prof && !d.md && !d.image && !d.pdf && !d.gitview && d.title.empty() && !d.ed.path.empty();
+}
+
+// Shows, in the focused split, a file another split shows: the same
+// document, at the place it has there, in a tab after the one in front (or
+// instead of that one, if it is a new file nobody has typed in).
+void App::show_also(Pane* from, size_t index) {
+    if (!from || from == pane_ || index >= from->docs.size()) return;
+    std::shared_ptr<Doc> d = from->docs[index];
+    d->others.app = this;
+    d->ed.views = &d->others;
+    const Editor::Caret there = caret_in(*from, *d);
+    from->places[d->id].caret = there;  // (kept there: this split is about to take the editor)
+    Pane::Place& here = pane_->places[d->id];
+    here.caret = there;
+    const bool front = from->doc == d.get();
+    const Pane::Place& kept = from->places[d->id];
+    here.scroll_x = front ? from->target_x : kept.scrolled ? kept.scroll_x : d->scroll_x;
+    here.scroll_y = front ? from->target_y : kept.scrolled ? kept.scroll_y : d->scroll_y;
+    here.scrolled = true;
+    const Doc& f = *pane_->doc;
+    const bool reuse = f.ed.path.empty() && !f.ed.modified() && f.ed.buf.size() == 0 && !f.read_only && f.title.empty() && !f.term && views_of(&f) == 1;
+    size_t at = pane_->tab + 1;
+    if (reuse) {
+        stop_lsp();
+        forget_doc(pane_->doc);
+        at = pane_->tab;
+        pane_->docs[at] = std::move(d);
+        pane_->doc = nullptr;
+    } else {
+        pane_->docs.insert(pane_->docs.begin() + static_cast<std::ptrdiff_t>(at), std::move(d));
+    }
+    tab_show(at);
+    pick_theme();
+    dirty_ = true;
 }
 
 // Brings a tab to the front. The view of the one that was there is kept for
@@ -129,17 +247,30 @@ void App::tab_show(size_t i) {
     dirty_ = true;
     if (pane_->doc == pane_->docs[i].get()) {
         pane_->tab = i;
+        place_view(pane_);
         return;
     }
     if (pane_->doc) {
         stop_lsp(true);  // it listens to the document in front; its server may do for the next one
-        pane_->doc->scroll_x = pane_->target_x;
-        pane_->doc->scroll_y = pane_->target_y;
+        if (views_of(pane_->doc) > 1) {  // (another split shows it too: its view here is kept here)
+            Pane::Place& at = pane_->places[pane_->doc->id];
+            at.scroll_x = pane_->target_x, at.scroll_y = pane_->target_y, at.scrolled = true;
+        } else {
+            pane_->doc->scroll_x = pane_->target_x;
+            pane_->doc->scroll_y = pane_->target_y;
+            pane_->places.erase(pane_->doc->id);
+        }
     }
     pane_->tab = i;
     pane_->doc = pane_->docs[i].get();
-    pane_->scroll_x = pane_->target_x = pane_->doc->scroll_x;
-    pane_->scroll_y = pane_->target_y = pane_->doc->scroll_y;
+    if (const auto at = pane_->places.find(pane_->doc->id); at != pane_->places.end() && at->second.scrolled) {
+        pane_->scroll_x = pane_->target_x = at->second.scroll_x;
+        pane_->scroll_y = pane_->target_y = at->second.scroll_y;
+    } else {
+        pane_->scroll_x = pane_->target_x = pane_->doc->scroll_x;
+        pane_->scroll_y = pane_->target_y = pane_->doc->scroll_y;
+    }
+    place_view(pane_);
     animating_ = dragging_ = dragging_thumb_ = false;
     pane_->cache_rev = ~0ull;
     lsp_pending_ = true;       // after the next frame, like at startup
@@ -161,7 +292,7 @@ void App::tab_step(int by) {
 
 void App::tab_move(size_t from, size_t to) {
     if (from >= pane_->docs.size() || to >= pane_->docs.size() || from == to) return;
-    std::unique_ptr<Doc> d = std::move(pane_->docs[from]);
+    std::shared_ptr<Doc> d = std::move(pane_->docs[from]);
     pane_->docs.erase(pane_->docs.begin() + static_cast<std::ptrdiff_t>(from));
     pane_->docs.insert(pane_->docs.begin() + static_cast<std::ptrdiff_t>(to), std::move(d));
     for (size_t i = 0; i < pane_->docs.size(); ++i)
@@ -175,6 +306,31 @@ void App::tab_move(size_t from, size_t to) {
 // when asked to (Cmd+Q), or by Vim's :q there (quit_if_last).
 bool App::tab_close(size_t i, bool force, bool quit_if_last) {
     if (i >= pane_->docs.size()) return true;
+    if (views_of(pane_->docs[i].get()) > 1) {  // another split shows it too: only this view goes, nothing asked
+        Doc* d = pane_->docs[i].get();
+        pane_->places.erase(d->id);
+        if (d->placed == pane_->id) d->placed = 0;  // (whichever split shows it next takes its own place)
+        if (pane_->docs.size() == 1 && panes_.size() > 1) {
+            stop_lsp();
+            remove_pane(pane_);
+            return true;
+        }
+        const bool front = d == pane_->doc;
+        if (front) {
+            stop_lsp(true);
+            pane_->doc = nullptr;
+        }
+        pane_->docs.erase(pane_->docs.begin() + static_cast<std::ptrdiff_t>(i));
+        if (front) {
+            tab_show(std::min(i, pane_->docs.size() - 1));
+        } else {
+            for (size_t k = 0; k < pane_->docs.size(); ++k)
+                if (pane_->docs[k].get() == pane_->doc) pane_->tab = k;
+        }
+        pane_->bar->reveal = true;
+        dirty_ = true;
+        return true;
+    }
     if (!force && pane_->docs[i]->term && !term_may_close(i)) return false;  // a program still running there (appterm.cpp)
     if (!force && remote_hold_close(i)) return false;  // a save to another machine under way: closing waits for it (appremote.cpp)
     if (pane_->docs[i]->ed.modified() && !force) {
@@ -254,7 +410,7 @@ bool App::tab_close(size_t i, bool force, bool quit_if_last) {
 // old name go by the new one.
 void App::renamed_on_disk(const std::string& from, const std::string& to) {
     for (const std::unique_ptr<Pane>& p : panes_)
-      for (const std::unique_ptr<Doc>& d : p->docs) {
+      for (const std::shared_ptr<Doc>& d : p->docs) {
         if (d->ed.path.empty()) continue;
         const std::string full = full_path(d->ed.path);
         if (full != from && !full.starts_with(from + "/")) continue;
@@ -441,7 +597,7 @@ void App::tabs_layout(int w, int h, FrameDesc& fd, bool focused) {
         mix(static_cast<u64>(t.drop + 1));
         mix(static_cast<u64>(t.hover + 1));
         mix(keys);
-        for (const std::unique_ptr<Doc>& d : pane_->docs) {
+        for (const std::shared_ptr<Doc>& d : pane_->docs) {
             mix(d->id);
             mix(d->ed.modified());
             mix(std::hash<std::string>{}(d->ed.path));

@@ -623,7 +623,7 @@ void App::apply_config(Config next) {
         next.lsp != cfg_.lsp || next.lsp_max_mb != cfg_.lsp_max_mb || next.lsp_servers != cfg_.lsp_servers || types_changed;
     cfg_ = std::move(next);
     for (const std::unique_ptr<Pane>& p : panes_) {
-        for (const std::unique_ptr<Doc>& d : p->docs) d->ed.tab_width = cfg_.tab_width;
+        for (const std::shared_ptr<Doc>& d : p->docs) d->ed.tab_width = cfg_.tab_width;
         p->cache_rev = ~0ull;  // columns depend on the tab width
     }
     if (syntax_changed)
@@ -676,30 +676,40 @@ void App::rescale_scroll(int old_cw, int old_ch) {
         p->scroll_y = p->target_y = std::floor(p->scroll_y / old_ch) * ch;
         p->scroll_x *= kx;
         p->target_x *= kx;
-        for (const std::unique_ptr<Doc>& d : p->docs) {
-            d->scroll_y = std::floor(d->scroll_y / old_ch) * ch;
-            d->scroll_x *= kx;
+        for (auto& [id, at] : p->places) {
+            at.scroll_y = std::floor(at.scroll_y / old_ch) * ch;
+            at.scroll_x *= kx;
         }
+    }
+    for (Doc* d : open_docs()) {  // (once each, however many splits show it)
+        d->scroll_y = std::floor(d->scroll_y / old_ch) * ch;
+        d->scroll_x *= kx;
     }
 }
 
 // ---------------------------------------------------------------- files
 
-// Shows a file: in the tab that already has it, else in a new tab next to
-// the one in front (or in that one, if it is a new file nobody has typed
-// in). False if it could not be opened; nothing has changed then.
+// Shows a file in the focused split: in the tab there that has it; else,
+// if another split shows it, as a second view of the same text (a picture,
+// a PDF or the like is gone to where it is instead); else in a new tab next
+// to the one in front (or in that one, if it is a new file nobody has
+// typed in). False if it could not be opened; nothing has changed then.
 bool App::open_path(const char* p) {
     const std::string full = full_path(p);
     Pane* where = nullptr;
     size_t have = 0;
-    if (find_open(full, &where, &have)) {  // a file shows in one place: go there
+    if (find_open(full, &where, &have)) {
+        if (where != pane_ && shareable(*where->docs[have])) {
+            show_also(where, have);
+            return true;
+        }
         focus_pane(where);
         tab_show(have);
         return true;
     }
     if (is_picture_path(full)) return image_open(full);  // a picture: in a tab of its own (appimage.cpp)
     if (is_pdf_path(full)) return pdf_open(full);        // a PDF too (apppdf.cpp)
-    auto fresh = std::make_unique<Doc>();
+    auto fresh = std::make_shared<Doc>();
     fresh->ed.tab_width = cfg_.tab_width;
     std::string err;
     const bool remote = is_remote(full);
@@ -846,8 +856,8 @@ void App::save_all() {
     std::vector<u64> wanted, fronts;
     for (const std::unique_ptr<Pane>& p : panes_) {
         fronts.push_back(p->doc ? p->doc->id : 0);
-        for (const std::unique_ptr<Doc>& d : p->docs)
-            if (d->ed.modified() && !d->ed.path.empty() && !d->read_only) wanted.push_back(d->id);
+        for (const std::shared_ptr<Doc>& d : p->docs)
+            if (d->ed.modified() && !d->ed.path.empty() && !d->read_only && std::ranges::find(wanted, d->id) == wanted.end()) wanted.push_back(d->id);
     }
     if (wanted.empty()) return;
     const u64 focused = pane_->doc->id;
@@ -892,8 +902,7 @@ void App::request_quit() {
         running_ = false;
         return;
     }
-    for (const std::unique_ptr<Pane>& p : panes_)
-        for (const std::unique_ptr<Doc>& d : p->docs) {
+    for (Doc* d : open_docs()) {
             if (!unsaved_doc(*d)) continue;
             if (d->ed.path.empty()) {
                 ++unnamed;
@@ -1198,7 +1207,7 @@ void App::measure_widest() {
 // Takes in what a measuring thread has found.
 void App::take_measured() {
     for (const std::unique_ptr<Pane>& p : panes_)
-      for (const std::unique_ptr<Doc>& d : p->docs) {
+      for (const std::shared_ptr<Doc>& d : p->docs) {
         if (!d->measured) continue;
         d->measurer = {};
         d->measured = false;
@@ -1340,11 +1349,13 @@ void App::layout(int w, int h, FrameDesc& fd) {
         if (fd.view_count >= kMaxViews) break;
         if (!p->doc) continue;
         pane_ = p.get();
+        place_view(pane_);  // (a file two splits show: this one's cursor and selection)
         pane_->view = fd.view_count;
         if (pane_ == focused) focus_view_ = fd.view_count;
         layout_pane(fd, pane_ == focused);
     }
     pane_ = focused;
+    place_view(pane_);
     fd.theme = theme_;
     fd.scale = scale_;
     if (cfg_.indent_guides && guide_inks_) fd.guide_px = static_cast<float>(std::max<long>(1, std::lround(scale_)));

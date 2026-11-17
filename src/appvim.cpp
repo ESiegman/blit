@@ -98,14 +98,17 @@ void App::vim_create() {
 void App::vim_attach() {
     if (!cfg_.modal || !font_) return;
     Doc& d = *pane_->doc;
-    if (vim_doc_ != d.id) {
-        if (Doc* old = find_doc(vim_doc_)) {
+    if (vim_doc_ != d.id || vim_pane_ != pane_->id) {
+        if (Doc* old = find_doc(vim_doc_); old && old != &d) {
             vim_.suspend(old->ed);
             old->ed.watch = nullptr;
+        } else if (old == &d) {  // (the same file, in another split: left, and taken up there)
+            vim_.suspend(d.ed);
         } else {
             vim_.forget();
         }
         vim_doc_ = d.id;
+        vim_pane_ = pane_->id;
         vim_.buffer_id = d.id;  // (before resume(): the places kept for this document come back)
         vim_.resume(d.ed);
         d.ed.watch = &vim_;     // marks and the like move with the text
@@ -128,7 +131,7 @@ void App::vim_attach() {
 
 bool App::vim_selection(u64* lo, u64* hi) const {
     // (Visual Block mode's rectangle is no run of text: vim_marks() draws it.)
-    if (!cfg_.modal || !vim_.visual() || vim_.mode() == Vim::kVisualBlock || pane_->doc->id != vim_doc_) return false;
+    if (!cfg_.modal || !vim_.visual() || vim_.mode() == Vim::kVisualBlock || pane_->doc->id != vim_doc_ || pane_->id != vim_pane_) return false;
     vim_.visual_range(pane_->doc->ed, lo, hi);
     return true;
 }
@@ -445,7 +448,7 @@ void App::vim_marks(FrameDesc& fd) {
     u.block.clear();
     u64 line0, line1;
     u32 col0, col1;
-    if (cfg_.modal && pane_->doc->id == vim_doc_ && vim_.block(ed, &line0, &line1, &col0, &col1)) {
+    if (cfg_.modal && pane_->doc->id == vim_doc_ && pane_->id == vim_pane_ && vim_.block(ed, &line0, &line1, &col0, &col1)) {
         // (On each line the grid shows as much of it as the line has text for.)
         for (u64 line = std::max(line0, grid.top_line); line <= line1 && line < grid.top_line + grid.rows; ++line) u.block.push_back({line, col0, col1, kDecoSelect});
         if (!u.block.empty()) fd.views[focus_view_].sel_radius = look().sel;  // its corners are rounded like any selection's

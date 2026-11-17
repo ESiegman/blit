@@ -562,7 +562,7 @@ void App::prof_panel_draw(TextBox& box, bool focused) {
     // The threads of the profile shown, when it has more than one: the graph of all, or of one.
     const ProfView* view = nullptr;
     for (const std::unique_ptr<Pane>& pane : panes_)
-        for (const std::unique_ptr<Doc>& d : pane->docs)
+        for (const std::shared_ptr<Doc>& d : pane->docs)
             if (d->prof && d->prof->p == u.shown) view = d->prof.get();
     if (view && view->p->by_thread.size() > 1) {
         const Profile& p = *view->p;
@@ -663,7 +663,7 @@ void App::prof_do(u32 row) {
         }
         case ProfUi::kThread:  // the graph of all the threads, or of one, in the tab of the profile shown
             for (const std::unique_ptr<Pane>& pane : panes_)
-                for (const std::unique_ptr<Doc>& d : pane->docs)
+                for (const std::shared_ptr<Doc>& d : pane->docs)
                     if (d->prof && d->prof->p == u.shown) prof_thread(*d->prof, static_cast<int>(it.index) - 1);
             break;
         case ProfUi::kNone: break;

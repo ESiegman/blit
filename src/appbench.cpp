@@ -596,6 +596,7 @@ int App::run_bench() {
 //   vim:KEYS               keys in Vim's notation (dw, <Esc>, <C-r>); vimdump prints the mode, the bottom line,
 //                          the cursor's line:column and the text of its line
 //   dump[:LABEL]           print how the window is split, and the tabs of each split
+//   views                  print each split's view of the file in front: its document, its own cursor and that line
 //   git:ACTION[:ARG]       a git action by name (stage:PATH, commit:MESSAGE, push, switch:BRANCH, ...)
 //   gitwait                wait for git to finish; gitdump[:LABEL] also prints what it has told the editor
 //   gitview[:LABEL]        print the diff tab in front: its hunks, and its lines with what is coloured added or taken away
@@ -816,6 +817,25 @@ void App::run_script(const char* script) {
             up.type = SDL_EVENT_MOUSE_BUTTON_UP;
             up.button.button = SDL_BUTTON_LEFT;
             handle(up);
+        } else if (verb == "views") {
+            // Each split's view of the file in front, on one line, in the
+            // order the splits were made: its name and document (the same
+            // number: the same text), the split's own cursor (line:column
+            // from 0) and that line's text; "<" marks the one with the keyboard.
+            std::string out = "views:";
+            for (const std::unique_ptr<Pane>& p : panes_) {
+                if (!p->doc) continue;
+                const Doc& d = *p->doc;
+                const u64 cur = std::min(caret_in(*p, d).cursor, d.ed.buf.size());
+                const u64 line = d.ed.buf.line_of(cur), start = d.ed.buf.line_start(line);
+                const size_t slash = d.ed.path.find_last_of('/');
+                const std::string name = d.ed.path.empty() ? "untitled" : d.ed.path.substr(slash == std::string::npos ? 0 : slash + 1);
+                char head[96];
+                std::snprintf(head, sizeof head, " [%s#%llu %llu:%llu ", name.c_str(), static_cast<unsigned long long>(d.id), static_cast<unsigned long long>(line),
+                              static_cast<unsigned long long>(cur - start));
+                out += head + d.ed.buf.text(start, d.ed.line_end(line) - start) + "]" + (p.get() == pane_ ? "<" : "");
+            }
+            std::fprintf(stderr, "%s\n", out.c_str());
         } else if (verb == "dump") {
             // How the window is split, on one line: a split is its tabs in
             // brackets, the one in front starred and the split with the
@@ -825,7 +845,7 @@ void App::run_script(const char* script) {
                 if (!n) return "?";
                 if (n->pane) {
                     std::string out = n->pane == pane_ ? ">[" : "[";
-                    for (const std::unique_ptr<Doc>& d : n->pane->docs) {
+                    for (const std::shared_ptr<Doc>& d : n->pane->docs) {
                         const std::string& path = d->ed.path;
                         if (out.back() != '[') out += ' ';
                         out += !d->title.empty() ? d->title : path.empty() ? "untitled" : path.substr(path.find_last_of('/') + 1);
@@ -872,7 +892,7 @@ void App::run_script(const char* script) {
                 remote_sync();
                 bool loading = false;
                 for (const std::unique_ptr<Pane>& p : panes_)
-                    for (const std::unique_ptr<Doc>& d : p->docs) loading |= d->loading;
+                    for (const std::shared_ptr<Doc>& d : p->docs) loading |= d->loading;
                 bool connecting = false;
                 for (const std::shared_ptr<Remote>& r : Remote::all()) connecting |= r->state() == Remote::kConnecting;
                 if (!Remote::asks().empty()) {  // ssh has a question: the script answers it

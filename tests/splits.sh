@@ -47,6 +47,19 @@ check() {
     fi
 }
 
+# views NAME SCRIPT EXPECTED: the last line the script's "views" prints
+# (each split's file in front, its document, the split's own cursor as
+# line:column, and that line).
+views() {
+    got=$("$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "$2;views" "$T/a.txt" 2>&1 >/dev/null | grep '^views:' | tail -1)
+    if [ -n "$print" ]; then
+        printf '%s\n    %s\n' "$1" "$got"
+    elif [ "$got" != "$3" ]; then
+        printf 'FAIL: %s\n    expected %s\n    got      %s\n' "$1" "$3" "$got"
+        failed=1
+    fi
+}
+
 # Two splits: a.txt and b.txt on the left, c.txt on the right, which has the keyboard.
 two="open:$T/b.txt;key:cmd+\\;open:$T/c.txt;frame"
 # The same with the side panel open, showing a.txt to d.txt.
@@ -104,15 +117,15 @@ check "a click on a file in the tree opens it where the keyboard is" "$panel;cli
     "H([a.txt b.txt*] | >[c.txt d.txt*])0.50"
 check "a file dragged within the panel: nothing" "$panel;click:60,90;drag:80,110;release" \
     "H([a.txt b.txt*] | >[c.txt*])0.50"
-check "a file that is open already: its tab moves to the new split" "$panel;click:60,59;drag:300,300;drag:660,430;release" \
-    "H([a.txt*] | V([c.txt*] / >[b.txt*])0.50)0.50"
+check "a file open in another split, dropped on an edge: a new split shows it too" "$panel;click:60,59;drag:300,300;drag:660,430;release" \
+    "H([a.txt b.txt*] | V([c.txt*] / >[b.txt*])0.50)0.50"
 # Cmd+\ opens Go to file for the new split: what is chosen opens in it.
 check "Cmd+\\: Go to file for the new split, and the file chosen opens there" "workdir:$T;$two;key:cmd+\\;text:d.txt;findwait;key:Return" \
     "H([a.txt b.txt*] | H([c.txt*] | >[d.txt*])0.50)0.50"
 check "Esc leaves the new split with a new file" "$two;key:cmd+\\;key:Escape" \
     "H([a.txt b.txt*] | H([c.txt*] | >[untitled*])0.50)0.50"
-check "a file open in another split: its tab moves to the new one" "workdir:$T;$two;key:cmd+\\;text:a.txt;findwait;key:Return" \
-    "H([b.txt*] | H([c.txt*] | >[a.txt*])0.50)0.50"
+check "a file open in another split: the new one shows it too" "workdir:$T;$two;key:cmd+\\;text:a.txt;findwait;key:Return" \
+    "H([a.txt b.txt*] | H([c.txt*] | >[a.txt*])0.50)0.50"
 check "Cmd+\\ again while the box is open: another split" "$two;key:cmd+\\;key:cmd+shift+\\;key:Escape" \
     "H([a.txt b.txt*] | H([c.txt*] | V([untitled*] / >[untitled*])0.50)0.50)0.50"
 # Cmd+Shift+W closes a split: its tabs join the one beside it.
@@ -128,6 +141,25 @@ check "the last split: its tabs close (unsaved ones asked about), a new file lef
     ">[untitled*]"
 check "the terminals' split (Ctrl+\`): hidden, its programs still running" "$two;key:ctrl+\`;frame;key:cmd+shift+W" \
     "H([a.txt b.txt*] | >[c.txt*])0.50"
+
+# One file in two splits: the same text in both, each with its own place.
+self="workdir:$T;key:cmd+\\;text:a.txt;findwait;key:Return"
+check "a file split beside itself: two views of it" "$self" \
+    "H([a.txt*] | >[a.txt*])0.50"
+views "what is typed in one shows in the other; each has its own cursor" "$self;text:XY;key:cmd+alt+Left;key:Down;key:Down" \
+    "views: [a.txt#1 2:2 line 2 of a]< [a.txt#1 0:2 XYline 0 of a]"
+views "a line put in above the other's cursor moves it along with its line" "workdir:$T;key:Down;key:Down;key:End;$self;key:Up;key:Up;key:Home;key:Return" \
+    "views: [a.txt#1 3:11 line 2 of a] [a.txt#1 1:0 line 0 of a]<"
+views "undone in one: the other keeps its place in the text" "$self;text:XY;key:cmd+alt+Left;key:Down;key:cmd+alt+Right;key:cmd+Z" \
+    "views: [a.txt#1 1:2 line 1 of a] [a.txt#1 0:0 line 0 of a]<"
+views "one view of a changed file closed: nothing asked, the other keeps the text" "$self;text:XY;key:cmd+W;asked" \
+    "views: [a.txt#1 0:2 XYline 0 of a]<"
+check "and its split goes with it" "$self;text:XY;key:cmd+W;asked" \
+    ">[a.txt*]"
+check "Cmd+Shift+W into a split that shows it already: one tab there" "$self;open:$T/b.txt;key:cmd+shift+W" \
+    ">[a.txt b.txt*]"
+check "the other split's other tabs stay when its view of the file is closed" "$self;open:$T/b.txt;key:cmd+alt+Left;key:cmd+W" \
+    ">[a.txt b.txt*]"
 
 check "tabs: new, next, close, and the last one closed leaves a new file" 'key:cmd+T;key:cmd+T;key:ctrl+Tab;key:cmd+W;key:cmd+W;key:cmd+W' \
     ">[untitled*]"

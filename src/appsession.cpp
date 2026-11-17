@@ -199,9 +199,10 @@ struct App::Session {
         }
         return n;
     }
-    // Leaves out a file that is gone (or is a folder now), and a file a
-    // split before had (a file shows in one place); a split left with none
-    // goes, and its other half takes its room. The files left.
+    // Leaves out a file that is gone (or is a folder now), and a file its
+    // split had already (another split may show it too: two views of it); a
+    // split left with none goes, and its other half takes its room. The
+    // files left (`seen`: every file kept, once).
     static size_t prune(std::unique_ptr<Node>& n, std::set<std::string>& seen) {
         if (!n) return 0;
         if (!n->leaf) {
@@ -211,12 +212,14 @@ struct App::Session {
         }
         const File* front = n->front < n->files.size() ? &n->files[n->front] : nullptr;
         const std::string front_path = front ? front->path : std::string();
+        std::set<std::string> here;
         std::erase_if(n->files, [&](const File& f) {
-            if (seen.contains(f.path)) return true;
+            if (here.contains(f.path)) return true;
             if (!is_remote(f.path)) {  // (another machine's: found out when it is read)
                 struct stat st;
                 if (::stat(f.path.c_str(), &st) != 0 || S_ISDIR(st.st_mode)) return true;
             }
+            here.insert(f.path);
             seen.insert(f.path);
             return false;
         });
@@ -377,12 +380,15 @@ std::string App::session_text() {
             if (!kept(d)) continue;
             if (i <= p.tab) front = shown;
             u64 line = 0, col = 0;
-            double top = (&d == p.doc ? p.target_y : d.scroll_y) / ch, left = (&d == p.doc ? p.target_x : d.scroll_x) / cw;
+            const auto kept_here = p.places.find(d.id);
+            const bool own = kept_here != p.places.end() && kept_here->second.scrolled;  // (a file another split shows too: its view here)
+            double top = (&d == p.doc ? p.target_y : own ? kept_here->second.scroll_y : d.scroll_y) / ch,
+                   left = (&d == p.doc ? p.target_x : own ? kept_here->second.scroll_x : d.scroll_x) / cw;
             if (d.loading) {  // (on its way from another machine: where it is to go)
                 if (d.goto_line != ~0ull) line = d.goto_line, col = d.goto_col;
                 if (const auto v = u.views.find(d.id); v != u.views.end()) top = v->second.first, left = v->second.second;
             } else if (!d.image && !d.pdf) {
-                const u64 cur = d.ed.cursor();
+                const u64 cur = std::min(caret_in(p, d).cursor, d.ed.buf.size());
                 line = d.ed.buf.line_of(cur);
                 col = cur - d.ed.buf.line_start(line);
             }
@@ -455,18 +461,21 @@ void App::session_apply(Session& st) {
         // arrangement changes (its programs keep running), and back after.
         // (One with no terminal left in it is only a split like any other.)
         const Pane* dock = dock_pane();
-        const bool docked = dock && std::ranges::any_of(dock->docs, [](const std::unique_ptr<Doc>& d) { return d->term != nullptr; });
+        const bool docked = dock && std::ranges::any_of(dock->docs, [](const std::shared_ptr<Doc>& d) { return d->term != nullptr; });
         if (docked) dock_hide();
         // What there is now: the session's files, what must stay, the rest.
-        std::map<std::string, std::unique_ptr<Doc>> have;
-        std::vector<std::unique_ptr<Doc>> stay;
+        std::map<std::string, std::shared_ptr<Doc>> have;
+        std::vector<std::shared_ptr<Doc>> stay;
+        std::vector<const Doc*> gone;  // (let go of: once, however many splits showed it)
         for (const std::unique_ptr<Pane>& p : panes_) {
             if (p->doc) p->doc->scroll_x = p->target_x, p->doc->scroll_y = p->target_y;  // (its view goes with it)
-            for (std::unique_ptr<Doc>& d : p->docs) {
+            for (std::shared_ptr<Doc>& d : p->docs) {
                 const std::string full = d->ed.path.empty() || !d->title.empty() ? std::string() : full_path(d->ed.path);
                 if (!full.empty() && seen.contains(full) && !have.contains(full)) have[full] = std::move(d);
+                else if (const auto same = have.find(full); !full.empty() && same != have.end() && same->second.get() == d.get()) d.reset();  // (shown in two splits: one document)
+                else if (std::ranges::any_of(stay, [&](const std::shared_ptr<Doc>& x) { return x.get() == d.get(); })) d.reset();
                 else if (must_stay(*d)) stay.push_back(std::move(d));
-                else forget_doc(d.get());
+                else if (std::ranges::find(gone, d.get()) == gone.end()) gone.push_back(d.get()), forget_doc(d.get());
             }
             p->docs.clear();
             p->doc = nullptr;
@@ -532,7 +541,7 @@ void App::session_apply(Session& st) {
         // What must stay, in the split with the keyboard; and the empty tabs
         // the splits were begun with go where there is anything else.
         pane_ = focused;
-        for (std::unique_ptr<Doc>& d : stay) {
+        for (std::shared_ptr<Doc>& d : stay) {
             focused->docs.push_back(std::move(d));
             tab_show(focused->docs.size() - 1);
         }

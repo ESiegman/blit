@@ -8,6 +8,7 @@
 #include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 #include "build.hpp"
@@ -118,11 +119,28 @@ struct PictureInfo {
     int shown_w = 0, shown_h = 0, before_w = 0, before_h = 0;
 };
 
+class App;
+struct Doc;
+
+// Moves the places the other splits keep in a document two or more of them
+// show (Pane::places) along with its edits.
+struct OtherViews final : EditWatch {
+    explicit OtherViews(Doc* d) : doc(d) {}
+    App* app = nullptr;
+    Doc* doc = nullptr;
+    void edited(u64 start, u64 old_end, u64 new_end) override;
+};
+
 struct Doc {
     Editor ed;
     Syntax syntax;  // after ed: it must let go of the buffer first
     u64 id = 0;     // stays the same however the tabs are reordered
     double scroll_x = 0, scroll_y = 0;  // the view, kept while another tab is in front
+    // Shown in more than one split, the editor holds one split's cursor at a
+    // time: this one's (a pane's id; 0: none in particular), the others'
+    // being kept in their Pane::places.
+    u64 placed = 0;
+    OtherViews others{this};
     // The widest line, in columns, and the revision of the text it was
     // measured at (see App::widest_line()).
     u64 widest_rev = ~0ull;
@@ -189,9 +207,19 @@ struct Pane {
     u64 id = 0;
     // Its files, in the order of their tabs, and the one in front. Never
     // empty while the pane is on show.
-    std::vector<std::unique_ptr<Doc>> docs;
+    std::vector<std::shared_ptr<Doc>> docs;  // (shared: one file can show in several splits, each with its own place in it)
     Doc* doc = nullptr;
     size_t tab = 0;
+    // Its place in each document another split shows too, kept while that
+    // split has the document's editor (see App::place_view()): the cursor
+    // and the selection, and, while the document is not in front here,
+    // the scroll.
+    struct Place {
+        Editor::Caret caret;
+        double scroll_x = 0, scroll_y = 0;
+        bool scrolled = false;  // (the scroll is kept here, not in the document)
+    };
+    std::unordered_map<u64, Place> places;
     // Where it is in the window, in pixels, and where in that the text
     // starts: right of the line numbers, under the tab bar.
     int x0 = 0, y0 = 0, x1 = 0, y1 = 0;
@@ -337,7 +365,19 @@ private:
     void tabs_create();
     Doc* add_doc(size_t at);
     Doc* find_doc(u64 id, Pane** pane = nullptr, size_t* index = nullptr);
-    bool find_open(const std::string& full, Pane** pane, size_t* index) const;  // the tab showing a file, if any
+    bool find_open(const std::string& full, Pane** pane, size_t* index) const;  // the tab showing a file, if any (the focused split's first)
+    // Two views of one file (apptabs.cpp): how many splits show a document;
+    // every document open, each once; the editor made to hold a split's own
+    // place in the document in front there; that place, wherever it is
+    // kept; a file another split shows, shown in this one too.
+    int views_of(const Doc* d) const;
+    std::vector<Doc*> open_docs() const;
+    void place_view(Pane* p);
+    Editor::Caret caret_in(const Pane& p, const Doc& d) const;
+    void show_also(Pane* from, size_t index);
+    bool shareable(const Doc& d) const;
+    void views_edited(Doc& d, u64 start, u64 old_end, u64 new_end);
+    friend struct OtherViews;
     void tab_show(size_t i);
     void tab_new();
     bool tab_close(size_t i, bool force = false, bool quit_if_last = false);  // false: the user said no (force: without asking)
@@ -1037,6 +1077,7 @@ private:
     std::shared_ptr<GitUi> gitui_;
     Vim vim_;                 // modal editing, for the document in front
     u64 vim_doc_ = 0;         // which document that was when Vim last looked
+    u64 vim_pane_ = 0;        // and in which split (a file two splits show: its selection is drawn in that one)
     std::shared_ptr<VimUi> vimui_;
     std::shared_ptr<StatusUi> status_;
     std::shared_ptr<StartUi> start_;

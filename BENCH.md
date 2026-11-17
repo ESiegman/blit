@@ -2474,6 +2474,30 @@ keeping the GPU busy; it moves to whichever call comes first (recording a
 draw, binding a pipeline, the submit) and none of it is an ioctl, a page
 fault or a context switch. So it is the machine's, not blit's code.
 
+### Round 47: one file in two splits
+
+A split shows views of documents instead of owning them: a pane's tabs
+hold shared documents, and a document's editor holds the cursor of one
+view at a time, the split last drawn or given the keyboard; the others
+keep theirs (cursor, selection, scroll) and get them back when it is
+their turn, and an edit through one view moves the others' places as
+marks move. Each frame asks every split for its place (a comparison when
+the file is shown once); an edit tells the other views only when there
+are some.
+
+Before and after, turn about, five rounds, code-100m.txt at 2560x1600:
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling: frames a second / CPU p50 / fill p50 | 19,033 / 25.83 µs / 1.12 µs | 19,179 / 26.12 µs / 1.12 µs |
+| Typing: frames a second / CPU p50 / fill p50 | 18,919 / 28.12 µs / 1.25 µs | 18,910 / 28.08 µs / 1.25 µs |
+
+No change. All 20 suites pass; splits.sh has seven cases more (the same
+text in both views, each cursor its own, an edit above moving the other's
+cursor, undo, one view of a changed file closed with nothing asked, Cmd+Shift+W
+into a split that shows the file, a view closed from the other split) and
+session.sh one (both views back, each where it was).
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

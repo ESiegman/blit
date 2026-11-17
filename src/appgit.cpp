@@ -389,12 +389,12 @@ void App::sync_git() {
                 shows |= panel_px() > 0;
                 if (moved)  // another commit to compare with: ask again
                     for (const std::unique_ptr<Pane>& p : panes_)
-                        for (const std::unique_ptr<Doc>& d : p->docs) d->hunks_asked = d->hunks_rev = d->blame_asked = d->blame_rev = ~0ull;
+                        for (const std::shared_ptr<Doc>& d : p->docs) d->hunks_asked = d->hunks_rev = d->blame_asked = d->blame_rev = ~0ull;
                 // What is staged and what is not may be other than it was:
                 // the diff tabs of files are read again (and change only if
                 // their text does).
                 for (const std::unique_ptr<Pane>& p : panes_)
-                    for (const std::unique_ptr<Doc>& d : p->docs)
+                    for (const std::shared_ptr<Doc>& d : p->docs)
                         if (d->gitview && d->gitview->kind != kViewOther && !d->gitview->asked) git_view_ask(*d, false);
                 break;
             }
@@ -413,7 +413,7 @@ void App::sync_git() {
                 shows = true;
                 reload_changed();  // a pull, a merge, a change of branch: files may be other files now
                 for (const std::unique_ptr<Pane>& p : panes_)
-                    for (const std::unique_ptr<Doc>& d : p->docs) d->hunks_asked = d->hunks_rev = d->blame_asked = d->blame_rev = ~0ull;
+                    for (const std::shared_ptr<Doc>& d : p->docs) d->hunks_asked = d->hunks_rev = d->blame_asked = d->blame_rev = ~0ull;
                 break;
             }
             case Git::kHunks: {
@@ -535,7 +535,7 @@ void App::git_tick() {
 // unless the tab has changes of its own that reading would lose.
 void App::reload_changed() {
     for (const std::unique_ptr<Pane>& p : panes_) {
-        for (const std::unique_ptr<Doc>& d : p->docs) {
+        for (const std::shared_ptr<Doc>& d : p->docs) {
             if (d->ed.path.empty() || d->read_only) continue;
             if (is_remote(d->ed.path)) {  // (another machine's: looked at on a thread, read again there if it changed)
                 remote_load(*d, true);

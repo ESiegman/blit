@@ -46,6 +46,9 @@ public:
     std::string path;
     u32 tab_width = 4;  // columns between tab stops
     EditWatch* watch = nullptr;
+    // A second one, for the other splits that show this text: each keeps its
+    // own cursor while one of them has the editor (see App::place_view()).
+    EditWatch* views = nullptr;
 
     // Up to three listeners hear about edits (syntax highlighting, the
     // language server, and the debugger's breakpoints).
@@ -93,6 +96,20 @@ public:
     u64 revision() const { return revision_; }
     // Where the text changed, revision by revision (the last 64).
     const EditLog& edit_log() const { return edits_; }
+
+    // The cursor, the selection's other end and the column vertical moves
+    // keep: a view's own, for a text two splits show.
+    struct Caret {
+        u64 cursor = 0, anchor = 0;
+        u32 want_col = ~0u;
+    };
+    Caret caret() const { return {cursor_, anchor_, want_col_}; }
+    void set_caret(const Caret& c) {
+        const u64 n = buf.size();
+        cursor_ = c.cursor < n ? c.cursor : n;
+        anchor_ = c.anchor < n ? c.anchor : n;
+        want_col_ = c.want_col;
+    }
 
     u64 cursor() const { return cursor_; }
     u64 anchor() const { return anchor_; }

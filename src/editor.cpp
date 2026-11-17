@@ -644,6 +644,7 @@ void Editor::apply(u64 off, u64 remove_len, std::string_view text, Kind kind) {
     if (!text.empty()) buf.insert(off, text);
     end_edit(note, text.size());
     if (watch) watch->edited(off, off + remove_len, off + text.size());
+    if (views) views->edited(off, off + remove_len, off + text.size());
     cursor_ = anchor_ = e.cursor1 = off + text.size();
     want_col_ = ~0u;
     ++revision_;
@@ -712,6 +713,7 @@ void Editor::swap_edit(Edit& e) {
     buf.insert_pieces(e.off, e.stash);
     end_edit(note, back);
     if (watch) watch->edited(e.off, e.off + e.cur_len, e.off + back);
+    if (views) views->edited(e.off, e.off + e.cur_len, e.off + back);
     e.stash = std::move(out);
     e.cur_len = back;
     e.sealed = true;
