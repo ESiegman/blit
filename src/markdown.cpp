@@ -440,7 +440,7 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
                 if (end != std::string_view::npos) {
                     flush();
                     Span inner = as;
-                    if (c == '~') inner.ink = kMdMuted;  // (struck out: quieter, there being no line through it)
+                    if (c == '~') inner.ink = kMdMuted, inner.style |= kMdStrike;  // (struck out: a line through, and quieter)
                     else inner.style |= static_cast<u8>(run == 1 ? kMdItalic : run == 2 ? kMdBold : kMdBold | kMdItalic);
                     parse_inline(s.substr(i + run, end - i - run), inner, refs, out);
                     i = end + run;

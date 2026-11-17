@@ -843,7 +843,8 @@ void App::term_layout(FrameDesc& fd) {
                     if (tc.attr & TermCell::kDim) {  // (halfway to the background)
                         fg = ((fg >> 16 & 0xFF) + (bg >> 16 & 0xFF)) / 2 << 16 | ((fg >> 8 & 0xFF) + (bg >> 8 & 0xFF)) / 2 << 8 | ((fg & 0xFF) + (bg & 0xFF)) / 2;
                     }
-                    const u32 style = (tc.attr & TermCell::kBold ? Font::kBold : 0) | (tc.attr & TermCell::kItalic ? Font::kItalic : 0);
+                    u32 style = (tc.attr & TermCell::kBold ? Font::kBold : 0) | (tc.attr & TermCell::kItalic ? Font::kItalic : 0) |
+                                (tc.attr & TermCell::kUnderline ? Font::kUnderline : 0) | (tc.attr & TermCell::kStrike ? Font::kStrike : 0);
                     const u32 cp = (tc.attr & TermCell::kHidden) || tc.cp < 0x20 ? ' ' : tc.cp;
                     u32 g = font.glyph(cp, style && font.ensure_style(style) ? style : 0);
                     const u32 slot = g & (Font::kWide - 1);

@@ -42,10 +42,14 @@ class Font {
 public:
     static constexpr u32 kTofu = 1;  // slot of the "missing glyph" box
 
-    // A style number is kItalic and kBold or-ed together; 0 is regular.
-    static constexpr u32 kItalic = 1, kBold = 2, kStyles = 4;
+    // A style number is kItalic, kBold, kUnderline and kStrike or-ed
+    // together; 0 is regular. The first four (kFaces) are faces; a line
+    // under or through is drawn over the face's glyph, in slots of its own,
+    // so a cell still shows one slot and the shader does not know.
+    static constexpr u32 kItalic = 1, kBold = 2, kUnderline = 4, kStrike = 8, kStyles = 16, kFaces = 4;
     static constexpr u32 kStyleShift = 7;  // where the style sits in an ASCII slot number
     static constexpr u32 kStyleMask = (kStyles - 1) << kStyleShift;
+    static constexpr u32 kLineBits = (kUnderline | kStrike) << kStyleShift;  // (a face's ASCII block has no room for these: looked up)
 
     Font() = default;
     Font(const Font&) = delete;
@@ -94,7 +98,7 @@ public:
     // style's face lacks comes back in regular.
     u32 glyph(u32 cp, u32 style) {
         if (style == 0) return glyph(cp);
-        if (cp < 128) return cp | (style << kStyleShift);
+        if (cp < 128 && style < kFaces) return cp | (style << kStyleShift);
         return lookup_styled(cp, style);
     }
 
@@ -166,7 +170,7 @@ private:
     static constexpr u32 kMaxRun = 256;
     static constexpr u32 kMaxShortRuns = 1u << 16;  // entries the short-run cache may grow to
 
-    static constexpr u32 kAsciiSlots = kStyles * 128;
+    static constexpr u32 kAsciiSlots = kFaces * 128;  // (the faces' ASCII blocks; a line under or through is looked up)
 
     // One of the four styles: the face its glyphs come from and how.
     struct Style {
@@ -186,6 +190,8 @@ private:
     bool joins(u32 cell) const { return (cell & 0xFFFF) < kAsciiSlots && joins_[cell & (kAsciiSlots - 1)]; }
     u32 lookup(u32 cp);
     u32 lookup_styled(u32 cp, u32 style);
+    u32 lookup_lined(u32 cp, u32 style);   // (a style with a line under or through)
+    void draw_lines(u32 slot, u32 width, u32 lines);
     u32 compose_mark(u32 base, u32 cp, u32 half);
     u32 alloc_slots(u32 width);
     void reset_atlas();
@@ -232,6 +238,7 @@ private:
 
     int cell_w_ = 0, cell_h_ = 0, baseline_ = 0;
     int x_height_ = 0;  // how far above the baseline a lower-case letter reaches, in pixels
+    int underline_y_ = 0, strike_y_ = 0, line_px_ = 1;  // where a line under and through the text goes (from the cell's top), and how thick
     int atlas_w_ = 0, atlas_h_ = 0;
     u32 cols_ = 0, shift_ = 0, slots_ = 0;
     u32 first_slot_ = 128, next_slot_ = 128;  // slots below first_slot_ are the ASCII blocks

@@ -186,7 +186,12 @@ u32 fill_row(Buffer::Reader& rd, Font& font, u32 first_col, u32 cols, u32* row, 
                             const u32 bits = sc->bits;
                             const u8* src = p + i + copied;
                             u32* d = dst + copied;
-                            for (size_t k = 0; k < seg; ++k) d[k] = src[k] | bits;
+                            if (bits & Font::kLineBits) [[unlikely]] {  // (a line under or through: each character's slot looked up)
+                                const u32 style = (bits & Font::kStyleMask) >> Font::kStyleShift, rest = bits & ~Font::kStyleMask;
+                                for (size_t k = 0; k < seg; ++k) d[k] = (font.glyph(src[k], style) & (Font::kPict - 1)) | rest;
+                            } else {
+                                for (size_t k = 0; k < seg; ++k) d[k] = src[k] | bits;
+                            }
                             copied += seg;
                         }
                     }

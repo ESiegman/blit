@@ -840,7 +840,8 @@ the template's commented-out one, else at the end.
 for them. `blit.opt.font.features = { "ss01", "zero" }` turns on other OpenType features.
 
 **Syntax colours and styles** come from tree-sitter (see below). Each theme
-says, per kind of token, a colour and whether it is italic or bold:
+says, per kind of token, a colour and whether it is italic, bold,
+underlined or struck through (`underline`, `strikethrough`):
 
 ```lua
 blit.opt.themes["rose-pine"].syntax = {          -- one theme
@@ -857,6 +858,10 @@ A dotted name takes whatever it does not set itself from its parent
 (`keyword.return` from `keyword`). `blit.opt.syntax.italic = false` or
 `bold = false` switches one of them off everywhere. The Rosé Pine themes use the styles the
 theme's editor ports use: italic comments, variables, parameters and properties, bold builtins.
+Every built-in theme underlines a link's address (`markup.link.url`) and
+strikes struck-out text (`markup.strikethrough`); the Markdown preview
+underlines its links and strikes `~~text~~`, and a terminal draws SGR 4 and 9
+(underlined, struck) as programs ask.
 
 **Italic and bold** use the font family's own faces ("Victor Mono Italic"),
 found next to the regular one. Where a family has no bold face but the font
@@ -1849,7 +1854,11 @@ glyph had earlier in the frame.
 slot `byte | s << 7`. The grid already ors a colour into each run of cells;
 the style rides in the same value, and the shader does not know styles exist.
 The extra faces are loaded on the font thread during startup, which finishes
-long before the window is up.
+long before the window is up. A line under or through text is a style too:
+its glyphs are the face's with the line drawn over them, in slots of their
+own (a space has the line alone, so it runs on between words), looked up as
+the run is filled; a cell still shows one slot, and the cell's bits and the
+shader are as they were.
 
 ## Layout
 

@@ -398,6 +398,16 @@ bool Font::init(const FontSpec& spec, std::string* err, std::string* warnings) {
     if (cell_w_ <= 0) cell_w_ = std::max(1, static_cast<int>(std::lround(px_ * 0.6)));
     x_height_ = baseline_ / 2;
     if (!FT_Load_Char(face_, 'x', load_flags_)) x_height_ = static_cast<int>((face_->glyph->metrics.horiBearingY + 32) >> 6);
+    // The lines under and through text: where the font says, else a
+    // twelfth of the cell below the baseline and half the x-height above.
+    line_px_ = std::max(1, static_cast<int>(std::lround(cell_h_ / 16.0)));
+    int below = std::max(1, (cell_h_ - baseline_) / 3);
+    if (FT_IS_SCALABLE(face_) && face_->underline_thickness > 0) {
+        line_px_ = std::max(1, static_cast<int>(std::lround(FT_MulFix(face_->underline_thickness, face_->size->metrics.y_scale) / 64.0)));
+        below = std::max(1, static_cast<int>(std::lround(-FT_MulFix(face_->underline_position, face_->size->metrics.y_scale) / 64.0)));
+    }
+    underline_y_ = std::clamp(baseline_ + below - line_px_ / 2, 0, cell_h_ - line_px_);
+    strike_y_ = std::clamp(baseline_ - x_height_ / 2 - line_px_ / 2, 0, cell_h_ - line_px_);
 
     // Atlas: up to 8191 slots, what a cell's slot number can say (below
     // kPict): one screen of distinct wide characters, CJK at a usual size on
@@ -568,12 +578,68 @@ void Font::setup_ascii(u32 s) {
     }
 }
 
+// A character with a line under or through: its glyph in the face's style,
+// copied into slots of its own, with the line over them. ASCII too: there is
+// no block set aside for these (the space gets the line as well, so that it
+// runs on between words).
+u32 Font::lookup_lined(u32 cp, u32 s) {
+    const u32 key = cp | (s << 21);  // code points end below 1 << 21
+    const u32 mask = static_cast<u32>(map_.size()) - 1;
+    for (u32 h = hash_u32(key) & mask; map_[h].key != kEmpty; h = (h + 1) & mask)
+        if (map_[h].key == key) return map_[h].slot;
+    if ((map_used_ + 1) * 2 >= map_.size()) reset_atlas();
+    const u32 base_style = s & (kFaces - 1);
+    const u32 base = base_style ? lookup_styled(cp, base_style) : glyph(cp);
+    if (full_) return base;
+    const u32 width = base & kWide ? 2 : 1;
+    const u32 gen = generation_;
+    const u32 slot = alloc_slots(width);
+    if (slot == kNoSlot) return base;  // (held, and no room: without the line)
+    if (generation_ != gen) {  // (the base went with the rest of the atlas: the frame is made again)
+        clear_slot(slot);
+        return slot | (base & ~(kPict - 1));
+    }
+    for (u32 k = 0; k < width; ++k) copy_slot((base & (kPict - 1)) + k, slot + k);
+    draw_lines(slot, width, s & ~(kFaces - 1));
+    const u32 packed = slot | (base & ~(kPict - 1));
+    u32 h = hash_u32(key) & mask;
+    while (map_[h].key != kEmpty) h = (h + 1) & mask;
+    map_[h] = {key, packed};
+    ++map_used_;
+    return packed;
+}
+
+void Font::draw_lines(u32 slot, u32 width, u32 lines) {
+    const int sx = static_cast<int>(slot % cols_) * cell_w_, sy = static_cast<int>(slot / cols_) * cell_h_;
+    auto bar = [&](int y0) {
+        for (int y = y0; y < y0 + line_px_ && y < cell_h_; ++y)
+            std::memset(pixels_ + static_cast<size_t>(sy + y) * atlas_w_ + sx, 255, static_cast<size_t>(cell_w_) * width);
+    };
+    if (lines & kUnderline) bar(underline_y_);
+    if (lines & kStrike) bar(strike_y_);
+    mark_dirty(slot);
+}
+
 bool Font::ensure_style(u32 s) {
     if (s == 0) return true;
     if (s >= kStyles || first_slot_ < kAsciiSlots) return false;
     Style& st = styles_[s];
     if (st.tried) return st.ready;
     st.tried = true;
+    if (s >= kFaces) {  // a line under or through: the face's glyphs, with the line drawn over them (and no ligatures)
+        const u32 base = s & (kFaces - 1);
+        if (!ensure_style(base)) return false;
+        const Style& from = styles_[base];
+        st.face = from.face;
+        st.path = from.path;
+        st.index = from.index;
+        st.slant = from.slant;
+        st.embolden = from.embolden;
+        st.how = from.how;
+        st.sh = nullptr;
+        st.ready = true;
+        return true;
+    }
     open_style(s);
     if (!st.face) return false;
     if (styles_[0].sh) {
@@ -686,6 +752,7 @@ u32 Font::lookup(u32 cp) {
 
 u32 Font::lookup_styled(u32 cp, u32 s) {
     if (s >= kStyles || !styles_[s].ready) return glyph(cp);
+    if (s >= kFaces) return lookup_lined(cp, s);
     Style& st = styles_[s];
     const u32 key = cp | (s << 21);  // code points end below 1 << 21
     u32 mask = static_cast<u32>(map_.size()) - 1;

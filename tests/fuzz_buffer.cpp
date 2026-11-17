@@ -391,11 +391,12 @@ void config_test() {
     check(is("string", 0, 1, 0, false, false), "a theme's own entry wins over syntax.styles, set before it or after");
     check(mine.syntax_style("nothing").color.r == mine.foreground.r && !mine.syntax_style("nothing").italic, "no entry: plain");
     check(ts.themes.find("rose-pine")->second.syntax_style("keyword.repeat").italic, "syntax.styles reaches every theme");
-    // (A new theme starts as a copy of blit-dark, whose headings are bold.)
-    check(ts.font_styles() == ((1u << 1) | (1u << 2) | (1u << 3)), "font styles the themes use");
+    // (A new theme starts as a copy of blit-dark, whose headings are bold,
+    // links' addresses underlined and struck-out text struck.)
+    check(ts.font_styles() == ((1u << 1) | (1u << 2) | (1u << 3) | (1u << 4) | (1u << 8)), "font styles the themes use");
     styled.push_back({"syntax.italic", "false", ""});
     Config upright = make_config(styled);
-    check(upright.warnings.empty() && upright.font_styles() == (1u << 2), "italics switched off everywhere");
+    check(upright.warnings.empty() && upright.font_styles() == ((1u << 2) | (1u << 4) | (1u << 8)), "italics switched off everywhere (the lines stay)");
     check(!settings({{"syntax.styles.comment", "\"#808080 wavy\""}}).warnings.empty(), "unknown style word warns");
 
     // Names other queries use for the same things follow the usual ones,
@@ -464,7 +465,7 @@ void config_test() {
     check(pine.syntax_style("variable").italic && !pine.syntax_style("variable.member").italic, "rose pine italics");
     const TokenStyle self = pine.syntax_style("variable.builtin");
     check(self.italic && self.bold && pine.syntax_style("type.builtin").bold && !pine.syntax_style("type").bold, "rose pine bold");
-    check(d.font_styles() == ((1u << 1) | (1u << 2)), "the default themes use italic and bold");
+    check(d.font_styles() == ((1u << 1) | (1u << 2) | (1u << 4) | (1u << 8)), "the default themes use italic, bold, a line under links and through struck-out text");
 }
 
 // Italic and bold: styled glyph slots, and what the grid makes of them.
@@ -674,6 +675,8 @@ void long_line_test() {
     }
 }
 
+void lines_test(const FontSpec& spec);
+
 // A screen that needs more glyphs than the atlas has: the frame's second
 // try holds the atlas, and what does not fit is a box. No slot shows two
 // characters (before, the atlas started over in the middle of the try and
@@ -735,6 +738,50 @@ void atlas_test() {
         }
     check(shared <= 2, "atlas: no slot shows two characters (but the two halves of the box)");
     check(real > 7000, "atlas: most of the screen is drawn: 8,191 slots, two a character");
+
+    // A line under and through: a style's slots are its face's glyphs with
+    // the line drawn over them, the space too (the line runs on between
+    // words), wide characters across both their cells. (A fresh font: the
+    // one above has a full atlas.)
+    lines_test(spec);
+}
+
+void lines_test(const FontSpec& spec) {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    Font font;
+    std::string err;
+    if (!font.init(spec, &err)) return;
+    check(font.ensure_style(Font::kUnderline) && font.ensure_style(Font::kStrike | Font::kBold), "lines: the styles are made");
+    auto ink_rows = [&](u32 slot) {  // which rows of a slot have any ink, as a bit set
+        u64 rows = 0;
+        const u32 sx = (slot % font.atlas_cols()) * static_cast<u32>(font.cell_w()), sy = (slot / font.atlas_cols()) * static_cast<u32>(font.cell_h());
+        for (int y = 0; y < font.cell_h() && y < 64; ++y)
+            for (int x = 0; x < font.cell_w(); ++x)
+                if (font.pixels()[static_cast<size_t>(sy + static_cast<u32>(y)) * static_cast<u32>(font.atlas_w()) + sx + static_cast<u32>(x)]) rows |= 1ull << y;
+        return rows;
+    };
+    auto full_rows = [&](u32 slot) {  // rows whose every pixel has ink
+        u64 rows = 0;
+        const u32 sx = (slot % font.atlas_cols()) * static_cast<u32>(font.cell_w()), sy = (slot / font.atlas_cols()) * static_cast<u32>(font.cell_h());
+        for (int y = 0; y < font.cell_h() && y < 64; ++y) {
+            bool all = true;
+            for (int x = 0; x < font.cell_w() && all; ++x)
+                all = font.pixels()[static_cast<size_t>(sy + static_cast<u32>(y)) * static_cast<u32>(font.atlas_w()) + sx + static_cast<u32>(x)] != 0;
+            if (all) rows |= 1ull << y;
+        }
+        return rows;
+    };
+    const u32 space = font.glyph(' ', Font::kUnderline) & (Font::kPict - 1), plain_a = font.glyph('a', 0) & (Font::kPict - 1), under_a = font.glyph('a', Font::kUnderline) & (Font::kPict - 1);
+    const u64 line = full_rows(space);
+    check(line != 0 && ink_rows(space) == line, "lines: an underlined space is the line alone");
+    check((ink_rows(under_a) & ~ink_rows(plain_a)) != 0 && (full_rows(under_a) & line) == line, "lines: an underlined a is the a with the line under it");
+    const u64 strike = full_rows(font.glyph(' ', Font::kStrike | Font::kBold) & (Font::kPict - 1));
+    check(strike != 0 && strike < line, "lines: a line through sits above the line under");
+    const u32 wide = font.glyph(0x6F22, Font::kUnderline);
+    check((wide & Font::kWide) && (full_rows(wide & (Font::kPict - 1)) & line) == line && (full_rows((wide & (Font::kPict - 1)) + 1) & line) == line,
+          "lines: a wide character is underlined across both its cells");
 }
 
 void styles_test() {
@@ -755,7 +802,7 @@ void styles_test() {
           "styles load on demand");
     check(font.glyph('a', 3) == ('a' | 3u << Font::kStyleShift), "styled ASCII slot");
     const u32 e = font.glyph(0xE9, 1);
-    check((e & (Font::kWide - 1)) >= Font::kStyles * 128 && e == font.glyph(0xE9, 1), "styled non-ASCII slot");
+    check((e & (Font::kWide - 1)) >= Font::kFaces * 128 && e == font.glyph(0xE9, 1), "styled non-ASCII slot");
     check(font.glyph(0x65E5, 1) == font.glyph(0x65E5), "a character the styled face lacks comes back regular");
 
     // One row of mixed text, all in one style. ASCII carries the style in
@@ -773,6 +820,10 @@ void styles_test() {
     for (u32 fs = 0; fs < Font::kStyles; ++fs) {
         const u32 block = fs << Font::kStyleShift;
         lut[1] = ink | block;
+        font.ensure_style(fs);
+        // (A face's ASCII is its block's slot; with a line under or through
+        // it is a slot of its own, looked up.)
+        auto ascii = [&](char c) { return (font.glyph(static_cast<u8>(c), fs) & (Font::kPict - 1)) | ink; };
         GridSpec g;
         g.cols = 24;
         g.rows = 1;
@@ -781,11 +832,11 @@ void styles_test() {
         u32 cells[24];
         fill_grid(buf, font, g, cells);
         const u32 accent = font.glyph(0xE9, fs) & (Font::kWide - 1), wide = font.glyph(0x65E5, fs) & (Font::kWide - 1);
-        check(cells[0] == ('a' | block | ink) && cells[1] == ('b' | block | ink), "styled ASCII cells");
+        check(cells[0] == ascii('a') && cells[1] == ascii('b') && (fs >= Font::kFaces || cells[0] == ('a' | block | ink)), "styled ASCII cells");
         check(cells[2] == (' ' | ink) && cells[3] == (' ' | ink), "tab cells are plain blanks");
         check(cells[4] == (accent | ink), "styled accent cell");
         check(cells[5] == (wide | ink) && cells[6] == ((wide + 1) | ink), "wide character in a style");
-        check(cells[7] == ('x' | block | ink), "ASCII after other characters");
+        check(cells[7] == ascii('x'), "ASCII after other characters");
         check(cells[14] == 0, "past the end of the line");
     }
 }

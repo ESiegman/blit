@@ -477,7 +477,10 @@ void App::md_layout(FrameDesc& fd) {
                     for (u32 c = kMargin + row.fill_from; c < std::min(cols, kMargin + row.fill_to); ++c) line[c] |= kCellSelected | static_cast<u32>(row.fill) << kCellDecoShift;
                 u32 c = kMargin;
                 for (const MdRun& run : row.runs) {
-                    const u32 style = (run.style & kMdBold ? Font::kBold : 0) | (run.style & kMdItalic ? Font::kItalic : 0);
+                    // (A link is underlined, struck-out text has a line through it.)
+                    u32 style = (run.style & kMdBold ? Font::kBold : 0) | (run.style & kMdItalic ? Font::kItalic : 0) |
+                                (run.style & kMdStrike ? Font::kStrike : 0) | (run.link.empty() ? 0 : Font::kUnderline);
+                    if (!font.ensure_style(style)) style &= Font::kFaces - 1;
                     const u32 end = v.box.put(font, r, c, run.text, run.ink, style);
                     if (run.tone)
                         for (u32 cell = c; cell < end; ++cell) line[cell] = (line[cell] & ~kCellDecoMask) | kCellSelected | static_cast<u32>(run.tone) << kCellDecoShift;

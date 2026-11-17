@@ -93,6 +93,7 @@ ThemeColors rose_pine(u32 base, u32 surface, u32 text, u32 highlight_med, u32 hi
         {"constant.builtin", "bold"}, {"module.builtin", "bold"}, {"type.builtin", "bold"},
         {"attribute.builtin", "bold"}, {"function.builtin", "bold"},
         {"markup.italic", "italic"}, {"markup.strong", "bold"}, {"markup.heading", "bold"},
+        {"markup.link.url", "underline"}, {"markup.strikethrough", "strikethrough"},
     });
     return t;
 }
@@ -131,7 +132,7 @@ void add_builtin_themes(Config& c) {
     });
     c.themes["blit-dark"].guides = guide_colours(0x1c1d21, {0x61afef, 0xe5c07b, 0x98c379, 0xc678dd, 0xe06c75, 0x56b6c2});
     const Sty plain_styles = {{"comment", "italic"}, {"markup.italic", "italic"}, {"markup.strong", "bold"},
-                              {"markup.heading", "bold"}};
+                              {"markup.heading", "bold"}, {"markup.link.url", "underline"}, {"markup.strikethrough", "strikethrough"}};
     style_all(c.themes["blit-dark"], plain_styles);
     c.themes["blit-light"] = base(0xffffff, 0x1a1a1c, 0xb3d4ff, 0x000000, 0x9a9aa0, 0xca3c2c, 0xa87b00, 0x325cc0, 0x0184bc, 0x8e9096, 0x325cc0, 0xf3f3f5, 0xcfd0d6);
     set_all(c.themes["blit-light"], {
@@ -515,7 +516,9 @@ bool parse_token_style(std::string_view s, ThemeColors::Entry* out) {
         if (word.empty()) continue;
         if (word == "italic") out->italic = 1;
         else if (word == "bold") out->bold = 1;
-        else if (word == "regular") out->italic = out->bold = 0;
+        else if (word == "underline") out->underline = 1;
+        else if (word == "strikethrough" || word == "strike") out->strike = 1;
+        else if (word == "regular") out->italic = out->bold = out->underline = out->strike = 0;
         else if (parse_color(word, &out->color)) out->has_color = true;
         else return false;
         any = true;
@@ -526,7 +529,7 @@ bool parse_token_style(std::string_view s, ThemeColors::Entry* out) {
 TokenStyle ThemeColors::syntax_style(std::string_view capture) const {
     const std::string_view asked = capture;
     TokenStyle out{foreground, false, false};
-    bool color = false, italic = false, bold = false;  // which of them are settled
+    bool color = false, italic = false, bold = false, underline = false, strike = false;  // which of them are settled
     bool found = false;
     for (;;) {
         for (const Entry& e : syntax) {
@@ -535,10 +538,12 @@ TokenStyle ThemeColors::syntax_style(std::string_view capture) const {
             if (!color && e.has_color) out.color = e.color, color = true;
             if (!italic && e.italic >= 0) out.italic = e.italic != 0, italic = true;
             if (!bold && e.bold >= 0) out.bold = e.bold != 0, bold = true;
+            if (!underline && e.underline >= 0) out.underline = e.underline != 0, underline = true;
+            if (!strike && e.strike >= 0) out.strike = e.strike != 0, strike = true;
             break;
         }
         const size_t dot = capture.rfind('.');
-        if (dot == std::string_view::npos || (color && italic && bold)) break;
+        if (dot == std::string_view::npos || (color && italic && bold && underline && strike)) break;
         capture = capture.substr(0, dot);
     }
     if (found) return out;
@@ -569,6 +574,8 @@ void ThemeColors::set_syntax(const Entry& e) {
         if (e.has_color) have.color = e.color, have.has_color = true;
         if (e.italic >= 0) have.italic = e.italic;
         if (e.bold >= 0) have.bold = e.bold;
+        if (e.underline >= 0) have.underline = e.underline;
+        if (e.strike >= 0) have.strike = e.strike;
         return;
     }
     syntax.push_back(e);

@@ -156,7 +156,7 @@ int App::run(const Options& opt) {
         std::printf("ligatures   %s", font_->ligatures() ? "on, between: " : cfg_.ligatures ? "asked for, but unavailable" : "off");
         std::printf("%s\n", font_->joining_characters().c_str());
         static const char* const style_names[] = {"", "italic", "bold", "bold italic"};
-        for (u32 fs = 1; fs < Font::kStyles; ++fs)
+        for (u32 fs = 1; fs < Font::kFaces; ++fs)
             if (font_->has_style(fs)) std::printf("%-11s %s\n", style_names[fs], font_->style_source(fs).c_str());
         settle_syntax();
         const std::string lang = Syntax::language_for(pane_->doc->ed.path, "", cfg_.grammars);

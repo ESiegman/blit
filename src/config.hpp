@@ -21,6 +21,7 @@ struct Rgb {
 struct TokenStyle {
     Rgb color;
     bool italic = false, bold = false;
+    bool underline = false, strike = false;
 };
 
 struct ThemeColors {
@@ -40,6 +41,7 @@ struct ThemeColors {
         Rgb color;
         bool has_color = false;
         std::int8_t italic = -1, bold = -1;  // 1 on, 0 off, -1 not said here
+        std::int8_t underline = -1, strike = -1;
     };
     std::vector<Entry> syntax;
 
@@ -165,10 +167,11 @@ struct Config {
     std::string warnings;  // one per line; empty when every setting was right
 
     const ThemeColors& theme(bool dark) const;
-    // The font style a token style asks for: Font::kItalic and Font::kBold
-    // or-ed together, after [syntax] italic/bold had their say.
+    // The font style a token style asks for: Font::kItalic, kBold,
+    // kUnderline and kStrike or-ed together, after [syntax] italic/bold had
+    // their say.
     u32 font_style_of(const TokenStyle& t) const {
-        return (t.italic && syntax_italic ? 1u : 0u) | (t.bold && syntax_bold ? 2u : 0u);
+        return (t.italic && syntax_italic ? 1u : 0u) | (t.bold && syntax_bold ? 2u : 0u) | (t.underline ? 4u : 0u) | (t.strike ? 8u : 0u);
     }
     // Every font style the two chosen themes can ask for, one bit each
     // (bit 1 italic, bit 2 bold, bit 3 bold italic).
