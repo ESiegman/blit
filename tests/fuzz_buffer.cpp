@@ -2,7 +2,9 @@
 // with contents, line index and structure compared along the way.
 #include <fcntl.h>
 #include <dirent.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -12,6 +14,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
 #include <random>
 #include <stop_token>
 #include <string>
@@ -30,6 +33,7 @@
 #include "grammars.hpp"
 #include "grid.hpp"
 #include "highlight.hpp"
+#include "instance.hpp"
 #include "job.hpp"
 #include "json.hpp"
 #include "keymap.hpp"
@@ -3222,6 +3226,81 @@ void lsp_test() {}
 
 }  // namespace
 
+// One blit takes the files (instance.hpp): an ask handed over through the
+// socket arrives whole, one that waits is told when its tabs have closed, a
+// socket left by a blit that died is taken over, and a second blit of the
+// same program leaves the socket to the first.
+std::atomic<bool> instance_taken{false};
+void instance_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    const std::string path = instance_socket();
+    ::unlink(path.c_str());
+    check(instance_hand_over({}) == -1, "instance: none running, nobody takes the files");
+    {  // a socket left behind
+        const int fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
+        sockaddr_un a{};
+        a.sun_family = AF_UNIX;
+        std::strcpy(a.sun_path, path.c_str());
+        check(fd >= 0 && ::bind(fd, reinterpret_cast<sockaddr*>(&a), sizeof a) == 0, "instance: a socket to leave behind");
+        ::close(fd);
+    }
+    check(instance_hand_over({}) == -1, "instance: a socket left behind takes nothing");
+    std::mutex mu;
+    std::vector<InstanceAsk> got;
+    std::atomic<int> n{0};
+    auto arrived = [&](int want) {
+        for (int i = 0; i < 400 && n.load() < want; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+        return n.load() >= want;
+    };
+    InstanceServer server;
+    check(server.start([&](InstanceAsk a) {
+        std::lock_guard lock(mu);
+        got.push_back(std::move(a));
+        ++n;
+    }),
+          "instance: the socket left behind is taken over");
+    struct stat st;
+    check(::stat(path.c_str(), &st) == 0 && (st.st_mode & 077) == 0, "instance: the socket is the user's alone");
+    InstanceServer second;
+    check(!second.start([](InstanceAsk) {}), "instance: a second blit of the program leaves the socket to the first");
+    InstanceAsk ask;
+    ask.files = {{"/tmp/a b:c.txt", 12, 3}, {"ssh://host/x", 0, 0}};
+    check(instance_hand_over(ask, [] { instance_taken = true; }) == 0 && instance_taken, "instance: handed over");
+    check(arrived(1), "instance: the ask arrives");
+    {
+        std::lock_guard lock(mu);
+        const InstanceAsk& a = got[0];
+        check(a.files.size() == 2 && a.files[0].path == "/tmp/a b:c.txt" && a.files[0].line == 12 && a.files[0].col == 3 &&
+                  a.files[1].path == "ssh://host/x" && a.files[1].line == 0 && !a.wait && a.fd < 0,
+              "instance: the ask arrives whole (spaces and colons in a name, a line, a column, another machine's file)");
+    }
+    check(instance_hand_over({}) == 0 && arrived(2), "instance: no files: the running one comes to the front");
+    InstanceAsk w;
+    w.wait = true;
+    w.files = {{"/tmp/c", 0, 0}};
+    std::atomic<int> rc{-2};
+    instance_taken = false;
+    std::jthread asker([&] { rc = instance_hand_over(w, [] { instance_taken = true; }); });
+    check(arrived(3), "instance: a waiting ask arrives");
+    for (int i = 0; i < 400 && !instance_taken; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(5));
+    std::this_thread::sleep_for(std::chrono::milliseconds(50));
+    check(instance_taken && rc == -2, "instance: one that waits hears the files are taken, and goes on waiting");
+    int fd = -1;
+    {
+        std::lock_guard lock(mu);
+        check(got[2].wait && got[2].fd >= 0, "instance: the running one keeps a waiting asker's connection");
+        fd = got[2].fd;
+    }
+    InstanceServer::answer(fd, "done\n");
+    asker.join();
+    check(rc == 0, "instance: told when its tabs have closed");
+    server.stop();
+    check(::stat(path.c_str(), &st) != 0, "instance: the socket goes with the blit");
+    check(instance_hand_over(ask) == -1, "instance: gone, nobody takes the files");
+}
+
 int main(int argc, char** argv) {
     int seeds = argc > 1 ? std::atoi(argv[1]) : 200;
     int steps = argc > 2 ? std::atoi(argv[2]) : 600;
@@ -3238,6 +3317,7 @@ int main(int argc, char** argv) {
     remote_test();
     git_test(seeds);
     tree_test();
+    instance_test();
     json_test();
     lsp_test();
     styles_test();

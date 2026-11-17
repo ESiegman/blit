@@ -182,6 +182,7 @@ int App::run(const Options& opt) {
 #endif
     watch_quit_signals();
     loop();
+    instance_stop();  // (those waiting on their tabs are told)
     session_save();  // (written on its own thread, which is waited for as blit goes)
     script_stop();  // (VimLeavePre for the scripts' handlers)
     return 0;
@@ -327,6 +328,8 @@ bool App::init(std::string* err) {
     script_started(!file_ok && !folder);
     if (later_file) open_path(opt_.file);
     if (folder && !project_open(opt_.file) && !panel_px()) panel_toggle();  // (the folder, shown)
+    for (const OpenAsk& f : opt_.more) open_place(f);
+    instance_start();  // (files from a later `blit` come here)
     return true;
 }
 
@@ -1441,8 +1444,8 @@ void App::handle(const SDL_Event& e) {
                 break;
             on_mouse_motion(e.motion);
             break;
-        case SDL_EVENT_DROP_FILE:
-            open_path(e.drop.data);
+        case SDL_EVENT_DROP_FILE:  // (and a file opened from the Finder, or with "Open With")
+            if (e.drop.data) open_place({e.drop.data, 0, 0});
             break;
         case SDL_EVENT_USER: {
 #if BLIT_DEV
@@ -1513,6 +1516,10 @@ void App::handle(const SDL_Event& e) {
             }
             if (e.user.code == 19) {  // the start screen's facts, or PyPI's list, have been found
                 start_sync();
+                break;
+            }
+            if (e.user.code == 21) {  // a later `blit` has handed files over
+                instance_take();
                 break;
             }
             if (e.user.code == 20) {  // a Markdown preview has been drawn
@@ -1838,6 +1845,7 @@ void App::loop() {
         }
         if (dirty_ && running_) frame();
         else gpu_.release();
+        if (!instance_waits_.empty()) instance_check_waits();
     }
 }
 

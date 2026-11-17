@@ -2126,6 +2126,35 @@ conflict). The merged build against 4ce9b19, turn about, medians of 5 to 6:
   between the two builds in the same sitting: the size of this machine's
   noise for numbers this small.
 
+### Round 35: blit.app, and shader libraries for Metal 3.0
+
+The compiled shader libraries (shaders/gen/*.metallib) had been built for
+the newest Metal the compiler knows, 4.1, which only macOS 27 runs: the
+first run of the tests on GitHub's macOS 26 machines could not load them.
+They are built for Metal 3.0 (macOS 13 and later) now; the MSL and SPIR-V
+did not change. Scrolling at 2560x1600, code-1m.txt, three runs each, turn
+about:
+
+| | Metal 4.1 libraries | Metal 3.0 libraries |
+|---|---:|---:|
+| Frames a second | 15,355 / 16,015 / 16,268 | 16,909 / 16,201 / 16,623 |
+| CPU per frame, p50 | 40.9 / 41.1 / 41.0 µs | 40.8 / 40.8 / 41.2 µs |
+| Fill, p50 | 1.96 / 1.96 / 1.88 µs | 1.96 / 1.96 / 1.83 µs |
+
+The same, within this machine's noise: the GPU compiles the libraries for
+itself either way, and the language version decides only what the source
+may use.
+
+- **`blit file` with a blit running** (the file handed over through a
+  socket): 83 ms from the command to its return, almost all of it the
+  system bringing the window to the front; the running blit's side is a
+  thread asleep in `poll` until something comes, and the main loop pays
+  for an asker waiting on its tabs (`-w`) only while there is one.
+- **Started from the Dock**, blit takes the login shell's PATH from the
+  copy kept the last time (a file read before anything else), and asks
+  the shell again in a process of its own. Only a first start ever waits
+  for the shell. From a terminal none of it runs.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

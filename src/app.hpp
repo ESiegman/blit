@@ -5,6 +5,7 @@
 #include <atomic>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <string>
 #include <thread>
 #include <vector>
@@ -16,6 +17,7 @@
 #include "font.hpp"
 #include "git.hpp"
 #include "grammars.hpp"
+#include "instance.hpp"
 #include "keymap.hpp"
 #include "lsp.hpp"
 #include "project.hpp"
@@ -27,6 +29,7 @@ namespace blit {
 
 struct Options {
     const char* file = nullptr;
+    std::vector<OpenAsk> more;     // the other files named after it (instance.hpp)
     const char* font = nullptr;    // font family or file; overrides the config
     // (The benchmark and test options below can only be set in a Debug
     // build: main.cpp reads their flags there and nowhere else.)
@@ -958,6 +961,19 @@ private:
     // Startup timeline (steady clock ns), for --bench startup.
     u64 t_sdl_ = 0, t_window_ = 0, t_gpu_ = 0, t_font_ = 0, t_file_ = 0;
     u64 t_script_ns_ = 0;  // how long init.lua and the plugins took
+
+    // Files a later `blit` hands over, and folders dropped on the window
+    // (appinstance.cpp).
+    void instance_start();
+    void instance_stop();
+    void instance_take();         // (user event 21) the files handed over are opened
+    void instance_check_waits();  // the askers whose tabs have all closed are told
+    bool open_place(const OpenAsk& f);  // a file (at a line), or a folder to work in
+    void install_command();       // `blit` on the PATH: a link to this program
+    std::mutex instance_mu_;
+    std::vector<InstanceAsk> instance_in_;     // handed over, not opened yet (under instance_mu_)
+    std::vector<InstanceAsk> instance_waits_;  // opened; their askers wait for the tabs to close
+    std::unique_ptr<InstanceServer> instance_;  // (declared after what it fills, so it goes first)
 };
 
 }  // namespace blit

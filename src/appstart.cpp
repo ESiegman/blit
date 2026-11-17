@@ -652,18 +652,16 @@ void App::start_layout(FrameDesc& fd) {
             if (still_there(r)) s.items.push_back({kRecent, "", std::to_string(++shown), "", r});
         }
 
-        // How it is laid out, top to bottom: the name, what it is, how it
-        // starts with Vim's modes on, what to do, what was opened lately;
-        // and the keys along the bottom of the column. What goes when
-        // there is not room, the least useful first: that line about the
-        // modes, what it is, the name in large letters (it is written
-        // small), the keys, and last the oldest of what was opened lately.
+        // How it is laid out, top to bottom: the name, what it is, what to
+        // do, what was opened lately; and the keys along the bottom of the
+        // column. What goes when there is not room, the least useful first:
+        // what it is, the name in large letters (it is written small), the
+        // keys, and last the oldest of what was opened lately.
         bool logo = font.has(0x2588) && font.has(0x2580) && font.has(0x2584);
-        bool tagline = true, note = cfg_.modal, hint = true;
+        bool tagline = true, hint = true;
         u32 recent_room = shown;
-        auto need = [&] { return (logo ? 3 : 1) + (tagline ? 2 : 0) + (note ? 1 : 0) + 1 + static_cast<u32>(actions) + (recent_room ? recent_room + 2 : 0); };
+        auto need = [&] { return (logo ? 3 : 1) + (tagline ? 2 : 0) + 1 + static_cast<u32>(actions) + (recent_room ? recent_room + 2 : 0); };
         u32 room = rows > 6 ? rows - 6 : 0;  // (below the tabs and a blank row; above a blank row, the keys and a blank row)
-        if (need() > room) note = false;
         if (need() > room) tagline = false;
         if (need() > room) logo = false;
         if (need() > room) hint = false, room = rows > 4 ? rows - 4 : 0;
@@ -688,7 +686,6 @@ void App::start_layout(FrameDesc& fd) {
             centred(r + 1, "a fast text editor", ink::kMuted);
             r += 2;
         }
-        if (note) centred(r++, fit_text("Starts in Normal mode: i to type, Esc to stop (editor.modal in Settings)", cols > 2 ? cols - 2 : cols), ink::kMuted);
         r += 1;
         // One left column for every row: the key that does it, then what it
         // is (a file or folder with its icon, as in the side panel), and the

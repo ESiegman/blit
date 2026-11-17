@@ -5,7 +5,8 @@ standard edits, keeps several files open in tabs, colours code with
 tree-sitter, talks to language servers, runs scripts and plugins in Lua,
 profiles programs, and works on another machine's files over ssh.
 C++26 (GCC); SDL3 for the window and input, and a renderer of its own on
-Metal (the Vulkan side, for other systems, is not written yet).
+Metal. It is a macOS editor: a Vulkan side, for Linux and Windows, is not
+planned for a long time.
 
 ![blit showing its own source](screenshot.png)
 
@@ -28,6 +29,40 @@ Syntax colours need grammars, which blit installs itself when asked:
 That build is the editor and nothing else. The tests, the benchmark tools and
 the editor's own benchmark and screenshot modes are compiled only in a Debug
 build; see [Testing](#testing).
+
+**blit.app.** The same build makes `build/blit.app` beside the program: its
+icon in the Dock, Spotlight and Launchpad, and "Open With" in the Finder
+for text, source code, pictures, PDFs and folders (blit is offered there,
+never made the default). `cmake --install build --prefix /Applications`
+puts it in Applications (or drag it there). It is signed for this Mac only
+(ad hoc). Started from the Dock, blit has launchd's bare PATH, which has
+none of Homebrew's programs; it takes the PATH your login shell has instead
+(kept in `~/Library/Caches/blit/login-path` and asked for again in the
+background each time, so only the first start waits for the shell).
+
+**From Homebrew.** This repository is a tap of its own:
+
+```bash
+brew tap ESiegman/blit https://github.com/ESiegman/blit
+brew install --HEAD ESiegman/blit/blit
+```
+
+That builds blit.app from `main` and puts `blit` on the PATH (the
+repository is private: brew's git needs to reach it, which `gh auth
+setup-git` sees to).
+
+**`blit` in a terminal.** With a blit already running, `blit file` opens
+the file as a tab in its window and returns at once; with none running it
+starts one. `blit a.cpp b.cpp` opens both, `blit src/main.cpp:42` (or
+`:42:7`) opens at a line and column as compilers and grep print them, and
+`blit DIR` opens a folder to work in. `blit -w file` waits until the file's
+tab is closed, for git (`git config --global core.editor "blit -w"`), and
+`blit -n` starts a blit of its own even with one running. The command
+"Put the blit command on the PATH" (Cmd+Shift+P) links this program as
+`/usr/local/bin/blit`, or `~/.local/bin/blit` when that cannot be written
+to. Each program file has its own: a build being worked on never hands its
+files to the blit in Applications. (A socket in the user's temporary
+folder, `blit-UID-HASH.sock`, readable by that user alone.)
 
 ## Using it
 
@@ -150,8 +185,9 @@ Space zooms the flame graph into it (again: back out), Esc zooms out. In a
 terminal: Cmd+A selects all of it, history included, for Cmd+C.
 
 Scroll with the wheel or touchpad, or drag the bar at the right edge. Drop a
-file on the window to open it in a tab. `blit --help` lists the options
-(`--config`, `--font`, `--size`, `--line`, `--info`).
+file on the window to open it in a tab, or a folder to work in it (as `d`
+does). `blit --help` lists the options (`--config`, `--font`, `--size`,
+`--line`, `--info`, `-n`, `-w`).
 
 ## Modal editing
 
@@ -1650,6 +1686,13 @@ src/applua.cpp  scripts: the Lua state, mappings, commands, events, timers, plug
 src/luaapi.cpp  the functions scripts call (the table `blit`, all of it C++: blit ships no Lua of its own)
 src/applua.hpp  what those two share: helpers, the events, the state kept for scripts
 src/appbench.cpp  in-app benchmarks, scripted input, screenshots (Debug builds)
+src/instance.*     one blit takes the files: a later `blit file` hands them over through a socket (and waits, with -w)
+src/appinstance.cpp the files handed over, and folders dropped on the window, opened; the blit command put on the PATH
+src/loginpath.*    started from the Dock: the PATH a login shell has, kept from the last time
+src/macapp.*       the application around blit on macOS: coming to the front (Objective-C)
+res/               blit.app: Info.plist, the icon and the script that draws it (icon.py)
+Formula/           the Homebrew formula (this repository is its own tap)
+.github/workflows/ tests on every push (macOS), and the formula built and installed when it changes
 shaders/        GLSL sources (grid: the text; popup: boxes over it; image: pictures), build script, compiled blobs (gen/)
 bench/          benchmark tools; see BENCH.md (Debug builds)
 tests/          fuzz and unit tests, and a language server that answers predictably (Debug builds)

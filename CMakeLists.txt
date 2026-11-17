@@ -1,5 +1,5 @@
 cmake_minimum_required(VERSION 3.28)
-project(blit LANGUAGES CXX)
+project(blit VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -87,9 +87,9 @@ if(APPLE)
   if(BLIT_DEV AND BLIT_OPTIMIZE_DEBUG)
     set(CMAKE_OBJC_FLAGS_DEBUG "${CMAKE_OBJC_FLAGS_RELEASE}")
   endif()
-  add_library(blit_gpu STATIC src/gpu_metal.m src/picture_mac.m)
+  add_library(blit_gpu STATIC src/gpu_metal.m src/picture_mac.m src/macapp.m)
   target_compile_options(blit_gpu PRIVATE -fobjc-arc -Wall -Wextra)
-  target_link_libraries(blit_gpu PUBLIC "-framework Metal" "-framework QuartzCore" "-framework Foundation" "-framework CoreGraphics" "-framework ImageIO")
+  target_link_libraries(blit_gpu PUBLIC "-framework Metal" "-framework QuartzCore" "-framework Foundation" "-framework CoreGraphics" "-framework ImageIO" "-framework AppKit")
 else()
   add_library(blit_gpu STATIC src/gpu_vulkan.cpp)
 endif()
@@ -184,20 +184,38 @@ target_link_libraries(blit_lsp PUBLIC blit_core)
 
 # The editor. Shaders are compiled offline by shaders/build.sh and the results
 # are checked in under shaders/gen, so this needs no shader tools.
-add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src/apptabs.cpp src/appsplit.cpp src/appgit.cpp src/appvim.cpp src/appfx.cpp src/appfind.cpp src/appstatus.cpp src/appstart.cpp src/appsession.cpp src/appremote.cpp src/appprofile.cpp src/appterm.cpp src/appcommands.cpp src/appdebug.cpp src/appbuild.cpp src/appmarkdown.cpp src/appimage.cpp src/apppdf.cpp src/look.cpp src/build.cpp src/fsio.cpp src/project.cpp src/libraries.cpp src/markdown.cpp src/mermaid.cpp src/dap.cpp src/applua.cpp src/luaapi.cpp src/git.cpp src/tree.cpp src/render.cpp)
+add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src/apptabs.cpp src/appsplit.cpp src/appgit.cpp src/appvim.cpp src/appfx.cpp src/appfind.cpp src/appstatus.cpp src/appstart.cpp src/appsession.cpp src/appremote.cpp src/appprofile.cpp src/appterm.cpp src/appcommands.cpp src/appdebug.cpp src/appbuild.cpp src/appmarkdown.cpp src/appimage.cpp src/apppdf.cpp src/appinstance.cpp src/instance.cpp src/loginpath.cpp src/look.cpp src/build.cpp src/fsio.cpp src/project.cpp src/libraries.cpp src/markdown.cpp src/mermaid.cpp src/dap.cpp src/applua.cpp src/luaapi.cpp src/git.cpp src/tree.cpp src/render.cpp)
 target_include_directories(blit PRIVATE ${LUA_INCLUDE_DIR})
 target_link_libraries(blit PRIVATE blit_view blit_syntax blit_lsp blit_gpu SDL3::SDL3 ${LUA_LIBRARY})
 
 blit_static_runtime(blit)
 
 target_compile_definitions(blit PRIVATE BLIT_DEV=$<BOOL:${BLIT_DEV}>)
+# blit.app, beside the program, in a Release build: the Dock, Spotlight,
+# "Open With" for text, pictures, PDFs and folders (res/Info.plist.in), and
+# the icon (res/icon.py). Signed for this machine only (ad hoc). Put it in
+# Applications with `cmake --install build --prefix /Applications`, or drag
+# it there.
+if(APPLE AND NOT BLIT_DEV)
+  set(BLIT_APP ${CMAKE_BINARY_DIR}/blit.app)
+  configure_file(${CMAKE_SOURCE_DIR}/res/Info.plist.in ${CMAKE_BINARY_DIR}/Info.plist @ONLY)
+  add_custom_command(TARGET blit POST_BUILD
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${BLIT_APP}/Contents/MacOS ${BLIT_APP}/Contents/Resources
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_BINARY_DIR}/Info.plist ${BLIT_APP}/Contents/Info.plist
+    COMMAND ${CMAKE_COMMAND} -E copy_if_different ${CMAKE_SOURCE_DIR}/res/blit.icns ${BLIT_APP}/Contents/Resources/blit.icns
+    COMMAND ${CMAKE_COMMAND} -E copy $<TARGET_FILE:blit> ${BLIT_APP}/Contents/MacOS/blit
+    COMMAND codesign --force --sign - ${BLIT_APP}
+    COMMENT "blit.app"
+    VERBATIM)
+  install(DIRECTORY ${BLIT_APP} DESTINATION . USE_SOURCE_PERMISSIONS)
+endif()
 
 if(BLIT_DEV)
   # The editor's benchmark and screenshot modes.
   target_sources(blit PRIVATE src/appbench.cpp)
 
   # Random edits checked against a plain std::string model, and unit tests.
-  add_executable(blit_fuzz tests/fuzz_buffer.cpp src/tree.cpp src/git.cpp)
+  add_executable(blit_fuzz tests/fuzz_buffer.cpp src/tree.cpp src/git.cpp src/instance.cpp)
   target_link_libraries(blit_fuzz PRIVATE blit_view blit_syntax blit_lsp SDL3::SDL3)
   if(NOT WIN32)
     target_compile_definitions(blit_fuzz PRIVATE BLIT_FAKE_SSH="${CMAKE_SOURCE_DIR}/tests/fake-ssh.sh" BLIT_PROFILE_DATA="${CMAKE_SOURCE_DIR}/tests/profile")

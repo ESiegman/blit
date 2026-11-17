@@ -285,6 +285,7 @@ void App::commands_create() {
     own("Stop the build", {key(SDLK_PERIOD, kP)}, [this] { build_stop(); });
     tab("Show Build", {key(SDLK_U, kP | kS)}, Commands::kBuild);
     own("Look for build systems again", {}, [this] { build_changed(); });
+    own("Put the blit command on the PATH", {}, [this] { install_command(); });
     // Profiling.
     own("Record a profile of the Profile tab's program", {}, [this] {
         Commands::show_tab(*this, Commands::kProfile, false);

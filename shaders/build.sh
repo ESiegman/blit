@@ -9,6 +9,10 @@
 # Needs: one of glslangValidator / glslc / qsb, plus spirv-cross; for
 # .metallib, Xcode (xcrun metal; in newer Xcodes the Metal toolchain is a
 # separate download: xcodebuild -downloadComponent MetalToolchain).
+# The libraries are built for Metal 3.0 (macOS 13 and later), not the
+# newest version the compiler knows: one built for the newest runs only on
+# the newest macOS (macOS 26's GPUs refused a library of Metal 4.1, which
+# macOS 27's compiler makes by default).
 set -eu
 cd "$(dirname "$0")"
 # Xcode's Metal compiler, even when the system's developer folder is the
@@ -49,7 +53,7 @@ for shader in grid.vert grid.frag popup.frag grid_fx.frag grid_dim.frag popup_fx
     spirv-cross --msl --msl-version 20100 --msl-decoration-binding \
         --output "gen/$shader.msl" "gen/$shader.spv"
     if xcrun -sdk macosx metal --version >/dev/null 2>&1; then
-        xcrun -sdk macosx metal -x metal -c "gen/$shader.msl" -o "$tmp/$shader.air"
+        xcrun -sdk macosx metal -x metal -std=metal3.0 -mmacosx-version-min=13.0 -c "gen/$shader.msl" -o "$tmp/$shader.air"
         xcrun -sdk macosx metallib "$tmp/$shader.air" -o "gen/$shader.metallib"
     fi
 done

@@ -1,0 +1,33 @@
+name: formula
+
+# The Homebrew formula (Formula/blit.rb) built and installed as a user would,
+# when it or what it builds changes.
+on:
+  push:
+    branches: [main]
+    paths:
+      - Formula/**
+      - res/**
+      - CMakeLists.txt
+      - .github/workflows/formula.yml
+  workflow_dispatch:
+
+jobs:
+  install:
+    runs-on: macos-26
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+      - name: Access to this repository for brew's git
+        run: git config --global url."https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/".insteadOf "https://github.com/"
+      - name: Tap
+        run: brew tap ESiegman/blit "$GITHUB_WORKSPACE"
+      - name: Style
+        run: brew style ESiegman/blit/blit
+      - name: Install
+        run: brew install --HEAD --verbose ESiegman/blit/blit
+      - name: Test
+        run: |
+          brew test --HEAD ESiegman/blit/blit
+          ls "$(brew --prefix blit)/blit.app/Contents"
+          codesign --verify --verbose "$(brew --prefix blit)/blit.app"
