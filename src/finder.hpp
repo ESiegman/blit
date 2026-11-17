@@ -48,6 +48,16 @@ struct FindHit {
     u32 line = 0, col = 0;  // a search for text: the line (from 0) and the byte in it where the first word is
     int score = 0;          // a search for names: how good the match is
     std::string text;       // a search for text: the line, cut if it is very long
+    u32 count = 1;          // a search for a phrase or a pattern: how many matches start on the line
+};
+
+// How a search for text reads what is typed: words, each anywhere on the
+// line (as it comes); the whole of it as it stands (a phrase, for
+// replacing); or a regular expression in Vim's syntax (regex.hpp). Small
+// letters match either case unless `exact`.
+struct TextQuery {
+    bool regex = false, phrase = false, exact = false;
+    bool operator==(const TextQuery&) const = default;
 };
 
 struct FindResults {
@@ -60,6 +70,7 @@ struct FindResults {
     bool searching = false;     // the search is still under way: these are the hits so far
     bool capped = false;        // text: it stopped at kMaxLines; there may be more
     u64 serial = 0;             // of the search they answer
+    std::string note;           // text: why there is nothing (a pattern another machine cannot be asked for)
 };
 
 class Finder {
@@ -83,7 +94,7 @@ public:
     void index(const std::string& root);
     // Starts a search; the number it returns is in the results that answer it.
     u64 find_names(std::string_view typed);
-    u64 find_text(std::string_view typed);
+    u64 find_text(std::string_view typed, TextQuery how = {});
     void cancel();
 
     std::shared_ptr<const FindResults> results() const;
@@ -102,12 +113,17 @@ public:
                            const std::vector<u32>* among = nullptr, std::vector<u32>* matched = nullptr, std::span<const u32> preferred = {});
     // Lines of `text` that have every term in them, appended to `out` (at most `room` of them). Returns false for a binary file.
     static bool grep(std::string_view text, std::span<const FuzzyTerm> terms, u32 file, size_t room, std::vector<FindHit>* out);
+#if !defined(BLIT_AGENT)
+    // The lines of `text` a phrase or a pattern is on (TextQuery), each with
+    // how many matches start there; false for a binary file.
+    static bool grep(std::string_view text, std::string_view typed, TextQuery how, u32 file, size_t room, std::vector<FindHit>* out);
+#endif
 
 private:
     void run(std::stop_token stop);       // the searches
     void run_walk(std::stop_token stop);  // the reading of the folder
     void search_names(u64 serial, const std::string& typed, std::shared_ptr<const FileIndex> ix, u64 epoch);
-    void search_text(u64 serial, const std::string& typed, std::shared_ptr<const FileIndex> ix, u64 epoch);
+    void search_text(u64 serial, const std::string& typed, TextQuery how, std::shared_ptr<const FileIndex> ix, u64 epoch);
     void publish(std::shared_ptr<FindResults> r);
 
     mutable std::mutex mu_;
@@ -119,6 +135,7 @@ private:
     bool want_index_ = false;
     u64 want_serial_ = 0, done_serial_ = 0;
     bool want_text_ = false;
+    TextQuery want_how_{};
     std::string want_typed_;
     bool busy_ = false, indexing_ = false;
     bool live_ = false;  // somebody still wants the answer to the last search (it is made again when the folder has been read again)

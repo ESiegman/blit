@@ -96,6 +96,7 @@ and everything in it that has Cmd in it (Ctrl elsewhere) works in every mode.
 | Command search: every command, by its name or its keys | Cmd+Shift+P | Ctrl+Shift+P |
 | Go to file / Search in files | Cmd+P / Cmd+Shift+F | Ctrl+P / Ctrl+Shift+F |
 | Find in this file; the next / previous match | Cmd+F; Cmd+G / Cmd+Shift+G | Ctrl+F; F3 / Shift+F3 |
+| Replace in this file / in files | Cmd+Option+F / Cmd+Shift+H | Ctrl+Alt+F / Ctrl+Shift+H |
 | The next / previous hit of Search in files | F4 / Shift+F4 | F4 / Shift+F4 |
 | The next / previous problem: the last build's, across files (else the open file's) | F8 / Shift+F8 | F8 / Shift+F8 |
 | New file / close tab | Cmd+N (or Cmd+T) / Cmd+W | Ctrl+N (or Ctrl+T) / Ctrl+W |
@@ -269,23 +270,49 @@ cursor down, at the cursor's column.
 **Search**: `/` and `?` find as you type (the cursor goes to the first
 match; Esc puts it back), Enter keeps it, `n` and `N` go on, `*` and `#`
 look for the word under the cursor. Matches stay lit until `:noh` or Ctrl-L.
-What is typed is looked for as it stands, not as a regular expression; `\c`
-anywhere in it ignores case, `\<word\>` finds whole words and `\n` is the
-end of a line. A search goes through a large file on several threads; one
-for something that is not there takes about 5 ms in 1 GB.
+Cmd+F opens `/` with the word under the cursor (or what is selected) on
+it, selected: the first character typed takes its place, Backspace clears
+it, an arrow keeps it to be typed onto (it is put there as a pattern that
+finds it as it stands: `a\.b` for `a.b`).
+
+What is typed is a regular expression, as Vim and Neovim read one: "magic"
+(`.` `*` `[abc]` `[^abc]` `~` `^` `$` as they stand; `\+` `\=` `\?`
+`\{n,m}` `\{-n,m}` (as few as may be) `\(\)` `\%(\)` `\|` `\<` `\>` with a
+backslash), or after `\v` very magic (all of those without one: `\v(ab|c)+`),
+`\m`, `\M`, or `\V` (nothing special but a backslash). The classes `\s \S
+\d \D \w \W \a \A \l \L \u \U \x \X \o \O \h \H \i \k \f \p` and
+`[:alpha:]` and the rest in a collection; `\n` is a line's end (a match may
+run across lines), `\_s`, `\_.`, `\_[...]` take one too; `\zs` and `\ze` set
+where the match is said to start and end; `\%^` `\%$` are the file's start
+and end, `\%d123` `\%x2a` `\%u20AC` a character by number; `\c` and `\C`
+anywhere ignore case or not (there is no 'ignorecase': as Vim's default,
+case counts). `.` and the classes take a character, not a byte (`é` is
+one). A pattern with nothing special in it is looked for as text, the
+fastest way (about 5 ms for something not there in 1 GB, on several
+threads); any other runs on blit's own engine, where the text lies: a DFA
+built as it goes finds the lines (about half a gigabyte a second a core),
+and a Pike VM where on them, so no pattern can take exponential time.
 
 **The command line**: `:w`, `:q` (closes the tab), `:q!`, `:wq`, `:x`, `:wa`,
 `:qa`, `:wqa`, `:e FILE`, `:bn :bp :bd`, `:tabnew`, `:sp`, `:vs`, `:noh`,
 `:{number}`, `:d`, `:y`, `:>`, `:<`, `:u`, `:red`, and `:s/this/that/` with
-the flags `g` and `i`, `&` for what was found, `\r` for a new line and `\n`
-in what is looked for to take a line's end (`:%s/\n/,/` joins every line;
-`:s` or `:&` alone does the last one again, `:&&` with its flags). A `:s`
-changes only the lines it matched, all in one undo step. Lines are
+the flags `g` (every match on a line), `c` (asks of each: `y` `n` `a` `q`
+`l`), `i` and `I` (case ignored or not), `n` (only counts them), `e` (says
+nothing when there is none) and `&` (the last one's flags first). In what a
+match becomes, `&` and `\0` are the match, `\1` to `\9` its groups, `~`
+what the last `:s` put in, `\r` and `\n` a new line, `\u` `\l` the next
+character in upper or lower case, `\U` `\L` all that follows until `\E`
+(`:%s/\(\w\+\)(\(\d\+\))/\2:\u\1/g`; `:%s/\n/,/` joins every line; `:s` or
+`:&` alone does the last one again, `:&&` with its flags). A `:s` changes
+only the lines it matched, all in one undo step. Lines are
 given as numbers, `.`, `$`, `%` or `'<,'>` (which `:` in Visual mode fills
 in). Up and Down recall earlier lines.
 
-What Neovim has and this does not, yet: regular expressions in searches and
-`:s`; `=`, `!`, `gq` and `gw`; folds; `:g`, `:normal`; the change list beyond its last entry
+What Neovim has and this does not, yet: in patterns, back-references
+(`\1` in what is looked for), look-ahead and look-behind (`\@=`, `\@<=` and
+the rest), `\&`, `\%[...]`, `\z(`, and the `\%` items that are about the
+cursor, lines, columns or marks (`\%#`, `\%23l`, `\%V`); 'ignorecase' and
+'smartcase'; Ctrl-E and Ctrl-Y while `:s///c` asks; `=`, `!`, `gq` and `gw`; folds; `:g`, `:normal`; the change list beyond its last entry
 (`g;` goes to the last change only); `U`; digraphs and Ctrl-X completion in
 Insert mode (completion is the language server's); Select mode and
 `virtualedit`; a motion forced to another kind (`dv}`); Ctrl-A and Ctrl-X
@@ -483,6 +510,29 @@ split to the right (making one if there is none).
 
 ![Cmd+Shift+F: the lines in the project that have both words on them](screenshot-search.png)
 
+**Cmd+F**, with Vim's modes off, opens the box that finds in the file,
+at the top right of its split, with the word at the cursor (or what is
+selected) in it, selected so that typing replaces it: the match from the
+cursor on is chosen (selected in the text) as it is typed, the others lit
+up, and the field says which of how many it is ("3 of 12"). Enter (or Down,
+or Cmd+G) chooses the next, Shift+Enter (or Up) the one before, round the
+ends; Esc leaves the one chosen selected, and Cmd+G and Cmd+Shift+G go on
+from it. Small letters match either case; a capital typed is a capital
+found. **Cmd+Option+F** (with Vim's modes as without) opens it with a second
+field, Replace with (Tab goes from one field to the other, and opens it
+from Cmd+F): Enter replaces the match chosen and chooses the next, Cmd+Enter
+replaces them all, in one undo step. With modes on, the match chosen is
+selected as in Visual mode, and when the box shuts what it found is the
+last search (`n` goes on with it).
+
+In both boxes (this one and Search in files) **Option+R** (or a click on
+`.*` in the field) turns regular expressions on, Vim's as `/` reads them
+(above), and **Option+C** (or `Aa`) makes case count as typed; each is lit
+when on, and stays on until turned off. With regular expressions on, what a
+match becomes is read by `:s`'s rules: `&` and `\0` the match, `\1` to `\9`
+its groups, `\n` a new line, `\u` and `\U` upper case; without, it is put
+in as it stands. A pattern that is not one says why, in the footer.
+
 **Cmd+Shift+F**, Search in files, finds text in files: the lines that have
 every word typed on them, in any order, with the file and line number of
 each. It opens with what was searched for last (or what is selected),
@@ -506,10 +556,23 @@ window has come back to the front since, or the file tree has seen a
 change; the list as it was is searched meanwhile, and again when the new
 one is in (switching between names and text reads nothing).
 
+**Replacing in files**: Tab in Search in files (or **Cmd+Shift+H**) adds
+Replace with. What is typed is then looked for as it stands, spaces and
+all (or as a pattern, Option+R), the count is of matches, and each line
+found shows what it is and, after an arrow, what it would become, the parts
+that change lit. Cmd+Enter asks first, in the box: "Replace 37 hits in 5
+files?" (Enter yes; anything else no). A file open in a tab is changed
+there, in one undo step, and left with its changes for you to save; the
+others are read, changed and written where they are, on another machine
+through its connection. The bottom line says how it went: "Replaced 37
+hits in 5 files". (When a search has stopped at 3,000 lines, it asks for
+a narrower one first.)
+
 In the box: Up and Down (or Ctrl-P and Ctrl-N, Ctrl-K and Ctrl-J) choose,
 Page Up and Page Down go by a page, Enter opens, Esc (or a click beside the
 box, or the key that opened it) shuts it. Tab turns a search for names
-into one for text and back, keeping what is typed. Option+Backspace (or
+into one for text, keeping what is typed (and in a search for text adds
+Replace with; Cmd+P goes back to names). Option+Backspace (or
 Ctrl-W) takes a word back, Cmd+Backspace (or Ctrl-U) all of it, Cmd+V puts
 in what the clipboard holds. A row can be clicked, and the wheel turns the
 list. In Vim's command line, `:find NAME` and `:grep WORDS` open the box
@@ -1001,19 +1064,29 @@ over the one ssh connection:
 
 - **Files** are read and written whole by the agent. The tab appears at
   once, read only and marked *loading*, and fills in when the text has
-  come; nothing on the main thread waits for the network but saving, which
-  is one round trip. Writing goes through a temporary file and keeps the
+  come. Saving writes the text on a thread: the status bar says *saving…*
+  until it is written there, typing goes on meanwhile (what is typed after
+  stays unsaved), and a save that fails says why on the bottom line.
+  Closing the tab or quitting while a save is under way waits for it in a
+  box: Enter goes on without waiting (the save still lands), Esc stays.
+  Nothing on the main thread waits for the network. Writing goes through a temporary file and keeps the
   file's permissions. A file changed there (a `git pull` in a terminal on
   that machine) is read again when blit's window comes back to the front,
   as a local one is.
 - **The tree** lists folders there; new, rename and delete work as they do
   here (delete moves to the freedesktop Trash of the user the agent runs
-  as).
+  as), on the tree's own thread: the tree shows them when they are done,
+  and one that fails says why on the bottom line. A folder there in the
+  boxes that open files and folders says *Listing…* until its names come.
 - **Finding files and text** (Cmd+P, Cmd+Shift+F): the agent walks the
   folder and searches the files on that machine, on as many threads as it
   has cores, and sends back the names and the lines found; the files
   themselves never cross the connection.
 - **Git** is that machine's own git, run there.
+- **Programs** run there (a terminal, a build, a language server) send
+  their output as they write it. One that writes faster than blit reads it
+  (`yes` in a terminal) is paused there after a few MB rather than filling
+  memory, and a language server's error output stays there.
 - **Language servers** are found and run there: the first server for the
   file's language that is on the `PATH` a login shell there would have, and
   the project folder is found there too. The status bar names it with its
@@ -1287,7 +1360,9 @@ It draws headings (the top two underlined), **bold**, *italic*, `code`,
 `[name]: url`), lists (nested, numbered from any number, `- [ ]` tasks),
 quotes (nested), tables (aligned as their `:--:` says, cells wrapped to
 fit), fenced and indented code (on a tinted band, the language at its
-top right), rules, line breaks, HTML (its text without the tags; comments
+top right; a block in a language blit has a grammar for, by its name,
+`c++`, `py`, `sh`, `yml` or another file ending, is coloured by that
+grammar in the theme's colours, on the preview's thread), rules, line breaks, HTML (its text without the tags; comments
 left out), and leaves out front matter.
 
 **Pictures** that are a paragraph of their own (`![alt](file.png)`, or a
@@ -1645,18 +1720,19 @@ tests/splits.sh build-debug/blit   # tabs and splits, by scripted mouse and keys
 tests/git.sh build-debug/blit      # git end to end, in scratch repositories with a "server" beside them
 tests/modal.sh build-debug/blit    # modal editing through the real key and text events
 tests/look.sh build-debug/blit     # the looks and the motion: frames compared pixel for pixel
-tests/find.sh build-debug/blit     # finding files and text, opening, saving and choosing a folder by a typed path
+tests/find.sh build-debug/blit     # finding files and text, opening, saving and choosing a folder by a typed path; finding and replacing in the file and in files (one open, others not, and through tests/fake-ssh.sh)
 tests/lua.sh build-debug/blit      # scripts: settings, mappings, commands, events, programs, pickers, plugins
 tests/start.sh build-debug/blit    # the start screen and the list of what was opened lately (a scratch one)
 tests/session.sh build-debug/blit  # sessions: kept on quit and when the folder changes, brought back by each way of opening a folder
-tests/remote.sh build-debug/blit   # another machine's files, git and language server, through tests/fake-ssh.sh
+tests/remote.sh build-debug/blit   # another machine's files, git and language server, through tests/fake-ssh.sh (BLIT_FAKE_SLOW=SECONDS makes it a slow host; BLIT_AGENT_LEVEL=1 acts as an old agent)
 tests/profile.sh build-debug/blit  # profiling tests/profile/spin.c here and through tests/fake-ssh.sh (skipped with no profiler)
 tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, copy and paste, here and through tests/fake-ssh.sh;
                                    # the split Ctrl+` shows and hides, and the questions about programs still running
 tests/keys.sh build-debug/blit     # the command search, the new keys, and every command run from the search
 tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger)
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running), a fake build's problems (F8, Cmd+click) and new projects (a stand-in vcpkg)
-tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md against what they should draw, Mermaid, typing, Cmd+Shift+V
+tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md against what they should draw, Mermaid, typing, Cmd+Shift+V, coloured code
+tests/unicode.sh build-debug/blit  # characters made of several code points: the cursor over them, their widths, accents drawn over their letter
 tests/images.sh build-debug/blit   # pictures and PDFs (tests/images): the tabs, their pixels, zoom, pages, too large, broken, changed, over ssh, in the preview
 ```
 
@@ -1695,14 +1771,23 @@ does not finish and takes all the memory the machine has.
 - Monospace fonts only. No line wrap. No underline or strikethrough.
 - A character the italic or bold face lacks is drawn upright in the regular
   face (or a fallback font).
-- Highlighting covers one language per file: code blocks inside Markdown and
-  scripts inside HTML are not coloured. Files over 32 MB (configurable) stay
+- Highlighting covers one language per file: code blocks inside Markdown
+  (in the editor: the preview colours them) and scripts inside HTML are not
+  coloured. Files over 32 MB (configurable) stay
   plain, and a large file opened far from its start is plain until its first
   parse finishes (about 13 MB of C++ a second).
 - Ligatures form between ASCII characters only, and are not split apart
   where the cursor sits.
 - Characters missing from the font fall back to a few system fonts; colour
-  emoji draw as a box.
+  emoji draw as a box. A character is what Unicode says one is to the eye:
+  a letter with its accents, an emoji with its skin tone or variation
+  selector, a sequence joined by zero-width joiners, a flag. The arrows,
+  Backspace and Delete take it whole, and it takes the cells Unicode's
+  widths say (an accent none, drawn over its letter and lifted clear of a
+  capital; an emoji two). An emoji sequence or a flag draws as its first
+  emoji. Hangul jamo sequences and Indic conjuncts are not joined yet, and
+  Vim's own motions in a few places (Visual `r`, block widths) still count
+  code points.
 - Language servers: one server at a time, for the file in front in the
   split that has the keyboard, so problems and completions show there and
   not in the other splits (moving to a file of the same language in the
@@ -1742,10 +1827,17 @@ does not finish and takes all the memory the machine has.
   ssh agent, as for any program that runs git for you. The changed-line
   marks compare with the last commit, not with what is staged. Not on
   Windows yet.
-- Text is found as it stands, in the file (`/`, with Vim's modes on) and
-  in all files (Cmd+Shift+F): there are no regular expressions, and no
-  replacing across files. With `modal = false`, Cmd+F finds in the file
-  and Cmd+G goes on, but nothing replaces. A file shows in one split at a time (two views of the same file
+- Regular expressions: Vim's, without back-references in the pattern,
+  look-around, `\&` and the `\%` items about the cursor, lines and marks
+  (see [Modal editing](#modal-editing)). Search in files reads a line at a
+  time for words, and the whole file for a phrase or a pattern; a pattern
+  on another machine is asked of it by the plain text every match must
+  have (two letters or more; a pattern without such text is not looked for
+  there), and its lines are looked through here, so a match that runs
+  across lines is not found there. Replacing in files stops at the 3,000
+  lines a search keeps, and passes over a file over 8 MB. The count in the
+  in-file box ("3 of 12") is left out in a file over 64 MB (8 MB with
+  regular expressions on). A file shows in one split at a time (two views of the same file
   are not possible yet), and there are at most eight splits. Tabs and
   splits are not remembered from one run to the next.
 - Only macOS has a renderer: the Vulkan side, for Windows and Linux, is

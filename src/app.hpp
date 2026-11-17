@@ -73,6 +73,7 @@ struct TermView;     // a terminal's tab (appterm.cpp)
 struct MdView;       // a Markdown preview's tab (appmarkdown.cpp)
 struct ImageView;    // an image file's tab (appimage.cpp)
 struct PdfView;      // a PDF's tab (apppdf.cpp)
+struct RemoteEntry;  // a folder's entry on another machine (remote.hpp)
 
 // A picture read from its file and put on the GPU (appimage.cpp).
 struct PictureInfo {
@@ -300,7 +301,7 @@ private:
 
     // Finding files, text and paths (appfind.cpp).
     struct Find;
-    enum : int { kFindNames, kFindText, kFindOpen, kFindSave, kFindFolder, kFindPick, kFindInput, kFindAsk, kFindCommand };
+    enum : int { kFindNames, kFindText, kFindOpen, kFindSave, kFindFolder, kFindPick, kFindInput, kFindAsk, kFindCommand, kFindFile };
     void find_create();
     bool find_is_open() const;
     void find_stale();  // the files may have changed: the finder reads the folder again when it opens
@@ -340,7 +341,17 @@ private:
     std::vector<std::string> recent_files(size_t most) const;  // appstart.cpp: files opened lately, the latest first, that are still there
     void save_as();                              // app.cpp: the file in front, under a name asked for
     void save_all();                             // app.cpp: every file with changes that has a name
-    void find_in_file();                         // appcommands.cpp: a search in the file in front (Vim's /, or a box without modes), from the word or selection
+    void find_in_file(bool replace = false);     // appcommands.cpp: a search in the file in front (Vim's /, or a box without modes; with "Replace with", the box), from the word or selection
+    // The box that finds in the file in front (kFindFile), with "Replace
+    // with" under it if asked; Search in files with that field (Cmd+Shift+H);
+    // the next (1) or previous (-1) match of what the box looked for last;
+    // and what it is looking for, to be lit up in the file (null: nothing).
+    void find_file_open(bool replace, const std::string& typed);  // appfind.cpp
+    void find_replace_in_files();                // appfind.cpp
+    void find_file_step(int by);                 // appfind.cpp
+    const Vim::Pattern* find_highlight() const;  // appfind.cpp
+    // The box's toggles: regular expressions (Option+R) and exact case (Option+C).
+    void find_toggle(bool regex);                // appfind.cpp
     std::shared_ptr<Find> find_;
 
     // Looks and motion (appfx.cpp).
@@ -450,6 +461,22 @@ private:
     void find_remote_ready();
     void remote_opened(Pane& p, Doc& d, bool fresh);
     void remote_reconnect();
+    // Saving one: the text as it is, written there on a thread of its own
+    // while typing goes on; closing its tab, or quitting, waits for that in a
+    // box that says so (true: it waits; Esc calls the close or quit off).
+    void remote_save(Doc& d);
+    bool remote_saving(u64 doc) const;       // a save of it is under way
+    bool remote_saving_all(const Doc& d) const;  // and nothing but that has changed it
+    void remote_saved();
+    void remote_forget(u64 doc);  // its text is about to go: a save of it takes its own copy first
+    bool remote_hold_close(size_t i);
+    bool remote_hold_quit(bool asked);
+    void remote_hold_box(u8 what, u64 doc);
+    // A folder there, for the box that opens files: true with its entries,
+    // false while they are on their way (find_remote_ready() is called when they come).
+    bool remote_listing(const std::string& dir, std::vector<RemoteEntry>* out);
+    bool remote_listing_busy() const;
+    bool panel_busy() const;  // (apppanel.cpp) the file tree is reading folders, or changing another machine's files
 
     // Profiling (appprofile.cpp): the side panel's Profile tab, a tab for
     // each profile (a flame graph and the functions), inline performance labels.
@@ -485,7 +512,7 @@ private:
     bool md_key(const SDL_KeyboardEvent& k);
     bool md_wheel(const SDL_MouseWheelEvent& w);
     bool md_mouse_down(const SDL_MouseButtonEvent& b);
-    std::string md_dump();
+    std::string md_dump(bool inks = false);
     struct MdWorker;  // draws previews on a thread of its own, so that typing never waits for one
     void md_sync();   // (event 20: a preview has been drawn)
     void md_wait();   // (for the tests: until every preview asked for is drawn)
@@ -745,6 +772,9 @@ private:
     void panel_focus(bool on);
     void panel_refresh();
     bool panel_has_keyboard() const;
+    // The tab the side panel shows, in the order of its tabs: 0 Files,
+    // 1 Problems, 2 Git, 3 Profile, 4 Debug, 5 Build.
+    u32 panel_tab() const;
     void sync_panel();
     void panel_select(int row);
     void panel_activate(const std::string& path);

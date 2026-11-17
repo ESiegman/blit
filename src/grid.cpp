@@ -37,6 +37,89 @@ struct Recorder {
     return font.glyph(d.cp, (bits & Font::kStyleMask) >> Font::kStyleShift) & (Font::kWide - 1);
 }
 
+// What a row remembers of the characters before, for one that may make one
+// with them (see Joiner, and Font::kJoin). The place is a byte offset, so
+// that nothing has to be forgotten when an ASCII character comes between:
+// the place is then not the one remembered.
+struct Cluster {
+    u64 join = ~0ull;  // just after a joiner, or a regional indicator with no pair yet
+    bool regional = false;  // (which of the two)
+    // Where a full row stopped: byte i of the chunk p (n bytes), `at` in
+    // the text, at column `col`. (Marks there are drawn after the row is
+    // made, by marks_at_end(): the row's loop is the hot path.)
+    const u8* p = nullptr;
+    size_t n = 0, i = 0;
+    u64 at = 0;
+    u32 col = 0;
+};
+// The glyph bits that send a character to no_cell().
+constexpr u32 kAttention = Font::kJoin | Font::kPict;
+
+// Whether the character with a cell before byte i of a chunk (past the
+// marks on it) is two cells wide. At the chunk's start: not known, no.
+bool wide_before(Font& font, const u8* p, size_t i) {
+    while (i > 0) {
+        size_t s = i - 1;
+        while (s > 0 && i - s < 4 && is_cont(p[s])) --s;
+        const Decoded d = decode_utf8(p + s, i - s);
+        if (d.len != i - s) return false;
+        const u32 g = font.cell_glyph(d.cp);
+        if (!(g & Font::kJoin) || (g & Font::kWide)) return (g & Font::kWide) != 0;
+        i = s;
+    }
+    return false;
+}
+
+// A character that may make one with the one before it (byte `i` of the
+// chunk `p`, `at` in the text): an emoji after a joiner, or the second
+// regional indicator of a flag, is not drawn (the cluster shows as its
+// first); a mark is drawn over the cell before it, or over both cells of a
+// wide character; a joiner or a selector is not drawn. True when it takes
+// no cell; false for an ordinary character after all.
+[[gnu::noinline]] bool no_cell(Font& font, Cluster& cl, u32 cp, u32 g, u64 at, u32 len, const u8* p, size_t i, u32* row, u32 col,
+                               u32 first_col) {
+    const bool after = at == cl.join;
+    cl.join = ~0ull;
+    if ((g & (Font::kWide | Font::kJoin)) == (Font::kWide | Font::kJoin)) {  // a regional indicator
+        if (after && cl.regional) return true;
+        cl.join = at + len;
+        cl.regional = true;
+        return false;
+    }
+    if (after && !cl.regional && (g & Font::kPict)) return true;
+    if (!(g & Font::kJoin)) return false;
+    if (cp == 0x200D) {
+        cl.join = at + len;
+        cl.regional = false;
+        return true;
+    }
+    if (cp - 0xFE00 < 16) return true;  // a variation selector: an emoji's, mostly, with nothing to draw
+    auto over = [&](u32 c, u32 half) {
+        if (c < first_col + 1) return;  // (the cell before is out of view)
+        u32& cell = row[c - 1 - first_col];
+        cell = (cell & ~0xFFFFu) | font.mark(cell, cp, half);
+    };
+    if (wide_before(font, p, i)) {
+        over(col - 1, 1);
+        over(col, 2);
+    } else {
+        over(col, 0);
+    }
+    return true;
+}
+
+// A row is full: what has no cell of its own right after its last cell
+// (byte i of the chunk on) is still drawn over that cell.
+[[gnu::noinline, gnu::cold]] void marks_at_end(Font& font, Cluster& cl, const u8* p, size_t n, size_t i, u64 at, u32* row, u32 col, u32 first_col) {
+    while (i < n && p[i] >= 0x80) {
+        const Decoded d = decode_utf8(p + i, n - i);
+        const u32 g = font.cell_glyph(d.cp);
+        if (!(g & kAttention) || !no_cell(font, cl, d.cp, g, at, d.len, p, i, row, col, first_col)) return;
+        i += d.len;
+        at += d.len;
+    }
+}
+
 // True when the CR that ends the reader's chunk is followed by a newline, or
 // by nothing: the next piece is looked at, so a CRLF cut in two still counts.
 bool cr_ends_line(const Buffer::Reader& rd, size_t n) {
@@ -52,9 +135,11 @@ bool cr_ends_line(const Buffer::Reader& rd, size_t n) {
 // and its italic or bold (see StyleCursor: the bits to or into a cell).
 // Returns the display column where the line ended, or kNoEnd if the row was
 // full before the line was. `at_next` reports whether the reader was left at
-// the start of the next line.
+// the start of the next line. (Inlined into its two callers, as the compiler
+// did by itself before it grew: a frame's time is spent in this loop.)
+[[gnu::always_inline]] inline
 u32 fill_row(Buffer::Reader& rd, Font& font, u32 first_col, u32 cols, u32* row, bool* at_next, u32 col, u64& off,
-             Recorder* rec, u32 tab_width, StyleCursor* sc) {
+             Recorder* rec, u32 tab_width, StyleCursor* sc, Cluster& cl) {
     const u32 end_col = first_col + cols;
     *at_next = false;
     for (;;) {
@@ -69,6 +154,7 @@ u32 fill_row(Buffer::Reader& rd, Font& font, u32 first_col, u32 cols, u32* row, 
         bool done = false;
         while (i < n) {
             if (col >= end_col) {
+                cl.p = p, cl.n = n, cl.i = i, cl.at = off + i, cl.col = col;
                 rd.advance(static_cast<u32>(i));
                 return kNoEnd;
             }
@@ -122,8 +208,12 @@ u32 fill_row(Buffer::Reader& rd, Font& font, u32 first_col, u32 cols, u32* row, 
                 Decoded d = decode_utf8(p + i, n - i);
                 len = d.len;
                 if (d.cp != 0xFFFD || len != 1) {
-                    const u32 g = font.glyph(d.cp);
-                    slot = g & (Font::kWide - 1);
+                    const u32 g = font.cell_glyph(d.cp);
+                    if ((g & kAttention) && no_cell(font, cl, d.cp, g, off + i, len, p, i, row, col, first_col)) [[unlikely]] {
+                        i += len;
+                        continue;
+                    }
+                    slot = g & (Font::kPict - 1);
                     w = g & Font::kWide ? 2 : 1;
                 }
             }
@@ -147,7 +237,7 @@ u32 fill_row(Buffer::Reader& rd, Font& font, u32 first_col, u32 cols, u32* row, 
             }
             col += w;
             i += len;
-            if (rec && col >= rec->next && col <= first_col) rec->hit(col, off + i);
+            if (rec && col >= rec->next && col <= first_col && off + i != cl.join) rec->hit(col, off + i);
         }
         rd.advance(static_cast<u32>(i));
         off += i;
@@ -207,6 +297,9 @@ void fill_grid(const Buffer& buf, Font& font, const GridSpec& g, u32* cells, Anc
 
     StyleCursor style(g.highlights, g.style_bits);
     StyleCursor* sc = style.active() ? &style : nullptr;
+    // (Kept from row to row: what it remembers is a place, which a later
+    // row never comes back to.)
+    Cluster cl;
 
     Buffer::Reader rd;
     bool positioned = false;
@@ -225,7 +318,7 @@ void fill_grid(const Buffer& buf, Font& font, const GridSpec& g, u32* cells, Anc
         u32 end;
         if (!far) {
             if (!positioned) rd = buf.line_reader(line, &off);
-            end = fill_row(rd, font, first_col, wide, dst, &positioned, 0, off, nullptr, tab, sc);
+            end = fill_row(rd, font, first_col, wide, dst, &positioned, 0, off, nullptr, tab, sc, cl);
         } else {
             // Scrolled far to the right: resume from the nearest anchor.
             Recorder rec{anchors, anchors->find(line), line};
@@ -247,11 +340,18 @@ void fill_grid(const Buffer& buf, Font& font, const GridSpec& g, u32* cells, Anc
             } else if (!positioned) {
                 rd = buf.line_reader(line, &off);
             }
-            end = fill_row(rd, font, first_col, wide, dst, &positioned, col, off, &rec, tab, sc);
+            end = fill_row(rd, font, first_col, wide, dst, &positioned, col, off, &rec, tab, sc, cl);
         }
-
         // Cells holding text; everything past the end of the line is blank.
-        u32 filled = end == kNoEnd ? wide : (end > first_col ? std::min(end - first_col, wide) : 0);
+        u32 filled;
+        if (end == kNoEnd) {
+            filled = wide;
+            // (Marks right after the last cell of a full row are drawn over it.)
+            if (cl.p[cl.i] >= 0x80) [[unlikely]]
+                marks_at_end(font, cl, cl.p, cl.n, cl.i, cl.at, dst, cl.col, first_col);
+        } else {
+            filled = end > first_col ? std::min(end - first_col, wide) : 0;
+        }
         if (lig) {
             font.ligate(dst, filled);
             filled = filled > back ? std::min(filled - back, cols) : 0;

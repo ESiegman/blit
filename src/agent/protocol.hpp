@@ -34,18 +34,32 @@ enum Op : uint8_t {
     kWalk,       // str root, u8 gitignore, u8 hidden, u32 most, u32 rules, * str -> u32 walk, u8 truncated, u32 n, n * str path (from the root)
     kGrep,       // u32 walk, u32 n (0: every file), n * u32 file, str typed, u64 most bytes, u32 most lines
                  //   -> u8 capped, u32 n, n * (u32 file, u32 line, u32 column, str text), u32 files, * u32 file (those with a line)
-    kSpawn,      // u32 process, str folder, u32 argc, * str, u32 envc, * str "NAME=value" -> u8 ok, str error
+    kSpawn,      // u32 process, str folder, u32 argc, * str, u32 envc, * str "NAME=value", [u8 flags] -> u8 ok, str error
+                 //   (flags, from agent 2: kQuiet, what it writes as errors goes to /dev/null there; an older agent
+                 //   reads no further than the environment, and sends them)
     kStdin,      // u32 process, bytes (none: its input is closed) -> nothing
     kKill,       // u32 process, i32 signal -> nothing
     kWhich,      // str program -> str path (empty: not found on the agent's PATH)
     kSpawnPty,   // u32 process, str folder, u32 rows, u32 columns, u32 argc, * str, u32 envc, * str -> u8 ok, str error
                  //   (on a pseudo-terminal: its output comes as stream 1, its input goes in with kStdin)
     kResize,     // u32 process, u32 rows, u32 columns -> nothing (its pseudo-terminal's size)
+    kFlow,       // u32 process, u8 paused -> nothing (from agent 2: while paused, its output is not read, so
+                 //   that it waits for blit to take what it has; an older agent answers "unknown request")
     // Sent by the agent.
     kReply = 100,  // the answer to a request
     kOutput,       // u32 process, u8 stream (1 output, 2 errors), bytes
     kExit,         // u32 process, i32 status (exit code, or 128 + signal)
 };
+
+// kSpawn's flags.
+enum : uint8_t { kQuiet = 1 };
+
+// The agent's own version, the number at the end of what it says to kHello
+// ("blit-agent 2"). It counts what an agent can do that one before it
+// could not (kFlow, kQuiet), so that blit asks an older one only for what it
+// knows. (A blit always brings its own agent; an older one is met only when
+// the agents kept in agent/bin were built from older sources.)
+constexpr uint32_t kAgentLevel = 2;
 
 // A message being put together.
 struct Writer {

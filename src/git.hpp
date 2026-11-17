@@ -132,8 +132,11 @@ public:
     void text(u64 doc, std::vector<std::string> args, std::string label);
 
     // A document is about to go, or its text to be replaced: nothing asked
-    // about it may still be reading that text when this returns.
+    // about it may still be reading that text when this returns. Git running
+    // for it is stopped, not waited for.
     void forget(u64 doc);
+    // Git is running for that document now (its committed text, its blame).
+    bool working_on(u64 doc) const;
 
     std::vector<Result> poll();
     // What run() is doing right now ("Push"), or empty.

@@ -11,6 +11,7 @@
 #include <cctype>
 #include <condition_variable>
 #include <cstdio>
+#include <deque>
 #include <cstdlib>
 #include <ctime>
 #include <mutex>
@@ -150,16 +151,13 @@ std::vector<Entry> read_folder(const std::string& path) {
     return out;
 }
 
+// (Here: another machine's are asked about on the reader's thread, see FileTree::Op.)
 bool exists(const std::string& path) {
-    std::string there;
-    RemoteStat st;
-    if (is_remote(path)) {
-        const std::shared_ptr<Remote> r = remote_for(path, &there);
-        return r && r->stat(there, &st) && st.kind != 0;
-    }
     SDL_PathInfo info;
     return SDL_GetPathInfo(path.c_str(), &info) && info.type != SDL_PATHTYPE_NONE;
 }
+
+std::string base_name(const std::string& path) { return path.substr(path.find_last_of('/') + 1); }
 
 // A name for one file or folder: no separators, not "." or "..".
 bool usable_name(const std::string& name, std::string* err) {
@@ -172,24 +170,90 @@ bool usable_name(const std::string& name, std::string* err) {
 
 }  // namespace
 
+// A change to another machine's files, made on the reader's thread: it and
+// the question whether the name is taken there are a round trip each.
+struct FileTree::Op {
+    Change change;               // (what it is to be, and then what it came to)
+    std::string folder;          // read again once it is done
+    bool as_folder = false;      // kCreated: a folder, not a file
+    bool same_but_for_case = false;  // kRenamed: "Readme" to "README", which may be one name there
+};
+
+namespace {
+
+void carry_out(FileTree::Change& c, bool as_folder, bool same_but_for_case) {
+    std::string there, err;
+    const std::shared_ptr<Remote> r = remote_for(c.path, &there, kRemoteWaitMs);
+    if (!r) {
+        c.error = remote_error(c.path);
+        return;
+    }
+    RemoteStat st;
+    switch (c.kind) {
+        case FileTree::Change::kCreated:
+            if (r->stat(there, &st) && st.kind != 0) c.error = "\"" + base_name(c.path) + "\" is already there";
+            else if (as_folder ? !r->make_dir(there, false, &err) : !r->create(there, &err)) c.error = err;
+            break;
+        case FileTree::Change::kRenamed: {
+            std::string host, there_to;
+            split_remote(c.to, &host, &there_to);
+            if (!same_but_for_case && r->stat(there_to, &st) && st.kind != 0) c.error = "\"" + base_name(c.to) + "\" is already there";
+            else if (!r->rename(there, there_to, &err)) c.error = err;
+            break;
+        }
+        case FileTree::Change::kTrashed:
+            if (!r->trash(there, &err)) c.error = err;  // (into the Trash there, of the user blit's agent runs as)
+            break;
+        default: break;
+    }
+}
+
+}  // namespace
+
 struct FileTree::Reader {
     std::mutex mu;
     std::condition_variable cv;
+    std::deque<Op> ops;                                                // changes to make (before folders are read)
     std::vector<std::string> wanted;                                   // folders to read
+    std::vector<Change> changed;                                       // changes made
     std::vector<std::pair<std::string, std::vector<Entry>>> finished;  // folders read
     std::function<void()> notify;
     bool stop = false, running = false;
+    bool working = false;  // reading a folder, or making a change, now
 
     static void work(std::shared_ptr<Reader> r) {
         thread_soon(Soon::kWaitedFor);
         for (;;) {
             std::string path;
+            Op op;
+            bool change = false;
             {
                 std::unique_lock lock(r->mu);
-                r->cv.wait(lock, [&] { return r->stop || !r->wanted.empty(); });
+                r->working = false;
+                r->cv.wait(lock, [&] { return r->stop || !r->wanted.empty() || !r->ops.empty(); });
                 if (r->stop) return;
-                path = std::move(r->wanted.front());
-                r->wanted.erase(r->wanted.begin());
+                r->working = true;
+                if (!r->ops.empty()) {
+                    op = std::move(r->ops.front());
+                    r->ops.pop_front();
+                    change = true;
+                } else {
+                    path = std::move(r->wanted.front());
+                    r->wanted.erase(r->wanted.begin());
+                }
+            }
+            if (change) {
+                carry_out(op.change, op.as_folder, op.same_but_for_case);
+                std::function<void()> notify;
+                {
+                    std::lock_guard lock(r->mu);
+                    if (r->stop) return;
+                    if (op.change.error.empty() && std::find(r->wanted.begin(), r->wanted.end(), op.folder) == r->wanted.end()) r->wanted.push_back(op.folder);
+                    r->changed.push_back(std::move(op.change));
+                    notify = r->notify;
+                }
+                if (notify) notify();
+                continue;
             }
             std::vector<Entry> entries = read_folder(path);
             std::function<void()> notify;
@@ -231,6 +295,23 @@ void FileTree::request(Node* folder) {
         }
     }
     reader_->cv.notify_one();
+}
+
+void FileTree::queue(Op op) {
+    {
+        std::lock_guard lock(reader_->mu);
+        reader_->ops.push_back(std::move(op));
+        if (!reader_->running) {
+            reader_->running = true;
+            std::thread(Reader::work, reader_).detach();
+        }
+    }
+    reader_->cv.notify_one();
+}
+
+bool FileTree::busy() const {
+    std::lock_guard lock(reader_->mu);
+    return reader_->working || !reader_->ops.empty() || !reader_->wanted.empty() || !reader_->changed.empty() || !reader_->finished.empty();
 }
 
 void FileTree::set_root(const std::string& path) {
@@ -322,11 +403,30 @@ void FileTree::refresh(Node* folder) {
 
 bool FileTree::poll() {
     std::vector<std::pair<std::string, std::vector<Entry>>> done;
+    std::vector<Change> made;
     {
         std::lock_guard lock(reader_->mu);
         done.swap(reader_->finished);
+        made.swap(reader_->changed);
     }
     bool changed = false;
+    // Changes made there: a node renamed keeps its place (and whether it is
+    // open) as one renamed here does; one in the Trash goes. (Their folders
+    // are being read again.)
+    for (Change& c : made) {
+        if (c.error.empty() && (c.kind == Change::kRenamed || c.kind == Change::kTrashed)) {
+            if (Node* node = node_at(c.path); node && node != root_.get() && node->parent) {
+                if (c.kind == Change::kRenamed) {
+                    node->name = base_name(c.to);
+                } else {
+                    Node* parent = node->parent;
+                    std::erase_if(parent->kids, [&](const std::unique_ptr<Node>& k) { return k.get() == node; });
+                }
+                changed = true;
+            }
+        }
+        changes_.push_back(std::move(c));
+    }
     for (auto& [path, entries] : done) {
         Node* folder = node_at(path);
         if (!folder || !folder->dir) continue;  // it has gone, or the root moved on
@@ -367,16 +467,25 @@ bool FileTree::create(Node* folder, const std::string& name, bool as_folder, std
     if (!folder || !folder->dir) folder = root_.get();
     if (!folder || !usable_name(name, err)) return false;
     const std::string path = path_of(folder) + "/" + name;
+    if (is_remote(path)) {  // (another machine's: its agent makes it, on the reader's thread)
+        Op op;
+        op.change = {Change::kCreated, path, {}, {}};
+        op.folder = path_of(folder);
+        op.as_folder = as_folder;
+        queue(std::move(op));
+        if (!folder->open) {  // (read once the change is made, whether or not it was)
+            folder->open = true;
+            request(folder);
+            rows_stale_ = true;
+            ++generation_;
+        }
+        return true;
+    }
     if (exists(path)) {
         *err = "\"" + name + "\" is already there";
         return false;
     }
-    if (is_remote(path)) {  // (another machine's: its agent makes it)
-        std::string there;
-        const std::shared_ptr<Remote> r = remote_for(path, &there);
-        if (!r) return *err = remote_error(path), false;
-        if (as_folder ? !r->make_dir(there, false, err) : !r->create(there, err)) return false;
-    } else if (as_folder) {
+    if (as_folder) {
         if (!SDL_CreateDirectory(path.c_str())) {
             *err = std::string("cannot create the folder: ") + SDL_GetError();
             return false;
@@ -405,22 +514,24 @@ bool FileTree::rename(Node* node, const std::string& new_name, std::string* err)
     bool same_but_for_case = new_name.size() == node->name.size();
     for (size_t i = 0; same_but_for_case && i < new_name.size(); ++i)
         same_but_for_case = std::tolower(static_cast<unsigned char>(new_name[i])) == std::tolower(static_cast<unsigned char>(node->name[i]));
+    if (is_remote(from)) {  // (on the reader's thread; the node takes its new name when it is done)
+        Op op;
+        op.change = {Change::kRenamed, from, to, {}};
+        op.folder = path_of(node->parent);
+        op.same_but_for_case = same_but_for_case;
+        queue(std::move(op));
+        return true;
+    }
     bool same_file = false;
-    if (same_but_for_case && !is_remote(from)) {
+    if (same_but_for_case) {
         struct stat a, b;
         same_file = stat(from.c_str(), &a) == 0 && stat(to.c_str(), &b) == 0 && a.st_dev == b.st_dev && a.st_ino == b.st_ino;
     }
-    if (exists(to) && !(same_but_for_case && (same_file || is_remote(from)))) {
+    if (exists(to) && !(same_but_for_case && same_file)) {
         *err = "\"" + new_name + "\" is already there";
         return false;
     }
-    if (is_remote(from)) {
-        std::string there_from, there_to;
-        const std::shared_ptr<Remote> r = remote_for(from, &there_from);
-        if (!r) return *err = remote_error(from), false;
-        remote_for(to, &there_to);
-        if (!r->rename(there_from, there_to, err)) return false;
-    } else if (!SDL_RenamePath(from.c_str(), to.c_str())) {
+    if (!SDL_RenamePath(from.c_str(), to.c_str())) {
         *err = std::string("cannot rename: ") + SDL_GetError();
         return false;
     }
@@ -442,16 +553,11 @@ bool FileTree::has_trash() {
 bool FileTree::trash(Node* node, std::string* err) {
     if (!node || node == root_.get() || !node->parent) return false;
     const std::string from = path_of(node);
-    if (is_remote(from)) {  // (into the Trash there, of the user blit's agent runs as)
-        std::string there;
-        const std::shared_ptr<Remote> r = remote_for(from, &there);
-        if (!r) return *err = remote_error(from), false;
-        if (!r->trash(there, err)) return false;
-        Node* parent = node->parent;
-        std::erase_if(parent->kids, [&](const std::unique_ptr<Node>& k) { return k.get() == node; });
-        rows_stale_ = true;
-        ++generation_;
-        request(parent);
+    if (is_remote(from)) {  // (on the reader's thread; the node goes when it is done)
+        Op op;
+        op.change = {Change::kTrashed, from, {}, {}};
+        op.folder = path_of(node->parent);
+        queue(std::move(op));
         return true;
     }
     const char* home = std::getenv("HOME");

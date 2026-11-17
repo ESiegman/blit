@@ -507,6 +507,7 @@ struct Lsp::Conn::Worker {
     // Runs a program on the other machine and gives what it printed (false if it could not be run).
     bool run_there(const std::vector<std::string>& argv, std::string* out, int* status) {
         RemoteProc p;
+        p.errors = false;  // (not read: not sent)
         std::string err;
         if (!c.rconn->spawn(argv, "", {}, &p, &err)) return false;
         close(p.in);
@@ -576,6 +577,7 @@ struct Lsp::Conn::Worker {
             std::vector<std::string> argv = {c.program};
             for (size_t i = 1; i < c.server.command.size(); ++i) argv.push_back(c.server.command[i]);
             RemoteProc p;
+            p.errors = false;  // (what it says for people is not kept: it stays there)
             if (!c.rconn->spawn(argv, there(c.root), {}, &p, why)) {
                 *why = "cannot start " + c.program + ": " + *why;
                 return false;

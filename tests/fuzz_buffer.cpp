@@ -2290,6 +2290,69 @@ void vim_test() {
         {"|a a\na a", ":s/a/b/<CR>j&", "b a\n|b a"},
         {"|a a\na a", ":s/a/b/g<CR>ug&", "b b\n|b b"},
         {"|a a\na a", ":s/a/b/<CR>j:s<CR>", "b a\n|b a"},
+        // Regular expressions (magic unless \v or \V says otherwise).
+        {"|ab1 cd22 ef", "/\\d\\d<CR>", "ab1 cd|22 ef"},
+        {"|foo.bar fooxbar", "/foo.bar<CR>", "foo.bar |fooxbar"},
+        {"|foo.bar fooxbar", "/foo\\.bar<CR>", "|foo.bar fooxbar"},
+        {"|a ab abb", "/ab\\+<CR>n", "a ab |abb"},
+        {"|xay xby xcy", "/x\\(b\\|c\\)y<CR>", "xay |xby xcy"},
+        {"|xay xby xcy", "/\\vx(b|c)y<CR>n", "xay xby |xcy"},
+        {"a.c |abc", "/\\Va.c<CR>", "|a.c abc"},
+        {"|x FOO foo", "/\\cfoo<CR>", "x |FOO foo"},
+        {"|x Foo foo", "/\\C[fF]oo<CR>n", "x Foo |foo"},
+        {"|is this island is", "/\\<is\\w*<CR>", "is this |island is"},
+        {"|is this island is", "/\\vis><CR>", "is th|is island is"},
+        {"a\n|b a\na", "/^a<CR>", "a\nb a\n|a"},
+        {"|ab\nb\nab", "/b$<CR>", "a|b\nb\nab"},
+        {"|ab\r\nb", "/b$<CR>", "a|b\r\nb"},
+        {"|foobar foobaz", "/foo\\zsbaz<CR>", "foobar foo|baz"},
+        {"|x foobar foo", "/foo\\zebar<CR>n", "x |foobar foo"},
+        {"|ab\ncd\nab\nce", "/b\\nc<CR>n", "ab\ncd\na|b\nce"},
+        {"|ab\ncd", "/b\\_.c<CR>", "a|b\ncd"},
+        {"|ab\ncd", "/b.c<CR>", "|ab\ncd"},
+        {"|café cafè", "/caf.<CR>", "café |cafè"},
+        {"|aé b", "/[é]<CR>", "a|é b"},
+        {"|ÉCOLE école", "/\\cÉ<CR>", "ÉCOLE |école"},
+        {"|a aa aaa", "/a\\{3}<CR>", "a aa |aaa"},
+        {"|a aa aaa", "/\\<a\\{2,}<CR>", "a |aa aaa"},
+        {"x1 x22 |x333", "?x\\d\\d<CR>", "x1 |x22 x333"},
+        {"x1 x22 |x333", "?x\\d\\d<CR>N", "x1 x22 |x333"},
+        {"|abc", "/a\\(<CR>", "|abc"},
+        {"|abc", "/x*<CR>", "a|bc"},
+        {"|a x12 b", "/x\\d\\+<CR>0dgn", "a | b"},
+        {"|a x1 b x22", "/x\\d\\+<CR>ggcgnY<Esc>.", "a Y b |Y"},
+        {"|a x1 b x22", "/x\\d\\+<CR>$gNd", "a x1 b| "},
+        {"|ab ab", "/\\(a\\)\\@=<CR>", "|ab ab"},
+        // :s with them: groups, & \0 ~ \u \U \r in what it becomes; the flags.
+        {"|foo(1) bar(22)", ":s/\\(\\w\\+\\)(\\(\\d\\+\\))/\\2:\\1/g<CR>", "|1:foo 22:bar"},
+        {"|ab cd", ":s/\\v(\\w)(\\w)/\\2\\1/g<CR>", "|ba dc"},
+        {"|ab", ":s/b/[&\\0\\&]/<CR>", "|a[bb&]"},
+        {"|a b a b", ":s/a/X/<CR>:s/b/~~/g<CR>", "|X XX a XX"},
+        {"|one two", ":s/\\w\\+/\\u&/g<CR>", "|One Two"},
+        {"|one two", ":s/one/\\U&x\\Ey/<CR>", "|ONEXy two"},
+        {"|a,b", ":s/,/\\r/<CR>", "|a\nb"},
+        {"|a\nb\nc", ":%s/\\n\\(b\\)/+\\1/<CR>", "|a+b\nc"},
+        {"|A a", ":s/a/x/gi<CR>", "|x x"},
+        {"|A a", ":s/a\\c/x/g<CR>", "|x x"},
+        {"|A a", ":s/[aA]/x/I<CR>", "|x a"},
+        {"|a a\na", ":%s/a/x/gn<CR>", "|a a\na"},
+        {"|a a a", ":s/a/x/gc<CR>yny", "|x a x"},
+        {"|a a a", ":s/a/x/gc<CR>yq", "|x a a"},
+        {"|a a a", ":s/a/x/gc<CR>nl", "|a x a"},
+        {"|a a\na", ":%s/a/x/gc<CR>na", "a x\n|x"},
+        {"|a a", ":s/a/x/gc<CR>yyu", "|a a"},
+        {"|abc", ":s/x*/-/g<CR>", "|-a-b-c-"},
+        {"|xxa", ":s/x*/-/g<CR>", "|-a-"},
+        {"|ab", ":s/$/!/<CR>", "|ab!"},
+        {"|ab\ncd", ":%s/^/> /<CR>", "> ab\n|> cd"},
+        {"|foobar", ":s/foo\\zsbar/X/<CR>", "|fooX"},
+        {"|<a><b>", ":s/<.\\{-}>/X/<CR>", "|X<b>"},
+        {"|<a><b>", ":s/<.*>/X/<CR>", "|X"},
+        {"|café", ":s/é/e/<CR>", "|cafe"},
+        {"|ÉCOLE école", ":s/\\cé/E/g<CR>", "|ECOLE Ecole"},
+        {"|a a\na a", ":s/a/b/g<CR>j:&&<CR>", "b b\n|b b"},
+        {"|abc", ":s/\\(/x/<CR>", "|abc"},
+        {"|ab\nab\nab", ":%s/b\\n/-/<CR>", "|a-a-ab"},
         {"|1\n1\n1", "qa<C-a>jqQ", "2\n2\n|1"},
         {"|ab", "ylgp", "aa|b"},
         {"|a\nb", "yygp", "a\na\n|b"},
@@ -2507,6 +2570,151 @@ void vim_test() {
         np.text = "nothere";
         if (Vim::find(lb, np, 5, true, true) != ~0ull || Vim::find(lb, np, 5, false, true) != ~0ull) ++bad;
         if (bad) fail("searching a long document", bad, 0);
+    }
+    // Regular expressions (regex.cpp), made up at random, and texts of "a",
+    // "b", "é", spaces and line breaks: the matches found in a document of
+    // many small pieces (an "é" now and then split between two) are those
+    // found in the same text as one string; and for a pattern that stays on
+    // a line, those found line by line, each line on its own (short: there
+    // only the VM runs, never the DFA or the plain-text prefilter that a
+    // whole text goes through).
+    {
+        u64 seed = 0x2e6e;
+        auto rnd = [&](u64 n) {
+            seed = seed * 6364136223846793005ull + 1442695040888963407ull;
+            return (seed >> 33) % n;
+        };
+        std::function<std::string(int)> alt;
+        auto atom = [&](int depth) -> std::string {
+            static const char* const kAtoms[] = {"a", "b", "\xC3\xA9", " ", ".", "[ab]", "[^a]", "\\w", "\\s", "aab", "\\a", "[a-b\xC3\xA9]"};
+            if (depth < 2 && rnd(6) == 0) return "\\(" + alt(depth + 1) + "\\)";
+            return kAtoms[rnd(std::size(kAtoms))];
+        };
+        auto concat = [&](int depth, bool lines) {
+            static const char* const kMulti[] = {"", "", "", "*", "\\+", "\\=", "\\{1,2}", "\\{-}", "\\{2}"};
+            std::string out = rnd(6) == 0 ? "^" : rnd(8) == 0 ? "\\<" : "";
+            for (u64 k = 1 + rnd(4); k > 0; --k) {
+                out += atom(depth) + kMulti[rnd(std::size(kMulti))];
+                if (!lines && rnd(8) == 0) out += rnd(2) ? "\\n" : "\\_.";
+            }
+            if (rnd(6) == 0) out += rnd(2) ? "$" : "\\>";
+            return out;
+        };
+        bool lines_only = true;
+        alt = [&](int depth) {
+            std::string out = concat(depth, lines_only);
+            while (rnd(4) == 0) out += "\\|" + concat(depth, lines_only);
+            return out;
+        };
+        u64 bad = 0, checked = 0;
+        for (int round = 0; round < 40 && bad < 5; ++round) {
+            std::string flat;
+            static const char* const kText[] = {"a", "a", "b", "b", "\xC3\xA9", " ", "\n", "aab"};
+            for (u64 n = rnd(round % 4 == 0 ? 3000 : 400); flat.size() < n;) flat += kText[rnd(std::size(kText))];
+            Buffer b;
+            for (u64 end = flat.size(); end > 0;) {  // (each piece put in at the front: none runs on into the next)
+                const u64 len = std::min<u64>(end, 1 + rnd(7));
+                b.insert(0, std::string_view(flat).substr(end - len, len));
+                end -= len;
+            }
+            for (int q = 0; q < 40 && bad < 5; ++q) {
+                lines_only = rnd(3) != 0;
+                const std::string typed = alt(0);
+                const Vim::Pattern p = Vim::parse_pattern(typed);
+                if (p.bad() || p.empty()) {
+                    if (p.bad() && bad++ < 5) std::fprintf(stderr, "regex: \"%s\" not read: %s\n", typed.c_str(), p.error.c_str());
+                    continue;
+                }
+                using Found = std::vector<std::pair<u64, u64>>;
+                Found in_doc, in_text, by_line;
+                Vim::each_whole(b, p, 0, b.size() + 1, false, [&](const RegexMatch& m) {
+                    in_doc.push_back({m.start, m.end});
+                    return true;
+                });
+                Vim::each_whole(std::string_view(flat), p, 0, flat.size() + 1, false, [&](const RegexMatch& m) {
+                    in_text.push_back({m.start, m.end});
+                    return true;
+                });
+                bool same = in_doc == in_text;
+                if (same && (p.re ? !p.re->multiline() : p.text.find('\n') == std::string::npos)) {
+                    for (size_t ls = 0; ls < flat.size() || (ls == flat.size() && (flat.empty() || flat.back() != '\n'));) {
+                        size_t le = flat.find('\n', ls);
+                        if (le == std::string::npos) le = flat.size();
+                        const std::string_view line = std::string_view(flat).substr(ls, le - ls);
+                        Vim::each_whole(line, p, 0, line.size() + 1, false, [&](const RegexMatch& m) {
+                            by_line.push_back({ls + m.start, ls + m.end});
+                            return true;
+                        });
+                        ls = le + 1;
+                        if (le == flat.size()) break;
+                    }
+                    same = in_doc == by_line;
+                }
+                // And the next match from a place, and the last before it, as Vim's / and ? find them.
+                if (same && !in_text.empty()) {
+                    const u64 from = rnd(flat.size() + 1);
+                    RegexMatch m;
+                    const u64 on = Vim::find(b, p, from, true, false, nullptr, ~0ull, &m);
+                    u64 want_on = ~0ull, want_back = ~0ull;
+                    for (u64 at = 0; at <= flat.size(); ++at) {  // (every place a match starts, overlapping ones too)
+                        if (at < flat.size() && (static_cast<u8>(flat[at]) & 0xC0) == 0x80) continue;
+                        const size_t got = Vim::match_in(flat, p, at);
+                        if (got != at) continue;
+                        if (at > from && want_on == ~0ull) want_on = at;
+                        if (at < from) want_back = at;
+                    }
+                    same = on == want_on && Vim::find(b, p, from, false, false) == want_back;
+                }
+                ++checked;
+                if (!same && bad++ < 5) std::fprintf(stderr, "regex: \"%s\" in %zu bytes: %zu matches in pieces, %zu in the string, %zu line by line\n", typed.c_str(),
+                                                     flat.size(), in_doc.size(), in_text.size(), by_line.size());
+            }
+        }
+        if (bad || checked < 1000) fail("regular expressions across pieces and lines", bad, static_cast<int>(checked));
+    }
+    // Cmd+F with modes: the command line opened with the word on it,
+    // selected; the first character typed takes its place, Backspace
+    // clears it, an arrow keeps it.
+    {
+        auto opened = [](Editor& ed, Vim& vim) {
+            ed.insert("one two three two");
+            ed.move_to(0, false);
+            vim.resume(ed);
+            ed.watch = &vim;
+            vim.open_command(ed, '/', "two", true);
+        };
+        auto check = [](bool ok, const char* what) {
+            if (!ok) fail(what, 0, 0);
+        };
+        {
+            Editor ed;
+            Vim vim;
+            opened(ed, vim);
+            check(vim.status() == "/two" && vim.command_selected() && ed.cursor() == 4, "the command line opens selected, the cursor on the first match");
+            vim.keys(ed, "th");
+            check(vim.status() == "/th" && !vim.command_selected() && ed.cursor() == 8, "what is typed takes its place");
+        }
+        {
+            Editor ed;
+            Vim vim;
+            opened(ed, vim);
+            vim.keys(ed, "<BS>");
+            check(vim.status() == "/" && vim.mode() == Vim::kCommand && ed.cursor() == 0, "Backspace clears it, and the line stays open");
+        }
+        {
+            Editor ed;
+            Vim vim;
+            opened(ed, vim);
+            vim.keys(ed, "<Right>s<CR>");
+            check(vim.mode() == Vim::kNormal && ed.cursor() == 0 && vim.message().find("twos") != std::string::npos, "an arrow keeps it, to be typed onto");
+        }
+        {
+            Editor ed;
+            Vim vim;
+            opened(ed, vim);
+            vim.keys(ed, "<CR>n");
+            check(vim.mode() == Vim::kNormal && ed.cursor() == 14, "Enter looks for it, n goes on");
+        }
     }
     // Operations on many lines are made as few edits (vim.cpp, kManyLines):
     // the text they leave, and where the cursor ends up, are those of the

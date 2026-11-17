@@ -95,6 +95,54 @@ check ":find" 'names [helper] 1 of 1 : >src/helper.hpp'
 run "text::;text:grep omega;key:Return;finddump"
 check ":grep" 'text [omega] 1 of 1 : >src/main.cpp:3:1'
 
+# Replacing in files: Tab (or Cmd+Shift+H) gives Search in files a second
+# field; the lines then show what they would become, and what is typed is
+# looked for as it stands (or as a regular expression, Option+R).
+run "key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;finddump"
+check "Tab: Replace with, and each line before and after" 'text [needle] with> [pin] 3 of 3 : >src/deep/inner.txt:2:14=    indented pin line src/helper.hpp:2:12=// another pin, with a capital src/main.cpp:2:5=the pin is here'
+run "key:cmd+shift+H;text:Needle;findwait;finddump"
+check "Cmd+Shift+H opens it with that field; a capital typed is a capital found" 'text [Needle] with [] 1 of 1 : >src/helper.hpp:2:12=// another , with a capital'
+run "key:cmd+shift+F;text:needle is;findwait;key:cmd+shift+H;findwait;finddump"
+check "with the field there what is typed is a phrase, as it stands" 'text [needle is] with> [] 1 of 1 : >src/main.cpp:2:5=the  here'
+run "key:cmd+shift+F;key:alt+R;text:ne\\+dle\\|omega;findwait;finddump"
+check "Option+R: a regular expression" 'text [ne\+dle\|omega] .* 4 of 4 : >src/deep/inner.txt:2:14 src/helper.hpp:2:12 src/main.cpp:2:5 src/main.cpp:3:1'
+run "key:cmd+shift+F;key:alt+C;text:needle;findwait;finddump"
+check "Option+C: case as typed" 'text [needle] Aa 2 of 2 : >src/deep/inner.txt:2:14 src/main.cpp:2:5'
+run "key:cmd+shift+F;key:alt+R;text:\\(;findwait;finddump"
+check "what is not a pattern says why" 'text [\(] .* (E54: Unmatched \() 0 of 0 :'
+run "key:cmd+shift+F;key:alt+R;text:\\(\\w\\+\\) \\(is\\);key:Tab;text:\\2 \\u\\1;findwait;finddump"
+check "groups in what it becomes" 'text [\(\w\+\) \(is\)] with> [\2 \u\1] .* 1 of 1 : >src/main.cpp:2:5=the is Needle here'
+run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;finddump"
+check "Cmd+Enter asks first" 'text [needle] with> [pin] asking 3 in 3 3 of 3 : >src/deep/inner.txt:2:14=    indented pin line src/helper.hpp:2:12=// another pin, with a capital src/main.cpp:2:5=the pin is here'
+run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Escape;finddump"
+check "Esc: not now" 'text [needle] with> [pin] 3 of 3 : >src/deep/inner.txt:2:14=    indented pin line src/helper.hpp:2:12=// another pin, with a capital src/main.cpp:2:5=the pin is here'
+run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;vim:j;vimdump;dump"
+got="$got | $(sed -n 2p "$W/src/main.cpp") | $(sed -n 2p "$W/src/helper.hpp") | $(sed -n 2p "$W/src/deep/inner.txt")"
+check "Enter: a file open in a tab is changed there (and left to be saved), the others where they are" '>[README.md main.cpp*] | the needle is here | // another pin, with a capital |     indented pin line'
+run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;vimdump"
+check "and the bottom line says how many" 'NORMAL | Replaced 3 hits in 3 files | 1:1 | alpha line'
+run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;text:j;text:u;vimdump"
+check "u takes it back in the file that was open" 'NORMAL |  | 2:5 | the needle is here'
+
+# Finding and replacing in the file in front: Cmd+Option+F (with Vim's modes as without).
+run "open:$W/src/main.cpp;text:j;text:w;key:cmd+alt+F;finddump"
+check "Cmd+Option+F: the word at the cursor, chosen, and Replace with" 'file [needle] with [] 1 of 1 at 15-21'
+run "open:$W/src/main.cpp;key:cmd+alt+F;text:e;key:Tab;text:E;key:Return;key:Return;finddump"
+check "Enter replaces the match chosen and chooses the next (small letters: either case)" 'file [e] with> [E] 3 of 8 at 16-17'
+run "open:$W/src/main.cpp;key:cmd+alt+F;key:alt+R;text:\\<\\(\\w\\)\\(\\w*\\);key:Tab;text:\\u\\1\\2;key:cmd+Return;vimdump;key:Escape;key:cmd+S"
+got="$got | $(sed -n 2p "$W/src/main.cpp")"
+check "Cmd+Enter replaces them all, with a regular expression's groups" 'NORMAL | Replaced 7 matches | 1:1 | Alpha Line | The Needle Is Here'
+
+# On another machine (tests/fake-ssh.sh stands in for ssh): replaced there.
+T="$dir/there"
+mkdir -p "$T/work/src"
+printf 'the needle\n' >"$T/work/src/a.txt"
+printf 'no\nneedle two needle\n' >"$T/work/b.txt"
+got=$(BLIT_SSH="$(cd "$(dirname "$0")" && pwd)/fake-ssh.sh" BLIT_FAKE_HOME="$T" BLIT_RECENT_FILE="$dir/recent" "$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" \
+    --script "remotewait;find:text;key:alt+R;text:ne\\+dle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;remotewait;vimdump" "ssh://box$T/work" 2>&1 >/dev/null | tail -1)
+got="$got | $(cat "$T/work/src/a.txt") | $(sed -n 2p "$T/work/b.txt")"
+check "a folder on another machine: its files read and written there" 'NORMAL | Replaced 3 hits in 2 files | 1:1 |  | the pin | pin two pin'
+
 # A path, where the system's dialogs used to be.
 run "key:cmd+O;finddump"
 check "Cmd+O: the working directory as it is on disk, folders first" "open [$W/] 7 : >../ build/ docs/ node_modules/ src/ README.md"
@@ -140,6 +188,43 @@ check "going into a folder and taking it makes it the working directory" 'names 
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/init.lua"
 run "key:cmd+P;text:notes;key:Return;dump"
 check "modal = false: Cmd+P and Enter" '>[README.md notes.md*]'
+
+# Cmd+F without modes: the box that finds in the file, the word at the
+# cursor in it, selected; Enter the next match, Shift+Enter the one before.
+runf() {
+    printf 'one two one\ntwo one\n' >"$dir/r.txt"
+    got=$("$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "frame;$1" "$dir/r.txt" 2>&1 >/dev/null | tail -1)
+}
+runf "key:cmd+F;finddump"
+check "Cmd+F: the word at the cursor, its match chosen, and how many there are" 'file [one] 1 of 3 at 0-3'
+runf "key:cmd+F;key:Return;finddump"
+check "Enter: the next" 'file [one] 2 of 3 at 8-11'
+runf "key:cmd+F;key:shift+Return;finddump"
+check "Shift+Enter: the one before, round the top" 'file [one] 3 of 3 at 16-19'
+runf "key:cmd+F;text:tw;finddump"
+check "typing takes the place of what was there" 'file [tw] 1 of 2 at 4-6'
+runf "key:cmd+F;text:ONE;finddump"
+check "a capital typed is a capital found" 'file [ONE] - of 0'
+runf "key:cmd+F;key:alt+C;text:one;key:alt+C;finddump"
+check "Option+C: case as typed, and off again" 'file [one] 1 of 3 at 0-3'
+runf "key:cmd+F;key:alt+R;text:o.e\\|t.o;finddump"
+check "Option+R: a regular expression" 'file [o.e\|t.o] .* 1 of 5 at 0-3'
+runf "key:cmd+F;key:alt+R;text:\\(;finddump"
+check "and one that is not says why" 'file [\(] .* (E54: Unmatched \()'
+runf "key:cmd+F;key:Return;key:Escape;key:cmd+G;key:cmd+G;vimdump"
+check "Cmd+G goes on with it after the box has gone" 'NORMAL |  | 1:4 | one two one'
+runf "key:cmd+F;text:two;key:Tab;text:2;key:Return;finddump;save"
+got="$got | $(tr '\n' '/' <"$dir/r.txt")"
+check "Tab: Replace with; Enter replaces the one chosen and chooses the next" 'file [two] with> [2] 1 of 1 at 10-13 | one 2 one/two one/'
+runf "key:cmd+alt+F;key:Tab;text:1;key:cmd+Return;save"
+got=$(tr '\n' '/' <"$dir/r.txt")
+check "Cmd+Option+F, then Cmd+Enter: all of them" '1 two 1/two 1/'
+runf "key:cmd+alt+F;key:alt+R;text:\\(o\\)\\(n\\)e;key:Tab;text:\\2\\1&;key:cmd+Return;save"
+got=$(tr '\n' '/' <"$dir/r.txt")
+check "a regular expression's groups, and & for the match" 'noone two noone/two noone/'
+runf "key:cmd+alt+F;key:Tab;text:1;key:cmd+Return;key:Escape;key:cmd+Z;save"
+got=$(tr '\n' '/' <"$dir/r.txt")
+check "all of them are one undo step" 'one two one/two one/'
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "find ok"
 exit $failed

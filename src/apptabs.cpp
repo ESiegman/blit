@@ -176,6 +176,7 @@ void App::tab_move(size_t from, size_t to) {
 bool App::tab_close(size_t i, bool force, bool quit_if_last) {
     if (i >= pane_->docs.size()) return true;
     if (!force && pane_->docs[i]->term && !term_may_close(i)) return false;  // a program still running there (appterm.cpp)
+    if (!force && remote_hold_close(i)) return false;  // a save to another machine under way: closing waits for it (appremote.cpp)
     if (pane_->docs[i]->ed.modified() && !force) {
         tab_show(i);  // what the question is about
         const std::string name(pane_->doc->ed.path.empty() ? std::string_view("this new file") : base_name(pane_->doc->ed.path));
@@ -208,6 +209,7 @@ bool App::tab_close(size_t i, bool force, bool quit_if_last) {
                 return false;
             }
             save();
+            if (remote_hold_close(i)) return false;  // (to another machine: it closes once that is written)
             if (pane_->doc->ed.modified()) return false;  // it would not save
         }
     }

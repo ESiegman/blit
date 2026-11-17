@@ -15,6 +15,7 @@
 #include "app.hpp"
 #include "applua.hpp"
 #include "look.hpp"
+#include "regex.hpp"
 #include "remote.hpp"
 
 namespace blit {
@@ -91,29 +92,20 @@ struct App::Commands {
         std::function<void()> run;      // none: its first chord is sent through on_key
     };
     std::vector<Command> all;
-    // What Cmd+F last looked for without modes (with them, Vim's pattern is
-    // what Cmd+G looks for).
-    std::string find_text;
-    // The side panel's tab a command last showed, while it may still have
-    // the keyboard (see show_tab()).
+    // The side panel's tabs a command shows (the panel's own numbers are one
+    // more: its first tab, Files, has a command of its own).
     enum : int { kNone = -1, kProblems, kGit, kProfile, kDebug, kBuild };
-    int shown = kNone;
     static void show_tab(App& a, int tab, bool toggle);
     static void find_next(App& a, bool forward);
     static bool git_ready(App& a);
 };
 
-// A side panel tab's key shows that tab, and pressed again while the tab
+// A side panel tab's key shows that tab, and pressed again while that tab
 // has the keyboard, gives the keyboard back to the text (as Cmd+Shift+E does
-// for the Files tab). Which tab has it is the panel's to know: this goes by
-// the tab a command showed last, which is right unless another tab was
-// clicked since.
+// for the Files tab).
 void App::Commands::show_tab(App& a, int tab, bool toggle) {
-    Commands& c = *a.commands_;
-    if (!a.panel_has_keyboard()) c.shown = kNone;
-    if (toggle && c.shown == tab) {
+    if (toggle && a.panel_has_keyboard() && a.panel_tab() == static_cast<u32>(tab) + 1) {
         a.panel_focus(false);
-        c.shown = kNone;
         return;
     }
     switch (tab) {
@@ -123,7 +115,6 @@ void App::Commands::show_tab(App& a, int tab, bool toggle) {
         case kDebug: a.panel_show_debug(); break;
         default: a.panel_show_build(); break;
     }
-    c.shown = tab;
 }
 
 // Whether there is a repository for git's commands to act on; if not, the
@@ -136,8 +127,8 @@ bool App::Commands::git_ready(App& a) {
 }
 
 // The next (or previous) match of what was looked for in the file: Vim's n
-// and N with modes; without them, from the selection on, round the ends,
-// and chosen.
+// and N with modes; without them, what the find box looked for, from the
+// selection on, round the ends, and chosen.
 void App::Commands::find_next(App& a, bool forward) {
     Doc& d = *a.pane_->doc;
     if (!has_text(d)) return;
@@ -159,24 +150,7 @@ void App::Commands::find_next(App& a, bool forward) {
         a.vim_after(Vim::kHandled);
         return;
     }
-    const std::string& text = a.commands_->find_text;
-    if (text.empty()) {
-        a.notify("Nothing to find yet: " + key_symbols(chord_text(SDLK_F, kPrimaryMod), *a.font_) + " finds in the file");
-        return;
-    }
-    // Capitals typed: they count; none: neither do the text's.
-    Vim::Pattern p;
-    p.text = text;
-    p.ignore_case = std::none_of(text.begin(), text.end(), [](char ch) { return std::isupper(static_cast<unsigned char>(ch)) != 0; });
-    const u64 at = Vim::find(ed.buf, p, ed.sel_min(), forward, true);
-    if (at == ~0ull) {
-        a.notify("No match for '" + text + "'");
-        return;
-    }
-    ed.move_to(at, false);
-    ed.move_to(at + text.size(), true);
-    a.scroll_to_cursor();
-    a.dirty_ = true;
+    a.find_file_step(forward ? 1 : -1);
 }
 
 void App::commands_create() {
@@ -233,6 +207,12 @@ void App::commands_create() {
     sent("Go to file", {key(SDLK_P, kP)});
     sent("Search in files", {key(SDLK_F, kP | kS)});
     own("Find in this file", {key(SDLK_F, kP)}, [this] { find_in_file(); });
+    own("Replace in this file", {key(SDLK_F, kP | kA)}, [this] { find_in_file(true); });
+    own("Replace in files", {key(SDLK_H, kP | kS)}, [this] { find_replace_in_files(); });
+    // (Their keys work while a find box is open, and are its own then: Option
+    // and a letter types a character everywhere else.)
+    c.push_back({"Find: regular expressions on or off", {key(SDLK_R, kA)}, false, [this] { find_toggle(true); }});
+    c.push_back({"Find: match case on or off", {key(SDLK_C, kA)}, false, [this] { find_toggle(false); }});
     own("Find the next match", {mac ? key(SDLK_G, kP) : key(SDLK_F3)}, [this] { Commands::find_next(*this, true); });
     own("Find the previous match", {mac ? key(SDLK_G, kP | kS) : key(SDLK_F3, kS)}, [this] { Commands::find_next(*this, false); });
     own("Go to the next hit of Search in files", {key(SDLK_F4)}, [this] { find_step(1); });
@@ -325,9 +305,11 @@ void App::commands_create() {
 }
 
 // Cmd+F: a search in the file in front, starting from the selection (its
-// first line) or else the word at the cursor. With modes it is Vim's / with
-// that typed; without, the box that finds things as one line to type.
-void App::find_in_file() {
+// first line) or else the word at the cursor, which is put there selected,
+// so that typing replaces it. With modes it is Vim's / with that typed (as
+// a pattern that finds it as it stands); without, and for Cmd+Option+F in
+// either case, the box that finds (and replaces) in the file.
+void App::find_in_file(bool replace) {
     Doc& d = *pane_->doc;
     if (!has_text(d) || d.ed.buf.size() == 0) return;  // (the start screen's empty file too)
     if (panel_has_keyboard()) panel_focus(false);
@@ -341,18 +323,13 @@ void App::find_in_file() {
     what.resize(std::min(what.size(), what.find_first_of("\r\n")));
     if (what.empty()) what = word_at(ed.buf, ed.cursor());
     lsp_close(kPopAll);
-    if (cfg_.modal) {
-        // (Typed as keys: a backslash stands for itself, and "<" is written <lt>.)
-        std::string keys = "<Esc>/";
-        for (const char ch : what) keys += ch == '\\' ? "\\\\" : ch == '<' ? "<lt>" : std::string(1, ch);
-        vim_.keys(ed, keys);
+    if (cfg_.modal && !replace) {
+        if (find_open_) find_close(false);
+        vim_.open_command(ed, '/', regex_escape(what), true);
         vim_after(Vim::kHandled);
         return;
     }
-    find_choose(kFindInput, "Find", what, [this](const std::string& typed) {
-        if (!typed.empty()) commands_->find_text = typed;
-        Commands::find_next(*this, true);
-    });
+    find_file_open(replace, what);
 }
 
 // The commands' keys this file handles (the others are their owners').
@@ -361,7 +338,6 @@ bool App::command_key(const SDL_KeyboardEvent& k) {
     const u8 m = mods_of(k.mod);
     // (The panel's own keys for another of its tabs: which tab a command
     // showed last no longer says which has the keyboard.)
-    if ((k.key == SDLK_TAB && (k.mod & SDL_KMOD_CTRL)) || (k.key == SDLK_E && m == (kP | kS))) commands_->shown = Commands::kNone;
     for (const Commands::Command& c : commands_->all) {
         if (!c.here) continue;
         for (const Chord& ch : c.keys)

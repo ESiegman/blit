@@ -48,7 +48,7 @@ namespace {
 
 using namespace blit_wire;
 
-constexpr std::string_view kAgentVersion = "blit-agent 1";
+const std::string kAgentVersion = std::format("blit-agent {}", kAgentLevel);
 
 // ---------------------------------------------------------------- sending
 
@@ -235,23 +235,26 @@ struct Child {
     bool pty = false;
     std::string pending;    // input not written yet
     bool close_in = false;  // and then its input closes
+    bool paused = false;    // blit has more of its output than it has taken yet: none is read until it asks again (kFlow)
     bool exited = false;
     int status = 0;
 };
 std::map<uint32_t, Child> children;
 
-bool spawn(uint32_t id, const std::string& cwd, std::vector<std::string> argv, std::span<const std::string> env, std::string* err) {
-    int in[2], out[2], er[2];
+// (quiet: what it writes as errors goes nowhere, rather than to blit, which would not read it.)
+bool spawn(uint32_t id, const std::string& cwd, std::vector<std::string> argv, std::span<const std::string> env, bool quiet, std::string* err) {
+    int in[2], out[2], er[2] = {-1, -1};
     if (::pipe(in) != 0) return *err = "cannot make a pipe", false;
     if (::pipe(out) != 0) {
         ::close(in[0]), ::close(in[1]);
         return *err = "cannot make a pipe", false;
     }
-    if (::pipe(er) != 0) {
+    if (!quiet && ::pipe(er) != 0) {
         ::close(in[0]), ::close(in[1]), ::close(out[0]), ::close(out[1]);
         return *err = "cannot make a pipe", false;
     }
     for (const int fd : {in[1], out[0], er[0]}) {
+        if (fd < 0) continue;
         ::fcntl(fd, F_SETFD, FD_CLOEXEC);
         ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) | O_NONBLOCK);
     }
@@ -281,14 +284,18 @@ bool spawn(uint32_t id, const std::string& cwd, std::vector<std::string> argv, s
     posix_spawn_file_actions_init(&fa);
     posix_spawn_file_actions_adddup2(&fa, in[0], 0);
     posix_spawn_file_actions_adddup2(&fa, out[1], 1);
-    posix_spawn_file_actions_adddup2(&fa, er[1], 2);
-    for (const int fd : {in[0], out[1], er[1]}) posix_spawn_file_actions_addclose(&fa, fd);
+    if (quiet) posix_spawn_file_actions_addopen(&fa, 2, "/dev/null", O_WRONLY, 0);
+    else posix_spawn_file_actions_adddup2(&fa, er[1], 2);
+    for (const int fd : {in[0], out[1], er[1]})
+        if (fd >= 0) posix_spawn_file_actions_addclose(&fa, fd);
     pid_t pid = 0;
     const int rc = ::posix_spawnp(&pid, args[0], &fa, nullptr, args.data(), envp.data());
     posix_spawn_file_actions_destroy(&fa);
-    ::close(in[0]), ::close(out[1]), ::close(er[1]);
+    ::close(in[0]), ::close(out[1]);
+    if (er[1] >= 0) ::close(er[1]);
     if (rc != 0) {
-        ::close(in[1]), ::close(out[0]), ::close(er[0]);
+        ::close(in[1]), ::close(out[0]);
+        if (er[0] >= 0) ::close(er[0]);
         *err = std::format("cannot run {}: {}", words.empty() ? "" : words[0], std::strerror(rc));
         return false;
     }
@@ -507,8 +514,9 @@ void handle(uint8_t op, uint32_t id, std::string_view body) {
             for (std::string& a : argv) a = r.str();
             std::vector<std::string> env(r.u32());
             for (std::string& e : env) e = r.str();
+            const uint8_t flags = r.n > 0 ? r.u8() : 0;  // (none from a blit before them)
             std::string err = argv.empty() ? "nothing to run" : "";
-            const bool ok = !argv.empty() && spawn(proc, cwd, std::move(argv), env, &err);
+            const bool ok = !argv.empty() && spawn(proc, cwd, std::move(argv), env, (flags & kQuiet) != 0, &err);
             w.u8(ok).str(err);
             return reply(id, w);
         }
@@ -550,6 +558,12 @@ void handle(uint8_t op, uint32_t id, std::string_view body) {
             if (auto it = children.find(proc); it != children.end() && it->second.pid > 0 && !it->second.exited) ::kill(it->second.pid, sig);
             return;
         }
+        case kFlow: {
+            const uint32_t proc = r.u32();
+            const bool paused = r.u8() != 0;
+            if (auto it = children.find(proc); it != children.end()) it->second.paused = paused;
+            return;
+        }
         default: {
             w.u8(0).str("unknown request");
             return reply(id, w);
@@ -571,8 +585,9 @@ int main() {
         std::vector<std::pair<uint32_t, int>> who;  // for each after blit's: (process, 0 input / 1 output / 2 errors)
         if (open) fds.push_back({0, POLLIN, 0});
         for (auto& [pid, c] : children) {
-            if (c.out >= 0) fds.push_back({c.out, POLLIN, 0}), who.emplace_back(pid, 1);
-            if (c.err >= 0) fds.push_back({c.err, POLLIN, 0}), who.emplace_back(pid, 2);
+            // (A paused program's output waits in its pipe, and once that is full, the program waits.)
+            if (c.out >= 0 && !c.paused) fds.push_back({c.out, POLLIN, 0}), who.emplace_back(pid, 1);
+            if (c.err >= 0 && !c.paused) fds.push_back({c.err, POLLIN, 0}), who.emplace_back(pid, 2);
             if (c.in >= 0 && !c.pending.empty()) fds.push_back({c.in, POLLOUT, 0}), who.emplace_back(pid, 0);
             else if (c.in >= 0 && c.close_in && !c.pty) ::close(c.in), c.in = -1;  // (a terminal's input is its output: it stays)
         }
@@ -592,6 +607,7 @@ int main() {
                     } else if (got == 0) {
                         open = false;  // blit has gone: the programs it started go too
                         for (auto& [pid, c] : children) {
+                            c.paused = false;  // (what they still write is read, so that they can end)
                             if (c.pid <= 0 || c.exited) continue;
                             if (c.pty) {  // (a shell does not end on SIGTERM; a terminal that hangs up ends it)
                                 ::kill(-c.pid, SIGHUP);

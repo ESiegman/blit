@@ -15,6 +15,7 @@
 #include <climits>
 #include <condition_variable>
 #include <csignal>
+#include <cstdlib>
 #include <cstring>
 #include <deque>
 #include <format>
@@ -262,6 +263,25 @@ bool read_all(int fd, char* p, size_t n) {
     return true;
 }
 
+// A frame's head: its length (counting `more` bytes that follow the payload,
+// sent after it as they are), operation, number, and the payload.
+std::string frame_head(u8 op, u32 id, const std::string& payload, size_t more) {
+    Writer w;
+    w.u32(static_cast<u32>(5 + payload.size() + more)).u8(op).u32(id);
+    w.b += payload;
+    return std::move(w.b);
+}
+
+// A program's output held here for its reader: past kHoldMost the agent is
+// told to stop reading it (kFlow), and under kHoldLess to read on. What was
+// already on its way still comes; past kHoldHard (or past kHoldMost, from an
+// agent that cannot be told) no more frames are read until its reader has
+// taken some, which holds up the whole connection: the last resort.
+constexpr size_t kHoldMost = 4u << 20, kHoldLess = 1u << 20, kHoldHard = 16u << 20;
+// What a program writes to its input waits to go, at most this much at a time
+// (more waits for room); a request is never kept waiting for room.
+constexpr size_t kSendMost = 4u << 20;
+
 }  // namespace
 
 #if !defined(BLIT_NO_REMOTE)
@@ -342,8 +362,21 @@ struct Remote::Impl {
     std::string ssh_errors;  // the last of what ssh said on its error stream
     pid_t ssh = -1;
     int to = -1, from = -1, errs = -1;  // ssh's input (written here), output and errors (read here)
-    std::mutex write_mu;
+    u32 agent_level = 0;  // what the agent can do (protocol.hpp's kAgentLevel, as it says it)
     u32 next_id = 1;
+    // What is to go to ssh's input, in order, written by a thread of its own:
+    // nobody waits for a long write (a big file being saved) but whoever
+    // waits for its answer. Its own lock, never taken with mu's held the
+    // other way round (mu first, then this one, if both).
+    struct Out {
+        std::string head, tail;  // (tail: a file's text, sent after its request's head without being copied into it)
+    };
+    std::mutex out_mu;
+    std::condition_variable out_cv;  // something to write, or room for more
+    std::deque<Out> outq;
+    size_t out_bytes = 0;
+    bool out_done = false;  // nothing more goes: the writer lets go of ssh's input (and closes it)
+    std::jthread writer;
     struct Slot {
         bool done = false, failed = false;
         std::string body;
@@ -353,16 +386,20 @@ struct Remote::Impl {
     struct Proc {
         int out_w = -1, err_w = -1, in_r = -1;  // this end of the pipes blit's code was given the other end of
         std::deque<std::pair<int, std::string>> queue;  // output to put into the pipes (stream, bytes); stream 0: the end
+        size_t held = 0;      // bytes of output in the queue, or being written into a pipe
+        bool paused = false;  // the agent has been told to stop reading its output (kFlow)
+        bool quiet = false;   // its errors are not wanted (an older agent sends them anyway: they are dropped)
         bool exited = false, ended = false;
         int status = -1;
         std::jthread pump_in, pump_out;
     };
     std::map<u32, std::unique_ptr<Proc>> procs;
     u32 next_proc = 1;
+    std::condition_variable room;  // a program's held output has been taken (for the reader, when it waits for that)
+    size_t held_most = 0;
     std::jthread connector, reader, err_reader;
 
     void fail(const std::string& why) {
-        std::vector<std::unique_ptr<Proc>> gone;
         {
             std::lock_guard lock(mu);
             if (state == kFailed) return;
@@ -378,7 +415,62 @@ struct Remote::Impl {
                 }
         }
         cv.notify_all();
+        room.notify_all();
+        stop_writing();
         if (notify_fn) notify_fn();
+    }
+
+    // Nothing more is written: what waits to go is dropped, and the writer
+    // closes ssh's input once what it is writing now has gone (or failed).
+    // True if there is a writer to do that.
+    bool stop_writing() {
+        bool writing;
+        {
+            std::lock_guard lock(out_mu);
+            out_done = true;
+            outq.clear();
+            out_bytes = 0;
+            writing = writer.joinable();
+        }
+        out_cv.notify_all();
+        return writing;
+    }
+
+    void write_frames() {
+        bool broken = false;  // (ssh has gone: the reader says so; until then what comes is dropped)
+        for (;;) {
+            Out o;
+            {
+                std::unique_lock lock(out_mu);
+                out_cv.wait(lock, [&] { return out_done || !outq.empty(); });
+                if (out_done) break;
+                o = std::move(outq.front());
+                outq.pop_front();
+            }
+            if (!broken) broken = !write_all(to, o.head.data(), o.head.size()) || !write_all(to, o.tail.data(), o.tail.size());
+            {
+                std::lock_guard lock(out_mu);
+                out_bytes -= std::min(out_bytes, o.head.size() + o.tail.size());
+            }
+            out_cv.notify_all();
+        }
+        ::close(to);
+    }
+
+    // A frame, to go when those before it have (tail: more of it, after
+    // head). may_wait: the caller waits while much is waiting to go already
+    // (a program's input); a request, or anything from the main thread, never
+    // does. False if nothing more goes on this connection.
+    bool enqueue(std::string head, std::string tail = {}, bool may_wait = false) {
+        {
+            std::unique_lock lock(out_mu);
+            if (may_wait) out_cv.wait(lock, [&] { return out_done || out_bytes < kSendMost; });
+            if (out_done) return false;
+            out_bytes += head.size() + tail.size();
+            outq.push_back({std::move(head), std::move(tail)});
+        }
+        out_cv.notify_all();
+        return true;
     }
 
     void set_progress(std::string what) {
@@ -499,6 +591,10 @@ struct Remote::Impl {
         }
         if (l != "BLIT-START") return fail(why(std::format("cannot start blit's agent on {}", host)));
         reader = std::jthread([this] { read_frames(); });
+        {
+            std::lock_guard lock(out_mu);
+            if (!out_done) writer = std::jthread([this] { write_frames(); });  // (from here on, only it writes to ssh)
+        }
         // Hello: the agent's version, and where home is there.
         std::string body;
         Writer w;
@@ -510,9 +606,13 @@ struct Remote::Impl {
         }
         if (!call(kHello, w.b, &body, 30'000)) return fail(why(std::format("blit's agent on {} did not answer", host)));
         Reader r(body.data(), body.size());
-        r.str();
+        const std::string version = r.str();  // "blit-agent 2"
+        u32 level = static_cast<u32>(std::atoi(version.c_str() + std::min(version.size(), version.find_last_of(' ') + 1)));
+        // (BLIT_AGENT_LEVEL: the tests' way to meet an agent from before what a level brings.)
+        if (const char* as = std::getenv("BLIT_AGENT_LEVEL"); as && *as) level = std::min(level, static_cast<u32>(std::atoi(as)));
         {
             std::lock_guard lock(mu);
+            agent_level = level;
             home = r.str();
             system = r.str();
             progress.clear();
@@ -545,26 +645,42 @@ struct Remote::Impl {
             } else if (op == kOutput || op == kExit) {
                 Reader r(rest.data(), rest.size());
                 const u32 proc = r.u32();
-                std::lock_guard lock(mu);
+                std::unique_lock lock(mu);
                 auto it = procs.find(proc);
                 if (it == procs.end()) continue;
                 Proc& p = *it->second;
                 if (op == kOutput) {
                     const int stream = r.u8();
-                    p.queue.push_back({stream, r.str()});
+                    if (stream == 2 && p.quiet) continue;  // (an older agent's: nobody here reads them)
+                    std::string bytes = r.str();
+                    p.held += bytes.size();
+                    held_most = std::max(held_most, p.held);
+                    p.queue.push_back({stream, std::move(bytes)});
+                    if (p.held > kHoldMost && !p.paused && agent_level >= 2) {
+                        p.paused = true;
+                        flow(proc, true);
+                    }
                 } else {
                     p.exited = true;
                     p.status = static_cast<int>(r.u32());
                     p.queue.push_back({0, {}});
                 }
                 cv.notify_all();
+                // Far more than its reader has taken: nothing more is read
+                // until it has taken some (an agent that was told to pause
+                // it does not get here but for what was already on its way).
+                if (op == kOutput && p.held > (agent_level >= 2 ? kHoldHard : kHoldMost)) {
+                    Proc* const held = &p;  // (not looked at once the connection has failed: it may be gone then)
+                    room.wait(lock, [&] { return state == kFailed || held->held <= kHoldLess; });
+                }
             }
         }
         fail(std::format("the connection to {} was lost", self->host_));
     }
 
-    // A request, and its answer (false if there is none: no connection, or it went).
-    bool call(u8 op, const std::string& payload, std::string* answer, int ms = 60'000) {
+    // A request, and its answer (false if there is none: no connection, or it
+    // went). tail: bytes that end the request, as they are (a file's text).
+    bool call(u8 op, const std::string& payload, std::string* answer, int ms = 60'000, std::string tail = {}) {
         Slot slot;
         u32 id;
         {
@@ -573,12 +689,8 @@ struct Remote::Impl {
             id = next_id++;
             pending[id] = &slot;
         }
-        bool sent;
-        {
-            const std::string f = frame(op, id, payload);
-            std::lock_guard lock(write_mu);
-            sent = write_all(to, f.data(), f.size());
-        }
+        const size_t more = tail.size();
+        const bool sent = enqueue(frame_head(op, id, payload, more), std::move(tail));
         std::unique_lock lock(mu);
         if (sent) cv.wait_for(lock, std::chrono::milliseconds(ms), [&] { return slot.done; });
         pending.erase(id);
@@ -587,14 +699,21 @@ struct Remote::Impl {
         return true;
     }
 
-    void send(u8 op, const std::string& payload) {
+    // A message that has no answer. may_wait: as enqueue's.
+    void send(u8 op, const std::string& payload, bool may_wait = false) {
         {
             std::lock_guard lock(mu);
             if (state != kReady) return;
         }
-        const std::string f = frame(op, 0, payload);
-        std::lock_guard lock(write_mu);
-        write_all(to, f.data(), f.size());
+        enqueue(frame_head(op, 0, payload, 0), {}, may_wait);
+    }
+
+    // The agent is to stop reading a program's output, or to read on (mu is held).
+    void flow(u32 proc, bool paused) {
+        if (state != kReady) return;
+        Writer w;
+        w.u32(proc).u8(paused);
+        enqueue(frame_head(kFlow, 0, w.b, 0));
     }
 };
 
@@ -602,7 +721,9 @@ Remote::Remote(std::string host) : host_(std::move(host)), impl_(std::make_uniqu
 
 Remote::~Remote() {
     Impl& m = *impl_;
-    if (m.to >= 0) ::close(m.to);  // the agent sees its input end, and ends (and its programs with it)
+    // The agent sees its input end, and ends (and its programs with it). (The
+    // writer, if there is one, closes it, once what it is writing has gone.)
+    if (!m.stop_writing() && m.to >= 0) ::close(m.to);
     if (m.ssh > 0) {
         for (int i = 0; i < 50 && ::waitpid(m.ssh, nullptr, WNOHANG) == 0; ++i) ::usleep(10'000);
         if (::waitpid(m.ssh, nullptr, WNOHANG) == 0) {
@@ -613,6 +734,7 @@ Remote::~Remote() {
     if (m.connector.joinable()) m.connector.join();
     if (m.reader.joinable()) m.reader.join();
     if (m.err_reader.joinable()) m.err_reader.join();
+    if (m.writer.joinable()) m.writer.join();
     m.fail("closed");
     for (auto& [id, p] : m.procs) {
         if (p->pump_out.joinable()) p->pump_out.join();
@@ -753,11 +875,11 @@ int Remote::read(const std::string& path, u64 most, std::string* out, i64* modif
     return r.ok ? status : 4;
 }
 
-bool Remote::write(const std::string& path, std::string_view data, std::string* err, i64* modified_ns) {
+bool Remote::write(const std::string& path, std::string data, std::string* err, i64* modified_ns) {
     Writer w;
-    w.str(path).str(data.data(), data.size());
+    w.str(path).u32(static_cast<u32>(data.size()));  // (the text itself follows, as it is)
     std::string a;
-    if (!impl_->call(kWrite, w.b, &a, 300'000)) {
+    if (!impl_->call(kWrite, w.b, &a, 300'000, std::move(data))) {
         if (err) *err = std::format("no connection to {}", host_);
         return false;
     }
@@ -894,9 +1016,16 @@ bool Remote::spawn(const std::vector<std::string>& argv, const std::string& cwd,
         if (err) *err = "cannot make a pipe";
         return false;
     }
-    for (const int fd : {in[0], in[1], o[0], o[1], e[0], e[1]}) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+    const bool quiet = !out->errors && !rows;
+    if (quiet) {  // (no pipe for what nobody reads)
+        ::close(e[0]), ::close(e[1]);
+        e[0] = e[1] = -1;
+    }
+    for (const int fd : {in[0], in[1], o[0], o[1], e[0], e[1]})
+        if (fd >= 0) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
     auto p = std::make_unique<Impl::Proc>();
     p->in_r = in[0], p->out_w = o[1], p->err_w = e[1];
+    p->quiet = quiet;
     u32 id;
     {
         std::lock_guard lock(m.mu);
@@ -910,6 +1039,7 @@ bool Remote::spawn(const std::vector<std::string>& argv, const std::string& cwd,
     for (const std::string& a : argv) w.str(a);
     w.u32(static_cast<u32>(env.size()));
     for (const std::string& v : env) w.str(v);
+    if (!rows) w.u8(quiet ? kQuiet : 0);  // (an agent from before the flags reads no further)
     std::string a;
     bool ok = m.call(rows ? kSpawnPty : kSpawn, w.b, &a);
     std::string why = std::format("no connection to {}", host_);
@@ -923,7 +1053,8 @@ bool Remote::spawn(const std::vector<std::string>& argv, const std::string& cwd,
             std::lock_guard lock(m.mu);
             m.procs.erase(id);
         }
-        for (const int fd : {in[0], in[1], o[0], o[1], e[0], e[1]}) ::close(fd);
+        for (const int fd : {in[0], in[1], o[0], o[1], e[0], e[1]})
+            if (fd >= 0) ::close(fd);
         if (err) *err = why;
         return false;
     }
@@ -943,13 +1074,13 @@ bool Remote::spawn(const std::vector<std::string>& argv, const std::string& cwd,
             if (k <= 0) break;
             Writer chunk;
             chunk.u32(id).str(buf, static_cast<size_t>(k));
-            m.send(kStdin, chunk.b);
+            m.send(kStdin, chunk.b, true);  // (a program fed faster than the connection takes it waits)
         }
         Writer done;
         done.u32(id).str("", 0);  // (its input is closed)
         m.send(kStdin, done.b);
     });
-    proc->pump_out = std::jthread([&m, proc] {
+    proc->pump_out = std::jthread([&m, proc, id] {
         for (;;) {
             std::pair<int, std::string> item;
             {
@@ -959,10 +1090,21 @@ bool Remote::spawn(const std::vector<std::string>& argv, const std::string& cwd,
                 proc->queue.pop_front();
             }
             if (item.first == 0) break;
-            write_all(item.first == 1 ? proc->out_w : proc->err_w, item.second.data(), item.second.size());
+            // (Into a pipe whose reader has gone, it goes nowhere, at once.)
+            const int fd = item.first == 1 ? proc->out_w : proc->err_w;
+            if (fd >= 0) write_all(fd, item.second.data(), item.second.size());
+            {
+                std::lock_guard lock(m.mu);
+                proc->held -= std::min(proc->held, item.second.size());
+                if (proc->paused && proc->held <= kHoldLess) {  // taken: the agent reads on
+                    proc->paused = false;
+                    m.flow(id, false);
+                }
+            }
+            m.room.notify_all();
         }
         ::close(proc->out_w);
-        ::close(proc->err_w);
+        if (proc->err_w >= 0) ::close(proc->err_w);
         std::lock_guard lock(m.mu);
         proc->ended = true;
         m.cv.notify_all();
@@ -970,7 +1112,7 @@ bool Remote::spawn(const std::vector<std::string>& argv, const std::string& cwd,
     out->id = id;
     out->in = in[1];
     out->out = o[0];
-    out->err = e[0];
+    out->err = e[0];  // (-1 when its errors are not wanted)
     return true;
 }
 
@@ -1004,6 +1146,11 @@ void Remote::kill(u32 proc, int sig) {
     Writer w;
     w.u32(proc).u32(static_cast<u32>(sig));
     impl_->send(kKill, w.b);
+}
+
+u64 Remote::held_most() const {
+    std::lock_guard lock(impl_->mu);
+    return impl_->held_most;
 }
 
 }  // namespace blit

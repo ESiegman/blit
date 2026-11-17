@@ -1,7 +1,8 @@
 #!/bin/sh
 # The Markdown preview: what it draws of tests/markdown/*.md (compared with
-# the .txt beside each: rows as text), Mermaid diagrams in it, the preview
-# following the file as it is typed in, and Cmd+Shift+V.
+# the .txt beside each: rows as text), Mermaid diagrams in it, code blocks
+# in colour, the preview following the file as it is typed in, and
+# Cmd+Shift+V.
 #
 #   tests/markdown.sh path/to/blit            run the cases
 #   tests/markdown.sh path/to/blit --print    show what each case gives
@@ -32,12 +33,27 @@ run() {
     got=$("$blit" --offscreen "$1" --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;$3;mddump" "$2" 2>&1 >/dev/null | grep -v '^\[')
 }
 
-for f in sample edge diagrams; do
+for f in sample edge diagrams code; do
     size=1600x1100
     [ $f = sample ] || [ $f = diagrams ] && size=3600x1100
     run $size "$here/markdown/$f.md" ""
     check "$f.md drawn" "$(cat "$here/markdown/$f.txt")"
 done
+
+# Code blocks in colour: each run of a row in the colour it is drawn in,
+# with the theme's keywords made red. A language with a grammar is coloured
+# by it, by its name or another (c++, py, sh); one with none stays as it was,
+# a run in one colour. (Only where the grammars are installed.)
+if "$blit" --grammars 2>/dev/null | grep -Eq '^ *cpp +installed' && "$blit" --grammars 2>/dev/null | grep -Eq '^ *python +installed' &&
+    "$blit" --grammars 2>/dev/null | grep -Eq '^ *bash +installed'; then
+    { cat "$dir/init.lua"; printf 'blit.opt.theme.dark = "blit-dark"\nblit.opt.theme.light = "blit-dark"\nblit.opt.themes["blit-dark"] = { syntax = { keyword = "#ff0000" } }\n'; } >"$dir/colours.lua"
+    inks=$(BLIT_INIT="$dir/colours.lua" "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mdinks" "$here/markdown/code.md" 2>&1 >/dev/null)
+    got=$(printf '%s\n' "$inks" | grep -c 'main.*\[#ff0000\]return'),$(printf '%s\n' "$inks" | grep -c '\[#ff0000\]def'),$(printf '%s\n' "$inks" | grep -c '\[#ff0000\]for.*\[#ff0000\]done')
+    got=$got,$(printf '%s\n' "$inks" | grep 'int plain' | grep -o '\[#' | wc -l | tr -d ' '),$(printf '%s\n' "$inks" | grep 'no language' | grep -o '\[#' | wc -l | tr -d ' ')
+    check "code blocks coloured by their language's grammar, in the theme's colours" "1,1,1,1,1"
+else
+    echo "code colours skipped: the cpp, python and bash grammars are not all installed"
+fi
 
 # A flowchart too wide across for the view is drawn down instead.
 run 1600x1100 "$here/markdown/diagrams.md" ""

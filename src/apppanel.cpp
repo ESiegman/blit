@@ -247,6 +247,8 @@ void App::panel_focus(bool on) {
 }
 
 bool App::panel_has_keyboard() const { return side_->open && side_->focus; }
+static_assert(kTabFiles == 0 && kTabProblems == 1 && kTabGit == 2 && kTabProfile == 3 && kTabDebug == 4 && kTabBuild == 5, "the order app.hpp gives for panel_tab()");
+u32 App::panel_tab() const { return side_->tab < kTabCount ? side_->tab : kTabFiles; }
 
 // The working directory: the folder the Files tab shows. There is none
 // until the panel has been opened or a folder chosen.
@@ -378,14 +380,30 @@ void App::panel_session_set(bool open, const std::string& tab, int cols) {
     dirty_ = true;
 }
 
-// Takes in folders the tree has finished reading.
+// Takes in folders the tree has finished reading, and what changes made to
+// another machine's files came to: one that failed says why on the bottom
+// line; a file or folder renamed there takes its open files' tabs with it.
 void App::sync_panel() {
     Side& s = *side_;
     if (s.tree.poll()) {
         dirty_ = dirty_ || s.open;
         find_stale();  // (a folder read: it may have news)
     }
+    for (FileTree::Change& c : s.tree.take_changes()) {
+        if (!c.error.empty()) {
+            notify(c.error);
+        } else if (c.kind == FileTree::Change::kRenamed) {
+            renamed_on_disk(c.path, c.to);
+            if (s.selected == c.path) s.selected = c.to;
+        } else if (c.kind == FileTree::Change::kTrashed && s.selected == c.path) {
+            s.selected.clear();
+        }
+        s.touch();
+        dirty_ = true;
+    }
 }
+
+bool App::panel_busy() const { return side_->tree.busy(); }
 
 // ---------------------------------------------------------------- the file tree
 
@@ -468,7 +486,7 @@ void App::panel_commit_input() {
         FileTree::Node* node = s.tree.find(s.input_at);
         const std::string to = parent_of(s.input_at) + "/" + s.input_text;
         ok = node && s.tree.rename(node, s.input_text, &err);
-        if (ok) {
+        if (ok && !is_remote(s.input_at)) {  // (another machine's is renamed on the tree's thread: see sync_panel)
             renamed_on_disk(s.input_at, to);  // an open file, or a folder above one, may be what was renamed
             s.selected = to;
         }
@@ -505,7 +523,7 @@ void App::panel_trash(const std::string& path) {
     if (hit != 1) return;
     std::string err;
     if (!s.tree.trash(node, &err)) tell(SDL_MESSAGEBOX_ERROR, err.c_str());
-    s.selected.clear();
+    if (!is_remote(path)) s.selected.clear();  // (another machine's: once it is in the Trash there, see sync_panel)
     s.touch();
     dirty_ = true;
 }

@@ -8,7 +8,9 @@
 // The text is drawn into rows on a thread of its own (MdWorker): a key
 // typed in the file only copies the text and hands it over, and the
 // preview takes the new rows on a frame soon after. (Drawn in the frame, a
-// README of 1,600 lines made each key cost 1.7 ms instead of 41 µs.)
+// README of 1,600 lines made each key cost 1.7 ms instead of 41 µs.) Code
+// blocks are coloured there too, by the editor's grammars, the theme's
+// colours of a few kinds of token standing for all of them.
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -22,6 +24,7 @@
 #include "app.hpp"
 #include "markdown.hpp"
 #include "remote.hpp"
+#include "syntax.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
 
@@ -120,6 +123,14 @@ void colours(const ThemeColors& tc, const float* bg, MdView& v) {
     set(kMdSlice1, pick(tc, {"string"}, tc.warning));
     set(kMdSlice2, pick(tc, {"type"}, tc.hint));
     set(kMdSlice3, pick(tc, {"keyword"}, tc.error));
+    set(kMdCodeKeyword, pick(tc, {"keyword"}, tc.accent));
+    set(kMdCodeString, pick(tc, {"string"}, tc.foreground));
+    set(kMdCodeComment, pick(tc, {"comment"}, tc.muted));
+    set(kMdCodeFunction, pick(tc, {"function"}, tc.foreground));
+    set(kMdCodeType, pick(tc, {"type"}, tc.foreground));
+    set(kMdCodeConstant, pick(tc, {"number", "constant", "boolean"}, tc.foreground));
+    set(kMdCodeOperator, pick(tc, {"operator", "punctuation"}, tc.foreground));
+    set(kMdCodePlain, tc.foreground);
     // Backgrounds: the text's own, a little towards its colour.
     auto tone = [&](u32 i, float k) {
         for (int c = 0; c < 3; ++c) v.tones[i][c] = bg[c] + (v.palette[kMdText][c] - bg[c]) * k;
@@ -128,6 +139,28 @@ void colours(const ThemeColors& tc, const float* bg, MdView& v) {
     tone(kMdCodeTone, 0.07f);
     tone(kMdHeaderTone, 0.12f);
     tone(kMdNodeTone, 0.05f);
+}
+
+// The preview's ink for a capture of a highlight query: by the first part
+// of its name, the few kinds of token it tells apart.
+u8 code_ink(std::string_view capture) {
+    const std::string_view head = capture.substr(0, capture.find('.'));
+    static const struct {
+        std::string_view name;
+        u8 ink;
+    } kinds[] = {
+        {"keyword", kMdCodeKeyword}, {"conditional", kMdCodeKeyword}, {"repeat", kMdCodeKeyword}, {"include", kMdCodeKeyword},
+        {"exception", kMdCodeKeyword}, {"preproc", kMdCodeKeyword}, {"storageclass", kMdCodeKeyword},
+        {"string", kMdCodeString}, {"character", kMdCodeString}, {"escape", kMdCodeString},
+        {"comment", kMdCodeComment},
+        {"function", kMdCodeFunction}, {"method", kMdCodeFunction}, {"constructor", kMdCodeFunction},
+        {"type", kMdCodeType}, {"module", kMdCodeType}, {"namespace", kMdCodeType}, {"attribute", kMdCodeType},
+        {"number", kMdCodeConstant}, {"float", kMdCodeConstant}, {"boolean", kMdCodeConstant}, {"constant", kMdCodeConstant},
+        {"operator", kMdCodeOperator}, {"punctuation", kMdCodeOperator}, {"delimiter", kMdCodeOperator},
+    };
+    for (const auto& k : kinds)
+        if (head == k.name) return k.ink;
+    return kMdCodePlain;
 }
 
 // The size of a picture known to the worker: read (and its own size), or not to be shown.
@@ -154,6 +187,11 @@ struct App::MdWorker {
         double density = 1;
         int cw = 1, ch = 1;
         std::map<std::string, PicSize> known;  // pictures asked about before
+        // Code blocks coloured (not the first time: then it is drawn in
+        // the frame, and comes again coloured), and where grammars are.
+        bool colour = false;
+        SyntaxOptions syntax;
+        std::vector<GrammarSource> grammars;
     };
     struct Done {
         u64 view = 0, rev = 0, pictures = 0;
@@ -167,6 +205,10 @@ struct App::MdWorker {
     u64 busy = 0;             // the preview being drawn (0: none)
     u64 posted = 0;           // how many have been handed over (for md_wait)
     std::vector<Done> done;
+    // Code blocks coloured lately, by language and text, with their inks:
+    // typing in a file redraws all of it, and its code blocks are mostly
+    // as they were. Only the worker uses it.
+    std::map<std::string, std::vector<u8>> coloured;
     std::jthread worker;
 
     MdWorker() {
@@ -180,7 +222,7 @@ struct App::MdWorker {
     // The rows of a job's text. A picture's size: one of its pixels to a
     // point (or the size the text asks for), made smaller to fit across,
     // and to fit in the view.
-    static Done draw(Job& j) {
+    static Done draw(Job& j, std::map<std::string, std::vector<u8>>* coloured = nullptr) {
         Done d;
         d.view = j.view, d.rev = j.rev, d.pictures = j.pictures, d.width = j.width, d.tall = j.tall;
         const MdPictureFn size = [&](const std::string& s, u32 room, u32 want_w, u32 want_h, MdPic* out) {
@@ -205,7 +247,27 @@ struct App::MdWorker {
             out->rows = (out->h + static_cast<u32>(j.ch) - 1) / static_cast<u32>(j.ch);
             return true;
         };
-        d.rows = md_render(j.text, j.width, size);
+        const MdCodeFn colour = [&](std::string_view word, std::string_view code, std::vector<u8>* inks) {
+            const std::string lang = Syntax::language_named(word, j.grammars, j.syntax);
+            if (lang.empty()) return false;
+            std::string key = lang + '\n';
+            key += code;
+            if (const auto it = coloured->find(key); it != coloured->end()) {
+                *inks = it->second;
+                return true;
+            }
+            std::vector<u8> styles;
+            std::vector<std::string> names;
+            if (!Syntax::highlight_text(lang, code, j.syntax, &styles, &names)) return false;
+            std::vector<u8> by_style(names.size(), kMdCodePlain);
+            for (size_t s = 1; s < names.size(); ++s) by_style[s] = code_ink(names[s]);
+            inks->resize(styles.size());
+            for (size_t k = 0; k < styles.size(); ++k) (*inks)[k] = styles[k] < by_style.size() ? by_style[styles[k]] : static_cast<u8>(kMdCodePlain);
+            if (coloured->size() >= 256) coloured->clear();
+            coloured->emplace(std::move(key), *inks);
+            return true;
+        };
+        d.rows = md_render(j.text, j.width, size, j.colour && coloured ? colour : MdCodeFn{});
         return d;
     }
     void run(std::stop_token st) {
@@ -219,7 +281,7 @@ struct App::MdWorker {
                 todo.erase(it);
                 busy = j.view;
             }
-            Done d = draw(j);
+            Done d = draw(j, &coloured);
             {
                 std::lock_guard l(mu);
                 busy = 0;
@@ -357,12 +419,18 @@ void App::md_layout(FrameDesc& fd) {
                 const PictureInfo* p = picture(path);
                 j.known[path] = {p->state == PictureInfo::kReady, p->full_w, p->full_h};
             }
+            j.colour = cfg_.syntax;
+            j.syntax.parser_dirs = cfg_.parser_dirs;
+            j.syntax.query_dirs = cfg_.query_dirs;
+            j.grammars = cfg_.grammars;
             v.asked_rev = j.rev, v.asked_width = width, v.asked_tall = rows, v.asked_pictures = j.pictures;
-            if (v.renders == 0 && v.rows.empty()) {  // (the first time: at once, so that it opens drawn)
+            const bool first = v.renders == 0 && v.rows.empty();
+            if (first) {  // (the first time: at once, so that it opens drawn; its code is coloured on the worker)
                 MdWorker::Done d = MdWorker::draw(j);
                 std::lock_guard l(md_worker_->mu);
                 md_worker_->done.push_back(std::move(d));
-            } else {
+            }
+            if (!first || (j.colour && (j.text.find("```") != std::string::npos || j.text.find("~~~") != std::string::npos))) {
                 std::lock_guard l(md_worker_->mu);
                 md_worker_->todo[j.view] = std::move(j);
                 ++md_worker_->posted;
@@ -550,14 +618,29 @@ bool App::md_mouse_down(const SDL_MouseButtonEvent& b) {
     return true;
 }
 
-// The preview in front (the first there is), its rows as text (for the tests).
-std::string App::md_dump() {
+// The preview in front (the first there is), its rows as text (for the
+// tests); with `inks`, each run of a row in the colour it is drawn in
+// ("[#rrggbb]text").
+std::string App::md_dump(bool inks) {
     md_wait();
     for (const std::unique_ptr<Pane>& p : panes_) {
         if (!p->doc || !p->doc->md) continue;
         const MdView& v = *p->doc->md;
         std::string out;
-        for (const MdRow& r : v.rows) out += md_row_text(r) + "\n";
+        for (const MdRow& r : v.rows) {
+            if (!inks) {
+                out += md_row_text(r) + "\n";
+                continue;
+            }
+            for (const MdRun& run : r.runs) {
+                char hex[16];
+                const float* c = v.palette[run.ink < 32 ? run.ink : 0];
+                auto byte = [](float f) { return static_cast<int>(std::lround(std::clamp(f, 0.0f, 1.0f) * 255)); };
+                std::snprintf(hex, sizeof hex, "[#%02x%02x%02x]", byte(c[0]), byte(c[1]), byte(c[2]));
+                out += hex + run.text;
+            }
+            out += "\n";
+        }
         return out;
     }
     return "no preview\n";

@@ -2,12 +2,15 @@
 // path. Each scenario prints one JSON object on stdout.
 #include <algorithm>
 #include <atomic>
+#include <cerrno>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <ctime>
 #include <thread>
 #include <vector>
+
+#include <unistd.h>
 
 #include "app.hpp"
 #include "remote.hpp"
@@ -569,9 +572,17 @@ int App::run_bench() {
 //   diag                   wait for the server's next set of diagnostics (10 s at most)
 //   wait:MS                let MS milliseconds pass, taking in whatever the server sends
 //   asked                  print the last question a box would have asked (scripted runs answer yes, or Don't Save)
+//   clock; within:MS       start a stopwatch; print whether the main thread got here within MS milliseconds
+//   lap:LABEL              print the milliseconds since the stopwatch started (or the last lap), and start it again
+//   treewait               wait for the side panel's tree to finish reading folders and changing files (20 s at most)
+//   alive                  print whether blit is still running, or has been told to quit
+//   gitbusy                wait until git is running for the file in front (20 s at most)
+//   remotestream:BYTES     a program on the machine of the file in front writes that many bytes, read here only after a
+//                          second; print how many came and whether no more than a few MB were held here meanwhile
 // Scrolling is settled instantly, so the next event sees the final view.
 void App::run_script(const char* script) {
     std::string_view rest = script;
+    u64 clock_ns = now_ns();
     while (!rest.empty()) {
         const size_t semi = rest.find(';');
         std::string_view item = rest.substr(0, semi);
@@ -777,6 +788,52 @@ void App::run_script(const char* script) {
                 if ((!loading && !connecting && !remote_busy()) || now_ns() > until) break;
                 SDL_Delay(2);
             }
+        } else if (verb == "clock") {
+            clock_ns = now_ns();
+        } else if (verb == "lap") {  // (for measuring: not for tests, whose output must not change from run to run)
+            const u64 now = now_ns();
+            std::fprintf(stderr, "%s %.3f ms\n", arg.c_str(), static_cast<double>(now - clock_ns) / 1e6);
+            clock_ns = now;
+        } else if (verb == "within") {  // (the time the main thread took, since clock: what waits for the network does not count against it)
+            const u64 ms = (now_ns() - clock_ns) / 1'000'000, most = static_cast<u64>(std::atoll(arg.c_str()));
+            if (ms <= most) std::fprintf(stderr, "within %llu ms\n", static_cast<unsigned long long>(most));
+            else std::fprintf(stderr, "took %llu ms (over %llu)\n", static_cast<unsigned long long>(ms), static_cast<unsigned long long>(most));
+        } else if (verb == "alive") {
+            std::fprintf(stderr, "%s\n", running_ ? "running" : "quitting");
+        } else if (verb == "treewait") {
+            const u64 until = now_ns() + 20'000'000'000ull;
+            while (panel_busy() && now_ns() < until) {
+                sync_panel();
+                SDL_Delay(2);
+            }
+            sync_panel();
+        } else if (verb == "gitbusy") {
+            const u64 until = now_ns() + 20'000'000'000ull;
+            while (!git_.working_on(pane_->doc->id) && now_ns() < until) SDL_Delay(1);
+            if (!git_.working_on(pane_->doc->id)) std::fprintf(stderr, "gitbusy: git is not running for it\n");
+        } else if (verb == "remotestream") {
+            std::string there;
+            const std::shared_ptr<Remote> r = remote_for(full_path(pane_->doc->ed.path), &there, kRemoteWaitMs);
+            RemoteProc p;
+            std::string err;
+            if (!r || !r->spawn({"/bin/sh", "-c", "head -c \"$1\" /dev/zero", "sh", arg}, "/", {}, &p, &err)) {
+                std::fprintf(stderr, "remotestream: %s\n", r ? err.c_str() : remote_error(pane_->doc->ed.path).c_str());
+            } else {
+                ::close(p.in);
+                SDL_Delay(1000);  // (nobody reads it meanwhile)
+                u64 got = 0;
+                char buf[65536];
+                for (ssize_t k; (k = ::read(p.out, buf, sizeof buf)) != 0;) {
+                    if (k > 0) got += static_cast<u64>(k);
+                    else if (errno != EINTR) break;
+                }
+                ::close(p.out);
+                if (p.err >= 0) ::close(p.err);
+                const int code = r->wait(p.id, 10'000);
+                const u64 held = r->held_most();
+                const std::string how = held <= (8u << 20) ? "held a few MB at most" : "held " + std::to_string(held >> 20) + " MB";
+                std::fprintf(stderr, "streamed %llu bytes (exit %d), %s\n", static_cast<unsigned long long>(got), code, how.c_str());
+            }
         } else if (verb == "prof") {  // prof:what=value (program, args, cwd, dwarf, annotate)
             const size_t eq = arg.find('=');
             prof_set(arg.substr(0, eq), eq == std::string::npos ? std::string() : arg.substr(eq + 1));
@@ -829,6 +886,8 @@ void App::run_script(const char* script) {
             md_wait();
         } else if (verb == "mddump") {  // the preview's rows, as text
             std::fputs(md_dump().c_str(), stderr);
+        } else if (verb == "mdinks") {  // and each of their runs in its colour
+            std::fputs(md_dump(true).c_str(), stderr);
         } else if (verb == "imagewait") {  // every picture asked for has been read (10 s at most)
             picture_wait();
         } else if (verb == "imagedump") {  // the image tab in front: what it shows, and how

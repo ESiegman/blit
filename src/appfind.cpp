@@ -14,7 +14,9 @@
 #include "app.hpp"
 #include "remote.hpp"
 #include "finder.hpp"
+#include "fsio.hpp"
 #include "look.hpp"
+#include "regex.hpp"
 #include "textbox.hpp"
 #include "tree.hpp"
 #include "utf8.hpp"
@@ -35,7 +37,18 @@ constexpr std::string_view kCmdShiftO = kPrimaryMod == SDL_KMOD_GUI ? "Cmd+Shift
 constexpr std::string_view kCmdShiftF = kPrimaryMod == SDL_KMOD_GUI ? "Cmd+Shift+F" : "Ctrl+Shift+F";
 constexpr Hint kHintsNames[] = {{"Enter", "open"}, {kCmdEnter, "open beside"}, {"Tab", "search in files"}};
 constexpr Hint kHintsLine[] = {{"Enter", "go to the line"}};
-constexpr Hint kHintsText[] = {{"Enter", "open"}, {kCmdEnter, "open beside"}, {"Tab", "go to file"}};
+constexpr Hint kHintsText[] = {{"Enter", "open"}, {kCmdEnter, "open beside"}, {"Tab", "replace"}};
+constexpr Hint kHintsTextReplace[] = {{kCmdEnter, "replace all"}, {"Enter", "open"}, {"Tab", "other field"}};
+constexpr Hint kHintsFile[] = {{"Enter", "next"}, {"Shift+Enter", "previous"}, {"Tab", "replace"}};
+constexpr Hint kHintsFileReplace[] = {{"Enter", "replace"}, {kCmdEnter, "all"}, {"Tab", "other field"}};
+constexpr Hint kHintsSure[] = {{"Enter", "replace"}, {"Esc", "not now"}};
+constexpr std::string_view kWithLabel = "Replace with";
+// Matches counted in the file ("3 of 12"), at most, and in a file no larger
+// than this: a count is made again at every letter typed, and a regular
+// expression is read at about half a gigabyte a second (text as it stands
+// at several).
+constexpr u64 kMostCounted = 100000;
+constexpr u64 kCountBytes = 64ull << 20, kCountBytesRegex = 8ull << 20;
 constexpr Hint kHintsCommand[] = {{"Enter", "run"}, {"Tab", "find by keys"}};
 constexpr Hint kHintsCapture[] = {{"Tab", "back to typing"}};
 constexpr Hint kHintsOpen[] = {{"Enter", "open"}, {"Tab", "complete"}};
@@ -147,6 +160,38 @@ void pop_char(std::string* s) {
     if (!s->empty()) s->pop_back();
 }
 
+// A line found, and what replacing makes of it: the bytes of each match in
+// the one, and of what each became in the other, to be lit. (A new line
+// put in shows as "↵".)
+void preview(std::string_view line, const Vim::Pattern& p, std::string_view with, bool rules, std::vector<u32>* lit, std::string* after, std::vector<u32>* lit_after) {
+    u64 from = 0;
+    std::string made;
+    Vim::each_whole(line, p, 0, line.size() + 1, false, [&](const RegexMatch& m) {
+        if (m.start < from) return true;
+        after->append(line.substr(from, m.start - from));
+        for (u64 k = m.start; k < m.end && k < line.size(); ++k) lit->push_back(static_cast<u32>(k));
+        made.clear();
+        Vim::replacement(m, with, rules, [&](u64 x, u64 y) { return std::string(line.substr(x, y > x ? y - x : 0)); }, &made);
+        const size_t a = after->size();
+        for (const char ch : made) {
+            if (ch == '\n') *after += "\xE2\x86\xB5";
+            else *after += ch;
+        }
+        for (size_t k = a; k < after->size(); ++k) lit_after->push_back(static_cast<u32>(k));
+        from = m.end;
+        return lit->size() < 4000;
+    });
+    after->append(line.substr(std::min<u64>(from, line.size())));
+}
+
+// The bytes of each match of a pattern in a line, to be lit.
+void lit_matches(std::string_view line, const Vim::Pattern& p, std::vector<u32>* lit) {
+    Vim::each_whole(line, p, 0, line.size() + 1, false, [&](const RegexMatch& m) {
+        for (u64 k = m.start; k < m.end && k < line.size(); ++k) lit->push_back(static_cast<u32>(k));
+        return lit->size() < 4000;
+    });
+}
+
 }  // namespace
 
 struct App::Find {
@@ -202,6 +247,7 @@ struct App::Find {
     std::vector<u32> item_ids;
     bool capture = false, chord_query = false;  // (and whether what is typed is keys pressed)
     bool drop_text = false;  // (the text a key looked up brings is not typed too)
+    bool drop_option = false;  // (nor the character Option and a letter types, after a toggle: "®")
     bool secret = false;
     int back_mode = -1;
     std::string back_typed;
@@ -223,6 +269,32 @@ struct App::Find {
 
     bool beside = false;  // what is chosen opens in the split to the right (Cmd+Enter)
     bool all = false;     // what is typed is selected: typing replaces it
+
+    // Finding in the file in front (kFindFile), and replacing there and in
+    // files (kFindText): the toggles (kept from one opening to the next),
+    // the second field, and what is typed read as a pattern.
+    bool regex = false, exact = false;
+    bool replacing = false;  // "Replace with" is there
+    bool in_with = false;    // and has the keyboard
+    std::string with;
+    bool with_all = false;   // what is in it is selected
+    Vim::Pattern pattern;    // what is typed, read (kFindFile; kFindText's lines lit and previewed)
+    u64 file_doc = 0, file_from = 0;  // kFindFile: the document, and where its cursor was when the box opened
+    // The match on show, selected in the document, and the text it was found in.
+    RegexMatch cur{};
+    u64 cur_rev = ~0ull;
+    bool cur_ok = false;
+    // Where the matches in the file start ("3 of 12"), for the text and pattern they were counted for.
+    std::vector<u64> starts;
+    bool starts_capped = false, counted = false;
+    u64 starts_key = 0;
+    Vim::Pattern last_file;  // what kFindFile looked for last (Cmd+G with the box shut)
+    // Replacing in files: the question asked first.
+    bool asking = false;
+    u64 ask_hits = 0, ask_files = 0;
+    u32 toggle_col = 0;  // where ".*" is drawn in the field (and "Aa" three columns on)
+    u32 fields() const { return 1 + (replacing && (mode == kFindText || mode == kFindFile) ? 1 : 0); }
+    bool file() const { return mode == kFindFile; }
     // Search in files: what was last searched for (it is there again the
     // next time), and the hits last shown, to go through without the box
     // (find_step): which of them was last gone to (-1: none yet).
@@ -246,6 +318,7 @@ struct App::Find {
     void touch() { ++state; }
 
     size_t count() const {
+        if (mode == kFindFile) return 0;
         if (nearby()) return near.size();
         if (line_only()) return 0;
         if (mode == kFindNames || mode == kFindText) return shown ? shown->hits.size() : 0;
@@ -257,6 +330,15 @@ struct App::Find {
     static void go(App& a, u64 line, u64 col);
     static bool open_beside(App& a, const std::string& path);
     static void say(App& a, const std::string& text);
+    // Finding and replacing in the file (kFindFile).
+    static void file_query(App& a);
+    static bool file_go(App& a, u64 from, bool forward, bool at_from);
+    static void file_select(App& a, const RegexMatch& m);
+    static void file_count(App& a);
+    static void file_replace(App& a, bool all);
+    // Replacing in files: the question, then the work.
+    static void files_ask(App& a);
+    static void files_replace(App& a);
 };
 
 // The files Go to file lists with nothing typed: those open, the one in
@@ -360,6 +442,279 @@ void App::Find::say(App& a, const std::string& text) {
     a.dirty_ = true;
 }
 
+// ---------------------------------------------------------------- finding and replacing in the file
+
+// What is typed has changed: read it, and the first match from where the
+// cursor was when the box opened is chosen (round the end if need be).
+void App::Find::file_query(App& a) {
+    Find& f = *a.find_;
+    f.pattern = Vim::make_pattern(f.typed, f.regex, f.exact);
+    f.cur_ok = false;
+    if (a.pane_->doc->id == f.file_doc && !f.pattern.empty() && !f.pattern.bad()) file_go(a, f.file_from, true, true);
+    file_count(a);
+    f.touch();
+    a.dirty_ = true;
+}
+
+// The next match after `from` (or at it, with at_from), or the one before
+// it, chosen; false if there is none.
+bool App::Find::file_go(App& a, u64 from, bool forward, bool at_from) {
+    Find& f = *a.find_;
+    Doc& d = *a.pane_->doc;
+    if (d.id != f.file_doc || f.pattern.empty() || f.pattern.bad()) return false;
+    RegexMatch m;
+    const u64 after = at_from ? (from == 0 ? ~0ull : from - 1) : from;
+    if (Vim::find(d.ed.buf, f.pattern, forward ? after : from, forward, true, nullptr, ~0ull, &m) == ~0ull) {
+        f.cur_ok = false;
+        f.touch();
+        return false;
+    }
+    file_select(a, m);
+    return true;
+}
+
+// A match, selected in the document (with modes, as Visual mode would
+// select it), and shown.
+void App::Find::file_select(App& a, const RegexMatch& m) {
+    Find& f = *a.find_;
+    Editor& ed = a.pane_->doc->ed;
+    f.cur = m;
+    f.cur_rev = ed.revision();
+    f.cur_ok = true;
+    ed.move_to(m.start, false);
+    if (m.end > m.start) ed.move_to(m.end, true);
+    if (a.cfg_.modal) a.vim_mouse();
+    a.pane_->cache_rev = ~0ull;
+    a.scroll_to_cursor();
+    f.touch();
+    a.dirty_ = true;
+}
+
+// Where every match in the file starts, for "3 of 12": counted again only
+// when the text or the pattern has changed (and not in a very large file).
+void App::Find::file_count(App& a) {
+    Find& f = *a.find_;
+    const Doc& d = *a.pane_->doc;
+    u64 key = 1469598103934665603ull;
+    auto mix = [&](u64 v) { key = (key ^ v) * 1099511628211ull; };
+    mix(d.id);
+    mix(d.ed.revision());
+    mix(std::hash<std::string>{}(f.pattern.text));
+    mix(reinterpret_cast<u64>(f.pattern.re.get()));
+    mix((f.pattern.ignore_case ? 1u : 0u) | (f.pattern.word ? 2u : 0u));
+    if (key == f.starts_key) return;
+    f.starts_key = key;
+    f.starts.clear();
+    f.starts_capped = false;
+    f.counted = d.id == f.file_doc && !f.pattern.empty() && !f.pattern.bad() && d.ed.buf.size() <= (f.pattern.re ? kCountBytesRegex : kCountBytes);
+    if (!f.counted) return;
+    Vim::each_whole(d.ed.buf, f.pattern, 0, d.ed.buf.size() + 1, false, [&](const RegexMatch& m) {
+        f.starts.push_back(m.start);
+        f.starts_capped = f.starts.size() >= kMostCounted;
+        return !f.starts_capped;
+    });
+}
+
+// Enter with "Replace with" there: the match chosen becomes what is typed
+// there (by :s's rules, with regular expressions on: \1, &, \n), and the
+// next is chosen; if none was chosen (or the text has changed since), the
+// next is chosen first. Cmd+Enter: all of them, in one undo step.
+void App::Find::file_replace(App& a, bool all) {
+    Find& f = *a.find_;
+    Doc& d = *a.pane_->doc;
+    Editor& ed = d.ed;
+    if (d.id != f.file_doc || f.pattern.empty() || f.pattern.bad()) return;
+    if (d.read_only) {
+        say(a, "This tab is for reading: nothing is replaced");
+        return;
+    }
+    if (all) {
+        const u64 n = Vim::replace_all(ed, f.pattern, f.with, f.regex, 0, ed.buf.size() + 1);
+        f.cur_ok = false;
+        if (a.cfg_.modal) a.vim_mouse();
+        a.pane_->cache_rev = ~0ull;
+        a.scroll_to_cursor();
+        file_count(a);
+        f.touch();
+        say(a, n == 0 ? std::string("Nothing to replace") : "Replaced " + std::to_string(n) + (n == 1 ? " match" : " matches"));
+        return;
+    }
+    if (!f.cur_ok || f.cur_rev != ed.revision()) {
+        file_go(a, ed.has_selection() ? ed.sel_min() : ed.cursor(), true, true);
+        file_count(a);
+        return;
+    }
+    std::string out;
+    Vim::replacement(f.cur, f.with, f.regex, [&](u64 x, u64 y) { return ed.buf.text(x, y > x ? y - x : 0); }, &out);
+    const u64 at = f.cur.start, was_end = f.cur.end;
+    ed.replace(at, was_end, out);
+    // On from after what was put in (one of nothing in place of nothing: from the next character).
+    u64 next = at + out.size();
+    if (out.empty() && was_end == at) next = ed.next_char(next);
+    f.cur_ok = false;
+    if (!file_go(a, next, true, true)) {
+        ed.move_to(at + out.size(), false);
+        if (a.cfg_.modal) a.vim_mouse();
+        a.scroll_to_cursor();
+    }
+    a.pane_->cache_rev = ~0ull;
+    file_count(a);
+    f.touch();
+    a.dirty_ = true;
+}
+
+// ---------------------------------------------------------------- replacing in files
+
+// Cmd+Enter with "Replace with" there: how many there are to replace, asked
+// about first, in the box.
+void App::Find::files_ask(App& a) {
+    Find& f = *a.find_;
+    if (f.pattern.empty() || f.pattern.bad() || !a.find_current(400) || !f.shown) return;
+    const FindResults& r = *f.shown;
+    if (r.searching) return say(a, "Still searching: replace when it has finished");
+    if (r.capped) return say(a, "More than " + std::to_string(Finder::kMaxLines) + " lines have it: narrow the search to replace");
+    u64 hits = 0;
+    for (const FindHit& h : r.hits) hits += h.count;
+    if (hits == 0) return say(a, "Nothing to replace");
+    f.asking = true;
+    f.ask_hits = hits;
+    f.ask_files = r.files_hit;
+    f.touch();
+    a.dirty_ = true;
+}
+
+// Every hit replaced. A file open in a tab is changed there (one undo step,
+// left for its owner to save); any other is read, changed and written, here
+// or on another machine.
+void App::Find::files_replace(App& a) {
+    Find& f = *a.find_;
+    f.asking = false;
+    const std::shared_ptr<const FindResults> r = f.shown;
+    if (!r || !r->index || f.pattern.empty() || f.pattern.bad()) return;
+    std::vector<u32> files;
+    for (const FindHit& h : r->hits)
+        if (files.empty() || files.back() != h.file) files.push_back(h.file);
+    const Vim::Pattern p = f.pattern;
+    const std::string with = f.with;
+    const bool rules = f.regex;
+    const u64 most = f.walked_opt.max_file_bytes;
+    u64 hits = 0, changed = 0;
+    std::string failed;
+    for (const u32 i : files) {
+        const std::string rel(r->index->path(i));
+        const std::string full = r->index->root + "/" + rel;
+        Pane* where = nullptr;
+        size_t at = 0;
+        u64 n = 0;
+        if (a.find_open(full_path(full), &where, &at)) {
+            Doc& d = *where->docs[at];
+            if (d.read_only || d.loading) {
+                failed = rel;
+                continue;
+            }
+            n = Vim::replace_all(d.ed, p, with, rules, 0, d.ed.buf.size() + 1);
+            where->cache_rev = ~0ull;
+        } else {
+            std::string text, err;
+            if (!fs_read(full, &text, most + 1) || text.size() > most) {
+                failed = rel;
+                continue;
+            }
+            const std::string out = Vim::replace_text(text, p, with, rules, &n);
+            if (n && !fs_write(full, out, &err)) {
+                failed = rel + " (" + err + ")";
+                continue;
+            }
+        }
+        hits += n;
+        changed += n ? 1 : 0;
+    }
+    a.find_close(true);
+    if (a.cfg_.modal) a.vim_attach();
+    say(a, "Replaced " + std::to_string(hits) + (hits == 1 ? " hit in " : " hits in ") + std::to_string(changed) + (changed == 1 ? " file" : " files") +
+               (failed.empty() ? std::string() : "; not in " + failed));
+}
+
+void App::find_file_open(bool replace, const std::string& typed) {
+    Find& f = *find_;
+    Doc& d = *pane_->doc;
+    if (cfg_.modal) {  // (out of Insert mode and the command line: the match is shown as Visual mode would select it)
+        vim_attach();
+        if (vim_.mode() == Vim::kInsert || vim_.mode() == Vim::kReplace || vim_.mode() == Vim::kCommand) {
+            vim_.keys(d.ed, "<Esc>");
+            vim_after(Vim::kHandled);
+        }
+    }
+    if (find_open_ && f.mode == kFindFile && f.file_doc == d.id) {  // open already: "Replace with" comes, with the keyboard
+        if (replace && !f.replacing) f.with_all = !f.with.empty();
+        f.replacing = f.replacing || replace;
+        f.in_with = f.replacing;
+        f.touch();
+        dirty_ = true;
+        return;
+    }
+    find_open(kFindFile, f.regex ? regex_escape(typed, 0) : typed);
+    if (replace) {
+        f.replacing = true;
+        f.with_all = !f.with.empty();
+        f.touch();
+    }
+}
+
+void App::find_replace_in_files() {
+    Find& f = *find_;
+    if (find_open_ && f.mode == kFindText) {  // open already: the field comes, or goes
+        f.replacing = !f.replacing;
+        f.in_with = f.replacing;
+        f.with_all = f.replacing && !f.with.empty();
+        f.asking = false;
+        find_query();
+        return;
+    }
+    find_open(kFindText);
+    f.replacing = true;
+    f.in_with = !f.typed.empty();  // (the keyboard where something is to be typed first)
+    f.with_all = !f.with.empty();
+    find_query();
+}
+
+void App::find_file_step(int by) {
+    Find& f = *find_;
+    Doc& d = *pane_->doc;
+    Editor& ed = d.ed;
+    if (f.last_file.empty() || f.last_file.bad()) {
+        notify("Nothing to find yet: " + key_symbols(chord_text(SDLK_F, kPrimaryMod), *font_) + " finds in the file");
+        return;
+    }
+    RegexMatch m;
+    if (Vim::find(ed.buf, f.last_file, ed.sel_min(), by > 0, true, nullptr, ~0ull, &m) == ~0ull) {
+        notify("No match for '" + f.last_file.text + "'");
+        return;
+    }
+    ed.move_to(m.start, false);
+    ed.move_to(m.end, true);
+    scroll_to_cursor();
+    dirty_ = true;
+}
+
+const Vim::Pattern* App::find_highlight() const {
+    const Find& f = *find_;
+    if (!find_open_ || f.mode != kFindFile || f.file_doc != pane_->doc->id || f.pattern.empty() || f.pattern.bad()) return nullptr;
+    return &f.pattern;
+}
+
+void App::find_toggle(bool regex) {
+    Find& f = *find_;
+    (regex ? f.regex : f.exact) = !(regex ? f.regex : f.exact);
+    if (find_open_ && (f.mode == kFindFile || f.mode == kFindText)) {
+        f.asking = false;
+        find_query();
+        return;
+    }
+    Find::say(*this, regex ? (f.regex ? "Regular expressions on, in Find and Search in files" : "Regular expressions off: text is found as it stands")
+                           : (f.exact ? "Match case on, in Find and Search in files" : "Match case off: small letters match either case"));
+}
+
 void App::find_create() { find_ = std::make_shared<Find>(); }
 
 void App::find_save_for(u64 doc) { find_->save_doc = doc; }
@@ -397,7 +752,17 @@ void App::find_open(int mode, const std::string& typed) {
     f.sel = f.top = 0;
     f.hover = -1;
     f.all = f.beside = false;
+    f.replacing = f.in_with = f.with_all = f.asking = false;  // (asked for afterwards, by whoever wants them)
+    f.cur_ok = false;
     f.seen_cols = 0;  // (as wide as this purpose needs)
+    if (mode == kFindFile) {  // the file in front, from where its cursor (or selection) is
+        f.file_doc = pane_->doc->id;
+        const Editor& ed = pane_->doc->ed;
+        u64 lo = 0, hi = 0;
+        f.file_from = vim_selection(&lo, &hi) ? lo : ed.has_selection() ? ed.sel_min() : ed.cursor();
+        f.all = !f.typed.empty();  // (typing replaces what was put there)
+        f.starts_key = 0;
+    }
     if (mode == kFindNames || mode == kFindText) {
         if (!f.engine) {
             f.engine = std::make_unique<Finder>();
@@ -548,7 +913,11 @@ void App::find_close(bool chosen) {
     }
     find_open_ = false;
     f.keep_hits();  // (for F4 to go through)
-    f.beside = f.all = false;
+    if (f.mode == kFindFile && !f.pattern.empty() && !f.pattern.bad()) {  // what Cmd+G (and with modes n) goes on with
+        f.last_file = f.pattern;
+        if (cfg_.modal) vim_.set_search(f.pattern);
+    }
+    f.beside = f.all = f.asking = false;
     if (f.engine) f.engine->cancel();
     if (!chosen && f.mode == kFindSave) quit_after_save_ = close_after_save_ = false;  // no name: what was to follow the save does not
     pane_->cache_rev = ~0ull;
@@ -574,9 +943,13 @@ void App::find_query() {
     }
     if (f.mode == kFindText) {
         if (!f.typed.empty()) f.last_text = f.typed;
-        f.serial = f.engine->find_text(f.typed);
+        // Words, as a rule; a pattern with regular expressions on; and with
+        // "Replace with" there, what is typed as it stands, as replacing needs.
+        f.pattern = f.regex || f.replacing ? Vim::make_pattern(f.typed, f.regex, f.exact) : Vim::Pattern{};
+        f.serial = f.engine->find_text(f.typed, TextQuery{f.regex, f.replacing && !f.regex, f.exact});
         return;
     }
+    if (f.mode == kFindFile) return Find::file_query(*this);
     if (f.mode == kFindAsk) {
         f.entries.clear();
         return;
@@ -650,13 +1023,11 @@ void App::find_query() {
     if (f.dir != f.listed) {
         f.listed = f.dir;
         f.listing.clear();
-        std::string there;
         std::vector<RemoteEntry> list;
         if (f.dir == "ssh://") {  // the machines there are to go to
             for (std::string& h : ssh_hosts()) f.listing.push_back({std::move(h), true, Find::Entry::kPlain, 0});
-        } else if (is_remote(f.dir)) {  // a folder on another machine (listed once it is connected: see find_remote_ready)
-            const std::shared_ptr<Remote> r = remote_for(f.dir, &there);
-            if (r && r->list(there, &list))
+        } else if (is_remote(f.dir)) {  // a folder on another machine: listed on a thread, and here when it has been (see find_remote_ready)
+            if (remote_listing(f.dir, &list))
                 for (RemoteEntry& e : list) f.listing.push_back({std::move(e.name), e.dir, Find::Entry::kPlain, 0});
             else f.listed.clear();
         } else if (DIR* d = ::opendir(f.dir.c_str())) {
@@ -759,7 +1130,7 @@ void App::save_named(const std::string& path, u64 doc) {
     stop_lsp();  // it knows the file by its name
     pane_->doc->ed.path = path;
     save();
-    if (!pane_->doc->ed.modified()) {
+    if (!pane_->doc->ed.modified() || remote_saving(doc)) {  // (to another machine: closing and quitting wait for it)
         if (closing) tab_close(at);
         if (quitting) request_quit();  // on to the next unsaved file, or out
     }
@@ -807,6 +1178,13 @@ void App::find_accept() {
         script_chose(true, index, typed);
         return;
     }
+    if (f.mode == kFindFile) {  // (Enter: the next match, or with "Replace with" there, this one replaced)
+        if (f.replacing) Find::file_replace(*this, false);
+        else Find::file_go(*this, f.cur_ok ? f.cur.start : pane_->doc->ed.cursor(), true, !f.cur_ok);
+        Find::file_count(*this);
+        return;
+    }
+    if (f.mode == kFindText && f.asking) return Find::files_replace(*this);
     if (f.mode == kFindNames || f.mode == kFindText) {
         const bool beside = std::exchange(f.beside, false);
         if (f.line_only()) {  // ":120": a line of the file in front
@@ -893,7 +1271,21 @@ void App::find_accept() {
 // places (what is typed stays).
 void App::find_tab() {
     Find& f = *find_;
-    if (f.mode == kFindNames || f.mode == kFindText) return find_open(f.mode == kFindNames ? kFindText : kFindNames, f.typed);
+    // Search in files and Find: "Replace with" opens, and then Tab goes from one field to the other.
+    if (f.mode == kFindText || f.mode == kFindFile) {
+        if (!f.replacing) {
+            f.replacing = f.in_with = true;
+            f.with_all = !f.with.empty();
+            if (f.mode == kFindText) find_query();  // (what is typed is then looked for as it stands)
+        } else {
+            f.in_with = !f.in_with;
+        }
+        f.asking = false;
+        f.touch();
+        dirty_ = true;
+        return;
+    }
+    if (f.mode == kFindNames) return find_open(kFindText, f.typed);
     if (f.script() || f.sel >= f.entries.size()) return;
     const Find::Entry& e = f.entries[f.sel];
     if (e.kind != Find::Entry::kPlain) return;
@@ -965,7 +1357,28 @@ bool App::find_key(const SDL_KeyboardEvent& k) {
         return true;
     }
     if (!find_open_) return false;
-    f.drop_text = false;
+    // (While the box is open the commands' keys are not looked at: those that are about finding are its own.)
+    if (cmd && k.key == SDLK_F && !shift) {  // Cmd+F, and Cmd+Option+F with "Replace with"
+        if (f.mode == kFindFile && !alt) find_close(false);
+        else find_in_file(alt);
+        return true;
+    }
+    if (cmd && shift && !alt && k.key == SDLK_H) {
+        find_replace_in_files();
+        return true;
+    }
+    f.drop_text = f.drop_option = false;
+    if (alt && !cmd && !ctrl && (k.key == SDLK_R || k.key == SDLK_C) && (f.mode == kFindText || f.mode == kFindFile)) {
+        find_toggle(k.key == SDLK_R);
+        f.drop_option = true;  // (Option+R types "®", Option+C "ç")
+        return true;
+    }
+    if (f.mode == kFindFile && ((cmd && k.key == SDLK_G) || k.key == SDLK_F3 || k.key == SDLK_UP || k.key == SDLK_DOWN)) {  // the next match, or the one before
+        const bool back = k.key == SDLK_UP || ((k.key == SDLK_G || k.key == SDLK_F3) && shift);
+        Find::file_go(*this, f.cur_ok ? f.cur.start : pane_->doc->ed.cursor(), !back, false);
+        Find::file_count(*this);
+        return true;
+    }
     if (f.mode == kFindCommand && f.capture) {  // keys to look up: what they are is what is searched for
         const SDL_Keycode key = k.key;
         if (key == SDLK_LSHIFT || key == SDLK_RSHIFT || key == SDLK_LCTRL || key == SDLK_RCTRL || key == SDLK_LALT || key == SDLK_RALT || key == SDLK_LGUI ||
@@ -990,11 +1403,38 @@ bool App::find_key(const SDL_KeyboardEvent& k) {
         dirty_ = true;
         return true;
     }
+    if (f.asking && k.key != SDLK_RETURN && k.key != SDLK_KP_ENTER) {  // the question has its answer: anything but Enter is "no"
+        f.asking = false;
+        f.touch();
+        dirty_ = true;
+        if (k.key == SDLK_ESCAPE) return true;
+    }
+    // The field with the keyboard: what is typed, or "Replace with".
+    std::string& field = f.in_with ? f.with : f.typed;
+    bool& lit = f.in_with ? f.with_all : f.all;
+    auto edited = [&] {
+        if (f.in_with) {  // (nothing to look for again: the previews are drawn afresh)
+            f.touch();
+            dirty_ = true;
+        } else {
+            find_query();
+        }
+    };
     const i64 page = std::max<i64>(1, static_cast<i64>(f.list_rows) - 1);
     switch (k.key) {
         case SDLK_ESCAPE: find_close(false); break;
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
+            if (f.mode == kFindFile) {
+                if (cmd && f.replacing) Find::file_replace(*this, true);
+                else if (shift) Find::file_go(*this, f.cur_ok ? f.cur.start : pane_->doc->ed.cursor(), false, false), Find::file_count(*this);
+                else find_accept();
+                break;
+            }
+            if (f.mode == kFindText && f.replacing && cmd && !f.asking) {
+                Find::files_ask(*this);
+                break;
+            }
             f.beside = cmd && (f.mode == kFindNames || f.mode == kFindText);  // (Cmd+Enter: in the split to the right)
             find_accept();
             break;
@@ -1007,47 +1447,47 @@ bool App::find_key(const SDL_KeyboardEvent& k) {
         case SDLK_RIGHT:
         case SDLK_HOME:
         case SDLK_END:
-            if (f.all) {  // what is typed stays, no longer selected, to be typed onto
-                f.all = false;
+            if (lit) {  // what is typed stays, no longer selected, to be typed onto
+                lit = false;
                 f.touch();
                 dirty_ = true;
             }
             break;
         case SDLK_BACKSPACE:
-            if (f.typed.empty()) break;
-            if (f.all) {  // selected: it all goes
-                f.typed.clear();
-                f.all = false;
+            if (field.empty()) break;
+            if (lit) {  // selected: it all goes
+                field.clear();
+                lit = false;
             } else if (cmd || alt) {
                 // A word back; in a path, a folder back.
                 const bool path = f.path();
                 const char stop = path ? '/' : ' ';
-                while (!f.typed.empty() && f.typed.back() == stop) f.typed.pop_back();
-                while (!f.typed.empty() && f.typed.back() != stop) f.typed.pop_back();
-                if (cmd && !path) f.typed.clear();
+                while (!field.empty() && field.back() == stop) field.pop_back();
+                while (!field.empty() && field.back() != stop) field.pop_back();
+                if (cmd && !path) field.clear();
             } else {
-                pop_char(&f.typed);
+                pop_char(&field);
             }
-            find_query();
+            edited();
             break;
         default:
             if (ctrl && (k.key == SDLK_P || k.key == SDLK_K)) find_move(-1);
             else if (ctrl && (k.key == SDLK_N || k.key == SDLK_J)) find_move(1);
-            else if (ctrl && k.key == SDLK_U) f.typed.clear(), f.all = false, find_query();
+            else if (ctrl && k.key == SDLK_U) field.clear(), lit = false, edited();
             else if (ctrl && k.key == SDLK_W) {
-                if (std::exchange(f.all, false)) f.typed.clear();
-                while (!f.typed.empty() && (f.typed.back() == ' ' || f.typed.back() == '/')) f.typed.pop_back();
-                while (!f.typed.empty() && f.typed.back() != ' ' && f.typed.back() != '/') f.typed.pop_back();
-                find_query();
+                if (std::exchange(lit, false)) field.clear();
+                while (!field.empty() && (field.back() == ' ' || field.back() == '/')) field.pop_back();
+                while (!field.empty() && field.back() != ' ' && field.back() != '/') field.pop_back();
+                edited();
             } else if (cmd && k.key == SDLK_V) {
                 // What the clipboard holds, as far as its first line goes (in place of what is typed, if that is selected).
                 if (char* clip = SDL_GetClipboardText()) {
                     std::string_view text = clip;
                     text = text.substr(0, text.find('\n'));
-                    if (std::exchange(f.all, false)) f.typed.clear();
-                    f.typed += std::string(text.substr(0, 400));
+                    if (std::exchange(lit, false)) field.clear();
+                    field += std::string(text.substr(0, 400));
                     SDL_free(clip);
-                    find_query();
+                    edited();
                 }
             }
             break;
@@ -1055,12 +1495,24 @@ bool App::find_key(const SDL_KeyboardEvent& k) {
     return true;
 }
 
-// Typed text goes into the box while it is open.
+// Typed text goes into the box while it is open (into the field with the keyboard).
 bool App::find_typed(const char* text) {
     Find& f = *find_;
     if (!find_open_) return false;
     if (f.drop_text) {
         f.drop_text = false;
+        return true;
+    }
+    if (std::exchange(f.drop_option, false) && static_cast<u8>(text[0]) >= 0x80) return true;
+    if (f.asking) {  // (typing is no answer to the question)
+        f.asking = false;
+        f.touch();
+    }
+    if (f.in_with) {
+        if (std::exchange(f.with_all, false)) f.with.clear();
+        f.with += text;
+        f.touch();
+        dirty_ = true;
         return true;
     }
     // (Typing after keys looked up starts a search of its own; typed over
@@ -1079,7 +1531,7 @@ int App::find_row_at(int px, int py) const {
     const Find& f = *find_;
     if (!find_open_ || px < f.rect.x || px >= f.rect.x + f.rect.w || py < f.rect.y || py >= f.rect.y + f.rect.h) return -1;
     const int ch = font_->cell_h(), pad_y = look().pad_y;
-    const int row = (py - f.rect.y - pad_y) / ch - 1;  // (under the field)
+    const int row = (py - f.rect.y - pad_y) / ch - static_cast<int>(f.fields());  // (under the fields)
     if (py < f.rect.y + pad_y || row < 0 || row >= static_cast<int>(f.list_rows)) return -1;
     const size_t at = f.top + static_cast<size_t>(row);
     return at < f.count() ? static_cast<int>(at) : -1;
@@ -1093,6 +1545,14 @@ bool App::find_mouse_down(const SDL_MouseButtonEvent& b) {
     if (!inside) {  // a click beside it shuts it
         find_close(false);
         return true;
+    }
+    // The toggles in the field: ".*" (regular expressions) and "Aa" (case).
+    if (f.toggle_col && b.button == SDL_BUTTON_LEFT && py >= f.rect.y + look().pad_y && py < f.rect.y + look().pad_y + font_->cell_h()) {
+        const int col = (px - f.rect.x - look().edge) / font_->cell_w();
+        if (col >= static_cast<int>(f.toggle_col) && col < static_cast<int>(f.toggle_col) + 5) {
+            find_toggle(col < static_cast<int>(f.toggle_col) + 3);
+            return true;
+        }
     }
     const int row = find_row_at(px, py);
     if (row >= 0 && b.button == SDL_BUTTON_LEFT && !f.heading(static_cast<size_t>(row))) {
@@ -1145,12 +1605,13 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
     const u32 cap = static_cast<u32>(std::clamp((w - 2 * pad_x) / cw - 4, 20, static_cast<int>(kLookPickerCols)));
     const u32 room = static_cast<u32>(std::clamp((h * 7 / 10 - 2 * pad_y) / ch - 2, 3, static_cast<int>(kMaxRows)));
     const size_t n = f.count();
-    f.list_rows = f.mode == kFindInput || f.mode == kFindAsk ? 0 : static_cast<u32>(std::min<size_t>(room, std::max<size_t>(n, 1)));
+    f.list_rows = f.mode == kFindInput || f.mode == kFindAsk || f.mode == kFindFile ? 0 : static_cast<u32>(std::min<size_t>(room, std::max<size_t>(n, 1)));
     // The chosen row is kept among those on show.
     if (f.sel < f.top) f.top = f.sel;
     if (f.sel >= f.top + f.list_rows) f.top = f.sel + 1 - f.list_rows;
     if (f.top + f.list_rows > n) f.top = n > f.list_rows ? static_cast<u32>(n - f.list_rows) : 0;
-    const u32 rows = 1 + f.list_rows + 1;  // the field, the rows, the footer
+    const u32 fields = f.fields();
+    const u32 rows = fields + f.list_rows + 1;  // the fields, the rows, the footer
     // The field's tone: the box's background a little way toward a chosen
     // row's. (Each frame: it is not in the cells, and the theme may change.)
     for (int k = 0; k < 3; ++k) f.tones[kFieldTone][k] = theme_.popup_bg[k] + (theme_.sel[k] - theme_.popup_bg[k]) * 0.35f;
@@ -1164,11 +1625,13 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
         TextBox& box = f.box;
         const bool nerd = font.has(0xE5FF) && font.has(0xE61D);
         const bool path = f.path(), names = f.mode == kFindNames, text = f.mode == kFindText, listed = f.mode == kFindPick || f.mode == kFindCommand;
+        const bool infile = f.mode == kFindFile, toggles = text || infile;
+        const bool lit_by_pattern = text && (f.regex || f.replacing) && !f.pattern.empty() && !f.pattern.bad();
 
         // The field: a word that says what the box is for, what is typed (a
         // secret as a dot for each letter, keys looked up as keys) and how
         // many there are.
-        static const char* const kLabel[] = {"Go to file", "Search in files", "Open", "Save as", "Folder", "Pick", "Input", "ssh", "Command search"};
+        static const char* const kLabel[] = {"Go to file", "Search in files", "Open", "Save as", "Folder", "Pick", "Input", "ssh", "Command search", "Find"};
         const std::string_view label = (f.script() || f.mode == kFindAsk || f.chose) && !f.prompt.empty() ? std::string_view(f.prompt) : std::string_view(kLabel[f.mode]);
         const bool secret = f.mode == kFindAsk && f.secret, pressed = f.mode == kFindCommand && f.chord_query;
         std::string masked;
@@ -1179,8 +1642,9 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
         const std::string_view typed = secret || pressed ? std::string_view(masked) : std::string_view(f.typed);
         const bool reading = (names || text) && (!f.shown || !f.shown->index || f.shown->indexing);
         const size_t files = f.shown && f.shown->index ? f.shown->index->size() : 0;
-        size_t longest = 0;  // (a search for text: its longest word)
-        if (text)
+        size_t longest = 0;  // (a search for text: its longest word; a phrase or a pattern, all of it)
+        if (text && (f.regex || f.replacing)) longest = f.pattern.bad() ? 0 : f.regex ? std::max<size_t>(f.typed.size(), f.typed.empty() ? 0 : 2) : f.typed.size();
+        else if (text)
             for (const FuzzyTerm& t : fuzzy_terms(f.typed)) longest = std::max(longest, t.text.size());
         std::string count;
         bool going = reading;  // (there may be more: an ellipsis after the count)
@@ -1188,10 +1652,28 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
             const std::string total = std::to_string(files) + (f.shown->index->truncated ? "+" : "");
             count = f.nearby() ? total + " files" : std::to_string(f.shown->matched) + " / " + total;
         } else if (text && longest >= 2 && f.shown && f.shown->text) {
-            count = std::to_string(f.shown->matched) + (f.shown->capped ? "+" : "") + " in " + std::to_string(f.shown->files_hit) + (f.shown->files_hit == 1 ? " file" : " files");
+            u64 found = f.shown->matched;  // (lines; with "Replace with" there, the matches on them)
+            if (f.replacing) {
+                found = 0;
+                for (const FindHit& hit : f.shown->hits) found += hit.count;
+            }
+            count = std::to_string(found) + (f.shown->capped ? "+" : "") + " in " + std::to_string(f.shown->files_hit) + (f.shown->files_hit == 1 ? " file" : " files");
             going = going || f.shown->searching;
+        } else if (infile && !f.pattern.empty() && !f.pattern.bad()) {
+            Find::file_count(*this);  // (the text may have changed under the box)
+            if (f.counted && f.starts.empty()) {
+                count = "No matches";
+            } else if (f.counted) {
+                const u64 at = f.cur_ok ? static_cast<u64>(std::lower_bound(f.starts.begin(), f.starts.end(), f.cur.start) - f.starts.begin()) : f.starts.size();
+                const std::string total = std::to_string(f.starts.size()) + (f.starts_capped ? "+" : "");
+                count = at < f.starts.size() && f.starts[at] == f.cur.start ? std::to_string(at + 1) + " of " + total : total + (f.starts.size() == 1 ? " match" : " matches");
+            } else if (!f.cur_ok) {
+                count = "No match";
+            }
         } else if (f.mode == kFindPick || (f.mode == kFindCommand && !f.capture)) {
             count = std::to_string(n) + " / " + std::to_string(f.items.size());
+        } else if (path && f.listed != f.dir && remote_listing_busy()) {
+            count = "Listing\xE2\x80\xA6";  // (a folder on another machine, on its way)
         }
         if (going && !count.empty()) count += "\xE2\x80\xA6";
 
@@ -1200,7 +1682,8 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
         std::span<const Hint> hints;
         switch (f.mode) {
             case kFindNames: hints = f.line_only() ? std::span<const Hint>(kHintsLine) : std::span<const Hint>(kHintsNames); break;
-            case kFindText: hints = kHintsText; break;
+            case kFindText: hints = f.asking ? std::span<const Hint>(kHintsSure) : f.replacing ? std::span<const Hint>(kHintsTextReplace) : std::span<const Hint>(kHintsText); break;
+            case kFindFile: hints = f.replacing ? std::span<const Hint>(kHintsFileReplace) : std::span<const Hint>(kHintsFile); break;
             case kFindOpen: hints = kHintsOpen; break;
             case kFindSave: hints = kHintsSave; break;
             case kFindFolder: hints = kHintsFolder; break;
@@ -1217,6 +1700,19 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
             default: break;
         }
         if (names || text) where = tilde(f.root);
+        // What the footer says in place of where: the question before
+        // replacing in files, or why what is typed is no pattern.
+        Ink where_ink = ink::kMuted;
+        if (toggles && f.pattern.bad()) {
+            where = f.pattern.error;
+            where_ink = ink::kError;
+        } else if (f.asking) {
+            where = "Replace " + std::to_string(f.ask_hits) + (f.ask_hits == 1 ? " hit in " : " hits in ") + std::to_string(f.ask_files) + (f.ask_files == 1 ? " file?" : " files?");
+            where_ink = ink::kAccentStrong;
+        } else if (infile) {
+            const std::string& in = pane_->doc->ed.path;
+            where = in.empty() ? std::string("in this file") : "in " + in.substr(in.rfind('/') + 1);
+        }
 
         // A list with nothing in it says why, or what to do.
         std::string empty;
@@ -1235,11 +1731,15 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
                         : !panel_root()     ? "Choose a project folder: " + key_symbols(kCmdShiftO, font)
                                             : "No files in " + tilde(f.root);
             } else if (text) {
-                empty = longest < 2 ? std::string("Type two letters or more; words in any order")
+                empty = f.pattern.bad()                                                                   ? std::string("Not a pattern: see below")
+                        : longest < 2                                                                     ? std::string(f.regex     ? "Type a pattern"
+                                                                                                                        : f.replacing ? "Type two letters or more, as they stand"
+                                                                                                                                      : "Type two letters or more; words in any order")
                         : !f.shown || !f.shown->text || f.shown->searching || (reading && !files) ? std::string("Searching\xE2\x80\xA6")
+                        : !f.shown->note.empty()                                                  ? f.shown->note
                                                                                                   : "No line has " + quoted;
             } else if (path) {
-                empty = "Nothing here by that name";
+                empty = f.listed != f.dir && remote_listing_busy() ? "Listing\xE2\x80\xA6" : "Nothing here by that name";
             } else if (f.mode == kFindCommand) {
                 empty = f.chord_query ? std::string("No command has those keys") : "No command matches " + quoted;
             } else {
@@ -1272,7 +1772,7 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
                 where_cols = std::max(where_cols, width_of(wheres.back()));
                 std::string_view line = hit.text;
                 line.remove_prefix(std::min(line.find_first_not_of(" \t"), line.size()));
-                need = width_of(line);
+                need = width_of(line) * (f.replacing ? 2 : 1) + (f.replacing ? 3 : 0);  // (before → after)
             } else if (listed) {
                 const Find::Entry& e = f.entries[i];
                 const u32 kw = f.mode == kFindCommand ? width_of(f.item_syms[e.index]) : 0;
@@ -1287,7 +1787,10 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
             need_rows = std::max(need_rows, need);
         }
         if (text && need_rows) need_rows += where_cols + 2;
-        u32 need = width_of(label) + 2 + std::max(width_of(typed) + 1, kTypeRoom) + (count.empty() ? 0 : 2 + width_of(count));
+        // (Both fields' text starts in one column, past the longer label.)
+        const u32 label_w = std::max(width_of(label), fields > 1 ? width_of(kWithLabel) : 0u);
+        const u32 toggles_w = toggles ? 2 + 5 : 0;  // ".*  Aa", two columns from what is before
+        u32 need = label_w + 2 + std::max(width_of(typed) + 1, kTypeRoom) + (count.empty() ? 0 : 2 + width_of(count)) + toggles_w;
         need = std::max(need, (where.empty() ? 0 : width_of(where) + 3) + hints_width(hints, font));
         need = std::max({need, need_rows, width_of(empty)});
         f.seen_cols = std::max(f.seen_cols, need);
@@ -1330,9 +1833,20 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
         // and then the field keeps the box's own background (a lit cell's
         // rounded ends would cut into the tone).
         const bool bar = font.can_draw(0x258F);
-        u32 c = put(box, font, 0, 0, fit_text(label, std::max<u32>(cols / 2, 8)), ink::kHeading) + 2;
+        put(box, font, 0, 0, fit_text(label, std::max<u32>(cols / 2, 8)), ink::kHeading);
+        u32 c = std::min(label_w, std::max<u32>(cols / 2, 8)) + 2;
+        const u32 text_col = c;
+        // The toggles at the right end: lit when on.
+        u32 right_end = cols;
+        f.toggle_col = 0;
+        if (toggles && cols > c + 8 + toggles_w) {
+            f.toggle_col = cols - 5;
+            put(box, font, 0, f.toggle_col, ".*", f.regex ? ink::kAccentStrong : ink::kMuted);
+            put(box, font, 0, f.toggle_col + 3, "Aa", f.exact ? ink::kAccentStrong : ink::kMuted);
+            right_end = cols - toggles_w;
+        }
         const u32 count_w = width_of(count);
-        const u32 stop = count_w && c + 8 + 2 + count_w <= cols ? cols - count_w - 2 : cols;  // (what is typed ends before the count)
+        const u32 stop = count_w && c + 8 + 2 + count_w <= right_end ? right_end - count_w - 2 : right_end;  // (what is typed ends before the count)
         std::string_view t = typed;
         const u32 space = stop > c + 1 ? stop - c - 1 : 0;  // (and one for the caret)
         if (width_of(t) > space && space > 1) {  // too long for the line: its end shows
@@ -1346,23 +1860,46 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
         }
         const u32 from = c;
         c = put(box, font, 0, c, t, ink::kText);
-        if (stop < cols) put(box, font, 0, cols - count_w, count, ink::kMuted);
-        u32* field = box.cells.data();
-        if (f.all) {  // (typing replaces it)
-            for (u32 k = from; k < c; ++k) field[k] |= kCellSelected;
-        } else if (c < cols) {
-            if (bar) put(box, font, 0, c, "\xE2\x96\x8F", ink::kAccent);
-            else field[c] |= kCellSelected;
+        if (stop < right_end) put(box, font, 0, right_end - count_w, count, infile && count.starts_with("No") ? ink::kError : ink::kMuted);
+        // The caret (or what is selected) in the field that has the keyboard.
+        auto caret = [&](u32 row, u32 a, u32 b, bool all) {
+            u32* cells = box.cells.data() + static_cast<size_t>(row) * cols;
+            if (all) {  // (typing replaces it)
+                for (u32 k = a; k < b; ++k) cells[k] |= kCellSelected;
+            } else if (b < cols) {
+                if (bar) put(box, font, row, b, "\xE2\x96\x8F", ink::kAccent);
+                else cells[b] |= kCellSelected;
+            }
+        };
+        if (!f.in_with) caret(0, from, c, f.all);
+        // "Replace with", under it.
+        if (fields > 1) {
+            put(box, font, 1, 0, kWithLabel, ink::kHeading);
+            std::string_view wt = f.with;
+            const u32 wspace = cols > text_col + 1 ? cols - text_col - 1 : 0;
+            u32 wc = text_col;
+            if (width_of(wt) > wspace && wspace > 1) {  // too long for the line: its end shows
+                size_t cut = wt.size();
+                for (u32 width = 0; cut > 0 && width < wspace - 1;) {
+                    --cut;
+                    if (!is_cont(static_cast<u8>(wt[cut]))) ++width;
+                }
+                wc = put(box, font, 1, wc, "\xE2\x80\xA6", ink::kMuted);
+                wt = wt.substr(cut);
+            }
+            const u32 wfrom = wc;
+            wc = put(box, font, 1, wc, wt, ink::kText);
+            if (f.in_with) caret(1, wfrom, wc, f.with_all);
         }
         if (bar)
-            for (u32 k = 0; k < cols; ++k)
-                if (!(field[k] & kCellSelected)) field[k] |= kCellSelected | kFieldTone << kCellDecoShift;
+            for (u32 k = 0; k < cols * fields; ++k)
+                if (!(box.cells[k] & kCellSelected)) box.cells[k] |= kCellSelected | kFieldTone << kCellDecoShift;
 
         // The rows.
         std::vector<u32> at;
         for (u32 r = 0; r < f.list_rows; ++r) {
             const size_t i = f.top + r;
-            const u32 row = 1 + r;
+            const u32 row = fields + r;
             if (i >= n) {
                 if (r == 0) put(box, font, row, 0, fit_text(empty, cols), empty_plain ? ink::kText : ink::kMuted);
                 continue;
@@ -1393,10 +1930,24 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
                 const u32 col = std::min(where_cols + 2, cols);
                 std::string_view line = hit.text;
                 line.remove_prefix(std::min(line.find_first_not_of(" \t"), line.size()));
-                for (const FuzzyTerm& term : terms)
-                    for (size_t start = 0, found; (found = find_term(line, term, start)) != std::string_view::npos; start = found + term.text.size())
-                        for (size_t k = 0; k < term.text.size(); ++k) at.push_back(static_cast<u32>(found + k));
-                marked(row, col, line, at, 0, ink::kText, cols - col);
+                if (f.replacing && lit_by_pattern) {  // the line as it is, and as replacing leaves it
+                    std::string after;
+                    std::vector<u32> at_after;
+                    preview(line, f.pattern, f.with, f.regex, &at, &after, &at_after);
+                    const u32 room_cols = cols > col ? cols - col : 0, half = room_cols > 3 ? (room_cols - 3) / 2 : 0;
+                    const u32 c2 = marked(row, col, line, at, 0, ink::kMuted, half);
+                    const u32 arrow = put(box, font, row, c2 + 1, "\xE2\x86\x92", ink::kMuted) + 1;
+                    if (arrow < cols) marked(row, arrow, after, at_after, 0, ink::kText, cols - arrow);
+                } else {
+                    if (lit_by_pattern) {
+                        lit_matches(line, f.pattern, &at);
+                    } else {
+                        for (const FuzzyTerm& term : terms)
+                            for (size_t start = 0, found; (found = find_term(line, term, start)) != std::string_view::npos; start = found + term.text.size())
+                                for (size_t k = 0; k < term.text.size(); ++k) at.push_back(static_cast<u32>(found + k));
+                    }
+                    marked(row, col, line, at, 0, ink::kText, cols - col);
+                }
             } else if (listed) {
                 const Find::Entry& e = f.entries[i];
                 for (const FuzzyTerm& term : terms) fuzzy_score(term, e.name, &at);
@@ -1435,7 +1986,7 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
         while (keys_shown > 0 && hints_width(hints.first(keys_shown), font) > cols) --keys_shown;
         const u32 hw = hints_width(hints.first(keys_shown), font);
         const u32 left = hw == 0 ? cols : cols > hw + 3 ? cols - hw - 3 : 0;
-        if (!where.empty() && left >= 8) put(box, font, foot, 0, fit_text(where, left, names || text), ink::kMuted);
+        if (!where.empty() && left >= 8) put(box, font, foot, 0, fit_text(where, left, (names || text) && where_ink.ink == ink::kMuted.ink), where_ink);
         put_hints(box, font, foot, cols - hw, hints.first(keys_shown));
     }
 
@@ -1450,6 +2001,10 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
     p.x = std::max(0, (w - p.w) / 2);
     // Near the top, and at the same height whatever is in it, so that it does not jump about as results come and go.
     p.y = std::min(std::max(tabs_px() + ch, h / 9), std::max(0, h - p.h));
+    if (f.mode == kFindFile) {  // finding in the file: at the top right of its split, over as little of the text as may be
+        p.x = std::clamp(pane_->x1 - p.w - l.gap - l.edge, 0, std::max(0, w - p.w));
+        p.y = std::clamp(pane_->text_y + l.gap, 0, std::max(0, h - p.h));
+    }
     p.border_px = static_cast<float>(l.hair);
     p.tones = &f.tones[0][0];
     f.rect = {p.x, p.y, p.w, p.h};
@@ -1461,8 +2016,23 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
 // chosen one marked.
 std::string App::find_dump() {
     Find& f = *find_;
-    static const char* const kMode[] = {"names", "text", "open", "save", "folder", "pick", "input", "ask", "commands"};
+    static const char* const kMode[] = {"names", "text", "open", "save", "folder", "pick", "input", "ask", "commands", "file"};
     if (!find_open_) return "closed";
+    // Find in the file, and the replace fields: what is typed in each, the toggles, how many, which.
+    std::string extra;
+    if (f.replacing && (f.mode == kFindText || f.mode == kFindFile)) extra += std::string(" with") + (f.in_with ? ">" : "") + " [" + f.with + "]";
+    if (f.mode == kFindText || f.mode == kFindFile) extra += std::string(f.regex ? " .*" : "") + (f.exact ? " Aa" : "") + (f.pattern.bad() ? " (" + f.pattern.error + ")" : "");
+    if (f.asking) extra += " asking " + std::to_string(f.ask_hits) + " in " + std::to_string(f.ask_files);
+    if (f.mode == kFindFile) {
+        Find::file_count(*this);
+        std::string out = "file [" + f.typed + "]" + extra;
+        if (f.counted) {
+            const u64 at = f.cur_ok ? static_cast<u64>(std::lower_bound(f.starts.begin(), f.starts.end(), f.cur.start) - f.starts.begin()) : f.starts.size();
+            out += " " + (at < f.starts.size() && f.starts[at] == f.cur.start ? std::to_string(at + 1) : std::string("-")) + " of " + std::to_string(f.starts.size());
+        }
+        if (f.cur_ok) out += " at " + std::to_string(f.cur.start) + "-" + std::to_string(f.cur.end);
+        return out;
+    }
     std::string typed = f.typed;
     if (f.mode == kFindAsk) {  // (never a secret in a dump)
         if (f.secret) typed.assign(f.typed.size(), '*');
@@ -1478,13 +2048,22 @@ std::string App::find_dump() {
         }
         return out;
     }
-    std::string out = std::string(kMode[f.mode]) + " [" + typed + "] " + std::to_string(f.count());
+    std::string out = std::string(kMode[f.mode]) + " [" + typed + "]" + extra + " " + std::to_string(f.count());
     if ((f.mode == kFindNames || f.mode == kFindText) && f.shown) out += " of " + std::to_string(f.shown->matched);
     out += " :";
     for (size_t i = 0; i < f.count() && i < 6; ++i) {
         out += i == f.sel ? " >" : " ";
         if (f.mode == kFindNames) out += std::string(f.shown->index->path(f.shown->hits[i].file));
-        else if (f.mode == kFindText) out += std::string(f.shown->index->path(f.shown->hits[i].file)) + ":" + std::to_string(f.shown->hits[i].line + 1) + ":" + std::to_string(f.shown->hits[i].col + 1);
+        else if (f.mode == kFindText) {
+            const FindHit& h = f.shown->hits[i];
+            out += std::string(f.shown->index->path(h.file)) + ":" + std::to_string(h.line + 1) + ":" + std::to_string(h.col + 1);
+            if (f.replacing && !f.pattern.empty() && !f.pattern.bad()) {  // (the preview: what the line becomes)
+                std::vector<u32> a, b;
+                std::string after;
+                preview(h.text, f.pattern, f.with, f.regex, &a, &after, &b);
+                out += "=" + after;
+            }
+        }
         else if (f.mode == kFindCommand) out += f.entries[i].name + (f.item_keys[f.entries[i].index].empty() ? "" : " (" + f.item_keys[f.entries[i].index] + ")");
         else out += f.entries[i].kind == Find::Entry::kNew ? "+" + f.entries[i].name : f.entries[i].name + (f.entries[i].dir ? "/" : "");
     }

@@ -3,6 +3,7 @@
 #include <tree_sitter/api.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -854,6 +855,65 @@ std::string Syntax::language_for(std::string_view path, std::string_view first_l
 
 bool Syntax::installed(const std::string& lang, const SyntaxOptions& opt) {
     return !lang.empty() && !find_parser(lang, opt).empty();
+}
+
+// A code block's language, by its name, an alias, or a file ending.
+std::string Syntax::language_named(std::string_view name, std::span<const GrammarSource> own, const SyntaxOptions& opt) {
+    std::string n;
+    for (const char c : name) n += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    static const struct {
+        const char* name;
+        const char* lang;
+    } aliases[] = {
+        {"c++", "cpp"}, {"python3", "python"}, {"shell", "bash"},
+    };
+    std::string lang;
+    for (const auto& a : aliases)
+        if (n == a.name) lang = a.lang;
+    if (lang.empty() && !n.empty() && n.find_first_of("/\\.") == std::string::npos) {
+        if (installed(n, opt)) lang = n;
+        else if (lang = language_for("x." + n, "", own); lang.empty()) lang = language_for(n, "", own);
+    }
+    if (lang == "cpp" && !installed(lang, opt)) lang = "c";  // (as a file of it would be)
+    return installed(lang, opt) ? lang : std::string();
+}
+
+bool Syntax::highlight_text(const std::string& lang, std::string_view text, const SyntaxOptions& opt, std::vector<u8>* styles,
+                            std::vector<std::string>* names) {
+    if (text.empty() || text.size() > (4u << 20) || !installed(lang, opt)) return false;
+    Engine e;
+    std::string err;
+    e.bundle = get_bundle(lang, opt, &err);
+    if (!e.bundle) return false;
+    e.parser = ts_parser_new();
+    if (!ts_parser_set_language(e.parser, e.bundle->language)) return false;
+    const u32 n = static_cast<u32>(text.size());
+    e.tree = ts_parser_parse_string(e.parser, nullptr, text.data(), n);
+    if (!e.tree) return false;
+    e.snap.pieces.push_back({text.data(), n, 0});
+    e.snap.index();
+    {
+        // The whole query, or its slices, whichever is ready first (as Syntax::work() picks).
+        Bundle& b = *e.bundle;
+        std::unique_lock lk(b.mu);
+        const std::vector<QuerySet>* pick = nullptr;
+        for (;;) {
+            if (b.whole_done && !b.whole.empty()) pick = &b.whole;
+            else if (b.parts_done && b.parts_usable && !b.parts.empty()) pick = &b.parts;
+            if (pick || (b.whole_done && b.parts_done)) break;
+            b.cv.wait_for(lk, std::chrono::milliseconds(2));
+        }
+        if (!pick) return false;
+        *names = b.names;
+        e.use(pick);
+    }
+    if (!e.collect(0, n, [] { return false; })) return false;
+    e.paint.resize(n);
+    e.paint_lo = 0;
+    e.paint_hi = n;
+    e.paint_caps(0, n);
+    *styles = std::move(e.paint);
+    return true;
 }
 
 // ---------------------------------------------------------------- main thread

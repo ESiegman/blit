@@ -33,6 +33,16 @@ enum MdInk : u8 {
     kMdSlice1,
     kMdSlice2,
     kMdSlice3,
+    // A code block in a language with a grammar: its kinds of token, a few
+    // inks between all the captures a grammar has.
+    kMdCodeKeyword,
+    kMdCodeString,
+    kMdCodeComment,
+    kMdCodeFunction,
+    kMdCodeType,
+    kMdCodeConstant,  // numbers, booleans, constants
+    kMdCodeOperator,  // operators and punctuation
+    kMdCodePlain,     // the rest of such a block
     kMdInkCount
 };
 // Backgrounds behind runs or rows (the preview's tones).
@@ -69,8 +79,14 @@ struct MdRow {
 // not known (not there, not read yet): it is shown as text then.
 using MdPictureFn = std::function<bool(const std::string& src, u32 room, u32 want_w, u32 want_h, MdPic* out)>;
 
+// The colours of a fenced code block: `lang` is the word after the fence,
+// `code` its lines, each ended by a newline. Out: an ink for each byte of
+// it. False when the language is not one there is a grammar for: the block
+// stays in kMdCode.
+using MdCodeFn = std::function<bool(std::string_view lang, std::string_view code, std::vector<u8>* inks)>;
+
 // The text drawn `width` columns wide.
-std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn& picture = {});
+std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn& picture = {}, const MdCodeFn& code = {});
 // A row as plain text (for the tests): what its runs say.
 std::string md_row_text(const MdRow& r);
 

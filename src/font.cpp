@@ -66,8 +66,10 @@ const char* const kFallbackFonts[] = {
 };
 
 constexpr u32 kEmpty = 0xFFFFFFFFu;
+constexpr u64 kEmptyMark = ~0ull;
 
 u32 hash_u32(u32 x) { return (x * 2654435761u) >> 7; }
+u32 hash_u64(u64 x) { return static_cast<u32>((x * 0x9E3779B97F4A7C15ull) >> 40); }
 
 int floor_div(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }
 
@@ -393,6 +395,8 @@ bool Font::init(const FontSpec& spec, std::string* err, std::string* warnings) {
     cell_w_ = 0;
     if (!FT_Load_Char(face_, 'M', load_flags_)) cell_w_ = static_cast<int>((face_->glyph->advance.x + 32) >> 6);
     if (cell_w_ <= 0) cell_w_ = std::max(1, static_cast<int>(std::lround(px_ * 0.6)));
+    x_height_ = baseline_ / 2;
+    if (!FT_Load_Char(face_, 'x', load_flags_)) x_height_ = static_cast<int>((face_->glyph->metrics.horiBearingY + 32) >> 6);
 
     // Atlas: up to 4096 slots. The number of slots per row is a power of two
     // so the shader can split a slot number with a shift and a mask.
@@ -402,7 +406,7 @@ bool Font::init(const FontSpec& spec, std::string* err, std::string* warnings) {
     const u32 rows = std::min<u32>(4096u >> shift_, static_cast<u32>(8192 / cell_h_));
     atlas_w_ = static_cast<int>(cols_) * cell_w_;
     atlas_h_ = static_cast<int>(rows) * cell_h_;
-    slots_ = std::min(cols_ * rows, kWide - 1);
+    slots_ = std::min(cols_ * rows, kPict - 1);
     // The styles' ASCII blocks are set aside when the atlas is big enough to
     // spare them, which it is at any reasonable size.
     first_slot_ = next_slot_ = slots_ >= 2 * kAsciiSlots ? kAsciiSlots : 128;
@@ -415,6 +419,7 @@ bool Font::init(const FontSpec& spec, std::string* err, std::string* warnings) {
     // sized so that they never fill up before the atlas does.
     map_.assign(8192, {kEmpty, 0});
     slices_.assign(8192, {kEmpty, 0});
+    marks_.assign(8192, {kEmptyMark, 0});
     short_runs_.assign(1024, ShortRun{});  // grows, see ligate_run()
     bmp_ = static_cast<u16*>(std::calloc(0x10000, sizeof(u16)));
     if (!bmp_) return false;
@@ -606,10 +611,11 @@ void Font::mark_dirty(u32 slot) {
 void Font::reset_atlas() {
     std::fill(map_.begin(), map_.end(), Ent{kEmpty, 0});
     std::fill(slices_.begin(), slices_.end(), Ent{kEmpty, 0});
+    std::fill(marks_.begin(), marks_.end(), MarkEnt{kEmptyMark, 0});
     std::fill(short_runs_.begin(), short_runs_.end(), ShortRun{});
     long_runs_.clear();
     std::memset(bmp_, 0, 0x10000 * sizeof(u16));
-    map_used_ = slices_used_ = short_used_ = 0;
+    map_used_ = slices_used_ = short_used_ = marks_used_ = 0;
     next_slot_ = first_slot_;
     ++generation_;
 }
@@ -637,8 +643,10 @@ u32 Font::lookup(u32 cp) {
             if (map_[h].key == cp) return map_[h].slot;
         if (map_used_ * 2 >= map_.size()) reset_atlas();
     }
-    const u32 slot = alloc_slots(width);
-    const u32 packed = slot | (width == 2 ? kWide : 0);
+    // A character of no width still gets a cell's slot, for where it is
+    // shown on its own; in the text it is drawn over the cell before it.
+    const u32 slot = alloc_slots(std::max(width, 1u));
+    const u32 packed = slot | (width == 2 ? kWide : 0) | (width == 0 || cp_regional(cp) ? kJoin : 0) | (cp_pictographic(cp) ? kPict : 0);
     if (cp < 0x10000) {
         bmp_[cp] = static_cast<u16>(packed);
     } else {
@@ -649,8 +657,9 @@ u32 Font::lookup(u32 cp) {
     }
     u32 gi;
     FT_Face f = face_for(cp, &gi);
-    if (f) blit_glyph(f, gi, slot, width, f != face_);
-    else draw_tofu(slot, width);
+    if (f) blit_glyph(f, gi, slot, std::max(width, 1u), f != face_ || width == 0);
+    else if (width) draw_tofu(slot, width);
+    else clear_slot(slot);  // (a joiner, a selector: nothing to see)
     return packed;
 }
 
@@ -665,7 +674,7 @@ u32 Font::lookup_styled(u32 cp, u32 s) {
 
     u32 packed;
     if (const u32 gid = FT_Get_Char_Index(st.face, cp)) {
-        const u32 width = cp_width(cp), slot = alloc_slots(width);
+        const u32 width = std::max(cp_width(cp), 1u), slot = alloc_slots(width);
         packed = slot | (width == 2 ? kWide : 0);
         if (render(st, gid)) put_glyph(st.face, slot, width, false);
         else draw_tofu(slot, width);
@@ -678,6 +687,88 @@ u32 Font::lookup_styled(u32 cp, u32 s) {
     map_[h] = {key, packed};
     ++map_used_;
     return packed;
+}
+
+u32 Font::mark(u32 base, u32 cp, u32 half) {
+    base &= 0xFFFF;
+    const u64 key = base | static_cast<u64>(half) << 16 | static_cast<u64>(cp) << 18;
+    const u32 mask = static_cast<u32>(marks_.size()) - 1;
+    for (u32 h = hash_u64(key) & mask; marks_[h].key != kEmptyMark; h = (h + 1) & mask)
+        if (marks_[h].key == key) return marks_[h].slot;
+    if (marks_used_ * 2 >= marks_.size()) {
+        reset_atlas();
+        return base;  // (the slot asked about is gone with the rest; the frame is made again)
+    }
+    const u32 gen = generation_;
+    const u32 slot = compose_mark(base, cp, half);
+    if (generation_ != gen) return slot;  // the atlas restarted while it was drawn: not kept
+    u32 h = hash_u64(key) & mask;
+    while (marks_[h].key != kEmptyMark) h = (h + 1) & mask;
+    marks_[h] = {key, slot};
+    ++marks_used_;
+    return slot;
+}
+
+// Draws a mark over a copy of the cell it sits on. Most monospace fonts
+// draw a mark in a cell of its own, where it would sit over a letter in
+// that cell (a horn to the right, an acute a little to the right of the
+// middle); that is kept. One placed some other way (with no advance,
+// hanging back over the cell before, or from another font) is put in the
+// middle. A mark above the letters that would run into its letter (an
+// accent on a capital, a second accent over the first) goes up until it
+// clears it, as far as the cell allows.
+u32 Font::compose_mark(u32 base, u32 cp, u32 half) {
+    if (!cp_extends(cp) || cp == 0x200C || cp == 0x200D || cp - 0xFE00 < 16 || cp - 0x1F3FB < 5 || cp - 0xE0000 < 0x1000) return base;  // (nothing to see)
+    u32 gi = 0;
+    FT_Face f = face_for(cp, &gi);
+    if (!f || FT_Load_Glyph(f, gi, load_flags_ | FT_LOAD_RENDER) || f->glyph->bitmap.pixel_mode != FT_PIXEL_MODE_GRAY) return base;
+    const FT_Bitmap& bm = f->glyph->bitmap;
+    const int w = static_cast<int>(bm.width), rows = static_cast<int>(bm.rows);
+    if (w == 0 || rows == 0) return base;
+    const int left = f->glyph->bitmap_left, top = f->glyph->bitmap_top;
+    const int advance = static_cast<int>((f->glyph->advance.x + 32) >> 6);
+
+    const u32 gen = generation_;
+    const u32 slot = alloc_slots(1);
+    if (generation_ != gen) {  // (the base went with the rest of the atlas)
+        clear_slot(slot);
+        return slot;
+    }
+    copy_slot(base, slot);
+    const int sx = static_cast<int>(slot % cols_) * cell_w_, sy = static_cast<int>(slot / cols_) * cell_h_;
+
+    // Where the mark goes across the character (two cells for a wide one),
+    // and which part of that this cell is.
+    const int span = half ? 2 * cell_w_ : cell_w_;
+    const bool own_cell = f == face_ && advance > 0 && left >= 0 && left + w <= advance;
+    const int x0 = own_cell ? left + (span - cell_w_) / 2 : (span - w) / 2;
+    const int from = half == 2 ? cell_w_ : 0;
+    int y0 = baseline_ - top;
+    if (half == 0 && top - rows >= x_height_ - 1) {
+        int ink = cell_h_;  // the first row of the letter's ink
+        for (int y = 0; y < cell_h_ && ink == cell_h_; ++y) {
+            const u8* row = pixels_ + static_cast<size_t>(sy + y) * atlas_w_ + sx;
+            for (int x = 0; x < cell_w_; ++x)
+                if (row[x] >= 64) {
+                    ink = y;
+                    break;
+                }
+        }
+        const int gap = std::max(1, cell_h_ / 24);
+        if (y0 + rows + gap > ink) y0 -= std::min(y0 + rows + gap - ink, std::max(0, y0));
+    }
+    for (int y = 0; y < rows; ++y) {
+        const int dy = y0 + y;
+        if (dy < 0 || dy >= cell_h_) continue;
+        const u8* src = bm.buffer + static_cast<ptrdiff_t>(y) * bm.pitch;
+        u8* dst = pixels_ + static_cast<size_t>(sy + dy) * atlas_w_ + sx;
+        for (int x = 0; x < w; ++x) {
+            const int dx = x0 + x - from;
+            if (dx >= 0 && dx < cell_w_) dst[dx] = std::max(dst[dx], src[x]);
+        }
+    }
+    mark_dirty(slot);
+    return slot;
 }
 
 bool Font::has(u32 cp) const { return FT_Get_Char_Index(face_, cp) != 0; }
@@ -855,6 +946,12 @@ void Font::blit_glyph(FT_Face f, u32 gid, u32 slot, u32 width, bool centred) {
         draw_tofu(slot, width);
     else
         put_glyph(f, slot, width, centred);
+}
+
+void Font::clear_slot(u32 slot) {
+    const int sx = static_cast<int>(slot % cols_) * cell_w_, sy = static_cast<int>(slot / cols_) * cell_h_;
+    for (int y = 0; y < cell_h_; ++y) std::memset(pixels_ + static_cast<size_t>(sy + y) * atlas_w_ + sx, 0, static_cast<size_t>(cell_w_));
+    mark_dirty(slot);
 }
 
 void Font::copy_slot(u32 from, u32 to) {

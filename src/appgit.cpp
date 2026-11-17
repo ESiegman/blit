@@ -397,6 +397,7 @@ void App::reread(Pane& p, Doc& d, const std::string* bytes) {
     }
     stop_syntax();
     git_.forget(d.id);
+    remote_forget(d.id);
     d.measurer = {};
     std::string err;
     bool read = true;

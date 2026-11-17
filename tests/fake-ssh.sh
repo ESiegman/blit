@@ -19,4 +19,18 @@ if [ -n "${BLIT_FAKE_PASSWORD:-}" ]; then
     got=$("$SSH_ASKPASS" "tester@box's password: ") || { echo "tester@box: Permission denied (publickey,password)." >&2; exit 255; }
     [ "$got" = "$BLIT_FAKE_PASSWORD" ] || { echo "tester@box: Permission denied, please try again." >&2; exit 255; }
 fi
+# BLIT_FAKE_SLOW=SECONDS: a slow host. Once blit's agent has started, each
+# piece of what it sends back is held that long first, so that every request
+# blit makes waits at least that long for its answer.
+if [ -n "${BLIT_FAKE_SLOW:-}" ]; then
+    /bin/sh -c "$*" | exec perl -e '
+        $| = 1;
+        my ($slow, $on, $seen) = ($ENV{BLIT_FAKE_SLOW}, 0, "");
+        while (sysread(STDIN, my $b, 65536)) {
+            if ($on) { select(undef, undef, undef, $slow) }
+            else { $seen = substr($seen . $b, -64); $on = 1 if $seen =~ /BLIT-START\n/ }
+            syswrite(STDOUT, $b) or exit 0;
+        }'
+    exit
+fi
 exec /bin/sh -c "$*"

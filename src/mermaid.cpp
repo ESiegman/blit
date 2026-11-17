@@ -117,9 +117,16 @@ struct Canvas {
     void text(int x, int y, std::string_view s, u8 ink, u8 style = 0) {
         if (x < 0 || y < 0) return;
         const u8* p = reinterpret_cast<const u8*>(s.data());
+        int last = -1;  // the cell the last character went in
         for (size_t i = 0; i < s.size();) {
             const Decoded d = decode_utf8(p + i, s.size() - i);
             const size_t len = d.len ? d.len : 1;
+            if (last >= 0 && cp_width(d.cp) == 0) {  // a mark: with the character it is on
+                at(last, y).text.append(s.substr(i, len));
+                i += len;
+                continue;
+            }
+            last = x;
             Cell& c = at(x, y);
             c.text.assign(s.substr(i, len));
             c.ink = ink, c.style = style, c.lines = 0, c.cont = false;

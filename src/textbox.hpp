@@ -42,6 +42,10 @@ struct TextBox {
             const Decoded d = decode_utf8(p + i, s.size() - i);
             i += d.len;
             const u32 cp = d.cp < 0x20 || d.cp == 0x7F ? ' ' : d.cp;
+            if (cp >= 0x300 && cp_width(cp) == 0) {  // (no cell of its own: over the one before)
+                if (col > 0) line[col - 1] = (line[col - 1] & ~0xFFFFu) | font.mark(line[col - 1], cp);
+                continue;
+            }
             const u32 g = font.glyph(cp, style);
             const u32 slot = g & (Font::kWide - 1);
             line[col++] = slot | (ink << kCellInkShift);

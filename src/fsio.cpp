@@ -98,7 +98,7 @@ bool fs_write(const std::string& path, std::string_view text, std::string* err) 
         std::string there;
         const std::shared_ptr<Remote> r = remote_for(path, &there);
         if (!r) return *err = remote_error(path), false;
-        return r->write(there, text, err);
+        return r->write(there, std::string(text), err);
     }
     FILE* f = std::fopen(path.c_str(), "wb");
     if (!f) return *err = std::strerror(errno), false;
@@ -150,12 +150,12 @@ bool fs_run(const std::string& dir, const std::string& command, std::string* out
     if (split_remote(dir, &host, &there)) {
         const std::shared_ptr<Remote> r = remote_for(dir, &there, kRemoteWaitMs);
         RemoteProc p;
+        p.errors = false;  // (the shell sends them to /dev/null anyway)
         std::string err;
         if (!r || !r->spawn(argv, there, {}, &p, &err)) return false;
         ::close(p.in);
         read_all(p.out, out, until);
         ::close(p.out);
-        ::close(p.err);
         const int code = r->wait(p.id, static_cast<int>(std::max<i64>(0, static_cast<i64>(until - std::min(until, now_ns())) / 1'000'000)));
         if (code == -2) r->kill(p.id, SIGKILL);
         return code == 0;

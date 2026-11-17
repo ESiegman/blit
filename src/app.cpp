@@ -736,17 +736,16 @@ void App::save() {
         focus_pane(where);
         tab_show(at);
     }
+    if (is_remote(pane_->doc->ed.path)) {  // to another machine: written on a thread, and saved once it has been (appremote.cpp)
+        remote_save(*pane_->doc);
+        return;
+    }
     std::string err;
-    i64 there_stamp = 0;  // (a file on another machine: when it was written there)
-    const bool saved = pane_->doc->ed.save(&err, &there_stamp);
+    const bool saved = pane_->doc->ed.save(&err);
     if (!saved) tell(SDL_MESSAGEBOX_ERROR, err.c_str());
     else if (lsp_.attached()) lsp_.did_save();
     else lsp_pending_ = true;  // a new file has a name now: a server can have it
-    if (is_remote(pane_->doc->ed.path)) {
-        if (saved) pane_->doc->disk_stamp = there_stamp;
-    } else if (saved) {
-        pane_->doc->disk_stamp = file_stamp(pane_->doc->ed.path);
-    }
+    if (saved) pane_->doc->disk_stamp = file_stamp(pane_->doc->ed.path);
     if (cfg_.git) git_.refresh();  // git has something new to say about it
     const std::string path = pane_->doc->ed.path;
     if (saved) {
@@ -802,26 +801,30 @@ void App::save_all() {
     }
 }
 
+// (Files being saved to another machine, and changed by nothing else, are
+// not asked about: quitting waits for them, in a box that says so.)
 void App::request_quit() {
     size_t unsaved = 0, unnamed = 0;
     std::vector<std::string> names;  // of the files with changes, in the order of their tabs
     Pane* first_pane = nullptr;
     size_t first = 0;
+    auto unsaved_doc = [&](const Doc& d) { return d.ed.modified() && !remote_saving_all(d); };
     for (size_t k = panes_.size(); k-- > 0;)
         for (size_t i = panes_[k]->docs.size(); i-- > 0;)
-            if (panes_[k]->docs[i]->ed.modified()) ++unsaved, first_pane = panes_[k].get(), first = i;
+            if (unsaved_doc(*panes_[k]->docs[i])) ++unsaved, first_pane = panes_[k].get(), first = i;
     // Programs still running in terminals end with blit: the question counts them.
     const size_t busy = term_busy_count();
     const std::string running = busy == 1 ? "1 program is still running in a terminal."
                                           : std::to_string(busy) + " programs are still running in terminals.";
     if (!unsaved) {
         if (busy && !confirm(running + (busy == 1 ? " Quit and end it?" : " Quit and end them?"), "Quit")) return;
+        if (remote_hold_quit(true)) return;
         running_ = false;
         return;
     }
     for (const std::unique_ptr<Pane>& p : panes_)
         for (const std::unique_ptr<Doc>& d : p->docs) {
-            if (!d->ed.modified()) continue;
+            if (!unsaved_doc(*d)) continue;
             if (d->ed.path.empty()) {
                 ++unnamed;
                 continue;
@@ -859,28 +862,31 @@ void App::request_quit() {
 #endif
     SDL_ShowMessageBox(&box, &hit);
     if (hit == 2) {
+        if (remote_hold_quit(false)) return;  // (saves already under way are still waited for)
         running_ = false;
     } else if (hit == 1) {
-        // Files with names are saved here and now. One without a name
-        // needs the save dialog, which answers later: quitting carries on
-        // from there (see the handling of user event 1).
+        // Files with names are saved here and now (one on another machine
+        // has its save started). One without a name needs the save dialog,
+        // which answers later: quitting carries on from there (see the
+        // handling of user event 1).
         for (size_t k = 0; k < panes_.size(); ++k)
             for (size_t i = 0; i < panes_[k]->docs.size(); ++i) {
-                if (!panes_[k]->docs[i]->ed.modified() || panes_[k]->docs[i]->ed.path.empty()) continue;
+                if (!unsaved_doc(*panes_[k]->docs[i]) || panes_[k]->docs[i]->ed.path.empty()) continue;
                 focus_pane(panes_[k].get());
                 tab_show(i);
                 save();
-                if (pane_->doc->ed.modified()) return;  // it would not save: stay
+                if (pane_->doc->ed.modified() && !remote_saving(pane_->doc->id)) return;  // it would not save: stay
             }
         for (size_t k = 0; k < panes_.size(); ++k)
             for (size_t i = 0; i < panes_[k]->docs.size(); ++i) {
-                if (!panes_[k]->docs[i]->ed.modified()) continue;
+                if (!panes_[k]->docs[i]->ed.modified() || remote_saving(panes_[k]->docs[i]->id)) continue;
                 focus_pane(panes_[k].get());
                 tab_show(i);
                 quit_after_save_ = true;
                 save();
                 return;
             }
+        if (remote_hold_quit(true)) return;  // (once they are written, what is still not saved is asked about again)
         running_ = false;
     }
 }

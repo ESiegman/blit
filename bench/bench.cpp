@@ -24,6 +24,7 @@
 #if !defined(_WIN32)
 #include "term.hpp"
 #endif
+#include "vim.hpp"
 
 using namespace blit;
 
@@ -433,6 +434,58 @@ int run(const char* file, const char* only) {
         const double common_ms = pass("return", "find_text_common_word");
         emit(file, "find_text_common_word_lines", "count", static_cast<double>(hits.size()));
         emit(file, "find_text_common_word_ns_per_line", "ns", hits.empty() ? 0.0 : common_ms * 1e6 / static_cast<double>(hits.size()));
+
+        // The same text searched in files with regular expressions on
+        // (Finder::grep's pattern mode, regex.hpp), and a phrase as it
+        // stands (what replacing searches for): a pattern with a piece of
+        // plain text in it, a class with none, an alternation, one with no
+        // plain text that is on many lines.
+        auto pattern = [&](const char* typed, bool regex, const char* name) {
+            hits.clear();
+            const u64 t0 = now_ns();
+            Finder::grep(text, typed, TextQuery{regex, !regex, false}, 0, 1u << 30, &hits);
+            const double ms = static_cast<double>(now_ns() - t0) * 1e-6;
+            emit(file, (std::string(name) + "_gb_per_s").c_str(), "GB/s", static_cast<double>(take) / (1u << 30) / (ms * 1e-3));
+            return ms;
+        };
+        pattern("tensor shape", false, "find_text_phrase_absent");
+        pattern("qzjx\\d\\+", true, "find_text_regex_absent_with_text");
+        pattern("[A-Z]\\{3}[0-9]\\{4}", true, "find_text_regex_absent_class");
+        pattern("qzjx\\|vkqz\\|zzqq", true, "find_text_regex_absent_alternation");
+        const double many_ms = pattern("\\<\\d\\+\\>", true, "find_text_regex_numbers");
+        emit(file, "find_text_regex_numbers_lines", "count", static_cast<double>(hits.size()));
+        emit(file, "find_text_regex_numbers_ns_per_line", "ns", hits.empty() ? 0.0 : many_ms * 1e6 / static_cast<double>(hits.size()));
+
+        // Vim's / in the document itself (Vim::find, where the pieces lie,
+        // on as many threads as it takes past the first 8 MB): a word that
+        // is not there, from the top to the end; and the same patterns as
+        // regular expressions, each match after the last counted on one
+        // thread (as :s and the highlighting go through them).
+        auto in_doc = [&](const char* typed, const char* name) {
+            const Vim::Pattern p = Vim::parse_pattern(typed);
+            const u64 t0 = now_ns();
+            sink = Vim::find(b, p, ~0ull, true, false);
+            const double ms = static_cast<double>(now_ns() - t0) * 1e-6;
+            emit(file, (std::string(name) + "_ms").c_str(), "ms", ms);
+        };
+        in_doc("qzjxvkqzjx", "find_vim_absent_rare_letters");
+        in_doc("tensor", "find_vim_absent_common_letters");
+        in_doc("tensor\\c", "find_vim_absent_any_case");
+        in_doc("qzjx\\d\\+", "find_vim_regex_absent_with_text");
+        in_doc("[A-Z]\\{3}[0-9]\\{4}", "find_vim_regex_absent_class");
+        in_doc("qzjx\\|vkqz\\|zzqq", "find_vim_regex_absent_alternation");
+        auto every = [&](const char* typed, const char* name) {
+            const Vim::Pattern p = Vim::parse_pattern(typed);
+            u64 n = 0;
+            const u64 t0 = now_ns();
+            Vim::each_whole(b, p, 0, b.size() + 1, false, [&](const RegexMatch&) { return ++n < (1u << 30); });
+            const double ms = static_cast<double>(now_ns() - t0) * 1e-6;
+            emit(file, (std::string(name) + "_gb_per_s").c_str(), "GB/s", static_cast<double>(size) / (1u << 30) / (ms * 1e-3));
+            emit(file, (std::string(name) + "_matches").c_str(), "count", static_cast<double>(n));
+        };
+        every("return", "find_vim_all_word");
+        every("\\<\\d\\+\\>", "find_vim_all_regex_numbers");
+        every("[A-Z]\\{3}[0-9]\\{4}", "find_vim_all_regex_class");
     }
 
     // Syntax highlighting: what the worker thread spends, how long colours

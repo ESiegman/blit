@@ -14,7 +14,7 @@ dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/init.lua"
 export BLIT_INIT="$dir/init.lua"
-fresh() { printf 'hello world\nsecond line\n    third\n' >"$dir/a.txt"; printf 'other\n' >"$dir/b.txt"; printf 'int x;\n    int y;\n' >"$dir/c.c"; printf 'x = 1\n' >"$dir/d.py"; }
+fresh() { printf 'hello world\nsecond line\n    third\n' >"$dir/a.txt"; printf 'other\n' >"$dir/b.txt"; printf 'int x;\n    int y;\n' >"$dir/c.c"; printf 'x = 1\n' >"$dir/d.py"; printf 'a.b axb [a.b]\n' >"$dir/e.txt"; }
 
 failed=0
 check() {
@@ -61,6 +61,28 @@ run "frame;text:/;text:lin;key:Return;text:n;vimdump"
 check "Return keeps it; n wraps round to it again" 'NORMAL | search hit BOTTOM, continuing at TOP | 2:8 | second line'
 run "frame;text:/;text:lin;key:Escape;vimdump"
 check "Esc gives it up" 'NORMAL |  | 1:1 | hello world'
+run "frame;text:j;text:w;key:cmd+F;vimdump"
+check "Cmd+F: / with the word under the cursor on it, selected" 'COMMAND | /[line] | 2:8 | second line'
+run "frame;text:j;text:w;key:cmd+F;text:th;vimdump"
+check "what is typed takes its place" 'COMMAND | /th | 3:5 |     third'
+run "frame;text:j;text:w;key:cmd+F;key:Backspace;vimdump"
+check "Backspace clears it, and the line stays open" 'COMMAND | / | 2:8 | second line'
+run "frame;text:j;text:w;key:cmd+F;key:Right;text:s;vimdump"
+check "an arrow keeps it, to be typed onto" 'COMMAND | /lines | 2:8 | second line'
+run "frame;text:v;text:e;key:cmd+F;key:Return;vimdump"
+check "from Visual mode it is what is selected; Enter looks for it" 'NORMAL | search hit BOTTOM, continuing at TOP | 1:1 | hello world'
+run "frame;open:$dir/e.txt;text:v;text:2;text:l;key:cmd+F;key:Return;vimdump"
+check "as it stands: a dot in it is a dot (it is put there as \\.)" 'NORMAL |  | 1:10 | a.b axb [a.b]'
+run "frame;open:$dir/e.txt;text:v;text:2;text:l;key:cmd+F;vimdump"
+check "the pattern Cmd+F puts there" 'COMMAND | /[a\.b] | 1:10 | a.b axb [a.b]'
+run "frame;text:/;text:s\\w\\+d;key:Return;vimdump"
+check "a regular expression" 'NORMAL |  | 2:1 | second line'
+run "frame;text::;text:%s/\\(\\w\\+\\) \\(\\w\\+\\)/\\2 \\1/;key:Return;text:g;text:g;vimdump"
+check ":s with groups" 'NORMAL |  | 1:1 | world hello'
+run "frame;key:cmd+alt+F;text:o;key:Tab;text:0;key:cmd+Return;vimdump"
+check "Cmd+Option+F, with modes too: replaced, in one step" 'NORMAL | Replaced 3 matches | 1:5 | hell0 w0rld'
+run "frame;key:cmd+alt+F;text:o;key:Tab;text:0;key:cmd+Return;key:Escape;text:u;vimdump"
+check "and u takes all of it back" 'NORMAL |  | 1:5 | hello world'
 run "frame;text::;text:3;key:Return;vimdump"
 check ":3 goes to line 3, in the same column" 'NORMAL |  | 3:1 |     third'
 run "frame;text::;text:%s/o/0/g;key:Return;vimdump"

@@ -64,6 +64,7 @@ struct App::VimUi {
     TextBox line;
     std::string status, right;
     int cursor = -2;
+    bool selected = false;  // (the command line's text is selected)
     u32 font = ~0u;
     // The file the comment markers were looked up for.
     u64 comment_doc = ~0ull;
@@ -215,7 +216,7 @@ void App::vim_after(u32 result) {
                     break;
                 }
                 save();
-                if (q.then_close && !pane_->doc->ed.modified()) tab_close(pane_->tab);
+                if (q.then_close && (!pane_->doc->ed.modified() || remote_saving(pane_->doc->id))) tab_close(pane_->tab);  // (another machine's: once written)
                 break;
             case VimRequest::kSaveAll:
                 save_all();
@@ -352,10 +353,12 @@ void App::vim_layout(int w, int h, FrameDesc& fd) {
         right += std::to_string(pane_->cur_line + 1) + "," + std::to_string(pane_->cur_col + 1);
     }
     const int cursor = vim_.status_cursor();
-    if (status != u.status || right != u.right || cursor != u.cursor || u.line.cols != cols || u.font != font_->generation()) {
+    const bool selected = vim_.command_selected();
+    if (status != u.status || right != u.right || cursor != u.cursor || selected != u.selected || u.line.cols != cols || u.font != font_->generation()) {
         u.status = status;
         u.right = right;
         u.cursor = cursor;
+        u.selected = selected;
         u.font = font_->generation();
         u.line.resize(cols, 1);
         Font& font = *font_;
@@ -370,7 +373,11 @@ void App::vim_layout(int w, int h, FrameDesc& fd) {
         }
         const u32 need = width_of(right);
         if (cols > need + width_of(status) + 2) put(u.line, font, 0, cols - need, right, ink::kMuted);
-        if (cursor >= 0 && static_cast<u32>(cursor) < cols) u.line.cells[static_cast<size_t>(cursor)] |= kCellSelected;
+        if (selected) {  // what Cmd+F put there, lit as a selection is: typing takes its place
+            for (u32 k = 1; k < static_cast<u32>(std::max(cursor, 1)) && k < cols; ++k) u.line.cells[k] |= kCellSelected;
+        } else if (cursor >= 0 && static_cast<u32>(cursor) < cols) {
+            u.line.cells[static_cast<size_t>(cursor)] |= kCellSelected;
+        }
     }
     Popup& p = fd.popups[fd.popup_count++];
     p.x = x;
@@ -390,23 +397,26 @@ void App::vim_layout(int w, int h, FrameDesc& fd) {
 }
 
 // Lights up the matches of the last search in the split that has the
-// keyboard (Vim's hlsearch), worked out again only when the text, the view
-// or the pattern has changed; and shows Visual Block mode's rectangle.
+// keyboard (Vim's hlsearch, or what the find box is looking for in the
+// file), worked out again only when the text, the view or the pattern has
+// changed; and shows Visual Block mode's rectangle.
 void App::vim_marks(FrameDesc& fd) {
-    if (!cfg_.modal || focus_view_ >= fd.view_count) return;
+    if (focus_view_ >= fd.view_count) return;
     VimUi& u = *vimui_;
     GridSpec& grid = fd.views[focus_view_].grid;
     const Editor& ed = pane_->doc->ed;
     u.block.clear();
     u64 line0, line1;
     u32 col0, col1;
-    if (pane_->doc->id == vim_doc_ && vim_.block(ed, &line0, &line1, &col0, &col1)) {
+    if (cfg_.modal && pane_->doc->id == vim_doc_ && vim_.block(ed, &line0, &line1, &col0, &col1)) {
         // (On each line the grid shows as much of it as the line has text for.)
         for (u64 line = std::max(line0, grid.top_line); line <= line1 && line < grid.top_line + grid.rows; ++line) u.block.push_back({line, col0, col1, kDecoSelect});
         if (!u.block.empty()) fd.views[focus_view_].sel_radius = look().sel;  // its corners are rounded like any selection's
     }
-    const Vim::Pattern& pat = vim_.highlight();
-    if (pat.empty()) {
+    static const Vim::Pattern kNoPattern{};
+    const Vim::Pattern* boxed = find_highlight();
+    const Vim::Pattern& pat = boxed ? *boxed : cfg_.modal ? vim_.highlight() : kNoPattern;
+    if (pat.empty() || pat.bad()) {
         if (u.block.empty()) return;
         u.all.assign(grid.decos.begin(), grid.decos.end());
         u.all.insert(u.all.end(), u.block.begin(), u.block.end());
@@ -421,19 +431,50 @@ void App::vim_marks(FrameDesc& fd) {
     mix(grid.rows);
     mix(ed.tab_width);
     mix(std::hash<std::string>{}(pat.text));
+    mix(reinterpret_cast<u64>(pat.re.get()));
     mix((pat.ignore_case ? 1u : 0u) | (pat.word ? 2u : 0u));
     if (key != u.marks_key) {
         u.marks_key = key;
         u.marks.clear();
         constexpr u64 kLineBytes = 8192;  // a longer line is looked at this far
-        const u64 lines = ed.buf.line_count();
-        for (u64 line = grid.top_line; line < grid.top_line + grid.rows && line < lines && u.marks.size() < 4000; ++line) {
-            const u64 start = ed.buf.line_start(line);
-            const std::string text = ed.buf.text(start, std::min(ed.line_end(line) - start, kLineBytes));
-            for (size_t at = Vim::match_in(text, pat, 0); at != std::string::npos; at = Vim::match_in(text, pat, at + pat.text.size())) {
-                const u32 c0 = ed.col_between(start, start + at), c1 = ed.col_between(start, start + at + pat.text.size());
+        constexpr size_t kMost = 4000;
+        const u64 lines = ed.buf.line_count(), bottom = std::min<u64>(grid.top_line + grid.rows, lines);
+        // A match, a piece on each line of the view it is on. (One of
+        // nothing, "^" or "\zs" alone, is not lit.)
+        auto mark = [&](u64 a, u64 b) {
+            if (b <= a) return;
+            for (u64 line = std::max(ed.buf.line_of(a), grid.top_line); line < bottom && u.marks.size() < kMost; ++line) {
+                const u64 start = ed.buf.line_start(line);
+                if (start >= b) break;
+                const u64 end = ed.line_end(line);
+                const u32 c0 = a > start ? ed.col_between(start, std::min(a, end)) : 0;
+                const u32 c1 = b > end ? ed.col_between(start, end) + 1 : ed.col_between(start, b);
                 u.marks.push_back({line, c0, std::max(c1, c0 + 1), kDecoMatch});
             }
+        };
+        if (!pat.re) {
+            for (u64 line = grid.top_line; line < bottom && u.marks.size() < kMost; ++line) {
+                const u64 start = ed.buf.line_start(line);
+                const std::string text = ed.buf.text(start, std::min(ed.line_end(line) - start, kLineBytes));
+                for (size_t at = Vim::match_in(text, pat, 0); at != std::string::npos; at = Vim::match_in(text, pat, at + pat.text.size())) {
+                    const u32 c0 = ed.col_between(start, start + at), c1 = ed.col_between(start, start + at + pat.text.size());
+                    u.marks.push_back({line, c0, std::max(c1, c0 + 1), kDecoMatch});
+                }
+            }
+        } else if (!pat.re->multiline()) {  // line by line, a very long one as far as kLineBytes
+            for (u64 line = grid.top_line; line < bottom && u.marks.size() < kMost; ++line) {
+                const u64 start = ed.buf.line_start(line), len = ed.line_end(line) - start;
+                Vim::each_whole(ed.buf, pat, start, start + std::min(len, kLineBytes) + 1, false, [&](const RegexMatch& m) {
+                    mark(m.start, m.end);
+                    return u.marks.size() < kMost;
+                });
+            }
+        } else if (grid.top_line < bottom) {  // (a match may run from one line into the next)
+            const u64 lo = ed.buf.line_start(grid.top_line), hi = ed.line_end(bottom - 1) + 1;
+            Vim::each_whole(ed.buf, pat, lo, hi, false, [&](const RegexMatch& m) {
+                mark(m.start, m.end);
+                return u.marks.size() < kMost;
+            });
         }
     }
     if (u.marks.empty() && u.block.empty()) return;
@@ -451,7 +492,9 @@ std::string App::vim_dump() {
     static const char* const modes[] = {"NORMAL", "INSERT", "REPLACE", "VISUAL", "V-LINE", "COMMAND", "V-BLOCK"};
     const Editor& ed = pane_->doc->ed;
     const u64 line = ed.buf.line_of(ed.cursor()), start = ed.buf.line_start(line);
-    return std::string(modes[vim_.mode()]) + " | " + vim_.status() + " | " + std::to_string(line + 1) + ":" + std::to_string(ed.cursor() - start + 1) + " | " +
+    std::string status = vim_.status();
+    if (vim_.command_selected()) status = status.substr(0, 1) + "[" + status.substr(1) + "]";  // (what Cmd+F put there, selected)
+    return std::string(modes[vim_.mode()]) + " | " + status + " | " + std::to_string(line + 1) + ":" + std::to_string(ed.cursor() - start + 1) + " | " +
            ed.buf.text(start, std::min<u64>(ed.line_end(line) - start, 200));
 }
 

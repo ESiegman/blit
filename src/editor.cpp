@@ -29,6 +29,29 @@ bool cr_ends_line(const Buffer::Reader& rd, size_t n) {
     return c.empty() || c[0] == '\n';
 }
 
+bool is_control(u32 cp) { return cp < 0x20 || cp == 0x7F; }
+
+// The code point that ends at `off` (> 0): where it starts, and what it is
+// (U+FFFD for a broken one, a byte long; a CRLF is one, a newline).
+u64 point_before(const Buffer& buf, u64 off, u32* cp) {
+    char b[4];
+    const u32 k = static_cast<u32>(std::min<u64>(off, 4));
+    buf.read(off - k, b, k);
+    *cp = 0xFFFD;
+    if (k >= 2 && b[k - 1] == '\n' && b[k - 2] == '\r') {
+        *cp = '\n';
+        return off - 2;
+    }
+    for (u32 back = 1; back <= k; ++back) {
+        if (is_cont(static_cast<u8>(b[k - back]))) continue;
+        const Decoded d = decode_utf8(reinterpret_cast<const u8*>(&b[k - back]), back);
+        if (d.len != back) return off - 1;
+        *cp = d.cp;
+        return off - back;
+    }
+    return off - 1;
+}
+
 }  // namespace
 
 // ---------------------------------------------------------------- files
@@ -97,6 +120,7 @@ u64 Editor::widest_columns(std::span<const Piece> pieces, u32 tab_width, std::st
         const u64 bytes = part_bytes + last.size();
         if (bytes * tab > best) {
             u64 col = 0;
+            Joiner join;
             auto walk = [&](const std::string_view& sv) {
                 const u8* p = reinterpret_cast<const u8*>(sv.data());
                 const size_t n = sv.size();
@@ -107,6 +131,7 @@ u64 Editor::widest_columns(std::span<const Piece> pieces, u32 tab_width, std::st
                     const size_t run = ascii_run(p + i, std::min<size_t>(n - i, 1u << 16));
                     col += run;
                     i += run;
+                    if (run) join.reset();
                     if (i >= n) break;
                     if (p[i] >= 0x20 && p[i] < 0x7F) {
                         if (stop.stop_requested()) return;
@@ -115,14 +140,16 @@ u64 Editor::widest_columns(std::span<const Piece> pieces, u32 tab_width, std::st
                     if (p[i] == '\t') {
                         col = (col / tab + 1) * tab;
                         ++i;
+                        join.reset();
                     } else if (p[i] == '\r' && i + 1 == n && &sv == &last) {
                         ++i;  // the CR of a CRLF takes no space
                     } else if (p[i] < 0x80) {
                         ++col;
                         ++i;
+                        join.reset();
                     } else {
                         const Decoded d = decode_utf8(p + i, n - i);
-                        col += cp_width(d.cp);
+                        col += join.width(d.cp);
                         i += d.len;
                     }
                 }
@@ -223,32 +250,67 @@ u64 Editor::line_end(u64 line) const {
     return e;
 }
 
+// A character here is a grapheme cluster: a letter with the marks on it,
+// an emoji sequence with its joiners, a flag (see cp_extends() and Joiner).
+// After a control character (a tab, a line break) one always ends.
 u64 Editor::next_char(u64 off) const {
-    if (off >= buf.size()) return buf.size();
-    char b[4];
-    u64 n = buf.read(off, b, 4);
-    if (b[0] == '\r' && n >= 2 && b[1] == '\n') return off + 2;
-    return off + decode_utf8(reinterpret_cast<const u8*>(b), n).len;
+    const u64 size = buf.size();
+    if (off >= size) return size;
+    char b[16];
+    u64 n = buf.read(off, b, sizeof b);
+    const u8* p = reinterpret_cast<const u8*>(b);
+    if (p[0] == '\r' && n >= 2 && p[1] == '\n') return off + 2;
+    if (is_control(p[0])) return off + 1;
+    Decoded d = decode_utf8(p, n);
+    Joiner join;
+    join.joins(d.cp);
+    u64 i = d.len;
+    for (;;) {
+        if (i + 4 > n && off + n < size) {  // (a whole code point in the window)
+            off += i;
+            n = buf.read(off, b, sizeof b);
+            i = 0;
+        }
+        if (i >= n || p[i] < 0x80) return off + i;  // (nothing in ASCII goes on with a cluster)
+        d = decode_utf8(p + i, n - i);
+        if (!join.extends(d.cp)) return off + i;
+        i += d.len;
+    }
 }
 
 u64 Editor::prev_char(u64 off) const {
     if (off == 0) return 0;
-    char b[4];
-    u32 k = static_cast<u32>(std::min<u64>(off, 4));
-    buf.read(off - k, b, k);
-    if (k >= 2 && b[k - 1] == '\n' && b[k - 2] == '\r') return off - 2;
-    for (u32 back = 1; back <= k; ++back) {
-        if (is_cont(static_cast<u8>(b[k - back]))) continue;
-        Decoded d = decode_utf8(reinterpret_cast<const u8*>(&b[k - back]), back);
-        return d.len == back ? off - back : off - 1;
+    u32 cp = 0;
+    u64 at = point_before(buf, off, &cp);
+    // While the character at `at` goes on with the one before it, the cluster starts further back.
+    while (at > 0 && cp >= 0xA9) {
+        u32 before = 0;
+        const u64 from = point_before(buf, at, &before);
+        if (is_control(before)) break;
+        if (cp_regional(cp) && cp_regional(before)) {
+            // Indicators pair up from the first of a run: this one is the second of a pair if an odd number come before it.
+            u32 run = 1;
+            for (u64 q = from; q > 0 && run < 64;) {
+                u32 c = 0;
+                q = point_before(buf, q, &c);
+                if (!cp_regional(c)) break;
+                ++run;
+            }
+            if (run % 2) at = from;
+            break;
+        }
+        if (!cp_extends(cp) && !(before == 0x200D && cp_pictographic(cp))) break;
+        at = from;
+        cp = before;
     }
-    return off - 1;
+    return at;
 }
 
 u32 Editor::col_between(u64 line_start, u64 off) const {
     Buffer::Reader r = buf.reader(line_start);
     u64 left = off - line_start;
     u32 col = 0;
+    Joiner join;
     while (left > 0) {
         std::string_view c = r.chunk();
         if (c.empty()) break;
@@ -259,16 +321,19 @@ u32 Editor::col_between(u64 line_start, u64 off) const {
             size_t run = ascii_run(p + i, n - i);
             col += static_cast<u32>(run);
             i += run;
+            if (run) join.reset();
             if (i >= n) break;
             if (p[i] == '\t') {
                 col = tab_stop(col);
                 ++i;
+                join.reset();
             } else if (p[i] < 0x80) {
                 ++col;
                 ++i;
+                join.reset();
             } else {
                 Decoded d = decode_utf8(p + i, c.size() - i);
-                col += cp_width(d.cp);
+                col += join.width(d.cp);
                 i += d.len;
             }
         }
@@ -286,28 +351,43 @@ u64 Editor::off_at(u64 line, u32 want, bool nearest) const {
     u64 off;
     Buffer::Reader r = buf.line_reader(line, &off);
     u32 col = 0;
+    // The character (cluster) under way: where it starts, and its column.
+    // Once the next one starts, it is known whether `want` was in it.
+    u64 start = off;
+    u32 start_col = 0;
+    auto in_last = [&] { return (nearest && (want - start_col) * 2 >= col - start_col) ? off : start; };
+    Joiner join;
     for (;;) {
         std::string_view c = r.chunk();
-        if (c.empty()) return off;
+        if (c.empty()) return want < col ? in_last() : off;
         const u8* p = reinterpret_cast<const u8*>(c.data());
         size_t i = 0;
         while (i < c.size()) {
             u8 b = p[i];
             u32 w, len = 1;
-            if (b == '\n') return off;
+            bool goes_on = false;
+            if (b == '\n') return want < col ? in_last() : off;
             if (b == '\r') {
-                if (i + 1 < c.size() ? p[i + 1] == '\n' : cr_ends_line(r, c.size())) return off;
+                if (i + 1 < c.size() ? p[i + 1] == '\n' : cr_ends_line(r, c.size())) return want < col ? in_last() : off;
             }
             if (b == '\t') {
                 w = tab_stop(col) - col;
+                join.reset();
             } else if (b < 0x80) {
                 w = 1;
+                join.reset();
             } else {
                 Decoded d = decode_utf8(p + i, c.size() - i);
-                w = cp_width(d.cp);
+                const bool joined = join.joins(d.cp);
+                goes_on = joined || cp_extends(d.cp);
+                w = joined ? 0 : cp_width(d.cp);
                 len = d.len;
             }
-            if (want < col + w) return (nearest && (want - col) * 2 >= w) ? off + len : off;
+            if (!goes_on) {
+                if (want < col) return in_last();
+                start = off;
+                start_col = col;
+            }
             col += w;
             off += len;
             i += len;
@@ -358,23 +438,48 @@ void Editor::vertical(i64 lines, bool select) {
 }
 
 // Next word boundary from off in direction dir (-1 or +1): skips anything
-// that is not a word character, then the word itself.
+// that is not a word character, then the word itself. It goes a character
+// (a cluster) at a time, and a character is of the class of its first
+// byte: a mark on a space or a sign is no part of a word. Bytes are read a
+// window at a time, and ASCII is a byte a character with no more asked.
 u64 Editor::word_edge(u64 off, int dir) const {
+    const u64 size = buf.size();
     char win[256];
-    bool in_word = false;
-    while (dir < 0 ? off > 0 : off < buf.size()) {
-        u64 n = dir < 0 ? std::min<u64>(off, sizeof win) : sizeof win;
-        u64 from = dir < 0 ? off - n : off;
-        n = buf.read(from, win, n);
-        for (u64 k = 0; k < n; ++k) {
-            u8 c = static_cast<u8>(dir < 0 ? win[n - 1 - k] : win[k]);
-            bool word = char_class(c) == 1;
-            if (in_word && !word) return off;
-            in_word = in_word || word;
-            off = dir < 0 ? off - 1 : off + 1;
+    u64 base = 0, have = 0;  // win holds the bytes [base, base + have)
+    auto byte = [&](u64 at) {
+        if (at < base || at >= base + have) {
+            base = dir > 0 ? at : at + 1 - std::min<u64>(at + 1, sizeof win);
+            have = buf.read(base, win, sizeof win);
         }
+        return static_cast<u8>(win[at - base]);
+    };
+    bool in_word = false;
+    while (dir < 0 ? off > 0 : off < size) {
+        u8 c;
+        u64 next;
+        if (dir > 0) {
+            c = byte(off);
+            next = c < 0x80 && off + 1 < size && byte(off + 1) < 0x80 ? off + 1 : next_char(off);
+        } else {
+            c = byte(off - 1);
+            next = c < 0x80 ? off - 1 : prev_char(off);
+            if (c >= 0x80) c = byte(next);
+        }
+        const bool word = char_class(c) == 1;
+        if (in_word && !word) return off;
+        in_word = in_word || word;
+        off = next;
     }
     return off;
+}
+
+// A word starts and ends where a character does. Inside a cluster: its
+// end, unless that is not before `limit`; then its start.
+u64 Editor::cluster_edge(u64 off, u64 limit) const {
+    if (off == 0 || off >= buf.size()) return off;
+    const u64 start = prev_char(off), end = next_char(start);
+    if (end == off) return off;
+    return end < limit ? end : start;
 }
 
 void Editor::word_left(bool select) { move_to(word_edge(cursor_, -1), select); }
@@ -417,8 +522,8 @@ void Editor::select_word(u64 off) {
             going = k + 1 == n;
         }
     }
-    anchor_ = lo;
-    cursor_ = hi;
+    anchor_ = cluster_edge(lo, off + 1);
+    cursor_ = cluster_edge(hi, ~0ull);
     want_col_ = ~0u;
 }
 

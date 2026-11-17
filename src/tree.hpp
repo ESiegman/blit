@@ -6,6 +6,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "common.hpp"
@@ -66,7 +67,10 @@ public:
     Node* find(const std::string& path) { return node_at(path); }
 
     // File operations. Each returns false with a reason; on success the
-    // folder concerned is read again.
+    // folder concerned is read again. On another machine they wait for the
+    // network, so they are done on the reader's thread, in turn with the
+    // folders it reads: true then says only that the name will do, and what
+    // came of it is a Change, taken in by poll() (the tree shows it then).
     bool create(Node* folder, const std::string& name, bool as_folder, std::string* err);
     bool rename(Node* node, const std::string& new_name, std::string* err);
     // Moves to the system's Trash where there is one (macOS, Linux), else
@@ -75,9 +79,22 @@ public:
     // True if trash() moves things to a Trash they can be got back from.
     static bool has_trash();
 
+    // What a change made on the reader's thread came to.
+    struct Change {
+        enum : u8 { kCreated, kRenamed, kTrashed };
+        u8 kind = kCreated;
+        std::string path, to;  // what was made, renamed (to: its new path) or put in the Trash
+        std::string error;     // empty: it was done
+    };
+    std::vector<Change> take_changes() { return std::exchange(changes_, {}); }
+    // Folders being read, or changes being made, on the reader's thread.
+    bool busy() const;
+
 private:
     struct Reader;
+    struct Op;
     void request(Node* folder);
+    void queue(Op op);
     Node* node_at(const std::string& path);
 
     std::string root_path_;
@@ -85,6 +102,7 @@ private:
     std::vector<Row> rows_;
     bool rows_stale_ = true;
     u64 generation_ = 0;
+    std::vector<Change> changes_;
     std::shared_ptr<Reader> reader_;
 };
 

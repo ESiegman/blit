@@ -50,12 +50,42 @@ got=$(printf '%s' "$got" | sed -e 's#^\(connecting to box… \).*/\(notes.txt lo
 check "opened: its tab at once, the text on its way" 'connecting to box… notes.txt loading…'
 run "remotewait;frame;statusdump;dump" "$R/notes.txt"
 check "and then here" 'box ~/work/notes.txt | Ln 1, Col 1 Tabs LF Plain text ;; >[notes.txt*]'
-run "remotewait;text:X;save;frame;statusdump" "$R/notes.txt"
+run "remotewait;text:X;save;frame;statusdump;remotewait;frame;statusdump" "$R/notes.txt"
 got="$got | $(tr '\n' ' ' <"$W/notes.txt")"
-check "saved there" 'box ~/work/notes.txt | Ln 1, Col 2 Tabs LF Plain text | Xhello world '
-run "remotewait;text:new;save;frame;statusdump" "$R/fresh.txt"
+check "saved there (on a thread: the tab says so meanwhile)" 'box ~/work/notes.txt saving… | Ln 1, Col 2 Tabs LF Plain text ;; box ~/work/notes.txt | Ln 1, Col 2 Tabs LF Plain text | Xhello world '
+run "remotewait;text:new;save;remotewait;frame;statusdump" "$R/fresh.txt"
 got="$got | $(cat "$W/fresh.txt")"
 check "one that is not there: made when saved" 'box ~/work/fresh.txt | Ln 1, Col 4 Tabs LF Plain text | new'
+run "remotewait;text:lost;save;remotewait;frame;statusdump" "$R/nowhere/lost.txt"
+check "a save that fails: the bottom line says why, and it is still changed" 'blit: cannot write ~/work/nowhere/lost.txt.blit-tmp: No such file or directory ;; box ~/work/nowhere/lost.txt ● | Ln 1, Col 5 Tabs LF Plain text'
+
+# A slow host (each answer held half a second): saving goes back to the keys at
+# once, and the file is saved as it was then when the write has been made
+# (typing meanwhile is kept, and is not saved). Closing its tab, or
+# quitting, waits for it, in a box that says so; Esc there calls that off.
+mkdir -p "$T/.slow" && printf 'hello\nworld\n' >"$T/.slow/slow.txt"
+L="ssh://box$T/.slow"
+# slow SCRIPT [FILE]: as run, on a host that holds each answer SLOW seconds (half a second).
+slow() {
+    got=$(BLIT_FAKE_SLOW=${SLOW:-0.5} BLIT_INIT="${INIT:-$dir/init.lua}" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "$1" ${2:+"$2"} 2>&1 >/dev/null |
+        sed -e "s#$T#~#g" -e "s#$dir#@#g" | join)
+    INIT= SLOW=
+}
+slow "remotewait;text:S;clock;save;within:300;frame;statusdump;text:T;frame;statusdump;remotewait;frame;statusdump" "$L/slow.txt"
+got="$got | $(tr '\n' ' ' <"$T/.slow/slow.txt")"
+check "a save on a slow host: at once, and saved when written" 'within 300 ms ;; box ~/.slow/slow.txt saving… | Ln 1, Col 2 Tabs LF Plain text ;; box ~/.slow/slow.txt saving… | Ln 1, Col 3 Tabs LF Plain text ;; box ~/.slow/slow.txt ● | Ln 1, Col 3 Tabs LF Plain text | Shello world '
+printf 'hello\nworld\n' >"$T/.slow/slow.txt"
+slow "remotewait;text:C;save;clock;key:cmd+W;within:300;finddump;dump;remotewait;finddump;dump" "$L/slow.txt"
+got="$got | $(tr '\n' ' ' <"$T/.slow/slow.txt")"
+check "closing it waits for the save" 'within 300 ms ;; pick [] 1 : >Close without waiting ;; >[slow.txt*] ;; closed ;; >[untitled*] | Chello world '
+slow "remotewait;text:E;save;key:cmd+W;key:Escape;finddump;remotewait;dump" "$L/slow.txt"
+check "Esc: it stays" 'closed ;; >[slow.txt*]'
+slow "remotewait;text:N;save;key:cmd+W;key:Return;dump;remotewait" "$L/slow.txt"
+got="$got | $(tr '\n' ' ' <"$T/.slow/slow.txt")"
+check "closed without waiting: the save goes on" '>[untitled*] | NEChello world '
+slow "remotewait;text:Q;save;quit;finddump;alive;remotewait;finddump;alive" "$L/slow.txt"
+got="$got | $(tr '\n' ' ' <"$T/.slow/slow.txt")"
+check "quitting waits for it too" 'pick [] 1 : >Quit without waiting ;; running ;; closed ;; quitting | QNEChello world '
 run "remotewait;frame;lua:print(blit.workdir())" "$R"
 check "a folder: the working directory" "blit: ssh://box~/work"
 got=$(BLIT_FAKE_FAIL=refused BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "remotewait;frame;statusdump;remotedump" "$R/notes.txt" 2>&1 >/dev/null | join)
@@ -80,8 +110,10 @@ run "remotewait;find:names;text:.;findwait;finddump" "$R"
 check "files found by name there (the one opened lately first)" 'names [.] 3 of 3 : >notes.txt fresh.txt src/main.cpp'
 run "remotewait;find:text;text:main;findwait;finddump;key:Return;remotewait;frame;statusdump" "$R"
 check "text searched for there, and a line found opened" 'text [main] 1 of 1 : >src/main.cpp:1:5 ;; box src/main.cpp | Ln 1, Col 5 Tabs LF C++'
-run "remotewait;find:open;finddump;text:src/;finddump" "$R"
+run "remotewait;find:open;remotewait;finddump;text:src/;remotewait;finddump" "$R"
 check "the box that opens files, in a folder there" 'open [ssh://box~/work/] 4 : >../ src/ fresh.txt notes.txt ;; open [ssh://box~/work/src/] 2 : >../ main.cpp'
+slow "remotewait;find:open;remotewait;clock;text:src/;within:300;finddump;text:m;remotewait;finddump" "$R"
+check "a folder listed on a slow host: typing goes on, and its files come when they do" 'within 300 ms ;; open [ssh://box~/work/src/] 1 : >../ ;; open [ssh://box~/work/src/m] 1 : >main.cpp'
 HOME="$dir/home" run "find:folder;text:ssh://;finddump"
 got=$(printf '%s' "$got" | sed -e 's#\[.*ssh://#[ssh://#')
 check "ssh:// typed: the hosts ~/.ssh/config names (not its patterns)" 'folder [ssh://] 5 : >./ ../ box/ other/ second/'
@@ -96,6 +128,8 @@ printf 'one\nTWO\nthree\nfour\n' >"$dir/repo/notes.txt"
 INIT="$dir/git.lua"
 run "remotewait;panel;frame;gitwait;frame;open:ssh://box$dir/repo/notes.txt;remotewait;frame;gitwait;frame;gitwait;frame;gitdump" "ssh://box$dir/repo"
 check "git's view of a repository there" 'main | changes M:notes.txt | branches *main | commits 1 "first" | lines 2~ 4+'
+INIT="$dir/git.lua" SLOW=0.5 slow "remotewait;panel;frame;gitwait;frame;open:ssh://box$dir/repo/notes.txt;remotewait;frame;gitwait;frame;gitwait;command:Show or hide who changed each line (git blame);frame;gitbusy;clock;key:cmd+W;within:300;dump" "ssh://box$dir/repo"
+check "a tab closed while a slow blame of it runs: at once (the blame is stopped)" 'within 300 ms ;; >[untitled*]'
 
 # A language server, run there (the test one, next to blit).
 if [ -x "$(dirname "$blit")/blit_fakelsp" ]; then
@@ -106,6 +140,23 @@ if [ -x "$(dirname "$blit")/blit_fakelsp" ]; then
     run "remotewait;frame;ready;diag;frame;text:];text:d;vimdump" "ssh://box$dir/proj/src/e.cpp"
     check "its diagnostics, in the file here" 'NORMAL |  | 2:14 | int b; // an ERROR here'
 fi
+
+# The tree, on a slow host: new, rename and the Trash are done on its
+# thread (the keys go on at once), and it shows them when they are done; a
+# file open in a tab goes with its new name, and what fails says why.
+mkdir -p "$T/.tree/src" && printf 'a\n' >"$T/.tree/a.txt" && : >"$T/.tree/src/main.cpp"
+up5="key:Backspace;key:Backspace;key:Backspace;key:Backspace;key:Backspace"
+SLOW=0.3 slow "remotewait;treewait;open:ssh://box$T/.tree/a.txt;remotewait;key:cmd+shift+E;key:Down;key:cmd+N;text:made.txt;clock;key:Return;within:300;treewait;key:End;key:F2;$up5;text:src;key:Return;treewait;frame;statusdump;key:F2;$up5;text:b.txt;key:Return;treewait;frame;statusdump;key:Delete;treewait" "ssh://box$T/.tree"
+got="$got | $(cd "$T/.tree" && ls * | tr '\n' ' ')| $(ls "$T/.local/share/Trash/files")"
+check "the tree's changes there" 'within 300 ms ;; blit: "src" is already there ;; box a.txt | Ln 1, Col 1 Tabs LF Plain text ;; box b.txt | Ln 1, Col 1 Tabs LF Plain text | made.txt main.cpp | b.txt'
+
+# A program there that writes far faster than what reads it here: no more
+# than a few MB of it are held here (the agent stops reading it meanwhile,
+# or, an older agent, the connection is not read), and all of it comes.
+run "remotewait;remotestream:67108864" "$R/notes.txt"
+check "a stream nobody reads for a while: held there" 'streamed 67108864 bytes (exit 0), held a few MB at most'
+got=$(BLIT_AGENT_LEVEL=1 BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "remotewait;remotestream:67108864" "$R/notes.txt" 2>&1 >/dev/null | join)
+check "and from an agent that cannot pause it" 'streamed 67108864 bytes (exit 0), held a few MB at most'
 
 # The agent was copied there once, into the cache blit keeps in that home.
 got=$(ls "$T/.cache/blit" | sed -e 's/-[0-9a-f]*$//')

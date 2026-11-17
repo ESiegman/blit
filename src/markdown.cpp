@@ -100,16 +100,21 @@ std::string from_col(std::string_view s, int n) {
     return std::string(s.substr(i));
 }
 
-std::string expand_tabs(std::string_view s) {
+// Tabs as spaces. With `inks` (one for each byte of s), *out_inks gets one
+// for each byte of what comes back (a tab's for its spaces).
+std::string expand_tabs(std::string_view s, const u8* inks = nullptr, std::vector<u8>* out_inks = nullptr) {
     std::string out;
     u32 col = 0;
-    for (const char c : s) {
+    for (size_t i = 0; i < s.size(); ++i) {
+        const char c = s[i];
         if (c == '\t') {
             const u32 to = (col / 4 + 1) * 4;
             out.append(to - col, ' ');
+            if (inks) out_inks->insert(out_inks->end(), to - col, inks[i]);
             col = to;
         } else {
             out += c;
+            if (inks) out_inks->push_back(inks[i]);
             if (!is_cont(static_cast<u8>(c))) ++col;
         }
     }
@@ -982,6 +987,7 @@ struct Layout {
     const Refs& refs;
     std::vector<Level> levels;
     const MdPictureFn* picture = nullptr;
+    const MdCodeFn* colour = nullptr;
 
     u32 indent() const {
         u32 n = 0;
@@ -1117,16 +1123,44 @@ struct Layout {
         std::vector<MdRun> top;
         if (!lang.empty() && room_cols > cols_of(lang) + 2) top.push_back({std::string(room_cols - cols_of(lang) - 1, ' ') + lang, kMdMuted, 0, kMdCodeTone});
         fill(row(std::move(top), b.line));
+        // Its colours, when it is in a language there is a grammar for: an
+        // ink for each byte of its lines (each ended by a newline).
+        std::vector<u8> inks;
+        std::vector<size_t> starts;
+        if (colour && *colour && !lang.empty() && !b.text.empty()) {
+            std::string src;
+            for (const std::string& l : b.text) {
+                starts.push_back(src.size());
+                src += l;
+                src += '\n';
+            }
+            if (!(*colour)(lang, src, &inks) || inks.size() != src.size()) inks.clear();
+        }
         for (size_t k = 0; k < b.text.size(); ++k) {
-            std::string l = expand_tabs(b.text[k]);
+            std::vector<u8> li;  // (the ink of each byte of l)
+            std::string l = expand_tabs(b.text[k], inks.empty() ? nullptr : inks.data() + starts[k], &li);
             const u32 line = k < b.nos.size() ? b.nos[k] : b.line;
-            std::string_view rest = l;
+            size_t at = 0;
             do {  // (long lines wrap)
+                const std::string_view rest = std::string_view(l).substr(at);
                 size_t cut = room_cols > 2 ? fit(rest, room_cols - 2) : rest.size();
                 if (cut == 0) cut = first_char(rest);  // (a wide character in one column: over the edge, whole)
-                fill(row({{" " + std::string(rest.substr(0, cut)), kMdCode, 0, kMdCodeTone}}, line));
-                rest.remove_prefix(std::min(cut, rest.size()));
-            } while (!rest.empty());
+                cut = std::min(cut, rest.size());
+                std::vector<MdRun> runs;
+                if (li.empty()) {
+                    runs.push_back({" " + std::string(rest.substr(0, cut)), kMdCode, 0, kMdCodeTone});
+                } else {  // a run for each stretch of one ink
+                    runs.push_back({" ", kMdCodePlain, 0, kMdCodeTone});
+                    for (size_t a = at; a < at + cut;) {
+                        size_t e = a + 1;
+                        while (e < at + cut && li[e] == li[a]) ++e;
+                        runs.push_back({l.substr(a, e - a), li[a], 0, kMdCodeTone});
+                        a = e;
+                    }
+                }
+                fill(row(std::move(runs), line));
+                at += cut;
+            } while (at < l.size());
         }
         fill(row({}, b.nos.empty() ? b.line : b.nos.back()));
     }
@@ -1313,7 +1347,7 @@ struct Layout {
 
 }  // namespace
 
-std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn& picture) {
+std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn& picture, const MdCodeFn& colour) {
     width = std::max<u32>(width, 12);
     std::vector<Line> lines;
     u32 no = 0;
@@ -1351,7 +1385,7 @@ std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn
     }
     const std::vector<Block> blocks = parse_blocks(lines, refs);
     std::vector<MdRow> rows;
-    Layout layout{rows, width, refs, {}, &picture};
+    Layout layout{rows, width, refs, {}, &picture, &colour};
     layout.blocks(blocks, false, kMdText);
     return rows;
 }

@@ -78,6 +78,16 @@ public:
     static std::string language_for(std::string_view path, std::string_view first_line, std::span<const GrammarSource> own = {});
     // True if a grammar for the language is installed.
     static bool installed(const std::string& lang, const SyntaxOptions& opt);
+    // The installed language a name stands for, as a Markdown code block
+    // names one ("c++", "py", "sh", "yml", a language's name or one of its
+    // file endings, built in or from the settings); "" if none.
+    static std::string language_named(std::string_view name, std::span<const GrammarSource> own, const SyntaxOptions& opt);
+    // Colours a piece of text on its own, all at once, on the calling
+    // thread (for a worker: it parses, and the first time a language is
+    // used it waits for its query to compile). Out: the style id of each
+    // byte (an index into *names; 0 is plain). False if there is no grammar.
+    static bool highlight_text(const std::string& lang, std::string_view text, const SyntaxOptions& opt, std::vector<u8>* styles,
+                               std::vector<std::string>* names);
 
     // Starts highlighting buf. Returns false (and stays off) if the file is
     // too large or no grammar is installed for the language.

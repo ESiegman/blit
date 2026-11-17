@@ -67,14 +67,29 @@ public:
     const std::string& family() const { return family_; }
     float px() const { return px_; }
 
-    // Glyph for a code point: slot number in the low 15 bits, and bit 15 set
+    // Glyph for a code point: slot number in the low 13 bits, and bit 15 set
     // when the character is two cells wide (its right half is slot + 1).
     static constexpr u32 kWide = 0x8000;
-    u32 glyph(u32 cp) {
+    u32 glyph(u32 cp) { return cell_glyph(cp) & ~(kJoin | kPict); }
+    // The same, with bit 14 set when the character may make one with the
+    // one before it: it has no width of its own (a combining mark, a
+    // joiner: see cp_width()), or, with bit 15, it is a regional indicator,
+    // two of which are a flag; and bit 13 when it is an emoji (one that
+    // joins the one before after a joiner). Its slot shows it on its own; in
+    // the text a mark goes over the cell before it, by mark().
+    static constexpr u32 kJoin = 0x4000, kPict = 0x2000;
+    u32 cell_glyph(u32 cp) {
         if (cp < 128) return cp;
         if (cp < 0x10000 && bmp_[cp]) return bmp_[cp];
         return lookup(cp);
     }
+    // The slot of a cell showing `base` (a slot) with the character of no
+    // width `cp` drawn over it: a combining mark in its place, lifted clear
+    // of a capital; a joiner or a selector leaves it as it is. Over a
+    // character two cells wide, `half` is 1 for its left cell and 2 for its
+    // right one, and the mark is placed over the whole of it. Each pair is
+    // drawn once and then served from a table.
+    u32 mark(u32 base, u32 cp, u32 half = 0);
     // The same in a style that ensure_style() said yes to. A character the
     // style's face lacks comes back in regular.
     u32 glyph(u32 cp, u32 style) {
@@ -165,12 +180,14 @@ private:
     bool joins(u32 cell) const { return (cell & 0xFFFF) < kAsciiSlots && joins_[cell & (kAsciiSlots - 1)]; }
     u32 lookup(u32 cp);
     u32 lookup_styled(u32 cp, u32 style);
+    u32 compose_mark(u32 base, u32 cp, u32 half);
     u32 alloc_slots(u32 width);
     void reset_atlas();
     bool render(const Style& st, u32 gid);
     void put_glyph(FT_Face f, u32 slot, u32 width, bool centred);
     void blit_glyph(FT_Face f, u32 gid, u32 slot, u32 width, bool centred);
     void copy_slot(u32 from, u32 to);
+    void clear_slot(u32 slot);
     void draw_tofu(u32 slot, u32 width);
     void draw_icon(u32 id, u32 slot);
     FT_Face face_for(u32 cp, u32* glyph_index);
@@ -184,6 +201,10 @@ private:
 
     struct Ent {
         u32 key;
+        u32 slot;
+    };
+    struct MarkEnt {
+        u64 key;  // the base slot, the half, the mark
         u32 slot;
     };
     struct ShortRun {
@@ -204,6 +225,7 @@ private:
     int load_flags_ = 0;
 
     int cell_w_ = 0, cell_h_ = 0, baseline_ = 0;
+    int x_height_ = 0;  // how far above the baseline a lower-case letter reaches, in pixels
     int atlas_w_ = 0, atlas_h_ = 0;
     u32 cols_ = 0, shift_ = 0, slots_ = 0;
     u32 first_slot_ = 128, next_slot_ = 128;  // slots below first_slot_ are the ASCII blocks
@@ -216,6 +238,8 @@ private:
     u16* bmp_ = nullptr;
     std::vector<Ent> map_;
     u32 map_used_ = 0;
+    std::vector<MarkEnt> marks_;  // (base, mark) -> slot, see mark()
+    u32 marks_used_ = 0;
 
     Style styles_[kStyles];
     std::vector<std::string> features_;

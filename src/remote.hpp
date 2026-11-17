@@ -9,7 +9,11 @@
 // A connection is made the first time a host is asked for, on a thread of
 // its own; until it is ready, what is asked of it from the main thread
 // fails at once (and the main thread is told when it is ready, see
-// Remote::set_notify), while a worker thread may wait for it.
+// Remote::set_notify), while a worker thread may wait for it. A call waits
+// for its answer, so the main thread makes none: what it wants of another
+// machine is asked on a worker thread (appremote.cpp, the tree's reader, git's
+// worker), and only what does not wait for an answer (kill, resize) goes
+// from the main thread.
 #include <functional>
 #include <memory>
 #include <string>
@@ -73,10 +77,16 @@ struct RemoteEntry {
 };
 
 // A program running there, as local pipes: what is written to `in` goes to
-// its input, its output and errors come out of `out` and `err`.
+// its input, its output and errors come out of `out` and `err`. Its output
+// is held here for whoever reads `out` (and `err`) only up to a few MB:
+// past that, the agent stops reading it there until it has been taken, and
+// the program waits, as one writing into a full pipe does.
 struct RemoteProc {
     u32 id = 0;
     int in = -1, out = -1, err = -1;
+    // (Asked before spawn: false, its errors are not wanted. They go to
+    // /dev/null there rather than over the connection, and `err` is -1.)
+    bool errors = true;
 };
 
 class Remote {
@@ -111,7 +121,8 @@ public:
     // Calls: false (with *err where there is one) when they fail or the connection does.
     bool stat(const std::string& path, RemoteStat* out);
     int read(const std::string& path, u64 most, std::string* out, i64* modified_ns = nullptr);  // 0 read, 1 none, 2 not a file, 3 too big, 4 failed, 5 no connection
-    bool write(const std::string& path, std::string_view data, std::string* err, i64* modified_ns = nullptr);
+    // (The text is moved into the request as it is: a big file is not copied again.)
+    bool write(const std::string& path, std::string data, std::string* err, i64* modified_ns = nullptr);
     bool list(const std::string& path, std::vector<RemoteEntry>* out);
     bool make_dir(const std::string& path, bool parents, std::string* err);
     bool create(const std::string& path, std::string* err);
@@ -132,6 +143,9 @@ public:
     void resize(u32 proc, unsigned rows, unsigned cols);  // its pseudo-terminal's size
     int wait(u32 proc, int ms = -1);  // its exit status, once it has ended (-1 if the connection went; -2 still running after ms)
     void kill(u32 proc, int sig);
+    // The most output held at once for one program, waiting for its reader,
+    // since the connection was made (for the tests: it stays a few MB).
+    u64 held_most() const;
 
     struct Impl;
 

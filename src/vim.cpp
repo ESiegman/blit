@@ -4,6 +4,7 @@
 #include <atomic>
 #include <cctype>
 #include <cstring>
+#include <type_traits>
 
 #include "fuzzy.hpp"
 #include "threads.hpp"
@@ -336,33 +337,124 @@ u64 Vim::lines_of(const Editor& ed) {
 
 // ---------------------------------------------------------------- searching
 
-Vim::Pattern Vim::parse_pattern(std::string_view typed) {
-    Pattern p;
-    if (typed.starts_with("\\<") && typed.ends_with("\\>") && typed.size() >= 4) {
-        p.word = true;
-        typed = typed.substr(2, typed.size() - 4);
+namespace {
+
+// A pattern compiled: text as it stands when nothing in it is special.
+Vim::Pattern compiled(std::string_view typed, const VimRegex::Options& o) {
+    Vim::Pattern p;
+    std::string error;
+    const std::shared_ptr<const VimRegex> re = VimRegex::compile(typed, o, &error);
+    if (!re) {
+        p.text = std::string(typed);
+        p.error = std::move(error);
+        return p;
     }
-    for (size_t i = 0; i < typed.size(); ++i) {
-        if (typed[i] == '\\' && i + 1 < typed.size()) {
-            const char n = typed[++i];
-            if (n == 'c') p.ignore_case = true;
-            else if (n == 'C') p.ignore_case = false;
-            else if (n == 'n') p.text += '\n';
-            else if (n == 't') p.text += '\t';
-            else p.text += n;  // \/ \\ \. and the like: the character itself
-        } else {
-            p.text += typed[i];
-        }
+    p.ignore_case = re->ignore_case();
+    if (re->plain()) {  // looked for as text, the fastest way there is
+        p.text = re->plain_text();
+        p.word = re->plain_word();
+        return p;
     }
+    p.text = std::string(typed);
+    p.re = re;
     return p;
 }
 
-size_t Vim::match_in(std::string_view hay, const Pattern& p, size_t from) { return find_in(hay, p, from, hay.size()); }
+RegexMatch plain_match(u64 at, u64 len) {
+    RegexMatch m;
+    m.start = m.anchor = at;
+    m.end = at + len;
+    m.group[0][0] = at;
+    m.group[0][1] = at + len;
+    for (u32 g = 1; g < 10; ++g) m.group[g][0] = m.group[g][1] = RegexMatch::kUnset;
+    return m;
+}
+
+// The place after the character at `at` (a regular expression starts only
+// where a character does).
+u64 after_char(const Buffer& buf, u64 at) {
+    char b = 0;
+    buf.read(at, &b, 1);
+    const u8 c = static_cast<u8>(b);
+    return at + (c < 0xC0 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4);
+}
+u64 after_char(std::string_view s, u64 at) {
+    const u8 c = at < s.size() ? static_cast<u8>(s[at]) : 0;
+    return at + (c < 0xC0 ? 1 : c < 0xE0 ? 2 : c < 0xF0 ? 3 : 4);
+}
+// The first place at or after `at` where a character starts.
+u64 align(const Buffer& buf, u64 at) {
+    char b[4] = {};
+    const u64 got = buf.read(at, b, 4);
+    u64 k = 0;
+    while (k < got && k < 3 && is_cont(static_cast<u8>(b[k]))) ++k;
+    return at + k;
+}
+
+// Where a regular expression's matches may start: up to the end of the
+// text, but not after a final newline (Vim has no line there).
+u64 regex_top(const Buffer& buf) {
+    const u64 size = buf.size();
+    char last = 0;
+    if (size > 0) buf.read(size - 1, &last, 1);
+    return size + (size > 0 && last == '\n' ? 0 : 1);
+}
+u64 regex_top(std::string_view s) { return s.size() + (!s.empty() && s.back() == '\n' ? 0 : 1); }
+
+u64 line_after(const Buffer& buf, u64 off) { return next_line_start(buf, off); }
+u64 line_after(std::string_view s, u64 off) {
+    const size_t nl = s.find('\n', off);
+    return nl == std::string_view::npos ? s.size() : nl + 1;
+}
+
+}  // namespace
+
+Vim::Pattern Vim::parse_pattern(std::string_view typed, const std::string& last_sub) {
+    VimRegex::Options o;
+    o.last_sub = last_sub;
+    return compiled(typed, o);
+}
+
+Vim::Pattern Vim::make_pattern(std::string_view typed, bool regex, bool exact_case) {
+    if (regex) {
+        VimRegex::Options o;
+        o.ignore_case = !exact_case;
+        o.smart_case = true;
+        return compiled(typed, o);
+    }
+    // Capitals typed: they count; none: neither do the text's.
+    Pattern p;
+    p.text = std::string(typed);
+    p.ignore_case = !exact_case && std::none_of(p.text.begin(), p.text.end(), [](char ch) { return ch >= 'A' && ch <= 'Z'; });
+    return p;
+}
+
+size_t Vim::match_in(std::string_view hay, const Pattern& p, size_t from, RegexMatch* m) {
+    if (p.bad() || p.empty()) return std::string_view::npos;
+    if (!p.re) {
+        const size_t at = find_in(hay, p, from, hay.size());
+        if (m && at != std::string_view::npos) *m = plain_match(at, p.text.size());
+        return at;
+    }
+    RegexMatch got;
+    if (!p.re->search(hay, from, regex_top(hay), &got)) return std::string_view::npos;
+    if (m) *m = got;
+    return static_cast<size_t>(got.start);
+}
 
 // The text is looked at where it lies, a piece of the document at a time;
 // only a match that runs from one piece into the next is copied out to be
 // compared.
 u64 Vim::each_match(const Buffer& buf, const Pattern& p, u64 lo, u64 hi, const std::function<bool(u64)>& hit) {
+    if (p.bad()) return kNone;
+    if (p.re) {  // (each place a match starts, one after another)
+        VimRegex::Searcher s(*p.re);
+        RegexMatch m;
+        hi = std::min(hi, regex_top(buf));
+        for (u64 at = align(buf, lo); at < hi && s.next(buf, at, hi, &m); at = after_char(buf, m.anchor))
+            if (hit(m.start)) return m.start;
+        return kNone;
+    }
     const u64 size = buf.size(), len = p.text.size();
     if (len == 0 || size < len) return kNone;
     hi = std::min(hi, size - len + 1);
@@ -403,78 +495,276 @@ u64 Vim::each_match(const Buffer& buf, const Pattern& p, u64 lo, u64 hi, const s
     return kNone;
 }
 
-u64 Vim::find(const Buffer& buf, const Pattern& p, u64 from, bool forward, bool wrap, bool* wrapped, u64 reach) {
+namespace {
+
+// The matches one after another (see each_whole), in a Buffer or a string.
+template <class Hay>
+void whole_matches(const Hay& hay, const Vim::Pattern& p, u64 lo, u64 hi, bool per_line, const std::function<bool(const RegexMatch&)>& fn) {
+    if (p.bad() || p.empty()) return;
+    if (!p.re) {
+        const u64 len = p.text.size();
+        u64 free_from = lo;  // where the next may start: not inside the last, nor (per line) on its line
+        if constexpr (std::is_same_v<Hay, Buffer>) {
+            NextLines lines_after(hay);
+            Vim::each_match(hay, p, lo, hi, [&](u64 at) {
+                if (at < free_from) return false;
+                if (!fn(plain_match(at, len))) return true;
+                free_from = per_line ? std::max(at + len, lines_after.after(at)) : at + len;
+                return false;
+            });
+        } else {
+            const u64 top = std::min<u64>(hi, hay.size());
+            for (size_t at = find_in(hay, p, lo, top); at != std::string_view::npos && at < top; at = find_in(hay, p, free_from, top)) {
+                if (!fn(plain_match(at, len))) return;
+                free_from = per_line ? std::max(at + len, line_after(hay, at)) : at + len;
+                if (free_from >= top) return;
+            }
+        }
+        return;
+    }
+    VimRegex::Searcher s(*p.re);
+    RegexMatch m;
+    hi = std::min(hi, regex_top(hay));
+    u64 at = lo, last_end = kNone;
+    while (at < hi && s.next(hay, at, hi, &m)) {
+        if (m.start == m.end && m.start == last_end) {  // nothing, just where the last one ended: not again
+            at = after_char(hay, std::max(at, m.anchor));
+            continue;
+        }
+        if (!fn(m)) return;
+        last_end = m.end;
+        at = std::max(m.end, m.anchor);
+        if (per_line) at = std::max(at, line_after(hay, m.start));
+    }
+}
+
+}  // namespace
+
+void Vim::each_whole(const Buffer& buf, const Pattern& p, u64 lo, u64 hi, bool per_line, const std::function<bool(const RegexMatch&)>& fn) {
+    whole_matches(buf, p, lo, hi, per_line, fn);
+}
+
+void Vim::each_whole(std::string_view text, const Pattern& p, u64 lo, u64 hi, bool per_line, const std::function<bool(const RegexMatch&)>& fn) {
+    whole_matches(text, p, lo, hi, per_line, fn);
+}
+
+u64 Vim::find(const Buffer& buf, const Pattern& p, u64 from, bool forward, bool wrap, bool* wrapped, u64 reach, RegexMatch* out) {
     if (wrapped) *wrapped = false;
-    const u64 size = buf.size(), len = p.text.size();
-    if (p.empty() || size < len) return kNone;
+    if (p.empty() || p.bad()) return kNone;
+    const u64 len = p.re ? 0 : p.text.size();
+    if (buf.size() < len) return kNone;
+    // (A regular expression may match nothing at the very end.)
+    const u64 size = p.re ? regex_top(buf) : buf.size();
     // The first or the last match in [lo, hi), the stretch nearest `from`
     // looked through first. Most searches end in the first few megabytes,
     // looked through on this thread; past them the parts of a long stretch
     // are taken by several threads at once, nearest first, and no part is
     // started once a nearer one has a match.
     constexpr u64 kAlone = 8 << 20, kPart = 16 << 20, kStretch = 1 << 20;
-    auto in_part = [&](u64 a, u64 b, bool want_first) {
-        if (want_first) return each_match(buf, p, a, b, [](u64) { return true; });
-        for (u64 top = b; top > a;) {  // (backward: the stretches before b in turn)
-            const u64 bottom = top - a > kStretch ? top - kStretch : a;
+    auto in_part = [&](u64 a, u64 b, bool want_first, RegexMatch* got) -> bool {
+        if (!p.re) {
             u64 best = kNone;
-            each_match(buf, p, bottom, top, [&](u64 at) {
-                best = at;
-                return false;
-            });
-            if (best != kNone) return best;
+            if (want_first) {
+                best = each_match(buf, p, a, b, [](u64) { return true; });
+            } else {
+                for (u64 top = b; top > a && best == kNone;) {  // (backward: the stretches before b in turn)
+                    const u64 bottom = top - a > kStretch ? top - kStretch : a;
+                    each_match(buf, p, bottom, top, [&](u64 at) {
+                        best = at;
+                        return false;
+                    });
+                    top = bottom;
+                }
+            }
+            if (best == kNone) return false;
+            *got = plain_match(best, len);
+            return true;
+        }
+        VimRegex::Searcher s(*p.re);
+        RegexMatch m;
+        a = align(buf, a);
+        if (want_first) {
+            // (A match that \zs says starts here may have begun earlier on the line.)
+            u64 at = p.re->has_zs() && a > 0 ? buf.line_start(buf.line_of(a)) : a;
+            for (; at < b && s.next(buf, at, b, &m); at = after_char(buf, m.anchor))
+                if (m.start >= a) return *got = m, true;
+            return false;
+        }
+        for (u64 top = b; top > a;) {
+            const u64 bottom = top - a > kStretch ? align(buf, top - kStretch) : a;
+            bool any = false;
+            for (u64 at = bottom; at < top && s.next(buf, at, top, &m); at = after_char(buf, m.anchor))
+                if (m.start < b) *got = m, any = true;
+            if (any) return true;
             top = bottom;
         }
-        return kNone;
+        return false;
     };
-    auto look = [&](u64 lo, u64 hi, bool want_first) -> u64 {
-        if (lo >= hi) return kNone;
+    auto look = [&](u64 lo, u64 hi, bool want_first, RegexMatch* got) -> bool {
+        if (lo >= hi) return false;
         const u64 near = hi - lo <= kAlone ? (want_first ? hi : lo) : want_first ? lo + kAlone : hi - kAlone;
-        const u64 hit = want_first ? in_part(lo, near, true) : in_part(near, hi, false);
-        if (hit != kNone || near == (want_first ? hi : lo)) return hit;
+        const bool hit = want_first ? in_part(lo, near, true, got) : in_part(near, hi, false, got);
+        if (hit || near == (want_first ? hi : lo)) return hit;
         const u64 far_lo = want_first ? near : lo, far_hi = want_first ? hi : near;
         const size_t parts = static_cast<size_t>((far_hi - far_lo + kPart - 1) / kPart);
-        std::vector<u64> got(parts, kNone);
+        std::vector<RegexMatch> found(parts);
+        std::vector<char> any(parts, 0);
         std::atomic<size_t> next{0}, nearest{parts};
         auto work = [&] {
             for (size_t k; (k = next.fetch_add(1)) < parts && k < nearest.load();) {
                 const u64 a = want_first ? far_lo + k * kPart : (far_hi - far_lo > (k + 1) * kPart ? far_hi - (k + 1) * kPart : far_lo);
                 const u64 b = want_first ? std::min(far_hi, a + kPart) : far_hi - k * kPart;
-                got[k] = in_part(a, b, want_first);
-                if (got[k] != kNone)
+                any[k] = in_part(a, b, want_first, &found[k]);
+                if (any[k])
                     for (size_t was = nearest.load(); k < was && !nearest.compare_exchange_weak(was, k);) {
                     }
             }
         };
         on_threads(static_cast<unsigned>(std::min<size_t>(parts, cores())), work);
-        return nearest.load() < parts ? got[nearest.load()] : kNone;
+        if (nearest.load() >= parts) return false;
+        *got = found[nearest.load()];
+        return true;
     };
-    auto first = [&](u64 lo, u64 hi) { return look(lo, hi, true); };
-    auto last = [&](u64 lo, u64 hi) { return look(lo, hi, false); };
-    u64 hit;
+    auto first = [&](u64 lo, u64 hi, RegexMatch* got) { return look(lo, hi, true, got); };
+    auto last = [&](u64 lo, u64 hi, RegexMatch* got) { return look(lo, hi, false, got); };
+    RegexMatch m;
+    bool hit;
     if (forward) {
         const u64 lo = from + 1;  // (from may be ~0: then everything)
         const u64 span = lo < size ? size - lo : 0;
-        hit = first(lo, span > reach ? lo + reach : size);
-        if (hit == kNone && wrap && reach > span) {
-            hit = first(0, std::min(lo, reach - span));
-            if (hit != kNone && wrapped) *wrapped = true;
+        hit = first(lo, span > reach ? lo + reach : size, &m);
+        if (!hit && wrap && reach > span) {
+            hit = first(0, std::min(lo, reach - span), &m);
+            if (hit && wrapped) *wrapped = true;
         }
     } else {
         const u64 to = std::min(from, size);
-        hit = last(to > reach ? to - reach : 0, to);
-        if (hit == kNone && wrap && reach > to) {
+        hit = last(to > reach ? to - reach : 0, to, &m);
+        if (!hit && wrap && reach > to) {
             const u64 left = reach - to;
-            hit = last(size - to > left ? size - left : to, size);
-            if (hit != kNone && wrapped) *wrapped = true;
+            hit = last(size - to > left ? size - left : to, size, &m);
+            if (hit && wrapped) *wrapped = true;
         }
     }
-    return hit;
+    if (!hit) return kNone;
+    if (out) *out = m;
+    return m.start;
+}
+
+void Vim::replacement(const RegexMatch& m, std::string_view with, bool rules, const std::function<std::string(u64, u64)>& text, std::string* out) {
+    if (!rules) out->append(with);
+    else regex_expand(with, m, text, out);
+}
+
+u64 Vim::replace_all(Editor& ed, const Pattern& p, std::string_view with, bool rules, u64 lo, u64 hi, bool per_line, u64* lines_out, u64* last_out) {
+    // The matches are found first, where the text lies, and what each
+    // becomes is made while the text is as it was (a group may be before
+    // the match itself, after a \zs). When every match becomes the same
+    // there is one copy of it.
+    struct Found {
+        u64 start, end, off;  // the match, and where what it becomes starts in `made`
+    };
+    std::vector<Found> found;
+    std::string made;
+    const bool same = !rules || regex_replacement_plain(with);
+    auto text = [&](u64 a, u64 b) { return ed.buf.text(a, b > a ? b - a : 0); };
+    if (same) replacement(plain_match(0, 0), with, rules, text, &made);
+    each_whole(ed.buf, p, lo, hi, per_line, [&](const RegexMatch& m) {
+        found.push_back({m.start, m.end, same ? 0 : made.size()});
+        if (!same) replacement(m, with, rules, text, &made);
+        return true;
+    });
+    if (found.empty()) return 0;
+    auto made_of = [&](size_t i) {
+        if (same) return std::string_view(made);
+        const u64 to = i + 1 < found.size() ? found[i + 1].off : made.size();
+        return std::string_view(made).substr(found[i].off, to - found[i].off);
+    };
+    // The matches by line (the one each starts on): [begin, end) of `found`.
+    struct Run {
+        size_t begin, end;
+    };
+    std::vector<Run> by_line;
+    {
+        NextLines lines_after(ed.buf);
+        for (size_t i = 0, line_end = 0; i < found.size(); ++i) {
+            if (i == 0 || found[i].start >= line_end) {
+                by_line.push_back({i, i});
+                line_end = lines_after.after(found[i].start);
+            }
+            by_line.back().end = i + 1;
+        }
+    }
+    // The edits: each from the first match of a run of lines to the end of
+    // its last. Each line its own, unless there are many: then lines close
+    // together go into one edit (see kManyLines).
+    std::vector<Run> edits;
+    const bool many = by_line.size() > kManyLines;
+    for (const Run& ln : by_line) {
+        if (many && !edits.empty()) {
+            const Run& e = edits.back();
+            const u64 gap = found[ln.begin].start - found[e.end - 1].end, span = found[ln.end - 1].end - found[e.begin].start;
+            if (gap <= kEditGap && span <= kEditMost) {
+                edits.back().end = ln.end;
+                continue;
+            }
+        }
+        edits.push_back(ln);
+    }
+    // (The cursor stays where it was in the text, which the edits before it
+    // move; one inside an edit goes to its start. Whoever wants it
+    // elsewhere, :s, puts it there.)
+    const u64 cursor = ed.cursor();
+    u64 cursor_to = cursor;
+    ed.begin_group();
+    i64 moved = 0;  // what the edits made so far (all before the rest) have added
+    u64 last = 0;
+    std::string out;
+    for (const Run& e : edits) {
+        const u64 a = found[e.begin].start, b = found[e.end - 1].end;
+        const u64 at = static_cast<u64>(static_cast<i64>(a) + moved);
+        const std::string was = ed.buf.text(at, b - a);
+        out.clear();
+        for (size_t i = e.begin; i < e.end; ++i) {
+            if (i > e.begin) out.append(was, found[i - 1].end - a, found[i].start - found[i - 1].end);
+            if (i + 1 == found.size()) last = at + out.size();
+            out += made_of(i);
+        }
+        ed.replace(at, at + (b - a), out);
+        moved += static_cast<i64>(out.size()) - static_cast<i64>(b - a);
+        if (b <= cursor) cursor_to = static_cast<u64>(static_cast<i64>(cursor) + moved);
+        else if (a < cursor) cursor_to = at;
+    }
+    ed.end_group();
+    ed.move_to(std::min(cursor_to, ed.buf.size()), false);
+    if (lines_out) *lines_out = by_line.size();
+    if (last_out) *last_out = last;
+    return found.size();
+}
+
+std::string Vim::replace_text(std::string_view text, const Pattern& p, std::string_view with, bool rules, u64* count) {
+    std::string out;
+    u64 from = 0, n = 0;
+    auto part = [&](u64 a, u64 b) { return std::string(text.substr(a, b > a ? b - a : 0)); };
+    each_whole(text, p, 0, regex_top(text), false, [&](const RegexMatch& m) {
+        out.append(text.substr(from, m.start - from));
+        replacement(m, with, rules, part, &out);
+        from = m.end;
+        ++n;
+        return true;
+    });
+    out.append(text.substr(std::min<u64>(from, text.size())));
+    if (count) *count = n;
+    return out;
 }
 
 bool Vim::search(Editor& ed, bool forward, u32 count) {
     if (pattern_.empty()) {
         message_ = "E35: No previous regular expression";
+        return false;
+    }
+    if (pattern_.bad()) {
+        message_ = pattern_.error;
         return false;
     }
     u64 at = ed.cursor();
@@ -631,6 +921,7 @@ int Vim::status_cursor() const {
 }
 
 void Vim::suspend(Editor& ed) {
+    confirm_end(ed);
     if (mode_ == kInsert || mode_ == kReplace || insert_once_) leave_insert(ed);
     if (visual()) leave_visual(ed);
     shelved_[buffer_id] = Places{std::move(jumps_), jump_at_, prev_jump_, last_change_, last_insert_at_, last_vstart_, last_vend_, last_vmode_};
@@ -638,6 +929,7 @@ void Vim::suspend(Editor& ed) {
 }
 
 void Vim::forget() {
+    confirm_.on = false;  // (its undo step ends with the document, which has gone)
     mode_ = kNormal;
     cmd_return_ = kNormal;
     cmd_op_ = 0;
@@ -1237,7 +1529,7 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
                 u64 lo = at, hi = at;
                 while (lo > ed.buf.line_start(line) && kind_of(p.at(lo - 1), false) == 2) --lo;
                 while (hi < end && kind_of(p.at(hi), false) == 2) ++hi;
-                pattern_ = Pattern{ed.buf.text(lo, hi - lo), false, c == key};  // (g* and g#: also as part of a longer word)
+                pattern_ = Pattern{ed.buf.text(lo, hi - lo), false, c == key, nullptr, {}};  // (g* and g#: also as part of a longer word)
                 search_forward_ = key == '*';
                 ed.move_to(lo, false);
             }
@@ -2108,6 +2400,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
         cmd_return_ = back;
         cmd_kind_ = kind;
         cmd_.clear();
+        cmd_selected_ = false;
         cmd_origin_ = cur;
         saved_pattern_ = pattern_;
         inc_rev_ = ~0ull;
@@ -2380,7 +2673,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
         u64 lo, hi;
         visual_range(ed, &lo, &hi);
         if (hi <= lo) return done();
-        pattern_ = Pattern{ed.buf.text(lo, std::min<u64>(hi - lo, 4096)), false, false};
+        pattern_ = Pattern{ed.buf.text(lo, std::min<u64>(hi - lo, 4096)), false, false, nullptr, {}};
         search_forward_ = c == '*';
         leave_visual(ed);
         ed.move_to(lo, false);
@@ -2428,14 +2721,29 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
             message_ = "E35: No previous regular expression";
             return done();
         }
-        const u64 len = pattern_.text.size();
-        const u64 hit = c == (kG | 'n') ? find(ed.buf, pattern_, (cur >= len - 1 ? cur - (len - 1) : 0) - 1, true, true) : find(ed.buf, pattern_, cur + 1, false, true);
+        if (pattern_.bad()) {
+            message_ = pattern_.error;
+            return fail();
+        }
+        RegexMatch mm;
+        u64 hit;
+        if (c == (kG | 'n')) {
+            // The first match from the cursor's line on that ends after the
+            // cursor (or is an empty one at it); else from the top.
+            const u64 ls = ed.buf.line_start(line);
+            hit = find(ed.buf, pattern_, ls == 0 ? kNone : ls - 1, true, false, nullptr, ~0ull, &mm);
+            while (hit != kNone && mm.end <= cur && !(mm.end == mm.start && mm.start == cur)) hit = find(ed.buf, pattern_, hit, true, false, nullptr, ~0ull, &mm);
+            if (hit == kNone) hit = find(ed.buf, pattern_, kNone, true, false, nullptr, ~0ull, &mm);
+        } else {
+            hit = find(ed.buf, pattern_, cur + 1, false, true, nullptr, ~0ull, &mm);
+        }
         if (hit == kNone) {
             message_ = "E486: Pattern not found: " + pattern_.text;
             return fail();
         }
         highlight_on_ = true;
-        const u64 end = std::min(hit + len, ed.buf.size());
+        // (A match of nothing is taken as the character it stands before.)
+        const u64 end = mm.end > hit ? std::min(mm.end, ed.buf.size()) : std::min(ed.next_char(hit), ed.buf.size());
         if (op_) {
             const char op = op_;
             ed.move_to(hit, false);
@@ -2966,6 +3274,52 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
 
 // ---------------------------------------------------------------- the command line
 
+void Vim::open_command(Editor& ed, char kind, std::string_view text, bool selected) {
+    if (confirm_.on) confirm_end(ed);
+    if (mode_ == kInsert || mode_ == kReplace || insert_once_) leave_insert(ed);
+    if (visual()) leave_visual(ed);
+    if (mode_ == kCommand) mode_ = cmd_return_;
+    clear_pending();
+    cmd_op_ = cmd_reg_ = 0;
+    mode_ = kCommand;
+    cmd_return_ = kNormal;
+    cmd_kind_ = kind;
+    cmd_ = std::string(text);
+    cmd_selected_ = selected && !cmd_.empty();
+    cmd_origin_ = ed.cursor();
+    saved_pattern_ = pattern_;
+    inc_rev_ = ~0ull;
+    history_at_ = history_.size();
+    message_.clear();
+    if (kind != ':' && !cmd_.empty()) incsearch(ed);
+}
+
+// Shows where the search being typed would land (incsearch).
+void Vim::incsearch(Editor& ed) {
+    pattern_ = parse_pattern(cmd_, last_with_);
+    highlight_on_ = true;
+    u64 hit = kNone;
+    if (!pattern_.empty() && !pattern_.bad()) {  // (half a pattern, "\(" on its way to "\(a\)", finds nothing yet)
+        const bool forward = cmd_kind_ == '/';
+        const Pattern& was = inc_pattern_;
+        // Text typed onto the end: a match of this is a match of what was
+        // there before, so none comes before the one found then.
+        const bool longer = inc_rev_ == ed.revision() && !pattern_.re && !was.re && !was.bad() && !pattern_.word && !was.word &&
+                            pattern_.ignore_case == was.ignore_case && pattern_.text.size() > was.text.size() && pattern_.text.starts_with(was.text);
+        const u64 o = cmd_origin_, h = inc_hit_, size = ed.buf.size();
+        if (!longer) hit = find(ed.buf, pattern_, o, forward, true);
+        else if (h != kNone && forward) hit = find(ed.buf, pattern_, h - 1, true, true, nullptr, h > o ? size - h + o + 1 : o + 1 - h);
+        else if (h != kNone) hit = find(ed.buf, pattern_, h + 1, false, true, nullptr, h < o ? h + 1 + size - o : h - o + 1);
+        inc_pattern_ = pattern_;
+        inc_hit_ = hit;
+        inc_rev_ = ed.revision();
+    }
+    const Mode keep = mode_;
+    mode_ = kNormal;  // (so that the cursor is put on a character)
+    go(ed, hit == kNone ? cmd_origin_ : hit);
+    mode_ = keep;
+}
+
 u32 Vim::command_key(Editor& ed, const VimKey& k) {
     const bool searching = cmd_kind_ != ':';
     const char op = cmd_op_, op_reg = cmd_reg_;
@@ -2973,6 +3327,7 @@ u32 Vim::command_key(Editor& ed, const VimKey& k) {
         mode_ = cmd_return_;  // (Visual mode, if a search was begun there)
         cmd_return_ = kNormal;
         cmd_op_ = 0;
+        cmd_selected_ = false;
         clear_pending();
     };
     if (k.kind == VimKey::kEsc || (k.ctrl && (k.ch == '[' || k.ch == 'c'))) {
@@ -2988,7 +3343,7 @@ u32 Vim::command_key(Editor& ed, const VimKey& k) {
         close();
         if (!line.empty() && (history_.empty() || history_.back() != std::string(1, cmd_kind_) + line)) history_.push_back(std::string(1, cmd_kind_) + line);
         if (searching) {
-            if (!line.empty()) pattern_ = parse_pattern(line);
+            if (!line.empty()) pattern_ = parse_pattern(line, last_with_);
             else pattern_ = saved_pattern_;
             search_forward_ = cmd_kind_ == '/';
             ed.move_to(cmd_origin_, false);
@@ -3015,6 +3370,17 @@ u32 Vim::command_key(Editor& ed, const VimKey& k) {
             run_command(ed, line);
         }
         return kHandled;
+    }
+    // What is on the line selected (Cmd+F put it there): what is typed
+    // takes its place, Backspace clears it, an arrow keeps it.
+    if (std::exchange(cmd_selected_, false)) {
+        const bool cut = k.kind == VimKey::kBackspace || (k.ctrl && (k.ch == 'h' || k.ch == 'u' || k.ch == 'w'));
+        if (cut || (k.kind == VimKey::kChar && !k.ctrl) || k.kind == VimKey::kTab || (k.ctrl && k.ch == 'r')) cmd_.clear();
+        if (cut) {
+            if (searching) incsearch(ed);
+            return kHandled;
+        }
+        if (k.kind == VimKey::kLeft || k.kind == VimKey::kRight || k.kind == VimKey::kHome || k.kind == VimKey::kEnd) return kHandled;
     }
     bool edited = false;
     if (k.kind == VimKey::kBackspace || (k.ctrl && k.ch == 'h')) {
@@ -3057,35 +3423,14 @@ u32 Vim::command_key(Editor& ed, const VimKey& k) {
         cmd_ += '\t';
         edited = true;
     }
-    if (edited && searching) {
-        // Show where it would land while it is being typed (incsearch).
-        pattern_ = parse_pattern(cmd_);
-        highlight_on_ = true;
-        u64 hit = kNone;
-        if (!pattern_.empty()) {
-            const bool forward = cmd_kind_ == '/';
-            const Pattern& was = inc_pattern_;
-            // Typed onto the end: a match of this is a match of what was
-            // there before, so none comes before the one found then.
-            const bool longer = inc_rev_ == ed.revision() && !pattern_.word && !was.word && pattern_.ignore_case == was.ignore_case &&
-                                pattern_.text.size() > was.text.size() && pattern_.text.starts_with(was.text);
-            const u64 o = cmd_origin_, h = inc_hit_, size = ed.buf.size();
-            if (!longer) hit = find(ed.buf, pattern_, o, forward, true);
-            else if (h != kNone && forward) hit = find(ed.buf, pattern_, h - 1, true, true, nullptr, h > o ? size - h + o + 1 : o + 1 - h);
-            else if (h != kNone) hit = find(ed.buf, pattern_, h + 1, false, true, nullptr, h < o ? h + 1 + size - o : h - o + 1);
-            inc_pattern_ = pattern_;
-            inc_hit_ = hit;
-            inc_rev_ = ed.revision();
-        }
-        const Mode keep = mode_;
-        mode_ = kNormal;  // (so that the cursor is put on a character)
-        go(ed, hit == kNone ? cmd_origin_ : hit);
-        mode_ = keep;
-    }
+    if (edited && searching) incsearch(ed);
     return kHandled;
 }
 
-// :s/this/that/ on lines line0..line1.
+// :s/this/that/flags on lines line0..line1. The flags: g every match on a
+// line (else the first), c ask about each, i and I ignore case or not, n
+// only count them, e say nothing when there is none, & the last :s's flags
+// first.
 void Vim::substitute(Editor& ed, u64 line0, u64 line1, std::string_view rest, bool flags) {
     if (rest.empty()) return;
     const std::string whole(rest);  // (`rest` may be last_sub_ itself)
@@ -3097,115 +3442,183 @@ void Vim::substitute(Editor& ed, u64 line0, u64 line1, std::string_view rest, bo
         if (rest[i] == '\\' && i + 1 < rest.size() && rest[i + 1] == delim) {
             parts[part] += delim;
             ++i;
+        } else if (rest[i] == '\\' && i + 1 < rest.size() && part < 2) {  // (an escape is the pattern's or the replacement's to read)
+            parts[part] += rest[i];
+            parts[part] += rest[++i];
         } else if (rest[i] == delim && part < 2) {
             ++part;
         } else {
             parts[part] += rest[i];
         }
     }
-    Pattern p = parts[0].empty() ? pattern_ : parse_pattern(parts[0]);
+    std::string fl = flags ? parts[2] : std::string();
+    if (fl.starts_with('&')) fl = last_flags_ + fl.substr(1);
+    auto has = [&](char f) { return fl.find(f) != std::string::npos; };
+    const bool all = has('g'), ask = has('c'), count_only = has('n'), quiet = has('e');
+    // The pattern (none typed: the last search's), and the case: i and I
+    // say, over what it was ("\c" and "\C" in it still decide).
+    Pattern p;
+    const int icase = has('i') ? 1 : has('I') ? 0 : -1;
+    if (parts[0].empty() && (icase < 0 || !pattern_.re)) {
+        p = pattern_;
+        if (icase >= 0) p.ignore_case = icase == 1;
+    } else {
+        VimRegex::Options o;
+        o.ignore_case = icase == 1;
+        o.last_sub = last_with_;
+        p = compiled(parts[0].empty() ? pattern_.text : parts[0], o);
+    }
     if (p.empty()) {
         message_ = "E35: No previous regular expression";
         return;
     }
-    if (!flags) parts[2].clear();
-    const bool all = parts[2].find('g') != std::string::npos;
-    if (parts[2].find('i') != std::string::npos) p.ignore_case = true;
-    if (refuse()) return;
-    last_sub_ = whole;
-    pattern_ = p;
-    highlight_on_ = true;
-    // The matches are found first, where the text lies, and only the lines
-    // with one are touched: each from its first match to the end of its
-    // last, in one edit.
-    const u64 last = std::min(line1, lines_of(ed) - 1), len = p.text.size();
-    std::vector<u64> found;
-    if (line0 <= last) {
-        const u64 lo = ed.buf.line_start(line0), hi = ed.line_end(last);
-        // A match may take in the newline at the end of the last line ("\n"), no further.
-        const u64 to = p.text.find('\n') != std::string::npos ? std::min(ed.buf.size(), ed.buf.line_start(last + 1)) : hi;
-        u64 free_from = lo;  // where the next match may start: not inside the last, nor (without g) on its line
-        NextLines lines_after(ed.buf);
-        each_match(ed.buf, p, lo, to + 1 >= lo + len ? to + 1 - len : lo, [&](u64 at) {
-            if (at < free_from) return false;
-            found.push_back(at);
-            free_from = all ? at + len : std::max(at + len, lines_after.after(at));
-            return false;
-        });
-    }
-    if (found.empty()) {
-        message_ = "E486: Pattern not found: " + p.text;
+    if (p.bad()) {
+        message_ = p.error;
         return;
     }
-    // The matches by line: [begin, end) of `found`.
-    struct Run {
-        size_t begin, end;
-    };
-    std::vector<Run> by_line;
-    {
+    // "~" in what it becomes: what the last :s put in.
+    std::string with;
+    for (size_t k = 0; k < parts[1].size(); ++k) {
+        if (parts[1][k] == '\\' && k + 1 < parts[1].size()) {
+            with += parts[1][k];
+            with += parts[1][++k];
+        } else if (parts[1][k] == '~') {
+            with += last_with_;
+        } else {
+            with += parts[1][k];
+        }
+    }
+    if (!count_only && refuse()) return;
+    last_sub_ = whole;
+    last_flags_ = fl;
+    last_with_ = with;
+    pattern_ = p;
+    highlight_on_ = true;
+    const u64 last = std::min(line1, lines_of(ed) - 1);
+    if (line0 > last) return;
+    // Matches start on the lines (their ends included, for "$" and "\n"); they may run on past them.
+    const u64 lo = ed.buf.line_start(line0), hi = ed.line_end(last) + 1;
+    if (count_only) {
+        u64 count = 0, lines = 0, line_was = kNone;
         NextLines lines_after(ed.buf);
-        for (size_t i = 0, line_end = 0; i < found.size(); ++i) {
-            if (i == 0 || found[i] >= line_end) {
-                by_line.push_back({i, i});
-                line_end = lines_after.after(found[i]);
+        each_whole(ed.buf, p, lo, hi, !all, [&](const RegexMatch& m) {
+            ++count;
+            if (line_was == kNone || m.start >= line_was) {
+                ++lines;
+                line_was = lines_after.after(m.start);
             }
-            by_line.back().end = i + 1;
+            return true;
+        });
+        if (count == 0) {
+            if (!quiet) message_ = "E486: Pattern not found: " + p.text;
+            return;
         }
+        message_ = std::to_string(count) + (count == 1 ? " match on " : " matches on ") + std::to_string(lines) + (lines == 1 ? " line" : " lines");
+        return;
     }
-    // The edits: each from the first match of a run of lines to the end of
-    // its last. Each line its own, unless there are many: then lines close
-    // together go into one edit (see kManyLines).
-    std::vector<Run> edits;
-    const bool many = by_line.size() > kManyLines;
-    for (const Run& ln : by_line) {
-        if (many && !edits.empty()) {
-            const Run& e = edits.back();
-            const u64 gap = found[ln.begin] - (found[e.end - 1] + len), span = found[ln.end - 1] + len - found[e.begin];
-            if (gap <= kEditGap && span <= kEditMost) {
-                edits.back().end = ln.end;
-                continue;
-            }
-        }
-        edits.push_back(ln);
+    if (ask) {
+        confirm_ = Confirm{};
+        confirm_.on = true;
+        confirm_.p = p;
+        confirm_.with = with;
+        confirm_.next = lo;
+        confirm_.end = hi;
+        confirm_.per_line = !all;
+        ed.begin_group();
+        confirm_next(ed);
+        if (confirm_.on || confirm_.count) return;
+        if (!quiet) message_ = "E486: Pattern not found: " + p.text;
+        return;
     }
-    // What a match becomes: & is what was found, \r a new line.
-    auto replace_into = [&](std::string& out, std::string_view matched) {
-        for (size_t k = 0; k < parts[1].size(); ++k) {
-            const char ch = parts[1][k];
-            if (ch == '\\' && k + 1 < parts[1].size()) {
-                const char next = parts[1][++k];
-                out += next == 'r' || next == 'n' ? '\n' : next == 't' ? '\t' : next;
-            } else if (ch == '&') {
-                out += matched;
-            } else {
-                out += ch;
-            }
+    u64 lines = 0, at = 0;
+    const u64 count = replace_all(ed, p, with, true, lo, hi, !all, &lines, &at);
+    if (count == 0) {
+        if (!quiet) message_ = "E486: Pattern not found: " + p.text;
+        return;
+    }
+    go(ed, first_nonblank(ed, std::min(ed.buf.line_of(at), lines_of(ed) - 1)));
+    if (count > 2 || lines > 1) message_ = std::to_string(count) + (count == 1 ? " substitution on " : " substitutions on ") + std::to_string(lines) + (lines == 1 ? " line" : " lines");
+}
+
+// :s///c: the next match, shown, and the question asked; or the end.
+void Vim::confirm_next(Editor& ed) {
+    Confirm& c = confirm_;
+    bool found = false;
+    each_whole(ed.buf, c.p, c.next, c.end, false, [&](const RegexMatch& m) {
+        if (m.start == m.end && m.start == c.last_end) return true;  // (nothing, where the last one ended)
+        c.m = m;
+        found = true;
+        return false;
+    });
+    if (!found) return confirm_end(ed);
+    highlight_on_ = true;
+    go(ed, c.m.start);
+    message_ = "replace with " + c.with + " (y/n/a/q/l/^E/^Y)?";
+}
+
+void Vim::confirm_end(Editor& ed) {
+    Confirm& c = confirm_;
+    if (!c.on) return;
+    c.on = false;
+    ed.end_group();
+    message_.clear();
+    if (c.count == 0) return;
+    go(ed, first_nonblank(ed, std::min(c.last_line, lines_of(ed) - 1)));
+    if (c.count > 2 || c.lines > 1)
+        message_ = std::to_string(c.count) + (c.count == 1 ? " substitution on " : " substitutions on ") + std::to_string(c.lines) + (c.lines == 1 ? " line" : " lines");
+}
+
+u32 Vim::confirm_key(Editor& ed, const VimKey& k) {
+    Confirm& c = confirm_;
+    // The match asked about, replaced; the next is looked for after it.
+    auto take = [&] {
+        std::string out;
+        replacement(c.m, c.with, true, [&](u64 a, u64 b) { return ed.buf.text(a, b > a ? b - a : 0); }, &out);
+        ed.replace(c.m.start, c.m.end, out);
+        const u64 e = c.m.start + out.size();
+        c.end = c.end + out.size() - (c.m.end - c.m.start);
+        const u64 line = ed.buf.line_of(c.m.start);
+        if (line != c.last_line) ++c.lines;
+        c.last_line = line;
+        ++c.count;
+        c.last_end = e;
+        c.next = e;
+        if (c.per_line) {
+            char before = 0;
+            if (e > c.m.start) ed.buf.read(e - 1, &before, 1);
+            c.next = before == '\n' ? e : next_line_start(ed.buf, e);
         }
     };
-    std::string one;  // (every match becomes the same number of bytes)
-    replace_into(one, std::string(len, ' '));
-    const i64 each = static_cast<i64>(one.size()) - static_cast<i64>(len);
-    ed.begin_group();
-    i64 moved = 0;  // what the edits made so far (all before the rest) have added
-    std::string out;
-    for (const Run& e : edits) {
-        const u64 a = found[e.begin], b = found[e.end - 1] + len;
-        const u64 at = static_cast<u64>(static_cast<i64>(a) + moved);
-        const std::string was = ed.buf.text(at, b - a);
-        out.clear();
-        for (size_t i = e.begin; i < e.end; ++i) {
-            const size_t here = found[i] - a;
-            if (i > e.begin) out.append(was, found[i - 1] + len - a, here - (found[i - 1] + len - a));
-            replace_into(out, std::string_view(was).substr(here, len));
+    const u32 ch = k.kind == VimKey::kChar && !k.ctrl ? k.ch : 0;
+    if (k.kind == VimKey::kEsc || ch == 'q' || (k.ctrl && (k.ch == 'c' || k.ch == '['))) {
+        confirm_end(ed);
+    } else if (ch == 'y') {
+        take();
+        confirm_next(ed);
+    } else if (ch == 'l') {
+        take();
+        confirm_end(ed);
+    } else if (ch == 'n') {
+        c.last_end = c.m.end;
+        c.next = c.per_line ? next_line_start(ed.buf, c.m.start) : std::max(c.m.end, c.m.anchor);
+        confirm_next(ed);
+    } else if (ch == 'a') {  // this one and all the rest, without asking
+        take();
+        bool same_line = false;  // (the next one is on the line of the one just taken: no line more)
+        each_whole(ed.buf, c.p, c.next, c.end, c.per_line, [&](const RegexMatch& m) {
+            same_line = ed.buf.line_of(m.start) == c.last_line;
+            return false;
+        });
+        u64 lines = 0, last = 0;
+        const u64 more = replace_all(ed, c.p, c.with, true, c.next, c.end, c.per_line, &lines, &last);
+        if (more) {
+            c.lines += lines - (same_line ? 1 : 0);
+            c.last_line = ed.buf.line_of(last);
         }
-        ed.replace(at, at + (b - a), out);
-        moved += static_cast<i64>(out.size()) - static_cast<i64>(b - a);
+        c.count += more;
+        confirm_end(ed);
     }
-    ed.end_group();
-    const u64 count = found.size(), lines = by_line.size(), k = by_line.back().begin;
-    const u64 last_line = ed.buf.line_of(static_cast<u64>(static_cast<i64>(found[k]) + static_cast<i64>(k) * each));
-    go(ed, first_nonblank(ed, std::min(last_line, lines_of(ed) - 1)));
-    if (count > 2 || lines > 1) message_ = std::to_string(count) + (count == 1 ? " substitution on " : " substitutions on ") + std::to_string(lines) + (lines == 1 ? " line" : " lines");
+    return kHandled;
 }
 
 void Vim::run_command(Editor& ed, std::string line) {
@@ -3338,6 +3751,7 @@ u32 Vim::feed(Editor& ed, const VimKey& k) {
         current_.push_back(k);
     }
     u32 r = 0;
+    if (confirm_.on) return confirm_key(ed, k);  // (:s///c asks about each match)
     switch (mode_) {
         case kInsert:
         case kReplace: r = insert_key(ed, k); break;

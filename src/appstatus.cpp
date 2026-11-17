@@ -295,6 +295,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                 }
                 add_path(path, g.repo ? 3 : 2);  // (a little more between the repository and the file)
                 if (d.loading) u.left.push_back({"loading\xE2\x80\xA6", ink::kMuted, kNone, 2});
+                else if (remote_saving(d.id)) u.left.push_back({"saving\xE2\x80\xA6", ink::kMuted, kNone, 2});  // (remote_gen_ says when this changes)
                 else if (d.read_only && !d.term && !d.prof && !d.image && !d.pdf) u.left.push_back({"read only", ink::kMuted, kNone, 2});
                 else if (ed.modified()) u.left.push_back({font.has(0x25CF) ? "\xE2\x97\x8F" : "*", ink::kAccent, kNone, 1});
             }

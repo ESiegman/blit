@@ -2,6 +2,7 @@
 
 #if !defined(BLIT_AGENT)
 #include "remote.hpp"  // (blit's, not its agent's: a folder on another machine)
+#include "vim.hpp"     // (and the patterns its Vim reads; the agent is asked for plain text)
 #endif
 
 #include <dirent.h>
@@ -452,6 +453,57 @@ bool Finder::grep(std::string_view text, std::span<const FuzzyTerm> terms, u32 f
     return true;
 }
 
+#if !defined(BLIT_AGENT)
+namespace {
+
+// The lines a phrase or pattern is on, each with how many matches start
+// there (all of them are found, one after another, as :s finds them).
+bool grep_lines(std::string_view text, const Vim::Pattern& pat, u32 file, size_t room, std::vector<FindHit>* out) {
+    if (std::memchr(text.data(), 0, std::min<size_t>(text.size(), 8192))) return false;  // not text
+    size_t counted_to = 0, line_end = 0;
+    u32 line_no = 0;
+    bool any = false;
+    Vim::each_whole(text, pat, 0, text.size() + 1, false, [&](const RegexMatch& m) {
+        const size_t at = static_cast<size_t>(std::min<u64>(m.start, text.size()));
+        if (any && at <= line_end) {  // (on the line of the last one: up to its "\n")
+            ++out->back().count;
+            return true;
+        }
+        if (room == 0) return false;
+        size_t ls = at == 0 ? std::string_view::npos : text.rfind('\n', at - 1);
+        ls = ls == std::string_view::npos ? 0 : ls + 1;
+        size_t le = text.find('\n', at);
+        if (le == std::string_view::npos) le = text.size();
+        line_no += static_cast<u32>(std::count(text.begin() + static_cast<std::ptrdiff_t>(counted_to), text.begin() + static_cast<std::ptrdiff_t>(ls), '\n'));
+        counted_to = ls;
+        std::string_view line = text.substr(ls, le - ls);
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+        FindHit h;
+        h.file = file;
+        h.line = line_no;
+        h.col = static_cast<u32>(std::min(at - ls, line.size()));
+        // (A very long line is kept from a little before the match on.)
+        size_t from = h.col > 200 ? h.col - 80 : 0;
+        while (from > 0 && (static_cast<u8>(line[from]) & 0xC0) == 0x80) --from;
+        h.text = std::string(line.substr(from, 600));
+        out->push_back(std::move(h));
+        --room;
+        any = true;
+        line_end = le;
+        return true;
+    });
+    return true;
+}
+
+}  // namespace
+
+bool Finder::grep(std::string_view text, std::string_view typed, TextQuery how, u32 file, size_t room, std::vector<FindHit>* out) {
+    const Vim::Pattern pat = Vim::make_pattern(typed, how.regex, how.exact);
+    if (pat.bad() || pat.empty()) return true;
+    return grep_lines(text, pat, file, room, out);
+}
+#endif
+
 const Finder::Base* Finder::Bases::under(std::string_view typed, const std::shared_ptr<const FileIndex>& ix, u64 now, u64 max_age_ns) const {
     for (size_t i = kept.size(); i-- > 0;) {
         const Base& b = kept[i];
@@ -498,10 +550,27 @@ void Finder::search_names(u64 serial, const std::string& typed, std::shared_ptr<
     publish(std::move(r));
 }
 
-void Finder::search_text(u64 serial, const std::string& typed, std::shared_ptr<const FileIndex> ix, u64 mine) {
-    const std::vector<FuzzyTerm> terms = fuzzy_terms(typed);
+void Finder::search_text(u64 serial, const std::string& typed, TextQuery how, std::shared_ptr<const FileIndex> ix, u64 mine) {
+    // Words (each anywhere on the line), or a phrase or a pattern.
+    const bool words = !how.regex && !how.phrase;
+    std::vector<FuzzyTerm> terms;
     size_t longest = 0;
-    for (const FuzzyTerm& t : terms) longest = std::max(longest, t.text.size());
+    if (words) {
+        terms = fuzzy_terms(typed);
+        for (FuzzyTerm& t : terms) {
+            t.exact_case = t.exact_case || how.exact;
+            longest = std::max(longest, t.text.size());
+        }
+    }
+#if !defined(BLIT_AGENT)
+    Vim::Pattern pat;
+    if (!words) {
+        pat = Vim::make_pattern(typed, how.regex, how.exact);
+        longest = pat.bad() || pat.empty() ? 0 : how.regex ? std::max<size_t>(typed.size(), 2) : typed.size();
+    }
+#endif
+    // What a search made to the end is kept by: what was typed, read how.
+    const std::string key = std::string(1, words ? 'w' : how.phrase ? 'p' : 'r') + (how.exact ? 'x' : 's') + typed;
     auto fresh = [&] {
         auto r = std::make_shared<FindResults>();
         r->index = ix;
@@ -523,7 +592,8 @@ void Finder::search_text(u64 serial, const std::string& typed, std::shared_ptr<c
     // files may have been changed since.)
     constexpr u64 kBaseFor = 10'000'000'000ull;
     const u64 started = now_ns();
-    const Base* base = text_bases_.under(typed, ix, started, kBaseFor);
+    // (Not a pattern: "a" finds fewer files than "a\|b".)
+    const Base* base = how.regex ? nullptr : text_bases_.under(key, ix, started, kBaseFor);
     const bool narrow = base != nullptr;
     const u64 looked_ns = narrow ? base->when_ns : started;  // when every file was last looked through
     const std::vector<u32>* among = narrow ? &base->files : nullptr;
@@ -551,7 +621,11 @@ void Finder::search_text(u64 serial, const std::string& typed, std::shared_ptr<c
             path.assign(ix->root).append("/").append(ix->path(i));
             if (!read_file(path, max_bytes, &text, true)) continue;
             found.clear();
+#if !defined(BLIT_AGENT)
+            if (!(words ? grep(text, terms, i, kMaxLines, &found) : grep_lines(text, pat, i, kMaxLines, &found)) || found.empty()) continue;
+#else
             if (!grep(text, terms, i, kMaxLines, &found) || found.empty()) continue;
+#endif
             std::lock_guard lock(m);
             ++files_hit;
             hit_files.push_back(i);
@@ -575,17 +649,49 @@ void Finder::search_text(u64 serial, const std::string& typed, std::shared_ptr<c
     };
 #if !defined(BLIT_AGENT)
     if (ix->remote_walk) {  // the files are on another machine: searched there, by its agent
+        // A phrase or a pattern: its agent is asked for the lines with the
+        // plain text every match has (in either case), and they are looked
+        // through here.
+        std::string asked = typed;
+        if (!words) {
+            asked = pat.re ? pat.re->required() : pat.text;
+            for (char& ch : asked) ch = static_cast<char>(ch >= 'A' && ch <= 'Z' ? ch + 32 : ch);
+            if (asked.size() < 2) {
+                auto r = fresh();
+                r->note = "On another machine a pattern needs two letters or more of plain text in it";
+                publish(std::move(r));
+                return;
+            }
+        }
         std::string there;
         bool capped = false;
         const std::shared_ptr<Remote> r = remote_for(ix->root, &there, kRemoteWaitMs);
-        if (!r || !r->grep(ix->remote_walk, among, typed, max_bytes, kMaxLines, &hits, &hit_files, &capped)) {
+        if (!r || !r->grep(ix->remote_walk, among, asked, max_bytes, kMaxLines, &hits, &hit_files, &capped)) {
             if (search_epoch_.load() == mine) publish(fresh());
             return;
         }
         if (search_epoch_.load() != mine) return;
-        if (!capped) {
+        if (!words) {
+            std::erase_if(hits, [&](FindHit& h) {
+                u32 n = 0;
+                size_t first = std::string_view::npos;
+                Vim::each_whole(h.text, pat, 0, h.text.size() + 1, false, [&](const RegexMatch& x) {
+                    if (first == std::string_view::npos) first = static_cast<size_t>(x.start);
+                    ++n;
+                    return true;
+                });
+                h.count = n;
+                if (n && h.col <= 200) h.col = static_cast<u32>(first);  // (the line is all there: where the match is)
+                return n == 0;
+            });
+            hit_files.clear();
+            for (const FindHit& h : hits)
+                if (hit_files.empty() || hit_files.back() != h.file) hit_files.push_back(h.file);
+        }
+        if (!capped && !how.regex) {
             std::sort(hit_files.begin(), hit_files.end());
-            text_bases_.add({typed, ix, hit_files, looked_ns});
+            hit_files.erase(std::unique(hit_files.begin(), hit_files.end()), hit_files.end());
+            text_bases_.add({key, ix, hit_files, looked_ns});
         }
         const u64 files = hit_files.size();
         report(std::move(hits), files, false);
@@ -611,9 +717,9 @@ void Finder::search_text(u64 serial, const std::string& typed, std::shared_ptr<c
         }
     }
     if (search_epoch_.load() != mine) return;
-    if (!full.load()) {
+    if (!full.load() && !how.regex) {
         std::sort(hit_files.begin(), hit_files.end());
-        text_bases_.add({typed, ix, std::move(hit_files), looked_ns});
+        text_bases_.add({key, ix, std::move(hit_files), looked_ns});
     }
     report(std::move(hits), files_hit, false);
 }
@@ -674,12 +780,13 @@ u64 Finder::find_names(std::string_view typed) {
     return serial;
 }
 
-u64 Finder::find_text(std::string_view typed) {
+u64 Finder::find_text(std::string_view typed, TextQuery how) {
     u64 serial;
     {
         std::lock_guard lock(mu_);
         want_typed_ = std::string(typed);
         want_text_ = true;
+        want_how_ = how;
         live_ = true;
         serial = ++want_serial_;
         ++search_epoch_;
@@ -750,11 +857,12 @@ void Finder::run(std::stop_token stop) {
         busy_ = true;
         const u64 serial = want_serial_;
         const bool text = want_text_;
+        const TextQuery how = want_how_;
         const std::string typed = want_typed_;
         const std::shared_ptr<const FileIndex> ix = index_;
         const u64 mine = search_epoch_.load();  // (under the lock that gave the serial: a search started after it overtakes this one)
         lock.unlock();
-        if (text) search_text(serial, typed, ix, mine);
+        if (text) search_text(serial, typed, how, ix, mine);
         else search_names(serial, typed, ix, mine);
         lock.lock();
         if (want_serial_ == serial && index_ == ix) done_serial_ = serial;  // (a new list came meanwhile: it is searched again)

@@ -76,6 +76,15 @@ public:
         if (!undo_.empty()) undo_.back().sealed = true;
         saved_id_ = state_id();
     }
+    // A save made elsewhere (a copy of the text written on another thread,
+    // while typing goes on): where the history is as the copy is taken (what
+    // is typed next is a step of its own), and, once that copy has been
+    // written, the text as it was there is the saved state.
+    u64 save_point() {
+        if (!undo_.empty()) undo_.back().sealed = true;
+        return state_id();
+    }
+    void mark_saved_at(u64 point) { saved_id_ = point; }
     // Changes whenever the text changes; the renderer keys its caches on it.
     u64 revision() const { return revision_; }
 
@@ -100,6 +109,8 @@ public:
     u32 guess_indent(bool* tabs = nullptr) const;
     u32 col_of(u64 off) const;
     u64 off_at(u64 line, u32 col, bool nearest = false) const;
+    // The next and the previous character: a grapheme cluster, so a letter
+    // and the marks on it, or an emoji and what is joined to it, are one.
     u64 next_char(u64 off) const;
     u64 prev_char(u64 off) const;
 
@@ -177,6 +188,7 @@ private:
     TextEdit begin_edit(u64 off, u64 remove_len) const;
     void end_edit(TextEdit& e, u64 insert_len);
     u64 word_edge(u64 off, int dir) const;
+    u64 cluster_edge(u64 off, u64 limit) const;
     u64 state_id() const { return undo_.empty() ? 0 : undo_.back().id; }
     u32 tab_stop(u32 col) const { return (col / tab_width + 1) * tab_width; }
 

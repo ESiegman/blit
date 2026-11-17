@@ -335,17 +335,27 @@ struct Ran {
 
 // The git running now, to stop it: a process here, or one on another
 // machine (its number there, negated, and the connection to that machine).
+// A stop asked for while it is still starting is carried out once it has.
 struct Child {
     std::atomic<int> pid{0};
+    std::atomic<bool> stopping{false};
     std::mutex mu;
     std::shared_ptr<Remote> conn;
     void stop() {
+        stopping = true;
+        kill_now();
+    }
+    void started(int p) {
+        pid = p;
+        if (stopping) kill_now();
+    }
+    void kill_now() {
         const int p = pid;
         if (p > 0) {
             ::kill(p, SIGTERM);
         } else if (p < 0) {
             std::lock_guard lock(mu);
-            if (conn) conn->kill(static_cast<u32>(-p), SIGTERM);
+            if (conn) conn->kill(static_cast<u32>(-p), SIGTERM);  // (sent, not waited for)
         }
     }
 };
@@ -404,7 +414,7 @@ Ran run_git_remote(Child& child, const std::string& root, const std::vector<std:
         std::lock_guard lock(child.mu);
         child.conn = conn;
     }
-    child.pid = -static_cast<int>(p.id);
+    child.started(-static_cast<int>(p.id));
     for (const int fd : {p.in, p.out, p.err}) fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
     pump(p.in, p.out, p.err, input, r);
     r.code = conn->wait(p.id);
@@ -485,7 +495,7 @@ Ran run_git(Child& child, const std::string& program, const std::string& root, c
         r.err = std::string("cannot run git: ") + std::strerror(rc);
         return r;
     }
-    child.pid = pid;
+    child.started(pid);
     pump(in[1], out[0], err[0], input, r);
     int status = 0;
     while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
@@ -539,7 +549,13 @@ struct Git::Worker {
     bool look = false;     // dir has changed since the repository was last looked for
     std::string busy;
     bool working = false;  // a job is being done
-    u64 working_doc = 0;   // and it reads this document's text
+    u64 working_doc = 0;   // and it is about this document
+    // While a job is about a document: the git it runs for it (the committed
+    // text, the blame), which forget() stops; when its text is being read,
+    // which forget() waits for (a moment: it is read into memory, not
+    // waited on); and whether forget() has let go of it.
+    u64 git_doc = 0, reading_doc = 0;
+    bool dropped = false;
     std::condition_variable cv_idle;
     bool stop = false;
     std::thread thread;
@@ -554,10 +570,43 @@ struct Git::Worker {
 
 #if !defined(_WIN32)
     Ran git(const std::vector<std::string>& args, std::string_view input = {}, bool action = false) {
+        child.stopping = false;
         child_is_action = action;
         Ran r = run_git(child, program, root, args, input);
         child_is_action = false;
         return r;
+    }
+
+    // Git run for a document's job, which forget() stops if the document goes.
+    Ran git_for(u64 doc, const std::vector<std::string>& args, std::string_view input = {}) {
+        {
+            std::lock_guard lock(mu);
+            if (dropped) return {};
+            git_doc = doc;
+            child.stopping = false;
+        }
+        Ran r = run_git(child, program, root, args, input);
+        std::lock_guard lock(mu);
+        git_doc = 0;
+        return r;
+    }
+    bool let_go() {
+        std::lock_guard lock(mu);
+        return dropped;
+    }
+    // The job's document's text is about to be read: false if it has gone.
+    bool reading(u64 doc) {
+        std::lock_guard lock(mu);
+        if (dropped) return false;
+        reading_doc = doc;
+        return true;
+    }
+    void done_reading() {
+        {
+            std::lock_guard lock(mu);
+            reading_doc = 0;
+        }
+        cv_idle.notify_all();
     }
 
     // The path of a file inside the repository, or empty if it is not in it.
@@ -645,18 +694,27 @@ struct Git::Worker {
                 if (rel.empty()) break;
                 auto it = bases.find(rel);
                 if (it == bases.end()) {
-                    const Ran r = git({"show", "HEAD:" + rel});
+                    const Ran r = git_for(job.doc, {"show", "HEAD:" + rel});
+                    if (let_go()) return;  // (the document went, and its git was stopped: what it gave is not kept)
                     it = bases.emplace(rel, r.code == 0 ? std::make_shared<std::vector<u64>>(line_hashes(std::string_view(r.out))) : nullptr).first;
                 }
                 res.ok = true;
                 res.tracked = it->second != nullptr;
-                if (res.tracked) res.hunks = diff_lines(*it->second, line_hashes(std::span<const Piece>(job.pieces)));
+                if (res.tracked) {
+                    if (!reading(job.doc)) return;
+                    res.hunks = diff_lines(*it->second, line_hashes(std::span<const Piece>(job.pieces)));
+                    done_reading();
+                }
                 break;
             }
             case kBlame: {
                 const std::string rel = inside(job.path);
                 if (rel.empty()) break;
-                const Ran r = git({"blame", "--porcelain", "--contents", "-", "--", rel}, joined(job.pieces));
+                if (!reading(job.doc)) return;
+                std::string text = joined(job.pieces);
+                done_reading();
+                const Ran r = git_for(job.doc, {"blame", "--porcelain", "--contents", "-", "--", rel}, text);
+                if (let_go()) return;
                 auto blame = std::make_shared<GitBlame>();
                 res.ok = r.code == 0 && parse_blame(r.out, blame.get());
                 if (res.ok) res.blame = std::move(blame);
@@ -694,6 +752,7 @@ struct Git::Worker {
                 job = std::move(jobs.front());
                 jobs.pop_front();
                 working = true;
+                dropped = false;
                 if (job.kind == kHunks || job.kind == kBlame) working_doc = job.doc;
                 if (job.kind == kAction) busy = job.label;
                 if (look) {
@@ -822,7 +881,21 @@ void Git::text(u64 doc, std::vector<std::string> args, std::string label) {
 void Git::forget(u64 doc) {
     std::unique_lock lock(w_->mu);
     std::erase_if(w_->jobs, [doc](const Worker::Job& j) { return (j.kind == kHunks || j.kind == kBlame) && j.doc == doc; });
-    w_->cv_idle.wait(lock, [&] { return w_->working_doc != doc; });
+    if (w_->working_doc != doc) return;
+    // The job under way for it: its git is stopped rather than waited for
+    // (a blame of a long file, or one on a slow connection, can take a
+    // while), and the text is not read after this returns. Only a read of
+    // the text going on now is waited for.
+    w_->dropped = true;
+#if !defined(_WIN32)
+    if (w_->git_doc == doc) w_->child.stop();
+#endif
+    w_->cv_idle.wait(lock, [&] { return w_->reading_doc != doc; });
+}
+
+bool Git::working_on(u64 doc) const {
+    std::lock_guard lock(w_->mu);
+    return w_->git_doc == doc;
 }
 
 bool Git::idle() const {

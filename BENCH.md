@@ -2035,6 +2035,97 @@ group (`tcgetpgrp` on its side of the pseudo-terminal: 5.6 to 6.0 µs here),
 and the program's name its arguments (`sysctl(KERN_PROCARGS2)`: 7.4 to 7.6
 µs).
 
+### Round 33: regular expressions, and replacing (one of three changes made side by side: see Round 34)
+
+Vim's `/`, `?`, `n`, `*`, `gn` and `:s`, the highlighting, and the find
+boxes take Vim's regular expressions, on an engine of blit's own
+(`src/regex.cpp`) that reads the document where it lies, a piece at a time.
+A pattern compiles to a Pike VM (every way a match could go, run at once:
+the text's length times the program's at worst, never exponential). A
+pattern with nothing special in it is not run there: it is text, looked for
+as before. A pattern that stays on a line and has three bytes or more of
+plain text every match must contain has that looked for with `memchr`
+(the finder's way), and only the lines it is on go through the VM. Any
+other one-line pattern is passed over the text by a DFA built as it goes
+(a state for each set of the VM's places that turns up, ASCII by a table,
+the rest by a map), line by line, and the VM runs only on a line the DFA
+says has a match, to say where.
+
+On one thread, 105 MB of code (the medians of three runs; `blit_bench run
+FILE find`):
+
+| Pattern | Way | Speed |
+|---|---|---:|
+| `qzjx\d\+` (plain text in it, not there) | prefilter | 21.6 GB/s |
+| `[A-Z]\{3}[0-9]\{4}` (no plain text, not there) | DFA | 0.55 GB/s |
+| `qzjx\|vkqz\|zzqq` (an alternation, not there) | DFA | 0.55 GB/s |
+| `\<\d\+\>` (1,052,787 lines have one) | DFA, then the VM on each | 0.29 GB/s |
+| `tensor shape` as a phrase (replacing's search) | text | 7.4 GB/s |
+
+Vim's `/` (`Vim::find`, on as many threads as it takes past 8 MB): the
+class and the alternation, not there, 46 ms in the 105 MB, 182 ms in the
+1 GB log. Searching for text as it stands is unchanged, turn about with
+`main` at 4ce9b19, built against each library (best of 5, three rounds):
+
+| `Vim::find`, a word not there | Before | After |
+|---|---:|---:|
+| 1 GB log, rare letters, forward / back | 4.88 to 5.09 / 4.94 to 5.11 ms | 4.92 to 4.99 / 4.88 to 5.03 ms |
+| 105 MB code, common letters, forward | 9.81 to 10.76 ms | 9.98 to 12.01 ms |
+| every `return` in 105 MB (421,115) | 17.2 to 18.4 ms | 17.4 to 18.1 ms |
+
+Search in files' word grep is the same code, and compiles to the same
+instructions (`find_text` and `find_term` are byte for byte those of
+`main`): best of 7, 2.45 to 2.55 GB/s before and 2.51 to 2.53 after for a
+word that is not there in the 105 MB. The frames (offscreen at 2560x1600,
+three runs each, alternating, with and without Vim's modes): typing, keys
+and scrolling 35.0 to 38.6 µs of CPU a frame at p50 on both sides, the
+layout 0.33 to 1.33 µs on both. The matches are lit from a cache keyed on
+the text, the view and the pattern, as before; a regular expression is
+looked for line by line, a long line as far as 8 KB, and only when that
+key changes.
+
+The machine was shared with other work during these runs; the numbers
+compare runs taken together.
+
+### Round 34: three changes made side by side, merged
+
+Search and replace (Round 33), remote work that never waits on the main
+thread, and characters made of several code points (with the Markdown
+preview's code blocks coloured) were each made in a copy of `main` at
+4ce9b19 by an agent of its own, measured there turn about against that
+build, then merged (seven files changed by two of them merged with no
+conflict). The merged build against 4ce9b19, turn about, medians of 5 to 6:
+
+| | Before | After |
+|---|---:|---:|
+| Fill, code-100m.txt, sequential / random | 1.270 / 1.560 µs | 1.319 / 1.578 µs |
+| Fill, utf8-16m.txt, sequential / random | 6.907 / 7.151 µs | 7.238 / 7.428 µs |
+| Search in files, a common word, code-100m.txt | 2.31 GB/s | 2.24 GB/s |
+| … letters in no line, utf8-16m.txt | 26.6 GB/s | 29.4 GB/s |
+| Typing a character, code-100m.txt | 22.0 ns | 22.4 ns |
+| Scrolling at 2560x1600, code-100m.txt: frames a second / CPU p50 / fill p50 | 16,374 to 17,397 / 30.9 µs / 1.25 µs | 15,881 to 17,349 / 30.6 µs / 1.25 µs |
+| … utf8-16m.txt | 16,860 to 17,439 / 30.2 µs / 4.62 to 4.88 µs | 16,640 to 17,240 / 30.1 µs / 4.62 to 4.83 µs |
+
+- **Fill is 1 to 4% slower on ASCII text, 4 to 5% on UTF-8, in
+  `blit_bench`; the same in a frame.** Text that is not ASCII now has its
+  width looked up in a table of Unicode's (two loads above U+0300), and a
+  character that may join the one before (a mark, a joiner, an emoji)
+  takes a slow path; ASCII takes none of it. What is left on ASCII text is
+  where the code lies: keeping the row's last place only when a mark could
+  follow, which takes work out, measured +12% on code-100m.txt, and a
+  build with the old `grid.cpp` and everything else new measured −0.5%.
+  So it was not kept, and the 0.02 to 0.05 µs a frame stands.
+- **Remote work, the main thread's time** (the agent that made it, against
+  4ce9b19 with the same timing verbs added): a save on a host 200 ms away
+  408 ms → 0.006 ms; a keystroke into a folder there 408 ms → 0.005 ms;
+  a file made or renamed in the tree there 205 to 604 ms → 0.004 to 0.012
+  ms. A remote terminal running `yes`: 72 → 619 MB in 8 s before, 91 MB
+  flat after (and with an agent from before, which cannot be paused: blit
+  stops reading at 4 MB instead).
+- The line-lookup benchmark, in code none of the three touched, moved 12%
+  between the two builds in the same sitting: the size of this machine's
+  noise for numbers this small.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
@@ -2066,6 +2157,11 @@ and the program's name its arguments (`sysctl(KERN_PROCARGS2)`: 7.4 to 7.6
   width ran slower, not faster, GPU-bound (13,700 to 14,300 frames a second
   against 17,400 to 18,100 at 2560x1600). The frame is not limited by the
   shader's work per pixel. (Round 19's review.)
+- **A DFA row of 256 entries, so that a byte costs one load and one
+  comparison** (a line's end, a "\r" and a byte past ASCII marked in it,
+  for the slow path): slower, 470 against 580 MB/s for a class or an
+  alternation over 105 MB, three runs each, alternating. The row of 128
+  with the three tests before it stays.
 - **Keeping the highlight query in slices for good**: each slice needs its
   own walk over the tree, so four slices make a pass 2.4x slower (2.3 →
   5.7 ms). They are only used for the first moments.

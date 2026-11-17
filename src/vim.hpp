@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "editor.hpp"
+#include "regex.hpp"
 
 namespace blit {
 
@@ -133,22 +134,60 @@ public:
     std::function<void(const std::string&)> clipboard_set;
 
     // The search pattern whose matches are to be shown (hlsearch), or empty.
+    // A pattern with nothing special in it is looked for as text (the
+    // fastest way); any other is a regular expression (regex.hpp).
     struct Pattern {
-        std::string text;  // what to look for, literally
+        std::string text;  // what to look for, literally; with `re`, the pattern as typed
         bool ignore_case = false, word = false;
-        bool empty() const { return text.empty(); }
+        std::shared_ptr<const VimRegex> re;
+        std::string error;  // it is no pattern: Vim's message saying why
+        bool empty() const { return text.empty() && !re; }
+        bool bad() const { return !error.empty(); }
     };
     const Pattern& highlight() const { return highlight_on_ ? pattern_ : none_; }
     // The next place the pattern is, from `from` (not at it), or ~0. No more
-    // than `reach` bytes are looked at, wrapping round included.
-    static u64 find(const Buffer& buf, const Pattern& p, u64 from, bool forward, bool wrap, bool* wrapped = nullptr, u64 reach = ~0ull);
+    // than `reach` bytes are looked at, wrapping round included. *m, if
+    // given, gets the whole match.
+    static u64 find(const Buffer& buf, const Pattern& p, u64 from, bool forward, bool wrap, bool* wrapped = nullptr, u64 reach = ~0ull, RegexMatch* m = nullptr);
     // Calls hit(at) with the start of each match that starts in [lo, hi), in
     // order (overlapping ones too), until it returns true; returns where
     // that was, or ~0.
     static u64 each_match(const Buffer& buf, const Pattern& p, u64 lo, u64 hi, const std::function<bool(u64)>& hit);
-    static Pattern parse_pattern(std::string_view typed);
+    // The matches that start in [lo, hi) one after another, none inside
+    // the one before, as :s and the highlighting take them (with
+    // per_line, only the first on each line), until fn returns false.
+    static void each_whole(const Buffer& buf, const Pattern& p, u64 lo, u64 hi, bool per_line, const std::function<bool(const RegexMatch&)>& fn);
+    static void each_whole(std::string_view text, const Pattern& p, u64 lo, u64 hi, bool per_line, const std::function<bool(const RegexMatch&)>& fn);
+    // What is typed, as Vim's / reads it.
+    static Pattern parse_pattern(std::string_view typed, const std::string& last_sub = {});
+    // What a box that finds things reads: a regular expression (`regex`) or
+    // text as it stands; with smart case, as typed when it has a capital,
+    // else in either case; or exactly as typed.
+    static Pattern make_pattern(std::string_view typed, bool regex, bool exact_case);
     // Where the pattern is in a piece of text, at or after `from`; npos if nowhere.
-    static size_t match_in(std::string_view hay, const Pattern& p, size_t from);
+    static size_t match_in(std::string_view hay, const Pattern& p, size_t from, RegexMatch* m = nullptr);
+    // What a match becomes: by :s's rules (& \1 \r ...), or as it stands.
+    static void replacement(const RegexMatch& m, std::string_view with, bool rules, const std::function<std::string(u64, u64)>& text, std::string* out);
+    // Every match in [lo, hi) of the document replaced (by :s's rules, or
+    // as it stands), all in one undo step; how many. *lines gets how many
+    // lines had one, *last where the last one's replacement starts now.
+    static u64 replace_all(Editor& ed, const Pattern& p, std::string_view with, bool rules, u64 lo, u64 hi, bool per_line = false, u64* lines = nullptr,
+                           u64* last = nullptr);
+    // The same in a text (a file not open); *count gets how many.
+    static std::string replace_text(std::string_view text, const Pattern& p, std::string_view with, bool rules, u64* count);
+    // The command line opened with `text` on it, as if it had been typed
+    // (a search: the cursor goes to the first match), and selected if asked:
+    // the first character typed then takes its place, Backspace clears it.
+    void open_command(Editor& ed, char kind, std::string_view text, bool selected);
+    bool command_selected() const { return mode_ == kCommand && cmd_selected_; }
+    // :s with the c flag is asking about a match.
+    bool confirming() const { return confirm_.on; }
+    // What a box found in the file becomes the last search (n and N go on with it).
+    void set_search(const Pattern& p) {
+        pattern_ = p;
+        highlight_on_ = true;
+        search_forward_ = true;
+    }
 
 private:
     struct Motion {
@@ -169,6 +208,7 @@ private:
     u32 normal_key(Editor& ed, const VimKey& k);
     u32 insert_key(Editor& ed, const VimKey& k);
     u32 command_key(Editor& ed, const VimKey& k);
+    void incsearch(Editor& ed);
     bool motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* out);
     bool text_object(Editor& ed, u32 c, bool around, u32 count, u64* lo, u64* hi, bool* linewise);
     void operate(Editor& ed, char op, u64 lo, u64 hi, bool linewise);
@@ -181,6 +221,9 @@ private:
     void leave_visual(Editor& ed);
     void run_command(Editor& ed, std::string line);
     void substitute(Editor& ed, u64 line0, u64 line1, std::string_view rest, bool flags = true);
+    u32 confirm_key(Editor& ed, const VimKey& k);
+    void confirm_next(Editor& ed);
+    void confirm_end(Editor& ed);
     bool search(Editor& ed, bool forward, u32 count);
     void clamp(Editor& ed);
     void go(Editor& ed, u64 off, bool keep_column = false);
@@ -237,6 +280,20 @@ private:
         i64 home = -1;  // I and A: the block's left edge, where the cursor goes afterwards
     } block_insert_;
     std::string last_sub_;       // the last :s, for &
+    std::string last_flags_;     // its flags, for :s with &
+    std::string last_with_;      // what it put in, for ~
+    // :s with the c flag: the match being asked about, and what is left.
+    struct Confirm {
+        bool on = false;
+        Pattern p;
+        std::string with;
+        u64 at = 0, end = 0;     // the match asked about; the end of the lines it may be on
+        u64 next = 0;            // where the next is looked for
+        u64 last_end = ~0ull;    // where the last one taken ended (an empty match is not taken there)
+        bool per_line = false;
+        u64 count = 0, lines = 0, last_line = ~0ull;
+        RegexMatch m;
+    } confirm_;
     // Places in the document in front. They move with its text (edited()),
     // and are put by while another document is in front.
     struct Places {
@@ -256,6 +313,7 @@ private:
     char cmd_op_ = 0, cmd_reg_ = 0;  // "d/word": the operator a search is the motion of
     char cmd_kind_ = ':';
     std::string cmd_;
+    bool cmd_selected_ = false;  // what is on it is selected: typing takes its place
     u64 cmd_origin_ = 0;  // where the cursor was when a search began
     std::string message_;
     std::vector<std::string> history_;
