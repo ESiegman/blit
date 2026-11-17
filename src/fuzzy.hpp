@@ -28,6 +28,11 @@ std::vector<FuzzyTerm> fuzzy_terms(std::string_view typed);
 // matched letter added to it.
 int fuzzy_score(const FuzzyTerm& term, std::string_view text, std::vector<u32>* at = nullptr);
 
+// A closer match than fuzzy_score() asks for: the term whole somewhere in
+// the text, or each letter just after the one before it or at the start of
+// a word ("lnum" in "line numbers"; not "tot" in "editor.tab_width").
+bool fuzzy_word_starts(const FuzzyTerm& term, std::string_view text);
+
 // The same for a path and all the terms. A term found in the file's name
 // alone counts for more than one that needs the folders too, and of two
 // equally good matches the shorter path wins.

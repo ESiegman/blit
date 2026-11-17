@@ -216,6 +216,8 @@ ConfigValue config_get(const Config& c, std::string_view key);
 std::string config_set(Config& c, const ConfigSetting& s);
 // Every key config_get() answers for.
 std::span<const char* const> config_keys();
+// A setting's value as init.lua writes it: true, 13, "Menlo", { "a", "b" }.
+std::string config_lua(const ConfigValue& v);
 // A string as a setting's literal value, quotes and all.
 std::string toml_quote(std::string_view s);
 

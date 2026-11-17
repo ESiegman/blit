@@ -2586,6 +2586,26 @@ server and everything on, against the build before:
   the name and with a selection, none for a name used once or with
   `lsp.highlight_uses` off. All 20 suites pass.
 
+### Round 51: Search everywhere
+
+Cmd+K: files, the project's symbols, commands and settings in one box,
+each kind under its heading, a few of each. The files are Go to file's
+worker's, the symbols the server's `workspace/symbol`, asked as each
+letter is typed; the commands and settings are scored on the main thread
+(133 commands and 56 settings) with a closer match than the command search's: the
+letters together, or each next to the one before or at a word's start,
+so `tot` finds `total` and not `editor.tab_width`. The rows are made
+again as the files and symbols come, the chosen row kept chosen. A
+setting chosen opens init.lua at its line, the value selected: the line
+that sets it, else the template's comment of it made live, else a new
+line. Nothing here runs unless the box is open: no benchmark.
+
+find.sh has 12 cases more (nothing typed, a file, each kind under its
+heading, a setting with its value, the closer match, nothing found, Tab,
+Enter on a file, a command and a setting, the template's line, a line
+already there), lsp.sh two (a symbol listed and gone to), fuzz_buffer.cpp
+the closer match's checks.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

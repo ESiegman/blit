@@ -765,6 +765,38 @@ ConfigValue config_get(const Config& c, std::string_view key) {
     return {};
 }
 
+std::string config_lua(const ConfigValue& v) {
+    auto quote = [](std::string_view s) {
+        std::string q = "\"";
+        for (const char ch : s) {
+            if (ch == '"' || ch == '\\') q += '\\', q += ch;
+            else if (ch == '\n') q += "\\n";
+            else if (static_cast<unsigned char>(ch) < 0x20) {  // (three digits: a digit after it is not taken into it)
+                char e[8];
+                std::snprintf(e, sizeof e, "\\%03u", static_cast<unsigned>(static_cast<unsigned char>(ch)));
+                q += e;
+            }
+            else q += ch;
+        }
+        return q + "\"";
+    };
+    switch (v.kind) {
+        case ConfigValue::kBool: return v.flag ? "true" : "false";
+        case ConfigValue::kNumber: {
+            char b[32];
+            std::snprintf(b, sizeof b, "%g", v.number);
+            return b;
+        }
+        case ConfigValue::kText: return quote(v.text);
+        case ConfigValue::kList: {
+            std::string out = "{";
+            for (size_t i = 0; i < v.list.size(); ++i) out += (i ? ", " : " ") + quote(v.list[i]);
+            return out + (v.list.empty() ? "}" : " }");
+        }
+        default: return {};
+    }
+}
+
 std::span<const char* const> config_keys() {
     static const std::vector<const char*> keys = [] {
         std::vector<const char*> k;

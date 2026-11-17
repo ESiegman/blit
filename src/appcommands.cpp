@@ -289,6 +289,7 @@ void App::commands_create() {
     own("Switch between header and source", {key(SDLK_F12, kA)}, [this] { lsp_switch_header(); });
     own("Show the file's outline", {key(SDLK_O, kP | kA)}, [this] { lsp_outline(); });
     own("Go to a symbol in the project", {key(SDLK_P, kP | kA)}, [this] { lsp_find_symbols(); });
+    own("Search everywhere", {key(SDLK_K, kP)}, [this] { find_everywhere(); });
     sent("Rename the symbol\xE2\x80\xA6", {key(SDLK_F2)});
     sent("Format the file, or the selected lines", {key(SDLK_F, kA | kS)});
     sent("Fixes and refactorings here (code actions)", {key(SDLK_RETURN, kA)});  // (Cmd+. stops the build)

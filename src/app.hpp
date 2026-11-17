@@ -301,6 +301,9 @@ private:
     void grammar_install();  // the grammar of the file in front's language, fetched and built (a command)
     bool grammar_missing();  // that language has none installed: its colours are missing
     void open_config();
+    // init.lua at the line that sets `key` (its value selected): the line
+    // there, else the template's commented one made live, else a new one.
+    void open_setting(const std::string& key);
     void apply_present_mode();
     void update_refresh();
     void zoom(float dpt);
@@ -358,6 +361,11 @@ private:
     std::string other_half(const std::string& path) const;
     void lsp_outline();
     void lsp_find_symbols();
+    void lsp_go_symbol(size_t i);  // (one of the project's symbols last found)
+    // Search everywhere's symbols: the server asked for those with `typed`
+    // in them, and what it last found, as a name and what it is and where.
+    void lsp_everywhere_ask(const std::string& typed);
+    std::vector<std::pair<std::string, std::string>> lsp_symbol_rows() const;
     bool lsp_uses_shown() const;
     std::string lsp_uses_dump();  // (the tests: the uses marked in the split in front, as line:column ranges)
     void lsp_rename();   // F2
@@ -407,7 +415,7 @@ private:
 
     // Finding files, text and paths (appfind.cpp).
     struct Find;
-    enum : int { kFindNames, kFindText, kFindOpen, kFindSave, kFindFolder, kFindPick, kFindInput, kFindAsk, kFindCommand, kFindFile };
+    enum : int { kFindNames, kFindText, kFindOpen, kFindSave, kFindFolder, kFindPick, kFindInput, kFindAsk, kFindCommand, kFindFile, kFindAll };
     void find_create();
     bool find_is_open() const;
     void find_stale();  // the files may have changed: the finder reads the folder again when it opens
@@ -454,6 +462,12 @@ private:
     // find_set_items() brings the rows for it.
     void find_live_items(const std::string& prompt, std::function<void(const std::string&)> typed, std::function<void(int)> chose);
     void find_set_items(std::vector<std::string> items);
+    // Search everywhere (kFindAll): files, the project's symbols, commands
+    // and settings, each kind under its heading; rows made again when the
+    // server's symbols come.
+    void find_everywhere();
+    bool find_everywhere_open() const;
+    void find_everywhere_rebuild();
     // The places jumps started from, across files, for Ctrl+- (back) and
     // Ctrl+Shift+- (forward), and Vim's Ctrl-O and Ctrl-I (app.cpp).
     struct Jumps;

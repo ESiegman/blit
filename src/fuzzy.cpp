@@ -44,6 +44,39 @@ constexpr Rarity kRarity;
 
 }  // namespace
 
+bool fuzzy_word_starts(const FuzzyTerm& term, std::string_view text) {
+    const size_t m = term.text.size(), n = text.size();
+    if (m == 0) return true;
+    if (m > n) return false;
+    const u8* p = reinterpret_cast<const u8*>(term.text.data());
+    const u8* t = reinterpret_cast<const u8*>(text.data());
+    auto same = [&](size_t ti, size_t pi) { return (term.exact_case ? t[ti] : low(t[ti])) == p[pi]; };
+    auto starts = [&](size_t ti) { return place_bonus(ti ? t[ti - 1] : 0, t[ti]) > 0 || (ti && t[ti - 1] == '('); };
+    for (size_t i = 0; i + m <= n; ++i) {  // whole
+        size_t k = 0;
+        while (k < m && same(i + k, k)) ++k;
+        if (k == m) return true;
+    }
+    // Where each letter can be: the first at a word's start; each after it
+    // just after one of the letter before's places, or at a word's start
+    // past the first of them.
+    std::vector<u8> here(n, 0), next(n, 0);
+    size_t first = n;
+    for (size_t i = 0; i < n; ++i)
+        if (same(i, 0) && starts(i)) here[i] = 1, first = std::min(first, i);
+    for (size_t k = 1; k < m && first < n; ++k) {
+        size_t now = n;
+        for (size_t i = first + 1; i < n; ++i) {
+            next[i] = same(i, k) && (here[i - 1] || starts(i));
+            if (next[i]) now = std::min(now, i);
+        }
+        std::fill(here.begin(), here.end(), 0);
+        here.swap(next);
+        first = now;
+    }
+    return first < n;
+}
+
 std::vector<FuzzyTerm> fuzzy_terms(std::string_view typed) {
     std::vector<FuzzyTerm> out;
     for (size_t i = 0; i < typed.size();) {

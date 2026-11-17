@@ -2396,6 +2396,12 @@ void find_test() {
         fuzzy_score(term("fb"), "xfoo_bar", &at);
         check(at.size() == 2 && at[0] == 1 && at[1] == 5, "where the matched letters are");
     }
+    check(fuzzy_word_starts(term("lnum"), "editor.line_numbers") && fuzzy_word_starts(term("gofile"), "Go to file") &&
+              fuzzy_word_starts(term("wid"), "editor.tab_width") && fuzzy_word_starts(term("gw"), "getWidth") && fuzzy_word_starts(term("dth"), "width"),
+          "letters in runs from the starts of words, or the term whole, are a close match");
+    check(!fuzzy_word_starts(term("tot"), "editor.tab_width") && !fuzzy_word_starts(term("wid"), "window.height") && !fuzzy_word_starts(term("Line"), "line") &&
+              !fuzzy_word_starts(term("abcd"), "abc"),
+          "letters scattered inside words are not");
     // Paths.
     {
         auto score = [](const char* typed, const char* path) {

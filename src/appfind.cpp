@@ -51,6 +51,9 @@ constexpr u64 kMostCounted = 100000;
 constexpr u64 kCountBytes = 64ull << 20, kCountBytesRegex = 8ull << 20;
 constexpr Hint kHintsCommand[] = {{"Enter", "run"}, {"Tab", "find by keys"}};
 constexpr Hint kHintsCapture[] = {{"Tab", "back to typing"}};
+constexpr Hint kHintsAll[] = {{"Enter", "open"}, {"Tab", "next kind"}};
+// Search everywhere: how many of each kind at most.
+constexpr size_t kAllFiles = 8, kAllSymbols = 6, kAllCommands = 6, kAllSettings = 5;
 constexpr Hint kHintsOpen[] = {{"Enter", "open"}, {"Tab", "complete"}};
 constexpr Hint kHintsSave[] = {{"Enter", "save"}, {"Tab", "complete"}};
 constexpr Hint kHintsFolder[] = {{"Enter", "choose"}, {"Tab", "go into"}};
@@ -265,15 +268,25 @@ struct App::Find {
     // last), then those opened lately, each kind under its heading. What is
     // looked for is what is typed without the line (and column) on its end.
     struct Near {
-        std::string heading;  // a heading's words; empty: a file
-        std::string full, name, folder;
+        enum : u8 { kFile, kSymbol, kCommand, kSetting };
+        std::string heading;  // a heading's words; empty: a row
+        std::string full, name, folder;  // (Search everywhere's other kinds: the name, and in folder what it is)
+        u8 kind = kFile;
+        u32 index = 0;  // (a symbol's or a command's)
     };
     std::vector<Near> near;
+    // Search everywhere (kFindAll): its rows are near, each kind under its
+    // heading; the settings that have what is typed (the commands are in
+    // entries), and whether a key has moved the choice off the first row.
+    std::vector<Entry> settings_found;
+    bool moved_all = false;
     std::string query;
     u64 go_line = 0, go_col = 0;  // (from 1; 0: none)
     bool nearby() const { return mode == kFindNames && query.empty() && !go_line && typed != ":" && !near.empty(); }
     bool line_only() const { return mode == kFindNames && query.empty() && (go_line || typed == ":"); }  // (":" alone: the status bar's Ln, Col)
-    bool heading(size_t i) const { return nearby() && i < near.size() && !near[i].heading.empty(); }
+    bool everywhere() const { return mode == kFindAll; }
+    bool sections() const { return nearby() || everywhere(); }  // (the rows are near's, under headings)
+    bool heading(size_t i) const { return sections() && i < near.size() && !near[i].heading.empty(); }
 
     bool beside = false;  // what is chosen opens in the split to the right (Cmd+Enter)
     bool all = false;     // what is typed is selected: typing replaces it
@@ -327,7 +340,7 @@ struct App::Find {
 
     size_t count() const {
         if (mode == kFindFile) return 0;
-        if (nearby()) return near.size();
+        if (sections()) return near.size();
         if (line_only()) return 0;
         if (mode == kFindNames || mode == kFindText) return shown ? shown->hits.size() : 0;
         return entries.size();
@@ -335,6 +348,8 @@ struct App::Find {
 
     // (Find is the App's, and can reach what the App keeps to itself.)
     static void list_near(App& a);
+    static void build_all(App& a);
+    static void load_commands(App& a);
     static void go(App& a, u64 line, u64 col);
     static bool open_beside(App& a, const std::string& path);
     static bool open_in(App& a, Pane* dest, const std::string& path, bool drop_blank);
@@ -812,7 +827,7 @@ void App::find_open(int mode, const std::string& typed) {
         f.all = !f.typed.empty();  // (typing replaces what was put there)
         f.starts_key = 0;
     }
-    if (mode == kFindNames || mode == kFindText) {
+    if (mode == kFindNames || mode == kFindText || mode == kFindAll) {
         if (!f.engine) {
             f.engine = std::make_unique<Finder>();
             f.engine->set_notify([] {
@@ -893,23 +908,132 @@ void App::find_ask(u64 id, const std::string& host, const std::string& prompt, b
 void App::palette_open() {
     Find& f = *find_;
     if (find_open_ && f.script()) find_close(false);
+    Find::load_commands(*this);
+    f.capture = f.chord_query = false;
+    find_open(kFindCommand);
+}
+
+// Search everywhere: the commands searched as the command search has them.
+void App::find_everywhere() {
+    Find& f = *find_;
+    if (find_open_ && f.script()) find_close(false);
+    Find::load_commands(*this);
+    f.capture = f.chord_query = false;
+    f.typed_asked.clear();
+    find_open(kFindAll);
+}
+
+bool App::find_everywhere_open() const { return find_open_ && find_->mode == kFindAll; }
+
+void App::find_everywhere_rebuild() {
+    if (find_everywhere_open()) Find::build_all(*this);
+}
+
+// Every command, with its keys and what is searched: its name and its keys, in words.
+void App::Find::load_commands(App& a) {
+    Find& f = *a.find_;
     f.items.clear();
     f.item_keys.clear();
     f.item_search.clear();
     f.item_syms.clear();
     f.item_ids.clear();
-    for (PaletteItem& it : palette_items()) {
+    for (PaletteItem& it : a.palette_items()) {
         std::string words = it.title + " " + it.keys;
         for (char& ch : words)
             if (ch == '+') ch = ' ';
-        f.item_syms.push_back(key_symbols(it.keys, *font_));
+        f.item_syms.push_back(key_symbols(it.keys, *a.font_));
         f.items.push_back(std::move(it.title));
         f.item_keys.push_back(std::move(it.keys));
         f.item_search.push_back(std::move(words));
         f.item_ids.push_back(it.id);
     }
-    f.capture = f.chord_query = false;
-    find_open(kFindCommand);
+}
+
+// Search everywhere's rows: with nothing typed, the files open and opened
+// lately, as Go to file has them; else the best few of each kind that has
+// what is typed, under its heading. The row chosen stays chosen as rows
+// come (the files from the worker, the symbols from the server); until a
+// key has moved it, the first is.
+void App::Find::build_all(App& a) {
+    Find& f = *a.find_;
+    Near was;
+    const bool keep = f.moved_all && f.sel < f.near.size() && f.near[f.sel].heading.empty();
+    if (keep) was = f.near[f.sel];
+    if (f.query.empty()) {
+        list_near(a);
+    } else {
+        f.near.clear();
+        const std::vector<FuzzyTerm> terms = fuzzy_terms(f.query);
+        auto section = [&](const char* heading) {
+            Near e;
+            e.heading = heading;
+            f.near.push_back(std::move(e));
+            return f.near.size();
+        };
+        auto close = [&](size_t from) {  // (a heading with nothing under it goes)
+            if (f.near.size() == from) f.near.pop_back();
+        };
+        size_t from = section("Files");
+        if (f.shown && !f.shown->text && f.shown->index && f.shown->index->root == f.root) {
+            const bool current = f.shown->serial == f.serial;
+            for (size_t i = 0; i < f.shown->hits.size() && f.near.size() - from < kAllFiles; ++i) {
+                const std::string_view rel = f.shown->index->path(f.shown->hits[i].file);
+                if (!current && fuzzy_path_score(terms, rel) < 0) continue;  // (an earlier search's, until this one's come: those that still match)
+                Near e;
+                e.full = f.shown->index->root + "/" + std::string(rel);
+                const size_t slash = rel.rfind('/');
+                e.name = std::string(slash == std::string_view::npos ? rel : rel.substr(slash + 1));
+                if (slash != std::string_view::npos) e.folder = std::string(rel.substr(0, slash));
+                f.near.push_back(std::move(e));
+            }
+        }
+        close(from);
+        auto matches = [&](std::string_view s) {
+            return std::ranges::all_of(terms, [&](const FuzzyTerm& t) { return fuzzy_score(t, s) >= 0; });
+        };
+        from = section("Symbols");
+        const std::vector<std::pair<std::string, std::string>> symbols = a.lsp_symbol_rows();
+        for (u32 i = 0; i < symbols.size() && f.near.size() - from < kAllSymbols; ++i) {
+            if (!matches(symbols[i].first)) continue;  // (the server's answer to what was typed before, until this one's comes)
+            Near e;
+            e.kind = Near::kSymbol;
+            e.index = i;
+            e.name = symbols[i].first;
+            e.folder = symbols[i].second;
+            f.near.push_back(std::move(e));
+        }
+        close(from);
+        from = section("Commands");
+        for (size_t i = 0; i < f.entries.size() && i < kAllCommands; ++i) {
+            Near e;
+            e.kind = Near::kCommand;
+            e.index = f.entries[i].index;
+            e.name = f.entries[i].name;
+            f.near.push_back(std::move(e));
+        }
+        close(from);
+        from = section("Settings");
+        for (size_t i = 0; i < f.settings_found.size() && i < kAllSettings; ++i) {
+            Near e;
+            e.kind = Near::kSetting;
+            e.name = f.settings_found[i].name;
+            e.folder = config_lua(config_get(a.cfg_, e.name));
+            f.near.push_back(std::move(e));
+        }
+        close(from);
+    }
+    size_t sel = f.near.size();
+    if (keep)
+        for (size_t i = 0; i < f.near.size() && sel == f.near.size(); ++i)
+            if (const Near& e = f.near[i]; e.heading.empty() && e.kind == was.kind && e.full == was.full && e.name == was.name && e.folder == was.folder) sel = i;
+    if (sel == f.near.size()) {
+        sel = 0;
+        while (sel < f.near.size() && !f.near[sel].heading.empty()) ++sel;
+        if (sel == f.near.size()) sel = 0;
+    }
+    f.sel = static_cast<u32>(sel);
+    f.touch();
+    a.dirty_ = true;
 }
 
 // The box, for a path or a line that comes back to `chose` (kFindOpen: a
@@ -1039,6 +1163,40 @@ void App::find_query() {
         split_place(f.typed, &f.query, &f.go_line, &f.go_col);
         while (f.heading(f.sel)) ++f.sel;  // (a heading is not chosen; one is never last)
         f.serial = f.engine->find_names(f.query);
+        return;
+    }
+    if (f.mode == kFindAll) {  // files from the worker, symbols from the server, and here the commands and settings that have every word typed
+        const size_t s0 = f.typed.find_first_not_of(' '), s1 = f.typed.find_last_not_of(' ');
+        f.query = s0 == std::string::npos ? std::string() : f.typed.substr(s0, s1 + 1 - s0);
+        f.moved_all = false;
+        f.entries.clear();
+        f.settings_found.clear();
+        if (!f.query.empty()) {
+            f.serial = f.engine->find_names(f.query);
+            const std::vector<FuzzyTerm> terms = fuzzy_terms(f.query);
+            auto score_of = [&](std::string_view s) {
+                int score = 0;
+                for (const FuzzyTerm& t : terms) {
+                    const int one = fuzzy_score(t, s);
+                    if (one < 0 || !fuzzy_word_starts(t, s)) return -1;  // (closer than the command search's: a few of each kind are shown)
+                    score += one;
+                }
+                return score;
+            };
+            for (u32 i = 0; i < f.items.size(); ++i)
+                if (const int score = score_of(f.item_search[i]); score >= 0) f.entries.push_back({f.items[i], false, Find::Entry::kPlain, score, i});
+            const std::span<const char* const> keys = config_keys();
+            for (u32 i = 0; i < keys.size(); ++i)
+                if (const int score = score_of(keys[i]); score >= 0) f.settings_found.push_back({keys[i], false, Find::Entry::kPlain, score, i});
+            auto best = [](const Find::Entry& x, const Find::Entry& y) { return x.score > y.score; };
+            std::stable_sort(f.entries.begin(), f.entries.end(), best);
+            std::stable_sort(f.settings_found.begin(), f.settings_found.end(), best);
+        }
+        if (f.query != f.typed_asked) {
+            f.typed_asked = f.query;
+            lsp_everywhere_ask(f.query);
+        }
+        Find::build_all(*this);
         return;
     }
     if (f.mode == kFindText) {
@@ -1194,13 +1352,14 @@ void App::find_query() {
 // The worker has something new.
 void App::find_sync() {
     Find& f = *find_;
-    if (!find_open_ || !f.engine || (f.mode != kFindNames && f.mode != kFindText)) return;
+    if (!find_open_ || !f.engine || (f.mode != kFindNames && f.mode != kFindText && f.mode != kFindAll)) return;
     std::shared_ptr<const FindResults> r = f.engine->results();
     if (!r || r->text != (f.mode == kFindText)) return;
     // (An answer to an earlier search is shown until the one asked for
     // comes, but only of the same folder.)
     if (r->index && r->index->root != f.root) return;
     f.shown = std::move(r);
+    if (f.mode == kFindAll) return Find::build_all(*this);
     const size_t n = f.count();
     if (f.sel >= n) f.sel = n ? static_cast<u32>(n - 1) : 0;
     f.touch();
@@ -1245,6 +1404,31 @@ void App::save_named(const std::string& path, u64 doc) {
 // name typed.
 void App::find_accept() {
     Find& f = *find_;
+    if (f.mode == kFindAll) {
+        // (Enter just after typing: the files for what was typed, waited for a moment.)
+        if (!f.query.empty() && f.engine && !(f.shown && f.shown->serial == f.serial)) {
+            f.engine->wait_idle_for(400);
+            find_sync();
+        }
+        if (f.sel >= f.near.size() || f.heading(f.sel)) return;
+        const Find::Near e = f.near[f.sel];
+        const bool beside = std::exchange(f.beside, false);
+        const u32 command = e.kind == Find::Near::kCommand ? f.item_ids[e.index] : 0;
+        find_close(true);
+        switch (e.kind) {
+            case Find::Near::kFile:
+                remember_place();  // (Ctrl-O comes back from it)
+                if (beside) Find::open_beside(*this, e.full);
+                else open_path(e.full.c_str());
+                break;
+            case Find::Near::kSymbol: lsp_go_symbol(e.index); break;
+            case Find::Near::kCommand: palette_run(command); break;
+            case Find::Near::kSetting: open_setting(e.name); break;
+            default: break;
+        }
+        dirty_ = true;
+        return;
+    }
     if (f.mode == kFindCommand) {
         if (f.sel >= f.entries.size()) return;
         const u32 id = f.item_ids[f.entries[f.sel].index];
@@ -1395,6 +1579,19 @@ void App::find_tab() {
         return;
     }
     if (f.mode == kFindNames) return find_open(kFindText, f.typed);
+    if (f.mode == kFindAll) {  // the first row of the next kind, round from the last
+        const size_t n = f.near.size();
+        size_t i = f.sel + 1;
+        while (i < n && !f.heading(i)) ++i;
+        if (i >= n) i = 0;
+        while (i < n && f.heading(i)) ++i;
+        if (i >= n) return;
+        f.sel = static_cast<u32>(i);
+        f.moved_all = true;
+        f.touch();
+        dirty_ = true;
+        return;
+    }
     if (f.script() || f.sel >= f.entries.size()) return;
     const Find::Entry& e = f.entries[f.sel];
     if (e.kind != Find::Entry::kPlain) return;
@@ -1427,6 +1624,7 @@ void App::find_move(i64 by) {
         }
     }
     f.sel = static_cast<u32>(to);
+    f.moved_all = true;
     f.touch();
     dirty_ = true;
     Find::tried(*this);
@@ -1549,7 +1747,7 @@ bool App::find_key(const SDL_KeyboardEvent& k) {
                 Find::files_ask(*this);
                 break;
             }
-            f.beside = cmd && (f.mode == kFindNames || f.mode == kFindText);  // (Cmd+Enter: in the split to the right)
+            f.beside = cmd && (f.mode == kFindNames || f.mode == kFindText || f.mode == kFindAll);  // (Cmd+Enter: in the split to the right)
             find_accept();
             break;
         case SDLK_TAB: find_tab(); break;
@@ -1747,7 +1945,7 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
         // The field: a word that says what the box is for, what is typed (a
         // secret as a dot for each letter, keys looked up as keys) and how
         // many there are.
-        static const char* const kLabel[] = {"Go to file", "Search in files", "Open", "Save as", "Folder", "Pick", "Input", "ssh", "Command search", "Find"};
+        static const char* const kLabel[] = {"Go to file", "Search in files", "Open", "Save as", "Folder", "Pick", "Input", "ssh", "Command search", "Find", "Search everywhere"};
         const std::string_view label = (f.script() || f.mode == kFindAsk || f.chose) && !f.prompt.empty() ? std::string_view(f.prompt) : std::string_view(kLabel[f.mode]);
         const bool secret = f.mode == kFindAsk && f.secret, pressed = f.mode == kFindCommand && f.chord_query;
         std::string masked;
@@ -1805,6 +2003,7 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
             case kFindFolder: hints = kHintsFolder; break;
             case kFindPick: hints = kHintsPick; break;
             case kFindInput: hints = kHintsInput; break;
+            case kFindAll: hints = kHintsAll; break;
             case kFindAsk:
                 hints = kHintsAsk;
                 where = f.ask_host + (f.secret ? " (hidden as it is typed)" : "");
@@ -1815,7 +2014,7 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
                 break;
             default: break;
         }
-        if (names || text) where = tilde(f.root);
+        if (names || text || f.mode == kFindAll) where = tilde(f.root);
         // What the footer says in place of where: the question before
         // replacing in files, or why what is typed is no pattern.
         Ink where_ink = ink::kMuted;
@@ -1859,6 +2058,8 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
                 empty = f.listed != f.dir && remote_listing_busy() ? "Listing\xE2\x80\xA6" : "Nothing here by that name";
             } else if (f.mode == kFindCommand) {
                 empty = f.chord_query ? std::string("No command has those keys") : "No command matches " + quoted;
+            } else if (f.mode == kFindAll) {
+                if (!f.query.empty()) empty = "Nothing matches " + quoted;
             } else {
                 empty = "Nothing matches " + quoted;
             }
@@ -1877,9 +2078,11 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
         for (u32 r = 0; r < f.list_rows && f.top + r < n; ++r) {
             const size_t i = f.top + r;
             u32 need = 0;
-            if (f.nearby()) {
+            if (f.sections()) {
                 const Find::Near& e = f.near[i];
-                need = e.heading.empty() ? 3 + width_of(e.name) + (e.folder.empty() ? 0 : 2 + width_of(e.folder)) : width_of(e.heading);
+                need = !e.heading.empty()                   ? width_of(e.heading)
+                       : e.kind == Find::Near::kCommand ? 3 + width_of(e.name) + 3 + width_of(f.item_syms[e.index])
+                                                        : 3 + width_of(e.name) + (e.folder.empty() ? 0 : 2 + width_of(e.folder));
             } else if (names) {
                 const std::string_view full = f.shown->index->path(f.shown->hits[i].file);
                 need = 3 + width_of(full) + (full.find('/') == std::string_view::npos ? 0 : 1);  // (the name, two spaces and its folder)
@@ -2022,15 +2225,33 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
                 continue;
             }
             at.clear();
-            if (f.nearby()) {
+            if (f.sections()) {
                 const Find::Near& e = f.near[i];
                 if (!e.heading.empty()) {  // (never chosen, nor lit under the mouse)
                     put(box, font, row, 0, e.heading, ink::kHeading);
                     continue;
                 }
-                icon(row, 0, file_icon(e.name, false, false));
-                const u32 col = marked(row, 3, e.name, at, 0, ink::kText, cols - 3) + 2;
-                if (!e.folder.empty() && cols > col + 4) put(box, font, row, col, fit_text(e.folder, cols - col, true), ink::kMuted);
+                // A file with its icon; the other kinds level with it. The
+                // letters that matched lit; then, fainter, its folder, what
+                // it is and where, or a setting's value; a command's keys at
+                // the right.
+                size_t shift = 0;
+                if (e.kind == Find::Near::kFile) {
+                    icon(row, 0, file_icon(e.name, false, false));
+                    if (f.everywhere() && !terms.empty()) {
+                        const std::string rel = e.folder.empty() ? e.name : e.folder + "/" + e.name;
+                        fuzzy_path_score(terms, rel, &at);
+                        shift = rel.size() - e.name.size();
+                    }
+                } else {
+                    for (const FuzzyTerm& term : terms) fuzzy_score(term, e.name, &at);
+                }
+                const std::string_view keys = e.kind == Find::Near::kCommand ? std::string_view(f.item_syms[e.index]) : std::string_view();
+                u32 kw = width_of(keys);
+                if (kw + 2 + 8 + 3 > cols) kw = 0;
+                const u32 col = marked(row, 3, e.name, at, shift, ink::kText, (kw ? cols - kw - 2 : cols) - 3) + 2;
+                if (kw) put(box, font, row, cols - kw, keys, ink::kMuted);
+                else if (!e.folder.empty() && cols > col + 4) put(box, font, row, col, fit_text(e.folder, cols - col, e.kind == Find::Near::kFile), ink::kMuted);
             } else if (names) {
                 const std::string_view full = f.shown->index->path(f.shown->hits[i].file);
                 const size_t slash = full.rfind('/');
@@ -2133,7 +2354,7 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
 // chosen one marked.
 std::string App::find_dump() {
     Find& f = *find_;
-    static const char* const kMode[] = {"names", "text", "open", "save", "folder", "pick", "input", "ask", "commands", "file"};
+    static const char* const kMode[] = {"names", "text", "open", "save", "folder", "pick", "input", "ask", "commands", "file", "everywhere"};
     if (!find_open_) return "closed";
     // Find in the file, and the replace fields: what is typed in each, the toggles, how many, which.
     std::string extra;
@@ -2154,6 +2375,23 @@ std::string App::find_dump() {
     if (f.mode == kFindAsk) {  // (never a secret in a dump)
         if (f.secret) typed.assign(f.typed.size(), '*');
         return "ask " + f.ask_host + " \"" + f.prompt + "\" [" + typed + "]";
+    }
+    if (f.everywhere()) {  // Search everywhere: each kind's heading, then its rows
+        const auto rows = std::ranges::count_if(f.near, [](const Find::Near& e) { return e.heading.empty(); });
+        std::string out = "everywhere [" + f.typed + "] " + std::to_string(rows) + " :";
+        for (size_t i = 0; i < f.near.size() && i < 32; ++i) {
+            const Find::Near& e = f.near[i];
+            if (!e.heading.empty()) {
+                out += " " + e.heading + ":";
+                continue;
+            }
+            out += i == f.sel ? " >" : " ";
+            if (e.kind == Find::Near::kFile) out += e.folder.empty() ? e.name : e.folder + "/" + e.name;
+            else if (e.kind == Find::Near::kSetting) out += e.name + "=" + e.folder;
+            else if (e.kind == Find::Near::kSymbol) out += e.name + " (" + e.folder + ")";
+            else out += e.name;
+        }
+        return out;
     }
     if (f.nearby()) {  // Go to file with nothing typed: the files open and opened lately, after "Open:" and "Recent:"
         const auto files = std::ranges::count_if(f.near, [](const Find::Near& e) { return e.heading.empty(); });

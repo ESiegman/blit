@@ -799,6 +799,67 @@ void App::open_config() {
     open_path(init_path_.c_str());
 }
 
+void App::open_setting(const std::string& key) {
+    remember_place();  // (Ctrl-O comes back from it)
+    open_config();
+    Editor& ed = pane_->doc->ed;
+    if (pane_->doc->loading || full_path(ed.path) != full_path(init_path_)) return;
+    // The last line that sets it (the one that counts), else the first
+    // that is a comment of it, as the template has them.
+    const std::string want = "blit.opt." + key;
+    u64 live = ~0ull, commented = ~0ull;
+    size_t live_at = 0, comment_at = 0, comment_name = 0;
+    for (u64 line = 0; line < ed.buf.line_count(); ++line) {
+        const u64 start = ed.buf.line_start(line), end = ed.line_end(line);
+        if (end - start > 4096) continue;
+        const std::string t = ed.buf.text(start, end - start);
+        size_t i = t.find_first_not_of(" \t");
+        const size_t dashes = i;
+        const bool comment = i != std::string::npos && t.compare(i, 2, "--") == 0;
+        if (comment) i = t.find_first_not_of(" \t", i + 2);
+        if (i == std::string::npos || t.compare(i, want.size(), want) != 0) continue;
+        size_t eq = i + want.size();
+        while (eq < t.size() && (t[eq] == ' ' || t[eq] == '\t')) ++eq;
+        if (eq >= t.size() || t[eq] != '=' || (eq + 1 < t.size() && t[eq + 1] == '=')) continue;  // ("editor.tab_width_x", or a comparison)
+        if (!comment) live = line, live_at = eq + 1;
+        else if (commented == ~0ull) commented = line, comment_at = dashes, comment_name = i;
+    }
+    u64 line = live;
+    if (line == ~0ull && commented != ~0ull) {  // the template's comment made a setting
+        const u64 start = ed.buf.line_start(commented);
+        ed.replace(start + comment_at, start + comment_name, "");
+        line = commented;
+    } else if (line == ~0ull) {  // a line of its own at the end, as it is now
+        const u64 size = ed.buf.size();
+        char last = '\n';
+        if (size) ed.buf.read(size - 1, &last, 1);
+        ed.replace(size, size, std::string(last == '\n' ? "" : "\n") + want + " = " + config_lua(config_get(cfg_, key)) + "\n");
+        line = ed.buf.line_of(size + (last == '\n' ? 0 : 1));
+    }
+    // The value, from after the "=" to a comment or the end of the line.
+    const u64 start = ed.buf.line_start(line), end = ed.line_end(line);
+    const std::string t = ed.buf.text(start, end - start);
+    if (live == ~0ull) live_at = t.find('=') + 1;
+    size_t v0 = t.find_first_not_of(" \t", live_at), v1 = t.size();
+    if (v0 == std::string::npos) v0 = t.size();
+    char quote = 0;
+    for (size_t k = v0; k + 1 < t.size(); ++k) {
+        if (quote) {
+            if (t[k] == '\\') ++k;
+            else if (t[k] == quote) quote = 0;
+        } else if (t[k] == '"' || t[k] == '\'') {
+            quote = t[k];
+        } else if (t[k] == '-' && t[k + 1] == '-') {
+            v1 = k;
+            break;
+        }
+    }
+    while (v1 > v0 && (t[v1 - 1] == ' ' || t[v1 - 1] == '\t')) --v1;
+    show_place(line, v0);
+    if (!cfg_.modal && v1 > v0) ed.move_to(start + v1, true);  // (selected: typing replaces it)
+    dirty_ = true;
+}
+
 void App::save() {
     if (pane_->doc->read_only) return;  // a diff is not a file
     if (pane_->doc->ed.path.empty()) {  // a new file: a name for it is asked for (appfind.cpp), and it is saved when there is one

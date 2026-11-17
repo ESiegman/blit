@@ -582,7 +582,10 @@ void App::sync_lsp() {
                               });
         }
     }
-    if ((news & Lsp::kSymbols) && a.symbols_live) {
+    if ((news & Lsp::kSymbols) && find_everywhere_open()) {  // (Search everywhere's)
+        a.symbol_rows = lsp_.found_symbols();
+        find_everywhere_rebuild();
+    } else if ((news & Lsp::kSymbols) && a.symbols_live) {
         if (!find_open_) {
             a.symbols_live = false;
         } else {
@@ -1021,23 +1024,50 @@ void App::lsp_find_symbols() {
     a.symbol_rows.clear();
     find_live_items("Symbols in the project", [this](const std::string& typed) { lsp_.find_symbols(typed); },
                     [this](int i) {
-                        Assist& x = *assist_;
-                        if (i < 0 || static_cast<size_t>(i) >= x.symbol_rows.size()) return;
-                        const LspSymbol y = x.symbol_rows[static_cast<size_t>(i)];
-                        const u64 key = lsp_.key_of(y.path);
-                        Pane* where = nullptr;
-                        size_t at = 0;
-                        remember_place();
-                        if (key && find_doc(key, &where, &at)) {
-                            focus_pane(where);
-                            tab_show(at);
-                            pane_->doc->ed.move_to(Lsp::offset_at(pane_->doc->ed.buf, y.line, y.character, lsp_.counts_utf16()), false);
-                            scroll_to_cursor();
-                        } else {
-                            go_to_place(y.path, y.line + 1, y.character + 1);
-                        }
+                        if (i >= 0) lsp_go_symbol(static_cast<size_t>(i));
                     });
     a.symbols_live = true;
+}
+
+void App::lsp_go_symbol(size_t i) {
+    Assist& a = *assist_;
+    if (i >= a.symbol_rows.size()) return;
+    const LspSymbol y = a.symbol_rows[i];
+    const u64 key = lsp_.key_of(y.path);
+    Pane* where = nullptr;
+    size_t at = 0;
+    remember_place();
+    if (key && find_doc(key, &where, &at)) {
+        focus_pane(where);
+        tab_show(at);
+        pane_->doc->ed.move_to(Lsp::offset_at(pane_->doc->ed.buf, y.line, y.character, lsp_.counts_utf16()), false);
+        scroll_to_cursor();
+    } else {
+        go_to_place(y.path, y.line + 1, y.character + 1);
+    }
+}
+
+void App::lsp_everywhere_ask(const std::string& typed) {
+    Assist& a = *assist_;
+    a.symbols_live = false;
+    if (typed.empty() || !lsp_.ready() || !lsp_.can_find_symbols()) {
+        a.symbol_rows.clear();
+        return;
+    }
+    lsp_.find_symbols(typed);  // (the rows there are stay, those that still match, until the answer comes)
+}
+
+std::vector<std::pair<std::string, std::string>> App::lsp_symbol_rows() const {
+    const Assist& a = *assist_;
+    std::vector<std::pair<std::string, std::string>> rows;
+    const std::string* root = panel_root();
+    for (const LspSymbol& y : a.symbol_rows) {
+        std::string what = symbol_kind_name(y.kind);
+        if (!y.container.empty()) what += (what.empty() ? "in " : " in ") + y.container;
+        what += (what.empty() ? "" : "  \xC2\xB7 ") + shown_name(y.path, root) + ":" + std::to_string(y.line + 1);
+        rows.emplace_back(y.name, std::move(what));
+    }
+    return rows;
 }
 
 void App::lsp_rename() {

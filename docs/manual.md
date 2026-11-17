@@ -192,6 +192,7 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | Save as… / save all | Cmd+Shift+S / Cmd+Option+S | Ctrl+Shift+S / Ctrl+Alt+S |
 | Open a folder | Cmd+Shift+O | Ctrl+Shift+O |
 | Command search: every command, by its name or its keys | Cmd+Shift+P | Ctrl+Shift+P |
+| Search everywhere: files, the project's symbols, commands and settings | Cmd+K | Ctrl+K |
 | Go to file / Search in files | Cmd+P / Cmd+Shift+F | Ctrl+P / Ctrl+Shift+F |
 | Find in this file; the next / previous match | Cmd+F; Cmd+G / Cmd+Shift+G | Ctrl+F (or Alt+F); F3 / Shift+F3 |
 | Replace in this file / in files | Cmd+Option+F / Cmd+Shift+H | Ctrl+Alt+F / Ctrl+Shift+H |
@@ -750,6 +751,20 @@ other, files open or opened lately come first. `name:120` (or `name:120:5`)
 opens the file at that line (and column); `:120` alone goes to line 120 of
 the file in front. Enter opens the file chosen, Cmd+Enter opens it in the
 split to the right (making one if there is none).
+
+**Cmd+K**, Search everywhere, finds four kinds of thing at once, each
+under its heading: files (as Go to file finds them, the best eight), the
+project's symbols (from the language server, as Cmd+Option+P has them),
+commands (as the command search has them, with their keys) and settings
+(with what each is now). With nothing typed it lists the files open and
+opened lately. Commands and settings need closer matches than the command
+search asks for: the letters typed together somewhere, or each just after
+the one before or at the start of a word (`lnum` finds
+`editor.line_numbers`). Tab goes to the next kind. Enter opens the file,
+goes to the symbol, runs the command, or opens init.lua at the line that
+sets the setting, with its value selected; a setting the file does not set
+yet is added (the template's commented line made a setting, else a new
+line at the end), and saving it applies it.
 
 ![Cmd+Shift+F: the lines that have both words](media/search.png)
 
@@ -2127,11 +2142,11 @@ src/gpu_metal.m the Metal side (Objective-C, built by Apple's clang)
 src/gpu_vulkan.cpp  the Vulkan side (Linux): the window's swapchain or an offscreen image, the pipelines and their cache
 src/app.*       window, input, scrolling, the frame loop
 src/appfx.cpp   looks and motion: radii and shadows, what the mouse is over, fades, the cursor's glide
-src/fuzzy.*     the fuzzy matcher: scores a name against the letters typed; finding a word with its rarest byte
+src/fuzzy.*     the fuzzy matcher: scores a name against the letters typed, and the closer match by words' starts; finding a word with its rarest byte
 src/threads.*   work spread over several threads, for code that would rather not include <thread>
 src/qos.hpp     how soon a worker thread's work is wanted, told to the scheduler
 src/finder.*    the list of files under a folder (.gitignore heeded), names ranked, text searched; on its own threads
-src/appfind.cpp the box that finds files and text, and the path typed where file dialogs used to be
+src/appfind.cpp the box that finds files and text (and everything, Search everywhere), and the path typed where file dialogs used to be
 src/appstatus.cpp  the status bar: the repository, the file, the cursor, problems, the language
 src/appstart.cpp   the start screen, and the files and folders opened lately
 src/appsession.cpp sessions: each project folder's tabs, splits, cursors and side panel, kept and brought back

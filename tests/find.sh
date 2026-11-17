@@ -230,5 +230,35 @@ runf "key:cmd+alt+F;key:Tab;text:1;key:cmd+Return;key:Escape;key:cmd+Z;save"
 got=$(tr '\n' '/' <"$dir/r.txt")
 check "all of them are one undo step" 'one two one/two one/'
 
+# Search everywhere: files, commands and settings in one box, each kind
+# under its heading, a few of each.
+run "key:cmd+K;finddump"
+check "Cmd+K with nothing typed: the files open and opened lately" 'everywhere [] 1 : Open: >README.md'
+run "key:cmd+K;text:help;wait:200;frame;finddump"
+check "a file by its name" 'everywhere [help] 1 : Files: >src/helper.hpp'
+run "key:cmd+K;text:wid;wait:200;frame;finddump"
+check "each kind under its heading" 'everywhere [wid] 5 : Commands: >Make the split wider Settings: editor.tab_width=4 editor.indent_width=0 panel.width=32 window.width=1100'
+run "key:cmd+K;text:line num;finddump"
+check "a setting, with its value" 'everywhere [line num] 1 : Settings: >editor.line_numbers=true'
+run "key:cmd+K;text:tot;finddump"
+check "commands and settings by the starts of their words, not any letters in order" 'everywhere [tot] 6 : Commands: >Reconnect to the servers that dropped Go to the next hit of Search in files Go to the previous hit of Search in files Go to the next tab Go to the previous tab Go to the last tab'
+run "key:cmd+K;text:qqqzzz;wait:200;frame;finddump"
+check "nothing" 'everywhere [qqqzzz] 0 :'
+run "key:cmd+K;text:wid;wait:200;frame;key:Tab;finddump"
+check "Tab goes to the next kind" 'everywhere [wid] 5 : Commands: Make the split wider Settings: >editor.tab_width=4 editor.indent_width=0 panel.width=32 window.width=1100'
+run "key:cmd+K;text:help;key:Return;dump"
+check "Enter opens a file (the files waited for)" '>[README.md helper.hpp*]'
+run "key:cmd+K;text:gofile;key:Return;finddump"
+check "runs a command (Go to file)" 'names [] 1 of 6 : Open: >README.md'
+run "key:cmd+K;text:line num;key:Return;text:false;vimdump"
+check "and a setting is added to init.lua, its value selected" 'NORMAL |  | 4:37 | blit.opt.editor.line_numbers = false'
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n-- blit.opt.editor.tab_width = 4   -- columns\nblit.opt.editor.modal = false -- "x"\n' >"$dir/tmpl.lua"
+BLIT_INIT="$dir/tmpl.lua"
+run "key:cmd+K;text:tab width;key:Return;text:8;vimdump"
+check "the template's line of it, a comment, made a setting" 'NORMAL |  | 3:30 | blit.opt.editor.tab_width = 8   -- columns'
+run "key:cmd+K;text:modal;key:Return;text:true;vimdump"
+check "the line that sets it" 'NORMAL |  | 4:29 | blit.opt.editor.modal = true -- "x"'
+BLIT_INIT="$dir/init.lua"
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "find ok"
 exit $failed

@@ -83,7 +83,8 @@ carries and starts over ssh.
 
 Settings, keys, commands and plugins in `~/.config/blit/init.lua` (Lua 5.5;
 blit itself ships no Lua), themes previewed as the list is walked, a
-command search with every command and its keys, and new projects (CMake,
+command search with every command and its keys, Search everywhere (files,
+symbols, commands and settings in one box), and new projects (CMake,
 Meson, uv, with tests and libraries) from a form.
 
 <img src="docs/media/theme.gif" alt="Choose a theme: each put on as the list comes to it" width="49%"> <img src="docs/media/commands.png" alt="the command search" width="49%">
