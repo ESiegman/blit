@@ -30,6 +30,7 @@ printf 'Host box\n    HostName example.invalid\n' >"$dir/home/.ssh/config"
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/init.lua"
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' >"$dir/off.lua"
 export BLIT_RECENT_FILE="$dir/recent" BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T"
+export BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i"  # (a shell that is the same everywhere, as tests/term.sh has)
 S="$dir/sessions"
 R="ssh://box$T/far"
 
@@ -117,6 +118,9 @@ got=$(printf '%s' "$got" | sed -e 's/.*\(file	[^;]*long.txt\).*/\1/')
 check "and the last one's kept as it was then" 'file	299	0	281.10	0.00	~/work/long.txt'
 run "folder:$W;frame;key:cmd+alt+Left;text:zz;folder:$V;frame;dump"
 check "a file with changes not saved stays (in the split with the keyboard)" '>[x.txt* long.txt]'
+run "folder:$V;key:ctrl+\`;frame;termwait:\$;key:space;text:echo kep''t;key:Return;termwait:kept;folder:$W;frame;dump;key:ctrl+\`;frame;termwait:kept;dump"
+check "the terminals' split along the bottom stays as it was, its shell still running" \
+    'H(V(>[notes.txt long.txt*]@282 / [Terminal*])0.70 | [main.cpp*])0.50 ;; H(V([notes.txt long.txt*]@282 / >[Terminal*])0.70 | [main.cpp*])0.50'
 
 # Another machine's folder: its files come back when the connection is up.
 run "folder:$R;open:$R/a.txt;remotewait;key:Down;key:Right;quit"

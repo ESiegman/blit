@@ -451,6 +451,12 @@ void App::session_apply(Session& st) {
         stop_lsp();
         lsp_close(kPopAll);
         drag_cancel();
+        // The terminals' split along the bottom is put away whole while the
+        // arrangement changes (its programs keep running), and back after.
+        // (One with no terminal left in it is only a split like any other.)
+        const Pane* dock = dock_pane();
+        const bool docked = dock && std::ranges::any_of(dock->docs, [](const std::unique_ptr<Doc>& d) { return d->term != nullptr; });
+        if (docked) dock_hide();
         // What there is now: the session's files, what must stay, the rest.
         std::map<std::string, std::unique_ptr<Doc>> have;
         std::vector<std::unique_ptr<Doc>> stay;
@@ -550,6 +556,8 @@ void App::session_apply(Session& st) {
                 if (p->docs[k].get() == p->doc) p->tab = k;
             tab_show(at);
         }
+        pane_ = focused;
+        if (docked) dock_show(focused);
         pane_ = focused;
         place_panes(px_w_, px_h_);
         for_each_pane([this] {  // (a file that has grown shorter: its view within it)
