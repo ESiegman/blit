@@ -2439,6 +2439,41 @@ Linux, real-200k.cpp, offscreen 2560x1600:
   p50 15.3 to 18.0 against 15.5 to 16.2 µs, fill p50 2.6 to 2.8 against 2.6
   to 2.7 µs, typing CPU p50 40.2 / 41.3 against 40.2 / 41.9 µs. No change.
 
+### Round 46: fill against the build before whole characters; Linux's key latency
+
+**Fill (PLAN 10.6).** Round 34 left fill 1 to 5% slower than 4ce9b19.
+That commit's `blit_bench`, built today with the same settings, raced the
+current one turn about (`blit_bench run FILE fill`, the Mac on mains power,
+High Power mode), three sittings of 6 to 7 rounds, medians in µs:
+
+| | 4ce9b19 | Now |
+|---|---:|---:|
+| code-100m.txt, sequential / random / selected | 1.233 / 1.490 / 1.893 | 1.241 / 1.490 / 1.864 |
+| utf8-16m.txt, sequential / random / selected (sitting 2) | 6.740 / 6.916 / 8.023 | 6.925 / 7.151 / 7.963 |
+| utf8-16m.txt, the same (sitting 3) | 6.724 / 6.801 / 7.661 | 6.600 / 6.756 / 7.640 |
+
+ASCII is level, and UTF-8 is within the noise between sittings (+2.7% in
+one, −1.8% in the next). The two fixes the plan named made it worse, so
+neither was kept:
+
+| Now, against | code, sequential | utf8, sequential / random |
+|---|---:|---:|
+| grid.cpp's loops aligned to 64 bytes | +0.5% | +6.2% / +9.8% |
+| … to 32 bytes | +4.1% | +1.1% / +4.1% |
+| The join check as a branch of its own, the width without one | (not run) | +5.3% / +4.3% |
+
+**Linux, a key's latency (PLAN 11.5, dropped).** The 460 µs to submit
+(against the Mac's 130) is one stall of about 240 µs in the frame's last
+steps, after the pause before each key; it is not the CPU's governor, as
+Round 45 guessed. With a key every 0, 1, 2, 4 or 8 ms there is no stall
+(the pass 5 to 8 µs); at 16 ms and longer it is always there (240 to 250
+µs). It stays the same pinned to any core, with the CPU kept busy between
+keys, with blit's buffers and RADV's command streams in system memory
+instead of the GPU's (`RADV_PERFTEST=nosam`), and with another program
+keeping the GPU busy; it moves to whichever call comes first (recording a
+draw, binding a pipeline, the submit) and none of it is an ioctl, a page
+fault or a context switch. So it is the machine's, not blit's code.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
