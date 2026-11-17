@@ -131,40 +131,66 @@ uint8_t read_file(const std::string& path, uint64_t most, std::string* out, int6
     return binary ? 2 : 0;
 }
 
-// Through a temporary file beside it, so that it is never seen half written;
-// through a link to the file it names; keeping its mode.
-bool write_file(std::string path, std::string_view data, std::string* err, int64_t* modified) {
-    char real[PATH_MAX];
-    if (::realpath(path.c_str(), real)) path = real;
-    const std::string tmp = path + ".blit-tmp";
-    struct stat st{};
-    const bool had = ::stat(path.c_str(), &st) == 0;
-    const int fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, had ? 0600 : 0644);
-    if (fd < 0) {
-        *err = std::format("cannot write {}: {}", tmp, std::strerror(errno));
-        return false;
+// A file being written: through a temporary file beside it, so that it is
+// never seen half written; through a link to the file it names; keeping its
+// mode. Its text comes whole (kWrite) or a part at a time (kWritePart).
+struct Writing {
+    std::string path, tmp, err;  // (err: why it failed, once it has: what comes after is dropped)
+    int fd = -1;
+
+    bool begin(std::string p) {
+        char real[PATH_MAX];
+        path = ::realpath(p.c_str(), real) ? std::string(real) : std::move(p);
+        tmp = path + ".blit-tmp";
+        struct stat st{};
+        const bool had = ::stat(path.c_str(), &st) == 0;
+        fd = ::open(tmp.c_str(), O_WRONLY | O_CREAT | O_TRUNC | O_CLOEXEC, had ? 0600 : 0644);
+        if (fd < 0) {
+            err = std::format("cannot write {}: {}", tmp, std::strerror(errno));
+            return false;
+        }
+        if (had) ::fchmod(fd, st.st_mode & 07777);  // (the mode it is to have, before any of its text is in it)
+        return true;
     }
-    if (had) ::fchmod(fd, st.st_mode & 07777);  // (the mode it is to have, before any of its text is in it)
-    bool ok = true;
-    for (size_t done = 0; done < data.size();) {
-        const ssize_t n = ::write(fd, data.data() + done, data.size() - done);
-        if (n > 0) done += static_cast<size_t>(n);
-        else if (n < 0 && errno == EINTR) continue;
-        else {
-            ok = false;
-            break;
+    void add(std::string_view data) {
+        for (size_t done = 0; fd >= 0 && done < data.size();) {
+            const ssize_t n = ::write(fd, data.data() + done, data.size() - done);
+            if (n > 0) done += static_cast<size_t>(n);
+            else if (n < 0 && errno == EINTR) continue;
+            else fail();
         }
     }
-    ok = ::close(fd) == 0 && ok;
-    ok = ok && ::rename(tmp.c_str(), path.c_str()) == 0;
-    if (!ok) {
-        *err = std::format("cannot save {}: {}", path, std::strerror(errno));
+    void fail() {
+        err = std::format("cannot save {}: {}", path, std::strerror(errno));
+        ::close(fd);
+        fd = -1;
         ::unlink(tmp.c_str());
-        return false;
     }
-    if (::stat(path.c_str(), &st) == 0) *modified = mtime_ns(st);
-    return true;
+    bool finish(std::string* why, int64_t* modified) {
+        if (fd >= 0 && ::close(fd) != 0) {
+            fd = -1;
+            fail();
+        }
+        fd = -1;
+        if (err.empty() && ::rename(tmp.c_str(), path.c_str()) != 0) {
+            err = std::format("cannot save {}: {}", path, std::strerror(errno));
+            ::unlink(tmp.c_str());
+        }
+        if (!err.empty()) return *why = err, false;
+        struct stat st{};
+        if (::stat(path.c_str(), &st) == 0) *modified = mtime_ns(st);
+        return true;
+    }
+};
+
+bool write_file(std::string path, std::string_view data, std::string* err, int64_t* modified) {
+    Writing w;
+    if (w.begin(std::move(path))) w.add(data);
+    return w.finish(err, modified);
 }
+
+// The files being written a part at a time, by blit's number for each.
+std::map<uint32_t, Writing> writings;
 
 bool make_dirs(const std::string& path, bool parents, std::string* err) {
     if (parents)
@@ -229,17 +255,34 @@ uint32_t next_walk = 1;
 
 // ---------------------------------------------------------------- programs
 
+// What a program has been sent and has not yet taken is held here up to
+// kInMost: past that, blit is told to hold what it sends until the
+// program has taken all but kInLess (kInFlow), so that what is held stays
+// a few MB (what was on its way still comes).
+constexpr size_t kInMost = 1u << 20, kInLess = 256u << 10;
+uint32_t blit_level = 0;  // (what blit says of itself in kHello: 3 understands kInFlow)
+
 struct Child {
     pid_t pid = -1;
     int in = -1, out = -1, err = -1;  // (on a pseudo-terminal, in and out are one descriptor)
     bool pty = false;
-    std::string pending;    // input not written yet
+    std::string pending;    // input not written yet (from pending_at)
+    size_t pending_at = 0;
+    bool in_paused = false; // blit has been told to hold its input (kInFlow)
     bool close_in = false;  // and then its input closes
     bool paused = false;    // blit has more of its output than it has taken yet: none is read until it asks again (kFlow)
     bool exited = false;
     int status = 0;
 };
 std::map<uint32_t, Child> children;
+
+void in_flow(uint32_t id, Child& c, bool paused) {
+    if (c.in_paused == paused || (paused && blit_level < 3)) return;
+    c.in_paused = paused;
+    Writer w;
+    w.u32(id).u8(paused);
+    send_frame(kInFlow, 0, w.b);
+}
 
 // (quiet: what it writes as errors goes nowhere, rather than to blit, which would not read it.)
 bool spawn(uint32_t id, const std::string& cwd, std::vector<std::string> argv, std::span<const std::string> env, bool quiet, std::string* err) {
@@ -332,6 +375,7 @@ void handle(uint8_t op, uint32_t id, std::string_view body) {
     switch (op) {
         case kHello: {
             r.u32();
+            blit_level = r.n >= 4 ? r.u32() : 0;  // (an older blit says only the version)
             struct utsname u;
             const std::string sys = ::uname(&u) == 0 ? std::format("{} {}", u.sysname, u.machine) : "unknown";
             w.str(std::string(kAgentVersion)).str(home()).str(sys).u32(static_cast<uint32_t>(::getpid()));
@@ -361,6 +405,23 @@ void handle(uint8_t op, uint32_t id, std::string_view body) {
             std::string err;
             int64_t m = 0;
             const bool ok = write_file(path, data, &err, &m);
+            w.u8(ok).str(err).i64(m);
+            return reply(id, w);
+        }
+        case kWritePart: {
+            const uint32_t number = r.u32();
+            const uint8_t part = r.u8();
+            std::string path = r.str();
+            const uint32_t k = r.u32();
+            const std::string_view data(r.p, std::min<size_t>(k, r.n));  // (as it is in the frame: not copied)
+            Writing& f = writings[number];
+            if (part & kFirst) f.begin(std::move(path));
+            f.add(data);
+            if (!(part & kLast)) return;
+            std::string err;
+            int64_t m = 0;
+            const bool ok = f.finish(&err, &m);
+            writings.erase(number);
             w.u8(ok).str(err).i64(m);
             return reply(id, w);
         }
@@ -540,15 +601,18 @@ void handle(uint8_t op, uint32_t id, std::string_view body) {
         }
         case kResize: {
             const uint32_t proc = r.u32(), rows = r.u32(), cols = r.u32();
-            if (auto it = children.find(proc); it != children.end() && it->second.pty && it->second.out >= 0) blit::pty_resize(it->second.out, rows, cols);
+            const uint32_t w = r.n >= 8 ? r.u32() : 0, h = r.n >= 4 ? r.u32() : 0;  // (in pixels: from blit 3)
+            if (auto it = children.find(proc); it != children.end() && it->second.pty && it->second.out >= 0) blit::pty_resize(it->second.out, rows, cols, w, h);
             return;
         }
         case kStdin: {
             const uint32_t proc = r.u32();
             const std::string data = r.str();
             if (auto it = children.find(proc); it != children.end()) {
-                if (data.empty()) it->second.close_in = true;
-                else it->second.pending += data;
+                Child& c = it->second;
+                if (data.empty()) c.close_in = true;
+                else c.pending += data;
+                if (c.pending.size() - c.pending_at > kInMost) in_flow(proc, c, true);
             }
             return;
         }
@@ -588,7 +652,7 @@ int main() {
             // (A paused program's output waits in its pipe, and once that is full, the program waits.)
             if (c.out >= 0 && !c.paused) fds.push_back({c.out, POLLIN, 0}), who.emplace_back(pid, 1);
             if (c.err >= 0 && !c.paused) fds.push_back({c.err, POLLIN, 0}), who.emplace_back(pid, 2);
-            if (c.in >= 0 && !c.pending.empty()) fds.push_back({c.in, POLLOUT, 0}), who.emplace_back(pid, 0);
+            if (c.in >= 0 && c.pending_at < c.pending.size()) fds.push_back({c.in, POLLOUT, 0}), who.emplace_back(pid, 0);
             else if (c.in >= 0 && c.close_in && !c.pty) ::close(c.in), c.in = -1;  // (a terminal's input is its output: it stays)
         }
         if (fds.empty()) {
@@ -641,9 +705,12 @@ int main() {
             if (it == children.end()) continue;
             Child& c = it->second;
             if (who[i].second == 0) {
-                const ssize_t put = ::write(c.in, c.pending.data(), c.pending.size());
-                if (put > 0) c.pending.erase(0, static_cast<size_t>(put));
-                else if (put < 0 && errno != EAGAIN && errno != EINTR) c.pending.clear(), c.close_in = !c.pty;
+                const ssize_t put = ::write(c.in, c.pending.data() + c.pending_at, c.pending.size() - c.pending_at);
+                if (put > 0) c.pending_at += static_cast<size_t>(put);
+                else if (put < 0 && errno != EAGAIN && errno != EINTR) c.pending.clear(), c.pending_at = 0, c.close_in = !c.pty;
+                if (c.pending_at == c.pending.size()) c.pending.clear(), c.pending_at = 0;
+                else if (c.pending_at > (64u << 10) && c.pending_at * 2 > c.pending.size()) c.pending.erase(0, c.pending_at), c.pending_at = 0;  // (taken: let go of)
+                if (c.pending.size() - c.pending_at <= kInLess) in_flow(who[i].first, c, false);
                 continue;
             }
             int& fd = who[i].second == 1 ? c.out : c.err;
@@ -656,7 +723,7 @@ int main() {
             } else if (got == 0 || (errno != EAGAIN && errno != EINTR)) {
                 ::close(fd);
                 fd = -1;
-                if (c.pty) c.in = -1, c.pending.clear();  // (the same descriptor)
+                if (c.pty) c.in = -1, c.pending.clear(), c.pending_at = 0, in_flow(it->first, c, false);  // (the same descriptor)
             }
         }
         finish_children();

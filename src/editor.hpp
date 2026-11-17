@@ -47,8 +47,8 @@ public:
     u32 tab_width = 4;  // columns between tab stops
     EditWatch* watch = nullptr;
 
-    // Up to two listeners hear about edits (syntax highlighting and the
-    // language server).
+    // Up to three listeners hear about edits (syntax highlighting, the
+    // language server, and the debugger's breakpoints).
     void listen(EditListener* l) {
         unlisten(l);
         for (EditListener*& slot : listeners_)
@@ -60,7 +60,10 @@ public:
     void unlisten(EditListener* l) {
         for (EditListener*& slot : listeners_)
             if (slot == l) slot = nullptr;
-        if (!listeners_[0]) std::swap(listeners_[0], listeners_[1]);  // the first slot is filled whenever any is
+        size_t n = 0;  // (the first slot is filled whenever any is)
+        for (EditListener* slot : listeners_)
+            if (slot) listeners_[n++] = slot;
+        while (n < std::size(listeners_)) listeners_[n++] = nullptr;
     }
 
     bool open(const char* file, std::string* err);
@@ -198,7 +201,7 @@ private:
 
     bool listening() const { return listeners_[0] != nullptr; }
 
-    EditListener* listeners_[2] = {};
+    EditListener* listeners_[3] = {};
     u64 cursor_ = 0;
     u64 anchor_ = 0;
     u32 want_col_ = ~0u;  // column kept across vertical moves

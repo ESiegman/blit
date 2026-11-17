@@ -118,10 +118,12 @@ bool pty_spawn(const std::vector<std::string>& argv, const std::string& cwd, con
     return true;
 }
 
-void pty_resize(int fd, unsigned rows, unsigned cols) {
+void pty_resize(int fd, unsigned rows, unsigned cols, unsigned width_px, unsigned height_px) {
     struct winsize ws{};
     ws.ws_row = static_cast<unsigned short>(rows);
     ws.ws_col = static_cast<unsigned short>(cols);
+    ws.ws_xpixel = static_cast<unsigned short>(width_px < 65536 ? width_px : 0);
+    ws.ws_ypixel = static_cast<unsigned short>(height_px < 65536 ? height_px : 0);
     ::ioctl(fd, TIOCSWINSZ, &ws);
 }
 

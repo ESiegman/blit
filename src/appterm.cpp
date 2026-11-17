@@ -26,6 +26,7 @@
 #include "app.hpp"
 #include "buildscan.hpp"
 #include "look.hpp"
+#include "picture.h"
 #include "pty.hpp"
 #include "remote.hpp"
 #include "term.hpp"
@@ -43,6 +44,17 @@ void wake() {
     ev.type = SDL_EVENT_USER;
     ev.user.code = 14;
     SDL_PushEvent(&ev);
+}
+
+// A PNG a program sends a terminal (kitty's pictures), read by the system's reader.
+bool read_picture(std::string_view bytes, std::vector<u8>* rgba, u32* w, u32* h) {
+    BlitPicture p{};
+    char err[128];
+    if (!blit_picture_read(bytes.data(), bytes.size(), 8192, &p, err, sizeof err)) return false;
+    rgba->assign(p.rgba, p.rgba + static_cast<size_t>(p.w) * static_cast<size_t>(p.h) * 4);
+    *w = static_cast<u32>(p.w), *h = static_cast<u32>(p.h);
+    blit_picture_free(&p);
+    return true;
 }
 
 // The 16 colours programs name, for a dark background and a light one.
@@ -93,6 +105,16 @@ struct TermView {
     bool selecting = false, selected = false;
     u64 sel_line0 = 0, sel_line1 = 0, anchor_line = 0;
     u32 sel_col0 = 0, sel_col1 = 0, anchor_col = 0;
+    // The mouse, told to a program that asked for it: the button held (-1:
+    // none), the cell it was last told of, and the wheel's part notches.
+    int mouse_button = -1;
+    u32 mouse_row = ~0u, mouse_col = ~0u;
+    float wheel_left = 0;
+    // Its pictures on the GPU, one for each picture's pixels (kitty's image
+    // put there twice is one), as of the screen's count of pictures.
+    Renderer* gpu = nullptr;
+    std::vector<std::pair<std::shared_ptr<const std::vector<u8>>, u32>> pics;
+    u64 pics_gen = ~0ull;
 
     ~TermView() {
         // The program is hung up on (a shell ends), and the reader stops.
@@ -125,6 +147,8 @@ struct TermView {
                 }
             }).detach();
         }
+        if (gpu)
+            for (const auto& [pixels, id] : pics) gpu->image_drop(id);
     }
 
     // On another machine: its connection (made now if it is not there yet)
@@ -381,9 +405,13 @@ u64 App::term_open(const std::string& dir_given, const std::string& command, con
         }
         v->in = v->out = v->pty.fd;
     }
+    static const bool reader = (Term::set_picture_reader(read_picture), true);
+    (void)reader;
+    v->gpu = &gpu_;
     {
         std::lock_guard lock(v->mu);
         v->term.resize(cols, rows);
+        v->term.set_cell_px(static_cast<u32>(font_->cell_w()), static_cast<u32>(font_->cell_h()));
         if (!hint.empty()) v->term.feed("\x1b[2m" + std::string(hint) + "\x1b[0m\r\n");  // (before the reader: the shell's first line comes after it)
     }
     TermView* raw = v.get();
@@ -781,10 +809,12 @@ void App::term_layout(FrameDesc& fd) {
         const bool focused = pane.get() == pane_ && !find_open_ && !panel_has_keyboard();
         std::lock_guard lock(v.mu);
         Term& t = v.term;
-        if (t.cols() != cols || t.rows() != rows) {  // the tab's size: the program is told
+        t.set_cell_px(static_cast<u32>(cw), static_cast<u32>(ch));
+        if (t.cols() != cols || t.rows() != rows) {  // the tab's size: the program is told (in pixels too, for its pictures)
+            if (t.cols() != cols) v.selected = v.selecting = false;  // (its lines are wrapped again: the places chosen are not where they were)
             t.resize(cols, rows);
-            if (v.conn) v.conn->resize(v.proc.id, rows, cols);
-            else if (v.pty.fd >= 0) pty_resize(v.pty.fd, rows, cols);
+            if (v.conn) v.conn->resize(v.proc.id, rows, cols, cols * static_cast<u32>(cw), rows * static_cast<u32>(ch));
+            else if (v.pty.fd >= 0) pty_resize(v.pty.fd, rows, cols, cols * static_cast<u32>(cw), rows * static_cast<u32>(ch));
         }
         v.scroll = std::min<u64>(v.scroll, t.history());
         u64 key = t.generation() * 1000003ull ^ v.scroll * 7919 ^ font.generation() * 31 ^ (focused ? 1 : 0) ^ static_cast<u64>(cols) << 40 ^
@@ -856,6 +886,49 @@ void App::term_layout(FrameDesc& fd) {
         q.sel = theme_.cursor;
         q.tones = &v.tones[0][0];
         q.palette = &v.palette[0][0];
+        if (!t.pictures().empty() || !v.pics.empty()) term_pictures(fd, v, x, y, w, h);
+    }
+}
+
+// A terminal's pictures (sixel's, kitty's), over its box: on the GPU once
+// each (and let go of when none on the screen or in the history has those
+// pixels any more), and drawn where their lines are on show, each pixel a
+// pixel unless it fills the cells it was given. (v.mu is held.)
+void App::term_pictures(FrameDesc& fd, TermView& v, int x, int y, int w, int h) {
+    const Term& t = v.term;
+    const int cw = font_->cell_w(), ch = font_->cell_h();
+    if (v.pics_gen != t.pictures_generation()) {
+        v.pics_gen = t.pictures_generation();
+        std::erase_if(v.pics, [&](const auto& g) {
+            const bool used = std::ranges::any_of(t.pictures(), [&](const TermPicture& p) { return p.rgba == g.first; });
+            if (!used) gpu_.image_drop(g.second);
+            return !used;
+        });
+        for (const TermPicture& p : t.pictures())
+            if (p.rgba && std::ranges::none_of(v.pics, [&](const auto& g) { return g.first == p.rgba; }))
+                if (const u32 id = gpu_.image_add(p.rgba->data(), static_cast<int>(p.w), static_cast<int>(p.h))) v.pics.emplace_back(p.rgba, id);
+    }
+    const bool alt = t.alt_screen();
+    const u64 first = t.lines_gone() + t.history() - v.scroll;  // the line at the top of the view
+    for (const TermPicture& p : t.pictures()) {
+        if (p.alt != alt || fd.picture_count >= std::size(fd.pictures)) continue;
+        const i64 row = alt ? static_cast<i64>(p.line) : static_cast<i64>(p.line) - static_cast<i64>(first);
+        if (row + static_cast<i64>(p.rows) <= 0 || row >= static_cast<i64>(v.rows)) continue;
+        u32 image = 0;
+        for (const auto& [pixels, id] : v.pics)
+            if (pixels == p.rgba) image = id;
+        if (!image) continue;
+        PictureDraw& d = fd.pictures[fd.picture_count++];
+        d = PictureDraw{};
+        d.image = image;
+        const float left = static_cast<float>(x + v.pad_x + static_cast<int>(p.col) * cw + static_cast<int>(p.off_x));
+        const float top = static_cast<float>(y + v.pad_y + static_cast<int>(row) * ch + static_cast<int>(p.off_y));
+        d.rect[0] = left, d.rect[1] = top;
+        d.rect[2] = left + static_cast<float>(p.fit ? static_cast<int>(p.cols) * cw : static_cast<int>(p.w));
+        d.rect[3] = top + static_cast<float>(p.fit ? static_cast<int>(p.rows) * ch : static_cast<int>(p.h));
+        d.clip[0] = x, d.clip[1] = y, d.clip[2] = x + w, d.clip[3] = y + h;
+        d.after = fd.popup_count;  // (over the terminal's box, under what is over that)
+        d.clear = true;
     }
 }
 
@@ -1035,6 +1108,36 @@ bool App::term_text(const char* text) {
     return true;
 }
 
+namespace {
+
+// What a terminal sends a program that asked for the mouse: a button
+// (0-2 left, middle, right; 64 and 65 the wheel up and down) pressed,
+// released or moved with, at a cell of the screen, in SGR's form if it
+// asked for that, else in X10's (which cannot say where past column 223).
+std::string mouse_report(const Term& t, int button, bool release, bool motion, u32 row, u32 col, SDL_Keymod mod) {
+    int b = button + (motion ? 32 : 0) + (mod & SDL_KMOD_SHIFT ? 4 : 0) + (mod & SDL_KMOD_ALT ? 8 : 0) + (mod & SDL_KMOD_CTRL ? 16 : 0);
+    if (t.mouse_mode() == 9) b = button;  // (X10's own: presses alone, no keys)
+    char buf[48];
+    if (t.mouse_sgr()) {
+        std::snprintf(buf, sizeof buf, "\x1b[<%d;%u;%u%c", b, col + 1, row + 1, release ? 'm' : 'M');
+        return buf;
+    }
+    if (release) b = (b & ~3) | 3;  // (X10's release does not say which)
+    if (col > 222 || row > 222) return {};
+    return {'\x1b', '[', 'M', static_cast<char>(32 + b), static_cast<char>(33 + col), static_cast<char>(33 + row)};
+}
+
+}  // namespace
+
+// The screen cell under a point in a terminal's tab, if it shows the screen (not the history) and its program wants the mouse.
+bool App::term_mouse_cell(TermView& v, int px, int py, u32* row, u32* col) {
+    if (!v.cols || v.scroll != 0) return false;
+    *col = static_cast<u32>(std::clamp((px - v.x - v.pad_x) / font_->cell_w(), 0, static_cast<int>(v.cols) - 1));
+    *row = static_cast<u32>(std::clamp((py - v.y - v.pad_y) / font_->cell_h(), 0, static_cast<int>(v.rows) - 1));
+    std::lock_guard lock(v.mu);
+    return v.term.mouse_mode() != 0;
+}
+
 // The terminal tab in front of the pane under a point, and the cell there (line counted from the oldest in the history).
 bool App::term_hit(int px, int py, Pane** pane, u64* line, u32* col) {
     for (const std::unique_ptr<Pane>& p : panes_) {
@@ -1059,7 +1162,24 @@ bool App::term_mouse_down(const SDL_MouseButtonEvent& b) {
     if (!term_hit(static_cast<int>(b.x * density_), static_cast<int>(b.y * density_), &pane, &line, &col)) return false;
     focus_pane(pane);
     TermView& v = *pane->doc->term;
-    if (b.button == SDL_BUTTON_LEFT && (SDL_GetModState() & kPrimaryMod) && term_go_place(v, line, col)) return true;  // Cmd+click on a path:line
+    const SDL_Keymod mod = SDL_GetModState();
+    if (b.button == SDL_BUTTON_LEFT && (mod & kPrimaryMod) && term_go_place(v, line, col)) return true;  // Cmd+click on a path:line
+    // A program that asked for the mouse is told of it (with Shift, it is the terminal's own: choosing text).
+    u32 mrow = 0, mcol = 0;
+    const int button = b.button == SDL_BUTTON_LEFT ? 0 : b.button == SDL_BUTTON_MIDDLE ? 1 : b.button == SDL_BUTTON_RIGHT ? 2 : -1;
+    if (button >= 0 && !(mod & SDL_KMOD_SHIFT) && term_mouse_cell(v, static_cast<int>(b.x * density_), static_cast<int>(b.y * density_), &mrow, &mcol)) {
+        std::string s;
+        {
+            std::lock_guard lock(v.mu);
+            s = mouse_report(v.term, button, false, false, mrow, mcol, mod);
+        }
+        v.mouse_button = button;
+        v.mouse_row = mrow, v.mouse_col = mcol;
+        v.selected = false;
+        v.send(s);
+        dirty_ = true;
+        return true;
+    }
     if (b.button == SDL_BUTTON_LEFT) {
         v.selecting = true;
         v.selected = false;
@@ -1161,6 +1281,32 @@ bool App::term_go_place(TermView& v, u64 line, u32 col) {
 }
 
 bool App::term_mouse_motion(const SDL_MouseMotionEvent& m) {
+    // A program that asked to be told of moves: with a button held (1002), or any (1003), as the mouse comes to another cell.
+    const int px = static_cast<int>(m.x * density_), py = static_cast<int>(m.y * density_);
+    for (const std::unique_ptr<Pane>& p : panes_) {
+        if (!p->doc || !p->doc->term) continue;
+        TermView& v = *p->doc->term;
+        const bool held = v.mouse_button >= 0;
+        if (!held && (px < v.x || py < v.y || px >= p->x1 || py >= p->y1)) continue;
+        u32 row = 0, col = 0;
+        if (!term_mouse_cell(v, px, py, &row, &col)) continue;
+        std::string s;
+        {
+            std::lock_guard lock(v.mu);
+            const u32 mode = v.term.mouse_mode();
+            if ((mode == 1002 && held) || mode == 1003) {
+                if (row == v.mouse_row && col == v.mouse_col) return true;
+                s = mouse_report(v.term, held ? v.mouse_button : 3, false, true, row, col, SDL_GetModState());
+            }
+        }
+        if (s.empty()) {
+            if (held) return true;  // (a press it was told of: the drag is not choosing text)
+            continue;
+        }
+        v.mouse_row = row, v.mouse_col = col;
+        v.send(s);
+        return true;
+    }
     if (!(m.state & SDL_BUTTON_LMASK)) return false;
     for (const std::unique_ptr<Pane>& p : panes_) {
         if (!p->doc || !p->doc->term || !p->doc->term->selecting) continue;
@@ -1181,8 +1327,23 @@ bool App::term_mouse_motion(const SDL_MouseMotionEvent& m) {
 }
 
 void App::term_mouse_up() {
-    for (const std::unique_ptr<Pane>& p : panes_)
-        if (p->doc && p->doc->term) p->doc->term->selecting = false;
+    for (const std::unique_ptr<Pane>& p : panes_) {
+        if (!p->doc || !p->doc->term) continue;
+        TermView& v = *p->doc->term;
+        v.selecting = false;
+        if (v.mouse_button < 0) continue;
+        // The button let go of, where the mouse is now (on the screen, as the press was).
+        const int button = std::exchange(v.mouse_button, -1);
+        u32 row = v.mouse_row, col = v.mouse_col;
+        term_mouse_cell(v, static_cast<int>(mouse_x_ * density_), static_cast<int>(mouse_y_ * density_), &row, &col);
+        std::string s;
+        {
+            std::lock_guard lock(v.mu);
+            const u32 mode = v.term.mouse_mode();
+            if (mode && mode != 9) s = mouse_report(v.term, button, true, false, row, col, SDL_GetModState());
+        }
+        if (!s.empty()) v.send(s);
+    }
 }
 
 bool App::term_wheel(const SDL_MouseWheelEvent& w) {
@@ -1191,6 +1352,19 @@ bool App::term_wheel(const SDL_MouseWheelEvent& w) {
     u32 col = 0;
     if (!term_hit(static_cast<int>(mouse_x_ * density_), static_cast<int>(mouse_y_ * density_), &pane, &line, &col)) return false;
     TermView& v = *pane->doc->term;
+    // A program that asked for the mouse: the wheel's notches, as buttons 64 (up) and 65 (down).
+    u32 mrow = 0, mcol = 0;
+    if (term_mouse_cell(v, static_cast<int>(mouse_x_ * density_), static_cast<int>(mouse_y_ * density_), &mrow, &mcol)) {
+        v.wheel_left += w.y;
+        std::string s;
+        {
+            std::lock_guard lock(v.mu);
+            for (; v.wheel_left >= 1 || v.wheel_left <= -1; v.wheel_left -= v.wheel_left > 0 ? 1.0f : -1.0f)
+                s += mouse_report(v.term, v.wheel_left > 0 ? 64 : 65, false, false, mrow, mcol, SDL_GetModState());
+        }
+        if (!s.empty()) v.send(s);
+        return true;
+    }
     const int n = static_cast<int>(std::lround(w.y * 3));
     if (n == 0) return true;
     bool alt, app_keys;
@@ -1224,8 +1398,14 @@ std::string App::term_dump() {
         const std::string t = v.term.row_text(r);
         if (!t.empty()) out += (out.empty() ? "" : "|") + t;
     }
-    return out + " @" + std::to_string(v.term.cursor_row()) + "," + std::to_string(v.term.cursor_col()) + " " + std::to_string(v.term.rows()) + "x" +
+    out += " @" + std::to_string(v.term.cursor_row()) + "," + std::to_string(v.term.cursor_col()) + " " + std::to_string(v.term.rows()) + "x" +
            std::to_string(v.term.cols()) + (v.scroll ? " back " + std::to_string(v.scroll) : "") + (v.ended ? " ended " + std::to_string(v.status.load()) : "");
+    // Its pictures: each one's size, and its row (on the screen: less than 0, in the history) and column.
+    for (const TermPicture& p : v.term.pictures()) {
+        const i64 row = p.alt ? static_cast<i64>(p.line) : static_cast<i64>(p.line - v.term.lines_gone()) - static_cast<i64>(v.term.history());
+        out += " picture " + std::to_string(p.w) + "x" + std::to_string(p.h) + "@" + std::to_string(row) + "," + std::to_string(p.col);
+    }
+    return out;
 }
 
 // Waits (10 s at most) until the program of the terminal in front has ended.

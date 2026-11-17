@@ -1,7 +1,8 @@
 #!/bin/sh
 # Profiling, end to end: a program recorded by the system's profiler
-# (xctrace here on a Mac), its tab, the times in its code; and the same
-# on "another machine" through tests/fake-ssh.sh (which runs it here).
+# (xctrace here on a Mac), its tab, the times in its code, its threads, the
+# profile kept beside the project and opened again; and the same on
+# "another machine" through tests/fake-ssh.sh (which runs it here).
 # Skipped where there is no profiler to run.
 #
 #   tests/profile.sh path/to/blit            run the cases
@@ -23,10 +24,15 @@ mkdir -p "$dir/here" "$T"
 for d in "$dir/here" "$T"; do
     cp "$here/profile/spin.c" "$d/" && (cd "$d" && cc -O1 -g -fno-omit-frame-pointer -o spin spin.c) || exit 1
 done
+cp "$here/profile/threads.c" "$dir/here/" && (cd "$dir/here" && cc -O1 -g -fno-omit-frame-pointer -pthread -o threads threads.c) || exit 1
+# (Profiles are kept beside the folder being worked in, which is blit's own
+# folder when none is chosen: run there, so that nothing is left behind.)
+blit=$(cd "$(dirname "$blit")" && pwd)/$(basename "$blit")
+cd "$dir" || exit 1
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/init.lua"
 export BLIT_INIT="$dir/init.lua" BLIT_RECENT_FILE="$dir/recent" BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T"
-tool=xctrace
-[ "$(uname -s)" = Darwin ] || tool=perf
+tool=xctrace main="Main Thread"  # (the profiler, and what it calls the first thread)
+[ "$(uname -s)" = Darwin ] || tool=perf main=threads
 
 failed=0
 check() {
@@ -64,6 +70,21 @@ check "a program that is not there: why, and no profile" "failed, 0 profiles"
 run "prof:program=ssh://box$T/spin;prof:args=40;profrecord;profwait;frame;profdump;key:Return;remotewait;frame;frame;profdump"
 check "recorded on another machine: its source opened from there, with the times" \
     "1 profiles; spin by $tool on box, 1 thread, over 10%: inner@spin.c outer@spin.c; tab: zoom all ;; 1 profiles; spin by $tool on box, 1 thread, over 10%: inner@spin.c outer@spin.c; times on lines 9F 17F 25F"
+
+# A graph per thread: the Profile tab lists the threads of the profile shown
+# (All threads, then the heaviest first), and the graph is of the one chosen.
+W="workdir:$dir/here"
+run "$W;prof:program=$dir/here/threads;prof:args=30;profpanel;profrecord;profwait;frame;profdump;profpick:threads:2;frame;profdump;profpick:threads:1;frame;profdump"
+check "a graph per thread, the heaviest thread's first" \
+    "1 profiles; threads by $tool, 2 thread, over 10%: main_work@threads.c worker_work@threads.c; tab: zoom all ;; 1 profiles; threads by $tool, 2 thread, over 10%: main_work@threads.c worker_work@threads.c; tab: zoom worker, heaviest worker_work ;; 1 profiles; threads by $tool, 2 thread, over 10%: main_work@threads.c worker_work@threads.c; tab: zoom all"
+
+# Profiles kept: each one made is written into .blit/profiles in the folder
+# being worked in; the Profile tab lists them there, and opens one again.
+got=$(ls "$dir/here/.blit/profiles" | grep '^threads' | sed -e 's/-[0-9-]*\.blitprofile$/ (when).blitprofile/')
+check "the profile kept beside the project" "threads (when).blitprofile"
+run "$W;profpanel;frame;profwait;frame;profpick:profiles:1;profwait;frame;profdump;profpick:threads:3;frame;profdump"
+check "and opened again from the Profile tab, its threads with it" \
+    "1 profiles; threads by $tool, 2 thread, over 10%: main_work@threads.c worker_work@threads.c; tab: zoom all ;; 1 profiles; threads by $tool, 2 thread, over 10%: main_work@threads.c worker_work@threads.c; tab: zoom $main, heaviest main_work"
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "profile ok"
 exit $failed

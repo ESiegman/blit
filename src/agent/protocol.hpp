@@ -21,7 +21,9 @@ constexpr uint32_t kVersion = 2;
 
 enum Op : uint8_t {
     // Asked by blit, answered with kReply and the same number.
-    kHello = 1,  // u32 version -> str agent version, str home, str system, u32 process id
+    kHello = 1,  // u32 version, [u32 blit's level] -> str agent version, str home, str system, u32 process id
+                 //   (blit's level, from blit 3: what it understands of what the agent sends, kInFlow; an older
+                 //   agent reads no further than the version)
     kStat,       // str path -> u8 kind (0 none, 1 file, 2 folder, 3 other), u64 size, i64 modified (ns), u32 mode
     kRead,       // str path, u64 most -> u8 status (0 read, 1 none, 2 not a file, 3 too big, 4 failed), bytes, i64 modified
     kWrite,      // str path, bytes -> u8 ok, str error, i64 modified (through a temporary file, keeping the mode; through a link to what it names)
@@ -42,24 +44,34 @@ enum Op : uint8_t {
     kWhich,      // str program -> str path (empty: not found on the agent's PATH)
     kSpawnPty,   // u32 process, str folder, u32 rows, u32 columns, u32 argc, * str, u32 envc, * str -> u8 ok, str error
                  //   (on a pseudo-terminal: its output comes as stream 1, its input goes in with kStdin)
-    kResize,     // u32 process, u32 rows, u32 columns -> nothing (its pseudo-terminal's size)
+    kResize,     // u32 process, u32 rows, u32 columns, [u32 width, u32 height] -> nothing (its pseudo-terminal's size;
+                 //   in pixels too, from blit 3: an older agent reads no further than the columns)
     kFlow,       // u32 process, u8 paused -> nothing (from agent 2: while paused, its output is not read, so
                  //   that it waits for blit to take what it has; an older agent answers "unknown request")
+    kWritePart,  // u32 write, u8 part (kFirst, kLast), str path, bytes -> (the last part only) as kWrite
+                 //   (from agent 3: a file written a part at a time, so that what else is sent goes between the
+                 //   parts; the parts of one write come in order, and only the last is answered)
     // Sent by the agent.
     kReply = 100,  // the answer to a request
     kOutput,       // u32 process, u8 stream (1 output, 2 errors), bytes
     kExit,         // u32 process, i32 status (exit code, or 128 + signal)
+    kInFlow,       // u32 process, u8 paused (to a blit of level 3: what it sends to the program's input waits
+                   //   while paused, the program not having taken what it has been sent)
 };
 
 // kSpawn's flags.
 enum : uint8_t { kQuiet = 1 };
+// kWritePart's parts.
+enum : uint8_t { kFirst = 1, kLast = 2 };
 
 // The agent's own version, the number at the end of what it says to kHello
-// ("blit-agent 2"). It counts what an agent can do that one before it
-// could not (kFlow, kQuiet), so that blit asks an older one only for what it
-// knows. (A blit always brings its own agent; an older one is met only when
-// the agents kept in agent/bin were built from older sources.)
-constexpr uint32_t kAgentLevel = 2;
+// ("blit-agent 3"). It counts what an agent can do that one before it
+// could not (2: kFlow, kQuiet; 3: kWritePart, kInFlow), so that blit asks
+// an older one only for what it knows. (A blit always brings its own agent;
+// an older one is met only when the agents kept in agent/bin were built
+// from older sources.) blit says its own level the same way, in kHello.
+constexpr uint32_t kAgentLevel = 3;
+constexpr uint32_t kBlitLevel = 3;
 
 // A message being put together.
 struct Writer {

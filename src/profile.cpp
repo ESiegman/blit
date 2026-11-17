@@ -16,7 +16,9 @@
 #include <ctime>
 #include <deque>
 #include <filesystem>
+#include <format>
 
+#include "json.hpp"
 #include "remote.hpp"
 
 extern char** environ;
@@ -34,7 +36,7 @@ std::string_view base_name(std::string_view path) {
 
 }  // namespace
 
-void Profile::add(std::span<const Frame> frames, u64 w) {
+void Profile::add(std::span<const Frame> frames, u64 w, u64 thread, std::string_view thread_name) {
     if (nodes.empty()) {
         nodes.push_back({});
         funcs.push_back({std::string(base_name(program)), program, {}, 0, 0, 0, true});  // [0]: the program, all of it
@@ -45,8 +47,25 @@ void Profile::add(std::span<const Frame> frames, u64 w) {
     weight += w;
     nodes[0].total += w;
     funcs[0].total += w;
+    add_path(0, frames, w, true);
+    // And in its thread's own tree, under a root of its own.
+    auto [it, fresh] = thread_ids_.try_emplace(thread, static_cast<u32>(by_thread.size()));
+    if (fresh) {
+        nodes.push_back({0, 0, 0, 0, {}});
+        by_thread.push_back({thread_name.empty() ? "Thread " + std::to_string(thread) : std::string(thread_name), thread, 0, 0, static_cast<u32>(nodes.size() - 1)});
+    }
+    ProfileThread& t = by_thread[it->second];
+    t.weight += w;
+    ++t.samples;
+    nodes[t.root].total += w;
+    add_path(t.root, frames, w, false);
+}
+
+// A sample's frames into the tree under `root` (counts: and into the
+// functions' weights and the lines', which are the whole profile's).
+void Profile::add_path(u32 root, std::span<const Frame> frames, u64 w, bool counts) {
     std::vector<std::pair<std::string_view, u32>> lines_now;  // (each line counted once in a sample)
-    u32 node = 0;
+    u32 node = root;
     for (size_t k = frames.size(); k-- > 0;) {  // from the outermost in
         const Frame& f = frames[k];
         std::string key;
@@ -56,19 +75,21 @@ void Profile::add(std::span<const Frame> frames, u64 w) {
         auto [fi, fresh_func] = func_ids_.try_emplace(std::move(key), static_cast<u32>(funcs.size()));
         const u32 fid = fi->second;
         if (fresh_func) funcs.push_back({std::string(f.name), std::string(f.module), {}, 0, 0, 0, false});
-        ProfileFunc& func = funcs[fid];
-        if (seen_.size() <= fid) seen_.resize(fid + 1, 0);
-        if (seen_[fid] != sample_no_) {
-            seen_[fid] = sample_no_;
-            func.total += w;
-        }
-        if (!f.file.empty() && f.line) {
-            if (func.file.empty()) func.file = f.file;
-            if (func.file == f.file && (func.line == 0 || f.line < func.line)) func.line = f.line;
-            const std::pair<std::string_view, u32> here{f.file, f.line};
-            if (std::ranges::find(lines_now, here) == lines_now.end()) {
-                lines_now.push_back(here);
-                lines[std::string(f.file)][f.line].total += w;
+        if (counts) {
+            ProfileFunc& func = funcs[fid];
+            if (seen_.size() <= fid) seen_.resize(fid + 1, 0);
+            if (seen_[fid] != sample_no_) {
+                seen_[fid] = sample_no_;
+                func.total += w;
+            }
+            if (!f.file.empty() && f.line) {
+                if (func.file.empty()) func.file = f.file;
+                if (func.file == f.file && (func.line == 0 || f.line < func.line)) func.line = f.line;
+                const std::pair<std::string_view, u32> here{f.file, f.line};
+                if (std::ranges::find(lines_now, here) == lines_now.end()) {
+                    lines_now.push_back(here);
+                    lines[std::string(f.file)][f.line].total += w;
+                }
             }
         }
         auto [ni, fresh_node] = node_ids_.try_emplace(static_cast<u64>(node) << 32 | fid, static_cast<u32>(nodes.size()));
@@ -79,14 +100,37 @@ void Profile::add(std::span<const Frame> frames, u64 w) {
         node = ni->second;
         nodes[node].total += w;
     }
-    if (frames.empty()) {
-        nodes[0].self += w;
-        return;
-    }
     nodes[node].self += w;
+    if (frames.empty() || !counts) return;
     funcs[nodes[node].func].self += w;
     const Frame& leaf = frames.front();
     if (!leaf.file.empty() && leaf.line) lines[std::string(leaf.file)][leaf.line].self += w;
+}
+
+bool Profile::thread_root(u32 node) const {
+    return node != 0 && std::ranges::any_of(by_thread, [&](const ProfileThread& t) { return t.root == node; });
+}
+
+void Profile::weights_under(u32 root, std::vector<u64>* self, std::vector<u64>* total) const {
+    self->assign(funcs.size(), 0);
+    total->assign(funcs.size(), 0);
+    if (root >= nodes.size()) return;
+    // Depth first, each function's total counted at the outermost of it on a path (a recursion is not counted twice).
+    std::vector<u32> on_path(funcs.size(), 0);
+    std::vector<std::pair<u32, bool>> todo{{root, false}};  // (node, leaving it)
+    while (!todo.empty()) {
+        const auto [n, leaving] = todo.back();
+        todo.pop_back();
+        const ProfileNode& node = nodes[n];
+        if (leaving) {
+            --on_path[node.func];
+            continue;
+        }
+        (*self)[node.func] += node.self;
+        if (on_path[node.func]++ == 0) (*total)[node.func] += node.total;
+        todo.push_back({n, true});
+        for (const u32 k : node.kids) todo.push_back({k, false});
+    }
 }
 
 void Profile::finish() {
@@ -98,9 +142,104 @@ void Profile::finish() {
         std::ranges::sort(n.kids, [&](u32 a, u32 b) { return nodes[a].total != nodes[b].total ? nodes[a].total > nodes[b].total : funcs[nodes[a].func].name < funcs[nodes[b].func].name; });
     const std::string_view prog = base_name(program);
     for (size_t i = 1; i < funcs.size(); ++i) funcs[i].own = !prog.empty() && base_name(funcs[i].module) == prog;
+    std::ranges::stable_sort(by_thread, [](const ProfileThread& a, const ProfileThread& b) { return a.weight > b.weight; });
+    threads = std::max<u32>(threads, static_cast<u32>(by_thread.size()));
     func_ids_.clear();
     node_ids_.clear();
+    thread_ids_.clear();
     seen_.clear();
+}
+
+// ---------------------------------------------------------------- as a file
+
+// JSON: what was run and how, then the functions, the nodes (a node's
+// parent; -1 for a root, which is no node's kid), the threads, the lines.
+std::string Profile::to_json() const {
+    std::string o = "{\"blit_profile\":1";
+    auto field = [&](const char* k, std::string_view v) {
+        o += ",\"";
+        o += k;
+        o += "\":";
+        json::quote(o, v);
+    };
+    auto num = [&](const char* k, double v) { o += std::format(",\"{}\":{}", k, v); };
+    field("program", program), field("args", args), field("backend", backend), field("host", host), field("when", when);
+    field("unit", unit), field("output", output), field("note", note);
+    num("weight", static_cast<double>(weight)), num("samples", static_cast<double>(samples)), num("seconds", seconds), num("threads", threads);
+    o += ",\"funcs\":[";
+    for (size_t i = 0; i < funcs.size(); ++i) {
+        const ProfileFunc& f = funcs[i];
+        o += i ? ",[" : "[";
+        json::quote(o, f.name), o += ",", json::quote(o, f.module), o += ",", json::quote(o, f.file);
+        o += std::format(",{},{},{},{}]", f.line, f.self, f.total, f.own ? 1 : 0);
+    }
+    o += "],\"nodes\":[";
+    for (size_t i = 0; i < nodes.size(); ++i) {
+        const ProfileNode& n = nodes[i];
+        const bool root = i == 0 || thread_root(static_cast<u32>(i));
+        o += std::format("{}[{},{},{},{}]", i ? "," : "", n.func, root ? -1 : static_cast<i64>(n.parent), n.total, n.self);
+    }
+    o += "],\"by_thread\":[";
+    for (size_t i = 0; i < by_thread.size(); ++i) {
+        const ProfileThread& t = by_thread[i];
+        o += i ? ",[" : "[";
+        json::quote(o, t.name);
+        o += std::format(",{},{},{},{}]", t.id, t.weight, t.samples, t.root);
+    }
+    o += "],\"lines\":{";
+    bool first = true;
+    for (const auto& [file, by_line] : lines) {
+        if (!first) o += ",";
+        first = false;
+        json::quote(o, file);
+        o += ":[";
+        bool one = true;
+        for (const auto& [line, w] : by_line) o += std::format("{}[{},{},{}]", one ? "" : ",", line, w.self, w.total), one = false;
+        o += "]";
+    }
+    return o + "}}";
+}
+
+bool Profile::from_json(std::string_view text, Profile* out, std::string* err) {
+    json::Doc doc;
+    if (!doc.parse(std::string(text)) || doc.root()["blit_profile"].integer() != 1) {
+        if (err) *err = "not a profile blit saved";
+        return false;
+    }
+    const json::Value r = doc.root();
+    Profile p;
+    p.program = r["program"].str(), p.args = r["args"].str(), p.backend = r["backend"].str(), p.host = r["host"].str(), p.when = r["when"].str();
+    p.unit = r["unit"].str(), p.output = r["output"].str(), p.note = r["note"].str();
+    p.weight = static_cast<u64>(r["weight"].integer()), p.samples = static_cast<u64>(r["samples"].integer());
+    p.seconds = r["seconds"].number(), p.threads = static_cast<u32>(r["threads"].integer());
+    for (json::Value f : r["funcs"])
+        p.funcs.push_back({std::string(f.at(0).str()), std::string(f.at(1).str()), std::string(f.at(2).str()), static_cast<u32>(f.at(3).integer()),
+                           static_cast<u64>(f.at(4).integer()), static_cast<u64>(f.at(5).integer()), f.at(6).integer() != 0});
+    for (json::Value n : r["nodes"]) {
+        const i64 parent = n.at(1).integer(-1);
+        const u32 func = static_cast<u32>(n.at(0).integer());
+        if (func >= p.funcs.size() || parent >= static_cast<i64>(p.nodes.size())) {  // (a node comes after its parent)
+            if (err) *err = "the profile's file is damaged";
+            return false;
+        }
+        p.nodes.push_back({func, parent < 0 ? 0u : static_cast<u32>(parent), static_cast<u64>(n.at(2).integer()), static_cast<u64>(n.at(3).integer()), {}});
+        if (parent >= 0) p.nodes[static_cast<size_t>(parent)].kids.push_back(static_cast<u32>(p.nodes.size() - 1));
+    }
+    for (json::Value t : r["by_thread"]) {
+        const u32 root = static_cast<u32>(t.at(4).integer());
+        if (root >= p.nodes.size()) continue;
+        p.by_thread.push_back({std::string(t.at(0).str()), static_cast<u64>(t.at(1).integer()), static_cast<u64>(t.at(2).integer()), static_cast<u64>(t.at(3).integer()), root});
+    }
+    for (json::Value file : r["lines"])
+        for (json::Value l : file) p.lines[std::string(file.key())][static_cast<u32>(l.at(0).integer())] = {static_cast<u64>(l.at(1).integer()), static_cast<u64>(l.at(2).integer())};
+    if (p.nodes.empty() || p.funcs.empty()) {
+        if (err) *err = "the profile's file is damaged";
+        return false;
+    }
+    for (ProfileNode& n : p.nodes)
+        std::ranges::sort(n.kids, [&](u32 a, u32 b) { return p.nodes[a].total != p.nodes[b].total ? p.nodes[a].total > p.nodes[b].total : p.funcs[p.nodes[a].func].name < p.funcs[p.nodes[b].func].name; });
+    *out = std::move(p);
+    return true;
 }
 
 std::vector<u32> Profile::by_self() const {
@@ -149,7 +288,8 @@ bool parse_perf_script(std::string_view text, const std::string& prefix, Profile
     };
     std::vector<F> frames;
     std::deque<std::string> files;  // (prefixed paths, which the sample's frames point into: a deque does not move them)
-    u64 period = 0;
+    u64 period = 0, tid = 0;
+    std::string_view comm;  // (the sample's thread's name)
     bool in_sample = false, any_line = false;
     double first = -1, last = 0;
     std::vector<u64> tids;
@@ -168,7 +308,7 @@ bool parse_perf_script(std::string_view text, const std::string& prefix, Profile
             }
         pf.clear();
         for (const F& f : frames) pf.push_back({f.name, f.module, f.file, f.line});
-        out->add(pf, period);
+        out->add(pf, period, tid, comm);
         frames.clear();
         files.clear();
     };
@@ -185,6 +325,8 @@ bool parse_perf_script(std::string_view text, const std::string& prefix, Profile
             flush();
             in_sample = true;
             period = 1;
+            tid = 0;
+            comm = {};
             std::string_view s = trim(line);
             const size_t sp = s.find_last_of(" \t");
             if (sp != std::string_view::npos) {
@@ -200,10 +342,10 @@ bool parse_perf_script(std::string_view text, const std::string& prefix, Profile
                 if (first < 0) first = t;
                 last = std::max(last, t);
                 s = t0 == std::string_view::npos ? std::string_view{} : trim(s.substr(0, t0));
-                const size_t t1 = s.find_last_of(" \t");  // the thread
-                u64 tid = 0;
+                const size_t t1 = s.find_last_of(" \t");  // the thread, and its name before it
                 const std::string_view tt = s.substr(t1 == std::string_view::npos ? 0 : t1 + 1);
                 if (std::from_chars(tt.data(), tt.data() + tt.size(), tid).ec == std::errc() && std::ranges::find(tids, tid) == tids.end()) tids.push_back(tid);
+                if (t1 != std::string_view::npos) comm = trim(s.substr(0, t1));
             }
             continue;
         }
@@ -334,14 +476,14 @@ bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out
     std::unordered_map<std::string, u64> weights;
     std::unordered_map<std::string, std::vector<u32>> backtraces;
     std::unordered_map<std::string, u32> frame_ids;
-    std::unordered_map<std::string, std::string> binaries, paths, threads;
+    std::unordered_map<std::string, std::string> binaries, paths, thread_names;  // (by the thread's id: "Main Thread", "worker")
     std::vector<XFrame> frames;
     std::vector<std::string> tids;
     u64 first = ~0ull, last = 0;
     bool any_line = false, any_row = false;
 
     // The row being read.
-    u64 row_weight = 0;
+    u64 row_weight = 0, row_thread = 0;
     std::vector<u32> row_bt;
     bool in_row = false;
     // What is being read inside it.
@@ -409,7 +551,7 @@ bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out
                     const XFrame& x = frames[f];
                     pf.push_back({x.name, x.module, x.file, x.line});
                 }
-                out->add(pf, row_weight);
+                out->add(pf, row_weight, row_thread, row_thread < tids.size() ? thread_names[tids[row_thread]] : std::string_view());
             }
             continue;
         }
@@ -418,6 +560,7 @@ bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out
         if (t.name == "row") {
             in_row = true;
             row_weight = 0;
+            row_thread = 0;
             row_bt.clear();
         } else if (!in_row) {
             continue;
@@ -426,6 +569,12 @@ bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out
         } else if (t.name == "thread" && frame < 0 && !bt) {
             const std::string key = id.empty() ? ref : id;
             if (!key.empty() && std::ranges::find(tids, key) == tids.end()) tids.push_back(key);
+            row_thread = static_cast<u64>(std::ranges::find(tids, key) - tids.begin());
+            if (!id.empty()) {  // its name: what it says it is, without its number and its process ("worker (0x5bf25f) (spin, pid: 84305)")
+                std::string name = t.attr("fmt");
+                if (const size_t at = name.find(" (0x"); at != std::string::npos) name.resize(at);
+                thread_names[id] = name;
+            }
         } else if (t.name == "weight" && frame < 0) {
             if (!ref.empty()) row_weight = weights[ref];
             else if (!t.empty) text_of = "weight:" + id, text.clear();

@@ -1,8 +1,9 @@
 // Profiling in the editor: the side panel's Profile tab (the program, its
-// arguments and folder, recording, the profiles made), a tab for each
-// profile (a flame graph, and its functions by their own time), and the
-// inline performance labels: at each function that took time, and on lines that
-// took much (profile.hpp records and reads).
+// arguments and folder, recording, the profiles made and those kept beside
+// the project, the threads of the one shown), a tab for each profile (a
+// flame graph of all its threads or of one, and its functions by their own
+// time), and the inline performance labels: at each function that took
+// time, and on lines that took much (profile.hpp records and reads).
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -10,10 +11,14 @@
 #include <cctype>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <map>
+#include <mutex>
+#include <thread>
 #include <unordered_map>
 
 #include "app.hpp"
+#include "fsio.hpp"
 #include "look.hpp"
 #include "profile.hpp"
 #include "remote.hpp"
@@ -115,9 +120,23 @@ Uint32 tick(void*, SDL_TimerID, Uint32 interval) {  // (while recording: the tim
 // A profile's tab: what it shows, and where its parts were drawn.
 struct ProfView {
     std::shared_ptr<Profile> p;
-    std::vector<u16> depth;  // of each node
+    std::vector<u16> depth;  // of each node (a thread's root is at 0)
+    std::vector<bool> is_root;  // (the roots: of all threads, and of each)
     u16 deepest = 0;
     std::vector<u32> order;  // the functions, the heaviest by their own time first
+    // The thread whose graph it is (-1: all of them): its root, the weight
+    // of all it ran, and (one thread's) each function's weight in it.
+    int thread = -1;
+    u32 root = 0;
+    u64 whole = 0;
+    std::vector<u64> self_w, total_w;
+    u64 self(u32 f) const { return self_w.empty() ? p->funcs[f].self : self_w[f]; }
+    u64 total(u32 f) const { return total_w.empty() ? p->funcs[f].total : total_w[f]; }
+    std::string root_name() const { return thread < 0 ? std::string("all") : p->by_thread[static_cast<size_t>(thread)].name; }
+    bool under_root(u32 n) const {  // (a node of the graph shown)
+        while (n != root && !is_root[n]) n = p->nodes[n].parent;
+        return n == root;
+    }
     u32 zoom = 0;            // the node shown across the whole width
     int hover = -1;          // the node under the mouse
     u32 sel = 0;             // the function chosen in the list (an index into order)
@@ -146,9 +165,24 @@ struct App::ProfUi {
     SDL_TimerID timer = 0;
     std::string error;
     std::vector<std::shared_ptr<Profile>> done;  // the latest first
+    std::vector<std::string> done_files;          // and the file each is kept in (beside the project)
     std::shared_ptr<Profile> shown;               // whose times are in the code
+    // The profiles kept beside the project (in its .blit/profiles): the
+    // folder, its files (the newest first), and what is done with them on
+    // threads of their own (listing the folder, writing one, reading one),
+    // handed back here.
+    struct Kept {
+        std::mutex mu;
+        std::string folder, listed;  // (listed: the folder whose files these are)
+        std::vector<std::string> files;
+        int busy = 0;  // listings, saves and readings under way
+        std::vector<std::pair<std::string, std::shared_ptr<Profile>>> read;  // (a file read, to be opened)
+        std::string error;
+    };
+    std::shared_ptr<Kept> kept = std::make_shared<Kept>();
+    std::string opening;  // a kept one being read
     // The panel: what each row does, and the row chosen.
-    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kRecord, kStop, kDwarf, kAnnotate, kOpen };
+    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kRecord, kStop, kDwarf, kAnnotate, kOpen, kOpenKept, kThread };
     struct Row {
         Act act = kNone;
         u32 index = 0;
@@ -221,11 +255,149 @@ void App::prof_stop() {
     if (profui_->job) profui_->job->stop();
 }
 
-// The recording has news: it has finished (its tab opens), or failed.
+namespace {
+
+// A profile's file's name: the program, and when it was kept.
+std::string kept_name(const Profile& p) {
+    const std::time_t now = std::time(nullptr);
+    std::tm local{};
+    ::localtime_r(&now, &local);
+    char when[40];
+    std::strftime(when, sizeof when, "%Y-%m-%d-%H%M%S", &local);
+    std::string prog = short_path(p.program);
+    for (char& c : prog)
+        if (c == ' ' || c == '/') c = '_';
+    return prog + "-" + when + ".blitprofile";
+}
+
+// The time a kept profile's name says it was kept, to sort them by ("2026-11-16-230501").
+std::string kept_when(const std::string& name) {
+    const size_t dot = name.rfind('.');
+    return dot != std::string::npos && dot >= 17 ? name.substr(dot - 17, 17) : name;
+}
+
+// A kept profile's name as the panel shows it: the program (and what it measured), and when.
+std::string kept_shown(const std::string& name) {
+    const std::string when = kept_when(name);
+    std::string prog = name.substr(0, std::min(name.size(), name.size() > when.size() + 13 ? name.size() - when.size() - 13 : name.size()));
+    if (when.size() == 17) return prog + "  " + when.substr(0, 10) + " " + when.substr(11, 2) + ":" + when.substr(13, 2) + ":" + when.substr(15, 2);
+    return name;
+}
+
+}  // namespace
+
+// The folder profiles are kept in: the .blit/profiles of the folder being
+// worked in, or of the program's (none: nowhere to keep them).
+std::string App::prof_kept_folder() const {
+    const std::string* root = panel_root();
+    const std::string dir = root ? *root : profui_->program.empty() ? std::string() : parent_of(profui_->program);
+    return dir.empty() ? std::string() : dir + "/.blit/profiles";
+}
+
+// The kept profiles' folder listed again (on a thread), if it is another one now.
+void App::prof_list_kept() {
+    ProfUi& u = *profui_;
+    const std::string folder = prof_kept_folder();
+    std::shared_ptr<ProfUi::Kept> k = u.kept;
+    {
+        std::lock_guard lock(k->mu);
+        if (folder == k->folder) return;
+        k->folder = folder;
+        k->files.clear();
+        if (folder.empty()) return;
+        ++k->busy;
+    }
+    std::thread([k, folder] {
+        std::vector<std::string> files;
+        for (const FsEntry& e : fs_list(folder))
+            if (!e.dir && e.name.ends_with(".blitprofile")) files.push_back(e.name);
+        std::ranges::sort(files, [](const std::string& a, const std::string& b) { return kept_when(a) > kept_when(b); });
+        {
+            std::lock_guard lock(k->mu);
+            if (k->folder == folder) {
+                k->files = std::move(files);
+                k->listed = folder;
+            }
+            --k->busy;
+        }
+        wake();
+    }).detach();
+}
+
+// A profile just made, kept beside the project (written on a thread).
+void App::prof_keep(const std::shared_ptr<Profile>& p) {
+    ProfUi& u = *profui_;
+    const std::string folder = prof_kept_folder();
+    if (folder.empty()) return;
+    const std::string name = kept_name(*p);
+    u.done_files.insert(u.done_files.begin(), folder + "/" + name);
+    std::shared_ptr<ProfUi::Kept> k = u.kept;
+    {
+        std::lock_guard lock(k->mu);
+        ++k->busy;
+    }
+    std::thread([k, p, folder, name] {
+        std::string err;
+        const bool ok = fs_mkdirs(folder, &err) && fs_write(folder + "/" + name, p->to_json(), &err);
+        {
+            std::lock_guard lock(k->mu);
+            if (ok && k->listed == folder && std::ranges::find(k->files, name) == k->files.end()) k->files.insert(k->files.begin(), name);
+            if (!ok) k->error = "cannot keep the profile: " + err;
+            --k->busy;
+        }
+        wake();
+    }).detach();
+}
+
+// A kept profile read (on a thread), and opened when it has been.
+void App::prof_open_kept(const std::string& path) {
+    ProfUi& u = *profui_;
+    for (size_t i = 0; i < u.done_files.size() && i < u.done.size(); ++i)
+        if (u.done_files[i] == path) return prof_open(u.done[i]);  // (read already, or made here)
+    if (!u.opening.empty()) return;
+    u.opening = path;
+    std::shared_ptr<ProfUi::Kept> k = u.kept;
+    {
+        std::lock_guard lock(k->mu);
+        ++k->busy;
+    }
+    std::thread([k, path] {
+        std::string bytes, why;
+        auto p = std::make_shared<Profile>();
+        const bool ok = fs_read_whole(path, &bytes, &why, 1ull << 30, std::stop_token()) && Profile::from_json(bytes, p.get(), &why);
+        {
+            std::lock_guard lock(k->mu);
+            if (ok) k->read.emplace_back(path, std::move(p));
+            else k->error = "cannot read " + path.substr(path.find_last_of('/') + 1) + ": " + why, k->read.emplace_back(path, nullptr);
+            --k->busy;
+        }
+        wake();
+    }).detach();
+}
+
+// The recording has news: it has finished (its tab opens), or failed. And
+// so may the kept profiles: a file read (its tab opens), or one that failed.
 void App::prof_sync() {
     ProfUi& u = *profui_;
     ++prof_gen_;
     dirty_ = true;
+    {
+        std::vector<std::pair<std::string, std::shared_ptr<Profile>>> read;
+        std::string error;
+        {
+            std::lock_guard lock(u.kept->mu);
+            read.swap(u.kept->read);
+            error.swap(u.kept->error);
+        }
+        if (!error.empty()) u.error = error;
+        for (auto& [path, p] : read) {
+            if (u.opening == path) u.opening.clear();
+            if (!p) continue;
+            u.done.insert(u.done.begin(), p);
+            u.done_files.insert(u.done_files.begin(), path);
+            prof_open(p);
+        }
+    }
     if (!u.job) return;
     const ProfileJob::State st = u.job->state();
     if (st != ProfileJob::kDone && st != ProfileJob::kFailed) return;
@@ -243,7 +415,9 @@ void App::prof_sync() {
     u.job.reset();
     if (!p) return;
     u.done.insert(u.done.begin(), p);
+    prof_keep(p);
     if (u.done.size() > 20) u.done.resize(20);
+    u.done_files.resize(std::min(u.done_files.size(), u.done.size()));
     prof_open(p);
 }
 
@@ -268,11 +442,16 @@ void App::prof_open(std::shared_ptr<Profile> p) {
     auto v = std::make_shared<ProfView>();
     v->p = p;
     v->depth.assign(p->nodes.size(), 0);
+    v->is_root.assign(p->nodes.size(), false);
+    v->is_root[0] = true;
+    for (const ProfileThread& t : p->by_thread) v->is_root[t.root] = true;
     for (u32 n = 1; n < p->nodes.size(); ++n) {  // (a node comes after its parent)
+        if (v->is_root[n]) continue;
         v->depth[n] = static_cast<u16>(v->depth[p->nodes[n].parent] + 1);
         v->deepest = std::max(v->deepest, v->depth[n]);
     }
     v->order = p->by_self();
+    v->whole = p->weight;
     d->prof = v;
     tab_show(pane_->tab + 1);
     ++prof_gen_;
@@ -349,9 +528,20 @@ void App::prof_panel_draw(TextBox& box, bool focused) {
         put(box, font, r++, 0, fit_text(std::string(u.annotate ? "\xE2\x97\x89" : "\xE2\x97\x8B") + " Inline performance labels", cols), u.annotate ? ink::kText : ink::kMuted);
     }
     ++r;
-    if (r < rows && !u.done.empty()) {
+    // The profiles: those made (or read) since blit started, then those kept
+    // beside the project that have not been read yet.
+    prof_list_kept();
+    std::vector<std::string> kept;
+    std::string folder;
+    {
+        std::lock_guard lock(u.kept->mu);
+        folder = u.kept->listed;
+        for (const std::string& f : u.kept->files)
+            if (std::ranges::find(u.done_files, folder + "/" + f) == u.done_files.end()) kept.push_back(f);
+    }
+    if (r < rows && (!u.done.empty() || !kept.empty())) {
         const u32 c = put(box, font, r, 0, "Profiles", ink::kHeading);
-        put(box, font, r++, c + 1, std::to_string(u.done.size()), ink::kMuted);
+        put(box, font, r++, c + 1, std::to_string(u.done.size() + kept.size()), ink::kMuted);
     }
     for (u32 i = 0; i < u.done.size() && r < rows; ++i, ++r) {
         const Profile& p = *u.done[i];
@@ -362,6 +552,33 @@ void App::prof_panel_draw(TextBox& box, bool focused) {
         char t[96];
         std::snprintf(t, sizeof t, "%s  %.1f s", p.when.c_str(), p.seconds);
         if (c + 4 < cols) put(box, font, r, c + 2, fit_text(t, cols - c - 2), ink::kMuted);
+    }
+    for (u32 i = 0; i < kept.size() && r < rows; ++i, ++r) {
+        u.rows[r] = {ProfUi::kOpenKept, i};
+        const std::string path = folder + "/" + kept[i];
+        const u32 c = put(box, font, r, 2, fit_text(kept_shown(kept[i]), cols > 2 ? cols - 2 : 1), ink::kMuted);
+        if (u.opening == path && c + 4 < cols) put(box, font, r, c + 2, "Opening\xE2\x80\xA6", ink::kMuted);
+    }
+    // The threads of the profile shown, when it has more than one: the graph of all, or of one.
+    const ProfView* view = nullptr;
+    for (const std::unique_ptr<Pane>& pane : panes_)
+        for (const std::unique_ptr<Doc>& d : pane->docs)
+            if (d->prof && d->prof->p == u.shown) view = d->prof.get();
+    if (view && view->p->by_thread.size() > 1) {
+        const Profile& p = *view->p;
+        ++r;
+        if (r < rows) {
+            const u32 c = put(box, font, r, 0, "Threads", ink::kHeading);
+            put(box, font, r++, c + 1, std::to_string(p.by_thread.size()), ink::kMuted);
+        }
+        for (u32 i = 0; i <= p.by_thread.size() && r < rows; ++i, ++r) {
+            u.rows[r] = {ProfUi::kThread, i};
+            const bool on = view->thread == static_cast<int>(i) - 1;
+            if (on) put(box, font, r, 0, "\xE2\x96\xB8", ink::kAccent);
+            const std::string name = i == 0 ? std::string("All threads") : p.by_thread[i - 1].name;
+            const u32 c = put(box, font, r, 2, fit_text(name, cols > 2 ? cols - 2 : 1), on ? ink::kStrong : ink::kText);
+            if (i > 0 && c + 6 < cols) put(box, font, r, c + 2, percent(p.by_thread[i - 1].weight, p.weight), ink::kMuted);
+        }
     }
     // The row chosen (with the keyboard): the nearest one that does something.
     if (u.sel >= rows || u.rows[u.sel].act == ProfUi::kNone) {
@@ -430,6 +647,25 @@ void App::prof_do(u32 row) {
         case ProfUi::kOpen:
             if (it.index < u.done.size()) prof_open(u.done[it.index]);
             break;
+        case ProfUi::kOpenKept: {  // (the nth of those not read yet, as drawn)
+            std::string path;
+            {
+                std::lock_guard lock(u.kept->mu);
+                u32 n = 0;
+                for (const std::string& f : u.kept->files) {
+                    const std::string full = u.kept->listed + "/" + f;
+                    if (std::ranges::find(u.done_files, full) != u.done_files.end()) continue;
+                    if (n++ == it.index) path = full;
+                }
+            }
+            if (!path.empty()) prof_open_kept(path);
+            break;
+        }
+        case ProfUi::kThread:  // the graph of all the threads, or of one, in the tab of the profile shown
+            for (const std::unique_ptr<Pane>& pane : panes_)
+                for (const std::unique_ptr<Doc>& d : pane->docs)
+                    if (d->prof && d->prof->p == u.shown) prof_thread(*d->prof, static_cast<int>(it.index) - 1);
+            break;
         case ProfUi::kNone: break;
     }
 }
@@ -478,6 +714,31 @@ bool App::prof_panel_key(const SDL_KeyboardEvent& k) {
 
 // ---------------------------------------------------------------- a profile's tab
 
+// The graph of one thread (or, -1, of all of them): zoomed out to its root,
+// its functions by their own time in it.
+void App::prof_thread(ProfView& v, int i) {
+    const Profile& p = *v.p;
+    v.thread = i >= 0 && i < static_cast<int>(p.by_thread.size()) ? i : -1;
+    v.root = v.zoom = v.thread < 0 ? 0 : p.by_thread[static_cast<size_t>(v.thread)].root;
+    v.hover = -1;
+    v.sel = v.top = v.shift = 0;
+    if (v.thread < 0) {
+        v.self_w.clear(), v.total_w.clear();
+        v.order = p.by_self();
+        v.whole = p.weight;
+    } else {
+        p.weights_under(v.root, &v.self_w, &v.total_w);
+        v.whole = p.nodes[v.root].total;
+        v.order.clear();
+        for (u32 f = 1; f < p.funcs.size(); ++f)
+            if (v.total_w[f]) v.order.push_back(f);
+        std::ranges::sort(v.order, [&](u32 a, u32 b) { return v.self_w[a] != v.self_w[b] ? v.self_w[a] > v.self_w[b] : v.total_w[a] > v.total_w[b]; });
+    }
+    v.key = 0;
+    ++prof_gen_;
+    dirty_ = true;
+}
+
 namespace {
 
 // The frames' colours: warm for the program's own code, cool for the
@@ -519,7 +780,7 @@ void App::prof_layout(FrameDesc& fd) {
 
         u64 key = 1469598103934665603ull;
         auto mix = [&](u64 k) { key = (key ^ k) * 1099511628211ull; };
-        mix(cols), mix(rows), mix(font.generation()), mix(v.zoom), mix(static_cast<u64>(v.hover + 1)), mix(v.sel), mix(v.top), mix(v.shift);
+        mix(cols), mix(rows), mix(font.generation()), mix(v.zoom), mix(static_cast<u64>(v.hover + 1)), mix(v.sel), mix(v.top), mix(v.shift), mix(static_cast<u64>(v.thread + 1));
         if (key != v.key) {
             v.key = key;
             v.box.resize(cols, rows);
@@ -534,17 +795,18 @@ void App::prof_layout(FrameDesc& fd) {
             char sum[160];
             std::snprintf(sum, sizeof sum, "%s samples \xC2\xB7 %.2f s \xC2\xB7 %u thread%s", with_commas(p.samples).c_str(), p.seconds, p.threads, p.threads == 1 ? "" : "s");
             c = box.put(font, 1, 1, sum, kInkMuted);
+            if (v.thread >= 0) c = box.put(font, 1, c, " \xC2\xB7 " + v.root_name() + " " + percent(v.whole, p.weight), 0);
             if (!p.note.empty()) put(box, font, 1, c + 3, clip(p.note, cols > c + 4 ? cols - c - 4 : 1), ink::kWarning);
 
             // Where in the graph the view is: the frames above the one zoomed into.
             const u32 top_rows = 3;
             {
                 std::vector<u32> path;
-                for (u32 n = v.zoom; n != 0; n = p.nodes[n].parent) path.push_back(n);
-                std::string crumbs = "all";
+                for (u32 n = v.zoom; n != v.root; n = p.nodes[n].parent) path.push_back(n);
+                std::string crumbs = v.root_name();
                 for (size_t k = path.size(); k-- > 0;) crumbs += " \xE2\x80\xBA " + std::string(short_name(p.funcs[p.nodes[path[k]].func].name));
-                c = box.put(font, 2, 1, clip(crumbs, cols / 2), v.zoom ? 0 : kInkMuted);
-                if (v.zoom) box.put(font, 2, c + 2, "Esc: zoom out", kInkMuted);
+                c = box.put(font, 2, 1, clip(crumbs, cols / 2), v.zoom != v.root ? 0 : kInkMuted);
+                if (v.zoom != v.root) box.put(font, 2, c + 2, "Esc: zoom out", kInkMuted);
             }
 
             // The flame graph: the root at the bottom, each function above
@@ -597,14 +859,14 @@ void App::prof_layout(FrameDesc& fd) {
                 last_layer[r] = tone;
                 TextBox& l = v.box;
                 if (c1 - c0 >= 4) {
-                    const std::string label = node == 0 ? "all" : std::string(short_name(f.name));
+                    const std::string label = node == v.root ? v.root_name() : std::string(short_name(f.name));
                     l.put(font, r, c0 + 1, clip(label, c1 - c0 - 2), 0);
                 }
                 for (u32 k = c0; k < c1 && k < cols; ++k) l.cells[static_cast<size_t>(r) * cols + k] |= kCellSelected | tone << kCellDecoShift;
                 v.hits.push_back({r, c0, c1, node});
             };
             // Above the frame zoomed into: what led to it, across the whole width.
-            for (u32 n = v.zoom, d = zoom_depth; n != 0;) {
+            for (u32 n = v.zoom, d = zoom_depth; n != v.root;) {
                 n = p.nodes[n].parent;
                 --d;
                 put_frame(n, d, 0, cols, true);
@@ -632,9 +894,11 @@ void App::prof_layout(FrameDesc& fd) {
             }
             for (u32 k = 0; k < v.list_rows && v.top + k < n; ++k) {
                 const u32 r = v.list_row + k;
-                const ProfileFunc& f = p.funcs[v.order[v.top + k]];
-                const std::string self = percent(f.self, p.weight), total = percent(f.total, p.weight);
-                box.put(font, r, 7 - std::min<u32>(7, width_of(self)), self, f.own && f.self ? kInkAccent : f.self ? 0 : kInkMuted, f.own && f.self ? Font::kBold : 0);
+                const u32 fi = v.order[v.top + k];
+                const ProfileFunc& f = p.funcs[fi];
+                const u64 f_self = v.self(fi), f_total = v.total(fi);
+                const std::string self = percent(f_self, v.whole), total = percent(f_total, v.whole);
+                box.put(font, r, 7 - std::min<u32>(7, width_of(self)), self, f.own && f_self ? kInkAccent : f_self ? 0 : kInkMuted, f.own && f_self ? Font::kBold : 0);
                 box.put(font, r, 14 - std::min<u32>(14, width_of(total)), total, kInkMuted);
                 box.put(font, r, name_col, clip(f.name, src_col > name_col + 2 ? src_col - name_col - 2 : 1), f.own ? 0 : kInkMuted);
                 if (src_col < cols && !f.file.empty()) box.put(font, r, src_col, clip(short_path(f.file) + ":" + std::to_string(f.line), src_w), kInkMuted);
@@ -651,10 +915,10 @@ void App::prof_layout(FrameDesc& fd) {
                     total = hn.total, self = hn.self;
                 } else if (focus_func != ~0u) {
                     f = &p.funcs[focus_func];
-                    total = f->total, self = f->self;
+                    total = v.total(focus_func), self = v.self(focus_func);
                 }
                 if (f) {
-                    about = f->name + "  \xC2\xB7  " + percent(total, p.weight) + " total, " + percent(self, p.weight) + " self";
+                    about = f->name + "  \xC2\xB7  " + percent(total, v.whole) + " total, " + percent(self, v.whole) + " self";
                     if (!f->file.empty()) about += "  \xC2\xB7  " + short_path(f->file) + ":" + std::to_string(f->line) + "  \xC2\xB7  Enter: open source";
                 }
                 box.put(font, rows - 1, 1, clip(about, cols - 2), kInkMuted);
@@ -803,16 +1067,16 @@ bool App::prof_key(const SDL_KeyboardEvent& k) {
             if (v.sel < n) prof_go_to(p, v.order[v.sel]);
             break;
         case SDLK_ESCAPE:
-            if (v.zoom == 0) return false;
+            if (v.zoom == v.root) return false;
             v.zoom = p.nodes[v.zoom].parent;
             break;
-        case SDLK_SPACE: {  // the graph zooms into the chosen function: where it took the most time
+        case SDLK_SPACE: {  // the graph zooms into the chosen function: where it took the most time (in the graph shown)
             if (v.sel >= n) break;
             const u32 func = v.order[v.sel];
             u32 best = 0;
             for (u32 node = 1; node < p.nodes.size(); ++node)
-                if (p.nodes[node].func == func && (best == 0 || p.nodes[node].total > p.nodes[best].total)) best = node;
-            v.zoom = v.zoom == best ? p.nodes[best].parent : best;  // (again: back out)
+                if (p.nodes[node].func == func && !v.is_root[node] && (best == 0 || p.nodes[node].total > p.nodes[best].total) && v.under_root(node)) best = node;
+            if (best) v.zoom = v.zoom == best ? p.nodes[best].parent : best;  // (again: back out)
             break;
         }
         default: return false;
@@ -941,7 +1205,26 @@ void App::prof_set(const std::string& what, const std::string& value) {
     ++prof_gen_;
 }
 
-bool App::prof_busy() const { return profui_ && profui_->job; }
+bool App::prof_busy() const {
+    if (!profui_) return false;
+    std::lock_guard lock(profui_->kept->mu);
+    return profui_->job || profui_->kept->busy > 0 || !profui_->kept->read.empty();
+}
+
+// What choosing a row of the Profile tab's sections does (profiles: those
+// made and kept, as listed; threads: from 1, All threads first), for the tests.
+bool App::prof_pick(const std::string& section, u32 n) {
+    ProfUi& u = *profui_;
+    for (u32 i = 0, seen = 0; i < u.rows.size(); ++i) {
+        const ProfUi::Act a = u.rows[i].act;
+        const bool in = section == "threads" ? a == ProfUi::kThread : section == "profiles" && (a == ProfUi::kOpen || a == ProfUi::kOpenKept);
+        if (in && ++seen == std::max(1u, n)) {
+            prof_do(i);
+            return true;
+        }
+    }
+    return false;
+}
 
 void App::prof_toggle_labels() {
     profui_->annotate = !profui_->annotate;
@@ -971,7 +1254,8 @@ std::string App::prof_dump() {
     }
     if (pane_->doc->prof) {
         const ProfView& v = *pane_->doc->prof;
-        out += "; tab: zoom " + std::string(v.zoom ? short_name(v.p->funcs[v.p->nodes[v.zoom].func].name) : "all");
+        out += "; tab: zoom " + (v.zoom != v.root ? std::string(short_name(v.p->funcs[v.p->nodes[v.zoom].func].name)) : v.root_name());
+        if (v.thread >= 0 && !v.order.empty()) out += ", heaviest " + std::string(short_name(v.p->funcs[v.order[0]].name));
     } else if (auto it = u.notes.find(pane_->doc->id); it != u.notes.end()) {
         out += "; times on lines";
         for (size_t k = 0; k < it->second.lines.size(); ++k) out += " " + std::to_string(it->second.lines[k].first + 1) + it->second.kinds[k];

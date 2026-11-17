@@ -140,7 +140,7 @@ public:
     // what it writes as errors both come out of `out`.)
     bool spawn(const std::vector<std::string>& argv, const std::string& cwd, const std::vector<std::string>& env, RemoteProc* out, std::string* err,
                unsigned rows = 0, unsigned cols = 0);
-    void resize(u32 proc, unsigned rows, unsigned cols);  // its pseudo-terminal's size
+    void resize(u32 proc, unsigned rows, unsigned cols, unsigned width_px = 0, unsigned height_px = 0);  // its pseudo-terminal's size
     int wait(u32 proc, int ms = -1);  // its exit status, once it has ended (-1 if the connection went; -2 still running after ms)
     void kill(u32 proc, int sig);
     // The most output held at once for one program, waiting for its reader,

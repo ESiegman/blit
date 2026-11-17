@@ -2341,6 +2341,29 @@ with 532fa9b, three runs each: scrolling CPU p50 40.67 to 41.12 against
 1.50 to 1.58 against 1.46 to 1.50 µs (the status bar's parts that take
 clicks are laid out with it).
 
+### Round 43: the debugger, the terminal, the profiler, and saves on another machine in parts
+
+Made in a copy of `main` at 532fa9b by an agent of its own; merged with no
+conflict (the Linux agents, rebuilt in Docker, taken whole). Medians, turn
+about with 532fa9b, on a machine building other copies:
+
+| | Before | After |
+|---|---:|---:|
+| The terminal's parser alone, code-100m.txt (6 rounds) | 128.9 MB/s | 135.0 MB/s |
+| … a build's log | 262 MB/s | 289 MB/s |
+| `yes`, 5 MB through a terminal | 2.48 s | 2.52 s (the ranges overlap) |
+| Typing in a file: layout / CPU p50 (8 rounds) | 1.94 / 39.2 µs | 1.79 / 34.5 µs |
+| Scrolling: layout / CPU p50 | 1.02 / 39.5 µs | 0.92 / 35.1 µs |
+| A terminal's frame while typing: layout / CPU p50 | 28.1 / 68.5 µs | 26.7 / 68.1 µs |
+| A remote terminal's echo during a 16 MB save | 2.64 s | 37 ms |
+| What the agent takes from a program that reads nothing for 1 s | 64 MB | a few MB |
+
+The parser's gain is likely the check for being inside a string, one
+comparison now instead of four. A save on another machine goes in parts
+of 256 KB, and keys and requests go ahead of them, so a key waits behind
+one part at most; past 1 MB of input waiting for a program the agent says
+so and blit stops reading until it is under 256 KB.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

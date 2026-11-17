@@ -542,6 +542,12 @@ private:
     void prof_stop();
     void prof_sync();
     void prof_open(std::shared_ptr<Profile> p);
+    std::string prof_kept_folder() const;
+    void prof_list_kept();
+    void prof_keep(const std::shared_ptr<Profile>& p);
+    void prof_open_kept(const std::string& path);
+    void prof_thread(struct ProfView& v, int i);
+    bool prof_pick(const std::string& section, u32 n);
     void prof_do(u32 row);
     void prof_panel_draw(struct TextBox& box, bool focused);
     void prof_panel_click(int row, int col, const SDL_MouseButtonEvent& b);
@@ -646,11 +652,13 @@ private:
     size_t term_busy_count();       // programs still running in terminals, hidden ones too
     void term_sync();
     void term_layout(FrameDesc& fd);
+    void term_pictures(FrameDesc& fd, TermView& v, int x, int y, int w, int h);
     void term_copy(TermView& v);
     void term_paste(TermView& v);
     bool term_key(const SDL_KeyboardEvent& k);
     bool term_text(const char* text);
     bool term_hit(int px, int py, Pane** pane, u64* line, u32* col);
+    bool term_mouse_cell(struct TermView& v, int px, int py, u32* row, u32* col);
     bool term_mouse_down(const SDL_MouseButtonEvent& b);
     bool term_mouse_motion(const SDL_MouseMotionEvent& m);
     void term_mouse_up();
@@ -682,12 +690,16 @@ private:
     void debug_create();
     bool debug_running() const;
     void debug_toggle_break();
+    void debug_edit_break();
     void debug_send_breaks(const std::string& path);
     u32 debug_gutter(const Doc& d, u64 line);
     void debug_start();
     void debug_end();
     void debug_command(const std::string& what);
     void debug_frame(u32 i, bool show);
+    void debug_stack();
+    void debug_thread(u32 i);
+    void debug_watch_eval();
     void debug_expand(u32 i);
     void debug_sync();
     void debug_evaluate();
@@ -699,6 +711,8 @@ private:
     void debug_set(const std::string& what, const std::string& value);
     void debug_wait(const std::string& state);
     std::string debug_dump();
+    std::string debug_breaks_dump();
+    bool debug_pick(const std::string& section, u32 n);
     void panel_show_debug();
 
     // Building (appbuild.cpp, build.cpp): what the working folder builds

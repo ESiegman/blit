@@ -178,6 +178,33 @@ check "a stream nobody reads for a while: held there" 'streamed 67108864 bytes (
 got=$(BLIT_AGENT_LEVEL=1 BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "remotewait;remotestream:67108864" "$R/notes.txt" 2>&1 >/dev/null | join)
 check "and from an agent that cannot pause it" 'streamed 67108864 bytes (exit 0), held a few MB at most'
 
+# And one that takes none of what it is sent for a while: no more than a
+# few MB of it are held for it (the agent tells blit to hold the rest, so
+# that what writes to it waits), and all of it comes.
+run "remotewait;remotefeed:67108864" "$R/notes.txt"
+check "a program there that takes no input for a while: held back here" 'fed 67108864 bytes, it read 67108864 (exit 0), a few MB taken before it read'
+
+# A big save there does not hold up the keys to a terminal there: the file
+# goes in parts, and what is small goes between them. (Over a connection
+# that carries 8 MB a second to the host: the save takes two seconds.)
+cat >"$dir/narrow-ssh.sh" <<EOF
+#!/bin/sh
+# tests/fake-ssh.sh, with what blit sends coming to it at \$BLIT_NARROW bytes a second.
+perl -e '\$| = 1; my \$rate = \$ENV{BLIT_NARROW}; while ((my \$n = sysread(STDIN, my \$b, 16384)) > 0) { syswrite(STDOUT, \$b) or exit 0; select(undef, undef, undef, \$n / \$rate) }' |
+    exec "$here/fake-ssh.sh" "\$@"
+EOF
+chmod +x "$dir/narrow-ssh.sh"
+mkdir -p "$W/big" && perl -e 'for (1..262144) { printf "%063d\n", $_ }' >"$W/big/big.txt"
+keys="remotewait;text:X;key:ctrl+\`;frame;termwait:\$;key:space;key:ctrl+\`;frame;save;key:ctrl+\`;key:space;frame;wait:500;clock;text:echo h''i;key:Return;termwait:hi;within:1000;remotewait;frame;statusdump"
+got=$(BLIT_SSH="$dir/narrow-ssh.sh" BLIT_NARROW=8000000 BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+    --script "$keys" "$R/big/big.txt" 2>&1 >/dev/null | join)
+got="$got | $(head -c 3 "$W/big/big.txt") $(wc -c <"$W/big/big.txt" | tr -d ' ')"
+check "a big save there: keys to a terminal there go between its parts" 'within 1000 ms ;; Terminal: box | | X00 16777217'
+got=$(BLIT_AGENT_LEVEL=2 BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "remotewait;text:Y;save;remotewait;frame;statusdump" "$R/big/big.txt" 2>&1 >/dev/null |
+    sed -e "s#$T#~#g" | join)
+got="$got | $(head -c 3 "$W/big/big.txt") $(wc -c <"$W/big/big.txt" | tr -d ' ')"
+check "and to an agent from before parts: whole" 'box ~/work/big/big.txt | Ln 1, Col 2 Tabs LF Plain text | YX0 16777218'
+
 # The agent was copied there once, into the cache blit keeps in that home.
 got=$(ls "$T/.cache/blit" | sed -e 's/-[0-9a-f]*$//')
 check "the agent, copied once" "blit-agent-$(uname -s)-$(uname -m)"

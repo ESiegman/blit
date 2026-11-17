@@ -890,6 +890,41 @@ void App::run_script(const char* script) {
                 const std::string how = held <= (8u << 20) ? "held a few MB at most" : "held " + std::to_string(held >> 20) + " MB";
                 std::fprintf(stderr, "streamed %llu bytes (exit %d), %s\n", static_cast<unsigned long long>(got), code, how.c_str());
             }
+        } else if (verb == "remotefeed") {  // remotefeed:N, N bytes written to a program there that takes none for a second
+            std::string there;
+            const std::shared_ptr<Remote> r = remote_for(full_path(pane_->doc->ed.path), &there, kRemoteWaitMs);
+            RemoteProc p;
+            std::string err;
+            if (!r || !r->spawn({"/bin/sh", "-c", "sleep 1; wc -c"}, "/", {}, &p, &err)) {
+                std::fprintf(stderr, "remotefeed: %s\n", r ? err.c_str() : remote_error(pane_->doc->ed.path).c_str());
+            } else {
+                const u64 want = std::strtoull(arg.c_str(), nullptr, 10);
+                std::atomic<u64> fed{0};
+                std::thread feeder([&] {
+                    std::string chunk(65536, 'x');
+                    while (fed < want) {
+                        const ssize_t k = ::write(p.in, chunk.data(), static_cast<size_t>(std::min<u64>(chunk.size(), want - fed)));
+                        if (k > 0) fed += static_cast<u64>(k);
+                        else if (errno != EINTR) break;
+                    }
+                    ::close(p.in);
+                });
+                SDL_Delay(700);  // (it takes none meanwhile: what it was fed waits, here or there)
+                const u64 early = fed;
+                feeder.join();
+                std::string out;
+                char buf[4096];
+                for (ssize_t k; (k = ::read(p.out, buf, sizeof buf)) != 0;) {
+                    if (k > 0) out.append(buf, static_cast<size_t>(k));
+                    else if (errno != EINTR) break;
+                }
+                ::close(p.out);
+                if (p.err >= 0) ::close(p.err);
+                const int code = r->wait(p.id, 10'000);
+                const std::string how = early <= (12u << 20) ? "a few MB taken before it read" : std::to_string(early >> 20) + " MB taken before it read";
+                std::fprintf(stderr, "fed %llu bytes, it read %llu (exit %d), %s\n", static_cast<unsigned long long>(fed.load()), std::strtoull(out.c_str(), nullptr, 10), code,
+                             how.c_str());
+            }
         } else if (verb == "prof") {  // prof:what=value (program, args, cwd, dwarf, annotate)
             const size_t eq = arg.find('=');
             prof_set(arg.substr(0, eq), eq == std::string::npos ? std::string() : arg.substr(eq + 1));
@@ -907,6 +942,11 @@ void App::run_script(const char* script) {
                 SDL_Delay(5);
             }
             prof_sync();
+        } else if (verb == "profpick") {  // profpick:SECTION:N, Enter on the Nth row of a section of the Profile tab (profiles, threads)
+            const size_t colon = arg.find(':');
+            frame();  // (its rows as they are now)
+            if (!prof_pick(arg.substr(0, colon), colon == std::string::npos ? 1 : static_cast<u32>(std::atoi(arg.c_str() + colon + 1))))
+                std::fprintf(stderr, "profpick: no %s\n", arg.c_str());
         } else if (verb == "profdump") {
             std::fprintf(stderr, "%s\n", prof_dump().c_str());
         } else if (verb == "term") {  // a terminal (term:folder, or in the folder being worked in)
@@ -921,6 +961,20 @@ void App::run_script(const char* script) {
             Editor& ed = pane_->doc->ed;
             ed.move_to(ed.buf.line_start(std::min<u64>(static_cast<u64>(std::max(1, std::atoi(arg.c_str()))) - 1, ed.buf.line_count() - 1)), false);
             debug_toggle_break();
+        } else if (verb == "breakif") {  // breakif:N, what Shift+F9 does on line N of the file in front (its boxes then take what is typed)
+            Editor& ed = pane_->doc->ed;
+            ed.move_to(ed.buf.line_start(std::min<u64>(static_cast<u64>(std::max(1, std::atoi(arg.c_str()))) - 1, ed.buf.line_count() - 1)), false);
+            debug_edit_break();
+        } else if (verb == "debugbreaks") {  // the breakpoints, where they are now and what they wait for
+            std::fprintf(stderr, "%s\n", debug_breaks_dump().c_str());
+        } else if (verb == "debugpanel") {  // the side panel's Debug tab
+            if (!panel_px()) panel_toggle();
+            panel_show_debug();
+        } else if (verb == "debugpick") {  // debugpick:SECTION:N, Enter on the Nth row of a section of the Debug tab (threads, stack, watch, add, breaks)
+            const size_t colon = arg.find(':');
+            frame();  // (its rows as they are now)
+            if (!debug_pick(arg.substr(0, colon), colon == std::string::npos ? 1 : static_cast<u32>(std::atoi(arg.c_str() + colon + 1))))
+                std::fprintf(stderr, "debugpick: no %s\n", arg.c_str());
         } else if (verb == "debugwait") {  // debugwait:stopped, or debugwait:idle
             debug_wait(arg);
         } else if (verb == "debugdump") {

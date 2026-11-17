@@ -1208,7 +1208,9 @@ over the one ssh connection:
   stays unsaved), and a save that fails says why on the bottom line.
   Closing the tab or quitting while a save is under way waits for it in a
   box: Enter goes on without waiting (the save still lands), Esc stays.
-  Nothing on the main thread waits for the network. Writing goes through a temporary file and keeps the
+  Nothing on the main thread waits for the network. A big file goes in
+  parts, with what else is sent going between them, so that keys typed into
+  a terminal there are not held up behind a save. Writing goes through a temporary file and keeps the
   file's permissions. A file changed there (a `git pull` in a terminal on
   that machine) is read again when blit's window comes back to the front,
   as a local one is.
@@ -1225,7 +1227,10 @@ over the one ssh connection:
 - **Programs** run there (a terminal, a build, a language server) send
   their output as they write it. One that writes faster than blit reads it
   (`yes` in a terminal) is paused there after a few MB rather than filling
-  memory, and a language server's error output stays there.
+  memory, and a language server's error output stays there. The other way
+  round too: a program there that does not take what it is sent (a paste
+  into a terminal whose program is busy) has a few MB of it held there, and
+  the rest waits here.
 - **Language servers** are found and run there: the first server for the
   file's language that is on the `PATH` a login shell there would have, and
   the project folder is found there too. The status bar names it with its
@@ -1274,6 +1279,19 @@ Each recording opens in a tab of its own:
 - The **functions**, by self time, with total time and source line. Up
   and Down choose one (its frames light up in the graph); Enter or a
   double click opens its source.
+- **Threads.** The Profile tab lists the threads of the profile shown
+  (when it has more than one), the heaviest first, with each one's share:
+  Enter on one shows its own flame graph and its own functions in the
+  profile's tab (the heading says which, and its share); *All threads*
+  shows them all together again. Thread names are the program's own
+  (`pthread_setname_np`), or what the profiler calls them.
+
+Each profile is **kept** beside the project, in `.blit/profiles` in the
+folder being worked in (or the program's folder when none is), as
+`program-date-time.blitprofile`. The Profile tab lists those it finds there
+under the ones made since blit started, and Enter opens one again in its
+tab, threads and source labels and all. (Add `.blit/` to a project's
+`.gitignore` to keep them out of git.)
 
 The profile shown also labels the code: a function that took time gets
 `◆ 52% total, 48% self` after its definition, and a line that took more
@@ -1313,8 +1331,25 @@ or drag it into a split of its own.
   Ctrl+Shift+C and Ctrl+Shift+V.)
 - Drag to select; double-click a word, triple-click a line; middle or
   right click pastes.
+- A program that asks for the mouse (htop, less with `--mouse`, vim with
+  `mouse=a`, tmux) gets it: clicks, drags and the wheel, as xterm sends
+  them (modes 1000, 1002 and 1003, told in SGR's form when it asks, 1006).
+  With **Shift** held, the mouse is the terminal's own again: dragging
+  selects.
 - The wheel and **Shift+PageUp/PageDown** scroll back through the last
   10,000 lines. In a full-screen program the wheel is its arrow keys.
+- Pictures: sixel (`img2sixel`, `chafa -f sixel`) and the kitty graphics
+  protocol (`kitten icat`, `chafa -f kitty`, `timg -pk`): RGB, RGBA or PNG,
+  compressed or not, sent within the escape codes (not as files). Each is
+  drawn where the cursor was, a pixel to a pixel of the screen (or filling
+  the cells it asks for), and goes up with the text into the history and
+  off its top with its line; clearing the screen takes those on it away. A
+  program can ask the size of a cell in pixels (`CSI 16 t`), and is told it
+  with the tab's size.
+- A line keeps being one line when the tab's width changes: what was
+  wrapped is wrapped again at the new width (in the history too), and a
+  narrower tab wraps long lines rather than cutting them. The row at the top
+  of the tab stays there, unless the cursor's line would go below the tab.
 - The tab is named after the program's title (or the shell's folder), and
   closes when the shell exits; if it exits with an error, the tab stays
   and says so.
@@ -1333,14 +1368,35 @@ its arguments and working directory.
 | Pause | F6 |
 | Step over / into / out | F10 / F7 or F11 / Shift+F11 (F11 is macOS's Show Desktop unless that is turned off) |
 | Breakpoint on this line, or not | F9 |
+| A breakpoint's condition and hit count | Shift+F9 |
 | Evaluate an expression where it stopped | Cmd+Shift+Y |
 | The Debug tab | Cmd+Shift+D |
 
 Where it stops, the line has an arrow in the gutter and says why, and its
-file comes to the front. The Debug tab shows the call stack (Enter on a
-frame shows its source and its variables), the variables (Right or Enter
-opens one a level, Left shuts it), the breakpoints (Delete takes one
-away), and what the program printed.
+file comes to the front. The Debug tab shows the threads (when there is
+more than one: Enter on one shows its call stack, and the steps step it),
+the call stack (Enter on a frame shows its source and its variables), the
+variables (Right or Enter opens one a level, Left shuts it), the
+expressions watched, the breakpoints (Delete takes one away), and what the
+program printed.
+
+- **A condition and a hit count.** Shift+F9 asks for a breakpoint's
+  condition (`x == 2`: it stops only where that holds), then its hit count
+  (`3`: it stops the third time it gets there), each as it is now; nothing
+  typed in either is a plain breakpoint. On the cursor's line (which gets
+  a breakpoint if it has none), or, with the Debug tab's keyboard on one,
+  on that breakpoint. One that waits for something is a diamond in the
+  gutter, and the tab says what it waits for (`count.c:8 if x == 2, hit 3`).
+- **Watch.** *Add expression…* in the Debug tab keeps an expression there,
+  evaluated each time the program stops, in the frame shown (and again
+  when another frame is chosen); one that cannot be says why. Enter on one
+  changes it (nothing typed takes it away), Delete takes it away.
+- **Breakpoints move with their lines** as the file is edited, as marks
+  do: a line put above one takes it down, lines taken away above it take it
+  up, and one whose own line is taken away stays where that line was. A
+  session under way keeps the lines it was given (the program running is
+  the one built from the file as it was); the next start, or F9 in the file,
+  gives it the new ones.
 
 The debugger is the one the machine has: Xcode's `lldb-dap` on a Mac
 (full Xcode), gdb 14 or later (which speaks the Debug Adapter Protocol

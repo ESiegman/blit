@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <zlib.h>
 #include <unistd.h>
 
 #include <atomic>
@@ -1694,7 +1695,7 @@ void term_test(int seeds) {
         t.feed("1\r\n2\r\n3\r\n4\r\n5\x1b[2;4r\x1b[4;1H\n\x1b[r");
         check(screen(t) == "1|3|4||5" && t.history() == 0, "a scrolling region scrolls only itself: " + screen(t));
         t.feed("\x1b[6n\x1b[c");
-        check(t.take_reply() == "\x1b[1;1R\x1b[?62;22c" && t.take_reply().empty(), "answers: the cursor's place, the kind of terminal");
+        check(t.take_reply() == "\x1b[1;1R\x1b[?62;4;22c" && t.take_reply().empty(), "answers: the cursor's place, the kind of terminal (with sixel)");
         t.feed("\x1b]0;my title\x07\x1b]7;file://host/home/me/a%20b\x1b\\");
         check(t.title() == "my title" && t.cwd() == "/home/me/a b", "OSC 0 and 7: the title and the folder");
         t.feed("\x1b(0qx\x1b(Bq");
@@ -1703,12 +1704,128 @@ void term_test(int seeds) {
         check(t.bracketed_paste() && t.app_cursor_keys() && !t.cursor_visible(), "modes: bracketed paste, cursor keys, cursor hidden");
     }
     {
+        // A new width: the lines wrapped again, the cursor with its character.
+        blit::Term t(5, 4);
+        t.feed("hello world\r\nok");
+        check(screen(t) == "hello| worl|d|ok", "a long line, wrapped: " + screen(t));
+        t.resize(20, 4);
+        check(screen(t) == "hello world|ok||" && t.cursor_row() == 1 && t.cursor_col() == 2, "wider: one line again, the cursor after ok: " + screen(t));
+        t.resize(4, 4);
+        check(screen(t) == "hell|o wo|rld|ok" && t.cursor_row() == 3 && t.cursor_col() == 2 && t.history() == 0, "narrower: wrapped at the new width: " + screen(t));
+        t.resize(3, 4);
+        check(screen(t) == "lo|wor|ld|ok" && t.history() == 1 && blit::Term::line_text(t.history_line(0).data(), 3) == "hel", "the cursor's line kept on show: the top goes into the history: " + screen(t));
+        t.resize(20, 4);
+        check(screen(t) == "hello world|ok||" && t.history() == 0, "wider again: the line at the top of the screen, whole there: " + screen(t));
+        t.feed("!\r\n1\r\n2\r\n3");
+        t.resize(5, 4);
+        check(screen(t) == "ok!|1|2|3" && t.history() == 3, "narrower: what goes off the top goes into the history: " + screen(t));
+        t.resize(30, 4);
+        check(screen(t) == "ok!|1|2|3" && t.history() == 1 && blit::Term::line_text(t.history_line(0).data(), 30) == "hello world",
+              "and wider: none of it comes back from the history: " + screen(t));
+    }
+    {
+        blit::Term t(4, 3);
+        t.feed("abc\xe6\x97\xa5" "d");  // a wide character that does not fit at the end of the row
+        check(screen(t) == "abc|\xe6\x97\xa5" "d|", "a wide character at the edge goes to the next row: " + screen(t));
+        t.resize(10, 3);
+        check(screen(t) == "abc\xe6\x97\xa5" "d||" && t.cursor_col() == 6, "wider: no blank left where it did not fit: " + screen(t));
+        t.resize(4, 3);
+        check(screen(t) == "abc|\xe6\x97\xa5" "d|" && (t.at(1, 0).attr & blit::TermCell::kWide), "and narrower again: " + screen(t));
+        blit::Term u(6, 3);
+        u.feed("abcdef");  // the last column written: the cursor waits there to wrap
+        u.resize(8, 3);
+        u.feed("g");
+        check(u.row_text(0) == "abcdefg", "a cursor waiting to wrap, after a wider resize: " + u.row_text(0));
+        blit::Term a(10, 3);
+        a.feed("main\x1b[?1049h\x1b[2Jfull");
+        a.resize(6, 3);
+        a.feed("\x1b[?1049l");
+        check(screen(a) == "main||" && a.cursor_col() == 4, "the main screen wrapped again under the alternate one: " + screen(a));
+    }
+    {
+        blit::Term t(10, 3);
+        check(t.mouse_mode() == 0 && !t.mouse_sgr(), "no mouse to start with");
+        t.feed("\x1b[?1002h\x1b[?1006h");
+        check(t.mouse_mode() == 1002 && t.mouse_sgr(), "the mouse asked for: 1002, told as SGR");
+        t.feed("\x1b[?1000l");
+        check(t.mouse_mode() == 1002, "a mode not on, turned off: the one on stays");
+        t.feed("\x1b[?1002l\x1b[?1006l");
+        check(t.mouse_mode() == 0 && !t.mouse_sgr(), "and off");
+    }
+    {
+        // Pictures: sixel's, put at the cursor, the cursor under them.
+        blit::Term t(20, 5, 5);
+        t.set_cell_px(10, 20);
+        t.feed("ab\x1bPq\"1;1;10;12#1;2;100;0;0#1!10~-!10~\x1b\\x");
+        check(t.pictures().size() == 1, "a sixel picture");
+        if (!t.pictures().empty()) {
+            const blit::TermPicture& p = t.pictures()[0];
+            const blit::u8* px = p.rgba->data();
+            check(p.w == 10 && p.h == 12 && p.col == 2 && p.line == 0 && p.cols == 1 && p.rows == 1 && px[0] == 255 && px[1] == 0 && px[3] == 255,
+                  "its size, its place and its colour: " + std::to_string(p.w) + "x" + std::to_string(p.h) + " at " + std::to_string(p.line) + "," + std::to_string(p.col));
+        }
+        check(t.cursor_row() == 1 && t.cursor_col() == 3 && t.row_text(1) == "  x", "the cursor under it, where it started: " + t.row_text(1));
+        t.feed("\x1b[16t\x1b[14t");
+        check(t.take_reply() == "\x1b[6;20;10t\x1b[4;100;200t", "a cell's size and the screen's, in pixels");
+        // It goes up with the text, and off the top of the history with its line.
+        t.feed("\r\n1\r\n2\r\n3\r\n4");
+        check(t.history() == 1 && t.pictures().size() == 1 && t.pictures()[0].line == 0 && t.lines_gone() == 0, "scrolled: on its line, now in the history");
+        t.feed("\r\n5\r\n6\r\n7\r\n8\r\n9\r\n10");
+        check(t.history() == 5 && t.lines_gone() == 2 && t.pictures().empty(), "gone with its line off the top of the history");
+    }
+    {
+        // Kitty's: sent and put there at once, in parts, compressed; sent, then put there; taken away.
+        blit::Term t(20, 5);
+        t.set_cell_px(10, 20);
+        t.feed("\x1b_Ga=T,f=24,s=2,v=1,i=5;/wAAAP8A\x1b\\");  // (a red pixel and a green one)
+        check(t.take_reply() == "\x1b_Gi=5;OK\x1b\\", "kitty: told it went well");
+        check(t.pictures().size() == 1 && t.pictures()[0].w == 2 && t.pictures()[0].rgba->at(4) == 0 && t.pictures()[0].rgba->at(5) == 255 && t.cursor_col() == 1,
+              "kitty: RGB, put at the cursor, the cursor after it");
+        t.feed("\x1b_Ga=t,f=32,s=1,v=1,i=6,m=1;AAD/\x1b\\\x1b_Gm=0;gA==\x1b\\");  // (blue, half see-through: in two parts)
+        check(t.take_reply() == "\x1b_Gi=6;OK\x1b\\" && t.pictures().size() == 1, "kitty: sent in parts, kept, not put there");
+        t.feed("\x1b_Ga=p,i=6,c=4,r=2,q=1\x1b\\");
+        check(t.take_reply().empty() && t.pictures().size() == 2 && t.pictures()[1].fit && t.pictures()[1].cols == 4 && t.pictures()[1].rows == 2 &&
+                  t.pictures()[1].rgba->at(2) == 128 && t.pictures()[1].rgba->at(3) == 128,
+              "kitty: put there, filling the cells asked for, its colour multiplied by its alpha, quietly");
+        unsigned char raw[16] = {1, 2, 3, 255, 4, 5, 6, 255, 7, 8, 9, 255, 10, 11, 12, 255}, packed[64];
+        uLongf n = sizeof packed;
+        compress2(packed, &n, raw, sizeof raw, 9);
+        static const char* const abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+        std::string b64;
+        for (uLongf k = 0; k < n; k += 3) {
+            const blit::u32 v = packed[k] << 16 | (k + 1 < n ? packed[k + 1] << 8 : 0) | (k + 2 < n ? packed[k + 2] : 0);
+            b64 += abc[v >> 18 & 63], b64 += abc[v >> 12 & 63], b64 += k + 1 < n ? abc[v >> 6 & 63] : '=', b64 += k + 2 < n ? abc[v & 63] : '=';
+        }
+        t.feed("\x1b_Ga=T,f=32,o=z,s=2,v=2,i=7,C=1;" + b64 + "\x1b\\");
+        check(t.take_reply() == "\x1b_Gi=7;OK\x1b\\" && t.pictures().size() == 3 && t.pictures()[2].rgba->at(12) == 10, "kitty: zlib compressed");
+        t.feed("\x1b_Ga=T,f=100,i=8;AAAA\x1b\\\x1b_Ga=p,i=99\x1b\\");
+        check(t.take_reply() == "\x1b_Gi=8;EBADPNG:the picture could not be read\x1b\\\x1b_Gi=99;ENOENT:no such image\x1b\\", "kitty: what cannot be done says why");
+        t.feed("\x1b_Ga=d,d=i,i=6\x1b\\");
+        check(t.pictures().size() == 2, "kitty: one image's taken away");
+        t.feed("\x1b[2J");
+        check(t.pictures().empty(), "the screen erased: its pictures go");
+    }
+    {
+        // A picture stays with its line when the width changes.
+        blit::Term t(10, 6);
+        t.set_cell_px(10, 20);
+        t.feed("0123456789abcdef\r\n\x1bPq#1;2;0;0;100#1!8~\x1b\\done");
+        check(t.pictures().size() == 1 && t.pictures()[0].line == 2, "under a line wrapped onto two rows");
+        t.resize(20, 6);
+        check(t.pictures().size() == 1 && t.pictures()[0].line == 1 && t.row_text(2) == "done", "wider: the line one row again, the picture with it, a row up");
+        t.feed("\x1b[?1049h\x1bPq#1!4~\x1b\\");
+        check(t.pictures().size() == 2 && t.pictures()[1].alt, "on the alternate screen");
+        t.feed("\x1b[?1049l");
+        check(t.pictures().size() == 1 && !t.pictures()[0].alt, "which go with it");
+    }
+    {
         // Whatever comes, nothing breaks, and the cursor stays on the screen.
         std::mt19937 gen(7);
         for (int s = 0; s < seeds * 4; ++s) {
             blit::Term t(1 + gen() % 40, 1 + gen() % 12, 50);
             static const char* const pieces[] = {"\x1b[", "\x1b]", "\x1b(0", "\x1bM", "\x1b" "7", "\x1b" "8", ";", ":", "?", "1049h", "1049l", "r", "J", "K", "L", "M",
-                                                 "P", "@", "S", "T", "m", "38;2;", "5", "H", "\r\n", "\t", "\b", "\xe6\x97\xa5", "\xf0\x9f\x98\x80", "\x07", "x"};
+                                                 "P", "@", "S", "T", "m", "38;2;", "5", "H", "\r\n", "\t", "\b", "\xe6\x97\xa5", "\xf0\x9f\x98\x80", "\x07", "x",
+                                                 "\x1bPq#1;2;50;50;50!20~-~~", "\x1b\\", "\x1b_Ga=T,f=24,s=1,v=1,i=3;AAAA", "\x1b_Gm=1;", "\x1b_Ga=d", "?1049h", "?1049l"};
             std::string bytes;
             for (int k = 0; k < 400; ++k) {
                 if (gen() % 3 == 0) bytes += static_cast<char>(gen() % 256);
@@ -1802,6 +1919,24 @@ void profile_test() {
         p.finish();
         check(p.samples == 477 && p.threads == 1, "perf: 477 samples on 1 thread, got " + std::to_string(p.samples) + " on " + std::to_string(p.threads));
         common(p, "perf", "/work/burn.c");
+        // Its one thread's tree is the whole one; and as a file, and back, it is the same.
+        check(p.by_thread.size() == 1 && p.by_thread[0].name == "burn" && p.by_thread[0].weight == p.weight && p.thread_root(p.by_thread[0].root),
+              "perf: the thread, by its name");
+        if (!p.by_thread.empty()) {
+            std::vector<blit::u64> self, total;
+            p.weights_under(p.by_thread[0].root, &self, &total);
+            const blit::ProfileFunc* a = find(p, "leaf_a");
+            const size_t ai = a ? static_cast<size_t>(a - p.funcs.data()) : 0;
+            check(a && self[ai] == a->self && total[ai] == a->total, "perf: a function's weight in its thread's tree");
+        }
+        blit::Profile back;
+        check(blit::Profile::from_json(p.to_json(), &back, &err), "a profile as a file, read back (" + err + ")");
+        check(back.samples == p.samples && back.weight == p.weight && back.funcs.size() == p.funcs.size() && back.nodes.size() == p.nodes.size() &&
+                  back.by_thread.size() == 1 && back.by_thread[0].root == p.by_thread[0].root && back.lines == p.lines && back.by_self() == p.by_self() &&
+                  back.nodes[0].kids == p.nodes[0].kids && back.program == p.program,
+              "the same profile, read back");
+        check(!blit::Profile::from_json("{\"blit_profile\":1,\"funcs\":[],\"nodes\":[[5,-1,1,1]]}", &back, &err) && !blit::Profile::from_json("[]", &back, &err),
+              "a file that is not one, or is damaged: not read");
         blit::Profile q;
         q.program = "/work/burn";
         check(blit::parse_perf_script(text, "ssh://box", &q, &err), "perf, another machine's: parsed");
@@ -1815,6 +1950,7 @@ void profile_test() {
         check(blit::parse_xctrace(slurp("xctrace-time-profile.xml"), "", &p, &err), "xctrace: parsed (" + err + ")");
         p.finish();
         check(p.samples == 934 && p.threads == 1 && p.weight == 934ull * 1000000, "xctrace: 934 samples of 1 ms on 1 thread, got " + std::to_string(p.samples));
+        check(p.by_thread.size() == 1 && p.by_thread[0].name == "Main Thread", "xctrace: the thread, by its name: " + (p.by_thread.empty() ? std::string() : p.by_thread[0].name));
         common(p, "xctrace", "/work/burn.c");
     }
     {

@@ -21,7 +21,8 @@ struct Pty {
 bool pty_spawn(const std::vector<std::string>& argv, const std::string& cwd, const std::vector<std::string>& env, unsigned rows, unsigned cols, Pty* out,
                std::string* err);
 
-// The terminal's new size (the program is told with SIGWINCH).
-void pty_resize(int fd, unsigned rows, unsigned cols);
+// The terminal's new size (the program is told with SIGWINCH), and in
+// pixels (what a program that draws pictures sizes them by; 0: not known).
+void pty_resize(int fd, unsigned rows, unsigned cols, unsigned width_px = 0, unsigned height_px = 0);
 
 }  // namespace blit

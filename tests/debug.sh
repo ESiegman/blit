@@ -24,6 +24,7 @@ mkdir -p "$dir/here" "$T"
 for d in "$dir/here" "$T"; do
     cp "$here/debug/count.c" "$d/" && (cd "$d" && cc -g -O0 -o count count.c) || exit 1
 done
+cp "$here/debug/threads.c" "$dir/here/" && (cd "$dir/here" && cc -g -O0 -pthread -o threads threads.c) || exit 1
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/init.lua"
 export BLIT_INIT="$dir/init.lua" BLIT_RECENT_FILE="$dir/recent" BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T"
 
@@ -62,9 +63,45 @@ run "debug:program=$dir/here/no-such;key:F5;debugwait:idle;debugdump"
 case "$got" in "idle error: cannot launch it"*) got="it says why" ;; esac
 check "a program that is not there" "it says why"
 
+# Breakpoints that wait for something: Shift+F9 asks for a condition, then
+# a hit count (each left empty: none).
+run "$P;breakif:8;text:x == 2;key:Return;key:Return;key:F5;debugwait:stopped;debugdump"
+check "a condition: it stops only where it holds" 'stopped (breakpoint); stack: square@8 main@15; vars: x=2 y=4; output: i=1 total=1'
+run "$P;breakif:8;key:Return;text:3;key:Return;debugbreaks;key:F5;debugwait:stopped;debugdump"
+check "a hit count: it stops the third time there" 'count.c:8 hit 3 ;; stopped (breakpoint); stack: square@8 main@15; vars: x=3 y=9; output: i=1 total=1 | i=2 total=5'
+run "$P;break:8;break:16;debugpanel;debugpick:breaks:2;debugpanel;key:shift+F9;text:i == 2;key:Return;key:Return;debugpick:breaks:1;debugpanel;key:Delete;debugbreaks;key:F5;debugwait:stopped;debugdump"
+got=$(printf '%s' "$got" | sed -e 's/main@16 [^;]*;/main@16;/')
+check "and from the Debug tab, the one chosen there" 'count.c:16 if i == 2 ;; stopped (breakpoint); stack: main@16; vars: total=5 i=2; output: i=1 total=1'
+
+# Expressions watched in the Debug tab, evaluated at each stop; changed, and taken away.
+W="debugpanel;debugpick:add;text:x * 100;key:Return;debugpick:add;text:nope;key:Return"
+run "$P;break:8;$W;key:F5;debugwait:stopped;key:F5;debugwait:stopped;debugdump"
+got=$(printf '%s' "$got" | sed -e 's/nope ([^)]*)/nope (why)/')
+check "expressions watched, at each stop (and why one cannot be)" 'stopped (breakpoint); stack: square@8 main@15; vars: x=2 y=4; watch: x * 100 = 200 | nope (why); output: i=1 total=1'
+bs="key:Backspace;key:Backspace;key:Backspace;key:Backspace;key:Backspace;key:Backspace;key:Backspace"
+run "$P;break:8;$W;key:F5;debugwait:stopped;debugpick:watch:1;$bs;text:y + 1;key:Return;debugpick:watch:2;key:Escape;debugpanel;key:Delete;debugwait:stopped;debugdump"
+check "one changed, one taken away" 'stopped (breakpoint); stack: square@8 main@15; vars: x=1 y=1; watch: y + 1 = 2'
+
+# Every thread: the stack of each, chosen from the list in the Debug tab.
+run "debug:program=$dir/here/threads;break:22;key:F5;debugwait:stopped;debugdump;debugpanel;debugpick:threads:2;debugwait:stopped;debugdump" "$dir/here/threads.c"
+got=$(printf '%s' "$got" | sed -e 's/main@22 [^;]*;/main@22;/' -e 's/t=0x[0-9a-f]*/t=0x/')  # (what called main: the system's; where the thread is)
+check "the threads, and the second one's stack chosen" \
+    'stopped (breakpoint); threads: 2, #1 shown; stack: main@22; vars: t=0x ;; stopped (breakpoint); threads: 2, #2 shown; stack: wait_here@9 worker@13; vars:'
+
+# Breakpoints move with their lines as the file is edited (as marks do):
+# a line put above takes them down, lines taken away above take them up,
+# one whose line goes stays where the line was; undone, they go back.
+# (break:1 twice: the cursor to the first line, and no breakpoint there.)
+run "break:8;break:15;break:1;break:1;key:Return;debugbreaks;key:Down;key:Down;key:shift+Down;key:shift+Down;key:Backspace;debugbreaks;key:cmd+z;key:cmd+z;debugbreaks"
+check "breakpoints follow their lines" 'count.c:9; count.c:16 ;; count.c:7; count.c:14 ;; count.c:8; count.c:15'
+run "lua:blit.opt.editor.modal = true;break:8;break:15;vim:ggO<Esc>;debugbreaks;vim:9Gdd;debugbreaks;vim:dk;debugbreaks"
+check "with Vim's keys too" 'count.c:9; count.c:16 ;; count.c:9; count.c:15 ;; count.c:8; count.c:13'
+
 # On another machine: the debugger runs there, its source opens from there.
 run "remotewait;debug:program=ssh://box$T/count;break:8;key:F5;debugwait:stopped;debugdump;frame;statusdump" "ssh://box$T/count.c"
 check "on another machine" 'stopped (breakpoint); stack: square@8 main@15; vars: x=1 y=1 ;; box count.c | Ln 8, Col 1 Spaces: 4 LF C'
+run "remotewait;debug:program=ssh://box$T/count;breakif:8;key:Return;text:2;key:Return;debugpanel;debugpick:add;text:y - x;key:Return;key:F5;debugwait:stopped;debugdump" "ssh://box$T/count.c"
+check "a hit count and a watch, there" 'stopped (breakpoint); stack: square@8 main@15; vars: x=2 y=4; watch: y - x = 2; output: i=1 total=1'
 
 # On a slow one (each answer held a while): F5 goes back to the keys at once
 # and the tab says it is starting (the debugger is started there on a thread
