@@ -846,9 +846,11 @@ void App::gutter_layout(int w, int h, FrameDesc& fd) {
                     mark = (font.glyph(0x2581) & (Font::kWide - 1)) | (kInkDiagnostic << kCellInkShift);
                 if (it != hunks.begin()) {
                     const GitHunk& k = *std::prev(it);
-                    if (k.kind == GitHunk::kDeleted && k.line == at) mark = (font.glyph(0x2594) & (Font::kWide - 1)) | (kInkDiagnostic << kCellInkShift);
+                    // (A change that is staged as it is: a thinner bar, and a
+                    // removal staged, in the quiet ink.)
+                    if (k.kind == GitHunk::kDeleted && k.line == at) mark = (font.glyph(0x2594) & (Font::kWide - 1)) | ((k.staged ? kInkMuted : kInkDiagnostic) << kCellInkShift);
                     else if (k.kind != GitHunk::kDeleted && at < u64(k.line) + k.count)
-                        mark = (font.glyph(0x258E) & (Font::kWide - 1)) | ((k.kind == GitHunk::kAdded ? kInkAdded : kInkChanged) << kCellInkShift);
+                        mark = (font.glyph(k.staged ? 0x258F : 0x258E) & (Font::kWide - 1)) | ((k.kind == GitHunk::kAdded ? kInkAdded : kInkChanged) << kCellInkShift);
                 }
                 if (mark) box.cells[static_cast<size_t>(r + 1) * cols - 1] = mark;
             }
