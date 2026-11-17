@@ -19,6 +19,7 @@ constexpr u32 kG = 0x10000;  // a key that came after "g": g + e is kG | 'e'
 constexpr u32 kLB = 0x20000, kRB = 0x40000;  // and after "[" or "]"
 constexpr u32 kEndCol = 0x7FFFFFFF;  // the column wanted after "$": the end of whatever line
 constexpr char kOpComment = 1;       // the operator "gc" (no key of its own)
+constexpr char kOpFormat = 2;        // the operator "gq": the language server formats the lines (asked of the application)
 constexpr u32 kBack = 8;             // the Backspace key, as a motion
 
 std::string_view trimmed(std::string_view s) {
@@ -1878,9 +1879,10 @@ void Vim::operate(Editor& ed, char op, u64 lo, u64 hi, bool linewise) {
     const u64 size = ed.buf.size();
     hi = std::min(hi, size);
     if (op != 'y' && refuse()) return;
-    if (op == '<' || op == '>' || op == kOpComment) {
+    if (op == '<' || op == '>' || op == kOpComment || op == kOpFormat) {
         const u64 first = ed.buf.line_of(lo), last = hi > lo ? ed.buf.line_of(hi - 1) : first;
-        if (op == kOpComment) toggle_comment(ed, first, last);
+        if (op == kOpFormat) requests_.push_back({VimRequest::kFormat, {}, 0, false, false, {}, first, last, true});
+        else if (op == kOpComment) toggle_comment(ed, first, last);
         else operate_lines(ed, op, first, last, true);
         return;
     }
@@ -2453,7 +2455,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
     };
     // The same for an operator in Visual mode: on what is selected (`lines`: on the lines it is in, whole).
     auto on_selection = [&](char op, bool lines = false) {
-        if (mode_ == kVisualBlock && !lines && op != kOpComment) {
+        if (mode_ == kVisualBlock && !lines && op != kOpComment && op != kOpFormat) {
             block_do(ed, op, total());
             return settle();
         }
@@ -2763,12 +2765,13 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
             case kG | 'u': op = 'u'; break;
             case kG | 'U': op = 'U'; break;
             case kG | '?': op = '?'; break;
+            case kG | 'q': op = kOpFormat; break;
             case kG | 'c':
                 if (!op_) op = kOpComment;  // (after an operator "gc" is the comment the cursor is in: below)
                 break;
             default: break;
         }
-        if (op_ && (c == static_cast<u32>(op_) || (op && op == op_) || (op_ == kOpComment && c == 'c'))) {  // dd, cc, yy, >>, g~~, guu, gUU, g??, gcc, and g~g~
+        if (op_ && (c == static_cast<u32>(op_) || (op && op == op_) || (op_ == kOpComment && c == 'c') || (op_ == kOpFormat && c == 'q'))) {  // dd, cc, yy, >>, g~~, guu, gUU, g??, gcc, and g~g~
             u64 lo, hi;
             lines_from(line, times, &lo, &hi);
             const char doubled = op_;
@@ -3383,6 +3386,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
         }
         case kG | 't': requests_.push_back({VimRequest::kTab, {}, 1}); return done();
         case kG | 'T': requests_.push_back({VimRequest::kTab, {}, -1}); return done();
+        case kG | 'r': requests_.push_back({VimRequest::kReferences, {}}); return done();
         case kG | 'd':
         case kG | 'D':
             remember_jump(ed, cur);

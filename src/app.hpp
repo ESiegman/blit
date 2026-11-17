@@ -306,6 +306,26 @@ private:
     void lsp_layout(int w, int h, FrameDesc& fd);
     void lsp_forgive();  // servers that failed may be tried again
     u32 lsp_popups_open() const;  // how many popups the last layout drew
+    // Every tab with text a server could have is open on one (didOpen and
+    // didClose follow the tabs); and a document about to go is let go of.
+    void lsp_reconcile();
+    void lsp_forget(const Doc& d);
+    // Shift+F12 (Vim's gr): the references to the name at the cursor, in a
+    // list; F4 / Shift+F4 step through them while it is the last list made.
+    void lsp_references();
+    bool lsp_step(int by);
+    void lsp_rename();   // F2
+    // Option+Shift+F: the selection's lines, or the whole file (Vim's gq: lines l0 to l1).
+    void lsp_format();
+    void lsp_format_lines(u64 l0, u64 l1);
+    void lsp_format_on_save();  // before the file in front is written, with lsp.format_on_save on
+    void lsp_actions();  // Option+Enter: the fixes and refactorings at the cursor, in a menu
+    bool lsp_apply(const LspWorkspaceEdit& e, std::string* said);  // a workspace edit made, as Replace in files does
+    u32 lsp_gutter(const Doc& d, u64 line);  // a mark beside a problem the server has a fix for
+    void lsp_extras(FrameDesc& fd);  // inlay hints and the server's colours, for each view
+    std::string lsp_dump();  // (tests) the servers, and each tab's place on one
+    std::string lsp_extras_dump();  // (tests) the inlay hints and the servers' colours on show
+    void lsp_go_problem(size_t i);  // (apppanel.cpp) the language servers' problem i, counted across files
 
     // The open files and their tab bar (apptabs.cpp).
     void tabs_create();
@@ -1001,6 +1021,7 @@ private:
     u64 next_doc_id_ = 1, next_pane_id_ = 1;
     Lsp lsp_;
     Doc* lsp_doc_ = nullptr;  // the document the language server is following, if any
+    u64 lsp_marks_gen_ = 0;   // counts up whenever lsp_gutter()'s marks may have changed
     Git git_;                 // (after the documents too: its worker reads their text)
     std::shared_ptr<GitUi> gitui_;
     Vim vim_;                 // modal editing, for the document in front

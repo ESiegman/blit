@@ -132,8 +132,10 @@ and everything in it that has Cmd in it (Ctrl elsewhere) works in every mode.
 | Go to file / Search in files | Cmd+P / Cmd+Shift+F | Ctrl+P / Ctrl+Shift+F |
 | Find in this file; the next / previous match | Cmd+F; Cmd+G / Cmd+Shift+G | Ctrl+F; F3 / Shift+F3 |
 | Replace in this file / in files | Cmd+Option+F / Cmd+Shift+H | Ctrl+Alt+F / Ctrl+Shift+H |
-| The next / previous hit of Search in files | F4 / Shift+F4 | F4 / Shift+F4 |
-| The next / previous problem: the last build's, across files (else the open file's) | F8 / Shift+F8 | F8 / Shift+F8 |
+| The next / previous hit of Search in files (or of the references found, after them) | F4 / Shift+F4 | F4 / Shift+F4 |
+| The next / previous problem: the last build's, across files (else the language servers', across files) | F8 / Shift+F8 | F8 / Shift+F8 |
+| Go to the definition; find references; rename | F12; Shift+F12; F2 | F12; Shift+F12; F2 |
+| Format the file (or the lines selected); fixes and refactorings here | Option+Shift+F; Option+Enter | Alt+Shift+F; Alt+Enter |
 | New file / close tab | Cmd+N (or Cmd+T) / Cmd+W | Ctrl+N (or Ctrl+T) / Ctrl+W |
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab, or Cmd+Shift+] / [ | Ctrl+Tab / Ctrl+Shift+Tab, or Ctrl+PageDown / PageUp |
 | Tab 1 to 8, last tab | Cmd+1 ... Cmd+8, Cmd+9 | Ctrl+1 ... Ctrl+8, Ctrl+9 |
@@ -280,9 +282,10 @@ file named under the cursor), `[<Space>` and `]<Space>` (an empty line
 above or below), `ZZ ZQ`, Ctrl-D Ctrl-U Ctrl-F Ctrl-B Ctrl-E Ctrl-Y,
 `zz zt zb`, Ctrl-L (as `:noh`), Ctrl-W with `h j k l w` (to another split),
 `v s` (split) and `c q` (close), and with a language server `gd` (or
-Ctrl-], and Ctrl-T back), `K`, and `]d [d` to the next and the previous
-diagnostic (`]D [D` the last and first), going round at the ends of the
-file.
+Ctrl-], and Ctrl-T back), `K`, `gr` (the references, in a list), `gq` with
+a motion (`gqq` a line; on a Visual selection, its lines) to format, and
+`]d [d` to the next and the previous diagnostic (`]D [D` the last and
+first), going round at the ends of the file.
 
 **Insert mode**: Esc (or Ctrl-[ or Ctrl-C) leaves it; Ctrl-W, Ctrl-U and
 Ctrl-H delete a word, to the start of the line, a character; Ctrl-T and
@@ -380,8 +383,8 @@ Insert mode (completion is the language server's); Select mode and
 on a selection; some seldom used `g` and `z` commands (`gI`, `ga`, `g,`,
 `gx`, `zh`, `zl`); Ctrl-W beyond the keys named above. Of the keys newer
 versions of Neovim set up by default, those that need something blit does
-not have are missing: `grn gra grr gri grt gO` (renaming, code actions,
-references and the rest are not in blit's language-server client yet), `[q ]q [l ]l [t ]t [a ]a` (there are no quickfix, location, tag or
+not have are missing: `grn gra grr gri grt gO` (references are `gr`;
+renaming and code actions are F2 and Option+Enter), `[q ]q [l ]l [t ]t [a ]a` (there are no quickfix, location, tag or
 argument lists), Ctrl-W `d`, and the tree-sitter selections `an in`. `gd`
 asks the language server; Neovim's looks for a declaration in the file.
 On the command line the cursor stays at the end (no moving back into what
@@ -421,7 +424,7 @@ the marks beside the line numbers count them, saved or not), how many files
 differ from the last commit (saved ones: what git sees), then the file's
 path in the repository, with a dot while it has unsaved changes. On its
 right: what a script put there (`blit.ui.status`), the errors and warnings
-(the language server's in the open file and the last build's in all of
+(the language servers' in the open file and the last build's in all of
 them), the cursor's line and column (and what is selected:
 characters, or lines), the indentation, the line endings, and the language
 with its server; `C++ (no colours)` when that language's grammar is not
@@ -1087,16 +1090,19 @@ name at the top of the tree, or use the right-click menu, to choose another.
 Deleting moves to the system's Trash (macOS and Linux), so it can be undone
 from there. `.git` and `.DS_Store` are not shown.
 
-**Problems** lists what the language server reports for the open file;
-click one to go to it. While a build runs (see [Building](#building)) the
-problems its output reports come in at the top, in a **Build** section:
-each file with its icon and folder, and under it its errors (`E`) and
-warnings (`W`) by line, the files in the order the build came to them.
-Enter or a click goes to one, in its file; the open file's own follow
-under its name. **F8** and **Shift+F8** go to the next and the previous
+**Problems** lists what the language servers report, for every file they
+report on (each open file, and with a server that offers it the whole
+project's): each file with its icon and folder (one that is not open in
+quieter ink), and under it its problems by line; click one to go to it.
+While a build runs (see [Building](#building)) the problems its output
+reports come in at the top, in a **Build** section: each file with its
+icon and folder, and under it its errors (`E`) and warnings (`W`) by line,
+the files in the order the build came to them. Enter or a click goes to
+one, in its file; the language servers' follow under them. **F8** and **Shift+F8** go to the next and the previous
 problem from anywhere: the build's, across files, while there are any,
-else the open file's, from the cursor; the tab picks the one gone to and
-the bottom line says which of how many it is.
+else the language servers', from the cursor on and across files (opening
+the next one if it is not open); the tab picks the one gone to and the
+bottom line says which of how many it is.
 
 Icons come from the font when it is a [Nerd Font](https://www.nerdfonts.com);
 with any other font blit draws a small set of its own.
@@ -1108,13 +1114,19 @@ blit.opt.panel.width = 32    -- in characters
 
 ## Language servers
 
-When a language server for the file's type is installed, blit starts it and
-shows what it says:
+When a language server for a file's type is installed, blit starts it and
+shows what it says. Every tab's file is open on its server, not just the
+one in front, and several servers run at once: one for each language and
+project, so a project of C++ and Python has clangd and pyright side by side.
+A server whose last file has been closed stops half a minute later.
 
 - **Problems** get a wavy underline in the colour of their kind (error,
   warning, information, hint). The line the cursor is on shows its most
   serious problem in words at its end; resting the mouse on an underline, or
-  Cmd+I with the cursor there, shows all of it.
+  Cmd+I with the cursor there, shows all of it. The Problems tab of the
+  [side panel](#side-panel) lists every file's, and F8 / Shift+F8 go
+  through them. A light bulb in the line numbers marks a problem the server
+  has a fix for.
 - **Completions** appear while typing and narrow as more is typed; the
   letters that matched are picked out, and the selected item's type and
   documentation show beside the list. An item that needs something added
@@ -1124,6 +1136,50 @@ shows what it says:
 - **Signature help** appears after `(` and follows the argument being typed.
 - **Go to definition** with F12 or Cmd+click, and Ctrl+- to come back. A
   definition in another file opens that file.
+- **Find references** with Shift+F12 (Vim's `gr`): a list of every place
+  the name is used, each with its file, line and text, as Search in files
+  shows them. Enter goes to one; afterwards F4 and Shift+F4 go to the next
+  and the previous, until another list is made.
+- **Rename** with F2: the new name is typed in the box, then the box shows
+  how many changes that makes in which files, and Enter makes them. A file
+  open in a tab is changed there (one undo takes the whole change back);
+  any other is changed on disk, on another machine too.
+- **Formatting** with Option+Shift+F: the whole file, or the lines of the
+  selection (Vim's `gq` with a motion, `gqq` for a line, or `gq` on a
+  Visual selection). One undo takes it back. With `lsp.format_on_save`
+  the file is formatted before it is written.
+- **Fixes and refactorings** (code actions) with Option+Enter: a menu of
+  what the server offers at the cursor or for the selection, fixes for the
+  problems there first. Choosing one makes its change or runs its command.
+- **Inlay hints**, with `lsp.inlay_hints`: parameter names before
+  arguments and deduced types after names, in the quiet ink, between the
+  characters on every line on show but the cursor's.
+- **The server's colours** (semantic tokens) over tree-sitter's, where they
+  say more: a type, a parameter, a macro, a namespace, a member of an enum.
+  A file that tree-sitter does not colour gets the server's alone.
+
+Hints and colours are asked for once the text has stood still a quarter
+of a second, for what is on show.
+
+```lua
+blit.opt.lsp.format_on_save = true   -- the server formats a file before it is saved (off)
+blit.opt.lsp.inlay_hints = true      -- parameter names and deduced types between the characters (off)
+blit.opt.lsp.semantic_colors = false -- tree-sitter's colours alone (on)
+```
+
+The server's colours use the theme's colour for what tree-sitter calls the
+same thing (`type`, `variable.parameter`, `function.macro`, `module`,
+`constant`, `property`, `function`, `function.method`, `attribute`), unless
+the theme has one of its own for the kind, as `lsp.KIND`:
+
+```lua
+blit.opt.syntax.styles["lsp.parameter"] = "#d19a66 italic"
+blit.opt.themes["rose-pine"].syntax["lsp.macro"] = "#c4a7e7"
+```
+
+The kinds are the protocol's: `namespace`, `type`, `class`, `enum`,
+`interface`, `struct`, `concept`, `typeParameter`, `parameter`, `property`,
+`enumMember`, `function`, `method`, `macro` and `decorator`.
 
 blit knows how to start the servers for the languages it has built in, and
 uses the first one for the file's language that it finds on `PATH` or in
@@ -1172,10 +1228,10 @@ the protocol does when the server cares (`typescript`, `typescriptreact`,
 `shellscript`.
 
 The project folder handed to the server is the nearest one above the file
-that holds one of the server's `roots`. clangd is started with
-`--background-index=false`: indexing a whole project on every core is a lot
-of work for an editor that shows one file, and the example above turns it
-back on.
+that holds one of the server's `roots`; files in two projects get a server
+each. clangd is started with `--background-index=false`: indexing a whole
+project on every core is a lot of work for an editor, and the example
+above turns it back on (references then reach files that are not open).
 
 The server's own output goes nowhere; `BLIT_LSP_LOG=/some/file blit ...`
 keeps it for when a server misbehaves.
@@ -1765,16 +1821,24 @@ the lines on screen first, and sends back a list of style runs. Until that
 arrives, a millisecond or so later, the previous colours are kept lined up
 with the text. Typing and scrolling cost the same with highlighting on.
 
-**A language server cannot slow the editor down.** The server is a child
-process, and one thread does all the talking to it: starting it, writing
-messages, reading and parsing the answers ([src/lsp.cpp](src/lsp.cpp)). The
-main thread queues a small message per edit (under a microsecond) and picks
-up results that are already parsed. A server that takes a second to answer,
-or never does, costs nothing; the popup just arrives later or not at all.
-The server is started after the first frame is on screen, so launch time is
-the same with or without one. The document goes over as the list of pieces
-it is made of and is turned into JSON on that thread, so opening a large
-file does not copy it on the main thread either.
+**A language server cannot slow the editor down.** Each server is a child
+process, and a thread of its own does all the talking to it: starting it,
+writing messages, reading and parsing the answers
+([src/lsp.cpp](src/lsp.cpp)). The main thread queues a small message per
+edit (under a microsecond) and picks up results that are already parsed,
+from every server at once with one lock. A server that takes a second to
+answer, or never does, costs nothing; the popup just arrives later or not
+at all. The servers are started after the first frame is on screen, so
+launch time is the same with or without them. The document in front goes
+over as the list of pieces it is made of and is turned into JSON on that
+thread, so opening a large file does not copy it on the main thread either
+(the other tabs' files are copied once, when they are opened). A column
+counted in UTF-16, as most servers want, is counted on from the last one
+worked out on the same line, so typing far along a long line does not walk
+it from its start at every key. Inlay hints are put between the characters
+after the grid is filled, and the servers' colours are laid over
+tree-sitter's for the lines on show only, so neither costs the fill
+anything.
 
 **Popups are more cell grids.** A completion list is a small grid of cells
 drawn by one more triangle, cut to the popup's box, reading its cells from
@@ -1870,8 +1934,8 @@ src/config.*    settings: their defaults, checking what init.lua sets, built-in 
 src/font.*      finding fonts, FreeType glyph atlas, italic/bold faces, ligature slices
 src/shape.*     HarfBuzz, loaded on demand
 src/json.*      JSON reader and writer
-src/lsp.*       language server client: process, messages, document sync
-src/applsp.cpp  squiggles, completion list, hover and signature popups
+src/lsp.*       language server client: processes, messages, every open document's sync
+src/applsp.cpp  squiggles, completion list, popups, references, rename, formatting, code actions, hints, colours
 src/tree.*      the file tree: reading folders in the background, new, rename, trash, icons
 src/apppanel.cpp  the side panel: tabs, the tree, the problems list
 src/apptabs.cpp   the open files: the tab bar, switching, closing, reordering; line numbers
@@ -2017,6 +2081,7 @@ tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, co
                                    # the split Ctrl+` shows and hides, and the questions about programs still running
 tests/keys.sh build-debug/blit     # the command search, the new keys, Back and Forward through the jumps, and every command run from the search
 tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger)
+tests/lsp.sh build-debug/blit      # language servers against the test server: several at once, Problems across files, references, rename, formatting, code actions, hints, colours
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running), a fake build's problems (F8, Cmd+click) and new projects (a stand-in vcpkg)
 tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md against what they should draw, Mermaid, typing, Cmd+Shift+V, coloured code
 tests/unicode.sh build-debug/blit  # characters made of several code points: the cursor over them, their widths, accents drawn over their letter
@@ -2077,14 +2142,13 @@ does not finish and takes all the memory the machine has.
   sequence or a flag draws as its first emoji; a syllable in jamo and a
   conjunct draw part by part, each in its own cells (blit does not shape
   text beyond ligatures).
-- Language servers: one server at a time, for the file in front in the
-  split that has the keyboard, so problems and completions show there and
-  not in the other splits (moving to a file of the same language in the
-  same project keeps the server running and hands it the new file), and
-  only what is listed above. No rename, formatting, code
-  actions, find references, inlay hints or semantic colours; snippets are
-  inserted as plain text. Problems are shown for the open file only. Not
-  available on Windows yet. Only tried with clangd and the test server.
+- Language servers: underlines and completions show in the split that
+  has the keyboard; the other splits get hints and colours. Snippets are
+  inserted as plain text. Inlay hints are not drawn on the cursor's line,
+  and a click on a line with hints lands as if they were not there. A
+  rename or fix that creates, renames or deletes a file does its edits and
+  says what it left undone. Not available on Windows yet. Only tried with
+  clangd and the test server.
 - Another machine: over ssh only, to
   Linux on x86-64 or ARM64 or a Mac like this one. Files up to 1 GB. The
   finder lists the whole folder again when it opens (as above), across the

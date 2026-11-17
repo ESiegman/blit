@@ -1,15 +1,20 @@
-// The language server's side of the editor: squiggles under problems, the
-// completion list, hover and signature popups, go to definition.
+// The language servers' side of the editor: every tab's document open on
+// its server, squiggles under problems, the completion list, hover and
+// signature popups, go to definition, references, rename, formatting, code
+// actions, inlay hints and the servers' colours.
 //
 // Everything here reacts to results the client has already parsed (see
-// lsp.hpp). Nothing waits for the server.
+// lsp.hpp). Nothing waits for a server, except formatting before a save,
+// which waits a moment at most.
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 
 #include "app.hpp"
+#include "fsio.hpp"
 #include "look.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
@@ -170,6 +175,31 @@ std::string why_no_server(const Config& cfg, const Lsp& lsp, bool following, con
     return why + "none is set up for " + lang + " (lsp.servers in Settings)";
 }
 
+// A file's name as a list shows it: from the project folder, or from ~.
+std::string shown_name(const std::string& path, const std::string* root) {
+    if (root && path.size() > root->size() + 1 && path.starts_with(*root) && path[root->size()] == '/') return path.substr(root->size() + 1);
+    const char* home = SDL_getenv("HOME");
+    const size_t h = home ? std::strlen(home) : 0;
+    if (h > 1 && path.size() > h && path.starts_with(home) && path[h] == '/') return "~" + path.substr(h);
+    return path;
+}
+
+// Edits as byte ranges, applied last first so that the earlier ones' places
+// hold; ones that overlap one already made are left out.
+struct Change {
+    u64 start, end;
+    std::string_view text;
+};
+void sort_changes(std::vector<Change>& c) {
+    std::stable_sort(c.begin(), c.end(), [](const Change& x, const Change& y) { return x.start > y.start; });
+    u64 floor = ~0ull;
+    std::erase_if(c, [&](const Change& x) {
+        if (x.end > floor) return true;
+        floor = x.start;
+        return false;
+    });
+}
+
 }  // namespace
 
 struct App::Assist {
@@ -184,7 +214,7 @@ struct App::Assist {
     std::vector<Shown> shown;  // items that match what is typed, best first
     // For each problem, the furthest any up to it reaches (see lsp_decorate()).
     std::vector<u64> reach;
-    u64 reach_gen = ~0ull;
+    u64 reach_gen = ~0ull, reach_doc = ~0ull;
     // What `shown` was made for: a longer word typed onto that one can only
     // match items that are there.
     std::string comp_prefix;
@@ -214,12 +244,60 @@ struct App::Assist {
     std::vector<GridDeco> decos;
     std::vector<GridNote> notes;
     std::vector<u32> note_cells;
-    u64 deco_gen = ~0ull, deco_top = ~0ull, deco_rev = ~0ull, deco_line = ~0ull;
+    u64 deco_gen = ~0ull, deco_top = ~0ull, deco_rev = ~0ull, deco_line = ~0ull, deco_doc = ~0ull;
     u32 deco_rows = 0, deco_font = ~0u, deco_edge = ~0u;
 
     // Servers that would not start, or died, since the settings were last
     // read. They are not tried again; the next one for the language is.
     std::vector<std::string> failed;
+    // Tabs that no server took, by document and the name it had then: not
+    // looked at again until something changes (a server comes or goes).
+    std::vector<std::pair<u64, std::string>> tried;
+    bool notify_set = false;
+
+    // Found references, and which of them F4 went to last; while `refs_live`
+    // they are what F4 steps through (another list in the box ends that).
+    std::vector<LspPlace> refs;
+    i64 refs_at = -1;
+    bool refs_pending = false, refs_live = false, refs_picker = false;
+    // A rename under way: asked where the name is, then for the new name.
+    bool rename_pending = false;
+    u64 rename_doc = 0, rename_off = 0;
+    std::string rename_to;
+    // Formatting asked for (and, before a save, waited for).
+    bool format_pending = false, format_quiet = false;
+    // Code actions asked for, and one being resolved before it is applied.
+    bool actions_pending = false, resolving = false;
+    u64 actions_doc = 0;
+    // Lines of the document in front with a problem the server can fix.
+    u64 marks_doc = ~0ull, marks_gen = ~0ull;
+    std::vector<u64> fix_lines;
+    std::vector<u64> action_lines;  // where Option+Enter found a fix (until the server's problems next change)
+
+    // Each view's inlay hints and the servers' colours, as last worked out,
+    // and what for.
+    struct Extras {
+        u64 doc = ~0ull, rev = ~0ull, rev_ns = 0;  // the text, and since when it has been as it is
+        // Inlay hints: notes between characters, and their cells.
+        std::vector<GridNote> notes;
+        std::vector<u32> cells;
+        std::vector<std::string> labels;  // (for the tests)
+        u64 hints_key = ~0ull;
+        // The servers' colours over tree-sitter's: the visible lines' marks,
+        // and the cell bits of each style (tree-sitter's ids first, then
+        // one for each kind of token that is coloured).
+        Highlights merged;
+        u64 merged_key = ~0ull;
+        u32 lut[256] = {};
+        u32 styles = 0;                         // tree-sitter's styles the table has
+        u64 lut_key = ~0ull;
+        std::vector<u8> type_style;            // the server's token type -> style id (0: left to tree-sitter)
+        std::vector<u8> builtin_style;         // the same, for one from the language's own library
+        std::vector<std::pair<u32, Rgb>> inks;  // the palette entries the table took, and their colours
+        std::vector<std::string> made;         // the capture each style past tree-sitter's is
+    };
+    Extras extras[kMaxViews];
+    u64 extras_due_ns = 0;  // when a text will have stood still long enough to ask about it
 
     // Go to definition: where to land once another file has opened, and
     // the places to go back to.
@@ -248,52 +326,97 @@ App::~App() {
 
 // ---------------------------------------------------------------- lifecycle
 
-// Looks for a language server for the open file and starts it. Returns at
-// once; the server reports in through sync_lsp().
+// Servers that failed on another machine may be tried again (its
+// connection is back).
 void App::lsp_forget_failed(const std::string& suffix) {
-    if (assist_) std::erase_if(assist_->failed, [&](const std::string& n) { return n.ends_with(suffix); });
+    if (!assist_) return;
+    std::erase_if(assist_->failed, [&](const std::string& n) { return n.ends_with(suffix); });
+    assist_->tried.clear();
 }
 
+// Every tab whose text a server could have gets its document opened on one
+// (started if need be), and one that no longer could is closed. Returns at
+// once; the servers report in through sync_lsp().
+void App::lsp_reconcile() {
+    Assist& a = *assist_;
+    if (!cfg_.lsp) return lsp_.shutdown();
+    const std::vector<LspServer> all = lsp_server_list(cfg_.lsp_servers);
+    std::vector<LspServer> here;  // (another machine's are filtered by its own failures, below)
+    for (const LspServer& s : all)
+        if (std::find(a.failed.begin(), a.failed.end(), s.name) == a.failed.end()) here.push_back(s);
+    const double most = static_cast<double>(cfg_.lsp_max_mb) * 1048576.0;
+    for (const std::unique_ptr<Pane>& p : panes_)
+        for (const std::unique_ptr<Doc>& dp : p->docs) {
+            Doc& d = *dp;
+            const bool wanted = server_text(d) && !d.loading && !d.ed.path.empty() && static_cast<double>(d.ed.buf.size()) <= most;
+            if (const std::string* as = lsp_.opened_as(d.id)) {
+                if (wanted && *as == d.ed.path) {
+                    lsp_.refresh(d.id);  // (read again from disk meanwhile: sent again)
+                    continue;
+                }
+                lsp_.close_doc(d.id);
+            }
+            if (!wanted) continue;
+            if (std::ranges::any_of(a.tried, [&](const auto& t) { return t.first == d.id && t.second == d.ed.path; })) continue;
+            char head[128];
+            const u64 n = d.ed.buf.read(0, head, sizeof head);
+            const std::string_view first(head, static_cast<size_t>(std::min<u64>(n, std::string_view(head, n).find('\n'))));
+            const std::string lang = Syntax::language_for(d.ed.path, first, cfg_.grammars);
+            std::string host, there;
+            const bool remote = split_remote(d.ed.path, &host, &there);
+            std::vector<LspServer> theirs;
+            if (remote)
+                for (const LspServer& s : all)
+                    if (std::find(a.failed.begin(), a.failed.end(), s.name + "@" + host) == a.failed.end()) theirs.push_back(s);
+            bool wait = false;
+            if (!lsp_.open(d.id, d.ed, d.ed.path, lang, remote ? theirs : here, &wait) && !wait) a.tried.push_back({d.id, d.ed.path});
+        }
+}
+
+// The document in front is the one the questions are about. Any tab that
+// has no server yet is offered one.
 void App::start_lsp() {
-    if (lsp_.attached() && !lsp_.idle()) return;
-    // (A server kept running across a change of tab is let go of here if
-    // the new tab has no use for it.)
-    if (!cfg_.lsp || pane_->doc->ed.path.empty() || static_cast<double>(pane_->doc->ed.buf.size()) > static_cast<double>(cfg_.lsp_max_mb) * 1048576.0)
-        return lsp_.detach();
-    char head[128];
-    const u64 n = pane_->doc->ed.buf.read(0, head, sizeof head);
-    const std::string_view first(head, static_cast<size_t>(std::min<u64>(n, std::string_view(head, n).find('\n'))));
-    lsp_.set_notify([] {  // on the client's thread: wake the event loop
-        SDL_Event ev{};
-        ev.type = SDL_EVENT_USER;
-        ev.user.code = 4;
-        SDL_PushEvent(&ev);
-    });
-    std::vector<LspServer> servers = lsp_server_list(cfg_.lsp_servers);
-    std::string host, there;
-    const bool remote = split_remote(pane_->doc->ed.path, &host, &there);
-    std::erase_if(servers, [&](const LspServer& s) {
-        const std::string name = remote ? s.name + "@" + host : s.name;  // (another machine's are its own)
-        return std::find(assist_->failed.begin(), assist_->failed.end(), name) != assist_->failed.end();
-    });
-    if (lsp_.attach(pane_->doc->ed.buf, pane_->doc->ed.path, Syntax::language_for(pane_->doc->ed.path, first, cfg_.grammars), servers)) {
-        lsp_doc_ = pane_->doc;
-        lsp_doc_->ed.listen(&lsp_);
+    Assist& a = *assist_;
+    if (!a.notify_set) {
+        a.notify_set = true;
+        lsp_.set_notify([] {  // on a client's thread: wake the event loop
+            SDL_Event ev{};
+            ev.type = SDL_EVENT_USER;
+            ev.user.code = 4;
+            SDL_PushEvent(&ev);
+        });
+    }
+    lsp_reconcile();
+    Doc* d = pane_->doc;
+    if (d && lsp_.is_open(d->id)) {
+        lsp_.follow(d->id);
+        lsp_doc_ = d;
+    } else {
+        lsp_.follow(0);
+        lsp_doc_ = nullptr;
     }
 }
 
-// Must run before the buffer is replaced.
+// Must run before the buffer of the document in front is replaced
+// (keep_server false: its document is closed, to be opened again) or
+// another document comes to the front (true: it stays open).
 void App::stop_lsp(bool keep_server) {
     Assist& a = *assist_;
-    if (lsp_doc_) lsp_doc_->ed.unlisten(&lsp_);
+    if (lsp_doc_ && !keep_server) lsp_.close_doc(lsp_doc_->id);
     lsp_doc_ = nullptr;
-    if (keep_server) lsp_.release();
-    else lsp_.detach();
+    lsp_.unfollow();
     lsp_close(kPopAll);
     a.decos.clear();
     a.notes.clear();
     a.deco_gen = ~0ull;
     lsp_pending_ = false;
+}
+
+// A document is about to go: its server lets go of it first.
+void App::lsp_forget(const Doc& d) {
+    if (lsp_doc_ == &d) stop_lsp();
+    lsp_.close_doc(d.id);
+    std::erase_if(assist_->tried, [&](const auto& t) { return t.first == d.id; });
 }
 
 void App::lsp_close(u32 what) {
@@ -313,25 +436,31 @@ void App::lsp_close(u32 what) {
     }
 }
 
-// Takes in what the server has sent since last time.
+// Takes in what the servers have sent since last time.
 void App::sync_lsp() {
     Assist& a = *assist_;
-    if (!lsp_.attached()) return;
+    if (a.refs_picker && !find_open_) a.refs_picker = false;  // (chosen from, or shut)
+    if (find_open_ && !a.refs_picker) a.refs_live = false;     // another list in the box: F4 is its
     const u32 news = lsp_.poll();
     if (!news) return;
     if (news & Lsp::kState) {
         const std::string msg = lsp_.take_message();
         if (!msg.empty()) std::fprintf(stderr, "blit: %s\n", msg.c_str());
-        if (!lsp_.attached()) {
-            pane_->doc->ed.unlisten(&lsp_);
+        // Those servers are out; another one for the language may do.
+        for (std::string& name : lsp_.take_failed()) a.failed.push_back(std::move(name));
+        a.tried.clear();
+        if (lsp_doc_ && !lsp_.is_open(lsp_doc_->id)) {
+            lsp_doc_ = nullptr;
             lsp_close(kPopAll);
-            // That server is out; another one for the language may do.
-            a.failed.push_back(lsp_.server_name());
-            lsp_pending_ = true;
-            dirty_ = true;
         }
+        lsp_pending_ = true;  // (and the tabs it had, or that waited for one to come up, are offered another)
+        dirty_ = true;
     }
-    if (news & Lsp::kDiagnostics) dirty_ = true;
+    if (news & (Lsp::kDiagnostics | Lsp::kHints | Lsp::kTokens)) dirty_ = true;
+    if (news & Lsp::kDiagnostics) {  // (the gutter's marks of fixes, looked at again)
+        a.action_lines.clear();
+        ++lsp_marks_gen_;
+    }
     if ((news & Lsp::kCompletion) && a.comp_pending) {
         a.comp_pending = false;
         if (!filter_completions()) lsp_close(kPopCompletion);
@@ -363,6 +492,416 @@ void App::sync_lsp() {
         if (open) a.sig_line = pane_->doc->ed.buf.line_of(pane_->doc->ed.cursor());
     }
     if (news & Lsp::kDefinition) goto_definition();
+
+    // References: in a list, the file, the line and its text, as Search in files has them.
+    if ((news & Lsp::kReferences) && a.refs_pending) {
+        a.refs_pending = false;
+        a.refs = lsp_.reference_list();
+        a.refs_at = -1;
+        if (a.refs.empty()) {
+            a.refs_live = false;
+            notify("No references found");
+        } else {
+            std::vector<std::string> items;
+            const std::string* root = panel_root();
+            for (const LspPlace& p : a.refs) {
+                std::string_view text = p.text;
+                while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
+                items.push_back(shown_name(p.path, root) + ":" + std::to_string(p.line + 1) + "  " + std::string(text));
+            }
+            const std::string title = "References (" + std::to_string(a.refs.size()) + ")";
+            find_choose_item(title, std::move(items), [this](int i) {
+                Assist& x = *assist_;
+                if (i < 0 || static_cast<size_t>(i) >= x.refs.size()) return;
+                x.refs_at = i - 1;
+                lsp_step(1);
+            });
+            a.refs_live = a.refs_picker = true;
+        }
+        dirty_ = true;
+    }
+
+    // Rename: the name the server says can be renamed, then a new one for it.
+    if ((news & Lsp::kRenameRange) && a.rename_pending) {
+        a.rename_pending = false;
+        if (lsp_.rename_lo() >= lsp_.rename_hi() || lsp_.front() != a.rename_doc) {
+            notify(lsp_.rename_error().empty() ? std::string("Nothing to rename here") : "Cannot rename: " + lsp_.rename_error());
+        } else {
+            const std::string was = lsp_.rename_placeholder();
+            a.rename_off = lsp_.rename_lo();
+            find_choose(kFindInput, "Rename " + was + " to", was, [this, was](const std::string& name) {
+                Assist& x = *assist_;
+                if (name.empty() || name == was) return;
+                if (!lsp_.can_rename() || lsp_.front() != x.rename_doc) return notify("The file changed: rename again");
+                x.rename_to = name;
+                x.rename_pending = true;
+                lsp_.rename(x.rename_off, name);
+            });
+        }
+    }
+    if ((news & Lsp::kRename) && a.rename_pending) {
+        a.rename_pending = false;
+        const LspWorkspaceEdit& e = lsp_.rename_edit();
+        if (!lsp_.rename_error().empty()) {
+            notify("Cannot rename: " + lsp_.rename_error());
+        } else if (e.empty()) {
+            notify("Nothing to rename");
+        } else {
+            // What it changes, file by file: Enter makes the change.
+            size_t edits = 0;
+            for (const LspFileEdit& f : e.files) edits += f.edits.size();
+            std::vector<std::string> items;
+            items.push_back("Rename to " + a.rename_to + ": " + std::to_string(edits) + (edits == 1 ? " edit in " : " edits in ") + std::to_string(e.files.size()) +
+                            (e.files.size() == 1 ? " file" : " files"));
+            const std::string* root = panel_root();
+            for (const LspFileEdit& f : e.files)
+                items.push_back(shown_name(f.path, root) + "  " + std::to_string(f.edits.size()) + (f.edits.size() == 1 ? " edit" : " edits"));
+            auto edit = std::make_shared<LspWorkspaceEdit>(e);
+            find_choose_item("Rename", std::move(items), [this, edit](int) {
+                std::string said;
+                lsp_apply(*edit, &said);
+                notify("Renamed: " + said);
+            });
+        }
+    }
+
+    // Formatting: made as one step that undo takes back.
+    if ((news & Lsp::kFormat) && a.format_pending) {
+        a.format_pending = false;
+        Doc* d = find_doc(lsp_.format_key());
+        const std::vector<Lsp::ByteEdit>& edits = lsp_.format_edits();
+        if (!d) {
+        } else if (lsp_.format_failed()) {
+            notify("Not formatted: the file changed meanwhile, or the server would not");
+        } else if (edits.empty()) {
+            if (!a.format_quiet) notify("Nothing to format");
+        } else {
+            std::vector<Change> c;
+            for (const Lsp::ByteEdit& e : edits) c.push_back({e.start, e.end, e.text});
+            sort_changes(c);
+            Editor& ed = d->ed;
+            u64 cur = ed.cursor();
+            ed.begin_group();
+            for (const Change& x : c) {
+                if (x.end > ed.buf.size()) continue;
+                ed.replace(x.start, x.end, x.text);
+                if (x.end <= cur) cur = cur + x.text.size() - (x.end - x.start);
+                else if (x.start < cur) cur = x.start + std::min<u64>(x.text.size(), cur - x.start);
+            }
+            ed.end_group();
+            ed.move_to(std::min(cur, ed.buf.size()), false);
+            for (const std::unique_ptr<Pane>& p : panes_) p->cache_rev = ~0ull;
+            if (!a.format_quiet) notify("Formatted");
+            if (cfg_.modal) vim_attach();
+        }
+        dirty_ = true;
+    }
+
+    // Code actions: a menu; a resolved one, its edit made.
+    if ((news & Lsp::kActions) && (a.actions_pending || a.resolving)) {
+        const bool resolved = a.resolving;
+        a.actions_pending = a.resolving = false;
+        const std::vector<LspAction>& acts = lsp_.actions();
+        if (resolved) {
+            if (!acts.empty()) {
+                std::string said;
+                if (!acts[0].edit.empty()) lsp_apply(acts[0].edit, &said);
+                if (!acts[0].command.empty()) lsp_.execute(acts[0]);
+                else notify(acts[0].title);
+            }
+        } else if (acts.empty() || lsp_.front() != a.actions_doc) {
+            notify("No actions here");
+        } else {
+            std::vector<std::string> items;
+            bool fixes = false;
+            for (const LspAction& x : acts) {
+                items.push_back(x.title + (x.disabled.empty() ? "" : " (" + x.disabled + ")"));
+                fixes = fixes || x.kind.starts_with("quickfix");
+            }
+            if (fixes && std::find(a.action_lines.begin(), a.action_lines.end(), pane_->cur_line) == a.action_lines.end()) {
+                a.action_lines.push_back(pane_->cur_line);
+                ++lsp_marks_gen_;
+            }
+            auto list = std::make_shared<std::vector<LspAction>>(acts);
+            find_choose_item("Actions", std::move(items), [this, list](int i) {
+                Assist& x = *assist_;
+                if (i < 0 || static_cast<size_t>(i) >= list->size()) return;
+                const LspAction& act = (*list)[static_cast<size_t>(i)];
+                if (!act.disabled.empty()) return notify(act.title + ": " + act.disabled);
+                if (!act.resolve.empty()) {  // (the server fills in its edit when asked)
+                    x.resolving = true;
+                    lsp_.resolve_action(act);
+                    return;
+                }
+                std::string said;
+                if (!act.edit.empty()) lsp_apply(act.edit, &said);
+                if (!act.command.empty()) lsp_.execute(act);  // (what it changes, the server asks for, under its own name)
+                else notify(act.title);
+            });
+        }
+        dirty_ = true;
+    }
+
+    // A server asks for an edit to be made (a command's).
+    if (news & Lsp::kApplyEdit) {
+        LspWorkspaceEdit e;
+        std::string label, said;
+        while (lsp_.take_apply(&e, &label)) {
+            lsp_.answer_apply(lsp_apply(e, &said));
+            if (!label.empty()) notify(label);
+        }
+        dirty_ = true;
+    }
+}
+
+// ---------------------------------------------------------------- changes to files
+
+// A workspace edit (a rename, a fix): a file open in a tab is changed there,
+// as one step that undo takes back; any other is read, changed and written,
+// here or on another machine. *said: how much changed, in words.
+bool App::lsp_apply(const LspWorkspaceEdit& e, std::string* said) {
+    size_t edits = 0, files = 0;
+    std::string failed;
+    for (const LspFileEdit& f : e.files) {
+        Doc* d = nullptr;
+        if (const u64 key = lsp_.key_of(f.path)) d = find_doc(key);
+        Pane* where = nullptr;
+        size_t at = 0;
+        if (!d && find_open(is_remote(f.path) ? f.path : full_path(f.path), &where, &at)) d = where->docs[at].get();
+        std::vector<Change> c;
+        if (d) {
+            if (d->read_only || d->loading) {
+                failed = f.path;
+                continue;
+            }
+            for (const LspTextEdit& t : f.edits) {
+                const u64 a0 = Lsp::offset_at(d->ed.buf, t.l0, t.c0, e.utf16), a1 = Lsp::offset_at(d->ed.buf, t.l1, t.c1, e.utf16);
+                if (a1 >= a0) c.push_back({a0, a1, t.text});
+            }
+            sort_changes(c);
+            Editor& ed = d->ed;
+            u64 cur = ed.cursor();
+            ed.begin_group();
+            for (const Change& x : c) {
+                ed.replace(x.start, x.end, x.text);
+                if (x.end <= cur) cur = cur + x.text.size() - (x.end - x.start);
+                else if (x.start < cur) cur = x.start + std::min<u64>(x.text.size(), cur - x.start);
+            }
+            ed.end_group();
+            ed.move_to(std::min(cur, ed.buf.size()), false);
+        } else {
+            std::string text, out, err;
+            if (!fs_read(f.path, &text, 64u << 20)) {
+                failed = f.path;
+                continue;
+            }
+            for (const LspTextEdit& t : f.edits) {
+                const u64 a0 = Lsp::offset_in(text, t.l0, t.c0, e.utf16), a1 = Lsp::offset_in(text, t.l1, t.c1, e.utf16);
+                if (a1 >= a0) c.push_back({a0, a1, t.text});
+            }
+            sort_changes(c);
+            out = text;
+            for (const Change& x : c) out.replace(x.start, x.end - x.start, x.text);
+            if (!fs_write(f.path, out, &err)) {
+                failed = f.path + " (" + err + ")";
+                continue;
+            }
+        }
+        edits += c.size();
+        files += c.empty() ? 0 : 1;
+    }
+    for (const std::unique_ptr<Pane>& p : panes_) p->cache_rev = ~0ull;
+    if (cfg_.modal) vim_attach();
+    find_stale();
+    dirty_ = true;
+    *said = std::to_string(edits) + (edits == 1 ? " edit in " : " edits in ") + std::to_string(files) + (files == 1 ? " file" : " files");
+    if (!failed.empty()) *said += "; not in " + failed;
+    if (!e.unsupported.empty()) *said += "; not done: " + e.unsupported;
+    return failed.empty();
+}
+
+// ---------------------------------------------------------------- references, rename, formatting, actions
+
+void App::lsp_references() {
+    Assist& a = *assist_;
+    if (!lsp_.ready() || !lsp_.can_references()) {
+        if (server_text(*pane_->doc))
+            notify(lsp_.ready() ? lsp_.server_name() + " does not find references" : why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
+        return;
+    }
+    lsp_close(kPopAll);
+    a.refs_pending = true;
+    lsp_.references(pane_->doc->ed.cursor());
+}
+
+// The next (or previous) of the references found, round the ends. False
+// when there is no list for F4 to go through.
+bool App::lsp_step(int by) {
+    Assist& a = *assist_;
+    if (a.refs_picker && !find_open_) a.refs_picker = false;
+    if (find_open_ && !a.refs_picker) a.refs_live = false;
+    if (!a.refs_live || a.refs.empty()) return false;
+    const i64 n = static_cast<i64>(a.refs.size());
+    a.refs_at = a.refs_at < 0 ? (by < 0 ? n - 1 : 0) : ((a.refs_at + by) % n + n) % n;
+    const LspPlace& p = a.refs[static_cast<size_t>(a.refs_at)];
+    const u64 key = lsp_.key_of(p.path);
+    Pane* where = nullptr;
+    size_t at = 0;
+    if (key && find_doc(key, &where, &at)) {
+        remember_place();
+        focus_pane(where);
+        tab_show(at);
+        show_place(p.line, p.col);
+    } else if (!go_to_place(p.path, p.line + 1, p.col + 1)) {
+        return true;
+    }
+    notify("Reference " + std::to_string(a.refs_at + 1) + " of " + std::to_string(n));
+    return true;
+}
+
+void App::lsp_rename() {
+    Assist& a = *assist_;
+    if (!lsp_.ready() || !lsp_.can_rename()) {
+        if (server_text(*pane_->doc))
+            notify(lsp_.ready() ? lsp_.server_name() + " does not rename" : why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
+        return;
+    }
+    lsp_close(kPopAll);
+    a.rename_pending = true;
+    a.rename_doc = pane_->doc->id;
+    lsp_.prepare_rename(pane_->doc->ed.cursor());
+}
+
+void App::lsp_format() {
+    Doc& d = *pane_->doc;
+    u64 lo = d.ed.sel_min(), hi = d.ed.sel_max();
+    if (cfg_.modal) {
+        vim_attach();
+        if (!vim_selection(&lo, &hi)) lo = hi = 0;
+    }
+    if (hi > lo) {
+        const Buffer& b = d.ed.buf;
+        return lsp_format_lines(b.line_of(lo), b.line_of(hi > lo ? hi - 1 : hi));
+    }
+    lsp_format_lines(~0ull, ~0ull);
+}
+
+// Lines l0 to l1 (both ~0: the whole file).
+void App::lsp_format_lines(u64 l0, u64 l1) {
+    Assist& a = *assist_;
+    const bool whole = l0 == ~0ull;
+    if (!lsp_.ready() || !lsp_.can_format(!whole)) {
+        if (server_text(*pane_->doc))
+            notify(lsp_.ready() ? lsp_.server_name() + " does not format" : why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
+        return;
+    }
+    lsp_close(kPopAll);
+    const Buffer& b = pane_->doc->ed.buf;
+    u64 lo = 0, hi = 0;
+    if (!whole) {
+        l1 = std::min(std::max(l0, l1), b.line_count() - 1);
+        lo = b.line_start(std::min(l0, l1));
+        hi = l1 + 1 < b.line_count() ? b.line_start(l1 + 1) : b.size();
+    }
+    a.format_pending = true;
+    a.format_quiet = false;
+    lsp_.format(lo, hi, whole);
+}
+
+// Before the file in front is written: formatted, if its server formats,
+// waiting a second at most for it (whatever else arrives meanwhile is taken
+// in as usual).
+void App::lsp_format_on_save() {
+    Assist& a = *assist_;
+    if (!cfg_.lsp || !cfg_.lsp_format_on_save) return;
+    Doc& d = *pane_->doc;
+    if (!lsp_.is_open(d.id)) return;
+    lsp_.follow(d.id);
+    lsp_doc_ = &d;
+    if (!lsp_.can_format(false)) return;
+    a.format_pending = true;
+    a.format_quiet = true;
+    lsp_.format(0, 0, true, d.id);
+    const u64 until = now_ns() + 1'000'000'000ull;
+    while (a.format_pending && now_ns() < until) {
+        lsp_.wait(10);
+        sync_lsp();
+    }
+    a.format_pending = false;
+}
+
+void App::lsp_actions() {
+    Assist& a = *assist_;
+    if (!lsp_.ready() || !lsp_.can_act()) {
+        if (server_text(*pane_->doc))
+            notify(lsp_.ready() ? lsp_.server_name() + " offers no actions" : why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
+        return;
+    }
+    lsp_close(kPopAll);
+    Editor& ed = pane_->doc->ed;
+    u64 lo = ed.sel_min(), hi = ed.sel_max();
+    if (cfg_.modal) {
+        vim_attach();
+        if (!vim_selection(&lo, &hi)) lo = hi = ed.cursor();
+    }
+    a.actions_pending = true;
+    a.actions_doc = pane_->doc->id;
+    lsp_.code_actions(lo, hi);
+}
+
+// The mark in the gutter beside a line with a problem the server can fix:
+// one it said so of (clangd says it of each problem), or one where Option+Enter
+// found a fix.
+u32 App::lsp_gutter(const Doc& d, u64 line) {
+    Assist& a = *assist_;
+    const std::vector<Diagnostic>* diags = lsp_.diagnostics_of(d.id);
+    if (!diags || diags->empty()) return 0;
+    if (a.marks_doc != d.id || a.marks_gen != lsp_marks_gen_) {
+        a.marks_doc = d.id;
+        a.marks_gen = lsp_marks_gen_;
+        std::vector<u64> lines;
+        for (const Diagnostic& x : *diags)
+            if (x.fixes) lines.push_back(d.ed.buf.line_of(std::min(x.start, d.ed.buf.size())));
+        if (d.id == a.actions_doc)
+            for (const u64 l : a.action_lines) lines.push_back(l);
+        std::sort(lines.begin(), lines.end());
+        lines.erase(std::unique(lines.begin(), lines.end()), lines.end());
+        a.fix_lines = std::move(lines);
+    }
+    if (!std::binary_search(a.fix_lines.begin(), a.fix_lines.end(), line)) return 0;
+    const char32_t bulb = font_->has(0xF0335) ? 0xF0335 : 0x2022;  // (a Nerd Font's light bulb, else a dot)
+    return (font_->glyph(bulb) & (Font::kWide - 1)) | (kInkDiagnostic + 1) << kCellInkShift;
+}
+
+// (Tests.) The view in front's inlay hints as they are put in ("line:col
+// label"), and the servers' colours laid over tree-sitter's ("text=capture").
+std::string App::lsp_extras_dump() {
+    const Assist::Extras& x = assist_->extras[pane_->view];
+    std::string out = "hints:";
+    for (size_t i = 0; i < x.notes.size() && i < x.labels.size(); ++i)
+        out += " " + std::to_string(x.notes[i].line + 1) + ":" + std::to_string(x.notes[i].col + 1) + "[" + x.labels[i] + "]";
+    out += " | colours:";
+    const Highlights& m = x.merged;
+    if (x.doc == pane_->doc->id)
+        for (size_t i = 0; i < m.size(); ++i) {
+            if (m.style[i] < x.styles || m.style[i] - x.styles >= x.made.size()) continue;
+            const u64 a = m.at(i), b = i + 1 < m.size() ? m.at(i + 1) : m.end;
+            out += " " + pane_->doc->ed.buf.text(a, std::min<u64>(b - a, 40)) + "=" + x.made[m.style[i] - x.styles];
+        }
+    return out;
+}
+
+std::string App::lsp_dump() {
+    std::string out = lsp_.servers_dump() + " |";
+    for (const std::unique_ptr<Pane>& p : panes_)
+        for (const std::unique_ptr<Doc>& d : p->docs) {
+            if (d->ed.path.empty()) continue;
+            const size_t slash = d->ed.path.rfind('/');
+            out += " " + d->ed.path.substr(slash == std::string::npos ? 0 : slash + 1) + (lsp_.is_open(d->id) ? "+" : "-");
+        }
+    const std::vector<Diagnostic>* front = lsp_.diagnostics_of(pane_->doc->id);
+    out += " | front " + std::string(lsp_doc_ == pane_->doc ? "followed" : "not followed") + " " + std::to_string(front ? front->size() : 0);
+    return out;
 }
 
 // ---------------------------------------------------------------- completion
@@ -497,16 +1036,25 @@ void App::show_hover(u64 off, bool at_cursor) {
     if (a.hover_open) dirty_ = true;
 }
 
-// Milliseconds until the mouse has rested long enough for a hover, or -1.
+// Milliseconds until the mouse has rested long enough for a hover, or a
+// server with no documents left is to stop; -1 if neither.
 int App::lsp_wait_ms() const {
     const Assist& a = *assist_;
-    if (!a.hover_due_ns) return -1;
+    u64 due = a.hover_due_ns;
+    if (const u64 stop = lsp_.next_tick_ns(); stop && (!due || stop < due)) due = stop;
+    if (a.extras_due_ns && (!due || a.extras_due_ns < due)) due = a.extras_due_ns;
+    if (!due) return -1;
     const u64 now = now_ns();
-    return a.hover_due_ns <= now ? 0 : static_cast<int>((a.hover_due_ns - now) / 1'000'000) + 1;
+    return due <= now ? 0 : static_cast<int>(std::min<u64>((due - now) / 1'000'000 + 1, 1u << 30));
 }
 
 void App::lsp_tick() {
     Assist& a = *assist_;
+    if (const u64 stop = lsp_.next_tick_ns(); stop && now_ns() >= stop) lsp_.tick();
+    if (a.extras_due_ns && now_ns() >= a.extras_due_ns) {  // (a frame asks for the hints and colours now due)
+        a.extras_due_ns = 0;
+        dirty_ = true;
+    }
     if (!a.hover_due_ns || now_ns() < a.hover_due_ns) return;
     a.hover_due_ns = 0;
     if (!lsp_.ready() || a.comp_open || dragging_ || a.mouse_line < 0) return;
@@ -656,6 +1204,20 @@ bool App::lsp_key(const SDL_KeyboardEvent& k) {
             default: break;
         }
     }
+    // References, rename, formatting and code actions (each says why, when
+    // nobody can answer). (The text Option+Shift+F types is not typed.)
+    if (k.key == SDLK_F12 && shift && !ctrl && !alt && !cmd) return lsp_references(), true;
+    if (k.key == SDLK_F2 && !shift && !ctrl && !alt && !cmd) return lsp_rename(), true;
+    if (k.key == SDLK_F && alt && shift && !ctrl && !cmd) {
+        lsp_format();
+        term_drop_text_ = true;
+        return true;
+    }
+    if ((k.key == SDLK_RETURN || k.key == SDLK_KP_ENTER) && alt && !shift && !ctrl && !cmd) {
+        lsp_actions();
+        term_drop_text_ = true;
+        return true;
+    }
     if (!lsp_.ready()) {
         // The keys that ask a server for something say why nothing comes of them.
         const bool asks = (ctrl && k.key == SDLK_SPACE) || (alt && k.key == SDLK_ESCAPE) || (cmd && k.key == SDLK_I) || k.key == SDLK_F12;
@@ -743,7 +1305,9 @@ bool App::lsp_click(float x, float y, bool cmd) {
 // change.
 void App::lsp_decorate(const GridSpec& g) {
     Assist& a = *assist_;
-    const std::vector<Diagnostic>& diags = lsp_.diagnostics();
+    static const std::vector<Diagnostic> none;
+    const std::vector<Diagnostic>* of = lsp_.diagnostics_of(pane_->doc->id);  // (the split's own file's, whether or not it is followed yet)
+    const std::vector<Diagnostic>& diags = of ? *of : none;
     if (diags.empty()) {
         a.decos.clear();
         a.notes.clear();
@@ -753,10 +1317,11 @@ void App::lsp_decorate(const GridSpec& g) {
     // The first column the view's right edge cuts (a message stops short of it).
     const i64 right = std::llround(pane_->scroll_x) - pad_x_ + (pane_->x1 - pane_->text_x);
     const u32 edge = right > 0 ? static_cast<u32>(right / font_->cell_w()) : 0;
-    if (a.deco_gen == lsp_.diagnostics_generation() && a.deco_top == g.top_line && a.deco_rows == g.rows &&
+    if (a.deco_gen == lsp_.diagnostics_generation() && a.deco_top == g.top_line && a.deco_rows == g.rows && a.deco_doc == pane_->doc->id &&
         a.deco_rev == pane_->doc->ed.revision() && a.deco_line == pane_->cur_line && a.deco_font == font_->generation() && a.deco_edge == edge)
         return;
     a.deco_gen = lsp_.diagnostics_generation();
+    a.deco_doc = pane_->doc->id;
     a.deco_top = g.top_line;
     a.deco_rows = g.rows;
     a.deco_rev = pane_->doc->ed.revision();
@@ -774,8 +1339,9 @@ void App::lsp_decorate(const GridSpec& g) {
     const u64 lo = b.line_start(first), hi = last >= lines ? b.size() + 1 : b.line_start(last);
     // The first problem that reaches into view: the furthest any reaches,
     // of those up to each one, only grows, so it can be searched for.
-    if (a.reach_gen != lsp_.diagnostics_generation() || a.reach.size() != diags.size()) {
+    if (a.reach_gen != lsp_.diagnostics_generation() || a.reach.size() != diags.size() || a.reach_doc != pane_->doc->id) {
         a.reach_gen = lsp_.diagnostics_generation();
+        a.reach_doc = pane_->doc->id;
         a.reach.resize(diags.size());
         u64 far = 0;
         for (size_t i = 0; i < diags.size(); ++i) a.reach[i] = far = std::max(far, std::max(diags[i].end, diags[i].start + 1));
@@ -825,7 +1391,10 @@ void App::lsp_decorate(const GridSpec& g) {
 void App::lsp_layout(int w, int h, FrameDesc& fd) {
     Assist& a = *assist_;
     popups_drawn_ = 0;
-    if (!lsp_.attached()) return;
+    if (a.refs_picker && !find_open_) a.refs_picker = false;
+    if (find_open_ && !a.refs_picker) a.refs_live = false;  // (another list in the box: F4 is its)
+    lsp_extras(fd);
+    if (!lsp_.attached() && !lsp_.diagnostics_of(pane_->doc->id)) return;
     // The wave under a problem: about a tenth of a line high.
     const float amp = std::max(1.0f, std::round(1.1f * scale_)), thick = std::max(1.0f, 0.75f * scale_);
     fd.squiggle[0] = 4 * amp;
@@ -990,7 +1559,231 @@ void App::lsp_layout(int w, int h, FrameDesc& fd) {
 
 u32 App::lsp_popups_open() const { return popups_drawn_; }
 
-void App::lsp_forgive() { assist_->failed.clear(); }
+// The settings changed: every server stops, to be started again as they
+// now say, and those that failed may be tried again.
+void App::lsp_forgive() {
+    assist_->failed.clear();
+    assist_->tried.clear();
+    lsp_doc_ = nullptr;
+    lsp_.shutdown();
+}
+
+// ---------------------------------------------------------------- inlay hints and semantic colours
+
+namespace {
+
+// How long a text stands still before its hints and colours are asked for
+// again (each key would otherwise ask, and the answers be out of date).
+constexpr u64 kSettleNs = 250'000'000;
+
+// The servers' kinds of token that say more than tree-sitter does, and the
+// capture each is coloured as when the theme has no "lsp.KIND" of its own.
+// (Keywords, strings, numbers, comments and operators are left to
+// tree-sitter, which tells more of them apart; so are plain variables.)
+struct TokenCapture {
+    std::string_view type, capture, builtin;
+};
+constexpr TokenCapture kTokenCaptures[] = {
+    {"namespace", "module", "module"},
+    {"type", "type", "type.builtin"},
+    {"class", "type", "type.builtin"},
+    {"enum", "type", "type.builtin"},
+    {"interface", "type", "type.builtin"},
+    {"struct", "type", "type.builtin"},
+    {"concept", "type", "type"},
+    {"typeParameter", "type.parameter", "type.parameter"},
+    {"parameter", "variable.parameter", "variable.parameter"},
+    {"property", "property", "property"},
+    {"enumMember", "constant", "constant.builtin"},
+    {"function", "function", "function.builtin"},
+    {"method", "function.method", "function.builtin"},
+    {"macro", "function.macro", "function.macro"},
+    {"decorator", "attribute", "attribute"},
+};
+
+}  // namespace
+
+// Each view's inlay hints (as notes between characters) and the servers'
+// colours (a layer of marks over tree-sitter's, for the lines on show),
+// asked for once a text has stood still a moment, and worked out again only
+// when what they are made from changes.
+void App::lsp_extras(FrameDesc& fd) {
+    Assist& a = *assist_;
+    a.extras_due_ns = 0;
+    if (!cfg_.lsp || (!cfg_.lsp_inlay_hints && !cfg_.lsp_semantic)) return;
+    const u64 now = now_ns();
+    for (const std::unique_ptr<Pane>& pp : panes_) {
+        Pane& p = *pp;
+        if (!p.doc || p.view >= fd.view_count) continue;
+        Doc& d = *p.doc;
+        GridSpec& g = fd.views[p.view].grid;
+        if (fd.views[p.view].buf != &d.ed.buf || g.doc != d.id || !lsp_.is_open(d.id)) continue;
+        Assist::Extras& x = a.extras[p.view];
+        if (x.doc != d.id || x.rev != d.ed.revision()) {
+            x.rev_ns = x.doc == d.id ? now : 0;  // (another file in the view: asked about at once)
+            x.doc = d.id;
+            x.rev = d.ed.revision();
+            x.hints_key = x.merged_key = ~0ull;
+        }
+        const bool settled = now - x.rev_ns >= kSettleNs;
+        if (!settled && (!a.extras_due_ns || x.rev_ns + kSettleNs < a.extras_due_ns)) a.extras_due_ns = x.rev_ns + kSettleNs;
+        const Buffer& b = d.ed.buf;
+        const u64 lines = b.line_count();
+        const u64 first = g.top_line, last = std::min<u64>(lines, g.top_line + g.rows);  // [first, last)
+        if (first >= last) continue;
+
+        // Inlay hints: those on show, but not on the cursor's line, where
+        // the cursor goes by the text's own columns.
+        if (cfg_.lsp_inlay_hints && lsp_.can_hint(d.id)) {
+            if (settled && !lsp_.hints_cover(d.id, first, last - 1))
+                lsp_.ask_hints(d.id, first > g.rows / 2 ? first - g.rows / 2 : 0, last + g.rows / 2);
+            const u64 key = (((lsp_.hints_generation(d.id) * 1000003 + first) * 1000003 + last) * 1000003 + p.cur_line) * 1000003 + font_->generation();
+            if (key != x.hints_key) {
+                x.hints_key = key;
+                x.notes.clear();
+                x.cells.clear();
+                x.labels.clear();
+                const std::vector<InlayHint>& hints = *lsp_.hints(d.id);
+                const u64 lo = b.line_start(first), hi = last < lines ? b.line_start(last) : b.size() + 1;
+                auto from = std::lower_bound(hints.begin(), hints.end(), lo, [](const InlayHint& h, u64 off) { return h.off < off; });
+                std::vector<std::pair<size_t, u32>> spans;  // (where in cells, how many) of each note
+                TextBox box;
+                for (auto it = from; it != hints.end() && it->off < hi; ++it) {
+                    const u64 line = b.line_of(std::min(it->off, b.size()));
+                    if (line == p.cur_line) continue;
+                    const std::string text = (it->pad_left ? " " : "") + fit_text(it->label, 40) + (it->pad_right ? " " : "");
+                    box.resize(std::max<u32>(1, width_of(text)), 1);
+                    put(box, *font_, 0, 0, text, ink::kMuted);
+                    x.notes.push_back({line, d.ed.col_between(b.line_start(line), it->off), nullptr, box.cols});
+                    spans.push_back({x.cells.size(), box.cols});
+                    x.labels.push_back(text);
+                    x.cells.insert(x.cells.end(), box.cells.begin(), box.cells.end());
+                }
+                for (size_t i = 0; i < x.notes.size(); ++i) x.notes[i].cells = x.cells.data() + spans[i].first;
+                // (In order of line and column: they come so, as the hints are sorted by place.)
+            }
+            g.inserts = x.notes;
+        }
+
+        // The servers' colours, laid over tree-sitter's where they say more.
+        // (A file with no tree-sitter colours of its own gets the server's alone.)
+        const std::vector<SemanticToken>* toks = lsp_.tokens(d.id);
+        const Highlights* own = d.syntax.active() ? &d.syntax.highlights() : nullptr;
+        static const Highlights kNone;
+        if (cfg_.lsp_semantic && lsp_.can_tokens(d.id) && !d.marks && g.highlights == own) {
+            if (settled && !lsp_.tokens_current(d.id)) lsp_.ask_tokens(d.id);
+            if (!toks || toks->empty()) continue;
+            // The style table: tree-sitter's styles as pick_theme() made
+            // them, then one for each kind of token, in an ink of its own
+            // (or one already showing that colour).
+            const std::vector<std::string>& types = *lsp_.token_types(d.id);
+            const u32 styles = own ? static_cast<u32>(std::min<size_t>(d.syntax.style_names().size(), 256)) : 1;
+            bool inks_hold = true;
+            for (const auto& [ink, c] : x.inks)
+                inks_hold = inks_hold && theme_.palette[ink][0] == c.r && theme_.palette[ink][1] == c.g && theme_.palette[ink][2] == c.b && theme_.palette[ink][3] == 1;
+            const u64 lut_key = (reinterpret_cast<u64>(&types) * 31 + styles) * 2 + (SDL_GetSystemTheme() != SDL_SYSTEM_THEME_LIGHT ? 1 : 0);
+            if (lut_key != x.lut_key || !inks_hold || x.styles != styles || (own && std::memcmp(x.lut, d.style_bits, styles * sizeof(u32)) != 0)) {
+                x.lut_key = lut_key;
+                x.styles = styles;
+                x.merged_key = ~0ull;
+                if (own) std::memcpy(x.lut, d.style_bits, styles * sizeof(u32));
+                std::fill(x.lut + (own ? styles : 0), x.lut + 256, 0u);
+                x.inks.clear();
+                x.type_style.assign(types.size(), 0);
+                x.builtin_style.assign(types.size(), 0);
+                const ThemeColors& tc = cfg_.theme(SDL_GetSystemTheme() != SDL_SYSTEM_THEME_LIGHT);
+                u32 next = styles;
+                std::vector<std::string>& made = x.made;
+                made.clear();
+                auto style_of = [&](const std::string& capture) -> u8 {
+                    for (size_t i = 0; i < made.size(); ++i)
+                        if (made[i] == capture) return static_cast<u8>(styles + i);
+                    if (next >= 256) return 0;
+                    const TokenStyle st = tc.syntax_style(capture);
+                    u32 face = cfg_.font_style_of(st);
+                    if (!font_->ensure_style(face)) face = 0;
+                    // The ink: one already that colour, else a free one.
+                    u32 ink = 0;
+                    for (u32 i = 1; i < kInkSyntaxEnd && !ink; ++i)
+                        if (theme_.palette[i][3] == 1 && theme_.palette[i][0] == st.color.r && theme_.palette[i][1] == st.color.g && theme_.palette[i][2] == st.color.b) ink = i;
+                    for (u32 i = 1; i < kInkSyntaxEnd && !ink; ++i)
+                        if (theme_.palette[i][3] == 0) {
+                            ink = i;
+                            std::ranges::copy(std::array<float, 4>{st.color.r, st.color.g, st.color.b, 1}, theme_.palette[i]);
+                            std::ranges::copy(std::array<float, 4>{st.color.r, st.color.g, st.color.b, 1}, fd.theme.palette[i]);  // (this frame's copy was taken already)
+                        }
+                    if (ink) x.inks.push_back({ink, st.color});
+                    x.lut[next] = (ink << kCellInkShift) | (face << Font::kStyleShift);
+                    made.push_back(capture);
+                    return static_cast<u8>(next++);
+                };
+                for (size_t t = 0; t < types.size(); ++t)
+                    for (const TokenCapture& tcap : kTokenCaptures) {
+                        if (types[t] != tcap.type) continue;
+                        // A theme's own "lsp.KIND" first, else the capture tree-sitter would use.
+                        const std::string own = "lsp." + types[t];
+                        const bool themed = std::ranges::any_of(tc.syntax, [&](const ThemeColors::Entry& e) { return e.capture == own; });
+                        x.type_style[t] = style_of(themed ? own : std::string(tcap.capture));
+                        x.builtin_style[t] = style_of(themed ? own : std::string(tcap.builtin));
+                    }
+                dirty_ = true;
+            }
+            // The marks for the lines on show: tree-sitter's, with the
+            // tokens' runs laid over them.
+            const Highlights& hl = own ? *own : kNone;
+            const u64 merged_key = ((((lsp_.tokens_generation(d.id) * 1000003 + first) * 1000003 + last) * 1000003 + reinterpret_cast<u64>(hl.off.data())) * 1000003 +
+                                    hl.size()) * 1000003 + hl.base + x.lut_key;
+            if (merged_key != x.merged_key) {
+                x.merged_key = merged_key;
+                const std::vector<std::string>& mods = *lsp_.token_modifiers(d.id);
+                u32 library = 0;  // (the modifier bit for "defaultLibrary")
+                for (size_t i = 0; i < mods.size() && i < 32; ++i)
+                    if (mods[i] == "defaultLibrary") library = 1u << i;
+                const u64 lo = b.line_start(first), hi = last < lines ? b.line_start(last) : b.size();
+                Highlights& m = x.merged;
+                m.clear();
+                m.base = lo;
+                m.end = hi;
+                size_t si = hl.empty() ? 0 : hl.upper(lo);  // tree-sitter's next mark
+                u8 ts = si > 0 && lo < hl.end ? hl.style[si - 1] : 0;
+                auto put_mark = [&](u64 at, u8 style) {
+                    if (!m.off.empty() && m.style.back() == style) return;
+                    if (!m.off.empty() && m.off.back() == static_cast<u32>(at - lo)) {
+                        m.style.back() = style;
+                        return;
+                    }
+                    m.off.push_back(static_cast<u32>(at - lo));
+                    m.style.push_back(style);
+                };
+                // Tree-sitter's marks from `from` up to `to`, with the style in force at `from`.
+                auto syntax_to = [&](u64 from, u64 to) {
+                    while (si < hl.size() && hl.at(si) <= from) ts = hl.style[si++];
+                    if (from >= hl.end) ts = 0;
+                    put_mark(from, ts);
+                    while (si < hl.size() && hl.at(si) < to) {
+                        ts = hl.style[si];
+                        put_mark(hl.at(si++), ts);
+                    }
+                };
+                u64 pos = lo;
+                auto t = std::lower_bound(toks->begin(), toks->end(), lo, [](const SemanticToken& k, u64 off) { return k.end <= off; });
+                for (; t != toks->end() && t->start < hi; ++t) {
+                    if (t->type >= x.type_style.size()) continue;
+                    const u8 style = (t->mods & library) ? x.builtin_style[t->type] : x.type_style[t->type];
+                    const u64 s0 = std::max(t->start, lo), s1 = std::min(t->end, hi);
+                    if (!style || s0 < pos || s1 <= s0) continue;
+                    if (s0 > pos) syntax_to(pos, s0);
+                    put_mark(s0, style);
+                    pos = s1;
+                }
+                if (pos < hi) syntax_to(pos, hi);
+                m.seal();
+            }
+            g.highlights = &x.merged;
+            g.style_bits = x.lut;
+        }
+    }
+}
 
 
 }  // namespace blit

@@ -317,8 +317,14 @@ struct Parser {
                 warn(std::string(key) + " should be a list of folders");
             return;
         }
-        if (key == "lsp.enabled" || key == "lsp.completion" || key == "lsp.inline_diagnostics") {
-            bool* out = key == "lsp.enabled" ? &c.lsp : key == "lsp.completion" ? &c.lsp_completion : &c.lsp_inline;
+        if (key == "lsp.enabled" || key == "lsp.completion" || key == "lsp.inline_diagnostics" || key == "lsp.format_on_save" ||
+            key == "lsp.inlay_hints" || key == "lsp.semantic_colors") {
+            bool* out = key == "lsp.enabled"          ? &c.lsp
+                        : key == "lsp.completion"     ? &c.lsp_completion
+                        : key == "lsp.format_on_save" ? &c.lsp_format_on_save
+                        : key == "lsp.inlay_hints"    ? &c.lsp_inlay_hints
+                        : key == "lsp.semantic_colors" ? &c.lsp_semantic
+                                                      : &c.lsp_inline;
             if (!as_bool(v, out)) warn(std::string(key) + " should be true or false");
             return;
         }
@@ -716,6 +722,9 @@ const Getter kGetters[] = {
     BLIT_GET("lsp.completion", flag(c.lsp_completion)),
     BLIT_GET("lsp.inline_diagnostics", flag(c.lsp_inline)),
     BLIT_GET("lsp.hover_ms", num(c.lsp_hover_ms)),
+    BLIT_GET("lsp.format_on_save", flag(c.lsp_format_on_save)),
+    BLIT_GET("lsp.inlay_hints", flag(c.lsp_inlay_hints)),
+    BLIT_GET("lsp.semantic_colors", flag(c.lsp_semantic)),
     BLIT_GET("git.enabled", flag(c.git)),
     BLIT_GET("panel.open", flag(c.panel_open)),
     BLIT_GET("panel.width", num(c.panel_width)),

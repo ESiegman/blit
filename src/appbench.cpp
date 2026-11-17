@@ -603,6 +603,12 @@ int App::run_bench() {
 //   ready                  wait for the language server to be up (10 s at most)
 //   diag                   wait for the server's next set of diagnostics (10 s at most)
 //   wait:MS                let MS milliseconds pass, taking in whatever the server sends
+//   lspsettle              wait until every tab that can have a server has one that is up, and the servers
+//                          have gone quiet (10 s at most)
+//   lspdump                print the language servers (name, project, documents) and which tabs are on one
+//   lspidle:MS             a server with no documents left stops after MS milliseconds
+//   lsptext                print the text of the file in front, its lines joined by " / "
+//   lspextras              print the inlay hints on show in the file in front, and the servers' colours there
 //   asked                  print the last question a box would have asked (scripted runs answer yes, or Don't Save)
 //   clock; within:MS       start a stopwatch; print whether the main thread got here within MS milliseconds
 //   lap:LABEL              print the milliseconds since the stopwatch started (or the last lap), and start it again
@@ -669,6 +675,32 @@ void App::run_script(const char* script) {
                 SDL_Delay(2);
             }
             sync_lsp();
+        } else if (verb == "lspsettle") {
+            const u64 until = now_ns() + 10'000'000'000ull;
+            u64 quiet_since = now_ns(), gen = ~0ull;
+            while (now_ns() < until) {
+                if (lsp_pending_) {
+                    lsp_pending_ = false;
+                    start_lsp();
+                }
+                sync_lsp();
+                lsp_tick();
+                const std::string d = lsp_.servers_dump();
+                const u64 g = lsp_.diagnostics_generation() + lsp_.problems_generation();
+                if (g != gen || d.find("starting") != std::string::npos || lsp_pending_) gen = g, quiet_since = now_ns();
+                else if (now_ns() - quiet_since > 150'000'000ull) break;
+                SDL_Delay(2);
+            }
+        } else if (verb == "lspdump") {
+            std::fprintf(stderr, "%s\n", lsp_dump().c_str());
+        } else if (verb == "lsptext") {
+            std::string t = pane_->doc->ed.buf.text(0, pane_->doc->ed.buf.size());
+            for (size_t at = t.find('\n'); at != std::string::npos; at = t.find('\n', at + 3)) t.replace(at, 1, " / ");
+            std::fprintf(stderr, "%s\n", t.c_str());
+        } else if (verb == "lspextras") {
+            std::fprintf(stderr, "%s\n", lsp_extras_dump().c_str());
+        } else if (verb == "lspidle") {
+            lsp_.set_idle_stop_ms(static_cast<u64>(std::atoll(arg.c_str())));
         } else if (verb == "panel") {  // let the file tree finish reading folders (2 s at most)
             const u64 until = now_ns() + 2'000'000'000ull;
             for (int quiet = 0; quiet < 30 && now_ns() < until;) {

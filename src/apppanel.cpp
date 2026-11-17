@@ -47,27 +47,55 @@ void light_row(TextBox& box, u32 row, bool focused) {
 }
 
 // The Problems tab's rows under its first line. With problems from the
-// build: each file's name and its problems, then (when the language server
-// reports any) a blank row, the open file's heading and its problems.
-// Without: the language server's alone, its heading the first line.
+// build: each file's name and its problems, then (when the language servers
+// report any) a blank row and their heading. Then the language servers'
+// problems, every file's they have reported on (open or not): each file's
+// name and its problems.
 struct ProblemRow {
-    enum Kind : u8 { kFile, kBuild, kGap, kHead, kDiag } kind;
-    u32 index;  // kFile: its first problem; kBuild: the problem; kDiag: the language server's
+    enum Kind : u8 { kFile, kBuild, kGap, kHead, kLspFile, kDiag } kind;
+    u32 index;  // kFile: its first problem; kBuild: the problem; kLspFile: the file; kDiag: the language servers' problem (counted across files)
 };
 
-std::vector<ProblemRow> problem_rows(const std::vector<BuildProblem>& b, size_t diags) {
+size_t count_problems(const std::vector<ProblemFile>& files) {
+    size_t n = 0;
+    for (const ProblemFile& f : files) n += f.items.size();
+    return n;
+}
+
+std::vector<ProblemRow> problem_rows(const std::vector<BuildProblem>& b, const std::vector<ProblemFile>& files) {
     std::vector<ProblemRow> rows;
     for (u32 i = 0; i < b.size(); ++i) {
         if (i == 0 || b[i].group != b[i - 1].group) rows.push_back({ProblemRow::kFile, i});
         rows.push_back({ProblemRow::kBuild, i});
     }
-    if (!b.empty() && diags) {
+    if (!b.empty() && count_problems(files)) {
         rows.push_back({ProblemRow::kGap, 0});
         rows.push_back({ProblemRow::kHead, 0});
     }
-    for (u32 i = 0; i < diags; ++i) rows.push_back({ProblemRow::kDiag, i});
+    u32 n = 0;
+    for (u32 f = 0; f < files.size(); ++f) {
+        if (files[f].items.empty()) continue;
+        rows.push_back({ProblemRow::kLspFile, f});
+        for (size_t i = 0; i < files[f].items.size(); ++i) rows.push_back({ProblemRow::kDiag, n++});
+    }
     return rows;
 }
+
+// The language servers' problem i (counted across files), and its file.
+const ProblemFile::Item* lsp_problem(const std::vector<ProblemFile>& files, size_t i, const ProblemFile** file) {
+    for (const ProblemFile& f : files) {
+        if (i < f.items.size()) {
+            *file = &f;
+            return &f.items[i];
+        }
+        i -= f.items.size();
+    }
+    return nullptr;
+}
+
+// A tab whose text a language server could have (not a terminal, a
+// profile, a preview, a picture or a PDF).
+bool server_text_doc(const Doc& d) { return !d.read_only && !d.term && !d.prof && !d.md && !d.image && !d.pdf; }
 
 // The row of a problem (numbered the build's first, then the language server's).
 u32 row_of_problem(const std::vector<ProblemRow>& rows, u32 problem, size_t builds) {
@@ -274,31 +302,71 @@ void App::panel_problem_seen(size_t i) {
 }
 
 // F8 (Shift+F8, back): the next of the build's problems, across files;
-// with none, the next of the open file's after the cursor (the language
-// server's), round the ends.
+// with none, the next of the language servers', from the cursor on, across
+// files (in the order the Problems tab has them), round the ends.
 void App::problem_step(int by) {
     if (build_step(by)) return;
-    const std::vector<Diagnostic>& d = lsp_.diagnostics();
-    Doc& doc = *pane_->doc;
-    if (d.empty() || lsp_doc_ != &doc || doc.term) {
+    const std::vector<ProblemFile>& files = lsp_.problems();
+    const size_t n = count_problems(files);
+    if (n == 0) {
         notify("No problems");
         return;
     }
-    const u64 cur = doc.ed.cursor();
-    size_t pick = d.size(), first = 0, last = 0;
-    for (size_t i = 0; i < d.size(); ++i) {
-        if (d[i].start < d[first].start) first = i;
-        if (d[i].start >= d[last].start) last = i;
-        const bool beyond = by > 0 ? d[i].start > cur : d[i].start < cur;
-        if (beyond && (pick == d.size() || (by > 0 ? d[i].start < d[pick].start : d[i].start > d[pick].start))) pick = i;
-    }
-    if (pick == d.size()) pick = by > 0 ? first : last;
+    // Where the cursor is, among them: the file in front's place in the
+    // list, and the line and byte in it.
+    const Doc& doc = *pane_->doc;
     const Buffer& buf = doc.ed.buf;
-    const u64 off = std::min<u64>(d[pick].start, buf.size()), line = buf.line_of(off);
-    show_place(line, off - buf.line_start(line));
+    const u64 cur = doc.ed.cursor(), cur_line = buf.line_of(cur), cur_col = cur - buf.line_start(cur_line);
+    const std::string here = doc.ed.path.empty() || is_remote(doc.ed.path) ? doc.ed.path : full_path(doc.ed.path);
+    size_t pick = n, at = 0;
+    bool found_file = false;
+    for (size_t f = 0; f < files.size() && pick == n; ++f) {
+        const ProblemFile& pf = files[f];
+        const bool this_one = pf.key == doc.id || (!pf.key && pf.path == here);
+        if (this_one) {
+            found_file = true;
+            if (by > 0) {
+                for (size_t i = 0; i < pf.items.size() && pick == n; ++i)
+                    if (pf.items[i].line > cur_line || (pf.items[i].line == cur_line && pf.items[i].col > cur_col)) pick = at + i;
+                if (pick == n) pick = (at + pf.items.size()) % n;  // (the next file's first)
+            } else {
+                for (size_t i = pf.items.size(); i-- > 0 && pick == n;)
+                    if (pf.items[i].line < cur_line || (pf.items[i].line == cur_line && pf.items[i].col < cur_col)) pick = at + i;
+                if (pick == n) pick = (at + n - 1) % n;  // (the file before's last)
+            }
+        }
+        at += pf.items.size();
+    }
+    if (!found_file) pick = by > 0 ? 0 : n - 1;
+    lsp_go_problem(pick);
     panel_problem_seen(build_problems().size() + pick);
-    const std::string& m = d[pick].message;
-    notify("Problem " + std::to_string(pick + 1) + " of " + std::to_string(d.size()) + ": " + m.substr(0, m.find('\n')));
+    const ProblemFile* file = nullptr;
+    if (const ProblemFile::Item* it = lsp_problem(files, pick, &file))
+        notify("Problem " + std::to_string(pick + 1) + " of " + std::to_string(n) + ": " + it->message.substr(0, it->message.find('\n')));
+}
+
+// The language servers' problem i, counted across files: its file comes to
+// the front (opened, if it is not), at its line.
+void App::lsp_go_problem(size_t i) {
+    const std::vector<ProblemFile>& files = lsp_.problems();
+    const ProblemFile* file = nullptr;
+    const ProblemFile::Item* it = lsp_problem(files, i, &file);
+    if (!it) return;
+    const std::string path = file->path;
+    const u64 key = file->key;
+    const u32 line = it->line, col = it->col;
+    Pane* where = nullptr;
+    size_t at = 0;
+    if (key && find_doc(key, &where, &at)) {
+        if (pane_->doc->id != key) {
+            remember_place();
+            focus_pane(where);
+            tab_show(at);
+        }
+        show_place(line, col);
+    } else {
+        go_to_place(path, line + 1, col + 1);
+    }
 }
 
 // (Tests.) The Run button's words, and the Problems tab's rows as text: a
@@ -306,18 +374,24 @@ void App::problem_step(int by) {
 std::string App::problems_dump() {
     term_sync();
     const std::vector<BuildProblem>& bp = build_problems();
-    const std::vector<Diagnostic>& d = lsp_.diagnostics();
-    std::string out = "button: " + build_label() + " | " + (bp.empty() ? "file " + std::to_string(d.size()) : "Build " + std::to_string(bp.size()));
+    const std::vector<ProblemFile>& files = lsp_.problems();
+    const size_t n = count_problems(files);
+    std::string out = "button: " + build_label() + " | " + (bp.empty() ? "file " + std::to_string(n) : "Build " + std::to_string(bp.size()));
     const Side& s = *side_;
-    for (const ProblemRow& row : problem_rows(bp, d.size())) {
+    for (const ProblemRow& row : problem_rows(bp, files)) {
         out += " | ";
         if (row.kind == ProblemRow::kFile) out += "file " + shown_path(bp[row.index].path, panel_root());
-        else if (row.kind == ProblemRow::kHead) out += "file " + std::to_string(d.size());
+        else if (row.kind == ProblemRow::kHead) out += "Problems " + std::to_string(n);
+        else if (row.kind == ProblemRow::kLspFile) out += "file " + shown_path(files[row.index].path, panel_root()) + (files[row.index].key ? "" : " (not open)");
         else if (row.kind == ProblemRow::kBuild) {
             const BuildProblem& p = bp[row.index];
             out += std::string(row.index == s.problem ? ">" : "") + (p.severity == 1 ? "E " : "W ") + std::to_string(p.line) + (p.col ? ":" + std::to_string(p.col) : "") + " " + p.message;
         } else if (row.kind == ProblemRow::kDiag) {
-            out += std::string(row.index + bp.size() == s.problem ? ">" : "") + "lsp " + d[row.index].message;
+            const ProblemFile* file = nullptr;
+            const ProblemFile::Item* it = lsp_problem(files, row.index, &file);
+            static const char* const letter[] = {"E ", "W ", "I ", "H "};
+            out += std::string(row.index + bp.size() == s.problem ? ">" : "") + letter[(it->severity - 1) & 3] + std::to_string(it->line + 1) + " " +
+                   it->message.substr(0, it->message.find('\n'));
         }
     }
     return out;
@@ -643,8 +717,7 @@ bool App::panel_key(const SDL_KeyboardEvent& k) {
     if (s.tab == kTabBuild) return build_panel_key(k) || !cmd;
 
     if (s.tab == kTabProblems) {
-        const std::vector<Diagnostic>& d = lsp_.diagnostics();
-        const u32 nb = static_cast<u32>(build_problems().size()), n = nb + static_cast<u32>(d.size());
+        const u32 nb = static_cast<u32>(build_problems().size()), n = nb + static_cast<u32>(count_problems(lsp_.problems()));
         switch (k.key) {
             case SDLK_UP: s.problem = s.problem ? s.problem - 1 : 0; break;
             case SDLK_DOWN: s.problem = n ? std::min(s.problem + 1, n - 1) : 0; break;
@@ -656,8 +729,7 @@ bool App::panel_key(const SDL_KeyboardEvent& k) {
                     build_go(s.problem);
                     panel_focus(false);
                 } else if (s.problem < n) {
-                    pane_->doc->ed.move_to(std::min<u64>(d[s.problem - nb].start, pane_->doc->ed.buf.size()), false);
-                    scroll_to_cursor();
+                    lsp_go_problem(s.problem - nb);
                     panel_focus(false);
                 }
                 return true;
@@ -814,17 +886,17 @@ bool App::panel_mouse_down(const SDL_MouseButtonEvent& b) {
     }
     if (s.tab == kTabProblems) {
         const std::vector<BuildProblem>& bp = build_problems();
-        const std::vector<Diagnostic>& d = lsp_.diagnostics();
-        const std::vector<ProblemRow> pr = problem_rows(bp, d.size());
+        const std::vector<ProblemFile>& files = lsp_.problems();
+        const std::vector<ProblemRow> pr = problem_rows(bp, files);
         const u32 i = s.problem_top + static_cast<u32>(std::max(0, row - static_cast<int>(kHeadRows)));
         if (row >= static_cast<int>(kHeadRows) && i < pr.size()) {
-            const ProblemRow r = pr[i];
+            ProblemRow r = pr[i];
+            if (r.kind == ProblemRow::kLspFile && i + 1 < pr.size()) r = pr[i + 1];  // (a file's row: its first)
             if (r.kind == ProblemRow::kFile || r.kind == ProblemRow::kBuild) {  // (a file's row: its first)
                 build_go(r.index);
             } else if (r.kind == ProblemRow::kDiag) {
                 s.problem = static_cast<u32>(bp.size()) + r.index;
-                pane_->doc->ed.move_to(std::min<u64>(d[r.index].start, pane_->doc->ed.buf.size()), false);
-                scroll_to_cursor();
+                lsp_go_problem(r.index);
             }
         }
         return true;
@@ -908,7 +980,7 @@ bool App::panel_wheel(const SDL_MouseWheelEvent& w) {
         s.top = static_cast<u32>(std::clamp<i64>(top, 0, last_top(rows, s.body_rows)));
     } else {
         const i64 top = static_cast<i64>(s.problem_top) - static_cast<i64>(std::lround(w.y * 3));
-        s.problem_top = static_cast<u32>(std::clamp<i64>(top, 0, last_top(problem_rows(build_problems(), lsp_.diagnostics().size()).size(), s.body_rows)));
+        s.problem_top = static_cast<u32>(std::clamp<i64>(top, 0, last_top(problem_rows(build_problems(), lsp_.problems()).size(), s.body_rows)));
     }
     s.touch();
     dirty_ = true;
@@ -936,7 +1008,7 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
     const std::string& open_file = s.file_full;
     const bool stale = s.drawn_state != s.state || s.drawn_tree != s.tree.generation() || s.drawn_font != font_->generation() ||
                        s.drawn_rows != rows || s.drawn_cols != cols || s.drawn_file != open_file ||
-                       (s.tab == kTabProblems && (s.drawn_diag != lsp_.diagnostics_generation() || s.drawn_bprob != build_prob_gen_)) || (s.tab == kTabGit && s.drawn_git != git_gen_) ||
+                       (s.tab == kTabProblems && (s.drawn_diag != lsp_.problems_generation() || s.drawn_bprob != build_prob_gen_)) || (s.tab == kTabGit && s.drawn_git != git_gen_) ||
                        (s.tab == kTabProfile && s.drawn_prof != prof_gen_) || (s.tab == kTabDebug && s.drawn_debug != debug_gen_) ||
                        (s.tab == kTabBuild && s.drawn_build != build_gen_);
     if (stale) {
@@ -946,7 +1018,7 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
         s.drawn_rows = rows;
         s.drawn_cols = cols;
         s.drawn_file = open_file;
-        s.drawn_diag = lsp_.diagnostics_generation();
+        s.drawn_diag = lsp_.problems_generation();
         s.drawn_bprob = build_prob_gen_;
         s.drawn_git = git_gen_;
         s.drawn_prof = prof_gen_;
@@ -1090,46 +1162,48 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
             build_panel_draw(box, s.focus);
         } else {
             // The build's problems, across files, then what the language
-            // server reports about the open file (its name the heading).
+            // servers report, across files too.
             const std::vector<BuildProblem>& bp = build_problems();
-            const std::vector<Diagnostic>& d = lsp_.diagnostics();
-            const size_t slash = open_file.find_last_of('/');
-            const std::string name = open_file.empty() ? std::string() : open_file.substr(slash == std::string::npos ? 0 : slash + 1);
+            const std::vector<ProblemFile>& files = lsp_.problems();
+            const size_t nl = count_problems(files);
             auto heading = [&](u32 r, const std::string& title, size_t n) {  // a name, and how many
                 const std::string count = std::to_string(n);
                 const u32 c = put(box, font, r, 0, fit_text(title, cols > count.size() + 1 ? cols - static_cast<u32>(count.size()) - 1 : 0), ink::kHeading);
                 put(box, font, r, c + 1, count, ink::kMuted);
             };
-            auto file_heading = [&](u32 r) {
-                if (d.empty() && !lsp_.attached()) put(box, font, r, 0, fit_text("No language server for this file", cols), ink::kMuted);
-                else if (d.empty()) put(box, font, r, 0, fit_text(name.empty() ? std::string("No problems") : "No problems in " + name, cols), ink::kMuted);
-                else heading(r, name.empty() ? std::string("Problems") : name, d.size());
+            auto lsp_heading = [&](u32 r) {
+                if (nl) heading(r, "Problems", nl);
+                else if (!lsp_.attached() && server_text_doc(*pane_->doc)) put(box, font, r, 0, fit_text("No language server for this file", cols), ink::kMuted);
+                else put(box, font, r, 0, fit_text("No problems", cols), ink::kMuted);
             };
             if (!bp.empty()) heading(1, "Build", bp.size());
-            else file_heading(1);
-            const std::vector<ProblemRow> pr = problem_rows(bp, d.size());
-            const u32 n = static_cast<u32>(bp.size() + d.size());
+            else lsp_heading(1);
+            const std::vector<ProblemRow> pr = problem_rows(bp, files);
+            const u32 n = static_cast<u32>(bp.size() + nl);
             s.problem = n ? std::min(s.problem, n - 1) : 0;
             s.problem_top = std::min(s.problem_top, last_top(pr.size(), s.body_rows));
             if ((s.focus || s.problem_show) && n) {  // the chosen one stays in view (a file's first, with its file)
                 u32 at = row_of_problem(pr, s.problem, bp.size());
-                if (at > 0 && pr[at - 1].kind == ProblemRow::kFile) --at;
+                if (at > 0 && (pr[at - 1].kind == ProblemRow::kFile || pr[at - 1].kind == ProblemRow::kLspFile)) --at;
                 if (at < s.problem_top) s.problem_top = at;
                 const u32 bottom = row_of_problem(pr, s.problem, bp.size());
                 if (s.body_rows > 0 && bottom >= s.problem_top + s.body_rows) s.problem_top = bottom - s.body_rows + 1;
             }
             s.problem_show = false;
             const std::string* root = panel_root();
+            auto file_row = [&](u32 r, const std::string& path, bool open) {  // its icon, its name, and its folder
+                const std::string shown = shown_path(path, root);
+                const size_t sl = shown.rfind('/');
+                const std::string file = sl == std::string::npos ? shown : shown.substr(sl + 1);
+                icon(r, 0, file_icon(file, false, false));
+                const u32 c = put(box, font, r, 3, fit_text(file, cols > 3 ? cols - 3 : 0), open ? ink::kText : ink::kMuted);
+                if (sl != std::string::npos && sl > 0 && c + 3 < cols) put(box, font, r, c + 1, fit_text(shown.substr(0, sl), cols - c - 1, true), ink::kMuted);
+            };
             u32 r = kHeadRows;
             for (size_t i = s.problem_top; i < pr.size() && r < rows; ++i, ++r) {
                 const ProblemRow& row = pr[i];
-                if (row.kind == ProblemRow::kFile) {  // its icon, its name, and its folder
-                    const std::string shown = shown_path(bp[row.index].path, root);
-                    const size_t sl = shown.rfind('/');
-                    const std::string file = sl == std::string::npos ? shown : shown.substr(sl + 1);
-                    icon(r, 0, file_icon(file, false, false));
-                    const u32 c = put(box, font, r, 3, fit_text(file, cols > 3 ? cols - 3 : 0), ink::kText);
-                    if (sl != std::string::npos && sl > 0 && c + 3 < cols) put(box, font, r, c + 1, fit_text(shown.substr(0, sl), cols - c - 1, true), ink::kMuted);
+                if (row.kind == ProblemRow::kFile) {
+                    file_row(r, bp[row.index].path, true);
                 } else if (row.kind == ProblemRow::kBuild) {  // under it: how bad, the line, what
                     const BuildProblem& p = bp[row.index];
                     box.put(font, r, 2, p.severity == 1 ? "E" : "W", kInkDiagnostic + p.severity - 1, Font::kBold);
@@ -1138,14 +1212,16 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
                     put(box, font, r, c + 1, fit_text(message, cols > c + 1 ? cols - c - 1 : 0), ink::kText);
                     if (row.index == s.problem) light_row(box, r, s.focus);
                 } else if (row.kind == ProblemRow::kHead) {
-                    file_heading(r);
+                    lsp_heading(r);
+                } else if (row.kind == ProblemRow::kLspFile) {
+                    file_row(r, files[row.index].path, files[row.index].key != 0);
                 } else if (row.kind == ProblemRow::kDiag) {
-                    const Diagnostic& x = d[row.index];
-                    const u32 ink = kInkDiagnostic + x.severity - 1;
+                    const ProblemFile* file = nullptr;
+                    const ProblemFile::Item& x = *lsp_problem(files, row.index, &file);
+                    const u32 sev = (x.severity - 1u) & 3u;
                     static const char* const letter[] = {"E", "W", "I", "H"};
-                    box.put(font, r, 0, letter[x.severity - 1], ink, Font::kBold);
-                    const u64 line = pane_->doc->ed.buf.line_of(std::min<u64>(x.start, pane_->doc->ed.buf.size()));
-                    const u32 c = put(box, font, r, 2, std::to_string(line + 1), ink::kMuted);
+                    box.put(font, r, 2, letter[sev], kInkDiagnostic + sev, Font::kBold);
+                    const u32 c = put(box, font, r, 4, std::to_string(x.line + 1), ink::kMuted);
                     const std::string_view message = std::string_view(x.message).substr(0, x.message.find('\n'));
                     put(box, font, r, c + 1, fit_text(message, cols > c + 1 ? cols - c - 1 : 0), ink::kText);
                     if (row.index + bp.size() == s.problem) light_row(box, r, s.focus);

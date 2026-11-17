@@ -81,6 +81,10 @@ struct GridSpec {
     std::span<const GridDeco> decos;
     std::span<const GridNote> notes;
     const EditLog* edits = nullptr;  // where the text changed lately (the anchors keep what is before)
+    // Notes between characters (inlay hints), put in after the fill (see
+    // render.cpp): the text after each moves right to make room. Sorted by
+    // line, then column.
+    std::span<const GridNote> inserts;
     // Selection as (line, display column) pairs; has_sel false when empty.
     bool has_sel = false;
     u64 sel_line0 = 0, sel_line1 = 0;

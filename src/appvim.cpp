@@ -303,6 +303,8 @@ void App::vim_after(u32 result) {
                 else goto_definition();  // (which says why there is nobody to ask)
                 break;
             case VimRequest::kHover: show_hover(pane_->doc->ed.cursor(), true); break;
+            case VimRequest::kReferences: lsp_references(); break;
+            case VimRequest::kFormat: lsp_format_lines(q.line0, q.line1); break;
             case VimRequest::kBack: jump_walk(q.n ? q.n : -1); break;  // (<C-o> and <C-i>: the jumps across files, app.cpp)
             default: break;
         }

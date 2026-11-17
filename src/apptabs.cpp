@@ -619,7 +619,7 @@ void App::gutter_layout(int w, int h, FrameDesc& fd) {
     const bool shown = blame_shown(doc);
     const GitBlame* blame = shown && doc.blame && doc.blame_rev == doc.ed.revision() ? doc.blame.get() : nullptr;
     const bool relative = cfg_.relative_numbers && cfg_.modal;  // (counts for j and k are Vim's)
-    const u64 git_key = ((((doc.id * 1000003 + doc.hunks_gen) * 1000003 + doc.blame_gen) * 4 + (shown ? 2 : 0) + (blame ? 1 : 0)) * 2 + (relative ? 1 : 0)) ^ debug_gen_ * 0x9E3779B97F4A7C15ull;
+    const u64 git_key = ((((doc.id * 1000003 + doc.hunks_gen) * 1000003 + doc.blame_gen) * 4 + (shown ? 2 : 0) + (blame ? 1 : 0)) * 2 + (relative ? 1 : 0)) ^ debug_gen_ * 0x9E3779B97F4A7C15ull ^ lsp_marks_gen_ * 0xC2B2AE3D27D4EB4Full;
     const bool same_rows = first == t.g_first && lines == t.g_lines && font_->generation() == t.g_font && box.cols == cols && box.rows == rows && git_key == t.g_git;
     if (same_rows && pane_->cur_line != t.g_current && !blame && !relative) {
         // Only the cursor has gone to another line: the number of the line
@@ -669,6 +669,7 @@ void App::gutter_layout(int w, int h, FrameDesc& fd) {
             }
             for (u64 n = number; n > 0 && end > row; n /= 10) *--end = static_cast<u32>('0' + n % 10) | ink;
             if (const u32 mark = debug_gutter(doc, at)) row[0] = mark;  // a breakpoint, or where the program has stopped
+            else if (const u32 fix = lsp_gutter(doc, at)) row[0] = fix;  // a problem the language server has a fix for
             // In that last cell, a bar beside lines added or changed since
             // the last commit, and a dash where lines were taken out.
             if (!hunks.empty()) {

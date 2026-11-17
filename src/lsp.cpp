@@ -10,6 +10,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <mutex>
 #include <thread>
 #include <unordered_map>
@@ -358,6 +359,7 @@ void Lsp::markdown_lines(std::string_view text, bool markdown, std::vector<InfoL
     while (!out->empty() && (out->back().text.empty() || out->back().kind == InfoLine::kRule)) out->pop_back();
 }
 
+
 // ---------------------------------------------------------------- shared state
 
 namespace {
@@ -369,7 +371,8 @@ struct RawRange {
 struct RawDiag {
     RawRange r;
     u8 severity = 1;
-    std::string message, source, code;
+    bool fixes = false;
+    std::string message, source, code, raw;
 };
 
 struct RawItem {
@@ -384,7 +387,20 @@ struct RawItem {
     std::vector<Extra> extra;
 };
 
-enum : u8 { kInReady = 1, kInFailed, kInStopped, kInDiagnostics, kInCompletion, kInHover, kInSignature, kInDefinition };
+struct RawHint {
+    u32 line = 0, character = 0;
+    std::string label;
+    u8 kind = 0;
+    bool pad_left = false, pad_right = false;
+};
+
+enum : u8 {
+    kInReady = 1, kInFailed, kInStopped, kInDiagnostics, kInCompletion, kInHover, kInSignature, kInDefinition,
+    kInReferences, kInPrepareRename, kInRename, kInFormat, kInActions, kInResolve, kInHints, kInTokens,
+    kInPull, kInWorkspacePull, kInApplyEdit, kInRefresh, kInIgnore,
+};
+// What a server asks to have asked again (kInRefresh).
+enum : u8 { kRefreshTokens = 1, kRefreshHints = 2, kRefreshDiagnostics = 4 };
 
 RawRange range_of(Value r) {
     RawRange out;
@@ -402,46 +418,108 @@ void doc_lines(Value doc, std::vector<InfoLine>* out) {
     else if (doc.is_object()) Lsp::markdown_lines(doc["value"].str(), doc["kind"].str() == "markdown", out);
 }
 
+// Byte offset in s of a column counted the way the server counts.
+size_t column_in(std::string_view s, u32 col, bool utf16) {
+    if (!utf16) return std::min<size_t>(col, s.size());
+    u32 units = 0;
+    for (size_t i = 0; i < s.size(); ++i) {
+        const u8 b = static_cast<u8>(s[i]);
+        if ((b & 0xC0) == 0x80) continue;
+        if (units >= col) return i;
+        units += b >= 0xF0 ? 2 : 1;
+    }
+    return s.size();
+}
+
+u64 steady_ms() {
+    return static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
+}
+
+struct Caps {
+    bool utf16 = true;
+    int sync = 1;  // 0 none, 1 whole document on every change, 2 just the changes
+    bool save = false;
+    bool completion = false, hover = false, signature = false, definition = false;
+    bool references = false, rename = false, prepare_rename = false, formatting = false, range_formatting = false;
+    bool actions = false, resolve = false, hints = false, tokens = false, tokens_delta = false, pull = false, workspace_pull = false;
+    bool execute = false;
+    std::string completion_triggers, signature_triggers;
+    std::vector<std::string> token_types, token_mods;
+};
+
+// One message from a worker to the main thread.
+struct In {
+    u8 kind = 0;
+    u32 server = 0;  // which connection it came from
+    u32 id = 0;
+    Caps caps;
+    std::string text;  // why it failed, which document, or the id of a request to answer (JSON)
+    i64 version = -1;
+    std::vector<RawDiag> diags;
+    std::vector<RawItem> items;
+    bool incomplete = false;
+    std::vector<InfoLine> lines;
+    SignatureInfo sig;
+    LspLocation loc;
+    std::vector<LspPlace> places;
+    std::vector<RawRange> ranges;  // (each place's, as the server counts)
+    RawRange range;
+    bool flag = false;
+    std::vector<LspTextEdit> edits;
+    LspWorkspaceEdit wedit;
+    std::vector<LspAction> actions;
+    std::vector<RawHint> hints;
+    std::vector<u32> tokens;
+    std::string result_id;
+};
+
 }  // namespace
+
+struct Lsp::Inbox {
+    std::mutex mu;
+    std::condition_variable arrived;
+    std::vector<In> in;
+    std::atomic<bool> any{false};
+    std::function<void()> notify;
+
+    void push(In&& m) {
+        {
+            std::lock_guard lock(mu);
+            in.push_back(std::move(m));
+            any.store(true, std::memory_order_release);
+        }
+        arrived.notify_all();
+        if (notify) notify();
+    }
+};
 
 struct Lsp::Conn {
     struct Out {
-        std::string head, tail;                          // the message, around the document text if there is one
-        std::shared_ptr<const std::vector<Piece>> text;  // the document, when the message carries it
-        u32 id = 0;                                      // of a request; 0 for a notification
-        u8 kind = 0;                                     // what its answer will be
-        bool whole = false;                              // a whole-document change, superseding an unsent older one
-        bool dead = false;                               // superseded while queued: not to be sent
-        u64 epoch = 0;                                   // the Conn's epoch when the text was taken
-    };
-    struct In {
-        u8 kind = 0;
-        u32 id = 0;
-        Caps caps;
-        std::string text;  // why it failed, or which document
-        i64 version = -1;
-        std::vector<RawDiag> diags;
-        std::vector<RawItem> items;
-        bool incomplete = false;
-        std::vector<InfoLine> lines;
-        SignatureInfo sig;
-        LspLocation loc;
+        std::string head, tail;                            // the message, around the document text if there is one
+        std::shared_ptr<const std::vector<Piece>> pieces;  // the document, when the message carries it as its buffer's pieces
+        std::shared_ptr<const std::string> text;           // or as a copy
+        const void* doc = nullptr;                         // whose text it is
+        u32 id = 0;                                        // of a request; 0 for a notification
+        u8 kind = 0;                                       // what its answer will be
+        std::string about;                                 // the document a request is about (its uri), where the answer needs it
+        bool whole = false;                                // a whole-document change, superseding an unsent older one
+        bool dead = false;                                 // superseded while queued: not to be sent
+        bool forget = false;                               // not a message: the worker forgets what it kept about `about`
     };
 
     std::mutex mu;
-    std::condition_variable arrived;
     std::vector<Out> out;  // main thread -> worker
-    // The pieces of a document point into its buffer, which is gone (or
-    // read again) when the document is closed. Closing raises the epoch
-    // while holding text_mu, which the worker holds while it copies pieces:
-    // text queued before is never read after, and one being read is waited for.
+    // The pieces of the document in front point into its buffer, which may
+    // go (or be read again) once it is no longer in front. The worker holds
+    // text_mu from taking the queue to having copied every piece in it;
+    // the main thread, holding it, turns what is still queued into copies
+    // before letting the document go (Lsp::materialize).
     std::mutex text_mu;
-    std::atomic<u64> epoch{0};
-    std::vector<In> in;    // worker -> main thread
     bool stop = false;
     int wake_r = -1, wake_w = -1;  // a byte written here wakes the worker
     std::atomic<int> pid{0};
-    std::function<void()> notify;
+    std::shared_ptr<Inbox> inbox;
+    u32 server_id = 0;
 
     // Set before the worker starts.
     LspServer server;
@@ -454,16 +532,10 @@ struct Lsp::Conn {
     std::vector<LspServer> candidates;
     std::shared_ptr<Remote> rconn;
     u32 rproc = 0;
-    std::mutex probe_mu;
-    std::string probed_root;  // the project's folder as found there (empty until it is)
 
     void push(In&& m) {
-        {
-            std::lock_guard lock(mu);
-            in.push_back(std::move(m));
-        }
-        arrived.notify_all();
-        if (notify) notify();
+        m.server = server_id;
+        inbox->push(std::move(m));
     }
 
 #if !defined(_WIN32)
@@ -481,6 +553,62 @@ struct Lsp::Conn {
 #endif
 };
 
+// One connection as the main thread keeps it.
+struct Lsp::Server {
+    u32 id = 0;
+    std::shared_ptr<Conn> conn;
+    std::string name;   // the server's, as the settings name it
+    std::string shown;  // as the user is told it (another machine's: name@host)
+    std::string program, root, remote;
+    std::vector<std::string> candidates;  // (another machine's: the names it may turn out to be)
+    Caps caps;
+    bool ready = false;
+    int docs = 0;           // documents on it
+    u64 idle_since = 0;     // ns: when its last document went (0: it has some)
+    // Problems in files that are not open, by path.
+    std::map<std::string, std::vector<ProblemFile::Item>> closed;
+    u32 workspace_id = 0;   // a workspace/diagnostic under way
+};
+
+// One open document.
+struct Lsp::Document final : EditListener {
+    Lsp* hub = nullptr;
+    Server* server = nullptr;
+    u64 key = 0;
+    Editor* ed = nullptr;  // null for attach()'s
+    const Buffer* buf = nullptr;
+    std::string as_given, path, uri, language_id, change_head;
+    i64 version = 0;
+    bool opened = false;
+    u64 rev = 0;  // the editor's revision as last seen, to tell a text read afresh
+    u32 old_end_char = 0;  // UTF-16 column of the end of the text about to go, from before_edit
+    // A place on a line whose UTF-16 column is known, so that the next
+    // column asked for on that line is counted from there rather than from
+    // the line's start (typing far along a long line).
+    u64 col_line = ~0ull, col_off = 0;
+    u32 col_units = 0;
+    std::vector<Diagnostic> diags;
+    u32 pull_id = 0;
+    i64 pull_version = -1;
+    bool pull_again = false;
+    std::vector<InlayHint> hints;
+    u64 hints_gen = 0;
+    u32 hints_id = 0;
+    i64 hints_version = -1;
+    u64 hints_first = 1, hints_last = 0;  // the lines they were asked for (none yet)
+    bool hints_stale = true;              // the text changed since
+    std::vector<SemanticToken> tokens;
+    u64 tokens_gen = 0;
+    u32 tokens_id = 0;
+    i64 tokens_version = -1;  // asked for (or got) at this version
+    std::string tokens_result;  // the last answer's resultId, for a delta
+
+    u32 character_of(u64 line_start, u64 off);
+    void position_json(std::string& out, u64 off);
+    void before_edit(u64 off, u64 remove_len) override;
+    void on_edit(const TextEdit& e) override;
+};
+
 #if !defined(_WIN32)
 
 // ---------------------------------------------------------------- the worker thread
@@ -492,9 +620,20 @@ struct Lsp::Conn::Worker {
     int to_fd = -1, from_fd = -1;  // the server's stdin and stdout
     std::string inbuf, outbuf;
     size_t in_at = 0, out_at = 0;
-    std::unordered_map<u32, u8> waiting;  // request id -> what kind of answer it gets
+    struct Waiting {
+        u8 kind;
+        std::string about;
+    };
+    std::unordered_map<u32, Waiting> waiting;  // request id -> what kind of answer it gets
     json::Doc settings;
     bool utf16 = true;
+    // Semantic tokens as last sent for each document (by uri), which a
+    // delta is applied to.
+    struct Tokens {
+        std::string result;
+        std::vector<u32> data;
+    };
+    std::unordered_map<std::string, Tokens> tokens;
 
     // Paths as the server knows them (another machine's, without "ssh://host").
     std::string to_uri(const std::string& p) const { return path_to_uri(c.remote.empty() || !p.starts_with(c.remote) ? p : p.substr(c.remote.size())); }
@@ -553,15 +692,7 @@ struct Lsp::Conn::Worker {
         int status = 0;
         if (!c.server.roots.empty() && run_there(argv, &out, &status) && status == 0 && out.starts_with('/')) dir = out;
         c.root = c.remote + dir;
-        std::lock_guard lock(c.probe_mu);
-        c.probed_root = c.root;
         return true;
-    }
-
-    static u64 now_ms() {
-        return static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(
-                                    std::chrono::steady_clock::now().time_since_epoch())
-                                    .count());
     }
 
     void frame(std::string_view body) {
@@ -670,19 +801,36 @@ struct Lsp::Conn::Worker {
         w.key("workspaceFolders").begin_array().begin_object().member("uri", root_uri).member("name", c.root.substr(c.root.rfind('/') + 1)).end_object().end_array();
         json::Doc options;
         if (!c.server.init_options.empty() && options.parse(c.server.init_options)) w.key("initializationOptions").raw(c.server.init_options);
+        // (codeActionsInline is clangd's: its problems say when it has a fix.)
         w.key("capabilities")
             .raw(R"({"general":{"positionEncodings":["utf-8","utf-16"]},)"
                  R"("offsetEncoding":["utf-8","utf-16"],)"
                  R"("textDocument":{)"
                  R"("synchronization":{"didSave":true},)"
-                 R"("publishDiagnostics":{"versionSupport":true,"relatedInformation":false},)"
+                 R"("publishDiagnostics":{"versionSupport":true,"relatedInformation":false,"codeActionsInline":true},)"
                  R"("completion":{"contextSupport":true,"completionItem":{"snippetSupport":false,"insertReplaceSupport":true,)"
                  R"("labelDetailsSupport":true,"documentationFormat":["plaintext","markdown"]}},)"
                  R"("hover":{"contentFormat":["markdown","plaintext"]},)"
                  R"("signatureHelp":{"signatureInformation":{"documentationFormat":["plaintext","markdown"],)"
                  R"("parameterInformation":{"labelOffsetSupport":true},"activeParameterSupport":true}},)"
-                 R"("definition":{"linkSupport":true}},)"
-                 R"("workspace":{"configuration":true,"workspaceFolders":true},)"
+                 R"("definition":{"linkSupport":true},)"
+                 R"("references":{},)"
+                 R"("rename":{"prepareSupport":true},)"
+                 R"("formatting":{},"rangeFormatting":{},)"
+                 R"("codeAction":{"codeActionLiteralSupport":{"codeActionKind":{"valueSet":["","quickfix","refactor","refactor.extract",)"
+                 R"("refactor.inline","refactor.rewrite","source","source.organizeImports","source.fixAll"]}},)"
+                 R"("isPreferredSupport":true,"disabledSupport":true,"dataSupport":true,"resolveSupport":{"properties":["edit"]}},)"
+                 R"("inlayHint":{},)"
+                 R"("semanticTokens":{"requests":{"full":{"delta":true}},"formats":["relative"],)"
+                 R"("tokenTypes":["namespace","type","class","enum","interface","struct","typeParameter","parameter","variable",)"
+                 R"("property","enumMember","event","function","method","macro","keyword","modifier","comment","string","number",)"
+                 R"("regexp","operator","decorator","concept"],)"
+                 R"("tokenModifiers":["declaration","definition","readonly","static","deprecated","abstract","async",)"
+                 R"("modification","documentation","defaultLibrary"],"overlappingTokenSupport":false,"multilineTokenSupport":false},)"
+                 R"("diagnostic":{"relatedDocumentSupport":false}},)"
+                 R"("workspace":{"configuration":true,"workspaceFolders":true,"applyEdit":true,"workspaceEdit":{"documentChanges":true},)"
+                 R"("executeCommand":{},"semanticTokens":{"refreshSupport":true},"inlayHint":{"refreshSupport":true},)"
+                 R"("diagnostics":{"refreshSupport":true}},)"
                  R"("window":{"workDoneProgress":false}})");
         w.end_object().end_object();
         frame(w.out);
@@ -721,6 +869,25 @@ struct Lsp::Conn::Worker {
         triggers(sp["triggerCharacters"], &caps.signature_triggers);
         triggers(sp["retriggerCharacters"], &caps.signature_triggers);
         caps.definition = truthy(sc["definitionProvider"]);
+        caps.references = truthy(sc["referencesProvider"]);
+        const Value rp = sc["renameProvider"];
+        caps.rename = truthy(rp);
+        caps.prepare_rename = rp["prepareProvider"].boolean(false);
+        caps.formatting = truthy(sc["documentFormattingProvider"]);
+        caps.range_formatting = truthy(sc["documentRangeFormattingProvider"]);
+        const Value ap = sc["codeActionProvider"];
+        caps.actions = truthy(ap);
+        caps.resolve = ap["resolveProvider"].boolean(false);
+        caps.execute = truthy(sc["executeCommandProvider"]);
+        caps.hints = truthy(sc["inlayHintProvider"]);
+        const Value tp = sc["semanticTokensProvider"];
+        caps.tokens = tp.is_object() && truthy(tp["full"]);
+        caps.tokens_delta = tp["full"]["delta"].boolean(false);
+        for (Value t : tp["legend"]["tokenTypes"]) caps.token_types.emplace_back(t.str());
+        for (Value t : tp["legend"]["tokenModifiers"]) caps.token_mods.emplace_back(t.str());
+        const Value dp = sc["diagnosticProvider"];
+        caps.pull = dp.is_object();
+        caps.workspace_pull = dp["workspaceDiagnostics"].boolean(false);
 
         frame(R"({"jsonrpc":"2.0","method":"initialized","params":{}})");
         if (!c.server.settings.empty() && settings.parse(c.server.settings)) {
@@ -728,13 +895,14 @@ struct Lsp::Conn::Worker {
         }
         In m;
         m.kind = kInReady;
-        m.caps = caps;
-        if (!c.remote.empty()) m.text = c.server.name + "@" + c.remote.substr(6);  // (the one chosen there)
+        m.caps = std::move(caps);
+        if (!c.remote.empty()) m.text = c.server.name + "@" + c.remote.substr(6) + "\n" + c.server.name + "\n" + c.root;  // (the one chosen there, and the project's folder found there)
         c.push(std::move(m));
     }
 
     // A request from the server. All of them get an answer, because a
-    // server may wait for it.
+    // server may wait for it; workspace/applyEdit is answered by the main
+    // thread, once the edit has been made.
     void answer_request(Value id, std::string_view method, Value params) {
         std::string reply = R"({"jsonrpc":"2.0","id":)";
         json::dump(reply, id);
@@ -762,16 +930,40 @@ struct Lsp::Conn::Worker {
             json::quote(reply, c.root.substr(c.root.rfind('/') + 1));
             reply += "}]}";
         } else if (method == "workspace/applyEdit") {
-            reply += R"(,"result":{"applied":false}})";
+            In m;
+            m.kind = kInApplyEdit;
+            json::dump(m.text, id);
+            m.result_id = params["label"].str();
+            m.wedit = workspace_edit(params["edit"]);
+            c.push(std::move(m));
+            return;
+        } else if (method == "workspace/semanticTokens/refresh" || method == "workspace/inlayHint/refresh" || method == "workspace/diagnostic/refresh") {
+            In m;
+            m.kind = kInRefresh;
+            m.id = method == "workspace/semanticTokens/refresh" ? kRefreshTokens : method == "workspace/inlayHint/refresh" ? kRefreshHints : kRefreshDiagnostics;
+            c.push(std::move(m));
+            reply += R"(,"result":null})";
         } else if (method == "client/registerCapability" || method == "client/unregisterCapability" ||
                    method == "window/workDoneProgress/create" || method == "window/showMessageRequest" ||
-                   method == "workspace/semanticTokens/refresh" || method == "workspace/inlayHint/refresh" ||
-                   method == "workspace/diagnostic/refresh" || method == "workspace/codeLens/refresh") {
+                   method == "workspace/codeLens/refresh") {
             reply += R"(,"result":null})";
         } else {
             reply += R"(,"error":{"code":-32601,"message":"not supported"}})";
         }
         frame(reply);
+    }
+
+    void diagnostic(Value d, RawDiag* r) {
+        r->r = range_of(d["range"]);
+        r->severity = static_cast<u8>(std::clamp<i64>(d["severity"].integer(1), 1, 4));
+        r->message = d["message"].str();
+        while (!r->message.empty() && (r->message.back() == '\n' || r->message.back() == ' ')) r->message.pop_back();
+        r->source = d["source"].str();
+        const Value code = d["code"];
+        if (code.is_string()) r->code = code.str();
+        else if (code.is_number()) r->code = std::to_string(code.integer());
+        r->fixes = d["codeActions"].size() > 0;
+        json::dump(r->raw, d);
     }
 
     void on_diagnostics(Value params) {
@@ -781,17 +973,47 @@ struct Lsp::Conn::Worker {
         m.version = params["version"].is_number() ? params["version"].integer() : -1;
         for (Value d : params["diagnostics"]) {
             RawDiag r;
-            r.r = range_of(d["range"]);
-            r.severity = static_cast<u8>(std::clamp<i64>(d["severity"].integer(1), 1, 4));
-            r.message = d["message"].str();
-            while (!r.message.empty() && (r.message.back() == '\n' || r.message.back() == ' ')) r.message.pop_back();
-            r.source = d["source"].str();
-            const Value code = d["code"];
-            if (code.is_string()) r.code = code.str();
-            else if (code.is_number()) r.code = std::to_string(code.integer());
+            diagnostic(d, &r);
             m.diags.push_back(std::move(r));
         }
         c.push(std::move(m));
+    }
+
+    // A document's diagnostics asked for (textDocument/diagnostic). An
+    // answer that they have not changed changes nothing.
+    void on_pull(u32 id, Value result, const std::string& path) {
+        In m;
+        m.kind = kInPull;
+        m.id = id;
+        m.text = path;
+        m.flag = result["kind"].str() == "full";
+        for (Value d : result["items"]) {
+            RawDiag r;
+            diagnostic(d, &r);
+            m.diags.push_back(std::move(r));
+        }
+        c.push(std::move(m));
+    }
+
+    // The whole project's (workspace/diagnostic): a message for each file.
+    void on_workspace_pull(u32 id, Value result) {
+        for (Value report : result["items"]) {
+            if (report["kind"].str() != "full") continue;
+            In m;
+            m.kind = kInDiagnostics;
+            m.text = from_uri(report["uri"].str());
+            m.version = report["version"].is_number() ? report["version"].integer() : -1;
+            for (Value d : report["items"]) {
+                RawDiag r;
+                diagnostic(d, &r);
+                m.diags.push_back(std::move(r));
+            }
+            c.push(std::move(m));
+        }
+        In done;
+        done.kind = kInWorkspacePull;
+        done.id = id;
+        c.push(std::move(done));
     }
 
     void on_completion(u32 id, Value result) {
@@ -871,19 +1093,6 @@ struct Lsp::Conn::Worker {
         c.push(std::move(m));
     }
 
-    // Byte offset in s of a column counted the way the server counts.
-    size_t column_in(std::string_view s, u32 col) const {
-        if (!utf16) return std::min<size_t>(col, s.size());
-        u32 units = 0;
-        for (size_t i = 0; i < s.size(); ++i) {
-            const u8 b = static_cast<u8>(s[i]);
-            if ((b & 0xC0) == 0x80) continue;
-            if (units >= col) return i;
-            units += b >= 0xF0 ? 2 : 1;
-        }
-        return s.size();
-    }
-
     void on_signature(u32 id, Value result) {
         In m;
         m.kind = kInSignature;
@@ -908,8 +1117,8 @@ struct Lsp::Conn::Worker {
                 const Value label = p["label"];
                 size_t a = std::string::npos, b = 0;
                 if (label.is_array()) {
-                    a = column_in(s.label, static_cast<u32>(label.at(0).integer()));
-                    b = column_in(s.label, static_cast<u32>(label.at(1).integer()));
+                    a = column_in(s.label, static_cast<u32>(label.at(0).integer()), utf16);
+                    b = column_in(s.label, static_cast<u32>(label.at(1).integer()), utf16);
                 } else if (!label.str().empty()) {
                     a = s.label.find(label.str(), from);
                     if (a != std::string::npos) b = a + label.str().size();
@@ -943,6 +1152,214 @@ struct Lsp::Conn::Worker {
         c.push(std::move(m));
     }
 
+    // Found references, each with its line's text: read here, from the
+    // files on this machine (a file open in a tab gets its own text from
+    // the main thread instead).
+    void on_references(u32 id, Value result) {
+        In m;
+        m.kind = kInReferences;
+        m.id = id;
+        std::string file_path, file_text;
+        std::vector<size_t> line_starts;
+        bool readable = false;
+        for (Value loc : result) {
+            LspPlace p;
+            p.path = from_uri(loc["uri"].str());
+            if (p.path.empty()) continue;
+            const RawRange r = range_of(loc["range"]);
+            m.ranges.push_back(r);
+            p.line = r.l0;
+            if (p.path != file_path) {
+                file_path = p.path;
+                file_text.clear();
+                line_starts.assign(1, 0);
+                readable = c.remote.empty() && read_file(p.path, &file_text);
+                if (readable)
+                    for (size_t i = 0; i < file_text.size(); ++i)
+                        if (file_text[i] == '\n') line_starts.push_back(i + 1);
+            }
+            if (readable && r.l0 < line_starts.size()) {
+                const size_t a = line_starts[r.l0];
+                size_t b = file_text.find('\n', a);
+                if (b == std::string::npos) b = file_text.size();
+                std::string_view line = std::string_view(file_text).substr(a, b - a);
+                if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+                p.col = static_cast<u32>(column_in(line, r.c0, utf16));
+                p.end_col = r.l1 == r.l0 ? static_cast<u32>(column_in(line, r.c1, utf16)) : static_cast<u32>(line.size());
+                p.text = line.substr(0, std::min<size_t>(line.size(), 400));
+            } else {
+                p.col = r.c0;  // (as the server counts: converted where the text is known)
+                p.end_col = r.l1 == r.l0 ? r.c1 : r.c0;
+            }
+            m.places.push_back(std::move(p));
+        }
+        c.push(std::move(m));
+    }
+
+    static bool read_file(const std::string& path, std::string* out) {
+        FILE* f = std::fopen(path.c_str(), "rb");
+        if (!f) return false;
+        char buf[65536];
+        for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) {
+            out->append(buf, n);
+            if (out->size() > (64u << 20)) break;
+        }
+        std::fclose(f);
+        return true;
+    }
+
+    std::vector<LspTextEdit> text_edits(Value list) {
+        std::vector<LspTextEdit> out;
+        for (Value e : list) {
+            LspTextEdit t;
+            const RawRange r = range_of(e["range"]);
+            t.l0 = r.l0, t.c0 = r.c0, t.l1 = r.l1, t.c1 = r.c1;
+            t.text = e["newText"].str();
+            if (e["insertTextFormat"].integer(1) == 2) t.text = strip_snippet(t.text);  // (a SnippetTextEdit's)
+            out.push_back(std::move(t));
+        }
+        return out;
+    }
+
+    LspWorkspaceEdit workspace_edit(Value e) {
+        LspWorkspaceEdit out;
+        out.utf16 = utf16;
+        auto file = [&](const std::string& path) -> LspFileEdit& {
+            for (LspFileEdit& f : out.files)
+                if (f.path == path) return f;
+            out.files.push_back({path, {}});
+            return out.files.back();
+        };
+        const Value changes = e["documentChanges"];
+        if (changes.is_array()) {
+            for (Value ch : changes) {
+                const std::string_view kind = ch["kind"].str();
+                if (!kind.empty()) {  // create, rename or delete a file
+                    out.unsupported = std::string(kind) + " " + uri_to_path(kind == "rename" ? ch["oldUri"].str() : ch["uri"].str());
+                    continue;
+                }
+                const std::string path = from_uri(ch["textDocument"]["uri"].str());
+                if (path.empty()) continue;
+                std::vector<LspTextEdit> edits = text_edits(ch["edits"]);
+                LspFileEdit& f = file(path);
+                f.edits.insert(f.edits.end(), std::make_move_iterator(edits.begin()), std::make_move_iterator(edits.end()));
+            }
+        } else {
+            for (Value ch : e["changes"]) {
+                const std::string path = from_uri(ch.key());
+                if (path.empty()) continue;
+                std::vector<LspTextEdit> edits = text_edits(ch);
+                LspFileEdit& f = file(path);
+                f.edits.insert(f.edits.end(), std::make_move_iterator(edits.begin()), std::make_move_iterator(edits.end()));
+            }
+        }
+        std::erase_if(out.files, [](const LspFileEdit& f) { return f.edits.empty(); });
+        return out;
+    }
+
+    LspAction action(Value a) {
+        LspAction out;
+        out.title = a["title"].str();
+        if (a["command"].is_string()) {  // a bare Command
+            json::Writer w;
+            w.begin_object().member("command", a["command"].str()).key("arguments");
+            std::string args;
+            json::dump(args, a["arguments"].exists() ? a["arguments"] : Value());
+            w.raw(a["arguments"].exists() ? args : "[]").end_object();
+            out.command = std::move(w.out);
+            return out;
+        }
+        out.kind = a["kind"].str();
+        out.preferred = a["isPreferred"].boolean(false);
+        out.disabled = a["disabled"]["reason"].str();
+        if (a["edit"].is_object()) out.edit = workspace_edit(a["edit"]);
+        const Value cmd = a["command"];
+        if (cmd.is_object()) {
+            json::Writer w;
+            w.begin_object().member("command", cmd["command"].str()).key("arguments");
+            std::string args;
+            if (cmd["arguments"].exists()) json::dump(args, cmd["arguments"]);
+            w.raw(args.empty() ? "[]" : args).end_object();
+            out.command = std::move(w.out);
+        }
+        if (!a["edit"].exists() && cmd.exists() == false && a["data"].exists()) json::dump(out.resolve, a);
+        return out;
+    }
+
+    void on_actions(u32 id, Value result, bool resolved) {
+        In m;
+        m.kind = resolved ? kInResolve : kInActions;
+        m.id = id;
+        if (resolved) {
+            if (result.is_object()) m.actions.push_back(action(result));
+        } else {
+            for (Value a : result) {
+                LspAction x = action(a);
+                if (!x.title.empty()) m.actions.push_back(std::move(x));
+            }
+        }
+        c.push(std::move(m));
+    }
+
+    void on_hints(u32 id, Value result) {
+        In m;
+        m.kind = kInHints;
+        m.id = id;
+        for (Value h : result) {
+            RawHint r;
+            r.line = static_cast<u32>(std::max<i64>(0, h["position"]["line"].integer()));
+            r.character = static_cast<u32>(std::max<i64>(0, h["position"]["character"].integer()));
+            const Value label = h["label"];
+            if (label.is_string()) {
+                r.label = label.str();
+            } else {
+                for (Value part : label) r.label += part["value"].str();
+            }
+            // (Line breaks in one would not fit between two characters.)
+            std::replace(r.label.begin(), r.label.end(), '\n', ' ');
+            if (r.label.empty()) continue;
+            r.kind = static_cast<u8>(std::clamp<i64>(h["kind"].integer(0), 0, 2));
+            r.pad_left = h["paddingLeft"].boolean(false);
+            r.pad_right = h["paddingRight"].boolean(false);
+            m.hints.push_back(std::move(r));
+        }
+        std::stable_sort(m.hints.begin(), m.hints.end(), [](const RawHint& a, const RawHint& b) { return a.line != b.line ? a.line < b.line : a.character < b.character; });
+        c.push(std::move(m));
+    }
+
+    // Semantic tokens: the whole list, or the changes to the last one
+    // (applied here, to the copy kept for that document).
+    void on_tokens(u32 id, Value result, const std::string& uri) {
+        In m;
+        m.kind = kInTokens;
+        m.id = id;
+        Tokens& t = tokens[uri];
+        if (result["data"].is_array()) {
+            t.data.clear();
+            t.data.reserve(result["data"].size());
+            for (Value v : result["data"]) t.data.push_back(static_cast<u32>(v.integer()));
+        } else if (result["edits"].is_array()) {
+            // Edits are against the old list; applied from the last, they leave the earlier ones' places alone.
+            std::vector<std::pair<size_t, Value>> edits;
+            for (Value e : result["edits"]) edits.push_back({static_cast<size_t>(std::max<i64>(0, e["start"].integer())), e});
+            std::stable_sort(edits.begin(), edits.end(), [](const auto& a, const auto& b) { return a.first > b.first; });
+            for (const auto& [start, e] : edits) {
+                const size_t at = std::min(start, t.data.size());
+                const size_t gone = std::min<size_t>(static_cast<size_t>(std::max<i64>(0, e["deleteCount"].integer())), t.data.size() - at);
+                std::vector<u32> in;
+                for (Value v : e["data"]) in.push_back(static_cast<u32>(v.integer()));
+                t.data.erase(t.data.begin() + static_cast<std::ptrdiff_t>(at), t.data.begin() + static_cast<std::ptrdiff_t>(at + gone));
+                t.data.insert(t.data.begin() + static_cast<std::ptrdiff_t>(at), in.begin(), in.end());
+            }
+        } else {
+            m.flag = true;  // nothing (null, or an error): the request failed
+        }
+        t.result = result["resultId"].str();
+        m.result_id = t.result;
+        if (!m.flag) m.tokens = t.data;
+        c.push(std::move(m));
+    }
+
     void handle(std::string body) {
         json::Doc doc;
         if (!doc.parse(std::move(body))) return;
@@ -970,13 +1387,59 @@ struct Lsp::Conn::Worker {
         }
         const auto it = waiting.find(n);
         if (it == waiting.end()) return;
-        const u8 kind = it->second;
+        const Waiting w = std::move(it->second);
         waiting.erase(it);
-        switch (kind) {
+        switch (w.kind) {
             case kInCompletion: on_completion(n, result); break;
             case kInHover: on_hover(n, result); break;
             case kInSignature: on_signature(n, result); break;
             case kInDefinition: on_definition(n, result); break;
+            case kInReferences: on_references(n, result); break;
+            case kInPrepareRename: {
+                In m;
+                m.kind = kInPrepareRename;
+                m.id = n;
+                if (v["error"].exists()) {
+                    m.text = v["error"]["message"].str();
+                    m.flag = true;  // refused
+                } else if (result["range"].is_object()) {
+                    m.range = range_of(result["range"]);
+                    m.result_id = result["placeholder"].str();
+                } else if (result["start"].is_object()) {
+                    m.range = range_of(result);
+                } else if (result["defaultBehavior"].boolean(false)) {
+                    m.version = 0;  // the word there
+                } else {
+                    m.flag = true;  // null: not something to rename
+                }
+                c.push(std::move(m));
+                break;
+            }
+            case kInRename: {
+                In m;
+                m.kind = kInRename;
+                m.id = n;
+                if (v["error"].exists()) m.text = v["error"]["message"].str();
+                else m.wedit = workspace_edit(result);
+                c.push(std::move(m));
+                break;
+            }
+            case kInFormat: {
+                In m;
+                m.kind = kInFormat;
+                m.id = n;
+                m.flag = v["error"].exists();
+                if (m.flag) m.text = v["error"]["message"].str();
+                m.edits = text_edits(result);
+                c.push(std::move(m));
+                break;
+            }
+            case kInActions: on_actions(n, result, false); break;
+            case kInResolve: on_actions(n, result, true); break;
+            case kInHints: on_hints(n, result); break;
+            case kInTokens: on_tokens(n, result, w.about); break;
+            case kInPull: on_pull(n, result, from_uri(w.about)); break;
+            case kInWorkspacePull: on_workspace_pull(n, result); break;
             default: break;
         }
     }
@@ -1019,6 +1482,8 @@ struct Lsp::Conn::Worker {
     }
 
     void take_outgoing() {
+        // (text_mu first, then mu: the order the main thread takes them in too.)
+        std::lock_guard text_lock(c.text_mu);
         std::vector<Out> out;
         {
             std::lock_guard lock(c.mu);
@@ -1027,35 +1492,41 @@ struct Lsp::Conn::Worker {
         // Of several whole-document changes with nothing between that
         // needs the older one, only the newest is worth sending.
         bool later_whole = false;
+        const void* later_doc = nullptr;
         for (size_t i = out.size(); i-- > 0;) {
             Out& o = out[i];
             if (o.whole) {
-                if (later_whole) o.dead = true;
+                if (later_whole && later_doc == o.doc) o.dead = true;
                 later_whole = true;
-            } else if (o.id || o.text || o.head.find("didClose") != std::string::npos) {
+                later_doc = o.doc;
+            } else if (o.id || o.pieces || o.text || o.head.find("didClose") != std::string::npos) {
                 later_whole = false;
             }
         }
-        std::string body;
+        std::string body, text;
         for (Out& o : out) {
             if (o.dead) continue;
-            if (o.id) waiting[o.id] = o.kind;
-            if (!o.text) {
+            if (o.forget) {
+                tokens.erase(o.about);
+                continue;
+            }
+            if (o.id) waiting[o.id] = {o.kind, std::move(o.about)};
+            if (!o.pieces && !o.text) {
                 frame(o.head);
                 continue;
             }
             // The document's text, as one JSON string made piece by piece.
-            std::string text;
-            {
-                std::lock_guard lock(c.text_mu);
-                if (o.epoch != c.epoch.load(std::memory_order_relaxed)) continue;  // its document has been closed: the pieces may be gone
-                size_t total = 0;
-                for (const Piece& p : *o.text) total += p.len;
-                text.reserve(total);
-                for (const Piece& p : *o.text) text.append(p.p, p.len);
-            }
             body = std::move(o.head);
-            json::quote(body, text);
+            if (o.text) {
+                json::quote(body, *o.text);
+            } else {
+                text.clear();
+                size_t total = 0;
+                for (const Piece& p : *o.pieces) total += p.len;
+                text.reserve(total);
+                for (const Piece& p : *o.pieces) text.append(p.p, p.len);
+                json::quote(body, text);
+            }
             body += o.tail;
             frame(body);
         }
@@ -1082,13 +1553,13 @@ struct Lsp::Conn::Worker {
                 if (stopping) {
                     frame(R"({"jsonrpc":"2.0","id":2,"method":"shutdown","params":null})");
                     frame(R"({"jsonrpc":"2.0","method":"exit","params":null})");
-                    deadline = now_ms() + 300;
+                    deadline = steady_ms() + 300;
                 }
             }
-            if (stopping && (out_at >= outbuf.size() || now_ms() >= deadline)) break;
+            if (stopping && (out_at >= outbuf.size() || steady_ms() >= deadline)) break;
 
             pollfd fds[3] = {{from_fd, POLLIN, 0}, {c.wake_r, POLLIN, 0}, {to_fd, static_cast<short>(out_at < outbuf.size() ? POLLOUT : 0), 0}};
-            const int timeout = stopping ? static_cast<int>(deadline - std::min(deadline, now_ms())) + 1 : -1;
+            const int timeout = stopping ? static_cast<int>(deadline - std::min(deadline, steady_ms())) + 1 : -1;
             if (::poll(fds, 3, timeout) < 0 && errno != EINTR) break;
             if (fds[1].revents & POLLIN) {
                 while (read(c.wake_r, buf, sizeof buf) > 0) {
@@ -1148,12 +1619,12 @@ struct Lsp::Conn::Worker {
         // The server gets a moment to leave by itself, then is made to.
         const pid_t pid = c.pid.load();
         auto gone = [&](int ms) {
-            const u64 until = now_ms() + static_cast<u64>(ms);
+            const u64 until = steady_ms() + static_cast<u64>(ms);
             for (;;) {
                 int status;
                 const pid_t r = waitpid(pid, &status, WNOHANG);
                 if (r == pid || (r < 0 && errno != EINTR)) return true;
-                if (now_ms() >= until) return false;
+                if (steady_ms() >= until) return false;
                 usleep(5000);
             }
         };
@@ -1184,19 +1655,627 @@ void Lsp::Conn::run(std::shared_ptr<Conn> self) {
 
 #endif  // !_WIN32
 
-// ---------------------------------------------------------------- main thread
+// ---------------------------------------------------------------- main thread: messages
 
-Lsp::Lsp() = default;
+namespace {
+
+void queue(Lsp::Conn& c, Lsp::Conn::Out&& o) {
+#if !defined(_WIN32)
+    bool was_empty;
+    {
+        std::lock_guard lock(c.mu);
+        was_empty = c.out.empty();
+        if (o.whole && !c.out.empty() && c.out.back().whole && c.out.back().doc == o.doc) c.out.back() = std::move(o);
+        else c.out.push_back(std::move(o));
+    }
+    if (was_empty) c.wake();  // otherwise the worker is already on its way
+#else
+    (void)c;
+    (void)o;
+#endif
+}
+
+void send(Lsp::Conn& c, std::string json, u32 id = 0, u8 kind = 0, std::string about = {}) {
+    Lsp::Conn::Out o;
+    o.head = std::move(json);
+    o.id = id;
+    o.kind = kind;
+    o.about = std::move(about);
+    queue(c, std::move(o));
+}
+
+}  // namespace
+
+// A message that carries the whole document. The document in front hands
+// its text over as a list of pieces, turned into JSON on the worker thread,
+// so the size of the file costs the main thread nothing; any other's is
+// copied (its buffer may be read again from disk while the message waits).
+static void send_document(Lsp::Document& d, bool pinned, std::string head, std::string tail, bool replaces_unsent) {
+    Lsp::Conn::Out o;
+    o.head = std::move(head);
+    o.tail = std::move(tail);
+    o.doc = &d;
+    o.whole = replaces_unsent;
+    if (pinned) {
+        auto pieces = std::make_shared<std::vector<Piece>>();
+        d.buf->snapshot(pieces.get());
+        o.pieces = std::move(pieces);
+    } else {
+        o.text = std::make_shared<const std::string>(d.buf->text(0, d.buf->size()));
+    }
+    queue(*d.server->conn, std::move(o));
+}
+
+// The document in front, no longer: what is still queued with its pieces
+// becomes copies, so that its buffer may go or be read again.
+void Lsp::materialize(Document* d) {
+    if (!d || !d->server || !d->server->conn) return;
+    Conn& c = *d->server->conn;
+    std::lock_guard text_lock(c.text_mu);
+    std::lock_guard lock(c.mu);
+    for (Conn::Out& o : c.out) {
+        if (o.doc != d || !o.pieces) continue;
+        std::string text;
+        for (const Piece& p : *o.pieces) text.append(p.p, p.len);
+        o.text = std::make_shared<const std::string>(std::move(text));
+        o.pieces.reset();
+    }
+}
+
+// ---------------------------------------------------------------- documents
+
+// Column of `off` within its line, the way the server counts. In UTF-16
+// that is counted from the last place asked about on the same line when
+// that is before `off` (a long line is not walked from its start at every
+// key), else from the line's start.
+u32 Lsp::Document::character_of(u64 line_start, u64 off) {
+    if (!server->caps.utf16) return static_cast<u32>(off - line_start);
+    u64 from = line_start;
+    u32 units = 0;
+    if (col_line == line_start && col_off <= off) {
+        from = col_off;
+        units = col_units;
+    }
+    // One unit per character, two for those outside the first plane: every
+    // byte that starts a character counts one, a four-byte starter one more.
+    u64 left = off - from;
+    for (Buffer::Reader rd = buf->reader(from); left > 0;) {
+        const std::string_view ch = rd.chunk();
+        if (ch.empty()) break;
+        const size_t n = static_cast<size_t>(std::min<u64>(left, ch.size()));
+        const u8* p = reinterpret_cast<const u8*>(ch.data());
+        u32 run = 0;
+        for (size_t i = 0; i < n; ++i) run += static_cast<u32>((p[i] & 0xC0) != 0x80) + static_cast<u32>(p[i] >= 0xF0);
+        units += run;
+        rd.advance(static_cast<u32>(n));
+        left -= n;
+    }
+    col_line = line_start;
+    col_off = off;
+    col_units = units;
+    return units;
+}
+
+void Lsp::Document::position_json(std::string& out, u64 off) {
+    const u64 line = buf->line_of(off);
+    char text[64];
+    const int n = std::snprintf(text, sizeof text, R"({"line":%llu,"character":%u})", static_cast<unsigned long long>(line),
+                                character_of(buf->line_start(line), off));
+    out.append(text, static_cast<size_t>(std::min<int>(n, sizeof text - 1)));
+}
+
+void Lsp::Document::before_edit(u64 off, u64 remove_len) {
+    // In UTF-16 the column where the removed text ends has to be worked out
+    // while that text is still there.
+    if (!opened || !server->caps.utf16 || server->caps.sync != 2) return;
+    const u64 end = off + remove_len;
+    old_end_char = character_of(buf->line_start(buf->line_of(end)), end);
+}
+
+void Lsp::Document::on_edit(const TextEdit& e) {
+    // (The editor counts its revision up once this returns.)
+    const bool same_text = !ed || ed->revision() == rev;
+    if (ed) rev = ed->revision() + 1;
+    ++version;
+    if (hub->front_ == this) hub->complete_first_edit_ = std::min(hub->complete_first_edit_, e.start);
+    const i64 delta = static_cast<i64>(e.new_end) - static_cast<i64>(e.old_end);
+    auto moved = [&](u64 x, u64 inside) {
+        if (x <= e.start) return x;
+        if (x >= e.old_end) return static_cast<u64>(static_cast<i64>(x) + delta);
+        return inside;
+    };
+    // Diagnostics and hints stay on the text they were about until the
+    // server sends new ones.
+    if (!diags.empty()) {
+        for (Diagnostic& d : diags) {
+            d.start = moved(d.start, e.start);
+            d.end = std::max(d.start, moved(d.end, e.new_end));
+        }
+        ++hub->diags_gen_;
+        ++hub->problems_gen_;
+    }
+    if (!hints.empty()) {
+        // (One inside what was replaced goes with it.)
+        std::erase_if(hints, [&](const InlayHint& h) { return h.off > e.start && h.off < e.old_end; });
+        for (InlayHint& h : hints) h.off = moved(h.off, e.start);
+        ++hints_gen;
+    }
+    hints_stale = true;
+    if (!tokens.empty()) {
+        std::erase_if(tokens, [&](const SemanticToken& t) { return t.end > e.start && t.start < e.old_end; });
+        for (SemanticToken& t : tokens) {
+            t.start = moved(t.start, e.start);
+            t.end = moved(t.end, e.start);
+        }
+        ++tokens_gen;
+    }
+    // The cached UTF-16 column holds while the text before it on its line
+    // is as it was: a change after it leaves it be, one wholly before its
+    // line (not taking the line's own start with it) moves it.
+    if (col_line != ~0ull && e.start < col_off) {
+        if (e.old_end < col_line) {
+            col_line = static_cast<u64>(static_cast<i64>(col_line) + delta);
+            col_off = static_cast<u64>(static_cast<i64>(col_off) + delta);
+        } else {
+            col_line = ~0ull;
+        }
+    }
+    if (!opened || server->caps.sync == 0) return;
+    const bool pinned = hub->front_ == this;
+    std::string m = change_head;
+    m += std::to_string(version);
+    if (server->caps.sync == 1 || !same_text) {
+        // (A text read afresh since the last change: the server's copy is
+        // not that text, and only the whole of it will do.)
+        m += R"(},"contentChanges":[{"text":)";
+        send_document(*this, pinned, std::move(m), "}]}}", same_text);
+    } else {
+        char num[192];
+        const u32 c0 = server->caps.utf16 ? character_of(buf->line_start(e.start_row), e.start) : e.start_col;
+        const u32 c1 = server->caps.utf16 ? old_end_char : e.old_end_col;
+        const int n = std::snprintf(num, sizeof num, R"(},"contentChanges":[{"range":{"start":{"line":%u,"character":%u},"end":{"line":%u,"character":%u}},"text":)",
+                                    e.start_row, c0, e.old_end_row, c1);
+        m.append(num, static_cast<size_t>(std::min<int>(n, sizeof num - 1)));
+        const u64 len = e.new_end - e.start;
+        if (len > 256 * 1024) {
+            // A big paste: cheaper to hand over the document than to copy the
+            // pasted text here. (A change without a range means "all of it".)
+            std::string whole = change_head;
+            whole += std::to_string(version);
+            whole += R"(},"contentChanges":[{"text":)";
+            send_document(*this, pinned, std::move(whole), "}]}}", false);
+        } else {
+            const std::string text = buf->text(e.start, len);
+            json::quote(m, text);
+            m += "}]}}";
+            send(*server->conn, std::move(m));
+            ++hub->sent_;
+            // Typing along a line: the column after what went in is known
+            // from the one before it, without counting from the line's start.
+            if (server->caps.utf16 && e.new_end_row == e.start_row) {
+                col_line = buf->line_start(e.start_row);
+                col_off = e.new_end;
+                col_units = c0 + utf16_units(text);
+            }
+        }
+    }
+    if (server->caps.pull) hub->pull_document(this);
+}
+
+Lsp::Document* Lsp::doc_of(u64 key) const {
+    for (const std::unique_ptr<Document>& d : docs_)
+        if (d->key == key) return d.get();
+    return nullptr;
+}
+
+static void open_on_server(Lsp::Document& d, bool pinned, u64* sent) {
+    std::string head = R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":)";
+    json::quote(head, d.uri);
+    head += R"(,"languageId":)";
+    json::quote(head, d.language_id);
+    head += R"(,"version":)" + std::to_string(d.version) + R"(,"text":)";
+    send_document(d, pinned, std::move(head), "}}}", false);
+    d.opened = true;
+    if (d.ed) d.rev = d.ed->revision();
+    ++*sent;
+}
+
+Lsp::Document* Lsp::add_document(Server* s, u64 key, Editor* ed, const Buffer* buf, const std::string& as_given, const std::string& full,
+                                 const std::string& language) {
+    auto d = std::make_unique<Document>();
+    d->hub = this;
+    d->server = s;
+    d->key = key;
+    d->ed = ed;
+    d->buf = buf;
+    d->as_given = as_given;
+    d->path = full;
+    std::string host, there;
+    d->uri = path_to_uri(split_remote(full, &host, &there) ? there : full);  // (another machine's: the path there)
+    d->language_id = language_id(language);
+    d->change_head = R"({"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":)";
+    json::quote(d->change_head, d->uri);
+    d->change_head += R"(,"version":)";
+    if (ed) {
+        d->rev = ed->revision();
+        ed->listen(d.get());
+    }
+    ++s->docs;
+    s->idle_since = 0;
+    // (Problems it had while it was not open are now the open document's.)
+    if (s->closed.erase(full)) ++problems_gen_;
+    Document* raw = d.get();
+    docs_.push_back(std::move(d));
+    unopened_ = true;
+    return raw;  // (told to its server by flush_opens(), once it is known whether it is the one in front)
+}
+
+// Documents not yet told to their servers (just opened, or their server
+// just came up) are: the one in front with its buffer's pieces, the others
+// copied.
+void Lsp::flush_opens() {
+    if (!unopened_) return;
+    unopened_ = false;
+    for (const std::unique_ptr<Document>& d : docs_) {
+        if (!d->opened && !d->server->ready) unopened_ = true;  // (its server is still starting)
+        if (d->opened || !d->server->ready) continue;
+        open_on_server(*d, d.get() == front_, &sent_);
+        if (d->server->caps.pull) pull_document(d.get());
+    }
+}
+
+// Lets go of a document: its server is told (tell), its editor no longer
+// reports to it, and whatever was said about it is forgotten.
+void Lsp::drop_document(Document* d, bool tell) {
+    if (!d) return;
+    materialize(d);
+    if (front_ == d) {
+        front_ = nullptr;
+        complete_id_ = hover_id_ = sig_id_ = def_id_ = refs_id_ = prepare_id_ = rename_id_ = actions_id_ = resolve_id_ = 0;
+        complete_first_edit_ = ~0ull;
+        items_.clear();
+        ++items_serial_;
+        hover_lines_.clear();
+        sig_ = SignatureInfo{};
+        def_ = LspLocation{};
+    }
+    if (d->ed) d->ed->unlisten(d);
+    Server* s = d->server;
+    if (s && s->conn && tell && d->opened) {
+        std::string m = R"({"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":)";
+        json::quote(m, d->uri);
+        m += "}}}";
+        send(*s->conn, std::move(m));
+        Conn::Out forget;
+        forget.forget = true;
+        forget.about = d->uri;
+        queue(*s->conn, std::move(forget));
+        ++sent_;
+    }
+    if (s && --s->docs == 0) s->idle_since = std::max<u64>(1, now_ns());
+    if (format_key_ == d->key) format_id_ = 0;
+    if (!d->diags.empty()) ++diags_gen_, ++problems_gen_;
+    std::erase_if(docs_, [&](const std::unique_ptr<Document>& x) { return x.get() == d; });
+}
+
+bool Lsp::open(u64 key, Editor& ed, const std::string& path, const std::string& language, const std::vector<LspServer>& servers, bool* wait) {
+    if (wait) *wait = false;
+    if (Document* d = doc_of(key)) {
+        if (d->as_given == path && d->ed == &ed) return true;
+        drop_document(d, true);
+    }
+#if defined(_WIN32)
+    (void)path;
+    (void)language;
+    (void)servers;
+    return false;
+#else
+    if (language.empty() || path.empty()) return false;
+    std::string host, dir;
+    if (split_remote(path, &host, &dir)) {  // another machine's: which server is installed there is found out there
+        std::vector<LspServer> candidates;
+        for (const LspServer& s : servers)
+            if (s.enabled && !s.command.empty() && std::ranges::find(s.languages, language) != s.languages.end()) candidates.push_back(s);
+        if (candidates.empty()) return false;
+        const std::string remote = "ssh://" + host;
+        for (const std::unique_ptr<Server>& s : servers_) {
+            if (s->remote != remote) continue;
+            const bool same = s->ready ? std::ranges::any_of(candidates, [&](const LspServer& c) { return c.name == s->name; })
+                                       : s->candidates.size() == candidates.size() &&
+                                             std::ranges::equal(s->candidates, candidates, [](const std::string& a, const LspServer& b) { return a == b.name; });
+            if (!same) continue;
+            if (!s->ready) {  // still finding its project there: this file may or may not be in it
+                if (wait) *wait = true;
+                return false;
+            }
+            if (path.starts_with(s->root + "/")) {
+                add_document(s.get(), key, &ed, &ed.buf, path, path, language);
+                return true;
+            }
+        }
+        Server* s = start_server(candidates[0], candidates[0].command[0], path.substr(0, path.rfind('/')), remote, candidates);
+        if (!s) return false;
+        add_document(s, key, &ed, &ed.buf, path, path, language);
+        return true;
+    }
+    std::string program;
+    const LspServer* server = pick(servers, language, &program);
+    if (!server) return false;
+    char real[PATH_MAX];
+    if (!realpath(path.c_str(), real)) return false;  // not on disk yet: nothing a server could use
+    const std::string full = real;
+    const std::string root = find_root(full.substr(0, full.rfind('/')), server->roots);
+    Server* s = nullptr;
+    for (const std::unique_ptr<Server>& have : servers_)
+        if (have->remote.empty() && have->name == server->name && have->program == program && have->root == root) s = have.get();
+    if (!s) s = start_server(*server, program, root, {}, {});
+    if (!s) return false;
+    add_document(s, key, &ed, &ed.buf, path, full, language);
+    return true;
+#endif
+}
+
+Lsp::Server* Lsp::start_server(const LspServer& server, const std::string& program, const std::string& root, const std::string& remote,
+                               std::vector<LspServer> candidates) {
+#if defined(_WIN32)
+    (void)server, (void)program, (void)root, (void)remote, (void)candidates;
+    return nullptr;
+#else
+    auto conn = std::make_shared<Conn>();
+    int wake[2];
+    if (pipe(wake) != 0) return nullptr;
+    for (const int fd : wake) {
+        fcntl(fd, F_SETFD, FD_CLOEXEC);
+        fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
+    }
+    conn->wake_r = wake[0];
+    conn->wake_w = wake[1];
+    conn->server = server;
+    conn->program = program;
+    conn->root = root;
+    conn->remote = remote;
+    conn->path_env = search_path();
+    conn->inbox = inbox_;
+    // Writing to a server that has died must be an error, not the end of
+    // this program.
+    signal(SIGPIPE, SIG_IGN);
+
+    auto s = std::make_unique<Server>();
+    s->id = next_server_++;
+    conn->server_id = s->id;
+    s->name = server.name;
+    s->shown = server.name;
+    s->program = program;
+    s->root = root;
+    s->remote = remote;
+    if (!remote.empty()) {
+        s->shown += "@" + remote.substr(6);  // (one that fails there may yet do here, and the other way round)
+        for (const LspServer& c : candidates) s->candidates.push_back(c.name);
+        conn->candidates = std::move(candidates);
+    }
+    s->conn = conn;
+    Server* raw = s.get();
+    servers_.push_back(std::move(s));
+    std::thread(Conn::run, std::move(conn)).detach();
+    return raw;
+#endif
+}
+
+void Lsp::close_doc(u64 key) { drop_document(doc_of(key), true); }
+
+bool Lsp::is_open(u64 key) const { return doc_of(key) != nullptr; }
+
+const std::string* Lsp::opened_as(u64 key) const {
+    const Document* d = doc_of(key);
+    return d ? &d->as_given : nullptr;
+}
+
+u64 Lsp::key_of(const std::string& path) const {
+    for (const std::unique_ptr<Document>& d : docs_)
+        if (d->path == path && d->key != ~0ull) return d->key;
+    return 0;
+}
+
+void Lsp::refresh(u64 key) {
+    Document* d = doc_of(key);
+    if (!d || !d->ed || d->ed->revision() == d->rev) return;
+    d->rev = d->ed->revision();
+    d->col_line = ~0ull;
+    // What was said about the old text no longer lines up with this one.
+    const u64 size = d->buf->size();
+    for (Diagnostic& x : d->diags) x.start = std::min(x.start, size), x.end = std::min(x.end, size);
+    d->hints.clear();
+    ++d->hints_gen;
+    d->tokens.clear();
+    ++d->tokens_gen;
+    ++diags_gen_;
+    ++problems_gen_;
+    if (!d->opened || d->server->caps.sync == 0) return;
+    ++d->version;
+    std::string m = d->change_head + std::to_string(d->version) + R"(},"contentChanges":[{"text":)";
+    send_document(*d, d == front_, std::move(m), "}]}}", true);
+    ++sent_;
+    d->hints_stale = true;
+    d->tokens_version = -1;
+    if (d->server->caps.pull) pull_document(d);
+}
+
+void Lsp::follow(u64 key) {
+    Document* d = key ? doc_of(key) : nullptr;
+    if (d == front_) {
+        if (d) last_ = d->server;
+        return;
+    }
+    Document* was = front_;
+    materialize(was);
+    // What was asked about the one in front is for nobody now.
+    complete_id_ = hover_id_ = sig_id_ = def_id_ = refs_id_ = prepare_id_ = rename_id_ = actions_id_ = resolve_id_ = 0;
+    complete_first_edit_ = ~0ull;
+    items_.clear();
+    ++items_serial_;
+    hover_lines_.clear();
+    sig_ = SignatureInfo{};
+    def_ = LspLocation{};
+    front_ = d;
+    last_ = d ? d->server : nullptr;
+    ++diags_gen_;
+    flush_opens();
+}
+
+void Lsp::unfollow() {
+    if (!front_) return;
+    Server* keep = front_->server;
+    follow(0);
+    last_ = keep;
+}
+
+u64 Lsp::front() const { return front_ ? front_->key : 0; }
+
+void Lsp::stop_server(Server* s, bool kill_now) {
+    if (!s) return;
+    std::vector<Document*> on;
+    for (const std::unique_ptr<Document>& d : docs_)
+        if (d->server == s) on.push_back(d.get());
+    for (Document* d : on) drop_document(d, !kill_now);
+    if (last_ == s) last_ = nullptr;
+    if (asked_ == s) asked_ = nullptr;
+    std::erase_if(applies_, [&](const Apply& a) { return a.server == s; });
+    if (applying_.server == s) applying_.server = nullptr;
+#if !defined(_WIN32)
+    if (s->conn) {
+        const int pid = s->conn->pid.load();
+        {
+            std::lock_guard lock(s->conn->mu);
+            s->conn->stop = true;
+        }
+        s->conn->wake();
+        if (kill_now && pid > 0) kill(pid, SIGTERM);
+    }
+#endif
+    if (!s->closed.empty()) ++problems_gen_;
+    std::erase_if(servers_, [&](const std::unique_ptr<Server>& x) { return x.get() == s; });
+}
+
+void Lsp::shutdown() {
+    while (!servers_.empty()) stop_server(servers_.back().get(), false);
+    docs_.clear();
+    front_ = nullptr;
+    last_ = nullptr;
+    ++diags_gen_;
+    ++problems_gen_;
+}
+
+void Lsp::tick() {
+    const u64 now = now_ns();
+    for (size_t i = 0; i < servers_.size();) {
+        Server* s = servers_[i].get();
+        if (s->docs == 0 && s->idle_since && now - s->idle_since >= idle_stop_ms_ * 1'000'000 && s != last_) {
+            stop_server(s, false);
+            continue;
+        }
+        ++i;
+    }
+}
+
+u64 Lsp::next_tick_ns() const {
+    u64 due = 0;
+    for (const std::unique_ptr<Server>& s : servers_)
+        if (s->docs == 0 && s->idle_since && s.get() != last_) {
+            const u64 at = s->idle_since + idle_stop_ms_ * 1'000'000;
+            due = due ? std::min(due, at) : at;
+        }
+    return due;
+}
+
+std::string Lsp::servers_dump() const {
+    std::vector<std::string> rows;
+    for (const std::unique_ptr<Server>& s : servers_) {
+        const size_t slash = s->root.rfind('/');
+        rows.push_back(s->shown + " " + (slash == std::string::npos ? s->root : s->root.substr(slash + 1)) + " " + std::to_string(s->docs) +
+                       (s->ready ? "" : " starting"));
+    }
+    std::sort(rows.begin(), rows.end());
+    std::string out;
+    for (const std::string& r : rows) out += (out.empty() ? "" : "; ") + r;
+    return out.empty() ? "no servers" : out;
+}
+
+size_t Lsp::server_count() const { return servers_.size(); }
+
+// ---------------------------------------------------------------- attach (tests and benchmarks)
+
+namespace {
+constexpr u64 kAttached = ~0ull;  // the key of attach()'s document
+}
+
+bool Lsp::attach(const Buffer& buf, const std::string& path, const std::string& language, const std::vector<LspServer>& servers) {
+    if (Document* d = doc_of(kAttached)) drop_document(d, true);
+#if defined(_WIN32)
+    (void)buf, (void)path, (void)language, (void)servers;
+    return false;
+#else
+    // (A server let go of by release() is used again if it is the one wanted.)
+    std::string program;
+    const LspServer* server = pick(servers, language, &program);
+    char real[PATH_MAX];
+    if (!server || path.empty() || !realpath(path.c_str(), real)) {
+        detach();
+        while (!servers_.empty()) stop_server(servers_.back().get(), false);
+        return false;
+    }
+    const std::string full = real;
+    const std::string root = find_root(full.substr(0, full.rfind('/')), server->roots);
+    Server* s = nullptr;
+    for (const std::unique_ptr<Server>& have : servers_)
+        if (have->name == server->name && have->program == program && have->root == root) s = have.get();
+    if (!s) s = start_server(*server, program, root, {}, {});
+    if (!s) return false;
+    Document* d = add_document(s, kAttached, nullptr, &buf, path, full, language);
+    follow(kAttached);
+    (void)d;
+    return true;
+#endif
+}
+
+void Lsp::release() {
+    Document* d = doc_of(kAttached);
+    if (!d) return;
+    Server* s = d->server;
+    if (!s->ready) return detach();  // still starting: not worth keeping
+    drop_document(d, true);
+    last_ = s;
+}
+
+void Lsp::detach() {
+    Document* d = front_ ? front_ : doc_of(kAttached);
+    Server* s = d ? d->server : last_;
+    if (d) drop_document(d, true);
+    if (s && s->docs == 0) stop_server(s, false);
+    last_ = nullptr;
+}
+
+void Lsp::before_edit(u64 off, u64 remove_len) {
+    if (front_ && !front_->ed) front_->before_edit(off, remove_len);
+}
+
+void Lsp::on_edit(const TextEdit& e) {
+    if (front_ && !front_->ed) front_->on_edit(e);
+}
+
+// ---------------------------------------------------------------- the document in front
+
+Lsp::Lsp() : inbox_(std::make_shared<Inbox>()) {}
 
 Lsp::~Lsp() {
-    if (!conn_) return;
-#if !defined(_WIN32)
     // The program is closing and will not wait for a polite goodbye: the
-    // server is told to go now.
-    const int pid = conn_->pid.load();
-    detach();
-    if (pid > 0) kill(pid, SIGTERM);
-#endif
+    // servers are told to go now.
+    while (!servers_.empty()) stop_server(servers_.back().get(), true);
+    docs_.clear();
+}
+
+void Lsp::set_notify(std::function<void()> fn) {
+    std::lock_guard lock(inbox_->mu);
+    inbox_->notify = std::move(fn);
 }
 
 std::string Lsp::find_program(const std::string& name) {
@@ -1234,254 +2313,768 @@ const LspServer* Lsp::pick(const std::vector<LspServer>& servers, std::string_vi
     return nullptr;
 }
 
-bool Lsp::attach(const Buffer& buf, const std::string& path, const std::string& language,
-                 const std::vector<LspServer>& servers) {
-#if !defined(_WIN32)
-    // The server that is running may be the one this file wants as well,
-    // which is the usual thing when moving between tabs: then the document
-    // it had is closed, this one is opened, and nothing is started.
-    if (conn_ && ready_ && is_remote(path) && path.starts_with(conn_->remote + "/")) {  // (another machine's: the same server, if the file is in its project)
-        std::string probed;
-        {
-            std::lock_guard lock(conn_->probe_mu);
-            probed = conn_->probed_root;
-        }
-        bool wanted = false;
-        for (const LspServer& s : servers)
-            wanted |= s.enabled && s.name == conn_->server.name && std::ranges::find(s.languages, language) != s.languages.end();
-        if (wanted && !probed.empty() && path.starts_with(probed + "/")) {
-            close_document();
-            buf_ = &buf;
-            name_document(path, language);
-            open_document();
-            return true;
-        }
-    }
-    if (conn_ && ready_ && !path.empty() && !is_remote(path)) {
-        std::string program;
-        const LspServer* server = pick(servers, language, &program);
-        char real[PATH_MAX];
-        if (server && server->name == server_name_ && program == conn_->program && realpath(path.c_str(), real)) {
-            const std::string full = real;
-            if (find_root(full.substr(0, full.rfind('/')), server->roots) == root_) {
-                close_document();
-                buf_ = &buf;
-                name_document(full, language);
-                open_document();
-                return true;
-            }
-        }
-    }
-#endif
-    detach();
-#if defined(_WIN32)
-    (void)buf;
-    (void)path;
-    (void)language;
-    (void)servers;
-    return false;
-#else
-    std::string program, host, dir;
-    const LspServer* server = nullptr;
-    std::vector<LspServer> candidates;
-    std::string full;
-    if (split_remote(path, &host, &dir)) {  // another machine's: which server is installed there is found out there
-        if (language.empty()) return false;
-        for (const LspServer& s : servers)
-            if (s.enabled && !s.command.empty() && std::ranges::find(s.languages, language) != s.languages.end()) candidates.push_back(s);
-        if (candidates.empty()) return false;
-        server = &candidates[0];
-        program = server->command[0];
-        full = path;
-    } else {
-        server = pick(servers, language, &program);
-        if (!server || path.empty()) return false;
-        char real[PATH_MAX];
-        if (!realpath(path.c_str(), real)) return false;  // not on disk yet: nothing a server could use
-        full = real;
-    }
+bool Lsp::attached() const { return last_ != nullptr; }
+bool Lsp::idle() const { return last_ && !front_; }
+bool Lsp::ready() const { return last_ && last_->ready; }
+bool Lsp::front_ready() const { return front_ && front_->opened && front_->server->ready; }
 
-    auto conn = std::make_shared<Conn>();
-    int wake[2];
-    if (pipe(wake) != 0) return false;
-    for (const int fd : wake) {
-        fcntl(fd, F_SETFD, FD_CLOEXEC);
-        fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
-    }
-    conn->wake_r = wake[0];
-    conn->wake_w = wake[1];
-    conn->server = *server;
-    conn->program = program;
-    if (!host.empty()) {
-        conn->remote = "ssh://" + host;
-        conn->candidates = candidates;
-        conn->root = full.substr(0, full.rfind('/'));  // (until the worker has found the project's folder there)
-    } else {
-        conn->root = find_root(full.substr(0, full.rfind('/')), server->roots);
-    }
-    conn->path_env = search_path();
-    conn->notify = notify_;
-    // Writing to a server that has died must be an error, not the end of
-    // this program.
-    signal(SIGPIPE, SIG_IGN);
+const std::string& Lsp::server_name() const {
+    static const std::string none;
+    return last_ ? last_->shown : none;
+}
+const std::string& Lsp::root() const {
+    static const std::string none;
+    return last_ ? last_->root : none;
+}
+const std::string& Lsp::path() const {
+    static const std::string none;
+    return front_ ? front_->path : none;
+}
+bool Lsp::counts_utf16() const { return last_ ? last_->caps.utf16 : true; }
 
-    buf_ = &buf;
-    server_name_ = server->name;
-    if (!host.empty()) server_name_ += "@" + host;  // (one that fails there may yet do here, and the other way round)
-    root_ = conn->root;
-    name_document(full, language);
-    caps_ = Caps{};
-    ready_ = opened_ = false;
-    version_ = 0;
-    conn_ = conn;
-    std::thread(Conn::run, conn).detach();
-    return true;
-#endif
+const std::vector<Diagnostic>& Lsp::diagnostics() const {
+    static const std::vector<Diagnostic> none;
+    return front_ ? front_->diags : none;
 }
 
-// The document's names, as the server is told them.
-void Lsp::name_document(const std::string& full, const std::string& language) {
-#if !defined(_WIN32)
-    path_ = full;
-    std::string host, there;
-    uri_ = path_to_uri(split_remote(full, &host, &there) ? there : full);  // (another machine's: the path there)
-    language_id_ = language_id(language);
-    change_head_ = R"({"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":)";
-    json::quote(change_head_, uri_);
-    change_head_ += R"(,"version":)";
-    version_ = 0;
-#else
-    (void)full;
-    (void)language;
-#endif
+const std::vector<Diagnostic>* Lsp::diagnostics_of(u64 key) const {
+    const Document* d = doc_of(key);
+    return d ? &d->diags : nullptr;
 }
 
-// Tells the server the document is closed and forgets what it said about
-// it. Answers still on their way are for questions nobody is asking any more.
-void Lsp::close_document() {
-#if !defined(_WIN32)
-    if (conn_) {  // (the text still queued is of a buffer about to go: the worker is to let go of it, and is waited for if it is reading it)
-        std::lock_guard lock(conn_->text_mu);
-        conn_->epoch.fetch_add(1, std::memory_order_relaxed);
+bool Lsp::can_complete() const { return front_ready() && front_->server->caps.completion; }
+bool Lsp::can_hover() const { return front_ready() && front_->server->caps.hover; }
+bool Lsp::can_signature() const { return front_ready() && front_->server->caps.signature; }
+bool Lsp::can_define() const { return front_ready() && front_->server->caps.definition; }
+bool Lsp::can_references() const { return front_ready() && front_->server->caps.references; }
+bool Lsp::can_rename() const { return front_ready() && front_->server->caps.rename; }
+bool Lsp::can_format(bool range) const { return front_ready() && (range ? front_->server->caps.range_formatting || front_->server->caps.formatting : front_->server->caps.formatting); }
+bool Lsp::can_act() const { return front_ready() && front_->server->caps.actions; }
+bool Lsp::completion_trigger(char c) const { return front_ready() && front_->server->caps.completion_triggers.find(c) != std::string::npos; }
+bool Lsp::signature_trigger(char c) const { return front_ready() && front_->server->caps.signature_triggers.find(c) != std::string::npos; }
+
+void Lsp::did_save() {
+    Document* d = front_;
+    if (!d || !d->opened || !d->server->caps.save) {
+        if (d && d->server->caps.workspace_pull) pull_workspace(d->server);
+        return;
     }
-    if (conn_ && opened_) {
-        std::string m = R"({"jsonrpc":"2.0","method":"textDocument/didClose","params":{"textDocument":{"uri":)";
-        json::quote(m, uri_);
-        m += "}}}";
-        send(std::move(m));
+    std::string m = R"({"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":)";
+    json::quote(m, d->uri);
+    m += "}}}";
+    send(*d->server->conn, std::move(m));
+    ++sent_;
+    if (d->server->caps.workspace_pull) pull_workspace(d->server);
+}
+
+void Lsp::cancel(Server* s, u32* latest) {
+    if (*latest && s && s->conn) {  // the answer still under way is no longer wanted
+        send(*s->conn, R"({"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":)" + std::to_string(*latest) + "}}");
+        ++sent_;
     }
-#endif
-    opened_ = false;
-    buf_ = nullptr;
-    path_.clear();  // what the server still says about that file is for nobody
-    complete_id_ = hover_id_ = sig_id_ = def_id_ = 0;
+    *latest = 0;
+}
+
+u32 Lsp::ask(Document* d, const char* method, u64 offset, u8 kind, std::string_view extra, u32* latest) {
+    cancel(asked_ ? asked_ : d->server, latest);
+    asked_ = d->server;
+    const u32 id = next_id_++;
+    std::string m = R"({"jsonrpc":"2.0","id":)" + std::to_string(id) + R"(,"method":")" + method + R"(","params":{"textDocument":{"uri":)";
+    json::quote(m, d->uri);
+    m += R"(},"position":)";
+    d->position_json(m, offset);
+    m += extra;
+    m += "}}";
+    send(*d->server->conn, std::move(m), id, kind);
+    ++sent_;
+    *latest = id;
+    return id;
+}
+
+void Lsp::complete(u64 offset, char trigger) {
+    if (!can_complete()) return;
+    std::string context;
+    if (trigger) {
+        context = R"(,"context":{"triggerKind":2,"triggerCharacter":)";
+        json::quote(context, std::string_view(&trigger, 1));
+        context += '}';
+    } else {
+        context = R"(,"context":{"triggerKind":1})";
+    }
+    ask(front_, "textDocument/completion", offset, kInCompletion, context, &complete_id_);
+    complete_at_ = offset;
     complete_first_edit_ = ~0ull;
-    items_.clear();
-    ++items_serial_;
-    hover_lines_.clear();
-    sig_ = SignatureInfo{};
-    def_ = LspLocation{};
-    if (!diags_.empty()) {
-        diags_.clear();
-        ++diags_gen_;
-    }
 }
 
-void Lsp::release() {
-    if (!conn_) return;
-    if (!ready_) return detach();  // still starting: not worth keeping
-    close_document();
+void Lsp::hover(u64 offset) {
+    if (!can_hover()) return;
+    ask(front_, "textDocument/hover", offset, kInHover, {}, &hover_id_);
+    hover_at_ = offset;
 }
 
-void Lsp::detach() {
-    if (!conn_) return;
-    close_document();
-#if !defined(_WIN32)
-    {
-        std::lock_guard lock(conn_->mu);
-        conn_->stop = true;
-    }
-    conn_->wake();
-#endif
-    conn_.reset();
-    ready_ = false;
+void Lsp::signature(u64 offset) {
+    if (!can_signature()) return;
+    ask(front_, "textDocument/signatureHelp", offset, kInSignature, {}, &sig_id_);
 }
 
-void Lsp::send(std::string json, u32 id, u8 kind) {
-#if !defined(_WIN32)
-    bool was_empty;
-    {
-        std::lock_guard lock(conn_->mu);
-        was_empty = conn_->out.empty();
-        Conn::Out o;
-        o.head = std::move(json);
-        o.id = id;
-        o.kind = kind;
-        conn_->out.push_back(std::move(o));
+void Lsp::definition(u64 offset) {
+    if (!can_define()) return;
+    ask(front_, "textDocument/definition", offset, kInDefinition, {}, &def_id_);
+}
+
+void Lsp::references(u64 offset) {
+    if (!can_references()) return;
+    ask(front_, "textDocument/references", offset, kInReferences, R"(,"context":{"includeDeclaration":true})", &refs_id_);
+}
+
+// The word at a place, as a rename starts from when the server does not
+// say which bytes the name is.
+static void word_around(const Buffer& b, u64 off, u64* lo, u64* hi) {
+    auto word = [](u8 c) { return std::isalnum(c) || c == '_' || c >= 0x80; };
+    char ch;
+    u64 a = off, z = off;
+    while (a > 0 && off - a < 400 && b.read(a - 1, &ch, 1) == 1 && word(static_cast<u8>(ch))) --a;
+    while (z < b.size() && z - off < 400 && b.read(z, &ch, 1) == 1 && word(static_cast<u8>(ch))) ++z;
+    *lo = a;
+    *hi = z;
+}
+
+void Lsp::prepare_rename(u64 offset) {
+    if (!can_rename()) return;
+    rename_at_ = offset;
+    rename_error_.clear();
+    if (!front_->server->caps.prepare_rename) {  // nothing to ask: the word there
+        word_around(*front_->buf, offset, &rename_lo_, &rename_hi_);
+        rename_text_ = front_->buf->text(rename_lo_, rename_hi_ - rename_lo_);
+        In m;
+        m.kind = kInPrepareRename;
+        m.server = front_->server->id;
+        m.id = prepare_id_ = next_id_++;
+        m.version = 0;
+        inbox_->push(std::move(m));
+        return;
     }
-    if (was_empty) conn_->wake();  // otherwise the worker is already on its way
+    ask(front_, "textDocument/prepareRename", offset, kInPrepareRename, {}, &prepare_id_);
+}
+
+void Lsp::rename(u64 offset, const std::string& name) {
+    if (!can_rename()) return;
+    std::string extra = R"(,"newName":)";
+    json::quote(extra, name);
+    ask(front_, "textDocument/rename", offset, kInRename, extra, &rename_id_);
+}
+
+void Lsp::format(u64 lo, u64 hi, bool whole, u64 key) {
+    Document* d = key ? doc_of(key) : front_;
+    if (!d || !d->opened || !d->server->ready) return;
+    const Caps& caps = d->server->caps;
+    if (!whole && !caps.range_formatting) whole = true;
+    if (whole ? !caps.formatting : !caps.range_formatting) return;
+    cancel(d->server, &format_id_);
+    const u32 id = next_id_++;
+    json::Writer w;
+    w.begin_object().member("jsonrpc", "2.0").member("id", id).member("method", whole ? "textDocument/formatting" : "textDocument/rangeFormatting");
+    w.key("params").begin_object().key("textDocument").begin_object().member("uri", d->uri).end_object();
+    if (!whole) {
+        std::string range = R"({"start":)";
+        d->position_json(range, lo);
+        range += R"(,"end":)";
+        d->position_json(range, hi);
+        range += "}";
+        w.key("range").raw(range);
+    }
+    // (How wide a tab is and whether to indent with tabs, as the editor has them.)
+    const u32 tab = d->ed ? d->ed->tab_width : 4;
+    bool tabs = false;
+    if (d->ed) d->ed->guess_indent(&tabs);
+    w.key("options").begin_object().member("tabSize", tab).member("insertSpaces", !tabs).member("trimTrailingWhitespace", true).end_object();
+    w.end_object().end_object();
+    send(*d->server->conn, std::move(w.out), id, kInFormat);
     ++sent_;
-#else
-    (void)json;
-    (void)id;
-    (void)kind;
-#endif
+    format_id_ = id;
+    format_key_ = d->key;
+    format_version_ = d->version;
+    format_edits_.clear();
+    format_failed_ = false;
 }
 
-// A message that carries the whole document. The text is handed over as a
-// list of pieces and turned into JSON on the worker thread, so the size of
-// the file costs the main thread nothing.
-void Lsp::send_document(std::string head, std::string tail, bool replaces_unsent) {
-#if !defined(_WIN32)
-    auto pieces = std::make_shared<std::vector<Piece>>();
-    buf_->snapshot(pieces.get());
-    bool was_empty;
-    {
-        std::lock_guard lock(conn_->mu);
-        was_empty = conn_->out.empty();
-        Conn::Out o;
-        o.head = std::move(head);
-        o.tail = std::move(tail);
-        o.text = std::move(pieces);
-        o.whole = replaces_unsent;
-        o.epoch = conn_->epoch.load(std::memory_order_relaxed);
-        if (replaces_unsent && !conn_->out.empty() && conn_->out.back().whole) conn_->out.back() = std::move(o);
-        else conn_->out.push_back(std::move(o));
+void Lsp::code_actions(u64 lo, u64 hi) {
+    if (!can_act()) return;
+    Document* d = front_;
+    cancel(d->server, &actions_id_);
+    asked_ = d->server;
+    const u32 id = next_id_++;
+    std::string m = R"({"jsonrpc":"2.0","id":)" + std::to_string(id) + R"(,"method":"textDocument/codeAction","params":{"textDocument":{"uri":)";
+    json::quote(m, d->uri);
+    m += R"(},"range":{"start":)";
+    d->position_json(m, lo);
+    m += R"(,"end":)";
+    d->position_json(m, hi);
+    m += R"(},"context":{"diagnostics":[)";
+    bool first = true;
+    for (const Diagnostic& x : d->diags) {
+        if (x.raw.empty() || x.start > hi || std::max(x.end, x.start + 1) < lo) continue;
+        if (!first) m += ',';
+        first = false;
+        m += x.raw;
     }
-    if (was_empty) conn_->wake();
+    m += "]}}}";
+    send(*d->server->conn, std::move(m), id, kInActions);
     ++sent_;
-#else
-    (void)head;
-    (void)tail;
-    (void)replaces_unsent;
-#endif
+    actions_id_ = id;
+    actions_.clear();
 }
 
-void Lsp::open_document() {
-    std::string head = R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":)";
-    json::quote(head, uri_);
-    head += R"(,"languageId":)";
-    json::quote(head, language_id_);
-    head += R"(,"version":)" + std::to_string(version_) + R"(,"text":)";
-    send_document(std::move(head), "}}}", false);
-    opened_ = true;
+void Lsp::resolve_action(const LspAction& a) {
+    if (!front_ready() || a.resolve.empty() || !front_->server->caps.resolve) return;
+    Server* s = front_->server;
+    cancel(s, &resolve_id_);
+    const u32 id = next_id_++;
+    send(*s->conn, R"({"jsonrpc":"2.0","id":)" + std::to_string(id) + R"(,"method":"codeAction/resolve","params":)" + a.resolve + "}", id, kInResolve);
+    ++sent_;
+    resolve_id_ = id;
 }
 
-// Column of `off` within its line, the way the server counts.
-u32 Lsp::character_of(u64 line_start, u64 off) const {
-    if (!caps_.utf16) return static_cast<u32>(off - line_start);
-    // One unit per character, two for those outside the first plane: every
-    // byte that starts a character counts one, a four-byte starter one more.
+void Lsp::execute(const LspAction& a) {
+    if (!front_ready() || a.command.empty()) return;
+    Server* s = front_->server;
+    const u32 id = next_id_++;
+    send(*s->conn, R"({"jsonrpc":"2.0","id":)" + std::to_string(id) + R"(,"method":"workspace/executeCommand","params":)" + a.command + "}", id, kInIgnore);
+    ++sent_;
+}
+
+bool Lsp::take_apply(LspWorkspaceEdit* edit, std::string* label) {
+    if (applies_.empty()) return false;
+    applying_ = std::move(applies_.front());
+    applies_.erase(applies_.begin());
+    *edit = std::move(applying_.edit);
+    *label = applying_.label;
+    return true;
+}
+
+void Lsp::answer_apply(bool applied) {
+    Server* s = applying_.server;
+    if (!s || applying_.id.empty()) return;
+    send(*s->conn, R"({"jsonrpc":"2.0","id":)" + applying_.id + R"(,"result":{"applied":)" + (applied ? "true" : "false") + "}}");
+    ++sent_;
+    applying_ = Apply{};
+}
+
+void Lsp::pull_document(Document* d) {
+    if (!d->opened || !d->server->ready || !d->server->caps.pull) return;
+    if (d->pull_id) {  // one at a time: the next when this one is answered
+        d->pull_again = true;
+        return;
+    }
+    const u32 id = next_id_++;
+    std::string m = R"({"jsonrpc":"2.0","id":)" + std::to_string(id) + R"(,"method":"textDocument/diagnostic","params":{"textDocument":{"uri":)";
+    json::quote(m, d->uri);
+    m += "}}}";
+    send(*d->server->conn, std::move(m), id, kInPull, d->uri);
+    ++sent_;
+    d->pull_id = id;
+    d->pull_version = d->version;
+    d->pull_again = false;
+}
+
+void Lsp::pull_workspace(Server* s) {
+    if (!s->ready || !s->caps.workspace_pull || s->workspace_id) return;
+    const u32 id = next_id_++;
+    send(*s->conn, R"({"jsonrpc":"2.0","id":)" + std::to_string(id) + R"(,"method":"workspace/diagnostic","params":{"previousResultIds":[]}})", id,
+         kInWorkspacePull);
+    ++sent_;
+    s->workspace_id = id;
+}
+
+bool Lsp::can_hint(u64 key) const {
+    const Document* d = doc_of(key);
+    return d && d->opened && d->server->ready && d->server->caps.hints;
+}
+
+void Lsp::ask_hints(u64 key, u64 first_line, u64 last_line) {
+    Document* d = doc_of(key);
+    if (!d || !d->opened || !d->server->ready || !d->server->caps.hints) return;
+    if (d->hints_id) return;  // (one at a time: once it is answered, the lines then on show are asked for if it did not cover them)
+    const u32 id = next_id_++;
+    const u64 lines = d->buf->line_count();
+    last_line = std::min(last_line, lines - 1);
+    std::string m = R"({"jsonrpc":"2.0","id":)" + std::to_string(id) + R"(,"method":"textDocument/inlayHint","params":{"textDocument":{"uri":)";
+    json::quote(m, d->uri);
+    m += R"(},"range":{"start":{"line":)" + std::to_string(first_line) + R"(,"character":0},"end":)";
+    const u64 end = last_line + 1 < lines ? d->buf->line_start(last_line + 1) : d->buf->size();
+    d->position_json(m, end);
+    m += "}}}";
+    send(*d->server->conn, std::move(m), id, kInHints);
+    ++sent_;
+    d->hints_id = id;
+    d->hints_version = d->version;
+    d->hints_first = first_line;
+    d->hints_last = last_line;
+    d->hints_stale = false;
+}
+
+const std::vector<InlayHint>* Lsp::hints(u64 key) const {
+    const Document* d = doc_of(key);
+    return d ? &d->hints : nullptr;
+}
+
+u64 Lsp::hints_generation(u64 key) const {
+    const Document* d = doc_of(key);
+    return d ? d->hints_gen : 0;
+}
+
+bool Lsp::hints_cover(u64 key, u64 first_line, u64 last_line) const {
+    const Document* d = doc_of(key);
+    return d && !d->hints_stale && d->hints_first <= first_line && d->hints_last >= last_line;
+}
+
+bool Lsp::can_tokens(u64 key) const {
+    const Document* d = doc_of(key);
+    return d && d->opened && d->server->ready && d->server->caps.tokens;
+}
+
+void Lsp::ask_tokens(u64 key) {
+    Document* d = doc_of(key);
+    if (!d || !d->opened || !d->server->ready || !d->server->caps.tokens) return;
+    if (d->tokens_id) return;  // (the answer under way says what it says; the version check asks again after)
+    const u32 id = next_id_++;
+    const bool delta = d->server->caps.tokens_delta && !d->tokens_result.empty();
+    std::string m = R"({"jsonrpc":"2.0","id":)" + std::to_string(id) + R"(,"method":"textDocument/semanticTokens/full)" + (delta ? "/delta" : "") +
+                    R"(","params":{"textDocument":{"uri":)";
+    json::quote(m, d->uri);
+    m += "}";
+    if (delta) {
+        m += R"(,"previousResultId":)";
+        json::quote(m, d->tokens_result);
+    }
+    m += "}}";
+    send(*d->server->conn, std::move(m), id, kInTokens, d->uri);
+    ++sent_;
+    d->tokens_id = id;
+    d->tokens_version = d->version;
+}
+
+const std::vector<SemanticToken>* Lsp::tokens(u64 key) const {
+    const Document* d = doc_of(key);
+    return d ? &d->tokens : nullptr;
+}
+
+u64 Lsp::tokens_generation(u64 key) const {
+    const Document* d = doc_of(key);
+    return d ? d->tokens_gen : 0;
+}
+
+bool Lsp::tokens_current(u64 key) const {
+    const Document* d = doc_of(key);
+    return d && d->tokens_version == d->version;
+}
+
+const std::vector<std::string>* Lsp::token_types(u64 key) const {
+    const Document* d = doc_of(key);
+    return d ? &d->server->caps.token_types : nullptr;
+}
+
+const std::vector<std::string>* Lsp::token_modifiers(u64 key) const {
+    const Document* d = doc_of(key);
+    return d ? &d->server->caps.token_mods : nullptr;
+}
+
+// ---------------------------------------------------------------- taking in answers
+
+void Lsp::server_gone(Server* s, const std::string& why) {
+    message_ = "language server: " + why;
+    failed_.push_back(s->shown);
+    // (Nobody is left to say goodbye to.)
+    for (const std::unique_ptr<Document>& d : docs_)
+        if (d->server == s) d->opened = false;
+    stop_server(s, false);
+}
+
+static void convert_diags(Lsp::Document& d, std::vector<RawDiag>& raw, bool utf16) {
+    d.diags.clear();
+    d.diags.reserve(raw.size());
+    for (RawDiag& r : raw) {
+        Diagnostic x;
+        x.start = Lsp::offset_at(*d.buf, r.r.l0, r.r.c0, utf16);
+        x.end = std::max(x.start, Lsp::offset_at(*d.buf, r.r.l1, r.r.c1, utf16));
+        x.severity = r.severity;
+        x.fixes = r.fixes;
+        x.message = std::move(r.message);
+        x.source = std::move(r.source);
+        x.code = std::move(r.code);
+        x.raw = std::move(r.raw);
+        d.diags.push_back(std::move(x));
+    }
+    std::stable_sort(d.diags.begin(), d.diags.end(), [](const Diagnostic& a, const Diagnostic& b) { return a.start < b.start; });
+}
+
+u32 Lsp::poll() {
+    if (!inbox_->any.load(std::memory_order_acquire) && applies_.empty()) {
+        flush_opens();
+        return 0;
+    }
+    std::vector<In> in;
+    {
+        std::lock_guard lock(inbox_->mu);
+        in.swap(inbox_->in);
+        inbox_->any.store(false, std::memory_order_relaxed);
+    }
+    u32 news = 0;
+    for (In& m : in) {
+        Server* s = nullptr;
+        for (const std::unique_ptr<Server>& x : servers_)
+            if (x->id == m.server) s = x.get();
+        if (!s) continue;  // (one that has been stopped: what it says is for nobody)
+        auto doc_by_path = [&](const std::string& path) -> Document* {
+            for (const std::unique_ptr<Document>& d : docs_)
+                if (d->server == s && d->path == path) return d.get();
+            return nullptr;
+        };
+        const bool front_asked = front_ && front_->server == s;
+        switch (m.kind) {
+            case kInReady: {
+                s->caps = std::move(m.caps);
+                s->ready = true;
+                if (!m.text.empty()) {  // another machine's: which server it turned out to be, and its project's folder there
+                    const size_t a = m.text.find('\n'), b = m.text.find('\n', a + 1);
+                    s->shown = m.text.substr(0, a);
+                    s->name = m.text.substr(a + 1, b - a - 1);
+                    s->root = m.text.substr(b + 1);
+                }
+                if (s->caps.workspace_pull) pull_workspace(s);
+                unopened_ = true;  // (its documents go to it below)
+                news |= kState;
+                break;
+            }
+            case kInFailed:
+            case kInStopped:
+                server_gone(s, m.text);
+                news |= kState | kDiagnostics;
+                break;
+            case kInDiagnostics: {
+                Document* d = doc_by_path(m.text);
+                if (d) {
+                    if (m.version >= 0 && m.version != d->version) break;
+                    convert_diags(*d, m.diags, s->caps.utf16);
+                } else if (m.diags.empty()) {
+                    if (!s->closed.erase(m.text)) break;
+                } else {
+                    std::vector<ProblemFile::Item>& items = s->closed[m.text];
+                    items.clear();
+                    for (RawDiag& r : m.diags) items.push_back({r.r.l0, r.r.c0, r.severity, ~0ull, std::move(r.message)});
+                }
+                ++diags_gen_;
+                ++problems_gen_;
+                news |= kDiagnostics;
+                break;
+            }
+            case kInPull: {
+                Document* d = nullptr;
+                for (const std::unique_ptr<Document>& x : docs_)
+                    if (x->server == s && x->pull_id == m.id) d = x.get();
+                if (!d) break;
+                d->pull_id = 0;
+                if (m.flag && d->pull_version == d->version) {
+                    convert_diags(*d, m.diags, s->caps.utf16);
+                    ++diags_gen_;
+                    ++problems_gen_;
+                    news |= kDiagnostics;
+                }
+                if (d->pull_again || d->pull_version != d->version) pull_document(d);
+                break;
+            }
+            case kInWorkspacePull:
+                if (s->workspace_id == m.id) s->workspace_id = 0;
+                break;
+            case kInCompletion: {
+                if (m.id != complete_id_ || !front_asked) break;
+                complete_id_ = 0;
+                // Positions in the answer are about the text as it was when
+                // the question was asked. Typing has usually gone on since,
+                // further along the line; everything before the first such
+                // change is where it was, and only that much is trusted.
+                // (A list of thousands is thousands of strings to free: that
+                // is done on a thread of its own, not on the one that draws.)
+                if (items_.size() > 2000) std::thread([gone = std::move(items_)] {}).detach();
+                items_.clear();
+                ++items_serial_;
+                items_.reserve(m.items.size());
+                // Nearly every item replaces the same word, so the position
+                // worked out for one is usually the next one's too.
+                u32 last_line = ~0u, last_col = ~0u;
+                u64 last_from = 0;
+                const Buffer& b = *front_->buf;
+                for (RawItem& r : m.items) {
+                    CompletionItem& it = r.item;
+                    if (r.has_range) {
+                        if (r.range.l0 != last_line || r.range.c0 != last_col) {
+                            last_line = r.range.l0;
+                            last_col = r.range.c0;
+                            last_from = offset_at(b, last_line, last_col, s->caps.utf16);
+                        }
+                        if (last_from <= complete_first_edit_) it.replace_from = last_from;
+                    }
+                    for (RawItem::Extra& x : r.extra) {
+                        const u64 a = offset_at(b, x.r.l0, x.r.c0, s->caps.utf16), z = offset_at(b, x.r.l1, x.r.c1, s->caps.utf16);
+                        if (a <= z && z <= complete_first_edit_) it.extra.push_back({a, z, std::move(x.text)});
+                    }
+                    items_.push_back(std::move(it));
+                }
+                items_incomplete_ = m.incomplete;
+                news |= kCompletion;
+                break;
+            }
+            case kInHover:
+                if (m.id != hover_id_ || !front_asked) break;
+                hover_id_ = 0;
+                hover_lines_ = std::move(m.lines);
+                news |= kHover;
+                break;
+            case kInSignature:
+                if (m.id != sig_id_ || !front_asked) break;
+                sig_id_ = 0;
+                sig_ = std::move(m.sig);
+                news |= kSignature;
+                break;
+            case kInDefinition:
+                if (m.id != def_id_ || !front_asked) break;
+                def_id_ = 0;
+                def_ = std::move(m.loc);
+                news |= kDefinition;
+                break;
+            case kInReferences: {
+                if (m.id != refs_id_ || !front_asked) break;
+                refs_id_ = 0;
+                refs_ = std::move(m.places);
+                // Lines in files that are open come from their tabs, as they are now.
+                for (size_t i = 0; i < refs_.size() && i < m.ranges.size(); ++i) {
+                    LspPlace& p = refs_[i];
+                    const RawRange& r = m.ranges[i];
+                    const Document* d = doc_by_path(p.path);
+                    if (!d || p.line >= d->buf->line_count()) continue;
+                    const u64 ls = d->buf->line_start(p.line);
+                    const u64 le = p.line + 1 < d->buf->line_count() ? d->buf->line_start(p.line + 1) - 1 : d->buf->size();
+                    std::string line = d->buf->text(ls, std::min<u64>(le - ls, 4096));
+                    if (!line.empty() && line.back() == '\r') line.pop_back();
+                    p.col = static_cast<u32>(column_in(line, r.c0, s->caps.utf16));
+                    p.end_col = r.l1 == r.l0 ? static_cast<u32>(column_in(line, r.c1, s->caps.utf16)) : static_cast<u32>(line.size());
+                    if (line.size() > 400) line.resize(400);
+                    p.text = std::move(line);
+                }
+                news |= kReferences;
+                break;
+            }
+            case kInPrepareRename: {
+                if (m.id != prepare_id_ || !front_asked) break;
+                prepare_id_ = 0;
+                if (m.flag) {
+                    rename_lo_ = rename_hi_ = rename_at_;
+                    rename_text_.clear();
+                    rename_error_ = m.text;
+                } else if (m.version == 0) {
+                    if (m.range.l0 || m.range.c0 || m.range.l1 || m.range.c1 || rename_text_.empty()) {
+                        word_around(*front_->buf, rename_at_, &rename_lo_, &rename_hi_);
+                        rename_text_ = front_->buf->text(rename_lo_, rename_hi_ - rename_lo_);
+                    }
+                } else {
+                    rename_lo_ = offset_at(*front_->buf, m.range.l0, m.range.c0, s->caps.utf16);
+                    rename_hi_ = std::max(rename_lo_, offset_at(*front_->buf, m.range.l1, m.range.c1, s->caps.utf16));
+                    rename_text_ = m.result_id.empty() ? front_->buf->text(rename_lo_, rename_hi_ - rename_lo_) : m.result_id;
+                }
+                news |= kRenameRange;
+                break;
+            }
+            case kInRename:
+                if (m.id != rename_id_ || !front_asked) break;
+                rename_id_ = 0;
+                rename_edit_ = std::move(m.wedit);
+                rename_error_ = m.text;
+                news |= kRename;
+                break;
+            case kInFormat: {
+                if (m.id != format_id_) break;
+                format_id_ = 0;
+                format_edits_.clear();
+                format_failed_ = m.flag;
+                Document* d = doc_of(format_key_);
+                if (!d || d->server != s) break;
+                if (d->version == format_version_) {
+                    for (LspTextEdit& t : m.edits) {
+                        const u64 a = offset_at(*d->buf, t.l0, t.c0, s->caps.utf16), z = offset_at(*d->buf, t.l1, t.c1, s->caps.utf16);
+                        if (z >= a) format_edits_.push_back({a, z, std::move(t.text)});
+                    }
+                } else {
+                    format_failed_ = true;  // (the text changed meanwhile: the edits are about another one)
+                }
+                news |= kFormat;
+                break;
+            }
+            case kInActions:
+                if (m.id != actions_id_ || !front_asked) break;
+                actions_id_ = 0;
+                actions_ = std::move(m.actions);
+                news |= kActions;
+                break;
+            case kInResolve:
+                if (m.id != resolve_id_ || !front_asked) break;
+                resolve_id_ = 0;
+                actions_ = std::move(m.actions);
+                for (LspAction& a : actions_) a.resolve.clear();
+                news |= kActions;
+                break;
+            case kInHints: {
+                Document* d = nullptr;
+                for (const std::unique_ptr<Document>& x : docs_)
+                    if (x->server == s && x->hints_id == m.id) d = x.get();
+                if (!d) break;
+                d->hints_id = 0;
+                if (d->hints_version != d->version) {
+                    d->hints_stale = true;  // (about a text that has changed since: asked again)
+                    break;
+                }
+                d->hints.clear();
+                const Buffer& b = *d->buf;
+                for (RawHint& h : m.hints) {
+                    InlayHint x;
+                    x.off = offset_at(b, h.line, h.character, s->caps.utf16);
+                    x.label = std::move(h.label);
+                    x.kind = h.kind;
+                    x.pad_left = h.pad_left;
+                    x.pad_right = h.pad_right;
+                    d->hints.push_back(std::move(x));
+                }
+                ++d->hints_gen;
+                news |= kHints;
+                break;
+            }
+            case kInTokens: {
+                Document* d = nullptr;
+                for (const std::unique_ptr<Document>& x : docs_)
+                    if (x->server == s && x->tokens_id == m.id) d = x.get();
+                if (!d) break;
+                d->tokens_id = 0;
+                if (m.flag) {
+                    d->tokens_result.clear();
+                    break;
+                }
+                d->tokens_result = std::move(m.result_id);
+                if (d->tokens_version != d->version) {  // (about another text: the next frame asks again)
+                    d->tokens_version = -1;
+                    break;
+                }
+                // Each token is five numbers: lines down from the last, the
+                // column (from the last one's, on the same line), length,
+                // type and modifiers.
+                d->tokens.clear();
+                d->tokens.reserve(m.tokens.size() / 5);
+                const Buffer& b = *d->buf;
+                const bool utf16 = s->caps.utf16;
+                u32 line = 0, col = 0;
+                u64 ls = 0, le = 0;
+                std::string text;  // (the line, when columns are UTF-16)
+                const u64 lines = b.line_count();
+                for (size_t i = 0; i + 5 <= m.tokens.size(); i += 5) {
+                    const u32 dl = m.tokens[i], dc = m.tokens[i + 1], len = m.tokens[i + 2];
+                    if (dl) {
+                        line += dl;
+                        col = dc;
+                    } else {
+                        col += dc;
+                    }
+                    if (i == 0 || dl) {
+                        if (line >= lines) break;
+                        ls = b.line_start(line);
+                        le = line + 1 < lines ? b.line_start(line + 1) - 1 : b.size();
+                        if (utf16) text = b.text(ls, std::min<u64>(le - ls, 1u << 20));
+                    }
+                    SemanticToken t;
+                    if (utf16) {
+                        t.start = ls + column_in(text, col, true);
+                        t.end = ls + column_in(text, col + len, true);
+                    } else {
+                        t.start = std::min(ls + col, le);
+                        t.end = std::min(ls + col + len, le);
+                    }
+                    if (t.end <= t.start) continue;
+                    t.type = static_cast<u16>(std::min<u32>(m.tokens[i + 3], 0xFFFF));
+                    t.mods = m.tokens[i + 4];
+                    d->tokens.push_back(t);
+                }
+                ++d->tokens_gen;
+                news |= kTokens;
+                break;
+            }
+            case kInApplyEdit:
+                applies_.push_back({s, std::move(m.text), std::move(m.result_id), std::move(m.wedit)});
+                break;
+            case kInRefresh:
+                for (const std::unique_ptr<Document>& d : docs_) {
+                    if (d->server != s) continue;
+                    if (m.id == kRefreshTokens) d->tokens_version = -1, ++d->tokens_gen;
+                    if (m.id == kRefreshHints) d->hints_stale = true, ++d->hints_gen;
+                    if (m.id == kRefreshDiagnostics && s->caps.pull) pull_document(d.get());
+                }
+                if (m.id == kRefreshDiagnostics) pull_workspace(s);
+                if (m.id == kRefreshTokens) news |= kTokens;
+                if (m.id == kRefreshHints) news |= kHints;
+                break;
+            default: break;
+        }
+    }
+    flush_opens();
+    if (!applies_.empty()) news |= kApplyEdit;
+    return news;
+}
+
+const std::vector<ProblemFile>& Lsp::problems() {
+    if (problems_built_ == problems_gen_) return problems_;
+    problems_built_ = problems_gen_;
+    problems_.clear();
+    std::map<std::string, size_t> at;  // path -> its entry
+    auto file = [&](const std::string& path) -> ProblemFile& {
+        const auto [it, fresh] = at.try_emplace(path, problems_.size());
+        if (fresh) problems_.push_back({path, 0, {}});
+        return problems_[it->second];
+    };
+    for (const std::unique_ptr<Document>& d : docs_) {
+        if (d->diags.empty() || d->key == kAttached) continue;
+        ProblemFile& f = file(d->path);
+        f.key = d->key;
+        const Buffer& b = *d->buf;
+        for (const Diagnostic& x : d->diags) {
+            const u64 off = std::min(x.start, b.size()), line = b.line_of(off);
+            f.items.push_back({static_cast<u32>(line), static_cast<u32>(off - b.line_start(line)), x.severity, off, x.message});
+        }
+    }
+    for (const std::unique_ptr<Server>& s : servers_)
+        for (const auto& [path, items] : s->closed) {
+            if (items.empty()) continue;
+            ProblemFile& f = file(path);
+            f.items.insert(f.items.end(), items.begin(), items.end());
+        }
+    for (ProblemFile& f : problems_)
+        std::stable_sort(f.items.begin(), f.items.end(), [](const ProblemFile::Item& a, const ProblemFile::Item& b) { return a.line != b.line ? a.line < b.line : a.col < b.col; });
+    std::sort(problems_.begin(), problems_.end(), [](const ProblemFile& a, const ProblemFile& b) { return a.path < b.path; });
+    return problems_;
+}
+
+std::string Lsp::take_message() {
+    std::string m;
+    m.swap(message_);
+    return m;
+}
+
+std::vector<std::string> Lsp::take_failed() {
+    std::vector<std::string> out;
+    out.swap(failed_);
+    return out;
+}
+
+u32 Lsp::utf16_units(std::string_view s) {
     u32 units = 0;
-    u64 left = off - line_start;
-    for (Buffer::Reader rd = buf_->reader(line_start); left > 0;) {
-        const std::string_view ch = rd.chunk();
-        if (ch.empty()) break;
-        const size_t n = static_cast<size_t>(std::min<u64>(left, ch.size()));
-        const u8* p = reinterpret_cast<const u8*>(ch.data());
-        for (size_t i = 0; i < n; ++i) units += static_cast<u32>((p[i] & 0xC0) != 0x80) + static_cast<u32>(p[i] >= 0xF0);
-        rd.advance(static_cast<u32>(n));
-        left -= n;
+    for (const char ch : s) {
+        const u8 c = static_cast<u8>(ch);
+        units += static_cast<u32>((c & 0xC0) != 0x80) + static_cast<u32>(c >= 0xF0);
     }
     return units;
 }
@@ -1509,240 +3102,21 @@ u64 Lsp::offset_at(const Buffer& b, u32 line, u32 character, bool utf16) {
     return limit;
 }
 
-void Lsp::position_json(std::string& out, u64 off) const {
-    const u64 line = buf_->line_of(off);
-    char buf[64];
-    const int n = std::snprintf(buf, sizeof buf, R"({"line":%llu,"character":%u})", static_cast<unsigned long long>(line),
-                                character_of(buf_->line_start(line), off));
-    out.append(buf, static_cast<size_t>(std::min<int>(n, sizeof buf - 1)));
-}
-
-void Lsp::before_edit(u64 off, u64 remove_len) {
-    // In UTF-16 the column where the removed text ends has to be worked out
-    // while that text is still there.
-    if (!opened_ || !caps_.utf16 || caps_.sync != 2) return;
-    const u64 end = off + remove_len;
-    old_end_char_ = character_of(buf_->line_start(buf_->line_of(end)), end);
-}
-
-void Lsp::on_edit(const TextEdit& e) {
-    if (!conn_) return;
-    ++version_;
-    complete_first_edit_ = std::min(complete_first_edit_, e.start);
-
-    // Diagnostics stay on the text they were about until the server sends
-    // new ones.
-    if (!diags_.empty()) {
-        const i64 delta = static_cast<i64>(e.new_end) - static_cast<i64>(e.old_end);
-        auto moved = [&](u64 x, u64 inside) {
-            if (x <= e.start) return x;
-            if (x >= e.old_end) return static_cast<u64>(static_cast<i64>(x) + delta);
-            return inside;
-        };
-        for (Diagnostic& d : diags_) {
-            d.start = moved(d.start, e.start);
-            d.end = std::max(d.start, moved(d.end, e.new_end));
-        }
-        ++diags_gen_;
+u64 Lsp::offset_in(std::string_view text, u32 line, u32 character, bool utf16) {
+    size_t at = 0;
+    for (u32 l = 0; l < line; ++l) {
+        const size_t nl = text.find('\n', at);
+        if (nl == std::string_view::npos) return text.size();
+        at = nl + 1;
     }
-
-    if (!opened_ || caps_.sync == 0) return;
-    char num[192];
-    std::string m = change_head_;
-    m += std::to_string(version_);
-    if (caps_.sync == 1) {
-        m += R"(},"contentChanges":[{"text":)";
-        send_document(std::move(m), "}]}}", true);
-        return;
-    }
-    const u32 c0 = caps_.utf16 ? character_of(buf_->line_start(e.start_row), e.start) : e.start_col;
-    const u32 c1 = caps_.utf16 ? old_end_char_ : e.old_end_col;
-    const int n = std::snprintf(num, sizeof num, R"(},"contentChanges":[{"range":{"start":{"line":%u,"character":%u},"end":{"line":%u,"character":%u}},"text":)",
-                                e.start_row, c0, e.old_end_row, c1);
-    m.append(num, static_cast<size_t>(std::min<int>(n, sizeof num - 1)));
-    const u64 len = e.new_end - e.start;
-    if (len > 256 * 1024) {
-        // A big paste: cheaper to hand over the document than to copy the
-        // pasted text here. (A change without a range means "all of it".)
-        std::string whole = change_head_;
-        whole += std::to_string(version_);
-        whole += R"(},"contentChanges":[{"text":)";
-        send_document(std::move(whole), "}]}}", false);
-        return;
-    }
-    json::quote(m, buf_->text(e.start, len));
-    m += "}]}}";
-    send(std::move(m));
-}
-
-void Lsp::did_save() {
-    if (!opened_ || !caps_.save) return;
-    std::string m = R"({"jsonrpc":"2.0","method":"textDocument/didSave","params":{"textDocument":{"uri":)";
-    json::quote(m, uri_);
-    m += "}}}";
-    send(std::move(m));
-}
-
-u32 Lsp::ask(const char* method, u64 offset, u8 kind, std::string_view extra, u32* latest) {
-    if (*latest) {  // the answer still under way is no longer wanted
-        send(R"({"jsonrpc":"2.0","method":"$/cancelRequest","params":{"id":)" + std::to_string(*latest) + "}}");
-    }
-    const u32 id = next_id_++;
-    std::string m = R"({"jsonrpc":"2.0","id":)" + std::to_string(id) + R"(,"method":")" + method + R"(","params":{"textDocument":{"uri":)";
-    json::quote(m, uri_);
-    m += R"(},"position":)";
-    position_json(m, offset);
-    m += extra;
-    m += "}}";
-    send(std::move(m), id, kind);
-    *latest = id;
-    return id;
-}
-
-void Lsp::complete(u64 offset, char trigger) {
-    if (!can_complete()) return;
-    std::string context;
-    if (trigger) {
-        context = R"(,"context":{"triggerKind":2,"triggerCharacter":)";
-        json::quote(context, std::string_view(&trigger, 1));
-        context += '}';
-    } else {
-        context = R"(,"context":{"triggerKind":1})";
-    }
-    ask("textDocument/completion", offset, kInCompletion, context, &complete_id_);
-    complete_at_ = offset;
-    complete_first_edit_ = ~0ull;
-}
-
-void Lsp::hover(u64 offset) {
-    if (!can_hover()) return;
-    ask("textDocument/hover", offset, kInHover, {}, &hover_id_);
-    hover_at_ = offset;
-}
-
-void Lsp::signature(u64 offset) {
-    if (!can_signature()) return;
-    ask("textDocument/signatureHelp", offset, kInSignature, {}, &sig_id_);
-}
-
-void Lsp::definition(u64 offset) {
-    if (!can_define()) return;
-    ask("textDocument/definition", offset, kInDefinition, {}, &def_id_);
-}
-
-u32 Lsp::poll() {
-    if (!conn_) return 0;
-    std::vector<Conn::In> in;
-    {
-        std::lock_guard lock(conn_->mu);
-        in.swap(conn_->in);
-    }
-    u32 news = 0;
-    for (Conn::In& m : in) {
-        switch (m.kind) {
-            case kInReady:
-                caps_ = m.caps;
-                ready_ = true;
-                if (!m.text.empty()) server_name_ = m.text;
-                open_document();
-                news |= kState;
-                break;
-            case kInFailed:
-            case kInStopped:
-                message_ = "language server: " + m.text;
-                opened_ = false;  // nobody left to say goodbye to
-                detach();
-                return news | kState | kDiagnostics;
-            case kInDiagnostics: {
-                if (!buf_ || path_.empty() || m.text != path_ || (m.version >= 0 && m.version != version_)) break;
-                diags_.clear();
-                diags_.reserve(m.diags.size());
-                for (RawDiag& r : m.diags) {
-                    Diagnostic d;
-                    d.start = offset_at(*buf_, r.r.l0, r.r.c0);
-                    d.end = std::max(d.start, offset_at(*buf_, r.r.l1, r.r.c1));
-                    d.severity = r.severity;
-                    d.message = std::move(r.message);
-                    d.source = std::move(r.source);
-                    d.code = std::move(r.code);
-                    diags_.push_back(std::move(d));
-                }
-                std::stable_sort(diags_.begin(), diags_.end(), [](const Diagnostic& a, const Diagnostic& b) { return a.start < b.start; });
-                ++diags_gen_;
-                news |= kDiagnostics;
-                break;
-            }
-            case kInCompletion: {
-                if (m.id != complete_id_) break;
-                complete_id_ = 0;
-                // Positions in the answer are about the text as it was when
-                // the question was asked. Typing has usually gone on since,
-                // further along the line; everything before the first such
-                // change is where it was, and only that much is trusted.
-                // (A list of thousands is thousands of strings to free: that
-                // is done on a thread of its own, not on the one that draws.)
-                if (items_.size() > 2000) std::thread([gone = std::move(items_)] {}).detach();
-                items_.clear();
-                ++items_serial_;
-                items_.reserve(m.items.size());
-                // Nearly every item replaces the same word, so the position
-                // worked out for one is usually the next one's too.
-                u32 last_line = ~0u, last_col = ~0u;
-                u64 last_from = 0;
-                for (RawItem& r : m.items) {
-                    CompletionItem& it = r.item;
-                    if (r.has_range) {
-                        if (r.range.l0 != last_line || r.range.c0 != last_col) {
-                            last_line = r.range.l0;
-                            last_col = r.range.c0;
-                            last_from = offset_at(*buf_, last_line, last_col);
-                        }
-                        if (last_from <= complete_first_edit_) it.replace_from = last_from;
-                    }
-                    for (RawItem::Extra& x : r.extra) {
-                        const u64 a = offset_at(*buf_, x.r.l0, x.r.c0), b = offset_at(*buf_, x.r.l1, x.r.c1);
-                        if (a <= b && b <= complete_first_edit_) it.extra.push_back({a, b, std::move(x.text)});
-                    }
-                    items_.push_back(std::move(it));
-                }
-                items_incomplete_ = m.incomplete;
-                news |= kCompletion;
-                break;
-            }
-            case kInHover:
-                if (m.id != hover_id_) break;
-                hover_id_ = 0;
-                hover_lines_ = std::move(m.lines);
-                news |= kHover;
-                break;
-            case kInSignature:
-                if (m.id != sig_id_) break;
-                sig_id_ = 0;
-                sig_ = std::move(m.sig);
-                news |= kSignature;
-                break;
-            case kInDefinition:
-                if (m.id != def_id_) break;
-                def_id_ = 0;
-                def_ = std::move(m.loc);
-                news |= kDefinition;
-                break;
-            default: break;
-        }
-    }
-    return news;
-}
-
-std::string Lsp::take_message() {
-    std::string m;
-    m.swap(message_);
-    return m;
+    size_t end = text.find('\n', at);
+    if (end == std::string_view::npos) end = text.size();
+    return at + column_in(text.substr(at, end - at), character, utf16);
 }
 
 bool Lsp::wait(int timeout_ms) {
-    if (!conn_) return false;
-    std::unique_lock lock(conn_->mu);
-    return conn_->arrived.wait_for(lock, std::chrono::milliseconds(timeout_ms), [&] { return !conn_->in.empty(); });
+    std::unique_lock lock(inbox_->mu);
+    return inbox_->arrived.wait_for(lock, std::chrono::milliseconds(timeout_ms), [&] { return !inbox_->in.empty(); });
 }
 
 }  // namespace blit

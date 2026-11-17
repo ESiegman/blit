@@ -2364,6 +2364,46 @@ of 256 KB, and keys and requests go ahead of them, so a key waits behind
 one part at most; past 1 MB of input waiting for a program the agent says
 so and blit stops reading until it is under 256 KB.
 
+### Round 44: language servers in depth; underline and strikethrough
+
+Language servers (several at once, problems for the whole project,
+references, rename, formatting, code actions, inlay hints, semantic
+colours, UTF-16 columns from a remembered place) were made in a copy of
+`main` at 532fa9b by an agent of its own; merged with three conflicts (Vim's
+requests, a grid field and the README's limits, each side kept). Its
+numbers, alternating with 532fa9b, medians, on a busy machine:
+
+| | Before | After |
+|---|---:|---:|
+| A key's step p50, `--bench assist`, real-200k.cpp, 7 rounds | 1.92 µs | 1.96 µs (one server), 2.00 µs (two) |
+| … frame CPU p50 | 17.96 µs | 18.12 / 18.08 µs |
+| A key at the end of a 64 MB line, a UTF-16 server | 15.5 ms | 2.18 ms |
+| Scrolling layout p50, hints and colours off / on | 1.04 µs | 1.33 / 4.21 µs |
+| Scrolling frame CPU p50, off / on | 21.00 µs | 21.38 / 22.71 µs |
+| Fill, code-1m.txt sequential / random | 1.952 / 2.057 µs | 1.929 / 2.013 µs |
+| Fill, real-2m.cpp sequential / random | 2.843 / 3.902 µs | 2.802 / 3.949 µs |
+
+- Inlay hints were first put into the fill loop, which measured 3 to 5%
+  slower on real-2m.cpp; they are put in by a pass after it now, and
+  `grid.cpp` is as it was. Semantic colours are laid over tree-sitter's for
+  the visible lines on the main thread (about 3 µs a scrolling frame with a
+  server sending them; a thread would cost more in handing over than that).
+- The 2.18 ms left on the 64 MB line was the editor's own walk of it,
+  which round 39 took away.
+
+**Underline and strikethrough** are glyph styles (a line drawn over the
+face's glyph in slots of their own; only the four faces keep ASCII blocks,
+so the atlas keeps its room for one screen of CJK). The grid looks a
+lined run's slots up character by character; other runs keep the copy.
+
+The whole batch (rounds 43 and 44 and these lines) against fccaebd, the
+commit before it, scrolling real-200k.cpp at 2560x1600 with no server and
+an empty init.lua, six runs each, turn about (the machine's load was 6, so
+the frame times scatter; layout and fill do not): layout p50 1.25 to 1.29
+against 1.17 to 1.21 µs (one run each way higher), fill 2.79 to 2.88
+against 2.88 to 3.04 µs. A tenth of a microsecond more layout a frame,
+0.2% of it.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

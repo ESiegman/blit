@@ -179,6 +179,7 @@ void App::focus_pane(Pane* p) {
 void App::forget_doc(const Doc* d) {
     remote_forget(d->id);  // (a save of it to another machine under way: it takes its own copy of the text)
     if (lsp_doc_ == d) stop_lsp();
+    lsp_forget(*d);  // (its language server lets go of its text)
     if (script_) script_closed(*d);  // (BufDelete, at the next tick)
 }
 

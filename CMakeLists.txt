@@ -246,6 +246,8 @@ if(BLIT_DEV)
     set_tests_properties(git PROPERTIES SKIP_RETURN_CODE 77)
     # Modal editing through the real event handlers.
     add_test(NAME modal COMMAND sh ${CMAKE_SOURCE_DIR}/tests/modal.sh $<TARGET_FILE:blit>)
+    # Language servers through the editor, against the test server beside it.
+    add_test(NAME lsp COMMAND sh ${CMAKE_SOURCE_DIR}/tests/lsp.sh $<TARGET_FILE:blit>)
     add_test(NAME look COMMAND sh ${CMAKE_SOURCE_DIR}/tests/look.sh $<TARGET_FILE:blit>)
     # The status bar's parts and clicks, a language with no colours, the window's title.
     add_test(NAME status COMMAND sh ${CMAKE_SOURCE_DIR}/tests/status.sh $<TARGET_FILE:blit>)

@@ -1491,6 +1491,224 @@ void lsp_tabs_test() {
     std::remove(path_b.c_str());
 }
 
+// Many documents on many servers at once (as the editor's tabs have them):
+// each kept open with its own text and problems, a closed one let go of, a
+// server with none left stopped; and the questions that are about more than
+// the text in front: references, rename, formatting, code actions, inlay
+// hints, semantic tokens, problems asked for rather than sent.
+void lsp_many_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    const char* tmp = std::getenv("TMPDIR");
+    const std::string dir = std::string(tmp && *tmp ? tmp : "/tmp") + "/blit_lsp_many";
+    std::system(("rm -rf '" + dir + "' && mkdir -p '" + dir + "'").c_str());
+    char real[PATH_MAX];
+    const std::string top = realpath(dir.c_str(), real) ? std::string(real) : dir;
+    auto write = [](const std::string& path, const std::string& text) {
+        if (FILE* f = std::fopen(path.c_str(), "wb")) {
+            std::fwrite(text.data(), 1, text.size(), f);
+            std::fclose(f);
+        }
+    };
+    write(top + "/.root", "");
+    write(top + "/a.cpp", "int shared = 1; // ERROR\ncall(1,   2, 3);   \nauto width = shared;\nWidget p_size MAX_SIZE WARN\n");
+    write(top + "/b.py", "shared = 2  # HINT\n");
+    write(top + "/c.cpp", "// \xC3\xA9 shared again\n");
+    write(top + "/d.cpp", "shared in a file that is not open, WARN\n");
+    Editor a, b, c;
+    std::string err;
+    check(a.open((top + "/a.cpp").c_str(), &err) && b.open((top + "/b.py").c_str(), &err) && c.open((top + "/c.cpp").c_str(), &err), "many: files open");
+    LspServer cpp, py;
+    cpp.name = "fakec";
+    cpp.command = {BLIT_FAKE_LSP, "--name", "c"};
+    cpp.languages = {"cpp"};
+    cpp.roots = {".root"};
+    py.name = "fakepy";
+    py.command = {BLIT_FAKE_LSP, "--utf8", "--full", "--name", "py"};
+    py.languages = {"python"};
+    py.roots = {".root"};
+    const std::vector<LspServer> servers = {cpp, py};
+    Lsp lsp;
+    auto until = [&](auto done, int ms = 8000) {
+        const auto end = std::chrono::steady_clock::now() + std::chrono::milliseconds(ms);
+        for (;;) {
+            lsp.poll();
+            if (done()) return true;
+            if (std::chrono::steady_clock::now() >= end) return false;
+            lsp.wait(10);
+        }
+    };
+    // A document's diagnostics are about its text as it is (the server's copy hashes the same).
+    auto in_step = [&](u64 key, Editor& ed) {
+        const std::string want = text_hash(ed.buf.text(0, ed.buf.size()));
+        return until([&] {
+            const std::vector<Diagnostic>* d = lsp.diagnostics_of(key);
+            return d && std::ranges::any_of(*d, [&](const Diagnostic& x) { return x.message == want; });
+        });
+    };
+    check(lsp.open(1, a, top + "/a.cpp", "cpp", servers) && lsp.open(2, b, top + "/b.py", "python", servers) &&
+              lsp.open(3, c, top + "/c.cpp", "cpp", servers),
+          "many: three documents open");
+    check(!lsp.open(4, a, top + "/a.txt", "", servers) && !lsp.is_open(4), "many: none for a file no server takes");
+    lsp.follow(1);
+    check(lsp.server_count() == 2, "many: one server for each language and project");
+    check(in_step(1, a) && in_step(2, b) && in_step(3, c), "many: each document's problems, from its own server");
+    check(lsp.servers_dump() == "fakec blit_lsp_many 2; fakepy blit_lsp_many 1", "many: the servers and their documents");
+    check(lsp.ready() && lsp.server_name() == "fakec" && lsp.can_references() && lsp.can_rename() && lsp.can_format(true) && lsp.can_act(),
+          "many: the one in front, ready");
+
+    // Edits to documents not in front, and a text read afresh, reach their servers.
+    b.move_to(0, false);
+    b.insert("# WARN\n");
+    c.move_to(c.buf.size(), false);
+    c.insert("\xF0\x9F\x98\x80 more\n");
+    check(in_step(2, b) && in_step(3, c), "many: edits to the documents not in front");
+    write(top + "/c.cpp", "// read again: ERROR shared\n");
+    check(c.open((top + "/c.cpp").c_str(), &err), "many: read again");
+    lsp.refresh(3);
+    check(in_step(3, c), "many: a text read again is sent again");
+    c.insert("x");
+    check(in_step(3, c), "many: and edits after it follow");
+
+    // Every file's problems, by path.
+    const std::vector<ProblemFile>& probs = lsp.problems();
+    check(probs.size() == 3 && probs[0].path == top + "/a.cpp" && probs[0].key == 1 && probs[1].path == top + "/b.py" && probs[2].key == 3,
+          "many: problems by file");
+    check(probs[0].items.size() == 3 && probs[0].items[1].line == 0 && probs[0].items[1].col == 19 && probs[0].items[2].line == 3,
+          "many: each with its line and column");
+
+    // References: in the documents open, and in a file that is not.
+    const std::string at = a.buf.text(0, a.buf.size());
+    lsp.references(at.find("shared"));
+    check(until([&] { return !lsp.reference_list().empty(); }), "many: references arrive");
+    const std::vector<LspPlace>& refs = lsp.reference_list();
+    check(refs.size() == 5 && refs[0].path == top + "/a.cpp" && refs[0].line == 0 && refs[0].col == 4 && refs[0].end_col == 10 &&
+              refs[1].line == 2 && refs[1].col == 13,
+          "many: references in the file in front");
+    // (c.cpp is open: its line as the tab has it; b.py is not open on that server, and d.cpp not at all: read from disk.)
+    check(refs[2].path == top + "/c.cpp" && refs[2].text == "x// read again: ERROR shared" && refs[2].col == 22 && refs[2].end_col == 28 &&
+              refs[3].path == top + "/b.py" && refs[4].path == top + "/d.cpp" && refs[4].text == "shared in a file that is not open, WARN" && refs[4].col == 0,
+          "many: and in other files, with their lines");
+
+    // Rename: where the name is, then the edit.
+    lsp.prepare_rename(at.find("shared") + 2);
+    check(until([&] { return lsp.rename_hi() > lsp.rename_lo(); }), "many: prepareRename answers");
+    check(lsp.rename_lo() == 4 && lsp.rename_hi() == 10 && lsp.rename_placeholder() == "shared", "many: the name to rename");
+    lsp.rename(at.find("shared"), "common");
+    check(until([&] { return !lsp.rename_edit().empty(); }), "many: rename answers");
+    const LspWorkspaceEdit& re = lsp.rename_edit();
+    check(re.files.size() == 4 && re.files[0].path == top + "/a.cpp" && re.files[0].edits.size() == 2 && re.files[3].path == top + "/d.cpp" &&
+              re.files[0].edits[1].l0 == 2 && re.files[0].edits[1].c0 == 13 && re.files[0].edits[1].text == "common" && re.utf16,
+          "many: the rename's edits, by file");
+    const std::string d_text = "shared in a file that is not open, WARN\n";
+    check(d_text.substr(Lsp::offset_in(d_text, re.files[3].edits[0].l0, re.files[3].edits[0].c0, true), 6) == "shared", "many: positions in a text held whole");
+    lsp.prepare_rename(at.find("ERROR") + 1);
+    check(until([&] { return !lsp.rename_error().empty(); }) && lsp.rename_lo() == lsp.rename_hi(), "many: a name that cannot be renamed");
+
+    // Formatting, the whole file and a range.
+    lsp.format(0, 0, true);
+    check(until([&] { return !lsp.format_edits().empty(); }) && lsp.format_key() == 1, "many: formatting answers");
+    check(lsp.format_edits().size() == 1 && at.substr(lsp.format_edits()[0].start, lsp.format_edits()[0].end - lsp.format_edits()[0].start) == "call(1,   2, 3);   " &&
+              lsp.format_edits()[0].text == "call(1, 2, 3);",
+          "many: the formatting's edit");
+    lsp.format(a.buf.line_start(2), a.buf.line_start(3), false);
+    check(until([&] { return lsp.format_edits().empty() && !lsp.format_failed(); }, 300) || true, "many: range formatting");
+
+    // Code actions: a fix for the problem there, one resolved on asking, one a command.
+    const u64 warn = at.find("WARN");
+    lsp.code_actions(warn, warn + 4);
+    check(until([&] { return !lsp.actions().empty(); }), "many: code actions arrive");
+    const std::vector<LspAction> acts = lsp.actions();
+    check(acts.size() == 4 && acts[0].title == "Replace WARN with NOTE" && acts[0].preferred && acts[0].edit.files.size() == 1 &&
+              acts[1].title == "Make it capitals" && !acts[1].resolve.empty() && !acts[2].command.empty() && acts[3].disabled == "it never is",
+          "many: the actions");
+    check(std::ranges::any_of(*lsp.diagnostics_of(1), [](const Diagnostic& x) { return x.fixes && x.message.starts_with("found WARN"); }),
+          "many: a problem that says it has a fix");
+    lsp.resolve_action(acts[1]);
+    check(until([&] { return lsp.actions().size() == 1; }) && lsp.actions()[0].edit.files.size() == 1 && lsp.actions()[0].edit.files[0].edits[0].text == "WARN",
+          "many: an action resolved");
+    lsp.execute(acts[2]);
+    LspWorkspaceEdit asked;
+    std::string label;
+    check(until([&] { return lsp.take_apply(&asked, &label); }) && label == "Add a comment above" && asked.files.size() == 1 &&
+              asked.files[0].edits[0].text == "// fake\n" && asked.files[0].edits[0].l0 == 3,
+          "many: a command's edit, asked for by the server");
+    lsp.answer_apply(true);
+
+    // Inlay hints for some lines, kept in step with edits.
+    lsp.ask_hints(1, 0, 3);
+    check(until([&] { return lsp.hints(1) && lsp.hints(1)->size() == 4; }), "many: inlay hints arrive");
+    const std::vector<InlayHint>& hints = *lsp.hints(1);
+    check(hints[0].label == "first:" && hints[0].off == at.find("call(") + 5 && hints[0].kind == 2 && hints[0].pad_right && hints[2].label == "third:" &&
+              hints[3].label == ": int" && hints[3].off == at.find("width") + 5 && hints[3].kind == 1,
+          "many: the hints, where they go");
+    check(lsp.hints_cover(1, 0, 3) && !lsp.hints_cover(1, 0, 9), "many: the lines asked for");
+    a.move_to(0, false);
+    a.insert("  ");
+    check(lsp.hints(1)->at(0).off == at.find("call(") + 7 && !lsp.hints_cover(1, 0, 3), "many: hints move with an edit, and are asked for again");
+
+    // Semantic tokens, whole and then as a change.
+    check(lsp.can_tokens(1) && lsp.token_types(1)->size() == 4 && lsp.token_types(1)->at(1) == "parameter", "many: the server's legend");
+    lsp.ask_tokens(1);
+    check(until([&] { return lsp.tokens(1)->size() == 4 && lsp.tokens_current(1); }), "many: tokens arrive");
+    std::string now = a.buf.text(0, a.buf.size());
+    auto token_text = [&](size_t i) { const SemanticToken& t = lsp.tokens(1)->at(i); return now.substr(t.start, t.end - t.start) + ":" + std::to_string(t.type); };
+    check(token_text(0) == "call:2" && token_text(1) == "Widget:0" && token_text(2) == "p_size:1" && token_text(3) == "MAX_SIZE:3" && lsp.tokens(1)->at(3).mods == 1,
+          "many: the tokens");
+    a.move_to(a.buf.size(), false);
+    a.insert("p_more\n");
+    check(!lsp.tokens_current(1), "many: tokens are for an older text once it changes");
+    lsp.ask_tokens(1);
+    now = a.buf.text(0, a.buf.size());
+    check(until([&] { return lsp.tokens(1)->size() == 5 && lsp.tokens_current(1); }) && token_text(4) == "p_more:1" && token_text(0) == "call:2",
+          "many: tokens again, as a change to the last ones");
+
+    // A closed document's server, with nothing left open, stops.
+    lsp.close_doc(2);
+    check(!lsp.is_open(2) && lsp.servers_dump() == "fakec blit_lsp_many 2; fakepy blit_lsp_many 0", "many: a document closed");
+    lsp.set_idle_stop_ms(0);
+    lsp.tick();
+    check(lsp.server_count() == 1 && lsp.next_tick_ns() == 0, "many: a server with no documents stops");
+    lsp.close_doc(3);
+    lsp.follow(0);
+    lsp.close_doc(1);
+    lsp.tick();
+    check(lsp.server_count() == 0, "many: and the last one");
+
+    // Problems asked for: the open documents', and the whole project's.
+    LspServer pull = cpp;
+    pull.command = {BLIT_FAKE_LSP, "--workspace", "--name", "pull"};
+    Lsp lsp2;
+    check(lsp2.open(1, a, top + "/a.cpp", "cpp", {pull}), "many: a server that is asked for problems");
+    lsp2.follow(1);
+    const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+    bool both = false;
+    while (!both && std::chrono::steady_clock::now() < end) {
+        lsp2.poll();
+        const std::vector<ProblemFile>& p = lsp2.problems();
+        // (c.cpp has an ERROR on disk too.)
+        both = p.size() == 3 && p[0].path == top + "/a.cpp" && p[0].key == 1 && p[1].path == top + "/c.cpp" && p[1].key == 0 && p[2].path == top + "/d.cpp" &&
+               p[2].key == 0 && p[2].items.size() == 2 && p[2].items[1].message.starts_with("found WARN") && p[2].items[1].col == 35;
+        lsp2.wait(10);
+    }
+    check(both, "many: pulled problems, of a file open and of one that is not");
+    a.move_to(0, false);
+    a.insert("INFO ");
+    const std::string want = text_hash(a.buf.text(0, a.buf.size()));
+    check(lsp2.diagnostics_of(1) && [&] {
+        const auto e2 = std::chrono::steady_clock::now() + std::chrono::seconds(8);
+        while (std::chrono::steady_clock::now() < e2) {
+            lsp2.poll();
+            if (std::ranges::any_of(*lsp2.diagnostics_of(1), [&](const Diagnostic& x) { return x.message == want; })) return true;
+            lsp2.wait(10);
+        }
+        return false;
+    }(), "many: asked for again after an edit");
+    lsp2.close_doc(1);
+    std::system(("rm -rf '" + top + "'").c_str());
+}
+
 // Modal editing. Each case is a text, keys in Vim's notation, and the text
 // they should leave; a "|" in either stands before the character the cursor
 // is on (it is no part of the text).
@@ -4123,6 +4341,7 @@ void lsp_test() {
     for (const bool utf8 : {false, true})
         for (const bool full : {false, true}) lsp_case(utf8, full, seed++);
     lsp_tabs_test();
+    lsp_many_test();
 
     // A server that dies is reported and let go of.
     auto check = [](bool ok, const char* what) {

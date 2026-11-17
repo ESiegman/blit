@@ -792,6 +792,7 @@ void App::save() {
         focus_pane(where);
         tab_show(at);
     }
+    lsp_format_on_save();  // (lsp.format_on_save: its server formats it first)
     if (is_remote(pane_->doc->ed.path)) {  // to another machine: written on a thread, and saved once it has been (appremote.cpp)
         remote_save(*pane_->doc);
         return;

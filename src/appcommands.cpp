@@ -224,8 +224,9 @@ void App::commands_create() {
     c.push_back({"Find: match case on or off", {key(SDLK_C, kA)}, false, [this] { find_toggle(false); }});
     own("Find the next match", {mac ? key(SDLK_G, kP) : key(SDLK_F3)}, [this] { Commands::find_next(*this, true); });
     own("Find the previous match", {mac ? key(SDLK_G, kP | kS) : key(SDLK_F3, kS)}, [this] { Commands::find_next(*this, false); });
-    own("Go to the next hit of Search in files", {key(SDLK_F4)}, [this] { find_step(1); });
-    own("Go to the previous hit of Search in files", {key(SDLK_F4, kS)}, [this] { find_step(-1); });
+    // (Or of the references found, while their list is the last one made.)
+    own("Go to the next hit of Search in files", {key(SDLK_F4)}, [this] { if (!lsp_step(1)) find_step(1); });
+    own("Go to the previous hit of Search in files", {key(SDLK_F4, kS)}, [this] { if (!lsp_step(-1)) find_step(-1); });
     // Editing.
     sent("Undo", {key(SDLK_Z, kP)});
     sent("Redo", {key(SDLK_Z, kP | kS), key(SDLK_Y, kP)});
@@ -272,6 +273,10 @@ void App::commands_create() {
     sent("Show the function's parameters", {key(SDLK_SPACE, kC | kS)});
     sent("Show what this is", {key(SDLK_I, kP)});
     sent("Go to the definition", {key(SDLK_F12)});
+    sent("Find references", {key(SDLK_F12, kS)});
+    sent("Rename the symbol\xE2\x80\xA6", {key(SDLK_F2)});
+    sent("Format the file, or the selected lines", {key(SDLK_F, kA | kS)});
+    sent("Fixes and refactorings here (code actions)", {key(SDLK_RETURN, kA)});  // (Cmd+. stops the build)
     sent("Go back", {mac ? key(SDLK_MINUS, kC) : key(SDLK_LEFT, kA)});
     sent("Go forward", {mac ? key(SDLK_MINUS, kC | kS) : key(SDLK_RIGHT, kA)});
     own("Install the grammar for this file's language", {}, [this] { grammar_install(); });

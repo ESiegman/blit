@@ -12,6 +12,38 @@
 
 namespace blit {
 
+// Puts a spec's inserts in at their columns, moving the rest of each row
+// right (what is pushed past the edge goes). Called after decorate_grid(),
+// so that underlines and notes move with their text, and before
+// round_selection(). Done after the fill, not in it, and not in grid.cpp,
+// whose fill loop is sensitive to how the code around it lies: the fill
+// costs the same with inlay hints on as off.
+static void insert_notes(const GridSpec& g, u32* cells) {
+    const u32 lead = std::min(g.lead, g.cols);
+    const u64 cols = g.cols - lead, first = g.first_col;
+    const std::span<const GridNote> in = g.inserts;
+    for (size_t i = 0; i < in.size();) {
+        const u64 line = in[i].line;
+        size_t j = i;
+        while (j < in.size() && in[j].line == line) ++j;  // [i, j): this line's, left to right
+        if (line >= g.top_line && line < g.top_line + g.rows) {
+            u32* row = cells + static_cast<size_t>(line - g.top_line) * g.cols + lead;
+            u64 shift = 0;  // (columns the notes already put in on this row have taken)
+            for (size_t k = i; k < j; ++k) {
+                const GridNote& n = in[k];
+                if (n.col < first) continue;  // (left of the view: not shown)
+                const u64 at = n.col - first + shift;
+                if (at >= cols) break;
+                const u64 w = std::min<u64>(n.count, cols - at);
+                if (at + w < cols) std::memmove(row + at + w, row + at, static_cast<size_t>(cols - at - w) * sizeof(u32));
+                std::memcpy(row + at, n.cells, static_cast<size_t>(w) * sizeof(u32));
+                shift += w;
+            }
+        }
+        i = j;
+    }
+}
+
 namespace {
 
 // Compiled shaders, baked in with C++26 #embed. See shaders/build.sh. Metal
@@ -289,6 +321,7 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
             fill_grid(*v.buf, font, text, text_cells, v.anchors ? v.anchors : &anchors_);
             if (text.guide_step) guide_grid(*v.buf, text, text_cells, v.guides ? *v.guides : guides_);
             if (!text.decos.empty() || !text.notes.empty()) decorate_grid(text, text_cells);
+            if (!text.inserts.empty()) insert_notes(text, text_cells);
             if (v.sel_radius > 0) round_selection(text, text_cells);
             // Flag the cells under the cursor, the scroll thumb and a tint (see the shader).
             auto mark = [&](const float* r) {
