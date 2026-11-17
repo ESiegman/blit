@@ -30,4 +30,5 @@ jobs:
         run: |
           brew test --HEAD ESiegman/blit/blit
           ls "$(brew --prefix blit)/blit.app/Contents"
-          codesign --verify --verbose "$(brew --prefix blit)/blit.app"
+          codesign -dvv "$(brew --prefix blit)/blit.app" 2>&1 | grep -E "Identifier|Signature|Sealed"
+          codesign --verify --strict --verbose "$(brew --prefix blit)/blit.app"

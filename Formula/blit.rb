@@ -16,10 +16,6 @@ class Blit < Formula
   depends_on "sdl3"
   depends_on "tree-sitter"
 
-  # Homebrew's cleaning of the keg breaks the bundle's signature (its seal
-  # over Contents): blit.app is left as it was built and signed.
-  skip_clean "blit.app"
-
   fails_with :clang do
     cause "blit is C++26, built with GCC (16 or later)"
   end
@@ -32,6 +28,13 @@ class Blit < Formula
     system "cmake", "--build", "build"
     prefix.install "build/blit.app"
     bin.install_symlink prefix/"blit.app/Contents/MacOS/blit"
+  end
+
+  # Homebrew re-signs the program alone after it has fixed the program's
+  # library paths, which leaves the bundle's seal (over Info.plist and the
+  # icon) out of step with it: the bundle is signed again, whole.
+  def post_install
+    system "codesign", "--force", "--sign", "-", prefix/"blit.app"
   end
 
   def caveats
