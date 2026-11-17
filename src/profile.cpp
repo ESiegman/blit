@@ -870,6 +870,7 @@ struct ProfileJob::Impl {
     Run run;  // the recording, or the reading of it, while it is under way (to stop it)
     std::atomic<bool> stop{false};
     std::atomic<bool> quit{false};  // the job is going away: no more waiting on anything
+    std::atomic<bool> ended{false};  // the thread is done with everything
     std::jthread thread;
 
     void set(State s, std::string what) {
@@ -1107,7 +1108,10 @@ ProfileJob::ProfileJob(ProfileRequest r, std::function<void()> notify) : req_(st
     impl_->notify = std::move(notify);
     Impl* m = impl_.get();
     const ProfileRequest* req = &req_;
-    impl_->thread = std::jthread([m, req] { m->work(*req); });
+    impl_->thread = std::jthread([m, req] {
+        m->work(*req);
+        m->ended = true;
+    });
 }
 
 ProfileJob::~ProfileJob() {
@@ -1117,6 +1121,14 @@ ProfileJob::~ProfileJob() {
         // (Reading what was recorded can take long: it ends too.)
         std::lock_guard lock(impl_->mu);
         if (impl_->reading) impl_->run.signal(SIGTERM);
+    }
+    // A profiler that does not end when asked (xctrace stuck on a machine
+    // that will not let it trace) is killed, it and what it runs, after a
+    // few seconds: blit does not wait on it for ever as it quits.
+    for (int i = 0; i < 500 && !impl_->ended; ++i) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    if (!impl_->ended) {
+        std::lock_guard lock(impl_->mu);
+        if (impl_->recording || impl_->reading) impl_->run.signal(SIGKILL);
     }
     if (impl_->thread.joinable()) impl_->thread.join();
 }
