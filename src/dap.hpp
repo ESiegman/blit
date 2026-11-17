@@ -7,19 +7,18 @@
 //
 // The adapter is read on a thread of the client's own; what it says is
 // queued, and poll() (on the main thread) runs the answers' callbacks and
-// hands back the events.
-#include <atomic>
-#include <deque>
+// hands back the events. Nothing on the main thread waits for it: on
+// another machine it is started on that thread (the connection waited for,
+// the adapter started there), and it is let go of on a thread of its own.
 #include <functional>
 #include <memory>
-#include <mutex>
 #include <string>
-#include <thread>
+#include <string_view>
+#include <utility>
 #include <vector>
 
 #include "common.hpp"
 #include "json.hpp"
-#include "remote.hpp"
 
 namespace blit {
 
@@ -37,11 +36,15 @@ public:
     using Done = std::function<void(const Message&)>;
 
     Dap() = default;
-    ~Dap();
+    ~Dap();  // (stop(): nothing here waits)
     Dap(const Dap&) = delete;
     Dap& operator=(const Dap&) = delete;
 
-    // The adapter: argv, run in `dir` (another machine's: ssh://host/path).
+    // The adapter: argv, run in `dir`. Here it is started now. On another
+    // machine (ssh://host/path) the connection is waited for and the adapter
+    // started there on the reader's thread: requests made meanwhile are sent
+    // once it has started, and one that cannot be started has ended(), with
+    // errors() saying why.
     bool start(const std::vector<std::string>& argv, const std::string& dir, std::function<void()> notify, std::string* err);
     // A request; `done` runs (in poll) with its answer. Its arguments are a JSON object's text.
     i64 request(std::string_view command, std::string_view arguments = "{}", Done done = {});
@@ -49,29 +52,20 @@ public:
     void respond(const Message& to, bool success, std::string_view body = "{}");
     // The answers' callbacks run; the events are handed back.
     std::vector<Message> poll();
-    bool ended() const { return ended_; }
+    bool ended() const;
     std::string errors() const;  // the last of what the adapter wrote as errors
-    // The adapter is made to end: given up to grace_ms first to end of itself
-    // (after a disconnect, so that it can let go of the program it ran).
+    // The adapter is let go of, on a thread of its own that holds what it
+    // needs (the main thread waits for none of it): given up to grace_ms first
+    // to end of itself (after a disconnect, so that it can let go of the
+    // program it ran), then made to end, and reaped. Nothing more is sent.
     void stop(int grace_ms = 0);
 
-private:
-    void read_loop(std::stop_token stop);
-    void send(const std::string& json);
+    struct Link;  // (dap.cpp: the adapter's pipes and process, and the thread reading it)
 
-    std::shared_ptr<Remote> conn_;
-    RemoteProc proc_;
-    pid_t pid_ = -1;
-    int in_ = -1, out_ = -1, err_ = -1;
-    std::jthread reader_, err_reader_;
-    std::mutex mu_;
-    std::deque<Message> queue_;
+private:
+    std::shared_ptr<Link> link_;
     std::vector<std::pair<i64, Done>> waiting_;  // (main thread only)
-    std::string errors_;
-    std::atomic<bool> ended_{false};
-    std::atomic<i64> seq_{1};
-    std::function<void()> notify_;
-    std::mutex write_mu_;
+    i64 seq_ = 1;
 };
 
 }  // namespace blit

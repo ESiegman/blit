@@ -19,8 +19,11 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <functional>
 #include <map>
 #include <mutex>
+#include <optional>
+#include <stop_token>
 #include <thread>
 #include <string>
 #include <vector>
@@ -213,6 +216,27 @@ bool still_there(Recent& r) {
     return r.there > 0;
 }
 
+// (On a worker thread.) The machine a path is on, reachable: another one's
+// connection waited for as a worker may (it may be coming up), but not once
+// it has failed, nor past a request to stop. This machine's always is.
+bool reached(const std::string& path, std::stop_token stop = {}) {
+    std::string host, there;
+    if (!split_remote(path, &host, &there)) return true;
+    const std::shared_ptr<Remote> r = Remote::get(host);  // (made now if it is not there, or again if it failed a while ago)
+    for (int waited = 0; waited < kRemoteWaitMs && !stop.stop_requested(); waited += 200) {
+        if (r->wait_ready(200)) return true;
+        if (r->state() == Remote::kFailed) return false;
+    }
+    return false;
+}
+
+void wake() {
+    SDL_Event ev{};
+    ev.type = SDL_EVENT_USER;
+    ev.user.code = 19;  // (start_sync)
+    SDL_PushEvent(&ev);
+}
+
 }  // namespace
 
 struct App::StartUi {
@@ -280,8 +304,35 @@ struct App::StartUi {
         bool done = false, applied = false;
     };
     std::mutex facts_mu;
-    Facts facts;  // (facts_mu while the worker runs)
-    std::jthread facts_worker;
+    Facts facts;  // (facts_mu: its worker fills it in)
+    // The worker looking now. One looking for a Location changed since is told
+    // to stop, and goes its own way (what it finds is not taken): nothing
+    // waits for it.
+    std::stop_source facts_stop;
+    // Enter on a row of libraries before the facts have come: its search
+    // opens when they do (if that row is still the chosen one).
+    bool libraries_wanted = false;
+    std::string libraries_key, libraries_typed;
+    // Making the project, on a thread of its own (on another machine each
+    // file is a round trip): what it is to make, then what it did. Create
+    // waits for the facts first, if they have not come.
+    struct Creation {
+        std::string kind, name, dir;
+        bool git = true;
+        bool scripted = false;  // init.lua's: its create function makes it, once the folder is made (on the main thread)
+        ProjectValues values;
+        std::function<ProjectPlan(const ProjectValues&)> plan;
+        std::vector<std::pair<std::string, std::string>> usages;  // (source, library): its usage notes, read there
+        std::string vcpkg_access, rocm_access;
+        std::string open, then, error;  // (what it did)
+    };
+    bool creating = false;       // Create was pressed: "Creating…" until it is made, or is not
+    bool create_wanted = false;  // (and the facts are waited for first)
+    std::mutex created_mu;
+    std::optional<Creation> created;  // (created_mu) the worker's, for start_sync
+
+    // (Its workers hold it weakly: one still looking when blit goes stops.)
+    ~StartUi() { facts_stop.request_stop(); }
     std::vector<VcpkgPort> pypi;  // PyPI's most downloaded packages, once looked up
     // Its list comes from a thread of its own (a download); one that failed is not tried again this session.
     std::mutex pypi_mu;
@@ -837,7 +888,7 @@ void App::project_page(bool on) {
             s.where = fs_kind(h + "/Dev") == 2 ? h + "/Dev" : h;
         }
         s.rows_again();
-        project_facts(false);
+        project_facts();
     }
     s.error.clear();
     s.key = 0;
@@ -919,65 +970,93 @@ void App::project_edit(const std::string& typed) {
     }
 }
 
-// What the machine the project goes on has: looked for on a thread (on
-// another machine that is round trips); `wait`: until it is done.
-void App::project_facts(bool wait) {
+// What the machine the project goes on has: looked for on a thread of its
+// own (on another machine, round trips, once its connection is up), and
+// never waited for here: what wants it (the libraries' search, Create)
+// goes on when it has come (start_sync).
+void App::project_facts() {
     StartUi& s = *start_;
-    bool fresh = false;
     {
         std::lock_guard lock(s.facts_mu);
-        fresh = s.facts.for_where != s.where;
+        if (s.facts.for_where == s.where) return;  // (looked for already, or being looked for)
+        s.facts = {};
+        s.facts.for_where = s.where;
     }
-    if (fresh) {
-        if (s.facts_worker.joinable()) s.facts_worker.join();
-        {
-            std::lock_guard lock(s.facts_mu);
-            s.facts = {};
-            s.facts.for_where = s.where;
-        }
-        const std::string where = s.where;
-        s.facts_worker = std::jthread([&s, where] {
-            StartUi::Facts f;
-            f.for_where = where;
-            std::string host, there;
-            const bool remote = split_remote(where, &host, &there);
-            auto access = [&](const std::string& path) { return path.empty() ? path : remote ? remote_path(host, path) : path; };
+    s.facts_stop.request_stop();  // (the one looking for the last Location: what it finds is not wanted)
+    s.facts_stop = std::stop_source();
+    std::thread([wp = std::weak_ptr(start_), where = s.where, stop = s.facts_stop.get_token()] {
+        StartUi::Facts f;
+        f.for_where = where;
+        std::string host, there;
+        const bool remote = split_remote(where, &host, &there);
+        auto access = [&](const std::string& path) { return path.empty() ? path : remote ? remote_path(host, path) : path; };
+        // (Each a round trip or more there: one no longer wanted stops between them.)
+        auto go = [&] { return !stop.stop_requested(); };
+        if (reached(where, stop) && go()) {
             f.vcpkg_root = vcpkg_root(where);
             f.vcpkg_access = access(f.vcpkg_root);
-            f.vcpkg_ports = vcpkg_ports(f.vcpkg_access, !remote);  // (a description each: a file each, too many round trips there)
-            f.vcpkg_baseline = vcpkg_baseline(f.vcpkg_access);
-            f.rocm_root = rocm_root(where);
+            if (go()) f.vcpkg_ports = vcpkg_ports(f.vcpkg_access, !remote);  // (a description each: a file each, too many round trips there)
+            if (go()) f.vcpkg_baseline = vcpkg_baseline(f.vcpkg_access);
+            if (go()) f.rocm_root = rocm_root(where);
             f.rocm_access = access(f.rocm_root);
-            f.rocm_packages = rocm_packages(f.rocm_access);
+            if (go()) f.rocm_packages = rocm_packages(f.rocm_access);
             const std::string dir = remote ? where : std::string();
-            if (!f.rocm_root.empty()) f.gpus = gpu_targets(dir, f.rocm_root);
+            if (go() && !f.rocm_root.empty()) f.gpus = gpu_targets(dir, f.rocm_root);
             std::string out;
-            if (fs_run(dir, "uv --version", &out, 5000) && out.starts_with("uv ")) {
+            if (go() && fs_run(dir, "uv --version", &out, 5000) && out.starts_with("uv ")) {
                 f.uv = true;
                 f.uv_version = out.substr(3, out.find_first_of(" \n", 3) - 3);
             }
-            f.pkgconfig = pkgconfig_modules(dir);
-            f.done = true;
-            {
-                std::lock_guard lock(s.facts_mu);
-                if (s.facts.for_where == where) s.facts = std::move(f);
-            }
-            SDL_Event ev{};
-            ev.type = SDL_EVENT_USER;
-            ev.user.code = 19;  // (the form takes what was found: start_sync)
-            SDL_PushEvent(&ev);
-        });
-    }
-    if (wait && s.facts_worker.joinable()) s.facts_worker.join();
+            if (go()) f.pkgconfig = pkgconfig_modules(dir);
+        }
+        const std::shared_ptr<StartUi> sp = wp.lock();
+        if (!go() || !sp) return;
+        f.done = true;
+        {
+            std::lock_guard lock(sp->facts_mu);
+            if (sp->facts.for_where == where) sp->facts = std::move(f);
+        }
+        wake();  // (the form takes what was found)
+    }).detach();
     ++s.gen;
 }
 
+// The facts waited for (for the tests: 60 s at most), and taken.
+void App::project_facts_wait() {
+    StartUi& s = *start_;
+    project_facts();
+    for (const u64 until = now_ns() + 60'000'000'000ull; now_ns() < until; SDL_Delay(2)) {
+        std::lock_guard lock(s.facts_mu);
+        if (s.facts.done) break;
+    }
+    start_sync();
+}
+
 // Something a thread of the start screen has found: the facts become
-// defaults, and PyPI's list opens if it was asked for.
+// defaults (and what waited for them goes on: the libraries' search, or
+// making the project), PyPI's list opens if it was asked for, and a
+// project that has been made opens.
 void App::start_sync() {
     if (!start_) return;
     StartUi& s = *start_;
     project_facts_apply();
+    bool facts = false;
+    {
+        std::lock_guard lock(s.facts_mu);
+        facts = s.facts.done;
+    }
+    if (facts && s.create_wanted) {
+        s.create_wanted = false;
+        s.creating = false;
+        project_create();
+    }
+    if (facts && s.libraries_wanted) {
+        s.libraries_wanted = false;
+        const bool still = start_shown() && s.page == 1 && !find_open_ && s.form_sel < s.form.size() && s.form[s.form_sel].what == kFormField &&
+                           s.chosen()->fields[s.form[s.form_sel].field].key == s.libraries_key;
+        if (still) project_libraries(s.libraries_typed);
+    }
+    project_created();
     std::vector<VcpkgPort> got;
     bool arrived = false;
     {
@@ -1026,7 +1105,24 @@ void App::project_libraries(const std::string& typed) {
     if (s.form_sel >= s.form.size() || s.form[s.form_sel].what != kFormField) return;
     const ProjectField& field = s.chosen()->fields[s.form[s.form_sel].field];
     const std::string key = field.key, source = field.source;
-    project_facts(true);
+    if (source != "pypi") {  // (what the machine has: until it has been looked at, the form says so, and the search opens when it has)
+        bool facts = false;
+        {
+            std::lock_guard lock(s.facts_mu);
+            facts = s.facts.done;
+        }
+        if (!facts) {
+            project_facts();
+            s.libraries_wanted = true;
+            s.libraries_key = key;
+            s.libraries_typed = typed;
+            s.error.clear();
+            s.key = 0;
+            ++s.gen;
+            dirty_ = true;
+            return;
+        }
+    }
     const std::vector<VcpkgPort>* list = nullptr;
     std::string prompt, missing;
     if (source == "vcpkg") {
@@ -1127,7 +1223,7 @@ void App::project_set(const std::string& key, const std::string& value) {
         if (home && *home && (w == "~" || w.starts_with("~/"))) w = home + w.substr(1);
         while (w.size() > 1 && w.back() == '/') w.pop_back();
         s.where = w;
-        project_facts(false);
+        project_facts();
     } else if (key == "git") {
         s.git = value == "true" || value == "on" || value == "1";
     } else if (const ProjectKind* k = s.chosen()) {
@@ -1136,19 +1232,7 @@ void App::project_set(const std::string& key, const std::string& value) {
                 ProjectValues& v = s.kind_values();
                 v[key] = f.kind == ProjectField::kSwitch ? (value == "true" || value == "on" || value == "1" ? "true" : "false") : value;
                 s.touched.push_back(k->name + "\t" + key);
-                if (f.kind == ProjectField::kLibraries && (f.source == "vcpkg" || f.source == "rocm")) {  // how CMake uses each, from its usage notes
-                    project_facts(true);
-                    std::string word;
-                    for (const char c : value + " ") {
-                        if (c != ' ') {
-                            word += c;
-                        } else if (!word.empty()) {
-                            if (!v.contains("usage:" + word))
-                                v["usage:" + word] = f.source == "rocm" ? rocm_usage(s.facts.rocm_access, word) : vcpkg_usage(s.facts.vcpkg_access, word);
-                            word.clear();
-                        }
-                    }
-                }
+                // (How CMake uses each of vcpkg's or ROCm's libraries, from its usage notes, is read when the project is made, on its thread.)
             }
     }
     s.error.clear();
@@ -1169,69 +1253,144 @@ bool good_name(const std::string& n) {
 
 }  // namespace
 
-// The project made: its folder and files written, the folder made the one
-// worked in, its main file opened, and what it runs once made run in the
-// build's output terminal.
+// The project made: its folder and files written on a thread of its own
+// (the form says "Creating…" meanwhile, and goes on answering), then
+// project_created opens it. What the machine has is waited for first (what
+// is made depends on it), if it has not come. False: not started (the
+// form says why), or one is under way.
 bool App::project_create() {
     StartUi& s = *start_;
     const ProjectKind* k = s.chosen();
-    s.error.clear();
     s.key = 0;
     dirty_ = true;
+    if (s.creating) return false;
+    s.error.clear();
     if (!k) return false;
     if (!good_name(s.name)) {
         s.error = s.name.empty() ? "It needs a name first." : "A name of letters, digits, '-', '_' and '.', starting with a letter or digit.";
         return false;
     }
-    const std::string dir = s.where + "/" + s.name;
-    if (fs_kind(dir) == 1 || (fs_kind(dir) == 2 && !fs_list(dir).empty())) {
-        s.error = home_short(dir) + " is there already.";
-        return false;
-    }
-    ProjectValues values = s.kind_values();
-    values["name"] = s.name;
-    values["git"] = s.git ? "true" : "false";
-    project_facts(true);
-    project_facts_apply();
-    values = s.kind_values();
-    values["name"] = s.name;
-    values["git"] = s.git ? "true" : "false";
-    values["vcpkg_root"] = s.facts.vcpkg_root;
-    values["vcpkg_baseline"] = s.facts.vcpkg_baseline;
-    values["rocm_root"] = s.facts.rocm_root;
-    values["uv_version"] = s.facts.uv_version;
-    std::string err, open, then;
-    if (!fs_mkdirs(dir, &err)) {
-        s.error = "Cannot make " + home_short(dir) + ": " + err;
-        return false;
-    }
-    if (k->scripted) {
-        if (!script_project_create(k->name, dir, values, &open, &then, &err)) {
-            s.error = err;
-            return false;
+    ++s.gen;
+    s.creating = true;
+    {
+        std::unique_lock lock(s.facts_mu);
+        if (!s.facts.done) {
+            lock.unlock();
+            s.create_wanted = true;  // (made when they come: start_sync)
+            project_facts();
+            return true;
         }
-        if (!open.empty() && open[0] != '/' && !is_remote(open)) open = dir + "/" + open;
-    } else {
-        const ProjectPlan plan = k->plan(values);
-        for (const ProjectFile& f : plan.files) {
-            const std::string path = dir + "/" + f.path;
-            const size_t slash = path.find_last_of('/');
-            if ((slash > dir.size() && !fs_mkdirs(path.substr(0, slash), &err)) || !fs_write(path, f.text, &err)) {
-                s.error = "Cannot write " + home_short(path) + ": " + err;
-                return false;
+    }
+    project_facts_apply();
+    StartUi::Creation c;
+    c.kind = k->name;
+    c.name = s.name;
+    c.dir = s.where + "/" + s.name;
+    c.git = s.git;
+    c.scripted = k->scripted;
+    if (!k->scripted) c.plan = k->plan;
+    c.values = s.kind_values();
+    c.values["name"] = s.name;
+    c.values["git"] = s.git ? "true" : "false";
+    c.values["vcpkg_root"] = s.facts.vcpkg_root;
+    c.values["vcpkg_baseline"] = s.facts.vcpkg_baseline;
+    c.values["rocm_root"] = s.facts.rocm_root;
+    c.values["uv_version"] = s.facts.uv_version;
+    c.vcpkg_access = s.facts.vcpkg_access;
+    c.rocm_access = s.facts.rocm_access;
+    for (const ProjectField& f : k->fields)  // (the libraries of vcpkg's and ROCm's chosen, for their usage notes)
+        if (f.kind == ProjectField::kLibraries && (f.source == "vcpkg" || f.source == "rocm") && f.shown(c.values)) {
+            std::string word;
+            for (const char ch : c.values[f.key] + " ") {
+                if (ch != ' ') word += ch;
+                else if (!word.empty()) c.usages.emplace_back(f.source, std::move(word)), word.clear();
             }
         }
-        if (!plan.open.empty()) open = dir + "/" + plan.open;
-        then = plan.then;
+    std::thread([wp = std::weak_ptr(start_), c = std::move(c)]() mutable {
+        const std::string& dir = c.dir;
+        std::string err;
+        if (!reached(dir)) c.error = "Cannot make " + home_short(dir) + ": " + remote_error(dir);
+        if (c.error.empty()) {
+            const int there = fs_kind(dir);
+            if (there == 1 || (there == 2 && !fs_list(dir).empty())) c.error = home_short(dir) + " is there already.";
+        }
+        if (c.error.empty())
+            for (const auto& [source, lib] : c.usages)
+                if (!c.values.contains("usage:" + lib)) c.values["usage:" + lib] = source == "rocm" ? rocm_usage(c.rocm_access, lib) : vcpkg_usage(c.vcpkg_access, lib);
+        if (c.error.empty() && !fs_mkdirs(dir, &err)) c.error = "Cannot make " + home_short(dir) + ": " + err;
+        if (c.error.empty() && !c.scripted) {
+            const ProjectPlan plan = c.plan(c.values);
+            std::vector<std::string> made = {dir};  // (the folders made: each once)
+            for (const ProjectFile& f : plan.files) {
+                const std::string path = dir + "/" + f.path, folder = path.substr(0, path.find_last_of('/'));
+                if (std::find(made.begin(), made.end(), folder) == made.end()) {
+                    if (!fs_mkdirs(folder, &err)) {
+                        c.error = "Cannot write " + home_short(path) + ": " + err;
+                        break;
+                    }
+                    made.push_back(folder);
+                }
+                if (!fs_write(path, f.text, &err)) {
+                    c.error = "Cannot write " + home_short(path) + ": " + err;
+                    break;
+                }
+            }
+            if (!plan.open.empty()) c.open = dir + "/" + plan.open;
+            c.then = plan.then;
+        }
+        c.plan = nullptr;
+        const std::shared_ptr<StartUi> sp = wp.lock();
+        if (!sp) return;  // (blit has gone)
+        {
+            std::lock_guard lock(sp->created_mu);
+            sp->created = std::move(c);
+        }
+        wake();
+    }).detach();
+    return true;
+}
+
+// The project made (or not), as its thread left it: the folder made the one
+// worked in, its main file opened, and what it runs once made run in the
+// build's output terminal (init.lua's kind: its create function makes it
+// first, in the folder made for it). Or the form says why not.
+void App::project_created() {
+    StartUi& s = *start_;
+    std::optional<StartUi::Creation> got;
+    {
+        std::lock_guard lock(s.created_mu);
+        got.swap(s.created);
     }
-    if (s.git) then = "git init -q" + (then.empty() ? std::string() : "; " + then);
-    s.made = dir;
-    if (!project_open(dir) && !panel_px()) panel_toggle();  // (the window's session is the new project's from here)
+    if (!got) return;
+    StartUi::Creation& c = *got;
+    s.creating = false;
+    ++s.gen;
+    s.key = 0;
+    dirty_ = true;
+    std::string open = c.open, then = c.then;
+    if (c.error.empty() && c.scripted) {
+        if (!script_project_create(c.kind, c.dir, c.values, &open, &then, &c.error)) open.clear();
+        else if (!open.empty() && open[0] != '/' && !is_remote(open)) open = c.dir + "/" + open;
+    }
+    if (!c.error.empty()) {
+        s.error = c.error;
+        if (!start_shown() || s.page != 1) notify(c.error);  // (the form is not there to say so)
+        return;
+    }
+    if (c.git) then = "git init -q" + (then.empty() ? std::string() : "; " + then);
+    s.made = c.dir;
+    if (!project_open(c.dir) && !panel_px()) panel_toggle();  // (the window's session is the new project's from here)
     if (!open.empty()) open_path(open.c_str());
     s.on = false;
-    if (!then.empty()) build_command(dir, then, "Setting up " + s.name);
+    if (!then.empty()) build_command(c.dir, then, "Setting up " + c.name);
     build_changed();
-    return true;
+}
+
+// What the form waits for (for the tests: 60 s at most): the project being
+// made, or the facts a search of libraries waits for.
+void App::project_wait() {
+    StartUi& s = *start_;
+    for (const u64 until = now_ns() + 60'000'000'000ull; (s.creating || s.libraries_wanted) && now_ns() < until; SDL_Delay(2)) start_sync();
 }
 
 // The New project tab's cells (start_layout): the form, section by
@@ -1361,8 +1520,8 @@ void App::project_cells(u32 cols, u32 rows) {
         r.row = y;
         const bool chosen = i == s.form_sel;
         if (r.what == kFormCreate) {  // a button, in the value column, on a bar of its own: lit when it is chosen
-            u32 c = put(box, font, y, value_col, "Create", ink::kAccentStrong);
-            c = put(box, font, y, c + 2, create, ink::kAccent);
+            u32 c = s.creating ? put(box, font, y, value_col, "Creating\xE2\x80\xA6", ink::kMuted) : put(box, font, y, value_col, "Create", ink::kAccentStrong);
+            if (!s.creating) c = put(box, font, y, c + 2, create, ink::kAccent);
             s.create_c[0] = value_col - 1;
             s.create_c[1] = std::min(cols, c + 1);
             for (u32 x = s.create_c[0]; x < s.create_c[1]; ++x) box.cells[static_cast<size_t>(y) * cols + x] |= chosen ? kCellSelected : kCellHover;
@@ -1430,9 +1589,17 @@ void App::project_cells(u32 cols, u32 rows) {
     if (!foot) return;
     // What the chosen row is for, in full (or what went wrong, or what is
     // being waited for), then the keys, as many as there is room for.
+    std::string host, there;
+    const bool remote = split_remote(s.where, &host, &there);
     if (!s.error.empty()) {
         const bool waiting = s.pypi_loading && s.pypi_wanted;  // (PyPI's list on its way: not a problem)
         put(box, font, msg_row, s.left, fit_text(s.error, s.width), waiting ? ink::kMuted : ink::kError);
+    } else if (s.creating) {  // (on its thread: and first, what the machine has, if that has not come)
+        const std::string what = "Creating " + s.name + (remote ? " on " + host : " in " + home_short(s.where)) +
+                                 (s.create_wanted ? ": looking at what " + std::string(remote ? "it" : "this machine") + " has first" : std::string());
+        put(box, font, msg_row, s.left, fit_text(what + "\xE2\x80\xA6", s.width), ink::kMuted);
+    } else if (s.libraries_wanted) {
+        put(box, font, msg_row, s.left, fit_text("Looking at what " + (remote ? host : std::string("this machine")) + " has\xE2\x80\xA6", s.width), ink::kMuted);
     } else if (s.form_sel < s.form.size()) {
         const StartUi::Row& r = s.form[s.form_sel];
         std::string note;
@@ -1456,7 +1623,7 @@ void App::project_cells(u32 cols, u32 rows) {
 std::string App::project_facts_dump() {
     StartUi& s = *start_;
     if (s.kinds.empty()) project_page(true);
-    project_facts(true);
+    project_facts_wait();
     const StartUi::Facts& f = s.facts;
     return "vcpkg=" + home_short(f.vcpkg_root) + " ports=" + std::to_string(f.vcpkg_ports.size()) + " baseline=" + f.vcpkg_baseline.substr(0, 10) +
            " rocm=" + f.rocm_root + " gpus=" + f.gpus + " uv=" + f.uv_version + " pkg-config=" + std::to_string(f.pkgconfig.size());
@@ -1478,6 +1645,8 @@ std::string App::project_dump() {
             out += " " + f.key + "=" + (it == v.end() ? std::string() : it->second);
         }
     if (s.form_sel < s.form.size()) out += " | at " + std::to_string(s.form_sel);
+    if (s.creating) out += " | creating";
+    if (s.libraries_wanted) out += " | looking";
     if (!s.error.empty()) out += " | error: " + s.error;
     if (!s.made.empty()) out += " | made " + home_short(s.made);
     return out;

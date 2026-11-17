@@ -66,5 +66,24 @@ check "a program that is not there" "it says why"
 run "remotewait;debug:program=ssh://box$T/count;break:8;key:F5;debugwait:stopped;debugdump;frame;statusdump" "ssh://box$T/count.c"
 check "on another machine" 'stopped (breakpoint); stack: square@8 main@15; vars: x=1 y=1 ;; box count.c | Ln 8, Col 1 Spaces: 4 LF C'
 
+# On a slow one (each answer held a while): F5 goes back to the keys at once
+# and the tab says it is starting (the debugger is started there on a thread
+# of its own), and the session works once it is up. Stopping it, while it
+# starts (Shift+F5, or F5 again) or once it has stopped, waits for nothing.
+# slow SCRIPT [FILE]: as run, on a host that holds each answer SLOW seconds (0.2).
+SLOW=
+slow() {
+    got=$(BLIT_FAKE_SLOW=${SLOW:-0.2} "$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "$1" "${2:-$dir/here/count.c}" 2>&1 >/dev/null |
+        sed -e "s#$dir#@#g" | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }')
+    SLOW=
+}
+slow "remotewait;debug:program=ssh://box$T/count;break:8;clock;key:F5;within:300;debugdump;debugwait:stopped;debugdump;clock;key:shift+F5;within:300;debugdump" "ssh://box$T/count.c"
+check "on a slow host: F5 at once, and the session once it is up; Shift+F5 at once" \
+    'within 300 ms ;; starting ;; stopped (breakpoint); stack: square@8 main@15; vars: x=1 y=1 ;; within 300 ms ;; idle'
+slow "remotewait;debug:program=ssh://box$T/count;key:F5;clock;key:shift+F5;within:300;debugdump;key:F5;clock;key:F5;within:300;debugdump;key:F5;debugwait:idle;debugdump" "ssh://box$T/count.c"
+case "$got" in *"[exited with code 0]") got="${got%%; output: *}; ran to its end" ;; esac
+check "stopped while it starts, by Shift+F5 or F5 again: at once (and it starts again after)" \
+    'within 300 ms ;; idle ;; within 300 ms ;; idle ;; idle; ran to its end'
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "debug ok"
 exit $failed

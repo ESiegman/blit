@@ -150,6 +150,26 @@ SLOW=0.3 slow "remotewait;treewait;open:ssh://box$T/.tree/a.txt;remotewait;key:c
 got="$got | $(cd "$T/.tree" && ls * | tr '\n' ' ')| $(ls "$T/.local/share/Trash/files")"
 check "the tree's changes there" 'within 300 ms ;; blit: "src" is already there ;; box a.txt | Ln 1, Col 1 Tabs LF Plain text ;; box b.txt | Ln 1, Col 1 Tabs LF Plain text | made.txt main.cpp | b.txt'
 
+# The New project tab, making a project there on a slow host: Create goes
+# back to the keys at once (the form says it is creating), the project is
+# made on its thread once what the host has has been looked at, and its
+# main file opens; one that cannot be made says why in the form. What the
+# host has is looked for on a thread too: a Location changed again, a name
+# typed and Enter on the libraries wait for none of it (the search opens
+# when it has come). (projectdump's fields are left out here.)
+fields() { got=$(printf '%s' "$got" | sed -E 's/ \| [a-z_]+=[^|]* \| at [0-9]+//g'); }
+SLOW=0.2 slow "newproject;project:where=ssh://box$T/proj;project:kind=C;project:build=Make;project:git=false;project:name=app;clock;projectcreate;within:300;projectdump;projectwait;projectdump;remotewait;frame;statusdump"
+fields
+got="$got | $(cd "$T/proj/app" && find . -type f | sort | tr '\n' ' ')"
+check "a project made there: at once, and made" 'within 300 ms ;; kind=C name=app where=ssh://box~/proj git=off | creating ;; kind=C name=app where=ssh://box~/proj git=off | made ssh://box~/proj/app ;; box src/main.c | Ln 1, Col 1 Spaces: 4 LF C | ./Makefile ./README.md ./compile_flags.txt ./include/app/app.h ./src/app.c ./src/main.c ./tests/test_app.c '
+run "newproject;project:where=ssh://box$T/proj;project:name=app;projectcreate;projectwait;projectdump"
+fields
+check "and one that is there already: the form says so" 'kind=C++ name=app where=ssh://box~/proj git=on | error: ssh://box~/proj/app is there already.'
+SLOW=0.3 slow "newproject;project:where=ssh://box$T/a;clock;project:where=ssh://box$T/proj;key:Down;text:n;text:b;key:Return;key:Down;key:Down;key:Down;key:Down;key:Down;key:Return;within:300;projectdump;projectwait;projectdump;finddump"
+fields
+got=$(printf '%s' "$got" | sed -e 's/ | error: vcpkg is not to be found.*/ | searched/' -e 's/^\(.*\) ;; pick \[.*/\1 | searched/')  # (its vcpkg there, or none)
+check "what the host has, looked for meanwhile: the form goes on" 'within 300 ms ;; kind=C++ name=nb where=ssh://box~/proj git=on | looking ;; kind=C++ name=nb where=ssh://box~/proj git=on | searched'
+
 # A program there that writes far faster than what reads it here: no more
 # than a few MB of it are held here (the agent stops reading it meanwhile,
 # or, an older agent, the connection is not read), and all of it comes.

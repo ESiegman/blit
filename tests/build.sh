@@ -169,11 +169,11 @@ run "$dir/none" "newproject;key:Down;key:Down;key:Down;key:Down;key:Right;key:Ri
 check "keys: down to Builds, a choice along" 'kind=C++ name= where=~/Dev git=on | target=Shared library std=23 libraries= tests=CTest warnings=Standard sanitizers=Address + undefined tuning=Portable lto=false generator=Ninja presets=true install=true clangd=true tidy=false format=None readme=true configure=true | at 4'
 run "$dir/none" "newproject;key:Down;key:Down;key:Down;key:Down;key:Left;projectdump"
 check "a field shown only for some values: Install rules, for a library" 'kind=C++ name= where=~/Dev git=on | target=Header-only library std=23 libraries= tests=CTest warnings=Standard sanitizers=Address + undefined tuning=Portable lto=false generator=Ninja presets=true install=true clangd=true tidy=false format=None readme=true configure=true | at 4'
-run "$dir/none" "newproject;projectcreate;projectdump"
+run "$dir/none" "newproject;projectcreate;projectwait;projectdump"
 check "no name" 'kind=C++ name= where=~/Dev git=on | target=Program std=23 libraries= tests=CTest warnings=Standard sanitizers=Address + undefined tuning=Portable lto=false generator=Ninja presets=true clangd=true tidy=false format=None readme=true configure=true | at 0 | error: It needs a name first.'
-run "$dir/none" "newproject;project:where=$P;project:name=taken;projectcreate;startdump"
+run "$dir/none" "newproject;project:where=$P;project:name=taken;projectcreate;projectwait;startdump"
 check "a folder that is there" 'new project: kind=C++ name=taken where=~/projects git=on | target=Program std=23 libraries= tests=CTest warnings=Standard sanitizers=Address + undefined tuning=Portable lto=false generator=Ninja presets=true clangd=true tidy=false format=None readme=true configure=true | at 0 | error: ~/projects/taken is there already.'
-run "$dir/none" "newproject;project:where=$P;project:libraries=fmt zlib;project:configure=false;project:git=false;project:name=app;projectcreate;frame;statusdump"
+run "$dir/none" "newproject;project:where=$P;project:libraries=fmt zlib;project:configure=false;project:git=false;project:name=app;projectcreate;projectwait;frame;statusdump"
 check "made: the start screen goes, its main file is open" 'NORMAL src/main.cpp | Ln 1, Col 1 Spaces: 4 LF C++'
 got=$(cd "$P/app" && find . -type f | sort | tr '\n' ' ')
 check "the files: headers in include/, sources in src/" './.clangd ./CMakeLists.txt ./CMakePresets.json ./README.md ./include/app/app.hpp ./src/app.cpp ./src/main.cpp ./tests/test_app.cpp ./vcpkg.json '
@@ -181,13 +181,13 @@ got=$(grep -E 'fmt|zlib|TOOLCHAIN_FILE "' "$P/app/CMakeLists.txt" | tr '\n' '|')
 check "vcpkg: the toolchain, fmt by its usage notes (the first way), zlib by none" '  set(CMAKE_TOOLCHAIN_FILE "$ENV{VCPKG_ROOT}/scripts/buildsystems/vcpkg.cmake" CACHE FILEPATH "vcpkg'"'"'s toolchain")|find_package(fmt CONFIG REQUIRED)|target_link_libraries(app_core PUBLIC fmt::fmt)|# zlib: vcpkg says what to find_package and link (target_link_libraries(app_core PUBLIC ...)) when it installs it.|'
 got=$(tr -d ' \n' <"$P/app/vcpkg.json")
 check "vcpkg.json" '{"name":"app","version-string":"0.1.0","dependencies":["fmt","zlib"]}'
-run "$dir/none" "newproject;project:where=$P;project:kind=C;project:build=Make;project:name=cm;projectcreate;buildwait;builddump"
+run "$dir/none" "newproject;project:where=$P;project:kind=C;project:build=Make;project:name=cm;projectcreate;projectwait;buildwait;builddump"
 check "C with make: made, git init run, and the Build tab has it" 'Make: >make make all make run make test make release make clean (last: 0)'
 [ -d "$P/cm/.git" ] && got=git || got='no .git'
 check "git init" 'git'
 run "$P/cm" "buildrun:make test;buildwait;builddump"
 check "and it builds, and its test passes" 'Make: make make all make run >make test make release make clean (last: 0)'
-run "$dir/none" "newproject;project:where=$P;project:kind=Python;project:manager=pip;project:type=Script;project:install=false;project:name=tool;projectcreate;projectdump"
+run "$dir/none" "newproject;project:where=$P;project:kind=Python;project:manager=pip;project:type=Script;project:install=false;project:name=tool;projectcreate;projectwait;projectdump"
 check "Python: a script with pip" 'kind=Python name=tool where=~/projects git=on | manager=pip type=Script python=3.13 backend_pip=hatchling deps= ruff=true types=mypy readme=true install=false | at 0 | made ~/projects/tool'
 
 printf 'notes\n' >"$dir/notes.txt"
@@ -213,7 +213,7 @@ INIT="$dir/kind.lua"
 run "$dir/none" "newproject;project:where=$P;project:kind=Python;projectdump"
 check "a kind taken away is not there" 'kind=C++ name= where=~/projects git=on | target=Program std=23 libraries= tests=CTest warnings=Standard sanitizers=Address + undefined tuning=Portable lto=false generator=Ninja presets=true clangd=true tidy=false format=None readme=true configure=true | at 0'
 INIT="$dir/kind.lua"
-run "$dir/none" "newproject;project:where=$P;project:kind=Notes;project:title=Ideas;project:git=false;project:name=notes;projectcreate;frame;statusdump"
+run "$dir/none" "newproject;project:where=$P;project:kind=Notes;project:title=Ideas;project:git=false;project:name=notes;projectcreate;projectwait;frame;statusdump"
 check "blit.project.add: its create made it, and its file is open" 'NORMAL notes.md | Ln 1, Col 1 Tabs LF Markdown'
 got=$(tr '\n' '|' <"$P/notes/notes.md")
 check "with the values set" '# Ideas||[TOC]|'

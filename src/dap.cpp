@@ -7,9 +7,16 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <cerrno>
 #include <charconv>
 #include <cstring>
+#include <deque>
+#include <mutex>
+#include <stop_token>
+#include <thread>
+
+#include "remote.hpp"
 
 extern char** environ;
 
@@ -27,34 +34,49 @@ inline int spawn_chdir(posix_spawn_file_actions_t* fa, const char* dir) {
 
 }  // namespace
 
-Dap::~Dap() {
-    stop();
-    reader_.request_stop();
-    err_reader_.request_stop();
-    if (reader_.joinable()) reader_.join();
-    if (err_reader_.joinable()) err_reader_.join();
-    if (in_ >= 0) ::close(in_);
-    if (out_ >= 0) ::close(out_);
-    if (err_ >= 0) ::close(err_);
-    if (pid_ > 0) {
-        int st = 0;
-        for (int i = 0; i < 50 && ::waitpid(pid_, &st, WNOHANG) == 0; ++i) ::usleep(10'000);
-        if (::waitpid(pid_, &st, WNOHANG) == 0) {
-            ::kill(pid_, SIGKILL);
-            ::waitpid(pid_, &st, 0);
-        }
-    }
-    if (conn_ && proc_.id) conn_->wait(proc_.id, 1000);
-}
+// The adapter's end of things, shared by the Dap (on the main thread), the
+// thread that reads it, and the one that lets go of it: the Dap can go at
+// once while the other two finish with it.
+struct Dap::Link {
+    std::function<void()> notify;
+    // The adapter: here, a process and its pipes; there, a program the
+    // agent runs (its connection and its number: mu, set by the reader once
+    // it has started).
+    pid_t pid = -1;
+    std::shared_ptr<Remote> conn;
+    RemoteProc proc;
+    int out = -1, err = -1;  // (the reader's)
+    // On another machine: where, and what is run there (by the reader).
+    std::string remote_dir;
+    std::vector<std::string> argv;
+    // Writing. Until the adapter has started (there), what is sent waits in `pending`.
+    std::mutex write_mu;
+    int in = -1;
+    bool up = false;
+    std::string pending;
+    // What it has said, for poll().
+    std::mutex mu;
+    std::deque<Message> queue;
+    std::string errors;
+    std::atomic<bool> ended{false};
+    std::jthread reader;  // (last: it is stopped and joined by end(), never by the Dap)
+
+    bool start_remote(std::stop_token stop);
+    void read_loop(std::stop_token stop);
+    void send(const std::string& frame);
+    void kill_now(int sig);
+    void end(int grace_ms);
+};
+
+Dap::~Dap() { stop(); }
 
 bool Dap::start(const std::vector<std::string>& argv, const std::string& dir, std::function<void()> notify, std::string* err) {
-    notify_ = std::move(notify);
+    auto l = std::make_shared<Link>();
+    l->notify = std::move(notify);
     std::string host, there;
     if (split_remote(dir, &host, &there)) {
-        conn_ = remote_for(dir, &there, kRemoteWaitMs);
-        if (!conn_) return *err = remote_error(dir), false;
-        if (!conn_->spawn(argv, there, {}, &proc_, err)) return false;
-        in_ = proc_.in, out_ = proc_.out, err_ = proc_.err;
+        l->remote_dir = dir;  // (connected to, and started there, on the reader's thread)
+        l->argv = argv;
     } else {
         int in[2], out[2], er[2];
         if (::pipe(in) || ::pipe(out) || ::pipe(er)) return *err = "cannot make a pipe", false;
@@ -74,46 +96,94 @@ bool Dap::start(const std::vector<std::string>& argv, const std::string& dir, st
         std::vector<char*> args;
         for (std::string& w : words) args.push_back(w.data());
         args.push_back(nullptr);
-        const int rc = ::posix_spawnp(&pid_, args[0], &fa, &attr, args.data(), environ);
+        const int rc = ::posix_spawnp(&l->pid, args[0], &fa, &attr, args.data(), environ);
         posix_spawnattr_destroy(&attr);
         posix_spawn_file_actions_destroy(&fa);
         ::close(in[0]), ::close(out[1]), ::close(er[1]);
         if (rc != 0) {
             ::close(in[1]), ::close(out[0]), ::close(er[0]);
+            l->pid = -1;
             return *err = std::string("cannot run ") + argv[0] + ": " + std::strerror(rc), false;
         }
-        in_ = in[1], out_ = out[0], err_ = er[0];
+        l->in = in[1], l->out = out[0], l->err = er[0];
+        l->up = true;
     }
     ::signal(SIGPIPE, SIG_IGN);
-    reader_ = std::jthread([this](std::stop_token stop) { read_loop(stop); });
-    err_reader_ = std::jthread([this](std::stop_token stop) {
-        char buf[4096];
-        while (!stop.stop_requested()) {
-            pollfd p{err_, POLLIN, 0};
-            if (::poll(&p, 1, 100) <= 0) continue;
-            const ssize_t k = ::read(err_, buf, sizeof buf);
-            if (k <= 0) break;
-            std::lock_guard lock(mu_);
-            errors_.append(buf, static_cast<size_t>(k));
-            if (errors_.size() > 4096) errors_.erase(0, errors_.size() - 4096);
-        }
-    });
+    Link* raw = l.get();  // (alive until end() has joined the reader)
+    l->reader = std::jthread([raw](std::stop_token stop) { raw->read_loop(stop); });
+    link_ = std::move(l);
     return true;
 }
 
-// Messages, as they come: a header ("Content-Length: n"), a blank line, n bytes of JSON.
-void Dap::read_loop(std::stop_token stop) {
-    std::string in;
+// On another machine: the connection (waited for, as a worker may, but not
+// once it has failed, nor past a request to stop) and the adapter started
+// there; then what was asked of it meanwhile is sent.
+bool Dap::Link::start_remote(std::stop_token stop) {
+    std::string host, there;
+    split_remote(remote_dir, &host, &there);
+    std::shared_ptr<Remote> c = Remote::get(host);  // (made now if it is not there, or again if it failed a while ago)
+    bool ready = false;
+    for (int waited = 0; !ready && waited < kRemoteWaitMs && !stop.stop_requested() && c->state() != Remote::kFailed; waited += 200) ready = c->wait_ready(200);
+    auto failed = [&](const std::string& why) {
+        std::lock_guard lock(mu);
+        errors += why + "\n";
+        return false;
+    };
+    if (stop.stop_requested()) return false;
+    if (!ready) return failed(remote_error(remote_dir));
+    RemoteProc p;
+    std::string why;
+    if (!c->spawn(argv, there, {}, &p, &why)) return failed("cannot start the debugger there: " + why);
+    {
+        std::lock_guard lock(mu);
+        conn = std::move(c);
+        proc = p;
+    }
+    out = p.out, err = p.err;
+    std::lock_guard lock(write_mu);
+    in = p.in;
+    up = true;
+    for (size_t at = 0; at < pending.size();) {
+        const ssize_t k = ::write(in, pending.data() + at, pending.size() - at);
+        if (k > 0) at += static_cast<size_t>(k);
+        else if (k < 0 && errno == EINTR) continue;
+        else break;
+    }
+    pending.clear();
+    return true;
+}
+
+// Messages, as they come: a header ("Content-Length: n"), a blank line, n
+// bytes of JSON. (And what it writes as errors, the last of it kept.)
+void Dap::Link::read_loop(std::stop_token stop) {
+    if (!remote_dir.empty() && !start_remote(stop)) {
+        ended = true;
+        if (notify) notify();
+        return;
+    }
+    std::string in_text;
     char buf[65536];
+    pollfd fds[2] = {{out, POLLIN, 0}, {err, POLLIN, 0}};
+    nfds_t watched = err >= 0 ? 2 : 1;
     while (!stop.stop_requested()) {
-        pollfd p{out_, POLLIN, 0};
-        const int r = ::poll(&p, 1, 100);
+        const int r = ::poll(fds, watched, 100);
         if (r < 0 && errno != EINTR) break;
         if (r <= 0) continue;
-        const ssize_t k = ::read(out_, buf, sizeof buf);
+        if (watched == 2 && fds[1].revents) {
+            const ssize_t k = ::read(err, buf, sizeof buf);
+            if (k <= 0) {
+                watched = 1;  // (its errors have ended: its output may not have)
+            } else {
+                std::lock_guard lock(mu);
+                errors.append(buf, static_cast<size_t>(k));
+                if (errors.size() > 4096) errors.erase(0, errors.size() - 4096);
+            }
+        }
+        if (!fds[0].revents) continue;
+        const ssize_t k = ::read(out, buf, sizeof buf);
         if (k == 0 || (k < 0 && errno != EINTR && errno != EAGAIN)) break;
         if (k < 0) continue;
-        in.append(buf, static_cast<size_t>(k));
+        in_text.append(buf, static_cast<size_t>(k));
         bool any = false;
         // Text that is not a message is the program's own (gdb lets the
         // program write where its messages go): it is told as output.
@@ -127,35 +197,35 @@ void Dap::read_loop(std::stop_token stop) {
             m.type = "event";
             m.name = "output";
             m.doc = std::move(doc);
-            std::lock_guard lock(mu_);
-            queue_.push_back(std::move(m));
+            std::lock_guard lock(mu);
+            queue.push_back(std::move(m));
             any = true;
         };
         for (;;) {
-            const size_t at = in.find("Content-Length:");
+            const size_t at = in_text.find("Content-Length:");
             if (at == std::string::npos) {  // (no header yet: what can not be the start of one is the program's)
-                const size_t keep = std::min<size_t>(in.size(), 15);
-                if (in.size() > keep && in.find('\n') != std::string::npos) {
-                    const size_t cut = in.rfind('\n') + 1;
-                    program_wrote(in.substr(0, cut));
-                    in.erase(0, cut);
+                const size_t keep = std::min<size_t>(in_text.size(), 15);
+                if (in_text.size() > keep && in_text.find('\n') != std::string::npos) {
+                    const size_t cut = in_text.rfind('\n') + 1;
+                    program_wrote(in_text.substr(0, cut));
+                    in_text.erase(0, cut);
                 }
                 break;
             }
             if (at > 0) {
-                program_wrote(in.substr(0, at));
-                in.erase(0, at);
+                program_wrote(in_text.substr(0, at));
+                in_text.erase(0, at);
                 continue;
             }
-            const size_t head_end = in.find("\r\n\r\n");
+            const size_t head_end = in_text.find("\r\n\r\n");
             if (head_end == std::string::npos) break;
             size_t length = 0;
             size_t num = at + 15;
-            while (num < head_end && in[num] == ' ') ++num;
-            std::from_chars(in.data() + num, in.data() + head_end, length);
-            if (in.size() < head_end + 4 + length) break;
-            std::string text = in.substr(head_end + 4, length);
-            in.erase(0, head_end + 4 + length);
+            while (num < head_end && in_text[num] == ' ') ++num;
+            std::from_chars(in_text.data() + num, in_text.data() + head_end, length);
+            if (in_text.size() < head_end + 4 + length) break;
+            std::string text = in_text.substr(head_end + 4, length);
+            in_text.erase(0, head_end + 4 + length);
             auto doc = std::make_shared<json::Doc>();
             if (!doc->parse(std::move(text))) continue;
             const json::Value v = doc->root();
@@ -167,55 +237,103 @@ void Dap::read_loop(std::stop_token stop) {
             m.success = v["success"].boolean(true);
             m.message = std::string(v["message"].str());
             m.doc = std::move(doc);
-            std::lock_guard lock(mu_);
-            queue_.push_back(std::move(m));
+            std::lock_guard lock(mu);
+            queue.push_back(std::move(m));
             any = true;
         }
-        if (any && notify_) notify_();
+        if (any && notify) notify();
     }
-    ended_ = true;
-    if (notify_) notify_();
+    ended = true;
+    if (notify) notify();
 }
 
-void Dap::send(const std::string& json) {
-    const std::string frame = "Content-Length: " + std::to_string(json.size()) + "\r\n\r\n" + json;
-    std::lock_guard lock(write_mu_);
+void Dap::Link::send(const std::string& frame) {
+    std::lock_guard lock(write_mu);
+    if (!up) {  // (not started there yet: sent when it has, unless it never will be)
+        if (!ended) pending += frame;
+        return;
+    }
     size_t at = 0;
-    while (at < frame.size() && in_ >= 0) {
-        const ssize_t k = ::write(in_, frame.data() + at, frame.size() - at);
+    while (at < frame.size() && in >= 0) {
+        const ssize_t k = ::write(in, frame.data() + at, frame.size() - at);
         if (k > 0) at += static_cast<size_t>(k);
         else if (k < 0 && errno == EINTR) continue;
         else break;
     }
 }
 
+// A signal to the adapter (a call that does not wait).
+void Dap::Link::kill_now(int sig) {
+    pid_t p;
+    std::shared_ptr<Remote> c;
+    u32 id;
+    {
+        std::lock_guard lock(mu);
+        p = pid, c = conn, id = proc.id;
+    }
+    if (p > 0) ::kill(p, sig);
+    if (c && id) c->kill(id, sig);
+}
+
+// Letting go of the adapter (on a thread of its own: each step may wait).
+void Dap::Link::end(int grace_ms) {
+    for (int waited = 0; waited < grace_ms && !ended; waited += 10) ::usleep(10'000);
+    const bool alive = !ended;
+    reader.request_stop();  // (one still connecting stops; one starting the adapter there finishes that first)
+    if (reader.joinable()) reader.join();
+    if (alive) kill_now(SIGTERM);
+    {
+        std::lock_guard lock(write_mu);
+        if (in >= 0) ::close(in);
+        in = -1;
+        up = false;
+    }
+    if (out >= 0) ::close(out);
+    if (err >= 0) ::close(err);
+    if (pid > 0) {
+        int st = 0;
+        for (int i = 0; i < 50 && ::waitpid(pid, &st, WNOHANG) == 0; ++i) ::usleep(10'000);
+        if (::waitpid(pid, &st, WNOHANG) == 0) {
+            ::kill(pid, SIGKILL);
+            ::waitpid(pid, &st, 0);
+        }
+    }
+    // The program there is reaped: the connection keeps a record and descriptors for it until it is.
+    if (conn && proc.id && conn->wait(proc.id, 1000) == -2) {
+        conn->kill(proc.id, SIGKILL);
+        conn->wait(proc.id, 3000);
+    }
+}
+
 i64 Dap::request(std::string_view command, std::string_view arguments, Done done) {
     const i64 seq = seq_++;
+    if (!link_) return seq;
     std::string json = "{\"seq\":" + std::to_string(seq) + ",\"type\":\"request\",\"command\":";
     json::quote(json, command);
     json += ",\"arguments\":";
     json += arguments;
     json += "}";
     if (done) waiting_.emplace_back(seq, std::move(done));
-    send(json);
+    link_->send("Content-Length: " + std::to_string(json.size()) + "\r\n\r\n" + json);
     return seq;
 }
 
 void Dap::respond(const Message& to, bool success, std::string_view body) {
+    if (!link_) return;
     std::string json = "{\"seq\":" + std::to_string(seq_++) + ",\"type\":\"response\",\"request_seq\":" + std::to_string(to.seq) + ",\"success\":" +
                        (success ? "true" : "false") + ",\"command\":";
     json::quote(json, to.name);
     json += ",\"body\":";
     json += body;
     json += "}";
-    send(json);
+    link_->send("Content-Length: " + std::to_string(json.size()) + "\r\n\r\n" + json);
 }
 
 std::vector<Dap::Message> Dap::poll() {
     std::deque<Message> got;
-    {
-        std::lock_guard lock(mu_);
-        got.swap(queue_);
+    if (link_) {
+        std::lock_guard lock(link_->mu);
+        got.swap(link_->queue);
     }
     std::vector<Message> events;
     for (Message& m : got) {
@@ -234,15 +352,21 @@ std::vector<Dap::Message> Dap::poll() {
     return events;
 }
 
+bool Dap::ended() const { return !link_ || link_->ended; }
+
 std::string Dap::errors() const {
-    std::lock_guard lock(const_cast<std::mutex&>(mu_));
-    return errors_;
+    if (!link_) return {};
+    std::lock_guard lock(link_->mu);
+    return link_->errors;
 }
 
 void Dap::stop(int grace_ms) {
-    for (int waited = 0; waited < grace_ms && !ended_; waited += 10) ::usleep(10'000);
-    if (pid_ > 0 && !ended_) ::kill(pid_, SIGTERM);
-    if (conn_ && proc_.id && !ended_) conn_->kill(proc_.id, SIGTERM);
+    if (!link_) return;
+    std::shared_ptr<Link> l = std::move(link_);
+    // With no time to end of itself, it is told to at once, from here (a
+    // thread just started may not run before blit itself has gone).
+    if (grace_ms <= 0 && !l->ended) l->kill_now(SIGTERM);
+    std::thread([l = std::move(l), grace_ms] { l->end(grace_ms); }).detach();
 }
 
 }  // namespace blit

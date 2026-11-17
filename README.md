@@ -1244,8 +1244,10 @@ The debugger is the one the machine has: Xcode's `lldb-dap` on a Mac
 itself) or `lldb-dap` on Linux, and debugpy for a `.py` program (`pip
 install debugpy`). A program on another machine (`ssh://host/...`) is
 debugged there, with that machine's debugger, its source opened from
-there. Build what is debugged with `-g` (and `-O0` to step through it as
-written).
+there; F5 waits for nothing there: the Debug tab says *Starting on host…*,
+and F5 again (or Shift+F5) calls it off. Stopping never waits for the
+debugger to end. Build what is debugged with `-g` (and `-O0` to step
+through it as written).
 
 ## Building
 
@@ -1320,7 +1322,12 @@ make it on another machine), whether it is a git repository, and the
 kind's own choices. Up and Down move, Left and Right (or Space) change a
 choice or a switch, Enter types into a line or looks up libraries, and
 Cmd+Enter (or Enter on Create) makes it. Under the form it says which
-files it writes and what it runs once they are written.
+files it writes and what it runs once they are written. Creating happens on
+a thread: Create says *Creating…*, the form keeps answering, and the main
+file opens when the project is made; one that cannot be made says why on
+the form's bottom line. On another machine a Libraries row says
+*Looking…* until what the machine has has come, and Enter there opens the
+search when it does.
 
 | Kind | What it is | Its choices |
 |---|---|---|

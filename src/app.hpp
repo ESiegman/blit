@@ -421,13 +421,16 @@ private:
     void project_change(int by);  // the chosen row's value, a step along (a choice, a switch)
     void project_edit(const std::string& typed = {});
     void project_set(const std::string& key, const std::string& value);
-    bool project_create();
+    bool project_create();  // (made on a thread: project_created takes it)
+    void project_created();
+    void project_wait();    // (for the tests: until what the form waits for has come)
     std::string project_dump();
     std::string project_facts_dump();
     void project_cells(u32 cols, u32 rows);
-    void project_facts(bool wait);  // what the machine the project goes on has: vcpkg, ROCm, GPUs, uv, pkg-config
+    void project_facts();  // what the machine the project goes on has (vcpkg, ROCm, GPUs, uv, pkg-config), looked for on a thread
+    void project_facts_wait();  // (for the tests)
     void project_facts_apply();
-    void start_sync();  // a thread of the start screen has found something (user event 19)
+    void start_sync();  // a thread of the start screen has found something, or made the project (user event 19)
     void project_libraries(const std::string& typed = {});
     void recent_add(const std::string& path, bool dir);
 

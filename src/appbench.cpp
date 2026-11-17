@@ -874,8 +874,10 @@ void App::run_script(const char* script) {
         } else if (verb == "project") {  // project:key=value (kind, name, where, git, or a field of the kind's)
             const size_t eq = arg.find('=');
             project_set(arg.substr(0, eq), eq == std::string::npos ? std::string() : arg.substr(eq + 1));
-        } else if (verb == "projectcreate") {
+        } else if (verb == "projectcreate") {  // what Create does (the project is made on a thread: projectwait)
             project_create();
+        } else if (verb == "projectwait") {  // what the New project tab waits for has come: the project made, or the facts a search wants
+            project_wait();
         } else if (verb == "projectfacts") {
             std::fprintf(stderr, "%s\n", project_facts_dump().c_str());
         } else if (verb == "projectdump") {

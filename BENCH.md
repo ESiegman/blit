@@ -2155,6 +2155,32 @@ may use.
   the shell again in a process of its own. Only a first start ever waits
   for the shell. From a terminal none of it runs.
 
+### Round 36: a new project and the debugger on another machine, off the main thread
+
+Made in a copy of `main` at 5b61450 by an agent of its own, merged with no
+conflict. Creating a project there, what the machine has (the facts the
+form shows), and starting and stopping the debugger there each waited on
+the connection on the main thread; now each is a thread's (the debugger's
+whole session lives in a shared link that a thread of its own tears down).
+The main thread's time, against 5b61450, four runs each, alternating, with
+a stand-in host that holds each answer 0.5 s (projects) or 0.3 s
+(debugger):
+
+| | Before | After |
+|---|---:|---:|
+| Create (C, Make) | 7,054 to 7,067 ms | 0.03 to 0.08 ms |
+| The Location changed while the facts load | 6,040 to 6,055 ms | 0.01 to 0.02 ms |
+| Enter on Libraries while the facts load | 5,531 to 5,551 ms | 0.001 to 0.003 ms |
+| F5, on the other machine | 303 to 306 ms | 0.06 to 0.23 ms |
+| Shift+F5 while stopped, there | 504 to 811 ms | 0.04 to 0.13 ms |
+| Shift+F5 while starting, there | 606 to 611 ms | 0.03 to 0.04 ms |
+| Shift+F5, on this machine | 184 to 198 ms | 0.04 to 0.09 ms |
+
+Nothing changed is on a text view's path: scrolling and keys on
+code-100m.txt at 2560x1600 measured the same within noise (16,449 to
+17,302 against 16,354 to 17,255 frames a second, fill p50 1.88 to 1.92
+µs in both).
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

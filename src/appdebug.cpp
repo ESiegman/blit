@@ -92,6 +92,7 @@ struct App::DebugUi {
     };
     std::vector<Var> vars;
     u64 vars_gen = 0;  // (answers about variables from before the last stop are dropped)
+    u32 asking = 0;    // questions about the stack and the variables not answered yet (debug_wait)
     std::vector<std::string> output;
     std::string partial;
     int exit_code = -1;
@@ -185,6 +186,7 @@ u32 App::debug_gutter(const Doc& d, u64 line) {
 void App::debug_start() {
     DebugUi& u = *debugui_;
     if (u.state == DebugUi::kStopped) return debug_command("continue");
+    if (u.state == DebugUi::kStarting) return debug_end();  // (F5 again while it starts: called off)
     if (u.state != DebugUi::kIdle) return;
     if (u.program.empty()) {  // first, what to debug
         if (!panel_px()) panel_toggle();
@@ -210,6 +212,10 @@ void App::debug_start() {
     u.error.clear();
     u.reason.clear();
     u.exit_code = -1;
+    u.asking = 0;
+    // (On another machine the connection is waited for and the debugger started
+    // there on the Dap's own thread: the tab says Starting… meanwhile, and what
+    // is asked of it below is sent once it has started.)
     std::string err;
     if (!u.dap->start({"/bin/sh", "-c", python ? kPython : kNative}, dir, wake, &err)) {
         u.error = err;
@@ -264,7 +270,8 @@ void App::debug_start() {
     dirty_ = true;
 }
 
-// The session over: the debugger let go of (and the program with it).
+// The session over: the debugger let go of (and the program with it), on
+// a thread of its own: nothing here waits for it to end.
 void App::debug_end() {
     DebugUi& u = *debugui_;
     if (u.dap && !u.dap->ended()) {
@@ -275,6 +282,7 @@ void App::debug_end() {
     u.state = DebugUi::kIdle;
     u.frames.clear();
     u.vars.clear();
+    u.asking = 0;
     ++debug_gen_;
     dirty_ = true;
 }
@@ -317,8 +325,10 @@ void App::debug_frame(u32 i, bool show) {
     }
     u.vars.clear();
     const u64 gen = ++u.vars_gen;
+    ++u.asking;
     u.dap->request("scopes", "{\"frameId\":" + std::to_string(f.id) + "}", [this, gen](const Dap::Message& m) {
         DebugUi& v = *debugui_;
+        if (v.asking) --v.asking;
         if (gen != v.vars_gen || !m.success) return;
         bool first = true;
         for (json::Value s : m.body()["scopes"]) {
@@ -352,8 +362,10 @@ void App::debug_expand(u32 i) {
     const u64 gen = u.vars_gen;
     const i64 ref = var.ref;
     const u32 depth = var.depth + 1;
+    ++u.asking;
     u.dap->request("variables", "{\"variablesReference\":" + std::to_string(ref) + "}", [this, gen, ref, depth](const Dap::Message& m) {
         DebugUi& v = *debugui_;
+        if (v.asking) --v.asking;
         if (gen != v.vars_gen || !m.success) return;
         // (Where its parent is now: the list may have changed meanwhile.)
         size_t at = 0;
@@ -394,8 +406,10 @@ void App::debug_sync() {
             u.frames.clear();
             u.vars.clear();
             ++u.vars_gen;
+            ++u.asking;
             u.dap->request("stackTrace", "{\"threadId\":" + std::to_string(u.thread) + ",\"startFrame\":0,\"levels\":64}", [this](const Dap::Message& r) {
                 DebugUi& v = *debugui_;
+                if (v.asking) --v.asking;
                 if (!r.success || v.state != DebugUi::kStopped) return;
                 v.frames.clear();
                 for (json::Value f : r.body()["stackFrames"])
@@ -470,6 +484,7 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
     // What it is doing.
     static const char* const kState[] = {"Not running", "Starting\xE2\x80\xA6", "Running", "Stopped"};
     std::string status = kState[u.state];
+    if (u.state == DebugUi::kStarting && !u.remote.empty()) status = "Starting on " + u.remote.substr(6) + "\xE2\x80\xA6";  // (ssh://host)
     if (u.state == DebugUi::kStopped && !u.reason.empty()) status += " (" + u.reason + ")";
     if (u.state == DebugUi::kIdle && u.exit_code >= 0) status += ": exited with code " + std::to_string(u.exit_code);
     put(box, font, 1, 0, fit_text(status, cols), u.state == DebugUi::kStopped ? ink::kStrong : ink::kMuted);
@@ -497,6 +512,8 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
     };
     if (u.state == DebugUi::kIdle) {
         control(DebugUi::kStart, "\xE2\x96\xB6", "Start", "F5", ink::kAccentStrong);
+    } else if (u.state == DebugUi::kStarting) {  // (F5 again, or Shift+F5, calls it off)
+        control(DebugUi::kStop, "\xE2\x96\xA0", "Cancel", "F5");
     } else if (u.state == DebugUi::kStopped) {
         control(DebugUi::kContinue, "\xE2\x96\xB6", "Continue", "F5", ink::kAccentStrong);
         control(DebugUi::kOver, "\xE2\x86\xB7", "Step over", "F10");
@@ -739,7 +756,7 @@ void App::debug_wait(const std::string& state) {
     DebugUi& u = *debugui_;
     while (now_ns() < until) {
         debug_sync();
-        const bool frames = !u.frames.empty() && !u.vars.empty() && u.vars.size() > 1;
+        const bool frames = !u.frames.empty() && !u.vars.empty() && u.asking == 0;  // (the stack, and the first scope's variables)
         if (state == "stopped" ? u.state == DebugUi::kStopped && frames : u.state == DebugUi::kIdle) break;
         SDL_Delay(5);
     }
