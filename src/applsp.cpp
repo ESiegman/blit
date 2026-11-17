@@ -559,6 +559,7 @@ void App::goto_definition() {
     if (!loc.valid()) return;
     const bool utf16 = lsp_.counts_utf16();
     const Assist::Place here{lsp_.path(), pane_->doc->ed.cursor()};
+    jump_record();  // (Ctrl+- comes back here: app.cpp)
     if (loc.path != lsp_.path() && !open_path(loc.path.c_str())) return;  // in another file, which gets a tab
     a.back.push_back(here);
     if (a.back.size() > 64) a.back.erase(a.back.begin());
@@ -574,6 +575,7 @@ void App::goto_definition() {
 // Notes where the cursor is, as somewhere go_back() returns to (before
 // going to a file or a line that was searched for).
 void App::remember_place() {
+    jump_record();  // (into the one list Ctrl+- walks: app.cpp)
     Assist& a = *assist_;
     if (pane_->doc->ed.path.empty()) return;
     a.back.push_back({lsp_.attached() ? lsp_.path() : pane_->doc->ed.path, pane_->doc->ed.cursor()});

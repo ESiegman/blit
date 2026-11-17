@@ -5,9 +5,12 @@
 // files are changed) and the file (its path in the project folder, unsaved
 // or read only); on the right what a script put there (blit.ui.status), the
 // language server's problems, the cursor's line and column, the
-// indentation, the line endings, the language and its server. A click on
-// the repository opens the Git tab of the side panel, one on the problems
-// the Problems tab. On the start screen it names the project folder and the
+// indentation, the line endings, the language and its server ("(no
+// colours)" when the language's grammar is not installed). A click on the
+// repository opens the Git tab of the side panel, one on the problems the
+// Problems tab; one on the line and column opens Go to line, and one on the
+// indentation, the line endings or the language a small list that changes
+// it for the file. On the start screen it names the project folder and the
 // settings file instead.
 //
 // Its cells are made again only when something it shows has changed; a
@@ -29,7 +32,7 @@ namespace blit {
 
 namespace {
 
-enum Action : u8 { kNone, kGitTab, kProblemsTab, kReconnect, kSettings };
+enum Action : u8 { kNone, kGitTab, kProblemsTab, kReconnect, kSettings, kGoLine, kIndent, kLineEnds, kLanguage };
 
 // The bar's tones (Popup::tones), behind Vim's mode: the muted ink's in
 // Normal and Command mode, the accent's in the modes that change the text.
@@ -49,6 +52,8 @@ struct Seg {
     u32 least = 0;        // the columns it takes at the least (the mode's: the longest name's, so that what follows stays put)
 };
 
+}  // namespace
+
 // A language's name as people write it ("C++" for "cpp"); one not listed
 // with a capital.
 std::string language_name(const std::string& id) {
@@ -65,6 +70,8 @@ std::string language_name(const std::string& id) {
         if (c == '_') c = ' ';
     return out;
 }
+
+namespace {
 
 std::string count_text(u64 n) {
     char b[32];
@@ -105,11 +112,14 @@ struct App::StatusUi {
     struct Spot {
         u32 c0, c1;
         Action action;
+        std::string_view text;  // (its part's, in left or right: they stay as they are until the spots are made again)
     };
     std::vector<Spot> spots;
-    // The language of a file, kept for it (it looks at the file's name and first line).
-    u64 lang_doc = ~0ull;
-    std::string lang_path, lang;
+    // The language of a file, kept for it (it looks at the file's name and
+    // first line), and whether its grammar is missing (that looks at the disk).
+    u64 lang_doc = ~0ull, colours_key = ~0ull;
+    std::string lang_path, lang, lang_chosen;
+    bool no_colours = false;
     // The project folder a file is shown in while the side panel has none:
     // the one the panel would open at, kept for the file (finding it looks
     // at the disk).
@@ -148,13 +158,19 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
     // Everything it shows, in a few numbers: when they are as they were, so are the cells.
     u64 key = 1469598103934665603ull;
     auto mix = [&](u64 v) { key = (key ^ v) * 1099511628211ull; };
+    const u64 path_hash = std::hash<std::string>{}(ed.path);
     mix(d.id);
     mix(ed.revision());
     mix(ed.modified() ? 1 : 0);
     mix(d.read_only ? 1 : 0);
     mix(d.loading ? 1 : 0);
     mix(remote_gen_);
-    mix(std::hash<std::string>{}(ed.path));
+    mix(path_hash);
+    // (Whether the colours are missing: what that depends on, as one number. The disk is looked at only when it changes.)
+    const u64 colours = ((((d.id * 1000003 + path_hash) * 1000003 + grammars_gen_) * 4 + (d.syntax.active() ? 2 : 0) + (cfg_.syntax ? 1 : 0)) * 1000003) ^
+                        std::hash<std::string>{}(d.lang);
+    mix(colours);
+    mix(ed.crlf() ? 1 : 0);
     mix(pane_->cur_line);
     mix(pane_->cur_col);
     mix(ed.anchor() ^ (ed.cursor() << 1));
@@ -339,20 +355,27 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                         at += " (" + count_text((hi - lo) >> 10) + " KB selected)";
                     }
                 }
-                u.right.push_back({std::move(at), ink::kMuted, kNone, 2, 5});
+                u.right.push_back({std::move(at), ink::kMuted, kGoLine, 2, 5});
             }
             const u32 step = text ? indent_step() : 0;
-            if (text) u.right.push_back({d.indent_tabs ? std::string("Tabs") : "Spaces: " + count_text(step), ink::kMuted, kNone, 2, 2});
-            if (text) u.right.push_back({ed.crlf() ? "CRLF" : "LF", ink::kMuted, kNone, 2, 2});
-            if (u.lang_doc != d.id || u.lang_path != ed.path) {
+            if (text) u.right.push_back({d.indent_tabs ? std::string("Tabs") : "Spaces: " + count_text(step), ink::kMuted, kIndent, 2, 2});
+            if (text) u.right.push_back({ed.crlf() ? "CRLF" : "LF", ink::kMuted, kLineEnds, 2, 2});
+            if (u.lang_doc != d.id || u.lang_path != ed.path || u.lang_chosen != d.lang) {
                 u.lang_doc = d.id;
                 u.lang_path = ed.path;
+                u.lang_chosen = d.lang;
                 u.lang = file_language();
             }
+            if (u.colours_key != colours) {
+                u.colours_key = colours;
+                u.no_colours = grammar_missing();
+            }
             if (text) {
-                std::string lang = u.lang.empty() ? std::string("Plain text") : language_name(u.lang);
-                if (lsp_.attached() && !lsp_.server_name().empty()) lang += " \xC2\xB7 " + lsp_.server_name() + (lsp_.ready() ? "" : " (starting)");
-                u.right.push_back({std::move(lang), ink::kMuted, kNone, 2, 3});
+                u.right.push_back({u.lang.empty() ? std::string("Plain text") : language_name(u.lang), ink::kMuted, kLanguage, 2, 3});
+                // (What a narrow window drops first: the rest stays where it was without it.)
+                if (u.no_colours) u.right.push_back({"(no colours)", ink::kMuted, kLanguage, 1, 1});
+                if (lsp_.attached() && !lsp_.server_name().empty())
+                    u.right.push_back({"\xC2\xB7 " + lsp_.server_name() + (lsp_.ready() ? "" : " (starting)"), ink::kMuted, kNone, 1, 2});  // (before the language)
             }
         }
 
@@ -365,7 +388,10 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
             return n;
         };
         auto over = [&] { return static_cast<i64>(width(u.left)) + static_cast<i64>(width(u.right)) + 3 - static_cast<i64>(cols); };
-        // First the path's folders, from their start ("…/src/"), and if
+        // First what is barely needed ("(no colours)": the rest stays as it would be without it).
+        for (size_t i = u.right.size(); i-- > 0 && over() > 0;)
+            if (u.right[i].keep <= 1) u.right.erase(u.right.begin() + static_cast<std::ptrdiff_t>(i));
+        // Then the path's folders, from their start ("…/src/"), and if
         // that is not enough, all of them.
         for (size_t i = 0; i < u.left.size() && over() > 0; ++i) {
             if (!u.left[i].shrink) continue;
@@ -402,7 +428,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                 c = end;
             }
             c = std::max(c, std::min(cols, c0 + s.least));
-            if (s.action != kNone) u.spots.push_back({c0, c, s.action});
+            if (s.action != kNone) u.spots.push_back({c0, c, s.action, s.text});
         }
         const u32 right_w = width(u.right);
         c = cols > right_w ? cols - right_w : 0;
@@ -411,7 +437,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
             if (i > 0) c += s.gap;
             const u32 c0 = c;
             c = put(u.box, font, 0, c, s.text, s.in);
-            if (s.action != kNone) u.spots.push_back({c0, c, s.action});
+            if (s.action != kNone) u.spots.push_back({c0, c, s.action, s.text});
         }
     }
     Popup& p = fd.popups[fd.popup_count++];
@@ -459,11 +485,134 @@ bool App::status_mouse_down(const SDL_MouseButtonEvent& b) {
                 else if (s.action == kProblemsTab) panel_show_problems();
                 else if (s.action == kReconnect) remote_reconnect();
                 else if (s.action == kSettings) open_config();
+                else if (s.action == kGoLine) find_open(kFindNames, ":");  // (Go to file's ":120")
+                else if (s.action == kIndent) status_pick(0);
+                else if (s.action == kLineEnds) status_pick(1);
+                else if (s.action == kLanguage) status_pick(2);
                 break;
             }
     }
     dirty_ = true;
     return true;  // (the bar has the click, whatever it was on)
+}
+
+// A click on the middle of the part of the bar whose text starts with
+// `part`, through the real event handler (for the tests).
+bool App::status_click(const std::string& part) {
+    if (!status_ || !status_px()) return false;
+    for (const StatusUi::Spot& s : status_->spots) {
+        if (!s.text.starts_with(part)) continue;
+        SDL_Event e{};
+        e.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+        e.button.button = SDL_BUTTON_LEFT;
+        e.button.clicks = 1;
+        e.button.x = static_cast<float>(look().edge + static_cast<int>((s.c0 + s.c1) * static_cast<u32>(font_->cell_w()) / 2)) / density_;
+        e.button.y = static_cast<float>(px_h_ - status_px() / 2) / density_;
+        handle(e);
+        return true;
+    }
+    return false;
+}
+
+// ---------------------------------------------------------------- the lists a click opens
+
+namespace {
+
+constexpr u32 kIndentSteps[] = {2, 3, 4, 8};  // (spaces; the first row is tabs)
+
+}  // namespace
+
+void App::status_pick(int what) {
+    Doc& d = *pane_->doc;
+    const u64 id = d.id;
+    if (what == 0) {  // the indentation: tabs, or so many spaces
+        std::vector<std::string> items{"Tabs"};
+        size_t at = 0;
+        const u32 step = indent_step();
+        for (const u32 n : kIndentSteps) {
+            if (!d.indent_tabs && n == step) at = items.size();
+            items.push_back("Spaces: " + count_text(n));
+        }
+        find_preview_item("Indentation", std::move(items), at, nullptr, [this, id](int i) {
+            Doc* doc = find_doc(id);
+            if (!doc || i < 0) return;
+            doc->indent_chosen = true;
+            doc->indent_tabs = i == 0;
+            doc->indent_step = i == 0 ? 0 : kIndentSteps[i - 1];
+            if (pane_->doc == doc) vim_attach();  // (what Vim's > shifts by)
+            dirty_ = true;
+        }, nullptr);
+    } else if (what == 1) {  // the line ends
+        find_preview_item("Line endings", {"LF", "CRLF"}, d.ed.crlf() ? 1 : 0, nullptr, [this, id](int i) {
+            if (Doc* doc = find_doc(id); doc && i >= 0) set_line_ends(*doc, i == 1);
+        }, nullptr);
+    } else {  // the language: every one blit knows of, by its name, and plain text first
+        std::vector<std::string> ids;
+        for (const GrammarSource& g : grammar_list(cfg_.grammars)) ids.push_back(g.name);
+        std::sort(ids.begin(), ids.end(), [](const std::string& a, const std::string& b) { return SDL_strcasecmp(language_name(a).c_str(), language_name(b).c_str()) < 0; });
+        ids.insert(ids.begin(), "-");
+        const std::string now = file_language();
+        // (Its grammar missing: getting it is the first row.)
+        const bool get = grammar_missing() && std::ranges::find(ids, now) != ids.end();
+        std::vector<std::string> items;
+        size_t at = 0;
+        if (get) items.push_back("Install the " + language_name(now) + " grammar");
+        for (const std::string& lang : ids) {
+            if (lang == (now.empty() ? "-" : now)) at = items.size();
+            items.push_back(lang == "-" ? std::string("Plain text") : language_name(lang));
+        }
+        find_preview_item("Language", std::move(items), at, nullptr, [this, id, ids, get](int i) {
+            Doc* doc = find_doc(id);
+            if (!doc || i < 0) return;
+            if (get && i == 0) return grammar_install();
+            set_language(*doc, ids[static_cast<size_t>(i - (get ? 1 : 0))]);
+        }, nullptr);
+    }
+}
+
+// A file's line ends made all one kind ("\r\n", or "\n"), as one step to undo;
+// what Enter puts in from then on is that kind.
+void App::set_line_ends(Doc& d, bool crlf) {
+    if (d.read_only || d.term || d.prof || d.image || d.pdf) return;
+    Editor& ed = d.ed;
+    const std::string text = ed.buf.text(0, ed.buf.size());
+    std::string out;
+    out.reserve(text.size() + (crlf ? text.size() / 32 : 0));
+    const u64 cursor = ed.cursor();
+    u64 moved_to = cursor;
+    for (size_t i = 0; i < text.size(); ++i) {
+        if (i == cursor) moved_to = out.size();
+        const char c = text[i];
+        if (c == '\r' && i + 1 < text.size() && text[i + 1] == '\n') continue;  // (the \n after it says what goes)
+        if (c == '\n' && crlf) out += '\r';
+        out += c;
+    }
+    if (cursor >= text.size()) moved_to = out.size();
+    ed.set_crlf(crlf);
+    if (out != text) {
+        ed.replace(0, ed.buf.size(), out);
+        ed.move_to(std::min<u64>(moved_to, ed.buf.size()), false);
+        if (pane_->doc == &d) vim_mouse();  // (Vim takes the cursor where it is)
+    }
+    pane_->cache_rev = ~0ull;
+    dirty_ = true;
+}
+
+// A file's language, chosen ("-": plain text): its colours and what the
+// scripts are told (FileType) follow; its language server stays the one
+// its name says.
+void App::set_language(Doc& d, const std::string& lang) {
+    d.lang = lang;
+    Doc* const front = pane_->doc;
+    const double top = front == &d ? pane_->scroll_y : d.scroll_y;
+    pane_->doc = &d;  // (its colours start again, wherever it is)
+    stop_syntax();
+    start_syntax(static_cast<u64>(std::max(0.0, top)) / static_cast<u64>(font_->cell_h()));
+    pane_->doc = front;
+    if (script_) script_filetype(d.id);
+    grammars_pending_ = true;  // (auto_install may want this one's grammar)
+    pick_theme();
+    dirty_ = true;
 }
 
 // What the bar shows, as text (for the tests).

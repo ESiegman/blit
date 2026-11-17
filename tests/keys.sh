@@ -1,8 +1,8 @@
 #!/bin/sh
 # The keyboard: the command search (every command, by name or by keys),
-# and the keys for what had none (moving tabs, resizing splits). Every
-# command is run from the search once, each in a run of its own: none may
-# fail or crash.
+# the keys for what had none (moving tabs, resizing splits), and Back and
+# Forward through the places jumps started from. Every command is run from
+# the search once, each in a run of its own: none may fail or crash.
 #
 #   tests/keys.sh path/to/blit            run the cases
 #   tests/keys.sh path/to/blit --print    show what each case gives
@@ -14,7 +14,14 @@ trap 'rm -rf "$dir"' EXIT
 dir=$(cd "$dir" && pwd -P)
 mkdir -p "$dir/work"
 printf 'notes\n' >"$dir/work/notes.txt"
+i=0
+while [ $i -lt 60 ]; do
+    echo "line $((i + 1)) of long"
+    i=$((i + 1))
+done >"$dir/work/long.txt"
+printf 'one\ntwo\nthe word\n' >"$dir/work/short.txt"
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/init.lua"
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/modal.lua"
 export BLIT_INIT="$dir/init.lua" BLIT_RECENT_FILE="$dir/recent" BLIT_SSH=/usr/bin/false
 export BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i"
 
@@ -27,8 +34,12 @@ check() {
         failed=1
     fi
 }
+# run SCRIPT [FILE]: the last line the run printed. INIT, if set, is the
+# init.lua for this run only.
+INIT=
 run() {
-    got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "workdir:$dir/work;$1" "$dir/work/notes.txt" 2>&1 >/dev/null | sed -e "s#$dir#@#g" | tail -1)
+    got=$(BLIT_INIT="${INIT:-$dir/init.lua}" "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "workdir:$dir/work;$1" "${2:-$dir/work/notes.txt}" 2>&1 >/dev/null | sed -e "s#$dir#@#g" | tail -1)
+    INIT=
 }
 
 run "key:cmd+shift+p;text:split right;finddump"
@@ -39,16 +50,44 @@ run "key:cmd+shift+p;key:Tab;key:ctrl+Tab;finddump"
 check "Tab, then keys pressed: looked up" 'commands [Ctrl+Tab] 1 : >Go to the next tab (Ctrl+Tab  Cmd+Shift+])'
 run "key:cmd+shift+p;text:split below;key:Return;frame;dump"
 check "a command run from the search: as its keys would" 'V([notes.txt*] / >[untitled*])0.50'
-run 'key:cmd+\;key:cmd+ctrl+right;key:cmd+ctrl+right;frame;dump'
+run 'key:cmd+\;key:Escape;key:cmd+ctrl+right;key:cmd+ctrl+right;frame;dump'
 check "the split wider (two twentieths)" 'H([notes.txt*] | >[untitled*])0.40'
 run 'key:cmd+t;key:cmd+t;key:ctrl+shift+pageup;frame;dump'
 check "the tab one place left" '>[notes.txt untitled* untitled]'
+run "open:$dir/work/long.txt;open:$dir/work/short.txt;key:cmd+alt+shift+[;key:cmd+alt+shift+[;frame;dump"
+check "the tab left with keys a MacBook has (Cmd+Option+Shift+[)" '>[short.txt* notes.txt long.txt]'
+run "open:$dir/work/long.txt;open:$dir/work/short.txt;key:cmd+1;key:cmd+alt+shift+];frame;dump;key:cmd+shift+];frame;dump"
+check "and right (Cmd+Option+Shift+]), and Cmd+Shift+] still goes to the next tab" '>[long.txt notes.txt short.txt*]'
 run 'key:cmd+t;key:cmd+alt+shift+right;frame;dump;key:cmd+alt+shift+left;frame;dump'
 check "the tab into a split of its own, and back" '>[notes.txt untitled*]'
 run 'key:cmd+t;key:cmd+alt+shift+down;frame;dump'
 check "the tab to a new split below" 'V([notes.txt*] / >[untitled*])0.50'
 run 'key:cmd+shift+o;finddump'
 check "a folder chosen by its path" 'folder [@/work/] 2 : >./ ../'
+
+# Back (Ctrl+-) and forward (Ctrl+Shift+-) through one list of the places
+# jumps started from: Go to file, Search in files, Vim's G and marks, in
+# any mode, with no language server.
+run "key:cmd+p;text:long.txt;findwait;key:Return;key:cmd+p;text::40;key:Return;frame;jumpdump"
+check "Go to file and its :line go into the list" 'notes.txt:1 long.txt:1 >'
+run "key:cmd+p;text:long.txt;findwait;key:Return;key:cmd+p;text::40;key:Return;key:ctrl+-;key:ctrl+-;frame;statusdump"
+check "Ctrl+- back to where each began, the file before too" 'notes.txt | Ln 1, Col 1 Tabs LF Plain text'
+run "key:cmd+p;text:long.txt;findwait;key:Return;key:cmd+p;text::40;key:Return;key:ctrl+-;key:ctrl+-;key:ctrl+shift+-;key:ctrl+shift+-;frame;jumpdump;statusdump"
+check "Ctrl+Shift+- forward again, to where the walk back began" 'long.txt | Ln 40, Col 1 Tabs LF Plain text'
+run "key:cmd+shift+f;text:the word;findwait;key:Return;key:ctrl+-;frame;statusdump"
+check "a line found by Search in files, and back" 'notes.txt | Ln 1, Col 1 Tabs LF Plain text'
+INIT="$dir/modal.lua"
+run "vim:G;key:cmd+p;text:short.txt;findwait;key:Return;vim:jjmagg'a;jumpdump" "$dir/work/long.txt"
+check "Vim's long moves go in too: G, a mark" 'long.txt:1 long.txt:60 short.txt:3 short.txt:1 >'
+INIT="$dir/modal.lua"
+run "vim:G;key:cmd+p;text:short.txt;findwait;key:Return;vim:jjmagg'a;vim:<C-o>;vim:<C-o>;vim:<C-o>;vimdump;vim:<C-i>;vim:<C-i>;frame;vimdump" "$dir/work/long.txt"
+check "Ctrl-O walks the same list, across files, and Ctrl-I comes back" 'NORMAL |  | 1:1 | one'
+INIT="$dir/modal.lua"
+run "vim:Ggg;vim:i;key:ctrl+-;frame;vimdump" "$dir/work/long.txt"
+check "Ctrl+- in Insert mode too, which it stays in" 'INSERT | -- INSERT -- | 60:1 | line 60 of long'
+INIT="$dir/modal.lua"
+run "vim:G;key:cmd+p;text:short.txt;findwait;key:Return;vim:i;key:ctrl+-;frame;vimdump" "$dir/work/long.txt"
+check "and to another file from Insert mode (Vim starts there in Normal mode)" 'NORMAL |  | 60:1 | line 60 of long'
 
 # Every command, from the search (Quit and Close the tab end the run; the rest leave it going).
 "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "commands" 2>&1 >/dev/null | cut -f1 | sed -e 's/;.*//' >"$dir/commands"

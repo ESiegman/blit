@@ -88,8 +88,10 @@ struct TextView {
     GuideCache* guides = nullptr;
 };
 
-inline constexpr u32 kMaxViews = 8;
-inline constexpr u32 kMaxPopups = 48;
+// (Sixteen splits: each has a tab bar and line numbers among the popups,
+// and there is a line between each two of them, so the popups grow with it.)
+inline constexpr u32 kMaxViews = 16;
+inline constexpr u32 kMaxPopups = 96;
 inline constexpr u32 kMaxPictures = 256;  // (a PDF's pages, and a box over each line of what is chosen or found on them)
 
 // A picture drawn in a frame (one Renderer::image_add() was given).

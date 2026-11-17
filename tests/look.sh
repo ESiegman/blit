@@ -8,7 +8,8 @@
 #   - a frame drawn with things in motion, once they have arrived, is the
 #     frame drawn without motion;
 #   - the mouse over a tab or a row of the side panel changes the frame, and
-#     leaving changes it back.
+#     leaving changes it back;
+#   - a theme tried in Choose a theme changes it, and Esc changes it back.
 #
 #   tests/look.sh path/to/blit
 set -u
@@ -66,6 +67,13 @@ differ rest row "the mouse over a row of the side panel changed nothing"
 differ tab row "the mouse over a tab and over a row gave the same frame"
 shot left default "$plain;mouse:300,12;mouse:60,45;mouse:700,400"
 same rest left "the frame did not go back to what it was when the mouse left the tab and the row"
+
+# Choose a theme: the one the choice comes to is put on at once, and Esc
+# puts back the frame there was.
+shot trying default "$plain;command:Choose a theme;key:Down;key:Down;frame"
+differ rest trying "the theme the choice came to was not put on"
+shot tried default "$plain;command:Choose a theme;key:Down;key:Down;frame;key:Escape"
+same rest tried "Esc did not put the theme there was back"
 
 # Line numbers: Vim's relative ones by default, every line its own with them off.
 printf "$base"'blit.opt.editor.relative_numbers = false\n' >"$dir/absolute.lua"

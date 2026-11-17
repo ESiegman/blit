@@ -244,6 +244,8 @@ if(BLIT_DEV)
     # Modal editing through the real event handlers.
     add_test(NAME modal COMMAND sh ${CMAKE_SOURCE_DIR}/tests/modal.sh $<TARGET_FILE:blit>)
     add_test(NAME look COMMAND sh ${CMAKE_SOURCE_DIR}/tests/look.sh $<TARGET_FILE:blit>)
+    # The status bar's parts and clicks, a language with no colours, the window's title.
+    add_test(NAME status COMMAND sh ${CMAKE_SOURCE_DIR}/tests/status.sh $<TARGET_FILE:blit>)
     add_test(NAME find COMMAND sh ${CMAKE_SOURCE_DIR}/tests/find.sh $<TARGET_FILE:blit>)
     add_test(NAME lua COMMAND sh ${CMAKE_SOURCE_DIR}/tests/lua.sh $<TARGET_FILE:blit>)
     add_test(NAME start COMMAND sh ${CMAKE_SOURCE_DIR}/tests/start.sh $<TARGET_FILE:blit>)

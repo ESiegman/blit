@@ -1049,6 +1049,7 @@ void Vim::list_jump(const Editor& ed, u64 off) {
 
 // A long move is about to start from `off`: <C-o> and '' come back to it.
 void Vim::remember_jump(const Editor& ed, u64 off) {
+    if (on_jump) on_jump(off);
     prev_jump_ = off;
     list_jump(ed, off);
     jump_at_ = jumps_.size();
@@ -2919,6 +2920,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
                 // Back and forward through the places long moves started from.
                 // (With nowhere to go back to in this document, the application
                 // is asked: it knows where a "go to definition" came from.)
+                if (on_jump) { requests_.push_back({VimRequest::kBack, {}, c == 'o' ? -static_cast<i64>(times) : static_cast<i64>(times)}); return done(); }
                 bool went = false;
                 for (u32 i = 0; i < times; ++i) {
                     if (c == 'o') {

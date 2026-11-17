@@ -52,6 +52,14 @@ SDL_Keymod keymod_of(u8 mods) {
 
 bool word_byte(u8 b) { return std::isalnum(b) || b == '_' || b >= 0x80; }
 
+// A key as the list names it. The bracket keys go by where they are: with
+// Shift or Option held, a Mac reports what they type ("{", "“") instead.
+SDL_Keycode key_of(const SDL_KeyboardEvent& k) {
+    if (k.scancode == SDL_SCANCODE_LEFTBRACKET) return SDLK_LEFTBRACKET;
+    if (k.scancode == SDL_SCANCODE_RIGHTBRACKET) return SDLK_RIGHTBRACKET;
+    return k.key;
+}
+
 // The word at a place in the text (the one ending there, if it is between two).
 std::string word_at(const Buffer& buf, u64 off) {
     u64 w0 = off, w1 = off;
@@ -201,6 +209,7 @@ void App::commands_create() {
     own("Save all", {key(SDLK_S, kP | kA)}, [this] { save_all(); });
     sent("Close the tab", {key(SDLK_W, kP)});
     sent("Open Settings (init.lua)", {key(SDLK_COMMA, kP)});
+    own("Choose a theme\xE2\x80\xA6", {}, [this] { theme_choose(); });
     sent("Quit", {key(SDLK_Q, kP)});
     // Finding.
     own("Command search", {key(SDLK_P, kP | kS)}, [this] { palette_open(); });
@@ -239,11 +248,13 @@ void App::commands_create() {
     sent("Go to the previous tab", {key(SDLK_TAB, kC | kS), key(SDLK_LEFTBRACKET, kP | kS)});
     sent("Go to the last tab", {key(SDLK_9, kP)});
     for (int n = 1; n <= 8; ++n) sent("Go to tab " + std::to_string(n), {key(static_cast<SDL_Keycode>(SDLK_0 + n), kP)});
-    own("Move the tab left", {key(SDLK_PAGEUP, kC | kS)}, [this] { tab_shift(-1); });
-    own("Move the tab right", {key(SDLK_PAGEDOWN, kC | kS)}, [this] { tab_shift(1); });
+    // (Keys a MacBook has first: it has no Page Up or Page Down.)
+    own("Move the tab left", {key(SDLK_LEFTBRACKET, kP | kA | kS), key(SDLK_PAGEUP, kC | kS)}, [this] { tab_shift(-1); });
+    own("Move the tab right", {key(SDLK_RIGHTBRACKET, kP | kA | kS), key(SDLK_PAGEDOWN, kC | kS)}, [this] { tab_shift(1); });
     // Splits.
     sent("Split to the right", {key(SDLK_BACKSLASH, kP)});
     sent("Split below", {key(SDLK_BACKSLASH, kP | kS)});
+    sent("Close the split", {key(SDLK_W, kP | kS)});
     sent("Go to the split on the left", {key(SDLK_LEFT, kP | kA)});
     sent("Go to the split on the right", {key(SDLK_RIGHT, kP | kA)});
     sent("Go to the split above", {key(SDLK_UP, kP | kA)});
@@ -262,6 +273,8 @@ void App::commands_create() {
     sent("Show what this is", {key(SDLK_I, kP)});
     sent("Go to the definition", {key(SDLK_F12)});
     sent("Go back", {mac ? key(SDLK_MINUS, kC) : key(SDLK_LEFT, kA)});
+    sent("Go forward", {mac ? key(SDLK_MINUS, kC | kS) : key(SDLK_RIGHT, kA)});
+    own("Install the grammar for this file's language", {}, [this] { grammar_install(); });
     own("Go to the next problem", {key(SDLK_F8)}, [this] { problem_step(1); });
     own("Go to the previous problem", {key(SDLK_F8, kS)}, [this] { problem_step(-1); });
     // Markdown.
@@ -353,12 +366,13 @@ bool App::command_key(const SDL_KeyboardEvent& k) {
     if (!commands_) return false;
     if (git_view_key(k)) return true;  // a diff tab's own keys, and those of what a change's mark offers (appgit.cpp)
     const u8 m = mods_of(k.mod);
+    const SDL_Keycode key = key_of(k);
     // (The panel's own keys for another of its tabs: which tab a command
     // showed last no longer says which has the keyboard.)
     for (const Commands::Command& c : commands_->all) {
         if (!c.here) continue;
         for (const Chord& ch : c.keys)
-            if (ch.key == k.key && ch.mods == m) {
+            if (ch.key == key && ch.mods == m) {
                 c.run();
                 return true;
             }

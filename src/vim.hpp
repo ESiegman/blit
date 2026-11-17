@@ -114,6 +114,8 @@ public:
     const std::string& message() const { return message_; }
     // The cursor to another place in the document, as a jump (<C-o> comes back).
     void jump(Editor& ed, u64 off);
+    // Set: the application keeps the jump list, across files. It hears where each long move starts, and <C-o> and <C-i> ask it (kBack, n back or forward).
+    std::function<void(u64 from)> on_jump;
     // Marks, the jump list and the like stay with their text when it
     // changes: the document in front has its Editor::watch set to this.
     void edited(u64 start, u64 old_end, u64 new_end) override;

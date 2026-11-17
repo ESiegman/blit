@@ -194,6 +194,56 @@ Pane* App::split_pane(Pane* target, Edge edge) {
     return fresh;
 }
 
+// Cmd+Shift+W: the split with the keyboard goes. Its tabs join the split
+// beside it (the one that takes its room), in their order after that
+// split's own, the one that was in front staying in front; a new file
+// with nothing in it goes with the split. The terminals' split is hidden
+// instead (its programs keep running). The last split cannot go: its tabs
+// close, each with unsaved changes asked about as Cmd+W asks.
+void App::split_close() {
+    Pane* const p = pane_;
+    if (p == dock_pane()) return dock_hide();
+    auto blank = [](const Doc& d) { return d.ed.path.empty() && !d.ed.modified() && d.ed.buf.size() == 0 && !d.term && !d.prof && !d.md && !d.image && !d.pdf && d.title.empty(); };
+    const bool last = std::ranges::none_of(panes_, [&](const std::unique_ptr<Pane>& q) { return q.get() != p && q.get() != dock_pane(); });
+    if (last) {  // (beside the terminals' split, if that is on show, there is no other)
+        for (size_t i = p->docs.size(); i-- > 0;) {
+            if (blank(*p->docs[i])) continue;
+            if (!tab_close(i)) return;  // (the user said no: the rest stay)
+        }
+        return;
+    }
+    SplitNode* parent = nullptr;
+    SplitNode* leaf = find_leaf(split_.get(), p, &parent);
+    if (!leaf || !parent) return;
+    Pane* heir = first_pane(parent->a.get() == leaf ? parent->b.get() : parent->a.get());
+    if (heir && heir == dock_pane())  // (not into the terminals)
+        for (const std::unique_ptr<Pane>& q : panes_)
+            if (q.get() != p && q.get() != dock_pane()) heir = q.get();
+    if (!heir || heir == p) return;
+    const u64 front = p->doc ? p->doc->id : 0, heir_id = heir->id, heir_front = heir->doc ? heir->doc->id : 0;
+    std::vector<u64> blanks;
+    for (const std::unique_ptr<Doc>& d : p->docs)
+        if (blank(*d)) blanks.push_back(d->id);
+    for (size_t n = p->docs.size(); n > 0; --n) move_doc(p, 0, heir, heir->docs.size());  // (the last move lets go of p)
+    for (const std::unique_ptr<Pane>& q : panes_) {
+        if (q->id != heir_id) continue;
+        focus_pane(q.get());
+        for (const u64 id : blanks) {
+            size_t i = 0;
+            Pane* where = nullptr;
+            if (pane_->docs.size() > 1 && find_doc(id, &where, &i) && where == pane_) tab_close(i, true);
+        }
+        // (Its front tab in front; if that was a new file that went, the one that was in front here.)
+        const bool kept = std::ranges::any_of(pane_->docs, [&](const std::unique_ptr<Doc>& d) { return d->id == front; });
+        for (size_t i = 0; i < pane_->docs.size(); ++i)
+            if (pane_->docs[i]->id == (kept ? front : heir_front)) tab_show(i);
+        break;
+    }
+    panel_focus(false);
+    pick_theme();
+    dirty_ = true;
+}
+
 void App::remove_pane(Pane* p) {
     if (!p || panes_.size() < 2) return;
     if (drag_->kind == kDragDivider) drag_->kind = kDragNone;
@@ -342,13 +392,18 @@ bool App::splits_key(const SDL_KeyboardEvent& k) {
         dirty_ = true;
         return true;
     }
-    if (cmd && k.key == SDLK_BACKSLASH) {  // a new split to the right (with Shift: below), holding a new file
+    if (cmd && k.key == SDLK_BACKSLASH) {  // a new split to the right (with Shift: below), and Go to file for what goes in it
         if (Pane* fresh = split_pane(pane_, shift ? kEdgeBottom : kEdgeRight)) {
             focus_pane(fresh);
-            add_doc(0);
+            add_doc(0);  // (what Esc leaves it with: a new file)
             tab_show(0);
             panel_focus(false);
+            find_for_split(fresh);
         }
+        return true;
+    }
+    if (cmd && shift && !alt && k.key == SDLK_W) {
+        split_close();
         return true;
     }
     if (cmd && alt) {

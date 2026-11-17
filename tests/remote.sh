@@ -161,7 +161,7 @@ fields() { got=$(printf '%s' "$got" | sed -E 's/ \| [a-z_]+=[^|]* \| at [0-9]+//
 SLOW=0.2 slow "newproject;project:where=ssh://box$T/proj;project:kind=C;project:build=Make;project:git=false;project:name=app;clock;projectcreate;within:300;projectdump;projectwait;projectdump;remotewait;frame;statusdump"
 fields
 got="$got | $(cd "$T/proj/app" && find . -type f | LC_ALL=C sort | tr '\n' ' ')"
-check "a project made there: at once, and made" 'within 300 ms ;; kind=C name=app where=ssh://box~/proj git=off | creating ;; kind=C name=app where=ssh://box~/proj git=off | made ssh://box~/proj/app ;; box src/main.c | Ln 1, Col 1 Spaces: 4 LF C | ./Makefile ./README.md ./compile_flags.txt ./include/app/app.h ./src/app.c ./src/main.c ./tests/test_app.c '
+check "a project made there: at once, and made" 'within 300 ms ;; kind=C name=app where=ssh://box~/proj git=off | creating ;; kind=C name=app where=ssh://box~/proj git=off | made ssh://box~/proj/app ;; box src/main.c | Ln 1, Col 1 Spaces: 4 LF C (no colours) | ./Makefile ./README.md ./compile_flags.txt ./include/app/app.h ./src/app.c ./src/main.c ./tests/test_app.c '
 run "newproject;project:where=ssh://box$T/proj;project:name=app;projectcreate;projectwait;projectdump"
 fields
 check "and one that is there already: the form says so" 'kind=C++ name=app where=ssh://box~/proj git=on | error: ssh://box~/proj/app is there already.'

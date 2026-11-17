@@ -67,6 +67,8 @@ inline constexpr SDL_Keymod kWordMod = SDL_KMOD_CTRL;
 // A path's folder, and a path made whole (from the current directory).
 std::string parent_of(const std::string& path);
 std::string full_path(const std::string& path);
+// A language's name as people write it: "C++" for "cpp" (appstatus.cpp).
+std::string language_name(const std::string& id);
 
 // One open file: its text, its colours, and where its view was left.
 struct Profile;      // (profile.hpp)
@@ -125,6 +127,8 @@ struct Doc {
     u64 indent_rev = ~0ull, indent_lines = 0;
     u32 indent_step = 0;
     bool indent_tabs = true;
+    bool indent_chosen = false;  // chosen from the status bar: no longer guessed (indent_step 0: the tab width)
+    std::string lang;            // its language as chosen from the status bar ("-": plain text); empty: by its name
     // A big file's widest line is found on a thread of its own, which
     // leaves the answer here. Declared last: the thread is stopped and
     // waited for before the text it reads goes.
@@ -261,6 +265,8 @@ private:
     std::string file_language() const;
     void want_grammars();
     void sync_grammars();
+    void grammar_install();  // the grammar of the file in front's language, fetched and built (a command)
+    bool grammar_missing();  // that language has none installed: its colours are missing
     void open_config();
     void apply_present_mode();
     void update_refresh();
@@ -358,6 +364,31 @@ private:
     void remote_asks();
     void save_named(const std::string& path, u64 doc);
     void remember_place();  // where the cursor is now is somewhere to come back to
+    // Go to file for a split just made: what is chosen opens in it (appfind.cpp).
+    void find_for_split(Pane* p);
+    // A list of blit's own whose rows are tried out as the choice moves
+    // (`moved` hears each, from 0), starting on `at`: Enter is `chose`, Esc
+    // `cancelled` (appfind.cpp; the theme picker's).
+    void find_preview_item(const std::string& prompt, std::vector<std::string> items, size_t at, std::function<void(int)> moved,
+                           std::function<void(int)> chose, std::function<void()> cancelled);
+    // The places jumps started from, across files, for Ctrl+- (back) and
+    // Ctrl+Shift+- (forward), and Vim's Ctrl-O and Ctrl-I (app.cpp).
+    struct Jumps;
+    void jumps_create();
+    void jump_record();                       // the cursor's place, in the file in front
+    bool jump_note(const Doc& d, u64 off);    // a place in a document (false: not one to come back to)
+    void jump_walk(i64 by);                   // back (negative) or forward through them
+    bool jump_go(size_t i);
+    bool jump_key(const SDL_KeyboardEvent& k);
+    // Where something that may jump started (the side panel's rows, F8):
+    // noted once it has taken the cursor to another file or line.
+    struct JumpFrom {
+        u64 doc = 0, off = 0;
+    };
+    JumpFrom jump_from() const;
+    void jump_if_moved(const JumpFrom& from);
+    std::string jump_dump() const;
+    std::shared_ptr<Jumps> jumps_;
     // (The overhaul's entry points; each is implemented by the part named.)
     void find_step(int by);                      // appfind.cpp: the next (1) or previous (-1) hit of the last search in files
     std::vector<std::string> recent_files(size_t most) const;  // appstart.cpp: files opened lately, the latest first, that are still there
@@ -722,6 +753,12 @@ private:
     void status_layout(int w, int h, FrameDesc& fd);
     bool status_mouse_down(const SDL_MouseButtonEvent& b);
     std::string status_dump() const;
+    bool status_click(const std::string& part);  // (tests) a click on the part of the bar that starts with this
+    // What a click on the indentation (0), the line ends (1) or the language
+    // (2) opens: a list that changes it for the file in front.
+    void status_pick(int what);
+    void set_line_ends(Doc& d, bool crlf);
+    void set_language(Doc& d, const std::string& lang);
     // What the status bar says of the repository (appgit.cpp).
     struct GitSummary {
         bool repo = false, merging = false;
@@ -788,6 +825,7 @@ private:
     void tab_to_split(Edge edge);
     void split_grow(bool across, int by);
     Pane* split_pane(Pane* target, Edge edge);  // a new pane with no files yet, on that side of target
+    void split_close();                         // Cmd+Shift+W: the split with the keyboard goes, its tabs to the one beside it
     void remove_pane(Pane* p);                  // takes it out of the arrangement and lets it go
     std::unique_ptr<Pane> take_pane(Pane* p, float* room);  // takes it out and keeps it whole (room: the share it had)
     bool put_pane(std::unique_ptr<Pane>& p, Pane* target, Edge edge, float room);  // puts it back beside target
@@ -868,6 +906,12 @@ private:
     void plug_list();
     std::string script_set(const std::string& key, const std::string& value, const std::string& from);
     void script_set_command(const std::string& arg);
+    bool set_complete(int by);  // Tab (1) or Shift+Tab (-1) on a ":set" command line
+    // Choose a theme: every one tried as the choice comes to it, Esc puts
+    // the one there was back, Enter writes it into init.lua (in its tab,
+    // not saved) for the system's appearance, light or dark.
+    void theme_choose();
+    void theme_write(bool dark, const std::string& name);
     // 0 information, 1 a warning, 2 an error; `detail` (a traceback) goes to :messages and the standard error, not the box.
     void notify(const std::string& text, int level = 0, const std::string& detail = {});
     char script_mode_char() const;
@@ -887,6 +931,7 @@ private:
     void script_fire(u32 event, u64 doc, const std::string& file, const std::string& match, int data = 0);
     bool script_write(bool after, u64 doc);  // false: the document went meanwhile
     void script_opened(u64 doc, bool fresh);
+    void script_filetype(u64 doc);  // its language was chosen: FileType again
     void script_closed(const Doc& d);
     void script_focus(bool gained);
     void script_saved(const std::string& path);
@@ -1003,10 +1048,13 @@ private:
     bool close_after_save_ = false;  // the tab whose new file is being named closes once it is saved
     bool lsp_pending_ = false;  // start a language server after the next frame
     bool grammars_pending_ = false;  // and see whether a grammar should be fetched
+    u64 grammars_gen_ = 0;           // counts up whenever a grammar has been installed (the status bar's "no colours")
     u32 popups_drawn_ = 0;
 
     bool title_modified_ = false;
     std::string title_path_ = "\x01";
+    std::string title_root_, title_base_;  // the project folder it was set with; the one found for a file while the side panel has none
+    std::string window_title();  // "render.cpp — blit (~/Dev/blit)"
 
     // Startup timeline (steady clock ns), for --bench startup.
     u64 t_sdl_ = 0, t_window_ = 0, t_gpu_ = 0, t_font_ = 0, t_file_ = 0;

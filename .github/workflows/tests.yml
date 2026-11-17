@@ -41,7 +41,7 @@ jobs:
 
       - name: Grammars
         run: |
-          build-debug/blit --install-grammar cpp,python,bash
+          build-debug/blit --install-grammar all
           build-debug/blit --grammars
 
       - name: Test

@@ -137,8 +137,9 @@ and everything in it that has Cmd in it (Ctrl elsewhere) works in every mode.
 | New file / close tab | Cmd+N (or Cmd+T) / Cmd+W | Ctrl+N (or Ctrl+T) / Ctrl+W |
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab, or Cmd+Shift+] / [ | Ctrl+Tab / Ctrl+Shift+Tab, or Ctrl+PageDown / PageUp |
 | Tab 1 to 8, last tab | Cmd+1 ... Cmd+8, Cmd+9 | Ctrl+1 ... Ctrl+8, Ctrl+9 |
-| Move the tab left / right | Ctrl+Shift+PageUp / PageDown | |
-| Split right / split down | Cmd+\ / Cmd+Shift+\ | Ctrl+\ / Ctrl+Shift+\ |
+| Move the tab left / right | Cmd+Option+Shift+[ / ], or Ctrl+Shift+PageUp / PageDown | Ctrl+Alt+Shift+[ / ] |
+| Split right / split down (Go to file for what goes in it) | Cmd+\ / Cmd+Shift+\ | Ctrl+\ / Ctrl+Shift+\ |
+| Close the split (its tabs join the one beside it) | Cmd+Shift+W | Ctrl+Shift+W |
 | Keyboard to the split on that side | Cmd+Option+arrow | Ctrl+Alt+arrow |
 | The tab to the split on that side (a new one if there is none) | Cmd+Option+Shift+arrow | Ctrl+Alt+Shift+arrow |
 | The split wider / narrower, taller / shorter | Cmd+Ctrl+Right / Left, Down / Up | |
@@ -149,6 +150,7 @@ and everything in it that has Cmd in it (Ctrl elsewhere) works in every mode.
 | A new project (the start screen's New project tab, in a tab of its own) | Cmd+Option+N | Ctrl+Alt+N |
 | Markdown preview, or an SVG's picture, beside the file | Cmd+Shift+V | Ctrl+Shift+V |
 | Blame column on or off | Cmd+Option+B | Ctrl+Alt+B |
+| Back / forward through the places jumps started from (Go to file, Search in files, a problem, a definition, Vim's G, a search, a mark) | Ctrl+- / Ctrl+Shift+- | Alt+Left / Alt+Right |
 | Font size | Cmd+= / Cmd+- / Cmd+0 | Ctrl+= / Ctrl+- / Ctrl+0 |
 | Open init.lua (the settings) | Cmd+, | Ctrl+, |
 | Quit | Cmd+Q | Ctrl+Q |
@@ -176,9 +178,17 @@ With a [language server](#language-servers) running:
 | In the list | Up/Down, Page Up/Down; Enter or Tab accepts; a click picks | same |
 | Describe what is under the cursor | Cmd+I | Ctrl+I |
 | Signature of the call being typed | Ctrl+Shift+Space | same |
-| Go to definition | F12 or Cmd+click | F12 or Ctrl+click |
-| Back to where the jump came from | Ctrl+- | Alt+Left |
+| Go to definition (Ctrl+- comes back) | F12 or Cmd+click | F12 or Ctrl+click |
 | Close popups | Esc | Esc |
+
+**Back.** Every jump goes into one list, across files, with or without a
+language server: Go to file (and its `:120`), Search in files and F4, a
+problem (F8, or a row of the Problems tab), a file opened from the side
+panel, a definition, and Vim's own long moves (`G`, `gg`, a search, `%`,
+a mark). Ctrl+- walks back through it in any mode, and Ctrl+Shift+-
+forward again; Vim's Ctrl-O and Ctrl-I walk the same list. As in Vim, a
+line is in it once, and walking back from the end first notes where the
+cursor is, for forward to come back to.
 
 In a profile's tab: Up/Down choose a function, Enter opens its source,
 Space zooms the flame graph into it (again: back out), Esc zooms out. In a
@@ -414,10 +424,25 @@ right: what a script put there (`blit.ui.status`), the errors and warnings
 (the language server's in the open file and the last build's in all of
 them), the cursor's line and column (and what is selected:
 characters, or lines), the indentation, the line endings, and the language
-with its server. A click on the repository part opens the side panel's Git
-tab, one on the problems its Problems tab. When the window is narrow a
-long path is shortened from its start first, then the least needed parts
-go. With Vim's modes on, the command line is just above it.
+with its server; `C++ (no colours)` when that language's grammar is not
+installed (see [Syntax highlighting](#syntax-highlighting)). A click on the
+repository part opens the side panel's Git tab, one on the problems its
+Problems tab, and one on the line and column Go to file with `:` typed, for
+a line. A click on the indentation, the line endings or the language opens
+a short list that changes it for that file: tabs or 2, 3, 4 or 8 spaces
+(what the indent lines and Vim's `>` go by; the file's text stays as it
+is), LF or CRLF (every line end made so, as one step to undo, and Enter
+puts that in), or another language (its colours and the scripts'
+`FileType` follow; its language server stays the one its name says), with
+getting its grammar first when it has none. When the
+window is narrow a long path is shortened from its start first, then the
+least needed parts go. With Vim's modes on, the command line is just above
+it.
+
+The window's title names the file in front and the project folder:
+`render.cpp — blit (~/Dev/blit)`, with a dot first while the file has
+unsaved changes. Before the side panel has a folder, it is the one the
+panel would open at for that file.
 
 Each level of indentation has a thin coloured line down it, a different
 colour per level, carried through the blank lines inside a block. How many
@@ -440,14 +465,21 @@ blit.opt.themes["rose-pine"].guides = { "#786168", "#7c6449", "#546a75" }   -- o
 ![three splits beside the side panel, each with its own tabs](screenshot-splits.png)
 
 The window can be divided into splits, side by side or one above the other,
-and each of those divided again (up to eight in all). Every split has its
+and each of those divided again (up to sixteen in all). Every split has its
 own tabs, line numbers and scroll position; the side panel is shared.
 Cmd+\ makes a split to the right of the one with the keyboard and
-Cmd+Shift+\ one below it, each starting with a new file. A click gives a
-split the keyboard (its front tab is the one in bold), and Cmd+Option with
-an arrow moves the keyboard to the split on that side. The wheel scrolls
-whichever split the mouse is over. Drag the line between two splits to
-resize them. A split goes when its last tab is closed.
+Cmd+Shift+\ one below it, and opens Go to file for it: the file chosen
+opens there (one open in another split moves there), and Esc leaves it
+with a new file. A click gives a split the keyboard (its front tab is the
+one in bold), and Cmd+Option with an arrow moves the keyboard to the split
+on that side. The wheel scrolls whichever split the mouse is over. Drag the
+line between two splits to resize them. A split goes when its last tab is
+closed, or with Cmd+Shift+W: its tabs then join the split beside it, after
+that split's own and with the one that was in front still in front (a new
+file with nothing in it goes with it). The terminals' split along the
+bottom is hidden instead, its programs still running; the last split
+cannot go, and Cmd+Shift+W closes its tabs, asking about unsaved changes
+as Cmd+W does.
 
 Things are moved by dragging them. While something is being dragged, the
 place it would land is washed with colour: one half of a split means "a new
@@ -766,8 +798,10 @@ There is no settings file: settings are made in `init.lua`
 same names throughout. Without an `init.lua` everything is at its default.
 Cmd+, opens it in blit, making it the first time from a template in which
 every setting is listed with its default and commented out. Saving it in
-blit applies it at once; edits made in another program apply the next
-time a blit window gets focus.
+blit applies it at once, and the bottom line says "Settings applied", or
+what is wrong and on which line (`init.lua:12: unknown setting
+editor.tabbar`); edits made in another program apply the next time a blit
+window gets focus.
 
 ```lua
 blit.opt.font.family = "Victor Mono"   -- a family name, or the path of a font file
@@ -783,7 +817,10 @@ features; themes and token styles; tab width, the tab bar, line numbers
 and indent lines; scrolling; window size. The same file holds mappings,
 commands and anything else that needs a program; see
 [Scripts and plugins](#scripts-and-plugins). `:set` changes a setting
-while blit runs (`:set tab_width=2`), until it starts again.
+while blit runs (`:set tab_width=2`), until it starts again. Tab completes
+the setting's name there (Tab again: the next that fits, Shift+Tab the one
+before; `no` before a switch's), and after `=` its value: true or false,
+a theme's name, or what it is now.
 
 **Fonts** are found by family name in the system font folders, so the name
 you would type in any other editor works; close matches count ("Victor Mono"
@@ -792,7 +829,12 @@ finds "VictorMono Nerd Font Mono"). The font has to be monospace.
 **Themes** built in: `blit-dark`, `blit-light`, `rose-pine`, `rose-pine-moon`,
 `rose-pine-dawn`. `blit.opt.themes.NAME = { ... }` defines your own from
 five colours (background, foreground, selection, cursor, scrollbar), or
-changes single colours of a built-in one.
+changes single colours of a built-in one. "Choose a theme…" in the command
+search lists every theme; each is put on as the choice comes to it, Esc
+puts back the one there was, and Enter keeps it and writes
+`blit.opt.theme.dark = "…"` (or `light`, by the system's appearance) into
+init.lua, in its tab and not saved: over the line that sets it, else over
+the template's commented-out one, else at the end.
 
 **Ligatures** are shaped with HarfBuzz, which is loaded only when a font asks
 for them. `blit.opt.font.features = { "ss01", "zero" }` turns on other OpenType features.
@@ -955,9 +997,13 @@ blit.opt.syntax.install = { "cpp", "python", "lua" }   -- have these installed
 blit.opt.syntax.auto_install = true                    -- and the grammar of any file that is opened
 ```
 
-Nothing is fetched unless one of these asks for it. It needs `curl`, `tar`
-and a C compiler (`cc`), which macOS has once the command line tools are
-installed.
+Nothing is fetched unless one of these asks for it, or the command "Install
+the grammar for this file's language" (in the command search, and first in
+the list a click on the status bar's language opens). A file whose
+language has no grammar installed says so there: `C++ (no colours)`. The
+bottom line says when a grammar is in (the file is coloured then), or why
+it could not be. It needs `curl`, `tar` and a C compiler (`cc`), which
+macOS has once the command line tools are installed.
 
 Built in are only C, C++, HIP and Python, and what the files around them
 are written in: CMake, Make, JSON, TOML, YAML, Markdown, shell scripts
@@ -1895,6 +1941,7 @@ tests/splits.sh build-debug/blit   # tabs and splits, by scripted mouse and keys
 tests/git.sh build-debug/blit      # git end to end, in scratch repositories with a "server" beside them
 tests/modal.sh build-debug/blit    # modal editing through the real key and text events
 tests/look.sh build-debug/blit     # the looks and the motion: frames compared pixel for pixel
+tests/status.sh build-debug/blit   # the status bar's parts and clicks, a language with no colours and getting its grammar (a curl that fails), the window's title
 tests/find.sh build-debug/blit     # finding files and text, opening, saving and choosing a folder by a typed path; finding and replacing in the file and in files (one open, others not, and through tests/fake-ssh.sh)
 tests/lua.sh build-debug/blit      # scripts: settings, mappings, commands, events, programs, pickers, plugins
 tests/start.sh build-debug/blit    # the start screen and the list of what was opened lately (a scratch one)
@@ -1903,7 +1950,7 @@ tests/remote.sh build-debug/blit   # another machine's files, git and language s
 tests/profile.sh build-debug/blit  # profiling tests/profile/spin.c here and through tests/fake-ssh.sh (skipped with no profiler)
 tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, copy and paste, here and through tests/fake-ssh.sh;
                                    # the split Ctrl+` shows and hides, and the questions about programs still running
-tests/keys.sh build-debug/blit     # the command search, the new keys, and every command run from the search
+tests/keys.sh build-debug/blit     # the command search, the new keys, Back and Forward through the jumps, and every command run from the search
 tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger)
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running), a fake build's problems (F8, Cmd+click) and new projects (a stand-in vcpkg)
 tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md against what they should draw, Mermaid, typing, Cmd+Shift+V, coloured code
@@ -2019,7 +2066,7 @@ does not finish and takes all the memory the machine has.
   lines a search keeps, and passes over a file over 8 MB. The count in the
   in-file box ("3 of 12") is left out in a file over 64 MB (8 MB with
   regular expressions on). A file shows in one split at a time (two views of the same file
-  are not possible yet), and there are at most eight splits. Tabs and
+  are not possible yet), and there are at most sixteen splits. Tabs and
   splits are not remembered from one run to the next.
 - Only macOS has a renderer: the Vulkan side, for Windows and Linux, is
   not written yet.

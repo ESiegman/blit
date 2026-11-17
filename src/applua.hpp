@@ -337,6 +337,8 @@ struct App::ScriptUi {
     u64 deadline = 0;      // when the outermost of them is stopped (0: none is running)
     bool starting = false; // init.lua is running before the window is there: settings go straight in
     bool reload = false;   // a fresh start is wanted, once nothing is running
+    bool announce = false; // and it is for init.lua saved: the bottom line says how it went
+    u32 errors = 0;        // errors shown so far (one while init.lua ran again: it said which line)
     std::string config_dir, data_dir, init_path;
     i64 init_stamp = 0;
 
@@ -447,6 +449,12 @@ struct App::ScriptUi {
     std::vector<std::string> namespaces;
     std::vector<GridDeco> view_decos[kMaxViews];
     std::vector<GridNote> view_notes[kMaxViews];
+
+    // Tab on a ":set" line (set_complete): the line it made, what it chose
+    // among, which of them, and what came before the word completed.
+    std::string set_made, set_head;
+    std::vector<std::string> set_options;
+    size_t set_at = 0;
 
     // The finder box, asked for by blit.ui.select or blit.ui.input.
     int pick_fn = LUA_NOREF, pick_items = LUA_NOREF;

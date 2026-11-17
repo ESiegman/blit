@@ -286,14 +286,18 @@ bool App::tabs_key(const SDL_KeyboardEvent& k) {
         return true;
     }
     if (!cmd) return false;
+    // (The bracket keys by where they are: with Shift held a Mac reports the brace they type.)
+    const int bracket = k.scancode == SDL_SCANCODE_LEFTBRACKET || k.key == SDLK_LEFTBRACKET || k.key == SDLK_LEFTBRACE      ? -1
+                        : k.scancode == SDL_SCANCODE_RIGHTBRACKET || k.key == SDLK_RIGHTBRACKET || k.key == SDLK_RIGHTBRACE ? 1
+                                                                                                                             : 0;
+    if (bracket) {
+        if (!shift || (k.mod & SDL_KMOD_ALT)) return false;  // (with Option: the tab moves, appcommands.cpp)
+        tab_step(bracket);
+        return true;
+    }
     switch (k.key) {
         case SDLK_T: tab_new(); return true;
         case SDLK_W: tab_close(pane_->tab); return true;
-        case SDLK_RIGHTBRACKET:
-        case SDLK_LEFTBRACKET:
-            if (!shift) return false;
-            tab_step(k.key == SDLK_RIGHTBRACKET ? 1 : -1);
-            return true;
         default: break;
     }
     if (k.key >= SDLK_1 && k.key <= SDLK_9) {  // the first eight tabs by number; 9 is the last

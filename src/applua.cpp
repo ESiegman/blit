@@ -527,6 +527,7 @@ void App::script_restart() {
     }
     script_shutdown();
     script_settings_.clear();
+    const u32 errors = script_ ? script_->errors : 0;
     // init.lua starts again from the defaults (what it no longer sets goes
     // back to them); what it ends with is then put into effect at once.
     Config now = cfg_;
@@ -539,6 +540,8 @@ void App::script_restart() {
         script_event(kEvBufEnter, pane_->doc->id);
         script_event(kEvVimEnter, 0);
     }
+    // Saved in blit: what came of it. (A line that is wrong has said so, with its number.)
+    if (script_ && std::exchange(script_->announce, false) && script_->errors == errors) notify("Settings applied");
 }
 
 // A setting from a script: checked, kept (it is made again on top of the
@@ -572,6 +575,7 @@ void App::notify(const std::string& text, int level, const std::string& detail) 
     ScriptUi& s = *script_;
     s.messages.push_back(full);
     if (s.messages.size() > 200) s.messages.erase(s.messages.begin());
+    if (level == kError) ++s.errors;
     if (level == kInfo && cfg_.modal && text.find('\n') == std::string::npos && width_of(text) < 120 && win_) {
         vim_.say(text);
     } else {
@@ -892,6 +896,7 @@ void App::script_mode_seen() {
 }
 
 std::string App::doc_language(const Doc& d) const {
+    if (!d.lang.empty()) return d.lang == "-" ? std::string() : d.lang;  // (chosen from the status bar)
     if (d.ed.path.empty()) return {};
     char head[128];
     const u64 n = d.ed.buf.read(0, head, sizeof head);
@@ -971,6 +976,10 @@ void App::script_opened(u64 doc, bool fresh) {
     script_event(kEvFileType, doc, d->ed.path, doc_language(*d));
 }
 
+void App::script_filetype(u64 doc) {
+    if (const Doc* d = script_ ? find_doc(doc) : nullptr) script_event(kEvFileType, doc, d->ed.path, doc_language(*d));
+}
+
 void App::script_closed(const Doc& d) {
     if (!script_) return;
     script_->marks.erase(d.id);
@@ -993,7 +1002,10 @@ void App::script_saved(const std::string& path) {
     // A script of the settings' was saved: all of them run again.
     const std::string dir = parent_of(init_path_) + "/";
     const bool ours = path.ends_with(".lua") && (path.starts_with(dir) || (script_ && path == script_->init_path));
-    if (ours) script_restart();
+    if (!ours) return;
+    if (!script_) script_ = std::make_shared<ScriptUi>();
+    script_->announce = true;
+    script_restart();
 }
 
 // What the commands outside Vim's own do: :lua, :=, :set, :map, a script's.
@@ -1238,6 +1250,200 @@ void App::script_ex(const VimRequest& q) {
     script_call(1, 0, (":" + name).c_str());
 }
 
+namespace {
+
+// A setting's name as :set takes it: the settings file's ("editor.tab_width"),
+// the part after the last dot alone where that is enough ("tab_width"), or
+// one of Vim's ("ts"). The whole key; "" if there is none; "?" and the keys
+// it could be if it is not enough.
+std::string set_key(const std::string& n) {
+    for (const auto& v : kVimNames)
+        if (n == v.vim) return v.key;
+    std::string found;
+    for (const char* k : config_keys()) {
+        const std::string_view key = k;
+        if (key == n) return std::string(key);
+        const size_t dot = key.rfind('.');
+        if (key.substr(dot + 1) == n) {
+            if (!found.empty()) return "?" + found + " " + std::string(key);
+            found = key;
+        }
+    }
+    return found;
+}
+
+// A key as :set is best told it: the part after the last dot, where that is enough.
+std::string set_short(std::string_view key) {
+    const std::string tail(key.substr(key.rfind('.') + 1));
+    return set_key(tail) == key ? tail : std::string(key);
+}
+
+bool starts_nocase(std::string_view s, std::string_view prefix) {
+    if (s.size() < prefix.size()) return false;
+    for (size_t i = 0; i < prefix.size(); ++i)
+        if (std::tolower(static_cast<u8>(s[i])) != std::tolower(static_cast<u8>(prefix[i]))) return false;
+    return true;
+}
+
+}  // namespace
+
+// Tab on a ":set" command line: the name being typed completed, then
+// (after "=") its value: true or false for a switch, a theme's name for
+// the themes, what it is now for the rest. Tab again goes on to the next
+// that fits, Shift+Tab back. False: not a ":set" line.
+bool App::set_complete(int by) {
+    const std::string line = vim_.status();  // ":" and what is typed
+    const size_t space = line.find(' ');
+    if (line.size() < 2 || line[0] != ':' || space == std::string::npos) return false;
+    const std::string command = line.substr(1, space - 1);
+    if (command != "se" && command != "set" && command != "setl" && command != "setlocal") return false;
+    if (!script_) script_ = std::make_shared<ScriptUi>();
+    ScriptUi& s = *script_;
+    if (line != s.set_made || s.set_options.empty()) {
+        // What to choose among, for the word at the end.
+        const size_t start = line.rfind(' ') + 1;
+        const std::string word = line.substr(start);
+        s.set_head = line.substr(1, start - 1);
+        s.set_options.clear();
+        if (const size_t eq = word.find_first_of("=:"); eq != std::string::npos) {
+            const std::string name = word.substr(0, eq), typed = word.substr(eq + 1);
+            const std::string key = set_key(name);
+            if (key.empty() || key[0] == '?') return true;
+            std::vector<std::string> values;
+            const ConfigValue now = config_get(cfg_, key);
+            if (now.kind == ConfigValue::kBool) {
+                values = {"true", "false"};
+            } else if (key == "theme.dark" || key == "theme.light") {
+                for (const auto& [theme, colours] : cfg_.themes) values.push_back(theme);
+            } else if (now.kind == ConfigValue::kNumber) {
+                char buf[48];
+                std::snprintf(buf, sizeof buf, "%g", now.number);
+                values.push_back(buf);
+            } else if (now.kind == ConfigValue::kText) {
+                values.push_back(now.text.find(' ') == std::string::npos ? now.text : toml_quote(now.text));
+            } else if (now.kind == ConfigValue::kList) {
+                std::string all;
+                for (const std::string& v : now.list) all += (all.empty() ? "" : ",") + v;
+                values.push_back(all);
+            }
+            for (const std::string& v : values)
+                if (starts_nocase(v, typed)) s.set_options.push_back(word.substr(0, eq + 1) + v);
+        } else {
+            // A name: the settings', the short way where that is enough;
+            // "no" before a switch's.
+            const bool no = word.starts_with("no");
+            for (const char* k : config_keys()) {
+                const std::string name = set_short(k);
+                const bool flag = config_get(cfg_, k).kind == ConfigValue::kBool;
+                if (starts_nocase(name, word) || starts_nocase(k, word)) s.set_options.push_back(starts_nocase(name, word) ? name : k);
+                else if (no && flag && starts_nocase(name, word.substr(2))) s.set_options.push_back("no" + name);
+            }
+            std::sort(s.set_options.begin(), s.set_options.end());
+            s.set_options.erase(std::unique(s.set_options.begin(), s.set_options.end()), s.set_options.end());
+        }
+        if (s.set_options.empty()) return true;  // (nothing fits: the Tab is no use to the line either)
+        s.set_at = by > 0 ? 0 : s.set_options.size() - 1;
+    } else {
+        const size_t n = s.set_options.size();
+        s.set_at = (s.set_at + n + (by > 0 ? 1 : n - 1)) % n;
+    }
+    const std::string text = s.set_head + s.set_options[s.set_at];
+    vim_.open_command(pane_->doc->ed, ':', text, false);
+    s.set_made = ":" + text;
+    dirty_ = true;
+    return true;
+}
+
+// ---------------------------------------------------------------- choosing a theme
+
+// Every theme in a list, the one in use chosen. Each is put on as the
+// choice comes to it; Esc puts the one there was back, Enter keeps the one
+// chosen (as :set would, until init.lua runs again) and writes it into
+// init.lua, for the system's appearance as it is now.
+void App::theme_choose() {
+    const bool dark = SDL_GetSystemTheme() != SDL_SYSTEM_THEME_LIGHT;
+    const std::string was = dark ? cfg_.theme_dark : cfg_.theme_light;
+    std::vector<std::string> names;
+    size_t at = 0;
+    for (const auto& [name, colours] : cfg_.themes) {
+        if (name == was || (!cfg_.themes.contains(was) && name == (dark ? "blit-dark" : "blit-light"))) at = names.size();
+        names.push_back(name);
+    }
+    auto put_on = [this, dark](const std::string& name) {
+        (dark ? cfg_.theme_dark : cfg_.theme_light) = name;
+        pick_theme();
+    };
+    find_preview_item(dark ? "Theme (dark)" : "Theme (light)", names, at, [names, put_on](int i) { put_on(names[static_cast<size_t>(i)]); },
+                      [this, names, dark, was, put_on](int i) {
+                          if (i < 0) return;
+                          put_on(was);  // (then made a setting: what it was is what goes back if that is not one)
+                          const std::string& name = names[static_cast<size_t>(i)];
+                          if (const std::string wrong = script_set(dark ? "theme.dark" : "theme.light", toml_quote(name), "theme"); !wrong.empty()) return notify(wrong, kError);
+                          theme_write(dark, name);
+                      },
+                      [put_on, was] { put_on(was); });
+}
+
+// The theme's line in init.lua, in its tab (made from the template the
+// first time), not saved: the line that sets it changed if there is one,
+// else the template's commented-out one put in its place, else a line at
+// the end. The cursor goes to it.
+void App::theme_write(bool dark, const std::string& name) {
+    open_config();
+    Doc& d = *pane_->doc;
+    if (d.ed.path.empty() || full_path(d.ed.path) != full_path(init_path_) || d.read_only) return;
+    Editor& ed = d.ed;
+    const std::string key = std::string("blit.opt.theme.") + (dark ? "dark" : "light");
+    std::string quoted = "\"";
+    for (const char c : name) quoted += c == '"' || c == '\\' ? std::string("\\") + c : std::string(1, c);
+    const std::string line = key + " = " + quoted + "\"";
+    // Which line: the one that sets it (the last of them wins in Lua), else the template's.
+    u64 set = ~0ull, commented = ~0ull;
+    const u64 lines = ed.buf.line_count();
+    for (u64 l = 0; l < lines; ++l) {
+        const u64 start = ed.buf.line_start(l);
+        std::string text = ed.buf.text(start, std::min<u64>(ed.line_end(l) - start, 400));
+        const size_t lead = text.find_first_not_of(" \t");
+        if (lead == std::string::npos) continue;
+        std::string_view t = std::string_view(text).substr(lead);
+        const bool comment = t.starts_with("--");
+        if (comment) {
+            t.remove_prefix(2);
+            while (!t.empty() && t.front() == ' ') t.remove_prefix(1);
+        }
+        if (!t.starts_with(key)) continue;
+        t.remove_prefix(key.size());
+        while (!t.empty() && t.front() == ' ') t.remove_prefix(1);
+        if (!t.starts_with("=") || t.starts_with("==")) continue;
+        if (!comment) set = l;
+        else if (commented == ~0ull) commented = l;
+    }
+    ed.begin_group();
+    u64 at = 0;
+    if (set != ~0ull || commented != ~0ull) {
+        const u64 l = set != ~0ull ? set : commented, start = ed.buf.line_start(l);
+        const std::string text = ed.buf.text(start, ed.line_end(l) - start);
+        const size_t lead = std::min(text.find_first_not_of(" \t"), text.size());
+        // (A comment after the value stays, in a line that sets it; the template's line goes whole.)
+        size_t end = text.size();
+        if (set != ~0ull)
+            if (const size_t dash = text.find(" --", lead); dash != std::string::npos && text.find('"', dash) == std::string::npos) end = dash;
+        ed.replace(start + lead, start + end, line);
+        at = start + lead;
+    } else {
+        const u64 size = ed.buf.size();
+        char last = '\n';
+        if (size) ed.buf.read(size - 1, &last, 1);
+        ed.replace(size, size, (last == '\n' ? "" : "\n") + line + "\n");
+        at = ed.buf.line_start(ed.buf.line_count() > 1 ? ed.buf.line_count() - 2 : 0);
+    }
+    ed.end_group();
+    ed.move_to(at, false);
+    vim_mouse();
+    scroll_to_cursor();
+    dirty_ = true;
+}
+
 // :set name=value, :set name, :set noname, :set name? (the names are the
 // settings file's, the part after the last dot alone where that is
 // enough, or a few of Vim's).
@@ -1265,24 +1471,9 @@ void App::script_set_command(const std::string& arg) {
         const bool ask = name.ends_with("?");
         if (ask) name.pop_back();
         bool flag = true;
-        auto resolve = [&](const std::string& n) -> std::string {
-            for (const auto& v : kVimNames)
-                if (n == v.vim) return v.key;
-            std::string found;
-            for (const char* k : config_keys()) {
-                const std::string_view key = k;
-                if (key == n) return std::string(key);
-                const size_t dot = key.rfind('.');
-                if (key.substr(dot + 1) == n) {
-                    if (!found.empty()) return "?" + found + " " + std::string(key);
-                    found = key;
-                }
-            }
-            return found;
-        };
-        std::string key = resolve(name);
+        std::string key = set_key(name);
         if (key.empty() && eq == std::string::npos && name.starts_with("no")) {
-            key = resolve(name.substr(2));
+            key = set_key(name.substr(2));
             flag = false;
         }
         if (key.empty()) {

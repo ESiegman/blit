@@ -2316,6 +2316,31 @@ one. What git's thread does more: one comparison of the text with the
 index for each hunks request (about 18 µs a MB), and one `git cat-file` a
 file after each status.
 
+### Round 42: sixteen splits, one Back for every jump, the status bar's clicks, settings that say what happened
+
+Made in a copy of `main` at 532fa9b by an agent of its own; merged with
+two conflicts (the frame's limits, where the other copy had raised the
+pictures, and a test line both had changed). With one view, alternating
+with 532fa9b, medians of ten rounds (code-1m.txt, 2560x1600):
+
+| | Frame CPU p50 | Layout mean |
+|---|---:|---:|
+| scroll | 38.08 → 38.00 µs | 0.36 → 0.37 µs |
+| keys | 37.25 → 37.23 µs | 1.14 → 1.19 µs |
+| type | 38.42 → 38.54 µs | 1.23 → 1.23 µs |
+
+Several views (the harness, 300 frames timed, seven rounds): 2 views 22.46
+→ 22.30 ms, 8 views 23.74 → 23.78 ms, 16 views (not possible before)
+23.53 ms. `--bench splits` on the new build, CPU p50 / layout / fill: 1
+view 40.69 / 0.63 / 1.23 µs, 2 views 43.12 / 0.92 / 2.08, 8 views 47.50 /
+1.65 / 5.59, 16 views 46.98 / 2.33 / 6.91.
+
+The merged build (these, the Git and picture rounds and 39), turn about
+with 532fa9b, three runs each: scrolling CPU p50 40.67 to 41.12 against
+40.92 to 41.42 µs; keys 38.58 to 38.83 against 38.75 to 39.00 µs, layout
+1.50 to 1.58 against 1.46 to 1.50 µs (the status bar's parts that take
+clicks are laid out with it).
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

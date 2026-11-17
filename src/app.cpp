@@ -207,6 +207,7 @@ bool App::init(std::string* err) {
     debug_create();
     build_create();
     commands_create();
+    jumps_create();
     // (A file on another machine, a picture or a PDF is opened once the window is up.)
     const bool later_file = opt_.file && (is_remote(opt_.file) || is_picture_path(opt_.file) || is_pdf_path(opt_.file));
     bool folder = false;  // blit DIR: a folder to work in, and its session (see appsession.cpp)
@@ -428,7 +429,7 @@ void App::pick_theme() {
 // Nothing here waits: loading the grammar, parsing and querying all happen
 // on the syntax worker.
 void App::start_syntax(u64 first_line, bool at_launch) {
-    if (!cfg_.syntax || pane_->doc->ed.path.empty()) return;
+    if (!cfg_.syntax || (pane_->doc->ed.path.empty() && pane_->doc->lang.empty())) return;
     char head[128];
     const u64 n = pane_->doc->ed.buf.read(0, head, sizeof head);
     const std::string_view first(head, static_cast<size_t>(std::min<u64>(n, std::string_view(head, n).find('\n'))));
@@ -447,13 +448,15 @@ void App::start_syntax(u64 first_line, bool at_launch) {
         ev.user.code = 3;
         SDL_PushEvent(&ev);
     });
-    if (!pane_->doc->syntax.attach(pane_->doc->ed.buf, Syntax::language_for(pane_->doc->ed.path, first, cfg_.grammars), so)) return;
+    const std::string& chosen = pane_->doc->lang;  // (one chosen from the status bar, over the file's name)
+    if (!pane_->doc->syntax.attach(pane_->doc->ed.buf, chosen.empty() ? Syntax::language_for(pane_->doc->ed.path, first, cfg_.grammars) : chosen == "-" ? std::string() : chosen, so)) return;
     pane_->doc->ed.listen(&pane_->doc->syntax);
     pane_->doc->syntax.want(pane_->doc->ed.buf, first_line, first_line + 200);
 }
 
 // The language of the open file, by its name or first line; "" if unknown.
 std::string App::file_language() const {
+    if (!pane_->doc->lang.empty()) return pane_->doc->lang == "-" ? std::string() : pane_->doc->lang;  // (chosen from the status bar)
     if (pane_->doc->ed.path.empty()) return {};
     char head[128];
     const u64 n = pane_->doc->ed.buf.read(0, head, sizeof head);
@@ -493,10 +496,11 @@ void App::want_grammars() {
 void App::sync_grammars() {
     for (const GrammarInstaller::Done& d : grammars_.poll()) {
         if (!d.ok) {
-            std::fprintf(stderr, "blit: grammar %s: %s\n", d.name.c_str(), d.message.c_str());
+            notify("The " + language_name(d.name) + " grammar was not installed: " + d.message, 2);
             continue;
         }
-        std::fprintf(stderr, "blit: installed the %s grammar\n", d.name.c_str());
+        notify("Installed the " + language_name(d.name) + " grammar");
+        ++grammars_gen_;
         // An open file may have been waiting for it.
         for_each_doc([&] {
             if (d.name != file_language() || (pane_->doc->syntax.active() && pane_->doc->syntax.language() == d.name)) return;
@@ -505,6 +509,43 @@ void App::sync_grammars() {
         });
         pick_theme();
     }
+}
+
+// Whether the file in front's language has no grammar installed (its text
+// is plain for want of one). Looks at the disk: asked when the status bar
+// is made again, not at every frame.
+bool App::grammar_missing() {
+    const Doc& d = *pane_->doc;
+    if (!cfg_.syntax || d.syntax.active() || d.term || d.prof || d.md || d.image || d.pdf) return false;
+    const std::string lang = file_language();
+    if (lang.empty()) return false;
+    SyntaxOptions so;
+    so.parser_dirs = cfg_.parser_dirs;
+    so.query_dirs = cfg_.query_dirs;
+    return !Syntax::installed(lang, so);
+}
+
+// The grammar of the file in front's language, fetched and built by the
+// installer on its thread, as the settings' syntax.install would have it;
+// the bottom line says when it is in (sync_grammars), and the file is
+// coloured then.
+void App::grammar_install() {
+    const std::string lang = file_language();
+    if (lang.empty()) return notify("This file has no language");
+    const std::string name = language_name(lang);
+    const std::vector<GrammarSource> list = grammar_list(cfg_.grammars);
+    const GrammarSource* g = find_grammar(list, lang);
+    if (!g || g->repo.empty()) return notify("No grammar is known for " + name, 1);
+    if (!grammar_missing() && grammar_state(*g) == GrammarState::kInstalled) return notify("The " + name + " grammar is installed");
+    grammars_.set_notify([] {  // on the installer's thread: wake the event loop
+        SDL_Event ev{};
+        ev.type = SDL_EVENT_USER;
+        ev.user.code = 5;
+        SDL_PushEvent(&ev);
+    });
+    grammars_.forgive();  // (one that failed before may be tried again)
+    grammars_.request(list, lang);
+    notify("Installing the " + name + " grammar\xE2\x80\xA6");
 }
 
 // Must run before the buffer is replaced: the worker reads its memory.
@@ -894,14 +935,179 @@ void App::request_quit() {
     }
 }
 
+// The window's title: the file in front and the project folder
+// ("render.cpp — blit (~/Dev/blit)"), with a dot first while the file has
+// unsaved changes. The folder is the side panel's, or before it has one,
+// the one it would open at for the file. Set only when it changes: a frame
+// that changes nothing compares a flag and two strings.
 void App::update_title() {
+    if (!win_) return;
     const std::string& shown = pane_->doc->title.empty() ? pane_->doc->ed.path : pane_->doc->title;
-    if (!win_ || (pane_->doc->ed.modified() == title_modified_ && shown == title_path_)) return;
+    const std::string* root = panel_root();
+    if (pane_->doc->ed.modified() == title_modified_ && shown == title_path_ && (root ? *root : std::string_view()) == title_root_) return;
+    SDL_SetWindowTitle(win_, window_title().c_str());
+}
+
+std::string App::window_title() {
+    const std::string& shown = pane_->doc->title.empty() ? pane_->doc->ed.path : pane_->doc->title;
+    const std::string* root = panel_root();
+    if (shown != title_path_ && !root) title_base_ = !pane_->doc->ed.path.empty() && pane_->doc->title.empty() ? default_workdir() : std::string();  // (looks at the disk: once a file)
     title_modified_ = pane_->doc->ed.modified();
     title_path_ = shown;
-    size_t cut = shown.find_last_of("/\\");
-    std::string name = shown.empty() ? "untitled" : shown.substr(cut == std::string::npos ? 0 : cut + 1);
-    SDL_SetWindowTitle(win_, ((title_modified_ ? "\xE2\x97\x8F " : "") + name + " - blit").c_str());
+    title_root_ = root ? *root : std::string();
+    std::string folder = root ? *root : title_base_;
+    if (const char* home = SDL_getenv("HOME"); home && *home && !is_remote(folder)) {
+        const std::string h = home;
+        if (folder == h || folder.starts_with(h + "/")) folder = "~" + folder.substr(h.size());
+    }
+    const size_t cut = shown.find_last_of("/\\");
+    const std::string name = shown.empty() ? std::string(start_shown() ? "" : "untitled") : shown.substr(cut == std::string::npos ? 0 : cut + 1);
+    return (title_modified_ ? "\xE2\x97\x8F " : "") + (name.empty() ? "" : name + " \xE2\x80\x94 ") + "blit" + (folder.empty() ? "" : " (" + folder + ")");
+}
+
+// ---------------------------------------------------------------- jumps
+
+// One list of the places jumps started from, across files: Go to file,
+// Search in files and its F4, a problem, a definition, and Vim's own long
+// moves (G, a search, a mark, %) all go into it. Ctrl+- walks back through
+// it and Ctrl+Shift+- forward again (Alt+Left and Alt+Right elsewhere), as
+// do Vim's Ctrl-O and Ctrl-I, with or without a language server. As in
+// Vim, a line is in the list once, and setting out back from the end
+// first notes where the cursor is, for forward to come back to.
+struct App::Jumps {
+    struct Place {
+        std::string path;  // the file; empty: a new one, known by its document
+        u64 doc = 0;
+        u64 line = 0, col = 0;  // (a byte in the line: a place survives the lines around it being edited better than an offset)
+    };
+    std::vector<Place> list;
+    size_t at = 0;         // the place walked back to; list.size() while not walking
+    bool going = false;    // the cursor is being put at one of them: no jump of its own
+};
+
+void App::jumps_create() {
+    jumps_ = std::make_shared<Jumps>();
+    vim_.on_jump = [this](u64 off) { jump_note(*pane_->doc, off); };  // (Vim's long moves; Ctrl-O and Ctrl-I come back as requests)
+}
+
+void App::jump_record() { jump_note(*pane_->doc, pane_->doc->ed.cursor()); }
+
+bool App::jump_note(const Doc& d, u64 off) {
+    if (!jumps_ || jumps_->going) return false;
+    if (d.term || d.prof || d.md || d.image || d.pdf || (d.ed.path.empty() && d.ed.buf.size() == 0)) return false;  // (no text to come back to)
+    Jumps& j = *jumps_;
+    const Buffer& b = d.ed.buf;
+    Jumps::Place p;
+    p.path = d.ed.path.empty() ? std::string() : full_path(d.ed.path);
+    p.doc = d.id;
+    p.line = b.line_of(std::min(off, b.size()));
+    p.col = std::min(off, b.size()) - b.line_start(p.line);
+    std::erase_if(j.list, [&](const Jumps::Place& q) { return q.line == p.line && (p.path.empty() ? q.path.empty() && q.doc == p.doc : q.path == p.path); });
+    j.list.push_back(std::move(p));
+    if (j.list.size() > 100) j.list.erase(j.list.begin());
+    j.at = j.list.size();
+    return true;
+}
+
+// The cursor to place i: its file brought to the front (opened again if it
+// was closed), at its line. False if the file is gone.
+bool App::jump_go(size_t i) {
+    Jumps& j = *jumps_;
+    const Jumps::Place p = j.list[i];
+    j.going = true;
+    struct Done {
+        Jumps& j;
+        ~Done() { j.going = false; }
+    } done{j};
+    Pane* where = nullptr;
+    size_t index = 0;
+    if (!p.path.empty()) {
+        if (!find_open(p.path, &where, &index)) {
+            if (!is_remote(p.path) && !SDL_GetPathInfo(p.path.c_str(), nullptr)) return false;  // (opening it would make a new, empty one)
+            if (!open_path(p.path.c_str())) return false;
+        } else {
+            focus_pane(where);
+            tab_show(index);
+        }
+    } else {
+        if (!find_doc(p.doc, &where, &index)) return false;
+        focus_pane(where);
+        tab_show(index);
+    }
+    panel_focus(false);
+    Doc& d = *pane_->doc;
+    if (d.loading) {  // (on its way from another machine: there when it comes)
+        d.goto_line = p.line;
+        d.goto_col = static_cast<u32>(std::min<u64>(p.col, ~0u));
+        return true;
+    }
+    Editor& ed = d.ed;
+    const u64 line = std::min<u64>(p.line, ed.buf.line_count() - 1), start = ed.buf.line_start(line);
+    ed.move_to(std::min(start + p.col, ed.line_end(line)), false);
+    vim_mouse();  // (Vim takes the cursor's new place as it would a click's)
+    scroll_to_cursor();
+    dirty_ = true;
+    return true;
+}
+
+void App::jump_walk(i64 by) {
+    if (!jumps_ || by == 0) return;
+    Jumps& j = *jumps_;
+    if (j.at >= j.list.size()) {
+        if (by > 0) return;  // (not walking back: there is nothing ahead)
+        // Setting out: here is where forward comes back to (if here is a place).
+        if (jump_note(*pane_->doc, pane_->doc->ed.cursor())) j.at = j.list.size() - 1;
+    }
+    if (j.list.empty()) return;
+    const i64 n = static_cast<i64>(j.list.size());
+    i64 to = std::clamp<i64>(static_cast<i64>(j.at) + by, 0, n - 1);
+    if (to == static_cast<i64>(j.at)) return;
+    // A place whose file has gone is passed over, and goes from the list.
+    while (to >= 0 && to < static_cast<i64>(j.list.size()) && to != static_cast<i64>(j.at)) {
+        if (jump_go(static_cast<size_t>(to))) {
+            j.at = static_cast<size_t>(to);
+            return;
+        }
+        j.list.erase(j.list.begin() + to);
+        if (to < static_cast<i64>(j.at)) --j.at;
+        if (by < 0) --to;
+    }
+}
+
+// (Two numbers at every key: the lines are looked up only when the cursor has moved.)
+App::JumpFrom App::jump_from() const { return {pane_->doc->id, pane_->doc->ed.cursor()}; }
+
+void App::jump_if_moved(const JumpFrom& from) {
+    const Editor& ed = pane_->doc->ed;
+    if (pane_->doc->id == from.doc && (ed.cursor() == from.off || ed.buf.line_of(ed.cursor()) == ed.buf.line_of(std::min(from.off, ed.buf.size())))) return;
+    if (const Doc* d = find_doc(from.doc)) jump_note(*d, from.off);
+}
+
+// Ctrl+- and Ctrl+Shift+- (by where the key is: with Shift a Mac reports
+// "_"), or Alt+Left and Alt+Right where Ctrl is the shortcut key.
+bool App::jump_key(const SDL_KeyboardEvent& k) {
+    const bool ctrl = k.mod & SDL_KMOD_CTRL, alt = k.mod & SDL_KMOD_ALT, shift = k.mod & SDL_KMOD_SHIFT, gui = k.mod & SDL_KMOD_GUI;
+    if (kMac) {
+        const bool minus = k.scancode == SDL_SCANCODE_MINUS || k.key == SDLK_MINUS || k.key == SDLK_UNDERSCORE;
+        if (!minus || !ctrl || alt || gui) return false;
+        jump_walk(shift ? 1 : -1);
+        return true;
+    }
+    if (!alt || ctrl || gui || shift || (k.key != SDLK_LEFT && k.key != SDLK_RIGHT)) return false;
+    jump_walk(k.key == SDLK_LEFT ? -1 : 1);
+    return true;
+}
+
+// The list, for the tests: each place as file:line, ">" before the one walked back to.
+std::string App::jump_dump() const {
+    if (!jumps_) return "no jumps";
+    std::string out;
+    for (size_t i = 0; i < jumps_->list.size(); ++i) {
+        const Jumps::Place& p = jumps_->list[i];
+        const size_t slash = p.path.rfind('/');
+        out += (out.empty() ? "" : " ") + std::string(i == jumps_->at ? ">" : "") + (p.path.empty() ? "untitled" : p.path.substr(slash + 1)) + ":" + std::to_string(p.line + 1);
+    }
+    return (out.empty() ? std::string("none") : out) + (jumps_->at >= jumps_->list.size() ? " >" : "");
 }
 
 // ---------------------------------------------------------------- view
@@ -983,8 +1189,9 @@ void App::take_measured() {
 // loses lines (it may have started empty), a long one is not. (Not at every
 // key: typing along a line seldom changes the answer.)
 u32 App::indent_step() {
-    if (cfg_.indent_width) return cfg_.indent_width;
     Doc& d = *pane_->doc;
+    if (d.indent_chosen) return d.indent_step ? d.indent_step : std::max<u32>(1, d.ed.tab_width);  // (this file's, from the status bar, over the setting)
+    if (cfg_.indent_width) return cfg_.indent_width;
     const u64 lines = d.ed.buf.line_count();
     if (d.indent_rev == ~0ull || (lines <= 256 && lines != d.indent_lines)) {
         d.indent_rev = d.ed.revision();
@@ -1402,7 +1609,10 @@ void App::handle(const SDL_Event& e) {
             mouse_y_ = e.button.y;
             if (find_open_ && find_mouse_down(e.button)) break;  // on the box that finds things, or beside it (which shuts it)
             if (status_mouse_down(e.button)) break;
-            if (panel_mouse_down(e.button)) break;
+            if (const JumpFrom from = jump_from(); panel_mouse_down(e.button)) {  // (a problem, a file: Ctrl+- comes back from it)
+                jump_if_moved(from);
+                break;
+            }
             if (start_mouse_down(e.button)) break;
             if (build_mouse_down(e.button)) break;  // the Run button
             if (prof_mouse_down(e.button)) break;  // a profile's tab
@@ -1570,7 +1780,10 @@ void App::on_key(const SDL_KeyboardEvent& k) {
         if (term_key(k)) return;   // a terminal's tab is in front (appterm.cpp)
     }
     if (script_keys_ && script_key(k)) return;  // a mapping of a script's has it (applua.cpp)
-    if (!find_open_ && command_key(k)) return;  // the keys of the commands added in appcommands.cpp
+    if (const JumpFrom from = jump_from(); !find_open_ && command_key(k)) {  // the keys of the commands added in appcommands.cpp
+        if (k.key == SDLK_F8) jump_if_moved(from);  // (a problem gone to: Ctrl+- comes back from it)
+        return;
+    }
     const bool shift = k.mod & SDL_KMOD_SHIFT;
     const bool cmd = k.mod & kCmd;
     const bool word = k.mod & kWord;
@@ -1578,7 +1791,10 @@ void App::on_key(const SDL_KeyboardEvent& k) {
     if (k.key == SDLK_ESCAPE && script_) script_close_floats();
 
     if ((find_open_ || cmd) && find_key(k)) return;  // the box that finds things is open, or this opens it
-    if (panel_key(k)) return;  // the side panel had the keyboard, or it was one of its shortcuts
+    if (const JumpFrom from = jump_from(); panel_key(k)) {  // the side panel had the keyboard, or it was one of its shortcuts
+        jump_if_moved(from);
+        return;
+    }
     if (splits_key(k)) return; // a new split, or the keyboard to another one
     if (tabs_key(k)) return;   // a new tab, another tab, this tab closed
     // With Vim, Esc is Vim's whatever else is open: it shuts the popups too.
@@ -1586,9 +1802,12 @@ void App::on_key(const SDL_KeyboardEvent& k) {
         lsp_close(kPopAll);
         if (vim_key(k)) return;
     }
+    if (jump_key(k)) return;   // back or forward through the jumps, in any mode
     if (lsp_key(k)) return;    // a popup, or a language-server command, took it
     if (cmd && (k.mod & SDL_KMOD_ALT) && k.key == SDLK_B) return git_command("blame", {});
     if (cfg_.modal) {
+        // Tab on a ":set" line completes the setting's name, then its value (applua.cpp).
+        if (k.key == SDLK_TAB && vim_.mode() == Vim::kCommand && !(k.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI)) && set_complete(shift ? -1 : 1)) return;
         // The application's shortcuts for the clipboard, undo and select
         // all are Vim commands when Vim is not in Insert mode, so that they
         // act on what Visual mode has selected and leave the cursor where

@@ -147,6 +147,34 @@ struct Bench {
         return 0;
     }
 
+    // The window divided into BLIT_BENCH_VIEWS splits (16, at most
+    // kMaxViews), each showing the file (a document of its own with the
+    // same text), all of them scrolling at once: what a frame costs with
+    // that many views ("splits-16").
+    int splits() {
+        const char* env = SDL_getenv("BLIT_BENCH_VIEWS");
+        const int want = std::clamp(env && *env ? std::atoi(env) : static_cast<int>(kMaxViews), 1, static_cast<int>(kMaxViews));
+        for (int i = 1; i < want; ++i) {
+            Pane* p = a.split_pane(a.pane_, i % 2 ? App::kEdgeRight : App::kEdgeBottom);
+            if (!p) break;
+            a.focus_pane(p);
+            Doc* d = a.add_doc(0);
+            std::string err;
+            if (a.opt_.file) d->ed.open(a.opt_.file, &err);
+            a.tab_show(0);
+        }
+        const double ch = a.font_->cell_h();
+        const std::string name = "splits-" + std::to_string(a.panes_.size());
+        frames(name.c_str(), a.opt_.frames > 0 ? a.opt_.frames : 2000, [&](int i) {
+            a.for_each_pane([&] {
+                const double max = a.max_scroll_y();
+                a.pane_->target_y = max > 0 ? std::fmod(i * 3.37 * ch, max) : 0;
+                snap();
+            });
+        });
+        return 0;
+    }
+
     int jump() {
         const double ch = a.font_->cell_h();
         const u64 lines = a.pane_->doc->ed.buf.line_count();
@@ -532,6 +560,7 @@ int App::run_bench() {
         return b.scroll("select");
     }
     if (!std::strcmp(name, "jump")) return b.jump();
+    if (!std::strcmp(name, "splits")) return b.splits();
     if (!std::strcmp(name, "hscroll")) return b.hscroll();
     if (!std::strcmp(name, "type")) return b.type();
     if (!std::strcmp(name, "keys")) return b.keys();
@@ -683,6 +712,7 @@ void App::run_script(const char* script) {
         } else if (verb == "save") {
             save();
         } else if (verb == "open") {
+            if (find_open_) find_close(false);  // (as a click elsewhere would: a box with the keyboard has nothing to do with it)
             open_path(arg.c_str());
         } else if (verb == "vim") {  // keys in Vim's notation, straight to Vim
             vim_attach();
@@ -773,6 +803,12 @@ void App::run_script(const char* script) {
                        self(self, n->b.get()) + share;
             };
             std::fprintf(stderr, "%s%s\n", arg.empty() ? "" : (arg + ": ").c_str(), show(show, split_.get()).c_str());
+        } else if (verb == "title") {  // what the window's title would be
+            std::fprintf(stderr, "%s\n", window_title().c_str());
+        } else if (verb == "statusclick") {  // statusclick:TEXT, a click on the part of the status bar that starts with it
+            if (!status_click(arg)) std::fprintf(stderr, "statusclick: no \"%s\"\n", arg.c_str());
+        } else if (verb == "jumpdump") {  // the places Ctrl+- goes back through, file:line, ">" at the one walked back to (at the end: none)
+            std::fprintf(stderr, "%s\n", jump_dump().c_str());
         } else if (verb == "pan" || verb == "step") {
             // A touchpad stroke of so many wheel units (the view follows it
             // exactly and may be pulled past an end), or so many

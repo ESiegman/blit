@@ -70,6 +70,7 @@ public:
     bool save(std::string* err, i64* modified_ns = nullptr);
     bool modified() const { return state_id() != saved_id_; }
     bool crlf() const { return crlf_; }  // its lines end in "\r\n" (as its first line did)
+    void set_crlf(bool on) { crlf_ = on; }  // (once they have all been made to: Enter puts that in)
     // Calls the text as it is now the saved state (for text that was put
     // there to be shown, not typed).
     void mark_saved() {

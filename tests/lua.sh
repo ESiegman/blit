@@ -94,6 +94,44 @@ check ":set nornu: Vim's name for relative numbers" 'NORMAL | editor.relative_nu
 fresh
 run "text::set nonsense=1;key:Return;vimdump"
 check ":set with a name that is no setting's" 'NORMAL | E518: Unknown option: nonsense | 1:1 | one'
+fresh
+run "text::set tab_w;key:Tab;vimdump;text:=;key:Tab;vimdump;key:Return;text::set ts?;key:Return;vimdump"
+got=$(printf '%s' "$got" | sed -e 's/ | 1:1 | one//g')
+check ":set and Tab: the name completed, then what it is now; Enter sets it" 'COMMAND | :set tab_width ; COMMAND | :set tab_width=4 ; NORMAL | editor.tab_width=4'
+fresh
+run "text::set tab;key:Tab;key:Tab;vimdump;key:shift+Tab;vimdump;key:Escape;text::set noli;key:Tab;vimdump"
+got=$(printf '%s' "$got" | sed -e 's/ | 1:1 | one//g')
+check "Tab again: the next name that fits, Shift+Tab the one before; no before a switch" 'COMMAND | :set tab_width ; COMMAND | :set tab_bar ; COMMAND | :set noligatures'
+fresh
+run "text::set ligatures=;key:Tab;vimdump;key:Tab;vimdump;key:Escape;text::set dark=rose-pine-;key:Tab;vimdump;key:Tab;vimdump;key:Tab;vimdump"
+got=$(printf '%s' "$got" | sed -e 's/ | 1:1 | one//g')
+check "values: true or false for a switch, the themes' names for a theme" 'COMMAND | :set ligatures=true ; COMMAND | :set ligatures=false ; COMMAND | :set dark=rose-pine-dawn ; COMMAND | :set dark=rose-pine-moon ; COMMAND | :set dark=rose-pine-dawn'
+
+# ---------------------------------------------------------------- choosing a theme
+# Every theme in a list; each is put on as the choice comes to it, Esc puts
+# the one there was back, Enter keeps it and writes it into init.lua (in
+# its tab, not saved): over the line that sets it, else over the template's
+# commented-out one, else at the end.
+fresh
+run "command:Choose a theme;finddump;key:Down;key:Down;lua:print(blit.opt.theme.dark);key:Escape;lua:print(blit.opt.theme.dark)"
+check "the list, the one in use chosen; each put on as it is come to, Esc puts it back" 'pick [] 5 : >blit-dark blit-light rose-pine rose-pine-dawn rose-pine-moon ; rose-pine ; blit-dark'
+fresh
+init <<'EOF'
+
+  blit.opt.theme.dark = "blit-light" -- for now
+EOF
+run "command:Choose a theme;key:Down;key:Return;frame;dump;vimdump;lua:print(blit.opt.theme.dark, blit.info(0).modified)"
+check "Enter: put on, and the line that sets it changed, in init.lua's tab, unsaved" '>[a.txt init.lua*] ; NORMAL |  | 2:3 |   blit.opt.theme.dark = "rose-pine" -- for now ; rose-pine	true'
+fresh
+run "command:Choose a theme;text:moon;key:Return;vimdump"
+got="$got / $(grep -c 'theme.dark = "blit-dark"' "$C/init.lua")"
+check "no init.lua: made from the template, the commented-out line taken, not saved" 'NORMAL |  | 29:1 | blit.opt.theme.dark = "rose-pine-moon" / 1'
+fresh
+init <<'EOF'
+print("hello")
+EOF
+run "command:Choose a theme;text:dawn;key:Return;vimdump"
+check "an init.lua without it: a line at the end" 'hello ; NORMAL |  | 2:1 | blit.opt.theme.dark = "rose-pine-dawn"'
 
 # ---------------------------------------------------------------- blit's helpers, settings set by tables
 fresh
@@ -438,7 +476,13 @@ init <<'EOF'
 print("init.lua ran")
 EOF
 run "text::e $C/init.lua;key:Return;text::w;key:Return;text::Reload;key:Return;luawait:20"
-check "saving init.lua runs it again, and so does :Reload" 'init.lua ran ; init.lua ran ; init.lua ran'
+check "saving init.lua runs it again (and says so), and so does :Reload" 'init.lua ran ; init.lua ran ; Settings applied ; init.lua ran'
+fresh
+init <<'EOF'
+blit.opt.editor.tab_width = 2
+EOF
+run "text::e $C/init.lua;key:Return;vim:oblit.opt.editor.tabbar = false<Esc>;text::w;key:Return;lua:print(blit.opt.editor.tab_width)"
+check "init.lua saved with a line that is wrong: that line, and nothing applied said" 'init.lua:2: unknown setting editor.tabbar ; 2'
 fresh
 init <<'EOF'
 print("before"

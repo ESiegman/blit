@@ -240,6 +240,12 @@ struct App::Find {
     // goes here instead of being opened (a path) or to a script (a line).
     std::function<void(const std::string&)> chose;
     std::function<void(int)> chose_item;  // (a list of blit's own, kFindPick: which of the items)
+    // A list of blit's own whose rows are tried out as the choice moves
+    // (find_preview_item): the row last tried, and what Esc puts back.
+    std::function<void(int)> moved;
+    std::function<void()> cancelled;
+    int moved_at = -1;
+    u64 into_pane = 0;  // Go to file for a split just made (find_for_split): what is chosen opens there
     // The command search (kFindCommand): each command's keys and what is
     // searched (its name and its keys, in words), and whether the next keys
     // pressed are to be looked up rather than acted on.
@@ -263,8 +269,8 @@ struct App::Find {
     std::vector<Near> near;
     std::string query;
     u64 go_line = 0, go_col = 0;  // (from 1; 0: none)
-    bool nearby() const { return mode == kFindNames && query.empty() && !go_line && !near.empty(); }
-    bool line_only() const { return mode == kFindNames && query.empty() && go_line; }
+    bool nearby() const { return mode == kFindNames && query.empty() && !go_line && typed != ":" && !near.empty(); }
+    bool line_only() const { return mode == kFindNames && query.empty() && (go_line || typed == ":"); }  // (":" alone: the status bar's Ln, Col)
     bool heading(size_t i) const { return nearby() && i < near.size() && !near[i].heading.empty(); }
 
     bool beside = false;  // what is chosen opens in the split to the right (Cmd+Enter)
@@ -329,6 +335,8 @@ struct App::Find {
     static void list_near(App& a);
     static void go(App& a, u64 line, u64 col);
     static bool open_beside(App& a, const std::string& path);
+    static bool open_in(App& a, Pane* dest, const std::string& path, bool drop_blank);
+    static void tried(App& a);
     static void say(App& a, const std::string& text);
     // Finding and replacing in the file (kFindFile).
     static void file_query(App& a);
@@ -415,12 +423,31 @@ bool App::Find::open_beside(App& a, const std::string& path) {
     Pane* dest = a.pane_at(here.x1 + 4, (here.y0 + here.y1) / 2);
     if (!dest) dest = a.split_pane(a.pane_, kEdgeRight);
     if (!dest) return a.open_path(path.c_str());  // (no room for another split)
+    return open_in(a, dest, path, false);
+}
+
+// Opens a file in a split, which gets the keyboard; one open elsewhere
+// moves there. drop_blank: the split was made for it (Cmd+\), and the new
+// file it was made with goes if nothing was typed in it.
+bool App::Find::open_in(App& a, Pane* dest, const std::string& path, bool drop_blank) {
     Pane* where = nullptr;
     size_t index = 0;
     if (a.find_open(full_path(path), &where, &index)) {
-        if (where != dest) a.move_doc(where, index, dest, dest->docs.size());
+        const bool moved = where != dest;
+        u64 id = 0;
+        if (moved) {
+            id = where->docs[index]->id;
+            a.move_doc(where, index, dest, dest->docs.size());
+        }
         a.focus_pane(dest);
-        if (where == dest) a.tab_show(index);
+        if (!moved) a.tab_show(index);
+        for (size_t i = 0; drop_blank && moved && i < a.pane_->docs.size() && a.pane_->docs.size() > 1; ++i) {
+            const Doc& d = *a.pane_->docs[i];
+            if (d.id != id && d.ed.path.empty() && !d.ed.modified() && d.ed.buf.size() == 0 && d.title.empty() && !d.term && !d.prof) {
+                a.tab_close(i, true);
+                break;
+            }
+        }
     } else {
         a.focus_pane(dest);
         if (dest->docs.empty()) {  // a new split: a new file, which the one opened takes the place of
@@ -737,6 +764,9 @@ void App::find_open(int mode, const std::string& typed) {
     if (find_open_ && f.script() && !(mode == f.mode && f.script())) find_close(false);  // (a script's picker is answered "nothing")
     f.chose = nullptr;  // (see find_choose)
     f.chose_item = nullptr;
+    f.moved = nullptr;
+    if (auto back = std::exchange(f.cancelled, nullptr)) back();  // (what a list tried out is put back)
+    if (mode != kFindNames && mode != kFindText) f.into_pane = 0;  // (Tab between those two keeps it)
     if (find_open_ && f.mode == kFindAsk && mode != kFindAsk) {  // (ssh's question waits, and comes back when this box shuts)
         wipe(f.typed);
         f.ask_id = 0;
@@ -884,6 +914,37 @@ void App::find_choose_item(const std::string& prompt, std::vector<std::string> i
     f.chose_item = std::move(chose);
 }
 
+// The same, with each row tried out as the choice comes to it, from the
+// one at `at` (which is in effect already).
+void App::find_preview_item(const std::string& prompt, std::vector<std::string> items, size_t at, std::function<void(int)> moved,
+                            std::function<void(int)> chose, std::function<void()> cancelled) {
+    find_choose_item(prompt, std::move(items), std::move(chose));
+    Find& f = *find_;
+    for (size_t i = 0; i < f.entries.size(); ++i)
+        if (f.entries[i].index == at) f.sel = static_cast<u32>(i);
+    f.moved = std::move(moved);
+    f.cancelled = std::move(cancelled);
+    f.moved_at = static_cast<int>(at);
+    f.touch();
+}
+
+// The choice has moved in a list whose rows are tried out: this one is.
+void App::Find::tried(App& a) {
+    Find& f = *a.find_;
+    if (!f.moved || f.mode != kFindPick || f.sel >= f.entries.size()) return;
+    const int index = static_cast<int>(f.entries[f.sel].index);
+    if (index == f.moved_at) return;
+    f.moved_at = index;
+    f.moved(index);
+}
+
+// Go to file, for a split just made: what is chosen goes into it, and Esc
+// leaves it with the new file it has.
+void App::find_for_split(Pane* p) {
+    find_open(kFindNames);
+    find_->into_pane = p ? p->id : 0;
+}
+
 u64 App::find_ask_id() const { return find_open_ && find_->mode == kFindAsk ? find_->ask_id : 0; }
 
 // The question went unanswered (the connection ended): the box goes.
@@ -925,6 +986,9 @@ void App::find_close(bool chosen) {
     if (!chosen && f.script() && !f.chose && !f.chose_item) script_chose(false, -1, {});  // (the script hears that nothing was chosen)
     f.chose = nullptr;
     f.chose_item = nullptr;
+    f.moved = nullptr;
+    f.into_pane = 0;
+    if (auto back = std::exchange(f.cancelled, nullptr); back && !chosen) back();  // (Esc: what was tried out is put back)
     remote_asks();  // (a question ssh asked while this box was open)
 }
 
@@ -1013,6 +1077,7 @@ void App::find_query() {
             if (all) f.entries.push_back({f.items[i], false, Find::Entry::kPlain, score - static_cast<int>(std::min<size_t>(f.items[i].size(), 64) / 8), i});
         }
         if (!terms.empty()) std::stable_sort(f.entries.begin(), f.entries.end(), [](const Find::Entry& a, const Find::Entry& b) { return a.score > b.score; });
+        Find::tried(*this);  // (what is typed has put another row first)
         return;
     }
     const std::string* root = panel_root();
@@ -1187,7 +1252,11 @@ void App::find_accept() {
     if (f.mode == kFindText && f.asking) return Find::files_replace(*this);
     if (f.mode == kFindNames || f.mode == kFindText) {
         const bool beside = std::exchange(f.beside, false);
+        Pane* into = nullptr;  // (the split it was opened for, if it still is)
+        for (const std::unique_ptr<Pane>& p : panes_)
+            if (f.into_pane && p->id == f.into_pane) into = p.get();
         if (f.line_only()) {  // ":120": a line of the file in front
+            if (!f.go_line) return;  // (no number yet)
             const u64 line = f.go_line - 1, col = f.go_col ? f.go_col - 1 : 0;
             find_close(true);
             remember_place();  // (Ctrl-O comes back from it)
@@ -1215,7 +1284,7 @@ void App::find_accept() {
         }
         find_close(true);
         remember_place();  // (Ctrl-O comes back from it)
-        if (!(beside ? Find::open_beside(*this, path) : open_path(path.c_str()))) return;
+        if (!(beside ? Find::open_beside(*this, path) : into ? Find::open_in(*this, into, path, true) : open_path(path.c_str()))) return;
         if (line != ~0ull) Find::go(*this, line, col);
         dirty_ = true;
         return;
@@ -1320,6 +1389,7 @@ void App::find_move(i64 by) {
     f.sel = static_cast<u32>(to);
     f.touch();
     dirty_ = true;
+    Find::tried(*this);
 }
 
 // F4 (and Shift+F4, back): the next hit of the last search in files,
@@ -1357,6 +1427,10 @@ bool App::find_key(const SDL_KeyboardEvent& k) {
         return true;
     }
     if (!find_open_) return false;
+    if (cmd && k.key == SDLK_BACKSLASH) {  // another split: this box shuts, and the split is made as ever
+        find_close(false);
+        return false;
+    }
     // (While the box is open the commands' keys are not looked at: those that are about finding are its own.)
     if (cmd && k.key == SDLK_F && !shift) {  // Cmd+F, and Cmd+Option+F with "Replace with"
         if (f.mode == kFindFile && !alt) find_close(false);
@@ -1587,6 +1661,7 @@ bool App::find_wheel(const SDL_MouseWheelEvent& w) {
         while (f.heading(f.sel) && f.sel + 1 < n) ++f.sel;
         f.touch();
         dirty_ = true;
+        Find::tried(*this);
     }
     return true;
 }
@@ -1722,9 +1797,10 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
             const std::string quoted = "'" + fit_text(asked, 40) + "'";
             if (f.line_only()) {
                 const std::string& in = pane_->doc->ed.path;
-                empty = "Go to line " + std::to_string(f.go_line) + (f.go_col ? ", column " + std::to_string(f.go_col) : std::string()) + " of " +
-                        (in.empty() ? std::string("this file") : in.substr(in.rfind('/') + 1));
-                empty_plain = true;
+                const std::string file = in.empty() ? std::string("this file") : in.substr(in.rfind('/') + 1);
+                empty = f.go_line ? "Go to line " + std::to_string(f.go_line) + (f.go_col ? ", column " + std::to_string(f.go_col) : std::string()) + " of " + file
+                                  : std::to_string(pane_->doc->ed.buf.line_count()) + " lines in " + file;
+                empty_plain = f.go_line != 0;
             } else if (names) {
                 empty = reading && !files   ? std::string("Reading the folder\xE2\x80\xA6")
                         : !asked.empty()    ? "No file matches " + quoted

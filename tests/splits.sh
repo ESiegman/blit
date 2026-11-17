@@ -19,6 +19,7 @@ dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 printf 'blit.opt.lsp.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/init.lua"
 export BLIT_INIT="$dir/init.lua"
+export BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i"
 mkdir "$dir/work"
 T="$dir/work"
 for f in a b c d; do
@@ -77,14 +78,22 @@ check "a tab moved along its own bar" "$two;click:40,12;drag:180,12;release" \
     "H(>[b.txt a.txt*] | [c.txt*])0.50"
 check "closing a split's last tab closes the split" "$two;key:cmd+W" \
     ">[a.txt b.txt*]"
-check "a split below, and the keyboard moved up, left and back" "$two;key:cmd+shift+\\;key:cmd+alt+Up;key:cmd+alt+Left;key:cmd+alt+Right" \
+check "a split below, and the keyboard moved up, left and back" "$two;key:cmd+shift+\\;key:Escape;key:cmd+alt+Up;key:cmd+alt+Left;key:cmd+alt+Right" \
     "H([a.txt b.txt*] | V([c.txt*] / >[untitled*])0.50)0.50"
 check "the divider dragged" "$two;click:400,200;drag:600,200;release" \
     "H([a.txt b.txt*] | >[c.txt*])0.75"
 check "the wheel scrolls the split under the mouse, not the one with the keyboard" "$two;mouse:200,200;wheel:-5" \
     "H([a.txt b.txt*]@16 | >[c.txt*])0.50"
-check "a ninth split is not made" 'key:cmd+\;key:cmd+\;key:cmd+\;key:cmd+\;key:cmd+\;key:cmd+\;key:cmd+\;key:cmd+\;key:cmd+\;key:cmd+W' \
-    "H([a.txt*] | H([untitled*] | H([untitled*] | H([untitled*] | H([untitled*] | H([untitled*] | >[untitled*])0.50)0.50)0.50)0.50)0.50)0.50"
+# Sixteen splits at most (each Cmd+\ opens Go to file for its split; the
+# next one shuts that box and splits again).
+many=$(i=0; while [ $i -lt 17 ]; do printf 'key:cmd+shift+\;'; i=$((i + 1)); done)
+got=$("$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "${many}key:Escape;frame;dump" "$T/a.txt" 2>&1 >/dev/null | tail -1 | tr -cd '[' | wc -c | tr -d ' ')
+if [ -n "$print" ]; then
+    printf 'a seventeenth split is not made\n    %s splits\n' "$got"
+elif [ "$got" != 16 ]; then
+    printf 'FAIL: a seventeenth split is not made\n    expected 16 splits\n    got      %s\n' "$got"
+    failed=1
+fi
 check "a file from the tree to the bottom edge of a split: a new split with it" "$panel;click:60,90;drag:300,300;drag:660,430;release" \
     "H([a.txt b.txt*] | V([c.txt*] / >[d.txt*])0.50)0.50"
 check "a file from the tree into the middle of a split" "$panel;click:60,90;drag:300,250;drag:400,250;release" \
@@ -97,6 +106,29 @@ check "a file dragged within the panel: nothing" "$panel;click:60,90;drag:80,110
     "H([a.txt b.txt*] | >[c.txt*])0.50"
 check "a file that is open already: its tab moves to the new split" "$panel;click:60,59;drag:300,300;drag:660,430;release" \
     "H([a.txt*] | V([c.txt*] / >[b.txt*])0.50)0.50"
+# Cmd+\ opens Go to file for the new split: what is chosen opens in it.
+check "Cmd+\\: Go to file for the new split, and the file chosen opens there" "workdir:$T;$two;key:cmd+\\;text:d.txt;findwait;key:Return" \
+    "H([a.txt b.txt*] | H([c.txt*] | >[d.txt*])0.50)0.50"
+check "Esc leaves the new split with a new file" "$two;key:cmd+\\;key:Escape" \
+    "H([a.txt b.txt*] | H([c.txt*] | >[untitled*])0.50)0.50"
+check "a file open in another split: its tab moves to the new one" "workdir:$T;$two;key:cmd+\\;text:a.txt;findwait;key:Return" \
+    "H([b.txt*] | H([c.txt*] | >[a.txt*])0.50)0.50"
+check "Cmd+\\ again while the box is open: another split" "$two;key:cmd+\\;key:cmd+shift+\\;key:Escape" \
+    "H([a.txt b.txt*] | H([c.txt*] | V([untitled*] / >[untitled*])0.50)0.50)0.50"
+# Cmd+Shift+W closes a split: its tabs join the one beside it.
+check "Cmd+Shift+W: the split goes, its tabs join the one beside it" "$two;key:cmd+shift+W" \
+    ">[a.txt b.txt c.txt*]"
+check "from the left split: its tabs after the right one's, the one in front still in front" "$two;key:cmd+alt+Left;key:cmd+1;key:cmd+shift+W" \
+    ">[c.txt a.txt* b.txt]"
+check "a new file with nothing in it goes with the split" "$two;key:cmd+\\;key:Escape;key:cmd+shift+W" \
+    "H([a.txt b.txt*] | >[c.txt*])0.50"
+check "one with something typed in it does not" "$two;key:cmd+\\;key:Escape;text:x;key:cmd+shift+W" \
+    "H([a.txt b.txt*] | >[c.txt untitled*])0.50"
+check "the last split: its tabs close (unsaved ones asked about), a new file left" "$two;key:cmd+shift+W;text:x;key:cmd+shift+W" \
+    ">[untitled*]"
+check "the terminals' split (Ctrl+\`): hidden, its programs still running" "$two;key:ctrl+\`;frame;key:cmd+shift+W" \
+    "H([a.txt b.txt*] | >[c.txt*])0.50"
+
 check "tabs: new, next, close, and the last one closed leaves a new file" 'key:cmd+T;key:cmd+T;key:ctrl+Tab;key:cmd+W;key:cmd+W;key:cmd+W' \
     ">[untitled*]"
 check "Cmd+W on that empty file, and on a last terminal tab: blit stays, an empty file left" 'key:cmd+W;key:cmd+W;key:cmd+W;term;key:cmd+W;key:cmd+W' \
