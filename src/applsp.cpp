@@ -276,6 +276,7 @@ struct App::Assist {
     // shown as they come.
     bool places_pending = false, switch_pending = false, outline_pending = false, symbols_live = false;
     std::vector<LspSymbol> symbol_rows;
+    std::vector<LspSymbol> outline_rows;  // (the outline on show: the server's, or the tree's)
     // The uses of the symbol at the cursor: asked once the cursor has rested,
     // drawn while it stays on one of them and the text is as it was.
     u64 uses_due_ns = 0;
@@ -538,49 +539,7 @@ void App::sync_lsp() {
     }
     if ((news & Lsp::kOutline) && a.outline_pending) {
         a.outline_pending = false;
-        const std::vector<LspSymbol>& all = lsp_.outline_list();
-        if (all.empty()) {
-            notify("No symbols in " + std::string(base_name(pane_->doc->ed.path)));
-        } else {
-            // Each with its kind and the server's detail, indented as nested;
-            // the one the cursor is in chosen to start with.
-            std::vector<std::string> items;
-            size_t at = 0;
-            const u64 cur = pane_->doc->ed.cursor();
-            for (size_t i = 0; i < all.size(); ++i) {
-                const LspSymbol& y = all[i];
-                std::string row(2 * std::min<u32>(y.depth, 8), ' ');
-                row += y.name;
-                if (!y.detail.empty() && y.detail.size() < 60) row += (y.detail.front() == '(' ? "" : " ") + y.detail;
-                if (const char* k = symbol_kind_name(y.kind); *k) row += std::string("  \xC2\xB7 ") + k;
-                items.push_back(std::move(row));
-                if (y.offset <= cur) at = i;
-            }
-            const u64 back_off = cur;
-            const double back_y = pane_->target_y;
-            find_preview_item("Outline of " + std::string(base_name(pane_->doc->ed.path)), std::move(items), at,
-                              [this](int i) {  // (the view follows the choice; the cursor stays until Enter)
-                                  const std::vector<LspSymbol>& list = lsp_.outline_list();
-                                  if (i < 0 || static_cast<size_t>(i) >= list.size()) return;
-                                  const Editor& ed = pane_->doc->ed;
-                                  const u64 line = ed.buf.line_of(std::min(list[static_cast<size_t>(i)].offset, ed.buf.size()));
-                                  const double ch = font_->cell_h(), vh = view_h();
-                                  pane_->target_y = std::clamp(static_cast<double>(line) * ch - vh / 3, 0.0, std::max(0.0, max_scroll_y()));
-                                  dirty_ = true;
-                              },
-                              [this](int i) {
-                                  const std::vector<LspSymbol>& list = lsp_.outline_list();
-                                  if (i < 0 || static_cast<size_t>(i) >= list.size()) return;
-                                  remember_place();
-                                  pane_->doc->ed.move_to(std::min(list[static_cast<size_t>(i)].offset, pane_->doc->ed.buf.size()), false);
-                                  scroll_to_cursor();
-                              },
-                              [this, back_off, back_y] {
-                                  pane_->doc->ed.move_to(std::min(back_off, pane_->doc->ed.buf.size()), false);
-                                  pane_->target_y = back_y;
-                                  dirty_ = true;
-                              });
-        }
+        outline_show(lsp_.outline_list(), ~0ull);
     }
     if ((news & Lsp::kSymbols) && find_everywhere_open()) {  // (Search everywhere's)
         a.symbol_rows = lsp_.found_symbols();
@@ -978,16 +937,91 @@ void App::lsp_switch_header() {
     if (!open_path(other.c_str())) notify("Cannot open " + other);
 }
 
+void App::outline_show(std::vector<LspSymbol> symbols, u64 pick) {
+    Assist& a = *assist_;
+    a.outline_rows = std::move(symbols);
+    const std::vector<LspSymbol>& all = a.outline_rows;
+    {
+        if (all.empty()) {
+            notify("No symbols in " + std::string(base_name(pane_->doc->ed.path)));
+        } else {
+            // Each with its kind and the server's detail, indented as nested;
+            // the one the cursor is in chosen to start with.
+            std::vector<std::string> items;
+            size_t at = 0;
+            const u64 cur = pane_->doc->ed.cursor();
+            for (size_t i = 0; i < all.size(); ++i) {
+                const LspSymbol& y = all[i];
+                std::string row(2 * std::min<u32>(y.depth, 8), ' ');
+                row += y.name;
+                if (!y.detail.empty() && y.detail.size() < 60) row += (y.detail.front() == '(' ? "" : " ") + y.detail;
+                if (const char* k = symbol_kind_name(y.kind); *k) row += std::string("  \xC2\xB7 ") + k;
+                items.push_back(std::move(row));
+                if (pick == ~0ull ? y.offset <= cur : y.offset == pick) at = i;
+            }
+            const u64 back_off = cur;
+            const double back_y = pane_->target_y;
+            find_preview_item("Outline of " + std::string(base_name(pane_->doc->ed.path)), std::move(items), at,
+                              [this](int i) {  // (the view follows the choice; the cursor stays until Enter)
+                                  const std::vector<LspSymbol>& list = assist_->outline_rows;
+                                  if (i < 0 || static_cast<size_t>(i) >= list.size()) return;
+                                  const Editor& ed = pane_->doc->ed;
+                                  const u64 line = ed.buf.line_of(std::min(list[static_cast<size_t>(i)].offset, ed.buf.size()));
+                                  const double ch = font_->cell_h(), vh = view_h();
+                                  pane_->target_y = std::clamp(static_cast<double>(line) * ch - vh / 3, 0.0, std::max(0.0, max_scroll_y()));
+                                  dirty_ = true;
+                              },
+                              [this](int i) {
+                                  const std::vector<LspSymbol>& list = assist_->outline_rows;
+                                  if (i < 0 || static_cast<size_t>(i) >= list.size()) return;
+                                  remember_place();
+                                  pane_->doc->ed.move_to(std::min(list[static_cast<size_t>(i)].offset, pane_->doc->ed.buf.size()), false);
+                                  scroll_to_cursor();
+                              },
+                              [this, back_off, back_y] {
+                                  pane_->doc->ed.move_to(std::min(back_off, pane_->doc->ed.buf.size()), false);
+                                  pane_->target_y = back_y;
+                                  dirty_ = true;
+                              });
+        }
+    }
+}
+
 void App::lsp_outline() {
     Assist& a = *assist_;
     if (!lsp_.ready() || lsp_doc_ != pane_->doc || !lsp_.can_outline()) {
-        if (server_text(*pane_->doc))
-            notify(lsp_.ready() && lsp_doc_ == pane_->doc ? lsp_.server_name() + " gives no outline" : why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
+        // No server that gives one: the definitions the syntax tree has.
+        Doc& d = *pane_->doc;
+        SyntaxStructure all;
+        if (d.syntax.active() && d.syntax.ask_all(d.ed.buf, &all)) {
+            lsp_close(kPopAll);
+            outline_show(tree_symbols(d, all), ~0ull);
+        } else if (server_text(d)) {
+            notify(lsp_.ready() && lsp_doc_ == pane_->doc ? lsp_.server_name() + " gives no outline" : why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, d));
+        }
         return;
     }
     lsp_close(kPopAll);
     a.outline_pending = true;
     lsp_.outline();
+}
+
+// A document's definitions as the syntax tree has them, as a server's
+// symbols would be.
+std::vector<LspSymbol> App::tree_symbols(const Doc& d, const SyntaxStructure& s) {
+    std::vector<LspSymbol> out;
+    for (const SyntaxScope& sc : s.scopes) {
+        LspSymbol y;
+        y.name = sc.name;
+        y.kind = sc.kind;
+        y.depth = sc.depth;
+        y.path = d.ed.path;
+        y.offset = sc.name_at;
+        y.line = static_cast<u32>(d.ed.buf.line_of(std::min(sc.name_at, d.ed.buf.size())));
+        y.character = static_cast<u32>(sc.name_at - d.ed.buf.line_start(y.line));
+        out.push_back(std::move(y));
+    }
+    return out;
 }
 
 // Whether the uses found are to be shown: of this text as it is, two or

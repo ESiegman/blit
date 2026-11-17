@@ -1206,6 +1206,24 @@ with it. **Shrink the selection** (Ctrl+Shift+Cmd+Left) goes back the way it
 came. With Vim's modes on it is Visual mode. Without a grammar it is the
 word, then its line, then the whole text.
 
+**Breadcrumbs** under each split's tabs say where the cursor is: the
+file's folders (from the project's) and its name, then the definitions it
+is in, outermost first (`src › render.cpp › blit › Renderer › draw()`).
+Too long for the split, the first folders give way to `…`. A click on a
+folder or the name opens Go to file in that folder; one on a definition
+opens the file's outline with it chosen. **Sticky scroll** pins, over the
+top of the view, the lines that open the scopes the top of the view is in
+(a namespace, a class, a function, a loop: any block the tree has), five
+at most, with their line numbers; a click on one goes to it. The
+definitions are the tree's (any node whose type says it is a function, a
+method, a class, a struct, a namespace and so on, and that has a body),
+so both work for any language with a grammar, without a language server.
+
+```lua
+blit.opt.editor.breadcrumbs = false    -- no breadcrumbs (on)
+blit.opt.editor.sticky_scroll = false  -- nothing pinned (on)
+```
+
 `blit --info` prints which `init.lua`, theme and font were picked, the
 cell size, which characters the font can join, and where the italic and bold
 faces come from. A setting that is wrong is reported with the line of
@@ -1303,7 +1321,8 @@ A server whose last file has been closed stops half a minute later.
 - **The file's outline** with Cmd+Option+O (Vim's `gO`): its classes,
   functions and the rest, nested, each with its kind, starting at the one
   the cursor is in. Typing narrows them, moving through them shows each,
-  Enter goes there and Esc goes back.
+  Enter goes there and Esc goes back. Without a server (or one that gives
+  no outline) it is the definitions the syntax tree has.
 - **A symbol in the project** with Cmd+Option+P: the server is asked again
   as the name is typed.
 - **The other uses** of the name under the cursor are marked in the file

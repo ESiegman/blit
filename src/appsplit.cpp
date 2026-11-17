@@ -126,7 +126,7 @@ void App::place_panes(int w, int h) {
     if (!split_ || !font_) return;
     place_node(*split_, std::min(panel_px(), w), 0, w, std::max(1, h - vim_px() - status_px()));  // (the bottom lines are the command line's and the status bar's)
     for_each_pane([this] {  // (never past the pane's own edges, however little room it has)
-        pane_->text_y = std::min(pane_->y0 + tabs_px(), pane_->y1);
+        pane_->text_y = std::min(pane_->y0 + tabs_px() + crumbs_px(*pane_), pane_->y1);
         pane_->text_x = std::min(pane_->x0 + gutter_px(), pane_->x1);
     });
 }

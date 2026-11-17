@@ -109,6 +109,8 @@ struct Config {
     u32 indent_width = 0;       // columns per level for those lines; 0 = worked out from each file
     bool tab_bar = true;        // the row of open files along the top
     bool status_bar = true;     // the row across the bottom: the repository, the file, the cursor, problems
+    bool breadcrumbs = true;
+    bool sticky_scroll = true;  // the lines that open the scopes the top of the view is in, pinned there    // under each split's tabs: the file's folders and name, and the definitions the cursor is in
     bool start_screen = true;   // started with no file: the start screen (what to do first, what was opened lately)
     bool restore = true;        // a project folder opened again: its tabs, splits, cursors and side panel as they were left
     bool modal = true;          // Vim's modes and keys; false: an editor where typing types

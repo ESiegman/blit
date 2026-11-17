@@ -1558,6 +1558,8 @@ void App::layout_pane(FrameDesc& fd, bool focused) {
     }
     gutter_layout(px_w_, px_h_, fd);
     tabs_layout(px_w_, px_h_, fd, focused);
+    crumbs_layout(fd, focused);
+    sticky_layout(fd, v);
 }
 
 // The display's refresh rate decides how often a frame may be drawn.
@@ -1727,6 +1729,8 @@ void App::handle(const SDL_Event& e) {
             // The split under the mouse gets the click, and with it the keyboard.
             if (Pane* over = pane_at(static_cast<int>(e.button.x * density_), static_cast<int>(e.button.y * density_))) focus_pane(over);
             if (tabs_mouse_down(e.button)) break;
+            if (crumbs_mouse_down(e.button)) break;
+            if (sticky_mouse_down(e.button)) break;
             on_mouse_down(e.button);
             break;
         case SDL_EVENT_MOUSE_BUTTON_UP:

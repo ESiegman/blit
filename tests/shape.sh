@@ -21,12 +21,23 @@ printf '%s\nblit.opt.editor.modal = false\n' "$base" >"$dir/init.lua"
 printf '%s\nblit.opt.editor.modal = true\n' "$base" >"$dir/vim.lua"
 printf '%s\nblit.opt.editor.modal = false\nblit.opt.syntax.bracket_colors = false\n' "$base" >"$dir/plain.lua"
 printf '%s\nblit.opt.editor.modal = false\nblit.opt.themes["blit-dark"].brackets = { "#ff0000" }\n' "$base" >"$dir/one.lua"
+printf '%s\nblit.opt.editor.modal = false\nblit.opt.editor.breadcrumbs = false\n' "$base" >"$dir/nocrumbs.lua"
+printf '%s\nblit.opt.editor.modal = false\nblit.opt.editor.sticky_scroll = false\n' "$base" >"$dir/nosticky.lua"
 export BLIT_RECENT_FILE="$dir/recent"
 init=
 fresh() {
     printf 'int f(int a[3]) {\n    if (a[0]) { g("(x"); }\n    return (a[1]);\n}\n' >"$dir/b.cpp"
     printf 'xs = [1, (2, {3: [4]})]\ns = "([{"\n' >"$dir/b.py"
     printf 'some words here\nand more\n' >"$dir/plain.txt"
+    mkdir -p "$dir/proj/src"
+    printf 'namespace geo {\nstruct Point {\n    int x;\n    int len() const {\n        return x;\n    }\n};\nint area(int w) {\n    return w;\n}\n}\n' >"$dir/proj/src/s.cpp"
+    printf 'class Shape:\n    def area(self):\n        return 0\n\ndef make():\n    return Shape()\n' >"$dir/proj/s.py"
+    i=0
+    while [ $i -lt 60 ]; do  # (room to scroll)
+        echo >>"$dir/proj/src/s.cpp"
+        echo >>"$dir/proj/s.py"
+        i=$((i + 1))
+    done
 }
 
 failed=0
@@ -112,6 +123,46 @@ run "$grow;seldump" "$dir/plain.txt"
 check "no grammar: the word" '[some]'
 run "$grow;$grow;$grow;seldump" "$dir/plain.txt"
 check "then its line, then everything" '[some words here / and more / ]'
+
+# The breadcrumbs under the tabs: the file's folders from the project's,
+# its name, and the definitions the cursor is in; the outline without a
+# language server, from the tree.
+S="$dir/proj/src/s.cpp"
+down4="key:Down;key:Down;key:Down;key:Down"
+run "workdir:$dir/proj;frame;crumbsdump" "$S"
+check "the folders, the file, the namespace the cursor is in" 'src > s.cpp > geo'
+run "workdir:$dir/proj;frame;$down4;frame;crumbsdump" "$S"
+check "a method, in its struct, in its namespace" 'src > s.cpp > geo > Point > len()'
+run "workdir:$dir/proj;frame;$down4;$down4;frame;crumbsdump" "$S"
+check "a function" 'src > s.cpp > geo > area()'
+run "workdir:$dir/proj;frame;key:Down;key:Down;key:Down;key:Down;key:Down;frame;crumbsdump" "$dir/proj/s.py"
+check "in Python" 's.py > make()'
+with nocrumbs "workdir:$dir/proj;frame;crumbsdump" "$S"
+check "editor.breadcrumbs = false" 'none'
+run "workdir:$dir/proj;frame;$down4;frame;key:cmd+alt+O;frame;finddump" "$S"
+check "the outline without a server: the tree's definitions, nested, the one the cursor is in chosen" 'pick [] 4 : geo  · namespace   Point  · struct >    len  · method   area  · function'
+run "workdir:$dir/proj;frame;key:cmd+alt+O;frame;text:are;key:Return;vimdump" "$S"
+check "Enter goes there" 'NORMAL |  | 8:5 | int area(int w) {'
+run "workdir:$dir/proj;frame;key:Down;key:Down;key:cmd+alt+O;frame;finddump" "$dir/proj/s.py"
+check "in Python" 'pick [] 3 : Shape  · class >  area  · method make  · function'
+
+# Sticky scroll: the lines that open the scopes the top of the view is in.
+run "workdir:$dir/proj;frame;stickydump" "$S"
+check "at the top: none" 'none'
+run "workdir:$dir/proj;frame;line:5;frame;stickydump" "$S"
+check "the namespace's and the struct's lines, the line under them in both" '1 2'
+run "workdir:$dir/proj;frame;line:3;frame;stickydump" "$S"
+check "and the method's, the line under them in it" '1 2 4'
+run "workdir:$dir/proj;frame;line:8;frame;stickydump" "$S"
+check "a function" '1 8'
+run "workdir:$dir/proj;frame;line:5;frame;stickydump" "$dir/proj/s.py"
+check "in Python" 'none'
+run "workdir:$dir/proj;frame;line:2;frame;stickydump" "$dir/proj/s.py"
+check "a method in its class" '1 2'
+with nocrumbs "workdir:$dir/proj;frame;line:5;frame;stickydump" "$S"
+check "(not with the breadcrumbs' setting)" '1 2'
+with nosticky "workdir:$dir/proj;frame;line:5;frame;stickydump" "$S"
+check "editor.sticky_scroll = false" 'none'
 
 [ "$failed" = 0 ] && echo "shape: all passed"
 exit "$failed"

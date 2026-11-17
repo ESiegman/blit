@@ -199,6 +199,8 @@ struct Doc {
 };
 
 struct TabBar;  // a pane's tab bar and line numbers, as cells (apptabs.cpp)
+struct Crumbs;  // a pane's breadcrumbs under its tabs, as cells (appshape.cpp)
+struct Sticky;  // the scope lines pinned at the top of a pane's view (appshape.cpp)
 struct ScriptKey;  // a key held back for the mappings (applua.cpp)
 
 // One split of the window: a group of tabs, and the view of the one in
@@ -240,6 +242,8 @@ struct Pane {
     GuideCache guides;
     u32 view = 0;  // which of the last frame's text views was this pane's
     std::shared_ptr<TabBar> bar;
+    std::shared_ptr<Crumbs> crumbs;  // (appshape.cpp)
+    std::shared_ptr<Sticky> sticky;  // (appshape.cpp)
     // Its scroll thumb: how strongly it shows (it fades away when the view
     // has been still a while), when it starts to fade, and where the view
     // was when it last showed fully.
@@ -309,6 +313,17 @@ private:
     // and shrink it back: the nodes asked for at the first press, kept while
     // the text and the selection stay as these left them.
     void select_grow(bool grow);
+    // The breadcrumbs under a split's tabs: how tall (none for a tab that is
+    // not a file's text), drawn, clicked.
+    int crumbs_px(const Pane& p) const;
+    void crumbs_layout(FrameDesc& fd, bool focused);
+    bool crumbs_mouse_down(const SDL_MouseButtonEvent& b);
+    std::string crumbs_dump();  // (the tests: what the split in front's say)
+    // Sticky scroll: the lines that open the scopes the top of the view is
+    // in, pinned over it (and clicked, gone to).
+    void sticky_layout(FrameDesc& fd, const TextView& v);
+    bool sticky_mouse_down(const SDL_MouseButtonEvent& b);
+    std::string sticky_dump();  // (the tests: which lines are pinned in the split in front)
     struct Grow {
         u64 doc = 0, revision = ~0ull;
         std::pair<u64, u64> start{}, now{};  // what was selected before the first press, and after the last
@@ -374,6 +389,10 @@ private:
     void lsp_switch_header();
     std::string other_half(const std::string& path) const;
     void lsp_outline();
+    // The file's outline in the box, `pick` (a symbol's offset; ~0: the one
+    // the cursor is in) chosen to start with.
+    void outline_show(std::vector<LspSymbol> list, u64 pick);
+    static std::vector<LspSymbol> tree_symbols(const Doc& d, const SyntaxStructure& s);
     void lsp_find_symbols();
     void lsp_go_symbol(size_t i);  // (one of the project's symbols last found)
     // Search everywhere's symbols: the server asked for those with `typed`
