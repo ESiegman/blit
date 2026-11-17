@@ -1178,6 +1178,7 @@ void App::layout_pane(FrameDesc& fd, bool focused) {
 
     g.doc = p.doc->id;
     g.revision = p.doc->ed.revision();
+    g.edits = &p.doc->ed.edit_log();
     g.tab_width = p.doc->ed.tab_width;
     if (p.doc->syntax.active()) {
         g.highlights = &p.doc->syntax.highlights();

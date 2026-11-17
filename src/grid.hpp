@@ -80,6 +80,7 @@ struct GridSpec {
     // Underlines and notes, laid over the text by decorate_grid().
     std::span<const GridDeco> decos;
     std::span<const GridNote> notes;
+    const EditLog* edits = nullptr;  // where the text changed lately (the anchors keep what is before)
     // Selection as (line, display column) pairs; has_sel false when empty.
     bool has_sel = false;
     u64 sel_line0 = 0, sel_line1 = 0;
@@ -94,6 +95,7 @@ struct GridSpec {
 struct LineAnchors {
     static constexpr u32 kStep = 1u << 16;
     u64 line = ~0ull;
+    u64 start = 0;  // where the line starts in the text
     u64 used = 0;  // last-use stamp, for recycling
     std::vector<u32> cols;
     std::vector<u64> offs;
@@ -101,10 +103,13 @@ struct LineAnchors {
 
 class AnchorCache {
 public:
-    // Anchors hold absolute offsets, so any edit drops them all, and so
-    // does another document. Anchors hold display columns, so a different
-    // tab width drops them too.
-    void sync(u64 doc, u64 revision, u32 tab_width);
+    // Anchors hold absolute offsets and display columns. An edit keeps
+    // those before it (typing far into a minified line walks it from the
+    // last anchor before the cursor, not from its start) and drops the lines
+    // that start at or after it, whose offsets and numbers may have moved;
+    // an edit the log no longer reaches, another document or another tab
+    // width drops them all.
+    void sync(u64 doc, u64 revision, u32 tab_width, const EditLog* edits);
     LineAnchors* find(u64 line);
     LineAnchors& claim(u64 line);  // finds, or recycles the stalest entry
 

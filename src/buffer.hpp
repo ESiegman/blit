@@ -1,4 +1,5 @@
 #pragma once
+#include <algorithm>
 // Text storage: a piece tree.
 //
 // The document is a sequence of pieces. A piece is a pointer + length into
@@ -91,6 +92,29 @@ private:
     size_t next_slab_ = 32;
 };
 }  // namespace detail
+
+// Where the last edits began, by revision: what lets a cache of offsets
+// (the grid's column anchors) keep what lies before an edit.
+struct EditLog {
+    static constexpr u32 kSize = 64;
+    u64 rev[kSize] = {};
+    u64 off[kSize] = {};
+    void note(u64 revision, u64 at) {
+        rev[revision % kSize] = revision;
+        off[revision % kSize] = at;
+    }
+    // The lowest offset changed after revision `from` up to `to`; 0 (all of
+    // it) when the log does not reach that far back.
+    u64 changed_since(u64 from, u64 to) const {
+        if (to <= from || to - from > kSize) return 0;
+        u64 low = ~0ull;
+        for (u64 r = from + 1; r <= to; ++r) {
+            if (rev[r % kSize] != r) return 0;
+            low = std::min(low, off[r % kSize]);
+        }
+        return low;
+    }
+};
 
 class Buffer {
 public:

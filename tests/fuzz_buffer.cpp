@@ -603,6 +603,139 @@ void view_test(int seeds) {
     check(lines_at(2) == 0, "no indent lines when they are off");
 }
 
+// Columns on a long line: the editor remembers where its last walks
+// stopped (col_between) and the grid keeps its anchors before an edit
+// (AnchorCache). Random edits and questions on a line of 200 KB of ASCII,
+// tabs, wide characters and emoji, each answer checked against an editor
+// that remembers nothing.
+void long_line_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    rng.seed(4242);
+    static const char* const kBits[] = {"abc", "\t", "x\ty", "\xe6\xbc\xa2", "\xf0\x9f\x91\x8d", "e\xcc\x81", "  ", "{\"k\":1},"};
+    std::string line;
+    while (line.size() < 200000) line += kBits[rnd(8)];
+    Editor ed;
+    ed.tab_width = 4;
+    ed.insert("first line\n" + line + "\nlast line\n");
+    ed.move_to(0, false);
+    const u64 start = ed.buf.line_start(1);
+    auto boundary = [&](u64 at) {  // a place the cursor may be: a character's start on line 1
+        at = std::min(at, ed.line_end(1));
+        while (at > start && ed.prev_char(ed.next_char(at)) != at) --at;
+        return at;
+    };
+    // The grid, scrolled far right, with anchors kept through edits, against
+    // one with no anchors at all.
+    Font font;
+    FontSpec spec;
+    spec.px = 14;
+    std::string ferr;
+    const bool have_font = font.init(spec, &ferr);
+    AnchorCache anchors;
+    GridSpec g;
+    g.cols = 80;
+    g.rows = 3;
+    g.tab_width = 4;
+    g.doc = 1;
+    std::vector<u32> with(static_cast<size_t>(g.cols) * g.rows), without(with.size());
+    for (int step = 0; step < 300; ++step) {
+        const u64 end = ed.line_end(1);
+        if (have_font && step % 5 == 0) {
+            const u32 width = ed.col_between(start, end);
+            g.first_col = width > 70000 ? width - 70000 + static_cast<u32>(rnd(60000)) : 70000;
+            g.revision = ed.revision();
+            g.edits = &ed.edit_log();
+            fill_grid(ed.buf, font, g, with.data(), &anchors);
+            fill_grid(ed.buf, font, g, without.data());
+            check(with == without, "long line: anchors kept through edits draw what a walk from the start draws");
+        }
+        if (rnd(3) == 0) {  // an edit: mostly near the far end, as typing is
+            const u64 at = boundary(rnd(2) ? end - rnd(std::min<u64>(end - start, 5000)) : start + rnd(end - start));
+            ed.move_to(at, false);
+            if (rnd(4) == 0 && at + 8 < end) {
+                ed.move_to(ed.next_char(at), true);
+                ed.insert("");
+            } else {
+                ed.insert(kBits[rnd(8)]);
+            }
+            continue;
+        }
+        const u64 at = boundary(rnd(2) ? end - rnd(std::min<u64>(end - start, 70000)) : start + rnd(end - start));
+        Editor ref;
+        ref.tab_width = 4;
+        ref.insert(ed.buf.text(0, ed.buf.size()));
+        if (ed.col_between(start, at) != ref.col_between(start, at)) {
+            std::printf("long line: at %llu, %u against %u\n", static_cast<unsigned long long>(at - start), ed.col_between(start, at), ref.col_between(start, at));
+            check(false, "long line: a remembered column is the column");
+        }
+    }
+}
+
+// A screen that needs more glyphs than the atlas has: the frame's second
+// try holds the atlas, and what does not fit is a box. No slot shows two
+// characters (before, the atlas started over in the middle of the try and
+// the rows made before that showed glyphs that were not theirs).
+void atlas_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    Font font;
+    FontSpec spec;
+    spec.px = 20;
+    std::string err;
+    if (!font.init(spec, &err)) {
+        std::printf("atlas test skipped: %s\n", err.c_str());
+        return;
+    }
+    // 100 rows of 50 wide characters, each a different one: 10,000 slots.
+    constexpr u32 kCols = 100, kRows = 100, kPerRow = kCols / 2;
+    std::string text;
+    for (u32 r = 0; r < kRows; ++r) {
+        for (u32 c = 0; c < kPerRow; ++c) {
+            const u32 cp = 0x4E00 + r * kPerRow + c;
+            text += static_cast<char>(0xE0 | (cp >> 12));
+            text += static_cast<char>(0x80 | ((cp >> 6) & 0x3F));
+            text += static_cast<char>(0x80 | (cp & 0x3F));
+        }
+        text += '\n';
+    }
+    Editor ed;
+    ed.insert(text);
+    GridSpec g;
+    g.cols = kCols;
+    g.rows = kRows;
+    g.tab_width = 4;
+    std::vector<u32> cells(static_cast<size_t>(kCols) * kRows);
+    u32 gen = font.generation();
+    fill_grid(ed.buf, font, g, cells.data());
+    check(font.generation() != gen, "atlas: a screen of 5,000 distinct wide characters fills it");
+    font.hold_atlas(true);  // (as render.cpp does the second time)
+    gen = font.generation();
+    fill_grid(ed.buf, font, g, cells.data());
+    const bool full = font.full();
+    font.hold_atlas(false);
+    check(font.generation() == gen && full, "atlas: held, it does not start over; it says it was full");
+    std::vector<u32> who(1u << 16, 0);  // slot -> the character it showed (0: none yet)
+    u32 shared = 0, real = 0;
+    std::vector<bool> counted(1u << 16, false);
+    for (u32 r = 0; r < kRows; ++r)
+        for (u32 c = 0; c < kCols; ++c) {
+            const u32 slot = cells[static_cast<size_t>(r) * kCols + c] & 0xFFFF;
+            const u32 cp = 0x4E00 + r * kPerRow + c / 2;
+            if (who[slot] == 0) {
+                who[slot] = cp;
+                ++real;
+            } else if (who[slot] != cp && !counted[slot]) {
+                counted[slot] = true;
+                ++shared;
+            }
+        }
+    check(shared <= 2, "atlas: no slot shows two characters (but the two halves of the box)");
+    check(real > 7000, "atlas: most of the screen is drawn: 8,191 slots, two a character");
+}
+
 void styles_test() {
     auto check = [](bool ok, const char* what) {
         if (!ok) fail(what, 0, 0);
@@ -3730,6 +3863,8 @@ int main(int argc, char** argv) {
     truncated_file_test();
     config_test();
     view_test(seeds);
+    atlas_test();
+    long_line_test();
     vim_test();
     find_test();
     script_test();

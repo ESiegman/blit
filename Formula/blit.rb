@@ -20,15 +20,6 @@ class Blit < Formula
     cause "blit is C++26, built with GCC (16 or later)"
   end
 
-  # Homebrew re-signs the program alone after it has fixed the program's
-  # library paths, which leaves the bundle's seal (over Info.plist and the
-  # icon) out of step with it: the bundle is signed again, whole.
-  post_install_steps do
-    run "/usr/bin/codesign", args:           ["--force", "--sign", "-", "{{prefix}}/blit.app"],
-                             writable_paths: ["blit.app"],
-                             writable_base:  :prefix
-  end
-
   def install
     system "cmake", "-S", ".", "-B", "build", "-G", "Ninja",
                     "-DCMAKE_CXX_COMPILER=#{ENV.cxx}",
@@ -37,6 +28,15 @@ class Blit < Formula
     system "cmake", "--build", "build"
     prefix.install "build/blit.app"
     bin.install_symlink prefix/"blit.app/Contents/MacOS/blit"
+  end
+
+  # Homebrew re-signs the program alone after it has fixed the program's
+  # library paths, which leaves the bundle's seal (over Info.plist and the
+  # icon) out of step with it: the bundle is signed again, whole.
+  post_install_steps do
+    run "/usr/bin/codesign", args:           ["--force", "--sign", "-", "{{prefix}}/blit.app"],
+                             writable_paths: ["blit.app"],
+                             writable_base:  :prefix
   end
 
   def caveats

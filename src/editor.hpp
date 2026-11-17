@@ -87,6 +87,8 @@ public:
     void mark_saved_at(u64 point) { saved_id_ = point; }
     // Changes whenever the text changes; the renderer keys its caches on it.
     u64 revision() const { return revision_; }
+    // Where the text changed, revision by revision (the last 64).
+    const EditLog& edit_log() const { return edits_; }
 
     u64 cursor() const { return cursor_; }
     u64 anchor() const { return anchor_; }
@@ -200,6 +202,17 @@ private:
     u64 anchor_ = 0;
     u32 want_col_ = ~0u;  // column kept across vertical moves
     u64 revision_ = 0;
+    EditLog edits_;
+    // Where col_between() last stopped on a long line, to go on from there
+    // (the cursor's column is asked for every key and every frame; on a line
+    // of millions of columns, walking it from its start each time was most
+    // of a key's cost), and an older place at least 4 KB before that one,
+    // which Backspace leaves standing. Each holds through edits after it.
+    struct ColMemo {
+        u64 line_start = ~0ull, off = 0, revision = 0;
+        u32 col = 0, tab_width = 0;
+    };
+    mutable ColMemo col_near_, col_far_;
     u64 next_id_ = 1;
     u64 saved_id_ = 0;
     bool crlf_ = false;

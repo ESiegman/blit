@@ -2078,8 +2078,15 @@ void App::find_remote_ready() {
     if ((f.mode == kFindOpen || f.mode == kFindFolder || f.mode == kFindSave) && f.listed != f.dir && is_remote(f.dir)) find_query();
 }
 
-void App::find_settle() {
+void App::find_settle(bool listing) {
     if (find_->engine) find_->engine->wait_idle();
+    // A folder on another machine is listed on the connection's thread: its
+    // listing too, when asked (ten seconds at most).
+    for (int i = 0; listing && i < 2000 && remote_listing_busy(); ++i) {
+        SDL_Delay(5);
+        remote_sync();
+    }
+    if (listing) remote_sync();
     find_sync();
 }
 

@@ -324,7 +324,7 @@ private:
     bool find_wheel(const SDL_MouseWheelEvent& w);
     void find_layout(int w, int h, FrameDesc& fd);
     std::string find_dump();
-    void find_settle();
+    void find_settle(bool listing = false);
     void find_save_for(u64 doc);  // the document the name being asked for is for
     // The box as a picker for a script (input: a line to type, no list).
     void find_pick(std::vector<std::string> items, const std::string& prompt, bool input, const std::string& typed);

@@ -19,10 +19,14 @@ struct Recorder {
     AnchorCache* cache = nullptr;
     LineAnchors* la = nullptr;
     u64 line = 0;
+    const Buffer* buf = nullptr;
     u32 next = LineAnchors::kStep;  // column where the next anchor is due
 
     void hit(u32 col, u64 off) {
-        if (!la) la = &cache->claim(line);
+        if (!la) {
+            la = &cache->claim(line);
+            la->start = buf->line_start(line);
+        }
         la->cols.push_back(col);
         la->offs.push_back(off);
         next = (col / LineAnchors::kStep + 1) * LineAnchors::kStep;
@@ -248,12 +252,23 @@ u32 fill_row(Buffer::Reader& rd, Font& font, u32 first_col, u32 cols, u32* row, 
 
 }  // namespace
 
-void AnchorCache::sync(u64 doc, u64 revision, u32 tab_width) {
+void AnchorCache::sync(u64 doc, u64 revision, u32 tab_width, const EditLog* edits) {
     if (revision == revision_ && doc == doc_ && tab_width == tab_width_) return;
+    const bool same = doc == doc_ && tab_width == tab_width_ && revision_ != ~0ull && revision > revision_;
+    const u64 from = same && edits ? edits->changed_since(revision_, revision) : 0;
     revision_ = revision;
     doc_ = doc;
     tab_width_ = tab_width;
-    for (LineAnchors& l : lines_) l = LineAnchors{};
+    for (LineAnchors& l : lines_) {
+        if (from == 0 || l.line == ~0ull || l.start >= from) {
+            l = LineAnchors{};
+            continue;
+        }
+        size_t keep = 0;
+        while (keep < l.offs.size() && l.offs[keep] < from) ++keep;
+        l.cols.resize(keep);
+        l.offs.resize(keep);
+    }
 }
 
 LineAnchors* AnchorCache::find(u64 line) {
@@ -282,7 +297,7 @@ void fill_grid(const Buffer& buf, Font& font, const GridSpec& g, u32* cells, Anc
     const u32 cols = g.cols - lead;  // columns that show text
     const u32 tab = std::max<u32>(1, g.tab_width);
     const bool far = anchors && g.first_col >= LineAnchors::kStep;
-    if (anchors) anchors->sync(g.doc, g.revision, tab);
+    if (anchors) anchors->sync(g.doc, g.revision, tab, g.edits);
 
     // With ligatures a row is filled a little wider than the window, so a
     // ligature that straddles the window edge is shaped whole, then the
@@ -321,7 +336,7 @@ void fill_grid(const Buffer& buf, Font& font, const GridSpec& g, u32* cells, Anc
             end = fill_row(rd, font, first_col, wide, dst, &positioned, 0, off, nullptr, tab, sc, cl);
         } else {
             // Scrolled far to the right: resume from the nearest anchor.
-            Recorder rec{anchors, anchors->find(line), line};
+            Recorder rec{anchors, anchors->find(line), line, &buf};
             u32 col = 0;
             u64 anchor = 0;
             if (rec.la && !rec.la->cols.empty()) {

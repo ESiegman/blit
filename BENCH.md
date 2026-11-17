@@ -2235,6 +2235,38 @@ at a time). In isolation the joiner had cost 0.82 ns a character before and
 the out-of-line path on every syllable until a syllable written whole got
 a path of its own.
 
+### Round 39: long lines, the atlas, ligature slices
+
+- **Typing far into a long line.** The grid's column anchors were dropped
+  by any edit, and the cursor's column was counted from the line's start
+  for every key (Vim's motion, scrolling to the cursor, the status bar).
+  Now an edit log (the place each of the last 64 revisions began) lets the
+  anchors keep what lies before an edit, and the editor remembers where it
+  last counted a long line's column, and a place 4 KB before that. On
+  longline-64m.txt, the cursor at the end, three runs each, turn about:
+
+  | 200 keys and a frame each | Before | After |
+  |---|---:|---:|
+  | Normal mode `x` (a delete, the cursor steps back) | 1,046 to 1,136 ms | 198 to 345 ms |
+  | Insert mode, typing | 805 to 806 ms | 169 to 174 ms |
+  | (startup and the first frame alone) | 139 to 193 ms | 140 to 301 ms |
+
+  About 4.4 ms a key before, under 0.3 ms after. A sample of the first
+  try showed what was left: two whole-line walks a key for the cursor's
+  column, then one when the cursor stepped back past the place remembered.
+- **The atlas** has 8,191 slots instead of 4,096 (what a cell can name),
+  with the glyph and slice tables doubled to match; a screen that needs
+  more holds the atlas on the frame's second try and draws boxes for the
+  rest. A unit test of 5,000 distinct wide characters on one screen
+  (10,000 slots) checks that no slot shows two characters. Scrolling at
+  2560x1600 is the same within noise (code-1m.txt 17,077 to 17,317 against
+  17,195 to 17,505 frames a second; utf8-16m.txt 17,028 to 17,148 against
+  17,033 to 17,050; fill p50 1.71 to 1.88 against 1.83 to 1.88 µs, and
+  4.67 to 4.96 against 4.79 to 5.00 µs).
+- **Ligature slices** are keyed by where the shaper put the glyph too (its
+  bitmap's left and top), so a glyph moved by a contextual alternate is not
+  drawn where it was the first time.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

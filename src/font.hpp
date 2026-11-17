@@ -152,6 +152,12 @@ public:
 
     // Bumps whenever previously returned slots became invalid.
     u32 generation() const { return generation_; }
+    // A frame's last try (render.cpp): the atlas starts over first, and may
+    // not start over again while held. A glyph that does not fit then is a
+    // box, never a slot another glyph had earlier in the frame. full() says
+    // whether any did not fit.
+    void hold_atlas(bool on);
+    bool full() const { return full_; }
 
     // Rows of atlas pixels changed since the last call: [y0, y1).
     bool take_dirty(int* y0, int* y1);
@@ -229,6 +235,8 @@ private:
     int atlas_w_ = 0, atlas_h_ = 0;
     u32 cols_ = 0, shift_ = 0, slots_ = 0;
     u32 first_slot_ = 128, next_slot_ = 128;  // slots below first_slot_ are the ASCII blocks
+    u32 tofu_wide_ = 0;  // a box two cells wide, for a wide character that did not fit while held
+    bool hold_ = false, full_ = false;
     u8* pixels_ = nullptr;
     int dirty_y0_ = 0, dirty_y1_ = 0;
     u32 generation_ = 0;
@@ -248,7 +256,7 @@ private:
     // Shaping state.
     bool ligatures_ = false;
     bool joins_[kAsciiSlots] = {};  // by ASCII slot: can it take part in a ligature
-    std::vector<Ent> slices_;       // (style, glyph, cell offset) -> slot
+    std::vector<MarkEnt> slices_;   // (style, glyph, cell offset, where the shaper put it) -> slot
     u32 slices_used_ = 0;
     std::vector<ShortRun> short_runs_;  // runs of up to 8 characters
     u32 short_used_ = 0;

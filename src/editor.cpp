@@ -79,6 +79,7 @@ void Editor::opened(const std::string& file) {
     redo_.clear();
     saved_id_ = 0;
     ++revision_;
+    edits_.note(revision_, 0);  // (all of it)
     // The first line break decides what Enter inserts.
     char head[4096];
     u64 n = buf.read(0, head, sizeof head);
@@ -331,14 +332,40 @@ bool Editor::joins_back(u64 from, u32 before, u32 cp) const {
 }
 
 u32 Editor::col_between(u64 line_start, u64 off) const {
-    Buffer::Reader r = buf.reader(line_start);
-    u64 left = off - line_start;
+    constexpr u64 kLong = 1u << 16;  // (shorter walks are not worth remembering)
+    u64 from = line_start;
     u32 col = 0;
+    // A remembered place holds while every edit since lies at or after it:
+    // the text before it is as it was, and the ASCII character just before
+    // it ends any cluster.
+    auto holds = [&](const ColMemo& m) {
+        return m.line_start == line_start && m.off <= off && m.tab_width == tab_width &&
+               (m.revision == revision_ || edits_.changed_since(m.revision, revision_) >= m.off);
+    };
+    if (off - line_start >= kLong) {
+        if (holds(col_near_)) {
+            from = col_near_.off;
+            col = col_near_.col;
+        } else if (holds(col_far_)) {
+            from = col_far_.off;
+            col = col_far_.col;
+        }
+    }
+    Buffer::Reader r = buf.reader(from);
+    u64 left = off - from;
     Joiner join;
+    // A place the walk passed at least 4 KB before `off`, between two ASCII
+    // characters at the end of a piece, to be the older place remembered.
+    const bool long_walk = off - line_start >= kLong;
+    u64 pos = from, edge = 0;
+    u32 edge_col = 0;
+    ColMemo passed;
     while (left > 0) {
         std::string_view c = r.chunk();
         if (c.empty()) break;
         const u8* p = reinterpret_cast<const u8*>(c.data());
+        if (edge && static_cast<u8>(c[0]) < 0x80) passed = {line_start, edge, revision_, edge_col, tab_width};
+        edge = 0;
         size_t n = static_cast<size_t>(std::min<u64>(c.size(), left));
         size_t i = 0;
         while (i < n) {
@@ -365,6 +392,22 @@ u32 Editor::col_between(u64 line_start, u64 off) const {
         size_t used = std::min(i, c.size());
         left -= std::min<u64>(used, left);
         r.advance(static_cast<u32>(used));
+        pos += used;
+        if (long_walk && used == c.size() && pos + 4096 <= off && pos - line_start >= kLong && p[used - 1] < 0x80) {
+            edge = pos;
+            edge_col = col;
+        }
+    }
+    if (passed.off && !(holds(col_far_) && col_far_.off >= passed.off)) col_far_ = passed;
+    // Remembered where the walk ended between two ASCII characters, a
+    // place no cluster runs across (so that going on from it is the same as
+    // walking all the way).
+    if (off - line_start >= kLong && off > 0 && off < buf.size()) {
+        char around[2];
+        if (buf.read(off - 1, around, 2) == 2 && static_cast<u8>(around[0]) < 0x80 && static_cast<u8>(around[1]) < 0x80) {
+            if (holds(col_near_) && col_near_.off + 4096 <= off) col_far_ = col_near_;
+            col_near_ = {line_start, off, revision_, col, tab_width};
+        }
     }
     return col;
 }
@@ -604,6 +647,7 @@ void Editor::apply(u64 off, u64 remove_len, std::string_view text, Kind kind) {
     cursor_ = anchor_ = e.cursor1 = off + text.size();
     want_col_ = ~0u;
     ++revision_;
+    edits_.note(revision_, off);
     redo_.clear();
 
     // Runs of typing, backspace and forward delete fold into one undo step.
@@ -672,6 +716,7 @@ void Editor::swap_edit(Edit& e) {
     e.cur_len = back;
     e.sealed = true;
     ++revision_;
+    edits_.note(revision_, e.off);
 }
 
 bool Editor::undo() {

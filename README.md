@@ -1632,6 +1632,22 @@ cell-wide slices in the atlas, so a cell still shows exactly one slot and the
 shader does not change. Only runs of characters the font says can join are
 shaped, and each distinct run is shaped once and then served from a cache.
 
+**Long lines stay cheap to edit.** Finding display column N of a line
+means walking it from its start; on a minified file, millions of columns
+long, that walk would be every frame's and every key's. The grid remembers
+a place every 65,536 columns of the long lines it has drawn, and the editor
+where it last counted the cursor's column (and a place at least 4 KB
+before that). An edit keeps everything before it, so typing at the far end
+of a 64 MB line costs what it does on a short one (4.4 ms a key before, now
+under 0.3 ms).
+
+**A screen always fits the glyph atlas.** The atlas has 8,191 slots, as
+many as a cell can name: a screen of distinct wide characters (CJK) at a
+usual size on a 2560-pixel display fits. A frame that runs out starts the
+atlas over and is made again; that second time the atlas is held, and a
+glyph that still does not fit is drawn as a box, never in a slot another
+glyph had earlier in the frame.
+
 **Italic and bold are free in the frame.** Each style has its own block of
 128 atlas slots after the regular one, so an ASCII character in style `s` is
 slot `byte | s << 7`. The grid already ors a colour into each run of cells;

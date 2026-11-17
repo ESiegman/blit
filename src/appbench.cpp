@@ -959,8 +959,8 @@ void App::run_script(const char* script) {
                 out += r->host() + (st == Remote::kReady ? ": ready " + r->system() : st == Remote::kFailed ? ": failed: " + r->error() : ": connecting") + "; ";
             }
             std::fprintf(stderr, "%s\n", out.empty() ? "no connections" : out.c_str());
-        } else if (verb == "findwait") {  // the worker that finds files and text has finished
-            find_settle();
+        } else if (verb == "findwait") {  // the worker that finds files and text has finished, and a folder there has been listed
+            find_settle(true);
         } else if (verb == "finddump") {
             find_settle();
             std::fprintf(stderr, "%s%s\n", arg.empty() ? "" : (arg + ": ").c_str(), find_dump().c_str());

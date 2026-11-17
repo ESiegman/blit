@@ -247,13 +247,16 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
 
     // The layout is asked again if the glyph atlas restarted while the
     // cells were being made (it filled up), since slots handed out before
-    // that are gone.
+    // that are gone. The second time the atlas starts empty and is held: a
+    // screen that needs more glyphs than it has shows boxes for the rest,
+    // never a glyph in a slot another took.
     FrameDesc fd;
     u32 text_total = 0, total = 0;
     u32* cells = nullptr;  // the frame's cells, in the memory the GPU reads them from
     u32 view_base[kMaxViews] = {};  // where each view's cells start in the buffer
     u64 fill_ns = 0, layout_ns = 0;
     for (int attempt = 0; attempt < 2; ++attempt) {
+        if (attempt > 0) font.hold_atlas(true);
         const u32 gen = font.generation();
         if (attempt > 0) fd = FrameDesc{};  // (made fresh just above the first time)
         const u64 l0 = now_ns();
@@ -321,6 +324,7 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
         }
         if (font.generation() == gen) break;
     }
+    font.hold_atlas(false);
     const u64 t2 = now_ns();
 
     // The cells are where the GPU reads them already. Glyphs drawn into the

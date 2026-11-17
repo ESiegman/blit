@@ -100,7 +100,7 @@ got=$(BLIT_FAKE_PASSWORD=$pw BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x
 check "a wrong one: ssh says so" 'blit: cannot connect to box: tester@box: Permission denied, please try again. ;; closed'
 got=$(BLIT_FAKE_PASSWORD=$pw BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "remotewait;key:Escape;remotewait;frame;finddump" "$R/notes.txt" 2>&1 >/dev/null | join)
 check "Esc: not connecting" 'blit: cannot connect to box: tester@box: Permission denied (publickey,password). ;; closed'
-got=$(BLIT_FAKE_PASSWORD=$pw BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "find:folder;text:ssh://box$W/;remotewait;finddump;text:$pw;key:Return;remotewait;finddump" 2>&1 >/dev/null | sed -e "s#$T#~#g" -e 's#\[[^]]*ssh://#[ssh://#g' | join)
+got=$(BLIT_FAKE_PASSWORD=$pw BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "find:folder;text:ssh://box$W/;remotewait;finddump;text:$pw;key:Return;remotewait;findwait;finddump" 2>&1 >/dev/null | sed -e "s#$T#~#g" -e 's#\[[^]]*ssh://#[ssh://#g' | join)
 check "asked while the box that opens folders is open: that box comes back" "ask box \"tester@box's password:\" [] ;; folder [ssh://box~/work/] 3 : >./ ../ src/"
 
 # Folders, the finder and the box that opens files.

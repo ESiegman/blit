@@ -66,6 +66,7 @@ const char* const kFallbackFonts[] = {
 };
 
 constexpr u32 kEmpty = 0xFFFFFFFFu;
+constexpr u32 kNoSlot = 0xFFFFFFFFu;  // alloc_slots() while the atlas is held and full
 constexpr u64 kEmptyMark = ~0ull;
 
 u32 hash_u32(u32 x) { return (x * 2654435761u) >> 7; }
@@ -398,12 +399,14 @@ bool Font::init(const FontSpec& spec, std::string* err, std::string* warnings) {
     x_height_ = baseline_ / 2;
     if (!FT_Load_Char(face_, 'x', load_flags_)) x_height_ = static_cast<int>((face_->glyph->metrics.horiBearingY + 32) >> 6);
 
-    // Atlas: up to 4096 slots. The number of slots per row is a power of two
-    // so the shader can split a slot number with a shift and a mask.
+    // Atlas: up to 8191 slots, what a cell's slot number can say (below
+    // kPict): one screen of distinct wide characters, CJK at a usual size on
+    // a 2560-pixel display, fits. The number of slots per row is a power of
+    // two so the shader can split a slot number with a shift and a mask.
     shift_ = 6;
     while (shift_ > 4 && (cell_w_ << shift_) > 4096) --shift_;
     cols_ = 1u << shift_;
-    const u32 rows = std::min<u32>(4096u >> shift_, static_cast<u32>(8192 / cell_h_));
+    const u32 rows = std::min<u32>(8192u >> shift_, static_cast<u32>(16384 / cell_h_));
     atlas_w_ = static_cast<int>(cols_) * cell_w_;
     atlas_h_ = static_cast<int>(rows) * cell_h_;
     slots_ = std::min(cols_ * rows, kPict - 1);
@@ -411,15 +414,15 @@ bool Font::init(const FontSpec& spec, std::string* err, std::string* warnings) {
     // spare them, which it is at any reasonable size.
     first_slot_ = next_slot_ = slots_ >= 2 * kAsciiSlots ? kAsciiSlots : 128;
     pixels_ = static_cast<u8*>(std::calloc(static_cast<size_t>(atlas_w_) * atlas_h_, 1));
-    if (!pixels_ || atlas_w_ > 8192 || slots_ < 256) {
+    if (!pixels_ || atlas_w_ > 8192 || atlas_h_ > 16384 || slots_ < 256) {
         if (err) *err = "font size out of range";
         return false;
     }
     // Glyph and slice tables hold at most one entry per atlas slot, and are
     // sized so that they never fill up before the atlas does.
-    map_.assign(8192, {kEmpty, 0});
-    slices_.assign(8192, {kEmpty, 0});
-    marks_.assign(8192, {kEmptyMark, 0});
+    map_.assign(16384, {kEmpty, 0});
+    slices_.assign(16384, {kEmptyMark, 0});
+    marks_.assign(16384, {kEmptyMark, 0});
     short_runs_.assign(1024, ShortRun{});  // grows, see ligate_run()
     bmp_ = static_cast<u16*>(std::calloc(0x10000, sizeof(u16)));
     if (!bmp_) return false;
@@ -442,6 +445,9 @@ bool Font::init(const FontSpec& spec, std::string* err, std::string* warnings) {
     dirty_y0_ = atlas_h_;
     dirty_y1_ = 0;
     draw_tofu(kTofu, 1);
+    tofu_wide_ = first_slot_;  // (the first two slots after the ASCII blocks, kept through every restart)
+    first_slot_ = next_slot_ = first_slot_ + 2;
+    draw_tofu(tofu_wide_, 2);
     setup_ascii(0);
     ligatures_ = std::any_of(joins_, joins_ + 128, [](bool b) { return b; });
     for (u32 s = 1; s < kStyles; ++s)
@@ -607,10 +613,15 @@ void Font::mark_dirty(u32 slot) {
 
 // ---------------------------------------------------------------- slots
 
-// Atlas full: start over. Callers notice through generation().
+// Atlas full: start over. Callers notice through generation(). While it is
+// held nothing starts over: full() is set, and allocation fails (kNoSlot).
 void Font::reset_atlas() {
+    if (hold_) {
+        full_ = true;
+        return;
+    }
     std::fill(map_.begin(), map_.end(), Ent{kEmpty, 0});
-    std::fill(slices_.begin(), slices_.end(), Ent{kEmpty, 0});
+    std::fill(slices_.begin(), slices_.end(), MarkEnt{kEmptyMark, 0});
     std::fill(marks_.begin(), marks_.end(), MarkEnt{kEmptyMark, 0});
     std::fill(short_runs_.begin(), short_runs_.end(), ShortRun{});
     long_runs_.clear();
@@ -620,7 +631,15 @@ void Font::reset_atlas() {
     ++generation_;
 }
 
+void Font::hold_atlas(bool on) {
+    hold_ = false;
+    if (on) reset_atlas();  // (the whole atlas for the try)
+    hold_ = on;
+    full_ = false;
+}
+
 u32 Font::alloc_slots(u32 width) {
+    if (full_) return kNoSlot;
     // A wide glyph needs two slots side by side in one atlas row.
     auto align = [&] {
         if (width == 2 && next_slot_ % cols_ == cols_ - 1) ++next_slot_;
@@ -628,6 +647,7 @@ u32 Font::alloc_slots(u32 width) {
     align();
     if (next_slot_ + width > slots_) {
         reset_atlas();
+        if (full_) return kNoSlot;
         align();
     }
     const u32 slot = next_slot_;
@@ -646,6 +666,7 @@ u32 Font::lookup(u32 cp) {
     // A character of no width still gets a cell's slot, for where it is
     // shown on its own; in the text it is drawn over the cell before it.
     const u32 slot = alloc_slots(std::max(width, 1u));
+    if (slot == kNoSlot) return width == 2 ? tofu_wide_ | kWide : kTofu;  // (held, and no room: a box, not kept)
     const u32 packed = slot | (width == 2 ? kWide : 0) | (width == 0 || cp_regional(cp) ? kJoin : 0) | (cp_pictographic(cp) ? kPict : 0);
     if (cp < 0x10000) {
         bmp_[cp] = static_cast<u16>(packed);
@@ -671,10 +692,12 @@ u32 Font::lookup_styled(u32 cp, u32 s) {
     for (u32 h = hash_u32(key) & mask; map_[h].key != kEmpty; h = (h + 1) & mask)
         if (map_[h].key == key) return map_[h].slot;
     if ((map_used_ + 1) * 2 >= map_.size()) reset_atlas();
+    if (full_) return glyph(cp);  // (held, and no room: as the regular face has it, or a box)
 
     u32 packed;
     if (const u32 gid = FT_Get_Char_Index(st.face, cp)) {
         const u32 width = std::max(cp_width(cp), 1u), slot = alloc_slots(width);
+        if (slot == kNoSlot) return width == 2 ? tofu_wide_ | kWide : kTofu;
         packed = slot | (width == 2 ? kWide : 0);
         if (render(st, gid)) put_glyph(st.face, slot, width, false);
         else draw_tofu(slot, width);
@@ -730,6 +753,7 @@ u32 Font::compose_mark(u32 base, u32 cp, u32 half) {
 
     const u32 gen = generation_;
     const u32 slot = alloc_slots(1);
+    if (slot == kNoSlot) return base;  // (held, and no room: the letter without its mark)
     if (generation_ != gen) {  // (the base went with the rest of the atlas)
         clear_slot(slot);
         return slot;
@@ -785,6 +809,7 @@ u32 Font::icon(u32 id) {
         if (map_[h].key == key) return map_[h].slot;
     if ((map_used_ + 1) * 2 >= map_.size()) reset_atlas();
     const u32 slot = alloc_slots(2);
+    if (slot == kNoSlot) return tofu_wide_;
     draw_icon(id, slot);
     u32 h = hash_u32(key) & mask;
     while (map_[h].key != kEmpty) h = (h + 1) & mask;
@@ -968,16 +993,20 @@ void Font::copy_slot(u32 from, u32 to) {
 // Slot holding the part of a glyph that falls into the cell `k` cells away
 // from the glyph's own (k < 0 is to the left). The glyph must be the one
 // currently rendered in the glyph slot of the style's face; `left` and `top` say where its
-// bitmap sits relative to the pen.
+// bitmap sits relative to the pen. They are in the key: a glyph the shaper
+// moves (a mark, a contextual alternate placed lower) is another slice
+// from the same glyph where it is not moved.
 u32 Font::slice_slot(u32 s, u32 gid, int k, int left, int top) {
-    const u32 key = (s << 22) | (gid << 6) | static_cast<u32>(k + 32);
+    const u64 key = static_cast<u64>(s) << 50 | static_cast<u64>(gid & 0xFFFF) << 34 | static_cast<u64>((left + 2048) & 0xFFF) << 22 |
+                    static_cast<u64>((top + 2048) & 0xFFF) << 10 | static_cast<u64>(k + 32);
     u32 mask = static_cast<u32>(slices_.size()) - 1;
-    for (u32 h = hash_u32(key) & mask; slices_[h].key != kEmpty; h = (h + 1) & mask)
+    for (u32 h = hash_u64(key) & mask; slices_[h].key != kEmptyMark; h = (h + 1) & mask)
         if (slices_[h].key == key) return slices_[h].slot;
     if (slices_used_ * 2 >= slices_.size()) reset_atlas();
     const u32 slot = alloc_slots(1);
-    u32 h = hash_u32(key) & mask;
-    while (slices_[h].key != kEmpty) h = (h + 1) & mask;
+    if (slot == kNoSlot) return kNoSlot;  // (held, and no room: the run is drawn without its ligatures)
+    u32 h = hash_u64(key) & mask;
+    while (slices_[h].key != kEmptyMark) h = (h + 1) & mask;
     slices_[h] = {key, slot};
     ++slices_used_;
 
@@ -1041,7 +1070,9 @@ void Font::shape_run(u32 s, const char* text, u32 n, u16* out) {
                 const int lo = std::max(left, k * cell_w_), hi = std::min(left + w, (k + 1) * cell_w_);
                 if (hi - lo < std::max(1, cell_w_ / 4) || inked[t]) continue;
             }
-            out[t] = static_cast<u16>(slice_slot(s, g.gid, k, left, top));
+            const u32 slice = slice_slot(s, g.gid, k, left, top);
+            if (slice == kNoSlot) return plain();
+            out[t] = static_cast<u16>(slice);
             inked[t] = true;
             if (generation_ != gen) return plain();  // the atlas restarted; the frame is redone
         }
