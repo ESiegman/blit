@@ -152,6 +152,7 @@
 -- blit.opt.editor.status_bar = true     -- the row across the bottom: the repository, the file, the cursor, problems
 -- blit.opt.editor.breadcrumbs = true    -- under each split's tabs: the folders, the file, the definitions the cursor is in
 -- blit.opt.editor.sticky_scroll = true  -- the lines that open the scopes at the top of the view, pinned there
+-- blit.opt.editor.close_pairs = true    -- an opening bracket or quote typed puts in its closer
 -- blit.opt.editor.start_screen = true   -- started with no file: what to do first, and what was opened lately
 -- blit.opt.editor.restore = true        -- a project folder opened again: its tabs, splits, cursors and side panel as left
 -- blit.opt.editor.line_numbers = true   -- a column of line numbers left of the text

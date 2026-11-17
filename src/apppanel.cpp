@@ -217,6 +217,13 @@ std::string App::default_workdir() const {
     if (!pane_->doc->ed.path.empty()) {
         const std::string dir = parent_of(full_path(pane_->doc->ed.path));
         if (is_remote(dir)) return dir;  // (another machine's: its own folder, without a round trip for each one above it)
+        // (Asked every frame while no folder is open: the folders above are
+        // looked at again for the same file once two seconds have passed.)
+        const u64 now = now_ns();
+        if (dir == workdir_for_ && now - workdir_ns_ < 2'000'000'000ull) return workdir_found_;
+        workdir_for_ = dir;
+        workdir_ns_ = now;
+        workdir_found_ = [&] {
         static const char* const build_files[] = {"CMakeLists.txt", "meson.build", "Makefile", "configure.ac", "pyproject.toml", "setup.py"};
         std::string by_build_file;
         std::string at = dir;
@@ -230,6 +237,8 @@ std::string App::default_workdir() const {
             at = parent_of(at);
         }
         return by_build_file.empty() ? dir : by_build_file;
+        }();
+        return workdir_found_;
     }
     char* cwd = SDL_GetCurrentDirectory();
     std::string out = cwd ? cwd : "";

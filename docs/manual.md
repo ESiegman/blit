@@ -190,6 +190,7 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | Select all | Cmd+A | Ctrl+A (or Ctrl+Shift+A) |
 | Expand the selection to what the syntax tree has around it / shrink it back | Ctrl+Shift+Cmd+Right / Left | Alt+Shift+Right / Left |
 | Fold / unfold the block at the cursor | Cmd+Option+[ / ] | Ctrl+Alt+[ / ] |
+| Move the line (or the lines chosen) up / down; copy them below / above | Option+Up / Down; Option+Shift+Down / Up | Alt+Up / Down; "Copy the lines down" in the command search |
 | Save / open (in a new tab) | Cmd+S / Cmd+O | Ctrl+S / Ctrl+O (or Alt+O) |
 | Save as… / save all | Cmd+Shift+S / Cmd+Option+S | Ctrl+Shift+S / Ctrl+Alt+S |
 | Open a folder | Cmd+Shift+O | Ctrl+Shift+O |
@@ -632,7 +633,9 @@ editor: a push that takes ten seconds takes them on a thread of its own.
 
 **In the text.** Lines changed since the last commit have a mark beside
 their number: one colour for added lines, one for changed ones, and a dash
-where lines were taken out. The marks follow the text as you type; nothing
+where lines were taken out. A change that is staged just as it is has a
+thinner bar (a staged removal, a quiet dash); one with anything not yet
+staged keeps the full one. The marks follow the text as you type; nothing
 has to be saved first. A click on a mark offers **Stage this change** (or,
 once it is staged, **Unstage this change**) and **Show the diff**, which
 opens the file's diff at that change; Up, Down and Enter pick, Esc or a
@@ -1219,6 +1222,21 @@ at most, with their line numbers; a click on one goes to it. The
 definitions are the tree's (any node whose type says it is a function, a
 method, a class, a struct, a namespace and so on, and that has a body),
 so both work for any language with a grammar, without a language server.
+
+**Brackets and quotes close themselves**: `(`, `[`, `{`, `"`, `'` and a
+backtick typed put their closer after the cursor, when what follows is
+nothing, a space or another closer (a quote not just after a letter, and
+none in a string or a comment). Typing the closer steps over the one put
+in, Backspace right after the opener takes both, and Enter between two
+brackets opens an indented line between them. With text selected, the
+two go round it. `blit.opt.editor.close_pairs = false` turns it off.
+
+**Marks along the scroll bar**, down the right edge of a file longer than
+its view, show where in the whole file the cursor is, and the problems,
+breakpoints, matches of Find in this file and lines changed since the last
+commit: each a thin bar at its place, the one that matters most where
+several meet (the cursor, an error, a breakpoint, a warning, a match, a
+change).
 
 **Folding** hides a block's lines under its first line: Cmd+Option+[
 folds the block that starts on the cursor's line, or else the innermost

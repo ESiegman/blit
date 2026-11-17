@@ -719,6 +719,10 @@ struct Ruler {
     u64 col = 0;  // the display column the view's right edge is in
     std::vector<GridNote> notes;  // (the view's other notes, and a cell of these on the line each row shows)
     std::vector<std::pair<u32, char>> marks;  // (for the tests: each place's row third and kind)
+    std::vector<u8> prio;  // each place's mark but the cursor's: how much it matters (0: none), and its ink
+    std::vector<u32> ink;
+    u32 cursor_at = ~0u;
+    u32 font = ~0u;
 };
 
 void App::ruler_layout(const TextView& v) {
@@ -736,11 +740,14 @@ void App::ruler_layout(const TextView& v) {
     Ruler& r = *p.ruler;
     const std::vector<Diagnostic>* diags = lsp_.diagnostics_of(d.id);
     const std::vector<u64>* matches = find_file_matches(d.id);
+    const u32 places = rows * 3;
+    auto place_of = [&](u64 line) { return static_cast<u32>(std::min<u64>(places - 1, row_of_line(line) * places / total)); };
+    // All but the cursor, made again when what they come from changes (an
+    // edit on a line moves none of them: only the count of lines is looked at).
     u64 key = 1469598103934665603ull;
     auto mix = [&](u64 x) { key = (key ^ x) * 1099511628211ull; };
     mix(d.id);
-    mix(d.ed.revision());
-    mix(p.cur_line);
+    mix(d.ed.buf.line_count());
     mix(rows);
     mix(total);
     mix(d.folds.generation());
@@ -749,16 +756,13 @@ void App::ruler_layout(const TextView& v) {
     mix(d.hunks_gen);
     mix(debug_gen_);
     mix(matches ? matches->size() * 31 + (matches->empty() ? 0 : matches->front()) : ~0ull);
-    mix(font_->generation());
     if (key != r.key) {
         r.key = key;
-        const u32 places = rows * 3;
-        std::vector<u8> prio(places, 0);
-        std::vector<u32> ink(places, 0);
+        r.prio.assign(places, 0);
+        r.ink.assign(places, 0);
         auto mark = [&](u64 line, u8 pr, u32 in) {
-            const u64 row = row_of_line(line);
-            const u32 at = static_cast<u32>(std::min<u64>(places - 1, row * places / total));
-            if (pr > prio[at]) prio[at] = pr, ink[at] = in;
+            const u32 at = place_of(line);
+            if (pr > r.prio[at]) r.prio[at] = pr, r.ink[at] = in;
         };
         const Buffer& b = d.ed.buf;
         for (const GitHunk& h : d.hunks) {
@@ -772,18 +776,27 @@ void App::ruler_layout(const TextView& v) {
             for (const Diagnostic& g : *diags)
                 if (g.severity <= 2) mark(b.line_of(std::min(g.start, b.size())), g.severity == 1 ? 5 : 3, kInkDiagnostic + g.severity - 1);
         for (const u64 l : debug_break_lines(d)) mark(l, 4, kInkDiagnostic);
-        mark(p.cur_line, 6, kInkAccent);
+        r.cursor_at = ~0u;
+    }
+    // The cursor's over them.
+    const u32 cursor_at = place_of(p.cur_line);
+    if (cursor_at != r.cursor_at || r.box.rows != rows || r.font != font_->generation()) {
+        r.cursor_at = cursor_at;
+        r.font = font_->generation();
         r.box.resize(1, rows);
         r.marks.clear();
         static constexpr u32 kBars[] = {0x2594, 0x2501, 0x2581};  // (a third of a cell each: its top, its middle, its foot)
         static constexpr char kKinds[] = {0, 'c', 'f', 'w', 'b', 'e', '>'};
+        auto prio = [&](u32 at) -> u8 { return at == cursor_at ? 6 : r.prio[at]; };
         for (u32 row = 0; row < rows; ++row) {  // (a cell, one bar: of its three places, the one that matters most)
             u32 at = row * 3;
             for (u32 k = 1; k < 3; ++k)
-                if (prio[row * 3 + k] > prio[at]) at = row * 3 + k;
-            if (!prio[at]) continue;
-            r.box.cells[row] = (font_->glyph(kBars[at % 3]) & (Font::kWide - 1)) | (ink[at] << kCellInkShift);
-            r.marks.emplace_back(at, kKinds[prio[at]]);
+                if (prio(row * 3 + k) > prio(at)) at = row * 3 + k;
+            r.box.cells[row] = 0;
+            if (!prio(at)) continue;
+            const u32 in = at == cursor_at ? kInkAccent : r.ink[at];
+            r.box.cells[row] = (font_->glyph(kBars[at % 3]) & (Font::kWide - 1)) | (in << kCellInkShift);
+            r.marks.emplace_back(at, kKinds[prio(at)]);
         }
     }
     // The text's last column on show, right of which nothing is: the marks

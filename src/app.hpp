@@ -361,6 +361,8 @@ private:
     int view_h() const { return std::max(1, pane_->y1 - pane_->text_y); }  // height of the focused pane's text area
     int view_w() const { return std::max(1, pane_->x1 - pane_->text_x); }
     int visible_rows() const { return view_h() / font_->cell_h(); }
+    mutable std::string workdir_for_, workdir_found_;  // (default_workdir()'s last answer, for which folder)
+    mutable u64 workdir_ns_ = 0;
     // Rows of the view and the lines they show, with what is folded in the
     // file in front (appshape.cpp): with nothing folded, the same numbers.
     const Folds* folds_on() const;

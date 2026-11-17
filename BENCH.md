@@ -2689,6 +2689,46 @@ milestone (080c547):
   Down past one, a jump into one, typing on one, Vim's `zc zo za zM zR`,
   by indentation without a grammar).
 
+### Round 54: small comforts; two files looked up every frame no longer
+
+Lines moved and copied (Option+Up/Down, Option+Shift+Down/Up), brackets
+and quotes closed as they are typed (stepped over, deleted together, Enter
+between braces, a selection put between them; not in a string or a
+comment, as the colours say), marks along the scroll bar (the cursor,
+problems, breakpoints, Find's matches, changes: notes in the view's last
+column, made again only when their places move, with the cursor's laid
+over them), and staged changes with a thinner bar.
+
+Profiling the typing benchmark for this round showed half the main
+thread in `open` and `stat`, before and after alike. `full_path()` asked
+the system for the working directory on every call, and the status bar,
+the breadcrumbs and the Run button's search for the project each called
+it every frame or key; blit never changes its working directory, so it is
+asked once. And `default_workdir()`, with no folder open, looked for
+`.git`, `CMakeLists.txt` and the rest in every folder above the file,
+every frame: its answer for a file is now kept for two seconds.
+
+Turn about, five rounds, 2560x1600, against the build before the
+milestone (d111647), which had both:
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 16,980 / 41.42 µs / 1.67 µs | 16,927 / 41.58 µs / 1.75 µs |
+| Typing, everything on: the same | 17,622 / 37.88 µs / 2.79 µs | 17,561 / 37.58 µs / 4.00 µs |
+| Scrolling code-100m.txt, plain: the same | 18,653 / 36.88 µs / 0.58 µs | 18,413 / 37.04 µs / 0.67 µs |
+
+- **Typing: 1.2 µs more layout, the frame no slower.** The test server
+  sends its problems again after every key, and the scroll bar's marks are
+  placed again (a line lookup each); the breadcrumbs are made again as the
+  cursor moves. With clangd, which waits a moment before it sends them,
+  the marks are placed again far less often.
+- tests/edit.sh, a new suite: lines moved and copied (one undo step, the
+  lines a selection covers, Vim's Visual mode), and pairs (put in, stepped
+  over, deleted together, quotes, Enter between braces, round a selection,
+  not before a word, after a letter or in a comment, a closer not put in,
+  the setting off, Vim's Insert mode). tests/shape.sh: the scroll bar's
+  marks.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

@@ -26,11 +26,17 @@ std::string parent_of(const std::string& path) {
 std::string full_path(const std::string& path) {
     if (path.empty()) return {};
     if (path[0] == '/' || is_remote(path)) return path;
-    char* cwd = SDL_GetCurrentDirectory();
-    std::string out = cwd ? cwd : "";
-    SDL_free(cwd);
-    if (!out.empty() && out.back() != '/') out += '/';
-    return out + path;
+    // The working directory, asked for once: blit never changes its own
+    // (only the programs it starts get others), and asking is a few system
+    // calls, which the status bar and the breadcrumbs would make every key.
+    static const std::string cwd = [] {
+        char* c = SDL_GetCurrentDirectory();
+        std::string out = c ? c : "";
+        SDL_free(c);
+        if (!out.empty() && out.back() != '/') out += '/';
+        return out;
+    }();
+    return cwd + path;
 }
 
 namespace {
