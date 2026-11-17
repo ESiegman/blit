@@ -1374,6 +1374,12 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
         case kG | 'j':
         case kG | 'k': {
             const bool down = (c & 0xFF) == 'j';
+            if (const LineSkip* s = ed.skip) {  // (by rows: a fold is one)
+                const u64 row = s->skip_row(line), rows = s->skip_rows();
+                if (down ? row + 1 >= rows : row == 0) m.ok = false;
+                to_line(s->skip_line(down ? std::min(rows - 1, row + count) : (row >= count ? row - count : 0)), true);
+                break;
+            }
             if (down ? line + 1 >= n : line == 0) m.ok = false;
             to_line(down ? line + count : (line >= count ? line - count : 0), true);
             break;
@@ -2691,6 +2697,11 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
                 if (c == 'z' || c == '.') requests_.push_back({VimRequest::kScroll, {}, std::max<i64>(0, here - rows / 2)});
                 else if (c == 't' || c == '\r') requests_.push_back({VimRequest::kScroll, {}, here});
                 else if (c == 'b' || c == '-') requests_.push_back({VimRequest::kScroll, {}, std::max<i64>(0, here - rows + 1)});
+                else if (c == 'c' || c == 'C') requests_.push_back({VimRequest::kFold, {}, 0});
+                else if (c == 'o' || c == 'O') requests_.push_back({VimRequest::kFold, {}, 1});
+                else if (c == 'a' || c == 'A') requests_.push_back({VimRequest::kFold, {}, 2});
+                else if (c == 'M') requests_.push_back({VimRequest::kFold, {}, 3});
+                else if (c == 'R') requests_.push_back({VimRequest::kFold, {}, 4});
                 return done();
             }
             case kPrefixWindow:

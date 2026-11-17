@@ -53,7 +53,7 @@ run "frame;text:v;text:e;text:d;vimdump"
 check "and an operator on it" 'NORMAL |  | 1:1 |  world'
 run "frame;click:200,90,1;release;text:x;vimdump"
 check "a click puts the cursor on a character" 'NORMAL |  | 3:8 |     thir'
-run "frame;click:60,30,2;release;vimdump"
+run "frame;click:60,45,2;release;vimdump"
 check "a double click selects a word: Visual mode" 'VISUAL | -- VISUAL -- | 1:5 | hello world'
 run "frame;text:/;text:lin;vimdump"
 check "a search being typed shows on the bottom line and moves the cursor" 'COMMAND | /lin | 2:8 | second line'

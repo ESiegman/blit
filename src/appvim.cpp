@@ -325,7 +325,7 @@ void App::vim_after(u32 result) {
                 break;
             case VimRequest::kScroll: {
                 const double ch = font_->cell_h();
-                pane_->target_y = std::clamp(static_cast<double>(q.n) * ch, 0.0, std::max(max_scroll_y(), 0.0));
+                pane_->target_y = std::clamp(static_cast<double>(row_of_line(static_cast<u64>(std::max<i64>(q.n, 0)))) * ch, 0.0, std::max(max_scroll_y(), 0.0));
                 if (!animating_) last_step_ns_ = now_ns() - 8'000'000;
                 animating_ = true;
                 scrolled = true;
@@ -341,6 +341,12 @@ void App::vim_after(u32 result) {
             case VimRequest::kReferences: lsp_references(); break;
             case VimRequest::kPlaces: lsp_places(static_cast<Lsp::PlaceKind>(q.n)); break;
             case VimRequest::kOutline: lsp_outline(); break;
+            case VimRequest::kFold:
+                if (q.n == 0) fold_close();
+                else if (q.n == 1) fold_open();
+                else if (q.n == 2) fold_toggle();
+                else fold_all(q.n == 3);
+                break;
             case VimRequest::kFormat: lsp_format_lines(q.line0, q.line1); break;
             case VimRequest::kBack: jump_walk(q.n ? q.n : -1); break;  // (<C-o> and <C-i>: the jumps across files, app.cpp)
             default: break;
@@ -452,7 +458,7 @@ void App::vim_marks(FrameDesc& fd) {
     u32 col0, col1;
     if (cfg_.modal && pane_->doc->id == vim_doc_ && pane_->id == vim_pane_ && vim_.block(ed, &line0, &line1, &col0, &col1)) {
         // (On each line the grid shows as much of it as the line has text for.)
-        for (u64 line = std::max(line0, grid.top_line); line <= line1 && line < grid.top_line + grid.rows; ++line) u.block.push_back({line, col0, col1, kDecoSelect});
+        for (u64 line = std::max(line0, grid.top_line); line <= line1 && line < grid.bottom(); ++line) u.block.push_back({line, col0, col1, kDecoSelect});
         if (!u.block.empty()) fd.views[focus_view_].sel_radius = look().sel;  // its corners are rounded like any selection's
     }
     static const Vim::Pattern kNoPattern{};
@@ -471,6 +477,7 @@ void App::vim_marks(FrameDesc& fd) {
     mix(ed.revision());
     mix(grid.top_line);
     mix(grid.rows);
+    mix(grid.rows_key);
     mix(ed.tab_width);
     mix(std::hash<std::string>{}(pat.text));
     mix(reinterpret_cast<u64>(pat.re.get()));
@@ -489,7 +496,7 @@ void App::vim_marks(FrameDesc& fd) {
         };
         constexpr u64 kLineBytes = 8192;  // a longer line is looked at this far
         constexpr size_t kMost = 4000;
-        const u64 lines = ed.buf.line_count(), bottom = std::min<u64>(grid.top_line + grid.rows, lines);
+        const u64 lines = ed.buf.line_count(), bottom = std::min<u64>(grid.bottom(), lines);
         // A match, a piece on each line of the view it is on. (One of
         // nothing, "^" or "\zs" alone, is not lit.)
         auto mark = [&](u64 a, u64 b) {

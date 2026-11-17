@@ -50,6 +50,7 @@ struct VimRequest {
         kPlaces,      // gD (n 2: the declaration), gy (n 1: the type definition)
         kOutline,     // gO: the file's outline
         kFormat,      // gq: the lines line0 to line1, formatted by the language server
+        kFold,        // zc zo za (n 0, 1, 2: the fold at the cursor closed, opened, switched), zM zR (n 3, 4: all closed, all opened)
     };
     u8 kind = 0;
     std::string arg;

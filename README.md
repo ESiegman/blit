@@ -18,7 +18,9 @@ to the server of its language and project): completions with their types,
 problems underlined with their messages, parameter names and deduced types
 between the code, colours from the server over tree-sitter's, rename across
 files, references, implementations, the file's outline, the project's
-symbols, header and source, formatting and fixes.
+symbols, header and source, formatting and fixes. And from the syntax
+tree alone, for any language with a grammar: folding, breadcrumbs, sticky
+scroll, brackets coloured by depth, and the selection grown node by node.
 
 ![completions from clangd, a problem underlined, inlay hints and the server's colours](docs/media/lsp.png)
 

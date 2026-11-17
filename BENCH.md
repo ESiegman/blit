@@ -2649,6 +2649,46 @@ turn about, against the build before:
   selection starting again, Vim's Visual mode, the word and line without a
   grammar. All 21 suites pass.
 
+### Round 53: folding, breadcrumbs, sticky scroll, the outline without a server
+
+The rest of the syntax tree's milestone, on round 52's shape. **Folding**:
+what is folded is the file's (offsets that follow edits), and from it a
+map between the view's rows and the lines they show, made again only when
+the text or the folds change. With nothing folded the map is the lines
+themselves and nothing looks at it; with folds, the grid is told each
+row's line (GridSpec::row_lines), the fill repositions its reader after a
+gap, and everything that turned lines into pixels (the cursor, the
+gutter, the scroll's limit, clicks, popups, the language server's marks)
+goes through the map. Up and Down, `j` and `k` count rows through the
+editor's LineSkip. **Breadcrumbs** (the folders, the file, the
+definitions at the cursor) are a strip of cells under the tabs, made
+again only when what they come from changes. **Sticky scroll** pins the
+lines that open the scopes the top of the view is in: five rows filled as
+the view fills them. Without a language server the outline and the
+symbols in the open files are the tree's definitions.
+
+Turn about, five rounds, 2560x1600, against the build before the
+milestone (080c547):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 17,769 / 41.21 µs / 1.50 µs | 17,996 / 41.04 µs / 1.58 µs |
+| Typing, everything on: the same | 18,432 / 38.46 µs / 1.79 µs | 18,601 / 37.54 µs / 2.75 µs |
+| Scrolling code-100m.txt, plain: the same | 19,565 / 35.71 µs / 0.58 µs | 19,623 / 35.62 µs / 0.58 µs |
+
+- **No change scrolling**, with the pinned rows filled each frame they
+  show. The first breadcrumbs made their parts every frame to see whether
+  they had changed (0.7 µs); a key made of what they come from took that
+  away.
+- **About 1 µs a key**: the cursor moves, so the breadcrumbs are made
+  again. The frame as a whole is no slower.
+- fuzz_buffer.cpp: random folds against the map worked out line by line,
+  and folds through edits before, inside, after and across them.
+  tests/shape.sh: breadcrumbs, the tree's outline and symbols, the pinned
+  lines, and folding (at and inside a block, nested, all and none, Up and
+  Down past one, a jump into one, typing on one, Vim's `zc zo za zM zR`,
+  by indentation without a grammar).
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

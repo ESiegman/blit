@@ -15,6 +15,7 @@
 #include "buildscan.hpp"
 #include "config.hpp"
 #include "editor.hpp"
+#include "folds.hpp"
 #include "font.hpp"
 #include "git.hpp"
 #include "grammars.hpp"
@@ -134,6 +135,7 @@ struct OtherViews final : EditWatch {
 struct Doc {
     Editor ed;
     Syntax syntax;  // after ed: it must let go of the buffer first
+    Folds folds;    // what is folded away (listening to ed while there is any)
     u64 id = 0;     // stays the same however the tabs are reordered
     double scroll_x = 0, scroll_y = 0;  // the view, kept while another tab is in front
     // Shown in more than one split, the editor holds one split's cursor at a
@@ -230,8 +232,12 @@ struct Pane {
     double scroll_x = 0, scroll_y = 0;
     double target_x = 0, target_y = 0;
     // Cursor and selection in (line, column), cached per edit/move.
-    u64 cache_rev = ~0ull, cache_cursor = ~0ull, cache_anchor = ~0ull;
+    u64 cache_rev = ~0ull, cache_cursor = ~0ull, cache_anchor = ~0ull, cache_folds = ~0ull;
     u64 cur_line = 0;
+    u64 cur_row = 0;  // the row of the view it is on: its line less those folded away above it
+    std::vector<u64> row_lines;  // with lines folded, the line each row of the view shows (GridSpec::row_lines)
+    std::vector<GridNote> fold_notes;  // (fold_notes(): the notes after its folded lines, with the others)
+    std::vector<u32> fold_note_cells;
     u32 cur_col = 0;
     u64 sel_line0 = 0, sel_line1 = 0;
     u32 sel_col0 = 0, sel_col1 = 0;
@@ -342,6 +348,22 @@ private:
     int view_h() const { return std::max(1, pane_->y1 - pane_->text_y); }  // height of the focused pane's text area
     int view_w() const { return std::max(1, pane_->x1 - pane_->text_x); }
     int visible_rows() const { return view_h() / font_->cell_h(); }
+    // Rows of the view and the lines they show, with what is folded in the
+    // file in front (appshape.cpp): with nothing folded, the same numbers.
+    const Folds* folds_on() const;
+    u64 row_of_line(u64 line) const;
+    u64 line_of_row(u64 row) const;
+    u64 view_line_count() const;  // rows the whole text takes
+    // Folding (appshape.cpp): the fold at the cursor's line closed, opened,
+    // switched; all of them; and a line the cursor has gone into shown.
+    void fold_close();
+    void fold_open();
+    void fold_toggle();
+    void fold_all(bool close);
+    void fold_reveal();
+    void fold_notes(FrameDesc& fd);
+    bool fold_mouse_down(const SDL_MouseButtonEvent& b);  // a click on a folded line's mark or note opens it
+    std::string fold_dump();  // (the tests: what is folded in the file in front, and the rows on show)
     void measure_widest();  // finds out how wide the widest line is, if that is not known
     void take_measured();
     double max_scroll_x() const;

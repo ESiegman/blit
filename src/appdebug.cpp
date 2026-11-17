@@ -1017,7 +1017,7 @@ void App::debug_marks(FrameDesc& fd) {
         Doc* d = find_doc(g.doc);
         if (!d || d->ed.path.empty() || full_path(d->ed.path) != f.path || f.line == 0) continue;
         const u64 l = f.line - 1;
-        if (l < g.top_line || l >= g.top_line + g.rows || l >= d->ed.buf.line_count()) continue;
+        if (l < g.top_line || l >= g.bottom() || l >= d->ed.buf.line_count()) continue;
         TextBox box;
         const std::string text = "\xE2\x97\x80 stopped" + (u.reason.empty() ? std::string() : ": " + u.reason);
         box.resize(std::min<u32>(width_of(text), 80), 1);

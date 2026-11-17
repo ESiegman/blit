@@ -1201,7 +1201,7 @@ void App::prof_marks(FrameDesc& fd) {
         const size_t had = notes.size();
         const u64 lines = d->ed.buf.line_count();
         for (const auto& [l, cells] : nt.lines) {
-            if (l < g.top_line || l >= g.top_line + g.rows || l >= lines) continue;
+            if (l < g.top_line || l >= g.bottom() || l >= lines) continue;
             bool taken = false;
             for (size_t k = 0; k < had && !taken; ++k) taken = notes[k].line == l;
             if (taken) continue;

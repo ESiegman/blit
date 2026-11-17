@@ -193,7 +193,7 @@ struct Crumbs {
     };
     std::vector<Part> parts;
     TextBox box;
-    u64 drawn = 0;
+    u64 asked = 0;  // (what they were made from: unchanged, nothing is made again)
 };
 
 int App::crumbs_px(const Pane& p) const {
@@ -252,18 +252,26 @@ void App::crumbs_layout(FrameDesc& fd, bool focused) {
     const u32 cols = static_cast<u32>(std::max(1, (pane_->x1 - pane_->x0 - 2 * pad_x) / cw));
     const Doc& d = *pane_->doc;
     const u64 cur = caret_in(*pane_, d).cursor;
-    std::vector<Crumbs::Part> parts = crumb_parts(d, cur, panel_root());
-    u64 sig = 1469598103934665603ull;
-    auto mix = [&](u64 v) { sig = (sig ^ v) * 1099511628211ull; };
+    // What they are made from, cheaply: the file, the cursor, the text, the
+    // tree's definitions as they last came, the room, the font.
+    u64 key = 1469598103934665603ull;
+    auto mix = [&](u64 v) { key = (key ^ v) * 1099511628211ull; };
+    mix(d.id);
+    mix(cur);
+    mix(d.ed.revision());
+    mix(std::hash<std::string>{}(d.ed.path));
+    mix(reinterpret_cast<uintptr_t>(panel_root()));
+    if (d.syntax.active()) {
+        const std::vector<SyntaxScope>& sc = d.syntax.structure().scopes;
+        mix(sc.size());
+        if (!sc.empty()) mix(sc.front().start * 31 + sc.back().end);
+    }
     mix(cols);
     mix(font.generation());
     mix(focused);
-    for (const Crumbs::Part& p : parts) {
-        mix(std::hash<std::string>{}(p.text));
-        mix(p.scope);
-    }
-    if (sig != c.drawn) {
-        c.drawn = sig;
+    if (key != c.asked) {
+        c.asked = key;
+        std::vector<Crumbs::Part> parts = crumb_parts(d, cur, panel_root());
         // " › " between parts; too wide, the first ones go (folders first), an ellipsis for them.
         const std::string_view sep = " \xE2\x80\xBA ";
         auto width = [&](size_t from) {
@@ -349,11 +357,12 @@ std::vector<u64> sticky_lines(const Doc& d, double scroll_y, int ch) {
     std::vector<u64> rows;
     if (!d.syntax.active() || scroll_y < 1) return rows;
     const std::vector<SyntaxFold>& folds = d.syntax.structure().folds;
-    const u64 top = static_cast<u64>(scroll_y) / static_cast<u64>(ch);
+    const u64 top = static_cast<u64>(scroll_y) / static_cast<u64>(ch);  // (a row: with lines folded, not a line)
+    if (!d.folds.empty()) d.folds.sync(d.ed.buf, d.ed.revision());
     // Each row the outermost scope, inside the one pinned before it, that
     // the line under the rows so far is in.
     while (rows.size() < kStickyMost) {
-        const u64 line = top + rows.size();
+        const u64 line = d.folds.empty() ? top + rows.size() : d.folds.line_at(top + rows.size());
         const SyntaxFold* pick = nullptr;
         for (const SyntaxFold& f : folds) {
             if (f.header >= line) break;
@@ -456,6 +465,243 @@ std::string App::sticky_dump() {
     if (lines.empty()) return "none";
     std::string out;
     for (const u64 l : lines) out += (out.empty() ? "" : " ") + std::to_string(l + 1);
+    return out;
+}
+
+// ---------------------------------------------------------------- folding
+
+const Folds* App::folds_on() const {
+    const Doc& d = *pane_->doc;
+    if (d.folds.empty()) return nullptr;
+    d.folds.sync(d.ed.buf, d.ed.revision());
+    return &d.folds;
+}
+
+u64 App::row_of_line(u64 line) const {
+    const Folds* f = folds_on();
+    return f ? f->row_of(line) : line;
+}
+
+u64 App::line_of_row(u64 row) const {
+    const Folds* f = folds_on();
+    const u64 lines = pane_->doc->ed.buf.line_count();
+    return std::min(f ? f->line_at(row) : row, lines ? lines - 1 : 0);
+}
+
+u64 App::view_line_count() const {
+    const Folds* f = folds_on();
+    const u64 lines = pane_->doc->ed.buf.line_count();
+    return f ? f->rows(lines) : lines;
+}
+
+namespace {
+
+// The folds hear of edits, and the editor's moves go by rows, only while
+// there are any.
+void fold_listen(Doc& d) {
+    if (d.folds.empty()) {
+        d.ed.unlisten(&d.folds);
+        d.ed.skip = nullptr;
+    } else {
+        d.folds.attach(&d.ed);
+        d.ed.listen(&d.folds);
+        d.ed.skip = &d.folds;
+    }
+}
+
+// How far a line is indented (-1: blank), for folding without a tree.
+i64 indent_of(const Editor& ed, u64 line) {
+    const u64 start = ed.buf.line_start(line), end = ed.line_end(line);
+    i64 n = 0;
+    char ch = 0;
+    for (u64 at = start; at < end && ed.buf.read(at, &ch, 1) == 1; ++at) {
+        if (ch == ' ') ++n;
+        else if (ch == '\t') n += ed.tab_width;
+        else return n;
+    }
+    return -1;
+}
+
+// What can fold around a line: the tree's folds of the text on show; or,
+// with no tree, the lines indented further than the one before them.
+std::vector<SyntaxFold> fold_points(const Doc& d, u64 line) {
+    if (d.syntax.active()) return d.syntax.structure().folds;
+    std::vector<SyntaxFold> out;
+    const Editor& ed = d.ed;
+    const u64 lines = ed.buf.line_count();
+    auto block = [&](u64 header) {  // the lines after header indented further than it
+        const i64 own = indent_of(ed, header);
+        if (own < 0) return;
+        u64 last = header;
+        for (u64 l = header + 1; l < lines && l - header < 100000; ++l) {
+            const i64 in = indent_of(ed, l);
+            if (in < 0) continue;
+            if (in <= own) break;
+            last = l;
+        }
+        if (last > header) out.push_back({static_cast<u32>(header), static_cast<u32>(last)});
+    };
+    // The headers above it, each indented less than the one before.
+    i64 limit = indent_of(ed, line);
+    block(line);
+    for (u64 l = line; l-- > 0 && line - l < 100000;) {
+        const i64 in = indent_of(ed, l);
+        if (in < 0 || (limit >= 0 && in >= limit)) continue;
+        block(l);
+        limit = in;
+        if (in == 0) break;
+    }
+    std::ranges::sort(out, [](const SyntaxFold& a, const SyntaxFold& b) { return a.header < b.header; });
+    return out;
+}
+
+}  // namespace
+
+// The fold at the cursor's line: one that starts there, else the innermost
+// it is in; on a line already folded, the one around that.
+void App::fold_close() {
+    Doc& d = *pane_->doc;
+    Editor& ed = d.ed;
+    const u64 line = ed.buf.line_of(ed.cursor());
+    d.folds.sync(ed.buf, ed.revision());
+    const bool closed = !d.folds.empty() && d.folds.header(line);
+    const SyntaxFold* pick = nullptr;
+    const std::vector<SyntaxFold> points = fold_points(d, line);
+    for (const SyntaxFold& f : points) {
+        if (f.header > line) break;
+        if (f.header == line && !closed) pick = &f;
+        else if (f.header < line && f.last >= line && (!pick || pick->header != line)) pick = &f;  // (later ones are inside earlier ones)
+    }
+    if (!pick || !d.folds.add(ed.buf, pick->header, pick->last)) return;
+    fold_listen(d);
+    if (line != pick->header) {  // (the cursor to the line it is folded under)
+        const u64 start = ed.buf.line_start(pick->header);
+        u64 at = start;
+        char ch = 0;
+        while (at < ed.line_end(pick->header) && ed.buf.read(at, &ch, 1) == 1 && (ch == ' ' || ch == '\t')) ++at;
+        ed.move_to(at, false);
+        vim_mouse();
+    }
+    scroll_to_cursor();
+    dirty_ = true;
+}
+
+void App::fold_open() {
+    Doc& d = *pane_->doc;
+    const u64 line = d.ed.buf.line_of(d.ed.cursor());
+    if (d.folds.open_header(d.ed.buf, line) || d.folds.open_around(d.ed.buf, line)) {
+        fold_listen(d);
+        scroll_to_cursor();
+        dirty_ = true;
+    }
+}
+
+void App::fold_toggle() {
+    Doc& d = *pane_->doc;
+    const u64 line = d.ed.buf.line_of(d.ed.cursor());
+    d.folds.sync(d.ed.buf, d.ed.revision());
+    if (!d.folds.empty() && d.folds.header(line)) fold_open();
+    else fold_close();
+}
+
+// Every fold the whole file has closed (the tree's), or every one opened.
+void App::fold_all(bool close) {
+    Doc& d = *pane_->doc;
+    if (!close) {
+        d.folds.clear();
+    } else {
+        SyntaxStructure all;
+        if (!d.syntax.active() || !d.syntax.ask_all(d.ed.buf, &all)) return;
+        for (const SyntaxFold& f : all.folds) d.folds.add(d.ed.buf, f.header, f.last);
+        fold_reveal();  // (the cursor's line stays on show)
+    }
+    fold_listen(d);
+    scroll_to_cursor();
+    dirty_ = true;
+}
+
+// The cursor has gone into lines folded away (a search, a jump, an edit):
+// the folds that hide its line open.
+void App::fold_reveal() {
+    Doc& d = *pane_->doc;
+    if (d.folds.empty()) return;
+    const u64 line = d.ed.buf.line_of(d.ed.cursor());
+    d.folds.sync(d.ed.buf, d.ed.revision());
+    if (!d.folds.hidden(line)) return;
+    while (d.folds.open_around(d.ed.buf, line)) {
+    }
+    fold_listen(d);
+    dirty_ = true;
+}
+
+// After a folded line's text, in the quiet ink: how many lines are under it.
+void App::fold_notes(FrameDesc& fd) {
+    for (const std::unique_ptr<Pane>& up : panes_) {
+        Pane& p = *up;
+        if (!p.doc || p.doc->folds.empty() || p.view >= fd.view_count) continue;
+        GridSpec& g = fd.views[p.view].grid;
+        if (!g.row_lines) continue;
+        const Folds& f = p.doc->folds;
+        f.sync(p.doc->ed.buf, p.doc->ed.revision());
+        std::vector<GridNote>& notes = p.fold_notes;
+        std::vector<u32>& cells = p.fold_note_cells;
+        notes.assign(g.notes.begin(), g.notes.end());
+        cells.clear();
+        std::vector<std::pair<size_t, u64>> mine;  // (where each note's cells start, and its line)
+        for (u32 r = 0; r < g.rows; ++r) {
+            const u64 line = g.row_lines[r];
+            if (line == ~0ull) break;
+            const u64 n = f.hidden_under(line);
+            if (!n) continue;
+            TextBox box;
+            const std::string text = " \xE2\x8B\xAF " + std::to_string(n) + (n == 1 ? " line" : " lines");
+            box.resize(width_of(text), 1);
+            put(box, *font_, 0, 0, text, ink::kMuted);
+            mine.emplace_back(cells.size(), line);
+            cells.insert(cells.end(), box.cells.begin(), box.cells.end());
+        }
+        if (mine.empty()) continue;
+        const Editor& ed = p.doc->ed;
+        for (size_t i = 0; i < mine.size(); ++i) {
+            const size_t from = mine[i].first, to = i + 1 < mine.size() ? mine[i + 1].first : cells.size();
+            const u64 line = mine[i].second;
+            const u32 col = ed.col_between(ed.buf.line_start(line), ed.line_end(line)) + 1;
+            notes.push_back({line, col, cells.data() + from, static_cast<u32>(to - from)});
+        }
+        std::ranges::sort(notes, [](const GridNote& a, const GridNote& b) { return a.line < b.line; });
+        g.notes = notes;
+    }
+}
+
+bool App::fold_mouse_down(const SDL_MouseButtonEvent& b) {
+    Doc& d = *pane_->doc;
+    if (d.folds.empty() || b.button != SDL_BUTTON_LEFT) return false;
+    const int px = static_cast<int>(b.x * density_), py = static_cast<int>(b.y * density_);
+    if (py < pane_->text_y || py >= pane_->y1 || px < pane_->x0 || px >= pane_->x1) return false;
+    const i64 doc_y = std::llround(pane_->scroll_y) + py - pane_->text_y;
+    if (doc_y < 0) return false;
+    const u64 line = line_of_row(static_cast<u64>(doc_y) / static_cast<u64>(font_->cell_h()));
+    d.folds.sync(d.ed.buf, d.ed.revision());
+    if (!d.folds.header(line)) return false;
+    // On its mark in the line numbers, or past the end of its text (the note).
+    const double tx = px - pane_->text_x + std::llround(pane_->scroll_x) - pad_x_;
+    const u64 end_col = d.ed.col_between(d.ed.buf.line_start(line), d.ed.line_end(line));
+    if (px >= pane_->text_x && tx < static_cast<double>(end_col + 1) * font_->cell_w()) return false;
+    d.folds.open_header(d.ed.buf, line);
+    fold_listen(d);
+    dirty_ = true;
+    return true;
+}
+
+std::string App::fold_dump() {
+    const Doc& d = *pane_->doc;
+    std::string out = "folds";
+    for (const Folds::Fold& f : d.folds.all())
+        out += " " + std::to_string(d.ed.buf.line_of(f.head) + 1) + "-" + std::to_string(d.ed.buf.line_of(std::min(f.end, d.ed.buf.size())) + 1);
+    if (d.folds.empty()) out += " none";
+    out += " | rows";
+    const u64 lines = d.ed.buf.line_count(), rows = std::min<u64>(view_line_count(), 12);
+    for (u64 r = 0; r < rows; ++r) out += " " + std::to_string(std::min(line_of_row(r), lines - 1) + 1);
     return out;
 }
 

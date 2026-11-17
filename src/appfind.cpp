@@ -425,7 +425,8 @@ void App::Find::go(App& a, u64 line, u64 col) {
     a.vim_mouse();  // (Vim takes the cursor's new place as it would a click's)
     a.scroll_to_cursor();
     const double ch = a.font_->cell_h();
-    a.pane_->target_y = std::clamp(static_cast<double>(line) * ch - (a.view_h() - ch) / 2, 0.0, std::max(a.max_scroll_y(), 0.0));
+    a.fold_reveal();  // (a line folded away: its fold opens)
+    a.pane_->target_y = std::clamp(static_cast<double>(a.row_of_line(line)) * ch - (a.view_h() - ch) / 2, 0.0, std::max(a.max_scroll_y(), 0.0));
     a.pane_->scroll_y = a.pane_->target_y;
     a.dirty_ = true;
 }

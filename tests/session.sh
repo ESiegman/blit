@@ -120,7 +120,7 @@ run "folder:$W;frame;key:cmd+alt+Left;key:Up;folder:$V;frame;dump"
 check "another folder: its tabs in place of the last one's" '>[x.txt*]'
 kept "$W"
 got=$(printf '%s' "$got" | sed -e 's/.*\(file	[^;]*long.txt\).*/\1/')
-check "and the last one's kept as it was then" 'file	299	0	281.10	0.00	~/work/long.txt'
+check "and the last one's kept as it was then" 'file	299	0	281.32	0.00	~/work/long.txt'
 run "folder:$W;frame;key:cmd+alt+Left;text:zz;folder:$V;frame;dump"
 check "a file with changes not saved stays (in the split with the keyboard)" '>[x.txt* long.txt]'
 run "folder:$V;key:ctrl+\`;frame;termwait:\$;key:space;text:echo kep''t;key:Return;termwait:kept;folder:$W;frame;dump;key:ctrl+\`;frame;termwait:kept;dump"

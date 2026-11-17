@@ -326,9 +326,12 @@ void fill_grid(const Buffer& buf, Font& font, const GridSpec& g, u32* cells, Anc
     Buffer::Reader rd;
     bool positioned = false;
     u64 off = 0;  // byte offset of the reader
+    u64 prev = ~0ull;
     for (u32 r = 0; r < g.rows; ++r) {
         u32* row = cells + static_cast<size_t>(r) * g.cols;
-        const u64 line = g.top_line + r;
+        const u64 line = g.line_at(r);
+        if (line != prev + 1) positioned = false;  // (past folded lines: the reader is not at this one)
+        prev = line;
         if (line >= lines) {
             std::memset(row, 0, static_cast<size_t>(g.rows - r) * g.cols * sizeof(u32));
             break;
@@ -431,16 +434,17 @@ void guide_grid(const Buffer& buf, const GridSpec& g, u32* cells, GuideCache& gc
     const u32 lead = std::min(g.lead, g.cols), cols = g.cols - lead;
     const u32 tab = std::max<u32>(1, g.tab_width);
     const u64 lines = buf.line_count();
-    if (gc.doc != g.doc || gc.revision != g.revision || gc.top_line != g.top_line || gc.rows != g.rows || gc.tab_width != tab) {
+    if (gc.doc != g.doc || gc.revision != g.revision || gc.top_line != g.top_line || gc.rows != g.rows || gc.tab_width != tab || gc.rows_key != g.rows_key) {
         gc.doc = g.doc;
         gc.revision = g.revision;
         gc.top_line = g.top_line;
+        gc.rows_key = g.rows_key;
         gc.rows = g.rows;
         gc.tab_width = tab;
         gc.indent.resize(g.rows);
         gc.next.resize(g.rows);
         for (u32 r = 0; r < g.rows; ++r) {
-            const u64 line = g.top_line + r;
+            const u64 line = g.line_at(r);
             if (line >= lines) {
                 gc.indent[r] = -1;
             } else if (g.first_col == 0) {
@@ -458,7 +462,7 @@ void guide_grid(const Buffer& buf, const GridSpec& g, u32* cells, GuideCache& gc
         if (gc.indent[0] < 0)
             for (u64 l = g.top_line, n = 0; l > 0 && n < kLook && gc.above < 0; --l, ++n) gc.above = line_indent(buf, l - 1, tab);
         if (gc.indent[g.rows - 1] < 0)
-            for (u64 l = g.top_line + g.rows, n = 0; l < lines && n < kLook && gc.below < 0; ++l, ++n) gc.below = line_indent(buf, l, tab);
+            for (u64 l = g.bottom(), n = 0; l < lines && n < kLook && gc.below < 0; ++l, ++n) gc.below = line_indent(buf, l, tab);
         i32 below = gc.below;
         for (u32 r = g.rows; r-- > 0;) {
             gc.next[r] = below;
@@ -467,7 +471,7 @@ void guide_grid(const Buffer& buf, const GridSpec& g, u32* cells, GuideCache& gc
     }
     const u32 step = g.guide_step;
     i32 above = gc.above;
-    for (u32 r = 0; r < g.rows && g.top_line + r < lines; ++r) {
+    for (u32 r = 0; r < g.rows && g.line_at(r) < lines; ++r) {
         const i32 own = gc.indent[r];
         u32 levels = 0;
         if (own >= 0) {
@@ -496,8 +500,9 @@ void decorate_grid(const GridSpec& g, u32* cells) {
     const u32 lead = std::min(g.lead, g.cols);
     const u64 cols = g.cols - lead, first = g.first_col;
     auto row_of = [&](u64 line) -> u32* {
-        if (line < g.top_line || line >= g.top_line + g.rows) return nullptr;
-        return cells + static_cast<size_t>(line - g.top_line) * g.cols + lead;
+        const i64 r = g.row_of(line);
+        if (r < 0) return nullptr;
+        return cells + static_cast<size_t>(r) * g.cols + lead;
     };
     // Selections that are no run of text (a rectangle) come first. They
     // cover a line's text and no more, and the text ends where the cells
@@ -545,8 +550,9 @@ void round_selection(const GridSpec& g, u32* cells) {
     static thread_local std::vector<Run> runs;
     runs.assign(g.rows, Run{});
     auto find = [&](u64 line, u64 col) {
-        if (line < g.top_line || line >= g.top_line + g.rows) return;
-        const u32 r = static_cast<u32>(line - g.top_line);
+        const i64 at = g.row_of(line);
+        if (at < 0) return;
+        const u32 r = static_cast<u32>(at);
         const u32* row = cells + static_cast<size_t>(r) * g.cols + lead;
         u32 a = col > g.first_col ? static_cast<u32>(std::min<u64>(col - g.first_col, cols)) : 0;
         while (a < cols && !(row[a] & kCellSelected)) ++a;  // (a block starts at the line's text, which may be further in)
@@ -555,7 +561,8 @@ void round_selection(const GridSpec& g, u32* cells) {
         if (b > a) runs[r] = {a, b};
     };
     if (g.has_sel)
-        for (u64 line = std::max(g.sel_line0, g.top_line); line <= g.sel_line1 && line < g.top_line + g.rows; ++line) find(line, line == g.sel_line0 ? g.sel_col0 : 0);
+        for (u32 r = 0; r < g.rows; ++r)
+            if (const u64 line = g.line_at(r); line >= g.sel_line0 && line <= g.sel_line1) find(line, line == g.sel_line0 ? g.sel_col0 : 0);
     for (const GridDeco& d : g.decos)
         if (d.kind == kDecoSelect) find(d.line, d.col0);
 

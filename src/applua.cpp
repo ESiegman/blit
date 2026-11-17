@@ -1812,7 +1812,7 @@ void App::script_layout(int w, int h, FrameDesc& fd) {
                 std::stable_sort(all.begin(), all.end(), [](const ScriptUi::Mark& x, const ScriptUi::Mark& y) { return x.line < y.line; });
             // Only those on the lines in view are looked at.
             auto first = std::lower_bound(all.begin(), all.end(), g.top_line, [](const ScriptUi::Mark& x, u64 l) { return x.line < l; });
-            for (auto mi = first; mi != all.end() && mi->line < g.top_line + g.rows; ++mi) {
+            for (auto mi = first; mi != all.end() && mi->line < g.bottom(); ++mi) {
                 ScriptUi::Mark& m = *mi;
                 if (m.line >= lines) break;
                 const u64 start = ed.buf.line_start(m.line), end = ed.line_end(m.line);

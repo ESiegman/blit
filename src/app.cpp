@@ -578,8 +578,9 @@ void App::stop_syntax() {
 // finished. Both are a few comparisons when nothing changed.
 void App::sync_syntax() {
     if (!pane_->doc->syntax.active()) return;
-    const u64 top = static_cast<u64>(std::max(0.0, pane_->scroll_y)) / static_cast<u64>(font_->cell_h());
-    pane_->doc->syntax.want(pane_->doc->ed.buf, top, top + static_cast<u64>(visible_rows()) + 1);
+    const u64 top_row = static_cast<u64>(std::max(0.0, pane_->scroll_y)) / static_cast<u64>(font_->cell_h());
+    const u64 top = line_of_row(top_row), bottom = line_of_row(top_row + static_cast<u64>(visible_rows()) + 1);
+    pane_->doc->syntax.want(pane_->doc->ed.buf, top, bottom);
     if (pane_->doc->syntax.poll()) {
         const std::string msg = pane_->doc->syntax.take_message();
         if (!msg.empty()) std::fprintf(stderr, "blit: %s\n", msg.c_str());
@@ -1214,7 +1215,7 @@ std::string App::jump_dump() const {
 
 double App::max_scroll_y() const {
     const double ch = font_->cell_h();
-    const double content = static_cast<double>(pane_->doc->ed.buf.line_count()) * ch;
+    const double content = static_cast<double>(view_line_count()) * ch;
     return content <= view_h() ? 0 : std::max(0.0, content - 3 * ch);
 }
 
@@ -1347,13 +1348,16 @@ void App::refresh_cursor_cache() {
     u64 lo = ed.sel_min(), hi = ed.sel_max();
     const bool visual = vim_selection(&lo, &hi);
     const u64 anchor = visual ? (lo * 0x9E3779B97F4A7C15ull) ^ hi : ed.anchor();
-    if (p.cache_rev == ed.revision() && p.cache_cursor == ed.cursor() && p.cache_anchor == anchor && p.cache_visual == visual) return;
+    const u64 folds = p.doc->folds.generation();
+    if (p.cache_rev == ed.revision() && p.cache_cursor == ed.cursor() && p.cache_anchor == anchor && p.cache_visual == visual && p.cache_folds == folds) return;
+    p.cache_folds = folds;
     p.cache_rev = ed.revision();
     p.cache_cursor = ed.cursor();
     p.cache_anchor = anchor;
     p.cache_visual = visual;
     const Buffer& b = ed.buf;
     p.cur_line = b.line_of(ed.cursor());
+    p.cur_row = row_of_line(p.cur_line);
     p.cur_col = ed.col_between(b.line_start(p.cur_line), ed.cursor());
     p.has_sel = visual || ed.has_selection();
     if (p.has_sel) {
@@ -1367,7 +1371,7 @@ void App::refresh_cursor_cache() {
 void App::scroll_to_cursor() {
     refresh_cursor_cache();
     const double cw = font_->cell_w(), ch = font_->cell_h(), vh = view_h();
-    const double y0 = static_cast<double>(pane_->cur_line) * ch;
+    const double y0 = static_cast<double>(pane_->cur_row) * ch;
     if (y0 < pane_->target_y) {
         pane_->target_y = y0;
     } else if (y0 + ch > pane_->target_y + vh) {
@@ -1396,7 +1400,7 @@ u64 App::offset_at_point(float x, float y) const {
     const int cw = font_->cell_w(), ch = font_->cell_h();
     const i64 doc_y = std::llround(pane_->scroll_y) + static_cast<i64>(y * density_) - pane_->text_y;
     const u64 last = pane_->doc->ed.buf.line_count() - 1;
-    const u64 line = doc_y <= 0 ? 0 : std::min<u64>(last, static_cast<u64>(doc_y) / static_cast<u64>(ch));
+    const u64 line = doc_y <= 0 ? 0 : std::min<u64>(last, line_of_row(static_cast<u64>(doc_y) / static_cast<u64>(ch)));
     const double tx = x * density_ - pane_->text_x + static_cast<double>(std::llround(pane_->scroll_x)) - pad_x_;
     const u32 col = tx <= 0 ? 0 : static_cast<u32>(tx / cw + 0.5);
     return pane_->doc->ed.off_at(line, col);
@@ -1428,6 +1432,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     // was drawn before the box that casts it: the side panel's on the
     // bottom line, a menu's on everything).
     fx_begin_layout();
+    fold_reveal();  // (the cursor gone into folded lines: they open)
     splits_layout(w, h, fd);
     start_layout(fd);
     prof_layout(fd);  // (a profile's tab, over its pane's text area)
@@ -1441,6 +1446,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     status_layout(w, h, fd);
     lsp_layout(w, h, fd);
     shape_marks(fd);  // (the bracket that pairs with the cursor's)
+    fold_notes(fd);   // (how many lines each folded one has under it)
     git_note(fd);
     vim_marks(fd);
     if (script_) script_layout(w, h, fd);  // marks, boxes and messages of the scripts'
@@ -1482,6 +1488,17 @@ void App::layout_pane(FrameDesc& fd, bool focused) {
     g.rows = static_cast<u32>(th / ch + 2);
     const i64 blank = sy < 0 ? std::min<i64>((-sy + ch - 1) / ch, g.rows) : 0;
     g.top_line = sy < 0 ? 0 : static_cast<u64>(sy / ch);
+    if (const Folds* f = folds_on()) {  // (lines folded away: each row's line from the map)
+        const u64 top_row = g.top_line, lines = p.doc->ed.buf.line_count();
+        p.row_lines.resize(g.rows);
+        for (u32 r = 0; r < g.rows; ++r) {
+            const u64 line = f->line_at(top_row + r);
+            p.row_lines[r] = line < lines ? line : ~0ull;
+        }
+        g.top_line = p.row_lines[0] == ~0ull ? lines : p.row_lines[0];
+        g.row_lines = p.row_lines.data();
+        g.rows_key = (f->generation() * 1000003 + top_row) * 1000003 + p.doc->ed.revision() + 1;
+    }
     v.blank_rows = static_cast<u32>(blank);
     v.origin[0] = static_cast<float>(tx < 0 ? tx + static_cast<i64>(g.lead) * cw : tx - static_cast<i64>(g.first_col) * cw);
     v.origin[1] = static_cast<float>(sy < 0 ? sy + blank * ch : sy % ch);
@@ -1525,7 +1542,7 @@ void App::layout_pane(FrameDesc& fd, bool focused) {
         const i64 bar = std::max<i64>(1, std::lround(scale_));
         const bool on_char = cfg_.modal && vim_.mode() != Vim::kInsert;
         const bool under = on_char && (vim_.mode() == Vim::kReplace || vim_.pending());
-        const double x = static_cast<double>(static_cast<i64>(p.cur_col) * cw), y = static_cast<double>(static_cast<i64>(p.cur_line) * ch);
+        const double x = static_cast<double>(static_cast<i64>(p.cur_col) * cw), y = static_cast<double>(static_cast<i64>(p.cur_row) * ch);
         const double want[4] = {x, under ? y + static_cast<double>(ch - std::max<i64>(2, ch / 6)) : y, on_char ? x + static_cast<double>(cw) : x + static_cast<double>(bar),
                                 y + static_cast<double>(ch)};
         double at[4];
@@ -1731,6 +1748,7 @@ void App::handle(const SDL_Event& e) {
             if (tabs_mouse_down(e.button)) break;
             if (crumbs_mouse_down(e.button)) break;
             if (sticky_mouse_down(e.button)) break;
+            if (fold_mouse_down(e.button)) break;
             on_mouse_down(e.button);
             break;
         case SDL_EVENT_MOUSE_BUTTON_UP:

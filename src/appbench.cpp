@@ -599,6 +599,7 @@ int App::run_bench() {
 //   views                  print each split's view of the file in front: its document, its own cursor and that line
 //   emojidump              print the colour emoji the last frame drew: how many, the cells of each, in the text or a box
 //   usesdump               print the uses of the symbol at the cursor that are marked (line:column ranges, from 1)
+//   folddump               print what is folded in the file in front (header-last, from 1) and its first rows' lines
 //   stickydump             print the lines pinned at the top of the split in front (from 1), or none
 //   crumbsdump             print the breadcrumbs under the split in front's tabs, " > " between them
 //   seldump                print what is selected in the file in front, in [ ], its lines joined by " / " (or none)
@@ -831,6 +832,8 @@ void App::run_script(const char* script) {
             std::string t = ed.buf.text(lo, std::min<u64>(hi - lo, 4000));
             for (size_t at = 0; (at = t.find('\n', at)) != std::string::npos;) t.replace(at, 1, " / ");
             std::fprintf(stderr, "%s\n", hi > lo ? ("[" + t + "]").c_str() : "none");
+        } else if (verb == "folddump") {  // what is folded in the file in front, and the lines its first rows show
+            std::fprintf(stderr, "%s\n", fold_dump().c_str());
         } else if (verb == "stickydump") {  // the lines sticky scroll pins in the split in front
             std::fprintf(stderr, "%s\n", sticky_dump().c_str());
         } else if (verb == "crumbsdump") {  // the breadcrumbs of the split in front

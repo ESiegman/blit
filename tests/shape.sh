@@ -29,6 +29,7 @@ fresh() {
     printf 'int f(int a[3]) {\n    if (a[0]) { g("(x"); }\n    return (a[1]);\n}\n' >"$dir/b.cpp"
     printf 'xs = [1, (2, {3: [4]})]\ns = "([{"\n' >"$dir/b.py"
     printf 'some words here\nand more\n' >"$dir/plain.txt"
+    printf 'top\n  inner one\n  inner two\n    deeper\nback\n' >"$dir/indent.txt"
     mkdir -p "$dir/proj/src"
     printf 'namespace geo {\nstruct Point {\n    int x;\n    int len() const {\n        return x;\n    }\n};\nint area(int w) {\n    return w;\n}\n}\n' >"$dir/proj/src/s.cpp"
     printf 'class Shape:\n    def area(self):\n        return 0\n\ndef make():\n    return Shape()\n' >"$dir/proj/s.py"
@@ -168,6 +169,43 @@ with nocrumbs "workdir:$dir/proj;frame;line:5;frame;stickydump" "$S"
 check "(not with the breadcrumbs' setting)" '1 2'
 with nosticky "workdir:$dir/proj;frame;line:5;frame;stickydump" "$S"
 check "editor.sticky_scroll = false" 'none'
+
+# Folding: the block at the cursor folds under its first line; the rows go
+# past it; moving, searching or jumping into it opens it.
+fold="keyof:Fold the block at the cursor"
+unfold="keyof:Unfold the block at the cursor"
+run "workdir:$dir/proj;frame;key:Down;key:Down;key:Down;$fold;frame;folddump" "$S"
+check "on a block's first line: it folds" 'folds 4-5 | rows 1 2 3 4 6 7 8 9 10 11 12 13'
+run "workdir:$dir/proj;frame;key:Down;key:Down;key:Down;$fold;key:Down;frame;vimdump" "$S"
+check "Down goes past it" 'NORMAL |  | 6:1 |     }'
+run "workdir:$dir/proj;frame;key:Down;key:Down;key:Down;$fold;key:Down;key:Up;frame;vimdump" "$S"
+check "Up back to it" 'NORMAL |  | 4:1 |     int len() const {'
+run "workdir:$dir/proj;frame;key:Down;key:Down;key:Down;key:Down;$fold;frame;vimdump" "$S"
+check "inside one: the innermost around it, the cursor to its first line" 'NORMAL |  | 4:5 |     int len() const {'
+run "workdir:$dir/proj;frame;key:Down;key:Down;key:Down;$fold;key:Up;$fold;frame;folddump" "$S"
+check "a fold in a fold" 'folds 4-5 2-6 | rows 1 2 7 8 9 10 11 12 13 14 15 16'
+run "workdir:$dir/proj;frame;key:Down;key:Down;key:Down;$fold;key:Up;$fold;$unfold;frame;folddump" "$S"
+check "unfolded, the one inside stays as it was" 'folds 4-5 | rows 1 2 3 4 6 7 8 9 10 11 12 13'
+run "workdir:$dir/proj;frame;command:Fold every block;frame;folddump" "$S"
+check "every block" 'folds 1-10 2-6 4-5 8-9 | rows 1 11 12 13 14 15 16 17 18 19 20 21'
+run "workdir:$dir/proj;frame;command:Fold every block;command:Unfold every block;frame;folddump" "$S"
+check "and none" 'folds none | rows 1 2 3 4 5 6 7 8 9 10 11 12'
+run "workdir:$dir/proj;frame;key:Down;key:Down;key:Down;$fold;key:cmd+P;text::5;key:Return;frame;folddump" "$S"
+check "a jump into it opens it" 'folds none | rows 1 2 3 4 5 6 7 8 9 10 11 12'
+run "workdir:$dir/proj;frame;key:Down;key:Down;key:Down;$fold;key:End;text: // here;frame;folddump" "$S"
+check "typing on its first line keeps it" 'folds 4-5 | rows 1 2 3 4 6 7 8 9 10 11 12 13'
+with vim "workdir:$dir/proj;frame;text:jjj;text:zc;text:j;frame;vimdump" "$S"
+check "Vim: zc, and j goes past it" 'NORMAL |  | 6:1 |     }'
+with vim "workdir:$dir/proj;frame;text:jjj;text:zc;text:zo;frame;folddump" "$S"
+check "zo" 'folds none | rows 1 2 3 4 5 6 7 8 9 10 11 12'
+with vim "workdir:$dir/proj;frame;text:jjj;text:za;text:za;text:za;frame;folddump" "$S"
+check "za, and again, and again" 'folds 4-5 | rows 1 2 3 4 6 7 8 9 10 11 12 13'
+with vim "workdir:$dir/proj;frame;text:zM;frame;folddump" "$S"
+check "zM" 'folds 1-10 2-6 4-5 8-9 | rows 1 11 12 13 14 15 16 17 18 19 20 21'
+with vim "workdir:$dir/proj;frame;text:zM;text:zR;frame;folddump" "$S"
+check "zR" 'folds none | rows 1 2 3 4 5 6 7 8 9 10 11 12'
+run "key:Down;$fold;frame;folddump" "$dir/indent.txt"
+check "no grammar: by indentation" 'folds 1-4 | rows 1 5 6'
 
 [ "$failed" = 0 ] && echo "shape: all passed"
 exit "$failed"

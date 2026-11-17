@@ -256,6 +256,7 @@ struct App::Assist {
     std::vector<u32> note_cells;
     u64 deco_gen = ~0ull, deco_top = ~0ull, deco_rev = ~0ull, deco_line = ~0ull, deco_doc = ~0ull;
     u32 deco_rows = 0, deco_font = ~0u, deco_edge = ~0u;
+    u64 deco_key = 0;
 
     // Servers that would not start, or died, since the settings were last
     // read. They are not tried again; the next one for the language is.
@@ -968,7 +969,7 @@ void App::outline_show(std::vector<LspSymbol> symbols, u64 pick) {
                                   const Editor& ed = pane_->doc->ed;
                                   const u64 line = ed.buf.line_of(std::min(list[static_cast<size_t>(i)].offset, ed.buf.size()));
                                   const double ch = font_->cell_h(), vh = view_h();
-                                  pane_->target_y = std::clamp(static_cast<double>(line) * ch - vh / 3, 0.0, std::max(0.0, max_scroll_y()));
+                                  pane_->target_y = std::clamp(static_cast<double>(row_of_line(line)) * ch - vh / 3, 0.0, std::max(0.0, max_scroll_y()));
                                   dirty_ = true;
                               },
                               [this](int i) {
@@ -1465,7 +1466,7 @@ void App::lsp_mouse(float x, float y) {
     const int cw = font_->cell_w(), ch = font_->cell_h();
     const double px = x * density_, py = y * density_;
     const double tx = px - pane_->text_x + std::llround(pane_->scroll_x) - pad_x_, ty = py - pane_->text_y + std::llround(pane_->scroll_y);
-    const i64 line = ty < 0 ? -1 : static_cast<i64>(ty / ch), col = tx < 0 ? -1 : static_cast<i64>(tx / cw);
+    const i64 line = ty < 0 ? -1 : static_cast<i64>(line_of_row(static_cast<u64>(ty / ch))), col = tx < 0 ? -1 : static_cast<i64>(tx / cw);
     if (line == a.mouse_line && col == a.mouse_col) return;
     a.mouse_line = line;
     a.mouse_col = col;
@@ -1708,13 +1709,14 @@ void App::lsp_decorate(const GridSpec& g) {
     // The first column the view's right edge cuts (a message stops short of it).
     const i64 right = std::llround(pane_->scroll_x) - pad_x_ + (pane_->x1 - pane_->text_x);
     const u32 edge = right > 0 ? static_cast<u32>(right / font_->cell_w()) : 0;
-    if (a.deco_gen == lsp_.diagnostics_generation() && a.deco_top == g.top_line && a.deco_rows == g.rows && a.deco_doc == pane_->doc->id &&
+    if (a.deco_gen == lsp_.diagnostics_generation() && a.deco_top == g.top_line && a.deco_rows == g.rows && a.deco_key == g.rows_key && a.deco_doc == pane_->doc->id &&
         a.deco_rev == pane_->doc->ed.revision() && a.deco_line == pane_->cur_line && a.deco_font == font_->generation() && a.deco_edge == edge)
         return;
     a.deco_gen = lsp_.diagnostics_generation();
     a.deco_doc = pane_->doc->id;
     a.deco_top = g.top_line;
     a.deco_rows = g.rows;
+    a.deco_key = g.rows_key;
     a.deco_rev = pane_->doc->ed.revision();
     a.deco_line = pane_->cur_line;
     a.deco_font = font_->generation();
@@ -1725,7 +1727,7 @@ void App::lsp_decorate(const GridSpec& g) {
 
     const Buffer& b = pane_->doc->ed.buf;
     const u64 lines = b.line_count();
-    const u64 first = g.top_line, last = std::min<u64>(lines, g.top_line + g.rows);  // [first, last)
+    const u64 first = g.top_line, last = std::min<u64>(lines, g.bottom());  // [first, last)
     if (first >= last) return;
     const u64 lo = b.line_start(first), hi = last >= lines ? b.size() + 1 : b.line_start(last);
     // The first problem that reaches into view: the furthest any reaches,
@@ -1810,7 +1812,7 @@ void App::lsp_layout(int w, int h, FrameDesc& fd) {
         }
         if (lsp_uses_shown()) {
             a.decos_all.assign(a.decos.begin(), a.decos.end());
-            const u64 lines = ed.buf.line_count(), bottom = std::min<u64>(grid.top_line + grid.rows, lines);
+            const u64 lines = ed.buf.line_count(), bottom = std::min<u64>(grid.bottom(), lines);
             const u64 from = ed.buf.line_start(std::min(grid.top_line, lines ? lines - 1 : 0)), to = bottom < lines ? ed.buf.line_start(bottom) : ed.buf.size() + 1;
             for (auto it = std::ranges::lower_bound(a.uses, from, {}, &std::pair<u64, u64>::first); it != a.uses.end() && it->first < to; ++it) {  // (those on show alone)
                 const auto [lo, hi] = *it;
@@ -1833,7 +1835,7 @@ void App::lsp_layout(int w, int h, FrameDesc& fd) {
     auto at_offset = [&](u64 off, int* x, int* y) {
         const u64 line = pane_->doc->ed.buf.line_of(off);
         *x = static_cast<int>(pane_->text_x + pad_x_ + static_cast<i64>(pane_->doc->ed.col_between(pane_->doc->ed.buf.line_start(line), off)) * cw - sx);
-        *y = static_cast<int>(pane_->text_y + static_cast<i64>(line) * ch - sy);
+        *y = static_cast<int>(pane_->text_y + static_cast<i64>(row_of_line(line)) * ch - sy);
     };
     // Places a box so that its text starts at x and it sits just below the
     // line at y, or just above when `above` is asked for or there is no
@@ -2043,7 +2045,7 @@ void App::lsp_extras(FrameDesc& fd) {
         if (!settled && (!a.extras_due_ns || x.rev_ns + kSettleNs < a.extras_due_ns)) a.extras_due_ns = x.rev_ns + kSettleNs;
         const Buffer& b = d.ed.buf;
         const u64 lines = b.line_count();
-        const u64 first = g.top_line, last = std::min<u64>(lines, g.top_line + g.rows);  // [first, last)
+        const u64 first = g.top_line, last = std::min<u64>(lines, g.bottom());  // [first, last)
         if (first >= last) continue;
 
         // Inlay hints: those on show, but not on the cursor's line, where

@@ -189,6 +189,7 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | Undo / redo | Cmd+Z / Shift+Cmd+Z | Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z |
 | Select all | Cmd+A | Ctrl+A (or Ctrl+Shift+A) |
 | Expand the selection to what the syntax tree has around it / shrink it back | Ctrl+Shift+Cmd+Right / Left | Alt+Shift+Right / Left |
+| Fold / unfold the block at the cursor | Cmd+Option+[ / ] | Ctrl+Alt+[ / ] |
 | Save / open (in a new tab) | Cmd+S / Cmd+O | Ctrl+S / Ctrl+O (or Alt+O) |
 | Save as… / save all | Cmd+Shift+S / Cmd+Option+S | Ctrl+Shift+S / Ctrl+Alt+S |
 | Open a folder | Cmd+Shift+O | Ctrl+Shift+O |
@@ -389,7 +390,7 @@ on numbers, `q` and `@` for macros (`@@` again, `Q` the one recorded last),
 `[b ]b` (the tab before and after; `[B ]B` the first and last), `gf` (the
 file named under the cursor), `[<Space>` and `]<Space>` (an empty line
 above or below), `ZZ ZQ`, Ctrl-D Ctrl-U Ctrl-F Ctrl-B Ctrl-E Ctrl-Y,
-`zz zt zb`, Ctrl-L (as `:noh`), Ctrl-W with `h j k l w` (to another split),
+`zz zt zb`, `zc zo za zM zR` (folding, below), Ctrl-L (as `:noh`), Ctrl-W with `h j k l w` (to another split),
 `v s` (split) and `c q` (close), and with a language server `gd` (or
 Ctrl-], and Ctrl-T back), `gD` (the declaration), `gy` (the type
 definition), `gO` (the file's outline), `K`, `gr` (the references, in a list), `gq` with
@@ -486,7 +487,7 @@ in). Up and Down recall earlier lines.
 What Neovim has and this does not, yet: in patterns, `\z(`, and the `\%`
 items that are about the cursor, the Visual area, marks or display columns
 (`\%#`, `\%V`, `\%'m`, `\%23v`); 'ignorecase' and
-'smartcase'; Ctrl-E and Ctrl-Y while `:s///c` asks; `=`, `!`, `gq` and `gw`; folds; `:g`, `:normal`; the change list beyond its last entry
+'smartcase'; Ctrl-E and Ctrl-Y while `:s///c` asks; `=`, `!`, `gq` and `gw`; folds made by hand (`zf`, `zd`) and fold levels; `:g`, `:normal`; the change list beyond its last entry
 (`g;` goes to the last change only); `U`; digraphs and Ctrl-X completion in
 Insert mode (completion is the language server's); Select mode and
 `virtualedit`; a motion forced to another kind (`dv}`); Ctrl-A and Ctrl-X
@@ -1218,6 +1219,20 @@ at most, with their line numbers; a click on one goes to it. The
 definitions are the tree's (any node whose type says it is a function, a
 method, a class, a struct, a namespace and so on, and that has a body),
 so both work for any language with a grammar, without a language server.
+
+**Folding** hides a block's lines under its first line: Cmd+Option+[
+folds the block that starts on the cursor's line, or else the innermost
+the cursor is in (Vim's `zc`), and Cmd+Option+] unfolds it (`zo`; `za`
+switches). "Fold every block" and "Unfold every block" in the command
+search (`zM`, `zR`) do the whole file. The blocks are the tree's: anything
+in brackets over three lines or more (the closing line stays), an
+indented block, a comment of several lines, a `#if`; a file with no
+grammar folds by indentation. A folded line has `›` beside its number and
+`⋯ 12 lines` after its text; a click on either unfolds it. Up and Down
+(and `j` and `k`) go past folded lines as one; a search, a jump or an edit
+that takes the cursor into them opens them. Typing on a folded line keeps
+it folded; an edit across a fold's edges opens it. Folds are the file's,
+the same in every split that shows it.
 
 ```lua
 blit.opt.editor.breadcrumbs = false    -- no breadcrumbs (on)

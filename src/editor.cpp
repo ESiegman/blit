@@ -485,6 +485,17 @@ void Editor::vertical(i64 lines, bool select) {
     u64 line = buf.line_of(cursor_);
     u32 col = want_col_ != ~0u ? want_col_ : col_between(buf.line_start(line), cursor_);
     u64 last = buf.line_count() - 1;
+    if (skip) {  // (by rows: a fold is one)
+        const u64 row = skip->skip_row(line), rows = skip->skip_rows();
+        if (lines < 0 ? row == 0 : row + 1 >= rows) {
+            move_to(lines < 0 ? 0 : buf.size(), select);
+            return;
+        }
+        const u64 to_row = lines < 0 ? (static_cast<u64>(-lines) > row ? 0 : row - static_cast<u64>(-lines)) : std::min(rows - 1, row + static_cast<u64>(lines));
+        move_to(off_at(std::min(last, skip->skip_line(to_row)), col), select);
+        want_col_ = col;
+        return;
+    }
     u64 to;
     if (lines < 0) {
         u64 up = static_cast<u64>(-lines);

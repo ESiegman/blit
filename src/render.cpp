@@ -26,8 +26,8 @@ static void insert_notes(const GridSpec& g, u32* cells) {
         const u64 line = in[i].line;
         size_t j = i;
         while (j < in.size() && in[j].line == line) ++j;  // [i, j): this line's, left to right
-        if (line >= g.top_line && line < g.top_line + g.rows) {
-            u32* row = cells + static_cast<size_t>(line - g.top_line) * g.cols + lead;
+        if (const i64 r = g.row_of(line); r >= 0) {
+            u32* row = cells + static_cast<size_t>(r) * g.cols + lead;
             u64 shift = 0;  // (columns the notes already put in on this row have taken)
             for (size_t k = i; k < j; ++k) {
                 const GridNote& n = in[k];

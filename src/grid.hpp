@@ -59,6 +59,30 @@ struct GridNote {
 
 struct GridSpec {
     u64 top_line = 0;   // document line shown in grid row 0
+    // With lines folded away, the line each row shows (ascending; ~0 past
+    // the end of the text), and a number that changes with them (for what
+    // is kept from frame to frame). Null: row r shows line top_line + r.
+    const u64* row_lines = nullptr;
+    u64 rows_key = 0;
+    u64 line_at(u32 r) const { return row_lines ? row_lines[r] : top_line + r; }
+    // The row a line is shown on; -1 if it is not on show.
+    i64 row_of(u64 line) const {
+        if (!row_lines) return line >= top_line && line < top_line + rows ? static_cast<i64>(line - top_line) : -1;
+        u32 lo = 0, hi = rows;
+        while (lo < hi) {
+            const u32 mid = (lo + hi) / 2;
+            if (row_lines[mid] < line) lo = mid + 1;
+            else hi = mid;
+        }
+        return lo < rows && row_lines[lo] == line ? static_cast<i64>(lo) : -1;
+    }
+    // One past the last line on show (lines past the text's end included).
+    u64 bottom() const {
+        if (!row_lines) return top_line + rows;
+        for (u32 r = rows; r-- > 0;)
+            if (row_lines[r] != ~0ull) return row_lines[r] + 1 + (rows - 1 - r);
+        return top_line + rows;
+    }
     u32 first_col = 0;  // display column shown in grid column 0
     u32 cols = 0;
     u32 rows = 0;
@@ -135,7 +159,7 @@ void fill_grid(const Buffer& buf, Font& font, const GridSpec& g, u32* cells, Anc
 // How far each line on screen is indented, kept from frame to frame: it
 // changes only when the text or the top line does.
 struct GuideCache {
-    u64 doc = ~0ull, revision = ~0ull, top_line = ~0ull;
+    u64 doc = ~0ull, revision = ~0ull, top_line = ~0ull, rows_key = 0;
     u32 rows = 0, tab_width = 0;
     // Per row: columns of white space the line starts with, or -1 for a
     // line with nothing else in it. `next` is the same for the nearest line

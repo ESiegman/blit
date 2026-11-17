@@ -20,6 +20,18 @@ struct TextEdit {
     u32 new_end_row = 0, new_end_col = 0;
 };
 
+// Rows of a view that are not one line each (lines folded away under the
+// line before them): what moves up and down count in, set while there are
+// any.
+struct LineSkip {
+    virtual u64 skip_row(u64 line) const = 0;   // the row a line is on (a hidden one: its fold's header's)
+    virtual u64 skip_line(u64 row) const = 0;   // the line a row shows
+    virtual u64 skip_rows() const = 0;          // how many rows the text takes
+
+protected:
+    ~LineSkip() = default;
+};
+
 // Told about every edit: before it is applied (while the text to be removed
 // can still be read) if it cares to know, and after.
 struct EditListener {
@@ -49,9 +61,10 @@ public:
     // A second one, for the other splits that show this text: each keeps its
     // own cursor while one of them has the editor (see App::place_view()).
     EditWatch* views = nullptr;
+    const LineSkip* skip = nullptr;  // (what is folded: up and down go by rows)
 
-    // Up to three listeners hear about edits (syntax highlighting, the
-    // language server, and the debugger's breakpoints).
+    // Up to four listeners hear about edits (syntax highlighting, the
+    // language server, the debugger's breakpoints, and what is folded).
     void listen(EditListener* l) {
         unlisten(l);
         for (EditListener*& slot : listeners_)
@@ -218,7 +231,7 @@ private:
 
     bool listening() const { return listeners_[0] != nullptr; }
 
-    EditListener* listeners_[3] = {};
+    EditListener* listeners_[4] = {};
     u64 cursor_ = 0;
     u64 anchor_ = 0;
     u32 want_col_ = ~0u;  // column kept across vertical moves

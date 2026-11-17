@@ -28,6 +28,7 @@
 #include "config.hpp"
 #include "editor.hpp"
 #include "finder.hpp"
+#include "folds.hpp"
 #include "font.hpp"
 #include "git.hpp"
 #include "profile.hpp"
@@ -2379,6 +2380,63 @@ void remote_test() {
 #endif
 }
 
+// What is folded: random folds over a text, the map from rows to lines
+// against one worked out the slow way, and folds kept through edits.
+void folds_test() {
+    std::mt19937 pick(7);
+    for (int round = 0; round < 200; ++round) {
+        Editor ed;
+        std::string text;
+        const int lines = 5 + static_cast<int>(pick() % 60);
+        for (int i = 0; i < lines; ++i) text += "line " + std::to_string(i) + "\n";
+        ed.insert(text);
+        Folds f;
+        f.attach(&ed);
+        const u64 n = ed.buf.line_count();
+        for (int k = static_cast<int>(pick() % 6); k > 0; --k) {
+            const u64 h = pick() % n, l = h + 1 + pick() % 8;
+            f.add(ed.buf, h, l);
+        }
+        f.sync(ed.buf, ed.revision());
+        // The slow way: each line hidden or not.
+        std::vector<bool> hidden(n, false);
+        for (const Folds::Fold& x : f.all())
+            for (u64 l = ed.buf.line_of(x.head) + 1; l <= ed.buf.line_of(std::min(x.end, ed.buf.size())) && l < n; ++l) hidden[l] = true;
+        std::vector<u64> shown;
+        for (u64 l = 0; l < n; ++l)
+            if (!hidden[l]) shown.push_back(l);
+        if (f.rows(n) != shown.size()) fail("folds: rows", round, 0);
+        for (u64 r = 0; r < shown.size(); ++r) {
+            if (f.line_at(r) != shown[r]) fail("folds: the line a row shows", round, static_cast<int>(r));
+            if (f.row_of(shown[r]) != r) fail("folds: the row a line is on", round, static_cast<int>(r));
+        }
+        for (u64 l = 0; l < n; ++l)
+            if (f.hidden(l) != hidden[l]) fail("folds: hidden", round, static_cast<int>(l));
+    }
+    // Through edits: one in what is folded keeps it; one across its edge opens it.
+    Editor ed;
+    ed.insert("a {\n  b\n  c\n}\nd\n");
+    Folds f;
+    f.attach(&ed);
+    ed.listen(&f);
+    f.add(ed.buf, 0, 2);
+    ed.move_to(ed.buf.line_start(1) + 2, false);
+    ed.insert("xx\n  y");  // (inside: the fold now hides four lines)
+    f.sync(ed.buf, ed.revision());
+    if (f.all().size() != 1 || !f.hidden(1) || !f.hidden(3) || f.hidden(4)) fail("folds: an edit inside one", 0, 0);
+    ed.move_to(ed.buf.size(), false);
+    ed.insert("e\n");  // (after it: nothing changes)
+    if (f.all().size() != 1) fail("folds: an edit after one", 0, 0);
+    ed.move_to(0, false);
+    ed.insert("z\n");  // (before it: it moves down a line)
+    f.sync(ed.buf, ed.revision());
+    if (f.all().size() != 1 || !f.header(1) || f.hidden(1)) fail("folds: an edit before one", 0, 0);
+    ed.move_to(ed.buf.line_start(1) - 1, false);
+    ed.move_to(ed.buf.line_start(2), true);
+    ed.insert("");  // (across its header's start: it opens)
+    if (!f.empty()) fail("folds: an edit across an edge", 0, 0);
+}
+
 void find_test() {
     auto check = [](bool ok, const char* what) {
         if (!ok) fail(what, 0, 0);
@@ -4535,6 +4593,7 @@ int main(int argc, char** argv) {
     long_line_test();
     vim_test();
     find_test();
+    folds_test();
     script_test();
     term_test(seeds);
     profile_test();

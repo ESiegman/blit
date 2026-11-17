@@ -779,13 +779,17 @@ void App::gutter_layout(int w, int h, FrameDesc& fd) {
     const bool shown = blame_shown(doc);
     const GitBlame* blame = shown && doc.blame && doc.blame_rev == doc.ed.revision() ? doc.blame.get() : nullptr;
     const bool relative = cfg_.relative_numbers && cfg_.modal;  // (counts for j and k are Vim's)
-    const u64 git_key = ((((doc.id * 1000003 + doc.hunks_gen) * 1000003 + doc.blame_gen) * 4 + (shown ? 2 : 0) + (blame ? 1 : 0)) * 2 + (relative ? 1 : 0)) ^ debug_gen_ * 0x9E3779B97F4A7C15ull ^ lsp_marks_gen_ * 0xC2B2AE3D27D4EB4Full;
+    const Folds* folds = folds_on();  // (lines folded away: each row's line from the map)
+    auto line_at = [&](i64 row) -> i64 { return row < 0 || !folds ? row : static_cast<i64>(folds->line_at(static_cast<u64>(row))); };
+    auto row_at = [&](u64 line) -> i64 { return static_cast<i64>(folds ? folds->row_of(line) : line); };
+    const u64 git_key = (((((doc.id * 1000003 + doc.hunks_gen) * 1000003 + doc.blame_gen) * 4 + (shown ? 2 : 0) + (blame ? 1 : 0)) * 2 + (relative ? 1 : 0)) ^ debug_gen_ * 0x9E3779B97F4A7C15ull ^ lsp_marks_gen_ * 0xC2B2AE3D27D4EB4Full) +
+                        (folds ? (folds->generation() + doc.ed.revision()) * 0x632BE59BD9B4E019ull : 0);
     const bool same_rows = first == t.g_first && lines == t.g_lines && font_->generation() == t.g_font && box.cols == cols && box.rows == rows && git_key == t.g_git;
     if (same_rows && pane_->cur_line != t.g_current && !blame && !relative) {
         // Only the cursor has gone to another line: the number of the line
         // it left and of the one it is on change colour, nothing else.
         auto ink_row = [&](u64 line, u32 ink) {
-            const i64 r = static_cast<i64>(line) - first;
+            const i64 r = row_at(line) - first;
             if (r < 0 || r >= static_cast<i64>(rows) || line >= lines) return;
             u32* const start = box.cells.data() + static_cast<size_t>(r) * cols;
             u32* c = start + cols - 1;  // (the last cell, with the mark in it, is not a digit)
@@ -814,14 +818,15 @@ void App::gutter_layout(int w, int h, FrameDesc& fd) {
         for (u64 n = lines; n >= 10; n /= 10) ++widest;
         widest = std::max<u32>(widest, 3);
         for (u32 r = 0; r < rows; ++r) {
-            const i64 line = first + r;
+            const i64 line = line_at(first + r);
             if (line < 0 || static_cast<u64>(line) >= lines) continue;
             // Digits are their own glyph slots; the cursor's line stands out.
             const u32 ink = static_cast<u64>(line) == pane_->cur_line ? 0 : kInkMuted << kCellInkShift;
             u32* const row = box.cells.data() + static_cast<size_t>(r) * cols;
             u32* end = row + cols - 1;  // the last cell stays blank
             const u64 at = static_cast<u64>(line);
-            const u64 number = !relative || at == cur ? at + 1 : at > cur ? at - cur : cur - at;
+            const i64 rel = first + static_cast<i64>(r) - row_at(cur);  // (in rows: a fold counts as one, as j and k take it)
+            const u64 number = !relative || at == cur ? at + 1 : static_cast<u64>(rel < 0 ? -rel : rel);
             if (relative && at == cur) {
                 u32 digits = 1;
                 for (u64 n = number; n >= 10; n /= 10) ++digits;
@@ -829,6 +834,7 @@ void App::gutter_layout(int w, int h, FrameDesc& fd) {
             }
             for (u64 n = number; n > 0 && end > row; n /= 10) *--end = static_cast<u32>('0' + n % 10) | ink;
             if (const u32 mark = debug_gutter(doc, at)) row[0] = mark;  // a breakpoint, or where the program has stopped
+            else if (folds && folds->header(at)) row[0] = (font.glyph(0x203A) & (Font::kWide - 1)) | (kInkAccent << kCellInkShift);  // lines folded under it
             else if (const u32 fix = lsp_gutter(doc, at)) row[0] = fix;  // a problem the language server has a fix for
             // In that last cell, a bar beside lines added or changed since
             // the last commit, and a dash where lines were taken out.
