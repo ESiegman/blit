@@ -1,4 +1,15 @@
 cmake_minimum_required(VERSION 3.28)
+# The macOS the build is for: the one it is built on, unless said otherwise,
+# which is also what Homebrew's libraries are built for. Left alone, GCC aims
+# at the major version it was itself built on (27.0) and Apple's clang at the
+# running one (27.2), and the link warned of every object and library the
+# other had made. (Set before project(): it is read as the languages start.)
+if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET AND NOT DEFINED ENV{MACOSX_DEPLOYMENT_TARGET})
+  execute_process(COMMAND sw_vers -productVersion OUTPUT_VARIABLE BLIT_MACOS OUTPUT_STRIP_TRAILING_WHITESPACE ERROR_QUIET)
+  if(BLIT_MACOS MATCHES "^([0-9]+\\.[0-9]+)")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "${CMAKE_MATCH_1}" CACHE STRING "The macOS version the build is for")
+  endif()
+endif()
 project(blit VERSION 0.1.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 26)

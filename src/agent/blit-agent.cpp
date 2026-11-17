@@ -601,8 +601,8 @@ void handle(uint8_t op, uint32_t id, std::string_view body) {
         }
         case kResize: {
             const uint32_t proc = r.u32(), rows = r.u32(), cols = r.u32();
-            const uint32_t w = r.n >= 8 ? r.u32() : 0, h = r.n >= 4 ? r.u32() : 0;  // (in pixels: from blit 3)
-            if (auto it = children.find(proc); it != children.end() && it->second.pty && it->second.out >= 0) blit::pty_resize(it->second.out, rows, cols, w, h);
+            const uint32_t px_w = r.n >= 8 ? r.u32() : 0, px_h = r.n >= 4 ? r.u32() : 0;  // (in pixels: from blit 3)
+            if (auto it = children.find(proc); it != children.end() && it->second.pty && it->second.out >= 0) blit::pty_resize(it->second.out, rows, cols, px_w, px_h);
             return;
         }
         case kStdin: {

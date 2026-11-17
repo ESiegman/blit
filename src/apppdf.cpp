@@ -528,10 +528,10 @@ struct PdfView {
     double page_x(const Page& p) const { return ax + ((doc_w - p.w) / 2 - left) * scale; }
     double page_y(const Page& p) const { return ay + (p.top - top) * scale; }
     // A place on a page shown at the top of the view, a third of the way down it.
-    void go_to(int page, double y) {
+    void go_to(int page, double down) {
         if (pages.empty()) return;
         page = std::clamp(page, 0, static_cast<int>(pages.size()) - 1);
-        top = pages[static_cast<size_t>(page)].top + y - kGap;
+        top = pages[static_cast<size_t>(page)].top + down - kGap;
         clamp();
     }
     // The place in the text nearest the point (px, py) of the window: on the
@@ -548,13 +548,13 @@ struct PdfView {
         const Page& p = pages[static_cast<size_t>(k)];
         if (!p.text || !p.text->boxed()) return false;
         const PdfText& t = *p.text;
-        const float u = static_cast<float>((px - page_x(p)) / scale), w = static_cast<float>((py - page_y(p)) / scale);
+        const float u = static_cast<float>((px - page_x(p)) / scale), v = static_cast<float>((py - page_y(p)) / scale);
         int best = -1;
         float far = 1e30f;
         for (size_t l = 0; l < t.line_from.size(); ++l) {
             if (t.line_to[l] <= t.line_from[l]) continue;
             const float* b = &t.lines[l * 4];
-            const float d = w < b[1] ? b[1] - w : w > b[3] ? w - b[3] : 0;
+            const float d = v < b[1] ? b[1] - v : v > b[3] ? v - b[3] : 0;
             if (d < far) far = d, best = static_cast<int>(l);
         }
         if (best < 0) return false;

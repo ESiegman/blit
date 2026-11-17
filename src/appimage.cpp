@@ -185,7 +185,7 @@ struct App::Pictures {
     struct Job {
         std::string path;
         int w = 0, h = 0;  // the size to draw it at (0: read the file)
-        std::shared_ptr<const std::string> source;
+        std::shared_ptr<const std::string> source = {};
     };
     struct Done {
         std::string path;

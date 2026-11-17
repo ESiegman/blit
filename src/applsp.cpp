@@ -1721,10 +1721,10 @@ void App::lsp_extras(FrameDesc& fd) {
                     for (const TokenCapture& tcap : kTokenCaptures) {
                         if (types[t] != tcap.type) continue;
                         // A theme's own "lsp.KIND" first, else the capture tree-sitter would use.
-                        const std::string own = "lsp." + types[t];
-                        const bool themed = std::ranges::any_of(tc.syntax, [&](const ThemeColors::Entry& e) { return e.capture == own; });
-                        x.type_style[t] = style_of(themed ? own : std::string(tcap.capture));
-                        x.builtin_style[t] = style_of(themed ? own : std::string(tcap.builtin));
+                        const std::string theme_key = "lsp." + types[t];
+                        const bool themed = std::ranges::any_of(tc.syntax, [&](const ThemeColors::Entry& e) { return e.capture == theme_key; });
+                        x.type_style[t] = style_of(themed ? theme_key : std::string(tcap.capture));
+                        x.builtin_style[t] = style_of(themed ? theme_key : std::string(tcap.builtin));
                     }
                 dirty_ = true;
             }

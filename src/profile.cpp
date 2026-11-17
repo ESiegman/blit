@@ -572,7 +572,7 @@ bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out
             row_thread = static_cast<u64>(std::ranges::find(tids, key) - tids.begin());
             if (!id.empty()) {  // its name: what it says it is, without its number and its process ("worker (0x5bf25f) (spin, pid: 84305)")
                 std::string name = t.attr("fmt");
-                if (const size_t at = name.find(" (0x"); at != std::string::npos) name.resize(at);
+                if (const size_t cut = name.find(" (0x"); cut != std::string::npos) name.resize(cut);
                 thread_names[id] = name;
             }
         } else if (t.name == "weight" && frame < 0) {

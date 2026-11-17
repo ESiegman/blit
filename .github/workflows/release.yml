@@ -75,13 +75,15 @@ jobs:
           shasum -a 256 "$name" > "$name.sha256"
           echo "NAME=$name" >> "$GITHUB_ENV"
           echo "VERSION=$version" >> "$GITHUB_ENV"
+          echo "MACOS=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' build/blit.app/Contents/Info.plist)" >> "$GITHUB_ENV"
 
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           cat > notes.md <<EOF
-          blit $VERSION for Apple silicon Macs (macOS 13 or later).
+          blit $VERSION for Apple silicon Macs (macOS $MACOS or later: the
+          libraries inside it are built for that).
 
           1. Unzip it and move **blit.app** to Applications.
           2. It is signed ad hoc, not by a developer Apple knows, so macOS

@@ -498,7 +498,7 @@ int blit_pdf_text(BlitPdf* pdf, int page, int boxes, BlitPdfText* out) {
     if (!cgp) return 0;
     @autoreleasepool {
         PDFDocument* kit = kit_of(pdf);
-        PDFPage* p = kit && page < kit.pageCount ? [kit pageAtIndex:(NSUInteger)page] : nil;
+        PDFPage* p = kit && page >= 0 && (NSUInteger)page < kit.pageCount ? [kit pageAtIndex:(NSUInteger)page] : nil;
         if (!p) return 0;
         NSString* s = p.string ?: @"";
         const NSUInteger n = s.length;
@@ -630,7 +630,7 @@ int blit_pdf_links(BlitPdf* pdf, int page, BlitPdfLink** out) {
     if (!cgp) return 0;
     @autoreleasepool {
         PDFDocument* kit = kit_of(pdf);
-        PDFPage* p = kit && page < kit.pageCount ? [kit pageAtIndex:(NSUInteger)page] : nil;
+        PDFPage* p = kit && page >= 0 && (NSUInteger)page < kit.pageCount ? [kit pageAtIndex:(NSUInteger)page] : nil;
         NSArray<PDFAnnotation*>* all = p.annotations;
         if (!all.count) return 0;
         BlitPdfLink* links = (BlitPdfLink*)calloc(all.count, sizeof *links);

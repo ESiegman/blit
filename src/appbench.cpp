@@ -975,9 +975,9 @@ void App::run_script(const char* script) {
             }
             prof_sync();
         } else if (verb == "profpick") {  // profpick:SECTION:N, Enter on the Nth row of a section of the Profile tab (profiles, threads)
-            const size_t colon = arg.find(':');
+            const size_t sep = arg.find(':');
             frame();  // (its rows as they are now)
-            if (!prof_pick(arg.substr(0, colon), colon == std::string::npos ? 1 : static_cast<u32>(std::atoi(arg.c_str() + colon + 1))))
+            if (!prof_pick(arg.substr(0, sep), sep == std::string::npos ? 1 : static_cast<u32>(std::atoi(arg.c_str() + sep + 1))))
                 std::fprintf(stderr, "profpick: no %s\n", arg.c_str());
         } else if (verb == "profdump") {
             std::fprintf(stderr, "%s\n", prof_dump().c_str());
@@ -1003,9 +1003,9 @@ void App::run_script(const char* script) {
             if (!panel_px()) panel_toggle();
             panel_show_debug();
         } else if (verb == "debugpick") {  // debugpick:SECTION:N, Enter on the Nth row of a section of the Debug tab (threads, stack, watch, add, breaks)
-            const size_t colon = arg.find(':');
+            const size_t sep = arg.find(':');
             frame();  // (its rows as they are now)
-            if (!debug_pick(arg.substr(0, colon), colon == std::string::npos ? 1 : static_cast<u32>(std::atoi(arg.c_str() + colon + 1))))
+            if (!debug_pick(arg.substr(0, sep), sep == std::string::npos ? 1 : static_cast<u32>(std::atoi(arg.c_str() + sep + 1))))
                 std::fprintf(stderr, "debugpick: no %s\n", arg.c_str());
         } else if (verb == "debugwait") {  // debugwait:stopped, or debugwait:idle
             debug_wait(arg);
