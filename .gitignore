@@ -5,3 +5,8 @@ compile_commands.json
 .DS_Store
 build-bench/
 build-*/
+
+# Planning notes: local only, never committed
+PLAN.md
+TODO.md
+docs/review.md
