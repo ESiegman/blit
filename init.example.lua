@@ -162,6 +162,9 @@
 -- blit.opt.search.gitignore = true  -- leave out what .gitignore files say (build folders and compiled files are left out anyway)
 -- blit.opt.search.hidden = true     -- show files and folders whose names start with a dot
 
+---------------------------------------------------------------- the Markdown preview
+-- blit.opt.markdown.web_pictures = false  -- fetch its pictures on the web (kept in blit's cache); off, their alt text shows, as a link
+
 ---------------------------------------------------------------- the look
 -- blit.opt.look.rounding = 6          -- corner radius in points: popups, tabs, highlights and what is selected; 0 = square
 -- blit.opt.look.shadows = true        -- popups and menus cast a shadow; so do the tab bar and line numbers over text slid under them

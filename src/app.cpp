@@ -1537,6 +1537,7 @@ void App::handle(const SDL_Event& e) {
 // Typed text into the document: Vim's, or typed as it is.
 void App::on_text(const char* text) {
     if (term_text(text)) return;  // (to a terminal in front)
+    if (pdf_text(text)) return;   // (a PDF's password, or what to find in it: apppdf.cpp)
     if (cfg_.modal) {  // text, or commands: Vim knows which
         vim_text(text);
         return;

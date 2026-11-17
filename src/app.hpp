@@ -91,6 +91,24 @@ struct PictureInfo {
     u64 bytes = 0;        // the file's size
     i64 stamp = 0;        // its change time when it was read (a file here)
     u64 used_ns = 0;      // when it was last drawn or asked about
+    // An animation (a GIF, an animated PNG or WebP): each frame's picture on
+    // the GPU (0: not yet; it goes up the first time it is shown), how long
+    // each shows, the frames not up yet (let go once all are), which one is
+    // shown, until when (0: it is not playing), and how many times it has
+    // played through, of how many (0: for ever).
+    std::vector<u32> frame_gpu, frame_ms;
+    std::shared_ptr<u8> frames_waiting;
+    int frames_w = 0, frames_h = 0;
+    u32 frame = 0, played = 0, loops = 0;
+    u64 frame_due_ns = 0;
+    bool finished = false;
+    // Drawn from shapes (an SVG): drawn again at the size it is shown, from
+    // its file's bytes, one size at a time; the largest size it was shown
+    // at in the frame it was last drawn in, and in the frame before that.
+    bool vector = false, redrawing = false;
+    std::shared_ptr<const std::string> source;
+    u64 shown_frame = 0;
+    int shown_w = 0, shown_h = 0, before_w = 0, before_h = 0;
 };
 
 struct Doc {
@@ -527,7 +545,15 @@ private:
     // put on the GPU, for an image file's tab and the Markdown preview.
     struct Pictures;
     static bool is_picture_path(std::string_view path);
+    static bool is_svg_path(std::string_view path);
+    void svg_preview();   // (appimage.cpp) an SVG's picture beside its text
+    void preview_open();  // Cmd+Shift+V: that, or the Markdown preview
     const PictureInfo* picture(const std::string& path);
+    // What to draw of it now, shown w by h pixels: an animation's frame (its
+    // next asked for when it is due), a drawing from shapes made again at
+    // that size if it was made at another.
+    u32 picture_gpu(const std::string& path, double w, double h);
+    void picture_due(u64 at_ns);  // the timer that wakes the loop for an animation's next frame
     void picture_sync();
     void picture_recheck();
     void picture_tidy();
@@ -543,6 +569,7 @@ private:
     bool image_mouse_motion(const SDL_MouseMotionEvent& m);
     void image_mouse_up();
     std::string image_dump();
+    std::string picture_frames(int ms);  // (for the tests: frames drawn in `ms` milliseconds of the main loop)
 
     // PDFs (apppdf.cpp): in a tab of their own, pages drawn on a thread of their own.
     struct Pdfs;
@@ -561,7 +588,11 @@ private:
     bool pdfs_busy() const;
     void pdf_wait();
     std::string pdf_dump();
+    std::string pdf_dump_more(std::string_view what);
     std::string pdf_page_rect(int page);
+    bool pdf_text(const char* text);  // a password typed, or what to find
+    void pdf_find(Doc& doc);
+    void pdf_copy(Doc& doc);
 
     // Terminals (appterm.cpp): a tab running a shell, here or on another machine.
     // A terminal tab in dir (the working folder when none): a login shell, or

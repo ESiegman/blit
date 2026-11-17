@@ -3,7 +3,8 @@
 // mermaid.cpp; pictures: appimage.cpp), kept up to date as it is typed in,
 // and scrolled to where the file's cursor is. Cmd+Shift+V opens it; it is
 // read only. Pictures are read from files beside it (or anywhere on its
-// machine), never from the web: those stay a link.
+// machine); those on the web stay a link, unless markdown.web_pictures says
+// to fetch them (appimage.cpp keeps them in blit's cache).
 //
 // The text is drawn into rows on a thread of its own (MdWorker): a key
 // typed in the file only copies the text and hands it over, and the
@@ -39,6 +40,7 @@ struct MdView {
     // just come.
     u64 asked_rev = ~0ull, asked_pictures = ~0ull;
     u32 asked_width = 0, asked_tall = 0;
+    bool asked_web = false;
     u64 renders = 0;
     bool fresh = false;
     std::string base;               // the folder its pictures are found from
@@ -68,9 +70,10 @@ constexpr u32 kMargin = 2;  // columns kept clear at either side
 constexpr u32 kTop = 1;     // rows kept clear above the text (it does not start against the tab bar)
 
 // The file a picture in the text is (relative to the folder of the file
-// the text is in, `base`), or "" if it is not one to read: on the web, or
-// in the text itself (data:).
-std::string picture_source(const std::string& base, std::string_view src) {
+// the text is in, `base`), or "" if it is not one to read: on the web
+// (unless `web`: then its address), or in the text itself (data:).
+std::string picture_source(const std::string& base, std::string_view src, bool web) {
+    if (web && (src.starts_with("http://") || src.starts_with("https://"))) return std::string(src);
     if (src.starts_with("http://") || src.starts_with("https://") || src.starts_with("data:") || src.starts_with("//")) return {};
     if (src.starts_with("file://")) src.remove_prefix(7);
     src = src.substr(0, src.find_first_of("?#"));
@@ -184,6 +187,7 @@ struct App::MdWorker {
         u64 rev = 0, pictures = 0;
         u32 width = 0, tall = 0;
         std::string text, base;
+        bool web = false;  // pictures on the web fetched (markdown.web_pictures)
         double density = 1;
         int cw = 1, ch = 1;
         std::map<std::string, PicSize> known;  // pictures asked about before
@@ -226,7 +230,7 @@ struct App::MdWorker {
         Done d;
         d.view = j.view, d.rev = j.rev, d.pictures = j.pictures, d.width = j.width, d.tall = j.tall;
         const MdPictureFn size = [&](const std::string& s, u32 room, u32 want_w, u32 want_h, MdPic* out) {
-            const std::string path = picture_source(j.base, s);
+            const std::string path = picture_source(j.base, s, j.web);
             if (path.empty()) return false;
             const auto it = j.known.find(path);
             if (it == j.known.end()) {
@@ -406,7 +410,7 @@ void App::md_layout(FrameDesc& fd) {
         Doc* src = find_doc(v.source, &src_pane, &src_at);
         const u32 width = cols > 2 * kMargin + 12 ? cols - 2 * kMargin : cols;
         // Its text handed to the worker when it, the width or the height change, or a picture comes.
-        if (src && (src->ed.revision() != v.asked_rev || width != v.asked_width || rows != v.asked_tall || pictures_gen_ != v.asked_pictures)) {
+        if (src && (src->ed.revision() != v.asked_rev || width != v.asked_width || rows != v.asked_tall || pictures_gen_ != v.asked_pictures || cfg_.markdown_web_pictures != v.asked_web)) {
             if (!md_worker_) md_worker_ = std::make_shared<MdWorker>();
             v.base = !src->ed.path.empty() ? parent_of(full_path(src->ed.path)) : std::string();
             MdWorker::Job j;
@@ -414,6 +418,7 @@ void App::md_layout(FrameDesc& fd) {
             j.rev = src->ed.revision(), j.pictures = pictures_gen_, j.width = width, j.tall = rows;
             j.text = src->ed.buf.text(0, src->ed.buf.size());
             j.base = v.base;
+            j.web = cfg_.markdown_web_pictures;
             j.density = density_, j.cw = cw, j.ch = ch;
             for (const std::string& path : v.pics) {
                 const PictureInfo* p = picture(path);
@@ -423,7 +428,7 @@ void App::md_layout(FrameDesc& fd) {
             j.syntax.parser_dirs = cfg_.parser_dirs;
             j.syntax.query_dirs = cfg_.query_dirs;
             j.grammars = cfg_.grammars;
-            v.asked_rev = j.rev, v.asked_width = width, v.asked_tall = rows, v.asked_pictures = j.pictures;
+            v.asked_rev = j.rev, v.asked_width = width, v.asked_tall = rows, v.asked_pictures = j.pictures, v.asked_web = j.web;
             const bool first = v.renders == 0 && v.rows.empty();
             if (first) {  // (the first time: at once, so that it opens drawn; its code is coloured on the worker)
                 MdWorker::Done d = MdWorker::draw(j);
@@ -499,20 +504,21 @@ void App::md_layout(FrameDesc& fd) {
             for (const MdPic& pic : v.rows[v.top + k].pics) {
                 if ((pic.part != 0 && k != 0) || fd.picture_count >= std::size(fd.pictures)) continue;
                 const u32 r = k + top_row;
-                const std::string path = picture_source(v.base, pic.src);
+                const std::string path = picture_source(v.base, pic.src, cfg_.markdown_web_pictures);
                 if (path.empty()) continue;
                 const PictureInfo* p = picture(path);
                 if (p->state != PictureInfo::kReady) continue;
+                const u32 image = picture_gpu(path, pic.w, pic.h);
                 PictureDraw& d = fd.pictures[fd.picture_count++];
                 d = PictureDraw{};
-                d.image = p->gpu;
+                d.image = image;
                 const int left = x + v.pad_x + static_cast<int>(kMargin + pic.col) * cw;
                 const int top = y + v.pad_y + (static_cast<int>(r) - static_cast<int>(pic.part)) * ch;
                 d.rect[0] = static_cast<float>(left), d.rect[1] = static_cast<float>(top);
                 d.rect[2] = static_cast<float>(left + static_cast<int>(pic.w)), d.rect[3] = static_cast<float>(top + static_cast<int>(pic.h));
                 d.clip[0] = x, d.clip[1] = y + v.pad_y + static_cast<int>(top_row) * ch, d.clip[2] = x + w, d.clip[3] = y + v.pad_y + static_cast<int>(all_rows) * ch;
                 d.after = fd.popup_count;
-                d.sharp = static_cast<double>(pic.w) / p->w >= 3;
+                d.sharp = !p->vector && static_cast<double>(pic.w) / p->w >= 3;
                 d.clear = p->clear;
             }
     }

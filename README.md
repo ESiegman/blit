@@ -147,7 +147,7 @@ and everything in it that has Cmd in it (Ctrl elsewhere) works in every mode.
 | The Problems / Git / Profile tab of the side panel (again: the keyboard back to the text) | Cmd+Shift+M / Ctrl+Shift+G / Cmd+Shift+R | Ctrl+Shift+M / G / R |
 | The Build tab; run its chosen task (the Run button); stop it | Cmd+Shift+U; Cmd+Shift+B; Cmd+. | Ctrl+Shift+U; Ctrl+Shift+B |
 | A new project (the start screen's New project tab, in a tab of its own) | Cmd+Option+N | Ctrl+Alt+N |
-| Markdown preview, beside the file | Cmd+Shift+V | Ctrl+Shift+V |
+| Markdown preview, or an SVG's picture, beside the file | Cmd+Shift+V | Ctrl+Shift+V |
 | Blame column on or off | Cmd+Option+B | Ctrl+Alt+B |
 | Font size | Cmd+= / Cmd+- / Cmd+0 | Ctrl+= / Ctrl+- / Ctrl+0 |
 | Open init.lua (the settings) | Cmd+, | Ctrl+, |
@@ -1430,9 +1430,17 @@ are drawn, from files beside the Markdown file or anywhere on its machine
 to a point, or the size `width`/`height` ask for, made smaller to fit
 across the preview and within its height, in the middle where the HTML
 says `align="center"`. A click opens the picture in its own tab (or
-follows the link it is in). Pictures on the web are not fetched: their alt
-text shows, as a link. So does a picture in the middle of a sentence, and
-one that cannot be read.
+follows the link it is in). An SVG is drawn at the size it takes there; an
+animation plays while its rows are on show, and waits where it was while
+they are not. A picture in the middle of a sentence shows its alt text, as
+a link, and so does one that cannot be read.
+
+**Pictures on the web** (`![](https://...)`) are not fetched unless
+`blit.opt.markdown.web_pictures = true`: until then their alt text shows,
+as a link. With it, the system fetches them (on a thread of their own,
+20 seconds at most, no cookies kept) and blit keeps them in its cache
+folder (`~/Library/Caches/blit/pictures`), fetching one again after a day;
+one that cannot be fetched then is shown from the copy kept.
 
 **Mermaid diagrams** (` ```mermaid ` blocks) are drawn in box-drawing
 characters, laid out by blit itself (no browser, no JavaScript):
@@ -1478,6 +1486,26 @@ when blit comes back to the front. A picture larger than 4096 pixels on a
 side is read at 4096 (the row at the bottom says its own size), and one
 not drawn for a minute is let go.
 
+**Animations** (GIF, animated PNG and WebP, HEIC sequences) play, as many
+times as the file says, each frame for as long as it says (one that says
+10 ms or less, as browsers do, for 100). Their frames are read together on
+the pictures' thread (smaller, if all of them would take more than 128 MB)
+and go up to the GPU as each is first shown. A timer wakes blit for the
+next frame only while one is on show, in its tab in front or in the rows
+of a Markdown preview on show: then the frame drawn is the only work done,
+and nothing at all while it is not on show (it goes on from where it was
+when it comes back). The row at the bottom says how many frames it has.
+
+**SVG** is text, and opens as text; **Cmd+Shift+V** shows its picture in
+a split beside it (as it does a Markdown file's preview), drawn again each
+time the file is saved, and Cmd+Shift+V there goes back to the text. The
+picture is drawn by macOS itself (AppKit's own SVG, nothing added to
+blit), on the pictures' thread, at the size it is shown, and again at the
+new size when it is zoomed, so that it stays sharp (up to 4096 pixels a
+side); the drawing it had stands in, stretched, meanwhile. Its own size is
+the one its `width` and `height` (or `viewBox`) give, a pixel of it to a
+point.
+
 ## PDFs
 
 A PDF opens in a tab of its own too (here or on another machine): its
@@ -1491,7 +1519,12 @@ middle of the view, of how many, and the zoom.
 | The next / previous page | `n` / `p` |
 | Zoom in / out | `+` / `-` (or Cmd+= / Cmd+-), a pinch, Cmd+wheel (about the mouse) |
 | Fit the width / the whole page / its own size | `0` (or Cmd+0) / `9` / `1` |
-| Move it | drag it; `h` `l` and Left / Right sideways when it is wider than the tab |
+| Move it | drag it where there is no text; `h` `l` and Left / Right sideways when it is wider than the tab |
+| Choose text | drag over it; two clicks a word, three a line; Cmd+A all of it; Esc lets go |
+| Copy it | Cmd+C |
+| Find | Cmd+F, then Enter / Shift+Enter (or Cmd+G / Cmd+Shift+G) the next / the one before; Esc done |
+| Follow a link | click it |
+| The outline | `o` shows it in a box at the side, or hides it; click an entry to go there |
 
 A thread of its own reads the document and draws the pages as they come
 into view, at the size they are shown (macOS's own PDF drawing): a page
@@ -1500,6 +1533,25 @@ until it is drawn again. A page is drawn whole up to 4096 pixels on a side;
 zoomed in further, the part of it on show is drawn again, sharp, over it.
 Pages more than three away from the view are let go. A PDF whose file
 changes is read again (keeping the page) when blit comes back to the front.
+
+The same thread reads each page's text as it comes into view (PDFKit's):
+where each character and line is, and the links on it. What is chosen is
+washed in the theme's selection colour, a box a line; Cmd+C copies it
+(the thread puts it together, from pages on show or not). **Cmd+F** opens a
+field in the row at the bottom: what is typed is found in all the pages
+(A to Z in either case), on the thread a few milliseconds at a time between
+the pages it draws; the row says which of how many is the current one, the
+matches on the pages on show are washed in the theme's warning colour and
+the current one in its accent, and the view moves to it. A **link** within
+the document goes to its place; one to the web opens in the browser (the
+system's own opener). The **outline**, when the document has one, is a
+list in a box at the left, each entry indented by how deep it is, the one
+the view is in lit; the wheel scrolls it.
+
+A PDF **locked with a password** asks for it in its tab (a dot a letter):
+Enter tries it on the reading thread, and the tab says so if it does not
+open it. The password is not written anywhere, said in any message, kept
+in the session, or kept in memory once tried (its bytes are wiped).
 
 ## How it is fast
 
@@ -1890,10 +1942,11 @@ does not finish and takes all the memory the machine has.
   stopped); no conditional breakpoints, watch list, or breakpoints that
   move with the lines when the file is edited while debugging. With gdb
   the program's output reaches the Debug tab when it flushes it.
-- Pictures: macOS only so far (no reader elsewhere yet); the first frame
-  of an animated GIF; no SVG; none fetched from the web.
-- PDFs: macOS only so far; for reading: no text to choose, copy or search
-  yet, links in them are not followed, no outline, and no password.
+- Pictures: macOS only. An SVG's picture shows the file as saved, not as
+  it is being typed.
+- PDFs: macOS only, for reading. Find ignores case for A to Z only;
+  choosing text does not scroll the view past its edge; the outline box
+  is for the mouse and the wheel.
 - Terminal: no mouse reporting to programs (a click in htop does nothing),
   no underline or strikethrough drawn, no images (sixel, kitty), no
   ligatures. A screen with more than 32 text colours or 6 background

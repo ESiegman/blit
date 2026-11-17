@@ -144,6 +144,9 @@ struct Config {
     bool search_gitignore = true;            // leave out what .gitignore files say
     bool search_hidden = true;               // show files and folders whose names start with a dot
 
+    // [markdown]
+    bool markdown_web_pictures = false;  // the preview fetches pictures on the web (else their alt text shows, as a link)
+
     // [look]
     float look_rounding = 6;          // corner radius, in points, that everything rounded is sized from; 0: square corners
     bool look_shadows = true;         // popups cast a shadow, and so do the tab bar and line numbers over text that has slid under them

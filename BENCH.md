@@ -2267,6 +2267,35 @@ a path of its own.
   bitmap's left and top), so a glyph moved by a contextual alternate is not
   drawn where it was the first time.
 
+### Round 40: animations, SVG, PDF text, links and passwords, pictures from the web
+
+Made in a copy of `main` at 532fa9b by an agent of its own, merged with
+no conflict. Medians of six runs each, alternating with 532fa9b, on a
+machine building four other copies:
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k.cpp, CPU per frame, p50 | 41.46 µs | 40.73 µs |
+| Typing there, CPU per frame, p50 | 39.92 µs | 39.98 µs |
+| Scrolling a 500-page text PDF, 300 wheel notches | 28.0 ms (93 µs a frame) | 27.4 ms (91 µs a frame) |
+| … with 10,000 matches of a find tinted | — | 25.1 ms (84 µs a frame) |
+| Typing with the preview of a 1,960-line README open, p50 | 21.56 µs | 20.94 µs |
+| … with two pictures at its top | 21.27 µs | 21.44 µs |
+
+- An animation on show costs a frame and a wakeup per frame of its own
+  (about 9 in 1.2 s for the test GIF); behind another tab, or scrolled out
+  of a preview, none: one SDL timer for the soonest frame due, set only
+  while one is drawn.
+- On the PDF thread, never the main one: a page's text 1.3 ms, the
+  character boxes of a dense page 4.8 ms, a first find over 500 pages 250
+  to 300 ms in slices of 8 ms that take turns with drawing pages, copying
+  all 500 pages 2.9 ms. An SVG is drawn in 27 to 44 ms on the pictures'
+  thread.
+- Pictures a frame may draw went from 64 to 256. Scrolling real-200k.cpp
+  at 2560x1600 on the merged build, turn about, three runs each: 16,766 to
+  16,931 frames a second against 16,799 to 16,931, CPU p50 41.8 to 42.4
+  against 41.7 to 42.9 µs.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

@@ -1,8 +1,8 @@
 #!/bin/sh
 # The Markdown preview: what it draws of tests/markdown/*.md (compared with
 # the .txt beside each: rows as text), Mermaid diagrams in it, code blocks
-# in colour, the preview following the file as it is typed in, and
-# Cmd+Shift+V.
+# in colour, the preview following the file as it is typed in,
+# Cmd+Shift+V, and pictures on the web (fetched only when the setting says).
 #
 #   tests/markdown.sh path/to/blit            run the cases
 #   tests/markdown.sh path/to/blit --print    show what each case gives
@@ -96,6 +96,41 @@ printf -- '---\nA rule above this line\n\nsome text\n\n---\n\nmore\n' >"$dir/rul
 run 1600x1100 "$dir/rule.md" ""
 got=$(printf '%s\n' "$got" | grep -c 'A rule above this line')
 check "a rule at the top is not front matter" "1"
+
+# Pictures on the web (markdown.web_pictures): their alt text, as a link,
+# while the setting is off (as it starts); fetched when it is on (here from
+# a server on this machine, never the network) and kept in blit's cache,
+# and drawn from there once the server has gone.
+if command -v python3 >/dev/null 2>&1; then
+    mkdir -p "$dir/site" && cp "$(dirname "$here")/tests/images/quad.png" "$dir/site/"
+    python3 -u -m http.server 0 --bind 127.0.0.1 --directory "$dir/site" >"$dir/server.log" 2>&1 &
+    server=$!
+    trap 'kill $server 2>/dev/null; rm -rf "$dir"' EXIT
+    port= i=0
+    while [ -z "$port" ] && [ $i -lt 100 ]; do
+        port=$(sed -n 's/.*port \([0-9][0-9]*\).*/\1/p' "$dir/server.log" | head -1)
+        [ -n "$port" ] || sleep 0.1
+        i=$((i + 1))
+    done
+    printf '# Web\n\n![from the web](http://127.0.0.1:%s/quad.png)\n' "$port" >"$dir/web.md"
+    { cat "$dir/init.lua"; printf 'blit.opt.markdown.web_pictures = true\n'; } >"$dir/web.lua"
+    export BLIT_CACHE_DIR="$dir/cache"
+    web() { run 1600x1100 "$dir/web.md" "imagewait;frame;mdwait"; got=$(printf '%s\n' "$got" | grep -v '^$' | tail -1 | sed -e "s/:$port\//:PORT\//"); }
+    web
+    check "a picture on the web, the setting off: its alt text" "▣ from the web"
+    BLIT_INIT="$dir/web.lua"
+    web
+    check "the setting on: fetched, and drawn" "picture: http://127.0.0.1:PORT/quad.png 8x4"
+    kill $server 2>/dev/null
+    wait $server 2>/dev/null
+    web
+    got="$got, $(ls "$dir/cache/pictures" | wc -l | tr -d ' ') kept"
+    check "the server gone: drawn from blit's cache" "picture: http://127.0.0.1:PORT/quad.png 8x4, 1 kept"
+    BLIT_INIT="$dir/init.lua"
+    unset BLIT_CACHE_DIR
+else
+    echo "web pictures skipped: no python3 to serve them"
+fi
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "markdown ok"
 exit $failed

@@ -369,6 +369,10 @@ struct Parser {
             if (!as_bool(v, key == "search.gitignore" ? &c.search_gitignore : &c.search_hidden)) warn(std::string(key) + " should be true or false");
             return;
         }
+        if (key == "markdown.web_pictures") {
+            if (!as_bool(v, &c.markdown_web_pictures)) warn(std::string(key) + " should be true or false");
+            return;
+        }
         if (key == "look.shadows" || key == "look.animations") {
             if (!as_bool(v, key == "look.shadows" ? &c.look_shadows : &c.look_animations)) warn(std::string(key) + " should be true or false");
             return;
@@ -714,6 +718,7 @@ const Getter kGetters[] = {
     BLIT_GET("search.ignore", list(c.search_ignore)),
     BLIT_GET("search.gitignore", flag(c.search_gitignore)),
     BLIT_GET("search.hidden", flag(c.search_hidden)),
+    BLIT_GET("markdown.web_pictures", flag(c.markdown_web_pictures)),
     BLIT_GET("look.rounding", num(c.look_rounding)),
     BLIT_GET("look.shadows", flag(c.look_shadows)),
     BLIT_GET("look.animations", flag(c.look_animations)),

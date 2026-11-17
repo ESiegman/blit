@@ -265,7 +265,7 @@ void App::commands_create() {
     own("Go to the next problem", {key(SDLK_F8)}, [this] { problem_step(1); });
     own("Go to the previous problem", {key(SDLK_F8, kS)}, [this] { problem_step(-1); });
     // Markdown.
-    own("Preview Markdown beside the file", {key(SDLK_V, kP | kS)}, [this] { md_open(); });
+    own("Preview beside the file (Markdown, or an SVG's picture)", {key(SDLK_V, kP | kS)}, [this] { preview_open(); });
     // Terminals: in the split along the bottom.
     own("Show or hide the terminal", {key(SDLK_GRAVE, ctl)}, [this] { term_toggle(); });
     own("New terminal", {key(SDLK_GRAVE, ctl | kS)}, [this] { term_new(); });

@@ -894,12 +894,18 @@ void App::run_script(const char* script) {
             picture_wait();
         } else if (verb == "imagedump") {  // the image tab in front: what it shows, and how
             std::fprintf(stderr, "%s\n", image_dump().c_str());
+        } else if (verb == "imageframes") {  // imageframes:MS, MS milliseconds of the main loop: how many frames it drew (an animation's)
+            std::fprintf(stderr, "%s\n", picture_frames(std::atoi(arg.c_str())).c_str());
         } else if (verb == "pdfwait") {  // the PDFs read, and their pages on show drawn (20 s at most)
             pdf_wait();
         } else if (verb == "pdfdump") {  // the PDF tab in front: what it shows, and how
             std::fprintf(stderr, "%s\n", pdf_dump().c_str());
         } else if (verb == "pdfpage") {  // pdfpage:N, where its page N is drawn
             std::fprintf(stderr, "page %s at %s\n", arg.c_str(), pdf_page_rect(std::atoi(arg.c_str())).c_str());
+        } else if (verb == "pdfclip" || verb == "pdfopened" || verb == "pdfoutline") {  // what Cmd+C copied, the web address a link opened, the outline
+            std::fprintf(stderr, "%s\n", pdf_dump_more(verb.substr(3)).c_str());
+        } else if (verb == "pdftextat") {  // pdftextat:N:TEXT, where TEXT is on page N (its text read): x0,y0,x1,y1 in pixels
+            std::fprintf(stderr, "%s at %s\n", arg.c_str(), pdf_dump_more(arg).c_str());
         } else if (verb == "pixel") {  // pixel:X,Y, the colour of the last frame there (pixels, not points)
             int x = 0, y = 0, w = 0, h = 0;
             std::sscanf(arg.c_str(), "%d,%d", &x, &y);

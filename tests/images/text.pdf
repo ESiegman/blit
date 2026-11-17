@@ -1,0 +1,72 @@
+%PDF-1.4
+1 0 obj
+<< /Type /Font /Subtype /Type1 /BaseFont /Helvetica /Encoding /WinAnsiEncoding >>
+endobj
+2 0 obj
+<< /Length 284 >>
+stream
+BT /F1 24 Tf 72 720 Td (A page of text) Tj ET
+BT /F1 14 Tf 72 680 Td (The quick brown fox jumps over the lazy dog.) Tj ET
+BT /F1 14 Tf 72 660 Td (A second line, with the fox in it again.) Tj ET
+BT /F1 14 Tf 72 620 Td (Go to the web) Tj ET
+BT /F1 14 Tf 72 590 Td (Go to page two) Tj ET
+endstream
+endobj
+3 0 obj
+<< /Length 96 >>
+stream
+BT /F1 24 Tf 72 720 Td (Page two) Tj ET
+BT /F1 14 Tf 72 680 Td (One more fox, at the end.) Tj ET
+endstream
+endobj
+4 0 obj
+<< /Type /Page /Parent 8 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R >> >> /Contents 2 0 R /Annots [6 0 R 7 0 R] >>
+endobj
+5 0 obj
+<< /Type /Page /Parent 8 0 R /MediaBox [0 0 612 792] /Resources << /Font << /F1 1 0 R >> >> /Contents 3 0 R >>
+endobj
+6 0 obj
+<< /Type /Annot /Subtype /Link /Rect [70 615 170 635] /Border [0 0 0] /A << /S /URI /URI (https://example.org/blit) >> >>
+endobj
+7 0 obj
+<< /Type /Annot /Subtype /Link /Rect [70 585 180 605] /Border [0 0 0] /Dest [5 0 R /XYZ 0 792 0] >>
+endobj
+8 0 obj
+<< /Type /Pages /Kids [4 0 R 5 0 R] /Count 2 >>
+endobj
+9 0 obj
+<< /Type /Catalog /Pages 8 0 R /Outlines 10 0 R /PageMode /UseOutlines >>
+endobj
+10 0 obj
+<< /Type /Outlines /First 11 0 R /Last 12 0 R /Count 3 >>
+endobj
+11 0 obj
+<< /Title (The first page) /Parent 10 0 R /Next 12 0 R /Dest [4 0 R /XYZ 0 792 0] >>
+endobj
+12 0 obj
+<< /Title (Page two) /Parent 10 0 R /Prev 11 0 R /First 13 0 R /Last 13 0 R /Count 1 /Dest [5 0 R /XYZ 0 792 0] >>
+endobj
+13 0 obj
+<< /Title (Its last line) /Parent 12 0 R /Dest [5 0 R /XYZ 0 700 0] >>
+endobj
+xref
+0 14
+0000000000 65535 f 
+0000000009 00000 n 
+0000000106 00000 n 
+0000000441 00000 n 
+0000000587 00000 n 
+0000000735 00000 n 
+0000000861 00000 n 
+0000000998 00000 n 
+0000001113 00000 n 
+0000001176 00000 n 
+0000001265 00000 n 
+0000001339 00000 n 
+0000001440 00000 n 
+0000001571 00000 n 
+trailer
+<< /Size 14 /Root 9 0 R >>
+startxref
+1658
+%%EOF

@@ -2,6 +2,12 @@
 // system's reader) and put on the GPU (Renderer::image_add), for an image
 // file's tab and for the pictures in the Markdown preview. A picture not
 // drawn for a minute is let go; one whose file changes is read again.
+// An animation's frames are read together, and go up to the GPU as each is
+// first shown; a timer wakes the main loop when the next frame is due, and
+// only while one is on show (the frame drawn then is the only one drawn).
+// A picture drawn from shapes (SVG) is drawn again at the size it is shown.
+// Pictures on the web (the Markdown preview's, when markdown.web_pictures
+// is on) are fetched by a reader of their own and kept in blit's cache.
 //
 // An image file opens in a tab of its own: the picture fitted to the tab
 // (never made larger than it is), zoomed with + and - (Cmd too), a pinch or
@@ -10,6 +16,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <cstdio>
@@ -34,17 +41,47 @@ extern "C" int blit_picture_read(const void*, size_t, int, BlitPicture* out, cha
     if (err && err_size) std::snprintf(err, err_size, "pictures are not read on this system yet");
     return 0;
 }
+extern "C" int blit_picture_draw(const void*, size_t, int, int, BlitPicture* out, char* err, size_t err_size) { return blit_picture_read(nullptr, 0, 0, out, err, err_size); }
 extern "C" void blit_picture_free(BlitPicture* p) {
     if (p) std::free(p->rgba), p->rgba = nullptr;
+}
+extern "C" int blit_frames_read(const void*, size_t, int, size_t, BlitFrames* out) {
+    *out = BlitFrames{};
+    return 0;
+}
+extern "C" void blit_frames_free(BlitFrames* f) {
+    if (f) std::free(f->rgba), std::free(f->ms), f->rgba = nullptr, f->ms = nullptr;
+}
+extern "C" int blit_fetch(const char*, int, size_t, char** data, size_t* size, char* err, size_t err_size) {
+    *data = nullptr, *size = 0;
+    if (err && err_size) std::snprintf(err, err_size, "the web is not read on this system yet");
+    return 0;
 }
 extern "C" BlitPdf* blit_pdf_open(const void*, size_t, char* err, size_t err_size) {
     if (err && err_size) std::snprintf(err, err_size, "PDFs are not read on this system yet");
     return nullptr;
 }
 extern "C" void blit_pdf_close(BlitPdf*) {}
+extern "C" int blit_pdf_locked(const BlitPdf*) { return 0; }
+extern "C" int blit_pdf_unlock(BlitPdf*, const char*) { return 0; }
 extern "C" int blit_pdf_pages(const BlitPdf*) { return 0; }
 extern "C" void blit_pdf_page_size(const BlitPdf*, int, double* w, double* h) { *w = 612, *h = 792; }
 extern "C" int blit_pdf_render(const BlitPdf*, int, double, int, int, int, int, BlitPicture*) { return 0; }
+extern "C" int blit_pdf_text(BlitPdf*, int, int, BlitPdfText* out) {
+    *out = BlitPdfText{};
+    return 0;
+}
+extern "C" void blit_pdf_text_free(BlitPdfText*) {}
+extern "C" int blit_pdf_links(BlitPdf*, int, BlitPdfLink** out) {
+    *out = nullptr;
+    return 0;
+}
+extern "C" void blit_pdf_links_free(BlitPdfLink*, int) {}
+extern "C" int blit_pdf_outline(BlitPdf*, BlitPdfHeading** out) {
+    *out = nullptr;
+    return 0;
+}
+extern "C" void blit_pdf_outline_free(BlitPdfHeading*, int) {}
 #endif
 
 namespace blit {
@@ -53,13 +90,29 @@ namespace {
 
 constexpr u64 kMostBytes = 256ull << 20;    // a file larger than this is not read
 constexpr int kMostSide = 4096;             // a picture larger than this is read smaller
+constexpr u64 kMostFrameBytes = 128ull << 20;  // an animation's frames, all together: one larger is read smaller
 constexpr u64 kForgetNs = 60'000'000'000ull;  // a picture not drawn for this long is let go
+// An animation's frame drawn this long after it was due was not on show
+// meanwhile: it goes on from where it was, rather than catching up.
+constexpr u64 kLateNs = 250'000'000ull;
+constexpr int kWebMs = 20000;           // a picture on the web: how long it may take to come
+constexpr i64 kWebKeepNs = 86'400'000'000'000ll;  // and how long it is kept before it is fetched again
 
 void wake() {
     SDL_Event ev{};
     ev.type = SDL_EVENT_USER;
     ev.user.code = 17;
     SDL_PushEvent(&ev);
+}
+
+// The animation timer that has fired, by its number (0: none). Its
+// callback runs on SDL's timer thread, and only says so.
+std::atomic<u64> g_frame_fired{0};
+
+Uint64 SDLCALL frame_due(void* number, SDL_TimerID, Uint64) {
+    g_frame_fired.store(reinterpret_cast<uintptr_t>(number));
+    wake();
+    return 0;
 }
 
 i64 stamp_of(const std::string& path) {
@@ -80,65 +133,140 @@ std::string leaf_of(const std::string& path) {
     return slash == std::string::npos ? path : path.substr(slash + 1);
 }
 
+bool is_web(std::string_view path) { return path.starts_with("http://") || path.starts_with("https://"); }
+
+// blit's cache folder (where the GPU's compiled pipelines are kept too).
+std::string cache_dir() {
+    if (const char* d = std::getenv("BLIT_CACHE_DIR"); d && *d) return d;
+#if defined(__APPLE__)
+    if (const char* home = std::getenv("HOME"); home && *home) return std::string(home) + "/Library/Caches/blit";
+#else
+    if (const char* x = std::getenv("XDG_CACHE_HOME"); x && *x) return std::string(x) + "/blit";
+    if (const char* home = std::getenv("HOME"); home && *home) return std::string(home) + "/.cache/blit";
+#endif
+    return {};
+}
+
+// A picture on the web: the copy in blit's cache, if it was fetched in the
+// last day; else fetched (by the system) and kept there. One that cannot
+// be fetched now is shown from an older copy, if there is one.
+bool web_read(const std::string& url, std::string* bytes, std::string* why, std::stop_token st) {
+    u64 h = 1469598103934665603ull;
+    for (const char c : url) h = (h ^ static_cast<u8>(c)) * 1099511628211ull;
+    char name[40];
+    std::snprintf(name, sizeof name, "%016llx", static_cast<unsigned long long>(h));
+    const std::string dir = cache_dir(), kept = dir.empty() ? std::string() : dir + "/pictures/" + name;
+    SDL_PathInfo info;
+    const bool have = !kept.empty() && SDL_GetPathInfo(kept.c_str(), &info) && info.type == SDL_PATHTYPE_FILE;
+    SDL_Time now = 0;
+    SDL_GetCurrentTime(&now);
+    if (have && now - info.modify_time < kWebKeepNs && fs_read_whole(kept, bytes, why, kMostBytes, st)) return true;
+    char* data = nullptr;
+    size_t size = 0;
+    char err[200] = "";
+    if (blit_fetch(url.c_str(), kWebMs, kMostBytes, &data, &size, err, sizeof err)) {
+        bytes->assign(data, size);
+        std::free(data);
+        std::string ignored;
+        if (!kept.empty() && fs_mkdirs(dir + "/pictures", &ignored)) fs_write(kept, *bytes, &ignored);
+        return true;
+    }
+    if (have && fs_read_whole(kept, bytes, why, kMostBytes, st)) return true;
+    *why = err;
+    return false;
+}
+
 }  // namespace
 
 struct App::Pictures {
     std::map<std::string, PictureInfo, std::less<>> known;
+    // What a reader is asked to do: read a picture's file, or draw a
+    // picture made from shapes again at another size.
+    struct Job {
+        std::string path;
+        int w = 0, h = 0;  // the size to draw it at (0: read the file)
+        std::shared_ptr<const std::string> source;
+    };
     struct Done {
         std::string path;
         BlitPicture pic{};
+        BlitFrames frames{};  // an animation's
+        std::shared_ptr<const std::string> source;  // a picture drawn from shapes: its file
         std::string error;
         u64 bytes = 0;
         i64 stamp = 0;
         bool clear = false;
+        bool redraw = false;  // drawn again at another size
     };
     std::mutex mu;
     std::condition_variable_any cv;
-    // Two readers: files here, and files on other machines (which may wait
-    // for a connection, and should not hold up the others).
-    std::deque<std::string> todo[2];
+    // Three readers: files here, files on other machines (which may wait
+    // for a connection), and pictures on the web (which may wait for a
+    // server): neither of the slow ones holds up the others.
+    std::deque<Job> todo[3];
     std::vector<Done> done;
     u64 tidied_ns = 0;
-    std::jthread workers[2];
+    // The timer for the next frame of an animation on show (one at a time:
+    // the soonest), and its number.
+    SDL_TimerID timer = 0;
+    u64 timer_due = 0, timer_number = 0;
+    u64 shown_in = ~0ull;  // the frame an animation was last drawn in (when it fires, the frame after that is drawn only if one was on show)
+    std::jthread workers[3];
 
     Pictures() {
-        for (int k = 0; k < 2; ++k) workers[k] = std::jthread([this, k](std::stop_token st) { run(st, todo[k]); });
+        for (int k = 0; k < 3; ++k) workers[k] = std::jthread([this, k](std::stop_token st) { run(st, todo[k]); });
     }
     ~Pictures() {
+        if (timer) SDL_RemoveTimer(timer);
         for (std::jthread& w : workers) w.request_stop();
         cv.notify_all();
         for (std::jthread& w : workers)
             if (w.joinable()) w.join();
-        for (Done& d : done) blit_picture_free(&d.pic);
+        for (Done& d : done) blit_picture_free(&d.pic), blit_frames_free(&d.frames);
     }
-    void want(const std::string& path) {
+    void want(Job job) {
         {
             std::lock_guard l(mu);
-            todo[is_remote(path) ? 1 : 0].push_back(path);
+            std::deque<Job>& q = todo[is_web(job.path) ? 2 : is_remote(job.path) ? 1 : 0];
+            // (A drawing at another size not begun yet is not wanted any more: this one is.)
+            auto same = std::ranges::find_if(q, [&](const Job& j) { return j.path == job.path && j.w > 0; });
+            if (job.w > 0 && same != q.end()) *same = std::move(job);
+            else q.push_back(std::move(job));
         }
         cv.notify_all();
     }
-    void run(std::stop_token st, std::deque<std::string>& queue) {
+    void run(std::stop_token st, std::deque<Job>& queue) {
         for (;;) {
-            std::string path;
+            Job job;
             {
                 std::unique_lock l(mu);
                 if (!cv.wait(l, st, [&] { return !queue.empty(); })) return;
-                path = std::move(queue.front());
+                job = std::move(queue.front());
                 queue.pop_front();
             }
             Done d;
-            d.path = path;
-            d.stamp = stamp_of(path);
-            std::string bytes;
-            if (fs_read_whole(path, &bytes, &d.error, kMostBytes, st)) {
-                char why[160] = "";
-                if (!blit_picture_read(bytes.data(), bytes.size(), kMostSide, &d.pic, why, sizeof why)) d.error = why;
-                for (size_t k = 3; d.pic.rgba && k < static_cast<size_t>(d.pic.w) * static_cast<size_t>(d.pic.h) * 4 && !d.clear; k += 4) d.clear = d.pic.rgba[k] != 255;
+            d.path = job.path;
+            char why[200] = "";
+            if (job.w > 0) {
+                d.redraw = true;
+                if (!blit_picture_draw(job.source->data(), job.source->size(), job.w, job.h, &d.pic, why, sizeof why)) d.error = why;
+            } else {
+                d.stamp = stamp_of(job.path);
+                std::string bytes;
+                if (is_web(job.path) ? web_read(job.path, &bytes, &d.error, st) : fs_read_whole(job.path, &bytes, &d.error, kMostBytes, st)) {
+                    if (!blit_picture_read(bytes.data(), bytes.size(), kMostSide, &d.pic, why, sizeof why)) d.error = why;
+                    else if (d.pic.frames > 1) blit_frames_read(bytes.data(), bytes.size(), kMostSide, kMostFrameBytes, &d.frames);
+                }
+                d.bytes = bytes.size();
+                if (d.pic.vector) d.source = std::make_shared<const std::string>(std::move(bytes));
             }
-            d.bytes = bytes.size();
+            // (See-through anywhere: in its first frame, or any of an animation's.)
+            for (size_t k = 3; d.pic.rgba && k < static_cast<size_t>(d.pic.w) * static_cast<size_t>(d.pic.h) * 4 && !d.clear; k += 4) d.clear = d.pic.rgba[k] != 255;
+            for (size_t k = 3; d.frames.rgba && k < static_cast<size_t>(d.frames.w) * static_cast<size_t>(d.frames.h) * 4 * static_cast<size_t>(d.frames.frames) && !d.clear; k += 4)
+                d.clear = d.frames.rgba[k] != 255;
             if (st.stop_requested()) {
                 blit_picture_free(&d.pic);
+                blit_frames_free(&d.frames);
                 return;
             }
             {
@@ -155,6 +283,7 @@ struct ImageView {
     std::string path;
     double zoom = 0;            // pixels of the window to a pixel of the picture; 0: fitted to the tab
     double cx = 0.5, cy = 0.5;  // the point of the picture at the middle of the tab (0 to 1 across it)
+    u64 source = 0;             // the text tab this shows the picture of (an SVG's, Cmd+Shift+V), or 0
     // As drawn: where the picture may be, its size there, and the bottom row.
     int ax = 0, ay = 0, aw = 0, ah = 0;
     double scale = 1;
@@ -171,8 +300,69 @@ bool App::is_picture_path(std::string_view path) {
     if (dot == std::string_view::npos || path.find('/', dot) != std::string_view::npos) return false;
     std::string ext(path.substr(dot + 1));
     for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    static const char* const kKinds[] = {"png", "jpg", "jpeg", "jpe", "gif", "bmp", "webp", "heic", "heif", "avif", "tif", "tiff", "ico", "icns", "tga", "psd", "jp2", "exr", "hdr"};
+    // (Not SVG: it is text, and opens as text; Cmd+Shift+V shows its picture
+    // beside it, as it does a Markdown file's preview.)
+    static const char* const kKinds[] = {"png", "jpg", "jpeg", "jpe", "gif", "bmp", "webp", "heic", "heif", "avif", "tif", "tiff", "ico", "icns", "tga", "psd", "jp2", "exr", "hdr", "apng"};
     return std::ranges::any_of(kKinds, [&](const char* k) { return ext == k; });
+}
+
+bool App::is_svg_path(std::string_view path) {
+    const size_t dot = path.find_last_of('.');
+    if (dot == std::string_view::npos || path.size() - dot != 4) return false;
+    std::string ext(path.substr(dot + 1));
+    for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return ext == "svg";
+}
+
+// Cmd+Shift+V on an SVG: its picture in a tab beside it, drawn again each
+// time the file is saved (the picture store watches the file). The tab has
+// no path of its own, as a Markdown preview has none: going to the file, the
+// session and the scripts see only the text.
+void App::svg_preview() {
+    Doc& src = *pane_->doc;
+    if (src.image && src.image->source) {  // (from the picture: back to its text)
+        Pane* p = nullptr;
+        size_t at = 0;
+        if (find_doc(src.image->source, &p, &at)) {
+            focus_pane(p);
+            tab_show(at);
+        }
+        return;
+    }
+    for (const std::unique_ptr<Pane>& p : panes_)
+        for (size_t i = 0; i < p->docs.size(); ++i)
+            if (p->docs[i]->image && p->docs[i]->image->source == src.id) {
+                Pane* const editing = pane_;
+                pane_ = p.get();
+                tab_show(i);
+                focus_pane(editing);
+                dirty_ = true;
+                return;
+            }
+    const std::string full = full_path(src.ed.path);
+    const u64 id = src.id;
+    Pane* const editing = pane_;
+    Pane* into = split_pane(editing, kEdgeRight);
+    if (!into) into = editing;
+    pane_ = into;
+    Doc* d = add_doc(pane_->tab + 1);
+    d->title = "Preview: " + full.substr(full.find_last_of('/') + 1);
+    d->read_only = true;
+    d->image = std::make_shared<ImageView>();
+    d->image->path = full;
+    d->image->source = id;
+    picture(full);
+    for (size_t i = 0; i < pane_->docs.size(); ++i)
+        if (pane_->docs[i].get() == d) tab_show(i);
+    focus_pane(editing);
+    dirty_ = true;
+}
+
+// Cmd+Shift+V: an SVG's picture, or a Markdown preview.
+void App::preview_open() {
+    const Doc& d = *pane_->doc;
+    if ((d.image && d.image->source) || (!d.image && !d.md && is_svg_path(d.ed.path))) svg_preview();
+    else md_open();
 }
 
 // The picture of this file: being read (asked for now, the first time),
@@ -182,15 +372,37 @@ const PictureInfo* App::picture(const std::string& path) {
     auto it = pictures_->known.find(path);
     if (it == pictures_->known.end()) {
         it = pictures_->known.emplace(path, PictureInfo{}).first;
-        pictures_->want(path);
+        pictures_->want({path});
     }
     it->second.used_ns = now_ns();
     return &it->second;
 }
 
-// Pictures that have been read go onto the GPU.
+namespace {
+
+// An animation's frames, let go of on the GPU.
+void drop_frames(Renderer& gpu, PictureInfo& p) {
+    for (const u32 id : p.frame_gpu)
+        if (id) gpu.image_drop(id);
+    p.frame_gpu.clear();
+    p.frame_ms.clear();
+    p.frames_waiting.reset();
+    p.frame = p.played = p.loops = 0;
+    p.frame_due_ns = 0;
+    p.finished = false;
+}
+
+}  // namespace
+
+// Pictures that have been read go onto the GPU; an animation's timer that
+// has fired asks for a frame.
 void App::picture_sync() {
     if (!pictures_) return;
+    if (const u64 fired = g_frame_fired.exchange(0); fired && fired == pictures_->timer_number) {
+        pictures_->timer = 0;
+        pictures_->timer_due = 0;
+        if (pictures_->shown_in == frames_) dirty_ = true;  // (not if the last frame drawn had none on show: it has gone since)
+    }
     std::vector<Pictures::Done> done;
     {
         std::lock_guard l(pictures_->mu);
@@ -198,7 +410,18 @@ void App::picture_sync() {
     }
     for (Pictures::Done& d : done) {
         auto it = pictures_->known.find(d.path);
-        if (it != pictures_->known.end()) {
+        if (it != pictures_->known.end() && d.redraw) {  // drawn again at the size it is shown
+            PictureInfo& p = it->second;
+            p.redrawing = false;
+            if (d.pic.rgba && p.state == PictureInfo::kReady && p.vector)
+                if (const u32 id = gpu_.image_add(d.pic.rgba, d.pic.w, d.pic.h)) {
+                    if (p.gpu) gpu_.image_drop(p.gpu);
+                    p.gpu = id;
+                    p.w = d.pic.w, p.h = d.pic.h;
+                    p.clear = d.clear;
+                }
+            dirty_ = true;
+        } else if (it != pictures_->known.end()) {
             PictureInfo& p = it->second;
             p.stamp = d.stamp;
             if (!d.error.empty()) {
@@ -208,6 +431,7 @@ void App::picture_sync() {
                 }
             } else if (const u32 id = gpu_.image_add(d.pic.rgba, d.pic.w, d.pic.h)) {
                 if (p.gpu) gpu_.image_drop(p.gpu);
+                drop_frames(gpu_, p);
                 p.gpu = id;
                 p.state = PictureInfo::kReady;
                 p.w = d.pic.w, p.h = d.pic.h, p.full_w = d.pic.full_w, p.full_h = d.pic.full_h;
@@ -215,7 +439,18 @@ void App::picture_sync() {
                 p.kind = d.pic.kind;
                 p.bytes = d.bytes;
                 p.clear = d.clear;
+                p.vector = d.pic.vector;
+                p.redrawing = false;
+                p.source = std::move(d.source);
                 p.error.clear();
+                if (d.frames.frames > 1) {  // an animation: its frames go up as they are shown
+                    p.frame_gpu.assign(static_cast<size_t>(d.frames.frames), 0);
+                    p.frame_ms.assign(d.frames.ms, d.frames.ms + d.frames.frames);
+                    p.frames_waiting = std::shared_ptr<u8>(d.frames.rgba, std::free);
+                    d.frames.rgba = nullptr;
+                    p.frames_w = d.frames.w, p.frames_h = d.frames.h;
+                    p.loops = static_cast<u32>(std::max(0, d.frames.loops));
+                }
             } else if (p.state != PictureInfo::kReady) {
                 p.state = PictureInfo::kFailed;
                 p.error = "the GPU would not take it";
@@ -225,7 +460,88 @@ void App::picture_sync() {
             dirty_ = true;
         }
         blit_picture_free(&d.pic);
+        blit_frames_free(&d.frames);
     }
+}
+
+// What to draw of a picture now (picture() has been asked for it): an
+// animation's frame, played as the time goes while it is drawn, and paused
+// while it is not (its next frame drawn when it is due, by the timer); a
+// picture drawn from shapes drawn again when it is shown at another size.
+u32 App::picture_gpu(const std::string& path, double w, double h) {
+    auto it = pictures_ ? pictures_->known.find(path) : decltype(pictures_->known)::iterator{};
+    if (!pictures_ || it == pictures_->known.end() || it->second.state != PictureInfo::kReady) return 0;
+    PictureInfo& p = it->second;
+    if (p.vector && p.source && w >= 1 && h >= 1) {
+        // Drawn as large as the largest it is shown at (at most 4096 pixels a
+        // side, as any picture), when that is larger than the drawing by
+        // more than a little; smaller again only when it has been shown at
+        // under half the size for two frames (two views of it at two sizes
+        // share the larger drawing, and do not ask for each in turn).
+        const double k = std::min(1.0, kMostSide / std::max(w, h));
+        const int want_w = static_cast<int>(std::max(1.0, std::round(w * k))), want_h = static_cast<int>(std::max(1.0, std::round(h * k)));
+        if (p.shown_frame != frames_) {
+            p.before_w = p.shown_w, p.before_h = p.shown_h;
+            p.shown_w = p.shown_h = 0;
+            p.shown_frame = frames_;
+        }
+        p.shown_w = std::max(p.shown_w, want_w), p.shown_h = std::max(p.shown_h, want_h);
+        const int most_w = std::max(p.shown_w, p.before_w), most_h = std::max(p.shown_h, p.before_h);
+        if (p.redrawing) {
+        } else if (p.shown_w > p.w + std::max(2, p.w / 50) || p.shown_h > p.h + std::max(2, p.h / 50)) {
+            p.redrawing = true;
+            pictures_->want({path, p.shown_w, p.shown_h, p.source});
+        } else if (most_w * 2 < p.w && most_h * 2 < p.h) {
+            p.redrawing = true;
+            pictures_->want({path, most_w, most_h, p.source});
+        }
+    }
+    const size_t n = p.frame_gpu.size();
+    if (n < 2) return p.gpu;
+    pictures_->shown_in = frames_;
+    const u64 now = now_ns();
+    if (!p.finished) {
+        if (!p.frame_due_ns) {
+            p.frame_due_ns = now + p.frame_ms[p.frame] * 1'000'000ull;  // (it starts, or goes on, from the frame it is at)
+        } else if (now + 2'000'000 >= p.frame_due_ns) {  // (a timer a hair early is on time)
+            if (now > p.frame_due_ns + kLateNs) {
+                p.frame_due_ns = now + p.frame_ms[p.frame] * 1'000'000ull;
+            } else {
+                while (p.frame_due_ns && now + 2'000'000 >= p.frame_due_ns) {
+                    if (p.frame + 1 < n) {
+                        ++p.frame;
+                    } else if (++p.played, p.loops && p.played >= p.loops) {
+                        p.finished = true;  // (it stays on its last frame)
+                        p.frame_due_ns = 0;
+                        break;
+                    } else {
+                        p.frame = 0;
+                    }
+                    p.frame_due_ns += p.frame_ms[p.frame] * 1'000'000ull;
+                }
+            }
+        }
+        if (p.frame_due_ns) picture_due(p.frame_due_ns);
+    }
+    // The frame, up to the GPU the first time it is shown (the frames let go of once all are up).
+    u32& id = p.frame_gpu[p.frame];
+    if (!id && p.frames_waiting) {
+        const size_t one = static_cast<size_t>(p.frames_w) * static_cast<size_t>(p.frames_h) * 4;
+        id = gpu_.image_add(p.frames_waiting.get() + one * p.frame, p.frames_w, p.frames_h);
+        if (std::ranges::all_of(p.frame_gpu, [](u32 g) { return g != 0; })) p.frames_waiting.reset();
+    }
+    return id ? id : p.gpu;
+}
+
+// The main loop woken when the soonest frame of an animation on show is due.
+void App::picture_due(u64 at_ns) {
+    Pictures& s = *pictures_;
+    if (s.timer && s.timer_due <= at_ns) return;  // (one as soon, or sooner, is set)
+    if (s.timer) SDL_RemoveTimer(s.timer);
+    const u64 now = now_ns();
+    s.timer_due = at_ns;
+    s.timer_number = s.timer_number + 1;
+    s.timer = SDL_AddTimerNS(std::max<u64>(at_ns > now ? at_ns - now : 0, 1'000'000), frame_due, reinterpret_cast<void*>(static_cast<uintptr_t>(s.timer_number)));
 }
 
 // Pictures whose files have changed (here: on another machine they are not watched) are read again.
@@ -235,7 +551,7 @@ void App::picture_recheck() {
         if (p.state == PictureInfo::kReading || p.again || is_remote(path)) continue;
         if (stamp_of(path) == p.stamp) continue;
         p.again = true;
-        pictures_->want(path);
+        pictures_->want({path});
     }
 }
 
@@ -251,8 +567,9 @@ void App::picture_tidy() {
                 if (auto it = pictures_->known.find(d->image->path); it != pictures_->known.end()) it->second.used_ns = now;
     std::erase_if(pictures_->known, [&](auto& kv) {
         PictureInfo& p = kv.second;
-        if (p.state == PictureInfo::kReading || p.again || now - p.used_ns < kForgetNs) return false;
+        if (p.state == PictureInfo::kReading || p.again || p.redrawing || now - p.used_ns < kForgetNs) return false;
         if (p.gpu) gpu_.image_drop(p.gpu);
+        drop_frames(gpu_, p);
         return true;
     });
 }
@@ -260,7 +577,7 @@ void App::picture_tidy() {
 bool App::pictures_busy() const {
     if (!pictures_) return false;
     for (const auto& [path, p] : pictures_->known)
-        if (p.state == PictureInfo::kReading || p.again) return true;
+        if (p.state == PictureInfo::kReading || p.again || p.redrawing) return true;
     return false;
 }
 
@@ -376,7 +693,8 @@ void App::image_layout(FrameDesc& fd) {
                 info_ink = kInkDiagnostic;
             } else {
                 info = p->kind + "   " + std::to_string(p->full_w) + " × " + std::to_string(p->full_h) + "   " + size_text(p->bytes);
-                if (p->frames > 1) info += "   " + std::to_string(p->frames) + " frames, the first shown";
+                if (p->frame_gpu.size() > 1) info += "   " + std::to_string(p->frames) + " frames";
+                else if (p->frames > 1) info += "   " + std::to_string(p->frames) + " pictures, the first shown";
                 info += "   " + std::to_string(percent) + "%";
                 keys = "1";
             }
@@ -399,16 +717,17 @@ void App::image_layout(FrameDesc& fd) {
         q.border_px = 0;
         q.bg = theme_.bg;
         if (p->state != PictureInfo::kReady || fd.picture_count >= std::size(fd.pictures)) continue;
+        const double pw = p->full_w * v.scale, ph = p->full_h * v.scale;
+        const u32 image = picture_gpu(v.path, pw, ph);
         PictureDraw& d = fd.pictures[fd.picture_count++];
         d = PictureDraw{};
-        d.image = p->gpu;
-        const double pw = p->full_w * v.scale, ph = p->full_h * v.scale;
+        d.image = image;
         const double left = v.ax + v.aw / 2.0 - v.cx * pw, top = v.ay + v.ah / 2.0 - v.cy * ph;
         d.rect[0] = static_cast<float>(std::round(left)), d.rect[1] = static_cast<float>(std::round(top));
         d.rect[2] = static_cast<float>(std::round(left + pw)), d.rect[3] = static_cast<float>(std::round(top + ph));
         d.clip[0] = v.ax, d.clip[1] = v.ay, d.clip[2] = v.ax + v.aw, d.clip[3] = v.ay + v.ah;
         d.after = fd.popup_count;
-        d.sharp = pw / p->w >= 3;
+        d.sharp = !p->vector && pw / p->w >= 3;
         d.clear = p->clear;
         std::copy(d.rect, d.rect + 4, v.rect);
         if (p->clear) {  // (a checkerboard behind what is see-through)
@@ -561,13 +880,36 @@ std::string App::image_dump() {
         const PictureInfo* p = picture(v.path);
         if (p->state == PictureInfo::kReading) return leaf_of(v.path) + ": reading";
         if (p->state == PictureInfo::kFailed) return leaf_of(v.path) + ": failed (" + p->error + ")";
-        char b[320];
-        std::snprintf(b, sizeof b, "ready %s %dx%d read %dx%d%s zoom %d%% middle %.2f,%.2f at %d,%d,%d,%d", p->kind.c_str(), p->full_w, p->full_h, p->w, p->h, p->clear ? " clear" : "",
+        char b[320], anim[96] = "";
+        if (p->frame_gpu.size() > 1)
+            std::snprintf(anim, sizeof anim, " frame %u of %zu%s", p->frame + 1, p->frame_gpu.size(), p->finished ? " (played)" : p->frame_due_ns ? " playing" : "");
+        std::snprintf(b, sizeof b, "ready %s %dx%d read %dx%d%s%s zoom %d%% middle %.2f,%.2f at %d,%d,%d,%d", p->kind.c_str(), p->full_w, p->full_h, p->w, p->h, p->clear ? " clear" : "", anim,
                       static_cast<int>(std::lround(v.scale / density_ * 100)), v.cx, v.cy, static_cast<int>(v.rect[0]), static_cast<int>(v.rect[1]), static_cast<int>(v.rect[2]),
                       static_cast<int>(v.rect[3]));
         return leaf_of(v.path) + ": " + b;
     }
     return "no image tab";
+}
+
+// For the tests: `ms` milliseconds of what the main loop does (events
+// taken in, a frame drawn whenever one is asked for), and how many frames
+// were drawn in them, and how many times something woke it. An animation
+// on show draws one for each of its frames, and nothing else draws any.
+std::string App::picture_frames(int ms) {
+    const u64 until = now_ns() + static_cast<u64>(std::max(0, ms)) * 1'000'000ull;
+    const u64 before = frames_;
+    u64 woken = 0;
+    while (now_ns() < until) {
+        SDL_Event e;
+        if (SDL_PollEvent(&e)) {
+            ++woken;
+            handle(e);
+            while (SDL_PollEvent(&e)) handle(e);
+        }
+        if (dirty_) frame();
+        SDL_Delay(1);
+    }
+    return std::to_string(frames_ - before) + " frames drawn, woken " + std::to_string(woken) + " times";
 }
 
 // Waits until every picture asked for has been read (40 s at most: one on

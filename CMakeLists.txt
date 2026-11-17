@@ -78,7 +78,8 @@ endif()
 # Apple's framework headers); it talks to the rest through a C interface,
 # so the two compilers' C++ libraries never meet. It is left out of
 # link-time optimization: the two compilers' LTO objects do not mix.
-# Image files are read there too, by the system's ImageIO (src/picture.h).
+# Image files are read there too, by the system's ImageIO (src/picture.h),
+# SVG by AppKit, PDFs' text, links and outline by PDFKit.
 if(APPLE)
   if(NOT CMAKE_OBJC_COMPILER)
     set(CMAKE_OBJC_COMPILER /usr/bin/clang)
@@ -89,7 +90,7 @@ if(APPLE)
   endif()
   add_library(blit_gpu STATIC src/gpu_metal.m src/picture_mac.m src/macapp.m)
   target_compile_options(blit_gpu PRIVATE -fobjc-arc -Wall -Wextra)
-  target_link_libraries(blit_gpu PUBLIC "-framework Metal" "-framework QuartzCore" "-framework Foundation" "-framework CoreGraphics" "-framework ImageIO" "-framework AppKit")
+  target_link_libraries(blit_gpu PUBLIC "-framework Metal" "-framework QuartzCore" "-framework Foundation" "-framework CoreGraphics" "-framework ImageIO" "-framework AppKit" "-framework PDFKit")
 else()
   add_library(blit_gpu STATIC src/gpu_vulkan.cpp)
 endif()
