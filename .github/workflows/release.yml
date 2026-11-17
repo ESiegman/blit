@@ -45,6 +45,15 @@ jobs:
         run: |
           app=build/blit.app
           dylibbundler -od -b -x "$app/Contents/MacOS/blit" -d "$app/Contents/Frameworks" -p @executable_path/../Frameworks/
+          # dylibbundler adds the same search path once for each library;
+          # dyld refuses a program that names one twice.
+          for f in "$app/Contents/MacOS/blit" "$app"/Contents/Frameworks/*.dylib; do
+            for rp in $(otool -l "$f" | awk '/cmd LC_RPATH/ { getline; getline; print $2 }' | sort | uniq -d); do
+              while [ "$(otool -l "$f" | awk '/cmd LC_RPATH/ { getline; getline; print $2 }' | grep -cx "$rp")" -gt 1 ]; do
+                install_name_tool -delete_rpath "$rp" "$f"
+              done
+            done
+          done
           codesign --force --deep --sign - "$app"
           codesign --verify --strict --verbose "$app"
           otool -L "$app/Contents/MacOS/blit"
