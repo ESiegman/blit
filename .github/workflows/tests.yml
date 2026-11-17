@@ -1,0 +1,55 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: tests-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  macos:
+    runs-on: macos-26
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Libraries
+        run: |
+          brew update --quiet || true
+          brew install sdl3 freetype tree-sitter lua harfbuzz gcc ninja
+          g++-16 --version | head -1
+
+      - name: Configure
+        run: >
+          cmake -S . -B build-debug -G Ninja
+          -DCMAKE_CXX_COMPILER=g++-16
+          -DCMAKE_BUILD_TYPE=Debug
+          -DBLIT_OPTIMIZE_DEBUG=ON
+          -DBLIT_LTO=OFF
+
+      - name: Build
+        run: cmake --build build-debug -j 3
+
+      - name: GPU
+        run: build-debug/blit --info || true
+
+      - name: Grammars
+        run: |
+          build-debug/blit --install-grammar cpp,python,bash
+          build-debug/blit --grammars
+
+      - name: Test
+        run: ctest --test-dir build-debug -j 2 --timeout 900 --output-on-failure
+
+      - name: Keep what the tests left
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output
+          path: |
+            build-debug/Testing/Temporary/LastTest.log
+          if-no-files-found: ignore
