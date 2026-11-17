@@ -108,8 +108,38 @@ if(APPLE)
   set_target_properties(blit_gpu PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 else()
   find_package(Vulkan REQUIRED)
-  add_library(blit_gpu STATIC src/gpu_vulkan.cpp)
+  add_library(blit_gpu STATIC src/gpu_vulkan.cpp src/picture_linux.cpp)
   target_link_libraries(blit_gpu PUBLIC Vulkan::Vulkan SDL3::SDL3)
+  # Without link-time optimization here too, as on a Mac: GCC 16.2's got a
+  # test in picture_linux.cpp wrong (Nov 2026: `w <= 0` with w = 240 came out
+  # true, and an SVG asked for at 240 x 180 was drawn 1 x 1), and nothing in
+  # these two files gains from it. (The build type's own setting, which a
+  # Debug build compiled like a release has on, wins over the plain one.)
+  set_target_properties(blit_gpu PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+  # Pictures (src/picture_linux.cpp): PNG, JPEG, GIF and WebP by their own
+  # libraries, linked in (small, and nothing at startup); SVG by librsvg
+  # and PDF by poppler, both drawing through cairo, which are loaded when
+  # first wanted (they bring GLib and much more): only their headers are
+  # needed to build, and without them blit builds without SVG or PDF.
+  find_package(PNG REQUIRED)
+  find_package(GIF REQUIRED)
+  find_package(PkgConfig REQUIRED)
+  pkg_check_modules(BLIT_PICTURES REQUIRED IMPORTED_TARGET libturbojpeg libwebp libwebpdemux)
+  target_link_libraries(blit_gpu PUBLIC PNG::PNG GIF::GIF PkgConfig::BLIT_PICTURES ${CMAKE_DL_LIBS})
+  pkg_check_modules(BLIT_POPPLER poppler-glib cairo)
+  pkg_check_modules(BLIT_RSVG librsvg-2.0 cairo)
+  if(BLIT_POPPLER_FOUND)
+    target_include_directories(blit_gpu SYSTEM PRIVATE ${BLIT_POPPLER_INCLUDE_DIRS})
+    target_compile_definitions(blit_gpu PRIVATE BLIT_HAVE_POPPLER=1)
+  else()
+    message(STATUS "poppler-glib's headers not found: building without PDFs")
+  endif()
+  if(BLIT_RSVG_FOUND)
+    target_include_directories(blit_gpu SYSTEM PRIVATE ${BLIT_RSVG_INCLUDE_DIRS})
+    target_compile_definitions(blit_gpu PRIVATE BLIT_HAVE_RSVG=1)
+  else()
+    message(STATUS "librsvg's headers not found: building without SVG")
+  endif()
 endif()
 target_include_directories(blit_gpu PUBLIC src)
 

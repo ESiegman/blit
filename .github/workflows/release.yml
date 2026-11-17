@@ -8,9 +8,9 @@ name: release
 # macOS: blit.app, with the libraries Homebrew gave the build copied inside,
 # so it runs on a Mac without them; signed for no one in particular (ad hoc),
 # so macOS asks once before the first start.
-# Linux: an AppImage and a tarball of the same files, for any Linux as new
-# as the glibc they need (the build checks it, and starts them on Ubuntu and
-# Fedora).
+# Linux: an AppImage and a tarball of the same files, built on AlmaLinux 9
+# for any Linux with glibc 2.35 or later, and RHEL 9 (started on Ubuntu,
+# Debian and Fedora before release).
 on:
   push:
     tags: ['v*']
@@ -94,56 +94,27 @@ jobs:
 
   linux:
     runs-on: ubuntu-latest
-    # Arch is only where the build happens (it has GCC 16); what comes out is
-    # for any Linux as new as the glibc it needs: an AppImage, and a tarball
+    # AlmaLinux 9 is only where the build happens (Red Hat's GCC 16, and a
+    # glibc old enough for most systems in use); what comes out is for any
+    # Linux with glibc 2.35 or later, and RHEL 9: an AppImage, and a tarball
     # of the same files. Both carry the libraries few systems have yet (SDL3,
-    # Lua 5.5, tree-sitter, beside the program, found through its RPATH) and
-    # take glibc, the Vulkan loader, fontconfig and FreeType from the system.
-    container: archlinux:latest
+    # beside the program, found through its RPATH; Lua 5.5 and tree-sitter
+    # linked in) and take glibc, the Vulkan loader, fontconfig and FreeType
+    # from the system. packaging/linux/build.sh does it all, here and by hand.
+    container: almalinux:9
     timeout-minutes: 75
     steps:
-      - name: Tools and libraries
-        run: |
-          pacman -Syu --noconfirm --needed base-devel git cmake ninja gcc sdl3 freetype2 fontconfig harfbuzz lua tree-sitter \
-            vulkan-icd-loader vulkan-headers vulkan-swrast zlib file wget
+      - name: Git, for the checkout
+        run: dnf -q -y install git
 
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.tag && 'main' || github.ref }}
 
-      - name: Build
-        run: |
-          cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=g++ -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DBLIT_NATIVE=OFF
-          cmake --build build -j "$(nproc)"
-          DESTDIR="$PWD/AppDir" cmake --install build
-
-      - name: AppImage, with the libraries inside
+      - name: Build and package
         env:
           APPIMAGE_EXTRACT_AND_RUN: '1'
-          ARCH: x86_64
-        run: |
-          version="${TAG#v}"
-          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
-          chmod +x linuxdeploy-x86_64.AppImage
-          LINUXDEPLOY_OUTPUT_VERSION="$version" ./linuxdeploy-x86_64.AppImage --appdir AppDir \
-            --executable AppDir/usr/bin/blit \
-            --desktop-file AppDir/usr/share/applications/blit.desktop \
-            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/blit.png \
-            --output appimage
-          ls -l ./*.AppImage AppDir/usr/lib
-          objdump -T AppDir/usr/bin/blit | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1 > glibc.txt
-          echo "needs $(cat glibc.txt)"
-
-      - name: Package
-        run: |
-          version="${TAG#v}"
-          dir="blit-$version-linux-x86_64"
-          mkdir -p out "$dir"
-          cp -a AppDir/usr/bin AppDir/usr/lib AppDir/usr/share "$dir/"
-          tar -czf "out/$dir.tar.gz" "$dir"
-          mv ./blit*.AppImage "out/blit-$version-x86_64.AppImage"
-          (cd out && for f in *; do sha256sum "$f" > "$f.sha256"; done)
-          cp glibc.txt out/linux-glibc.txt
+        run: packaging/linux/build.sh "${TAG#v}"
 
       - uses: actions/upload-artifact@v4
         with:
@@ -158,7 +129,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        image: ['ubuntu:24.04', 'fedora:latest']
+        image: ['ubuntu:22.04', 'ubuntu:24.04', 'debian:12', 'fedora:latest', 'rockylinux:9']
     container: ${{ matrix.image }}
     steps:
       - uses: actions/download-artifact@v4
@@ -219,8 +190,9 @@ jobs:
 
           Ligatures need HarfBuzz (\`brew install harfbuzz\`).
 
-          **Linux** (x86-64, glibc $glibc or later: Ubuntu 24.04, Fedora 39,
-          Debian 13 and newer), with a Vulkan driver (Mesa's, or NVIDIA's):
+          **Linux** (x86-64, glibc $glibc or later: Ubuntu 22.04, Debian 12,
+          Fedora 36 and newer, and RHEL 9 and its rebuilds), with a Vulkan
+          driver (Mesa's, or NVIDIA's):
 
           - \`blit-$version-x86_64.AppImage\`: make it executable and run it.
           - \`blit-$version-linux-x86_64.tar.gz\`: unpack it anywhere and run
@@ -232,7 +204,7 @@ jobs:
           system's HarfBuzz.
 
           Keys on Linux: Ctrl where a Mac has Cmd, with Vim's own Ctrl keys
-          kept while its modes are on (the README's "Keys without Cmd").
+          kept while its modes are on (docs/manual.md, "Keys without Cmd").
           Syntax colours come from grammars blit builds itself
           (\`blit --install-grammar all\`), which needs a C compiler.
 

@@ -180,7 +180,7 @@ struct BlitGpu {
     uint32_t next_picture = 0;
     std::vector<Upload> uploads;
 
-    char name[160] = "vulkan";
+    char name[288] = "vulkan";  // (room for the longest name a device may have)
     uint64_t library_ns = 0, pipelines_ns = 0;
     int cached = 0;
     std::thread caching;  // the pipeline cache, written after startup
@@ -534,13 +534,15 @@ VkRenderPass render_pass(BlitGpu* g, bool window, bool shown = false) {
     sub.pColorAttachments = &ref;
     // In: after the image is free (the window's: its acquire is waited for at
     // this stage) or, offscreen, after the frames before have written it and
-    // it has been read back. Out, offscreen: before it is read back.
+    // it has been read back. Out, offscreen: before it is read back. The
+    // same two for every pass: passes whose dependencies differ are not
+    // compatible, and the pipelines, made with the offscreen one, draw in all.
     VkSubpassDependency deps[2] = {};
     deps[0].srcSubpass = VK_SUBPASS_EXTERNAL;
     deps[0].dstSubpass = 0;
-    deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | (window ? 0 : VK_PIPELINE_STAGE_TRANSFER_BIT);
+    deps[0].srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT | VK_PIPELINE_STAGE_TRANSFER_BIT;
     deps[0].dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
-    deps[0].srcAccessMask = window ? 0 : VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+    deps[0].srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     deps[0].dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
     deps[1].srcSubpass = 0;
     deps[1].dstSubpass = VK_SUBPASS_EXTERNAL;
@@ -553,7 +555,7 @@ VkRenderPass render_pass(BlitGpu* g, bool window, bool shown = false) {
     ri.pAttachments = &a;
     ri.subpassCount = 1;
     ri.pSubpasses = &sub;
-    ri.dependencyCount = window ? 1 : 2;
+    ri.dependencyCount = 2;
     ri.pDependencies = deps;
     VkRenderPass pass = VK_NULL_HANDLE;
     vkCreateRenderPass(g->dev, &ri, nullptr, &pass);

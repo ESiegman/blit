@@ -34,8 +34,8 @@
 #include "remote.hpp"
 #include "textbox.hpp"
 
-#if !defined(__APPLE__)
-// (No reader on other systems yet.)
+#if !defined(__APPLE__) && !defined(__linux__)
+// (No reader on other systems yet: picture_mac.m on a Mac, picture_linux.cpp on Linux.)
 extern "C" int blit_picture_read(const void*, size_t, int, BlitPicture* out, char* err, size_t err_size) {
     *out = BlitPicture{};
     if (err && err_size) std::snprintf(err, err_size, "pictures are not read on this system yet");
