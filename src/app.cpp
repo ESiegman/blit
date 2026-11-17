@@ -422,7 +422,11 @@ void App::pick_theme() {
         d.styles_known = names.size();
         std::fill(std::begin(d.style_bits), std::end(d.style_bits), 0u);
         for (size_t s = 1; s < names.size() && s < 256; ++s) {
-            const TokenStyle style = tc.syntax_style(names[s]);
+            // A bracket by its depth (the worker's "bracket.N"): the theme's
+            // colour for that depth, else what punctuation is.
+            TokenStyle style;
+            if (names[s].starts_with("bracket.") && cfg_.syntax_brackets && !tc.brackets.empty()) style.color = tc.brackets[static_cast<size_t>(std::atoi(names[s].c_str() + 8)) % tc.brackets.size()];
+            else style = tc.syntax_style(names[s].starts_with("bracket.") ? std::string_view("punctuation.bracket") : std::string_view(names[s]));
             const Rgb c = style.color;
             u32 face = cfg_.font_style_of(style);
             if (!font_->ensure_style(face)) face = 0;
@@ -1436,6 +1440,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     panel_layout(w, std::max(1, h - status_px()), fd);  // (above the status bar)
     status_layout(w, h, fd);
     lsp_layout(w, h, fd);
+    shape_marks(fd);  // (the bracket that pairs with the cursor's)
     git_note(fd);
     vim_marks(fd);
     if (script_) script_layout(w, h, fd);  // marks, boxes and messages of the scripts'

@@ -32,6 +32,9 @@ struct ThemeColors {
     // The lines that mark levels of indentation: the first level's colour,
     // the second's, and so on, starting over after the last (at most six).
     std::vector<Rgb> guides;
+    // Brackets by how deep they are: the first pair's colour, the second's,
+    // round and round (none: they are punctuation like any other).
+    std::vector<Rgb> brackets;
 
     // What the theme says about one tree-sitter capture name ("keyword",
     // "string.escape"). An entry sets only some of colour, italic and bold;
@@ -120,6 +123,7 @@ struct Config {
     std::vector<GrammarSource> grammars;      // [syntax.grammars.NAME]
     bool syntax_italic = true;  // false: draw nothing in italics, whatever the theme says
     bool syntax_bold = true;    // same for bold
+    bool syntax_brackets = true;  // brackets coloured by how deep they are (the theme's `brackets`, round and round)
 
     // [lsp]
     bool lsp = true;                 // start a language server when one is installed for the file type

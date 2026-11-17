@@ -45,6 +45,35 @@ struct SyntaxOptions {
     bool hold_full_parse = false;
 };
 
+// The shape of the text as its tree has it, for the lines around the
+// window and what encloses them: where brackets pair up, which runs of
+// lines can be folded, and the definitions (functions, classes,
+// namespaces) with their names. Made on the worker with the colours, kept
+// in step with edits until the next comes (see edit()).
+struct SyntaxFold {
+    u32 header = 0, last = 0;  // lines header + 1 to last fold away under header
+};
+struct SyntaxScope {
+    std::string name;
+    u8 kind = 0;          // as a language server's symbols have it: 12 a function, 6 a method, 5 a class, 3 a namespace...
+    u32 depth = 0;        // how many scopes it is inside
+    u64 start = 0, end = 0;  // bytes, the whole of it
+    u64 name_at = 0;      // where its name is
+};
+struct SyntaxStructure {
+    std::vector<std::pair<u64, u64>> pairs;  // brackets: where each opens and where it closes, by where it opens
+    std::vector<SyntaxFold> folds;           // by header; at most one a line
+    std::vector<SyntaxScope> scopes;         // in the order they start (an enclosing one first)
+    bool empty() const { return pairs.empty() && folds.empty() && scopes.empty(); }
+    void clear() {
+        pairs.clear();
+        folds.clear();
+        scopes.clear();
+    }
+    // The text changed: what is after the edit moves, what it cut into goes.
+    void edit(const TextEdit& e);
+};
+
 struct SyntaxStats {
     double setup_ms = 0;    // from attach until a compiled query was available
     double quick_ms = 0;    // big files: parsing and colouring just the start, before the full parse
@@ -112,6 +141,15 @@ public:
     bool poll();
 
     const Highlights& highlights() const { return hl_; }
+    const SyntaxStructure& structure() const { return shape_; }
+    // Asked of the tree as it is now (the edits not yet sent go first),
+    // waiting up to `wait_ms` for the worker. False: no answer (no tree yet,
+    // or the worker is busy past the wait).
+    // The nodes around bytes [lo, hi), the smallest first, each larger than
+    // the one before (Expand selection).
+    bool ask_around(const Buffer& buf, u64 lo, u64 hi, std::vector<std::pair<u64, u64>>* out, int wait_ms = 200);
+    // The whole file's folds and definitions (the outline, folding all).
+    bool ask_all(const Buffer& buf, SyntaxStructure* out, int wait_ms = 500);
     // Capture names by style id, e.g. "keyword.function". Index 0 is plain text.
     const std::vector<std::string>& style_names() const { return names_; }
     // Something the user should know (grammar failed to load, ...), once.
@@ -148,10 +186,23 @@ private:
         bool has_names = false;
         u64 version = 0;
         Highlights hl;
+        SyntaxStructure shape;
         std::vector<std::string> names;
         std::string message;
     };
     struct Engine;  // everything tree-sitter, used only by the worker
+    // A question for the worker (ask_around, ask_all), answered once its
+    // tree is of `version`.
+    struct Ask {
+        enum : u8 { kNone, kAround, kAll } kind = kNone;
+        u64 version = 0;
+        u64 lo = 0, hi = 0;
+        bool answered = false, ok = false;
+        std::vector<std::pair<u64, u64>> ranges;
+        SyntaxStructure all;
+    };
+    bool ask(const Buffer& buf, Ask& q, int wait_ms);
+    void answer(Ask& q);
 
     void run();
     void work(Job& job);
@@ -167,6 +218,7 @@ private:
     bool sent_any_ = false;
     u64 asked_first_ = 0, asked_last_ = 0;  // lines covered by the last request
     Highlights hl_;
+    SyntaxStructure shape_;
     std::vector<std::string> names_;
     std::string message_;
     Notify notify_;
@@ -176,6 +228,8 @@ private:
     std::condition_variable wake_, idle_;
     Job job_;
     Result result_;
+    Ask ask_;  // (kind kNone: none waiting)
+    u64 tree_version_ = 0;  // the text the worker's tree is of
     bool busy_ = false;
     bool quit_ = false;
     std::atomic<bool> cancel_{false};

@@ -599,6 +599,9 @@ int App::run_bench() {
 //   views                  print each split's view of the file in front: its document, its own cursor and that line
 //   emojidump              print the colour emoji the last frame drew: how many, the cells of each, in the text or a box
 //   usesdump               print the uses of the symbol at the cursor that are marked (line:column ranges, from 1)
+//   seldump                print what is selected in the file in front, in [ ], its lines joined by " / " (or none)
+//   shapedump              print the brackets on show in the file in front (line:column=depth, "-" not the tree's)
+//                          and the pair marked at the cursor
 //   git:ACTION[:ARG]       a git action by name (stage:PATH, commit:MESSAGE, push, switch:BRANCH, ...)
 //   gitwait                wait for git to finish; gitdump[:LABEL] also prints what it has told the editor
 //   gitview[:LABEL]        print the diff tab in front: its hunks, and its lines with what is coloured added or taken away
@@ -819,6 +822,15 @@ void App::run_script(const char* script) {
             up.type = SDL_EVENT_MOUSE_BUTTON_UP;
             up.button.button = SDL_BUTTON_LEFT;
             handle(up);
+        } else if (verb == "seldump") {  // what is selected (Vim's Visual mode, or the editor's), its lines joined by " / "
+            const Editor& ed = pane_->doc->ed;
+            u64 lo = 0, hi = 0;
+            if (!vim_selection(&lo, &hi)) lo = ed.sel_min(), hi = ed.sel_max();
+            std::string t = ed.buf.text(lo, std::min<u64>(hi - lo, 4000));
+            for (size_t at = 0; (at = t.find('\n', at)) != std::string::npos;) t.replace(at, 1, " / ");
+            std::fprintf(stderr, "%s\n", hi > lo ? ("[" + t + "]").c_str() : "none");
+        } else if (verb == "shapedump") {  // the brackets on show by depth, and the pair at the cursor
+            std::fprintf(stderr, "%s\n", shape_dump().c_str());
         } else if (verb == "usesdump") {  // the uses of the symbol at the cursor, as they are marked
             std::fprintf(stderr, "%s\n", lsp_uses_dump().c_str());
         } else if (verb == "emojidump") {

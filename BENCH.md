@@ -2606,6 +2606,49 @@ Enter on a file, a command and a setting, the template's line, a line
 already there), lsp.sh two (a symbol listed and gone to), fuzz_buffer.cpp
 the closer match's checks.
 
+### Round 52: the text's shape from its tree; brackets by depth; expand the selection
+
+The syntax worker now makes, with each pass of colours, the shape of the
+range it coloured and of what encloses it (SyntaxStructure): where
+brackets pair up, which runs of lines fold (a pair over three lines or
+more, an indented block, a comment of several lines, a `#if`), and the
+definitions with their names, found by the words grammars use in their
+node types and their `name` (or declarator, or type) fields, for any
+language. It is kept in step with edits until the next pass comes, as the
+colours are. Brackets the tree has are painted by depth into the colours
+themselves (styles `bracket.0` to `bracket.2`, the theme's `brackets`), so
+the main thread does nothing for them; the one that pairs with the bracket
+at the cursor is marked. The worker also answers questions of its tree as
+it is: the nodes around a range (Expand the selection) and the whole
+file's shape.
+
+The walk visits the nodes in the coloured range. A node of more than 32
+children (a file, a class's or namespace's body) is taken as a list: its
+pair from its ends, then a jump to the child at the range's start, not a
+walk past every child before it. That jump and each kind of node's
+details worked out once (not a dozen substring searches a node) took the
+first version's cost down by about half. `blit_bench syntax`, five rounds
+turn about, against the build before:
+
+| | real-200k: before | after | real-2m: before | after |
+|---|---:|---:|---:|---:|
+| A key to the colours on show | 1.22 ms | 1.32 ms | 5.05 ms | 5.10 ms |
+| A key to the whole range's colours | 2.66 ms | 3.31 ms | 6.38 ms | 6.93 ms |
+| The pass over the range (800 lines) | 1.43 ms | 1.98 ms | 1.32 ms | 1.81 ms |
+| The main thread, a key | 3.1 µs | 4.0 µs | 9.7 µs | 10.0 µs |
+
+- **About 0.5 ms more on the worker for each full pass**, after the lines
+  on show already have their colours (0.05 to 0.1 ms later).
+- **Under 1 µs a key on the main thread**, for keeping the pairs, folds
+  and definitions in step with the edit until the worker's next answer.
+- tests/shape.sh, a new suite: brackets by depth in C++ and Python, one in
+  a string left alone, `syntax.bracket_colors` off, a theme's own colours,
+  the pair at, after and under (Vim) the cursor, none in a string or with
+  a selection, after an edit; Expand from a name up to the whole file, what
+  is between brackets before them, Shrink back to the start, a new
+  selection starting again, Vim's Visual mode, the word and line without a
+  grammar. All 21 suites pass.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

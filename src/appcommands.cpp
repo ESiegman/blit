@@ -290,6 +290,8 @@ void App::commands_create() {
     own("Show the file's outline", {key(SDLK_O, kP | kA)}, [this] { lsp_outline(); });
     own("Go to a symbol in the project", {key(SDLK_P, kP | kA)}, [this] { lsp_find_symbols(); });
     own("Search everywhere", {key(SDLK_K, kP)}, [this] { find_everywhere(); });
+    own("Expand the selection", {mac ? key(SDLK_RIGHT, kP | kS | kC) : key(SDLK_RIGHT, kA | kS)}, [this] { select_grow(true); });
+    own("Shrink the selection", {mac ? key(SDLK_LEFT, kP | kS | kC) : key(SDLK_LEFT, kA | kS)}, [this] { select_grow(false); });
     sent("Rename the symbol\xE2\x80\xA6", {key(SDLK_F2)});
     sent("Format the file, or the selected lines", {key(SDLK_F, kA | kS)});
     sent("Fixes and refactorings here (code actions)", {key(SDLK_RETURN, kA)});  // (Cmd+. stops the build)

@@ -74,6 +74,9 @@ const bool ts_allocator_set = (ts_set_allocator(ts_alloc, ts_zalloc, ts_resize, 
 #endif
 
 constexpr u8 kSkip = 0xFF;  // a capture that is not a colour (@spell, @_internal, ...)
+// The styles a bracket gets by how deep it is, round and round.
+constexpr const char* kBracketStyles[] = {"bracket.0", "bracket.1", "bracket.2"};
+constexpr u32 kBracketDepths = 3;
 
 // ---------------------------------------------------------------- files and folders
 
@@ -420,6 +423,8 @@ std::shared_ptr<Bundle> get_bundle(const std::string& lang, const SyntaxOptions&
             if (name == "none" || name.empty() || name[0] == '_' || name == "spell" || name == "nospell" || name.starts_with("conceal")) return;
             if (names->size() < 250 && std::find(names->begin(), names->end(), name) == names->end()) names->emplace_back(name);
         });
+        for (const char* style : kBracketStyles)  // (brackets by depth: painted by the worker, not the query)
+            if (std::find(names->begin(), names->end(), style) == names->end()) names->emplace_back(style);
     };
     collect_names(sources->front(), &b->names);
 
@@ -566,6 +571,21 @@ struct Syntax::Engine {
     std::vector<Cap> caps;
     std::string text, text2;
 
+    // Brackets' styles by depth (0: no such style), and the shape last
+    // made, to go out with the colours.
+    u8 bracket_style[kBracketDepths] = {};
+    SyntaxStructure shaped;
+    // What shape() needs to know of each kind of node, worked out from its
+    // type's name the first time one is met.
+    struct Kind {
+        bool known = false;
+        u8 definition = 0;  // see definition_kind()
+        u8 fold = 0;        // 1 a comment, 2 a block, 3 a #if
+        char bracket = 0;   // an anonymous node that is one bracket
+    };
+    std::vector<Kind> kinds;
+    const Kind& kind_of(TSNode n);
+
     ~Engine() {
         for (TSQueryCursor* c : cursors) ts_query_cursor_delete(c);
         if (walking) ts_tree_cursor_delete(&walk);
@@ -602,6 +622,7 @@ struct Syntax::Engine {
     void paint_caps(u32 lo, u32 hi);
     void shift_paint(const TextEdit& e);
     void marks(Highlights* out) const;
+    void shape(u32 lo, u32 hi, SyntaxStructure* out, bool paint_brackets);
 };
 
 // Puts `walk` on the node. From there its parents are a step away.
@@ -799,6 +820,234 @@ void Syntax::Engine::marks(Highlights* out) const {
     out->seal();
 }
 
+// ---------------------------------------------------------------- shape
+
+namespace {
+
+// What kind of definition a node of this type is, as a language server's
+// symbols are numbered (0: none). By the words grammars use in their node
+// types: function_definition, class_specifier, impl_item, mod_item...
+u8 definition_kind(std::string_view t) {
+    static constexpr std::string_view kNot[] = {"call", "declarator", "parameter", "pointer", "signature", "reference", "expression", "argument", "_list", "identifier", "type_", "body"};
+    for (const std::string_view x : kNot)
+        if (t.find(x) != std::string_view::npos) return 0;
+    auto has = [&](std::string_view x) { return t.find(x) != std::string_view::npos; };
+    if (has("namespace")) return 3;
+    if (has("module") || t == "mod_item") return 2;
+    if (has("constructor")) return 9;
+    if (has("interface") || has("trait")) return 11;
+    if (has("enum")) return 10;
+    if (has("struct") || has("union")) return 23;
+    if (has("class") || has("impl")) return 5;
+    if (has("method")) return 6;
+    if (has("function")) return 12;
+    return 0;
+}
+
+// The last line a node has anything on (one that ends at the start of a
+// line ends on the line before).
+u32 last_row(TSNode n) {
+    const TSPoint p = ts_node_end_point(n);
+    return p.column == 0 && p.row > 0 ? p.row - 1 : p.row;
+}
+
+}  // namespace
+
+const Syntax::Engine::Kind& Syntax::Engine::kind_of(TSNode n) {
+    const TSSymbol sym = ts_node_symbol(n);
+    if (sym >= kinds.size()) kinds.resize(static_cast<size_t>(sym) + 1);
+    Kind& k = kinds[sym];
+    if (k.known) return k;
+    k.known = true;
+    const std::string_view type = ts_node_type(n);
+    if (!ts_node_is_named(n)) {
+        if (type.size() == 1 && std::string_view("()[]{}").find(type[0]) != std::string_view::npos) k.bracket = type[0];
+        return k;
+    }
+    k.definition = definition_kind(type);
+    k.fold = type.find("comment") != std::string_view::npos ? 1 : (type == "block" || type.ends_with("_block")) ? 2 : type.starts_with("preproc_if") ? 3 : 0;
+    return k;
+}
+
+// The shape of bytes [lo, hi), and what encloses them: one walk down the
+// tree, into the nodes that reach into the range. Brackets pair up among
+// the children of a node (an opening one waits for the next closing one of
+// its kind), each as deep as the pairs it is inside; a pair over three
+// lines or more, an indented block, a comment of several lines and a #if
+// fold; a node whose type names a definition and that has a body is one,
+// named by its name (or its declarator's, or its type's).
+void Syntax::Engine::shape(u32 lo, u32 hi, SyntaxStructure* out, bool paint_brackets) {
+    out->clear();
+    if (!tree) return;
+    TSTreeCursor c = ts_tree_cursor_new(ts_tree_root_node(tree));
+    std::string buf;
+    struct Open {
+        u32 at, row, depth;
+        char ch;
+    };
+    auto paint_one = [&](u32 at, u32 depth) {
+        const u8 style = bracket_style[depth % kBracketDepths];
+        if (paint_brackets && style && at >= lo && at < hi && at >= paint_lo && at < paint_hi) paint[at - paint_lo] = style;
+    };
+    auto in_range = [&](u32 at) { return at >= lo && at < hi; };
+    auto closer = [](char ch) { return ch == '(' ? ')' : ch == '[' ? ']' : '}'; };
+    auto pair = [&](u32 at, u32 row, u32 close, u32 close_row, u32 depth) {
+        paint_one(at, depth);
+        paint_one(close, depth);
+        if (in_range(at) || in_range(close)) out->pairs.push_back({at, close});
+        if (close_row > row + 1) out->folds.push_back({row, close_row - 1});
+    };
+    // The children of the node the cursor is on (`visit`), and one named
+    // child among them (`one`): its folds, whether it is a definition, and
+    // its own children.
+    auto visit = [&](auto&& self, auto&& one, u32 depth, u32 parent_row, u32 scope_depth, u8 scope_kind) -> void {
+        const TSNode parent = ts_tree_cursor_current_node(&c);
+        // A node of many children (a file, a class's or a namespace's body)
+        // is a list, with brackets at most first and last: its pair is taken
+        // from its ends, and of its children only those that reach into the
+        // range are looked at.
+        if (ts_node_child_count(parent) > 32) {
+            if (!ts_tree_cursor_goto_first_child(&c)) return;
+            const TSNode first = ts_tree_cursor_current_node(&c);
+            const char ch = kind_of(first).bracket;
+            ts_tree_cursor_goto_parent(&c);
+            const u32 end = ts_node_end_byte(parent);
+            u32 len = 0;
+            const char* last = end > 0 ? snap.read(end - 1, &len) : nullptr;
+            if ((ch == '(' || ch == '[' || ch == '{') && last && len > 0 && *last == closer(ch)) {
+                pair(ts_node_start_byte(first), ts_node_start_point(first).row, end - 1, ts_node_end_point(parent).row, depth);
+                ++depth;
+            }
+            if (ts_tree_cursor_goto_first_child_for_byte(&c, lo) < 0) return;
+            do {
+                const TSNode n = ts_tree_cursor_current_node(&c);
+                if (ts_node_start_byte(n) >= hi) break;
+                if (ts_node_is_named(n) && ts_node_end_byte(n) > lo) one(self, one, n, depth, parent_row, scope_depth, scope_kind);
+            } while (ts_tree_cursor_goto_next_sibling(&c));
+            ts_tree_cursor_goto_parent(&c);
+            return;
+        }
+        if (!ts_tree_cursor_goto_first_child(&c)) return;
+        std::vector<Open> opens;
+        do {
+            const TSNode n = ts_tree_cursor_current_node(&c);
+            const u32 s = ts_node_start_byte(n);
+            if (!ts_node_is_named(n)) {
+                const char ch = kind_of(n).bracket;
+                if (ch == '(' || ch == '[' || ch == '{') {
+                    const u32 d = depth + static_cast<u32>(opens.size());
+                    opens.push_back({s, ts_node_start_point(n).row, d, ch});
+                    paint_one(s, d);
+                } else if (ch) {
+                    for (size_t k = opens.size(); k-- > 0;) {
+                        if (closer(opens[k].ch) != ch) continue;
+                        const Open o = opens[k];
+                        opens.resize(k);
+                        pair(o.at, o.row, s, ts_node_start_point(n).row, o.depth);
+                        break;
+                    }
+                }
+                continue;
+            }
+            if (s >= hi && opens.empty()) break;  // (past the range, with nothing left to close)
+            if (ts_node_end_byte(n) <= lo || s >= hi) continue;  // (beside the range: its brackets are its own)
+            one(self, one, n, depth + static_cast<u32>(opens.size()), parent_row, scope_depth, scope_kind);
+        } while (ts_tree_cursor_goto_next_sibling(&c));
+        ts_tree_cursor_goto_parent(&c);
+    };
+    auto one = [&](auto&& visit_, auto&& self, TSNode n, u32 depth, u32 parent_row, u32 scope_depth, u8 scope_kind) -> void {
+        const Kind& k = kind_of(n);
+        const u32 row = ts_node_start_point(n).row;
+        if (k.fold) {
+            const u32 end_row = last_row(n);
+            if (k.fold == 1 && end_row > row) {
+                out->folds.push_back({row, end_row});
+            } else if (k.fold == 3 && end_row > row + 1) {
+                out->folds.push_back({row, end_row - 1});  // (the #endif stays)
+            } else if (k.fold == 2 && end_row > parent_row) {
+                const TSNode first = ts_node_child(n, 0);
+                if (ts_node_is_null(first) || kind_of(first).bracket != '{') out->folds.push_back({parent_row, end_row});  // (an indented block; one in braces folds by them)
+            }
+        }
+        u32 inner_depth = scope_depth;
+        u8 inner_kind = scope_kind;
+        if (k.definition && !ts_node_is_null(ts_node_child_by_field_name(n, "body", 4))) {
+            TSNode name = ts_node_child_by_field_name(n, "name", 4);
+            if (ts_node_is_null(name)) {
+                TSNode d = n;
+                for (TSNode x; !ts_node_is_null(x = ts_node_child_by_field_name(d, "declarator", 10));) d = x;
+                if (!ts_node_eq(d, n)) name = d;
+            }
+            if (ts_node_is_null(name)) name = ts_node_child_by_field_name(n, "type", 4);
+            if (!ts_node_is_null(name)) {
+                std::string called(node_text(name, &buf, 160));
+                for (char& ch : called)
+                    if (ch == '\n' || ch == '\t' || ch == '\r') ch = ' ';
+                u8 kind = k.definition;
+                if (kind == 12 && (scope_kind == 5 || scope_kind == 23 || scope_kind == 11)) kind = 6;  // (a function in a class is its method)
+                out->scopes.push_back({std::move(called), kind, scope_depth, ts_node_start_byte(n), ts_node_end_byte(n), ts_node_start_byte(name)});
+                inner_depth = scope_depth + 1;
+                inner_kind = kind;
+            }
+        }
+        visit_(visit_, self, depth, row, inner_depth, inner_kind);
+    };
+    visit(visit, one, 0, 0, 0, 0);
+    ts_tree_cursor_delete(&c);
+    // At most one fold a line, the longest; and in order.
+    std::ranges::sort(out->folds, [](const SyntaxFold& a, const SyntaxFold& b) { return a.header != b.header ? a.header < b.header : a.last > b.last; });
+    out->folds.erase(std::ranges::unique(out->folds, [](const SyntaxFold& a, const SyntaxFold& b) { return a.header == b.header; }).begin(), out->folds.end());
+    std::ranges::sort(out->pairs);
+}
+
+void SyntaxStructure::edit(const TextEdit& e) {
+    const u64 start = e.start, old_end = e.old_end;
+    const u64 d = e.new_end - e.old_end;  // (as two's complement: added, it moves either way)
+    size_t keep = 0;
+    for (auto& [o, cl] : pairs) {
+        if (cl < start) {
+        } else if (o >= old_end) {
+            o += d, cl += d;
+        } else if (o < start && cl >= old_end) {
+            cl += d;
+        } else {
+            continue;  // (an end of it was in what was cut)
+        }
+        pairs[keep++] = {o, cl};
+    }
+    pairs.resize(keep);
+    const i64 rows = static_cast<i64>(e.new_end_row) - static_cast<i64>(e.old_end_row);
+    keep = 0;
+    for (SyntaxFold f : folds) {
+        if (e.start_row > f.last) {
+        } else if (e.old_end_row < f.header) {
+            f.header = static_cast<u32>(f.header + rows), f.last = static_cast<u32>(f.last + rows);
+        } else if (e.start_row > f.header && e.old_end_row <= f.last) {  // in what folds
+            f.last = static_cast<u32>(f.last + rows);
+            if (f.last <= f.header) continue;
+        } else if (!(e.start_row == f.header && e.old_end_row == f.header && rows == 0)) {
+            continue;  // (its header line was split or joined)
+        }
+        folds[keep++] = f;
+    }
+    folds.resize(keep);
+    keep = 0;
+    for (SyntaxScope& sc : scopes) {
+        if (sc.end < start) {
+        } else if (sc.start >= old_end) {
+            sc.start += d, sc.end += d, sc.name_at += d;
+        } else if (sc.start < start && sc.end >= old_end) {
+            sc.end += d;
+            if (sc.name_at >= old_end) sc.name_at += d;
+        } else {
+            continue;
+        }
+        if (&scopes[keep] != &sc) scopes[keep] = std::move(sc);
+        ++keep;
+    }
+    scopes.resize(keep);
+}
+
 // ---------------------------------------------------------------- languages
 
 std::string Syntax::language_for(std::string_view path, std::string_view first_line, std::span<const GrammarSource> own) {
@@ -975,6 +1224,7 @@ void Syntax::on_edit(const TextEdit& e) {
     unsent_.push_back(e);
     recent_.emplace_back(version_, e);
     hl_.edit(e.start, e.old_end - e.start, e.new_end - e.start);  // keep the colours in step meanwhile
+    shape_.edit(e);
 }
 
 void Syntax::want(const Buffer& buf, u64 first, u64 last) {
@@ -1044,13 +1294,19 @@ bool Syntax::poll() {
         if (recent_[i].first <= r.version) continue;
         const TextEdit& e = recent_[i].second;
         r.hl.edit(e.start, e.old_end - e.start, e.new_end - e.start);
+        r.shape.edit(e);
         recent_[keep++] = recent_[i];
     }
     recent_.resize(keep);
     // The pass over the whole range usually confirms what the quick pass
     // over the visible lines already showed: then there is nothing to redraw.
-    const bool changed = r.has_names || !hl_.same_as(r.hl);
+    auto same_folds = [](const std::vector<SyntaxFold>& a, const std::vector<SyntaxFold>& b) {
+        return std::ranges::equal(a, b, [](const SyntaxFold& x, const SyntaxFold& y) { return x.header == y.header && x.last == y.last; });
+    };
+    const bool changed = r.has_names || !hl_.same_as(r.hl) || shape_.pairs != r.shape.pairs || !same_folds(shape_.folds, r.shape.folds) ||
+                         shape_.scopes.size() != r.shape.scopes.size();
     hl_ = std::move(r.hl);
+    shape_ = std::move(r.shape);
     return changed;
 }
 
@@ -1066,6 +1322,84 @@ void Syntax::wait_idle() {
     idle_.wait(lk, [&] { return !job_.valid && !busy_; });
 }
 
+bool Syntax::ask(const Buffer& buf, Ask& q, int wait_ms) {
+    if (!active_ || !thread_.joinable()) return false;
+    if (!unsent_.empty() || !sent_any_) want(buf, asked_first_, asked_last_);  // (the edits first: the answer is of the text as it is)
+    q.version = version_;
+    {
+        std::lock_guard lk(mu_);
+        ask_ = Ask{};
+        ask_.kind = q.kind;
+        ask_.version = q.version;
+        ask_.lo = q.lo;
+        ask_.hi = q.hi;
+    }
+    wake_.notify_one();
+    std::unique_lock lk(mu_);
+    const bool came = idle_.wait_for(lk, std::chrono::milliseconds(wait_ms), [&] { return ask_.answered; });
+    const bool ok = came && ask_.ok;
+    if (came) {
+        q.ranges = std::move(ask_.ranges);
+        q.all = std::move(ask_.all);
+    }
+    ask_ = Ask{};
+    return ok;
+}
+
+bool Syntax::ask_around(const Buffer& buf, u64 lo, u64 hi, std::vector<std::pair<u64, u64>>* out, int wait_ms) {
+    Ask q;
+    q.kind = Ask::kAround;
+    q.lo = lo;
+    q.hi = hi;
+    if (!ask(buf, q, wait_ms)) return false;
+    *out = std::move(q.ranges);
+    return true;
+}
+
+bool Syntax::ask_all(const Buffer& buf, SyntaxStructure* out, int wait_ms) {
+    Ask q;
+    q.kind = Ask::kAll;
+    if (!ask(buf, q, wait_ms)) return false;
+    *out = std::move(q.all);
+    return true;
+}
+
+// On the worker: a question, of the tree as it is (which is of the text it
+// was asked about: the edits before it were sent first).
+void Syntax::answer(Ask& q) {
+    Engine& e = *engine_;
+    q.ok = false;
+    if (!e.tree || tree_version_ != q.version) return;
+    const u32 size = e.snap.size;
+    if (q.kind == Ask::kAll) {
+        e.shape(0, size, &q.all, false);
+        q.ok = true;
+        return;
+    }
+    // The nodes around the range, each larger than the last; a node in
+    // brackets offers what is between them first.
+    const u32 lo = static_cast<u32>(std::min<u64>(q.lo, size)), hi = static_cast<u32>(std::min<u64>(q.hi, size));
+    u64 have_lo = lo, have_hi = hi;
+    auto offer = [&](u64 a, u64 b) {
+        if (a <= have_lo && b >= have_hi && (a < have_lo || b > have_hi)) {
+            q.ranges.emplace_back(a, b);
+            have_lo = a, have_hi = b;
+        }
+    };
+    for (TSNode n = ts_node_descendant_for_byte_range(ts_tree_root_node(e.tree), lo, hi); !ts_node_is_null(n); n = ts_node_parent(n)) {
+        const u32 count = ts_node_child_count(n);
+        if (count >= 2) {
+            const TSNode first = ts_node_child(n, 0), last = ts_node_child(n, count - 1);
+            const std::string_view a = ts_node_type(first), b = ts_node_type(last);
+            if (!ts_node_is_named(first) && !ts_node_is_named(last) &&
+                ((a == "(" && b == ")") || (a == "[" && b == "]") || (a == "{" && b == "}") || (a == "\"" && b == "\"")))
+                offer(ts_node_end_byte(first), ts_node_start_byte(last));
+        }
+        offer(ts_node_start_byte(n), ts_node_end_byte(n));
+    }
+    q.ok = true;
+}
+
 SyntaxStats Syntax::stats() {
     std::lock_guard lk(mu_);
     return stats_;
@@ -1077,20 +1411,35 @@ void Syntax::run() {
     thread_soon(Soon::kWaitedFor);
     for (;;) {
         Job job;
+        Ask q;
         {
             std::unique_lock lk(mu_);
-            wake_.wait(lk, [&] { return job_.valid || quit_; });
+            wake_.wait(lk, [&] { return job_.valid || (ask_.kind != Ask::kNone && !ask_.answered) || quit_; });
             if (quit_) return;
-            job = std::move(job_);
-            job_ = Job{};
-            pending_.store(false);
+            if (job_.valid) {  // (a question waits for the text before it to be parsed)
+                job = std::move(job_);
+                job_ = Job{};
+                pending_.store(false);
+            } else {
+                q.kind = ask_.kind;
+                q.version = ask_.version;
+                q.lo = ask_.lo;
+                q.hi = ask_.hi;
+            }
             busy_ = true;
         }
-        work(job);
+        if (job.valid) work(job);
+        else answer(q);
         {
             std::lock_guard lk(mu_);
             busy_ = false;
-            ++stats_.jobs;
+            if (job.valid) ++stats_.jobs;
+            else if (ask_.kind == q.kind && ask_.version == q.version && !ask_.answered) {
+                ask_.ranges = std::move(q.ranges);
+                ask_.all = std::move(q.all);
+                ask_.ok = q.ok;
+                ask_.answered = true;
+            }
         }
         idle_.notify_all();
     }
@@ -1178,6 +1527,12 @@ void Syntax::work(Job& job) {
             fail(why);
             return false;
         }
+        if (pick != e.sets || !e.names_sent) {
+            for (u32 k = 0; k < kBracketDepths; ++k) {
+                const auto it = std::ranges::find(b.names, std::string_view(kBracketStyles[k]));
+                e.bracket_style[k] = it == b.names.end() ? 0 : static_cast<u8>(it - b.names.begin());
+            }
+        }
         if (pick != e.sets) {
             const bool first = e.sets == nullptr;
             e.use(pick);
@@ -1195,6 +1550,7 @@ void Syntax::work(Job& job) {
         Result out;
         out.version = job.version;
         e.marks(&out.hl);
+        out.shape = std::move(e.shaped);
         if (!e.names_sent) {
             std::lock_guard lk(e.bundle->mu);
             out.names = e.bundle->names;
@@ -1221,6 +1577,7 @@ void Syntax::work(Job& job) {
         e.paint_hi = hi;
         e.paint_valid = true;
         e.paint_caps(lo, hi);
+        e.shape(lo, hi, &e.shaped, true);
         return true;
     };
 
@@ -1274,6 +1631,7 @@ void Syntax::work(Job& job) {
         if (!next) return;
         if (e.tree) ts_tree_delete(e.tree);
         e.tree = next;
+        tree_version_ = job.version;
         forget_walk();
         std::lock_guard lk(mu_);
         stats_.parse_ms = since(t0);
@@ -1289,6 +1647,7 @@ void Syntax::work(Job& job) {
         const u64 t0 = now_ns();
         if (!e.collect(vlo, vhi, gone)) return;
         e.paint_caps(vlo, vhi);
+        e.shape(vlo, vhi, &e.shaped, true);
         send();
         std::lock_guard lk(mu_);
         stats_.visible_ms = since(t0);

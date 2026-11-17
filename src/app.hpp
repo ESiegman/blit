@@ -301,6 +301,20 @@ private:
     void grammar_install();  // the grammar of the file in front's language, fetched and built (a command)
     bool grammar_missing();  // that language has none installed: its colours are missing
     void open_config();
+    // The text's shape from its syntax tree (appshape.cpp).
+    void shape_marks(FrameDesc& fd);
+    std::string shape_dump();  // (the tests: the brackets on show, by depth, how many inks they take, and the pair at the cursor)
+    std::vector<GridDeco> shape_decos_;
+    // Expand the selection (to the tree's node around it, then its parent)
+    // and shrink it back: the nodes asked for at the first press, kept while
+    // the text and the selection stay as these left them.
+    void select_grow(bool grow);
+    struct Grow {
+        u64 doc = 0, revision = ~0ull;
+        std::pair<u64, u64> start{}, now{};  // what was selected before the first press, and after the last
+        std::vector<std::pair<u64, u64>> chain;
+        size_t at = 0;  // how many of the chain are taken
+    } grow_;
     // init.lua at the line that sets `key` (its value selected): the line
     // there, else the template's commented one made live, else a new one.
     void open_setting(const std::string& key);

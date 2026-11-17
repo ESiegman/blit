@@ -188,6 +188,7 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | Copy / cut / paste | Cmd+C / X / V | Ctrl+C / X / V (or Ctrl+Shift+C / X / V) |
 | Undo / redo | Cmd+Z / Shift+Cmd+Z | Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z |
 | Select all | Cmd+A | Ctrl+A (or Ctrl+Shift+A) |
+| Expand the selection to what the syntax tree has around it / shrink it back | Ctrl+Shift+Cmd+Right / Left | Alt+Shift+Right / Left |
 | Save / open (in a new tab) | Cmd+S / Cmd+O | Ctrl+S / Ctrl+O (or Alt+O) |
 | Save as… / save all | Cmd+Shift+S / Cmd+Option+S | Ctrl+Shift+S / Ctrl+Alt+S |
 | Open a folder | Cmd+Shift+O | Ctrl+Shift+O |
@@ -1184,6 +1185,26 @@ may use `; inherits:` lines, the `#eq?`, `#any-of?`, `#match?`,
 `#lua-match?`, `#contains?`, `#has-parent?` and `#has-ancestor?` tests and
 their `not-` forms, and `#set! priority`. A pattern that uses a test blit
 does not know is left out rather than guessed.
+
+**Brackets** the tree has (not those in a string or a comment) are
+coloured by how deep they are, in the theme's `brackets` colours round and
+round (three for the built-in themes), and the one that pairs with the
+bracket at the cursor, or just before it, is marked as a match is. Both
+come with the colours, from the same worker, for any language with a
+grammar.
+
+```lua
+blit.opt.syntax.bracket_colors = false                   -- brackets as punctuation (on)
+blit.opt.themes["rose-pine"].brackets = { "#f6c177", "#c4a7e7", "#9ccfd8" }   -- up to six
+```
+
+**Expand the selection** (Ctrl+Shift+Cmd+Right) selects the smallest thing
+the tree has around the selection or the cursor (a name, then the
+expression it is in, the statement, the block, the function...), larger at
+each press; in brackets, what is between them comes before the brackets
+with it. **Shrink the selection** (Ctrl+Shift+Cmd+Left) goes back the way it
+came. With Vim's modes on it is Visual mode. Without a grammar it is the
+word, then its line, then the whole text.
 
 `blit --info` prints which `init.lua`, theme and font were picked, the
 cell size, which characters the font can join, and where the italic and bold

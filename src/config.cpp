@@ -79,6 +79,7 @@ ThemeColors rose_pine(u32 base, u32 surface, u32 text, u32 highlight_med, u32 hi
     t.popup = hex(surface);
     t.popup_border = hex(highlight_high);
     t.guides = guide_colours(base, {rose, gold, foam, iris, pine, love});
+    t.brackets = {hex(gold), hex(iris), hex(foam)};
     set_all(t, {
         {"comment", subtle}, {"comment.error", love}, {"comment.warning", gold}, {"comment.todo", rose}, {"comment.note", pine},
         {"string", gold}, {"string.escape", pine}, {"string.regexp", iris}, {"string.special.url", iris},
@@ -138,6 +139,7 @@ void add_builtin_themes(Config& c) {
         {"diff.delta", 0xe5c07b},
     });
     c.themes["blit-dark"].guides = guide_colours(0x1c1d21, {0x61afef, 0xe5c07b, 0x98c379, 0xc678dd, 0xe06c75, 0x56b6c2});
+    c.themes["blit-dark"].brackets = {hex(0xe5c07b), hex(0xc678dd), hex(0x61afef)};
     const Sty plain_styles = {{"comment", "italic"}, {"markup.italic", "italic"}, {"markup.strong", "bold"},
                               {"markup.heading", "bold"}, {"markup.link.url", "underline"}, {"markup.strikethrough", "strikethrough"}};
     style_all(c.themes["blit-dark"], plain_styles);
@@ -154,6 +156,7 @@ void add_builtin_themes(Config& c) {
         {"diff.delta", 0xa87b00},
     });
     c.themes["blit-light"].guides = guide_colours(0xffffff, {0x325cc0, 0xa87b00, 0x448c27, 0xa626a4, 0xca3c2c, 0x0184bc});
+    c.themes["blit-light"].brackets = {hex(0xa87b00), hex(0xa626a4), hex(0x325cc0)};
     style_all(c.themes["blit-light"], plain_styles);
     //                                  base      surface   text      hl med    hl high   muted     subtle    love      gold      rose      pine      foam      iris
     c.themes["rose-pine"] = rose_pine(0x191724, 0x1f1d2e, 0xe0def4, 0x403d52, 0x524f67, 0x6e6a86, 0x908caa, 0xeb6f92, 0xf6c177, 0xebbcba, 0x31748f, 0x9ccfd8, 0xc4a7e7);
@@ -444,8 +447,8 @@ struct Parser {
                 return;
             }
         }
-        if (key == "syntax.italic" || key == "syntax.bold") {
-            if (!as_bool(v, key == "syntax.italic" ? &c.syntax_italic : &c.syntax_bold))
+        if (key == "syntax.italic" || key == "syntax.bold" || key == "syntax.bracket_colors") {
+            if (!as_bool(v, key == "syntax.italic" ? &c.syntax_italic : key == "syntax.bold" ? &c.syntax_bold : &c.syntax_brackets))
                 warn(std::string(key) + " should be true or false");
             return;
         }
@@ -496,6 +499,19 @@ struct Parser {
                 }
                 if (!ok) return warn(std::string(key) + " should be a list of one to six colours like [\"#eb6f92\", \"#f6c177\"]");
                 t.guides = std::move(colours);
+                return;
+            }
+            if (field == "brackets") {
+                std::vector<std::string> names;
+                std::vector<Rgb> colours;
+                bool ok = as_string_array(v, &names) && names.size() <= 6;
+                for (const std::string& n : names) {
+                    Rgb rgb{};
+                    ok = ok && parse_color(n, &rgb);
+                    colours.push_back(rgb);
+                }
+                if (!ok) return warn(std::string(key) + " should be a list of up to six colours like [\"#f6c177\", \"#c4a7e7\"]");
+                t.brackets = std::move(colours);
                 return;
             }
         }
@@ -725,6 +741,7 @@ const Getter kGetters[] = {
     BLIT_GET("syntax.auto_install", flag(c.syntax_auto_install)),
     BLIT_GET("syntax.italic", flag(c.syntax_italic)),
     BLIT_GET("syntax.bold", flag(c.syntax_bold)),
+    BLIT_GET("syntax.bracket_colors", flag(c.syntax_brackets)),
     BLIT_GET("lsp.enabled", flag(c.lsp)),
     BLIT_GET("lsp.max_file_mb", num(c.lsp_max_mb)),
     BLIT_GET("lsp.completion", flag(c.lsp_completion)),

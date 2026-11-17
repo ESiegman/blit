@@ -86,6 +86,7 @@
 -- blit.opt.syntax.query_dirs = {}        -- more folders with queries, searched first
 -- blit.opt.syntax.italic = true          -- false: nothing is drawn in italics, whatever a theme says
 -- blit.opt.syntax.bold = true            -- the same for bold
+-- blit.opt.syntax.bracket_colors = true  -- brackets coloured by how deep they are
 
 -- Built in are only C, C++ (HIP files too) and Python, and CMake, Make,
 -- JSON, TOML, YAML, Markdown, shell scripts and Lua. Any other language is
