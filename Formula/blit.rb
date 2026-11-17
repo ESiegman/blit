@@ -16,6 +16,10 @@ class Blit < Formula
   depends_on "sdl3"
   depends_on "tree-sitter"
 
+  # Homebrew's cleaning of the keg breaks the bundle's signature (its seal
+  # over Contents): blit.app is left as it was built and signed.
+  skip_clean "blit.app"
+
   fails_with :clang do
     cause "blit is C++26, built with GCC (16 or later)"
   end
