@@ -168,6 +168,19 @@ public:
     const std::string& path() const { return path_; }
 
 private:
+    // Who is at the other end of a local socket (-1 if that cannot be told):
+    // BSD's call on macOS, the socket's credentials on Linux.
+    static uid_t peer_uid(int c) {
+#if defined(__linux__)
+        ucred cred{};
+        socklen_t len = sizeof cred;
+        return ::getsockopt(c, SOL_SOCKET, SO_PEERCRED, &cred, &len) == 0 ? cred.uid : static_cast<uid_t>(-1);
+#else
+        uid_t uid = 0;
+        gid_t gid = 0;
+        return ::getpeereid(c, &uid, &gid) == 0 ? uid : static_cast<uid_t>(-1);
+#endif
+    }
     void serve(std::stop_token stop) {
         while (!stop.stop_requested()) {
             pollfd p{fd_, POLLIN, 0};
@@ -181,9 +194,7 @@ private:
     }
     // One question: read it, wait for the answer, send it back.
     void one(int c, std::stop_token& stop) {
-        uid_t uid = 0;
-        gid_t gid = 0;
-        if (::getpeereid(c, &uid, &gid) != 0 || uid != ::getuid()) return;  // (only this user's programs are answered)
+        if (peer_uid(c) != ::getuid()) return;  // (only this user's programs are answered)
         std::string prompt;
         char buf[512];
         for (;;) {
@@ -557,6 +568,8 @@ struct Remote::Impl {
         posix_spawnattr_init(&attr);
 #if defined(POSIX_SPAWN_CLOEXEC_DEFAULT)
         posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
+#elif defined(__GLIBC__)
+        posix_spawn_file_actions_addclosefrom_np(&fa, 3);  // (glibc: the same, as the last of the file actions)
 #endif
         const int rc = ::posix_spawnp(&ssh, argv[0], &fa, &attr, argv.data(), envp.data());
         posix_spawnattr_destroy(&attr);

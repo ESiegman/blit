@@ -2404,6 +2404,41 @@ against 1.17 to 1.21 µs (one run each way higher), fill 2.79 to 2.88
 against 2.88 to 3.04 µs. A tenth of a microsecond more layout a frame,
 0.2% of it.
 
+### Round 45: Linux, with a Vulkan renderer
+
+Made by an agent of its own in a copy of `main` at 7ca4327, built and
+tested over ssh on an Arch machine (Ryzen 9 9950X3D, Radeon RX 7900 XT on
+RADV, Vulkan 1.4, GCC 16.2); merged with no conflict. All 20 suites pass
+there and on the Mac, and both build with no warning.
+
+Linux, real-200k.cpp, offscreen 2560x1600:
+
+| | Frames a second | CPU p50 | Fill p50 |
+|---|---:|---:|---:|
+| scroll | 25,500 to 26,900 | 29 to 31 µs (about 22 waiting on the GPU) | 1.4 to 1.7 µs |
+| type | 25,200 to 26,000 | 26 to 30 µs | 1.2 to 2.1 µs |
+| scroll, the cells in the GPU's memory | 1,025 | 914 µs | 570 µs |
+
+- **The cells live in cached CPU memory.** The grid reads back what it
+  writes (a row's last place, marks over the cell before), and in the
+  GPU's own memory, write-combined and uncached for the CPU, filling the
+  grid took 570 µs instead of 1.4.
+- **Two images or three** is chosen by waiting for the previous present
+  (`VK_KHR_present_wait`), not by building the swapchain again each time
+  scrolling starts or stops.
+- A window, 3804x2073 on Hyprland at 160 Hz: `pace` 160.0 Hz with 0 to 1
+  late frames of 640, CPU p50 25 µs; start-up, the GPU ready at 17 to 23
+  ms and the first frame out at 24.6 ms, the pipelines from the cache in
+  0.27 ms. `keypress`: 410 to 496 µs to submit, against 123 to 143 µs on the
+  Mac; about 200 to 250 µs of it is a stall at a random place while the
+  frame is recorded, right after the pause before each key, which looks
+  like the CPU's powersave governor waking (recording takes 5 µs when the
+  CPU is busy). Left for later.
+- The Mac, before and after, turn about in one sitting (on battery, Low
+  Power Mode): scrolling about 9,900 against 10,070 frames a second, CPU
+  p50 15.3 to 18.0 against 15.5 to 16.2 µs, fill p50 2.6 to 2.8 against 2.6
+  to 2.7 µs, typing CPU p50 40.2 / 41.3 against 40.2 / 41.9 µs. No change.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

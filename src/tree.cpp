@@ -569,11 +569,18 @@ bool FileTree::trash(Node* node, std::string* err) {
     const std::string bin = other && *other ? std::string(other) : std::string(home ? home : "") + "/.Trash";
     const std::string info_dir;
 #elif defined(__linux__)
-    const char* data = std::getenv("XDG_DATA_HOME");
-    const std::string base = (data && *data ? std::string(data) : std::string(home ? home : "") + "/.local/share") + "/Trash";
-    const std::string bin = base + "/files", info_dir = base + "/info";
+    // The desktop's Trash: the thing itself in files/, where it came from in
+    // info/. (The tests' folder takes the things straight, as a Mac's does.)
+    std::string bin, info_dir;
+    if (other && *other) {
+        bin = other;
+    } else {
+        const char* data = std::getenv("XDG_DATA_HOME");
+        const std::string base = (data && *data ? std::string(data) : std::string(home ? home : "") + "/.local/share") + "/Trash";
+        bin = base + "/files", info_dir = base + "/info";
+        SDL_CreateDirectory(info_dir.c_str());
+    }
     SDL_CreateDirectory(bin.c_str());
-    SDL_CreateDirectory(info_dir.c_str());
 #else
     const std::string bin, info_dir;
 #endif

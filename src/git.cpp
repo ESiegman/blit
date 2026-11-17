@@ -996,6 +996,8 @@ Ran run_git(Child& child, const std::string& program, const std::string& root, c
     posix_spawnattr_init(&attr);
 #if defined(POSIX_SPAWN_CLOEXEC_DEFAULT)
     posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
+#elif defined(__GLIBC__)
+    posix_spawn_file_actions_addclosefrom_np(&fa, 3);  // (glibc: the same, as the last of the file actions)
 #endif
     pid_t pid = 0;
     const int rc = posix_spawn(&pid, program.c_str(), &fa, &attr, argv.data(), envp.data());

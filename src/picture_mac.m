@@ -283,6 +283,8 @@ void blit_frames_free(BlitFrames* f) {
 
 // ---------------------------------------------------------------- the web
 
+const char* blit_picture_readers(void) { return "ImageIO, AppKit (SVG), PDFKit and CoreGraphics (PDF)"; }
+
 int blit_fetch(const char* url, int timeout_ms, size_t max_bytes, char** data, size_t* size, char* err, size_t err_size) {
     *data = NULL;
     *size = 0;

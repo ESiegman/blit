@@ -186,7 +186,7 @@ blit.map("n", "<C-j>", function() print("ctrl j") end)
 blit.map("n", "<F5>", function() print("f5") end)
 blit.map("n", "<S-Tab>", function() print("shift tab") end)
 EOF
-run "key:cmd+K;key:ctrl+J;key:F5;key:shift+Tab"
+run "key:gui+K;key:ctrl+J;key:F5;key:shift+Tab"
 check "Cmd, Ctrl, a function key, Shift with Tab" 'cmd k ; ctrl j ; f5 ; shift tab'
 fresh
 init <<'EOF'
@@ -212,7 +212,7 @@ init <<'EOF'
 blit.map("i", "<D-k>", function() print("cmd k, no modes") end)
 blit.map("i", "ab", "X")
 EOF
-run "key:cmd+K;text:ab;text:a;luawait:1100;lua:print(blit.lines(0, 1, 1)[1])"
+run "key:gui+K;text:ab;text:a;luawait:1100;lua:print(blit.lines(0, 1, 1)[1])"
 check "without Vim's modes the Insert mode mappings are the ones" 'cmd k, no modes ; Xaone'
 fresh
 init <<'EOF'

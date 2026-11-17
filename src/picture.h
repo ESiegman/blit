@@ -29,6 +29,8 @@ int blit_picture_read(const void* data, size_t size, int max_side, BlitPicture* 
  * drawn again, w by h pixels. */
 int blit_picture_draw(const void* data, size_t size, int w, int h, BlitPicture* out, char* err, size_t err_size);
 void blit_picture_free(BlitPicture* p);
+/* What reads them here, in words ("" where nothing does): for --info. */
+const char* blit_picture_readers(void);
 
 /* An animation's frames (a GIF, an animated PNG, WebP or HEIC): each the
  * whole picture as it is shown then, one after another. */

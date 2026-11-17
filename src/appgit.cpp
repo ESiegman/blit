@@ -1100,7 +1100,7 @@ void App::git_do(u32 action, const std::string& arg) {
                 g.input = 1;
                 g.pick(g.first(kRowMessage, 0));
                 g.top = 0;
-                g.note = "Type a message for the commit, then Cmd+Enter";
+                g.note = "Type a message for the commit, then " + key_words("Cmd+Enter");
                 g.note_bad = false;
                 break;
             }

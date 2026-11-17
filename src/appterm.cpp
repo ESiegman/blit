@@ -989,8 +989,13 @@ bool App::term_key(const SDL_KeyboardEvent& k) {
     TermView& v = *pane_->doc->term;
     const bool cmd = k.mod & kPrimaryMod, ctrl = k.mod & SDL_KMOD_CTRL, alt = k.mod & SDL_KMOD_ALT, shift = k.mod & SDL_KMOD_SHIFT;
     if (v.keep && k.key == SDLK_F8 && !ctrl && !alt && !(k.mod & SDL_KMOD_GUI)) return false;  // (a build's output: F8 is the editor's, its problems)
-    // The editor's own shortcuts stay its (Cmd+W, Cmd+T, Cmd+1 ...), but for copying and pasting.
-    if (cmd && kPrimaryMod == SDL_KMOD_GUI) {
+    // The editor's own shortcuts stay its (Cmd+W, Cmd+T, Cmd+1 ...), but for
+    // copying, pasting, choosing all and clearing. Where Ctrl is the editor's
+    // key those are Ctrl+Shift's, as in other terminals, and Ctrl alone is
+    // the program's (Ctrl+F4 still closes the tab).
+    if (kCtrlShared && ctrl && !shift && !alt && k.key == SDLK_F4) return false;
+    if (kCtrlShared && ctrl && alt && (k.key == SDLK_LEFT || k.key == SDLK_RIGHT || k.key == SDLK_UP || k.key == SDLK_DOWN)) return false;  // (the splits)
+    if (kCtrlShared ? ctrl && shift : cmd) {
         if (k.key == SDLK_C) return term_copy(v), true;
         if (k.key == SDLK_V) return term_paste(v), true;
         if (k.key == SDLK_A) {  // everything, the history too (then Cmd+C)
@@ -1011,12 +1016,7 @@ bool App::term_key(const SDL_KeyboardEvent& k) {
             dirty_ = true;
             return true;
         }
-        return false;
-    }
-    if (kPrimaryMod == SDL_KMOD_CTRL && ctrl && shift) {  // (where Ctrl is the editor's key: Ctrl+Shift is the editor's, as in other terminals)
-        if (k.key == SDLK_C) return term_copy(v), true;
-        if (k.key == SDLK_V) return term_paste(v), true;
-        if (k.key != SDLK_PAGEUP && k.key != SDLK_PAGEDOWN) return false;
+        if (!kCtrlShared || (k.key != SDLK_PAGEUP && k.key != SDLK_PAGEDOWN)) return false;  // (Shift+Page Up there is still the history)
     }
     if (shift && (k.key == SDLK_PAGEUP || k.key == SDLK_PAGEDOWN)) {  // the history
         std::lock_guard lock(v.mu);

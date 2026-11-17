@@ -18,6 +18,7 @@
 #include <string>
 #include <string_view>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 #include "common.hpp"
@@ -36,6 +37,10 @@ struct FontSpec {
     bool ligatures = false;
     std::vector<std::string> features;  // OpenType features, e.g. "ss01", "zero"
     u32 styles = 0;                 // bit s set: prepare style s right away (see Font::kItalic)
+    // The cell a 26-pixel font has, whatever the font's own (other sizes in
+    // proportion): the tests', so that a machine's fonts do not move their
+    // mouse positions and rows (BLIT_CELL, Debug builds). 0: the font's.
+    int cell_w26 = 0, cell_h26 = 0;
 };
 
 class Font {
@@ -203,6 +208,9 @@ private:
     void draw_tofu(u32 slot, u32 width);
     void draw_icon(u32 id, u32 slot);
     FT_Face face_for(u32 cp, u32* glyph_index);
+#if BLIT_FONTCONFIG
+    FT_Face fallback_for(u32 cp);  // a font fontconfig knows that has it (font.cpp)
+#endif
     FT_Face open_face(const std::string& path, int index);
     void open_style(u32 style);
     void setup_ascii(u32 style);
@@ -232,6 +240,9 @@ private:
     FT_Face face_ = nullptr;
     std::vector<FT_Face> fallbacks_;
     bool fallbacks_loaded_ = false;
+#if BLIT_FONTCONFIG
+    std::unordered_set<u32> asked_;  // characters fontconfig has been asked for a font for
+#endif
     std::string path_, family_;
     float px_ = 0;
     int load_flags_ = 0;

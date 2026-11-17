@@ -103,7 +103,9 @@ got="$got / $said"
 check "round the end, and Shift+F4 back" '>[a.cpp b.py d.cpp*] / blit: Reference 4 of 4'
 run "key:Right;key:Right;key:Right;key:Right;key:Right;key:shift+F12;wait:200;key:Return;key:cmd+P;frame;key:Escape;key:F4;dump"
 got="$got / $said"
-check "another list made since: F4 is Search in files' again" '>[a.cpp*] / blit: No search in files yet: ⇧⌘F'
+search_keys='Ctrl+Shift+F'  # (as the bottom line writes Search in files' keys: symbols on a Mac)
+[ "$(uname -s)" = Darwin ] && search_keys='⇧⌘F'
+check "another list made since: F4 is Search in files' again" ">[a.cpp*] / blit: No search in files yet: $search_keys"
 with vim "text:w;text:g;text:r;wait:200;finddump"
 check "Vim's gr lists them too" 'pick [] 4 : >a.cpp:1  int shared = 1; // ERROR a.cpp:3  WARN shared   b.py:1  shared = 2  # HINT d.cpp:1  shared in d, not open'
 run "key:Down;key:End;key:shift+F12;wait:200;finddump"

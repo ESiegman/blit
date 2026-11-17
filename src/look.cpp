@@ -19,6 +19,7 @@ const Named kKeys[] = {
     {"Right", 0x2192},  {"PageUp", 0x21DE},   {"PageDown", 0x21DF}, {"Home", 0x2196},  {"End", 0x2198},
 };
 
+#if defined(__APPLE__)  // (symbols are a Mac's: elsewhere keys are named in words)
 void append_utf8(std::string& out, u32 cp) {
     if (cp < 0x80) {
         out += static_cast<char>(cp);
@@ -66,14 +67,36 @@ std::string chord_symbols(std::string_view chord, Font& font) {
     out += key;
     return out;
 }
+#endif
 
 }  // namespace
 
+std::string key_words(std::string_view keys) {
+#if defined(__APPLE__)
+    return std::string(keys);
+#else
+    std::string out;
+    for (size_t at = 0; at < keys.size();) {
+        if (keys.substr(at).starts_with("Cmd+")) {
+            if (!out.ends_with("Ctrl+")) out += "Ctrl+";  // ("Cmd+Ctrl+": one Ctrl)
+            at += 4;
+        } else if (keys.substr(at).starts_with("Option+")) {
+            out += "Alt+";
+            at += 7;
+        } else {
+            out += keys[at++];
+        }
+    }
+    return out;
+#endif
+}
+
 std::string key_symbols(std::string_view keys, Font& font) {
-    // (Symbols on a Mac, and only where they can all be drawn: else the words.)
+    // (Symbols on a Mac, and only where they can all be drawn: else the
+    // words, which elsewhere are Ctrl's and Alt's.)
 #if !defined(__APPLE__)
     (void)font;
-    return std::string(keys);
+    return key_words(keys);
 #else
     static constexpr u32 kMods[] = {0x2318, 0x21E7, 0x2325, 0x2303};
     for (const u32 m : kMods)

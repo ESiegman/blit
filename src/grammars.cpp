@@ -150,6 +150,8 @@ int run(const std::vector<std::string>& argv, std::string* output) {
     posix_spawnattr_init(&attr);
 #if defined(POSIX_SPAWN_CLOEXEC_DEFAULT)
     posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
+#elif defined(__GLIBC__)
+    posix_spawn_file_actions_addclosefrom_np(&fa, 3);  // (glibc: the same, as the last of the file actions)
 #endif
     pid_t pid = 0;
     const int rc = posix_spawnp(&pid, args[0], &fa, &attr, args.data(), environ);

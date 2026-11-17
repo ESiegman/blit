@@ -19,6 +19,13 @@ printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/ini
 export BLIT_INIT="$dir/init.lua" BLIT_RECENT_FILE="$dir/recent" BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T"
 # The same shell everywhere, with a prompt that is the same too.
 export BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i"
+# The editor's keys in a terminal: Cmd's on a Mac; elsewhere Ctrl alone is
+# the program's, and copying, pasting and closing are Ctrl+Shift+C and V and
+# Ctrl+F4 (README.md, "Keys without Cmd").
+case $(uname -s) in
+    Darwin) copy=cmd+c paste=cmd+v close=cmd+W ;;
+    *) copy=ctrl+shift+c paste=ctrl+shift+v close=ctrl+F4 ;;
+esac
 
 failed=0
 check() {
@@ -48,7 +55,7 @@ check "the alternate screen (the cursor on the row it was on)" 'FULLSCREEN$ @1,1
 run "term;frame;termwait:\$;text:printf '\\033[?1049h\\033[2J%s%s' FULL SCREEN;key:Return;termwait:FULLSCREEN;text:printf '\\033[?1049l%s%s' BA CK;key:Return;termwait:BACK;termdump"
 case "$got" in *"FULL SCREEN|BACK\$ "*) got="the shell's screen as it was" ;; esac
 check "and back from it" "the shell's screen as it was"
-run "term;frame;termwait:\$;text:echo copy-m''e;key:Return;termwait:copy-me;click:24,52,2;release;key:cmd+c;key:cmd+v;termwait:\$ copy-me;termdump"
+run "term;frame;termwait:\$;text:echo copy-m''e;key:Return;termwait:copy-me;click:24,52,2;release;key:$copy;key:$paste;termwait:\$ copy-me;termdump"
 check "a word chosen with a double click, copied, and pasted after the prompt" "\$ echo copy-m''e|copy-me|\$ copy-me @2,9 15x74"
 run "term;frame;termwait:\$;text:exit;key:Return;termend;frame;dump"
 check "the shell ends: its tab goes" '>[untitled*]'
@@ -94,8 +101,12 @@ check "they scroll with the text" '7|8|9|10|11|12|13|14|15|16|17|18|19|20|$ @14,
 # (A PNG, in parts of 4096 bytes, as kitty's protocol has them sent: blit's own icon, 1024 pixels square, in eight columns.)
 perl -MMIME::Base64 -e 'local $/; open my $f, "<", $ARGV[0] or die; my @c = unpack("(A4096)*", encode_base64(<$f>, ""));
     printf "\e_G%s;%s\e\\", ($_ == 0 ? "a=T,f=100,i=9,q=2,c=8," : "") . "m=" . ($_ < $#c ? 1 : 0), $c[$_] for 0 .. $#c' "$here/../res/blit.png" >"$dir/work/png.txt"
-runall "term;frame;termwait:\$;text:cat png.txt && echo do''ne;key:Return;termwait:done;frame;termdump"
-check "a PNG sent in parts" "\$ cat png.txt && echo do''ne|        done|\$ @5,2 15x74 picture 1024x1024@1,0"
+if "$blit" --offscreen 800x600 --info 2>/dev/null | grep -q '^pictures    none'; then
+    echo "a PNG sent in parts: skipped, blit reads no pictures on this system yet"
+else
+    runall "term;frame;termwait:\$;text:cat png.txt && echo do''ne;key:Return;termwait:done;frame;termdump"
+    check "a PNG sent in parts" "\$ cat png.txt && echo do''ne|        done|\$ @5,2 15x74 picture 1024x1024@1,0"
+fi
 
 # Ctrl+`: the terminals' split along the bottom (the build's output's too).
 # (key:space before typing: a window sends a key before its text, and the
@@ -120,9 +131,9 @@ run "$open;key:ctrl+shift+\`;frame;termwait:\$;dump"
 check "Ctrl+Shift+\`: another terminal there" 'V([untitled*] / >[Terminal Terminal*])0.70'
 run "$open;text:sleep 1 && exit;key:Return;key:ctrl+\`;wait:2500;termdump;key:ctrl+\`;frame;termwait:\$;dump"
 check "a shell that exits while hidden goes; Ctrl+\` then opens a new one" 'V([untitled*] / >[Terminal*])0.70'
-run "$open;key:cmd+W;asked"
+run "$open;key:$close;asked"
 check "closing a terminal with only its shell: nothing asked" 'nothing asked'
-run "$open;text:$busy;key:Return;termwait:running;key:cmd+W;asked"
+run "$open;text:$busy;key:Return;termwait:running;key:$close;asked"
 check "closing one whose program still runs: asked first" "'sleep 30' is still running in this terminal. Close it?"
 run "$open;text:$busy;key:Return;termwait:running;key:ctrl+shift+\`;frame;termwait:\$;key:space;text:$busy;key:Return;termwait:running;key:ctrl+\`;key:cmd+Q;asked"
 check "quitting: the programs still running counted, hidden ones too" '2 programs are still running in terminals. Quit and end them?'

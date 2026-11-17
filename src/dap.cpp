@@ -91,6 +91,8 @@ bool Dap::start(const std::vector<std::string>& argv, const std::string& dir, st
         posix_spawnattr_init(&attr);
 #if defined(POSIX_SPAWN_CLOEXEC_DEFAULT)
         posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
+#elif defined(__GLIBC__)
+        posix_spawn_file_actions_addclosefrom_np(&fa, 3);  // (glibc: the same, as the last of the file actions)
 #endif
         std::vector<std::string> words = argv;
         std::vector<char*> args;

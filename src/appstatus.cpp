@@ -17,6 +17,7 @@
 // frame that changes nothing in it costs a comparison of a few numbers.
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <utility>
 #include <cstdio>
 #include <string>
@@ -50,6 +51,7 @@ struct Seg {
     bool shrink = false;  // a path's folders: shortened from the start before anything goes
     u32 tone = 0;         // a lit run behind it, in this of the bar's tones (0: none)
     u32 least = 0;        // the columns it takes at the least (the mode's: the longest name's, so that what follows stays put)
+    u32 icon = 0;         // the bytes of its text that are an icon and its space (the font's, where it has one)
 };
 
 }  // namespace
@@ -238,6 +240,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                     const char* icon = font.has(0x21C4) ? "\xE2\x87\x84 " : "";
                     Seg s;
                     s.action = kNone;
+                    s.icon = static_cast<u32>(std::strlen(icon));
                     if (st == Remote::kReady) {
                         s.text = icon + host;
                         s.in = ink::kText;
@@ -258,6 +261,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
             if (g.repo) {
                 const char* branch_icon = font.has(0xE0A0) ? "\xEE\x82\xA0 " : font.has(0x2387) ? "\xE2\x8E\x87 " : "";
                 u.left.push_back({std::string(branch_icon) + (g.branch.empty() ? "(" + g.head + ")" : g.branch), ink::kText, kGitTab});
+                u.left.back().icon = static_cast<u32>(std::strlen(branch_icon));
                 std::string how;
                 auto also = [&](const std::string& part) {
                     if (!how.empty()) how += ' ';
@@ -388,7 +392,11 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
             return n;
         };
         auto over = [&] { return static_cast<i64>(width(u.left)) + static_cast<i64>(width(u.right)) + 3 - static_cast<i64>(cols); };
-        // First what is barely needed ("(no colours)": the rest stays as it would be without it).
+        // First the icons (a font's own pictures for a branch, another
+        // machine): the words beside them say it without them.
+        for (Seg& s : u.left)
+            if (s.icon && over() > 0) s.text.erase(0, s.icon), s.icon = 0;
+        // Then what is barely needed ("(no colours)": the rest stays as it would be without it).
         for (size_t i = u.right.size(); i-- > 0 && over() > 0;)
             if (u.right[i].keep <= 1) u.right.erase(u.right.begin() + static_cast<std::ptrdiff_t>(i));
         // Then the path's folders, from their start ("…/src/"), and if

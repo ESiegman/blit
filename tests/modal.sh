@@ -61,19 +61,19 @@ run "frame;text:/;text:lin;key:Return;text:n;vimdump"
 check "Return keeps it; n wraps round to it again" 'NORMAL | search hit BOTTOM, continuing at TOP | 2:8 | second line'
 run "frame;text:/;text:lin;key:Escape;vimdump"
 check "Esc gives it up" 'NORMAL |  | 1:1 | hello world'
-run "frame;text:j;text:w;key:cmd+F;vimdump"
+run "frame;text:j;text:w;keyof:Find in this file;vimdump"
 check "Cmd+F: / with the word under the cursor on it, selected" 'COMMAND | /[line] | 2:8 | second line'
-run "frame;text:j;text:w;key:cmd+F;text:th;vimdump"
+run "frame;text:j;text:w;keyof:Find in this file;text:th;vimdump"
 check "what is typed takes its place" 'COMMAND | /th | 3:5 |     third'
-run "frame;text:j;text:w;key:cmd+F;key:Backspace;vimdump"
+run "frame;text:j;text:w;keyof:Find in this file;key:Backspace;vimdump"
 check "Backspace clears it, and the line stays open" 'COMMAND | / | 2:8 | second line'
-run "frame;text:j;text:w;key:cmd+F;key:Right;text:s;vimdump"
+run "frame;text:j;text:w;keyof:Find in this file;key:Right;text:s;vimdump"
 check "an arrow keeps it, to be typed onto" 'COMMAND | /lines | 2:8 | second line'
-run "frame;text:v;text:e;key:cmd+F;key:Return;vimdump"
+run "frame;text:v;text:e;keyof:Find in this file;key:Return;vimdump"
 check "from Visual mode it is what is selected; Enter looks for it" 'NORMAL | search hit BOTTOM, continuing at TOP | 1:1 | hello world'
-run "frame;open:$dir/e.txt;text:v;text:2;text:l;key:cmd+F;key:Return;vimdump"
+run "frame;open:$dir/e.txt;text:v;text:2;text:l;keyof:Find in this file;key:Return;vimdump"
 check "as it stands: a dot in it is a dot (it is put there as \\.)" 'NORMAL |  | 1:10 | a.b axb [a.b]'
-run "frame;open:$dir/e.txt;text:v;text:2;text:l;key:cmd+F;vimdump"
+run "frame;open:$dir/e.txt;text:v;text:2;text:l;keyof:Find in this file;vimdump"
 check "the pattern Cmd+F puts there" 'COMMAND | /[a\.b] | 1:10 | a.b axb [a.b]'
 run "frame;text:/;text:s\\w\\+d;key:Return;vimdump"
 check "a regular expression" 'NORMAL |  | 2:1 | second line'

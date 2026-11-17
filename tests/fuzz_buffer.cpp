@@ -5,6 +5,7 @@
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <sys/un.h>
+#include <sys/utsname.h>
 #include <zlib.h>
 #include <unistd.h>
 
@@ -2254,7 +2255,8 @@ void remote_test() {
     setenv("BLIT_FAKE_HOME", home.c_str(), 1);
     std::shared_ptr<Remote> r = Remote::get("box");
     check(r->wait_ready(60'000), ("remote: connected (" + r->error() + ")").c_str());
-    check(r->home() == home && r->system().starts_with("Darwin"), "remote: the agent says where home is, and what the machine is");
+    utsname here{};  // ("the machine" is this one, through the fake ssh)
+    check(uname(&here) == 0 && r->home() == home && r->system().starts_with(here.sysname), "remote: the agent says where home is, and what the machine is");
     DIR* cache = opendir((home + "/.cache/blit").c_str());
     int agents = 0;
     if (cache) {
@@ -3169,7 +3171,7 @@ void vim_test() {
                     if (same) all.push_back(at);
                 }
                 const u64 size = flat.size();
-                auto first_in = [&](u64 lo, u64 hi) {
+                auto first_in = [&](u64 lo, u64 hi) -> u64 {
                     for (u64 at : all)
                         if (at >= lo && at < hi) return at;
                     return ~0ull;

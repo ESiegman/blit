@@ -29,6 +29,12 @@ dir=$(cd "$dir" && pwd -P)
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/init.lua"
 export BLIT_INIT="$dir/init.lua" BLIT_RECENT_FILE="$dir/recent"
 pics="$here/images"
+# The end of a file: Cmd+Down on a Mac, Ctrl+End elsewhere.
+case $(uname -s) in Darwin) doc_end=cmd+Down ;; *) doc_end=ctrl+End ;; esac
+if "$blit" --offscreen 800x600 --info 2>/dev/null | grep -q '^pictures    none'; then
+    echo "images skipped: blit reads no pictures or PDFs on this system yet"
+    exit 0
+fi
 
 failed=0
 check() {
@@ -154,9 +160,9 @@ check "behind another tab: no frame drawn, nothing wakes blit" "0 frames drawn, 
 # points) is text: it opens as text, and Cmd+Shift+V shows its picture
 # beside it, drawn by the system at the size it is shown, and again when it
 # is zoomed (it stays sharp).
-run 800x600 "frame;key:cmd+shift+v;frame;imagewait;frame;dump" "$pics/shapes.svg"
+run 800x600 "frame;keyof:Preview beside the file;frame;imagewait;frame;dump" "$pics/shapes.svg"
 check "an SVG opens as text; Cmd+Shift+V shows its picture beside it" "H(>[shapes.svg*] | [Preview: shapes.svg*])0.50"
-SVG="frame;key:cmd+shift+v;frame;imagewait;frame;imagewait;frame"
+SVG="frame;keyof:Preview beside the file;frame;imagewait;frame;imagewait;frame"
 run 1200x600 "$SVG;imagedump;key:cmd+alt+Right;key:=;frame;imagewait;frame;imagedump" "$pics/shapes.svg"
 check "an SVG, drawn at the size it is shown" "shapes.svg: ready SVG 40x30 read 240x180 clear zoom 300% middle 0.50,0.50 ;; shapes.svg: ready SVG 40x30 read 300x225 clear zoom 375% middle 0.50,0.50"
 WHERE=1 run 1200x600 "$SVG;imagedump" "$pics/shapes.svg"
@@ -173,7 +179,7 @@ got=$(printf '%s' "$got" | sed -e 's/\( ;; \)*$//' -e 's/\( ;; \)\{2,\}/ ;; /g')
 check "an SVG and a GIF in the Markdown preview" "More pictures ;; ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━ ;; picture: shapes.svg 5x2 ;; picture: shapes.svg 15x6 ;; picture: anim.gif 4x2"
 cp "$pics/anim.gif" "$dir/anim.gif"
 { printf '# Far down\n\n'; i=0; while [ $i -lt 120 ]; do printf 'line %d\n\n' $i; i=$((i + 1)); done; printf '![frames](anim.gif)\n'; } >"$dir/far.md"
-run 1400x1000 "frame;mdpreview;frame;imagewait;frame;mdwait;imageframes:300;imageframes:600;key:cmd+Down;frame;mdwait;frame;imagewait;frame;imageframes:900" "$dir/far.md"
+run 1400x1000 "frame;mdpreview;frame;imagewait;frame;mdwait;imageframes:300;imageframes:600;key:$doc_end;frame;mdwait;frame;imagewait;frame;imageframes:900" "$dir/far.md"
 n=$(printf '%s' "$got" | sed -e 's/.* ;; //' -e 's/ frames drawn.*//')
 got=$(printf '%s' "$got" | sed -e 's/ ;; [0-9]* frames drawn[^;]*$//' -e 's/^[^;]* ;; //')$([ "$n" -ge 3 ] && echo " ;; then played")
 check "a GIF in the preview: played only on show" "0 frames drawn, woken 0 times ;; then played"

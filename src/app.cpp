@@ -13,6 +13,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include "picture.h"
 #include "qos.hpp"
 #include "remote.hpp"
 #endif
@@ -176,6 +177,8 @@ int App::run(const Options& opt) {
                                         : lang.empty()       ? "unknown file type"
                                                              : ("no language server installed for " + lang).c_str());
         std::printf("gpu         %s\n", gpu_.driver());
+        const char* readers = blit_picture_readers();
+        std::printf("pictures    %s\n", *readers ? readers : "none on this system yet");
         return 0;
     }
 #if BLIT_DEV
@@ -228,12 +231,17 @@ bool App::init(std::string* err) {
     // A flick on a touchpad should glide to a stop, as it does everywhere
     // else on a Mac. SDL turns that off unless asked.
     SDL_SetHint(SDL_HINT_MAC_SCROLL_MOMENTUM, cfg_.scroll_momentum ? "1" : "0");
+    const bool offscreen = opt_.off_w > 0 && opt_.off_h > 0;
+#if !defined(__APPLE__)
+    // A run with no window (the tests, a benchmark) needs no display, and
+    // may be where there is none (over ssh): SDL's driver without one.
+    if (offscreen) SDL_SetHint(SDL_HINT_VIDEO_DRIVER, "dummy");
+#endif
     if (!SDL_Init(SDL_INIT_VIDEO)) {
         *err = std::string("SDL failed to start: ") + SDL_GetError();
         return false;
     }
     t_sdl_ = now_ns();
-    const bool offscreen = opt_.off_w > 0 && opt_.off_h > 0;
 
     // The font is found, loaded and rasterized on another thread while the
     // window is being created. That needs the display scale before there is
@@ -366,6 +374,11 @@ FontSpec App::font_spec(float scale) const {
     s.ligatures = cfg_.ligatures;
     s.features = cfg_.font_features;
     s.styles = cfg_.font_styles();  // the italic and bold faces the themes use
+#if BLIT_DEV
+    // The tests' cell, whatever fonts the machine has (CMakeLists.txt sets it
+    // where macOS's own font does not give it).
+    if (const char* cell = std::getenv("BLIT_CELL"); cell && std::sscanf(cell, "%dx%d", &s.cell_w26, &s.cell_h26) != 2) s.cell_w26 = s.cell_h26 = 0;
+#endif
     return s;
 }
 
@@ -1793,6 +1806,10 @@ void App::on_key(const SDL_KeyboardEvent& k) {
         if (term_key(k)) return;   // a terminal's tab is in front (appterm.cpp)
     }
     if (script_keys_ && script_key(k)) return;  // a mapping of a script's has it (applua.cpp)
+    if (vim_owns_key(k)) {  // (Ctrl+W, Ctrl+V, Ctrl+O ... in the text, with modes on: Vim's before the editor's, where Ctrl is both)
+        vim_key(k);
+        return;
+    }
     if (const JumpFrom from = jump_from(); !find_open_ && command_key(k)) {  // the keys of the commands added in appcommands.cpp
         if (k.key == SDLK_F8) jump_if_moved(from);  // (a problem gone to: Ctrl+- comes back from it)
         return;
@@ -1803,7 +1820,7 @@ void App::on_key(const SDL_KeyboardEvent& k) {
     const i64 page = std::max(1, visible_rows() - 1);
     if (k.key == SDLK_ESCAPE && script_) script_close_floats();
 
-    if ((find_open_ || cmd) && find_key(k)) return;  // the box that finds things is open, or this opens it
+    if ((find_open_ || cmd || (kCtrlShared && (k.mod & SDL_KMOD_ALT))) && find_key(k)) return;  // the box that finds things is open, or this opens it
     if (const JumpFrom from = jump_from(); panel_key(k)) {  // the side panel had the keyboard, or it was one of its shortcuts
         jump_if_moved(from);
         return;

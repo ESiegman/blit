@@ -1168,6 +1168,8 @@ void App::lsp_typed(std::string_view text) {
     }
 }
 
+bool App::lsp_completing() const { return assist_->comp_open; }
+
 // A key press, before the editor sees it. True if it was for a popup or a
 // language-server command.
 bool App::lsp_key(const SDL_KeyboardEvent& k) {

@@ -32,7 +32,7 @@ constexpr u32 kHeadRows = 2;  // the tab bar and the line under it that names th
 
 const char* const kMenu[] = {"New file", "New folder", "Rename", "Move to Trash", "Make it the project folder",
                              "Go to the parent folder", "Choose a folder\xE2\x80\xA6", "Refresh"};
-const char* const kMenuKeys[] = {"Cmd+N", "Cmd+Shift+N", "F2", "Cmd+Backspace", "", "Cmd+Up", "", "Cmd+R"};
+const char* const kMenuKeys[] = {"Cmd+N", "Cmd+Shift+N", "F2", kCtrlShared ? "Delete" : "Cmd+Backspace", "", "Cmd+Up", "", "Cmd+R"};
 enum : u32 { kMenuNewFile, kMenuNewFolder, kMenuRename, kMenuTrash, kMenuSetRoot, kMenuParent, kMenuChoose, kMenuRefresh, kMenuCount };
 
 constexpr u32 kNoCell = 0;  // the one cell of a box that is all margin (a line)
@@ -637,7 +637,10 @@ void App::panel_menu_do(u32 item) {
 bool App::panel_key(const SDL_KeyboardEvent& k) {
     Side& s = *side_;
     const bool cmd = k.mod & kPrimaryMod, shift = k.mod & SDL_KMOD_SHIFT;
-    if (cmd && !shift && !(k.mod & SDL_KMOD_ALT) && k.key == SDLK_B) {  // show or hide (with Option it is git's blame column)
+    // Show or hide (with Option too it is git's blame column). Where Vim may
+    // have Ctrl+B (kCtrlShared), Alt+B as well.
+    const bool alt_only = (k.mod & SDL_KMOD_ALT) && !(k.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI));
+    if (k.key == SDLK_B && !shift && ((cmd && !(k.mod & SDL_KMOD_ALT)) || (kCtrlShared && alt_only))) {
         panel_toggle();
         return true;
     }

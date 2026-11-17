@@ -80,6 +80,7 @@ std::string App::chord_text(SDL_Keycode key, SDL_Keymod mod) {
     const bool mac = kPrimaryMod == SDL_KMOD_GUI;
     const u8 m = mods_of(mod);
     std::string s;
+    if (!mac && (mod & SDL_KMOD_GUI)) s += "Super+";  // (no command has it: keys looked up in the command search may)
     if (m & kP) s += mac ? "Cmd+" : "Ctrl+";
     if (m & kC) s += "Ctrl+";
     if (m & kA) s += mac ? "Option+" : "Alt+";
@@ -164,7 +165,18 @@ void App::Commands::find_next(App& a, bool forward) {
 void App::commands_create() {
     commands_ = std::make_shared<Commands>();
     std::vector<Commands::Command>& c = commands_->all;
-    auto key = [](SDL_Keycode k, u8 m = 0) { return Chord{k, m}; };
+    // Where Cmd is the editor's own key, Ctrl is free for keys of its own;
+    // elsewhere Ctrl is the editor's (a chord written with Ctrl is that
+    // key), and the keys of a Mac's Cmd+G go to F3.
+    const bool mac = kPrimaryMod == SDL_KMOD_GUI;
+    const u8 ctl = mac ? kC : kP;
+    auto key = [mac](SDL_Keycode k, u8 m = 0) { return Chord{k, mac || !(m & kC) ? m : static_cast<u8>((m & ~kC) | kP)}; };
+    // Where Vim's modes may have a command's Ctrl key (kCtrlShared, and
+    // README.md's "Keys without Cmd"), the keys it has there too.
+    auto also = [&](std::vector<Chord> keys, std::initializer_list<Chord> more) {
+        if (kCtrlShared) keys.insert(keys.end(), more);
+        return keys;
+    };
     // Keys handled elsewhere: run by sending them.
     auto sent = [&](std::string title, std::vector<Chord> keys) { c.push_back({std::move(title), std::move(keys), false, nullptr}); };
     // Keys handled here (or none at all), and what they do.
@@ -192,14 +204,9 @@ void App::commands_create() {
             });
         });
     };
-    // Where Cmd is the editor's own key, Ctrl is free for keys of its own;
-    // elsewhere Ctrl is the editor's, and the keys of a Mac's Cmd+G go to F3.
-    const bool mac = kPrimaryMod == SDL_KMOD_GUI;
-    const u8 ctl = mac ? kC : kP;
-
     // Files.
     sent("New file", {key(SDLK_N, kP), key(SDLK_T, kP)});
-    sent("Open a file\xE2\x80\xA6", {key(SDLK_O, kP)});
+    sent("Open a file\xE2\x80\xA6", also({key(SDLK_O, kP)}, {key(SDLK_O, kA)}));
     own("Open a folder\xE2\x80\xA6", {key(SDLK_O, kP | kS)}, [this] { find_open(kFindFolder); });
     own("New project\xE2\x80\xA6", {key(SDLK_N, kP | kA)}, [this] { project_anywhere(); });
     own("Connect to a server\xE2\x80\xA6", {}, [this] { find_open(kFindFolder, "ssh://"); });
@@ -207,7 +214,7 @@ void App::commands_create() {
     sent("Save", {key(SDLK_S, kP)});
     own("Save as\xE2\x80\xA6", {key(SDLK_S, kP | kS)}, [this] { save_as(); });
     own("Save all", {key(SDLK_S, kP | kA)}, [this] { save_all(); });
-    sent("Close the tab", {key(SDLK_W, kP)});
+    sent("Close the tab", also({key(SDLK_W, kP)}, {key(SDLK_F4, kP)}));
     sent("Open Settings (init.lua)", {key(SDLK_COMMA, kP)});
     own("Choose a theme\xE2\x80\xA6", {}, [this] { theme_choose(); });
     sent("Quit", {key(SDLK_Q, kP)});
@@ -215,7 +222,7 @@ void App::commands_create() {
     own("Command search", {key(SDLK_P, kP | kS)}, [this] { palette_open(); });
     sent("Go to file", {key(SDLK_P, kP)});
     sent("Search in files", {key(SDLK_F, kP | kS)});
-    own("Find in this file", {key(SDLK_F, kP)}, [this] { find_in_file(); });
+    own("Find in this file", also({key(SDLK_F, kP)}, {key(SDLK_F, kA)}), [this] { find_in_file(); });
     own("Replace in this file", {key(SDLK_F, kP | kA)}, [this] { find_in_file(true); });
     own("Replace in files", {key(SDLK_H, kP | kS)}, [this] { find_replace_in_files(); });
     // (Their keys work while a find box is open, and are its own then: Option
@@ -230,12 +237,12 @@ void App::commands_create() {
     // Editing.
     sent("Undo", {key(SDLK_Z, kP)});
     sent("Redo", {key(SDLK_Z, kP | kS), key(SDLK_Y, kP)});
-    sent("Cut", {key(SDLK_X, kP)});
-    sent("Copy", {key(SDLK_C, kP)});
-    sent("Paste", {key(SDLK_V, kP)});
-    sent("Select all", {key(SDLK_A, kP)});
+    sent("Cut", also({key(SDLK_X, kP)}, {key(SDLK_X, kP | kS)}));
+    sent("Copy", also({key(SDLK_C, kP)}, {key(SDLK_C, kP | kS)}));
+    sent("Paste", also({key(SDLK_V, kP)}, {key(SDLK_V, kP | kS)}));
+    sent("Select all", also({key(SDLK_A, kP)}, {key(SDLK_A, kP | kS)}));
     // The view.
-    sent("Show or hide the side panel", {key(SDLK_B, kP)});
+    sent("Show or hide the side panel", also({key(SDLK_B, kP)}, {key(SDLK_B, kA)}));
     sent("Show Files", {key(SDLK_E, kP | kS)});
     tab("Show Problems", {key(SDLK_M, kP | kS)}, Commands::kProblems);
     tab("Show Git", {key(SDLK_G, ctl | kS)}, Commands::kGit);
@@ -245,8 +252,8 @@ void App::commands_create() {
     sent("Make the text smaller", {key(SDLK_MINUS, kP)});
     sent("Reset text size", {key(SDLK_0, kP)});
     // Tabs.
-    sent("Go to the next tab", {key(SDLK_TAB, kC), key(SDLK_RIGHTBRACKET, kP | kS)});
-    sent("Go to the previous tab", {key(SDLK_TAB, kC | kS), key(SDLK_LEFTBRACKET, kP | kS)});
+    sent("Go to the next tab", also({key(SDLK_TAB, kC), key(SDLK_RIGHTBRACKET, kP | kS)}, {key(SDLK_PAGEDOWN, kC)}));
+    sent("Go to the previous tab", also({key(SDLK_TAB, kC | kS), key(SDLK_LEFTBRACKET, kP | kS)}, {key(SDLK_PAGEUP, kC)}));
     sent("Go to the last tab", {key(SDLK_9, kP)});
     for (int n = 1; n <= 8; ++n) sent("Go to tab " + std::to_string(n), {key(static_cast<SDL_Keycode>(SDLK_0 + n), kP)});
     // (Keys a MacBook has first: it has no Page Up or Page Down.)
@@ -264,14 +271,16 @@ void App::commands_create() {
     own("Move the tab to the split on the right", {key(SDLK_RIGHT, kP | kA | kS)}, [this] { tab_to_split(kEdgeRight); });
     own("Move the tab to the split above", {key(SDLK_UP, kP | kA | kS)}, [this] { tab_to_split(kEdgeTop); });
     own("Move the tab to the split below", {key(SDLK_DOWN, kP | kA | kS)}, [this] { tab_to_split(kEdgeBottom); });
-    own("Make the split wider", {key(SDLK_RIGHT, kP | kC)}, [this] { split_grow(true, 1); });
-    own("Make the split narrower", {key(SDLK_LEFT, kP | kC)}, [this] { split_grow(true, -1); });
-    own("Make the split taller", {key(SDLK_DOWN, kP | kC)}, [this] { split_grow(false, 1); });
-    own("Make the split shorter", {key(SDLK_UP, kP | kC)}, [this] { split_grow(false, -1); });
+    // (Where Ctrl with an arrow moves by words: Alt+Shift with it.)
+    const u8 grow = mac ? kP | kC : kA | kS;
+    own("Make the split wider", {key(SDLK_RIGHT, grow)}, [this] { split_grow(true, 1); });
+    own("Make the split narrower", {key(SDLK_LEFT, grow)}, [this] { split_grow(true, -1); });
+    own("Make the split taller", {key(SDLK_DOWN, grow)}, [this] { split_grow(false, 1); });
+    own("Make the split shorter", {key(SDLK_UP, grow)}, [this] { split_grow(false, -1); });
     // Code.
     sent("Show completions", {key(SDLK_SPACE, kC)});
     sent("Show the function's parameters", {key(SDLK_SPACE, kC | kS)});
-    sent("Show what this is", {key(SDLK_I, kP)});
+    sent("Show what this is", also({key(SDLK_I, kP)}, {key(SDLK_I, kP | kS)}));
     sent("Go to the definition", {key(SDLK_F12)});
     sent("Find references", {key(SDLK_F12, kS)});
     sent("Rename the symbol\xE2\x80\xA6", {key(SDLK_F2)});
@@ -283,7 +292,8 @@ void App::commands_create() {
     own("Go to the next problem", {key(SDLK_F8)}, [this] { problem_step(1); });
     own("Go to the previous problem", {key(SDLK_F8, kS)}, [this] { problem_step(-1); });
     // Markdown.
-    own("Preview beside the file (Markdown, or an SVG's picture)", {key(SDLK_V, kP | kS)}, [this] { preview_open(); });
+    // (Where Ctrl+Shift+V pastes, as in a terminal: Ctrl+Alt+V.)
+    own("Preview beside the file (Markdown, or an SVG's picture)", {key(SDLK_V, kCtrlShared ? kP | kA : kP | kS)}, [this] { preview_open(); });
     // Terminals: in the split along the bottom.
     own("Show or hide the terminal", {key(SDLK_GRAVE, ctl)}, [this] { term_toggle(); });
     own("New terminal", {key(SDLK_GRAVE, ctl | kS)}, [this] { term_new(); });
@@ -386,6 +396,33 @@ bool App::command_key(const SDL_KeyboardEvent& k) {
     return false;
 }
 
+bool App::command_key_now(std::string_view title, SDL_KeyboardEvent* out) {
+    if (!commands_) return false;
+    const Commands::Command* found = nullptr;
+    for (int pass = 0; pass < 2 && !found; ++pass)
+        for (const Commands::Command& c : commands_->all)
+            if (pass == 0 ? c.title == title : std::string_view(c.title).starts_with(title)) {
+                found = &c;
+                break;
+            }
+    if (!found || found->keys.empty()) return false;
+    auto event = [](const Chord& ch) {
+        SDL_KeyboardEvent e{};
+        e.type = SDL_EVENT_KEY_DOWN;
+        e.key = ch.key;
+        e.mod = keymod_of(ch.mods);
+        e.down = true;
+        return e;
+    };
+    *out = event(found->keys[0]);
+    for (const Chord& ch : found->keys)
+        if (const SDL_KeyboardEvent e = event(ch); !vim_owns_key(e)) {
+            *out = e;
+            break;
+        }
+    return true;
+}
+
 std::vector<App::PaletteItem> App::palette_items() {
     std::vector<PaletteItem> out;
     if (!commands_) return out;
@@ -425,7 +462,9 @@ void App::palette_run(u32 id) {
         ev.key = c.keys[0].key;
         ev.mod = keymod_of(c.keys[0].mods);
         ev.down = true;
+        command_sending_ = true;  // (the editor's, even where Vim has the key)
         on_key(ev);
+        command_sending_ = false;
     }
     dirty_ = true;
 }

@@ -104,10 +104,10 @@ run "a$FAMILY" "key:End;key:Backspace;$LINE"
 check "Backspace takes an emoji family whole" "a"
 
 # Words: a mark on a space belongs with the space, not with the word after it.
-run "x ${MARK}abc" "key:End;key:alt+Left;$AT;key:alt+Left;$AT"
-check "Option+Left stops at the word, not inside the space and its mark" "1:5 1:1"
-run "x ${MARK}abc" "key:End;key:alt+Backspace;$LINE"
-check "Option+Backspace takes the word and leaves the space with its mark" "x $MARK"
+run "x ${MARK}abc" "key:End;key:word+Left;$AT;key:word+Left;$AT"
+check "Option+Left (Ctrl+Left elsewhere) stops at the word, not inside the space and its mark" "1:5 1:1"
+run "x ${MARK}abc" "key:End;key:word+Backspace;$LINE"
+check "Option+Backspace (Ctrl+Backspace elsewhere) takes the word and leaves the space with its mark" "x $MARK"
 
 # Up and Down land on a character's edge, never inside it.
 run "abcdef

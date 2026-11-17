@@ -67,7 +67,7 @@ got=$(printf '%s\n' "$got" | head -1)
 check "what is typed in the file is in the preview" "Typed"
 
 # Cmd+Shift+V: the preview in a split to the right, the keyboard left with the file; again, the same preview.
-got=$("$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;key:cmd+shift+v;frame;key:cmd+shift+v;frame;dump" "$here/markdown/edge.md" 2>&1 >/dev/null | grep -v '^\[' | tail -1)
+got=$("$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;keyof:Preview beside the file;frame;keyof:Preview beside the file;frame;dump" "$here/markdown/edge.md" 2>&1 >/dev/null | grep -v '^\[' | tail -1)
 check "Cmd+Shift+V: beside it, once" "H(>[edge.md*] | [Preview: edge.md*])0.50"
 
 # At most so many seconds: timeout(1) where there is one (GitHub's macOS 26
@@ -101,7 +101,9 @@ check "a rule at the top is not front matter" "1"
 # while the setting is off (as it starts); fetched when it is on (here from
 # a server on this machine, never the network) and kept in blit's cache,
 # and drawn from there once the server has gone.
-if command -v python3 >/dev/null 2>&1; then
+if "$blit" --offscreen 800x600 --info 2>/dev/null | grep -q '^pictures    none'; then
+    echo "web pictures skipped: blit reads no pictures on this system yet"
+elif command -v python3 >/dev/null 2>&1; then
     mkdir -p "$dir/site" && cp "$(dirname "$here")/tests/images/quad.png" "$dir/site/"
     python3 -u -m http.server 0 --bind 127.0.0.1 --directory "$dir/site" >"$dir/server.log" 2>&1 &
     server=$!

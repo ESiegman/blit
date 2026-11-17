@@ -29,7 +29,24 @@ printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.edi
 export BLIT_INIT="$dir/init.lua" BLIT_RECENT_FILE="$dir/recent" BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T"
 
 failed=0
+# The variables of a stop in the order of their names: gdb lists a block's
+# own before the function's, lldb the other way round.
+sort_vars() {
+    awk 'BEGIN { RS = " ;; "; ORS = "" }
+         { n = split($0, parts, "; ")
+           for (p = 1; p <= n; p++)
+               if (parts[p] ~ /^vars: /) {
+                   m = split(substr(parts[p], 7), v, " ")
+                   for (i = 2; i <= m; i++) for (j = i; j > 1 && v[j - 1] > v[j]; j--) { t = v[j]; v[j] = v[j - 1]; v[j - 1] = t }
+                   parts[p] = "vars:"; for (i = 1; i <= m; i++) parts[p] = parts[p] " " v[i]
+               }
+           out = parts[1]; for (p = 2; p <= n; p++) out = out "; " parts[p]
+           printf "%s%s", (NR > 1 ? " ;; " : ""), out }'
+}
 check() {
+    # (The status bar's icon beside another machine is the font's, where it has one.)
+    got=$(printf '%s' "$got" | sed -e 's/⇄ //g' | sort_vars)
+    set -- "$1" "$(printf '%s' "$2" | sort_vars)"
     if [ -n "$print" ]; then
         printf '%s\n    %s\n' "$1" "$got"
     elif [ "$got" != "$2" ]; then
@@ -48,8 +65,16 @@ run "$P;break:8;key:F5;debugwait:stopped;debugdump;frame;statusdump"
 check "a breakpoint: stopped there, the stack and the variables, and its line in front" \
     'stopped (breakpoint); stack: square@8 main@15; vars: x=1 y=1 ;; count.c | Ln 8, Col 1 Spaces: 4 LF C'
 run "$P;break:8;key:F5;debugwait:stopped;key:F10;debugwait:stopped;debugdump"
+# (gdb stops at the function's closing brace on its way out, and from there
+# in the caller once the line that called it is done; lldb in the caller, in
+# the middle of that line.)
+back='stopped (step); stack: main@15; vars: total=0 i=1'
+case "$got" in *"stack: square@9 "*)
+    run "$P;break:8;key:F5;debugwait:stopped;key:F10;debugwait:stopped;key:F10;debugwait:stopped;debugdump"
+    back='stopped (step); stack: main@16; vars: total=1 i=1' ;;
+esac
 got=$(printf '%s' "$got" | sed -e 's/ start@[0-9]*//')  # (macOS's loader's frame, whose line is its own)
-check "F10 steps over (back out to the caller)" 'stopped (step); stack: main@15; vars: total=0 i=1'
+check "F10 steps over (back out to the caller)" "$back"
 run "$P;break:8;key:F5;debugwait:stopped;key:F5;debugwait:stopped;debugdump"
 check "F5 goes on to the next stop; what the program printed is there" 'stopped (breakpoint); stack: square@8 main@15; vars: x=2 y=4; output: i=1 total=1'
 run "$P;break:8;key:F5;debugwait:stopped;key:cmd+shift+y;text:x*10+y;key:Return;debugwait:stopped;debugdump"
@@ -84,7 +109,7 @@ check "one changed, one taken away" 'stopped (breakpoint); stack: square@8 main@
 
 # Every thread: the stack of each, chosen from the list in the Debug tab.
 run "debug:program=$dir/here/threads;break:22;key:F5;debugwait:stopped;debugdump;debugpanel;debugpick:threads:2;debugwait:stopped;debugdump" "$dir/here/threads.c"
-got=$(printf '%s' "$got" | sed -e 's/main@22 [^;]*;/main@22;/' -e 's/t=0x[0-9a-f]*/t=0x/')  # (what called main: the system's; where the thread is)
+got=$(printf '%s' "$got" | sed -e 's/main@22 [^;]*;/main@22;/' -e 's/t=0x[0-9a-f]*/t=0x/' -e 's/t=[1-9][0-9]*/t=0x/')  # (what called main: the system's; where the thread is, in hex or, from gdb, a number)
 check "the threads, and the second one's stack chosen" \
     'stopped (breakpoint); threads: 2, #1 shown; stack: main@22; vars: t=0x ;; stopped (breakpoint); threads: 2, #2 shown; stack: wait_here@9 worker@13; vars:'
 

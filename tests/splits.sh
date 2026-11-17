@@ -131,7 +131,10 @@ check "the terminals' split (Ctrl+\`): hidden, its programs still running" "$two
 
 check "tabs: new, next, close, and the last one closed leaves a new file" 'key:cmd+T;key:cmd+T;key:ctrl+Tab;key:cmd+W;key:cmd+W;key:cmd+W' \
     ">[untitled*]"
-check "Cmd+W on that empty file, and on a last terminal tab: blit stays, an empty file left" 'key:cmd+W;key:cmd+W;key:cmd+W;term;key:cmd+W;key:cmd+W' \
+# (In a terminal Ctrl+W is the program's where Ctrl is the editor's key: Ctrl+F4 closes the tab there.)
+close=cmd+W
+[ "$(uname -s)" = Darwin ] || close=ctrl+F4
+check "Cmd+W on that empty file, and on a last terminal tab: blit stays, an empty file left" "key:cmd+W;key:cmd+W;key:cmd+W;term;key:$close;key:$close" \
     ">[untitled*]"
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "splits ok"

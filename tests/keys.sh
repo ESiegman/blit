@@ -42,15 +42,26 @@ run() {
     INIT=
 }
 
+# The keys as the commands' list writes them: a Mac's, or those of a system
+# where Ctrl is the editor's key (README.md, "Keys without Cmd").
+if [ "$(uname -s)" = Darwin ]; then
+    split_keys='Split to the right (Cmd+\) Go to the split on the right (Cmd+Option+Right) Move the tab to the split on the right (Cmd+Option+Shift+Right) Make the split wider (Cmd+Ctrl+Right)'
+    panel_typed=cmd+b panel_keys='Show or hide the side panel (Cmd+B)'
+    next_keys='Go to the next tab (Ctrl+Tab  Cmd+Shift+])'
+else
+    split_keys='Split to the right (Ctrl+\) Go to the split on the right (Ctrl+Alt+Right) Move the tab to the split on the right (Ctrl+Alt+Shift+Right) Make the split wider (Alt+Shift+Right)'
+    panel_typed=ctrl+b panel_keys='Show or hide the side panel (Ctrl+B  Alt+B)'
+    next_keys='Go to the next tab (Ctrl+Tab  Ctrl+Shift+]  Ctrl+PageDown)'
+fi
 run "key:cmd+shift+p;text:split right;finddump"
-check "the search: commands by name, with their keys, the best first" 'commands [split right] 4 : >Split to the right (Cmd+\) Go to the split on the right (Cmd+Option+Right) Move the tab to the split on the right (Cmd+Option+Shift+Right) Make the split wider (Cmd+Ctrl+Right)'
-run "key:cmd+shift+p;text:cmd+b;finddump"
-check "keys typed: the command they are" 'commands [cmd+b] 1 : >Show or hide the side panel (Cmd+B)'
+check "the search: commands by name, with their keys, the best first" "commands [split right] 4 : >$split_keys"
+run "key:cmd+shift+p;text:$panel_typed;finddump"
+check "keys typed: the command they are" "commands [$panel_typed] 1 : >$panel_keys"
 run "key:cmd+shift+p;key:Tab;key:ctrl+Tab;finddump"
-check "Tab, then keys pressed: looked up" 'commands [Ctrl+Tab] 1 : >Go to the next tab (Ctrl+Tab  Cmd+Shift+])'
+check "Tab, then keys pressed: looked up" "commands [Ctrl+Tab] 1 : >$next_keys"
 run "key:cmd+shift+p;text:split below;key:Return;frame;dump"
 check "a command run from the search: as its keys would" 'V([notes.txt*] / >[untitled*])0.50'
-run 'key:cmd+\;key:Escape;key:cmd+ctrl+right;key:cmd+ctrl+right;frame;dump'
+run 'key:cmd+\;key:Escape;keyof:Make the split wider;keyof:Make the split wider;frame;dump'
 check "the split wider (two twentieths)" 'H([notes.txt*] | >[untitled*])0.40'
 run 'key:cmd+t;key:cmd+t;key:ctrl+shift+pageup;frame;dump'
 check "the tab one place left" '>[notes.txt untitled* untitled]'
@@ -70,11 +81,11 @@ check "a folder chosen by its path" 'folder [@/work/] 2 : >./ ../'
 # any mode, with no language server.
 run "key:cmd+p;text:long.txt;findwait;key:Return;key:cmd+p;text::40;key:Return;frame;jumpdump"
 check "Go to file and its :line go into the list" 'notes.txt:1 long.txt:1 >'
-run "key:cmd+p;text:long.txt;findwait;key:Return;key:cmd+p;text::40;key:Return;key:ctrl+-;key:ctrl+-;frame;statusdump"
+run "key:cmd+p;text:long.txt;findwait;key:Return;key:cmd+p;text::40;key:Return;keyof:Go back;keyof:Go back;frame;statusdump"
 check "Ctrl+- back to where each began, the file before too" 'notes.txt | Ln 1, Col 1 Tabs LF Plain text'
-run "key:cmd+p;text:long.txt;findwait;key:Return;key:cmd+p;text::40;key:Return;key:ctrl+-;key:ctrl+-;key:ctrl+shift+-;key:ctrl+shift+-;frame;jumpdump;statusdump"
+run "key:cmd+p;text:long.txt;findwait;key:Return;key:cmd+p;text::40;key:Return;keyof:Go back;keyof:Go back;keyof:Go forward;keyof:Go forward;frame;jumpdump;statusdump"
 check "Ctrl+Shift+- forward again, to where the walk back began" 'long.txt | Ln 40, Col 1 Tabs LF Plain text'
-run "key:cmd+shift+f;text:the word;findwait;key:Return;key:ctrl+-;frame;statusdump"
+run "key:cmd+shift+f;text:the word;findwait;key:Return;keyof:Go back;frame;statusdump"
 check "a line found by Search in files, and back" 'notes.txt | Ln 1, Col 1 Tabs LF Plain text'
 INIT="$dir/modal.lua"
 run "vim:G;key:cmd+p;text:short.txt;findwait;key:Return;vim:jjmagg'a;jumpdump" "$dir/work/long.txt"
@@ -83,10 +94,10 @@ INIT="$dir/modal.lua"
 run "vim:G;key:cmd+p;text:short.txt;findwait;key:Return;vim:jjmagg'a;vim:<C-o>;vim:<C-o>;vim:<C-o>;vimdump;vim:<C-i>;vim:<C-i>;frame;vimdump" "$dir/work/long.txt"
 check "Ctrl-O walks the same list, across files, and Ctrl-I comes back" 'NORMAL |  | 1:1 | one'
 INIT="$dir/modal.lua"
-run "vim:Ggg;vim:i;key:ctrl+-;frame;vimdump" "$dir/work/long.txt"
+run "vim:Ggg;vim:i;keyof:Go back;frame;vimdump" "$dir/work/long.txt"
 check "Ctrl+- in Insert mode too, which it stays in" 'INSERT | -- INSERT -- | 60:1 | line 60 of long'
 INIT="$dir/modal.lua"
-run "vim:G;key:cmd+p;text:short.txt;findwait;key:Return;vim:i;key:ctrl+-;frame;vimdump" "$dir/work/long.txt"
+run "vim:G;key:cmd+p;text:short.txt;findwait;key:Return;vim:i;keyof:Go back;frame;vimdump" "$dir/work/long.txt"
 check "and to another file from Insert mode (Vim starts there in Normal mode)" 'NORMAL |  | 60:1 | line 60 of long'
 
 # Every command, from the search (Quit and Close the tab end the run; the rest leave it going).

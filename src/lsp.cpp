@@ -753,6 +753,8 @@ struct Lsp::Conn::Worker {
 #if defined(POSIX_SPAWN_CLOEXEC_DEFAULT)
         // Everything else this program has open stays out of the server.
         posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
+#elif defined(__GLIBC__)
+        posix_spawn_file_actions_addclosefrom_np(&fa, 3);  // (glibc: the same, as the last of the file actions)
 #endif
 
         std::vector<char*> argv;

@@ -1,6 +1,7 @@
 // A program for the profiling tests with two threads: the second, named
 // "worker", does twice the work of the first, each in a function of its
 // own, so that which thread and which function is heavier is never in doubt.
+#define _GNU_SOURCE  // (glibc declares pthread_setname_np only then)
 #include <pthread.h>
 #include <stdio.h>
 #include <stdlib.h>

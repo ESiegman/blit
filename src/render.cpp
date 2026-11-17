@@ -178,6 +178,8 @@ bool Renderer::init(SDL_Window* win, int frames_in_flight, bool debug, std::stri
         }
         surface = SDL_Metal_GetLayer(static_cast<SDL_MetalView>(view_));
     }
+#else
+    surface = win;  // (the Vulkan side makes the window's surface itself)
 #endif
     BlitGpuShaders sh{};
     const int src = BLIT_SHADERS_COMPILED ? 0 : 1;
@@ -206,8 +208,8 @@ bool Renderer::init(SDL_Window* win, int frames_in_flight, bool debug, std::stri
 
 bool Renderer::set_present_mode(int mode) {
     if (!gpu_ || !win_) return false;
-    if (mode == kMailbox) return false;  // (Metal has none: the caller falls back to vsync)
-    return blit_gpu_set_present(gpu_, mode == kImmediate ? BLIT_PRESENT_IMMEDIATE : BLIT_PRESENT_VSYNC) != 0;
+    // (Metal has no mailbox: the caller falls back to vsync.)
+    return blit_gpu_set_present(gpu_, mode == kImmediate ? BLIT_PRESENT_IMMEDIATE : mode == kMailbox ? BLIT_PRESENT_MAILBOX : BLIT_PRESENT_VSYNC) != 0;
 }
 
 void Renderer::set_images(int n) {

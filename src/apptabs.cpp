@@ -298,6 +298,10 @@ bool App::tabs_key(const SDL_KeyboardEvent& k) {
     switch (k.key) {
         case SDLK_T: tab_new(); return true;
         case SDLK_W: tab_close(pane_->tab); return true;
+        case SDLK_F4:  // (where Vim may have Ctrl+W: closing a tab as browsers do too)
+            if (!kCtrlShared || shift) break;
+            tab_close(pane_->tab);
+            return true;
         default: break;
     }
     if (k.key >= SDLK_1 && k.key <= SDLK_9) {  // the first eight tabs by number; 9 is the last

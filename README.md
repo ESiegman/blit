@@ -5,8 +5,7 @@ standard edits, keeps several files open in tabs, colours code with
 tree-sitter, talks to language servers, runs scripts and plugins in Lua,
 profiles programs, and works on another machine's files over ssh.
 C++26 (GCC); SDL3 for the window and input, and a renderer of its own on
-Metal. It is a macOS editor: a Vulkan side, for Linux and Windows, is not
-planned for a long time.
+Metal (macOS) and Vulkan (Linux). Windows is not planned for a long time.
 
 ![blit showing its own source](screenshot.png)
 
@@ -22,6 +21,18 @@ Needs SDL3, FreeType, tree-sitter and Lua 5.5, and HarfBuzz for ligatures.
 On macOS: `brew install sdl3 freetype tree-sitter lua harfbuzz gcc`, and
 Apple's Command Line Tools (`xcode-select --install`), whose clang builds
 the Metal side. Without HarfBuzz everything else still works.
+
+**On Linux** the same commands build it with the system's GCC 16
+(`-DCMAKE_CXX_COMPILER=g++`). It needs the Vulkan loader and headers and a
+Vulkan driver (Mesa's RADV for AMD, ANV for Intel, NVIDIA's own), and
+fontconfig, which says which font is the system's monospace one and which
+fonts have the characters it lacks; on Arch: `pacman -S gcc cmake ninja
+sdl3 freetype2 fontconfig harfbuzz tree-sitter lua vulkan-icd-loader
+vulkan-headers vulkan-radeon` (or `vulkan-intel`). `vulkan-validation-layers`
+lets `--debug-gpu` check every Vulkan call. There is no app bundle; `blit`
+in a terminal and "Put the blit command on the PATH" work as below. The
+window is a Wayland (or X11) one through SDL. Pictures and PDFs are not
+read on Linux yet (see [Limits](#limits)).
 
 Syntax colours need grammars, which blit installs itself when asked:
 `./build/blit --install-grammar all` (see [Syntax highlighting](#syntax-highlighting)).
@@ -120,7 +131,10 @@ and `i` is what makes typing type. The modes and keys are Neovim's defaults;
 [Modal editing](#modal-editing) says what is there. `blit.opt.editor.modal = false`
 in init.lua makes it an editor without modes, where the table below is
 all there is to know. With modes on, the table is still true of Insert mode,
-and everything in it that has Cmd in it (Ctrl elsewhere) works in every mode.
+and everything in it that has Cmd in it works in every mode. Without a Cmd
+key (Linux), Vim's own Ctrl keys come first in its modes, and the editor's
+commands they would take are on Ctrl+Shift or Alt there: see [Keys without
+Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 
 | | macOS | elsewhere |
 |---|---|---|
@@ -131,35 +145,35 @@ and everything in it that has Cmd in it (Ctrl elsewhere) works in every mode.
 | Select | Shift with any movement, drag, double-click (word), triple-click (line) | same |
 | Delete word | Option+Backspace/Delete | Ctrl+Backspace/Delete |
 | Delete to line start | Cmd+Backspace | |
-| Copy / cut / paste | Cmd+C / X / V | Ctrl+C / X / V |
-| Undo / redo | Cmd+Z / Shift+Cmd+Z | Ctrl+Z / Ctrl+Y |
-| Select all | Cmd+A | Ctrl+A |
-| Save / open (in a new tab) | Cmd+S / Cmd+O | Ctrl+S / Ctrl+O |
+| Copy / cut / paste | Cmd+C / X / V | Ctrl+C / X / V (or Ctrl+Shift+C / X / V) |
+| Undo / redo | Cmd+Z / Shift+Cmd+Z | Ctrl+Z / Ctrl+Y or Ctrl+Shift+Z |
+| Select all | Cmd+A | Ctrl+A (or Ctrl+Shift+A) |
+| Save / open (in a new tab) | Cmd+S / Cmd+O | Ctrl+S / Ctrl+O (or Alt+O) |
 | Save as… / save all | Cmd+Shift+S / Cmd+Option+S | Ctrl+Shift+S / Ctrl+Alt+S |
 | Open a folder | Cmd+Shift+O | Ctrl+Shift+O |
 | Command search: every command, by its name or its keys | Cmd+Shift+P | Ctrl+Shift+P |
 | Go to file / Search in files | Cmd+P / Cmd+Shift+F | Ctrl+P / Ctrl+Shift+F |
-| Find in this file; the next / previous match | Cmd+F; Cmd+G / Cmd+Shift+G | Ctrl+F; F3 / Shift+F3 |
+| Find in this file; the next / previous match | Cmd+F; Cmd+G / Cmd+Shift+G | Ctrl+F (or Alt+F); F3 / Shift+F3 |
 | Replace in this file / in files | Cmd+Option+F / Cmd+Shift+H | Ctrl+Alt+F / Ctrl+Shift+H |
 | The next / previous hit of Search in files (or of the references found, after them) | F4 / Shift+F4 | F4 / Shift+F4 |
 | The next / previous problem: the last build's, across files (else the language servers', across files) | F8 / Shift+F8 | F8 / Shift+F8 |
 | Go to the definition; find references; rename | F12; Shift+F12; F2 | F12; Shift+F12; F2 |
 | Format the file (or the lines selected); fixes and refactorings here | Option+Shift+F; Option+Enter | Alt+Shift+F; Alt+Enter |
-| New file / close tab | Cmd+N (or Cmd+T) / Cmd+W | Ctrl+N (or Ctrl+T) / Ctrl+W |
+| New file / close tab | Cmd+N (or Cmd+T) / Cmd+W | Ctrl+N (or Ctrl+T) / Ctrl+W (or Ctrl+F4) |
 | Next / previous tab | Ctrl+Tab / Ctrl+Shift+Tab, or Cmd+Shift+] / [ | Ctrl+Tab / Ctrl+Shift+Tab, or Ctrl+PageDown / PageUp |
 | Tab 1 to 8, last tab | Cmd+1 ... Cmd+8, Cmd+9 | Ctrl+1 ... Ctrl+8, Ctrl+9 |
-| Move the tab left / right | Cmd+Option+Shift+[ / ], or Ctrl+Shift+PageUp / PageDown | Ctrl+Alt+Shift+[ / ] |
+| Move the tab left / right | Cmd+Option+Shift+[ / ], or Ctrl+Shift+PageUp / PageDown | Ctrl+Alt+Shift+[ / ], or Ctrl+Shift+PageUp / PageDown |
 | Split right / split down (Go to file for what goes in it) | Cmd+\ / Cmd+Shift+\ | Ctrl+\ / Ctrl+Shift+\ |
 | Close the split (its tabs join the one beside it) | Cmd+Shift+W | Ctrl+Shift+W |
 | Keyboard to the split on that side | Cmd+Option+arrow | Ctrl+Alt+arrow |
 | The tab to the split on that side (a new one if there is none) | Cmd+Option+Shift+arrow | Ctrl+Alt+Shift+arrow |
-| The split wider / narrower, taller / shorter | Cmd+Ctrl+Right / Left, Down / Up | |
+| The split wider / narrower, taller / shorter | Cmd+Ctrl+Right / Left, Down / Up | Alt+Shift+Right / Left, Down / Up |
 | The terminal along the bottom, with the keyboard; from there, back to the text (it hides, still running) | Ctrl+\` | Ctrl+\` |
 | Another terminal there | Ctrl+Shift+\` | Ctrl+Shift+\` |
 | The Problems / Git / Profile tab of the side panel (again: the keyboard back to the text) | Cmd+Shift+M / Ctrl+Shift+G / Cmd+Shift+R | Ctrl+Shift+M / G / R |
-| The Build tab; run its chosen task (the Run button); stop it | Cmd+Shift+U; Cmd+Shift+B; Cmd+. | Ctrl+Shift+U; Ctrl+Shift+B |
+| The Build tab; run its chosen task (the Run button); stop it | Cmd+Shift+U; Cmd+Shift+B; Cmd+. | Ctrl+Shift+U; Ctrl+Shift+B; Ctrl+. |
 | A new project (the start screen's New project tab, in a tab of its own) | Cmd+Option+N | Ctrl+Alt+N |
-| Markdown preview, or an SVG's picture, beside the file | Cmd+Shift+V | Ctrl+Shift+V |
+| Markdown preview, or an SVG's picture, beside the file | Cmd+Shift+V | Ctrl+Alt+V (Ctrl+Shift+V pastes) |
 | Blame column on or off | Cmd+Option+B | Ctrl+Alt+B |
 | Back / forward through the places jumps started from (Go to file, Search in files, a problem, a definition, Vim's G, a search, a mark) | Ctrl+- / Ctrl+Shift+- | Alt+Left / Alt+Right |
 | Font size | Cmd+= / Cmd+- / Cmd+0 | Ctrl+= / Ctrl+- / Ctrl+0 |
@@ -170,7 +184,7 @@ The [side panel](#side-panel):
 
 | | macOS | elsewhere |
 |---|---|---|
-| Show or hide it | Cmd+B | Ctrl+B |
+| Show or hide it | Cmd+B | Ctrl+B (or Alt+B) |
 | Keyboard to the file tree, and back | Cmd+Shift+E (Esc goes back) | Ctrl+Shift+E |
 | In the tree | Up/Down, Page Up/Down, Home/End; Right opens a folder, Left closes it; Enter opens | same |
 | New file / new folder | Cmd+N / Cmd+Shift+N | Ctrl+N / Ctrl+Shift+N |
@@ -187,9 +201,9 @@ With a [language server](#language-servers) running:
 |---|---|---|
 | Complete here | Ctrl+Space or Option+Esc | Ctrl+Space or Alt+Esc |
 | In the list | Up/Down, Page Up/Down; Enter or Tab accepts; a click picks | same |
-| Describe what is under the cursor | Cmd+I | Ctrl+I |
+| Describe what is under the cursor | Cmd+I | Ctrl+I (or Ctrl+Shift+I) |
 | Signature of the call being typed | Ctrl+Shift+Space | same |
-| Go to definition (Ctrl+- comes back) | F12 or Cmd+click | F12 or Ctrl+click |
+| Go to definition (Ctrl+- comes back, Alt+Left elsewhere) | F12 or Cmd+click | F12 or Ctrl+click |
 | Close popups | Esc | Esc |
 
 **Back.** Every jump goes into one list, across files, with or without a
@@ -197,13 +211,57 @@ language server: Go to file (and its `:120`), Search in files and F4, a
 problem (F8, or a row of the Problems tab), a file opened from the side
 panel, a definition, and Vim's own long moves (`G`, `gg`, a search, `%`,
 a mark). Ctrl+- walks back through it in any mode, and Ctrl+Shift+-
-forward again; Vim's Ctrl-O and Ctrl-I walk the same list. As in Vim, a
+forward again (Alt+Left and Alt+Right elsewhere); Vim's Ctrl-O and Ctrl-I
+walk the same list. As in Vim, a
 line is in it once, and walking back from the end first notes where the
 cursor is, for forward to come back to.
 
 In a profile's tab: Up/Down choose a function, Enter opens its source,
 Space zooms the flame graph into it (again: back out), Esc zooms out. In a
-terminal: Cmd+A selects all of it, history included, for Cmd+C.
+terminal: Cmd+A selects all of it, history included, for Cmd+C (elsewhere
+Ctrl+Shift+A and Ctrl+Shift+C: Ctrl alone is the program's there).
+
+### Keys without Cmd
+
+Where there is no Cmd key (Linux), Ctrl is the editor's key, as Cmd is on a
+Mac, and Ctrl also moves by words (Ctrl+Left and Right, Ctrl+Backspace and
+Delete), as Option does on a Mac. Vim needs Ctrl as well, and the rule is
+the one Zed and VS Code's Vim extension keep: **with modes on, while the
+text has the keyboard, a Ctrl key Vim knows is Vim's**, in Normal, Visual,
+Insert and Command-line mode. In Normal and Visual mode those are Ctrl-O and
+Ctrl-I, Ctrl-W (then h, j, k, l, s, v, c ...), Ctrl-V, Ctrl-R, Ctrl-F, B,
+D, U, E and Y, Ctrl-A and Ctrl-X, Ctrl-T, Ctrl-C, Ctrl-[ and Ctrl-]; in
+Insert mode Ctrl-W, U, H, R, O, J, M, N, P, T, D, A, V, Q, E and Y; on the
+command line Ctrl-W, U, H, R, J, M and C. Ctrl+N and Ctrl+P outside Insert
+mode are the exception: in Vim they are only j and k by other names, so
+they stay a new file and Go to file. An editor's command whose Ctrl key
+Vim takes is on **Ctrl+Shift** as well, as a terminal's copy and paste
+are, or on **Alt** where Ctrl+Shift already has a command of its own; those
+work without modes too. In the box that finds things, the side panel, the
+start screen, and with modes off, Ctrl is the editor's throughout, and a
+command run from the command search is always the editor's.
+
+| | Without modes | In Vim's modes |
+|---|---|---|
+| Copy / cut / paste | Ctrl+C / X / V | Ctrl+Shift+C / X / V (or y, d, p) |
+| Select all | Ctrl+A | Ctrl+Shift+A |
+| Redo | Ctrl+Y or Ctrl+Shift+Z | Ctrl+Shift+Z (or Ctrl-R) |
+| Close the tab | Ctrl+W | Ctrl+F4 (or `:q`) |
+| Open a file | Ctrl+O | Alt+O |
+| Find in this file | Ctrl+F | Alt+F (or `/`) |
+| Show or hide the side panel | Ctrl+B | Alt+B |
+| Describe what is under the cursor | Ctrl+I | Ctrl+Shift+I |
+| New file / Go to file | Ctrl+N or Ctrl+T / Ctrl+P | Ctrl+N / Ctrl+P (not in Insert mode, where they complete) |
+
+Ctrl+Shift+V pastes in any tab, the terminals' too, so the Markdown preview
+is Ctrl+Alt+V; a split is made wider or taller with Alt+Shift and the
+arrows (Ctrl with an arrow moves by words); Ctrl+Home and Ctrl+End go to
+the ends of the file (Vim's gg and G outside Insert mode). In a terminal
+tab Ctrl alone is the program's: copying, pasting, choosing all and
+clearing are Ctrl+Shift+C, V, A and K there, Ctrl+Shift and Ctrl+Alt+Shift
+keys are the editor's, as are Ctrl+Alt and the arrows (the splits),
+Ctrl+Tab, Ctrl+\` and Ctrl+F4. Shortcuts the editor shows are written in
+words (Ctrl+Shift+P), not in a Mac's symbols.
 
 Scroll with the wheel or touchpad, or drag the bar at the right edge. Drop a
 file on the window to open it in a tab, or a folder to work in it (as `d`
@@ -1963,7 +2021,7 @@ src/grid.*      visible text -> cell grid
 src/render.*    a frame: the cells of each view and box, the uniforms and the draws
 src/gpu.h       the GPU interface (C): window or offscreen image, atlas, cells, draws
 src/gpu_metal.m the Metal side (Objective-C, built by Apple's clang)
-src/gpu_vulkan.cpp  the Vulkan side, not written yet (every call fails)
+src/gpu_vulkan.cpp  the Vulkan side (Linux): the window's swapchain or an offscreen image, the pipelines and their cache
 src/app.*       window, input, scrolling, the frame loop
 src/appfx.cpp   looks and motion: radii and shadows, what the mouse is over, fades, the cursor's glide
 src/fuzzy.*     the fuzzy matcher: scores a name against the letters typed; finding a word with its rarest byte
@@ -1993,7 +2051,7 @@ src/markdown.*     Markdown parsed and laid out as rows of styled cells (blocks,
 src/mermaid.*      Mermaid diagrams drawn in box-drawing characters: flowcharts and state diagrams laid out in ranks, sequence diagrams, pies
 src/appmarkdown.cpp the Markdown preview's tab: drawn again as the file changes, following its cursor, links, pictures
 src/appimage.cpp   pictures: read on threads of their own and put on the GPU; an image file's tab (zoom, move)
-src/picture.h      image files and PDF pages read into pixels (C); src/picture_mac.m does it with macOS's ImageIO and CoreGraphics
+src/picture.h      image files and PDF pages read into pixels (C); src/picture_mac.m does it with macOS's ImageIO and CoreGraphics (Linux has no reader yet)
 src/apppdf.cpp     a PDF's tab: pages drawn on a thread of their own as they come into view, zoomed, scrolled
 src/agent/         the agent: what it and blit say to one another, the program, its build for Linux (Docker), the builds
 src/keymap.*    key mappings: Vim's key notation, the table of mappings, what keys typed so far add up to
@@ -2032,9 +2090,23 @@ and input methods.
   after the shaders change compiles them. The window's layer is set up as
   SDL_GPU set it (8-bit BGRA in sRGB, three images), and frames are the
   same pixel for pixel.
-- **Vulkan** (every other system, `src/gpu_vulkan.cpp`): not written yet.
-  Every call fails, and blit says so when it starts. The file says what it
-  will need.
+- **Vulkan** (Linux, `src/gpu_vulkan.cpp`): C++ like the rest, linked to
+  the Vulkan loader, the window's surface made through SDL. The same shapes
+  as Metal's: a frame's cells are written where the GPU reads them (memory
+  both see, cached for the CPU, which reads them back while making them),
+  its uniforms go into a buffer of their own (one block per draw, picked by
+  an offset), the atlas is copied to only when glyphs are added, pictures
+  are images with their mipmaps, and compiled pipelines are kept in
+  `~/.cache/blit` (a pipeline cache's data, under `$XDG_CACHE_HOME` if it
+  is set), so only the first run after the shaders or the driver change
+  compiles them. The window's images are 8-bit BGRA written as the shaders
+  give them; FIFO is vsync and the other modes are the driver's IMMEDIATE
+  and MAILBOX. Fewer images under way (`blit_gpu_set_images`) does not make
+  the swapchain again: a frame is begun once the one before it (or the one
+  before that) has reached the screen (`VK_KHR_present_wait`; without it,
+  three images always). A frame not drawn after all keeps its image for the
+  next, since Vulkan has no giving one back. Offscreen (the tests) is
+  RGBA.
 
 The shaders are written once in Vulkan GLSL. `shaders/build.sh` compiles
 them to SPIR-V (for Vulkan) and cross-compiles that to MSL (for Metal),
@@ -2055,7 +2127,8 @@ the pixels under it, which blending would have it draw. The
 results are checked in and baked into the binary with `#embed`, so a
 normal build needs no shader tools.
 
-The build has only been tried on macOS.
+Built and tried on macOS (Apple silicon, Metal) and on Arch Linux (an AMD
+GPU on Mesa's RADV, under Wayland).
 
 ## Testing
 
@@ -2096,6 +2169,16 @@ tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md a
 tests/unicode.sh build-debug/blit  # characters made of several code points: the cursor over them, their widths, accents drawn over their letter
 tests/images.sh build-debug/blit   # pictures and PDFs (tests/images): the tabs, their pixels, zoom, pages, too large, broken, changed, over ssh, in the preview
 ```
+
+On Linux the suites run the same way. They pin the cell to the 16 x 31
+pixels macOS's own font has at 13 pt (`BLIT_CELL`, which CMakeLists.txt
+sets for them there), so that a machine's fonts do not move their mouse
+positions and rows; where blit reads no pictures (Linux, for now) the
+picture and PDF cases say they are skipped; profiling uses `perf` and
+debugging `gdb` (14 or later) or `lldb-dap`. A case that names a command's
+keys asks blit for them (`keyof:Close the tab` in a script presses the
+command's key that works there and then), or says which a Mac has and
+which the rest.
 
 The tests never connect to a real host: `$BLIT_SSH` names the program used
 in place of `ssh`, and `tests/fake-ssh.sh` runs what blit asks of "the
@@ -2168,9 +2251,10 @@ does not finish and takes all the memory the machine has.
 - Debugging: one session at a time, one thread's stack (the one that
   stopped); no conditional breakpoints, watch list, or breakpoints that
   move with the lines when the file is edited while debugging. With gdb
-  the program's output reaches the Debug tab when it flushes it.
-- Pictures: macOS only. An SVG's picture shows the file as saved, not as
-  it is being typed.
+  the program's output reaches the Debug tab a line at a time where
+  `stdbuf` (coreutils) is there, and when it flushes it where not.
+- Pictures: macOS only (Linux has no reader yet: an image file's tab says
+  so). An SVG's picture shows the file as saved, not as it is being typed.
 - PDFs: macOS only, for reading. Find ignores case for A to Z only;
   choosing text does not scroll the view past its edge; the outline box
   is for the mouse and the wheel.
@@ -2206,8 +2290,10 @@ does not finish and takes all the memory the machine has.
   regular expressions on). A file shows in one split at a time (two views of the same file
   are not possible yet), and there are at most sixteen splits. Tabs and
   splits are not remembered from one run to the next.
-- Only macOS has a renderer: the Vulkan side, for Windows and Linux, is
-  not written yet.
+- Linux: the Vulkan renderer and the keys above; no pictures or PDFs
+  yet, no momentum after a flick (as below), and the blit started from a
+  desktop's launcher has the PATH the desktop has (no login shell is asked,
+  as a Mac's Dock start does). Windows has no renderer.
 - Scripts: mappings are for every buffer (none of one buffer's own), and
   their right-hand side is keys or a function (no `<expr>` mappings).
   Marks stay on their line and column when the text around them changes:

@@ -36,6 +36,9 @@ R="ssh://box$T/far"
 
 failed=0
 check() {
+    # (The status bar's icons beside a branch and another machine are the
+    # font's, where it has them: the words are what is compared.)
+    got=$(printf '%s' "$got" | sed -e 's/⎇ //g' -e 's/⇄ //g' -e 's/ //g')
     if [ -n "$print" ]; then
         printf '%s\n    %s\n' "$1" "$got"
     elif [ "$got" != "$2" ]; then
@@ -47,6 +50,8 @@ join() { awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }'; }
 # run SCRIPT [FILE]: what the run printed, its lines joined by " ;; ". INIT,
 # if set, is the init.lua for this run only. (Not "VAR=x run": sh keeps
 # such an assignment after a function.)
+# The end of the file: Cmd+Down on a Mac, Ctrl+End elsewhere.
+case $(uname) in Darwin) doc_end=cmd+Down ;; *) doc_end=ctrl+End ;; esac
 INIT=
 run() {
     got=$(BLIT_INIT="${INIT:-$dir/init.lua}" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "$1" ${2:+"$2"} 2>&1 >/dev/null |
@@ -63,10 +68,10 @@ kept() {
 run "open:$W/notes.txt;quit"
 got=$(ls "$S" 2>/dev/null | wc -l | tr -d ' ')
 check "a file opened, no folder opened to work in: nothing kept" '0'
-run "folder:$W;open:$W/notes.txt;key:Down;key:End;open:$W/long.txt;key:cmd+Down;key:cmd+\\;open:$W/src/main.cpp;key:Right;key:Right;frame"
+run "folder:$W;open:$W/notes.txt;key:Down;key:End;open:$W/long.txt;key:$doc_end;key:cmd+\\;open:$W/src/main.cpp;key:Right;key:Right;frame"
 got=$(ls "$S" 2>/dev/null | wc -l | tr -d ' ')
 check "not before it quits" '0'
-run "folder:$W;open:$W/notes.txt;key:Down;key:End;open:$W/long.txt;key:cmd+Down;key:cmd+\\;open:$W/src/main.cpp;key:Right;key:Right;frame;buildrun:make test;buildwait;quit"
+run "folder:$W;open:$W/notes.txt;key:Down;key:End;open:$W/long.txt;key:$doc_end;key:cmd+\\;open:$W/src/main.cpp;key:Right;key:Right;frame;buildrun:make test;buildwait;quit"
 kept "$W"
 check "on quit: the splits, the tabs in order, the cursors and views, the panel, the Build tab's task" \
     'blit session 1 ;; folder	~/work ;; tabs	3 ;; panel	0	Files	32 ;; build	Make	make test ;; H	0.5000 ;; pane	1	0 ;; file	1	11	0.00	0.00	~/work/notes.txt ;; file	300	0	281.10	0.00	~/work/long.txt ;; pane	0	1 ;; file	0	2	0.00	0.00	~/work/src/main.cpp'

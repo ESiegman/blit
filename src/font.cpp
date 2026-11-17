@@ -16,6 +16,10 @@
 #include <sys/stat.h>
 #endif
 
+#if BLIT_FONTCONFIG
+#include <fontconfig/fontconfig.h>
+#endif
+
 #include <ft2build.h>
 #include FT_FREETYPE_H
 #include FT_MULTIPLE_MASTERS_H
@@ -46,7 +50,8 @@ const char* const kDefaultFonts[] = {
 #endif
 };
 
-// Tried in order for characters the main font does not have.
+// Tried in order for characters the main font does not have (and then,
+// with fontconfig, whatever font it knows that has them).
 const char* const kFallbackFonts[] = {
 #if defined(__APPLE__)
     "/System/Library/Fonts/Menlo.ttc",
@@ -162,9 +167,55 @@ void walk_files(const std::string& dir, Visit&& visit, int depth = 0) {
 #endif
 }
 
+#if BLIT_FONTCONFIG
+// fontconfig's best fit for a family ("monospace", "Victor Mono") and
+// style: its file, the face in it, and the names its family goes by.
+// fontconfig always has an answer, the system's default font if nothing
+// better, so the caller looks at the names.
+bool fc_match(const std::string& family, const std::string& style, std::string* path, int* index, std::vector<std::string>* families) {
+    FcPattern* want = FcPatternCreate();
+    if (!want) return false;
+    FcPatternAddString(want, FC_FAMILY, reinterpret_cast<const FcChar8*>(family.c_str()));
+    if (!style.empty()) FcPatternAddString(want, FC_STYLE, reinterpret_cast<const FcChar8*>(style.c_str()));
+    FcConfigSubstitute(nullptr, want, FcMatchPattern);
+    FcDefaultSubstitute(want);
+    FcResult result;
+    FcPattern* got = FcFontMatch(nullptr, want, &result);
+    FcPatternDestroy(want);
+    if (!got) return false;
+    FcChar8* file = nullptr;
+    const bool ok = FcPatternGetString(got, FC_FILE, 0, &file) == FcResultMatch && file;
+    if (ok) {
+        *path = reinterpret_cast<const char*>(file);
+        int i = 0;
+        *index = FcPatternGetInteger(got, FC_INDEX, 0, &i) == FcResultMatch ? i : 0;  // (FreeType reads a named instance in the high bits too)
+        FcChar8* name = nullptr;
+        for (int k = 0; FcPatternGetString(got, FC_FAMILY, k, &name) == FcResultMatch; ++k) families->push_back(reinterpret_cast<const char*>(name));
+    }
+    FcPatternDestroy(got);
+    return ok;
+}
+#endif
+
 bool find_font_in(FT_Library lib, const std::string& family, const std::string& style, std::string* path, int* index) {
     const std::string want = squash(family), want_style = squash(style.empty() ? "Regular" : style);
     if (want.empty()) return false;
+#if BLIT_FONTCONFIG
+    // fontconfig knows every font's names without opening any; when it has
+    // the family (by one of its names), that is the answer.
+    {
+        std::string p;
+        int i = 0;
+        std::vector<std::string> names;
+        if (fc_match(family, style, &p, &i, &names))
+            for (const std::string& name : names)
+                if (squash(name) == want) {
+                    *path = p;
+                    *index = i;
+                    return true;
+                }
+    }
+#endif
 
     // Font files whose name mentions the family are opened first; that is
     // nearly always enough and avoids opening every font on the system.
@@ -367,7 +418,15 @@ bool Font::init(const FontSpec& spec, std::string* err, std::string* warnings) {
     }
     if (!face_) {
         index = 0;
+#if BLIT_FONTCONFIG
+        // The system's monospace font, as fontconfig is set up to give it.
+        std::string found;
+        std::vector<std::string> names;
+        if (fc_match("monospace", "", &found, &index, &names) && !FT_New_Face(lib_, found.c_str(), index, &face_)) path_ = found;
+        else face_ = nullptr, index = 0;
+#endif
         for (const char* p : kDefaultFonts) {
+            if (face_) break;
             if (!FT_New_Face(lib_, p, 0, &face_)) {
                 path_ = p;
                 break;
@@ -396,6 +455,12 @@ bool Font::init(const FontSpec& spec, std::string* err, std::string* warnings) {
     cell_w_ = 0;
     if (!FT_Load_Char(face_, 'M', load_flags_)) cell_w_ = static_cast<int>((face_->glyph->advance.x + 32) >> 6);
     if (cell_w_ <= 0) cell_w_ = std::max(1, static_cast<int>(std::lround(px_ * 0.6)));
+    if (spec.cell_w26 > 0 && spec.cell_h26 > 0) {  // (the line kept in the middle of the cell asked for)
+        const int h = std::max(1, static_cast<int>(std::lround(spec.cell_h26 * px_ / 26)));
+        baseline_ += (h - cell_h_) / 2;
+        cell_h_ = h;
+        cell_w_ = std::max(1, static_cast<int>(std::lround(spec.cell_w26 * px_ / 26)));
+    }
     x_height_ = baseline_ / 2;
     if (!FT_Load_Char(face_, 'x', load_flags_)) x_height_ = static_cast<int>((face_->glyph->metrics.horiBearingY + 32) >> 6);
     // The lines under and through text: where the font says, else a
@@ -965,8 +1030,64 @@ FT_Face Font::face_for(u32 cp, u32* gi) {
         *gi = FT_Get_Char_Index(f, cp);
         if (*gi) return f;
     }
+#if BLIT_FONTCONFIG
+    if (FT_Face f = fallback_for(cp)) {
+        *gi = FT_Get_Char_Index(f, cp);
+        if (*gi) return f;
+    }
+#endif
     return nullptr;
 }
+
+#if BLIT_FONTCONFIG
+// The fonts fontconfig knows, nearest to a monospace one first, for one
+// that has a character none of the faces loaded so far has. Not a colour
+// font: the atlas holds coverage, and FreeType gives such a font's glyphs
+// as colour bitmaps. Each character is asked about once (the answer, if
+// there is one, is then among the fallbacks).
+FT_Face Font::fallback_for(u32 cp) {
+    if (!asked_.insert(cp).second) return nullptr;
+    FcPattern* want = FcPatternCreate();
+    FcCharSet* chars = FcCharSetCreate();
+    if (!want || !chars) {
+        if (want) FcPatternDestroy(want);
+        if (chars) FcCharSetDestroy(chars);
+        return nullptr;
+    }
+    FcCharSetAddChar(chars, cp);
+    FcPatternAddCharSet(want, FC_CHARSET, chars);
+    FcPatternAddString(want, FC_FAMILY, reinterpret_cast<const FcChar8*>("monospace"));
+    FcConfigSubstitute(nullptr, want, FcMatchPattern);
+    FcDefaultSubstitute(want);
+    FcResult result;
+    FcFontSet* fonts = FcFontSort(nullptr, want, FcTrue, nullptr, &result);
+    FcPatternDestroy(want);
+    FcCharSetDestroy(chars);
+    if (!fonts) return nullptr;
+    FT_Face found = nullptr;
+    for (int i = 0; i < fonts->nfont && !found; ++i) {
+        FcPattern* f = fonts->fonts[i];
+        FcCharSet* has = nullptr;
+        FcBool colour = FcFalse;
+        FcChar8* file = nullptr;
+        int index = 0;
+        if (FcPatternGetCharSet(f, FC_CHARSET, 0, &has) != FcResultMatch || !FcCharSetHasChar(has, cp)) continue;
+        if (FcPatternGetBool(f, FC_COLOR, 0, &colour) == FcResultMatch && colour) continue;
+        if (FcPatternGetString(f, FC_FILE, 0, &file) != FcResultMatch || !file) continue;
+        FcPatternGetInteger(f, FC_INDEX, 0, &index);
+        FT_Face face;
+        if (FT_New_Face(lib_, reinterpret_cast<const char*>(file), index, &face)) continue;
+        if (!FT_IS_SCALABLE(face) || FT_Set_Char_Size(face, 0, static_cast<FT_F26Dot6>(std::lround(px_ * 64)), 72, 72) || !FT_Get_Char_Index(face, cp)) {
+            FT_Done_Face(face);
+            continue;
+        }
+        fallbacks_.push_back(face);
+        found = face;
+    }
+    FcFontSetDestroy(fonts);
+    return found;
+}
+#endif
 
 void Font::draw_tofu(u32 slot, u32 width) {
     const int sx = static_cast<int>(slot % cols_) * cell_w_, sy = static_cast<int>(slot / cols_) * cell_h_;

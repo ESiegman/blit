@@ -63,6 +63,11 @@ inline constexpr SDL_Keymod kWordMod = SDL_KMOD_ALT;
 inline constexpr SDL_Keymod kPrimaryMod = SDL_KMOD_CTRL;
 inline constexpr SDL_Keymod kWordMod = SDL_KMOD_CTRL;
 #endif
+// Ctrl is both the editor's key and Vim's (everywhere but on a Mac). With
+// modes on, Vim keeps its Ctrl keys while the text has the keyboard, and
+// the editor's commands it takes them from are on Ctrl+Shift or Alt as well
+// (README.md, "Keys without Cmd"; vim_owns_key() in appvim.cpp).
+inline constexpr bool kCtrlShared = kPrimaryMod == SDL_KMOD_CTRL;
 
 // A path's folder, and a path made whole (from the current directory).
 std::string parent_of(const std::string& path);
@@ -300,6 +305,7 @@ private:
     void go_back();
     void lsp_typed(std::string_view text);
     bool lsp_key(const SDL_KeyboardEvent& k);
+    bool lsp_completing() const;  // a completion list is open
     void lsp_after_key(SDL_Keycode key);
     bool lsp_click(float x, float y, bool cmd);
     void lsp_decorate(const GridSpec& g);
@@ -467,6 +473,7 @@ private:
     void vim_attach();
     bool vim_selection(u64* lo, u64* hi) const;
     bool vim_key(const SDL_KeyboardEvent& k);
+    bool vim_owns_key(const SDL_KeyboardEvent& k);  // a Ctrl key that is Vim's before it is the editor's (kCtrlShared)
     void vim_text(const char* text);
     void vim_after(u32 result);
     void vim_mouse();
@@ -699,6 +706,10 @@ private:
     void commands_create();
     bool command_key(const SDL_KeyboardEvent& k);
     std::vector<PaletteItem> palette_items();
+    // The key that does a command now (its title whole, else the first that
+    // starts so): the first of its keys that Vim would not take (the tests'
+    // keyof:). False if there is no such command or it has no keys.
+    bool command_key_now(std::string_view title, SDL_KeyboardEvent* out);
     void palette_open();
     void palette_run(u32 id);
     static std::string chord_text(SDL_Keycode key, SDL_Keymod mod);
@@ -1030,6 +1041,7 @@ private:
     std::shared_ptr<StatusUi> status_;
     std::shared_ptr<StartUi> start_;
     std::shared_ptr<Commands> commands_;
+    bool command_sending_ = false;  // a command's keys sent by the command search: the editor's, never Vim's
     std::shared_ptr<DebugUi> debugui_;
     std::shared_ptr<BuildUi> buildui_;
     u64 build_gen_ = 1;  // counts up whenever what the Build tab or the Run button shows may have changed

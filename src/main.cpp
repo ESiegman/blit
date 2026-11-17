@@ -33,7 +33,7 @@ void usage() {
         "  --font NAME        font family or font file; overrides the config\n"
         "  --size PT          font size in points; overrides the config\n"
         "  --line N           open at line N\n"
-        "  --debug-gpu        enable GPU validation (Metal's debug layer)\n"
+        "  --debug-gpu        enable GPU validation (Metal's debug layer, Vulkan's validation layers)\n"
         "  --info             print the settings and font in use, then exit\n"
         "  --grammars         list the tree-sitter grammars blit can install\n"
         "  --install-grammar NAME[,NAME...]   fetch and build grammars (\"all\" for every one)"

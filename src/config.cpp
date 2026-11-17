@@ -9,6 +9,13 @@ namespace blit {
 
 namespace {
 
+// The keys for git's blame column, for a message (this file knows nothing of SDL).
+#if defined(__APPLE__)
+constexpr const char* kBlameKeys = "Cmd+Option+B";
+#else
+constexpr const char* kBlameKeys = "Ctrl+Alt+B";
+#endif
+
 constexpr Rgb hex(u32 v) {
     return {static_cast<float>((v >> 16) & 255) / 255.0f, static_cast<float>((v >> 8) & 255) / 255.0f,
             static_cast<float>(v & 255) / 255.0f};
@@ -360,7 +367,7 @@ struct Parser {
             if (!as_bool(v, &c.git)) warn(std::string(key) + " should be true or false");
             return;
         }
-        if (key == "git.blame") return warn("git.blame is no longer a setting: blame shows in a file when Cmd+Option+B or the Git tab's Blame turns it on");
+        if (key == "git.blame") return warn(std::string("git.blame is no longer a setting: blame shows in a file when ") + kBlameKeys + " or the Git tab's Blame turns it on");
         if (key == "panel.open") {
             if (!as_bool(v, &c.panel_open)) warn("panel.open should be true or false");
             return;

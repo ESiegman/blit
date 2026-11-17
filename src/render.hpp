@@ -185,7 +185,7 @@ public:
 
 private:
     SDL_Window* win_ = nullptr;
-    void* view_ = nullptr;  // the window's Metal view (Apple), made by SDL
+    void* view_ = nullptr;  // the window's Metal view (Apple), made by SDL; Vulkan has none
     BlitGpu* gpu_ = nullptr;
     int off_w_ = 0, off_h_ = 0;
     AnchorCache anchors_;

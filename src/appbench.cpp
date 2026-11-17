@@ -577,7 +577,9 @@ int App::run_bench() {
 // Replays input through the same handlers real events use. Events are
 // separated by ';':
 //   text:STRING            typed text
-//   key:[shift+][cmd+][word+]NAME   a key press, NAME as SDL names it (Left, Return, A, ...)
+//   key:[shift+][cmd+][word+]NAME   a key press, NAME as SDL names it (Left, Return, A, ...); cmd is the editor's key
+//                          (Cmd on a Mac, Ctrl elsewhere), word the one that moves by words; ctrl, alt and gui are those keys
+//   keyof:COMMAND          the key that does a command now (as the command search names it): its first that Vim would not take
 //   wheel:N                N mouse wheel notches (negative scrolls down)
 //   click:X,Y[,COUNT]      left click at window coordinates; drag:X,Y; release
 //   save                   write the file
@@ -642,6 +644,7 @@ void App::run_script(const char* script) {
                 else if (name.starts_with("word+")) mod |= static_cast<Uint16>(kWordMod), name.erase(0, 5);
                 else if (name.starts_with("ctrl+")) mod |= SDL_KMOD_LCTRL, name.erase(0, 5);
                 else if (name.starts_with("alt+")) mod |= SDL_KMOD_LALT, name.erase(0, 4);
+                else if (name.starts_with("gui+")) mod |= SDL_KMOD_LGUI, name.erase(0, 4);
                 else break;
             }
             e.type = SDL_EVENT_KEY_DOWN;
@@ -650,6 +653,9 @@ void App::run_script(const char* script) {
             e.key.down = true;
             if (e.key.key == SDLK_UNKNOWN) std::fprintf(stderr, "script: unknown key %s\n", name.c_str());
             handle(e);
+        } else if (verb == "keyof") {
+            if (command_key_now(arg, &e.key)) handle(e);
+            else std::fprintf(stderr, "keyof: no \"%s\"\n", arg.c_str());
         } else if (verb == "wheel") {
             e.type = SDL_EVENT_MOUSE_WHEEL;
             e.wheel.y = static_cast<float>(std::atof(arg.c_str()));

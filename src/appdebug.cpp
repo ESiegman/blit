@@ -51,11 +51,14 @@ void light_row(TextBox& box, u32 row, bool focused) {
 
 // The debugger for a machine, chosen there: Xcode's lldb-dap on a Mac; gdb
 // (14 and later speak the protocol) or lldb-dap elsewhere; debugpy for Python.
+// gdb's program writes where gdb's messages go, a pipe, and C's stdio holds
+// back what is written to a pipe until it ends: stdbuf (coreutils) has it
+// write a line at a time, as to a terminal, gdb and the program both.
 const char* kNative =
     "if [ \"$(uname -s)\" = Darwin ]; then "
     "xcrun --find lldb-dap >/dev/null 2>&1 || { [ -d /Applications/Xcode.app/Contents/Developer ] && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer && export DEVELOPER_DIR; }; "
     "exec xcrun lldb-dap; fi; "
-    "if command -v gdb >/dev/null 2>&1 && [ \"$(gdb --version | sed -n '1s/.* \\([0-9][0-9]*\\)\\..*/\\1/p')\" -ge 14 ] 2>/dev/null; then echo 'blit-debugger: gdb' >&2; exec gdb -q -i dap; fi; "
+    "if command -v gdb >/dev/null 2>&1 && [ \"$(gdb --version | sed -n '1s/.* \\([0-9][0-9]*\\)\\..*/\\1/p')\" -ge 14 ] 2>/dev/null; then echo 'blit-debugger: gdb' >&2; command -v stdbuf >/dev/null 2>&1 && exec stdbuf -oL gdb -q -i dap; exec gdb -q -i dap; fi; "
     "for d in lldb-dap lldb-vscode; do command -v $d >/dev/null 2>&1 && exec $d; done; "
     "echo 'no debugger: install gdb 14 or newer, or lldb' >&2; exit 127";
 const char* kPython = "exec python3 -m debugpy.adapter";
@@ -149,6 +152,7 @@ struct App::DebugUi {
     enum State : u8 { kIdle, kStarting, kRunning, kStopped } state = kIdle;
     std::string remote;  // "ssh://host" when the program is on another machine
     bool gdb = false;    // the debugger is gdb (its hit counts are from 0)
+    bool going = false;  // the program has started (the "process" event): what gdb says before is its own
     i64 thread = 0;      // the thread whose stack is shown (and which the steps step)
     i64 stopped_thread = 0;
     struct Thread {
@@ -370,6 +374,7 @@ void App::debug_start() {
     const bool python = u.program.ends_with(".py");
     u.dap = std::make_unique<Dap>();
     u.gdb = false;
+    u.going = false;
     u.frames.clear();
     u.threads.clear();
     u.vars.clear();
@@ -504,7 +509,9 @@ void App::debug_frame(u32 i, bool show) {
         for (json::Value s : m.body()["scopes"]) {
             if (s["expensive"].boolean()) continue;
             v.vars.push_back({std::string(s["name"].str()), {}, s["variablesReference"].integer(), 0, false});
-            if (first) debug_expand(static_cast<u32>(v.vars.size() - 1));  // (the first, the locals or arguments, open)
+            // (The first open, the locals or the arguments; gdb has those two apart, and both are.)
+            const std::string_view hint = s["presentationHint"].str();
+            if ((first && hint != "registers") || hint == "arguments" || hint == "locals") debug_expand(static_cast<u32>(v.vars.size() - 1));
             first = false;
         }
         ++debug_gen_;
@@ -655,9 +662,14 @@ void App::debug_sync() {
             u.frames.clear();
             u.threads.clear();
             u.vars.clear();
+        } else if (m.name == "process") {
+            u.going = true;
         } else if (m.name == "output") {
             const std::string_view cat = b["category"].str();
-            if (cat != "telemetry" && cat != "important") u.print(b["output"].str());
+            // (gdb tells of breakpoints in a program it has not loaded yet,
+            // "No source file named ...", as if the program had said it.)
+            const bool gdb_own = u.gdb && !u.going && cat == "stdout";
+            if (cat != "telemetry" && cat != "important" && !gdb_own) u.print(b["output"].str());
         } else if (m.name == "exited") {
             u.exit_code = static_cast<int>(b["exitCode"].integer(-1));
             u.print("[exited with code " + std::to_string(u.exit_code) + "]\n");

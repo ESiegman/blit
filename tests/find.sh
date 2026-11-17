@@ -148,37 +148,37 @@ got="$got | $(cat "$T/work/src/a.txt") | $(sed -n 2p "$T/work/b.txt")"
 check "a folder on another machine: its files read and written there" 'NORMAL | Replaced 3 hits in 2 files | 1:1 |  | the pin | pin two pin'
 
 # A path, where the system's dialogs used to be.
-run "key:cmd+O;finddump"
+run "keyof:Open a file;finddump"
 check "Cmd+O: the working directory as it is on disk, folders first" "open [$W/] 7 : >../ build/ docs/ node_modules/ src/ README.md"
-run "key:cmd+O;text:sr;key:Return;finddump"
+run "keyof:Open a file;text:sr;key:Return;finddump"
 check "Enter on a folder goes into it" "open [$W/src/] 4 : >../ deep/ helper.hpp main.cpp"
-run "key:cmd+O;text:src/he;key:Return;dump"
+run "keyof:Open a file;text:src/he;key:Return;dump"
 check "Enter on a file opens it" '>[README.md helper.hpp*]'
-run "key:cmd+O;text:do;key:Tab;text:no;key:Tab;finddump"
+run "keyof:Open a file;text:do;key:Tab;text:no;key:Tab;finddump"
 check "Tab completes the name chosen" "open [$W/docs/notes.md] 1 : >notes.md"
-run "key:cmd+O;text:src/;key:Return;finddump"
+run "keyof:Open a file;text:src/;key:Return;finddump"
 check "the first row of a folder is the one above it" "open [$W/] 7 : >../ build/ docs/ node_modules/ src/ README.md"
-run "key:cmd+O;text:brand_new.txt;finddump;key:Return;dump"
+run "keyof:Open a file;text:brand_new.txt;finddump;key:Return;dump"
 check "a name that is not there opens a new file of that name" '>[README.md brand_new.txt*]'
-run "key:cmd+O;text:.g;finddump"
+run "keyof:Open a file;text:.g;finddump"
 check "names with a dot in front show once a dot is typed" "open [$W/.g] 2 : >.gitignore run.log"
-run "key:cmd+O;text:src/deep/;key:alt+Backspace;finddump"
+run "keyof:Open a file;text:src/deep/;key:alt+Backspace;finddump"
 check "Option+Backspace goes a folder back" "open [$W/src/] 4 : >../ deep/ helper.hpp main.cpp"
 
 # Saving a new file asks for its name here.
 fresh
-got=$("$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$W;frame;key:cmd+T;text:ihello there;key:Escape;key:cmd+S;finddump" "$W/README.md" 2>&1 >/dev/null | tail -1)
+got=$("$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$W;frame;keyof:New file;text:ihello there;key:Escape;key:cmd+S;finddump" "$W/README.md" 2>&1 >/dev/null | tail -1)
 check "Cmd+S in a new file asks for a name, starting in the working directory" "save [$W/] 7 : >../ build/ docs/ node_modules/ src/ README.md"
 fresh
-got=$("$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$W;frame;key:cmd+T;text:ihello there;key:Escape;key:cmd+S;text:docs/new.txt;key:Return;dump" "$W/README.md" 2>&1 >/dev/null | tail -1)
+got=$("$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$W;frame;keyof:New file;text:ihello there;key:Escape;key:cmd+S;text:docs/new.txt;key:Return;dump" "$W/README.md" 2>&1 >/dev/null | tail -1)
 got="$got / $(cat "$W/docs/new.txt" 2>/dev/null)"
 check "the name typed is the file's from then on, and it is saved" '>[README.md new.txt*] / hello there'
 fresh
-got=$("$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$W;frame;key:cmd+T;text:ireplaced;key:Escape;key:cmd+S;text:run.log;key:Return;dump" "$W/README.md" 2>&1 >/dev/null | tail -1)
+got=$("$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$W;frame;keyof:New file;text:ireplaced;key:Escape;key:cmd+S;text:run.log;key:Return;dump" "$W/README.md" 2>&1 >/dev/null | tail -1)
 got="$got / $(cat "$W/run.log" 2>/dev/null)"
 check "saving under a name that is there writes over it" '>[README.md run.log*] / replaced'
 fresh
-got=$("$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$W;frame;key:cmd+T;text:ikept;key:Escape;key:cmd+S;text:x.txt;key:Escape;dump" "$W/README.md" 2>&1 >/dev/null | tail -1)
+got=$("$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$W;frame;keyof:New file;text:ikept;key:Escape;key:cmd+S;text:x.txt;key:Escape;dump" "$W/README.md" 2>&1 >/dev/null | tail -1)
 got="$got / $(ls "$W/x.txt" 2>/dev/null)"
 check "Esc: no name, nothing saved" '>[README.md untitled*] / '
 
@@ -215,7 +215,7 @@ runf "key:cmd+F;key:alt+R;text:o.e\\|t.o;finddump"
 check "Option+R: a regular expression" 'file [o.e\|t.o] .* 1 of 5 at 0-3'
 runf "key:cmd+F;key:alt+R;text:\\(;finddump"
 check "and one that is not says why" 'file [\(] .* (E54: Unmatched \()'
-runf "key:cmd+F;key:Return;key:Escape;key:cmd+G;key:cmd+G;vimdump"
+runf "key:cmd+F;key:Return;key:Escape;keyof:Find the next match;keyof:Find the next match;vimdump"
 check "Cmd+G goes on with it after the box has gone" 'NORMAL |  | 1:4 | one two one'
 runf "key:cmd+F;text:two;key:Tab;text:2;key:Return;finddump;save"
 got="$got | $(tr '\n' '/' <"$dir/r.txt")"

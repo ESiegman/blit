@@ -45,6 +45,7 @@ extern "C" int blit_picture_draw(const void*, size_t, int, int, BlitPicture* out
 extern "C" void blit_picture_free(BlitPicture* p) {
     if (p) std::free(p->rgba), p->rgba = nullptr;
 }
+extern "C" const char* blit_picture_readers(void) { return ""; }
 extern "C" int blit_frames_read(const void*, size_t, int, size_t, BlitFrames* out) {
     *out = BlitFrames{};
     return 0;
@@ -754,11 +755,12 @@ bool App::image_hit(int px, int py, Pane** pane) {
 }
 
 bool App::image_key(const SDL_KeyboardEvent& k) {
-    if (!pane_->doc->image || (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT))) return false;
+    // (The editor's key with these is still the picture's: Cmd on a Mac, Ctrl elsewhere.)
+    if (!pane_->doc->image || (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI) & ~kPrimaryMod)) return false;
     ImageView& v = *pane_->doc->image;
     const PictureInfo* p = picture(v.path);
     if (p->state != PictureInfo::kReady) return false;
-    const bool cmd = (k.mod & SDL_KMOD_GUI) != 0;
+    const bool cmd = (k.mod & kPrimaryMod) != 0;
     const double mx = v.ax + v.aw / 2.0, my = v.ay + v.ah / 2.0;
     const double step_x = std::max(1.0, v.aw * 0.1) / (p->full_w * v.scale), step_y = std::max(1.0, v.ah * 0.1) / (p->full_h * v.scale);
     switch (k.key) {

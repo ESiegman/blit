@@ -4,9 +4,8 @@
  * pipelines, with its own uniforms.
  *
  * Metal on Apple's systems (gpu_metal.m), Vulkan everywhere else
- * (gpu_vulkan.cpp, which is not written yet). The interface is C because
- * the Metal side is Objective-C, built by Apple's compiler: nothing of C++
- * crosses it.
+ * (gpu_vulkan.cpp). The interface is C because the Metal side is
+ * Objective-C, built by Apple's compiler: nothing of C++ crosses it.
  *
  * A frame: blit_gpu_begin() waits until the memory of a frame is free and
  * says how big the target is; the cells are written straight into the
@@ -40,7 +39,7 @@ enum {
     BLIT_PIPE_COUNT
 };
 
-enum { BLIT_PRESENT_VSYNC, BLIT_PRESENT_IMMEDIATE };
+enum { BLIT_PRESENT_VSYNC, BLIT_PRESENT_IMMEDIATE, BLIT_PRESENT_MAILBOX };
 enum { BLIT_FRAME_FAILED = -1, BLIT_FRAME_SKIPPED = 0, BLIT_FRAME_DRAWN = 1 };
 
 /* One shader: compiled (a Metal library, SPIR-V) or source (MSL). */
@@ -73,11 +72,11 @@ typedef struct BlitGpuTimes {
     uint64_t submit_ns;  /* the commands handed to the GPU, the image shown */
 } BlitGpuTimes;
 
-/* view: the window's CAMetalLayer (Metal) or what the Vulkan side will
- * want; null for offscreen use only. frames: how many frames may be under
- * way at once (1 to 3). cache_dir: where compiled pipelines are kept from
- * one run to the next (null: they are not). On failure: null, and why in
- * err. */
+/* view: the window's CAMetalLayer (Metal) or its SDL_Window (Vulkan, which
+ * makes its surface from it); null for offscreen use only. frames: how
+ * many frames may be under way at once (1 to 3). cache_dir: where compiled
+ * pipelines are kept from one run to the next (null: they are not). On
+ * failure: null, and why in err. */
 BlitGpu* blit_gpu_create(void* view, const BlitGpuShaders* shaders, int frames, int debug, const char* cache_dir, char* err, size_t err_size);
 void blit_gpu_destroy(BlitGpu* g);
 const char* blit_gpu_name(const BlitGpu* g);
@@ -85,6 +84,7 @@ const char* blit_gpu_name(const BlitGpu* g);
  * whether the pipelines came from the cache. */
 void blit_gpu_setup_times(const BlitGpu* g, uint64_t* library_ns, uint64_t* pipelines_ns, int* cached);
 
+/* 0 if the window has no such mode (Metal has no mailbox). */
 int blit_gpu_set_present(BlitGpu* g, int mode);
 /* How many images of the window may be drawn or waiting to be shown (2 or
  * 3). Fewer: what is drawn is on the screen sooner; more: frames drawn one

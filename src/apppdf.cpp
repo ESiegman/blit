@@ -1099,10 +1099,11 @@ bool App::pdf_text(const char* text) {
 }
 
 bool App::pdf_key(const SDL_KeyboardEvent& k) {
-    if (!pane_->doc->pdf || (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT))) return false;
+    // (The editor's key is still the PDF's with some keys: Cmd on a Mac, Ctrl elsewhere.)
+    if (!pane_->doc->pdf || (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI) & ~kPrimaryMod)) return false;
     Doc& doc = *pane_->doc;
     PdfView& v = *doc.pdf;
-    const bool cmd = (k.mod & SDL_KMOD_GUI) != 0, shift = (k.mod & SDL_KMOD_SHIFT) != 0;
+    const bool cmd = (k.mod & kPrimaryMod) != 0, shift = (k.mod & SDL_KMOD_SHIFT) != 0;
     if (v.locked) {  // the password field has the keyboard
         if (cmd) return false;
         switch (k.key) {

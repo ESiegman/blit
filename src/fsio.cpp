@@ -186,6 +186,8 @@ bool fs_run(const std::string& dir, const std::string& command, std::string* out
     posix_spawnattr_init(&attr);
 #if defined(POSIX_SPAWN_CLOEXEC_DEFAULT)
     posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
+#elif defined(__GLIBC__)
+    posix_spawn_file_actions_addclosefrom_np(&fa, 3);  // (glibc: the same, as the last of the file actions)
 #endif
     pid_t pid = -1;
     const int rc = ::posix_spawn(&pid, args[0], &fa, &attr, args.data(), environ);

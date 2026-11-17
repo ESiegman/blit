@@ -90,7 +90,10 @@ endif()
 # so the two compilers' C++ libraries never meet. It is left out of
 # link-time optimization: the two compilers' LTO objects do not mix.
 # Image files are read there too, by the system's ImageIO (src/picture.h),
-# SVG by AppKit, PDFs' text, links and outline by PDFKit.
+# SVG by AppKit, PDFs' text, links and outline by PDFKit. Elsewhere the
+# Vulkan side is C++ like the rest, makes the window's surface through SDL,
+# and links the Vulkan loader.
+find_package(SDL3 REQUIRED CONFIG)
 if(APPLE)
   if(NOT CMAKE_OBJC_COMPILER)
     set(CMAKE_OBJC_COMPILER /usr/bin/clang)
@@ -102,13 +105,14 @@ if(APPLE)
   add_library(blit_gpu STATIC src/gpu_metal.m src/picture_mac.m src/macapp.m)
   target_compile_options(blit_gpu PRIVATE -fobjc-arc -Wall -Wextra)
   target_link_libraries(blit_gpu PUBLIC "-framework Metal" "-framework QuartzCore" "-framework Foundation" "-framework CoreGraphics" "-framework ImageIO" "-framework AppKit" "-framework PDFKit")
+  set_target_properties(blit_gpu PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 else()
+  find_package(Vulkan REQUIRED)
   add_library(blit_gpu STATIC src/gpu_vulkan.cpp)
+  target_link_libraries(blit_gpu PUBLIC Vulkan::Vulkan SDL3::SDL3)
 endif()
-set_target_properties(blit_gpu PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 target_include_directories(blit_gpu PUBLIC src)
 
-find_package(SDL3 REQUIRED CONFIG)
 find_package(Freetype REQUIRED)
 find_package(Threads REQUIRED)
 
@@ -162,6 +166,18 @@ endif()
 # Glyph atlas, shaping and text -> cell grid: CPU only.
 add_library(blit_view STATIC src/font.cpp src/shape.cpp src/grid.cpp)
 target_link_libraries(blit_view PUBLIC blit_core Freetype::Freetype ${CMAKE_DL_LIBS})
+# Away from Apple's systems fontconfig says which font is the system's
+# monospace one, where a family is, and which fonts have a character the
+# others lack. (Public: font.hpp has what it needs only where it is used.)
+if(NOT APPLE)
+  find_package(Fontconfig)
+  if(Fontconfig_FOUND)
+    target_link_libraries(blit_view PUBLIC Fontconfig::Fontconfig)
+    target_compile_definitions(blit_view PUBLIC BLIT_FONTCONFIG=1)
+  else()
+    message(STATUS "fontconfig not found: fonts are looked for in the usual folders")
+  endif()
+endif()
 if(HARFBUZZ_INCLUDE_DIR)
   target_include_directories(blit_view PRIVATE ${HARFBUZZ_INCLUDE_DIR})
   target_compile_definitions(blit_view PRIVATE BLIT_HAVE_HARFBUZZ=1)
@@ -277,9 +293,15 @@ if(BLIT_DEV)
     # Characters of more than one code point (marks, emoji sequences, flags) and of other widths.
     add_test(NAME unicode COMMAND sh ${CMAKE_SOURCE_DIR}/tests/unicode.sh $<TARGET_FILE:blit>)
     # Every suite sees the dark appearance, whatever the machine is set to
-    # (GitHub's machines are light).
+    # (GitHub's machines are light), and the cell macOS's own font has at
+    # 13 pt (16 x 31 pixels at twice the density), whatever fonts the
+    # machine has: the cases' mouse positions, rows and corners are for it.
     get_property(blit_tests DIRECTORY PROPERTY TESTS)
-    set_tests_properties(${blit_tests} PROPERTIES ENVIRONMENT BLIT_APPEARANCE=dark)
+    set(blit_test_env BLIT_APPEARANCE=dark)
+    if(NOT APPLE)
+      list(APPEND blit_test_env BLIT_CELL=16x31)
+    endif()
+    set_tests_properties(${blit_tests} PROPERTIES ENVIRONMENT "${blit_test_env}")
   endif()
 
   # Benchmark tools (POSIX only). See bench/run.sh.

@@ -241,7 +241,7 @@ void blit_gpu_setup_times(const BlitGpu* g, uint64_t* library_ns, uint64_t* pipe
 
 int blit_gpu_set_present(BlitGpu* g, int mode) {
     BlitMetal* m = M(g);
-    if (!m->layer) return 0;
+    if (!m->layer || mode == BLIT_PRESENT_MAILBOX) return 0;
     m->layer.displaySyncEnabled = mode == BLIT_PRESENT_VSYNC;
     return 1;
 }

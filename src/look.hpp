@@ -56,10 +56,13 @@ inline constexpr Ink kRemoved{kInkDiagnostic, 0};            // git: a removed l
 inline u32 put(TextBox& box, Font& font, u32 row, u32 col, std::string_view s, Ink in) { return box.put(font, row, col, s, in.ink, in.style); }
 
 // Keys as macOS writes them ("Cmd+Shift+P" becomes "⇧⌘P", "Ctrl+`" "⌃`",
-// "Enter" "↩"), where the font (or a fallback) can draw the symbols; as
-// they are elsewhere. Several chords ("Ctrl+Tab / Ctrl+Shift+Tab", "F4,
+// "Enter" "↩"), where the font (or a fallback) can draw the symbols; in
+// words elsewhere (key_words()). Several chords ("Ctrl+Tab / Ctrl+Shift+Tab", "F4,
 // Shift+F4") keep what is between them.
 std::string key_symbols(std::string_view keys, Font& font);
+// Keys written as for a Mac ("Cmd+Option+B") in the words of the system
+// blit runs on: as they are on a Mac, Ctrl and Alt elsewhere ("Ctrl+Alt+B").
+std::string key_words(std::string_view keys);
 
 // A hint line: each pair is the keys (written by key_symbols) and what they
 // do: the keys plain, what they do muted, three columns between pairs.

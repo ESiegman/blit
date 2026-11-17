@@ -1420,7 +1420,7 @@ bool App::find_key(const SDL_KeyboardEvent& k) {
     int want = -1;
     if (cmd && !alt && k.key == SDLK_P && !shift) want = kFindNames;
     else if (cmd && !alt && k.key == SDLK_F && shift) want = kFindText;
-    else if (cmd && !alt && k.key == SDLK_O && !shift) want = kFindOpen;
+    else if (k.key == SDLK_O && !shift && ((cmd && !alt) || (kCtrlShared && alt && !ctrl))) want = kFindOpen;  // (Alt+O too where Vim may have Ctrl+O)
     if (want >= 0) {
         if (find_open_ && f.mode == want) find_close(false);  // the same key again shuts it
         else find_open(want, find_open_ && want != kFindOpen && (f.mode == kFindNames || f.mode == kFindText) ? f.typed : std::string());
@@ -1533,12 +1533,13 @@ bool App::find_key(const SDL_KeyboardEvent& k) {
                 field.clear();
                 lit = false;
             } else if (cmd || alt) {
-                // A word back; in a path, a folder back.
+                // A word back; in a path, a folder back. (Cmd with it on a
+                // Mac takes the whole line; elsewhere Ctrl is the word key.)
                 const bool path = f.path();
                 const char stop = path ? '/' : ' ';
                 while (!field.empty() && field.back() == stop) field.pop_back();
                 while (!field.empty() && field.back() != stop) field.pop_back();
-                if (cmd && !path) field.clear();
+                if (cmd && !kCtrlShared && !path) field.clear();
             } else {
                 pop_char(&field);
             }

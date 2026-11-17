@@ -55,6 +55,10 @@ void Profile::add(std::span<const Frame> frames, u64 w, u64 thread, std::string_
         by_thread.push_back({thread_name.empty() ? "Thread " + std::to_string(thread) : std::string(thread_name), thread, 0, 0, static_cast<u32>(nodes.size() - 1)});
     }
     ProfileThread& t = by_thread[it->second];
+    // A thread that names itself once it is going (pthread_setname_np) is
+    // called by its program's name in perf's first samples of it: the name
+    // it has last is its name.
+    if (!fresh && !thread_name.empty() && t.name != thread_name) t.name = thread_name;
     t.weight += w;
     ++t.samples;
     nodes[t.root].total += w;
@@ -680,6 +684,8 @@ bool start(const std::shared_ptr<Remote>& remote, const std::vector<std::string>
     short flags = POSIX_SPAWN_SETPGROUP;
 #if defined(POSIX_SPAWN_CLOEXEC_DEFAULT)
     flags |= POSIX_SPAWN_CLOEXEC_DEFAULT;
+#elif defined(__GLIBC__)
+    posix_spawn_file_actions_addclosefrom_np(&fa, 3);  // (glibc: the same, as the last of the file actions)
 #endif
     posix_spawnattr_setflags(&attr, flags);
     posix_spawnattr_setpgroup(&attr, 0);

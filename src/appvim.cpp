@@ -17,15 +17,18 @@ namespace blit {
 
 namespace {
 
-// Ctrl with a letter: Vim's, or the application's? Where Ctrl is also the
-// key for the application's own shortcuts (everywhere but on a Mac), copy,
-// paste, cut, undo, save, quit and new tab stay the application's.
+// Ctrl with a letter: Vim's, or the application's? On a Mac the
+// application's keys are Cmd's, and every Ctrl key Vim knows is Vim's.
+// Where Ctrl is the application's key too (kCtrlShared) they are still
+// Vim's while the text has the keyboard (vim_owns_key()), but for Ctrl+N
+// and Ctrl+P outside Insert mode, which there are only j and k by other
+// names: those stay a new file and Go to file.
 bool vim_takes_ctrl(SDL_Keycode key, bool insert) {
     if (key == SDLK_LEFTBRACKET) return true;
     if (key == SDLK_RIGHTBRACKET) return !insert;
     if (key < SDLK_A || key > SDLK_Z) return false;
     const char c = static_cast<char>('a' + (key - SDLK_A));
-    if (kPrimaryMod == SDL_KMOD_CTRL && std::strchr("cvxzsqt", c)) return false;
+    if (kCtrlShared && !insert && (c == 'n' || c == 'p')) return false;
     return std::strchr(insert ? "wuhrojmnpctdavqey" : "rdufbeyowaxvhjmnpciltk", c) != nullptr;
 }
 
@@ -130,6 +133,24 @@ bool App::vim_selection(u64* lo, u64* hi) const {
     return true;
 }
 
+// Where Ctrl is the editor's key and Vim's alike: whether this one is
+// Vim's before any of the editor's shortcuts look at it. It is when modes
+// are on, the text has the keyboard (not a box, the side panel or a tab of
+// another kind), and Vim has a use for it in the mode it is in. A command
+// run from the command search is the editor's whatever its keys, and so
+// are Ctrl+N and Ctrl+P while a completion list is open (they go through
+// it, as Vim's would through its own).
+bool App::vim_owns_key(const SDL_KeyboardEvent& k) {
+    if (!kCtrlShared || !cfg_.modal || command_sending_) return false;
+    if (!(k.mod & SDL_KMOD_CTRL) || (k.mod & (SDL_KMOD_SHIFT | SDL_KMOD_ALT | SDL_KMOD_GUI))) return false;
+    if (find_open_ || panel_has_keyboard()) return false;
+    const Doc& d = *pane_->doc;
+    if (d.term || d.prof || d.md || d.image || d.pdf) return false;
+    if ((k.key == SDLK_N || k.key == SDLK_P) && lsp_completing()) return false;
+    vim_attach();
+    return vim_takes_ctrl(k.key, vim_.mode() == Vim::kInsert || vim_.mode() == Vim::kReplace);
+}
+
 // A key press. True if it was Vim's (or is nobody's: outside Insert mode a
 // key Vim has no use for does nothing).
 bool App::vim_key(const SDL_KeyboardEvent& k) {
@@ -169,6 +190,17 @@ bool App::vim_key(const SDL_KeyboardEvent& k) {
     // In Insert mode, Shift and Option with the arrows select and move by
     // words, as they do without Vim.
     if (insert && moving && (shift || alt)) return false;
+    // Ctrl+Home and Ctrl+End, the document's ends where Ctrl is the editor's
+    // key: Vim's gg and G outside Insert mode (as Vim has them), the
+    // editor's in it.
+    if (kCtrlShared && ctrl && (k.key == SDLK_HOME || k.key == SDLK_END)) {
+        if (insert) return false;
+        if (!shift && !alt) {
+            vim_.keys(pane_->doc->ed, k.key == SDLK_HOME ? "gg" : "G");
+            vim_after(Vim::kHandled);
+        }
+        return true;
+    }
     if (!insert) lsp_close(kPopHover);
     const u32 r = vim_.feed(pane_->doc->ed, v);
     vim_after(r);

@@ -17,6 +17,8 @@ trap 'rm -rf "$dir"' EXIT
 printf 'blit.opt.lsp.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/init.lua"
 export BLIT_INIT="$dir/init.lua"
 export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_SYSTEM=/dev/null
+# The ends of the file: Cmd+Up and Cmd+Down on a Mac, Ctrl+Home and Ctrl+End elsewhere.
+case $(uname -s) in Darwin) doc_start=cmd+Up doc_end=cmd+Down ;; *) doc_start=ctrl+Home doc_end=ctrl+End ;; esac
 
 # A server and two people's copies of it, with one commit.
 fresh() {
@@ -39,6 +41,9 @@ fresh() {
 failed=0
 # check NAME EXPECTED: compares $got with it.
 check() {
+    # (The status bar's icons beside a branch and another machine are the
+    # font's, where it has them: the words are what is compared.)
+    got=$(printf '%s' "$got" | sed -e 's/⎇ //g' -e 's/⇄ //g' -e 's/ //g')
     if [ -n "$print" ]; then
         printf '%s\n    %s\n' "$1" "$got"
     elif [ "$got" != "$2" ]; then
@@ -66,10 +71,10 @@ run "$dir/ada/poem.txt" "frame;gitdump"
 check "blame is no setting: init.lua cannot turn it on everywhere" 'main | branches *main origin/main | commits 1 "Start" | lines'
 printf 'blit.opt.lsp.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/init.lua"
 
-run "$dir/ada/poem.txt" "frame;gitwait;key:cmd+alt+B;key:Down;key:End;text: changed;key:cmd+Down;text:six;key:Return;key:cmd+Up;gitdump"
+run "$dir/ada/poem.txt" "frame;gitwait;key:cmd+alt+B;key:Down;key:End;text: changed;key:$doc_end;text:six;key:Return;key:$doc_start;gitdump"
 check "edited and not saved: the changed lines show, git's own status does not" 'main | branches *main origin/main | commits 1 "Start" | lines 2~ 6+ | blame ada: Start'
 
-run "$dir/ada/poem.txt" "frame;gitwait;key:cmd+alt+B;key:Down;key:End;text: changed;key:cmd+Down;text:six;key:Return;key:cmd+S;key:cmd+Up;key:Down;gitdump"
+run "$dir/ada/poem.txt" "frame;gitwait;key:cmd+alt+B;key:Down;key:End;text: changed;key:$doc_end;text:six;key:Return;key:cmd+S;key:$doc_start;key:Down;gitdump"
 check "saved: a change, and the changed line is nobody's yet" 'main | changes M:poem.txt | branches *main origin/main | commits 1 "Start" | lines 2~ 6+ | blame Not committed yet'
 
 run "$dir/ada/poem.txt" "frame;gitwait;key:cmd+alt+B;git:stage:poem.txt;gitdump:a;git:unstage:poem.txt;gitdump:b;git:stage:poem.txt;git:commit:Second verse;gitdump"
@@ -91,7 +96,7 @@ check "nothing new to fetch" 'main | branches *main origin/main | commits 2 "Sec
 # be in the file.
 printf 'zero\n' >"$dir/ada/poem.new" && cat "$dir/ada/poem.txt" >>"$dir/ada/poem.new" && mv "$dir/ada/poem.new" "$dir/ada/poem.txt"
 git -C "$dir/ada" commit -q -a -m "A line at the top" && git -C "$dir/ada" push -q 2>/dev/null
-run "$dir/bo/poem.txt" "frame;git:pull;key:cmd+Down;text:seven;key:Return;key:cmd+S;gitdump"
+run "$dir/bo/poem.txt" "frame;git:pull;key:$doc_end;text:seven;key:Return;key:cmd+S;gitdump"
 got="$got / $(head -1 "$dir/bo/poem.txt") ... $(tail -1 "$dir/bo/poem.txt")"
 check "pulled under an open tab, then edited: nothing lost" 'main | changes M:poem.txt | branches *main origin/main | commits 3 "A line at the top" | lines 8+ | note Pull: done / zero ... seven'
 git -C "$dir/bo" checkout -q -- poem.txt
@@ -102,7 +107,7 @@ check "a branch made, committed on, merged into main and deleted" 'main +1 | bra
 
 # Switching branches changes the file under the open tab.
 git -C "$dir/bo" switch -q -c old HEAD~3 2>/dev/null && git -C "$dir/bo" switch -q main
-run "$dir/bo/poem.txt" "frame;git:switch:old;key:cmd+Down;text:eight;key:Return;key:cmd+S;gitdump"
+run "$dir/bo/poem.txt" "frame;git:switch:old;key:$doc_end;text:eight;key:Return;key:cmd+S;gitdump"
 got="$got / $(head -1 "$dir/bo/poem.txt") ... $(tail -1 "$dir/bo/poem.txt")"
 check "another branch checked out under an open tab" 'old | changes M:poem.txt | branches main *old origin/main | commits 1 "Start" | lines 6+ | note Switch: done / one ... eight'
 git -C "$dir/bo" checkout -q -- poem.txt && git -C "$dir/bo" switch -q main
