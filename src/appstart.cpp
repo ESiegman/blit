@@ -683,7 +683,7 @@ void App::start_layout(FrameDesc& fd) {
         s.key = key;
         rebuilt = true;
         // Each thing to do, its key, and its shortcut from anywhere (as
-        // the command search and the README write it, in the platform's
+        // the command search and the manual write it, in the platform's
         // symbols).
         auto chord = [&](SDL_Keycode k, int mods) { return key_symbols(chord_text(k, static_cast<SDL_Keymod>(kPrimaryMod | mods)), font); };
         s.items.clear();

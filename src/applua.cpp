@@ -5,7 +5,7 @@
 // commands (blit.command), events (blit.on), the open files (blit.lines and
 // the like), floating boxes, pickers and messages (blit.ui, blit.notify),
 // timers (blit.defer) and programs run in the background (blit.system).
-// README.md lists it all. All of it is C++ (src/luaapi.cpp): the Lua is the
+// docs/manual.md lists it all. All of it is C++ (src/luaapi.cpp): the Lua is the
 // user's alone.
 //
 // None of this exists until there is a script to run: without init.lua and

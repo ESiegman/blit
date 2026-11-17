@@ -8,7 +8,7 @@ namespace blit {
 
 namespace {
 
-// A chord's parts, as the README writes them: "Cmd", "Shift", "P".
+// A chord's parts, as the manual (docs/manual.md) writes them: "Cmd", "Shift", "P".
 struct Named {
     std::string_view word;
     u32 symbol;

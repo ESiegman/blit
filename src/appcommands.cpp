@@ -75,7 +75,7 @@ bool has_text(const Doc& d) { return !d.term && !d.prof && !d.md && !d.image && 
 
 }  // namespace
 
-// A chord in words, as the README writes them: "Cmd+Shift+P", "Ctrl+`".
+// A chord in words, as the manual (docs/manual.md) writes them: "Cmd+Shift+P", "Ctrl+`".
 std::string App::chord_text(SDL_Keycode key, SDL_Keymod mod) {
     const bool mac = kPrimaryMod == SDL_KMOD_GUI;
     const u8 m = mods_of(mod);
@@ -172,7 +172,7 @@ void App::commands_create() {
     const u8 ctl = mac ? kC : kP;
     auto key = [mac](SDL_Keycode k, u8 m = 0) { return Chord{k, mac || !(m & kC) ? m : static_cast<u8>((m & ~kC) | kP)}; };
     // Where Vim's modes may have a command's Ctrl key (kCtrlShared, and
-    // README.md's "Keys without Cmd"), the keys it has there too.
+    // docs/manual.md's "Keys without Cmd"), the keys it has there too.
     auto also = [&](std::vector<Chord> keys, std::initializer_list<Chord> more) {
         if (kCtrlShared) keys.insert(keys.end(), more);
         return keys;
