@@ -10,7 +10,7 @@ if(CMAKE_HOST_APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET AND NOT DEFINED ENV{MACO
     set(CMAKE_OSX_DEPLOYMENT_TARGET "${CMAKE_MATCH_1}" CACHE STRING "The macOS version the build is for")
   endif()
 endif()
-project(blit VERSION 0.1.0 LANGUAGES CXX)
+project(blit VERSION 0.2.0 LANGUAGES CXX)
 
 set(CMAKE_CXX_STANDARD 26)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -239,6 +239,16 @@ if(APPLE AND NOT BLIT_DEV)
     COMMENT "blit.app"
     VERBATIM)
   install(DIRECTORY ${BLIT_APP} DESTINATION . USE_SOURCE_PERMISSIONS)
+endif()
+# Elsewhere, what a package puts in place: the program, its entry in the
+# desktop's list of applications (res/blit.desktop) and its icon.
+if(NOT APPLE AND NOT BLIT_DEV)
+  include(GNUInstallDirs)
+  install(TARGETS blit RUNTIME DESTINATION ${CMAKE_INSTALL_BINDIR})
+  install(FILES ${CMAKE_SOURCE_DIR}/res/blit.desktop DESTINATION ${CMAKE_INSTALL_DATADIR}/applications)
+  foreach(size 256 512)
+    install(FILES ${CMAKE_SOURCE_DIR}/res/blit-${size}.png DESTINATION ${CMAKE_INSTALL_DATADIR}/icons/hicolor/${size}x${size}/apps RENAME blit.png)
+  endforeach()
 endif()
 
 if(BLIT_DEV)

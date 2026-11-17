@@ -51,14 +51,25 @@ none of Homebrew's programs; it takes the PATH your login shell has instead
 (kept in `~/Library/Caches/blit/login-path` and asked for again in the
 background each time, so only the first start waits for the shell).
 
-**From the Releases page.** Each version tag (`v0.1.0`) builds blit.app on
-GitHub (`.github/workflows/release.yml`), with the libraries Homebrew gave
-the build copied inside it, so it runs on a Mac without them, and attaches
-`blit-VERSION-macos-arm64.zip` and its SHA-256 to the release. It is signed
-ad hoc, so macOS stops the first start of a downloaded copy: right-click it
-and choose Open, or `xattr -dr com.apple.quarantine /Applications/blit.app`.
-Ligatures need Homebrew's HarfBuzz there too. A release can also be made by
-hand: `gh workflow run release.yml -f tag=v0.2.0`.
+**From the Releases page.** Each version tag (`v0.2.0`) builds blit on
+GitHub (`.github/workflows/release.yml`) and attaches, with their SHA-256:
+
+- `blit-VERSION-macos-arm64.zip`: blit.app, with the libraries Homebrew
+  gave the build copied inside it, so it runs on a Mac without them. It is
+  signed ad hoc, so macOS stops the first start of a downloaded copy:
+  right-click it and choose Open, or `xattr -dr com.apple.quarantine
+  /Applications/blit.app`. Ligatures need Homebrew's HarfBuzz there too.
+- `blit-VERSION-x86_64.AppImage` and `blit-VERSION-linux-x86_64.tar.gz`:
+  the same files for any Linux as new as the glibc they need (2.38: Ubuntu
+  24.04, Fedora 39, Debian 13 and newer). They carry SDL3, Lua 5.5 and
+  tree-sitter beside the program and take glibc, the Vulkan loader,
+  fontconfig and FreeType from the system; the workflow starts both on
+  stock Ubuntu and Fedora before it releases them. Unpack the tarball
+  anywhere and run `bin/blit` (`bin/`, `lib/` and `share/` stay together).
+
+A release can also be made by hand, `gh workflow run release.yml -f
+tag=v0.3.0`, and with `-f publish=false` everything is built and kept with
+the run, and nothing is released.
 
 **From Homebrew.** This repository is a tap of its own:
 

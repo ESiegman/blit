@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=blit
+GenericName=Text Editor
+Comment=A fast text editor
+Exec=blit %F
+Icon=blit
+Terminal=false
+Categories=Development;TextEditor;
+MimeType=text/plain;text/x-c;text/x-csrc;text/x-chdr;text/x-c++;text/x-c++src;text/x-c++hdr;text/x-python;text/x-script.python;text/markdown;text/x-cmake;application/json;application/x-yaml;application/toml;application/x-shellscript;text/x-lua;inode/directory;
+StartupWMClass=blit

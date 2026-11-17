@@ -1,10 +1,16 @@
 name: release
 
-# blit.app on the Releases page: built when a version tag (v1.2.3) is
-# pushed, or by hand with the tag to make (from main, if it is new). The
-# libraries Homebrew gave the build are copied into the app, so it runs on a
-# Mac without them; it is signed for no one in particular (ad hoc), so
-# macOS asks once before the first start.
+# blit on the Releases page, for macOS and Linux: built when a version tag
+# (v1.2.3) is pushed, or by hand with the tag to make (from main, if it is
+# new). By hand with publish off, everything is built and kept with the run,
+# and nothing is released.
+#
+# macOS: blit.app, with the libraries Homebrew gave the build copied inside,
+# so it runs on a Mac without them; signed for no one in particular (ad hoc),
+# so macOS asks once before the first start.
+# Linux: an AppImage and a tarball of the same files, for any Linux as new
+# as the glibc they need (the build checks it, and starts them on Ubuntu and
+# Fedora).
 on:
   push:
     tags: ['v*']
@@ -13,6 +19,10 @@ on:
       tag:
         description: Tag to release (made from main if it does not exist yet), as v0.1.0
         required: true
+      publish:
+        description: Release it (off, the files are only kept with the run)
+        type: boolean
+        default: true
 
 permissions:
   contents: write
@@ -20,12 +30,13 @@ permissions:
 concurrency:
   group: release-${{ github.event.inputs.tag || github.ref_name }}
 
+env:
+  TAG: ${{ github.event.inputs.tag || github.ref_name }}
+
 jobs:
-  app:
+  mac:
     runs-on: macos-26
     timeout-minutes: 75
-    env:
-      TAG: ${{ github.event.inputs.tag || github.ref_name }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -71,21 +82,134 @@ jobs:
         run: |
           version="${TAG#v}"
           name="blit-$version-macos-arm64.zip"
-          ditto -c -k --keepParent build/blit.app "$name"
-          shasum -a 256 "$name" > "$name.sha256"
-          echo "NAME=$name" >> "$GITHUB_ENV"
-          echo "VERSION=$version" >> "$GITHUB_ENV"
-          echo "MACOS=$(/usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' build/blit.app/Contents/Info.plist)" >> "$GITHUB_ENV"
+          mkdir out
+          ditto -c -k --keepParent build/blit.app "out/$name"
+          (cd out && shasum -a 256 "$name" > "$name.sha256")
+          /usr/libexec/PlistBuddy -c 'Print :LSMinimumSystemVersion' build/blit.app/Contents/Info.plist > out/macos-minimum.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mac
+          path: out/
+
+  linux:
+    runs-on: ubuntu-latest
+    # Arch is only where the build happens (it has GCC 16); what comes out is
+    # for any Linux as new as the glibc it needs: an AppImage, and a tarball
+    # of the same files. Both carry the libraries few systems have yet (SDL3,
+    # Lua 5.5, tree-sitter, beside the program, found through its RPATH) and
+    # take glibc, the Vulkan loader, fontconfig and FreeType from the system.
+    container: archlinux:latest
+    timeout-minutes: 75
+    steps:
+      - name: Tools and libraries
+        run: |
+          pacman -Syu --noconfirm --needed base-devel git cmake ninja gcc sdl3 freetype2 fontconfig harfbuzz lua tree-sitter \
+            vulkan-icd-loader vulkan-headers vulkan-swrast zlib file wget
+
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag && 'main' || github.ref }}
+
+      - name: Build
+        run: |
+          cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=g++ -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DBLIT_NATIVE=OFF
+          cmake --build build -j "$(nproc)"
+          DESTDIR="$PWD/AppDir" cmake --install build
+
+      - name: AppImage, with the libraries inside
+        env:
+          APPIMAGE_EXTRACT_AND_RUN: '1'
+          ARCH: x86_64
+        run: |
+          version="${TAG#v}"
+          wget -q https://github.com/linuxdeploy/linuxdeploy/releases/download/continuous/linuxdeploy-x86_64.AppImage
+          chmod +x linuxdeploy-x86_64.AppImage
+          LINUXDEPLOY_OUTPUT_VERSION="$version" ./linuxdeploy-x86_64.AppImage --appdir AppDir \
+            --executable AppDir/usr/bin/blit \
+            --desktop-file AppDir/usr/share/applications/blit.desktop \
+            --icon-file AppDir/usr/share/icons/hicolor/256x256/apps/blit.png \
+            --output appimage
+          ls -l ./*.AppImage AppDir/usr/lib
+          objdump -T AppDir/usr/bin/blit | grep -o 'GLIBC_[0-9.]*' | sort -uV | tail -1 > glibc.txt
+          echo "needs $(cat glibc.txt)"
+
+      - name: Package
+        run: |
+          version="${TAG#v}"
+          dir="blit-$version-linux-x86_64"
+          mkdir -p out "$dir"
+          cp -a AppDir/usr/bin AppDir/usr/lib AppDir/usr/share "$dir/"
+          tar -czf "out/$dir.tar.gz" "$dir"
+          mv ./blit*.AppImage "out/blit-$version-x86_64.AppImage"
+          (cd out && for f in *; do sha256sum "$f" > "$f.sha256"; done)
+          cp glibc.txt out/linux-glibc.txt
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux
+          path: out/
+
+  # The Linux files on systems that are not where they were built: unpacked
+  # and started there, drawing with Mesa's software Vulkan.
+  portable:
+    needs: linux
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image: ['ubuntu:24.04', 'fedora:latest']
+    container: ${{ matrix.image }}
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: linux
+          path: files
+
+      - name: What a desktop already has
+        run: |
+          if command -v apt-get >/dev/null; then
+            apt-get update -q && DEBIAN_FRONTEND=noninteractive apt-get install -y -q libvulkan1 mesa-vulkan-drivers libfontconfig1 libfreetype6 zlib1g
+          else
+            dnf install -y -q vulkan-loader mesa-vulkan-drivers fontconfig freetype zlib
+          fi
+
+      - name: It starts
+        run: |
+          tar -xzf files/blit-*-linux-x86_64.tar.gz
+          bin=$(echo blit-*-linux-x86_64)/bin/blit
+          ldd "$bin"
+          if ldd "$bin" | grep -q 'not found'; then echo "a library is missing" >&2; exit 1; fi
+          "$bin" --help | head -1
+          "$bin" --info
+          chmod +x files/blit-*-x86_64.AppImage
+          APPIMAGE_EXTRACT_AND_RUN=1 files/blit-*-x86_64.AppImage --info
+
+  publish:
+    needs: [mac, linux, portable]
+    if: github.event_name == 'push' || github.event.inputs.publish == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: files
 
       - name: Release
         env:
           GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
         run: |
+          version="${TAG#v}"
+          macos=$(cat files/mac/macos-minimum.txt)
+          glibc=$(cut -d_ -f2 files/linux/linux-glibc.txt)
+          rm files/mac/macos-minimum.txt files/linux/linux-glibc.txt
+          sums=$(cat files/*/*.sha256 | sed 's/^/    /')
           cat > notes.md <<EOF
-          blit $VERSION for Apple silicon Macs (macOS $MACOS or later: the
-          libraries inside it are built for that).
+          blit $version for macOS (Apple silicon) and Linux (x86-64).
 
-          1. Unzip it and move **blit.app** to Applications.
+          **macOS** $macos or later (the libraries inside the app are built for it):
+
+          1. Unzip \`blit-$version-macos-arm64.zip\` and move **blit.app** to Applications.
           2. It is signed ad hoc, not by a developer Apple knows, so macOS
              stops the first start of a downloaded copy. Either right-click
              it, choose Open and confirm, or run
@@ -93,15 +217,31 @@ jobs:
           3. For \`blit\` in a terminal, run "Put the blit command on the PATH"
              from the command search (Cmd+Shift+P).
 
-          Ligatures need HarfBuzz (\`brew install harfbuzz\`); without it
-          everything else works. Syntax colours come from grammars blit
-          builds itself (\`blit --install-grammar all\`), which needs Apple's
-          Command Line Tools (\`xcode-select --install\`).
+          Ligatures need HarfBuzz (\`brew install harfbuzz\`).
 
-          SHA-256: $(cut -d' ' -f1 "$NAME.sha256")
+          **Linux** (x86-64, glibc $glibc or later: Ubuntu 24.04, Fedora 39,
+          Debian 13 and newer), with a Vulkan driver (Mesa's, or NVIDIA's):
+
+          - \`blit-$version-x86_64.AppImage\`: make it executable and run it.
+          - \`blit-$version-linux-x86_64.tar.gz\`: unpack it anywhere and run
+            \`bin/blit\` (keep \`bin/\`, \`lib/\` and \`share/\` together: the
+            libraries it carries are found beside it).
+
+          Both carry SDL3, Lua 5.5 and tree-sitter; glibc, the Vulkan loader,
+          fontconfig and FreeType come from the system. Ligatures need the
+          system's HarfBuzz.
+
+          Keys on Linux: Ctrl where a Mac has Cmd, with Vim's own Ctrl keys
+          kept while its modes are on (the README's "Keys without Cmd").
+          Syntax colours come from grammars blit builds itself
+          (\`blit --install-grammar all\`), which needs a C compiler.
+
+          SHA-256:
+
+          $sums
           EOF
           if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" "$NAME" "$NAME.sha256" --clobber
+            gh release upload "$TAG" files/*/* --clobber
           else
-            gh release create "$TAG" "$NAME" "$NAME.sha256" --target main --title "blit $VERSION" --notes-file notes.md
+            gh release create "$TAG" files/*/* --target main --title "blit $version" --notes-file notes.md
           fi
