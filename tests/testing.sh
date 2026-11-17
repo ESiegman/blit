@@ -81,6 +81,41 @@ if [ "$pytest" = yes ]; then
     run "$P/tests/test_math.py" "command:Run the tests;testdump;command:Run the failed tests again;testdump"
     check "the failed ones again" 'build: +adds xbreaks | tests/test_math.py: +test_adds xtest_fails | here: 1+ 6x'
 fi
+# Coverage, read with GCC's gcov from a build made with --coverage: the
+# lines run and missed, each file's share (none of a function no test calls).
+gcc=
+for c in g++-16 g++-15 g++-14 g++-13 g++; do
+    if command -v "$c" >/dev/null 2>&1 && "$c" --version 2>/dev/null | grep -q 'Free Software Foundation'; then gcc=$c; break; fi
+done
+if [ -n "$gcc" ]; then
+    C="$dir/cov"
+    mkdir -p "$C"
+    cat >"$C/CMakeLists.txt" <<'EOF'
+cmake_minimum_required(VERSION 3.21)
+project(cov CXX)
+enable_testing()
+add_executable(run run.cpp)
+add_test(NAME runs COMMAND run)
+EOF
+    cat >"$C/run.cpp" <<'EOF'
+int never() {
+    return 3;
+}
+
+int main() {
+    int sum = 0;
+    for (int i = 0; i < 3; ++i) sum += i;
+    return sum == 3 ? 0 : 1;
+}
+EOF
+    cmake -S "$C" -B "$C/build" -DCMAKE_CXX_COMPILER="$gcc" -DCMAKE_CXX_FLAGS=--coverage >/dev/null 2>&1 && cmake --build "$C/build" >/dev/null 2>&1 || { echo "testing: cannot build with coverage"; exit 1; }
+    got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$C;frame;command:Run the tests with coverage;testdump;coveragedump" "$C/run.cpp" 2>&1 >/dev/null | tail -1)
+    check "a run with coverage: the lines run and missed in the file in front, and its share" 'here: ran 5 6 7 8, missed 1 2 | files: run.cpp=67%'
+    got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$C;frame;command:Run the tests with coverage;testdump;command:Show or hide coverage;coveragedump" "$C/run.cpp" 2>&1 >/dev/null | tail -1)
+    check "hidden" 'here: none | files: run.cpp=67%'
+    got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$C;frame;command:Run the tests with coverage;testdump;key:End;text:x;coveragedump" "$C/run.cpp" 2>&1 >/dev/null | tail -1)
+    check "not on a file changed since" 'here: none | files: run.cpp=67%'
+fi
 mkdir -p "$dir/empty"
 : >"$dir/empty/a.txt"
 got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$dir/empty;frame;testdump" "$dir/empty/a.txt" 2>&1 >/dev/null | tail -1)

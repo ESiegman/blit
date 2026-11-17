@@ -45,6 +45,18 @@ std::vector<TestOutcome> parse_junit(std::string_view xml);
 // module (and class) as the report writes them, dotted.
 bool outcome_is(const TestOutcome& o, const TestCase& t);
 
+// Which lines of a file a run ran and missed (from 1), and the share of its
+// lines that ran.
+struct FileCoverage {
+    std::vector<u32> hit, missed;  // in order
+    double percent = 0;
+};
+// GCC's gcov --json-format --stdout (a JSON document a line; paths from the
+// build folder `dir` when not whole), and coverage.py's `coverage json`
+// (paths from `dir`). Each file's coverage, by its whole path.
+std::vector<std::pair<std::string, FileCoverage>> parse_gcov_json(std::string_view text, const std::string& dir);
+std::vector<std::pair<std::string, FileCoverage>> parse_coverage_py(std::string_view text, const std::string& dir);
+
 // Where tests are defined in a source file: each line (from 0) and the name
 // its runner gives it. C and C++: TEST(A, B), TEST_F, TEST_P and TYPED_TEST
 // ("A.B", as gtest_discover_tests names them), TEST_CASE("x") and

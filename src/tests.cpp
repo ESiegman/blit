@@ -1,7 +1,9 @@
 #include "tests.hpp"
 
+#include <algorithm>
 #include <cctype>
 #include <cstdlib>
+#include <filesystem>
 
 #include "json.hpp"
 
@@ -153,6 +155,75 @@ bool outcome_is(const TestOutcome& o, const TestCase& t) {
     std::string cls = module + (mid.empty() ? "" : "." + mid);
     while (!cls.empty() && cls.back() == '.') cls.pop_back();
     return o.classname == cls || o.classname.ends_with("." + cls) || cls.ends_with("." + o.classname);
+}
+
+namespace {
+
+std::string whole(const std::string& path, const std::string& dir) {
+    if (path.empty()) return path;
+    return std::filesystem::path(path[0] == '/' ? path : dir + "/" + path).lexically_normal().string();  // (as a document's path is: no ".." in it)
+}
+
+void finish(FileCoverage& c) {
+    std::ranges::sort(c.hit);
+    std::ranges::sort(c.missed);
+    const size_t all = c.hit.size() + c.missed.size();
+    c.percent = all ? 100.0 * static_cast<double>(c.hit.size()) / static_cast<double>(all) : 0;
+}
+
+}  // namespace
+
+std::vector<std::pair<std::string, FileCoverage>> parse_gcov_json(std::string_view text, const std::string& dir) {
+    std::vector<std::pair<std::string, FileCoverage>> out;
+    auto file_of = [&](const std::string& path) -> FileCoverage& {
+        for (auto& [p, c] : out)
+            if (p == path) return c;
+        out.emplace_back(path, FileCoverage{});
+        return out.back().second;
+    };
+    for (size_t at = 0; at < text.size();) {
+        size_t end = text.find('\n', at);
+        if (end == std::string_view::npos) end = text.size();
+        const std::string_view line = text.substr(at, end - at);
+        at = end + 1;
+        if (line.find('{') == std::string_view::npos) continue;
+        json::Doc doc;
+        if (!doc.parse(std::string(line))) continue;
+        const std::string cwd(doc.root()["current_working_directory"].str());
+        for (const json::Value f : doc.root()["files"]) {
+            const std::string path = whole(std::string(f["file"].str()), cwd.empty() ? dir : cwd);
+            if (path.empty() || path.starts_with("/usr/") || path.find("/include/c++/") != std::string::npos) continue;  // (the system's headers)
+            FileCoverage& c = file_of(path);
+            for (const json::Value l : f["lines"]) {
+                const u32 n = static_cast<u32>(l["line_number"].number());
+                if (!n) continue;
+                // (A line in several functions, an inline one's say: run if any ran it.)
+                const bool ran = l["count"].number() > 0;
+                std::erase(c.missed, n);
+                if (ran) {
+                    if (std::ranges::find(c.hit, n) == c.hit.end()) c.hit.push_back(n);
+                } else if (std::ranges::find(c.hit, n) == c.hit.end()) {
+                    c.missed.push_back(n);
+                }
+            }
+        }
+    }
+    for (auto& [p, c] : out) finish(c);
+    return out;
+}
+
+std::vector<std::pair<std::string, FileCoverage>> parse_coverage_py(std::string_view text, const std::string& dir) {
+    std::vector<std::pair<std::string, FileCoverage>> out;
+    json::Doc doc;
+    if (!doc.parse(std::string(text))) return out;
+    for (const json::Value f : doc.root()["files"]) {
+        FileCoverage c;
+        for (const json::Value n : f["executed_lines"]) c.hit.push_back(static_cast<u32>(n.number()));
+        for (const json::Value n : f["missing_lines"]) c.missed.push_back(static_cast<u32>(n.number()));
+        finish(c);
+        out.emplace_back(whole(std::string(f.key()), dir), std::move(c));
+    }
+    return out;
 }
 
 std::vector<std::pair<u32, std::string>> find_test_defs(std::string_view text, bool python) {

@@ -914,7 +914,7 @@ private:
     void test_create();
     void test_find();
     void test_sync();
-    void test_run(const std::vector<size_t>& which);  // (none: all of them)
+    void test_run(const std::vector<size_t>& which, bool coverage = false);  // (none: all of them; coverage: and what lines they ran)
     void test_run_failed();
     void test_run_here();
     void test_debug(size_t i);
@@ -929,6 +929,9 @@ private:
     void test_panel_click(int row, int col, const SDL_MouseButtonEvent& b);
     bool test_panel_key(const SDL_KeyboardEvent& k);
     std::string test_dump();
+    const struct FileCoverage* test_coverage(const Doc& d);  // (the lines a run with coverage ran in it, while shown and the file is as it was)
+    void test_coverage_toggle();
+    std::string coverage_dump();
     void panel_show_tests();
     std::string build_root() const;
     void build_follow();   // after each frame: the folder looked at, when it changed

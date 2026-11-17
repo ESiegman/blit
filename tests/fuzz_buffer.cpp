@@ -2460,6 +2460,13 @@ void tests_test() {
           "C++ tests where they are defined");
     const auto pyd = find_test_defs("def test_a():\n    pass\nclass TestK:\n    def test_b(self):\n        pass\ndef helper():\n    pass\nasync def test_c():\n    pass\n", true);
     check(pyd.size() == 3 && pyd[0].second == "test_a" && pyd[1] == std::pair<u32, std::string>{3, "TestK::test_b"} && pyd[2].second == "test_c", "Python tests, in a class or not");
+    const auto gc = parse_gcov_json(R"({"format_version":"2","current_working_directory":"/b","files":[{"file":"../p/a.cpp","lines":[{"line_number":3,"count":2},{"line_number":4,"count":0},{"line_number":7,"count":0}]},{"file":"/usr/include/c++/v.h","lines":[{"line_number":1,"count":1}]}]}
+{"current_working_directory":"/b","files":[{"file":"../p/a.cpp","lines":[{"line_number":7,"count":1}]}]}
+)", "/x");
+    check(gc.size() == 1 && gc[0].first == "/p/a.cpp" && gc[0].second.hit == std::vector<u32>{3, 7} && gc[0].second.missed == std::vector<u32>{4} && gc[0].second.percent > 66 && gc[0].second.percent < 67,
+          "gcov's JSON: lines run in any of its documents, the system's headers left out");
+    const auto cp = parse_coverage_py(R"({"meta":{},"files":{"src/m.py":{"executed_lines":[1,2],"missing_lines":[5]}}})", "/p");
+    check(cp.size() == 1 && cp[0].first == "/p/src/m.py" && cp[0].second.hit == std::vector<u32>{1, 2} && cp[0].second.missed == std::vector<u32>{5}, "coverage.py's JSON");
 }
 
 void find_test() {

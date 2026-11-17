@@ -73,13 +73,14 @@ struct App::TestUi {
     std::optional<Found> found;  // (mu)
     // The run going on: its output terminal, and the reports it writes.
     u64 term = 0;
-    std::vector<std::string> reports;
+    std::vector<std::pair<std::string, std::string>> reports;  // (each with the build folder it is CTest's for; pytest's: none)
     bool running = false;
     // The tab's rows: a group's heading (test -1) or a test; the one chosen.
     struct Row {
         int test = -1;
         std::string group;
         u32 count = 0;
+        int file = -1;  // (the coverage of one: cov_files' index)
     };
     std::vector<Row> rows;
     u32 sel = 0, top = 0, body = 0;
@@ -95,6 +96,17 @@ struct App::TestUi {
     // for (empty: all), run once they are.
     std::optional<std::vector<std::string>> pending;
     bool pending_here = false;  // (or the one at the cursor)
+    bool pending_coverage = false;  // (and whether with coverage)
+    // Coverage: the reports a run with coverage writes (gcov's from a build
+    // folder, coverage.py's), and what the last such run ran, by file.
+    struct CovReport {
+        std::string path, dir;
+        bool python = false;
+    };
+    std::vector<CovReport> cov_reports;
+    std::unordered_map<std::string, FileCoverage> coverage;
+    std::vector<std::string> cov_files;  // (their paths, in order, for the tab)
+    bool cov_shown = false;
     std::jthread worker;  // (last: joined first)
 };
 
@@ -179,7 +191,7 @@ void App::test_sync() {
         std::vector<size_t> which;
         for (size_t i = 0; i < u.tests.size(); ++i)
             if (std::ranges::find(*ids, u.tests[i].id) != ids->end()) which.push_back(i);
-        if (ids->empty() || !which.empty()) test_run(which);
+        if (ids->empty() || !which.empty()) test_run(which, std::exchange(u.pending_coverage, false));
     }
     if (std::exchange(u.pending_here, false)) test_run_here();
 }
@@ -187,13 +199,14 @@ void App::test_sync() {
 // Runs the tests given (all, if none), each runner's in one command, one
 // after another in the output terminal, each writing its report; the run
 // configuration's environment theirs too.
-void App::test_run(const std::vector<size_t>& which) {
+void App::test_run(const std::vector<size_t>& which, bool coverage) {
     TestUi& u = *testui_;
     if (!u.looked || u.looking) {  // (found first; then it runs)
         std::vector<std::string> ids;
         for (const size_t i : which)
             if (i < u.tests.size()) ids.push_back(u.tests[i].id);
         u.pending = std::move(ids);
+        u.pending_coverage = coverage;
         test_find();
         return notify("Looking for the tests\xE2\x80\xA6");
     }
@@ -212,9 +225,10 @@ void App::test_run(const std::vector<size_t>& which) {
     const std::string tmp = std::filesystem::temp_directory_path(ec).string();
     std::vector<std::string> parts;
     u.reports.clear();
-    auto report = [&] {
-        u.reports.push_back((tmp.empty() ? std::string("/tmp") : tmp) + "/blit-tests-" + std::to_string(::getpid()) + "-" + std::to_string(++u.runs) + ".xml");
-        return u.reports.back();
+    u.cov_reports.clear();
+    auto report = [&](const std::string& of = {}) {
+        u.reports.emplace_back((tmp.empty() ? std::string("/tmp") : tmp) + "/blit-tests-" + std::to_string(::getpid()) + "-" + std::to_string(++u.runs) + ".xml", of);
+        return u.reports.back().first;
     };
     // CTest: each build folder's in one command; pytest's in one.
     std::vector<std::string> dirs;
@@ -224,13 +238,40 @@ void App::test_run(const std::vector<size_t>& which) {
         std::string names;
         for (const size_t i : pick)
             if (u.tests[i].runner == TestCase::kCTest && u.tests[i].dir == d) names += (names.empty() ? "" : "|") + exactly(u.tests[i].id);
-        parts.push_back(env + "ctest --test-dir " + sh_word(d) + " --output-on-failure --output-junit " + sh_word(report()) + (all ? "" : " -R " + sh_word("^(" + names + ")$")));
+        std::string gcov;  // (with coverage: the gcov of the compiler the folder builds with, GCC's)
+        if (coverage) {
+            std::string cache;
+            fs_read(d + "/CMakeCache.txt", &cache);
+            const size_t at = cache.find("CMAKE_CXX_COMPILER:");
+            std::string cc = at == std::string::npos ? std::string() : cache.substr(cache.find('=', at) + 1, cache.find('\n', at) - cache.find('=', at) - 1);
+            const size_t slash = cc.rfind('/'), gpp = cc.rfind("g++");
+            if (gpp != std::string::npos && (slash == std::string::npos || gpp > slash)) gcov = cc.replace(gpp, 3, "gcov");
+            else if (cc.empty() || cc.ends_with("/c++")) gcov = "gcov";
+            else notify("Coverage is read with GCC's gcov: " + d.substr(d.rfind('/') + 1) + " builds with " + cc.substr(slash + 1));
+        }
+        const std::string clear = gcov.empty() ? std::string() : "find " + sh_word(d) + " -name '*.gcda' -delete; ";  // (this run's alone)
+        parts.push_back(clear + env + "ctest --test-dir " + sh_word(d) + " --output-on-failure --output-junit " + sh_word(report(d)) + (all ? "" : " -R " + sh_word("^(" + names + ")$")));
+        if (!gcov.empty()) {
+            const std::string out = report();
+            u.reports.pop_back();
+            u.cov_reports.push_back({out, d, false});
+            parts.push_back("(cd " + sh_word(d) + " && " + sh_word(gcov) + " --json-format --stdout $(find . -name '*.gcda') > " + sh_word(out) + " 2>/dev/null)");
+        }
     }
     std::string ids;
     for (const size_t i : pick)
         if (u.tests[i].runner == TestCase::kPytest) ids += " " + sh_word(u.tests[i].id);
     if (!ids.empty()) {
-        parts.push_back(env + pytest_command(u.root) + " -q --junitxml=" + sh_word(report()) + (all ? "" : ids));
+        if (coverage) {  // (through coverage.py, which writes what ran as JSON after)
+            const std::string cov = "$(command -v coverage || echo python3 -m coverage)";
+            parts.push_back(env + cov + " run -m pytest -q --junitxml=" + sh_word(report()) + (all ? "" : ids));
+            const std::string out = report();
+            u.reports.pop_back();
+            u.cov_reports.push_back({out, u.root, true});
+            parts.push_back(cov + " json -q -o " + sh_word(out));
+        } else {
+            parts.push_back(env + pytest_command(u.root) + " -q --junitxml=" + sh_word(report()) + (all ? "" : ids));
+        }
     }
     std::string cmd;
     for (const std::string& p : parts) cmd += (cmd.empty() ? "" : "; ") + p;
@@ -255,12 +296,12 @@ void App::test_ended(u64 doc) {
     if (!u.running || doc != u.term) return;
     u.running = false;
     u32 passed = 0, failed = 0;
-    for (const std::string& r : u.reports) {
+    for (const auto& [r, of] : u.reports) {
         std::string xml;
         if (!fs_read(r, &xml, 64u << 20)) continue;
         for (const TestOutcome& o : parse_junit(xml))
             for (TestCase& t : u.tests)
-                if (outcome_is(o, t)) {
+                if ((t.runner == TestCase::kCTest ? t.dir == of : of.empty()) && outcome_is(o, t)) {  // (two build folders have tests of the same name)
                     t.result = o.result;
                     t.message = o.message;
                     t.seconds = o.seconds;
@@ -272,6 +313,34 @@ void App::test_ended(u64 doc) {
         std::filesystem::remove(r, ec);
     }
     u.reports.clear();
+    // What a run with coverage ran.
+    if (!u.cov_reports.empty()) {
+        u.coverage.clear();
+        u.cov_files.clear();
+        size_t hit = 0, all = 0;
+        for (const TestUi::CovReport& r : u.cov_reports) {
+            std::string text;
+            if (fs_read(r.path, &text, 256u << 20))
+                for (auto& [path, c] : r.python ? parse_coverage_py(text, r.dir) : parse_gcov_json(text, r.dir)) {
+                    if (!path.starts_with(u.root + "/") || path.find("/_deps/") != std::string::npos || path.find("/CMakeFiles/") != std::string::npos) continue;  // (the project's own)
+                    hit += c.hit.size();
+                    all += c.hit.size() + c.missed.size();
+                    u.cov_files.push_back(path);
+                    u.coverage[path] = std::move(c);
+                }
+            std::error_code ec;
+            std::filesystem::remove(r.path, ec);
+        }
+        u.cov_reports.clear();
+        std::ranges::sort(u.cov_files);
+        u.cov_files.erase(std::ranges::unique(u.cov_files).begin(), u.cov_files.end());
+        u.cov_shown = !u.coverage.empty();
+        notify(u.coverage.empty() ? std::string("No coverage was recorded (built with --coverage?)")
+                                  : "Coverage: " + std::to_string(static_cast<int>(100.0 * static_cast<double>(hit) / static_cast<double>(std::max<size_t>(all, 1)) + 0.5)) + "% of the lines in " + std::to_string(u.cov_files.size()) + " files");
+        ++test_gen_;
+        dirty_ = true;
+        return;
+    }
     if (passed + failed) notify(failed ? std::to_string(failed) + " failed, " + std::to_string(passed) + " passed" : "All " + std::to_string(passed) + " passed");
     ++test_gen_;
     dirty_ = true;
@@ -290,7 +359,9 @@ const std::vector<std::pair<u32, int>>& App::test_defs(const Doc& d) {
     x.at.clear();
     const std::string& path = d.ed.path;
     const bool py = python_path(path);
-    if ((!py && !cpp_path(path)) || d.ed.buf.size() > (4u << 20) || is_remote(path)) return x.at;
+    // (Test files are small: a larger file is not looked through, nor any
+    // once the project is known to have no tests.)
+    if ((!py && !cpp_path(path)) || d.ed.buf.size() > (256u << 10) || is_remote(path) || (u.looked && u.tests.empty())) return x.at;
     const std::string text = d.ed.buf.text(0, d.ed.buf.size());
     const std::string full = full_path(path);
     const std::vector<std::pair<u32, std::string>> defs = find_test_defs(text, py);
@@ -380,6 +451,38 @@ void App::test_debug_here() {
     test_debug(static_cast<size_t>(i));
 }
 
+const FileCoverage* App::test_coverage(const Doc& d) {
+    TestUi& u = *testui_;
+    if (!u.cov_shown || d.ed.path.empty() || d.ed.modified()) return nullptr;
+    const auto it = u.coverage.find(full_path(d.ed.path));
+    return it == u.coverage.end() ? nullptr : &it->second;
+}
+
+void App::test_coverage_toggle() {
+    TestUi& u = *testui_;
+    if (u.coverage.empty()) return notify("No coverage yet: Run the tests with coverage");
+    u.cov_shown = !u.cov_shown;
+    ++test_gen_;
+    dirty_ = true;
+}
+
+// For the tests: the file in front's lines run and missed, and each file's share.
+std::string App::coverage_dump() {
+    TestUi& u = *testui_;
+    std::string out = "here:";
+    if (const FileCoverage* c = test_coverage(*pane_->doc)) {
+        out += " ran";
+        for (const u32 l : c->hit) out += " " + std::to_string(l);
+        out += ", missed";
+        for (const u32 l : c->missed) out += " " + std::to_string(l);
+    } else {
+        out += " none";
+    }
+    out += " | files:";
+    for (const std::string& f : u.cov_files) out += " " + f.substr(u.root.size() + 1) + "=" + std::to_string(static_cast<int>(u.coverage[f].percent + 0.5)) + "%";
+    return out;
+}
+
 // ---------------------------------------------------------------- the tab
 
 void App::test_panel_draw(TextBox& box, bool focused) {
@@ -398,6 +501,12 @@ void App::test_panel_draw(TextBox& box, bool focused) {
                 break;
             }
         u.rows.push_back({static_cast<int>(i), {}, 0});
+    }
+    if (u.cov_shown && !u.cov_files.empty()) {  // what the last run with coverage ran: a file a row, with its share
+        size_t hit = 0, all = 0;
+        for (const auto& [p, c] : u.coverage) hit += c.hit.size(), all += c.hit.size() + c.missed.size();
+        u.rows.push_back({-1, "Coverage " + std::to_string(static_cast<int>(100.0 * static_cast<double>(hit) / static_cast<double>(std::max<size_t>(all, 1)) + 0.5)) + "%", static_cast<u32>(u.cov_files.size())});
+        for (size_t i = 0; i < u.cov_files.size(); ++i) u.rows.push_back({-1, {}, 0, static_cast<int>(i)});
     }
     if (u.tests.empty()) {
         const std::string what = u.looking ? "Looking for tests\xE2\x80\xA6" : u.note;
@@ -420,15 +529,21 @@ void App::test_panel_draw(TextBox& box, bool focused) {
     if (passed + failed) head += " \xC2\xB7 " + std::to_string(passed) + " passed, " + std::to_string(failed) + " failed";
     if (u.running) head += " \xC2\xB7 running\xE2\x80\xA6";
     put(box, font, 1, 0, fit_text(head, cols), failed ? ink::kError : ink::kMuted);
-    static constexpr Hint kKeys[] = {{"Enter", "run"}, {"a", "all"}, {"f", "failed"}, {"d", "debug"}};
-    if (u.sel >= u.rows.size() || u.rows[u.sel].test < 0) u.sel = u.rows.size() > 1 ? 1 : 0;
+    static constexpr Hint kKeys[] = {{"Enter", "run"}, {"a", "all"}, {"f", "failed"}, {"c", "coverage"}, {"d", "debug"}};
+    if (u.sel >= u.rows.size() || (u.rows[u.sel].test < 0 && u.rows[u.sel].file < 0)) u.sel = u.rows.size() > 1 ? 1 : 0;
     u.body = rows > 4 ? rows - 4 : 0;
     if (u.sel < u.top) u.top = u.sel;
     if (u.body && u.sel >= u.top + u.body) u.top = u.sel - u.body + 1;
     for (u32 r = 0; r < u.body && u.top + r < u.rows.size(); ++r) {
         const TestUi::Row& row = u.rows[u.top + r];
         const u32 y = 2 + r;
-        if (row.test < 0) {
+        if (row.file >= 0) {
+            const std::string& path = u.cov_files[static_cast<size_t>(row.file)];
+            const FileCoverage& c = u.coverage[path];
+            const std::string pct = std::to_string(static_cast<int>(c.percent + 0.5)) + "%";
+            put(box, font, y, 0, pct, c.percent >= 80 ? ink::kAdded : c.percent >= 50 ? ink::kText : ink::kError);
+            put(box, font, y, 5, fit_text(path.substr(u.root.size() + 1), cols > 5 ? cols - 5 : 1, true), ink::kText);
+        } else if (row.test < 0) {
             const u32 c = put(box, font, y, 0, fit_text(row.group, cols > 4 ? cols - 4 : 1, true), ink::kHeading);
             put(box, font, y, c + 1, std::to_string(row.count), ink::kMuted);
         } else {
@@ -455,6 +570,7 @@ std::vector<size_t> App::test_row_tests(u32 row) {
     std::vector<size_t> out;
     if (row >= u.rows.size()) return out;
     if (u.rows[row].test >= 0) return {static_cast<size_t>(u.rows[row].test)};
+    if (u.rows[row].file >= 0) return out;
     for (u32 r = row + 1; r < u.rows.size() && u.rows[r].test >= 0; ++r) out.push_back(static_cast<size_t>(u.rows[r].test));
     return out;
 }
@@ -489,8 +605,10 @@ bool App::test_panel_key(const SDL_KeyboardEvent& k) {
             break;
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
-            if (u.sel < n) test_run(test_row_tests(u.sel));
+            if (u.sel < n && u.rows[u.sel].file >= 0) open_path(u.cov_files[static_cast<size_t>(u.rows[u.sel].file)].c_str());  // (a file's coverage: the file)
+            else if (u.sel < n && !test_row_tests(u.sel).empty()) test_run(test_row_tests(u.sel));
             break;
+        case SDLK_C: test_run({}, true); break;
         case SDLK_A: test_run({}); break;
         case SDLK_F: test_run_failed(); break;
         case SDLK_D:

@@ -7,6 +7,7 @@
 #include <ctime>
 
 #include "app.hpp"
+#include "tests.hpp"
 #include "look.hpp"
 #include "remote.hpp"
 #include "tabbar.hpp"
@@ -792,7 +793,8 @@ void App::gutter_layout(int w, int h, FrameDesc& fd) {
     const u64 git_key = (((((doc.id * 1000003 + doc.hunks_gen) * 1000003 + doc.blame_gen) * 4 + (shown ? 2 : 0) + (blame ? 1 : 0)) * 2 + (relative ? 1 : 0)) ^ debug_gen_ * 0x9E3779B97F4A7C15ull ^ lsp_marks_gen_ * 0xC2B2AE3D27D4EB4Full) +
                         (folds ? (folds->generation() + doc.ed.revision()) * 0x632BE59BD9B4E019ull : 0) + test_gen_ * 0x2545F4914F6CDD1Dull;
     const bool same_rows = first == t.g_first && lines == t.g_lines && font_->generation() == t.g_font && box.cols == cols && box.rows == rows && git_key == t.g_git;
-    if (same_rows && pane_->cur_line != t.g_current && !blame && !relative) {
+    const FileCoverage* cov = test_coverage(doc);  // (the lines a run with coverage ran and missed: their numbers coloured)
+    if (same_rows && pane_->cur_line != t.g_current && !blame && !relative && !cov) {
         // Only the cursor has gone to another line: the number of the line
         // it left and of the one it is on change colour, nothing else.
         auto ink_row = [&](u64 line, u32 ink) {
@@ -828,7 +830,12 @@ void App::gutter_layout(int w, int h, FrameDesc& fd) {
             const i64 line = line_at(first + r);
             if (line < 0 || static_cast<u64>(line) >= lines) continue;
             // Digits are their own glyph slots; the cursor's line stands out.
-            const u32 ink = static_cast<u64>(line) == pane_->cur_line ? 0 : kInkMuted << kCellInkShift;
+            u32 ink = static_cast<u64>(line) == pane_->cur_line ? 0 : kInkMuted << kCellInkShift;
+            if (cov) {
+                const u32 n = static_cast<u32>(line) + 1;
+                if (std::ranges::binary_search(cov->hit, n)) ink = kInkAdded << kCellInkShift;
+                else if (std::ranges::binary_search(cov->missed, n)) ink = kInkDiagnostic << kCellInkShift;
+            }
             u32* const row = box.cells.data() + static_cast<size_t>(r) * cols;
             u32* end = row + cols - 1;  // the last cell stays blank
             const u64 at = static_cast<u64>(line);
