@@ -333,6 +333,15 @@ void App::commands_create() {
     tab("Show Build", {key(SDLK_U, kP | kS)}, Commands::kBuild);
     own("Look for build systems again", {}, [this] { build_changed(); });
     own("Edit the run configurations", {}, [this] { run_config_edit(); });
+    own("Run the tests", {}, [this] { test_run({}); });
+    own("Run the failed tests again", {}, [this] { test_run_failed(); });
+    own("Run the test at the cursor", {}, [this] { test_run_here(); });
+    own("Debug the test at the cursor", {}, [this] { test_debug_here(); });
+    own("Look for the tests again", {}, [this] { test_find(); });
+    own("Show Tests", {}, [this] {
+        if (!panel_px()) panel_toggle();
+        panel_show_tests();
+    });
     own("Put the blit command on the PATH", {}, [this] { install_command(); });
     // Profiling.
     own("Record a profile of the Profile tab's program", {}, [this] {

@@ -604,6 +604,7 @@ int App::run_bench() {
 //   folddump               print what is folded in the file in front (header-last, from 1) and its first rows' lines
 //   stickydump             print the lines pinned at the top of the split in front (from 1), or none
 //   crumbsdump             print the breadcrumbs under the split in front's tabs, " > " between them
+//   testdump               print the project's tests by group (+ passed, x failed, - skipped, . not run), once found and run
 //   runconfdump            print the run configuration chosen, and what Debug and Profile would run with it
 //   seldump                print what is selected in the file in front, in [ ], its lines joined by " / " (or none)
 //   shapedump              print the brackets on show in the file in front (line:column=depth, "-" not the tree's)
@@ -1130,6 +1131,8 @@ void App::run_script(const char* script) {
         } else if (verb == "buildpanel") {  // the side panel's Build tab
             if (!panel_px()) panel_toggle();
             panel_show_build();
+        } else if (verb == "testdump") {  // the tests found (finding and running them waited for), and how each went
+            std::fprintf(stderr, "%s\n", test_dump().c_str());
         } else if (verb == "runconfdump") {  // the run configuration chosen, and what Debug and Profile would run
             build_settle();
             const BuildTask* t = run_config();

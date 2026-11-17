@@ -350,6 +350,7 @@ void App::build_stop() {
 // at again; and what git sees there (files written, or a repository made by
 // a new project's git init).
 void App::build_ended(u64 doc, int status) {
+    test_ended(doc);  // (a run of the tests: its reports read)
     BuildUi& u = *buildui_;
     if (doc != u.doc) return;
     u.running = false;

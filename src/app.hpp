@@ -909,6 +909,27 @@ private:
     // terminal below the text that runs a task.
     struct BuildUi;
     void build_create();
+    // The Tests tab, test runs and their marks in the text (apptest.cpp).
+    struct TestUi;
+    void test_create();
+    void test_find();
+    void test_sync();
+    void test_run(const std::vector<size_t>& which);  // (none: all of them)
+    void test_run_failed();
+    void test_run_here();
+    void test_debug(size_t i);
+    void test_debug_here();
+    void test_ended(u64 doc);
+    int test_at_cursor();
+    const std::vector<std::pair<u32, int>>& test_defs(const Doc& d);
+    u32 test_gutter(const Doc& d, u64 line);
+    bool test_gutter_click(const SDL_MouseButtonEvent& b);
+    std::vector<size_t> test_row_tests(u32 row);
+    void test_panel_draw(struct TextBox& box, bool focused);
+    void test_panel_click(int row, int col, const SDL_MouseButtonEvent& b);
+    bool test_panel_key(const SDL_KeyboardEvent& k);
+    std::string test_dump();
+    void panel_show_tests();
     std::string build_root() const;
     void build_follow();   // after each frame: the folder looked at, when it changed
     void build_sync();     // what the worker that looked found
@@ -1203,6 +1224,8 @@ private:
     bool command_sending_ = false;  // a command's keys sent by the command search: the editor's, never Vim's
     std::shared_ptr<DebugUi> debugui_;
     std::shared_ptr<BuildUi> buildui_;
+    std::shared_ptr<TestUi> testui_;
+    u64 test_gen_ = 1;  // counts up whenever what the Tests tab shows may have changed
     u64 build_gen_ = 1;  // counts up whenever what the Build tab or the Run button shows may have changed
     u64 build_prob_gen_ = 1;  // counts up whenever the build's problems change
     u32 build_errors_ = 0, build_warnings_ = 0;  // how many of each (the status bar asks at every key: not behind a pointer)

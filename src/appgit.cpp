@@ -941,7 +941,7 @@ bool App::git_gutter_click(const SDL_MouseButtonEvent& b) {
     if (px < pane_->text_x - cw || px >= pane_->text_x || py < pane_->text_y || py >= pane_->y1) return false;
     const i64 y = py - pane_->text_y + std::llround(pane_->scroll_y);
     if (y < 0) return false;
-    const u64 line = static_cast<u64>(y / ch), lines = d.ed.buf.line_count();
+    const u64 lines = d.ed.buf.line_count(), line = static_cast<u64>(y / ch) < view_line_count() ? line_of_row(static_cast<u64>(y / ch)) : lines;  // (rows, with lines folded)
     if (line >= lines) return false;
     // The run of lines the mark there is for (as the gutter draws them).
     const GitHunk* hit = nullptr;

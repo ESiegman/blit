@@ -20,14 +20,14 @@ namespace blit {
 
 namespace {
 
-const char* const kTabs[] = {"Files", "Problems", "Git", "Profile", "Debug", "Build"};
-constexpr u32 kTabFiles = 0, kTabProblems = 1, kTabGit = 2, kTabProfile = 3, kTabDebug = 4, kTabBuild = 5, kTabCount = 6;
+const char* const kTabs[] = {"Files", "Problems", "Git", "Profile", "Debug", "Build", "Tests"};
+constexpr u32 kTabFiles = 0, kTabProblems = 1, kTabGit = 2, kTabProfile = 3, kTabDebug = 4, kTabBuild = 5, kTabTests = 6, kTabCount = 7;
 // What a tab shrinks to when the names do not all fit: its icon in a Nerd
-// Font (a folder, a warning, a branch, a chart, a bug, a wrench), else a
-// mark of its own.
-const u32 kTabIcons[] = {0xE5FF, 0xF071, 0xE725, 0xF080, 0xF188, 0xF0AD};
-const char* const kTabIconText[] = {"\xEE\x97\xBF", "\xEF\x81\xB1", "\xEE\x9C\xA5", "\xEF\x82\x80", "\xEF\x86\x88", "\xEF\x82\xAD"};
-const char* const kTabMarks[] = {"F", "!", "G", "P", "D", "B"};
+// Font (a folder, a warning, a branch, a chart, a bug, a wrench, a flask),
+// else a mark of its own.
+const u32 kTabIcons[] = {0xE5FF, 0xF071, 0xE725, 0xF080, 0xF188, 0xF0AD, 0xF0C3};
+const char* const kTabIconText[] = {"\xEE\x97\xBF", "\xEF\x81\xB1", "\xEE\x9C\xA5", "\xEF\x82\x80", "\xEF\x86\x88", "\xEF\x82\xAD", "\xEF\x83\x83"};
+const char* const kTabMarks[] = {"F", "!", "G", "P", "D", "B", "T"};
 constexpr u32 kHeadRows = 2;  // the tab bar and the line under it that names the project folder
 
 const char* const kMenu[] = {"New file", "New folder", "Rename", "Move to Trash", "Make it the project folder",
@@ -157,7 +157,7 @@ struct App::Side {
     // The cells as last drawn, and what they were drawn from.
     TextBox box;
     float tones[8][4] = {};  // Popup::tones: [kFieldTone] the fields'
-    u64 state = 1, drawn_state = 0, drawn_tree = ~0ull, drawn_diag = ~0ull, drawn_git = 0, drawn_prof = 0, drawn_debug = 0, drawn_build = 0, drawn_bprob = 0;
+    u64 state = 1, drawn_state = 0, drawn_tree = ~0ull, drawn_diag = ~0ull, drawn_git = 0, drawn_prof = 0, drawn_debug = 0, drawn_build = 0, drawn_bprob = 0, drawn_tests = 0;
     u32 drawn_font = ~0u, drawn_rows = 0, drawn_cols = 0;
     std::string drawn_file;
     // The open file's full path, worked out when the file changes rather
@@ -284,7 +284,7 @@ void App::panel_focus(bool on) {
 }
 
 bool App::panel_has_keyboard() const { return side_->open && side_->focus; }
-static_assert(kTabFiles == 0 && kTabProblems == 1 && kTabGit == 2 && kTabProfile == 3 && kTabDebug == 4 && kTabBuild == 5, "the order app.hpp gives for panel_tab()");
+static_assert(kTabFiles == 0 && kTabProblems == 1 && kTabGit == 2 && kTabProfile == 3 && kTabDebug == 4 && kTabBuild == 5 && kTabTests == 6, "the order app.hpp gives for panel_tab()");
 u32 App::panel_tab() const { return side_->tab < kTabCount ? side_->tab : kTabFiles; }
 
 // The working directory: the folder the Files tab shows. There is none
@@ -409,6 +409,14 @@ std::string App::problems_dump() {
 void App::panel_show_debug() {
     Side& s = *side_;
     s.tab = kTabDebug;
+    panel_focus(true);
+    s.touch();
+    dirty_ = true;
+}
+
+void App::panel_show_tests() {
+    Side& s = *side_;
+    s.tab = kTabTests;
     panel_focus(true);
     s.touch();
     dirty_ = true;
@@ -727,6 +735,7 @@ bool App::panel_key(const SDL_KeyboardEvent& k) {
     if (s.tab == kTabProfile) return prof_panel_key(k) || !cmd;
     if (s.tab == kTabDebug) return debug_panel_key(k) || !cmd;
     if (s.tab == kTabBuild) return build_panel_key(k) || !cmd;
+    if (s.tab == kTabTests) return test_panel_key(k) || !cmd;
 
     if (s.tab == kTabProblems) {
         const u32 nb = static_cast<u32>(build_problems().size()), n = nb + static_cast<u32>(count_problems(lsp_.problems()));
@@ -896,6 +905,10 @@ bool App::panel_mouse_down(const SDL_MouseButtonEvent& b) {
         build_panel_click(row, col, b);
         return true;
     }
+    if (s.tab == kTabTests) {
+        test_panel_click(row, col, b);
+        return true;
+    }
     if (s.tab == kTabProblems) {
         const std::vector<BuildProblem>& bp = build_problems();
         const std::vector<ProblemFile>& files = lsp_.problems();
@@ -1022,7 +1035,7 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
                        s.drawn_rows != rows || s.drawn_cols != cols || s.drawn_file != open_file ||
                        (s.tab == kTabProblems && (s.drawn_diag != lsp_.problems_generation() || s.drawn_bprob != build_prob_gen_)) || (s.tab == kTabGit && s.drawn_git != git_gen_) ||
                        (s.tab == kTabProfile && s.drawn_prof != prof_gen_) || (s.tab == kTabDebug && s.drawn_debug != debug_gen_) ||
-                       (s.tab == kTabBuild && s.drawn_build != build_gen_);
+                       (s.tab == kTabBuild && s.drawn_build != build_gen_) || (s.tab == kTabTests && s.drawn_tests != test_gen_);
     if (stale) {
         s.drawn_state = s.state;
         s.drawn_tree = s.tree.generation();
@@ -1036,6 +1049,7 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
         s.drawn_prof = prof_gen_;
         s.drawn_debug = debug_gen_;
         s.drawn_build = build_gen_;
+        s.drawn_tests = test_gen_;
         TextBox& box = s.box;
         box.resize(cols, rows);
         Font& font = *font_;
@@ -1172,6 +1186,8 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
             debug_panel_draw(box, s.focus);
         } else if (s.tab == kTabBuild) {
             build_panel_draw(box, s.focus);
+        } else if (s.tab == kTabTests) {
+            test_panel_draw(box, s.focus);
         } else {
             // The build's problems, across files, then what the language
             // servers report, across files too.

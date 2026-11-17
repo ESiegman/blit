@@ -211,6 +211,7 @@ bool App::init(std::string* err) {
     prof_start();
     debug_create();
     build_create();
+    test_create();
     commands_create();
     jumps_create();
     // (A file on another machine, a picture or a PDF is opened once the window is up.)
@@ -1843,6 +1844,10 @@ void App::handle(const SDL_Event& e) {
             }
             if (e.user.code == 16) {  // what the working folder builds with has been found
                 build_sync();
+                break;
+            }
+            if (e.user.code == 22) {  // the project's tests have been found
+                test_sync();
                 break;
             }
             if (e.user.code == 17) {  // a picture has been read

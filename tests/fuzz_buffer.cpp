@@ -29,6 +29,7 @@
 #include "editor.hpp"
 #include "finder.hpp"
 #include "folds.hpp"
+#include "tests.hpp"
 #include "font.hpp"
 #include "git.hpp"
 #include "profile.hpp"
@@ -2437,6 +2438,30 @@ void folds_test() {
     if (!f.empty()) fail("folds: an edit across an edge", 0, 0);
 }
 
+// Tests as their runners list them, and their reports.
+void tests_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    const std::vector<TestCase> ct = parse_ctest_json(R"({"kind":"ctestInfo","tests":[{"name":"Math.Adds","command":["/b/t","--gtest_filter=Math.Adds"],"properties":[{"name":"WORKING_DIRECTORY","value":"/b"}]},{"name":"plain","command":["/b/p"]}]})", "/p/build");
+    check(ct.size() == 2 && ct[0].id == "Math.Adds" && ct[0].command.size() == 2 && ct[0].cwd == "/b" && ct[0].group == "build" && ct[0].dir == "/p/build",
+          "ctest's tests: name, command, working directory, folder");
+    const std::vector<TestCase> py = parse_pytest_collect("tests/test_a.py::test_x\ntests/test_a.py::TestK::test_y\n\n2 tests collected in 0.01s\n");
+    check(py.size() == 2 && py[1].id == "tests/test_a.py::TestK::test_y" && py[1].name == "test_y" && py[1].group == "tests/test_a.py", "pytest's node ids");
+    const std::vector<TestOutcome> ju = parse_junit(R"(<testsuite><testcase name="Math.Adds" classname="Math.Adds" time="0.25"/><testcase name="plain" time="1"><failure message="x &lt; 2">trace</failure></testcase><testcase name="s"><skipped/></testcase></testsuite>)");
+    check(ju.size() == 3 && ju[0].result == TestCase::kPassed && ju[0].seconds == 0.25 && ju[1].result == TestCase::kFailed && ju[1].message == "x < 2" && ju[2].result == TestCase::kSkipped,
+          "a JUnit report: passed, failed with its message, skipped");
+    TestOutcome o;
+    o.name = "test_y";
+    o.classname = "tests.test_a.TestK";
+    check(outcome_is(o, py[1]) && !outcome_is(o, py[0]), "a pytest outcome found by its module and class");
+    const auto cpp = find_test_defs("#include <gtest.h>\nTEST(Math, Adds) {\n}\n  TEST_F(Fix, Two)\nTEST_CASE(\"vectors grow\", \"[v]\") {}\nSCENARIO(\"a\")\nint TESTING(1);\n", false);
+    check(cpp.size() == 4 && cpp[0] == std::pair<u32, std::string>{1, "Math.Adds"} && cpp[1].second == "Fix.Two" && cpp[2].second == "vectors grow" && cpp[3].second == "Scenario: a",
+          "C++ tests where they are defined");
+    const auto pyd = find_test_defs("def test_a():\n    pass\nclass TestK:\n    def test_b(self):\n        pass\ndef helper():\n    pass\nasync def test_c():\n    pass\n", true);
+    check(pyd.size() == 3 && pyd[0].second == "test_a" && pyd[1] == std::pair<u32, std::string>{3, "TestK::test_b"} && pyd[2].second == "test_c", "Python tests, in a class or not");
+}
+
 void find_test() {
     auto check = [](bool ok, const char* what) {
         if (!ok) fail(what, 0, 0);
@@ -4594,6 +4619,7 @@ int main(int argc, char** argv) {
     vim_test();
     find_test();
     folds_test();
+    tests_test();
     script_test();
     term_test(seeds);
     profile_test();
