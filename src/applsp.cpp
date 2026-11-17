@@ -1050,6 +1050,34 @@ std::string App::lsp_uses_dump() {
 void App::lsp_find_symbols() {
     Assist& a = *assist_;
     if (!lsp_.ready() || !lsp_.can_find_symbols()) {
+        // No server that finds them: the definitions the syntax tree has in
+        // the files that are open.
+        std::vector<LspSymbol> rows;
+        std::vector<u64> seen;
+        for (const std::unique_ptr<Pane>& p : panes_)
+            for (const std::shared_ptr<Doc>& d : p->docs) {
+                if (std::ranges::find(seen, d->id) != seen.end()) continue;
+                seen.push_back(d->id);
+                SyntaxStructure all;
+                if (d->syntax.active() && d->syntax.ask_all(d->ed.buf, &all))
+                    for (LspSymbol& y : tree_symbols(*d, all)) rows.push_back(std::move(y));
+            }
+        if (!rows.empty()) {
+            lsp_close(kPopAll);
+            a.symbol_rows = std::move(rows);
+            std::vector<std::string> items;
+            const std::string* root = panel_root();
+            for (const LspSymbol& y : a.symbol_rows) {
+                std::string row = y.name;
+                if (const char* k = symbol_kind_name(y.kind); *k) row += std::string("  \xC2\xB7 ") + k;
+                row += "  \xC2\xB7 " + shown_name(y.path, root) + ":" + std::to_string(y.line + 1);
+                items.push_back(std::move(row));
+            }
+            find_choose_item("Symbols in the open files", std::move(items), [this](int i) {
+                if (i >= 0) lsp_go_symbol(static_cast<size_t>(i));
+            });
+            return;
+        }
         if (server_text(*pane_->doc))
             notify(lsp_.ready() ? lsp_.server_name() + " does not find the project's symbols" : why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
         return;

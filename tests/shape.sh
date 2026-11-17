@@ -146,6 +146,11 @@ check "Enter goes there" 'NORMAL |  | 8:5 | int area(int w) {'
 run "workdir:$dir/proj;frame;key:Down;key:Down;key:cmd+alt+O;frame;finddump" "$dir/proj/s.py"
 check "in Python" 'pick [] 3 : Shape  · class >  area  · method make  · function'
 
+run "workdir:$dir/proj;frame;open:$dir/proj/s.py;frame;key:cmd+alt+P;frame;text:ar;frame;finddump" "$S"
+check "Cmd+Option+P without a server: the tree's definitions in the files open" 'pick [ar] 3 : >area  · method  · s.py:2 area  · function  · src/s.cpp:8 geo  · namespace  · src/s.cpp:1'
+run "workdir:$dir/proj;frame;open:$dir/proj/s.py;frame;key:cmd+alt+P;frame;text:ar;frame;key:Down;key:Return;frame;vimdump" "$S"
+check "Enter goes there, in its tab" 'NORMAL |  | 8:5 | int area(int w) {'
+
 # Sticky scroll: the lines that open the scopes the top of the view is in.
 run "workdir:$dir/proj;frame;stickydump" "$S"
 check "at the top: none" 'none'
