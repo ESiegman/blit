@@ -2223,6 +2223,57 @@ void profile_test() {
         check(p.by_thread.size() == 1 && p.by_thread[0].name == "Main Thread", "xctrace: the thread, by its name: " + (p.by_thread.empty() ? std::string() : p.by_thread[0].name));
         common(p, "xctrace", "/work/burn.c");
     }
+    // Memory: the Virtual Memory Trace's faults of new memory (one that was
+    // in the page cache already is left out), and perf's page faults, a
+    // page's bytes each.
+    auto self_of = [&](const blit::Profile& p, std::string_view prefix) {
+        blit::u64 w = 0;
+        for (const blit::ProfileFunc& f : p.funcs)
+            if (f.name.starts_with(prefix)) w += f.total;
+        return w;
+    };
+    {
+        blit::Profile p;
+        std::string err;
+        check(blit::parse_xctrace(slurp("xctrace-virtual-memory.xml"), "", &p, &err), "xctrace, memory: parsed (" + err + ")");
+        p.finish();
+        check(p.unit == "bytes" && p.samples == 14 && p.weight == 14ull * 16384, "xctrace, memory: 14 faults of 16 KiB of new memory, got " + std::to_string(p.samples) + ", " + std::to_string(p.weight) + " " + p.unit);
+        check(self_of(p, "big_allocs") == 6ull * 16384 && self_of(p, "small_allocs") == 8ull * 16384, "xctrace, memory: each function's bytes");
+    }
+    {
+        blit::Profile p;
+        std::string err;
+        check(blit::parse_perf_script(slurp("perf-page-faults.txt"), "", &p, &err, 4096), "perf, memory: parsed (" + err + ")");
+        p.finish();
+        check(p.samples == 20 && p.weight == 20ull * 4096, "perf, memory: 20 page faults of 4 KiB, got " + std::to_string(p.samples) + ", " + std::to_string(p.weight));
+        check(self_of(p, "big_allocs") == 5ull * 4096 && self_of(p, "small_allocs") == 10ull * 4096, "perf, memory: each function's bytes");
+    }
+    // Waiting: the System Call Trace's calls by how long each took, and
+    // perf's context switches by how long until the thread ran again (a
+    // preemption is not a wait).
+    {
+        blit::Profile p;
+        std::string err;
+        check(blit::parse_xctrace(slurp("xctrace-syscall.xml"), "", &p, &err), "xctrace, waiting: parsed (" + err + ")");
+        p.finish();
+        const blit::ProfileFunc* sem = find(p, "__semwait_signal");
+        const blit::ProfileFunc* rd = find(p, "read");
+        check(p.unit == "ns" && p.threads == 2 && sem && rd && sem->self > 500'000'000 && rd->self > 200'000'000 && p.weight < 800'000'000,
+              "xctrace, waiting: sleeping (two threads) and a read, by how long, got " + std::to_string(p.weight) + " ns on " + std::to_string(p.threads));
+    }
+    {
+        blit::Profile p;
+        std::string err;
+        const std::string samples = blit::perf_waits_as_samples(slurp("perf-waits.txt"));
+        check(blit::parse_perf_script(samples, "", &p, &err), "perf, waiting: parsed (" + err + ")");
+        p.finish();
+        check(p.samples == 3 && p.threads == 2, "perf, waiting: three waits on two threads (the preemption left out), got " + std::to_string(p.samples) + " on " + std::to_string(p.threads));
+        check(self_of(p, "reader") == 205'000'000 && self_of(p, "sleeper") == 300'000'000 && self_of(p, "nanosleep") == 200'000'000 && p.weight == 705'000'000,
+              "perf, waiting: each wait from its switch out to its thread's next switch in, got " + std::to_string(p.weight));
+        blit::Profile none;
+        check(!blit::parse_perf_script(blit::perf_waits_as_samples("t  1000 1.0: PERF_RECORD_SWITCH OUT\nt  1000 2.0: PERF_RECORD_SWITCH IN\n"), "", &none, &err),
+              "perf, waiting: switches with no samples (perf_event_paranoid too high) are no profile");
+    }
     {
         blit::Profile p;
         std::string err;

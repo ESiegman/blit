@@ -8,6 +8,9 @@
 #include <fcntl.h>
 #include <sys/stat.h>
 #include <unistd.h>
+#if defined(__linux__)
+#include <sys/prctl.h>
+#endif
 #endif
 
 #include "app.hpp"
@@ -120,6 +123,16 @@ int main(int argc, char** argv) {
     // Run by ssh to ask a question (a password, a passphrase): the blit that
     // started that ssh shows it, and the answer is printed here (remote.cpp).
     if (const char* sock = std::getenv("BLIT_ASKPASS_SOCKET"); sock && *sock && argc == 2) return blit::remote_askpass(sock, argv[1]);
+#endif
+#if defined(__linux__)
+    // A memory profile's program, run by perf through this (profile.cpp):
+    // without transparent huge pages, so that each page fault is a page.
+    if (argc >= 3 && !std::strcmp(argv[1], "--exec-without-huge-pages")) {
+        ::prctl(PR_SET_THP_DISABLE, 1, 0, 0, 0);
+        ::execvp(argv[2], argv + 2);
+        std::perror(argv[2]);
+        return 127;
+    }
 #endif
     blit::Options opt;
     opt.t_main = blit::now_ns();

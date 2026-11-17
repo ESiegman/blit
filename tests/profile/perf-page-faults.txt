@@ -1,0 +1,272 @@
+t  411750 158244.497673:          1 
+	    7fd8c6ba2820 [unknown] (/usr/lib/ld-linux-x86-64.so.2)
+  ld-linux-x86-64.so.2[21820]
+
+t  411750 158244.497677:          1 
+	    7fd8c6ba34f2 [unknown] (/usr/lib/ld-linux-x86-64.so.2)
+  ld-linux-x86-64.so.2[224f2]
+	    7fd8c6ba2828 [unknown] (/usr/lib/ld-linux-x86-64.so.2)
+  ld-linux-x86-64.so.2[21828]
+
+t  411750 158244.497679:          1 
+	    7fd8c6ba3507 [unknown] (/usr/lib/ld-linux-x86-64.so.2)
+  ld-linux-x86-64.so.2[22507]
+	    7fd8c6ba2828 [unknown] (/usr/lib/ld-linux-x86-64.so.2)
+  ld-linux-x86-64.so.2[21828]
+
+t  411750 158244.497680:          1 
+	    7fd8c6ba3757 [unknown] (/usr/lib/ld-linux-x86-64.so.2)
+  ld-linux-x86-64.so.2[22757]
+	    7fd8c6ba2828 [unknown] (/usr/lib/ld-linux-x86-64.so.2)
+  ld-linux-x86-64.so.2[21828]
+
+t  411750 158244.497681:          1 
+	    7fd8c6ba3747 [unknown] (/usr/lib/ld-linux-x86-64.so.2)
+  ld-linux-x86-64.so.2[22747]
+	    7fd8c6ba2828 [unknown] (/usr/lib/ld-linux-x86-64.so.2)
+  ld-linux-x86-64.so.2[21828]
+
+t  411750 158244.498255:          1 
+	    7fd8c64a764c [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a764c]
+	    7fd8c64a7a4f [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7a4f]
+	    55c8f207d3ec big_allocs(std::vector<void*, std::allocator<void*> >&) (/work/t)
+  /work/t.cpp:11
+	    55c8f207d640 main (/work/t)
+  /work/t.cpp:21
+	    7fd8c6427781 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[27781]
+	    7fd8c64278b9 __libc_start_main (/usr/lib/libc.so.6)
+  libc.so.6[278b9]
+	    55c8f207d185 _start (/work/t)
+  ??:0
+
+t  411750 158244.498256:          1 
+	    7fd8c64a764c [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a764c]
+	    7fd8c64a7a4f [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7a4f]
+	    55c8f207d3ec big_allocs(std::vector<void*, std::allocator<void*> >&) (/work/t)
+  /work/t.cpp:11
+	    55c8f207d640 main (/work/t)
+  /work/t.cpp:21
+	    7fd8c6427781 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[27781]
+	    7fd8c64278b9 __libc_start_main (/usr/lib/libc.so.6)
+  libc.so.6[278b9]
+	    55c8f207d185 _start (/work/t)
+  ??:0
+
+t  411750 158244.498259:          1 
+	    7fd8c64a658d [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a658d]
+	    7fd8c64a7726 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7726]
+	    7fd8c64a7a4f [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7a4f]
+	    55c8f207d3ec big_allocs(std::vector<void*, std::allocator<void*> >&) (/work/t)
+  /work/t.cpp:11
+	    55c8f207d640 main (/work/t)
+  /work/t.cpp:21
+	    7fd8c6427781 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[27781]
+	    7fd8c64278b9 __libc_start_main (/usr/lib/libc.so.6)
+  libc.so.6[278b9]
+	    55c8f207d185 _start (/work/t)
+  ??:0
+
+t  411750 158244.498260:          1 
+	    7fd8c64a764c [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a764c]
+	    7fd8c64a7a4f [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7a4f]
+	    55c8f207d3ec big_allocs(std::vector<void*, std::allocator<void*> >&) (/work/t)
+  /work/t.cpp:11
+	    55c8f207d640 main (/work/t)
+  /work/t.cpp:21
+	    7fd8c6427781 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[27781]
+	    7fd8c64278b9 __libc_start_main (/usr/lib/libc.so.6)
+  libc.so.6[278b9]
+	    55c8f207d185 _start (/work/t)
+  ??:0
+
+t  411750 158244.498261:          1 
+	    7fd8c64a764c [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a764c]
+	    7fd8c64a7a4f [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7a4f]
+	    55c8f207d3ec big_allocs(std::vector<void*, std::allocator<void*> >&) (/work/t)
+  /work/t.cpp:11
+	    55c8f207d640 main (/work/t)
+  /work/t.cpp:21
+	    7fd8c6427781 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[27781]
+	    7fd8c64278b9 __libc_start_main (/usr/lib/libc.so.6)
+  libc.so.6[278b9]
+	    55c8f207d185 _start (/work/t)
+  ??:0
+
+t  411750 158244.498646:          1 
+	    7fd8c64a658d [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a658d]
+	    7fd8c64a7726 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7726]
+	    7fd8c64a7a4f [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7a4f]
+	    55c8f207d511 small_allocs(std::vector<void*, std::allocator<void*> >&) (/work/t)
+  /work/t.cpp:14
+	    55c8f207d649 main (/work/t)
+  /work/t.cpp:21
+	    7fd8c6427781 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[27781]
+	    7fd8c64278b9 __libc_start_main (/usr/lib/libc.so.6)
+  libc.so.6[278b9]
+	    55c8f207d185 _start (/work/t)
+  ??:0
+
+t  411750 158244.498648:          1 
+	    7fd8c64a764c [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a764c]
+	    7fd8c64a7a4f [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7a4f]
+	    55c8f207d511 small_allocs(std::vector<void*, std::allocator<void*> >&) (/work/t)
+  /work/t.cpp:14
+	    55c8f207d649 main (/work/t)
+  /work/t.cpp:21
+	    7fd8c6427781 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[27781]
+	    7fd8c64278b9 __libc_start_main (/usr/lib/libc.so.6)
+  libc.so.6[278b9]
+	    55c8f207d185 _start (/work/t)
+  ??:0
+
+t  411750 158244.498649:          1 
+	    7fd8c64a764c [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a764c]
+	    7fd8c64a7a4f [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7a4f]
+	    55c8f207d511 small_allocs(std::vector<void*, std::allocator<void*> >&) (/work/t)
+  /work/t.cpp:14
+	    55c8f207d649 main (/work/t)
+  /work/t.cpp:21
+	    7fd8c6427781 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[27781]
+	    7fd8c64278b9 __libc_start_main (/usr/lib/libc.so.6)
+  libc.so.6[278b9]
+	    55c8f207d185 _start (/work/t)
+  ??:0
+
+t  411750 158244.498649:          1 
+	    7fd8c64a764c [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a764c]
+	    7fd8c64a7a4f [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7a4f]
+	    55c8f207d511 small_allocs(std::vector<void*, std::allocator<void*> >&) (/work/t)
+  /work/t.cpp:14
+	    55c8f207d649 main (/work/t)
+  /work/t.cpp:21
+	    7fd8c6427781 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[27781]
+	    7fd8c64278b9 __libc_start_main (/usr/lib/libc.so.6)
+  libc.so.6[278b9]
+	    55c8f207d185 _start (/work/t)
+  ??:0
+
+t  411750 158244.498650:          1 
+	    7fd8c64a764c [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a764c]
+	    7fd8c64a7a4f [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7a4f]
+	    55c8f207d511 small_allocs(std::vector<void*, std::allocator<void*> >&) (/work/t)
+  /work/t.cpp:14
+	    55c8f207d649 main (/work/t)
+  /work/t.cpp:21
+	    7fd8c6427781 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[27781]
+	    7fd8c64278b9 __libc_start_main (/usr/lib/libc.so.6)
+  libc.so.6[278b9]
+	    55c8f207d185 _start (/work/t)
+  ??:0
+
+t  411750 158244.498651:          1 
+	    7fd8c64a764c [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a764c]
+	    7fd8c64a7a4f [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7a4f]
+	    55c8f207d511 small_allocs(std::vector<void*, std::allocator<void*> >&) (/work/t)
+  /work/t.cpp:14
+	    55c8f207d649 main (/work/t)
+  /work/t.cpp:21
+	    7fd8c6427781 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[27781]
+	    7fd8c64278b9 __libc_start_main (/usr/lib/libc.so.6)
+  libc.so.6[278b9]
+	    55c8f207d185 _start (/work/t)
+  ??:0
+
+t  411750 158244.498652:          1 
+	    7fd8c64a764c [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a764c]
+	    7fd8c64a7a4f [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7a4f]
+	    55c8f207d511 small_allocs(std::vector<void*, std::allocator<void*> >&) (/work/t)
+  /work/t.cpp:14
+	    55c8f207d649 main (/work/t)
+  /work/t.cpp:21
+	    7fd8c6427781 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[27781]
+	    7fd8c64278b9 __libc_start_main (/usr/lib/libc.so.6)
+  libc.so.6[278b9]
+	    55c8f207d185 _start (/work/t)
+  ??:0
+
+t  411750 158244.498653:          1 
+	    7fd8c64a764c [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a764c]
+	    7fd8c64a7a4f [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7a4f]
+	    55c8f207d511 small_allocs(std::vector<void*, std::allocator<void*> >&) (/work/t)
+  /work/t.cpp:14
+	    55c8f207d649 main (/work/t)
+  /work/t.cpp:21
+	    7fd8c6427781 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[27781]
+	    7fd8c64278b9 __libc_start_main (/usr/lib/libc.so.6)
+  libc.so.6[278b9]
+	    55c8f207d185 _start (/work/t)
+  ??:0
+
+t  411750 158244.498654:          1 
+	    7fd8c64a764c [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a764c]
+	    7fd8c64a7a4f [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7a4f]
+	    55c8f207d511 small_allocs(std::vector<void*, std::allocator<void*> >&) (/work/t)
+  /work/t.cpp:14
+	    55c8f207d649 main (/work/t)
+  /work/t.cpp:21
+	    7fd8c6427781 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[27781]
+	    7fd8c64278b9 __libc_start_main (/usr/lib/libc.so.6)
+  libc.so.6[278b9]
+	    55c8f207d185 _start (/work/t)
+  ??:0
+
+t  411750 158244.498655:          1 
+	    7fd8c64a764c [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a764c]
+	    7fd8c64a7a4f [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[a7a4f]
+	    55c8f207d511 small_allocs(std::vector<void*, std::allocator<void*> >&) (/work/t)
+  /work/t.cpp:14
+	    55c8f207d649 main (/work/t)
+  /work/t.cpp:21
+	    7fd8c6427781 [unknown] (/usr/lib/libc.so.6)
+  libc.so.6[27781]
+	    7fd8c64278b9 __libc_start_main (/usr/lib/libc.so.6)
+  libc.so.6[278b9]
+	    55c8f207d185 _start (/work/t)
+  ??:0
+

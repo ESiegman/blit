@@ -320,6 +320,16 @@ void App::commands_create() {
         Commands::show_tab(*this, Commands::kProfile, false);
         prof_record();
     });
+    own("Record a memory profile of the Profile tab's program", {}, [this] {
+        Commands::show_tab(*this, Commands::kProfile, false);
+        prof_set("kind", "memory");
+        prof_record();
+    });
+    own("Record a profile of the Profile tab's program's waiting", {}, [this] {
+        Commands::show_tab(*this, Commands::kProfile, false);
+        prof_set("kind", "waiting");
+        prof_record();
+    });
     own("Stop recording", {}, [this] { prof_stop(); });
     own("Show or hide inline performance labels", {}, [this] { prof_toggle_labels(); });
     sent("Zoom the flame graph into the chosen function", {key(SDLK_SPACE)});

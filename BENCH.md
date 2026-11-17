@@ -2530,6 +2530,30 @@ Turn about, five rounds, 2560x1600, against the build before:
   first letter, a thumb with and without its skin tone) still match. The
   same on Linux with Noto Color Emoji.
 
+### Round 49: memory and waiting profiles
+
+Two more kinds of profile, chosen in the Profile tab. **Memory**: the
+pages a program first touches, by where, in bytes: Instruments' Virtual
+Memory Trace (its "zero fill" faults) on a Mac, perf's page faults (a
+page each) on Linux. Allocations, Instruments' own template, was tried
+first: it injects a library into the program, which on a Mac without
+Developer Mode waits for a service that never answers (the program sat
+in its initializer for five minutes); the kernel's trace needs none.
+On Linux the program runs with transparent huge pages off
+(`prctl(PR_SET_THP_DISABLE)`, through blit itself), since a fault of a
+huge page is one fault: with them on, 24 MB touched counted as 13 faults.
+**Waiting**: Instruments' System Call Trace, each call by how long it
+took; perf's context switches with the switch events on Linux, each by
+the time until its thread ran again, preemptions left out. That needs
+`perf_event_paranoid` at 1 or lower: at 2 the kernel gives the switches
+but no stacks, and blit says so.
+
+The test program (tests/profile/memwait.c) on the Mac: 32 MB new, big()
+three quarters and small() a quarter; waits of 300 ms (a sleep) and
+200 ms (a pipe) on two threads. The parsers are tested on recordings of
+each kind (fuzz_buffer.cpp), perf's waits on one written in its format.
+Nothing here is on the editor's paths: no benchmark.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

@@ -25,6 +25,7 @@ for d in "$dir/here" "$T"; do
     cp "$here/profile/spin.c" "$d/" && (cd "$d" && cc -O1 -g -fno-omit-frame-pointer -o spin spin.c) || exit 1
 done
 cp "$here/profile/threads.c" "$dir/here/" && (cd "$dir/here" && cc -O1 -g -fno-omit-frame-pointer -pthread -o threads threads.c) || exit 1
+cp "$here/profile/memwait.c" "$dir/here/" && (cd "$dir/here" && cc -O1 -g -fno-omit-frame-pointer -pthread -o memwait memwait.c) || exit 1
 # (Profiles are kept beside the folder being worked in, which is blit's own
 # folder when none is chosen: run there, so that nothing is left behind.)
 blit=$(cd "$(dirname "$blit")" && pwd)/$(basename "$blit")
@@ -70,6 +71,19 @@ check "a program that is not there: why, and no profile" "failed, 0 profiles"
 run "prof:program=ssh://box$T/spin;prof:args=40;profrecord;profwait;frame;profdump;key:Return;remotewait;frame;frame;profdump"
 check "recorded on another machine: its source opened from there, with the times" \
     "1 profiles; spin by $tool on box, 1 thread, over 10%: inner@spin.c outer@spin.c; tab: zoom all ;; 1 profiles; spin by $tool on box, 1 thread, over 10%: inner@spin.c outer@spin.c; times on lines 9F 17F 25F"
+
+# Memory: the pages a program touches first (Instruments' Virtual Memory
+# Trace; perf's page faults), each function by the bytes it first touched.
+run "prof:program=$dir/here/memwait;prof:kind=memory;profrecord;profwait;frame;profdump"
+check "a memory profile: where new memory is first touched" "1 profiles; memwait (memory) by $tool, 1 thread, over 10%: big@memwait.c small@memwait.c; tab: zoom all"
+# Waiting: where threads wait (the System Call Trace; on Linux, perf's
+# context switches, which need kernel.perf_event_paranoid at 1 or lower).
+run "prof:program=$dir/here/memwait;prof:args=waiting;prof:kind=waiting;profrecord;profwait;frame;profdump"
+case $got in
+    *perf_event_paranoid*) echo "waiting profile skipped: perf_event_paranoid is above 1 here" ;;
+    *) got=$(printf '%s' "$got" | sed -e 's/over 10%:.*;/over 10%: (system calls);/')
+       check "a waiting profile: where the threads waited" "1 profiles; memwait (waiting) by $tool, 2 thread, over 10%: (system calls); tab: zoom all" ;;
+esac
 
 # A graph per thread: the Profile tab lists the threads of the profile shown
 # (All threads, then the heaviest first), and the graph is of the one chosen.

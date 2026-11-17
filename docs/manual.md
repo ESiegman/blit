@@ -1428,7 +1428,8 @@ What it needs:
 ## Profiling
 
 The side panel's **Profile** tab records a program with the system's
-sampling profiler and shows where its time went:
+profiler and shows where its time went, where its memory came from, or
+where its threads waited:
 
 ![a profile of the demo program: its flame graph and the functions by time](media/profile.png)
 
@@ -1443,6 +1444,28 @@ sampling profiler and shows where its time went:
 - **Call stack**: frame pointers (the default) or DWARF, for perf and
   programs built without frame pointers.
 - **Inline performance labels**: on or off.
+- **Record**: what the next recording is of, chosen in turn:
+  - **Time on the CPU**: samples of what runs (the Time Profiler; perf).
+  - **Memory first touched**: every page the program writes for the
+    first time, by where it was written, in bytes: its new memory, as the
+    system sees it (Instruments' Virtual Memory Trace, its "zero fill"
+    faults; perf's page faults, a page each, with transparent huge pages
+    off for the program run here). Neither needs Developer Mode on a Mac,
+    as Instruments' Allocations would; and what is counted is memory
+    used, not every allocation.
+  - **Time waiting**: where the threads were blocked, and for how long.
+    On a Mac, Instruments' System Call Trace: each system call by how
+    long it took (a sleep, a read, a lock's wait). On Linux, perf's
+    context switches, each by the time until its thread ran again (a
+    thread only preempted is left out); this needs
+    `kernel.perf_event_paranoid` at 1 or lower, and blit says so when it
+    is not.
+
+  The command search has "Record a memory profile…" and "Record a
+  profile… waiting" beside "Record a profile…". A memory or waiting
+  profile is a profile like the others: a flame graph and the functions
+  by their share, its tab named "Memory: …" or "Waiting: …", its summary
+  in megabytes or seconds waited.
 
 Each recording opens in a tab of its own:
 
@@ -2330,8 +2353,9 @@ does not finish and takes all the memory the machine has.
   ligatures. A screen with more than 32 text colours or 6 background
   colours at once draws the rest in the nearest of those. Lines are not
   re-wrapped when the tab's width changes.
-- Profiling: CPU time only (no memory, no off-CPU waits), one run at a
-  time, all threads merged in one flame graph. A function's label goes on
+- Profiling: one run at a time. Memory is the pages first touched, not
+  every allocation (blocks reused from the heap do not show), and waiting
+  on Linux needs `kernel.perf_event_paranoid` at 1 or lower. A function's label goes on
   the line above its hottest line that names it with a bracket after it,
   or on that line if none does. Profiles are not saved.
 - Git: what is listed above and no more. No interactive rebase, no

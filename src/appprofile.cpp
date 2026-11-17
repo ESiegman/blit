@@ -161,6 +161,7 @@ struct App::ProfUi {
     u32 frequency = 999;
     bool dwarf = false;
     bool annotate = true;
+    ProfileRequest::Kind kind = ProfileRequest::kTime;  // what it records: time, memory, waiting
     std::unique_ptr<ProfileJob> job;
     SDL_TimerID timer = 0;
     std::string error;
@@ -182,7 +183,7 @@ struct App::ProfUi {
     std::shared_ptr<Kept> kept = std::make_shared<Kept>();
     std::string opening;  // a kept one being read
     // The panel: what each row does, and the row chosen.
-    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kRecord, kStop, kDwarf, kAnnotate, kOpen, kOpenKept, kThread };
+    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kRecord, kStop, kDwarf, kAnnotate, kOpen, kOpenKept, kThread, kKind };
     struct Row {
         Act act = kNone;
         u32 index = 0;
@@ -224,6 +225,7 @@ void App::prof_record() {
     r.cwd = u.cwd;
     r.frequency = u.frequency;
     r.dwarf = u.dwarf;
+    r.kind = u.kind;
     // The arguments as a shell would split them (quotes keep spaces in).
     std::string word;
     bool any = false;
@@ -267,8 +269,12 @@ std::string kept_name(const Profile& p) {
     std::string prog = short_path(p.program);
     for (char& c : prog)
         if (c == ' ' || c == '/') c = '_';
-    return prog + "-" + when + ".blitprofile";
+    return prog + (p.kind == "time" || p.kind.empty() ? "" : "-" + p.kind) + "-" + when + ".blitprofile";
 }
+
+// What a profile is of, as its tab and the panel say it ("Profile" for
+// time on the CPU).
+std::string kind_title(const Profile& p) { return p.kind == "memory" ? "Memory" : p.kind == "waiting" ? "Waiting" : "Profile"; }
 
 // The time a kept profile's name says it was kept, to sort them by ("2026-11-16-230501").
 std::string kept_when(const std::string& name) {
@@ -437,7 +443,7 @@ void App::prof_open(std::shared_ptr<Profile> p) {
                 return;
             }
     Doc* d = add_doc(pane_->tab + 1);
-    d->title = "Profile: " + short_path(p->program) + " " + p->when;
+    d->title = kind_title(*p) + ": " + short_path(p->program) + " " + p->when;
     d->read_only = true;
     auto v = std::make_shared<ProfView>();
     v->p = p;
@@ -497,6 +503,11 @@ void App::prof_panel_draw(TextBox& box, bool focused) {
     field("Program", u.program, "Choose a program\xE2\x80\xA6", ProfUi::kProgram);
     field("Arguments", u.args, "None", ProfUi::kArgs);
     field("Working directory", u.cwd, "The program's folder", ProfUi::kCwd);
+    if (r < rows) {  // what is recorded: chosen in turn
+        u.rows[r] = {ProfUi::kKind, 0};
+        const u32 c = put(box, font, r, 0, "Record", ink::kText);
+        put(box, font, r++, c + 2, u.kind == ProfileRequest::kMemory ? "Memory first touched" : u.kind == ProfileRequest::kWaiting ? "Time waiting" : "Time on the CPU", ink::kMuted);
+    }
     ++r;
     if (r < rows) {  // record, or stop: the button, with its key on the right
         const bool running = u.job != nullptr;
@@ -550,7 +561,9 @@ void App::prof_panel_draw(TextBox& box, bool focused) {
         if (on) put(box, font, r, 0, "\xE2\x96\xB8", ink::kAccent);  // (the one shown)
         const u32 c = put(box, font, r, 2, fit_text(short_path(p.program), cols > 2 ? cols - 2 : 1), on ? ink::kStrong : ink::kText);
         char t[96];
-        std::snprintf(t, sizeof t, "%s  %.1f s", p.when.c_str(), p.seconds);
+        if (p.kind == "memory") std::snprintf(t, sizeof t, "%s  memory %.1f MB", p.when.c_str(), static_cast<double>(p.weight) / 1048576.0);
+        else if (p.kind == "waiting") std::snprintf(t, sizeof t, "%s  waiting %.2f s", p.when.c_str(), static_cast<double>(p.weight) * 1e-9);
+        else std::snprintf(t, sizeof t, "%s  %.1f s", p.when.c_str(), p.seconds);
         if (c + 4 < cols) put(box, font, r, c + 2, fit_text(t, cols - c - 2), ink::kMuted);
     }
     for (u32 i = 0; i < kept.size() && r < rows; ++i, ++r) {
@@ -640,6 +653,7 @@ void App::prof_do(u32 row) {
         case ProfUi::kRecord: prof_record(); break;
         case ProfUi::kStop: prof_stop(); break;
         case ProfUi::kDwarf: u.dwarf = !u.dwarf; break;
+        case ProfUi::kKind: u.kind = static_cast<ProfileRequest::Kind>((u.kind + 1) % 3); break;
         case ProfUi::kAnnotate:
             u.annotate = !u.annotate;
             for (const std::unique_ptr<Pane>& p : panes_) p->cache_rev = ~0ull;
@@ -793,7 +807,12 @@ void App::prof_layout(FrameDesc& fd) {
             const std::string where = p.backend + (p.host.empty() ? "" : " on " + p.host) + " \xC2\xB7 " + p.when;
             if (c + width_of(where) + 3 < cols) box.put(font, 0, cols - width_of(where) - 1, where, kInkMuted);
             char sum[160];
-            std::snprintf(sum, sizeof sum, "%s samples \xC2\xB7 %.2f s \xC2\xB7 %u thread%s", with_commas(p.samples).c_str(), p.seconds, p.threads, p.threads == 1 ? "" : "s");
+            if (p.kind == "memory")  // (bytes first touched, from the faults that touched them)
+                std::snprintf(sum, sizeof sum, "%.1f MB new \xC2\xB7 %s faults \xC2\xB7 %u thread%s", static_cast<double>(p.weight) / 1048576.0, with_commas(p.samples).c_str(), p.threads, p.threads == 1 ? "" : "s");
+            else if (p.kind == "waiting")
+                std::snprintf(sum, sizeof sum, "%.2f s waited \xC2\xB7 %s waits \xC2\xB7 %u thread%s", static_cast<double>(p.weight) * 1e-9, with_commas(p.samples).c_str(), p.threads, p.threads == 1 ? "" : "s");
+            else
+                std::snprintf(sum, sizeof sum, "%s samples \xC2\xB7 %.2f s \xC2\xB7 %u thread%s", with_commas(p.samples).c_str(), p.seconds, p.threads, p.threads == 1 ? "" : "s");
             c = box.put(font, 1, 1, sum, kInkMuted);
             if (v.thread >= 0) c = box.put(font, 1, c, " \xC2\xB7 " + v.root_name() + " " + percent(v.whole, p.weight), 0);
             if (!p.note.empty()) put(box, font, 1, c + 3, clip(p.note, cols > c + 4 ? cols - c - 4 : 1), ink::kWarning);
@@ -1202,6 +1221,7 @@ void App::prof_set(const std::string& what, const std::string& value) {
     else if (what == "cwd") u.cwd = full_path(value);
     else if (what == "dwarf") u.dwarf = value == "on";
     else if (what == "annotate") u.annotate = value != "off";
+    else if (what == "kind") u.kind = value == "memory" ? ProfileRequest::kMemory : value == "waiting" ? ProfileRequest::kWaiting : ProfileRequest::kTime;
     ++prof_gen_;
 }
 
@@ -1244,7 +1264,7 @@ std::string App::prof_dump() {
     out += std::to_string(u.done.size()) + " profiles";
     if (u.shown) {
         const Profile& p = *u.shown;
-        out += "; " + short_path(p.program) + " by " + p.backend + (p.host.empty() ? "" : " on " + p.host) + ", " + std::to_string(p.threads) + " thread";
+        out += "; " + short_path(p.program) + (p.kind == "time" || p.kind.empty() ? "" : " (" + p.kind + ")") + " by " + p.backend + (p.host.empty() ? "" : " on " + p.host) + ", " + std::to_string(p.threads) + " thread";
         std::vector<std::string> hot;
         for (const u32 f : p.by_self())
             if (p.funcs[f].self * 10 >= p.weight && hot.size() < 4) hot.push_back(std::string(short_name(p.funcs[f].name)) + (p.funcs[f].file.empty() ? "" : "@" + short_path(p.funcs[f].file)));

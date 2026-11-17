@@ -1,0 +1,36 @@
+t  1000 100.000000:          1 
+	    7f20d41a1e8c read (/usr/lib/libc.so.6)
+  libc.so.6[11e8c]
+	    55c8f207d5a0 reader(int) (/work/t)
+  /work/t.cpp:17
+	    55c8f207d6f0 main (/work/t)
+  /work/t.cpp:21
+
+t  1000 100.000001: PERF_RECORD_SWITCH OUT        
+t  1001 100.000100:          1 
+	    7f20d41a2a10 clock_nanosleep (/usr/lib/libc.so.6)
+  libc.so.6[12a10]
+	    7f20d41a2a90 nanosleep (/usr/lib/libc.so.6)
+  libc.so.6[12a90]
+	    55c8f207d640 main::{lambda()#1}::operator()() const (/work/t)
+  /work/t.cpp:24
+
+t  1001 100.000101: PERF_RECORD_SWITCH OUT        
+t  1001 100.200101: PERF_RECORD_SWITCH IN         
+t  1000 100.205001: PERF_RECORD_SWITCH IN         
+t  1000 100.300000:          1 
+	    55c8f207d700 main (/work/t)
+  /work/t.cpp:30
+
+t  1000 100.300001: PERF_RECORD_SWITCH OUT preempt
+t  1000 100.300050: PERF_RECORD_SWITCH IN         
+t  1000 100.400000:          1 
+	    7f20d41a2a10 clock_nanosleep (/usr/lib/libc.so.6)
+  libc.so.6[12a10]
+	    55c8f207d5d0 sleeper() (/work/t)
+  /work/t.cpp:16
+	    55c8f207d6f0 main (/work/t)
+  /work/t.cpp:28
+
+t  1000 100.400001: PERF_RECORD_SWITCH OUT        
+t  1000 100.700001: PERF_RECORD_SWITCH IN         

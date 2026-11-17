@@ -991,7 +991,7 @@ void App::run_script(const char* script) {
                 std::fprintf(stderr, "fed %llu bytes, it read %llu (exit %d), %s\n", static_cast<unsigned long long>(fed.load()), std::strtoull(out.c_str(), nullptr, 10), code,
                              how.c_str());
             }
-        } else if (verb == "prof") {  // prof:what=value (program, args, cwd, dwarf, annotate)
+        } else if (verb == "prof") {  // prof:what=value (program, args, cwd, dwarf, annotate, kind: time, memory or waiting)
             const size_t eq = arg.find('=');
             prof_set(arg.substr(0, eq), eq == std::string::npos ? std::string() : arg.substr(eq + 1));
         } else if (verb == "profpanel") {  // the side panel's Profile tab

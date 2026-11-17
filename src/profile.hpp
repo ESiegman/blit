@@ -1,7 +1,10 @@
 #pragma once
 // Profiling a program: where its time goes, from the system's sampling
 // profiler (perf on Linux, Instruments' Time Profiler through xctrace on
-// macOS), run here or on another machine (remote.hpp), and what was found:
+// macOS), run here or on another machine (remote.hpp); or where its memory
+// comes from (the pages it touches first: perf's page faults, Instruments'
+// Virtual Memory Trace), or where its threads wait (Instruments' System
+// Call Trace; perf's context switches); and what was found:
 // a call tree for the flame graph (of all its threads, and of each), each
 // function's time, and the time on each line of source the samples could
 // be traced to. A profile is kept in a file of its own (to_json), and read
@@ -64,7 +67,8 @@ struct Profile {
     u64 samples = 0;
     double seconds = 0;  // from the first sample to the last
     u32 threads = 0;
-    std::string unit;    // what a sample's weight counts ("ns")
+    std::string unit;    // what a sample's weight counts ("ns", "bytes")
+    std::string kind = "time";  // what was recorded: "time" on the CPU, "memory" first touched, "waiting"
     std::vector<ProfileFunc> funcs;
     std::vector<ProfileNode> nodes;  // [0]: the root, every sample
     std::vector<ProfileThread> by_thread;  // the heaviest first
@@ -103,8 +107,17 @@ private:
 
 // The two profilers' output read into a profile (prefix: put before every
 // source path, "ssh://host" for one recorded on another machine).
-bool parse_perf_script(std::string_view text, const std::string& prefix, Profile* out, std::string* err);
+// (scale: what one of perf's periods weighs, a page's bytes for page
+// faults. xctrace's table says by its schema what it is: the Time
+// Profiler's samples, the Virtual Memory Trace's faults of new memory, or
+// the System Call Trace's calls, each weighing how long it took.)
+bool parse_perf_script(std::string_view text, const std::string& prefix, Profile* out, std::string* err, u64 scale = 1);
 bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out, std::string* err);
+// perf's context switches (each a sample where a thread stopped running)
+// and the switches themselves (--show-switch-events), as samples of the
+// stacks the threads waited on, each weighing the nanoseconds until its
+// thread ran again (a thread preempted, not waiting, is left out).
+std::string perf_waits_as_samples(std::string_view text);
 
 // What to record.
 struct ProfileRequest {
@@ -113,6 +126,12 @@ struct ProfileRequest {
     std::string cwd;                // where it runs (another machine's: ssh://host/path); empty: the program's folder
     u32 frequency = 999;            // samples a second
     bool dwarf = false;             // perf: walk stacks with DWARF (for code built without frame pointers)
+    // What is recorded: time on the CPU; memory, as the pages it touches
+    // first (new memory, where it was first written); or time spent
+    // waiting (in system calls on macOS; off the CPU on Linux, which needs
+    // kernel.perf_event_paranoid at 1 or lower).
+    enum Kind : u8 { kTime, kMemory, kWaiting };
+    Kind kind = kTime;
 };
 
 // Records a program and reads what was recorded, on a thread of its own.

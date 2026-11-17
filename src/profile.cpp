@@ -10,6 +10,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <charconv>
+#include <cmath>
 #include <chrono>
 #include <condition_variable>
 #include <cstring>
@@ -168,7 +169,7 @@ std::string Profile::to_json() const {
     };
     auto num = [&](const char* k, double v) { o += std::format(",\"{}\":{}", k, v); };
     field("program", program), field("args", args), field("backend", backend), field("host", host), field("when", when);
-    field("unit", unit), field("output", output), field("note", note);
+    field("unit", unit), field("output", output), field("note", note), field("kind", kind);
     num("weight", static_cast<double>(weight)), num("samples", static_cast<double>(samples)), num("seconds", seconds), num("threads", threads);
     o += ",\"funcs\":[";
     for (size_t i = 0; i < funcs.size(); ++i) {
@@ -214,6 +215,7 @@ bool Profile::from_json(std::string_view text, Profile* out, std::string* err) {
     Profile p;
     p.program = r["program"].str(), p.args = r["args"].str(), p.backend = r["backend"].str(), p.host = r["host"].str(), p.when = r["when"].str();
     p.unit = r["unit"].str(), p.output = r["output"].str(), p.note = r["note"].str();
+    p.kind = r["kind"].str().empty() ? "time" : r["kind"].str();
     p.weight = static_cast<u64>(r["weight"].integer()), p.samples = static_cast<u64>(r["samples"].integer());
     p.seconds = r["seconds"].number(), p.threads = static_cast<u32>(r["threads"].integer());
     for (json::Value f : r["funcs"])
@@ -285,7 +287,7 @@ bool split_srcline(std::string_view s, std::string_view* file, u32* line) {
 // innermost first ("ip symbol (dso)", no dso for an inlined one), each
 // followed by its source line ("  file:line") when perf knows it, and a
 // blank line.
-bool parse_perf_script(std::string_view text, const std::string& prefix, Profile* out, std::string* err) {
+bool parse_perf_script(std::string_view text, const std::string& prefix, Profile* out, std::string* err, u64 scale) {
     struct F {
         std::string_view name, module, file;
         u32 line = 0;
@@ -312,7 +314,7 @@ bool parse_perf_script(std::string_view text, const std::string& prefix, Profile
             }
         pf.clear();
         for (const F& f : frames) pf.push_back({f.name, f.module, f.file, f.line});
-        out->add(pf, period, tid, comm);
+        out->add(pf, period * scale, tid, comm);
         frames.clear();
         files.clear();
     };
@@ -404,6 +406,85 @@ bool parse_perf_script(std::string_view text, const std::string& prefix, Profile
     return true;
 }
 
+// perf's context switches as waits. A sample of the "context-switches"
+// event is where a thread stopped running (its stack); the switch records
+// after it say when it ran again ("PERF_RECORD_SWITCH IN", for its thread)
+// or that it was only preempted ("OUT preempt": it did not wait). Each wait
+// comes out as a sample of that stack whose period is the nanoseconds it
+// lasted, for parse_perf_script().
+std::string perf_waits_as_samples(std::string_view text) {
+    struct Waiting {
+        double at = 0;
+        std::string head, frames;  // the sample's line (without its period) and its frames
+        bool on = false;
+    };
+    std::unordered_map<u64, Waiting> waiting;
+    std::unordered_map<u64, double> preempted;  // when each thread was last preempted
+    std::string out;
+    // A line's thread and time: "comm  tid  time: ...", the name may have spaces.
+    auto parse_head = [](std::string_view line, u64* tid, double* at, std::string_view* rest) {
+        const size_t colon = line.find(": ");
+        const size_t end = colon == std::string_view::npos ? (line.ends_with(':') ? line.size() - 1 : std::string_view::npos) : colon;
+        if (end == std::string_view::npos) return false;
+        const std::string_view left = trim(line.substr(0, end));
+        const size_t t0 = left.find_last_of(" \t");
+        if (t0 == std::string_view::npos) return false;
+        *at = std::strtod(std::string(left.substr(t0 + 1)).c_str(), nullptr);
+        const std::string_view before = trim(left.substr(0, t0));
+        const size_t t1 = before.find_last_of(" \t");
+        const std::string_view tt = before.substr(t1 == std::string_view::npos ? 0 : t1 + 1);
+        if (std::from_chars(tt.data(), tt.data() + tt.size(), *tid).ec != std::errc()) return false;
+        *rest = end + 1 < line.size() ? trim(line.substr(end + 1)) : std::string_view{};
+        return true;
+    };
+    size_t at = 0;
+    Waiting* building = nullptr;  // the sample whose frames are being read
+    while (at <= text.size()) {
+        const size_t nl = text.find('\n', at);
+        const std::string_view line = text.substr(at, nl == std::string_view::npos ? std::string_view::npos : nl - at);
+        at = nl == std::string_view::npos ? text.size() + 1 : nl + 1;
+        if (trim(line).empty()) {
+            building = nullptr;
+            continue;
+        }
+        if (line[0] == ' ' || line[0] == '\t') {
+            if (building) building->frames.append(line).push_back('\n');
+            continue;
+        }
+        building = nullptr;
+        u64 tid = 0;
+        double t = 0;
+        std::string_view rest;
+        if (!parse_head(line, &tid, &t, &rest)) continue;
+        if (rest.starts_with("PERF_RECORD_SWITCH")) {
+            Waiting& w = waiting[tid];
+            if (rest.find("OUT") != std::string_view::npos) {
+                if (rest.find("preempt") != std::string_view::npos) {
+                    preempted[tid] = t;
+                    if (w.on && t - w.at < 1e-4) w.on = false;  // (the sample just taken was of a preemption)
+                } else if (w.on) {
+                    w.at = t;  // (the switch itself: when it stopped)
+                }
+            } else if (rest.find("IN") != std::string_view::npos && w.on) {
+                const u64 ns = static_cast<u64>(std::llround(std::max(0.0, (t - w.at) * 1e9)));
+                if (ns > 0) out += w.head + " " + std::to_string(ns) + "\n" + w.frames + "\n";
+                w.on = false;
+            }
+            continue;
+        }
+        // A sample: where the thread stopped.
+        Waiting& w = waiting[tid];
+        const auto p = preempted.find(tid);
+        w.on = !(p != preempted.end() && t - p->second < 1e-4 && t >= p->second);
+        w.at = t;
+        const size_t colon = line.find(": ");
+        w.head = std::string(colon == std::string_view::npos ? line : line.substr(0, colon + 1));
+        w.frames.clear();
+        building = &w;
+    }
+    return out;
+}
+
 // ---------------------------------------------------------------- xctrace
 
 namespace {
@@ -471,8 +552,15 @@ struct Tag {
 // The "time-profile" table: a row for each sample, with its thread, its
 // weight and its backtrace (frames, the innermost first, each with its
 // binary and, when there is debug information, its source line). What has
-// come once is given an id and later only referred to (ref="id").
+// come once is given an id and later only referred to (ref="id"). The
+// "virtual-memory" table is the same with a fault in each row (its kind,
+// its bytes: only new memory, "Zero Fill", is kept), and "syscall" with a
+// system call in each (how long it took).
 bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out, std::string* err) {
+    enum Mode { kSamples, kFaults, kCalls } mode = kSamples;
+    std::string_view weight_tag = "weight";
+    std::unordered_map<std::string, std::string> ops;  // a fault's kind, by id
+    std::string row_op;
     struct XFrame {
         std::string name, module, file;
         u32 line = 0;
@@ -523,9 +611,12 @@ bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out
         t.attrs = sp == std::string_view::npos ? std::string_view{} : body.substr(sp + 1);
 
         if (t.close) {
-            if (!text_of.empty() && (t.name == "weight" || t.name == "path" || t.name == "sample-time")) {
+            if (!text_of.empty() && (t.name == weight_tag || t.name == "path" || t.name == "sample-time" || t.name == "start-time" || t.name == "vm-op")) {
                 const std::string value = decode(text);
-                if (text_of.starts_with("weight:")) {
+                if (text_of.starts_with("op:")) {
+                    ops[text_of.substr(3)] = value;
+                    if (in_row) row_op = value;
+                } else if (text_of.starts_with("weight:")) {
                     const u64 v = std::strtoull(value.c_str(), nullptr, 10);
                     weights[text_of.substr(7)] = v;
                     if (in_row) row_weight = v;
@@ -550,6 +641,8 @@ bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out
             } else if (t.name == "row" && in_row) {
                 in_row = false;
                 any_row = true;
+                if (mode == kFaults && row_op != "Zero Fill") continue;  // (memory that was there already: paged in, copied, cached)
+                if (mode != kSamples && row_bt.empty()) continue;         // (no stack to put it on)
                 pf.clear();
                 for (const u32 f : row_bt) {
                     const XFrame& x = frames[f];
@@ -561,14 +654,24 @@ bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out
         }
 
         const std::string id = t.attr("id"), ref = t.attr("ref");
+        if (t.name == "schema" && !in_row) {
+            const std::string name = t.attr("name");
+            if (name == "virtual-memory") mode = kFaults, weight_tag = "size-in-bytes";
+            else if (name == "syscall") mode = kCalls, weight_tag = "duration";
+            continue;
+        }
         if (t.name == "row") {
             in_row = true;
             row_weight = 0;
             row_thread = 0;
             row_bt.clear();
+            row_op.clear();
         } else if (!in_row) {
             continue;
-        } else if (t.name == "sample-time") {
+        } else if (t.name == "vm-op") {
+            if (!ref.empty()) row_op = ops[ref];
+            else if (!t.empty) text_of = "op:" + id, text.clear();
+        } else if (t.name == "sample-time" || t.name == "start-time") {
             if (!t.empty) text_of = "time", text.clear();
         } else if (t.name == "thread" && frame < 0 && !bt) {
             const std::string key = id.empty() ? ref : id;
@@ -579,7 +682,7 @@ bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out
                 if (const size_t cut = name.find(" (0x"); cut != std::string::npos) name.resize(cut);
                 thread_names[id] = name;
             }
-        } else if (t.name == "weight" && frame < 0) {
+        } else if (t.name == weight_tag && frame < 0) {
             if (!ref.empty()) row_weight = weights[ref];
             else if (!t.empty) text_of = "weight:" + id, text.clear();
         } else if ((t.name == "tagged-backtrace" || t.name == "backtrace") && !bt) {
@@ -618,12 +721,12 @@ bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out
         }
     }
     if (!any_row || out->samples == 0) {
-        if (err) *err = "the Time Profiler recorded no samples";
+        if (err) *err = mode == kFaults ? "the Virtual Memory Trace saw no new memory" : mode == kCalls ? "the System Call Trace saw no calls" : "the Time Profiler recorded no samples";
         return false;
     }
     out->seconds = last > first ? static_cast<double>(last - first) * 1e-9 : 0;
     out->threads = static_cast<u32>(tids.size());
-    out->unit = "ns";
+    out->unit = mode == kFaults ? "bytes" : "ns";
     if (!any_line) out->note = "No source lines: build the program with -g to see them.";
     return true;
 }
@@ -858,13 +961,29 @@ struct ProfileJob::Impl {
         std::vector<std::string> argv;
         const std::string freq = std::to_string(std::clamp<u32>(req.frequency, 1, 20000));
         if (tool == "perf") {
-            argv = {"perf", "record", "-F", freq, "-g", "--user-callchains", "-o", dir + "/perf.data"};
-            if (req.dwarf) argv.insert(argv.begin() + 5, {"--call-graph", "dwarf"});
+            // Time: samples at a frequency. Memory: every page fault (where
+            // memory is first touched). Waiting: every context switch, and
+            // the switches themselves (when each thread ran again).
+            if (req.kind == ProfileRequest::kMemory) argv = {"perf", "record", "-e", "page-faults", "-c", "1", "-g", "--user-callchains", "-o", dir + "/perf.data"};
+            else if (req.kind == ProfileRequest::kWaiting) argv = {"perf", "record", "-e", "context-switches", "-c", "1", "--switch-events", "-g", "--user-callchains", "-o", dir + "/perf.data"};
+            else argv = {"perf", "record", "-F", freq, "-g", "--user-callchains", "-o", dir + "/perf.data"};
+            if (req.dwarf) argv.insert(std::ranges::find(argv, std::string("-g")), {"--call-graph", "dwarf"});
+
         } else {
+            // (The two besides the Time Profiler trace the kernel, as it
+            // does: neither needs Developer Mode, as Allocations would.)
             argv = kXctrace;
-            argv.insert(argv.end(), {"record", "--template", "Time Profiler", "--no-prompt", "--output", dir + "/profile.trace", "--target-stdout", "-", "--launch"});
+            const char* what = req.kind == ProfileRequest::kMemory ? "Virtual Memory Trace" : req.kind == ProfileRequest::kWaiting ? "System Call Trace" : nullptr;
+            if (what) argv.insert(argv.end(), {"record", "--instrument", what});
+            else argv.insert(argv.end(), {"record", "--template", "Time Profiler"});
+            argv.insert(argv.end(), {"--no-prompt", "--output", dir + "/profile.trace", "--target-stdout", "-", "--launch"});
         }
         argv.push_back("--");
+#if defined(__linux__)
+        // Memory here: the program without transparent huge pages (a fault
+        // of one would count as a single page), through this blit.
+        if (tool == "perf" && req.kind == ProfileRequest::kMemory && !remote) argv.insert(argv.end(), {program_path(), "--exec-without-huge-pages"});
+#endif
         argv.push_back(there);
         argv.insert(argv.end(), req.args.begin(), req.args.end());
         std::string output, rec_err;
@@ -910,11 +1029,24 @@ struct ProfileJob::Impl {
         // Read it.
         set(kReading, "Reading the recording" + where);
         std::vector<std::string> read;
+        u64 page = 4096;  // (perf's page faults: a page's bytes each, as the machine has them)
+        bool huge = false;  // (another machine's program had transparent huge pages: a fault of one counted as a page)
         if (tool == "perf") {
             read = {"perf", "script", "-i", dir + "/perf.data", "-F", "comm,tid,time,period,ip,sym,dso,srcline", "--full-source-path"};
+            if (req.kind == ProfileRequest::kWaiting) read.push_back("--show-switch-events");
+            if (req.kind == ProfileRequest::kMemory) {
+                Run pg;
+                std::string out, ignore;
+                if (start(remote, {"/bin/sh", "-c", "getconf PAGESIZE; cat /sys/kernel/mm/transparent_hugepage/enabled 2>/dev/null"}, "", &pg, &ignore) &&
+                    finish(pg, &out, &ignore) == 0) {
+                    if (const u64 n = std::strtoull(out.c_str(), nullptr, 10); n >= 512) page = n;
+                    huge = remote && out.find("[always]") != std::string::npos;
+                }
+            }
         } else {
+            const char* table = req.kind == ProfileRequest::kMemory ? "virtual-memory" : req.kind == ProfileRequest::kWaiting ? "syscall" : "time-profile";
             read = kXctrace;
-            read.insert(read.end(), {"export", "--input", dir + "/profile.trace", "--xpath", "/trace-toc/run[@number=\"1\"]/data/table[@schema=\"time-profile\"]"});
+            read.insert(read.end(), {"export", "--input", dir + "/profile.trace", "--xpath", "/trace-toc/run[@number=\"1\"]/data/table[@schema=\"" + std::string(table) + "\"]"});
         }
         Run r;
         std::string text, err;
@@ -945,7 +1077,18 @@ struct ProfileJob::Impl {
         }
         const std::string prefix = host.empty() ? std::string() : "ssh://" + host;
         std::string perr;
-        const bool ok = tool == "perf" ? parse_perf_script(text, prefix, p.get(), &perr) : parse_xctrace(text, prefix, p.get(), &perr);
+        bool ok;
+        if (tool != "perf") {
+            ok = parse_xctrace(text, prefix, p.get(), &perr);
+        } else if (req.kind == ProfileRequest::kWaiting) {
+            ok = parse_perf_script(perf_waits_as_samples(text), prefix, p.get(), &perr);
+            if (!ok) perr = "perf saw no waits: off-CPU stacks need kernel.perf_event_paranoid at 1 or lower";
+        } else {
+            ok = parse_perf_script(text, prefix, p.get(), &perr, req.kind == ProfileRequest::kMemory ? page : 1);
+            if (ok && req.kind == ProfileRequest::kMemory) p->unit = "bytes";
+            if (ok && huge) p->note = "Transparent huge pages are always on there: a fault of a huge page counts as one page.";
+        }
+        p->kind = req.kind == ProfileRequest::kMemory ? "memory" : req.kind == ProfileRequest::kWaiting ? "waiting" : "time";
         if (!ok) {
             const std::string why = last_line(rec_err);
             return fail(perr + (why.empty() ? std::string() : " (" + why + ")"));
