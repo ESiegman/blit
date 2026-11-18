@@ -103,9 +103,13 @@ check "Vim's Insert mode" 'int f() { /     g(x); q(1) / } /  @ 2:14'
 # every match; typing, deleting and moving at each, one undo for all; Esc
 # leaves the primary; copied a line each, and pasted a line each where the
 # lines are as many as the carets. (And with Vim: commands at each.)
-below="keyof:Add a caret on the line below"
-next="keyof:Add the next match to the carets"
-every="keyof:Add carets to every match"
+# (The commands by name: off a Mac the line below has no key, and with Vim's
+# modes Ctrl+D is Vim's. And the text's ends: Cmd+Up and Cmd+Down on a Mac,
+# Ctrl+Home and Ctrl+End elsewhere.)
+below="command:Add a caret on the line below"
+next="command:Add the next match to the carets"
+every="command:Add carets to every match"
+case $(uname -s) in Darwin) text_start=cmd+Up ;; *) text_start=ctrl+Home ;; esac
 # carets SCRIPT [FILE] [INIT]: the text after it (" / " between lines) and every caret.
 carets() {
     fresh
@@ -120,7 +124,7 @@ carets "$every;key:Backspace;key:Right;text:_"
 check "every match, deleted, then moved and typed at each (past a line's end: the next line)" ' _one /  _two / bar  / _end /  @ *1:3 2:3 4:2'
 carets "$every;key:Backspace;key:cmd+z;key:Escape"
 check "one undo for all, the primary's selection back; Esc leaves one" 'foo one / foo two / bar foo / end /  @ *1:4-1:1'
-carets "$below;$below;key:End;key:shift+word+Left;key:cmd+c;key:Escape;key:cmd+Up;$below;$below;key:cmd+v"
+carets "$below;$below;key:End;key:shift+word+Left;key:cmd+c;key:Escape;key:$text_start;$below;$below;key:cmd+v"
 check "copied a line each, pasted a line each" 'onefoo one / twofoo two / foobar foo / end /  @ *1:4 2:4 3:4'
 carets "$below;$below;text:A!;key:Escape" "$dir/l.txt" "$dir/vim.lua"
 check "Vim: a command at each" 'one! / two! / three! / four @ *1:4 2:4 3:6'

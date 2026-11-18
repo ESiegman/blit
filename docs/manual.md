@@ -191,7 +191,7 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | Expand the selection to what the syntax tree has around it / shrink it back | Ctrl+Shift+Cmd+Right / Left | Alt+Shift+Right / Left |
 | Fold / unfold the block at the cursor | Cmd+Option+[ / ] | Ctrl+Alt+[ / ] |
 | Move the line (or the lines chosen) up / down; copy them below / above | Option+Up / Down; Option+Shift+Down / Up | Alt+Up / Down; "Copy the lines down" in the command search |
-| Select the word, then add the next match as a caret / add every match | Cmd+D / Cmd+Shift+L | Ctrl+D / Ctrl+Shift+L |
+| Select the word, then add the next match as a caret / add every match | Cmd+D / Cmd+Shift+L | Ctrl+D (with Vim's modes Vim's: "Add the next match to the carets" in the command search) / Ctrl+Shift+L |
 | Add a caret on the line above / below | Ctrl+Shift+Up / Down | "Add a caret on the line above" ("… below") in the command search |
 | Add a caret (or take one away) / a column of carets | Option+click / Option+drag | Alt+click / Alt+drag |
 | Save / open (in a new tab) | Cmd+S / Cmd+O | Ctrl+S / Ctrl+O (or Alt+O) |
