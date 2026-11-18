@@ -31,6 +31,7 @@
 #include "folds.hpp"
 #include "snippet.hpp"
 #include "asm.hpp"
+#include "notebook.hpp"
 #include "tests.hpp"
 #include "font.hpp"
 #include "git.hpp"
@@ -362,6 +363,110 @@ void asm_test() {
     check(asm_command(R"([{"directory": "/b", "arguments": ["c++", "-c", "x.cpp"], "file": "x.cpp"}])", "/b/x.cpp", &argv, &dir) && argv.size() == 7 && argv.back() == "x.cpp",
           "asm: arguments, and a file relative to its folder");
     check(!asm_command(R"([{"directory": "/b", "command": "cc -c y.c", "file": "y.c"}])", "/b/x.c", &argv, &dir), "asm: no entry for the file");
+}
+
+// A notebook as the script of its cells, and back: a Markdown cell's
+// lines commented; outputs and ids kept for the cells as they were, a
+// changed one's outputs gone, a new one given an id; the notebook's own
+// metadata kept, and written as Jupyter writes it.
+void notebook_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    const std::string nb = R"NB({
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "a1",
+   "metadata": {},
+   "source": [
+    "# Title\n",
+    "\n",
+    "Some text"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 3,
+   "id": "b2",
+   "metadata": {
+    "tags": []
+   },
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "first\n",
+      "6.5\n"
+     ]
+    }
+   ],
+   "source": [
+    "x = 13 / 2\n",
+    "print('first')\n",
+    "print(x)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 4,
+   "id": "c3",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "image/png": "iVBOR"
+     },
+     "metadata": {},
+     "output_type": "display_data"
+    }
+   ],
+   "source": "plot()"
+  }
+ ],
+ "metadata": {
+  "kernelspec": {
+   "display_name": "Python 3",
+   "name": "python3"
+  },
+  "language_info": {
+   "version": "3.12.1"
+  }
+ },
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
+)NB";
+    std::vector<NotebookCell> cells;
+    std::string script;
+    check(notebook_read(nb, &cells, &script), "notebook: read");
+    check(script == "# %% [markdown]\n# # Title\n#\n# Some text\n\n# %%\nx = 13 / 2\nprint('first')\nprint(x)\n\n# %%\nplot()\n", "notebook: the script of its cells");
+    check(cells.size() == 3 && cells[1].output == "6.5" && cells[2].output == "[image/png]" && cells[0].output.empty(), "notebook: each code cell's outputs in a line");
+    check(notebook_write(nb, script) == nb, "notebook: written back as it was, unchanged");
+    const std::vector<CellLines> lines = notebook_cell_lines(script);
+    check(lines.size() == 3 && lines[0].head == 0 && lines[0].end == 4 && !lines[0].code && lines[1].head == 5 && lines[1].first == 6 && lines[1].end == 9 &&
+              lines[2].end == 12,
+          "notebook: each cell's lines, without the gap after it");
+    // The second cell changed, a cell put in before the last: the last keeps its outputs and id.
+    const std::string edited = "# %% [markdown]\n# # Title\n#\n# Some text\n\n# %%\nx = 1\n\n# %%\nnew()\n\n# %%\nplot()\n";
+    const std::string out = notebook_write(nb, edited);
+    std::vector<NotebookCell> again;
+    std::string script2;
+    check(notebook_read(out, &again, &script2) && script2 == edited, "notebook: an edited script read back the same");
+    check(again.size() == 4 && again[1].output.empty() && again[3].output == "[image/png]", "notebook: a changed cell's outputs gone, an unchanged one's kept");
+    check(out.find("\"id\": \"b2\"") != std::string::npos && out.find("\"id\": \"c3\"") != std::string::npos && out.find("\"execution_count\": 3") == std::string::npos &&
+              out.find("\"tags\": []") != std::string::npos && out.find("\"version\": \"3.12.1\"") != std::string::npos,
+          "notebook: ids and a cell's metadata kept, a changed one's count gone, the notebook's metadata kept");
+    size_t ids = 0;
+    for (size_t at = 0; (at = out.find("\"id\": ", at)) != std::string::npos; ++at) ++ids;
+    check(ids == 4, "notebook: a new cell given an id");
+    std::vector<NotebookCell> plain = notebook_cells("import os\n\n# %%\nprint(1)\n");
+    check(plain.size() == 2 && plain[0].source == "import os" && plain[1].source == "print(1)", "notebook: lines before the first # %%, a cell of their own");
+    std::vector<NotebookCell> fresh;
+    std::string fresh_script;
+    check(notebook_read(notebook_write("", "# %%\n1 + 1\n"), &fresh, &fresh_script) && fresh_script == "# %%\n1 + 1\n", "notebook: a new one");
+    check(!notebook_read("{\"x\": 1}", &fresh, &fresh_script), "notebook: JSON that is not one");
 }
 
 // A profile's timeline: kept with each sample's time, narrowed to a
@@ -4873,6 +4978,7 @@ int main(int argc, char** argv) {
     timeline_test();
     snippets_test();
     asm_test();
+    notebook_test();
     find_test();
     folds_test();
     tests_test();

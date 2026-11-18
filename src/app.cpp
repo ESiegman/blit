@@ -1,4 +1,5 @@
 #include "app.hpp"
+#include "notebook.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -722,7 +723,9 @@ bool App::open_path(const char* p) {
     if (remote) {  // another machine's: its tab now, and the file when it comes (appremote.cpp)
         fresh->ed.path = full;
         fresh->loading = fresh->read_only = true;
-    } else if (!fresh->ed.open(p, &err)) {
+    } else if (fresh->ed.open(p, &err)) {
+        if (is_notebook_path(full)) nb_load(*fresh);  // (a notebook: the script of its cells)
+    } else {
         SDL_PathInfo info;
         if (SDL_GetPathInfo(p, &info)) {  // it is there, and cannot be read
             tell(SDL_MESSAGEBOX_ERROR, err.c_str());
@@ -888,7 +891,8 @@ void App::save() {
         return;
     }
     std::string err;
-    const bool saved = pane_->doc->ed.save(&err);
+    const bool notebook = pane_->doc->nb || (is_notebook_path(pane_->doc->ed.path) && nb_new(*pane_->doc));
+    const bool saved = notebook ? nb_save(*pane_->doc, &err) : pane_->doc->ed.save(&err);  // (a notebook: written as one)
     if (!saved) tell(SDL_MESSAGEBOX_ERROR, err.c_str());
     else if (lsp_.attached()) lsp_.did_save();
     else lsp_pending_ = true;  // a new file has a name now: a server can have it
@@ -1300,7 +1304,9 @@ u32 App::indent_step() {
     if (d.indent_rev == ~0ull || (lines <= 256 && lines != d.indent_lines)) {
         d.indent_rev = d.ed.revision();
         d.indent_lines = lines;
-        d.indent_step = d.ed.guess_indent(&d.indent_tabs);
+        bool known = false;
+        d.indent_step = d.ed.guess_indent(&d.indent_tabs, &known);
+        if (!known && file_language() == "python") d.indent_tabs = false, d.indent_step = 4;  // (nothing indented yet: Python's own way)
     }
     return d.indent_step ? d.indent_step : std::max<u32>(1, d.ed.tab_width);
 }
@@ -1466,6 +1472,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     caret_marks(fd);  // the other carets, and what each has selected
     snippet_marks(fd);  // a snippet's stops still to come
     asm_marks(fd);      // the lines of a file and of its assembly that go together
+    nb_marks(fd);       // a notebook's saved outputs
     if (script_) script_layout(w, h, fd);  // marks, boxes and messages of the scripts'
     prof_marks(fd);  // inline performance labels (after a server's and the scripts' notes)
     debug_marks(fd);  // and where the program being debugged has stopped
@@ -1980,6 +1987,7 @@ void App::on_key(const SDL_KeyboardEvent& k) {
     if (jump_key(k)) return;   // back or forward through the jumps, in any mode
     if (lsp_key(k)) return;    // a popup, or a language-server command, took it
     if (snippet_key(k)) return;  // Tab: a snippet's next stop, or one's own put in (appsnippet.cpp)
+    if (nb_key(k)) return;       // Shift+Return in a notebook: its cell run (appnotebook.cpp)
     if (cmd && (k.mod & SDL_KMOD_ALT) && k.key == SDLK_B) return git_command("blame", {});
     if (cfg_.modal) {
         // Tab on a ":set" line completes the setting's name, then its value (applua.cpp).

@@ -184,7 +184,7 @@ u64 Editor::widest_columns(std::span<const Piece> pieces, u32 tab_width, std::st
     return best;
 }
 
-u32 Editor::guess_indent(bool* tabs) const {
+u32 Editor::guess_indent(bool* tabs, bool* known) const {
     constexpr u64 kLines = 4000;
     constexpr u64 kBytes = 256 << 10;  // nor further than this, whatever the lines are like
     constexpr u32 kMaxStep = 8;
@@ -238,6 +238,7 @@ u32 Editor::guess_indent(bool* tabs) const {
         r.advance(static_cast<u32>(c.size()));
     }
     if (tabs) *tabs = tabbed > spaced || (tabbed == 0 && spaced == 0);
+    if (known) *known = tabbed || spaced;
     if (tabbed > spaced) return std::max<u32>(1, tab_width);
     u32 step = 0;
     for (u32 k = 2; k <= kMaxStep; ++k)

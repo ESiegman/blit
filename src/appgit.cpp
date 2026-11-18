@@ -696,6 +696,7 @@ void App::reread(Pane& p, Doc& d, const std::string* bytes) {
     bool read = true;
     if (bytes) d.ed.open_bytes(d.ed.path, *bytes);
     else read = d.ed.open(d.ed.path.c_str(), &err);
+    if (read && d.nb) nb_load(d);  // (a notebook: the script of its cells again)
     if (read) {
         const u64 last = d.ed.buf.line_count() - 1;
         d.ed.move_to(d.ed.off_at(std::min(line, last), col), false);

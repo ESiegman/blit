@@ -1121,6 +1121,9 @@ void App::run_script(const char* script) {
             }
             frame();
             std::fprintf(stderr, "%s\n", asm_dump().c_str());
+        } else if (verb == "nbdump") {  // the notebook in front's saved outputs on show, as "line: output"
+            frame();
+            std::fprintf(stderr, "%s\n", nb_dump().c_str());
         } else if (verb == "caretdump") {  // every caret of the file in front: line:column (from 1), a selection's other end after a dash, the primary starred
             std::fprintf(stderr, "%s\n", caret_dump().c_str());
         } else if (verb == "docdump") {  // docdump:N, the tab in front's title, then its lines from N before the cursor's to N after (the cursor's marked >, and in it the cursor |)

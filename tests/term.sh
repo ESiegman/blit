@@ -168,5 +168,76 @@ printf 'print("six", 6 * 7)\nprint("next")\n' >"$P/line.py"
 got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/line.py;command:Send the lines to the Python console;docdump:0;command:Open the Python console;termwait:>>>;termwait:six 42;termdump" 2>&1 >/dev/null | grep -E '^>|six 42' | sed -e 's/.*\(six 42\).*/\1/' | tr '\n' ' ')
 check "the cursor's line, and the cursor to the next" '> |print("next") six 42 '
 
+# A notebook: opened as the script of its cells, its saved outputs after
+# them; edited and saved, written back as a notebook (a changed cell's
+# outputs gone, the rest kept); Shift+Return runs a cell in the console
+# and goes to the next.
+cat >"$P/n.ipynb" <<'EOF'
+{
+ "cells": [
+  {
+   "cell_type": "markdown",
+   "id": "m1",
+   "metadata": {},
+   "source": [
+    "# Sums"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 1,
+   "id": "c1",
+   "metadata": {},
+   "outputs": [
+    {
+     "name": "stdout",
+     "output_type": "stream",
+     "text": [
+      "total 10\n"
+     ]
+    }
+   ],
+   "source": [
+    "total = sum(range(5))\n",
+    "print('total', total)"
+   ]
+  },
+  {
+   "cell_type": "code",
+   "execution_count": 2,
+   "id": "c2",
+   "metadata": {},
+   "outputs": [
+    {
+     "data": {
+      "text/plain": [
+       "20"
+      ]
+     },
+     "execution_count": 2,
+     "metadata": {},
+     "output_type": "execute_result"
+    }
+   ],
+   "source": [
+    "total * 2"
+   ]
+  }
+ ],
+ "metadata": {},
+ "nbformat": 4,
+ "nbformat_minor": 5
+}
+EOF
+got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/n.ipynb;lsptext;nbdump" 2>&1 >/dev/null | tail -2 | tr '\n' '#')
+check "a notebook: the script of its cells, and their outputs after them" "# %% [markdown] / # # Sums /  / # %% / total = sum(range(5)) / print('total', total) /  / # %% / total * 2 / #6: total 10 | 9: 20#"
+"$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/n.ipynb;vim:Gyyp;save" 2>/dev/null >/dev/null
+got=$(python3 -c 'import json,sys; nb=json.load(open(sys.argv[1])); print(" | ".join(c["cell_type"] + ":" + "".join(c["source"]) + ":" + str(len(c.get("outputs", []))) for c in nb["cells"]))' "$P/n.ipynb")
+check "saved: still a notebook, the changed cell's outputs gone, the others' kept" 'markdown:# Sums:0 | code:total = sum(range(5))
+print('"'"'total'"'"', total):1 | code:total * 2
+total * 2:0'
+got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/n.ipynb;vim:4G;key:shift+Return;docdump:0;key:shift+Return;command:Open the Python console;termwait:>>>;termwait:total 10;termwait:20;termdump" 2>&1 >/dev/null | grep -E '^>|total 10' | sed -e 's/.*\(total 10\).*/\1/' | tr '\n' ' ')
+check "Shift+Return: the cell run in the console, the cursor to the next cell" '> |total * 2 total 10 '
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "term ok"
 exit $failed

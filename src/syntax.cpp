@@ -1073,7 +1073,7 @@ std::string Syntax::language_for(std::string_view path, std::string_view first_l
     } by_ext[] = {
         {"c", "c"}, {"h", "cpp"}, {"cc", "cpp"}, {"cpp", "cpp"}, {"cxx", "cpp"}, {"hpp", "cpp"}, {"hh", "cpp"},
         {"hxx", "cpp"}, {"ipp", "cpp"}, {"inl", "cpp"}, {"hip", "cpp"},
-        {"py", "python"}, {"pyi", "python"},
+        {"py", "python"}, {"pyi", "python"}, {"ipynb", "python"},
         {"cmake", "cmake"}, {"mk", "make"}, {"json", "json"}, {"jsonc", "json"}, {"toml", "toml"},
         {"yaml", "yaml"}, {"yml", "yaml"}, {"md", "markdown"}, {"markdown", "markdown"},
         {"sh", "bash"}, {"bash", "bash"}, {"zsh", "bash"}, {"lua", "lua"},

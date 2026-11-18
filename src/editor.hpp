@@ -198,7 +198,7 @@ public:
     // step by which the leading spaces of one line exceed the last one's.
     // *tabs: whether lines are indented with tabs (also said of a text
     // with no indentation to go by: a tab is what the Tab key puts in).
-    u32 guess_indent(bool* tabs = nullptr) const;
+    u32 guess_indent(bool* tabs = nullptr, bool* known = nullptr) const;  // (known: an indented line was seen)
     u32 col_of(u64 off) const;
     u64 off_at(u64 line, u32 col, bool nearest = false) const;
     // The next and the previous character: a grapheme cluster, so a letter

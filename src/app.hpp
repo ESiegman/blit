@@ -84,6 +84,7 @@ struct ProfView;     // a profile's tab (appprofile.cpp)
 struct TermView;     // a terminal's tab (appterm.cpp)
 struct MdView;       // a Markdown preview's tab (appmarkdown.cpp)
 struct AsmTab;       // a file's assembly's tab (appasm.cpp)
+struct NotebookTab;  // a Jupyter notebook's tab (appnotebook.cpp)
 struct MergeView;    // a merge tab (appgit.cpp)
 struct RebaseView;   // an interactive rebase's tab (appgit.cpp)
 struct ImageView;    // an image file's tab (appimage.cpp)
@@ -195,6 +196,7 @@ struct Doc {
     std::shared_ptr<TermView> term;  // a terminal's tab: drawn over it too (appterm.cpp)
     std::shared_ptr<MdView> md;      // a Markdown preview's tab: drawn over it too (appmarkdown.cpp)
     std::shared_ptr<AsmTab> asmv;    // a file's assembly's tab (appasm.cpp)
+    std::shared_ptr<NotebookTab> nb;  // a notebook's: what it was, its outputs (appnotebook.cpp)
     std::shared_ptr<ImageView> image;  // an image file's tab: drawn over it too (appimage.cpp)
     std::shared_ptr<PdfView> pdf;      // a PDF's tab: drawn over it too (apppdf.cpp)
     bool term_closed = false;        // (its program has ended, and that has been seen to)
@@ -882,6 +884,15 @@ private:
     void py_send(std::string code);
     void py_flush(TermView& v);
     void py_send_lines();
+    // Jupyter notebooks (appnotebook.cpp).
+    bool nb_load(Doc& d);
+    bool nb_save(Doc& d, std::string* err);
+    bool nb_new(Doc& d);
+    bool nb_run_cell();
+    bool nb_key(const SDL_KeyboardEvent& k);
+    void nb_marks(FrameDesc& fd);
+    std::string nb_dump();
+    std::vector<GridNote> nb_notes_[kMaxViews];
     // The terminals' split along the bottom, the one the build's output
     // uses too: Ctrl+` shows it with the keyboard on its terminal, and
     // with the keyboard there hides it and gives the keyboard back to the
