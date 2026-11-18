@@ -73,7 +73,7 @@ case "$got" in *"stack: square@9 "*)
     run "$P;break:8;key:F5;debugwait:stopped;key:F10;debugwait:stopped;key:F10;debugwait:stopped;debugdump"
     back='stopped (step); stack: main@16; vars: total=1 i=1' ;;
 esac
-got=$(printf '%s' "$got" | sed -e 's/ start@[0-9]*//')  # (macOS's loader's frame, whose line is its own)
+got=$(printf '%s' "$got" | sed -e 's/ start\(@[0-9]*\)\{0,1\}$//' -e 's/ start\(@[0-9]*\)\{0,1\};/;/')  # (macOS's loader's frame, whose line is its own)
 check "F10 steps over (back out to the caller)" "$back"
 run "$P;break:8;key:F5;debugwait:stopped;key:F5;debugwait:stopped;debugdump"
 check "F5 goes on to the next stop; what the program printed is there" 'stopped (breakpoint); stack: square@8 main@15; vars: x=2 y=4; output: i=1 total=1'
@@ -146,6 +146,29 @@ slow "remotewait;debug:program=ssh://box$T/count;key:F5;clock;key:shift+F5;withi
 case "$got" in *"[exited with code 0]") got="${got%%; output: *}; ran to its end" ;; esac
 check "stopped while it starts, by Shift+F5 or F5 again: at once (and it starts again after)" \
     'within 300 ms ;; idle ;; within 300 ms ;; idle ;; idle; ran to its end'
+
+# Attaching to a process that is running, and a core file.
+cp "$here/debug/waits.c" "$here/debug/crash.c" "$dir/here/" && (cd "$dir/here" && cc -g -O0 -o waits waits.c && cc -g -O0 -o crash crash.c) || exit 1
+"$dir/here/waits" &
+waiting=$!
+sleep 0.3
+run "break:13;debugattach:$waiting;debugwait:stopped;debugdump" "$dir/here/waits.c"
+kill "$waiting" 2>/dev/null
+wait "$waiting" 2>/dev/null
+got=$(printf '%s' "$got" | sed -e 's/rounds=[0-9]*/rounds=N/' -e 's/ start\(@[0-9]*\)\{0,1\};/;/')
+check "attached to a process: it stops at a breakpoint as one launched would" 'stopped (breakpoint); stack: main@13; vars: rounds=N'
+# (A core file as the debugger writes it: lldb's save-core, gdb's generate-core-file.)
+core="$dir/here/crash.core"
+if command -v lldb >/dev/null 2>&1; then
+    (cd "$dir/here" && lldb -b -o run -k "process save-core $core" -k quit ./crash >/dev/null 2>&1)
+elif command -v gdb >/dev/null 2>&1; then
+    (cd "$dir/here" && gdb -batch -ex run -ex "generate-core-file $core" ./crash >/dev/null 2>&1)
+fi
+if [ -s "$core" ]; then
+    run "debugcore:$dir/here/crash:$core;debugwait:stopped;debugdump" "$dir/here/crash.c"
+    got=$(printf '%s' "$got" | sed -e 's/; stack: [^;]*;/;/')  # (the library frames above the program's: the system's own)
+    check "a core file: where it stopped, the program's own frame shown with its variables" 'stopped; vars: depth=3 here=21'
+fi
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "debug ok"
 exit $failed

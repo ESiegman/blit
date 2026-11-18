@@ -333,6 +333,8 @@ void App::commands_create() {
     tab("Show Build", {key(SDLK_U, kP | kS)}, Commands::kBuild);
     own("Look for build systems again", {}, [this] { build_changed(); });
     own("Edit the run configurations", {}, [this] { run_config_edit(); });
+    own("Attach the debugger to a process\xE2\x80\xA6", {}, [this] { debug_attach_pick(); });
+    own("Debug a core file\xE2\x80\xA6", {}, [this] { debug_core_pick(); });
     own("Run the tests", {}, [this] { test_run({}); });
     own("Run the failed tests again", {}, [this] { test_run_failed(); });
     own("Run the tests with coverage", {}, [this] { test_run({}, true); });

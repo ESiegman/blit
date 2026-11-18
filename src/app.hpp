@@ -883,6 +883,14 @@ private:
     u32 debug_gutter(const Doc& d, u64 line);
     std::vector<u64> debug_break_lines(const Doc& d);  // (the file's breakpoints' lines, from 0: the scroll bar's marks)
     void debug_start();
+    // A session's start (appdebug.cpp): the debugger started, then told to
+    // launch, to attach to a process, or to open a core file.
+    bool debug_open(const std::string& near, const std::string& dir, bool python);
+    void debug_begin(const std::string& request, const std::string& arguments);
+    void debug_attach_pick();
+    void debug_attach(i64 pid);
+    void debug_core_pick();
+    void debug_core(const std::string& program, const std::string& core);
     void debug_end();
     void debug_command(const std::string& what);
     void debug_frame(u32 i, bool show);

@@ -1051,6 +1051,11 @@ void App::run_script(const char* script) {
         } else if (verb == "termwait") {  // the terminal in front shows this text (10 s at most)
             if (!term_wait(arg)) std::fprintf(stderr, "termwait: no \"%s\" on the screen\n", arg.c_str());
             term_sync();
+        } else if (verb == "debugattach") {  // debugattach:PID, the debugger attached to that process
+            debug_attach(std::atoll(arg.c_str()));
+        } else if (verb == "debugcore") {  // debugcore:PROGRAM:CORE, a core file opened
+            const size_t sep = arg.find(':');
+            debug_core(arg.substr(0, sep), sep == std::string::npos ? std::string() : arg.substr(sep + 1));
         } else if (verb == "debug") {  // debug:what=value (program, args, cwd)
             const size_t eq = arg.find('=');
             debug_set(arg.substr(0, eq), eq == std::string::npos ? std::string() : arg.substr(eq + 1));

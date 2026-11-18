@@ -12,6 +12,8 @@
 #include <cstring>
 #include <map>
 
+#include <unistd.h>
+
 #include "app.hpp"
 #include "dap.hpp"
 #include "look.hpp"
@@ -148,8 +150,13 @@ struct App::DebugUi {
             it = movers.erase(it);
         }
     }
-    // The session.
+    // The session, and what its debugger says it can do (initialize's answer).
     std::unique_ptr<Dap> dap;
+    struct Can {
+        bool data_breaks = false, set_variable = false, goto_targets = false, function_breaks = false, log_points = false;
+        bool disassemble = false, read_memory = false, write_memory = false, instruction_breaks = false, granularity = false;
+    } can;
+    std::string how;  // what the session began with: "launch", "attach" (a process), "core"
     enum State : u8 { kIdle, kStarting, kRunning, kStopped } state = kIdle;
     std::string remote;  // "ssh://host" when the program is on another machine
     bool gdb = false;    // the debugger is gdb (its hit counts are from 0)
@@ -381,27 +388,12 @@ std::string App::debug_target() const {
 
 // ---------------------------------------------------------------- a session
 
-void App::debug_start() {
+// The debugger started (for a program at `near`: on its machine), the
+// last session's state let go of, the Debug tab shown.
+bool App::debug_open(const std::string& near, const std::string& dir, bool python) {
     DebugUi& u = *debugui_;
-    if (u.state == DebugUi::kStopped) return debug_command("continue");
-    if (u.state == DebugUi::kStarting) return debug_end();  // (F5 again while it starts: called off)
-    if (u.state != DebugUi::kIdle) return;
-    if (u.program.empty()) {  // first, what to debug
-        if (!panel_px()) panel_toggle();
-        panel_show_debug();
-        const std::string* root = panel_root();
-        std::string start = (root ? *root : default_workdir()) + "/";
-        if (const char* home = SDL_getenv("HOME"); home && *home && start.starts_with(home)) start = "~" + start.substr(std::strlen(home));
-        find_choose(kFindOpen, "Program to debug", start, [this](const std::string& p) {
-            debugui_->program = p;
-            debug_start();
-        });
-        return;
-    }
     std::string host, there;
-    u.remote = split_remote(u.program, &host, &there) ? "ssh://" + host : std::string();
-    const std::string dir = !u.cwd.empty() ? u.cwd : parent_of(u.program);
-    const bool python = u.program.ends_with(".py");
+    u.remote = split_remote(near, &host, &there) ? "ssh://" + host : std::string();
     u.dap = std::make_unique<Dap>();
     u.gdb = false;
     u.going = false;
@@ -425,12 +417,92 @@ void App::debug_start() {
         u.dap.reset();
         ++debug_gen_;
         dirty_ = true;
-        return;
+        return false;
     }
     u.state = DebugUi::kStarting;
     if (!panel_px()) panel_toggle();
     panel_show_debug();
     panel_focus(false);
+    return true;
+}
+
+// Attaching to a process of the user's: the list of them, narrowed by name.
+void App::debug_attach_pick() {
+    DebugUi& u = *debugui_;
+    if (u.state != DebugUi::kIdle) return notify("A session is under way");
+    std::string out;
+    if (!fs_run(default_workdir(), "ps -x -o pid= -o comm=", &out, 5000)) return notify("Cannot list the processes");
+    std::vector<std::pair<std::string, i64>> procs;
+    const i64 self = static_cast<i64>(::getpid());
+    for (size_t at = 0; at < out.size();) {
+        size_t end = out.find('\n', at);
+        if (end == std::string::npos) end = out.size();
+        const std::string line = out.substr(at, end - at);
+        at = end + 1;
+        const size_t a = line.find_first_not_of(' ');
+        if (a == std::string::npos) continue;
+        const size_t sp = line.find(' ', a);
+        if (sp == std::string::npos) continue;
+        const i64 pid = std::atoll(line.c_str() + a);
+        std::string name = line.substr(line.find_first_not_of(' ', sp));
+        if (pid <= 0 || pid == self) continue;
+        procs.emplace_back(name.substr(name.find_last_of('/') + 1) + "  " + std::to_string(pid) + "  " + name, pid);
+    }
+    std::ranges::sort(procs);
+    std::vector<std::string> items;
+    for (const auto& [text, pid] : procs) items.push_back(text);
+    find_choose_item("Attach to", std::move(items), [this, procs](int i) {
+        if (i >= 0 && static_cast<size_t>(i) < procs.size()) debug_attach(procs[static_cast<size_t>(i)].second);
+    });
+}
+
+void App::debug_attach(i64 pid) {
+    DebugUi& u = *debugui_;
+    if (u.state != DebugUi::kIdle) return;
+    if (!debug_open({}, default_workdir(), false)) return;
+    debug_begin("attach", "{\"pid\":" + std::to_string(pid) + "}");
+}
+
+// A core file: the program it is of, then the core, each chosen.
+void App::debug_core_pick() {
+    DebugUi& u = *debugui_;
+    if (u.state != DebugUi::kIdle) return notify("A session is under way");
+    const std::string* root = panel_root();
+    std::string start = u.program.empty() ? (root ? *root : default_workdir()) + "/" : u.program;
+    find_choose(kFindOpen, "Program the core is of", start, [this](const std::string& program) {
+        find_choose(kFindOpen, "Core file", parent_of(program) + "/", [this, program](const std::string& core) { debug_core(program, core); });
+    });
+}
+
+void App::debug_core(const std::string& program, const std::string& core) {
+    DebugUi& u = *debugui_;
+    if (u.state != DebugUi::kIdle) return;
+    u.program = full_path(program);
+    if (!debug_open(u.program, parent_of(u.program), false)) return;
+    // (lldb-dap reads coreFile; gdb, core.)
+    debug_begin("attach", "{\"program\":" + quoted(u.there(u.program)) + ",\"coreFile\":" + quoted(u.there(full_path(core))) + ",\"core\":" + quoted(u.there(full_path(core))) + "}");
+}
+
+void App::debug_start() {
+    DebugUi& u = *debugui_;
+    if (u.state == DebugUi::kStopped) return debug_command("continue");
+    if (u.state == DebugUi::kStarting) return debug_end();  // (F5 again while it starts: called off)
+    if (u.state != DebugUi::kIdle) return;
+    if (u.program.empty()) {  // first, what to debug
+        if (!panel_px()) panel_toggle();
+        panel_show_debug();
+        const std::string* root = panel_root();
+        std::string start = (root ? *root : default_workdir()) + "/";
+        if (const char* home = SDL_getenv("HOME"); home && *home && start.starts_with(home)) start = "~" + start.substr(std::strlen(home));
+        find_choose(kFindOpen, "Program to debug", start, [this](const std::string& p) {
+            debugui_->program = p;
+            debug_start();
+        });
+        return;
+    }
+    const std::string dir = !u.cwd.empty() ? u.cwd : parent_of(u.program);
+    const bool python = u.program.ends_with(".py");
+    if (!debug_open(u.program, dir, python)) return;
     // The program's arguments, as a shell would split them.
     std::string args = "[";
     {
@@ -453,18 +525,31 @@ void App::debug_start() {
     args += "]";
     const std::string launch = "{\"program\":" + quoted(u.there(u.program)) + ",\"args\":" + args + ",\"cwd\":" + quoted(u.there(dir)) +
                                (python ? ",\"type\":\"python\",\"request\":\"launch\",\"console\":\"internalConsole\",\"justMyCode\":true" : "") + "}";
+    debug_begin("launch", launch);
+}
+
+// The debugger told what to do once it has said what it can: launch the
+// program, attach to a process, or open a core file.
+void App::debug_begin(const std::string& request, const std::string& arguments) {
+    DebugUi& u = *debugui_;
+    u.how = request == "launch" ? "launch" : arguments.find("coreFile") != std::string::npos ? "core" : "attach";
     u.dap->request("initialize",
                    "{\"clientID\":\"blit\",\"clientName\":\"blit\",\"adapterID\":\"blit\",\"linesStartAt1\":true,\"columnsStartAt1\":true,"
                    "\"pathFormat\":\"path\",\"supportsVariableType\":true,\"supportsRunInTerminalRequest\":false}",
-                   [this, launch](const Dap::Message& m) {
+                   [this, request, arguments](const Dap::Message& m) {
                        DebugUi& v = *debugui_;
                        if (!m.success) {
                            v.error = "the debugger would not start: " + m.message;
                            return;
                        }
-                       v.dap->request("launch", launch, [this](const Dap::Message& r) {
+                       const json::Value c = m.body();
+                       v.can = {c["supportsDataBreakpoints"].boolean(), c["supportsSetVariable"].boolean(), c["supportsGotoTargetsRequest"].boolean(),
+                                c["supportsFunctionBreakpoints"].boolean(), c["supportsLogPoints"].boolean(), c["supportsDisassembleRequest"].boolean(),
+                                c["supportsReadMemoryRequest"].boolean(), c["supportsWriteMemoryRequest"].boolean(), c["supportsInstructionBreakpoints"].boolean(),
+                                c["supportsSteppingGranularity"].boolean()};
+                       v.dap->request(request, arguments, [this, request](const Dap::Message& r) {
                            if (!r.success) {
-                               debugui_->error = "cannot launch it: " + (r.message.empty() ? std::string("the debugger said no") : r.message);
+                               debugui_->error = (request == "launch" ? "cannot launch it: " : "cannot attach: ") + (r.message.empty() ? std::string("the debugger said no") : r.message);
                                debugui_->end_soon = true;
                            }
                        });
@@ -593,8 +678,12 @@ void App::debug_stack() {
         if (v.asking) --v.asking;
         if (!r.success || v.state != DebugUi::kStopped || v.thread != thread) return;  // (another thread chosen meanwhile: its own answer counts)
         v.frames.clear();
-        for (json::Value f : r.body()["stackFrames"])
-            v.frames.push_back({f["id"].integer(), std::string(f["name"].str()), v.here(f["source"]["path"].str()), static_cast<u32>(f["line"].integer())});
+        for (json::Value f : r.body()["stackFrames"]) {
+            // (A frame without source of its own, a library's, is given one the debugger makes, its
+            // disassembly, by reference: its path is no file's.)
+            const bool own = f["source"]["sourceReference"].integer() == 0;
+            v.frames.push_back({f["id"].integer(), std::string(f["name"].str()), own ? v.here(f["source"]["path"].str()) : std::string(), static_cast<u32>(f["line"].integer())});
+        }
         u32 first = 0;
         while (first < v.frames.size() && v.frames[first].path.empty()) ++first;
         debug_frame(first < v.frames.size() ? first : 0, true);
