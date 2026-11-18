@@ -579,6 +579,43 @@ blit.opt.editor.indent_width = 0       -- 0: from the file
 blit.opt.themes["rose-pine"].guides = { "#786168", "#7c6449", "#546a75" }   -- one to six colours, first level first
 ```
 
+## Local history
+
+Each file's text is kept, by its path, at every save (and at the first
+save of a session, the text it had on disk before it), and every five
+minutes while it is being typed in: in blit's data folder
+(`~/.local/share/blit/history`, a folder for each file named by a hash of
+its path, each version a gzip file), written on a thread of its own. A
+text is not kept again while it is the newest; the 200 newest versions of
+a file are kept. Only files on this machine have one.
+
+"Show the file's local history" lists the versions, newest first: how long
+ago, whether at a save or while typing, and when. Moving through them
+shows each as a diff against the text as it is now, in a tab beside the
+file (what the version had and the text has not in red, the other way in
+green). Enter puts the one chosen back, as one edit that one undo takes
+back; Esc closes the list and the tab. `blit.opt.editor.local_history =
+false` keeps none.
+
+## Spelling
+
+The words in the comments and strings on show (as the syntax colours find
+them), in a Markdown file's text (not its code, between backticks or in
+blocks), and in all of a plain text file are checked, in English, by the
+system's checker: NSSpellChecker on a Mac, and elsewhere Hunspell's
+`en_US` dictionary (`/usr/share/hunspell`), opened when first wanted, so
+that blit does not need it; without one nothing is checked. A word that
+looks like a name in code (a digit, an underscore, a capital after its
+first letter), one in capitals, and part of an address or a path are left
+out. The check runs on a thread of its own once the text and the view
+have been still a moment.
+
+A word the checker does not know is underlined as a problem is. Option+Enter
+on it lists what it might be (Enter puts one in its place) and, last,
+adds it to the dictionary: the system's own on a Mac, blit's
+(`~/.local/share/blit/words`) elsewhere. `blit.opt.editor.spell_check =
+false` turns it off.
+
 ## Splits
 
 ![three splits, each with its own tabs, and a terminal](media/splits.png)
@@ -917,6 +954,24 @@ the text's edges.
 Sideways, the view goes as far as the widest line in the file and no
 further. With no line wider than the window it does not move sideways at
 all.
+
+### The minimap
+
+Down the right of a split wide enough for it (80 columns of text besides),
+the file small: each line a couple of pixels high, each character a pixel
+in its syntax colour (the text's colour where the colours are not in
+yet: they are worked out for what has been on show). It goes over the
+ends of long lines and over the scroll bar, whose place the view's box on
+it takes: a lighter box shows the lines on show. A click there brings
+that place into the middle of the view; dragging scrolls with the mouse.
+A file that fits is all there from its top; a longer one moves down the
+column as the view moves down the file.
+
+It is drawn in tiles of 256 lines, each a picture on the GPU, made again
+from where the text changed (or all of them, when the colours do) once
+typing pauses; a tile made again the same is not sent again, and tiles
+far from the view are let go of. `blit.opt.editor.minimap = false` turns
+it off.
 
 ## Looks
 
@@ -2812,9 +2867,9 @@ does not finish and takes all the memory the machine has.
   Mac, the one fontconfig names for emoji elsewhere, such as Noto Color
   Emoji), over their two cells, in the text and in boxes alike; past
   U+1F000 the colour font is asked first, and an older pictograph (a
-  heart, an aeroplane) stays text where a font has it. Each emoji on show
-  is a picture of its own: a screen packed with them (about 210) takes
-  some 45 µs more a frame. A character is what Unicode says one is to the eye:
+  heart, an aeroplane) stays text where a font has it. The text shader
+  draws them, from a colour atlas of their own (the glyph atlas's last
+  rows), so an emoji costs nothing more than a letter. A character is what Unicode says one is to the eye:
   a letter with its accents, an emoji with its skin tone or variation
   selector, a sequence joined by zero-width joiners, a flag, a Hangul
   syllable written in jamo, an Indic conjunct (consonants joined by a
@@ -2822,8 +2877,12 @@ does not finish and takes all the memory the machine has.
   The arrows, Backspace and Delete take it whole, and so do Vim's
   commands; it takes the cells Unicode's widths say (an accent none, drawn
   over its letter and lifted clear of a capital; an emoji two). An emoji
-  sequence draws as its first emoji (a family as its first person, a skin
-  tone not shown), and a flag as a box; a syllable in jamo and a
+  sequence (a family joined by zero-width joiners, an emoji with a skin
+  tone, a flag) draws as the one picture the colour font has of it, in its
+  first emoji's two cells: shaped by CoreText on a Mac, by HarfBuzz with
+  the colour font elsewhere. One the font has no single picture of (or
+  one that starts with a character one cell wide, as the rainbow flag
+  does) draws as its first emoji. A syllable in jamo and a
   conjunct draw part by part, each in its own cells (blit does not shape
   text beyond ligatures).
 - Language servers: underlines and completions show in the split that
