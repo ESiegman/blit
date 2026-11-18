@@ -55,6 +55,14 @@ bool App::minimap_on(const Pane& p) const {
     return p.x1 - p.text_x >= 80 * font_->cell_w() + w;  // (only where the text keeps its room)
 }
 
+// How much of a split's width the column takes (0: it has none).
+int App::minimap_px(const Pane& p) const {
+    if (!minimap_on(p)) return 0;
+    int lp = 0, cp = 0, w = 0;
+    sizes(scale_, &lp, &cp, &w);
+    return w;
+}
+
 // The column's place in a split, and where the file's lines are on it.
 bool App::minimap_place(const Pane& p, int* x0, int* y0, int* x1, int* y1, double* top_line, int* lp) const {
     if (!minimap_on(p)) return false;

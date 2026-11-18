@@ -34,6 +34,7 @@
 #include "asm.hpp"
 #include "notebook.hpp"
 #include "history.hpp"
+#include "wrap.hpp"
 #include "tests.hpp"
 #include "font.hpp"
 #include "git.hpp"
@@ -499,6 +500,80 @@ void history_test() {
           "history: the oldest let go past the most");
     check(history_keep(dir, "/src/a.cpp", "", true, 5000, 3, &err) && history_read(history_list(dir)[0].file, &text) && text.empty(), "history: an empty text");
     std::filesystem::remove_all(root);
+}
+
+// Soft wrap: where a line breaks (after the last space that fits; a long
+// word where the width ends; a space hanging past the end; a wide
+// character whole), and the map between rows and lines kept as the text
+// changes, with lines folded away taking none.
+void wrap_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    std::vector<u32> b;
+    Wrap::breaks("hello world foo bar", 11, 4, &b);
+    check(b == std::vector<u32>{12}, "wrap: after the last space that fits, a space hanging past the end");
+    Wrap::breaks("abcdefghijklmnopqrstuvwxyz", 10, 4, &b);
+    check(b == std::vector<u32>{10, 20}, "wrap: a word longer than the width, where the width ends");
+    Wrap::breaks("\xE4\xB8\xAD\xE4\xB8\xAD\xE4\xB8\xAD\xE4\xB8\xAD", 5, 4, &b);  // (four two-column characters, five columns)
+    check(b == std::vector<u32>{4}, "wrap: a wide character whole on the next row, not split at the edge");
+    Wrap::breaks("short", 10, 4, &b);
+    check(b.empty(), "wrap: a line that fits");
+
+    Editor ed;
+    ed.insert("one\ntwo three four five six seven\nend\n");
+    Wrap w;
+    w.set(&ed, 1, nullptr, 0, 10, 4);
+    // two three four five six seven: rows start at 0, "four " at 10, "six" at 20 (with width 10)
+    check(w.rows() == 6 && w.row_of(1) == 1 && w.row_of(2) == 4 && w.line_at(2) == 1 && w.line_at(4) == 2 && w.line_at(5) == 3,
+          "wrap: rows and lines");
+    check(w.start_col(1) == 0 && w.start_col(2) == 10 && w.start_col(3) == 20 && w.end_col(2) == 20 && w.end_col(3) == ~0u && w.row_at(1, 14) == 2,
+          "wrap: each row's columns, and the row a place is in");
+    ed.move_to(ed.buf.line_start(1), false);
+    ed.insert("x\n");  // a line put in before it: one more row, the rest after it
+    check(w.rows() == 7 && w.row_of(2) == 2 && w.line_at(3) == 2 && w.row_of(3) == 5, "wrap: kept as lines are put in");
+    ed.move_to(ed.buf.line_start(2), false);
+    ed.move_to(ed.line_end(2), true);
+    ed.insert("short");  // the long line made short: its rows go
+    check(w.rows() == 5 && w.rows_of(2) == 1 && w.row_of(3) == 3, "wrap: kept as a line changes");
+    // Moving down by rows, along the row.
+    ed.insert(" and now it is long again");
+    ed.skip = &w;
+    ed.move_to(ed.buf.line_start(2) + 3, false);
+    ed.down(false);
+    check(ed.buf.line_of(ed.cursor()) == 2 && ed.col_of(ed.cursor()) == w.start_col(w.row_of(2) + 1) + 3, "wrap: down within a wrapped line, along the row");
+    ed.skip = nullptr;
+    w.detach();
+    Folds f;
+    f.attach(&ed);
+    f.add(ed.buf, 0, 1);  // (line 1 under line 0)
+    w.set(&ed, 1, &f, f.generation(), 10, 4);
+    check(w.rows_of(1) == 0 && w.row_of(1) == 0 && w.line_at(1) == 2, "wrap: a folded line takes no row");
+    w.detach();
+    // Random edits: the map kept as it goes is the map made afresh.
+    std::mt19937 dice(7);
+    Editor e2;
+    Wrap kept;
+    kept.set(&e2, 2, nullptr, 0, 12, 4);
+    const char* words[] = {"a ", "word ", "longerword ", "\n", "x", "\t", "averyveryverylongword ", "\xE4\xB8\xAD"};
+    bool same = true;
+    for (int step = 0; step < 400 && same; ++step) {
+        const u64 at = e2.buf.size() ? dice() % (e2.buf.size() + 1) : 0;
+        e2.move_to(e2.next_char(e2.prev_char(at)), false);
+        if (dice() % 4 == 0 && e2.buf.size()) {
+            e2.move_to(std::min<u64>(e2.buf.size(), e2.cursor() + dice() % 20), true);
+            e2.insert(dice() % 2 ? "" : "\n");
+        } else {
+            e2.insert(words[dice() % std::size(words)]);
+        }
+        Wrap fresh;
+        fresh.set(&e2, 2, nullptr, 0, 12, 4);
+        same = fresh.rows() == kept.rows();
+        for (u64 r = 0; same && r < fresh.rows(); ++r) same = fresh.line_at(r) == kept.line_at(r) && fresh.start_col(r) == kept.start_col(r);
+        fresh.detach();
+    }
+    check(same, "wrap: kept through random edits, the same as made afresh");
+    kept.detach();
 }
 
 // A profile's timeline: kept with each sample's time, narrowed to a
@@ -5012,6 +5087,7 @@ int main(int argc, char** argv) {
     asm_test();
     notebook_test();
     history_test();
+    wrap_test();
     find_test();
     folds_test();
     tests_test();

@@ -1374,10 +1374,30 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
         case kG | 'j':
         case kG | 'k': {
             const bool down = (c & 0xFF) == 'j';
-            if (const LineSkip* s = ed.skip) {  // (by rows: a fold is one)
-                const u64 row = s->skip_row(line), rows = s->skip_rows();
+            const LineSkip* s = ed.skip;
+            if (s && (c & kG)) {  // gj, gk: by rows (a wrapped line's parts each one), along the row
+                const u32 col = ed.col_of(cur);
+                const u64 row = s->skip_row_at(line, col), rows = s->skip_rows();
                 if (down ? row + 1 >= rows : row == 0) m.ok = false;
-                to_line(s->skip_line(down ? std::min(rows - 1, row + count) : (row >= count ? row - count : 0)), true);
+                const u64 to = down ? std::min(rows - 1, row + count) : (row >= count ? row - count : 0);
+                const u32 start = s->skip_col(to), end = s->skip_end(to);
+                u32 at = start + (col - std::min(col, s->skip_col(row)));
+                if (end != ~0u && at >= end) at = end > start ? end - 1 : start;
+                const u64 l = std::min<u64>(s->skip_line(to), n - 1);
+                m.to = std::min(ed.off_at(l, at), line_last(ed, l));
+                break;
+            }
+            if (s) {  // (by lines on show: a fold's are passed over, a wrapped line's later rows too)
+                u64 l = line;
+                for (u32 i = 0; i < count; ++i) {
+                    const u64 r = down ? s->skip_row_at(l, ~0u) : s->skip_row(l);
+                    if (down ? r + 1 >= s->skip_rows() : r == 0) {
+                        if (i == 0) m.ok = false;
+                        break;
+                    }
+                    l = s->skip_line(down ? r + 1 : r - 1);
+                }
+                to_line(l, true);
                 break;
             }
             if (down ? line + 1 >= n : line == 0) m.ok = false;

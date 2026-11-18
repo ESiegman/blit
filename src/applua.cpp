@@ -1893,7 +1893,7 @@ void App::script_layout(int w, int h, FrameDesc& fd) {
                 break;
             default: {  // under the cursor (over it if there is no room below)
                 const Pane& pn = *pane_;
-                const int cx = pn.text_x + pad_x_ + static_cast<int>(pn.cur_col) * cw - static_cast<int>(std::lround(pn.scroll_x));
+                const int cx = pn.text_x + pad_x_ + static_cast<int>(pn.cur_x) * cw - static_cast<int>(std::lround(pn.scroll_x));
                 const int cy = pn.text_y + static_cast<int>(pn.cur_line) * ch - static_cast<int>(std::lround(pn.scroll_y));
                 p.x = cx - pad_x;
                 p.y = cy + ch + gap;

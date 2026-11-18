@@ -789,10 +789,17 @@ void App::gutter_layout(int w, int h, FrameDesc& fd) {
     const GitBlame* blame = shown && doc.blame && doc.blame_rev == doc.ed.revision() ? doc.blame.get() : nullptr;
     const bool relative = cfg_.relative_numbers && cfg_.modal;  // (counts for j and k are Vim's)
     const Folds* folds = folds_on();  // (lines folded away: each row's line from the map)
-    auto line_at = [&](i64 row) -> i64 { return row < 0 || !folds ? row : static_cast<i64>(folds->line_at(static_cast<u64>(row))); };
-    auto row_at = [&](u64 line) -> i64 { return static_cast<i64>(folds ? folds->row_of(line) : line); };
+    const Wrap* wrap = wrap_on();     // (lines wrapped: the map has a line's rows, its first numbered)
+    auto line_at = [&](i64 row) -> i64 {
+        if (row < 0) return row;
+        if (wrap) return static_cast<u64>(row) < wrap->rows() ? static_cast<i64>(wrap->line_at(static_cast<u64>(row))) : static_cast<i64>(doc.ed.buf.line_count());
+        return !folds ? row : static_cast<i64>(folds->line_at(static_cast<u64>(row)));
+    };
+    auto row_at = [&](u64 line) -> i64 { return static_cast<i64>(wrap ? wrap->row_of(line) : folds ? folds->row_of(line) : line); };
+    auto shown_at = [&](u64 line) -> i64 { return static_cast<i64>(folds ? folds->row_of(line) : line); };  // (lines on show: what j and k count)
     const u64 git_key = (((((doc.id * 1000003 + doc.hunks_gen) * 1000003 + doc.blame_gen) * 4 + (shown ? 2 : 0) + (blame ? 1 : 0)) * 2 + (relative ? 1 : 0)) ^ debug_gen_ * 0x9E3779B97F4A7C15ull ^ lsp_marks_gen_ * 0xC2B2AE3D27D4EB4Full) +
-                        (folds ? (folds->generation() + doc.ed.revision()) * 0x632BE59BD9B4E019ull : 0) + test_gen_ * 0x2545F4914F6CDD1Dull;
+                        (folds ? (folds->generation() + doc.ed.revision()) * 0x632BE59BD9B4E019ull : 0) + test_gen_ * 0x2545F4914F6CDD1Dull +
+                        (wrap ? (wrap->rows() * 31 + wrap->width() + doc.ed.revision()) * 0x9FB21C651E98DF25ull : 0);
     const bool same_rows = first == t.g_first && lines == t.g_lines && font_->generation() == t.g_font && box.cols == cols && box.rows == rows && git_key == t.g_git;
     const FileCoverage* cov = test_coverage(doc);  // (the lines a run with coverage ran and missed: their numbers coloured)
     if (same_rows && pane_->cur_line != t.g_current && !blame && !relative && !cov) {
@@ -830,6 +837,7 @@ void App::gutter_layout(int w, int h, FrameDesc& fd) {
         for (u32 r = 0; r < rows; ++r) {
             const i64 line = line_at(first + r);
             if (line < 0 || static_cast<u64>(line) >= lines) continue;
+            if (wrap && wrap->start_col(first + r) > 0) continue;  // (a wrapped line's later row: no number)
             // Digits are their own glyph slots; the cursor's line stands out.
             u32 ink = static_cast<u64>(line) == pane_->cur_line ? 0 : kInkMuted << kCellInkShift;
             if (cov) {
@@ -840,7 +848,7 @@ void App::gutter_layout(int w, int h, FrameDesc& fd) {
             u32* const row = box.cells.data() + static_cast<size_t>(r) * cols;
             u32* end = row + cols - 1;  // the last cell stays blank
             const u64 at = static_cast<u64>(line);
-            const i64 rel = first + static_cast<i64>(r) - row_at(cur);  // (in rows: a fold counts as one, as j and k take it)
+            const i64 rel = shown_at(at) - shown_at(cur);  // (in lines on show: a fold counts as one, as j and k take it)
             const u64 number = !relative || at == cur ? at + 1 : static_cast<u64>(rel < 0 ? -rel : rel);
             if (relative && at == cur) {
                 u32 digits = 1;

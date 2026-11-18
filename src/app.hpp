@@ -26,6 +26,7 @@
 #include "render.hpp"
 #include "syntax.hpp"
 #include "vim.hpp"
+#include "wrap.hpp"
 
 namespace blit {
 
@@ -200,6 +201,7 @@ struct Doc {
     std::shared_ptr<NotebookTab> nb;  // a notebook's: what it was, its outputs (appnotebook.cpp)
     std::shared_ptr<struct Minimap> minimap;  // its minimap's tiles (appminimap.cpp)
     u64 hl_gen = 0;  // counts up as its syntax colours change
+    signed char wrap_choice = -1;  // its own soft wrap (Toggle soft wrap): 1 on, 0 off, -1 as the settings say
     std::shared_ptr<ImageView> image;  // an image file's tab: drawn over it too (appimage.cpp)
     std::shared_ptr<PdfView> pdf;      // a PDF's tab: drawn over it too (apppdf.cpp)
     bool term_closed = false;        // (its program has ended, and that has been seen to)
@@ -254,9 +256,12 @@ struct Pane {
     u64 cur_line = 0;
     u64 cur_row = 0;  // the row of the view it is on: its line less those folded away above it
     std::vector<u64> row_lines;  // with lines folded, the line each row of the view shows (GridSpec::row_lines)
+    std::vector<u32> row_cols, row_ends;  // with lines wrapped, where each row starts in its line and where its part ends (GridSpec)
+    std::unique_ptr<Wrap> wrap;           // this view's soft wrap, while its file wraps (appwrap.cpp)
     std::vector<GridNote> fold_notes;  // (fold_notes(): the notes after its folded lines, with the others)
     std::vector<u32> fold_note_cells;
     u32 cur_col = 0;
+    u32 cur_x = 0;  // the column along its row, where it is drawn: cur_col less where a wrapped line's row starts
     u64 sel_line0 = 0, sel_line1 = 0;
     u32 sel_col0 = 0, sel_col1 = 0;
     bool has_sel = false;       // there is a selection to draw: the editor's own, or Visual mode's
@@ -602,8 +607,16 @@ private:
     std::string spell_dump();
     std::shared_ptr<struct SpellWork> spell_work_;
     std::shared_ptr<struct SpellUi> spell_;
+    // Soft wrap (appwrap.cpp).
+    bool wrap_wanted(const Pane& p) const;
+    void wrap_sync(Pane& p);
+    const Wrap* wrap_on() const;
+    void wrap_toggle();
+    void wrap_forget(const Doc& d);
+    std::string wrap_dump();
     // The minimap (appminimap.cpp).
     bool minimap_on(const Pane& p) const;
+    int minimap_px(const Pane& p) const;
     bool minimap_place(const Pane& p, int* x0, int* y0, int* x1, int* y1, double* top_line, int* lp) const;
     void minimap_tile(Doc& d, u64 index, std::vector<u8>& rgba);
     int minimap_wait_ms() const;

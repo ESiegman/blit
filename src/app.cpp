@@ -1235,6 +1235,7 @@ double App::max_scroll_y() const {
 // The widest line is measured the first time the view is scrolled sideways
 // by hand; until then there is no limit to give.
 double App::max_scroll_x() const {
+    if (wrap_on()) return 0;  // (lines wrapped: nothing goes past the right edge)
     const Doc& d = *pane_->doc;
     if (d.widest_rev == ~0ull) return 1e300;
     const double cw = font_->cell_w(), view_w = pane_->x1 - pane_->text_x - pad_x_;
@@ -1370,8 +1371,14 @@ void App::refresh_cursor_cache() {
     p.cache_visual = visual;
     const Buffer& b = ed.buf;
     p.cur_line = b.line_of(ed.cursor());
-    p.cur_row = row_of_line(p.cur_line);
     p.cur_col = ed.col_between(b.line_start(p.cur_line), ed.cursor());
+    if (const Wrap* w = wrap_on()) {  // (lines wrapped: the row of its part of the line, along it)
+        p.cur_row = w->row_at(p.cur_line, p.cur_col);
+        p.cur_x = p.cur_col - std::min(p.cur_col, w->start_col(p.cur_row));
+    } else {
+        p.cur_row = row_of_line(p.cur_line);
+        p.cur_x = p.cur_col;
+    }
     p.has_sel = visual || ed.has_selection();
     if (p.has_sel) {
         p.sel_line0 = b.line_of(lo);
@@ -1390,7 +1397,7 @@ void App::scroll_to_cursor() {
     } else if (y0 + ch > pane_->target_y + vh) {
         pane_->target_y = y0 + ch - vh;
     }
-    const double x = pane_->cur_col * cw, margin = 4 * cw, view_w = pane_->x1 - pane_->text_x - pad_x_;
+    const double x = pane_->cur_x * cw, margin = 4 * cw, view_w = pane_->x1 - pane_->text_x - pad_x_;
     if (x - margin < pane_->target_x) {
         pane_->target_x = std::max(0.0, x - margin);
     } else if (x + margin > pane_->target_x + view_w) {
@@ -1422,9 +1429,15 @@ void App::point_line_col(float x, float y, u64* line_out, u32* col_out) const {
     const int cw = font_->cell_w(), ch = font_->cell_h();
     const i64 doc_y = std::llround(pane_->scroll_y) + static_cast<i64>(y * density_) - pane_->text_y;
     const u64 last = pane_->doc->ed.buf.line_count() - 1;
-    const u64 line = doc_y <= 0 ? 0 : std::min<u64>(last, line_of_row(static_cast<u64>(doc_y) / static_cast<u64>(ch)));
+    const u64 row = doc_y <= 0 ? 0 : static_cast<u64>(doc_y) / static_cast<u64>(ch);
+    const u64 line = doc_y <= 0 ? 0 : std::min<u64>(last, line_of_row(row));
     const double tx = x * density_ - pane_->text_x + static_cast<double>(std::llround(pane_->scroll_x)) - pad_x_;
-    const u32 col = tx <= 0 ? 0 : static_cast<u32>(tx / cw + 0.5);
+    u32 col = tx <= 0 ? 0 : static_cast<u32>(tx / cw + 0.5);
+    if (const Wrap* w = wrap_on(); w && row < w->rows()) {  // (a wrapped line's row: from where it starts, and not past its end)
+        const u32 start = w->start_col(row), end = w->end_col(row);
+        col += start;
+        if (end != ~0u && col >= end) col = end > start ? end - 1 : start;
+    }
     *line_out = line;
     *col_out = col;
 }
@@ -1436,6 +1449,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     px_h_ = h;
     place_panes(w, h);
     peek_layout();  // (a peek's box: placed over its split, laid out last)
+    for (const std::unique_ptr<Pane>& p : panes_) wrap_sync(*p);  // (each split's soft wrap, for its width now)
     build_measure();  // (the Run button: the tab bar under it ends before it)
     Pane* const focused = pane_;
     for (const std::unique_ptr<Pane>& p : panes_) {
@@ -1521,7 +1535,26 @@ void App::layout_pane(FrameDesc& fd, bool focused) {
     g.rows = static_cast<u32>(th / ch + 2);
     const i64 blank = sy < 0 ? std::min<i64>((-sy + ch - 1) / ch, g.rows) : 0;
     g.top_line = sy < 0 ? 0 : static_cast<u64>(sy / ch);
-    if (const Folds* f = folds_on()) {  // (lines folded away: each row's line from the map)
+    if (const Wrap* w = wrap_on()) {  // (lines wrapped: each row's line, and where in it the row starts and its part ends)
+        const u64 top_row = g.top_line, lines = p.doc->ed.buf.line_count(), rows = w->rows();
+        p.row_lines.resize(g.rows);
+        p.row_cols.resize(g.rows);
+        p.row_ends.resize(g.rows);
+        for (u32 r = 0; r < g.rows; ++r) {
+            const u64 row = top_row + r;
+            const bool in = row < rows;
+            const u64 line = in ? w->line_at(row) : lines;
+            p.row_lines[r] = line < lines ? line : ~0ull;
+            p.row_cols[r] = in ? w->start_col(row) : 0;
+            p.row_ends[r] = in ? w->end_col(row) : ~0u;
+        }
+        g.top_line = p.row_lines[0] == ~0ull ? lines : p.row_lines[0];
+        g.row_lines = p.row_lines.data();
+        g.row_cols = p.row_cols.data();
+        g.row_ends = p.row_ends.data();
+        g.first_col = 0;
+        g.rows_key = ((w->rows() * 1000003 + w->width()) * 1000003 + top_row) * 1000003 + p.doc->ed.revision() + 7;
+    } else if (const Folds* f = folds_on()) {  // (lines folded away: each row's line from the map)
         const u64 top_row = g.top_line, lines = p.doc->ed.buf.line_count();
         p.row_lines.resize(g.rows);
         for (u32 r = 0; r < g.rows; ++r) {
@@ -1576,7 +1609,7 @@ void App::layout_pane(FrameDesc& fd, bool focused) {
         const i64 bar = std::max<i64>(1, std::lround(scale_));
         const bool on_char = cfg_.modal && vim_.mode() != Vim::kInsert;
         const bool under = on_char && (vim_.mode() == Vim::kReplace || vim_.pending());
-        const double x = static_cast<double>(static_cast<i64>(p.cur_col) * cw), y = static_cast<double>(static_cast<i64>(p.cur_row) * ch);
+        const double x = static_cast<double>(static_cast<i64>(p.cur_x) * cw), y = static_cast<double>(static_cast<i64>(p.cur_row) * ch);
         const double want[4] = {x, under ? y + static_cast<double>(ch - std::max<i64>(2, ch / 6)) : y, on_char ? x + static_cast<double>(cw) : x + static_cast<double>(bar),
                                 y + static_cast<double>(ch)};
         double at[4];

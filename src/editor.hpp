@@ -22,12 +22,17 @@ struct TextEdit {
 };
 
 // Rows of a view that are not one line each (lines folded away under the
-// line before them): what moves up and down count in, set while there are
-// any.
+// line before them; long lines wrapped onto the rows under them): what
+// moves up and down count in, set while there are any.
 struct LineSkip {
     virtual u64 skip_row(u64 line) const = 0;   // the row a line is on (a hidden one: its fold's header's)
     virtual u64 skip_line(u64 row) const = 0;   // the line a row shows
     virtual u64 skip_rows() const = 0;          // how many rows the text takes
+    // With rows that are parts of lines: the row a place is in, the column a
+    // row starts at, and where the next row of its line starts (~0u: none).
+    virtual u64 skip_row_at(u64 line, u32 /*col*/) const { return skip_row(line); }
+    virtual u32 skip_col(u64 /*row*/) const { return 0; }
+    virtual u32 skip_end(u64 /*row*/) const { return ~0u; }
 
 protected:
     ~LineSkip() = default;

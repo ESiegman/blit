@@ -317,6 +317,7 @@ void App::commands_create() {
     // Markdown.
     // (Where Ctrl+Shift+V pastes, as in a terminal: Ctrl+Alt+V.)
     own("Preview beside the file (Markdown, or an SVG's picture)", {key(SDLK_V, kCtrlShared ? kP | kA : kP | kS)}, [this] { preview_open(); });
+    own("Toggle soft wrap", {key(SDLK_Z, kA)}, [this] { wrap_toggle(); });
     own("Show the file's local history", {}, [this] { history_show(); });
     own("Show the assembly beside the file", {}, [this] { asm_open(); });
     // Terminals: in the split along the bottom.

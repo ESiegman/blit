@@ -85,6 +85,14 @@ struct GridSpec {
         return top_line + rows;
     }
     u32 first_col = 0;  // display column shown in grid column 0
+    // Soft wrap (wrap.hpp): each row's display column (where its part of
+    // its line starts), and where the next part of its line starts (~0u:
+    // the line ends in this row). A line's rows are one after another in
+    // row_lines. Null: every row from first_col, to its end.
+    const u32* row_cols = nullptr;
+    const u32* row_ends = nullptr;
+    u32 col_at(u32 r) const { return row_cols ? row_cols[r] : first_col; }
+    u64 end_at(u32 r) const { return row_ends && row_ends[r] != ~0u ? row_ends[r] : ~0ull; }
     u32 cols = 0;
     u32 rows = 0;
     u32 lead = 0;  // blank grid columns before the text (left padding)

@@ -187,5 +187,46 @@ else
     check "editor.spell_check = false: none" "off"
 fi
 
+# Soft wrap: a Markdown file wraps (each break after a space), a C file
+# not until Option+Z; gj and gk go by rows along the row, j by lines; a
+# click on a wrapped row lands in its line; typing on keeps the map.
+long="This paragraph goes on for a good while so that it has to wrap onto the rows under it when the view is narrower than it is, which it will be here, more than once."
+printf '# Title\n\n%s\n\nShort.\n' "$long" >"$dir/wrap.md"
+printf 'int x; // %s\nint y;\n' "$long" >"$dir/wrap.c"
+wr() { BLIT_INIT="$dir/${3:-vim}.lua" "$blit" --offscreen 900x500 --shot "$dir/shot.bmp" --script "frame;$1" "$2" 2>&1 >/dev/null | grep -v '^blit: '; }
+got=$(wr "wrapdump" "$dir/wrap.md" | tail -1)
+rows=$(printf '%s' "$got" | sed -n 's/.*, \([0-9]*\) rows.*/\1/p')
+case $got in "width "*) [ "${rows:-0}" -gt 5 ] && got=wraps ;; esac
+check "a Markdown file wraps by default" "wraps"
+breaks=$(wr "wrapdump" "$dir/wrap.md" | tail -1 | tr ' ' '\n' | grep '^3@' | grep -v '^3@0$' | sed 's/3@//')
+ok=wrapped
+for b in $breaks; do ch=$(printf '%s' "$long" | cut -c"$b"); [ "$ch" = " " ] || ok="broke at $b: [$ch]"; done
+[ -n "$breaks" ] || ok="no breaks"
+got=$ok
+check "each break after a space" "wrapped"
+got=$(wr "wrapdump" "$dir/wrap.c" | tail -1)
+check "a C file does not" "off"
+got=$(wr "key:alt+z;wrapdump;key:alt+z;wrapdump" "$dir/wrap.c" | tail -2 | sed -e 's/^width .*/on/' | tr '\n' ' ')
+check "Option+Z: it does, then not" "on off "
+got=$(wr "vim:3G;vim:5l;frame;statusdump;vim:gj;frame;statusdump;vim:gk;frame;statusdump;vim:j;frame;statusdump" "$dir/wrap.md" | tail -4 | sed -e 's/.*| Ln \([0-9]*\), Col \([0-9]*\).*/\1:\2/' | tr '\n' ' ')
+first=$(printf '%s' "$got" | cut -d' ' -f1); second=$(printf '%s' "$got" | cut -d' ' -f2); back=$(printf '%s' "$got" | cut -d' ' -f3); next=$(printf '%s' "$got" | cut -d' ' -f4)
+case "$second" in 3:*) [ "${second#3:}" -gt 10 ] && [ "$back" = "$first" ] && [ "$next" = "4:1" ] && got=rows ;; esac
+check "gj and gk by rows along the row (the line the same); j by lines" "rows"
+got=$(wr "vim:3G;vim:gj;frame;statusdump" "$dir/wrap.md" | tail -1 | sed -e 's/.*Col \([0-9]*\).*/\1/')
+row2=$got
+got=$(wr "click:100,100;frame;statusdump" "$dir/wrap.md" | tail -1 | sed -e 's/.*| Ln \([0-9]*\), Col \([0-9]*\).*/\1:\2/')
+case $got in 3:*) [ "${got#3:}" -ge "$((row2 - 2))" ] && got=row ;; esac
+check "a click on a wrapped row lands in its line, along that row" "row"
+got=$(wr "wrapdump;vim:3G;vim:A and some more words to make it longer still<Esc>;wrapdump" "$dir/wrap.md" | tail -2 | sed -n 's/.*, \([0-9]*\) rows.*/\1/p' | tr '\n' ' ')
+a=$(printf '%s' "$got" | cut -d' ' -f1); b=$(printf '%s' "$got" | cut -d' ' -f2)
+[ "${b:-0}" -gt "${a:-0}" ] && got=more
+check "typed on: more rows" "more"
+printf 'int f() {\n    // %s\n    return 1;\n}\nint g;\n' "$long" >"$dir/fold.c"
+got=$(wr "key:alt+z;command:Fold every block;frame;wrapdump;vim:gg;vim:j;frame;statusdump" "$dir/fold.c" | tail -2 | sed -e 's/^width [0-9]*, \([0-9]*\) rows: \(.*\)/\1 rows: \2/' -e 's/.*| Ln \([0-9]*\),.*/Ln \1/' | tr '\n' ' ')
+check "folded lines take no rows (wrapped or not); j passes over them" "4 rows: 1@0 4@0 5@0 6@0 Ln 4 "
+printf '%s\nblit.opt.editor.modal = true\nblit.opt.editor.soft_wrap = true\n' "$base" >"$dir/wrapall.lua"
+got=$(wr "wrapdump" "$dir/wrap.c" wrapall | tail -1 | sed -e 's/^width .*/on/')
+check "editor.soft_wrap = true: every file" "on"
+
 [ "$failed" = 0 ] && echo "edit: all passed"
 exit "$failed"

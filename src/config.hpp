@@ -139,6 +139,8 @@ struct Config {
     bool lsp_semantic = true;        // the server's colours (semantic tokens) over tree-sitter's, where it says more
     bool lsp_uses = true;            // the other uses of the symbol at the cursor marked, once it has rested
     bool spell = true;               // the words of comments, strings and prose checked, in English (appspell.cpp)
+    bool soft_wrap = false;          // long lines go on in the rows under them, in every file (appwrap.cpp)
+    std::vector<std::string> soft_wrap_languages = {"markdown"};  // and in these languages' files
     bool minimap = true;             // the file's lines small down the right of a wide enough split (appminimap.cpp)
     bool local_history = true;       // each file's text kept at its saves and while it is typed in (apphistory.cpp)
     bool lsp_ref_counts = true;      // how many references each definition on show has, after its line

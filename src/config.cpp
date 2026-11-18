@@ -304,7 +304,7 @@ struct Parser {
         if (key == "editor.tab_width") return number(key, v, 1, 32, &c.tab_width);
         if (key == "editor.indent_width") return number(key, v, 0, 32, &c.indent_width);
         if (key == "editor.line_numbers" || key == "editor.relative_numbers" || key == "editor.indent_guides" || key == "editor.tab_bar" || key == "editor.status_bar" || key == "editor.start_screen" ||
-            key == "editor.restore" || key == "scroll.momentum" || key == "editor.modal" || key == "editor.breadcrumbs" || key == "editor.sticky_scroll" || key == "editor.close_pairs" || key == "editor.local_history" || key == "editor.minimap" || key == "editor.spell_check") {
+            key == "editor.restore" || key == "scroll.momentum" || key == "editor.modal" || key == "editor.breadcrumbs" || key == "editor.sticky_scroll" || key == "editor.close_pairs" || key == "editor.local_history" || key == "editor.minimap" || key == "editor.spell_check" || key == "editor.soft_wrap") {
             bool* out = key == "editor.modal"          ? &c.modal
                         : key == "editor.line_numbers" ? &c.line_numbers
                         : key == "editor.relative_numbers" ? &c.relative_numbers
@@ -319,6 +319,7 @@ struct Parser {
                         : key == "editor.local_history" ? &c.local_history
                         : key == "editor.minimap"       ? &c.minimap
                         : key == "editor.spell_check"   ? &c.spell
+                        : key == "editor.soft_wrap"     ? &c.soft_wrap
                                                         : &c.scroll_momentum;
             if (!as_bool(v, out)) warn(std::string(key) + " should be true or false");
             return;
@@ -328,6 +329,10 @@ struct Parser {
             return;
         }
         if (key == "syntax.max_file_mb") return number(key, v, 0, 2047, &c.syntax_max_mb);
+        if (key == "editor.soft_wrap_languages") {
+            if (!as_string_array(v, &c.soft_wrap_languages)) warn("editor.soft_wrap_languages should be a list like [\"markdown\", \"text\"]");
+            return;
+        }
         if (key == "syntax.parser_dirs" || key == "syntax.query_dirs") {
             if (!as_string_array(v, key == "syntax.parser_dirs" ? &c.parser_dirs : &c.query_dirs))
                 warn(std::string(key) + " should be a list of folders");
@@ -749,6 +754,8 @@ const Getter kGetters[] = {
     BLIT_GET("editor.local_history", flag(c.local_history)),
     BLIT_GET("editor.minimap", flag(c.minimap)),
     BLIT_GET("editor.spell_check", flag(c.spell)),
+    BLIT_GET("editor.soft_wrap", flag(c.soft_wrap)),
+    BLIT_GET("editor.soft_wrap_languages", list(c.soft_wrap_languages)),
     BLIT_GET("editor.modal", flag(c.modal)),
     BLIT_GET("syntax.enabled", flag(c.syntax)),
     BLIT_GET("syntax.max_file_mb", num(c.syntax_max_mb)),

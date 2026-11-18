@@ -478,17 +478,20 @@ const Folds* App::folds_on() const {
 }
 
 u64 App::row_of_line(u64 line) const {
+    if (const Wrap* w = wrap_on()) return w->row_of(line);  // (lines wrapped: their first rows; folds are in its map too)
     const Folds* f = folds_on();
     return f ? f->row_of(line) : line;
 }
 
 u64 App::line_of_row(u64 row) const {
-    const Folds* f = folds_on();
     const u64 lines = pane_->doc->ed.buf.line_count();
+    if (const Wrap* w = wrap_on()) return std::min(w->line_at(row), lines ? lines - 1 : 0);
+    const Folds* f = folds_on();
     return std::min(f ? f->line_at(row) : row, lines ? lines - 1 : 0);
 }
 
 u64 App::view_line_count() const {
+    if (const Wrap* w = wrap_on()) return w->rows();
     const Folds* f = folds_on();
     const u64 lines = pane_->doc->ed.buf.line_count();
     return f ? f->rows(lines) : lines;

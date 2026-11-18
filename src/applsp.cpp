@@ -1535,7 +1535,9 @@ void App::lsp_mouse(float x, float y) {
     const int cw = font_->cell_w(), ch = font_->cell_h();
     const double px = x * density_, py = y * density_;
     const double tx = px - pane_->text_x + std::llround(pane_->scroll_x) - pad_x_, ty = py - pane_->text_y + std::llround(pane_->scroll_y);
-    const i64 line = ty < 0 ? -1 : static_cast<i64>(line_of_row(static_cast<u64>(ty / ch))), col = tx < 0 ? -1 : static_cast<i64>(tx / cw);
+    const i64 line = ty < 0 ? -1 : static_cast<i64>(line_of_row(static_cast<u64>(ty / ch)));
+    i64 col = tx < 0 ? -1 : static_cast<i64>(tx / cw);
+    if (const Wrap* w = wrap_on(); w && ty >= 0 && col >= 0) col += w->start_col(static_cast<u64>(ty / ch));  // (a wrapped line's row)
     if (line == a.mouse_line && col == a.mouse_col) return;
     a.mouse_line = line;
     a.mouse_col = col;

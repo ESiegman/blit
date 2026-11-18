@@ -488,15 +488,21 @@ void Editor::vertical(i64 lines, bool select) {
     u64 line = buf.line_of(cursor_);
     u32 col = want_col_ != ~0u ? want_col_ : col_between(buf.line_start(line), cursor_);
     u64 last = buf.line_count() - 1;
-    if (skip) {  // (by rows: a fold is one)
-        const u64 row = skip->skip_row(line), rows = skip->skip_rows();
+    if (skip) {  // (by rows: a fold is one, and a wrapped line's parts are each one)
+        const u32 at_col = col_between(buf.line_start(line), cursor_);
+        const u64 row = skip->skip_row_at(line, at_col), rows = skip->skip_rows();
+        // (The column kept is along the row: a wrapped line's next row starts further in.)
+        const u32 along = want_col_ != ~0u ? want_col_ : at_col - std::min(at_col, skip->skip_col(row));
         if (lines < 0 ? row == 0 : row + 1 >= rows) {
             move_to(lines < 0 ? 0 : buf.size(), select);
             return;
         }
         const u64 to_row = lines < 0 ? (static_cast<u64>(-lines) > row ? 0 : row - static_cast<u64>(-lines)) : std::min(rows - 1, row + static_cast<u64>(lines));
-        move_to(off_at(std::min(last, skip->skip_line(to_row)), col), select);
-        want_col_ = col;
+        const u32 start = skip->skip_col(to_row), end = skip->skip_end(to_row);
+        u32 to_col = start + along;
+        if (end != ~0u && to_col >= end) to_col = end > start ? end - 1 : start;  // (not past the row's end, onto the next)
+        move_to(off_at(std::min(last, skip->skip_line(to_row)), to_col), select);
+        want_col_ = along;
         return;
     }
     u64 to;
