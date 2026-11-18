@@ -1113,6 +1113,14 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s\n", debug_inline_dump().c_str());
         } else if (verb == "snippetdump") {  // the snippet being filled in: each stop's places (line:column, from 1), the one the cursor is at in brackets
             std::fprintf(stderr, "%s\n", snippet_dump().c_str());
+        } else if (verb == "asmdump") {  // once a file's assembly is made: its lines (from 1) of the file's cursor line, as "line: lines"
+            for (const u64 until = now_ns() + 60'000'000'000ull; asm_dump() == "asking" && now_ns() < until;) {
+                if (script_) script_jobs();
+                asm_take();
+                SDL_Delay(5);
+            }
+            frame();
+            std::fprintf(stderr, "%s\n", asm_dump().c_str());
         } else if (verb == "caretdump") {  // every caret of the file in front: line:column (from 1), a selection's other end after a dash, the primary starred
             std::fprintf(stderr, "%s\n", caret_dump().c_str());
         } else if (verb == "docdump") {  // docdump:N, the tab in front's title, then its lines from N before the cursor's to N after (the cursor's marked >, and in it the cursor |)

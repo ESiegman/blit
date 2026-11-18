@@ -30,6 +30,7 @@
 #include "finder.hpp"
 #include "folds.hpp"
 #include "snippet.hpp"
+#include "asm.hpp"
 #include "tests.hpp"
 #include "font.hpp"
 #include "git.hpp"
@@ -329,6 +330,38 @@ void snippets_test() {
     Snippet body = parse_snippet("if (${1:x}) {\n\t$0\n}");
     indent_snippet(body, "    ", "  ");
     check(body.text == "if (x) {\n      \n    }" && spans(body, 0) == "4-5" && spans(body, 1) == "15-15", "snippet: indented as the line is, a tab one level");
+}
+
+// A file's assembly read: GCC's for x86 (comments after '#', .loc lines,
+// a debug section skipped, its own labels left out) and Clang's for Apple's
+// arm64 ('#' an immediate there, ';' a comment); and a compile command
+// turned into one that writes the assembly.
+void asm_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    const AsmView gcc = read_asm(
+        "\t.file\t\"sum.c\"\n\t.text\n.Ltext0:\n\t.file 1 \"sum.c\"\n\t.globl\tsum\n\t.type\tsum, @function\nsum:\n.LFB0:\n\t.loc 1 2 30\n"
+        "\tmovl\t$0, %eax\t# s\n\t.loc 1 4 5\n.L3:\n\taddl\t(%rdi), %eax\n\t.loc 1 9 1\n\tcall\tother\n\t.file 2 \"inc.h\"\n\t.loc 2 7 1\n\tret\n.LFE0:\n"
+        "\t.section\t.debug_info,\"\",@progbits\n\t.long\t0x8c\nnotcode:\n\t.text\n\tnop\n",
+        "/src/sum.c");
+    check(gcc.text == "sum:\n    movl    $0, %eax  # s\n.L3:\n    addl    (%rdi), %eax\n    call    other\n    ret\n    nop", "asm: GCC's x86, without directives, its labels, the debug section");
+    check(gcc.line == std::vector<u32>{0, 2, 0, 4, 9, 0, 0}, "asm: each instruction's line of the file (none for another file's)");
+    check(gcc.off == std::vector<u32>{0, 5, 25, 31, 36} && gcc.style == std::vector<u8>{3, 0, 4, 3, 0}, "asm: labels and comments coloured");
+    const AsmView arm = read_asm(
+        "\t.section\t__TEXT,__text,regular,pure_instructions\n\t.file\t0 \"/src\" \"sum.c\" md5 0x12\n\t.globl\t_sum ; -- Begin function sum\n_sum: ; @sum\n"
+        "Lfunc_begin0:\n\t.loc\t0 3 0\n\tsub\tsp, sp, #32\n; %bb.0:\nLBB0_1: ; =>This Inner Loop Header\n\t.loc\t0 4 5 prologue_end\n\tldr\tw8, [sp, #12]\nLtmp0:\n",
+        "/src/sum.c");
+    check(arm.text == "_sum:  ; @sum\n    sub     sp, sp, #32\nLBB0_1:  ; =>This Inner Loop Header\n    ldr     w8, [sp, #12]", "asm: Apple's arm64, '#' kept, ';' a comment");
+    check(arm.line == std::vector<u32>{0, 3, 0, 4}, "asm: DWARF 5's file 0, as a folder and a name");
+    std::vector<std::string> argv;
+    std::string dir;
+    check(asm_command(R"([{"directory": "/b", "command": "cc -O2 -DX=\"a b\" -c ../src/sum.c -o sum.o -MD -MF sum.d -flto", "file": "/src/sum.c"}])", "/src/sum.c", &argv, &dir) &&
+              argv == std::vector<std::string>{"cc", "-S", "-g", "-fno-asynchronous-unwind-tables", "-o", "-", "-O2", "-DX=a b", "../src/sum.c"} && dir == "/b",
+          "asm: a command's object, dependencies and LTO left out, the assembly to the standard output");
+    check(asm_command(R"([{"directory": "/b", "arguments": ["c++", "-c", "x.cpp"], "file": "x.cpp"}])", "/b/x.cpp", &argv, &dir) && argv.size() == 7 && argv.back() == "x.cpp",
+          "asm: arguments, and a file relative to its folder");
+    check(!asm_command(R"([{"directory": "/b", "command": "cc -c y.c", "file": "y.c"}])", "/b/x.c", &argv, &dir), "asm: no entry for the file");
 }
 
 // A profile's timeline: kept with each sample's time, narrowed to a
@@ -4839,6 +4872,7 @@ int main(int argc, char** argv) {
     carets_test(seeds);
     timeline_test();
     snippets_test();
+    asm_test();
     find_test();
     folds_test();
     tests_test();

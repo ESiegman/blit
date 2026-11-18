@@ -83,6 +83,7 @@ struct ProfileFunc;
 struct ProfView;     // a profile's tab (appprofile.cpp)
 struct TermView;     // a terminal's tab (appterm.cpp)
 struct MdView;       // a Markdown preview's tab (appmarkdown.cpp)
+struct AsmTab;       // a file's assembly's tab (appasm.cpp)
 struct MergeView;    // a merge tab (appgit.cpp)
 struct RebaseView;   // an interactive rebase's tab (appgit.cpp)
 struct ImageView;    // an image file's tab (appimage.cpp)
@@ -193,6 +194,7 @@ struct Doc {
     std::shared_ptr<ProfView> prof;  // a profile's tab: drawn over the text area (appprofile.cpp)
     std::shared_ptr<TermView> term;  // a terminal's tab: drawn over it too (appterm.cpp)
     std::shared_ptr<MdView> md;      // a Markdown preview's tab: drawn over it too (appmarkdown.cpp)
+    std::shared_ptr<AsmTab> asmv;    // a file's assembly's tab (appasm.cpp)
     std::shared_ptr<ImageView> image;  // an image file's tab: drawn over it too (appimage.cpp)
     std::shared_ptr<PdfView> pdf;      // a PDF's tab: drawn over it too (apppdf.cpp)
     bool term_closed = false;        // (its program has ended, and that has been seen to)
@@ -797,6 +799,16 @@ private:
     // The Markdown preview (appmarkdown.cpp, markdown.cpp, mermaid.cpp): a tab
     // beside a Markdown file that shows it drawn, Mermaid diagrams and all.
     void md_open();
+    // A file's assembly beside it (appasm.cpp).
+    void asm_open();
+    void asm_ask(Doc& d);
+    void asm_saved(const std::string& path);
+    void asm_marks(FrameDesc& fd);
+    std::string asm_dump();
+    void asm_take();
+    std::shared_ptr<struct AsmWork> asm_work_;
+    std::vector<GridDeco> asm_decos_[kMaxViews];
+    std::array<u64, 4> asm_seen_{};
     void md_layout(FrameDesc& fd);
     bool md_hit(int px, int py, Pane** pane, u32* row, u32* col);
     bool md_key(const SDL_KeyboardEvent& k);

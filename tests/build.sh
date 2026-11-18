@@ -292,4 +292,29 @@ printf 'all:\n\ttrue\n' >"$dir/fresh/Makefile"
 run "$dir/fresh" "command:Edit the run configurations;frame;lsptext"
 check "Edit the run configurations: made, with one to fill in" '{ /   "configurations": [ /     { /       "name": "fresh", /       "program": "build/fresh", /       "args": [], /       "env": {}, /       "cwd": "." /     } /   ] / } / '
 
+# A file's assembly beside it: from its own command in a build folder's
+# compile_commands.json (its -D is needed), linked line by line, and made
+# again when the file is saved; with no such command, the plain compiler's.
+A="$dir/asm"
+mkdir -p "$A/build" "$A/plain"
+printf '// sums\nint sum(const int* a, int n) {\n    int s = 0;\n    for (int i = 0; i < n; ++i) s += a[i];\n    return s;\n}\n#ifndef STEP\n#error no STEP\n#endif\n' >"$A/sum.c"
+printf '[{"directory": "%s", "command": "cc -O0 -DSTEP=1 -c sum.c -o build/sum.o", "file": "sum.c"}]\n' "$A" >"$A/build/compile_commands.json"
+run "$A" "open:$A/sum.c;command:Show the assembly beside the file;asmdump"
+check "a comment's line: none of the assembly" '1:'
+first=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$A;open:$A/sum.c;command:Show the assembly beside the file;key:Down;key:Down;key:Down;asmdump;vim:O<Esc>j;save;asmdump" 2>&1 >/dev/null | tail -2 | tr '\n' '|')
+loop=${first%%|*}
+case $loop in "4: "[0-9]*) got=lines ;; *) got=$loop ;; esac
+check "the loop's line: its instructions" 'lines'
+moved=${first#*|}
+got=${moved%|}
+check "a line put above it and saved: made again, the same instructions now the next line's" "5:${loop#4:}"
+printf 'int twice(int x) { return 2 * x; }\n' >"$A/plain/two.c"
+run "$A/plain" "open:$A/plain/two.c;command:Show the assembly beside the file;asmdump"
+case $got in "1: "[0-9]*) got=lines ;; esac
+check "no compile_commands.json: the plain compiler's" 'lines'
+printf 'int broken( {\n' >"$A/plain/bad.c"
+run "$A/plain" "open:$A/plain/bad.c;command:Show the assembly beside the file;asmdump"
+case $got in *error*) got=said ;; esac
+check "a file that does not compile: the compiler's errors in the tab" 'said'
+
 exit $failed

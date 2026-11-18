@@ -312,6 +312,7 @@ void App::commands_create() {
     // Markdown.
     // (Where Ctrl+Shift+V pastes, as in a terminal: Ctrl+Alt+V.)
     own("Preview beside the file (Markdown, or an SVG's picture)", {key(SDLK_V, kCtrlShared ? kP | kA : kP | kS)}, [this] { preview_open(); });
+    own("Show the assembly beside the file", {}, [this] { asm_open(); });
     // Terminals: in the split along the bottom.
     own("Show or hide the terminal", {key(SDLK_GRAVE, ctl)}, [this] { term_toggle(); });
     own("New terminal", {key(SDLK_GRAVE, ctl | kS)}, [this] { term_new(); });

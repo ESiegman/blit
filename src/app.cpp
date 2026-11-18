@@ -898,6 +898,7 @@ void App::save() {
     if (saved) {
         if (path.ends_with(kRunConfigs)) build_changed();  // (the run configurations: the Build tab reads them again)
         script_saved(path);  // or one of the scripts (they run again)
+        asm_saved(path);     // (its assembly made again)
         if (script_) script_write(true, id);
     }
     dirty_ = true;
@@ -1464,6 +1465,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     vim_marks(fd);
     caret_marks(fd);  // the other carets, and what each has selected
     snippet_marks(fd);  // a snippet's stops still to come
+    asm_marks(fd);      // the lines of a file and of its assembly that go together
     if (script_) script_layout(w, h, fd);  // marks, boxes and messages of the scripts'
     prof_marks(fd);  // inline performance labels (after a server's and the scripts' notes)
     debug_marks(fd);  // and where the program being debugged has stopped
@@ -1857,6 +1859,10 @@ void App::handle(const SDL_Event& e) {
             }
             if (e.user.code == 16) {  // what the working folder builds with has been found
                 build_sync();
+                break;
+            }
+            if (e.user.code == 23) {  // a file's assembly has been read
+                asm_take();
                 break;
             }
             if (e.user.code == 22) {  // the project's tests have been found
