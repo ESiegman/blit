@@ -30,6 +30,7 @@ printf '%s\nblit.opt.editor.modal = false\nblit.opt.lsp.semantic_colors = false\
 printf '%s\nblit.opt.editor.modal = false\nblit.opt.syntax.styles["lsp.parameter"] = "#ff0000 italic"\n' "$servers" >"$dir/themed.lua"
 printf 'blit.opt.lsp.servers.clangd = { command = { "%s", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/clangd.lua"
 printf '%s\nblit.opt.editor.modal = false\nblit.opt.lsp.highlight_uses = false\n' "$servers" >"$dir/nouses.lua"
+printf '%s\nblit.opt.editor.modal = false\nblit.opt.lsp.reference_counts = false\n' "$servers" >"$dir/nolens.lua"
 printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--workspace", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/pull.lua"
 export BLIT_RECENT_FILE="$dir/recent"
 init=
@@ -202,6 +203,13 @@ run "vim:3G;vim:fw;command:Peek the definition;peekdump;key:Escape;peekdump;vimd
 check "Esc: gone, the keyboard back where it was" 'NORMAL |  | 3:20 | int three = one + two;'
 run "vim:3G;vim:fw;command:Peek the definition;peekdump;vim:A // seen<Esc>;key:Escape;vim:2G;vimdump" "$P/e.cpp"
 check "typed in the box: the file's" 'NORMAL |  | 2:22 | int two = one; // seen'
+
+# How many references each definition on show has, after its line; a
+# click on one lists them.
+run "lensdump" "$P/src/app.cpp"
+check "each definition's references, counted" '1: 2 references | 3: 1 reference | 6: 1 reference'
+with nolens "lensdump" "$P/src/app.cpp"
+check "lsp.reference_counts = false: none" 'no counts'
 
 # The other uses of the name under the cursor, a moment after it stops.
 uses="key:Right;key:Right;key:Right;key:Right;key:Right;frame;wait:250;frame;wait:100;frame"

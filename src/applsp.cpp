@@ -13,6 +13,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <set>
 #include <span>
 
 #include <sys/stat.h>
@@ -289,6 +290,18 @@ struct App::Assist {
     std::vector<LspSymbol> symbol_rows;
     std::vector<LspSymbol> outline_rows;  // (the outline on show: the server's, or the tree's)
     std::vector<HierRow> hier_rows;  // a hierarchy on show (hier_show)
+    // How many references each definition on show has (lens_marks): for
+    // the document in front as of a version of it (the tag the answers
+    // come with), by where the name is; what has been asked; when to ask
+    // (typing has paused); the notes drawn of them.
+    u64 lens_doc = 0, lens_rev = ~0ull, lens_tag = 0, lens_due_ns = 0;
+    std::map<u64, u32> lens_counts;
+    std::set<u64> lens_asked;
+    std::vector<GridNote> lens_notes;
+    std::vector<std::vector<u32>> lens_cells;
+    std::vector<std::string> lens_texts;
+    std::vector<u64> lens_at;  // (each note's definition: where its name is)
+    u64 lens_key[4] = {};
     std::string hier_title;
     u8 hier_kind = 0;
     int hier_asking = -1;
@@ -559,6 +572,12 @@ void App::sync_lsp() {
         else if (remember_place(), !open_path(other.c_str())) notify("Cannot open " + other);
     }
     if ((news & Lsp::kHierarchy) && a.hier_waiting) hier_take();
+    if (news & Lsp::kCounts) {
+        for (const Lsp::RefCount& r : lsp_.take_counts())
+            if (r.tag == a.lens_tag) a.lens_counts[r.offset] = r.count;
+        a.lens_key[0] = ~0ull;  // (drawn again)
+        dirty_ = true;
+    }
     if ((news & Lsp::kOutline) && a.outline_pending) {
         a.outline_pending = false;
         outline_show(lsp_.outline_list(), ~0ull);
@@ -1464,6 +1483,7 @@ int App::lsp_wait_ms() const {
     if (const u64 stop = lsp_.next_tick_ns(); stop && (!due || stop < due)) due = stop;
     if (a.extras_due_ns && (!due || a.extras_due_ns < due)) due = a.extras_due_ns;
     if (a.uses_due_ns && (!due || a.uses_due_ns < due)) due = a.uses_due_ns;
+    if (a.lens_due_ns && (!due || a.lens_due_ns < due)) due = a.lens_due_ns;
     if (!due) return -1;
     const u64 now = now_ns();
     return due <= now ? 0 : static_cast<int>(std::min<u64>((due - now) / 1'000'000 + 1, 1u << 30));
@@ -1476,6 +1496,7 @@ void App::lsp_tick() {
         a.extras_due_ns = 0;
         dirty_ = true;
     }
+    if (a.lens_due_ns && now_ns() >= a.lens_due_ns) dirty_ = true;  // (typing has paused: a frame asks for the counts)
     if (a.uses_due_ns && now_ns() >= a.uses_due_ns) {  // (the cursor has rested: the uses of what it is on)
         a.uses_due_ns = 0;
         const Editor& ed = pane_->doc->ed;
@@ -2388,6 +2409,124 @@ std::string App::hier_dump() {
     std::string out;
     for (const std::string& t : hier_texts()) out += (out.empty() ? "" : " | ") + t;
     return out.empty() ? "no hierarchy" : out;
+}
+
+// ---------------------------------------------------------------- reference counts
+
+// After each definition on show in the split in front (a function, a
+// method, a class, a struct, as the syntax tree has them), how many
+// references the server finds to it, muted. Asked for once typing has
+// paused, a definition at a time as it comes into view; all asked again
+// when the text changes or a file is saved.
+void App::lens_marks(FrameDesc& fd) {
+    Assist& a = *assist_;
+    if (!cfg_.lsp_ref_counts || focus_view_ >= fd.view_count || !lsp_.ready() || lsp_doc_ != pane_->doc || !lsp_.can_references()) return;
+    Doc& d = *pane_->doc;
+    const u64 now = now_ns();
+    if (a.lens_doc != d.id || a.lens_rev != d.ed.revision()) {  // (another file, or this one changed: the counts it had are gone)
+        a.lens_doc = d.id;
+        a.lens_rev = d.ed.revision();
+        ++a.lens_tag;
+        a.lens_counts.clear();
+        a.lens_asked.clear();
+        a.lens_due_ns = now + 400'000'000ull;
+        a.lens_key[0] = ~0ull;
+    }
+    GridSpec& g = fd.views[focus_view_].grid;
+    const std::vector<SyntaxScope>& scopes = d.syntax.structure().scopes;
+    auto counted = [](u8 kind) { return kind == 12 || kind == 6 || kind == 5 || kind == 23 || kind == 9 || kind == 11 || kind == 10; };
+    if (a.lens_due_ns && now >= a.lens_due_ns) {
+        a.lens_due_ns = 0;
+        size_t asked = 0;
+        for (const SyntaxScope& sc : scopes) {
+            if (!counted(sc.kind) || sc.name_at >= d.ed.buf.size() || a.lens_asked.contains(sc.name_at)) continue;
+            const u64 line = d.ed.buf.line_of(sc.name_at);
+            if (line < g.top_line || line >= g.bottom()) continue;
+            a.lens_asked.insert(sc.name_at);
+            lsp_.count_references(sc.name_at, a.lens_tag);
+            if (++asked == 40) break;
+        }
+    } else if (!a.lens_due_ns) {  // (scrolled to more: asked for in a moment)
+        for (const SyntaxScope& sc : scopes)
+            if (counted(sc.kind) && sc.name_at < d.ed.buf.size() && !a.lens_asked.contains(sc.name_at)) {
+                const u64 line = d.ed.buf.line_of(sc.name_at);
+                if (line >= g.top_line && line < g.bottom()) {
+                    a.lens_due_ns = now + 150'000'000ull;
+                    break;
+                }
+            }
+    }
+    if (a.lens_counts.empty()) return;
+    const u64 key[4] = {a.lens_tag, g.top_line, g.bottom(), a.lens_counts.size()};
+    if (!std::equal(std::begin(key), std::end(key), std::begin(a.lens_key))) {
+        std::copy(std::begin(key), std::end(key), std::begin(a.lens_key));
+        a.lens_notes.clear();
+        a.lens_cells.clear();
+        a.lens_texts.clear();
+        a.lens_at.clear();
+        Font& font = *font_;
+        for (const auto& [at, n] : a.lens_counts) {
+            if (at >= d.ed.buf.size()) continue;
+            const u64 line = d.ed.buf.line_of(at);
+            if (line < g.top_line || line >= g.bottom()) continue;
+            if (std::ranges::any_of(a.lens_notes, [&](const GridNote& x) { return x.line == line; })) continue;
+            const std::string said = n == 1 ? "1 reference" : std::to_string(n) + " references";
+            TextBox box;
+            box.resize(width_of(said), 1);
+            put(box, font, 0, 0, said, ink::kMuted);
+            a.lens_cells.push_back(std::move(box.cells));
+            a.lens_texts.push_back(std::to_string(line + 1) + ": " + said);
+            a.lens_at.push_back(at);
+            const u64 start = d.ed.buf.line_start(line);
+            a.lens_notes.push_back({line, d.ed.col_between(start, d.ed.line_end(line)) + 3, nullptr, static_cast<u32>(a.lens_cells.back().size())});
+        }
+        for (size_t k = 0; k < a.lens_notes.size(); ++k) a.lens_notes[k].cells = a.lens_cells[k].data();
+    }
+    if (a.lens_notes.empty()) return;
+    // Each where nothing else is said (a problem's message, a value while debugging, come first).
+    lens_view_notes_.assign(g.notes.begin(), g.notes.end());
+    for (const GridNote& n : a.lens_notes)
+        if (std::ranges::none_of(g.notes, [&](const GridNote& o) { return o.line == n.line; })) lens_view_notes_.push_back(n);
+    g.notes = lens_view_notes_;
+}
+
+// A click on a count: those references, listed as Find references lists them.
+bool App::lens_click(const SDL_MouseButtonEvent& b) {
+    Assist& a = *assist_;
+    if (b.button != SDL_BUTTON_LEFT || a.lens_notes.empty() || a.lens_doc != pane_->doc->id || a.lens_rev != pane_->doc->ed.revision() || !lsp_.ready()) return false;
+    const int px = static_cast<int>(b.x * density_), py = static_cast<int>(b.y * density_);
+    if (py < pane_->text_y || py >= pane_->y1 || px < pane_->text_x || px >= pane_->x1) return false;
+    u64 line = 0;
+    u32 col = 0;
+    point_line_col(b.x, b.y, &line, &col);
+    for (size_t k = 0; k < a.lens_notes.size() && k < a.lens_at.size(); ++k) {
+        const GridNote& n = a.lens_notes[k];
+        if (n.line != line || col < n.col || col > n.col + n.count) continue;
+        lsp_close(kPopAll);
+        a.refs_pending = true;
+        lsp_.references(a.lens_at[k], false);  // (those counted: not the definition itself)
+        return true;
+    }
+    return false;
+}
+
+// A file saved: what refers to what may have changed.
+void App::lens_saved() {
+    if (assist_) assist_->lens_rev = ~0ull;
+}
+
+// Counts due to be asked for, or asked for and not yet answered.
+bool App::lens_waiting() const {
+    const Assist& a = *assist_;
+    return a.lens_due_ns || a.lens_asked.size() > a.lens_counts.size();
+}
+
+// For the tests: the counts drawn in the split in front, or none.
+std::string App::lens_dump() {
+    Assist& a = *assist_;
+    std::string out;
+    for (const std::string& t : a.lens_texts) out += (out.empty() ? "" : " | ") + t;
+    return out.empty() ? "no counts" : out;
 }
 
 }  // namespace blit

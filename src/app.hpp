@@ -584,6 +584,13 @@ private:
     // (`moved` hears each, from 0), starting on `at`: Enter is `chose`, Esc
     // `cancelled` (appfind.cpp; the theme picker's).
     void find_on_side(std::function<bool(int, bool)> fn);
+    // Reference counts after the definitions (applsp.cpp).
+    void lens_marks(FrameDesc& fd);
+    void lens_saved();
+    bool lens_click(const SDL_MouseButtonEvent& b);
+    std::string lens_dump();
+    bool lens_waiting() const;
+    std::vector<GridNote> lens_view_notes_;
     // Peek (apppeek.cpp).
     void peek_open();
     void peek_show(LspLocation loc);  // (a copy: the client's own goes as the keyboard moves)

@@ -903,6 +903,7 @@ void App::save() {
         if (path.ends_with(kRunConfigs)) build_changed();  // (the run configurations: the Build tab reads them again)
         script_saved(path);  // or one of the scripts (they run again)
         asm_saved(path);     // (its assembly made again)
+        lens_saved();        // (and what refers to what counted again)
         if (script_) script_write(true, id);
     }
     dirty_ = true;
@@ -1474,6 +1475,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     snippet_marks(fd);  // a snippet's stops still to come
     asm_marks(fd);      // the lines of a file and of its assembly that go together
     nb_marks(fd);       // a notebook's saved outputs
+    lens_marks(fd);     // how many references each definition on show has
     if (script_) script_layout(w, h, fd);  // marks, boxes and messages of the scripts'
     prof_marks(fd);  // inline performance labels (after a server's and the scripts' notes)
     debug_marks(fd);  // and where the program being debugged has stopped

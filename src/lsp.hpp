@@ -25,8 +25,10 @@
 // out is in byte offsets into the document; the conversion happens inside.
 #include <functional>
 #include <memory>
+#include <map>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "config.hpp"
@@ -204,6 +206,7 @@ public:
         kSymbols = 131072,    // the project's symbols that match what was asked
         kSwitch = 262144,     // the header for a source file, or the source for a header
         kHierarchy = 524288,  // a call or type hierarchy's items (see hierarchy_list())
+        kCounts = 1048576,    // how many references places have (see take_counts())
     };
     // The levels of a hierarchy asked for under an item.
     enum HierKind : u8 { kCallsIn, kCallsOut, kSupertypes, kSubtypes };
@@ -305,7 +308,7 @@ public:
     void hover(u64 offset);
     void signature(u64 offset);
     void definition(u64 offset);
-    void references(u64 offset);
+    void references(u64 offset, bool declaration = true);
     void places(u64 offset, PlaceKind kind);    // the answer, place_list(), comes as kPlaces
     void highlight(u64 offset);                 // highlights(), as kHighlights
     void outline();                             // outline_list(), as kOutline
@@ -317,6 +320,15 @@ public:
     void hierarchy_prepare(u64 offset, bool types);
     void hierarchy_expand(const std::string& raw, HierKind kind);
     const std::vector<LspHierItem>& hierarchy_list() const { return hier_; }
+    // How many references the name at a place in the document in front has
+    // (the declaration left out), as kCounts; several asked at once, each
+    // answer with the tag it was asked with.
+    struct RefCount {
+        u64 tag = 0, offset = 0;
+        u32 count = 0;
+    };
+    void count_references(u64 offset, u64 tag);
+    std::vector<RefCount> take_counts() { return std::exchange(counts_, {}); }
     // Asks whether the name at offset can be renamed, and which bytes it is.
     // A server that does not say answers at once: renamable, the word there.
     void prepare_rename(u64 offset);
@@ -466,6 +478,8 @@ private:
     std::vector<LspPlace> refs_;
     std::vector<LspHierItem> hier_;
     u32 hier_id_ = 0;
+    std::map<u32, RefCount> counting_;  // (asked, by request)
+    std::vector<RefCount> counts_;
     std::vector<LspPlace> places_;
     PlaceKind place_kind_ = kImplementation;
     std::vector<std::pair<u64, u64>> highlights_;

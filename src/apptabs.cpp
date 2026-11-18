@@ -478,6 +478,7 @@ bool App::tabs_key(const SDL_KeyboardEvent& k) {
 
 bool App::tabs_mouse_down(const SDL_MouseButtonEvent& b) {
     if (test_gutter_click(b)) return true;  // a test's mark: it runs (apptest.cpp)
+    if (lens_click(b)) return true;  // a definition's count of references: they are listed (applsp.cpp)
     if (git_gutter_click(b)) return true;  // a change's mark beside the line numbers, or what it offers (appgit.cpp)
     TabBar& t = *pane_->bar;
     const int bar = tabs_px();

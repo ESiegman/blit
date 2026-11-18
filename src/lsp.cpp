@@ -398,7 +398,7 @@ enum : u8 {
     kInReady = 1, kInFailed, kInStopped, kInDiagnostics, kInCompletion, kInHover, kInSignature, kInDefinition,
     kInReferences, kInPrepareRename, kInRename, kInFormat, kInActions, kInResolve, kInHints, kInTokens,
     kInPull, kInWorkspacePull, kInApplyEdit, kInRefresh, kInIgnore, kInPlaces, kInHighlight, kInOutline, kInSymbols, kInSwitch,
-    kInHierarchy,
+    kInHierarchy, kInCount,
 };
 // What a server asks to have asked again (kInRefresh).
 enum : u8 { kRefreshTokens = 1, kRefreshHints = 2, kRefreshDiagnostics = 4 };
@@ -1506,6 +1506,14 @@ struct Lsp::Conn::Worker {
             case kInOutline: on_outline(n, result); break;
             case kInSymbols: on_symbols(n, result); break;
             case kInHierarchy: on_hierarchy(n, result); break;
+            case kInCount: {  // (how many: nothing else is needed of them)
+                In m;
+                m.kind = kInCount;
+                m.id = n;
+                m.version = result.is_array() ? static_cast<i64>(result.size()) : 0;
+                c.push(std::move(m));
+                break;
+            }
             case kInSwitch: {  // (clangd's: the other file's URI, or null)
                 In m;
                 m.kind = kInSwitch;
@@ -2557,9 +2565,9 @@ void Lsp::definition(u64 offset) {
     ask(front_, "textDocument/definition", offset, kInDefinition, {}, &def_id_);
 }
 
-void Lsp::references(u64 offset) {
+void Lsp::references(u64 offset, bool declaration) {
     if (!can_references()) return;
-    ask(front_, "textDocument/references", offset, kInReferences, R"(,"context":{"includeDeclaration":true})", &refs_id_);
+    ask(front_, "textDocument/references", offset, kInReferences, declaration ? R"(,"context":{"includeDeclaration":true})" : R"(,"context":{"includeDeclaration":false})", &refs_id_);
 }
 
 void Lsp::places(u64 offset, PlaceKind kind) {
@@ -2580,6 +2588,13 @@ void Lsp::hierarchy_prepare(u64 offset, bool types) {
     if (!can_hierarchy(types)) return;
     hier_.clear();
     ask(front_, types ? "textDocument/prepareTypeHierarchy" : "textDocument/prepareCallHierarchy", offset, kInHierarchy, {}, &hier_id_);
+}
+
+void Lsp::count_references(u64 offset, u64 tag) {
+    if (!can_references()) return;
+    u32 id = 0;  // (one of many under way: none is cancelled for it)
+    ask(front_, "textDocument/references", offset, kInCount, R"(,"context":{"includeDeclaration":false})", &id);
+    if (id) counting_[id] = {tag, offset, 0};
 }
 
 void Lsp::hierarchy_expand(const std::string& raw, HierKind kind) {
@@ -3076,6 +3091,15 @@ u32 Lsp::poll() {
                 news |= refs ? kReferences : kPlaces;
                 break;
             }
+            case kInCount:
+                if (const auto it = counting_.find(m.id); it != counting_.end()) {
+                    RefCount r = it->second;
+                    r.count = static_cast<u32>(std::max<i64>(0, m.version));
+                    counting_.erase(it);
+                    counts_.push_back(r);
+                    news |= kCounts;
+                }
+                break;
             case kInHierarchy:
                 if (m.id != hier_id_) break;
                 hier_id_ = 0;

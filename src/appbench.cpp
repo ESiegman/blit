@@ -1137,6 +1137,15 @@ void App::run_script(const char* script) {
             }
             frame();
             std::fprintf(stderr, "%s\n", peek_dump().c_str());
+        } else if (verb == "lensdump") {  // the reference counts drawn in the split in front (once asked and answered: a second at most)
+            for (const u64 until = now_ns() + 3'000'000'000ull; now_ns() < until;) {
+                sync_lsp();
+                lsp_tick();
+                frame();
+                if (!lens_waiting()) break;
+                SDL_Delay(5);
+            }
+            std::fprintf(stderr, "%s\n", lens_dump().c_str());
         } else if (verb == "caretdump") {  // every caret of the file in front: line:column (from 1), a selection's other end after a dash, the primary starred
             std::fprintf(stderr, "%s\n", caret_dump().c_str());
         } else if (verb == "docdump") {  // docdump:N, the tab in front's title, then its lines from N before the cursor's to N after (the cursor's marked >, and in it the cursor |)
