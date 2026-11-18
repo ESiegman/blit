@@ -204,6 +204,12 @@ tops=$(printf '%s' "$got" | awk 'BEGIN { RS = " ;; " } /^>/ { print }' | sed -n 
 got="$(total_bytes "$got") ;; $tops"
 check "a variable's memory, read again at the next stop (and a page back and on, to where it was)" '00 00 00 00;01 00 00 00; ;; 1'
 
+# The values of the variables each line names, after it, from the start of the
+# function it stopped in to where it stopped (not those in the string); and
+# with debug.inline_values off, where it stopped alone.
+run "$P;break:16;key:F5;debugwait:stopped;key:F5;debugwait:stopped;frame;debuginline;lua:blit.opt.debug.inline_values = false;frame;debuginline"
+check "the values in the code" '13: total = 5 | 14: i = 2 | 15: total = 5, i = 2 | 16: ◀ stopped: breakpoint   i = 2, total = 5 ;; 16: ◀ stopped: breakpoint'
+
 # Attaching to a process that is running, and a core file.
 cp "$here/debug/waits.c" "$here/debug/crash.c" "$dir/here/" && (cd "$dir/here" && cc -g -O0 -o waits waits.c && cc -g -O0 -o crash crash.c) || exit 1
 "$dir/here/waits" &

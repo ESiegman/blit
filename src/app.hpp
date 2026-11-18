@@ -927,6 +927,7 @@ private:
     void debug_wait(const std::string& state);
     std::string debug_dump();
     std::string debug_breaks_dump();
+    std::string debug_inline_dump();  // (the notes after the lines of the first view, as last drawn)
     bool debug_pick(const std::string& section, u32 n);
     void panel_show_debug();
 
@@ -1260,7 +1261,6 @@ private:
     u32 build_errors_ = 0, build_warnings_ = 0;  // how many of each (the status bar asks at every key: not behind a pointer)
     u64 debug_gen_ = 1;  // counts up whenever breakpoints, the Debug tab or the stopped line may have changed
     std::vector<GridNote> debug_notes_[kMaxViews];
-    std::vector<u32> debug_note_cells_[kMaxViews];
     std::shared_ptr<ProfUi> profui_;  // (before remote_: a recording on another machine ends when its connection does)
     u64 prof_gen_ = 1;                // counts up whenever what the Profile tab shows may have changed
     bool term_drop_text_ = false;     // the text a key sent to a terminal as itself also brings is not typed again

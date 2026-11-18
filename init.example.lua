@@ -139,6 +139,9 @@
 -- Cmd+Option+B or the Git tab's Blame turns it on.
 -- blit.opt.git.enabled = true
 
+---------------------------------------------------------------- debugging
+-- blit.opt.debug.inline_values = true  -- while stopped, the values of the variables a line names after its end
+
 ---------------------------------------------------------------- the side panel
 -- The side panel (Cmd+B): tabs along its top, the first of them a tree of
 -- the files in the working directory.

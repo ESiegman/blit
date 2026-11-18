@@ -270,6 +270,15 @@ struct App::DebugUi {
     };
     std::vector<Row> rows;
     u32 sel = 0, top = 0;
+    // The notes after the lines of each view (where it stopped, the values),
+    // and what they were made for.
+    struct Inline {
+        u64 key[8] = {};
+        std::vector<std::vector<u32>> cells;
+        std::vector<GridNote> notes;
+        std::vector<std::string> texts;  // (what each says: the tests)
+    };
+    Inline inline_[kMaxViews];
 
     void print(std::string_view text) {
         for (const char c : text)
@@ -1753,41 +1762,115 @@ bool App::debug_panel_key(const SDL_KeyboardEvent& k) {
 
 // ---------------------------------------------------------------- the stopped line, in the text
 
+// Where it stopped, after the line's end; and after each line of the
+// function it stopped in, from its start to there, the values of the
+// variables the line names (by name, among the frame's: not in a comment or
+// a string, as the colours have them, and not a member's, after . -> or ::).
+// Made again only when something they are of changes.
 void App::debug_marks(FrameDesc& fd) {
     if (!debugui_ || debugui_->state != DebugUi::kStopped) return;
     DebugUi& u = *debugui_;
     if (u.frame >= u.frames.size()) return;
     const DebugUi::Frame& f = u.frames[u.frame];
-    Font& font = *font_;
     for (u32 vi = 0; vi < fd.view_count && vi < kMaxViews; ++vi) {
         GridSpec& g = fd.views[vi].grid;
         Doc* d = find_doc(g.doc);
         if (!d) continue;
         u64 l = ~0ull;
-        if (u.disasm_doc && d->id == u.disasm_doc) {  // the disassembly: the instruction's line
+        const bool instructions = u.disasm_doc && d->id == u.disasm_doc;
+        if (instructions) {  // the disassembly: the instruction's line
             for (size_t k = 0; k < u.disasm_addrs.size() && f.ip; ++k)
                 if (u.disasm_addrs[k] == f.ip) l = k;
         } else if (!d->ed.path.empty() && f.line && full_path(d->ed.path) == f.path) {
             l = f.line - 1;
         }
-        if (l == ~0ull) continue;
-        if (l < g.top_line || l >= g.bottom() || l >= d->ed.buf.line_count()) continue;
-        TextBox box;
-        const std::string text = "\xE2\x97\x80 stopped" + (u.reason.empty() ? std::string() : ": " + u.reason);
-        box.resize(std::min<u32>(width_of(text), 80), 1);
-        put(box, font, 0, 0, text, ink::kAccent);  // (upright: the font's italic may be a script)
-        debug_note_cells_[vi] = std::move(box.cells);
+        if (l == ~0ull || l >= d->ed.buf.line_count()) continue;
+        const Buffer& buf = d->ed.buf;
+        const Highlights& hl = d->syntax.highlights();
+        DebugUi::Inline& c = u.inline_[vi];
+        const u64 key[] = {debug_gen_, d->id, d->ed.revision(), g.top_line, g.bottom(), hl.size(), hl.base, cfg_.debug_inline_values};
+        if (!std::equal(std::begin(key), std::end(key), std::begin(c.key))) {
+            std::copy(std::begin(key), std::end(key), std::begin(c.key));
+            c.notes.clear();
+            c.cells.clear();
+            c.texts.clear();
+            std::vector<std::pair<u64, std::string>> lines;  // (each line's values)
+            if (!instructions && cfg_.debug_inline_values) {
+                // The frame's variables, by name (the first of a name: the innermost block's).
+                std::map<std::string, std::string, std::less<>> values;
+                for (const DebugUi::Var& v : u.vars) {
+                    if (v.depth != 1 || v.name.empty()) continue;
+                    std::string value = v.value.substr(0, v.value.find("  ("));
+                    for (char& ch : value)
+                        if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';
+                    if (width_of(value) > 40) value = value.substr(0, 39) + "\xE2\x80\xA6";
+                    values.try_emplace(v.name, std::move(value));
+                }
+                // From the start of the function it stopped in (or the top of the view) to the line.
+                u64 first = g.top_line;
+                const u64 at = buf.line_start(l);
+                for (const SyntaxScope& sc : d->syntax.structure().scopes)
+                    if ((sc.kind == 12 || sc.kind == 6) && sc.start <= at && at < sc.end) first = buf.line_of(sc.start);
+                first = std::max(first, g.top_line);
+                const std::vector<std::string>& names = d->syntax.style_names();
+                auto quiet = [&](u64 pos) {  // (in a comment or a string)
+                    if (hl.empty() || pos < hl.base || pos >= hl.end) return false;
+                    const size_t i = hl.upper(pos);
+                    const u8 st = i ? hl.style[i - 1] : 0;
+                    return st < names.size() && (names[st].starts_with("comment") || names[st].starts_with("string"));
+                };
+                for (u64 line = first; !values.empty() && line <= l && line < g.bottom(); ++line) {
+                    const u64 start = buf.line_start(line);
+                    const std::string text = buf.text(start, d->ed.line_end(line) - start);
+                    std::string said;
+                    std::vector<std::string_view> seen;
+                    for (size_t i = 0; i < text.size();) {
+                        const auto word = [](char ch) { return std::isalnum(static_cast<unsigned char>(ch)) || ch == '_'; };
+                        if (!word(text[i]) || std::isdigit(static_cast<unsigned char>(text[i]))) {
+                            while (i < text.size() && word(text[i])) ++i;  // (a number, all of it)
+                            if (i < text.size() && !word(text[i])) ++i;
+                            continue;
+                        }
+                        size_t e = i;
+                        while (e < text.size() && word(text[e])) ++e;
+                        const std::string_view name(text.data() + i, e - i);
+                        const bool member = (i >= 1 && text[i - 1] == '.') || (i >= 2 && (text.compare(i - 2, 2, "->") == 0 || text.compare(i - 2, 2, "::") == 0));
+                        if (const auto v = values.find(name); v != values.end() && !member && std::ranges::find(seen, name) == seen.end() && !quiet(start + i)) {
+                            seen.push_back(name);
+                            said += (said.empty() ? "" : ", ") + std::string(name) + " = " + v->second;
+                        }
+                        i = e;
+                    }
+                    if (!said.empty()) lines.emplace_back(line, std::move(said));
+                }
+            }
+            Font& font = *font_;
+            auto note = [&](u64 line, const std::string& stop, const std::string& said) {
+                TextBox box;
+                const std::string gap = stop.empty() || said.empty() ? "" : "   ";
+                box.resize(std::min<u32>(width_of(stop) + width_of(gap) + width_of(said), 120), 1);
+                const u32 col = put(box, font, 0, 0, stop, ink::kAccent);  // (upright: the font's italic may be a script)
+                put(box, font, 0, col + width_of(gap), said, ink::kMuted);
+                c.cells.push_back(std::move(box.cells));
+                c.texts.push_back(std::to_string(line + 1) + ": " + stop + gap + said);
+                const u64 start = buf.line_start(line);
+                c.notes.push_back({line, d->ed.col_between(start, d->ed.line_end(line)) + 3, nullptr, static_cast<u32>(c.cells.back().size())});
+            };
+            const std::string stop = "\xE2\x97\x80 stopped" + (u.reason.empty() ? std::string() : ": " + u.reason);
+            bool stopped_said = false;
+            for (const auto& [line, said] : lines) {
+                note(line, line == l ? stop : std::string(), said);
+                stopped_said |= line == l;
+            }
+            if (!stopped_said && l >= g.top_line && l < g.bottom()) note(l, stop, {});
+            for (size_t k = 0; k < c.notes.size(); ++k) c.notes[k].cells = c.cells[k].data();  // (once they have stopped moving)
+        }
+        if (c.notes.empty()) continue;
+        // Each where nothing else is said (a problem's message comes first).
         std::vector<GridNote>& notes = debug_notes_[vi];
-        notes.clear();
-        bool taken = false;
-        for (const GridNote& n : g.notes) {
-            notes.push_back(n);
-            taken |= n.line == l;
-        }
-        if (!taken) {
-            const u64 start = d->ed.buf.line_start(l), end = d->ed.line_end(l);
-            notes.push_back({l, d->ed.col_between(start, end) + 3, debug_note_cells_[vi].data(), static_cast<u32>(debug_note_cells_[vi].size())});
-        }
+        notes.assign(g.notes.begin(), g.notes.end());
+        for (const GridNote& n : c.notes)
+            if (std::ranges::none_of(g.notes, [&](const GridNote& o) { return o.line == n.line; })) notes.push_back(n);
         g.notes = notes;
     }
 }
@@ -1853,6 +1936,13 @@ std::string App::debug_dump() {
 }
 
 // The breakpoints: each file's name and line, with what it waits for.
+std::string App::debug_inline_dump() {
+    const DebugUi::Inline& c = debugui_->inline_[0];
+    std::string out;
+    for (const std::string& t : c.texts) out += (out.empty() ? "" : " | ") + t;
+    return out.empty() ? "none" : out;
+}
+
 std::string App::debug_breaks_dump() {
     DebugUi& u = *debugui_;
     std::string out;

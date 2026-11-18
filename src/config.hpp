@@ -141,6 +141,7 @@ struct Config {
     std::vector<LspServer> lsp_servers;  // [lsp.servers.NAME], tried before the built-in ones
 
     // [git]
+    bool debug_inline_values = true;  // while stopped, the values of the variables a line names after its end
     bool git = true;        // show git's view of the files: changed lines, the Git tab of the side panel
 
     // [panel]

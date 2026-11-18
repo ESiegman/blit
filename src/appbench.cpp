@@ -1081,6 +1081,8 @@ void App::run_script(const char* script) {
             debug_wait(arg);
         } else if (verb == "debugdump") {
             std::fprintf(stderr, "%s\n", debug_dump().c_str());
+        } else if (verb == "debuginline") {  // the notes after the lines of the first view while stopped (where, the values), as last drawn
+            std::fprintf(stderr, "%s\n", debug_inline_dump().c_str());
         } else if (verb == "docdump") {  // docdump:N, the tab in front's title, then its lines from N before the cursor's to N after (the cursor's marked >, and in it the cursor |)
             const Editor& ed = pane_->doc->ed;
             const u64 n = static_cast<u64>(std::max(0, std::atoi(arg.c_str()))), at = ed.buf.line_of(ed.cursor());

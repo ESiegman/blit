@@ -374,6 +374,10 @@ struct Parser {
             if (!as_bool(v, &c.git)) warn(std::string(key) + " should be true or false");
             return;
         }
+        if (key == "debug.inline_values") {
+            if (!as_bool(v, &c.debug_inline_values)) warn(std::string(key) + " should be true or false");
+            return;
+        }
         if (key == "git.blame") return warn(std::string("git.blame is no longer a setting: blame shows in a file when ") + kBlameKeys + " or the Git tab's Blame turns it on");
         if (key == "panel.open") {
             if (!as_bool(v, &c.panel_open)) warn("panel.open should be true or false");
@@ -758,6 +762,7 @@ const Getter kGetters[] = {
     BLIT_GET("lsp.semantic_colors", flag(c.lsp_semantic)),
     BLIT_GET("lsp.highlight_uses", flag(c.lsp_uses)),
     BLIT_GET("git.enabled", flag(c.git)),
+    BLIT_GET("debug.inline_values", flag(c.debug_inline_values)),
     BLIT_GET("panel.open", flag(c.panel_open)),
     BLIT_GET("panel.width", num(c.panel_width)),
     BLIT_GET("scroll.lines", num(c.scroll_lines)),
