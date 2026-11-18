@@ -159,6 +159,59 @@ Profile invert_profile(const Profile& p) {
     return q;
 }
 
+ProfileDiff diff_profiles(const Profile& before, const Profile& after) {
+    ProfileDiff d;
+    d.node_before.assign(after.nodes.size(), -1.0);
+    if (after.nodes.empty() || before.nodes.empty()) return d;
+    const double bw = before.weight ? static_cast<double>(before.weight) : 1.0, aw = after.weight ? static_cast<double>(after.weight) : 1.0;
+    auto key = [](const ProfileFunc& f) { return f.name + '\0' + f.module; };
+    // The same paths: from the roots down, each kid matched by its function.
+    d.node_before[0] = 1.0;
+    std::vector<std::pair<u32, u32>> todo{{0, 0}};
+    while (!todo.empty()) {
+        const auto [a, b] = todo.back();
+        todo.pop_back();
+        for (const u32 ka : after.nodes[a].kids) {
+            const std::string want = key(after.funcs[after.nodes[ka].func]);
+            for (const u32 kb : before.nodes[b].kids)
+                if (key(before.funcs[before.nodes[kb].func]) == want) {
+                    d.node_before[ka] = static_cast<double>(before.nodes[kb].total) / bw;
+                    todo.emplace_back(ka, kb);
+                    break;
+                }
+        }
+    }
+    // The functions, by their names.
+    std::unordered_map<std::string, u32> was;
+    for (u32 f = 1; f < before.funcs.size(); ++f) was.emplace(key(before.funcs[f]), f);
+    std::vector<bool> seen(before.funcs.size(), false);
+    for (u32 f = 1; f < after.funcs.size(); ++f) {
+        const ProfileFunc& af = after.funcs[f];
+        if (!af.total) continue;
+        ProfileDiff::Row r;
+        r.func = f;
+        r.name = af.name;
+        r.self_after = static_cast<double>(af.self) / aw, r.total_after = static_cast<double>(af.total) / aw;
+        if (const auto it = was.find(key(af)); it != was.end()) {
+            seen[it->second] = true;
+            r.self_before = static_cast<double>(before.funcs[it->second].self) / bw, r.total_before = static_cast<double>(before.funcs[it->second].total) / bw;
+        }
+        d.rows.push_back(std::move(r));
+    }
+    for (u32 f = 1; f < before.funcs.size(); ++f)
+        if (!seen[f] && before.funcs[f].total) {
+            ProfileDiff::Row r;
+            r.name = before.funcs[f].name;
+            r.self_before = static_cast<double>(before.funcs[f].self) / bw, r.total_before = static_cast<double>(before.funcs[f].total) / bw;
+            d.rows.push_back(std::move(r));
+        }
+    std::ranges::stable_sort(d.rows, [](const ProfileDiff::Row& x, const ProfileDiff::Row& y) {
+        const double dx = std::abs(x.self_after - x.self_before), dy = std::abs(y.self_after - y.self_before);
+        return dx != dy ? dx > dy : std::abs(x.total_after - x.total_before) > std::abs(y.total_after - y.total_before);
+    });
+    return d;
+}
+
 bool Profile::thread_root(u32 node) const {
     return node != 0 && std::ranges::any_of(by_thread, [&](const ProfileThread& t) { return t.root == node; });
 }

@@ -70,6 +70,23 @@ std::string percent(u64 part, u64 whole) {
     return buf;
 }
 
+// A share (0..1) as percent; a change of share in points, signed.
+std::string share_text(double f) {
+    char buf[32];
+    const double p = 100.0 * f;
+    std::snprintf(buf, sizeof buf, p >= 10 ? "%.0f%%" : "%.1f%%", p);
+    return buf;
+}
+std::string change_text(double d) {
+    char buf[32];
+    const double p = 100.0 * d;
+    if (std::abs(p) < 0.05) return "0";
+    std::snprintf(buf, sizeof buf, std::abs(p) >= 10 ? "%+.0f" : "%+.1f", p);
+    std::string s = buf;
+    if (s[0] == '-') s.replace(0, 1, "\xE2\x88\x92");  // (a minus sign)
+    return s;
+}
+
 std::string with_commas(u64 n) {
     std::string s = std::to_string(n);
     for (int i = static_cast<int>(s.size()) - 3; i > 0; i -= 3) s.insert(static_cast<size_t>(i), ",");
@@ -135,6 +152,11 @@ struct ProfView {
     u32 rel_of = ~0u;
     int rel_thread = -2;
     u32 rel_sel = 0, rel_top = 0;
+    // Compared with an earlier profile (base): the difference, and the row
+    // of its list chosen.
+    std::shared_ptr<Profile> base;
+    std::shared_ptr<ProfileDiff> diff;
+    u32 dsel = 0, dtop = 0;
     std::vector<u16> depth;  // of each node (a thread's root is at 0)
     std::vector<bool> is_root;  // (the roots: of all threads, and of each)
     u16 deepest = 0;
@@ -207,6 +229,7 @@ struct App::ProfUi {
     std::vector<Row> rows;
     u32 sel = 0;
     float tones[8][4] = {};  // the frames' colours (Popup::tones)
+    float diff_tones[8][4] = {};  // and a comparison's: grown, the same, shrunk
     // The inline performance labels, for each document: made again when its text,
     // the profile shown or the font change.
     struct Notes {
@@ -460,6 +483,47 @@ void App::prof_sync() {
     if (u.done.size() > 20) u.done.resize(20);
     u.done_files.resize(std::min(u.done_files.size(), u.done.size()));
     prof_open(p);
+}
+
+// Two profiles compared in a tab of their own: the later's flame graph,
+// each frame coloured by how its share moved since the earlier, and each
+// function's share before and after.
+void App::prof_compare(std::shared_ptr<Profile> before, std::shared_ptr<Profile> after) {
+    Doc* d = add_doc(pane_->tab + 1);
+    d->title = "Compared: " + short_path(after->program) + " " + before->when + " \xE2\x86\x92 " + after->when;
+    d->read_only = true;
+    auto v = std::make_shared<ProfView>();
+    v->p = v->orig = after;
+    v->base = std::move(before);
+    v->diff = std::make_shared<ProfileDiff>(diff_profiles(*v->base, *after));
+    prof_view_init(*v);
+    if (!v->diff->rows.empty())  // (the function chosen is the list's first, the one that moved most)
+        for (u32 j = 0; j < v->order.size(); ++j)
+            if (v->order[j] == v->diff->rows[0].func) v->sel = j;
+    d->prof = v;
+    tab_show(pane_->tab + 1);
+    panel_focus(false);
+    ++prof_gen_;
+    dirty_ = true;
+}
+
+// With a profile's tab in front: another of those made or opened, chosen,
+// as what it is compared with (the earlier).
+void App::prof_compare_pick() {
+    if (!profui_ || !pane_->doc->prof || pane_->doc->prof->diff) return notify("A profile's tab is what is compared");
+    ProfUi& u = *profui_;
+    const std::shared_ptr<Profile> after = pane_->doc->prof->orig;
+    std::vector<std::shared_ptr<Profile>> others;
+    std::vector<std::string> items;
+    for (const std::shared_ptr<Profile>& p : u.done)
+        if (p != after) {
+            others.push_back(p);
+            items.push_back(kind_title(*p) + ": " + short_path(p->program) + " " + p->when + (p->args.empty() ? std::string() : "  " + p->args));
+        }
+    if (others.empty()) return notify("No other profile to compare with (make one, or open one kept)");
+    find_choose_item("Compare with", std::move(items), [this, others, after](int i) {
+        if (i >= 0 && static_cast<size_t>(i) < others.size()) prof_compare(others[static_cast<size_t>(i)], after);
+    });
 }
 
 // A profile made elsewhere (read from a file, for the tests): among those
@@ -832,6 +896,7 @@ void App::prof_relations(ProfView& v) {
 }
 
 void App::prof_thread(ProfView& v, int i) {
+    if (v.diff) i = -1;  // (a comparison is of all of it)
     const Profile& p = *v.p;
     const Profile& o = *v.orig;
     v.thread = i >= 0 && i < static_cast<int>(p.by_thread.size()) ? i : -1;
@@ -874,6 +939,29 @@ void make_colours(const Theme& t, float out[8][4]) {
     }
 }
 
+// A comparison's frames: 1 grown much, 2 grown, 3 about the same, 4 shrunk,
+// 5 shrunk much (and new: as grown much); 7 the one chosen.
+void make_diff_colours(const Theme& t, float out[8][4]) {
+    static const float kHue[8][3] = {
+        {0, 0, 0}, {0.90f, 0.25f, 0.22f}, {0.88f, 0.55f, 0.45f}, {0.55f, 0.55f, 0.58f}, {0.48f, 0.62f, 0.86f}, {0.22f, 0.45f, 0.92f}, {0.55f, 0.55f, 0.58f}, {0, 0, 0},
+    };
+    const float* accent = t.palette[kInkAccent];
+    for (u32 i = 1; i < 8; ++i) {
+        const float* h = i == kFocusTone ? accent : kHue[i];
+        for (int c = 0; c < 3; ++c) out[i][c] = t.bg[c] + (h[c] - t.bg[c]) * (i == kFocusTone ? 0.6f : i == 3 ? 0.35f : 0.55f);
+        out[i][3] = 1;
+    }
+}
+
+// The tone of a frame compared: by how its share of the time moved.
+u32 diff_tone(double before, double after) {
+    if (before < 0) return 1;  // (a path the earlier profile had not)
+    const double d = after - before;
+    if (std::abs(d) < 0.005) return 3;
+    if (d > 0) return d >= 0.05 ? 1 : 2;
+    return d <= -0.05 ? 5 : 4;
+}
+
 }  // namespace
 
 // Draws the profile tabs in front in their panes: over the pane's text
@@ -885,6 +973,7 @@ void App::prof_layout(FrameDesc& fd) {
     Font& font = *font_;
     const int cw = font.cell_w(), ch = font.cell_h();
     make_colours(theme_, u.tones);
+    make_diff_colours(theme_, u.diff_tones);
     for (const std::unique_ptr<Pane>& pane : panes_) {
         if (!pane->doc || !pane->doc->prof || fd.popup_count >= std::size(fd.popups)) continue;
         ProfView& v = *pane->doc->prof;
@@ -900,7 +989,7 @@ void App::prof_layout(FrameDesc& fd) {
         u64 key = 1469598103934665603ull;
         auto mix = [&](u64 k) { key = (key ^ k) * 1099511628211ull; };
         mix(cols), mix(rows), mix(font.generation()), mix(v.zoom), mix(static_cast<u64>(v.hover + 1)), mix(v.sel), mix(v.top), mix(v.shift), mix(static_cast<u64>(v.thread + 1));
-        mix(v.bottom_up), mix(v.relations), mix(v.rel_sel), mix(v.rel_top), mix(v.rel_of);
+        mix(v.bottom_up), mix(v.relations), mix(v.rel_sel), mix(v.rel_top), mix(v.rel_of), mix(v.dsel), mix(v.dtop);
         if (key != v.key) {
             v.key = key;
             v.box.resize(cols, rows);
@@ -922,6 +1011,7 @@ void App::prof_layout(FrameDesc& fd) {
             c = box.put(font, 1, 1, sum, kInkMuted);
             if (v.thread >= 0) c = box.put(font, 1, c, " \xC2\xB7 " + v.root_name() + " " + percent(v.whole, p.weight), 0);
             if (v.bottom_up) c = box.put(font, 1, c, " \xC2\xB7 bottom-up", 0);
+            if (v.base) c = box.put(font, 1, c, " \xC2\xB7 compared with " + v.base->when + (v.base->program != p.program ? " (" + short_path(v.base->program) + ")" : std::string()), 0);
             if (!p.note.empty()) put(box, font, 1, c + 3, clip(p.note, cols > c + 4 ? cols - c - 4 : 1), ink::kWarning);
 
             // Where in the graph the view is: the frames above the one zoomed into.
@@ -976,10 +1066,14 @@ void App::prof_layout(FrameDesc& fd) {
                 const u32 r = static_cast<u32>(row);
                 const ProfileFunc& f = p.funcs[p.nodes[node].func];
                 u32 tone;
-                if (static_cast<int>(node) == v.hover || (node != 0 && p.nodes[node].func == focus_func)) tone = kFocusTone;
+                // (Compared, colour says how a frame moved: only the one under the mouse is lit.)
+                if (static_cast<int>(node) == v.hover || (!v.diff && node != 0 && p.nodes[node].func == focus_func)) tone = kFocusTone;
+                else if (v.diff) tone = diff_tone(v.diff->node_before[node], p.weight ? static_cast<double>(p.nodes[node].total) / static_cast<double>(p.weight) : 0);
                 else if (ancestor || !f.own) tone = 1 + kOwnTones + hash_of(f.name) % kLibTones;
                 else tone = 1 + hash_of(f.name) % kOwnTones;
-                if (tone != kFocusTone && last_end[r] == c0 && last_layer[r] == tone)  // (two side by side of one tone would run into one)
+                const bool touching = last_end[r] == c0 && last_layer[r] == tone;
+                if (v.diff && touching && c1 - c0 >= 2) ++c0;  // (compared, the tones mean something: a gap between two of one tone instead)
+                if (!v.diff && tone != kFocusTone && touching)  // (two side by side of one tone would run into one)
                     tone = tone <= kOwnTones ? 1 + tone % kOwnTones : 1 + kOwnTones + (tone - kOwnTones) % kLibTones;
                 last_end[r] = c1;
                 last_layer[r] = tone;
@@ -1012,7 +1106,32 @@ void App::prof_layout(FrameDesc& fd) {
             if (v.list_rows && v.sel >= v.top + v.list_rows) v.top = v.sel - v.list_rows + 1;
             v.top = std::min(v.top, n > v.list_rows ? n - v.list_rows : 0);
             const u32 src_w = std::min<u32>(36, cols / 4), name_col = 16, src_col = cols > src_w + 2 ? cols - src_w - 1 : cols;
-            if (v.relations) {  // the chosen function's callers, then its callees, in place of the list
+            if (v.diff) {  // compared: each function's own share before and after, the most changed first
+                const std::vector<ProfileDiff::Row>& dr = v.diff->rows;
+                const u32 nd = static_cast<u32>(dr.size());
+                if (head < rows) {
+                    box.put(font, head, 1, "Before", kInkMuted);
+                    box.put(font, head, 9, "After", kInkMuted);
+                    box.put(font, head, 17, "Change", kInkMuted);
+                    box.put(font, head, 26, "Function", kInkMuted);
+                }
+                v.dsel = nd ? std::min(v.dsel, nd - 1) : 0;
+                if (v.dsel < v.dtop) v.dtop = v.dsel;
+                if (v.list_rows && v.dsel >= v.dtop + v.list_rows) v.dtop = v.dsel - v.list_rows + 1;
+                v.dtop = std::min(v.dtop, nd > v.list_rows ? nd - v.list_rows : 0);
+                for (u32 k = 0; k < v.list_rows && v.dtop + k < nd; ++k) {
+                    const u32 r = v.list_row + k;
+                    const ProfileDiff::Row& row = dr[v.dtop + k];
+                    const std::string b = share_text(row.self_before), a = share_text(row.self_after), moved = change_text(row.self_after - row.self_before);
+                    box.put(font, r, 7 - std::min<u32>(7, width_of(b)), b, kInkMuted);
+                    box.put(font, r, 15 - std::min<u32>(15, width_of(a)), a, 0);
+                    const u32 ink = row.self_after > row.self_before + 0.0005 ? kInkDiagnostic : row.self_after + 0.0005 < row.self_before ? kInkAccent : kInkMuted;
+                    box.put(font, r, 23 - std::min<u32>(23, width_of(moved)), moved, ink);
+                    const std::string name = row.func == ~0u ? row.name + "  (gone)" : row.name;
+                    box.put(font, r, 26, clip(name, cols > 28 ? cols - 28 : 1), row.func == ~0u ? kInkMuted : 0);
+                    if (v.dtop + k == v.dsel) box.select_row(r);
+                }
+            } else if (v.relations) {  // the chosen function's callers, then its callees, in place of the list
                 const u32 nr = static_cast<u32>(v.rel.size());
                 const std::string of = v.rel_of < p.funcs.size() ? std::string(short_name(p.funcs[v.rel_of].name)) : std::string();
                 if (head < rows) box.put(font, head, 2, clip("Callers and callees of " + of, cols > 4 ? cols - 4 : 1), kInkMuted);
@@ -1039,7 +1158,7 @@ void App::prof_layout(FrameDesc& fd) {
                 box.put(font, head, name_col, "Function", kInkMuted);
                 if (src_col < cols) box.put(font, head, src_col, "Source", kInkMuted);
             }
-            for (u32 k = 0; !v.relations && k < v.list_rows && v.top + k < n; ++k) {
+            for (u32 k = 0; !v.relations && !v.diff && k < v.list_rows && v.top + k < n; ++k) {
                 const u32 r = v.list_row + k;
                 const u32 fi = v.order[v.top + k];
                 const ProfileFunc& f = p.funcs[fi];
@@ -1083,7 +1202,7 @@ void App::prof_layout(FrameDesc& fd) {
         q.cells = v.box.cells.data();
         q.border_px = 0;
         q.bg = theme_.bg;
-        q.tones = &u.tones[0][0];
+        q.tones = v.diff ? &u.diff_tones[0][0] : &u.tones[0][0];
         q.pill = std::max(2.0f, lk.pill * 0.5f);
         q.pill_dx = std::max(1.0f, std::round(scale_));
         q.pill_dy = std::max(1.0f, std::round(scale_));
@@ -1215,6 +1334,32 @@ bool App::prof_key(const SDL_KeyboardEvent& k) {
     ProfView& v = *pane_->doc->prof;
     const Profile& p = *v.p;
     const u32 n = static_cast<u32>(v.order.size());
+    if (v.diff) {  // compared: the list of changes
+        const u32 nd = static_cast<u32>(v.diff->rows.size());
+        auto pick = [&] {  // (the graph's chosen function follows the row)
+            if (v.dsel < nd)
+                for (u32 j = 0; j < n; ++j)
+                    if (v.order[j] == v.diff->rows[v.dsel].func) v.sel = j;
+        };
+        switch (k.key) {
+            case SDLK_UP: v.dsel = v.dsel ? v.dsel - 1 : 0; pick(); break;
+            case SDLK_DOWN: v.dsel = nd ? std::min(v.dsel + 1, nd - 1) : 0; pick(); break;
+            case SDLK_PAGEUP: v.dsel = v.dsel > v.list_rows ? v.dsel - v.list_rows : 0; pick(); break;
+            case SDLK_PAGEDOWN: v.dsel = nd ? std::min(v.dsel + std::max(1u, v.list_rows), nd - 1) : 0; pick(); break;
+            case SDLK_RETURN:
+            case SDLK_KP_ENTER:
+                if (v.dsel < nd && v.diff->rows[v.dsel].func != ~0u) prof_go_to(p, v.diff->rows[v.dsel].func);
+                break;
+            case SDLK_ESCAPE:
+                if (v.zoom == v.root) return false;
+                v.zoom = p.nodes[v.zoom].parent;
+                break;
+            case SDLK_SPACE: pick(); goto zoom;  // (below)
+            default: return false;
+        }
+        dirty_ = true;
+        return true;
+    }
     if (k.key == SDLK_B && !(k.mod & SDL_KMOD_SHIFT)) {  // the graph bottom-up, or top-down again
         prof_flip(v);
         dirty_ = true;
@@ -1277,7 +1422,8 @@ bool App::prof_key(const SDL_KeyboardEvent& k) {
             if (v.zoom == v.root) return false;
             v.zoom = p.nodes[v.zoom].parent;
             break;
-        case SDLK_SPACE: {  // the graph zooms into the chosen function: where it took the most time (in the graph shown)
+        case SDLK_SPACE:
+        zoom: {  // the graph zooms into the chosen function: where it took the most time (in the graph shown)
             if (v.sel >= n) break;
             const u32 func = v.order[v.sel];
             u32 best = 0;
@@ -1464,6 +1610,15 @@ std::string App::prof_dump() {
         const ProfView& v = *pane_->doc->prof;
         out += "; tab: zoom " + (v.zoom != v.root ? std::string(short_name(v.p->funcs[v.p->nodes[v.zoom].func].name)) : v.root_name());
         if (v.thread >= 0 && !v.order.empty()) out += ", heaviest " + std::string(short_name(v.p->funcs[v.order[0]].name));
+        if (v.diff) {  // (the functions that moved most, their own share before and after)
+            out += ", compared with " + v.base->when + ":";
+            for (size_t k = 0; k < v.diff->rows.size() && k < 4; ++k) {
+                const ProfileDiff::Row& row = v.diff->rows[k];
+                out += " " + std::string(short_name(row.name)) + " " + share_text(row.self_before) + "\xE2\x86\x92" + share_text(row.self_after) + (row.func == ~0u ? " (gone)" : "");
+            }
+            out += ", frames:";  // (the bottom row's, each with its tone)
+            for (const u32 kid : v.p->nodes[v.root].kids) out += " " + std::string(short_name(v.p->funcs[v.p->nodes[kid].func].name)) + "=" + std::to_string(diff_tone(v.diff->node_before[kid], v.p->weight ? static_cast<double>(v.p->nodes[kid].total) / static_cast<double>(v.p->weight) : 0));
+        }
         if (v.bottom_up) {  // (the bottom row: where time was spent, each with its share)
             out += ", bottom-up:";
             for (const u32 kid : v.p->nodes[v.root].kids) out += " " + std::string(short_name(v.p->funcs[v.p->nodes[kid].func].name)) + "=" + percent(v.p->nodes[kid].total, v.whole);

@@ -32,6 +32,13 @@ sample() {  # thread, time, weight, frames (the innermost first)
     sample 100 1.200 20 leaf_a other main
     sample 101 1.300 40 leaf_b worker
 } >"$dir/a.perf"
+# Later: leaf_b down to 10, leaf_a up to 50, fresh new at 40, worker gone.
+{
+    sample 100 1.000 10 leaf_a mid main
+    sample 100 1.100 10 leaf_b mid main
+    sample 100 1.200 40 leaf_a other main
+    sample 100 1.300 40 fresh main
+} >"$dir/b.perf"
 
 failed=0
 check() {
@@ -59,6 +66,12 @@ run "profopen:$dir/a.perf;frame;key:c;frame;profdump"
 check "the heaviest function's callers and callees" 'zoom all, of leaf_b: callers worker=40% mid=30% | callees'
 run "profopen:$dir/a.perf;frame;key:c;frame;key:Down;key:Return;frame;profdump"
 check "a caller chosen: its own callers and callees" 'zoom all, of mid: callers main=40% | callees leaf_b=30% leaf_a=10%'
+
+# Two compared: the later's graph, its frames coloured by how their share
+# moved (1 grown much ... 5 shrunk much); each function's own share before
+# and after, those that moved most first, one gone among them.
+run "profopen:$dir/a.perf;profopen:$dir/b.perf;frame;command:Compare with a profile…;key:Return;frame;profdump"
+check "two profiles compared" 'zoom all, compared with 00:00: leaf_b 70%→10% fresh 0.0%→40% leaf_a 30%→50% main 0.0%→0.0%, frames: main=1'
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "profviews ok"
 exit $failed

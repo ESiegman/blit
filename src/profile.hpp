@@ -113,6 +113,22 @@ private:
 // the callers the time), and so are their indices.
 Profile invert_profile(const Profile& p);
 
+// Two profiles of the same program compared, before and after: for each
+// node of the later one's tree (all threads), the share of the earlier's
+// weight the same path had (by its functions' names; -1 where it had no
+// such path); and each function's own and total share before and after,
+// those that changed most first, with those the later one no longer has.
+struct ProfileDiff {
+    std::vector<double> node_before;  // by the later profile's node
+    struct Row {
+        u32 func = ~0u;     // the later profile's function (~0: one it no longer has)
+        std::string name;   // (the earlier's name, for one that is gone)
+        double self_before = 0, self_after = 0, total_before = 0, total_after = 0;  // shares of each profile's weight
+    };
+    std::vector<Row> rows;
+};
+ProfileDiff diff_profiles(const Profile& before, const Profile& after);
+
 // The two profilers' output read into a profile (prefix: put before every
 // source path, "ssh://host" for one recorded on another machine).
 // (scale: what one of perf's periods weighs, a page's bytes for page

@@ -764,6 +764,8 @@ private:
     void prof_open_kept(const std::string& path);
     void prof_thread(struct ProfView& v, int i);
     void prof_take_profile(std::shared_ptr<struct Profile> p);
+    void prof_compare(std::shared_ptr<struct Profile> before, std::shared_ptr<struct Profile> after);
+    void prof_compare_pick();
     void prof_view_init(struct ProfView& v);
     void prof_flip(struct ProfView& v);
     void prof_relations(struct ProfView& v);

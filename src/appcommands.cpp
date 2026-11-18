@@ -341,6 +341,7 @@ void App::commands_create() {
     own("Add a caret on the line above", mac ? std::vector<Chord>{key(SDLK_UP, kC | kS)} : std::vector<Chord>{}, [this] { caret_add_line(-1); });
     own("Add a caret on the line below", mac ? std::vector<Chord>{key(SDLK_DOWN, kC | kS)} : std::vector<Chord>{}, [this] { caret_add_line(1); });
     own("Insert a snippet\xE2\x80\xA6", {}, [this] { snippet_pick(); });
+    own("Compare with a profile\xE2\x80\xA6", {}, [this] { prof_compare_pick(); });
     own("Leave one caret", {}, [this] {
         pane_->doc->ed.clear_carets();
         dirty_ = true;
