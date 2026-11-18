@@ -2834,6 +2834,39 @@ new fields, the lanes (an octopus merge, a lane passing under one that
 meets), the three-way merge (its chunks, markers, each take) and, on
 random texts, that a side left as the base gives the other.
 
+### Round 58: the editor's core
+
+More carets than one: the editor keeps other carets beside the primary,
+moved through each edit as marks are and merged where they meet; a key
+runs at each in turn as one undo step (with Vim, Vim's state as it was
+before the key for every caret); the others are drawn by the grid shader
+(a decoration kind of their own, a bar in the cursor's colour). Snippets:
+the servers' and one's own (blit.snippet), their tab stops kept as the
+editor's spans, which move with the text, a stop in several places a
+caret in each.
+
+With one caret, which is nearly always, an edit pays a test of an empty
+list (the carets, the spans), and a key a call through a lambda; the
+carets' marks are made only when there are others, and only for the split
+with the keyboard. Turn about, five rounds, 2560x1600, against the build
+before the milestone (2eebbc9):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 17,498 / 53.88 µs / 1.92 µs | 17,340 / 53.33 µs / 2.00 µs |
+| Typing, everything on: the same | 17,665 / 48.79 µs / 3.79 µs | 17,831 / 48.21 µs / 3.75 µs |
+| Scrolling code-100m.txt, plain: the same | 19,028 / 49.62 µs / 0.67 µs | 19,126 / 49.42 µs / 0.67 µs |
+
+No change. Tests: edit.sh's carets (on the lines below, the next match
+thrice, every match, deleted and moved at each, one undo, copied and
+pasted a line each, Alt+click and Alt+drag; with Vim a command at each,
+Cmd+D's matches changed as Visual mode's, one undo) and snippets of one's
+own (stop to stop, with Vim, a stop in two places, a choice, one wrapping
+the selection, undo ending one, a trigger inside a word); lsp.sh's
+snippet from a server (its stops, filled in); fuzz_buffer.cpp checks of
+the editor's carets (typed and deleted at each, merged, typed at random
+places against the same done by hand) and of snippets read and indented.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

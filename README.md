@@ -30,6 +30,9 @@ Normal, Insert, Replace, Visual, Visual Line and Visual Block, the command
 line, registers, macros, marks, text objects and dot-repeat, with Neovim's
 keys. Search and `:s` take Vim's own regular expressions, back-references
 and look-around included. Or switch the modes off and edit as anywhere else.
+Either way: more carets than one (the next match, every match, a column),
+each taking the command, and snippets with tab stops, the servers' and
+your own.
 
 ![a block chosen across four lines in Visual Block mode](docs/media/vim.png)
 

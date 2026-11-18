@@ -191,6 +191,9 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | Expand the selection to what the syntax tree has around it / shrink it back | Ctrl+Shift+Cmd+Right / Left | Alt+Shift+Right / Left |
 | Fold / unfold the block at the cursor | Cmd+Option+[ / ] | Ctrl+Alt+[ / ] |
 | Move the line (or the lines chosen) up / down; copy them below / above | Option+Up / Down; Option+Shift+Down / Up | Alt+Up / Down; "Copy the lines down" in the command search |
+| Select the word, then add the next match as a caret / add every match | Cmd+D / Cmd+Shift+L | Ctrl+D / Ctrl+Shift+L |
+| Add a caret on the line above / below | Ctrl+Shift+Up / Down | "Add a caret on the line above" ("… below") in the command search |
+| Add a caret (or take one away) / a column of carets | Option+click / Option+drag | Alt+click / Alt+drag |
 | Save / open (in a new tab) | Cmd+S / Cmd+O | Ctrl+S / Ctrl+O (or Alt+O) |
 | Save as… / save all | Cmd+Shift+S / Cmd+Option+S | Ctrl+Shift+S / Ctrl+Alt+S |
 | Open a folder | Cmd+Shift+O | Ctrl+Shift+O |
@@ -1111,6 +1114,7 @@ front):
 | `blit.opt.SECTION.NAME` | read and set any setting (`blit.opt.lsp.servers.x = { command = {...} }`) |
 | `blit.map(mode, lhs, rhs, opts)`, `blit.unmap(mode, lhs)`, `blit.maps()` | mappings; opts: `desc`, `remap` |
 | `blit.command(name, fn_or_line, opts)`, `blit.delcommand(name)` | `:Name`; opts: `nargs` (`0`, `1`, `?`, `+`, `*`), `bang`, `range`, `desc`; fn gets `args`, `fargs`, `bang`, `line1`, `line2` |
+| `blit.snippet(trigger, body, opts)` | a snippet of one's own (Tab after `trigger` puts it in); opts: `lang` (a language or a list of them; none: every one), `desc` |
 | `blit.on(events, opts, fn)` → id, `blit.off(id or group)`, `blit.group(name)`, `blit.emit(name, data)` | events; opts: `pattern`, `once`, `group`; fn gets `event`, `buf`, `file`, `match`, `data` |
 | `blit.cmd(line)`, `blit.normal(keys)`, `blit.feed(keys, remap)` | a command line, Vim keys, keys as if typed |
 | `blit.mode()`, `blit.count()` | `n`, `no`, `i`, `R`, `v`, `V`, `"\x16"`, `c` |
@@ -1275,6 +1279,52 @@ none in a string or a comment). Typing the closer steps over the one put
 in, Backspace right after the opener takes both, and Enter between two
 brackets opens an indented line between them. With text selected, the
 two go round it. `blit.opt.editor.close_pairs = false` turns it off.
+
+**More carets than one.** Cmd+D selects the word at the cursor; again, it
+adds the next place that text is (past the end, round from the top) as a
+caret of its own, selected, and goes there; Cmd+Shift+L adds every place
+at once. Ctrl+Shift+Up and Down add a caret on the line above or below,
+Option+click adds one where you click (on one, it goes), and Option+drag
+makes a column of them, a caret on each line between, selecting the
+columns between. Then typing, Backspace, Delete, Enter, Tab and the
+moves happen at every caret, and one undo takes back all of it (and
+leaves one caret). Carets that meet become one. Copying gives what each
+has selected, a line each; pasting as many lines as there are carets
+puts a line at each, and anything else all of it at each. Esc (or a plain
+click) leaves only the caret you were at. The others are thin bars in the
+cursor's colour, and the status bar says how many there are. Brackets
+are not closed for you while there are several. With Vim's modes on, each
+caret takes the command: `dw`, `A;`, `ciw`, a count, `.`, typing in Insert
+mode; the matches Cmd+D adds are Visual mode's, so `c` changes them all.
+What is not about a place runs once, at the caret you were at: the `:`
+line, a search, `u` and Ctrl+R (after which one caret is left), macros.
+
+**Snippets.** A language server's completion that is a snippet goes in
+with its tab stops: the first placeholder selected, so that typing takes
+its place; Tab goes on to the next, Shift+Tab back. A stop in more than
+one place has a caret at each, so what is typed goes in at all of them; a
+stop with choices offers them. The stops still to come are marked. The
+last stop (where the snippet says the cursor ends), Esc, an undo, or Tab
+with the cursor gone from the snippet ends it. With Vim's modes on the
+stops are filled in from Insert mode. Snippets of your own are made in
+`init.lua`, each with the word that puts it in when Tab is pressed after
+it, and the languages it is for:
+
+```lua
+blit.snippet("fn", "int ${1:name}(${2:void})\n{\n\t$0\n}", {lang = "cpp", desc = "a function"})
+blit.snippet("todo", "// TODO($TM_FILENAME_BASE): $0")
+blit.snippet("wrap", "(${TM_SELECTED_TEXT})$0")
+```
+
+The body is in the servers' form: `$1`, `${1:default}` (with stops inside
+it), `${1|one,two|}`, `$0`; variables (`$TM_FILENAME`, `$TM_SELECTED_TEXT`,
+`$TM_CURRENT_LINE`, `$CLIPBOARD`, `$CURRENT_YEAR` and the rest of the
+date, `${NAME:default}` where one has no value); `\$` and `\}` for the
+characters themselves. A tab in it is one level of the file's indentation,
+and its lines after the first start as far in as the line it goes into.
+"Insert a snippet…" lists those for the file in front; one chosen over a
+selection has it as `TM_SELECTED_TEXT`. A trigger inside a longer word
+does nothing.
 
 **Marks along the scroll bar**, down the right edge of a file longer than
 its view, show where in the whole file the cursor is, and the problems,

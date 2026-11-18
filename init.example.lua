@@ -139,6 +139,11 @@
 -- Cmd+Option+B or the Git tab's Blame turns it on.
 -- blit.opt.git.enabled = true
 
+---------------------------------------------------------------- snippets
+-- Tab after the trigger puts one in; Tab goes on through its stops.
+-- blit.snippet("fn", "int ${1:name}(${2:void})\n{\n\t$0\n}", {lang = "cpp", desc = "a function"})
+-- blit.snippet("todo", "// TODO($TM_FILENAME_BASE): $0")
+
 ---------------------------------------------------------------- debugging
 -- blit.opt.debug.inline_values = true  -- while stopped, the values of the variables a line names after its end
 
