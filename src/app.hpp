@@ -184,6 +184,7 @@ struct Doc {
     std::shared_ptr<RebaseView> rebase;  // an interactive rebase's tab: the commits, and what is done with each (appgit.cpp)
     std::shared_ptr<MergeView> merge;  // a merge tab's: a conflicted file's three versions, and what is taken of each (appgit.cpp)
     u64 seen_rev = ~0ull, changed_ns = 0;  // when its text was last seen to have changed
+    u64 hist_rev = ~0ull, hist_ns = 0;     // the text last kept in its local history, and when (apphistory.cpp; 0: not yet this session)
     i64 disk_stamp = 0;                    // the file's change time when it was last read or written
     // A tab that shows something made and not a file (a diff, a commit):
     // what it is called, that it is not to be typed in, and its colours.
@@ -591,6 +592,20 @@ private:
     std::string lens_dump();
     bool lens_waiting() const;
     std::vector<GridNote> lens_view_notes_;
+    // Local history (apphistory.cpp).
+    std::string history_folder(const Doc& d) const;
+    bool history_wanted(const Doc& d) const;
+    void history_keep_doc(Doc& d, bool saved, std::string text);
+    void history_before_save(Doc& d);
+    void history_saved(Doc& d);
+    void history_tick();
+    void history_show();
+    void history_try(int i);
+    void history_close_tab();
+    void history_put_back(int i);
+    std::string history_dump();
+    std::shared_ptr<struct HistoryWork> history_work_;
+    std::shared_ptr<struct HistoryView> history_view_;
     // Peek (apppeek.cpp).
     void peek_open();
     void peek_show(LspLocation loc);  // (a copy: the client's own goes as the keyboard moves)

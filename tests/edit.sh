@@ -157,5 +157,16 @@ if [ "$(uname -s)" = Darwin ]; then  # (the cells' size is the font's: the Mac's
     check "Alt+click: a caret, gone again; Alt+drag: a column" 'fooQ one / fooQo / barQo / endQ /  @ 1:5 2:5 3:5 *4:5'
 fi
 
+# Local history: the text on disk kept at the first save, then each save;
+# the versions listed, each tried out as a diff against now, one put back.
+export BLIT_HISTORY_DIR="$dir/data"
+printf 'one\ntwo\n' >"$dir/hist.txt"
+BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x600 --shot "$dir/shot.bmp" --script "frame;text:X;save;text:Y;save;frame" "$dir/hist.txt" >/dev/null 2>&1
+got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x600 --shot "$dir/shot.bmp" --script "frame;historydump" "$dir/hist.txt" 2>&1 >/dev/null | tail -1)
+check "local history: the text before the first save, and each save" "sss"
+got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x600 --shot "$dir/shot.bmp" --script "frame;command:Show the file's local history;frame;key:Down;frame;lsptext;key:Down;frame;key:Return;frame;lsptext;dump:tabs" "$dir/hist.txt" 2>&1 >/dev/null | grep -v '^blit: ' | tail -3 | tr '\n' '#')
+check "tried out: the diff against now; chosen: put back, the tab of diffs gone" "@@ -1 +1 @@ / -Xone / +XYone /  two#one / two / #tabs: >[hist.txt*]#"
+unset BLIT_HISTORY_DIR
+
 [ "$failed" = 0 ] && echo "edit: all passed"
 exit "$failed"

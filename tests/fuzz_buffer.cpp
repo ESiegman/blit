@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <filesystem>
 #include <functional>
 #include <mutex>
 #include <random>
@@ -32,6 +33,7 @@
 #include "snippet.hpp"
 #include "asm.hpp"
 #include "notebook.hpp"
+#include "history.hpp"
 #include "tests.hpp"
 #include "font.hpp"
 #include "git.hpp"
@@ -467,6 +469,36 @@ void notebook_test() {
     std::string fresh_script;
     check(notebook_read(notebook_write("", "# %%\n1 + 1\n"), &fresh, &fresh_script) && fresh_script == "# %%\n1 + 1\n", "notebook: a new one");
     check(!notebook_read("{\"x\": 1}", &fresh, &fresh_script), "notebook: JSON that is not one");
+}
+
+// Local history: versions kept newest first, read back as they were; the
+// same text not kept twice (a save marks it saved); the oldest let go past
+// the most kept; and each file's folder its own.
+void history_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    char tmpl[] = "/tmp/blit-history-XXXXXX";
+    const char* made = mkdtemp(tmpl);
+    check(made != nullptr, "history: a folder to try it in");
+    if (!made) return;
+    const std::string root = made, dir = history_dir(root, "/src/a.cpp");
+    check(dir != history_dir(root, "/src/b.cpp") && dir == history_dir(root, "/src/a.cpp"), "history: a folder for each file");
+    std::string err, text;
+    check(history_list(dir).empty(), "history: none at first");
+    check(history_keep(dir, "/src/a.cpp", "one\n", false, 1000, 3, &err), "history: kept");
+    check(history_keep(dir, "/src/a.cpp", "one\n", true, 2000, 3, &err), "history: the same again");
+    std::vector<HistoryEntry> e = history_list(dir);
+    check(e.size() == 1 && e[0].saved && e[0].when_ms == 1000, "history: the same text kept once, marked saved");
+    check(history_keep(dir, "/src/a.cpp", "two\n", true, 3000, 3, &err) && history_keep(dir, "/src/a.cpp", std::string(100000, 'x'), false, 3000, 3, &err),
+          "history: more kept (one at the same time)");
+    e = history_list(dir);
+    check(e.size() == 3 && e[0].when_ms == 3001 && !e[0].saved && e[1].when_ms == 3000 && e[2].when_ms == 1000, "history: newest first, in order however fast");
+    check(history_read(e[0].file, &text) && text == std::string(100000, 'x') && history_read(e[1].file, &text) && text == "two\n", "history: read back as kept");
+    check(history_keep(dir, "/src/a.cpp", "three\n", false, 4000, 3, &err) && history_list(dir).size() == 3 && history_list(dir).back().when_ms == 3000,
+          "history: the oldest let go past the most");
+    check(history_keep(dir, "/src/a.cpp", "", true, 5000, 3, &err) && history_read(history_list(dir)[0].file, &text) && text.empty(), "history: an empty text");
+    std::filesystem::remove_all(root);
 }
 
 // A profile's timeline: kept with each sample's time, narrowed to a
@@ -4979,6 +5011,7 @@ int main(int argc, char** argv) {
     snippets_test();
     asm_test();
     notebook_test();
+    history_test();
     find_test();
     folds_test();
     tests_test();

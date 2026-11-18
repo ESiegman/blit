@@ -890,6 +890,7 @@ void App::save() {
         remote_save(*pane_->doc);
         return;
     }
+    history_before_save(*pane_->doc);  // (the first save this session: the text on disk kept first)
     std::string err;
     const bool notebook = pane_->doc->nb || (is_notebook_path(pane_->doc->ed.path) && nb_new(*pane_->doc));
     const bool saved = notebook ? nb_save(*pane_->doc, &err) : pane_->doc->ed.save(&err);  // (a notebook: written as one)
@@ -904,6 +905,7 @@ void App::save() {
         script_saved(path);  // or one of the scripts (they run again)
         asm_saved(path);     // (its assembly made again)
         lens_saved();        // (and what refers to what counted again)
+        history_saved(*pane_->doc);  // (a version kept in its local history)
         if (script_) script_write(true, id);
     }
     dirty_ = true;
@@ -1476,6 +1478,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     asm_marks(fd);      // the lines of a file and of its assembly that go together
     nb_marks(fd);       // a notebook's saved outputs
     lens_marks(fd);     // how many references each definition on show has
+    history_tick();     // (typed in for a while: a version of it kept)
     if (script_) script_layout(w, h, fd);  // marks, boxes and messages of the scripts'
     prof_marks(fd);  // inline performance labels (after a server's and the scripts' notes)
     debug_marks(fd);  // and where the program being debugged has stopped
