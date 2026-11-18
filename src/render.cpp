@@ -266,6 +266,7 @@ void Renderer::release() {
 // colour one is passed over), each kept to its view or box.
 void Renderer::find_emoji(Font& font, const FrameDesc& fd, const u32* cells, const u32* view_base, const u32* row_base) {
     emoji_.clear();
+    std::fill(std::begin(view_colour_), std::end(view_colour_), false);
     if (!font.has_colour()) return;
     const float cw = static_cast<float>(font.cell_w()), ch = static_cast<float>(font.cell_h());
     const u32 lowest = font.colour_lowest();
@@ -295,10 +296,12 @@ void Renderer::find_emoji(Font& font, const FrameDesc& fd, const u32* cells, con
         const TextView& v = fd.views[i];
         if (!v.buf || !v.grid.cols) continue;
         const int clip[4] = {v.x, v.y, v.x + v.w, v.y + v.h};
+        const size_t before = emoji_.size();
         for (u32 r = 0; r < v.grid.rows; ++r)
             if (pict_rows_[row_base[i] + r])
                 row(cells + view_base[i] + static_cast<size_t>(r) * v.grid.cols, v.grid.cols, static_cast<float>(v.x) - v.origin[0],
                     static_cast<float>(v.y) + static_cast<float>(r) * ch - v.origin[1], clip, 0, 1 - v.dim);
+        view_colour_[i] = emoji_.size() > before;  // (its text shader has to draw colour glyphs)
     }
     for (u32 i = 0; i < fd.popup_count; ++i) {
         const Popup& p = fd.popups[i];
@@ -518,8 +521,9 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
         const int left = std::max(v.x, 0), top = std::max(v.y, 0);
         const int right = std::min(v.x + v.w, static_cast<int>(w)), bottom = std::min(v.y + v.h, static_cast<int>(h));
         if (right <= left || bottom <= top || !v.grid.cols || !v.grid.rows) continue;
-        // (The shader that rounds what is selected, and the one that dims too, only where there is something for them to do.)
-        bind(v.dim > 0 ? BLIT_PIPE_TEXT_DIM : v.sel_radius > 0 ? BLIT_PIPE_TEXT_FX : BLIT_PIPE_TEXT);
+        // (The shader that rounds what is selected and draws colour glyphs, and
+        // the one that dims too, only where there is something for them to do.)
+        bind(v.dim > 0 ? BLIT_PIPE_TEXT_DIM : v.sel_radius > 0 || view_colour_[i] ? BLIT_PIPE_TEXT_FX : BLIT_PIPE_TEXT);
         std::memcpy(u.cur_rect, v.cursor, sizeof u.cur_rect);
         u.cur_color[3] = v.cursor_block ? 0.5f : 1.0f;
         std::memcpy(u.thumb_rect, v.thumb, sizeof u.thumb_rect);

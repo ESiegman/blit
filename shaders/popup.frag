@@ -79,11 +79,10 @@ uint cell_at(ivec2 q, uint outside) {
     return cells[cell_base + uint(q.y) * cols + uint(q.x)];
 }
 
-// A colour glyph's pixel (premultiplied) over what is there.
-vec3 over_colour(vec3 col, uint slot, vec2 in_cell) {
+// A colour glyph's pixel (premultiplied), from the colour atlas.
+vec4 colour_of(uint slot, vec2 in_cell) {
     vec2 xy = vec2(float(slot & ((1u << atlas_shift) - 1u)), float((slot >> atlas_shift) - colour_at.y));
-    vec4 e = textureLod(colours, (xy * cell + in_cell + 0.5) * colour_inv.xy, 0.0);
-    return col * (1.0 - e.a) + e.rgb;
+    return textureLod(colours, (xy * cell + in_cell + 0.5) * colour_inv.xy, 0.0);
 }
 
 void main() {
@@ -100,14 +99,19 @@ void main() {
     uint slot = v & 0xFFFFu;
 
     float a = 0.0;
+    vec4 emoji = vec4(0.0);  // (a colour glyph's pixel: one read of one atlas or the other)
     if (slot > 32u) {
-        vec2 slot_xy = vec2(float(slot & ((1u << atlas_shift) - 1u)), float(slot >> atlas_shift));
-        a = textureLod(atlas, (slot_xy * cell + in_cell + 0.5) * inv_atlas, 0.0).r;
+        if (slot >= colour_at.x) {
+            emoji = colour_of(slot, in_cell);
+        } else {
+            vec2 slot_xy = vec2(float(slot & ((1u << atlas_shift) - 1u)), float(slot >> atlas_shift));
+            a = textureLod(atlas, (slot_xy * cell + in_cell + 0.5) * inv_atlas, 0.0).r;
+        }
     }
 
     vec3 back = (v & 0x80000000u) != 0u ? (((v >> 21) & 7u) != 0u ? tones[(v >> 21) & 7u].rgb : sel.rgb) : bg.rgb;
     vec3 col = mix(back, palette[(v >> 16) & 31u].rgb, a);
-    if (slot >= colour_at.x && slot > 32u) col = over_colour(col, slot, in_cell);
+    col = col * (1.0 - emoji.a) + emoji.rgb;
 
     // The outline.
     vec2 edge = min(px - frame_rect.xy, frame_rect.zw - 1.0 - px);
@@ -141,9 +145,14 @@ void main() {
     uint slot = v & 0xFFFFu;
 
     float a = 0.0;
+    vec4 emoji = vec4(0.0);
     if (in_grid && slot > 32u) {
-        vec2 slot_xy = vec2(float(slot & ((1u << atlas_shift) - 1u)), float(slot >> atlas_shift));
-        a = textureLod(atlas, (slot_xy * cell + in_cell + 0.5) * inv_atlas, 0.0).r;
+        if (slot >= colour_at.x) {
+            emoji = colour_of(slot, in_cell);
+        } else {
+            vec2 slot_xy = vec2(float(slot & ((1u << atlas_shift) - 1u)), float(slot >> atlas_shift));
+            a = textureLod(atlas, (slot_xy * cell + in_cell + 0.5) * inv_atlas, 0.0).r;
+        }
     }
 
     // Bit 31: selected. Bit 24: under the mouse. Either lights the cell's
@@ -171,7 +180,7 @@ void main() {
         }
     }
     vec3 col = mix(back, palette[(v >> 16) & 31u].rgb, a);
-    if (in_grid && slot >= colour_at.x && slot > 32u) col = over_colour(col, slot, in_cell);
+    col = col * (1.0 - emoji.a) + emoji.rgb;
 
     // The outline, and the box's own edge: a pixel the edge runs through is
     // partly the box and partly its shadow.

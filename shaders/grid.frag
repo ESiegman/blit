@@ -65,11 +65,10 @@ uint cell_at(ivec2 q, uint outside) {
     return cells[cell_base + uint(q.y) * cols + uint(q.x)];
 }
 
-// A colour glyph's pixel (premultiplied) over what is there.
-vec3 over_colour(vec3 col, uint slot, vec2 in_cell) {
+// A colour glyph's pixel (premultiplied), from the colour atlas.
+vec4 colour_of(uint slot, vec2 in_cell) {
     vec2 xy = vec2(float(slot & ((1u << atlas_shift) - 1u)), float((slot >> atlas_shift) - colour_at.y));
-    vec4 e = textureLod(colours, (xy * cell + in_cell + 0.5) * colour_inv.xy, 0.0);
-    return col * (1.0 - e.a) + e.rgb;
+    return textureLod(colours, (xy * cell + in_cell + 0.5) * colour_inv.xy, 0.0);
 }
 
 void main() {
@@ -85,6 +84,15 @@ void main() {
 
     // Slots up to 32 (space) are blank: most of the screen skips the atlas.
     float a = 0.0;
+#ifdef BLIT_FX
+    // A colour glyph (an emoji) from the colour atlas, in the build of the
+    // shader a view gets when it has one on show (render.cpp): the plain
+    // build does not pay for it.
+    vec4 emoji = vec4(0.0);
+    if (slot > 32u && slot >= colour_at.x) {
+        emoji = colour_of(slot, in_cell);
+    } else
+#endif
     if (slot > 32u) {
         vec2 slot_xy = vec2(float(slot & ((1u << atlas_shift) - 1u)), float(slot >> atlas_shift));
         a = textureLod(atlas, (slot_xy * cell + in_cell + 0.5) * inv_atlas, 0.0).r;
@@ -113,7 +121,9 @@ void main() {
     }
 #endif
     vec3 col = mix(back, palette[(v >> 16) & 31u].rgb, a);
-    if (slot >= colour_at.x) col = over_colour(col, slot, in_cell);  // (an emoji: from the colour atlas, no draw of its own)
+#ifdef BLIT_FX
+    col = col * (1.0 - emoji.a) + emoji.rgb;  // (an emoji: from the colour atlas, no draw of its own)
+#endif
 
     // Bit 30 marks the few cells that need more than a glyph: those the
     // cursor or the scroll thumb touch, and those with a wavy underline.

@@ -194,6 +194,7 @@ private:
     // with the frame's own pictures.
     std::vector<u8> pict_rows_;
     std::vector<PictureDraw> emoji_;
+    bool view_colour_[kMaxViews] = {};  // (each view: colour glyphs on show, so the shader that draws them)
     void find_emoji(Font& font, const FrameDesc& fd, const u32* cells, const u32* view_base, const u32* row_base);
     SDL_Window* win_ = nullptr;
     void* view_ = nullptr;  // the window's Metal view (Apple), made by SDL; Vulkan has none

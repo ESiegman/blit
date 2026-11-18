@@ -5,7 +5,7 @@
 
 using namespace metal;
 
-struct _28
+struct _25
 {
     float4 _m0;
     float4 _m1;
@@ -38,104 +38,107 @@ struct _28
     uint4 _m28;
 };
 
-struct _152
+struct _137
 {
     uint _m0[1];
 };
 
 struct main0_out
 {
-    float4 m_306 [[color(0)]];
+    float4 m_302 [[color(0)]];
 };
 
 static inline __attribute__((always_inline))
-float3 _17(thread const float3& _14, thread const uint& _15, thread const float2& _16, constant _28& _30, texture2d<float> _55, sampler _55Smplr)
+float4 _15(thread const uint& _13, thread const float2& _14, constant _25& _27, texture2d<float> _50, sampler _50Smplr)
 {
-    float2 _19 = float2(float(_15 & ((1u << _30._m13) - 1u)), float((_15 >> _30._m13) - _30._m28.y));
-    float4 _51 = _55.sample(_55Smplr, ((((_19 * _30._m7) + _16) + float2(0.5)) * _30._m27.xy), level(0.0));
-    return (_14 * (1.0 - _51.w)) + _51.xyz;
+    float2 _17 = float2(float(_13 & ((1u << _27._m13) - 1u)), float((_13 >> _27._m13) - _27._m28.y));
+    return _50.sample(_50Smplr, ((((_17 * _27._m7) + _14) + float2(0.5)) * _27._m27.xy), level(0.0));
 }
 
-fragment main0_out main0(constant _28& _30 [[buffer(0)]], const device _152& _154 [[buffer(1)]], texture2d<float> _195 [[texture(0)]], texture2d<float> _55 [[texture(2)]], sampler _195Smplr [[sampler(0)]], sampler _55Smplr [[sampler(2)]], float4 gl_FragCoord [[position]])
+fragment main0_out main0(constant _25& _27 [[buffer(0)]], const device _137& _139 [[buffer(1)]], texture2d<float> _195 [[texture(0)]], texture2d<float> _50 [[texture(2)]], sampler _195Smplr [[sampler(0)]], sampler _50Smplr [[sampler(2)]], float4 gl_FragCoord [[position]])
 {
     main0_out out = {};
-    float2 _89 = floor(gl_FragCoord.xy);
-    float2 _95 = _89 + _30._m9;
-    float2 _101 = floor((_95 + float2(0.5)) * _30._m8);
-    float2 _110 = _95 - (_101 * _30._m7);
-    uint _117 = 0u;
-    bool _122 = _95.x >= 0.0;
-    bool _128;
-    if (_122)
+    float2 _73 = floor(gl_FragCoord.xy);
+    float2 _79 = _73 + _27._m9;
+    float2 _85 = floor((_79 + float2(0.5)) * _27._m8);
+    float2 _94 = _79 - (_85 * _27._m7);
+    uint _101 = 0u;
+    bool _107 = _79.x >= 0.0;
+    bool _113;
+    if (_107)
     {
-        _128 = _95.y >= 0.0;
+        _113 = _79.y >= 0.0;
     }
     else
     {
-        _128 = _122;
+        _113 = _107;
     }
-    bool _138;
-    if (_128)
+    bool _123;
+    if (_113)
     {
-        _138 = _101.x < float(_30._m11);
-    }
-    else
-    {
-        _138 = _128;
-    }
-    bool _148;
-    if (_138)
-    {
-        _148 = _101.y < float(_30._m12);
+        _123 = _85.x < float(_27._m11);
     }
     else
     {
-        _148 = _138;
+        _123 = _113;
     }
-    if (_148)
+    bool _133;
+    if (_123)
     {
-        _117 = _154._m0[(_30._m14 + (uint(_101.y) * _30._m11)) + uint(_101.x)];
+        _133 = _85.y < float(_27._m12);
     }
-    uint _172 = _117 & 65535u;
-    float _176 = 0.0;
-    if (_172 > 32u)
+    else
     {
-        float2 _181 = float2(float(_172 & ((1u << _30._m13) - 1u)), float(_172 >> _30._m13));
-        _176 = _195.sample(_195Smplr, ((((_181 * _30._m7) + _110) + float2(0.5)) * _30._m10), level(0.0)).x;
+        _133 = _123;
     }
-    float3 _216;
-    if ((_117 & 2147483648u) != 0u)
+    if (_133)
     {
-        float3 _225;
-        if (((_117 >> uint(21)) & 7u) != 0u)
+        _101 = _139._m0[(_27._m14 + (uint(_85.y) * _27._m11)) + uint(_85.x)];
+    }
+    uint _157 = _101 & 65535u;
+    float _161 = 0.0;
+    float4 _163 = float4(0.0);
+    if (_157 > 32u)
+    {
+        if (_157 >= _27._m28.x)
         {
-            _225 = _30._m26[(_117 >> uint(21)) & 7u].xyz;
+            uint _175 = _157;
+            float2 _177 = _94;
+            _163 = _15(_175, _177, _27, _50, _50Smplr);
         }
         else
         {
-            _225 = _30._m2.xyz;
+            float2 _181 = float2(float(_157 & ((1u << _27._m13) - 1u)), float(_157 >> _27._m13));
+            _161 = _195.sample(_195Smplr, ((((_181 * _27._m7) + _94) + float2(0.5)) * _27._m10), level(0.0)).x;
         }
-        _216 = _225;
+    }
+    float3 _218;
+    if ((_101 & 2147483648u) != 0u)
+    {
+        float3 _227;
+        if (((_101 >> uint(21)) & 7u) != 0u)
+        {
+            _227 = _27._m26[(_101 >> uint(21)) & 7u].xyz;
+        }
+        else
+        {
+            _227 = _27._m2.xyz;
+        }
+        _218 = _227;
     }
     else
     {
-        _216 = _30._m0.xyz;
+        _218 = _27._m0.xyz;
     }
-    float3 _211 = _216;
-    float3 _246 = mix(_211, _30._m25[(_117 >> uint(16)) & 31u].xyz, float3(_176));
-    if ((_172 >= _30._m28.x) && (_172 > 32u))
+    float3 _213 = _218;
+    float3 _248 = mix(_213, _27._m25[(_101 >> uint(16)) & 31u].xyz, float3(_161));
+    _248 = (_248 * (1.0 - _163.w)) + _163.xyz;
+    float2 _272 = fast::min(_73 - _27._m15.xy, (_27._m15.zw - float2(1.0)) - _73);
+    if (fast::min(_272.x, _272.y) < _27._m16.w)
     {
-        float3 _269 = _246;
-        uint _271 = _172;
-        float2 _273 = _110;
-        _246 = _17(_269, _271, _273, _30, _55, _55Smplr);
+        _248 = _27._m16.xyz;
     }
-    float2 _276 = fast::min(_89 - _30._m15.xy, (_30._m15.zw - float2(1.0)) - _89);
-    if (fast::min(_276.x, _276.y) < _30._m16.w)
-    {
-        _246 = _30._m16.xyz;
-    }
-    out.m_306 = float4(_246, 1.0);
+    out.m_302 = float4(_248, 1.0);
     return out;
 }
 
