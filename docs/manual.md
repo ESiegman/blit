@@ -204,7 +204,7 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | Replace in this file / in files | Cmd+Option+F / Cmd+Shift+H | Ctrl+Alt+F / Ctrl+Shift+H |
 | The next / previous hit of Search in files (or of the references found, after them) | F4 / Shift+F4 | F4 / Shift+F4 |
 | The next / previous problem: the last build's, across files (else the language servers', across files) | F8 / Shift+F8 | F8 / Shift+F8 |
-| Go to the definition; find references; rename | F12; Shift+F12; F2 | F12; Shift+F12; F2 |
+| Go to the definition; peek at it; find references; rename | F12; Option+Shift+F12; Shift+F12; F2 | F12; Alt+Shift+F12; Shift+F12; F2 |
 | Go to the implementation / the type definition; the header or source | Cmd+F12 / Cmd+Shift+F12; Option+F12 | Ctrl+F12 / Ctrl+Shift+F12; Alt+F12 |
 | The file's outline / a symbol in the project | Cmd+Option+O / Cmd+Option+P | Ctrl+Alt+O / Ctrl+Alt+P |
 | Format the file (or the lines selected); fixes and refactorings here | Option+Shift+F; Option+Enter | Alt+Shift+F; Alt+Enter |
@@ -1434,6 +1434,15 @@ A server whose last file has been closed stops half a minute later.
 - **Signature help** appears after `(` and follows the argument being typed.
 - **Go to definition** with F12 or Cmd+click, and Ctrl+- to come back. A
   definition in another file opens that file.
+- **Peek at the definition** with Option+Shift+F12: the definition in a
+  box under the cursor's line (above it, when there is more room there),
+  a dozen lines or so across the split; the split under it is dimmed. The
+  box is a split of its own: its own tab, cursor and scroll, the text
+  editable as anywhere (the same file in both shows each edit in both).
+  Esc (in Vim, from Normal mode) closes it and gives the keyboard back;
+  so does a click in the split under it, or going to another split. A
+  file only the box had open, with changes, goes to a tab of the split
+  it was asked from, so that nothing typed is lost.
 - **Find references** with Shift+F12 (Vim's `gr`): a list of every place
   the name is used, each with its file, line and text, as Search in files
   shows them. Enter goes to one; afterwards F4 and Shift+F4 go to the next
@@ -1452,6 +1461,15 @@ A server whose last file has been closed stops half a minute later.
   the cursor is in. Typing narrows them, moving through them shows each,
   Enter goes there and Esc goes back. Without a server (or one that gives
   no outline) it is the definitions the syntax tree has.
+- **Calls and types**: "Show the calls to this function", "Show the calls
+  from this function", "Show the supertypes of this type" and "Show the
+  subtypes of this type" (the server's call and type hierarchies) list
+  them as a tree in the find box, the first level opened. **Right** on a
+  row asks for its level (▸ not asked yet, ▾ open), **Left** closes an
+  open one or goes to the row it is under, Enter goes to the row's place:
+  for a call coming in, the line where it calls; otherwise where the
+  function or type is. clangd gives both hierarchies (its calls going out
+  from version 20).
 - **A symbol in the project** with Cmd+Option+P: the server is asked again
   as the name is typed.
 - **The other uses** of the name under the cursor are marked in the file
