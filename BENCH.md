@@ -3031,6 +3031,35 @@ where there is a colour font), the history and notebook units in the
 fuzz program; on the Arch box as well, under Vulkan, with Noto Color
 Emoji shaped by HarfBuzz.
 
+### Round 64: soft wrap
+
+Lines longer than the view go on in the rows under it: each split keeps a
+map of rows to lines (each line's rows in a Fenwick tree, break columns
+only for lines that wrap), made again line by line as edits come; the
+grid draws each row from where its part of the line starts.
+
+With nothing wrapping, as in the three runs here (C++ and plain text,
+which do not wrap by default), the map is not there: turn about, five
+rounds, 2560x1600, against the build before it (26d760c):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 14,965 / 57.17 µs / 2.29 µs | 15,175 / 57.08 µs / 2.42 µs |
+| Typing, everything on: the same | 16,158 / 52.08 µs / 4.04 µs | 16,256 / 52.08 µs / 4.08 µs |
+| Scrolling code-100m.txt, plain: the same | 16,629 / 51.79 µs / 0.88 µs | 16,784 / 51.75 µs / 0.88 µs |
+
+No change. Wrapping, a 4 MB Markdown file of 20,000 lines up to 60 words
+long, against the same build with it not wrapping: scrolling, layout 1.2
+µs against 0.9 (it was 4 µs, each row on show found in the tree three
+times, before they were walked once from the top), frames the same;
+typing, 49.0 against 47.8 µs a frame (each key's line measured again).
+Tests: the wrap map's units in the fuzz program (where lines break, rows
+and lines kept through edits, and 400 random edits each checked against
+a map made afresh, folded lines), edit.sh's soft wrap (a Markdown file
+wraps, each break after a space, a C file not until Option+Z, gj and gk
+by rows and j by lines, a click on a wrapped row, more rows as it is
+typed on, folds and wrapping together, editor.soft_wrap).
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
