@@ -156,5 +156,17 @@ check "a terminal on another machine, in the folder there, at home there" '$ ech
 run "workdir:ssh://box$T/proj;term;frame;termwait:\$;text:stty size;key:Return;termwait:15 74;wait:300;termdump"  # (the next prompt comes just after)
 check "and it knows the tab's size too" '$ stty size|15 74|$ @2,2 15x74'
 
+# The Python console: lines sent from a file before it has started (kept
+# until it takes a paste), a block with a blank line in it whole; the
+# cursor's line alone, and the cursor to the next.
+P="$dir/py"
+mkdir -p "$P"
+printf 'import math\n\ndef f(x):\n    y = x * 2\n\n    return y + math.floor(1.5)\n\nprint("got", f(20))\n' >"$P/block.py"
+got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/block.py;vim:ggVG;command:Send the lines to the Python console;command:Open the Python console;termwait:>>>;termwait:got 41;termdump" 2>&1 >/dev/null | grep -c 'got 41')
+check "lines sent whole, blank lines in them and between them kept" '1'
+printf 'print("six", 6 * 7)\nprint("next")\n' >"$P/line.py"
+got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/line.py;command:Send the lines to the Python console;docdump:0;command:Open the Python console;termwait:>>>;termwait:six 42;termdump" 2>&1 >/dev/null | grep -E '^>|six 42' | sed -e 's/.*\(six 42\).*/\1/' | tr '\n' ' ')
+check "the cursor's line, and the cursor to the next" '> |print("next") six 42 '
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "term ok"
 exit $failed

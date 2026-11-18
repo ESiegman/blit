@@ -316,6 +316,8 @@ void App::commands_create() {
     // Terminals: in the split along the bottom.
     own("Show or hide the terminal", {key(SDLK_GRAVE, ctl)}, [this] { term_toggle(); });
     own("New terminal", {key(SDLK_GRAVE, ctl | kS)}, [this] { term_new(); });
+    own("Open the Python console", {}, [this] { py_console(true); });
+    own("Send the lines to the Python console", {}, [this] { py_send_lines(); });
     // Debugging.
     own("Start or continue debugging", {key(SDLK_F5)}, [this] { debug_start(); });
     own("Stop debugging", {key(SDLK_F5, kS)}, [this] { debug_command("stop"); });

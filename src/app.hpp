@@ -876,7 +876,12 @@ private:
     // A terminal tab in dir (the working folder when none): a login shell, or
     // `command` run by sh, whose tab stays when it ends and says how (and
     // keeps `title`). Its document's id; 0 if it could not start.
-    u64 term_open(const std::string& dir = {}, const std::string& command = {}, const std::string& title = {}, std::string_view hint = {});
+    u64 term_open(const std::string& dir = {}, const std::string& command = {}, const std::string& title = {}, std::string_view hint = {}, bool console = false);
+    // The Python console, in the terminals' split (appterm.cpp).
+    TermView* py_console(bool keyboard);
+    void py_send(std::string code);
+    void py_flush(TermView& v);
+    void py_send_lines();
     // The terminals' split along the bottom, the one the build's output
     // uses too: Ctrl+` shows it with the keyboard on its terminal, and
     // with the keyboard there hides it and gives the keyboard back to the

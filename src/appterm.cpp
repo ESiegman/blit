@@ -17,6 +17,7 @@
 #endif
 
 #include <algorithm>
+#include <deque>
 #include <cerrno>
 #include <cmath>
 #include <cstring>
@@ -92,6 +93,10 @@ struct TermView {
     std::atomic<bool> scan_news{false};
     u64 started_ns = 0;
     std::atomic<int> status{0};
+    // The Python console's: what was sent to it before it could take a
+    // paste (it has not started yet), for when it can.
+    bool python = false;
+    std::string waiting;
     // Drawn as.
     TextBox box;
     u64 drawn = ~0ull;
@@ -232,8 +237,14 @@ struct TermView {
             const int wi = in == out ? 0 : 1;
             pollfd p[2] = {{out, POLLIN, 0}, {in, 0, 0}};
             if (backed_up) p[wi].events |= POLLOUT;
-            const int r = ::poll(p, wi + 1, 100);
+            int wait = 100;
+            {
+                std::lock_guard lock(out_mu);
+                if (!later.empty()) wait = static_cast<int>(std::clamp<i64>((static_cast<i64>(later.front().first) - static_cast<i64>(now_ns())) / 1'000'000, 0, 100));
+            }
+            const int r = ::poll(p, wi + 1, wait);
             if (r < 0 && errno != EINTR) break;
+            send_due();
             if (r <= 0) continue;
             if (backed_up && (p[wi].revents & (POLLOUT | POLLERR | POLLHUP))) flush_backlog();
             if (!(p[0].revents & ~POLLOUT)) continue;
@@ -324,6 +335,29 @@ struct TermView {
         }
     }
 
+    // Bytes to send at a time of their own (the Returns after a paste to
+    // Python's prompt: one that comes in the same read as the paste is taken
+    // as part of it).
+    std::deque<std::pair<u64, std::string>> later;  // (out_mu) in time's order
+
+    void send_later(u64 due, std::string s) {
+        std::lock_guard lock(out_mu);
+        later.emplace_back(due, std::move(s));
+    }
+
+    void send_due() {
+        std::vector<std::string> due;
+        {
+            std::lock_guard lock(out_mu);
+            const u64 now = now_ns();
+            while (!later.empty() && later.front().first <= now) {
+                due.push_back(std::move(later.front().second));
+                later.pop_front();
+            }
+        }
+        for (const std::string& d : due) send(d);
+    }
+
     void flush_backlog() {
         std::lock_guard lock(out_mu);
         while (backlog_at < backlog.size()) {
@@ -362,7 +396,7 @@ struct App::TermDock {
 // A terminal in a new tab, in `dir` (the folder being worked in when none
 // is given): a shell there, or on the machine that folder is on. A hint
 // shows dimmed on its first line, above what the shell writes.
-u64 App::term_open(const std::string& dir_given, const std::string& command, const std::string& title, std::string_view hint) {
+u64 App::term_open(const std::string& dir_given, const std::string& command, const std::string& title, std::string_view hint, bool console) {
     const std::string* root = panel_root();
     const std::string dir = !dir_given.empty() ? dir_given : root ? *root : default_workdir();
     auto v = std::make_shared<TermView>();
@@ -381,10 +415,11 @@ u64 App::term_open(const std::string& dir_given, const std::string& command, con
     // terminal's, where a blit started from the Dock has little).
     if (!command.empty()) argv = {"/bin/sh", "-c", lang + "exec \"${SHELL:-/bin/sh}\" -lc \"$1\"", "sh", command};
     v->keep = !command.empty();
+    v->python = console;
     v->command = command;
     v->title = title;
     v->dir = dir;
-    if (v->keep)  // (a file is looked for there when a relative path could be from more than one folder; not on another machine: a round trip each)
+    if (v->keep && !console)  // (a file is looked for there when a relative path could be from more than one folder; not on another machine: a round trip each)
         v->scan = std::make_unique<BuildScan>(dir, remote ? std::function<bool(const std::string&)>{} : [](const std::string& p) {
             struct stat st;
             return ::stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode);
@@ -439,6 +474,7 @@ void App::term_sync() {
             if (!d.term) continue;
             TermView& v = *d.term;
             v.told = false;
+            if (!v.waiting.empty()) py_flush(v);  // (the console may take what was sent to it now)
             if (v.scan && v.scan_news.exchange(false)) {  // problems the build reported (before it is seen to end: the last ones count)
                 std::vector<BuildProblem> found;
                 {
@@ -621,6 +657,140 @@ void App::term_toggle() {
 
 // Ctrl+Shift+`: another terminal there.
 void App::term_new() { TermDock::enter(*this, true); }
+
+// ---------------------------------------------------------------- the Python console
+
+namespace {
+
+// The Python for a folder: its virtual environment's (IPython, if it has
+// it), uv's for a uv project, else the one on the PATH.
+std::string python_for(const std::string& root) {
+    auto quoted = [](const std::string& path) { return "'" + path + "'"; };  // (a folder's path with no quote in it)
+    if (root.find('\'') == std::string::npos) {
+        if (fs_kind(root + "/.venv/bin/ipython") == 1) return quoted(root + "/.venv/bin/ipython");
+        if (fs_kind(root + "/.venv/bin/python") == 1) return quoted(root + "/.venv/bin/python");
+    }
+    if (fs_kind(root + "/uv.lock") == 1 || fs_kind(root + "/pyproject.toml") == 1) return "uv run python";
+    return "python3";
+}
+
+}  // namespace
+
+// The Python console's tab: brought into view in the terminals' split
+// (started there, the first time, with the folder's Python); the keyboard
+// on it if `keyboard`. Its terminal, or null if it could not start.
+TermView* App::py_console(bool keyboard) {
+    Pane* const editing = pane_;
+    for (size_t k = 0; k <= panes_.size(); ++k) {
+        Pane* const p = k < panes_.size() ? panes_[k].get() : nullptr;
+        for (size_t i = 0; p && i < p->docs.size(); ++i) {
+            Doc& d = *p->docs[i];
+            if (!d.term || !d.term->python || d.term->ended) continue;
+            pane_ = p;
+            tab_show(i);
+            pane_ = editing;
+            if (keyboard) focus_pane(p);
+            dirty_ = true;
+            return d.term.get();
+        }
+    }
+    // (In the hidden split: it comes back, with the console in front.)
+    if (dock_ && dock_->away)
+        for (const std::shared_ptr<Doc>& d : dock_->away->docs)
+            if (d->term && d->term->python && !d->term->ended) {
+                dock_show(editing);
+                return py_console(keyboard);
+            }
+    const std::string* root = panel_root();
+    const std::string dir = root ? *root : default_workdir();
+    Pane* into = dock_show(editing);
+    if (!into) into = editing;
+    pane_ = into;
+    const u64 doc = term_open(dir, python_for(dir), "Python", {}, true);
+    if (!doc && into->docs.empty() && into != editing) remove_pane(into);
+    pane_ = editing;
+    Doc* d = doc ? find_doc(doc) : nullptr;
+    if (!d) return nullptr;
+    if (keyboard) {
+        Pane* p = nullptr;
+        find_doc(doc, &p);
+        if (p) focus_pane(p);
+    }
+    dirty_ = true;
+    return d->term.get();
+}
+
+// Code to the console, as a paste (Python's own prompt, from 3.13, and
+// IPython take one whole, indented as it is), and run. Kept until the
+// console can take a paste, for a while after it starts.
+void App::py_send(std::string code) {
+    TermView* v = py_console(false);
+    if (!v) return;
+    while (!code.empty() && (code.back() == '\n' || code.back() == '\r' || code.back() == ' ' || code.back() == '\t')) code.pop_back();
+    if (code.empty()) return;
+    v->waiting += (v->waiting.empty() ? "" : "\n") + code;
+    py_flush(*v);
+}
+
+void App::py_flush(TermView& v) {
+    if (v.waiting.empty() || v.ended) return;
+    bool bracketed;
+    {
+        std::lock_guard lock(v.mu);
+        bracketed = v.term.bracketed_paste();
+    }
+    const bool late = now_ns() - v.started_ns > 5'000'000'000ull;  // (a Python that never asks for pastes: line by line)
+    if (!bracketed && !late) return;
+    std::string code;
+    code.swap(v.waiting);
+    std::string out;
+    bool indented = false;  // (the last line in a block: a blank line ends it)
+    size_t at = 0;
+    while (at <= code.size()) {
+        size_t nl = code.find('\n', at);
+        if (nl == std::string::npos) nl = code.size();
+        std::string_view line(code.data() + at, nl - at);
+        at = nl + 1;
+        if (!line.empty() && line.back() == '\r') line.remove_suffix(1);
+        if (line.find_first_not_of(" \t") == std::string_view::npos && !bracketed) continue;  // (line by line, a blank line would end a block early)
+        indented = !line.empty() && (line[0] == ' ' || line[0] == '\t');
+        if (!out.empty()) out += '\r';
+        out += line;
+    }
+    v.scroll = 0;
+    if (!bracketed) {
+        v.send(out + (indented ? "\r\r" : "\r"));
+    } else {
+        // Each Return a moment after (in a read of its own: with the paste
+        // it would be part of it): one runs a line; more than one line wants
+        // a second, on the empty line the first leaves.
+        v.send("\x1b[200~" + out + "\x1b[201~");
+        const bool lines = out.find('\r') != std::string::npos;
+        const u64 now = now_ns();
+        v.send_later(now + 80'000'000ull, "\r");
+        if (lines) v.send_later(now + 160'000'000ull, "\r");
+    }
+    dirty_ = true;
+}
+
+// The lines selected (or the cursor's line, and the cursor to the next) to
+// the Python console.
+void App::py_send_lines() {
+    Editor& ed = pane_->doc->ed;
+    if (pane_->doc->term || pane_->doc->read_only) return;
+    u64 lo = ed.sel_min(), hi = ed.sel_max();
+    const bool chosen = cfg_.modal ? vim_selection(&lo, &hi) : ed.has_selection();
+    if (!chosen) {
+        const u64 line = ed.buf.line_of(ed.cursor());
+        lo = ed.buf.line_start(line), hi = ed.line_end(line);
+        if (line + 1 < ed.buf.line_count()) {
+            const u64 next = ed.buf.line_start(line + 1);
+            ed.move_to(next, false);
+            scroll_to_cursor();
+        }
+    }
+    py_send(ed.buf.text(lo, hi - lo));
+}
 
 // ---------------------------------------------------------------- what runs in one
 
