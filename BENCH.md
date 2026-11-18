@@ -2867,6 +2867,35 @@ snippet from a server (its stops, filled in); fuzz_buffer.cpp checks of
 the editor's carets (typed and deleted at each, merged, typed at random
 places against the same done by hand) and of snippets read and indented.
 
+### Round 59: profiling's depth
+
+A profile's graph bottom-up (invert_profile, made when first asked for)
+and a function's callers and callees; two profiles compared (each node's
+share the earlier had at the same path, each function's before and
+after); a timeline (each sample's time kept, a lane a thread, a stretch
+narrowing the graph by counting every node again from its samples); and
+every allocation, through blit's own sampler put in front of the
+program's allocator, sampling by bytes.
+
+None of it is on a frame's path: a profile's tab is made again only when
+it changes, and the timeline's lanes with it. The sampler costs the
+program profiled a subtraction a malloc (and a stack every 64 KB), a bit
+looked up a free. Turn about, five rounds, 2560x1600, against the build
+before the chunk (b8b4092):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 16,447 / 53.33 µs / 2.00 µs | 16,373 / 53.04 µs / 1.96 µs |
+| Typing, everything on: the same | 17,176 / 48.00 µs / 3.75 µs | 17,024 / 47.92 µs / 3.75 µs |
+| Scrolling code-100m.txt, plain: the same | 18,048 / 49.42 µs / 0.67 µs | 18,070 / 49.17 µs / 0.67 µs |
+
+No change. Tests: a new suite, tests/profviews.sh, on profiles written by
+hand as perf's text (bottom-up, back again, callers and callees, one
+chosen in turn, two compared, a stretch of the timeline, bottom-up in it,
+Esc) and on a program run through the sampler (what it allocated, what
+it still held); fuzz_buffer.cpp checks of the timeline (times, narrowed,
+kept and read back) and of the sampler's file read.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

@@ -69,7 +69,9 @@ log messages that move with their lines, breakpoints on a function or on a
 variable's writes, a watch list, every thread's stack, the values in the
 code, the disassembly stepped an instruction at a time, and memory read
 and written. A recording with xctrace or perf becomes a flame graph, by
-thread if you like, and each line's cost beside the code.
+thread if you like, bottom-up, along a timeline, or compared with another,
+and each line's cost beside the code; blit's own sampler records every
+allocation and what leaked.
 
 <img src="docs/media/debug.png" alt="stopped at a breakpoint: the stack, the variables, the line in front" width="49%"> <img src="docs/media/profile.png" alt="a flame graph of the demo program, and its functions by time" width="49%">
 

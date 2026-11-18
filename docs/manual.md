@@ -1666,6 +1666,18 @@ where its threads waited:
     thread only preempted is left out); this needs
     `kernel.perf_event_paranoid` at 1 or lower, and blit says so when it
     is not.
+  - **Every allocation**: blit's own sampler put in front of the
+    program's allocator (`DYLD_INSERT_LIBRARIES` on a Mac, `LD_PRELOAD`
+    on Linux; a small library blit carries and writes out when it is
+    wanted). It samples allocations by bytes, one about every 64 KB, a
+    larger block always, each with its stack, and forgets a sampled block
+    that is freed again; when the program ends (or Stop ends it) blit
+    names the stacks with `atos` or `addr2line`, source lines and all, and
+    opens two profiles: **Allocations**, every allocation by where it was
+    made, in bytes, and **Held at the end**, those never freed: the leaks.
+    `BLIT_ALLOC_RATE` in the program's environment sets another rate. On
+    this machine only, and not for a program the system protects (one in
+    `/usr/bin`, or signed to refuse it).
 
   The command search has "Record a memory profile…" and "Record a
   profile… waiting" beside "Record a profile…". A memory or waiting
@@ -1682,6 +1694,26 @@ Each recording opens in a tab of its own:
 - The **functions**, by self time, with total time and source line. Up
   and Down choose one (its frames light up in the graph); Enter or a
   double click opens its source.
+- **Bottom-up**: `b` turns the graph over: the functions the time was
+  spent in at the bottom, each as wide as its own time, with what called
+  them above, out to the outermost caller. `b` again goes back.
+- **Callers and callees**: `c` shows, in place of the list, the chosen
+  function's callers and the functions it calls, each with the share it
+  had there; Enter on one (or a double click) makes it the function
+  chosen. `c` or Esc goes back to the list.
+- **The timeline**, under the heading: a lane for each of the heaviest
+  threads (six at most) across the time recorded, how much each ran in
+  each stretch as a bar, a dot where it did not. Drag across it to choose
+  a stretch: the graph and the list are then of that stretch alone (the
+  heading says which); a click or Esc gives all of it back.
+- **Comparing**: "Compare with a profile…" in a profile's tab chooses
+  another of those made or opened as the earlier, and opens the two
+  compared. The later's flame graph has each frame coloured by how its
+  share of the time moved since: red where it grew, blue where it shrank,
+  the stronger the more, grey where it stayed about the same (a path the
+  earlier had not counts as grown). In place of the list, each function's
+  own share before and after and the change in points, those that moved
+  most first, with any the later no longer has.
 - **Threads.** The Profile tab lists the threads of the profile shown
   (when it has more than one), the heaviest first, with each one's share:
   Enter on one shows its own flame graph and its own functions in the
