@@ -2958,6 +2958,34 @@ outputs, saved back with a changed cell's outputs gone, Shift+Return run
 in the console), the notebook writer's units (written back byte for byte
 as Python's json writes it), and lua.sh's blit.run.
 
+### Round 62: code intelligence, further
+
+Call and type hierarchies (the server asked a level at a time, as Right
+opens a row in the find box); peek, the definition in a split of its own
+floating under the cursor's line; and how many references each
+definition on show has, after its line.
+
+On a frame's path: the peek's box is one more split, laid out as any is,
+and only while it is open; the reference counts look through the syntax
+tree's scopes on show for one not yet asked about (the counts themselves
+are asked for once typing pauses, and their notes made again only when
+the view or the counts change). The everything-on runs had the counts on
+(the stand-in server answering them). Turn about, five rounds,
+2560x1600, against the build before the chunk (c26048e):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 15,895 / 53.12 µs / 2.04 µs | 16,015 / 53.25 µs / 2.04 µs |
+| Typing, everything on: the same | 16,764 / 47.92 µs / 3.83 µs | 16,778 / 48.04 µs / 3.83 µs |
+| Scrolling code-100m.txt, plain: the same | 17,616 / 49.33 µs / 0.71 µs | 17,728 / 49.21 µs / 0.71 µs |
+
+No change. Tests: lsp.sh's hierarchies (the calls to and from a
+function, Right and Left, Enter to where a call is, a type's subtypes and
+supertypes, the stand-in server reading back each item's own data), peek
+(the definition with the keyboard, Esc giving it back, what is typed in
+the box the file's) and reference counts (and with them turned off);
+also tried with clangd 21.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
