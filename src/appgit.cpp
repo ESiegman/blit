@@ -659,7 +659,8 @@ void App::git_view_set(Pane& p, Doc& d, Git::Result& r) {
     }
     GitDiffView& view = *r.view;
     const bool same = v.source && *v.source == *r.source && v.cols == view.cols && v.two == (view.cols > 0);
-    if (!v.source && v.keep_hunk < 0 && !v.goto_line) v.keep_hunk = 0;  // (opened: at the first hunk)
+    const bool history = !v.args.empty() && v.args[0] == "log";  // (a history opens at its top: the newest commit's heading)
+    if (!v.source && v.keep_hunk < 0 && !v.goto_line && !history) v.keep_hunk = 0;  // (opened: at the first hunk)
     if (same && !v.goto_line && v.keep_hunk < 0) return;  // (nothing to show that is not shown)
     // Where the cursor was: in which hunk, or on which line.
     const bool front = p.doc == &d && pane_ == &p;
@@ -861,7 +862,13 @@ bool App::git_view_key(const SDL_KeyboardEvent& k) {
     switch (k.key) {
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
-            if (v.kind == kViewOther) return false;
+            if (v.kind == kViewOther) {  // a history's: the commit there, all of it
+                if (v.args.empty() || v.args[0] != "log") return false;
+                const std::string commit = git_commit_at(d);
+                if (commit.empty()) return false;
+                git_open_view({"show", "--stat", "--patch", "--no-ext-diff", commit}, commit.substr(0, 10), kViewOther, {});
+                break;
+            }
             git_stage_here(v.kind == kViewChanges);
             break;
         case SDLK_S:
@@ -1038,6 +1045,57 @@ void App::git_view_note(FrameDesc& fd) {
     const u64 start = d.ed.buf.line_start(head);
     v.note = {head, d.ed.col_between(start, d.ed.line_end(head)) + 4, v.note_cells.data(), static_cast<u32>(v.note_cells.size())};
     grid.notes = {&v.note, 1};
+}
+
+// ---------------------------------------------------------------- a file's history
+
+// The commits that changed the file in front (followed through renames),
+// or the lines chosen in it (the cursor's, if none: as git log -L finds
+// them in the commits before), each with its change, in a diff tab. Enter
+// on a commit there shows all of it.
+void App::git_history(bool lines) {
+    GitUi& g = *gitui_;
+    if (!cfg_.git || !g.status.repo) return notify("Not in a git repository");
+    Doc& d = *pane_->doc;
+    if (d.ed.path.empty() || d.gitview || d.term || d.prof || d.loading) return;
+    const std::string rel = in_repo(g.status.root, full_path(d.ed.path));
+    if (rel.empty()) return notify("Not in the repository");
+    std::vector<std::string> args{"log", "--pretty=medium", "--no-ext-diff"};
+    std::string title = std::string(name_of(rel));
+    if (lines) {
+        const u64 a = std::min(d.ed.cursor(), d.ed.anchor()), b = std::max(d.ed.cursor(), d.ed.anchor());
+        const u64 first = d.ed.buf.line_of(a);
+        u64 last = d.ed.buf.line_of(b);
+        if (last > first && b == d.ed.buf.line_start(last)) --last;  // (a selection to the start of a line ends on the line before)
+        const std::string span = std::to_string(first + 1) + "," + std::to_string(last + 1);
+        args.push_back("-L" + span + ":" + rel);
+        title += ":" + std::to_string(first + 1) + (last > first ? "-" + std::to_string(last + 1) : std::string()) + " (history)";
+    } else {
+        args.insert(args.end(), {"--follow", "--patch", "--", rel});
+        title += " (history)";
+    }
+    git_open_view(std::move(args), title, kViewOther, {});
+}
+
+// The commit a line of a history tab (or any log with patches) is in: the
+// last "commit <hash>" at or above it.
+std::string App::git_commit_at(const Doc& d) {
+    if (!d.gitview || !d.gitview->source || !d.gitview->diff) return {};
+    const GitView& v = *d.gitview;
+    const std::string& text = *v.source;
+    const std::vector<u64>& off = v.diff->line_off;
+    u32 line = ~0u;  // (the cursor's row, or the nearest above that shows a line of the diff)
+    for (u64 r = d.ed.buf.line_of(d.ed.cursor()) + 1; r-- > 0 && line == ~0u;) line = v.diff_line(r);
+    if (line == ~0u) return {};
+    for (u32 l = line + 1; l-- > 0;) {
+        if (l + 1 >= off.size()) continue;
+        const std::string_view s(text.data() + off[l], off[l + 1] - off[l]);
+        if (!s.starts_with("commit ")) continue;
+        size_t n = 7;
+        while (n < s.size() && std::isxdigit(static_cast<unsigned char>(s[n]))) ++n;
+        if (n >= 7 + 7) return std::string(s.substr(7, n - 7));
+    }
+    return {};
 }
 
 // ---------------------------------------------------------------- doing things

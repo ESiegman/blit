@@ -282,6 +282,28 @@ got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;gitwai
 got="$got / $(git -C "$dir/ada" log --format=%s | wc -l | tr -d ' ')"
 check "Enter alone commits nothing" 'field 2 of 2: x / ^ / 2'
 
+# A file's history (through a rename), and the history of the lines chosen:
+# each commit with its change, in a diff tab; Enter on one shows all of it.
+fresh
+printf 'one\ntwo\nTHREE\nfour\nfive\n' >"$dir/ada/poem.txt"
+git -C "$dir/ada" commit -qam "Shout three"
+git -C "$dir/ada" mv poem.txt verse.txt
+git -C "$dir/ada" commit -qm "Call it a verse"
+printf 'one\ntwo\nTHREE\nfour\nFIVE\n' >"$dir/ada/verse.txt"
+printf 'x\n' >>"$dir/ada/other.txt"
+git -C "$dir/ada" commit -qam "Shout five"
+# (Its commits by their messages, the tab's title, and the lines added.)
+history() { "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "$2" "$1" 2>&1 >/dev/null | grep -v '^blit: git' |
+    awk 'NR == 1 { t = $0; next } /^ *    [A-Z]/ { sub(/^ +/, ""); m = m (m ? ", " : "") $0 } /^ *\+[^+]/ { sub(/^ +/, ""); a = a " " $0 } END { print t " | " m " |" a }'; }
+got=$(history "$dir/ada/verse.txt" "frame;gitwait;command:Git: The file's history;gitwait;docdump:200")
+check "a file's history, through its rename" 'verse.txt (history) | Shout five, Call it a verse, Shout three, Start | +FIVE +THREE +one +two +three +four +five'
+got=$(history "$dir/ada/verse.txt" "frame;gitwait;key:Down;key:Down;command:Git: The history of the lines chosen;gitwait;docdump:200")
+check "the history of a line" 'verse.txt:3 (history) | Shout three, Start | +THREE +three'
+got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;gitwait;command:Git: The file's history;gitwait;key:Down;key:Return;gitwait;docdump:0" "$dir/ada/verse.txt" 2>&1 >/dev/null | grep -v '^blit: git' | head -2 | tr '\n' '|')
+got="$got $(git -C "$dir/ada" log -1 --format=%H | cut -c1-10)"
+case "$got" in "$(git -C "$dir/ada" log -1 --format=%H | cut -c1-10)|"*) got="its commit, all of it" ;; esac
+check "Enter on a commit in it: all of that commit" 'its commit, all of it'
+
 # The status bar along the bottom: the branch and how it stands, this
 # file's changed lines, the files changed, the file, the cursor.
 fresh

@@ -397,6 +397,12 @@ void App::commands_create() {
         if (Commands::git_ready(*this)) git_stage_here(false);
     });
     own("Git: Diffs in two columns or one", {}, [this] { git_view_toggle(); });
+    own("Git: The file's history", {}, [this] {
+        if (Commands::git_ready(*this)) git_history(false);
+    });
+    own("Git: The history of the lines chosen", {}, [this] {
+        if (Commands::git_ready(*this)) git_history(true);
+    });
 }
 
 // Cmd+F: a search in the file in front, starting from the selection (its

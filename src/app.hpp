@@ -1062,6 +1062,8 @@ private:
     void git_offer_layout(FrameDesc& fd);
     bool git_view_key(const SDL_KeyboardEvent& k);  // (appcommands.cpp's command_key asks first)
     bool git_gutter_click(const SDL_MouseButtonEvent& b);  // (apptabs.cpp's tabs_mouse_down asks first)
+    void git_history(bool lines);  // the file's commits, or the chosen lines', in a diff tab
+    std::string git_commit_at(const Doc& d);
     void git_stage_here(bool stage);  // the hunk or the lines chosen at the cursor, in a diff tab or a file
     void git_view_toggle();           // a diff tab in two columns, or back in one
     void git_message_changed();
