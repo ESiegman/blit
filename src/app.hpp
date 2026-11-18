@@ -965,6 +965,7 @@ private:
     void debug_frame(u32 i, bool show);
     void debug_stack();
     void debug_thread(u32 i);
+    void debug_name_waves();
     void debug_watch_eval();
     void debug_expand(u32 i);
     void debug_sync();

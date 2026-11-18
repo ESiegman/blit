@@ -63,6 +63,9 @@ void light_row(TextBox& box, u32 row, bool focused) {
 
 // The debugger for a machine, chosen there: Xcode's lldb-dap on a Mac; gdb
 // (14 and later speak the protocol) or lldb-dap elsewhere; debugpy for Python.
+// A program with HIP's code for the GPU in it ($BLIT_DEBUG_PROGRAM has a
+// .hip_fatbin) gets ROCm's rocgdb where there is one: a gdb that sees the
+// GPU's waves as threads, its kernels' frames and variables.
 // gdb's program writes where gdb's messages go, a pipe, and C's stdio holds
 // back what is written to a pipe until it ends: stdbuf (coreutils) has it
 // write a line at a time, as to a terminal, gdb and the program both.
@@ -70,6 +73,8 @@ const char* kNative =
     "if [ \"$(uname -s)\" = Darwin ]; then "
     "xcrun --find lldb-dap >/dev/null 2>&1 || { [ -d /Applications/Xcode.app/Contents/Developer ] && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer && export DEVELOPER_DIR; }; "
     "exec xcrun lldb-dap; fi; "
+    "if [ -n \"$BLIT_DEBUG_PROGRAM\" ] && grep -q -a -m1 hip_fatbin \"$BLIT_DEBUG_PROGRAM\" 2>/dev/null; then "
+    "for d in rocgdb /opt/rocm/bin/rocgdb; do if command -v $d >/dev/null 2>&1; then echo 'blit-debugger: gdb (rocgdb)' >&2; command -v stdbuf >/dev/null 2>&1 && exec stdbuf -oL $d -q -i dap; exec $d -q -i dap; fi; done; fi; "
     "if command -v gdb >/dev/null 2>&1 && [ \"$(gdb --version | sed -n '1s/.* \\([0-9][0-9]*\\)\\..*/\\1/p')\" -ge 14 ] 2>/dev/null; then echo 'blit-debugger: gdb' >&2; command -v stdbuf >/dev/null 2>&1 && exec stdbuf -oL gdb -q -i dap; exec gdb -q -i dap; fi; "
     "for d in lldb-dap lldb-vscode; do command -v $d >/dev/null 2>&1 && exec $d; done; "
     "echo 'no debugger: install gdb 14 or newer, or lldb' >&2; exit 127";
@@ -167,6 +172,7 @@ struct DebugSession {
     enum State : u8 { kIdle, kStarting, kRunning, kStopped } state = kIdle;
     std::string remote;  // "ssh://host" when the program is on another machine
     bool gdb = false;    // the debugger is gdb (its hit counts are from 0)
+    bool rocm = false;   // and ROCm's rocgdb: the GPU's waves are threads, named by `info threads`
     bool going = false;  // the program has started (the "process" event): what gdb says before is its own
     i64 thread = 0;      // the thread whose stack is shown (and which the steps step)
     i64 stopped_thread = 0;
@@ -610,7 +616,7 @@ bool App::debug_open(const std::string& near, const std::string& dir, bool pytho
     std::string host, there;
     u.remote = split_remote(near, &host, &there) ? "ssh://" + host : std::string();
     u.dap = std::make_unique<Dap>();
-    u.gdb = false;
+    u.gdb = u.rocm = false;
     u.going = false;
     u.frames.clear();
     u.threads.clear();
@@ -627,6 +633,8 @@ bool App::debug_open(const std::string& near, const std::string& dir, bool pytho
     std::string err;
     std::string exports;  // (the debugger has them, and the program it starts)
     for (const std::string& e : u.env) exports += "export " + sh_word(e) + "; ";
+    if (const std::string prog = u.remote.empty() ? near : there; !prog.empty() && !python)
+        exports += "BLIT_DEBUG_PROGRAM=" + sh_word(prog) + "; export BLIT_DEBUG_PROGRAM; ";  // (what it debugs: HIP's gets rocgdb)
     if (!u.dap->start({"/bin/sh", "-c", exports + (python ? kPython : kNative)}, dir, wake, &err)) {
         u.error = err;
         u.dap.reset();
@@ -930,6 +938,45 @@ void App::debug_stack() {
     dirty_ = true;
 }
 
+// rocgdb's names for the GPU's waves among the threads: `info threads`
+// says of each "AMDGPU Wave 1:1:1:1 (0,0,0)/0", its work-group and its
+// number in it; the threads that are waves are named so ("GPU wave
+// (0,0,0)/0"), after the program's own.
+void App::debug_name_waves() {
+    DebugUi& u = *debugui_;
+    if (!u.dap || u.state != DebugUi::kStopped) return;
+    ++u.asking;
+    u.dap->request("evaluate", "{\"expression\":\"info threads\",\"context\":\"repl\"}", [this](const Dap::Message& m) {
+        DebugUi& v = *debugui_;
+        if (v.asking) --v.asking;
+        if (!m.success || v.state != DebugUi::kStopped) return;
+        const std::string text(m.body()["result"].str());
+        std::map<i64, std::string> waves;
+        for (size_t at = 0; at < text.size();) {
+            size_t nl = text.find('\n', at);
+            if (nl == std::string::npos) nl = text.size();
+            std::string_view line = std::string_view(text).substr(at, nl - at);
+            at = nl + 1;
+            const size_t wave = line.find("AMDGPU Wave ");
+            if (wave == std::string_view::npos) continue;
+            size_t k = 0;
+            while (k < line.size() && (line[k] == ' ' || line[k] == '*')) ++k;
+            const i64 id = std::atoll(std::string(line.substr(k)).c_str());
+            const size_t open = line.find('(', wave), slash = open == std::string_view::npos ? open : line.find('/', open);
+            if (id <= 0 || slash == std::string_view::npos) continue;
+            size_t end = slash + 1;
+            while (end < line.size() && std::isdigit(static_cast<unsigned char>(line[end]))) ++end;
+            waves[id] = "GPU wave " + std::string(line.substr(open, end - open));
+        }
+        if (waves.empty()) return;
+        for (DebugUi::Thread& t : v.threads)
+            if (const auto it = waves.find(t.id); it != waves.end()) t.name = it->second;
+        std::ranges::stable_sort(v.threads, [&](const DebugUi::Thread& a, const DebugUi::Thread& b) { return !waves.contains(a.id) && waves.contains(b.id); });
+        ++debug_gen_;
+        dirty_ = true;
+    });
+}
+
 // A thread chosen in the Debug tab: its stack shown (and the steps are its).
 void App::debug_thread(u32 i) {
     DebugUi& u = *debugui_;
@@ -1029,6 +1076,7 @@ void App::debug_sync_session(bool* stopped) {
         } else if (m.name == "initialized") {
             u.state = DebugUi::kRunning;
             u.gdb = u.dap->errors().find(kGdbSays) != std::string::npos;  // (said before it started: here by now)
+            u.rocm = u.dap->errors().find("blit-debugger: gdb (rocgdb)") != std::string::npos;
             for (const auto& [path, lines] : u.breaks) debug_send_breaks(path);
             debug_send_functions();
             debug_send_instructions();
@@ -1056,6 +1104,7 @@ void App::debug_sync_session(bool* stopped) {
                 if (!r.success || v.state != DebugUi::kStopped) return;
                 v.threads.clear();
                 for (json::Value t : r.body()["threads"]) v.threads.push_back({t["id"].integer(), std::string(t["name"].str())});
+                if (v.rocm) debug_name_waves();  // (the GPU's waves, which rocgdb names as it lists them)
                 ++debug_gen_;
                 dirty_ = true;
             });
@@ -2164,6 +2213,8 @@ std::string App::debug_dump() {
         for (u32 i = 0; i < u.threads.size(); ++i)
             if (u.threads[i].id == u.thread) at = i;
         out += "; threads: " + std::to_string(u.threads.size()) + ", #" + std::to_string(at + 1) + " shown";
+        const size_t waves = static_cast<size_t>(std::ranges::count_if(u.threads, [](const DebugUi::Thread& t) { return t.name.starts_with("GPU wave"); }));
+        if (waves) out += " (" + std::to_string(waves) + " GPU waves; shown: " + u.threads[at].name + ")";
     }
     if (!u.frames.empty()) {
         out += "; stack:";

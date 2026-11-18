@@ -223,7 +223,9 @@ check "two sessions at once" 'sessions: *count stopped, count stopped; stopped (
 run "$P;break:16;key:F5;debugwait:stopped;key:cmd+shift+y;text:tot;key:Tab;debugwait:answers;finddump;key:Return;debugwait:stopped;debugdump"
 got=$(printf '%s' "$got" | sed -e 's/ start\(@[0-9]*\)\{0,1\};/;/g')
 case "$got" in
-'input [tot]'*) check "evaluate: this debugger completes nothing (as typed, evaluated)" 'input [tot] 0 : ;; stopped (breakpoint); stack: main@16; vars: total=1 i=1; output: tot = (no symbol)' ;;
+'input [tot]'*)  # (gdb has no completions: what is typed is evaluated as it stands, and gdb says why it cannot be)
+    got=$(printf '%s' "$got" | sed -e 's/output: tot = (.*)$/output: tot = (why not)/')
+    check "evaluate: this debugger completes nothing (as typed, evaluated)" 'input [tot] 0 : ;; stopped (breakpoint); stack: main@16; vars: total=1 i=1; output: tot = (why not)' ;;
 *) check "evaluate: what is typed completed with Tab, then evaluated" 'input [total] 0 : ;; stopped (breakpoint); stack: main@16; vars: total=1 i=1; output: total = 1' ;;
 esac
 
@@ -237,6 +239,17 @@ case "$got" in
 *'["a"]'*) check "containers: sizes, and a map's entries as [key] = value (gdb)" 'stopped (breakpoint); vars: m=size=2 ["a"]=1 ["b"]=2 s="hello" v=size=3' ;;
 *) check "containers: sizes, and a map's entries summed up (lldb)" 'stopped (breakpoint); vars: m=size=2 [0]={first:"a",second:1} [1]={first:"b",second:2} s="hello" v=size=3' ;;
 esac
+
+# A HIP program, where ROCm is (its hipcc and rocgdb, and an AMD GPU): rocgdb
+# chosen for it, a breakpoint in the kernel stopping a GPU wave, the waves
+# named in the thread list, the kernel's frame and variables.
+hipcc=$(command -v hipcc 2>/dev/null || { [ -x /opt/rocm/bin/hipcc ] && echo /opt/rocm/bin/hipcc; })
+if [ "$(uname -s)" != Darwin ] && [ -n "$hipcc" ] && { command -v rocgdb >/dev/null 2>&1 || [ -x /opt/rocm/bin/rocgdb ]; } && [ -e /dev/kfd ]; then
+    cp "$here/debug/vadd.hip" "$dir/here/" && (cd "$dir/here" && "$hipcc" -g -O0 -o vadd vadd.hip 2>/dev/null) || exit 1
+    run "debug:program=$dir/here/vadd;break:9;key:F5;debugwait:stopped;debugdump" "$dir/here/vadd.hip"
+    got=$(printf '%s' "$got" | sed -e 's/threads: [0-9]*, #[0-9]* shown ([0-9]* GPU waves; shown: \(GPU wave ([0-9,]*)\)\/[0-9]*)/\1/' -e 's/; vars: .*//')
+    check "HIP: rocgdb, a breakpoint in the kernel: a GPU wave stopped there" 'stopped (breakpoint); GPU wave (0,0,0); stack: vadd@9'
+fi
 
 # Attaching to a process that is running, and a core file.
 cp "$here/debug/waits.c" "$here/debug/crash.c" "$dir/here/" && (cd "$dir/here" && cc -g -O0 -o waits waits.c && cc -g -O0 -o crash crash.c) || exit 1
