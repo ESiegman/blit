@@ -56,6 +56,12 @@ struct Cluster {
     u64 at = 0;
     u32 col = 0;
     bool pict = false;  // a pictograph was in the row (see GridSpec::pict_rows)
+    // An emoji sequence under way: its code points so far, the column of its
+    // first character's cell, and the byte just past it (the next of it must
+    // come there). See Font::sequence_glyph.
+    u32 seq[12] = {};
+    u32 seq_n = 0, seq_col = 0;
+    u64 seq_end = ~0ull;
 };
 // The glyph bits that send a character to no_cell().
 constexpr u32 kAttention = Font::kJoin | Font::kPict;
@@ -86,20 +92,63 @@ bool wide_before(Font& font, const u8* p, size_t i) {
     cl.pict |= (g & Font::kPict) != 0;
     const bool after = at == cl.join;
     cl.join = ~0ull;
+    // An emoji sequence: its first character takes the cells; each of the
+    // rest is added to it, and once there is more than a joiner the colour
+    // font's one picture of all of it (if it has one) goes in those cells.
+    const bool going = at == cl.seq_end && cl.seq_n > 0;
+    auto start = [&] {
+        cl.seq[0] = cp;
+        cl.seq_n = 1;
+        cl.seq_col = col;
+        cl.seq_end = at + len;
+    };
+    auto add = [&](bool draw) {
+        if (!going || cl.seq_n >= std::size(cl.seq)) return;
+        cl.seq[cl.seq_n++] = cp;
+        cl.seq_end = at + len;
+        if (!draw) return;
+        const u32 slot = font.sequence_glyph(cl.seq, cl.seq_n);
+        if (!slot) return;
+        cl.pict = true;  // (a flag's letters are not pictographs: the row has one now)
+        for (u32 k = 0; k < 2; ++k)
+            if (cl.seq_col + k >= first_col) {
+                u32& cell = row[cl.seq_col + k - first_col];
+                cell = (cell & ~0xFFFFu) | (slot + k);
+            }
+    };
+    if (!going) cl.seq_n = 0;
     if ((g & (Font::kWide | Font::kJoin)) == (Font::kWide | Font::kJoin)) {  // a regional indicator
-        if (after && cl.regional) return true;
+        if (after && cl.regional) {
+            add(true);  // (the second of a flag)
+            return true;
+        }
         cl.join = at + len;
         cl.regional = true;
+        start();
         return false;
     }
-    if (after && !cl.regional && (g & Font::kPict)) return true;
-    if (!(g & Font::kJoin)) return false;
+    if (after && !cl.regional && (g & Font::kPict)) {
+        add(true);  // (an emoji after a joiner)
+        return true;
+    }
+    if (!(g & Font::kJoin)) {
+        if ((g & Font::kPict) && (g & Font::kWide)) start();  // (an emoji that takes cells: a sequence may follow)
+        return false;
+    }
     if (cp == 0x200D) {
         cl.join = at + len;
         cl.regional = false;
+        add(false);
         return true;
     }
-    if (cp - 0xFE00 < 16) return true;  // a variation selector: an emoji's, mostly, with nothing to draw
+    if (cp - 0xFE00 < 16) {  // a variation selector: an emoji's, mostly, with nothing to draw
+        add(false);
+        return true;
+    }
+    if (cp - 0x1F3FB < 5) {  // a skin tone: the emoji before it in that tone
+        add(true);
+        return true;
+    }
     auto over = [&](u32 c, u32 half) {
         if (c < first_col + 1) return;  // (the cell before is out of view)
         u32& cell = row[c - 1 - first_col];

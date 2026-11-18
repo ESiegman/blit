@@ -29,6 +29,7 @@
 #include FT_MULTIPLE_MASTERS_H
 #include FT_SYNTHESIS_H
 
+#include "shape.hpp"
 #include "utf8.hpp"
 
 namespace blit {
@@ -767,6 +768,7 @@ void Font::reset_atlas() {
     map_used_ = slices_used_ = short_used_ = marks_used_ = 0;
     if (colour_used_) {
         colour_.clear();
+        sequences_.clear();
         std::fill(colour_marks_.begin(), colour_marks_.end(), u8{0});
         colour_used_ = 0;
         colour_lowest_ = ~0u;
@@ -852,10 +854,40 @@ bool Font::colour_glyph(u32 cp, u32 slot, u32 width) {
     return true;
 }
 
+u32 Font::sequence_glyph(const u32* cps, size_t n) {
+    std::u32string key(reinterpret_cast<const char32_t*>(cps), n);
+    if (const auto it = sequences_.find(key); it != sequences_.end()) return it->second;
+    u32 out = 0;
+    Colour c;
+    c.cells = 2;
+    c.w = cell_w_ * 2;
+    c.h = cell_h_;
+    if (c.w > 0 && c.h > 0 && sequence_pixels(cps, n, c.w, c.h, &c.rgba)) {
+        const u32 slot = alloc_slots(2);
+        if (slot != kNoSlot) {
+            for (u32 k = 0; k < 2; ++k) {
+                clear_slot(slot + k);
+                colour_marks_[(slot + k) & 0xFFFF] = static_cast<u8>(k + 1);
+            }
+            colour_lowest_ = std::min(colour_lowest_, slot);
+            colour_[slot] = std::move(c);
+            ++colour_used_;
+            out = slot;
+        }
+    }
+    sequences_.emplace(std::move(key), out);
+    return out;
+}
+
 #if defined(__APPLE__)
 bool Font::colour_pixels(u32 cp, int w, int h, std::vector<u8>* out) {
     out->assign(static_cast<size_t>(w) * static_cast<size_t>(h) * 4, 0);
     return blit_emoji_rgba(cp, w, h, out->data());  // (Apple Color Emoji: emoji_mac.m)
+}
+
+bool Font::sequence_pixels(const u32* cps, size_t n, int w, int h, std::vector<u8>* out) {
+    out->assign(static_cast<size_t>(w) * static_cast<size_t>(h) * 4, 0);
+    return blit_emoji_seq_rgba(cps, n, w, h, out->data());
 }
 #else
 // The colour font fontconfig names for emoji (Noto Color Emoji, mostly):
@@ -886,8 +918,13 @@ bool Font::colour_pixels(u32 cp, int w, int h, std::vector<u8>* out) {
                     } else {
                         sized = !FT_Set_Pixel_Sizes(face, 0, static_cast<FT_UInt>(std::max(h, 8)));
                     }
-                    if (sized && FT_HAS_COLOR(face)) colour_face_ = face;
-                    else FT_Done_Face(face);
+                    if (sized && FT_HAS_COLOR(face)) {
+                        colour_face_ = face;
+                        colour_path_ = reinterpret_cast<const char*>(file);
+                        colour_index_ = index;
+                    } else {
+                        FT_Done_Face(face);
+                    }
                 }
             }
             if (got) FcPatternDestroy(got);
@@ -896,7 +933,12 @@ bool Font::colour_pixels(u32 cp, int w, int h, std::vector<u8>* out) {
     }
 #endif
     if (!colour_face_) return false;
-    const FT_UInt gi = FT_Get_Char_Index(colour_face_, cp);
+    return colour_glyph_pixels(FT_Get_Char_Index(colour_face_, cp), w, h, out);
+}
+
+// The colour font's glyph `gi`, as large as fits the box with a little
+// room, in the middle of it.
+bool Font::colour_glyph_pixels(u32 gi, int w, int h, std::vector<u8>* out) {
     if (!gi || FT_Load_Glyph(colour_face_, gi, FT_LOAD_COLOR | FT_LOAD_RENDER)) return false;
     const FT_Bitmap& bm = colour_face_->glyph->bitmap;
     if (bm.pixel_mode != FT_PIXEL_MODE_BGRA || !bm.width || !bm.rows) return false;
@@ -922,6 +964,30 @@ bool Font::colour_pixels(u32 cp, int w, int h, std::vector<u8>* out) {
         }
     }
     return true;
+}
+
+// A sequence shaped in the colour font (HarfBuzz): one glyph, drawn as a
+// character's is; more, and the font has no one picture of it.
+bool Font::sequence_pixels(const u32* cps, size_t n, int w, int h, std::vector<u8>* out) {
+    std::vector<u8> probe;
+    if (!colour_face_ && !colour_pixels(cps[0], w, h, &probe)) return false;  // (the colour font found)
+    if (!colour_face_ || colour_path_.empty()) return false;
+    if (!colour_shaper_) {
+        colour_shaper_ = std::make_unique<Shaper>();
+        std::string err;
+        colour_shaper_->open(colour_path_, static_cast<unsigned>(colour_index_), static_cast<float>(h), {}, true, &err);
+    }
+    if (!colour_shaper_->ok()) return false;
+    std::string utf8;
+    for (size_t i = 0; i < n; ++i) {
+        const u32 c = cps[i];
+        if (c < 0x80) utf8 += static_cast<char>(c);
+        else if (c < 0x800) utf8 += static_cast<char>(0xC0 | (c >> 6)), utf8 += static_cast<char>(0x80 | (c & 0x3F));
+        else if (c < 0x10000) utf8 += static_cast<char>(0xE0 | (c >> 12)), utf8 += static_cast<char>(0x80 | ((c >> 6) & 0x3F)), utf8 += static_cast<char>(0x80 | (c & 0x3F));
+        else utf8 += static_cast<char>(0xF0 | (c >> 18)), utf8 += static_cast<char>(0x80 | ((c >> 12) & 0x3F)), utf8 += static_cast<char>(0x80 | ((c >> 6) & 0x3F)), utf8 += static_cast<char>(0x80 | (c & 0x3F));
+    }
+    const std::span<const ShapedGlyph> g = colour_shaper_->shape(utf8.data(), static_cast<u32>(utf8.size()));
+    return g.size() == 1 && colour_glyph_pixels(g[0].gid, w, h, out);
 }
 #endif
 

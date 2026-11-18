@@ -15,6 +15,7 @@
 // by one wide glyph that reaches back over the spacers. A cell still holds
 // exactly one slot, so such a glyph is cut into cell-wide slices, one slot
 // each. ligate() rewrites a row of cells accordingly.
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -176,6 +177,11 @@ public:
         const auto it = colour_.find(slot);
         return it == colour_.end() ? nullptr : &it->second;
     }
+    // An emoji sequence drawn as the one picture the colour font has of it
+    // (a family joined by zero width joiners, an emoji with a skin tone, a
+    // flag): the first of its two slots; 0 if there is none. Asked once a
+    // sequence.
+    u32 sequence_glyph(const u32* cps, size_t n);
 
     // Bumps whenever previously returned slots became invalid.
     u32 generation() const { return generation_; }
@@ -213,6 +219,8 @@ private:
     bool joins(u32 cell) const { return (cell & 0xFFFF) < kAsciiSlots && joins_[cell & (kAsciiSlots - 1)]; }
     u32 lookup(u32 cp);
     bool colour_glyph(u32 cp, u32 slot, u32 width);  // a colour font's picture of it, for those slots
+    bool sequence_pixels(const u32* cps, size_t n, int w, int h, std::vector<u8>* out);  // a sequence's, if the colour font has one picture of it
+    bool colour_glyph_pixels(u32 gi, int w, int h, std::vector<u8>* out);  // (elsewhere than a Mac: a glyph of the colour font's)
     bool colour_pixels(u32 cp, int w, int h, std::vector<u8>* out);  // (the system's: CoreText on a Mac, FreeType elsewhere)
     u32 lookup_styled(u32 cp, u32 style);
     u32 lookup_lined(u32 cp, u32 style);   // (a style with a line under or through)
@@ -290,6 +298,10 @@ private:
     // Colour emoji (see Colour): each glyph's picture, by its first slot;
     // every slot's mark; and the colour font, looked for once.
     std::unordered_map<u32, Colour> colour_;
+    std::unordered_map<std::u32string, u32> sequences_;  // (sequence_glyph's answers)
+    std::string colour_path_;
+    int colour_index_ = 0;
+    std::unique_ptr<class Shaper> colour_shaper_;  // (elsewhere than a Mac: the colour font's sequences shaped)
     std::vector<u8> colour_marks_ = std::vector<u8>(0x10000, 0);
     u32 colour_used_ = 0, colour_lowest_ = ~0u;
 #if !defined(__APPLE__)

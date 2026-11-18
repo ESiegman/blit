@@ -147,15 +147,6 @@ differ marked plain "the combining acute is not drawn"
 shot marked_on "$E$digits" "col:4"
 shot plain_on "e$digits" "col:4"
 same marked_on plain_on "a combining mark took a cell of its own (the text after it moved)"
-shot family "${FAMILY}x"
-shot man "${MAN}x"
-same family man "an emoji family is not drawn as its first emoji, in two cells"
-shot flag "${FLAG}x"
-shot j "${J}x"
-same flag j "the second half of a flag took cells"
-shot thumb "${THUMB}x"
-shot thumb1 "${THUMB1}x"
-same thumb thumb1 "a skin tone took cells"
 shot selected "${CHECK}${VS16}a${ZWSP}b"
 shot unselected "${CHECK}ab"
 same selected unselected "a variation selector or a zero width space was drawn"
@@ -163,11 +154,25 @@ same selected unselected "a variation selector or a zero width space was drawn"
 # Colour emoji: a picture each, from the system's colour font, over its two
 # cells, in the text and in a box (the Markdown preview); a heart stays text.
 # (Skipped where there is no colour emoji font.)
+printf '%s %s %s\n' "$FAMILY" "$FLAG" "$THUMB" >"$dir/seq.txt"
 printf '%s\n' "Smile $(printf '\360\237\230\200') party $(printf '\360\237\216\211') heart $(printf '\342\235\244') go $(printf '\360\237\232\200')" >"$dir/e.md"
 got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;frame;emojidump;keyof:Preview beside the file;frame;frame;frame;emojidump" "$dir/e.md" 2>&1 >/dev/null | grep '^emoji' | tr '\n' ' ' | sed -e 's/ $//')
 case $got in
     "emoji 0: emoji 0:") echo "colour emoji skipped: no colour emoji font here" ;;
-    *) check "colour emoji are pictures over their cells, in the text and in a box" "emoji 3: 2t 2t 2t emoji 6: 2t 2t 2t 2b 2b 2b" ;;
+    *) check "colour emoji are pictures over their cells, in the text and in a box" "emoji 3: 2t 2t 2t emoji 6: 2t 2t 2t 2b 2b 2b"
+       # A sequence: one picture of all of it, in its first character's two
+       # cells (what comes after is where it was: the widths' cases above).
+       shot family "${FAMILY}x"
+       shot man "${MAN}x"
+       differ family man "an emoji family is drawn as its first emoji, not as the family"
+       shot flag "${FLAG}x"
+       shot j "${J}x"
+       differ flag j "a flag is drawn as its first letter, not as the flag"
+       shot thumb "${THUMB}x"
+       shot thumb1 "${THUMB1}x"
+       differ thumb thumb1 "a skin tone is not drawn on its emoji"
+       got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;frame;emojidump" "$dir/seq.txt" 2>&1 >/dev/null | grep '^emoji' | tail -1)
+       check "each sequence one picture" "emoji 3: 2t 2t 2t" ;;
 esac
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "unicode ok"
