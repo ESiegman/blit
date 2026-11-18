@@ -351,6 +351,35 @@ check "theirs taken, then each side's in the simple one; ] past the last stays" 
 got="$(merge "key:t;key:a;key:cmd+s;gitwait;gitdump" | sed 's/ | branches.*//') $(tr '\n' '/' <"$dir/ada/poem.txt")"
 check "saved: the file as merged, and staged" 'blit: Saved and staged poem.txt/main +1 merging | staged M:poem.txt one/TWO/three/four!/FIVE/'
 
+# Interactive rebase: four commits since the server's, each in a file of
+# its own. The second squashed into the first, the third reworded (its body
+# kept), the fourth dropped; and, again, one moved up.
+fresh
+four() {
+    for n in 1 2 3 4; do
+        printf '%s\n' "$n" >"$dir/ada/f$n.txt"
+        git -C "$dir/ada" add "f$n.txt"
+        git -C "$dir/ada" commit -qm "C$n" -m "Body $n"
+    done
+}
+four
+rebase() { "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;gitwait;command:Git: Rebase interactively onto…;key:ctrl+U;text:origin/main;key:Return;gitwait;$1" "$dir/ada/poem.txt" 2>&1 >/dev/null | grep -v '^blit: git' | tr '\n' '/'; }
+got=$(rebase "rebasedump")
+check "the commits since the base, oldest first" 'pick C1; pick C2; pick C3; pick C4/'
+got=$(rebase "key:Down;key:s;key:Down;key:r;key:ctrl+U;text:Third, better;key:Return;key:Down;key:d;rebasedump;key:cmd+s;gitwait")
+got="$got $(git -C "$dir/ada" log --format='%s|%b' origin/main..HEAD | tr '\n' '/') $(ls "$dir/ada" | tr '\n' ' ')"
+check "squashed, reworded (its body kept) and dropped" 'pick C1; squash C2; reword Third, better; drop C4/ Third, better|Body 3//C1|Body 1//C2//Body 2// f1.txt f2.txt f3.txt other.txt poem.txt '
+fresh
+four
+got=$(rebase "key:Down;key:Down;key:alt+Up;key:alt+Up;key:alt+Up;rebasedump;key:Up;key:s;rebasedump;key:cmd+s;gitwait")
+got="$got $(git -C "$dir/ada" log --format=%s origin/main..HEAD | tr '\n' ' ')"
+check "one moved up (not past the first); a first one cannot be squashed" 'pick C3; pick C1; pick C2; pick C4/blit: Nothing before it to fold it into/pick C3; pick C1; pick C2; pick C4/ C4 C2 C1 C3 '
+fresh
+four
+got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;gitwait;command:Git: Rebase interactively onto…;key:ctrl+U;text:origin/main;key:Return;gitwait;key:Down;key:e;key:cmd+s;gitwait;gitdump;git:continue;gitwait;gitdump" "$dir/ada/poem.txt" 2>&1 >/dev/null |
+    grep -v '^blit: git' | sed -e 's/ | .*//' | tr '\n' '/')
+check "an edit stops it there, as a rebase's stops are; Continue goes on" '(no branch) rebasing/main +4/'
+
 # The status bar along the bottom: the branch and how it stands, this
 # file's changed lines, the files changed, the file, the cursor.
 fresh

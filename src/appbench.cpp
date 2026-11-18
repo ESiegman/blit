@@ -815,6 +815,8 @@ void App::run_script(const char* script) {
             if (verb == "gitdump") std::fprintf(stderr, "%s%s\n", arg.empty() ? "" : (arg + ": ").c_str(), git_dump().c_str());
         } else if (verb == "gitgraph") {  // History as the Git tab draws it: lanes, what points at each commit, its subject
             std::fprintf(stderr, "%s\n", git_graph_dump().c_str());
+        } else if (verb == "rebasedump") {  // the rebase tab in front: each commit's action and subject
+            std::fprintf(stderr, "%s\n", git_rebase_dump().c_str());
         } else if (verb == "mergedump") {  // the merge tab in front: its changes, what is taken of each conflict, and how many are open
             std::fprintf(stderr, "%s\n", git_merge_dump().c_str());
         } else if (verb == "gitview") {

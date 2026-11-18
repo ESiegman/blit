@@ -250,6 +250,18 @@ struct MergeView {
     bool asked = false;
 };
 
+// An interactive rebase's tab: the commits since the base, oldest first,
+// each with what is to be done with it (as git's to-do says: pick, reword,
+// edit, squash, fixup, drop) and, reworded, its new subject.
+struct RebaseView {
+    std::string base;
+    struct Item {
+        std::string hash, full, subject, body, action = "pick", reword;
+    };
+    std::vector<Item> items;
+    bool asked = false;
+};
+
 struct GitView {
     u8 kind = kViewOther;
     std::string path;               // the file, from the top of the repository (changes and staged)
@@ -491,6 +503,39 @@ void App::sync_git() {
                 Pane* where = nullptr;
                 Doc* d = find_doc(r.doc, &where);
                 if (!d) break;
+                if (d->rebase) {  // the commits to rebase: hash, whole hash, subject, body, each record ending in \x1e
+                    RebaseView& rv = *d->rebase;
+                    rv.asked = false;
+                    rv.items.clear();
+                    std::string_view text = r.text;
+                    while (r.ok && !text.empty()) {
+                        const size_t end = text.find('\x1e');
+                        std::string_view rec = text.substr(0, end);
+                        text = end == std::string_view::npos ? std::string_view{} : text.substr(end + 1);
+                        while (!rec.empty() && (rec.front() == '\n' || rec.front() == '\r')) rec.remove_prefix(1);
+                        RebaseView::Item it;
+                        std::string* const fields[] = {&it.hash, &it.full, &it.subject, &it.body};
+                        for (std::string* f : fields) {
+                            const size_t sep = rec.find('\x1f');
+                            *f = rec.substr(0, sep);
+                            rec = sep == std::string_view::npos ? std::string_view{} : rec.substr(sep + 1);
+                        }
+                        while (!it.body.empty() && (it.body.back() == '\n' || it.body.back() == ' ')) it.body.pop_back();
+                        if (!it.full.empty()) rv.items.push_back(std::move(it));
+                    }
+                    if (!r.ok || rv.items.empty()) {
+                        d->rebase.reset();
+                        d->measurer = {};
+                        d->ed.open_bytes({}, r.ok ? std::string("Nothing to rebase onto ") + rv.base + "\n" : "git: " + r.text + "\n");
+                        d->ed.mark_saved();
+                        where->cache_rev = ~0ull;
+                    } else {
+                        d->ed.move_to(0, false);
+                        git_rebase_lay(*d);
+                    }
+                    shows = true;
+                    break;
+                }
                 d->ed.insert(r.ok ? r.text : "git: " + r.text + "\n");
                 d->ed.move_to(0, false);
                 d->ed.mark_saved();
@@ -924,6 +969,7 @@ bool App::git_view_key(const SDL_KeyboardEvent& k) {
         }
     }
     if (cfg_.git && !find_open_ && !panel_has_keyboard() && pane_->doc->merge) return git_merge_key(k);
+    if (cfg_.git && !find_open_ && !panel_has_keyboard() && pane_->doc->rebase) return git_rebase_key(k);
     if (!cfg_.git || find_open_ || panel_has_keyboard() || !pane_->doc->gitview) return false;
     if (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI | SDL_KMOD_ALT)) return false;
     if (cfg_.modal) {  // (not while a command or a search is typed)
@@ -1120,6 +1166,234 @@ void App::git_view_note(FrameDesc& fd) {
     const u64 start = d.ed.buf.line_start(head);
     v.note = {head, d.ed.col_between(start, d.ed.line_end(head)) + 4, v.note_cells.data(), static_cast<u32>(v.note_cells.size())};
     grid.notes = {&v.note, 1};
+}
+
+// ---------------------------------------------------------------- interactive rebase
+
+// The commits since `base` (the merges left out, as git rebase does), oldest
+// first, in a tab: p picks the commit at the cursor, r rewords it (its new
+// subject asked for), e stops at it to be changed, s squashes it into the
+// one before, f fixes it up into that one (its message dropped), d drops it;
+// Alt+Up and Alt+Down move it. Cmd+S starts the rebase: blit is git's
+// sequence editor, and writes the to-do. A stop (edit, a conflict) is
+// handled as a rebase's stops are: continued or abandoned from the Git tab.
+namespace {
+
+std::string_view trimmed_view(std::string_view s) {
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.front()))) s.remove_prefix(1);
+    while (!s.empty() && std::isspace(static_cast<unsigned char>(s.back()))) s.remove_suffix(1);
+    return s;
+}
+
+}  // namespace
+
+void App::git_rebase_open(const std::string& base) {
+    GitUi& g = *gitui_;
+    if (!cfg_.git || !g.status.repo) return notify("Not in a git repository");
+    if (g.status.rebasing || g.status.merging || g.status.picking) return notify("A rebase, merge or cherry-pick is under way");
+    for (const std::unique_ptr<Pane>& p : panes_)
+        for (size_t i = 0; i < p->docs.size(); ++i)
+            if (p->docs[i]->rebase) {  // (one at a time: that one, onto this base)
+                focus_pane(p.get());
+                tab_show(i);
+                panel_focus(false);
+                Doc& d = *p->docs[i];
+                d.rebase->base = base;
+                d.rebase->asked = true;
+                d.title = "Rebase onto " + base;
+                git_.text(d.id, {"log", "--reverse", "--no-merges", "--format=%h%x1f%H%x1f%s%x1f%b%x1e", base + "..HEAD", "--"}, "Rebase");
+                return;
+            }
+    Doc* d = add_doc(pane_->tab + 1);
+    d->title = "Rebase onto " + base;
+    d->read_only = true;
+    d->rebase = std::make_shared<RebaseView>();
+    d->rebase->base = base;
+    d->rebase->asked = true;
+    git_.text(d->id, {"log", "--reverse", "--no-merges", "--format=%h%x1f%H%x1f%s%x1f%b%x1e", base + "..HEAD", "--"}, "Rebase");
+    tab_show(pane_->tab + 1);
+    panel_focus(false);
+}
+
+// The tab's text: a line a commit, what is done with it first (in the
+// accent, unless picked; a dropped one muted, and those folded into the one
+// before quieter too).
+void App::git_rebase_lay(Doc& d) {
+    const RebaseView& rv = *d.rebase;
+    const u64 row = d.ed.buf.line_of(d.ed.cursor());
+    std::string text;
+    std::vector<u32> off;
+    std::vector<u8> style;
+    auto mark = [&](u8 st) {
+        const u32 at = static_cast<u32>(text.size());
+        if (!style.empty() && style.back() == st) return;
+        if (!off.empty() && off.back() == at) style.back() = st;
+        else off.push_back(at), style.push_back(st);
+    };
+    for (const RebaseView::Item& it : rv.items) {
+        const bool drop = it.action == "drop", folded = it.action == "squash" || it.action == "fixup";
+        mark(drop ? 4 : it.action == "pick" ? 0 : 3);
+        text += it.action;
+        text.append(7 - std::min<size_t>(7, it.action.size()), ' ');
+        mark(4);
+        text += it.hash + "  ";
+        mark(drop || folded ? 4 : 0);
+        text += it.reword.empty() ? it.subject : it.reword;
+        if (!it.reword.empty()) mark(4), text += "  (was: " + it.subject + ")";
+        text += '\n';
+    }
+    if (!text.empty()) text.pop_back();
+    d.measurer = {};
+    d.ed.open_bytes({}, text);
+    d.ed.mark_saved();
+    auto h = std::make_unique<Highlights>();
+    h->base = 0;
+    h->end = text.size();
+    h->off = std::move(off);
+    h->style = std::move(style);
+    h->seal();
+    d.marks = std::move(h);
+    d.style_bits[1] = kInkAdded << kCellInkShift;
+    d.style_bits[2] = kInkDiagnostic << kCellInkShift;
+    d.style_bits[3] = kInkAccent << kCellInkShift;
+    d.style_bits[4] = kInkMuted << kCellInkShift;
+    d.widest_rev = d.indent_rev = ~0ull;
+    d.ed.move_to(d.ed.buf.line_start(std::min<u64>(row, d.ed.buf.line_count() - 1)), false);
+    Pane* where = nullptr;
+    find_doc(d.id, &where);
+    if (where) {
+        where->cache_rev = ~0ull;
+        if (where->doc == &d) {
+            Pane* const keep = pane_;
+            pane_ = where;
+            scroll_to_cursor();
+            pane_ = keep;
+        }
+    }
+    dirty_ = true;
+}
+
+bool App::git_rebase_key(const SDL_KeyboardEvent& k) {
+    Doc& d = *pane_->doc;
+    RebaseView& rv = *d.rebase;
+    if ((k.mod & kPrimaryMod) && k.key == SDLK_S) {
+        git_rebase_start();
+        term_drop_text_ = true;
+        return true;
+    }
+    if (rv.items.empty()) return false;
+    const u64 row = std::min<u64>(d.ed.buf.line_of(d.ed.cursor()), rv.items.size() - 1);
+    if ((k.mod & SDL_KMOD_ALT) && (k.key == SDLK_UP || k.key == SDLK_DOWN)) {  // the commit moved
+        const u64 to = k.key == SDLK_UP ? (row ? row - 1 : row) : std::min<u64>(row + 1, rv.items.size() - 1);
+        if (to != row) {
+            std::swap(rv.items[row], rv.items[to]);
+            git_rebase_lay(d);
+            d.ed.move_to(d.ed.buf.line_start(to), false);
+            scroll_to_cursor();
+        }
+        term_drop_text_ = true;
+        return true;
+    }
+    if (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI | SDL_KMOD_ALT | SDL_KMOD_SHIFT)) return false;
+    if (cfg_.modal) {  // (not while a command or a search is typed)
+        vim_attach();
+        const Vim::Mode m = vim_.mode();
+        if (m == Vim::kCommand || m == Vim::kInsert || m == Vim::kReplace || vim_.awaiting_char() || !vim_.showcmd().empty()) return false;
+    }
+    const char* action = nullptr;
+    switch (k.key) {
+        case SDLK_P: action = "pick"; break;
+        case SDLK_E: action = "edit"; break;
+        case SDLK_S: action = "squash"; break;
+        case SDLK_F: action = "fixup"; break;
+        case SDLK_D: action = "drop"; break;
+        case SDLK_R: {  // a new subject for it
+            const u64 at = row;
+            const std::string was = rv.items[at].reword.empty() ? rv.items[at].subject : rv.items[at].reword;
+            find_choose(kFindInput, "Subject", was, [this, id = d.id, at](const std::string& typed) {
+                Doc* doc = find_doc(id);
+                if (!doc || !doc->rebase || at >= doc->rebase->items.size() || trimmed_view(typed).empty()) return;
+                RebaseView::Item& it = doc->rebase->items[at];
+                it.action = "reword";
+                it.reword = std::string(trimmed_view(typed));
+                if (it.reword == it.subject) it.reword.clear(), it.action = "pick";
+                git_rebase_lay(*doc);
+            });
+            term_drop_text_ = true;
+            return true;
+        }
+        default: return false;
+    }
+    if ((std::string_view(action) == "squash" || std::string_view(action) == "fixup") && row == 0) {
+        notify("Nothing before it to fold it into");
+    } else {
+        rv.items[row].action = action;
+        rv.items[row].reword.clear();
+        git_rebase_lay(d);
+    }
+    term_drop_text_ = true;
+    dirty_ = true;
+    return true;
+}
+
+namespace {
+
+// Text quoted for sh, whatever is in it.
+std::string sh_quote(std::string_view s) {
+    std::string out = "'";
+    for (const char c : s) {
+        if (c == '\'') out += "'\\''";
+        else out += c;
+    }
+    return out + "'";
+}
+
+}  // namespace
+
+// The rebase started, with this to-do: git's sequence editor is `cat >`,
+// which writes it into git's file from what blit sends it (so that it
+// works where the repository is on another machine too). A reworded commit
+// is picked, then its message amended by an exec, the new subject over the
+// old body.
+void App::git_rebase_start() {
+    Doc& d = *pane_->doc;
+    if (!d.rebase || d.rebase->items.empty() || d.rebase->asked) return;
+    const RebaseView rv = *d.rebase;
+    std::string todo;
+    for (const RebaseView::Item& it : rv.items) {
+        todo += (it.action == "reword" ? std::string("pick") : it.action) + " " + it.full + " " + it.subject + "\n";
+        if (it.action == "reword") {
+            std::string printf_args = sh_quote(it.reword);
+            if (!it.body.empty()) {
+                printf_args += " ''";
+                size_t at = 0;
+                while (at <= it.body.size()) {
+                    size_t nl = it.body.find('\n', at);
+                    if (nl == std::string::npos) nl = it.body.size();
+                    printf_args += " " + sh_quote(std::string_view(it.body).substr(at, nl - at));
+                    at = nl + 1;
+                }
+            }
+            todo += "exec printf '%s\\n' " + printf_args + " | git commit --amend --only --no-verify --cleanup=verbatim -F -\n";
+        }
+    }
+    GitUi& g = *gitui_;
+    g.busy = "Rebase";
+    g.note.clear();
+    git_.run({"-c", "sequence.editor=cat >", "rebase", "-i", rv.base}, "Rebase", todo);
+    ++git_gen_;
+    Pane* where = nullptr;
+    size_t at = 0;
+    if (find_doc(d.id, &where, &at) && where == pane_) tab_close(at, true);
+}
+
+// The rebase tab in front, for the tests: each commit's action and subject.
+std::string App::git_rebase_dump() {
+    const Doc& d = *pane_->doc;
+    if (!d.rebase) return "no rebase";
+    std::string out;
+    for (const RebaseView::Item& it : d.rebase->items) out += (out.empty() ? "" : "; ") + it.action + " " + (it.reword.empty() ? it.subject : it.reword);
+    return out;
 }
 
 // ---------------------------------------------------------------- the merge tool
@@ -2019,6 +2293,7 @@ void App::git_panel_draw(TextBox& box, bool focused) {
     } else if (picked && picked->kind == kRowCommit) {
         add("Enter", "show", kActShowCommit);
         if (!g.log_of.empty() && g.log_of != g.status.branch) add("c", "cherry-pick", kActPick);
+        if (g.log_of.empty() && g.log_find.empty()) add("i", "rebase from here");
         add("Tab", "message");
     } else if (picked && picked->kind == kRowStash) {
         add("Enter", "show", kActShowStash);
@@ -2257,6 +2532,12 @@ bool App::git_panel_key(const SDL_KeyboardEvent& k) {
         case SDLK_C:
             if (kind == kRowCommit && !g.log_of.empty() && g.log_of != g.status.branch) git_do(kActPick);
             return changed();
+        case SDLK_I:  // an interactive rebase of the commits from this one on
+            if (kind == kRowCommit && g.log_of.empty() && g.log_find.empty() && g.sel >= 0) {
+                const std::string hash = g.name_of_row(g.rows[static_cast<size_t>(g.sel)]);
+                if (!hash.empty()) git_rebase_open(hash + "~1");
+            }
+            return changed();
         case SDLK_P:
             if (kind == kRowStash) git_do(kActPop);
             else if (kind == kRowTag) git_do(kActPushTag);
@@ -2421,6 +2702,7 @@ void App::git_command(std::string_view name, const std::string& arg) {
 // History as the Git tab draws it: each commit's lanes, what points at it
 // and its subject, a line each (for the tests).
 std::string App::git_searched() const { return gitui_->log_find; }
+std::string App::git_upstream() const { return gitui_->status.upstream; }
 
 std::string App::git_graph_dump() {
     const GitUi& g = *gitui_;

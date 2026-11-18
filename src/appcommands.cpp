@@ -409,6 +409,12 @@ void App::commands_create() {
         Commands::show_tab(*this, Commands::kGit, false);
         git_command("allbranches", {});
     });
+    own("Git: Rebase interactively onto\xE2\x80\xA6", {}, [this] {
+        if (!Commands::git_ready(*this)) return;
+        find_choose(kFindInput, "Rebase onto", git_upstream(), [this](const std::string& base) {
+            if (!base.empty()) git_rebase_open(base);
+        });
+    });
     own("Git: Merge the file's conflicts", {}, [this] {
         if (Commands::git_ready(*this) && !pane_->doc->ed.path.empty()) git_merge_open(full_path(pane_->doc->ed.path));
     });

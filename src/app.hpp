@@ -84,6 +84,7 @@ struct ProfView;     // a profile's tab (appprofile.cpp)
 struct TermView;     // a terminal's tab (appterm.cpp)
 struct MdView;       // a Markdown preview's tab (appmarkdown.cpp)
 struct MergeView;    // a merge tab (appgit.cpp)
+struct RebaseView;   // an interactive rebase's tab (appgit.cpp)
 struct ImageView;    // an image file's tab (appimage.cpp)
 struct PdfView;      // a PDF's tab (apppdf.cpp)
 struct RemoteEntry;  // a folder's entry on another machine (remote.hpp)
@@ -178,6 +179,7 @@ struct Doc {
     u64 blame_rev = ~0ull, blame_asked = ~0ull, blame_gen = 0;
     bool blame_on = false;
     std::shared_ptr<struct GitView> gitview;  // a diff tab's: what it shows, how it was asked for, its hunks
+    std::shared_ptr<RebaseView> rebase;  // an interactive rebase's tab: the commits, and what is done with each (appgit.cpp)
     std::shared_ptr<MergeView> merge;  // a merge tab's: a conflicted file's three versions, and what is taken of each (appgit.cpp)
     u64 seen_rev = ~0ull, changed_ns = 0;  // when its text was last seen to have changed
     i64 disk_stamp = 0;                    // the file's change time when it was last read or written
@@ -1065,6 +1067,11 @@ private:
     bool git_view_key(const SDL_KeyboardEvent& k);  // (appcommands.cpp's command_key asks first)
     bool git_gutter_click(const SDL_MouseButtonEvent& b);  // (apptabs.cpp's tabs_mouse_down asks first)
     std::string git_graph_dump();
+    void git_rebase_open(const std::string& base);
+    void git_rebase_lay(Doc& d);
+    bool git_rebase_key(const SDL_KeyboardEvent& k);
+    void git_rebase_start();
+    std::string git_rebase_dump();
     void git_merge_open(const std::string& full);
     void git_merge_lay(Doc& d, i64 chunk);
     bool git_merge_key(const SDL_KeyboardEvent& k);
@@ -1072,6 +1079,7 @@ private:
     void git_merge_save();
     std::string git_merge_dump();
     std::string git_searched() const;  // what History is searched for
+    std::string git_upstream() const;  // the branch the one checked out follows, if any
     void git_history(bool lines);  // the file's commits, or the chosen lines', in a diff tab
     std::string git_commit_at(const Doc& d);
     void git_stage_here(bool stage);  // the hunk or the lines chosen at the cursor, in a diff tab or a file
