@@ -1066,6 +1066,10 @@ void App::run_script(const char* script) {
                 if (p->backend.empty()) p->backend = "perf", p->when = "00:00";
                 prof_take_profile(p);
             }
+        } else if (verb == "proftime") {  // proftime:T0,T1, the profile tab in front narrowed to that stretch of seconds (proftime: all of it)
+            double t0 = -1, t1 = -1;
+            if (std::sscanf(arg.c_str(), "%lf,%lf", &t0, &t1) != 2) t0 = t1 = -1;
+            prof_set_stretch(t0, t1);
         } else if (verb == "profdump") {
             std::fprintf(stderr, "%s\n", prof_dump().c_str());
         } else if (verb == "term") {  // a terminal (term:folder, or in the folder being worked in)

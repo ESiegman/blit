@@ -331,6 +331,36 @@ void snippets_test() {
     check(body.text == "if (x) {\n      \n    }" && spans(body, 0) == "4-5" && spans(body, 1) == "15-15", "snippet: indented as the line is, a tab one level");
 }
 
+// A profile's timeline: kept with each sample's time, narrowed to a
+// stretch, and written and read back.
+void timeline_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    Profile p;
+    p.program = "/t/prog";
+    auto add = [&](double t, u64 tid, u64 w, std::vector<std::string_view> names) {
+        std::vector<Profile::Frame> f;
+        for (const std::string_view n : names) f.push_back({n, "/t/prog", {}, 0});
+        p.add(f, w, tid, {}, t);
+    };
+    add(10.0, 1, 10, {"a", "main"});
+    add(10.5, 1, 30, {"b", "main"});
+    add(11.0, 2, 40, {"b", "work"});
+    p.finish();
+    check(p.timeline.size() == 3 && p.timeline[0].t == 0 && p.timeline[2].t == 1.0, "timeline: times from the first sample");
+    const Profile q = narrow_profile(p, 0.4, 1.0);
+    u32 b = 0;
+    for (u32 f = 0; f < q.funcs.size(); ++f)
+        if (q.funcs[f].name == "b") b = f;
+    check(q.weight == 70 && q.samples == 2 && q.funcs[b].self == 70 && q.nodes[0].total == 70 && q.by_thread.size() == 2, "timeline: narrowed to a stretch");
+    Profile back;
+    std::string err;
+    check(Profile::from_json(p.to_json(), &back, &err) && back.timeline.size() == 3 && back.timeline[1].t == 0.5 && back.timeline[2].thread == 2 &&
+              back.timeline[2].w == 40,
+          "timeline: kept and read back");
+}
+
 void carets_test(int seeds) {
     auto check = [](bool ok, const char* what) {
         if (!ok) fail(what, 0, 0);
@@ -4793,6 +4823,7 @@ int main(int argc, char** argv) {
     long_line_test();
     vim_test();
     carets_test(seeds);
+    timeline_test();
     snippets_test();
     find_test();
     folds_test();

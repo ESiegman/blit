@@ -37,7 +37,7 @@ std::string_view base_name(std::string_view path) {
 
 }  // namespace
 
-void Profile::add(std::span<const Frame> frames, u64 w, u64 thread, std::string_view thread_name) {
+void Profile::add(std::span<const Frame> frames, u64 w, u64 thread, std::string_view thread_name, double time) {
     if (nodes.empty()) {
         nodes.push_back({});
         funcs.push_back({std::string(base_name(program)), program, {}, 0, 0, 0, true});  // [0]: the program, all of it
@@ -48,7 +48,7 @@ void Profile::add(std::span<const Frame> frames, u64 w, u64 thread, std::string_
     weight += w;
     nodes[0].total += w;
     funcs[0].total += w;
-    add_path(0, frames, w, true);
+    const u32 leaf = add_path(0, frames, w, true);
     // And in its thread's own tree, under a root of its own.
     auto [it, fresh] = thread_ids_.try_emplace(thread, static_cast<u32>(by_thread.size()));
     if (fresh) {
@@ -63,12 +63,13 @@ void Profile::add(std::span<const Frame> frames, u64 w, u64 thread, std::string_
     t.weight += w;
     ++t.samples;
     nodes[t.root].total += w;
-    add_path(t.root, frames, w, false);
+    const u32 thread_leaf = add_path(t.root, frames, w, false);
+    if (time >= 0) timeline.push_back({time, leaf, thread_leaf, thread, w});
 }
 
 // A sample's frames into the tree under `root` (counts: and into the
 // functions' weights and the lines', which are the whole profile's).
-void Profile::add_path(u32 root, std::span<const Frame> frames, u64 w, bool counts) {
+u32 Profile::add_path(u32 root, std::span<const Frame> frames, u64 w, bool counts) {
     std::vector<std::pair<std::string_view, u32>> lines_now;  // (each line counted once in a sample)
     u32 node = root;
     for (size_t k = frames.size(); k-- > 0;) {  // from the outermost in
@@ -106,10 +107,51 @@ void Profile::add_path(u32 root, std::span<const Frame> frames, u64 w, bool coun
         nodes[node].total += w;
     }
     nodes[node].self += w;
-    if (frames.empty() || !counts) return;
+    if (frames.empty() || !counts) return node;
     funcs[nodes[node].func].self += w;
     const Frame& leaf = frames.front();
     if (!leaf.file.empty() && leaf.line) lines[std::string(leaf.file)][leaf.line].self += w;
+    return node;
+}
+
+Profile narrow_profile(const Profile& p, double t0, double t1) {
+    Profile q = p;
+    q.weight = q.samples = 0;
+    q.seconds = std::max(0.0, t1 - t0);
+    for (ProfileNode& n : q.nodes) n.total = n.self = 0;
+    for (ProfileFunc& f : q.funcs) f.self = f.total = 0;
+    for (ProfileThread& t : q.by_thread) t.weight = t.samples = 0;
+    std::unordered_map<u64, size_t> thread_of;
+    for (size_t i = 0; i < q.by_thread.size(); ++i) thread_of.emplace(q.by_thread[i].id, i);
+    std::vector<u64> seen(q.funcs.size(), ~0ull);
+    for (size_t k = 0; k < p.timeline.size(); ++k) {
+        const Profile::Sample& s = p.timeline[k];
+        if (s.t < t0 || s.t > t1) continue;
+        q.weight += s.w;
+        ++q.samples;
+        if (s.leaf < q.nodes.size()) {  // the whole tree, and the functions' weights (each once a sample)
+            q.nodes[s.leaf].self += s.w;
+            q.funcs[q.nodes[s.leaf].func].self += s.w;
+            for (u32 n = s.leaf;; n = q.nodes[n].parent) {
+                q.nodes[n].total += s.w;
+                if (seen[q.nodes[n].func] != k) seen[q.nodes[n].func] = k, q.funcs[q.nodes[n].func].total += s.w;
+                if (n == 0) break;
+            }
+        }
+        if (const auto it = thread_of.find(s.thread); it != thread_of.end() && s.thread_leaf < q.nodes.size()) {  // its thread's tree
+            ProfileThread& t = q.by_thread[it->second];
+            t.weight += s.w;
+            ++t.samples;
+            q.nodes[s.thread_leaf].self += s.w;
+            for (u32 n = s.thread_leaf;; n = q.nodes[n].parent) {
+                q.nodes[n].total += s.w;
+                if (n == t.root) break;
+            }
+        }
+    }
+    for (ProfileNode& node : q.nodes)
+        std::ranges::stable_sort(node.kids, [&](u32 a, u32 b) { return q.nodes[a].total > q.nodes[b].total; });
+    return q;
 }
 
 Profile invert_profile(const Profile& p) {
@@ -249,6 +291,11 @@ void Profile::finish() {
     for (size_t i = 1; i < funcs.size(); ++i) funcs[i].own = !prog.empty() && base_name(funcs[i].module) == prog;
     std::ranges::stable_sort(by_thread, [](const ProfileThread& a, const ProfileThread& b) { return a.weight > b.weight; });
     threads = std::max<u32>(threads, static_cast<u32>(by_thread.size()));
+    if (!timeline.empty()) {  // (times from the first sample)
+        double t0 = timeline[0].t;
+        for (const Sample& s : timeline) t0 = std::min(t0, s.t);
+        for (Sample& s : timeline) s.t -= t0;
+    }
     func_ids_.clear();
     node_ids_.clear();
     thread_ids_.clear();
@@ -290,6 +337,11 @@ std::string Profile::to_json() const {
         o += i ? ",[" : "[";
         json::quote(o, t.name);
         o += std::format(",{},{},{},{}]", t.id, t.weight, t.samples, t.root);
+    }
+    o += "],\"timeline\":[";
+    for (size_t i = 0; i < timeline.size(); ++i) {
+        const Sample& s = timeline[i];
+        o += std::format("{}[{},{},{},{},{}]", i ? "," : "", s.t, s.leaf, s.thread_leaf, s.thread, s.w);
     }
     o += "],\"lines\":{";
     bool first = true;
@@ -335,6 +387,11 @@ bool Profile::from_json(std::string_view text, Profile* out, std::string* err) {
         const u32 root = static_cast<u32>(t.at(4).integer());
         if (root >= p.nodes.size()) continue;
         p.by_thread.push_back({std::string(t.at(0).str()), static_cast<u64>(t.at(1).integer()), static_cast<u64>(t.at(2).integer()), static_cast<u64>(t.at(3).integer()), root});
+    }
+    for (json::Value s : r["timeline"]) {
+        const u32 leaf = static_cast<u32>(s.at(1).integer()), thread_leaf = static_cast<u32>(s.at(2).integer());
+        if (leaf >= p.nodes.size() || thread_leaf >= p.nodes.size()) continue;
+        p.timeline.push_back({s.at(0).number(), leaf, thread_leaf, static_cast<u64>(s.at(3).integer()), static_cast<u64>(s.at(4).integer())});
     }
     for (json::Value file : r["lines"])
         for (json::Value l : file) p.lines[std::string(file.key())][static_cast<u32>(l.at(0).integer())] = {static_cast<u64>(l.at(1).integer()), static_cast<u64>(l.at(2).integer())};
@@ -395,6 +452,7 @@ bool parse_perf_script(std::string_view text, const std::string& prefix, Profile
     std::vector<F> frames;
     std::deque<std::string> files;  // (prefixed paths, which the sample's frames point into: a deque does not move them)
     u64 period = 0, tid = 0;
+    double when = -1;       // (the sample's time)
     std::string_view comm;  // (the sample's thread's name)
     bool in_sample = false, any_line = false;
     double first = -1, last = 0;
@@ -414,7 +472,7 @@ bool parse_perf_script(std::string_view text, const std::string& prefix, Profile
             }
         pf.clear();
         for (const F& f : frames) pf.push_back({f.name, f.module, f.file, f.line});
-        out->add(pf, period * scale, tid, comm);
+        out->add(pf, period * scale, tid, comm, when);
         frames.clear();
         files.clear();
     };
@@ -432,6 +490,7 @@ bool parse_perf_script(std::string_view text, const std::string& prefix, Profile
             in_sample = true;
             period = 1;
             tid = 0;
+            when = -1;
             comm = {};
             std::string_view s = trim(line);
             const size_t sp = s.find_last_of(" \t");
@@ -445,6 +504,7 @@ bool parse_perf_script(std::string_view text, const std::string& prefix, Profile
                 const size_t t0 = s.find_last_of(" \t");
                 const std::string_view tok = s.substr(t0 == std::string_view::npos ? 0 : t0 + 1, s.size() - 1 - (t0 == std::string_view::npos ? 0 : t0 + 1));
                 const double t = std::strtod(std::string(tok).c_str(), nullptr);
+                when = t;
                 if (first < 0) first = t;
                 last = std::max(last, t);
                 s = t0 == std::string_view::npos ? std::string_view{} : trim(s.substr(0, t0));
@@ -676,6 +736,7 @@ bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out
 
     // The row being read.
     u64 row_weight = 0, row_thread = 0;
+    double row_time = -1;  // (the row's time, in seconds)
     std::vector<u32> row_bt;
     bool in_row = false;
     // What is being read inside it.
@@ -727,6 +788,7 @@ bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out
                     const u64 v = std::strtoull(value.c_str(), nullptr, 10);
                     first = std::min(first, v);
                     last = std::max(last, v);
+                    if (in_row) row_time = static_cast<double>(v) * 1e-9;
                 }
                 text_of.clear();
                 text.clear();
@@ -748,7 +810,7 @@ bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out
                     const XFrame& x = frames[f];
                     pf.push_back({x.name, x.module, x.file, x.line});
                 }
-                out->add(pf, row_weight, row_thread, row_thread < tids.size() ? thread_names[tids[row_thread]] : std::string_view());
+                out->add(pf, row_weight, row_thread, row_thread < tids.size() ? thread_names[tids[row_thread]] : std::string_view(), row_time);
             }
             continue;
         }
@@ -763,6 +825,7 @@ bool parse_xctrace(std::string_view xml, const std::string& prefix, Profile* out
         if (t.name == "row") {
             in_row = true;
             row_weight = 0;
+            row_time = -1;
             row_thread = 0;
             row_bt.clear();
             row_op.clear();

@@ -766,6 +766,9 @@ private:
     void prof_take_profile(std::shared_ptr<struct Profile> p);
     void prof_compare(std::shared_ptr<struct Profile> before, std::shared_ptr<struct Profile> after);
     void prof_compare_pick();
+    void prof_narrow(struct ProfView& v);
+    void prof_mouse_up();
+    void prof_set_stretch(double t0, double t1);
     void prof_view_init(struct ProfView& v);
     void prof_flip(struct ProfView& v);
     void prof_relations(struct ProfView& v);

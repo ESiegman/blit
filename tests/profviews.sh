@@ -73,5 +73,15 @@ check "a caller chosen: its own callers and callees" 'zoom all, of mid: callers 
 run "profopen:$dir/a.perf;profopen:$dir/b.perf;frame;command:Compare with a profile…;key:Return;frame;profdump"
 check "two profiles compared" 'zoom all, compared with 00:00: leaf_b 70%→10% fresh 0.0%→40% leaf_a 30%→50% main 0.0%→0.0%, frames: main=1'
 
+# The timeline: a stretch of it chosen narrows the graph and the list to
+# what ran then (the samples at 0.2 s and 0.3 s: other's leaf_a, then
+# worker's leaf_b), bottom-up too; Esc lets it go.
+run "profopen:$dir/a.perf;frame;proftime:0.15,0.25;frame;profdump"
+check "a stretch of time: what ran then" 'zoom all, stretch 0.15-0.25: 1 samples, heaviest leaf_a'
+run "profopen:$dir/a.perf;frame;proftime:0.15,0.35;key:b;frame;profdump"
+check "and bottom-up" 'zoom all, stretch 0.15-0.35: 2 samples, heaviest leaf_b, bottom-up: leaf_b=67% leaf_a=33%'
+run "profopen:$dir/a.perf;frame;proftime:0.15,0.25;frame;key:Escape;frame;profdump"
+check "Esc: all of it again" 'zoom all'
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "profviews ok"
 exit $failed

@@ -74,6 +74,16 @@ struct Profile {
     std::vector<ProfileThread> by_thread;  // the heaviest first
     // Weight by source line: file -> line (from 1) -> weight.
     std::map<std::string, std::map<u32, ProfileLine>> lines;
+    // Each sample in the order it came: when (seconds from the first), the
+    // node it ended at in the whole tree and in its thread's, its thread (by
+    // number) and its weight. What the timeline is drawn from, and what a
+    // stretch of it is narrowed to (narrow_profile).
+    struct Sample {
+        double t = 0;
+        u32 leaf = 0, thread_leaf = 0;
+        u64 thread = 0, w = 0;
+    };
+    std::vector<Sample> timeline;
     std::string output;  // what the program printed (its last 64 KB)
     std::string note;    // what the reader should know (no source lines found, ...)
 
@@ -82,7 +92,8 @@ struct Profile {
         std::string_view name, module, file;
         u32 line = 0;
     };
-    void add(std::span<const Frame> frames, u64 weight, u64 thread = 0, std::string_view thread_name = {});
+    // (time: when it was taken, in seconds on any clock; negative: not known.)
+    void add(std::span<const Frame> frames, u64 weight, u64 thread = 0, std::string_view thread_name = {}, double time = -1);
     void finish();  // the kids in order, functions' lines
 
     // The functions, the heaviest by own time first.
@@ -97,7 +108,7 @@ struct Profile {
     static bool from_json(std::string_view text, Profile* out, std::string* err);
 
 private:
-    void add_path(u32 root, std::span<const Frame> frames, u64 weight, bool counts);
+    u32 add_path(u32 root, std::span<const Frame> frames, u64 weight, bool counts);
     std::unordered_map<std::string, u32> func_ids_;            // name + '\0' + module
     std::unordered_map<u64, u32> node_ids_;                    // parent << 32 | func
     std::unordered_map<u64, u32> thread_ids_;                  // a thread's number -> by_thread
@@ -112,6 +123,12 @@ private:
 // (their weights are the profile's: weights_under() on this tree would give
 // the callers the time), and so are their indices.
 Profile invert_profile(const Profile& p);
+
+// The profile as it was between two times (seconds from its first sample)
+// only: the same functions, nodes and threads, each weighing what its
+// samples in that stretch weighed (and the functions' weights, the whole's
+// and the threads', counted again from them). Its timeline is all of it.
+Profile narrow_profile(const Profile& p, double t0, double t1);
 
 // Two profiles of the same program compared, before and after: for each
 // node of the later one's tree (all threads), the share of the earlier's

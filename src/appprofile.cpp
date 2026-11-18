@@ -7,6 +7,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cctype>
 #include <cstdio>
@@ -157,6 +158,21 @@ struct ProfView {
     std::shared_ptr<Profile> base;
     std::shared_ptr<ProfileDiff> diff;
     u32 dsel = 0, dtop = 0;
+    // The timeline: all of the profile (orig is a stretch of it while one is
+    // chosen), the stretch chosen (t0 < 0: none), a drag across it under way;
+    // where its lanes are, the thread each is, and the seconds it spans.
+    std::shared_ptr<Profile> full;
+    double t0 = -1, t1 = -1;
+    bool tl_drag = false;
+    double tl_anchor = 0;
+    u32 tl_row = 0, tl_rows = 0, tl_col = 0, tl_cols = 0;
+    std::vector<u64> lane_ids;
+    double tl_span = 0;
+    double time_at(u32 col) const {
+        if (!tl_cols) return 0;
+        const double at = (static_cast<double>(col) - static_cast<double>(tl_col) + 0.5) / static_cast<double>(tl_cols);
+        return std::clamp(at, 0.0, 1.0) * tl_span;
+    }
     std::vector<u16> depth;  // of each node (a thread's root is at 0)
     std::vector<bool> is_root;  // (the roots: of all threads, and of each)
     u16 deepest = 0;
@@ -485,6 +501,43 @@ void App::prof_sync() {
     prof_open(p);
 }
 
+// The graph and the list as they were in the stretch of time chosen (all
+// of it, with none chosen); the function chosen stays chosen.
+void App::prof_narrow(ProfView& v) {
+    const u32 focus = v.sel < v.order.size() ? v.order[v.sel] : ~0u;
+    v.orig = v.t0 < 0 ? v.full : std::make_shared<Profile>(narrow_profile(*v.full, v.t0, v.t1));
+    v.flipped = v.bottom_up ? std::make_shared<Profile>(invert_profile(*v.orig)) : nullptr;
+    v.p = v.bottom_up ? v.flipped : v.orig;
+    prof_view_init(v);
+    prof_thread(v, v.thread);
+    for (u32 k = 0; k < v.order.size(); ++k)
+        if (v.order[k] == focus) v.sel = k;
+    v.rel_of = ~0u;  // (counted again)
+    v.key = 0;
+    dirty_ = true;
+}
+
+// The profile tab in front narrowed to a stretch of time (t0 < 0: all of it). For the tests.
+void App::prof_set_stretch(double t0, double t1) {
+    if (!pane_->doc->prof) return;
+    ProfView& v = *pane_->doc->prof;
+    v.t0 = t0 < 0 ? -1 : t0, v.t1 = t0 < 0 ? -1 : t1;
+    prof_narrow(v);
+}
+
+// A drag across the timeline let go of: that stretch, or (no more than a
+// click) all of it again.
+void App::prof_mouse_up() {
+    if (!profui_) return;
+    for (const std::unique_ptr<Pane>& pane : panes_) {
+        if (!pane->doc || !pane->doc->prof || !pane->doc->prof->tl_drag) continue;
+        ProfView& v = *pane->doc->prof;
+        v.tl_drag = false;
+        if (v.tl_cols == 0 || v.t1 - v.t0 < v.tl_span / static_cast<double>(v.tl_cols)) v.t0 = v.t1 = -1;
+        prof_narrow(v);
+    }
+}
+
 // Two profiles compared in a tab of their own: the later's flame graph,
 // each frame coloured by how its share moved since the earlier, and each
 // function's share before and after.
@@ -493,7 +546,7 @@ void App::prof_compare(std::shared_ptr<Profile> before, std::shared_ptr<Profile>
     d->title = "Compared: " + short_path(after->program) + " " + before->when + " \xE2\x86\x92 " + after->when;
     d->read_only = true;
     auto v = std::make_shared<ProfView>();
-    v->p = v->orig = after;
+    v->p = v->orig = v->full = after;
     v->base = std::move(before);
     v->diff = std::make_shared<ProfileDiff>(diff_profiles(*v->base, *after));
     prof_view_init(*v);
@@ -554,7 +607,7 @@ void App::prof_open(std::shared_ptr<Profile> p) {
     d->title = kind_title(*p) + ": " + short_path(p->program) + " " + p->when;
     d->read_only = true;
     auto v = std::make_shared<ProfView>();
-    v->p = v->orig = p;
+    v->p = v->orig = v->full = p;
     prof_view_init(*v);
     d->prof = v;
     tab_show(pane_->tab + 1);
@@ -990,6 +1043,7 @@ void App::prof_layout(FrameDesc& fd) {
         auto mix = [&](u64 k) { key = (key ^ k) * 1099511628211ull; };
         mix(cols), mix(rows), mix(font.generation()), mix(v.zoom), mix(static_cast<u64>(v.hover + 1)), mix(v.sel), mix(v.top), mix(v.shift), mix(static_cast<u64>(v.thread + 1));
         mix(v.bottom_up), mix(v.relations), mix(v.rel_sel), mix(v.rel_top), mix(v.rel_of), mix(v.dsel), mix(v.dtop);
+        mix(std::bit_cast<u64>(v.t0)), mix(std::bit_cast<u64>(v.t1));
         if (key != v.key) {
             v.key = key;
             v.box.resize(cols, rows);
@@ -1011,11 +1065,56 @@ void App::prof_layout(FrameDesc& fd) {
             c = box.put(font, 1, 1, sum, kInkMuted);
             if (v.thread >= 0) c = box.put(font, 1, c, " \xC2\xB7 " + v.root_name() + " " + percent(v.whole, p.weight), 0);
             if (v.bottom_up) c = box.put(font, 1, c, " \xC2\xB7 bottom-up", 0);
+            if (v.t0 >= 0) {
+                char stretch[96];
+                std::snprintf(stretch, sizeof stretch, " \xC2\xB7 %.2f\xE2\x80\x93%.2f s of %.2f", v.t0, v.t1, v.full->seconds);
+                c = box.put(font, 1, c, stretch, 0);
+            }
             if (v.base) c = box.put(font, 1, c, " \xC2\xB7 compared with " + v.base->when + (v.base->program != p.program ? " (" + short_path(v.base->program) + ")" : std::string()), 0);
             if (!p.note.empty()) put(box, font, 1, c + 3, clip(p.note, cols > c + 4 ? cols - c - 4 : 1), ink::kWarning);
 
+            // The timeline: a lane for each thread (the heaviest few), how much
+            // it ran in each stretch of time, the stretch chosen lit.
+            v.tl_rows = 0;
+            const Profile& whole = *v.full;
+            if (!v.diff && whole.timeline.size() > 1) {
+                double span = 0;
+                for (const Profile::Sample& s : whole.timeline) span = std::max(span, s.t);
+                if (span > 0) {
+                    v.tl_span = span;
+                    v.lane_ids.clear();
+                    for (size_t k = 0; k < whole.by_thread.size() && k < 6; ++k) v.lane_ids.push_back(whole.by_thread[k].id);
+                    v.tl_row = 3;
+                    v.tl_rows = static_cast<u32>(v.lane_ids.size());
+                    const u32 label = std::min<u32>(16, cols / 5);
+                    v.tl_col = label + 2;
+                    v.tl_cols = cols > v.tl_col + 2 ? cols - v.tl_col - 1 : 1;
+                    std::vector<std::vector<u64>> lanes(v.tl_rows, std::vector<u64>(v.tl_cols, 0));
+                    for (const Profile::Sample& s : whole.timeline) {
+                        const auto lane = std::ranges::find(v.lane_ids, s.thread);
+                        if (lane == v.lane_ids.end()) continue;
+                        const u32 b = std::min<u32>(v.tl_cols - 1, static_cast<u32>(s.t / span * static_cast<double>(v.tl_cols)));
+                        lanes[static_cast<size_t>(lane - v.lane_ids.begin())][b] += s.w;
+                    }
+                    static const char* const kLevel[] = {"\xE2\x96\x81", "\xE2\x96\x82", "\xE2\x96\x83", "\xE2\x96\x84", "\xE2\x96\x85", "\xE2\x96\x86", "\xE2\x96\x87", "\xE2\x96\x88"};
+                    for (u32 l = 0; l < v.tl_rows; ++l) {
+                        const u32 r = v.tl_row + l;
+                        const ProfileThread& t = whole.by_thread[l];
+                        box.put(font, r, 1, clip(t.name, label), kInkMuted);
+                        const u64 most = *std::ranges::max_element(lanes[l]);
+                        for (u32 b = 0; b < v.tl_cols; ++b) {
+                            const u64 ran = lanes[l][b];
+                            if (!ran) box.put(font, r, v.tl_col + b, "\xC2\xB7", kInkMuted);  // (not running)
+                            else box.put(font, r, v.tl_col + b, kLevel[std::min<u64>(7, (ran * 8 + most - 1) / most - 1)], kInkAccent);
+                            const double b0 = static_cast<double>(b) / static_cast<double>(v.tl_cols) * span, b1 = static_cast<double>(b + 1) / static_cast<double>(v.tl_cols) * span;
+                            if (v.t0 >= 0 && b1 > v.t0 && b0 <= v.t1) box.cells[static_cast<size_t>(r) * cols + v.tl_col + b] |= kCellSelected;
+                        }
+                    }
+                }
+            }
+
             // Where in the graph the view is: the frames above the one zoomed into.
-            const u32 top_rows = 3;
+            const u32 top_rows = 3 + (v.tl_rows ? v.tl_rows + 1 : 0);
             {
                 std::vector<u32> path;
                 for (u32 n = v.zoom; n != v.root; n = p.nodes[n].parent) path.push_back(n);
@@ -1027,7 +1126,9 @@ void App::prof_layout(FrameDesc& fd) {
 
             // The flame graph: the root at the bottom, each function above
             // what called it, as wide as its share of the time.
-            const u32 list_min = std::min<u32>(8, rows / 3);
+            // (The list gives up rows before the graph has fewer than four.)
+            u32 list_min = std::min<u32>(8, rows / 3);
+            while (list_min > 2 && rows < top_rows + list_min + 3 + 4) --list_min;
             const u32 room = rows > top_rows + list_min + 3 ? rows - top_rows - list_min - 3 : 3;
             // The frames a cell wide or more, by depth: as many rows as the deepest of them needs.
             struct Item {
@@ -1237,6 +1338,15 @@ bool App::prof_mouse_motion(const SDL_MouseMotionEvent& m) {
     for (const std::unique_ptr<Pane>& p : panes_) {
         if (!p->doc || !p->doc->prof) continue;
         ProfView& v = *p->doc->prof;
+        if (v.tl_drag) {  // (the stretch follows the mouse, anywhere across the tab)
+            const int cw = font_->cell_w();
+            const int cx = (static_cast<int>(m.x * density_) - v.x - v.pad_x) / std::max(1, cw);
+            const double t = v.time_at(static_cast<u32>(std::max(0, cx)));
+            v.t0 = std::min(v.tl_anchor, t), v.t1 = std::max(v.tl_anchor, t);
+            v.key = 0;
+            dirty_ = true;
+            continue;
+        }
         hover = -1;
         if (over && pane == p.get())
             for (const ProfView::Hit& h : v.hits)
@@ -1279,6 +1389,12 @@ bool App::prof_mouse_down(const SDL_MouseButtonEvent& b) {
     const Profile& p = *v.p;
     dirty_ = true;
     if (b.button != SDL_BUTTON_LEFT) return true;
+    if (v.tl_rows && row >= v.tl_row && row < v.tl_row + v.tl_rows && col >= v.tl_col) {  // a stretch of the timeline, dragged out from here
+        v.tl_drag = true;
+        v.tl_anchor = v.t0 = v.t1 = v.time_at(col);
+        v.key = 0;
+        return true;
+    }
     for (const ProfView::Hit& h : v.hits)
         if (h.row == row && col >= h.c0 && col < h.c1) {
             // A frame: the graph zooms into it (or back out to it), and
@@ -1419,7 +1535,12 @@ bool App::prof_key(const SDL_KeyboardEvent& k) {
             if (v.sel < n) prof_go_to(p, v.order[v.sel]);
             break;
         case SDLK_ESCAPE:
-            if (v.zoom == v.root) return false;
+            if (v.zoom == v.root) {
+                if (v.t0 < 0) return false;
+                v.t0 = v.t1 = -1;  // (the stretch of time chosen let go of: all of it again)
+                prof_narrow(v);
+                break;
+            }
             v.zoom = p.nodes[v.zoom].parent;
             break;
         case SDLK_SPACE:
@@ -1610,6 +1731,12 @@ std::string App::prof_dump() {
         const ProfView& v = *pane_->doc->prof;
         out += "; tab: zoom " + (v.zoom != v.root ? std::string(short_name(v.p->funcs[v.p->nodes[v.zoom].func].name)) : v.root_name());
         if (v.thread >= 0 && !v.order.empty()) out += ", heaviest " + std::string(short_name(v.p->funcs[v.order[0]].name));
+        if (v.t0 >= 0) {
+            char stretch[64];
+            std::snprintf(stretch, sizeof stretch, ", stretch %.2f-%.2f: %llu samples", v.t0, v.t1, static_cast<unsigned long long>(v.orig->samples));
+            out += stretch;
+            if (!v.order.empty()) out += ", heaviest " + std::string(short_name(v.p->funcs[v.order[0]].name));
+        }
         if (v.diff) {  // (the functions that moved most, their own share before and after)
             out += ", compared with " + v.base->when + ":";
             for (size_t k = 0; k < v.diff->rows.size() && k < 4; ++k) {

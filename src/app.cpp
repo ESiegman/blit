@@ -1770,6 +1770,7 @@ void App::handle(const SDL_Event& e) {
         case SDL_EVENT_MOUSE_BUTTON_UP:
             if (e.button.button == SDL_BUTTON_LEFT) dragging_ = dragging_thumb_ = column_drag_ = false;
             splits_mouse_up(e.button);  // lets go of whatever was being carried
+            prof_mouse_up();  // a stretch of a profile's timeline
             panel_mouse_up();
             tabs_mouse_up();
             term_mouse_up();
