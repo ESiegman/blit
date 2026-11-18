@@ -4118,6 +4118,59 @@ void git_test(int seeds) {
         check(lanes({{"m", {"a", "b", "c"}}, {"a", {"r"}}, {"b", {"r"}}, {"c", {"r"}}, {"r", {}}}) == "●─╮─╮/● │ │/│ ● │/│ │ ●/●─╯─╯/", "graph: an octopus merge, and the branches meeting");
         check(lanes({{"t1", {"r"}}, {"t2", {"z"}}, {"t3", {"r"}}, {"r", {}}, {"z", {}}}) == "●/│ ●/│ │ ●/●─┼─╯/  ●/", "graph: a lane passing under a branch that meets");
         check(lanes({{"a", {"b"}}, {"b", {}}}) == "●/●/" && lanes({}).empty(), "graph: one line");
+        // Three ways: changes one side made taken; the same change by both once; a conflict open between markers, then taken.
+        {
+            using C = GitMerge::Chunk;
+            GitMerge m = merge3("a\nb\nc\nd\ne\nf\ng\n", "a\nB\nc\nd\ne\nF\ng\n", "a\nb\nC\nd\ne\nF!\ng\n");
+            std::string kinds;
+            for (const C& c : m.chunks) kinds += "SYTBC"[c.kind];
+            check(kinds == "SCSCS" && m.chunks[1].simple && !m.chunks[3].simple && m.open() == 2, "merge: b and c changed side by side (simple), f both ways (not)");
+            check(m.result() == "a\n<<<<<<< yours\nB\nc\n=======\nb\nC\n>>>>>>> theirs\nd\ne\n<<<<<<< yours\nF\n=======\nF!\n>>>>>>> theirs\ng\n", "merge: open conflicts between markers");
+            m.chunks[1].take = C::kTakeEach;
+            m.chunks[3].take = C::kTakeTheirs;
+            check(m.result() == "a\nB\nC\nd\ne\nF!\ng\n" && m.open() == 0, "merge: each side's, and theirs");
+            m.chunks[3].take = C::kTakeYoursTheirs;
+            check(m.result() == "a\nB\nC\nd\ne\nF\nF!\ng\n", "merge: both, yours first");
+            const GitMerge one = merge3("x\ny\n", "x\ny\nyours\n", "theirs\nx\ny\n");
+            check(one.result() == "theirs\nx\ny\nyours\n" && one.open() == 0, "merge: one side's at each end");
+            const GitMerge both = merge3("x\n", "x\nsame\n", "x\nsame\n");
+            check(both.result() == "x\nsame\n" && both.chunks.back().kind == C::kBoth, "merge: the same change by both, once");
+            const GitMerge added = merge3("", "mine", "theirs");
+            check(added.result() == "<<<<<<< yours\nmine\n=======\ntheirs\n>>>>>>> theirs\n" && !added.chunks[0].simple, "merge: both added, without a last line end");
+            GitMergeView v;
+            merge_view(m, 60, 4, &v);
+            check(v.chunk_of_row.size() == 1 + 1 + 2 + 2 + 2 + 1 && v.chunk_of_row[0] == ~0u && v.text.starts_with("Theirs"), "merge: laid out in three columns");
+        }
+        // And with random texts: where one side is the base, the other is the result; where both are alike, they are.
+        {
+            u64 seed = 12345;
+            auto next = [&] { return seed = seed * 6364136223846793005ull + 1442695040888963407ull, static_cast<u32>(seed >> 33); };
+            auto text = [&](u32 n) {
+                std::string t;
+                for (u32 i = 0; i < n; ++i) t += std::string(1, static_cast<char>('a' + next() % 5)) + "\n";
+                return t;
+            };
+            auto edit = [&](std::string t) {
+                for (u32 k = next() % 4; k-- > 0;) {
+                    const size_t at = t.empty() ? 0 : (next() % (t.size() / 2 + 1)) * 2;
+                    if (next() % 2 && at < t.size()) t.erase(at, 2);
+                    else t.insert(std::min(at, t.size()), std::string(1, static_cast<char>('f' + next() % 5)) + "\n");
+                }
+                return t;
+            };
+            bool ok = true;
+            for (int round = 0; round < 300 && ok; ++round) {
+                const std::string b0 = text(next() % 12), y = edit(b0), t = edit(b0);
+                ok = merge3(b0, y, b0).result() == y && merge3(b0, b0, t).result() == t && merge3(b0, y, y).result() == y && merge3(b0, y, t).base.size() == line_hashes(b0).size();
+                GitMerge m = merge3(b0, y, t);
+                for (GitMerge::Chunk& c : m.chunks) c.take = GitMerge::Chunk::kTakeYours;
+                bool yours_only = true;
+                for (const GitMerge::Chunk& c : m.chunks) yours_only &= c.kind != GitMerge::Chunk::kTheirs;
+                if (yours_only) ok &= m.result() == y;
+                if (!ok) std::fprintf(stderr, "merge: base %s yours %s theirs %s\n", b0.c_str(), y.c_str(), t.c_str());
+            }
+            check(ok, "merge: random texts, one side as the base");
+        }
         GitBlame blame;
         const std::string a(40, 'a'), zero(40, '0');
         const std::string porcelain = a + " 1 1 2\nauthor Ada\nauthor-time 1700000000\nsummary First\nfilename f\n\tline one\n" + a + " 2 2\n\tline two\n" +

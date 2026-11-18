@@ -134,6 +134,47 @@ void diff_view(std::string_view text, const GitDiff& diff, u32 cols, u32 tab_wid
 // are whole lines with their ends.
 std::string stage_lines(std::string_view head, std::string_view index, std::string_view now, u32 line0, u32 line1, bool stage);
 
+// A conflicted file merged three ways, from git's three versions of it:
+// the base (:1, what both started from), yours (:2, the branch checked
+// out) and theirs (:3, what is merged in). The file goes in chunks: lines
+// all three have alike; changes only one side made; the same change made by
+// both; and conflicts, where both changed the same lines, or lines next to
+// each other's, differently. A conflict is taken from theirs, yours or both,
+// or is open (the result has it between markers, as git writes it). A
+// simple one, where the sides' changes only touch, can have each taken.
+struct GitMerge {
+    std::vector<std::string> base, yours, theirs;  // their lines, each with its end
+    struct Span {
+        u32 b0, b1, n0, n1;  // a side's change: the base's lines [b0, b1) became its lines [n0, n1)
+    };
+    struct Chunk {
+        enum Kind : u8 { kSame, kYours, kTheirs, kBoth, kConflict };
+        enum Take : u8 { kOpen, kTakeTheirs, kTakeYours, kTakeYoursTheirs, kTakeTheirsYours, kTakeEach };
+        Kind kind = kSame;
+        Take take = kOpen;
+        bool simple = false;
+        u32 b0 = 0, b1 = 0, y0 = 0, y1 = 0, t0 = 0, t1 = 0;  // its lines in each
+        std::vector<Span> ys, ts;                             // a conflict's: each side's changes in it
+    };
+    std::vector<Chunk> chunks;
+    u32 open() const;  // conflicts not resolved
+    std::vector<std::string> lines_of(const Chunk& c) const;  // the result's lines for it
+    std::string result() const;
+};
+GitMerge merge3(std::string_view base, std::string_view yours, std::string_view theirs);
+// The merge laid out in three columns, theirs, the result and yours, each
+// a third of `cols` (long lines carried on below), the chunks beside each
+// other a row apart; the colours as a diff view's (1: what the result has
+// of a change, 2: an open conflict, 3: the titles, 4: muted); and the chunk
+// each row is of (~0u: the titles).
+struct GitMergeView {
+    std::string text;
+    std::vector<u32> off;
+    std::vector<u8> style;
+    std::vector<u32> chunk_of_row;
+};
+void merge_view(const GitMerge& m, u32 cols, u32 tab_width, GitMergeView* out);
+
 // Who last changed each line.
 struct GitBlame {
     struct Commit {
@@ -170,6 +211,7 @@ public:
         kBlame,
         kText,        // the output of a command, for showing in a tab
         kView,        // a diff for a tab: read, and laid out (see diff_view)
+        kMerge,       // a conflicted file's three versions, merged (merge3)
     };
     struct Result {
         u32 kind = 0;
@@ -191,6 +233,7 @@ public:
         std::shared_ptr<const std::string> source;
         std::shared_ptr<const GitDiff> diff;
         std::shared_ptr<GitDiffView> view;
+        std::shared_ptr<GitMerge> merge;  // kMerge
     };
 
     Git();
@@ -224,6 +267,9 @@ public:
     // index is written with git's own plumbing, not through a patch.
     // Reported as an action, then a status.
     void stage(u64 doc, const std::string& path, std::vector<Piece> pieces, u32 line0, u32 line1, bool stage, std::string label);
+    // A conflicted file's three versions from the index (`path`: its full
+    // path), merged (kMerge, for the document `doc`).
+    void merge(u64 doc, const std::string& path);
     // The branch whose commits a status lists (empty: the one checked out;
     // "--all": every branch's).
     void log_of(const std::string& branch);

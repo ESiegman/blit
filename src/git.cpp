@@ -744,6 +744,247 @@ bool mark_changes(Cells& a, Cells& b) {
 
 }  // namespace
 
+// ---------------------------------------------------------------- three ways
+
+namespace {
+
+std::vector<std::string> split_lines(std::string_view s) {
+    std::vector<std::string> out;
+    size_t at = 0;
+    while (at < s.size()) {
+        size_t nl = s.find('\n', at);
+        nl = nl == std::string_view::npos ? s.size() : nl + 1;
+        out.emplace_back(s.substr(at, nl - at));
+        at = nl;
+    }
+    return out;
+}
+
+}  // namespace
+
+GitMerge merge3(std::string_view base, std::string_view yours, std::string_view theirs) {
+    GitMerge m;
+    m.base = split_lines(base), m.yours = split_lines(yours), m.theirs = split_lines(theirs);
+    const std::vector<u64> hb = line_hashes(base), hy = line_hashes(yours), ht = line_hashes(theirs);
+    const std::vector<Spans> sy = spans_of(diff_lines(hb, hy)), st = spans_of(diff_lines(hb, ht));
+    u32 pos = 0;
+    i64 shy = 0, sht = 0;  // (each side's lines less the base's, before pos)
+    auto same = [&](u32 upto) {
+        if (upto <= pos) return;
+        GitMerge::Chunk c;
+        c.b0 = pos, c.b1 = upto;
+        c.y0 = static_cast<u32>(pos + shy), c.y1 = static_cast<u32>(upto + shy);
+        c.t0 = static_cast<u32>(pos + sht), c.t1 = static_cast<u32>(upto + sht);
+        m.chunks.push_back(std::move(c));
+        pos = upto;
+    };
+    size_t iy = 0, it = 0;
+    constexpr u32 kNone = ~0u;
+    while (iy < sy.size() || it < st.size()) {
+        const u32 start = std::min(iy < sy.size() ? sy[iy].old0 : kNone, it < st.size() ? st[it].old0 : kNone);
+        same(start);
+        // The changes of either side that overlap or touch, from there.
+        GitMerge::Chunk c;
+        c.b0 = start;
+        c.y0 = static_cast<u32>(start + shy), c.t0 = static_cast<u32>(start + sht);
+        u32 b1 = start;
+        for (bool grew = true; grew;) {
+            grew = false;
+            if (iy < sy.size() && sy[iy].old0 <= b1) {
+                c.ys.push_back({sy[iy].old0, sy[iy].old1, sy[iy].new0, sy[iy].new1});
+                shy += static_cast<i64>(sy[iy].new1 - sy[iy].new0) - static_cast<i64>(sy[iy].old1 - sy[iy].old0);
+                b1 = std::max(b1, sy[iy++].old1), grew = true;
+            }
+            if (it < st.size() && st[it].old0 <= b1) {
+                c.ts.push_back({st[it].old0, st[it].old1, st[it].new0, st[it].new1});
+                sht += static_cast<i64>(st[it].new1 - st[it].new0) - static_cast<i64>(st[it].old1 - st[it].old0);
+                b1 = std::max(b1, st[it++].old1), grew = true;
+            }
+        }
+        c.b1 = b1;
+        c.y1 = static_cast<u32>(b1 + shy), c.t1 = static_cast<u32>(b1 + sht);
+        if (c.ts.empty()) {
+            c.kind = GitMerge::Chunk::kYours;
+        } else if (c.ys.empty()) {
+            c.kind = GitMerge::Chunk::kTheirs;
+        } else {
+            const bool alike = c.y1 - c.y0 == c.t1 - c.t0 && std::equal(m.yours.begin() + c.y0, m.yours.begin() + c.y1, m.theirs.begin() + c.t0);
+            c.kind = alike ? GitMerge::Chunk::kBoth : GitMerge::Chunk::kConflict;
+            // Simple: no line changed by both, and no two things put in at one place.
+            c.simple = true;
+            for (const GitMerge::Span& y : c.ys)
+                for (const GitMerge::Span& t : c.ts)
+                    if ((y.b0 < t.b1 && t.b0 < y.b1) || (y.b0 == y.b1 && t.b0 == t.b1 && y.b0 == t.b0)) c.simple = false;
+        }
+        if (c.kind != GitMerge::Chunk::kConflict) c.ys.clear(), c.ts.clear();
+        m.chunks.push_back(std::move(c));
+        pos = b1;
+    }
+    same(static_cast<u32>(m.base.size()));
+    return m;
+}
+
+u32 GitMerge::open() const {
+    u32 n = 0;
+    for (const Chunk& c : chunks) n += c.kind == Chunk::kConflict && c.take == Chunk::kOpen;
+    return n;
+}
+
+std::vector<std::string> GitMerge::lines_of(const Chunk& c) const {
+    std::vector<std::string> out;
+    auto add = [&](const std::vector<std::string>& from, u32 a, u32 b) {
+        for (u32 i = a; i < b && i < from.size(); ++i) out.push_back(from[i]);
+    };
+    auto end_line = [&] {  // (a marker after a last line without its end goes on a line of its own)
+        if (!out.empty() && !out.back().ends_with('\n')) out.back() += '\n';
+    };
+    switch (c.kind) {
+        case Chunk::kSame: add(base, c.b0, c.b1); break;
+        case Chunk::kYours:
+        case Chunk::kBoth: add(yours, c.y0, c.y1); break;
+        case Chunk::kTheirs: add(theirs, c.t0, c.t1); break;
+        case Chunk::kConflict:
+            switch (c.take) {
+                case Chunk::kOpen:
+                    out.emplace_back("<<<<<<< yours\n");
+                    add(yours, c.y0, c.y1);
+                    end_line();
+                    out.emplace_back("=======\n");
+                    add(theirs, c.t0, c.t1);
+                    end_line();
+                    out.emplace_back(">>>>>>> theirs\n");
+                    break;
+                case Chunk::kTakeTheirs: add(theirs, c.t0, c.t1); break;
+                case Chunk::kTakeYours: add(yours, c.y0, c.y1); break;
+                case Chunk::kTakeYoursTheirs:
+                    add(yours, c.y0, c.y1), end_line(), add(theirs, c.t0, c.t1);
+                    break;
+                case Chunk::kTakeTheirsYours:
+                    add(theirs, c.t0, c.t1), end_line(), add(yours, c.y0, c.y1);
+                    break;
+                case Chunk::kTakeEach: {  // the base, with each side's changes in their places
+                    std::vector<std::pair<const Span*, bool>> all;
+                    for (const Span& s : c.ys) all.emplace_back(&s, true);
+                    for (const Span& s : c.ts) all.emplace_back(&s, false);
+                    // (By where each starts; at one place, what is put in before what is changed.)
+                    std::ranges::sort(all, [](const std::pair<const Span*, bool>& x, const std::pair<const Span*, bool>& y) {
+                        const bool xi = x.first->b1 == x.first->b0, yi = y.first->b1 == y.first->b0;
+                        return x.first->b0 != y.first->b0 ? x.first->b0 < y.first->b0 : xi && !yi;
+                    });
+                    u32 p = c.b0;
+                    for (const auto& [s, mine] : all) {
+                        add(base, p, s->b0);
+                        add(mine ? yours : theirs, s->n0, s->n1);
+                        p = std::max(p, s->b1);
+                    }
+                    add(base, p, c.b1);
+                    break;
+                }
+            }
+            break;
+    }
+    return out;
+}
+
+std::string GitMerge::result() const {
+    std::string out;
+    for (const Chunk& c : chunks)
+        for (const std::string& l : lines_of(c)) out += l;
+    return out;
+}
+
+void merge_view(const GitMerge& m, u32 cols, u32 tab_width, GitMergeView* out) {
+    out->text.clear();
+    out->off.clear();
+    out->style.clear();
+    out->chunk_of_row.clear();
+    std::string& s = out->text;
+    auto mark = [&](u8 st) {
+        const u32 at = static_cast<u32>(s.size());
+        if (!out->style.empty() && out->style.back() == st) return;
+        if (!out->off.empty() && out->off.back() == at) {
+            out->style.back() = st;
+            if (out->style.size() >= 2 && out->style[out->style.size() - 2] == st) out->off.pop_back(), out->style.pop_back();
+            return;
+        }
+        out->off.push_back(at);
+        out->style.push_back(st);
+    };
+    const u32 w = std::max<u32>(12, cols > 6 ? (cols - 6) / 3 : 0);
+    // A line as the rows of a column w wide (each padded to it but the last column's).
+    Cells cells;
+    auto rows_of = [&](const std::string& line, std::vector<std::string>* rows) {
+        std::string_view l = line;
+        if (l.ends_with('\n')) l.remove_suffix(1);
+        cells.set(l, tab_width);
+        std::string row;
+        u32 used = 0;
+        for (const Cells::Ch& ch : cells.ch) {
+            if (used + ch.w > w) rows->push_back(std::move(row)), row.clear(), used = 0;
+            row.append(cells.text, ch.b0, ch.b1 - ch.b0);
+            used += ch.w;
+        }
+        rows->push_back(std::move(row));
+    };
+    auto width = [](std::string_view r) {
+        u32 n = 0;
+        const u8* p = reinterpret_cast<const u8*>(r.data());
+        for (size_t i = 0; i < r.size();) {
+            const Decoded d = decode_utf8(p + i, r.size() - i);
+            n += cp_width(d.cp);
+            i += d.len;
+        }
+        return n;
+    };
+    auto cell = [&](const std::string& r, u8 st, bool pad) {
+        mark(st);
+        s += r;
+        if (pad) {
+            mark(0);
+            const u32 n = width(r);
+            s.append(n < w ? w - n : 0, ' ');
+        }
+    };
+    auto title = [&](const char* t, bool pad) { cell(t, 3, pad); };
+    title("Theirs", true), mark(4), s += " │ ", title("Result", true), mark(4), s += " │ ", title("Yours", false);
+    s += '\n';
+    out->chunk_of_row.push_back(~0u);
+    using C = GitMerge::Chunk;
+    for (u32 k = 0; k < m.chunks.size(); ++k) {
+        const C& c = m.chunks[k];
+        std::vector<std::string> left, mid, right;
+        for (u32 i = c.t0; i < c.t1; ++i) rows_of(m.theirs[i], &left);
+        for (const std::string& l : m.lines_of(c)) rows_of(l, &mid);
+        for (u32 i = c.y0; i < c.y1; ++i) rows_of(m.yours[i], &right);
+        u8 sl = 0, sm = 0, sr = 0;
+        switch (c.kind) {
+            case C::kSame: break;
+            case C::kYours: sl = 4, sm = 1, sr = 1; break;
+            case C::kTheirs: sl = 1, sm = 1, sr = 4; break;
+            case C::kBoth: sl = sm = sr = 1; break;
+            case C::kConflict:
+                switch (c.take) {
+                    case C::kOpen: sl = sm = sr = 2; break;
+                    case C::kTakeTheirs: sl = 1, sm = 1, sr = 4; break;
+                    case C::kTakeYours: sl = 4, sm = 1, sr = 1; break;
+                    default: sl = sm = sr = 1; break;
+                }
+                break;
+        }
+        const size_t n = std::max({left.size(), mid.size(), right.size(), size_t{1}});
+        static const std::string none;
+        for (size_t r = 0; r < n; ++r) {
+            cell(r < left.size() ? left[r] : none, sl, true);
+            mark(4), s += " │ ";
+            cell(r < mid.size() ? mid[r] : none, sm, true);
+            mark(4), s += " │ ";
+            cell(r < right.size() ? right[r] : none, sr, false);
+            s += '\n';
+            out->chunk_of_row.push_back(k);
+        }
+    }
+}
+
 void diff_view(std::string_view text, const GitDiff& diff, u32 cols, u32 tab_width, GitDiffView* out) {
     out->text.clear();
     out->off.clear();
@@ -1464,6 +1705,24 @@ struct Git::Worker {
                 res.text = res.ok ? r.out : trimmed(r.err);
                 break;
             }
+            case kMerge: {
+                const std::string rel = inside(job.path);
+                if (root.empty() || rel.empty()) {
+                    res.text = root.empty() ? "not in a git repository" : "not in the repository";
+                    break;
+                }
+                std::string base, yours, theirs;
+                const bool has_yours = blob(0, ":2:" + rel, &yours), has_theirs = blob(0, ":3:" + rel, &theirs);
+                if (!has_yours && !has_theirs) {
+                    res.text = rel + " has no conflict";
+                    break;
+                }
+                blob(0, ":1:" + rel, &base);  // (none where both sides added it)
+                if (let_go()) return;
+                res.merge = std::make_shared<GitMerge>(merge3(base, yours, theirs));
+                res.ok = true;
+                break;
+            }
             case kView: {
                 std::shared_ptr<const std::string> source = job.source;
                 if (!source) {
@@ -1640,6 +1899,14 @@ void Git::text(u64 doc, std::vector<std::string> args, std::string label) {
     job.doc = doc;
     job.args = std::move(args);
     job.label = std::move(label);
+    w_->push(std::move(job));
+}
+
+void Git::merge(u64 doc, const std::string& path) {
+    Worker::Job job;
+    job.kind = kMerge;
+    job.doc = doc;
+    job.path = path;
     w_->push(std::move(job));
 }
 

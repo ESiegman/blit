@@ -83,6 +83,7 @@ struct ProfileFunc;
 struct ProfView;     // a profile's tab (appprofile.cpp)
 struct TermView;     // a terminal's tab (appterm.cpp)
 struct MdView;       // a Markdown preview's tab (appmarkdown.cpp)
+struct MergeView;    // a merge tab (appgit.cpp)
 struct ImageView;    // an image file's tab (appimage.cpp)
 struct PdfView;      // a PDF's tab (apppdf.cpp)
 struct RemoteEntry;  // a folder's entry on another machine (remote.hpp)
@@ -177,6 +178,7 @@ struct Doc {
     u64 blame_rev = ~0ull, blame_asked = ~0ull, blame_gen = 0;
     bool blame_on = false;
     std::shared_ptr<struct GitView> gitview;  // a diff tab's: what it shows, how it was asked for, its hunks
+    std::shared_ptr<MergeView> merge;  // a merge tab's: a conflicted file's three versions, and what is taken of each (appgit.cpp)
     u64 seen_rev = ~0ull, changed_ns = 0;  // when its text was last seen to have changed
     i64 disk_stamp = 0;                    // the file's change time when it was last read or written
     // A tab that shows something made and not a file (a diff, a commit):
@@ -1063,6 +1065,12 @@ private:
     bool git_view_key(const SDL_KeyboardEvent& k);  // (appcommands.cpp's command_key asks first)
     bool git_gutter_click(const SDL_MouseButtonEvent& b);  // (apptabs.cpp's tabs_mouse_down asks first)
     std::string git_graph_dump();
+    void git_merge_open(const std::string& full);
+    void git_merge_lay(Doc& d, i64 chunk);
+    bool git_merge_key(const SDL_KeyboardEvent& k);
+    void git_merge_take(u8 take, bool all_simple);
+    void git_merge_save();
+    std::string git_merge_dump();
     std::string git_searched() const;  // what History is searched for
     void git_history(bool lines);  // the file's commits, or the chosen lines', in a diff tab
     std::string git_commit_at(const Doc& d);

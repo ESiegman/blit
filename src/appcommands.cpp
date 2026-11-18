@@ -409,6 +409,12 @@ void App::commands_create() {
         Commands::show_tab(*this, Commands::kGit, false);
         git_command("allbranches", {});
     });
+    own("Git: Merge the file's conflicts", {}, [this] {
+        if (Commands::git_ready(*this) && !pane_->doc->ed.path.empty()) git_merge_open(full_path(pane_->doc->ed.path));
+    });
+    own("Git: Resolve the simple conflicts", {}, [this] {
+        if (Commands::git_ready(*this)) git_merge_take(0, true);
+    });
     own("Git: The file's history", {}, [this] {
         if (Commands::git_ready(*this)) git_history(false);
     });

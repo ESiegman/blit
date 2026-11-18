@@ -330,6 +330,27 @@ check "by author" 'Merge feature [main] [tag v1]/Main work/Feature work [feature
 got=$(search feature.txt)
 check "by a path" 'Feature work [feature]/'
 
+# The merge tool: a merge that stopped for conflicts, its file in three
+# columns. Both sides changed line two (a conflict); one changed line four
+# and the other line five (git's conflict too, but a simple one: each can
+# be taken). Theirs taken for the first, each side's for the simple ones,
+# then saved: the file as merged, and staged.
+fresh
+git -C "$dir/ada" switch -q -c feature
+printf 'one\nTWO\nthree\nfour!\nfive\n' >"$dir/ada/poem.txt"
+git -C "$dir/ada" commit -qam "Theirs"
+git -C "$dir/ada" switch -q main
+printf 'one\ntwo.\nthree\nfour\nFIVE\n' >"$dir/ada/poem.txt"
+git -C "$dir/ada" commit -qam "Yours"
+git -C "$dir/ada" merge -q feature >/dev/null 2>&1
+merge() { "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;gitwait;command:Git: Merge the file's conflicts;gitwait;$1" "$dir/ada/poem.txt" 2>&1 >/dev/null | grep -v '^blit: git' | tr '\n' '/'; }
+got=$(merge "mergedump;docdump:1")
+check "a conflicted file in three columns: two conflicts, one simple; the cursor at the first" 'conflict:open conflict(simple):open | open 2/poem.txt (merge)/  one                   │ one                   │ one/> |TWO                   │ <<<<<<< yours         │ two./                        │ two.                  │ /'
+got=$(merge "key:t;mergedump;key:];key:x;key:a;mergedump;key:]")
+check "theirs taken, then each side's in the simple one; ] past the last stays" 'conflict:theirs conflict(simple):open | open 1/conflict:theirs conflict(simple):each | open 0/'
+got="$(merge "key:t;key:a;key:cmd+s;gitwait;gitdump" | sed 's/ | branches.*//') $(tr '\n' '/' <"$dir/ada/poem.txt")"
+check "saved: the file as merged, and staged" 'blit: Saved and staged poem.txt/main +1 merging | staged M:poem.txt one/TWO/three/four!/FIVE/'
+
 # The status bar along the bottom: the branch and how it stands, this
 # file's changed lines, the files changed, the file, the cursor.
 fresh

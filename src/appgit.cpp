@@ -193,6 +193,10 @@ std::vector<std::string> diff_args(const std::string& rel, bool staged) {
 
 // The file a path names, from the top of a repository; empty if it is not
 // in it. (Git names the top by its real path: so is a file here.)
+// The columns of text a split shows, for laying a diff out in two (or a merge in three). (Less
+// one: the scroll bar's strip is over the last.)
+u32 text_cols(const Pane& p, int cell_w) { return static_cast<u32>(std::max(1, (p.x1 - p.text_x) / std::max(1, cell_w) - 1)); }
+
 // A character as UTF-8 (the graph's are all below U+10000).
 std::string utf8_of(char32_t c) {
     std::string out;
@@ -236,6 +240,16 @@ std::string in_repo(const std::string& root, std::string full) {
 }  // namespace
 
 // A diff tab's own state (see Doc::gitview).
+// A merge tab: a conflicted file's three versions, merged (GitMerge), what
+// is taken of each conflict, and how it was laid out.
+struct MergeView {
+    std::string full, rel;  // the file
+    std::shared_ptr<GitMerge> m;
+    std::vector<u32> chunk_of_row;
+    u32 cols = 0;
+    bool asked = false;
+};
+
 struct GitView {
     u8 kind = kViewOther;
     std::string path;               // the file, from the top of the repository (changes and staged)
@@ -484,6 +498,28 @@ void App::sync_git() {
                 shows = true;
                 break;
             }
+            case Git::kMerge: {
+                Pane* where = nullptr;
+                Doc* d = find_doc(r.doc, &where);
+                if (!d || !d->merge) break;
+                d->merge->asked = false;
+                if (!r.ok || !r.merge) {
+                    d->measurer = {};
+                    d->ed.open_bytes({}, "git: " + r.text + "\n");
+                    d->ed.mark_saved();
+                    where->cache_rev = ~0ull;
+                    shows = true;
+                    break;
+                }
+                d->merge->m = std::move(r.merge);
+                // (The cursor to the first conflict.)
+                i64 first = -1;
+                for (size_t k = 0; k < d->merge->m->chunks.size() && first < 0; ++k)
+                    if (d->merge->m->chunks[k].kind == GitMerge::Chunk::kConflict) first = static_cast<i64>(k);
+                git_merge_lay(*d, first);
+                shows = true;
+                break;
+            }
             case Git::kView: {
                 Pane* where = nullptr;
                 Doc* d = find_doc(r.doc, &where);
@@ -525,6 +561,10 @@ App::GitSummary App::git_summary() const {
 void App::git_want(Doc& d) {
     const GitUi& g = *gitui_;
     if (d.gitview) return git_view_want(d);
+    if (d.merge) {  // (laid out again for another width)
+        if (d.merge->m && text_cols(*pane_, font_->cell_w()) != d.merge->cols && pane_->doc == &d) git_merge_lay(d, -1);
+        return;
+    }
     if (!cfg_.git || !g.status.repo || d.ed.path.empty() || d.read_only || d.ed.buf.size() > kGitMaxBytes) return;
     const u64 rev = d.ed.revision();
     const u64 now = now_ns();
@@ -633,9 +673,6 @@ void App::git_open_text(std::vector<std::string> args, const std::string& title)
 
 namespace {
 
-// The columns of text a split shows, for laying a diff out in two. (Less
-// one: the scroll bar's strip is over the last.)
-u32 text_cols(const Pane& p, int cell_w) { return static_cast<u32>(std::max(1, (p.x1 - p.text_x) / std::max(1, cell_w) - 1)); }
 
 }  // namespace
 
@@ -886,6 +923,7 @@ bool App::git_view_key(const SDL_KeyboardEvent& k) {
             default: o.open = false; break;  // (any other key: the box goes, and the key does what it does)
         }
     }
+    if (cfg_.git && !find_open_ && !panel_has_keyboard() && pane_->doc->merge) return git_merge_key(k);
     if (!cfg_.git || find_open_ || panel_has_keyboard() || !pane_->doc->gitview) return false;
     if (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI | SDL_KMOD_ALT)) return false;
     if (cfg_.modal) {  // (not while a command or a search is typed)
@@ -1084,6 +1122,209 @@ void App::git_view_note(FrameDesc& fd) {
     grid.notes = {&v.note, 1};
 }
 
+// ---------------------------------------------------------------- the merge tool
+
+// A conflicted file in a merge tab: theirs, the result and yours side by
+// side. In it, t takes theirs for the conflict at the cursor, y yours, b
+// both (yours first; B theirs first), e each side's changes where they only
+// touch, x opens it again, a takes each side's in every such simple one;
+// ] and [ go to the next conflict and the one before. Cmd+S writes the
+// result to the file, and stages it once no conflict is open.
+void App::git_merge_open(const std::string& full) {
+    GitUi& g = *gitui_;
+    if (!cfg_.git || !g.status.repo) return notify("Not in a git repository");
+    for (const std::unique_ptr<Pane>& p : panes_)
+        for (size_t i = 0; i < p->docs.size(); ++i)
+            if (p->docs[i]->merge && p->docs[i]->merge->full == full) {
+                focus_pane(p.get());
+                tab_show(i);
+                panel_focus(false);
+                return;
+            }
+    const std::string rel = in_repo(g.status.root, full);
+    if (rel.empty()) return notify("Not in the repository");
+    Doc* d = add_doc(pane_->tab + 1);
+    d->title = std::string(name_of(rel)) + " (merge)";
+    d->read_only = true;
+    d->merge = std::make_shared<MergeView>();
+    d->merge->full = full;
+    d->merge->rel = rel;
+    d->merge->asked = true;
+    git_.merge(d->id, full);
+    tab_show(pane_->tab + 1);
+    panel_focus(false);
+}
+
+// The merge laid out (again) as wide as the split, the cursor where it was,
+// or at the first row of chunk `chunk`.
+void App::git_merge_lay(Doc& d, i64 chunk) {
+    MergeView& mv = *d.merge;
+    if (!mv.m) return;
+    Pane* where = nullptr;
+    find_doc(d.id, &where);
+    const u32 cols = text_cols(where ? *where : *pane_, font_->cell_w());
+    GitMergeView view;
+    merge_view(*mv.m, cols, d.ed.tab_width, &view);
+    const u64 row = d.ed.buf.line_of(d.ed.cursor());
+    mv.cols = cols;
+    mv.chunk_of_row = std::move(view.chunk_of_row);
+    d.measurer = {};  // (it may be reading the text that goes)
+    if (cfg_.modal && where == pane_ && pane_->doc == &d) {  // (Visual mode's ends are in the text that goes)
+        vim_attach();
+        if (vim_.visual()) {
+            vim_.keys(d.ed, "<Esc>");
+            vim_after(Vim::kHandled);
+        }
+    }
+    d.ed.open_bytes({}, view.text);
+    d.ed.mark_saved();
+    auto h = std::make_unique<Highlights>();
+    h->base = 0;
+    h->end = view.text.size();
+    h->off = std::move(view.off);
+    h->style = std::move(view.style);
+    h->seal();
+    d.marks = std::move(h);
+    d.style_bits[1] = kInkAdded << kCellInkShift;
+    d.style_bits[2] = kInkDiagnostic << kCellInkShift;
+    d.style_bits[3] = kInkAccent << kCellInkShift;
+    d.style_bits[4] = kInkMuted << kCellInkShift;
+    d.widest_rev = d.indent_rev = ~0ull;
+    u64 to = std::min<u64>(row, d.ed.buf.line_count() - 1);
+    if (chunk >= 0)
+        for (size_t r = 0; r < mv.chunk_of_row.size(); ++r)
+            if (mv.chunk_of_row[r] == static_cast<u32>(chunk)) {
+                to = r;
+                break;
+            }
+    d.ed.move_to(d.ed.buf.line_start(to), false);
+    if (where) {
+        where->cache_rev = ~0ull;
+        if (where->doc == &d) {
+            Pane* const keep = pane_;
+            pane_ = where;
+            scroll_to_cursor();
+            pane_ = keep;
+        }
+    }
+    dirty_ = true;
+}
+
+bool App::git_merge_key(const SDL_KeyboardEvent& k) {
+    Doc& d = *pane_->doc;
+    MergeView& mv = *d.merge;
+    if ((k.mod & kPrimaryMod) && k.key == SDLK_S) {
+        git_merge_save();
+        term_drop_text_ = true;
+        return true;
+    }
+    if (!mv.m || (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_GUI | SDL_KMOD_ALT))) return false;
+    if (cfg_.modal) {  // (not while a command or a search is typed)
+        vim_attach();
+        const Vim::Mode m = vim_.mode();
+        if (m == Vim::kCommand || m == Vim::kInsert || m == Vim::kReplace || vim_.awaiting_char() || !vim_.showcmd().empty()) return false;
+    }
+    const bool shift = k.mod & SDL_KMOD_SHIFT;
+    using C = GitMerge::Chunk;
+    switch (k.key) {
+        case SDLK_T: git_merge_take(C::kTakeTheirs, false); break;
+        case SDLK_Y: git_merge_take(C::kTakeYours, false); break;
+        case SDLK_B: git_merge_take(shift ? C::kTakeTheirsYours : C::kTakeYoursTheirs, false); break;
+        case SDLK_E: git_merge_take(C::kTakeEach, false); break;
+        case SDLK_X: git_merge_take(C::kOpen, false); break;
+        case SDLK_A: git_merge_take(C::kTakeEach, true); break;
+        case SDLK_RIGHTBRACKET:
+        case SDLK_LEFTBRACKET: {  // to the next conflict, or the one before
+            if (shift) return false;
+            const u64 row = d.ed.buf.line_of(d.ed.cursor());
+            const u32 here = row < mv.chunk_of_row.size() ? mv.chunk_of_row[row] : ~0u;
+            const std::vector<C>& cs = mv.m->chunks;
+            i64 to = -1;
+            if (k.key == SDLK_RIGHTBRACKET) {
+                for (size_t c = here == ~0u ? 0 : here + 1; c < cs.size() && to < 0; ++c)
+                    if (cs[c].kind == C::kConflict) to = static_cast<i64>(c);
+            } else {
+                for (size_t c = here == ~0u ? 0 : here; c-- > 0 && to < 0;)
+                    if (cs[c].kind == C::kConflict) to = static_cast<i64>(c);
+            }
+            if (to < 0) break;
+            for (size_t r = 0; r < mv.chunk_of_row.size(); ++r)
+                if (mv.chunk_of_row[r] == static_cast<u32>(to)) {
+                    if (cfg_.modal && vim_.visual()) {
+                        vim_.keys(d.ed, "<Esc>");
+                        vim_after(Vim::kHandled);
+                    }
+                    d.ed.move_to(d.ed.buf.line_start(r), false);
+                    scroll_to_cursor();
+                    break;
+                }
+            break;
+        }
+        default: return false;
+    }
+    term_drop_text_ = true;  // (the letter is not typed after it)
+    dirty_ = true;
+    return true;
+}
+
+// The conflict at the cursor taken as `take` (or, all_simple, each side's
+// changes in every simple conflict still open).
+void App::git_merge_take(u8 take, bool all_simple) {
+    Doc& d = *pane_->doc;
+    if (!d.merge || !d.merge->m) return;
+    MergeView& mv = *d.merge;
+    using C = GitMerge::Chunk;
+    if (all_simple) {
+        u32 n = 0;
+        for (C& c : mv.m->chunks)
+            if (c.kind == C::kConflict && c.simple && c.take == C::kOpen) c.take = C::kTakeEach, ++n;
+        if (n == 0) return notify("No simple conflicts to resolve");
+        git_merge_lay(d, -1);
+        return;
+    }
+    const u64 row = d.ed.buf.line_of(d.ed.cursor());
+    const u32 at = row < mv.chunk_of_row.size() ? mv.chunk_of_row[row] : ~0u;
+    if (at == ~0u || mv.m->chunks[at].kind != C::kConflict) return notify("No conflict at the cursor");
+    C& c = mv.m->chunks[at];
+    if (take == C::kTakeEach && !c.simple) return notify("Both sides changed the same lines here");
+    c.take = static_cast<C::Take>(take);
+    git_merge_lay(d, at);
+}
+
+// The result written to the file; staged once no conflict is open.
+void App::git_merge_save() {
+    Doc& d = *pane_->doc;
+    if (!d.merge || !d.merge->m) return;
+    const MergeView& mv = *d.merge;
+    std::string err;
+    if (!fs_write(mv.full, mv.m->result(), &err)) return notify("Cannot write " + mv.rel + ": " + err);
+    reload_changed();  // (the file, where it is open)
+    const u32 open = mv.m->open();
+    if (open) return notify("Saved, with " + std::to_string(open) + (open == 1 ? " conflict" : " conflicts") + " open: not staged");
+    GitUi& g = *gitui_;
+    g.busy = "Stage";
+    g.note.clear();
+    git_.run({"add", "--", mv.rel}, "Stage");
+    ++git_gen_;
+    notify("Saved and staged " + mv.rel);
+}
+
+// The merge tab in front, for the tests: each chunk that is a change (its
+// kind and what is taken), and how many conflicts are open.
+std::string App::git_merge_dump() {
+    const Doc& d = *pane_->doc;
+    if (!d.merge || !d.merge->m) return "no merge";
+    static const char* const kKind[] = {"same", "yours", "theirs", "both", "conflict"};
+    static const char* const kTake[] = {"open", "theirs", "yours", "yours+theirs", "theirs+yours", "each"};
+    std::string out;
+    for (const GitMerge::Chunk& c : d.merge->m->chunks) {
+        if (c.kind == GitMerge::Chunk::kSame) continue;
+        out += (out.empty() ? "" : " ") + std::string(kKind[c.kind]);
+        if (c.kind == GitMerge::Chunk::kConflict) out += std::string(c.simple ? "(simple)" : "") + ":" + kTake[c.take];
+    }
+    return out + " | open " + std::to_string(d.merge->m->open());
+}
+
 // ---------------------------------------------------------------- a file's history
 
 // The commits that changed the file in front (followed through renames),
@@ -1243,7 +1484,9 @@ void App::git_do(u32 action, const std::string& arg) {
             break;
         case kActOpenDiff:
             if (!entry) break;
-            if (entry->index == '?' || entry->conflict) {  // nothing to compare with, or markers to deal with: the file itself
+            if (entry->conflict) {  // its three versions, to merge
+                git_merge_open(full);
+            } else if (entry->index == '?') {  // nothing to compare with: the file itself
                 open_path(full.c_str());
             } else {
                 const bool cached = arg.empty() ? staged_side : !entry->unstaged();
