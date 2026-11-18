@@ -813,6 +813,8 @@ void App::run_script(const char* script) {
                 settle();
             }
             if (verb == "gitdump") std::fprintf(stderr, "%s%s\n", arg.empty() ? "" : (arg + ": ").c_str(), git_dump().c_str());
+        } else if (verb == "gitgraph") {  // History as the Git tab draws it: lanes, what points at each commit, its subject
+            std::fprintf(stderr, "%s\n", git_graph_dump().c_str());
         } else if (verb == "gitview") {
             std::fprintf(stderr, "%s%s\n", arg.empty() ? "" : (arg + ": ").c_str(), git_view_dump().c_str());
         } else if (verb == "gitfield") {

@@ -304,6 +304,32 @@ got="$got $(git -C "$dir/ada" log -1 --format=%H | cut -c1-10)"
 case "$got" in "$(git -C "$dir/ada" log -1 --format=%H | cut -c1-10)|"*) got="its commit, all of it" ;; esac
 check "Enter on a commit in it: all of that commit" 'its commit, all of it'
 
+# History as a graph: a branch made, worked on beside main, merged back and
+# tagged (each commit a second after the one before, so that the order is
+# the same each time); what points at each commit beside it. Searched by
+# message, by author and by a path.
+fresh
+# (After the first commit, made now.)
+step() { n=$1; shift; GIT_AUTHOR_DATE="2099-01-01T00:00:0$n" GIT_COMMITTER_DATE="2099-01-01T00:00:0$n" git -C "$dir/ada" "$@" >/dev/null 2>&1; }
+step 1 switch -q -c feature
+printf 'new\n' >"$dir/ada/feature.txt"
+step 1 add feature.txt
+step 1 commit -qm "Feature work"
+step 2 switch -q main
+printf 'x\n' >>"$dir/ada/other.txt"
+step 2 commit -qam "Main work"
+step 3 merge -q --no-ff -m "Merge feature" feature
+git -C "$dir/ada" tag v1
+got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;gitwait;gitgraph" "$dir/ada/poem.txt" 2>&1 >/dev/null | grep -v '^blit: git' | tr '\n' '/')
+check "History as a graph: a branch merged back, and what points at each commit" '●─╮  Merge feature [main] [tag v1]/● │  Main work/│ ●  Feature work [feature]/●─╯  Start [origin/main]/'
+search() { "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;gitwait;command:Git: Search the history…;text:$1;key:Return;gitwait;gitgraph" "$dir/ada/poem.txt" 2>&1 >/dev/null | grep -v '^blit: git' | tr '\n' '/'; }
+got=$(search feature)
+check "searched by message (any case): no lanes" 'Merge feature [main] [tag v1]/Feature work [feature]/'
+got=$(search ADA)
+check "by author" 'Merge feature [main] [tag v1]/Main work/Feature work [feature]/Start [origin/main]/'
+got=$(search feature.txt)
+check "by a path" 'Feature work [feature]/'
+
 # The status bar along the bottom: the branch and how it stands, this
 # file's changed lines, the files changed, the file, the cursor.
 fresh

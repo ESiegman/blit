@@ -193,6 +193,39 @@ std::vector<std::string> diff_args(const std::string& rel, bool staged) {
 
 // The file a path names, from the top of a repository; empty if it is not
 // in it. (Git names the top by its real path: so is a file here.)
+// A character as UTF-8 (the graph's are all below U+10000).
+std::string utf8_of(char32_t c) {
+    std::string out;
+    if (c < 0x80) out += static_cast<char>(c);
+    else if (c < 0x800) out += static_cast<char>(0xC0 | c >> 6), out += static_cast<char>(0x80 | (c & 0x3F));
+    else out += static_cast<char>(0xE0 | c >> 12), out += static_cast<char>(0x80 | (c >> 6 & 0x3F)), out += static_cast<char>(0x80 | (c & 0x3F));
+    return out;
+}
+
+// What points at a commit, from git's decoration ("HEAD -> main,
+// origin/main, origin/HEAD, tag: v1"): the branch checked out, others, the
+// server's (its HEAD left out) and tags.
+struct GitRef {
+    std::string name;
+    bool head = false, remote = false, tag = false;
+};
+std::vector<GitRef> refs_of(std::string_view s) {
+    std::vector<GitRef> out;
+    while (!s.empty()) {
+        const size_t comma = s.find(", ");
+        std::string_view r = s.substr(0, comma);
+        s = comma == std::string_view::npos ? std::string_view{} : s.substr(comma + 2);
+        GitRef ref;
+        if (r.starts_with("HEAD -> ")) r.remove_prefix(8), ref.head = true;
+        else if (r.starts_with("tag: ")) r.remove_prefix(5), ref.tag = true;
+        else if (r.ends_with("/HEAD")) continue;
+        else ref.remote = r.find('/') != std::string_view::npos && r != "HEAD";  // (a branch may have a / in its name: then it shows as the server's, quietly)
+        ref.name = r;
+        out.push_back(std::move(ref));
+    }
+    return out;
+}
+
 std::string in_repo(const std::string& root, std::string full) {
     char real[PATH_MAX];
     if (!is_remote(full) && realpath(full.c_str(), real)) full = real;
@@ -249,7 +282,9 @@ struct App::GitUi {
     GitStatus status;
     std::vector<GitBranch> branches;
     std::vector<GitCommit> log;
-    std::string log_of;  // the branch History shows (empty: the one checked out)
+    std::string log_of;  // the branch History shows (empty: the one checked out; "--all": every one)
+    std::string log_find;  // what History is searched for (empty: none)
+    std::vector<GitGraphRow> graph;  // History's lanes, a row a commit (none while searched: what is found is not one line of descent)
     std::vector<std::string> tags;
     std::vector<GitStash> stashes;
     // Where git was last pointed: the working directory, or while there
@@ -384,6 +419,8 @@ void App::sync_git() {
                 g.branches = std::move(r.branches);
                 g.log = std::move(r.log);
                 g.log_of = std::move(r.log_of);
+                g.log_find = std::move(r.log_find);
+                g.graph = g.log_find.empty() ? graph_lanes(g.log) : std::vector<GitGraphRow>{};
                 g.tags = std::move(r.tags);
                 g.stashes = std::move(r.stashes);
                 shows |= panel_px() > 0;
@@ -1617,7 +1654,10 @@ void App::git_panel_draw(TextBox& box, bool focused) {
                     for (const GitEntry& e : g.status.entries) n += row.index == kSecConflicts ? e.conflict : row.index == kSecStaged ? e.staged() : e.unstaged();
                 put(box, font, r, 0, g.fold[row.index] ? "\xE2\x96\xB8" : "\xE2\x96\xBE", ink::kMuted);  // a small triangle, right or down
                 u32 c = put(box, font, r, 2, kSections[row.index], ink::kHeading);
-                if (row.index == kSecHistory && !g.log_of.empty()) c = put(box, font, r, c + 1, fit_text(g.log_of, cols > c + 6 ? cols - c - 6 : 1), ink::kText);
+                if (row.index == kSecHistory && !g.log_of.empty())
+                    c = put(box, font, r, c + 1, fit_text(g.log_of == "--all" ? "all branches" : g.log_of, cols > c + 6 ? cols - c - 6 : 1), ink::kText);
+                if (row.index == kSecHistory && !g.log_find.empty())
+                    c = put(box, font, r, c + 1, fit_text("\xE2\x80\x9C" + g.log_find + "\xE2\x80\x9D", cols > c + 6 ? cols - c - 6 : 1), ink::kAccent);
                 put(box, font, r, c + 1, std::to_string(n), ink::kMuted);
                 break;
             }
@@ -1648,10 +1688,23 @@ void App::git_panel_draw(TextBox& box, bool focused) {
                 put(box, font, r, 4, fit_text(b.name, cols > 4 ? cols - 4 : 0), b.current ? ink::kStrong : b.remote ? ink::kMuted : ink::kText);
                 break;
             }
-            case kRowCommit: {
+            case kRowCommit: {  // its lanes, its hash, what points at it, its subject
                 const GitCommit& c = g.log[row.index];
-                const u32 at = put(box, font, r, 2, c.hash, ink::kMuted);
-                put(box, font, r, at + 1, fit_text(c.subject, cols > at + 1 ? cols - at - 1 : 0), ink::kText);
+                u32 at = 2;
+                if (row.index < g.graph.size()) {
+                    const GitGraphRow& gr = g.graph[row.index];
+                    for (size_t k = 0; k < gr.cells.size() && at + 8 < cols; ++k, ++at) {
+                        if (gr.cells[k] == U' ') continue;
+                        put(box, font, r, at, utf8_of(gr.cells[k]), guide_inks_ ? Ink{kInkGuide + gr.lanes[k] % guide_inks_, 0} : ink::kMuted);
+                    }
+                    ++at;
+                }
+                at = put(box, font, r, at, c.hash, ink::kMuted) + 1;
+                for (const GitRef& ref : refs_of(c.refs)) {
+                    if (at + 4 >= cols) break;
+                    at = put(box, font, r, at, fit_text(ref.name, cols - at - 2), ref.tag ? ink::kWarning : ref.remote ? ink::kMuted : ref.head ? ink::kAccentStrong : ink::kAccent) + 1;
+                }
+                put(box, font, r, at, fit_text(c.subject, cols > at ? cols - at : 0), ink::kText);
                 break;
             }
             case kRowStash: {  // its number, and what git called it
@@ -2100,6 +2153,19 @@ void App::git_command(std::string_view name, const std::string& arg) {
                  {"showtag", kActShowTag},     {"pushtag", kActPushTag},     {"deletetag", kActDeleteTag}, {"history", kActHistory},
                  {"stagehere", kActStageHere}, {"unstagehere", kActUnstageHere}};
     if (name == "columns") return git_view_toggle();
+    if (name == "find") {  // History searched (nothing: all of it again)
+        gitui_->log_find = arg;
+        git_.log_find(arg);
+        ++git_gen_;
+        return;
+    }
+    if (name == "allbranches") {  // History of every branch, or (again) the one checked out
+        GitUi& g = *gitui_;
+        g.log_of = g.log_of == "--all" ? std::string() : std::string("--all");
+        git_.log_of(g.log_of);
+        ++git_gen_;
+        return;
+    }
     if (name == "staged") {  // (what is staged of a file, in a diff tab)
         if (gitui_->status.repo) git_open_view(diff_args(arg, true), std::string(name_of(arg)) + " (staged)", kViewStaged, arg);
         return;
@@ -2107,6 +2173,23 @@ void App::git_command(std::string_view name, const std::string& arg) {
     for (const auto& k : known)
         if (name == k.name) return git_do(k.action, arg);
     std::fprintf(stderr, "blit: no git action called %.*s\n", static_cast<int>(name.size()), name.data());
+}
+
+// History as the Git tab draws it: each commit's lanes, what points at it
+// and its subject, a line each (for the tests).
+std::string App::git_searched() const { return gitui_->log_find; }
+
+std::string App::git_graph_dump() {
+    const GitUi& g = *gitui_;
+    std::string out;
+    for (size_t i = 0; i < g.log.size(); ++i) {
+        std::string lanes;
+        if (i < g.graph.size())
+            for (const char32_t ch : g.graph[i].cells) lanes += utf8_of(ch);
+        out += (i ? "\n" : "") + lanes + (lanes.empty() ? "" : "  ") + g.log[i].subject;
+        for (const GitRef& ref : refs_of(g.log[i].refs)) out += std::string(" [") + (ref.tag ? "tag " : "") + ref.name + "]";
+    }
+    return out;
 }
 
 // What git has told the editor, on one line (for the tests).
@@ -2140,6 +2223,7 @@ std::string App::git_dump() {
     }
     out += " | commits " + std::to_string(g.log.size());
     if (!g.log_of.empty()) out += " of " + g.log_of;
+    if (!g.log_find.empty()) out += " found \"" + g.log_find + "\"";
     if (!g.log.empty()) out += " \"" + g.log[0].subject + "\"";
     const Doc& d = *pane_->doc;
     if (!d.ed.path.empty()) {

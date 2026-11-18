@@ -397,6 +397,18 @@ void App::commands_create() {
         if (Commands::git_ready(*this)) git_stage_here(false);
     });
     own("Git: Diffs in two columns or one", {}, [this] { git_view_toggle(); });
+    own("Git: Search the history\xE2\x80\xA6", {}, [this] {
+        if (!Commands::git_ready(*this)) return;
+        find_choose(kFindInput, "Search the history", git_searched(), [this](const std::string& text) {
+            Commands::show_tab(*this, Commands::kGit, false);
+            git_command("find", text);
+        });
+    });
+    own("Git: History of all branches", {}, [this] {
+        if (!Commands::git_ready(*this)) return;
+        Commands::show_tab(*this, Commands::kGit, false);
+        git_command("allbranches", {});
+    });
     own("Git: The file's history", {}, [this] {
         if (Commands::git_ready(*this)) git_history(false);
     });

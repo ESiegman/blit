@@ -179,13 +179,101 @@ std::vector<GitCommit> parse_log(std::string_view text) {
         std::string_view line = text.substr(0, nl);
         text = nl == std::string_view::npos ? std::string_view{} : text.substr(nl + 1);
         GitCommit c;
-        std::string* const fields[] = {&c.hash, &c.author, &c.when, &c.subject};
+        std::string parents, time;
+        std::string* const fields[] = {&c.hash, &c.author, &c.when, &c.subject, &c.full, &parents, &c.refs, &time};
         for (std::string* f : fields) {
+            if (line.data() == nullptr) break;  // (the older form: four fields)
             const size_t sep = line.find('\x1f');
             *f = line.substr(0, sep);
             line = sep == std::string_view::npos ? std::string_view{} : line.substr(sep + 1);
         }
+        for (size_t at = 0; at < parents.size();) {
+            size_t sp = parents.find(' ', at);
+            if (sp == std::string::npos) sp = parents.size();
+            if (sp > at) c.parents.push_back(parents.substr(at, sp - at));
+            at = sp + 1;
+        }
+        c.time = std::atoll(time.c_str());
+        if (c.full.empty()) c.full = c.hash;
         if (!c.hash.empty()) out.push_back(std::move(c));
+    }
+    return out;
+}
+
+std::vector<GitGraphRow> graph_lanes(std::span<const GitCommit> log, u32 most_lanes) {
+    std::vector<GitGraphRow> out;
+    out.reserve(log.size());
+    std::vector<std::string> lanes;  // the commit each lane waits for ("": free)
+    std::vector<u8> colour;          // each lane's colour, given when it starts
+    u8 next = 0;
+    auto free_lane = [&]() -> size_t {
+        for (size_t i = 0; i < lanes.size(); ++i)
+            if (lanes[i].empty()) return i;
+        lanes.emplace_back();
+        colour.push_back(0);
+        return lanes.size() - 1;
+    };
+    for (const GitCommit& c : log) {
+        const std::vector<std::string> before = lanes;
+        size_t col = std::ranges::find(lanes, c.full) - lanes.begin();
+        if (col == lanes.size() || c.full.empty()) {  // a tip: nothing came down to it
+            col = free_lane();
+            colour[col] = next++;
+        }
+        // Lanes that waited for it too (branches that started here) end here.
+        std::vector<u8> ends(lanes.size(), 0);
+        std::vector<u8> ended(lanes.size(), 0);  // (their colours)
+        for (size_t i = 0; i < lanes.size(); ++i)
+            if (i != col && !c.full.empty() && lanes[i] == c.full) ends[i] = 1, ended[i] = colour[i], lanes[i].clear();
+        lanes[col] = c.parents.empty() ? std::string() : c.parents[0];
+        // A merge's other parents: a lane already waiting for one is joined; else one starts.
+        std::vector<u8> joins, starts;
+        for (size_t k = 1; k < c.parents.size(); ++k) {
+            size_t j = std::ranges::find(lanes, c.parents[k]) - lanes.begin();
+            bool fresh = false;
+            if (j == lanes.size()) {
+                j = free_lane();
+                lanes[j] = c.parents[k];
+                colour[j] = next++;
+                fresh = true;
+            }
+            if (joins.size() < lanes.size()) joins.resize(lanes.size(), 0), starts.resize(lanes.size(), 0);
+            joins[j] = 1;
+            starts[j] = fresh;
+        }
+        const size_t n = std::max(before.size(), lanes.size());
+        ends.resize(n, 0), ended.resize(n, 0), joins.resize(n, 0), starts.resize(n, 0), colour.resize(std::max(colour.size(), n), 0);
+        // The horizontal line, from the commit to the farthest lane it meets each way.
+        size_t lo = col, hi = col;
+        for (size_t i = 0; i < n; ++i)
+            if (ends[i] || joins[i]) lo = std::min(lo, i), hi = std::max(hi, i);
+        auto lane_colour = [&](size_t i) -> u8 { return ends[i] ? ended[i] : colour[i]; };
+        GitGraphRow row;
+        for (size_t i = 0; i < n; ++i) {
+            const bool passes = i < before.size() && !before[i].empty() && i < lanes.size() && !lanes[i].empty() && !ends[i];
+            const bool between = i > lo && i < hi;
+            char32_t ch = U' ';
+            if (i == col) ch = U'●';
+            else if (ends[i]) ch = i > col ? U'╯' : U'╰';
+            else if (joins[i]) ch = starts[i] ? (i > col ? U'╮' : U'╭') : (i > col ? U'┤' : U'├');
+            else if (passes) ch = between ? U'┼' : U'│';
+            else if (between) ch = U'─';
+            row.cells += ch;
+            row.lanes.push_back(ch == U'─' ? lane_colour(i < col ? lo : hi) : lane_colour(i));
+            if (i + 1 < n) {
+                const bool line = i >= lo && i < hi;
+                row.cells += line ? U'─' : U' ';
+                row.lanes.push_back(lane_colour(i < col ? lo : hi));
+            }
+        }
+        while (!lanes.empty() && lanes.back().empty()) lanes.pop_back(), colour.pop_back();
+        // (Trailing blanks go; past the most lanes drawn, an ellipsis.)
+        while (!row.cells.empty() && row.cells.back() == U' ') row.cells.pop_back(), row.lanes.pop_back();
+        if (row.cells.size() > 2 * static_cast<size_t>(most_lanes)) {
+            row.cells.resize(2 * most_lanes - 1), row.lanes.resize(2 * most_lanes - 1);
+            row.cells.back() = U'…';
+        }
+        out.push_back(std::move(row));
     }
     return out;
 }
@@ -1018,6 +1106,10 @@ Ran run_git(Child& child, const std::string& program, const std::string& root, c
     return r;
 }
 
+// The log a status lists: its most commits, and each one's fields (parse_log).
+const char* const kLogMost = "100";
+const char* const kLogFormat = "--format=%h%x1f%an%x1f%ar%x1f%s%x1f%H%x1f%P%x1f%D%x1f%ct";
+
 bool exists(const std::string& path) {
     if (is_remote(path)) {
         std::string there;
@@ -1068,6 +1160,7 @@ struct Git::Worker {
     std::string dir;       // where to look for a repository; changed by open()
     bool look = false;     // dir has changed since the repository was last looked for
     std::string log_ref;   // whose commits a status lists (empty: the branch checked out)
+    std::string log_text;  // and what they are searched for (empty: none)
     std::string busy;
     bool working = false;  // a job is being done
     u64 working_doc = 0;   // and it is about this document
@@ -1167,9 +1260,12 @@ struct Git::Worker {
         // asked for at the same time as the status, by programs of their
         // own (the status is the slow one in a big repository).
         std::string of;
+        std::string find;
+        std::vector<GitCommit> found;
         {
             std::lock_guard lock(mu);
             of = log_ref;
+            find = log_text;
         }
         Child refs_child, log_child, stash_child;
         Ran refs, log, stashes;
@@ -1177,7 +1273,26 @@ struct Git::Worker {
             refs = run_git(refs_child, program, root, {"for-each-ref", "--format=%(HEAD)%09%(refname)", "refs/heads", "refs/remotes", "refs/tags"}, {});
         });
         std::jthread log_thread([&] {
-            std::vector<std::string> args = {"log", "-n", "40", "--format=%h%x1f%an%x1f%ar%x1f%s"};
+            if (!find.empty()) {  // (searched: by message, by author, and a path that is there; newest first, each once)
+                const std::string rev = of.empty() ? std::string("HEAD") : of;
+                std::vector<std::vector<std::string>> asks = {{"log", "-n", kLogMost, "-i", "--fixed-strings", "--grep=" + find, kLogFormat, rev, "--"},
+                                                              {"log", "-n", kLogMost, "-i", "--fixed-strings", "--author=" + find, kLogFormat, rev, "--"}};
+                if (exists(root + "/" + find)) asks.push_back({"log", "-n", kLogMost, kLogFormat, rev, "--", find});
+                std::vector<GitCommit> all;
+                log.code = 1;
+                for (const std::vector<std::string>& a : asks) {
+                    const Ran r = run_git(log_child, program, root, a, {});
+                    if (r.code != 0) continue;
+                    log.code = 0;
+                    for (GitCommit& c : parse_log(r.out))
+                        if (std::ranges::none_of(all, [&](const GitCommit& x) { return x.full == c.full; })) all.push_back(std::move(c));
+                }
+                std::ranges::stable_sort(all, [](const GitCommit& x, const GitCommit& y) { return x.time > y.time; });
+                if (all.size() > 100) all.resize(100);
+                found = std::move(all);
+                return;
+            }
+            std::vector<std::string> args = {"log", "-n", kLogMost, kLogFormat};
             if (!of.empty()) args.insert(args.end(), {of, "--"});
             log = run_git(log_child, program, root, args, {});
         });
@@ -1209,10 +1324,12 @@ struct Git::Worker {
                 if (log_ref == of) log_ref.clear();
             }
             of.clear();
-            log = git({"log", "-n", "40", "--format=%h%x1f%an%x1f%ar%x1f%s"});
+            log = git({"log", "-n", kLogMost, kLogFormat});
         }
         res.log_of = of;
-        if ((!res.status.head.empty() || !of.empty()) && log.code == 0) res.log = parse_log(log.out);
+        res.log_find = find;
+        if (!find.empty()) res.log = std::move(found);
+        else if ((!res.status.head.empty() || !of.empty()) && log.code == 0) res.log = parse_log(log.out);
         if (stashes.code == 0) res.stashes = parse_stashes(stashes.out);
     }
 
@@ -1555,6 +1672,15 @@ void Git::log_of(const std::string& branch) {
         std::lock_guard lock(w_->mu);
         if (w_->log_ref == branch) return;
         w_->log_ref = branch;
+    }
+    refresh();
+}
+
+void Git::log_find(const std::string& text) {
+    {
+        std::lock_guard lock(w_->mu);
+        if (w_->log_text == text) return;
+        w_->log_text = text;
     }
     refresh();
 }

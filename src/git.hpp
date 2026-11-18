@@ -47,7 +47,24 @@ struct GitBranch {
 
 struct GitCommit {
     std::string hash, author, when, subject;
+    std::string full;                  // the whole hash
+    std::vector<std::string> parents;  // theirs, whole
+    std::string refs;                  // what points at it, as git decorates it ("HEAD -> main, origin/main, tag: v1")
+    i64 time = 0;                      // committed, in seconds since 1970
 };
+
+// History as a graph: for each commit of a log (newest first), the row of
+// cells before it that draws the lanes, worked out from the parents (a
+// lane for each line of descent shown: a commit on its lane, ● ; lanes
+// passing │, a branch that started there joining it ╯ ╰, a merge's other
+// parent starting one ╮ ╭ or joining one that is there ┤ ├, ─ and ┼ between).
+// Each cell is a character (U' ' for none) and the lane it is of, by which
+// it is coloured; at most `most_lanes` are drawn, the rest cut.
+struct GitGraphRow {
+    std::u32string cells;
+    std::vector<u8> lanes;
+};
+std::vector<GitGraphRow> graph_lanes(std::span<const GitCommit> log, u32 most_lanes = 8);
 
 // A stash: its name ("stash@{0}"), how long ago it was made, and what git
 // called it ("WIP on main: 1a2b3c4 Start").
@@ -163,7 +180,8 @@ public:
         GitStatus status;
         std::vector<GitBranch> branches;
         std::vector<GitCommit> log;
-        std::string log_of;                // kStatus: the branch the log is of (empty: the one checked out)
+        std::string log_of;                // kStatus: the branch the log is of (empty: the one checked out; "--all": every one)
+        std::string log_find;              // and what it was searched for (empty: none)
         std::vector<std::string> tags;     // newest (by version) first
         std::vector<GitStash> stashes;
         std::vector<GitHunk> hunks;
@@ -206,8 +224,12 @@ public:
     // index is written with git's own plumbing, not through a patch.
     // Reported as an action, then a status.
     void stage(u64 doc, const std::string& path, std::vector<Piece> pieces, u32 line0, u32 line1, bool stage, std::string label);
-    // The branch whose commits a status lists (empty: the one checked out).
+    // The branch whose commits a status lists (empty: the one checked out;
+    // "--all": every branch's).
     void log_of(const std::string& branch);
+    // Those of its commits a status lists: whose message or author has this
+    // in it (any case), or that changed it, a path; empty: all.
+    void log_find(const std::string& text);
 
     // A document is about to go, or its text to be replaced: nothing asked
     // about it may still be reading that text when this returns. Git running

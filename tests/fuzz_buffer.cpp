@@ -4097,6 +4097,27 @@ void git_test(int seeds) {
         check(log.size() == 2 && log[0].hash == "abc1234" && log[0].author == "Ada" && log[0].when == "2 days ago" && log[0].subject == "Fix the thing" &&
                   log[1].subject == "Start",
               "history");
+        const std::vector<GitCommit> full = parse_log("abc1234\x1f" "Ada\x1f" "now\x1f" "Merge\x1f" "abc1234ffff\x1f" "p1 p2\x1f" "HEAD -> main, tag: v1\x1f" "1700000000\n");
+        check(full.size() == 1 && full[0].full == "abc1234ffff" && full[0].parents == std::vector<std::string>{"p1", "p2"} && full[0].refs == "HEAD -> main, tag: v1" &&
+                  full[0].time == 1700000000,
+              "history: parents, what points at it, and when");
+        // The lanes of a graph, as text.
+        auto lanes = [](std::vector<std::pair<std::string, std::vector<std::string>>> commits) {
+            std::vector<GitCommit> made;
+            for (auto& [hash, parents] : commits) made.push_back({hash, "", "", "", hash, parents, "", 0});
+            std::string out;
+            for (const GitGraphRow& r : graph_lanes(made)) {
+                for (const char32_t c : r.cells) {
+                    if (c < 0x80) out += static_cast<char>(c);
+                    else out += static_cast<char>(0xE0 | c >> 12), out += static_cast<char>(0x80 | (c >> 6 & 0x3F)), out += static_cast<char>(0x80 | (c & 0x3F));
+                }
+                out += '/';
+            }
+            return out;
+        };
+        check(lanes({{"m", {"a", "b", "c"}}, {"a", {"r"}}, {"b", {"r"}}, {"c", {"r"}}, {"r", {}}}) == "●─╮─╮/● │ │/│ ● │/│ │ ●/●─╯─╯/", "graph: an octopus merge, and the branches meeting");
+        check(lanes({{"t1", {"r"}}, {"t2", {"z"}}, {"t3", {"r"}}, {"r", {}}, {"z", {}}}) == "●/│ ●/│ │ ●/●─┼─╯/  ●/", "graph: a lane passing under a branch that meets");
+        check(lanes({{"a", {"b"}}, {"b", {}}}) == "●/●/" && lanes({}).empty(), "graph: one line");
         GitBlame blame;
         const std::string a(40, 'a'), zero(40, '0');
         const std::string porcelain = a + " 1 1 2\nauthor Ada\nauthor-time 1700000000\nsummary First\nfilename f\n\tline one\n" + a + " 2 2\n\tline two\n" +
