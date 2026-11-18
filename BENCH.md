@@ -2923,6 +2923,41 @@ the Evaluate box (lldb completes; gdb evaluates what is typed), and a
 HIP kernel stopped under rocgdb where ROCm and an AMD GPU are (run on
 the Arch box: a GPU wave at the kernel's line).
 
+### Round 61: building and running
+
+Sanitizers' reports read into Problems (from a build's output and a
+run's, on the terminal's reading thread); CMake's build type and target
+chosen in the Build tab; a file's assembly beside it (the compiler run in
+the background, its output read on a thread of its own, the lines of
+each view that go with the other's cursor marked); a Python console, and
+notebooks opened as the script of their cells.
+
+On a frame's path are only the marks: the assembly's (nothing unless an
+assembly tab is on show, and worked out again only when the cursor's
+line or the text changes) and a notebook's outputs (made again only when
+its text changes). Reading the assembly of app.cpp as g++ makes it with
+-g (18 MB, a million lines, 27,000 shown) took 58 ms at first, 21 ms with
+the debug sections skipped by their first character and numbers read
+with from_chars; it is off the main thread all the same. Turn about,
+five rounds, 2560x1600, against the build before the chunk (9741cd3):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 16,026 / 53.29 µs / 2.00 µs | 15,959 / 53.29 µs / 2.00 µs |
+| Typing, everything on: the same | 16,423 / 48.21 µs / 3.83 µs | 16,762 / 47.96 µs / 3.75 µs |
+| Scrolling code-100m.txt, plain: the same | 17,425 / 49.38 µs / 0.67 µs | 17,582 / 49.50 µs / 0.71 µs |
+
+No change. Tests: build.sh's assembly (a compile_commands.json's
+command, a comment's line with none, made again when saved with the
+same instructions now the next line's, the plain compiler's, a compile
+error said in the tab), the reader's units in the fuzz program (GCC's
+x86, Apple's arm64, DWARF 5's file 0, a command rewritten), term.sh's
+console (lines sent before it started, a block with blank lines whole,
+the cursor's line and the cursor on) and notebook (its script and
+outputs, saved back with a changed cell's outputs gone, Shift+Return run
+in the console), the notebook writer's units (written back byte for byte
+as Python's json writes it), and lua.sh's blit.run.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
