@@ -2986,6 +2986,51 @@ supertypes, the stand-in server reading back each item's own data), peek
 the box the file's) and reference counts (and with them turned off);
 also tried with clangd 21.
 
+### Round 63: the editor, further
+
+Local history (kept on a thread of its own), a minimap, spell checking (on
+a thread, once the view is still), emoji sequences as one picture, and
+colour emoji drawn by the text shader from a colour atlas of their own.
+
+The colour atlas first went into the text shader for every view, and
+made every pixel slower, emoji or not: some 5 µs a frame at 2560x1600,
+found by measuring the build before it (b6d1b46) against it with
+everything new turned off, the difference all in waiting for the GPU.
+Colour glyphs are now drawn by the shader's heavier build (the one that
+rounds what is selected), which a view gets only when it has an emoji or
+a selection on show; the plain build is as it was. Each glyph pixel
+reads one atlas or the other.
+
+The minimap first made its tiles again at each key (130 µs of layout a
+typing frame, a millisecond at the p99): they wait for typing to pause
+now, and a tile made again the same is not sent again. It drew six
+pictures a frame (a background, four tiles of 256 lines, the view's
+box); its tiles carry the background now, and are 1024 lines each:
+three. What is left is the minimap's: about 2.5 µs a frame while it is
+on show (52.1 against 49.5 µs, plain scrolling, the same build with
+editor.minimap on and off), against a frame's 8.3 ms at 120 Hz.
+
+Turn about, five rounds, 2560x1600, against the build before the chunk
+(c6e11fa); the minimap on in all three (it is on by default):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 17,286 / 52.92 µs / 2.00 µs | 15,499 / 56.50 µs / 2.25 µs |
+| Typing, everything on: the same | 17,886 / 47.83 µs / 3.92 µs | 16,779 / 51.29 µs / 4.58 µs |
+| Scrolling code-100m.txt, plain: the same | 18,863 / 49.00 µs / 0.75 µs | 17,039 / 51.54 µs / 0.92 µs |
+
+The minimap's 2.5 µs, and a little more with everything on (the spelling
+and history's checks each frame; history no longer reads its environment
+each frame since). Tests: edit.sh's local history (the text before the
+first save, each save, a version tried out as a diff and put back) and
+spelling (comments and strings, not names or addresses; Markdown's text,
+not its code; Option+Enter's suggestions), look.sh's minimap (on in a
+wide split, not in a narrow one or turned off, a click scrolls),
+unicode.sh's sequences (a family, a flag, a skin tone each one picture,
+where there is a colour font), the history and notebook units in the
+fuzz program; on the Arch box as well, under Vulkan, with Noto Color
+Emoji shaped by HarfBuzz.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
