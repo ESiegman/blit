@@ -86,5 +86,24 @@ shot abs_top absolute "vim:gg"
 shot rel_top default "vim:gg"
 differ abs_top rel_top "relative numbers look the same as absolute ones (the cursor's line's number stands at the left)"
 
+# The minimap: down the right of a split wide enough for it (not of a
+# narrow one, nor with editor.minimap off); a click on it scrolls there.
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/map.lua"
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.minimap = false\n' >"$dir/nomap.lua"
+i=0
+while [ $i -lt 3000 ]; do echo "int line_$i = $i;"; i=$((i + 1)); done >"$dir/work/long.cpp"
+mm() { BLIT_INIT="$dir/$1.lua" "$blit" --offscreen "$2" --shot "$dir/$1-mm.bmp" --script "workdir:$dir/work;frame;$3;minimapdump" "$dir/work/long.cpp" 2>&1 >/dev/null | tail -1; }
+got=$(mm map 1600x700 "")
+case $got in "top 0 tiles "[1-9]*) ;; *) echo "FAIL: a wide split's minimap: $got"; failed=1 ;; esac
+cp "$dir/map-mm.bmp" "$dir/mapone.bmp"
+got=$(mm map 700x700 "")
+[ "$got" = "none" ] || { echo "FAIL: a narrow split has none: $got"; failed=1; }
+got=$(mm nomap 1600x700 "")
+cp "$dir/nomap-mm.bmp" "$dir/maptwo.bmp"
+[ "$got" = "none" ] || { echo "FAIL: editor.minimap = false: $got"; failed=1; }
+got=$(mm map 1600x700 "click:795,200;frame")
+case $got in "top 0 "*) echo "FAIL: a click on the minimap scrolled nothing: $got"; failed=1 ;; esac
+differ mapone maptwo "the minimap drew nothing"
+
 [ $failed = 1 ] || echo "look ok"
 exit $failed

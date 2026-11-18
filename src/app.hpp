@@ -198,6 +198,8 @@ struct Doc {
     std::shared_ptr<MdView> md;      // a Markdown preview's tab: drawn over it too (appmarkdown.cpp)
     std::shared_ptr<AsmTab> asmv;    // a file's assembly's tab (appasm.cpp)
     std::shared_ptr<NotebookTab> nb;  // a notebook's: what it was, its outputs (appnotebook.cpp)
+    std::shared_ptr<struct Minimap> minimap;  // its minimap's tiles (appminimap.cpp)
+    u64 hl_gen = 0;  // counts up as its syntax colours change
     std::shared_ptr<ImageView> image;  // an image file's tab: drawn over it too (appimage.cpp)
     std::shared_ptr<PdfView> pdf;      // a PDF's tab: drawn over it too (apppdf.cpp)
     bool term_closed = false;        // (its program has ended, and that has been seen to)
@@ -592,6 +594,18 @@ private:
     std::string lens_dump();
     bool lens_waiting() const;
     std::vector<GridNote> lens_view_notes_;
+    // The minimap (appminimap.cpp).
+    bool minimap_on(const Pane& p) const;
+    bool minimap_place(const Pane& p, int* x0, int* y0, int* x1, int* y1, double* top_line, int* lp) const;
+    void minimap_tile(Doc& d, u64 index, std::vector<u8>& rgba);
+    int minimap_wait_ms() const;
+    void minimap_layout(FrameDesc& fd);
+    bool minimap_mouse(float x, float y, bool down);
+    void minimap_forget(const Doc& d);
+    std::string minimap_dump();
+    u32 minimap_box_ = 0, minimap_bg_ = 0, minimap_bg_key_ = ~0u;
+    u64 minimap_drag_ = 0, minimap_due_ns_ = 0;
+    std::vector<u8> minimap_rgba_;
     // Local history (apphistory.cpp).
     std::string history_folder(const Doc& d) const;
     bool history_wanted(const Doc& d) const;

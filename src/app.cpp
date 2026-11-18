@@ -588,6 +588,7 @@ void App::sync_syntax() {
         if (!msg.empty()) std::fprintf(stderr, "blit: %s\n", msg.c_str());
         if (!pane_->doc->syntax.active()) pane_->doc->ed.unlisten(&pane_->doc->syntax);
         if (pane_->doc->syntax.style_names().size() != pane_->doc->styles_known) pick_theme();
+        ++pane_->doc->hl_gen;
         dirty_ = true;
     }
 }
@@ -1463,6 +1464,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     md_layout(fd);    // (and a Markdown preview's)
     image_layout(fd);  // (and an image file's)
     pdf_layout(fd);    // (and a PDF's)
+    minimap_layout(fd);  // (and each split's minimap, down its right)
     build_layout(w, fd);  // the Run button, over the top right tab bar's end
     vim_layout(w, h, fd);
     panel_layout(w, std::max(1, h - status_px()), fd);  // (above the status bar)
@@ -1784,7 +1786,7 @@ void App::handle(const SDL_Event& e) {
             on_mouse_down(e.button);
             break;
         case SDL_EVENT_MOUSE_BUTTON_UP:
-            if (e.button.button == SDL_BUTTON_LEFT) dragging_ = dragging_thumb_ = column_drag_ = false;
+            if (e.button.button == SDL_BUTTON_LEFT) dragging_ = dragging_thumb_ = column_drag_ = false, minimap_drag_ = 0;
             splits_mouse_up(e.button);  // lets go of whatever was being carried
             prof_mouse_up();  // a stretch of a profile's timeline
             panel_mouse_up();
@@ -2212,6 +2214,7 @@ void App::drag_thumb(float y) {
 void App::on_mouse_down(const SDL_MouseButtonEvent& b) {
     if (b.button != SDL_BUTTON_LEFT) return;
     if (lsp_click(b.x, b.y, SDL_GetModState() & kCmd)) return;
+    if (minimap_mouse(b.x, b.y, true)) return;  // the minimap: the view goes there (appminimap.cpp)
     // The strip along the right edge is the scroll bar.
     if (max_scroll_y() > 0 && b.x * density_ >= pane_->x1 - 12 * scale_) {
         dragging_thumb_ = true;
@@ -2242,6 +2245,10 @@ void App::on_mouse_down(const SDL_MouseButtonEvent& b) {
 
 void App::on_mouse_motion(const SDL_MouseMotionEvent& m) {
     if (dragging_thumb_) return drag_thumb(m.y);
+    if (minimap_drag_) {
+        minimap_mouse(m.x, m.y, false);
+        return;
+    }
     if (column_drag_) {
         caret_click(m.x, m.y, true);
         scroll_to_cursor();
@@ -2268,7 +2275,7 @@ void App::loop() {
             // until the mouse has rested long enough for a hover popup, or a
             // scroll thumb has been left alone long enough to fade.
             int wait = -1;
-            for (const int ms : {lsp_wait_ms(), git_wait_ms(), fx_wait_ms(), script_ ? script_wait_ms() : -1})
+            for (const int ms : {lsp_wait_ms(), git_wait_ms(), fx_wait_ms(), minimap_wait_ms(), script_ ? script_wait_ms() : -1})
                 if (ms >= 0 && (wait < 0 || ms < wait)) wait = ms;
             if (wait < 0 ? SDL_WaitEvent(&e) : SDL_WaitEventTimeout(&e, wait)) {
                 handle(e);
@@ -2277,6 +2284,7 @@ void App::loop() {
             lsp_tick();
             git_tick();
             fx_tick();
+            if (minimap_due_ns_ && now_ns() >= minimap_due_ns_) dirty_ = true;  // (typing has paused: the minimap made again)
         }
         if (script_) script_tick();  // timers, events, keys of a mapping that waited long enough
         if (animating_ || fx_moving_) {

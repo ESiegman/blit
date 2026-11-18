@@ -190,6 +190,7 @@ void App::forget_doc(const Doc* d) {
     if (lsp_doc_ == d) stop_lsp();
     lsp_forget(*d);  // (its language server lets go of its text)
     if (script_) script_closed(*d);  // (BufDelete, at the next tick)
+    minimap_forget(*d);  // (its minimap's pictures let go of)
 }
 
 Pane* App::split_pane(Pane* target, Edge edge) {
