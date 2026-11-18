@@ -1343,6 +1343,19 @@ void App::accept_completion() {
     const u64 cur = pane_->doc->ed.cursor();
     u64 from = item.replace_from != ~0ull ? std::min(item.replace_from, cur) : a.comp_anchor;
     if (from > cur) from = cur;
+    if (item.snippet) {  // with its tab stops: the edits elsewhere first (all before it), then it
+        u64 at = from, end = cur;
+        std::vector<CompletionItem::Extra> extra = item.extra;
+        std::sort(extra.begin(), extra.end(), [](const auto& x, const auto& y) { return x.start > y.start; });
+        for (const CompletionItem::Extra& x : extra) {
+            if (x.end > from || x.start > x.end) continue;
+            pane_->doc->ed.replace(x.start, x.end, x.text);
+            at = at + x.text.size() - (x.end - x.start);
+            end = end + x.text.size() - (x.end - x.start);
+        }
+        snippet_expand(item.insert, at, end, {});
+        return;
+    }
     pane_->doc->ed.replace(from, cur, item.insert);
     // Edits elsewhere (an import, say), last first so earlier ones stay put.
     if (!item.extra.empty()) {

@@ -205,6 +205,12 @@ got="$got / $said"
 check "a name the server will not rename: it says why" 'closed / blit: Cannot rename: ERROR cannot be renamed'
 
 # Formatting: the file, the lines selected, Vim's gq, and before a save.
+# A completion that is a snippet: put in with its tab stops, the first
+# (in three places) filled in at once, then the next, then where it ends.
+run "key:cmd+Down;text:for_l;key:ctrl+space;wait:200;key:Return;snippetdump"
+check "a snippet completed: its stops, the first in three places" '[4:6-4:7,4:13-4:14,4:22-4:23] 4:17-4:18 4:26-4:26'
+run "key:cmd+Down;text:for_l;key:ctrl+space;wait:200;key:Return;text:j;key:Tab;text:10;key:Tab;text:go();lsptext"
+check "filled in at each stop" 'int shared = 1; // ERROR / call(1,   2, 3);    / WARN shared   / for (j = 0; j < 10; ++j) {go()}'
 run "key:alt+shift+F;wait:200;lsptext"
 got="$got / $said"
 check "Option+Shift+F formats the file" 'int shared = 1; // ERROR / call(1, 2, 3); / WARN shared /  / blit: Formatted'

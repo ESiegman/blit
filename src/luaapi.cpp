@@ -773,6 +773,35 @@ struct ScriptApi {
         s.commands.push_back(std::move(c));
         return 0;
     }
+    // blit.snippet(trigger, body, {lang = "cpp" or {"c", "cpp"}, desc = "..."})
+    static int snippet(lua_State* L) {
+        if (!is_str(L, 1) || str_at(L, 1).empty()) return fail("blit.snippet: a trigger is wanted (the word Tab puts it in after)");
+        if (!is_str(L, 2)) return fail("blit.snippet: its body is wanted, as a string ($1, ${2:default}, $0 ...)");
+        App::ScriptUi::OwnSnippet s;
+        s.trigger = std::string(str_at(L, 1));
+        for (const char c : s.trigger)
+            if (c == ' ' || c == '\t' || c == '\n') return fail("blit.snippet: a trigger has no blanks in it");
+        s.body = std::string(str_at(L, 2));
+        s.desc = field_str(L, 3, "desc");
+        if (field(L, 3, "lang") == LUA_TSTRING) {
+            s.langs.emplace_back(str_at(L, -1));
+        } else if (lua_istable(L, -1)) {
+            for (lua_Integer i = 1; lua_rawgeti(L, -1, i) == LUA_TSTRING; ++i) {
+                s.langs.emplace_back(str_at(L, -1));
+                lua_pop(L, 1);
+            }
+            lua_pop(L, 1);
+        }
+        lua_pop(L, 1);
+        App::ScriptUi& u = ui(L);
+        for (App::ScriptUi::OwnSnippet& have : u.snippets)
+            if (have.trigger == s.trigger && have.langs == s.langs) {
+                have = std::move(s);
+                return 0;
+            }
+        u.snippets.push_back(std::move(s));
+        return 0;
+    }
     static int delcommand(lua_State* L) {
         if (!is_str(L, 1)) return fail("blit.delcommand: a name is wanted");
         App::ScriptUi& s = ui(L);
@@ -1670,7 +1699,7 @@ const luaL_Reg kTop[] = {
     {"notify", api<ScriptApi::notify>},       {"cmd", api<ScriptApi::cmd>},              {"normal", api<ScriptApi::normal>},
     {"feed", api<ScriptApi::feed>},           {"mode", api<ScriptApi::mode>},            {"count", api<ScriptApi::count>},
     {"map", api<ScriptApi::map_keys>},        {"unmap", api<ScriptApi::unmap_keys>},     {"maps", api<ScriptApi::maps>},
-    {"command", api<ScriptApi::command>},     {"delcommand", api<ScriptApi::delcommand>}, {"on", api<ScriptApi::on_events>},
+    {"snippet", api<ScriptApi::snippet>},     {"command", api<ScriptApi::command>},     {"delcommand", api<ScriptApi::delcommand>}, {"on", api<ScriptApi::on_events>},
     {"off", api<ScriptApi::off>},             {"group", api<ScriptApi::group>},          {"emit", api<ScriptApi::emit>},
     {"defer", api<ScriptApi::defer>},         {"every", api<ScriptApi::every>},          {"schedule", api<ScriptApi::schedule>},
     {"stop", api<ScriptApi::stop>},           {"system", api<ScriptApi::system>},        {"kill", api<ScriptApi::kill>},

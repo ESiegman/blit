@@ -76,6 +76,7 @@ void Editor::opened(const std::string& file) {
     cursor_ = anchor_ = 0;
     want_col_ = ~0u;
     carets_.clear();
+    spans.clear();
     undo_.clear();
     redo_.clear();
     saved_id_ = 0;
@@ -658,6 +659,7 @@ void Editor::apply(u64 off, u64 remove_len, std::string_view text, Kind kind) {
     if (watch) watch->edited(off, off + remove_len, off + text.size());
     if (views) views->edited(off, off + remove_len, off + text.size());
     if (!carets_.empty()) shift_carets(off, remove_len, text.size());
+    if (!spans.empty()) shift_spans(off, remove_len, text.size());
     cursor_ = anchor_ = e.cursor1 = off + text.size();
     want_col_ = ~0u;
     ++revision_;
@@ -724,6 +726,19 @@ void Editor::shift_carets(u64 off, u64 remove_len, u64 insert_len) {
         if (static_cast<i64>(i) == active_) continue;
         move(carets_[i].cursor);
         move(carets_[i].anchor);
+    }
+}
+
+void Editor::shift_spans(u64 off, u64 remove_len, u64 insert_len) {
+    for (Span& s : spans) {
+        if (remove_len) {
+            s.a = s.a <= off ? s.a : s.a >= off + remove_len ? s.a - remove_len + insert_len : off;
+            s.b = s.b <= off ? s.b : s.b >= off + remove_len ? s.b - remove_len + insert_len : off + insert_len;
+        } else {
+            if (s.a > off || (s.a == off && !s.sticky)) s.a += insert_len;
+            if (s.b >= off) s.b += insert_len;
+        }
+        if (s.b < s.a) s.b = s.a;
     }
 }
 
@@ -805,6 +820,7 @@ void Editor::swap_edit(Edit& e) {
 bool Editor::undo() {
     if (undo_.empty()) return false;
     carets_.clear();
+    spans.clear();
     const u64 group = undo_.back().group;
     changed_at_ = ~0ull;
     do {  // the step, and with it the rest of its group
@@ -823,6 +839,7 @@ bool Editor::undo() {
 bool Editor::redo() {
     if (redo_.empty()) return false;
     carets_.clear();
+    spans.clear();
     const u64 group = redo_.back().group;
     changed_at_ = ~0ull;
     do {

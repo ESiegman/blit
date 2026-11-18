@@ -144,6 +144,17 @@ public:
         merge_carets();
     }
     void clear_carets() { carets_.clear(); }
+
+    // Ranges kept in step with the text (a snippet's tab stops): an insert
+    // before one moves it, one at its end or inside it makes it longer, one
+    // at its start moves it on (unless it is `sticky`, the stop being
+    // filled in, which then takes it); what is taken out of one is gone from
+    // it. An undo or a redo, or opening a file, drops them all.
+    struct Span {
+        u64 a = 0, b = 0;
+        bool sticky = false;
+    };
+    std::vector<Span> spans;
     // Every caret, the primary among them, in the order of the text; *primary: which it is.
     std::vector<Caret> all_carets(size_t* primary = nullptr) const;
     template <class F>
@@ -277,6 +288,7 @@ private:
     bool listening() const { return listeners_[0] != nullptr; }
     void merge_carets();
     void shift_carets(u64 off, u64 remove_len, u64 insert_len);
+    void shift_spans(u64 off, u64 remove_len, u64 insert_len);
 
     EditListener* listeners_[4] = {};
     u64 cursor_ = 0;

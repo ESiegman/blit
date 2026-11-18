@@ -302,6 +302,17 @@ private:
     u64 offset_at_point(float x, float y) const;
     void point_line_col(float x, float y, u64* line, u32* col) const;
     void caret_marks(FrameDesc& fd);
+    struct SnippetRun;
+    std::shared_ptr<SnippetRun> snippet_;  // a snippet being filled in (appsnippet.cpp)
+    std::vector<GridDeco> snippet_decos_;
+    bool snippet_live();
+    void snippet_end();
+    void snippet_expand(std::string_view body, u64 from, u64 to, const std::string& selected);
+    void snippet_go(size_t k);
+    bool snippet_key(const SDL_KeyboardEvent& k);
+    void snippet_pick();
+    void snippet_marks(FrameDesc& fd);
+    std::string snippet_dump();
     u32 vim_feed(const VimKey& v);
     void edit_key(const SDL_KeyboardEvent& k, i64 page);
     void caret_add_match(bool every);

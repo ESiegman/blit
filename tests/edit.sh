@@ -17,6 +17,11 @@ blit.opt.editor.restore = false'
 printf '%s\nblit.opt.editor.modal = false\n' "$base" >"$dir/init.lua"
 printf '%s\nblit.opt.editor.modal = true\n' "$base" >"$dir/vim.lua"
 printf '%s\nblit.opt.editor.modal = false\nblit.opt.editor.close_pairs = false\n' "$base" >"$dir/off.lua"
+snips='blit.snippet("fn", "int ${1:name}(${2:void})\n{\n\t$0\n}", {lang = "cpp", desc = "a function"})
+blit.snippet("pair", "${1:a} = ${1:a} + ${2|one,two|};")
+blit.snippet("wrap", "(${TM_SELECTED_TEXT:nothing})$0")'
+printf '%s\nblit.opt.editor.modal = false\n%s\n' "$base" "$snips" >"$dir/snip.lua"
+printf '%s\nblit.opt.editor.modal = true\n%s\n' "$base" "$snips" >"$dir/snipv.lua"
 export BLIT_RECENT_FILE="$dir/recent"
 init=
 fresh() {
@@ -123,6 +128,26 @@ carets "$next;$next;$next;text:cX;key:Escape" "$dir/m.txt" "$dir/vim.lua"
 check "Vim: the matches as Visual mode's, changed at each" 'X one / X two / bar X / end /  @ 1:1 2:1 *3:5'
 carets "$below;$below;text:dw;text:u" "$dir/m.txt" "$dir/vim.lua"
 check "Vim: undone once, for all" 'foo one / foo two / bar foo / end /  @ *1:1'
+# Snippets of one's own: Tab after the trigger puts one in, indented, and
+# goes from stop to stop; a stop in two places takes what is typed at both;
+# a choice is chosen; one wraps what is selected (from the list of them);
+# one for C++ is not put in elsewhere; undo, or Esc, ends it.
+printf 'x\n' >"$dir/s0.cpp"
+snip() { cp "$dir/s0.cpp" "$dir/s.cpp"; carets "$1" "$dir/s.cpp" "$dir/${2:-snip}.lua"; }
+snip "key:End;key:Return;text:fn;key:Tab;text:add;key:Tab;key:Tab;text:return 1"
+check "Tab after a trigger: the snippet, filled in from stop to stop" 'x / int add(void) / { / 	return 1 / } /  @ *4:13'
+snip "text:A;key:Return;text:fn;key:Tab;text:add;key:Tab;text:int a;key:Tab;text:return a;key:Escape" snipv
+check "with Vim, in Insert mode" 'x / int add(int a) / { / 	return a / } /  @ *4:12'
+snip "key:End;key:Return;text:pair;key:Tab;text:k;key:Tab;key:Down;key:Return"
+check "a stop in two places, then a choice" 'x / k = k + two; /  @ *2:12'
+snip "key:shift+End;command:Insert a snippet…;text:wrap;key:Return;text:!"
+check "one wrapping what is selected, from the list" '(x)! /  @ *1:5'
+snip "key:End;key:Return;text:fn;key:Tab;key:cmd+z;key:Tab"
+check "undo ends it (Tab then types over what is selected)" 'x / 	 /  @ *2:5'
+cp "$dir/s0.cpp" "$dir/s.txt"
+carets "key:End;key:Return;text:afn;key:Tab" "$dir/s.txt" "$dir/snip.lua"
+check "a trigger inside a longer word, or for another language: a tab" 'x / afn	 /  @ *2:5'
+
 if [ "$(uname -s)" = Darwin ]; then  # (the cells' size is the font's: the Mac's, here)
     carets "click:70,50;release;click:70,76,alt;release;click:70,76,alt;release;click:70,63,alt;drag:90,89,alt;release;text:Q"
     check "Alt+click: a caret, gone again; Alt+drag: a column" 'fooQ one / fooQo / barQo / endQ /  @ 1:5 2:5 3:5 *4:5'

@@ -1463,6 +1463,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     git_note(fd);
     vim_marks(fd);
     caret_marks(fd);  // the other carets, and what each has selected
+    snippet_marks(fd);  // a snippet's stops still to come
     if (script_) script_layout(w, h, fd);  // marks, boxes and messages of the scripts'
     prof_marks(fd);  // inline performance labels (after a server's and the scripts' notes)
     debug_marks(fd);  // and where the program being debugged has stopped
@@ -1957,6 +1958,7 @@ void App::on_key(const SDL_KeyboardEvent& k) {
     }
     if (splits_key(k)) return; // a new split, or the keyboard to another one
     if (tabs_key(k)) return;   // a new tab, another tab, this tab closed
+    if (k.key == SDLK_ESCAPE && snippet_) snippet_end();  // (Esc ends a snippet, and does what it does)
     // Esc with more carets than one leaves the primary alone (with Vim, in Normal mode).
     if (k.key == SDLK_ESCAPE && pane_->doc->ed.multi() && (!cfg_.modal || (vim_.mode() == Vim::kNormal && !vim_.pending() && vim_.showcmd().empty()))) {
         pane_->doc->ed.clear_carets();
@@ -1970,6 +1972,7 @@ void App::on_key(const SDL_KeyboardEvent& k) {
     }
     if (jump_key(k)) return;   // back or forward through the jumps, in any mode
     if (lsp_key(k)) return;    // a popup, or a language-server command, took it
+    if (snippet_key(k)) return;  // Tab: a snippet's next stop, or one's own put in (appsnippet.cpp)
     if (cmd && (k.mod & SDL_KMOD_ALT) && k.key == SDLK_B) return git_command("blame", {});
     if (cfg_.modal) {
         // Tab on a ":set" line completes the setting's name, then its value (applua.cpp).

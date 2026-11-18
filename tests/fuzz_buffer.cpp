@@ -29,6 +29,7 @@
 #include "editor.hpp"
 #include "finder.hpp"
 #include "folds.hpp"
+#include "snippet.hpp"
 #include "tests.hpp"
 #include "font.hpp"
 #include "git.hpp"
@@ -296,6 +297,40 @@ void run_editor(u64 seed, int steps) {
 // More carets than one: an edit at each, each moving with the others'
 // edits; those that meet merged; and, with random texts, typing at every
 // caret what typing at each place by hand gives.
+// Snippets read: the stops in Tab's order ($0 last), a stop in more than one
+// place, a placeholder in a placeholder, choices, variables, escapes; and
+// indented for the line they go in at.
+void snippets_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    auto spans = [](const Snippet& s, size_t k) {
+        std::string out;
+        for (const Snippet::Span& sp : s.stops[k].spans) out += (out.empty() ? "" : ",") + std::to_string(sp.start) + "-" + std::to_string(sp.end);
+        return out;
+    };
+    const Snippet loop = parse_snippet("for (${1:i} = 0; ${1:i} < ${2:n}; ++${1:i}) {$0}");
+    check(loop.text == "for (i = 0; i < n; ++i) {}" && loop.stops.size() == 3 && loop.stops[0].index == 1 && spans(loop, 0) == "5-6,12-13,21-22" &&
+              spans(loop, 1) == "16-17" && loop.stops[2].index == 0 && spans(loop, 2) == "25-25",
+          "snippet: a stop in three places, then the next, then $0");
+    const Snippet nested = parse_snippet("${2:second} ${1:call(${3:arg})}");
+    check(nested.text == "second call(arg)" && nested.stops.size() == 4 && nested.stops[0].index == 1 && spans(nested, 0) == "7-16" && spans(nested, 1) == "0-6" &&
+              spans(nested, 2) == "12-15" && spans(nested, 3) == "16-16",
+          "snippet: one inside another; no $0, the end");
+    const Snippet choice = parse_snippet("x = ${1|left,right|};");
+    check(choice.text == "x = left;" && choice.stops[0].choices == std::vector<std::string>{"left", "right"} && spans(choice, 0) == "4-8", "snippet: choices, the first in place");
+    const Snippet escaped = parse_snippet("\\$1 costs \\${2} \\\\ ${1:a\\}b}");
+    check(escaped.text == "$1 costs ${2} \\ a}b" && escaped.stops.size() == 2, "snippet: escapes");
+    const Snippet vars = parse_snippet("// $TM_FILENAME by ${USER:nobody} ${UNKNOWN} $NOPE.", [](std::string_view name, std::string* v) {
+        if (name == "TM_FILENAME") return *v = "a.cpp", true;
+        return false;
+    });
+    check(vars.text == "// a.cpp by nobody  .", "snippet: variables, a default where one has no value");
+    Snippet body = parse_snippet("if (${1:x}) {\n\t$0\n}");
+    indent_snippet(body, "    ", "  ");
+    check(body.text == "if (x) {\n      \n    }" && spans(body, 0) == "4-5" && spans(body, 1) == "15-15", "snippet: indented as the line is, a tab one level");
+}
+
 void carets_test(int seeds) {
     auto check = [](bool ok, const char* what) {
         if (!ok) fail(what, 0, 0);
@@ -1435,7 +1470,7 @@ void lsp_case(bool utf8, bool full, u64 seed) {
     }
     check(vec && vec->extra.size() == 1 && vec->extra[0].start == 0 && vec->extra[0].end == 0 && vec->extra[0].text == "#include <vector>\n",
           "completion with an edit elsewhere");
-    check(loop && loop->insert == "for (i = 0; i < n; ++i) {}" && loop->replace_from == ~0ull, "snippet marks are stripped");
+    check(loop && loop->snippet && loop->insert == "for (${1:i} = 0; ${1:i} < ${2:n}; ++${1:i}) {$0}" && loop->replace_from == ~0ull, "a snippet comes as it is, said to be one");
     // Typing on while the answer is under way keeps its positions good...
     lsp.complete(at, '.');
     ed.insert("p");
@@ -4758,6 +4793,7 @@ int main(int argc, char** argv) {
     long_line_test();
     vim_test();
     carets_test(seeds);
+    snippets_test();
     find_test();
     folds_test();
     tests_test();

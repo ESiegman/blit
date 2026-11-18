@@ -59,6 +59,7 @@ struct CompletionItem {
     std::string label, detail, doc;
     std::string filter;  // what typed characters are matched against
     std::string insert;  // what accepting it puts in
+    bool snippet = false;  // `insert` is a snippet ($1, ${2:x} ...: snippet.hpp)
     u8 kind = 0;         // the protocol's CompletionItemKind
     // Start of the text `insert` replaces (it ends at the cursor); ~0 means
     // the word being typed.

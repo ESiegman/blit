@@ -365,6 +365,13 @@ struct App::ScriptUi {
         std::function<void(const std::string& args)> native;  // blit's own (:PlugInstall ...)
     };
     std::vector<Command> commands;
+    // Snippets of one's own (blit.snippet): the word that puts one in with
+    // Tab, its body, what it is, and the languages it is for (none: all).
+    struct OwnSnippet {
+        std::string trigger, body, desc;
+        std::vector<std::string> langs;
+    };
+    std::vector<OwnSnippet> snippets;
     struct Handler {
         u64 id = 0;
         u32 events = 0;

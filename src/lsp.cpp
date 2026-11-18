@@ -812,7 +812,7 @@ struct Lsp::Conn::Worker {
                  R"("textDocument":{)"
                  R"("synchronization":{"didSave":true},)"
                  R"("publishDiagnostics":{"versionSupport":true,"relatedInformation":false,"codeActionsInline":true},)"
-                 R"("completion":{"contextSupport":true,"completionItem":{"snippetSupport":false,"insertReplaceSupport":true,)"
+                 R"("completion":{"contextSupport":true,"completionItem":{"snippetSupport":true,"insertReplaceSupport":true,)"
                  R"("labelDetailsSupport":true,"documentationFormat":["plaintext","markdown"]}},)"
                  R"("hover":{"contentFormat":["markdown","plaintext"]},)"
                  R"("signatureHelp":{"signatureInformation":{"documentationFormat":["plaintext","markdown"],)"
@@ -1056,7 +1056,7 @@ struct Lsp::Conn::Worker {
                 o.insert = it["insertText"].str();
                 if (o.insert.empty()) o.insert = it["label"].str();
             }
-            if (it["insertTextFormat"].integer(1) == 2) o.insert = strip_snippet(o.insert);
+            o.snippet = it["insertTextFormat"].integer(1) == 2;  // (put in with its tab stops: appsnippet.cpp)
             std::vector<InfoLine> doc;
             doc_lines(it["documentation"], &doc);
             for (const InfoLine& l : doc) {
