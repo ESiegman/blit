@@ -214,6 +214,19 @@ check "a variable's memory, read again at the next stop (and a page back and on,
 run "$P;break:16;key:F5;debugwait:stopped;key:F5;debugwait:stopped;frame;debuginline;lua:blit.opt.debug.inline_values = false;frame;debuginline"
 check "the values in the code" '13: total = 5 | 14: i = 2 | 15: total = 5, i = 2 | 16: ◀ stopped: breakpoint   i = 2, total = 5 ;; 16: ◀ stopped: breakpoint'
 
+# Two sessions at once (the breakpoints are both's): each stopped, one run
+# on, the other chosen in the Debug tab as it was left; one stopped, the
+# other takes its place. And what is typed to evaluate completed with Tab.
+run "$P;break:8;key:F5;debugwait:stopped;command:Start another debugging session;debugwait:stopped;debugdump;key:F5;debugwait:stopped;debugdump;debugpanel;debugpick:sessions:2;debugwait:stopped;debugdump;key:shift+F5;debugwait:stopped;debugdump"
+got=$(printf '%s' "$got" | sed -e 's/; output: [^;]* ;;/ ;;/g' -e 's/; output: [^;]*$//' -e 's/ start\(@[0-9]*\)\{0,1\};/;/g')
+check "two sessions at once" 'sessions: *count stopped, count stopped; stopped (breakpoint); stack: square@8 main@15; vars: x=1 y=1 ;; sessions: *count stopped, count stopped; stopped (breakpoint); stack: square@8 main@15; vars: x=2 y=4 ;; sessions: *count stopped, count stopped; stopped (breakpoint); stack: square@8 main@15; vars: x=1 y=1 ;; stopped (breakpoint); stack: square@8 main@15; vars: x=2 y=4'
+run "$P;break:16;key:F5;debugwait:stopped;key:cmd+shift+y;text:tot;key:Tab;debugwait:answers;finddump;key:Return;debugwait:stopped;debugdump"
+got=$(printf '%s' "$got" | sed -e 's/ start\(@[0-9]*\)\{0,1\};/;/g')
+case "$got" in
+'input [tot]'*) check "evaluate: this debugger completes nothing (as typed, evaluated)" 'input [tot] 0 : ;; stopped (breakpoint); stack: main@16; vars: total=1 i=1; output: tot = (no symbol)' ;;
+*) check "evaluate: what is typed completed with Tab, then evaluated" 'input [total] 0 : ;; stopped (breakpoint); stack: main@16; vars: total=1 i=1; output: total = 1' ;;
+esac
+
 # The standard library's containers, as the debugger's printers show them:
 # their sizes, and a map's entries (lldb: each pair summed up from its
 # members; gdb: its printer's keys and values put together, [key] = value).

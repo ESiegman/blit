@@ -244,6 +244,7 @@ struct App::Find {
     std::function<void(const std::string&)> chose;
     std::function<void(int)> chose_item;  // (a list of blit's own, kFindPick: which of the items)
     std::function<void(const std::string&)> typed_changed;  // (one whose rows come as it is typed: find_live_items)
+    std::function<void(const std::string&)> on_tab;  // (a line to type whose Tab completes it: find_on_tab)
     std::string typed_asked;
     // A list of blit's own whose rows are tried out as the choice moves
     // (find_preview_item): the row last tried, and what Esc puts back.
@@ -799,6 +800,7 @@ void App::find_open(int mode, const std::string& typed) {
     f.chose = nullptr;  // (see find_choose)
     f.chose_item = nullptr;
     f.typed_changed = nullptr;
+    f.on_tab = nullptr;
     f.moved = nullptr;
     if (auto back = std::exchange(f.cancelled, nullptr)) back();  // (what a list tried out is put back)
     if (mode != kFindNames && mode != kFindText) f.into_pane = 0;  // (Tab between those two keeps it)
@@ -1067,6 +1069,20 @@ void App::find_live_items(const std::string& prompt, std::function<void(const st
     f.typed_changed(f.typed);
 }
 
+// A line being typed (kFindInput, blit's own): Tab hears it (to complete it), and what is typed is changed.
+void App::find_on_tab(std::function<void(const std::string&)> fn) {
+    if (find_open_) find_->on_tab = std::move(fn);
+}
+
+void App::find_set_typed(const std::string& typed) {
+    if (!find_open_) return;
+    find_->typed = typed;
+    find_->touch();
+    dirty_ = true;
+}
+
+std::string App::find_typed() const { return find_open_ ? find_->typed : std::string(); }
+
 void App::find_set_items(std::vector<std::string> items) {
     Find& f = *find_;
     if (!find_open_ || f.mode != kFindPick || !f.typed_changed) return;
@@ -1154,6 +1170,7 @@ void App::find_close(bool chosen) {
     f.chose = nullptr;
     f.chose_item = nullptr;
     f.typed_changed = nullptr;
+    f.on_tab = nullptr;
     f.moved = nullptr;
     f.into_pane = 0;
     if (auto back = std::exchange(f.cancelled, nullptr); back && !chosen) back();  // (Esc: what was tried out is put back)
@@ -1598,6 +1615,11 @@ void App::find_tab() {
         f.moved_all = true;
         f.touch();
         dirty_ = true;
+        return;
+    }
+    if (f.mode == kFindInput && f.on_tab) {  // (a line of blit's own that Tab completes)
+        const auto fn = f.on_tab;
+        fn(f.typed);
         return;
     }
     if (f.script() || f.sel >= f.entries.size()) return;

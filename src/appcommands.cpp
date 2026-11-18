@@ -346,6 +346,7 @@ void App::commands_create() {
         pane_->doc->ed.clear_carets();
         dirty_ = true;
     });
+    own("Start another debugging session", {}, [this] { debug_start_another(); });
     own("Run to the cursor", {key(SDLK_F10, kC)}, [this] { debug_run_to_cursor(); });
     own("Jump to the cursor's line", {}, [this] { debug_jump_to_cursor(); });
     own("Show the disassembly", {}, [this] { debug_disasm_open(); });

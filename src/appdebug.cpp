@@ -150,7 +150,81 @@ std::string hex(u64 v, int width = 1) {
 
 }  // namespace
 
-struct App::DebugUi {
+// One debugging session: its debugger and what it says, the program's
+// threads, stack, variables and output, and what it has of its own (data
+// and instruction breakpoints, run to the cursor). The one shown is the
+// Debug tab's (App::DebugUi is one); the others wait in DebugUi::others,
+// each swapped into its place to be shown or to hear from its debugger.
+struct DebugSession {
+    std::string name;  // what it debugs: the program, a process, a core
+    // The session, and what its debugger says it can do (initialize's answer).
+    std::unique_ptr<Dap> dap;
+    struct Can {
+        bool data_breaks = false, set_variable = false, goto_targets = false, function_breaks = false, log_points = false;
+        bool disassemble = false, read_memory = false, write_memory = false, instruction_breaks = false, granularity = false;
+    } can;
+    std::string how;  // what the session began with: "launch", "attach" (a process), "core"
+    enum State : u8 { kIdle, kStarting, kRunning, kStopped } state = kIdle;
+    std::string remote;  // "ssh://host" when the program is on another machine
+    bool gdb = false;    // the debugger is gdb (its hit counts are from 0)
+    bool going = false;  // the program has started (the "process" event): what gdb says before is its own
+    i64 thread = 0;      // the thread whose stack is shown (and which the steps step)
+    i64 stopped_thread = 0;
+    struct Thread {
+        i64 id = 0;
+        std::string name;
+    };
+    std::vector<Thread> threads;  // (when it is stopped)
+    std::string reason, error;
+    struct Frame {
+        i64 id = 0;
+        std::string name, path;  // (the path as blit knows it)
+        u32 line = 0;            // from 1
+        u64 ip = 0;              // the address of its instruction
+    };
+    std::vector<Frame> frames;
+    u32 frame = 0;
+    struct Var {
+        std::string name, value;
+        i64 ref = 0;
+        u32 depth = 0;
+        bool open = false;
+        i64 parent = 0;  // (the reference it was listed under: what setVariable and dataBreakpointInfo name it by)
+        u64 addr = 0;    // where it is in memory, where the debugger says
+    };
+    // Data breakpoints: a variable's writes watched, by the debugger's id for it.
+    struct Data {
+        std::string id, name;
+    };
+    std::vector<Data> data;
+    // Run to the cursor: a breakpoint there until the next stop.
+    std::string run_to_path;
+    u32 run_to_line = 0;
+    std::set<u64> ibreaks;  // breakpoints at an instruction, by its address
+    std::vector<Var> vars;
+    u64 vars_gen = 0;  // (answers about variables from before the last stop are dropped)
+    u64 watch_gen = 0;  // (answers from before the last evaluation are dropped)
+    u32 asking = 0;    // questions about the stack and the variables not answered yet (debug_wait)
+    std::vector<std::string> output;
+    std::string partial;
+    int exit_code = -1;
+    bool end_soon = false;  // (the session ends once the debugger's answers have been run: not inside one)
+    void print(std::string_view text) {
+        for (const char c : text)
+            if (c != '\r') partial += c;  // (a program on a terminal ends its lines with \r\n)
+        size_t nl;
+        while ((nl = partial.find('\n')) != std::string::npos) {
+            output.push_back(partial.substr(0, nl));
+            partial.erase(0, nl + 1);
+        }
+        if (output.size() > 500) output.erase(output.begin(), output.begin() + static_cast<std::ptrdiff_t>(output.size() - 500));
+    }
+    // A path as the debugger knows it (another machine's: without ssh://host), and back.
+    std::string there(const std::string& p) const { return !remote.empty() && p.starts_with(remote) ? p.substr(remote.size()) : p; }
+    std::string here(std::string_view p) const { return p.empty() ? std::string() : remote + std::string(p); }
+};
+
+struct App::DebugUi : DebugSession {
     // What to debug.
     std::string program, args, cwd;
     std::vector<std::string> env;  // ("NAME=value": a run configuration's, given the debugger and so the program)
@@ -204,49 +278,6 @@ struct App::DebugUi {
             it = movers.erase(it);
         }
     }
-    // The session, and what its debugger says it can do (initialize's answer).
-    std::unique_ptr<Dap> dap;
-    struct Can {
-        bool data_breaks = false, set_variable = false, goto_targets = false, function_breaks = false, log_points = false;
-        bool disassemble = false, read_memory = false, write_memory = false, instruction_breaks = false, granularity = false;
-    } can;
-    std::string how;  // what the session began with: "launch", "attach" (a process), "core"
-    enum State : u8 { kIdle, kStarting, kRunning, kStopped } state = kIdle;
-    std::string remote;  // "ssh://host" when the program is on another machine
-    bool gdb = false;    // the debugger is gdb (its hit counts are from 0)
-    bool going = false;  // the program has started (the "process" event): what gdb says before is its own
-    i64 thread = 0;      // the thread whose stack is shown (and which the steps step)
-    i64 stopped_thread = 0;
-    struct Thread {
-        i64 id = 0;
-        std::string name;
-    };
-    std::vector<Thread> threads;  // (when it is stopped)
-    std::string reason, error;
-    struct Frame {
-        i64 id = 0;
-        std::string name, path;  // (the path as blit knows it)
-        u32 line = 0;            // from 1
-        u64 ip = 0;              // the address of its instruction
-    };
-    std::vector<Frame> frames;
-    u32 frame = 0;
-    struct Var {
-        std::string name, value;
-        i64 ref = 0;
-        u32 depth = 0;
-        bool open = false;
-        i64 parent = 0;  // (the reference it was listed under: what setVariable and dataBreakpointInfo name it by)
-        u64 addr = 0;    // where it is in memory, where the debugger says
-    };
-    // Data breakpoints: a variable's writes watched, by the debugger's id for it.
-    struct Data {
-        std::string id, name;
-    };
-    std::vector<Data> data;
-    // Run to the cursor: a breakpoint there until the next stop.
-    std::string run_to_path;
-    u32 run_to_line = 0;
     // The disassembly tab (its document's id; 0 when there is none): the
     // instructions around the frame shown's, a line each, and before those of
     // each source line a heading (its function, file and line, and its text).
@@ -254,7 +285,6 @@ struct App::DebugUi {
     u64 disasm_doc = 0;
     std::vector<u64> disasm_addrs;
     u64 disasm_gen = 0;
-    std::set<u64> ibreaks;  // breakpoints at an instruction, by its address
     // The memory tab: a page of memory from mem_addr, 16 bytes a line, read
     // again at each stop; what it was asked for as.
     u64 mem_doc = 0, mem_addr = 0, mem_gen = 0;
@@ -263,22 +293,14 @@ struct App::DebugUi {
     u64 mem_last_addr = 0;
     u32 mem_width = 8;  // (the hex digits of its addresses)
     static constexpr u32 kMemPage = 4096;
-    std::vector<Var> vars;
-    u64 vars_gen = 0;  // (answers about variables from before the last stop are dropped)
     // The expressions watched: each evaluated where it stopped, in the frame shown.
     struct Watch {
         std::string expr, value;
         bool failed = false;
     };
     std::vector<Watch> watches;
-    u64 watch_gen = 0;  // (answers from before the last evaluation are dropped)
-    u32 asking = 0;    // questions about the stack and the variables not answered yet (debug_wait)
-    std::vector<std::string> output;
-    std::string partial;
-    int exit_code = -1;
-    bool end_soon = false;  // (the session ends once the debugger's answers have been run: not inside one)
     // The panel: a row for each thing shown, and the one chosen.
-    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData, kInstr };
+    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData, kInstr, kSession };
     // A row: a mark (a triangle, an arrow) before its text, in an ink of its
     // own; the text; something quieter after it; and on the right its key.
     struct Row {
@@ -292,6 +314,11 @@ struct App::DebugUi {
     };
     std::vector<Row> rows;
     u32 sel = 0, top = 0;
+    // The other sessions, and whether one of them is in this one's place for
+    // a moment (to hear from its debugger, or be sent breakpoints).
+    std::vector<DebugSession> others;
+    bool background = false;
+    DebugSession& session() { return *this; }
     // The notes after the lines of each view (where it stopped, the values),
     // and what they were made for.
     struct Inline {
@@ -302,19 +329,6 @@ struct App::DebugUi {
     };
     Inline inline_[kMaxViews];
 
-    void print(std::string_view text) {
-        for (const char c : text)
-            if (c != '\r') partial += c;  // (a program on a terminal ends its lines with \r\n)
-        size_t nl;
-        while ((nl = partial.find('\n')) != std::string::npos) {
-            output.push_back(partial.substr(0, nl));
-            partial.erase(0, nl + 1);
-        }
-        if (output.size() > 500) output.erase(output.begin(), output.begin() + static_cast<std::ptrdiff_t>(output.size() - 500));
-    }
-    // A path as the debugger knows it (another machine's: without ssh://host), and back.
-    std::string there(const std::string& p) const { return !remote.empty() && p.starts_with(remote) ? p.substr(remote.size()) : p; }
-    std::string here(std::string_view p) const { return p.empty() ? std::string() : remote + std::string(p); }
 };
 
 void App::DebugUi::Mover::on_edit(const TextEdit& e) {
@@ -338,7 +352,51 @@ void App::DebugUi::Mover::on_edit(const TextEdit& e) {
 
 void App::debug_create() { debugui_ = std::make_shared<DebugUi>(); }
 
-bool App::debug_running() const { return debugui_ && debugui_->state != DebugUi::kIdle; }
+bool App::debug_running() const {
+    if (!debugui_) return false;
+    return debugui_->state != DebugUi::kIdle || std::ranges::any_of(debugui_->others, [](const DebugSession& s) { return s.state != DebugUi::kIdle; });
+}
+
+// ---------------------------------------------------------------- several sessions
+
+// The session in front kept aside, among the others, and a fresh one in its place.
+void App::debug_park() {
+    DebugUi& u = *debugui_;
+    if (!u.dap && u.state == DebugUi::kIdle) return;
+    u.others.push_back(std::move(u.session()));
+    u.session() = DebugSession{};
+}
+
+// Another session to the front (the one there among the others): its stack
+// shown as it left it, its variables and watches asked for again.
+void App::debug_switch(size_t i) {
+    DebugUi& u = *debugui_;
+    if (i >= u.others.size()) return;
+    std::swap(u.session(), u.others[i]);
+    if (u.state == DebugUi::kStopped && u.frame < u.frames.size()) debug_frame(u.frame, true);
+    ++debug_gen_;
+    dirty_ = true;
+}
+
+// Something done in each of the other sessions too (breakpoints sent), each in turn in the front one's place.
+void App::debug_each_other(const std::function<void()>& fn) {
+    DebugUi& u = *debugui_;
+    if (u.background) return;
+    for (DebugSession& other : u.others) {
+        std::swap(u.session(), other);
+        u.background = true;
+        fn();
+        u.background = false;
+        std::swap(u.session(), other);
+    }
+}
+
+// F5's session again, beside the one under way (which is kept aside).
+void App::debug_start_another() {
+    DebugUi& u = *debugui_;
+    if (u.state != DebugUi::kIdle) debug_park();
+    debug_start();
+}
 
 // ---------------------------------------------------------------- breakpoints
 
@@ -414,6 +472,7 @@ void App::debug_edit_break() {
 // A file's breakpoints, to a session under way.
 void App::debug_send_breaks(const std::string& path) {
     DebugUi& u = *debugui_;
+    debug_each_other([&] { debug_send_breaks(path); });  // (every session has them)
     if (!u.dap || u.state == DebugUi::kStarting) return;  // (all are sent when the debugger is ready for them)
     std::string a = "{\"source\":{\"path\":" + quoted(u.there(path)) + "},\"breakpoints\":[";
     if (auto it = u.breaks.find(path); it != u.breaks.end()) {
@@ -444,6 +503,7 @@ void App::debug_send_breaks(const std::string& path) {
 // The breakpoints by function name, to a session under way.
 void App::debug_send_functions() {
     DebugUi& u = *debugui_;
+    debug_each_other([&] { debug_send_functions(); });
     if (!u.dap || u.state == DebugUi::kStarting) return;  // (sent when the debugger is ready for them)
     std::string a = "{\"breakpoints\":[";
     for (size_t i = 0; i < u.functions.size(); ++i) a += std::string(i ? "," : "") + "{\"name\":" + quoted(u.functions[i]) + "}";
@@ -583,8 +643,6 @@ bool App::debug_open(const std::string& near, const std::string& dir, bool pytho
 
 // Attaching to a process of the user's: the list of them, narrowed by name.
 void App::debug_attach_pick() {
-    DebugUi& u = *debugui_;
-    if (u.state != DebugUi::kIdle) return notify("A session is under way");
     std::string out;
     if (!fs_run(default_workdir(), "ps -x -o pid= -o comm=", &out, 5000)) return notify("Cannot list the processes");
     std::vector<std::pair<std::string, i64>> procs;
@@ -613,15 +671,15 @@ void App::debug_attach_pick() {
 
 void App::debug_attach(i64 pid) {
     DebugUi& u = *debugui_;
-    if (u.state != DebugUi::kIdle) return;
+    if (u.state != DebugUi::kIdle) debug_park();  // (beside the session under way)
     if (!debug_open({}, default_workdir(), false)) return;
+    u.name = "process " + std::to_string(pid);
     debug_begin("attach", "{\"pid\":" + std::to_string(pid) + "}");
 }
 
 // A core file: the program it is of, then the core, each chosen.
 void App::debug_core_pick() {
     DebugUi& u = *debugui_;
-    if (u.state != DebugUi::kIdle) return notify("A session is under way");
     const std::string* root = panel_root();
     std::string start = u.program.empty() ? (root ? *root : default_workdir()) + "/" : u.program;
     find_choose(kFindOpen, "Program the core is of", start, [this](const std::string& program) {
@@ -631,9 +689,10 @@ void App::debug_core_pick() {
 
 void App::debug_core(const std::string& program, const std::string& core) {
     DebugUi& u = *debugui_;
-    if (u.state != DebugUi::kIdle) return;
+    if (u.state != DebugUi::kIdle) debug_park();
     u.program = full_path(program);
     if (!debug_open(u.program, parent_of(u.program), false)) return;
+    u.name = "core of " + base_name(u.program);
     // (lldb-dap reads coreFile; gdb, core.)
     debug_begin("attach", "{\"program\":" + quoted(u.there(u.program)) + ",\"coreFile\":" + quoted(u.there(full_path(core))) + ",\"core\":" + quoted(u.there(full_path(core))) + "}");
 }
@@ -658,6 +717,7 @@ void App::debug_start() {
     const std::string dir = !u.cwd.empty() ? u.cwd : parent_of(u.program);
     const bool python = u.program.ends_with(".py");
     if (!debug_open(u.program, dir, python)) return;
+    u.name = base_name(u.program);
     // The program's arguments, as a shell would split them.
     std::string args = "[";
     {
@@ -736,6 +796,12 @@ void App::debug_end() {
     u.vars.clear();
     for (DebugUi::Watch& w : u.watches) w.value.clear(), w.failed = false;
     u.asking = 0;
+    // Another session waiting takes its place (not while one is in it for a moment).
+    if (!u.background && !u.others.empty()) {
+        u.session() = std::move(u.others.back());
+        u.others.pop_back();
+        if (u.state == DebugUi::kStopped && u.frame < u.frames.size()) debug_frame(u.frame, true);
+    }
     ++debug_gen_;
     dirty_ = true;
 }
@@ -928,7 +994,32 @@ void App::debug_expand(u32 i) {
 }
 
 // What the debugger has said: answers' callbacks run, then its events.
+// What the debuggers have said: the front session's, then each other's in
+// its place for a moment. One of them that has stopped comes to the front
+// (the one there is kept aside in its place); one that has ended goes.
 void App::debug_sync() {
+    DebugUi& u = *debugui_;
+    bool stopped = false;
+    debug_sync_session(&stopped);
+    for (size_t i = 0; i < u.others.size();) {
+        std::swap(u.session(), u.others[i]);
+        u.background = true;
+        stopped = false;
+        debug_sync_session(&stopped);
+        u.background = false;
+        if (!u.dap) {  // (ended)
+            std::swap(u.session(), u.others[i]);
+            u.others.erase(u.others.begin() + static_cast<std::ptrdiff_t>(i));
+            continue;
+        }
+        if (!stopped) std::swap(u.session(), u.others[i]);
+        ++i;
+    }
+    ++debug_gen_;
+    dirty_ = true;
+}
+
+void App::debug_sync_session(bool* stopped) {
     DebugUi& u = *debugui_;
     if (!u.dap) return;
     for (const Dap::Message& m : u.dap->poll()) {
@@ -948,6 +1039,7 @@ void App::debug_sync() {
             u.dap->request("threads");
         } else if (m.name == "stopped") {
             u.state = DebugUi::kStopped;
+            *stopped = true;
             if (!u.run_to_path.empty()) {  // (run to the cursor: that breakpoint goes)
                 const std::string path = std::exchange(u.run_to_path, {});
                 debug_send_breaks(path);
@@ -1009,10 +1101,10 @@ void App::debug_sync() {
     dirty_ = true;
 }
 
-void App::debug_evaluate() {
+void App::debug_evaluate(const std::string& start) {
     DebugUi& u = *debugui_;
     if (!u.dap || u.state != DebugUi::kStopped) return;
-    find_choose(kFindInput, "Evaluate", "", [this](const std::string& e) {
+    find_choose(kFindInput, "Evaluate", start, [this](const std::string& e) {
         DebugUi& v = *debugui_;
         if (!v.dap || e.empty()) return;
         const std::string frame = v.frame < v.frames.size() ? ",\"frameId\":" + std::to_string(v.frames[v.frame].id) : std::string();
@@ -1023,6 +1115,47 @@ void App::debug_evaluate() {
             w.print(e + " = " + (m.success ? std::string(m.body()["result"].str()) : "(" + m.message + ")") + "\n");
             ++debug_gen_;
             dirty_ = true;
+        });
+    });
+    find_on_tab([this](const std::string& typed) { debug_complete(typed); });  // (Tab: what the debugger would complete it with)
+}
+
+// What is typed to be evaluated, completed as the debugger would (its
+// completions request): one answer goes in; several that share more than
+// is typed, that much; else a list of them, the one chosen going in.
+void App::debug_complete(const std::string& typed) {
+    DebugUi& u = *debugui_;
+    if (!u.dap || u.state != DebugUi::kStopped) return;
+    const std::string frame = u.frame < u.frames.size() ? ",\"frameId\":" + std::to_string(u.frames[u.frame].id) : std::string();
+    u.dap->request("completions", "{\"text\":" + quoted(typed) + ",\"column\":" + std::to_string(typed.size() + 1) + frame + "}", [this, typed](const Dap::Message& m) {
+        if (!m.success || find_typed() != typed) return;  // (typed on meanwhile, or the box shut)
+        // The word being typed, which a completion takes the place of (where the debugger says no other place).
+        size_t word = typed.size();
+        while (word > 0 && (std::isalnum(static_cast<unsigned char>(typed[word - 1])) || typed[word - 1] == '_')) --word;
+        std::vector<std::string> all;
+        for (const json::Value t : m.body()["targets"]) {
+            const std::string label(t["label"].str());
+            if (label.find(" -- ") != std::string::npos && label.ends_with(".")) continue;  // (lldb's own commands, with their help: not an expression)
+            std::string text(t["text"].exists() ? t["text"].str() : t["label"].str());
+            if (const size_t d = text.find(" -- "); d != std::string::npos) text.resize(d);
+            std::string whole;
+            if (t["start"].exists()) {
+                const size_t at = std::min<size_t>(static_cast<size_t>(std::max<i64>(0, t["start"].integer() - 1)), typed.size());
+                const size_t len = std::min<size_t>(static_cast<size_t>(std::max<i64>(0, t["length"].integer())), typed.size() - at);
+                whole = typed.substr(0, at) + text + typed.substr(at + len);
+            } else {
+                whole = text.starts_with(typed.substr(word)) ? typed.substr(0, word) + text : typed + text;
+            }
+            if (std::ranges::find(all, whole) == all.end()) all.push_back(std::move(whole));
+        }
+        if (all.empty()) return;
+        if (all.size() == 1) return find_set_typed(all[0]);
+        std::string common = all[0];
+        for (const std::string& c : all)
+            while (!c.starts_with(common)) common.pop_back();
+        if (common.size() > typed.size()) return find_set_typed(common);
+        find_choose_item("Complete", all, [this, all](int i) {
+            if (i >= 0 && static_cast<size_t>(i) < all.size()) debug_evaluate(all[static_cast<size_t>(i)]);
         });
     });
 }
@@ -1528,6 +1661,17 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
         Row& r = add(DebugUi::kNone, 0, title, ink::kHeading);
         if (count) r.after = std::to_string(count);
     };
+    if (!u.others.empty()) {  // (one alone is the tab's own)
+        static const char* const kWord[] = {"not running", "starting", "running", "stopped"};
+        heading("Sessions", 1 + u.others.size());
+        Row& r = add(DebugUi::kSession, 0, u.name.empty() ? std::string("this one") : u.name);
+        r.mark = "\xE2\x96\xB8", r.mark_ink = ink::kAccent;  // (the one shown)
+        r.after = kWord[u.state];
+        for (u32 i = 0; i < u.others.size(); ++i) {
+            Row& o = add(DebugUi::kSession, i + 1, u.others[i].name.empty() ? std::string("another") : u.others[i].name);
+            o.after = kWord[u.others[i].state];
+        }
+    }
     if (u.threads.size() > 1) {  // (one alone is the stack's own)
         heading("Threads", u.threads.size());
         for (u32 i = 0; i < u.threads.size(); ++i) {
@@ -1721,6 +1865,9 @@ void App::debug_do(u32 i) {
             break;
         }
         case DebugUi::kData: break;
+        case DebugUi::kSession:  // that one shown
+            if (row.index > 0) debug_switch(row.index - 1);
+            break;
         case DebugUi::kInstr: {  // its instruction, where the disassembly has it
             auto it = u.ibreaks.begin();
             std::advance(it, std::min<size_t>(row.index, u.ibreaks.size() - 1));
@@ -1798,6 +1945,22 @@ bool App::debug_panel_key(const SDL_KeyboardEvent& k) {
             if (u.sel < n && u.rows[u.sel].act == DebugUi::kData && u.rows[u.sel].index < u.data.size()) {
                 u.data.erase(u.data.begin() + u.rows[u.sel].index);
                 debug_send_data();
+                ++debug_gen_;
+                dirty_ = true;
+                return true;
+            }
+            if (u.sel < n && u.rows[u.sel].act == DebugUi::kSession) {  // a session stopped
+                const u32 at = u.rows[u.sel].index;
+                if (at == 0) {
+                    debug_command("stop");
+                } else if (at - 1 < u.others.size()) {
+                    std::swap(u.session(), u.others[at - 1]);
+                    u.background = true;
+                    debug_end();
+                    u.background = false;
+                    std::swap(u.session(), u.others[at - 1]);
+                    u.others.erase(u.others.begin() + (at - 1));
+                }
                 ++debug_gen_;
                 dirty_ = true;
                 return true;
@@ -1989,6 +2152,11 @@ std::string App::debug_dump() {
     DebugUi& u = *debugui_;
     static const char* const kState[] = {"idle", "starting", "running", "stopped"};
     std::string out = std::string(kState[u.state]);
+    if (!u.others.empty()) {  // (the others first: "sessions: name state, ...", the one shown starred)
+        std::string all = "sessions: *" + u.name + " " + kState[u.state];
+        for (const DebugSession& o : u.others) all += ", " + o.name + " " + kState[o.state];
+        out = all + "; " + out;
+    }
     if (!u.reason.empty() && u.state == DebugUi::kStopped) out += " (" + u.reason + ")";
     if (!u.error.empty()) out += " error: " + u.error;
     if (u.threads.size() > 1) {
@@ -2048,7 +2216,7 @@ std::string App::debug_breaks_dump() {
 bool App::debug_pick(const std::string& section, u32 n, const std::string& name) {
     DebugUi& u = *debugui_;
     const DebugUi::Act act = section == "threads" ? DebugUi::kThread : section == "stack" ? DebugUi::kFrame : section == "watch" ? DebugUi::kWatch
-                             : section == "add"   ? DebugUi::kWatchAdd : section == "breaks" ? DebugUi::kBreak : section == "vars" ? DebugUi::kVar : DebugUi::kNone;
+                             : section == "add"   ? DebugUi::kWatchAdd : section == "breaks" ? DebugUi::kBreak : section == "vars" ? DebugUi::kVar : section == "sessions" ? DebugUi::kSession : DebugUi::kNone;
     u32 seen = 0;
     for (u32 i = 0; i < u.rows.size(); ++i)
         if (act != DebugUi::kNone && u.rows[i].act == act && (name.empty() ? ++seen == std::max(1u, n) : u.rows[i].text.starts_with(name + " "))) {

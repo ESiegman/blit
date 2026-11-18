@@ -580,6 +580,9 @@ private:
     // find_set_items() brings the rows for it.
     void find_live_items(const std::string& prompt, std::function<void(const std::string&)> typed, std::function<void(int)> chose);
     void find_set_items(std::vector<std::string> items);
+    void find_on_tab(std::function<void(const std::string&)> fn);
+    void find_set_typed(const std::string& typed);
+    std::string find_typed() const;
     // Search everywhere (kFindAll): files, the project's symbols, commands
     // and settings, each kind under its heading; rows made again when the
     // server's symbols come.
@@ -953,6 +956,11 @@ private:
     void debug_memory_ask(i64 line, i32 byte);
     void debug_memory_write();
     void debug_end();
+    void debug_park();
+    void debug_switch(size_t i);
+    void debug_each_other(const std::function<void()>& fn);
+    void debug_start_another();
+    void debug_sync_session(bool* stopped);
     void debug_command(const std::string& what);
     void debug_frame(u32 i, bool show);
     void debug_stack();
@@ -960,7 +968,8 @@ private:
     void debug_watch_eval();
     void debug_expand(u32 i);
     void debug_sync();
-    void debug_evaluate();
+    void debug_evaluate(const std::string& start = {});
+    void debug_complete(const std::string& typed);
     void debug_panel_draw(struct TextBox& box, bool focused);
     void debug_do(u32 i);
     void debug_panel_click(int row, int col, const SDL_MouseButtonEvent& b);
