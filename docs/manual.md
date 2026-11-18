@@ -1807,7 +1807,7 @@ its arguments and working directory.
 | Breakpoint on this line, or not | F9 |
 | A breakpoint's condition, hit count and log message | Shift+F9 |
 | Run to the cursor | Ctrl+F10 |
-| Evaluate an expression where it stopped | Cmd+Shift+Y |
+| Evaluate an expression where it stopped (Tab completes what is typed) | Cmd+Shift+Y |
 | The Debug tab | Cmd+Shift+D |
 | In the Debug tab, on a variable: set its value / watch its writes / its memory | F2 / W / M |
 
@@ -1871,6 +1871,24 @@ program printed.
   the values of the variables it names (those of the frame shown; not in a
   comment or a string, not a member's), quietly. `debug.inline_values =
   false` leaves them out.
+- **Several sessions at once.** "Start another debugging session" (or
+  attaching to a process, or opening a core file, while a session is
+  under way) keeps the session under way aside and starts another. The
+  Debug tab lists them under *Sessions*: Enter shows one as it was left,
+  Delete stops one. The breakpoints are every session's; one that stops
+  while another is shown comes to the front, and one that ends gives its
+  place to another. Each has its own threads, stack, variables, output,
+  writes watched and breakpoints at instructions.
+- **Completing what is evaluated.** Tab in the Evaluate box completes
+  what is typed as the debugger would: one answer goes in, several that
+  share more than is typed that much, else a list of them to choose from.
+  (lldb-dap completes; gdb does not.)
+- **The standard library's containers** read as they should: a vector's
+  or a map's size, its elements under it, a string as text (lldb's
+  formatters for libc++ and libstdc++, gdb's printers as the system
+  installs them). With lldb, a value whose type has no summary of its own
+  gets one made from its members (a map's entries read `{first:"a",
+  second:1}`); with gdb, a map's entries read `["a"] = 1`.
 - **Breakpoints move with their lines** as the file is edited, as marks
   do: a line put above one takes it down, lines taken away above it take it
   up, and one whose own line is taken away stays where that line was. A
@@ -1881,7 +1899,12 @@ program printed.
 The debugger is the one the machine has: Xcode's `lldb-dap` on a Mac
 (full Xcode), gdb 14 or later (which speaks the Debug Adapter Protocol
 itself) or `lldb-dap` on Linux, and debugpy for a `.py` program (`pip
-install debugpy`). A program on another machine (`ssh://host/...`) is
+install debugpy`). A program with HIP's code for the GPU in it is
+debugged with ROCm's `rocgdb`, where there is one (on the PATH or in
+`/opt/rocm/bin`): a breakpoint in a kernel stops a GPU wave there, with the
+kernel's frame and variables, and the GPU's waves are among the threads,
+named by their work-group and number ("GPU wave (0,0,0)/0"), after the
+program's own. A program on another machine (`ssh://host/...`) is
 debugged there, with that machine's debugger, its source opened from
 there; F5 waits for nothing there: the Debug tab says *Starting on host…*,
 and F5 again (or Shift+F5) calls it off. Stopping never waits for the

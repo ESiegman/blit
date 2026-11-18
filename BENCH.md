@@ -2896,6 +2896,33 @@ Esc) and on a program run through the sampler (what it allocated, what
 it still held); fuzz_buffer.cpp checks of the timeline (times, narrowed,
 kept and read back) and of the sampler's file read.
 
+### Round 60: debugging, further
+
+The standard library's containers readably (lldb-dap's summaries for
+types with none of their own; gdb's map entries put together as
+[key] = value); several sessions at once (each session's state swapped
+into the Debug tab's place to be shown or to hear from its debugger, the
+breakpoints every session's) and Tab completing what is evaluated (DAP's
+completions); HIP on the GPU with ROCm's rocgdb, the GPU's waves named
+among the threads.
+
+None of it is on a frame's path: the debugger's answers are heard when
+it says something, the other sessions' each in turn. Turn about, five
+rounds, 2560x1600, against the build before the chunk (45021c7):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 15,865 / 53.08 µs / 2.00 µs | 16,037 / 53.04 µs / 2.00 µs |
+| Typing, everything on: the same | 16,641 / 48.04 µs / 3.79 µs | 16,769 / 47.92 µs / 3.83 µs |
+| Scrolling code-100m.txt, plain: the same | 17,618 / 49.67 µs / 0.67 µs | 17,417 / 49.50 µs / 0.67 µs |
+
+No change. Tests: debug.sh's containers (lldb's summaries, or gdb's
+[key] = value), two sessions at once (each stopped, one run on, the
+other chosen as left, one stopped and the other in its place), Tab in
+the Evaluate box (lldb completes; gdb evaluates what is typed), and a
+HIP kernel stopped under rocgdb where ROCm and an AMD GPU are (run on
+the Arch box: a GPU wave at the kernel's line).
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
