@@ -250,6 +250,9 @@ struct App::Find {
     // (find_preview_item): the row last tried, and what Esc puts back.
     std::function<void(int)> moved;
     std::function<void()> cancelled;
+    // A list that is a tree (find_on_side): Right and Left on a row, with
+    // nothing typed, open it a level or close it. True: it was.
+    std::function<bool(int, bool)> on_side;
     int moved_at = -1;
     u64 into_pane = 0;  // Go to file for a split just made (find_for_split): what is chosen opens there
     // The command search (kFindCommand): each command's keys and what is
@@ -802,6 +805,7 @@ void App::find_open(int mode, const std::string& typed) {
     f.typed_changed = nullptr;
     f.on_tab = nullptr;
     f.moved = nullptr;
+    f.on_side = nullptr;
     if (auto back = std::exchange(f.cancelled, nullptr)) back();  // (what a list tried out is put back)
     if (mode != kFindNames && mode != kFindText) f.into_pane = 0;  // (Tab between those two keeps it)
     if (find_open_ && f.mode == kFindAsk && mode != kFindAsk) {  // (ssh's question waits, and comes back when this box shuts)
@@ -1090,6 +1094,26 @@ void App::find_set_items(std::vector<std::string> items) {
     find_query();  // (the rows that have what is typed, the best first)
 }
 
+// A list that is a tree: Right and Left on its rows (find_set_rows gives it
+// the rows it has then).
+void App::find_on_side(std::function<bool(int, bool)> fn) {
+    if (find_open_) find_->on_side = std::move(fn);
+}
+
+// A list of blit's own given other rows while it is open, the choice on
+// the row at `at` (with nothing typed, the rows are in their order).
+void App::find_set_rows(std::vector<std::string> items, size_t at) {
+    Find& f = *find_;
+    if (!find_open_ || f.mode != kFindPick) return;
+    f.items = std::move(items);
+    find_query();
+    for (size_t i = 0; i < f.entries.size(); ++i)
+        if (f.entries[i].index == at) f.sel = static_cast<u32>(i);
+    f.moved_at = static_cast<int>(at);
+    f.touch();
+    dirty_ = true;
+}
+
 // The same, with each row tried out as the choice comes to it, from the
 // one at `at` (which is in effect already).
 void App::find_preview_item(const std::string& prompt, std::vector<std::string> items, size_t at, std::function<void(int)> moved,
@@ -1172,6 +1196,7 @@ void App::find_close(bool chosen) {
     f.typed_changed = nullptr;
     f.on_tab = nullptr;
     f.moved = nullptr;
+    f.on_side = nullptr;
     f.into_pane = 0;
     if (auto back = std::exchange(f.cancelled, nullptr); back && !chosen) back();  // (Esc: what was tried out is put back)
     remote_asks();  // (a question ssh asked while this box was open)
@@ -1787,6 +1812,9 @@ bool App::find_key(const SDL_KeyboardEvent& k) {
         case SDLK_PAGEDOWN: find_move(page); break;
         case SDLK_LEFT:
         case SDLK_RIGHT:
+            if (f.on_side && f.mode == kFindPick && f.typed.empty() && f.sel < f.entries.size() && f.on_side(static_cast<int>(f.entries[f.sel].index), k.key == SDLK_RIGHT))
+                break;
+            [[fallthrough]];
         case SDLK_HOME:
         case SDLK_END:
             if (lit) {  // what is typed stays, no longer selected, to be typed onto

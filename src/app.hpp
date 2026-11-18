@@ -577,6 +577,16 @@ private:
     // A list of blit's own whose rows are tried out as the choice moves
     // (`moved` hears each, from 0), starting on `at`: Enter is `chose`, Esc
     // `cancelled` (appfind.cpp; the theme picker's).
+    void find_on_side(std::function<bool(int, bool)> fn);
+    // Call and type hierarchies (applsp.cpp).
+    void hier_show(u8 kind);
+    void hier_take();
+    void hier_open(size_t i);
+    bool hier_side(int index, bool right);
+    void hier_go(int index);
+    std::vector<std::string> hier_texts();
+    std::string hier_dump();
+    void find_set_rows(std::vector<std::string> items, size_t at);
     void find_preview_item(const std::string& prompt, std::vector<std::string> items, size_t at, std::function<void(int)> moved,
                            std::function<void(int)> chose, std::function<void()> cancelled);
     // A list of blit's own whose items come from elsewhere as what is typed

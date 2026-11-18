@@ -1124,6 +1124,12 @@ void App::run_script(const char* script) {
         } else if (verb == "nbdump") {  // the notebook in front's saved outputs on show, as "line: output"
             frame();
             std::fprintf(stderr, "%s\n", nb_dump().c_str());
+        } else if (verb == "hierdump") {  // the call or type hierarchy on show: its rows (once the server has answered)
+            for (const u64 until = now_ns() + 10'000'000'000ull; hier_dump() == "waiting" && now_ns() < until;) {
+                sync_lsp();
+                SDL_Delay(2);
+            }
+            std::fprintf(stderr, "%s\n", hier_dump().c_str());
         } else if (verb == "caretdump") {  // every caret of the file in front: line:column (from 1), a selection's other end after a dash, the primary starred
             std::fprintf(stderr, "%s\n", caret_dump().c_str());
         } else if (verb == "docdump") {  // docdump:N, the tab in front's title, then its lines from N before the cursor's to N after (the cursor's marked >, and in it the cursor |)

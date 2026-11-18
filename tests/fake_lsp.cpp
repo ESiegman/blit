@@ -58,6 +58,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <tuple>
 #include <map>
 #include <string>
 #include <vector>
@@ -878,6 +879,169 @@ void pull_workspace(Value id) {
 
 }  // namespace
 
+// Call and type hierarchies, in the document: a function's calls are the
+// names of functions followed by "(" in its lines (up to the next one); a
+// type's supertype is what follows ":" in "struct B : A {". Each item
+// says its name again in "data", read back from what blit sends (which
+// is the item as it was given).
+struct FakeFn {
+    std::string name;
+    size_t at = 0, end = 0;  // its name, and where its lines end
+};
+std::vector<FakeFn> functions_of(const std::string& t) {
+    std::vector<FakeFn> out;
+    auto add = [&](const FakeSymbol& f) { out.push_back({f.name, f.at, t.size()}); };
+    for (const FakeSymbol& s : symbols_of(t)) {
+        if (s.kind == 12) add(s);
+        for (const FakeSymbol& k : s.kids) add(k);
+    }
+    std::sort(out.begin(), out.end(), [](const FakeFn& a, const FakeFn& b) { return a.at < b.at; });
+    for (size_t i = 0; i + 1 < out.size(); ++i) out[i].end = out[i + 1].at;
+    return out;
+}
+
+void hier_item(std::string& r, const std::string& name, int kind, size_t at, const char* key) {
+    r += "{\"name\":";
+    json::quote(r, name);
+    r += ",\"kind\":" + std::to_string(kind) + ",\"detail\":\"" + (kind == 12 ? "()" : "") + "\",\"uri\":";
+    json::quote(r, uri);
+    r += ",\"range\":";
+    range_json(r, at, at + name.size());
+    r += ",\"selectionRange\":";
+    range_json(r, at, at + name.size());
+    r += ",\"data\":{\"" + std::string(key) + "\":";
+    json::quote(r, name);
+    r += "}}";
+}
+
+// The calls in a function's lines (after its name): each callee and where.
+std::vector<std::pair<std::string, size_t>> calls_in(const FakeFn& f, const std::vector<FakeFn>& all) {
+    std::vector<std::pair<std::string, size_t>> out;
+    const size_t from = text.find('\n', f.at);
+    for (size_t i = from == std::string::npos ? f.end : from; i < f.end && i < text.size(); ++i) {
+        if (!word_char(text[i]) || (i > 0 && word_char(text[i - 1]))) continue;
+        size_t e = i;
+        while (e < text.size() && word_char(text[e])) ++e;
+        if (e < text.size() && text[e] == '(') {
+            const std::string w = text.substr(i, e - i);
+            for (const FakeFn& g : all)
+                if (g.name == w) out.emplace_back(w, i);
+        }
+        i = e;
+    }
+    return out;
+}
+
+void prepare_calls(Value id, Value params) {
+    const std::string w = word_at(offset_of(params["position"]));
+    for (const FakeFn& f : functions_of(text))
+        if (f.name == w) {
+            std::string r = "[";
+            hier_item(r, f.name, 12, f.at, "fn");
+            return reply(id, r + "]");
+        }
+    reply(id, "null");
+}
+
+void calls(Value id, Value params, bool incoming) {
+    const std::string name(params["item"]["data"]["fn"].str());
+    const std::vector<FakeFn> all = functions_of(text);
+    std::string r = "[";
+    bool first = true;
+    auto item_of = [&](const std::string& n) {
+        for (const FakeFn& g : all)
+            if (g.name == n) return g;
+        return FakeFn{};
+    };
+    for (const FakeFn& f : all) {
+        if (incoming ? false : f.name != name) continue;
+        // Coming in: each function that calls it, with where; going out: each it calls.
+        std::vector<std::pair<std::string, size_t>> found = calls_in(f, all);
+        if (!incoming) {
+            for (const auto& [callee, at] : found) {
+                r += first ? "{\"to\":" : ",{\"to\":";
+                first = false;
+                hier_item(r, callee, 12, item_of(callee).at, "fn");
+                r += ",\"fromRanges\":[";
+                range_json(r, at, at + callee.size());
+                r += "]}";
+            }
+        }
+    }
+    if (incoming)
+        for (const FakeFn& f : all) {
+            std::string ranges;
+            for (const auto& [callee, at] : calls_in(f, all))
+                if (callee == name) {
+                    if (!ranges.empty()) ranges += ',';
+                    range_json(ranges, at, at + callee.size());
+                }
+            if (ranges.empty()) continue;
+            r += first ? "{\"from\":" : ",{\"from\":";
+            first = false;
+            hier_item(r, f.name, 12, f.at, "fn");
+            r += ",\"fromRanges\":[" + ranges + "]}";
+        }
+    reply(id, r + "]");
+}
+
+// Each struct or class, where its name is, and its supertype ("" none).
+std::vector<std::tuple<std::string, size_t, std::string>> types_of(const std::string& t) {
+    std::vector<std::tuple<std::string, size_t, std::string>> out;
+    for (size_t ls = 0; ls < t.size();) {
+        size_t le = t.find('\n', ls);
+        if (le == std::string::npos) le = t.size();
+        const std::string line = t.substr(ls, le - ls);
+        for (const char* kw : {"struct ", "class "})
+            if (line.rfind(kw, 0) == 0) {
+                const size_t p = std::strlen(kw);
+                size_t e = p;
+                while (e < line.size() && word_char(line[e])) ++e;
+                std::string base;
+                if (const size_t colon = line.find(':', e); colon != std::string::npos) {
+                    size_t b = colon + 1;
+                    while (b < line.size() && line[b] == ' ') ++b;
+                    if (line.compare(b, 7, "public ") == 0) b += 7;
+                    size_t be = b;
+                    while (be < line.size() && word_char(line[be])) ++be;
+                    base = line.substr(b, be - b);
+                }
+                out.emplace_back(line.substr(p, e - p), ls + p, base);
+            }
+        ls = le + 1;
+    }
+    return out;
+}
+
+void prepare_types(Value id, Value params) {
+    const std::string w = word_at(offset_of(params["position"]));
+    for (const auto& [name, at, base] : types_of(text))
+        if (name == w) {
+            std::string r = "[";
+            hier_item(r, name, 23, at, "type");
+            return reply(id, r + "]");
+        }
+    reply(id, "null");
+}
+
+void types(Value id, Value params, bool super) {
+    const std::string name(params["item"]["data"]["type"].str());
+    const auto all = types_of(text);
+    std::string r = "[";
+    bool first = true;
+    for (const auto& [n, at, base] : all) {
+        const bool wanted = super ? false : base == name;
+        bool is_base = false;
+        if (super)
+            for (const auto& [m, mat, mbase] : all) is_base = is_base || (m == name && mbase == n);
+        if (!wanted && !is_base) continue;
+        if (!first) r += ',';
+        first = false;
+        hier_item(r, n, 23, at, "type");
+    }
+    reply(id, r + "]");
+}
+
 int main(int argc, char** argv) {
     for (int i = 1; i < argc; ++i) {
         const std::string a = argv[i];
@@ -918,7 +1082,7 @@ int main(int argc, char** argv) {
                                R"("codeActionProvider":{"resolveProvider":true},"executeCommandProvider":{"commands":["fake.comment"]},)"
                                R"("inlayHintProvider":true,"implementationProvider":true,"typeDefinitionProvider":true,)"
                                R"("declarationProvider":true,"documentHighlightProvider":true,"documentSymbolProvider":true,)"
-                               R"("workspaceSymbolProvider":true,)"
+                               R"("workspaceSymbolProvider":true,"callHierarchyProvider":true,"typeHierarchyProvider":true,)"
                                R"("semanticTokensProvider":{"legend":{"tokenTypes":["type","parameter","function","macro"],)"
                                R"("tokenModifiers":["readonly"]},"full":{"delta":true}})";
             if (pull) caps += std::string(R"(,"diagnosticProvider":{"interFileDependencies":false,"workspaceDiagnostics":)") + (workspace ? "true" : "false") + "}";
@@ -979,6 +1143,14 @@ int main(int argc, char** argv) {
             outline(id);
         } else if (method == "workspace/symbol") {
             workspace_symbols(id, params);
+        } else if (method == "textDocument/prepareCallHierarchy") {
+            prepare_calls(id, params);
+        } else if (method == "callHierarchy/incomingCalls" || method == "callHierarchy/outgoingCalls") {
+            calls(id, params, method == "callHierarchy/incomingCalls");
+        } else if (method == "textDocument/prepareTypeHierarchy") {
+            prepare_types(id, params);
+        } else if (method == "typeHierarchy/supertypes" || method == "typeHierarchy/subtypes") {
+            types(id, params, method == "typeHierarchy/supertypes");
         } else if (method == "textDocument/switchSourceHeader") {
             switch_header(id, params);
         } else if (method == "textDocument/prepareRename") {

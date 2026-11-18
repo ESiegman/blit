@@ -212,6 +212,16 @@ void sort_changes(std::vector<Change>& c) {
 
 }  // namespace
 
+// A call or type hierarchy being looked through (the find box's list, a
+// tree): its rows in the order shown, each with its depth and whether its
+// level is open; the row whose level is being asked for (-1: the first
+// items, from the cursor's place).
+struct HierRow {
+    LspHierItem item;
+    u32 depth = 0;
+    bool open = false;
+};
+
 struct App::Assist {
     // The completion list.
     bool comp_open = false, comp_pending = false;
@@ -278,6 +288,11 @@ struct App::Assist {
     bool places_pending = false, switch_pending = false, outline_pending = false, symbols_live = false;
     std::vector<LspSymbol> symbol_rows;
     std::vector<LspSymbol> outline_rows;  // (the outline on show: the server's, or the tree's)
+    std::vector<HierRow> hier_rows;  // a hierarchy on show (hier_show)
+    std::string hier_title;
+    u8 hier_kind = 0;
+    int hier_asking = -1;
+    bool hier_waiting = false;
     // The uses of the symbol at the cursor: asked once the cursor has rested,
     // drawn while it stays on one of them and the text is as it was.
     u64 uses_due_ns = 0;
@@ -538,6 +553,7 @@ void App::sync_lsp() {
         if (other.empty()) notify("No header or source found for " + std::string(base_name(pane_->doc->ed.path)));
         else if (remember_place(), !open_path(other.c_str())) notify("Cannot open " + other);
     }
+    if ((news & Lsp::kHierarchy) && a.hier_waiting) hier_take();
     if ((news & Lsp::kOutline) && a.outline_pending) {
         a.outline_pending = false;
         outline_show(lsp_.outline_list(), ~0ull);
@@ -2214,5 +2230,146 @@ void App::lsp_extras(FrameDesc& fd) {
     }
 }
 
+
+// ---------------------------------------------------------------- call and type hierarchies
+
+// The calls to the function at the cursor (or from it), or the type's
+// supertypes (or subtypes): in the find box, a level at a time.
+void App::hier_show(u8 kind) {
+    Assist& a = *assist_;
+    const bool types = kind >= Lsp::kSupertypes;
+    if (!lsp_.ready() || !lsp_.can_hierarchy(types)) {
+        if (server_text(*pane_->doc))
+            notify(lsp_.ready() ? lsp_.server_name() + (types ? " has no type hierarchy" : " has no call hierarchy")
+                                : why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
+        return;
+    }
+    lsp_close(kPopAll);
+    a.hier_rows.clear();
+    a.hier_kind = kind;
+    a.hier_asking = -1;
+    a.hier_waiting = true;
+    lsp_.hierarchy_prepare(pane_->doc->ed.cursor(), types);
+}
+
+namespace {
+
+std::string hier_row_text(const HierRow& r, bool leaf_known, const std::string* root) {
+    std::string row(2 * std::min<u32>(r.depth, 12), ' ');
+    row += r.open ? "\xE2\x96\xBE " : leaf_known ? "  " : "\xE2\x96\xB8 ";  // ▾ open, ▸ not yet
+    // (clangd's detail is the name with its scope: that, in the name's place.)
+    const std::string& d = r.item.detail;
+    const bool scoped = d.size() > r.item.name.size() + 2 && d.ends_with("::" + r.item.name);
+    row += scoped ? d : r.item.name;
+    if (!scoped && !d.empty() && d != r.item.name && d.size() < 60) row += (d.front() == '(' ? "" : " ") + d;
+    if (const char* k = symbol_kind_name(static_cast<u8>(r.item.kind)); *k) row += std::string("  \xC2\xB7 ") + k;
+    row += "  \xC2\xB7 " + shown_name(r.item.at.path, root) + ":" + std::to_string(r.item.at.line + 1);
+    return row;
+}
+
+}  // namespace
+
+std::vector<std::string> App::hier_texts() {
+    Assist& a = *assist_;
+    const std::string* root = panel_root();
+    std::vector<std::string> out;
+    for (size_t i = 0; i < a.hier_rows.size(); ++i) {
+        const HierRow& r = a.hier_rows[i];
+        const bool leaf = r.open || (i + 1 < a.hier_rows.size() && a.hier_rows[i + 1].depth > r.depth);
+        out.push_back(hier_row_text(r, leaf && !r.open, root));
+    }
+    return out;
+}
+
+// The server's answer: the first items (shown, and the first opened a
+// level), or the level under the row asked about.
+void App::hier_take() {
+    Assist& a = *assist_;
+    a.hier_waiting = false;
+    std::vector<LspHierItem> items = lsp_.hierarchy_list();
+    static const char* const kTitles[] = {"Calls to ", "Calls from ", "Supertypes of ", "Subtypes of "};
+    if (a.hier_asking < 0) {
+        if (items.empty()) {
+            notify(a.hier_kind >= Lsp::kSupertypes ? "No type here" : "No function here");
+            return;
+        }
+        for (LspHierItem& it : items) a.hier_rows.push_back({std::move(it), 0, false});
+        a.hier_title = kTitles[a.hier_kind] + a.hier_rows[0].item.name;
+        find_choose_item(a.hier_title, hier_texts(), [this](int i) { hier_go(i); });
+        find_on_side([this](int i, bool right) { return hier_side(i, right); });
+        hier_open(0);
+        return;
+    }
+    const size_t at = static_cast<size_t>(a.hier_asking);
+    if (at >= a.hier_rows.size() || !find_open_) return;  // (the box has gone since)
+    const u32 depth = a.hier_rows[at].depth + 1;
+    a.hier_rows[at].open = true;
+    std::vector<HierRow> under;
+    for (LspHierItem& it : items) under.push_back({std::move(it), depth, false});
+    a.hier_rows.insert(a.hier_rows.begin() + static_cast<std::ptrdiff_t>(at + 1), under.begin(), under.end());
+    find_set_rows(hier_texts(), at);
+}
+
+// A row's level asked for.
+void App::hier_open(size_t i) {
+    Assist& a = *assist_;
+    if (i >= a.hier_rows.size() || a.hier_waiting) return;
+    static const Lsp::HierKind kKinds[] = {Lsp::kCallsIn, Lsp::kCallsOut, Lsp::kSupertypes, Lsp::kSubtypes};
+    a.hier_asking = static_cast<int>(i);
+    a.hier_waiting = true;
+    lsp_.hierarchy_expand(a.hier_rows[i].item.raw, kKinds[a.hier_kind]);
+}
+
+// Right on a row: its level, asked for; Left: an open one closed, else
+// the choice to the row it is under.
+bool App::hier_side(int index, bool right) {
+    Assist& a = *assist_;
+    if (index < 0 || static_cast<size_t>(index) >= a.hier_rows.size()) return false;
+    const size_t i = static_cast<size_t>(index);
+    HierRow& r = a.hier_rows[i];
+    if (right) {
+        if (!r.open) hier_open(i);
+        return true;
+    }
+    if (r.open) {
+        size_t end = i + 1;
+        while (end < a.hier_rows.size() && a.hier_rows[end].depth > r.depth) ++end;
+        a.hier_rows.erase(a.hier_rows.begin() + static_cast<std::ptrdiff_t>(i + 1), a.hier_rows.begin() + static_cast<std::ptrdiff_t>(end));
+        r.open = false;
+        find_set_rows(hier_texts(), i);
+        return true;
+    }
+    for (size_t k = i; k-- > 0;)
+        if (a.hier_rows[k].depth < r.depth) {
+            find_set_rows(hier_texts(), k);
+            break;
+        }
+    return true;
+}
+
+// Enter: to the row's place (a call coming in: where it calls).
+void App::hier_go(int index) {
+    Assist& a = *assist_;
+    if (index < 0 || static_cast<size_t>(index) >= a.hier_rows.size()) return;
+    const LspLocation at = a.hier_rows[static_cast<size_t>(index)].item.at;
+    remember_place();
+    if (at.path != pane_->doc->ed.path && full_path(pane_->doc->ed.path) != at.path && !open_path(at.path.c_str())) return;
+    if (pane_->doc->loading) {
+        pane_->doc->goto_line = at.line;
+        pane_->doc->goto_col = at.character;
+        return;
+    }
+    pane_->doc->ed.move_to(Lsp::offset_at(pane_->doc->ed.buf, at.line, at.character, lsp_.counts_utf16()), false);
+    scroll_to_cursor();
+}
+
+// For the tests: the hierarchy's rows as shown, or none.
+std::string App::hier_dump() {
+    Assist& a = *assist_;
+    if (a.hier_waiting) return "waiting";
+    std::string out;
+    for (const std::string& t : hier_texts()) out += (out.empty() ? "" : " | ") + t;
+    return out.empty() ? "no hierarchy" : out;
+}
 
 }  // namespace blit

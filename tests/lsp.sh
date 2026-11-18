@@ -49,6 +49,7 @@ fresh() {
     printf 'int util() {\n    return 1;\n}\n' >"$P/src/util.cpp"
     printf '// beside\n' >"$P/src/util.hpp"
     printf '// included\n' >"$P/include/util.hpp"
+    printf 'struct Shape {\n};\nstruct Circle : public Shape {\n};\nstruct Square : Shape {\n};\nint leaf(int n) {\n    return n;\n}\nint middle(int n) {\n    return leaf(n) + leaf(1);\n}\nint top() {\n    return middle(2);\n}\n' >"$P/calls.cpp"
 }
 
 failed=0
@@ -174,6 +175,24 @@ run "key:cmd+K;frame;text:draw;frame;wait:200;frame;finddump" "$P/src/app.cpp"
 check "Search everywhere has them too" 'everywhere [draw] 1 : Symbols: >draw (method in Widget  · src/app.cpp:3)'
 run "key:cmd+K;frame;text:draw;frame;wait:200;frame;key:Return;vimdump" "$P/src/app.cpp"
 check "and goes to one" 'NORMAL |  | 3:10 |     void draw() {'
+
+# Call and type hierarchies, a level at a time: the first level opened,
+# Right opens a row's, Left closes it (or goes up), Enter goes there.
+on_middle="key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Right;key:Right;key:Right;key:Right;key:Right"
+run "$on_middle;command:Show the calls to this function;hierdump" "$P/calls.cpp"
+check "the calls to a function" '▾ middle()  · function  · calls.cpp:10 |   ▸ top()  · function  · calls.cpp:14'
+run "$on_middle;command:Show the calls to this function;hierdump;key:Down;key:Right;hierdump" "$P/calls.cpp"
+check "Right: the calls to a caller (none)" '▾ middle()  · function  · calls.cpp:10 |   ▾ top()  · function  · calls.cpp:14'
+run "$on_middle;command:Show the calls from this function;hierdump" "$P/calls.cpp"
+check "the calls from it, each where it is" '▾ middle()  · function  · calls.cpp:10 |   ▸ leaf()  · function  · calls.cpp:7 |   ▸ leaf()  · function  · calls.cpp:7'
+run "$on_middle;command:Show the calls from this function;hierdump;key:Left;frame;hierdump" "$P/calls.cpp"
+check "Left: a level closed" '▸ middle()  · function  · calls.cpp:10'
+run "$on_middle;command:Show the calls to this function;hierdump;key:Down;key:Return;vimdump" "$P/calls.cpp"
+check "Enter: to where it calls" 'NORMAL |  | 14:12 |     return middle(2);'
+run "key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;command:Show the subtypes of this type;hierdump" "$P/calls.cpp"
+check "a type's subtypes" '▾ Shape  · struct  · calls.cpp:1 |   ▸ Circle  · struct  · calls.cpp:3 |   ▸ Square  · struct  · calls.cpp:5'
+run "key:Down;key:Down;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;command:Show the supertypes of this type;hierdump" "$P/calls.cpp"
+check "and supertypes" '▾ Circle  · struct  · calls.cpp:3 |   ▸ Shape  · struct  · calls.cpp:1'
 
 # The other uses of the name under the cursor, a moment after it stops.
 uses="key:Right;key:Right;key:Right;key:Right;key:Right;frame;wait:250;frame;wait:100;frame"

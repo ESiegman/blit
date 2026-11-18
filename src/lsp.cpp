@@ -398,6 +398,7 @@ enum : u8 {
     kInReady = 1, kInFailed, kInStopped, kInDiagnostics, kInCompletion, kInHover, kInSignature, kInDefinition,
     kInReferences, kInPrepareRename, kInRename, kInFormat, kInActions, kInResolve, kInHints, kInTokens,
     kInPull, kInWorkspacePull, kInApplyEdit, kInRefresh, kInIgnore, kInPlaces, kInHighlight, kInOutline, kInSymbols, kInSwitch,
+    kInHierarchy,
 };
 // What a server asks to have asked again (kInRefresh).
 enum : u8 { kRefreshTokens = 1, kRefreshHints = 2, kRefreshDiagnostics = 4 };
@@ -444,6 +445,7 @@ struct Caps {
     bool actions = false, resolve = false, hints = false, tokens = false, tokens_delta = false, pull = false, workspace_pull = false;
     bool execute = false;
     bool implementation = false, type_definition = false, declaration = false, highlight = false, outline = false, symbols = false;
+    bool calls = false, types = false;  // call and type hierarchies
     std::string completion_triggers, signature_triggers;
     std::vector<std::string> token_types, token_mods;
 };
@@ -473,6 +475,7 @@ struct In {
     std::vector<u32> tokens;
     std::string result_id;
     std::vector<LspSymbol> symbols;
+    std::vector<LspHierItem> hier;
 };
 
 }  // namespace
@@ -818,7 +821,7 @@ struct Lsp::Conn::Worker {
                  R"("signatureHelp":{"signatureInformation":{"documentationFormat":["plaintext","markdown"],)"
                  R"("parameterInformation":{"labelOffsetSupport":true},"activeParameterSupport":true}},)"
                  R"("definition":{"linkSupport":true},)"
-                 R"("references":{},)"
+                 R"("references":{},"callHierarchy":{},"typeHierarchy":{},)"
                  R"("rename":{"prepareSupport":true},)"
                  R"("formatting":{},"rangeFormatting":{},)"
                  R"("codeAction":{"codeActionLiteralSupport":{"codeActionKind":{"valueSet":["","quickfix","refactor","refactor.extract",)"
@@ -880,6 +883,8 @@ struct Lsp::Conn::Worker {
         caps.highlight = truthy(sc["documentHighlightProvider"]);
         caps.outline = truthy(sc["documentSymbolProvider"]);
         caps.symbols = truthy(sc["workspaceSymbolProvider"]);
+        caps.calls = truthy(sc["callHierarchyProvider"]);
+        caps.types = truthy(sc["typeHierarchyProvider"]);
         const Value rp = sc["renameProvider"];
         caps.rename = truthy(rp);
         caps.prepare_rename = rp["prepareProvider"].boolean(false);
@@ -1158,6 +1163,31 @@ struct Lsp::Conn::Worker {
                                              : first["range"]);
             m.loc.line = r.l0;
             m.loc.character = r.c0;
+        }
+        c.push(std::move(m));
+    }
+
+    // A hierarchy's items: an item's own (where its name is), or a call's
+    // (coming in: the caller, gone to where it calls; going out: the one
+    // called, gone to where it is), each with its JSON to send back.
+    void on_hierarchy(u32 id, Value result) {
+        In m;
+        m.kind = kInHierarchy;
+        m.id = id;
+        for (const Value e : result) {
+            const bool in = e["from"].exists(), out = e["to"].exists();
+            const Value item = in ? e["from"] : out ? e["to"] : e;
+            LspHierItem h;
+            h.name = std::string(item["name"].str());
+            h.detail = std::string(item["detail"].str());
+            h.kind = static_cast<int>(item["kind"].integer());
+            h.at.path = from_uri(item["uri"].str());
+            const Value ranges = e["fromRanges"];
+            const RawRange r = range_of(in && ranges.size() ? ranges.at(0) : item["selectionRange"].exists() ? item["selectionRange"] : item["range"]);
+            h.at.line = r.l0;
+            h.at.character = r.c0;
+            json::dump(h.raw, item);
+            if (!h.name.empty() && !h.at.path.empty()) m.hier.push_back(std::move(h));
         }
         c.push(std::move(m));
     }
@@ -1475,6 +1505,7 @@ struct Lsp::Conn::Worker {
             case kInHighlight: on_highlight(n, result); break;
             case kInOutline: on_outline(n, result); break;
             case kInSymbols: on_symbols(n, result); break;
+            case kInHierarchy: on_hierarchy(n, result); break;
             case kInSwitch: {  // (clangd's: the other file's URI, or null)
                 In m;
                 m.kind = kInSwitch;
@@ -2447,6 +2478,7 @@ bool Lsp::can_place(PlaceKind kind) const {
     return kind == kImplementation ? c.implementation : kind == kTypeDefinition ? c.type_definition : c.declaration;
 }
 bool Lsp::can_highlight() const { return front_ready() && front_->server->caps.highlight; }
+bool Lsp::can_hierarchy(bool types) const { return front_ready() && (types ? front_->server->caps.types : front_->server->caps.calls); }
 bool Lsp::can_outline() const { return front_ready() && front_->server->caps.outline; }
 bool Lsp::can_find_symbols() const { return front_ready() && front_->server->caps.symbols; }
 bool Lsp::can_switch() const { return front_ready() && front_->server->shown.find("clangd") != std::string::npos; }
@@ -2542,6 +2574,19 @@ void Lsp::highlight(u64 offset) {
     highlight_at_ = offset;
     highlight_doc_ = front_;
     ask(front_, "textDocument/documentHighlight", offset, kInHighlight, {}, &highlight_id_);
+}
+
+void Lsp::hierarchy_prepare(u64 offset, bool types) {
+    if (!can_hierarchy(types)) return;
+    hier_.clear();
+    ask(front_, types ? "textDocument/prepareTypeHierarchy" : "textDocument/prepareCallHierarchy", offset, kInHierarchy, {}, &hier_id_);
+}
+
+void Lsp::hierarchy_expand(const std::string& raw, HierKind kind) {
+    if (!can_hierarchy(kind >= kSupertypes)) return;
+    static const char* const kMethods[] = {"callHierarchy/incomingCalls", "callHierarchy/outgoingCalls", "typeHierarchy/supertypes", "typeHierarchy/subtypes"};
+    hier_.clear();
+    ask_with(front_->server, kMethods[kind], "{\"item\":" + raw + "}", kInHierarchy, &hier_id_);
 }
 
 // A question whose parameters are not a document and a place.
@@ -3031,6 +3076,12 @@ u32 Lsp::poll() {
                 news |= refs ? kReferences : kPlaces;
                 break;
             }
+            case kInHierarchy:
+                if (m.id != hier_id_) break;
+                hier_id_ = 0;
+                hier_ = std::move(m.hier);
+                news |= kHierarchy;
+                break;
             case kInHighlight: {
                 if (m.id != highlight_id_ || !front_asked || front_ != highlight_doc_) break;
                 highlight_id_ = 0;

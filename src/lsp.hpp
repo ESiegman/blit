@@ -100,6 +100,16 @@ struct LspPlace {
     std::string text;
 };
 
+// An item of a call or type hierarchy: what it is, where to go for it
+// (its name; for a call coming in, where it calls), and the item as the
+// server gave it, to send back for the level under it.
+struct LspHierItem {
+    std::string name, detail;
+    int kind = 0;
+    LspLocation at;
+    std::string raw;
+};
+
 // A symbol of a document (its outline) or of the whole project.
 struct LspSymbol {
     std::string name, detail, container;  // its name, what the server adds (a signature, a type), what it is inside
@@ -193,7 +203,10 @@ public:
         kOutline = 65536,     // the document in front's symbols
         kSymbols = 131072,    // the project's symbols that match what was asked
         kSwitch = 262144,     // the header for a source file, or the source for a header
+        kHierarchy = 524288,  // a call or type hierarchy's items (see hierarchy_list())
     };
+    // The levels of a hierarchy asked for under an item.
+    enum HierKind : u8 { kCallsIn, kCallsOut, kSupertypes, kSubtypes };
     // What places() asks for.
     enum PlaceKind : u8 { kImplementation, kTypeDefinition, kDeclaration };
 
@@ -298,6 +311,12 @@ public:
     void outline();                             // outline_list(), as kOutline
     void find_symbols(const std::string& query);  // found_symbols(), as kSymbols
     void switch_header();                       // switch_target(), as kSwitch
+    // A call (or type) hierarchy: the items at a place, then those under one
+    // of them; hierarchy_list(), as kHierarchy.
+    bool can_hierarchy(bool types) const;
+    void hierarchy_prepare(u64 offset, bool types);
+    void hierarchy_expand(const std::string& raw, HierKind kind);
+    const std::vector<LspHierItem>& hierarchy_list() const { return hier_; }
     // Asks whether the name at offset can be renamed, and which bytes it is.
     // A server that does not say answers at once: renamable, the word there.
     void prepare_rename(u64 offset);
@@ -445,6 +464,8 @@ private:
     SignatureInfo sig_;
     LspLocation def_;
     std::vector<LspPlace> refs_;
+    std::vector<LspHierItem> hier_;
+    u32 hier_id_ = 0;
     std::vector<LspPlace> places_;
     PlaceKind place_kind_ = kImplementation;
     std::vector<std::pair<u64, u64>> highlights_;

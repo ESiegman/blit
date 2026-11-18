@@ -304,6 +304,10 @@ void App::commands_create() {
     sent("Rename the symbol\xE2\x80\xA6", {key(SDLK_F2)});
     sent("Format the file, or the selected lines", {key(SDLK_F, kA | kS)});
     sent("Fixes and refactorings here (code actions)", {key(SDLK_RETURN, kA)});  // (Cmd+. stops the build)
+    own("Show the calls to this function", {}, [this] { hier_show(Lsp::kCallsIn); });
+    own("Show the calls from this function", {}, [this] { hier_show(Lsp::kCallsOut); });
+    own("Show the supertypes of this type", {}, [this] { hier_show(Lsp::kSupertypes); });
+    own("Show the subtypes of this type", {}, [this] { hier_show(Lsp::kSubtypes); });
     sent("Go back", {mac ? key(SDLK_MINUS, kC) : key(SDLK_LEFT, kA)});
     sent("Go forward", {mac ? key(SDLK_MINUS, kC | kS) : key(SDLK_RIGHT, kA)});
     own("Install the grammar for this file's language", {}, [this] { grammar_install(); });
