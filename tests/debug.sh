@@ -110,7 +110,7 @@ check "one changed, one taken away" 'stopped (breakpoint); stack: square@8 main@
 
 # Every thread: the stack of each, chosen from the list in the Debug tab.
 run "debug:program=$dir/here/threads;break:22;key:F5;debugwait:stopped;debugdump;debugpanel;debugpick:threads:2;debugwait:stopped;debugdump" "$dir/here/threads.c"
-got=$(printf '%s' "$got" | sed -e 's/main@22 [^;]*;/main@22;/' -e 's/t=0x[0-9a-f]*/t=0x/' -e 's/t=[1-9][0-9]*/t=0x/')  # (what called main: the system's; where the thread is, in hex or, from gdb, a number)
+got=$(printf '%s' "$got" | sed -e 's/main@22 [^;]*;/main@22;/' -e 's/t=0x[0-9a-f]* {[^}]*}/t=0x/' -e 's/t=0x[0-9a-f]*/t=0x/' -e 's/t=[1-9][0-9]*/t=0x/')  # (what called main: the system's; where the thread is, in hex (lldb: and what it points at summed up) or, from gdb, a number)
 check "the threads, and the second one's stack chosen" \
     'stopped (breakpoint); threads: 2, #1 shown; stack: main@22; vars: t=0x ;; stopped (breakpoint); threads: 2, #2 shown; stack: wait_here@9 worker@13; vars:'
 
@@ -213,6 +213,17 @@ check "a variable's memory, read again at the next stop (and a page back and on,
 # with debug.inline_values off, where it stopped alone.
 run "$P;break:16;key:F5;debugwait:stopped;key:F5;debugwait:stopped;frame;debuginline;lua:blit.opt.debug.inline_values = false;frame;debuginline"
 check "the values in the code" '13: total = 5 | 14: i = 2 | 15: total = 5, i = 2 | 16: ◀ stopped: breakpoint   i = 2, total = 5 ;; 16: ◀ stopped: breakpoint'
+
+# The standard library's containers, as the debugger's printers show them:
+# their sizes, and a map's entries (lldb: each pair summed up from its
+# members; gdb: its printer's keys and values put together, [key] = value).
+cp "$here/debug/containers.cpp" "$dir/here/" && (cd "$dir/here" && c++ -g -O0 -std=c++20 -o containers containers.cpp) || exit 1
+run "debug:program=$dir/here/containers;break:10;key:F5;debugwait:stopped;debugpanel;debugpick:vars:m;debugwait:stopped;debugdump" "$dir/here/containers.cpp"
+got=$(printf '%s' "$got" | sed -e 's/; stack: [^;]*;/;/' -e 's/std::vector of length 3, capacity 3/size=3/' -e 's/std::map with 2 elements/size=2/' -e 's/, second/,second/g')
+case "$got" in
+*'["a"]'*) check "containers: sizes, and a map's entries as [key] = value (gdb)" 'stopped (breakpoint); vars: m=size=2 ["a"]=1 ["b"]=2 s="hello" v=size=3' ;;
+*) check "containers: sizes, and a map's entries summed up (lldb)" 'stopped (breakpoint); vars: m=size=2 [0]={first:"a",second:1} [1]={first:"b",second:2} s="hello" v=size=3' ;;
+esac
 
 # Attaching to a process that is running, and a core file.
 cp "$here/debug/waits.c" "$here/debug/crash.c" "$dir/here/" && (cd "$dir/here" && cc -g -O0 -o waits waits.c && cc -g -O0 -o crash crash.c) || exit 1

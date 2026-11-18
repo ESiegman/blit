@@ -685,8 +685,13 @@ void App::debug_start() {
 
 // The debugger told what to do once it has said what it can: launch the
 // program, attach to a process, or open a core file.
-void App::debug_begin(const std::string& request, const std::string& arguments) {
+void App::debug_begin(const std::string& request, const std::string& args_in) {
     DebugUi& u = *debugui_;
+    // (lldb-dap: a value whose type has no summary of its own gets one made
+    // from its members, "{first:"a", second:1}" for "std::pair<...> @ 0x..."
+    // in a map. The other debuggers pass over what they do not know.)
+    std::string arguments = args_in;
+    if (arguments.starts_with("{")) arguments.insert(1, std::string("\"enableAutoVariableSummaries\":true") + (arguments.size() > 2 ? "," : ""));
     u.how = request == "launch" ? "launch" : arguments.find("coreFile") != std::string::npos ? "core" : "attach";
     u.dap->request("initialize",
                    "{\"clientID\":\"blit\",\"clientName\":\"blit\",\"adapterID\":\"blit\",\"linesStartAt1\":true,\"columnsStartAt1\":true,"
@@ -899,6 +904,20 @@ void App::debug_expand(u32 i) {
             std::string value(x["value"].str());
             if (const std::string_view type = x["type"].str(); !type.empty() && value.size() < 40) value += "  (" + std::string(type) + ")";
             kids.push_back({std::string(x["name"].str()), std::move(value), x["variablesReference"].integer(), depth, false, ref, address_of(x["memoryReference"].str())});
+        }
+        // gdb gives a map's (libstdc++'s printer's) entries as keys and values
+        // one after another, [0] a key, [1] its value: as pairs, [key] = value.
+        const std::string& of = v.vars[at].value;
+        const bool mapping = of.starts_with("std::map with") || of.starts_with("std::unordered_map with") || of.starts_with("std::multimap with") ||
+                             of.starts_with("std::unordered_multimap with") || of.starts_with("std::__debug::map with");
+        if (v.gdb && mapping && kids.size() % 2 == 0) {
+            std::vector<DebugUi::Var> pairs;
+            for (size_t k = 0; k + 1 < kids.size(); k += 2) {
+                DebugUi::Var e = kids[k + 1];
+                e.name = "[" + kids[k].value.substr(0, kids[k].value.find("  (")) + "]";
+                pairs.push_back(std::move(e));
+            }
+            kids = std::move(pairs);
         }
         v.vars.insert(v.vars.begin() + static_cast<std::ptrdiff_t>(at + 1), kids.begin(), kids.end());
         ++debug_gen_;
