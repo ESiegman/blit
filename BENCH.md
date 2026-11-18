@@ -2762,6 +2762,41 @@ hidden, not on a file changed since); fuzz_buffer.cpp checks of CTest's
 JSON, pytest's list, JUnit reports, gcov's and coverage.py's JSON, and
 finding test definitions in C++ and Python.
 
+### Round 56: the debugger's depth
+
+Attaching to a running process and opening a core file; logpoints and
+breakpoints by a function's name; setting a variable's value, watching a
+variable's writes, running to the cursor and jumping to it; a disassembly
+tab (stepping an instruction at a time there, breakpoints at an
+instruction), a memory tab (a page at a time, what changed since the last
+stop in the accent, bytes written at the cursor); and the values of the
+variables a line names after it while stopped.
+
+None of it is on a frame's path unless the program is stopped, and then
+only the notes after the lines, made again when the stop, the text or the
+view changes (each visible line of the function scanned once for names,
+against the frame's variables), and copied in beside the problems'
+otherwise. Turn about, five rounds, 2560x1600, against the build before
+the milestone (e6b78a5):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 16,274 / 53.38 µs / 2.00 µs | 16,429 / 53.29 µs / 1.96 µs |
+| Typing, everything on: the same | 17,077 / 48.42 µs / 3.71 µs | 16,998 / 48.29 µs / 3.71 µs |
+| Scrolling code-100m.txt, plain: the same | 18,142 / 49.38 µs / 0.71 µs | 17,884 / 49.54 µs / 0.67 µs |
+
+No change (the frame rates move by a round's noise, the CPU's time a
+frame not at all). Tests: debug.sh's attaching (a program waiting in a
+loop, stopped at a breakpoint), a core file saved by the debugger (its
+frame and variables), a logpoint's message with a value and no stop, a
+function's breakpoint, a value set and the program going on with it, a
+variable's writes stopping it, running to the cursor (the breakpoints
+after as before), a jump or the debugger saying it cannot, the
+disassembly's heading and a step of one instruction, a breakpoint at an
+instruction, memory where an expression points written and the program
+going on with it, a variable's memory read again at the next stop (and
+paged back and on), and the values in the code, on and off.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

@@ -59,9 +59,12 @@ merges with their conflicts, stash, rebase, cherry-pick, tags.
 
 ## A debugger and a profiler
 
-F5 runs the program under lldb-dap, gdb or debugpy: breakpoints with
-conditions and hit counts that move with their lines, a watch list, every
-thread's stack. A recording with xctrace or perf becomes a flame graph, by
+F5 runs the program under lldb-dap, gdb or debugpy, or attaches to one
+running, or opens a core file: breakpoints with conditions, hit counts and
+log messages that move with their lines, breakpoints on a function or on a
+variable's writes, a watch list, every thread's stack, the values in the
+code, the disassembly stepped an instruction at a time, and memory read
+and written. A recording with xctrace or perf becomes a flame graph, by
 thread if you like, and each line's cost beside the code.
 
 <img src="docs/media/debug.png" alt="stopped at a breakpoint: the stack, the variables, the line in front" width="49%"> <img src="docs/media/profile.png" alt="a flame graph of the demo program, and its functions by time" width="49%">

@@ -1678,9 +1678,11 @@ its arguments and working directory.
 | Pause | F6 |
 | Step over / into / out | F10 / F7 or F11 / Shift+F11 (F11 is macOS's Show Desktop unless that is turned off) |
 | Breakpoint on this line, or not | F9 |
-| A breakpoint's condition and hit count | Shift+F9 |
+| A breakpoint's condition, hit count and log message | Shift+F9 |
+| Run to the cursor | Ctrl+F10 |
 | Evaluate an expression where it stopped | Cmd+Shift+Y |
 | The Debug tab | Cmd+Shift+D |
+| In the Debug tab, on a variable: set its value / watch its writes / its memory | F2 / W / M |
 
 Where it stops, the line has an arrow in the gutter and says why, and its
 file comes to the front. The Debug tab shows the threads (when there is
@@ -1701,6 +1703,47 @@ program printed.
   evaluated each time the program stops, in the frame shown (and again
   when another frame is chosen); one that cannot be says why. Enter on one
   changes it (nothing typed takes it away), Delete takes it away.
+- **Logpoints.** Shift+F9's third question is a message: a breakpoint
+  with one does not stop, it says the message (each `{expression}` in it
+  filled in with its value) in what the program printed. A diamond in a
+  diamond in the gutter.
+- **A function's breakpoint.** *Break at a function…* stops where the
+  function named starts, wherever it is; the Debug tab lists them under
+  *Function breakpoints* (Enter changes the name, Delete takes one away).
+- **Setting a value.** F2 on a variable in the Debug tab asks for its new
+  value; the program goes on with it, and the watches are evaluated again.
+- **Watching a variable's writes.** W on a variable stops the program where
+  it is next written, wherever that is (W again, or Delete under *Writes
+  watched*, no longer). The machine has only a few of these (four on most).
+- **Run to the cursor** (Ctrl+F10) goes on to the cursor's line and stops
+  there, the breakpoints as they were. *Jump to the cursor's line* moves
+  the program there without running what is between, where the debugger
+  can (gdb can; Apple's `lldb-dap` cannot, and says so).
+- **Attaching and core files.** *Attach the debugger to a process…* lists
+  your processes, narrowed by name as you type; it stops at the
+  breakpoints as one started with F5 would, and Shift+F5 lets the process
+  go on. *Debug a core file…* asks for the program, then the core: it shows
+  where it stopped, the stack and the variables, as a stop would.
+- **The disassembly.** *Show the disassembly* opens a tab of the
+  instructions around where it stopped, under headings of the source lines
+  they are of (the function, the file and line, and its text), the
+  instruction it stopped at marked as the line is. There F10 and F11 step
+  an instruction at a time, and F9 puts a breakpoint at an instruction (the
+  Debug tab lists them under *Instruction breakpoints*). It follows the
+  frame chosen.
+- **Memory.** *Show memory at…* opens a page of memory (4 KB) where an
+  expression points (`&total`, `p`, `0x16fdfe0c8`), the cursor on that
+  byte; M on a variable in the Debug tab opens where the variable is. Each
+  line is sixteen bytes, as numbers and as characters, `??` where it cannot
+  be read. It is read again at each stop, what changed since in the accent.
+  *Write to memory at the cursor…* writes bytes typed as hex (`2a 00`)
+  where the cursor is; *Next page of memory* and *Previous page of memory*
+  turn the pages.
+- **The values in the code.** While it is stopped, each line of the
+  function it stopped in, from its start to where it stopped, has after it
+  the values of the variables it names (those of the frame shown; not in a
+  comment or a string, not a member's), quietly. `debug.inline_values =
+  false` leaves them out.
 - **Breakpoints move with their lines** as the file is edited, as marks
   do: a line put above one takes it down, lines taken away above it take it
   up, and one whose own line is taken away stays where that line was. A

@@ -212,14 +212,19 @@ check "the values in the code" '13: total = 5 | 14: i = 2 | 15: total = 5, i = 2
 
 # Attaching to a process that is running, and a core file.
 cp "$here/debug/waits.c" "$here/debug/crash.c" "$dir/here/" && (cd "$dir/here" && cc -g -O0 -o waits waits.c && cc -g -O0 -o crash crash.c) || exit 1
-"$dir/here/waits" &
-waiting=$!
-sleep 0.3
-run "break:13;debugattach:$waiting;debugwait:stopped;debugdump" "$dir/here/waits.c"
-kill "$waiting" 2>/dev/null
-wait "$waiting" 2>/dev/null
-got=$(printf '%s' "$got" | sed -e 's/rounds=[0-9]*/rounds=N/' -e 's/ start\(@[0-9]*\)\{0,1\};/;/')
-check "attached to a process: it stops at a breakpoint as one launched would" 'stopped (breakpoint); stack: main@13; vars: rounds=N'
+# (Not where Linux lets a debugger attach only to what it started itself:
+# Yama's ptrace_scope above 0, unless the tests are root.)
+scope=$(cat /proc/sys/kernel/yama/ptrace_scope 2>/dev/null || echo 0)
+if [ "$scope" = 0 ] || [ "$(id -u)" = 0 ]; then
+    "$dir/here/waits" &
+    waiting=$!
+    sleep 0.3
+    run "break:13;debugattach:$waiting;debugwait:stopped;debugdump" "$dir/here/waits.c"
+    kill "$waiting" 2>/dev/null
+    wait "$waiting" 2>/dev/null
+    got=$(printf '%s' "$got" | sed -e 's/rounds=[0-9]*/rounds=N/' -e 's/ start\(@[0-9]*\)\{0,1\};/;/')
+    check "attached to a process: it stops at a breakpoint as one launched would" 'stopped (breakpoint); stack: main@13; vars: rounds=N'
+fi
 # (A core file as the debugger writes it: lldb's save-core, gdb's generate-core-file.)
 core="$dir/here/crash.core"
 if command -v lldb >/dev/null 2>&1; then
