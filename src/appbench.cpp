@@ -13,6 +13,8 @@
 #include <unistd.h>
 
 #include "app.hpp"
+#include "fsio.hpp"
+#include "profile.hpp"
 #include "remote.hpp"
 
 namespace blit {
@@ -1055,6 +1057,15 @@ void App::run_script(const char* script) {
             frame();  // (its rows as they are now)
             if (!prof_pick(arg.substr(0, sep), sep == std::string::npos ? 1 : static_cast<u32>(std::atoi(arg.c_str() + sep + 1))))
                 std::fprintf(stderr, "profpick: no %s\n", arg.c_str());
+        } else if (verb == "profopen") {  // profopen:FILE, a profile kept (.json) or perf script's text, opened in a tab
+            std::string text, why;
+            auto p = std::make_shared<Profile>();
+            const bool ok = fs_read(arg, &text, 64u << 20) && (arg.ends_with(".json") ? Profile::from_json(text, p.get(), &why) : parse_perf_script(text, {}, p.get(), &why));
+            if (!ok) std::fprintf(stderr, "profopen: %s\n", why.c_str());
+            else {
+                if (p->backend.empty()) p->backend = "perf", p->when = "00:00";
+                prof_take_profile(p);
+            }
         } else if (verb == "profdump") {
             std::fprintf(stderr, "%s\n", prof_dump().c_str());
         } else if (verb == "term") {  // a terminal (term:folder, or in the folder being worked in)

@@ -119,7 +119,22 @@ Uint32 tick(void*, SDL_TimerID, Uint32 interval) {  // (while recording: the tim
 
 // A profile's tab: what it shows, and where its parts were drawn.
 struct ProfView {
-    std::shared_ptr<Profile> p;
+    std::shared_ptr<Profile> p;     // the tree shown: orig, or (bottom-up) flipped
+    std::shared_ptr<Profile> orig;  // the profile, top-down (whose weights the list has)
+    std::shared_ptr<Profile> flipped;  // turned over (invert_profile), made when first asked for
+    bool bottom_up = false;
+    // In place of the list of functions: the chosen one's callers and
+    // callees (counted in orig, under the thread shown), each with its weight.
+    bool relations = false;
+    struct Rel {
+        u32 func = 0;
+        u64 weight = 0;
+        u8 kind = 0;  // 0 a heading (func: 1 the callers', 2 the callees'), 1 a caller, 2 a callee
+    };
+    std::vector<Rel> rel;
+    u32 rel_of = ~0u;
+    int rel_thread = -2;
+    u32 rel_sel = 0, rel_top = 0;
     std::vector<u16> depth;  // of each node (a thread's root is at 0)
     std::vector<bool> is_root;  // (the roots: of all threads, and of each)
     u16 deepest = 0;
@@ -447,6 +462,15 @@ void App::prof_sync() {
     prof_open(p);
 }
 
+// A profile made elsewhere (read from a file, for the tests): among those
+// made, and in a tab.
+void App::prof_take_profile(std::shared_ptr<Profile> p) {
+    p->finish();
+    ProfUi& u = *profui_;
+    u.done.insert(u.done.begin(), p);
+    prof_open(std::move(p));
+}
+
 // A profile in a tab of its own (the one it has already, if it has one).
 // Its times show in the code from now on.
 void App::prof_open(std::shared_ptr<Profile> p) {
@@ -457,7 +481,7 @@ void App::prof_open(std::shared_ptr<Profile> p) {
     panel_focus(false);  // (the profile's tab, in front, has the keyboard: the panel's Profile tab had it to start the recording)
     for (const std::unique_ptr<Pane>& pane : panes_)
         for (size_t i = 0; i < pane->docs.size(); ++i)
-            if (pane->docs[i]->prof && pane->docs[i]->prof->p == p) {
+            if (pane->docs[i]->prof && pane->docs[i]->prof->orig == p) {
                 focus_pane(pane.get());
                 tab_show(i);
                 return;
@@ -466,18 +490,8 @@ void App::prof_open(std::shared_ptr<Profile> p) {
     d->title = kind_title(*p) + ": " + short_path(p->program) + " " + p->when;
     d->read_only = true;
     auto v = std::make_shared<ProfView>();
-    v->p = p;
-    v->depth.assign(p->nodes.size(), 0);
-    v->is_root.assign(p->nodes.size(), false);
-    v->is_root[0] = true;
-    for (const ProfileThread& t : p->by_thread) v->is_root[t.root] = true;
-    for (u32 n = 1; n < p->nodes.size(); ++n) {  // (a node comes after its parent)
-        if (v->is_root[n]) continue;
-        v->depth[n] = static_cast<u16>(v->depth[p->nodes[n].parent] + 1);
-        v->deepest = std::max(v->deepest, v->depth[n]);
-    }
-    v->order = p->by_self();
-    v->whole = p->weight;
+    v->p = v->orig = p;
+    prof_view_init(*v);
     d->prof = v;
     tab_show(pane_->tab + 1);
     ++prof_gen_;
@@ -596,7 +610,7 @@ void App::prof_panel_draw(TextBox& box, bool focused) {
     const ProfView* view = nullptr;
     for (const std::unique_ptr<Pane>& pane : panes_)
         for (const std::shared_ptr<Doc>& d : pane->docs)
-            if (d->prof && d->prof->p == u.shown) view = d->prof.get();
+            if (d->prof && d->prof->orig == u.shown) view = d->prof.get();
     if (view && view->p->by_thread.size() > 1) {
         const Profile& p = *view->p;
         ++r;
@@ -698,7 +712,7 @@ void App::prof_do(u32 row) {
         case ProfUi::kThread:  // the graph of all the threads, or of one, in the tab of the profile shown
             for (const std::unique_ptr<Pane>& pane : panes_)
                 for (const std::shared_ptr<Doc>& d : pane->docs)
-                    if (d->prof && d->prof->p == u.shown) prof_thread(*d->prof, static_cast<int>(it.index) - 1);
+                    if (d->prof && d->prof->orig == u.shown) prof_thread(*d->prof, static_cast<int>(it.index) - 1);
             break;
         case ProfUi::kNone: break;
     }
@@ -750,19 +764,89 @@ bool App::prof_panel_key(const SDL_KeyboardEvent& k) {
 
 // The graph of one thread (or, -1, of all of them): zoomed out to its root,
 // its functions by their own time in it.
+// The tree shown taken in: each node's depth, the roots (of all threads and
+// of each), the deepest; the functions in order.
+void App::prof_view_init(ProfView& v) {
+    const Profile& p = *v.p;
+    v.depth.assign(p.nodes.size(), 0);
+    v.is_root.assign(p.nodes.size(), false);
+    v.is_root[0] = true;
+    v.deepest = 0;
+    for (const ProfileThread& t : p.by_thread) v.is_root[t.root] = true;
+    for (u32 n = 1; n < p.nodes.size(); ++n) {  // (a node comes after its parent)
+        if (v.is_root[n]) continue;
+        v.depth[n] = static_cast<u16>(v.depth[p.nodes[n].parent] + 1);
+        v.deepest = std::max(v.deepest, v.depth[n]);
+    }
+    v.order = v.orig->by_self();
+    v.whole = v.orig->weight;
+}
+
+// The graph turned over (bottom-up), or back; the thread and the function
+// chosen stay as they were.
+void App::prof_flip(ProfView& v) {
+    const u32 focus = v.sel < v.order.size() ? v.order[v.sel] : ~0u;
+    v.bottom_up = !v.bottom_up;
+    if (v.bottom_up && !v.flipped) v.flipped = std::make_shared<Profile>(invert_profile(*v.orig));
+    v.p = v.bottom_up ? v.flipped : v.orig;
+    prof_view_init(v);
+    prof_thread(v, v.thread);
+    for (u32 k = 0; k < v.order.size(); ++k)
+        if (v.order[k] == focus) v.sel = k;
+}
+
+// The chosen function's callers and callees, with their weights: each place
+// it is in the top-down tree (under the thread shown) gives what called it
+// there and what it called, as much as they weighed there.
+void App::prof_relations(ProfView& v) {
+    const Profile& o = *v.orig;
+    const u32 focus = v.sel < v.order.size() ? v.order[v.sel] : ~0u;
+    v.rel_of = focus;
+    v.rel_thread = v.thread;
+    v.rel.clear();
+    v.rel_sel = v.rel_top = 0;
+    if (focus == ~0u) return;
+    const u32 root = v.thread < 0 ? 0 : o.by_thread[static_cast<size_t>(v.thread)].root;
+    std::vector<bool> roots(o.nodes.size(), false), under(o.nodes.size(), false);
+    roots[0] = true;
+    for (const ProfileThread& t : o.by_thread) roots[t.root] = true;
+    under[root] = true;
+    std::map<u32, u64> callers, callees;
+    for (u32 n = 1; n < o.nodes.size(); ++n) {
+        if (roots[n]) continue;
+        under[n] = under[o.nodes[n].parent];
+        if (!under[n] || o.nodes[n].func != focus) continue;
+        if (const u32 up = o.nodes[n].parent; !roots[up]) callers[o.nodes[up].func] += o.nodes[n].total;
+        for (const u32 k : o.nodes[n].kids) callees[o.nodes[k].func] += o.nodes[k].total;
+    }
+    auto add = [&](const std::map<u32, u64>& m, u8 kind) {
+        v.rel.push_back({kind, 0, 0});  // (its heading: which it is, in func)
+        std::vector<ProfView::Rel> rows;
+        for (const auto& [f, w] : m) rows.push_back({f, w, kind});
+        std::ranges::sort(rows, [](const ProfView::Rel& a, const ProfView::Rel& b) { return a.weight > b.weight; });
+        v.rel.insert(v.rel.end(), rows.begin(), rows.end());
+    };
+    add(callers, 1);
+    add(callees, 2);
+    while (v.rel_sel < v.rel.size() && v.rel[v.rel_sel].kind == 0) ++v.rel_sel;
+}
+
 void App::prof_thread(ProfView& v, int i) {
     const Profile& p = *v.p;
+    const Profile& o = *v.orig;
     v.thread = i >= 0 && i < static_cast<int>(p.by_thread.size()) ? i : -1;
     v.root = v.zoom = v.thread < 0 ? 0 : p.by_thread[static_cast<size_t>(v.thread)].root;
     v.hover = -1;
     v.sel = v.top = v.shift = 0;
     if (v.thread < 0) {
         v.self_w.clear(), v.total_w.clear();
-        v.order = p.by_self();
-        v.whole = p.weight;
+        v.order = o.by_self();
+        v.whole = o.weight;
     } else {
-        p.weights_under(v.root, &v.self_w, &v.total_w);
-        v.whole = p.nodes[v.root].total;
+        // (The weights are the top-down tree's, whichever is shown.)
+        const u32 oroot = o.by_thread[static_cast<size_t>(v.thread)].root;
+        o.weights_under(oroot, &v.self_w, &v.total_w);
+        v.whole = o.nodes[oroot].total;
         v.order.clear();
         for (u32 f = 1; f < p.funcs.size(); ++f)
             if (v.total_w[f]) v.order.push_back(f);
@@ -812,9 +896,11 @@ void App::prof_layout(FrameDesc& fd) {
         v.pad_x = (w - static_cast<int>(cols) * cw) / 2;
         v.pad_y = (h - static_cast<int>(rows) * ch) / 2;
 
+        if (v.relations && (v.rel_of != (v.sel < v.order.size() ? v.order[v.sel] : ~0u) || v.rel_thread != v.thread)) prof_relations(v);
         u64 key = 1469598103934665603ull;
         auto mix = [&](u64 k) { key = (key ^ k) * 1099511628211ull; };
         mix(cols), mix(rows), mix(font.generation()), mix(v.zoom), mix(static_cast<u64>(v.hover + 1)), mix(v.sel), mix(v.top), mix(v.shift), mix(static_cast<u64>(v.thread + 1));
+        mix(v.bottom_up), mix(v.relations), mix(v.rel_sel), mix(v.rel_top), mix(v.rel_of);
         if (key != v.key) {
             v.key = key;
             v.box.resize(cols, rows);
@@ -835,6 +921,7 @@ void App::prof_layout(FrameDesc& fd) {
                 std::snprintf(sum, sizeof sum, "%s samples \xC2\xB7 %.2f s \xC2\xB7 %u thread%s", with_commas(p.samples).c_str(), p.seconds, p.threads, p.threads == 1 ? "" : "s");
             c = box.put(font, 1, 1, sum, kInkMuted);
             if (v.thread >= 0) c = box.put(font, 1, c, " \xC2\xB7 " + v.root_name() + " " + percent(v.whole, p.weight), 0);
+            if (v.bottom_up) c = box.put(font, 1, c, " \xC2\xB7 bottom-up", 0);
             if (!p.note.empty()) put(box, font, 1, c + 3, clip(p.note, cols > c + 4 ? cols - c - 4 : 1), ink::kWarning);
 
             // Where in the graph the view is: the frames above the one zoomed into.
@@ -925,13 +1012,34 @@ void App::prof_layout(FrameDesc& fd) {
             if (v.list_rows && v.sel >= v.top + v.list_rows) v.top = v.sel - v.list_rows + 1;
             v.top = std::min(v.top, n > v.list_rows ? n - v.list_rows : 0);
             const u32 src_w = std::min<u32>(36, cols / 4), name_col = 16, src_col = cols > src_w + 2 ? cols - src_w - 1 : cols;
-            if (head < rows) {
+            if (v.relations) {  // the chosen function's callers, then its callees, in place of the list
+                const u32 nr = static_cast<u32>(v.rel.size());
+                const std::string of = v.rel_of < p.funcs.size() ? std::string(short_name(p.funcs[v.rel_of].name)) : std::string();
+                if (head < rows) box.put(font, head, 2, clip("Callers and callees of " + of, cols > 4 ? cols - 4 : 1), kInkMuted);
+                if (v.rel_sel < v.rel_top) v.rel_top = v.rel_sel;
+                if (v.list_rows && v.rel_sel >= v.rel_top + v.list_rows) v.rel_top = v.rel_sel - v.list_rows + 1;
+                v.rel_top = std::min(v.rel_top, nr > v.list_rows ? nr - v.list_rows : 0);
+                for (u32 k = 0; k < v.list_rows && v.rel_top + k < nr; ++k) {
+                    const u32 r = v.list_row + k;
+                    const ProfView::Rel& rx = v.rel[v.rel_top + k];
+                    if (rx.kind == 0) {
+                        box.put(font, r, 2, rx.func == 1 ? "Called by" : "Calls", kInkMuted, Font::kBold);
+                        continue;
+                    }
+                    const ProfileFunc& f = p.funcs[rx.func];
+                    const std::string wt = percent(rx.weight, v.whole);
+                    box.put(font, r, 7 - std::min<u32>(7, width_of(wt)), wt, f.own ? kInkAccent : 0);
+                    box.put(font, r, name_col, clip(f.name, src_col > name_col + 2 ? src_col - name_col - 2 : 1), f.own ? 0 : kInkMuted);
+                    if (src_col < cols && !f.file.empty()) box.put(font, r, src_col, clip(short_path(f.file) + ":" + std::to_string(f.line), src_w), kInkMuted);
+                    if (v.rel_top + k == v.rel_sel) box.select_row(r);
+                }
+            } else if (head < rows) {
                 box.put(font, head, 2, "Self", kInkMuted);
                 box.put(font, head, 9, "Total", kInkMuted);
                 box.put(font, head, name_col, "Function", kInkMuted);
                 if (src_col < cols) box.put(font, head, src_col, "Source", kInkMuted);
             }
-            for (u32 k = 0; k < v.list_rows && v.top + k < n; ++k) {
+            for (u32 k = 0; !v.relations && k < v.list_rows && v.top + k < n; ++k) {
                 const u32 r = v.list_row + k;
                 const u32 fi = v.order[v.top + k];
                 const ProfileFunc& f = p.funcs[fi];
@@ -1063,6 +1171,17 @@ bool App::prof_mouse_down(const SDL_MouseButtonEvent& b) {
             if (b.clicks >= 2 && h.node != 0) prof_go_to(p, func);
             return true;
         }
+    if (v.relations && row >= v.list_row && row < v.list_row + v.list_rows) {  // a caller or a callee: chosen; twice, it is the function shown
+        const u32 k = v.rel_top + (row - v.list_row);
+        if (k < v.rel.size() && v.rel[k].kind != 0) {
+            v.rel_sel = k;
+            if (b.clicks >= 2)
+                for (u32 j = 0; j < v.order.size(); ++j)
+                    if (v.order[j] == v.rel[k].func) v.sel = j;
+        }
+        v.key = 0;
+        return true;
+    }
     if (row >= v.list_row && row < v.list_row + v.list_rows) {
         const u32 k = v.top + (row - v.list_row);
         if (k < v.order.size()) {
@@ -1096,6 +1215,55 @@ bool App::prof_key(const SDL_KeyboardEvent& k) {
     ProfView& v = *pane_->doc->prof;
     const Profile& p = *v.p;
     const u32 n = static_cast<u32>(v.order.size());
+    if (k.key == SDLK_B && !(k.mod & SDL_KMOD_SHIFT)) {  // the graph bottom-up, or top-down again
+        prof_flip(v);
+        dirty_ = true;
+        return true;
+    }
+    if (k.key == SDLK_C && !(k.mod & SDL_KMOD_SHIFT)) {  // the chosen function's callers and callees, or the functions again
+        v.relations = !v.relations;
+        if (v.relations) prof_relations(v);
+        v.key = 0;
+        dirty_ = true;
+        return true;
+    }
+    if (v.relations) {
+        const u32 nr = static_cast<u32>(v.rel.size());
+        auto step = [&](int by) {  // (over the headings)
+            for (u32 at = v.rel_sel; nr;) {
+                if ((by < 0 && at == 0) || (by > 0 && at + 1 >= nr)) break;
+                at = static_cast<u32>(static_cast<int>(at) + by);
+                if (v.rel[at].kind != 0) {
+                    v.rel_sel = at;
+                    break;
+                }
+            }
+        };
+        switch (k.key) {
+            case SDLK_UP: step(-1); break;
+            case SDLK_DOWN: step(1); break;
+            case SDLK_RETURN:
+            case SDLK_KP_ENTER:  // that one chosen: its callers and callees
+                if (v.rel_sel < nr && v.rel[v.rel_sel].kind != 0)
+                    for (u32 j = 0; j < n; ++j)
+                        if (v.order[j] == v.rel[v.rel_sel].func) v.sel = j;
+                break;
+            case SDLK_ESCAPE:
+                if (v.zoom != v.root) {
+                    v.zoom = p.nodes[v.zoom].parent;
+                    break;
+                }
+                v.relations = false;
+                break;
+            case SDLK_SPACE: break;  // (below)
+            default: return false;
+        }
+        if (k.key != SDLK_SPACE) {
+            v.key = 0;
+            dirty_ = true;
+            return true;
+        }
+    }
     switch (k.key) {
         case SDLK_UP: v.sel = v.sel ? v.sel - 1 : 0; break;
         case SDLK_DOWN: v.sel = n ? std::min(v.sel + 1, n - 1) : 0; break;
@@ -1296,6 +1464,15 @@ std::string App::prof_dump() {
         const ProfView& v = *pane_->doc->prof;
         out += "; tab: zoom " + (v.zoom != v.root ? std::string(short_name(v.p->funcs[v.p->nodes[v.zoom].func].name)) : v.root_name());
         if (v.thread >= 0 && !v.order.empty()) out += ", heaviest " + std::string(short_name(v.p->funcs[v.order[0]].name));
+        if (v.bottom_up) {  // (the bottom row: where time was spent, each with its share)
+            out += ", bottom-up:";
+            for (const u32 kid : v.p->nodes[v.root].kids) out += " " + std::string(short_name(v.p->funcs[v.p->nodes[kid].func].name)) + "=" + percent(v.p->nodes[kid].total, v.whole);
+        }
+        if (v.relations) {
+            out += ", of " + (v.rel_of < v.p->funcs.size() ? std::string(short_name(v.p->funcs[v.rel_of].name)) : std::string("?")) + ":";
+            for (const ProfView::Rel& rx : v.rel)
+                out += rx.kind == 0 ? (rx.func == 1 ? " callers" : " | callees") : " " + std::string(short_name(v.p->funcs[rx.func].name)) + "=" + percent(rx.weight, v.whole);
+        }
     } else if (auto it = u.notes.find(pane_->doc->id); it != u.notes.end()) {
         out += "; times on lines";
         for (size_t k = 0; k < it->second.lines.size(); ++k) out += " " + std::to_string(it->second.lines[k].first + 1) + it->second.kinds[k];

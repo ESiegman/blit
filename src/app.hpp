@@ -763,6 +763,10 @@ private:
     void prof_keep(const std::shared_ptr<Profile>& p);
     void prof_open_kept(const std::string& path);
     void prof_thread(struct ProfView& v, int i);
+    void prof_take_profile(std::shared_ptr<struct Profile> p);
+    void prof_view_init(struct ProfView& v);
+    void prof_flip(struct ProfView& v);
+    void prof_relations(struct ProfView& v);
     bool prof_pick(const std::string& section, u32 n);
     void prof_do(u32 row);
     void prof_panel_draw(struct TextBox& box, bool focused);

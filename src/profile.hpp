@@ -105,6 +105,14 @@ private:
     u64 sample_no_ = 0;
 };
 
+// The call tree turned over (bottom-up): its roots' kids are the functions
+// time was spent in (their own time, each as much as it had), each of those
+// with what called it above it, and so on out to the outermost caller; for
+// all threads and for each. The functions, threads and lines are the same
+// (their weights are the profile's: weights_under() on this tree would give
+// the callers the time), and so are their indices.
+Profile invert_profile(const Profile& p);
+
 // The two profilers' output read into a profile (prefix: put before every
 // source path, "ssh://host" for one recorded on another machine).
 // (scale: what one of perf's periods weighs, a page's bytes for page

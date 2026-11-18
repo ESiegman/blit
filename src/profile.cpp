@@ -112,6 +112,53 @@ void Profile::add_path(u32 root, std::span<const Frame> frames, u64 w, bool coun
     if (!leaf.file.empty() && leaf.line) lines[std::string(leaf.file)][leaf.line].self += w;
 }
 
+Profile invert_profile(const Profile& p) {
+    Profile q;
+    q.program = p.program, q.args = p.args, q.backend = p.backend, q.host = p.host, q.when = p.when;
+    q.weight = p.weight, q.samples = p.samples, q.seconds = p.seconds, q.threads = p.threads;
+    q.unit = p.unit, q.kind = p.kind, q.funcs = p.funcs, q.lines = p.lines, q.output = p.output, q.note = p.note;
+    if (p.nodes.empty()) return q;
+    q.nodes.push_back({p.nodes[0].func, 0, p.nodes[0].total, 0, {}});
+    std::vector<bool> is_root(p.nodes.size(), false);
+    std::vector<u32> root_of(p.nodes.size(), 0);  // (an original root -> its root here)
+    is_root[0] = true;
+    for (const ProfileThread& t : p.by_thread) {
+        is_root[t.root] = true;
+        root_of[t.root] = static_cast<u32>(q.nodes.size());
+        q.nodes.push_back({p.nodes[t.root].func, 0, p.nodes[t.root].total, 0, {}});
+        ProfileThread nt = t;
+        nt.root = root_of[t.root];
+        q.by_thread.push_back(nt);
+    }
+    std::unordered_map<u64, u32> ids;  // parent << 32 | func
+    auto child = [&](u32 parent, u32 func) {
+        const u64 key = static_cast<u64>(parent) << 32 | func;
+        if (const auto it = ids.find(key); it != ids.end()) return it->second;
+        const u32 id = static_cast<u32>(q.nodes.size());
+        q.nodes.push_back({func, parent, 0, 0, {}});
+        q.nodes[parent].kids.push_back(id);
+        ids.emplace(key, id);
+        return id;
+    };
+    for (u32 n = 1; n < p.nodes.size(); ++n) {
+        if (is_root[n] || p.nodes[n].self == 0) continue;
+        const u64 w = p.nodes[n].self;
+        u32 r = n;  // (the root it is under)
+        while (!is_root[r]) r = p.nodes[r].parent;
+        u32 at = root_of[r];
+        bool first = true;
+        for (u32 m = n; !is_root[m]; m = p.nodes[m].parent) {
+            at = child(at, p.nodes[m].func);
+            q.nodes[at].total += w;
+            if (first) q.nodes[at].self += w;  // (its own time: where it was spent)
+            first = false;
+        }
+    }
+    for (ProfileNode& node : q.nodes)
+        std::ranges::sort(node.kids, [&](u32 a, u32 b) { return q.nodes[a].total != q.nodes[b].total ? q.nodes[a].total > q.nodes[b].total : q.funcs[q.nodes[a].func].name < q.funcs[q.nodes[b].func].name; });
+    return q;
+}
+
 bool Profile::thread_root(u32 node) const {
     return node != 0 && std::ranges::any_of(by_thread, [&](const ProfileThread& t) { return t.root == node; });
 }
