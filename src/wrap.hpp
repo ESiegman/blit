@@ -36,6 +36,9 @@ public:
     u32 end_col(u64 row) const;                // where the next row of its line starts (~0u: its line ends in it)
     u64 row_at(u64 line, u32 col) const;       // the row a place is shown in
     u32 rows_of(u64 line) const { return line < count_.size() ? count_[line] : 1; }
+    // The rows from `top` on, n of them, walked once (for a view): each
+    // one's line (~0 past the end), start column and end column.
+    void walk(u64 top, u32 n, u64* lines, u32* cols, u32* ends) const;
 
     // Where a line's rows start (after its first, which starts at 0): the
     // breaks for `text` in `width` columns. (Public for the tests.)

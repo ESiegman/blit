@@ -1540,14 +1540,8 @@ void App::layout_pane(FrameDesc& fd, bool focused) {
         p.row_lines.resize(g.rows);
         p.row_cols.resize(g.rows);
         p.row_ends.resize(g.rows);
-        for (u32 r = 0; r < g.rows; ++r) {
-            const u64 row = top_row + r;
-            const bool in = row < rows;
-            const u64 line = in ? w->line_at(row) : lines;
-            p.row_lines[r] = line < lines ? line : ~0ull;
-            p.row_cols[r] = in ? w->start_col(row) : 0;
-            p.row_ends[r] = in ? w->end_col(row) : ~0u;
-        }
+        w->walk(top_row, g.rows, p.row_lines.data(), p.row_cols.data(), p.row_ends.data());  // (once down the rows on show)
+        (void)rows;
         g.top_line = p.row_lines[0] == ~0ull ? lines : p.row_lines[0];
         g.row_lines = p.row_lines.data();
         g.row_cols = p.row_cols.data();

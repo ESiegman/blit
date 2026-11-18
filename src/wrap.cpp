@@ -137,6 +137,24 @@ u64 Wrap::line_at(u64 row) const {
     return std::min<u64>(at, count_.size() - 1);
 }
 
+void Wrap::walk(u64 top, u32 n, u64* lines, u32* cols, u32* ends) const {
+    const u64 total = rows();
+    u64 line = top < total ? line_at(top) : count_.size();
+    u64 k = line < count_.size() ? top - sum_before(line) : 0;  // (which of its line's rows)
+    for (u32 r = 0; r < n; ++r) {
+        while (line < count_.size() && k >= count_[line]) ++line, k = 0;  // (on to the next line with rows: past folded ones)
+        if (line >= count_.size()) {
+            lines[r] = ~0ull, cols[r] = 0, ends[r] = ~0u;
+            continue;
+        }
+        const std::vector<u32>& st = starts_[line];
+        lines[r] = line;
+        cols[r] = k == 0 ? 0 : st[k - 1];
+        ends[r] = k < st.size() ? st[k] : ~0u;
+        ++k;
+    }
+}
+
 u32 Wrap::start_col(u64 row) const {
     const u64 line = line_at(row);
     const u64 k = row - std::min(row, sum_before(line));
