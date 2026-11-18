@@ -2797,6 +2797,43 @@ instruction, memory where an expression points written and the program
 going on with it, a variable's memory read again at the next stop (and
 paged back and on), and the values in the code, on and off.
 
+### Round 57: Git's history
+
+A file's history (followed through renames) and the history of the lines
+chosen (`git log -L`), each commit with its change in a tab; History as a
+graph, its lanes worked out from the commits' parents, the branches and
+tags beside each commit, every branch's at once, and searched by message,
+author and path; a merge tab, a conflicted file in three columns merged
+from git's three versions line by line, each conflict taken from either
+side or both, the simple ones (changes that only touch) each side's, saved
+and staged; interactive rebase, blit writing git's to-do.
+
+None of it is on a frame's path. History's lanes are worked out once a
+status (100 commits, a few microseconds), on the main thread as it comes;
+the merge is made on git's thread and laid out when it changes. Turn
+about, five rounds, 2560x1600, against the build before the milestone
+(1b4cea6):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 17,842 / 53.67 µs / 2.00 µs | 16,280 / 53.58 µs / 1.92 µs |
+| Typing, everything on: the same | 18,301 / 48.21 µs / 3.75 µs | 18,249 / 48.21 µs / 3.79 µs |
+| Scrolling code-100m.txt, plain: the same | 17,531 / 49.38 µs / 0.67 µs | 19,397 / 49.25 µs / 0.62 µs |
+
+No change. The frame rates are medians of rounds that ran from 13,700 to
+18,100 frames a second in one build (the GPU's clock, this sitting); the
+best rounds of each were alike (18,069 and 18,067 scrolling with
+everything on, 19,755 and 19,772 plain), and the CPU's time a frame did not
+move. Tests: git.sh's histories (a file's through a rename, a line's,
+Enter on a commit), the graph of a branch merged back and tagged, searches
+by message, author and path, the merge tool (two conflicts, one simple:
+taken, saved, the file as merged and staged), interactive rebase
+(squashed, reworded with its body kept, dropped, moved, a first one not
+squashed, an edit's stop continued); fuzz_buffer.cpp checks of the log's
+new fields, the lanes (an octopus merge, a lane passing under one that
+meets), the three-way merge (its chunks, markers, each take) and, on
+random texts, that a side left as the base gives the other.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

@@ -53,7 +53,8 @@ xterm, with the mouse, re-wrapping on resize, and sixel and kitty pictures.
 
 The changed lines beside the text, blame, a Git tab for everything else:
 stage a hunk or the lines chosen, diffs in one column or two, branches,
-merges with their conflicts, stash, rebase, cherry-pick, tags.
+History as a graph, searched, a file's or some lines' history, conflicts
+merged three ways, interactive rebase, stash, cherry-pick, tags.
 
 ![the Git tab and a diff in two columns](docs/media/git.png)
 

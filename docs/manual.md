@@ -690,9 +690,19 @@ from outside that repository gets no marks and no blame. From the top:
 - **Tags**, when there are any, folded to start with (click the heading):
   newest version first ("v1.10" before "v1.9"). Pick one to **Show** it, **Push** it (`p`: to the server the
   branch follows, or `origin`) or **Delete** it here (after asking).
-- **History**: the last forty commits. A double click shows one, with its
-  diff. While History shows another branch's commits, `c` cherry-picks the
-  one picked onto the branch checked out.
+- **History**: the last hundred commits, as a graph: before each, the
+  lanes of the lines of descent it is on, worked out from the commits'
+  parents (a branch meeting the line it started from, a merge's other
+  parent joining), each in a colour of its own; beside it, the branches
+  and tags that point at it (the one checked out bold, the server's
+  quieter). A double click shows one, with its diff. While History shows
+  another branch's commits, `c` cherry-picks the one picked onto the branch
+  checked out; on the branch checked out, `i` rebases from that commit on,
+  interactively (below). "Git: History of all branches" shows every
+  branch's commits together (again: the one checked out's), and "Git:
+  Search the history…" lists those whose message or author has the text
+  in it, any case, or that changed it as a path, newest first and without
+  lanes (nothing searched for: all of them again).
 
 From the keyboard: Up and Down (or `j` and `k`) pick, Enter does the usual
 thing with what is picked (a file's diff, switch to a branch, show a
@@ -705,7 +715,11 @@ The command search has them too: "Git: Commit", "Git: Pull", "Git: Push",
 "Git: New branch…", "Git: Switch branch…", "Git: New tag…", "Git: Rebase
 onto branch…", "Git: Cherry-pick a commit…", "Git: Continue the rebase or
 cherry-pick", "Git: Stage the change at the cursor", "Git: Unstage the
-change at the cursor" and "Git: Diffs in two columns or one".
+change at the cursor", "Git: Diffs in two columns or one", "Git: The
+file's history", "Git: The history of the lines chosen", "Git: History of
+all branches", "Git: Search the history…", "Git: Rebase interactively
+onto…", "Git: Merge the file's conflicts" and "Git: Resolve the simple
+conflicts".
 
 **Diffs** open in a tab of their own, coloured, to read and copy from, with
 the cursor on the first hunk. A file's diff is staged from there a hunk or
@@ -722,12 +736,43 @@ column go on in the rows below. `|` again goes back to one column, and
 diffs open the way the last one was turned. Two columns stage the same way:
 a row selected is both its lines.
 
-A merge or pull that conflicts leaves the files under Conflicts and
-"merging" beside the branch: open each, settle it, stage it and commit; or
-**Abort merge**. A rebase or a cherry-pick that conflicts stops the same
-way, with "rebasing" or "cherry-picking" beside the branch: settle and
-stage the files, then **Continue rebase** (or **Continue cherry-pick**), or
-give it up with **Abort rebase** (**Abort cherry-pick**).
+**A file's history.** "Git: The file's history" opens a tab of the
+commits that changed the file in front, newest first, followed through
+renames, each with its change; "Git: The history of the lines chosen" does
+the same for the lines selected (or the cursor's line), as `git log -L`
+follows them back. Enter on a commit there shows all of it.
+
+**Merging.** A merge or pull that conflicts leaves the files under
+Conflicts and "merging" beside the branch. Enter on one (or "Git: Merge the
+file's conflicts" in the file) opens it in a merge tab of three columns:
+theirs (what is merged in), the result, and yours (the branch checked out),
+merged line by line from git's three versions of it. What only one side
+changed is taken from it, the same change by both once; where both
+changed the same lines, or lines next to each other's, there is a
+conflict, red, between git's markers in the result. On a conflict `t` takes
+theirs, `y` yours, `b` both (yours first; `B` theirs first) and `x` opens
+it again; where the two sides' changes only touch (git calls those
+conflicts too) `e` takes each side's, and `a` (or "Git: Resolve the simple
+conflicts") does that for all of them. What the result has of each side is
+green, what it leaves muted. `]` and `[` go to the next conflict and the one
+before. Cmd+S writes the result to the file (with any conflict still open
+between markers) and, once none is, stages it. Then commit; or **Abort
+merge**.
+
+**Rebasing interactively.** "Git: Rebase interactively onto…" (the branch
+followed, to start with) or `i` on a commit in History lists the commits
+since that base in a tab, oldest first, each with what is to be done with
+it: `p` picks it, `r` rewords it (a new subject, the rest of its message
+kept), `e` stops at it to change it, `s` squashes it into the one before
+(their messages together), `f` fixes it up into that one (its message
+dropped), `d` drops it; Alt+Up and Alt+Down move it. Cmd+S starts the
+rebase. It stops where it was told to, or at a conflict, as below.
+
+A rebase or a cherry-pick that conflicts, or a rebase told to stop, stops
+with "rebasing" or "cherry-picking" beside the branch: change or settle the
+files (a merge tab settles a conflict here too) and stage them, then
+**Continue rebase** (or **Continue cherry-pick**), or give it up with
+**Abort rebase** (**Abort cherry-pick**).
 
 **Files that change on disk** under an open tab (git switched branches,
 pulled, merged or discarded; or another program wrote them) are read again
