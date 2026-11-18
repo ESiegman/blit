@@ -120,6 +120,7 @@
 -- blit.opt.lsp.inlay_hints = false          -- parameter names and deduced types between the characters
 -- blit.opt.lsp.semantic_colors = true       -- the server's colours over tree-sitter's
 -- blit.opt.lsp.highlight_uses = true        -- mark the other uses of the name under the cursor
+-- blit.opt.lsp.reference_counts = true      -- how many references each definition on show has, after its line
 
 -- A server of your own, or changes to a built-in one (same name: only what
 -- is listed changes). `languages` are blit's names for file types, the ones

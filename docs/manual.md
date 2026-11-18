@@ -1489,6 +1489,14 @@ A server whose last file has been closed stops half a minute later.
 - **Inlay hints**, with `lsp.inlay_hints`: parameter names before
   arguments and deduced types after names, in the quiet ink, between the
   characters on every line on show but the cursor's.
+- **Reference counts**, with `lsp.reference_counts`: after each function,
+  method, class and struct on show (as the syntax tree finds them), how
+  many references the server finds to it, muted ("3 references", the
+  definition itself not counted). They are asked for once typing has
+  paused for a moment, each as its definition comes into view, and again
+  when the text changes or a file is saved. A click on one lists those
+  references, as Find references does. (Code lenses as servers send them
+  are not asked for: clangd, pyright and ruff send none.)
 - **The server's colours** (semantic tokens) over tree-sitter's, where they
   say more: a type, a parameter, a macro, a namespace, a member of an enum.
   A file that tree-sitter does not colour gets the server's alone.
@@ -1501,6 +1509,7 @@ blit.opt.lsp.format_on_save = true   -- the server formats a file before it is s
 blit.opt.lsp.inlay_hints = true      -- parameter names and deduced types between the characters (off)
 blit.opt.lsp.semantic_colors = false -- tree-sitter's colours alone (on)
 blit.opt.lsp.highlight_uses = false  -- no marks on the other uses of the name under the cursor (on)
+blit.opt.lsp.reference_counts = false -- no counts of references after the definitions (on)
 ```
 
 The server's colours use the theme's colour for what tree-sitter calls the
