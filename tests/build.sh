@@ -143,11 +143,11 @@ run "$F" "buildrun:make errors;buildwait;key:F8;key:F8;key:F8;problemsdump"
 got=${got#*| Build 7 | }
 check "and the Problems tab picks it" 'file src/a.c | E 3:9 '"'"'x'"'"' undeclared | E 7:9 second | file src/b.h | >W 2:5 unused [-Wunused] | file lib/c.c | E 4:3 bad | file sub/d.c | W 2:1 in a folder make went into | file cmake/x.cmake | W 2 look here | file tool.py | E 2 ValueError: boom'
 run "$F" "buildrun:make errors;buildwait;key:shift+F8;frame;statusdump"
-check "Shift+F8 from the start: the last" 'NORMAL tool.py | × 4 ▲ 3 Ln 2, Col 1 Tabs LF Python'
+check "Shift+F8 from the start: the last" 'NORMAL tool.py | × 4 ▲ 3 Ln 2, Col 1 LF Python'
 run "$F" "buildrun:make errors;frame;buildwait;frame;termclick:c.c:4:3;frame;statusdump"
 check "Cmd+click on a path:line in the output: from the folder Ninja went into" 'NORMAL lib/c.c | × 4 ▲ 3 Ln 4, Col 3 Spaces: 2 LF C'
 run "$F" "buildrun:make errors;frame;buildwait;frame;termclick:tool.py\", line 2;frame;statusdump"
-check "and on Python's File \"path\", line N (a long line, wrapped)" 'NORMAL tool.py | × 4 ▲ 3 Ln 2, Col 1 Tabs LF Python'
+check "and on Python's File \"path\", line N (a long line, wrapped)" 'NORMAL tool.py | × 4 ▲ 3 Ln 2, Col 1 LF Python'
 run "$F" "buildrun:make errors;frame;buildwait;frame;termclick:Linking;frame;statusdump"
 check "Cmd+click on what is not a place: nothing opens (the click is the terminal's)" 'make errors | × 4 ▲ 3'
 run "$F" "buildrun:make errors;buildwait;buildrun:make ok;buildwait;problemsdump"
