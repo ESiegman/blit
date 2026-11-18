@@ -104,6 +104,10 @@ if(APPLE)
   if(BLIT_DEV AND BLIT_OPTIMIZE_DEBUG)
     set(CMAKE_OBJC_FLAGS_DEBUG "${CMAKE_OBJC_FLAGS_RELEASE}")
   endif()
+  # (Objective-C whatever C's compiler is: once C is on too, CMake would
+  # give the .m files to it, and GCC, which a Homebrew build sets, cannot
+  # read the SDK's headers.)
+  set_source_files_properties(src/gpu_metal.m src/picture_mac.m src/macapp.m src/emoji_mac.m PROPERTIES LANGUAGE OBJC)
   add_library(blit_gpu STATIC src/gpu_metal.m src/picture_mac.m src/macapp.m)
   target_compile_options(blit_gpu PRIVATE -fobjc-arc -Wall -Wextra)
   target_link_libraries(blit_gpu PUBLIC "-framework Metal" "-framework QuartzCore" "-framework Foundation" "-framework CoreGraphics" "-framework ImageIO" "-framework AppKit" "-framework PDFKit")

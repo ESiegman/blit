@@ -3,7 +3,7 @@
 # (xctrace here on a Mac), its tab, the times in its code, its threads, the
 # profile kept beside the project and opened again; and the same on
 # "another machine" through tests/fake-ssh.sh (which runs it here).
-# Skipped where there is no profiler to run.
+# Skipped where there is no profiler to run, and on a Mac on CI.
 #
 #   tests/profile.sh path/to/blit            run the cases
 #   tests/profile.sh path/to/blit --print    show what each case gives
@@ -12,6 +12,9 @@ blit=${1:?usage: tests/profile.sh path/to/blit [--print]}
 print=${2:-}
 here=$(cd "$(dirname "$0")" && pwd)
 if [ "$(uname -s)" = Darwin ]; then
+    # (Not on CI: xctrace on GitHub's Mac runners now and then never ends.
+    # Reading its exports is tested from saved ones, tests/profile/*.xml.)
+    [ -z "${CI:-}" ] || { echo "profile skipped: no live recordings on CI"; exit 0; }
     xcrun --find xctrace >/dev/null 2>&1 || [ -x /Applications/Xcode.app/Contents/Developer/usr/bin/xctrace ] || { echo "profile skipped: no xctrace"; exit 0; }
 else
     command -v perf >/dev/null 2>&1 || { echo "profile skipped: no perf"; exit 0; }
