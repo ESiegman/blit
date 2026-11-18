@@ -239,14 +239,17 @@ void App::test_run(const std::vector<size_t>& which, bool coverage) {
         for (const size_t i : pick)
             if (u.tests[i].runner == TestCase::kCTest && u.tests[i].dir == d) names += (names.empty() ? "" : "|") + exactly(u.tests[i].id);
         std::string gcov;  // (with coverage: the gcov of the compiler the folder builds with, GCC's)
+        std::string compiler;  // (and where that one says its gcov is, when it is not on the PATH)
         if (coverage) {
             std::string cache;
             fs_read(d + "/CMakeCache.txt", &cache);
             const size_t at = cache.find("CMAKE_CXX_COMPILER:");
             std::string cc = at == std::string::npos ? std::string() : cache.substr(cache.find('=', at) + 1, cache.find('\n', at) - cache.find('=', at) - 1);
             const size_t slash = cc.rfind('/'), gpp = cc.rfind("g++");
-            if (gpp != std::string::npos && (slash == std::string::npos || gpp > slash)) gcov = cc.replace(gpp, 3, "gcov");
-            else if (cc.empty() || cc.ends_with("/c++")) gcov = "gcov";
+            if (gpp != std::string::npos && (slash == std::string::npos || gpp > slash)) {
+                compiler = cc;
+                gcov = cc.replace(gpp, 3, "gcov");
+            } else if (cc.empty() || cc.ends_with("/c++")) gcov = "gcov";
             else notify("Coverage is read with GCC's gcov: " + d.substr(d.rfind('/') + 1) + " builds with " + cc.substr(slash + 1));
         }
         const std::string clear = gcov.empty() ? std::string() : "find " + sh_word(d) + " -name '*.gcda' -delete; ";  // (this run's alone)
@@ -255,7 +258,9 @@ void App::test_run(const std::vector<size_t>& which, bool coverage) {
             const std::string out = report();
             u.reports.pop_back();
             u.cov_reports.push_back({out, d, false});
-            parts.push_back("(cd " + sh_word(d) + " && " + sh_word(gcov) + " --json-format --stdout $(find . -name '*.gcda') > " + sh_word(out) + " 2>/dev/null)");
+            // (Arch's gcc15 has g++-15 but its gcov only in GCC's own folder, which -print-prog-name knows.)
+            const std::string run = compiler.empty() ? sh_word(gcov) : "\"$(command -v " + sh_word(gcov) + " || " + sh_word(compiler) + " -print-prog-name=gcov)\"";
+            parts.push_back("(cd " + sh_word(d) + " && " + run + " --json-format --stdout $(find . -name '*.gcda') > " + sh_word(out) + " 2>/dev/null)");
         }
     }
     std::string ids;
