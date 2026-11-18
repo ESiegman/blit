@@ -12,6 +12,8 @@
 #include <deque>
 #include <string>
 
+#include "base64.hpp"
+
 namespace blit {
 
 namespace {
@@ -881,32 +883,6 @@ void Term::osc() {
 // ---------------------------------------------------------------- pictures
 
 namespace {
-
-// Base64, as kitty's pictures come (anything else in it is passed over).
-std::string from_base64(std::string_view in) {
-    static const auto kValue = [] {
-        std::array<signed char, 256> v{};
-        v.fill(-1);
-        const char* abc = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
-        for (int k = 0; k < 64; ++k) v[static_cast<u8>(abc[k])] = static_cast<signed char>(k);
-        return v;
-    }();
-    std::string out;
-    out.reserve(in.size() / 4 * 3);
-    u32 acc = 0;
-    int bits = 0;
-    for (const char c : in) {
-        const signed char v = kValue[static_cast<u8>(c)];
-        if (v < 0) continue;
-        acc = acc << 6 | static_cast<u32>(v);
-        bits += 6;
-        if (bits >= 8) {
-            bits -= 8;
-            out += static_cast<char>(acc >> bits & 0xFF);
-        }
-    }
-    return out;
-}
 
 // Bytes zlib compressed (kitty's o=z), no more than `most` of them out.
 bool inflate_all(const std::string& in, size_t most, std::string* out) {

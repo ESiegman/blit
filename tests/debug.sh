@@ -175,6 +175,35 @@ case "$got" in
 *) check "a jump to the cursor's line: it is there, the lines between not run" 'stopped; stack: main@18' ;;
 esac
 
+# The disassembly (the instructions are the machine's own: what is checked is
+# the heading of the line they are of, and the addresses): the cursor on the
+# instruction it stopped at, a step there an instruction's, and a breakpoint
+# at an instruction (the line's own taken away) where it stops the next time.
+heading_of() { printf '%s' "$1" | awk 'BEGIN { RS = " ;; " } /^>/ { print h; exit } /^ *count\.c:/ { h = $0 }' | sed 's/^ *//'; }
+run "$P;break:7;key:F5;debugwait:stopped;command:Show the disassembly;debugwait:answers;docdump:8;key:F10;debugwait:stopped;debugwait:answers;docdump:0;debugdump"
+first=$(printf '%s' "$got" | awk 'BEGIN { RS = " ;; " } /^>/ { print; exit }' | sed -n 's/^> |* *\(0x[0-9a-f]*\) .*/\1/p')
+second=$(printf '%s' "$got" | awk 'BEGIN { RS = " ;; " } /^>/ { n++ } n == 2 && /^>/ { print; exit }' | sed -n 's/^> |* *\(0x[0-9a-f]*\) .*/\1/p')
+heading=$(heading_of "$got")
+stop=$(printf '%s' "$got" | sed -e 's/.* ;; stopped/stopped/' -e 's/; vars: .*//')
+got="$heading ;; $([ -n "$first" ] && [ -n "$second" ] && [ $((second)) -gt $((first)) ] && echo "a step on" || echo "first $first, then $second") ;; $stop"
+check "the disassembly where it stopped, and a step of one instruction" 'count.c:7  int y = x * x; ;; a step on ;; stopped (step); stack: square@7 main@15'
+run "$P;break:7;key:F5;debugwait:stopped;command:Show the disassembly;debugwait:answers;key:F9;debugpanel;debugpick:breaks:1;debugpanel;key:Delete;debugbreaks;key:F5;debugwait:stopped;debugdump"
+got=$(printf '%s' "$got" | sed -e 's/at 0x[0-9a-f]*/at ADDRESS/' -e 's/stopped ([^)]*)/stopped/' -e 's/ y=[-0-9]*//')
+check "a breakpoint at an instruction" 'at ADDRESS ;; stopped; stack: square@7 main@15; vars: x=2; output: i=1 total=1'
+
+# Memory: where an expression points, the cursor on its byte; bytes written
+# there (the program goes on with them); and a variable's own (M in the Debug
+# tab), read again at the next stop with what changed.
+run "$P;break:16;key:F5;debugwait:stopped;command:Show memory at…;text:&total;key:Return;debugwait:answers;docdump:0;command:Write to memory at the cursor…;text:2a 00;key:Return;debugwait:answers;key:F5;debugwait:stopped;debugdump"
+# (Where total is: its four bytes, after the cursor.)
+total_bytes() { printf '%s' "$1" | awk 'BEGIN { RS = " ;; " } /^>/ { print }' | sed -n 's/.*|\([0-9a-f?]*\) \([0-9a-f?]*\) \([0-9a-f?]*\) \([0-9a-f?]*\).*/\1 \2 \3 \4/p' | tr '\n' ';'; }
+got="$(total_bytes "$got") ;; $(printf '%s' "$got" | sed -e 's/.* ;; stopped/stopped/' -e 's/ start\(@[0-9]*\)\{0,1\};/;/')"
+check "memory where an expression points: written, and the program goes on with it" '01 00 00 00; ;; stopped (breakpoint); stack: main@16; vars: i=2 total=46; output: i=1 total=42'
+run "$P;break:15;key:F5;debugwait:stopped;debugpanel;debugpick:vars:2;key:m;debugwait:answers;docdump:0;key:F10;debugwait:stopped;debugwait:answers;key:ctrl+Tab;docdump:0;command:Previous page of memory;command:Next page of memory;debugwait:answers;docdump:0"
+tops=$(printf '%s' "$got" | awk 'BEGIN { RS = " ;; " } /^>/ { print }' | sed -n 's/^> |*\(0x[0-9a-f]*\) .*/\1/p' | sort -u | wc -l | tr -d ' ')
+got="$(total_bytes "$got") ;; $tops"
+check "a variable's memory, read again at the next stop (and a page back and on, to where it was)" '00 00 00 00;01 00 00 00; ;; 1'
+
 # Attaching to a process that is running, and a core file.
 cp "$here/debug/waits.c" "$here/debug/crash.c" "$dir/here/" && (cd "$dir/here" && cc -g -O0 -o waits waits.c && cc -g -O0 -o crash crash.c) || exit 1
 "$dir/here/waits" &

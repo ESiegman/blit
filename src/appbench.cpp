@@ -1081,6 +1081,17 @@ void App::run_script(const char* script) {
             debug_wait(arg);
         } else if (verb == "debugdump") {
             std::fprintf(stderr, "%s\n", debug_dump().c_str());
+        } else if (verb == "docdump") {  // docdump:N, the tab in front's title, then its lines from N before the cursor's to N after (the cursor's marked >, and in it the cursor |)
+            const Editor& ed = pane_->doc->ed;
+            const u64 n = static_cast<u64>(std::max(0, std::atoi(arg.c_str()))), at = ed.buf.line_of(ed.cursor());
+            std::string out = pane_->doc->title;
+            for (u64 l = at > n ? at - n : 0; l <= at + n && l < ed.buf.line_count(); ++l) {
+                const u64 b = ed.buf.line_start(l);
+                std::string text = ed.buf.text(b, ed.line_end(l) - b);
+                if (l == at) text.insert(std::min<size_t>(text.size(), ed.cursor() - b), "|");
+                out += "\n" + std::string(l == at ? "> " : "  ") + text;
+            }
+            std::fprintf(stderr, "%s\n", out.c_str());
         } else if (verb == "newproject") {  // the start screen's New project tab
             project_page(true);
         } else if (verb == "project") {  // project:key=value (kind, name, where, git, or a field of the kind's)

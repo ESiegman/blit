@@ -898,6 +898,17 @@ private:
     void debug_send_data();
     void debug_run_to_cursor();
     void debug_jump_to_cursor();
+    bool debug_disasm_front() const;
+    Doc* debug_tab(u64& id, const char* title);
+    void debug_tab_fill(Doc& d, std::string text, std::vector<u32> off, std::vector<u8> style, i64 line, u64 col);
+    void debug_disasm_open();
+    void debug_disasm_ask();
+    void debug_send_instructions();
+    void debug_memory_pick();
+    void debug_memory_open(u64 addr, const std::string& name);
+    void debug_memory_page(int by);
+    void debug_memory_ask(i64 line, i32 byte);
+    void debug_memory_write();
     void debug_end();
     void debug_command(const std::string& what);
     void debug_frame(u32 i, bool show);

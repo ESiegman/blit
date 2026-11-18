@@ -6,18 +6,26 @@
 // the side panel's Debug tab: the program, the controls, the threads, the
 // call stack of the one chosen, the variables (opened a level at a time),
 // the expressions watched, the breakpoints and what the program printed.
+// And, in tabs of their own, the instructions where it stopped (stepped one
+// at a time there, with breakpoints at an address) and memory, a page at a
+// time.
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cstdio>
 #include <cstring>
 #include <map>
+#include <set>
 
 #include <unistd.h>
 
 #include <cctype>
 
 #include "app.hpp"
+#include "base64.hpp"
 #include "dap.hpp"
+#include "fsio.hpp"
+#include "highlight.hpp"
 #include "look.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
@@ -96,6 +104,26 @@ std::string trimmed(std::string_view s) {
     while (!s.empty() && (s.front() == ' ' || s.front() == '\t')) s.remove_prefix(1);
     while (!s.empty() && (s.back() == ' ' || s.back() == '\t')) s.remove_suffix(1);
     return std::string(s);
+}
+
+// An address as the debugger writes it ("0x1000004FC") or a number: 0 where it is neither.
+u64 address_of(std::string_view s) {
+    while (!s.empty() && s.front() == ' ') s.remove_prefix(1);
+    u64 base = 10;
+    if (s.starts_with("0x") || s.starts_with("0X")) s.remove_prefix(2), base = 16;
+    u64 v = 0;
+    for (const char c : s) {
+        const int d = c >= '0' && c <= '9' ? c - '0' : base == 16 && c >= 'a' && c <= 'f' ? c - 'a' + 10 : base == 16 && c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+        if (d < 0) break;
+        v = v * base + static_cast<u64>(d);
+    }
+    return v;
+}
+
+std::string hex(u64 v, int width = 1) {
+    char b[24];
+    std::snprintf(b, sizeof b, "0x%0*llx", width, static_cast<unsigned long long>(v));
+    return b;
 }
 
 }  // namespace
@@ -177,6 +205,7 @@ struct App::DebugUi {
         i64 id = 0;
         std::string name, path;  // (the path as blit knows it)
         u32 line = 0;            // from 1
+        u64 ip = 0;              // the address of its instruction
     };
     std::vector<Frame> frames;
     u32 frame = 0;
@@ -186,6 +215,7 @@ struct App::DebugUi {
         u32 depth = 0;
         bool open = false;
         i64 parent = 0;  // (the reference it was listed under: what setVariable and dataBreakpointInfo name it by)
+        u64 addr = 0;    // where it is in memory, where the debugger says
     };
     // Data breakpoints: a variable's writes watched, by the debugger's id for it.
     struct Data {
@@ -195,6 +225,22 @@ struct App::DebugUi {
     // Run to the cursor: a breakpoint there until the next stop.
     std::string run_to_path;
     u32 run_to_line = 0;
+    // The disassembly tab (its document's id; 0 when there is none): the
+    // instructions around the frame shown's, a line each, and before those of
+    // each source line a heading (its function, file and line, and its text).
+    // The address of each line, 0 for a heading's.
+    u64 disasm_doc = 0;
+    std::vector<u64> disasm_addrs;
+    u64 disasm_gen = 0;
+    std::set<u64> ibreaks;  // breakpoints at an instruction, by its address
+    // The memory tab: a page of memory from mem_addr, 16 bytes a line, read
+    // again at each stop; what it was asked for as.
+    u64 mem_doc = 0, mem_addr = 0, mem_gen = 0;
+    std::string mem_name;
+    std::vector<i32> mem_last;  // (each byte as last read, -1 where it could not be)
+    u64 mem_last_addr = 0;
+    u32 mem_width = 8;  // (the hex digits of its addresses)
+    static constexpr u32 kMemPage = 4096;
     std::vector<Var> vars;
     u64 vars_gen = 0;  // (answers about variables from before the last stop are dropped)
     // The expressions watched: each evaluated where it stopped, in the frame shown.
@@ -210,7 +256,7 @@ struct App::DebugUi {
     int exit_code = -1;
     bool end_soon = false;  // (the session ends once the debugger's answers have been run: not inside one)
     // The panel: a row for each thing shown, and the one chosen.
-    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData };
+    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData, kInstr };
     // A row: a mark (a triangle, an arrow) before its text, in an ink of its
     // own; the text; something quieter after it; and on the right its key.
     struct Row {
@@ -268,6 +314,17 @@ bool App::debug_running() const { return debugui_ && debugui_->state != DebugUi:
 void App::debug_toggle_break() {
     DebugUi& u = *debugui_;
     Doc& d = *pane_->doc;
+    if (debug_disasm_front()) {  // at the cursor's instruction
+        const u64 line = d.ed.buf.line_of(d.ed.cursor());
+        const u64 a = line < u.disasm_addrs.size() ? u.disasm_addrs[line] : 0;
+        if (!a) return;
+        if (!u.can.instruction_breaks) return notify("This debugger cannot break at an instruction");
+        if (!u.ibreaks.erase(a)) u.ibreaks.insert(a);
+        debug_send_instructions();
+        ++debug_gen_;
+        dirty_ = true;
+        return;
+    }
     if (d.ed.path.empty() || d.term || d.prof) return;
     const std::string path = full_path(d.ed.path);
     const u32 line = static_cast<u32>(d.ed.buf.line_of(d.ed.cursor()));
@@ -387,8 +444,17 @@ void App::debug_break_function() {
 // What goes in a line's first gutter cell: the line the program stopped
 // on (an arrow), or a breakpoint (a dot); 0 for nothing.
 u32 App::debug_gutter(const Doc& d, u64 line) {
-    if (!debugui_ || d.ed.path.empty()) return 0;
+    if (!debugui_) return 0;
     DebugUi& u = *debugui_;
+    if (u.disasm_doc && d.id == u.disasm_doc) {  // the disassembly's: by address
+        const u64 a = line < u.disasm_addrs.size() ? u.disasm_addrs[line] : 0;
+        if (!a) return 0;
+        if (u.state == DebugUi::kStopped && u.frame < u.frames.size() && u.frames[u.frame].ip == a)
+            return (font_->glyph(0x25B6) & (Font::kWide - 1)) | (kInkAccent << kCellInkShift);
+        if (u.ibreaks.contains(a)) return (font_->glyph(0x25CF) & (Font::kWide - 1)) | (kInkDiagnostic << kCellInkShift);
+        return 0;
+    }
+    if (d.ed.path.empty()) return 0;
     if (u.breaks.empty() && u.state != DebugUi::kStopped) return 0;
     if (u.gutter_gen != debug_gen_ || u.gutter_of != d.ed.path) {
         u.gutter_of = d.ed.path;
@@ -411,8 +477,14 @@ u32 App::debug_gutter(const Doc& d, u64 line) {
 
 std::vector<u64> App::debug_break_lines(const Doc& d) {
     std::vector<u64> out;
-    if (!debugui_ || d.ed.path.empty()) return out;
+    if (!debugui_) return out;
     const DebugUi& u = *debugui_;
+    if (u.disasm_doc && d.id == u.disasm_doc) {
+        for (size_t l = 0; l < u.disasm_addrs.size(); ++l)
+            if (u.disasm_addrs[l] && u.ibreaks.contains(u.disasm_addrs[l])) out.push_back(l);
+        return out;
+    }
+    if (d.ed.path.empty()) return out;
     if (u.breaks.empty()) return out;  // (none anywhere: the path is not even looked up)
     if (const auto it = u.breaks.find(full_path(d.ed.path)); it != u.breaks.end())
         for (const auto& [line, b] : it->second) out.push_back(line);
@@ -620,7 +692,8 @@ void App::debug_end() {
     }
     u.dap.reset();
     u.state = DebugUi::kIdle;
-    u.data.clear();  // (the debugger's ids for them were this session's)
+    u.data.clear();  // (the debugger's ids for them were this session's, as the program's addresses were)
+    u.ibreaks.clear();
     u.run_to_path.clear();
     u.frames.clear();
     u.threads.clear();
@@ -640,7 +713,9 @@ void App::debug_command(const std::string& what) {
         return;
     }
     if (u.state != DebugUi::kStopped) return;
-    u.dap->request(what, "{\"threadId\":" + std::to_string(u.thread) + "}");  // continue, next, stepIn, stepOut
+    // continue, next, stepIn, stepOut; in the disassembly, a step is an instruction's
+    const bool by_instruction = (what == "next" || what == "stepIn") && u.can.granularity && debug_disasm_front();
+    u.dap->request(what, "{\"threadId\":" + std::to_string(u.thread) + (by_instruction ? ",\"granularity\":\"instruction\"" : "") + "}");
     u.state = DebugUi::kRunning;
     u.frames.clear();
     u.threads.clear();
@@ -689,6 +764,8 @@ void App::debug_frame(u32 i, bool show) {
         dirty_ = true;
     });
     debug_watch_eval();  // (in this frame)
+    debug_disasm_ask();  // (its instructions)
+    debug_memory_ask(-1, -1);  // (as it is now)
     ++debug_gen_;
     dirty_ = true;
 }
@@ -736,11 +813,14 @@ void App::debug_stack() {
             // (A frame without source of its own, a library's, is given one the debugger makes, its
             // disassembly, by reference: its path is no file's.)
             const bool own = f["source"]["sourceReference"].integer() == 0;
-            v.frames.push_back({f["id"].integer(), std::string(f["name"].str()), own ? v.here(f["source"]["path"].str()) : std::string(), static_cast<u32>(f["line"].integer())});
+            v.frames.push_back({f["id"].integer(), std::string(f["name"].str()), own ? v.here(f["source"]["path"].str()) : std::string(), static_cast<u32>(f["line"].integer()),
+                                address_of(f["instructionPointerReference"].str())});
         }
+        // (Stepping in the disassembly, the frame that stopped, source or none, and the tab stays in front.)
+        const bool instructions = debug_disasm_front();
         u32 first = 0;
-        while (first < v.frames.size() && v.frames[first].path.empty()) ++first;
-        debug_frame(first < v.frames.size() ? first : 0, true);
+        while (!instructions && first < v.frames.size() && v.frames[first].path.empty()) ++first;
+        debug_frame(first < v.frames.size() ? first : 0, !instructions);
         ++debug_gen_;
         dirty_ = true;
     });
@@ -787,7 +867,7 @@ void App::debug_expand(u32 i) {
         for (json::Value x : m.body()["variables"]) {
             std::string value(x["value"].str());
             if (const std::string_view type = x["type"].str(); !type.empty() && value.size() < 40) value += "  (" + std::string(type) + ")";
-            kids.push_back({std::string(x["name"].str()), std::move(value), x["variablesReference"].integer(), depth, false, ref});
+            kids.push_back({std::string(x["name"].str()), std::move(value), x["variablesReference"].integer(), depth, false, ref, address_of(x["memoryReference"].str())});
         }
         v.vars.insert(v.vars.begin() + static_cast<std::ptrdiff_t>(at + 1), kids.begin(), kids.end());
         ++debug_gen_;
@@ -810,6 +890,7 @@ void App::debug_sync() {
             u.gdb = u.dap->errors().find(kGdbSays) != std::string::npos;  // (said before it started: here by now)
             for (const auto& [path, lines] : u.breaks) debug_send_breaks(path);
             debug_send_functions();
+            debug_send_instructions();
             u.dap->request("setExceptionBreakpoints", "{\"filters\":[]}");
             u.dap->request("configurationDone");
             // (As other clients do, the threads are asked for once now: lldb-dap answers the
@@ -981,6 +1062,318 @@ void App::debug_jump_to_cursor() {
                    });
 }
 
+// ---------------------------------------------------------------- the disassembly and memory tabs
+
+bool App::debug_disasm_front() const {
+    return debugui_ && debugui_->disasm_doc && pane_ && pane_->doc && pane_->doc->id == debugui_->disasm_doc;
+}
+
+// One of the debugger's tabs (by its document's id, which is set when it is
+// made) brought to the front; made, beside the one in front, if it is not open.
+Doc* App::debug_tab(u64& id, const char* title) {
+    Pane* p = nullptr;
+    size_t at = 0;
+    if (Doc* d = id ? find_doc(id, &p, &at) : nullptr) {
+        focus_pane(p);
+        tab_show(at);
+        panel_focus(false);
+        return d;
+    }
+    Doc* d = add_doc(pane_->tab + 1);
+    d->title = title;
+    d->read_only = true;
+    id = d->id;
+    tab_show(pane_->tab + 1);
+    panel_focus(false);
+    return d;
+}
+
+// Such a tab given its text, coloured in runs (from off[i] on, style[i]: 3 the
+// accent, 4 quieter), its cursor on `line` (where it was, for -1), `col` along it.
+void App::debug_tab_fill(Doc& d, std::string text, std::vector<u32> off, std::vector<u8> style, i64 line, u64 col_at) {
+    const u64 was = d.ed.buf.line_of(d.ed.cursor()), col = d.ed.cursor() - d.ed.buf.line_start(was);
+    if (!text.empty() && text.back() == '\n') text.pop_back();
+    d.measurer = {};  // (it may be reading the text that goes)
+    d.ed.open_bytes({}, text);
+    d.ed.mark_saved();
+    auto h = std::make_unique<Highlights>();
+    h->base = 0;
+    h->end = text.size();
+    h->off = std::move(off);
+    h->style = std::move(style);
+    h->seal();
+    d.marks = std::move(h);
+    d.style_bits[3] = kInkAccent << kCellInkShift;
+    d.style_bits[4] = kInkMuted << kCellInkShift;
+    d.widest_rev = d.indent_rev = ~0ull;
+    const u64 to = std::min<u64>(line >= 0 ? static_cast<u64>(line) : was, d.ed.buf.line_count() - 1);
+    const u64 start = d.ed.buf.line_start(to);
+    d.ed.move_to(std::min<u64>(start + (line >= 0 ? col_at : col), d.ed.line_end(to)), false);
+    Pane* where = nullptr;
+    find_doc(d.id, &where);
+    if (where) {
+        where->cache_rev = ~0ull;
+        if (where->doc == &d) {
+            Pane* const keep = pane_;
+            pane_ = where;
+            scroll_to_cursor();
+            pane_ = keep;
+        }
+    }
+    ++debug_gen_;
+    dirty_ = true;
+}
+
+namespace {
+
+// Runs of style as a tab's text is put together.
+struct Runs {
+    std::string text;
+    std::vector<u32> off;
+    std::vector<u8> style;
+    void add(std::string_view s, u8 st) {
+        if (s.empty()) return;
+        const u32 at = static_cast<u32>(text.size());
+        if (style.empty() ? st != 0 : style.back() != st) {
+            if (!off.empty() && off.back() == at) style.back() = st;
+            else off.push_back(at), style.push_back(st);
+        }
+        text += s;
+    }
+};
+
+}  // namespace
+
+void App::debug_disasm_open() {
+    DebugUi& u = *debugui_;
+    if (!u.dap || u.state != DebugUi::kStopped) return notify("The program is not stopped");
+    if (!u.can.disassemble) return notify("This debugger cannot disassemble");
+    debug_tab(u.disasm_doc, "Disassembly");
+    debug_disasm_ask();
+}
+
+// The instructions around the frame shown's, asked for when the tab is open:
+// a line each, and above those of each source line its file, line and text.
+void App::debug_disasm_ask() {
+    DebugUi& u = *debugui_;
+    if (u.disasm_doc && !find_doc(u.disasm_doc)) u.disasm_doc = 0, u.disasm_addrs.clear();  // (closed)
+    if (!u.disasm_doc || !u.dap || u.state != DebugUi::kStopped || u.frame >= u.frames.size() || !u.frames[u.frame].ip) return;
+    const u64 ip = u.frames[u.frame].ip, gen = ++u.disasm_gen;
+    ++u.asking;
+    u.dap->request("disassemble", "{\"memoryReference\":" + quoted(hex(ip)) + ",\"instructionOffset\":-32,\"instructionCount\":96,\"resolveSymbols\":true}",
+                   [this, gen, ip](const Dap::Message& m) {
+                       DebugUi& v = *debugui_;
+                       if (v.asking) --v.asking;
+                       Doc* d = v.disasm_doc ? find_doc(v.disasm_doc) : nullptr;
+                       if (gen != v.disasm_gen || !d) return;
+                       v.disasm_addrs.clear();
+                       if (!m.success) {
+                           debug_tab_fill(*d, "The debugger could not disassemble here: " + why_not(m.message), {}, {}, 0, 0);
+                           return;
+                       }
+                       const json::Value all = m.body()["instructions"];
+                       u64 last = ip;
+                       for (const json::Value x : all) last = std::max(last, address_of(x["address"].str()));
+                       int width = 1;
+                       for (u64 a = last; a >= 16; a /= 16) ++width;
+                       std::map<std::string, std::vector<std::string>> sources;  // (each file's lines, read once)
+                       auto source_line = [&](const std::string& path, i64 n) -> std::string {
+                           if (!v.remote.empty()) return {};
+                           auto [it, fresh] = sources.try_emplace(path);
+                           if (fresh) {
+                               std::string text;
+                               if (fs_read(path, &text)) {
+                                   size_t from = 0;
+                                   for (size_t nl; (nl = text.find('\n', from)) != std::string::npos; from = nl + 1) it->second.push_back(text.substr(from, nl - from));
+                                   it->second.push_back(text.substr(from));
+                               }
+                           }
+                           if (n < 1 || static_cast<size_t>(n) > it->second.size()) return {};
+                           std::string l = trimmed(it->second[static_cast<size_t>(n - 1)]);
+                           for (char& c : l)
+                               if (c == '\t') c = ' ';
+                           return l;
+                       };
+                       Runs out;
+                       std::string sym, file;
+                       i64 line = -1, at = -1;
+                       for (const json::Value x : all) {
+                           const u64 a = address_of(x["address"].str());
+                           if (const std::string_view s = x["symbol"].str(); !s.empty() && s != sym) {
+                               sym = s;
+                               out.add(sym + ":\n", 3);
+                               v.disasm_addrs.push_back(0);
+                           }
+                           // (gdb names the file only where it changes.)
+                           const std::string_view named = x["location"]["path"].str();
+                           const std::string path = named.empty() ? file : std::string(named);
+                           const i64 n = x["line"].integer(-1);
+                           if (!path.empty() && n > 0 && (path != file || n != line)) {
+                               file = path, line = n;
+                               out.add("  " + base_name(file) + ":" + std::to_string(n), 4);
+                               if (const std::string l = source_line(file, n); !l.empty()) out.add("  " + l, 0);
+                               out.add("\n", 0);
+                               v.disasm_addrs.push_back(0);
+                           }
+                           // (lldb pads the instruction, and names after a function's first the function, a heading here.)
+                           std::string ins = trimmed(x["instruction"].str());
+                           if (const size_t semi = ins.find(';'); semi != std::string::npos) {
+                               std::string note = trimmed(std::string_view(ins).substr(semi + 1));
+                               ins = trimmed(std::string_view(ins).substr(0, semi));
+                               if (!note.empty() && note != sym) ins += "  ; " + note;
+                           }
+                           if (a == ip) at = static_cast<i64>(v.disasm_addrs.size());
+                           out.add("    " + hex(a, width), 4);
+                           out.add("  " + ins + "\n", 0);
+                           v.disasm_addrs.push_back(a);
+                       }
+                       debug_tab_fill(*d, std::move(out.text), std::move(out.off), std::move(out.style), at >= 0 ? at : 0, 0);
+                   });
+}
+
+// Breakpoints at instructions, to a session under way.
+void App::debug_send_instructions() {
+    DebugUi& u = *debugui_;
+    if (!u.dap || u.state == DebugUi::kStarting || !u.can.instruction_breaks) return;
+    std::string a = "{\"breakpoints\":[";
+    for (const u64 at : u.ibreaks) a += std::string(a.back() == '[' ? "" : ",") + "{\"instructionReference\":" + quoted(hex(at)) + "}";
+    u.dap->request("setInstructionBreakpoints", a + "]}");
+}
+
+// Memory at an address, or where an expression says (a pointer's value, or
+// what the debugger says is its memory).
+void App::debug_memory_pick() {
+    DebugUi& u = *debugui_;
+    if (!u.dap || u.state != DebugUi::kStopped) return notify("The program is not stopped");
+    if (!u.can.read_memory) return notify("This debugger cannot read memory");
+    find_choose(kFindInput, "Memory at", u.mem_name, [this](const std::string& typed) {
+        DebugUi& v = *debugui_;
+        const std::string e = trimmed(typed);
+        if (e.empty() || !v.dap || v.state != DebugUi::kStopped) return;
+        const std::string frame = v.frame < v.frames.size() ? ",\"frameId\":" + std::to_string(v.frames[v.frame].id) : std::string();
+        ++v.asking;
+        v.dap->request("evaluate", "{\"expression\":" + quoted(e) + frame + ",\"context\":\"watch\"}", [this, e](const Dap::Message& m) {
+            DebugUi& w = *debugui_;
+            if (w.asking) --w.asking;
+            if (!m.success) return notify(e + ": " + why_not(m.message));
+            u64 a = address_of(m.body()["memoryReference"].str());
+            if (!a) a = address_of(m.body()["result"].str());
+            if (!a) return notify(e + " is no address");
+            debug_memory_open(a, e);
+        });
+    });
+}
+
+void App::debug_memory_open(u64 addr, const std::string& name) {
+    DebugUi& u = *debugui_;
+    u.mem_addr = addr & ~u64{15};
+    if (!name.empty()) u.mem_name = name;
+    u.mem_last.clear();
+    debug_tab(u.mem_doc, "Memory");
+    debug_memory_ask(0, static_cast<i32>(addr & 15));
+}
+
+void App::debug_memory_page(int by) {
+    DebugUi& u = *debugui_;
+    if (!u.mem_doc || !find_doc(u.mem_doc)) return;
+    const u64 step = DebugUi::kMemPage;
+    if (by < 0 && u.mem_addr < step) return;
+    u.mem_addr = by < 0 ? u.mem_addr - step : u.mem_addr + step;
+    u.mem_last.clear();
+    debug_tab(u.mem_doc, "Memory");
+    debug_memory_ask(0, -1);
+}
+
+// A page of memory from mem_addr, read (again): 16 bytes a line, as numbers
+// and as characters, those that cannot be read ??, and those that have
+// changed since it was last read in the accent.
+void App::debug_memory_ask(i64 line, i32 byte) {
+    DebugUi& u = *debugui_;
+    if (u.mem_doc && !find_doc(u.mem_doc)) u.mem_doc = 0;  // (closed)
+    if (!u.mem_doc || !u.dap || u.state != DebugUi::kStopped) return;
+    const u64 addr = u.mem_addr, gen = ++u.mem_gen;
+    ++u.asking;
+    u.dap->request("readMemory", "{\"memoryReference\":" + quoted(hex(addr)) + ",\"count\":" + std::to_string(DebugUi::kMemPage) + "}",
+                   [this, gen, addr, line, byte](const Dap::Message& m) {
+                       DebugUi& v = *debugui_;
+                       if (v.asking) --v.asking;
+                       Doc* d = v.mem_doc ? find_doc(v.mem_doc) : nullptr;
+                       if (gen != v.mem_gen || !d) return;
+                       if (!m.success) {
+                           debug_tab_fill(*d, "The debugger could not read memory at " + hex(addr) + ": " + why_not(m.message), {}, {}, 0, 0);
+                           return;
+                       }
+                       const std::string data = from_base64(m.body()["data"].str());
+                       const u64 start = data.empty() ? addr : address_of(m.body()["address"].str());
+                       // Each byte, or -1 where it could not be read.
+                       std::vector<i32> now(DebugUi::kMemPage, -1);
+                       for (u64 i = 0; i < DebugUi::kMemPage; ++i)
+                           if (addr + i >= start && addr + i - start < data.size()) now[i] = static_cast<u8>(data[addr + i - start]);
+                       const bool compare = v.mem_last.size() == now.size() && v.mem_last_addr == addr;
+                       int width = 8;
+                       for (u64 a = (addr + DebugUi::kMemPage - 1) >> 32; a; a >>= 4) ++width;
+                       v.mem_width = static_cast<u32>(width);
+                       Runs out;
+                       static const char kDigits[] = "0123456789abcdef";
+                       for (u64 row = 0; row < DebugUi::kMemPage / 16; ++row) {
+                           out.add(hex(addr + row * 16, width) + " ", 4);
+                           std::string chars;
+                           for (u64 j = 0; j < 16; ++j) {
+                               const i32 b = now[row * 16 + j];
+                               out.add(j == 8 ? "  " : " ", 0);
+                               if (b < 0) {
+                                   out.add("??", 4);
+                                   chars += ' ';
+                                   continue;
+                               }
+                               const char two[2] = {kDigits[b >> 4], kDigits[b & 15]};
+                               out.add(std::string_view(two, 2), compare && v.mem_last[row * 16 + j] != b ? 3 : 0);
+                               chars += b >= 0x20 && b < 0x7F ? static_cast<char>(b) : '.';
+                           }
+                           out.add("  " + chars + "\n", 4);
+                       }
+                       v.mem_last = std::move(now);
+                       v.mem_last_addr = addr;
+                       // (The cursor on the byte asked for: after the address and its space, each byte is three wide, one more after the eighth.)
+                       const u64 col = byte < 0 ? 0 : 2 + static_cast<u64>(width) + 2 + 3 * static_cast<u64>(byte) + (byte >= 8 ? 1 : 0);
+                       debug_tab_fill(*d, std::move(out.text), std::move(out.off), std::move(out.style), line, col);
+                   });
+}
+
+// Bytes written where the cursor is in the memory tab (typed as hex: "2a 00").
+void App::debug_memory_write() {
+    DebugUi& u = *debugui_;
+    if (!u.mem_doc || !pane_->doc || pane_->doc->id != u.mem_doc || !u.dap || u.state != DebugUi::kStopped) return;
+    if (!u.can.write_memory) return notify("This debugger cannot write memory");
+    const Doc& d = *pane_->doc;
+    const u64 line = d.ed.buf.line_of(d.ed.cursor()), col = d.ed.cursor() - d.ed.buf.line_start(line);
+    // (The bytes start after the address, "0x" and its digits, and a space; each is three wide, with one more after the eighth; then the characters.)
+    const u64 bytes = 2 + u.mem_width + 1, chars = bytes + 16 * 3 + 1 + 2;
+    u64 j = col >= chars ? col - chars : col <= bytes ? 0 : (col - bytes - (col - bytes >= 25 ? 1 : 0)) / 3;
+    j = std::min<u64>(j, 15);
+    const u64 at = u.mem_addr + line * 16 + j;
+    find_choose(kFindInput, "Bytes at " + hex(at), "", [this, at](const std::string& typed) {
+        DebugUi& v = *debugui_;
+        std::string raw;
+        int half = -1;
+        for (const char c : typed) {
+            const int digit = c >= '0' && c <= '9' ? c - '0' : c >= 'a' && c <= 'f' ? c - 'a' + 10 : c >= 'A' && c <= 'F' ? c - 'A' + 10 : -1;
+            if (c == ' ' || c == ',') continue;
+            if (digit < 0) return notify("Not bytes: " + typed);
+            if (half < 0) half = digit;
+            else raw += static_cast<char>(half << 4 | digit), half = -1;
+        }
+        if (raw.empty() || half >= 0 || !v.dap || v.state != DebugUi::kStopped) return;
+        ++v.asking;
+        v.dap->request("writeMemory", "{\"memoryReference\":" + quoted(hex(at)) + ",\"data\":" + quoted(to_base64(raw)) + "}", [this, at](const Dap::Message& m) {
+            DebugUi& w = *debugui_;
+            if (w.asking) --w.asking;
+            if (!m.success) return notify("Cannot write at " + hex(at) + ": " + why_not(m.message));
+            debug_frame(w.frame, false);  // (the variables, the watches and the memory, as they are now)
+        });
+    });
+}
+
 // ---------------------------------------------------------------- the Debug tab
 
 void App::debug_panel_draw(TextBox& box, bool focused) {
@@ -1117,6 +1510,15 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
             r.mark_ink = ink::kError;
         }
     }
+    if (!u.ibreaks.empty()) {
+        heading("Instruction breakpoints", u.ibreaks.size());
+        u32 i = 0;
+        for (const u64 a : u.ibreaks) {
+            Row& r = add(DebugUi::kInstr, i++, hex(a));
+            r.mark = "\xE2\x97\x8F";
+            r.mark_ink = ink::kError;
+        }
+    }
     if (!u.output.empty() || !u.partial.empty()) {
         heading("Output", 0);
         const size_t from = u.output.size() > 200 ? u.output.size() - 200 : 0;
@@ -1227,6 +1629,17 @@ void App::debug_do(u32 i) {
             break;
         }
         case DebugUi::kData: break;
+        case DebugUi::kInstr: {  // its instruction, where the disassembly has it
+            auto it = u.ibreaks.begin();
+            std::advance(it, std::min<size_t>(row.index, u.ibreaks.size() - 1));
+            Doc* d = u.disasm_doc ? find_doc(u.disasm_doc) : nullptr;
+            const auto at = std::ranges::find(u.disasm_addrs, *it);
+            if (!d || at == u.disasm_addrs.end()) break;
+            debug_disasm_open();
+            d->ed.move_to(d->ed.buf.line_start(static_cast<u64>(at - u.disasm_addrs.begin())), false);
+            scroll_to_cursor();
+            break;
+        }
         case DebugUi::kNone: break;
     }
 }
@@ -1269,6 +1682,14 @@ bool App::debug_panel_key(const SDL_KeyboardEvent& k) {
         case SDLK_W:  // a variable's writes watched (again: no longer)
             if (u.sel < n && u.rows[u.sel].act == DebugUi::kVar) debug_watch_writes(u.rows[u.sel].index);
             return true;
+        case SDLK_M:  // the memory a variable is in
+            if (u.sel < n && u.rows[u.sel].act == DebugUi::kVar && u.rows[u.sel].index < u.vars.size()) {
+                const DebugUi::Var& v = u.vars[u.rows[u.sel].index];
+                if (!v.addr) return notify("No address for " + v.name), true;
+                if (!u.can.read_memory) return notify("This debugger cannot read memory"), true;
+                debug_memory_open(v.addr, {});
+            }
+            return true;
         case SDLK_RIGHT:
         case SDLK_LEFT:  // a variable opened or shut
             if (u.sel < n && u.rows[u.sel].act == DebugUi::kVar) {
@@ -1285,6 +1706,15 @@ bool App::debug_panel_key(const SDL_KeyboardEvent& k) {
             if (u.sel < n && u.rows[u.sel].act == DebugUi::kData && u.rows[u.sel].index < u.data.size()) {
                 u.data.erase(u.data.begin() + u.rows[u.sel].index);
                 debug_send_data();
+                ++debug_gen_;
+                dirty_ = true;
+                return true;
+            }
+            if (u.sel < n && u.rows[u.sel].act == DebugUi::kInstr && u.rows[u.sel].index < u.ibreaks.size()) {
+                auto it = u.ibreaks.begin();
+                std::advance(it, u.rows[u.sel].index);
+                u.ibreaks.erase(it);
+                debug_send_instructions();
                 ++debug_gen_;
                 dirty_ = true;
                 return true;
@@ -1332,8 +1762,15 @@ void App::debug_marks(FrameDesc& fd) {
     for (u32 vi = 0; vi < fd.view_count && vi < kMaxViews; ++vi) {
         GridSpec& g = fd.views[vi].grid;
         Doc* d = find_doc(g.doc);
-        if (!d || d->ed.path.empty() || full_path(d->ed.path) != f.path || f.line == 0) continue;
-        const u64 l = f.line - 1;
+        if (!d) continue;
+        u64 l = ~0ull;
+        if (u.disasm_doc && d->id == u.disasm_doc) {  // the disassembly: the instruction's line
+            for (size_t k = 0; k < u.disasm_addrs.size() && f.ip; ++k)
+                if (u.disasm_addrs[k] == f.ip) l = k;
+        } else if (!d->ed.path.empty() && f.line && full_path(d->ed.path) == f.path) {
+            l = f.line - 1;
+        }
+        if (l == ~0ull) continue;
         if (l < g.top_line || l >= g.bottom() || l >= d->ed.buf.line_count()) continue;
         TextBox box;
         const std::string text = "\xE2\x97\x80 stopped" + (u.reason.empty() ? std::string() : ": " + u.reason);
@@ -1428,6 +1865,7 @@ std::string App::debug_breaks_dump() {
         }
     for (const std::string& f : u.functions) out += (out.empty() ? "" : "; ") + f + "()";
     for (const DebugUi::Data& d : u.data) out += (out.empty() ? "" : "; ") + std::string("writes to ") + d.name;
+    for (const u64 a : u.ibreaks) out += (out.empty() ? "" : "; ") + std::string("at ") + hex(a);
     return out.empty() ? "no breakpoints" : out;
 }
 

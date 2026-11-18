@@ -338,6 +338,11 @@ void App::commands_create() {
     own("Break at a function\xE2\x80\xA6", {}, [this] { debug_break_function(); });
     own("Run to the cursor", {key(SDLK_F10, kC)}, [this] { debug_run_to_cursor(); });
     own("Jump to the cursor's line", {}, [this] { debug_jump_to_cursor(); });
+    own("Show the disassembly", {}, [this] { debug_disasm_open(); });
+    own("Show memory at\xE2\x80\xA6", {}, [this] { debug_memory_pick(); });
+    own("Next page of memory", {}, [this] { debug_memory_page(1); });
+    own("Previous page of memory", {}, [this] { debug_memory_page(-1); });
+    own("Write to memory at the cursor\xE2\x80\xA6", {}, [this] { debug_memory_write(); });
     own("Run the tests", {}, [this] { test_run({}); });
     own("Run the failed tests again", {}, [this] { test_run_failed(); });
     own("Run the tests with coverage", {}, [this] { test_run({}, true); });
