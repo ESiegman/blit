@@ -85,9 +85,12 @@ struct App::BuildUi {
     std::unordered_map<std::string, u32> groups;  // a file's place in that order
     u32 seq = 0;
     i64 at = -1;
+    // CMake's build type and target, chosen in the Build tab (empty: the
+    // project's own, and all), put into its tasks as they run.
+    std::string cmake_type, cmake_target;
     // The Build tab: a row for each system and for each task, and the one chosen.
     struct Row {
-        int task = -1;  // -1: a system's heading
+        int task = -1;  // -1: a system's heading; kTypeRow, kTargetRow: CMake's build type and target
         std::string text;
         u32 count = 0;  // a heading's: its tasks
     };
@@ -104,6 +107,37 @@ struct App::BuildUi {
 };
 
 void App::build_create() { buildui_ = std::make_shared<BuildUi>(); }
+
+namespace {
+
+constexpr int kTypeRow = -2, kTargetRow = -3;  // (the Build tab's rows for CMake's build type and target)
+bool choosable(int task) { return task >= 0 || task == kTypeRow || task == kTargetRow; }
+
+// A CMake task's command with the build type and target chosen: a
+// configure given -DCMAKE_BUILD_TYPE (and, where a build is all it does, a
+// configure first, so that the type is the folder's), a build given
+// --target. A preset's says its own.
+std::string with_cmake(std::string cmd, const std::string& type, const std::string& target) {
+    if (cmd.find("--preset") != std::string::npos) return cmd;
+    auto word_end = [&](size_t from) {
+        size_t e = cmd.find(' ', from);
+        return e == std::string::npos ? cmd.size() : e;
+    };
+    if (!type.empty()) {
+        const size_t conf = cmd.find("cmake -S . -B ");
+        if (conf != std::string::npos) {
+            cmd.insert(word_end(conf + 14), " -DCMAKE_BUILD_TYPE=" + type);
+        } else if (const size_t build = cmd.find("cmake --build "); build != std::string::npos && cmd.find("--target clean") == std::string::npos) {
+            const std::string dir = cmd.substr(build + 14, word_end(build + 14) - build - 14);
+            cmd = "cmake -S . -B " + dir + " -DCMAKE_BUILD_TYPE=" + type + " && " + cmd;
+        }
+    }
+    if (!target.empty() && cmd.find("--target") == std::string::npos)
+        if (const size_t build = cmd.find("cmake --build "); build != std::string::npos) cmd.insert(word_end(build + 14), " --target " + sh_word(target));
+    return cmd;
+}
+
+}  // namespace
 
 std::string App::build_root() const {
     const std::string* root = panel_root();
@@ -283,7 +317,7 @@ void App::build_run(int index) {
     }
     const BuildTask t = u.tasks[static_cast<size_t>(index)];
     u.current = task_key(t);
-    std::string cmd = t.cmd;
+    std::string cmd = t.system == "CMake" ? with_cmake(t.cmd, u.cmake_type, u.cmake_target) : t.cmd;
     if (!t.before.empty()) {  // a run configuration's build first: then, if it went well, the program
         const auto it = std::ranges::find_if(u.tasks, [&](const BuildTask& b) { return !b.config && (b.name == t.before || b.system + ": " + b.name == t.before); });
         if (it == u.tasks.end()) return notify("No task called " + t.before + " to run before " + t.name);
@@ -453,6 +487,10 @@ void App::build_panel_draw(TextBox& box, bool focused) {
         if (i == 0 || u.tasks[i - 1].system != t.system) {
             heading = u.rows.size();
             u.rows.push_back({-1, t.system, 0});
+            if (t.system == "CMake") {  // (its build type and target, chosen here)
+                u.rows.push_back({kTypeRow, "Build type", 0});
+                u.rows.push_back({kTargetRow, "Target", 0});
+            }
         }
         ++u.rows[heading].count;
         u.rows.push_back({static_cast<int>(i), t.name, 0});
@@ -487,11 +525,11 @@ void App::build_panel_draw(TextBox& box, bool focused) {
         }
     }
     // The chosen row: a task (the Run button's, after the folder was looked at).
-    if (u.sel >= u.rows.size() || u.rows[u.sel].task < 0) {
+    if (u.sel >= u.rows.size() || !choosable(u.rows[u.sel].task)) {
         u.sel = 0;
         for (u32 i = 0; i < u.rows.size(); ++i)
             if (u.rows[i].task >= 0 && task_key(u.tasks[static_cast<size_t>(u.rows[i].task)]) == u.current) u.sel = i;
-        if (u.rows[u.sel].task < 0 && u.sel + 1 < u.rows.size()) ++u.sel;
+        while (!choosable(u.rows[u.sel].task) && u.sel + 1 < u.rows.size()) ++u.sel;
     }
     u.body = rows > 3 + foot ? rows - 3 - foot : 0;  // (between the folder's line and a blank one above the keys)
     if (u.sel < u.top) u.top = u.sel;
@@ -499,6 +537,13 @@ void App::build_panel_draw(TextBox& box, bool focused) {
     for (u32 r = 0; r < u.body && u.top + r < u.rows.size(); ++r) {
         const BuildUi::Row& row = u.rows[u.top + r];
         const u32 y = 2 + r;
+        if (row.task == kTypeRow || row.task == kTargetRow) {  // CMake's build type and target: what is chosen, or the project's own
+            const std::string& v = row.task == kTypeRow ? u.cmake_type : u.cmake_target;
+            const u32 c = put(box, font, y, 2, row.text, ink::kText);
+            if (c + 4 < cols) put(box, font, y, c + 2, fit_text(v.empty() ? (row.task == kTypeRow ? "the project's" : "all") : v, cols - c - 2), v.empty() ? ink::kMuted : ink::kAccent);
+            if (u.top + r == u.sel) light_row(box, y, focused);
+            continue;
+        }
         if (row.task < 0) {
             const std::string count = std::to_string(row.count);
             const u32 c = put(box, font, y, 0, fit_text(row.text, cols > count.size() + 1 ? cols - static_cast<u32>(count.size()) - 1 : 1), ink::kHeading);
@@ -511,7 +556,7 @@ void App::build_panel_draw(TextBox& box, bool focused) {
         const bool cur = task_key(t) == u.current;
         if (cur) put(box, font, y, 0, "\xE2\x96\xB6", ink::kAccent);
         const u32 c = put(box, font, y, 2, fit_text(t.name, cols > 2 ? cols - 2 : 1), cur ? ink::kStrong : ink::kText);
-        std::string after = t.cmd;
+        std::string after = t.system == "CMake" ? with_cmake(t.cmd, u.cmake_type, u.cmake_target) : t.cmd;
         Ink in = ink::kMuted;
         if (!u.last_key.empty() && task_key(t) == u.last_key) {
             if (u.running) after = "running\xE2\x80\xA6";
@@ -534,8 +579,12 @@ void App::build_panel_click(int row, int col, const SDL_MouseButtonEvent& b) {
     BuildUi& u = *buildui_;
     if (b.button != SDL_BUTTON_LEFT || row < 2 || static_cast<u32>(row - 2) >= u.body) return;
     const u32 i = u.top + static_cast<u32>(row - 2);
-    if (i >= u.rows.size() || u.rows[i].task < 0) return;
+    if (i >= u.rows.size() || !choosable(u.rows[i].task)) return;
     u.sel = i;
+    if (u.rows[i].task < 0) {  // CMake's build type or target: changed
+        build_option(u.rows[i].task);
+        return;
+    }
     u.current = task_key(u.tasks[static_cast<size_t>(u.rows[i].task)]);
     if (b.clicks >= 2) build_run(u.rows[i].task);
     ++build_gen_;
@@ -556,7 +605,7 @@ bool App::build_panel_key(const SDL_KeyboardEvent& k) {
         u32 at = u.sel < n ? u.sel : 0;
         for (u32 tries = 0; tries < n; ++tries) {
             at = static_cast<u32>((static_cast<int>(at) + by + static_cast<int>(n)) % static_cast<int>(n));
-            if (u.rows[at].task >= 0) break;
+            if (choosable(u.rows[at].task)) break;
         }
         u.sel = at;
     };
@@ -574,12 +623,62 @@ bool App::build_panel_key(const SDL_KeyboardEvent& k) {
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
             if (u.sel < n && u.rows[u.sel].task >= 0) build_run(u.rows[u.sel].task);
+            else if (u.sel < n && choosable(u.rows[u.sel].task)) build_option(u.rows[u.sel].task);
             break;
         default: return false;
     }
     ++build_gen_;
     dirty_ = true;
     return true;
+}
+
+// CMake's build type, the next in turn; or its target, chosen from those
+// the build folder has (CMake's own "help" target lists them, for make and
+// Ninja alike): the folder of the CMake task the Run button runs, or else
+// the first that builds.
+void App::build_option(int row) {
+    BuildUi& u = *buildui_;
+    if (row == kTypeRow) {
+        static const char* const kTypes[] = {"", "Debug", "Release", "RelWithDebInfo", "MinSizeRel"};
+        size_t at = 0;
+        for (size_t k = 0; k < std::size(kTypes); ++k)
+            if (u.cmake_type == kTypes[k]) at = k;
+        u.cmake_type = kTypes[(at + 1) % std::size(kTypes)];
+        ++build_gen_;
+        dirty_ = true;
+        return;
+    }
+    std::string build;
+    for (const BuildTask& t : u.tasks)
+        if (t.system == "CMake" && t.cmd.find("cmake --build ") != std::string::npos && t.cmd.find("--target") == std::string::npos && (build.empty() || task_key(t) == u.current))
+            build = t.cmd.substr(t.cmd.rfind("cmake --build "));
+    if (build.empty()) return notify("Configure the project first: its targets are the build folder's");
+    // ("cmake --build DIR --parallel" or "cmake --build --preset P": its help.)
+    if (const size_t par = build.find(" --parallel"); par != std::string::npos) build.resize(par);
+    std::string out;
+    if (!fs_run(u.root, build + " --target help", &out, 30000) && out.empty()) return notify("CMake did not list the targets");
+    std::vector<std::string> targets{"all"};
+    for (size_t at = 0; at < out.size();) {
+        size_t nl = out.find('\n', at);
+        if (nl == std::string::npos) nl = out.size();
+        std::string_view line = std::string_view(out).substr(at, nl - at);
+        at = nl + 1;
+        std::string name;
+        if (line.starts_with("... ")) name = std::string(line.substr(4, line.find(' ', 4) - 4));  // (make's "... name")
+        else if (const size_t c = line.find(": phony"); c != std::string_view::npos) name = std::string(line.substr(0, c));  // (Ninja's "name: phony")
+        else continue;
+        // (CMake's own targets, and a file's object, preprocessed and assembly ones, are no target of the project's.)
+        static constexpr std::string_view kOwn[] = {"all", "clean", "depend", "edit_cache", "rebuild_cache", "install", "list_install_components", "help", "test", "package", "package_source", "ZERO_CHECK", "ALL_BUILD", "RUN_TESTS"};
+        const bool file = name.ends_with(".o") || name.ends_with(".obj") || name.ends_with(".i") || name.ends_with(".s");
+        if (!name.empty() && name.find('/') == std::string::npos && !file && std::ranges::find(kOwn, name) == std::end(kOwn) && std::ranges::find(targets, name) == targets.end())
+            targets.push_back(name);
+    }
+    find_choose_item("Target", targets, [this, targets](int i) {
+        if (i < 0 || static_cast<size_t>(i) >= targets.size()) return;
+        buildui_->cmake_target = i == 0 ? std::string() : targets[static_cast<size_t>(i)];
+        ++build_gen_;
+        dirty_ = true;
+    });
 }
 
 // ---------------------------------------------------------------- the Run button

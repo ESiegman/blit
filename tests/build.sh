@@ -152,6 +152,21 @@ run "$F" "buildrun:make errors;frame;buildwait;frame;termclick:Linking;frame;sta
 check "Cmd+click on what is not a place: nothing opens (the click is the terminal's)" 'make errors | × 4 ▲ 3'
 run "$F" "buildrun:make errors;buildwait;buildrun:make ok;buildwait;problemsdump"
 check "the next run starts with none" 'button: ▶ make ok | file 0'
+# CMake's build type and target, chosen in the Build tab (Enter on each):
+# Release, then the target app of the folder's own (CMake's help lists
+# them); Build configures with the type and builds that target alone.
+if command -v cmake >/dev/null 2>&1; then
+    T="$dir/types"
+    mkdir -p "$T"
+    printf 'cmake_minimum_required(VERSION 3.20)\nproject(two C)\nadd_executable(app app.c)\nadd_executable(tool tool.c)\n' >"$T/CMakeLists.txt"
+    printf 'int main(void) { return 0; }\n' >"$T/app.c"
+    cp "$T/app.c" "$T/tool.c"
+    (cd "$T" && cmake -S . -B build >/dev/null 2>&1)
+    got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$T;frame;key:cmd+shift+u;builddump;frame;key:Up;key:Up;key:Return;key:Return;key:Down;key:Return;finddump;key:Down;key:Return;frame;buildrun:Build;buildwait;builddump" "$T/CMakeLists.txt" 2>&1 >/dev/null | tail -2 | tr '\n' '/')
+    got="$got $(sed -n 's/^CMAKE_BUILD_TYPE:STRING=//p' "$T/build/CMakeCache.txt") $(ls "$T/build" | grep -E '^(app|tool)$' | tr '\n' ' ')"
+    check "CMake: the build type and a target chosen, and built so" 'pick [] 3 : >all app tool/CMake: >Build Test Clean Configure (last: 0)/ Release app '
+fi
+
 # The sanitizers' reports, as a program run prints them: AddressSanitizer
 # (its first frame the system's, the next the program's own), UBSan's
 # runtime error, ThreadSanitizer's race, LeakSanitizer's leaks (each a

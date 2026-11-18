@@ -1020,7 +1020,8 @@ private:
     void build_settle();   // looked at now, and waited for
     std::vector<BuildTask> build_tasks();
     u64 build_command(const std::string& dir, const std::string& cmd, const std::string& title);
-    void build_run(int index);  // a task of the Build tab's (-1: the Run button's)
+    void build_run(int index);
+    void build_option(int row);  // a task of the Build tab's (-1: the Run button's)
     bool build_run_named(const std::string& name);
     void build_stop();
     void build_ended(u64 doc, int status);
