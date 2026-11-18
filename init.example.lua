@@ -163,6 +163,8 @@
 -- blit.opt.editor.sticky_scroll = true  -- the lines that open the scopes at the top of the view, pinned there
 -- blit.opt.editor.close_pairs = true    -- an opening bracket or quote typed puts in its closer
 -- blit.opt.editor.minimap = true        -- the file small down the right of a wide enough split
+-- blit.opt.editor.soft_wrap = false     -- long lines go on in the rows under them, in every file
+-- blit.opt.editor.soft_wrap_languages = { "markdown" }  -- and in these languages' files
 -- blit.opt.editor.local_history = true  -- each file's text kept at its saves and while it is typed in
 -- blit.opt.editor.spell_check = true    -- the words of comments, strings and prose checked, in English
 -- blit.opt.editor.start_screen = true   -- started with no file: what to do first, and what was opened lately

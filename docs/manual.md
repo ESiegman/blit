@@ -205,6 +205,7 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | The next / previous hit of Search in files (or of the references found, after them) | F4 / Shift+F4 | F4 / Shift+F4 |
 | The next / previous problem: the last build's, across files (else the language servers', across files) | F8 / Shift+F8 | F8 / Shift+F8 |
 | Go to the definition; peek at it; find references; rename | F12; Option+Shift+F12; Shift+F12; F2 | F12; Alt+Shift+F12; Shift+F12; F2 |
+| Soft wrap on or off, for the file in front | Option+Z | Alt+Z |
 | Go to the implementation / the type definition; the header or source | Cmd+F12 / Cmd+Shift+F12; Option+F12 | Ctrl+F12 / Ctrl+Shift+F12; Alt+F12 |
 | The file's outline / a symbol in the project | Cmd+Option+O / Cmd+Option+P | Ctrl+Alt+O / Ctrl+Alt+P |
 | Format the file (or the lines selected); fixes and refactorings here | Option+Shift+F; Option+Enter | Alt+Shift+F; Alt+Enter |
@@ -954,6 +955,32 @@ the text's edges.
 Sideways, the view goes as far as the widest line in the file and no
 further. With no line wider than the window it does not move sideways at
 all.
+
+### Soft wrap
+
+A line longer than the view can go on in the rows under it instead: it
+breaks after the last space that fits (a space past the edge hangs there;
+a word longer than the width breaks where the width ends; a wide
+character is kept whole, on the next row). Markdown files wrap as they
+open (`blit.opt.editor.soft_wrap_languages = {"markdown"}`, a list of
+languages as the status bar names them, `text` for plain text);
+`blit.opt.editor.soft_wrap = true` wraps every file, and **Option+Z**
+("Toggle soft wrap", Alt+Z elsewhere) turns it on or off for the file in
+front, whatever the settings say. A file larger than 16 MB does not wrap.
+While a file wraps, nothing scrolls sideways.
+
+A wrapped line's rows are moved through as rows: the arrows up and down,
+and Vim's `gj` and `gk`, go to the row above or below, keeping the column
+along the row (and stopping at its end, not going on into the next part
+of the line). Vim's `j` and `k` go by lines, over a wrapped line's other
+rows, and so do the counts the relative numbers show. A line's number is
+on its first row only. A click lands where it is along its row; a
+selection, the underlines and the notes after a line follow the line from
+row to row. Folded lines take no rows, wrapped or not.
+
+Each split keeps its own wrap, for its own width (the same file in two
+splits of other widths wraps in each as fits), made again line by line
+as the text changes.
 
 ### The minimap
 
