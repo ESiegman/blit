@@ -139,7 +139,7 @@ void App::spell_marks(FrameDesc& fd) {
     const u64 key[4] = {g.top_line, g.bottom(), d.hl_gen, d.ed.revision()};
     if (!std::equal(std::begin(key), std::end(key), std::begin(u.key))) {
         std::copy(std::begin(key), std::end(key), std::begin(u.key));
-        u.due_ns = std::max(u.due_ns, now + 100'000'000ull);  // (once the view has been still a moment: not while it scrolls)
+        u.due_ns = std::max<u64>(u.due_ns, now + 100'000'000ull);  // (once the view has been still a moment: not while it scrolls)
     }
     if (u.due_ns && now >= u.due_ns && spell_work_->ready == 1) {
         u.due_ns = 0;
