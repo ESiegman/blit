@@ -1117,6 +1117,7 @@ front):
 | `blit.snippet(trigger, body, opts)` | a snippet of one's own (Tab after `trigger` puts it in); opts: `lang` (a language or a list of them; none: every one), `desc` |
 | `blit.on(events, opts, fn)` → id, `blit.off(id or group)`, `blit.group(name)`, `blit.emit(name, data)` | events; opts: `pattern`, `once`, `group`; fn gets `event`, `buf`, `file`, `match`, `data` |
 | `blit.cmd(line)`, `blit.normal(keys)`, `blit.feed(keys, remap)` | a command line, Vim keys, keys as if typed |
+| `blit.run(name)` | a command of the command search's, by its name (or the start of it); false if there is none |
 | `blit.mode()`, `blit.count()` | `n`, `no`, `i`, `R`, `v`, `V`, `"\x16"`, `c` |
 | `blit.buf()`, `blit.bufs()`, `blit.info(buf)` | info: `id`, `path`, `name`, `language`, `lines`, `bytes`, `modified`, `readonly` |
 | `blit.lines(buf, first, last)`, `blit.set_lines(buf, first, last, lines)`, `blit.text(buf)` | `set_lines` with `last = first - 1` puts lines in before `first` |
@@ -1789,6 +1790,28 @@ or drag it into a split of its own.
   closes when the shell exits; if it exits with an error, the tab stays
   and says so.
 
+### The Python console
+
+"Open the Python console" starts Python in the terminals' split, in the
+folder being worked in, as a tab named Python: the folder's `.venv`'s
+IPython or Python if it has one, `uv run python` for a uv project (a
+`uv.lock` or a `pyproject.toml`), else `python3`. Once started it is used
+again, until it ends.
+
+"Send the lines to the Python console" sends the lines selected (in Vim,
+Visual mode's), or the cursor's line, after which the cursor goes to the
+next line; the console is started if it is not. The lines go as a
+bracketed paste, which Python's own prompt (from 3.13) and IPython take
+whole, so a block keeps its indentation and the blank lines in it. Each
+Return after the paste is sent a moment later, in a read of its own (one
+in the same read as the paste is taken as part of it): one runs a line,
+and a second runs more than one. Lines sent before the console has started
+wait for it. A Python that never asks for pastes is sent the lines one by
+one after five seconds, without their blank lines.
+
+Neither has a key of its own; map them in init.lua, for example
+`blit.map("nx", "<leader>r", function() blit.run("Send the lines to the Python console") end)`.
+
 ## Debugging
 
 **F9** puts a breakpoint on the cursor's line (a red dot in the gutter),
@@ -1938,7 +1961,8 @@ own reading thread (nothing per frame): GCC's and Clang's
 `CMake Error at path:line (command):` with the paragraph under it, make's
 `path:line: *** message`, Python's tracebacks (the innermost frame in a
 file of the program's own, with the exception) and its warnings, and
-pytest's `path.py:line: AssertionError`. Colours are no matter, nor
+pytest's `path.py:line: AssertionError`, and the sanitizers' reports
+(below). Colours are no matter, nor
 Ninja's progress line written over itself; the same problem twice (a
 header's, from each file that includes it) is one. A relative path is
 taken from the folder the task runs in, or one make or Ninja says it
@@ -1955,6 +1979,48 @@ or the one the terminal started in. Cmd+R in the
 tab looks again by hand; with nothing found the tab says so, and how to
 add a system (below). On another
 machine (`ssh://`) the folder is looked at, and the tasks run, there.
+
+A sanitizer's report, in a build's output or a run's, is a problem too:
+AddressSanitizer's, LeakSanitizer's, ThreadSanitizer's and
+MemorySanitizer's (`==4242==ERROR: AddressSanitizer: heap-buffer-overflow`)
+at the first frame of its stack in the program's own files (not the
+system's or the compiler's), saying what was wrong and what was read or
+written ("READ of size 4"); each leak of a leak report is one of its own.
+UndefinedBehaviorSanitizer's `path:line:col: runtime error:` lines are
+read as they come. Each frame of a stack is a `path:line` to Cmd+click.
+
+Under **CMake** the tab has two rows of its own. **Build type**: Enter goes
+from the project's own (what the build folder was configured with) to
+Debug, Release, RelWithDebInfo, MinSizeRel and round. **Target**: Enter
+lists the build folder's targets, as CMake's `help` target has them
+(CMake's own, and one for each file, left out); the first, "all", builds
+everything. CMake's tasks run with them: a configure is given
+`-DCMAKE_BUILD_TYPE`, a build `--target` (and, with a type chosen, is
+configured first, so that the folder has that type), and each task's row
+shows its command as it will run. A preset's tasks keep the preset's.
+
+### The assembly beside the file
+
+"Show the assembly beside the file" opens a read-only tab in a split to
+its right with what the compiler makes of the file (C, C++, Objective-C,
+and what a `compile_commands.json` has a command for): the file's own
+command, from a `compile_commands.json` in its folder, one above it, or a
+`build*` folder of one, with `-S -g` and its object, its dependency files
+and link-time optimization left out; with none, `cc` or `c++ -O2`. The
+compiler runs in the background, and its output is read on a thread of
+its own (a large file's is many megabytes). Shown are the code's labels
+and instructions, each instruction's name and then its operands, its
+comment quieter; the directives, the debug information's sections and
+the compiler's own labels for them are left out. Each time the file is
+saved, it is made again. A file that does not compile shows the
+compiler's errors instead.
+
+The two are linked: with the cursor in the file, the instructions of its
+line are marked in the assembly, and the first of them is brought into
+view; with the cursor in the assembly, its line of the file is marked and
+brought into view. (Instructions of an inlined function from a header are
+of the header's lines, so none of the file's.) The command again, from
+the assembly, goes back to the file.
 
 ```lua
 -- In init.lua: a system of your own (files that say it is there, its tasks).
@@ -2172,6 +2238,52 @@ characters, laid out by blit itself (no browser, no JavaScript):
 - `pie`: as bars, with each slice's share.
 
 Other kinds show as code, with a line that says so.
+
+## Notebooks
+
+A Jupyter notebook (`.ipynb`) opens as the script of its cells, as
+Python, each cell after a `# %%` line (the percent format):
+
+```python
+# %% [markdown]
+# # Orbits
+#
+# The first hundred steps.
+
+# %%
+import numpy as np
+steps = np.arange(100)
+
+# %%
+steps.mean()
+```
+
+A Markdown cell's lines are commented, under `# %% [markdown]`; a raw
+cell is under `# %% [raw]`. A blank line separates the cells, and is not
+part of them. Text before the first `# %%` is a code cell. Cells are
+added, moved and taken away by typing the lines.
+
+Saving writes the notebook back, as Jupyter writes one (two members a
+line, keys in order, one space an indent), so that what changed is all
+that differs. A cell whose text is as it was keeps everything the
+notebook had of it: its outputs, its count, its id and metadata. A
+changed one keeps its id and metadata and loses its outputs (they were of
+other code); a new one is given an id. The notebook's own metadata (its
+kernel, its language) stays. A new `.ipynb`, typed in blit, is saved as a
+notebook too. When the file changes on disk it is read again, as any
+file is.
+
+Each code cell's saved outputs are shown after its last line, quieter, in
+a line: the last line it printed, its result, `[image/png]` for a picture,
+or the error's name and message. A cell changed since the notebook was
+saved shows none.
+
+**Shift+Return** in a notebook runs the cell the cursor is in, in the
+[Python console](#the-python-console) (started if it is not), and the
+cursor goes to the next cell's first line; in a Markdown cell only the
+cursor goes. "Run the cell (# %%) in the Python console" does the same in
+any script with `# %%` cells (Shift+Return is a file's own there). What a
+cell prints is shown in the console; it is not put in the notebook.
 
 ## Pictures
 

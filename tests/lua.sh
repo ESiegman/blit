@@ -532,5 +532,9 @@ run "lua:while true do pcall(function() while true do end end) end;lua:print('af
 got=$(printf '%s' "$got" | sed -e 's/.*stopped: .*script.timeout_ms/stopped/')
 check "a script that catches its own timeout is stopped all the same" 'stopped ; after'
 
+fresh
+run "lua:print(blit.run('Unfold every block'), blit.run('Fold every'), blit.run('No such command'))"
+check "blit.run: a command by its name, whole or its start; false for none" 'true	true	false'
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "lua ok"
 exit $failed

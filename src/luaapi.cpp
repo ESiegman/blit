@@ -616,6 +616,24 @@ struct ScriptApi {
     }
 
     // blit.cmd(line): a command line, as typed after ":".
+    // blit.run(name): a command of the command search's, by its name (the
+    // name whole, else the first that starts so). False: there is none.
+    static int run_command(lua_State* L) {
+        if (!is_str(L, 1)) return fail("blit.run: a command's name is wanted");
+        App& a = app(L);
+        if (!a.font_) return fail("blit.run: not until the window is up");
+        const std::string_view name = str_at(L, 1);
+        const std::vector<App::PaletteItem> items = a.palette_items();
+        for (int pass = 0; pass < 2; ++pass)
+            for (const App::PaletteItem& it : items)
+                if (pass == 0 ? it.title == name : it.title.starts_with(name)) {
+                    a.palette_run(it.id);
+                    lua_pushboolean(L, 1);
+                    return 1;
+                }
+        lua_pushboolean(L, 0);
+        return 1;
+    }
     static int cmd(lua_State* L) {
         if (!is_str(L, 1)) return fail("blit.cmd: a command line is wanted");
         App& a = app(L);
@@ -1696,7 +1714,7 @@ int api(lua_State* L) {
 namespace script {
 
 const luaL_Reg kTop[] = {
-    {"notify", api<ScriptApi::notify>},       {"cmd", api<ScriptApi::cmd>},              {"normal", api<ScriptApi::normal>},
+    {"notify", api<ScriptApi::notify>},       {"cmd", api<ScriptApi::cmd>}, {"run", api<ScriptApi::run_command>},              {"normal", api<ScriptApi::normal>},
     {"feed", api<ScriptApi::feed>},           {"mode", api<ScriptApi::mode>},            {"count", api<ScriptApi::count>},
     {"map", api<ScriptApi::map_keys>},        {"unmap", api<ScriptApi::unmap_keys>},     {"maps", api<ScriptApi::maps>},
     {"snippet", api<ScriptApi::snippet>},     {"command", api<ScriptApi::command>},     {"delcommand", api<ScriptApi::delcommand>}, {"on", api<ScriptApi::on_events>},
