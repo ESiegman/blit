@@ -336,6 +336,8 @@ void App::commands_create() {
     own("Attach the debugger to a process\xE2\x80\xA6", {}, [this] { debug_attach_pick(); });
     own("Debug a core file\xE2\x80\xA6", {}, [this] { debug_core_pick(); });
     own("Break at a function\xE2\x80\xA6", {}, [this] { debug_break_function(); });
+    own("Run to the cursor", {key(SDLK_F10, kC)}, [this] { debug_run_to_cursor(); });
+    own("Jump to the cursor's line", {}, [this] { debug_jump_to_cursor(); });
     own("Run the tests", {}, [this] { test_run({}); });
     own("Run the failed tests again", {}, [this] { test_run_failed(); });
     own("Run the tests with coverage", {}, [this] { test_run({}, true); });

@@ -53,6 +53,7 @@ public:
     // The answers' callbacks run; the events are handed back.
     std::vector<Message> poll();
     bool ended() const;
+    bool answered() const { return waiting_.empty(); }  // every request sent has its answer
     std::string errors() const;  // the last of what the adapter wrote as errors
     // The adapter is let go of, on a thread of its own that holds what it
     // needs (the main thread waits for none of it): given up to grace_ms first

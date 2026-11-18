@@ -1077,7 +1077,7 @@ void App::run_script(const char* script) {
             frame();  // (its rows as they are now)
             if (!debug_pick(arg.substr(0, sep), sep == std::string::npos ? 1 : static_cast<u32>(std::atoi(arg.c_str() + sep + 1))))
                 std::fprintf(stderr, "debugpick: no %s\n", arg.c_str());
-        } else if (verb == "debugwait") {  // debugwait:stopped, or debugwait:idle
+        } else if (verb == "debugwait") {  // debugwait:stopped, debugwait:idle, or debugwait:answers (every request answered)
             debug_wait(arg);
         } else if (verb == "debugdump") {
             std::fprintf(stderr, "%s\n", debug_dump().c_str());

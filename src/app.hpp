@@ -893,6 +893,11 @@ private:
     void debug_core(const std::string& program, const std::string& core);
     void debug_send_functions();
     void debug_break_function();
+    void debug_set_value(u32 var);
+    void debug_watch_writes(u32 var);
+    void debug_send_data();
+    void debug_run_to_cursor();
+    void debug_jump_to_cursor();
     void debug_end();
     void debug_command(const std::string& what);
     void debug_frame(u32 i, bool show);

@@ -157,6 +157,24 @@ run "$P;command:Break at a function…;frame;text:square;key:Return;debugbreaks;
 got=$(printf '%s' "$got" | sed -e 's/; vars: .*//')
 check "a breakpoint by a function's name: it stops where the function starts" 'square() ;; stopped (breakpoint); stack: square@7 main@15'
 
+# A variable set where it stopped, a variable's writes watched, running to the
+# cursor (the breakpoints as they were after), and jumping to it where the
+# debugger can.
+run "$P;break:7;key:F5;debugwait:stopped;debugpanel;debugpick:vars:2;key:F2;key:ctrl+U;text:5;key:Return;debugwait:stopped;key:F10;debugwait:stopped;debugdump"
+check "a variable set: the program goes on with its new value" 'stopped (step); stack: square@8 main@15; vars: x=5 y=25'
+run "$P;break:15;key:F5;debugwait:stopped;debugpanel;debugpick:vars:2;key:w;debugwait:answers;debugbreaks;key:F5;debugwait:stopped;debugdump"
+got=$(printf '%s' "$got" | sed -e 's/stopped ([^)]*)/stopped/' -e 's/ start\(@[0-9]*\)\{0,1\};/;/' -e 's/; output: .*//')
+check "a variable's writes watched: it stops where it is written" 'count.c:15; writes to total ;; stopped; stack: main@16; vars: total=1 i=1'
+run "$P;break:13;key:F5;debugwait:stopped;key:cmd+P;text::17;key:Return;key:ctrl+F10;debugwait:stopped;debugdump;debugbreaks"
+got=$(printf '%s' "$got" | sed -e 's/stopped ([^)]*)/stopped/' -e 's/ start\(@[0-9]*\)\{0,1\};/;/')
+check "run to the cursor: it stops there, and the breakpoints are as they were" 'stopped; stack: main@17; vars: total=1 i=1; output: i=1 total=1 ;; count.c:13'
+run "$P;break:13;key:F5;debugwait:stopped;key:cmd+P;text::18;key:Return;command:Jump to the cursor's line;debugwait:stopped;debugdump"
+got=$(printf '%s' "$got" | sed -e 's/stopped ([^)]*)/stopped/' -e 's/ start\(@[0-9]*\)\{0,1\};/;/' -e 's/; vars: .*//')
+case "$got" in
+*"cannot jump"*) check "a jump: this debugger cannot, and it says so" 'blit: This debugger cannot jump ;; stopped; stack: main@13' ;;
+*) check "a jump to the cursor's line: it is there, the lines between not run" 'stopped; stack: main@18' ;;
+esac
+
 # Attaching to a process that is running, and a core file.
 cp "$here/debug/waits.c" "$here/debug/crash.c" "$dir/here/" && (cd "$dir/here" && cc -g -O0 -o waits waits.c && cc -g -O0 -o crash crash.c) || exit 1
 "$dir/here/waits" &

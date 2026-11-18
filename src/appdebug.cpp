@@ -185,7 +185,16 @@ struct App::DebugUi {
         i64 ref = 0;
         u32 depth = 0;
         bool open = false;
+        i64 parent = 0;  // (the reference it was listed under: what setVariable and dataBreakpointInfo name it by)
     };
+    // Data breakpoints: a variable's writes watched, by the debugger's id for it.
+    struct Data {
+        std::string id, name;
+    };
+    std::vector<Data> data;
+    // Run to the cursor: a breakpoint there until the next stop.
+    std::string run_to_path;
+    u32 run_to_line = 0;
     std::vector<Var> vars;
     u64 vars_gen = 0;  // (answers about variables from before the last stop are dropped)
     // The expressions watched: each evaluated where it stopped, in the frame shown.
@@ -201,7 +210,7 @@ struct App::DebugUi {
     int exit_code = -1;
     bool end_soon = false;  // (the session ends once the debugger's answers have been run: not inside one)
     // The panel: a row for each thing shown, and the one chosen.
-    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction };
+    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData };
     // A row: a mark (a triangle, an arrow) before its text, in an ink of its
     // own; the text; something quieter after it; and on the right its key.
     struct Row {
@@ -335,6 +344,10 @@ void App::debug_send_breaks(const std::string& path) {
             a += "}";
             first = false;
         }
+    }
+    if (u.run_to_path == path) {  // (run to the cursor: there too, until it stops)
+        const bool listed = u.breaks.contains(path) && u.breaks.at(path).contains(u.run_to_line);
+        if (!listed) a += std::string(a.back() == '[' ? "" : ",") + "{\"line\":" + std::to_string(u.run_to_line + 1) + "}";
     }
     a += "]}";
     u.dap->request("setBreakpoints", a);
@@ -607,6 +620,8 @@ void App::debug_end() {
     }
     u.dap.reset();
     u.state = DebugUi::kIdle;
+    u.data.clear();  // (the debugger's ids for them were this session's)
+    u.run_to_path.clear();
     u.frames.clear();
     u.threads.clear();
     u.vars.clear();
@@ -772,7 +787,7 @@ void App::debug_expand(u32 i) {
         for (json::Value x : m.body()["variables"]) {
             std::string value(x["value"].str());
             if (const std::string_view type = x["type"].str(); !type.empty() && value.size() < 40) value += "  (" + std::string(type) + ")";
-            kids.push_back({std::string(x["name"].str()), std::move(value), x["variablesReference"].integer(), depth, false});
+            kids.push_back({std::string(x["name"].str()), std::move(value), x["variablesReference"].integer(), depth, false, ref});
         }
         v.vars.insert(v.vars.begin() + static_cast<std::ptrdiff_t>(at + 1), kids.begin(), kids.end());
         ++debug_gen_;
@@ -802,6 +817,10 @@ void App::debug_sync() {
             u.dap->request("threads");
         } else if (m.name == "stopped") {
             u.state = DebugUi::kStopped;
+            if (!u.run_to_path.empty()) {  // (run to the cursor: that breakpoint goes)
+                const std::string path = std::exchange(u.run_to_path, {});
+                debug_send_breaks(path);
+            }
             u.thread = u.stopped_thread = b["threadId"].integer(u.thread);
             u.reason = std::string(b["reason"].str());
             if (const std::string_view text = b["text"].str(); !text.empty()) u.reason += ": " + std::string(text);
@@ -874,6 +893,92 @@ void App::debug_evaluate() {
             dirty_ = true;
         });
     });
+}
+
+// A variable's value set, as typed (its value now to start with).
+void App::debug_set_value(u32 i) {
+    DebugUi& u = *debugui_;
+    if (i >= u.vars.size() || !u.dap || u.state != DebugUi::kStopped || u.vars[i].parent <= 0) return;
+    if (!u.can.set_variable) return notify("This debugger cannot set a value");
+    const DebugUi::Var v = u.vars[i];
+    find_choose(kFindInput, "Value of " + v.name, v.value.substr(0, v.value.find("  (")), [this, v](const std::string& typed) {
+        DebugUi& w = *debugui_;
+        if (!w.dap || trimmed(typed).empty()) return;
+        ++w.asking;
+        w.dap->request("setVariable", "{\"variablesReference\":" + std::to_string(v.parent) + ",\"name\":" + quoted(v.name) + ",\"value\":" + quoted(trimmed(typed)) + "}",
+                       [this, v](const Dap::Message& m) {
+                           DebugUi& x = *debugui_;
+                           if (x.asking) --x.asking;
+                           if (!m.success) return notify("Cannot set " + v.name + ": " + m.message);
+                           for (DebugUi::Var& y : x.vars)
+                               if (y.parent == v.parent && y.name == v.name) y.value = std::string(m.body()["value"].str());
+                           debug_watch_eval();  // (what the watches say may have changed)
+                           ++debug_gen_;
+                           dirty_ = true;
+                       });
+    });
+}
+
+// A variable's writes watched: the debugger says what it calls it (and
+// whether it can), then it is set with the others.
+void App::debug_watch_writes(u32 i) {
+    DebugUi& u = *debugui_;
+    if (i >= u.vars.size() || !u.dap || u.state != DebugUi::kStopped || u.vars[i].parent <= 0) return;
+    if (!u.can.data_breaks) return notify("This debugger cannot watch a variable's writes");
+    const DebugUi::Var v = u.vars[i];
+    ++u.asking;
+    u.dap->request("dataBreakpointInfo", "{\"variablesReference\":" + std::to_string(v.parent) + ",\"name\":" + quoted(v.name) + "}", [this, v](const Dap::Message& m) {
+        DebugUi& x = *debugui_;
+        if (x.asking) --x.asking;
+        const std::string id(m.body()["dataId"].str());
+        if (!m.success || id.empty()) return notify("Cannot watch " + v.name + (m.body()["description"].str().empty() ? std::string() : ": " + std::string(m.body()["description"].str())));
+        const auto had = std::ranges::find_if(x.data, [&](const DebugUi::Data& d) { return d.id == id; });
+        if (had != x.data.end()) x.data.erase(had);  // (again: no longer)
+        else x.data.push_back({id, v.name});
+        debug_send_data();
+        ++debug_gen_;
+        dirty_ = true;
+    });
+}
+
+void App::debug_send_data() {
+    DebugUi& u = *debugui_;
+    if (!u.dap) return;
+    std::string a = "{\"breakpoints\":[";
+    for (size_t i = 0; i < u.data.size(); ++i) a += std::string(i ? "," : "") + "{\"dataId\":" + quoted(u.data[i].id) + ",\"accessType\":\"write\"}";
+    u.dap->request("setDataBreakpoints", a + "]}");
+}
+
+// Run to the cursor's line: a breakpoint there until it stops, then on.
+void App::debug_run_to_cursor() {
+    DebugUi& u = *debugui_;
+    const Doc& d = *pane_->doc;
+    if (!u.dap || u.state != DebugUi::kStopped || d.ed.path.empty()) return;
+    u.run_to_path = full_path(d.ed.path);
+    u.run_to_line = static_cast<u32>(d.ed.buf.line_of(d.ed.cursor()));
+    debug_send_breaks(u.run_to_path);
+    debug_command("continue");
+}
+
+// The program put back (or on) to the cursor's line, where the debugger
+// can: what is between is not run.
+void App::debug_jump_to_cursor() {
+    DebugUi& u = *debugui_;
+    const Doc& d = *pane_->doc;
+    if (!u.dap || u.state != DebugUi::kStopped || d.ed.path.empty()) return;
+    if (!u.can.goto_targets) return notify("This debugger cannot jump");
+    const u32 line = static_cast<u32>(d.ed.buf.line_of(d.ed.cursor())) + 1;
+    const i64 thread = u.thread;
+    u.dap->request("gotoTargets", "{\"source\":{\"path\":" + quoted(u.there(full_path(d.ed.path))) + "},\"line\":" + std::to_string(line) + "}",
+                   [this, thread](const Dap::Message& m) {
+                       DebugUi& v = *debugui_;
+                       const json::Value t = m.body()["targets"];
+                       if (!m.success || !t.is_array() || t.size() == 0) return notify("Cannot jump there");
+                       for (const json::Value target : t) {
+                           v.dap->request("goto", "{\"threadId\":" + std::to_string(thread) + ",\"targetId\":" + std::to_string(target["id"].integer()) + "}");
+                           break;
+                       }
+                   });
 }
 
 // ---------------------------------------------------------------- the Debug tab
@@ -996,6 +1101,14 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
                 if (focused && u.sel == out.size() - 1) r.key = key_symbols("Shift+F9", font);  // (the one chosen: what changes its condition)
             }
     }
+    if (!u.data.empty()) {
+        heading("Writes watched", u.data.size());
+        for (u32 i = 0; i < u.data.size(); ++i) {
+            Row& r = add(DebugUi::kData, i, u.data[i].name);
+            r.mark = "\xE2\x97\x89";  // (a dot in a ring)
+            r.mark_ink = ink::kError;
+        }
+    }
     if (!u.functions.empty()) {
         heading("Function breakpoints", u.functions.size());
         for (u32 i = 0; i < u.functions.size(); ++i) {
@@ -1113,6 +1226,7 @@ void App::debug_do(u32 i) {
             });
             break;
         }
+        case DebugUi::kData: break;
         case DebugUi::kNone: break;
     }
 }
@@ -1149,6 +1263,12 @@ bool App::debug_panel_key(const SDL_KeyboardEvent& k) {
         case SDLK_RETURN:
         case SDLK_KP_ENTER:
         case SDLK_SPACE: debug_do(u.sel); return true;
+        case SDLK_F2:  // a variable's value set
+            if (u.sel < n && u.rows[u.sel].act == DebugUi::kVar) debug_set_value(u.rows[u.sel].index);
+            return true;
+        case SDLK_W:  // a variable's writes watched (again: no longer)
+            if (u.sel < n && u.rows[u.sel].act == DebugUi::kVar) debug_watch_writes(u.rows[u.sel].index);
+            return true;
         case SDLK_RIGHT:
         case SDLK_LEFT:  // a variable opened or shut
             if (u.sel < n && u.rows[u.sel].act == DebugUi::kVar) {
@@ -1161,6 +1281,13 @@ bool App::debug_panel_key(const SDL_KeyboardEvent& k) {
             if (u.sel < n && u.rows[u.sel].act == DebugUi::kWatch && u.rows[u.sel].index < u.watches.size()) {
                 u.watches.erase(u.watches.begin() + u.rows[u.sel].index);
                 break;
+            }
+            if (u.sel < n && u.rows[u.sel].act == DebugUi::kData && u.rows[u.sel].index < u.data.size()) {
+                u.data.erase(u.data.begin() + u.rows[u.sel].index);
+                debug_send_data();
+                ++debug_gen_;
+                dirty_ = true;
+                return true;
             }
             if (u.sel < n && u.rows[u.sel].act == DebugUi::kFunction && u.rows[u.sel].index < u.functions.size()) {
                 u.functions.erase(u.functions.begin() + u.rows[u.sel].index);
@@ -1245,7 +1372,7 @@ void App::debug_wait(const std::string& state) {
     while (now_ns() < until) {
         debug_sync();
         const bool frames = !u.frames.empty() && !u.vars.empty() && u.asking == 0;  // (the stack, and the first scope's variables)
-        if (state == "stopped" ? u.state == DebugUi::kStopped && frames : u.state == DebugUi::kIdle) break;
+        if (state == "answers" ? !u.dap || u.dap->answered() : state == "stopped" ? u.state == DebugUi::kStopped && frames : u.state == DebugUi::kIdle) break;
         SDL_Delay(5);
     }
     // (A little longer for the variables' answers.)
@@ -1300,6 +1427,7 @@ std::string App::debug_breaks_dump() {
             if (!b.log.empty()) out += " log " + b.log;
         }
     for (const std::string& f : u.functions) out += (out.empty() ? "" : "; ") + f + "()";
+    for (const DebugUi::Data& d : u.data) out += (out.empty() ? "" : "; ") + std::string("writes to ") + d.name;
     return out.empty() ? "no breakpoints" : out;
 }
 
@@ -1309,7 +1437,7 @@ std::string App::debug_breaks_dump() {
 bool App::debug_pick(const std::string& section, u32 n) {
     DebugUi& u = *debugui_;
     const DebugUi::Act act = section == "threads" ? DebugUi::kThread : section == "stack" ? DebugUi::kFrame : section == "watch" ? DebugUi::kWatch
-                             : section == "add"   ? DebugUi::kWatchAdd : section == "breaks" ? DebugUi::kBreak : DebugUi::kNone;
+                             : section == "add"   ? DebugUi::kWatchAdd : section == "breaks" ? DebugUi::kBreak : section == "vars" ? DebugUi::kVar : DebugUi::kNone;
     u32 seen = 0;
     for (u32 i = 0; i < u.rows.size(); ++i)
         if (act != DebugUi::kNone && u.rows[i].act == act && ++seen == std::max(1u, n)) {
