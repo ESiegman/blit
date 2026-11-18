@@ -2,9 +2,12 @@
 // What a build says is wrong, read from its output as it comes: GCC's and
 // Clang's "path:line:col: error: message" (and warning, fatal error),
 // CMake's "CMake Error at path:line (command):" with the lines under it,
-// make's "path:line: *** message", and Python's tracebacks (the innermost
+// make's "path:line: *** message", Python's tracebacks (the innermost
 // frame of the program's own, and the exception), its warnings and
-// pytest's "path.py:line: AssertionError". The bytes are a terminal's: the
+// pytest's "path.py:line: AssertionError"; and the sanitizers' reports
+// (AddressSanitizer, LeakSanitizer, ThreadSanitizer, MemorySanitizer: at
+// the first frame of a stack in the program's own files, what was wrong;
+// UndefinedBehaviorSanitizer's "path:line:col: runtime error: ..."). The bytes are a terminal's: the
 // escape sequences are dropped, and a line a carriage return goes back
 // over (Ninja's progress) is the line written over it.
 //
@@ -58,6 +61,7 @@ private:
     bool cmake_line(std::string_view text);
     bool python_line(std::string_view text);
     bool compiler_line(std::string_view text);
+    bool sanitizer_line(std::string_view text);
     void entered(std::string_view text);
     void add(std::string_view path, u32 line, u32 col, u8 severity, std::string_view message);
     std::string resolve(std::string_view path);
@@ -80,6 +84,10 @@ private:
     // CMake's problem, whose message is the lines under it.
     bool cmake_ = false;
     BuildProblem cmake_problem_;
+    // A sanitizer's report: what it says is wrong (and what was read or
+    // written, or leaked), and whether a frame of its stack has been taken.
+    bool san_ = false, san_taken_ = false;
+    std::string san_kind_, san_what_;
     // Python's traceback: its innermost frame of a file's own, so far.
     bool py_ = false;
     std::string py_path_;

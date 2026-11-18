@@ -152,6 +152,33 @@ run "$F" "buildrun:make errors;frame;buildwait;frame;termclick:Linking;frame;sta
 check "Cmd+click on what is not a place: nothing opens (the click is the terminal's)" 'make errors | × 4 ▲ 3'
 run "$F" "buildrun:make errors;buildwait;buildrun:make ok;buildwait;problemsdump"
 check "the next run starts with none" 'button: ▶ make ok | file 0'
+# The sanitizers' reports, as a program run prints them: AddressSanitizer
+# (its first frame the system's, the next the program's own), UBSan's
+# runtime error, ThreadSanitizer's race, LeakSanitizer's leaks (each a
+# problem); and a program really built with AddressSanitizer, run.
+S="$dir/san"
+mkdir -p "$S"
+printf '#include <stdlib.h>\nint main(void)\n{\n    int* p = malloc(4 * sizeof(int));\n    return p[4];\n}\n' >"$S/a.c"
+printf 'int f(void);\nint g(void);\nint h(void);\n' >"$S/t.c"
+cat >"$S/reports.sh" <<EOF
+sleep 0.2
+printf '=================================================================\n==4242==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x602000000014 at pc 0x1 bp 0x2 sp 0x3\n'
+printf 'READ of size 4 at 0x602000000014 thread T0\n    #0 0x7fff in memcpy (/usr/lib/libc.so.6+0x10)\n    #1 0x5555 in main $S/a.c:5:12\n    #2 0x5556 in start (/usr/lib/dyld+0x20)\n'
+printf 'SUMMARY: AddressSanitizer: heap-buffer-overflow $S/a.c:5:12 in main\n'
+printf '$S/t.c:2:5: runtime error: signed integer overflow: 2147483647 + 1 cannot be represented in type int\n'
+printf '==================\nWARNING: ThreadSanitizer: data race (pid=77)\n  Write of size 4 at 0x7b04 by thread T1:\n    #0 f $S/t.c:1:5 (t+0x12)\n  Previous read of size 4 at 0x7b04 by main thread:\n    #0 g $S/t.c:2:5 (t+0x34)\nSUMMARY: ThreadSanitizer: data race $S/t.c:1:5 in f\n'
+printf '==9==ERROR: LeakSanitizer: detected memory leaks\n\nDirect leak of 64 byte(s) in 1 object(s) allocated from:\n    #0 0x1 in malloc (/usr/lib/libasan.so+0x9)\n    #1 0x2 in h $S/t.c:3:5\n\nIndirect leak of 8 byte(s) in 1 object(s) allocated from:\n    #0 0x1 in malloc (/usr/lib/libasan.so+0x9)\n    #1 0x3 in main $S/a.c:3:5\nSUMMARY: AddressSanitizer: 72 byte(s) leaked in 2 allocation(s).\n'
+exit 1
+EOF
+printf 'reports:\n\tsh reports.sh\nasan:\n\tcc -g -O0 -fsanitize=address -o a a.c && ./a\n' >"$S/Makefile"
+run "$S" "buildrun:make reports;buildwait;problemsdump"
+got=$(printf '%s' "$got" | sed -e 's/^button: [^|]*| //' -e 's/Build [0-9]* | //')
+check "the sanitizers' reports: where in the program's own code, and what" 'file a.c | >E 5:12 AddressSanitizer: heap-buffer-overflow: READ of size 4 | E 3:5 LeakSanitizer: detected memory leaks: Indirect leak of 8 byte(s) in 1 object(s) | file t.c | E 2:5 runtime error: signed integer overflow: 2147483647 + 1 cannot be represented in type int | E 1:5 ThreadSanitizer: data race: Write of size 4 | E 3:5 LeakSanitizer: detected memory leaks: Direct leak of 64 byte(s) in 1 object(s)'
+if (cd "$S" && printf 'int main(void){return 0;}\n' | cc -fsanitize=address -x c -o /dev/null - 2>/dev/null); then
+    run "$S" "buildrun:make asan;buildwait;problemsdump"
+    got=$(printf '%s' "$got" | sed -e 's/^button: [^|]*| //' -e 's/Build [0-9]* | //' -e 's/E 5:[0-9]* /E 5 /')  # (a column, or none, as the symbolizer has it)
+    check "a program built with AddressSanitizer, run: its report read" 'file a.c | >E 5 AddressSanitizer: heap-buffer-overflow: READ of size 4'
+fi
 printf 'one\ntwo\n' >"$dir/notes.txt"
 export BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i"
 run "$dir/none" "open:$dir/notes.txt;frame;term;frame;text:echo ../notes.txt:2:3: here;key:Return;termwait:here;frame;termclick:notes.txt:2;frame;statusdump"

@@ -164,6 +164,7 @@ void BuildScan::line(std::string_view text) {
     ++lines_;
     while (!text.empty() && (text.back() == ' ' || text.back() == '\r')) text.remove_suffix(1);
     if (cmake_ && cmake_line(text)) return;
+    if (sanitizer_line(text)) return;
     if (python_line(text)) return;
     if (text.starts_with("CMake ")) {
         // "CMake Error at CMakeLists.txt:3 (add_executable):", "CMake Warning
@@ -267,6 +268,71 @@ bool BuildScan::python_line(std::string_view text) {
     return true;
 }
 
+// A sanitizer's report: "==4242==ERROR: AddressSanitizer: heap-buffer-
+// overflow on address ...", "WARNING: ThreadSanitizer: data race (pid=7)",
+// then what was read or written ("READ of size 4 at ..."), a stack ("#0
+// 0x1234 in main /src/a.c:6:13" from ASan, "#0 worker /src/t.c:8 (t+0x12)"
+// from TSan), more stacks, and "SUMMARY: ...". The first frame of a stack
+// in a file of the program's own (not the system's) is where the problem
+// is; a leak report has a stack for each leak, each a problem.
+bool BuildScan::sanitizer_line(std::string_view text) {
+    const std::string_view t = trim_left(text);
+    for (const std::string_view kind : {"AddressSanitizer: ", "LeakSanitizer: ", "ThreadSanitizer: ", "MemorySanitizer: ", "HWAddressSanitizer: "}) {
+        const size_t at = t.find(kind);
+        if (at == std::string_view::npos || t.starts_with("SUMMARY:") || !(t.find("ERROR: ") < at || t.find("WARNING: ") < at)) continue;
+        std::string_view what = t.substr(at);
+        for (const std::string_view cut : {" on address", " on unknown address", " (pid="})
+            if (const size_t c = what.find(cut); c != std::string_view::npos) what = what.substr(0, c);
+        san_ = true;
+        san_taken_ = false;
+        san_kind_ = std::string(trim(what));
+        san_what_.clear();
+        return true;
+    }
+    if (!san_) return false;
+    if (t.starts_with("SUMMARY: ")) {
+        san_ = false;
+        return true;
+    }
+    // What was read or written (the first such line), or a leak (each with a stack of its own).
+    for (const std::string_view head : {"READ of size", "WRITE of size", "Read of size", "Write of size", "Atomic read of size", "Atomic write of size"})
+        if (t.starts_with(head) && san_what_.empty()) {
+            std::string_view w = t;
+            if (const size_t c = w.find(" at 0x"); c != std::string_view::npos) w = w.substr(0, c);
+            san_what_ = std::string(w);
+            return true;
+        }
+    if (t.starts_with("Direct leak") || t.starts_with("Indirect leak")) {
+        std::string_view w = t;
+        if (w.ends_with(" allocated from:")) w.remove_suffix(16);
+        san_what_ = std::string(w);
+        san_taken_ = false;
+        return true;
+    }
+    if (!t.starts_with("#") || t.size() < 2 || !digit(t[1])) return true;  // (the report's other lines: nothing to show)
+    if (san_taken_) return true;
+    // The frame's place: its last word that is a path with a line ("(module+0x12)" is not).
+    size_t end = t.size();
+    while (end > 0) {
+        size_t begin = t.rfind(' ', end - 1);
+        begin = begin == std::string_view::npos ? 0 : begin + 1;
+        const std::string_view word = t.substr(begin, end - begin);
+        std::string_view path;
+        u32 line = 0, col = 0;
+        if (!word.starts_with('(') && split_location(word, &path, &line, &col) && line > 0) {
+            static constexpr std::string_view kSystem[] = {"/usr/", "/lib", "/System/", "/Library/", "/opt/", "/Applications/", "<"};
+            if (std::ranges::none_of(kSystem, [&](std::string_view s) { return path.starts_with(s); })) {
+                add(path, line, col, 1, san_kind_ + (san_what_.empty() ? std::string() : ": " + san_what_));
+                san_taken_ = true;
+            }
+            break;
+        }
+        if (begin == 0) break;
+        end = begin - 1;
+    }
+    return true;
+}
+
 // "path:line:col: error: message" and the like.
 bool BuildScan::compiler_line(std::string_view text) {
     size_t from = 0;
@@ -282,6 +348,7 @@ bool BuildScan::compiler_line(std::string_view text) {
         else if (after.starts_with("warning:")) sev = 2, skip = 8;
         else if (after.starts_with("fatal error:")) sev = 1, skip = 12;
         else if (after.starts_with("*** ")) sev = 1, skip = 4;  // make's own
+        else if (after.starts_with("runtime error:")) sev = 1, skip = 0;  // UndefinedBehaviorSanitizer's
         else if ((sev = python_name(after, false))) python = true;  // Python's warnings, pytest's failures: "x.py:3: DeprecationWarning: ..."
         else continue;
         std::string_view path;
