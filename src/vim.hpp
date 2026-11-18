@@ -115,6 +115,10 @@ public:
     // A selection made with the mouse becomes Visual mode; a plain click
     // leaves it.
     void adopt_selection(Editor& ed);
+    // Where Visual mode began (each of several carets has its own: the
+    // application keeps them, and puts each back before that caret's key).
+    u64 visual_start() const { return vstart_; }
+    void set_visual_start(u64 at) { vstart_ = at; }
     void say(std::string message) { message_ = std::move(message); }
     const std::string& message() const { return message_; }
     // The cursor to another place in the document, as a jump (<C-o> comes back).
@@ -151,7 +155,10 @@ public:
         bool empty() const { return text.empty() && !re; }
         bool bad() const { return !error.empty(); }
     };
-    const Pattern& highlight() const { return highlight_on_ ? pattern_ : none_; }
+    const Pattern& highlight() const {
+        static const Pattern none;
+        return highlight_on_ ? pattern_ : none;
+    }
     // The next place the pattern is, from `from` (not at it), or ~0. No more
     // than `reach` bytes are looked at, wrapping round included. *m, if
     // given, gets the whole match.
@@ -332,7 +339,6 @@ private:
     // a pattern typed onto is looked for from there on.
     Pattern inc_pattern_;
     u64 inc_hit_ = 0, inc_rev_ = ~0ull;
-    const Pattern none_{};
     bool search_forward_ = true;
     bool highlight_on_ = false;
 

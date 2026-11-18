@@ -1,6 +1,7 @@
 #!/bin/sh
-# Editing comforts: lines moved and copied, and brackets and quotes closed
-# as they are typed. Needs the C++ grammar for the cases in a comment.
+# Editing comforts: lines moved and copied, brackets and quotes closed as
+# they are typed, and more carets than one. Needs the C++ grammar for the
+# cases in a comment.
 #
 #   tests/edit.sh path/to/blit            run the cases
 #   tests/edit.sh path/to/blit --print    show what each case gives
@@ -20,6 +21,7 @@ export BLIT_RECENT_FILE="$dir/recent"
 init=
 fresh() {
     printf 'one\ntwo\nthree\nfour' >"$dir/l.txt"
+    printf 'foo one\nfoo two\nbar foo\nend\n' >"$dir/m.txt"
     printf 'int f() {\n    g(x);\n}\n' >"$dir/p.cpp"
 }
 failed=0
@@ -91,6 +93,40 @@ with off "key:Down;key:End;key:Return;text:h;text:(" "$F"
 check "editor.close_pairs = false" 'int f() { /     g(x); / h( / } /  @ 3:3'
 with vim "text:jA;text: q(;text:1;text:);key:Escape" "$F"
 check "Vim's Insert mode" 'int f() { /     g(x); q(1) / } /  @ 2:14'
+
+# More carets than one: added on the lines below, at the next match and at
+# every match; typing, deleting and moving at each, one undo for all; Esc
+# leaves the primary; copied a line each, and pasted a line each where the
+# lines are as many as the carets. (And with Vim: commands at each.)
+below="keyof:Add a caret on the line below"
+next="keyof:Add the next match to the carets"
+every="keyof:Add carets to every match"
+# carets SCRIPT [FILE] [INIT]: the text after it (" / " between lines) and every caret.
+carets() {
+    fresh
+    out=$(BLIT_INIT="${3:-$dir/init.lua}" "$blit" --offscreen 1000x600 --shot "$dir/shot.bmp" --script "frame;$1;frame;lsptext;caretdump" "${2:-$dir/m.txt}" 2>&1 >/dev/null | grep -v '^blit: ' | tail -2)
+    got="$(printf '%s\n' "$out" | head -1) @ $(printf '%s\n' "$out" | tail -1)"
+}
+carets "$below;$below;key:End;text:!" "$dir/l.txt"
+check "carets on the lines below, typed at each" 'one! / two! / three! / four @ *1:5 2:5 3:7'
+carets "$next;$next;$next;text:X"
+check "the next match, thrice, typed over" 'X one / X two / bar X / end /  @ 1:2 2:2 *3:6'
+carets "$every;key:Backspace;key:Right;text:_"
+check "every match, deleted, then moved and typed at each (past a line's end: the next line)" ' _one /  _two / bar  / _end /  @ *1:3 2:3 4:2'
+carets "$every;key:Backspace;key:cmd+z;key:Escape"
+check "one undo for all, the primary's selection back; Esc leaves one" 'foo one / foo two / bar foo / end /  @ *1:4-1:1'
+carets "$below;$below;key:End;key:shift+word+Left;key:cmd+c;key:Escape;key:cmd+Up;$below;$below;key:cmd+v"
+check "copied a line each, pasted a line each" 'onefoo one / twofoo two / foobar foo / end /  @ *1:4 2:4 3:4'
+carets "$below;$below;text:A!;key:Escape" "$dir/l.txt" "$dir/vim.lua"
+check "Vim: a command at each" 'one! / two! / three! / four @ *1:4 2:4 3:6'
+carets "$next;$next;$next;text:cX;key:Escape" "$dir/m.txt" "$dir/vim.lua"
+check "Vim: the matches as Visual mode's, changed at each" 'X one / X two / bar X / end /  @ 1:1 2:1 *3:5'
+carets "$below;$below;text:dw;text:u" "$dir/m.txt" "$dir/vim.lua"
+check "Vim: undone once, for all" 'foo one / foo two / bar foo / end /  @ *1:1'
+if [ "$(uname -s)" = Darwin ]; then  # (the cells' size is the font's: the Mac's, here)
+    carets "click:70,50;release;click:70,76,alt;release;click:70,76,alt;release;click:70,63,alt;drag:90,89,alt;release;text:Q"
+    check "Alt+click: a caret, gone again; Alt+drag: a column" 'fooQ one / fooQo / barQo / endQ /  @ 1:5 2:5 3:5 *4:5'
+fi
 
 [ "$failed" = 0 ] && echo "edit: all passed"
 exit "$failed"

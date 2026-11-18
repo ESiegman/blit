@@ -346,7 +346,9 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
             if (text) {
                 std::string at = "Ln " + count_text(pane_->cur_line + 1) + ", Col " + count_text(static_cast<u64>(pane_->cur_col) + 1);
                 u64 lo = visual ? vlo : std::min(ed.anchor(), ed.cursor()), hi = visual ? vhi : std::max(ed.anchor(), ed.cursor());
-                if (hi > lo) {
+                if (ed.multi()) {  // (more carets than one: how many, for what one has selected says little)
+                    at += " (" + count_text(ed.carets().size() + 1) + " carets)";
+                } else if (hi > lo) {
                     const u64 l0 = ed.buf.line_of(lo), l1 = ed.buf.line_of(hi);
                     if (l1 > l0) {
                         at += " (" + count_text(l1 - l0 + 1) + " lines)";

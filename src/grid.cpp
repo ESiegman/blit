@@ -528,6 +528,10 @@ void decorate_grid(const GridSpec& g, u32* cells) {
         u32* row = row_of(d.line);
         if (!row) continue;
         if (d.kind == kDecoSelect) continue;
+        if (d.kind == kDecoCaret) {  // (over anything else there)
+            if (d.col0 >= first && d.col0 < first + cols) row[d.col0 - first] = (row[d.col0 - first] & ~kCellDecoMask) | (7u << kCellDecoShift) | kCellOverlay;
+            continue;
+        }
         const u64 lo = std::max<u64>(d.col0, first), hi = std::min<u64>(d.col1, first + cols);
         for (u64 c = lo; c < hi; ++c) {
             u32& cell = row[c - first];

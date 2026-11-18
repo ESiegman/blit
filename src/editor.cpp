@@ -75,6 +75,7 @@ void Editor::opened(const std::string& file) {
     path = file;
     cursor_ = anchor_ = 0;
     want_col_ = ~0u;
+    carets_.clear();
     undo_.clear();
     redo_.clear();
     saved_id_ = 0;
@@ -656,6 +657,7 @@ void Editor::apply(u64 off, u64 remove_len, std::string_view text, Kind kind) {
     end_edit(note, text.size());
     if (watch) watch->edited(off, off + remove_len, off + text.size());
     if (views) views->edited(off, off + remove_len, off + text.size());
+    if (!carets_.empty()) shift_carets(off, remove_len, text.size());
     cursor_ = anchor_ = e.cursor1 = off + text.size();
     want_col_ = ~0u;
     ++revision_;
@@ -711,6 +713,74 @@ void Editor::apply(u64 off, u64 remove_len, std::string_view text, Kind kind) {
     undo_.push_back(std::move(e));
 }
 
+// The other carets, through an edit: a place after what was taken out
+// moves with the text, one inside it goes to the end of what was put in.
+void Editor::shift_carets(u64 off, u64 remove_len, u64 insert_len) {
+    auto move = [&](u64& p) {
+        if (p >= off + remove_len) p = p - remove_len + insert_len;
+        else if (p > off) p = off + insert_len;
+    };
+    for (size_t i = 0; i < carets_.size(); ++i) {
+        if (static_cast<i64>(i) == active_) continue;
+        move(carets_[i].cursor);
+        move(carets_[i].anchor);
+    }
+}
+
+std::vector<Editor::Caret> Editor::all_carets(size_t* primary) const {
+    std::vector<Caret> all = carets_;
+    all.push_back(caret());
+    std::ranges::stable_sort(all, [](const Caret& x, const Caret& y) { return std::min(x.cursor, x.anchor) < std::min(y.cursor, y.anchor); });
+    if (primary)
+        for (size_t i = 0; i < all.size(); ++i)
+            if (all[i].cursor == cursor_ && all[i].anchor == anchor_) *primary = i;
+    return all;
+}
+
+// Carets that meet become one: two at one place, or two selections that
+// overlap (or touch, where one is no more than a caret), as their union,
+// the cursor at the end the later of them had it. The primary stays the
+// primary (the caret it merged into, if it did).
+void Editor::merge_carets() {
+    if (carets_.empty()) return;
+    const u64 n = buf.size();
+    for (Caret& c : carets_) c.cursor = std::min(c.cursor, n), c.anchor = std::min(c.anchor, n);
+    std::vector<std::pair<Caret, bool>> all;
+    for (const Caret& c : carets_) all.emplace_back(c, false);
+    all.emplace_back(caret(), true);
+    std::ranges::stable_sort(all, [](const auto& x, const auto& y) {
+        return std::min(x.first.cursor, x.first.anchor) < std::min(y.first.cursor, y.first.anchor);
+    });
+    std::vector<std::pair<Caret, bool>> out;
+    for (auto& [c, primary] : all) {
+        if (!out.empty()) {
+            Caret& last = out.back().first;
+            const u64 lo = std::min(c.cursor, c.anchor), hi = std::max(c.cursor, c.anchor);
+            const u64 last_lo = std::min(last.cursor, last.anchor), last_hi = std::max(last.cursor, last.anchor);
+            const bool meet = lo < last_hi || (lo == last_hi && (lo == hi || last_lo == last_hi));
+            if (meet) {
+                const u64 a = last_lo, b = std::max(hi, last_hi);
+                const bool forward = c.cursor >= c.anchor;
+                last.anchor = forward ? a : b;
+                last.cursor = forward ? b : a;
+                if (a == b) last.anchor = last.cursor;
+                out.back().second = out.back().second || primary;
+                continue;
+            }
+        }
+        out.emplace_back(c, primary);
+    }
+    carets_.clear();
+    for (auto& [c, primary] : out) {
+        if (primary) {
+            cursor_ = c.cursor, anchor_ = c.anchor;
+            want_col_ = c.want_col;
+        } else {
+            carets_.push_back(c);
+        }
+    }
+}
+
 void Editor::swap_edit(Edit& e) {
     if (e.reversed) {
         std::reverse(e.stash.begin(), e.stash.end());
@@ -734,6 +804,7 @@ void Editor::swap_edit(Edit& e) {
 
 bool Editor::undo() {
     if (undo_.empty()) return false;
+    carets_.clear();
     const u64 group = undo_.back().group;
     changed_at_ = ~0ull;
     do {  // the step, and with it the rest of its group
@@ -751,6 +822,7 @@ bool Editor::undo() {
 
 bool Editor::redo() {
     if (redo_.empty()) return false;
+    carets_.clear();
     const u64 group = redo_.back().group;
     changed_at_ = ~0ull;
     do {

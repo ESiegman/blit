@@ -300,6 +300,23 @@ private:
     void clamp_scroll();
     double max_scroll_y() const;
     u64 offset_at_point(float x, float y) const;
+    void point_line_col(float x, float y, u64* line, u32* col) const;
+    void caret_marks(FrameDesc& fd);
+    u32 vim_feed(const VimKey& v);
+    void edit_key(const SDL_KeyboardEvent& k, i64 page);
+    void caret_add_match(bool every);
+    void caret_add_line(int dir);
+    void carets_to_visual();
+    void carets_from_visual();
+    void caret_click(float x, float y, bool drag);
+    std::string carets_text() const;
+    void carets_paste(const std::string& text);
+    std::string caret_dump() const;
+    std::vector<GridDeco> caret_decos_;
+    std::vector<Editor::Caret> column_keep_;  // (Alt+drag: the carets there were before it)
+    u64 column_from_line_ = 0;
+    u32 column_from_col_ = 0;
+    bool column_drag_ = false;
     void refresh_cursor_cache();
     void update_title();
     bool load_font(std::string* err);

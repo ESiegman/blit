@@ -1,6 +1,7 @@
 #pragma once
 // Cursor, selection, movement, edits and undo on top of a Buffer.
 // Knows nothing about windows, pixels or the GPU.
+#include <algorithm>
 #include <span>
 #include <stop_token>
 #include <string>
@@ -124,6 +125,50 @@ public:
         want_col_ = c.want_col;
     }
 
+    // Other carets than the one above (the primary, which the view follows
+    // and the rest of the editor speaks of): each with its own selection.
+    // They move with every edit as marks do; each_caret() runs a command at
+    // every caret in turn, the primary among them, as one undo step, and
+    // then those that meet are merged. An undo or a redo leaves only the
+    // primary, as does opening a file.
+    const std::vector<Caret>& carets() const { return carets_; }
+    bool multi() const { return !carets_.empty(); }
+    void add_caret(const Caret& c) {
+        carets_.push_back(c);
+        merge_carets();
+    }
+    // The caret given becomes the primary, the primary one of the others.
+    void add_primary(const Caret& c) {
+        carets_.push_back(caret());
+        set_caret(c);
+        merge_carets();
+    }
+    void clear_carets() { carets_.clear(); }
+    // Every caret, the primary among them, in the order of the text; *primary: which it is.
+    std::vector<Caret> all_carets(size_t* primary = nullptr) const;
+    template <class F>
+    void each_caret(F&& f) {
+        if (carets_.empty()) return f();
+        begin_group();
+        carets_.push_back(caret());
+        const size_t primary = carets_.size() - 1;
+        std::vector<size_t> order(carets_.size());
+        for (size_t i = 0; i < order.size(); ++i) order[i] = i;
+        std::ranges::sort(order, [&](size_t x, size_t y) { return carets_[x].cursor < carets_[y].cursor; });
+        for (const size_t i : order) {
+            active_ = static_cast<i64>(i);
+            set_caret(carets_[i]);
+            f();
+            carets_[i] = caret();
+        }
+        active_ = -1;
+        const Caret p = carets_[primary];
+        carets_.erase(carets_.begin() + static_cast<std::ptrdiff_t>(primary));
+        set_caret(p);
+        merge_carets();
+        end_group();
+    }
+
     u64 cursor() const { return cursor_; }
     u64 anchor() const { return anchor_; }
     bool has_selection() const { return cursor_ != anchor_; }
@@ -230,10 +275,14 @@ private:
     u32 tab_stop(u32 col) const { return (col / tab_width + 1) * tab_width; }
 
     bool listening() const { return listeners_[0] != nullptr; }
+    void merge_carets();
+    void shift_carets(u64 off, u64 remove_len, u64 insert_len);
 
     EditListener* listeners_[4] = {};
     u64 cursor_ = 0;
     u64 anchor_ = 0;
+    std::vector<Caret> carets_;
+    i64 active_ = -1;  // (each_caret: the one of carets_ in cursor_ now, which edits do not move)
     u32 want_col_ = ~0u;  // column kept across vertical moves
     u64 revision_ = 0;
     EditLog edits_;

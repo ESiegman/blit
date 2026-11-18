@@ -336,6 +336,14 @@ void App::commands_create() {
     own("Attach the debugger to a process\xE2\x80\xA6", {}, [this] { debug_attach_pick(); });
     own("Debug a core file\xE2\x80\xA6", {}, [this] { debug_core_pick(); });
     own("Break at a function\xE2\x80\xA6", {}, [this] { debug_break_function(); });
+    own("Add the next match to the carets", {key(SDLK_D, kP)}, [this] { caret_add_match(false); });
+    own("Add carets to every match", {key(SDLK_L, kP | kS)}, [this] { caret_add_match(true); });
+    own("Add a caret on the line above", mac ? std::vector<Chord>{key(SDLK_UP, kC | kS)} : std::vector<Chord>{}, [this] { caret_add_line(-1); });
+    own("Add a caret on the line below", mac ? std::vector<Chord>{key(SDLK_DOWN, kC | kS)} : std::vector<Chord>{}, [this] { caret_add_line(1); });
+    own("Leave one caret", {}, [this] {
+        pane_->doc->ed.clear_carets();
+        dirty_ = true;
+    });
     own("Run to the cursor", {key(SDLK_F10, kC)}, [this] { debug_run_to_cursor(); });
     own("Jump to the cursor's line", {}, [this] { debug_jump_to_cursor(); });
     own("Show the disassembly", {}, [this] { debug_disasm_open(); });

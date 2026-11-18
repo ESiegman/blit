@@ -205,10 +205,41 @@ bool App::vim_key(const SDL_KeyboardEvent& k) {
         return true;
     }
     if (!insert) lsp_close(kPopHover);
-    const u32 r = vim_.feed(pane_->doc->ed, v);
+    const u32 r = vim_feed(v);
     vim_after(r);
     if (insert && r) lsp_after_key(k.key);
     return r != 0 || !insert;
+}
+
+// A key to Vim; with more carets than one, to each in turn, Vim as it was
+// before the key for every one (its Visual mode beginning where that caret
+// has it), and as the last one left it after. What is not about a place in
+// the text runs once, at the primary: what is typed on the command line or
+// in a search, undo and redo (which leave one caret), a macro begun or
+// played.
+u32 App::vim_feed(const VimKey& v) {
+    Editor& ed = pane_->doc->ed;
+    const bool fresh = !vim_.pending() && vim_.showcmd().empty() && !vim_.awaiting_char();
+    const bool normal = vim_.mode() == Vim::kNormal;
+    const bool once = !ed.multi() || vim_.mode() == Vim::kCommand ||
+                      (fresh && normal && !v.kind && ((v.ch == 'u' && !v.ctrl) || (v.ch == 'r' && v.ctrl) || v.ch == 'q' || v.ch == '@' || v.ch == ':' || v.ch == '/' || v.ch == '?'));
+    if (once) return vim_.feed(ed, v);
+    const Vim before = vim_;
+    Vim after = vim_;
+    u32 r = 0;
+    ed.each_caret([&] {
+        vim_ = before;
+        if (vim_.visual()) vim_.set_visual_start(ed.anchor());
+        r |= vim_.feed(ed, v);
+        // (The caret keeps where its Visual mode began as its anchor; out of it, none.)
+        Editor::Caret c = ed.caret();
+        c.anchor = vim_.visual() ? vim_.visual_start() : c.cursor;
+        ed.set_caret(c);
+        after = vim_;
+    });
+    vim_ = after;
+    if (vim_.visual()) vim_.set_visual_start(ed.anchor());
+    return r;
 }
 
 // Typed text: in Insert mode it goes into the document, elsewhere each
@@ -225,7 +256,7 @@ void App::vim_text(const char* text) {
         i += d.len;
         VimKey v;
         v.ch = d.cp;
-        const u32 r = vim_.feed(pane_->doc->ed, v);
+        const u32 r = vim_feed(v);
         all |= r;
         if (r & Vim::kTyped) typed += vim_.typed();
         if (script_modes_) script_mode_seen();  // (each change of mode, for the scripts' handlers)

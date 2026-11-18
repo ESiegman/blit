@@ -116,6 +116,10 @@ void main() {
         uint deco = (v >> 21) & 7u;
         if (deco == 5u) {
             if (in_cell.x < guide.x) col = palette[(v >> 16) & 31u].rgb;
+        } else if (deco == 7u) {
+            // Kind 7: another caret than the cursor, a bar down the left
+            // edge of the cell in the cursor's colour.
+            if (in_cell.x < max(2.0 * guide.x, 2.0)) col = cur_color.rgb;
         } else if (deco == 6u) {
             // Kind 6: a search match, on a background of its own, the ends
             // of the run rounded.

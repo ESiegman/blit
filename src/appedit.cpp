@@ -1,5 +1,5 @@
-// Editing comforts: lines moved up and down and copied, and brackets and
-// quotes closed as they are typed.
+// Editing comforts: lines moved up and down and copied, brackets and
+// quotes closed as they are typed, and more carets than one.
 #include <algorithm>
 #include <cctype>
 
@@ -185,7 +185,7 @@ bool App::pair_key(const SDL_KeyboardEvent& k) {
     if (cfg_.modal && vim_.mode() != Vim::kInsert) return false;
     Doc& d = *pane_->doc;
     Editor& ed = d.ed;
-    if (d.read_only || d.term || d.prof || d.image || d.pdf || d.md || ed.has_selection()) return false;
+    if (d.read_only || d.term || d.prof || d.image || d.pdf || d.md || ed.has_selection() || ed.multi()) return false;
     const u64 cur = ed.cursor();
     if (cur == 0) return false;
     const char prev = char_at(ed, cur - 1), next = char_at(ed, cur);
@@ -231,6 +231,231 @@ void App::pairs_follow(u64 cursor_before, u64 size_before, u64 rev_before) {
     } else if (ed.revision() != rev_before) {
         pair_closers_.clear();
     }
+}
+
+// ---------------------------------------------------------------- more carets than one
+
+// The other carets of the split with the keyboard, drawn: each a bar in the
+// cursor's colour, and what each has selected (Visual mode's, with Vim: the
+// character under it too) as a selection is.
+void App::caret_marks(FrameDesc& fd) {
+    if (focus_view_ >= fd.view_count) return;
+    const Editor& ed = pane_->doc->ed;
+    if (!ed.multi()) return;
+    GridSpec& g = fd.views[focus_view_].grid;
+    caret_decos_.assign(g.decos.begin(), g.decos.end());
+    const Buffer& b = ed.buf;
+    const bool visual = cfg_.modal && vim_.visual();
+    for (const Editor::Caret& c : ed.carets()) {
+        u64 lo = std::min(c.cursor, c.anchor), hi = std::max(c.cursor, c.anchor);
+        if (visual) hi = std::min(ed.next_char(hi), b.size());
+        if (hi > lo) {
+            const u64 l0 = b.line_of(lo), l1 = b.line_of(hi);
+            for (u64 l = std::max(l0, g.top_line); l <= l1 && l < g.bottom(); ++l) {
+                const u32 c0 = l == l0 ? ed.col_between(b.line_start(l), lo) : 0;
+                const u32 c1 = l == l1 ? ed.col_between(b.line_start(l), hi) : ~0u;
+                caret_decos_.push_back({l, c0, c1, kDecoSelect});
+            }
+            fd.views[focus_view_].sel_radius = look().sel;
+        }
+        const u64 line = b.line_of(c.cursor);
+        if (line < g.top_line || line >= g.bottom()) continue;
+        const u32 col = ed.col_between(b.line_start(line), c.cursor);
+        caret_decos_.push_back({line, col, col + 1, kDecoCaret});
+    }
+    g.decos = caret_decos_;
+}
+
+// Cmd+D: the word at the cursor selected; then, each time, the next place
+// the selection's text is found (after the last caret, round past the end)
+// gets a caret of its own, selected, the view going to it. (every: all of
+// them at once.)
+void App::caret_add_match(bool every) {
+    Doc& d = *pane_->doc;
+    Editor& ed = d.ed;
+    if (cfg_.modal) vim_attach();  // (first: taken up, Vim puts the selection away)
+    if (cfg_.modal && vim_.visual()) carets_from_visual();  // (Visual mode's selections, as the editor's)
+    if (!ed.has_selection()) {
+        ed.select_word(ed.cursor());
+        if (!every) {
+            if (cfg_.modal) carets_to_visual();
+            scroll_to_cursor();
+            dirty_ = true;
+            return;
+        }
+    }
+    const std::string what = ed.selection_text();
+    if (what.empty()) return;
+    const std::string text = ed.buf.text(0, ed.buf.size());
+    auto taken = [&](u64 at) {
+        for (const Editor::Caret& c : ed.all_carets())
+            if (std::min(c.cursor, c.anchor) == at) return true;
+        return false;
+    };
+    if (every) {
+        for (size_t at = text.find(what); at != std::string::npos; at = text.find(what, at + what.size()))
+            if (!taken(at)) ed.add_caret({at + what.size(), at, ~0u});
+    } else {
+        u64 last = 0;
+        for (const Editor::Caret& c : ed.all_carets()) last = std::max(last, std::max(c.cursor, c.anchor));
+        size_t at = text.find(what, last);
+        if (at == std::string::npos || taken(at)) at = text.find(what);
+        while (at != std::string::npos && taken(at)) at = text.find(what, at + 1);
+        if (at == std::string::npos) return notify("No more of it to find");
+        ed.add_primary({at + what.size(), at, ~0u});
+    }
+    if (cfg_.modal) carets_to_visual();  // (selected carets are Visual mode's to go on with)
+    scroll_to_cursor();
+    dirty_ = true;
+}
+
+// With Vim: what the carets have selected becomes Visual mode's, each
+// caret's anchor where its Visual mode begins and its cursor on the last
+// character selected (as Vim has them); and back, the editor's selections.
+void App::carets_to_visual() {
+    Editor& ed = pane_->doc->ed;
+    vim_attach();
+    std::vector<Editor::Caret> others = ed.carets();
+    ed.clear_carets();
+    vim_.adopt_selection(ed);
+    Editor::Caret primary = ed.caret();
+    primary.anchor = vim_.visual() ? vim_.visual_start() : primary.cursor;
+    ed.set_caret(primary);
+    for (Editor::Caret c : others) {
+        const u64 lo = std::min(c.cursor, c.anchor), hi = std::max(c.cursor, c.anchor);
+        c.anchor = lo;
+        c.cursor = hi > lo ? ed.prev_char(hi) : lo;
+        ed.add_caret(c);
+    }
+    vim_after(Vim::kHandled);
+}
+
+void App::carets_from_visual() {
+    Editor& ed = pane_->doc->ed;
+    std::vector<Editor::Caret> all = ed.all_carets();
+    u64 plo = 0, phi = 0;
+    const bool primary_sel = vim_selection(&plo, &phi);
+    vim_.keys(ed, "<Esc>");
+    vim_after(Vim::kHandled);
+    ed.clear_carets();
+    const u64 size = ed.buf.size();
+    for (Editor::Caret c : all) {
+        const u64 lo = std::min(c.cursor, c.anchor), hi = std::min(std::max(c.cursor, c.anchor) < size ? ed.next_char(std::max(c.cursor, c.anchor)) : size, size);
+        if (primary_sel && lo == plo) continue;  // (the primary's, below)
+        ed.add_caret({hi, lo, ~0u});
+    }
+    if (primary_sel) {
+        ed.move_to(plo, false);
+        ed.move_to(phi, true);
+    }
+}
+
+// A caret on the line above the highest (dir -1) or below the lowest, at
+// the column the primary keeps.
+void App::caret_add_line(int dir) {
+    Editor& ed = pane_->doc->ed;
+    const std::vector<Editor::Caret> all = ed.all_carets();
+    const Editor::Caret& edge = dir < 0 ? all.front() : all.back();
+    const u64 line = ed.buf.line_of(edge.cursor);
+    if (dir < 0 ? line == 0 : line + 1 >= ed.buf.line_count()) return;
+    const u32 col = ed.caret().want_col != ~0u ? ed.caret().want_col : ed.col_between(ed.buf.line_start(ed.buf.line_of(ed.cursor())), ed.cursor());
+    const u64 at = ed.off_at(dir < 0 ? line - 1 : line + 1, col);
+    Editor::Caret primary = ed.caret();
+    primary.want_col = col;
+    ed.add_caret({at, at, col});
+    ed.set_caret(primary);
+    dirty_ = true;
+}
+
+// Alt+click: a caret there, or (on one) that one gone. Alt+drag after it:
+// a caret on each line between, selecting the columns between.
+void App::caret_click(float x, float y, bool drag) {
+    Editor& ed = pane_->doc->ed;
+    u64 line = 0;
+    u32 col = 0;
+    point_line_col(x, y, &line, &col);
+    if (!drag) {
+        const u64 off = ed.off_at(line, col);
+        column_from_line_ = line, column_from_col_ = col;
+        std::vector<Editor::Caret> keep;
+        bool removed = false;
+        for (const Editor::Caret& c : ed.carets()) {
+            if (c.cursor == off && c.anchor == off) removed = true;
+            else keep.push_back(c);
+        }
+        if (!removed && ed.multi() && ed.cursor() == off && !ed.has_selection()) {  // (the primary itself: the last other one takes its place)
+            ed.set_caret(keep.back());
+            keep.pop_back();
+            removed = true;
+        }
+        if (removed) {
+            ed.clear_carets();
+            for (const Editor::Caret& c : keep) ed.add_caret(c);
+        } else if (ed.cursor() != off || ed.has_selection()) {
+            ed.add_primary({off, off, ~0u});
+        }
+        column_keep_ = ed.carets();
+        dirty_ = true;
+        return;
+    }
+    // (The carets there were before the press stay; the column's take the place of the one it made.)
+    const u64 l0 = std::min(column_from_line_, line), l1 = std::max(column_from_line_, line);
+    const u32 c0 = std::min(column_from_col_, col), c1 = std::max(column_from_col_, col);
+    ed.clear_carets();
+    auto at_line = [&](u64 l) { return Editor::Caret{ed.off_at(l, c1), ed.off_at(l, c0), c1}; };
+    ed.set_caret(at_line(line));  // (the primary first: the one on the mouse's line)
+    for (const Editor::Caret& c : column_keep_) ed.add_caret(c);
+    for (u64 l = l0; l <= l1; ++l)
+        if (l != line) ed.add_caret(at_line(l));
+    dirty_ = true;
+}
+
+// Copied with more carets than one: what each has selected, a line each.
+std::string App::carets_text() const {
+    const Editor& ed = pane_->doc->ed;
+    std::string out;
+    for (const Editor::Caret& c : ed.all_carets()) {
+        const u64 lo = std::min(c.cursor, c.anchor), hi = std::max(c.cursor, c.anchor);
+        if (!out.empty()) out += '\n';
+        out += ed.buf.text(lo, hi - lo);
+    }
+    return out;
+}
+
+// Pasted with more carets than one: as many lines as carets, a line each;
+// else all of it at each.
+void App::carets_paste(const std::string& text) {
+    Editor& ed = pane_->doc->ed;
+    std::vector<std::string> lines;
+    size_t at = 0;
+    while (at <= text.size()) {
+        size_t nl = text.find('\n', at);
+        if (nl == std::string::npos) nl = text.size();
+        lines.push_back(text.substr(at, nl - at));
+        at = nl + 1;
+    }
+    if (!text.empty() && text.back() == '\n') lines.pop_back();
+    const bool spread = lines.size() == ed.carets().size() + 1;
+    size_t k = 0;
+    ed.each_caret([&] { ed.insert(spread ? lines[k++] : text); });
+}
+
+// Every caret, for the tests: line:column (from 1) of each, its selection's
+// other end after a dash when it has one; the primary starred.
+std::string App::caret_dump() const {
+    const Editor& ed = pane_->doc->ed;
+    size_t primary = 0;
+    const std::vector<Editor::Caret> all = ed.all_carets(&primary);
+    auto place = [&](u64 off) {
+        const u64 l = ed.buf.line_of(off);
+        return std::to_string(l + 1) + ":" + std::to_string(ed.col_between(ed.buf.line_start(l), off) + 1);
+    };
+    std::string out;
+    for (size_t i = 0; i < all.size(); ++i) {
+        out += (i ? " " : "") + std::string(i == primary ? "*" : "") + place(all[i].cursor);
+        if (all[i].anchor != all[i].cursor) out += "-" + place(all[i].anchor);
+    }
+    return out;
 }
 
 }  // namespace blit

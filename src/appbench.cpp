@@ -581,7 +581,7 @@ int App::run_bench() {
 //                          (Cmd on a Mac, Ctrl elsewhere), word the one that moves by words; ctrl, alt and gui are those keys
 //   keyof:COMMAND          the key that does a command now (as the command search names it): its first that Vim would not take
 //   wheel:N                N mouse wheel notches (negative scrolls down)
-//   click:X,Y[,COUNT]      left click at window coordinates; drag:X,Y; release
+//   click:X,Y[,COUNT][,alt]  left click at window coordinates (,alt: with Option held); drag:X,Y[,alt]; release
 //   save                   write the file
 //   frame                  draw a frame now (the script otherwise draws only at the end)
 //   col:N / line:N         scroll so that column N / line N is at the window edge
@@ -744,6 +744,10 @@ void App::run_script(const char* script) {
             float x = 0, y = 0;
             int clicks = 1;
             std::sscanf(arg.c_str(), "%f,%f,%d", &x, &y, &clicks);
+            // (",alt" at its end: with Option held, as long as the event takes.)
+            const bool alt = arg.ends_with(",alt");
+            const SDL_Keymod held = SDL_GetModState();
+            if (alt) SDL_SetModState(static_cast<SDL_Keymod>(held | SDL_KMOD_ALT));
             if (verb == "click") {
                 e.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
                 e.button.button = SDL_BUTTON_LEFT;
@@ -757,6 +761,7 @@ void App::run_script(const char* script) {
                 if (verb == "drag") e.motion.state = SDL_BUTTON_LMASK;  // (as a real drag says: the button is held)
             }
             handle(e);
+            if (alt) SDL_SetModState(held);
         } else if (verb == "release") {
             e.type = SDL_EVENT_MOUSE_BUTTON_UP;
             e.button.button = SDL_BUTTON_LEFT;
@@ -1091,6 +1096,8 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s\n", debug_dump().c_str());
         } else if (verb == "debuginline") {  // the notes after the lines of the first view while stopped (where, the values), as last drawn
             std::fprintf(stderr, "%s\n", debug_inline_dump().c_str());
+        } else if (verb == "caretdump") {  // every caret of the file in front: line:column (from 1), a selection's other end after a dash, the primary starred
+            std::fprintf(stderr, "%s\n", caret_dump().c_str());
         } else if (verb == "docdump") {  // docdump:N, the tab in front's title, then its lines from N before the cursor's to N after (the cursor's marked >, and in it the cursor |)
             const Editor& ed = pane_->doc->ed;
             const u64 n = static_cast<u64>(std::max(0, std::atoi(arg.c_str()))), at = ed.buf.line_of(ed.cursor());

@@ -293,6 +293,65 @@ void run_editor(u64 seed, int steps) {
 }
 
 // A mapped file shrinks underneath the buffer: reads must not crash.
+// More carets than one: an edit at each, each moving with the others'
+// edits; those that meet merged; and, with random texts, typing at every
+// caret what typing at each place by hand gives.
+void carets_test(int seeds) {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    {
+        Editor ed;
+        ed.open_bytes({}, "abcdefghij");
+        ed.move_to(2, false);
+        ed.add_caret({5, 5, ~0u});
+        ed.add_caret({8, 8, ~0u});
+        ed.each_caret([&] { ed.insert("X"); });
+        check(ed.buf.text(0, ed.buf.size()) == "abXcdeXfghXij" && ed.cursor() == 3 && ed.carets().size() == 2, "carets: typed at each, the primary still first");
+        ed.each_caret([&] { ed.backspace(); });
+        check(ed.buf.text(0, ed.buf.size()) == "abcdefghij", "carets: Backspace at each");
+        ed.undo();
+        check(ed.buf.text(0, ed.buf.size()) == "abXcdeXfghXij" && !ed.multi(), "carets: one undo for all, and one caret after");
+    }
+    {
+        Editor ed;
+        ed.open_bytes({}, "aaaa bbbb cccc");
+        ed.move_to(0, false);
+        ed.move_to(4, true);
+        ed.add_caret({2, 2, ~0u});        // (inside the primary's selection: merged into it)
+        ed.add_caret({9, 6, ~0u});        // (a selection of its own)
+        ed.add_caret({11, 8, ~0u});       // (overlapping that one: their union)
+        check(ed.carets().size() == 1 && ed.sel_min() == 0 && ed.sel_max() == 4 && ed.carets()[0].anchor == 6 && ed.carets()[0].cursor == 11, "carets: those that meet are merged");
+        ed.each_caret([&] { ed.left(false); });
+        ed.each_caret([&] { ed.home(false); });
+        check(!ed.multi() && ed.cursor() == 0, "carets: moved to one place, one caret");
+    }
+    u64 seed = 99;
+    auto next = [&] { return seed = seed * 6364136223846793005ull + 1442695040888963407ull, static_cast<u32>(seed >> 33); };
+    for (int round = 0; round < seeds; ++round) {
+        std::string text;
+        for (u32 n = next() % 40 + 1; n-- > 0;) text += static_cast<char>("ab \n"[next() % 4]);
+        std::vector<u64> at;
+        for (u32 n = next() % 5 + 1; n-- > 0;) at.push_back(next() % (text.size() + 1));
+        std::ranges::sort(at);
+        at.erase(std::unique(at.begin(), at.end()), at.end());
+        Editor ed;
+        ed.open_bytes({}, text);
+        ed.move_to(at[0], false);
+        for (size_t k = 1; k < at.size(); ++k) ed.add_caret({at[k], at[k], ~0u});
+        const std::string put = std::string(1 + next() % 3, 'X');
+        ed.each_caret([&] { ed.insert(put); });
+        std::string want = text;
+        for (size_t k = at.size(); k-- > 0;) want.insert(at[k], put);
+        bool ok = ed.buf.text(0, ed.buf.size()) == want && ed.carets().size() + 1 == at.size();
+        for (size_t k = 0; ok && k < at.size(); ++k) {  // (each caret after what it typed)
+            const u64 expect = at[k] + (k + 1) * put.size();
+            ok = std::ranges::any_of(ed.all_carets(), [&](const Editor::Caret& c) { return c.cursor == expect; });
+        }
+        if (!ok) fail("carets: typed at random places", static_cast<u64>(round), 0);
+    }
+}
+
 void truncated_file_test() {
 #if !defined(_WIN32)
     std::string path = "/tmp/blit-truncate-test.txt";
@@ -4698,6 +4757,7 @@ int main(int argc, char** argv) {
     atlas_test();
     long_line_test();
     vim_test();
+    carets_test(seeds);
     find_test();
     folds_test();
     tests_test();

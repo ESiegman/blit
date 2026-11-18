@@ -1399,13 +1399,23 @@ void App::scroll_to_cursor() {
 }
 
 u64 App::offset_at_point(float x, float y) const {
+    u64 line = 0;
+    u32 col = 0;
+    point_line_col(x, y, &line, &col);
+    return pane_->doc->ed.off_at(line, col);
+}
+
+// The line and the display column under a point (past a line's end: the
+// column there would be).
+void App::point_line_col(float x, float y, u64* line_out, u32* col_out) const {
     const int cw = font_->cell_w(), ch = font_->cell_h();
     const i64 doc_y = std::llround(pane_->scroll_y) + static_cast<i64>(y * density_) - pane_->text_y;
     const u64 last = pane_->doc->ed.buf.line_count() - 1;
     const u64 line = doc_y <= 0 ? 0 : std::min<u64>(last, line_of_row(static_cast<u64>(doc_y) / static_cast<u64>(ch)));
     const double tx = x * density_ - pane_->text_x + static_cast<double>(std::llround(pane_->scroll_x)) - pad_x_;
     const u32 col = tx <= 0 ? 0 : static_cast<u32>(tx / cw + 0.5);
-    return pane_->doc->ed.off_at(line, col);
+    *line_out = line;
+    *col_out = col;
 }
 
 // Lays out a frame: where each split is, then each split's text, tab bar
@@ -1452,6 +1462,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     ruler_notes(fd);  // (the marks along the scroll bar)
     git_note(fd);
     vim_marks(fd);
+    caret_marks(fd);  // the other carets, and what each has selected
     if (script_) script_layout(w, h, fd);  // marks, boxes and messages of the scripts'
     prof_marks(fd);  // inline performance labels (after a server's and the scripts' notes)
     debug_marks(fd);  // and where the program being debugged has stopped
@@ -1756,7 +1767,7 @@ void App::handle(const SDL_Event& e) {
             on_mouse_down(e.button);
             break;
         case SDL_EVENT_MOUSE_BUTTON_UP:
-            if (e.button.button == SDL_BUTTON_LEFT) dragging_ = dragging_thumb_ = false;
+            if (e.button.button == SDL_BUTTON_LEFT) dragging_ = dragging_thumb_ = column_drag_ = false;
             splits_mouse_up(e.button);  // lets go of whatever was being carried
             panel_mouse_up();
             tabs_mouse_up();
@@ -1884,12 +1895,18 @@ void App::on_text(const char* text) {
     const Editor& ed = pane_->doc->ed;
     const u64 cursor = ed.cursor(), size = ed.buf.size(), rev = ed.revision();
     if (cfg_.modal) {  // text, or commands: Vim knows which
-        if (vim_.mode() == Vim::kInsert && pair_text(text)) return;
+        if (vim_.mode() == Vim::kInsert && !ed.multi() && pair_text(text)) return;
         vim_text(text);
         pairs_follow(cursor, size, rev);
         return;
     }
     if (pane_->doc->read_only) return;  // a diff is for reading
+    if (ed.multi()) {  // (at every caret; brackets are not closed for them)
+        pane_->doc->ed.each_caret([&] { pane_->doc->ed.insert(text); });
+        scroll_to_cursor();
+        lsp_typed(text);
+        return;
+    }
     if (pair_text(text)) return;
     pane_->doc->ed.insert(text);
     pairs_follow(cursor, size, rev);
@@ -1930,7 +1947,6 @@ void App::on_key(const SDL_KeyboardEvent& k) {
     }
     const bool shift = k.mod & SDL_KMOD_SHIFT;
     const bool cmd = k.mod & kCmd;
-    const bool word = k.mod & kWord;
     const i64 page = std::max(1, visible_rows() - 1);
     if (k.key == SDLK_ESCAPE && script_) script_close_floats();
 
@@ -1941,6 +1957,12 @@ void App::on_key(const SDL_KeyboardEvent& k) {
     }
     if (splits_key(k)) return; // a new split, or the keyboard to another one
     if (tabs_key(k)) return;   // a new tab, another tab, this tab closed
+    // Esc with more carets than one leaves the primary alone (with Vim, in Normal mode).
+    if (k.key == SDLK_ESCAPE && pane_->doc->ed.multi() && (!cfg_.modal || (vim_.mode() == Vim::kNormal && !vim_.pending() && vim_.showcmd().empty()))) {
+        pane_->doc->ed.clear_carets();
+        dirty_ = true;
+        return;
+    }
     // With Vim, Esc is Vim's whatever else is open: it shuts the popups too.
     if (cfg_.modal && k.key == SDLK_ESCAPE) {
         lsp_close(kPopAll);
@@ -1984,10 +2006,20 @@ void App::on_key(const SDL_KeyboardEvent& k) {
         // Whatever these do, the popups were about the text as it was.
         if (k.key == SDLK_V || k.key == SDLK_X || k.key == SDLK_Z || k.key == SDLK_Y || k.key == SDLK_A) lsp_close(kPopAll);
         switch (k.key) {
-            case SDLK_A: pane_->doc->ed.select_all(); dirty_ = true; return;
+            case SDLK_A:
+                pane_->doc->ed.clear_carets();
+                pane_->doc->ed.select_all();
+                dirty_ = true;
+                return;
             case SDLK_C:
             case SDLK_X:
-                if (pane_->doc->ed.has_selection()) {
+                if (pane_->doc->ed.multi()) {  // what each caret has selected, a line each
+                    SDL_SetClipboardText(carets_text().c_str());
+                    if (k.key == SDLK_X) pane_->doc->ed.each_caret([&] {
+                        if (pane_->doc->ed.has_selection()) pane_->doc->ed.backspace();
+                    });
+                    scroll_to_cursor();
+                } else if (pane_->doc->ed.has_selection()) {
                     SDL_SetClipboardText(pane_->doc->ed.selection_text().c_str());
                     if (k.key == SDLK_X) {
                         pane_->doc->ed.backspace();
@@ -1997,7 +2029,10 @@ void App::on_key(const SDL_KeyboardEvent& k) {
                 return;
             case SDLK_V: {
                 char* t = SDL_GetClipboardText();
-                if (t && *t) pane_->doc->ed.insert(t);
+                if (t && *t) {
+                    if (pane_->doc->ed.multi()) carets_paste(t);
+                    else pane_->doc->ed.insert(t);
+                }
                 SDL_free(t);
                 scroll_to_cursor();
                 return;
@@ -2022,6 +2057,24 @@ void App::on_key(const SDL_KeyboardEvent& k) {
         }
     }
 
+    switch (k.key) {  // (the keys below, at every caret)
+        case SDLK_LEFT: case SDLK_RIGHT: case SDLK_UP: case SDLK_DOWN: case SDLK_HOME: case SDLK_END: case SDLK_PAGEUP: case SDLK_PAGEDOWN:
+        case SDLK_BACKSPACE: case SDLK_DELETE: case SDLK_RETURN: case SDLK_KP_ENTER: case SDLK_TAB: break;
+        default: return;
+    }
+    // (Cmd+Up and Cmd+Down, the text's ends, leave one caret there.)
+    if (kMac && cmd && (k.key == SDLK_UP || k.key == SDLK_DOWN)) pane_->doc->ed.clear_carets();
+    pane_->doc->ed.each_caret([&] { edit_key(k, page); });
+    scroll_to_cursor();
+    lsp_after_key(k.key);
+}
+
+// A key that moves or edits, at the caret (on_key runs it at each).
+void App::edit_key(const SDL_KeyboardEvent& k, i64 page) {
+    const bool shift = k.mod & SDL_KMOD_SHIFT;
+    const bool cmd = k.mod & kCmd;
+    const bool word = k.mod & kWord;
+    if (pane_->doc->ed.multi() == false && pair_key(k)) return;
     switch (k.key) {
         case SDLK_LEFT:
             if (kMac && cmd) pane_->doc->ed.home(shift);
@@ -2068,10 +2121,8 @@ void App::on_key(const SDL_KeyboardEvent& k) {
         case SDLK_RETURN:
         case SDLK_KP_ENTER: pane_->doc->ed.newline(); break;
         case SDLK_TAB: pane_->doc->ed.insert("\t"); break;
-        default: return;
+        default: break;
     }
-    scroll_to_cursor();
-    lsp_after_key(k.key);
 }
 
 // The wheel scrolls what the mouse is over, whichever split has the keyboard.
@@ -2143,6 +2194,13 @@ void App::on_mouse_down(const SDL_MouseButtonEvent& b) {
     }
     text_press_ = true;
     const u64 off = offset_at_point(b.x, b.y);
+    const SDL_Keymod mods = SDL_GetModState();
+    if ((mods & SDL_KMOD_ALT) && !(mods & (SDL_KMOD_CTRL | SDL_KMOD_GUI | SDL_KMOD_SHIFT)) && b.clicks == 1 && b.x * density_ >= pane_->text_x) {
+        caret_click(b.x, b.y, false);  // a caret more (or one fewer); a drag from here, a column of them
+        column_drag_ = true;
+        return;
+    }
+    if (!(mods & SDL_KMOD_SHIFT)) pane_->doc->ed.clear_carets();
     if (b.x * density_ < pane_->text_x) {  // on a line's number: the whole line
         pane_->doc->ed.select_line(off);
     } else if (b.clicks == 2) {
@@ -2158,6 +2216,11 @@ void App::on_mouse_down(const SDL_MouseButtonEvent& b) {
 
 void App::on_mouse_motion(const SDL_MouseMotionEvent& m) {
     if (dragging_thumb_) return drag_thumb(m.y);
+    if (column_drag_) {
+        caret_click(m.x, m.y, true);
+        scroll_to_cursor();
+        return;
+    }
     if (!dragging_) {
         // Hover text is for the split the language server is in.
         const int px = static_cast<int>(m.x * density_), py = static_cast<int>(m.y * density_);

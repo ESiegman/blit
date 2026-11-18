@@ -35,6 +35,7 @@ inline constexpr u32 kInkGuides = 6;
 inline constexpr u32 kDecoGuide = 5;       // the "underline kind" that is an indent line
 inline constexpr u32 kDecoMatch = 6;       // and the one that is the background of a search match
 inline constexpr u32 kDecoSelect = 7;      // not drawn as such: the cells of the line's text that it covers are shown selected
+inline constexpr u32 kDecoCaret = 8;       // another caret than the cursor: a bar down the left of its cell, in the cursor's colour (kind 7 in the cell)
 inline constexpr u32 kInkDiagnostic = 24;  // + severity - 1: error, warning, information, hint
 inline constexpr u32 kInkMuted = 28;
 inline constexpr u32 kInkAccent = 29;
