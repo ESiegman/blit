@@ -898,6 +898,101 @@ const char* profiler_for(std::string_view system) { return system.starts_with("D
 
 // ---------------------------------------------------------------- recording
 
+std::unordered_map<u64, AllocPlace> alloc_places(std::string_view text) {
+    std::unordered_map<u64, AllocPlace> out;
+    size_t at = 0;
+    while (at < text.size()) {
+        size_t nl = text.find('\n', at);
+        if (nl == std::string_view::npos) nl = text.size();
+        const std::string_view line = text.substr(at, nl - at);
+        at = nl + 1;
+        if (!line.starts_with("a ")) continue;
+        // "a ADDR BASE IMAGE\tSYMBOL"
+        const std::string_view rest = line.substr(2);
+        const size_t sp1 = rest.find(' '), sp2 = sp1 == std::string_view::npos ? sp1 : rest.find(' ', sp1 + 1);
+        if (sp2 == std::string_view::npos) continue;
+        const u64 addr = std::strtoull(std::string(rest.substr(0, sp1)).c_str(), nullptr, 16);
+        AllocPlace p;
+        p.base = std::strtoull(std::string(rest.substr(sp1 + 1, sp2 - sp1 - 1)).c_str(), nullptr, 16);
+        const std::string_view tail = rest.substr(sp2 + 1);
+        const size_t tab = tail.find('\t');
+        p.image = tail.substr(0, tab);
+        if (tab != std::string_view::npos) p.symbol = tail.substr(tab + 1);
+        out.emplace(addr, std::move(p));
+    }
+    return out;
+}
+
+bool parse_alloc(std::string_view text, const std::unordered_map<u64, AllocName>& names, Profile* all, Profile* held, std::string* err) {
+    if (!text.starts_with("blit-alloc 1")) {
+        if (err) *err = "not what blit's allocation sampler writes";
+        return false;
+    }
+    const std::unordered_map<u64, AllocPlace> places = alloc_places(text);
+    u64 bytes = 0, count = 0, rate = 0;
+    std::vector<std::string> keep;  // (names made here, which the frames point into)
+    keep.reserve(1024);
+    std::unordered_map<u64, AllocName> made;
+    auto name_of = [&](u64 addr) -> const AllocName& {
+        if (const auto it = names.find(addr); it != names.end()) return it->second;
+        auto [it, fresh] = made.try_emplace(addr);
+        if (fresh) {
+            AllocName& n = it->second;
+            if (const auto pl = places.find(addr); pl != places.end()) {
+                n.module = pl->second.image;
+                n.name = !pl->second.symbol.empty() ? pl->second.symbol : "[" + std::string(base_name(pl->second.image)) + "]";
+            } else {
+                n.name = std::format("0x{:x}", addr);
+            }
+        }
+        return it->second;
+    };
+    std::vector<Profile::Frame> frames;
+    size_t at = 0;
+    while (at < text.size()) {
+        size_t nl = text.find('\n', at);
+        if (nl == std::string_view::npos) nl = text.size();
+        const std::string_view line = text.substr(at, nl - at);
+        at = nl + 1;
+        if (line.starts_with("total ")) {
+            std::sscanf(std::string(line).c_str(), "total %llu %llu", reinterpret_cast<unsigned long long*>(&bytes), reinterpret_cast<unsigned long long*>(&count));
+            continue;
+        }
+        if (line.starts_with("rate ")) {
+            rate = std::strtoull(std::string(line.substr(5)).c_str(), nullptr, 10);
+            continue;
+        }
+        if (!line.starts_with("s ")) continue;
+        // "s WEIGHT SIZE LIVE ADDR ..." (the innermost frame first)
+        std::vector<std::string_view> words;
+        for (size_t k = 2; k < line.size();) {
+            size_t e = line.find(' ', k);
+            if (e == std::string_view::npos) e = line.size();
+            if (e > k) words.push_back(line.substr(k, e - k));
+            k = e + 1;
+        }
+        if (words.size() < 3) continue;
+        const u64 weight = std::strtoull(std::string(words[0]).c_str(), nullptr, 10);
+        const bool live = words[2] == "1";
+        frames.clear();
+        for (size_t k = 3; k < words.size(); ++k) {
+            const AllocName& n = name_of(std::strtoull(std::string(words[k]).c_str(), nullptr, 16));
+            frames.push_back({n.name, n.module, n.file, n.line});
+        }
+        const std::string_view who = base_name(all->program);
+        all->add(frames, weight, 0, who);
+        if (live) held->add(frames, weight, 0, who);
+    }
+    if (all->samples == 0) {
+        if (err) *err = "no allocation was sampled (" + std::to_string(count) + " allocations, " + std::to_string(bytes) + " bytes)";
+        return false;
+    }
+    all->unit = held->unit = "bytes";
+    all->note = std::format("{} allocations, {:.1f} MB; sampled every {} KB", count, static_cast<double>(bytes) / 1048576.0, rate / 1024);
+    held->note = std::format("{:.1f} MB still held at the end (sampled)", static_cast<double>(held->weight) / 1048576.0);
+    return true;
+}
+
 namespace {
 
 // A program the job runs: here, or on another machine through its agent.
@@ -921,7 +1016,10 @@ inline int spawn_chdir(posix_spawn_file_actions_t* fa, const char* dir) {
 #endif
 }
 
-bool start(const std::shared_ptr<Remote>& remote, const std::vector<std::string>& argv, const std::string& cwd, Run* run, std::string* err) {
+// (env: more of the environment, "NAME=value", put in the program's own:
+// here only, and not through a program, so that a Mac keeps DYLD_ ones.)
+bool start(const std::shared_ptr<Remote>& remote, const std::vector<std::string>& argv, const std::string& cwd, Run* run, std::string* err,
+           const std::vector<std::string>& env = {}) {
     run->remote = remote;
     if (remote) {
         RemoteProc p;
@@ -959,7 +1057,16 @@ bool start(const std::shared_ptr<Remote>& remote, const std::vector<std::string>
     std::vector<char*> args;
     for (std::string& w : words) args.push_back(w.data());
     args.push_back(nullptr);
-    const int rc = ::posix_spawnp(&run->pid, args[0], &fa, &attr, args.data(), environ);
+    std::vector<std::string> vars = env;
+    std::vector<char*> envp;
+    for (std::string& v : vars) envp.push_back(v.data());
+    for (char** e = environ; e && *e; ++e) {
+        const std::string_view have(*e);
+        const size_t eq = have.find('=');
+        if (std::ranges::none_of(env, [&](const std::string& v) { return v.compare(0, eq + 1, have.substr(0, eq + 1)) == 0; })) envp.push_back(*e);
+    }
+    envp.push_back(nullptr);
+    const int rc = ::posix_spawnp(&run->pid, args[0], &fa, &attr, args.data(), env.empty() ? environ : envp.data());
     posix_spawnattr_destroy(&attr);
     posix_spawn_file_actions_destroy(&fa);
     ::close(out[1]), ::close(er[1]);
@@ -1019,13 +1126,127 @@ const std::vector<std::string> kXctrace = {
     "DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer; export DEVELOPER_DIR; fi; exec xcrun xctrace \"$@\"",
     "xctrace"};
 
+// The allocation sampler blit carries (src/alloc, built with it), and
+// where it is written out to be put into a program: the temporary folder,
+// under a name that changes with it.
+#if defined(BLIT_ALLOC_HERE) && __has_embed(BLIT_ALLOC_HERE)
+constexpr unsigned char kAllocLib[] = {
+#embed BLIT_ALLOC_HERE
+};
+#endif
+
+std::string alloc_library(std::string* err) {
+#if defined(BLIT_ALLOC_HERE) && __has_embed(BLIT_ALLOC_HERE)
+    const std::string_view bytes(reinterpret_cast<const char*>(kAllocLib), sizeof kAllocLib);
+    u64 h = 1469598103934665603ull;
+    for (const char c : bytes) h = (h ^ static_cast<u8>(c)) * 1099511628211ull;
+    const char* tmp = std::getenv("TMPDIR");
+    std::string dir = tmp && *tmp ? tmp : "/tmp";
+    while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
+#if defined(__APPLE__)
+    const std::string path = std::format("{}/blit-alloc-{:016x}.dylib", dir, h);
+#else
+    const std::string path = std::format("{}/blit-alloc-{:016x}.so", dir, h);
+#endif
+    std::error_code ec;
+    if (std::filesystem::file_size(path, ec) == bytes.size() && !ec) return path;
+    const std::string part = path + ".part" + std::to_string(::getpid());
+    const int fd = ::open(part.c_str(), O_WRONLY | O_CREAT | O_TRUNC, 0755);
+    if (fd < 0) return *err = "cannot write the allocation sampler to " + dir, std::string();
+    const bool ok = ::write(fd, bytes.data(), bytes.size()) == static_cast<ssize_t>(bytes.size());
+    ::close(fd);
+    if (!ok || ::rename(part.c_str(), path.c_str()) != 0) return *err = "cannot write the allocation sampler to " + dir, std::string();
+    return path;
+#else
+    *err = "this blit was built without its allocation sampler";
+    return {};
+#endif
+}
+
+// The sampler's addresses named, with their source lines: by atos on a Mac
+// (an image's addresses at a time, with its base), by addr2line elsewhere.
+// The system's own images are left to the names dladdr gave.
+std::unordered_map<u64, AllocName> alloc_names(std::string_view text) {
+    std::unordered_map<u64, AllocName> out;
+    std::map<std::pair<std::string, u64>, std::vector<u64>> by_image;
+    for (const auto& [addr, pl] : alloc_places(text)) {
+        if (pl.image.starts_with("/usr/lib") || pl.image.starts_with("/System") || pl.image.starts_with("/lib")) continue;
+        by_image[{pl.image, pl.base}].push_back(addr);
+    }
+    for (auto& [img, addrs] : by_image) {
+        const auto& [image, base] = img;
+#if !defined(__APPLE__)
+        // (A shared object's addresses, and a position-independent program's, are offsets from its base.)
+        char head[18] = {};
+        bool shared = true;
+        if (FILE* f = std::fopen(image.c_str(), "rb")) {
+            shared = std::fread(head, 1, sizeof head, f) == sizeof head && head[16] == 3;
+            std::fclose(f);
+        }
+#endif
+        for (size_t from = 0; from < addrs.size(); from += 400) {
+            const size_t to = std::min(addrs.size(), from + 400);
+#if defined(__APPLE__)
+            std::vector<std::string> argv{"atos", "-fullPath", "-o", image, "-l", std::format("0x{:x}", base)};
+            for (size_t k = from; k < to; ++k) argv.push_back(std::format("0x{:x}", addrs[k]));
+#else
+            std::vector<std::string> argv{"addr2line", "-C", "-f", "-e", image};
+            for (size_t k = from; k < to; ++k) argv.push_back(std::format("0x{:x}", shared ? addrs[k] - base : addrs[k]));
+#endif
+            Run r;
+            std::string said, ignore;
+            if (!start(nullptr, argv, "", &r, &ignore)) break;
+            finish(r, &said, &ignore);
+            std::vector<std::string_view> lines;
+            for (size_t at = 0; at < said.size();) {
+                size_t nl = said.find('\n', at);
+                if (nl == std::string::npos) nl = said.size();
+                lines.push_back(std::string_view(said).substr(at, nl - at));
+                at = nl + 1;
+            }
+            for (size_t k = from; k < to; ++k) {
+                AllocName n;
+                n.module = image;
+#if defined(__APPLE__)
+                // "name (in image) (file:line)", or "0x... (in image)": no name known
+                if (k - from >= lines.size()) break;
+                const std::string_view l = lines[k - from];
+                const size_t in = l.find(" (in ");
+                if (in == std::string_view::npos || l.starts_with("0x")) continue;
+                n.name = l.substr(0, in);
+                if (l.ends_with(")")) {
+                    const size_t open = l.rfind('(');
+                    std::string_view where = l.substr(open + 1, l.size() - open - 2);
+                    std::string_view file;
+                    u32 line = 0;
+                    if (open > in + 4 && split_srcline(where, &file, &line)) n.file = file, n.line = line;
+                }
+#else
+                // two lines: the function ("??": not known), then "file:line" ("??:0")
+                const size_t at = (k - from) * 2;
+                if (at + 1 >= lines.size()) break;
+                if (lines[at] == "??") continue;
+                n.name = lines[at];
+                std::string_view where = lines[at + 1];
+                if (const size_t d = where.find(" (discriminator"); d != std::string_view::npos) where = where.substr(0, d);
+                std::string_view file;
+                u32 line = 0;
+                if (split_srcline(where, &file, &line)) n.file = file, n.line = line;
+#endif
+                out.emplace(addrs[k], std::move(n));
+            }
+        }
+    }
+    return out;
+}
+
 }  // namespace
 
 struct ProfileJob::Impl {
     mutable std::mutex mu;
     State state = kStarting;
     std::string status = "Starting", error;
-    std::shared_ptr<Profile> result;
+    std::shared_ptr<Profile> result, held;
     std::function<void()> notify;
     std::chrono::steady_clock::time_point started{};
     bool recording = false;
@@ -1052,6 +1273,78 @@ struct ProfileJob::Impl {
             status = "Failed";
         }
         if (notify) notify();
+    }
+
+    // Allocations: the program run with blit's sampler in front of its
+    // allocator (here only), then what the sampler wrote, named.
+    template <class Clean>
+    void allocations(const ProfileRequest& req, std::shared_ptr<Profile> p, const std::string& there, const std::string& cwd, const std::string& dir, bool remote, Clean& clean) {
+        if (remote) {
+            clean();
+            return fail("allocations are recorded on this machine only");
+        }
+        std::string err;
+        const std::string lib = alloc_library(&err);
+        if (lib.empty()) {
+            clean();
+            return fail(err);
+        }
+        std::vector<std::string> env = req.env;
+#if defined(__APPLE__)
+        env.push_back("DYLD_INSERT_LIBRARIES=" + lib);
+#else
+        env.push_back("LD_PRELOAD=" + lib);
+#endif
+        env.push_back("BLIT_ALLOC_OUT=" + dir + "/alloc.txt");
+        std::vector<std::string> argv{there};
+        argv.insert(argv.end(), req.args.begin(), req.args.end());
+        Run r;
+        if (!start(nullptr, argv, cwd, &r, &err, env)) {
+            clean();
+            return fail(err);
+        }
+        {
+            std::lock_guard lock(mu);
+            run = r;
+            recording = true;
+            started = std::chrono::steady_clock::now();
+        }
+        set(kRecording, "Recording allocations");
+        if (stop) r.signal(SIGINT);
+        std::string output, rec_err;
+        finish(r, &output, &rec_err, 64 * 1024);
+        {
+            std::lock_guard lock(mu);
+            recording = false;
+        }
+        p->output = output.empty() ? rec_err : output + (rec_err.empty() ? "" : "\n" + rec_err);
+        set(kReading, "Reading the allocations");
+        std::string text;
+        bool wrote = false;
+        if (FILE* f = std::fopen((dir + "/alloc.txt").c_str(), "rb")) {
+            char buf[65536];
+            for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0 && text.size() < (512u << 20);) text.append(buf, n);
+            std::fclose(f);
+            wrote = !text.empty();
+        }
+        clean();
+        if (quit) return fail("Stopped");
+        if (!wrote) return fail("the program wrote no allocations (one the system protects, or signed to refuse it, cannot be given the sampler)");
+        auto held_p = std::make_shared<Profile>(*p);
+        std::string perr;
+        if (!parse_alloc(text, alloc_names(text), p.get(), held_p.get(), &perr)) return fail(perr);
+        p->kind = "allocations";
+        held_p->kind = "held";
+        p->backend = held_p->backend = "blit";  // (its own sampler, not the system's profiler)
+        held_p->output.clear();
+        p->finish();
+        held_p->finish();
+        {
+            std::lock_guard lock(mu);
+            result = std::move(p);
+            held = std::move(held_p);
+        }
+        set(kDone, "Done");
     }
 
     void work(const ProfileRequest& req) {
@@ -1120,6 +1413,8 @@ struct ProfileJob::Impl {
                 std::filesystem::remove_all(dir, ec);
             }
         };
+
+        if (req.kind == ProfileRequest::kAllocations) return allocations(req, p, there, cwd, dir, remote != nullptr, clean);
 
         // Record.
         std::vector<std::string> argv;
@@ -1327,6 +1622,11 @@ double ProfileJob::elapsed() const {
 std::shared_ptr<Profile> ProfileJob::result() const {
     std::lock_guard lock(impl_->mu);
     return impl_->result;
+}
+
+std::shared_ptr<Profile> ProfileJob::held() const {
+    std::lock_guard lock(impl_->mu);
+    return impl_->held;
 }
 
 std::string ProfileJob::error() const {

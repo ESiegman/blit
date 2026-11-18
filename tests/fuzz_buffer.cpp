@@ -359,6 +359,20 @@ void timeline_test() {
     check(Profile::from_json(p.to_json(), &back, &err) && back.timeline.size() == 3 && back.timeline[1].t == 0.5 && back.timeline[2].thread == 2 &&
               back.timeline[2].w == 40,
           "timeline: kept and read back");
+    // The allocation sampler's file: two samples, one still held; an address named, one only by dladdr's line.
+    const std::string alloc = "blit-alloc 1\nrate 65536\ntotal 300000 10\ns 65536 100 0 10 20\ns 131072 131072 1 30 20\n"
+                              "a 10 0 /t/prog\tsmall\na 20 0 /t/prog\tmain\na 30 0 /t/prog\t\n";
+    std::unordered_map<u64, AllocName> names;
+    names[0x30] = {"big", "/t/prog", "/t/prog.c", 9};
+    Profile all, held;
+    all.program = held.program = "/t/prog";
+    std::string why;
+    check(parse_alloc(alloc, names, &all, &held, &why) && all.weight == 196608 && held.weight == 131072 && all.samples == 2 && held.samples == 1,
+          "allocations: every one, and those still held");
+    all.finish();
+    bool big = false, small = false;
+    for (const ProfileFunc& f : all.funcs) big |= f.name == "big" && f.file == "/t/prog.c" && f.line == 9, small |= f.name == "small";
+    check(big && small, "allocations: named by atos's names, else dladdr's");
 }
 
 void carets_test(int seeds) {

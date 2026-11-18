@@ -146,6 +146,24 @@ struct ProfileDiff {
 };
 ProfileDiff diff_profiles(const Profile& before, const Profile& after);
 
+// What blit's allocation sampler wrote (src/alloc/blit_alloc.c) read into
+// two profiles: every sampled allocation by its stack, weighing its bytes,
+// and those still held at the end. An address is named from `names` (atos
+// or addr2line, which know the source lines) or else from the sampler's own
+// lines (dladdr's symbol and image).
+struct AllocName {
+    std::string name, module, file;
+    u32 line = 0;
+};
+bool parse_alloc(std::string_view text, const std::unordered_map<u64, AllocName>& names, Profile* all, Profile* held, std::string* err);
+// The sampler's lines that say where each address is: its image, that
+// image's base, and the symbol dladdr found (empty: none).
+struct AllocPlace {
+    u64 base = 0;
+    std::string image, symbol;
+};
+std::unordered_map<u64, AllocPlace> alloc_places(std::string_view text);
+
 // The two profilers' output read into a profile (prefix: put before every
 // source path, "ssh://host" for one recorded on another machine).
 // (scale: what one of perf's periods weighs, a page's bytes for page
@@ -172,7 +190,10 @@ struct ProfileRequest {
     // first (new memory, where it was first written); or time spent
     // waiting (in system calls on macOS; off the CPU on Linux, which needs
     // kernel.perf_event_paranoid at 1 or lower).
-    enum Kind : u8 { kTime, kMemory, kWaiting };
+    // Or (here only) every allocation, sampled by bytes, through blit's own
+    // allocator in front of the program's (src/alloc): what was allocated,
+    // and what was still held when it ended.
+    enum Kind : u8 { kTime, kMemory, kWaiting, kAllocations };
     Kind kind = kTime;
 };
 
@@ -189,6 +210,7 @@ public:
     std::string status() const;  // what it is doing, in a few words
     double elapsed() const;      // seconds since the recording started
     std::shared_ptr<Profile> result() const;
+    std::shared_ptr<Profile> held() const;  // (allocations: what was still held at the end)
     std::string error() const;
     const ProfileRequest& request() const { return req_; }
 

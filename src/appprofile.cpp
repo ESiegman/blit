@@ -348,7 +348,9 @@ std::string kept_name(const Profile& p) {
 
 // What a profile is of, as its tab and the panel say it ("Profile" for
 // time on the CPU).
-std::string kind_title(const Profile& p) { return p.kind == "memory" ? "Memory" : p.kind == "waiting" ? "Waiting" : "Profile"; }
+std::string kind_title(const Profile& p) {
+    return p.kind == "memory" ? "Memory" : p.kind == "waiting" ? "Waiting" : p.kind == "allocations" ? "Allocations" : p.kind == "held" ? "Held at the end" : "Profile";
+}
 
 // The time a kept profile's name says it was kept, to sort them by ("2026-11-16-230501").
 std::string kept_when(const std::string& name) {
@@ -492,8 +494,14 @@ void App::prof_sync() {
         return;
     }
     std::shared_ptr<Profile> p = u.job->result();
+    std::shared_ptr<Profile> held = u.job->held();
     u.job.reset();
     if (!p) return;
+    if (held) {  // (allocations: what was still held at the end too, in a tab behind)
+        u.done.insert(u.done.begin(), held);
+        prof_keep(held);
+        prof_open(held);
+    }
     u.done.insert(u.done.begin(), p);
     prof_keep(p);
     if (u.done.size() > 20) u.done.resize(20);
@@ -636,7 +644,8 @@ void App::prof_panel_draw(TextBox& box, bool focused) {
         tool = "perf";
 #endif
     }
-    put(box, font, 1, 0, fit_text((tool.empty() ? std::string("Profiler") : tool == "perf" ? "perf" : "xctrace") + (remote ? " on " + host : ", local"), cols), ink::kMuted);
+    const std::string by = u.kind == ProfileRequest::kAllocations ? std::string("blit's sampler") : tool.empty() ? std::string("Profiler") : tool == "perf" ? "perf" : "xctrace";
+    put(box, font, 1, 0, fit_text(by + (remote ? " on " + host : ", local"), cols), ink::kMuted);
     u32 r = 2;
     // A field: its heading, and under it its value, or (quietly) what it is when not set.
     auto field = [&](const char* label, const std::string& value, const char* none, ProfUi::Act act) {
@@ -657,7 +666,9 @@ void App::prof_panel_draw(TextBox& box, bool focused) {
     if (r < rows) {  // what is recorded: chosen in turn
         u.rows[r] = {ProfUi::kKind, 0};
         const u32 c = put(box, font, r, 0, "Record", ink::kText);
-        put(box, font, r++, c + 2, u.kind == ProfileRequest::kMemory ? "Memory first touched" : u.kind == ProfileRequest::kWaiting ? "Time waiting" : "Time on the CPU", ink::kMuted);
+        put(box, font, r++, c + 2,
+            u.kind == ProfileRequest::kMemory ? "Memory first touched" : u.kind == ProfileRequest::kWaiting ? "Time waiting" : u.kind == ProfileRequest::kAllocations ? "Every allocation" : "Time on the CPU",
+            ink::kMuted);
     }
     ++r;
     if (r < rows) {  // record, or stop: the button, with its key on the right
@@ -713,6 +724,8 @@ void App::prof_panel_draw(TextBox& box, bool focused) {
         const u32 c = put(box, font, r, 2, fit_text(short_path(p.program), cols > 2 ? cols - 2 : 1), on ? ink::kStrong : ink::kText);
         char t[96];
         if (p.kind == "memory") std::snprintf(t, sizeof t, "%s  memory %.1f MB", p.when.c_str(), static_cast<double>(p.weight) / 1048576.0);
+        else if (p.kind == "allocations") std::snprintf(t, sizeof t, "%s  allocated %.1f MB", p.when.c_str(), static_cast<double>(p.weight) / 1048576.0);
+        else if (p.kind == "held") std::snprintf(t, sizeof t, "%s  held %.1f MB", p.when.c_str(), static_cast<double>(p.weight) / 1048576.0);
         else if (p.kind == "waiting") std::snprintf(t, sizeof t, "%s  waiting %.2f s", p.when.c_str(), static_cast<double>(p.weight) * 1e-9);
         else std::snprintf(t, sizeof t, "%s  %.1f s", p.when.c_str(), p.seconds);
         if (c + 4 < cols) put(box, font, r, c + 2, fit_text(t, cols - c - 2), ink::kMuted);
@@ -804,7 +817,7 @@ void App::prof_do(u32 row) {
         case ProfUi::kRecord: prof_record(); break;
         case ProfUi::kStop: prof_stop(); break;
         case ProfUi::kDwarf: u.dwarf = !u.dwarf; break;
-        case ProfUi::kKind: u.kind = static_cast<ProfileRequest::Kind>((u.kind + 1) % 3); break;
+        case ProfUi::kKind: u.kind = static_cast<ProfileRequest::Kind>((u.kind + 1) % 4); break;
         case ProfUi::kAnnotate:
             u.annotate = !u.annotate;
             for (const std::unique_ptr<Pane>& p : panes_) p->cache_rev = ~0ull;
@@ -1058,6 +1071,8 @@ void App::prof_layout(FrameDesc& fd) {
             char sum[160];
             if (p.kind == "memory")  // (bytes first touched, from the faults that touched them)
                 std::snprintf(sum, sizeof sum, "%.1f MB new \xC2\xB7 %s faults \xC2\xB7 %u thread%s", static_cast<double>(p.weight) / 1048576.0, with_commas(p.samples).c_str(), p.threads, p.threads == 1 ? "" : "s");
+            else if (p.kind == "allocations" || p.kind == "held")  // (bytes, from the allocations sampled)
+                std::snprintf(sum, sizeof sum, "%.1f MB %s \xC2\xB7 %s sampled", static_cast<double>(p.weight) / 1048576.0, p.kind == "held" ? "held at the end" : "allocated", with_commas(p.samples).c_str());
             else if (p.kind == "waiting")
                 std::snprintf(sum, sizeof sum, "%.2f s waited \xC2\xB7 %s waits \xC2\xB7 %u thread%s", static_cast<double>(p.weight) * 1e-9, with_commas(p.samples).c_str(), p.threads, p.threads == 1 ? "" : "s");
             else
@@ -1676,7 +1691,7 @@ void App::prof_set(const std::string& what, const std::string& value) {
     else if (what == "cwd") u.cwd = full_path(value);
     else if (what == "dwarf") u.dwarf = value == "on";
     else if (what == "annotate") u.annotate = value != "off";
-    else if (what == "kind") u.kind = value == "memory" ? ProfileRequest::kMemory : value == "waiting" ? ProfileRequest::kWaiting : ProfileRequest::kTime;
+    else if (what == "kind") u.kind = value == "memory" ? ProfileRequest::kMemory : value == "waiting" ? ProfileRequest::kWaiting : value == "allocations" ? ProfileRequest::kAllocations : ProfileRequest::kTime;
     ++prof_gen_;
 }
 

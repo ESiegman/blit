@@ -193,6 +193,18 @@ if(NOT WIN32)
   set_property(SOURCE src/remote.cpp APPEND PROPERTY COMPILE_DEFINITIONS BLIT_AGENT_HERE="${CMAKE_BINARY_DIR}/blit-agent")
   set_source_files_properties(src/remote.cpp PROPERTIES OBJECT_DEPENDS
     "${CMAKE_BINARY_DIR}/blit-agent;${CMAKE_SOURCE_DIR}/src/agent/bin/blit-agent-linux-x86_64;${CMAKE_SOURCE_DIR}/src/agent/bin/blit-agent-linux-aarch64")
+  # The allocation sampler a profile of allocations puts into the program
+  # (src/alloc): a shared library built here, which blit carries
+  # (profile.cpp embeds it, and writes it out when it is wanted).
+  enable_language(C)
+  add_library(blit_alloc SHARED src/alloc/blit_alloc.c)
+  set_target_properties(blit_alloc PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+  target_compile_options(blit_alloc PRIVATE -O2 -fno-omit-frame-pointer)
+  target_link_libraries(blit_alloc PRIVATE ${CMAKE_DL_LIBS} Threads::Threads)
+  add_dependencies(blit_core blit_alloc)
+  set(blit_alloc_file "${CMAKE_BINARY_DIR}/${CMAKE_SHARED_LIBRARY_PREFIX}blit_alloc${CMAKE_SHARED_LIBRARY_SUFFIX}")
+  set_property(SOURCE src/profile.cpp APPEND PROPERTY COMPILE_DEFINITIONS BLIT_ALLOC_HERE="${blit_alloc_file}")
+  set_source_files_properties(src/profile.cpp PROPERTIES OBJECT_DEPENDS "${blit_alloc_file}")
 endif()
 
 # Glyph atlas, shaping and text -> cell grid: CPU only.

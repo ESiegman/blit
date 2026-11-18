@@ -2,13 +2,15 @@
 # Profiles' views, on profiles written by hand (perf script's text, so that
 # no profiler is needed and the numbers are known): the graph turned over
 # (bottom-up), a function's callers and callees, two profiles compared,
-# the timeline.
+# the timeline. And every allocation, through blit's own sampler (which
+# needs no profiler either).
 #
 #   tests/profviews.sh path/to/blit            run the cases
 #   tests/profviews.sh path/to/blit --print    show what each case gives
 set -u
 blit=${1:?usage: tests/profviews.sh path/to/blit [--print]}
 print=${2:-}
+here=$(cd "$(dirname "$0")" && pwd)
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 dir=$(cd "$dir" && pwd -P)
@@ -82,6 +84,14 @@ run "profopen:$dir/a.perf;frame;proftime:0.15,0.35;key:b;frame;profdump"
 check "and bottom-up" 'zoom all, stretch 0.15-0.35: 2 samples, heaviest leaf_b, bottom-up: leaf_b=67% leaf_a=33%'
 run "profopen:$dir/a.perf;frame;proftime:0.15,0.25;frame;key:Escape;frame;profdump"
 check "Esc: all of it again" 'zoom all'
+
+# Every allocation: tests/profile/allocs.c, whose make_big allocates most of
+# the bytes and keeps half of them to the end, make_small many small blocks
+# freed again. Two profiles: what was allocated, and what was still held.
+cp "$here/profile/allocs.c" "$dir/" && (cd "$dir" && cc -g -O1 -fno-omit-frame-pointer -o allocs allocs.c) || exit 1
+got=$("$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "prof:program=$dir/allocs;prof:kind=allocations;profrecord;profwait;frame;profdump;profpanel;profpick:profiles:2;frame;profdump" 2>&1 >/dev/null |
+    grep -v '^\[' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }')
+check "every allocation: what was allocated, and what was still held at the end" '2 profiles; allocs (allocations) by blit, 1 thread, over 10%: make_big@allocs.c; tab: zoom all ;; 2 profiles; allocs (held) by blit, 1 thread, over 10%: make_big@allocs.c; tab: zoom all'
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "profviews ok"
 exit $failed
