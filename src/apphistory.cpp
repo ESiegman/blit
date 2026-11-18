@@ -88,13 +88,20 @@ struct HistoryView {
 
 // Under blit's data folder; or, for a run with no window (the tests, the
 // benchmarks), only where BLIT_HISTORY_DIR says, and not at all without it.
+namespace {
+const char* own_dir() {
+    static const char* const dir = std::getenv("BLIT_HISTORY_DIR");  // (read once: it is asked each frame)
+    return dir;
+}
+}  // namespace
+
 std::string App::history_folder(const Doc& d) const {
-    const char* own = std::getenv("BLIT_HISTORY_DIR");
+    const char* own = own_dir();
     return own && *own ? history_dir(own, full_path(d.ed.path)) : history_dir(grammar_dir(), full_path(d.ed.path));
 }
 
 bool App::history_wanted(const Doc& d) const {
-    const char* own = std::getenv("BLIT_HISTORY_DIR");
+    const char* own = own_dir();
     if (!win_ && !(own && *own)) return false;
     return cfg_.local_history && !d.ed.path.empty() && !is_remote(d.ed.path) && !d.read_only && !d.nb && d.ed.buf.size() <= kLargest;
 }
