@@ -164,6 +164,8 @@ struct BlitGpu {
 
     Image atlas;
     int atlas_w = 0, atlas_h = 0;
+    Image colours;  // (colour emoji: the font's colour slots, RGBA)
+    int colours_w = 0, colours_h = 0;
     bool atlas_pending = false;
     int atlas_y0 = 0, atlas_y1 = 0;
 
@@ -641,8 +643,9 @@ void write_file(const std::string& path, const void* data, size_t size) {
 // The descriptor sets of a frame, pointed at what it has now (the atlas,
 // its cells, its uniforms), where those were made since it last drew.
 void frame_sets(BlitGpu* g, Frame& f, size_t stride) {
-    VkWriteDescriptorSet w[3] = {};
+    VkWriteDescriptorSet w[4] = {};
     VkDescriptorImageInfo atlas{g->sampler, g->atlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
+    VkDescriptorImageInfo colours{g->sampler, g->colours.view ? g->colours.view : g->atlas.view, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL};
     VkDescriptorBufferInfo cells{f.cells.buf, 0, VK_WHOLE_SIZE};
     VkDescriptorBufferInfo uniforms{f.uniforms.buf, 0, stride};
     uint32_t n = 0;
@@ -659,6 +662,12 @@ void frame_sets(BlitGpu* g, Frame& f, size_t stride) {
         w[n].descriptorCount = 1;
         w[n].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
         w[n++].pBufferInfo = &cells;
+        w[n] = {VK_STRUCTURE_TYPE_WRITE_DESCRIPTOR_SET};
+        w[n].dstSet = f.text_set;
+        w[n].dstBinding = 2;
+        w[n].descriptorCount = 1;
+        w[n].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+        w[n++].pImageInfo = &colours;
         f.text_stale = false;
     }
     if (f.uniform_stale) {
@@ -846,7 +855,7 @@ BlitGpu* blit_gpu_create(void* view, const BlitGpuShaders* shaders, int frames, 
 
     // The layout every pipeline shares: sets 0 and 1 empty, set 2 the
     // atlas (or a picture) and the cells, set 3 the uniforms.
-    VkDescriptorSetLayoutBinding text[2] = {};
+    VkDescriptorSetLayoutBinding text[3] = {};
     text[0].binding = 0;
     text[0].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
     text[0].descriptorCount = 1;
@@ -855,6 +864,10 @@ BlitGpu* blit_gpu_create(void* view, const BlitGpuShaders* shaders, int frames, 
     text[1].descriptorType = VK_DESCRIPTOR_TYPE_STORAGE_BUFFER;
     text[1].descriptorCount = 1;
     text[1].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
+    text[2].binding = 2;  // (the colour atlas)
+    text[2].descriptorType = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER;
+    text[2].descriptorCount = 1;
+    text[2].stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutBinding uniform{};
     uniform.binding = 0;
     uniform.descriptorType = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC;
@@ -862,7 +875,7 @@ BlitGpu* blit_gpu_create(void* view, const BlitGpuShaders* shaders, int frames, 
     uniform.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT;
     VkDescriptorSetLayoutCreateInfo li{VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO};
     vkCreateDescriptorSetLayout(g->dev, &li, nullptr, &g->empty_layout);
-    li.bindingCount = 2;
+    li.bindingCount = 3;
     li.pBindings = text;
     vkCreateDescriptorSetLayout(g->dev, &li, nullptr, &g->text_layout);
     li.bindingCount = 1;
@@ -875,7 +888,7 @@ BlitGpu* blit_gpu_create(void* view, const BlitGpuShaders* shaders, int frames, 
     if (vkCreatePipelineLayout(g->dev, &pli, nullptr, &g->layout) != VK_SUCCESS) return fail("no pipeline layout");
 
     // Each frame's descriptor sets.
-    VkDescriptorPoolSize sizes[3] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, kMaxFrames},
+    VkDescriptorPoolSize sizes[3] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 2 * kMaxFrames},
                                      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, kMaxFrames},
                                      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, kMaxFrames}};
     VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
@@ -1058,6 +1071,7 @@ void blit_gpu_destroy(BlitGpu* g) {
         if (g->off_fb) vkDestroyFramebuffer(g->dev, g->off_fb, nullptr);
         image_free(g, g->offscreen);
         image_free(g, g->atlas);
+        image_free(g, g->colours);
         for (VkPipeline p : g->pipes)
             if (p) vkDestroyPipeline(g->dev, p, nullptr);
         if (g->cache) vkDestroyPipelineCache(g->dev, g->cache, nullptr);
@@ -1137,6 +1151,53 @@ int blit_gpu_set_offscreen(BlitGpu* g, int w, int h) {
     return 1;
 }
 
+int blit_gpu_set_colours(BlitGpu* g, int w, int h) {
+    if (w <= 0 || h <= 0) return 0;
+    blit_gpu_wait_idle(g);
+    image_free(g, g->colours);
+    g->colours_w = g->colours_h = 0;
+    for (Frame& f : g->frames) f.text_stale = true;
+    if (!image_make(g, g->colours, VK_FORMAT_R8G8B8A8_UNORM, w, h, 1, VK_IMAGE_USAGE_SAMPLED_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT)) return 0;
+    VkCommandBuffer cmd = command_buffer(g);
+    if (!cmd) return 0;
+    barrier(cmd, g->colours.img, 0, 1, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 0, VK_ACCESS_TRANSFER_WRITE_BIT,
+            VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+    const VkClearColorValue empty{};
+    const VkImageSubresourceRange all{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+    vkCmdClearColorImage(cmd, g->colours.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, &empty, 1, &all);
+    barrier(cmd, g->colours.img, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+            VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+    if (!run_now(g, cmd)) return 0;
+    g->colours_w = w;
+    g->colours_h = h;
+    return 1;
+}
+
+void blit_gpu_colour_rows(BlitGpu* g, const uint8_t* rgba, int y0, int y1) {
+    if (!g->colours.img || !rgba) return;
+    if (y0 < 0) y0 = 0;
+    if (y1 > g->colours_h) y1 = g->colours_h;
+    if (y1 <= y0) return;
+    blit_gpu_wait_idle(g);  // (no frame under way reads it as it changes)
+    const size_t row = static_cast<size_t>(g->colours_w) * 4, bytes = row * static_cast<size_t>(y1 - y0);
+    Buffer src;
+    if (!buffer_make(g, src, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) return;
+    std::memcpy(src.map, rgba + static_cast<size_t>(y0) * row, bytes);
+    if (VkCommandBuffer cmd = command_buffer(g)) {
+        barrier(cmd, g->colours.img, 0, 1, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_ACCESS_SHADER_READ_BIT,
+                VK_ACCESS_TRANSFER_WRITE_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT);
+        VkBufferImageCopy c{};
+        c.imageSubresource = {VK_IMAGE_ASPECT_COLOR_BIT, 0, 0, 1};
+        c.imageOffset = {0, y0, 0};
+        c.imageExtent = {static_cast<uint32_t>(g->colours_w), static_cast<uint32_t>(y1 - y0), 1};
+        vkCmdCopyBufferToImage(cmd, src.buf, g->colours.img, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &c);
+        barrier(cmd, g->colours.img, 0, 1, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL, VK_ACCESS_TRANSFER_WRITE_BIT,
+                VK_ACCESS_SHADER_READ_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT);
+        run_now(g, cmd);
+    }
+    buffer_free(g, src);
+}
+
 int blit_gpu_set_atlas(BlitGpu* g, int w, int h) {
     blit_gpu_wait_idle(g);  // (frames under way read the old one)
     image_free(g, g->atlas);
@@ -1172,7 +1233,7 @@ uint32_t blit_gpu_image_add(BlitGpu* g, const uint8_t* rgba, int w, int h) {
     // the picture shader does not read).
     for (int attempt = 0; attempt < 2 && !p.set; ++attempt) {
         if (attempt > 0 || g->picture_pools.empty()) {
-            const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 64}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64}};
+            const VkDescriptorPoolSize sizes[2] = {{VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 128}, {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 64}};
             VkDescriptorPoolCreateInfo dpi{VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO};
             dpi.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
             dpi.maxSets = 64;

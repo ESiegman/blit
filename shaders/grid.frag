@@ -13,6 +13,7 @@ layout(location = 0) out vec4 out_color;
 
 layout(set = 2, binding = 0) uniform sampler2D atlas;
 layout(std430, set = 2, binding = 1) readonly buffer Cells { uint cells[]; };
+layout(set = 2, binding = 2) uniform sampler2D colours;  // colour glyphs (emoji): the atlas's last rows, RGBA
 
 layout(std140, set = 3, binding = 0) uniform Frame {
     vec4 bg;
@@ -46,6 +47,9 @@ layout(std140, set = 3, binding = 0) uniform Frame {
                        // selected, z pixels to a point
     vec4 palette[32];  // ink colours; a cell picks one with bits 16-20. 0 is plain text,
                        // 24-27 are the four kinds of diagnostic
+    vec4 tones[8];     // (a popup's)
+    vec4 colour_inv;   // 1 / the colour atlas's size
+    uvec4 colour_at;   // x the first colour glyph's slot, y its row in the atlas
 };
 
 // How far a point is outside a box with rounded corners (negative: inside).
@@ -59,6 +63,13 @@ float round_box(vec2 q, vec2 half_size, float r) {
 uint cell_at(ivec2 q, uint outside) {
     if (q.x < 0 || q.y < 0 || q.x >= int(cols) || q.y >= int(rows)) return outside;
     return cells[cell_base + uint(q.y) * cols + uint(q.x)];
+}
+
+// A colour glyph's pixel (premultiplied) over what is there.
+vec3 over_colour(vec3 col, uint slot, vec2 in_cell) {
+    vec2 xy = vec2(float(slot & ((1u << atlas_shift) - 1u)), float((slot >> atlas_shift) - colour_at.y));
+    vec4 e = textureLod(colours, (xy * cell + in_cell + 0.5) * colour_inv.xy, 0.0);
+    return col * (1.0 - e.a) + e.rgb;
 }
 
 void main() {
@@ -102,6 +113,7 @@ void main() {
     }
 #endif
     vec3 col = mix(back, palette[(v >> 16) & 31u].rgb, a);
+    if (slot >= colour_at.x) col = over_colour(col, slot, in_cell);  // (an emoji: from the colour atlas, no draw of its own)
 
     // Bit 30 marks the few cells that need more than a glyph: those the
     // cursor or the scroll thumb touch, and those with a wavy underline.

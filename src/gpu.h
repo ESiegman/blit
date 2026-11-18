@@ -95,6 +95,11 @@ int blit_gpu_set_atlas(BlitGpu* g, int w, int h);
 /* Rows y0 to y1 (not y1) of the atlas have changed; pixels is all of it,
  * one byte a pixel. They reach the GPU with the next frame. */
 void blit_gpu_atlas_rows(BlitGpu* g, const uint8_t* pixels, int y0, int y1);
+/* The colour atlas (colour emoji: the font's colour slots, its last rows),
+ * w * h pixels of RGBA, premultiplied, made empty; and rows y0 to y1 of it
+ * replaced (rgba is all of it). Rare (a new emoji): each waits for the GPU. */
+int blit_gpu_set_colours(BlitGpu* g, int w, int h);
+void blit_gpu_colour_rows(BlitGpu* g, const uint8_t* rgba, int y0, int y1);
 
 /* A picture, for BLIT_PIPE_IMAGE draws: w * h pixels of 4 bytes, RGBA,
  * the colours already multiplied by their alpha. It is on the GPU from the

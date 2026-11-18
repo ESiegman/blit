@@ -15,6 +15,7 @@ layout(location = 0) out vec4 out_color;
 
 layout(set = 2, binding = 0) uniform sampler2D atlas;
 layout(std430, set = 2, binding = 1) readonly buffer Cells { uint cells[]; };
+layout(set = 2, binding = 2) uniform sampler2D colours;  // colour glyphs (emoji): the atlas's last rows, RGBA
 
 layout(std140, set = 3, binding = 0) uniform Frame {
     vec4 bg;
@@ -49,6 +50,8 @@ layout(std140, set = 3, binding = 0) uniform Frame {
     vec4 palette[32];  // ink colours; a cell picks one with bits 16-20. 0 is plain text,
                        // 24-27 are the four kinds of diagnostic
     vec4 tones[8];     // a popup's other backgrounds for selected cells: a cell names one with bits 21-23 (0: none)
+    vec4 colour_inv;   // 1 / the colour atlas's size
+    uvec4 colour_at;   // x the first colour glyph's slot, y its row in the atlas
 };
 
 // How far a point is outside a box with rounded corners (negative: inside).
@@ -76,6 +79,13 @@ uint cell_at(ivec2 q, uint outside) {
     return cells[cell_base + uint(q.y) * cols + uint(q.x)];
 }
 
+// A colour glyph's pixel (premultiplied) over what is there.
+vec3 over_colour(vec3 col, uint slot, vec2 in_cell) {
+    vec2 xy = vec2(float(slot & ((1u << atlas_shift) - 1u)), float((slot >> atlas_shift) - colour_at.y));
+    vec4 e = textureLod(colours, (xy * cell + in_cell + 0.5) * colour_inv.xy, 0.0);
+    return col * (1.0 - e.a) + e.rgb;
+}
+
 void main() {
 #ifndef BLIT_FX
     vec2 px = floor(gl_FragCoord.xy);
@@ -97,6 +107,7 @@ void main() {
 
     vec3 back = (v & 0x80000000u) != 0u ? (((v >> 21) & 7u) != 0u ? tones[(v >> 21) & 7u].rgb : sel.rgb) : bg.rgb;
     vec3 col = mix(back, palette[(v >> 16) & 31u].rgb, a);
+    if (slot >= colour_at.x && slot > 32u) col = over_colour(col, slot, in_cell);
 
     // The outline.
     vec2 edge = min(px - frame_rect.xy, frame_rect.zw - 1.0 - px);
@@ -160,6 +171,7 @@ void main() {
         }
     }
     vec3 col = mix(back, palette[(v >> 16) & 31u].rgb, a);
+    if (in_grid && slot >= colour_at.x && slot > 32u) col = over_colour(col, slot, in_cell);
 
     // The outline, and the box's own edge: a pixel the edge runs through is
     // partly the box and partly its shadow.

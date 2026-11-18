@@ -46,6 +46,8 @@ static void say(char* err, size_t size, NSString* what, NSError* why) {
     uint32_t next_picture;
     MTLRenderPassDescriptor* pass;  // the same one each frame, with that frame's image put in
     id<MTLTexture> atlas;
+    id<MTLTexture> colours;  // (colour emoji: the font's colour slots, RGBA)
+    int colours_w, colours_h;
     id<MTLTexture> offscreen;
     int off_w, off_h, atlas_w, atlas_h;
     // Per frame under way: its cells, and the atlas rows it carries to the GPU.
@@ -282,6 +284,34 @@ int blit_gpu_set_atlas(BlitGpu* g, int w, int h) {
     return m->atlas != nil;
 }
 
+int blit_gpu_set_colours(BlitGpu* g, int w, int h) {
+    BlitMetal* m = M(g);
+    if (w <= 0 || h <= 0) return 0;
+    blit_gpu_wait_idle(g);
+    MTLTextureDescriptor* td = [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatRGBA8Unorm width:(NSUInteger)w height:(NSUInteger)h mipmapped:NO];
+    td.usage = MTLTextureUsageShaderRead;
+    td.storageMode = MTLStorageModeShared;
+    m->colours = [m->device newTextureWithDescriptor:td];
+    if (!m->colours) return 0;
+    m->colours_w = w;
+    m->colours_h = h;
+    void* zero = calloc((size_t)w * 4, 1);
+    for (int y = 0; y < h && zero; ++y) [m->colours replaceRegion:MTLRegionMake2D(0, (NSUInteger)y, (NSUInteger)w, 1) mipmapLevel:0 withBytes:zero bytesPerRow:(NSUInteger)w * 4];
+    free(zero);
+    return 1;
+}
+
+void blit_gpu_colour_rows(BlitGpu* g, const uint8_t* rgba, int y0, int y1) {
+    BlitMetal* m = M(g);
+    if (!m->colours || !rgba) return;
+    if (y0 < 0) y0 = 0;
+    if (y1 > m->colours_h) y1 = m->colours_h;
+    if (y1 <= y0) return;
+    blit_gpu_wait_idle(g);  // (no frame under way reads it as it changes)
+    [m->colours replaceRegion:MTLRegionMake2D(0, (NSUInteger)y0, (NSUInteger)m->colours_w, (NSUInteger)(y1 - y0)) mipmapLevel:0
+                    withBytes:rgba + (size_t)y0 * (size_t)m->colours_w * 4 bytesPerRow:(NSUInteger)m->colours_w * 4];
+}
+
 uint32_t blit_gpu_image_add(BlitGpu* g, const uint8_t* rgba, int w, int h) {
     BlitMetal* m = M(g);
     if (!rgba || w <= 0 || h <= 0) return 0;
@@ -456,6 +486,8 @@ int blit_gpu_end(BlitGpu* g, const void* uniforms, size_t stride, size_t blocks,
         [e setFragmentTexture:m->atlas atIndex:0];
         [e setFragmentSamplerState:m->sampler atIndex:0];
         [e setFragmentBuffer:m->cells[slot] offset:0 atIndex:1];
+        [e setFragmentTexture:(m->colours ? m->colours : m->atlas) atIndex:2];
+        [e setFragmentSamplerState:m->sampler atIndex:2];
         const NSInteger tw = (NSInteger)m->target.width, th = (NSInteger)m->target.height;
         uint32_t bound = ~0u;
         size_t given = (size_t)-1;  // the uniform block the last draw was given: the next with the same one is not given it again

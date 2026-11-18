@@ -46,6 +46,34 @@ struct TextBox {
                 if (col > 0) line[col - 1] = (line[col - 1] & ~0xFFFFu) | font.mark(line[col - 1], cp);
                 continue;
             }
+            // An emoji with more after it (a family joined by zero width
+            // joiners, a skin tone, a flag's second letter): all of it read
+            // first, and drawn as the colour font's one picture of it, if
+            // there is one, in its first's two cells.
+            const u32 cg = cp < 0x80 ? cp : font.cell_glyph(cp);
+            const bool ri = (cg & (Font::kWide | Font::kJoin)) == (Font::kWide | Font::kJoin);
+            if ((cg & Font::kWide) && ((cg & Font::kPict) || ri) && col + 1 < cols) {
+                u32 seq[12] = {cp};
+                u32 n = 1;
+                size_t j = i;
+                bool joined = false;
+                while (j < s.size() && n < std::size(seq)) {
+                    const Decoded e = decode_utf8(p + j, s.size() - j);
+                    const u32 c = e.cp, ce = c < 0x80 ? c : font.cell_glyph(c);
+                    const bool next_ri = (ce & (Font::kWide | Font::kJoin)) == (Font::kWide | Font::kJoin);
+                    if (!(c == 0x200D || c - 0xFE00 < 16 || c - 0x1F3FB < 5 || (joined && (ce & Font::kPict)) || (ri && next_ri && n == 1))) break;
+                    joined = c == 0x200D;
+                    seq[n++] = c;
+                    j += e.len;
+                }
+                if (n > 1)
+                    if (const u32 slot = font.sequence_glyph(seq, n)) {
+                        line[col++] = slot | (ink << kCellInkShift);
+                        line[col++] = (slot + 1) | (ink << kCellInkShift);
+                        i = j;
+                        continue;
+                    }
+            }
             const u32 g = font.glyph(cp, style);
             const u32 slot = g & (Font::kWide - 1);
             line[col++] = slot | (ink << kCellInkShift);

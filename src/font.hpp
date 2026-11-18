@@ -166,10 +166,17 @@ public:
     // together, which the renderer draws over them. colour_mark() says, of
     // a slot, 1: the first of such a glyph's cells, 2: its second; 0: none.
     struct Colour {
-        std::vector<u8> rgba;  // premultiplied, w * h * 4
         int w = 0, h = 0;
         u32 cells = 1;
     };
+    // The colour glyphs' own slots: from colour_base(), the atlas's last
+    // rows (from colour_row0()); the colour atlas is those rows, RGBA
+    // (premultiplied), colour_h() tall, the atlas's width.
+    u32 colour_base() const { return colour_base_; }
+    u32 colour_row0() const { return colour_row0_; }
+    int colour_h() const { return colour_h_; }
+    const u8* colour_atlas() const { return colour_px_.data(); }
+    bool take_colour_dirty(int* y0, int* y1);
     bool has_colour() const { return colour_used_ > 0; }
     u32 colour_lowest() const { return colour_lowest_; }  // (no colour glyph's slot is below this)
     u8 colour_mark(u32 slot) const { return colour_marks_[slot & 0xFFFF]; }
@@ -218,7 +225,9 @@ private:
     // A cell's low 16 bits are its slot; higher bits (colour) ride along.
     bool joins(u32 cell) const { return (cell & 0xFFFF) < kAsciiSlots && joins_[cell & (kAsciiSlots - 1)]; }
     u32 lookup(u32 cp);
-    bool colour_glyph(u32 cp, u32 slot, u32 width);  // a colour font's picture of it, for those slots
+    void colour_glyph(u32 slot, u32 width, const std::vector<u8>& rgba);  // a colour picture, in those slots
+    u32 alloc_colour(u32 width);
+    void put_colour(u32 slot, u32 width, const std::vector<u8>& rgba);
     bool sequence_pixels(const u32* cps, size_t n, int w, int h, std::vector<u8>* out);  // a sequence's, if the colour font has one picture of it
     bool colour_glyph_pixels(u32 gi, int w, int h, std::vector<u8>* out);  // (elsewhere than a Mac: a glyph of the colour font's)
     bool colour_pixels(u32 cp, int w, int h, std::vector<u8>* out);  // (the system's: CoreText on a Mac, FreeType elsewhere)
@@ -298,6 +307,9 @@ private:
     // Colour emoji (see Colour): each glyph's picture, by its first slot;
     // every slot's mark; and the colour font, looked for once.
     std::unordered_map<u32, Colour> colour_;
+    u32 colour_rows_ = 1, colour_row0_ = 0, colour_base_ = 0, next_colour_ = 0;
+    int colour_h_ = 0, colour_dirty0_ = 0, colour_dirty1_ = 0;
+    std::vector<u8> colour_px_;
     std::unordered_map<std::u32string, u32> sequences_;  // (sequence_glyph's answers)
     std::string colour_path_;
     int colour_index_ = 0;

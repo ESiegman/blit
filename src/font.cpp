@@ -496,6 +496,14 @@ bool Font::init(const FontSpec& spec, std::string* err, std::string* warnings) {
     // The styles' ASCII blocks are set aside when the atlas is big enough to
     // spare them, which it is at any reasonable size.
     first_slot_ = next_slot_ = slots_ >= 2 * kAsciiSlots ? kAsciiSlots : 128;
+    // The last rows are colour glyphs' own (colour emoji), and the colour
+    // atlas (RGBA) is those rows alone: the shader samples it there.
+    colour_rows_ = std::clamp<u32>(rows / 16, 1, 8);
+    colour_row0_ = rows - colour_rows_;
+    colour_base_ = next_colour_ = colour_row0_ * cols_;
+    colour_h_ = static_cast<int>(colour_rows_) * cell_h_;
+    colour_px_.assign(static_cast<size_t>(atlas_w_) * static_cast<size_t>(colour_h_) * 4, 0);
+    colour_dirty0_ = 0, colour_dirty1_ = colour_h_;
     pixels_ = static_cast<u8*>(std::calloc(static_cast<size_t>(atlas_w_) * atlas_h_, 1));
     if (!pixels_ || atlas_w_ > 8192 || atlas_h_ > 16384 || slots_ < 256) {
         if (err) *err = "font size out of range";
@@ -768,12 +776,15 @@ void Font::reset_atlas() {
     map_used_ = slices_used_ = short_used_ = marks_used_ = 0;
     if (colour_used_) {
         colour_.clear();
-        sequences_.clear();
         std::fill(colour_marks_.begin(), colour_marks_.end(), u8{0});
+        std::fill(colour_px_.begin(), colour_px_.end(), u8{0});
+        colour_dirty0_ = 0, colour_dirty1_ = colour_h_;
         colour_used_ = 0;
         colour_lowest_ = ~0u;
     }
+    sequences_.clear();
     next_slot_ = first_slot_;
+    next_colour_ = colour_base_;
     ++generation_;
 }
 
@@ -791,7 +802,7 @@ u32 Font::alloc_slots(u32 width) {
         if (width == 2 && next_slot_ % cols_ == cols_ - 1) ++next_slot_;
     };
     align();
-    if (next_slot_ + width > slots_) {
+    if (next_slot_ + width > colour_base_) {  // (past it: the colour glyphs')
         reset_atlas();
         if (full_) return kNoSlot;
         align();
@@ -799,6 +810,49 @@ u32 Font::alloc_slots(u32 width) {
     const u32 slot = next_slot_;
     next_slot_ += width;
     return slot;
+}
+
+// Slots of the colour glyphs' own rows (see colour_base()).
+u32 Font::alloc_colour(u32 width) {
+    if (full_) return kNoSlot;
+    auto align = [&] {
+        if (width == 2 && next_colour_ % cols_ == cols_ - 1) ++next_colour_;
+    };
+    align();
+    if (next_colour_ + width > slots_) {
+        reset_atlas();
+        if (full_) return kNoSlot;
+        align();
+    }
+    const u32 slot = next_colour_;
+    next_colour_ += width;
+    return slot;
+}
+
+// A colour picture (cells wide, premultiplied RGBA) into its slots of the
+// colour atlas, each cell's part in its slot's place.
+void Font::put_colour(u32 slot, u32 width, const std::vector<u8>& rgba) {
+    const int w = cell_w_ * static_cast<int>(width);
+    for (u32 k = 0; k < width; ++k) {
+        const u32 s = slot + k;
+        const int x = static_cast<int>(s % cols_) * cell_w_, y = static_cast<int>(s / cols_ - colour_row0_) * cell_h_;
+        if (y < 0 || y + cell_h_ > colour_h_) continue;
+        for (int r = 0; r < cell_h_; ++r)
+            std::memcpy(&colour_px_[(static_cast<size_t>(y + r) * static_cast<size_t>(atlas_w_) + static_cast<size_t>(x)) * 4],
+                        &rgba[(static_cast<size_t>(r) * static_cast<size_t>(w) + static_cast<size_t>(k) * static_cast<size_t>(cell_w_)) * 4], static_cast<size_t>(cell_w_) * 4);
+        colour_dirty0_ = std::min(colour_dirty0_, y);
+        colour_dirty1_ = std::max(colour_dirty1_, y + cell_h_);
+        colour_marks_[s & 0xFFFF] = static_cast<u8>(k + 1);
+    }
+}
+
+bool Font::take_colour_dirty(int* y0, int* y1) {
+    if (colour_dirty1_ <= colour_dirty0_) return false;
+    *y0 = colour_dirty0_;
+    *y1 = colour_dirty1_;
+    colour_dirty0_ = colour_h_;
+    colour_dirty1_ = 0;
+    return true;
 }
 
 u32 Font::lookup(u32 cp) {
@@ -809,10 +863,21 @@ u32 Font::lookup(u32 cp) {
             if (map_[h].key == cp) return map_[h].slot;
         if (map_used_ * 2 >= map_.size()) reset_atlas();
     }
+    // Drawn in colour, or from a font: decided first, for a colour glyph's
+    // slots are its own rows'. An emoji past U+1F000 is drawn in colour,
+    // before any font has a plain one; another pictograph (a heart, an
+    // aeroplane) is text unless only a colour font has it.
+    const bool colour_first = width > 0 && cp >= 0x1F000 && cp_pictographic(cp);
+    std::vector<u8> rgba;
+    bool colour = colour_first && colour_pixels(cp, cell_w_ * static_cast<int>(width), cell_h_, &rgba);
+    u32 gi = 0;
+    FT_Face f = colour ? nullptr : face_for(cp, &gi);
+    if (!colour && !f && width && !colour_first && cp_pictographic(cp)) colour = colour_pixels(cp, cell_w_ * static_cast<int>(width), cell_h_, &rgba);
     // A character of no width still gets a cell's slot, for where it is
     // shown on its own; in the text it is drawn over the cell before it.
-    const u32 slot = alloc_slots(std::max(width, 1u));
+    const u32 slot = colour ? alloc_colour(width) : alloc_slots(std::max(width, 1u));
     if (slot == kNoSlot) return width == 2 ? tofu_wide_ | kWide : kTofu;  // (held, and no room: a box, not kept)
+    if (colour) f = nullptr;
     const u32 packed = slot | (width == 2 ? kWide : 0) | (width == 0 || cp_regional(cp) ? kJoin : 0) | (cp_pictographic(cp) ? kPict : 0);
     if (cp < 0x10000) {
         bmp_[cp] = static_cast<u16>(packed);
@@ -822,36 +887,27 @@ u32 Font::lookup(u32 cp) {
         map_[h] = {cp, packed};
         ++map_used_;
     }
-    // An emoji past U+1F000 is drawn in colour, before any font has a
-    // plain one; another pictograph (a heart, an aeroplane) is text unless
-    // only a colour font has it.
-    const bool colour_first = width > 0 && cp >= 0x1F000 && cp_pictographic(cp);
-    if (colour_first && colour_glyph(cp, slot, width)) return packed;
-    u32 gi;
-    FT_Face f = face_for(cp, &gi);
+    if (colour) {
+        colour_glyph(slot, width, rgba);
+        return packed;
+    }
     if (f) blit_glyph(f, gi, slot, std::max(width, 1u), f != face_ || width == 0);
-    else if (width && !colour_first && cp_pictographic(cp) && colour_glyph(cp, slot, width)) {}
     else if (width) draw_tofu(slot, width);
     else clear_slot(slot);  // (a joiner, a selector: nothing to see)
     return packed;
 }
 
 // A colour font's picture of a character, the size of its cells together,
-// for the renderer to draw over them; the slots are left empty.
-bool Font::colour_glyph(u32 cp, u32 slot, u32 width) {
+// in its slots of the colour atlas (the text shader draws it from there).
+void Font::colour_glyph(u32 slot, u32 width, const std::vector<u8>& rgba) {
+    put_colour(slot, width, rgba);
     Colour c;
     c.cells = width;
     c.w = cell_w_ * static_cast<int>(width);
     c.h = cell_h_;
-    if (c.w <= 0 || c.h <= 0 || !colour_pixels(cp, c.w, c.h, &c.rgba)) return false;
-    for (u32 k = 0; k < width; ++k) {
-        clear_slot(slot + k);
-        colour_marks_[(slot + k) & 0xFFFF] = static_cast<u8>(k + 1);
-    }
     colour_lowest_ = std::min(colour_lowest_, slot);
-    colour_[slot] = std::move(c);
+    colour_[slot] = c;
     ++colour_used_;
-    return true;
 }
 
 u32 Font::sequence_glyph(const u32* cps, size_t n) {
@@ -862,16 +918,11 @@ u32 Font::sequence_glyph(const u32* cps, size_t n) {
     c.cells = 2;
     c.w = cell_w_ * 2;
     c.h = cell_h_;
-    if (c.w > 0 && c.h > 0 && sequence_pixels(cps, n, c.w, c.h, &c.rgba)) {
-        const u32 slot = alloc_slots(2);
+    std::vector<u8> rgba;
+    if (c.w > 0 && c.h > 0 && sequence_pixels(cps, n, c.w, c.h, &rgba)) {
+        const u32 slot = alloc_colour(2);
         if (slot != kNoSlot) {
-            for (u32 k = 0; k < 2; ++k) {
-                clear_slot(slot + k);
-                colour_marks_[(slot + k) & 0xFFFF] = static_cast<u8>(k + 1);
-            }
-            colour_lowest_ = std::min(colour_lowest_, slot);
-            colour_[slot] = std::move(c);
-            ++colour_used_;
+            colour_glyph(slot, 2, rgba);
             out = slot;
         }
     }

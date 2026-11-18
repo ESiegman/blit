@@ -136,8 +136,10 @@ struct Uniforms {
     float radii[4], shadow[4], inset[4], fx[4];
     float palette[32][4];
     float tones[8][4];  // a popup's: the backgrounds of lit cells that name one of them (bits 21-23; 0 names none)
+    float colour_inv[4];  // 1 / the colour atlas's size
+    u32 colour_at[4];     // the first colour glyph's slot, and its row in the atlas
 };
-static_assert(sizeof(Uniforms) == 960);
+static_assert(sizeof(Uniforms) == 992);
 
 // Mirrors the block in shaders/image.frag (at the start of a Uniforms' room).
 struct PictureUniforms {
@@ -224,7 +226,7 @@ void Renderer::image_drop(u32 id) {
 }
 
 bool Renderer::set_font(const Font& font, std::string* err) {
-    if (!blit_gpu_set_atlas(gpu_, font.atlas_w(), font.atlas_h())) {
+    if (!blit_gpu_set_atlas(gpu_, font.atlas_w(), font.atlas_h()) || !blit_gpu_set_colours(gpu_, font.atlas_w(), font.colour_h())) {
         if (err) *err = "atlas texture creation failed";
         return false;
     }
@@ -257,29 +259,22 @@ void Renderer::release() {
     blit_gpu_cancel(gpu_);
 }
 
-// The colour emoji on show (see Font::Colour): each glyph's picture,
-// made once, over its cells, in the text views (only rows the fill saw a
+// The colour emoji on show (see Font::Colour), noted (the text shader
+// draws them, from the colour atlas: none costs a draw of its own): each
+// over its cells, in the text views (only rows the fill saw a
 // pictograph in) and in the boxes (a row whose largest slot is below every
 // colour one is passed over), each kept to its view or box.
 void Renderer::find_emoji(Font& font, const FrameDesc& fd, const u32* cells, const u32* view_base, const u32* row_base) {
     emoji_.clear();
     if (!font.has_colour()) return;
-    if (font.generation() != emoji_gen_) {  // (the atlas started over: other glyphs in those slots now)
-        for (const auto& [slot, id] : emoji_images_) image_drop(id);
-        emoji_images_.clear();
-        emoji_gen_ = font.generation();
-    }
     const float cw = static_cast<float>(font.cell_w()), ch = static_cast<float>(font.cell_h());
     const u32 lowest = font.colour_lowest();
     auto add = [&](u32 slot, float x, float y, const int clip[4], u32 after, float opacity) {
         if (font.colour_mark(slot) == 2) --slot, x -= cw;  // (the second cell of one whose first is out of view)
         const Font::Colour* c = font.colour(slot);
         if (!c) return;
-        u32& id = emoji_images_[slot];
-        if (!id) id = image_add(c->rgba.data(), c->w, c->h);
-        if (!id) return;
-        PictureDraw pd;
-        pd.image = id;
+        PictureDraw pd;  // (a record of it, for the tests: the text shader draws it from the colour atlas)
+        pd.image = 0;
         pd.rect[0] = x, pd.rect[1] = y, pd.rect[2] = x + static_cast<float>(c->w), pd.rect[3] = y + static_cast<float>(c->h);
         std::memcpy(pd.clip, clip, sizeof pd.clip);
         pd.after = after;
@@ -436,6 +431,7 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
     int y0, y1;
     const bool atlas_changed = font.take_dirty(&y0, &y1);
     if (atlas_changed) blit_gpu_atlas_rows(gpu_, font.pixels(), y0, y1);
+    if (font.take_colour_dirty(&y0, &y1)) blit_gpu_colour_rows(gpu_, font.colour_atlas(), y0, y1);  // (a new emoji: rare)
     const u64 t3 = now_ns();
 
     Uniforms u{};
@@ -453,6 +449,10 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
     u.inv_atlas[0] = 1.0f / static_cast<float>(font.atlas_w());
     u.inv_atlas[1] = 1.0f / static_cast<float>(font.atlas_h());
     u.atlas_shift = font.atlas_shift();
+    u.colour_inv[0] = 1.0f / static_cast<float>(font.atlas_w());
+    u.colour_inv[1] = 1.0f / static_cast<float>(std::max(1, font.colour_h()));
+    u.colour_at[0] = font.colour_base();
+    u.colour_at[1] = font.colour_row0();
     u.guide[0] = fd.guide_px;
     std::memcpy(u.squiggle, fd.squiggle, sizeof u.squiggle);
     u.fx[2] = fd.scale;
@@ -478,12 +478,10 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
     // popups (the frame's own, and the colour emoji in the text and boxes).
     const u32 pictures = std::min(fd.picture_count, kMaxPictures);
     u32 next_picture = 0;
-    size_t next_emoji = 0;
     auto pictures_after = [&](u32 popups) {
         for (;;) {
             const PictureDraw* next = nullptr;
             if (next_picture < pictures && fd.pictures[next_picture].after <= popups) next = &fd.pictures[next_picture++];
-            else if (next_emoji < emoji_.size() && emoji_[next_emoji].after <= popups) next = &emoji_[next_emoji++];
             else break;
             const PictureDraw& pd = *next;
             if (!pd.image) continue;

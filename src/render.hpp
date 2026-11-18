@@ -192,8 +192,6 @@ private:
     // its first slot, for the atlas generation it was made in; the text
     // views' rows a pictograph is in; this frame's pictures of them, drawn
     // with the frame's own pictures.
-    std::unordered_map<u32, u32> emoji_images_;
-    u32 emoji_gen_ = ~0u;
     std::vector<u8> pict_rows_;
     std::vector<PictureDraw> emoji_;
     void find_emoji(Font& font, const FrameDesc& fd, const u32* cells, const u32* view_base, const u32* row_base);
