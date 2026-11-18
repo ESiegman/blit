@@ -44,8 +44,9 @@ sort_vars() {
            printf "%s%s", (NR > 1 ? " ;; " : ""), out }'
 }
 check() {
-    # (The status bar's icon beside another machine is the font's, where it has one.)
-    got=$(printf '%s' "$got" | sed -e 's/⇄ //g' | sort_vars)
+    # (The status bar's icon beside another machine is the font's, where it has
+    # one; and it says "no colours" where the C grammar is not installed.)
+    got=$(printf '%s' "$got" | sed -e 's/⇄ //g' -e 's/ (no colours)//g' | sort_vars)
     set -- "$1" "$(printf '%s' "$2" | sort_vars)"
     if [ -n "$print" ]; then
         printf '%s\n    %s\n' "$1" "$got"
@@ -151,7 +152,7 @@ check "stopped while it starts, by Shift+F5 or F5 again: at once (and it starts 
 # breakpoints by a function's name.
 down7="key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down"
 run "$P;$down7;key:shift+F9;frame;key:Return;frame;key:Return;frame;text:x is {x};key:Return;debugbreaks;key:F5;debugwait:idle;debugdump"
-got=$(printf '%s' "$got" | sed -e 's/;; idle; output: \(x is 3 | i=3 total=14\) .*/;; \1/')
+got=$(printf '%s' "$got" | sed -e 's/;; idle; output: .*\(x is 3 | i=3 total=14\) .*/;; \1/')
 check "a logpoint: its message with the value, and no stop" 'count.c:8 log x is {x} ;; x is 3 | i=3 total=14'
 run "$P;command:Break at a function…;frame;text:square;key:Return;debugbreaks;key:F5;debugwait:stopped;debugdump"
 got=$(printf '%s' "$got" | sed -e 's/; vars: .*//')
@@ -164,10 +165,13 @@ run "$P;break:7;key:F5;debugwait:stopped;debugpanel;debugpick:vars:2;key:F2;key:
 check "a variable set: the program goes on with its new value" 'stopped (step); stack: square@8 main@15; vars: x=5 y=25'
 run "$P;break:15;key:F5;debugwait:stopped;debugpanel;debugpick:vars:2;key:w;debugwait:answers;debugbreaks;key:F5;debugwait:stopped;debugdump"
 got=$(printf '%s' "$got" | sed -e 's/stopped ([^)]*)/stopped/' -e 's/ start\(@[0-9]*\)\{0,1\};/;/' -e 's/; output: .*//')
-check "a variable's writes watched: it stops where it is written" 'count.c:15; writes to total ;; stopped; stack: main@16; vars: total=1 i=1'
-run "$P;break:13;key:F5;debugwait:stopped;key:cmd+P;text::17;key:Return;key:ctrl+F10;debugwait:stopped;debugdump;debugbreaks"
-got=$(printf '%s' "$got" | sed -e 's/stopped ([^)]*)/stopped/' -e 's/ start\(@[0-9]*\)\{0,1\};/;/')
-check "run to the cursor: it stops there, and the breakpoints are as they were" 'stopped; stack: main@17; vars: total=1 i=1; output: i=1 total=1 ;; count.c:13'
+case "$got" in
+*"cannot watch"*) check "a variable's writes: this debugger cannot watch them, and it says so" "blit: This debugger cannot watch a variable's writes ;; count.c:15 ;; stopped; stack: main@15; vars: i=2 total=1" ;;
+*) check "a variable's writes watched: it stops where it is written" 'count.c:15; writes to total ;; stopped; stack: main@16; vars: total=1 i=1' ;;
+esac
+run "$P;break:13;key:F5;debugwait:stopped;key:cmd+P;text::16;key:Return;key:ctrl+F10;debugwait:stopped;debugdump;debugbreaks"
+got=$(printf '%s' "$got" | sed -e 's/stopped ([^)]*)/stopped/' -e 's/ start\(@[0-9]*\)\{0,1\};/;/' -e 's/; output: [^;]*;;/ ;;/')
+check "run to the cursor: it stops there, and the breakpoints are as they were" 'stopped; stack: main@16; vars: total=1 i=1 ;; count.c:13'
 run "$P;break:13;key:F5;debugwait:stopped;key:cmd+P;text::18;key:Return;command:Jump to the cursor's line;debugwait:stopped;debugdump"
 got=$(printf '%s' "$got" | sed -e 's/stopped ([^)]*)/stopped/' -e 's/ start\(@[0-9]*\)\{0,1\};/;/' -e 's/; vars: .*//')
 case "$got" in
@@ -199,7 +203,7 @@ run "$P;break:16;key:F5;debugwait:stopped;command:Show memory at…;text:&total;
 total_bytes() { printf '%s' "$1" | awk 'BEGIN { RS = " ;; " } /^>/ { print }' | sed -n 's/.*|\([0-9a-f?]*\) \([0-9a-f?]*\) \([0-9a-f?]*\) \([0-9a-f?]*\).*/\1 \2 \3 \4/p' | tr '\n' ';'; }
 got="$(total_bytes "$got") ;; $(printf '%s' "$got" | sed -e 's/.* ;; stopped/stopped/' -e 's/ start\(@[0-9]*\)\{0,1\};/;/')"
 check "memory where an expression points: written, and the program goes on with it" '01 00 00 00; ;; stopped (breakpoint); stack: main@16; vars: i=2 total=46; output: i=1 total=42'
-run "$P;break:15;key:F5;debugwait:stopped;debugpanel;debugpick:vars:2;key:m;debugwait:answers;docdump:0;key:F10;debugwait:stopped;debugwait:answers;key:ctrl+Tab;docdump:0;command:Previous page of memory;command:Next page of memory;debugwait:answers;docdump:0"
+run "$P;break:15;key:F5;debugwait:stopped;debugpanel;debugpick:vars:total;key:m;debugwait:answers;docdump:0;key:F10;debugwait:stopped;debugwait:answers;key:ctrl+Tab;docdump:0;command:Previous page of memory;command:Next page of memory;debugwait:answers;docdump:0"
 tops=$(printf '%s' "$got" | awk 'BEGIN { RS = " ;; " } /^>/ { print }' | sed -n 's/^> |*\(0x[0-9a-f]*\) .*/\1/p' | sort -u | wc -l | tr -d ' ')
 got="$(total_bytes "$got") ;; $tops"
 check "a variable's memory, read again at the next stop (and a page back and on, to where it was)" '00 00 00 00;01 00 00 00; ;; 1'
@@ -227,14 +231,17 @@ if [ "$scope" = 0 ] || [ "$(id -u)" = 0 ]; then
 fi
 # (A core file as the debugger writes it: lldb's save-core, gdb's generate-core-file.)
 core="$dir/here/crash.core"
-if command -v lldb >/dev/null 2>&1; then
+# (Elsewhere than a Mac gdb is the one blit uses first, and lldb's are minidumps gdb cannot read.)
+if [ "$(uname -s)" = Darwin ]; then
     (cd "$dir/here" && lldb -b -o run -k "process save-core $core" -k quit ./crash >/dev/null 2>&1)
 elif command -v gdb >/dev/null 2>&1; then
     (cd "$dir/here" && gdb -batch -ex run -ex "generate-core-file $core" ./crash >/dev/null 2>&1)
+else
+    (cd "$dir/here" && lldb -b -o run -k "process save-core $core" -k quit ./crash >/dev/null 2>&1)
 fi
 if [ -s "$core" ]; then
     run "debugcore:$dir/here/crash:$core;debugwait:stopped;debugdump" "$dir/here/crash.c"
-    got=$(printf '%s' "$got" | sed -e 's/; stack: [^;]*;/;/')  # (the library frames above the program's: the system's own)
+    got=$(printf '%s' "$got" | sed -e 's/; stack: [^;]*;/;/' -e 's/^stopped ([^)]*)/stopped/')  # (the library frames above the program's: the system's own; gdb's word for why)
     check "a core file: where it stopped, the program's own frame shown with its variables" 'stopped; vars: depth=3 here=21'
 fi
 

@@ -902,10 +902,12 @@ private:
     Doc* debug_tab(u64& id, const char* title);
     void debug_tab_fill(Doc& d, std::string text, std::vector<u32> off, std::vector<u8> style, i64 line, u64 col);
     void debug_disasm_open();
-    void debug_disasm_ask();
+    void debug_disasm_ask(bool from_ip = false);
     void debug_send_instructions();
     void debug_memory_pick();
+    void debug_memory_at(const std::string& expr, const std::string& name);
     void debug_memory_open(u64 addr, const std::string& name);
+    void debug_memory_show(u64 addr, std::vector<i32> now, i64 line, i32 byte);
     void debug_memory_page(int by);
     void debug_memory_ask(i64 line, i32 byte);
     void debug_memory_write();
@@ -928,7 +930,7 @@ private:
     std::string debug_dump();
     std::string debug_breaks_dump();
     std::string debug_inline_dump();  // (the notes after the lines of the first view, as last drawn)
-    bool debug_pick(const std::string& section, u32 n);
+    bool debug_pick(const std::string& section, u32 n, const std::string& name = {});
     void panel_show_debug();
 
     // Building (appbuild.cpp, build.cpp): what the working folder builds

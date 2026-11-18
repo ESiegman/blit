@@ -1075,7 +1075,9 @@ void App::run_script(const char* script) {
         } else if (verb == "debugpick") {  // debugpick:SECTION:N, Enter on the Nth row of a section of the Debug tab (threads, stack, watch, add, breaks)
             const size_t sep = arg.find(':');
             frame();  // (its rows as they are now)
-            if (!debug_pick(arg.substr(0, sep), sep == std::string::npos ? 1 : static_cast<u32>(std::atoi(arg.c_str() + sep + 1))))
+            const std::string which = sep == std::string::npos ? "1" : arg.substr(sep + 1);  // (a number, or a variable's name)
+            const bool named = !which.empty() && !std::isdigit(static_cast<unsigned char>(which[0]));
+            if (!debug_pick(arg.substr(0, sep), named ? 0 : static_cast<u32>(std::atoi(which.c_str())), named ? which : std::string()))
                 std::fprintf(stderr, "debugpick: no %s\n", arg.c_str());
         } else if (verb == "debugwait") {  // debugwait:stopped, debugwait:idle, or debugwait:answers (every request answered)
             debug_wait(arg);

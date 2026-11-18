@@ -120,6 +120,28 @@ u64 address_of(std::string_view s) {
     return v;
 }
 
+// What gdb says as it puts a breakpoint somewhere ("Breakpoint 2 at
+// 0x5555...: file count.c, line 7.", "Breakpoint 1 (-source ...) pending.").
+bool gdb_breakpoint_said(std::string_view s) {
+    if (!s.starts_with("Breakpoint ")) return false;
+    s.remove_prefix(11);
+    size_t n = 0;
+    while (n < s.size() && std::isdigit(static_cast<unsigned char>(s[n]))) ++n;
+    return n > 0 && (s.substr(n).starts_with(" at 0x") || s.substr(n).starts_with(" ("));
+}
+
+// Memory is read in pieces this big where a page cannot be read whole.
+constexpr u64 kMemPiece = 256;
+
+// The bytes a readMemory answer has, into those of the page from `addr`
+// (from `at` in it, `count` of them): -1 where they could not be read.
+void memory_take(std::vector<i32>& now, u64 addr, const Dap::Message& m, u64 at, u64 count) {
+    const std::string data = from_base64(m.body()["data"].str());
+    const u64 start = data.empty() ? addr + at : address_of(m.body()["address"].str());
+    for (u64 i = at; i < at + count && i < now.size(); ++i)
+        if (addr + i >= start && addr + i - start < data.size()) now[i] = static_cast<u8>(data[addr + i - start]);
+}
+
 std::string hex(u64 v, int width = 1) {
     char b[24];
     std::snprintf(b, sizeof b, "0x%0*llx", width, static_cast<unsigned long long>(v));
@@ -938,7 +960,8 @@ void App::debug_sync() {
             const std::string_view cat = b["category"].str();
             // (gdb tells of breakpoints in a program it has not loaded yet,
             // "No source file named ...", as if the program had said it.)
-            const bool gdb_own = u.gdb && !u.going && cat == "stdout";
+            // (And after, its word that it has put a breakpoint somewhere: "Breakpoint 2 at 0x...: file f.c, line 7.")
+            const bool gdb_own = u.gdb && cat == "stdout" && (!u.going || gdb_breakpoint_said(b["output"].str()));
             if (cat != "telemetry" && cat != "important" && !gdb_own) u.print(b["output"].str());
         } else if (m.name == "exited") {
             u.exit_code = static_cast<int>(b["exitCode"].integer(-1));
@@ -1163,18 +1186,30 @@ void App::debug_disasm_open() {
 
 // The instructions around the frame shown's, asked for when the tab is open:
 // a line each, and above those of each source line its file, line and text.
-void App::debug_disasm_ask() {
+// (Those before it: lldb counts back by instructions; gdb cannot, and is
+// asked from 128 bytes before, which it reads from the next it can. An answer
+// that has not the frame's instruction in it is asked for again from there.)
+void App::debug_disasm_ask(bool from_ip) {
     DebugUi& u = *debugui_;
     if (u.disasm_doc && !find_doc(u.disasm_doc)) u.disasm_doc = 0, u.disasm_addrs.clear();  // (closed)
     if (!u.disasm_doc || !u.dap || u.state != DebugUi::kStopped || u.frame >= u.frames.size() || !u.frames[u.frame].ip) return;
     const u64 ip = u.frames[u.frame].ip, gen = ++u.disasm_gen;
+    const std::string frame_path = u.frames[u.frame].path;
+    const char* const around = from_ip ? ",\"instructionOffset\":0,\"instructionCount\":64"
+                               : u.gdb ? ",\"offset\":-128,\"instructionOffset\":0,\"instructionCount\":96"
+                                       : ",\"instructionOffset\":-32,\"instructionCount\":96";
     ++u.asking;
-    u.dap->request("disassemble", "{\"memoryReference\":" + quoted(hex(ip)) + ",\"instructionOffset\":-32,\"instructionCount\":96,\"resolveSymbols\":true}",
-                   [this, gen, ip](const Dap::Message& m) {
+    u.dap->request("disassemble", "{\"memoryReference\":" + quoted(hex(ip)) + around + ",\"resolveSymbols\":true}",
+                   [this, gen, ip, from_ip, frame_path](const Dap::Message& m) {
                        DebugUi& v = *debugui_;
                        if (v.asking) --v.asking;
                        Doc* d = v.disasm_doc ? find_doc(v.disasm_doc) : nullptr;
                        if (gen != v.disasm_gen || !d) return;
+                       if (!from_ip) {
+                           bool has = false;
+                           for (const json::Value x : m.body()["instructions"]) has |= address_of(x["address"].str()) == ip;
+                           if (!has) return debug_disasm_ask(true);
+                       }
                        v.disasm_addrs.clear();
                        if (!m.success) {
                            debug_tab_fill(*d, "The debugger could not disassemble here: " + why_not(m.message), {}, {}, 0, 0);
@@ -1191,7 +1226,9 @@ void App::debug_disasm_ask() {
                            auto [it, fresh] = sources.try_emplace(path);
                            if (fresh) {
                                std::string text;
-                               if (fs_read(path, &text)) {
+                               // (gdb names it as the program was built with it: beside the frame's, for a name alone.)
+                               const std::string full = path.starts_with('/') || frame_path.empty() ? path : parent_of(frame_path) + "/" + path;
+                               if (fs_read(full, &text)) {
                                    size_t from = 0;
                                    for (size_t nl; (nl = text.find('\n', from)) != std::string::npos; from = nl + 1) it->second.push_back(text.substr(from, nl - from));
                                    it->second.push_back(text.substr(from));
@@ -1259,17 +1296,26 @@ void App::debug_memory_pick() {
         DebugUi& v = *debugui_;
         const std::string e = trimmed(typed);
         if (e.empty() || !v.dap || v.state != DebugUi::kStopped) return;
-        const std::string frame = v.frame < v.frames.size() ? ",\"frameId\":" + std::to_string(v.frames[v.frame].id) : std::string();
-        ++v.asking;
-        v.dap->request("evaluate", "{\"expression\":" + quoted(e) + frame + ",\"context\":\"watch\"}", [this, e](const Dap::Message& m) {
-            DebugUi& w = *debugui_;
-            if (w.asking) --w.asking;
-            if (!m.success) return notify(e + ": " + why_not(m.message));
-            u64 a = address_of(m.body()["memoryReference"].str());
-            if (!a) a = address_of(m.body()["result"].str());
-            if (!a) return notify(e + " is no address");
-            debug_memory_open(a, e);
-        });
+        debug_memory_at(e, e);
+    });
+}
+
+// Memory where an expression points: the debugger's memory reference for
+// it, or its value (a pointer's: "(int *) 0x7ffe..." too).
+void App::debug_memory_at(const std::string& expr, const std::string& name) {
+    DebugUi& v = *debugui_;
+    const std::string frame = v.frame < v.frames.size() ? ",\"frameId\":" + std::to_string(v.frames[v.frame].id) : std::string();
+    ++v.asking;
+    v.dap->request("evaluate", "{\"expression\":" + quoted(expr) + frame + ",\"context\":\"watch\"}", [this, expr, name](const Dap::Message& m) {
+        DebugUi& w = *debugui_;
+        if (w.asking) --w.asking;
+        if (!m.success) return notify(expr + ": " + why_not(m.message));
+        const std::string_view result = m.body()["result"].str();
+        u64 a = address_of(m.body()["memoryReference"].str());
+        if (!a) a = address_of(result);
+        if (const size_t x = result.find("0x"); !a && x != std::string_view::npos) a = address_of(result.substr(x));
+        if (!a) return notify(expr + " is no address");
+        debug_memory_open(a, name);
     });
 }
 
@@ -1293,9 +1339,7 @@ void App::debug_memory_page(int by) {
     debug_memory_ask(0, -1);
 }
 
-// A page of memory from mem_addr, read (again): 16 bytes a line, as numbers
-// and as characters, those that cannot be read ??, and those that have
-// changed since it was last read in the accent.
+// A page of memory from mem_addr, read (again).
 void App::debug_memory_ask(i64 line, i32 byte) {
     DebugUi& u = *debugui_;
     if (u.mem_doc && !find_doc(u.mem_doc)) u.mem_doc = 0;  // (closed)
@@ -1306,47 +1350,67 @@ void App::debug_memory_ask(i64 line, i32 byte) {
                    [this, gen, addr, line, byte](const Dap::Message& m) {
                        DebugUi& v = *debugui_;
                        if (v.asking) --v.asking;
-                       Doc* d = v.mem_doc ? find_doc(v.mem_doc) : nullptr;
-                       if (gen != v.mem_gen || !d) return;
+                       if (gen != v.mem_gen || !v.dap) return;
                        if (!m.success) {
-                           debug_tab_fill(*d, "The debugger could not read memory at " + hex(addr) + ": " + why_not(m.message), {}, {}, 0, 0);
+                           // (gdb reads all of it or nothing: what it can, in pieces.)
+                           struct Pieces {
+                               std::vector<i32> now = std::vector<i32>(DebugUi::kMemPage, -1);
+                               u32 left = DebugUi::kMemPage / kMemPiece;
+                           };
+                           auto pieces = std::make_shared<Pieces>();
+                           for (u64 at = 0; at < DebugUi::kMemPage; at += kMemPiece) {
+                               ++v.asking;
+                               v.dap->request("readMemory", "{\"memoryReference\":" + quoted(hex(addr + at)) + ",\"count\":" + std::to_string(kMemPiece) + "}",
+                                              [this, gen, addr, at, line, byte, pieces](const Dap::Message& r) {
+                                                  DebugUi& w = *debugui_;
+                                                  if (w.asking) --w.asking;
+                                                  if (r.success) memory_take(pieces->now, addr, r, at, kMemPiece);
+                                                  if (--pieces->left == 0 && gen == w.mem_gen) debug_memory_show(addr, std::move(pieces->now), line, byte);
+                                              });
+                           }
                            return;
                        }
-                       const std::string data = from_base64(m.body()["data"].str());
-                       const u64 start = data.empty() ? addr : address_of(m.body()["address"].str());
-                       // Each byte, or -1 where it could not be read.
                        std::vector<i32> now(DebugUi::kMemPage, -1);
-                       for (u64 i = 0; i < DebugUi::kMemPage; ++i)
-                           if (addr + i >= start && addr + i - start < data.size()) now[i] = static_cast<u8>(data[addr + i - start]);
-                       const bool compare = v.mem_last.size() == now.size() && v.mem_last_addr == addr;
-                       int width = 8;
-                       for (u64 a = (addr + DebugUi::kMemPage - 1) >> 32; a; a >>= 4) ++width;
-                       v.mem_width = static_cast<u32>(width);
-                       Runs out;
-                       static const char kDigits[] = "0123456789abcdef";
-                       for (u64 row = 0; row < DebugUi::kMemPage / 16; ++row) {
-                           out.add(hex(addr + row * 16, width) + " ", 4);
-                           std::string chars;
-                           for (u64 j = 0; j < 16; ++j) {
-                               const i32 b = now[row * 16 + j];
-                               out.add(j == 8 ? "  " : " ", 0);
-                               if (b < 0) {
-                                   out.add("??", 4);
-                                   chars += ' ';
-                                   continue;
-                               }
-                               const char two[2] = {kDigits[b >> 4], kDigits[b & 15]};
-                               out.add(std::string_view(two, 2), compare && v.mem_last[row * 16 + j] != b ? 3 : 0);
-                               chars += b >= 0x20 && b < 0x7F ? static_cast<char>(b) : '.';
-                           }
-                           out.add("  " + chars + "\n", 4);
-                       }
-                       v.mem_last = std::move(now);
-                       v.mem_last_addr = addr;
-                       // (The cursor on the byte asked for: after the address and its space, each byte is three wide, one more after the eighth.)
-                       const u64 col = byte < 0 ? 0 : 2 + static_cast<u64>(width) + 2 + 3 * static_cast<u64>(byte) + (byte >= 8 ? 1 : 0);
-                       debug_tab_fill(*d, std::move(out.text), std::move(out.off), std::move(out.style), line, col);
+                       memory_take(now, addr, m, 0, DebugUi::kMemPage);
+                       debug_memory_show(addr, std::move(now), line, byte);
                    });
+}
+
+// The page shown: 16 bytes a line, as numbers and as characters, those that
+// cannot be read ??, and those that have changed since it was last read in
+// the accent; the cursor on `line` and the byte asked for.
+void App::debug_memory_show(u64 addr, std::vector<i32> now, i64 line, i32 byte) {
+    DebugUi& v = *debugui_;
+    Doc* d = v.mem_doc ? find_doc(v.mem_doc) : nullptr;
+    if (!d) return;
+    const bool compare = v.mem_last.size() == now.size() && v.mem_last_addr == addr;
+    int width = 8;
+    for (u64 a = (addr + DebugUi::kMemPage - 1) >> 32; a; a >>= 4) ++width;
+    v.mem_width = static_cast<u32>(width);
+    Runs out;
+    static const char kDigits[] = "0123456789abcdef";
+    for (u64 row = 0; row < DebugUi::kMemPage / 16; ++row) {
+        out.add(hex(addr + row * 16, width) + " ", 4);
+        std::string chars;
+        for (u64 j = 0; j < 16; ++j) {
+            const i32 b = now[row * 16 + j];
+            out.add(j == 8 ? "  " : " ", 0);
+            if (b < 0) {
+                out.add("??", 4);
+                chars += ' ';
+                continue;
+            }
+            const char two[2] = {kDigits[b >> 4], kDigits[b & 15]};
+            out.add(std::string_view(two, 2), compare && v.mem_last[row * 16 + j] != b ? 3 : 0);
+            chars += b >= 0x20 && b < 0x7F ? static_cast<char>(b) : '.';
+        }
+        out.add("  " + chars + "\n", 4);
+    }
+    v.mem_last = std::move(now);
+    v.mem_last_addr = addr;
+    // (The cursor on the byte asked for: after the address and its space, each byte is three wide, one more after the eighth.)
+    const u64 col = byte < 0 ? 0 : 2 + static_cast<u64>(width) + 2 + 3 * static_cast<u64>(byte) + (byte >= 8 ? 1 : 0);
+    debug_tab_fill(*d, std::move(out.text), std::move(out.off), std::move(out.style), line, col);
 }
 
 // Bytes written where the cursor is in the memory tab (typed as hex: "2a 00").
@@ -1694,9 +1758,9 @@ bool App::debug_panel_key(const SDL_KeyboardEvent& k) {
         case SDLK_M:  // the memory a variable is in
             if (u.sel < n && u.rows[u.sel].act == DebugUi::kVar && u.rows[u.sel].index < u.vars.size()) {
                 const DebugUi::Var& v = u.vars[u.rows[u.sel].index];
-                if (!v.addr) return notify("No address for " + v.name), true;
                 if (!u.can.read_memory) return notify("This debugger cannot read memory"), true;
-                debug_memory_open(v.addr, {});
+                if (v.addr) debug_memory_open(v.addr, {});
+                else if (u.state == DebugUi::kStopped) debug_memory_at("&" + v.name, {});  // (gdb says where none is)
             }
             return true;
         case SDLK_RIGHT:
@@ -1959,16 +2023,16 @@ std::string App::debug_breaks_dump() {
     return out.empty() ? "no breakpoints" : out;
 }
 
-// What Enter does on the Nth row (from 1) of a section of the Debug tab as
+// What Enter does on the Nth row (from 1; or, named, the variable's) of a section of the Debug tab as
 // it was last drawn: threads, stack, watch, add (the row that adds an
 // expression), or breaks. The row is chosen first, as the keys would.
-bool App::debug_pick(const std::string& section, u32 n) {
+bool App::debug_pick(const std::string& section, u32 n, const std::string& name) {
     DebugUi& u = *debugui_;
     const DebugUi::Act act = section == "threads" ? DebugUi::kThread : section == "stack" ? DebugUi::kFrame : section == "watch" ? DebugUi::kWatch
                              : section == "add"   ? DebugUi::kWatchAdd : section == "breaks" ? DebugUi::kBreak : section == "vars" ? DebugUi::kVar : DebugUi::kNone;
     u32 seen = 0;
     for (u32 i = 0; i < u.rows.size(); ++i)
-        if (act != DebugUi::kNone && u.rows[i].act == act && ++seen == std::max(1u, n)) {
+        if (act != DebugUi::kNone && u.rows[i].act == act && (name.empty() ? ++seen == std::max(1u, n) : u.rows[i].text.starts_with(name + " "))) {
             u.sel = i;
             debug_do(i);
             return true;
