@@ -88,13 +88,13 @@ run "debug:program=$dir/here/no-such;key:F5;debugwait:idle;debugdump"
 case "$got" in "idle error: cannot launch it"*) got="it says why" ;; esac
 check "a program that is not there" "it says why"
 
-# Breakpoints that wait for something: Shift+F9 asks for a condition, then
-# a hit count (each left empty: none).
-run "$P;breakif:8;text:x == 2;key:Return;key:Return;key:F5;debugwait:stopped;debugdump"
+# Breakpoints that wait for something: Shift+F9 asks for a condition, a
+# hit count and a message to log (each left empty: none).
+run "$P;breakif:8;text:x == 2;key:Return;key:Return;key:Return;key:F5;debugwait:stopped;debugdump"
 check "a condition: it stops only where it holds" 'stopped (breakpoint); stack: square@8 main@15; vars: x=2 y=4; output: i=1 total=1'
-run "$P;breakif:8;key:Return;text:3;key:Return;debugbreaks;key:F5;debugwait:stopped;debugdump"
+run "$P;breakif:8;key:Return;text:3;key:Return;key:Return;debugbreaks;key:F5;debugwait:stopped;debugdump"
 check "a hit count: it stops the third time there" 'count.c:8 hit 3 ;; stopped (breakpoint); stack: square@8 main@15; vars: x=3 y=9; output: i=1 total=1 | i=2 total=5'
-run "$P;break:8;break:16;debugpanel;debugpick:breaks:2;debugpanel;key:shift+F9;text:i == 2;key:Return;key:Return;debugpick:breaks:1;debugpanel;key:Delete;debugbreaks;key:F5;debugwait:stopped;debugdump"
+run "$P;break:8;break:16;debugpanel;debugpick:breaks:2;debugpanel;key:shift+F9;text:i == 2;key:Return;key:Return;key:Return;debugpick:breaks:1;debugpanel;key:Delete;debugbreaks;key:F5;debugwait:stopped;debugdump"
 got=$(printf '%s' "$got" | sed -e 's/main@16 [^;]*;/main@16;/')
 check "and from the Debug tab, the one chosen there" 'count.c:16 if i == 2 ;; stopped (breakpoint); stack: main@16; vars: total=5 i=2; output: i=1 total=1'
 
@@ -125,7 +125,7 @@ check "with Vim's keys too" 'count.c:9; count.c:16 ;; count.c:9; count.c:15 ;; c
 # On another machine: the debugger runs there, its source opens from there.
 run "remotewait;debug:program=ssh://box$T/count;break:8;key:F5;debugwait:stopped;debugdump;frame;statusdump" "ssh://box$T/count.c"
 check "on another machine" 'stopped (breakpoint); stack: square@8 main@15; vars: x=1 y=1 ;; box count.c | Ln 8, Col 1 Spaces: 4 LF C'
-run "remotewait;debug:program=ssh://box$T/count;breakif:8;key:Return;text:2;key:Return;debugpanel;debugpick:add;text:y - x;key:Return;key:F5;debugwait:stopped;debugdump" "ssh://box$T/count.c"
+run "remotewait;debug:program=ssh://box$T/count;breakif:8;key:Return;text:2;key:Return;key:Return;debugpanel;debugpick:add;text:y - x;key:Return;key:F5;debugwait:stopped;debugdump" "ssh://box$T/count.c"
 check "a hit count and a watch, there" 'stopped (breakpoint); stack: square@8 main@15; vars: x=2 y=4; watch: y - x = 2; output: i=1 total=1'
 
 # On a slow one (each answer held a while): F5 goes back to the keys at once
@@ -146,6 +146,16 @@ slow "remotewait;debug:program=ssh://box$T/count;key:F5;clock;key:shift+F5;withi
 case "$got" in *"[exited with code 0]") got="${got%%; output: *}; ran to its end" ;; esac
 check "stopped while it starts, by Shift+F5 or F5 again: at once (and it starts again after)" \
     'within 300 ms ;; idle ;; within 300 ms ;; idle ;; idle; ran to its end'
+
+# Logpoints (a message said where it would stop, its {x} filled in) and
+# breakpoints by a function's name.
+down7="key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down"
+run "$P;$down7;key:shift+F9;frame;key:Return;frame;key:Return;frame;text:x is {x};key:Return;debugbreaks;key:F5;debugwait:idle;debugdump"
+got=$(printf '%s' "$got" | sed -e 's/;; idle; output: \(x is 3 | i=3 total=14\) .*/;; \1/')
+check "a logpoint: its message with the value, and no stop" 'count.c:8 log x is {x} ;; x is 3 | i=3 total=14'
+run "$P;command:Break at a function…;frame;text:square;key:Return;debugbreaks;key:F5;debugwait:stopped;debugdump"
+got=$(printf '%s' "$got" | sed -e 's/; vars: .*//')
+check "a breakpoint by a function's name: it stops where the function starts" 'square() ;; stopped (breakpoint); stack: square@7 main@15'
 
 # Attaching to a process that is running, and a core file.
 cp "$here/debug/waits.c" "$here/debug/crash.c" "$dir/here/" && (cd "$dir/here" && cc -g -O0 -o waits waits.c && cc -g -O0 -o crash crash.c) || exit 1

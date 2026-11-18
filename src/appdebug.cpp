@@ -14,6 +14,8 @@
 
 #include <unistd.h>
 
+#include <cctype>
+
 #include "app.hpp"
 #include "dap.hpp"
 #include "look.hpp"
@@ -107,10 +109,12 @@ struct App::DebugUi {
     struct Break {
         std::string cond;  // it stops only where this is true
         std::string hits;  // and only at this hit (a number: the Nth time it is reached)
+        std::string log;   // a logpoint: this said (its {expressions} filled in) where it would stop, and no stop
         bool operator==(const Break&) const = default;
     };
     using Lines = std::map<u32, Break>;
     std::map<std::string, Lines> breaks;
+    std::vector<std::string> functions;  // breakpoints by a function's name
     // The file whose gutter was drawn last: its full path and breakpoints, kept
     // while debug_gen_ stands (the gutter asks about each line).
     std::string gutter_of, gutter_full;
@@ -197,7 +201,7 @@ struct App::DebugUi {
     int exit_code = -1;
     bool end_soon = false;  // (the session ends once the debugger's answers have been run: not inside one)
     // The panel: a row for each thing shown, and the one chosen.
-    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak };
+    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction };
     // A row: a mark (a triangle, an arrow) before its text, in an ink of its
     // own; the text; something quieter after it; and on the right its key.
     struct Row {
@@ -295,14 +299,17 @@ void App::debug_edit_break() {
     DebugUi::Break was;
     if (auto f = u.breaks.find(path); f != u.breaks.end())
         if (auto b = f->second.find(line); b != f->second.end()) was = b->second;
-    find_choose(kFindInput, "Condition", was.cond, [this, path, line, hits = was.hits](const std::string& cond) {
-        find_choose(kFindInput, "Hit count", hits, [this, path, line, cond = trimmed(cond)](const std::string& typed) {
-            DebugUi& v = *debugui_;
-            v.breaks[path][line] = {cond, trimmed(typed)};
-            if (Doc* d = pane_->doc; d && !d->ed.path.empty() && full_path(d->ed.path) == path) v.follow(*this, *d);
-            debug_send_breaks(path);
-            ++debug_gen_;
-            dirty_ = true;
+    find_choose(kFindInput, "Condition", was.cond, [this, path, line, hits = was.hits, log = was.log](const std::string& cond) {
+        find_choose(kFindInput, "Hit count", hits, [this, path, line, log, cond = trimmed(cond)](const std::string& typed) {
+            // Last, a message to log in place of stopping ({x} for x's value).
+            find_choose(kFindInput, "Log message", log, [this, path, line, cond, hits = trimmed(typed)](const std::string& message) {
+                DebugUi& v = *debugui_;
+                v.breaks[path][line] = {cond, hits, trimmed(message)};
+                if (Doc* d = pane_->doc; d && !d->ed.path.empty() && full_path(d->ed.path) == path) v.follow(*this, *d);
+                debug_send_breaks(path);
+                ++debug_gen_;
+                dirty_ = true;
+            });
         });
     });
 }
@@ -324,12 +331,44 @@ void App::debug_send_breaks(const std::string& path) {
                     hits = std::to_string(std::max(1, std::atoi(hits.c_str())) - 1);
                 a += ",\"hitCondition\":" + quoted(hits);
             }
+            if (!b.log.empty()) a += ",\"logMessage\":" + quoted(b.log + "\n");
             a += "}";
             first = false;
         }
     }
     a += "]}";
     u.dap->request("setBreakpoints", a);
+}
+
+// The breakpoints by function name, to a session under way.
+void App::debug_send_functions() {
+    DebugUi& u = *debugui_;
+    if (!u.dap || u.state == DebugUi::kStarting) return;  // (sent when the debugger is ready for them)
+    std::string a = "{\"breakpoints\":[";
+    for (size_t i = 0; i < u.functions.size(); ++i) a += std::string(i ? "," : "") + "{\"name\":" + quoted(u.functions[i]) + "}";
+    u.dap->request("setFunctionBreakpoints", a + "]}");
+}
+
+// A breakpoint by a function's name, typed (the word at the cursor to start with).
+void App::debug_break_function() {
+    std::string word;
+    if (const Doc& d = *pane_->doc; !d.ed.path.empty()) {
+        u64 lo = d.ed.cursor(), hi = lo;
+        char c = 0;
+        auto ok = [&](u64 at) { return at < d.ed.buf.size() && d.ed.buf.read(at, &c, 1) == 1 && (std::isalnum(static_cast<unsigned char>(c)) || c == '_' || c == ':'); };
+        while (lo > 0 && hi - lo < 200 && ok(lo - 1)) --lo;
+        while (hi - lo < 200 && ok(hi)) ++hi;
+        word = d.ed.buf.text(lo, hi - lo);
+    }
+    find_choose(kFindInput, "Break at the function", word, [this](const std::string& typed) {
+        DebugUi& v = *debugui_;
+        const std::string name = trimmed(typed);
+        if (name.empty() || std::ranges::find(v.functions, name) != v.functions.end()) return;
+        v.functions.push_back(name);
+        debug_send_functions();
+        ++debug_gen_;
+        dirty_ = true;
+    });
 }
 
 // What goes in a line's first gutter cell: the line the program stopped
@@ -351,8 +390,8 @@ u32 App::debug_gutter(const Doc& d, u64 line) {
         return (font_->glyph(0x25B6) & (Font::kWide - 1)) | (kInkAccent << kCellInkShift);
     if (u.gutter_breaks)
         if (const auto b = u.gutter_breaks->find(static_cast<u32>(line)); b != u.gutter_breaks->end()) {
-            const bool plain = b->second.cond.empty() && b->second.hits.empty();  // (a dot; one that waits for something, a diamond)
-            return (font_->glyph(plain ? 0x25CF : 0x25C6) & (Font::kWide - 1)) | (kInkDiagnostic << kCellInkShift);
+            const bool plain = b->second.cond.empty() && b->second.hits.empty();  // (a dot; one that waits for something, a diamond; a logpoint, a diamond in one)
+            return (font_->glyph(!b->second.log.empty() ? 0x25C8 : plain ? 0x25CF : 0x25C6) & (Font::kWide - 1)) | (kInkDiagnostic << kCellInkShift);
         }
     return 0;
 }
@@ -755,6 +794,7 @@ void App::debug_sync() {
             u.state = DebugUi::kRunning;
             u.gdb = u.dap->errors().find(kGdbSays) != std::string::npos;  // (said before it started: here by now)
             for (const auto& [path, lines] : u.breaks) debug_send_breaks(path);
+            debug_send_functions();
             u.dap->request("setExceptionBreakpoints", "{\"filters\":[]}");
             u.dap->request("configurationDone");
             // (As other clients do, the threads are asked for once now: lldb-dap answers the
@@ -947,13 +987,22 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
         for (const auto& [path, lines] : u.breaks)
             for (const auto& [l, b] : lines) {
                 Row& r = add(DebugUi::kBreak, n++, base_name(path) + ":" + std::to_string(l + 1));
-                const bool plain = b.cond.empty() && b.hits.empty();
+                const bool plain = b.cond.empty() && b.hits.empty() && b.log.empty();
                 r.mark = plain ? "\xE2\x97\x8F" : "\xE2\x97\x86";  // (the gutter's dot, or diamond)
                 r.mark_ink = ink::kError;
                 if (!b.cond.empty()) r.after = "if " + b.cond;
                 if (!b.hits.empty()) r.after += (r.after.empty() ? "" : ", ") + std::string("hit ") + b.hits;
+                if (!b.log.empty()) r.after += (r.after.empty() ? "" : ", ") + std::string("log \"") + b.log + "\"", r.mark = "\xE2\x97\x88";  // (a logpoint: a diamond in a diamond)
                 if (focused && u.sel == out.size() - 1) r.key = key_symbols("Shift+F9", font);  // (the one chosen: what changes its condition)
             }
+    }
+    if (!u.functions.empty()) {
+        heading("Function breakpoints", u.functions.size());
+        for (u32 i = 0; i < u.functions.size(); ++i) {
+            Row& r = add(DebugUi::kFunction, i, u.functions[i]);
+            r.mark = "\xC6\x92";  // (a small f)
+            r.mark_ink = ink::kError;
+        }
     }
     if (!u.output.empty() || !u.partial.empty()) {
         heading("Output", 0);
@@ -1051,6 +1100,19 @@ void App::debug_do(u32 i) {
                     }
             break;
         }
+        case DebugUi::kFunction: {  // its name changed (nothing: it goes)
+            const u32 at = row.index;
+            find_choose(kFindInput, "Function", at < u.functions.size() ? u.functions[at] : std::string(), [this, at](const std::string& typed) {
+                DebugUi& v = *debugui_;
+                if (at >= v.functions.size()) return;
+                if (trimmed(typed).empty()) v.functions.erase(v.functions.begin() + at);
+                else v.functions[at] = trimmed(typed);
+                debug_send_functions();
+                ++debug_gen_;
+                dirty_ = true;
+            });
+            break;
+        }
         case DebugUi::kNone: break;
     }
 }
@@ -1099,6 +1161,13 @@ bool App::debug_panel_key(const SDL_KeyboardEvent& k) {
             if (u.sel < n && u.rows[u.sel].act == DebugUi::kWatch && u.rows[u.sel].index < u.watches.size()) {
                 u.watches.erase(u.watches.begin() + u.rows[u.sel].index);
                 break;
+            }
+            if (u.sel < n && u.rows[u.sel].act == DebugUi::kFunction && u.rows[u.sel].index < u.functions.size()) {
+                u.functions.erase(u.functions.begin() + u.rows[u.sel].index);
+                debug_send_functions();
+                ++debug_gen_;
+                dirty_ = true;
+                return true;
             }
             if (u.sel < n && u.rows[u.sel].act == DebugUi::kBreak) {
                 u32 i = 0;
@@ -1228,7 +1297,9 @@ std::string App::debug_breaks_dump() {
             out += (out.empty() ? "" : "; ") + base_name(path) + ":" + std::to_string(l + 1);
             if (!b.cond.empty()) out += " if " + b.cond;
             if (!b.hits.empty()) out += " hit " + b.hits;
+            if (!b.log.empty()) out += " log " + b.log;
         }
+    for (const std::string& f : u.functions) out += (out.empty() ? "" : "; ") + f + "()";
     return out.empty() ? "no breakpoints" : out;
 }
 

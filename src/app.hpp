@@ -891,6 +891,8 @@ private:
     void debug_attach(i64 pid);
     void debug_core_pick();
     void debug_core(const std::string& program, const std::string& core);
+    void debug_send_functions();
+    void debug_break_function();
     void debug_end();
     void debug_command(const std::string& what);
     void debug_frame(u32 i, bool show);
