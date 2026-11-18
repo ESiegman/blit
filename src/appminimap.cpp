@@ -7,6 +7,7 @@
 // scrolls the view to it.
 #include <algorithm>
 #include <cmath>
+#include <cstring>
 #include <map>
 
 #include "app.hpp"
@@ -15,7 +16,7 @@ namespace blit {
 
 namespace {
 
-constexpr u64 kTileLines = 256;
+constexpr u64 kTileLines = 1024;  // (one or two on show: a draw each)
 constexpr u32 kColumns = 100;  // characters of a line drawn
 
 }  // namespace
@@ -75,8 +76,12 @@ bool App::minimap_place(const Pane& p, int* x0, int* y0, int* x1, int* y1, doubl
 void App::minimap_tile(Doc& d, u64 index, std::vector<u8>& rgba) {
     int lp = 0, cp = 0, w = 0;
     sizes(scale_, &lp, &cp, &w);
-    const int pw = cp * static_cast<int>(kColumns), ph = lp * static_cast<int>(kTileLines);
-    rgba.assign(static_cast<size_t>(pw) * static_cast<size_t>(ph) * 4, 0);
+    const int pw = w, ph = lp * static_cast<int>(kTileLines);  // (the column's width: its margins too)
+    const int inset = static_cast<int>(std::lround(3 * scale_));
+    // On the text's background (each tile opaque: nothing under it is drawn).
+    const u8 bg[4] = {static_cast<u8>(theme_.bg[0] * 255), static_cast<u8>(theme_.bg[1] * 255), static_cast<u8>(theme_.bg[2] * 255), 255};
+    rgba.resize(static_cast<size_t>(pw) * static_cast<size_t>(ph) * 4);
+    for (size_t k = 0; k < rgba.size(); k += 4) std::memcpy(&rgba[k], bg, 4);
     const Buffer& b = d.ed.buf;
     const Highlights& hl = d.syntax.active() ? d.syntax.highlights() : Highlights();
     const float* fg = theme_.palette[0];
@@ -105,9 +110,9 @@ void App::minimap_tile(Doc& d, u64 index, std::vector<u8>& rgba) {
             const float* rgb = ink ? theme_.palette[ink] : fg;
             for (int y = 0; y < lp; ++y)
                 for (int x = 0; x < cp; ++x) {
-                    u8* px = &rgba[((static_cast<size_t>(l - first) * lp + y) * pw + col * cp + x) * 4];
+                    u8* px = &rgba[((static_cast<size_t>(l - first) * lp + y) * pw + inset + col * cp + x) * 4];
                     const float a = 0.8f;  // (a little softer than the text)
-                    px[0] = static_cast<u8>(rgb[0] * a * 255), px[1] = static_cast<u8>(rgb[1] * a * 255), px[2] = static_cast<u8>(rgb[2] * a * 255), px[3] = static_cast<u8>(a * 255);
+                    for (int ch = 0; ch < 3; ++ch) px[ch] = static_cast<u8>((rgb[ch] * a + theme_.bg[ch] * (1 - a)) * 255);
                 }
             ++col;
         }
@@ -160,18 +165,10 @@ void App::minimap_layout(FrameDesc& fd) {
             minimap_bg_ = gpu_.image_add(bg, 1, 1);
             minimap_bg_key_ = bg_key;
         }
-        if (minimap_bg_) {
-            PictureDraw& pd = fd.pictures[fd.picture_count++];
-            pd = {};
-            pd.image = minimap_bg_;
-            pd.rect[0] = static_cast<float>(x0), pd.rect[1] = static_cast<float>(y0), pd.rect[2] = static_cast<float>(x1), pd.rect[3] = static_cast<float>(y1);
-            pd.clip[0] = x0, pd.clip[1] = y0, pd.clip[2] = x1, pd.clip[3] = y1;
-        }
         const u64 lines = d.ed.buf.line_count();
         const u64 t0 = static_cast<u64>(top) / kTileLines, t1 = std::min<u64>((lines + kTileLines - 1) / kTileLines, (static_cast<u64>(top) + static_cast<u64>((y1 - y0) / lp) + 1) / kTileLines + 1);
         int cp = 0, w = 0;
         sizes(scale_, &lp, &cp, &w);
-        const int inset = static_cast<int>(std::lround(3 * scale_));
         for (u64 t = t0; t < t1 && fd.picture_count + 2 < kMaxPictures; ++t) {
             Minimap::Tile& tile = m.tiles[t];
             const auto want = m.gen_of.find(t);
@@ -181,7 +178,7 @@ void App::minimap_layout(FrameDesc& fd) {
                     if (tile.image) gpu_.image_drop(tile.image);
                     int lp2 = 0, cp2 = 0, w2 = 0;
                     sizes(scale_, &lp2, &cp2, &w2);
-                    tile.image = gpu_.image_add(minimap_rgba_.data(), cp2 * static_cast<int>(kColumns), lp2 * static_cast<int>(kTileLines));
+                    tile.image = gpu_.image_add(minimap_rgba_.data(), w2, lp2 * static_cast<int>(kTileLines));
                     tile.rgba.swap(minimap_rgba_);
                 }
                 tile.made = m.gen;
@@ -192,13 +189,21 @@ void App::minimap_layout(FrameDesc& fd) {
             pd = {};
             pd.image = tile.image;
             const double ty = y0 + (static_cast<double>(t * kTileLines) - top) * lp;
-            pd.rect[0] = static_cast<float>(x0 + inset);
+            pd.rect[0] = static_cast<float>(x0);
             pd.rect[1] = static_cast<float>(ty);
-            pd.rect[2] = static_cast<float>(x0 + inset + cp * static_cast<int>(kColumns));
+            pd.rect[2] = static_cast<float>(x1);
             pd.rect[3] = static_cast<float>(ty + static_cast<double>(lp) * kTileLines);
             pd.clip[0] = x0, pd.clip[1] = y0, pd.clip[2] = x1, pd.clip[3] = y1;
             pd.sharp = true;
-            pd.clear = true;
+        }
+        // (Below the last tile, if the column goes on past it: the background.)
+        const double tiles_end = y0 + (static_cast<double>(t1 * kTileLines) - top) * lp;
+        if (minimap_bg_ && tiles_end < y1 && fd.picture_count < kMaxPictures) {
+            PictureDraw& pd = fd.pictures[fd.picture_count++];
+            pd = {};
+            pd.image = minimap_bg_;
+            pd.rect[0] = static_cast<float>(x0), pd.rect[1] = static_cast<float>(std::max<double>(y0, tiles_end)), pd.rect[2] = static_cast<float>(x1), pd.rect[3] = static_cast<float>(y1);
+            pd.clip[0] = x0, pd.clip[1] = y0, pd.clip[2] = x1, pd.clip[3] = y1;
         }
         // (Tiles far from the view let go of.)
         for (auto it = m.tiles.begin(); it != m.tiles.end();) {
