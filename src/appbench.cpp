@@ -1130,6 +1130,13 @@ void App::run_script(const char* script) {
                 SDL_Delay(2);
             }
             std::fprintf(stderr, "%s\n", hier_dump().c_str());
+        } else if (verb == "peekdump") {  // a peek's box: its file:line, that line, whether it has the keyboard and is inside its split
+            for (const u64 until = now_ns() + 10'000'000'000ull; peek_pending_ && now_ns() < until;) {
+                sync_lsp();
+                SDL_Delay(2);
+            }
+            frame();
+            std::fprintf(stderr, "%s\n", peek_dump().c_str());
         } else if (verb == "caretdump") {  // every caret of the file in front: line:column (from 1), a selection's other end after a dash, the primary starred
             std::fprintf(stderr, "%s\n", caret_dump().c_str());
         } else if (verb == "docdump") {  // docdump:N, the tab in front's title, then its lines from N before the cursor's to N after (the cursor's marked >, and in it the cursor |)

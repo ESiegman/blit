@@ -531,7 +531,12 @@ void App::sync_lsp() {
         a.sig_open = open;
         if (open) a.sig_line = pane_->doc->ed.buf.line_of(pane_->doc->ed.cursor());
     }
-    if (news & Lsp::kDefinition) goto_definition();
+    if ((news & Lsp::kDefinition) && peek_pending_) {  // (asked for a peek: the place in a box, apppeek.cpp)
+        peek_pending_ = false;
+        peek_show(lsp_.definition_target());
+    } else if (news & Lsp::kDefinition) {
+        goto_definition();
+    }
 
     // References: in a list, the file, the line and its text, as Search in files has them.
     if ((news & Lsp::kReferences) && a.refs_pending) {
@@ -797,6 +802,19 @@ void App::lsp_references() {
     lsp_close(kPopAll);
     a.refs_pending = true;
     lsp_.references(pane_->doc->ed.cursor());
+}
+
+// Alt+Shift+F12: where the definition is, asked for a peek (apppeek.cpp).
+void App::peek_open() {
+    Assist& a = *assist_;
+    if (!lsp_.ready() || !lsp_.can_define()) {
+        if (server_text(*pane_->doc))
+            notify(lsp_.ready() ? lsp_.server_name() + " does not find definitions" : why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
+        return;
+    }
+    lsp_close(kPopAll);
+    peek_pending_ = true;
+    lsp_.definition(pane_->doc->ed.cursor());
 }
 
 // The next (or previous) of the references found, round the ends. False

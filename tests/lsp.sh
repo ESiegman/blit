@@ -194,6 +194,15 @@ check "a type's subtypes" '▾ Shape  · struct  · calls.cpp:1 |   ▸ Circle  
 run "key:Down;key:Down;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;command:Show the supertypes of this type;hierdump" "$P/calls.cpp"
 check "and supertypes" '▾ Circle  · struct  · calls.cpp:3 |   ▸ Shape  · struct  · calls.cpp:1'
 
+# Peek: the definition in a box under the line, with the keyboard; Esc
+# closes it and gives the keyboard back; what is typed there is the file's.
+run "vim:3G;vim:fw;command:Peek the definition;peekdump" "$P/e.cpp"
+check "a peek: the definition, in a box inside the split, with the keyboard" 'e.cpp:2 | int two = one; | keyboard | inside'
+run "vim:3G;vim:fw;command:Peek the definition;peekdump;key:Escape;peekdump;vimdump" "$P/e.cpp"
+check "Esc: gone, the keyboard back where it was" 'NORMAL |  | 3:20 | int three = one + two;'
+run "vim:3G;vim:fw;command:Peek the definition;peekdump;vim:A // seen<Esc>;key:Escape;vim:2G;vimdump" "$P/e.cpp"
+check "typed in the box: the file's" 'NORMAL |  | 2:22 | int two = one; // seen'
+
 # The other uses of the name under the cursor, a moment after it stops.
 uses="key:Right;key:Right;key:Right;key:Right;key:Right;frame;wait:250;frame;wait:100;frame"
 run "$uses;usesdump" "$P/e.cpp"

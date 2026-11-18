@@ -158,8 +158,8 @@ void App::place_node(SplitNode& n, int x0, int y0, int x1, int y1) {
 }
 
 Pane* App::pane_at(int px, int py) const {
-    for (const std::unique_ptr<Pane>& p : panes_)
-        if (px >= p->x0 && px < p->x1 && py >= p->y0 && py < p->y1) return p.get();
+    for (auto p = panes_.rbegin(); p != panes_.rend(); ++p)  // (from the last: a peek's box, over the split it floats on)
+        if (px >= (*p)->x0 && px < (*p)->x1 && py >= (*p)->y0 && py < (*p)->y1) return p->get();
     return nullptr;
 }
 
@@ -212,6 +212,7 @@ Pane* App::split_pane(Pane* target, Edge edge) {
 // close, each with unsaved changes asked about as Cmd+W asks.
 void App::split_close() {
     Pane* const p = pane_;
+    if (p->floating) return peek_close();
     if (p == dock_pane()) return dock_hide();
     auto blank = [](const Doc& d) { return d.ed.path.empty() && !d.ed.modified() && d.ed.buf.size() == 0 && !d.term && !d.prof && !d.md && !d.image && !d.pdf && d.title.empty(); };
     const bool last = std::ranges::none_of(panes_, [&](const std::unique_ptr<Pane>& q) { return q.get() != p && q.get() != dock_pane(); });

@@ -1431,6 +1431,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     px_w_ = w;
     px_h_ = h;
     place_panes(w, h);
+    peek_layout();  // (a peek's box: placed over its split, laid out last)
     build_measure();  // (the Run button: the tab bar under it ends before it)
     Pane* const focused = pane_;
     for (const std::unique_ptr<Pane>& p : panes_) {
@@ -1551,6 +1552,7 @@ void App::layout_pane(FrameDesc& fd, bool focused) {
     v.match_radius = lk.match;
     v.tint_radius = lk.box;
     v.dim = focused || panes_.size() < 2 ? 0.0f : std::min(cfg_.look_dim_inactive, 0.6f);
+    if (Pane* peek = peek_pane(); peek && peek->host == p.id) v.dim = std::max(v.dim, 0.35f);  // (under a peek's box: the box stands out)
     g.has_sel = p.has_sel;
     g.sel_line0 = p.sel_line0;
     g.sel_line1 = p.sel_line1;
@@ -1952,6 +1954,7 @@ void App::on_key(const SDL_KeyboardEvent& k) {
     }
     if (script_keys_ && script_key(k)) return;  // a mapping of a script's has it (applua.cpp)
     if (!find_open_ && !panel_has_keyboard() && pair_key(k)) return;  // Backspace or Enter between a pair
+    if (!boxed && peek_key(k)) return;  // Esc in a peek's box: it closes (apppeek.cpp)
     if (vim_owns_key(k)) {  // (Ctrl+W, Ctrl+V, Ctrl+O ... in the text, with modes on: Vim's before the editor's, where Ctrl is both)
         vim_key(k);
         return;

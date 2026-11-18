@@ -218,6 +218,12 @@ struct ScriptKey;  // a key held back for the mappings (applua.cpp)
 // front. A window that is not split has one.
 struct Pane {
     u64 id = 0;
+    // A peek's box (apppeek.cpp): not one of the window's splits but over
+    // one (host), placed under the line it was asked from (peek_line, the
+    // host's).
+    bool floating = false;
+    u64 host = 0;
+    u64 peek_line = 0;
     // Its files, in the order of their tabs, and the one in front. Never
     // empty while the pane is on show.
     std::vector<std::shared_ptr<Doc>> docs;  // (shared: one file can show in several splits, each with its own place in it)
@@ -578,6 +584,17 @@ private:
     // (`moved` hears each, from 0), starting on `at`: Enter is `chose`, Esc
     // `cancelled` (appfind.cpp; the theme picker's).
     void find_on_side(std::function<bool(int, bool)> fn);
+    // Peek (apppeek.cpp).
+    void peek_open();
+    void peek_show(LspLocation loc);  // (a copy: the client's own goes as the keyboard moves)
+    void peek_place(Pane& p, Pane& host);
+    void peek_close();
+    void peek_layout();
+    bool peek_key(const SDL_KeyboardEvent& k);
+    std::string peek_dump();
+    Pane* peek_pane() const;
+    u64 peek_ = 0;
+    bool peek_pending_ = false;
     // Call and type hierarchies (applsp.cpp).
     void hier_show(u8 kind);
     void hier_take();

@@ -285,6 +285,7 @@ void App::commands_create() {
     sent("Find references", {key(SDLK_F12, kS)});
     own("Go to the implementation", {key(SDLK_F12, kP)}, [this] { lsp_places(Lsp::kImplementation); });
     own("Go to the type definition", {key(SDLK_F12, kP | kS)}, [this] { lsp_places(Lsp::kTypeDefinition); });
+    own("Peek the definition", {key(SDLK_F12, kA | kS)}, [this] { peek_open(); });
     own("Go to the declaration", {}, [this] { lsp_places(Lsp::kDeclaration); });
     own("Switch between header and source", {key(SDLK_F12, kA)}, [this] { lsp_switch_header(); });
     own("Show the file's outline", {key(SDLK_O, kP | kA)}, [this] { lsp_outline(); });
