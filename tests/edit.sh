@@ -168,5 +168,24 @@ got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x600 --shot "$dir/shot.b
 check "tried out: the diff against now; chosen: put back, the tab of diffs gone" "@@ -1 +1 @@ / -Xone / +XYone /  two#one / two / #tabs: >[hist.txt*]#"
 unset BLIT_HISTORY_DIR
 
+# Spelling: the words of comments and strings (not names, addresses or
+# capitals), of Markdown's text (not its code); Option+Enter on one, its
+# suggestions. Where there is no English checker, skipped.
+printf '// This functon adds the numbrs, see http://example.com/teh_page\nint totl_count = 0;  // HTTP and getValue are fine\nconst char* s = "a mispelled string";\n' >"$dir/sp.c"
+printf '# Notes\n\nSome recieved text with `codde` in it.\n' >"$dir/sp.md"
+printf '%s\nblit.opt.editor.modal = true\nblit.opt.editor.spell_check = false\n' "$base" >"$dir/nospell.lua"
+got=$(BLIT_INIT="$dir/vim.lua" "$blit" --offscreen 1400x600 --shot "$dir/shot.bmp" --script "frame;spelldump" "$dir/sp.c" 2>&1 >/dev/null | tail -1)
+if [ "$got" = "no checker" ]; then
+    echo "spelling skipped: no English checker here"
+else
+    check "spelling: comments and strings, not names, addresses or capitals" "functon numbrs mispelled"
+    got=$(BLIT_INIT="$dir/vim.lua" "$blit" --offscreen 1400x600 --shot "$dir/shot.bmp" --script "frame;spelldump" "$dir/sp.md" 2>&1 >/dev/null | tail -1)
+    check "Markdown: its text, not its code" "recieved"
+    got=$(BLIT_INIT="$dir/vim.lua" "$blit" --offscreen 1400x600 --shot "$dir/shot.bmp" --script "frame;spelldump;vim:ff;key:alt+Return;frame;finddump;key:Return;frame;spelldump" "$dir/sp.c" 2>&1 >/dev/null | tail -2 | sed -e 's/pick \[\] [0-9]* : >\([a-z]*\) .*Add.*/first \1, and Add/' | tr '\n' '#')
+    check "Option+Enter: its suggestions (the dictionary's last); chosen, it is right" "first function, and Add#numbrs mispelled#"
+    got=$(BLIT_INIT="$dir/nospell.lua" "$blit" --offscreen 1400x600 --shot "$dir/shot.bmp" --script "frame;spelldump" "$dir/sp.c" 2>&1 >/dev/null | tail -1)
+    check "editor.spell_check = false: none" "off"
+fi
+
 [ "$failed" = 0 ] && echo "edit: all passed"
 exit "$failed"

@@ -1259,6 +1259,7 @@ void App::lsp_format_on_save() {
 
 void App::lsp_actions() {
     Assist& a = *assist_;
+    if (spell_fix()) return;  // (on a word underlined as wrong: its spelling, appspell.cpp)
     if (!lsp_.ready() || !lsp_.can_act()) {
         if (server_text(*pane_->doc))
             notify(lsp_.ready() ? lsp_.server_name() + " offers no actions" : why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));

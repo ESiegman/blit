@@ -594,6 +594,14 @@ private:
     std::string lens_dump();
     bool lens_waiting() const;
     std::vector<GridNote> lens_view_notes_;
+    // Spelling (appspell.cpp).
+    void spell_marks(FrameDesc& fd);
+    void spell_take();
+    int spell_wait_ms() const;
+    bool spell_fix();
+    std::string spell_dump();
+    std::shared_ptr<struct SpellWork> spell_work_;
+    std::shared_ptr<struct SpellUi> spell_;
     // The minimap (appminimap.cpp).
     bool minimap_on(const Pane& p) const;
     bool minimap_place(const Pane& p, int* x0, int* y0, int* x1, int* y1, double* top_line, int* lp) const;

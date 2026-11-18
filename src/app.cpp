@@ -1481,6 +1481,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     nb_marks(fd);       // a notebook's saved outputs
     lens_marks(fd);     // how many references each definition on show has
     history_tick();     // (typed in for a while: a version of it kept)
+    spell_marks(fd);    // words not known, underlined
     if (script_) script_layout(w, h, fd);  // marks, boxes and messages of the scripts'
     prof_marks(fd);  // inline performance labels (after a server's and the scripts' notes)
     debug_marks(fd);  // and where the program being debugged has stopped
@@ -1875,6 +1876,10 @@ void App::handle(const SDL_Event& e) {
             }
             if (e.user.code == 16) {  // what the working folder builds with has been found
                 build_sync();
+                break;
+            }
+            if (e.user.code == 24) {  // the spelling of the words on show has been checked
+                spell_take();
                 break;
             }
             if (e.user.code == 23) {  // a file's assembly has been read
@@ -2275,7 +2280,7 @@ void App::loop() {
             // until the mouse has rested long enough for a hover popup, or a
             // scroll thumb has been left alone long enough to fade.
             int wait = -1;
-            for (const int ms : {lsp_wait_ms(), git_wait_ms(), fx_wait_ms(), minimap_wait_ms(), script_ ? script_wait_ms() : -1})
+            for (const int ms : {lsp_wait_ms(), git_wait_ms(), fx_wait_ms(), minimap_wait_ms(), spell_wait_ms(), script_ ? script_wait_ms() : -1})
                 if (ms >= 0 && (wait < 0 || ms < wait)) wait = ms;
             if (wait < 0 ? SDL_WaitEvent(&e) : SDL_WaitEventTimeout(&e, wait)) {
                 handle(e);
@@ -2285,6 +2290,7 @@ void App::loop() {
             git_tick();
             fx_tick();
             if (minimap_due_ns_ && now_ns() >= minimap_due_ns_) dirty_ = true;  // (typing has paused: the minimap made again)
+            if (spell_wait_ms() == 0) dirty_ = true;  // (and the words on show checked)
         }
         if (script_) script_tick();  // timers, events, keys of a mapping that waited long enough
         if (animating_ || fx_moving_) {

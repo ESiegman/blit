@@ -107,8 +107,8 @@ if(APPLE)
   # (Objective-C whatever C's compiler is: once C is on too, CMake would
   # give the .m files to it, and GCC, which a Homebrew build sets, cannot
   # read the SDK's headers.)
-  set_source_files_properties(src/gpu_metal.m src/picture_mac.m src/macapp.m src/emoji_mac.m PROPERTIES LANGUAGE OBJC)
-  add_library(blit_gpu STATIC src/gpu_metal.m src/picture_mac.m src/macapp.m)
+  set_source_files_properties(src/gpu_metal.m src/picture_mac.m src/macapp.m src/emoji_mac.m src/spell_mac.m PROPERTIES LANGUAGE OBJC)
+  add_library(blit_gpu STATIC src/gpu_metal.m src/picture_mac.m src/macapp.m src/spell_mac.m)
   target_compile_options(blit_gpu PRIVATE -fobjc-arc -Wall -Wextra)
   target_link_libraries(blit_gpu PUBLIC "-framework Metal" "-framework QuartzCore" "-framework Foundation" "-framework CoreGraphics" "-framework ImageIO" "-framework AppKit" "-framework PDFKit")
   set_target_properties(blit_gpu PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
@@ -271,7 +271,7 @@ target_link_libraries(blit_lsp PUBLIC blit_core)
 
 # The editor. Shaders are compiled offline by shaders/build.sh and the results
 # are checked in under shaders/gen, so this needs no shader tools.
-add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src/apptabs.cpp src/appsplit.cpp src/appgit.cpp src/appvim.cpp src/appshape.cpp src/appedit.cpp src/apptest.cpp src/folds.cpp src/snippet.cpp src/appsnippet.cpp src/appfx.cpp src/appfind.cpp src/appstatus.cpp src/appstart.cpp src/appsession.cpp src/appremote.cpp src/appprofile.cpp src/appterm.cpp src/appcommands.cpp src/appdebug.cpp src/appbuild.cpp src/appmarkdown.cpp src/appasm.cpp src/asm.cpp src/appnotebook.cpp src/notebook.cpp src/apppeek.cpp src/apphistory.cpp src/appminimap.cpp src/appimage.cpp src/apppdf.cpp src/appinstance.cpp src/instance.cpp src/loginpath.cpp src/look.cpp src/build.cpp src/tests.cpp src/fsio.cpp src/project.cpp src/libraries.cpp src/markdown.cpp src/mermaid.cpp src/dap.cpp src/applua.cpp src/luaapi.cpp src/git.cpp src/tree.cpp src/render.cpp)
+add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src/apptabs.cpp src/appsplit.cpp src/appgit.cpp src/appvim.cpp src/appshape.cpp src/appedit.cpp src/apptest.cpp src/folds.cpp src/snippet.cpp src/appsnippet.cpp src/appfx.cpp src/appfind.cpp src/appstatus.cpp src/appstart.cpp src/appsession.cpp src/appremote.cpp src/appprofile.cpp src/appterm.cpp src/appcommands.cpp src/appdebug.cpp src/appbuild.cpp src/appmarkdown.cpp src/appasm.cpp src/asm.cpp src/appnotebook.cpp src/notebook.cpp src/apppeek.cpp src/apphistory.cpp src/appminimap.cpp src/appspell.cpp src/spell.cpp src/appimage.cpp src/apppdf.cpp src/appinstance.cpp src/instance.cpp src/loginpath.cpp src/look.cpp src/build.cpp src/tests.cpp src/fsio.cpp src/project.cpp src/libraries.cpp src/markdown.cpp src/mermaid.cpp src/dap.cpp src/applua.cpp src/luaapi.cpp src/git.cpp src/tree.cpp src/render.cpp)
 target_include_directories(blit PRIVATE ${LUA_INCLUDE_DIR})
 target_link_libraries(blit PRIVATE blit_view blit_syntax blit_lsp blit_gpu SDL3::SDL3 ${LUA_LIBRARY})
 
