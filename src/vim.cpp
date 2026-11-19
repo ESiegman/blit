@@ -2279,13 +2279,29 @@ u32 Vim::insert_key(Editor& ed, const VimKey& k) {
         }
         switch (k.ch) {
             case 'w':
-                ed.backspace_word();
-                if (ed.cursor() < insert_from_) insert_from_ = ed.cursor();
-                break;
             case 'u': {
-                const u64 start = ed.buf.line_start(ed.buf.line_of(ed.cursor()));
-                const u64 from = insert_from_ > start && insert_from_ < ed.cursor() ? insert_from_ : start;
-                if (ed.cursor() > from) ed.replace(from, ed.cursor(), "");
+                // <C-w>: the blanks before the cursor and the word (or the
+                // run of signs) before them; <C-u>: all of the line before
+                // it but the indent. At the start of a line, the line break.
+                // Neither goes back past the start of the line, nor past
+                // where typing began, unless it began here.
+                const u64 cur = ed.cursor(), line = ed.buf.line_of(cur), start = ed.buf.line_start(line);
+                if (cur == start) {
+                    ed.backspace();
+                } else {
+                    u64 floor = start;
+                    if (k.ch == 'u' && first_nonblank(ed, line) < cur) floor = first_nonblank(ed, line);
+                    if (insert_from_ > floor && insert_from_ < cur) floor = insert_from_;
+                    u64 at = floor;
+                    if (k.ch == 'w') {
+                        Peek p(ed.buf);
+                        at = cur;
+                        while (at > floor && kind_of(p.at(char_before(ed, p, at)), false) == 0) at = char_before(ed, p, at);
+                        const int kind = at > floor ? kind_of(p.at(char_before(ed, p, at)), false) : 0;
+                        while (at > floor && kind_of(p.at(char_before(ed, p, at)), false) == kind) at = char_before(ed, p, at);
+                    }
+                    if (at < cur) ed.replace(at, cur, "");
+                }
                 insert_from_ = std::min(insert_from_, ed.cursor());
                 break;
             }
@@ -2419,8 +2435,15 @@ u32 Vim::insert_key(Editor& ed, const VimKey& k) {
             insert_plain_ = false;
             auto_indent_ = false;
             break;
-        case VimKey::kLeft: ed.left(false), moved(); break;
-        case VimKey::kRight: ed.right(false), moved(); break;
+        // (The arrows stay on the line, as Vim's 'whichwrap' has them.)
+        case VimKey::kLeft:
+            if (ed.cursor() == ed.buf.line_start(ed.buf.line_of(ed.cursor()))) return kHandled;
+            ed.left(false), moved();
+            break;
+        case VimKey::kRight:
+            if (ed.cursor() >= ed.line_end(ed.buf.line_of(ed.cursor()))) return kHandled;
+            ed.right(false), moved();
+            break;
         case VimKey::kHome: ed.home(false), moved(); break;
         case VimKey::kEnd: ed.end(false), moved(); break;
         case VimKey::kUp:

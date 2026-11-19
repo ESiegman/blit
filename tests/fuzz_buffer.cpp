@@ -3616,6 +3616,23 @@ void vim_test() {
         {"foo| bar", "i<CR><Esc>", "foo\n|bar"},
         {" | foo   bar\nend", "i<CR><Esc>", " \n| foo   bar\nend"},
         {"  a|  b", "R<CR><BS><BS><BS><Esc>", "  |a  b"},
+        // <C-w> and <C-u> stop at the start of the line (there they take the
+        // line break), and where typing began; <C-w> takes a run of signs as
+        // a word, <C-u> leaves the indent. The arrows stay on the line.
+        {"foo bar\n  b|az  qux\nend", "i<C-w><C-w>x<Esc>", "foo bar\n|xaz  qux\nend"},
+        {"foo bar\n  b|az  qux\nend", "i<C-w><C-w><C-w>x<Esc>", "foo bar|xaz  qux\nend"},
+        {"foo bar\n  baz  qu|x\nend", "a  <C-w>x<Esc>", "foo bar\n  baz  qux|x\nend"},
+        {"foo bar\n  baz  qu|x\nend", "a  <C-w><C-w>x<Esc>", "foo bar\n  baz  |x\nend"},
+        {"ab c|d", "a e<C-w><C-w><C-w>x<Esc>", "ab |x"},
+        {"x|y", "af(a.b)<C-w><C-w>!<Esc>", "xyf(a.|!"},
+        {"foo bar\n  b|az  qux\nend", "i<C-u>x<Esc>", "foo bar\n  |xaz  qux\nend"},
+        {"foo bar\n  baz  q|ux\nend", "iab<C-u><C-u>x<Esc>", "foo bar\n  |xux\nend"},
+        {"foo bar\n |  baz\nend", "i<C-u>x<Esc>", "foo bar\n|x  baz\nend"},
+        {"foo bar\n|baz\nend", "i<C-u>x<Esc>", "foo bar|xbaz\nend"},
+        {"foo bar\n  baz  qu|x\nend", "a<CR>ab<C-u><C-u><C-u>x<Esc>", "foo bar\n  baz  qux|x\nend"},
+        {"foo bar\n  baz  qu|x\nend", "A<Right>x<Esc>", "foo bar\n  baz  qux|x\nend"},
+        {"foo bar\n|  baz\nend", "i<Left>x<Esc>", "foo bar\n|x  baz\nend"},
+        {"a|b\nc", "o<Right>x<Esc>", "ab\n|x\nc"},
     };
     int wrong = 0;
     for (const Case& c : cases) {
