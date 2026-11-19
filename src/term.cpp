@@ -1197,11 +1197,14 @@ void Term::kitty(std::string_view control, std::string payload) {
     p.w = img.w, p.h = img.h;
     p.image = id, p.placement = placement;
     p.off_x = std::min(num('X'), cell_w_ - 1), p.off_y = std::min(num('Y'), cell_h_ - 1);
-    const u32 c = num('c'), r = num('r');
+    // (No more cells than a picture has pixels at most: asked for four
+    // billion rows, the cursor was moved down them one at a time.)
+    const u32 c = std::min(num('c'), kPictureSideMost), r = std::min(num('r'), kPictureSideMost);
     if (c || r) {  // the cells it fills (one given: the other as its shape has it)
         p.fit = true;
-        p.cols = c ? c : std::max(1u, static_cast<u32>(std::lround(static_cast<double>(r) * cell_h_ * img.w / std::max(1u, img.h) / cell_w_)));
-        p.rows = r ? r : std::max(1u, static_cast<u32>(std::lround(static_cast<double>(c) * cell_w_ * img.h / std::max(1u, img.w) / cell_h_)));
+        auto cells = [](double n) { return static_cast<u32>(std::clamp<long>(std::lround(n), 1, kPictureSideMost)); };
+        p.cols = c ? c : cells(static_cast<double>(r) * cell_h_ * img.w / std::max(1u, img.h) / cell_w_);
+        p.rows = r ? r : cells(static_cast<double>(c) * cell_w_ * img.h / std::max(1u, img.w) / cell_h_);
     }
     place(std::move(p), num('C') != 1, true);
     tell("OK");

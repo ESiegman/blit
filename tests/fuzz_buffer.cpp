@@ -2812,6 +2812,11 @@ void term_test(int seeds) {
         t.feed("\x1b_Ga=T,f=32,o=z,s=100000,v=100000,i=10;AAAA\x1b\\");
         check(t.take_reply() == "\x1b_Gi=10;ENODATA:not enough data for its size\x1b\\" && t.pictures().empty(),
               "kitty: a size past the most a picture may be, refused before its data is decompressed (it once let the data grow to gigabytes)");
+        t.feed("\x1b_Ga=T,f=24,s=1,v=1,i=11,r=4000000000;AAAA\x1b\\");
+        check(t.take_reply() == "\x1b_Gi=11;OK\x1b\\" && t.pictures().size() == 1 && t.pictures()[0].rows == 8192 && t.pictures()[0].cols >= 1 &&
+                  t.pictures()[0].cols <= 8192,
+              "kitty: four billion rows asked for, no more than 8,192 (the cursor once went down them one at a time)");
+        t.feed("\x1b[2J");
     }
     {
         // A picture stays with its line when the width changes.
