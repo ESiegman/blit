@@ -229,6 +229,20 @@ bool exclusive_trim(const Editor& ed, u64* lo, u64* hi) {
     return *lo <= first_nonblank(ed, start_line);
 }
 
+// Vim's rule in op_delete(): a delete of characters over more than one
+// line, from at or before the first non-blank of its first line, that
+// leaves only blanks on its last, is of the lines whole. (`lines`: how
+// many the text has; past them there is no line to keep.)
+bool deletes_lines(const Editor& ed, u64 lo, u64 hi, u64 lines) {
+    if (hi <= lo || hi > ed.buf.size()) return false;
+    const u64 first = ed.buf.line_of(lo), last = ed.buf.line_of(hi);
+    if (last <= first || last >= lines || lo > first_nonblank(ed, first)) return false;
+    Peek p(ed.buf);
+    for (u64 at = hi, e = ed.line_end(last); at < e; ++at)
+        if (p.at(at) != ' ' && p.at(at) != '\t') return false;
+    return true;
+}
+
 // What a line break typed is: what the text's lines end in.
 const char* line_break(const Editor& ed) { return ed.crlf() ? "\r\n" : "\n"; }
 
@@ -2632,6 +2646,7 @@ void Vim::leave_visual(Editor& ed) {
 
 u32 Vim::normal_key(Editor& ed, const VimKey& k) {
     message_.clear();
+    const u32 want_before = want_col_;  // (the column wanted before this key's motion: "$" changes it)
     u32 c = k.ch;
     bool ctrl = k.ctrl;
     switch (k.kind) {
@@ -2697,16 +2712,22 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
             return done();
         }
         u64 lo = std::min(cur, m.to), hi = std::max(cur, m.to);
-        bool linewise = m.linewise;
+        bool linewise = m.linewise, adjusted = false;
         if (linewise) lines_from(ed.buf.line_of(lo), ed.buf.line_of(hi) - ed.buf.line_of(lo) + 1, &lo, &hi);
         else if (m.inclusive) hi = std::min(ed.next_char(hi), ed.buf.size());
         else if (exclusive_trim(ed, &lo, &hi)) {
+            linewise = adjusted = true;
+            lines_from(ed.buf.line_of(lo), ed.buf.line_of(hi) - ed.buf.line_of(lo) + 1, &lo, &hi);
+        }
+        if (!linewise && op_ == 'd' && deletes_lines(ed, lo, hi, n)) {
             linewise = true;
             lines_from(ed.buf.line_of(lo), ed.buf.line_of(hi) - ed.buf.line_of(lo) + 1, &lo, &hi);
+            want_col_ = want_before;  // (the cursor goes to the column it wanted before, as after "dj")
         }
         const char op = op_;
         op_from_ = std::min(cur, m.to);
         operate(ed, op, lo, hi, linewise);
+        if (adjusted && op == 'd') go(ed, first_nonblank(ed, ed.buf.line_of(ed.cursor())));  // (made whole lines by that rule, Vim's delete leaves the cursor at the first non-blank, not in the column)
         return settle();
     };
     // The same for an operator in Visual mode: on what is selected (`lines`: on the lines it is in, whole).
@@ -2933,6 +2954,10 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
                     return done();
                 }
                 if (!text_object(ed, c, around, total(), &lo, &hi, &linewise)) return fail();
+                if (!linewise && op_ == 'd' && deletes_lines(ed, lo, hi, n)) {
+                    linewise = true;
+                    lines_from(ed.buf.line_of(lo), ed.buf.line_of(hi) - ed.buf.line_of(lo) + 1, &lo, &hi);
+                }
                 const char op = op_;
                 operate(ed, op, lo, hi, linewise);
                 return settle();

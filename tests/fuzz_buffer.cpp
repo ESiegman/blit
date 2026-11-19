@@ -3782,6 +3782,12 @@ void vim_test() {
         {"a\nb\n\n|c\nd\n\ne", "dip", "a\nb\n\n|\ne"},
         {"a\nb\n\n|c\nd\n\ne", "dap", "a\nb\n\n|e"},
         {"one t|wo three", "yiwP", "one tw|otwo three"},
+        // (A delete of characters over lines, from the indent to a line's end, is of the lines whole; one made whole lines
+        // because it ended at the start of a line leaves the cursor at the first non-blank.)
+        {"|a\nb c\nd", "d2e", "|d"},
+        {"   |  ab\ncd\n      xyz", "d2$", "   |   xyz"},
+        {"    |Ab cd.\nEf. xyz", "d)", "|Ef. xyz"},
+        {"  ? ? \n\n| x", "d[]", " |x"},
         // Other changes.
         {"|one\ntwo", ">>", "|    one\ntwo"},
         {"    |one\ntwo", "<<", "on|e\ntwo"},
