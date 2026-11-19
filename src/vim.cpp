@@ -915,6 +915,12 @@ void Vim::go(Editor& ed, u64 off, bool keep_column) {
         vis_eol_ = false;
         const u64 line = ed.buf.line_of(ed.cursor());
         want_col_ = ed.col_between(ed.buf.line_start(line), ed.cursor());
+        // On a tab Vim's cursor stands at its last column (in Visual mode,
+        // only after where the selection began), and that is the column
+        // that j and k keep.
+        char c = 0;
+        if (ed.tab_width > 0 && ed.buf.read(ed.cursor(), &c, 1) == 1 && c == '\t' && !(visual() && ed.cursor() <= vstart_))
+            want_col_ = (want_col_ / ed.tab_width + 1) * ed.tab_width - 1;
     }
 }
 

@@ -3633,6 +3633,16 @@ void vim_test() {
         {"foo bar\n  baz  qu|x\nend", "A<Right>x<Esc>", "foo bar\n  baz  qux|x\nend"},
         {"foo bar\n|  baz\nend", "i<Left>x<Esc>", "foo bar\n|x  baz\nend"},
         {"a|b\nc", "o<Right>x<Esc>", "ab\n|x\nc"},
+        // On a tab the column j and k keep is its last one (in Visual mode,
+        // once past where the selection began).
+        {"|\tx\nabcdef", "j", "\tx\nabc|def"},
+        {"ab|\tx\nabcdefghij", "j", "ab\tx\nabc|defghij"},
+        {"|\t\tx\nabcdefghij", "lj", "\t\tx\nabcdefg|hij"},
+        {"|\tx\nabcdefgh", "jx", "\tx\nabc|efgh"},
+        {"abc\n|\tx\nabcdef", "Vj", "abc\n\tx\nabc|def"},
+        {"abcdef\nx|\tx\nabcdef", "vhj", "abcdef\nx\tx\n|abcdef"},
+        {"abcdef\n|\tx\nabcdef", "vkj", "abcdef\n|\tx\nabcdef"},
+        {"x|\tx\nabcdef", "i<Down>z<Esc>", "x\tx\na|zbcdef"},
     };
     int wrong = 0;
     for (const Case& c : cases) {
