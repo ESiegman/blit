@@ -692,7 +692,9 @@ void App::sync_lsp() {
         a.actions_pending = a.resolving = false;
         const std::vector<LspAction>& acts = lsp_.actions();
         if (resolved) {
-            if (!acts.empty()) {
+            if (!acts.empty() && !acts[0].disabled.empty()) {
+                notify(acts[0].title + ": " + acts[0].disabled);
+            } else if (!acts.empty()) {
                 std::string said;
                 if (!acts[0].edit.empty()) lsp_apply(acts[0].edit, &said);
                 if (!acts[0].command.empty()) lsp_.execute(acts[0]);

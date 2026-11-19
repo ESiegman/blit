@@ -32,6 +32,7 @@ printf 'blit.opt.lsp.servers.clangd = { command = { "%s", "--name", "c" }, langu
 printf '%s\nblit.opt.editor.modal = false\nblit.opt.lsp.highlight_uses = false\n' "$servers" >"$dir/nouses.lua"
 printf '%s\nblit.opt.editor.modal = false\nblit.opt.lsp.reference_counts = false\n' "$servers" >"$dir/nolens.lua"
 printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--workspace", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/pull.lua"
+printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--late", "300", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/late.lua"
 export BLIT_RECENT_FILE="$dir/recent"
 init=
 fresh() {
@@ -242,6 +243,9 @@ check "one undo takes it back in the open file" 'int shared = 1; // ERROR / call
 run "key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;finddump"
 got="$got / $said"
 check "a name the server will not rename: it says why" 'closed / blit: Cannot rename: ERROR cannot be renamed'
+with late "key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;key:ctrl+U;text:common;key:Return;key:Home;text:xx;wait:700;lsptext"
+got="$got / $said"
+check "typed in while a slow server renames: its edits, about the old text, are not made" 'xxint shared = 1; // ERROR / call(1,   2, 3);    / WARN shared   /  / blit: Cannot rename: the text changed meanwhile'
 
 # Formatting: the file, the lines selected, Vim's gq, and before a save.
 # A completion that is a snippet: put in with its tab stops, the first
@@ -282,6 +286,11 @@ check "a command, whose edit the server asks for" 'int shared = 1; // ERROR / ca
 run "key:Down;key:Down;key:alt+Return;wait:200;key:Down;key:Down;key:Down;key:Return;wait:100;lsptext"
 got="$got / $said"
 check "one that cannot be used says why" 'int shared = 1; // ERROR / call(1,   2, 3);    / WARN shared   /  / blit: Not now: it never is'
+with late "key:Down;key:Down;key:alt+Return;key:End;text:z;wait:700;finddump"
+check "typed in while a slow server finds them: none can be used, and each says why" 'pick [] 4 : >Replace WARN with NOTE (the text changed meanwhile) Make it capitals (the text changed meanwhile) Add a comment above (the text changed meanwhile) Not now (it never is)'
+with late "key:Down;key:Down;key:End;key:Left;key:Left;key:Left;key:Left;key:alt+Return;wait:700;key:Return;key:Home;text:z;wait:700;lsptext"
+got="$got / $said"
+check "or while one is filled in: it is not made" 'int shared = 1; // ERROR / call(1,   2, 3);    / zWARN shared   /  / blit: Make it capitals: the text changed meanwhile'
 
 # Inlay hints between the characters (off unless asked for), and the
 # servers' colours over tree-sitter's.

@@ -2691,6 +2691,7 @@ void Lsp::rename(u64 offset, const std::string& name) {
     std::string extra = R"(,"newName":)";
     json::quote(extra, name);
     ask(front_, "textDocument/rename", offset, kInRename, extra, &rename_id_);
+    rename_version_ = front_->version;
 }
 
 void Lsp::format(u64 lo, u64 hi, bool whole, u64 key) {
@@ -2751,6 +2752,7 @@ void Lsp::code_actions(u64 lo, u64 hi) {
     send(*d->server->conn, std::move(m), id, kInActions);
     ++sent_;
     actions_id_ = id;
+    actions_version_ = d->version;
     actions_.clear();
 }
 
@@ -2762,6 +2764,7 @@ void Lsp::resolve_action(const LspAction& a) {
     send(*s->conn, R"({"jsonrpc":"2.0","id":)" + std::to_string(id) + R"(,"method":"codeAction/resolve","params":)" + a.resolve + "}", id, kInResolve);
     ++sent_;
     resolve_id_ = id;
+    resolve_version_ = front_->version;
 }
 
 void Lsp::execute(const LspAction& a) {
@@ -3166,8 +3169,13 @@ u32 Lsp::poll() {
             case kInRename:
                 if (m.id != rename_id_ || !front_asked) break;
                 rename_id_ = 0;
-                rename_edit_ = std::move(m.wedit);
-                rename_error_ = m.text;
+                if (front_->version != rename_version_) {  // (typed in meanwhile: its places are the old text's)
+                    rename_edit_ = {};
+                    rename_error_ = "the text changed meanwhile";
+                } else {
+                    rename_edit_ = std::move(m.wedit);
+                    rename_error_ = m.text;
+                }
                 news |= kRename;
                 break;
             case kInFormat: {
@@ -3192,6 +3200,9 @@ u32 Lsp::poll() {
                 if (m.id != actions_id_ || !front_asked) break;
                 actions_id_ = 0;
                 actions_ = std::move(m.actions);
+                if (front_->version != actions_version_)  // (typed in meanwhile: what they would change is the old text's)
+                    for (LspAction& a : actions_)
+                        if (a.disabled.empty()) a.disabled = "the text changed meanwhile";
                 news |= kActions;
                 break;
             case kInResolve:
@@ -3199,6 +3210,9 @@ u32 Lsp::poll() {
                 resolve_id_ = 0;
                 actions_ = std::move(m.actions);
                 for (LspAction& a : actions_) a.resolve.clear();
+                if (front_->version != resolve_version_)
+                    for (LspAction& a : actions_)
+                        if (a.disabled.empty()) a.disabled = "the text changed meanwhile";
                 news |= kActions;
                 break;
             case kInHints: {

@@ -490,6 +490,10 @@ private:
     std::string found_query_, found_asked_, switch_;
     u32 ask_with(Server* s, const char* method, const std::string& params, u8 kind, u32* latest);
     u64 rename_lo_ = 0, rename_hi_ = 0, rename_at_ = 0;
+    // The front document's version a rename, the code actions and an action
+    // resolved were asked at: edits that arrive about a text changed since
+    // are not used (their places are the old text's).
+    i64 rename_version_ = 0, actions_version_ = 0, resolve_version_ = 0;
     std::string rename_text_, rename_error_;
     LspWorkspaceEdit rename_edit_;
     std::vector<ByteEdit> format_edits_;

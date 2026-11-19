@@ -1,12 +1,14 @@
 // A language server with predictable answers, for the tests and benchmarks.
 //
-//   blit_fakelsp [--utf8] [--full] [--slow MS] [--die-after N] [--items N] [--quiet]
+//   blit_fakelsp [--utf8] [--full] [--slow MS] [--late MS] [--die-after N] [--items N] [--quiet]
 //                [--pull] [--workspace] [--no-prepare] [--default-rename] [--changes] [--noise]
 //                [--name NAME]
 //
 // --utf8        agree to count columns in bytes (the default is UTF-16)
 // --full        ask for the whole document on every change
 // --slow MS     wait that long before every answer
+// --late MS     wait that long before answering with edits (a rename, code
+//               actions, an action resolved), reading nothing meanwhile
 // --die-after N exit without a word after N messages
 // --items N     pad completion lists to N items
 // --quiet       send diagnostics when a document opens, but not on changes
@@ -79,7 +81,7 @@ namespace {
 
 bool utf16 = true;
 int sync_kind = 2;
-int slow_ms = 0;
+int slow_ms = 0, late_ms = 0;
 long die_after = -1;
 long pad_items = 0;
 bool quiet = false, pull = false, workspace = false, prepare = true, by_changes = false, noise = false, default_rename = false;
@@ -1059,6 +1061,7 @@ int main(int argc, char** argv) {
         if (a == "--utf8") utf16 = false;
         else if (a == "--full") sync_kind = 1;
         else if (a == "--slow" && i + 1 < argc) slow_ms = std::atoi(argv[++i]);
+        else if (a == "--late" && i + 1 < argc) late_ms = std::atoi(argv[++i]);
         else if (a == "--die-after" && i + 1 < argc) die_after = std::atol(argv[++i]);
         else if (a == "--items" && i + 1 < argc) pad_items = std::atol(argv[++i]);
         else if (a == "--quiet") quiet = true;
@@ -1169,12 +1172,15 @@ int main(int argc, char** argv) {
         } else if (method == "textDocument/prepareRename") {
             prepare_rename(id, params);
         } else if (method == "textDocument/rename") {
+            if (late_ms > 0) usleep(static_cast<useconds_t>(late_ms) * 1000);
             rename(id, params);
         } else if (method == "textDocument/formatting" || method == "textDocument/rangeFormatting") {
             formatting(id, params, method == "textDocument/rangeFormatting");
         } else if (method == "textDocument/codeAction") {
+            if (late_ms > 0) usleep(static_cast<useconds_t>(late_ms) * 1000);
             code_actions(id, params);
         } else if (method == "codeAction/resolve") {
+            if (late_ms > 0) usleep(static_cast<useconds_t>(late_ms) * 1000);
             resolve(id, params);
         } else if (method == "workspace/executeCommand") {
             execute(id, params);
