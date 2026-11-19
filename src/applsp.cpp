@@ -342,6 +342,7 @@ struct App::Assist {
         // one for each kind of token that is coloured).
         Highlights merged;
         u64 merged_key = ~0ull;
+        u64 merged_first = 0, merged_last = 0;  // the lines it covers, [first, last)
         u32 lut[256] = {};
         u32 styles = 0;                         // tree-sitter's styles the table has
         u64 lut_key = ~0ull;
@@ -2228,17 +2229,22 @@ void App::lsp_extras(FrameDesc& fd) {
                 dirty_ = true;
             }
             // The marks for the lines on show: tree-sitter's, with the
-            // tokens' runs laid over them.
+            // tokens' runs laid over them. Made again when either changes,
+            // for the lines on show, or when the view goes past the lines
+            // they were made for, then for half a screen more above and
+            // below as well (scrolling makes them again only now and then).
             const Highlights& hl = own ? *own : kNone;
-            const u64 merged_key = ((((lsp_.tokens_generation(d.id) * 1000003 + first) * 1000003 + last) * 1000003 + reinterpret_cast<u64>(hl.off.data())) * 1000003 +
-                                    hl.size()) * 1000003 + hl.base + x.lut_key;
-            if (merged_key != x.merged_key) {
+            const u64 merged_key = (((lsp_.tokens_generation(d.id) * 1000003 + reinterpret_cast<u64>(hl.off.data())) * 1000003 + hl.size()) * 1000003 + hl.base) * 1000003 + x.lut_key;
+            if (merged_key != x.merged_key || first < x.merged_first || last > x.merged_last) {
+                const u64 more = merged_key == x.merged_key ? g.rows / 2 : 0;
                 x.merged_key = merged_key;
+                x.merged_first = first > more ? first - more : 0;
+                x.merged_last = std::min(lines, last + more);
                 const std::vector<std::string>& mods = *lsp_.token_modifiers(d.id);
                 u32 library = 0;  // (the modifier bit for "defaultLibrary")
                 for (size_t i = 0; i < mods.size() && i < 32; ++i)
                     if (mods[i] == "defaultLibrary") library = 1u << i;
-                const u64 lo = b.line_start(first), hi = last < lines ? b.line_start(last) : b.size();
+                const u64 lo = b.line_start(x.merged_first), hi = x.merged_last < lines ? b.line_start(x.merged_last) : b.size();
                 Highlights& m = x.merged;
                 m.clear();
                 m.base = lo;
