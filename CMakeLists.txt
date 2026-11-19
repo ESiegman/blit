@@ -48,6 +48,14 @@ endif()
 # (GCC's flags are for the C++: the Metal side is Objective-C, built by
 # Apple's compiler, below.)
 add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wshadow;-fno-exceptions;-fno-rtti>")
+# A Debug build warns of more that is likely a mistake: an else-if whose
+# condition is one already tested, && and || that cannot be what was
+# meant, a format that is not a literal, a virtual function overridden
+# without `override`, const cast away, an array sized at run time. The
+# code has none of them; this keeps it so. (GCC's names for them.)
+if(BLIT_DEV AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wduplicated-cond;-Wlogical-op;-Wformat=2;-Wsuggest-override;-Wcast-qual;-Wvla>")
+endif()
 if(BLIT_NATIVE)
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
     # On macOS GCC cannot tell which Apple chip it is on, and -mcpu=native
