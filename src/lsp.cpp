@@ -2287,6 +2287,7 @@ void Lsp::stop_server(Server* s, bool kill_now) {
     if (asked_ == s) asked_ = nullptr;
     std::erase_if(applies_, [&](const Apply& a) { return a.server == s; });
     if (applying_.server == s) applying_.server = nullptr;
+    std::erase_if(counting_, [&](const auto& c) { return c.second.server == s; });  // (their answers will not come)
 #if !defined(_WIN32)
     if (s->conn) {
         const int pid = s->conn->pid.load();
@@ -2605,9 +2606,21 @@ void Lsp::hierarchy_prepare(u64 offset, bool types) {
 
 void Lsp::count_references(u64 offset, u64 tag) {
     if (!can_references()) return;
+    // Those asked with another tag are for nobody now (the text, or the
+    // file, has changed since): the server is told so, and they are let go
+    // of. So are the oldest, past a thousand or so (answers that never came).
+    for (auto it = counting_.begin(); it != counting_.end();) {
+        if (it->second.r.tag == tag && counting_.size() < 1024) {
+            ++it;
+            continue;
+        }
+        u32 was = it->first;
+        cancel(it->second.server, &was);
+        it = counting_.erase(it);
+    }
     u32 id = 0;  // (one of many under way: none is cancelled for it)
     ask(front_, "textDocument/references", offset, kInCount, R"(,"context":{"includeDeclaration":false})", &id);
-    if (id) counting_[id] = {tag, offset, 0};
+    if (id) counting_[id] = {{tag, offset, 0}, front_->server};
 }
 
 void Lsp::hierarchy_expand(const std::string& raw, HierKind kind) {
@@ -3113,7 +3126,7 @@ u32 Lsp::poll() {
             }
             case kInCount:
                 if (const auto it = counting_.find(m.id); it != counting_.end()) {
-                    RefCount r = it->second;
+                    RefCount r = it->second.r;
                     r.count = static_cast<u32>(std::max<i64>(0, m.version));
                     counting_.erase(it);
                     counts_.push_back(r);

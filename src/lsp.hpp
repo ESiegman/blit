@@ -329,6 +329,7 @@ public:
     };
     void count_references(u64 offset, u64 tag);
     std::vector<RefCount> take_counts() { return std::exchange(counts_, {}); }
+    size_t counts_asked() const { return counting_.size(); }  // asked and not answered (for the tests)
     // Asks whether the name at offset can be renamed, and which bytes it is.
     // A server that does not say answers at once: renamable, the word there.
     void prepare_rename(u64 offset);
@@ -478,7 +479,14 @@ private:
     std::vector<LspPlace> refs_;
     std::vector<LspHierItem> hier_;
     u32 hier_id_ = 0;
-    std::map<u32, RefCount> counting_;  // (asked, by request)
+    // (Asked, by request, and of which server: those of an earlier tag, or of
+    // a server that has gone, are let go of, and there are never more than
+    // a thousand or so.)
+    struct Counting {
+        RefCount r;
+        Server* server = nullptr;
+    };
+    std::map<u32, Counting> counting_;
     std::vector<RefCount> counts_;
     std::vector<LspPlace> places_;
     PlaceKind place_kind_ = kImplementation;

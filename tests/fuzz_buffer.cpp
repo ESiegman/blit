@@ -5718,6 +5718,31 @@ void lsp_test() {
           "and the next time, the word there then");
     ren.detach();
 
+    // Reference counts asked for and not answered yet (a slow server's):
+    // those of an earlier tag let go of when another tag's are asked for,
+    // and all of a server's once it has gone.
+    LspServer slow = fake;
+    slow.command = {BLIT_FAKE_LSP, "--slow", "400"};
+    Lsp counting;
+    check(counting.attach(ed.buf, path, "cpp", {slow}) && (lsp_wait(counting, Lsp::kState) & Lsp::kState), "slow server becomes ready");
+    for (int i = 0; i < 3; ++i) counting.count_references(4, 1);
+    check(counting.counts_asked() == 3, "counts asked for, waiting for their answers");
+    counting.count_references(4, 2);
+    check(counting.counts_asked() == 1, "counts of an earlier tag let go of");
+    counting.detach();
+    check(counting.counts_asked() == 0, "and a server's, once it has gone");
+    LspServer doomed = fake;
+    doomed.command = {BLIT_FAKE_LSP, "--slow", "200", "--die-after", "6"};
+    Lsp dying;
+    check(dying.attach(ed.buf, path, "cpp", {doomed}) && (lsp_wait(dying, Lsp::kState) & Lsp::kState), "a server to die becomes ready");
+    for (int i = 0; i < 4; ++i) dying.count_references(4, 1);
+    check(dying.counts_asked() == 4, "counts asked of a server that dies");
+    for (int i = 0; i < 400 && dying.attached(); ++i) {
+        dying.poll();
+        dying.wait(10);
+    }
+    check(!dying.attached() && dying.counts_asked() == 0, "a server that died: its counts let go of");
+
     LspServer missing;
     missing.name = "missing";
     missing.command = {"blit-no-such-language-server"};
