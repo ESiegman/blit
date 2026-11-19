@@ -345,6 +345,7 @@ bool App::init(std::string* err) {
     if (folder && !project_open(opt_.file) && !panel_px()) panel_toggle();  // (the folder, shown)
     for (const OpenAsk& f : opt_.more) open_place(f);
     instance_start();  // (files from a later `blit` come here)
+    update_check(false);  // (a newer release, once a day: appupdate.cpp)
     return true;
 }
 

@@ -1,0 +1,219 @@
+// Updates: the latest release on GitHub looked for (at the start, once a
+// day, with updates.check; or with "Check for updates"), and, if it is newer
+// than this blit and the user says so, fetched, its SHA-256 checked against
+// the .sha256 published beside it, and put in place of this one: blit.app
+// in its folder (the new one unpacked beside it, then the two swapped), or
+// the AppImage (written beside it, then renamed over it). The new blit is
+// the one that starts next time. A blit installed some other way (the
+// tarball, Homebrew, a build) is only told of it.
+//
+// BLIT_UPDATES_URL names another place to ask (the tests: a file:// one),
+// and BLIT_UPDATE_TARGET another blit to replace.
+#include <SDL3/SDL.h>
+#include <unistd.h>
+
+#include <cstdio>
+#include <cstdlib>
+
+#include "app.hpp"
+#include "fsio.hpp"
+#include "grammars.hpp"
+#include "json.hpp"
+
+#ifndef BLIT_VERSION
+#define BLIT_VERSION "0.0.0"
+#endif
+
+namespace blit {
+
+namespace {
+
+constexpr i64 kDaySeconds = 24 * 60 * 60;
+
+std::string env(const char* name) {
+    const char* v = std::getenv(name);
+    return v ? v : "";
+}
+
+std::string latest_url() {
+    const std::string own = env("BLIT_UPDATES_URL");
+    return own.empty() ? "https://api.github.com/repos/ESiegman/blit/releases/latest" : own;
+}
+
+// "1.2.3" (a "v" in front, anything after a "-" left out) as numbers.
+std::vector<long> version_parts(std::string_view v) {
+    if (!v.empty() && (v.front() == 'v' || v.front() == 'V')) v.remove_prefix(1);
+    v = v.substr(0, v.find('-'));
+    std::vector<long> out;
+    for (size_t at = 0; at <= v.size();) {
+        size_t dot = v.find('.', at);
+        if (dot == std::string_view::npos) dot = v.size();
+        out.push_back(std::strtol(std::string(v.substr(at, dot - at)).c_str(), nullptr, 10));
+        at = dot + 1;
+    }
+    while (out.size() < 3) out.push_back(0);
+    return out;
+}
+
+bool newer(std::string_view a, std::string_view than) { return version_parts(a) > version_parts(than); }
+
+// The blit this one would be replaced as: its blit.app, or its AppImage
+// (empty: installed some other way).
+std::string target() {
+    if (std::string own = env("BLIT_UPDATE_TARGET"); !own.empty()) return own;
+#if defined(__APPLE__)
+    if (const char* base = SDL_GetBasePath()) {
+        const std::string b = base;
+        if (const size_t app = b.find(".app/"); app != std::string::npos) return b.substr(0, app + 4);
+    }
+    return {};
+#else
+    return env("APPIMAGE");
+#endif
+}
+
+// The release's file for it.
+std::string asset_for(const std::string& where, const std::string& version) {
+    if (where.ends_with(".app")) return "blit-" + version + "-macos-arm64.zip";
+    return "blit-" + version + "-x86_64.AppImage";
+}
+
+// What a program said, its first line (for a toast).
+std::string said(const std::string& err, const std::string& out) {
+    const std::string& s = err.empty() ? out : err;
+    std::string line = s.substr(0, s.find('\n'));
+    return line.empty() ? std::string("it failed") : line;
+}
+
+std::string first_word(std::string_view s) {
+    const size_t a = s.find_first_not_of(" \t\r\n");
+    if (a == std::string_view::npos) return {};
+    const size_t b = s.find_first_of(" \t\r\n", a);
+    return std::string(s.substr(a, b == std::string_view::npos ? std::string_view::npos : b - a));
+}
+
+std::string folder_of(const std::string& p) {
+    const size_t s = p.find_last_of('/');
+    return s == std::string::npos ? std::string(".") : s == 0 ? std::string("/") : p.substr(0, s);
+}
+
+std::string stamp_path() { return grammar_dir() + "/update-checked"; }
+
+}  // namespace
+
+std::string App::version() { return BLIT_VERSION; }
+
+// The latest release asked about: by the user (asked: told either way), or
+// at the start (at most once a day, and only with updates.check on).
+void App::update_check(bool asked) {
+    if (!asked) {
+        if (!cfg_.update_check) return;
+#if BLIT_DEV
+        if (env("BLIT_UPDATES_URL").empty()) return;  // (a build of one's own is not replaced by a release)
+#endif
+        std::string last;
+        std::string why;
+        if (fs_read_whole(stamp_path(), &last, &why, 64, {}) && std::time(nullptr) - std::atoll(last.c_str()) < kDaySeconds) return;
+        SDL_CreateDirectory(grammar_dir().c_str());
+        const std::string now = std::to_string(static_cast<long long>(std::time(nullptr)));
+        SDL_SaveFile(stamp_path().c_str(), now.data(), now.size());
+    }
+    if (update_busy_) {
+        if (asked) notify("Already looking for an update");
+        return;
+    }
+    update_busy_ = true;
+    SDL_CreateDirectory(grammar_dir().c_str());
+    script_run({"curl", "-fsSL", "--proto", "=https,file", "--max-time", "30", "-H", "Accept: application/vnd.github+json", latest_url()}, grammar_dir(),
+               [this, asked](int code, const std::string& out, const std::string& err) {
+                   update_busy_ = false;
+                   if (code != 0) {
+                       if (asked) notify("Could not ask for the latest release: " + said(err, out), 2);
+                       return;
+                   }
+                   json::Doc doc;
+                   if (!doc.parse(out)) return asked ? notify("The answer about the latest release was not JSON", 2) : void();
+                   const std::string tag(doc.root()["tag_name"].str());
+                   const std::string version = tag.starts_with('v') ? tag.substr(1) : tag;
+                   if (version.empty() || !newer(version, App::version())) {
+                       if (asked) notify("blit " + App::version() + " is the latest");
+                       return;
+                   }
+                   const std::string where = target();
+                   if (where.empty()) return notify("blit " + version + " is out (this one is " + App::version() + ")");
+                   const std::string want = asset_for(where, version);
+                   std::string url, sum;
+                   for (const json::Value a : doc.root()["assets"]) {
+                       const std::string name(a["name"].str());
+                       if (name == want) url = std::string(a["browser_download_url"].str());
+                       if (name == want + ".sha256") sum = std::string(a["browser_download_url"].str());
+                   }
+                   if (url.empty() || sum.empty()) return notify("blit " + version + " is out, with no " + want + " (and its .sha256) to install", 1);
+                   if (!confirm("blit " + version + " is out (this one is " + App::version() + "). Install it? It starts next time.", "Install")) return;
+                   update_fetch(version, where, url, sum);
+               });
+}
+
+// The release's file and its sum fetched (into blit's data folder), the
+// sum checked, then put in place.
+void App::update_fetch(const std::string& version, const std::string& where, const std::string& url, const std::string& sum) {
+    const std::string dir = grammar_dir() + "/update";
+    SDL_CreateDirectory(dir.c_str());
+    const std::string file = dir + "/" + url.substr(url.find_last_of('/') + 1);
+    update_busy_ = true;
+    notify("Fetching blit " + version + "\xE2\x80\xA6");
+    script_run({"curl", "-fsSL", "--proto", "=https,file", "--max-time", "600", "-o", file, url, "-o", file + ".sha256", sum}, dir,
+               [this, version, where, file](int code, const std::string& out, const std::string& err) {
+                   if (code != 0) {
+                       update_busy_ = false;
+                       return notify("Could not fetch blit " + version + ": " + said(err, out), 2);
+                   }
+#if defined(__APPLE__)
+                   std::vector<std::string> sum_argv = {"shasum", "-a", "256", file};
+#else
+                   std::vector<std::string> sum_argv = {"sha256sum", file};
+#endif
+                   script_run(std::move(sum_argv), folder_of(file), [this, version, where, file](int summed, const std::string& said, const std::string&) {
+                       std::string want, why;
+                       fs_read_whole(file + ".sha256", &want, &why, 4096, {});
+                       if (summed != 0 || first_word(said).empty() || first_word(said) != first_word(want)) {
+                           update_busy_ = false;
+                           SDL_RemovePath(file.c_str());
+                           return notify("blit " + version + " came with the wrong SHA-256: not installed", 2);
+                       }
+                       update_install(version, where, file);
+                   });
+               });
+}
+
+// The checked file put in place of the blit there, by a few lines of sh
+// (rm -rf and mv, which follow no links): blit.app unpacked beside it and
+// the two swapped, the old one put back if the new one cannot go in; an
+// AppImage copied beside it, made a program, and renamed over it.
+void App::update_install(const std::string& version, const std::string& where, const std::string& file) {
+    const std::string folder = folder_of(where);
+    if (::access(folder.c_str(), W_OK) != 0) {
+        update_busy_ = false;
+        return notify("blit " + version + " is fetched, but " + folder + " cannot be written to: it is in " + file, 2);
+    }
+    const char* app_swap =
+        "fresh=\"$(dirname \"$1\")/.blit-update\"; old=\"$(dirname \"$1\")/.blit-old.app\"; "
+        "rm -rf \"$fresh\" \"$old\" && mkdir \"$fresh\" && ditto -x -k \"$2\" \"$fresh\" || exit 1; "
+        "new=$(ls -d \"$fresh\"/*.app | head -1); [ -d \"$new\" ] || { rm -rf \"$fresh\"; echo 'no app in it' >&2; exit 1; }; "
+        "mv \"$1\" \"$old\" || exit 1; "
+        "mv \"$new\" \"$1\" || { mv \"$old\" \"$1\"; exit 1; }; "
+        "rm -rf \"$old\" \"$fresh\"";
+    const char* file_swap =
+        "fresh=\"$(dirname \"$1\")/.blit-update.AppImage\"; "
+        "cp \"$2\" \"$fresh\" && chmod 755 \"$fresh\" && mv -f \"$fresh\" \"$1\" || { rm -f \"$fresh\"; exit 1; }";
+    script_run({"/bin/sh", "-c", where.ends_with(".app") ? app_swap : file_swap, "sh", where, file}, folder,
+               [this, version, file](int code, const std::string& out, const std::string& err) {
+                   update_busy_ = false;
+                   if (code != 0) return notify("blit " + version + " could not be put in place: " + said(err, out), 2);
+                   SDL_RemovePath(file.c_str());
+                   SDL_RemovePath((file + ".sha256").c_str());
+                   notify("blit " + version + " is installed: it starts next time");
+               });
+}
+
+}  // namespace blit

@@ -49,7 +49,7 @@ jobs:
 
       - name: Build
         run: |
-          cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=g++-16 -DCMAKE_BUILD_TYPE=Release -DBLIT_NATIVE=OFF
+          cmake -S . -B build -G Ninja -DCMAKE_CXX_COMPILER=g++-16 -DCMAKE_BUILD_TYPE=Release -DBLIT_NATIVE=OFF -DBLIT_VERSION="${TAG#v}"
           cmake --build build -j 3
 
       - name: Libraries inside the app

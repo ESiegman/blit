@@ -63,7 +63,7 @@ cmake --install "$work/Vulkan-Headers/build" >/dev/null
 
 # blit.
 cmake -S "$top" -B "$work/blit" -G Ninja -DCMAKE_BUILD_TYPE=Release -DCMAKE_INSTALL_PREFIX=/usr -DBLIT_NATIVE=OFF \
-    -DCMAKE_PREFIX_PATH="$deps" -DVulkan_INCLUDE_DIR="$deps/include"
+    -DCMAKE_PREFIX_PATH="$deps" -DVulkan_INCLUDE_DIR="$deps/include" -DBLIT_VERSION="$version"
 cmake --build "$work/blit"
 rm -rf "$work/AppDir"
 DESTDIR="$work/AppDir" cmake --install "$work/blit"

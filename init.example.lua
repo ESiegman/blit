@@ -200,6 +200,9 @@
 -- blit.opt.window.width = 1100    -- size of a new window, in points
 -- blit.opt.window.height = 760
 
+---------------------------------------------------------------- updates
+-- blit.opt.updates.check = true   -- at the start, once a day: a newer release offered (blit.app and the AppImage install it)
+
 ---------------------------------------------------------------- keys and scripts
 -- blit.opt.keys.leader = "\\"         -- what <leader> in a mapping stands for (" " for the space bar)
 -- blit.opt.keys.timeout_ms = 1000     -- how long the first keys of a mapping wait for the rest

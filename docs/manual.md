@@ -100,6 +100,19 @@ A release can also be made by hand, `gh workflow run release.yml -f
 tag=v0.3.0`, and with `-f publish=false` everything is built and kept with
 the run, and nothing is released.
 
+**Updates.** A blit from the Releases page looks for a newer release when
+it starts, once a day (`blit.opt.updates.check = false` stops that), and
+"Check for updates" looks at any time. If there is one, it asks; then it
+fetches the file for this blit, checks its SHA-256 against the `.sha256`
+published beside it, and puts it in place: blit.app is unpacked beside the
+one there and the two swapped, the AppImage written beside it and renamed
+over it. The new version is the one that starts next time. A blit
+installed some other way (the tarball, Homebrew, a build of your own) is
+only told that a new release is out; a build of your own never looks by
+itself. The release builds take their version from the tag
+(`-DBLIT_VERSION`); other builds say they are `project()`'s version in
+CMakeLists.txt.
+
 **From Homebrew.** This repository is a tap of its own:
 
 ```bash

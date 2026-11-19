@@ -217,6 +217,7 @@ void App::commands_create() {
     sent("Close the tab", also({key(SDLK_W, kP)}, {key(SDLK_F4, kP)}));
     sent("Settings", {key(SDLK_COMMA, kP)});
     own("Open init.lua", {}, [this] { open_config(); });
+    own("Check for updates", {}, [this] { update_check(true); });
     own("Choose a theme\xE2\x80\xA6", {}, [this] { theme_choose(); });
     sent("Quit", {key(SDLK_Q, kP)});
     // Finding.

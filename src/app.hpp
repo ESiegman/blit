@@ -626,6 +626,12 @@ private:
     void pr_marks(FrameDesc& fd);
     std::string pr_dump();
     std::shared_ptr<struct PrUi> pr_;
+    // Updates (appupdate.cpp).
+    static std::string version();
+    void update_check(bool asked);
+    void update_fetch(const std::string& version, const std::string& where, const std::string& url, const std::string& sum);
+    void update_install(const std::string& version, const std::string& where, const std::string& file);
+    bool update_busy_ = false;
     // The settings screen (appsettings.cpp).
     void settings_open();
     void settings_lay(Doc& d);
