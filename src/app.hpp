@@ -620,6 +620,13 @@ private:
     void pr_marks(FrameDesc& fd);
     std::string pr_dump();
     std::shared_ptr<struct PrUi> pr_;
+    // Distraction-free and presentation modes (appfocus.cpp).
+    enum : u8 { kFocusNone, kFocusPlain, kFocusShow };
+    void focus_toggle(u8 mode);
+    std::string focus_dump();
+    u8 focus_mode_ = kFocusNone;
+    float focus_pt_ = 0;
+    bool focus_full_ = false;
     // Soft wrap (appwrap.cpp).
     bool wrap_wanted(const Pane& p) const;
     void wrap_sync(Pane& p);

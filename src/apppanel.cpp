@@ -181,7 +181,7 @@ void App::panel_create() {
 // The panel's width in pixels; 0 while it is closed.
 int App::panel_px() const {
     const Side& s = *side_;
-    if (!s.open || !font_) return 0;
+    if (!s.open || !font_ || focus_mode_) return 0;
     const int cw = font_->cell_w();
     return std::min(s.cols * cw + 2 * look().edge, std::max(0, px_w_ - 8 * cw));
 }

@@ -303,6 +303,12 @@ struct Parser {
         if (key == "theme.light") return text(key, v, &c.theme_light);
         if (key == "editor.tab_width") return number(key, v, 1, 32, &c.tab_width);
         if (key == "editor.indent_width") return number(key, v, 0, 32, &c.indent_width);
+        if (key == "look.presentation_size") {
+            double n = 0;
+            if (!as_number(v, &n) || n < 0 || n > 96) return warn("look.presentation_size should be a size from 6 to 96, or 0");
+            c.presentation_size = static_cast<float>(n);
+            return;
+        }
         if (key == "editor.line_numbers" || key == "editor.relative_numbers" || key == "editor.indent_guides" || key == "editor.tab_bar" || key == "editor.status_bar" || key == "editor.start_screen" ||
             key == "editor.restore" || key == "scroll.momentum" || key == "editor.modal" || key == "editor.breadcrumbs" || key == "editor.sticky_scroll" || key == "editor.close_pairs" || key == "editor.local_history" || key == "editor.minimap" || key == "editor.spell_check" || key == "editor.soft_wrap") {
             bool* out = key == "editor.modal"          ? &c.modal
@@ -755,6 +761,7 @@ const Getter kGetters[] = {
     BLIT_GET("editor.minimap", flag(c.minimap)),
     BLIT_GET("editor.spell_check", flag(c.spell)),
     BLIT_GET("editor.soft_wrap", flag(c.soft_wrap)),
+    BLIT_GET("look.presentation_size", num(c.presentation_size)),
     BLIT_GET("editor.soft_wrap_languages", list(c.soft_wrap_languages)),
     BLIT_GET("editor.modal", flag(c.modal)),
     BLIT_GET("syntax.enabled", flag(c.syntax)),

@@ -134,7 +134,7 @@ struct App::StatusUi {
 };
 
 int App::status_px() const {
-    if (!cfg_.status_bar || !font_) return 0;
+    if (!cfg_.status_bar || !font_ || focus_mode_) return 0;
     return font_->cell_h() + font_->cell_h() / 4;
 }
 

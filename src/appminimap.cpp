@@ -49,7 +49,7 @@ void sizes(double scale, int* lp, int* cp, int* width) {
 }  // namespace
 
 bool App::minimap_on(const Pane& p) const {
-    if (!cfg_.minimap || !p.doc || p.doc->term || p.doc->prof || p.doc->md || p.doc->image || p.doc->pdf || p.floating || !font_) return false;
+    if (!cfg_.minimap || focus_mode_ || !p.doc || p.doc->term || p.doc->prof || p.doc->md || p.doc->image || p.doc->pdf || p.floating || !font_) return false;
     int lp = 0, cp = 0, w = 0;
     sizes(scale_, &lp, &cp, &w);
     return p.x1 - p.text_x >= 80 * font_->cell_w() + w;  // (only where the text keeps its room)

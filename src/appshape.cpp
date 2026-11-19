@@ -197,7 +197,7 @@ struct Crumbs {
 };
 
 int App::crumbs_px(const Pane& p) const {
-    if (!cfg_.breadcrumbs || !font_ || !p.doc) return 0;
+    if (!cfg_.breadcrumbs || !font_ || !p.doc || focus_mode_) return 0;
     const Doc& d = *p.doc;
     if (d.term || d.image || d.pdf || d.md || d.prof || d.marks || d.ed.path.empty()) return 0;
     const int ch = font_->cell_h();

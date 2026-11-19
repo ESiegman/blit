@@ -433,7 +433,7 @@ void App::renamed_on_disk(const std::string& from, const std::string& to) {
 // ---------------------------------------------------------------- input
 
 int App::tabs_px() const {
-    if (!cfg_.tab_bar || !font_) return 0;
+    if (!cfg_.tab_bar || !font_ || focus_mode_) return 0;
     const int ch = font_->cell_h();
     return ch + 2 * (ch / 4);
 }
@@ -761,7 +761,7 @@ void App::tabs_layout(int w, int h, FrameDesc& fd, bool focused) {
 // Room for the number of the last line, and never fewer than three digits,
 // so that the text does not shift about in a short file.
 int App::gutter_px() const {
-    if (!cfg_.line_numbers || !font_) return 0;
+    if (!cfg_.line_numbers || !font_ || focus_mode_) return 0;
     u32 digits = 1;
     for (u64 n = pane_->doc->ed.buf.line_count(); n >= 10; n /= 10) ++digits;
     const int cw = font_->cell_w();
