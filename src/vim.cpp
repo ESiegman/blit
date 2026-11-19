@@ -6,6 +6,7 @@
 #include <cstring>
 #include <type_traits>
 
+#include "casemap.hpp"
 #include "fuzzy.hpp"
 #include "threads.hpp"
 #include "utf8.hpp"
@@ -141,7 +142,9 @@ size_t last_char_start(std::string_view s) {
 
 // ~ u U and g?: letters to the other case, to lower, to upper, or thirteen along the alphabet.
 std::string recase(std::string text, char op) {
-    for (char& ch : text) {
+    size_t i = 0;
+    for (; i < text.size() && (op == '?' || static_cast<u8>(text[i]) < 0x80); ++i) {  // (g? turns ASCII letters only, as in Vim)
+        char& ch = text[i];
         const bool up = ch >= 'A' && ch <= 'Z', low = ch >= 'a' && ch <= 'z';
         if (op == '?') {
             if (up || low) ch = static_cast<char>((up ? 'A' : 'a') + (ch - (up ? 'A' : 'a') + 13) % 26);
@@ -151,7 +154,23 @@ std::string recase(std::string text, char op) {
             ch = static_cast<char>(ch + 32);
         }
     }
-    return text;
+    if (i == text.size()) return text;
+    // Past ASCII, a character at a time, by Unicode's case, as Vim's
+    // swapchar() has it: one that has an upper case goes up (gU, ~) and is
+    // otherwise left as it is ("ǅ"), else one that has a lower case goes
+    // down (gu, ~). What becomes another length is put in afresh.
+    std::string out(text, 0, i);
+    out.reserve(text.size());
+    while (i < text.size()) {
+        const Decoded d = decode_utf8(reinterpret_cast<const u8*>(text.data()) + i, text.size() - i);
+        const u32 up = case_upper(d.cp);
+        u32 to = up != d.cp ? (op == 'u' ? d.cp : up) : (op == 'U' ? d.cp : case_lower(d.cp));
+        if (cp_extends(d.cp)) to = d.cp;  // (a mark goes with the letter it is on, and keeps its own case: U+0345)
+        if (to == d.cp) out.append(text, i, d.len);
+        else out += utf8_of(to);
+        i += d.len;
+    }
+    return out;
 }
 
 // Lines as Vim counts them: the nothing after a final newline is not one.
