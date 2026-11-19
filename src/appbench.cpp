@@ -604,6 +604,8 @@ int App::run_bench() {
 //   dump[:LABEL]           print how the window is split, and the tabs of each split
 //   views                  print each split's view of the file in front: its document, its own cursor and that line
 //   emojidump              print the colour emoji the last frame drew: how many, the cells of each, in the text or a box
+//   rowsdump:N             draw a frame and print the first N rows of the split in front's text as drawn, each after
+//                          a "|" (ASCII as it is, anything else #)
 //   usesdump               print the uses of the symbol at the cursor that are marked (line:column ranges, from 1)
 //   rulerdump              print the marks along the scroll bar of the split in front: place (a third of a row):kind
 //                          (> the cursor, e error, b breakpoint, w warning, f a match, c a change), or none
@@ -882,6 +884,24 @@ void App::run_script(const char* script) {
             std::string out = "emoji " + std::to_string(gpu_.emoji_drawn().size()) + ":";
             for (const PictureDraw& pd : gpu_.emoji_drawn())
                 out += " " + std::to_string(static_cast<int>(std::lround((pd.rect[2] - pd.rect[0]) / font_->cell_w()))) + (pd.after ? "b" : "t");
+            std::fprintf(stderr, "%s\n", out.c_str());
+        } else if (verb == "rowsdump") {  // rowsdump:N, the first N rows of the split in front as drawn (ASCII; # anything else)
+            gpu_.keep_view(static_cast<int>(pane_->view));
+            settle_syntax();
+            frame();
+            gpu_.keep_view(-1);
+            u32 cols = 0;
+            const std::vector<u32>& cells = gpu_.kept_cells(&cols);
+            std::string out = "rows";
+            for (size_t r = 0; cols && r < cells.size() / cols && r < static_cast<size_t>(std::max(1, std::atoi(arg.c_str()))); ++r) {
+                std::string row;
+                for (u32 c = 0; c < cols; ++c) {
+                    const u32 slot = cells[r * cols + c] & 0x1FFF;
+                    row += slot == 0 ? ' ' : slot < Font::kFaces * 128 ? static_cast<char>(slot & 127) : '#';
+                }
+                while (!row.empty() && row.back() == ' ') row.pop_back();
+                out += " |" + row;
+            }
             std::fprintf(stderr, "%s\n", out.c_str());
         } else if (verb == "views") {
             // Each split's view of the file in front, on one line, in the

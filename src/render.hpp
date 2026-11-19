@@ -181,6 +181,13 @@ public:
 
     // The colour emoji the last frame drew (see Font::Colour), for the tests.
     const std::vector<PictureDraw>& emoji_drawn() const { return emoji_; }
+    // For the tests: the cells of one text view (by its index; -1: none) as
+    // the frames from now on draw them, and how many columns a row has.
+    void keep_view(int view) { keep_view_ = view; }
+    const std::vector<u32>& kept_cells(u32* cols) const {
+        *cols = kept_cols_;
+        return kept_;
+    }
 
     const char* driver() const;
     // What making the GPU device took: compiling or loading the shaders,
@@ -196,6 +203,10 @@ private:
     std::vector<PictureDraw> emoji_;
     bool view_colour_[kMaxViews] = {};  // (each view: colour glyphs on show, so the shader that draws them)
     void find_emoji(Font& font, const FrameDesc& fd, const u32* cells, const u32* view_base, const u32* row_base);
+    std::vector<u32> insert_starts_;  // (a view scrolled sideways past inlay hints: where each row starts, see render.cpp)
+    int keep_view_ = -1;
+    std::vector<u32> kept_;
+    u32 kept_cols_ = 0;
     SDL_Window* win_ = nullptr;
     void* view_ = nullptr;  // the window's Metal view (Apple), made by SDL; Vulkan has none
     BlitGpu* gpu_ = nullptr;

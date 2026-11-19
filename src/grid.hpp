@@ -88,7 +88,9 @@ struct GridSpec {
     // Soft wrap (wrap.hpp): each row's display column (where its part of
     // its line starts), and where the next part of its line starts (~0u:
     // the line ends in this row). A line's rows are one after another in
-    // row_lines. Null: every row from first_col, to its end.
+    // row_lines. Null: every row from first_col, to its end. (Row columns
+    // with no ends: lines not wrapped, some starting left of first_col, as
+    // the renderer has those with inlay hints left of the view.)
     const u32* row_cols = nullptr;
     const u32* row_ends = nullptr;
     u32 col_at(u32 r) const { return row_cols ? row_cols[r] : first_col; }

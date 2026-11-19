@@ -518,7 +518,7 @@ void guide_grid(const Buffer& buf, const GridSpec& g, u32* cells, GuideCache& gc
             gc.starts[r] = ~0ull;  // (known only where the line is read from the text)
             if (line >= lines) {
                 gc.indent[r] = -1;
-            } else if (g.col_at(r) > 0 && g.row_cols) {  // (a wrapped line's later row: its line's indent, and no lines drawn on it)
+            } else if (g.row_ends && g.col_at(r) > 0) {  // (a wrapped line's later row: its line's indent, and no lines drawn on it)
                 gc.indent[r] = r > 0 ? gc.indent[r - 1] : line_indent(buf, line, tab);
             } else if (g.first_col == 0) {
                 const u32* row = cells + static_cast<size_t>(r) * g.cols + lead;
@@ -556,12 +556,13 @@ void guide_grid(const Buffer& buf, const GridSpec& g, u32* cells, GuideCache& gc
             if (a == 0 && b == 0) levels = 0;
         }
         u32* row = cells + static_cast<size_t>(r) * g.cols + lead;
-        if (g.row_cols && g.row_cols[r] > 0) continue;
+        if (g.row_ends && g.row_cols[r] > 0) continue;
+        const u32 from = g.col_at(r);  // (first_col, or for a row past inlay hints, where it starts)
         for (u32 k = 0; k < levels; ++k) {
             const u64 col = u64(k) * step;
-            if (col < g.first_col) continue;
-            if (col - g.first_col >= cols) break;
-            u32& cell = row[col - g.first_col];
+            if (col < from) continue;
+            if (col - from >= cols) break;
+            u32& cell = row[col - from];
             cell = (cell & ~((31u << kCellInkShift) | kCellDecoMask)) | ((kInkGuide + k % g.guide_inks) << kCellInkShift) |
                    (kDecoGuide << kCellDecoShift) | kCellOverlay;
         }

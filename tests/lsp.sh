@@ -296,6 +296,10 @@ check "or while one is filled in: it is not made" 'int shared = 1; // ERROR / ca
 # servers' colours over tree-sitter's.
 with hints "frame;wait:100;frame;lspextras" "$P/h.cpp"
 check "inlay hints where the server puts them, and its colours" 'hints: 2:6[first: ] 2:9[second: ] 2:12[third: ] 3:11[: int] | colours: call=function p_size=variable.parameter Widget=type MAX_SIZE=function.macro'
+with hints "frame;wait:100;frame;key:Down;key:Down;col:7;rowsdump:3" "$P/h.cpp"
+check "scrolled sideways into a hint: what is right of the edge of it, the text after it" 'rows | |irst: 1, second: 2, third: 3); |idth = p_size;'
+with hints "frame;wait:100;frame;key:Down;key:Down;col:12;rowsdump:3" "$P/h.cpp"
+check "and past it: the text moves on a column at a time, the hint's room kept" 'rows | | 1, second: 2, third: 3); |= p_size;'
 with hints "key:Down;frame;wait:100;frame;lspextras" "$P/h.cpp"
 check "none on the cursor's line" 'hints: 3:11[: int] | colours: call=function p_size=variable.parameter Widget=type MAX_SIZE=function.macro'
 with hints "frame;wait:100;frame;key:Down;key:Down;key:End;text: + 1;frame;lspextras" "$P/h.cpp"

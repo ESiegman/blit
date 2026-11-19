@@ -12,12 +12,48 @@
 
 namespace blit {
 
+// Inserts (inlay hints) take room in their line, left of the view as well:
+// scrolled sideways, the view's left edge is a column of the line as drawn
+// with them. So a line with any left of first_col starts its row further
+// left, at its first character at or past that edge (each row's start, as
+// GridSpec::row_cols: the rest start at first_col). False if none does.
+static bool insert_starts(const GridSpec& g, std::vector<u32>& starts) {
+    const u64 first = g.first_col;
+    const std::span<const GridNote> in = g.inserts;
+    bool any = false;
+    for (size_t i = 0; i < in.size();) {
+        const u64 line = in[i].line;
+        size_t j = i;
+        while (j < in.size() && in[j].line == line) ++j;  // [i, j): this line's, left to right
+        const i64 r = in[i].col < first ? g.row_of(line) : -1;
+        if (r >= 0) {
+            // The first column c where c, and the inserts up to it, reach
+            // the edge: between two inserts' columns those before count.
+            u64 from = 0, before = 0, start = ~0ull;
+            for (size_t k = i; k < j && start == ~0ull; ++k) {
+                const u64 c = std::max(from, first > before ? first - before : 0);
+                if (in[k].col > from && c < in[k].col) start = c;
+                from = in[k].col;
+                before += in[k].count;
+            }
+            if (start == ~0ull) start = std::max(from, first > before ? first - before : 0);
+            if (!any) starts.assign(g.rows, g.first_col);
+            any = true;
+            starts[static_cast<size_t>(r)] = static_cast<u32>(start);
+        }
+        i = j;
+    }
+    return any;
+}
+
 // Puts a spec's inserts in at their columns, moving the rest of each row
-// right (what is pushed past the edge goes). Called after decorate_grid(),
-// so that underlines and notes move with their text, and before
-// round_selection(). Done after the fill, not in it, and not in grid.cpp,
-// whose fill loop is sensitive to how the code around it lies: the fill
-// costs the same with inlay hints on as off.
+// right (what is pushed past the edge goes). A row that starts left of
+// first_col (insert_starts()) first moves right by what of the inserts
+// before its first character is still in view, and shows that much of
+// them. Called after decorate_grid(), so that underlines and notes move
+// with their text, and before round_selection(). Done after the fill, not
+// in it, and not in grid.cpp, whose fill loop is sensitive to how the code
+// around it lies: the fill costs the same with inlay hints on as off.
 static void insert_notes(const GridSpec& g, u32* cells) {
     const u32 lead = std::min(g.lead, g.cols);
     const u64 cols = g.cols - lead, first = g.first_col;
@@ -28,11 +64,23 @@ static void insert_notes(const GridSpec& g, u32* cells) {
         while (j < in.size() && in[j].line == line) ++j;  // [i, j): this line's, left to right
         if (const i64 r = g.row_of(line); r >= 0) {
             u32* row = cells + static_cast<size_t>(r) * g.cols + lead;
-            u64 shift = 0;  // (columns the notes already put in on this row have taken)
-            for (size_t k = i; k < j; ++k) {
+            const u64 start = g.col_at(static_cast<u32>(r));  // (where the row starts in its line)
+            size_t k = i;
+            u64 before = 0;  // (the inserts before its first character: out of view)
+            for (; k < j && in[k].col < start; ++k) before += in[k].count;
+            u64 at_start = 0;
+            for (size_t m = k; m < j && in[m].col == start; ++m) at_start += in[m].count;
+            // Those just before its first character: as much of them as is
+            // right of the edge, the row's text moved right to make room.
+            const u64 left = start + before + at_start > first ? start + before + at_start - first : 0;
+            if (left > 0 && left < cols) std::memmove(row + left, row, static_cast<size_t>(cols - left) * sizeof(u32));
+            for (i64 x = static_cast<i64>(start + before) - static_cast<i64>(first); k < j && in[k].col == start; x += in[k].count, ++k)
+                for (u32 c = 0; c < in[k].count; ++c)
+                    if (x + c >= 0 && static_cast<u64>(x + c) < std::min(left, cols)) row[x + c] = in[k].cells[c];
+            u64 shift = left;  // (columns the notes already put in on this row have taken)
+            for (; k < j; ++k) {
                 const GridNote& n = in[k];
-                if (n.col < first) continue;  // (left of the view: not shown)
-                const u64 at = n.col - first + shift;
+                const u64 at = n.col - start + shift;
                 if (at >= cols) break;
                 const u64 w = std::min<u64>(n.count, cols - at);
                 if (at + w < cols) std::memmove(row + at + w, row + at, static_cast<size_t>(cols - at - w) * sizeof(u32));
@@ -385,6 +433,7 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
             text.rows -= blank;
             u32* const text_cells = view_cells + static_cast<size_t>(blank) * text.cols;
             text.pict_rows = pict_rows_.data() + row_base[i] + blank;
+            if (!text.inserts.empty() && text.first_col > 0 && !text.row_cols && insert_starts(text, insert_starts_)) text.row_cols = insert_starts_.data();
             std::memset(view_cells, 0, static_cast<size_t>(blank) * text.cols * sizeof(u32));
             fill_grid(*v.buf, font, text, text_cells, v.anchors ? v.anchors : &anchors_);
             if (text.guide_step) guide_grid(*v.buf, text, text_cells, v.guides ? *v.guides : guides_);
@@ -427,6 +476,11 @@ Renderer::Result Renderer::draw(Font& font, LayoutFn layout, FrameStats* stats) 
     }
     font.hold_atlas(false);
     find_emoji(font, fd, cells, view_base, row_base);
+    if (keep_view_ >= 0 && static_cast<u32>(keep_view_) < fd.view_count) [[unlikely]] {  // (the tests')
+        const GridSpec& g = fd.views[keep_view_].grid;
+        kept_.assign(cells + view_base[keep_view_], cells + view_base[keep_view_] + static_cast<size_t>(g.cols) * g.rows);
+        kept_cols_ = g.cols;
+    }
     const u64 t2 = now_ns();
 
     // The cells are where the GPU reads them already. Glyphs drawn into the
