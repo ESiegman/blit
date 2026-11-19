@@ -611,6 +611,7 @@ int App::run_bench() {
 //                          (> the cursor, e error, b breakpoint, w warning, f a match, c a change), or none
 //   folddump               print what is folded in the file in front (header-last, from 1) and its first rows' lines
 //   stickydump             print the lines pinned at the top of the split in front (from 1), or none
+//   tabsdump               print what the tabs of the split in front say, " | " between them
 //   crumbsdump             print the breadcrumbs under the split in front's tabs, " > " between them
 //   coveragedump           print the lines the last run with coverage ran and missed in the file in front, and each file's share
 //   testdump               print the project's tests by group (+ passed, x failed, - skipped, . not run), once found and run
@@ -872,6 +873,8 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s\n", fold_dump().c_str());
         } else if (verb == "stickydump") {  // the lines sticky scroll pins in the split in front
             std::fprintf(stderr, "%s\n", sticky_dump().c_str());
+        } else if (verb == "tabsdump") {  // what the tabs of the split in front say
+            std::fprintf(stderr, "%s\n", tabs_dump().c_str());
         } else if (verb == "crumbsdump") {  // the breadcrumbs of the split in front
             std::fprintf(stderr, "%s\n", crumbs_dump().c_str());
         } else if (verb == "shapedump") {  // the brackets on show by depth, and the pair at the cursor

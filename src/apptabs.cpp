@@ -577,6 +577,35 @@ bool App::tabs_wheel(const SDL_MouseWheelEvent& w) {
 
 // ---------------------------------------------------------------- drawing
 
+// What each tab of a split says: the file's name, with its folder when two
+// tabs would otherwise read the same.
+std::vector<std::string> App::tab_labels(const Pane& p) const {
+    std::vector<std::string> labels(p.docs.size());
+    for (size_t i = 0; i < p.docs.size(); ++i) {
+        const std::string& path = p.docs[i]->ed.path;
+        if (!p.docs[i]->title.empty()) {  // a diff, a commit: what it was called when it was made
+            labels[i] = p.docs[i]->title;
+            continue;
+        }
+        if (path.empty()) {
+            labels[i] = "untitled";
+            continue;
+        }
+        const std::string_view name = base_name(path);
+        bool twice = false;
+        for (size_t k = 0; k < p.docs.size() && !twice; ++k) twice = k != i && base_name(p.docs[k]->ed.path) == name;
+        // (A long one cut to its last columns: that is where names differ.)
+        labels[i] = fit_text(twice ? with_folder(path) : name, kMaxLabel, true);
+    }
+    return labels;
+}
+
+std::string App::tabs_dump() {
+    std::string out;
+    for (const std::string& l : tab_labels(*pane_)) out += (out.empty() ? "" : " | ") + l;
+    return out;
+}
+
 // Adds the tab bar to a frame. Its cells are made again only when what
 // they show has changed: the files, their names, which have unsaved
 // changes, which is in front, the room there is, the font.
@@ -616,30 +645,7 @@ void App::tabs_layout(int w, int h, FrameDesc& fd, bool focused) {
     };
     if (signature() != t.drawn) {
         Font& font = *font_;
-        // What each tab says: the file's name, with its folder when two
-        // tabs would otherwise read the same.
-        std::vector<std::string> labels(pane_->docs.size());
-        for (size_t i = 0; i < pane_->docs.size(); ++i) {
-            const std::string& path = pane_->docs[i]->ed.path;
-            if (!pane_->docs[i]->title.empty()) {  // a diff, a commit: what it was called when it was made
-                labels[i] = pane_->docs[i]->title;
-                continue;
-            }
-            if (path.empty()) {
-                labels[i] = "untitled";
-                continue;
-            }
-            const std::string_view name = base_name(path);
-            bool twice = false;
-            for (size_t k = 0; k < pane_->docs.size() && !twice; ++k) twice = k != i && base_name(pane_->docs[k]->ed.path) == name;
-            labels[i] = std::string(twice ? with_folder(path) : name);
-            if (width_of(labels[i]) > kMaxLabel) {
-                // Keep the end: that is where names differ.
-                size_t cut = labels[i].size() - std::min<size_t>(labels[i].size(), kMaxLabel - 1);
-                while (cut < labels[i].size() && is_cont(static_cast<u8>(labels[i][cut]))) ++cut;
-                labels[i] = "\xE2\x80\xA6" + labels[i].substr(cut);
-            }
-        }
+        const std::vector<std::string> labels = tab_labels(*pane_);
         // Where each goes: a space, the icon, a space, the name, a space,
         // the close mark, a space.
         t.spans.resize(pane_->docs.size());

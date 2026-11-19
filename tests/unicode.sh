@@ -151,6 +151,29 @@ shot selected "${CHECK}${VS16}a${ZWSP}b"
 shot unselected "${CHECK}ab"
 same selected unselected "a variation selector or a zero width space was drawn"
 
+# A long name on a tab is cut to its last 31 columns after an ellipsis, by
+# columns and whole characters (before, by bytes: a name not in ASCII came
+# out shorter, and a decomposed one could start with a mark).
+rep() {
+    out= i=0
+    while [ $i -lt "$2" ]; do out="$out$1" i=$((i + 1)); done
+    printf '%s' "$out"
+}
+DOTS=$(printf '\342\200\246')
+tab() {
+    : >"$dir/$1"
+    got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;tabsdump" "$dir/$1" 2>&1 >/dev/null | grep -v '^blit: ' | tail -1)
+}
+EACUTE=$(printf '\303\251')
+tab "$(rep "$EACUTE" 40).txt"
+check "a long name of two-byte letters on its tab" "$DOTS$(rep "$EACUTE" 27).txt"
+tab "$(rep "$E" 40).txt"
+check "a long decomposed name: whole letters, no mark first" "$DOTS$(rep "$E" 27).txt"
+tab "$(rep "$(printf '\346\274\242')" 20).txt"
+check "a long name of wide characters: as many as fit" "$DOTS$(rep "$(printf '\346\274\242')" 13).txt"
+tab "$(rep x 40).txt"
+check "and in ASCII, as before" "$DOTS$(rep x 27).txt"
+
 # Colour emoji: a picture each, from the system's colour font, over its two
 # cells, in the text and in a box (the Markdown preview); a heart stays text.
 # (Skipped where there is no colour emoji font.)

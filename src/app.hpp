@@ -562,6 +562,8 @@ private:
     void tabs_mouse_up();
     bool tabs_wheel(const SDL_MouseWheelEvent& w);
     void tabs_layout(int w, int h, FrameDesc& fd, bool focused);
+    std::vector<std::string> tab_labels(const Pane& p) const;
+    std::string tabs_dump();  // (the tests: what the split in front's tabs say, " | " between them)
 
     // Finding files, text and paths (appfind.cpp).
     struct Find;
