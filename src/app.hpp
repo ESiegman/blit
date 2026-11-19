@@ -671,8 +671,11 @@ private:
     float focus_pt_ = 0;
     bool focus_full_ = false;
     // Soft wrap (appwrap.cpp).
-    bool wrap_wanted(const Pane& p) const;
+    bool wrap_wanted(const Pane& p, const Doc* d = nullptr) const;  // (d: one of its files not in front)
+    u32 wrap_width(const Pane& p) const;
     void wrap_sync(Pane& p);
+    double view_line(const Pane& p, const Doc& d, double rows) const;  // (a view's top: rows of the split's map as a line)
+    double view_rows(const Pane& p, const Doc& d, double line) const;  // (and back)
     const Wrap* wrap_on() const;
     void wrap_toggle();
     void wrap_forget(const Doc& d);

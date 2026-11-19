@@ -593,6 +593,19 @@ void wrap_test() {
             fresh.detach();
         }
         check(kept_same, "wrap: kept through random edits with folds, the same as made afresh");
+        // A view's top as a line and back, folded lines about: walked to
+        // (with no map, as for a file not in front) as the map has it.
+        bool tops = true;
+        f3.sync(e3.buf, e3.revision());
+        const Folds* folded = f3.empty() ? nullptr : &f3;
+        for (double r = 0; tops && r < static_cast<double>(w3.rows()); r += 0.75) {
+            const double line = w3.top_line(r);
+            tops = std::fabs(Wrap::walk_line(e3, folded, 10, 4, r) - line) < 1e-9 && std::fabs(w3.top_rows(line) - r) < 1e-6 &&
+                   std::fabs(Wrap::walk_rows(e3, folded, 10, 4, line) - r) < 1e-6;
+        }
+        for (u64 l = 0; tops && l < e3.buf.line_count(); ++l)  // (a line folded away among them: its header's row)
+            tops = std::fabs(Wrap::walk_rows(e3, folded, 10, 4, l + 0.5) - w3.top_rows(l + 0.5)) < 1e-6;
+        check(tops, "wrap: a view's top as a line and back, with the map or without");
         w3.detach();
         e3.unlisten(&f3);
     }

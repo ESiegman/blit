@@ -28,6 +28,7 @@
 #include <mutex>
 #include <set>
 #include <thread>
+#include <tuple>
 
 #include "app.hpp"
 #include "grammars.hpp"
@@ -129,7 +130,7 @@ struct App::Session {
         std::string path;
         u64 line = 0;            // the cursor: its line from 0, and the byte in that line
         u32 col = 0;
-        double top = 0, left = 0;  // the view: lines scrolled down, columns across
+        double top = 0, left = 0;  // the view: the line at its top (and the part through it: 5.5 is halfway), columns across
     };
     // How the window was split (as SplitNode), each split's files.
     struct Node {
@@ -391,6 +392,7 @@ std::string App::session_text() {
                 const u64 cur = std::min(caret_in(p, d).cursor, d.ed.buf.size());
                 line = d.ed.buf.line_of(cur);
                 col = cur - d.ed.buf.line_start(line);
+                top = view_line(p, d, top);  // (rows are lines only where nothing wraps or is folded)
             }
             char nums[96];
             std::snprintf(nums, sizeof nums, "file\t%llu\t%llu\t%.2f\t%.2f\t", static_cast<unsigned long long>(line), static_cast<unsigned long long>(col),
@@ -487,6 +489,7 @@ void App::session_apply(Session& st) {
         const double ch = font_->cell_h(), cw = font_->cell_w();
         std::set<u64> placeholders;
         std::map<Pane*, Doc*> fronts;
+        std::vector<std::tuple<Pane*, u64, double>> tops;  // (each view's top line, made rows once the splits are placed)
         Pane* focused = nullptr;
         restoring_ = true;
         auto build = [&](auto&& self, const Session::Node& n) -> std::unique_ptr<SplitNode> {
@@ -528,6 +531,7 @@ void App::session_apply(Session& st) {
                         for (char c; off > start && ed.buf.read(off, &c, 1) == 1 && (static_cast<unsigned char>(c) & 0xC0) == 0x80;) --off;  // (not inside a character)
                         ed.move_to(off, false);
                         p->scroll_y = p->target_y = std::min(f.top, static_cast<double>(last)) * ch;
+                        tops.emplace_back(p, d.id, f.top);
                         p->scroll_x = p->target_x = f.left * cw;
                         p->cache_rev = ~0ull;
                     }
@@ -570,6 +574,23 @@ void App::session_apply(Session& st) {
         if (docked) dock_show(focused);
         pane_ = focused;
         place_panes(px_w_, px_h_);
+        // Each view's top was kept as a line: the rows to it are this
+        // window's (a file that wraps, at its split's width now).
+        for (const auto& [p, id, top] : tops) {
+            const auto it = std::ranges::find_if(p->docs, [&](const std::shared_ptr<Doc>& x) { return x->id == id; });
+            if (it == p->docs.end()) continue;
+            Doc& d = **it;
+            pane_ = p;
+            if (&d == p->doc) {
+                wrap_sync(*p);
+                p->scroll_y = p->target_y = view_rows(*p, d, top) * ch;
+            } else if (const auto at = p->places.find(id); at != p->places.end() && at->second.scrolled) {
+                at->second.scroll_y = view_rows(*p, d, top) * ch;
+            } else {
+                d.scroll_y = view_rows(*p, d, top) * ch;
+            }
+        }
+        pane_ = focused;
         for_each_pane([this] {  // (a file that has grown shorter: its view within it)
             pane_->target_y = pane_->scroll_y = std::clamp(pane_->target_y, 0.0, std::max(0.0, max_scroll_y()));
         });
@@ -592,8 +613,8 @@ bool App::session_arrived(Pane& p, Doc& d) {
     const auto v = u.views.find(d.id);
     if (v == u.views.end()) return false;
     const double ch = font_->cell_h(), cw = font_->cell_w();
-    const double last = static_cast<double>(d.ed.buf.line_count() > 0 ? d.ed.buf.line_count() - 1 : 0);
-    const double top = std::min(v->second.first, last) * ch, left = v->second.second * cw;
+    if (&d == p.doc) wrap_sync(p);  // (its rows: the line kept is turned into them)
+    const double top = view_rows(p, d, v->second.first) * ch, left = v->second.second * cw;
     u.views.erase(v);
     if (&d == p.doc) {
         p.scroll_y = p.target_y = top;

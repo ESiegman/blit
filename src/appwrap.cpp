@@ -4,6 +4,7 @@
 // split's width, which what goes by rows asks: the view, the cursor, a
 // click, the moves up and down, the line numbers.
 #include <algorithm>
+#include <cmath>
 
 #include "app.hpp"
 
@@ -15,9 +16,10 @@ constexpr u64 kLargest = 16u << 20;  // (a larger file does not wrap: its map wo
 
 }  // namespace
 
-bool App::wrap_wanted(const Pane& p) const {
-    if (!p.doc || p.floating) return p.doc && p.floating && p.doc->wrap_choice == 1;
-    const Doc& d = *p.doc;
+bool App::wrap_wanted(const Pane& p, const Doc* doc) const {
+    if (!doc) doc = p.doc;
+    if (!doc || p.floating) return doc && p.floating && doc->wrap_choice == 1;
+    const Doc& d = *doc;
     if (d.term || d.prof || d.md || d.image || d.pdf || d.marks || d.loading || d.ed.buf.size() > kLargest) return false;
     if (d.wrap_choice >= 0) return d.wrap_choice == 1;
     if (cfg_.soft_wrap) return true;
@@ -49,15 +51,46 @@ void App::wrap_sync(Pane& p) {
         }
         return;
     }
-    const int cw = font_->cell_w();
-    const int text = p.x1 - p.text_x - pad_x_ - minimap_px(p) - cw;  // (a column left over: the cursor at a row's end)
-    const u32 width = static_cast<u32>(std::max(8 * cw, text) / cw);
     if (!p.wrap) p.wrap = std::make_unique<Wrap>();
     const u64 before = p.wrap->rows();
-    p.wrap->set(&d.ed, d.id, d.folds.empty() ? nullptr : &d.folds, d.folds.generation(), width, d.ed.tab_width);
+    p.wrap->set(&d.ed, d.id, d.folds.empty() ? nullptr : &d.folds, d.folds.generation(), wrap_width(p), d.ed.tab_width);
     if (p.wrap->rows() != before) p.cache_rev = ~0ull;
     if (&p == pane_) d.ed.skip = p.wrap.get();
     p.scroll_x = p.target_x = 0;  // (nothing goes past the right edge)
+}
+
+// The columns a split's rows hold.
+u32 App::wrap_width(const Pane& p) const {
+    const int cw = font_->cell_w();
+    const int text = p.x1 - p.text_x - pad_x_ - minimap_px(p) - cw;  // (a column left over: the cursor at a row's end)
+    return static_cast<u32>(std::max(8 * cw, text) / cw);
+}
+
+// A view's top, as a session keeps it: rows of the split's map (its soft
+// wrap, or what is folded) as a line and the part through it, and back. A
+// file not in front there has no map of its own: it is walked to.
+double App::view_line(const Pane& p, const Doc& d, double rows) const {
+    rows = std::max(0.0, rows);
+    const Folds* f = d.folds.empty() ? nullptr : &d.folds;
+    if (f) f->sync(d.ed.buf, d.ed.revision());
+    if (&d == p.doc && p.wrap && p.wrap->doc() == d.id) return p.wrap->top_line(rows);
+    if (&d != p.doc && wrap_wanted(p, &d)) return Wrap::walk_line(d.ed, f, wrap_width(p), d.ed.tab_width, rows);
+    if (!f) return rows;
+    const double row = std::floor(rows);
+    return static_cast<double>(f->line_at(static_cast<u64>(row))) + (rows - row);
+}
+
+double App::view_rows(const Pane& p, const Doc& d, double line) const {
+    const u64 lines = d.ed.buf.line_count();
+    line = std::clamp(line, 0.0, static_cast<double>(lines > 0 ? lines - 1 : 0) + 0.9999);
+    const Folds* f = d.folds.empty() ? nullptr : &d.folds;
+    if (f) f->sync(d.ed.buf, d.ed.revision());
+    if (&d == p.doc && p.wrap && p.wrap->doc() == d.id) return p.wrap->top_rows(line);
+    if (&d != p.doc && wrap_wanted(p, &d)) return Wrap::walk_rows(d.ed, f, wrap_width(p), d.ed.tab_width, line);
+    if (!f) return line;
+    const double whole = std::floor(line);
+    const u64 l = static_cast<u64>(whole);
+    return static_cast<double>(f->row_of(l)) + (f->hidden(l) ? 0 : line - whole);
 }
 
 const Wrap* App::wrap_on() const {

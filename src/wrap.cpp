@@ -1,6 +1,7 @@
 #include "wrap.hpp"
 
 #include <algorithm>
+#include <cmath>
 
 #include "folds.hpp"
 #include "utf8.hpp"
@@ -69,29 +70,77 @@ void Wrap::set(Editor* ed, u64 doc, const Folds* folds, u64 folds_gen, u32 width
 }
 
 void Wrap::measure(u64 line) {
-    const Buffer& b = ed_->buf;
     if (folds_ && folds_->hidden(line)) {
         count_[line] = 0;
         starts_[line].clear();
         return;
     }
-    const u64 s = b.line_start(line), e = ed_->line_end(line);
-    if (e - s <= width_ / 2) {  // (short enough whatever it holds: a character is two columns at most, a tab no wider than the width)
+    count_[line] = line_rows(*ed_, line, width_, tab_, &starts_[line]);
+}
+
+u32 Wrap::line_rows(const Editor& ed, u64 line, u32 width, u32 tab, std::vector<u32>* starts) {
+    const Buffer& b = ed.buf;
+    const u64 s = b.line_start(line), e = ed.line_end(line);
+    if (e - s <= width / 2) {  // (short enough whatever it holds: a character is two columns at most, a tab no wider than the width)
         bool tabbed = false;
-        if (e - s > 0 && tab_ > 2) {
+        if (e - s > 0 && tab > 2) {
             char buf[256];
             const u64 n = std::min<u64>(e - s, sizeof buf);
             b.read(s, buf, n);
             tabbed = std::find(buf, buf + n, '\t') != buf + n;
         }
         if (!tabbed) {
-            count_[line] = 1;
-            starts_[line].clear();
-            return;
+            starts->clear();
+            return 1;
         }
     }
-    breaks(b.text(s, e - s), width_, tab_, &starts_[line]);
-    count_[line] = 1 + static_cast<u32>(starts_[line].size());
+    breaks(b.text(s, e - s), width, tab, starts);
+    return 1 + static_cast<u32>(starts->size());
+}
+
+double Wrap::top_line(double rows) const {
+    if (count_.empty()) return 0;
+    rows = std::max(0.0, rows);
+    const u64 line = line_at(static_cast<u64>(rows));  // (never one folded away)
+    const double part = (rows - static_cast<double>(sum_before(line))) / std::max<u32>(1, count_[line]);
+    return static_cast<double>(line) + std::clamp(part, 0.0, 0.9999);
+}
+
+double Wrap::top_rows(double line) const {
+    if (count_.empty()) return 0;
+    const double whole = std::floor(std::max(0.0, line));
+    const u64 l = std::min<u64>(static_cast<u64>(whole), count_.size() - 1);
+    return static_cast<double>(row_of(l)) + (std::max(0.0, line) - whole) * count_[l];  // (one folded away: its header's row)
+}
+
+double Wrap::walk_line(const Editor& ed, const Folds* folds, u32 width, u32 tab, double rows) {
+    width = std::max<u32>(width, 8);
+    rows = std::max(0.0, rows);
+    const u64 lines = ed.buf.line_count();
+    std::vector<u32> starts;
+    double above = 0;  // (rows of the lines before this one)
+    for (u64 l = 0; l < lines; ++l) {
+        const u32 n = folds && folds->hidden(l) ? 0 : line_rows(ed, l, width, tab, &starts);
+        if (n && above + n > rows) return static_cast<double>(l) + (rows - above) / n;
+        above += n;
+    }
+    return lines > 0 ? static_cast<double>(lines - 1) : 0;
+}
+
+double Wrap::walk_rows(const Editor& ed, const Folds* folds, u32 width, u32 tab, double line) {
+    width = std::max<u32>(width, 8);
+    const u64 lines = ed.buf.line_count();
+    const double whole = std::floor(std::max(0.0, line));
+    const u64 to = std::min<u64>(static_cast<u64>(whole), lines > 0 ? lines - 1 : 0);
+    std::vector<u32> starts;
+    double above = 0, shown = 0;  // (rows of the lines before it; where the last line on show began)
+    for (u64 l = 0; l < to; ++l) {
+        if (folds && folds->hidden(l)) continue;
+        shown = above;
+        above += line_rows(ed, l, width, tab, &starts);
+    }
+    if (folds && folds->hidden(to)) return shown;  // (folded away: its header's row)
+    return above + (std::max(0.0, line) - whole) * line_rows(ed, to, width, tab, &starts);
 }
 
 void Wrap::tree() {

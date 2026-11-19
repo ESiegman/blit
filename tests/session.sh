@@ -127,6 +127,29 @@ run "folder:$V;key:ctrl+\`;frame;termwait:\$;key:space;text:echo kep''t;key:Retu
 check "the terminals' split along the bottom stays as it was, its shell still running" \
     'H(V(>[notes.txt long.txt*]@282 / [Terminal*])0.70 | [main.cpp*])0.50 ;; H(V([notes.txt long.txt*]@282 / >[Terminal*])0.70 | [main.cpp*])0.50'
 
+# A view's top is kept as a line and the part through it, not as rows: a
+# file that wraps comes back wider with the same line at the top, and one
+# with blocks folded above its top comes back (its folds open) with that
+# line at the top. A tab not in front keeps its line too.
+X="$dir/wraps"
+mkdir -p "$X"
+i=1; while [ $i -le 100 ]; do echo "Line $i of the file, which goes on with words for long enough that it wraps onto a second row and a third one in a view that is narrow"; i=$((i + 1)); done >"$X/wrapped.md"
+i=1; while [ $i -le 60 ]; do printf 'int f%d() {\n    int a = 1;\n    int b = 2;\n    return a + b;\n}\n' $i; i=$((i + 1)); done >"$X/blocks.c"
+top() { sed 's/.* rows: \([0-9]*\)@.*/\1/'; }
+run "folder:$X;open:$X/wrapped.md;line:62;frame;wrapdump;quit"
+got=$(printf '%s' "$got" | top)
+check "a file that wraps: line 21 at the top, its second row" '21'
+got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "frame;wrapdump" "$X" 2>&1 >/dev/null | tail -1 | top)
+check "brought back wider (fewer rows to a line): line 21 at the top" '21'
+run "folder:$X;open:$X/blocks.c;command:Fold every block;line:21;frame;quit"
+kept "$X"
+got=$(printf '%s' "$got" | sed 's/.*;; pane[^;]*;; //')
+check "kept: each tab's top line (the one not in front's too)" 'file	0	0	20.33	0.00	~/wraps/wrapped.md ;; file	0	0	50.00	0.00	~/wraps/blocks.c'
+run "frame;dump" "$X"
+check "folded above the top, brought back open: line 51 at the top" '>[wrapped.md blocks.c*]@51'
+got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "frame;key:cmd+1;frame;wrapdump" "$X" 2>&1 >/dev/null | tail -1 | top)
+check "and the tab behind it, wider: line 21 at the top" '21'
+
 # One file in two splits: both views come back, each where it was.
 rm -f "$S"/*
 run "folder:$W;open:$W/long.txt;key:Down;key:Down;key:cmd+\\;text:long.txt;findwait;key:Return;key:Down;key:Down;key:Down;quit"

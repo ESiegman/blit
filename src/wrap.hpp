@@ -43,6 +43,18 @@ public:
     // Where a line's rows start (after its first, which starts at 0): the
     // breaks for `text` in `width` columns. (Public for the tests.)
     static void breaks(std::string_view text, u32 width, u32 tab, std::vector<u32>* out);
+    // How many rows a line takes, and its breaks (in `starts`).
+    static u32 line_rows(const Editor& ed, u64 line, u32 width, u32 tab, std::vector<u32>* starts);
+
+    // A view's top as a line and the part through it (5.5: halfway through
+    // line 5's rows), from rows of the map (fractional: part of a row), and
+    // back.
+    double top_line(double rows) const;
+    double top_rows(double line) const;
+    // The same with no map made (a file not in front has none): the lines
+    // walked from the first, as far as the top.
+    static double walk_line(const Editor& ed, const Folds* folds, u32 width, u32 tab, double rows);
+    static double walk_rows(const Editor& ed, const Folds* folds, u32 width, u32 tab, double line);
 
     // LineSkip: the editor's moves up and down go by rows, at the column
     // along the row.
