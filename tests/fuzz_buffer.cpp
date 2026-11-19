@@ -3654,6 +3654,16 @@ void vim_test() {
         {"ab cd\nef| gh", "2g_", "ab cd\nef| gh"},
         {"ab cd\ne|f gh\nij", "2dd", "a|b cd"},
         {"ab\n|c\nd", "qaA;<Esc>2yyjq2@a", "ab\nc;\nd|;"},
+        // g~ gu gU g? on whole lines leave the cursor where the motion began
+        // or ended, whichever is first, its column with it.
+        {"ab cd\n  ef| gh\nij kl\n\nmn", "g~~", "ab cd\n  |EF GH\nij kl\n\nmn"},
+        {"ab cd\n  ef| gh\nij kl\n\nmn", "2gUU", "ab cd\n  EF| GH\nIJ KL\n\nmn"},
+        {"ab cd\n  ef| gh\nij kl\n\nmn", "gUj", "ab cd\n  EF| GH\nIJ KL\n\nmn"},
+        {"ab cd\n  ef| gh\nij kl\n\nmn", "gUk", "AB C|D\n  EF GH\nij kl\n\nmn"},
+        {"ab cd\n  ef| gh\nij kl\n\nmn", "gU+", "ab cd\n  EF| GH\nIJ KL\n\nmn"},
+        {"ab cd\n  ef| gh\nij kl\n\nmn", "VjgU", "ab cd\n|  EF GH\nIJ KL\n\nmn"},
+        {"ab cd\n  ef| gh\nij kl\n\nmn", "VkgU", "AB C|D\n  EF GH\nij kl\n\nmn"},
+        {"ab cd\n  ef| gh\nij kl\n\nmn", "gUip", "|AB CD\n  EF GH\nIJ KL\n\nmn"},
     };
     int wrong = 0;
     for (const Case& c : cases) {

@@ -1913,6 +1913,7 @@ bool Vim::text_object(Editor& ed, u32 c, bool around, u32 count, u64* lo, u64* h
 
 // Does an operator to the bytes [lo, hi). Linewise: they are whole lines.
 void Vim::operate(Editor& ed, char op, u64 lo, u64 hi, bool linewise) {
+    const u64 from = std::exchange(op_from_, kNone);
     if (hi < lo) std::swap(lo, hi);
     const u64 size = ed.buf.size();
     hi = std::min(hi, size);
@@ -1976,7 +1977,9 @@ void Vim::operate(Editor& ed, char op, u64 lo, u64 hi, bool linewise) {
             const std::string changed = recase(text, op);
             if (changed != text) ed.replace(lo, lo + text.size(), changed);
             changing_ = true;
-            go(ed, lo);
+            // (On whole lines the cursor goes to the start of what the motion
+            // went over, the column with it: "g~~" stays where it is.)
+            go(ed, linewise && from >= lo && from < ed.buf.size() ? from : lo);
             break;
         }
         default: break;
@@ -2563,6 +2566,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
             lines_from(ed.buf.line_of(lo), ed.buf.line_of(hi) - ed.buf.line_of(lo) + 1, &lo, &hi);
         }
         const char op = op_;
+        op_from_ = std::min(cur, m.to);
         operate(ed, op, lo, hi, linewise);
         return settle();
     };
@@ -2578,6 +2582,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
         if (lines) lines_from(l0, l1 - l0 + 1, &lo, &hi);
         const bool linewise = lines || mode_ == kVisualLine;
         const u32 levels = total();
+        const u64 from = std::min(cur, ed.buf.line_start(ed.buf.line_of(vstart_)));
         leave_visual(ed);
         ed.move_to(lo, false);
         if (op == '<' || op == '>') {  // with a count: by so many levels
@@ -2585,6 +2590,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
             for (u32 i = 0; i < levels; ++i) operate_lines(ed, op, l0, l1, true);
             ed.end_group();
         } else {
+            if (linewise) op_from_ = from;
             operate(ed, op, lo, hi, linewise);
         }
         return settle();
@@ -2893,6 +2899,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
             if (times > 1 && line + 1 >= n) return fail();  // (more lines than one asked for on the last: Vim does nothing)
             u64 lo, hi;
             lines_from(line, times, &lo, &hi);
+            op_from_ = std::min(cur, first_nonblank(ed, std::min<u64>(line + times - 1, n - 1)));
             const char doubled = op_;
             operate(ed, doubled, lo, hi, true);
             return settle();

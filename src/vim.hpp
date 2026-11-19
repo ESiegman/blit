@@ -259,6 +259,7 @@ private:
     bool counted_ = false;
     char op_ = 0;       // d c y < > and ~ u U for g~ gu gU
     char reg_ = 0;
+    u64 op_from_ = ~0ull;  // where the motion an operator is given went from or to, whichever is first (~0: lo)
     Await await_ = kNothing;
     char await_key_ = 0;  // f F t T; i or a
     std::string shown_;   // its keys, as typed
