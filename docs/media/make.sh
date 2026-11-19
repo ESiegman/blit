@@ -17,7 +17,7 @@ trap 'rm -rf "$work"' EXIT
 want() { [ -z "$WANT" ] && return 0; for n in $WANT; do [ "$n" = "$1" ] && return 0; done; return 1; }
 WANT="$*"
 
-export HOME="$work/home" BLIT_APPEARANCE=dark BLIT_RECENT_FILE="$work/recent" BLIT_CACHE_DIR="$work/cache"
+export HOME="$work/home" BLIT_APPEARANCE=dark BLIT_RECENT_FILE="$work/recent" BLIT_CACHE_DIR="$work/cache" BLIT_HISTORY_DIR="$work/history"
 unset XDG_CONFIG_HOME XDG_DATA_HOME XDG_CACHE_HOME
 mkdir -p "$HOME/.config/blit" "$HOME/.local/share"
 # A terminal's shell with a plain prompt (no user or machine name in a picture).
@@ -61,7 +61,10 @@ shot() {
     fi
 }
 # anim NAME FPS STEP...: one frame after each step (each step's script is
-# the steps before it and itself), made into NAME.gif at half size.
+# the steps before it and itself), made into NAME.gif, from a smaller
+# window than the stills' (AW x AH) at three quarters, so that its text
+# reads at the width the README shows it.
+AW=1600 AH=1000
 anim() {
     name=$1 fps=$2
     shift 2
@@ -70,12 +73,14 @@ anim() {
     script="" n=0
     for s in "$@"; do
         script="${script:+$script;}$s"
-        "$blit" --offscreen ${W}x$H --shot "$frames/f.bmp" --script "$script" $ANIM_FILE >/dev/null 2>&1 || true
+        [ -n "${ANIM_RESET:-}" ] && eval "$ANIM_RESET"  # (what a step changes on disk, put back before the next replays them all)
+        "$blit" --offscreen ${AW}x$AH --shot "$frames/f.bmp" --script "$script" $ANIM_FILE >/dev/null 2>&1 || true
         sips -s format png "$frames/f.bmp" --out "$(printf '%s/%03d.png' "$frames" "$n")" >/dev/null
         n=$((n + 1))
     done
+    [ -n "${ANIM_RESET:-}" ] && eval "$ANIM_RESET"
     ffmpeg -loglevel error -y -framerate "$fps" -i "$frames/%03d.png" \
-        -vf "scale=$((W / 2)):-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=none" \
+        -vf "scale=$((AW * 3 / 4)):-1:flags=lanczos,split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse=dither=none" \
         "$here/$name.gif"
     echo "$name.gif"
 }
@@ -97,8 +102,6 @@ if want lsp && command -v clangd >/dev/null; then
     unset BLIT_INIT
 fi
 
-# Vim: a block chosen across the bodies' starting places.
-want vim && shot vim "open:$demo/src/main.cpp;frame;text::11;key:Return;text:www;key:ctrl+v;text:jjjeee;frame;frame"
 
 # Go to file, narrowing as letters are typed.
 ANIM_FILE="$demo/src/main.cpp"
@@ -150,3 +153,74 @@ want commands && shot commands "open:$demo/src/main.cpp;frame;key:cmd+shift+p;te
 
 # A new project, from a form.
 want newproject && shot newproject "newproject;project:name=gravity;project:where=$work/projects;frame;frame"
+
+# Peek: the definition of step() in a box under the line that calls it.
+if want peek && command -v clangd >/dev/null; then
+    export BLIT_INIT="$HOME/.config/blit/lsp.lua"
+    shot peek "open:$demo/src/main.cpp;ready;lspsettle;wait:1500;text:/step(;key:Return;command:Peek the definition;wait:1500;frame;wait:500;frame"
+    unset BLIT_INIT
+fi
+
+# The calls to step(), in the side panel.
+if want calls && command -v clangd >/dev/null; then
+    export BLIT_INIT="$HOME/.config/blit/lsp.lua"
+    shot calls "folder:$demo;open:$demo/src/main.cpp;ready;lspsettle;wait:1500;open:$demo/src/body.cpp;ready;lspsettle;wait:1500;text:/step(;key:Return;command:Show the calls to this function;wait:2000;frame;key:Right;wait:1500;frame;frame"
+    unset BLIT_INIT
+fi
+
+# Local history: the file as it was at each save, the one chosen against now.
+if want history; then
+    cp src/body.cpp "$work/body.cpp"
+    # (Saved in one run, listed in the next, as the history is kept when it goes.)
+    "$blit" --offscreen ${W}x$H --shot "$work/saves.bmp" --script "open:$demo/src/body.cpp;frame;text:G;text:o;key:Return;text:// The step's cost grows as the square of the bodies.;key:Escape;text::w;key:Return;wait:1100;text::12;key:Return;text:A  // never zero;key:Escape;text::w;key:Return;frame" >/dev/null 2>&1
+    shot history "open:$demo/src/body.cpp;frame;command:Show the file's local history;frame;key:Down;frame;frame"
+    cp "$work/body.cpp" src/body.cpp
+fi
+
+# The assembly of the file, beside it, each line's instructions lit with it.
+want asm && shot asm "open:$demo/src/body.cpp;frame;text:/pull\\[i\\] = ;key:Return;command:Show the assembly beside the file;asmdump;text:jk;frame;frame"
+
+# A notebook: its cells, their outputs.
+want notebook && shot notebook "open:$demo/orbits.ipynb;frame;wait:300;frame"
+
+
+# Vim: a word changed, then the change repeated at the next ones with n and .
+ANIM_FILE="$demo/src/main.cpp"
+want vimdot && anim vimdot 2 "frame" "text:/gravity;key:Return;frame" "text:ciw;frame" "text:g;frame" "key:Escape;frame" \
+    "text:n;frame" "text:.;frame" "text:n;frame" "text:.;frame" "text:n;frame" "text:.;frame" "frame"
+
+# Several carets: the next match added to them, each taking the change.
+ANIM_FILE="$demo/src/body.cpp"
+want carets && anim carets 2 "frame" "text:/bodies;key:Return;frame" "command:Add the next match to the carets;frame" \
+    "command:Add the next match to the carets;frame" "command:Add the next match to the carets;frame" \
+    "command:Add the next match to the carets;frame" "text:c;frame" "text:bs;frame" "key:Escape;frame" "frame"
+
+# The settings screen: a switch flipped, a theme picked, each written into init.lua.
+ANIM_FILE="$demo/src/body.cpp"
+if want settings; then
+    cp "$HOME/.config/blit/init.lua" "$work/init.lua"
+    ANIM_RESET='cp "$work/init.lua" "$HOME/.config/blit/init.lua"'
+    anim settings 1 "frame" "key:cmd+,;frame" "text:/editor.relative_numbers;key:Return;text::noh;key:Return;frame" "key:Return;frame" \
+        "text:/theme.dark;key:Return;text::noh;key:Return;frame" "key:Return;frame" "key:Down;frame" "key:Down;frame" "key:Return;frame" "frame"
+    ANIM_RESET=
+fi
+
+# Distraction-free, then presentation mode.
+ANIM_FILE=
+want focus && anim focus 1 "folder:$demo;key:cmd+b;panel;open:$demo/src/body.cpp;frame" "command:Toggle distraction-free mode;frame" \
+    "command:Toggle distraction-free mode;command:Toggle presentation mode;frame" "command:Toggle presentation mode;frame"
+
+# The tree keeps up with the disk: a file made and one removed by another
+# program, then a file dragged into a folder.
+if want tree; then
+    ANIM_RESET='rm -rf "$demo/plot.py" "$demo/data"; git -C "$demo" checkout -q -- logo.png; [ -f "$demo/src/notes.md" ] && mv "$demo/src/notes.md" "$demo/notes.md"; true'
+    anim tree 2 "folder:$demo;key:cmd+b;panel;open:$demo/README.md;frame" "lua:os.execute('echo import math > $demo/plot.py');watchwait;frame" \
+        "lua:os.execute('mkdir $demo/data');watchwait;frame" "lua:os.execute('rm $demo/logo.png');watchwait;frame" \
+        "click:60,104;drag:70,96;frame" "drag:65,75;frame" "drag:60,57;frame" "release;panel;frame" "click:60,57;release;panel;frame" "frame"
+    ANIM_RESET=
+fi
+
+# A tab dragged to the right edge: a split of its own.
+ANIM_FILE=
+want splitdrag && anim splitdrag 3 "open:$demo/src/main.cpp;open:$demo/src/body.cpp;frame" "click:193,12;drag:210,40;frame" \
+    "drag:450,200;frame" "drag:650,240;frame" "drag:785,250;frame" "release;frame" "frame"

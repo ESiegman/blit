@@ -24,6 +24,12 @@ scroll, brackets coloured by depth, and the selection grown node by node.
 
 ![completions from clangd, a problem underlined, inlay hints and the server's colours](docs/media/lsp.png)
 
+Peek a definition in a box under the line, without leaving it; follow the
+calls to a function and from it, a type's supertypes and subtypes; see how
+many references each definition has, after its line.
+
+<img src="docs/media/peek.png" alt="the definition of step() peeked under the line that calls it" width="49%"> <img src="docs/media/calls.png" alt="the calls to step(), as a tree" width="49%">
+
 ## Vim, as Neovim has it
 
 Normal, Insert, Replace, Visual, Visual Line and Visual Block, the command
@@ -34,7 +40,10 @@ Either way: more carets than one (the next match, every match, a column),
 each taking the command, and snippets with tab stops, the servers' and
 your own.
 
-![a block chosen across four lines in Visual Block mode](docs/media/vim.png)
+<img src="docs/media/vimdot.gif" alt="a word changed, then the change repeated with n and ." width="49%"> <img src="docs/media/carets.gif" alt="the next matches added to the carets, all changed at once" width="49%">
+
+Long lines wrap where you want them to, a minimap runs down the right of a
+wide split, and the words of comments, strings and prose are spell-checked.
 
 ## Find anything
 
@@ -49,17 +58,23 @@ files is one undo step a file.
 Sixteen splits, each with its own tabs, dragged where they should go; the
 side panel's tree, problems, Git, profile and debugger; terminals that speak
 xterm, with the mouse, re-wrapping on resize, and sixel and kitty pictures.
+The tree keeps up with whatever else changes the folder, and files are
+moved by dragging them onto a folder.
 
 ![three splits and a terminal](docs/media/splits.png)
+
+<img src="docs/media/splitdrag.gif" alt="a tab dragged to the right edge, becoming a split of its own" width="49%"> <img src="docs/media/tree.gif" alt="files made and removed by another program appearing in the tree, then one dragged into a folder" width="49%">
 
 ## Git
 
 The changed lines beside the text, blame, a Git tab for everything else:
 stage a hunk or the lines chosen, diffs in one column or two, branches,
 History as a graph, searched, a file's or some lines' history, conflicts
-merged three ways, interactive rebase, stash, cherry-pick, tags.
+merged three ways, interactive rebase, stash, cherry-pick, tags, a file
+against any revision, worktrees and submodules, and pull requests through
+gh. And without Git: each file's local history, its text at every save.
 
-![the Git tab and a diff in two columns](docs/media/git.png)
+<img src="docs/media/git.png" alt="the Git tab and a diff in two columns" width="49%"> <img src="docs/media/history.png" alt="a file's local history, one version against the text now" width="49%">
 
 ## A debugger and a profiler
 
@@ -75,6 +90,14 @@ allocation and what leaked.
 
 <img src="docs/media/debug.png" alt="stopped at a breakpoint: the stack, the variables, the line in front" width="49%"> <img src="docs/media/profile.png" alt="a flame graph of the demo program, and its functions by time" width="49%">
 
+## Notebooks and the assembly
+
+Jupyter notebooks open as Python with their cells and outputs, run cell by
+cell in a Python console; a C or C++ file's assembly sits beside it, each
+line's instructions lit as the cursor comes to the line.
+
+<img src="docs/media/notebook.png" alt="a notebook: its cells and their outputs" width="49%"> <img src="docs/media/asm.png" alt="a file's assembly beside it" width="49%">
+
 ## Markdown, pictures and PDFs
 
 A preview drawn as the file is typed, with Mermaid diagrams, tables and
@@ -88,16 +111,21 @@ with their text to choose, copy and search, their links and outline.
 `blit ssh://host/path` works on a file or a folder somewhere else as if it
 were here: its tree, saves, Search in files, terminals, builds, the
 debugger and the profiler all run there, through a small agent blit
-carries and starts over ssh.
+carries and starts over ssh. `docker://container/path` does the same in a
+container, and "Open in the dev container" makes one from the folder's
+devcontainer.json.
 
 ## Make it yours
 
 Settings, keys, commands and plugins in `~/.config/blit/init.lua` (Lua 5.5;
-blit itself ships no Lua), themes previewed as the list is walked, a
+blit itself ships no Lua), or changed on a settings screen that writes
+them there; distraction-free and presentation modes; themes previewed as
+the list is walked, a
 command search with every command and its keys, Search everywhere (files,
 symbols, commands and settings in one box), and new projects (CMake,
 Meson, uv, with tests and libraries) from a form.
 
+<img src="docs/media/settings.gif" alt="the settings screen: relative numbers turned off, then a theme picked" width="49%"> <img src="docs/media/focus.gif" alt="distraction-free mode, then presentation mode" width="49%">
 <img src="docs/media/theme.gif" alt="Choose a theme: each put on as the list comes to it" width="49%"> <img src="docs/media/commands.png" alt="the command search" width="49%">
 <img src="docs/media/start.png" alt="the start screen" width="49%"> <img src="docs/media/newproject.png" alt="the New project form" width="49%">
 
@@ -123,6 +151,7 @@ round since the first.
 
 - **[Releases](https://github.com/ESiegman/blit/releases)**: blit.app for
   Apple silicon Macs, and an AppImage and a tarball for x86-64 Linux.
+  blit.app and the AppImage offer each newer release, and install it.
 - **Homebrew**: `brew tap ESiegman/blit https://github.com/ESiegman/blit`
   and `brew install --HEAD ESiegman/blit/blit`.
 - **From source**, with GCC 16, CMake and Ninja:
