@@ -699,10 +699,11 @@ struct Drawer {
             for (size_t k = 0; k < part.size(); ++k) part[k].line = k == 0 ? head : first + part[k].line;
             if (!part.empty()) part.back().line = last;
             shift(part);
-            // In [n]: beside its first line (blank: it has not run; quieter,
-            // and said, if it has changed since).
+            // In [n]: beside its first line (blank: it has not run; a star:
+            // it is running, or waiting to; quieter, and said, if it has
+            // changed since).
             const i64 count = ran ? ran->count : -1;
-            const std::string label = "In [" + (count >= 0 ? std::to_string(count) : std::string(" ")) + "]:";
+            const std::string label = "In [" + (ran && ran->busy ? std::string("*") : count >= 0 ? std::to_string(count) : std::string(" ")) + "]:";
             const bool changed = ran && !same && (ran->count >= 0 || ran->outputs);
             put_label(part, gutter ? 1 : 0, label, changed ? kMdMuted : kMdAnsiBlue, 0, changed ? "edited" : "");
             if (!gutter && !part.empty()) part.front().line = head;

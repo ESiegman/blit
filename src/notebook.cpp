@@ -15,14 +15,16 @@ bool is_notebook_path(std::string_view path) { return path.ends_with(".ipynb"); 
 
 namespace {
 
-// A cell's text: its "source", a string or (as Jupyter writes it) its lines.
-std::string source_of(json::Value cell) {
-    const json::Value s = cell["source"];
+// A text as Jupyter keeps one: a string, or its lines.
+std::string source_of_text(json::Value s) {
     if (s.is_string()) return std::string(s.str());
     std::string out;
     for (const json::Value line : s) out += line.str();
     return out;
 }
+
+// A cell's text: its "source".
+std::string source_of(json::Value cell) { return source_of_text(cell["source"]); }
 
 std::string_view chomp(std::string_view s) {
     while (!s.empty() && (s.back() == '\n' || s.back() == '\r')) s.remove_suffix(1);
@@ -248,6 +250,49 @@ bool notebook_set_outputs(NotebookCell* cell, std::string_view outputs, i64 coun
     return true;
 }
 
+bool notebook_add_output(std::vector<std::string>* outputs, std::string_view output) {
+    json::Doc doc;
+    if (!doc.parse(std::string(output)) || !doc.root().is_object()) return false;
+    const json::Value o = doc.root();
+    if (o["output_type"].str() != "stream") {
+        outputs->emplace_back(output);
+        return true;
+    }
+    const std::string_view name = o["name"].str();
+    std::string text = source_of_text(o["text"]);
+    if (!outputs->empty()) {  // (after the same stream's text: one text)
+        json::Doc last;
+        if (last.parse(outputs->back()) && last.root()["output_type"].str() == "stream" && last.root()["name"].str() == name) {
+            text = source_of_text(last.root()["text"]) + text;
+            outputs->pop_back();
+        }
+    }
+    // Each line as a terminal leaves it: what is after its last carriage
+    // return (one at its end is kept, for what comes next to write over).
+    std::string kept;
+    kept.reserve(text.size());
+    for (size_t at = 0; at <= text.size();) {
+        size_t nl = text.find('\n', at);
+        const bool ended = nl != std::string::npos;
+        if (!ended) nl = text.size();
+        std::string_view line(text.data() + at, nl - at);
+        const bool back = line.ends_with('\r');
+        while (line.ends_with('\r')) line.remove_suffix(1);
+        if (const size_t cr = line.rfind('\r'); cr != std::string_view::npos) line.remove_prefix(cr + 1);
+        kept += line;
+        if (ended) kept += '\n';
+        else if (back) kept += '\r';
+        at = nl + 1;
+    }
+    std::string out = "{\"name\": ";
+    json::quote(out, name);
+    out += ", \"output_type\": \"stream\", \"text\": ";
+    json::quote(out, kept);
+    out += "}";
+    outputs->push_back(std::move(out));
+    return true;
+}
+
 std::vector<CellMatch> notebook_match(const std::vector<NotebookCell>& now, const std::vector<NotebookCell>& model) {
     std::vector<CellMatch> out(now.size());
     std::vector<bool> taken(model.size(), false);
@@ -344,8 +389,7 @@ std::string notebook_write(std::string_view original, std::string_view script, c
         const json::Value o = match[i].at >= 0 ? old[static_cast<size_t>(match[i].at)] : json::Value();
         out += i ? ",\n  {" : "\n  {";
         // Its members in order of name: what the notebook had, its kind,
-        // its text, and (if its text is the one they are of) its outputs
-        // and count.
+        // its text, and its outputs and count.
         std::map<std::string, std::string> m;
         for (const json::Value v : o) {
             const std::string_view k = v.key();
@@ -361,7 +405,7 @@ std::string notebook_write(std::string_view original, std::string_view script, c
         else source_lines(m["source"], c.source, 3);
         if (!m.contains("metadata")) m["metadata"] = "{}";
         if (c.kind == "code") {
-            const NotebookCell* r = ran[i].same ? &(*model)[static_cast<size_t>(ran[i].at)] : nullptr;
+            const NotebookCell* r = ran[i].at >= 0 ? &(*model)[static_cast<size_t>(ran[i].at)] : nullptr;  // (changed since: kept, as Jupyter keeps them)
             m["outputs"] = r && r->outputs ? *r->outputs : "[]";
             m["execution_count"] = r && r->count >= 0 ? std::to_string(r->count) : "null";
         }

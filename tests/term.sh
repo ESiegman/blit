@@ -240,9 +240,9 @@ BLIT_INIT="$dir/zero.lua" "$blit" --offscreen 900x700 --shot "$dir/nb-zero.bmp" 
 cmp -s "$dir/nb-zero.bmp" "$dir/nb-rezero.bmp" || { echo "FAIL: a notebook's outputs kept the glyphs of the font there was"; failed=1; }
 "$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/n.ipynb;vim:Gyyp;save" 2>/dev/null >/dev/null
 got=$(python3 -c 'import json,sys; nb=json.load(open(sys.argv[1])); print(" | ".join(c["cell_type"] + ":" + "".join(c["source"]) + ":" + str(len(c.get("outputs", []))) for c in nb["cells"]))' "$P/n.ipynb")
-check "saved: still a notebook, the changed cell's outputs gone, the others' kept" 'markdown:# Sums:0 | code:total = sum(range(5))
+check "saved: still a notebook, a changed cell's outputs kept (as Jupyter keeps them)" 'markdown:# Sums:0 | code:total = sum(range(5))
 print('"'"'total'"'"', total):1 | code:total * 2
-total * 2:0'
+total * 2:1'
 got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/n.ipynb;vim:4G;key:shift+Return;docdump:0;key:shift+Return;command:Open the Python console;termwait:>>>;termwait:total 10;termwait:20;termdump" 2>&1 >/dev/null | grep -E '^>|total 10' | sed -e 's/.*\(total 10\).*/\1/' | tr '\n' ' ')
 check "Shift+Return: the cell run in the console, the cursor to the next cell" '> |total * 2 total 10 '
 got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/line.py;command:Run the cell (# %%) in the Python console;frame" 2>&1 >/dev/null | grep '^blit: ' | tail -1)

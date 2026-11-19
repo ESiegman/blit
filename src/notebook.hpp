@@ -8,9 +8,10 @@
 // The cells read from a notebook are its model: each code cell's outputs,
 // as Jupyter keeps them, and its count. A script's cells are matched to
 // the model's (notebook_match): one with the same text has its outputs;
-// one changed at the same place had them, but they are of other code.
-// Whatever runs a cell gives the model its new outputs
-// (notebook_set_outputs), and those are what is written back.
+// one changed at the same place had them, but they are of other code (and
+// are kept, as Jupyter keeps them, until it runs again). Whatever runs a
+// cell gives the model its new outputs (notebook_set_outputs), and those
+// are what is written back.
 #include <memory>
 #include <string>
 #include <string_view>
@@ -31,6 +32,11 @@ struct NotebookCell {
     std::shared_ptr<const std::string> outputs;
     i64 count = -1;      // its execution count (-1: none)
     std::string output;  // its outputs in a line (the last line of text, "[image/png]", the error)
+    // (Whatever runs it: which cell it is, however the script changes
+    // around it, 0 until it is run; and that it is waiting to run, or
+    // running: In [*].)
+    u64 key = 0;
+    bool busy = false;
 };
 
 // The notebook's cells, and the script that shows them. False: not a notebook.
@@ -40,6 +46,11 @@ std::string notebook_language(std::string_view json);
 // A code cell's outputs (Jupyter's JSON list of them) and its count put in
 // it, its line made again. False: that is not a list (nothing changes).
 bool notebook_set_outputs(NotebookCell* cell, std::string_view outputs, i64 count);
+// An output (its JSON) put after a cell's others (each one's JSON), as
+// Jupyter does: text printed to the same stream as the last joins it, and
+// what a carriage return goes back over is gone from it. False: that is not
+// an output (nothing changes).
+bool notebook_add_output(std::vector<std::string>* outputs, std::string_view output);
 // A script's cells (the text before the first "# %%", if any, a code cell).
 std::vector<NotebookCell> notebook_cells(std::string_view script);
 // Each of a script's cells (`now`) matched to one of the model's: the first
@@ -51,8 +62,8 @@ struct CellMatch {
 };
 std::vector<CellMatch> notebook_match(const std::vector<NotebookCell>& now, const std::vector<NotebookCell>& model);
 // The script written as the notebook `original` (its text) with its cells:
-// each with the outputs and count it has in `model` if its text is the one
-// they are of (no model: the cells of `original`).
+// each with the outputs and count of its cell in `model`, its text the one
+// they are of or changed since (no model: the cells of `original`).
 std::string notebook_write(std::string_view original, std::string_view script, const std::vector<NotebookCell>* model = nullptr);
 // The line (from 0) of each cell's "# %%" in a script, and where each ends
 // (the line after its last), for the cells notebook_cells finds; and so the

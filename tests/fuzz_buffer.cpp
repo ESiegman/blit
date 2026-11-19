@@ -461,10 +461,11 @@ void notebook_test() {
     std::vector<NotebookCell> again;
     std::string script2;
     check(notebook_read(out, &again, &script2) && script2 == edited, "notebook: an edited script read back the same");
-    check(again.size() == 4 && again[1].output.empty() && again[3].output == "[image/png]", "notebook: a changed cell's outputs gone, an unchanged one's kept");
-    check(out.find("\"id\": \"b2\"") != std::string::npos && out.find("\"id\": \"c3\"") != std::string::npos && out.find("\"execution_count\": 3") == std::string::npos &&
+    check(again.size() == 4 && again[1].output == "6.5" && again[2].output.empty() && again[3].output == "[image/png]",
+          "notebook: a changed cell's outputs kept (as Jupyter keeps them), a new one has none");
+    check(out.find("\"id\": \"b2\"") != std::string::npos && out.find("\"id\": \"c3\"") != std::string::npos && out.find("\"execution_count\": 3") != std::string::npos &&
               out.find("\"tags\": []") != std::string::npos && out.find("\"version\": \"3.12.1\"") != std::string::npos,
-          "notebook: ids and a cell's metadata kept, a changed one's count gone, the notebook's metadata kept");
+          "notebook: ids and a cell's metadata kept, a changed one's count kept, the notebook's metadata kept");
     size_t ids = 0;
     for (size_t at = 0; (at = out.find("\"id\": ", at)) != std::string::npos; ++at) ++ids;
     check(ids == 4, "notebook: a new cell given an id");
@@ -501,6 +502,24 @@ void notebook_test() {
           "notebook: written with the model's outputs and counts, the cell's id kept");
     check(notebook_set_outputs(&model[1], "[]", -1) && !model[1].outputs && model[1].output.empty() && notebook_write(nb, edited, &model).find("\"execution_count\": null") != std::string::npos,
           "notebook: outputs cleared");
+    // Outputs as a kernel sends them: a stream's text joined to the last
+    // if it is the same stream's, a carriage return's line written over.
+    std::vector<std::string> outs;
+    check(notebook_add_output(&outs, R"({"output_type": "stream", "name": "stdout", "text": "0%\r"})") &&
+              notebook_add_output(&outs, R"({"output_type": "stream", "name": "stdout", "text": "50%\r"})") && outs.size() == 1 &&
+              outs[0] == R"({"name": "stdout", "output_type": "stream", "text": "50%\r"})",
+          "notebook: a stream's text joined, a carriage return's line written over (one at the end kept)");
+    check(notebook_add_output(&outs, R"({"output_type": "stream", "name": "stdout", "text": "done\nnext"})") && outs.size() == 1 &&
+              outs[0] == R"({"name": "stdout", "output_type": "stream", "text": "done\nnext"})",
+          "notebook: what comes after a carriage return writes over its line");
+    check(notebook_add_output(&outs, R"({"output_type": "stream", "name": "stderr", "text": "warn\n"})") &&
+              notebook_add_output(&outs, R"({"output_type": "execute_result", "execution_count": 2, "data": {"text/plain": "2"}, "metadata": {}})") &&
+              notebook_add_output(&outs, R"({"output_type": "stream", "name": "stderr", "text": "late\n"})") && outs.size() == 4 && !notebook_add_output(&outs, "[1]") &&
+              !notebook_add_output(&outs, "{") && outs.size() == 4,
+          "notebook: another stream, a result, and text after it: each an output of its own; what is not one, refused");
+    std::string list = "[";
+    for (const std::string& o : outs) list += (list.size() > 1 ? "," : "") + o;
+    check(notebook_set_outputs(&model[1], list + "]", 2) && model[1].output == "late", "notebook: outputs made one by one, put in the model");
 }
 
 // A notebook drawn (nbview.cpp): its rows as text, each with the script's
