@@ -1407,6 +1407,24 @@ void edge_test() {
     check((cells[9] & 0xFFFF) == font.mark(han, 0x301, 1), "edge: the mark is drawn over the half that shows");
     fill("aaaaaaaa\xE6\xBC\xA2\xE6\xBC\xA2\xCC\x81x\n", 1, &cells);  // (scrolled one column: the second one cut)
     check(cells[10] == kGuard, "edge: and scrolled sideways");
+    {  // A mark typed after a wide character, in a piece of the text of its own: over both its cells.
+        Buffer buf;
+        buf.insert(0, "\xE6\xBC\xA2\n");
+        buf.insert(3, "\xCC\x81");
+        check(buf.reader(3).chunk().size() == 2, "pieces: the mark is a piece of its own");
+        GridSpec g;
+        g.cols = 4;
+        g.rows = 1;
+        cells.assign(g.cols, 0);
+        fill_grid(buf, font, g, cells.data());
+        check(cells[0] == font.mark(han, 0x301, 1) && cells[1] == font.mark(han + 1, 0x301, 2), "pieces: a mark in a piece of its own goes over both cells of a wide character");
+        // An emoji joined to a letter has no cell: a mark after it goes over the letter, which is narrow.
+        Buffer joined;
+        joined.insert(0, "a\xE2\x80\x8D\xF0\x9F\x98\x80\xCC\x81\n");
+        cells.assign(g.cols, 0);
+        fill_grid(joined, font, g, cells.data());
+        check(cells[0] == font.mark('a', 0x301) && cells[1] == 0, "joined: a mark after an emoji joined to a letter is over the letter alone");
+    }
     // Emoji sequences: a family (joined by zero width joiners), a flag, a
     // skin tone. (With no colour font they are each their first emoji, and
     // nothing is written over them.)
@@ -1443,6 +1461,14 @@ void edge_test() {
         std::vector<u32> whole(kWide + 1, kGuard), part;
         fill_grid(buf, font, g, whole.data());
         check(whole[kWide] == kGuard, "window: the reference row stays in its cells");
+        {  // (Made in one piece, the line shows the same: a mark in a piece of its own finds a wide character before it.)
+            Buffer one;
+            one.insert(0, line + "\n");
+            std::vector<u32> joined(kWide + 1, kGuard);
+            fill_grid(one, font, g, joined.data());
+            if (joined != whole) std::printf("pieces: line \"%s\" shows otherwise in one piece\n", line.c_str());
+            check(joined == whole, "window: a line made in pieces shows what it shows made in one");
+        }
         {  // (The cells the line takes are as many as the editor's columns, by which the cursor is placed.)
             Editor ed;
             ed.tab_width = g.tab_width;

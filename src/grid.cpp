@@ -63,23 +63,28 @@ struct Cluster {
     u32 seq_n = 0, seq_col = 0;
     u64 seq_end = ~0ull;
     u32 end = 0;  // one past the row's last column (what is drawn over a cell stays in the row)
+    // Whether what has no cell at byte base_end goes over a character two
+    // cells wide: kept by what has no cell (for what follows it), and where
+    // a chunk of the text ends (for a mark in the next, typed after a wide
+    // character in a piece of its own).
+    u64 base_end = ~0ull;
+    bool base_wide = false;
 };
 // The glyph bits that send a character to no_cell().
 constexpr u32 kAttention = Font::kJoin | Font::kPict;
 
-// Whether the character with a cell before byte i of a chunk (past the
-// marks on it) is two cells wide. At the chunk's start: not known, no.
-bool wide_before(Font& font, const u8* p, size_t i) {
-    while (i > 0) {
-        size_t s = i - 1;
-        while (s > 0 && i - s < 4 && is_cont(p[s])) --s;
-        const Decoded d = decode_utf8(p + s, i - s);
-        if (d.len != i - s) return false;
-        const u32 g = font.cell_glyph(d.cp);
-        if (!(g & Font::kJoin) || (g & Font::kWide)) return (g & Font::kWide) != 0;
-        i = s;
-    }
-    return false;
+// Whether the character with cells that byte i of a chunk (`at` in the
+// text) comes after, past what has no cell, is two cells wide: as the one
+// before said, if it had no cell either; else the character before. (An
+// emoji joined to what is before it has no cell: what it joined decides.)
+// At the chunk's start, as the chunk before ended; not known there, no.
+bool wide_before(Font& font, const Cluster& cl, const u8* p, size_t i, u64 at) {
+    if (at == cl.base_end) return cl.base_wide;
+    if (i == 0) return false;
+    size_t s = i - 1;
+    while (s > 0 && i - s < 4 && is_cont(p[s])) --s;
+    const Decoded d = decode_utf8(p + s, i - s);
+    return d.len == i - s && (font.cell_glyph(d.cp) & Font::kWide);
 }
 
 // A character that may make one with the one before it (byte `i` of the
@@ -91,6 +96,12 @@ bool wide_before(Font& font, const u8* p, size_t i) {
 [[gnu::noinline]] bool no_cell(Font& font, Cluster& cl, u32 cp, u32 g, u64 at, u32 len, const u8* p, size_t i, u32* row, u32 col,
                                u32 first_col) {
     cl.pict |= (g & Font::kPict) != 0;
+    // (Each that has no cell says, for what follows it, what it goes over.)
+    auto none = [&](bool wide) {
+        cl.base_end = at + len;
+        cl.base_wide = wide;
+        return true;
+    };
     const bool after = at == cl.join;
     cl.join = ~0ull;
     // An emoji sequence: its first character takes the cells; each of the
@@ -121,7 +132,7 @@ bool wide_before(Font& font, const u8* p, size_t i) {
     if ((g & (Font::kWide | Font::kJoin)) == (Font::kWide | Font::kJoin)) {  // a regional indicator
         if (after && cl.regional) {
             add(true);  // (the second of a flag)
-            return true;
+            return none(wide_before(font, cl, p, i, at));
         }
         cl.join = at + len;
         cl.regional = true;
@@ -130,7 +141,7 @@ bool wide_before(Font& font, const u8* p, size_t i) {
     }
     if (after && !cl.regional && (g & Font::kPict)) {
         add(true);  // (an emoji after a joiner)
-        return true;
+        return none(wide_before(font, cl, p, i, at));
     }
     if (!(g & Font::kJoin)) {
         if ((g & Font::kPict) && (g & Font::kWide)) start();  // (an emoji that takes cells: a sequence may follow)
@@ -140,28 +151,29 @@ bool wide_before(Font& font, const u8* p, size_t i) {
         cl.join = at + len;
         cl.regional = false;
         add(false);
-        return true;
+        return none(wide_before(font, cl, p, i, at));
     }
     if (cp - 0xFE00 < 16) {  // a variation selector: an emoji's, mostly, with nothing to draw
         add(false);
-        return true;
+        return none(wide_before(font, cl, p, i, at));
     }
     if (cp - 0x1F3FB < 5) {  // a skin tone: the emoji before it in that tone
         add(true);
-        return true;
+        return none(wide_before(font, cl, p, i, at));
     }
     auto over = [&](u32 c, u32 half) {
         if (c < first_col + 1 || c > cl.end) return;  // (the cell before is out of view)
         u32& cell = row[c - 1 - first_col];
         cell = (cell & ~0xFFFFu) | font.mark(cell, cp, half);
     };
-    if (wide_before(font, p, i)) {
+    const bool wide = wide_before(font, cl, p, i, at);
+    if (wide) {
         over(col - 1, 1);
         over(col, 2);
     } else {
         over(col, 0);
     }
-    return true;
+    return none(wide);
 }
 
 // A row is full: what has no cell of its own right after its last cell
@@ -174,6 +186,14 @@ bool wide_before(Font& font, const u8* p, size_t i) {
         i += d.len;
         at += d.len;
     }
+}
+
+// A chunk of the text ends (n bytes from `off`) in a character outside
+// ASCII: whether what has no cell at the next one's start goes over a wide
+// character.
+[[gnu::noinline, gnu::cold]] void chunk_end(Font& font, Cluster& cl, const u8* p, size_t n, u64 off) {
+    cl.base_wide = wide_before(font, cl, p, n, off + n);
+    cl.base_end = off + n;
 }
 
 // True when the CR that ends the reader's chunk is followed by a newline, or
@@ -300,6 +320,7 @@ u32 fill_row(Buffer::Reader& rd, Font& font, u32 first_col, u32 cols, u32* row, 
             i += len;
             if (rec && col >= rec->next && col <= first_col && off + i != cl.join) rec->hit(col, off + i);
         }
+        if (!done && p[n - 1] >= 0x80) [[unlikely]] chunk_end(font, cl, p, n, off);
         rd.advance(static_cast<u32>(i));
         off += i;
         if (done) break;
