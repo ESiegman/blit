@@ -1621,7 +1621,7 @@ void App::git_compare_pick() {
     GitUi& g = *gitui_;
     if (!cfg_.git || !g.status.repo) return notify("Not in a git repository");
     Doc& d = *pane_->doc;
-    if (d.ed.path.empty() || d.gitview || d.term || d.prof || d.loading) return;
+    if (d.ed.path.empty() || d.gitview || d.term || d.prof || d.loading) return notify("Not a file in the repository");
     const std::string rel = in_repo(g.status.root, full_path(d.ed.path));
     if (rel.empty()) return notify("Not in the repository");
     std::vector<std::string> revs, rows;
@@ -1662,7 +1662,7 @@ void App::git_history(bool lines) {
     GitUi& g = *gitui_;
     if (!cfg_.git || !g.status.repo) return notify("Not in a git repository");
     Doc& d = *pane_->doc;
-    if (d.ed.path.empty() || d.gitview || d.term || d.prof || d.loading) return;
+    if (d.ed.path.empty() || d.gitview || d.term || d.prof || d.loading) return notify("Not a file in the repository");
     const std::string rel = in_repo(g.status.root, full_path(d.ed.path));
     if (rel.empty()) return notify("Not in the repository");
     std::vector<std::string> args{"log", "--pretty=medium", "--no-ext-diff"};

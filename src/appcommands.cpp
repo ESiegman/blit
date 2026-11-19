@@ -452,7 +452,9 @@ void App::commands_create() {
         });
     });
     own("Git: Merge the file's conflicts", {}, [this] {
-        if (Commands::git_ready(*this) && !pane_->doc->ed.path.empty()) git_merge_open(full_path(pane_->doc->ed.path));
+        if (!Commands::git_ready(*this)) return;
+        if (pane_->doc->ed.path.empty()) return notify("Not a file in the repository");
+        git_merge_open(full_path(pane_->doc->ed.path));
     });
     own("Git: Resolve the simple conflicts", {}, [this] {
         if (Commands::git_ready(*this)) git_merge_take(0, true);
