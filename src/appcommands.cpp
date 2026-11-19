@@ -331,7 +331,10 @@ void App::commands_create() {
     own("New terminal", {key(SDLK_GRAVE, ctl | kS)}, [this] { term_new(); });
     own("Open the Python console", {}, [this] { py_console(true); });
     own("Send the lines to the Python console", {}, [this] { py_send_lines(); });
-    own("Run the cell (# %%) in the Python console", {}, [this] { if (!nb_run_cell()) notify("The file has no # %% cells"); });
+    own("Run the cell (# %%)", {}, [this] { if (!nb_run_cell()) notify("The file has no # %% cells"); });
+    own("Run all the cells", {}, [this] { nb_run_all(); });
+    own("Interrupt the kernel", {}, [this] { nb_interrupt(); });
+    own("Restart the kernel", {}, [this] { nb_restart(); });
     // Debugging.
     own("Start or continue debugging", {key(SDLK_F5)}, [this] { debug_start(); });
     own("Stop debugging", {key(SDLK_F5, kS)}, [this] { debug_command("stop"); });

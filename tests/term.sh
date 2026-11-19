@@ -243,9 +243,12 @@ got=$(python3 -c 'import json,sys; nb=json.load(open(sys.argv[1])); print(" | ".
 check "saved: still a notebook, a changed cell's outputs kept (as Jupyter keeps them)" 'markdown:# Sums:0 | code:total = sum(range(5))
 print('"'"'total'"'"', total):1 | code:total * 2
 total * 2:1'
-got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/n.ipynb;vim:4G;key:shift+Return;docdump:0;key:shift+Return;command:Open the Python console;termwait:>>>;termwait:total 10;termwait:20;termdump" 2>&1 >/dev/null | grep -E '^>|total 10' | sed -e 's/.*\(total 10\).*/\1/' | tr '\n' ' ')
-check "Shift+Return: the cell run in the console, the cursor to the next cell" '> |total * 2 total 10 '
-got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/line.py;command:Run the cell (# %%) in the Python console;frame" 2>&1 >/dev/null | grep '^blit: ' | tail -1)
+# "Run the cell" in a script with # %% cells (not a notebook): in the
+# console, the cursor to the next cell. (A notebook's run in its kernel: tests/notebook.sh.)
+printf '# %%%%\ntotal = sum(range(5))\nprint("total", total)\n\n# %%%%\ntotal * 2\n' >"$P/cells.py"
+got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/cells.py;vim:2G;command:Run the cell (# %%);docdump:0;command:Run the cell (# %%);command:Open the Python console;termwait:>>>;termwait:total 10;termwait:20;termdump" 2>&1 >/dev/null | grep -E '^>|total 10' | sed -e 's/.*\(total 10\).*/\1/' | tr '\n' ' ')
+check "Run the cell, in a script: in the console, the cursor to the next cell" '> |total * 2 total 10 '
+got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/line.py;command:Run the cell (# %%);frame" 2>&1 >/dev/null | grep '^blit: ' | tail -1)
 check "Run the cell, in a file with no cells: said" 'blit: The file has no # %% cells'
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "term ok"

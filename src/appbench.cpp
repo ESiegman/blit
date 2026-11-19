@@ -1214,6 +1214,10 @@ void App::run_script(const char* script) {
             if (std::sscanf(arg.c_str(), "%d,%d,%1023[^\n]", &cell, &count, file) == 3 && fs_read(file, &text, 64u << 20) && cell > 0) {
                 if (!nb_set_outputs(*pane_->doc, static_cast<size_t>(cell - 1), text, count)) std::fprintf(stderr, "nbset: no such code cell, or not outputs\n");
             }
+        } else if (verb == "nbwait") {  // nbwait: until no notebook's kernel runs a cell or has one waiting (and each is ready); nbwait:started, until a cell is running and has given an output
+            if (!nb_kernel_wait(arg == "started")) std::fprintf(stderr, "nbwait: timed out\n");
+        } else if (verb == "nbkernel") {  // the kernel of the notebook in front: ipython or python, its pid, running or idle, how many cells wait
+            std::fprintf(stderr, "%s\n", nb_kernel_dump().c_str());
         } else if (verb == "nbclick") {  // nbclick:ROW, a click on that row of the notebook's view (as nbview counts them, from 0)
             md_wait();
             float x = 0, y = 0;

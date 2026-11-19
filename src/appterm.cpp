@@ -660,21 +660,18 @@ void App::term_new() { TermDock::enter(*this, true); }
 
 // ---------------------------------------------------------------- the Python console
 
-namespace {
-
-// The Python for a folder: its virtual environment's (IPython, if it has
-// it), uv's for a uv project, else the one on the PATH.
-std::string python_for(const std::string& root) {
+// The Python for a folder: its virtual environment's (for the console,
+// IPython, if it has it), uv's for a uv project, else the one on the PATH.
+// (A notebook's kernel on another machine has the same chosen there: kernel.cpp.)
+std::string App::python_for(const std::string& root, bool console) {
     auto quoted = [](const std::string& path) { return "'" + path + "'"; };  // (a folder's path with no quote in it)
     if (root.find('\'') == std::string::npos) {
-        if (fs_kind(root + "/.venv/bin/ipython") == 1) return quoted(root + "/.venv/bin/ipython");
+        if (console && fs_kind(root + "/.venv/bin/ipython") == 1) return quoted(root + "/.venv/bin/ipython");
         if (fs_kind(root + "/.venv/bin/python") == 1) return quoted(root + "/.venv/bin/python");
     }
     if (fs_kind(root + "/uv.lock") == 1 || fs_kind(root + "/pyproject.toml") == 1) return "uv run python";
     return "python3";
 }
-
-}  // namespace
 
 // The Python console's tab: brought into view in the terminals' split
 // (started there, the first time, with the folder's Python); the keyboard

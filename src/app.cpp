@@ -1952,6 +1952,10 @@ void App::handle(const SDL_Event& e) {
                 md_sync();
                 break;
             }
+            if (e.user.code == 26) {  // a notebook's kernel has said something
+                nb_sync();
+                break;
+            }
             break;
         }
         default:

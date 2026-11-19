@@ -5,7 +5,10 @@
 # LaTeX, an error's traceback in colour), a long one cut; following the
 # script's cursor, a click taking the cursor to a cell; Cmd+Shift+V; a
 # cell changed since it ran; outputs given as a kernel would, shown and
-# saved; and broken notebooks.
+# saved; and broken notebooks. Cells run in the notebook's kernel (plain
+# Python, and IPython where python3 has it): their outputs shown as they
+# come and saved, an error, an interrupt, a restart, run all, a kernel
+# that cannot start, and no process left behind.
 #
 #   tests/notebook.sh path/to/blit            run the cases
 #   tests/notebook.sh path/to/blit --print    show what each case gives
@@ -172,6 +175,197 @@ cat >"$dir/broken.ipynb" <<'EOF'
 EOF
 got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/broken.ipynb;mdwait;imagewait;mdwait;nbview;nbdump" 2>&1 >/dev/null | sed -e 's/^[0-9]*: *//' -e 's/ *$//' | grep . | tr '\n' '|')
 check "broken outputs drawn as far as they go" 'top 0 @1|In [ ]:  a = 1|In [2]:  b|<Figure>|[image/png]|E: v|odd link|[application/vnd.plotly.v1+json]|Out[2]: ┌──────┬───┐|│ wide │   │|├──────┼───┤|│ tall │ x │|└──────┴───┘|In [ ]:  c = 3|odd link|'
+
+# ---------------------------------------------------------------- running cells
+
+# A notebook to run, in a folder whose .venv's Python is python3 without
+# its site-packages: plain Python wherever the tests run (IPython's
+# tracebacks and counts differ; it has cases of its own, below).
+run=$dir/plain
+mkdir -p "$run/.venv/bin"
+printf '#!/bin/sh\nexec python3 -S "$@"\n' >"$run/.venv/bin/python" && chmod +x "$run/.venv/bin/python"
+cat >"$dir/make-run.py" <<'EOF'
+import json, sys
+def src(s): return [l + '\n' for l in s.split('\n')[:-1]] + [s.split('\n')[-1]]
+def code(s): return {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": src(s)}
+cells = [
+    {"cell_type": "markdown", "metadata": {}, "source": src("# Running")},
+    code("x = 21\nprint('half of', x * 2)\nx * 2"),
+    code("import sys\nprint('careful', file=sys.stderr)\n1/0"),
+    code("y = x + 1\ny"),
+]
+json.dump({"cells": cells, "metadata": {"language_info": {"name": "python"}}, "nbformat": 4, "nbformat_minor": 5}, open(sys.argv[1], "w"), indent=1, sort_keys=True)
+EOF
+python3 "$dir/make-run.py" "$run/r.ipynb"
+# run SCRIPT: blit on r.ipynb (made again first), what it says on stderr.
+run() {
+    python3 "$dir/make-run.py" "$run/r.ipynb"
+    got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$run/r.ipynb;mdwait;$1" 2>&1 >/dev/null | sed -e 's/ *$//')
+}
+# outputs FILE: each cell of a saved notebook as "kind count: its outputs' types (a stream's text)".
+outputs() {
+    python3 -c '
+import json, sys
+for c in json.load(open(sys.argv[1]))["cells"]:
+    if c["cell_type"] != "code": continue
+    kinds = [o["output_type"] + ("(" + "".join(o["text"]).strip() + ")" if o["output_type"] == "stream" else "") for o in c["outputs"]]
+    print((str(c["execution_count"]) + ": " + " ".join(kinds)).strip())' "$1"
+}
+
+# Shift+Return: the cell run in the notebook's kernel, the cursor to the
+# next cell; its outputs in the view as they would be in Jupyter, its line
+# after it; the notebook changed, and saved with them.
+run "lua:print(blit.info().modified);vim:7G;key:shift+Return;docdump:0;nbwait;nbkernel;mdwait;nbview;nbdump;lua:print(blit.info().modified);save;lua:print(blit.info().modified)"
+got=$(printf '%s\n' "$got" | grep -v ━ | grep .)
+check "Shift+Return: run in the kernel, the cursor to the next cell, its outputs shown and its count; the notebook changed, and saved" "blit: false
+> |import sys
+python pid $(printf '%s\n' "$got" | sed -n 's/^python pid \([0-9]*\) idle$/\1/p') idle
+top 0 @2
+2:         Running
+4:
+4:
+5: In [1]:  x = 21
+6:          print('half of', x * 2)
+7:          x * 2
+7:
+5:         half of 42
+5: Out[1]: 42
+9:
+9:
+10: In [ ]:  import sys
+11:          print('careful', file=sys.stderr)
+12:          1/0
+12:
+14:
+14:
+15: In [ ]:  y = x + 1
+16:          y
+16:
+7: 42
+blit: true
+blit: false"
+got=$(outputs "$run/r.ipynb")
+check "saved: the cell's outputs and count, as Jupyter writes them" "1: stream(half of 42) execute_result
+None:
+None:"
+
+# An error: its traceback (the cell's own lines, not the kernel's), and
+# with it the cells after it, run with it, do not run (as in Jupyter).
+run "command:Run all the cells;nbwait;nbcells;mdwait;nbview"
+all=$got
+got=$(printf '%s\n' "$all" | grep -E '^[0-9] (code|markdown)')
+check "run all, an error: the cells after it not run" "1 markdown same
+2 code [1] same stream execute_result
+3 code [2] same stream error
+4 code [ ] same"
+got=$(printf '%s\n' "$all" | grep -E '^10: ' | grep -v 'In \[' | sed -e 's/^[0-9]*: *//' | grep . | tr '\n' '|')
+check "an error's traceback, its stderr before it" 'careful|Traceback (most recent call last):|File "<cell 2>", line 3, in <module>|1/0|~^~|ZeroDivisionError: division by zero|'
+# Run all with no error: each in turn, counted in order.
+run "vim:12Gdd;command:Run all the cells;nbwait;nbcells;save"
+check "run all: each cell in turn" "1 markdown same
+2 code [1] same stream execute_result
+3 code [2] same stream
+4 code [3] same execute_result"
+got=$(outputs "$run/r.ipynb")
+check "run all, saved" "1: stream(half of 42) execute_result
+2: stream(careful)
+3: execute_result"
+
+# While a cell runs: In [*], it and those waiting; what it has printed so
+# far shown. An interrupt: KeyboardInterrupt in it, at once, and the cells
+# waiting do not run.
+start=$(date +%s)
+run "vim:7GA<CR>import time<CR>print('before', flush=True)<CR>time.sleep(30)<Esc>;command:Run all the cells;nbwait:started;nbkernel;nbcells;mdwait;nbview;command:Interrupt the kernel;nbwait;nbkernel;nbcells;nbview"
+took=$(($(date +%s) - start))
+all=$got
+got=$(printf '%s\n' "$all" | sed -n '1,5p' | sed -e 's/pid [0-9]*/pid P/')
+check "running: In [*], it and the cells waiting" "python pid P running 2 waiting
+1 markdown same
+2 code [*] same stream
+3 code [*] same
+4 code [*] same"
+got=$(printf '%s\n' "$all" | sed -n '6,$p' | grep -E '^(5: In|5: *before|5: *KeyboardInterrupt|python pid|[0-9] code)' | sed -e 's/pid [0-9]*/pid P/' -e 's/^5: *//' | tr '\n' '|')
+check "interrupted: KeyboardInterrupt in the cell, the cells waiting not run" "In [*]:  x = 21|before|python pid P idle|2 code [1] same stream error|3 code [ ] same|4 code [ ] same|In [1]:  x = 21|before|KeyboardInterrupt|"
+[ "$took" -lt 20 ] && took=soon
+got=$took
+check "interrupted at once, not after the sleep" "soon"
+
+# Restart: what was defined is gone, and the counts start again.
+run "vim:7G;key:shift+Return;nbwait;nbkernel;command:Restart the kernel;nbwait;nbkernel;vim:16G;key:shift+Return;nbwait;nbcells;mdwait;nbview"
+pids=$(printf '%s\n' "$got" | sed -n 's/^python pid \([0-9]*\) idle$/\1/p' | tr '\n' ' ')
+set -- $pids
+[ $# = 2 ] && [ "$1" != "$2" ] && ! kill -0 "$1" 2>/dev/null && pids=new
+all=$got
+got=$pids
+check "restarted: another process, the one before it gone" "new"
+got=$(printf '%s\n' "$all" | grep -E '^[0-9] code|NameError' | sed -e 's/^[0-9]*: *//' | tr '\n' '|')
+check "restarted: x not defined, counted from 1" "2 code [1] same stream execute_result|3 code [ ] same|4 code [1] same error|NameError: name 'x' is not defined|"
+
+# A cell changed after it ran keeps its outputs, said to be of other code,
+# and saving keeps them (as Jupyter does); run again, they are its own.
+run "vim:7G;key:shift+Return;nbwait;vim:7GA + 1<Esc>;nbcells;mdwait;nbview;save;nbcells"
+all=$got
+got=$(printf '%s\n' "$all" | grep -m1 '^2 code')
+check "a cell changed after it ran: its outputs kept, of other code" "2 code [1] changed stream execute_result"
+got=$(printf '%s\n' "$all" | grep -E '^[0-9]+: +edited' | tr -s ' ')
+check "a cell changed after it ran: said in the view" "6: edited print('half of', x * 2)"
+got=$(printf '%s\n' "$all" | grep '^2 code' | tail -1)
+check "a cell changed after it ran: still said once saved" "2 code [1] changed stream execute_result"
+got=$(outputs "$run/r.ipynb" | head -1)
+check "a cell changed after it ran: saved with its outputs" "1: stream(half of 42) execute_result"
+run "vim:7GA + 1<Esc>;vim:7G;key:shift+Return;nbwait;nbcells;nbdump"
+got=$(printf '%s\n' "$got" | grep -E '^2 code|^7: ')
+check "run again: its own outputs" "2 code [1] same stream execute_result
+7: 43"
+
+# No process left behind: the kernel (and what a cell started) ends with
+# the notebook's tab, and with blit.
+cat >"$dir/spawn.txt" <<'EOF'
+import subprocess
+p = subprocess.Popen(['sleep', '60'])
+print('child', p.pid)
+EOF
+spawn=$(tr '\n' '\r' <"$dir/spawn.txt" | sed -e 's/\r/<CR>/g')
+alive() {
+    for p in "$@"; do kill -0 "$p" 2>/dev/null && printf 'alive %s ' "$p"; done
+    printf 'gone'
+}
+run "vim:7GA<CR>$spawn<Esc>;vim:7G;key:shift+Return;nbwait;nbkernel;nbview;save;key:$close;dump;wait:300"
+kernel=$(printf '%s\n' "$got" | sed -n 's/^python pid \([0-9]*\) idle$/\1/p')
+child=$(printf '%s\n' "$got" | sed -n 's/^5: *child \([0-9]*\)$/\1/p')
+[ -n "$kernel" ] && [ -n "$child" ] && got=$(alive "$kernel" "$child")
+check "the notebook closed: its kernel and what it started, gone" "gone"
+run "vim:7GA<CR>$spawn<Esc>;vim:7G;key:shift+Return;nbwait;nbkernel;nbview"
+kernel=$(printf '%s\n' "$got" | sed -n 's/^python pid \([0-9]*\) idle$/\1/p')
+child=$(printf '%s\n' "$got" | sed -n 's/^5: *child \([0-9]*\)$/\1/p')
+sleep 0.3
+[ -n "$kernel" ] && [ -n "$child" ] && got=$(alive "$kernel" "$child")
+check "blit quit: its kernels and what they started, gone" "gone"
+
+# A kernel that cannot run (the folder's Python is not one): said, and the
+# cell is not left waiting.
+mkdir -p "$dir/broken/.venv/bin" && cp "$run/r.ipynb" "$dir/broken/r.ipynb"
+printf '#!/bin/sh\necho "not a Python" >&2\nexit 1\n' >"$dir/broken/.venv/bin/python" && chmod +x "$dir/broken/.venv/bin/python"
+got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/broken/r.ipynb;mdwait;vim:7G;key:shift+Return;nbwait;frame;nbcells;nbkernel" 2>&1 >/dev/null | grep -E '^blit: |^2 code|kernel')
+case $got in
+    "blit: The kernel has stopped: not a Python"*"2 code [ ] same"*"no kernel") got=said ;;
+esac
+check "a kernel that cannot start: said, nothing left waiting" "said"
+
+# With IPython, where python3 has it: its display hooks, magics and tracebacks.
+if python3 -c 'import IPython' 2>/dev/null; then
+    mkdir -p "$dir/ipython" && python3 "$dir/make-run.py" "$dir/ipython/r.ipynb"
+    got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/ipython/r.ipynb;mdwait;vim:7GA<CR>from IPython.display import Markdown, display<CR>display(Markdown('**rich**'))<CR>%time 1<Esc>;command:Run all the cells;nbwait;nbkernel;nbcells;mdwait;mdinks" 2>&1 >/dev/null | sed -e 's/ *$//')
+    all=$got
+    got=$(printf '%s\n' "$all" | sed -e 's/\[#[0-9a-f]*\]//g' | grep -E '^ipython|^[0-9] code|rich|Wall time|ZeroDivisionError|Out\[' | grep -v 'display(' |
+        sed -e 's/pid [0-9]*/pid P/' -e 's/^[0-9]*: *//' -e 's/Wall time: .*/Wall time/' -e 's/^ *//' | tr -s ' ' | tr '\n' '|')
+    check "IPython: display(), a magic, its counts, a traceback" "ipython pid P idle|2 code [1] same stream display_data stream execute_result|3 code [2] same stream error|4 code [ ] same|rich|Wall time|Out[1]: 1|ZeroDivisionError Traceback (most recent call last)|ZeroDivisionError: division by zero|"
+    got=$(printf '%s\n' "$all" | sed -n 's/.*\[#\([0-9a-f]*\)\]ZeroDivisionError\[#\([0-9a-f]*\)\] *Traceback.*/\1 \2/p')
+    [ -n "$got" ] && [ "${got% *}" != "${got#* }" ] && got=coloured
+    check "IPython: its traceback in colour" "coloured"
+else
+    echo "notebook: no IPython for python3 here, its cases skipped"
+fi
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "notebook ok"
 exit $failed

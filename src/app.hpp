@@ -1037,6 +1037,10 @@ private:
     // keeps `title`). Its document's id; 0 if it could not start.
     u64 term_open(const std::string& dir = {}, const std::string& command = {}, const std::string& title = {}, std::string_view hint = {}, bool console = false);
     // The Python console, in the terminals' split (appterm.cpp).
+    // python_for: the Python a folder's code runs with, as words for a
+    // shell (the console's: IPython where the folder's environment has it;
+    // else, and for a notebook's kernel, Python).
+    static std::string python_for(const std::string& root, bool console = true);
     TermView* py_console(bool keyboard);
     void py_send(std::string code);
     void py_flush(TermView& v);
@@ -1052,6 +1056,18 @@ private:
     std::string nb_cells_dump();
     bool nb_model(const Doc& d, u64* gen, std::shared_ptr<const std::vector<NotebookCell>>* cells = nullptr, std::string* lang = nullptr) const;
     bool nb_set_outputs(Doc& d, size_t cell, std::string_view outputs, i64 count);
+    // Its kernel (kernel.hpp): cells run in it, their outputs put in the model.
+    Doc* nb_of(Doc& d);
+    void nb_queue(Doc& d, const std::vector<size_t>& cells);
+    bool nb_start(Doc& d);
+    void nb_next(Doc& d);
+    void nb_run_all();
+    void nb_interrupt();
+    void nb_restart();
+    void nb_sync();
+    void nb_forget(const Doc& d);
+    bool nb_kernel_wait(bool started);
+    std::string nb_kernel_dump();
     // Its view (appmarkdown.cpp): the notebook drawn beside its script.
     void nb_view_toggle();
     void nb_view_close(u64 source);

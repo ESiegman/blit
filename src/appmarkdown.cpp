@@ -457,6 +457,14 @@ void App::md_open() {
     dirty_ = true;
 }
 
+// The notebook a tab is of: itself, or the one a notebook's view shows (null: neither).
+Doc* App::nb_of(Doc& d) {
+    if (d.nb) return &d;
+    if (!d.md || !d.md->notebook) return nullptr;
+    Doc* src = find_doc(d.md->source);
+    return src && src->nb ? src : nullptr;
+}
+
 // Cmd+Shift+V in a notebook (its script, or its view): the view shown
 // beside the script if it is not, else closed.
 void App::nb_view_toggle() {
