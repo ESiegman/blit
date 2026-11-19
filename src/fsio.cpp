@@ -88,8 +88,9 @@ bool fs_read_whole(const std::string& path, std::string* bytes, std::string* why
         }
         return false;
     }
-    if (!fs_read(path, bytes, most)) return *why = fs_kind(path) == 0 ? "there is no such file" : "the file could not be read", false;
-    if (bytes->size() >= most) return *why = too_big, false;
+    // (A byte more than may be, to tell a file of just that size from a larger one.)
+    if (!fs_read(path, bytes, most + 1)) return *why = fs_kind(path) == 0 ? "there is no such file" : "the file could not be read", false;
+    if (bytes->size() > most) return *why = too_big, false;
     return true;
 }
 

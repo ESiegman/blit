@@ -31,6 +31,7 @@
 #include "editor.hpp"
 #include "finder.hpp"
 #include "folds.hpp"
+#include "fsio.hpp"
 #include "snippet.hpp"
 #include "asm.hpp"
 #include "notebook.hpp"
@@ -500,6 +501,11 @@ void history_test() {
     check(history_keep(dir, "/src/a.cpp", "three\n", false, 4000, 3, &err) && history_list(dir).size() == 3 && history_list(dir).back().when_ms == 3000,
           "history: the oldest let go past the most");
     check(history_keep(dir, "/src/a.cpp", "", true, 5000, 3, &err) && history_read(history_list(dir)[0].file, &text) && text.empty(), "history: an empty text");
+    // (And in the same folder, a file read whole: one just as large as it
+    // may be is read, one a byte larger is not.)
+    std::string why;
+    check(fs_write(root + "/eight", "12345678", &err) && fs_read_whole(root + "/eight", &text, &why, 8, {}) && text == "12345678", "read whole: just as large as it may be");
+    check(!fs_read_whole(root + "/eight", &text, &why, 7, {}) && why.starts_with("the file is too big"), "read whole: a byte larger");
     std::filesystem::remove_all(root);
 }
 
