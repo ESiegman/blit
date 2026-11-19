@@ -1713,6 +1713,153 @@ void json_test() {
     check(rp.error.r == 1.0f && rp.error.g == 0 && rp.warning.r == 0xf6 / 255.0f && rp.popup.r == 0x1f / 255.0f, "theme colours for diagnostics and popups");
 }
 
+// What blit reads from files and from other programs, spoiled: cut short,
+// bytes changed to ones that mean something to a parser, pieces doubled
+// and dropped. Nothing is checked but that each reader gets through it
+// (run under AddressSanitizer, that it never reads or writes out of bounds),
+// and that a profile read back from its file can be shown.
+void parsers_test(int seeds) {
+    using namespace std::string_literals;
+    std::vector<std::string> notebooks, jsons, diffs, statuses, logs, blames, asms, junits, perfs, xmls, snippets, markdowns, profiles;
+    Profile original;
+    notebooks.push_back(R"NB({"cells": [{"cell_type": "markdown", "id": "a1", "metadata": {}, "source": ["# Title\n", "\n", "Some text"]},
+ {"cell_type": "code", "execution_count": 3, "id": "b2", "metadata": {"tags": []}, "outputs": [{"name": "stdout", "output_type": "stream", "text": ["first\n", "6.5\n"]},
+ {"data": {"image/png": "iVBOR", "text/plain": ["<Figure>"]}, "metadata": {}, "output_type": "display_data"}], "source": ["x = 13 / 2\n", "print(x)"]},
+ {"cell_type": "code", "execution_count": null, "id": "c3", "metadata": {}, "outputs": [{"ename": "E", "evalue": "v", "output_type": "error", "traceback": ["t"]}], "source": "plot()"}],
+ "metadata": {"kernelspec": {"display_name": "Python 3", "name": "python3"}, "language_info": {"version": "3.12.1"}}, "nbformat": 4, "nbformat_minor": 5}
+)NB");
+    jsons.push_back(R"({"a": 1, "b": [true, false, null, -2.5e2, "x\ty"], "s": "caf\u00e9 \ud83d\ude00 \ud800 x \"q\" \\ \/", "o": {"k": {"deep": [1, [2, [3]]]}}, "e": [], "eo": {}})");
+    jsons.push_back(R"({"kind":"ctestInfo","tests":[{"name":"Math.Adds","command":["/b/t","--gtest_filter=Math.Adds"],"properties":[{"name":"WORKING_DIRECTORY","value":"/b"}]},{"name":"plain","command":["/b/p"]}]})");
+    jsons.push_back(R"({"format_version":"2","current_working_directory":"/b","files":[{"file":"../p/a.cpp","lines":[{"line_number":3,"count":2},{"line_number":4,"count":0}]}]})");
+    jsons.push_back(R"({"meta":{},"files":{"src/m.py":{"executed_lines":[1,2],"missing_lines":[5]}}})");
+    jsons.push_back(R"([{"directory": "/b", "command": "cc -O2 -DX=\"a b\" -c ../src/sum.c -o sum.o -MD -MF sum.d", "file": "/src/sum.c"}, {"directory": "/b", "arguments": ["c++", "-c", "x.cpp"], "file": "x.cpp"}])");
+    diffs.push_back("diff --git a/a.txt b/a.txt\nindex 1111111..2222222 100644\n--- a/a.txt\n+++ b/a.txt\n@@ -1,4 +1,5 @@\n one\n-two\n+TWO\n+2.5\n three\n\tfour\n"
+                    "@@ -10 +11,0 @@ int f()\n-ten\n\\ No newline at end of file\ndiff --git a/b.bin b/b.bin\nBinary files a/b.bin and b/b.bin differ\n"
+                    "diff --git a/c b/d\nsimilarity index 90%\nrename from c\nrename to d\n@@ -2,2 +2,2 @@\n x\n-y\n+日本\n");
+    statuses.push_back("# branch.oid 0123456789abcdef0123456789abcdef01234567\0# branch.head main\0# branch.upstream origin/main\0# branch.ab +2 -1\0"
+                       "1 .M N... 100644 100644 100644 aaaa bbbb src/a file.cpp\0"
+                       "2 R. N... 100644 100644 100644 aaaa bbbb R100 after.txt\0before.txt\0"
+                       "u UU N... 100644 100644 100644 100644 aaaa bbbb cccc both.txt\0? notes.txt\0"s);
+    logs.push_back("abc1234\x1f" "Ada\x1f" "now\x1f" "Merge\x1f" "abc1234ffff\x1f" "p1 p2\x1f" "HEAD -> main, tag: v1\x1f" "1700000000\ndef5678\x1f" "Bo\x1f" "3 weeks ago\x1f" "Start\n");
+    blames.push_back("0123456789abcdef0123456789abcdef01234567 1 1 2\nauthor Ada\nauthor-time 1700000000\nsummary Start\nfilename a.txt\n\tone\n"
+                     "0123456789abcdef0123456789abcdef01234567 2 2\n\ttwo\n0000000000000000000000000000000000000000 3 3 1\nauthor Not Committed Yet\nsummary Version of a.txt\n\tthree\n");
+    asms.push_back("\t.file\t\"sum.c\"\n\t.text\n\t.file 1 \"sum.c\"\n\t.globl\tsum\nsum:\n.LFB0:\n\t.loc 1 2 30\n\tmovl\t$0, %eax\t# s\n.L3:\n\t.file 2 \"inc.h\"\n\t.loc 2 7 1\n\tret\n"
+                   "\t.section\t.debug_info,\"\",@progbits\n\t.text\n\t.file\t0 \"/src\" \"sum.c\" md5 0x12\n_sum: ; @sum\n\t.loc\t0 4 5 prologue_end\n\tldr\tw8, [sp, #12]\n");
+    junits.push_back(R"(<?xml version="1.0"?><testsuite><testcase name="Math.Adds" classname="Math.Adds" time="0.25"/><testcase name="plain" time="1"><failure message="x &lt; 2 &#65; &amp;">trace</failure></testcase><testcase name="s"><skipped/></testcase><![CDATA[x]]><!-- c --></testsuite>)");
+    snippets.push_back("for (${1:i} = 0; ${1:i} < ${2:n}; ++${1:i}) {$0} ${3:call(${4:arg})} ${5|left,right|} \\$1 \\${2} \\\\ ${6:a\\}b} $TM_FILENAME ${USER:nobody} ${TM_SELECTED_TEXT/(.*)/$1/}");
+    markdowns.push_back("### Title\n\nSome **bold** and `code` and a [link](http://x) \\_ok\\_ &lt;T&gt; &#x41;\n\n```cpp\nint  x;\n\ty();\n```\n---\n- a\n  1. b\n> q\n| a | b |\n|---|---|\n");
+#if defined(BLIT_PROFILE_DATA)
+    auto slurp = [](const char* name, size_t most) {
+        std::string s;
+        if (FILE* f = std::fopen((std::string(BLIT_PROFILE_DATA) + "/" + name).c_str(), "rb")) {
+            s.resize(most);
+            s.resize(std::fread(s.data(), 1, most, f));
+            std::fclose(f);
+        }
+        return s;
+    };
+    perfs.push_back(slurp("perf-script.txt", 6000));
+    perfs.push_back(slurp("perf-page-faults.txt", 6000));
+    {
+        std::string err;
+        if (parse_perf_script(slurp("perf-script.txt", 20000), "", &original, &err)) profiles.push_back(original.to_json());
+    }
+    xmls.push_back(slurp("xctrace-syscall.xml", 12500));
+    xmls.push_back(slurp("xctrace-time-profile.xml", 12000));
+#endif
+    static const char kMeaningful[] = "{}[]\":,\\\n\0<>&;#-+0123456789 \t\x1f@$|/.*eE'u";
+    auto spoil = [](std::string s) {
+        for (int n = 1 + static_cast<int>(rnd(4)); n-- > 0 && !s.empty();) {
+            const size_t at = rnd(s.size());
+            switch (rnd(6)) {
+                case 0: s.resize(at); break;
+                case 1: s[at] = kMeaningful[rnd(sizeof kMeaningful - 1)]; break;
+                case 2: s[at] = static_cast<char>(rnd(256)); break;
+                case 3: s.insert(at, s.substr(rnd(s.size()), rnd(64))); break;
+                case 4: s.erase(at, rnd(64)); break;
+                default: s.insert(at, 1, kMeaningful[rnd(sizeof kMeaningful - 1)]); break;
+            }
+        }
+        return s;
+    };
+    const SnippetVars vars = [](std::string_view name, std::string* v) {
+        *v = std::string(name) + "!";
+        return name != "USER";
+    };
+    rng.seed(4242);
+    u64 seen = 0;  // (what was read, used so that none of it is thrown away unread)
+    for (int round = 0; round < seeds * 4; ++round) {
+        for (const std::string& t : notebooks) {
+            const std::string s = spoil(t);
+            std::vector<NotebookCell> cells;
+            std::string script;
+            if (notebook_read(s, &cells, &script)) seen += cells.size() + notebook_cell_lines(script).size();
+            seen += notebook_write(s, spoil(script.empty() ? "# %%\nx = 1\n\n# %% [markdown]\n# hi\n" : script)).size();
+            seen += notebook_cells(spoil("import os\n\n# %%\nprint(1)\n# %% [markdown]\n# a\n")).size();
+        }
+        for (const std::string& t : jsons) {
+            const std::string s = spoil(t);
+            json::Doc d;
+            if (d.parse(s)) {
+                std::string back;
+                json::dump(back, d.root());
+                seen += back.size();
+            }
+            seen += parse_ctest_json(s, "/p/build").size() + parse_gcov_json(s, "/p").size() + parse_coverage_py(s, "/p").size();
+            std::vector<std::string> argv;
+            std::string dir;
+            seen += asm_command(s, "/src/sum.c", &argv, &dir);
+        }
+        for (const std::string& t : diffs) {
+            const std::string s = spoil(t);
+            const GitDiff diff = parse_diff(s);
+            std::vector<u8> chosen(diff.lines());
+            for (u8& c : chosen) c = static_cast<u8>(rnd(2));
+            seen += diff_patch(s, diff, chosen, rnd(2)).size();
+            GitDiffView view;
+            diff_view(s, diff, 1 + static_cast<u32>(rnd(120)), 4, &view);
+            seen += view.text.size();
+            for (u32 line = 0; line <= diff.lines(); ++line) seen += static_cast<u64>(diff.hunk_at(line) + 1);
+        }
+        for (const std::string& t : statuses) seen += parse_status(spoil(t)).entries.size();
+        for (const std::string& t : logs) seen += parse_log(spoil(t)).size() + parse_branches(spoil(t)).size() + parse_stashes(spoil(t)).size();
+        for (const std::string& t : blames) {
+            GitBlame b;
+            seen += parse_blame(spoil(t), &b) + b.lines.size();
+        }
+        for (const std::string& t : asms) seen += read_asm(spoil(t), "/src/sum.c").text.size();
+        for (const std::string& t : junits) seen += parse_junit(spoil(t)).size() + parse_pytest_collect(spoil(t)).size();
+        for (const std::string& t : snippets) seen += parse_snippet(spoil(t), vars).text.size();
+        for (const std::string& t : markdowns) {
+            std::vector<InfoLine> lines;
+            Lsp::markdown_lines(spoil(t), rnd(2), &lines);
+            seen += lines.size();
+        }
+        for (const std::string& t : perfs) {
+            Profile p;
+            std::string err;
+            seen += parse_perf_script(spoil(t), "", &p, &err) + parse_perf_script(perf_waits_as_samples(spoil(t)), "", &p, &err);
+        }
+        for (const std::string& t : xmls) {
+            Profile p;
+            std::string err;
+            seen += parse_xctrace(spoil(t), "", &p, &err);
+        }
+        for (const std::string& t : profiles) {
+            // (A kept profile read back: the views work on it as on a new one.)
+            Profile p;
+            std::string err;
+            if (!Profile::from_json(spoil(t), &p, &err)) continue;
+            std::vector<u64> self, total;
+            p.weights_under(0, &self, &total);
+            for (const ProfileThread& th : p.by_thread) p.weights_under(th.root, &self, &total);
+            const Profile up = invert_profile(p), part = narrow_profile(p, 0, p.seconds / 2);
+            seen += p.by_self().size() + up.nodes.size() + part.nodes.size() + diff_profiles(original, p).rows.size() + diff_profiles(p, part).rows.size();
+        }
+    }
+    if (seen == 0) fail("parsers: nothing read", 0, 0);
+}
+
 // The side panel's file tree: reading folders, and new, rename and trash.
 void tree_test() {
     auto check = [](bool ok, const char* what) {
@@ -5482,6 +5629,7 @@ int main(int argc, char** argv) {
     tree_test();
     instance_test();
     json_test();
+    parsers_test(seeds);
     lsp_test();
     styles_test();
     edge_test();
