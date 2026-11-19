@@ -188,6 +188,23 @@ void Dap::Link::read_loop(std::stop_token stop) {
     }
     std::string in_text;
     char buf[65536];
+    bool any = false;
+    // Text that is not a message is the program's own (gdb lets the
+    // program write where its messages go): it is told as output.
+    auto program_wrote = [&](std::string text) {
+        std::string json = "{\"type\":\"event\",\"event\":\"output\",\"body\":{\"category\":\"stdout\",\"output\":";
+        json::quote(json, text);
+        json += "}}";
+        auto doc = std::make_shared<json::Doc>();
+        if (!doc->parse(std::move(json))) return;
+        Message m;
+        m.type = "event";
+        m.name = "output";
+        m.doc = std::move(doc);
+        std::lock_guard lock(mu);
+        queue.push_back(std::move(m));
+        any = true;
+    };
     // (Its output, its errors, the wake, and its input while something waits
     // to be written: a descriptor of -1 is not looked at.)
     pollfd fds[4] = {{out, POLLIN, 0}, {err, POLLIN, 0}, {wake_r, POLLIN, 0}, {-1, POLLOUT, 0}};
@@ -221,23 +238,7 @@ void Dap::Link::read_loop(std::stop_token stop) {
         if (k == 0 || (k < 0 && errno != EINTR && errno != EAGAIN)) break;
         if (k < 0) continue;
         in_text.append(buf, static_cast<size_t>(k));
-        bool any = false;
-        // Text that is not a message is the program's own (gdb lets the
-        // program write where its messages go): it is told as output.
-        auto program_wrote = [&](std::string text) {
-            std::string json = "{\"type\":\"event\",\"event\":\"output\",\"body\":{\"category\":\"stdout\",\"output\":";
-            json::quote(json, text);
-            json += "}}";
-            auto doc = std::make_shared<json::Doc>();
-            if (!doc->parse(std::move(json))) return;
-            Message m;
-            m.type = "event";
-            m.name = "output";
-            m.doc = std::move(doc);
-            std::lock_guard lock(mu);
-            queue.push_back(std::move(m));
-            any = true;
-        };
+        any = false;
         for (;;) {
             const size_t at = in_text.find("Content-Length:");
             if (at == std::string::npos) {  // (no header yet: whole lines are the program's; what follows the last may be the start of one)
@@ -279,6 +280,9 @@ void Dap::Link::read_loop(std::stop_token stop) {
         }
         if (any && notify) notify();
     }
+    // What the program wrote last, with no line's end after it, is its
+    // output too once its output has ended (but not a message cut short).
+    if (!stop.stop_requested() && !in_text.empty() && in_text.find("Content-Length:") == std::string::npos) program_wrote(std::move(in_text));
     ended = true;
     if (notify) notify();
 }

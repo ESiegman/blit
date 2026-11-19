@@ -3213,6 +3213,23 @@ void dap_test() {
           "dap: messages, and the program's lines between them");
     dap.stop();
 
+    // What the program wrote last, with no line's end, as its output ends.
+    {
+        Dap last;
+        check(last.start({"/bin/sh", "-c", "printf 'the end'"}, "", {}, &err), "dap: an adapter that ends at once starts");
+        std::string out;
+        const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+        bool ended = false;
+        while (!ended && std::chrono::steady_clock::now() < end) {
+            ended = last.ended();  // (before the poll: what came before the end is in it)
+            for (const Dap::Message& m : last.poll())
+                if (m.name == "output") out += m.body()["output"].str();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        check(ended && out == "the end", "dap: the program's last words, with no line's end, as its output ends");
+        last.stop();
+    }
+
     // An adapter that takes none of what it is sent for a while (far more
     // than a pipe holds): sending waits for none of it, and all of it comes
     // to it, in order, once it reads.
