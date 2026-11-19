@@ -542,6 +542,7 @@ void App::script_restart() {
     }
     // Saved in blit: what came of it. (A line that is wrong has said so, with its number.)
     if (script_ && std::exchange(script_->announce, false) && script_->errors == errors) notify("Settings applied");
+    settings_relay();  // (the settings screen shows what they are now)
 }
 
 // A setting from a script: checked, kept (it is made again on top of the

@@ -126,6 +126,8 @@ void watch_quit_signals() {}
 
 }  // namespace
 
+std::string_view init_template() { return {kInitTemplate, sizeof kInitTemplate - 1}; }
+
 // ---------------------------------------------------------------- setup
 
 int App::run(const Options& opt) {
@@ -2114,7 +2116,7 @@ void App::on_key(const SDL_KeyboardEvent& k) {
                 tab_new();
                 return;
             case SDLK_Q: request_quit(); return;
-            case SDLK_COMMA: open_config(); return;
+            case SDLK_COMMA: settings_open(); return;
             case SDLK_EQUALS: zoom(1); return;
             case SDLK_MINUS: zoom(-1); return;
             case SDLK_0: zoom(0); return;

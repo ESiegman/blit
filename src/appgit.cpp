@@ -983,6 +983,7 @@ bool App::git_view_key(const SDL_KeyboardEvent& k) {
             default: o.open = false; break;  // (any other key: the box goes, and the key does what it does)
         }
     }
+    if (!find_open_ && !panel_has_keyboard() && pane_->doc->settings) return settings_key(k);
     if (cfg_.git && !find_open_ && !panel_has_keyboard() && pane_->doc->merge) return git_merge_key(k);
     if (cfg_.git && !find_open_ && !panel_has_keyboard() && pane_->doc->rebase) return git_rebase_key(k);
     if (!cfg_.git || find_open_ || panel_has_keyboard() || !pane_->doc->gitview) return false;

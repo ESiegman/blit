@@ -976,6 +976,18 @@ void App::run_script(const char* script) {
             else std::fprintf(stderr, "took %llu ms (over %llu)\n", static_cast<unsigned long long>(ms), static_cast<unsigned long long>(most));
         } else if (verb == "alive") {
             std::fprintf(stderr, "%s\n", running_ ? "running" : "quitting");
+        } else if (verb == "settingsdump") {
+            std::fprintf(stderr, "%s\n", settings_dump().c_str());
+        } else if (verb == "settingsopen") {  // settingsopen:KEY, the cursor on that setting's line
+            settings_open();
+            const Doc& d = *pane_->doc;
+            for (u64 l = 0; !arg.empty() && d.settings && l < d.ed.buf.line_count(); ++l) {
+                const u64 a = d.ed.buf.line_start(l);
+                if (d.ed.buf.text(a, std::min<u64>(d.ed.line_end(l) - a, 200)).starts_with("  " + arg + " ")) {
+                    pane_->doc->ed.move_to(a, false);
+                    break;
+                }
+            }
         } else if (verb == "treedump") {
             std::fprintf(stderr, "%s\n", tree_dump().c_str());
         } else if (verb == "watchwait") {  // something changed on disk: heard (3 s at most), the tree read again, the open files looked at

@@ -215,7 +215,8 @@ void App::commands_create() {
     own("Save as\xE2\x80\xA6", {key(SDLK_S, kP | kS)}, [this] { save_as(); });
     own("Save all", {key(SDLK_S, kP | kA)}, [this] { save_all(); });
     sent("Close the tab", also({key(SDLK_W, kP)}, {key(SDLK_F4, kP)}));
-    sent("Open Settings (init.lua)", {key(SDLK_COMMA, kP)});
+    sent("Settings", {key(SDLK_COMMA, kP)});
+    own("Open init.lua", {}, [this] { open_config(); });
     own("Choose a theme\xE2\x80\xA6", {}, [this] { theme_choose(); });
     sent("Quit", {key(SDLK_Q, kP)});
     // Finding.

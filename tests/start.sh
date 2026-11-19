@@ -67,7 +67,7 @@ check "a file opened from the box: the start screen is gone" 'notes.txt | Ln 1, 
 cp "$dir/init.lua" "$dir/settings.lua"
 INIT="$dir/settings.lua"
 run "text:c;frame;dump"
-check "c: the settings file" '>[settings.lua*]'
+check "c: the settings screen, in place of the empty tab" '>[Settings*]'
 INIT="$dir/modal.lua"
 run "text:n;text:ihello;key:Escape;frame;vimdump"
 check "with Vim: n, then Vim's keys" 'NORMAL |  | 1:5 | hello'

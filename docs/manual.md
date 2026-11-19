@@ -132,7 +132,7 @@ icons). Each has a key, in one column at the left, and its shortcut at the
 right: `n` a new file (or Cmd+N), `p` a new project (the New project tab:
 see [New projects](#new-projects)), `o` a file opened by its path, `f` Go
 to file, `s` Search in files, `d` a folder to work in, `r` a server to
-connect to, `c` the settings (init.lua), `q` quit, and `1` to `9` what was
+connect to, `c` the settings, `q` quit, and `1` to `9` what was
 opened lately (a folder becomes the project folder and the side panel shows
 it). The arrows (or `j` and `k`) and Enter, or the mouse, do the same; Esc
 leaves an empty file to type into. The status bar shows the project folder
@@ -227,7 +227,7 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | Blame column on or off | Cmd+Option+B | Ctrl+Alt+B |
 | Back / forward through the places jumps started from (Go to file, Search in files, a problem, a definition or any place a name leads, Vim's G, a search, a mark) | Ctrl+- / Ctrl+Shift+- | Alt+Left / Alt+Right |
 | Font size | Cmd+= / Cmd+- / Cmd+0 | Ctrl+= / Ctrl+- / Ctrl+0 |
-| Open init.lua (the settings) | Cmd+, | Ctrl+, |
+| The settings | Cmd+, | Ctrl+, |
 | Quit | Cmd+Q | Ctrl+Q |
 
 The [side panel](#side-panel):
@@ -1104,12 +1104,24 @@ There is no settings file: settings are made in `init.lua`
 (`~/.config/blit/init.lua`; `$XDG_CONFIG_HOME` is honoured, and
 `--config FILE` or `$BLIT_INIT` names another), with `blit.opt` and the
 same names throughout. Without an `init.lua` everything is at its default.
-Cmd+, opens it in blit, making it the first time from a template in which
+"Open init.lua" opens it in blit, making it the first time from a template in which
 every setting is listed with its default and commented out. Saving it in
 blit applies it at once, and the bottom line says "Settings applied", or
 what is wrong and on which line (`init.lua:12: unknown setting
 editor.tabbar`); edits made in another program apply the next time a blit
 window gets focus.
+
+Cmd+, (Ctrl+,) opens the settings screen: a tab of every setting, under
+the template's headings, each with its value (in green where it is not the
+default) and what it does. Enter (or Space) changes the one under the
+cursor: a switch flips, a theme is picked from a list, anything else is
+typed (a list's items with commas between). Delete puts it back to its
+default, and O opens init.lua at its line. A change is written into
+init.lua as a line, over the line that sets it, else over the template's
+commented-out one (its comment kept), else at the end, and applied at
+once; Delete comments the line out. With init.lua open and changes in it
+not saved, the line is put there instead, to be saved with them. init.lua
+stays what counts: the screen only reads and writes it.
 
 ```lua
 blit.opt.font.family = "Victor Mono"   -- a family name, or the path of a font file

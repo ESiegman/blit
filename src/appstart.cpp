@@ -454,7 +454,7 @@ void App::start_do(size_t i) {
             s.folder_asked = true;
             find_open(kFindFolder, "ssh://");
             break;
-        case kSettings: open_config(); break;
+        case kSettings: settings_open(); break;
         case kQuit: request_quit(); break;
         case kRecent:
             if (it.recent.dir) {

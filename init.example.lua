@@ -153,6 +153,7 @@
 -- the files in the working directory.
 -- blit.opt.panel.open = false     -- true: show it when blit starts
 -- blit.opt.panel.width = 32       -- in characters
+-- blit.opt.panel.watch = true      -- what other programs change in the working folder shown at once
 
 ---------------------------------------------------------------- editing
 -- blit.opt.editor.modal = true          -- Vim's modes and keys (Normal, Insert, Visual, the : line); false: typing types
@@ -193,6 +194,7 @@
 -- blit.opt.look.animations = true     -- popups fade in, the scroll thumb fades away when left alone
 -- blit.opt.look.cursor_glide_ms = 60  -- how long the cursor takes from one place to the next; 0 = it jumps
 -- blit.opt.look.dim_inactive = 0      -- how far a split without the keyboard is dimmed toward the background (0 to 0.6)
+-- blit.opt.look.presentation_size = 0 -- the text's size in points in presentation mode; 0 = 1.6 times what it is
 
 ---------------------------------------------------------------- the window
 -- blit.opt.window.width = 1100    -- size of a new window, in points

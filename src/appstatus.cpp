@@ -494,7 +494,7 @@ bool App::status_mouse_down(const SDL_MouseButtonEvent& b) {
                 if (s.action == kGitTab) panel_show_git();
                 else if (s.action == kProblemsTab) panel_show_problems();
                 else if (s.action == kReconnect) remote_reconnect();
-                else if (s.action == kSettings) open_config();
+                else if (s.action == kSettings) settings_open();
                 else if (s.action == kGoLine) find_open(kFindNames, ":");  // (Go to file's ":120")
                 else if (s.action == kIndent) status_pick(0);
                 else if (s.action == kLineEnds) status_pick(1);

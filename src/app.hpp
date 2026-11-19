@@ -89,6 +89,7 @@ struct AsmTab;       // a file's assembly's tab (appasm.cpp)
 struct NotebookTab;  // a Jupyter notebook's tab (appnotebook.cpp)
 struct MergeView;    // a merge tab (appgit.cpp)
 struct RebaseView;   // an interactive rebase's tab (appgit.cpp)
+struct SettingsView;  // the settings screen's tab (appsettings.cpp)
 struct ImageView;    // an image file's tab (appimage.cpp)
 struct PdfView;      // a PDF's tab (apppdf.cpp)
 struct RemoteEntry;  // a folder's entry on another machine (remote.hpp)
@@ -127,6 +128,9 @@ struct PictureInfo {
 };
 
 class App;
+
+// What a new init.lua starts as: every setting, commented out (init.example.lua).
+std::string_view init_template();
 struct Doc;
 
 // Moves the places the other splits keep in a document two or more of them
@@ -200,6 +204,7 @@ struct Doc {
     std::shared_ptr<MdView> md;      // a Markdown preview's tab: drawn over it too (appmarkdown.cpp)
     std::shared_ptr<AsmTab> asmv;    // a file's assembly's tab (appasm.cpp)
     std::shared_ptr<NotebookTab> nb;  // a notebook's: what it was, its outputs (appnotebook.cpp)
+    std::shared_ptr<SettingsView> settings;  // the settings screen's: its settings, a line each (appsettings.cpp)
     std::shared_ptr<struct Minimap> minimap;  // its minimap's tiles (appminimap.cpp)
     u64 hl_gen = 0;  // counts up as its syntax colours change
     signed char wrap_choice = -1;  // its own soft wrap (Toggle soft wrap): 1 on, 0 off, -1 as the settings say
@@ -621,6 +626,16 @@ private:
     void pr_marks(FrameDesc& fd);
     std::string pr_dump();
     std::shared_ptr<struct PrUi> pr_;
+    // The settings screen (appsettings.cpp).
+    void settings_open();
+    void settings_lay(Doc& d);
+    void settings_relay();
+    bool settings_key(const SDL_KeyboardEvent& k);
+    void settings_change(const std::string& key);
+    void settings_write(const std::string& key, const ConfigValue* v);
+    std::string settings_key_here() const;
+    std::string settings_dump();
+    static std::string init_with(std::string text, const std::string& key, const std::string& line);
     // The disk watched (apppanel.cpp): the tree reads again what changed.
     void watch_follow();
     void watch_take();
