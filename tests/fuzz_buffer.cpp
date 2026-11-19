@@ -2645,6 +2645,8 @@ void sequence_test() {
         {"sequenceDiagram\n else\n", "line 2: else outside a block"},
         {"sequenceDiagram\n Note A: x\n", "line 2: a note goes left of, right of or over someone"},
         {"sequenceDiagram\n ->>B: x\n", "line 2: a message from whom to whom?"},
+        {"sequenceDiagram\n A->>B: hi\n Note over A,: x\n", "line 3: a note over whom?"},
+        {"sequenceDiagram\n Note right of A, : x\n", "line 2: a note over whom?"},
         {"pie\n \"a\" : -1\n", "line 2: a slice is \"name\" : a number, not less than 0"},
         {"pie\n \"a\" : nan\n", "line 2: a slice is \"name\" : a number, not less than 0"},
         {"pie\n \"a\" : 0\n", "no slices"},

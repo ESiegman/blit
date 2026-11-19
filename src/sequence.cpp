@@ -289,6 +289,7 @@ bool Sequence::parse(const std::vector<std::string>& st, std::string* err) {
             else return fail(k, "a note goes left of, right of or over someone");
             const size_t comma = who.find(',');
             if (diagram_trim(who.substr(0, comma)).empty()) return fail(k, "a note over whom?");
+            if (comma != std::string_view::npos && diagram_trim(who.substr(comma + 1)).empty()) return fail(k, "a note over whom?");  // (A, and no one after it)
             e.a = part(who.substr(0, comma));
             e.b = comma == std::string_view::npos ? e.a : part(who.substr(comma + 1));
             if (e.a > e.b) std::swap(e.a, e.b);
