@@ -321,6 +321,7 @@ struct App::MdWorker {
     u64 asked = 0;
     std::atomic<u64> laid = 0;  // how many it has laid out (for the tests: not one again when it has not changed)
     DiagramFont font;
+    std::stop_token stop;  // (the worker's: a diagram being laid out gives up when blit quits)
     std::jthread worker;
 
     MdWorker() {
@@ -362,10 +363,11 @@ struct App::MdWorker {
         st.size = j.font_px / density;
         st.room = room_px / density;
         st.palette = j.palette;
+        st.stop = stop;
         Drawing d;
         auto pic = std::make_shared<MdDiagramPicture>();
         const u8 made = diagram_make(src, st, &d, &pic->error);
-        if (made == kDiagramNone) {
+        if (made == kDiagramNone || stop.stop_requested()) {  // (blit is quitting: nothing kept)
             *cells = true;
             return nullptr;
         }
@@ -477,6 +479,7 @@ struct App::MdWorker {
         return d;
     }
     void run(std::stop_token st) {
+        stop = st;
         for (;;) {
             Job j;
             {

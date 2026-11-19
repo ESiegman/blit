@@ -190,6 +190,9 @@ check "lines of half a megabyte full of marks that close nothing: drawn, in time
 awk 'BEGIN { print "```mermaid"; print "flowchart TD"; for (i = 0; i < 800; i++) print "subgraph s" i; print "x --> y"; for (i = 0; i < 800; i++) print "end"; print "```" }' >"$dir/nested.md"
 got=$(limit 20 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mdwait;mddump" "$dir/nested.md" 2>&1 >/dev/null | grep -c 'subgraphs nested too deeply')
 check "subgraphs nested 800 deep: said to be too deep (laid out, they ran a Mac's preview thread out of stack)" "1"
+awk 'BEGIN { print "```mermaid"; print "graph TD"; for (i = 0; i < 1399; i++) print "a" i " --> a" i + 1; for (i = 0; i < 1500; i++) print "a0 --> a" 1399 - i % 50; print "```" }' >"$dir/long.md"
+got=$(limit 20 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mdwait;mddump" "$dir/long.md" 2>&1 >/dev/null | grep -c 'too large to draw')
+check "edges across thousands of ranks: too large to draw, said at once (they took seconds and gigabytes)" "1"
 printf '<!--\nhidden\n\nstill hidden\n-->\nshown\n\n```mermaid\npie title Pets\n  "Dogs" : 3\n  "Cats" : 1\n```\n' >"$dir/odd.md"
 run 1600x1100 "$dir/odd.md" ""
 got=$(printf '%s\n' "$got" | grep -c 'hidden'),$(printf '%s\n' "$got" | grep -c 'shown'),$(printf '%s\n' "$got" | grep -c 'Pets')

@@ -2361,6 +2361,22 @@ void diagram_test() {
         for (int k = 0; k < 400; ++k) big += " n" + std::to_string(k) + " --> n" + std::to_string((k * 7 + 3) % 400) + "\n";
         const u64 t0 = now_ns();
         check(diagram_make(big, st, &d, &err) == kDiagramDrawn && now_ns() - t0 < 20'000'000'000ull, "diagram: 400 nodes in a tangle, laid out in time");
+        // An edge across many ranks keeps a point at each: a chain of 1,400
+        // with 1,500 edges across all of it made millions of them (seconds,
+        // and gigabytes). Too large to draw, said at once.
+        std::string longs = "graph TD\n";
+        for (int k = 0; k < 1399; ++k) longs += " a" + std::to_string(k) + " --> a" + std::to_string(k + 1) + "\n";
+        for (int k = 0; k < 1500; ++k) longs += " a0 --> a" + std::to_string(1399 - k % 50) + "\n";
+        const u64 t1 = now_ns();
+        check(diagram_make(longs, st, &d, &err) == kDiagramError && err == "too large to draw" && now_ns() - t1 < 5'000'000'000ull,
+              "diagram: a long chain with long edges across it, too large to draw (" + err + ")");
+        // Asked to stop (blit quitting while the preview's thread lays one
+        // out): it gives up.
+        std::stop_source quit;
+        quit.request_stop();
+        DiagramStyle stopping = st;
+        stopping.stop = quit.get_token();
+        check(diagram_make(big, stopping, &d, &err) == kDiagramError && err == "stopped", "diagram: asked to stop, it stops");
     }
 }
 

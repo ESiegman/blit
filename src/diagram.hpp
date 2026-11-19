@@ -13,6 +13,7 @@
 // Mermaid source. diagram_make() picks the kind; diagram_paint() draws.
 #include <map>
 #include <memory>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -127,6 +128,7 @@ struct DiagramStyle {
     float size = 13;      // the text's size, points
     float room = 600;     // how wide it may be (it is made smaller to fit, if it is wider)
     DiagramPalette palette;
+    std::stop_token stop;  // (asked to stop: it gives up, "stopped")
     float unit() const { return size / 16; }  // (Mermaid's sizes are for 16 pixel text: in proportion)
 };
 

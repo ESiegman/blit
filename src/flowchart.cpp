@@ -27,6 +27,10 @@ constexpr size_t kMostNodes = 1500, kMostEdges = 3000;
 // stack is the system's (512 KB on a Mac). Deeper than any diagram a person
 // draws.
 constexpr int kDeepest = 32;
+// Points laid out at most (nodes, subgraphs, and the points edges keep
+// between ranks, in every level): an edge across many ranks keeps one at
+// each, and a few thousand long ones made millions.
+constexpr long long kMostPoints = 100'000;
 
 // What an edge joins: a node (from 0), or a subgraph (cluster c is -(c + 2)).
 int as_cluster(int c) { return -(c + 2); }
@@ -791,6 +795,14 @@ struct Layout {
     float nodesep, ranksep, edgesep, pad, title_h, px, py, wrap;
     std::vector<std::vector<Port>> ports;  // each subgraph's
     std::vector<int> depth;                // each subgraph's
+    long long points = 0;                  // laid out so far, in every level
+    std::string gave_up;                   // why it stopped, if it did
+
+    // Asked to stop (blit is quitting): the levels laid out give up.
+    bool stopped() {
+        if (gave_up.empty() && style.stop.stop_requested()) gave_up = "stopped";
+        return !gave_up.empty();
+    }
 
     Layout(Graph& graph, const DiagramStyle& s, const DiagramFont& f) : g(graph), style(s), font(f) {
         u = s.unit();
@@ -992,6 +1004,7 @@ struct Layout {
             }
             const int passes = n > 400 ? 2 : 8;
             for (int pass = 0; pass < passes; ++pass) {
+                if (stopped()) return {};
                 bool moved = false;
                 for (int t = static_cast<int>(topo.size()) - 1; t >= 0; --t) {
                     const int v = topo[static_cast<size_t>(t)];
@@ -1044,6 +1057,15 @@ struct Layout {
 
         // Chains: an edge across more than one rank goes through a point at
         // each between (its label one of them, in the middle).
+        {
+            long long between = 0;
+            for (const LEdge& e : le) between += std::max(0, ln[static_cast<size_t>(e.v)].rank - ln[static_cast<size_t>(e.u)].rank - 1);
+            points += static_cast<long long>(ln.size()) + between;
+            if (points > kMostPoints) {
+                gave_up = "too large to draw";
+                return {};
+            }
+        }
         std::vector<std::vector<int>> chain(le.size());
         for (size_t k = 0; k < le.size(); ++k) {
             const LEdge& e = le[k];
@@ -1187,6 +1209,7 @@ struct Layout {
             long long best = crossings();
             std::vector<std::vector<int>> best_layer = layer;
             for (int it = 0; it < iterations && best > 0; ++it) {
+                if (stopped()) return {};
                 sweep(it % 2 == 0);
                 const long long c2 = crossings();
                 if (c2 < best) best = c2, best_layer = layer;
@@ -1244,6 +1267,7 @@ struct Layout {
             const Cluster& cl = g.clusters[static_cast<size_t>(k)];
             const char inner_dir = ports[static_cast<size_t>(k)].empty() && cl.dir ? cl.dir : dir;
             inner[k] = level(k, inner_dir, lvl_depth + 1);
+            if (!gave_up.empty()) return {};
         }
         // Sizes, across and along.
         for (size_t v = 0; v < items; ++v) {
@@ -1308,6 +1332,7 @@ struct Layout {
             const int passes = work > 2000 ? 6 : work > 500 ? 20 : 60;
             std::vector<double> want, weight, sep, x;
             for (int pass = 0; pass < passes; ++pass) {
+                if (stopped()) return {};
                 const bool down = pass % 2 == 0;
                 for (size_t k = 0; k < layer.size(); ++k) {
                     std::vector<int>& l = layer[down ? k : layer.size() - 1 - k];
@@ -1477,9 +1502,10 @@ struct Layout {
 
     // ------------------------------------------------ the whole
 
-    // Each level's box, from its own place to the whole's.
-    void absolute(float* w, float* h) {
+    // Each level's box, from its own place to the whole's (false if it gave up: why in gave_up).
+    bool absolute(float* w, float* h) {
         const LevelSize root = level(-1, g.dir, 0);
+        if (!gave_up.empty()) return false;
         *w = root.w, *h = root.h;
         std::vector<DiagramVec> origin(g.clusters.size());
         std::vector<int> order(g.clusters.size());
@@ -1512,6 +1538,7 @@ struct Layout {
                 e.label_at.x += o.x, e.label_at.y += o.y;
             }
         }
+        return true;
     }
 };
 
@@ -1619,6 +1646,7 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
     };
     // Each edge's points, from a to b: out of a's subgraphs, across, into b's.
     std::vector<std::vector<DiagramVec>> chains(g.edges.size());
+    long long tries = 40'000'000;  // (straightening's work, at most, for all of them: past it, they keep their points)
     for (size_t k = 0; k < g.edges.size(); ++k) {
         const Edge& e = g.edges[k];
         if (!e.laid || e.from == e.to) continue;
@@ -1653,7 +1681,9 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
         for (const Edge& o : g.edges)
             if (&o != &e && !o.label.empty() && o.label_w > 0 && o.from != o.to)
                 walls.push_back({{o.label_at.x - o.label_w / 2 - spare, o.label_at.y - o.label_h / 2 - spare}, {o.label_at.x + o.label_w / 2 + spare, o.label_at.y + o.label_h / 2 + spare}});
-        if (walls.size() * pts.size() * pts.size() > 4'000'000) continue;
+        const long long cost = static_cast<long long>(walls.size() * pts.size() * pts.size());
+        if (cost > 4'000'000 || cost > tries || style.stop.stop_requested()) continue;
+        tries -= cost;
         auto clear = [&](DiagramVec a, DiagramVec b) {
             for (const auto& [lo, hi] : walls) {
                 // (Liang and Barsky's clipping: does the line meet the box at all)
@@ -1888,12 +1918,19 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
     }
 }
 
-bool lay_out(Graph g, const DiagramStyle& style, Drawing* out, DiagramGeometry* geo) {
+bool lay_out(Graph g, const DiagramStyle& style, Drawing* out, DiagramGeometry* geo, std::string* err) {
     resolve_styles(g);
     Layout lay(g, style, *style.font);
     float w = 0, h = 0;
-    lay.absolute(&w, &h);
+    if (!lay.absolute(&w, &h)) {
+        *err = lay.gave_up;
+        return false;
+    }
     draw(g, lay, style, w, h, out, geo);
+    if (style.stop.stop_requested()) {
+        *err = "stopped";
+        return false;
+    }
     return true;
 }
 
@@ -1911,15 +1948,15 @@ bool flowchart_layout(const std::vector<std::string>& st, bool state, const Diag
         return false;
     }
     DiagramGeometry across_geo;
-    lay_out(g, style, out, geo ? &across_geo : nullptr);
+    if (!lay_out(g, style, out, geo ? &across_geo : nullptr, err)) return false;
     // Too wide across for the room: down instead, if that is less too wide.
     if (out->w > style.room && (g.dir == 'R' || g.dir == 'L')) {
         Graph down = g;
         down.dir = 'D';
         Drawing d2;
         DiagramGeometry g2;
-        lay_out(down, style, &d2, geo ? &g2 : nullptr);
-        if (std::min(1.0f, style.room / d2.w) > std::min(1.0f, style.room / out->w) * 1.25f) {
+        std::string why;
+        if (lay_out(down, style, &d2, geo ? &g2 : nullptr, &why) && std::min(1.0f, style.room / d2.w) > std::min(1.0f, style.room / out->w) * 1.25f) {
             *out = std::move(d2);
             across_geo = std::move(g2);
         }
