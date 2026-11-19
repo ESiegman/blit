@@ -4399,7 +4399,9 @@ void vim_test() {
     }
     // A pattern that would take time exponential in the line on the
     // backtracker (every way of cutting forty "a"s into runs, each then
-    // said again) stops, says so, and changes nothing.
+    // said again) stops, says so, and changes nothing. (Timed by this
+    // thread's processor time, not the clock: on a loaded machine, under a
+    // sanitizer, the clock ran past the limit with the budget kept.)
     {
         Editor ed;
         ed.insert(std::string(40, 'a') + " b\n");
@@ -4407,14 +4409,19 @@ void vim_test() {
         Vim vim;
         vim.resume(ed);
         ed.watch = &vim;
-        const u64 t0 = now_ns();
+        auto cpu_ns = [] {
+            timespec ts;
+            clock_gettime(CLOCK_THREAD_CPUTIME_ID, &ts);
+            return static_cast<u64>(ts.tv_sec) * 1'000'000'000ull + static_cast<u64>(ts.tv_nsec);
+        };
+        const u64 t0 = cpu_ns();
         vim.keys(ed, "/\\(a*\\)*\\1b<CR>");
         const bool said = vim.status() == VimRegex::kTooSlow && ed.cursor() == 0;
         vim.keys(ed, ":%s/\\(a*\\)*\\1b/x/<CR>");
         const bool kept = vim.status() == VimRegex::kTooSlow && ed.buf.text(0, ed.buf.size()) == std::string(40, 'a') + " b\n";
-        const u64 ms = (now_ns() - t0) / 1000000;
+        const u64 ms = (cpu_ns() - t0) / 1000000;
         if (!said || !kept || ms > 5000) {
-            std::fprintf(stderr, "vim: a pattern past the budget: \"%s\" after %llu ms\n", vim.status().c_str(), static_cast<unsigned long long>(ms));
+            std::fprintf(stderr, "vim: a pattern past the budget: \"%s\" after %llu ms of processor time\n", vim.status().c_str(), static_cast<unsigned long long>(ms));
             fail("a pattern past the backtracker's budget stops and says so", 0, 0);
         }
     }
