@@ -24,6 +24,10 @@
 #include "gpu.h"
 
 enum { kMaxFrames = 3 };
+// Memory a picture is copied to the GPU from: a few kept, each for the next
+// picture once the GPU has copied from it (a minimap's tile is about a
+// megabyte), and a bigger picture's (a page, a photograph) its own.
+enum { kStagings = 4, kStagingMost = 4 << 20 };
 
 static uint64_t now_ns(void) { return clock_gettime_nsec_np(CLOCK_UPTIME_RAW); }
 
@@ -44,6 +48,8 @@ static void say(char* err, size_t size, NSString* what, NSError* why) {
     id<MTLSamplerState> smooth;  // (pictures')
     NSMutableDictionary<NSNumber*, id<MTLTexture>>* pictures;
     uint32_t next_picture;
+    id<MTLBuffer> picture_staging[kStagings];
+    id<MTLCommandBuffer> picture_copy[kStagings];  // (the copy from each, until it is done)
     MTLRenderPassDescriptor* pass;  // the same one each frame, with that frame's image put in
     id<MTLTexture> atlas;
     id<MTLTexture> colours;  // (colour emoji: the font's colour slots, RGBA)
@@ -312,6 +318,28 @@ void blit_gpu_colour_rows(BlitGpu* g, const uint8_t* rgba, int y0, int y1) {
                     withBytes:rgba + (size_t)y0 * (size_t)m->colours_w * 4 bytesPerRow:(NSUInteger)m->colours_w * 4];
 }
 
+static id<MTLBuffer> buffer_at_least(BlitMetal* m, id<MTLBuffer> have, NSUInteger bytes);
+
+// A kept staging buffer of at least `bytes` that no copy still reads, made
+// larger if none is that large (the smallest goes); -1 if all are being
+// copied from. (Made afresh each time, a tile's buffer cost a fifth of a
+// frame as the view jumped: its pages were faulted in as it was filled.)
+static int picture_staging(BlitMetal* m, NSUInteger bytes) {
+    int fits = -1, small = -1;
+    for (int k = 0; k < kStagings; ++k) {
+        id<MTLCommandBuffer> cb = m->picture_copy[k];
+        if (cb && cb.status < MTLCommandBufferStatusCompleted) continue;
+        m->picture_copy[k] = nil;
+        const NSUInteger have = m->picture_staging[k] ? m->picture_staging[k].length : 0;
+        if (have >= bytes && (fits < 0 || have < m->picture_staging[fits].length)) fits = k;
+        if (small < 0 || have < (m->picture_staging[small] ? m->picture_staging[small].length : 0)) small = k;
+    }
+    if (fits >= 0) return fits;
+    if (small < 0) return -1;
+    m->picture_staging[small] = buffer_at_least(m, nil, bytes);
+    return m->picture_staging[small] ? small : -1;
+}
+
 uint32_t blit_gpu_image_add(BlitGpu* g, const uint8_t* rgba, int w, int h) {
     BlitMetal* m = M(g);
     if (!rgba || w <= 0 || h <= 0) return 0;
@@ -325,7 +353,14 @@ uint32_t blit_gpu_image_add(BlitGpu* g, const uint8_t* rgba, int w, int h) {
         td.storageMode = MTLStorageModePrivate;
         id<MTLTexture> tex = [m->device newTextureWithDescriptor:td];
         const NSUInteger row = (NSUInteger)w * 4, bytes = row * (NSUInteger)h;
-        id<MTLBuffer> src = tex ? [m->device newBufferWithBytes:rgba length:bytes options:MTLResourceStorageModeShared] : nil;
+        const int kept = tex && bytes <= kStagingMost ? picture_staging(m, bytes) : -1;
+        id<MTLBuffer> src = nil;
+        if (kept >= 0) {
+            src = m->picture_staging[kept];
+            memcpy(src.contents, rgba, bytes);
+        } else if (tex) {
+            src = [m->device newBufferWithBytes:rgba length:bytes options:MTLResourceStorageModeShared];
+        }
         if (!src) return 0;
         // Copied, and its copies made, by the GPU ahead of the frames that
         // draw it (one queue: they come after this). Not waited for.
@@ -337,6 +372,7 @@ uint32_t blit_gpu_image_add(BlitGpu* g, const uint8_t* rgba, int w, int h) {
         [b endEncoding];
         [cb commit];
         m->last = cb;
+        if (kept >= 0) m->picture_copy[kept] = cb;
         const uint32_t id = ++m->next_picture;
         m->pictures[@(id)] = tex;
         return id;
