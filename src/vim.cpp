@@ -1676,13 +1676,17 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
             // To a "{" at the start of a line ("[[" back, "]]" on), or a "}" there ("[]" and "][").
             const bool back = (c & kLB) != 0;
             const char want = (c & 0xFF) == (back ? '[' : ']') ? '{' : '}';
+            // (Vi's way, which Vim keeps: "]]" after an operator stops at a "}" there too, and takes its line in.)
+            const bool both = op_ && !back && want == '{';
             // A newline with the bracket after it, looked for as text.
-            Pattern nl_want;
+            Pattern nl_want, nl_close;
             nl_want.text = {'\n', want};
+            nl_close.text = {'\n', '}'};
             const u64 here = ed.buf.line_start(line);
             u64 s = here;
             for (u32 i = 0; i < count; ++i) {
-                const u64 hit = s == 0 && back ? kNone : find(ed.buf, nl_want, s - 1, !back, false);
+                u64 hit = s == 0 && back ? kNone : find(ed.buf, nl_want, s - 1, !back, false);
+                if (both) hit = std::min(hit, find(ed.buf, nl_close, s - 1, true, false));
                 if (hit == kNone || (!back && hit + 1 >= ed.buf.line_start(n))) {
                     s = back ? 0 : ed.buf.line_start(n - 1);  // (to the first or last line; with more to go, nowhere)
                     if (i + 1 < count) m.ok = false;
@@ -1690,8 +1694,19 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
                 }
                 s = hit + 1;
             }
+            // The line with the "}" is taken in: to the start of the next
+            // (if it was the last line, to the start of that, as Vim's
+            // cursor ends up there).
+            bool past = false;
+            if (both && p.at(s) == '}') {
+                if (ed.buf.line_of(s) + 1 < n) s = ed.buf.line_start(ed.buf.line_of(s) + 1);
+                else past = true;
+                if (past && s == here) m.ok = false;  // (from that line itself: nowhere, which Neovim gets wrong and stops at, E292)
+            }
+            const u64 sl = ed.buf.line_of(s);
             m.to = s;
-            m.ok = m.ok && s != here;
+            if (!op_) m.to = first_nonblank(ed, sl);
+            else if (!back && want == '{' && !past && sl + 1 == n && ed.line_end(sl) > s) m.to = line_last(ed, sl), m.inclusive = true;  // (the last line: all of it, as Vim has it)
             m.jump = true;
             break;
         }

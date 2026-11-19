@@ -3720,6 +3720,13 @@ void vim_test() {
         {"|a\n}\nb", "][", "a\n|}\nb"},
         {"|a\nb\nc", "]]", "a\nb\n|c"},
         {"a\nb\n|c", "[[", "|a\nb\nc"},
+        // (After an operator "]]" stops at a "}" there too, taking its line in, as Vi did and Vim does; to the last line, all of it.)
+        {"|a\nb\n}\nc\n{\nd", "y3]]P", "|a\nb\n}\nc\n{\nda\nb\n}\nc\n{\nd"},
+        {"|a\nb\n}\nc\n{\nd", "d]]", "|c\n{\nd"},
+        {"|a\nb\n}\nc\n{\nd", "d2]]", "|{\nd"},
+        {"|a\nb\n}\nc", "d]]", "|"},
+        {"x |a\nb\nc", "d]]", "x| "},
+        {"a\n}x|yz", "d]]", "a\n}x|yz"},
         {"one |two", "l", "one t|wo"},
         {"one tw|o", "l", "one tw|o"},
         {"|one two", "h", "|one two"},
