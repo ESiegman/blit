@@ -116,8 +116,9 @@ private:
 // and "\l" the next character in upper or lower case, "\U" and "\L" all that
 // follows until "\E" or "\e"; "\&" and "\\" are themselves. (A "~" for the
 // last substitute string is put in beforehand, by whoever keeps that.)
-// `text(a, b)` gives the bytes [a, b) of what was searched.
-void regex_expand(std::string_view replacement, const RegexMatch& m, const std::function<std::string(u64, u64)>& text, std::string* out);
+// `text(a, b)` gives the bytes [a, b) of what was searched; `nl` is the
+// new line (what the text's lines end in).
+void regex_expand(std::string_view replacement, const RegexMatch& m, const std::function<std::string(u64, u64)>& text, std::string* out, std::string_view nl = "\n");
 // Whether, by those rules, every match becomes the same (there is no
 // group, no "&" and no change of case in it).
 bool regex_replacement_plain(std::string_view replacement);

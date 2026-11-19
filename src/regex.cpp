@@ -2567,7 +2567,7 @@ bool VimRegex::search(std::string_view text, u64 from, u64 to, RegexMatch* m) co
 
 // ---------------------------------------------------------------- replacing
 
-void regex_expand(std::string_view r, const RegexMatch& m, const std::function<std::string(u64, u64)>& text, std::string* out) {
+void regex_expand(std::string_view r, const RegexMatch& m, const std::function<std::string(u64, u64)>& text, std::string* out, std::string_view nl) {
     enum Case : u8 { kAsIs, kUpper, kLower };
     Case all = kAsIs, one = kAsIs;
     auto put = [&](std::string_view s) {
@@ -2610,7 +2610,7 @@ void regex_expand(std::string_view r, const RegexMatch& m, const std::function<s
             case '8':
             case '9': group(static_cast<u32>(n - '0')); break;
             case 'r':
-            case 'n': *out += '\n'; break;
+            case 'n': out->append(nl); break;
             case 't': *out += '\t'; break;
             case 'u': one = kUpper; break;
             case 'l': one = kLower; break;

@@ -749,9 +749,9 @@ u64 Vim::find(const Buffer& buf, const Pattern& p, u64 from, bool forward, bool 
     return m.start;
 }
 
-void Vim::replacement(const RegexMatch& m, std::string_view with, bool rules, const std::function<std::string(u64, u64)>& text, std::string* out) {
+void Vim::replacement(const RegexMatch& m, std::string_view with, bool rules, const std::function<std::string(u64, u64)>& text, std::string* out, std::string_view nl) {
     if (!rules) out->append(with);
-    else regex_expand(with, m, text, out);
+    else regex_expand(with, m, text, out, nl);
 }
 
 u64 Vim::replace_all(Editor& ed, const Pattern& p, std::string_view with, bool rules, u64 lo, u64 hi, bool per_line, u64* lines_out, u64* last_out) {
@@ -766,11 +766,12 @@ u64 Vim::replace_all(Editor& ed, const Pattern& p, std::string_view with, bool r
     std::string made;
     const bool same = !rules || regex_replacement_plain(with);
     auto text = [&](u64 a, u64 b) { return ed.buf.text(a, b > a ? b - a : 0); };
-    if (same) replacement(plain_match(0, 0), with, rules, text, &made);
+    const std::string_view nl = line_break(ed);  // (what \r puts in)
+    if (same) replacement(plain_match(0, 0), with, rules, text, &made, nl);
     const u32 runs = overruns(p);
     each_whole(ed.buf, p, lo, hi, per_line, [&](const RegexMatch& m) {
         found.push_back({m.start, m.end, same ? 0 : made.size()});
-        if (!same) replacement(m, with, rules, text, &made);
+        if (!same) replacement(m, with, rules, text, &made, nl);
         return true;
     });
     if (found.empty() || overruns(p) != runs) return 0;  // (one that gave up part of the way changes nothing)
@@ -845,9 +846,11 @@ std::string Vim::replace_text(std::string_view text, const Pattern& p, std::stri
     std::string out;
     u64 from = 0, n = 0;
     auto part = [&](u64 a, u64 b) { return std::string(text.substr(a, b > a ? b - a : 0)); };
+    const size_t first_nl = text.find('\n');
+    const std::string_view nl = first_nl != std::string_view::npos && first_nl > 0 && text[first_nl - 1] == '\r' ? "\r\n" : "\n";  // (by its first line, as Editor reads a file's)
     each_whole(text, p, 0, regex_top(text), false, [&](const RegexMatch& m) {
         out.append(text.substr(from, m.start - from));
-        replacement(m, with, rules, part, &out);
+        replacement(m, with, rules, part, &out, nl);
         from = m.end;
         ++n;
         return true;
@@ -930,7 +933,7 @@ void Vim::go(Editor& ed, u64 off, bool keep_column) {
     }
 }
 
-void Vim::store(char name, std::string text, bool linewise, bool yank, bool blockwise) {
+void Vim::store(char name, std::string text, bool linewise, bool yank, const char* nl, bool blockwise) {
     if (name == '_') return;
     auto r = std::make_shared<const Register>(Register{std::move(text), linewise, blockwise});
     if (!yank && !name) {
@@ -955,11 +958,11 @@ void Vim::store(char name, std::string text, bool linewise, bool yank, bool bloc
         if (more.text.empty()) {
             more = *r;
         } else if (linewise && !more.linewise) {  // lines added to characters: a line of their own
-            more.text += '\n';
+            more.text += nl;
             more.text += r->text;
         } else if (!linewise && more.linewise) {  // characters added to lines: a line of their own, so the register stays well-formed
             more.text += r->text;
-            if (more.text.back() != '\n') more.text += '\n';
+            if (more.text.back() != '\n') more.text += nl;
         } else {
             more.text += r->text;
         }
@@ -1151,12 +1154,12 @@ void Vim::block_do(Editor& ed, char what, u32 arg) {
     };
     switch (what) {
         case 'y':
-            store(reg_, std::move(text), false, true, true);
+            store(reg_, std::move(text), false, true, line_break(ed), true);
             go(ed, corner);
             break;
         case 'd':
         case 'D':
-            store(reg_, std::move(text), false, false, true);
+            store(reg_, std::move(text), false, false, line_break(ed), true);
             ed.begin_group();
             remove();
             ed.end_group();
@@ -1169,7 +1172,7 @@ void Vim::block_do(Editor& ed, char what, u32 arg) {
             // Typed on the first line; Esc puts the same on the others (leave_insert()).
             ed.begin_group();
             if (what != 'I') {
-                store(reg_, std::move(text), false, false, true);
+                store(reg_, std::move(text), false, false, line_break(ed), true);
                 remove();
             }
             ed.move_to(corner, false);
@@ -1951,19 +1954,19 @@ void Vim::operate(Editor& ed, char op, u64 lo, u64 hi, bool linewise) {
     }
     std::string text = ed.buf.text(lo, hi - lo);
     const bool open_end = linewise && (text.empty() || text.back() != '\n');  // the file's last line, with no newline of its own
-    if (open_end) text += '\n';
+    if (open_end) text += line_break(ed);
     const u64 cur = ed.cursor();
     switch (op) {
         case 'y':
-            store(reg_, std::move(text), linewise, true);
+            store(reg_, std::move(text), linewise, true, line_break(ed));
             // The cursor goes to where the text starts; over whole lines it keeps its column.
             if (!linewise) go(ed, lo);
             else if (ed.buf.line_of(cur) != ed.buf.line_of(lo)) go(ed, std::min(ed.off_at(ed.buf.line_of(lo), want_col_), line_last(ed, ed.buf.line_of(lo))), true);
             break;
         case 'd': {
-            store(reg_, std::move(text), linewise, false);
-            // (Whole lines at the end of the file take the newline before them along.)
-            if (open_end && lo > 0) --lo;
+            store(reg_, std::move(text), linewise, false, line_break(ed));
+            // (Whole lines at the end of the file take the line break before them along.)
+            if (open_end && lo > 0) lo = ed.line_end(ed.buf.line_of(lo) - 1);
             if (hi > lo) ed.replace(lo, hi, "");
             changing_ = true;
             if (linewise) {
@@ -1976,12 +1979,12 @@ void Vim::operate(Editor& ed, char op, u64 lo, u64 hi, bool linewise) {
             break;
         }
         case 'c': {
-            store(reg_, std::move(text), linewise, false);
+            store(reg_, std::move(text), linewise, false, line_break(ed));
             ed.begin_group();
             if (linewise) {
                 // The lines go, one empty line stays, with the indentation the first had.
                 const std::string indent = indent_of(ed, ed.buf.line_of(lo));
-                const u64 end = open_end ? hi : hi - 1;
+                const u64 end = open_end ? hi : ed.line_end(ed.buf.line_of(hi - 1));  // (the last line's break stays, "\r" and all)
                 ed.replace(lo, end, indent);
                 ed.move_to(lo + indent.size(), false);
             } else {
@@ -2158,7 +2161,7 @@ void Vim::put(Editor& ed, bool before, u32 count, bool then_after) {
         u64 first = cur;
         for (size_t i = 0; i < rows.size(); ++i) {
             const u64 l = line + i;
-            if (l >= lines_of(ed)) ed.replace(ed.buf.size(), ed.buf.size(), "\n");
+            if (l >= lines_of(ed)) ed.replace(ed.buf.size(), ed.buf.size(), line_break(ed));
             const u64 start = ed.buf.line_start(l), end = ed.line_end(l);
             const u32 have = ed.col_between(start, end);
             const u64 at = have < col ? end : ed.off_at(l, col);
@@ -2179,12 +2182,13 @@ void Vim::put(Editor& ed, bool before, u32 count, bool then_after) {
             char last = size > 0 ? '\n' : 0;  // (nothing in the buffer: its one empty line comes first, as if it had no newline)
             if (size > 0) ed.buf.read(size - 1, &last, 1);
             if (last != '\n') {  // after a last line that has no newline: one before the text instead of after it
+                const size_t cut = text.ends_with("\r\n") ? 2 : 1;
                 std::string moved;
-                moved.reserve(text.size());
-                moved += '\n';
-                moved += text.substr(0, text.size() - 1);
+                moved.reserve(text.size() + 1);
+                moved += line_break(ed);
+                moved += text.substr(0, text.size() - cut);
                 ed.replace(size, size, moved);
-                at = size + 1;
+                at = size + std::strlen(line_break(ed));
                 text = {};
             }
         }
@@ -3948,7 +3952,7 @@ u32 Vim::confirm_key(Editor& ed, const VimKey& k) {
     // The match asked about, replaced; the next is looked for after it.
     auto take = [&] {
         std::string out;
-        replacement(c.m, c.with, true, [&](u64 a, u64 b) { return ed.buf.text(a, b > a ? b - a : 0); }, &out);
+        replacement(c.m, c.with, true, [&](u64 a, u64 b) { return ed.buf.text(a, b > a ? b - a : 0); }, &out, line_break(ed));
         ed.replace(c.m.start, c.m.end, out);
         const u64 e = c.m.start + out.size();
         c.end = c.end + out.size() - (c.m.end - c.m.start);

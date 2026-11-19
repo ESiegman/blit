@@ -181,7 +181,8 @@ public:
     // Where the pattern is in a piece of text, at or after `from`; npos if nowhere.
     static size_t match_in(std::string_view hay, const Pattern& p, size_t from, RegexMatch* m = nullptr);
     // What a match becomes: by :s's rules (& \1 \r ...), or as it stands.
-    static void replacement(const RegexMatch& m, std::string_view with, bool rules, const std::function<std::string(u64, u64)>& text, std::string* out);
+    // `nl` is what \r puts in: the line break of the text.
+    static void replacement(const RegexMatch& m, std::string_view with, bool rules, const std::function<std::string(u64, u64)>& text, std::string* out, std::string_view nl = "\n");
     // Every match in [lo, hi) of the document replaced (by :s's rules, or
     // as it stands), all in one undo step; how many. *lines gets how many
     // lines had one, *last where the last one's replacement starts now.
@@ -244,7 +245,7 @@ private:
     void clamp(Editor& ed);
     void go(Editor& ed, u64 off, bool keep_column = false);
     void clear_pending();
-    void store(char name, std::string text, bool linewise, bool yank, bool blockwise = false);
+    void store(char name, std::string text, bool linewise, bool yank, const char* nl, bool blockwise = false);  // (nl: the text's line break, for "A to join with)
     void remember_jump(const Editor& ed, u64 off);
     void list_jump(const Editor& ed, u64 off);
     void block_do(Editor& ed, char what, u32 arg = 0);

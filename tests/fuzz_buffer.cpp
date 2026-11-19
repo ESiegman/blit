@@ -4402,6 +4402,17 @@ void vim_test() {
             {"|ab\r\nb", "r<CR>", "\r\n|b\r\nb"},
             {"a\r\n|b", "2[<Space>", "a\r\n\r\n\r\n|b"},
             {"|a\r\nb", "Rx<CR><BS><Esc>", "|x\r\nb"},
+            // (Lines put after a last line with no line break; a rectangle past the last line; :s's \r; lines added to a register.)
+            {"a\r\n|b", "yyp", "a\r\nb\r\n|b"},
+            {"|a\r\nb", "yjGp", "a\r\nb\r\n|a\r\nb"},
+            {"|ab\r\ncd", "<C-v>jlyjp", "ab\r\nc|abd\r\n cd"},
+            {"|a b\r\nc", ":s/ /\\r/<CR>", "|a\r\nb\r\nc"},
+            {"|a b\r\nc d", ":%s/ /\\r/c<CR>yy", "a\r\nb\r\n|c\r\nd"},
+            {"|a\r\nb\r\nc", "\"ayw\"Ayy\"ap", "a\r\n|a\r\na\r\nb\r\nc"},
+            {"|a\r\nb\r\nc", "\"ayyj\"Ayw\"ap", "a\r\nb\r\n|a\r\nb\r\nc"},
+            // (And the line break that whole lines take with them, or leave: the last line deleted, a line changed.)
+            {"a\r\n|b", "ddP", "|b\r\na"},
+            {"|a\r\nb", "ccx<Esc>", "|x\r\nb"},
         };
         for (const Case& c : crlf) {
             std::string text = c.before, want = c.after;
@@ -4422,6 +4433,10 @@ void vim_test() {
                 fail("line breaks put in by Vim in a CRLF text", 0, 0);
             }
         }
+        // (So in a file that is not open, by the line break its first line ends in.)
+        u64 n = 0;
+        const std::string made = Vim::replace_text("a b\r\nc d\r\n", Vim::parse_pattern(" "), "\\r", true, &n);
+        if (made != "a\r\nb\r\nc\r\nd\r\n" || n != 2) fail("line breaks put in by :s's rules in a CRLF text not open", 0, 0);
     }
     // The command line's cursor stands after what is typed, in columns (a
     // wide character two, a mark none), and Backspace takes a whole character.
