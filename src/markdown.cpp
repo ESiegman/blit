@@ -185,7 +185,14 @@ u32 attribute_px(std::string_view tag, std::string_view name) {
     return k < v.size() && v[k] == '%' ? 0 : n;
 }
 
-using Refs = std::map<std::string, std::string>;  // a link's label (lower case) -> where it goes
+struct Refs {
+    std::map<std::string, std::string> to;  // a link's label (lower case) -> where it goes
+    size_t longest = 0;                     // the longest label (text longer is none of them)
+    void set(std::string label, std::string dest) {
+        longest = std::max(longest, label.size());
+        to[std::move(label)] = std::move(dest);
+    }
+};
 
 constexpr int kMostDepth = 32;  // quotes, lists, emphasis and links nested deeper than this are taken as text
 
@@ -199,7 +206,7 @@ std::string entity(std::string_view s, size_t* len) {
             return text;
         }
     if (s.starts_with("&#")) {
-        const size_t semi = s.find(';');
+        const size_t semi = s.substr(0, 12).find(';');  // (not past where it could be: the rest of a long line, for each &#)
         if (semi != std::string_view::npos && semi < 12) {
             const bool hex = s.size() > 2 && (s[2] == 'x' || s[2] == 'X');
             const std::string num(s.substr(hex ? 3 : 2, semi - (hex ? 3 : 2)));
@@ -217,47 +224,166 @@ std::string entity(std::string_view s, size_t* len) {
     return {};
 }
 
-// Where the run of c (exactly n long) that closes one opened before `from` is, or npos.
-size_t closer(std::string_view s, size_t from, char c, size_t n) {
-    for (size_t j = from; j < s.size(); ++j) {
-        if (s[j] == '\\') {
-            ++j;
-            continue;
-        }
-        if (s[j] == '`') {  // (not inside code)
-            size_t k = j;
-            while (k < s.size() && s[k] == '`') ++k;
-            const std::string run(k - j, '`');
-            const size_t end = s.find(run, k);
-            if (end != std::string_view::npos) j = end + run.size() - 1;
-            else j = k - 1;
-            continue;
-        }
-        if (s[j] != c) continue;
-        size_t k = j;
-        while (k < s.size() && s[k] == c) ++k;
-        const size_t run = k - j;
-        const bool after_space = j > 0 && (s[j - 1] == ' ' || s[j - 1] == '\t');
-        const bool word_after = c == '_' && k < s.size() && std::isalnum(static_cast<unsigned char>(s[k]));
-        if (run >= n && !after_space && !word_after && j > from) return j + (run - n);
-        j = k - 1;
-    }
-    return std::string_view::npos;
-}
+// What parse_inline looks for in a piece of text again and again, each
+// found once (on first use): the marks that close others, brackets'
+// partners, runs of backticks, the next of a few characters. (A long line
+// of marks that close nothing, thousands of `*`, `[` or `<`, once took time
+// with the square of its length: each mark looked to its end.)
+class Marks {
+  public:
+    explicit Marks(std::string_view s) : s_(s) {}
 
-// The ] that closes the [ at i (brackets inside may nest), or npos.
-size_t bracket_end(std::string_view s, size_t i, char open, char close) {
-    int depth = 0;
-    for (size_t j = i; j < s.size(); ++j) {
-        if (s[j] == '\\') {
-            ++j;
-            continue;
+    // Where the run of c (exactly n long) that closes one opened before `from`
+    // is, or npos. (Most are a few words on. Once a scan goes far, what a scan
+    // finds from each place it passes is kept, and the next to get there stops.)
+    size_t closer(size_t from, char c, size_t n) {
+        std::vector<size_t>& found_from = closers_[c == '*' ? n - 1 : c == '_' ? n + 2 : 6];
+        path_.clear();
+        size_t steps = 0;
+        size_t found = std::string_view::npos;
+        for (size_t j = from; j < s_.size();) {
+            if (j > from) {
+                if (found_from.empty()) {
+                    if (++steps > kNear) {
+                        found_from.assign(s_.size(), kUnknown);
+                        return closer(from, c, n);
+                    }
+                } else if (found_from[j] != kUnknown) {
+                    found = found_from[j];
+                    break;
+                } else {
+                    path_.push_back(j);
+                }
+            }
+            if (s_[j] == '\\') {
+                j += 2;
+                continue;
+            }
+            if (s_[j] == '`') {  // (not inside code)
+                size_t k = j;
+                while (k < s_.size() && s_[k] == '`') ++k;
+                const size_t end = ticks(k, k - j);
+                j = end != std::string_view::npos ? end + (k - j) : k;
+                continue;
+            }
+            if (s_[j] != c) {
+                ++j;
+                continue;
+            }
+            size_t k = j;
+            while (k < s_.size() && s_[k] == c) ++k;
+            const size_t run = k - j;
+            const bool after_space = j > 0 && (s_[j - 1] == ' ' || s_[j - 1] == '\t');
+            const bool word_after = c == '_' && k < s_.size() && std::isalnum(static_cast<unsigned char>(s_[k]));
+            if (run >= n && !after_space && !word_after && j > from) {
+                found = j + (run - n);
+                break;
+            }
+            j = k;
         }
-        if (s[j] == open) ++depth;
-        else if (s[j] == close && --depth == 0) return j;
+        for (const size_t j : path_) found_from[j] = found;
+        return found;
     }
-    return std::string_view::npos;
-}
+
+    // The ] or ) that closes the [ or ( at i (brackets inside may nest), or
+    // npos. (Looked for, while it is near; past that, every one is paired at once.)
+    size_t bracket_end(size_t i, char open) {
+        std::vector<size_t>& ends = open == '[' ? square_ : round_;
+        const char close = open == '[' ? ']' : ')';
+        if (ends.empty()) {
+            const size_t near = std::min(s_.size(), i + kNear);
+            int depth = 0;
+            for (size_t j = i; j < near; ++j) {
+                if (s_[j] == '\\') {
+                    ++j;
+                    continue;
+                }
+                if (s_[j] == open) ++depth;
+                else if (s_[j] == close && --depth == 0) return j;
+            }
+            if (near == s_.size()) return std::string_view::npos;
+            ends.assign(s_.size(), std::string_view::npos);
+            std::vector<size_t> opened;
+            for (size_t j = 0; j < s_.size(); ++j) {
+                if (s_[j] == '\\') {
+                    ++j;
+                    continue;
+                }
+                if (s_[j] == open) {
+                    opened.push_back(j);
+                } else if (s_[j] == close && !opened.empty()) {
+                    ends[opened.back()] = j;
+                    opened.pop_back();
+                }
+            }
+        }
+        return ends[i];
+    }
+
+    // Where the first run of backticks at least n long starts, at k (the end
+    // of a run) or after, or npos: s.find(std::string(n, '`'), k).
+    size_t ticks(size_t k, size_t n) {
+        if (!ticks_found_) {  // (looked for, while near; past that, every run is found at once)
+            const size_t near = std::min(s_.size(), k + kNear);
+            for (size_t j = s_.find('`', k); j < near;) {
+                size_t e = j;
+                while (e < s_.size() && s_[e] == '`') ++e;
+                if (e - j >= n) return j;
+                j = s_.find('`', e);
+            }
+            if (near == s_.size()) return std::string_view::npos;
+            ticks_found_ = true;
+            for (size_t j = s_.find('`'); j != std::string_view::npos; j = s_.find('`', j)) {
+                size_t e = j;
+                while (e < s_.size() && s_[e] == '`') ++e;
+                tick_at_.push_back(j);
+                tick_len_.push_back(e - j);
+                j = e;
+            }
+            // (and for each run, the next one longer: the runs between it and that are no answer where it is not)
+            tick_longer_.resize(tick_at_.size());
+            std::vector<size_t> later;
+            for (size_t r = tick_at_.size(); r-- > 0;) {
+                while (!later.empty() && tick_len_[later.back()] <= tick_len_[r]) later.pop_back();
+                tick_longer_[r] = later.empty() ? tick_at_.size() : later.back();
+                later.push_back(r);
+            }
+        }
+        size_t r = static_cast<size_t>(std::lower_bound(tick_at_.begin(), tick_at_.end(), k) - tick_at_.begin());
+        while (r < tick_at_.size() && tick_len_[r] < n) r = tick_longer_[r];
+        return r < tick_at_.size() ? tick_at_[r] : std::string_view::npos;
+    }
+
+    // The first ch (one of kNext) at `from` or after, asked with `from` never going back.
+    size_t next(char ch, size_t from) {
+        size_t& at = next_[std::strchr(kNext, ch) - kNext];
+        if (at == kUnknown || (at != std::string_view::npos && at < from)) at = s_.find(ch, from);
+        return at;
+    }
+
+    // Where what is before the > at gt ends, the spaces, tabs and returns in front of it left out.
+    size_t trimmed_end(size_t gt) {
+        if (trimmed_for_ != gt) {
+            trimmed_for_ = gt;
+            trimmed_ = gt;
+            while (trimmed_ > 0 && (s_[trimmed_ - 1] == ' ' || s_[trimmed_ - 1] == '\t' || s_[trimmed_ - 1] == '\r')) --trimmed_;
+        }
+        return trimmed_;
+    }
+
+  private:
+    static constexpr size_t kUnknown = std::string_view::npos - 1;
+    static constexpr size_t kNear = 256;  // how far a scan looks before what it finds is kept for the next
+    static constexpr const char* kNext = "<>:@ ";
+    std::string_view s_;
+    std::vector<size_t> closers_[7];  // for each mark (*, **, ***, _, __, ___, ~~), what a scan from each place finds
+    std::vector<size_t> path_;
+    std::vector<size_t> square_, round_;
+    bool ticks_found_ = false;
+    std::vector<size_t> tick_at_, tick_len_, tick_longer_;
+    size_t next_[5] = {kUnknown, kUnknown, kUnknown, kUnknown, kUnknown};
+    size_t trimmed_for_ = std::string_view::npos, trimmed_ = 0;
+};
 
 void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vector<Span>& out) {
     static thread_local int depth = 0;
@@ -287,6 +413,7 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
         inner.link = url;
         parse_inline(text, inner, refs, out);
     };
+    Marks marks(s);
     for (size_t i = 0; i < s.size();) {
         const char c = s[i];
         if (c == '\\' && i + 1 < s.size() && std::ispunct(static_cast<unsigned char>(s[i + 1]))) {
@@ -305,8 +432,8 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
         if (c == '`') {
             size_t k = i;
             while (k < s.size() && s[k] == '`') ++k;
-            const std::string run(k - i, '`');
-            const size_t end = s.find(run, k);
+            const std::string_view run = s.substr(i, k - i);
+            const size_t end = marks.ticks(k, run.size());
             if (end == std::string_view::npos || (end + run.size() < s.size() && s[end + run.size()] == '`')) {
                 buf += run;
                 i = k;
@@ -327,11 +454,16 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
             continue;
         }
         if (c == '<') {
-            const size_t end = s.find('>', i);
+            const size_t end = marks.next('>', i);
             if (end != std::string_view::npos) {
                 const std::string_view inner = s.substr(i + 1, end - i - 1);
-                const std::string tag = lower(trim(inner));
-                if (tag == "br" || tag == "br/" || tag == "br /") {
+                // (what is between, trimmed, of which no more is copied than tells a <br> or an <img>: each of a
+                // thousand < before one > once copied all there was up to it)
+                size_t from = i + 1;
+                while (from < end && (s[from] == ' ' || s[from] == '\t')) ++from;
+                const size_t to = std::max(from, marks.trimmed_end(end));
+                const std::string tag = lower(s.substr(from, std::min<size_t>(to - from, 5)));
+                if (to - from <= 4 && (tag == "br" || tag == "br/" || tag == "br /")) {
                     flush();
                     Span br = as;
                     br.brk = true;
@@ -339,10 +471,11 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
                     i = end + 1;
                     continue;
                 }
-                const size_t colon = inner.find(':');
-                const bool url = colon != std::string_view::npos && colon > 1 && inner.find(' ') == std::string_view::npos &&
+                const auto in_it = [&](char ch) { return marks.next(ch, i + 1) < end; };
+                const size_t colon = in_it(':') ? marks.next(':', i + 1) - i - 1 : std::string_view::npos;
+                const bool url = colon != std::string_view::npos && colon > 1 && !in_it(' ') &&
                                  std::all_of(inner.begin(), inner.begin() + static_cast<std::ptrdiff_t>(colon), [](char ch) { return std::isalnum(static_cast<unsigned char>(ch)) || ch == '+' || ch == '.' || ch == '-'; });
-                const bool mail = !url && inner.find('@') != std::string_view::npos && inner.find(' ') == std::string_view::npos && !inner.empty();
+                const bool mail = !url && in_it('@') && !in_it(' ') && !inner.empty();
                 if (url || mail) {
                     link_span(inner, url ? std::string(inner) : "mailto:" + std::string(inner));
                     i = end + 1;
@@ -366,7 +499,7 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
                     continue;
                 }
                 // Inline HTML (<kbd>, <sup>, </b> ...): its tags go, its text stays.
-                if (!inner.empty() && (std::isalpha(static_cast<unsigned char>(inner[0])) || inner[0] == '/') && inner.find('<') == std::string_view::npos) {
+                if (!inner.empty() && (std::isalpha(static_cast<unsigned char>(inner[0])) || inner[0] == '/') && !in_it('<')) {
                     i = end + 1;
                     continue;
                 }
@@ -375,13 +508,13 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
         if ((c == '!' && i + 1 < s.size() && s[i + 1] == '[') || c == '[') {
             const bool image = c == '!';
             const size_t open = image ? i + 1 : i;
-            const size_t close = bracket_end(s, open, '[', ']');
+            const size_t close = marks.bracket_end(open, '[');
             if (close != std::string_view::npos) {
                 const std::string_view text = s.substr(open + 1, close - open - 1);
                 std::string url;
                 size_t next = std::string_view::npos;
                 if (close + 1 < s.size() && s[close + 1] == '(') {
-                    const size_t end = bracket_end(s, close + 1, '(', ')');
+                    const size_t end = marks.bracket_end(close + 1, '(');
                     if (end != std::string_view::npos) {
                         std::string_view dest = trim(s.substr(close + 2, end - close - 2));
                         if (dest.starts_with('<')) dest = dest.substr(1, dest.find('>') == std::string_view::npos ? dest.size() - 1 : dest.find('>') - 1);
@@ -390,16 +523,17 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
                         next = end + 1;
                     }
                 } else {
-                    std::string label(text);
+                    std::string_view label = text;
                     size_t end = close + 1;
                     if (close + 1 < s.size() && s[close + 1] == '[') {
                         const size_t e2 = s.find(']', close + 2);
                         if (e2 != std::string_view::npos) {
-                            if (e2 > close + 2) label = std::string(s.substr(close + 2, e2 - close - 2));
+                            if (e2 > close + 2) label = s.substr(close + 2, e2 - close - 2);
                             end = e2 + 1;
                         }
                     }
-                    if (const auto it = refs.find(lower(label)); it != refs.end()) {
+                    // (text longer than any label is not looked up: brackets nested thousands deep each copied what they hold)
+                    if (const auto it = label.size() <= refs.longest ? refs.to.find(lower(label)) : refs.to.end(); it != refs.to.end()) {
                         url = it->second;
                         next = end;
                     } else if (text.starts_with('^')) {  // a footnote's mark
@@ -436,7 +570,7 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
             const bool space_after = k >= s.size() || s[k] == ' ' || s[k] == '\t' || s[k] == '\n';
             const bool intraword = c == '_' && i > 0 && std::isalnum(static_cast<unsigned char>(s[i - 1]));
             if (!space_after && !intraword && (c != '~' || k - i == 2)) {
-                const size_t end = closer(s, i + run, c, run);
+                const size_t end = marks.closer(i + run, c, run);
                 if (end != std::string_view::npos) {
                     flush();
                     Span inner = as;
@@ -832,7 +966,7 @@ void parse_into(const std::vector<Line>& lines, Refs& refs, std::vector<Block>& 
                 if (const size_t sp = dest.find_first_of(" \t"); sp != std::string_view::npos) dest = dest.substr(0, sp);
                 if (dest.starts_with('<') && dest.ends_with('>')) dest = dest.substr(1, dest.size() - 2);
                 if (!dest.empty()) {
-                    refs[lower(s.substr(1, close - 1))] = std::string(dest);
+                    refs.set(lower(s.substr(1, close - 1)), std::string(dest));
                     ++i;
                     continue;
                 }
@@ -1380,7 +1514,7 @@ std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn
         if (s.starts_with('[') && close != std::string_view::npos && close > 1 && s[1] != '^') {
             std::string_view dest = trim(s.substr(close + 2));
             if (const size_t sp = dest.find_first_of(" \t"); sp != std::string_view::npos) dest = dest.substr(0, sp);
-            if (!dest.empty()) refs[lower(s.substr(1, close - 1))] = std::string(dest);
+            if (!dest.empty()) refs.set(lower(s.substr(1, close - 1)), std::string(dest));
         }
     }
     const std::vector<Block> blocks = parse_blocks(lines, refs);

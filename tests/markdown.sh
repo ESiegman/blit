@@ -92,6 +92,14 @@ check "quotes nested 5,000 deep: drawn (the deepest as text), no crash" "drawn"
 awk 'BEGIN { print "```mermaid"; print "sequenceDiagram"; for (i = 0; i < 2000; i++) print "loop x" i; print "A->>B: hi"; for (i = 0; i < 2000; i++) print "end"; print "```" }' >"$dir/loops.md"
 got=$(limit 20 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mddump" "$dir/loops.md" 2>&1 >/dev/null | grep -c 'loop x1999')
 check "a sequence diagram's loops nested 2,000 deep: drawn, in time (each row once copied the whole picture)" "1"
+awk 'BEGIN { for (i = 0; i < 20000; i++) printf "*a **b `c` [d](e) _f_ "; print "\n"
+    for (i = 0; i < 100000; i++) printf "["; print "\n"
+    for (i = 0; i < 100000; i++) printf "~~a "; print "\n"
+    for (i = 0; i < 100000; i++) printf "<"; print ">\n"
+    for (i = 0; i < 50000; i++) printf "["; for (i = 0; i < 50000; i++) printf "]"; print "\n"
+    for (i = 0; i < 50000; i++) printf "[a]("; print "\n"; print "the end" }' >"$dir/marks.md"
+got=$(limit 10 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mddump" "$dir/marks.md" 2>&1 >/dev/null | grep -c '^the end')
+check "lines of half a megabyte full of marks that close nothing: drawn, in time (each mark once looked to the end of the line)" "1"
 printf '<!--\nhidden\n\nstill hidden\n-->\nshown\n\n```mermaid\npie title Pets\n  "Dogs" : 3\n  "Cats" : 1\n```\n' >"$dir/odd.md"
 run 1600x1100 "$dir/odd.md" ""
 got=$(printf '%s\n' "$got" | grep -c 'hidden'),$(printf '%s\n' "$got" | grep -c 'shown'),$(printf '%s\n' "$got" | grep -c 'Pets')
