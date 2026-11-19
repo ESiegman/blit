@@ -1039,8 +1039,8 @@ void Vim::forget() {
     block_insert_.on = false;
     jumps_.clear();
     jump_at_ = 0;
-    prev_jump_ = last_insert_at_ = last_vstart_ = last_vend_ = 0;
-    last_change_ = kNone;
+    prev_jump_ = 0;
+    last_change_ = last_insert_at_ = last_vstart_ = last_vend_ = kNone;
     last_vmode_ = kVisual;
     lines_buf_ = nullptr;
     lines_rev_ = lines_size_ = kNone;
@@ -3285,7 +3285,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
             ed.end_group();
             return kHandled;
         }
-        case kG | 'i': return insert_at(std::min(last_insert_at_, ed.buf.size()), times);  // where Insert mode was last left
+        case kG | 'i': return insert_at(last_insert_at_ == kNone ? cur : std::min(last_insert_at_, ed.buf.size()), times);  // where Insert mode was last left (if it has been)
         case 'x': case 'X': case 's': case 'D': case 'C': case 'Y': case 'S': {
             // Short for an operator and a motion.
             static const struct {
@@ -3482,6 +3482,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
             mode_ = c == 'v' ? kVisual : kVisualLine;
             return done();
         case kG | 'v':
+            if (last_vstart_ == kNone) return fail();  // (nothing has been selected yet)
             mode_ = last_vmode_;
             vstart_ = std::min(last_vstart_, ed.buf.size());
             go(ed, last_vend_);
@@ -3910,7 +3911,7 @@ void Vim::run_command(Editor& ed, std::string line) {
     // The lines it is about.
     const u64 n = lines_of(ed), here = ed.buf.line_of(ed.cursor());
     u64 line0 = here, line1 = here;
-    bool ranged = false;
+    bool ranged = false, unset = false;
     auto address = [&](u64* out) {
         skip();
         if (at >= line.size()) return false;
@@ -3924,6 +3925,7 @@ void Vim::run_command(Editor& ed, std::string line) {
             *out = n - 1, ++at;
         } else if (line.compare(at, 2, "'<") == 0 || line.compare(at, 2, "'>") == 0) {
             const u64 a = std::min(last_vstart_, last_vend_), b = std::max(last_vstart_, last_vend_);
+            if (a == kNone) unset = true;  // (nothing has been selected yet)
             *out = ed.buf.line_of(std::min(line[at + 1] == '<' ? a : b, ed.buf.size()));
             at += 2;
         } else {
@@ -3942,6 +3944,10 @@ void Vim::run_command(Editor& ed, std::string line) {
             if (!address(&line1)) line1 = line0;
         }
         if (line1 < line0) std::swap(line0, line1);
+    }
+    if (unset) {
+        message_ = "E20: Mark not set";
+        return;
     }
     skip();
     if (at >= line.size()) {  // a number alone: go to that line (in the cursor's column: 'startofline' is off)

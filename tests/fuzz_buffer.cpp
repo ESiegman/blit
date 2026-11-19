@@ -3921,6 +3921,11 @@ void vim_test() {
         {"|one\ntwo", "jxgg`.", "one\n|wo"},
         {"|one\ntwo", "jxggg;", "one\n|wo"},
         {"|one two", "wiX<Esc>0giY<Esc>", "one X|Ytwo"},
+        // (Before Insert mode has been left, gi inserts at the cursor; before anything has been selected, gv and '< do nothing.)
+        {"one t|wo", "giX<Esc>", "one t|Xwo"},
+        {"one t|wo", "gvd", "one t|wo"},
+        {"one t|wo\nb", ":'<lt>,'>d<CR>", "one t|wo\nb"},
+        {"one t|wo", "vlv0gvd", "one |t"},
         {"one |two three", "ve<Esc>0`>", "one tw|o three"},
         {"one |two three", "ve<Esc>$`<lt>", "one |two three"},
         {"one\nt|wo", "maggOzero<Esc>`a", "zero\none\nt|wo"},

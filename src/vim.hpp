@@ -266,7 +266,7 @@ private:
 
     u64 vstart_ = 0;  // where Visual mode began
     bool vis_eol_ = false;  // Visual mode after "$": the end of the line is selected with its last character
-    u64 last_vstart_ = 0, last_vend_ = 0;
+    u64 last_vstart_ = ~0ull, last_vend_ = ~0ull;  // the last selection (~0: none yet)
     Mode last_vmode_ = kVisual;
     u32 want_col_ = 0;
     char find_key_ = 0;
@@ -286,7 +286,7 @@ private:
     std::string insert_prefix_; // o and O with a count: what starts each further line
     bool auto_indent_ = false;  // the line's indent was put there (o, O, cc, S, Enter) and nothing has been typed after it
     std::string last_inserted_; // the "." register
-    u64 last_insert_at_ = 0;    // where Insert mode was last left (gi)
+    u64 last_insert_at_ = ~0ull;  // where Insert mode was last left (gi; ~0: it has not been)
     std::vector<std::string> replaced_;  // Replace mode: what each character typed went over, for Backspace
     // Visual Block mode: I, A and c type on the first line, and Esc puts the same on the others.
     struct BlockInsert {
@@ -316,7 +316,7 @@ private:
     struct Places {
         std::vector<u64> jumps;  // where long moves started from
         size_t jump_at = 0;
-        u64 prev_jump = 0, last_change = ~0ull, last_insert_at = 0, last_vstart = 0, last_vend = 0;
+        u64 prev_jump = 0, last_change = ~0ull, last_insert_at = ~0ull, last_vstart = ~0ull, last_vend = ~0ull;
         Mode last_vmode = kVisual;
     };
     std::vector<u64> jumps_;
