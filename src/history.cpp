@@ -68,6 +68,8 @@ bool history_read(const std::string& file, std::string* text) {
 }
 
 bool history_keep(const std::string& dir, const std::string& path, std::string_view text, bool saved, i64 when_ms, size_t most, std::string* err) {
+    std::string unasked;
+    if (!err) err = &unasked;  // (fs_mkdirs and fs_write say why to somewhere)
     const u64 h = fnv(text);
     std::vector<HistoryEntry> have = history_list(dir);
     if (!have.empty() && have.front().hash == h) {  // (as the newest is: kept already; a save marks it saved)
@@ -79,14 +81,14 @@ bool history_keep(const std::string& dir, const std::string& path, std::string_v
     }
     if (!fs_mkdirs(dir, err)) return false;
     const std::string where = dir + "/path";
-    if (fs_kind(where) != 1) fs_write(where, path + "\n", nullptr);
+    if (fs_kind(where) != 1) fs_write(where, path + "\n", err);
     i64 when = when_ms;
     if (!have.empty() && when <= have.front().when_ms) when = have.front().when_ms + 1;  // (in order, however fast)
     const std::string file = dir + "/" + std::to_string(when) + (saved ? "-s-" : "-t-") + hex(h) + ".gz";
     const std::string part = file + ".part";
     gzFile f = gzopen(part.c_str(), "wb6");
     if (!f) {
-        if (err) *err = "cannot write " + part;
+        *err = "cannot write " + part;
         return false;
     }
     size_t at = 0;
@@ -99,7 +101,7 @@ bool history_keep(const std::string& dir, const std::string& path, std::string_v
     ok = gzclose(f) == Z_OK && ok;
     if (!ok || std::rename(part.c_str(), file.c_str()) != 0) {
         std::remove(part.c_str());
-        if (err) *err = "cannot write " + file;
+        *err = "cannot write " + file;
         return false;
     }
     have.insert(have.begin(), HistoryEntry{when, saved, h, file});

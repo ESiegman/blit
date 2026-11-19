@@ -166,6 +166,14 @@ got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x600 --shot "$dir/shot.b
 check "local history: the text before the first save, and each save" "sss"
 got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x600 --shot "$dir/shot.bmp" --script "frame;command:Show the file's local history;frame;key:Down;frame;lsptext;key:Down;frame;key:Return;frame;lsptext;dump:tabs" "$dir/hist.txt" 2>&1 >/dev/null | grep -v '^blit: ' | tail -3 | tr '\n' '#')
 check "tried out: the diff against now; chosen: put back, the tab of diffs gone" "@@ -1 +1 @@ / -Xone / +XYone /  two#one / two / #tabs: >[hist.txt*]#"
+# Where the history cannot be kept (a file in the way of its folder): the
+# file is saved all the same, and blit goes on.
+echo "in the way" >"$dir/nohist"
+export BLIT_HISTORY_DIR="$dir/nohist"
+printf 'one\n' >"$dir/hist2.txt"
+BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x600 --shot "$dir/shot.bmp" --script "frame;text:X;save;frame" "$dir/hist2.txt" >/dev/null 2>&1
+got="$? $(cat "$dir/hist2.txt")"
+check "local history that cannot be kept: saved all the same" "0 Xone"
 unset BLIT_HISTORY_DIR
 
 # Spelling: the words of comments and strings (not names, addresses or
