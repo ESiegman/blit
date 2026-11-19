@@ -52,6 +52,41 @@ check "a list typed, with commas" "$base" "settingsopen:font.features;key:Return
 check "Delete: back to the default, the line commented out" "$base
 blit.opt.font.size = 16" "settingsopen:font.size;key:Delete" \
     'font.size 13 points' "-- blit.opt.font.size = 16|"
+# init.lua written by hand, in less usual ways: a table over several lines
+# (all of it changed, or commented out), two settings on one line (the
+# other kept), a setting inside a long comment (which sets nothing).
+# whole NAME EXPECTED: init.lua after the base's lines, its lines joined by "|".
+whole() {
+    got=$(tail -n +4 "$BLIT_INIT" | tr '\n' '|')
+    if [ -z "$print" ] && [ "$got" != "$2" ]; then
+        printf 'FAIL: %s (init.lua)\n    expected %s\n    got      %s\n' "$1" "$2" "$got"
+        failed=1
+    fi
+}
+features='blit.opt.font.features = {
+    "ss01",  -- stylistic set 1
+}'
+check "a table over several lines, changed: all of it" "$base
+$features
+blit.opt.font.size = 15" "settingsopen:font.features;key:Return;key:Backspace;key:Backspace;key:Backspace;key:Backspace;text:zero;key:Return" \
+    'font.features { "zero" } OpenType features, for example { "ss01", "zero" }'
+whole "a table over several lines, changed" 'blit.opt.font.features = { "zero" }|blit.opt.font.size = 15|'
+check "a table over several lines, back to the default: all of it commented out" "$base
+$features
+blit.opt.font.size = 15" "settingsopen:font.features;key:Delete" \
+    'font.features {} OpenType features, for example { "ss01", "zero" }'
+whole "a table over several lines, commented out" '-- blit.opt.font.features = {|    -- "ss01",  -- stylistic set 1|-- }|blit.opt.font.size = 15|'
+check "two settings on a line: the other kept" "$base
+blit.opt.font.size = 16; blit.opt.font.ligatures = true" "settingsopen:font.size;key:Return;key:Backspace;key:Backspace;text:18;key:Return" \
+    'font.size 18 points' "blit.opt.font.size = 18; blit.opt.font.ligatures = true|"
+check "two settings on a line, one back to the default: the other kept, on a line of its own" "$base
+blit.opt.font.size = 16; blit.opt.font.ligatures = true" "settingsopen:font.size;key:Delete;settingsopen:font.ligatures" \
+    'font.ligatures true draw -> != => <= and friends joined, if the font can' "-- blit.opt.font.size = 16;|blit.opt.font.ligatures = true|"
+check "a setting inside a long comment: left there, the line added" "$base
+--[[
+blit.opt.font.size = 20
+]]" "settingsopen:font.size;key:Return;key:Backspace;key:Backspace;text:16;key:Return" \
+    'font.size 16 points' "blit.opt.font.size = 20|blit.opt.font.size = 16|"
 # The template as init.lua: its commented-out line taken in, its comment
 # kept in its column.
 tmpl=$(cat "$src/init.example.lua")
