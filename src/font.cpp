@@ -511,7 +511,10 @@ bool Font::init(const FontSpec& spec, std::string* err, std::string* warnings) {
     colour_base_ = next_colour_ = colour_row0_ * cols_;
     colour_h_ = static_cast<int>(colour_rows_) * cell_h_;
     colour_px_.assign(static_cast<size_t>(atlas_w_) * static_cast<size_t>(colour_h_) * 4, 0);
-    colour_dirty0_ = 0, colour_dirty1_ = colour_h_;
+    // (Nothing to send yet: the renderer clears the texture it makes for
+    // these rows. Sending them anyway waited, in the first frame, for all the
+    // GPU had been given, the minimap's pictures among it.)
+    colour_dirty0_ = colour_h_, colour_dirty1_ = 0;
     pixels_ = static_cast<u8*>(std::calloc(static_cast<size_t>(atlas_w_) * atlas_h_, 1));
     if (!pixels_ || atlas_w_ > 8192 || atlas_h_ > 16384 || slots_ < 256) {
         if (err) *err = "font size out of range";
