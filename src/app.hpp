@@ -1352,6 +1352,7 @@ private:
     // Line numbers (apptabs.cpp).
     int gutter_px() const;
     void gutter_layout(int w, int h, FrameDesc& fd);
+    std::string gutter_dump();  // (the tests: each row of the split in front's line numbers, and its change mark)
 
     // The side panel: tabs, the file tree (apppanel.cpp).
     struct Side;

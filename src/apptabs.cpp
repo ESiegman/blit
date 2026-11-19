@@ -837,7 +837,30 @@ void App::gutter_layout(int w, int h, FrameDesc& fd) {
         for (u32 r = 0; r < rows; ++r) {
             const i64 line = line_at(first + r);
             if (line < 0 || static_cast<u64>(line) >= lines) continue;
-            if (wrap && wrap->start_col(first + r) > 0) continue;  // (a wrapped line's later row: no number)
+            const u64 at = static_cast<u64>(line);
+            const bool head = !wrap || wrap->start_col(first + r) == 0;  // (a wrapped line's first row: its number)
+            // In that last cell, a bar beside lines added or changed since
+            // the last commit (beside each of a wrapped line's rows), and a
+            // dash where lines were taken out.
+            if (!hunks.empty()) {
+                auto it = std::upper_bound(hunks.begin(), hunks.end(), at, [](u64 l, const GitHunk& k) { return l < k.line; });
+                u32 mark = 0;
+                // (Lines taken from the very end are marked under the last line, by its last row.)
+                if (at + 1 == lines && hunks.back().kind == GitHunk::kDeleted && hunks.back().line >= lines && (!wrap || wrap->end_col(first + r) == ~0u))
+                    mark = (font.glyph(0x2581) & (Font::kWide - 1)) | (kInkDiagnostic << kCellInkShift);
+                if (it != hunks.begin()) {
+                    const GitHunk& k = *std::prev(it);
+                    // (A change that is staged as it is: a thinner bar, and a
+                    // removal staged, in the quiet ink.)
+                    if (k.kind == GitHunk::kDeleted && k.line == at) {
+                        if (head) mark = (font.glyph(0x2594) & (Font::kWide - 1)) | ((k.staged ? kInkMuted : kInkDiagnostic) << kCellInkShift);
+                    } else if (k.kind != GitHunk::kDeleted && at < u64(k.line) + k.count) {
+                        mark = (font.glyph(k.staged ? 0x258F : 0x258E) & (Font::kWide - 1)) | ((k.kind == GitHunk::kAdded ? kInkAdded : kInkChanged) << kCellInkShift);
+                    }
+                }
+                if (mark) box.cells[static_cast<size_t>(r + 1) * cols - 1] = mark;
+            }
+            if (!head) continue;  // (a wrapped line's later row: no number)
             // Digits are their own glyph slots; the cursor's line stands out.
             u32 ink = static_cast<u64>(line) == pane_->cur_line ? 0 : kInkMuted << kCellInkShift;
             if (cov) {
@@ -847,7 +870,6 @@ void App::gutter_layout(int w, int h, FrameDesc& fd) {
             }
             u32* const row = box.cells.data() + static_cast<size_t>(r) * cols;
             u32* end = row + cols - 1;  // the last cell stays blank
-            const u64 at = static_cast<u64>(line);
             const i64 rel = shown_at(at) - shown_at(cur);  // (in lines on show: a fold counts as one, as j and k take it)
             const u64 number = !relative || at == cur ? at + 1 : static_cast<u64>(rel < 0 ? -rel : rel);
             if (relative && at == cur) {
@@ -860,24 +882,6 @@ void App::gutter_layout(int w, int h, FrameDesc& fd) {
             else if (const u32 test = test_gutter(doc, at)) row[0] = test;  // a test defined here, as its last run went
             else if (folds && folds->header(at)) row[0] = (font.glyph(0x203A) & (Font::kWide - 1)) | (kInkAccent << kCellInkShift);  // lines folded under it
             else if (const u32 fix = lsp_gutter(doc, at)) row[0] = fix;  // a problem the language server has a fix for
-            // In that last cell, a bar beside lines added or changed since
-            // the last commit, and a dash where lines were taken out.
-            if (!hunks.empty()) {
-                auto it = std::upper_bound(hunks.begin(), hunks.end(), at, [](u64 l, const GitHunk& k) { return l < k.line; });
-                u32 mark = 0;
-                // (Lines taken from the very end are marked under the last line.)
-                if (at + 1 == lines && hunks.back().kind == GitHunk::kDeleted && hunks.back().line >= lines)
-                    mark = (font.glyph(0x2581) & (Font::kWide - 1)) | (kInkDiagnostic << kCellInkShift);
-                if (it != hunks.begin()) {
-                    const GitHunk& k = *std::prev(it);
-                    // (A change that is staged as it is: a thinner bar, and a
-                    // removal staged, in the quiet ink.)
-                    if (k.kind == GitHunk::kDeleted && k.line == at) mark = (font.glyph(0x2594) & (Font::kWide - 1)) | ((k.staged ? kInkMuted : kInkDiagnostic) << kCellInkShift);
-                    else if (k.kind != GitHunk::kDeleted && at < u64(k.line) + k.count)
-                        mark = (font.glyph(k.staged ? 0x258F : 0x258E) & (Font::kWide - 1)) | ((k.kind == GitHunk::kAdded ? kInkAdded : kInkChanged) << kCellInkShift);
-                }
-                if (mark) box.cells[static_cast<size_t>(r + 1) * cols - 1] = mark;
-            }
             // Blame: who and when, on the first line of each run of lines
             // from one commit (and on the top row, whatever it is).
             if (blame && static_cast<u64>(line) < blame->lines.size() && cols > kBlameCols) {
@@ -924,6 +928,26 @@ void App::gutter_layout(int w, int h, FrameDesc& fd) {
         p.shadow_alpha = 0.8f * static_cast<float>(std::min(1.0, pane_->scroll_x / (2.0 * static_cast<double>(cw))));
         p.clip[0] = pane_->x0, p.clip[1] = pane_->text_y, p.clip[2] = pane_->x1, p.clip[3] = pane_->y1;
     }
+}
+
+// For the tests: the line numbers of the split in front as last drawn, a
+// row each: its number (none on a wrapped line's later rows), then its
+// change mark (+ added, ~ changed, - lines taken out), or "." for neither.
+std::string App::gutter_dump() {
+    const TextBox& box = pane_->bar->gutter;
+    std::string out = "gutter";
+    for (u32 r = 0; r < box.rows; ++r) {
+        const u32* row = box.cells.data() + static_cast<size_t>(r) * box.cols;
+        std::string one;
+        for (u32 c = 0; c + 1 < box.cols; ++c)
+            if (const u32 ch = row[c] & (Font::kWide - 1); ch >= '0' && ch <= '9') one += static_cast<char>(ch);
+        if (const u32 mark = row[box.cols - 1]) {
+            const u32 ink = (mark >> kCellInkShift) & 0x1F;
+            one += ink == kInkAdded ? '+' : ink == kInkChanged ? '~' : '-';
+        }
+        out += " " + (one.empty() ? std::string(".") : one);
+    }
+    return out;
 }
 
 }  // namespace blit

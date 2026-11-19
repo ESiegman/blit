@@ -217,6 +217,13 @@ check "a click beside an unchanged line, or Esc, offers nothing" 'main +2 | chan
 run "$dir/ada/long.txt" "frame;gitwait;key:Down;key:End;text: and more;command:Git: Stage the change at the cursor;gitwait;gitdump"
 got="$got / $(git -C "$dir/ada" show :long.txt | sed -n 2p)"
 check "the change at the cursor staged from the command search, as the text is, saved or not" 'main +2 | staged M:long.txt | changes M:long.txt | branches *main origin/main | commits 3 "Code" | lines 2~s 11+3 | note Stage: done / TWO and more'
+# A changed line that wraps: the bar beside each of its rows, its number
+# on the first alone.
+changed
+printf 'one\nTWO%s\nthree\nfour\nfive\nsix\nseven\neight\nnine\nten\nA\nB\nC\neleven\ntwelve\nthirteen\nfourteen\n' "$(printf ' and a good many more words%.0s' 1 2 3 4 5 6 7 8)" >"$dir/ada/long.txt"
+run "$dir/ada/long.txt" "frame;gitwait;command:Toggle soft wrap;frame;gutterdump"
+got=$(printf '%s' "$got" | cut -d' ' -f1-9)
+check "soft wrap: a change's bar beside each row of its line" 'gutter 1 2~ ~ ~ ~ 3 4 5'
 
 # Stashes: made, listed, shown, popped, applied, dropped.
 changed

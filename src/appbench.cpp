@@ -621,6 +621,8 @@ int App::run_bench() {
 //   gitview[:LABEL]        print the diff tab in front: its hunks, and its lines with what is coloured added or taken away
 //   gitfield               print the rows of the commit message as its field shows them
 //   gutterclick:N          a click on the change's mark beside line N of the file in front
+//   gutterdump             print the rows of the line numbers in front: each one's number (none on a wrapped line's
+//                          later rows) and change mark (+ added, ~ changed, - lines taken out, . neither)
 //   pan:DX,DY              a touchpad stroke; step:MS lets MS milliseconds of scrolling pass
 //   ready                  wait for the language server to be up (10 s at most)
 //   diag                   wait for the server's next set of diagnostics (10 s at most)
@@ -853,6 +855,8 @@ void App::run_script(const char* script) {
             up.type = SDL_EVENT_MOUSE_BUTTON_UP;
             up.button.button = SDL_BUTTON_LEFT;
             handle(up);
+        } else if (verb == "gutterdump") {  // the rows of the line numbers in front: each one's number and change mark
+            std::fprintf(stderr, "%s\n", gutter_dump().c_str());
         } else if (verb == "seldump") {  // what is selected (Vim's Visual mode, or the editor's), its lines joined by " / "
             const Editor& ed = pane_->doc->ed;
             u64 lo = 0, hi = 0;
