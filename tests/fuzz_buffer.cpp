@@ -3663,6 +3663,10 @@ void find_test() {
 #define FAM "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7"
 #define FLAG "\xF0\x9F\x87\xAB\xF0\x9F\x87\xB7"
 
+// Vim has EditWatch's virtual function and a destructor that is not: none
+// may be made of it to be deleted as one.
+static_assert(std::is_final_v<Vim> || std::has_virtual_destructor_v<Vim>);
+
 void vim_test() {
     struct Case {
         const char* before;

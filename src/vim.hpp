@@ -61,7 +61,7 @@ struct VimRequest {
     bool ranged = false;
 };
 
-class Vim : public EditWatch {
+class Vim final : public EditWatch {
 public:
     enum Mode : u8 { kNormal, kInsert, kReplace, kVisual, kVisualLine, kCommand, kVisualBlock };
     enum : u32 {
