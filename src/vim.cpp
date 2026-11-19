@@ -1419,10 +1419,15 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
             if (line == 0) m.ok = false;
             to_line(line >= count ? line - count : 0, false);
             break;
-        case '_': to_line(line + count - 1, false); break;
+        // (_ $ and g_ with a count go down count - 1 lines, and on the last line fail.)
+        case '_':
+            if (count > 1 && line + 1 >= n) m.ok = false;
+            to_line(line + count - 1, false);
+            break;
         case '0': m.to = ed.buf.line_start(line); break;
         case '^': m.to = first_nonblank(ed, line); break;
         case '$': {
+            if (count > 1 && line + 1 >= n) m.ok = false;
             const u64 l = std::min(line + count - 1, n - 1);
             m.to = line_last(ed, l);
             m.inclusive = ed.line_end(l) > ed.buf.line_start(l);  // (an empty line has nothing to include)
@@ -1431,6 +1436,7 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
             break;
         }
         case kG | '_': {
+            if (count > 1 && line + 1 >= n) m.ok = false;
             const u64 l = std::min(line + count - 1, n - 1);
             u64 at = line_last(ed, l);
             const u64 start = ed.buf.line_start(l);
@@ -2884,6 +2890,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
             default: break;
         }
         if (op_ && (c == static_cast<u32>(op_) || (op && op == op_) || (op_ == kOpComment && c == 'c') || (op_ == kOpFormat && c == 'q'))) {  // dd, cc, yy, >>, g~~, guu, gUU, g??, gcc, and g~g~
+            if (times > 1 && line + 1 >= n) return fail();  // (more lines than one asked for on the last: Vim does nothing)
             u64 lo, hi;
             lines_from(line, times, &lo, &hi);
             const char doubled = op_;
@@ -3271,6 +3278,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
                 if (ed.line_end(line) == ed.buf.line_start(line) && (c == 'x' || c == 'X')) return done();  // nothing to delete on an empty line
                 op_ = s.op;
                 if (!s.move) {  // S: the whole line
+                    if (times > 1 && line + 1 >= n) return fail();
                     u64 lo, hi;
                     lines_from(line, times, &lo, &hi);
                     operate(ed, 'c', lo, hi, true);

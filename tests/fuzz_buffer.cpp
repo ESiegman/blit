@@ -3643,6 +3643,17 @@ void vim_test() {
         {"abcdef\nx|\tx\nabcdef", "vhj", "abcdef\nx\tx\n|abcdef"},
         {"abcdef\n|\tx\nabcdef", "vkj", "abcdef\n|\tx\nabcdef"},
         {"x|\tx\nabcdef", "i<Down>z<Esc>", "x\tx\na|zbcdef"},
+        // A count of lines from the last line fails (and a macro stops there).
+        {"ab cd\nef| gh", "2dd", "ab cd\nef| gh"},
+        {"ab cd\nef| gh", "3yyP", "ab cd\nef| gh"},
+        {"ab cd\nef| gh", "2Sx<Esc>", "ab cd\nef|gh"},
+        {"ab cd\nef| gh", "2>>", "ab cd\nef| gh"},
+        {"ab cd\nef| gh", "2g~~", "ab cd\nef| gh"},
+        {"ab cd\nef| gh", "2_", "ab cd\nef| gh"},
+        {"ab cd\nef| gh", "d2$", "ab cd\nef| gh"},
+        {"ab cd\nef| gh", "2g_", "ab cd\nef| gh"},
+        {"ab cd\ne|f gh\nij", "2dd", "a|b cd"},
+        {"ab\n|c\nd", "qaA;<Esc>2yyjq2@a", "ab\nc;\nd|;"},
     };
     int wrong = 0;
     for (const Case& c : cases) {
