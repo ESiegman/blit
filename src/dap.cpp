@@ -205,9 +205,8 @@ void Dap::Link::read_loop(std::stop_token stop) {
         };
         for (;;) {
             const size_t at = in_text.find("Content-Length:");
-            if (at == std::string::npos) {  // (no header yet: what can not be the start of one is the program's)
-                const size_t keep = std::min<size_t>(in_text.size(), 15);
-                if (in_text.size() > keep && in_text.find('\n') != std::string::npos) {
+            if (at == std::string::npos) {  // (no header yet: whole lines are the program's; what follows the last may be the start of one)
+                if (in_text.find('\n') != std::string::npos) {
                     const size_t cut = in_text.rfind('\n') + 1;
                     program_wrote(in_text.substr(0, cut));
                     in_text.erase(0, cut);

@@ -27,6 +27,7 @@
 
 #include "buffer.hpp"
 #include "config.hpp"
+#include "dap.hpp"
 #include "editor.hpp"
 #include "finder.hpp"
 #include "folds.hpp"
@@ -2816,6 +2817,30 @@ void profile_test() {
 #endif
 }
 
+// A debugger's adapter, here a script: its messages, and what it writes
+// that is not one (gdb lets the program write where its messages go), told
+// as the program's output as soon as a line of it is whole, however short.
+void dap_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    const std::string body = R"({"seq":1,"type":"event","event":"stopped","body":{"reason":"step"}})";
+    const std::string script = "printf 'one line\\n'; printf 'Content-Length: " + std::to_string(body.size()) + "\\r\\n\\r\\n%s' '" + body +
+                               "'; sleep 0.2; printf 'hi\\n'; sleep 5";
+    Dap dap;
+    std::string err;
+    check(dap.start({"/bin/sh", "-c", script}, "", {}, &err), "dap: the adapter starts");
+    std::vector<std::string> said;
+    const auto until = std::chrono::steady_clock::now() + std::chrono::seconds(4);
+    while (said.size() < 3 && std::chrono::steady_clock::now() < until) {
+        for (const Dap::Message& m : dap.poll()) said.push_back(m.name + ":" + std::string(m.name == "output" ? m.body()["output"].str() : m.body()["reason"].str()));
+        std::this_thread::sleep_for(std::chrono::milliseconds(10));
+    }
+    check(said.size() == 3 && said[0] == "output:one line\n" && said[1] == "stopped:step" && said[2] == "output:hi\n",
+          "dap: messages, and the program's lines between them");
+    dap.stop();
+}
+
 void remote_test() {
 #if defined(BLIT_FAKE_SSH)
     auto check = [](bool ok, const char* what) {
@@ -5386,6 +5411,7 @@ int main(int argc, char** argv) {
     script_test();
     term_test(seeds);
     profile_test();
+    dap_test();
     remote_test();
     git_test(seeds);
     tree_test();
