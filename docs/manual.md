@@ -421,8 +421,11 @@ first), going round at the ends of the file.
 Ctrl-H delete a word, to the start of the line, a character; Ctrl-T and
 Ctrl-D indent the line a level more or less; Ctrl-R and a register's name
 puts its text in, Ctrl-A what was typed last time; Ctrl-V (or Ctrl-Q) takes
-the next key as it is (a real tab); Ctrl-Y and Ctrl-E copy the character
-above or below; Ctrl-O does one Normal-mode command; Ctrl-S asks the
+the next key as it is (a real tab), or a character by its number: up to
+three decimal digits, `o` and three octal ones, `x` and two hex ones, `u`
+and four hex ones or `U` and eight (Ctrl-V `u00e9` is é); Ctrl-Y and
+Ctrl-E copy the character above or below; Ctrl-O does one Normal-mode
+command; Ctrl-S asks the
 language server for the signature of the call being typed. Ctrl-U and
 Ctrl-W start an undo step of their own, as Neovim's do, so `u` brings back
 what they took. A new line starts as

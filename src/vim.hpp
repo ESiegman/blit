@@ -221,6 +221,7 @@ private:
 
     u32 normal_key(Editor& ed, const VimKey& k);
     u32 insert_key(Editor& ed, const VimKey& k);
+    u32 literal_key(Editor& ed, const VimKey& k);
     u32 command_key(Editor& ed, const VimKey& k);
     void incsearch(Editor& ed);
     bool motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* out);
@@ -290,6 +291,12 @@ private:
     std::vector<std::string> replaced_;  // Replace mode: what each character typed went over, for Backspace
     std::vector<VimKey> insert_keys_;    // the keys typed in Insert mode, which a count types again ("3i<CR><Esc>")
     bool retyping_ = false;              // and they are being typed again
+    // <C-v> in Insert mode: the number typed after it so far, its digits,
+    // and its kind (x hex, o octal, u or U Unicode; none of them, decimal).
+    u32 literal_ = 0;
+    u8 literal_digits_ = 0;
+    bool literal_hex_ = false, literal_octal_ = false;
+    char literal_unicode_ = 0;
     // Visual Block mode: I, A and c type on the first line, and Esc puts the same on the others.
     struct BlockInsert {
         bool on = false;

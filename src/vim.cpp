@@ -2310,7 +2310,63 @@ void Vim::leave_insert(Editor& ed) {
     if (dropped) want_col_ = indent_col;
 }
 
+// <C-v> in Insert mode, as Vim's get_literal() has it: the next key as it
+// is (Esc and Ctrl with a letter too, as control characters), or a
+// character by its number: up to three decimal digits, "o" and three
+// octal ones, "x" and two hex ones (to 255 at most), "u" and four hex
+// ones or "U" and eight. A key that is no digit ends the number early and
+// is then a key as usual.
+u32 Vim::literal_key(Editor& ed, const VimKey& k) {
+    auto keep = [&] {  // (as insert_key() keeps the keys a count types again)
+        if (insert_count_ > 1 && !retyping_) insert_keys_.push_back(k);
+    };
+    auto put = [&](u32 cp) {
+        await_ = kNothing;
+        typed_ = cp == 0 ? std::string(1, '\0') : cp <= 0x10FFFF ? utf8_of(cp) : std::string();
+        if (typed_.empty()) return static_cast<u32>(kHandled);
+        ed.insert(typed_);
+        return static_cast<u32>(kHandled) | static_cast<u32>(kTyped);
+    };
+    const u32 c = k.kind == VimKey::kChar && !k.ctrl ? k.ch : 0;
+    if (c == 'x' || c == 'X') {
+        literal_hex_ = true;
+    } else if (c == 'o' || c == 'O') {
+        literal_octal_ = true;
+    } else if (c == 'u' || c == 'U') {
+        literal_unicode_ = static_cast<char>(c);
+    } else {
+        int d = -1;
+        if (literal_hex_ || literal_unicode_) d = c < 128 && std::isxdigit(static_cast<int>(c)) ? (c <= '9' ? static_cast<int>(c - '0') : (static_cast<int>(c) | 0x20) - 'a' + 10) : -1;
+        else if (literal_octal_) d = c >= '0' && c <= '7' ? static_cast<int>(c - '0') : -1;
+        else d = c >= '0' && c <= '9' ? static_cast<int>(c - '0') : -1;
+        if (d < 0) {
+            if (literal_digits_ == 0) {  // no number: this key, as it is
+                keep();
+                if (k.kind == VimKey::kTab) return put('\t');
+                if (k.kind == VimKey::kEnter) return put('\n');
+                if (k.kind == VimKey::kEsc) return put(0x1B);
+                if (k.kind != VimKey::kChar) return put(~0u);
+                return put(k.ctrl && k.ch >= '@' && k.ch < 0x80 ? (k.ch & 0x1F) : k.ch);
+            }
+            const u32 r = put(literal_);
+            const std::string number = typed_;
+            const u32 then = insert_key(ed, k);
+            if (then & kTyped) typed_ = number + typed_;
+            else typed_ = number;
+            return r | then;
+        }
+        literal_ = literal_ * (literal_hex_ || literal_unicode_ ? 16 : literal_octal_ ? 8 : 10) + static_cast<u32>(d);
+        ++literal_digits_;
+    }
+    keep();
+    if (literal_ > 255 && !literal_unicode_) literal_ = 255;
+    const u8 most = literal_hex_ ? 2 : literal_unicode_ == 'u' ? 4 : literal_unicode_ == 'U' ? 8 : 3;
+    if (literal_digits_ >= most) return put(literal_);
+    return kHandled;
+}
+
 u32 Vim::insert_key(Editor& ed, const VimKey& k) {
+    if (await_ == kInsertLiteral && !read_only) return literal_key(ed, k);
     if (k.kind == VimKey::kEsc || (k.ctrl && (k.ch == '[' || k.ch == 'c'))) {
         leave_insert(ed);
         return kHandled;
@@ -2321,12 +2377,6 @@ u32 Vim::insert_key(Editor& ed, const VimKey& k) {
         await_ = kNothing;
         if (k.kind != VimKey::kChar) return kHandled;
         typed_ = k.ch < 128 ? fetch(static_cast<char>(k.ch))->text : std::string();
-        if (!typed_.empty()) ed.insert(typed_);
-        return typed_.empty() ? static_cast<u32>(kHandled) : static_cast<u32>(kHandled) | static_cast<u32>(kTyped);
-    }
-    if (await_ == kInsertLiteral) {  // <C-v>: the next key as it is
-        await_ = kNothing;
-        typed_ = k.kind == VimKey::kTab ? "\t" : k.kind == VimKey::kEnter ? "\n" : k.kind == VimKey::kChar ? utf8_of(k.ch) : "";
         if (!typed_.empty()) ed.insert(typed_);
         return typed_.empty() ? static_cast<u32>(kHandled) : static_cast<u32>(kHandled) | static_cast<u32>(kTyped);
     }
@@ -2382,7 +2432,10 @@ u32 Vim::insert_key(Editor& ed, const VimKey& k) {
                 break;
             }
             case 'v':
-            case 'q': await_ = kInsertLiteral; break;
+            case 'q':
+                await_ = kInsertLiteral;
+                literal_ = 0, literal_digits_ = 0, literal_hex_ = literal_octal_ = false, literal_unicode_ = 0;
+                break;
             case 'a':
                 if (!last_inserted_.empty()) {
                     typed_ = last_inserted_;
