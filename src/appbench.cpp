@@ -730,6 +730,13 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s\n", t.c_str());
         } else if (verb == "lspextras") {
             std::fprintf(stderr, "%s\n", lsp_extras_dump().c_str());
+        } else if (verb == "cpuquiet") {  // cpuquiet:MS, the CPU time every thread took while the main one slept MS ms: "quiet" under a quarter of it
+            const std::clock_t c0 = std::clock();
+            const u64 t0 = now_ns();
+            SDL_Delay(static_cast<Uint32>(std::atoi(arg.c_str())));
+            const double cpu = static_cast<double>(std::clock() - c0) / CLOCKS_PER_SEC, wall = static_cast<double>(now_ns() - t0) * 1e-9;
+            if (cpu < wall / 4) std::fprintf(stderr, "quiet\n");
+            else std::fprintf(stderr, "busy (%.0f%%)\n", 100.0 * cpu / wall);
         } else if (verb == "lspidle") {
             lsp_.set_idle_stop_ms(static_cast<u64>(std::atoll(arg.c_str())));
         } else if (verb == "panel") {  // let the file tree finish reading folders (2 s at most)

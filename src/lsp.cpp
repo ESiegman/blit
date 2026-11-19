@@ -1695,7 +1695,10 @@ struct Lsp::Conn::Worker {
             }
             if (stopping && (out_at >= outbuf.size() || steady_ms() >= deadline)) break;
 
-            pollfd fds[3] = {{from_fd, POLLIN, 0}, {c.wake_r, POLLIN, 0}, {to_fd, static_cast<short>(out_at < outbuf.size() ? POLLOUT : 0), 0}};
+            // (The server's input only while something waits to be written: a
+            // server that has closed it would have poll() say so, at once,
+            // every time, and the loop spin until its output ends.)
+            pollfd fds[3] = {{from_fd, POLLIN, 0}, {c.wake_r, POLLIN, 0}, {out_at < outbuf.size() ? to_fd : -1, POLLOUT, 0}};
             const int timeout = stopping ? static_cast<int>(deadline - std::min(deadline, steady_ms())) + 1 : -1;
             if (::poll(fds, 3, timeout) < 0 && errno != EINTR) break;
             if (fds[1].revents & POLLIN) {

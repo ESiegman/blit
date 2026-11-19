@@ -33,6 +33,7 @@ printf '%s\nblit.opt.editor.modal = false\nblit.opt.lsp.highlight_uses = false\n
 printf '%s\nblit.opt.editor.modal = false\nblit.opt.lsp.reference_counts = false\n' "$servers" >"$dir/nolens.lua"
 printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--workspace", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/pull.lua"
 printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--late", "300", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/late.lua"
+printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--close-input", "200", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/closing.lua"
 export BLIT_RECENT_FILE="$dir/recent"
 init=
 fresh() {
@@ -312,6 +313,11 @@ with themed "frame;wait:100;frame;lspextras" "$P/h.cpp"
 check "a theme's own colour for a kind of token" 'hints: | colours: call=function p_size=lsp.parameter Widget=type MAX_SIZE=function.macro'
 with plain "frame;wait:100;frame;lspextras" "$P/h.cpp"
 check "no colours of the server's with lsp.semantic_colors off" 'hints: | colours:'
+
+# A server that closes its input and keeps its output open: its output is
+# waited for, with nothing spinning meanwhile.
+with closing "wait:500;cpuquiet:1000"
+check "a server's input closed, its output open: nothing spins" 'quiet'
 
 [ "$failed" = 0 ] && echo "lsp: all passed"
 exit "$failed"

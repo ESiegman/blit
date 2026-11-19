@@ -2,7 +2,7 @@
 //
 //   blit_fakelsp [--utf8] [--full] [--slow MS] [--late MS] [--die-after N] [--items N] [--quiet]
 //                [--pull] [--workspace] [--no-prepare] [--default-rename] [--changes] [--noise]
-//                [--name NAME]
+//                [--close-input MS] [--name NAME]
 //
 // --utf8        agree to count columns in bytes (the default is UTF-16)
 // --full        ask for the whole document on every change
@@ -21,6 +21,8 @@
 // --changes     workspace edits as "changes" (by file) rather than "documentChanges"
 // --noise       print a line of its own on its output before every message (as
 //               servers that log to stdout do)
+// --close-input MS  once nothing has come for MS ms, close its input and keep
+//               its output open for two seconds more, saying nothing
 // --name NAME   what diagnostics give as their source (default "fake")
 //
 // It keeps every document it is sent. What it does with one:
@@ -58,6 +60,7 @@
 //                function, a word all in capitals (not the four above) a
 //                macro; whole or as a change to the last list
 #include <dirent.h>
+#include <poll.h>
 #include <strings.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -81,7 +84,7 @@ namespace {
 
 bool utf16 = true;
 int sync_kind = 2;
-int slow_ms = 0, late_ms = 0;
+int slow_ms = 0, late_ms = 0, close_input_ms = 0;
 long die_after = -1;
 long pad_items = 0;
 bool quiet = false, pull = false, workspace = false, prepare = true, by_changes = false, noise = false, default_rename = false;
@@ -115,6 +118,16 @@ bool read_message(std::string* body) {
     }
     body->resize(length);
     return std::fread(body->data(), 1, length, stdin) == length;
+}
+
+// False once its input has been closed (--close-input), two seconds after.
+bool still_reading() {
+    if (close_input_ms <= 0) return true;
+    pollfd p{0, POLLIN, 0};
+    if (poll(&p, 1, close_input_ms) != 0) return true;
+    close(0);
+    usleep(2'000'000);
+    return false;
 }
 
 void send(const std::string& body) {
@@ -1071,10 +1084,12 @@ int main(int argc, char** argv) {
         else if (a == "--changes") by_changes = true;
         else if (a == "--noise") noise = true;
         else if (a == "--default-rename") default_rename = true;
+        else if (a == "--close-input" && i + 1 < argc) close_input_ms = std::atoi(argv[++i]);
         else if (a == "--name" && i + 1 < argc) source = argv[++i];
     }
+    if (close_input_ms > 0) setvbuf(stdin, nullptr, _IONBF, 0);  // (what has come is all read: poll() says when more has)
     std::string body;
-    while (read_message(&body)) {
+    while (still_reading() && read_message(&body)) {
         if (die_after >= 0 && handled++ >= die_after) return 3;
         json::Doc doc;
         if (!doc.parse(body)) continue;
