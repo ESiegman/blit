@@ -723,6 +723,8 @@ void App::panel_trash(const std::string& path) {
     if (hit != 1) return;
     std::string err;
     for (const std::string& p : all) {
+        // (One in a folder chosen with it goes with that folder, where it is in it.)
+        if (std::ranges::any_of(all, [&](const std::string& other) { return p.starts_with(other + "/"); })) continue;
         FileTree::Node* n = s.tree.find(p);
         if (n && p != s.tree.root() && !s.tree.trash(n, &err)) {
             tell(SDL_MESSAGEBOX_ERROR, err.c_str());
@@ -1129,6 +1131,8 @@ bool App::panel_drop(const std::string& path, float x, float y) {
     for (const std::string& from : moving) {
         FileTree::Node* node = s.tree.find(from);
         if (!node || node == into || parent_of(from) == dest) continue;
+        // (One in a folder chosen with it goes with that folder, where it is in it.)
+        if (std::ranges::any_of(moving, [&](const std::string& other) { return from.starts_with(other + "/"); })) continue;
         if (!s.tree.move(node, into, &err)) break;
         const std::string to = dest + "/" + from.substr(from.find_last_of('/') + 1);
         renamed_on_disk(from, to);  // (an open file, or one in a folder moved, follows it)

@@ -95,6 +95,16 @@ check "a file dragged onto a folder: moved into it" "click:60,73;drag:70,60;drag
     "tree: sub/@42 x.txt@57 z.txt@73" "./sub/q.txt ./sub/y.txt ./x.txt ./z.txt "
 check "the chosen ones dragged onto a folder: all moved" "click:60,57;release;click:60,88,1,cmd;release;click:60,88;drag:70,70;drag:60,42;release;panel" \
     "tree: sub/@42 y.txt@57" "./sub/q.txt ./sub/x.txt ./sub/z.txt ./y.txt "
+# (A folder, opened, and a file in it chosen with it, the file first.)
+both="lua:os.execute('mkdir $T/dest');watchwait;click:60,57;release;panel;click:60,73;release;click:60,57,1,cmd;release"
+check "a folder dragged with a file in it chosen too: the file stays in it" "$both;click:60,73;drag:70,60;drag:60,42;release;panel" \
+    "tree: dest/@42 x.txt@57 y.txt@73 z.txt@88" "./dest/sub/q.txt ./x.txt ./y.txt ./z.txt "
+check "and trashed together: the same" "$both;key:cmd+Backspace;panel" \
+    "tree: dest/@42 x.txt@57 y.txt@73 z.txt@88" "./x.txt ./y.txt ./z.txt "
+if [ -z "$print" ] && [ "$(cd "$BLIT_TRASH_DIR" && find . -type f | sort | tr '\n' ' ')" != "./sub/q.txt " ]; then
+    printf 'FAIL: trashed together: in the Trash\n    got %s\n' "$(cd "$BLIT_TRASH_DIR" && find . -type f | tr '\n' ' ')"
+    failed=1
+fi
 check "a file from an open folder dropped below the rows: moved to the top" "click:60,42;release;panel;click:60,57;drag:70,100;drag:60,300;release;panel" \
     "tree: sub/@42 >q.txt@57 x.txt@73 y.txt@88 z.txt@104" "./q.txt ./x.txt ./y.txt ./z.txt "
 check "a file dropped in its own folder: nothing" "click:60,57;drag:70,70;drag:60,88;release;panel" \
