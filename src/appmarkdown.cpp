@@ -1,6 +1,6 @@
 // The Markdown preview: a tab beside a Markdown file that shows it drawn
 // (headings, emphasis, lists, tables, code, Mermaid diagrams: markdown.cpp,
-// mermaid.cpp; pictures: appimage.cpp), kept up to date as it is typed in,
+// diagram.cpp; pictures: appimage.cpp), kept up to date as it is typed in,
 // and scrolled to where the file's cursor is. Cmd+Shift+V opens it; it is
 // read only. Pictures are read from files beside it (or anywhere on its
 // machine); those on the web stay a link, unless markdown.web_pictures says
@@ -340,7 +340,7 @@ struct App::MdWorker {
     // A diagram's picture: the one drawn before, if nothing that went into
     // it has changed; else laid out and drawn now, as wide as the room
     // across (at most), at the display's density.
-    std::shared_ptr<MdDiagramPicture> diagram(const Job& j, std::string_view src, u32 room, u64* key, bool* cells) {
+    std::shared_ptr<MdDiagramPicture> diagram(const Job& j, std::string_view src, u32 room, u64* key) {
         u64 h = 1469598103934665603ull;
         auto mix = [&](const void* p, size_t n) {
             for (size_t i = 0; i < n; ++i) h = (h ^ static_cast<const u8*>(p)[i]) * 1099511628211ull;
@@ -352,7 +352,6 @@ struct App::MdWorker {
         mix(&j.font_index, sizeof j.font_index), mix(&j.font_px, sizeof j.font_px), mix(&room_px, sizeof room_px), mix(&j.density, sizeof j.density);
         for (const FontFile& f : j.fallbacks) mix(f.path.data(), f.path.size() + 1), mix(&f.index, sizeof f.index);
         *key = h;
-        *cells = false;
         ++asked;
         if (const auto it = drawn.find(h); it != drawn.end()) {
             it->second->used = asked;
@@ -369,11 +368,8 @@ struct App::MdWorker {
         st.stop = stop;
         Drawing d;
         auto pic = std::make_shared<MdDiagramPicture>();
-        const u8 made = diagram_make(src, st, &d, &pic->error);
-        if (made == kDiagramNone || stop.stop_requested()) {  // (blit is quitting: nothing kept)
-            *cells = true;
-            return nullptr;
-        }
+        const u8 made = diagram_make(src, st, &d, &pic->error);  // (a kind not drawn: why, in error)
+        if (stop.stop_requested()) return nullptr;  // (blit is quitting: nothing kept)
         if (made == kDiagramDrawn) {
             // As wide as it is, or the room; and no side more than a picture may have.
             float scale = std::min(1.0f, st.room / std::max(1.0f, d.w)) * density;
@@ -449,9 +445,8 @@ struct App::MdWorker {
         const MdDiagramFn diagram = [&](std::string_view src, u32 room, MdPic* out, std::string* note) -> u8 {
             if (!self) return kMdDiagramLater;
             u64 key = 0;
-            bool cells = false;
-            const std::shared_ptr<MdDiagramPicture> pic = self->diagram(j, src, room, &key, &cells);
-            if (cells || !pic) return kMdDiagramCells;
+            const std::shared_ptr<MdDiagramPicture> pic = self->diagram(j, src, room, &key);
+            if (!pic) return kMdDiagramLater;  // (blit is quitting)
             if (!pic->error.empty() || pic->rgba.empty()) {
                 *note = pic->error.empty() ? "nothing to draw" : pic->error;
                 return kMdDiagramError;

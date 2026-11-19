@@ -2458,7 +2458,7 @@ one that cannot be fetched then is shown from the copy kept.
 
 **Mermaid diagrams** (` ```mermaid ` blocks) are laid out and drawn by
 blit itself, with no browser, no JavaScript and no SVG library.
-Flowcharts and state diagrams are pictures, in the middle of the preview:
+The kinds below are pictures, in the middle of the preview:
 blit lays them out in points, draws the shapes with its own anti-aliased
 rasterizer and the text from the editor's font's own outlines, at the
 size they are shown at (the display's density, the preview's width), so
@@ -2507,11 +2507,33 @@ never lays one out again. A click on one does nothing.
   `note right of`, on one line or up to `end note`) beside their state,
   `classDef` and `class` colours. (Concurrent regions, `--`, are laid out
   as one.)
-- `sequenceDiagram`, drawn in box-drawing characters: participants (and
-  `as` names), messages (`->>`, `-->>`, `->`, `-x`), to oneself, notes
-  (left of, right of, over), `loop`/`alt`/`opt`/`par` blocks,
-  `autonumber`.
-- `pie`: as bars, with each slice's share.
+- `sequenceDiagram`: participants in a row across the top and again at
+  the bottom, a lifeline down from each; `participant`, `actor` (a stick
+  figure), `as` names, `A@{ "type": "database" }` (a cylinder) and
+  `"collections"`; `box` round participants, in its colour, with its
+  label; `create` (the box drawn where the message that makes it arrives)
+  and `destroy` (its lifeline ended with a cross). Messages of every
+  kind: solid and dotted, with an arrowhead (`->>`), none (`->`), a cross
+  (`-x`), an open head (`-)`, async), both ways (`<<->>`); to oneself, a
+  loop out and back. Activations (`+` and `-` on a message, `activate`
+  and `deactivate`) are bars on the lifeline, nested ones beside each
+  other, and messages end on their edges. Notes left of, right of or over
+  one or two participants; `loop`, `alt`/`else`, `opt`, `par`/`and`,
+  `critical`/`option` and `break` frames, nested, with a tab saying what
+  they are and their conditions; `rect` colours behind what is in them;
+  `autonumber` (with a start and a step, and `off`) in circles at each
+  message's start; `title`. The gaps between participants are as wide as
+  what passes between them needs; long text wraps; a lifeline stops for
+  the text over it. Colours a box or a `rect` names are made quieter in a
+  dark theme, so that the text on them stays readable. One too wide for
+  the preview is laid out narrower (text wrapped shorter, boxes and gaps
+  smaller) before it is made smaller.
+- `pie`: wedges round from the top, each slice's share on it where it
+  fits, a legend beside it (under it, when that fits the preview better)
+  with each slice's colour, name and share, the title over it (`pie title
+  ...` or `title ...`, wrapped to the preview); `showData` puts each
+  value in the legend too. The colours are the theme's own, those not too
+  like one another (then the same again, quieter).
 
 A diagram with a mistake in it shows its code, under a line that says
 what and where (`mermaid: line 3: ...`). Other kinds show as code, with a
@@ -3016,9 +3038,10 @@ src/project.*      new projects: the kinds (C++, HIP, C, Python), their fields, 
 src/libraries.*    where libraries are looked up: vcpkg's ports and usage notes, ROCm's packages, pkg-config, PyPI
 src/fsio.*         files and small commands, here or on another machine
 src/markdown.*     Markdown parsed and laid out as rows of styled cells (blocks, inline styles, tables, lists)
-src/mermaid.*      Mermaid diagrams drawn in box-drawing characters: sequence diagrams, pies
 src/diagram.*      Mermaid diagrams as pictures: the drawing (shapes, text), the text measured and drawn from the font's outlines, shapes, arrowheads, curves
 src/flowchart.cpp  flowcharts and state diagrams laid out in layers (ranks, crossings, balance, subgraphs as blocks with ports), as drawings
+src/sequence.cpp   sequence diagrams laid out: participants, lifelines, messages, activations, notes, frames, as drawings
+src/pie.cpp        pie charts laid out: wedges, their shares, a legend, as drawings
 src/raster.*       the diagrams' rasterizer: exact-area anti-aliased fills, strokes with joins, caps and dashes
 src/appmarkdown.cpp the Markdown preview's tab: drawn again as the file changes, following its cursor, links, pictures
 src/appimage.cpp   pictures: read on threads of their own and put on the GPU; an image file's tab (zoom, move)

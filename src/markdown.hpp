@@ -1,9 +1,9 @@
 #pragma once
 // Markdown, drawn as cells: headings, paragraphs with their emphasis, code
 // and links, lists (and task lists), quotes, tables, code blocks, rules, and
-// Mermaid diagrams (as pictures: diagram.hpp; or cells: mermaid.hpp), laid
-// out to a width, with room left for pictures. What blit's preview tab shows (appmarkdown.cpp); nothing here
-// knows about the window, or reads a picture.
+// Mermaid diagrams (as pictures: diagram.hpp), laid out to a width, with
+// room left for pictures. What blit's preview tab shows (appmarkdown.cpp);
+// nothing here knows about the window, or reads a picture.
 #include <functional>
 #include <string>
 #include <string_view>
@@ -96,10 +96,9 @@ using MdCodeFn = std::function<bool(std::string_view lang, std::string_view code
 // A Mermaid diagram (a ```mermaid block's text) drawn as a picture at
 // most `room` columns wide. kMdDiagramPicture: drawn, its size in `out`
 // (its src the picture's name); kMdDiagramError: a mistake in it, why in
-// `note` (its code is shown, under that); kMdDiagramCells: not a kind drawn
-// as a picture (drawn in cells, if it is a kind drawn at all);
-// kMdDiagramLater: not drawn yet (its code is shown until it is).
-enum MdDiagram : u8 { kMdDiagramCells, kMdDiagramPicture, kMdDiagramError, kMdDiagramLater };
+// `note` (its code is shown, under that; a kind not drawn says so there
+// too); kMdDiagramLater: not drawn yet (its code is shown until it is).
+enum MdDiagram : u8 { kMdDiagramLater, kMdDiagramPicture, kMdDiagramError };
 using MdDiagramFn = std::function<u8(std::string_view source, u32 room, MdPic* out, std::string* note)>;
 
 // The text drawn `width` columns wide.

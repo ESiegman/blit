@@ -127,9 +127,11 @@ dump() {
     got=$("$blit" --offscreen "$1" --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;$3;diagramdump" "$2" 2>&1 >/dev/null | grep -v '^\[')
 }
 
-# Flowcharts and state diagrams are pictures, one for each; their layouts
-# are clean, wide and narrow; a mistake shows the code under what it is.
-for f in diagrams layout; do
+# Flowcharts, state diagrams, sequence diagrams and pies are pictures, one
+# for each; their layouts are clean, wide and narrow (in a sequence
+# diagram, each participant's lifeline is a "cluster" its messages end on);
+# a mistake shows the code under what it is.
+for f in diagrams layout sequence; do
     for size in 3600x1100 1200x1100; do
         dump $size "$here/markdown/$f.md" ""
         layout=$got
@@ -138,7 +140,7 @@ for f in diagrams layout; do
         laid=$(printf '%s\n' "$layout" | grep -c '^diagram [0-9]* [0-9]*x[0-9]*$')
         run $size "$here/markdown/$f.md" ""
         got="$laid $(printf '%s\n' "$got" | grep -c '^picture: diagram:')"
-        [ $f = diagrams ] && want="2 2" || want="10 10"
+        case $f in diagrams) want="4 4" ;; layout) want="10 10" ;; *) want="6 6" ;; esac
         check "$f.md at $size: a picture for each diagram laid out" "$want"
     done
 done
@@ -221,8 +223,8 @@ got=$(limit 20 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "fr
 [ "$got" -ge 1 ] && got=drawn
 check "quotes nested 5,000 deep: drawn (the deepest as text), no crash" "drawn"
 awk 'BEGIN { print "```mermaid"; print "sequenceDiagram"; for (i = 0; i < 2000; i++) print "loop x" i; print "A->>B: hi"; for (i = 0; i < 2000; i++) print "end"; print "```" }' >"$dir/loops.md"
-got=$(limit 20 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mddump" "$dir/loops.md" 2>&1 >/dev/null | grep -c 'loop x1999')
-check "a sequence diagram's loops nested 2,000 deep: drawn, in time (each row once copied the whole picture)" "1"
+got=$(limit 20 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mdwait;mddump" "$dir/loops.md" 2>&1 >/dev/null | grep -c '^picture: diagram:')
+check "a sequence diagram's loops nested 2,000 deep: drawn, in time" "1"
 awk 'BEGIN { for (i = 0; i < 20000; i++) printf "*a **b `c` [d](e) _f_ "; print "\n"
     for (i = 0; i < 100000; i++) printf "["; print "\n"
     for (i = 0; i < 100000; i++) printf "~~a "; print "\n"
@@ -238,8 +240,10 @@ awk 'BEGIN { print "```mermaid"; print "graph TD"; for (i = 0; i < 1399; i++) pr
 got=$(limit 20 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mdwait;mddump" "$dir/long.md" 2>&1 >/dev/null | grep -c 'too large to draw')
 check "edges across thousands of ranks: too large to draw, said at once (they took seconds and gigabytes)" "1"
 printf '<!--\nhidden\n\nstill hidden\n-->\nshown\n\n```mermaid\npie title Pets\n  "Dogs" : 3\n  "Cats" : 1\n```\n' >"$dir/odd.md"
-run 1600x1100 "$dir/odd.md" ""
-got=$(printf '%s\n' "$got" | grep -c 'hidden'),$(printf '%s\n' "$got" | grep -c 'shown'),$(printf '%s\n' "$got" | grep -c 'Pets')
+run 1600x1100 "$dir/odd.md" "mdwait"
+seen=$(printf '%s\n' "$got" | grep -c 'hidden'),$(printf '%s\n' "$got" | grep -c 'shown')
+dump 1600x1100 "$dir/odd.md" ""
+got=$seen,$(printf '%s\n' "$got" | grep -c '^node title ')
 check "a comment over blank lines, gone; a pie's title on its first line" "0,1,1"
 printf -- '---\nA rule above this line\n\nsome text\n\n---\n\nmore\n' >"$dir/rule.md"
 run 1600x1100 "$dir/rule.md" ""

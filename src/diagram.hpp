@@ -150,7 +150,8 @@ struct DiagramStyle {
 };
 
 // A source laid out as a drawing. kDiagramNone: not a kind drawn as a
-// picture; kDiagramError: a mistake in it (why in `err`).
+// picture (why in `err`: not drawn yet); kDiagramError: a mistake in it
+// (why in `err`).
 enum DiagramMade : u8 { kDiagramNone, kDiagramDrawn, kDiagramError };
 u8 diagram_make(std::string_view source, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo = nullptr);
 
@@ -226,5 +227,9 @@ std::vector<RasterPoint> diagram_sample(const RasterPath& p, int n);
 
 // Flowcharts (graph, flowchart) and state diagrams (flowchart.cpp).
 bool flowchart_layout(const std::vector<std::string>& st, bool state, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo);
+// Sequence diagrams (sequence.cpp).
+bool sequence_layout(const std::vector<std::string>& st, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo);
+// Pie charts (pie.cpp).
+bool pie_layout(const std::vector<std::string>& st, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo);
 
 }  // namespace blit

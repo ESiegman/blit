@@ -6,7 +6,6 @@
 #include <cstring>
 #include <map>
 
-#include "mermaid.hpp"
 #include "utf8.hpp"
 
 namespace blit {
@@ -1235,15 +1234,15 @@ struct Layout {
 
     void code(const Block& b) {
         const u32 room_cols = room();
-        // A Mermaid diagram, drawn (a picture, in the middle; or cells); or
-        // the code, if it cannot be.
+        // A Mermaid diagram, drawn (a picture, in the middle); or the code,
+        // if it cannot be (or is not drawn yet).
         if (lower(b.info.substr(0, b.info.find(' '))) == "mermaid") {
             std::string src;
             for (const std::string& l : b.text) src += l + "\n";
             auto line_of = [&](size_t k, size_t n) { return b.nos.empty() ? b.line : b.nos[std::min(k * b.nos.size() / std::max<size_t>(1, n), b.nos.size() - 1)]; };
             std::string note;
             MdPic pic;
-            const u8 got = diagram && *diagram ? (*diagram)(src, room_cols, &pic, &note) : static_cast<u8>(kMdDiagramCells);
+            const u8 got = diagram && *diagram ? (*diagram)(src, room_cols, &pic, &note) : static_cast<u8>(kMdDiagramLater);
             if (got == kMdDiagramPicture && pic.cols && pic.rows) {
                 pic.col = indent() + (room_cols > pic.cols ? (room_cols - pic.cols) / 2 : 0);
                 for (u32 r = 0; r < pic.rows; ++r) {
@@ -1252,14 +1251,6 @@ struct Layout {
                     at.pics.back().part = r;
                 }
                 return;
-            }
-            if (got == kMdDiagramCells) {
-                std::vector<MdRow> drawn;
-                if (mermaid_draw(src, room_cols, &drawn, &note)) {
-                    for (size_t k = 0; k < drawn.size(); ++k) row(std::move(drawn[k].runs), line_of(k, drawn.size()));
-                    if (!note.empty()) row({{note, kMdMuted, kMdItalic}}, b.line);
-                    return;
-                }
             }
             if (got != kMdDiagramLater && !note.empty()) row({{"mermaid: " + note, kMdError, kMdItalic}}, b.line);
         }

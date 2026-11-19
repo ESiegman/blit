@@ -76,7 +76,10 @@ bool diagram_colour(std::string_view s, DiagramColour* out) {
                   {"lightgray", 0xd3d3d3}, {"darkgrey", 0xa9a9a9}, {"darkgray", 0xa9a9a9}, {"cyan", 0x00ffff}, {"magenta", 0xff00ff}, {"brown", 0xa52a2a},
                   {"navy", 0x000080}, {"teal", 0x008080},  {"lime", 0x00ff00},  {"olive", 0x808000},  {"maroon", 0x800000},    {"silver", 0xc0c0c0},
                   {"gold", 0xffd700},   {"coral", 0xff7f50}, {"salmon", 0xfa8072}, {"violet", 0xee82ee}, {"lightblue", 0xadd8e6}, {"lightgreen", 0x90ee90},
-                  {"darkgreen", 0x006400}, {"darkblue", 0x00008b}, {"darkred", 0x8b0000}, {"indigo", 0x4b0082}, {"tomato", 0xff6347}, {"skyblue", 0x87ceeb}};
+                  {"darkgreen", 0x006400}, {"darkblue", 0x00008b}, {"darkred", 0x8b0000}, {"indigo", 0x4b0082}, {"tomato", 0xff6347}, {"skyblue", 0x87ceeb},
+                  {"aqua", 0x00ffff},   {"fuchsia", 0xff00ff}, {"khaki", 0xf0e68c}, {"lavender", 0xe6e6fa}, {"beige", 0xf5f5dc}, {"turquoise", 0x40e0d0},
+                  {"plum", 0xdda0dd},   {"orchid", 0xda70d6}, {"wheat", 0xf5deb3}, {"tan", 0xd2b48c},    {"crimson", 0xdc143c},   {"chocolate", 0xd2691e},
+                  {"aquamarine", 0x7fffd4}, {"lightyellow", 0xffffe0}, {"lightpink", 0xffb6c1}, {"steelblue", 0x4682b4}, {"slategray", 0x708090}, {"slategrey", 0x708090}};
     for (const auto& n : kNames)
         if (l == n.name) {
             out->r = (n.rgb >> 16) / 255.0f, out->g = ((n.rgb >> 8) & 255) / 255.0f, out->b = (n.rgb & 255) / 255.0f, out->a = 1;
@@ -777,7 +780,12 @@ u8 diagram_make(std::string_view source, const DiagramStyle& style, Drawing* out
     bool ok = false;
     if (kind == "graph" || kind == "flowchart" || kind == "flowchart-elk") ok = flowchart_layout(diagram_statements(source, true), false, style, out, err, geo);
     else if (kind == "statediagram" || kind == "statediagram-v2") ok = flowchart_layout(st, true, style, out, err, geo);
-    else return kDiagramNone;
+    else if (kind == "sequencediagram") ok = sequence_layout(st, style, out, err, geo);
+    else if (kind == "pie") ok = pie_layout(st, style, out, err, geo);
+    else {
+        *err = st[0].substr(0, st[0].find(' ')) + " is not drawn yet: shown as text";
+        return kDiagramNone;
+    }
     if (!ok) return kDiagramError;
     // A title from the front matter, over it in the middle.
     if (!title.empty() && style.font) {

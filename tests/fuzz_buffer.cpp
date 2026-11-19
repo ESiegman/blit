@@ -2467,7 +2467,7 @@ void diagram_test() {
         Drawing d;
         std::string err;
         check(diagram_make("graph TD\n A --> B\n B -> \n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: a mistake, with its line");
-        check(diagram_make("sequenceDiagram\n A->>B: hi\n", st, &d, &err) == kDiagramNone, "diagram: a kind not drawn as a picture");
+        check(diagram_make("notakind\n A->>B: hi\n", st, &d, &err) == kDiagramNone && err == "notakind is not drawn yet: shown as text", "diagram: a kind not drawn as a picture");
         check(diagram_make("---\ntitle: Hello\n---\ngraph LR\n a --> b\n", st, &d, &err) == kDiagramDrawn, "diagram: front matter's title");
         // Subgraphs and composite states nested past what the preview's
         // thread has stack for (512 KB on a Mac): said, and not laid out.
@@ -2510,6 +2510,149 @@ void diagram_test() {
         DiagramStyle stopping = st;
         stopping.stop = quit.get_token();
         check(diagram_make(big, stopping, &d, &err) == kDiagramError && err == "stopped", "diagram: asked to stop, it stops");
+    }
+}
+
+// Sequence diagrams and pies laid out (with a font that could not be
+// opened, as above): within the picture; no two participants' boxes, notes
+// or legend rows over each other; no text over another or over a box; each
+// message ending on its lifelines (or the box it makes); frames nested or
+// apart, each tab in its frame; the same pixels each time. Mistakes said
+// with their line; frames nested 2,000 deep laid out and drawn in time.
+void sequence_test() {
+    auto check = [](bool ok, const std::string& what) {
+        if (!ok) fail(what.c_str(), 0, 0);
+    };
+    DiagramFont font;
+    font.open("", 0);
+    DiagramStyle st;
+    st.font = &font;
+    st.size = 13;
+    st.room = 2000;
+    for (u32 i = 0; i < kMdInkCount; ++i) st.palette.ink[i][0] = 0.9f, st.palette.ink[i][1] = 0.3f + 0.04f * static_cast<float>(i), st.palette.ink[i][2] = 0.2f;
+    const char* const sources[] = {
+        "sequenceDiagram\n participant U as User\n participant B as blit\n participant L as clangd\n U->>B: open main.cpp\n B->>L: didOpen\n L-->>B: diagnostics\n"
+        " loop every keystroke\n B->>L: didChange\n end\n Note over B,L: async\n B->>B: redraw\n",
+        "sequenceDiagram\n autonumber\n box Aqua Front\n actor U as User\n participant W as Web app\n end\n box rgb(200, 160, 255) Back\n participant A as API\n"
+        " participant D@{ \"type\": \"database\" } as Postgres\n end\n U->>+W: Sign in with a password that is long enough to wrap onto lines\n W->>+A: POST /login\n"
+        " A->>D: SELECT user\n D-->>A: row\n alt the password matches\n A-->>W: 200 + token\n else it does not\n A--xW: 401\n end\n A-->>-W: done\n W-)U: welcome\n"
+        " Note right of D: indexed<br/>by email\n Note left of U: on a phone\n rect rgb(191, 223, 255)\n par to the log\n W->>A: audit\n and to metrics\n W->>A: count\n end\n end\n"
+        " critical a session\n W->>W: keep the cookie\n option it expired\n W-->>U: sign in again\n end\n break when the server is down\n W-xU: error page\n end\n"
+        " W-->>-U: home\n U<<->>W: live updates\n U->U: wait\n U-->W: plain\n U--)W: later\n",
+        "sequenceDiagram\n title Making and ending\n Alice->>Bob: Hello Bob, how are you?\n create participant Carl\n Alice->>Carl: Hi Carl!\n create actor D as Donald\n"
+        " Carl->>D: Hi!\n activate Carl\n activate Carl\n Carl->>Carl: think\n deactivate Carl\n destroy Carl\n Alice-xCarl: We are too many\n destroy Bob\n"
+        " Bob->>Alice: I agree\n Note over Alice: alone now, with a note wider than she is\n loop forever\n loop and ever\n opt sometimes\n Alice->>D: still here?\n end\n end\n end\n",
+        "sequenceDiagram\n a->>f: across them all, a message that says rather a lot about it\n f-->>a: back\n b->>c: next\n c->>d: door\n d->>e: x\n Note over b,e: a note over four\n"
+        " loop\n end\n alt\n else\n end\n",
+        "pie showData\n title Key elements in Product X\n \"Calcium\" : 42.96\n \"Potassium\" : 50.05\n \"Magnesium\" : 10.01\n \"Iron\" :  5\n",
+        "pie title Pets adopted by volunteers\n \"Dogs\" : 386\n \"Cats\" : 85\n \"Rats\" : 15\n \"Hamsters\" : 0\n \"Fish\" : 0.001\n",
+        "pie\n \"All of it\" : 1\n",
+    };
+    for (const char* src : sources) {
+        for (const float room : {2000.0f, 300.0f}) {
+            st.room = room;
+            Drawing d;
+            DiagramGeometry geo;
+            std::string err;
+            check(diagram_make(src, st, &d, &err, &geo) == kDiagramDrawn, std::string("sequence: drawn: ") + src + " " + err);
+            const std::string what = std::string(" (") + src + ")";
+            std::vector<DiagramGeometry::Box> nodes, labels, frames;
+            for (const auto& b : geo.boxes) {
+                if (b.kind == "node") nodes.push_back(b);
+                else if (b.kind == "label") labels.push_back(b);
+                else if (b.kind == "frame") frames.push_back(b);
+                check(b.x >= 0 && b.y >= 0 && b.x + b.w <= d.w + 0.01f && b.y + b.h <= d.h + 0.01f, "sequence: everything within the picture: " + b.name + what);
+            }
+            auto apart = [](const DiagramGeometry::Box& a, const DiagramGeometry::Box& b) {
+                return a.x + a.w <= b.x + 0.01f || b.x + b.w <= a.x + 0.01f || a.y + a.h <= b.y + 0.01f || b.y + b.h <= a.y + 0.01f;
+            };
+            auto within = [](const DiagramGeometry::Box& o, const DiagramGeometry::Box& in) {
+                return in.x >= o.x - 0.01f && in.y >= o.y - 0.01f && in.x + in.w <= o.x + o.w + 0.01f && in.y + in.h <= o.y + o.h + 0.01f;
+            };
+            for (size_t i = 0; i < nodes.size(); ++i)
+                for (size_t j = i + 1; j < nodes.size(); ++j) check(apart(nodes[i], nodes[j]), "sequence: " + nodes[i].name + " and " + nodes[j].name + " apart" + what);
+            for (size_t i = 0; i < labels.size(); ++i) {
+                for (size_t j = i + 1; j < labels.size(); ++j) check(apart(labels[i], labels[j]), "sequence: text " + labels[i].name + " and " + labels[j].name + " apart" + what);
+                for (const auto& n : nodes) check(apart(labels[i], n), "sequence: text " + labels[i].name + " clear of " + n.name + what);
+            }
+            for (size_t i = 0; i < frames.size(); ++i) {
+                for (size_t j = i + 1; j < frames.size(); ++j) check(apart(frames[i], frames[j]) || within(frames[i], frames[j]) || within(frames[j], frames[i]), "sequence: frames nested or apart" + what);
+                const std::string tab = "tab:" + frames[i].name.substr(frames[i].name.find(':') + 1);
+                for (const auto& l : labels)
+                    if (l.name == tab) check(within(frames[i], l), "sequence: a frame's tab in it" + what);
+            }
+            for (const auto& l : geo.lines) {
+                const DiagramGeometry::Box* a = nullptr;
+                const DiagramGeometry::Box* b = nullptr;
+                for (const auto& bx : geo.boxes) {
+                    if (bx.kind != "cluster" && bx.kind != "node") continue;
+                    if (bx.name == l.from && !a) a = &bx;
+                    if (bx.name == l.to && !b) b = &bx;
+                }
+                check(a && b && l.pts.size() >= 2, "sequence: a message's ends are known: " + l.from + " " + l.to + what);
+                auto on = [](const DiagramGeometry::Box& bx, RasterPoint p) { return p.x >= bx.x - 0.5f && p.x <= bx.x + bx.w + 0.5f && p.y >= bx.y - 0.5f && p.y <= bx.y + bx.h + 0.5f; };
+                check(on(*a, l.pts.front()) && on(*b, l.pts.back()), "sequence: a message from " + l.from + " to " + l.to + " ends on them" + what);
+            }
+            const float scale = std::min(1.5f, 4096 / std::max(d.w, d.h));
+            RasterImage one(static_cast<int>(d.w * scale) + 1, static_cast<int>(d.h * scale) + 1), two(one.w(), one.h());
+            diagram_paint(d, scale, font, &one);
+            diagram_paint(d, scale, font, &two);
+            bool any = false;
+            for (size_t k = 3; k < one.pixels().size() && !any; k += 4) any = one.pixels()[k] != 0;
+            check(any && one.pixels() == two.pixels(), "sequence: drawn, the same pixels each time" + what);
+        }
+    }
+    // Made narrower when it is too wide for the room.
+    {
+        Drawing wide, narrow;
+        std::string err;
+        st.room = 4000;
+        diagram_make(sources[1], st, &wide, &err);
+        st.room = 300;
+        diagram_make(sources[1], st, &narrow, &err);
+        check(narrow.w < wide.w * 0.9f, "sequence: narrower in a narrow room");
+        st.room = 2000;
+    }
+    // Mistakes, with their lines.
+    const struct {
+        const char* src;
+        const char* err;
+    } wrong[] = {
+        {"sequenceDiagram\n A->>B: hi\n end\n", "line 3: an end with nothing to end"},
+        {"sequenceDiagram\n A->>B: hi\n loop x\n B->>A: oh\n", "line 4: a block is not ended (end)"},
+        {"sequenceDiagram\n A->>B: hi\n hello there\n", "line 3: not a message, a note or a block: \"hello there\""},
+        {"sequenceDiagram\n else\n", "line 2: else outside a block"},
+        {"sequenceDiagram\n Note A: x\n", "line 2: a note goes left of, right of or over someone"},
+        {"sequenceDiagram\n ->>B: x\n", "line 2: a message from whom to whom?"},
+        {"pie\n \"a\" : -1\n", "line 2: a slice is \"name\" : a number, not less than 0"},
+        {"pie\n \"a\" : nan\n", "line 2: a slice is \"name\" : a number, not less than 0"},
+        {"pie\n \"a\" : 0\n", "no slices"},
+        {"pie title Nothing\n", "no slices"},
+    };
+    for (const auto& w : wrong) {
+        Drawing d;
+        std::string err;
+        check(diagram_make(w.src, st, &d, &err) == kDiagramError && err == w.err, std::string("sequence: the mistake in ") + w.src + " (said: " + err + ")");
+    }
+    // Frames nested 2,000 deep, and a pie of 5,000 slices: laid out and
+    // drawn (as the preview would, at most 4,096 pixels a side) in time.
+    for (int which = 0; which < 2; ++which) {
+        std::string big = which == 0 ? "sequenceDiagram\n" : "pie\n";
+        if (which == 0) {
+            for (int k = 0; k < 2000; ++k) big += "loop x" + std::to_string(k) + "\n";
+            big += "A->>B: hi\n";
+            for (int k = 0; k < 2000; ++k) big += "end\n";
+        } else {
+            for (int k = 0; k < 5000; ++k) big += " \"s" + std::to_string(k) + "\" : " + std::to_string(k % 7 + 1) + "\n";
+        }
+        const u64 t0 = now_ns();
+        Drawing d;
+        std::string err;
+        const bool made = diagram_make(big, st, &d, &err) == kDiagramDrawn;
+        const float scale = std::min(1.0f, 4096 / std::max(d.w, d.h));
+        RasterImage img(static_cast<int>(d.w * scale) + 1, static_cast<int>(d.h * scale) + 1);
+        diagram_paint(d, scale, font, &img);
+        check(made && now_ns() - t0 < 20'000'000'000ull, which == 0 ? "sequence: frames 2,000 deep, in time" : "pie: 5,000 slices, in time");
     }
 }
 
@@ -6842,6 +6985,7 @@ int main(int argc, char** argv) {
     syntax_test();
     raster_test();
     diagram_test();
+    sequence_test();
 #if !defined(_WIN32)
     std::system(("rm -rf '" + scratch + "'").c_str());
 #endif

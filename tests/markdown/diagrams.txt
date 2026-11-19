@@ -2,41 +2,9 @@ picture: diagram
 
 picture: diagram
 
-  ╭──────╮         ╭──────╮      ╭────────╮
-  │ User │         │ blit │      │ clangd │
-  ╰──────╯         ╰──────╯      ╰────────╯
-      ┆  open main.cpp ┆              ┆
-      ├───────────────▶┆              ┆
-      ┆                ┆              ┆
-      ┆                ┆    didOpen   ┆
-      ┆                ├─────────────▶┆
-      ┆                ┆              ┆
-      ┆                ┆  diagnostics ┆
-      ┆                ┆◀┄┄┄┄┄┄┄┄┄┄┄┄┄┤
-      ┆                ┆              ┆
-╭┄ loop every keystroke ┄┄┄┄┄┄┄┄┄┄┄┄┄┄┼┄┄┄┄┄┄╮
-┆     ┆                ┆              ┆      ┆
-┆     ┆                ┆   didChange  ┆      ┆
-┆     ┆                ├─────────────▶┆      ┆
-┆     ┆                ┆              ┆      ┆
-╰┄┄┄┄┄┼┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┄┼┄┄┄┄┄┄┄┄┄┄┄┄┄┄┼┄┄┄┄┄┄╯
-      ┆                ┆              ┆
-      ┆             ┌───────────────────┐
-      ┆             │       async       │
-      ┆             └───────────────────┘
-      ┆                ┆              ┆
-      ┆                ┆ redraw       ┆
-      ┆                ├──╮           ┆
-      ┆                ┆◀─╯           ┆
-      ┆                ┆              ┆
-  ╭──────╮         ╭──────╮      ╭────────╮
-  │ User │         │ blit │      │ clangd │
-  ╰──────╯         ╰──────╯      ╰────────╯
+picture: diagram
 
-Time spent
-Parsing  ██████████████████████████████████ 40.0%
-Layout   ██████████████████████████████ 35.0%
-Drawing  █████████████████████ 25.0%
+picture: diagram
 
 mermaid: classDiagram is not drawn yet: shown as text
                                                                                                     mermaid
@@ -49,4 +17,3 @@ mermaid: line 3: an arrow is wanted at "-> C"
  graph TD
    A --> B
    B -> C
-

@@ -955,7 +955,7 @@ private:
     std::string prof_dump();
     void panel_show_profile();
 
-    // The Markdown preview (appmarkdown.cpp, markdown.cpp, mermaid.cpp): a tab
+    // The Markdown preview (appmarkdown.cpp, markdown.cpp, diagram.cpp): a tab
     // beside a Markdown file that shows it drawn, Mermaid diagrams and all.
     void md_open();
     // A file's assembly beside it (appasm.cpp).
