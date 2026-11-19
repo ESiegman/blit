@@ -550,6 +550,44 @@ void wrap_test() {
     w.set(&ed, 1, &f, f.generation(), 10, 4);
     check(w.rows_of(1) == 0 && w.row_of(1) == 0 && w.line_at(1) == 2, "wrap: a folded line takes no row");
     w.detach();
+    // Lines an edit makes inside a fold are hidden with it, though the folds
+    // began to hear of edits after the wrap did.
+    {
+        Editor e3;
+        e3.insert("head\none\ntwo\nafter");
+        Wrap w3;
+        w3.set(&e3, 3, nullptr, 0, 10, 4);
+        Folds f3;
+        f3.attach(&e3);
+        f3.add(e3.buf, 0, 2);  // (one and two under head)
+        e3.listen(&f3);
+        w3.set(&e3, 3, &f3, f3.generation(), 10, 4);
+        e3.move_to(e3.buf.line_start(2), false);
+        e3.insert("new\nlines\n");
+        w3.set(&e3, 3, &f3, f3.generation(), 10, 4);
+        check(w3.rows() == 2 && w3.line_at(1) == 5 && w3.rows_of(2) == 0 && w3.rows_of(3) == 0, "wrap: lines made inside a fold are hidden");
+        // Random edits with folds about: the map kept is the map made afresh.
+        std::mt19937 roll(11);
+        bool kept_same = true;
+        for (int step = 0; step < 300 && kept_same; ++step) {
+            if (roll() % 8 == 0) {
+                const u64 h = roll() % e3.buf.line_count();
+                if (f3.add(e3.buf, h, h + 1 + roll() % 3)) e3.listen(&f3);  // (as the application listens again)
+            }
+            const u64 at = roll() % (e3.buf.size() + 1), len = roll() % 2 ? std::min<u64>(e3.buf.size() - at, roll() % 12) : 0;
+            static const char* const puts[] = {"", "x", "a b ", "\n", "\nlonger words here\n", "averyveryverylongword", "\t"};
+            e3.replace(at, at + len, puts[roll() % std::size(puts)]);
+            w3.set(&e3, 3, f3.empty() ? nullptr : &f3, f3.generation(), 10, 4);
+            Wrap fresh;
+            fresh.set(&e3, 4, f3.empty() ? nullptr : &f3, f3.generation(), 10, 4);
+            kept_same = fresh.rows() == w3.rows();
+            for (u64 l = 0; kept_same && l < e3.buf.line_count(); ++l) kept_same = fresh.rows_of(l) == w3.rows_of(l) && fresh.row_of(l) == w3.row_of(l);
+            fresh.detach();
+        }
+        check(kept_same, "wrap: kept through random edits with folds, the same as made afresh");
+        w3.detach();
+        e3.unlisten(&f3);
+    }
     // Random edits: the map kept as it goes is the map made afresh.
     std::mt19937 dice(7);
     Editor e2;
