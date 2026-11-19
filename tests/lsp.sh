@@ -50,6 +50,7 @@ fresh() {
     printf 'int util() {\n    return 1;\n}\n' >"$P/src/util.cpp"
     printf '// beside\n' >"$P/src/util.hpp"
     printf '// included\n' >"$P/include/util.hpp"
+    printf '/* \303\251\303\251 */ int wide(int n) {\n}\n' >"$P/w.cpp"
     printf 'struct Shape {\n};\nstruct Circle : public Shape {\n};\nstruct Square : Shape {\n};\nint leaf(int n) {\n    return n;\n}\nint middle(int n) {\n    return leaf(n) + leaf(1);\n}\nint top() {\n    return middle(2);\n}\n' >"$P/calls.cpp"
 }
 
@@ -172,6 +173,8 @@ run "key:cmd+alt+P;frame;text:tot;frame;wait:200;frame;finddump" "$P/src/app.cpp
 check "Cmd+Option+P asks the server as it is typed" 'pick [tot] 1 : >total  · function  · src/app.cpp:6'
 run "key:cmd+alt+P;frame;text:tot;frame;wait:200;frame;key:Return;vimdump" "$P/src/app.cpp"
 check "Enter goes there" 'NORMAL |  | 6:5 | int total(int n) {'
+run "key:cmd+alt+P;frame;text:wide;frame;wait:200;frame;key:Return;vimdump" "$P/src/app.cpp"
+check "in a file not open, past letters UTF-16 counts otherwise: to its name" 'NORMAL |  | 1:16 | /* éé */ int wide(int n) {'
 run "key:cmd+K;frame;text:draw;frame;wait:200;frame;finddump" "$P/src/app.cpp"
 check "Search everywhere has them too" 'everywhere [draw] 1 : Symbols: >draw (method in Widget  · src/app.cpp:3)'
 run "key:cmd+K;frame;text:draw;frame;wait:200;frame;key:Return;vimdump" "$P/src/app.cpp"

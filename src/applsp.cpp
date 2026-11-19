@@ -1158,8 +1158,16 @@ void App::lsp_go_symbol(size_t i) {
         tab_show(at);
         pane_->doc->ed.move_to(Lsp::offset_at(pane_->doc->ed.buf, y.line, y.character, lsp_.counts_utf16()), false);
         scroll_to_cursor();
-    } else {
-        go_to_place(y.path, y.line + 1, y.character + 1);
+    } else if (go_to_place(y.path, y.line + 1, 1)) {
+        // (Its column is as the server counts: worked out once the text is
+        // here, or, on its way from another machine, near enough.)
+        Doc& d = *pane_->doc;
+        if (d.loading) {
+            d.goto_col = y.character;
+        } else {
+            d.ed.move_to(Lsp::offset_at(d.ed.buf, y.line, y.character, lsp_.counts_utf16()), false);
+            scroll_to_cursor();
+        }
     }
 }
 

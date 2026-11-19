@@ -39,7 +39,9 @@
 //   symbols      a line starting "struct NAME" or "class NAME", with the
 //                functions inside it as its children; a line "TYPE NAME(...) {"
 //                is a function (the outline nested, the project's flat, those
-//                whose name has what was asked in it, ignoring case)
+//                whose name has what was asked in it, ignoring case, in the
+//                open documents and the files of the project's folder that
+//                are not open)
 //   switch       clangd's other half: .cpp and .hpp swapped, src/ and
 //                include/ too (null when the file is neither)
 //   rename       those places, renamed (not ERROR, which cannot be)
@@ -545,7 +547,7 @@ void workspace_symbols(Value id, Value params) {
     for (char& ch : q) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
     std::string r = "[";
     bool first = true;
-    for (const auto& [u, d] : docs) {
+    auto file = [&](const std::string& u, const std::string& t) {
         auto add = [&](const FakeSymbol& s) {
             std::string low = s.name;
             for (char& ch : low) ch = static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
@@ -562,14 +564,16 @@ void workspace_symbols(Value id, Value params) {
             r += ",\"location\":{\"uri\":";
             json::quote(r, u);
             r += ",\"range\":";
-            range_json(r, s.at, s.at + s.name.size(), d.text);
+            range_json(r, s.at, s.at + s.name.size(), t);
             r += "}}";
         };
-        for (const FakeSymbol& s : symbols_of(d.text)) {
+        for (const FakeSymbol& s : symbols_of(t)) {
             add(s);
             for (const FakeSymbol& k : s.kids) add(k);
         }
-    }
+    };
+    for (const auto& [u, d] : docs) file(u, d.text);
+    for (const auto& [u, t] : closed_files()) file(u, t);
     r += "]";
     reply(id, r);
 }
