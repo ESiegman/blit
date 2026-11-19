@@ -50,12 +50,13 @@ endif()
 # Apple's compiler, below.)
 add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wshadow;-fno-exceptions;-fno-rtti>")
 # A Debug build warns of more that is likely a mistake: an else-if whose
-# condition is one already tested, && and || that cannot be what was
-# meant, a format that is not a literal, a virtual function overridden
-# without `override`, const cast away, an array sized at run time. The
-# code has none of them; this keeps it so. (GCC's names for them.)
+# condition is one already tested, an if (or a ?:) whose two branches are
+# the same, && and || that cannot be what was meant, a format that is not
+# a literal, a virtual function overridden without `override`, const cast
+# away, an array sized at run time. The code has none of them; this keeps
+# it so. (GCC's names for them.)
 if(BLIT_DEV AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
-  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wduplicated-cond;-Wlogical-op;-Wformat=2;-Wsuggest-override;-Wcast-qual;-Wvla>")
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wduplicated-cond;-Wduplicated-branches;-Wlogical-op;-Wformat=2;-Wsuggest-override;-Wcast-qual;-Wvla>")
 endif()
 # A Debug build that checks itself as it runs (-DBLIT_SANITIZE=ON):
 # memory read or written out of bounds or after it was freed, overflows

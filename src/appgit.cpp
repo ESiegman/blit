@@ -1131,7 +1131,7 @@ void App::git_offer_layout(FrameDesc& fd) {
         const u32 cols = widest + 3 + width_of(enter);
         o.box.resize(cols, o.count);
         for (u32 i = 0; i < o.count; ++i) {
-            put(o.box, font, i, 0, label(o.items[i]), i == 0 ? ink::kText : ink::kText);
+            put(o.box, font, i, 0, label(o.items[i]), ink::kText);
             if (i == o.sel) {
                 put(o.box, font, i, cols - width_of(enter), enter, ink::kMuted);
                 o.box.select_row(i);
