@@ -680,7 +680,9 @@ back.
   open it there, or onto an edge to open it in a new split.
 - **A file or folder in the tree** dragged onto a folder of the tree moves
   there on disk (below the last row: to the working folder), and so do the
-  others chosen with it. A file open in a tab follows it.
+  others chosen with it. One whose name is already there stays where it is
+  (the others move all the same), and one notice says which did not. A file
+  open in a tab follows it.
 
 **One file in two splits.** A file can show in several splits at once,
 the same text in each: what is typed in one shows in the others, and each

@@ -1139,20 +1139,32 @@ bool App::panel_drop(const std::string& path, float x, float y) {
     }
     if (!into) return true;
     std::vector<std::string> moving = std::ranges::find(s.chosen, path) != s.chosen.end() ? s.chosen : std::vector<std::string>{path};
-    const std::string dest = s.tree.path_of(into);
-    std::string err;
+    const std::string dest = s.tree.path_of(into), into_name = into->name;
+    // Each that can be moved is; those that cannot are said in one notice
+    // (with how many were, when some were).
+    std::vector<std::string> failed;
+    size_t moved = 0;
     for (const std::string& from : moving) {
         FileTree::Node* node = s.tree.find(from);
         if (!node || node == into || parent_of(from) == dest) continue;
         // (One in a folder chosen with it goes with that folder, where it is in it.)
         if (std::ranges::any_of(moving, [&](const std::string& other) { return from.starts_with(other + "/"); })) continue;
-        if (!s.tree.move(node, into, &err)) break;
+        std::string err;
+        if (!s.tree.move(node, into, &err)) {
+            if (!err.empty()) failed.push_back(std::move(err));
+            continue;
+        }
+        ++moved;
         const std::string to = dest + "/" + from.substr(from.find_last_of('/') + 1);
         renamed_on_disk(from, to);  // (an open file, or one in a folder moved, follows it)
         if (s.selected == from) s.selected = to;
     }
     s.chosen.clear();
-    if (!err.empty()) tell(SDL_MESSAGEBOX_ERROR, err.c_str());
+    if (!failed.empty()) {
+        std::string say = moved ? std::to_string(moved) + " of " + std::to_string(moved + failed.size()) + " moved into " + into_name + "; not moved:" : "";
+        for (const std::string& why : failed) say += (say.empty() ? "" : "\n") + why;
+        tell(SDL_MESSAGEBOX_ERROR, say.c_str());
+    }
     s.touch();
     dirty_ = true;
     return true;

@@ -148,6 +148,18 @@ check "the chosen ones dragged onto a folder: all moved" "click:60,57;release;cl
 check "a file dragged onto a folder with a link of its name (to nothing) in it: not put over the link" \
     "lua:os.execute('ln -s nowhere $T/sub/y.txt');watchwait;click:60,73;drag:70,60;drag:60,42;release;panel" \
     "tree: sub/@42 x.txt@57 >y.txt@73 z.txt@88" "./sub/q.txt ./x.txt ./y.txt ./z.txt "
+# (One of three chosen has its name in the folder already: the other two
+# moved all the same, and one notice says so and why that one was not.)
+fresh
+got=$("$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "key:cmd+B;panel;lua:os.execute('echo old > $T/sub/y.txt');click:60,57;release;click:60,88,1,shift;release;click:60,88;drag:70,70;drag:60,42;release;panel;treedump" "$T/x.txt" 2>&1 >/dev/null | grep -A1 '^blit: \|^tree:' | tr '\n' '#')
+disk=$(cd "$T" && find . -type f | sort | tr '\n' ' ')
+if [ -n "$print" ]; then
+    printf 'some of those chosen dragged onto a folder\n    %s\n    %s\n' "$got" "$disk"
+elif [ "$got" != "blit: 2 of 3 moved into sub; not moved:#\"y.txt\" is already in sub#tree: sub/@42 y.txt@57#" ] ||
+    [ "$disk" != "./sub/q.txt ./sub/x.txt ./sub/y.txt ./sub/z.txt ./y.txt " ]; then
+    printf 'FAIL: some of those chosen dragged onto a folder: the others moved, and said\n    got %s\n    %s\n' "$got" "$disk"
+    failed=1
+fi
 # (A folder, opened, and a file in it chosen with it, the file first.)
 both="lua:os.execute('mkdir $T/dest');watchwait;click:60,57;release;panel;click:60,73;release;click:60,57,1,cmd;release"
 check "a folder dragged with a file in it chosen too: the file stays in it" "$both;click:60,73;drag:70,60;drag:60,42;release;panel" \
