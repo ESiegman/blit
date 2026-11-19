@@ -92,6 +92,23 @@ got=$(run "Open in the dev container")
 printf '%s' "$got" | grep -q "blit: The dev container's image did not build: build failed: no such base image" || fail "a build that fails: said" "$got"
 unset BLIT_FAKE_DOCKER_FAIL
 
+# A folder with a comma (and a quote) in its path: mounted as docker reads
+# --mount (CSV), the fields with them in quotes; and the same for a
+# workspaceMount that names the folder.
+W="$dir/one, two \"three\""
+Wj=$(printf '%s' "$W" | sed 's/"/\\"/g')
+export BLIT_FAKE_DOCKER_MOUNT="$dir/mount"
+for mount in "" '"workspaceMount": "source=${localWorkspaceFolder},target=${containerWorkspaceFolder},type=bind",'; do
+    fresh '{ "image": "ubuntu:24.04", '"$mount"' "workspaceFolder": "'"$Wj"'" }'
+    rm -f "$dir/mount"
+    got=$(run "Open in the dev container")
+    printf '%s' "$got" | grep -q '^docker:blit-one--two--three-' || fail "a comma in the path${mount:+ (workspaceMount)}: opened" "$got"
+    grep -qx "source=$W" "$dir/mount" && grep -qx "target=$W" "$dir/mount" && grep -qx "type=bind" "$dir/mount" ||
+        fail "a comma in the path${mount:+ (workspaceMount)}: mounted whole" "$(cat "$dir/mount" 2>/dev/null; cat "$dir/log")"
+done
+unset BLIT_FAKE_DOCKER_MOUNT
+W="$dir/work"
+
 # Not there, or of no use.
 rm -rf "$W/.devcontainer"
 got=$(run "Open in the dev container")

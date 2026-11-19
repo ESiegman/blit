@@ -78,6 +78,44 @@ std::string container_name(const std::string& root) {
     return std::format("blit-{}-{:08x}", name, static_cast<u32>(h ^ (h >> 32)));
 }
 
+// A --mount's fields, as docker reads them: CSV, where a field in double
+// quotes may hold commas, and "" in it is a quote.
+std::vector<std::string> mount_fields(std::string_view s) {
+    std::vector<std::string> out(1);
+    bool quoted = false;
+    for (size_t i = 0; i < s.size(); ++i) {
+        const char c = s[i];
+        if (quoted) {
+            if (c != '"') out.back() += c;
+            else if (i + 1 < s.size() && s[i + 1] == '"') out.back() += '"', ++i;
+            else quoted = false;
+        } else if (c == ',') {
+            out.emplace_back();
+        } else if (c == '"') {
+            quoted = true;
+        } else {
+            out.back() += c;
+        }
+    }
+    return out;
+}
+
+// The fields as a --mount (each with a comma or a quote in it in quotes).
+std::string mount_of(const std::vector<std::string>& fields) {
+    std::string out;
+    for (const std::string& f : fields) {
+        if (!out.empty()) out += ',';
+        if (f.find_first_of(",\"\r\n") == std::string::npos) {
+            out += f;
+            continue;
+        }
+        out += '"';
+        for (const char c : f) out += c == '"' ? std::string("\"\"") : std::string(1, c);
+        out += '"';
+    }
+    return out;
+}
+
 std::string first_line(const std::string& err, const std::string& out) {
     const std::string& s = err.empty() ? out : err;
     std::string line = s.substr(0, s.find('\n'));
@@ -121,11 +159,15 @@ bool App::container_plan(const std::string& root, ContainerPlan* plan, std::stri
     if (p.image.empty()) return *err = file + " names no image and no Dockerfile", false;
     p.workspace = std::string(c["workspaceFolder"].str());
     if (p.workspace.empty()) p.workspace = "/workspaces/" + base_name(root);
-    p.mount = std::string(c["workspaceMount"].str());
-    if (p.mount.empty()) p.mount = "type=bind,source=" + root + ",target=" + p.workspace;
-    for (const auto& [from, to] : {std::pair{"${localWorkspaceFolder}", root}, std::pair{"${containerWorkspaceFolder}", p.workspace},
-                                   std::pair{"${localWorkspaceFolderBasename}", base_name(root)}})
-        for (size_t at; (at = p.mount.find(from)) != std::string::npos;) p.mount.replace(at, std::string_view(from).size(), to);
+    // (The paths put in field by field, then quoted as they need: a comma in
+    // one would end its field.)
+    const std::string_view mount = c["workspaceMount"].str();
+    std::vector<std::string> fields = mount.empty() ? std::vector<std::string>{"type=bind", "source=" + root, "target=" + p.workspace} : mount_fields(mount);
+    for (std::string& f : fields)
+        for (const auto& [from, to] : {std::pair{"${localWorkspaceFolder}", root}, std::pair{"${containerWorkspaceFolder}", p.workspace},
+                                       std::pair{"${localWorkspaceFolderBasename}", base_name(root)}})
+            for (size_t at = 0; (at = f.find(from, at)) != std::string::npos; at += to.size()) f.replace(at, std::string_view(from).size(), to);
+    p.mount = mount_of(fields);
     for (const json::Value a : c["runArgs"])
         if (a.is_string()) p.run_args.emplace_back(a.str());
     for (const json::Value e : c["containerEnv"])
