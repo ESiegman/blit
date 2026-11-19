@@ -36,12 +36,14 @@ run() {
 }
 log() { sed -e 's/blit-work-[0-9a-f]*/NAME/g' -e "s#$dir#@#g" "$dir/log" | cut -d' ' -f1-2 | tr '\n' '|'; }
 
-json='// comments and a trailing comma, as devcontainer.json may have
+json='// comments and trailing commas (a comment after one too), as devcontainer.json may have
 {
   "image": "ubuntu:24.04", /* the image */
   "workspaceFolder": "'"$W"'",
   "containerEnv": { "FOO": "bar" },
-  "runArgs": [ "--cap-add=SYS_PTRACE" ],
+  "runArgs": [
+    "--cap-add=SYS_PTRACE", // to debug
+  ],
   "postCreateCommand": "echo made >> made.txt",
 }'
 fresh "$json"
