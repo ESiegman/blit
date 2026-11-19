@@ -3664,6 +3664,15 @@ void vim_test() {
         {"ab cd\n  ef| gh\nij kl\n\nmn", "VjgU", "ab cd\n|  EF GH\nIJ KL\n\nmn"},
         {"ab cd\n  ef| gh\nij kl\n\nmn", "VkgU", "AB C|D\n  EF GH\nij kl\n\nmn"},
         {"ab cd\n  ef| gh\nij kl\n\nmn", "gUip", "|AB CD\n  EF GH\nIJ KL\n\nmn"},
+        // Paragraphs and sections: the end of the text reached with more of
+        // the count to go fails.
+        {"a\nb\n\n|c\nd\n\n{\ne\n}", "3}", "a\nb\n\n|c\nd\n\n{\ne\n}"},
+        {"a\nb\n\n|c\nd\n\n{\ne\n}", "d4}", "a\nb\n\n|c\nd\n\n{\ne\n}"},
+        {"a\nb\n\nc\nd\n\n{\ne\n|}", "4{", "a\nb\n\nc\nd\n\n{\ne\n|}"},
+        {"a\nb\n\n|c\nd\n\n{\ne\n}", "3]]", "a\nb\n\n|c\nd\n\n{\ne\n}"},
+        {"a\nb\n\n|c\nd\n\n{\ne\n}", "2]]", "a\nb\n\nc\nd\n\n{\ne\n|}"},
+        {"x\n\n|a\n\ny", "2]]", "x\n\n|a\n\ny"},
+        {"a\nb\n\nc\nd\n\n{\ne\n|}", "3[[", "a\nb\n\nc\nd\n\n{\ne\n|}"},
     };
     int wrong = 0;
     for (const Case& c : cases) {

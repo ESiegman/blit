@@ -1571,7 +1571,9 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
                     }
                     const u64 b = s > 0 ? prev_blank(ed.buf, s) : kNone;
                     s = b == kNone ? 0 : b;
+                    if (b == kNone && i + 1 < count) m.ok = false;
                 }
+                if (to_end && i + 1 < count) m.ok = false;  // (an end of the text with paragraphs still to go: Vim does nothing)
             }
             if (to_end) {
                 const u64 l = n - 1;
@@ -1651,13 +1653,14 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
             for (u32 i = 0; i < count; ++i) {
                 const u64 hit = s == 0 && back ? kNone : find(ed.buf, nl_want, s - 1, !back, false);
                 if (hit == kNone || (!back && hit + 1 >= ed.buf.line_start(n))) {
-                    s = back ? 0 : ed.buf.line_start(n - 1);  // (to the first or last line)
+                    s = back ? 0 : ed.buf.line_start(n - 1);  // (to the first or last line; with more to go, nowhere)
+                    if (i + 1 < count) m.ok = false;
                     break;
                 }
                 s = hit + 1;
             }
             m.to = s;
-            m.ok = s != here;
+            m.ok = m.ok && s != here;
             m.jump = true;
             break;
         }
