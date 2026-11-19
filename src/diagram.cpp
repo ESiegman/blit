@@ -784,6 +784,8 @@ u8 diagram_make(std::string_view source, const DiagramStyle& style, Drawing* out
     else if (kind == "statediagram" || kind == "statediagram-v2") ok = flowchart_layout(st, true, style, out, err, geo);
     else if (kind == "sequencediagram") ok = sequence_layout(st, style, out, err, geo);
     else if (kind == "pie") ok = pie_layout(st, style, out, err, geo);
+    else if (kind == "classdiagram" || kind == "classdiagram-v2") ok = classdiagram_layout(st, style, out, err, geo);
+    else if (kind == "erdiagram") ok = erdiagram_layout(st, style, out, err, geo);
     else {
         *err = st[0].substr(0, st[0].find(' ')) + " is not drawn yet: shown as text";
         return kDiagramNone;

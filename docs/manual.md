@@ -2507,6 +2507,32 @@ never lays one out again. A click on one does nothing.
   `note right of`, on one line or up to `end note`) beside their state,
   `classDef` and `class` colours. (Concurrent regions, `--`, are laid out
   as one.)
+- `classDiagram`: classes as boxes of three parts (the name, with its
+  annotations such as `<<interface>>` over it; the attributes; the
+  methods, `name(args) : type`), visibility marks as written, generics
+  (`List~T~` as `List<T>`), static members underlined and abstract ones
+  (and an `<<abstract>>` class's name) slanted. Members come from
+  `class A { ... }` blocks or `A : +member` lines; `class A["Label"]`
+  names one. Every relation, with its ends: inheritance (`<|--`) and
+  realization (`<|..`) with a hollow triangle, composition (`*--`) a
+  filled diamond, aggregation (`o--`) a hollow one, association (`-->`)
+  and dependency (`..>`) an arrowhead, an interface (`()--`) a ring,
+  links (`--`, `..`); dotted ones dashed; both ends at once
+  (`<|--|>`); how many at either end (`A "1" --> "*" B`, beside the line
+  by its box) and what it says (`: label`, on a pill). `namespace`s are
+  titled boxes round their classes; `note` and `note for A` are notes
+  (beside their class); `direction`, `style`, `classDef`, `cssClass` and
+  `:::` colours too. Laid out in ranks as flowcharts are, each parent
+  over its children.
+- `erDiagram`: entities as tables (the name in a band, then a row for
+  each attribute: its type, name, keys `PK`, `FK`, `UK` and comment, in
+  columns, rows in turn a little stronger), `p[Person]` and `"a name"`
+  names. Relations end in crow's feet for each cardinality (`||` only
+  one, `|o` zero or one, `}|` one or more, `}o` zero or more; or in
+  words, `one or more`, `zero or one`, `1+`, ...), solid when
+  identifying (`--`, `to`), dashed when not (`..`, `optionally to`),
+  with what they say on a pill. `direction`, `style`, `classDef` and
+  `class` too.
 - `sequenceDiagram`: participants in a row across the top and again at
   the bottom, a lifeline down from each; `participant`, `actor` (a stick
   figure), `as` names, `A@{ "type": "database" }` (a cylinder) and
@@ -3039,7 +3065,8 @@ src/libraries.*    where libraries are looked up: vcpkg's ports and usage notes,
 src/fsio.*         files and small commands, here or on another machine
 src/markdown.*     Markdown parsed and laid out as rows of styled cells (blocks, inline styles, tables, lists)
 src/diagram.*      Mermaid diagrams as pictures: the drawing (shapes, text), the text measured and drawn from the font's outlines, shapes, arrowheads, curves
-src/flowchart.cpp  flowcharts and state diagrams laid out in layers (ranks, crossings, balance, subgraphs as blocks with ports), as drawings
+src/flowchart.cpp  flowcharts and state diagrams laid out in layers (ranks, crossings, balance, subgraphs as blocks with ports), as drawings; the same layout for other kinds (diagram_layered)
+src/classdiagram.cpp  class diagrams and entity relationship diagrams: boxes of members, tables, relations' ends (triangles, diamonds, crow's feet)
 src/sequence.cpp   sequence diagrams laid out: participants, lifelines, messages, activations, notes, frames, as drawings
 src/pie.cpp        pie charts laid out: wedges, their shares, a legend, as drawings
 src/raster.*       the diagrams' rasterizer: exact-area anti-aliased fills, strokes with joins, caps and dashes

@@ -140,11 +140,29 @@ for f in diagrams layout sequence; do
         laid=$(printf '%s\n' "$layout" | grep -c '^diagram [0-9]* [0-9]*x[0-9]*$')
         run $size "$here/markdown/$f.md" ""
         got="$laid $(printf '%s\n' "$got" | grep -c '^picture: diagram:')"
-        case $f in diagrams) want="4 4" ;; layout) want="10 10" ;; *) want="6 6" ;; esac
+        case $f in diagrams) want="5 5" ;; layout) want="10 10" ;; *) want="6 6" ;; esac
         check "$f.md at $size: a picture for each diagram laid out" "$want"
     done
 done
 
+# Class diagrams and entity relationship diagrams too: clean, wide and
+# narrow (how many at a relation's end, as labels, clear of every box);
+# each relation from its first class (or entity) to its second; a
+# picture for each.
+for size in 3600x1100 1200x1100; do
+    dump $size "$here/markdown/classes.md" ""
+    layout=$got
+    got=$(printf '%s\n' "$layout" | layout_problems)
+    check "classes.md at $size: laid out with nothing over anything" ""
+    got=$(printf '%s\n' "$layout" | awk '/^diagram / { d = $2 } /^edge / { n[d]++ } /^label .*:/ { c[d]++ } END { for (i = 1; i <= 6; i++) printf "%d:%d,%d ", i, n[i], c[i] }')
+    check "classes.md at $size: relations and their ends' words" "1:3,0 2:8,0 3:7,6 4:4,0 5:4,0 6:4,0 "
+    got=$(printf '%s\n' "$layout" | grep -E '^edge (Customer Ticket|CUSTOMER ORDER|p a|Square Drawable) ' | cut -d' ' -f1-3 | tr '\n' ,)
+    check "classes.md at $size: relations from the first named to the second" "edge Customer Ticket,edge Square Drawable,edge CUSTOMER ORDER,edge p a,"
+    laid=$(printf '%s\n' "$layout" | grep -c '^diagram [0-9]* [0-9]*x[0-9]*$')
+    run $size "$here/markdown/classes.md" ""
+    got="$laid $(printf '%s\n' "$got" | grep -c '^picture: diagram:')"
+    check "classes.md at $size: a picture for each diagram laid out" "6 6"
+done
 # The same pixels on every system: the diagrams' code calls none of the
 # maths library's functions whose last bit may differ from one system's to
 # another's (hypot, sin, pow...; sqrt is exact everywhere, and the

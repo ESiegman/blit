@@ -297,14 +297,12 @@ target_link_libraries(blit_lsp PUBLIC blit_core)
 
 # The editor. Shaders are compiled offline by shaders/build.sh and the results
 # are checked in under shaders/gen, so this needs no shader tools.
-add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src/apptabs.cpp src/appsplit.cpp src/appgit.cpp src/appvim.cpp src/appshape.cpp src/appedit.cpp src/apptest.cpp src/folds.cpp src/snippet.cpp src/appsnippet.cpp src/appfx.cpp src/appfind.cpp src/appstatus.cpp src/appstart.cpp src/appsession.cpp src/appremote.cpp src/appprofile.cpp src/appterm.cpp src/appcommands.cpp src/appdebug.cpp src/appbuild.cpp src/appmarkdown.cpp src/appasm.cpp src/asm.cpp src/appnotebook.cpp src/notebook.cpp src/nbview.cpp src/kernel.cpp src/apppeek.cpp src/apphistory.cpp src/wrap.cpp src/appwrap.cpp src/apppr.cpp src/appfocus.cpp src/appsettings.cpp src/appupdate.cpp src/appcontainer.cpp src/watch.cpp src/appminimap.cpp src/appspell.cpp src/spell.cpp src/appimage.cpp src/apppdf.cpp src/appinstance.cpp src/instance.cpp src/loginpath.cpp src/look.cpp src/build.cpp src/tests.cpp src/fsio.cpp src/project.cpp src/libraries.cpp src/markdown.cpp src/dap.cpp src/applua.cpp src/luaapi.cpp src/git.cpp src/tree.cpp src/render.cpp src/raster.cpp src/diagram.cpp src/flowchart.cpp src/sequence.cpp src/pie.cpp)
-# The diagrams' pictures (raster.cpp) are the
-# The diagrams' pictures (raster.cpp, diagram.cpp, flowchart.cpp) are the
+add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src/apptabs.cpp src/appsplit.cpp src/appgit.cpp src/appvim.cpp src/appshape.cpp src/appedit.cpp src/apptest.cpp src/folds.cpp src/snippet.cpp src/appsnippet.cpp src/appfx.cpp src/appfind.cpp src/appstatus.cpp src/appstart.cpp src/appsession.cpp src/appremote.cpp src/appprofile.cpp src/appterm.cpp src/appcommands.cpp src/appdebug.cpp src/appbuild.cpp src/appmarkdown.cpp src/appasm.cpp src/asm.cpp src/appnotebook.cpp src/notebook.cpp src/nbview.cpp src/kernel.cpp src/apppeek.cpp src/apphistory.cpp src/wrap.cpp src/appwrap.cpp src/apppr.cpp src/appfocus.cpp src/appsettings.cpp src/appupdate.cpp src/appcontainer.cpp src/watch.cpp src/appminimap.cpp src/appspell.cpp src/spell.cpp src/appimage.cpp src/apppdf.cpp src/appinstance.cpp src/instance.cpp src/loginpath.cpp src/look.cpp src/build.cpp src/tests.cpp src/fsio.cpp src/project.cpp src/libraries.cpp src/markdown.cpp src/dap.cpp src/applua.cpp src/luaapi.cpp src/git.cpp src/tree.cpp src/render.cpp src/raster.cpp src/diagram.cpp src/flowchart.cpp src/classdiagram.cpp src/sequence.cpp src/pie.cpp)
 # The diagrams' pictures (raster.cpp, diagram.cpp and the kinds' files) are the
 # same pixels on every system: no multiply and add fused into one, which
 # rounds once where two steps round twice, and which one processor does
 # where another does not.
-set_source_files_properties(src/raster.cpp src/diagram.cpp src/flowchart.cpp src/sequence.cpp src/pie.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+set_source_files_properties(src/raster.cpp src/diagram.cpp src/flowchart.cpp src/classdiagram.cpp src/sequence.cpp src/pie.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
 target_include_directories(blit PRIVATE ${LUA_INCLUDE_DIR})
 target_link_libraries(blit PRIVATE blit_view blit_syntax blit_lsp blit_gpu SDL3::SDL3 ${LUA_LIBRARY})
 
@@ -354,7 +352,7 @@ if(BLIT_DEV)
   target_sources(blit PRIVATE src/appbench.cpp)
 
   # Random edits checked against a plain std::string model, and unit tests.
-  add_executable(blit_fuzz tests/fuzz_buffer.cpp src/tree.cpp src/git.cpp src/instance.cpp src/folds.cpp src/tests.cpp src/snippet.cpp src/asm.cpp src/notebook.cpp src/nbview.cpp src/markdown.cpp src/history.cpp src/fsio.cpp src/wrap.cpp src/dap.cpp src/look.cpp src/raster.cpp src/diagram.cpp src/flowchart.cpp src/sequence.cpp src/pie.cpp)
+  add_executable(blit_fuzz tests/fuzz_buffer.cpp src/tree.cpp src/git.cpp src/instance.cpp src/folds.cpp src/tests.cpp src/snippet.cpp src/asm.cpp src/notebook.cpp src/nbview.cpp src/markdown.cpp src/history.cpp src/fsio.cpp src/wrap.cpp src/dap.cpp src/look.cpp src/raster.cpp src/diagram.cpp src/flowchart.cpp src/classdiagram.cpp src/sequence.cpp src/pie.cpp)
   target_link_libraries(blit_fuzz PRIVATE blit_view blit_syntax blit_lsp SDL3::SDL3 ZLIB::ZLIB)
   if(NOT WIN32)
     target_compile_definitions(blit_fuzz PRIVATE BLIT_FAKE_SSH="${CMAKE_SOURCE_DIR}/tests/fake-ssh.sh" BLIT_PROFILE_DATA="${CMAKE_SOURCE_DIR}/tests/profile")

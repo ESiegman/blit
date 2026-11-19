@@ -6,11 +6,7 @@ picture: diagram
 
 picture: diagram
 
-mermaid: classDiagram is not drawn yet: shown as text
-                                                                                                    mermaid
- classDiagram
-   A <|-- B
-
+picture: diagram
 
 mermaid: line 3: an arrow is wanted at "-> C"
                                                                                                     mermaid

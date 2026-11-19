@@ -8,9 +8,11 @@
 // every system.
 //
 // Each kind of diagram lays itself out in a file of its own (flowcharts
-// and state diagrams: flowchart.cpp), with what is here: the drawing, the
-// text measurer, shapes, arrowheads and curves, and the statements of a
-// Mermaid source. diagram_make() picks the kind; diagram_paint() draws.
+// and state diagrams: flowchart.cpp; class and entity relationship
+// diagrams, in the same layers: classdiagram.cpp), with what is here: the
+// drawing, the text measurer, shapes, arrowheads and curves, and the
+// statements of a Mermaid source. diagram_make() picks the kind;
+// diagram_paint() draws.
 #include <map>
 #include <memory>
 #include <stop_token>
@@ -275,5 +277,9 @@ struct LayeredGraph {
     float w = 0, h = 0;  // laid out: the whole, from 0, 0
 };
 bool diagram_layered(LayeredGraph* g, const DiagramStyle& style, std::string* err);
+
+// Class diagrams and entity relationship diagrams (classdiagram.cpp).
+bool classdiagram_layout(const std::vector<std::string>& st, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo);
+bool erdiagram_layout(const std::vector<std::string>& st, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo);
 
 }  // namespace blit

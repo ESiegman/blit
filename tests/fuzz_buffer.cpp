@@ -2228,11 +2228,12 @@ void raster_test() {
     }
 }
 
-// Flowcharts and state diagrams laid out (diagram.hpp, with the measure of
-// a font that could not be opened: a monospace one): no two nodes over
-// each other, labels clear of nodes, each edge ending on its nodes'
-// borders and passing no other node, subgraphs nested or apart; the same
-// pixels each time it is drawn; mistakes said with their line.
+// Flowcharts, state, class and entity relationship diagrams laid out
+// (diagram.hpp, with the measure of a font that could not be opened: a
+// monospace one): no two nodes over each other, labels clear of nodes,
+// each edge ending on its nodes' borders and passing no other node,
+// subgraphs nested or apart; the same pixels each time it is drawn;
+// mistakes said with their line.
 void diagram_test() {
     auto check = [](bool ok, const std::string& what) {
         if (!ok) fail(what.c_str(), 0, 0);
@@ -2264,6 +2265,16 @@ void diagram_test() {
         "flowchart TB\n subgraph g0\n n0_0\n end\n subgraph g2\n n2_0 --> n2_1\n n2_1 --> n2_2\n end\n subgraph g3\n n3_0\n end\n n2_0 --> g3\n x6 --> n2_0\n n1_0 --> n2_0\n",
         "flowchart TD\n subgraph g0\n n0_0 --> n0_1\n end\n subgraph g2\n n2_0 --> n2_1\n end\n n2_0 --> n0_0\n n2_0 --> g0\n n0_1 --> n2_1\n",
         "flowchart BT\n subgraph g0\n n0_0 --> n0_1\n end\n subgraph g1\n n1_0 --> n1_1\n end\n n1_1 --> g0\n g1 --> n0_1\n n1_1 --> n0_1\n n0_0 --> g1\n",
+        "classDiagram\n note \"From Duck till Zebra\"\n Animal <|-- Duck\n note for Duck \"can fly\\ncan swim\"\n Animal <|-- Fish\n Animal <|-- Zebra\n Animal : +int age\n"
+        " Animal: +isMammal()\n class Duck{\n +String beakColor\n +swim()\n }\n class Zebra{\n <<interface>>\n +bool is_wild$\n +run()* void\n }\n",
+        "classDiagram\n direction RL\n classA <|-- classB : Inheritance\n classC *-- classD\n classE o-- classF\n classG <-- classH\n classI -- classJ\n classK <.. classL\n"
+        " classM <|.. classN\n classO .. classP\n classA \"1\" --> \"*\" classC : many\n classA ()-- classE\n classB --> classB : again\n classD <|--|> classF\n classDef hot fill:#f96\n classA:::hot --> classP : hot\n",
+        "classDiagram\n namespace Shapes {\n class Triangle\n class Square~T~ {\n +List~List~T~~ sides\n }\n }\n namespace Pets {\n class Dog\n }\n"
+        " Polygon <|-- Triangle\n Polygon <|-- Square~T~\n Animal <|-- Dog\n Dog --> Square : chews\n class Polygon[\"A polygon with a very long name that has to wrap\"]\n",
+        "erDiagram\n CUSTOMER ||--o{ ORDER : places\n ORDER ||--|{ LINE-ITEM : contains\n CUSTOMER }|..|{ DELIVERY-ADDRESS : uses\n"
+        " CUSTOMER {\n string name\n string custNumber PK, FK \"a comment\"\n }\n ORDER {\n int orderNumber PK\n }\n",
+        "erDiagram\n direction LR\n p[Person] {\n string name\n }\n p ||--o| a : has\n CAR ||--o{ NAMED-DRIVER : allows\n"
+        " PERSON only one to zero or more NAMED-DRIVER : is\n CAR }o..o{ GARAGE : \"parked in\"\n GARAGE one or more optionally to 1 CAR : holds\n",
     };
     for (const char* src : sources) {
         Drawing d;
@@ -2492,8 +2503,19 @@ void diagram_test() {
               "diagram: composites named in each other 800 deep, said to be too deep");
         std::string big = "graph TD\n";
         for (int k = 0; k < 400; ++k) big += " n" + std::to_string(k) + " --> n" + std::to_string((k * 7 + 3) % 400) + "\n";
-        const u64 t0 = now_ns();
+        u64 t0 = now_ns();
         check(diagram_make(big, st, &d, &err) == kDiagramDrawn && now_ns() - t0 < 20'000'000'000ull, "diagram: 400 nodes in a tangle, laid out in time");
+        check(diagram_make("classDiagram\n A <|-- B\n A <|-- \n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: a class diagram's mistake, with its line");
+        check(diagram_make("classDiagram\n A <|-- B\n what is this\n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: a class diagram's unknown line");
+        check(diagram_make("erDiagram\n A ||--o{ B : x\n A ||--o< B : y\n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: an ER diagram's mistake, with its line");
+        check(diagram_make("erDiagram\n A {\n string\n }\n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: an attribute wants a type and a name");
+        std::string classes = "classDiagram\n";
+        for (int k = 0; k < 300; ++k) classes += " C" + std::to_string(k) + " <|-- C" + std::to_string((k * 7 + 3) % 300) + " : x\n C" + std::to_string(k) + " : +int f" + std::to_string(k) + "\n";
+        std::string er = "erDiagram\n";
+        for (int k = 0; k < 300; ++k) er += " E" + std::to_string(k) + " ||--o{ E" + std::to_string((k * 11 + 5) % 300) + " : r\n";
+        t0 = now_ns();
+        check(diagram_make(classes, st, &d, &err) == kDiagramDrawn && diagram_make(er, st, &d, &err) == kDiagramDrawn && now_ns() - t0 < 20'000'000'000ull,
+              "diagram: 300 classes and 300 entities in tangles, laid out in time");
         // An edge across many ranks keeps a point at each: a chain of 1,400
         // with 1,500 edges across all of it made millions of them (seconds,
         // and gigabytes). Too large to draw, said at once.
