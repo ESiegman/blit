@@ -542,6 +542,34 @@ bool FileTree::rename(Node* node, const std::string& new_name, std::string* err)
     return true;
 }
 
+bool FileTree::move(Node* node, Node* folder, std::string* err) {
+    if (!node || !folder || node == root_.get() || !node->parent || !folder->dir) return false;
+    if (node->parent == folder) return true;
+    const std::string from = path_of(node), into = path_of(folder), to = into + "/" + node->name;
+    if (is_remote(from) || is_remote(into)) {
+        *err = "moving is for files on this machine";
+        return false;
+    }
+    for (const Node* up = folder; up; up = up->parent)
+        if (up == node) {
+            *err = "\"" + node->name + "\" cannot go inside itself";
+            return false;
+        }
+    if (exists(to)) {
+        *err = "\"" + node->name + "\" is already in " + folder->name;
+        return false;
+    }
+    if (!SDL_RenamePath(from.c_str(), to.c_str())) {
+        *err = std::string("cannot move: ") + SDL_GetError();
+        return false;
+    }
+    rows_stale_ = true;
+    ++generation_;
+    request(node->parent);  // (both folders read again: the node goes from one, comes in the other)
+    request(folder);
+    return true;
+}
+
 bool FileTree::has_trash() {
 #if defined(__APPLE__) || defined(__linux__)
     return true;

@@ -20,6 +20,10 @@
 namespace blit {
 
 namespace {
+float script_mouse_x = 0, script_mouse_y = 0;  // (where the scripted mouse last was)
+}  // namespace
+
+namespace {
 
 struct Series {
     std::vector<double> v;
@@ -746,10 +750,12 @@ void App::run_script(const char* script) {
             float x = 0, y = 0;
             int clicks = 1;
             std::sscanf(arg.c_str(), "%f,%f,%d", &x, &y, &clicks);
-            // (",alt" at its end: with Option held, as long as the event takes.)
-            const bool alt = arg.ends_with(",alt");
+            // (",alt", ",cmd" (Ctrl off a Mac) or ",shift" at its end: with
+            // that held, as long as the event takes.)
+            const SDL_Keymod with = arg.ends_with(",alt") ? SDL_KMOD_ALT : arg.ends_with(",cmd") ? kPrimaryMod : arg.ends_with(",shift") ? SDL_KMOD_SHIFT : SDL_KMOD_NONE;
+            const bool alt = with != SDL_KMOD_NONE;
             const SDL_Keymod held = SDL_GetModState();
-            if (alt) SDL_SetModState(static_cast<SDL_Keymod>(held | SDL_KMOD_ALT));
+            if (alt) SDL_SetModState(static_cast<SDL_Keymod>(held | with));
             if (verb == "click") {
                 e.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
                 e.button.button = SDL_BUTTON_LEFT;
@@ -764,9 +770,13 @@ void App::run_script(const char* script) {
             }
             handle(e);
             if (alt) SDL_SetModState(held);
-        } else if (verb == "release") {
+            script_mouse_x = x;
+            script_mouse_y = y;
+        } else if (verb == "release") {  // (where the mouse last was, as a real one says)
             e.type = SDL_EVENT_MOUSE_BUTTON_UP;
             e.button.button = SDL_BUTTON_LEFT;
+            e.button.x = script_mouse_x;
+            e.button.y = script_mouse_y;
             handle(e);
         } else if (verb == "save") {
             save();
@@ -966,6 +976,23 @@ void App::run_script(const char* script) {
             else std::fprintf(stderr, "took %llu ms (over %llu)\n", static_cast<unsigned long long>(ms), static_cast<unsigned long long>(most));
         } else if (verb == "alive") {
             std::fprintf(stderr, "%s\n", running_ ? "running" : "quitting");
+        } else if (verb == "treedump") {
+            std::fprintf(stderr, "%s\n", tree_dump().c_str());
+        } else if (verb == "watchwait") {  // something changed on disk: heard (3 s at most), the tree read again, the open files looked at
+            const u64 seen = watch_events_, until = now_ns() + 3'000'000'000ull;
+            while (watch_events_ == seen && now_ns() < until) {
+                watch_take();
+                SDL_Delay(2);
+            }
+            if (watch_events_ == seen) std::fprintf(stderr, "watchwait: nothing heard\n");
+            while (watch_due_ns_ && now_ns() < watch_due_ns_) SDL_Delay(5);
+            watch_tick();
+            const u64 calm = now_ns() + 2'000'000'000ull;
+            while (panel_busy() && now_ns() < calm) {
+                sync_panel();
+                SDL_Delay(2);
+            }
+            sync_panel();
         } else if (verb == "treewait") {
             const u64 until = now_ns() + 20'000'000'000ull;
             while (panel_busy() && now_ns() < until) {

@@ -239,7 +239,8 @@ The [side panel](#side-panel):
 | In the tree | Up/Down, Page Up/Down, Home/End; Right opens a folder, Left closes it; Enter opens | same |
 | New file / new folder | Cmd+N / Cmd+Shift+N | Ctrl+N / Ctrl+Shift+N |
 | Rename | F2 | F2 |
-| Move to Trash | Delete or Cmd+Backspace | Delete |
+| Move to Trash (all those chosen) | Delete or Cmd+Backspace | Delete |
+| Choose one more / the rows from the selected one | Cmd+click / Shift+click | Ctrl+click / Shift+click |
 | Read the folders again | Cmd+R | Ctrl+R |
 | The menu a right click opens (then Up/Down, Enter) | Shift+F10 or the Menu key | same |
 | The folder above the working folder | Cmd+Up | Ctrl+Up |
@@ -652,6 +653,9 @@ back.
   that split's.
 - **A file from the tree** in the side panel can be dragged onto a split to
   open it there, or onto an edge to open it in a new split.
+- **A file or folder in the tree** dragged onto a folder of the tree moves
+  there on disk (below the last row: to the working folder), and so do the
+  others chosen with it. A file open in a tab follows it.
 
 **One file in two splits.** A file can show in several splits at once,
 the same text in each: what is typed in one shows in the others, and each
@@ -1503,6 +1507,17 @@ file's own folder. The home folder is never picked this way. Click its
 name at the top of the tree, or use the right-click menu, to choose another.
 Deleting moves to the system's Trash (macOS and Linux), so it can be undone
 from there. `.git` and `.DS_Store` are not shown.
+
+Cmd+click (Ctrl+click off a Mac) chooses one row more, or one fewer;
+Shift+click chooses the rows from the selected one to it. Esc lets them
+go. Move to Trash and dragging act on all of them.
+
+The tree keeps up with the disk by itself: what another program, a build or
+git makes, removes or renames in the working folder shows at once (FSEvents
+on a Mac, inotify on Linux), and an open file written elsewhere is read
+again, with git's view, a moment later. Not for a folder on another
+machine, where Cmd+R reads it again. `blit.opt.panel.watch = false` turns
+it off.
 
 **Problems** lists what the language servers report, for every file they
 report on (each open file, and with a server that offers it the whole

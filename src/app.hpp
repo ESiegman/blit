@@ -26,6 +26,7 @@
 #include "render.hpp"
 #include "syntax.hpp"
 #include "vim.hpp"
+#include "watch.hpp"
 #include "wrap.hpp"
 
 namespace blit {
@@ -620,6 +621,16 @@ private:
     void pr_marks(FrameDesc& fd);
     std::string pr_dump();
     std::shared_ptr<struct PrUi> pr_;
+    // The disk watched (apppanel.cpp): the tree reads again what changed.
+    void watch_follow();
+    void watch_take();
+    void watch_tick();
+    int watch_wait_ms() const;
+    bool panel_drop(const std::string& path, float x, float y);
+    std::string tree_dump();
+    std::unique_ptr<DirWatch> watch_;
+    std::string watch_real_;
+    u64 watch_due_ns_ = 0, watch_events_ = 0;
     // Distraction-free and presentation modes (appfocus.cpp).
     enum : u8 { kFocusNone, kFocusPlain, kFocusShow };
     void focus_toggle(u8 mode);

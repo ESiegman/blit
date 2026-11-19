@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "app.hpp"
+#include "fsio.hpp"
 #include "look.hpp"
 #include "tabbar.hpp"
 #include "textbox.hpp"
@@ -608,6 +609,12 @@ bool App::splits_mouse_up(const SDL_MouseButtonEvent& b) {
         panel_activate(path);
         return true;
     }
+    if (d.kind == kDragFile && d.moving && panel_drop(d.path, b.x, b.y)) {  // (let go over the tree: moved into a folder)
+        d.kind = kDragNone;
+        d.moving = d.away = false;
+        d.over = 0;
+        return true;
+    }
     if (d.kind != kDragDivider && d.moving && d.away && d.over) drag_drop();
     d.kind = kDragNone;
     d.moving = d.away = false;
@@ -692,6 +699,7 @@ void App::drag_drop() {
             break;
         }
         case kDragFile: {
+            if (fs_kind(d.path) == 2) break;  // (a folder of the tree: nothing to open in a split)
             Pane* dest = d.edge != kEdgeNone ? split_pane(target, d.edge) : target;
             if (!dest) dest = target;
             Pane* where = nullptr;

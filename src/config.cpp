@@ -310,7 +310,7 @@ struct Parser {
             return;
         }
         if (key == "editor.line_numbers" || key == "editor.relative_numbers" || key == "editor.indent_guides" || key == "editor.tab_bar" || key == "editor.status_bar" || key == "editor.start_screen" ||
-            key == "editor.restore" || key == "scroll.momentum" || key == "editor.modal" || key == "editor.breadcrumbs" || key == "editor.sticky_scroll" || key == "editor.close_pairs" || key == "editor.local_history" || key == "editor.minimap" || key == "editor.spell_check" || key == "editor.soft_wrap") {
+            key == "editor.restore" || key == "scroll.momentum" || key == "editor.modal" || key == "editor.breadcrumbs" || key == "editor.sticky_scroll" || key == "editor.close_pairs" || key == "editor.local_history" || key == "editor.minimap" || key == "editor.spell_check" || key == "editor.soft_wrap" || key == "panel.watch") {
             bool* out = key == "editor.modal"          ? &c.modal
                         : key == "editor.line_numbers" ? &c.line_numbers
                         : key == "editor.relative_numbers" ? &c.relative_numbers
@@ -326,6 +326,7 @@ struct Parser {
                         : key == "editor.minimap"       ? &c.minimap
                         : key == "editor.spell_check"   ? &c.spell
                         : key == "editor.soft_wrap"     ? &c.soft_wrap
+                        : key == "panel.watch"          ? &c.watch
                                                         : &c.scroll_momentum;
             if (!as_bool(v, out)) warn(std::string(key) + " should be true or false");
             return;
@@ -761,6 +762,7 @@ const Getter kGetters[] = {
     BLIT_GET("editor.minimap", flag(c.minimap)),
     BLIT_GET("editor.spell_check", flag(c.spell)),
     BLIT_GET("editor.soft_wrap", flag(c.soft_wrap)),
+    BLIT_GET("panel.watch", flag(c.watch)),
     BLIT_GET("look.presentation_size", num(c.presentation_size)),
     BLIT_GET("editor.soft_wrap_languages", list(c.soft_wrap_languages)),
     BLIT_GET("editor.modal", flag(c.modal)),

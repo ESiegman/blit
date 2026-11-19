@@ -139,6 +139,7 @@ struct Config {
     bool lsp_semantic = true;        // the server's colours (semantic tokens) over tree-sitter's, where it says more
     bool lsp_uses = true;            // the other uses of the symbol at the cursor marked, once it has rested
     bool spell = true;               // the words of comments, strings and prose checked, in English (appspell.cpp)
+    bool watch = true;               // the working folder watched for what changes on disk (apppanel.cpp)
     float presentation_size = 0;     // the text's size in presentation mode (0: 1.6 times what it is)
     bool soft_wrap = false;          // long lines go on in the rows under them, in every file (appwrap.cpp)
     std::vector<std::string> soft_wrap_languages = {"markdown"};  // and in these languages' files

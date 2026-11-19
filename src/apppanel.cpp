@@ -6,11 +6,14 @@
 // rebuilt only when something it shows has changed, and the text view is
 // simply told to start further right.
 #include <algorithm>
+#include <climits>
+#include <cstdlib>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 
 #include "app.hpp"
+#include "watch.hpp"
 #include "look.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
@@ -131,6 +134,7 @@ struct App::Side {
     FileTree tree;
     bool rooted = false;   // a working directory has been chosen
     std::string selected;  // path of the selected row; paths, not nodes: nodes come and go
+    std::vector<std::string> chosen;  // more than one chosen (Cmd+click, Shift+click): their paths, the selected one among them
     u32 top = 0;           // first row shown
     u32 body_rows = 0;     // rows the last layout had room for
 
@@ -479,6 +483,7 @@ void App::sync_panel() {
     if (s.tree.poll()) {
         dirty_ = dirty_ || s.open;
         find_stale();  // (a folder read: it may have news)
+        watch_follow();  // (a folder read: watched too)
     }
     for (FileTree::Change& c : s.tree.take_changes()) {
         if (!c.error.empty()) {
@@ -495,6 +500,94 @@ void App::sync_panel() {
 }
 
 bool App::panel_busy() const { return side_->tree.busy(); }
+
+// ---------------------------------------------------------------- the disk watched
+
+// The working folder watched (on this machine), and each folder the tree
+// has read, for what changes in them.
+void App::watch_follow() {
+    Side& s = *side_;
+    if (!watch_) {
+        watch_ = std::make_unique<DirWatch>();
+        watch_->set_notify([] {
+            SDL_Event ev{};
+            ev.type = SDL_EVENT_USER;
+            ev.user.code = 25;
+            SDL_PushEvent(&ev);
+        });
+    }
+    const std::string root = s.rooted && !is_remote(s.tree.root()) && cfg_.watch ? s.tree.root() : std::string();
+    if (root != watch_->root()) {
+        watch_->watch(root);
+        // (The system names folders by their real paths: /private/tmp for /tmp.)
+        char real[PATH_MAX];
+        watch_real_ = !root.empty() && ::realpath(root.c_str(), real) ? real : root;
+    }
+    if (root.empty()) return;
+    for (const FileTree::Row& r : s.tree.rows())
+        if (r.node->dir && r.node->open) watch_->add(s.tree.path_of(r.node));
+    watch_->add(root);
+}
+
+// Something changed on disk: the folders it changed in read again (those
+// the tree has read); the open files and git looked at again a moment
+// later, once it has settled.
+void App::watch_take() {
+    if (!watch_) return;
+    Side& s = *side_;
+    const std::string root = s.tree.root();
+    const std::vector<std::string> heard = watch_->take();
+    if (heard.empty()) return;
+    bool files = false;
+    for (std::string dir : heard) {
+        if (!watch_real_.empty() && watch_real_ != root && dir.starts_with(watch_real_)) dir = root + dir.substr(watch_real_.size());
+        if (dir.find("/.git") != std::string::npos) {  // (git's own: what it says may have changed)
+            files = true;
+            continue;
+        }
+        files = true;
+        FileTree::Node* node = s.tree.find(dir);
+        if (node && node->dir && node->loaded) s.tree.refresh(node);
+    }
+    if (files && !watch_due_ns_) watch_due_ns_ = now_ns() + 300'000'000ull;
+    ++watch_events_;
+    dirty_ = true;
+}
+
+void App::watch_tick() {
+    if (!watch_due_ns_ || now_ns() < watch_due_ns_) return;
+    watch_due_ns_ = 0;
+    reload_changed();  // (an open file another program wrote)
+    if (cfg_.git) git_.refresh();
+}
+
+// For the tests: the tree's rows, each a path under the top folder (a
+// folder's ending in /) and where its middle is in the window; "*" chosen,
+// ">" selected.
+std::string App::tree_dump() {
+    Side& s = *side_;
+    std::string out = "tree:";
+    const std::string root = s.tree.root();
+    const int ch = font_->cell_h();
+    const std::vector<FileTree::Row>& rows = s.tree.rows();
+    for (size_t i = s.top; i < rows.size(); ++i) {
+        const std::string path = s.tree.path_of(rows[i].node);
+        std::string name = path.starts_with(root + "/") ? path.substr(root.size() + 1) : path;
+        if (rows[i].node->dir) name += "/";
+        const int y = look().pad_y + static_cast<int>(kHeadRows + i - s.top) * ch + ch / 2;
+        out += " ";
+        if (path == s.selected) out += ">";
+        if (std::ranges::find(s.chosen, path) != s.chosen.end()) out += "*";
+        out += name + "@" + std::to_string(static_cast<int>(y / density_));
+    }
+    return out;
+}
+
+int App::watch_wait_ms() const {
+    if (!watch_due_ns_) return -1;
+    const u64 now = now_ns();
+    return watch_due_ns_ <= now ? 0 : static_cast<int>((watch_due_ns_ - now) / 1'000'000 + 1);
+}
 
 // ---------------------------------------------------------------- the file tree
 
@@ -593,7 +686,10 @@ void App::panel_trash(const std::string& path) {
     FileTree::Node* node = s.tree.find(path);
     if (!node || path == s.tree.root()) return;
     const bool bin = FileTree::has_trash();
-    const std::string what = (bin ? "Move \"" : "Delete \"") + node->name + (bin ? "\" to the Trash?" : "\"? This cannot be undone.");
+    // Several chosen (the one asked about among them): all of them.
+    std::vector<std::string> all = std::ranges::find(s.chosen, path) != s.chosen.end() && s.chosen.size() > 1 ? s.chosen : std::vector<std::string>{path};
+    const std::string who = all.size() > 1 ? std::to_string(all.size()) + " items" : "\"" + node->name + "\"";
+    const std::string what = (bin ? "Move " : "Delete ") + who + (bin ? " to the Trash?" : "? This cannot be undone.");
     const SDL_MessageBoxButtonData buttons[] = {
         {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, bin ? "Move to Trash" : "Delete"},
         {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Cancel"},
@@ -613,7 +709,14 @@ void App::panel_trash(const std::string& path) {
     SDL_ShowMessageBox(&box, &hit);
     if (hit != 1) return;
     std::string err;
-    if (!s.tree.trash(node, &err)) tell(SDL_MESSAGEBOX_ERROR, err.c_str());
+    for (const std::string& p : all) {
+        FileTree::Node* n = s.tree.find(p);
+        if (n && p != s.tree.root() && !s.tree.trash(n, &err)) {
+            tell(SDL_MESSAGEBOX_ERROR, err.c_str());
+            break;
+        }
+    }
+    s.chosen.clear();
     if (!is_remote(path)) s.selected.clear();  // (another machine's: once it is in the Trash there, see sync_panel)
     s.touch();
     dirty_ = true;
@@ -803,6 +906,14 @@ bool App::panel_key(const SDL_KeyboardEvent& k) {
         case SDLK_BACKSPACE:
             if (cmd && node) panel_trash(s.selected);
             return true;
+        case SDLK_ESCAPE:
+            if (!s.chosen.empty()) {  // (what was chosen let go of, the selected row kept)
+                s.chosen.clear();
+                s.touch();
+                dirty_ = true;
+                return true;
+            }
+            break;
         case SDLK_R:
             if (cmd) return s.tree.refresh(), true;
             break;
@@ -945,13 +1056,75 @@ bool App::panel_mouse_down(const SDL_MouseButtonEvent& b) {
     }
     if (on_row) {
         const FileTree::Node* node = rows[static_cast<size_t>(index)].node;
-        s.selected = s.tree.path_of(node);
-        // A folder opens or closes at once. A file is opened when the
-        // button comes up, unless by then it has been dragged off to a
-        // split (see splits_mouse_up).
-        if (node->dir) panel_activate(s.selected);
-        else drag_arm(kDragFile, 0, s.selected, b.x, b.y);
+        const std::string path = s.tree.path_of(node);
+        const SDL_Keymod mods = SDL_GetModState();
+        // Cmd+click: one more chosen (or one fewer); Shift+click: the rows
+        // from the one selected to this one.
+        if (mods & kPrimaryMod) {
+            if (s.chosen.empty() && !s.selected.empty()) s.chosen.push_back(s.selected);
+            if (const auto it = std::ranges::find(s.chosen, path); it == s.chosen.end()) {
+                s.chosen.push_back(path);
+                s.selected = path;
+            } else {  // (one fewer: the last of the others selected; one left, just it)
+                s.chosen.erase(it);
+                if (!s.chosen.empty()) s.selected = s.chosen.back();
+                if (s.chosen.size() == 1) s.chosen.clear();
+            }
+            return true;
+        }
+        if ((mods & SDL_KMOD_SHIFT) && !s.selected.empty()) {
+            const int from = row_of(rows, s.tree, s.selected);
+            if (from >= 0) {
+                s.chosen.clear();
+                for (int k = std::min(from, index); k <= std::max(from, index); ++k) s.chosen.push_back(s.tree.path_of(rows[static_cast<size_t>(k)].node));
+                s.selected = path;
+                return true;
+            }
+        }
+        if (std::ranges::find(s.chosen, path) == s.chosen.end()) s.chosen.clear();  // (a plain click on one of those chosen keeps them, to drag)
+        s.selected = path;
+        // A file is opened, a folder opened or closed, when the button
+        // comes up, unless by then it has been dragged: off to a split (a
+        // file), or onto a folder of the tree (moved there: see panel_drop).
+        drag_arm(kDragFile, 0, s.selected, b.x, b.y);
     }
+    return true;
+}
+
+// What was dragged from the tree (and the others chosen with it), let go
+// over the tree: moved into the folder it was let go on (a file's: its
+// folder). False if it was not let go over a row of the tree.
+bool App::panel_drop(const std::string& path, float x, float y) {
+    Side& s = *side_;
+    if (!s.open || s.tab != kTabFiles) return false;
+    const int px = static_cast<int>(x * density_), py = static_cast<int>(y * density_);
+    if (px >= panel_px()) return false;
+    const std::vector<FileTree::Row>& rows = s.tree.rows();
+    const int row = (py - look().pad_y) / font_->cell_h();
+    const int index = row - static_cast<int>(kHeadRows) + static_cast<int>(s.top);
+    FileTree::Node* into = nullptr;
+    if (row >= static_cast<int>(kHeadRows) && index >= 0 && index < static_cast<int>(rows.size())) {
+        FileTree::Node* n = rows[static_cast<size_t>(index)].node;
+        into = n->dir ? n : n->parent;
+    } else if (row >= static_cast<int>(kHeadRows)) {
+        into = s.tree.find(s.tree.root());  // (below the last row: the top folder)
+    }
+    if (!into) return true;
+    std::vector<std::string> moving = std::ranges::find(s.chosen, path) != s.chosen.end() ? s.chosen : std::vector<std::string>{path};
+    const std::string dest = s.tree.path_of(into);
+    std::string err;
+    for (const std::string& from : moving) {
+        FileTree::Node* node = s.tree.find(from);
+        if (!node || node == into || parent_of(from) == dest) continue;
+        if (!s.tree.move(node, into, &err)) break;
+        const std::string to = dest + "/" + from.substr(from.find_last_of('/') + 1);
+        renamed_on_disk(from, to);  // (an open file, or one in a folder moved, follows it)
+        if (s.selected == from) s.selected = to;
+    }
+    s.chosen.clear();
+    if (!err.empty()) tell(SDL_MESSAGEBOX_ERROR, err.c_str());
+    s.touch();
+    dirty_ = true;
     return true;
 }
 
@@ -1173,6 +1346,7 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
                     if (width_of(n->name) <= fits) put(box, font, r, c0 + 5, n->name, in);
                     else put(box, font, r, c0 + 5, fit_text(n->name, fits), in);
                     if (static_cast<int>(i) == selected) light_row(box, r, s.focus);
+                    else if (!s.chosen.empty() && std::ranges::find(s.chosen, s.tree.path_of(n)) != s.chosen.end()) light_row(box, r, false);
                 }
                 ++r;
                 if (input_after == static_cast<int>(i) && r < rows) input_line(r++, input_depth, s.input == Side::kNewFolder);

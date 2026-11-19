@@ -73,6 +73,8 @@ public:
     // came of it is a Change, taken in by poll() (the tree shows it then).
     bool create(Node* folder, const std::string& name, bool as_folder, std::string* err);
     bool rename(Node* node, const std::string& new_name, std::string* err);
+    // Into another folder, under its own name (a folder on this machine).
+    bool move(Node* node, Node* folder, std::string* err);
     // Moves to the system's Trash where there is one (macOS, Linux), else
     // deletes (files and empty folders only).
     bool trash(Node* node, std::string* err);

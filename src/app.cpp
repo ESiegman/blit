@@ -1906,6 +1906,10 @@ void App::handle(const SDL_Event& e) {
                 build_sync();
                 break;
             }
+            if (e.user.code == 25) {  // something changed on disk in the folder worked in
+                watch_take();
+                break;
+            }
             if (e.user.code == 24) {  // the spelling of the words on show has been checked
                 spell_take();
                 break;
@@ -2308,7 +2312,7 @@ void App::loop() {
             // until the mouse has rested long enough for a hover popup, or a
             // scroll thumb has been left alone long enough to fade.
             int wait = -1;
-            for (const int ms : {lsp_wait_ms(), git_wait_ms(), fx_wait_ms(), minimap_wait_ms(), spell_wait_ms(), script_ ? script_wait_ms() : -1})
+            for (const int ms : {lsp_wait_ms(), git_wait_ms(), fx_wait_ms(), minimap_wait_ms(), spell_wait_ms(), watch_wait_ms(), script_ ? script_wait_ms() : -1})
                 if (ms >= 0 && (wait < 0 || ms < wait)) wait = ms;
             if (wait < 0 ? SDL_WaitEvent(&e) : SDL_WaitEventTimeout(&e, wait)) {
                 handle(e);
@@ -2319,6 +2323,7 @@ void App::loop() {
             fx_tick();
             if (minimap_due_ns_ && now_ns() >= minimap_due_ns_) dirty_ = true;  // (typing has paused: the minimap made again)
             if (spell_wait_ms() == 0) dirty_ = true;  // (and the words on show checked)
+            watch_tick();  // (what changed on disk has settled: the open files and git looked at)
         }
         if (script_) script_tick();  // timers, events, keys of a mapping that waited long enough
         if (animating_ || fx_moving_) {
