@@ -731,6 +731,18 @@ from outside that repository gets no marks and no blame. From the top:
 - **Tags**, when there are any, folded to start with (click the heading):
   newest version first ("v1.10" before "v1.9"). Pick one to **Show** it, **Push** it (`p`: to the server the
   branch follows, or `origin`) or **Delete** it here (after asking).
+- **Worktrees**, when the repository has another than this one: this one
+  first (marked), each with its branch and where it is. Enter on another
+  opens it as the folder worked in (the side panel, the Git tab and the
+  rest follow it); Backspace removes it, after asking (its branch stays).
+  "Git: New worktree…" makes one for a branch, beside the repository and
+  named after it and the branch (`blit-feature` for `feature`), the branch
+  made from the one checked out if there is none.
+- **Submodules**, when there are any: each one's path, how it stands (●
+  as the repository wants it, `+` at another commit, ○ not checked out,
+  `U` in a conflict) and its commit. Enter opens one that is checked out as
+  the folder worked in; `u` (and "Git: Update the submodules") checks them
+  all out at the commits the repository wants, the ones in them too.
 - **History**: the last hundred commits, as a graph: before each, the
   lanes of the lines of descent it is on, worked out from the commits'
   parents (a branch meeting the line it started from, a merge's other
@@ -759,8 +771,32 @@ cherry-pick", "Git: Stage the change at the cursor", "Git: Unstage the
 change at the cursor", "Git: Diffs in two columns or one", "Git: The
 file's history", "Git: The history of the lines chosen", "Git: History of
 all branches", "Git: Search the history…", "Git: Rebase interactively
-onto…", "Git: Merge the file's conflicts" and "Git: Resolve the simple
-conflicts".
+onto…", "Git: Merge the file's conflicts", "Git: Resolve the simple
+conflicts", "Git: Compare the file with…", "Git: New worktree…", "Git:
+Update the submodules" and "Git: Pull requests…".
+
+**Comparing with any revision**: "Git: Compare the file with…" lists the
+branches (but the one checked out), the tags, History's commits and
+HEAD; the one chosen opens a diff tab of the file as it is now against it.
+
+**Pull requests** go through GitHub's own command, `gh`, signed in as it
+is (`gh auth login`), in the repository it takes this one to be. "Git: Pull
+requests…" lists the open ones (number, title, author, branch, and a draft
+or a review's verdict); the one chosen offers:
+
+- **Check out**: its branch, made or brought up to date by `gh`, and its
+  comments asked for: each comment on a line then shows after that line in
+  the file (◆, who, its first line, and how many answers it has).
+- **Show the changes**: its diff, as GitHub has it, in a tab coloured as a
+  diff.
+- **The comments on its lines**, as threads (each answer under what it
+  answers); one chosen is gone to (its file, at its line) or answered (the
+  answer goes to its thread).
+- **Approve**, **Ask for changes…** (what should change asked for) and
+  **Comment…**.
+
+What posts to GitHub (an answer, a review) is asked about first. Each runs
+in the background; what goes wrong is what `gh` said.
 
 **Diffs** open in a tab of their own, coloured, to read and copy from, with
 the cursor on the first hunk. A file's diff is staged from there a hunk or
