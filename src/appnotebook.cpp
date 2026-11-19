@@ -187,6 +187,7 @@ bool App::nb_set_outputs(Doc& d, size_t cell, std::string_view outputs, i64 coun
     if (!notebook_set_outputs(&model[cell], outputs, count)) return false;
     nb.cells = std::make_shared<const std::vector<NotebookCell>>(std::move(model));
     nb.gen = ++models;
+    d.ed.mark_saved_at(~0ull);  // (changed: closing it, or quitting, asks first)
     dirty_ = true;
     return true;
 }

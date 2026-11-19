@@ -152,6 +152,9 @@ check "a kernel's outputs: drawn, the count beside the cell, the line after it" 
 31:         ran
 31: Out[8]: 1
 7: careful | 10:    planet | 13: [image/png] | 16: 42 | 19: [image/svg+xml] | 22: ZeroDivisionError: division by zero | 25: step 99 | 31: 1'
+cp "$dir/n.ipynb" "$dir/k.ipynb"
+got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/k.ipynb;mdwait;lua:print(blit.info().modified);nbset:10,8,$dir/out.json;lua:print(blit.info().modified);save;lua:print(blit.info().modified)" 2>&1 >/dev/null | tr '\n' ' ')
+check "a kernel's outputs: the notebook changed (closing or quitting asks first), till saved" "blit: false blit: true blit: false "
 
 # Broken notebooks: JSON that is not a notebook opens as text, without a
 # view; outputs that are not what they should be are drawn as far as they go.
