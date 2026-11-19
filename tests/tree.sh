@@ -85,6 +85,23 @@ if [ -r /proc/sys/fs/inotify/max_queued_events ]; then
         "click:60,$suby;release;panel;watchheld:$flood && mv $T/sub $T/gone && mkdir $T/sub;watchwait;lua:os.execute('echo r > $T/sub/r.txt');watchwait" \
         "tree: gone/ >sub/ sub/r.txt x.txt y.txt z.txt"
 fi
+# (Linux: the desktop's Trash, with where each thing came from in info/,
+# written as a URL's path is; a name in info/ with nothing in files/ is
+# taken all the same.)
+if [ "$(uname)" = Linux ]; then
+    fresh
+    echo t >"$T/a%41b.txt"
+    mkdir -p "$dir/xdg/Trash/info"
+    : >"$dir/xdg/Trash/info/a%41b.txt.trashinfo"
+    BLIT_TRASH_DIR= XDG_DATA_HOME="$dir/xdg" "$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "key:cmd+B;panel;click:60,$suby;release;panel;key:Down;key:Down;key:Delete;panel" "$T/x.txt" >/dev/null 2>&1
+    got="$(cd "$dir/xdg/Trash" && find . -type f | sort | tr '\n' ' ')$(grep '^Path=' "$dir/xdg/Trash/info/a%41b 2.txt.trashinfo" 2>/dev/null)"
+    if [ -n "$print" ]; then
+        printf 'the Trash on Linux\n    %s\n' "$got"
+    elif [ "$got" != "./files/a%41b 2.txt ./info/a%41b 2.txt.trashinfo ./info/a%41b.txt.trashinfo Path=$T/a%2541b.txt" ]; then
+        printf 'FAIL: the Trash on Linux\n    got %s\n' "$got"
+        failed=1
+    fi
+fi
 got=$(fresh; "$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "key:cmd+B;panel;lua:os.execute('echo changed > $T/x.txt');watchwait;docdump:0" "$T/x.txt" 2>&1 >/dev/null | tail -1)
 if [ -z "$print" ] && [ "$got" != "> |changed" ]; then
     printf 'FAIL: the open file another program writes: read again\n    got %s\n' "$got"

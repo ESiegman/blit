@@ -9,6 +9,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cerrno>
 #include <condition_variable>
 #include <cstdio>
 #include <deque>
@@ -160,6 +161,22 @@ bool exists(const std::string& path) {
 }
 
 std::string base_name(const std::string& path) { return path.substr(path.find_last_of('/') + 1); }
+
+// A path as a URL's is written (a .trashinfo's Path=): every byte but
+// letters, digits, "-._~" and "/" as %XX.
+std::string url_escaped(const std::string& path) {
+    static const char hex[] = "0123456789ABCDEF";
+    std::string out;
+    out.reserve(path.size());
+    for (const char ch : path) {
+        const unsigned char c = static_cast<unsigned char>(ch);
+        if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '-' || c == '.' || c == '_' || c == '~' || c == '/')
+            out += ch;
+        else
+            out += {'%', hex[c >> 4], hex[c & 15]};
+    }
+    return out;
+}
 
 // A name for one file or folder: no separators, not "." or "..".
 bool usable_name(const std::string& name, std::string* err) {
@@ -626,24 +643,34 @@ bool FileTree::trash(Node* node, std::string* err) {
         }
     } else {
         // A name not taken in the Trash: "notes.txt", "notes 2.txt", ...
+        // (On Linux neither in files/ nor in info/, whose NAME.trashinfo is
+        // made first, as the desktop's own Trash does, to keep the name.)
         const size_t dot = node->dir ? std::string::npos : node->name.rfind('.');
         const std::string stem = dot == std::string::npos || dot == 0 ? node->name : node->name.substr(0, dot);
         const std::string ext = dot == std::string::npos || dot == 0 ? "" : node->name.substr(dot);
-        std::string name = node->name;
-        for (int n = 2; exists(bin + "/" + name) && n < 10000; ++n) name = stem + " " + std::to_string(n) + ext;
-        if (!SDL_RenamePath(from.c_str(), (bin + "/" + name).c_str())) {
-            *err = std::string("cannot move it to the Trash: ") + SDL_GetError();
-            return false;
+        std::string name = node->name, info;
+        FILE* f = nullptr;
+        for (int n = 2;; ++n) {
+            if (!exists(bin + "/" + name)) {
+                if (info_dir.empty()) break;
+                info = info_dir + "/" + name + ".trashinfo";
+                if ((f = std::fopen(info.c_str(), "wbx")) || errno != EEXIST) break;  // ("x": not over one there)
+            }
+            if (n >= 10000) break;
+            name = stem + " " + std::to_string(n) + ext;
         }
-        if (!info_dir.empty()) {
-            // What the desktop needs to offer "restore".
+        if (f) {
+            // What the desktop needs to offer "restore" (the path written as a URL's is).
             char when[32];
             const std::time_t now = std::time(nullptr);
             std::strftime(when, sizeof when, "%Y-%m-%dT%H:%M:%S", std::localtime(&now));
-            if (FILE* f = std::fopen((info_dir + "/" + name + ".trashinfo").c_str(), "wb")) {
-                std::fprintf(f, "[Trash Info]\nPath=%s\nDeletionDate=%s\n", from.c_str(), when);
-                std::fclose(f);
-            }
+            std::fprintf(f, "[Trash Info]\nPath=%s\nDeletionDate=%s\n", url_escaped(from).c_str(), when);
+            std::fclose(f);
+        }
+        if (!SDL_RenamePath(from.c_str(), (bin + "/" + name).c_str())) {
+            *err = std::string("cannot move it to the Trash: ") + SDL_GetError();
+            if (f) std::remove(info.c_str());
+            return false;
         }
     }
     Node* parent = node->parent;
