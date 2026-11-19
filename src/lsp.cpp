@@ -1577,22 +1577,23 @@ struct Lsp::Conn::Worker {
             const std::string_view rest = std::string_view(inbuf).substr(in_at);
             const size_t head_end = rest.find("\r\n\r\n");
             if (head_end == std::string_view::npos) break;
+            // The length's header is looked for anywhere in the head, not
+            // only at a line's start: a server that prints a line of its own
+            // ("\n" alone, which ends no header) puts it in front, and so
+            // does a message skipped below (its body is then in front of
+            // the next header).
             size_t length = 0;
             bool found = false;
-            std::string_view head = rest.substr(0, head_end);
-            while (!head.empty()) {
-                const size_t eol = head.find("\r\n");
-                const std::string_view line = head.substr(0, eol);
-                head = eol == std::string_view::npos ? std::string_view{} : head.substr(eol + 2);
-                static const char name[] = "content-length:";
-                if (line.size() >= sizeof name - 1) {
-                    bool same = true;
-                    for (size_t i = 0; same && i < sizeof name - 1; ++i) same = std::tolower(static_cast<unsigned char>(line[i])) == name[i];
-                    if (same) {
-                        length = std::strtoull(std::string(line.substr(sizeof name - 1)).c_str(), nullptr, 10);
-                        found = true;
-                    }
-                }
+            const std::string_view head = rest.substr(0, head_end);
+            static const char name[] = "content-length:";
+            for (size_t at = 0; at + sizeof name - 1 <= head.size(); ++at) {
+                bool same = true;
+                for (size_t i = 0; same && i < sizeof name - 1; ++i) same = std::tolower(static_cast<unsigned char>(head[at + i])) == name[i];
+                if (!same) continue;
+                std::string_view value = head.substr(at + sizeof name - 1);
+                value = value.substr(0, value.find("\r\n"));
+                length = std::strtoull(std::string(value).c_str(), nullptr, 10);
+                found = true;  // (the last one counts: anything before it is not a header)
             }
             if (!found || length > (1u << 30)) {  // not a message we can make sense of: resynchronize past it
                 in_at += head_end + 4;

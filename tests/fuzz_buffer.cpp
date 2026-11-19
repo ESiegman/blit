@@ -5244,6 +5244,20 @@ void lsp_test() {
     ed.insert("still typing");  // must be harmless
     ed.unlisten(&lsp);
 
+    // One that prints lines of its own on its output, between its messages:
+    // they are passed over, and every message still arrives.
+    LspServer noisy = fake;
+    noisy.command = {BLIT_FAKE_LSP, "--noise"};
+    Lsp loud;
+    check(loud.attach(ed.buf, path, "cpp", {noisy}), "noisy server starts");
+    ed.listen(&loud);
+    check(lsp_wait(loud, Lsp::kState) & Lsp::kState, "noisy server becomes ready");
+    lsp_check_diagnostics(loud, ed, "a noisy server's diagnostics");
+    ed.insert(" WARN");
+    lsp_check_diagnostics(loud, ed, "a noisy server's diagnostics after an edit");
+    ed.unlisten(&loud);
+    loud.detach();
+
     LspServer missing;
     missing.name = "missing";
     missing.command = {"blit-no-such-language-server"};

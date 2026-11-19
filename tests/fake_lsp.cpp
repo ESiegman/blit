@@ -1,7 +1,7 @@
 // A language server with predictable answers, for the tests and benchmarks.
 //
 //   blit_fakelsp [--utf8] [--full] [--slow MS] [--die-after N] [--items N] [--quiet]
-//                [--pull] [--workspace] [--no-prepare] [--changes] [--name NAME]
+//                [--pull] [--workspace] [--no-prepare] [--changes] [--noise] [--name NAME]
 //
 // --utf8        agree to count columns in bytes (the default is UTF-16)
 // --full        ask for the whole document on every change
@@ -14,6 +14,8 @@
 //               files that are not open
 // --no-prepare  rename without saying first what would be renamed
 // --changes     workspace edits as "changes" (by file) rather than "documentChanges"
+// --noise       print a line of its own on its output before every message (as
+//               servers that log to stdout do)
 // --name NAME   what diagnostics give as their source (default "fake")
 //
 // It keeps every document it is sent. What it does with one:
@@ -75,7 +77,7 @@ int sync_kind = 2;
 int slow_ms = 0;
 long die_after = -1;
 long pad_items = 0;
-bool quiet = false, pull = false, workspace = false, prepare = true, by_changes = false;
+bool quiet = false, pull = false, workspace = false, prepare = true, by_changes = false, noise = false;
 long handled = 0;
 std::string source = "fake";
 
@@ -110,6 +112,7 @@ bool read_message(std::string* body) {
 
 void send(const std::string& body) {
     if (slow_ms > 0) usleep(static_cast<useconds_t>(slow_ms) * 1000);
+    if (noise) std::printf("fake: a line that is not a message\n");
     std::printf("Content-Length: %zu\r\n\r\n", body.size());
     std::fwrite(body.data(), 1, body.size(), stdout);
     std::fflush(stdout);
@@ -1055,6 +1058,7 @@ int main(int argc, char** argv) {
         else if (a == "--workspace") pull = workspace = true;
         else if (a == "--no-prepare") prepare = false;
         else if (a == "--changes") by_changes = true;
+        else if (a == "--noise") noise = true;
         else if (a == "--name" && i + 1 < argc) source = argv[++i];
     }
     std::string body;
