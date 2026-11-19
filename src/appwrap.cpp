@@ -70,6 +70,10 @@ void App::wrap_toggle() {
     Doc& d = *pane_->doc;
     d.wrap_choice = wrap_on() ? 0 : 1;
     wrap_sync(*pane_);
+    if (d.wrap_choice == 1 && !wrap_on() && !d.loading) {  // (a file on its way wraps once it is here)
+        d.wrap_choice = -1;
+        return notify(d.ed.buf.size() > kLargest ? "A file larger than 16 MB does not wrap" : "This tab does not wrap");
+    }
     pane_->cache_rev = ~0ull;
     scroll_to_cursor();
     dirty_ = true;

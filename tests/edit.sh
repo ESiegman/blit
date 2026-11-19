@@ -217,6 +217,8 @@ got=$(wr "wrapdump" "$dir/wrap.c" | tail -1)
 check "a C file does not" "off"
 got=$(wr "key:alt+z;wrapdump;key:alt+z;wrapdump" "$dir/wrap.c" | tail -2 | sed -e 's/^width .*/on/' | tr '\n' ' ')
 check "Option+Z: it does, then not" "on off "
+got=$(BLIT_INIT="$dir/vim.lua" "$blit" --offscreen 900x500 --shot "$dir/shot.bmp" --script "frame;settingsopen;command:Toggle soft wrap;wrapdump" "$dir/wrap.c" 2>&1 >/dev/null | tail -2 | tr '\n' ' ')
+check "a tab that does not wrap (the settings screen): said, and off" "blit: This tab does not wrap off "
 got=$(wr "vim:3G;vim:5l;frame;statusdump;vim:gj;frame;statusdump;vim:gk;frame;statusdump;vim:j;frame;statusdump" "$dir/wrap.md" | tail -4 | sed -e 's/.*| Ln \([0-9]*\), Col \([0-9]*\).*/\1:\2/' | tr '\n' ' ')
 first=$(printf '%s' "$got" | cut -d' ' -f1); second=$(printf '%s' "$got" | cut -d' ' -f2); back=$(printf '%s' "$got" | cut -d' ' -f3); next=$(printf '%s' "$got" | cut -d' ' -f4)
 case "$second" in 3:*) [ "${second#3:}" -gt 10 ] && [ "$back" = "$first" ] && [ "$next" = "4:1" ] && got=rows ;; esac
