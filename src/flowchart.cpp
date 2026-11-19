@@ -22,6 +22,11 @@ namespace blit {
 namespace {
 
 constexpr size_t kMostNodes = 1500, kMostEdges = 3000;
+// Subgraphs (and composite states) within each other at most so deep: each
+// is laid out by a call within its parent's, on the preview's thread, whose
+// stack is the system's (512 KB on a Mac). Deeper than any diagram a person
+// draws.
+constexpr int kDeepest = 32;
 
 // What an edge joins: a node (from 0), or a subgraph (cluster c is -(c + 2)).
 int as_cluster(int c) { return -(c + 2); }
@@ -442,6 +447,7 @@ bool parse_flowchart(const std::vector<std::string>& st, Graph& g, std::string* 
             continue;
         }
         if (l == "subgraph" || l.starts_with("subgraph ")) {
+            if (open.size() >= static_cast<size_t>(kDeepest)) return fail("subgraphs nested too deeply");
             // subgraph id, subgraph id [title], subgraph id["title"], subgraph "title", subgraph a title
             std::string_view rest = diagram_trim(s.substr(8));
             Cluster c;
@@ -522,7 +528,6 @@ bool parse_flowchart(const std::vector<std::string>& st, Graph& g, std::string* 
 // ---------------------------------------------------------------- state diagrams
 
 bool parse_state(const std::vector<std::string>& st, Graph& g, std::string* err) {
-    (void)err;
     g.state = true;
     // Composite states first: a transition may name one before its block.
     std::set<std::string> composites;
@@ -540,8 +545,15 @@ bool parse_state(const std::vector<std::string>& st, Graph& g, std::string* err)
     std::vector<int> open;
     std::map<int, int> starts, ends;  // each scope's [*] (the whole is -1)
     auto scope = [&] { return open.empty() ? -1 : open.back(); };
+    // (A composite is within the scope it is first named in, which may
+    // itself be within one first named elsewhere: how deep it is goes by
+    // those, not by the blocks open.)
+    bool deep = false;
     auto composite = [&](const std::string& name) {
         if (const auto it = g.cluster_ids.find(name); it != g.cluster_ids.end()) return it->second;
+        int depth = 1;
+        for (int p = scope(); p >= 0; p = g.clusters[static_cast<size_t>(p)].parent) ++depth;
+        if (depth > kDeepest) deep = true;
         Cluster c;
         c.id = name;
         c.title = {name};
@@ -601,7 +613,12 @@ bool parse_state(const std::vector<std::string>& st, Graph& g, std::string* err)
     bool in_note = false;
     std::string note_head;
     std::vector<std::string> note_text;
+    auto too_deep = [&](size_t k) {
+        *err = "line " + std::to_string(k) + ": states nested too deeply";
+        return false;
+    };
     for (size_t k = 1; k < st.size(); ++k) {
+        if (deep) return too_deep(k);  // (the statement before this one)
         std::string_view s = st[k];
         const std::string l = diagram_lower(s);
         if (in_note) {
@@ -731,6 +748,7 @@ bool parse_state(const std::vector<std::string>& st, Graph& g, std::string* err)
         const int r = state(s.ends_with('{') ? diagram_trim(s.substr(0, s.size() - 1)) : s, false);
         if (s.ends_with('{') && is_cluster(r)) open.push_back(cluster_of(r));
     }
+    if (deep) return too_deep(st.size());
     return true;
 }
 

@@ -2336,6 +2336,27 @@ void diagram_test() {
         check(diagram_make("graph TD\n A --> B\n B -> \n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: a mistake, with its line");
         check(diagram_make("sequenceDiagram\n A->>B: hi\n", st, &d, &err) == kDiagramNone, "diagram: a kind not drawn as a picture");
         check(diagram_make("---\ntitle: Hello\n---\ngraph LR\n a --> b\n", st, &d, &err) == kDiagramDrawn, "diagram: front matter's title");
+        // Subgraphs and composite states nested past what the preview's
+        // thread has stack for (512 KB on a Mac): said, and not laid out.
+        // Thirty-two deep is drawn. A composite first named inside another
+        // is within it, however few blocks are open.
+        for (const bool state : {false, true}) {
+            auto nested = [&](int n) {
+                std::string s = state ? "stateDiagram-v2\n" : "flowchart TD\n";
+                for (int k = 0; k < n; ++k) s += (state ? "state s" : "subgraph s") + std::to_string(k) + (state ? " {\n" : "\n");
+                s += "x --> y\n";
+                for (int k = 0; k < n; ++k) s += state ? "}\n" : "end\n";
+                return s;
+            };
+            check(diagram_make(nested(800), st, &d, &err) == kDiagramError && err.find("nested too deeply") != std::string::npos,
+                  std::string("diagram: nested 800 deep, said to be too deep: ") + (state ? "states" : "subgraphs"));
+            check(diagram_make(nested(32), st, &d, &err) == kDiagramDrawn, std::string("diagram: nested 32 deep, drawn: ") + (state ? "states" : "subgraphs"));
+        }
+        std::string chain = "stateDiagram-v2\n";
+        for (int k = 0; k < 800; ++k) chain += "state s" + std::to_string(k) + " {\n s" + std::to_string(k + 1) + "\n}\n";
+        chain += "state s800 {\n x --> y\n}\n";
+        check(diagram_make(chain, st, &d, &err) == kDiagramError && err.find("nested too deeply") != std::string::npos,
+              "diagram: composites named in each other 800 deep, said to be too deep");
         std::string big = "graph TD\n";
         for (int k = 0; k < 400; ++k) big += " n" + std::to_string(k) + " --> n" + std::to_string((k * 7 + 3) % 400) + "\n";
         const u64 t0 = now_ns();
