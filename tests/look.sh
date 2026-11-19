@@ -164,6 +164,15 @@ want=$(apart long.cpp "frame")
 got=$(apart wrap.cpp "command:Toggle soft wrap;frame;vim:500G;frame")
 [ "$got" -ge $((want - 1)) ] && [ "$got" -le $((want + 1)) ] || { echo "FAIL: clicks on the minimap of a wrapped file land $got lines apart, not $want"; failed=1; }
 
+# The font made again (here for other features, at the same size): what
+# was kept of the old one's glyphs is made again, the tab bar's too. (Other
+# characters in the text first take the new font's slots in another order.)
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.font.features = { "zero" }\n' >"$dir/zero.lua"
+printf 'int x = 0; // caf\303\251 \346\274\242\345\255\227 \342\206\222 \342\234\223\n' >"$dir/work/glyphs.cpp"
+BLIT_INIT="$dir/zero.lua" "$blit" --offscreen 1300x500 --shot "$dir/zero.bmp" --script "workdir:$dir/work;frame;frame" "$dir/work/glyphs.cpp" >/dev/null 2>&1
+BLIT_INIT="$dir/map.lua" "$blit" --offscreen 1300x500 --shot "$dir/rezero.bmp" --script "workdir:$dir/work;frame;frame;lua:blit.opt.font.features = { 'zero' };frame;frame" "$dir/work/glyphs.cpp" >/dev/null 2>&1
+same zero rezero "after the font was made again, the frame differs from one drawn with that font from the start"
+
 # Distraction-free and presentation modes: the chrome gone (and back), the
 # text larger for showing.
 fm=$(BLIT_INIT="$dir/map.lua" "$blit" --offscreen 1300x700 --shot "$dir/fm.bmp" --script "workdir:$dir/work;frame;focusdump;command:Toggle distraction-free mode;focusdump;command:Toggle presentation mode;focusdump;command:Toggle presentation mode;focusdump" "$dir/work/long.cpp" 2>&1 >/dev/null | tail -4 | sed -e 's/ tabs [1-9][0-9]*/ tabs N/' -e 's/ status [1-9][0-9]*/ status N/' -e 's/ gutter [1-9][0-9]*/ gutter N/' -e 's/ crumbs [1-9][0-9]*/ crumbs N/' -e 's/ tabs N status N gutter N panel [0-9]* crumbs N/ chrome/' | tr '\n' '#')

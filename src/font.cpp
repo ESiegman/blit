@@ -1,6 +1,7 @@
 #include "font.hpp"
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <climits>
 #include <cmath>
@@ -83,6 +84,12 @@ u32 hash_u32(u32 x) { return (x * 2654435761u) >> 7; }
 u32 hash_u64(u64 x) { return static_cast<u32>((x * 0x9E3779B97F4A7C15ull) >> 40); }
 
 int floor_div(int a, int b) { return a >= 0 ? a / b : -((-a + b - 1) / b); }
+
+// Generations are numbered across every font there is (one is made on a
+// thread at startup): a font made to take another's place, for a new size
+// or other features, starts at a number the old one never had, so that
+// what was kept from the old one's slots is made again.
+std::atomic<u32> g_generation{0};
 
 // ---------------------------------------------------------------- finding fonts
 
@@ -403,6 +410,7 @@ Font::~Font() {
 }
 
 bool Font::init(const FontSpec& spec, std::string* err, std::string* warnings) {
+    generation_ = ++g_generation;
     auto warn = [&](const std::string& w) {
         if (warnings && !w.empty()) *warnings += w + "\n";
     };
@@ -785,7 +793,7 @@ void Font::reset_atlas() {
     sequences_.clear();
     next_slot_ = first_slot_;
     next_colour_ = colour_base_;
-    ++generation_;
+    generation_ = ++g_generation;
 }
 
 void Font::hold_atlas(bool on) {

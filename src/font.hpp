@@ -190,7 +190,8 @@ public:
     // sequence.
     u32 sequence_glyph(const u32* cps, size_t n);
 
-    // Bumps whenever previously returned slots became invalid.
+    // Changes whenever previously returned slots became invalid; never the
+    // same as another font's (one that takes this one's place).
     u32 generation() const { return generation_; }
     // A frame's last try (render.cpp): the atlas starts over first, and may
     // not start over again while held. A glyph that does not fit then is a
