@@ -21,10 +21,12 @@ namespace blit {
 
 namespace {
 
+#if defined(__APPLE__)
 std::string parent(const std::string& p) {
     const size_t s = p.find_last_of('/');
     return s == std::string::npos ? std::string() : s == 0 ? std::string("/") : p.substr(0, s);
 }
+#endif
 
 }  // namespace
 
@@ -85,14 +87,14 @@ struct DirWatch::Impl {
                 const ssize_t n = ::read(fd, buf, sizeof buf);
                 for (ssize_t at = 0; at < n;) {
                     const inotify_event* e = reinterpret_cast<const inotify_event*>(buf + at);
-                    std::string dir;
+                    std::string in;
                     {
                         std::lock_guard lock(mu);
-                        if (const auto it = dirs.find(e->wd); it != dirs.end()) dir = it->second;
+                        if (const auto it = dirs.find(e->wd); it != dirs.end()) in = it->second;
                     }
-                    if (!dir.empty()) {
-                        heard(dir);
-                        if ((e->mask & IN_ISDIR) && e->len) heard(dir + "/" + e->name);
+                    if (!in.empty()) {
+                        heard(in);
+                        if ((e->mask & IN_ISDIR) && e->len) heard(in + "/" + e->name);
                     }
                     at += static_cast<ssize_t>(sizeof(inotify_event) + e->len);
                 }

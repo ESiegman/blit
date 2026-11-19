@@ -3081,6 +3081,32 @@ updated), and pull requests through a stand-in for gh (listed, comments as
 threads, checked out with its comments after their lines, its changes, an
 approval and an answer, each asked first and as gh was told).
 
+### Round 66: the workspace
+
+Distraction-free and presentation modes (the bars and the panel given no
+room), the tree watching the disk (FSEvents or inotify on threads of their
+own, what they hear taken on the main thread only when it comes, the open
+files and git looked at 300 ms after it settles), a settings screen, updates
+and dev containers (programs in the background, asked for by a command or
+once a day at the start). None of it is on a frame's path. Turn about, five
+rounds, 2560x1600, against the build before the chunk (84a7f97):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 15,244 / 57.04 µs / 2.38 µs | 15,256 / 57.04 µs / 2.42 µs |
+| Typing, everything on: the same | 16,509 / 51.96 µs / 4.21 µs | 16,420 / 51.96 µs / 4.17 µs |
+| Scrolling code-100m.txt, plain: the same | 16,999 / 51.75 µs / 0.88 µs | 16,835 / 51.88 µs / 0.88 µs |
+
+No change (a browser playing video meanwhile, the same for both sides).
+Tests: tree.sh (what another program makes, removes or writes shown and
+read again, rows chosen with Cmd+click and Shift+click, several trashed,
+rows dragged into folders), settings.sh (switches, numbers, lists, back to
+the default, the template's line taken in, init.lua open with changes
+not saved), update.sh (a release made in a scratch folder: an AppImage and
+a blit.app put in place, a wrong SHA-256 refused, once a day at the start)
+and container.sh (made, started again, rebuilt, a Dockerfile built,
+docker:// opened, all against a stand-in for docker).
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
