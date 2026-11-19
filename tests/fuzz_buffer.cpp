@@ -1722,6 +1722,9 @@ void tree_test() {
 
     check(tree.rename(tree.find(top + "/src/new.py"), "renamed.py", &err) && !tree.find(top + "/src/new.py"), "rename");
     check(!tree.rename(tree.find(top + "/src/renamed.py"), "main.cpp", &err) && err.find("already") != std::string::npos, "rename onto another file is refused");
+    check(::symlink("nowhere", (top + "/src/gone.py").c_str()) == 0 && !tree.rename(tree.find(top + "/src/renamed.py"), "gone.py", &err) &&
+              err.find("already") != std::string::npos && ::unlink((top + "/src/gone.py").c_str()) == 0,
+          "rename onto a link to nothing is refused");
     check(tree.rename(tree.find(top + "/Alpha.md"), "alpha.md", &err), "rename that only changes case");
     settle();
     check(tree.find(top + "/src/renamed.py") && tree.find(top + "/alpha.md") && tree.find(top + "/src/deep/x.h"), "the tree after renames");

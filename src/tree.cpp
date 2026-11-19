@@ -152,9 +152,11 @@ std::vector<Entry> read_folder(const std::string& path) {
 }
 
 // (Here: another machine's are asked about on the reader's thread, see FileTree::Op.)
+// A link is there even when what it leads to is not: a rename must not put
+// something over it.
 bool exists(const std::string& path) {
-    SDL_PathInfo info;
-    return SDL_GetPathInfo(path.c_str(), &info) && info.type != SDL_PATHTYPE_NONE;
+    struct stat st;
+    return ::lstat(path.c_str(), &st) == 0;
 }
 
 std::string base_name(const std::string& path) { return path.substr(path.find_last_of('/') + 1); }
@@ -525,7 +527,7 @@ bool FileTree::rename(Node* node, const std::string& new_name, std::string* err)
     bool same_file = false;
     if (same_but_for_case) {
         struct stat a, b;
-        same_file = stat(from.c_str(), &a) == 0 && stat(to.c_str(), &b) == 0 && a.st_dev == b.st_dev && a.st_ino == b.st_ino;
+        same_file = ::lstat(from.c_str(), &a) == 0 && ::lstat(to.c_str(), &b) == 0 && a.st_dev == b.st_dev && a.st_ino == b.st_ino;
     }
     if (exists(to) && !(same_but_for_case && same_file)) {
         *err = "\"" + new_name + "\" is already there";

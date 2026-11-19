@@ -95,6 +95,9 @@ check "a file dragged onto a folder: moved into it" "click:60,73;drag:70,60;drag
     "tree: sub/@42 x.txt@57 z.txt@73" "./sub/q.txt ./sub/y.txt ./x.txt ./z.txt "
 check "the chosen ones dragged onto a folder: all moved" "click:60,57;release;click:60,88,1,cmd;release;click:60,88;drag:70,70;drag:60,42;release;panel" \
     "tree: sub/@42 y.txt@57" "./sub/q.txt ./sub/x.txt ./sub/z.txt ./y.txt "
+check "a file dragged onto a folder with a link of its name (to nothing) in it: not put over the link" \
+    "lua:os.execute('ln -s nowhere $T/sub/y.txt');watchwait;click:60,73;drag:70,60;drag:60,42;release;panel" \
+    "tree: sub/@42 x.txt@57 >y.txt@73 z.txt@88" "./sub/q.txt ./x.txt ./y.txt ./z.txt "
 # (A folder, opened, and a file in it chosen with it, the file first.)
 both="lua:os.execute('mkdir $T/dest');watchwait;click:60,57;release;panel;click:60,73;release;click:60,57,1,cmd;release"
 check "a folder dragged with a file in it chosen too: the file stays in it" "$both;click:60,73;drag:70,60;drag:60,42;release;panel" \
