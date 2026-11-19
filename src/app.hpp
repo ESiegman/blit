@@ -525,6 +525,7 @@ private:
     void lsp_format_on_save();  // before the file in front is written, with lsp.format_on_save on
     void lsp_actions();  // Option+Enter: the fixes and refactorings at the cursor, in a menu
     bool lsp_apply(const LspWorkspaceEdit& e, std::string* said);  // a workspace edit made, as Replace in files does
+    Doc* lsp_edit_doc(const std::string& path);  // the tab a file a workspace edit changes is open in, if any
     u32 lsp_gutter(const Doc& d, u64 line);  // a mark beside a problem the server has a fix for
     void lsp_extras(FrameDesc& fd);  // inlay hints and the server's colours, for each view
     std::string lsp_dump();  // (tests) the servers, and each tab's place on one

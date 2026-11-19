@@ -242,6 +242,9 @@ got="$got / $said / $(cat "$P/d.cpp")"
 check "Enter renames: the open file through its tab, the other on disk" 'int common = 1; // ERROR / call(1,   2, 3);    / WARN common   /  / blit: Renamed: 4 edits in 3 files / common in d, not open'
 run "key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;key:ctrl+U;text:common;key:Return;wait:200;key:Return;key:cmd+Z;lsptext"
 check "one undo takes it back in the open file" 'int shared = 1; // ERROR / call(1,   2, 3);    / WARN shared   / '
+run "key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;key:ctrl+U;text:common;key:Return;wait:200;lua:blit.insert('x');key:Return;lsptext"
+got="$got / $said / $(cat "$P/d.cpp")"
+check "typed in while what it changes is on show: Enter makes none of it" 'int sxhared = 1; // ERROR / call(1,   2, 3);    / WARN shared   /  / blit: Cannot rename: the text changed meanwhile / shared in d, not open'
 run "key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;finddump"
 got="$got / $said"
 check "a name the server will not rename: it says why" 'closed / blit: Cannot rename: ERROR cannot be renamed'

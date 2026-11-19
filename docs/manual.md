@@ -1649,7 +1649,8 @@ A server whose last file has been closed stops half a minute later.
 - **Rename** with F2: the new name is typed in the box, then the box shows
   how many changes that makes in which files, and Enter makes them. A file
   open in a tab is changed there (one undo takes the whole change back);
-  any other is changed on disk, on another machine too.
+  any other is changed on disk, on another machine too. If a file open in
+  a tab has been typed in since the changes were found, none is made.
 - **Formatting** with Option+Shift+F: the whole file, or the lines of the
   selection (Vim's `gq` with a motion, `gqq` for a line, or `gq` on a
   Visual selection). One undo takes it back. With `lsp.format_on_save`

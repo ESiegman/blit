@@ -646,8 +646,15 @@ void App::sync_lsp() {
             const std::string* root = panel_root();
             for (const LspFileEdit& f : e.files)
                 items.push_back(shown_name(f.path, root) + "  " + std::to_string(f.edits.size()) + (f.edits.size() == 1 ? " edit" : " edits"));
+            // (Each open file it changes, as its text is now: the change is
+            // about that text, and is not made to one typed in since.)
+            std::vector<std::pair<u64, u64>> revs;
+            for (const LspFileEdit& f : e.files)
+                if (const Doc* d = lsp_edit_doc(f.path)) revs.emplace_back(d->id, d->ed.revision());
             auto edit = std::make_shared<LspWorkspaceEdit>(e);
-            find_choose_item("Rename", std::move(items), [this, edit](int) {
+            find_choose_item("Rename", std::move(items), [this, edit, revs](int) {
+                for (const auto& [id, rev] : revs)
+                    if (const Doc* d = find_doc(id); !d || d->ed.revision() != rev) return notify("Cannot rename: the text changed meanwhile");
                 std::string said;
                 lsp_apply(*edit, &said);
                 notify("Renamed: " + said);
@@ -755,11 +762,7 @@ bool App::lsp_apply(const LspWorkspaceEdit& e, std::string* said) {
     size_t edits = 0, files = 0;
     std::string failed;
     for (const LspFileEdit& f : e.files) {
-        Doc* d = nullptr;
-        if (const u64 key = lsp_.key_of(f.path)) d = find_doc(key);
-        Pane* where = nullptr;
-        size_t at = 0;
-        if (!d && find_open(is_remote(f.path) ? f.path : full_path(f.path), &where, &at)) d = where->docs[at].get();
+        Doc* d = lsp_edit_doc(f.path);
         std::vector<Change> c;
         if (d) {
             if (d->read_only || d->loading) {
@@ -810,6 +813,14 @@ bool App::lsp_apply(const LspWorkspaceEdit& e, std::string* said) {
     if (!failed.empty()) *said += "; not in " + failed;
     if (!e.unsupported.empty()) *said += "; not done: " + e.unsupported;
     return failed.empty();
+}
+
+Doc* App::lsp_edit_doc(const std::string& path) {
+    if (const u64 key = lsp_.key_of(path))
+        if (Doc* d = find_doc(key)) return d;
+    Pane* where = nullptr;
+    size_t at = 0;
+    return find_open(is_remote(path) ? path : full_path(path), &where, &at) ? where->docs[at].get() : nullptr;
 }
 
 // ---------------------------------------------------------------- references, rename, formatting, actions
