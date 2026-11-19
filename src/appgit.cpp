@@ -196,8 +196,6 @@ std::vector<std::string> diff_args(const std::string& rel, bool staged) {
     return args;
 }
 
-// The file a path names, from the top of a repository; empty if it is not
-// in it. (Git names the top by its real path: so is a file here.)
 // The columns of text a split shows, for laying a diff out in two (or a merge in three). (Less
 // one: the scroll bar's strip is over the last.)
 u32 text_cols(const Pane& p, int cell_w) { return static_cast<u32>(std::max(1, (p.x1 - p.text_x) / std::max(1, cell_w) - 1)); }
@@ -235,6 +233,8 @@ std::vector<GitRef> refs_of(std::string_view s) {
     return out;
 }
 
+// The file a path names, from the top of a repository; empty if it is not
+// in it. (Git names the top by its real path: so is a file here.)
 std::string in_repo(const std::string& root, std::string full) {
     char real[PATH_MAX];
     if (!is_remote(full) && realpath(full.c_str(), real)) full = real;
@@ -244,7 +244,6 @@ std::string in_repo(const std::string& root, std::string full) {
 
 }  // namespace
 
-// A diff tab's own state (see Doc::gitview).
 // A merge tab: a conflicted file's three versions, merged (GitMerge), what
 // is taken of each conflict, and how it was laid out.
 struct MergeView {
@@ -267,6 +266,7 @@ struct RebaseView {
     bool asked = false;
 };
 
+// A diff tab's own state (see Doc::gitview).
 struct GitView {
     u8 kind = kViewOther;
     std::string path;               // the file, from the top of the repository (changes and staged)
@@ -730,11 +730,6 @@ void App::reread(Pane& p, Doc& d, const std::string* bytes) {
 void App::git_open_text(std::vector<std::string> args, const std::string& title) { git_open_view(std::move(args), title, kViewOther, {}); }
 
 // ---------------------------------------------------------------- diff tabs
-
-namespace {
-
-
-}  // namespace
 
 // A tab for a diff (or a commit, or a stash). One already open for the
 // same is shown instead, and read again. `goto_line`: when it comes, the
