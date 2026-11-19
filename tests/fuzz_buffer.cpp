@@ -3688,6 +3688,38 @@ void vim_test() {
         }
     }
     if (wrong) fail("modal editing", static_cast<u64>(wrong), 0);
+    // In a text whose lines end in "\r\n", the line breaks Vim's commands
+    // put in do too.
+    {
+        static const Case crlf[] = {
+            {"|a\r\nb", "ox<Esc>", "a\r\n|x\r\nb"},
+            {"|a\r\nb", "Ox<Esc>", "|x\r\na\r\nb"},
+            {"|a\r\nb", "Ax<CR>y<Esc>", "ax\r\n|y\r\nb"},
+            {"  |a\r\nb", "2ox<Esc>", "  a\r\n  x\r\n  |x\r\nb"},
+            {"|ab\r\nb", "r<CR>", "\r\n|b\r\nb"},
+            {"a\r\n|b", "2[<Space>", "a\r\n\r\n\r\n|b"},
+            {"|a\r\nb", "Rx<CR><BS><Esc>", "|x\r\nb"},
+        };
+        for (const Case& c : crlf) {
+            std::string text = c.before, want = c.after;
+            const size_t cur = text.find('|'), want_cur = want.find('|');
+            text.erase(cur, 1);
+            want.erase(want_cur, 1);
+            Editor ed;
+            ed.insert(text);
+            ed.set_crlf(true);
+            ed.move_to(cur, false);
+            Vim vim;
+            vim.resume(ed);
+            ed.watch = &vim;
+            vim.keys(ed, c.keys);
+            const std::string got = ed.buf.text(0, ed.buf.size());
+            if (got != want || ed.cursor() != want_cur) {
+                std::fprintf(stderr, "vim, CRLF: \"%s\" then %s gave \"%s\" (cursor %llu)\n", c.before, c.keys, got.c_str(), static_cast<unsigned long long>(ed.cursor()));
+                fail("line breaks put in by Vim in a CRLF text", 0, 0);
+            }
+        }
+    }
     // The command line's cursor stands after what is typed, in columns (a
     // wide character two, a mark none), and Backspace takes a whole character.
     {
