@@ -103,6 +103,21 @@ cp "$dir/nomap-mm.bmp" "$dir/maptwo.bmp"
 [ "$got" = "none" ] || { echo "FAIL: editor.minimap = false: $got"; failed=1; }
 got=$(mm map 1600x700 "click:795,200;frame")
 case $got in "top 0 "*) echo "FAIL: a click on the minimap scrolled nothing: $got"; failed=1 ;; esac
+# A file that wraps (its lines take rows of their own): the view's box over
+# the lines on show, at the end too; a click goes to the line clicked, as
+# it does where nothing wraps.
+long="this line goes on so that it wraps onto rows of its own in the view, more than once where the view is narrow enough for that"
+i=1
+while [ $i -le 2000 ]; do echo "$i $long $long"; i=$((i + 1)); done >"$dir/work/wrap.txt"
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = true\n' >"$dir/flat.lua"
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = true\nblit.opt.editor.soft_wrap = true\n' >"$dir/wrap.lua"
+wm() { BLIT_INIT="$dir/$1.lua" "$blit" --offscreen 1600x700 --shot "$dir/wm.bmp" --script "workdir:$dir/work;frame;$2;frame;wait:400;frame;minimapdump" "$dir/work/wrap.txt" 2>&1 >/dev/null | tail -1 | sed 's/.* box //'; }
+got=$(wm wrap "vim:G")
+case $got in 19[0-9][0-9]-200[01]) ;; *) echo "FAIL: the minimap's box at the end of a file that wraps: $got"; failed=1 ;; esac
+flat=$(wm flat "click:795,200;release")
+wrapped=$(wm wrap "click:795,200;release")
+a=$(( (${flat%-*} + ${flat#*-}) / 2 )) b=$(( (${wrapped%-*} + ${wrapped#*-}) / 2 ))
+[ $((a - b)) -le 3 ] && [ $((b - a)) -le 3 ] || { echo "FAIL: a click on the minimap of a file that wraps: lines $wrapped, not about those of $flat"; failed=1; }
 differ mapone maptwo "the minimap drew nothing"
 # The view's box on it, with lines folded away or wrapped (the view scrolls
 # by rows, the minimap is in lines): at the end of the file at its end, and
