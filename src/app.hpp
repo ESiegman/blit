@@ -197,6 +197,7 @@ struct Doc {
     std::shared_ptr<MergeView> merge;  // a merge tab's: a conflicted file's three versions, and what is taken of each (appgit.cpp)
     u64 seen_rev = ~0ull, changed_ns = 0;  // when its text was last seen to have changed
     u64 hist_rev = ~0ull, hist_ns = 0;     // the text last kept in its local history, and when (apphistory.cpp; 0: not yet this session)
+    bool hist_disk = false;                // the text it had on disk kept, at its first save this session (apphistory.cpp)
     i64 disk_stamp = 0;                    // the file's change time when it was last read or written
     // A tab that shows something made and not a file (a diff, a commit):
     // what it is called, that it is not to be typed in, and its colours.

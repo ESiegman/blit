@@ -117,7 +117,8 @@ void App::history_keep_doc(Doc& d, bool saved, std::string text) {
 // Before a file is saved: the first time this session, the text it had on
 // disk is kept too (so that what was there before is never lost to it).
 void App::history_before_save(Doc& d) {
-    if (!history_wanted(d) || d.hist_ns) return;
+    if (!history_wanted(d) || d.hist_disk) return;
+    d.hist_disk = true;  // (not by hist_ns: typing, or a version kept while typing, comes before the first save)
     std::string was;
     if (fs_read(d.ed.path, &was, kLargest)) history_keep_doc(d, true, std::move(was));
 }
