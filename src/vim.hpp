@@ -288,6 +288,8 @@ private:
     std::string last_inserted_; // the "." register
     u64 last_insert_at_ = ~0ull;  // where Insert mode was last left (gi; ~0: it has not been)
     std::vector<std::string> replaced_;  // Replace mode: what each character typed went over, for Backspace
+    std::vector<VimKey> insert_keys_;    // the keys typed in Insert mode, which a count types again ("3i<CR><Esc>")
+    bool retyping_ = false;              // and they are being typed again
     // Visual Block mode: I, A and c type on the first line, and Esc puts the same on the others.
     struct BlockInsert {
         bool on = false;

@@ -260,6 +260,9 @@ bool sentence_start(Peek& p, u64 i, u64 size) {
 
 bool wordish(char c) { return kind_of(static_cast<u8>(c), false) == 2; }
 
+// Enter, or Ctrl-J or Ctrl-M (in Insert mode, the same).
+bool is_enter(const VimKey& k) { return k.kind == VimKey::kEnter || (k.ctrl && (k.ch == 'j' || k.ch == 'm')); }
+
 // Is the line that starts at `s` empty ("\r" alone counts as empty)? Not
 // asked of the nothing after a final newline.
 bool blank_at(const Buffer& buf, u64 s) {
@@ -2202,6 +2205,7 @@ void Vim::enter_insert(Editor& ed, u32 count, Mode mode) {
     insert_prefix_.clear();
     auto_indent_ = false;
     replaced_.clear();
+    insert_keys_.clear();
     changing_ = true;
     // Everything typed until Esc is one step to undo. (After <C-o> in
     // Insert mode that step is open already, and this is still part of it.)
@@ -2230,16 +2234,38 @@ bool Vim::drop_indent(Editor& ed, u64 at) {
 }
 
 void Vim::leave_insert(Editor& ed) {
+    // "3ix": the text, twice more; "3o": two more lines of it. Typed again
+    // key by key, as Vim does, when it was all typing: each Enter puts in
+    // its own indent and takes back the one before it, if that is alone on
+    // its line ("3i<CR><Esc>" leaves the new lines empty, not indented).
+    const bool by_keys = insert_count_ > 1 && mode_ == kInsert && insert_plain_;
+    std::string typed;
+    if (by_keys) {
+        u64 end = ed.cursor();
+        if (auto_indent_ && end == ed.line_end(ed.buf.line_of(end)))  // (what was typed, without an indent that Esc would take out)
+            for (Peek p(ed.buf); end > insert_from_ && (p.at(end - 1) == ' ' || p.at(end - 1) == '\t');) --end;
+        typed = end >= insert_from_ ? ed.buf.text(insert_from_, end - insert_from_) : std::string();
+        last_inserted_ = typed;
+        retyping_ = true;
+        for (u32 i = 1; i < insert_count_; ++i) {
+            if (!insert_prefix_.empty()) insert_key(ed, VimKey{VimKey::kEnter, 0, false});  // ("3o": the next line, as Enter makes it)
+            for (const VimKey& key : insert_keys_)
+                if ((insert_key(ed, key) & kTyped) && !is_enter(key)) auto_indent_ = false;
+        }
+        retyping_ = false;
+    }
     // ("3o<Esc>": the further lines are empty too. The column the cursor
     // keeps for j and k is still the one the indent went to.)
     const u32 indent_col = auto_indent_ ? ed.col_of(ed.cursor()) : 0;
     const bool dropped = drop_indent(ed, ed.cursor());
-    if (dropped && !insert_prefix_.empty()) insert_prefix_ = line_break(ed);
-    const std::string typed = insert_plain_ && ed.cursor() >= insert_from_ ? ed.buf.text(insert_from_, ed.cursor() - insert_from_) : std::string();
-    if (insert_plain_) last_inserted_ = typed;
-    if (insert_count_ > 1 && !(insert_prefix_ + typed).empty()) {  // "3ix": the text, twice more; "3o": two more lines of it
-        const std::string text = insert_prefix_ + typed;
-        for (u32 i = 1; i < insert_count_; ++i) ed.insert(text);
+    if (!by_keys) {
+        if (dropped && !insert_prefix_.empty()) insert_prefix_ = line_break(ed);
+        typed = insert_plain_ && ed.cursor() >= insert_from_ ? ed.buf.text(insert_from_, ed.cursor() - insert_from_) : std::string();
+        if (insert_plain_) last_inserted_ = typed;
+        if (insert_count_ > 1 && !(insert_prefix_ + typed).empty()) {
+            const std::string text = insert_prefix_ + typed;
+            for (u32 i = 1; i < insert_count_; ++i) ed.insert(text);
+        }
     }
     u64 block_home = kNone;
     if (block_insert_.on) {
@@ -2281,6 +2307,7 @@ u32 Vim::insert_key(Editor& ed, const VimKey& k) {
         return kHandled;
     }
     if (read_only) return kHandled;
+    if (insert_count_ > 1 && !retyping_) insert_keys_.push_back(k);  // (only with a count: they are to be typed again)
     if (await_ == kInsertRegister) {  // <C-r> and a register's name: its text, as if typed
         await_ = kNothing;
         if (k.kind != VimKey::kChar) return kHandled;
@@ -4053,7 +4080,7 @@ u32 Vim::feed(Editor& ed, const VimKey& k) {
         case kInsert:
         case kReplace:
             r = insert_key(ed, k);
-            if ((r & kTyped) && k.kind != VimKey::kEnter && !(k.ctrl && (k.ch == 'j' || k.ch == 'm'))) auto_indent_ = false;  // (something typed after the indent: it stays)
+            if ((r & kTyped) && !is_enter(k)) auto_indent_ = false;  // (something typed after the indent: it stays)
             break;
         case kCommand: r = command_key(ed, k); break;
         default: r = normal_key(ed, k); break;

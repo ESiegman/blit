@@ -3798,6 +3798,11 @@ void vim_test() {
         {"one |two", "I> <Esc>", ">| one two"},
         {"|one two", "A!<Esc>", "one two|!"},
         {"|x", "3ia<Esc>", "aa|ax"},
+        // (A count types it all again key by key: each Enter's indent, left alone on its line by the next, goes.)
+        {"  a|b", "3i<CR><Esc>", "  a\n\n\n | b"},
+        {"  a|b", "2i<CR><CR><Esc>", "  a\n\n\n\n | b"},
+        {"  a|b", "3i<CR>y<Esc>", "  a\n  y\n  y\n  |yb"},
+        {"  a|b", "3o<CR>x<Esc>", "  ab\n\n  x\n\n  x\n\n  |x"},
         {"    |x", "oy<Esc>", "    x\n    |y"},
         {"    |x", "Oy<Esc>", "    |y\n    x"},
         {"|", "iab<BS>c<Esc>", "a|c"},
