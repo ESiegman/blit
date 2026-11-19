@@ -231,6 +231,13 @@ cat >"$P/n.ipynb" <<'EOF'
 EOF
 got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/n.ipynb;lsptext;nbdump" 2>&1 >/dev/null | tail -2 | tr '\n' '#')
 check "a notebook: the script of its cells, and their outputs after them" "# %% [markdown] / # # Sums /  / # %% / total = sum(range(5)) / print('total', total) /  / # %% / total * 2 / #6: total 10 | 9: 20#"
+# The outputs hold the font's glyphs: with the font made again (for other
+# features, at the same size) they are made again too, and the frame is
+# the one drawn with that font from the start.
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.font.features = { "zero" }\n' >"$dir/zero.lua"
+BLIT_INIT="$dir/zero.lua" "$blit" --offscreen 900x700 --shot "$dir/nb-zero.bmp" --script "workdir:$P;open:$P/n.ipynb;frame;frame" >/dev/null 2>&1
+"$blit" --offscreen 900x700 --shot "$dir/nb-rezero.bmp" --script "workdir:$P;open:$P/n.ipynb;frame;frame;lua:blit.opt.font.features = { 'zero' };frame;frame" >/dev/null 2>&1
+cmp -s "$dir/nb-zero.bmp" "$dir/nb-rezero.bmp" || { echo "FAIL: a notebook's outputs kept the glyphs of the font there was"; failed=1; }
 "$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/n.ipynb;vim:Gyyp;save" 2>/dev/null >/dev/null
 got=$(python3 -c 'import json,sys; nb=json.load(open(sys.argv[1])); print(" | ".join(c["cell_type"] + ":" + "".join(c["source"]) + ":" + str(len(c.get("outputs", []))) for c in nb["cells"]))' "$P/n.ipynb")
 check "saved: still a notebook, the changed cell's outputs gone, the others' kept" 'markdown:# Sums:0 | code:total = sum(range(5))

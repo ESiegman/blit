@@ -16,8 +16,10 @@ namespace blit {
 struct NotebookTab {
     std::string original;            // the notebook as last read or written
     std::vector<NotebookCell> cells;  // its cells (their saved outputs)
-    // The notes after the cells on show, as of the text's revision.
+    // The notes after the cells on show, as of the text's revision (and
+    // the font's generation: the cells hold its glyphs).
     u64 noted_rev = ~0ull;
+    u32 noted_font = ~0u;
     std::vector<GridNote> notes;
     std::vector<std::vector<u32>> cells_of_notes;
     std::vector<std::string> texts;  // (for the tests: "line: what")
@@ -103,8 +105,9 @@ void App::nb_marks(FrameDesc& fd) {
         Doc* d = find_doc(g.doc);
         if (!d || !d->nb) continue;
         NotebookTab& nb = *d->nb;
-        if (nb.noted_rev != d->ed.revision()) {
+        if (nb.noted_rev != d->ed.revision() || nb.noted_font != font_->generation()) {
             nb.noted_rev = d->ed.revision();
+            nb.noted_font = font_->generation();
             nb.notes.clear();
             nb.cells_of_notes.clear();
             nb.texts.clear();

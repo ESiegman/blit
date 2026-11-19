@@ -328,7 +328,7 @@ struct App::DebugUi : DebugSession {
     // The notes after the lines of each view (where it stopped, the values),
     // and what they were made for.
     struct Inline {
-        u64 key[8] = {};
+        u64 key[9] = {};
         std::vector<std::vector<u32>> cells;
         std::vector<GridNote> notes;
         std::vector<std::string> texts;  // (what each says: the tests)
@@ -2083,7 +2083,7 @@ void App::debug_marks(FrameDesc& fd) {
         const Buffer& buf = d->ed.buf;
         const Highlights& hl = d->syntax.highlights();
         DebugUi::Inline& c = u.inline_[vi];
-        const u64 key[] = {debug_gen_, d->id, d->ed.revision(), g.top_line, g.bottom(), hl.size(), hl.base, cfg_.debug_inline_values};
+        const u64 key[] = {debug_gen_, d->id, d->ed.revision(), g.top_line, g.bottom(), hl.size(), hl.base, cfg_.debug_inline_values, font_->generation()};
         if (!std::equal(std::begin(key), std::end(key), std::begin(c.key))) {
             std::copy(std::begin(key), std::end(key), std::begin(c.key));
             c.notes.clear();

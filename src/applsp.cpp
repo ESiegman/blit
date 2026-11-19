@@ -301,7 +301,7 @@ struct App::Assist {
     std::vector<std::vector<u32>> lens_cells;
     std::vector<std::string> lens_texts;
     std::vector<u64> lens_at;  // (each note's definition: where its name is)
-    u64 lens_key[4] = {};
+    u64 lens_key[5] = {};
     std::string hier_title;
     u8 hier_kind = 0;
     int hier_asking = -1;
@@ -2460,7 +2460,7 @@ void App::lens_marks(FrameDesc& fd) {
             }
     }
     if (a.lens_counts.empty()) return;
-    const u64 key[4] = {a.lens_tag, g.top_line, g.bottom(), a.lens_counts.size()};
+    const u64 key[5] = {a.lens_tag, g.top_line, g.bottom(), a.lens_counts.size(), font_->generation()};
     if (!std::equal(std::begin(key), std::end(key), std::begin(a.lens_key))) {
         std::copy(std::begin(key), std::end(key), std::begin(a.lens_key));
         a.lens_notes.clear();

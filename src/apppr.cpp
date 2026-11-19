@@ -32,7 +32,7 @@ struct PrUi {
     std::vector<PrComment> comments;
     // The notes after the commented lines on show, for each view.
     struct Notes {
-        u64 key[4] = {};
+        u64 key[5] = {};
         std::vector<GridNote> notes;
         std::vector<std::vector<u32>> cells;
     } views[kMaxViews];
@@ -267,7 +267,7 @@ void App::pr_marks(FrameDesc& fd) {
         if (!full.starts_with(root + "/")) continue;
         const std::string rel = full.substr(root.size() + 1);
         PrUi::Notes& v = u.views[vi];
-        const u64 key[4] = {d->id, d->ed.revision(), g.top_line * 1000003 + g.bottom(), u.comments.size() + static_cast<u64>(u.number) * 1000003};
+        const u64 key[5] = {d->id, d->ed.revision(), g.top_line * 1000003 + g.bottom(), u.comments.size() + static_cast<u64>(u.number) * 1000003, font.generation()};
         if (!std::equal(std::begin(key), std::end(key), std::begin(v.key))) {
             std::copy(std::begin(key), std::end(key), std::begin(v.key));
             v.notes.clear();
