@@ -406,8 +406,10 @@ std::vector<u64> sticky_lines(const Doc& d, double scroll_y, int ch) {
 
 void App::sticky_layout(FrameDesc& fd, const TextView& v) {
     Pane& p = *pane_;
-    if (!cfg_.sticky_scroll || p.doc->term || p.doc->image || p.doc->pdf || p.doc->md || p.doc->prof || p.doc->marks) return;
+    // (Gone first, whatever happens: a click where they were would go to a
+    // line they no longer show.)
     if (p.sticky) p.sticky->lines.clear();
+    if (!cfg_.sticky_scroll || p.doc->term || p.doc->image || p.doc->pdf || p.doc->md || p.doc->prof || p.doc->marks) return;
     const int ch = font_->cell_h(), cw = font_->cell_w();
     std::vector<u64> lines = sticky_lines(*p.doc, p.scroll_y, ch);
     if (lines.empty() || fd.popup_count >= std::size(fd.popups)) return;

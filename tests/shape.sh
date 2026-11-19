@@ -201,6 +201,12 @@ with nocrumbs "workdir:$dir/proj;frame;line:5;frame;stickydump" "$S"
 check "(not with the breadcrumbs' setting)" '1 2'
 with nosticky "workdir:$dir/proj;frame;line:5;frame;stickydump" "$S"
 check "editor.sticky_scroll = false" 'none'
+run "workdir:$dir/proj;frame;line:5;frame;click:300,60;release;frame;vimdump" "$S"
+check "a click on the struct's pinned line goes to it" 'NORMAL |  | 2:1 | struct Point {'
+with nosticky "workdir:$dir/proj;frame;line:5;frame;click:300,60;release;frame;vimdump" "$S"
+text=$got
+run "workdir:$dir/proj;frame;line:5;frame;lua:blit.opt.editor.sticky_scroll = false;frame;click:300,60;release;frame;vimdump" "$S"
+check "turned off once they were shown, a click there goes to the text under it, not a line they showed" "$text"
 
 # Folding: the block at the cursor folds under its first line; the rows go
 # past it; moving, searching or jumping into it opens it.
