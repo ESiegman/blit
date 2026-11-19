@@ -2560,6 +2560,36 @@ never lays one out again. A click on one does nothing.
   ...` or `title ...`, wrapped to the preview); `showData` puts each
   value in the legend too. The colours are the theme's own, those not too
   like one another (then the same again, quieter).
+- `gantt`: a task a row, as a bar from its start to its end against a
+  date axis, in its section's band (the sections' names at the left, the
+  bands in turn lighter and darker, each in a colour of its own); `title`,
+  `dateFormat` (Day.js's tokens: `YYYY-MM-DD`, `DD/MM/YYYY HH:mm`, `X`,
+  `MMM D YYYY`, ...), `axisFormat` (strftime's: `%Y-%m-%d`, `%b %e`,
+  `%H:%M`, ...), `tickInterval` (else the ticks are as close as their
+  labels let them be, on days, weeks, months or years), `topAxis`. Tasks
+  are `done` (grey), `active` (outlined), `crit` (red) or `milestone` (a
+  diamond at its date); they start at a date, `after` other tasks (the
+  latest of their ends) or after the task before, and end at a date,
+  `until` other tasks, or after a length (`3d`, `2w`, `12h`, `30m`, `1M`).
+  `excludes` (`weekends`, days' names, dates) shades those days, and a
+  length skips them (as Mermaid's does); `includes`, `weekend friday`,
+  `weekday`, `inclusiveEndDates` too. A task's name is in its bar when it
+  fits, else beside it (wrapped if it must be). Today is marked only when
+  `todayMarker` asks for it (with its `stroke`, `stroke-width` and
+  `opacity`). Dates are the calendar's own, with no time zones.
+- `mindmap`: nested by indentation, from the root out to both sides (half
+  of its branches to the right, by how tall each is), or to the right
+  only when that is narrower and both do not fit; each branch in a colour
+  of the theme's, joined by curves thinner the further out. Shapes:
+  `[square]`, `(rounded)`, `((circle))`, `))bang((`, `)cloud(`,
+  `{{hexagon}}`, and plain text (a box with a line under it). Long text
+  wraps, narrower while the mindmap is too wide. (`::icon()` is left out.)
+- `timeline`: a `title`, `section`s as bands over their periods, periods in
+  a row along an arrow, each with its events (`2004 : Facebook : Google`,
+  or `: Google` on a line of its own) in boxes under it, joined by a dashed
+  line. Columns are as wide as the text needs (within bounds; longer text
+  wraps), and a timeline wider than the preview goes on in rows under it,
+  a section kept whole on a row where it can be.
 
 A diagram with a mistake in it shows its code, under a line that says
 what and where (`mermaid: line 3: ...`). Other kinds show as code, with a
@@ -3069,6 +3099,8 @@ src/flowchart.cpp  flowcharts and state diagrams laid out in layers (ranks, cros
 src/classdiagram.cpp  class diagrams and entity relationship diagrams: boxes of members, tables, relations' ends (triangles, diamonds, crow's feet)
 src/sequence.cpp   sequence diagrams laid out: participants, lifelines, messages, activations, notes, frames, as drawings
 src/pie.cpp        pie charts laid out: wedges, their shares, a legend, as drawings
+src/gantt.cpp      Gantt charts (dates read and written, after/until, days left out, the axis's ticks) and timelines, as drawings
+src/mindmap.cpp    mindmaps laid out as a balanced tree from the root, as drawings
 src/raster.*       the diagrams' rasterizer: exact-area anti-aliased fills, strokes with joins, caps and dashes
 src/appmarkdown.cpp the Markdown preview's tab: drawn again as the file changes, following its cursor, links, pictures
 src/appimage.cpp   pictures: read on threads of their own and put on the GPU; an image file's tab (zoom, move)

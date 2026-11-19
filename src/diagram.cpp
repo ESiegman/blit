@@ -26,6 +26,27 @@ DiagramColour DiagramPalette::tone(u8 which, float k) const {
     return {bg[0] + (c[0] - bg[0]) * k, bg[1] + (c[1] - bg[1]) * k, bg[2] + (c[2] - bg[2]) * k, 1};
 }
 
+std::vector<u8> diagram_series(const DiagramPalette& p) {
+    std::vector<u8> out;
+    for (const u8 i : {kMdSlice0, kMdSlice1, kMdSlice2, kMdSlice3, kMdHeading1, kMdHeading2, kMdHeading3, kMdAccent, kMdLink, kMdLabel, kMdCodeConstant, kMdCodeKeyword, kMdCodeType,
+                       kMdCodeString}) {
+        const float* c = p.ink[i];
+        // (a colour, not a grey, and not too near the background in
+        // brightness; and not near one already taken)
+        if (std::max({c[0], c[1], c[2]}) - std::min({c[0], c[1], c[2]}) < 0.12f) continue;
+        if (std::fabs(c[0] * 0.3f + c[1] * 0.59f + c[2] * 0.11f - (p.bg[0] * 0.3f + p.bg[1] * 0.59f + p.bg[2] * 0.11f)) < 0.15f) continue;
+        bool near = false;
+        for (const u8 o : out) {
+            const float* q = p.ink[o];
+            near = near || std::fabs(c[0] - q[0]) + std::fabs(c[1] - q[1]) + std::fabs(c[2] - q[2]) < 0.24f;
+        }
+        if (!near) out.push_back(i);
+        if (out.size() == 8) break;
+    }
+    if (out.empty()) out.push_back(kMdAccent);
+    return out;
+}
+
 bool diagram_colour(std::string_view s, DiagramColour* out) {
     s = diagram_trim(s);
     const std::string l = diagram_lower(s);
@@ -398,6 +419,38 @@ std::vector<std::string> diagram_statements(std::string_view src, bool split_sem
             l = l.substr(from);
         }
         if (!diagram_trim(l).empty()) out.emplace_back(diagram_trim(l));
+    }
+    return out;
+}
+
+std::vector<DiagramLine> diagram_lines(std::string_view src, std::string* title) {
+    std::vector<DiagramLine> out;
+    bool first = true, front = false;
+    int no = 0;
+    for (size_t at = 0; at <= src.size();) {
+        const size_t nl = src.find('\n', at);
+        std::string_view l = src.substr(at, nl == std::string_view::npos ? std::string_view::npos : nl - at);
+        at = nl == std::string_view::npos ? src.size() + 1 : nl + 1;
+        ++no;
+        // (front matter as diagram_statements() reads it)
+        if (first && diagram_trim(l).empty()) continue;
+        if (first && diagram_trim(l) == "---") {
+            first = false, front = true;
+            continue;
+        }
+        first = false;
+        if (front) {
+            if (diagram_trim(l) == "---") front = false;
+            else if (const std::string_view t = diagram_trim(l); title && t.starts_with("title:")) {
+                std::string_view v = diagram_trim(t.substr(6));
+                if (v.size() >= 2 && (v.front() == '"' || v.front() == '\'') && v.back() == v.front()) v = v.substr(1, v.size() - 2);
+                *title = std::string(v);
+            }
+            continue;
+        }
+        if (const size_t c = l.find("%%"); c != std::string_view::npos) l = l.substr(0, c);
+        while (!l.empty() && (l.back() == ' ' || l.back() == '\t' || l.back() == '\r')) l.remove_suffix(1);
+        if (!diagram_trim(l).empty()) out.push_back({no, std::string(l)});
     }
     return out;
 }
@@ -786,6 +839,9 @@ u8 diagram_make(std::string_view source, const DiagramStyle& style, Drawing* out
     else if (kind == "pie") ok = pie_layout(st, style, out, err, geo);
     else if (kind == "classdiagram" || kind == "classdiagram-v2") ok = classdiagram_layout(st, style, out, err, geo);
     else if (kind == "erdiagram") ok = erdiagram_layout(st, style, out, err, geo);
+    else if (kind == "gantt") ok = gantt_layout(diagram_lines(source), style, out, err, geo);
+    else if (kind == "timeline") ok = timeline_layout(diagram_lines(source), style, out, err, geo);
+    else if (kind == "mindmap") ok = mindmap_layout(diagram_lines(source), style, out, err, geo);
     else {
         *err = st[0].substr(0, st[0].find(' ')) + " is not drawn yet: shown as text";
         return kDiagramNone;

@@ -119,8 +119,12 @@ layout_problems() {
         nb = ne = 0
     }
     function apart(i, j) { return bx[i] + bw[i] <= bx[j] || bx[j] + bw[j] <= bx[i] || by[i] + bh[i] <= by[j] || by[j] + bh[j] <= by[i] }
+    # (A box flush with a side of its subgraph, as the periods of a timeline
+    # are with their section, is in it: the dump rounds to a tenth.)
     function holds(o, name,   j) {
-        for (j = 1; j <= nb; j++) if (bk[j] != "label" && bk[j] != "title" && bn[j] == name) return within(o, j)
+        for (j = 1; j <= nb; j++)
+            if (bk[j] != "label" && bk[j] != "title" && bn[j] == name)
+                return bx[j] >= bx[o] - 0.2 && by[j] >= by[o] - 0.2 && bx[j] + bw[j] <= bx[o] + bw[o] + 0.2 && by[j] + bh[j] <= by[o] + bh[o] + 0.2
         return 0
     }
     function within(o, i) { return bx[i] >= bx[o] && by[i] >= by[o] && bx[i] + bw[i] <= bx[o] + bw[o] && by[i] + bh[i] <= by[o] + bh[o] }
@@ -208,6 +212,24 @@ for size in 3600x1100 1600x1100; do
     got=$(printf '%s\n' "$got" | awk '/^diagram 2/ { exit } /^node / { printf "%.0f\n", $(NF - 2) + $NF / 2 }' | sort -u | wc -l | tr -d ' ')
     [ $size = 3600x1100 ] && want=1 || want=5
     check "a flowchart LR at $size: its nodes in $want rows" "$want"
+done
+
+# Gantt charts, mindmaps and timelines are pictures too, laid out cleanly
+# wide and narrow: no bars, nodes, labels or sections over each other, a
+# mindmap's branches and a timeline's joins ending on their nodes and
+# passing through no other; a mistake (a task after one there is not)
+# shows the code under its line.
+for size in 3600x1100 1200x1100; do
+    dump $size "$here/markdown/plans.md" ""
+    layout=$got
+    got=$(printf '%s\n' "$layout" | layout_problems)
+    check "plans.md at $size: laid out with nothing over anything" ""
+    got=$(printf '%s\n' "$layout" | grep -c '^diagram [0-9]* [0-9]*x[0-9]*$'),$(printf '%s\n' "$layout" | grep -c '^diagram 7 error: line 4: no task nowhere to come after$')
+    got=$got,$(printf '%s\n' "$layout" | grep -c '^edge '),$(printf '%s\n' "$layout" | grep -c '^node ')
+    check "plans.md at $size: six laid out (with their branches and joins), one mistake" "6,1,31,63"
+    run $size "$here/markdown/plans.md" ""
+    got="$(printf '%s\n' "$got" | grep -c '^picture: diagram:'),$(printf '%s\n' "$got" | grep -c 'mermaid: line 4: no task nowhere')"
+    check "plans.md at $size: a picture for each, the mistake's code under it" "6,1"
 done
 
 # Code blocks in colour: each run of a row in the colour it is drawn in,

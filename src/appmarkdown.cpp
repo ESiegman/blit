@@ -1094,7 +1094,7 @@ std::string App::md_diagram_dump() {
         int n = 0;
         for (size_t at = 0; at < text.size();) {
             const size_t nl = std::min(text.find('\n', at), text.size());
-            const std::string_view line = diagram_trim(std::string_view(text).substr(at, nl - at));
+            const std::string_view raw = std::string_view(text).substr(at, nl - at), line = diagram_trim(raw);
             at = nl + 1;
             if (!in) {
                 in = line.starts_with("```mermaid") || line.starts_with("~~~mermaid");
@@ -1102,7 +1102,7 @@ std::string App::md_diagram_dump() {
                 continue;
             }
             if (!line.starts_with("```") && !line.starts_with("~~~")) {
-                block += std::string(line) + "\n";
+                block += std::string(raw) + "\n";  // (as it is: a mindmap nests by indentation)
                 continue;
             }
             in = false;

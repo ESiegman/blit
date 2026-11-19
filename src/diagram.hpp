@@ -296,4 +296,22 @@ bool diagram_layered(LayeredGraph* g, const DiagramStyle& style, std::string* er
 bool classdiagram_layout(const std::vector<std::string>& st, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo);
 bool erdiagram_layout(const std::vector<std::string>& st, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo);
 
+// A source's lines as they are (their indentation kept, for the kinds that
+// nest by it), each with its line in the source (from 1), without comments,
+// blank lines, front matter (its title in `title`) or directives.
+struct DiagramLine {
+    int no = 0;
+    std::string text;
+};
+std::vector<DiagramLine> diagram_lines(std::string_view src, std::string* title = nullptr);
+// The palette's inks that tell one series from another (a mindmap's
+// branches, a timeline's sections, a Gantt chart's): its slices first, then
+// other inks unlike them, each different enough from the rest.
+std::vector<u8> diagram_series(const DiagramPalette& p);
+
+// Gantt charts and timelines (gantt.cpp), mindmaps (mindmap.cpp).
+bool gantt_layout(const std::vector<DiagramLine>& lines, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo);
+bool timeline_layout(const std::vector<DiagramLine>& lines, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo);
+bool mindmap_layout(const std::vector<DiagramLine>& lines, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo);
+
 }  // namespace blit

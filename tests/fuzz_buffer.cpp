@@ -2894,6 +2894,142 @@ void sequence_test() {
     }
 }
 
+// Gantt charts, mindmaps and timelines laid out (with a monospace
+// measure, as above): bars, nodes and labels apart, sections apart,
+// branches and joins ending on their nodes; dates read by dateFormat,
+// tasks after others, until others, and lengths that skip the days left
+// out; mistakes said with their line; huge ones bounded.
+void plans_test() {
+    auto check = [](bool ok, const std::string& what) {
+        if (!ok) fail(what.c_str(), 0, 0);
+    };
+    DiagramFont font;
+    font.open("", 0);
+    DiagramStyle st;
+    st.font = &font;
+    st.size = 13;
+    st.room = 900;
+    for (u32 i = 0; i < kMdInkCount; ++i) st.palette.ink[i][0] = 0.9f, st.palette.ink[i][1] = 0.3f + 0.04f * static_cast<float>(i), st.palette.ink[i][2] = 0.2f;
+    using Box = DiagramGeometry::Box;
+    auto apart = [](const Box& a, const Box& b, float gap) { return a.x + a.w + gap <= b.x || b.x + b.w + gap <= a.x || a.y + a.h + gap <= b.y || b.y + b.h + gap <= a.y; };
+    const char* const sources[] = {
+        "gantt\n title A Gantt Diagram\n dateFormat YYYY-MM-DD\n section Section\n A task :a1, 2014-01-01, 30d\n Another task :after a1, 20d\n section Another\n"
+        " Task in sec :2014-01-12, 12d\n another task : 24d\n",
+        "gantt\n dateFormat YYYY-MM-DD\n excludes weekends\n todayMarker off\n section A\n Done :done, des1, 2014-01-06,2014-01-08\n Active :active, des2, 2014-01-09, 3d\n"
+        " Future :des3, after des2, 5d\n section Critical\n Crit done :crit, done, 2014-01-06,24h\n Crit active :crit, active, 3d\n Until :until m1\n"
+        " Milestone :milestone, m1, 2014-01-25, 0d\n",
+        "gantt\n dateFormat HH:mm\n axisFormat %H:%M\n topAxis\n Wake :w, 06:30, 30m\n Breakfast :after w, 20m\n Commute : 1h\n",
+        "mindmap\n root((mindmap))\n  Origins\n   Long history\n   Popularisation\n    British popular psychology author Tony Buzan\n  Research\n   On effectiveness<br/>and features\n"
+        "   On Automatic creation\n    Uses\n     Creative techniques\n     Strategic planning\n  Tools\n   Pen and paper\n   Mermaid\n",
+        "mindmap\n Shapes\n  a[Square]\n  b(Rounded)\n  c((Circle))\n  d))Bang((\n  e)Cloud(\n  f{{Hexagon}}\n  Plain\n   ::icon(fa fa-book)\n   deeper\n",
+        "timeline\n title History of Social Media Platform\n 2002 : LinkedIn\n 2004 : Facebook\n      : Google\n 2005 : YouTube\n 2006 : Twitter\n 2007\n",
+        "timeline\n section 17th-20th century\n Industry 1.0 : Machinery, Water power, Steam <br>power\n Industry 2.0 : Electricity : Mass production\n Industry 3.0 : Electronics\n"
+        " section 21st century\n Industry 4.0 : Internet : Robotics : Internet of Things\n Industry 5.0 : Artificial intelligence\n",
+    };
+    for (const float room : {900.0f, 300.0f})
+        for (const char* src : sources) {
+            st.room = room;
+            Drawing d;
+            DiagramGeometry geo;
+            std::string err;
+            const std::string what = " (" + std::string(src) + ", " + std::to_string(static_cast<int>(room)) + " points)";
+            check(diagram_make(src, st, &d, &err, &geo) == kDiagramDrawn, "plans: drawn" + what + " " + err);
+            std::map<std::string, Box> nodes;
+            std::vector<Box> labels, clusters;
+            for (const Box& b : geo.boxes) {
+                if (b.kind == "node") check(nodes.emplace(b.name, b).second, "plans: each node named once" + what);
+                else if (b.kind == "label") labels.push_back(b);
+                else clusters.push_back(b);
+                check(b.x >= 0 && b.y >= 0 && b.x + b.w <= d.w + 0.01f && b.y + b.h <= d.h + 0.01f, "plans: everything within the picture" + what);
+            }
+            check(!nodes.empty(), "plans: nodes" + what);
+            for (auto a = nodes.begin(); a != nodes.end(); ++a)
+                for (auto b = std::next(a); b != nodes.end(); ++b) check(apart(a->second, b->second, 1), "plans: " + a->first + " and " + b->first + " apart" + what);
+            for (const Box& l : labels) {
+                for (const auto& [name, n] : nodes) check(apart(l, n, 0), "plans: label " + l.name + " clear of " + name + what);
+                for (const Box& m : labels) check(&m == &l || apart(l, m, 0), "plans: labels apart" + what);
+            }
+            for (size_t i = 0; i < clusters.size(); ++i)
+                for (size_t j = i + 1; j < clusters.size(); ++j) check(apart(clusters[i], clusters[j], 0), "plans: sections apart" + what);
+            for (const auto& l : geo.lines) {
+                const auto a = nodes.find(l.from), b = nodes.find(l.to);
+                check(a != nodes.end() && b != nodes.end() && l.pts.size() >= 2, "plans: a line's ends are known" + what);
+                if (a == nodes.end() || b == nodes.end() || l.pts.size() < 2) continue;
+                auto on = [](const Box& bx, RasterPoint p) {
+                    const float in = std::min({p.x - bx.x, bx.x + bx.w - p.x, p.y - bx.y, bx.y + bx.h - p.y});
+                    return in >= -1.0f && in <= std::max(1.5f, 0.3f * std::min(bx.w, bx.h));
+                };
+                check(on(a->second, l.pts.front()) && on(b->second, l.pts.back()), "plans: " + l.from + " to " + l.to + " ends on its nodes" + what);
+                for (size_t k = 1; k + 1 < l.pts.size(); ++k)
+                    for (const auto& [name, n] : nodes) {
+                        const RasterPoint p = l.pts[k];
+                        check(name == l.from || name == l.to || !(p.x > n.x + 2 && p.x < n.x + n.w - 2 && p.y > n.y + 2 && p.y < n.y + n.h - 2),
+                              "plans: " + l.from + " to " + l.to + " passes clear of " + name + what);
+                    }
+            }
+            RasterImage one(static_cast<int>(d.w) + 1, static_cast<int>(d.h) + 1), two(static_cast<int>(d.w) + 1, static_cast<int>(d.h) + 1);
+            diagram_paint(d, 1, font, &one);
+            diagram_paint(d, 1, font, &two);
+            bool any = false;
+            for (size_t k = 3; k < one.pixels().size() && !any; k += 4) any = one.pixels()[k] != 0;
+            check(any && one.pixels() == two.pixels(), "plans: drawn, the same pixels each time" + what);
+        }
+    st.room = 900;
+    // Bars by their dates: after, until, a length over a weekend left out,
+    // inclusive end dates, a milestone at its date, dates in other formats.
+    auto bars = [&](const std::string& src) {
+        Drawing d;
+        DiagramGeometry geo;
+        std::string err;
+        std::map<std::string, Box> out;
+        if (diagram_make(src, st, &d, &err, &geo) != kDiagramDrawn) return out;
+        for (const Box& b : geo.boxes)
+            if (b.kind == "node") out[b.name] = b;
+        return out;
+    };
+    auto near = [](float a, float b) { return std::fabs(a - b) < 0.05f; };
+    {
+        // (Thursday 2024-01-04: 3 working days end on Tuesday, 5 days from it on the Tuesday after)
+        auto b = bars("gantt\n dateFormat YYYY-MM-DD\n excludes weekends\n A :a, 2024-01-04, 3d\n B :b, after a, 5d\n C :c, 2024-01-04, 2024-01-16\n");
+        check(b.size() == 3 && near(b["b"].x, b["a"].x + b["a"].w) && near(b["a"].w * 7, b["b"].w * 5) && near(b["a"].w + b["b"].w, b["c"].w), "plans: lengths skip the weekends, after starts at the end");
+        b = bars("gantt\n dateFormat YYYY-MM-DD\n A :a, 2024-01-01, 10d\n B :b, 2024-01-03, until c\n C :c, 2024-01-06, 1d\n M :milestone, m, 2024-01-11, 0d\n");
+        check(b.size() == 4 && near(b["b"].x + b["b"].w, b["c"].x) && near(b["m"].x + b["m"].w / 2, b["a"].x + b["a"].w), "plans: until ends at the other's start; a milestone at its date");
+        b = bars("gantt\n dateFormat YYYY-MM-DD\n inclusiveEndDates\n A :a, 2024-01-01, 2024-01-02\n B :b, 2024-01-01, 2d\n C :c, 2024-01-01, 48h\n D :d, 2024-01-01, 1w\n");
+        check(b.size() == 4 && near(b["a"].w, b["b"].w) && near(b["b"].w, b["c"].w) && near(b["d"].w, b["b"].w * 3.5f), "plans: inclusive end dates, lengths in d, h and w");
+        const auto iso = bars("gantt\n dateFormat YYYY-MM-DD\n A :a, 2024-02-28, 3d\n B :b, 2024-03-02, 2d\n");
+        for (const char* other : {"gantt\n dateFormat DD/MM/YYYY\n A :a, 28/02/2024, 3d\n B :b, 02/03/2024, 2d\n", "gantt\n dateFormat X\n A :a, 1709078400, 3d\n B :b, 1709337600, 2d\n",
+                                  "gantt\n dateFormat MMM D YYYY\n A :a, Feb 28 2024, 3d\n B :b, Mar 2 2024, 2d\n"}) {
+            const auto b2 = bars(other);
+            check(b2.size() == 2 && near(b2.at("a").x, iso.at("a").x) && near(b2.at("b").x, iso.at("b").x) && near(b2.at("b").w, iso.at("b").w), std::string("plans: dates read by dateFormat: ") + other);
+        }
+    }
+    {
+        Drawing d;
+        std::string err;
+        auto wrong = [&](const char* src, const char* line) { return diagram_make(src, st, &d, &err) == kDiagramError && err.starts_with(line); };
+        check(wrong("gantt\n dateFormat YYYY-MM-DD\n\n A :a, 2024-13-45, 3d\n", "line 4"), "plans: a date that is not one, with its line");
+        check(wrong("gantt\n A :a, 2024-01-01, 3d\n %% a comment\n B :after nowhere, 2d\n", "line 4"), "plans: after a task there is not");
+        check(wrong("gantt\n A :a, after b, 1d\n B :b, after a, 1d\n", "line 2"), "plans: after going round in a circle");
+        check(wrong("gantt\n A :a, 2024-01-01, soon\n", "line 2"), "plans: neither a date nor a length");
+        check(wrong("gantt\n A :a, 2024-01-01, 99999999d\n", "line 2"), "plans: a length beyond any calendar");
+        check(wrong("mindmap\n root\n  a\n other root\n", "line 4"), "plans: a mindmap with two roots");
+        check(wrong("timeline\n : an event\n", "line 2"), "plans: an event with no period");
+        check(diagram_make("gantt\n title nothing\n", st, &d, &err) == kDiagramError && diagram_make("mindmap\n", st, &d, &err) == kDiagramError, "plans: nothing in them");
+        // Huge: 2,000 tasks, ticks a millisecond apart over years, 1,500 nodes, 500 periods; NaN-free and in time.
+        std::string big = "gantt\n tickInterval 1millisecond\n";
+        for (int k = 0; k < 2000; ++k) big += " T" + std::to_string(k) + " :t" + std::to_string(k) + ", " + (k ? "after t" + std::to_string(k - 1) : std::string("2000-01-01")) + ", 3d\n";
+        std::string tree = "mindmap\n root\n";
+        for (int k = 0; k < 1500; ++k) tree += std::string(2 + static_cast<size_t>(k % 7), ' ') + " n" + std::to_string(k) + "\n";
+        std::string row = "timeline\n";
+        for (int k = 0; k < 500; ++k) row += " " + std::to_string(1500 + k) + " : one : two\n";
+        const u64 t0 = now_ns();
+        for (const std::string& s : {big, tree, row}) {
+            check(diagram_make(s, st, &d, &err) == kDiagramDrawn && std::isfinite(d.w) && std::isfinite(d.h) && d.w > 0 && d.h > 0, "plans: huge, drawn: " + s.substr(0, 20) + " " + err);
+        }
+        check(now_ns() - t0 < 20'000'000'000ull, "plans: huge ones laid out in time");
+    }
+}
+
 // End to end, when a C++ grammar is installed: colours kept up to date
 // across edits must equal colours computed from scratch for the same text,
 // and the sliced query must give the same answer as the whole one.
@@ -7224,6 +7360,7 @@ int main(int argc, char** argv) {
     raster_test();
     diagram_test();
     sequence_test();
+    plans_test();
 #if !defined(_WIN32)
     std::system(("rm -rf '" + scratch + "'").c_str());
 #endif
