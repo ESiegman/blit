@@ -125,8 +125,8 @@ got="$got | $(sed -n 2p "$W/src/main.cpp") | $(sed -n 2p "$W/src/helper.hpp") | 
 check "Enter: a file open in a tab is changed there (and left to be saved), the others where they are" '>[README.md main.cpp*] | the needle is here | // another pin, with a capital |     indented pin line'
 run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;vimdump"
 check "and the bottom line says how many" 'NORMAL | Replaced 3 hits in 3 files | 1:1 | alpha line'
-run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;text:j;text:u;vimdump"
-check "u takes it back in the file that was open" 'NORMAL |  | 2:5 | the needle is here'
+run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;text:j;text:u;text:j;vimdump"
+check "u takes it back in the file that was open (the cursor back where it was, then down onto it)" 'NORMAL |  | 2:1 | the needle is here'
 
 # Finding and replacing in the file in front: Cmd+Option+F (with Vim's modes as without).
 run "open:$W/src/main.cpp;text:j;text:w;key:cmd+alt+F;finddump"

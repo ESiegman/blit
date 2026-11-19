@@ -66,7 +66,7 @@ check "the last line: nowhere to go" 'one / two / three / four @ 4:1'
 run "key:Down;key:shift+Down;key:shift+Down;$down"
 check "the lines chosen (one the selection ends at the start of is not)" 'one / four / two / three @ 4:6'
 run "key:Down;$down;key:cmd+Z"
-check "one undo step" 'one / two / three / four @ 3:6'
+check "one undo step (the cursor back where it was)" 'one / two / three / four @ 2:1'
 run "key:Down;command:Copy the lines down"
 check "copied below: the cursor goes with the copy" 'one / two / two / three / four @ 3:1'
 run "key:Down;command:Copy the lines up"
@@ -147,7 +147,7 @@ check "a stop in two places, then a choice" 'x / k = k + two; /  @ *2:12'
 snip "key:shift+End;command:Insert a snippet…;text:wrap;key:Return;text:!"
 check "one wrapping what is selected, from the list" '(x)! /  @ *1:5'
 snip "key:End;key:Return;text:fn;key:Tab;key:cmd+z;key:Tab"
-check "undo ends it (Tab then types over what is selected)" 'x / 	 /  @ *2:5'
+check "undo ends it (Tab then puts it in again, not on to its next stop)" 'x / int name(void) / { / 	 / } /  @ *2:9-2:5'
 cp "$dir/s0.cpp" "$dir/s.txt"
 carets "key:End;key:Return;text:afn;key:Tab" "$dir/s.txt" "$dir/snip.lua"
 check "a trigger inside a longer word, or for another language: a tab" 'x / afn	 /  @ *2:5'

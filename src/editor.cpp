@@ -657,6 +657,7 @@ void Editor::apply(u64 off, u64 remove_len, std::string_view text, Kind kind) {
     e.cur_len = text.size();
     e.cursor0 = cursor_;
     e.anchor0 = anchor_;
+    if (group_depth_ > 0 && undo_.size() == group_from_ && group_cursor_ != ~0ull) e.cursor0 = e.anchor0 = group_cursor_;  // (the group's first edit)
     e.kind = kind;
     if (remove_len) buf.erase(off, remove_len, &e.stash);
     if (!text.empty()) buf.insert(off, text);
@@ -838,6 +839,7 @@ bool Editor::undo() {
         redo_.push_back(std::move(e));
     } while (group && !undo_.empty() && undo_.back().group == group);
     want_col_ = ~0u;
+    if (group_depth_ > 0) group_from_ = undo_.size();  // (a group open around this takes in only the edits after it)
     return true;
 }
 
@@ -856,12 +858,23 @@ bool Editor::redo() {
         undo_.push_back(std::move(e));
     } while (group && !redo_.empty() && redo_.back().group == group);
     want_col_ = ~0u;
+    if (group_depth_ > 0) group_from_ = undo_.size();  // (as in undo())
     return true;
 }
 
 void Editor::insert(std::string_view text) {
     bool sel = has_selection();
     apply(sel_min(), sel_max() - sel_min(), text, sel ? kOther : kTyping);
+}
+
+void Editor::replace(u64 start, u64 end, std::string_view text) {
+    // As if the range were selected and typed over, but with the cursor
+    // from before kept for undo (selecting the range first kept its end:
+    // "o" undone left the cursor at the end of the line above).
+    start = std::min(start, buf.size()), end = std::min(end, buf.size());
+    if (end < start) std::swap(start, end);
+    if (start == end && text.empty()) return move_to(start, false);
+    apply(start, end - start, text, end > start ? kOther : kTyping);
 }
 
 void Editor::newline() { insert(crlf_ ? "\r\n" : "\n"); }

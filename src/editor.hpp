@@ -224,12 +224,9 @@ public:
 
     // Edits. All of them replace the selection when there is one.
     void insert(std::string_view text);
-    // Replaces [start, end) with text, as one undo step.
-    void replace(u64 start, u64 end, std::string_view text) {
-        move_to(start, false);
-        move_to(end, true);
-        insert(text);
-    }
+    // Replaces [start, end) with text, as one undo step. (Undone, the
+    // cursor goes back to where it was before, not to the range.)
+    void replace(u64 start, u64 end, std::string_view text);
     void newline();
     void backspace();
     void del();
@@ -240,12 +237,24 @@ public:
     bool redo();
     // Where the text changed in the last undo() or redo(): the first place, if there were several.
     u64 changed_at() const { return changed_at_; }
+    // Where the cursor was when the last step there is to undo began (what
+    // undo() puts back); 0 if there is none.
+    u64 step_cursor() const {
+        size_t i = undo_.size();
+        if (i == 0) return 0;
+        const u64 group = undo_[--i].group;
+        while (group && i > 0 && undo_[i - 1].group == group) --i;
+        return undo_[i].cursor0;
+    }
     // Edits made between begin_group() and end_group() are undone and
     // redone together, as one step (a command that changes several places,
-    // everything typed in one go). The calls nest.
-    void begin_group() {
+    // everything typed in one go). The calls nest. `from`, if given, is
+    // where the cursor counts as having been before them (where the command
+    // they are began, before it moved the cursor): undone, they put it there.
+    void begin_group(u64 from = ~0ull) {
         if (group_depth_++ > 0) return;
         group_from_ = undo_.size();
+        group_cursor_ = from == ~0ull ? from : std::min(from, buf.size());
         if (!undo_.empty()) undo_.back().sealed = true;
     }
     void end_group() {
@@ -313,6 +322,7 @@ private:
     std::vector<Edit> redo_;
     u64 changed_at_ = 0;
     size_t group_from_ = 0;
+    u64 group_cursor_ = ~0ull;  // begin_group()'s `from` (~0: none)
     u64 next_group_ = 1;
     int group_depth_ = 0;
 };

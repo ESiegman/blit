@@ -3040,8 +3040,14 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
         switch (c) {
             case 'r':
                 if (refuse()) return done();
-                // (The cursor goes to where the text changed, as after an undo.)
-                for (u32 i = 0; i < times && ed.redo(); ++i) go(ed, ed.changed_at());
+                // The cursor goes to where the text changed; or, as Vim has
+                // it, where it was before the change, if that was on the line
+                // the change starts on or the one above it (after "o").
+                for (u32 i = 0; i < times && ed.redo(); ++i) {
+                    const u64 at = std::min(ed.changed_at(), ed.buf.size()), was = std::min(ed.step_cursor(), ed.buf.size());
+                    const u64 l = ed.buf.line_of(at), wl = ed.buf.line_of(was);
+                    go(ed, wl == l || wl + 1 == l ? was : at);
+                }
                 return done();
             case 'd': page(counted ? times : rows / 2); return done();
             case 'u': page(-(counted ? static_cast<i64>(times) : rows / 2)); return done();
@@ -3441,7 +3447,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
         }
         case 'u':
             if (refuse()) return done();
-            for (u32 i = 0; i < times && ed.undo(); ++i) go(ed, ed.changed_at());
+            for (u32 i = 0; i < times && ed.undo(); ++i) go(ed, ed.cursor());  // (back where it was before the change)
             return done();
         case '.': {
             if (dot_.empty() || replaying_) return done();
@@ -4026,7 +4032,7 @@ void Vim::run_command(Editor& ed, std::string line) {
 u32 Vim::feed(Editor& ed, const VimKey& k) {
     typed_.clear();
     const bool idle = mode_ == kNormal && !op_ && !counted_ && !reg_ && await_ == kNothing;
-    if (idle) failed_ = false;
+    if (idle) failed_ = false, cmd_from_ = ed.cursor();
     if (macro_into_ && macro_depth_ == 0 && !replaying_) macro_keys_.push_back(k);
     if (!replaying_ && macro_depth_ == 0) {
         if (idle) {  // this key starts a command: what it changes, "." will do again
@@ -4037,6 +4043,12 @@ u32 Vim::feed(Editor& ed, const VimKey& k) {
     }
     u32 r = 0;
     if (confirm_.on) return confirm_key(ed, k);  // (:s///c asks about each match)
+    // What a command changes is one step to undo, and undone it puts the
+    // cursor back where the command began, as Vim does: before "A" took it
+    // to the end of the line, "v" began a selection, ":" was typed. (Insert
+    // mode has its group open already.)
+    const bool grouped = mode_ != kInsert && mode_ != kReplace;
+    if (grouped) ed.begin_group(cmd_from_);
     switch (mode_) {
         case kInsert:
         case kReplace:
@@ -4046,6 +4058,7 @@ u32 Vim::feed(Editor& ed, const VimKey& k) {
         case kCommand: r = command_key(ed, k); break;
         default: r = normal_key(ed, k); break;
     }
+    if (grouped) ed.end_group();
     if (mode_ == kNormal && !op_ && !counted_ && !reg_ && await_ == kNothing) {
         if (changing_ && !replaying_ && macro_depth_ == 0 && !(current_.size() == 1 && current_[0].kind == VimKey::kChar && current_[0].ch == '.')) dot_ = current_;
         if (changing_) last_change_ = ed.cursor();

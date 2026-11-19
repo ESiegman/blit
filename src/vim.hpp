@@ -351,6 +351,7 @@ private:
     char macro_into_ = 0, macro_last_ = 0, macro_rec_ = 0;
     bool macro_append_ = false;  // "qA": what is recorded goes on the end of the macro in a
     bool failed_ = false;        // the command under way did not work (a motion, search or find that found nothing): a macro stops
+    u64 cmd_from_ = 0;           // where the cursor was when the command under way began (undone, its change goes back there)
     std::vector<VimKey> macro_keys_;
     std::unordered_map<char, std::vector<VimKey>> macros_;
     int macro_depth_ = 0;
