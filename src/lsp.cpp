@@ -364,6 +364,15 @@ void Lsp::markdown_lines(std::string_view text, bool markdown, std::vector<InfoL
 
 namespace {
 
+// A read or write on a pipe that would have waited, or was cut short: try
+// again later. (EWOULDBLOCK is EAGAIN on Linux and macOS, but needn't be.)
+bool try_later(int e) {
+#if EWOULDBLOCK != EAGAIN
+    if (e == EWOULDBLOCK) return true;
+#endif
+    return e == EAGAIN || e == EINTR;
+}
+
 struct RawRange {
     u32 l0 = 0, c0 = 0, l1 = 0, c1 = 0;
 };
@@ -1698,7 +1707,7 @@ struct Lsp::Conn::Worker {
                     const ssize_t n = write(to_fd, outbuf.data() + out_at, outbuf.size() - out_at);
                     if (n > 0) {
                         out_at += static_cast<size_t>(n);
-                    } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+                    } else if (n < 0 && try_later(errno)) {
                         break;
                     } else {
                         eof = true;  // the server is gone
@@ -1715,7 +1724,7 @@ struct Lsp::Conn::Worker {
                     const ssize_t n = read(from_fd, buf, sizeof buf);
                     if (n > 0) {
                         inbuf.append(buf, static_cast<size_t>(n));
-                    } else if (n < 0 && (errno == EAGAIN || errno == EWOULDBLOCK || errno == EINTR)) {
+                    } else if (n < 0 && try_later(errno)) {
                         break;
                     } else {
                         eof = true;
