@@ -145,6 +145,18 @@ same twin retheme "the minimap kept the colours of the theme there was"
 mmshot tab8 tab8 tabs.cpp ""
 mmshot map retab tabs.cpp "lua:blit.opt.editor.tab_width = 8"
 same tab8 retab "a tab width set while running is drawn otherwise than one set from the start (the minimap, the indent lines)"
+# The view scrolled to the end of a long line keeps it out from under the
+# minimap: two lines that differ only in their last character, each at
+# the end of it, draw two different frames.
+long=""
+i=0
+while [ $i -lt 30 ]; do long="${long}abcdefghij"; i=$((i + 1)); done
+for end in Z Q; do
+    mkdir -p "$dir/end$end/w"
+    printf 'short\n%sXY%s\nshort\n' "$long" "$end" >"$dir/end$end/w/t.txt"
+    BLIT_INIT="$dir/map.lua" "$blit" --offscreen 1600x700 --shot "$dir/end$end.bmp" --script "workdir:$dir/end$end/w;frame;vim:j\$;frame;frame" "$dir/end$end/w/t.txt" >/dev/null 2>&1
+done
+differ endZ endQ "the end of a long line, with the cursor on it, was under the minimap"
 # (Two clicks some way apart: the box lands as many lines apart as in a
 # file with nothing wrapped.)
 apart() { a=$(mmbox "$1" "$2;click:795,200") b=$(mmbox "$1" "$2;click:795,260"); echo $((${b%-*} - ${a%-*})); }

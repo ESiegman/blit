@@ -1242,7 +1242,7 @@ double App::max_scroll_x() const {
     if (wrap_on()) return 0;  // (lines wrapped: nothing goes past the right edge)
     const Doc& d = *pane_->doc;
     if (d.widest_rev == ~0ull) return 1e300;
-    const double cw = font_->cell_w(), view_w = pane_->x1 - pane_->text_x - pad_x_;
+    const double cw = font_->cell_w(), view_w = pane_->x1 - pane_->text_x - pad_x_ - minimap_px(*pane_);  // (not under the minimap)
     return std::max(0.0, static_cast<double>(std::max<u64>(d.widest_cols, pane_->cur_col)) * cw + 4 * cw - view_w);
 }
 
@@ -1402,7 +1402,7 @@ void App::scroll_to_cursor() {
     } else if (y0 + ch > pane_->target_y + vh) {
         pane_->target_y = y0 + ch - vh;
     }
-    const double x = pane_->cur_x * cw, margin = 4 * cw, view_w = pane_->x1 - pane_->text_x - pad_x_;
+    const double x = pane_->cur_x * cw, margin = 4 * cw, view_w = pane_->x1 - pane_->text_x - pad_x_ - minimap_px(*pane_);  // (the minimap is over the text's right end)
     if (x - margin < pane_->target_x) {
         pane_->target_x = std::max(0.0, x - margin);
     } else if (x + margin > pane_->target_x + view_w) {
