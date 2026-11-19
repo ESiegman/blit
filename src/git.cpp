@@ -172,6 +172,58 @@ std::vector<GitStash> parse_stashes(std::string_view text) {
     return out;
 }
 
+std::vector<GitWorktree> parse_worktrees(std::string_view text) {
+    std::vector<GitWorktree> out;
+    while (!text.empty()) {
+        const size_t nl = text.find('\n');
+        const std::string_view line = text.substr(0, nl);
+        text = nl == std::string_view::npos ? std::string_view{} : text.substr(nl + 1);
+        if (line.starts_with("worktree ")) {
+            out.push_back({});
+            out.back().path = std::string(line.substr(9));
+        } else if (out.empty()) {
+            continue;
+        } else if (line.starts_with("HEAD ")) {
+            out.back().head = std::string(line.substr(5));
+        } else if (line.starts_with("branch ")) {
+            std::string_view b = line.substr(7);
+            if (b.starts_with("refs/heads/")) b.remove_prefix(11);
+            out.back().branch = std::string(b);
+        } else if (line == "locked" || line.starts_with("locked ")) {
+            out.back().locked = true;
+        } else if (line == "prunable" || line.starts_with("prunable ")) {
+            out.back().prunable = true;
+        } else if (line == "bare") {
+            out.pop_back();  // (no files to work on: not listed)
+        }
+    }
+    return out;
+}
+
+std::vector<GitSubmodule> parse_submodules(std::string_view text) {
+    std::vector<GitSubmodule> out;
+    while (!text.empty()) {
+        const size_t nl = text.find('\n');
+        std::string_view line = text.substr(0, nl);
+        text = nl == std::string_view::npos ? std::string_view{} : text.substr(nl + 1);
+        if (line.size() < 42) continue;
+        GitSubmodule m;
+        m.state = line[0];
+        line.remove_prefix(1);
+        const size_t sp = line.find(' ');
+        if (sp == std::string_view::npos) continue;
+        m.commit = std::string(line.substr(0, sp));
+        line.remove_prefix(sp + 1);
+        if (const size_t paren = line.find(" ("); paren != std::string_view::npos && line.ends_with(")")) {
+            m.describe = std::string(line.substr(paren + 2, line.size() - paren - 3));
+            line = line.substr(0, paren);
+        }
+        m.path = std::string(line);
+        out.push_back(std::move(m));
+    }
+    return out;
+}
+
 std::vector<GitCommit> parse_log(std::string_view text) {
     std::vector<GitCommit> out;
     while (!text.empty()) {
@@ -1538,10 +1590,19 @@ struct Git::Worker {
             log = run_git(log_child, program, root, args, {});
         });
         std::jthread stash_thread([&] { stashes = run_git(stash_child, program, root, {"stash", "list", "--format=%gd%x1f%cr%x1f%gs"}, {}); });
+        // (The working trees, and the submodules where there are any: each a program of its own too.)
+        Child tree_child, sub_child;
+        Ran trees, subs;
+        const bool modules = exists(root + "/.gitmodules");
+        std::jthread tree_thread([&] {
+            trees = run_git(tree_child, program, root, {"worktree", "list", "--porcelain"}, {});
+            if (modules) subs = run_git(sub_child, program, root, {"submodule", "status"}, {});
+        });
         const Ran st = git({"status", "--porcelain=v2", "--branch", "-z"});
         refs_thread.join();
         log_thread.join();
         stash_thread.join();
+        tree_thread.join();
         staged.clear();  // (the index may have changed)
         if (st.code != 0) {
             res.ok = false;
@@ -1572,6 +1633,13 @@ struct Git::Worker {
         if (!find.empty()) res.log = std::move(found);
         else if ((!res.status.head.empty() || !of.empty()) && log.code == 0) res.log = parse_log(log.out);
         if (stashes.code == 0) res.stashes = parse_stashes(stashes.out);
+        if (trees.code == 0) {
+            res.worktrees = parse_worktrees(trees.out);
+            // (This one first.)
+            const auto here = std::ranges::find_if(res.worktrees, [&](const GitWorktree& w) { return w.path == root; });
+            if (here != res.worktrees.end()) std::rotate(res.worktrees.begin(), here, here + 1);
+        }
+        if (modules && subs.code == 0) res.submodules = parse_submodules(subs.out);
     }
 
     // The text of a file in the index (":path") or a commit ("HEAD:path"),

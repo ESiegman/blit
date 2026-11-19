@@ -67,14 +67,18 @@ enum : u32 {
     kActStageHere,  // the change at the cursor (or the lines chosen), staged; in a diff tab or a file
     kActUnstageHere,
     kActShowHere,   // the diff of the file, at that change
+    kActOpenTree,     // a working tree, or a submodule, opened as the folder worked in
+    kActNewTree,      // a working tree made for a branch, beside the repository
+    kActRemoveTree,   // the picked working tree taken away
+    kActSubmodules,   // the submodules checked out at the commits the repository wants
 };
 
 // The Git tab's rows: the message field, a row for each thing to do, how the
 // last command went, and the sections of files, stashes, branches, tags and
 // commits.
-enum : u8 { kRowMessage, kRowAction, kRowNote, kRowHeader, kRowEntry, kRowBranch, kRowCommit, kRowBlank, kRowStash, kRowTag };
-enum : u32 { kSecConflicts, kSecStaged, kSecChanges, kSecStashes, kSecBranches, kSecTags, kSecHistory, kSecCount };
-const char* const kSections[] = {"Conflicts", "Staged", "Changes", "Stashes", "Branches", "Tags", "History"};
+enum : u8 { kRowMessage, kRowAction, kRowNote, kRowHeader, kRowEntry, kRowBranch, kRowCommit, kRowBlank, kRowStash, kRowTag, kRowTree, kRowModule };
+enum : u32 { kSecConflicts, kSecStaged, kSecChanges, kSecStashes, kSecBranches, kSecTags, kSecTrees, kSecModules, kSecHistory, kSecCount };
+const char* const kSections[] = {"Conflicts", "Staged", "Changes", "Stashes", "Branches", "Tags", "Worktrees", "Submodules", "History"};
 constexpr u32 kStagedBit = 0x80000000u;  // an entry row: the file's staged side
 constexpr u32 kFieldTone = 1;            // the panel's tone for a field typed into (see panel_layout)
 
@@ -85,7 +89,8 @@ enum : u8 { kViewChanges, kViewStaged, kViewOther };
 
 // Rows Up and Down go to (the message field is reached with Tab).
 bool pickable(u8 kind) {
-    return kind == kRowAction || kind == kRowEntry || kind == kRowBranch || kind == kRowCommit || kind == kRowStash || kind == kRowTag;
+    return kind == kRowAction || kind == kRowEntry || kind == kRowBranch || kind == kRowCommit || kind == kRowStash || kind == kRowTag || kind == kRowTree ||
+           kind == kRowModule;
 }
 
 // A row that is picked: lit as selected while the list has the keyboard,
@@ -313,6 +318,8 @@ struct App::GitUi {
     std::vector<GitGraphRow> graph;  // History's lanes, a row a commit (none while searched: what is found is not one line of descent)
     std::vector<std::string> tags;
     std::vector<GitStash> stashes;
+    std::vector<GitWorktree> worktrees;  // (this one first)
+    std::vector<GitSubmodule> submodules;
     // Where git was last pointed: the working directory, or while there
     // is none, the project of this document. `known`: git has answered.
     std::string dir;
@@ -348,6 +355,8 @@ struct App::GitUi {
         if (r.kind == kRowCommit) return i < log.size() ? log[i].hash : std::string();
         if (r.kind == kRowStash) return i < stashes.size() ? stashes[i].name : std::string();
         if (r.kind == kRowTag) return i < tags.size() ? tags[i] : std::string();
+        if (r.kind == kRowTree) return i < worktrees.size() ? worktrees[i].path : std::string();
+        if (r.kind == kRowModule) return i < submodules.size() ? submodules[i].path : std::string();
         if (r.kind == kRowAction) return std::to_string(r.index);
         return {};
     }
@@ -369,7 +378,7 @@ struct App::GitUi {
     u32 top = 0, body_rows = 0;
     u32 foot_row = 0;  // the panel's row the keys for what is picked are on (the last)
     // Sections folded away. Tags to start with: a repository may have hundreds.
-    bool fold[kSecCount] = {false, false, false, false, false, true, false};
+    bool fold[kSecCount] = {false, false, false, false, false, true, false, false, false};
     // What has the keyboard while the tab does: 0 the list, 1 the commit
     // message (to start with), 2 a new branch's name, 3 a new tag's.
     u8 input = 1;
@@ -449,6 +458,8 @@ void App::sync_git() {
                 g.graph = g.log_find.empty() ? graph_lanes(g.log) : std::vector<GitGraphRow>{};
                 g.tags = std::move(r.tags);
                 g.stashes = std::move(r.stashes);
+                g.worktrees = std::move(r.worktrees);
+                g.submodules = std::move(r.submodules);
                 shows |= panel_px() > 0;
                 if (moved)  // another commit to compare with: ask again
                     for (const std::unique_ptr<Pane>& p : panes_)
@@ -1730,7 +1741,8 @@ void App::git_do(u32 action, const std::string& arg) {
         entry = &g.status.entries[row->index & ~kStagedBit];
         staged_side = row->index & kStagedBit;
         name = entry->path;
-    } else if (row && (row->kind == kRowBranch || row->kind == kRowCommit || row->kind == kRowStash || row->kind == kRowTag)) {
+    } else if (row && (row->kind == kRowBranch || row->kind == kRowCommit || row->kind == kRowStash || row->kind == kRowTag || row->kind == kRowTree ||
+                       row->kind == kRowModule)) {
         name = g.name_of_row(*row);
     }
     auto run = [&](std::vector<std::string> args, const char* label, std::string input = {}) {
@@ -1916,6 +1928,39 @@ void App::git_do(u32 action, const std::string& arg) {
         }
         case kActStageHere: git_stage_here(true); break;
         case kActUnstageHere: git_stage_here(false); break;
+        case kActOpenTree: {  // a working tree (not this one), or a submodule (one checked out), as the folder worked in
+            std::string dir;
+            if (kind == kRowTree && row->index > 0) dir = name;
+            else if (kind == kRowModule) {
+                const GitSubmodule& m = g.submodules[row->index];
+                if (m.state == '-') {
+                    g.note = m.path + " is not checked out: u updates the submodules";
+                    g.note_bad = true;
+                    break;
+                }
+                dir = g.status.root + "/" + m.path;
+            } else if (!arg.empty()) {
+                dir = arg.starts_with('/') ? arg : g.status.root + "/" + arg;
+            }
+            if (!dir.empty()) panel_set_workdir(dir);
+            break;
+        }
+        case kActNewTree: {  // beside the repository, named after it and the branch; the branch made if there is none
+            if (arg.empty()) break;
+            std::string leaf = std::string(name_of(g.status.root)) + "-" + arg;
+            std::ranges::replace(leaf, '/', '-');
+            const std::string where = parent_of(g.status.root) + "/" + leaf;
+            const bool have = std::ranges::any_of(g.branches, [&](const GitBranch& b) { return !b.remote && b.name == arg; });
+            if (have) run({"worktree", "add", where, arg}, "New worktree");
+            else run({"worktree", "add", "-b", arg, where}, "New worktree");
+            break;
+        }
+        case kActRemoveTree: {
+            if (kind != kRowTree || row->index == 0) break;
+            if (confirm("Remove the worktree at " + name + "? (Its branch stays.)", "Remove")) run({"worktree", "remove", name}, "Remove worktree");
+            break;
+        }
+        case kActSubmodules: run({"submodule", "update", "--init", "--recursive"}, "Update submodules"); break;
         default: break;
     }
     ++git_gen_;
@@ -2010,6 +2055,8 @@ void App::git_rows() {
         list(kSecStashes, kRowStash, g.stashes.size(), false);
         list(kSecBranches, kRowBranch, g.branches.size(), true);
         list(kSecTags, kRowTag, g.tags.size(), false);
+        list(kSecTrees, kRowTree, g.worktrees.size() > 1 ? g.worktrees.size() : 0, false);  // (only when there is another than this one)
+        list(kSecModules, kRowModule, g.submodules.size(), false);
         list(kSecHistory, kRowCommit, g.log.size(), false);
     }
     // (What was picked stays picked if it is still there.)
@@ -2210,6 +2257,8 @@ void App::git_panel_draw(TextBox& box, bool focused) {
                 else if (row.index == kSecHistory) n = static_cast<u32>(g.log.size());
                 else if (row.index == kSecStashes) n = static_cast<u32>(g.stashes.size());
                 else if (row.index == kSecTags) n = static_cast<u32>(g.tags.size());
+                else if (row.index == kSecTrees) n = static_cast<u32>(g.worktrees.size());
+                else if (row.index == kSecModules) n = static_cast<u32>(g.submodules.size());
                 else
                     for (const GitEntry& e : g.status.entries) n += row.index == kSecConflicts ? e.conflict : row.index == kSecStaged ? e.staged() : e.unstaged();
                 put(box, font, r, 0, g.fold[row.index] ? "\xE2\x96\xB8" : "\xE2\x96\xBE", ink::kMuted);  // a small triangle, right or down
@@ -2275,6 +2324,24 @@ void App::git_panel_draw(TextBox& box, bool focused) {
                 break;
             }
             case kRowTag: put(box, font, r, 2, fit_text(g.tags[row.index], cols > 2 ? cols - 2 : 0), ink::kText); break;
+            case kRowTree: {  // its branch (this one's marked), and where it is
+                const GitWorktree& w = g.worktrees[row.index];
+                const bool here = row.index == 0;
+                u32 at = put(box, font, r, 2, here ? "\xE2\x97\x8F" : " ", ink::kAccent) + 1;  // ●
+                at = put(box, font, r, at, fit_text(w.branch.empty() ? w.head.substr(0, 7) : w.branch, cols > at ? cols - at : 0), here ? ink::kAccentStrong : ink::kText) + 1;
+                std::string where = w.path;
+                if (const char* home = SDL_getenv("HOME"); home && *home && where.starts_with(home)) where = "~" + where.substr(std::strlen(home));
+                put(box, font, r, at, fit_text(where + (w.locked ? "  (locked)" : w.prunable ? "  (gone)" : ""), cols > at ? cols - at : 0), ink::kMuted);
+                break;
+            }
+            case kRowModule: {  // how it stands, its path, and the commit
+                const GitSubmodule& m = g.submodules[row.index];
+                const char* mark = m.state == '-' ? "\xE2\x97\x8B" : m.state == '+' ? "+" : m.state == 'U' ? "U" : "\xE2\x97\x8F";  // ○ not checked out, ● as wanted
+                u32 at = put(box, font, r, 2, mark, m.state == ' ' ? ink::kAdded : m.state == '-' ? ink::kMuted : ink::kWarning) + 1;
+                at = put(box, font, r, at, fit_text(m.path, cols > at ? cols - at : 0), ink::kText) + 1;
+                put(box, font, r, at, fit_text(m.describe.empty() ? m.commit.substr(0, 7) : m.describe, cols > at ? cols - at : 0), ink::kMuted);
+                break;
+            }
             default: break;
         }
         if (lit) light_row(box, r, list);
@@ -2347,6 +2414,14 @@ void App::git_panel_draw(TextBox& box, bool focused) {
         add("Enter", "show", kActShowTag);
         add("p", "push", kActPushTag);
         add("Backspace", "delete", kActDeleteTag);
+    } else if (picked && picked->kind == kRowTree) {
+        if (picked->index > 0) {
+            add("Enter", "open", kActOpenTree);
+            add("Backspace", "remove", kActRemoveTree);
+        }
+    } else if (picked && picked->kind == kRowModule) {
+        add("Enter", "open", kActOpenTree);
+        add("u", "update all", kActSubmodules);
     } else {
         add("Tab", "message");
         add("Cmd+R", "refresh", kActRefresh);
@@ -2539,6 +2614,7 @@ bool App::git_panel_key(const SDL_KeyboardEvent& k) {
             else if (kind == kRowCommit) git_do(kActShowCommit);
             else if (kind == kRowStash) git_do(kActShowStash);
             else if (kind == kRowTag) git_do(kActShowTag);
+            else if (kind == kRowTree || kind == kRowModule) git_do(kActOpenTree);
             return changed();
         case SDLK_RIGHT:  // towards "staged"
             if (kind == kRowEntry && !(row->index & kStagedBit)) git_do(kActStage);
@@ -2552,6 +2628,7 @@ bool App::git_panel_key(const SDL_KeyboardEvent& k) {
             else if (other && !g.branches[row->index].remote) git_do(kActDeleteBranch);
             else if (kind == kRowStash) git_do(kActDrop);
             else if (kind == kRowTag) git_do(kActDeleteTag);
+            else if (kind == kRowTree && row->index > 0) git_do(kActRemoveTree);
             return changed();
         default: break;
     }
@@ -2562,6 +2639,9 @@ bool App::git_panel_key(const SDL_KeyboardEvent& k) {
     switch (k.key) {
         case SDLK_O:
             if (kind == kRowEntry) git_do(kActOpenFile);
+            return changed();
+        case SDLK_U:
+            if (kind == kRowModule) git_do(kActSubmodules);
             return changed();
         case SDLK_M:
             if (other) git_do(kActMerge);
@@ -2662,6 +2742,12 @@ void App::git_panel_click(int row, int col, const SDL_MouseButtonEvent& b) {
             g.pick(static_cast<int>(i));
             if (b.clicks >= 2) git_do(r.kind == kRowCommit ? kActShowCommit : r.kind == kRowStash ? kActShowStash : kActShowTag);
             break;
+        case kRowTree:
+        case kRowModule:
+            g.input = 0;
+            g.pick(static_cast<int>(i));
+            if (b.clicks >= 2) git_do(kActOpenTree);
+            break;
         default: break;
     }
 }
@@ -2718,7 +2804,8 @@ void App::git_command(std::string_view name, const std::string& arg) {
                  {"drop", kActDrop},           {"showstash", kActShowStash}, {"rebase", kActRebase},       {"continue", kActContinue},
                  {"abortrebase", kActAbortRebase}, {"pick", kActPick},       {"abortpick", kActAbortPick}, {"tag", kActNewTag},
                  {"showtag", kActShowTag},     {"pushtag", kActPushTag},     {"deletetag", kActDeleteTag}, {"history", kActHistory},
-                 {"stagehere", kActStageHere}, {"unstagehere", kActUnstageHere}};
+                 {"stagehere", kActStageHere}, {"unstagehere", kActUnstageHere}, {"worktree", kActNewTree}, {"removeworktree", kActRemoveTree},
+                 {"submodules", kActSubmodules}, {"opentree", kActOpenTree}};
     if (name == "columns") return git_view_toggle();
     if (name == "find") {  // History searched (nothing: all of it again)
         gitui_->log_find = arg;
@@ -2788,6 +2875,14 @@ std::string App::git_dump() {
     if (!g.tags.empty()) {
         out += " | tags";
         for (const std::string& t : g.tags) out += " " + t;
+    }
+    if (g.worktrees.size() > 1) {
+        out += " | worktrees";
+        for (const GitWorktree& w : g.worktrees) out += " " + (w.branch.empty() ? std::string("(detached)") : w.branch) + "@" + std::string(name_of(w.path));
+    }
+    if (!g.submodules.empty()) {
+        out += " | submodules";
+        for (const GitSubmodule& m : g.submodules) out += std::string(" ") + (m.state == ' ' ? "" : std::string(1, m.state)) + m.path;
     }
     out += " | commits " + std::to_string(g.log.size());
     if (!g.log_of.empty()) out += " of " + g.log_of;

@@ -72,6 +72,21 @@ struct GitStash {
     std::string name, when, subject;
 };
 
+// A working tree of the repository (git worktree): where it is, the branch
+// it has checked out (empty: a commit, detached), and that commit.
+struct GitWorktree {
+    std::string path, branch, head;
+    bool locked = false, prunable = false;
+};
+
+// A submodule: its path, the commit checked out (or wanted), how it stands
+// (' ' as the repository wants it, '+' at another commit, '-' not checked
+// out yet, 'U' in a conflict), and git's name for that commit.
+struct GitSubmodule {
+    std::string path, commit, describe;
+    char state = ' ';
+};
+
 // A run of lines that differ from the committed text, in line numbers of
 // the text as it is now.
 struct GitHunk {
@@ -190,6 +205,8 @@ GitStatus parse_status(std::string_view porcelain_v2_z);
 std::vector<GitBranch> parse_branches(std::string_view text, std::vector<std::string>* tags = nullptr);
 std::vector<GitCommit> parse_log(std::string_view text);
 std::vector<GitStash> parse_stashes(std::string_view text);
+std::vector<GitWorktree> parse_worktrees(std::string_view porcelain);
+std::vector<GitSubmodule> parse_submodules(std::string_view status);
 bool parse_blame(std::string_view porcelain, GitBlame* out);
 
 // A number per line of a text, equal for equal lines. A last line without a
@@ -226,6 +243,8 @@ public:
         std::string log_find;              // and what it was searched for (empty: none)
         std::vector<std::string> tags;     // newest (by version) first
         std::vector<GitStash> stashes;
+        std::vector<GitWorktree> worktrees;    // kStatus: every working tree, this one first
+        std::vector<GitSubmodule> submodules;  // and the submodules
         std::vector<GitHunk> hunks;
         bool tracked = false;  // kHunks: the file has a committed version to compare with
         std::shared_ptr<GitBlame> blame;

@@ -423,5 +423,33 @@ check "the branches, the tags, the commits" "pick [] 5 : >origin/main  · remote
 view "$dir/ada/poem.txt" "frame;gitwait;command:Git: Compare the file with;frame;text:v1;key:Return;gitwait;gitview"
 check "one chosen: the file now against it" "other poem.txt, one column: 1 hunks, cursor in 1 / diff --git a/poem.txt b/poem.txt / index b2f931a..9642008 100644 / --- a/poem.txt / +++ b/poem.txt / @@ -1,5 +1,6 @@ /  one / [--two-] / {++TWO+} /  three /  four /  five / {++six+}"
 
+# Worktrees: listed (this one first), made for a branch beside the
+# repository, and opened as the folder worked in (its branch in the tab).
+fresh
+git -C "$dir/ada" worktree add -q -b feature "$dir/ada-feature" 2>/dev/null
+run "$dir/ada/poem.txt" "frame;gitwait;gitdump"
+got=$(printf '%s' "$got" | sed -n 's/.*| \(worktrees [^|]*\).*/\1/p' | sed 's/ $//')
+check "the worktrees, this one first" "worktrees main@ada feature@ada-feature"
+run "$dir/ada/poem.txt" "frame;gitwait;command:Git: New worktree;text:topic;key:Return;gitwait;gitdump"
+got=$(git -C "$dir/ada" worktree list --porcelain | grep -c '^worktree .*ada-topic$')
+check "one made for a new branch, beside the repository" "1"
+run "$dir/ada/poem.txt" "frame;gitwait;git:opentree:$dir/ada-feature;gitwait;frame;gitwait;gitdump"
+got=$(printf '%s' "$got" | sed -n 's/.*| branches \([^|]*\).*/\1/p' | tr ' ' '\n' | grep '^\*')
+check "opened: the folder worked in, its branch the one checked out" "*feature"
+# Submodules: listed, one not checked out marked, and updated.
+git init -q -b main "$dir/lib"
+git -C "$dir/lib" -c user.name=x -c user.email=x@example.invalid commit -q --allow-empty -m "Lib"
+git -C "$dir/ada" config protocol.file.allow always
+git -C "$dir/ada" -c protocol.file.allow=always submodule -q add "$dir/lib" lib 2>/dev/null
+git -C "$dir/ada" commit -q -m "Lib"
+run "$dir/ada/poem.txt" "frame;gitwait;gitdump"
+got=$(printf '%s' "$got" | sed -n 's/.*| \(submodules [^|]*\).*/\1/p' | sed 's/ $//')
+check "the submodules" "submodules lib"
+git -C "$dir/ada" submodule -q deinit -f lib 2>/dev/null
+got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;gitwait;gitdump;command:Git: Update the submodules;gitwait;gitdump" "$dir/ada/poem.txt" 2>&1 >/dev/null | sed -n 's/.*| \(submodules [^|]*\).*/\1/p' | sed 's/ $//' | tr '\n' ',')
+check "one not checked out, updated: checked out" "submodules -lib,submodules lib,"
+got=$(git -C "$dir/ada" submodule status | cut -c1)
+check "(git says so too)" " "
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "git ok"
 exit $failed
