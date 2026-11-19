@@ -1518,6 +1518,12 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
             break;
         }
         case '%': {
+            if (counted) {  // with a count: that far through the text, in lines ("50%" the middle), the column kept
+                if (count > 100) return m.ok = false, true;
+                to_line(std::max<u64>(1, (static_cast<u64>(count) * n + 99) / 100) - 1, true);
+                m.jump = true;
+                break;
+            }
             const u64 end = ed.line_end(line);
             u64 at = cur;
             static const char pairs[] = "()[]{}";

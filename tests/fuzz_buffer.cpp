@@ -3673,6 +3673,14 @@ void vim_test() {
         {"a\nb\n\n|c\nd\n\n{\ne\n}", "2]]", "a\nb\n\nc\nd\n\n{\ne\n|}"},
         {"x\n\n|a\n\ny", "2]]", "x\n\n|a\n\ny"},
         {"a\nb\n\nc\nd\n\n{\ne\n|}", "3[[", "a\nb\n\nc\nd\n\n{\ne\n|}"},
+        // % with a count is that far through the text, in lines.
+        {"a1\nb2\n  c|3\nd4\ne5\nf6\ng7\n(h8)", "50%", "a1\nb2\n  c3\nd|4\ne5\nf6\ng7\n(h8)"},
+        {"a1\nb2\n  c|3\nd4\ne5\nf6\ng7\n(h8)", "2%", "a|1\nb2\n  c3\nd4\ne5\nf6\ng7\n(h8)"},
+        {"a1\nb2\n  c|3\nd4\ne5\nf6\ng7\n(h8)", "100%", "a1\nb2\n  c3\nd4\ne5\nf6\ng7\n(h8|)"},
+        {"a1\nb2\n  c|3\nd4\ne5\nf6\ng7\n(h8)", "101%", "a1\nb2\n  c|3\nd4\ne5\nf6\ng7\n(h8)"},
+        {"a1\nb2\n  c|3\nd4\ne5\nf6\ng7\n(h8)", "d50%", "a1\nb2\ne|5\nf6\ng7\n(h8)"},
+        {"a1\nb2\n  c|3\nd4\ne5\nf6\ng7\n(h8)", "V25%d", "a1\nd|4\ne5\nf6\ng7\n(h8)"},
+        {"a1\nb2\n  c|3\nd4\ne5\nf6\ng7\n(h8)", "50%<C-o>", "a1\nb2\n  c|3\nd4\ne5\nf6\ng7\n(h8)"},
     };
     int wrong = 0;
     for (const Case& c : cases) {
