@@ -1507,6 +1507,57 @@ void edge_test() {
     }
 }
 
+// Text in a popup (TextBox::put) takes the cells it takes in the text
+// (fill_grid), and as many as width_of() says. (Before, a mark after a
+// wide character was drawn over its right cell alone, and an emoji
+// sequence the colour font has no picture of took two cells for each of
+// its emoji, where the text gives all of it its first's two.)
+void box_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    Font font;
+    FontSpec spec;
+    spec.px = 20;
+    std::string err;
+    if (!font.init(spec, &err)) {
+        std::printf("box test skipped: %s\n", err.c_str());
+        return;
+    }
+    constexpr u32 kWide = 200;
+    TextBox box;
+    box.resize(kWide, 1);
+    const u32 han = font.glyph(0x6F22) & (Font::kWide - 1);
+    check(box.put(font, 0, 0, "\xE6\xBC\xA2\xCC\x81", 0) == 2, "box: a wide character with a mark takes its two cells");
+    check(box.cells[0] == font.mark(han, 0x301, 1) && box.cells[1] == font.mark(han + 1, 0x301, 2), "box: the mark is over both of them");
+    box.resize(kWide, 1);
+    const char* const grins = "\xF0\x9F\x98\x80\xE2\x80\x8D\xF0\x9F\x98\x80\xE2\x80\x8D\xF0\x9F\x98\x80";  // (three grins joined: no picture of that)
+    check(box.put(font, 0, 0, grins, 0) == 2 && width_of(grins) == 2, "box: emoji joined with no picture of them take their first's two cells");
+    static const char* const kBits[] = {"ab", "x", " ", "\xE6\xBC\xA2", "e\xCC\x81", "\xCC\x81", "\xE6\xBC\xA2\xCC\x81", "\xF0\x9F\x98\x80",
+                                        "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9", "\xF0\x9F\x87\xAF\xF0\x9F\x87\xB5", "\xF0\x9F\x87\xAF",
+                                        "\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD", "\xE2\x9C\x85\xEF\xB8\x8F", "\xE2\x80\x8B", "\xE2\x80\x8D", grins};
+    rng.seed(919);
+    for (int round = 0; round < 300; ++round) {
+        std::string line;
+        for (int k = 0, n = 1 + static_cast<int>(rnd(30)); k < n; ++k) line += kBits[rnd(std::size(kBits))];
+        Buffer buf;
+        buf.insert(0, line + "\n");
+        GridSpec g;
+        g.rows = 1;
+        g.cols = kWide;
+        std::vector<u32> text(kWide);
+        fill_grid(buf, font, g, text.data());
+        box.resize(kWide, 1);
+        const u32 end = box.put(font, 0, 0, line, 0);
+        u32 n = 0;
+        while (n < kWide && text[n]) ++n;
+        bool same = end == n && width_of(line) == n;
+        for (u32 c = 0; c < kWide && same; ++c) same = (box.cells[c] & 0xFFFF) == (text[c] & 0xFFFF);
+        if (!same) std::printf("box: line \"%s\": %u cells in the box, %u in the text, width %u\n", line.c_str(), end, n, width_of(line));
+        check(same, "box: a line in a box takes the cells it takes in the text");
+    }
+}
+
 // Text cut to a number of columns (fit_text): never wider than that, and
 // what follows the ellipsis of a path starts with a character of its own
 // (before, a mark or a selector whose character was cut off was kept, and
@@ -5753,6 +5804,7 @@ int main(int argc, char** argv) {
     lsp_test();
     styles_test();
     edge_test();
+    box_test();
     fit_test();
     match_test();
     highlights_test();

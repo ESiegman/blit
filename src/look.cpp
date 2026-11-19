@@ -141,13 +141,14 @@ std::string fit_text(std::string_view s, u32 cols, bool path) {
     if (cols == 0) return {};
     const std::string_view dots = "\xE2\x80\xA6";  // …
     const u8* p = reinterpret_cast<const u8*>(s.data());
+    Joiner j;  // (widths as width_of() counts them)
     if (!path) {
         // Characters from the start while they and the ellipsis fit.
         u32 w = 0;
         size_t i = 0;
         while (i < s.size()) {
             const Decoded d = decode_utf8(p + i, s.size() - i);
-            const u32 cw = cp_width(d.cp);
+            const u32 cw = j.width(d.cp);
             if (w + cw + 1 > cols) break;
             w += cw;
             i += d.len ? d.len : 1;
@@ -156,29 +157,22 @@ std::string fit_text(std::string_view s, u32 cols, bool path) {
     }
     // A path: its end, where the name is, after the ellipsis.
     std::vector<size_t> starts;  // (each character's first byte)
+    std::vector<u8> widths;      // (and its width, after what is before it)
     for (size_t i = 0; i < s.size();) {
         starts.push_back(i);
         const Decoded d = decode_utf8(p + i, s.size() - i);
+        widths.push_back(static_cast<u8>(j.width(d.cp)));
         i += d.len ? d.len : 1;
     }
     u32 w = 0;
-    size_t from = s.size();
-    for (size_t k = starts.size(); k-- > 0;) {
-        const Decoded d = decode_utf8(p + starts[k], s.size() - starts[k]);
-        const u32 cw = cp_width(d.cp);
-        if (w + cw + 1 > cols) break;
-        w += cw;
-        from = starts[k];
-    }
+    size_t k = starts.size();
+    while (k > 0 && w + widths[k - 1] + 1 <= cols) w += widths[--k];
     // (Nothing of no width of its own right after the ellipsis: a mark, a
     // joiner or a selector whose character was cut off would be drawn over
-    // the ellipsis. A name written decomposed, as macOS's are, has them.)
-    while (from < s.size()) {
-        const Decoded d = decode_utf8(p + from, s.size() - from);
-        if (cp_width(d.cp) != 0) break;
-        from += d.len ? d.len : 1;
-    }
-    return std::string(dots) + std::string(s.substr(from));
+    // the ellipsis, and an emoji joined to one would take cells. A name
+    // written decomposed, as macOS's are, has marks.)
+    while (k < starts.size() && widths[k] == 0) ++k;
+    return std::string(dots) + std::string(s.substr(k < starts.size() ? starts[k] : s.size()));
 }
 
 }  // namespace blit
