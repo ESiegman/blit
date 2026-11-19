@@ -1309,7 +1309,13 @@ uint32_t blit_gpu_image_add(BlitGpu* g, const uint8_t* rgba, int w, int h) {
     std::memcpy(u.staging.map, rgba, static_cast<size_t>(bytes));
 
     // Copied, and its copies made, by the GPU ahead of the frames that draw
-    // it (one queue: they come after this). Not waited for.
+    // it (one queue: they come after this), and waited for. (Not waited for,
+    // an upload under way while a frame was drawn lost the device on an AMD
+    // card with RADV, Nov 2026: a GPUVM fault, the context lost, whether or
+    // not that frame drew the picture. A plain file in a window 3600 pixels
+    // wide did it, by the minimap's tiles, and so did a Markdown preview's
+    // diagram at its top; waiting here, neither did. Waiting costs a
+    // picture's copy, a few milliseconds for a large one, once.)
     u.cmd = command_buffer(g);
     u.done = fence(g);
     if (!u.cmd || !u.done) {
@@ -1355,6 +1361,7 @@ uint32_t blit_gpu_image_add(BlitGpu* g, const uint8_t* rgba, int w, int h) {
         picture_free(g, p);
         return 0;
     }
+    vkWaitForFences(g->dev, 1, &u.done, VK_TRUE, UINT64_MAX);
     p.upload = u.done;
     g->uploads.push_back(u);
     const uint32_t id = ++g->next_picture;
