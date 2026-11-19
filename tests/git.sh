@@ -429,6 +429,10 @@ got=$(printf '%s' "$got" | sed -E -e 's/[0-9a-f]{7,}/H/g' -e 's/ada, (just now|n
 check "the branches, the tags, the commits" "pick [] 5 : >origin/main  · remote branch v1  · tag H  Six  · ada H  Start  · ada HEAD  · the last commit"
 view "$dir/ada/poem.txt" "frame;gitwait;command:Git: Compare the file with;frame;text:v1;key:Return;gitwait;gitview"
 check "one chosen: the file now against it" "other poem.txt, one column: 1 hunks, cursor in 1 / diff --git a/poem.txt b/poem.txt / index b2f931a..9642008 100644 / --- a/poem.txt / +++ b/poem.txt / @@ -1,5 +1,6 @@ /  one / [--two-] / {++TWO+} /  three /  four /  five / {++six+}"
+view "$dir/ada/poem.txt" "frame;gitwait;command:Git: Compare the file with;frame;text:HEAD~1;key:Return;gitwait;gitview"
+check "a revision typed that is none of the rows: compared with as it is" "other poem.txt, one column: 1 hunks, cursor in 1 / diff --git a/poem.txt b/poem.txt / index b2f931a..9642008 100644 / --- a/poem.txt / +++ b/poem.txt / @@ -1,5 +1,6 @@ /  one / [--two-] / {++TWO+} /  three /  four /  five / {++six+}"
+run "$dir/ada/poem.txt" "frame;gitwait;command:Git: Compare the file with;frame;key:Escape;command:Choose a theme;frame;text:HEAD~1;key:Return;frame;finddump"
+check "(the next list of blit's own: Enter with no row that matches does nothing)" "pick [HEAD~1] 0 :"
 for c in "Compare the file with" "The file's history" "Merge the file's conflicts"; do
     run "$dir/ada/poem.txt" "frame;gitwait;command:New file;command:Git: $c;frame"
     check "$c, from a new file not saved: said" "blit: Not a file in the repository"

@@ -246,6 +246,7 @@ struct App::Find {
     std::function<void(int)> chose_item;  // (a list of blit's own, kFindPick: which of the items)
     std::function<void(const std::string&)> typed_changed;  // (one whose rows come as it is typed: find_live_items)
     std::function<void(const std::string&)> on_tab;  // (a line to type whose Tab completes it: find_on_tab)
+    std::function<void(const std::string&)> chose_typed;  // (a list of blit's own that takes what is typed when no row has it: find_take_typed)
     std::string typed_asked;
     // A list of blit's own whose rows are tried out as the choice moves
     // (find_preview_item): the row last tried, and what Esc puts back.
@@ -806,6 +807,7 @@ void App::find_open(int mode, const std::string& typed) {
     f.chose_item = nullptr;
     f.typed_changed = nullptr;
     f.on_tab = nullptr;
+    f.chose_typed = nullptr;
     f.moved = nullptr;
     f.on_side = nullptr;
     if (auto back = std::exchange(f.cancelled, nullptr)) back();  // (what a list tried out is put back)
@@ -1080,6 +1082,13 @@ void App::find_on_tab(std::function<void(const std::string&)> fn) {
     if (find_open_) find_->on_tab = std::move(fn);
 }
 
+// A list of blit's own where what is typed is an answer too: Enter with no
+// row that has it gives it to fn (with nothing typed, Enter still does
+// nothing).
+void App::find_take_typed(std::function<void(const std::string&)> fn) {
+    if (find_open_ && find_->mode == kFindPick) find_->chose_typed = std::move(fn);
+}
+
 void App::find_set_typed(const std::string& typed) {
     if (!find_open_) return;
     find_->typed = typed;
@@ -1197,6 +1206,7 @@ void App::find_close(bool chosen) {
     f.chose_item = nullptr;
     f.typed_changed = nullptr;
     f.on_tab = nullptr;
+    f.chose_typed = nullptr;
     f.moved = nullptr;
     f.on_side = nullptr;
     f.into_pane = 0;
@@ -1505,7 +1515,14 @@ void App::find_accept() {
         return;
     }
     if (f.script()) {
-        if (f.mode == kFindPick && f.sel >= f.entries.size()) return;
+        if (f.mode == kFindPick && f.sel >= f.entries.size()) {
+            if (!f.chose_typed || f.typed.empty()) return;
+            auto chose = std::move(f.chose_typed);
+            const std::string typed = f.typed;
+            find_close(true);
+            chose(typed);
+            return;
+        }
         const int index = f.mode == kFindPick ? static_cast<int>(f.entries[f.sel].index) : -1;
         const std::string typed = f.typed;
         if (f.chose_item) {  // blit's own list

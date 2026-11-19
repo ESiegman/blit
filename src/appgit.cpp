@@ -1648,6 +1648,10 @@ void App::git_compare_pick() {
         if (i < 0 || static_cast<size_t>(i) >= revs.size()) return;
         git_compare(revs[static_cast<size_t>(i)], rel);
     });
+    find_take_typed([this, rel](const std::string& typed) {
+        const size_t a = typed.find_first_not_of(" \t"), b = typed.find_last_not_of(" \t");
+        if (a != std::string::npos) git_compare(typed.substr(a, b + 1 - a), rel);
+    });
 }
 
 void App::git_compare(const std::string& rev, const std::string& rel) {

@@ -738,6 +738,7 @@ private:
     void find_live_items(const std::string& prompt, std::function<void(const std::string&)> typed, std::function<void(int)> chose);
     void find_set_items(std::vector<std::string> items);
     void find_on_tab(std::function<void(const std::string&)> fn);
+    void find_take_typed(std::function<void(const std::string&)> fn);  // (Enter with no row that matches: what is typed, to fn)
     void find_set_typed(const std::string& typed);
     std::string find_typed() const;
     // Search everywhere (kFindAll): files, the project's symbols, commands

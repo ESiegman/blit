@@ -809,6 +809,8 @@ Update the submodules" and "Git: Pull requests…".
 **Comparing with any revision**: "Git: Compare the file with…" lists the
 branches (but the one checked out), the tags, History's commits and
 HEAD; the one chosen opens a diff tab of the file as it is now against it.
+A revision typed that no row has (`HEAD~3`, a commit's hash) is compared
+with as it is, on Enter.
 
 **Pull requests** go through GitHub's own command, `gh`, signed in as it
 is (`gh auth login`), in the repository it takes this one to be. "Git: Pull
