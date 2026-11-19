@@ -3060,6 +3060,27 @@ wraps, each break after a space, a C file not until Option+Z, gj and gk
 by rows and j by lines, a click on a wrapped row, more rows as it is
 typed on, folds and wrapping together, editor.soft_wrap).
 
+### Round 65: Git, further
+
+Comparing the file with any revision, worktrees and submodules in the
+Git tab (asked for by programs of their own beside the status: not on a
+frame's path), and pull requests through gh (in the background; their
+comments drawn after their lines only once asked for). Turn about, five
+rounds, 2560x1600, against the build before the chunk (4c87776):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 15,488 / 57.08 µs / 2.38 µs | 15,359 / 57.00 µs / 2.38 µs |
+| Typing, everything on: the same | 16,812 / 51.75 µs / 4.25 µs | 16,650 / 51.75 µs / 4.21 µs |
+| Scrolling code-100m.txt, plain: the same | 17,102 / 51.83 µs / 0.92 µs | 17,160 / 51.88 µs / 0.88 µs |
+
+No change. Tests: git.sh's comparing (the branches, tags and commits
+listed; the file against a tag), worktrees (listed, made for a new branch,
+opened as the folder), submodules (listed, one not checked out marked,
+updated), and pull requests through a stand-in for gh (listed, comments as
+threads, checked out with its comments after their lines, its changes, an
+approval and an answer, each asked first and as gh was told).
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
