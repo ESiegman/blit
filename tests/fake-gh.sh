@@ -13,6 +13,6 @@ case "$1 $2" in
     "api -X")
         printf '{}\n' ;;
     "api repos/{owner}/{repo}/pulls/12/comments")
-        printf '%s\n' '[{"id":101,"path":"poem.txt","line":2,"body":"Why shout?\nIt is loud.","user":{"login":"ada"}},{"id":102,"in_reply_to_id":101,"path":"poem.txt","line":2,"body":"For effect.","user":{"login":"bo"}},{"id":103,"path":"poem.txt","line":4,"body":"Nice.","user":{"login":"ada"}}]' ;;
+        printf '%s\n' '[{"id":101,"path":"poem.txt","line":2,"body":"Why shout?\nIt is loud.","user":{"login":"ada"}},{"id":102,"in_reply_to_id":101,"path":"poem.txt","line":2,"body":"For effect.","user":{"login":"bo"}},{"id":103,"path":"poem.txt","line":4,"side":"RIGHT","body":"Nice.","user":{"login":"ada"}},{"id":104,"path":"poem.txt","line":3,"side":"LEFT","body":"Keep it.","user":{"login":"cy"}}]' ;;
     *) echo "fake gh: no answer for: $*" >&2; exit 1 ;;
 esac

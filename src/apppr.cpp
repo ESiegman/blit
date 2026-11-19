@@ -24,6 +24,7 @@ struct PrComment {
     i64 id = 0, reply_to = 0;
     std::string path, author, body;
     i64 line = 0;  // in the pull request's version of the file (0: the line has changed since: not placed)
+    bool taken_out = false;  // on a line the pull request takes out (its side is LEFT, its line the base's): listed, not placed
 };
 
 struct PrUi {
@@ -176,6 +177,7 @@ void App::pr_comments(i64 n, bool show) {
                 m.author = std::string(c["user"]["login"].str());
                 m.body = std::string(c["body"].str());
                 m.line = c["line"].integer();
+                m.taken_out = c["side"].str() == "LEFT";
                 u.comments.push_back(std::move(m));
             }
         for (PrUi::Notes& v : u.views) v.key[0] = ~0ull;
@@ -193,7 +195,7 @@ void App::pr_comments(i64 n, bool show) {
         std::vector<std::string> rows;
         for (const size_t i : order) {
             const PrComment& c = u.comments[i];
-            rows.push_back((c.reply_to ? "    " : "") + c.path + (c.line ? ":" + std::to_string(c.line) : " (changed since)") + "  " + c.author + ": " + first_line(c.body));
+            rows.push_back((c.reply_to ? "    " : "") + c.path + (c.taken_out ? " (taken out)" : c.line ? ":" + std::to_string(c.line) : " (changed since)") + "  " + c.author + ": " + first_line(c.body));
         }
         find_choose_item("Comments on #" + std::to_string(n), std::move(rows), [this, order](int k) {
             if (k < 0 || static_cast<size_t>(k) >= order.size()) return;
@@ -202,18 +204,20 @@ void App::pr_comments(i64 n, bool show) {
     });
 }
 
-// A comment chosen: gone to (its file, at its line), or answered.
+// A comment chosen: gone to (its file, at its line; one on a line taken
+// out, the file), or answered.
 void App::pr_comment_menu(size_t i) {
     PrUi& u = *pr_;
     if (i >= u.comments.size()) return;
     const PrComment c = u.comments[i];
-    find_choose_item(c.author + ": " + first_line(c.body), {"Go to " + c.path + (c.line ? ":" + std::to_string(c.line) : ""), "Answer\xE2\x80\xA6"}, [this, c](int k) {
+    const i64 line = c.taken_out ? 0 : c.line;
+    find_choose_item(c.author + ": " + first_line(c.body), {"Go to " + c.path + (line ? ":" + std::to_string(line) : ""), "Answer\xE2\x80\xA6"}, [this, c, line](int k) {
         if (k == 0) {
             remember_place();
             if (!open_path((git_root() + "/" + c.path).c_str())) return;
-            if (c.line > 0) {
+            if (line > 0) {
                 Editor& ed = pane_->doc->ed;
-                ed.move_to(ed.buf.line_start(std::min<u64>(static_cast<u64>(c.line - 1), ed.buf.line_count() - 1)), false);
+                ed.move_to(ed.buf.line_start(std::min<u64>(static_cast<u64>(line - 1), ed.buf.line_count() - 1)), false);
                 scroll_to_cursor();
             }
         } else if (k == 1) {
@@ -252,7 +256,9 @@ void App::pr_review(i64 n, const std::string& kind) {
 }
 
 // The comments of the pull request whose comments were asked for, after
-// their lines in the files on show (those of the repository).
+// their lines in the files on show (those of the repository). One on a
+// line the pull request takes out is not: its line is the base's, and
+// the file has no such line to put it after.
 void App::pr_marks(FrameDesc& fd) {
     if (!pr_ || pr_->comments.empty()) return;
     PrUi& u = *pr_;
@@ -273,7 +279,7 @@ void App::pr_marks(FrameDesc& fd) {
             v.notes.clear();
             v.cells.clear();
             for (const PrComment& c : u.comments) {
-                if (c.path != rel || c.line <= 0 || c.reply_to) continue;
+                if (c.path != rel || c.line <= 0 || c.reply_to || c.taken_out) continue;
                 const u64 line = static_cast<u64>(c.line - 1);
                 if (line < g.top_line || line >= g.bottom() || line >= d->ed.buf.line_count()) continue;
                 if (std::ranges::any_of(v.notes, [&](const GridNote& x) { return x.line == line; })) continue;
@@ -302,7 +308,7 @@ void App::pr_marks(FrameDesc& fd) {
 std::string App::pr_dump() {
     if (!pr_ || pr_->comments.empty()) return "no comments";
     std::string out = "#" + std::to_string(pr_->number) + ":";
-    for (const PrComment& c : pr_->comments) out += " " + c.path + ":" + std::to_string(c.line) + " " + c.author + (c.reply_to ? "(answer)" : "");
+    for (const PrComment& c : pr_->comments) out += " " + c.path + ":" + std::to_string(c.line) + " " + c.author + (c.reply_to ? "(answer)" : "") + (c.taken_out ? "(taken out)" : "");
     size_t notes = 0;
     for (const PrUi::Notes& v : pr_->views) notes += v.notes.size();
     return out + " | notes " + std::to_string(notes);

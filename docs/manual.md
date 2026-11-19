@@ -819,12 +819,14 @@ or a review's verdict); the one chosen offers:
 
 - **Check out**: its branch, made or brought up to date by `gh`, and its
   comments asked for: each comment on a line then shows after that line in
-  the file (◆, who, its first line, and how many answers it has).
+  the file (◆, who, its first line, and how many answers it has). One on a
+  line the pull request takes out is not shown in the file, which no longer
+  has that line; it is in the list below, marked "(taken out)".
 - **Show the changes**: its diff, as GitHub has it, in a tab coloured as a
   diff.
 - **The comments on its lines**, as threads (each answer under what it
-  answers); one chosen is gone to (its file, at its line) or answered (the
-  answer goes to its thread).
+  answers); one chosen is gone to (its file, at its line, if it is still
+  there) or answered (the answer goes to its thread).
 - **Approve**, **Ask for changes…** (what should change asked for) and
   **Comment…**.
 
