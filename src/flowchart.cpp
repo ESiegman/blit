@@ -122,6 +122,7 @@ struct Node {
     int note_of = -1;  // a note: what it is beside
     bool note_left = false;
     float loop_room = 0;  // across, after it: its loops' (edges from it to itself) and their labels'
+    bool fixed = false;  // its size given (by a kind that draws its own: diagram_layered)
     float w = 0, h = 0;  // laid out: its size, and its middle (in its level's box, then in the whole)
     float x = 0, y = 0;
 };
@@ -178,6 +179,7 @@ struct Graph {
     Style link_default;
     char dir = 'D';
     bool state = false;
+    float sep = 1;  // the gaps between nodes and between ranks, times this
 
     int node(const std::string& id, int cluster) {
         if (const auto it = ids.find(id); it != ids.end()) {
@@ -815,7 +817,7 @@ struct Layout {
         u = s.unit();
         size = s.size;
         line = f.line(size);
-        nodesep = 40 * u, ranksep = 46 * u, edgesep = 16 * u;
+        nodesep = 40 * u * g.sep, ranksep = 46 * u * g.sep, edgesep = 16 * u;
         pad = 14 * u;
         title_h = line + 6 * u;
         px = 15 * u, py = 9 * u;
@@ -872,6 +874,7 @@ struct Layout {
 
     // The size of a node's shape round its text.
     void measure(Node& n, char dir) {
+        if (n.fixed) return;
         const float tiny = 14 * u;
         switch (n.shape) {
             case kShapeStart: n.w = n.h = tiny; return;
@@ -1239,7 +1242,7 @@ struct Layout {
         auto fixed = [&](const std::vector<int>& l) {
             return !l.empty() && (ln[static_cast<size_t>(l[0])].kind == LNode::kPortIn || ln[static_cast<size_t>(l[0])].kind == LNode::kPortOut);
         };
-        auto sweep = [&](bool down) {
+        auto sweep = [&](bool down, bool right) {
             const int n = static_cast<int>(layer.size());
             for (int k = 1; k < n; ++k) {
                 const int r = down ? k : n - 1 - k;
@@ -1254,6 +1257,9 @@ struct Layout {
                     for (const Adj& a : adj) sum += a.w * ln[static_cast<size_t>(a.other)].order, w += a.w;
                     if (w > 0) movable.push_back({sum / w, l[i]}), moves[i] = 1;
                 }
+                // (equal ones kept in their order, or every other time turned
+                // round: a tie broken the other way may cross less)
+                if (right) std::reverse(movable.begin(), movable.end());
                 std::stable_sort(movable.begin(), movable.end(), [](const auto& a, const auto& b) { return a.first < b.first; });
                 size_t next = 0;
                 for (size_t i = 0; i < l.size(); ++i)
@@ -1269,7 +1275,7 @@ struct Layout {
             std::vector<std::vector<int>> best_layer = layer;
             for (int it = 0; it < iterations && best > 0; ++it) {
                 if (stopped()) return {};
-                sweep(it % 2 == 0);
+                sweep(it % 2 == 0, it % 4 >= 2);
                 const long long c2 = crossings();
                 if (c2 < best) best = c2, best_layer = layer;
             }
@@ -1695,6 +1701,277 @@ DiagramColour readable_on(DiagramColour fill, const DiagramPalette& p) {
 
 DiagramVec axis_of(char dir) { return dir == 'U' ? DiagramVec{0, -1} : dir == 'R' ? DiagramVec{1, 0} : dir == 'L' ? DiagramVec{-1, 0} : DiagramVec{0, 1}; }
 
+// Where an edge's end is: a node's box and shape, or a subgraph's.
+void box_of(const Graph& g, int ref, float* x, float* y, float* bw, float* bh, u8* shape) {
+    if (is_cluster(ref)) {
+        const Cluster& cl = g.clusters[static_cast<size_t>(cluster_of(ref))];
+        *x = cl.x, *y = cl.y, *bw = cl.w, *bh = cl.h, *shape = kShapeRect;
+    } else {
+        const Node& n = g.nodes[static_cast<size_t>(ref)];
+        *x = n.x - n.w / 2, *y = n.y - n.h / 2, *bw = n.w, *bh = n.h, *shape = n.shape;
+    }
+}
+
+// Each subgraph's title: its box, top left and bottom right (none: zero wide).
+std::vector<std::pair<DiagramVec, DiagramVec>> titles_of(const Graph& g, const Layout& lay) {
+    const float u = lay.u;
+    std::vector<std::pair<DiagramVec, DiagramVec>> titles(g.clusters.size());
+    for (size_t k = 0; k < g.clusters.size(); ++k) {
+        const Cluster& cl = g.clusters[k];
+        if (cl.title.empty() || (cl.title.size() == 1 && cl.title[0].empty())) continue;
+        float tw = 0;
+        for (const std::string& t : cl.title) tw = std::max(tw, lay.font.width(t, lay.size, true));
+        const float mid = cl.title_x >= 0 ? cl.x + cl.title_x : cl.x + cl.w / 2, top = cl.y + lay.pad * 0.5f;
+        titles[k] = {{mid - tw / 2 - 4 * u, top}, {mid + tw / 2 + 4 * u, top + lay.title_h * static_cast<float>(cl.title.size()) - 2 * u}};
+    }
+    return titles;
+}
+
+// An edge's line: its points from a to b, and the way it leaves a and
+// meets b (along the ranks; across them at a diamond's corner).
+struct Route {
+    std::vector<DiagramVec> pts;
+    DiagramVec dir_a, dir_b;
+};
+
+// Each edge's line, from a to b: out of a's subgraphs, across, into b's,
+// straightened where nothing is in the way, its ends on its nodes' borders
+// (none for a loop; a hidden one's not on them).
+std::vector<Route> routes(const Graph& g, const Layout& lay) {
+    const float u = lay.u;
+    const std::vector<std::pair<DiagramVec, DiagramVec>> titles = titles_of(g, lay);
+    std::vector<Route> lines(g.edges.size());
+    long long tries = 40'000'000;  // (straightening's work, at most, for all of them: past it, they keep their points)
+    for (size_t k = 0; k < g.edges.size(); ++k) {
+        const Edge& e = g.edges[k];
+        if (!e.laid || e.from == e.to) continue;
+        std::vector<DiagramVec>& pts = lines[k].pts;
+        auto add = [&](const std::vector<DiagramVec>& s) {
+            for (const DiagramVec& q : s)
+                if (pts.empty() || std::fabs(pts.back().x - q.x) + std::fabs(pts.back().y - q.y) > 0.01f) pts.push_back(q);
+        };
+        std::vector<Seg> outs = e.out_a, ins = e.in_b;
+        std::stable_sort(outs.begin(), outs.end(), [](const Seg& a, const Seg& b) { return a.depth > b.depth; });
+        std::stable_sort(ins.begin(), ins.end(), [](const Seg& a, const Seg& b) { return a.depth < b.depth; });
+        std::vector<DiagramVec> keep;  // (ports and the label: the line goes through them)
+        for (const Seg& s : outs) add(s.pts), keep.push_back(pts.back()), keep.insert(keep.end(), s.keep.begin(), s.keep.end());
+        add(e.mid.pts);
+        for (const Seg& s : ins) keep.push_back(s.pts.empty() ? DiagramVec{} : s.pts.front()), keep.insert(keep.end(), s.keep.begin(), s.keep.end()), add(s.pts);
+        if (!e.label.empty() && e.label_w > 0) keep.push_back(e.label_at);
+        if (pts.size() < 3) continue;
+        // Straightened: the points between left out wherever a straight line
+        // from the last one kept clears every other node, subgraph and label
+        // (with room to spare), so that a long edge is one sweep, not steps.
+        std::vector<std::pair<DiagramVec, DiagramVec>> walls;  // (boxes, top left and bottom right)
+        const float spare = 7 * lay.u;
+        for (const Node& n : g.nodes)
+            if (!n.dead && &n - g.nodes.data() != e.a && &n - g.nodes.data() != e.b)
+                walls.push_back({{n.x - n.w / 2 - spare, n.y - n.h / 2 - spare}, {n.x + n.w / 2 + spare, n.y + n.h / 2 + spare}});
+        for (size_t c = 0; c < g.clusters.size(); ++c) {
+            const int ref = as_cluster(static_cast<int>(c));
+            if (ref == e.a || ref == e.b || lay.inside(e.a, static_cast<int>(c)) || lay.inside(e.b, static_cast<int>(c))) continue;
+            const Cluster& cl = g.clusters[c];
+            walls.push_back({{cl.x - spare, cl.y - spare}, {cl.x + cl.w + spare, cl.y + cl.h + spare}});
+        }
+        for (const auto& [lo, hi] : titles)
+            if (hi.x > lo.x) walls.push_back({{lo.x - spare / 2, lo.y - spare / 2}, {hi.x + spare / 2, hi.y + spare / 2}});
+        for (const Edge& o : g.edges)
+            if (&o != &e && !o.label.empty() && o.label_w > 0 && o.from != o.to)
+                walls.push_back({{o.label_at.x - o.label_w / 2 - spare, o.label_at.y - o.label_h / 2 - spare}, {o.label_at.x + o.label_w / 2 + spare, o.label_at.y + o.label_h / 2 + spare}});
+        const long long cost = static_cast<long long>(walls.size() * pts.size() * pts.size());
+        if (cost > 4'000'000 || cost > tries || lay.style.stop.stop_requested()) continue;
+        tries -= cost;
+        auto clear = [&](DiagramVec a, DiagramVec b) {
+            for (const auto& [lo, hi] : walls) {
+                // (Liang and Barsky's clipping: does the line meet the box at all)
+                float t0 = 0, t1 = 1;
+                const float dx = b.x - a.x, dy = b.y - a.y;
+                const float pq[4][2] = {{-dx, a.x - lo.x}, {dx, hi.x - a.x}, {-dy, a.y - lo.y}, {dy, hi.y - a.y}};
+                bool out = false;
+                for (const auto& [pp, q] : pq) {
+                    if (pp == 0) {
+                        if (q < 0) out = true;
+                        continue;
+                    }
+                    const float r = q / pp;
+                    if (pp < 0) t0 = std::max(t0, r);
+                    else t1 = std::min(t1, r);
+                }
+                if (!out && t0 <= t1) return false;
+            }
+            return true;
+        };
+        auto kept = [&](DiagramVec q) {
+            for (const DiagramVec& kp : keep)
+                if (std::fabs(kp.x - q.x) + std::fabs(kp.y - q.y) < 0.05f) return true;
+            return false;
+        };
+        std::vector<DiagramVec> out{pts.front()};
+        size_t i = 0;
+        while (i + 1 < pts.size()) {
+            size_t j = i + 1;
+            for (size_t t = i + 1; t < pts.size(); ++t) {
+                if (!clear(pts[i], pts[t])) break;
+                j = t;
+                if (kept(pts[t])) break;
+            }
+            out.push_back(pts[j]);
+            i = j;
+        }
+        pts = std::move(out);
+    }
+    // Where on its side of a node each end goes: the edges leaving (or
+    // meeting) the same side spread along it, in the order of where they go;
+    // one alone a little off the middle towards where it goes.
+    std::map<std::pair<size_t, bool>, float> spread;
+    std::map<std::pair<size_t, bool>, int> corner;  // (an end at a diamond's left corner, -1, or right, 1)
+    // (An end at a subgraph that the other end is in: at its own port, on its border, as it is.)
+    auto own_end = [&](const Edge& e, bool a) {
+        const int ref = a ? e.a : e.b, other = a ? e.b : e.a;
+        return e.own && is_cluster(ref) && lay.inside(other, cluster_of(ref));
+    };
+    {
+        std::map<std::pair<int, bool>, std::vector<std::pair<float, size_t>>> sides;
+        for (size_t k = 0; k < g.edges.size(); ++k) {
+            const std::vector<DiagramVec>& pts = lines[k].pts;
+            if (pts.size() < 2 || g.edges[k].line == kInvisible) continue;
+            const DiagramVec axis = axis_of(g.edges[k].dir), across{std::fabs(axis.y), std::fabs(axis.x)};
+            auto toward = [&](DiagramVec c, DiagramVec t) { return (t.x - c.x) * across.x + (t.y - c.y) * across.y; };
+            if (!own_end(g.edges[k], true)) sides[{g.edges[k].a, true}].push_back({toward(pts.front(), pts[1]), k});
+            if (!own_end(g.edges[k], false)) sides[{g.edges[k].b, false}].push_back({toward(pts.back(), pts[pts.size() - 2]), k});
+        }
+        for (auto& [side, list] : sides) {
+            float bx, by, bw, bh;
+            u8 shape;
+            box_of(g, side.first, &bx, &by, &bw, &bh, &shape);
+            const bool vert = Layout::vertical(g.edges[list[0].second].dir);
+            const float span = vert ? bw : bh;
+            const bool dot = shape == kShapeStart || shape == kShapeEnd;
+            const float share = dot ? 0.08f : shape == kShapeDiamond ? (list.size() > 1 ? 0.2f : 0.06f) : shape == kShapeCircle || shape == kShapeDoubleCircle ? 0.22f : list.size() >= 3 ? 0.4f : 0.32f;
+            const float most = span * share;
+            std::stable_sort(list.begin(), list.end());
+            // A diamond's: one going off further left than its left corner
+            // leaves from that corner, one further right from its right; the
+            // rest from its tip (not its slanted sides).
+            if (shape == kShapeDiamond && list.size() > 1) {
+                if (list.back().first > span * 0.6f) corner[{list.back().second, side.second}] = 1, list.pop_back();
+                if (list.front().first < -span * 0.6f) corner[{list.front().second, side.second}] = -1, list.erase(list.begin());
+                for (size_t i = 0; i < list.size(); ++i)
+                    spread[{list[i].second, side.second}] = std::clamp((static_cast<float>(i) - static_cast<float>(list.size() - 1) / 2) * 5 * u, -span * 0.12f, span * 0.12f);
+                continue;
+            }
+            const size_t n = list.size();
+            for (size_t i = 0; i < n; ++i) {
+                float off = std::clamp(list[i].first * 0.5f, -most, most);
+                if (n > 1) off = -most + 2 * most * (static_cast<float>(i) + 0.5f) / static_cast<float>(n);
+                spread[{list[i].second, side.second}] = off;
+            }
+        }
+    }
+    for (size_t k = 0; k < g.edges.size(); ++k) {
+        const Edge& e = g.edges[k];
+        Route& r = lines[k];
+        std::vector<DiagramVec>& pts = r.pts;
+        if (!e.laid || e.line == kInvisible || e.from == e.to || pts.size() < 2) continue;
+        const DiagramVec axis = axis_of(e.dir), across{std::fabs(axis.y), std::fabs(axis.x)};
+        // Each end on its node's border: where the edge leaves (or meets) it
+        // along the axis, off the middle as far as it was spread.
+        auto attach = [&](int ref, DiagramVec centre, bool start) {
+            float bx, by, bw, bh;
+            u8 shape;
+            box_of(g, ref, &bx, &by, &bw, &bh, &shape);
+            const float off = spread[{k, start}];
+            const DiagramVec base{centre.x + across.x * off, centre.y + across.y * off};
+            const float far = (axis.x ? bw : bh) + 10;
+            const float sgn = start ? 1.0f : -1.0f;
+            const DiagramVec from{base.x + axis.x * far * sgn, base.y + axis.y * far * sgn};
+            return diagram_shape_hit(shape, bx, by, bw, bh, u, from, base);
+        };
+        // (at a diamond's corner: there, leaving or meeting it across)
+        auto at_corner = [&](int ref, bool start_end, DiagramVec* at, DiagramVec* dir) {
+            const auto it = corner.find({k, start_end});
+            if (it == corner.end()) return false;
+            float bx, by, bw, bh;
+            u8 shape;
+            box_of(g, ref, &bx, &by, &bw, &bh, &shape);
+            const float side = static_cast<float>(it->second);
+            *at = {bx + bw / 2 + across.x * side * bw / 2, by + bh / 2 + across.y * side * bh / 2};
+            *dir = {across.x * side * (start_end ? 1.0f : -1.0f), across.y * side * (start_end ? 1.0f : -1.0f)};
+            return true;
+        };
+        DiagramVec start, end;
+        r.dir_a = r.dir_b = axis;
+        if (!at_corner(e.a, true, &start, &r.dir_a)) start = own_end(e, true) ? pts.front() : attach(e.a, pts.front(), true);
+        if (!at_corner(e.b, false, &end, &r.dir_b)) end = own_end(e, false) ? pts.back() : attach(e.b, pts.back(), false);
+        pts.front() = start, pts.back() = end;
+    }
+    return lines;
+}
+
+// A loop from a node or subgraph to itself, beside it: where it leaves and
+// comes back, and its curve's two control points between.
+struct Loop {
+    DiagramVec s, c1, c2, t;
+};
+Loop loop_of(const Graph& g, const Edge& e, float u) {
+    float bx, by, bw, bh;
+    u8 shape;
+    box_of(g, e.from, &bx, &by, &bw, &bh, &shape);
+    const bool vert = Layout::vertical(e.dir);
+    const DiagramVec out = vert ? DiagramVec{1, 0} : DiagramVec{0, 1}, side = vert ? DiagramVec{0, 1} : DiagramVec{1, 0};
+    const DiagramVec mid{bx + bw / 2, by + bh / 2};
+    const float span = vert ? bh : bw, reach = (vert ? bw : bh) / 2;
+    const float nth = static_cast<float>(e.loop);
+    const float half = std::min(span * (0.35f + 0.06f * nth), (11 + 7 * nth) * u), bulge = (Layout::kLoopReach + Layout::kLoopStep * nth) * u;
+    // (where a line out from its middle, so far along its side, meets its outline)
+    auto on_side = [&](float along) {
+        const DiagramVec in{mid.x + side.x * along, mid.y + side.y * along};
+        const DiagramVec far{in.x + out.x * (reach + 20), in.y + out.y * (reach + 20)};
+        return diagram_shape_hit(shape, bx, by, bw, bh, u, far, in);
+    };
+    Loop l;
+    l.s = on_side(-half), l.t = on_side(half);
+    // Out of s and round into t, square to the side; the curve's
+    // furthest is three quarters of the way to its handles.
+    auto proj = [&](DiagramVec v) { return v.x * out.x + v.y * out.y; };
+    const float apex = std::max(proj(l.s), proj(l.t)) + bulge, wide = half * 0.7f;
+    const float hs = (apex - proj(l.s)) / 0.75f, ht = (apex - proj(l.t)) / 0.75f;
+    l.c1 = {l.s.x + out.x * hs - side.x * wide, l.s.y + out.y * hs - side.y * wide}, l.c2 = {l.t.x + out.x * ht + side.x * wide, l.t.y + out.y * ht + side.y * wide};
+    return l;
+}
+
+// Each node's and subgraph's loops: how many, and their labels (how
+// tall, one under another, and how far down those placed so far go).
+struct LoopLabels {
+    int loops = 0;
+    float tall = 0, done = 0;
+};
+std::map<int, LoopLabels> loop_labels_of(const Graph& g, float u) {
+    std::map<int, LoopLabels> all;
+    for (const Edge& e : g.edges)
+        if (e.laid && e.from == e.to) {
+            LoopLabels& ll = all[e.from];
+            ll.loops = std::max(ll.loops, e.loop + 1);
+            if (!e.label.empty() && e.label_w > 0 && e.line != kInvisible) ll.tall += e.label_h + (ll.tall > 0 ? 2 * u : 0);
+        }
+    return all;
+}
+// The middle of a loop's label: beyond the outermost of its item's loops,
+// one under another (the next one's place moves on).
+DiagramVec loop_label_at(const Graph& g, const Edge& e, float u, LoopLabels& ll) {
+    float bx, by, bw, bh;
+    u8 shape;
+    box_of(g, e.from, &bx, &by, &bw, &bh, &shape);
+    const bool vert = Layout::vertical(e.dir);
+    const DiagramVec mid{bx + bw / 2, by + bh / 2};
+    const float beyond = (vert ? mid.x + bw / 2 : mid.y + bh / 2) + (Layout::kLoopReach + Layout::kLoopStep * static_cast<float>(ll.loops - 1)) * u + 6 * u;
+    DiagramVec at;
+    if (vert) at = {beyond + e.label_w / 2, mid.y - ll.tall / 2 + ll.done + e.label_h / 2};
+    else at = {mid.x, beyond + ll.done + e.label_h / 2};
+    ll.done += e.label_h + 2 * u;
+    return at;
+}
+
 void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float h, Drawing* d, DiagramGeometry* geo) {
     const DiagramPalette& p = style.palette;
     const DiagramFont& font = *style.font;
@@ -1750,167 +2027,9 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
         DiagramVec at;
     };
     std::vector<LabelAt> labels;
-    auto end_box = [&](int ref, float* x, float* y, float* bw, float* bh, u8* shape) {
-        if (is_cluster(ref)) {
-            const Cluster& cl = g.clusters[static_cast<size_t>(cluster_of(ref))];
-            *x = cl.x, *y = cl.y, *bw = cl.w, *bh = cl.h, *shape = kShapeRect;
-        } else {
-            const Node& n = g.nodes[static_cast<size_t>(ref)];
-            *x = n.x - n.w / 2, *y = n.y - n.h / 2, *bw = n.w, *bh = n.h, *shape = n.shape;
-        }
-    };
-    // Each subgraph's title: its box (none: zero wide).
-    std::vector<std::pair<DiagramVec, DiagramVec>> titles(g.clusters.size());
-    for (size_t k = 0; k < g.clusters.size(); ++k) {
-        const Cluster& cl = g.clusters[k];
-        if (cl.title.empty() || (cl.title.size() == 1 && cl.title[0].empty())) continue;
-        float tw = 0;
-        for (const std::string& t : cl.title) tw = std::max(tw, font.width(t, size, true));
-        const float mid = cl.title_x >= 0 ? cl.x + cl.title_x : cl.x + cl.w / 2, top = cl.y + lay.pad * 0.5f;
-        titles[k] = {{mid - tw / 2 - 4 * u, top}, {mid + tw / 2 + 4 * u, top + lay.title_h * static_cast<float>(cl.title.size()) - 2 * u}};
-    }
-    // Each edge's points, from a to b: out of a's subgraphs, across, into b's.
-    std::vector<std::vector<DiagramVec>> chains(g.edges.size());
-    long long tries = 40'000'000;  // (straightening's work, at most, for all of them: past it, they keep their points)
-    for (size_t k = 0; k < g.edges.size(); ++k) {
-        const Edge& e = g.edges[k];
-        if (!e.laid || e.from == e.to) continue;
-        std::vector<DiagramVec>& pts = chains[k];
-        auto add = [&](const std::vector<DiagramVec>& s) {
-            for (const DiagramVec& q : s)
-                if (pts.empty() || std::fabs(pts.back().x - q.x) + std::fabs(pts.back().y - q.y) > 0.01f) pts.push_back(q);
-        };
-        std::vector<Seg> outs = e.out_a, ins = e.in_b;
-        std::stable_sort(outs.begin(), outs.end(), [](const Seg& a, const Seg& b) { return a.depth > b.depth; });
-        std::stable_sort(ins.begin(), ins.end(), [](const Seg& a, const Seg& b) { return a.depth < b.depth; });
-        std::vector<DiagramVec> keep;  // (ports and the label: the line goes through them)
-        for (const Seg& s : outs) add(s.pts), keep.push_back(pts.back()), keep.insert(keep.end(), s.keep.begin(), s.keep.end());
-        add(e.mid.pts);
-        for (const Seg& s : ins) keep.push_back(s.pts.empty() ? DiagramVec{} : s.pts.front()), keep.insert(keep.end(), s.keep.begin(), s.keep.end()), add(s.pts);
-        if (!e.label.empty() && e.label_w > 0) keep.push_back(e.label_at);
-        if (pts.size() < 3) continue;
-        // Straightened: the points between left out wherever a straight line
-        // from the last one kept clears every other node, subgraph and label
-        // (with room to spare), so that a long edge is one sweep, not steps.
-        std::vector<std::pair<DiagramVec, DiagramVec>> walls;  // (boxes, top left and bottom right)
-        const float spare = 7 * lay.u;
-        for (const Node& n : g.nodes)
-            if (!n.dead && &n - g.nodes.data() != e.a && &n - g.nodes.data() != e.b)
-                walls.push_back({{n.x - n.w / 2 - spare, n.y - n.h / 2 - spare}, {n.x + n.w / 2 + spare, n.y + n.h / 2 + spare}});
-        for (size_t c = 0; c < g.clusters.size(); ++c) {
-            const int ref = as_cluster(static_cast<int>(c));
-            if (ref == e.a || ref == e.b || lay.inside(e.a, static_cast<int>(c)) || lay.inside(e.b, static_cast<int>(c))) continue;
-            const Cluster& cl = g.clusters[c];
-            walls.push_back({{cl.x - spare, cl.y - spare}, {cl.x + cl.w + spare, cl.y + cl.h + spare}});
-        }
-        for (const auto& [lo, hi] : titles)
-            if (hi.x > lo.x) walls.push_back({{lo.x - spare / 2, lo.y - spare / 2}, {hi.x + spare / 2, hi.y + spare / 2}});
-        for (const Edge& o : g.edges)
-            if (&o != &e && !o.label.empty() && o.label_w > 0 && o.from != o.to)
-                walls.push_back({{o.label_at.x - o.label_w / 2 - spare, o.label_at.y - o.label_h / 2 - spare}, {o.label_at.x + o.label_w / 2 + spare, o.label_at.y + o.label_h / 2 + spare}});
-        const long long cost = static_cast<long long>(walls.size() * pts.size() * pts.size());
-        if (cost > 4'000'000 || cost > tries || style.stop.stop_requested()) continue;
-        tries -= cost;
-        auto clear = [&](DiagramVec a, DiagramVec b) {
-            for (const auto& [lo, hi] : walls) {
-                // (Liang and Barsky's clipping: does the line meet the box at all)
-                float t0 = 0, t1 = 1;
-                const float dx = b.x - a.x, dy = b.y - a.y;
-                const float pq[4][2] = {{-dx, a.x - lo.x}, {dx, hi.x - a.x}, {-dy, a.y - lo.y}, {dy, hi.y - a.y}};
-                bool out = false;
-                for (const auto& [pp, q] : pq) {
-                    if (pp == 0) {
-                        if (q < 0) out = true;
-                        continue;
-                    }
-                    const float r = q / pp;
-                    if (pp < 0) t0 = std::max(t0, r);
-                    else t1 = std::min(t1, r);
-                }
-                if (!out && t0 <= t1) return false;
-            }
-            return true;
-        };
-        auto kept = [&](DiagramVec q) {
-            for (const DiagramVec& kp : keep)
-                if (std::fabs(kp.x - q.x) + std::fabs(kp.y - q.y) < 0.05f) return true;
-            return false;
-        };
-        std::vector<DiagramVec> out{pts.front()};
-        size_t i = 0;
-        while (i + 1 < pts.size()) {
-            size_t j = i + 1;
-            for (size_t t = i + 1; t < pts.size(); ++t) {
-                if (!clear(pts[i], pts[t])) break;
-                j = t;
-                if (kept(pts[t])) break;
-            }
-            out.push_back(pts[j]);
-            i = j;
-        }
-        pts = std::move(out);
-    }
-    // Where on its side of a node each end goes: the edges leaving (or
-    // meeting) the same side spread along it, in the order of where they go;
-    // one alone a little off the middle towards where it goes.
-    std::map<std::pair<size_t, bool>, float> spread;
-    std::map<std::pair<size_t, bool>, int> corner;  // (an end at a diamond's left corner, -1, or right, 1)
-    // (An end at a subgraph that the other end is in: at its own port, on its border, as it is.)
-    auto own_end = [&](const Edge& e, bool a) {
-        const int ref = a ? e.a : e.b, other = a ? e.b : e.a;
-        return e.own && is_cluster(ref) && lay.inside(other, cluster_of(ref));
-    };
-    {
-        std::map<std::pair<int, bool>, std::vector<std::pair<float, size_t>>> sides;
-        for (size_t k = 0; k < g.edges.size(); ++k) {
-            const std::vector<DiagramVec>& pts = chains[k];
-            if (pts.size() < 2 || g.edges[k].line == kInvisible) continue;
-            const DiagramVec axis = axis_of(g.edges[k].dir), across{std::fabs(axis.y), std::fabs(axis.x)};
-            auto toward = [&](DiagramVec c, DiagramVec t) { return (t.x - c.x) * across.x + (t.y - c.y) * across.y; };
-            if (!own_end(g.edges[k], true)) sides[{g.edges[k].a, true}].push_back({toward(pts.front(), pts[1]), k});
-            if (!own_end(g.edges[k], false)) sides[{g.edges[k].b, false}].push_back({toward(pts.back(), pts[pts.size() - 2]), k});
-        }
-        for (auto& [side, list] : sides) {
-            float bx, by, bw, bh;
-            u8 shape;
-            end_box(side.first, &bx, &by, &bw, &bh, &shape);
-            const bool vert = Layout::vertical(g.edges[list[0].second].dir);
-            const float span = vert ? bw : bh;
-            const bool dot = shape == kShapeStart || shape == kShapeEnd;
-            const float share = dot ? 0.08f : shape == kShapeDiamond ? (list.size() > 1 ? 0.2f : 0.06f) : shape == kShapeCircle || shape == kShapeDoubleCircle ? 0.22f : list.size() >= 3 ? 0.4f : 0.32f;
-            const float most = span * share;
-            std::stable_sort(list.begin(), list.end());
-            // A diamond's: one going off further left than its left corner
-            // leaves from that corner, one further right from its right; the
-            // rest from its tip (not its slanted sides).
-            if (shape == kShapeDiamond && list.size() > 1) {
-                if (list.back().first > span * 0.6f) corner[{list.back().second, side.second}] = 1, list.pop_back();
-                if (list.front().first < -span * 0.6f) corner[{list.front().second, side.second}] = -1, list.erase(list.begin());
-                for (size_t i = 0; i < list.size(); ++i)
-                    spread[{list[i].second, side.second}] = std::clamp((static_cast<float>(i) - static_cast<float>(list.size() - 1) / 2) * 5 * u, -span * 0.12f, span * 0.12f);
-                continue;
-            }
-            const size_t n = list.size();
-            for (size_t i = 0; i < n; ++i) {
-                float off = std::clamp(list[i].first * 0.5f, -most, most);
-                if (n > 1) off = -most + 2 * most * (static_cast<float>(i) + 0.5f) / static_cast<float>(n);
-                spread[{list[i].second, side.second}] = off;
-            }
-        }
-    }
-    // Each node's and subgraph's loops: how many, and their labels (how
-    // tall, one under another, and how far down those drawn so far go).
-    struct LoopLabels {
-        int loops = 0;
-        float tall = 0, done = 0;
-    };
-    std::map<int, LoopLabels> loop_labels;
-    for (const Edge& e : g.edges)
-        if (e.laid && e.from == e.to) {
-            LoopLabels& ll = loop_labels[e.from];
-            ll.loops = std::max(ll.loops, e.loop + 1);
-            if (!e.label.empty() && e.label_w > 0 && e.line != kInvisible) ll.tall += e.label_h + (ll.tall > 0 ? 2 * u : 0);
-        }
+    const std::vector<std::pair<DiagramVec, DiagramVec>> titles = titles_of(g, lay);
+    const std::vector<Route> lines = routes(g, lay);
+    std::map<int, LoopLabels> loop_labels = loop_labels_of(g, u);
     for (size_t k = 0; k < g.edges.size(); ++k) {
         Edge& e = g.edges[k];
         if (!e.laid || e.line == kInvisible) continue;
@@ -1925,28 +2044,8 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
         // Its tips: at the end the original arrow points to (to), and from.
         const u8 head_a = e.reversed ? e.head_to : e.head_from, head_b = e.reversed ? e.head_from : e.head_to;
         if (e.from == e.to) {  // a loop, beside its node or subgraph
-            float bx, by, bw, bh;
-            u8 shape;
-            end_box(e.from, &bx, &by, &bw, &bh, &shape);
-            const bool vert = Layout::vertical(e.dir);
-            const DiagramVec out = vert ? DiagramVec{1, 0} : DiagramVec{0, 1}, side = vert ? DiagramVec{0, 1} : DiagramVec{1, 0};
-            const DiagramVec mid{bx + bw / 2, by + bh / 2};
-            const float span = vert ? bh : bw, reach = (vert ? bw : bh) / 2;
-            const float nth = static_cast<float>(e.loop);
-            const float half = std::min(span * (0.35f + 0.06f * nth), (11 + 7 * nth) * u), bulge = (Layout::kLoopReach + Layout::kLoopStep * nth) * u;
-            // (where a line out from its middle, so far along its side, meets its outline)
-            auto on_side = [&](float along) {
-                const DiagramVec in{mid.x + side.x * along, mid.y + side.y * along};
-                const DiagramVec far{in.x + out.x * (reach + 20), in.y + out.y * (reach + 20)};
-                return diagram_shape_hit(shape, bx, by, bw, bh, u, far, in);
-            };
-            const DiagramVec s = on_side(-half), t = on_side(half);
-            // Out of s and round into t, square to the side; the curve's
-            // furthest is three quarters of the way to its handles.
-            auto proj = [&](DiagramVec v) { return v.x * out.x + v.y * out.y; };
-            const float apex = std::max(proj(s), proj(t)) + bulge, wide = half * 0.7f;
-            const float hs = (apex - proj(s)) / 0.75f, ht = (apex - proj(t)) / 0.75f;
-            const DiagramVec c1{s.x + out.x * hs - side.x * wide, s.y + out.y * hs - side.y * wide}, c2{t.x + out.x * ht + side.x * wide, t.y + out.y * ht + side.y * wide};
+            const Loop lp = loop_of(g, e, u);
+            const DiagramVec s = lp.s, t = lp.t, c1 = lp.c1, c2 = lp.c2;
             DiagramVec dir{t.x - c2.x, t.y - c2.y};
             const float len = std::sqrt(dir.x * dir.x + dir.y * dir.y);
             dir = {dir.x / len, dir.y / len};
@@ -1966,50 +2065,13 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
                 geo->lines.push_back(std::move(gl));
             }
             d->shape(std::move(path), {}, colour, width, dash, RasterStroke::kRound);
-            if (!e.label.empty() && e.label_w > 0) {
-                // Beyond the outermost of its item's loops, one under another.
-                LoopLabels& ll = loop_labels[e.from];
-                const float beyond = proj(mid) + reach + (Layout::kLoopReach + Layout::kLoopStep * static_cast<float>(ll.loops - 1)) * u + 6 * u;
-                DiagramVec at;
-                if (vert) at = {beyond + e.label_w / 2, mid.y - ll.tall / 2 + ll.done + e.label_h / 2};
-                else at = {mid.x, beyond + ll.done + e.label_h / 2};
-                ll.done += e.label_h + 2 * u;
-                labels.push_back({&e, at});
-            }
+            if (!e.label.empty() && e.label_w > 0) labels.push_back({&e, loop_label_at(g, e, u, loop_labels[e.from])});
             continue;
         }
-        std::vector<DiagramVec>& pts = chains[k];
+        const std::vector<DiagramVec>& pts = lines[k].pts;
         if (pts.size() < 2) continue;
-        const DiagramVec axis = axis_of(e.dir), across{std::fabs(axis.y), std::fabs(axis.x)};
-        // Each end on its node's border: where the edge leaves (or meets) it
-        // along the axis, off the middle as far as it was spread.
-        auto attach = [&](int ref, DiagramVec centre, bool start) {
-            float bx, by, bw, bh;
-            u8 shape;
-            end_box(ref, &bx, &by, &bw, &bh, &shape);
-            const float off = spread[{k, start}];
-            const DiagramVec base{centre.x + across.x * off, centre.y + across.y * off};
-            const float far = (axis.x ? bw : bh) + 10;
-            const float sgn = start ? 1.0f : -1.0f;
-            const DiagramVec from{base.x + axis.x * far * sgn, base.y + axis.y * far * sgn};
-            return diagram_shape_hit(shape, bx, by, bw, bh, u, from, base);
-        };
-        // (at a diamond's corner: there, leaving or meeting it across)
-        auto at_corner = [&](int ref, bool start_end, DiagramVec* at, DiagramVec* dir) {
-            const auto it = corner.find({k, start_end});
-            if (it == corner.end()) return false;
-            float bx, by, bw, bh;
-            u8 shape;
-            end_box(ref, &bx, &by, &bw, &bh, &shape);
-            const float side = static_cast<float>(it->second);
-            *at = {bx + bw / 2 + across.x * side * bw / 2, by + bh / 2 + across.y * side * bh / 2};
-            *dir = {across.x * side * (start_end ? 1.0f : -1.0f), across.y * side * (start_end ? 1.0f : -1.0f)};
-            return true;
-        };
-        DiagramVec start, end, dir_a = axis, dir_b = axis;
-        if (!at_corner(e.a, true, &start, &dir_a)) start = own_end(e, true) ? pts.front() : attach(e.a, pts.front(), true);
-        if (!at_corner(e.b, false, &end, &dir_b)) end = own_end(e, false) ? pts.back() : attach(e.b, pts.back(), false);
-        pts.front() = start, pts.back() = end;
+        const DiagramVec axis = axis_of(e.dir), dir_a = lines[k].dir_a, dir_b = lines[k].dir_b;
+        const DiagramVec start = pts.front(), end = pts.back();
         // Heads: the line stops short of a tip by the head's length.
         const float back_b = diagram_head(*d, head_b, end, dir_b, head, colour, width);
         const float back_a = diagram_head(*d, head_a, start, {-dir_a.x, -dir_a.y}, head, colour, width);
@@ -2034,7 +2096,7 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
         if (n.dead || n.note_of == -1) continue;
         float bx, by, bw, bh;
         u8 shape;
-        end_box(n.note_of, &bx, &by, &bw, &bh, &shape);
+        box_of(g, n.note_of, &bx, &by, &bw, &bh, &shape);
         const DiagramVec tc{bx + bw / 2, by + bh / 2}, nc{n.x, n.y};
         const DiagramVec a = diagram_shape_hit(kShapeNote, n.x - n.w / 2, n.y - n.h / 2, n.w, n.h, u, tc, nc);
         const DiagramVec b = diagram_shape_hit(shape, bx, by, bw, bh, u, nc, tc);
@@ -2169,6 +2231,75 @@ bool flowchart_layout(const std::vector<std::string>& st, bool state, const Diag
         }
     }
     if (geo) *geo = std::move(across_geo);
+    return true;
+}
+
+bool diagram_layered(LayeredGraph* lg, const DiagramStyle& style, std::string* err) {
+    Graph g;
+    g.dir = lg->dir, g.sep = lg->sep;
+    for (const LayeredGraph::Node& ln : lg->nodes) {
+        Node n;
+        n.id = ln.id;
+        n.lines.clear();
+        n.shape = ln.shape;
+        n.fixed = true;
+        n.w = ln.w, n.h = ln.h;
+        n.cluster = ln.cluster;
+        n.note_of = ln.note_of, n.note_left = ln.note_left;
+        g.nodes.push_back(std::move(n));
+    }
+    for (const LayeredGraph::Cluster& lc : lg->clusters) {
+        Cluster c;
+        c.id = lc.id;
+        c.title = lc.title;
+        c.parent = lc.parent;
+        g.clusters.push_back(std::move(c));
+    }
+    for (const LayeredGraph::Edge& le : lg->edges) {
+        Edge e;
+        e.from = le.from, e.to = le.to;
+        e.label = le.label;
+        e.minlen = std::max(1, le.minlen);
+        g.edges.push_back(std::move(e));
+    }
+    // (As a flowchart's: its work bounded, and given up when asked to stop.)
+    Layout lay(g, style, *style.font, false);
+    if (!lay.absolute(&lg->w, &lg->h)) {
+        *err = lay.gave_up;
+        return false;
+    }
+    const std::vector<Route> lines = routes(g, lay);
+    if (style.stop.stop_requested()) {
+        *err = "stopped";
+        return false;
+    }
+    for (size_t k = 0; k < g.nodes.size(); ++k) lg->nodes[k].x = g.nodes[k].x, lg->nodes[k].y = g.nodes[k].y;
+    for (size_t k = 0; k < g.clusters.size(); ++k) {
+        const Cluster& c = g.clusters[k];
+        LayeredGraph::Cluster& lc = lg->clusters[k];
+        lc.x = c.x, lc.y = c.y, lc.w = c.w, lc.h = c.h;
+        lc.title_x = c.title_x >= 0 ? c.x + c.title_x : c.x + c.w / 2;
+    }
+    std::map<int, LoopLabels> loop_labels = loop_labels_of(g, lay.u);
+    for (size_t k = 0; k < g.edges.size(); ++k) {
+        const Edge& e = g.edges[k];
+        LayeredGraph::Edge& le = lg->edges[k];
+        le.label = e.label;
+        if (!e.laid) continue;
+        const DiagramVec axis = axis_of(e.dir);
+        if (e.from == e.to) {
+            const Loop lp = loop_of(g, e, lay.u);
+            le.loop = true;
+            le.pts = {lp.s, lp.c1, lp.c2, lp.t};
+            le.axis = axis;
+            if (!e.label.empty() && e.label_w > 0) le.label_at = loop_label_at(g, e, lay.u, loop_labels[e.from]), le.label_w = e.label_w, le.label_h = e.label_h;
+            continue;
+        }
+        le.pts = lines[k].pts;
+        if (e.reversed) std::reverse(le.pts.begin(), le.pts.end());
+        le.axis = e.reversed ? DiagramVec{-axis.x, -axis.y} : axis;
+        if (!e.label.empty() && e.label_w > 0) le.label_at = e.label_at, le.label_w = e.label_w, le.label_h = e.label_h;
+    }
     return true;
 }
 

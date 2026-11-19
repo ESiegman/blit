@@ -111,6 +111,7 @@ struct DiagramItem {
     std::string text;
     float x = 0, y = 0, size = 0;
     bool bold = false;
+    bool italic = false;  // (slanted: the font's own letters, leaning)
 };
 
 struct Drawing {
@@ -231,5 +232,48 @@ bool flowchart_layout(const std::vector<std::string>& st, bool state, const Diag
 bool sequence_layout(const std::vector<std::string>& st, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo);
 // Pie charts (pie.cpp).
 bool pie_layout(const std::vector<std::string>& st, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo);
+
+// A graph laid out in layers as flowcharts are (flowchart.cpp), for the
+// kinds that draw their own nodes and lines: each node's size in, its
+// place out; each edge's points out, its ends on its nodes' borders.
+// False if it gave up (why in `err`: too large to draw, or asked to stop).
+struct LayeredGraph {
+    struct Node {
+        std::string id;
+        float w = 0, h = 0;
+        u8 shape = kShapeRect;  // (where its edges meet it)
+        int cluster = -1;       // the innermost cluster it is in
+        int note_of = -1;       // a note: the node it is beside
+        bool note_left = false;
+        float x = 0, y = 0;  // laid out: its middle
+    };
+    struct Edge {
+        int from = 0, to = 0;
+        std::vector<std::string> label;  // its lines (wrapped, once laid out)
+        int minlen = 1;
+        // Laid out: its points from `from` to `to` (a loop: where it leaves,
+        // two control points, where it comes back), the way the ranks go
+        // along it at both ends, and its label's middle and size.
+        std::vector<DiagramVec> pts;
+        DiagramVec axis;
+        bool loop = false;
+        DiagramVec label_at;
+        float label_w = 0, label_h = 0;
+    };
+    struct Cluster {
+        std::string id;
+        std::vector<std::string> title;  // drawn at its top, a line (and a little) each
+        int parent = -1;
+        float x = 0, y = 0, w = 0, h = 0;  // laid out
+        float title_x = 0;  // laid out: the middle of its title (edges that come in at its top pass beside it there)
+    };
+    std::vector<Node> nodes;
+    std::vector<Edge> edges;
+    std::vector<Cluster> clusters;
+    char dir = 'D';  // D (top to bottom), U, R (left to right), L
+    float sep = 1;   // the gaps between nodes and between ranks, times this
+    float w = 0, h = 0;  // laid out: the whole, from 0, 0
+};
+bool diagram_layered(LayeredGraph* g, const DiagramStyle& style, std::string* err);
 
 }  // namespace blit

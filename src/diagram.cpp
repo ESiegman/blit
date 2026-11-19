@@ -302,6 +302,8 @@ void diagram_paint(const Drawing& d, float scale, const DiagramFont& font, Raste
         if (it.kind == DiagramItem::kText) {
             RasterPath p;
             font.outline(it.text, it.x, it.y, it.size, it.bold, &p);
+            if (it.italic)
+                for (size_t i = 0; i < p.pts.size(); i += 2) p.pts[i] += (it.y - p.pts[i + 1]) * 0.2f;
             const float c[4] = {it.fill.r, it.fill.g, it.fill.b, it.fill.a};
             out->fill(raster_flatten(p, scale, 0, 0, 0.04f), c);
             continue;
