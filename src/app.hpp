@@ -87,6 +87,7 @@ struct TermView;     // a terminal's tab (appterm.cpp)
 struct MdView;       // a Markdown preview's tab (appmarkdown.cpp)
 struct AsmTab;       // a file's assembly's tab (appasm.cpp)
 struct NotebookTab;  // a Jupyter notebook's tab (appnotebook.cpp)
+struct NotebookCell;  // (notebook.hpp)
 struct MergeView;    // a merge tab (appgit.cpp)
 struct RebaseView;   // an interactive rebase's tab (appgit.cpp)
 struct SettingsView;  // the settings screen's tab (appsettings.cpp)
@@ -972,6 +973,7 @@ private:
     bool md_wheel(const SDL_MouseWheelEvent& w);
     bool md_mouse_down(const SDL_MouseButtonEvent& b);
     std::string md_dump(bool inks = false);
+    static bool md_notebook(const Doc& d);  // (a notebook's view)
     struct MdWorker;  // draws previews on a thread of its own, so that typing never waits for one
     void md_sync();   // (event 20: a preview has been drawn)
     void md_wait();   // (for the tests: until every preview asked for is drawn)
@@ -1047,6 +1049,13 @@ private:
     bool nb_key(const SDL_KeyboardEvent& k);
     void nb_marks(FrameDesc& fd);
     std::string nb_dump();
+    std::string nb_cells_dump();
+    bool nb_model(const Doc& d, u64* gen, std::shared_ptr<const std::vector<NotebookCell>>* cells = nullptr, std::string* lang = nullptr) const;
+    bool nb_set_outputs(Doc& d, size_t cell, std::string_view outputs, i64 count);
+    // Its view (appmarkdown.cpp): the notebook drawn beside its script.
+    void nb_view_toggle();
+    void nb_view_close(u64 source);
+    std::string nb_view_dump();
     std::vector<GridNote> nb_notes_[kMaxViews];
     // The terminals' split along the bottom, the one the build's output
     // uses too: Ctrl+` shows it with the keyboard on its terminal, and

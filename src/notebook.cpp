@@ -1,6 +1,7 @@
 #include "notebook.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <charconv>
 #include <cmath>
 #include <map>
@@ -37,10 +38,11 @@ std::string last_line(std::string_view s) {
     return line;
 }
 
-// A code cell's outputs in a line: what it printed last, or what it gave.
-std::string output_of(json::Value cell) {
+// A code cell's outputs in a line: what it printed last, or what it gave
+// (without the escapes that colour a terminal's text).
+std::string output_of(json::Value outputs) {
     std::string out;
-    for (const json::Value o : cell["outputs"]) {
+    for (const json::Value o : outputs) {
         const std::string_view type = o["output_type"].str();
         if (type == "stream") {
             const json::Value t = o["text"];
@@ -66,6 +68,15 @@ std::string output_of(json::Value cell) {
                 out = last_line(text);
             }
         }
+    }
+    for (size_t esc; (esc = out.find('\x1b')) != std::string::npos;) {
+        size_t end = esc + 1;  // (its last byte)
+        if (end < out.size() && out[end] == '[') {  // a colour (CSI): to its final byte
+            for (++end; end < out.size() && !(out[end] >= '@' && out[end] <= '~');) ++end;
+        } else if (end < out.size() && out[end] == ']') {  // a title or a link (OSC): to BEL, or ESC backslash
+            for (++end; end < out.size() && out[end] != '\a' && !(out[end] == '\\' && out[end - 1] == '\x1b');) ++end;
+        }
+        out.erase(esc, std::min(end + 1, out.size()) - esc);
     }
     for (char& c : out)
         if (c == '\t') c = ' ';
@@ -181,7 +192,16 @@ bool notebook_read(std::string_view text, std::vector<NotebookCell>* cells, std:
         cell.kind = std::string(c["cell_type"].str());
         if (cell.kind != "markdown" && cell.kind != "raw") cell.kind = "code";
         cell.source = std::string(chomp(source_of(c)));
-        if (cell.kind == "code") cell.output = output_of(c);
+        if (cell.kind == "code") {
+            const json::Value outputs = c["outputs"];
+            cell.output = output_of(outputs);
+            if (outputs.is_array() && outputs.size()) {
+                std::string s;
+                pretty(s, outputs, 3);
+                cell.outputs = std::make_shared<const std::string>(std::move(s));
+            }
+            if (c["execution_count"].is_number()) cell.count = c["execution_count"].integer();
+        }
         if (!script->empty()) *script += "\n";
         *script += cell.kind == "code" ? "# %%\n" : cell.kind == "markdown" ? "# %% [markdown]\n" : "# %% [raw]\n";
         if (cell.kind == "markdown") {  // (each line commented: the script is still Python)
@@ -202,6 +222,45 @@ bool notebook_read(std::string_view text, std::vector<NotebookCell>* cells, std:
         cells->push_back(std::move(cell));
     }
     return true;
+}
+
+std::string notebook_language(std::string_view text) {
+    json::Doc doc;
+    if (!doc.parse(std::string(text))) return "python";
+    const json::Value meta = doc.root()["metadata"];
+    std::string lang(meta["language_info"]["name"].str());
+    if (lang.empty()) lang = meta["kernelspec"]["language"].str();
+    for (char& c : lang) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return lang.empty() ? "python" : lang;
+}
+
+bool notebook_set_outputs(NotebookCell* cell, std::string_view outputs, i64 count) {
+    json::Doc doc;
+    if (!doc.parse(std::string(outputs)) || !doc.root().is_array()) return false;
+    cell->output = output_of(doc.root());
+    cell->count = count;
+    cell->outputs = nullptr;
+    if (doc.root().size()) {
+        std::string s;
+        pretty(s, doc.root(), 3);  // (as the file has them)
+        cell->outputs = std::make_shared<const std::string>(std::move(s));
+    }
+    return true;
+}
+
+std::vector<CellMatch> notebook_match(const std::vector<NotebookCell>& now, const std::vector<NotebookCell>& model) {
+    std::vector<CellMatch> out(now.size());
+    std::vector<bool> taken(model.size(), false);
+    for (size_t i = 0; i < now.size(); ++i)
+        for (size_t j = 0; j < model.size(); ++j)
+            if (!taken[j] && model[j].kind == now[i].kind && model[j].source == now[i].source) {
+                out[i] = {static_cast<int>(j), true};
+                taken[j] = true;
+                break;
+            }
+    for (size_t i = 0; i < now.size(); ++i)
+        if (out[i].at < 0 && i < model.size() && !taken[i] && model[i].kind == now[i].kind) out[i].at = static_cast<int>(i), taken[i] = true;
+    return out;
 }
 
 std::vector<CellLines> notebook_cell_lines(std::string_view script) {
@@ -254,42 +313,43 @@ std::vector<NotebookCell> notebook_cells(std::string_view script) {
     return out;
 }
 
-std::string notebook_write(std::string_view original, std::string_view script) {
+std::string notebook_write(std::string_view original, std::string_view script, const std::vector<NotebookCell>* model) {
     json::Doc doc;
     const bool had = doc.parse(std::string(original)) && doc.root().is_object();
     const json::Value root = had ? doc.root() : json::Value();
+    // The notebook's cells, as they were; each of the script's matched to
+    // one of them (its id and metadata), and to one of the model's (its
+    // outputs and count).
     std::vector<json::Value> old;
-    for (const json::Value c : root["cells"]) old.push_back(c);
+    std::vector<NotebookCell> was;
+    for (const json::Value c : root["cells"]) {
+        old.push_back(c);
+        NotebookCell cell;
+        cell.kind = c["cell_type"].str() == "markdown" || c["cell_type"].str() == "raw" ? std::string(c["cell_type"].str()) : std::string("code");
+        cell.source = std::string(chomp(source_of(c)));
+        was.push_back(std::move(cell));
+    }
+    std::vector<NotebookCell> own;
+    if (!model) {
+        std::string ignored;
+        if (had) notebook_read(original, &own, &ignored);
+        model = &own;
+    }
     const std::vector<NotebookCell> cells = notebook_cells(script);
-    // Each cell matched to one of the notebook's: with the same text (in
-    // order), else the one at its place, if of its kind and not taken.
-    std::vector<int> match(cells.size(), -1);
-    std::vector<bool> taken(old.size(), false), same(cells.size(), false);
-    auto kind_of = [](json::Value c) {
-        const std::string_view k = c["cell_type"].str();
-        return k == "markdown" || k == "raw" ? std::string(k) : std::string("code");
-    };
-    for (size_t i = 0; i < cells.size(); ++i)
-        for (size_t j = 0; j < old.size(); ++j)
-            if (!taken[j] && kind_of(old[j]) == cells[i].kind && chomp(source_of(old[j])) == cells[i].source) {
-                match[i] = static_cast<int>(j), taken[j] = true, same[i] = true;
-                break;
-            }
-    for (size_t i = 0; i < cells.size(); ++i)
-        if (match[i] < 0 && i < old.size() && !taken[i] && kind_of(old[i]) == cells[i].kind) match[i] = static_cast<int>(i), taken[i] = true;
+    const std::vector<CellMatch> match = notebook_match(cells, was), ran = notebook_match(cells, *model);
     std::mt19937_64 rng(std::random_device{}());
     std::string out = "{\n \"cells\": [";
     for (size_t i = 0; i < cells.size(); ++i) {
         const NotebookCell& c = cells[i];
-        const json::Value o = match[i] >= 0 ? old[static_cast<size_t>(match[i])] : json::Value();
+        const json::Value o = match[i].at >= 0 ? old[static_cast<size_t>(match[i].at)] : json::Value();
         out += i ? ",\n  {" : "\n  {";
-        // Its members in order of name: what the notebook had (outputs and
-        // the count only if its text is as it was), its kind, its text.
+        // Its members in order of name: what the notebook had, its kind,
+        // its text, and (if its text is the one they are of) its outputs
+        // and count.
         std::map<std::string, std::string> m;
         for (const json::Value v : o) {
             const std::string_view k = v.key();
-            if (k == "cell_type" || k == "source") continue;
-            if (!same[i] && (k == "outputs" || k == "execution_count")) continue;
+            if (k == "cell_type" || k == "source" || k == "outputs" || k == "execution_count") continue;
             std::string s;
             pretty(s, v, 3);
             m[std::string(k)] = std::move(s);
@@ -297,12 +357,13 @@ std::string notebook_write(std::string_view original, std::string_view script) {
         m["cell_type"] = std::string();
         json::quote(m["cell_type"], c.kind);
         m["source"] = std::string();
-        if (same[i]) pretty(m["source"], o["source"], 3);  // (as it was written: a string, or its lines)
+        if (match[i].same) pretty(m["source"], o["source"], 3);  // (as it was written: a string, or its lines)
         else source_lines(m["source"], c.source, 3);
         if (!m.contains("metadata")) m["metadata"] = "{}";
         if (c.kind == "code") {
-            if (!m.contains("outputs")) m["outputs"] = "[]";
-            if (!m.contains("execution_count")) m["execution_count"] = "null";
+            const NotebookCell* r = ran[i].same ? &(*model)[static_cast<size_t>(ran[i].at)] : nullptr;
+            m["outputs"] = r && r->outputs ? *r->outputs : "[]";
+            m["execution_count"] = r && r->count >= 0 ? std::to_string(r->count) : "null";
         }
         const bool ids = !root["nbformat"].exists() || root["nbformat"].integer() > 4 || (root["nbformat"].integer() == 4 && root["nbformat_minor"].integer() >= 5);
         if (ids && !m.contains("id")) {

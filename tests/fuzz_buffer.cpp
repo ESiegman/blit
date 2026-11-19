@@ -473,6 +473,33 @@ void notebook_test() {
     std::string fresh_script;
     check(notebook_read(notebook_write("", "# %%\n1 + 1\n"), &fresh, &fresh_script) && fresh_script == "# %%\n1 + 1\n", "notebook: a new one");
     check(!notebook_read("{\"x\": 1}", &fresh, &fresh_script), "notebook: JSON that is not one");
+
+    // The model: each code cell's outputs as the file has them, and its count.
+    check(cells[1].count == 3 && cells[2].count == 4 && cells[0].count == -1 && !cells[0].outputs && cells[1].outputs &&
+              cells[1].outputs->starts_with("[\n    {\n     \"name\": \"stdout\"") && nb.find(*cells[1].outputs) != std::string::npos,
+          "notebook: the model, each code cell's outputs as the file has them and its count");
+    check(notebook_language(nb) == "python" && notebook_language(R"({"metadata": {"kernelspec": {"language": "Julia"}}, "cells": []})") == "julia" &&
+              notebook_language("[") == "python",
+          "notebook: its language, from its metadata");
+    // Matched: by text in order, else by place (changed); a new cell, none.
+    const std::vector<CellMatch> m = notebook_match(notebook_cells(edited), cells);
+    check(m.size() == 4 && m[0].at == 0 && m[0].same && m[1].at == 1 && !m[1].same && m[2].at == -1 && m[3].at == 2 && m[3].same,
+          "notebook: the script's cells matched to the model's (same, changed, new)");
+    // Outputs given by a kernel: shown in the line, written in the file, the count too.
+    std::vector<NotebookCell> model = cells;
+    check(!notebook_set_outputs(&model[1], "{\"not\": 1}", 9) && model[1].count == 3, "notebook: outputs that are not a list, refused");
+    check(notebook_set_outputs(&model[1], R"([{"output_type": "execute_result", "execution_count": 9, "data": {"text/plain": "\u001b[31mred\u001b[0m"}}])", 9) &&
+              model[1].output == "red" && model[1].count == 9,
+          "notebook: a kernel's outputs put in a cell, its line without the terminal's colours");
+    model[1].source = "x = 1";
+    const std::string ran = notebook_write(nb, edited, &model);
+    std::vector<NotebookCell> back;
+    std::string back_script;
+    check(notebook_read(ran, &back, &back_script) && back[1].count == 9 && back[1].output == "red" && back[3].count == 4 && back[3].output == "[image/png]" &&
+              ran.find("\"execution_count\": 9,\n   \"id\": \"b2\"") != std::string::npos,
+          "notebook: written with the model's outputs and counts, the cell's id kept");
+    check(notebook_set_outputs(&model[1], "[]", -1) && !model[1].outputs && model[1].output.empty() && notebook_write(nb, edited, &model).find("\"execution_count\": null") != std::string::npos,
+          "notebook: outputs cleared");
 }
 
 // Local history: versions kept newest first, read back as they were; the
