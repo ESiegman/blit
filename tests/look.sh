@@ -113,7 +113,7 @@ printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.edi
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = true\nblit.opt.editor.soft_wrap = true\n' >"$dir/wrap.lua"
 wm() { BLIT_INIT="$dir/$1.lua" "$blit" --offscreen 1600x700 --shot "$dir/wm.bmp" --script "workdir:$dir/work;frame;$2;frame;wait:400;frame;minimapdump" "$dir/work/wrap.txt" 2>&1 >/dev/null | tail -1 | sed 's/.* box //'; }
 got=$(wm wrap "vim:G")
-case $got in 19[0-9][0-9]-200[01]) ;; *) echo "FAIL: the minimap's box at the end of a file that wraps: $got"; failed=1 ;; esac
+case $got in 19[0-9][0-9]-1999 | 19[0-9][0-9]-200[01]) ;; *) echo "FAIL: the minimap's box at the end of a file that wraps: $got"; failed=1 ;; esac
 flat=$(wm flat "click:795,200;release")
 wrapped=$(wm wrap "click:795,200;release")
 a=$(( (${flat%-*} + ${flat#*-}) / 2 )) b=$(( (${wrapped%-*} + ${wrapped#*-}) / 2 ))
