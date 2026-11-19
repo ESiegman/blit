@@ -2955,6 +2955,19 @@ neither reads nor writes the list of files and folders opened lately;
 `--script` replays input through the real event handlers and `--shot` saves
 what the renderer drew, with no window involved.
 
+A Debug build can check itself as it runs. Configured with
+`-DBLIT_SANITIZE=ON` it is built with AddressSanitizer (memory read or
+written out of bounds, or after it was freed), UndefinedBehaviorSanitizer
+(overflows and the like, each of which stops it) and libstdc++'s checks
+(an index past a vector's end); `blit_fuzz` and the suites run on it as on
+any other build, a few times more slowly:
+
+```bash
+cmake -S . -B build-san -G Ninja -DCMAKE_CXX_COMPILER=g++-16 -DCMAKE_BUILD_TYPE=Debug -DBLIT_LTO=OFF -DBLIT_SANITIZE=ON
+cmake --build build-san
+(cd build-san && ctest -j3)
+```
+
 A plain Debug build is unoptimized, so its benchmark numbers mean nothing.
 The benchmarks are run from a Debug build that is compiled exactly like a
 release, in `build-bench/`:

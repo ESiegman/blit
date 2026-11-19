@@ -28,6 +28,7 @@ option(BLIT_NATIVE "Tune for the build machine's CPU" ON)
 option(BLIT_LTO "Link-time optimization" ON)
 option(BLIT_STATIC_RUNTIME "Link libstdc++ and libgcc statically (faster process start)" ON)
 option(BLIT_OPTIMIZE_DEBUG "Compile a Debug build with Release's optimization, for benchmarking" OFF)
+option(BLIT_SANITIZE "Compile a Debug build with AddressSanitizer, UndefinedBehaviorSanitizer and libstdc++'s checks, for the tests" OFF)
 
 # Tests and benchmarks are development tools, and only a Debug build has
 # them: the test program, the benchmark tools, and the editor's own benchmark
@@ -55,6 +56,22 @@ add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wall;-Wextra;-Wshadow;-fno-excep
 # code has none of them; this keeps it so. (GCC's names for them.)
 if(BLIT_DEV AND CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
   add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:-Wduplicated-cond;-Wlogical-op;-Wformat=2;-Wsuggest-override;-Wcast-qual;-Wvla>")
+endif()
+# A Debug build that checks itself as it runs (-DBLIT_SANITIZE=ON):
+# memory read or written out of bounds or after it was freed, overflows
+# and other undefined behaviour (each stops the program), an index past a
+# vector's end. Slower, with larger stack frames: for the tests, not the
+# benchmarks. The C++ only: the Objective-C side and the allocation
+# sampler (a library of its own, put into other programs) are as they are.
+if(BLIT_DEV AND BLIT_SANITIZE)
+  set(blit_sanitize -fsanitize=address,undefined -fno-sanitize-recover=undefined -fno-omit-frame-pointer -D_GLIBCXX_ASSERTIONS -D_GLIBCXX_SANITIZE_VECTOR)
+  if(NOT BLIT_OPTIMIZE_DEBUG)
+    # (-O1, as the sanitizers' makers advise: unoptimized, the checked
+    # program is slow enough that the tests that go by time fail.)
+    list(APPEND blit_sanitize -O1)
+  endif()
+  add_compile_options("$<$<COMPILE_LANGUAGE:CXX>:${blit_sanitize}>")
+  add_link_options("$<$<LINK_LANGUAGE:CXX>:-fsanitize=address,undefined>")
 endif()
 if(BLIT_NATIVE)
   if(CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
