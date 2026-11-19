@@ -136,6 +136,12 @@ bool is_key(std::string_view k) {
     return false;
 }
 
+// Every setting at its default.
+const Config& defaults() {
+    static const Config c = make_config();
+    return c;
+}
+
 // The first sentence of a paragraph.
 std::string first_sentence(const std::string& p) {
     const size_t dot = p.find(". ");
@@ -357,7 +363,6 @@ void App::settings_open() {
 void App::settings_lay(Doc& d) {
     SettingsView& sv = *d.settings;
     const u64 row = d.ed.buf.line_of(d.ed.cursor());
-    static const Config defaults = make_config();
     size_t wide = 0;
     for (const SettingsView::Item& it : sv.items) wide = std::max(wide, it.key.size());
     std::string text;
@@ -383,7 +388,7 @@ void App::settings_lay(Doc& d) {
         text += "  " + it.key;
         text.append(wide + 2 - it.key.size(), ' ');
         const std::string now = config_lua(config_get(cfg_, it.key));
-        mark(now == config_lua(config_get(defaults, it.key)) ? 0 : 1);
+        mark(now == config_lua(config_get(defaults(), it.key)) ? 0 : 1);
         text += now;
         if (!it.about.empty()) {
             text.append(now.size() < 22 ? 22 - now.size() : 2, ' ');
@@ -513,6 +518,12 @@ void App::settings_write(const std::string& key, const ConfigValue* v) {
         if (const std::string wrong = config_set(probe, {key, literal(*v), "Settings"}); !wrong.empty()) return notify(wrong, kError);
         line = "blit.opt." + key + " = " + config_lua(*v);
     }
+    // (What it should be now; if init.lua, or a plugin, makes it otherwise
+    // where its lines do not show it, that is said.)
+    const std::string want = config_lua(v ? *v : config_get(defaults(), key));
+    auto unlike = [this, key, want] {
+        if (config_lua(config_get(cfg_, key)) != want) notify(key + " is set in init.lua where the screen cannot change it, or by a plugin");
+    };
     // init.lua open in a tab: the line put there (and saved, if it had no
     // changes of its own).
     Doc* open = nullptr;
@@ -524,28 +535,30 @@ void App::settings_write(const std::string& key, const ConfigValue* v) {
         const bool changes = ed.modified();
         const std::string was = ed.buf.text(0, ed.buf.size());
         const std::string now = init_with(was, key, line);
-        if (now == was) return;
-        size_t a = 0;
-        while (a < was.size() && a < now.size() && was[a] == now[a]) ++a;
-        size_t b = 0;
-        while (b < was.size() - a && b < now.size() - a && was[was.size() - 1 - b] == now[now.size() - 1 - b]) ++b;
-        ed.replace(a, was.size() - b, now.substr(a, now.size() - a - b));
+        if (now != was) {
+            size_t a = 0;
+            while (a < was.size() && a < now.size() && was[a] == now[a]) ++a;
+            size_t b = 0;
+            while (b < was.size() - a && b < now.size() - a && was[was.size() - 1 - b] == now[now.size() - 1 - b]) ++b;
+            ed.replace(a, was.size() - b, now.substr(a, now.size() - a - b));
+        }
         if (changes) return notify("init.lua has changes not saved: the setting is put there, to be saved with them");
         std::string err;
-        if (!ed.save(&err)) return tell(SDL_MESSAGEBOX_ERROR, err.c_str());
+        if (now != was && !ed.save(&err)) return tell(SDL_MESSAGEBOX_ERROR, err.c_str());
         open->disk_stamp = stamp_of(full_path(ed.path));
     } else {
         std::string was;
         std::string why;
         if (!fs_read_whole(init_path_, &was, &why, 16u << 20, {})) was = std::string(init_template());
         const std::string now = init_with(was, key, line);
-        if (now == was) return;
         const size_t slash = init_path_.find_last_of('/');
-        if (slash != std::string::npos) SDL_CreateDirectory(init_path_.substr(0, slash).c_str());
-        if (!SDL_SaveFile(init_path_.c_str(), now.data(), now.size())) return tell(SDL_MESSAGEBOX_ERROR, SDL_GetError());
+        if (now != was && slash != std::string::npos) SDL_CreateDirectory(init_path_.substr(0, slash).c_str());
+        if (now != was && !SDL_SaveFile(init_path_.c_str(), now.data(), now.size())) return tell(SDL_MESSAGEBOX_ERROR, SDL_GetError());
     }
+    // (Run again even when init.lua already said so: what :set changed since
+    // goes, and it is what init.lua says.)
     script_restart();  // (which makes the settings tabs again)
-    if (v && config_lua(config_get(cfg_, key)) != config_lua(*v)) notify(key + " is set again further on in init.lua, or by a plugin");
+    unlike();
 }
 
 // For the tests: the setting under the cursor and its value as shown.

@@ -115,6 +115,18 @@ fi
 check "after Enter, the next key is still the next key (a search here)" "$base
 blit.opt.editor.modal = true" "settingsopen:font.ligatures;key:Return;text:/font.size;key:Return" \
     'font.size 13 points'
+check "Enter after :set: init.lua already says so, and is what counts again" "$base
+blit.opt.editor.modal = true
+blit.opt.font.ligatures = true" "vim::set noligatures<CR>;settingsopen:font.ligatures;key:Return" \
+    'font.ligatures true draw -> != => <= and friends joined, if the font can' "blit.opt.editor.modal = true|blit.opt.font.ligatures = true|"
+# Set where the screen cannot change it (not a line of its own): Delete
+# leaves it, and says why.
+printf '%s\nif true then blit.opt.font.size = 16 end\n' "$base" >"$BLIT_INIT"
+got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "settingsopen:font.size;key:Delete;frame;settingsdump" "$dir/a.txt" 2>&1 >/dev/null)
+if [ -z "$print" ] && ! printf '%s' "$got" | grep -q 'font.size is set in init.lua where the screen cannot change it'; then
+    printf 'FAIL: Delete on a setting set inside an if: not said\n    %s\n' "$(printf '%s' "$got" | tail -3)"
+    failed=1
+fi
 check "Cmd+, opens it" "$base" "key:cmd+," \
     'font.family "" A family name ("JetBrains Mono") or the path of a font file.'
 exit $failed
