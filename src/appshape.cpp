@@ -261,7 +261,7 @@ void App::crumbs_layout(FrameDesc& fd, bool focused) {
     mix(cur);
     mix(d.ed.revision());
     mix(std::hash<std::string>{}(d.ed.path));
-    mix(reinterpret_cast<uintptr_t>(panel_root()));
+    mix(panel_root() ? std::hash<std::string>{}(*panel_root()) : 0);
     if (d.syntax.active()) {
         const std::vector<SyntaxScope>& sc = d.syntax.structure().scopes;
         mix(sc.size());
@@ -281,7 +281,7 @@ void App::crumbs_layout(FrameDesc& fd, bool focused) {
         auto add = [&](u64 v) { shown = (shown ^ v) * 1099511628211ull; };
         add(d.id);
         add(std::hash<std::string>{}(d.ed.path));
-        add(reinterpret_cast<uintptr_t>(panel_root()));
+        add(panel_root() ? std::hash<std::string>{}(*panel_root()) : 0);
         add(cols);
         add(font.generation());
         add(focused);
