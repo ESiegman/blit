@@ -232,6 +232,14 @@ got=$(wr "wrapdump;vim:3G;vim:A and some more words to make it longer still<Esc>
 a=$(printf '%s' "$got" | cut -d' ' -f1); b=$(printf '%s' "$got" | cut -d' ' -f2)
 [ "${b:-0}" -gt "${a:-0}" ] && got=more
 check "typed on: more rows" "more"
+# Six splits of one file (each a wrap that hears its edits, with the
+# file's colours): the one typed in last keeps its map, as one split does.
+mkdir -p "$dir/six" && cp "$dir/wrap.md" "$dir/six/"
+more="vim:3G;vim:A and some more words to make it longer still<Esc>;frame;wrapdump"
+one=$(wr "$more" "$dir/six/wrap.md" | tail -1 | sed -n 's/.*, \([0-9]*\) rows.*/\1/p')
+split="key:cmd+shift+\\;text:wrap.md;findwait;key:Return"
+got=$(BLIT_INIT="$dir/vim.lua" "$blit" --offscreen 900x1200 --shot "$dir/shot.bmp" --script "workdir:$dir/six;frame;$split;$split;$split;$split;$split;frame;$more" "$dir/six/wrap.md" 2>&1 >/dev/null | tail -1 | sed -n 's/.*, \([0-9]*\) rows.*/\1/p')
+check "six splits of a file: each one's wrap hears the edits" "$one"
 printf 'int f() {\n    // %s\n    return 1;\n}\nint g;\n' "$long" >"$dir/fold.c"
 if wr "command:Fold every block;folddump" "$dir/fold.c" | tail -1 | grep -q '^folds none'; then
     echo "soft wrap with folds skipped: nothing folds here (no grammar for C)"

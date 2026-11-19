@@ -69,24 +69,15 @@ public:
     EditWatch* views = nullptr;
     const LineSkip* skip = nullptr;  // (what is folded: up and down go by rows)
 
-    // Up to four listeners hear about edits (syntax highlighting, the
-    // language server, the debugger's breakpoints, and what is folded).
+    // Listeners hear about edits (syntax highlighting, the language
+    // server, the debugger's breakpoints, what is folded, and the soft wrap
+    // of each split that shows the text), as many as there are, in the
+    // order they started listening.
     void listen(EditListener* l) {
         unlisten(l);
-        for (EditListener*& slot : listeners_)
-            if (!slot) {
-                slot = l;
-                return;
-            }
+        listeners_.push_back(l);
     }
-    void unlisten(EditListener* l) {
-        for (EditListener*& slot : listeners_)
-            if (slot == l) slot = nullptr;
-        size_t n = 0;  // (the first slot is filled whenever any is)
-        for (EditListener* slot : listeners_)
-            if (slot) listeners_[n++] = slot;
-        while (n < std::size(listeners_)) listeners_[n++] = nullptr;
-    }
+    void unlisten(EditListener* l) { std::erase(listeners_, l); }
 
     bool open(const char* file, std::string* err);
     // The file's bytes, read already (from another machine: see remote.hpp).
@@ -290,12 +281,12 @@ private:
     u64 state_id() const { return undo_.empty() ? 0 : undo_.back().id; }
     u32 tab_stop(u32 col) const { return (col / tab_width + 1) * tab_width; }
 
-    bool listening() const { return listeners_[0] != nullptr; }
+    bool listening() const { return !listeners_.empty(); }
     void merge_carets();
     void shift_carets(u64 off, u64 remove_len, u64 insert_len);
     void shift_spans(u64 off, u64 remove_len, u64 insert_len);
 
-    EditListener* listeners_[4] = {};
+    std::vector<EditListener*> listeners_;
     u64 cursor_ = 0;
     u64 anchor_ = 0;
     std::vector<Caret> carets_;

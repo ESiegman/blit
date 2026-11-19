@@ -628,8 +628,7 @@ void Editor::select_line(u64 off) {
 TextEdit Editor::begin_edit(u64 off, u64 remove_len) const {
     TextEdit t;
     if (!listening()) return t;
-    for (EditListener* l : listeners_)
-        if (l) l->before_edit(off, remove_len);
+    for (EditListener* l : listeners_) l->before_edit(off, remove_len);
     t.start = off;
     t.old_end = off + remove_len;
     const u64 row = buf.line_of(off), row_start = buf.line_start(row);
@@ -647,8 +646,7 @@ void Editor::end_edit(TextEdit& t, u64 insert_len) {
     const u64 end_row = buf.line_of(t.new_end);
     t.new_end_row = static_cast<u32>(end_row);
     t.new_end_col = static_cast<u32>(t.new_end - buf.line_start(end_row));
-    for (EditListener* l : listeners_)
-        if (l) l->on_edit(t);
+    for (EditListener* l : listeners_) l->on_edit(t);
 }
 
 void Editor::apply(u64 off, u64 remove_len, std::string_view text, Kind kind) {
