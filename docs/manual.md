@@ -1059,7 +1059,7 @@ that place into the middle of the view; dragging scrolls with the mouse.
 A file that fits is all there from its top; a longer one moves down the
 column as the view moves down the file.
 
-It is drawn in tiles of 256 lines, each a picture on the GPU, made again
+It is drawn in tiles of 1024 lines, each a picture on the GPU, made again
 from where the text changed (or all of them, when the colours do) once
 typing pauses; a tile made again the same is not sent again, and tiles
 far from the view are let go of. `blit.opt.editor.minimap = false` turns
