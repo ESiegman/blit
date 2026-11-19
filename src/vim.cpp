@@ -2336,7 +2336,7 @@ void Vim::operate(Editor& ed, char op, u64 lo, u64 hi, bool linewise) {
         case 'u':
         case 'U':
         case '?': {
-            if (open_end) text.pop_back();
+            if (open_end) text.resize(text.size() - std::strlen(line_break(ed)));  // (the line break put on the last line, "\r\n" in a CRLF text)
             const std::string changed = recase(text, op);
             if (changed != text) ed.replace(lo, lo + text.size(), changed);
             changing_ = true;
@@ -2594,14 +2594,18 @@ void Vim::leave_insert(Editor& ed) {
         if (auto_indent_ && end == ed.line_end(ed.buf.line_of(end)))  // (what was typed, without an indent that Esc would take out)
             for (Peek p(ed.buf); end > insert_from_ && (p.at(end - 1) == ' ' || p.at(end - 1) == '\t');) --end;
         typed = end >= insert_from_ ? ed.buf.text(insert_from_, end - insert_from_) : std::string();
-        last_inserted_ = typed;
         retyping_ = true;
         for (u32 i = 1; i < insert_count_; ++i) {
             if (!insert_prefix_.empty()) insert_key(ed, VimKey{VimKey::kEnter, 0, false});  // ("3o": the next line, as Enter makes it)
             for (const VimKey& key : insert_keys_)
                 if ((insert_key(ed, key) & kTyped) && !is_enter(key)) auto_indent_ = false;
+            if (await_ == kInsertLiteral) {  // (a <C-v> number that Esc ended, the first time: ended here too)
+                await_ = kNothing;
+                if (literal_digits_ && literal_ <= 0x10FFFF) ed.insert(literal_ == 0 ? std::string(1, '\0') : utf8_of(literal_));
+            }
         }
         retyping_ = false;
+        last_inserted_ = typed;  // (after: a <C-a> or <C-r>. typed again puts in the insert before this one)
     }
     // ("3o<Esc>": the further lines are empty too. The column the cursor
     // keeps for j and k is still the one the indent went to.)
@@ -3871,7 +3875,11 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
             u64 end = cur;
             const u64 limit = ed.line_end(line);
             for (u32 i = 0; i < times && end < limit; ++i) end = ed.next_char(end);
-            if (end > cur) operate(ed, '~', cur, end, false);
+            if (end > cur) {
+                const u64 size0 = ed.buf.size();
+                operate(ed, '~', cur, end, false);
+                end = end + ed.buf.size() - size0;  // (a letter whose other case is longer or shorter: "ſ" is two bytes, "S" one)
+            }
             go(ed, std::min(end, line_last(ed, line)));
             return done();
         }

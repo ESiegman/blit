@@ -3835,6 +3835,8 @@ void vim_test() {
         {"|ÿŸßẞ ſıİµς", "g~$", "|Ÿÿẞß SIiΜΣ"},
         {"|ſıİµς ǅ", "gU$", "|SIİΜΣ Ǆ"},
         {"|ſıİµς ǅ", "gu$", "|ſıiµς ǅ"},
+        {"|ſab", "~", "S|ab"},   // (a letter whose other case is shorter: the cursor on the next one)
+        {"|ſab", "~~", "SA|b"},
         {"|ΑΒΓ ԱաՖֆ ＡＺａｚ", "g~~", "|αβγ աԱֆՖ ａｚＡＺ"},
         {"|ạẠ ỳỲ \xCD\x85x", "g~$", "|Ạạ Ỳỳ \xCD\x85X"},
         {"|éx", "~~", "É|X"},
@@ -4036,6 +4038,8 @@ void vim_test() {
         {"|", "i<C-v><Esc><Esc>", "|\x1B"},
         {"|", "i<C-v><C-a><Esc>", "|\x01"},
         {"|", "3i<C-v>u00e9<Esc>", "\xC3\xA9\xC3\xA9|\xC3\xA9"},
+        {"a|b", "3i<C-v>65<Esc>", "aAA|Ab"},  // (a number Esc ended, typed each time)
+        {"a|b", "ifoo<Esc>3ix<C-a><Esc>", "afoxfooxfooxfo|oob"},  // (<C-a> typed again: the insert before, each time)
         {"one |two", "i<C-o>0X<Esc>", "|Xone two"},
         {"one |two three", "i<C-o>dwX<Esc>", "one |Xthree"},
         {"|ab", "A<C-o>Ix<Esc>u", "|ab"},
@@ -4468,6 +4472,7 @@ void vim_test() {
             // (And the line break that whole lines take with them, or leave: the last line deleted, a line changed.)
             {"a\r\n|b", "ddP", "|b\r\na"},
             {"|a\r\nb", "ccx<Esc>", "|x\r\nb"},
+            {"a\r\n|b", "gUU", "a\r\n|B"},  // (the last line, with no line break of its own)
         };
         for (const Case& c : crlf) {
             std::string text = c.before, want = c.after;
