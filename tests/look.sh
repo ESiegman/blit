@@ -129,15 +129,22 @@ case $got in 29[89][0-9]-300[0-9]) ;; *) echo "FAIL: the minimap's box at the en
 got=$(mmbox wrap.cpp "command:Toggle soft wrap;frame;vim:500G")
 case $got in 49[0-9]-5[01][0-9]) ;; *) echo "FAIL: the minimap's box over line 500 of a wrapped file: $got"; failed=1 ;; esac
 # Drawn again when what it is drawn with changes: a theme put on whose
-# background is the one there was and whose text is another colour. (The
-# frame the same as one that started that way.)
+# background is the one there was and whose text is another colour, and
+# another tab width (with the indent lines of a file indented with tabs
+# a tab apart). Each frame the same as one that started that way.
 twins='blit.opt.themes.twin = { background = "#1c1d21", foreground = "#ff2020" }\nblit.opt.themes.plain = { background = "#1c1d21" }\n'
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n'"$twins"'blit.opt.theme = "plain"\n' >"$dir/plain.lua"
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n'"$twins"'blit.opt.theme = "twin"\n' >"$dir/twin.lua"
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.tab_width = 8\n' >"$dir/tab8.lua"
+i=0
+while [ $i -lt 300 ]; do printf 'int f_%d() {\n\treturn %d;\n}\n' $i $i; i=$((i + 1)); done >"$dir/work/tabs.cpp"
 mmshot() { BLIT_INIT="$dir/$1.lua" "$blit" --offscreen 1600x700 --shot "$dir/$2.bmp" --script "workdir:$dir/work;frame;frame;$4;frame;frame" "$dir/work/$3" >/dev/null 2>&1; }
 mmshot twin twin long.cpp ""
 mmshot plain retheme long.cpp "lua:blit.opt.theme = 'twin'"
 same twin retheme "the minimap kept the colours of the theme there was"
+mmshot tab8 tab8 tabs.cpp ""
+mmshot map retab tabs.cpp "lua:blit.opt.editor.tab_width = 8"
+same tab8 retab "a tab width set while running is drawn otherwise than one set from the start (the minimap, the indent lines)"
 # (Two clicks some way apart: the box lands as many lines apart as in a
 # file with nothing wrapped.)
 apart() { a=$(mmbox "$1" "$2;click:795,200") b=$(mmbox "$1" "$2;click:795,260"); echo $((${b%-*} - ${a%-*})); }

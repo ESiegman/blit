@@ -1315,6 +1315,7 @@ u32 App::indent_step() {
         d.indent_lines = lines;
         bool known = false;
         d.indent_step = d.ed.guess_indent(&d.indent_tabs, &known);
+        if (d.indent_tabs) d.indent_step = 0;  // (indented with tabs: a level is a tab, however wide tabs are made later)
         if (!known && file_language() == "python") d.indent_tabs = false, d.indent_step = 4;  // (nothing indented yet: Python's own way)
     }
     return d.indent_step ? d.indent_step : std::max<u32>(1, d.ed.tab_width);
