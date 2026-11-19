@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 
@@ -127,11 +128,15 @@ std::string said(const std::string& err, const std::string& out) {
     return line.empty() ? std::string("it failed") : line;
 }
 
-std::string first_word(std::string_view s) {
+// A SHA-256 as shasum or a .sha256 gives it: the first word, in lower case
+// (hex in upper case is the same sum).
+std::string sum_of(std::string_view s) {
     const size_t a = s.find_first_not_of(" \t\r\n");
     if (a == std::string_view::npos) return {};
     const size_t b = s.find_first_of(" \t\r\n", a);
-    return std::string(s.substr(a, b == std::string_view::npos ? std::string_view::npos : b - a));
+    std::string out(s.substr(a, b == std::string_view::npos ? std::string_view::npos : b - a));
+    for (char& c : out) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return out;
 }
 
 std::string folder_of(const std::string& p) {
@@ -218,7 +223,7 @@ void App::update_fetch(const std::string& version, const std::string& where, con
                    script_run(std::move(sum_argv), folder_of(file), [this, version, where, file](int summed, const std::string& said, const std::string&) {
                        std::string want, why;
                        fs_read_whole(file + ".sha256", &want, &why, 4096, {});
-                       if (summed != 0 || first_word(said).empty() || first_word(said) != first_word(want)) {
+                       if (summed != 0 || sum_of(said).empty() || sum_of(said) != sum_of(want)) {
                            update_busy_ = false;
                            SDL_RemovePath(file.c_str());
                            return notify("blit " + version + " came with the wrong SHA-256: not installed", 2);

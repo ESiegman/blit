@@ -67,6 +67,13 @@ got=$(run "command:Check for updates")
 [ "$(cat "$dir/apps/blit.AppImage")" = "old" ] || fail "the wrong SHA-256: not put in place" "$got"
 printf '%s' "$got" | grep -q 'came with the wrong SHA-256' || fail "the wrong SHA-256: said" "$got"
 
+# A sum written in upper case: the same sum, put in place.
+release 99.0.2
+awk '{ $1 = toupper($1); print }' "$dir/rel/blit-99.0.2-x86_64.AppImage.sha256" >"$dir/upper" && mv "$dir/upper" "$dir/rel/blit-99.0.2-x86_64.AppImage.sha256"
+echo old >"$dir/apps/blit.AppImage"
+got=$(run "command:Check for updates")
+[ "$(cat "$dir/apps/blit.AppImage")" = "new 99.0.2" ] || fail "a SHA-256 in upper case: put in place" "$got"
+
 # The same version (or an older one): the latest, nothing fetched.
 release 0.0.1
 got=$(run "command:Check for updates")
