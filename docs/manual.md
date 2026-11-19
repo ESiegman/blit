@@ -594,6 +594,18 @@ blit.opt.editor.indent_width = 0       -- 0: from the file
 blit.opt.themes["rose-pine"].guides = { "#786168", "#7c6449", "#546a75" }   -- one to six colours, first level first
 ```
 
+### Distraction-free and presentation modes
+
+"Toggle distraction-free mode" leaves the text alone: the window goes full
+screen (if it was not), and the tab bars, the breadcrumbs, the line
+numbers, the status bar, the side panel and the minimap go, each coming
+back as it was when the mode is left. "Toggle presentation mode" does the
+same with the text larger, for showing: `blit.opt.look.presentation_size`
+points, or 1.6 times its size (0, the default). Either command goes from
+one mode to the other; the same one again leaves it. Asking for the side
+panel (showing it, or one of its tabs) leaves the mode too, so that the
+panel is there to be used.
+
 ## Local history
 
 Each file's text is kept, by its path, at every save (and at the first

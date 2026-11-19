@@ -265,8 +265,14 @@ void App::panel_set_workdir(const std::string& path) {
     dirty_ = true;
 }
 
+// (Distraction-free and presentation modes draw no panel: asked for, it
+// brings back what they hide, and is shown, open as it was or opened.)
 void App::panel_toggle() {
     Side& s = *side_;
+    if (focus_mode_ != kFocusNone) {
+        focus_toggle(focus_mode_);
+        if (s.open) return;
+    }
     s.open = !s.open;
     if (s.open && !s.rooted) panel_set_workdir(default_workdir());
     if (!s.open) s.focus = s.menu = false;
@@ -278,7 +284,7 @@ void App::panel_toggle() {
 
 void App::panel_focus(bool on) {
     Side& s = *side_;
-    if (on && !s.open) panel_toggle();
+    if (on && (!s.open || focus_mode_ != kFocusNone)) panel_toggle();
     if (s.focus == on) return;
     s.focus = on;
     if (!on) s.input = Side::kNoInput, s.menu = false;

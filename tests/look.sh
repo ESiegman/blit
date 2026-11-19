@@ -178,6 +178,11 @@ same zero rezero "after the font was made again, the frame differs from one draw
 fm=$(BLIT_INIT="$dir/map.lua" "$blit" --offscreen 1300x700 --shot "$dir/fm.bmp" --script "workdir:$dir/work;frame;focusdump;command:Toggle distraction-free mode;focusdump;command:Toggle presentation mode;focusdump;command:Toggle presentation mode;focusdump" "$dir/work/long.cpp" 2>&1 >/dev/null | tail -4 | sed -e 's/ tabs [1-9][0-9]*/ tabs N/' -e 's/ status [1-9][0-9]*/ status N/' -e 's/ gutter [1-9][0-9]*/ gutter N/' -e 's/ crumbs [1-9][0-9]*/ crumbs N/' -e 's/ tabs N status N gutter N panel [0-9]* crumbs N/ chrome/' | tr '\n' '#')
 want="off | 13pt | chrome#distraction-free | 13pt | tabs 0 status 0 gutter 0 panel 0 crumbs 0#presentation | 21pt | tabs 0 status 0 gutter 0 panel 0 crumbs 0#off | 13pt | chrome#"
 [ "$fm" = "$want" ] || { echo "FAIL: distraction-free and presentation modes: $fm"; failed=1; }
+# The side panel asked for in either (a tab's command, or showing it): the
+# mode left, the panel there (not given the keyboard unseen).
+fm=$(BLIT_INIT="$dir/map.lua" "$blit" --offscreen 1300x700 --shot "$dir/fm.bmp" --script "workdir:$dir/work;frame;command:Toggle presentation mode;command:Show Problems;focusdump;command:Toggle distraction-free mode;command:Show or hide the side panel;focusdump" "$dir/work/long.cpp" 2>&1 >/dev/null | tail -2 | sed -e 's/ \([a-z]*\) [1-9][0-9]*/ \1 N/g' | tr '\n' '#')
+want="off | 13pt | tabs N status N gutter N panel N crumbs N#off | 13pt | tabs N status N gutter N panel N crumbs N#"
+[ "$fm" = "$want" ] || { echo "FAIL: the side panel asked for in those modes: $fm"; failed=1; }
 
 [ $failed = 1 ] || echo "look ok"
 exit $failed
