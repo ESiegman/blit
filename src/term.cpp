@@ -1142,19 +1142,24 @@ void Term::kitty(std::string_view control, std::string payload) {
     } else {
         if (ch('t', 'd') != 'd') return tell("EINVAL:only data sent in the escape codes is taken");
         const u32 f = num('f', 32), w = num('s'), h = num('v');
+        // (The format and the size before the data: compressed, it is let
+        // grow to what the size needs and no more, and a size past the
+        // most a picture may be once let it grow to gigabytes.)
+        if (f != 24 && f != 32 && f != 100) return tell("EINVAL:no such format");
+        if (f != 100 && (!w || !h || w > kPictureSideMost || h > kPictureSideMost)) return tell("ENODATA:not enough data for its size");
         std::string data = from_base64(payload);
         if (ch('o', 0) == 'z') {
             std::string raw;
-            const size_t most = f == 100 ? kStringMost : static_cast<size_t>(w) * h * (f == 24 ? 3 : 4);
+            const size_t most = f == 100 ? kStringMost : static_cast<size_t>(w) * h * (f / 8);
             if (!inflate_all(data, most, &raw)) return tell("EINVAL:the data would not decompress");
             data = std::move(raw);
         }
         auto rgba = std::make_shared<std::vector<u8>>();
         if (f == 100) {
             if (!g_picture_reader || !g_picture_reader(data, rgba.get(), &img.w, &img.h)) return tell("EBADPNG:the picture could not be read");
-        } else if (f == 24 || f == 32) {
+        } else {
             const size_t bpp = f / 8;
-            if (!w || !h || w > kPictureSideMost || h > kPictureSideMost || data.size() < static_cast<size_t>(w) * h * bpp) return tell("ENODATA:not enough data for its size");
+            if (data.size() < static_cast<size_t>(w) * h * bpp) return tell("ENODATA:not enough data for its size");
             img.w = w, img.h = h;
             rgba->resize(static_cast<size_t>(w) * h * 4);
             const u8* in = reinterpret_cast<const u8*>(data.data());
@@ -1163,8 +1168,6 @@ void Term::kitty(std::string_view control, std::string payload) {
                 const u32 a = bpp == 4 ? in[3] : 255;
                 out[0] = static_cast<u8>(in[0] * a / 255), out[1] = static_cast<u8>(in[1] * a / 255), out[2] = static_cast<u8>(in[2] * a / 255), out[3] = static_cast<u8>(a);
             }
-        } else {
-            return tell("EINVAL:no such format");
         }
         if (action == 'q') return tell("OK");
         img.rgba = std::move(rgba);

@@ -2809,6 +2809,9 @@ void term_test(int seeds) {
         check(t.pictures().size() == 2, "kitty: one image's taken away");
         t.feed("\x1b[2J");
         check(t.pictures().empty(), "the screen erased: its pictures go");
+        t.feed("\x1b_Ga=T,f=32,o=z,s=100000,v=100000,i=10;AAAA\x1b\\");
+        check(t.take_reply() == "\x1b_Gi=10;ENODATA:not enough data for its size\x1b\\" && t.pictures().empty(),
+              "kitty: a size past the most a picture may be, refused before its data is decompressed (it once let the data grow to gigabytes)");
     }
     {
         // A picture stays with its line when the width changes.
