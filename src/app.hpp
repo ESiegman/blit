@@ -1048,6 +1048,7 @@ private:
     // Jupyter notebooks (appnotebook.cpp).
     bool nb_load(Doc& d);
     bool nb_save(Doc& d, std::string* err);
+    std::string nb_json(Doc& d);
     bool nb_new(Doc& d);
     bool nb_run_cell();
     bool nb_key(const SDL_KeyboardEvent& k);

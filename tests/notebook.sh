@@ -352,6 +352,22 @@ case $got in
 esac
 check "a kernel that cannot start: said, nothing left waiting" "said"
 
+# A notebook on another machine (tests/fake-ssh.sh standing in for ssh,
+# its home a folder here): read as one, its kernel run there (the helper
+# written to blit's cache there), Ctrl+C sent there, saved as a notebook,
+# and nothing left running there.
+there="$dir/there"
+mkdir -p "$there/work/.venv/bin" && cp "$run/.venv/bin/python" "$there/work/.venv/bin/python"
+python3 "$dir/make-run.py" "$there/work/r.ipynb"
+got=$(BLIT_SSH="$(cd "$(dirname "$0")" && pwd)/fake-ssh.sh" BLIT_FAKE_HOME="$there" "$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" \
+    --script "open:ssh://box$there/work/r.ipynb;remotewait;mdwait;dump;vim:7G;key:shift+Return;nbwait;nbkernel;vim:11GA<CR>import time<CR>time.sleep(30)<Esc>;vim:10G;key:shift+Return;nbwait:started;command:Interrupt the kernel;nbwait;nbcells;mdwait;nbview;save;remotewait" 2>&1 >/dev/null | sed -e 's/ *$//')
+kernel=$(printf '%s\n' "$got" | sed -n 's/^python pid \([0-9]*\) idle$/\1/p')
+sleep 0.3
+got=$(printf '%s\n' "$got" | grep -E '^H\(|^[0-9] code|KeyboardInterrupt$|^5: +half' | sed -e 's/^[0-9]*: *//' | tr '\n' '|')
+check "on another machine: run there, interrupted there" "H(>[r.ipynb*] | [Notebook: r.ipynb*])0.50|2 code [1] same stream execute_result|3 code [2] same stream error|4 code [ ] same|half of 42|KeyboardInterrupt|"
+got="$(ls "$there/.cache/blit" | grep -c '^kernel-[0-9a-f]*\.py$') $(outputs "$there/work/r.ipynb" | tr '\n' '|') $(alive $kernel)"
+check "on another machine: the helper written there once, saved as a notebook, nothing left running" "1 1: stream(half of 42) execute_result|2: stream(careful) error|None:| gone"
+
 # With IPython, where python3 has it: its display hooks, magics and tracebacks.
 if python3 -c 'import IPython' 2>/dev/null; then
     mkdir -p "$dir/ipython" && python3 "$dir/make-run.py" "$dir/ipython/r.ipynb"

@@ -14,6 +14,7 @@
 #include <optional>
 
 #include "app.hpp"
+#include "notebook.hpp"
 #include "qos.hpp"
 #include "remote.hpp"
 
@@ -271,7 +272,8 @@ void App::remote_save(Doc& d) {
     s.doc = d.id;
     s.path = d.ed.path;
     s.point = d.ed.save_point();
-    d.ed.buf.snapshot(&s.pieces);
+    if (d.nb) s.text = nb_json(d);  // (a notebook: written as one)
+    else d.ed.buf.snapshot(&s.pieces);
     bool instead = false;
     {
         std::lock_guard lock(u.mu);
@@ -577,8 +579,13 @@ void App::remote_sync() {
         switch (x.status) {
             case 0:
                 d->ed.open_bytes(x.path, x.bytes);
+                if (is_notebook_path(x.path)) nb_load(*d);  // (a notebook: the script of its cells)
                 d->disk_stamp = x.modified;
                 remote_opened(*where, *d, false);
+                if (d->nb && where->doc == d && !restoring_) {  // (and drawn beside it)
+                    pane_ = where;
+                    md_open();
+                }
                 break;
             case 1:  // not there: a new file, made when it is saved
                 d->disk_stamp = 0;

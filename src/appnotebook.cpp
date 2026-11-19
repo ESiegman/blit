@@ -215,6 +215,15 @@ bool App::nb_save(Doc& d, std::string* err) {
     return true;
 }
 
+// The notebook as it is to be written (to another machine, on a thread:
+// appremote.cpp), and from now on what it was.
+std::string App::nb_json(Doc& d) {
+    NotebookTab& nb = *d.nb;
+    nb.original = notebook_write(nb.original, d.ed.buf.text(0, d.ed.buf.size()), nb.cells.get());
+    remodel(d, [](NotebookCell&) {});
+    return nb.original;
+}
+
 // The cell the cursor is in to the Python console (a Markdown cell's
 // text is not code: only the cursor moves), and the cursor to the next
 // cell's first line. False: the text has no "# %%" cells.
@@ -287,7 +296,8 @@ bool App::nb_start(Doc& d) {
     const std::string dir = root && path.starts_with(*root + "/") ? *root : folder;
     auto k = std::make_unique<Kernel>();
     std::string err;
-    if (!k->start(python_for(dir, false), dir, folder, kernel_wake, &err)) {
+    // (On another machine the Python is chosen there.)
+    if (!k->start(is_remote(dir) ? std::string() : python_for(dir, false), dir, folder, kernel_wake, &err)) {
         notify("The kernel could not start: " + err, 2);
         return false;
     }
