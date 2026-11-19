@@ -421,6 +421,7 @@ void App::Find::go(App& a, u64 line, u64 col) {
     if (d.loading) {  // (on its way from another machine: there when it comes)
         d.goto_line = line;
         d.goto_col = static_cast<u32>(std::min<u64>(col, ~0u));
+        d.goto_utf16 = false;
         return;
     }
     Editor& ed = d.ed;

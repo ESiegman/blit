@@ -1386,6 +1386,7 @@ void App::prof_go_to(const Profile& p, u32 func) {
     if (d.loading) {  // (on its way from another machine)
         d.goto_line = line;
         d.goto_col = 0;
+        d.goto_utf16 = false;
         return;
     }
     const u64 at = prof_definition(d, f);

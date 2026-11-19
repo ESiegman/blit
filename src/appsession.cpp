@@ -518,6 +518,7 @@ void App::session_apply(Session& st) {
                     if (d.loading) {  // another machine's: where it goes, once it is here
                         d.goto_line = f.line;
                         d.goto_col = f.col;
+                        d.goto_utf16 = false;
                         u.views[d.id] = {f.top, f.left};
                     } else if (!d.image && !d.pdf) {
                         Editor& ed = d.ed;

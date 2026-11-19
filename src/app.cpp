@@ -1155,6 +1155,7 @@ bool App::jump_go(size_t i) {
     if (d.loading) {  // (on its way from another machine: there when it comes)
         d.goto_line = p.line;
         d.goto_col = static_cast<u32>(std::min<u64>(p.col, ~0u));
+        d.goto_utf16 = false;
         return true;
     }
     Editor& ed = d.ed;

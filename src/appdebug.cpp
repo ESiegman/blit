@@ -848,6 +848,7 @@ void App::debug_frame(u32 i, bool show) {
             if (d.loading) {
                 d.goto_line = f.line ? f.line - 1 : 0;
                 d.goto_col = 0;
+                d.goto_utf16 = false;
             } else {
                 d.ed.move_to(d.ed.buf.line_start(std::min<u64>(f.line ? f.line - 1 : 0, d.ed.buf.line_count() - 1)), false);
                 scroll_to_cursor();
