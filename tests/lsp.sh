@@ -33,6 +33,7 @@ printf '%s\nblit.opt.editor.modal = false\nblit.opt.lsp.highlight_uses = false\n
 printf '%s\nblit.opt.editor.modal = false\nblit.opt.lsp.reference_counts = false\n' "$servers" >"$dir/nolens.lua"
 printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--workspace", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/pull.lua"
 printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--late", "300", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/late.lua"
+printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--hints-once", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\nblit.opt.lsp.inlay_hints = true\n' "$fake" >"$dir/hintsonce.lua"
 printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--close-input", "200", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/closing.lua"
 export BLIT_RECENT_FILE="$dir/recent"
 init=
@@ -305,6 +306,8 @@ with hints "key:Down;frame;wait:100;frame;lspextras" "$P/h.cpp"
 check "none on the cursor's line" 'hints: 3:11[: int] | colours: call=function p_size=variable.parameter Widget=type MAX_SIZE=function.macro'
 with hints "frame;wait:100;frame;key:Down;key:Down;key:End;text: + 1;frame;lspextras" "$P/h.cpp"
 check "kept in step with an edit until asked again" 'hints: 2:6[first: ] 2:9[second: ] 2:12[third: ] | colours: call=function p_size=variable.parameter Widget=type MAX_SIZE=function.macro'
+with hintsonce "frame;wait:100;frame;key:Down;key:Down;key:End;text: + 1;frame;wait:400;frame;wait:100;frame;lspextras" "$P/h.cpp"
+check "asked again, and answered with an error: the hints there stay" 'hints: 2:6[first: ] 2:9[second: ] 2:12[third: ] | colours: call=function p_size=variable.parameter Widget=type MAX_SIZE=function.macro'
 with hints "frame;wait:100;frame;key:Up;text:auto p_size = 1;key:Return;frame;wait:400;frame;wait:100;frame;lspextras" "$P/h.cpp"
 check "and asked again once the text stands still" 'hints: 1:12[: int] 3:6[first: ] 3:9[second: ] 3:12[third: ] 4:11[: int] | colours: p_size=variable.parameter call=function p_size=variable.parameter Widget=type MAX_SIZE=function.macro'
 run "frame;wait:100;frame;lspextras" "$P/h.cpp"

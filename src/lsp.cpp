@@ -1416,10 +1416,11 @@ struct Lsp::Conn::Worker {
         c.push(std::move(m));
     }
 
-    void on_hints(u32 id, Value result) {
+    void on_hints(u32 id, Value result, bool error) {
         In m;
         m.kind = kInHints;
         m.id = id;
+        m.flag = error;  // (no hints said, rather than none there)
         for (Value h : result) {
             RawHint r;
             r.line = static_cast<u32>(std::max<i64>(0, h["position"]["line"].integer()));
@@ -1572,7 +1573,7 @@ struct Lsp::Conn::Worker {
             }
             case kInActions: on_actions(n, result, false); break;
             case kInResolve: on_actions(n, result, true); break;
-            case kInHints: on_hints(n, result); break;
+            case kInHints: on_hints(n, result, v["error"].exists()); break;
             case kInTokens: on_tokens(n, result, w.about); break;
             case kInPull: on_pull(n, result, from_uri(w.about)); break;
             case kInWorkspacePull: on_workspace_pull(n, result); break;
@@ -3250,6 +3251,11 @@ u32 Lsp::poll() {
                     d->hints_stale = true;  // (about a text that has changed since: asked again)
                     break;
                 }
+                // An error says nothing of the hints: those there are (kept
+                // in step with the edits since) stay until the next edit
+                // asks again, rather than none (asked again at once, a
+                // server that cannot answer now would be asked again and again).
+                if (m.flag) break;
                 d->hints.clear();
                 const Buffer& b = *d->buf;
                 for (RawHint& h : m.hints) {
