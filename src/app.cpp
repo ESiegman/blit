@@ -409,6 +409,7 @@ bool App::load_font(std::string* err) {
 void App::pick_theme() {
     const ThemeColors& tc = cfg_.theme(dark());
     theme_ = make_theme(tc);
+    ++theme_gen_;
     guide_inks_ = static_cast<u32>(std::min<size_t>(tc.guides.size(), kInkGuides));
     // The documents on show (the one in front in each split) share the
     // palette: each colour any of them uses gets one ink.

@@ -6,6 +6,7 @@
 // The view's place on it is a lighter box; a click or a drag there
 // scrolls the view to it.
 #include <algorithm>
+#include <bit>
 #include <cmath>
 #include <cstring>
 #include <map>
@@ -29,6 +30,7 @@ struct Minimap {
     };
     std::map<u64, Tile> tiles;  // by the number of its first line / kTileLines
     u64 rev = ~0ull, hl = ~0ull, theme = 0;
+    u64 theme_gen = ~0ull, colours = 0;  // (the colours it is drawn in, as of that setting of the theme's)
     u64 low_line = 0;  // lines from here on changed since the tiles past it were made
     u64 gen = 1;       // what a tile made now is made for; tiles before low_line keep theirs
     std::map<u64, u64> gen_of;  // (the generation each tile index must have to be current)
@@ -172,9 +174,21 @@ void App::minimap_layout(FrameDesc& fd) {
         Doc& d = *p.doc;
         if (!d.minimap) d.minimap = std::make_shared<Minimap>();
         Minimap& m = *d.minimap;
-        const u64 theme = static_cast<u64>(theme_.bg[0] * 1000) * 1000003 + static_cast<u64>(scale_ * 100) + (dark() ? 7 : 0);
+        // The colours the tiles are drawn in, worked out again whenever the
+        // theme's are set (which a switch of tab does too, mostly to the
+        // same ones): the background and each syntax style's.
+        if (m.theme_gen != theme_gen_) {
+            m.theme_gen = theme_gen_;
+            u64 h = 1469598103934665603ull;
+            auto mix = [&](float v) { h = (h ^ std::bit_cast<u32>(v)) * 1099511628211ull; };
+            for (int c = 0; c < 3; ++c) mix(theme_.bg[c]);
+            for (const u32 bits : d.style_bits)
+                for (int c = 0; c < 3; ++c) mix(theme_.palette[(bits >> kCellInkShift) & 31][c]);
+            m.colours = h;
+        }
+        const u64 theme = (m.colours * 1000003 + static_cast<u64>(scale_ * 100)) * 1000003 + d.ed.tab_width;  // (and the size, and how wide a tab is)
         const u64 now = now_ns();
-        if (m.theme != theme) {  // (another theme or size: every tile, now)
+        if (m.theme != theme) {  // (another theme, size or tab width: every tile, now)
             m.theme = theme;
             m.from = 0;
             m.due_ns = now;

@@ -1548,6 +1548,7 @@ private:
     bool dragging_thumb_ = false;
     bool text_press_ = false;  // the text area took the left-button press that is held
     u32 guide_inks_ = 0;  // how many colours the theme has for indent lines
+    u64 theme_gen_ = 0;   // counts up each time pick_theme() sets the colours (for what is drawn from them and kept)
     bool quit_after_save_ = false;
     bool close_after_save_ = false;  // the tab whose new file is being named closes once it is saved
     bool lsp_pending_ = false;  // start a language server after the next frame

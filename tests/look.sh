@@ -128,6 +128,16 @@ got=$(mmbox wrap.cpp "command:Toggle soft wrap;frame;vim:G")
 case $got in 29[89][0-9]-300[0-9]) ;; *) echo "FAIL: the minimap's box at the end of a wrapped file: $got"; failed=1 ;; esac
 got=$(mmbox wrap.cpp "command:Toggle soft wrap;frame;vim:500G")
 case $got in 49[0-9]-5[01][0-9]) ;; *) echo "FAIL: the minimap's box over line 500 of a wrapped file: $got"; failed=1 ;; esac
+# Drawn again when what it is drawn with changes: a theme put on whose
+# background is the one there was and whose text is another colour. (The
+# frame the same as one that started that way.)
+twins='blit.opt.themes.twin = { background = "#1c1d21", foreground = "#ff2020" }\nblit.opt.themes.plain = { background = "#1c1d21" }\n'
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n'"$twins"'blit.opt.theme = "plain"\n' >"$dir/plain.lua"
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n'"$twins"'blit.opt.theme = "twin"\n' >"$dir/twin.lua"
+mmshot() { BLIT_INIT="$dir/$1.lua" "$blit" --offscreen 1600x700 --shot "$dir/$2.bmp" --script "workdir:$dir/work;frame;frame;$4;frame;frame" "$dir/work/$3" >/dev/null 2>&1; }
+mmshot twin twin long.cpp ""
+mmshot plain retheme long.cpp "lua:blit.opt.theme = 'twin'"
+same twin retheme "the minimap kept the colours of the theme there was"
 # (Two clicks some way apart: the box lands as many lines apart as in a
 # file with nothing wrapped.)
 apart() { a=$(mmbox "$1" "$2;click:795,200") b=$(mmbox "$1" "$2;click:795,260"); echo $((${b%-*} - ${a%-*})); }
