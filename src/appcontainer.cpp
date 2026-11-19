@@ -47,8 +47,13 @@ std::string plain_json(std::string_view s) {
             const size_t end = s.find("*/", i + 2);
             i = end == std::string_view::npos ? s.size() : end + 1;
         } else if (c == ',') {
-            size_t j = i + 1;  // (a comma before a closing bracket is left out)
-            while (j < s.size() && (s[j] == ' ' || s[j] == '\t' || s[j] == '\n' || s[j] == '\r')) ++j;
+            size_t j = i + 1;  // (a comma before a closing bracket is left out, comments between them or not)
+            for (;;) {
+                while (j < s.size() && (s[j] == ' ' || s[j] == '\t' || s[j] == '\n' || s[j] == '\r')) ++j;
+                if (s.substr(j, 2) == "//") j = std::min(s.find('\n', j), s.size());
+                else if (s.substr(j, 2) == "/*") j = std::min(s.find("*/", j + 2), s.size() - 2) + 2;
+                else break;
+            }
             if (j < s.size() && (s[j] == '}' || s[j] == ']')) continue;
             out += c;
         } else {

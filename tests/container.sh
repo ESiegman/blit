@@ -67,6 +67,17 @@ got=$(run "Rebuild the dev container")
 [ "$(log)" = "rm -f|run -d|exec -w|exec -i|" ] || fail "rebuilt: removed and made anew" "$(log)"
 printf '%s' "$got" | grep -q '^docker:NAME ' || fail "rebuilt: opened" "$got"
 
+# A trailing comma with what is commented out after it (as the templates
+# leave it): still JSON.
+fresh '{
+  "image": "ubuntu:24.04",
+  "workspaceFolder": "'"$W"'",
+  // "features": {},
+  /* "forwardPorts": [] */
+}'
+got=$(run "Open in the dev container")
+printf '%s' "$got" | grep -q '^docker:NAME ' || fail "a trailing comma before comments: opened" "$got"
+
 # A Dockerfile: built first, its context beside it unless given.
 fresh '{ "build": { "dockerfile": "Dockerfile" }, "workspaceFolder": "'"$W"'" }'
 got=$(run "Open in the dev container")
