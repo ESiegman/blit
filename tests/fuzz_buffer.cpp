@@ -2530,7 +2530,7 @@ void sequence_test() {
     st.size = 13;
     st.room = 2000;
     for (u32 i = 0; i < kMdInkCount; ++i) st.palette.ink[i][0] = 0.9f, st.palette.ink[i][1] = 0.3f + 0.04f * static_cast<float>(i), st.palette.ink[i][2] = 0.2f;
-    const char* const sources[] = {
+    std::vector<std::string> sources = {
         "sequenceDiagram\n participant U as User\n participant B as blit\n participant L as clangd\n U->>B: open main.cpp\n B->>L: didOpen\n L-->>B: diagnostics\n"
         " loop every keystroke\n B->>L: didChange\n end\n Note over B,L: async\n B->>B: redraw\n",
         "sequenceDiagram\n autonumber\n box Aqua Front\n actor U as User\n participant W as Web app\n end\n box rgb(200, 160, 255) Back\n participant A as API\n"
@@ -2548,7 +2548,17 @@ void sequence_test() {
         "pie title Pets adopted by volunteers\n \"Dogs\" : 386\n \"Cats\" : 85\n \"Rats\" : 15\n \"Hamsters\" : 0\n \"Fish\" : 0.001\n",
         "pie\n \"All of it\" : 1\n",
     };
-    for (const char* src : sources) {
+    // Activations 30 deep, in the middle and on the last participant: they
+    // reach no further than the next lifeline, nor past the picture's edge.
+    {
+        std::string deep = "sequenceDiagram\n participant A\n participant B\n participant C\n";
+        for (int k = 0; k < 30; ++k) deep += " A->>+B: m" + std::to_string(k) + "\n";
+        deep += " B->>C: next door\n";
+        for (int k = 0; k < 30; ++k) deep += " B->>+C: n" + std::to_string(k) + "\n";
+        deep += " C->>C: think\n Note right of C: the last\n Note left of B: by B\n";
+        sources.push_back(deep);
+    }
+    for (const std::string& src : sources) {
         for (const float room : {2000.0f, 300.0f}) {
             st.room = room;
             Drawing d;
@@ -2571,6 +2581,13 @@ void sequence_test() {
             };
             for (size_t i = 0; i < nodes.size(); ++i)
                 for (size_t j = i + 1; j < nodes.size(); ++j) check(apart(nodes[i], nodes[j]), "sequence: " + nodes[i].name + " and " + nodes[j].name + " apart" + what);
+            // (lifelines, with their activations, side by side, not over one another)
+            std::vector<DiagramGeometry::Box> lifelines;
+            for (const auto& b : geo.boxes)
+                if (b.kind == "cluster" && !b.name.starts_with("box:") && b.name != "pie") lifelines.push_back(b);
+            for (size_t i = 0; i < lifelines.size(); ++i)
+                for (size_t j = i + 1; j < lifelines.size(); ++j)
+                    check(lifelines[i].x + lifelines[i].w <= lifelines[j].x || lifelines[j].x + lifelines[j].w <= lifelines[i].x, "sequence: lifelines " + lifelines[i].name + " and " + lifelines[j].name + " apart" + what);
             for (size_t i = 0; i < labels.size(); ++i) {
                 for (size_t j = i + 1; j < labels.size(); ++j) check(apart(labels[i], labels[j]), "sequence: text " + labels[i].name + " and " + labels[j].name + " apart" + what);
                 for (const auto& n : nodes) check(apart(labels[i], n), "sequence: text " + labels[i].name + " clear of " + n.name + what);

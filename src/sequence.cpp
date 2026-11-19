@@ -70,6 +70,12 @@ struct Bar {
     float y0 = 0, y1 = -1;
 };
 
+// Activations nested deeper than this are drawn on one another (each
+// level is a half bar right of the one under it: far enough, and they
+// would spread over the next lifeline).
+constexpr int kBarLevels = 8;
+int bar_level(int level) { return std::min(level, kBarLevels - 1); }
+
 // How tight it is laid out: the usual way, or narrower to fit the room.
 struct Tight {
     float wrap = 1, min_w = 1, margin = 1;
@@ -399,7 +405,7 @@ float Sequence::edge_at(int part, float y, int s) const {
     const float x = parts_[static_cast<size_t>(part)].x, bw = 10 * u_;
     const int level = level_at(part, y);
     if (level == 0) return x;
-    return x + static_cast<float>(level - 1) * bw / 2 + static_cast<float>(s) * bw / 2;
+    return x + static_cast<float>(bar_level(level - 1)) * bw / 2 + static_cast<float>(s) * bw / 2;
 }
 
 void Sequence::text_block(Drawing* d, const std::vector<std::string>& lines, float x, float top, DiagramColour c, int align, bool bold, float size) const {
@@ -473,6 +479,26 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
 
     // ---- across: the gaps between lifelines, wide enough for what is between them
     const size_t n = parts_.size();
+    // How far each one's activations will reach right of its lifeline (and
+    // left: half a bar), from how deep they nest.
+    std::vector<float> reach_r(n, 0), reach_l(n, 0);
+    {
+        std::vector<int> open(n, 0);
+        auto on = [&](int who) {
+            const int level = open[static_cast<size_t>(who)]++;
+            reach_r[static_cast<size_t>(who)] = std::max(reach_r[static_cast<size_t>(who)], static_cast<float>(bar_level(level)) * bw / 2 + bw / 2);
+            reach_l[static_cast<size_t>(who)] = bw / 2;
+        };
+        auto off = [&](int who) {
+            if (open[static_cast<size_t>(who)] > 0) --open[static_cast<size_t>(who)];
+        };
+        for (const Event& e : events_) {
+            if (e.kind == kMessage && e.activate) on(e.b);
+            if (e.kind == kMessage && e.deactivate) off(e.a);
+            if (e.kind == kActivate) on(e.a);
+            if (e.kind == kDeactivate) off(e.a);
+        }
+    }
     std::vector<float> gap(n > 1 ? n - 1 : 0, 0);
     for (size_t k = 0; k + 1 < n; ++k) {
         gap[k] = parts_[k].w / 2 + parts_[k + 1].w / 2 + margin;
@@ -494,21 +520,24 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
         else right = std::max(right, reach);
     };
     auto out_left = [&](int a, float reach) {
-        if (a > 0) need(a - 1, a, reach + 12 * u);
+        if (a > 0) need(a - 1, a, reach + 12 * u + reach_r[static_cast<size_t>(a) - 1]);
         else left = std::max(left, reach);
     };
-    const float activation = bw * 1.5f;  // (room for a bar or two at an end)
+    const float activation = bw * 1.5f;  // (room for a bar or two at an end; more for more)
+    auto bars_r = [&](int a) { return std::max(activation, reach_r[static_cast<size_t>(a)] + bw / 2); };
     for (const Event& e : events_) {
         if (e.kind == kMessage) {
             const float number = e.numbered ? 2 * number_half(e) + 4 * u : 0;
-            if (e.a == e.b) out_right(e.a, std::max(8 * u + e.tw, loop_w) + activation + number);
+            const int lo = std::min(e.a, e.b), hi = std::max(e.a, e.b);
+            const float bars = std::max(activation, reach_r[static_cast<size_t>(lo)] + reach_l[static_cast<size_t>(hi)]);
+            if (e.a == e.b) out_right(e.a, std::max(8 * u + e.tw, loop_w) + bars_r(e.a) + number);
             else if (parts_[static_cast<size_t>(e.b)].created >= 0 && &events_[static_cast<size_t>(parts_[static_cast<size_t>(e.b)].created)] == &e)
-                need(e.a, e.b, e.tw + 2 * 14 * u + activation + number + parts_[static_cast<size_t>(e.b)].w / 2);
-            else need(e.a, e.b, e.tw + 2 * 14 * u + activation + number);
+                need(e.a, e.b, e.tw + 2 * 14 * u + bars + number + parts_[static_cast<size_t>(e.b)].w / 2);
+            else need(e.a, e.b, e.tw + 2 * 14 * u + bars + number);
         } else if (e.kind == kNote) {
             const float nw = e.tw + 2 * note_pad;
-            if (e.side == 1) out_right(e.a, 12 * u + activation + nw);
-            else if (e.side == -1) out_left(e.a, 12 * u + nw);
+            if (e.side == 1) out_right(e.a, 12 * u + std::max(activation, reach_r[static_cast<size_t>(e.a)]) + nw);
+            else if (e.side == -1) out_left(e.a, 12 * u + reach_l[static_cast<size_t>(e.a)] + nw);
             else if (e.a == e.b) {
                 const float half = std::max(nw, 60 * u) / 2;
                 out_left(e.a, half), out_right(e.a, half);
@@ -639,7 +668,7 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
     std::erase_if(bars_, [](const Bar& b) { return b.y1 <= b.y0; });
     for (const Bar& b : bars_) {
         Part& p = parts_[static_cast<size_t>(b.part)];
-        p.reach = std::max(p.reach, static_cast<float>(b.level) * bw / 2 + bw / 2);
+        p.reach = std::max(p.reach, static_cast<float>(bar_level(b.level)) * bw / 2 + bw / 2);
     }
 
     // ---- across again: messages' ends, notes' boxes, frames round what is in them
@@ -659,7 +688,7 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
             const Part &a = parts_[static_cast<size_t>(e.a)], &b = parts_[static_cast<size_t>(e.b)];
             const float nw = e.tw + 2 * note_pad;
             if (e.side == 1) e.x0 = a.x + a.reach + 12 * u, e.x1 = e.x0 + nw;
-            else if (e.side == -1) e.x1 = a.x - a.reach - 12 * u, e.x0 = e.x1 - nw;
+            else if (e.side == -1) e.x1 = a.x - (a.reach > 0 ? bw / 2 : 0) - 12 * u, e.x0 = e.x1 - nw;  // (bars reach left by half a bar, however deep)
             else if (e.a == e.b) {
                 const float w = std::max(nw, 60 * u);
                 e.x0 = a.x - w / 2, e.x1 = a.x + w / 2;
@@ -730,6 +759,8 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
     // ---- the whole: from its leftmost thing to its rightmost, a margin round it
     float x_lo = parts_.front().x - left, x_hi = parts_.back().x + right;
     for (const Part& p : parts_) x_lo = std::min(x_lo, p.x - p.w / 2), x_hi = std::max(x_hi, p.x + p.w / 2);
+    for (const Part& p : parts_)
+        if (p.reach > 0) x_lo = std::min(x_lo, p.x - bw / 2), x_hi = std::max(x_hi, p.x + p.reach);  // (its activations)
     for (const Event& e : events_) {
         if (e.kind == kNote || (e.kind == kMessage && e.a == e.b)) x_lo = std::min(x_lo, e.x0), x_hi = std::max(x_hi, e.x1);
         if (e.kind == kMessage && e.a != e.b) {
@@ -843,9 +874,9 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
             from = std::max(from, h.y1 + 2 * u);
         }
         if (from < y1) side(p.x, from, p.x, y1, lifeline, u);
-        if (geo) {
-            const float r = std::max(p.reach, 2 * u);
-            geo->boxes.push_back({"cluster", p.id, p.x - r, y0, 2 * r, y1 - y0});
+        if (geo) {  // (its bars' reach: half a bar left, as far as they go right)
+            const float l = p.reach > 0 ? bw / 2 : 2 * u, r = std::max(p.reach, 2 * u);
+            geo->boxes.push_back({"cluster", p.id, p.x - l, y0, l + r, y1 - y0});
         }
     }
     std::vector<size_t> bar_order(bars_.size());
@@ -853,7 +884,7 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
     std::stable_sort(bar_order.begin(), bar_order.end(), [&](size_t a, size_t b) { return bars_[a].level < bars_[b].level; });
     for (const size_t k : bar_order) {
         const Bar& b = bars_[k];
-        const float x = parts_[static_cast<size_t>(b.part)].x + static_cast<float>(b.level) * bw / 2 - bw / 2;
+        const float x = parts_[static_cast<size_t>(b.part)].x + static_cast<float>(bar_level(b.level)) * bw / 2 - bw / 2;
         RasterPath r;
         r.rect(x, b.y0, bw, b.y1 - b.y0, u);
         d->shape(std::move(r), bar_fill, node_stroke, u);
