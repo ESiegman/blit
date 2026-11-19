@@ -32,12 +32,104 @@ check() {
 run() {
     got=$("$blit" --offscreen "$1" --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;$3;mddump" "$2" 2>&1 >/dev/null | grep -v '^\[')
 }
+# A diagram's picture as the one row "picture: diagram" (its name and its
+# size come from the font and the colours), the rows it covers as one.
+pictures() {
+    awk '/^picture: diagram:/ { if (skip) print ""; print "picture: diagram"; skip = 1; next }
+         skip && /^$/ { next }
+         { if (skip) print ""; skip = 0; print }'
+}
 
 for f in sample edge diagrams code; do
     size=1600x1100
     [ $f = sample ] || [ $f = diagrams ] && size=3600x1100
     run $size "$here/markdown/$f.md" ""
+    got=$(printf '%s\n' "$got" | pictures)
     check "$f.md drawn" "$(cat "$here/markdown/$f.txt")"
+done
+
+# What is wrong in a diagram's layout (diagramdump): two nodes over each
+# other, a label over a node, an edge that does not end on its nodes or
+# that passes through another node, a subgraph partly over another; a line
+# each, nothing when all is well.
+layout_problems() {
+    awk '
+    function flush(   i, j, e, k, q, p, xy) {
+        for (i = 1; i <= nb; i++) for (j = i + 1; j <= nb; j++) {
+            if (bk[i] == "label" && bk[j] == "label") continue
+            if (bk[i] == "cluster" || bk[j] == "cluster") {
+                if ((bk[i] == "cluster" && bk[j] == "cluster") && !apart(i, j) && !within(i, j) && !within(j, i)) print d ": subgraphs " bn[i] " and " bn[j] " overlap"
+                continue
+            }
+            if (!apart(i, j)) print d ": " bk[i] " " bn[i] " and " bk[j] " " bn[j] " overlap"
+        }
+        for (e = 1; e <= ne; e++) {
+            k = split(ep[e], p, " ")
+            if (!on(ef[e], p[1]) || !on(et[e], p[k])) print d ": edge " ef[e] " to " et[e] " does not end on its nodes"
+            if (ef[e] == et[e]) continue
+            for (q = 2; q < k; q++) {
+                split(p[q], xy, ",")
+                for (i = 1; i <= nb; i++)
+                    if (bk[i] == "node" && bn[i] != ef[e] && bn[i] != et[e] && xy[1] > bx[i] + 2 && xy[1] < bx[i] + bw[i] - 2 && xy[2] > by[i] + 2 && xy[2] < by[i] + bh[i] - 2) {
+                        print d ": edge " ef[e] " to " et[e] " passes through " bn[i]
+                        q = k
+                        break
+                    }
+            }
+        }
+        nb = ne = 0
+    }
+    function apart(i, j) { return bx[i] + bw[i] <= bx[j] || bx[j] + bw[j] <= bx[i] || by[i] + bh[i] <= by[j] || by[j] + bh[j] <= by[i] }
+    function within(o, i) { return bx[i] >= bx[o] && by[i] >= by[o] && bx[i] + bw[i] <= bx[o] + bw[o] && by[i] + bh[i] <= by[o] + bh[o] }
+    function on(name, pt,   xy, i) {
+        split(pt, xy, ",")
+        for (i = 1; i <= nb; i++)
+            if (bk[i] != "label" && bn[i] == name) return xy[1] >= bx[i] - 1 && xy[1] <= bx[i] + bw[i] + 1 && xy[2] >= by[i] - 1 && xy[2] <= by[i] + bh[i] + 1
+        return 0
+    }
+    /^diagram / { flush(); d = $1 " " $2; next }
+    /^(node|cluster|label) / { nb++; bk[nb] = $1; bn[nb] = $2; bx[nb] = $(NF - 3); by[nb] = $(NF - 2); bw[nb] = $(NF - 1); bh[nb] = $NF; next }
+    /^edge / { ne++; ef[ne] = $2; et[ne] = $3; ep[ne] = ""; for (i = 4; i <= NF; i++) ep[ne] = ep[ne] " " $i; next }
+    END { flush() }'
+}
+# dump SIZE FILE SCRIPT: the preview's diagrams as laid out.
+dump() {
+    got=$("$blit" --offscreen "$1" --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;$3;diagramdump" "$2" 2>&1 >/dev/null | grep -v '^\[')
+}
+
+# Flowcharts and state diagrams are pictures, one for each; their layouts
+# are clean, wide and narrow; a mistake shows the code under what it is.
+for f in diagrams layout; do
+    for size in 3600x1100 1200x1100; do
+        dump $size "$here/markdown/$f.md" ""
+        layout=$got
+        got=$(printf '%s\n' "$layout" | layout_problems)
+        check "$f.md at $size: laid out with nothing over anything" ""
+        laid=$(printf '%s\n' "$layout" | grep -c '^diagram [0-9]* [0-9]*x[0-9]*$')
+        run $size "$here/markdown/$f.md" ""
+        got="$laid $(printf '%s\n' "$got" | grep -c '^picture: diagram:')"
+        [ $f = diagrams ] && want="2 2" || want="7 7"
+        check "$f.md at $size: a picture for each diagram laid out" "$want"
+    done
+done
+
+# Typing elsewhere in the file lays no diagram out again (the worker keeps
+# them); typing in one lays out only that one.
+cp "$here/markdown/layout.md" "$dir/typed.md"
+dump 3600x1100 "$dir/typed.md" "mdwait;key:ctrl+Home;text:# Typed;key:Return;frame;mdwait;text:more;frame;mdwait"
+got=$(printf '%s\n' "$got" | head -1)
+check "typing elsewhere: each diagram laid out once" "laid out 7"
+dump 3600x1100 "$dir/typed.md" "mdwait;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:End;text: & a1;frame;mdwait"
+got=$(printf '%s\n' "$got" | head -1)
+check "typing in the first diagram: that one laid out again" "laid out 8"
+
+# A flowchart too wide across for the view is drawn down instead: wide, its
+# nodes in a row; narrow, one under another.
+for size in 3600x1100 1600x1100; do
+    dump $size "$here/markdown/diagrams.md" ""
+    got=$(printf '%s\n' "$got" | awk '/^diagram 2/ { exit } /^node / { printf "%.0f\n", $(NF - 2) + $NF / 2 }' | sort -u | wc -l | tr -d ' ')
+    [ $size = 3600x1100 ] && want=1 || want=5
+    check "a flowchart LR at $size: its nodes in $want rows" "$want"
 done
 
 # Code blocks in colour: each run of a row in the colour it is drawn in,
@@ -54,11 +146,6 @@ if "$blit" --grammars 2>/dev/null | grep -Eq '^ *cpp +installed' && "$blit" --gr
 else
     echo "code colours skipped: the cpp, python and bash grammars are not all installed"
 fi
-
-# A flowchart too wide across for the view is drawn down instead.
-run 1600x1100 "$here/markdown/diagrams.md" ""
-got=$(printf '%s\n' "$got" | grep -c 'drawn top to bottom: too wide across')
-check "a flowchart too wide across, drawn down" "1"
 
 # It follows the file: typed at the top, drawn at once.
 cp "$here/markdown/edge.md" "$dir/live.md"

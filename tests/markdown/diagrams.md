@@ -38,3 +38,9 @@ pie title Time spent
 classDiagram
   A <|-- B
 ```
+
+```mermaid
+graph TD
+  A --> B
+  B -> C
+```

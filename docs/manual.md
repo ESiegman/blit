@@ -2456,24 +2456,58 @@ as a link. With it, the system fetches them (on a thread of their own,
 folder (`~/Library/Caches/blit/pictures`), fetching one again after a day;
 one that cannot be fetched then is shown from the copy kept.
 
-**Mermaid diagrams** (` ```mermaid ` blocks) are drawn in box-drawing
-characters, laid out by blit itself (no browser, no JavaScript):
+**Mermaid diagrams** (` ```mermaid ` blocks) are laid out and drawn by
+blit itself, with no browser, no JavaScript and no SVG library.
+Flowcharts and state diagrams are pictures, in the middle of the preview:
+blit lays them out in points, draws the shapes with its own anti-aliased
+rasterizer and the text from the editor's font's own outlines, at the
+size they are shown at (the display's density, the preview's width), so
+they are the same pixels on a Mac and on Linux. Their colours are the
+theme's (the boxes in its type colour, the text in its text colour, the
+lines a little quieter), the text the editor's font at its size. One
+wider than the preview is made smaller to fit (a left-to-right one is
+laid out top to bottom first, if that fits better), never cut off; it is
+drawn again when the width, the theme, the font or the display changes.
+The pictures drawn lately are kept, so that typing elsewhere in the file
+never lays one out again. A click on one does nothing.
 
-- `graph` / `flowchart`, in any direction (TD, BT, LR, RL): every node
-  shape (`[ ]`, `( )`, `{ }` as a slanted box, `[[ ]]` doubled, `(( ))`
-  ...), arrows plain, dotted (`-.->`), thick (`==>`), without heads
-  (`---`), with circles or crosses, both ways (`<-->`), with text
-  (`-->|yes|`, `-- yes -->`), chains (`A --> B --> C`) and `&`. Nodes go
-  in ranks, ordered to cross as little as they can; an arrow back up a
-  loop is drawn back up. One too wide across for the view is drawn down.
-- `stateDiagram`: states, `[*]` as start and end dots, transitions with
-  what they say, `state "..." as X`, choices.
-- `sequenceDiagram`: participants (and `as` names), messages (`->>`,
-  `-->>`, `->`, `-x`), to oneself, notes (left of, right of, over),
-  `loop`/`alt`/`opt`/`par` blocks, `autonumber`.
+- `graph` / `flowchart`, in any direction (TD/TB, BT, LR, RL): every node
+  shape (`[ ]` rectangle, `( )` rounded, `([ ])` stadium, `[[ ]]`
+  subroutine, `[( )]` cylinder, `(( ))` circle, `((( )))` double circle,
+  `{ }` diamond, `{{ }}` hexagon, `[/ /]` and `[\ \]` parallelograms,
+  `[/ \]` and `[\ /]` trapezoids, `> ]` flag; `A@{ shape: ... }` by
+  name), edges plain, dotted (`-.->`), thick (`==>`), hidden (`~~~`),
+  without heads (`---`), with circles or crosses, both ways (`<-->`),
+  longer for each dash more (`--->`), with text (`-->|yes|`,
+  `-- yes -->`, on a pill over the line), chains (`A --> B --> C`) and
+  `&`. Subgraphs are titled boxes round their nodes, nested, each in its
+  own `direction` when no edge goes into it (as Mermaid's rule is); an
+  edge may go to a subgraph itself. `classDef`, `class`, `:::name`,
+  `style` and `linkStyle` colours (fill, stroke, its width and dashes, the
+  text's colour) are used; `%%` comments and a front matter `title:` too.
+  Nodes go in ranks (Sugiyama's way, as Mermaid's dagre does), ordered to
+  cross as little as they can and placed in balance with their
+  neighbours; edges are smooth curves that leave and meet their nodes'
+  borders, spread along a side when several share it, and go round what
+  is in their way; an edge back up a loop goes round beside the others.
+  Long text wraps.
+- `stateDiagram` / `stateDiagram-v2`: states (`state "..." as X`,
+  `X : text`), `[*]` as start and end dots (each composite state's its
+  own), transitions with what they say, composite states as boxes with
+  their name in a band (nested, with their own `direction`), choices as
+  small diamonds, forks and joins as bars, notes (`note left of`,
+  `note right of`, on one line or up to `end note`) beside their state,
+  `classDef` and `class` colours. (Concurrent regions, `--`, are laid out
+  as one.)
+- `sequenceDiagram`, drawn in box-drawing characters: participants (and
+  `as` names), messages (`->>`, `-->>`, `->`, `-x`), to oneself, notes
+  (left of, right of, over), `loop`/`alt`/`opt`/`par` blocks,
+  `autonumber`.
 - `pie`: as bars, with each slice's share.
 
-Other kinds show as code, with a line that says so.
+A diagram with a mistake in it shows its code, under a line that says
+what and where (`mermaid: line 3: ...`). Other kinds show as code, with a
+line that says so.
 
 ## Notebooks
 
@@ -2974,7 +3008,10 @@ src/project.*      new projects: the kinds (C++, HIP, C, Python), their fields, 
 src/libraries.*    where libraries are looked up: vcpkg's ports and usage notes, ROCm's packages, pkg-config, PyPI
 src/fsio.*         files and small commands, here or on another machine
 src/markdown.*     Markdown parsed and laid out as rows of styled cells (blocks, inline styles, tables, lists)
-src/mermaid.*      Mermaid diagrams drawn in box-drawing characters: flowcharts and state diagrams laid out in ranks, sequence diagrams, pies
+src/mermaid.*      Mermaid diagrams drawn in box-drawing characters: sequence diagrams, pies
+src/diagram.*      Mermaid diagrams as pictures: the drawing (shapes, text), the text measured and drawn from the font's outlines, shapes, arrowheads, curves
+src/flowchart.cpp  flowcharts and state diagrams laid out in layers (ranks, crossings, balance, subgraphs as blocks with ports), as drawings
+src/raster.*       the diagrams' rasterizer: exact-area anti-aliased fills, strokes with joins, caps and dashes
 src/appmarkdown.cpp the Markdown preview's tab: drawn again as the file changes, following its cursor, links, pictures
 src/appimage.cpp   pictures: read on threads of their own and put on the GPU; an image file's tab (zoom, move)
 src/picture.h      image files and PDF pages read into pixels (C); src/picture_mac.m does it with macOS's ImageIO and CoreGraphics,

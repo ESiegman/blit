@@ -123,6 +123,7 @@ struct PictureInfo {
     // its file's bytes, one size at a time; the largest size it was shown
     // at in the frame it was last drawn in, and in the frame before that.
     bool vector = false, redrawing = false;
+    bool made = false;  // made in memory (a diagram's), not read from a file
     std::shared_ptr<const std::string> source;
     u64 shown_frame = 0;
     int shown_w = 0, shown_h = 0, before_w = 0, before_h = 0;
@@ -975,6 +976,7 @@ private:
     std::string md_dump(bool inks = false);
     static bool md_notebook(const Doc& d);  // (a notebook's view)
     u32 nb_view_room(const Doc& src);
+    std::string md_diagram_dump();  // (for the tests: where the preview's diagrams' parts are)
     struct MdWorker;  // draws previews on a thread of its own, so that typing never waits for one
     void md_sync();   // (event 20: a preview has been drawn)
     void md_wait();   // (for the tests: until every preview asked for is drawn)
@@ -987,6 +989,10 @@ private:
     void svg_preview();   // (appimage.cpp) an SVG's picture beside its text
     void preview_open();  // Cmd+Shift+V: that, or the Markdown preview
     const PictureInfo* picture(const std::string& path);
+    // A picture made in memory (a diagram's, by the Markdown preview), by a
+    // name of its own: put on the GPU the first time it is asked for (and
+    // again if it has been let go).
+    const PictureInfo* picture_made(const std::string& name, const u8* rgba, int w, int h);
     // What to draw of it now, shown w by h pixels: an animation's frame (its
     // next asked for when it is due), a drawing from shapes made again at
     // that size if it was made at another.

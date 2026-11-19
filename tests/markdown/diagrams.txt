@@ -1,25 +1,6 @@
-┌────────┐         ╭─────╮   ╔════╗            ┌─────┐   ┌──────────┐
-│ Source ├─ parse ▶│ AST ├──▶║ IR ║┄ optimize ▶│ IR' ├━━▶│ Assembly │
-└────────┘         ╰─────╯   ╚════╝            └─────┘   └──────────┘
+picture: diagram
 
-     ●
-     │
-     │
-     ▼
- ╭──────╮
- │ Idle │
- ╰──┬───╯
-    │ ▲
-    │ ╰╮ stop
-    │ start
-    ▼  │
-╭──────┴──╮
-│ Running │
-╰────┬────╯
-     │
-     │
-     ▼
-     ◉
+picture: diagram
 
   ╭──────╮         ╭──────╮      ╭────────╮
   │ User │         │ blit │      │ clangd │
@@ -61,4 +42,11 @@ mermaid: classDiagram is not drawn yet: shown as text
                                                                                                     mermaid
  classDiagram
    A <|-- B
+
+
+mermaid: line 3: an arrow is wanted at "-> C"
+                                                                                                    mermaid
+ graph TD
+   A --> B
+   B -> C
 

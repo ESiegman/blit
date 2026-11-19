@@ -1,8 +1,8 @@
 #pragma once
 // Markdown, drawn as cells: headings, paragraphs with their emphasis, code
 // and links, lists (and task lists), quotes, tables, code blocks, rules, and
-// Mermaid diagrams (mermaid.hpp), laid out to a width, with room left for
-// pictures. What blit's preview tab shows (appmarkdown.cpp); nothing here
+// Mermaid diagrams (as pictures: diagram.hpp; or cells: mermaid.hpp), laid
+// out to a width, with room left for pictures. What blit's preview tab shows (appmarkdown.cpp); nothing here
 // knows about the window, or reads a picture.
 #include <functional>
 #include <string>
@@ -93,8 +93,17 @@ using MdPictureFn = std::function<bool(const std::string& src, u32 room, u32 wan
 // stays in kMdCode.
 using MdCodeFn = std::function<bool(std::string_view lang, std::string_view code, std::vector<u8>* inks)>;
 
+// A Mermaid diagram (a ```mermaid block's text) drawn as a picture at
+// most `room` columns wide. kMdDiagramPicture: drawn, its size in `out`
+// (its src the picture's name); kMdDiagramError: a mistake in it, why in
+// `note` (its code is shown, under that); kMdDiagramCells: not a kind drawn
+// as a picture (drawn in cells, if it is a kind drawn at all);
+// kMdDiagramLater: not drawn yet (its code is shown until it is).
+enum MdDiagram : u8 { kMdDiagramCells, kMdDiagramPicture, kMdDiagramError, kMdDiagramLater };
+using MdDiagramFn = std::function<u8(std::string_view source, u32 room, MdPic* out, std::string* note)>;
+
 // The text drawn `width` columns wide.
-std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn& picture = {}, const MdCodeFn& code = {});
+std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn& picture = {}, const MdCodeFn& code = {}, const MdDiagramFn& diagram = {});
 // Code drawn as a fenced block of it in `lang` is (without the language's
 // name over it), and a table as one in Markdown is, its first row the
 // header; align, for each column: -1 left, 0 centre, 1 right. The table's

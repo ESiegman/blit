@@ -14,6 +14,7 @@
 #include <climits>
 #include <cmath>
 #include <limits>
+#include <map>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -29,6 +30,7 @@
 
 #include "buffer.hpp"
 #include "config.hpp"
+#include "diagram.hpp"
 #include "raster.hpp"
 #include "dap.hpp"
 #include "editor.hpp"
@@ -2223,6 +2225,121 @@ void raster_test() {
         double s, c;
         raster_sincos(a, &s, &c);
         if (std::fabs(s - std::sin(a)) > 1e-12 || std::fabs(c - std::cos(a)) > 1e-12) fail("raster: its own sine and cosine", 0, 0);
+    }
+}
+
+// Flowcharts and state diagrams laid out (diagram.hpp, with the measure of
+// a font that could not be opened: a monospace one): no two nodes over
+// each other, labels clear of nodes, each edge ending on its nodes'
+// borders and passing no other node, subgraphs nested or apart; the same
+// pixels each time it is drawn; mistakes said with their line.
+void diagram_test() {
+    auto check = [](bool ok, const std::string& what) {
+        if (!ok) fail(what.c_str(), 0, 0);
+    };
+    DiagramFont font;
+    font.open("", 0);
+    DiagramStyle st;
+    st.font = &font;
+    st.size = 13;
+    st.room = 2000;
+    for (u32 i = 0; i < kMdInkCount; ++i) st.palette.ink[i][0] = st.palette.ink[i][1] = st.palette.ink[i][2] = 0.9f;
+    const char* const sources[] = {
+        "graph TD\n A[Start] --> B{Ready?}\n B -->|yes| C(Go)\n B -->|no| D[Wait]\n D --> B\n",
+        "flowchart LR\n src[Source] -->|parse| ast((AST)) --> ir[[IR]]\n ir -. optimize .-> ir2[IR'] ==> asm>Assembly]\n",
+        "flowchart BT\n a --> b & c --> d\n d --> a\n c -- a long label on it --> e[(Disk)]\n",
+        "flowchart RL\n a{{one}} --> b[/two/] --> c[\\three\\] --> d[/four\\] --> e[\\five/] --> f(((six))) --> g([seven])\n g --> a\n",
+        "flowchart TB\n c1-->a2\n subgraph one\n a1-->a2\n end\n subgraph two\n b1-->b2\n end\n subgraph three\n c1-->c2\n end\n one --> two\n three --> two\n two --> c2\n",
+        "flowchart LR\n subgraph TOP\n direction TB\n subgraph B1\n direction RL\n i1 -->f1\n end\n subgraph B2\n direction BT\n i2 -->f2\n end\n end\n A --> TOP --> B\n B1 --> B2\n",
+        "flowchart TD\n x --> x\n x -->|again| x\n x <--> y\n y o--o z\n z --x x\n y ---> w\n",
+        "stateDiagram-v2\n [*] --> Still\n Still --> [*]\n Still --> Moving\n Moving --> Still\n Moving --> Crash\n Crash --> [*]\n"
+        " state Moving {\n [*] --> Slow\n Slow --> Fast : speed up\n }\n state fork_state <<fork>>\n Still --> fork_state\n fork_state --> State2\n fork_state --> State3\n"
+        " state join_state <<join>>\n State2 --> join_state\n State3 --> join_state\n join_state --> Crash\n state if_state <<choice>>\n Crash --> if_state\n"
+        " if_state --> Still : if n < 0\n note right of Crash : Important\n",
+    };
+    for (const char* src : sources) {
+        Drawing d;
+        DiagramGeometry geo;
+        std::string err;
+        check(diagram_make(src, st, &d, &err, &geo) == kDiagramDrawn, std::string("diagram: drawn: ") + src);
+        const std::string what = std::string(" (") + src + ")";
+        std::map<std::string, DiagramGeometry::Box> nodes;
+        std::vector<DiagramGeometry::Box> labels, clusters;
+        for (const auto& b : geo.boxes) {
+            if (b.kind == "node") nodes[b.name] = b;
+            else if (b.kind == "label") labels.push_back(b);
+            else clusters.push_back(b);
+            check(b.x >= 0 && b.y >= 0 && b.x + b.w <= d.w + 0.01f && b.y + b.h <= d.h + 0.01f, "diagram: everything within the picture" + what);
+        }
+        auto apart = [](const DiagramGeometry::Box& a, const DiagramGeometry::Box& b, float gap) {
+            return a.x + a.w + gap <= b.x || b.x + b.w + gap <= a.x || a.y + a.h + gap <= b.y || b.y + b.h + gap <= a.y;
+        };
+        for (auto a = nodes.begin(); a != nodes.end(); ++a)
+            for (auto b = std::next(a); b != nodes.end(); ++b) check(apart(a->second, b->second, 1), "diagram: nodes " + a->first + " and " + b->first + " apart" + what);
+        for (const auto& l : labels)
+            for (const auto& [name, n] : nodes) check(apart(l, n, 0), "diagram: label " + l.name + " clear of node " + name + what);
+        for (size_t i = 0; i < clusters.size(); ++i)
+            for (size_t j = i + 1; j < clusters.size(); ++j) {
+                const auto &a = clusters[i], &b = clusters[j];
+                auto within = [](const DiagramGeometry::Box& o, const DiagramGeometry::Box& in) { return in.x >= o.x && in.y >= o.y && in.x + in.w <= o.x + o.w && in.y + in.h <= o.y + o.h; };
+                check(apart(a, b, 0) || within(a, b) || within(b, a), "diagram: subgraphs nested or apart" + what);
+            }
+        auto box_of = [&](const std::string& name, DiagramGeometry::Box* out) {
+            if (const auto it = nodes.find(name); it != nodes.end()) return *out = it->second, true;
+            for (const auto& c : clusters)
+                if (c.name == name) return *out = c, true;
+            return false;
+        };
+        for (const auto& l : geo.lines) {
+            DiagramGeometry::Box a, b;
+            check(box_of(l.from, &a) && box_of(l.to, &b) && l.pts.size() >= 2, "diagram: an edge's ends are known" + what);
+            // On the border: within the box (a little more), and no deeper in
+            // it than a slanted or round side's border is.
+            auto on = [](const DiagramGeometry::Box& bx, RasterPoint p) {
+                const float in = std::min({p.x - bx.x, bx.x + bx.w - p.x, p.y - bx.y, bx.y + bx.h - p.y});
+                return in >= -1.0f && in <= std::max(1.5f, 0.3f * std::min(bx.w, bx.h));
+            };
+            check(on(a, l.pts.front()) && on(b, l.pts.back()), "diagram: edge " + l.from + " to " + l.to + " ends on its nodes" + what);
+            if (l.from == l.to) continue;
+            for (size_t k = 1; k + 1 < l.pts.size(); ++k)
+                for (const auto& [name, n] : nodes) {
+                    if (name == l.from || name == l.to) continue;
+                    const RasterPoint p = l.pts[k];
+                    const bool inside = p.x > n.x + 2 && p.x < n.x + n.w - 2 && p.y > n.y + 2 && p.y < n.y + n.h - 2;
+                    check(!inside, "diagram: edge " + l.from + " to " + l.to + " passes clear of " + name + what);
+                }
+        }
+        RasterImage one(static_cast<int>(d.w) + 1, static_cast<int>(d.h) + 1), two(static_cast<int>(d.w) + 1, static_cast<int>(d.h) + 1);
+        diagram_paint(d, 1, font, &one);
+        diagram_paint(d, 1, font, &two);
+        bool any = false;
+        for (size_t k = 3; k < one.pixels().size() && !any; k += 4) any = one.pixels()[k] != 0;
+        check(any && one.pixels() == two.pixels(), "diagram: drawn, the same pixels each time" + what);
+    }
+    // An edge's end exactly on a rectangle's border.
+    {
+        Drawing d;
+        DiagramGeometry geo;
+        std::string err;
+        diagram_make("graph TD\n A[aaaa] --> B[bbbb]\n", st, &d, &err, &geo);
+        float bottom = 0, top = 0;
+        for (const auto& b : geo.boxes) {
+            if (b.name == "A") bottom = b.y + b.h;
+            if (b.name == "B") top = b.y;
+        }
+        check(geo.lines.size() == 1 && std::fabs(geo.lines[0].pts.front().y - bottom) < 0.05f && std::fabs(geo.lines[0].pts.back().y - top) < 0.05f,
+              "diagram: an edge from the bottom of one box to the top of the next");
+    }
+    {
+        Drawing d;
+        std::string err;
+        check(diagram_make("graph TD\n A --> B\n B -> \n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: a mistake, with its line");
+        check(diagram_make("sequenceDiagram\n A->>B: hi\n", st, &d, &err) == kDiagramNone, "diagram: a kind not drawn as a picture");
+        check(diagram_make("---\ntitle: Hello\n---\ngraph LR\n a --> b\n", st, &d, &err) == kDiagramDrawn, "diagram: front matter's title");
+        std::string big = "graph TD\n";
+        for (int k = 0; k < 400; ++k) big += " n" + std::to_string(k) + " --> n" + std::to_string((k * 7 + 3) % 400) + "\n";
+        const u64 t0 = now_ns();
+        check(diagram_make(big, st, &d, &err) == kDiagramDrawn && now_ns() - t0 < 20'000'000'000ull, "diagram: 400 nodes in a tangle, laid out in time");
     }
 }
 
@@ -6554,6 +6671,7 @@ int main(int argc, char** argv) {
     highlights_test();
     syntax_test();
     raster_test();
+    diagram_test();
 #if !defined(_WIN32)
     std::system(("rm -rf '" + scratch + "'").c_str());
 #endif

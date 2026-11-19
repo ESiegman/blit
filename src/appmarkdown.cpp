@@ -19,10 +19,18 @@
 // Typing in one cell draws only that one again: the worker keeps the rest
 // (NbCache), and each output's pictures are written to blit's cache once,
 // named by what is in them, and shown from there as any picture is.
+//
+// Mermaid diagrams are laid out and drawn on that thread too, as pictures
+// (diagram.hpp), in the theme's colours and the editor's font, at the size
+// they are shown at. The worker keeps the diagrams it drew lately, so that
+// typing elsewhere in the file never draws one again; the preview hands
+// their pixels to the pictures (appimage.cpp) by a name made from all that
+// went into them.
 #include <SDL3/SDL.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cctype>
 #include <cmath>
 #include <chrono>
@@ -35,6 +43,7 @@
 
 #include "app.hpp"
 #include "fsio.hpp"
+#include "diagram.hpp"
 #include "markdown.hpp"
 #include "nbview.hpp"
 #include "remote.hpp"
@@ -43,6 +52,14 @@
 #include "utf8.hpp"
 
 namespace blit {
+
+// A diagram drawn: its pixels (or the mistake in it).
+struct MdDiagramPicture {
+    std::vector<u8> rgba;
+    int w = 0, h = 0;
+    std::string error;
+    u64 used = 0;  // (the worker's count when it was last asked for)
+};
 
 struct MdView {
     u64 source = 0;  // the document it shows
@@ -56,13 +73,14 @@ struct MdView {
     // width and height, and the pictures' generation (asked again when one
     // of them changes); how many times rows have come; whether they have
     // just come.
-    u64 asked_rev = ~0ull, asked_pictures = ~0ull;
+    u64 asked_rev = ~0ull, asked_pictures = ~0ull, asked_look = 0;
     u32 asked_width = 0, asked_tall = 0;
     bool asked_web = false;
     u64 renders = 0;
     bool fresh = false;
     std::string base;               // the folder its pictures are found from
     std::vector<std::string> pics;  // the pictures its text names (their files)
+    std::map<std::string, std::shared_ptr<const MdDiagramPicture>> diagrams;  // its diagrams' pictures, by name
     const ThemeColors* coloured = nullptr;  // the theme its colours were taken from
     float coloured_bg[3] = {-1, -1, -1};
     u32 top = 0;           // the first row shown
@@ -272,6 +290,11 @@ struct App::MdWorker {
         // their outputs (notebook.hpp), its code in this language.
         std::shared_ptr<const std::vector<NotebookCell>> notebook;
         std::string lang;
+        // Diagrams: the colours, the font (its file, and its size in pixels).
+        DiagramPalette palette;
+        std::string font_path;
+        int font_index = 0;
+        float font_px = 26;
     };
     struct Done {
         u64 view = 0, rev = 0, pictures = 0;
@@ -279,6 +302,7 @@ struct App::MdWorker {
         std::vector<MdRow> rows;
         std::vector<u32> heads;  // a notebook's: each cell's first line
         std::vector<std::string> wanted;  // pictures it names that were not known yet
+        std::map<std::string, std::shared_ptr<const MdDiagramPicture>> diagrams;
     };
     std::mutex mu;
     std::condition_variable_any cv;
@@ -291,6 +315,12 @@ struct App::MdWorker {
     // as they were. Only the worker uses it.
     std::map<std::string, std::vector<u8>> coloured;
     std::map<u64, NbCache> notebooks;  // (each notebook view's: its cells as drawn last)
+    // Diagrams drawn lately, by all that went into them; the font they
+    // are drawn in (the worker's own). Only the worker uses them.
+    std::map<u64, std::shared_ptr<MdDiagramPicture>> drawn;
+    u64 asked = 0;
+    std::atomic<u64> laid = 0;  // how many it has laid out (for the tests: not one again when it has not changed)
+    DiagramFont font;
     std::jthread worker;
 
     MdWorker() {
@@ -304,7 +334,66 @@ struct App::MdWorker {
     // The rows of a job's text. A picture's size: one of its pixels to a
     // point (or the size the text asks for), made smaller to fit across,
     // and to fit in the view.
-    static Done draw(Job& j, std::map<std::string, std::vector<u8>>* coloured = nullptr, NbCache* nb = nullptr) {
+    // A diagram's picture: the one drawn before, if nothing that went into
+    // it has changed; else laid out and drawn now, as wide as the room
+    // across (at most), at the display's density.
+    std::shared_ptr<MdDiagramPicture> diagram(const Job& j, std::string_view src, u32 room, u64* key, bool* cells) {
+        u64 h = 1469598103934665603ull;
+        auto mix = [&](const void* p, size_t n) {
+            for (size_t i = 0; i < n; ++i) h = (h ^ static_cast<const u8*>(p)[i]) * 1099511628211ull;
+        };
+        const float room_px = static_cast<float>(room) * static_cast<float>(j.cw);
+        mix(src.data(), src.size());
+        mix(&j.palette, sizeof j.palette);
+        mix(j.font_path.data(), j.font_path.size());
+        mix(&j.font_index, sizeof j.font_index), mix(&j.font_px, sizeof j.font_px), mix(&room_px, sizeof room_px), mix(&j.density, sizeof j.density);
+        *key = h;
+        *cells = false;
+        ++asked;
+        if (const auto it = drawn.find(h); it != drawn.end()) {
+            it->second->used = asked;
+            return it->second;
+        }
+        font.open(j.font_path, j.font_index);
+        ++laid;
+        const float density = static_cast<float>(std::max(1.0, j.density));
+        DiagramStyle st;
+        st.font = &font;
+        st.size = j.font_px / density;
+        st.room = room_px / density;
+        st.palette = j.palette;
+        Drawing d;
+        auto pic = std::make_shared<MdDiagramPicture>();
+        const u8 made = diagram_make(src, st, &d, &pic->error);
+        if (made == kDiagramNone) {
+            *cells = true;
+            return nullptr;
+        }
+        if (made == kDiagramDrawn) {
+            // As wide as it is, or the room; and no side more than a picture may have.
+            float scale = std::min(1.0f, st.room / std::max(1.0f, d.w)) * density;
+            scale = std::min({scale, 4096 / std::max(1.0f, d.w), 4096 / std::max(1.0f, d.h)});
+            RasterImage img(std::max(1, static_cast<int>(std::ceil(d.w * scale))), std::max(1, static_cast<int>(std::ceil(d.h * scale))));
+            diagram_paint(d, scale, font, &img);
+            pic->w = img.w(), pic->h = img.h();
+            pic->rgba = std::move(img.pixels());
+        }
+        pic->used = asked;
+        // At most so many kept (the least lately asked for let go first).
+        size_t bytes = pic->rgba.size();
+        for (const auto& [k, p] : drawn) bytes += p->rgba.size();
+        while (!drawn.empty() && (drawn.size() >= 48 || bytes > (96u << 20))) {
+            auto oldest = drawn.begin();
+            for (auto it = drawn.begin(); it != drawn.end(); ++it)
+                if (it->second->used < oldest->second->used) oldest = it;
+            bytes -= oldest->second->rgba.size();
+            drawn.erase(oldest);
+        }
+        drawn[h] = pic;
+        return pic;
+    }
+
+    static Done draw(Job& j, std::map<std::string, std::vector<u8>>* coloured = nullptr, MdWorker* self = nullptr, NbCache* nb = nullptr) {
         Done d;
         d.view = j.view, d.rev = j.rev, d.pictures = j.pictures, d.width = j.width, d.tall = j.tall;
         const NbPictureFn sized = [&](const std::string& s, u32 room, u32 want_w, u32 want_h, MdPic* out) {
@@ -351,6 +440,26 @@ struct App::MdWorker {
             coloured->emplace(std::move(key), *inks);
             return true;
         };
+        // Diagrams: drawn on the worker only (the first, quick drawing shows their code).
+        const MdDiagramFn diagram = [&](std::string_view src, u32 room, MdPic* out, std::string* note) -> u8 {
+            if (!self) return kMdDiagramLater;
+            u64 key = 0;
+            bool cells = false;
+            const std::shared_ptr<MdDiagramPicture> pic = self->diagram(j, src, room, &key, &cells);
+            if (cells || !pic) return kMdDiagramCells;
+            if (!pic->error.empty() || pic->rgba.empty()) {
+                *note = pic->error.empty() ? "nothing to draw" : pic->error;
+                return kMdDiagramError;
+            }
+            char name[40];
+            std::snprintf(name, sizeof name, "diagram:%016llx", static_cast<unsigned long long>(key));
+            out->src = name;
+            out->w = static_cast<u32>(pic->w), out->h = static_cast<u32>(pic->h);
+            out->cols = (out->w + static_cast<u32>(j.cw) - 1) / static_cast<u32>(j.cw);
+            out->rows = (out->h + static_cast<u32>(j.ch) - 1) / static_cast<u32>(j.ch);
+            d.diagrams[name] = pic;
+            return kMdDiagramPicture;
+        };
         if (j.notebook) {
             NbLook look;
             look.width = j.width;
@@ -364,7 +473,7 @@ struct App::MdWorker {
             for (const CellLines& c : notebook_cell_lines(j.text)) d.heads.push_back(static_cast<u32>(c.head));
             return d;
         }
-        d.rows = md_render(j.text, j.width, size, j.colour && coloured ? colour : MdCodeFn{});
+        d.rows = md_render(j.text, j.width, size, j.colour && coloured ? colour : MdCodeFn{}, diagram);
         return d;
     }
     void run(std::stop_token st) {
@@ -379,7 +488,7 @@ struct App::MdWorker {
                 busy = j.view;
             }
             if (j.notebook && !notebooks.contains(j.view) && notebooks.size() >= 8) notebooks.clear();  // (views gone, mostly)
-            Done d = draw(j, &coloured, j.notebook ? &notebooks[j.view] : nullptr);
+            Done d = draw(j, &coloured, this, j.notebook ? &notebooks[j.view] : nullptr);
             {
                 std::lock_guard l(mu);
                 busy = 0;
@@ -404,6 +513,8 @@ void App::md_sync() {
         MdView& v = *doc->md;
         v.rows = std::move(d.rows);
         v.heads = std::move(d.heads);
+        v.diagrams = std::move(d.diagrams);
+        for (const auto& [name, pic] : v.diagrams) picture_made(name, pic->rgba.data(), pic->w, pic->h);
         ++v.renders;
         v.fresh = true;
         for (const std::string& path : d.wanted) {
@@ -551,8 +662,19 @@ void App::md_layout(FrameDesc& fd) {
         const u32 width = cols > 2 * kMargin + 12 ? cols - 2 * kMargin : cols;
         u64 nb_gen = 0;  // (a notebook's outputs: how many times they have changed)
         if (v.notebook && src) nb_model(*src, &nb_gen);
-        // Its text handed to the worker when it, the width or the height change, or a picture comes.
-        if (src && (src->ed.revision() != v.asked_rev || width != v.asked_width || rows != v.asked_tall || pictures_gen_ != v.asked_pictures || cfg_.markdown_web_pictures != v.asked_web || nb_gen != v.asked_nb)) {
+        // How its diagrams look: the colours, the font, the display's density.
+        u64 look = 1469598103934665603ull;
+        {
+            auto mix = [&](const void* p, size_t n) {
+                for (size_t i = 0; i < n; ++i) look = (look ^ static_cast<const u8*>(p)[i]) * 1099511628211ull;
+            };
+            mix(v.palette, sizeof v.palette), mix(theme_.bg, sizeof(float) * 3), mix(font.path().data(), font.path().size());
+            const float px = font.px();
+            mix(&px, sizeof px), mix(&density_, sizeof density_);
+        }
+        // Its text handed to the worker when it, the width or the height change, a picture comes, a notebook's outputs change, or the diagrams' look changes.
+        if (src && (src->ed.revision() != v.asked_rev || width != v.asked_width || rows != v.asked_tall || pictures_gen_ != v.asked_pictures || cfg_.markdown_web_pictures != v.asked_web ||
+                    nb_gen != v.asked_nb || look != v.asked_look)) {
             if (!md_worker_) md_worker_ = std::make_shared<MdWorker>();
             v.base = !src->ed.path.empty() ? parent_of(full_path(src->ed.path)) : std::string();
             MdWorker::Job j;
@@ -571,7 +693,10 @@ void App::md_layout(FrameDesc& fd) {
             j.syntax.query_dirs = cfg_.query_dirs;
             j.grammars = cfg_.grammars;
             if (v.notebook && !nb_model(*src, &nb_gen, &j.notebook, &j.lang)) j.notebook = std::make_shared<const std::vector<NotebookCell>>();
-            v.asked_rev = j.rev, v.asked_width = width, v.asked_tall = rows, v.asked_pictures = j.pictures, v.asked_web = j.web, v.asked_nb = nb_gen;
+            for (u32 i = 0; i < kMdInkCount; ++i) std::copy(v.palette[i], v.palette[i] + 3, j.palette.ink[i]);
+            std::copy(theme_.bg, theme_.bg + 3, j.palette.bg);
+            j.font_path = font.path(), j.font_index = font.index(), j.font_px = font.px();
+            v.asked_rev = j.rev, v.asked_width = width, v.asked_tall = rows, v.asked_pictures = j.pictures, v.asked_web = j.web, v.asked_nb = nb_gen, v.asked_look = look;
             // (the first time: at once, so that it opens drawn; its code is
             // coloured on the worker. A notebook's, only there: its pictures
             // are written out as it is drawn.)
@@ -581,7 +706,8 @@ void App::md_layout(FrameDesc& fd) {
                 std::lock_guard l(md_worker_->mu);
                 md_worker_->done.push_back(std::move(d));
             }
-            if (!first || v.notebook || (j.colour && (j.text.find("```") != std::string::npos || j.text.find("~~~") != std::string::npos))) {
+            const bool fences = j.text.find("```") != std::string::npos || j.text.find("~~~") != std::string::npos;
+            if (!first || v.notebook || (fences && (j.colour || j.text.find("mermaid") != std::string::npos))) {
                 std::lock_guard l(md_worker_->mu);
                 md_worker_->todo[j.view] = std::move(j);
                 ++md_worker_->posted;
@@ -676,9 +802,16 @@ void App::md_layout(FrameDesc& fd) {
             for (const MdPic& pic : v.rows[v.top + k].pics) {
                 if ((pic.part != 0 && k != 0) || fd.picture_count >= std::size(fd.pictures)) continue;
                 const u32 r = k + top_row;
-                const std::string path = picture_source(v.base, pic.src, cfg_.markdown_web_pictures);
-                if (path.empty()) continue;
-                const PictureInfo* p = picture(path);
+                const PictureInfo* p = nullptr;
+                std::string path;
+                if (const auto made = v.diagrams.find(pic.src); made != v.diagrams.end()) {  // (a diagram's)
+                    path = pic.src;
+                    p = picture_made(path, made->second->rgba.data(), made->second->w, made->second->h);
+                } else {
+                    path = picture_source(v.base, pic.src, cfg_.markdown_web_pictures);
+                    if (path.empty()) continue;
+                    p = picture(path);
+                }
                 if (p->state != PictureInfo::kReady) continue;
                 const u32 image = picture_gpu(path, pic.w, pic.h);
                 PictureDraw& d = fd.pictures[fd.picture_count++];
@@ -897,6 +1030,75 @@ std::string App::nb_view_dump() {
         return out;
     }
     return "no notebook view\n";
+}
+
+// The preview in front's Mermaid diagrams, laid out as its worker lays
+// them out (for the tests): each one's size in points (or why it is not a
+// picture), then where its nodes, subgraphs and labels are, and points
+// along each edge, its ends first and last.
+std::string App::md_diagram_dump() {
+    md_wait();
+    for (const std::unique_ptr<Pane>& p : panes_) {
+        if (!p->doc || !p->doc->md) continue;
+        const MdView& v = *p->doc->md;
+        const Doc* src = find_doc(v.source);
+        if (!src) return "no file\n";
+        DiagramFont f;
+        f.open(font_->path(), font_->index());
+        DiagramStyle st;
+        st.font = &f;
+        const float density = std::max(1.0f, static_cast<float>(density_));
+        st.size = font_->px() / density;
+        st.room = static_cast<float>(v.asked_width) * static_cast<float>(font_->cell_w()) / density;
+        for (u32 i = 0; i < kMdInkCount; ++i) std::copy(v.palette[i], v.palette[i] + 3, st.palette.ink[i]);
+        std::copy(theme_.bg, theme_.bg + 3, st.palette.bg);
+        const std::string text = src->ed.buf.text(0, src->ed.buf.size());
+        std::string out = "laid out " + std::to_string(md_worker_ ? md_worker_->laid.load() : 0) + "\n", block;
+        // The pictures on show: their sizes and a hash of their pixels (the
+        // same on every system, for the same font file).
+        std::vector<std::string> pics;
+        for (const auto& [name, pic] : v.diagrams) {
+            u64 h = 1469598103934665603ull;
+            for (const u8 b : pic->rgba) h = (h ^ b) * 1099511628211ull;
+            char line[80];
+            std::snprintf(line, sizeof line, "picture %dx%d %016llx\n", pic->w, pic->h, static_cast<unsigned long long>(h));
+            pics.emplace_back(line);
+        }
+        std::sort(pics.begin(), pics.end());
+        for (const std::string& l : pics) out += l;
+        bool in = false;
+        int n = 0;
+        for (size_t at = 0; at < text.size();) {
+            const size_t nl = std::min(text.find('\n', at), text.size());
+            const std::string_view line = diagram_trim(std::string_view(text).substr(at, nl - at));
+            at = nl + 1;
+            if (!in) {
+                in = line.starts_with("```mermaid") || line.starts_with("~~~mermaid");
+                block.clear();
+                continue;
+            }
+            if (!line.starts_with("```") && !line.starts_with("~~~")) {
+                block += std::string(line) + "\n";
+                continue;
+            }
+            in = false;
+            Drawing d;
+            DiagramGeometry geo;
+            std::string err;
+            const u8 made = diagram_make(block, st, &d, &err, &geo);
+            char head[96];
+            std::snprintf(head, sizeof head, "diagram %d ", ++n);
+            out += head;
+            if (made == kDiagramDrawn) {
+                std::snprintf(head, sizeof head, "%.0fx%.0f\n", static_cast<double>(d.w), static_cast<double>(d.h));
+                out += head + geo.dump();
+            } else {
+                out += made == kDiagramError ? "error: " + err + "\n" : std::string("cells\n");
+            }
+        }
+        return out;
+    }
+    return "no preview\n";
 }
 
 }  // namespace blit

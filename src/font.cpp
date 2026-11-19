@@ -455,6 +455,7 @@ bool Font::init(const FontSpec& spec, std::string* err, std::string* warnings) {
         return false;
     }
     family_ = face_->family_name ? face_->family_name : "";
+    index_ = index;
     px_ = spec.px;
     if (FT_Set_Char_Size(face_, 0, static_cast<FT_F26Dot6>(std::lround(px_ * 64)), 72, 72)) {
         if (err) *err = "font has no scalable outlines: " + path_;

@@ -368,6 +368,24 @@ const PictureInfo* App::picture(const std::string& path) {
     return &it->second;
 }
 
+const PictureInfo* App::picture_made(const std::string& name, const u8* rgba, int w, int h) {
+    if (!pictures_) pictures_ = std::make_shared<Pictures>();
+    auto it = pictures_->known.find(name);
+    if (it == pictures_->known.end()) {
+        PictureInfo p;
+        p.made = true;
+        p.gpu = gpu_.image_add(rgba, w, h);
+        p.state = p.gpu ? PictureInfo::kReady : PictureInfo::kFailed;
+        p.w = p.full_w = w, p.h = p.full_h = h;
+        p.clear = true;
+        p.kind = "diagram";
+        p.bytes = static_cast<u64>(w) * static_cast<u64>(h) * 4;
+        it = pictures_->known.emplace(name, std::move(p)).first;
+    }
+    it->second.used_ns = now_ns();
+    return &it->second;
+}
+
 namespace {
 
 // An animation's frames, let go of on the GPU.
@@ -538,7 +556,7 @@ void App::picture_due(u64 at_ns) {
 void App::picture_recheck() {
     if (!pictures_) return;
     for (auto& [path, p] : pictures_->known) {
-        if (p.state == PictureInfo::kReading || p.again || is_remote(path)) continue;
+        if (p.state == PictureInfo::kReading || p.again || p.made || is_remote(path)) continue;
         if (stamp_of(path) == p.stamp) continue;
         p.again = true;
         pictures_->want({path});

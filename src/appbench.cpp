@@ -1314,6 +1314,8 @@ void App::run_script(const char* script) {
             std::fputs(md_dump().c_str(), stderr);
         } else if (verb == "mdinks") {  // and each of their runs in its colour
             std::fputs(md_dump(true).c_str(), stderr);
+        } else if (verb == "diagramdump") {  // the preview's diagrams as laid out: boxes of nodes, subgraphs and labels, points along edges
+            std::fputs(md_diagram_dump().c_str(), stderr);
         } else if (verb == "imagewait") {  // every picture asked for has been read (10 s at most)
             picture_wait();
         } else if (verb == "imagedump") {  // the image tab in front: what it shows, and how

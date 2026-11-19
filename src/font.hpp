@@ -74,6 +74,7 @@ public:
     u32 atlas_shift() const { return shift_; }  // log2(atlas_cols)
     const u8* pixels() const { return pixels_; }
     const std::string& path() const { return path_; }
+    int index() const { return index_; }  // (the face's, in its file)
     const std::string& family() const { return family_; }
     float px() const { return px_; }
 
@@ -282,6 +283,7 @@ private:
     std::unordered_set<u32> asked_;  // characters fontconfig has been asked for a font for
 #endif
     std::string path_, family_;
+    int index_ = 0;
     float px_ = 0;
     int load_flags_ = 0;
 
