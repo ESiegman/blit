@@ -61,6 +61,17 @@ check "plain text has none to miss" 'notes.txt | Ln 1, Col 1 Tabs LF Plain text'
 INIT="$dir/plain.lua"
 run "statusdump" "$W/src/main.cpp"
 check "nor has a file with colours turned off (syntax.enabled = false)" 'NORMAL src/main.cpp | Ln 1, Col 1 Spaces: 2 LF C++'
+# Where the cursor is, a key at a time (the bar made again only where it
+# says so, when nothing else changed), and what is drawn of it.
+run "text:x;frame;text:y;frame;key:Down;frame;key:Left;frame;key:shift+Right;frame;key:shift+Right;frame;statusdump" "$W/notes.txt"
+check "typed, moved and selected a frame at a time" 'notes.txt ● | Ln 2, Col 4 (2 selected) Tabs LF Plain text'
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.minimap = false\nblit.opt.editor.spell_check = false\nblit.opt.look.animations = false\nblit.opt.look.cursor_glide_ms = 0\n' >"$dir/still.lua"
+barshot() {
+    BLIT_INIT="$dir/still.lua" "$blit" --offscreen 1400x700 --shot "$dir/$1.bmp" --script "workdir:$W;$2" "$W/notes.txt" >/dev/null 2>&1
+}
+barshot steps "frame;text:x;frame;text:y;frame;key:Down;frame;key:Left;frame;key:shift+Right;frame;key:shift+Right;frame"
+barshot once "text:x;text:y;key:Down;key:Left;key:shift+Right;key:shift+Right"
+cmp -s "$dir/steps.bmp" "$dir/once.bmp" || { echo "FAIL: the bar drawn a key at a time, as drawn once at the end"; failed=1; }
 
 # The command that gets a grammar, with the installer blit has.
 run "command:Install the grammar" "$W/notes.txt"

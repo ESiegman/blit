@@ -117,6 +117,11 @@ struct App::StatusUi {
         std::string_view text;  // (its part's, in left or right: they stay as they are until the spots are made again)
     };
     std::vector<Spot> spots;
+    // Where the cursor is: what it was made from, its part in `right`, and
+    // the columns it took.
+    u64 at_key = 0;
+    size_t at_seg = ~size_t{0};
+    u32 at_c0 = 0, at_w = 0;
     // The language of a file, kept for it (it looks at the file's name and
     // first line), and whether its grammar is missing (that looks at the disk).
     u64 lang_doc = ~0ull, colours_key = ~0ull;
@@ -162,7 +167,6 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
     auto mix = [&](u64 v) { key = (key ^ v) * 1099511628211ull; };
     const u64 path_hash = std::hash<std::string>{}(ed.path);
     mix(d.id);
-    mix(ed.revision());
     mix(ed.modified() ? 1 : 0);
     mix(d.read_only ? 1 : 0);
     mix(d.loading ? 1 : 0);
@@ -173,12 +177,6 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                         std::hash<std::string>{}(d.lang);
     mix(colours);
     mix(ed.crlf() ? 1 : 0);
-    mix(pane_->cur_line);
-    mix(pane_->cur_col);
-    mix(ed.anchor() ^ (ed.cursor() << 1));
-    u64 vlo = 0, vhi = 0;
-    const bool visual = vim_selection(&vlo, &vhi);
-    mix(visual ? vlo * 31 + vhi : 0);
     mix(git_gen_);
     mix(d.hunks_gen);
     mix(lsp_.attached() ? lsp_.diagnostics_generation() * 4 + (lsp_.ready() ? 2 : 1) : 0);
@@ -191,8 +189,53 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
     mix(modal ? vim_.mode() + 1u : 0);
     mix(round ? 1 : 0);
     mix(root ? std::hash<std::string>{}(*root) : 0);
-    if (key != u.key) {
+    // And apart from those, where the cursor is and what is selected (the
+    // text's revision for what that holds): when only these change, as with
+    // every key typed, and the words for them are as wide as they were, they
+    // are written over their old place and nothing else is made again.
+    u64 at_key = 1469598103934665603ull;
+    auto mix_at = [&](u64 v) { at_key = (at_key ^ v) * 1099511628211ull; };
+    mix_at(ed.revision());
+    mix_at(pane_->cur_line);
+    mix_at(pane_->cur_col);
+    mix_at(ed.anchor() ^ (ed.cursor() << 1));
+    u64 vlo = 0, vhi = 0;
+    const bool visual = vim_selection(&vlo, &vhi);
+    mix_at(visual ? vlo * 31 + vhi : 0);
+    auto at_text = [&] {
+        std::string at = "Ln " + count_text(pane_->cur_line + 1) + ", Col " + count_text(static_cast<u64>(pane_->cur_col) + 1);
+        u64 lo = visual ? vlo : std::min(ed.anchor(), ed.cursor()), hi = visual ? vhi : std::max(ed.anchor(), ed.cursor());
+        if (ed.multi()) {  // (more carets than one: how many, for what one has selected says little)
+            at += " (" + count_text(ed.carets().size() + 1) + " carets)";
+        } else if (hi > lo) {
+            const u64 l0 = ed.buf.line_of(lo), l1 = ed.buf.line_of(hi);
+            if (l1 > l0) {
+                at += " (" + count_text(l1 - l0 + 1) + " lines)";
+            } else if (hi - lo <= 65536) {  // (characters, counted; a longer stretch is told in bytes)
+                const std::string t = ed.buf.text(lo, hi - lo);
+                u64 chars = 0;
+                for (const char c : t) chars += (static_cast<u8>(c) & 0xC0) != 0x80;
+                at += " (" + count_text(chars) + " selected)";
+            } else {
+                at += " (" + count_text((hi - lo) >> 10) + " KB selected)";
+            }
+        }
+        return at;
+    };
+    if (key == u.key && at_key != u.at_key && u.at_seg < u.right.size()) {
+        std::string at = at_text();
+        if (width_of(at) == u.at_w) {
+            put(u.box, font, 0, u.at_c0, at, ink::kMuted);
+            Seg& s = u.right[u.at_seg];
+            s.text = std::move(at);
+            for (StatusUi::Spot& spot : u.spots)
+                if (spot.action == kGoLine) spot.text = s.text;
+            u.at_key = at_key;
+        }
+    }
+    if (key != u.key || at_key != u.at_key) {
         u.key = key;
+        u.at_key = at_key;
         u.left.clear();
         u.right.clear();
         // A path as its folders (muted, and shortened from their start first
@@ -343,26 +386,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                 u.right.push_back({err + count_text(errors), errors ? ink::kError : ink::kMuted, kProblemsTab, 2, 4});
                 u.right.push_back({warn + count_text(warnings), warnings ? ink::kWarning : ink::kMuted, kProblemsTab, 1, 4});
             }
-            if (text) {
-                std::string at = "Ln " + count_text(pane_->cur_line + 1) + ", Col " + count_text(static_cast<u64>(pane_->cur_col) + 1);
-                u64 lo = visual ? vlo : std::min(ed.anchor(), ed.cursor()), hi = visual ? vhi : std::max(ed.anchor(), ed.cursor());
-                if (ed.multi()) {  // (more carets than one: how many, for what one has selected says little)
-                    at += " (" + count_text(ed.carets().size() + 1) + " carets)";
-                } else if (hi > lo) {
-                    const u64 l0 = ed.buf.line_of(lo), l1 = ed.buf.line_of(hi);
-                    if (l1 > l0) {
-                        at += " (" + count_text(l1 - l0 + 1) + " lines)";
-                    } else if (hi - lo <= 65536) {  // (characters, counted; a longer stretch is told in bytes)
-                        const std::string t = ed.buf.text(lo, hi - lo);
-                        u64 chars = 0;
-                        for (const char c : t) chars += (static_cast<u8>(c) & 0xC0) != 0x80;
-                        at += " (" + count_text(chars) + " selected)";
-                    } else {
-                        at += " (" + count_text((hi - lo) >> 10) + " KB selected)";
-                    }
-                }
-                u.right.push_back({std::move(at), ink::kMuted, kGoLine, 2, 5});
-            }
+            if (text) u.right.push_back({at_text(), ink::kMuted, kGoLine, 2, 5});
             const u32 step = text ? indent_step() : 0;
             if (text) u.right.push_back({d.indent_tabs ? std::string("Tabs") : "Spaces: " + count_text(step), ink::kMuted, kIndent, 2, 2});
             if (text) u.right.push_back({ed.crlf() ? "CRLF" : "LF", ink::kMuted, kLineEnds, 2, 2});
@@ -442,12 +466,14 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
         }
         const u32 right_w = width(u.right);
         c = cols > right_w ? cols - right_w : 0;
+        u.at_seg = ~size_t{0};
         for (size_t i = 0; i < u.right.size(); ++i) {
             const Seg& s = u.right[i];
             if (i > 0) c += s.gap;
             const u32 c0 = c;
             c = put(u.box, font, 0, c, s.text, s.in);
             if (s.action != kNone) u.spots.push_back({c0, c, s.action, s.text});
+            if (s.action == kGoLine) u.at_seg = i, u.at_c0 = c0, u.at_w = c - c0;
         }
     }
     Popup& p = fd.popups[fd.popup_count++];
