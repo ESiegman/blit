@@ -5445,6 +5445,16 @@ void instance_test() {
 int main(int argc, char** argv) {
     int seeds = argc > 1 ? std::atoi(argv[1]) : 200;
     int steps = argc > 2 ? std::atoi(argv[2]) : 600;
+#if !defined(_WIN32)
+    // A scratch folder of this run's own, as TMPDIR: the tests' files and
+    // folders there have fixed names (blit_git_test, ...), and two runs at
+    // once (two worktrees, two build folders) took them from each other.
+    // (Kept when a test fails, to be looked at.)
+    const char* tmp = std::getenv("TMPDIR");
+    std::string scratch = std::string(tmp && *tmp ? tmp : "/tmp") + "/blit-fuzz-XXXXXX";
+    if (!mkdtemp(scratch.data())) fail("a scratch folder", 0, 0);
+    setenv("TMPDIR", scratch.c_str(), 1);
+#endif
     for (int s = 1; s <= seeds; ++s) run(static_cast<u64>(s), steps);
     for (int s = 1; s <= seeds; ++s) run_editor(static_cast<u64>(s), steps);
     truncated_file_test();
@@ -5478,6 +5488,9 @@ int main(int argc, char** argv) {
     match_test();
     highlights_test();
     syntax_test();
+#if !defined(_WIN32)
+    std::system(("rm -rf '" + scratch + "'").c_str());
+#endif
     std::printf("fuzz ok: %d seeds x %d steps\n", seeds, steps);
     return 0;
 }
