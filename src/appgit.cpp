@@ -1600,6 +1600,48 @@ std::string App::git_merge_dump() {
     return out + " | open " + std::to_string(d.merge->m->open());
 }
 
+// ---------------------------------------------------------------- comparing with a revision
+
+// "Git: Compare the file with…": the file in front against a branch, a tag
+// or a commit chosen from a list (the branches, the tags, then the
+// history's commits, newest first), in a diff tab: what the file has now
+// that it had there. (What is typed and is none of them, a revision git
+// knows, is compared with as it is.)
+void App::git_compare_pick() {
+    GitUi& g = *gitui_;
+    if (!cfg_.git || !g.status.repo) return notify("Not in a git repository");
+    Doc& d = *pane_->doc;
+    if (d.ed.path.empty() || d.gitview || d.term || d.prof || d.loading) return;
+    const std::string rel = in_repo(g.status.root, full_path(d.ed.path));
+    if (rel.empty()) return notify("Not in the repository");
+    std::vector<std::string> revs, rows;
+    for (const GitBranch& b : g.branches) {
+        if (b.current) continue;
+        revs.push_back(b.name);
+        rows.push_back(b.name + "  \xC2\xB7 " + (b.remote ? "remote branch" : "branch"));
+    }
+    for (const std::string& t : g.tags) {
+        revs.push_back(t);
+        rows.push_back(t + "  \xC2\xB7 tag");
+    }
+    for (const GitCommit& c : g.log) {
+        revs.push_back(c.full.empty() ? c.hash : c.full);
+        rows.push_back(c.hash + "  " + c.subject + "  \xC2\xB7 " + c.author + ", " + c.when);
+    }
+    revs.push_back("HEAD");
+    rows.push_back("HEAD  \xC2\xB7 the last commit");
+    const std::string name(name_of(rel));
+    find_choose_item("Compare " + name + " with", std::move(rows), [this, revs, rel, name](int i) {
+        if (i < 0 || static_cast<size_t>(i) >= revs.size()) return;
+        git_compare(revs[static_cast<size_t>(i)], rel);
+    });
+}
+
+void App::git_compare(const std::string& rev, const std::string& rel) {
+    const std::string shown = rev.size() == 40 ? rev.substr(0, 10) : rev;
+    git_open_view({"diff", "--no-ext-diff", "--src-prefix=a/", "--dst-prefix=b/", rev, "--", rel}, std::string(name_of(rel)) + " (against " + shown + ")", kViewOther, rel);
+}
+
 // ---------------------------------------------------------------- a file's history
 
 // The commits that changed the file in front (followed through renames),

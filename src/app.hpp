@@ -1240,7 +1240,9 @@ private:
     std::string git_merge_dump();
     std::string git_searched() const;  // what History is searched for
     std::string git_upstream() const;  // the branch the one checked out follows, if any
-    void git_history(bool lines);  // the file's commits, or the chosen lines', in a diff tab
+    void git_history(bool lines);
+    void git_compare_pick();
+    void git_compare(const std::string& rev, const std::string& rel);  // the file's commits, or the chosen lines', in a diff tab
     std::string git_commit_at(const Doc& d);
     void git_stage_here(bool stage);  // the hunk or the lines chosen at the cursor, in a diff tab or a file
     void git_view_toggle();           // a diff tab in two columns, or back in one

@@ -426,6 +426,9 @@ void App::commands_create() {
             git_command("find", text);
         });
     });
+    own("Git: Compare the file with\xE2\x80\xA6", {}, [this] {
+        if (Commands::git_ready(*this)) git_compare_pick();
+    });
     own("Git: History of all branches", {}, [this] {
         if (!Commands::git_ready(*this)) return;
         Commands::show_tab(*this, Commands::kGit, false);

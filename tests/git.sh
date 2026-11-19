@@ -410,5 +410,18 @@ shot middle "click:600,690;release"
 got="$(cmp -s "$dir/none.bmp" "$dir/branch.bmp" && echo same || echo different) $(cmp -s "$dir/none.bmp" "$dir/middle.bmp" && echo same || echo different)"
 check "a click on the branch opens the Git tab; one on nothing in the bar does nothing" 'different same'
 
+# Compare the file with a revision chosen from a list (branches, tags,
+# commits): the diff of the file now against it, in a tab.
+fresh
+git -C "$dir/ada" tag v1
+printf 'one\ntwo\nthree\nfour\nfive\nsix\n' >"$dir/ada/poem.txt"
+git -C "$dir/ada" commit -q -am "Six"
+printf 'one\nTWO\nthree\nfour\nfive\nsix\n' >"$dir/ada/poem.txt"
+run "$dir/ada/poem.txt" "frame;gitwait;command:Git: Compare the file with;frame;finddump"
+got=$(printf '%s' "$got" | sed -E -e 's/[0-9a-f]{7,}/H/g' -e 's/ada, (just now|now|[0-9]+ [a-z]+ ago)/ada/g')
+check "the branches, the tags, the commits" "pick [] 5 : >origin/main  · remote branch v1  · tag H  Six  · ada H  Start  · ada HEAD  · the last commit"
+view "$dir/ada/poem.txt" "frame;gitwait;command:Git: Compare the file with;frame;text:v1;key:Return;gitwait;gitview"
+check "one chosen: the file now against it" "other poem.txt, one column: 1 hunks, cursor in 1 / diff --git a/poem.txt b/poem.txt / index b2f931a..9642008 100644 / --- a/poem.txt / +++ b/poem.txt / @@ -1,5 +1,6 @@ /  one / [--two-] / {++TWO+} /  three /  four /  five / {++six+}"
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "git ok"
 exit $failed
