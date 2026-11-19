@@ -6,7 +6,7 @@
 
 #if defined(__APPLE__)
 extern "C" {
-void* blit_watch_start(const char* dir, void (*heard)(void* ctx, const char* path, int dir), void* ctx);
+void* blit_watch_start(const char* dir, void (*heard)(void* ctx, const char* path, int what), void* ctx);
 void blit_watch_stop(void* w);
 }
 #elif defined(__linux__)
@@ -50,11 +50,14 @@ struct DirWatch::Impl {
 #if defined(__APPLE__)
     void* mac = nullptr;
 
-    static void heard_mac(void* ctx, const char* path, int dir) {
+    // what: 1 a folder; 2 it and everything under it to be looked at again.
+    static void heard_mac(void* ctx, const char* path, int what) {
         Impl* self = static_cast<Impl*>(ctx);
-        const std::string p = path;
+        std::string p = path;
+        while (p.size() > 1 && p.back() == '/') p.pop_back();
+        if (what & 2) return self->heard(p, true);
         self->heard(parent(p));  // (what changed in a folder: that folder)
-        if (dir) self->heard(p);
+        if (what & 1) self->heard(p);
     }
     void start(const std::string& dir) {
         stop();

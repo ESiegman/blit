@@ -3,7 +3,8 @@
 #include <CoreServices/CoreServices.h>
 #include <stdlib.h>
 
-typedef void (*blit_watch_heard)(void* ctx, const char* path, int dir);
+// what: 1 a folder; 2 it and everything under it to be looked at again.
+typedef void (*blit_watch_heard)(void* ctx, const char* path, int what);
 
 typedef struct {
     FSEventStreamRef stream;
@@ -24,7 +25,11 @@ static void callback(ConstFSEventStreamRef s, void* info, size_t n, void* paths,
     (void)ids;
     BlitWatch* w = (BlitWatch*)info;
     char** p = (char**)paths;
-    for (size_t i = 0; i < n; ++i) w->heard(w->ctx, p[i], (flags[i] & kFSEventStreamEventFlagItemIsDir) != 0);
+    // (Events dropped, by the system or here, or folded together: what
+    // changed under the folder named has to be found by looking.)
+    const FSEventStreamEventFlags lost = kFSEventStreamEventFlagMustScanSubDirs | kFSEventStreamEventFlagUserDropped | kFSEventStreamEventFlagKernelDropped;
+    for (size_t i = 0; i < n; ++i)
+        w->heard(w->ctx, p[i], (flags[i] & lost) ? 2 : (flags[i] & kFSEventStreamEventFlagItemIsDir) ? 1 : 0);
 }
 
 void* blit_watch_start(const char* dir, blit_watch_heard heard, void* ctx) {
