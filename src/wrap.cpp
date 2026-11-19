@@ -17,15 +17,44 @@ void Wrap::detach() {
     count_.clear();
     starts_.clear();
     fen_.clear();
+    notes_.clear();
+    hints_key_ = ~0ull;
 }
 
-void Wrap::breaks(std::string_view t, u32 width, u32 tab, std::vector<u32>* out) {
+namespace {
+
+// Wrap::breaks(), with notes or without (the loop as plain as it can be
+// then: a long line is measured again on every key typed in it).
+template <bool kNotes>
+void line_breaks(std::string_view t, u32 width, u32 tab, std::vector<u32>* out, std::span<const Wrap::Hint> notes) {
     out->clear();
     if (width < 2) return;
     u32 col = 0, row_start = 0, after_space = 0;  // (after_space: where a row may start, past spaces; 0: nowhere yet)
+    // With notes: the columns they have taken so far, and as that was past
+    // the last space; and what the row's room is counted from, where it
+    // starts less the notes in it before here (what was taken at its start,
+    // less what the notes have taken).
+    u64 extra = 0, space_extra = 0;
+    i64 base = 0;
+    size_t k = 0;  // (the next note)
+    u64 next = notes.empty() ? ~0ull : notes[0].off;
+    auto fits = [&](u64 w) { return static_cast<i64>(col + w) - base <= static_cast<i64>(width); };
+    auto new_row = [&](u64 here) {  // (here: what the notes had taken before this column's)
+        if (after_space > row_start) row_start = after_space, base = static_cast<i64>(after_space + space_extra) - static_cast<i64>(extra);
+        else row_start = col, base = static_cast<i64>(col + here) - static_cast<i64>(extra);
+        out->push_back(row_start);
+    };
     Joiner join;
     const u8* p = reinterpret_cast<const u8*>(t.data());
     for (size_t i = 0; i < t.size();) {
+        const u64 here = extra;
+        if (kNotes && i >= next) [[unlikely]] {  // (the notes before this character go on its row: one that does not fit starts a row)
+            for (; k < notes.size() && notes[k].off <= i; ++k) {
+                while (!fits(notes[k].width) && col > row_start) new_row(here);
+                extra += notes[k].width, base -= notes[k].width;
+            }
+            next = k < notes.size() ? notes[k].off : ~0ull;
+        }
         u32 w;
         bool space = false;
         size_t len = 1;
@@ -42,19 +71,38 @@ void Wrap::breaks(std::string_view t, u32 width, u32 tab, std::vector<u32>* out)
             w = join.width(d.cp);
             len = d.len;
         }
-        if (w && !space && col + w - row_start > width && col > row_start) {  // (it does not fit: a new row; a space hangs past the end)
-            row_start = after_space > row_start ? after_space : col;
-            out->push_back(row_start);
+        if (w && !space && !fits(w) && col > row_start) {  // (it does not fit: a new row; a space hangs past the end)
+            new_row(here);
+            if (kNotes && !fits(w) && col > row_start) new_row(here);  // (past the last space, the notes there still in the way)
         }
         col += w;
-        if (space) after_space = col;
+        if (space) after_space = col, space_extra = extra;
         i += len;
     }
+    // Notes at the line's end: one that does not fit takes the word before
+    // it to the next row, if there is a space before that (no row holds a
+    // note alone).
+    const u64 here = extra;
+    for (; kNotes && k < notes.size(); ++k) {
+        if (!fits(notes[k].width) && after_space > row_start) new_row(here);
+        extra += notes[k].width, base -= notes[k].width;
+    }
+}
+
+}  // namespace
+
+void Wrap::breaks(std::string_view t, u32 width, u32 tab, std::vector<u32>* out, std::span<const Hint> notes) {
+    if (notes.empty()) line_breaks<false>(t, width, tab, out, notes);
+    else line_breaks<true>(t, width, tab, out, notes);
 }
 
 void Wrap::set(Editor* ed, u64 doc, const Folds* folds, u64 folds_gen, u32 width, u32 tab) {
     width = std::max<u32>(width, 8);
     if (ed == ed_ && doc == doc_ && width == width_ && tab == tab_ && folds_gen == folds_gen_ && folds == folds_) return;
+    if (ed != ed_ || doc != doc_) {  // (another text: its notes are not these)
+        notes_.clear();
+        hints_key_ = ~0ull;
+    }
     if (ed != ed_) {
         if (ed_) ed_->unlisten(this);
         ed_ = ed;
@@ -75,13 +123,19 @@ void Wrap::measure(u64 line) {
         starts_[line].clear();
         return;
     }
-    count_[line] = line_rows(*ed_, line, width_, tab_, &starts_[line]);
+    std::span<const Hint> notes;
+    if (!notes_.empty() && line >= notes_.front().line && line <= notes_.back().line) {
+        line_hints_.clear();
+        for (auto it = std::ranges::lower_bound(notes_, line, {}, &Note::line); it != notes_.end() && it->line == line; ++it) line_hints_.push_back({it->at, it->width});
+        notes = line_hints_;
+    }
+    count_[line] = line_rows(*ed_, line, width_, tab_, &starts_[line], notes);
 }
 
-u32 Wrap::line_rows(const Editor& ed, u64 line, u32 width, u32 tab, std::vector<u32>* starts) {
+u32 Wrap::line_rows(const Editor& ed, u64 line, u32 width, u32 tab, std::vector<u32>* starts, std::span<const Hint> notes) {
     const Buffer& b = ed.buf;
     const u64 s = b.line_start(line), e = ed.line_end(line);
-    if (e - s <= width / 2) {  // (short enough whatever it holds: a character is two columns at most, a tab no wider than the width)
+    if (e - s <= width / 2 && notes.empty()) {  // (short enough whatever it holds: a character is two columns at most, a tab no wider than the width)
         bool tabbed = false;
         if (e - s > 0 && tab > 2) {
             char buf[256];
@@ -94,8 +148,34 @@ u32 Wrap::line_rows(const Editor& ed, u64 line, u32 width, u32 tab, std::vector<
             return 1;
         }
     }
-    breaks(b.text(s, e - s), width, tab, starts);
+    breaks(b.text(s, e - s), width, tab, starts, notes);
     return 1 + static_cast<u32>(starts->size());
+}
+
+void Wrap::set_hints(std::vector<Hint> hints, u64 key) {
+    hints_key_ = key;
+    std::vector<Note> notes;
+    if (ed_) {
+        const Buffer& b = ed_->buf;
+        notes.reserve(hints.size());
+        for (const Hint& h : hints) {
+            const u64 off = std::min(h.off, b.size()), line = b.line_of(off);
+            notes.push_back({line, static_cast<u32>(off - b.line_start(line)), h.width});
+        }
+    }
+    if (notes == notes_) return;
+    std::vector<u64> lines;  // (those with notes, before or now: measured again)
+    for (const Note& n : notes_) lines.push_back(n.line);
+    for (const Note& n : notes) lines.push_back(n.line);
+    notes_ = std::move(notes);
+    std::ranges::sort(lines);
+    lines.erase(std::unique(lines.begin(), lines.end()), lines.end());
+    for (const u64 l : lines) {
+        if (l >= count_.size()) continue;
+        const u32 was = count_[l];
+        measure(l);
+        if (count_[l] != was) add(l, static_cast<i64>(count_[l]) - static_cast<i64>(was));
+    }
 }
 
 double Wrap::top_line(double rows) const {
@@ -229,6 +309,16 @@ void Wrap::on_edit(const TextEdit& e) {
     // (What is hidden now: lines the edit made inside a fold are. The folds
     // have heard of the edit already, being the editor's first listener.)
     if (folds_) folds_->sync(ed_->buf, ed_->revision());
+    if (!notes_.empty()) {
+        // The notes after it move with the text (one inside what was
+        // replaced goes with it): those on the line it ended in, along it to
+        // where it ends now; the lines after, by the lines it made or took.
+        const Note from{e.start_row, e.start_col}, to = std::max(Note{e.old_end_row, e.old_end_col}, Note{e.start_row, e.start_col + 1});
+        auto it = notes_.erase(std::upper_bound(notes_.begin(), notes_.end(), from), std::lower_bound(notes_.begin(), notes_.end(), to));
+        for (; it != notes_.end() && it->line == e.old_end_row; ++it) it->line = e.new_end_row, it->at = it->at - e.old_end_col + e.new_end_col;
+        if (e.new_end_row != e.old_end_row)
+            for (; it != notes_.end(); ++it) it->line = it->line - e.old_end_row + e.new_end_row;
+    }
     const u64 first = e.start_row, old_last = e.old_end_row, new_last = e.new_end_row;
     // The lines it replaced make way for the ones it made; those are measured.
     if (new_last != old_last) {

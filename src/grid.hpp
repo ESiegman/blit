@@ -93,6 +93,7 @@ struct GridSpec {
     // the renderer has those with inlay hints left of the view.)
     const u32* row_cols = nullptr;
     const u32* row_ends = nullptr;
+    u32 wrap_cols = 0;  // (and the columns a wrapped row holds: those on show, of cols)
     u32 col_at(u32 r) const { return row_cols ? row_cols[r] : first_col; }
     u64 end_at(u32 r) const { return row_ends && row_ends[r] != ~0u ? row_ends[r] : ~0ull; }
     u32 cols = 0;

@@ -654,6 +654,53 @@ void wrap_test() {
     }
     check(same, "wrap: kept through random edits, the same as made afresh");
     kept.detach();
+
+    // Notes between characters (inlay hints) take room in the rows: one
+    // that does not fit goes to the next row with its character; at the
+    // line's end, only after a space (no row holds a note alone).
+    Wrap::breaks("x = call(aa, bb);", 16, 4, &b);
+    check(b == std::vector<u32>{13}, "wrap: no notes");
+    Wrap::breaks("x = call(aa, bb);", 16, 4, &b, std::vector<Wrap::Hint>{{9, 7}, {13, 8}});
+    check(b == std::vector<u32>{4, 13}, "wrap: room for the notes, each on its character's row");
+    Wrap::breaks("abc def", 8, 4, &b, std::vector<Wrap::Hint>{{7, 5}});
+    check(b == std::vector<u32>{4}, "wrap: a note at the end, with the word before it");
+    Wrap::breaks("abcdefg", 8, 4, &b, std::vector<Wrap::Hint>{{7, 5}});
+    check(b.empty(), "wrap: a note at the end of a word that fills its row: no row of its own");
+    // Random edits with notes about: the map kept (moving its notes with
+    // each edit, as the language server moves its own) is the map made
+    // afresh with the notes moved the same way.
+    {
+        std::mt19937 roll(5);
+        Editor e5;
+        e5.insert("call(one, two) and then a few more words here\nx\ncall(three)\n");
+        std::vector<Wrap::Hint> notes = {{5, 6}, {10, 4}, {53, 9}};
+        Wrap w5;
+        w5.set(&e5, 6, nullptr, 0, 14, 4);
+        w5.set_hints(notes, 1);
+        bool kept_same = true;
+        for (int step = 0; step < 400 && kept_same; ++step) {
+            if (roll() % 10 == 0) {  // (new ones from the server)
+                notes.clear();
+                for (u64 at = roll() % 6; at <= e5.buf.size(); at += 1 + roll() % 12) notes.push_back({at, 1 + static_cast<u32>(roll() % 9)});
+                w5.set_hints(notes, static_cast<u64>(step) + 2);
+            }
+            const u64 at = roll() % (e5.buf.size() + 1), len = roll() % 2 ? std::min<u64>(e5.buf.size() - at, roll() % 10) : 0;
+            static const char* const puts[] = {"", "x", "a b ", "\n", "call(p, q) ", "averyveryverylongword", "\t"};
+            const std::string text = puts[roll() % std::size(puts)];
+            e5.replace(at, at + len, text);
+            std::erase_if(notes, [&](const Wrap::Hint& h) { return h.off > at && h.off < at + len; });
+            for (Wrap::Hint& h : notes)
+                if (h.off > at && h.off >= at + len) h.off = h.off - len + text.size();
+            Wrap fresh;
+            fresh.set(&e5, 7, nullptr, 0, 14, 4);
+            fresh.set_hints(notes, 0);
+            kept_same = fresh.rows() == w5.rows();
+            for (u64 r = 0; kept_same && r < fresh.rows(); ++r) kept_same = fresh.line_at(r) == w5.line_at(r) && fresh.start_col(r) == w5.start_col(r);
+            fresh.detach();
+        }
+        check(kept_same, "wrap: kept through random edits with notes, the same as made afresh");
+        w5.detach();
+    }
 }
 
 // A profile's timeline: kept with each sample's time, narrowed to a

@@ -2124,6 +2124,10 @@ constexpr TokenCapture kTokenCaptures[] = {
 
 }  // namespace
 
+// An inlay hint as it is drawn: its label (cut short if it is long), with
+// the room the server asks for either side.
+std::string App::hint_text(const InlayHint& h) { return (h.pad_left ? " " : "") + fit_text(h.label, 40) + (h.pad_right ? " " : ""); }
+
 // Each view's inlay hints (as notes between characters) and the servers'
 // colours (a layer of marks over tree-sitter's, for the lines on show),
 // asked for once a text has stood still a moment, and worked out again only
@@ -2172,7 +2176,7 @@ void App::lsp_extras(FrameDesc& fd) {
                 for (auto it = from; it != hints.end() && it->off < hi; ++it) {
                     const u64 line = b.line_of(std::min(it->off, b.size()));
                     if (line == p.cur_line) continue;
-                    const std::string text = (it->pad_left ? " " : "") + fit_text(it->label, 40) + (it->pad_right ? " " : "");
+                    const std::string text = hint_text(*it);
                     box.resize(std::max<u32>(1, width_of(text)), 1);
                     put(box, *font_, 0, 0, text, ink::kMuted);
                     x.notes.push_back({line, d.ed.col_between(b.line_start(line), it->off), nullptr, box.cols});

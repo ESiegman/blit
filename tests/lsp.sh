@@ -313,6 +313,33 @@ with hintsonce "frame;wait:100;frame;key:Down;key:Down;key:End;text: + 1;frame;w
 check "asked again, and answered with an error: the hints there stay" 'hints: 2:6[first: ] 2:9[second: ] 2:12[third: ] | colours: call=function p_size=variable.parameter Widget=type MAX_SIZE=function.macro'
 with hints "frame;wait:100;frame;key:Up;text:auto p_size = 1;key:Return;frame;wait:400;frame;wait:100;frame;lspextras" "$P/h.cpp"
 check "and asked again once the text stands still" 'hints: 1:12[: int] 3:6[first: ] 3:9[second: ] 3:12[third: ] 4:11[: int] | colours: p_size=variable.parameter call=function p_size=variable.parameter Widget=type MAX_SIZE=function.macro'
+# With soft wrap: each hint on the row its column is on, and the rows make
+# room for them, so that no text is lost. wrapped SCRIPT [LINE]: a long
+# line with hints, wrapped in a narrow window; got is that line's rows as
+# drawn (the padding before each left out) joined by a space, "too wide"
+# after them if any row holds more than the wrap's width, and then the
+# wrap's rows (line@column).
+long='int y = 0; call(alpha, beta, gamma); then some more words to make this line long enough that it wraps a couple of times in a narrow view; call(1, 2, 3);'
+drawn='int y = 0; call(first: alpha, second: beta, third: gamma); then some more words to make this line long enough that it wraps a couple of times in a narrow view; call(first: 1, second: 2, third: 3);'
+wrapped() {
+    fresh
+    printf 'int x;\n%s\nauto width = p_size;\n' "$long" >"$P/wrap.cpp"
+    got=$(BLIT_INIT="$dir/hints.lua" "$blit" --offscreen 700x800 --shot "$dir/shot.bmp" --script "workdir:$P;frame;lspsettle;frame;wait:100;frame;command:Toggle soft wrap;frame;$1;wrapdump;rowsdump:16" "$P/wrap.cpp" 2>&1 >/dev/null |
+        grep -v '^blit: ' | tail -2 | awk -v want="${2:-2}" '
+            /^width / { width = $2 + 0; at = substr($0, index($0, "rows: ") + 6); n = split(at, w, " "); for (i = 1; i <= n; i++) { split(w[i], p, "@"); line[i] = p[1] } }
+            /^rows / { m = split($0, r, / [|]/); for (i = 2; i <= m; i++) if (line[i - 1] == want) { s = r[i]; sub(/^ +/, "", s); out = out (out == "" ? "" : " ") s; if (length(s) > width) over = 1 } }
+            END { print out (over ? " too wide" : "") " / " at }')
+}
+wrapped "frame"
+rows=${got##* / }
+got=${got% / *}
+check "soft wrap: each hint on its row, the rows making room (no text lost)" "$drawn"
+case $rows in *"2@0 2@"*) ;; *) echo "FAIL: soft wrap with hints: the line does not wrap: $rows"; failed=1 ;; esac
+wrapped "key:Down;frame"
+check "the cursor's line: no hints drawn, its rows as they were" "$long / $rows"
+wrapped "key:End;key:Return;text:int z;frame" 3
+below=$(printf '%s' "$rows" | awk '{ for (i = 1; i <= NF; i++) { split($i, p, "@"); n = p[1] + (p[1] >= 2); out = out (i > 1 ? " " : "") n "@" p[2] (i == 1 ? " 2@0" : "") } print out }')
+check "a line put in above: the hints move with their text, before they are asked for again" "$drawn / $below"
 run "frame;wait:100;frame;lspextras" "$P/h.cpp"
 check "no hints unless lsp.inlay_hints is on" 'hints: | colours: call=function p_size=variable.parameter Widget=type MAX_SIZE=function.macro'
 with themed "frame;wait:100;frame;lspextras" "$P/h.cpp"

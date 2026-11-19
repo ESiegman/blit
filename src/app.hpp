@@ -528,6 +528,7 @@ private:
     Doc* lsp_edit_doc(const std::string& path);  // the tab a file a workspace edit changes is open in, if any
     u32 lsp_gutter(const Doc& d, u64 line);  // a mark beside a problem the server has a fix for
     void lsp_extras(FrameDesc& fd);  // inlay hints and the server's colours, for each view
+    static std::string hint_text(const InlayHint& h);  // (an inlay hint as it is drawn)
     std::string lsp_dump();  // (tests) the servers, and each tab's place on one
     std::string lsp_extras_dump();  // (tests) the inlay hints and the servers' colours on show
     void lsp_go_problem(size_t i);  // (apppanel.cpp) the language servers' problem i, counted across files

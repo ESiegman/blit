@@ -1553,6 +1553,7 @@ void App::layout_pane(FrameDesc& fd, bool focused) {
         g.row_lines = p.row_lines.data();
         g.row_cols = p.row_cols.data();
         g.row_ends = p.row_ends.data();
+        g.wrap_cols = w->width();
         g.first_col = 0;
         g.rows_key = ((w->rows() * 1000003 + w->width()) * 1000003 + top_row) * 1000003 + p.doc->ed.revision() + 7;
     } else if (const Folds* f = folds_on()) {  // (lines folded away: each row's line from the map)

@@ -400,6 +400,7 @@ public:
     void answer_apply(bool applied);
     const std::vector<InlayHint>* hints(u64 key) const;
     u64 hints_generation(u64 key) const;
+    u64 hints_given(u64 key) const;  // (changes as new ones come, not as an edit moves them: they move as it says)
     bool hints_cover(u64 key, u64 first_line, u64 last_line) const;  // asked for these lines since the text last changed
     bool can_hint(u64 key) const;
     const std::vector<SemanticToken>* tokens(u64 key) const;

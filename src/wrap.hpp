@@ -3,8 +3,10 @@
 // lines longer than the view's width go on in the rows under them, broken
 // after the last space that fits (or, with none, where the width ends).
 // Each row is a part of a line: the line, and the display column it starts
-// at. Lines folded away (folds.hpp) take no rows. Kept for a width; made
-// again line by line as the text changes (it hears each edit).
+// at. Lines folded away (folds.hpp) take no rows. Notes put in between
+// characters (inlay hints) take room in the rows as the text does. Kept for
+// a width; made again line by line as the text changes (it hears each edit).
+#include <span>
 #include <vector>
 
 #include "buffer.hpp"
@@ -26,6 +28,20 @@ public:
     // edits until it is let go of or made for another.
     void set(Editor* ed, u64 doc, const Folds* folds, u64 folds_gen, u32 width, u32 tab);
     void detach();
+    // A note between characters (an inlay hint): the byte it goes before,
+    // and how many columns it takes.
+    struct Hint {
+        u64 off = 0;
+        u32 width = 0;
+        bool operator==(const Hint&) const = default;
+    };
+    // The notes, in order of place, that the rows make room for, and what
+    // the caller made them from (its key). Lines whose notes change are
+    // measured again; meanwhile each edit moves them as it moves the text
+    // (and takes one inside what it replaced with it), as the language
+    // server's own are moved. Let go of with the text.
+    void set_hints(std::vector<Hint> hints, u64 key);
+    u64 hints_key() const { return hints_key_; }
     u64 doc() const { return doc_; }
     u32 width() const { return width_; }
 
@@ -41,10 +57,11 @@ public:
     void walk(u64 top, u32 n, u64* lines, u32* cols, u32* ends) const;
 
     // Where a line's rows start (after its first, which starts at 0): the
-    // breaks for `text` in `width` columns. (Public for the tests.)
-    static void breaks(std::string_view text, u32 width, u32 tab, std::vector<u32>* out);
+    // breaks for `text` in `width` columns, with room for the notes in it
+    // (their places from the text's start). (Public for the tests.)
+    static void breaks(std::string_view text, u32 width, u32 tab, std::vector<u32>* out, std::span<const Hint> notes = {});
     // How many rows a line takes, and its breaks (in `starts`).
-    static u32 line_rows(const Editor& ed, u64 line, u32 width, u32 tab, std::vector<u32>* starts);
+    static u32 line_rows(const Editor& ed, u64 line, u32 width, u32 tab, std::vector<u32>* starts, std::span<const Hint> notes = {});
 
     // A view's top as a line and the part through it (5.5: halfway through
     // line 5's rows), from rows of the map (fractional: part of a row), and
@@ -80,6 +97,17 @@ private:
     std::vector<u32> count_;                // each line's rows (0: folded away)
     std::vector<std::vector<u32>> starts_;  // each line's breaks (empty: one row)
     std::vector<u64> fen_;                  // a Fenwick tree of the counts (1-based)
+    // The notes, by line and their bytes in it (an edit within a line, as
+    // typing is, moves none but that line's).
+    struct Note {
+        u64 line = 0;
+        u32 at = 0, width = 0;
+        bool operator==(const Note&) const = default;
+        auto operator<=>(const Note& o) const { return line != o.line ? line <=> o.line : at <=> o.at; }
+    };
+    std::vector<Note> notes_;
+    u64 hints_key_ = ~0ull;
+    std::vector<Hint> line_hints_;  // (measure(): one line's, from its start)
 };
 
 }  // namespace blit

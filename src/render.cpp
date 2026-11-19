@@ -46,6 +46,37 @@ static bool insert_starts(const GridSpec& g, std::vector<u32>& starts) {
     return any;
 }
 
+// A wrapped line's inserts, each on the row its column is in, after the
+// text before it there. The wrap made room for them (wrap.hpp); one too
+// wide for any row is cut short, never the text.
+static void insert_wrapped(const GridSpec& g, u32* cells, std::span<const GridNote> in, u32 r) {
+    const u32 lead = std::min(g.lead, g.cols);
+    const u64 cols = std::min<u64>(g.cols - lead, g.wrap_cols ? g.wrap_cols : g.cols - lead);
+    size_t k = 0;
+    for (const u64 line = in[0].line; r < g.rows && g.line_at(r) == line && k < in.size(); ++r) {
+        u32* row = cells + static_cast<size_t>(r) * g.cols + lead;
+        const u64 start = g.col_at(r), end = g.end_at(r);  // (where its part of the line starts, and where the next row's does)
+        while (k < in.size() && in[k].col < start) ++k;    // (on rows above the view)
+        if (k == in.size() || in[k].col >= end) continue;
+        u64 used = end != ~0ull ? std::min(end - start, cols) : cols;  // (its text: on the line's last row, up to its last cell)
+        if (end == ~0ull) {
+            while (used >= 4 && (row[used - 1] | row[used - 2] | row[used - 3] | row[used - 4]) == 0) used -= 4;  // (four blank cells at a time)
+            while (used > 0 && row[used - 1] == 0) --used;
+        }
+        while (used > 0 && (row[used - 1] & 0xFFFFu) == ' ') --used;  // (spaces at its end may go: one hangs past the edge)
+        for (u64 shift = 0; k < in.size() && in[k].col < end; ++k) {
+            const GridNote& n = in[k];
+            const u64 at = n.col - start + shift;
+            used = std::max(used, at);  // (past the text's last cell: what is between stays blank)
+            const u64 w = std::min<u64>(n.count, cols > used ? cols - used : 0);
+            if (w == 0) continue;
+            std::memmove(row + at + w, row + at, static_cast<size_t>(used - at) * sizeof(u32));
+            std::memcpy(row + at, n.cells, static_cast<size_t>(w) * sizeof(u32));
+            shift += w, used += w;
+        }
+    }
+}
+
 // Puts a spec's inserts in at their columns, moving the rest of each row
 // right (what is pushed past the edge goes). A row that starts left of
 // first_col (insert_starts()) first moves right by what of the inserts
@@ -62,7 +93,9 @@ static void insert_notes(const GridSpec& g, u32* cells) {
         const u64 line = in[i].line;
         size_t j = i;
         while (j < in.size() && in[j].line == line) ++j;  // [i, j): this line's, left to right
-        if (const i64 r = g.row_of(line); r >= 0) {
+        if (const i64 r = g.row_of(line); r >= 0 && g.row_ends) {
+            insert_wrapped(g, cells, in.subspan(i, j - i), static_cast<u32>(r));
+        } else if (r >= 0) {
             u32* row = cells + static_cast<size_t>(r) * g.cols + lead;
             const u64 start = g.col_at(static_cast<u32>(r));  // (where the row starts in its line)
             size_t k = i;

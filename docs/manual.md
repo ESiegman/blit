@@ -1048,7 +1048,11 @@ of the line). Vim's `j` and `k` go by lines, over a wrapped line's other
 rows, and so do the counts the relative numbers show. A line's number is
 on its first row only. A click lands where it is along its row; a
 selection, the underlines and the notes after a line follow the line from
-row to row. Folded lines take no rows, wrapped or not.
+row to row. Folded lines take no rows, wrapped or not. Inlay hints take
+room in the rows as the text does, each on the row of the character it
+comes before; on the cursor's line, where they are not drawn, they keep
+that room, so that the line's rows stay as they are as the cursor comes
+and goes.
 
 Each split keeps its own wrap, for its own width (the same file in two
 splits of other widths wraps in each as fits), made again line by line

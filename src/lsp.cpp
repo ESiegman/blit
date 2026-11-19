@@ -607,6 +607,7 @@ struct Lsp::Document final : EditListener {
     bool pull_again = false;
     std::vector<InlayHint> hints;
     u64 hints_gen = 0;
+    u64 hints_given = 0;  // (as hints_gen, but only as new ones replace them: not as an edit moves them)
     u32 hints_id = 0;
     i64 hints_version = -1;
     u64 hints_first = 1, hints_last = 0;  // the lines they were asked for (none yet)
@@ -2231,6 +2232,7 @@ void Lsp::refresh(u64 key) {
     for (Diagnostic& x : d->diags) x.start = std::min(x.start, size), x.end = std::min(x.end, size);
     d->hints.clear();
     ++d->hints_gen;
+    ++d->hints_given;
     d->tokens.clear();
     ++d->tokens_gen;
     ++diags_gen_;
@@ -2882,6 +2884,11 @@ u64 Lsp::hints_generation(u64 key) const {
     return d ? d->hints_gen : 0;
 }
 
+u64 Lsp::hints_given(u64 key) const {
+    const Document* d = doc_of(key);
+    return d ? d->hints_given : 0;
+}
+
 bool Lsp::hints_cover(u64 key, u64 first_line, u64 last_line) const {
     const Document* d = doc_of(key);
     return d && !d->hints_stale && d->hints_first <= first_line && d->hints_last >= last_line;
@@ -3270,6 +3277,7 @@ u32 Lsp::poll() {
                     d->hints.push_back(std::move(x));
                 }
                 ++d->hints_gen;
+                ++d->hints_given;
                 news |= kHints;
                 break;
             }

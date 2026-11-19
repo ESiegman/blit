@@ -7,6 +7,7 @@
 #include <cmath>
 
 #include "app.hpp"
+#include "textbox.hpp"
 
 namespace blit {
 
@@ -54,6 +55,20 @@ void App::wrap_sync(Pane& p) {
     if (!p.wrap) p.wrap = std::make_unique<Wrap>();
     const u64 before = p.wrap->rows();
     p.wrap->set(&d.ed, d.id, d.folds.empty() ? nullptr : &d.folds, d.folds.generation(), wrap_width(p), d.ed.tab_width);
+    // The inlay hints take room in the rows: given again as the server sends
+    // new ones (the map moves them with each edit meanwhile, as the server's
+    // own are moved). On the cursor's line too, where they are not drawn, so
+    // that a line's rows stay as they are as the cursor comes and goes.
+    const std::vector<InlayHint>* hints = cfg_.lsp && cfg_.lsp_inlay_hints && lsp_.can_hint(d.id) ? lsp_.hints(d.id) : nullptr;
+    const u64 key = hints ? lsp_.hints_given(d.id) * 0x9E3779B97F4A7C15ull + reinterpret_cast<u64>(hints) : 0;
+    if (key != p.wrap->hints_key()) {
+        std::vector<Wrap::Hint> h;
+        if (hints) {
+            h.reserve(hints->size());
+            for (const InlayHint& x : *hints) h.push_back({x.off, std::max<u32>(1, width_of(hint_text(x)))});
+        }
+        p.wrap->set_hints(std::move(h), key);
+    }
     if (p.wrap->rows() != before) p.cache_rev = ~0ull;
     if (&p == pane_) d.ed.skip = p.wrap.get();
     p.scroll_x = p.target_x = 0;  // (nothing goes past the right edge)
