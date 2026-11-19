@@ -462,9 +462,9 @@ void fill_grid(const Buffer& buf, Font& font, const GridSpec& g, u32* cells, Anc
 namespace {
 
 // Columns of white space a line starts with; -1 if it holds nothing else.
-i32 line_indent(const Buffer& buf, u64 line, u32 tab) {
+i32 line_indent(const Buffer& buf, u64 line, u32 tab, u64* start = nullptr) {
     if (line >= buf.line_count()) return -1;
-    Buffer::Reader rd = buf.line_reader(line);
+    Buffer::Reader rd = buf.line_reader(line, start);
     u32 col = 0;
     for (;;) {
         const std::string_view c = rd.chunk();
@@ -493,7 +493,17 @@ void guide_grid(const Buffer& buf, const GridSpec& g, u32* cells, GuideCache& gc
     const u32 lead = std::min(g.lead, g.cols), cols = g.cols - lead;
     const u32 tab = std::max<u32>(1, g.tab_width);
     const u64 lines = buf.line_count();
-    if (gc.doc != g.doc || gc.revision != g.revision || gc.top_line != g.top_line || gc.rows != g.rows || gc.tab_width != tab || gc.rows_key != g.rows_key) {
+    const bool same_view = gc.doc == g.doc && gc.top_line == g.top_line && gc.rows == g.rows && gc.tab_width == tab && gc.rows_key == g.rows_key;
+    if (!same_view || gc.revision != g.revision) {
+        // Scrolled sideways, where each row worked out reads the text, the
+        // rows whose lines end before where an edit began keep what they had
+        // (they are the same lines, unchanged). With lines wrapped or folded,
+        // every row is worked out again.
+        u32 keep = 0;
+        if (same_view && g.first_col > 0 && !g.row_lines && g.edits && gc.revision < g.revision) {
+            const u64 from = g.edits->changed_since(gc.revision, g.revision);
+            while (keep + 1 < g.rows && gc.starts[keep + 1] <= from) ++keep;  // (the next row's line starts before it)
+        }
         gc.doc = g.doc;
         gc.revision = g.revision;
         gc.top_line = g.top_line;
@@ -502,8 +512,10 @@ void guide_grid(const Buffer& buf, const GridSpec& g, u32* cells, GuideCache& gc
         gc.tab_width = tab;
         gc.indent.resize(g.rows);
         gc.next.resize(g.rows);
-        for (u32 r = 0; r < g.rows; ++r) {
+        gc.starts.resize(g.rows);
+        for (u32 r = keep; r < g.rows; ++r) {
             const u64 line = g.line_at(r);
+            gc.starts[r] = ~0ull;  // (known only where the line is read from the text)
             if (line >= lines) {
                 gc.indent[r] = -1;
             } else if (g.col_at(r) > 0 && g.row_cols) {  // (a wrapped line's later row: its line's indent, and no lines drawn on it)
@@ -514,7 +526,7 @@ void guide_grid(const Buffer& buf, const GridSpec& g, u32* cells, GuideCache& gc
                 while (n < cols && (row[n] & 0xFFFFu) == ' ') ++n;
                 gc.indent[r] = n < cols && (row[n] & 0xFFFFu) == 0 ? -1 : static_cast<i32>(n);
             } else {
-                gc.indent[r] = line_indent(buf, line, tab);
+                gc.indent[r] = line_indent(buf, line, tab, &gc.starts[r]);
             }
         }
         // A blank row at an edge takes after lines that are off screen.

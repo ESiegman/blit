@@ -174,6 +174,7 @@ struct GuideCache {
     // line with nothing else in it. `next` is the same for the nearest line
     // below that has text.
     std::vector<i32> indent, next;
+    std::vector<u64> starts;     // where each row's line starts, where it was read from the text (else ~0)
     i32 above = -1, below = -1;  // the nearest lines with text off the top and the bottom
 };
 // Marks the cells that carry an indent line. Call after fill_grid() and

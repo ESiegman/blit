@@ -1034,6 +1034,52 @@ void view_test(int seeds) {
     fill_grid(ed.buf, font, g, cells.data());
     guide_grid(ed.buf, g, cells.data(), cache);
     check(lines_at(2) == 0, "no indent lines when they are off");
+
+    // A cache kept from frame to frame through random edits (it keeps the
+    // rows above where an edit began) marks the same cells as one made
+    // afresh each frame, with the view at the left edge and scrolled
+    // sideways (where each row's indentation is read from the text).
+    for (const u32 first_col : {0u, 5u}) {
+        rng.seed(6007 + first_col);
+        Editor fz;
+        fz.tab_width = 4;
+        std::string start;
+        for (int l = 0; l < 60; ++l) start += std::string(rnd(5) * 2, ' ') + (rnd(4) ? "\tx" + std::to_string(l) : std::string()) + "\n";
+        fz.insert(start);
+        GridSpec v;
+        v.cols = 60;
+        v.rows = 24;
+        v.tab_width = 4;
+        v.guide_step = 2;
+        v.guide_inks = 3;
+        v.doc = 7;
+        v.top_line = 10;
+        v.first_col = first_col;
+        v.edits = &fz.edit_log();
+        std::vector<u32> kept_cells(static_cast<size_t>(v.cols) * v.rows), fresh_cells(kept_cells.size());
+        GuideCache kept;
+        static const char* const kPieces[] = {" ", "  ", "\t", "\n", "\n  ", "y", "{\n", "    z\n", "\n\n"};
+        bool same = true;
+        for (int step = 0; step < 400 && same; ++step) {
+            for (u64 k = 1 + rnd(3); k-- > 0;) {  // (sometimes several edits between two frames)
+                const u64 at = rnd(fz.buf.size() + 1);
+                if (rnd(3) == 0 && at < fz.buf.size()) {
+                    fz.replace(at, std::min<u64>(fz.buf.size(), at + 1 + rnd(4)), "");
+                } else {
+                    fz.move_to(at, false);
+                    fz.insert(kPieces[rnd(std::size(kPieces))]);
+                }
+            }
+            v.revision = fz.revision();
+            GuideCache fresh;
+            fill_grid(fz.buf, font, v, kept_cells.data());
+            guide_grid(fz.buf, v, kept_cells.data(), kept);
+            fill_grid(fz.buf, font, v, fresh_cells.data());
+            guide_grid(fz.buf, v, fresh_cells.data(), fresh);
+            same = kept_cells == fresh_cells;
+        }
+        check(same, first_col ? "indent lines kept through edits, scrolled sideways, match lines made afresh" : "indent lines kept through edits match lines made afresh");
+    }
 }
 
 // Columns on a long line: the editor remembers where its last walks
