@@ -558,7 +558,7 @@ void wrap_test() {
     check(w.rows_of(1) == 0 && w.row_of(1) == 0 && w.line_at(1) == 2, "wrap: a folded line takes no row");
     w.detach();
     // Lines an edit makes inside a fold are hidden with it, though the folds
-    // began to hear of edits after the wrap did.
+    // began to hear of edits after the wrap did (they go first).
     {
         Editor e3;
         e3.insert("head\none\ntwo\nafter");
@@ -567,7 +567,7 @@ void wrap_test() {
         Folds f3;
         f3.attach(&e3);
         f3.add(e3.buf, 0, 2);  // (one and two under head)
-        e3.listen(&f3);
+        e3.listen(&f3, true);
         w3.set(&e3, 3, &f3, f3.generation(), 10, 4);
         e3.move_to(e3.buf.line_start(2), false);
         e3.insert("new\nlines\n");
@@ -579,7 +579,8 @@ void wrap_test() {
         for (int step = 0; step < 300 && kept_same; ++step) {
             if (roll() % 8 == 0) {
                 const u64 h = roll() % e3.buf.line_count();
-                if (f3.add(e3.buf, h, h + 1 + roll() % 3)) e3.listen(&f3);  // (as the application listens again)
+                f3.add(e3.buf, h, h + 1 + roll() % 3);
+                e3.listen(&f3, true);  // (as the application listens again, a fold added or not)
             }
             const u64 at = roll() % (e3.buf.size() + 1), len = roll() % 2 ? std::min<u64>(e3.buf.size() - at, roll() % 12) : 0;
             static const char* const puts[] = {"", "x", "a b ", "\n", "\nlonger words here\n", "averyveryverylongword", "\t"};
@@ -594,6 +595,26 @@ void wrap_test() {
         check(kept_same, "wrap: kept through random edits with folds, the same as made afresh");
         w3.detach();
         e3.unlisten(&f3);
+    }
+    // The folds listen again with none changed (everything folded already),
+    // and an edit comes before the wrap is next set: it measures the lines
+    // by the folds as that edit moved them.
+    {
+        Editor e4;
+        e4.insert("head\none\ntwo\nafter\n");
+        Folds f4;
+        f4.attach(&e4);
+        f4.add(e4.buf, 0, 2);
+        e4.listen(&f4, true);
+        Wrap w4;
+        w4.set(&e4, 5, &f4, f4.generation(), 10, 4);
+        check(!f4.add(e4.buf, 0, 2), "wrap: a fold there already is not added again");
+        e4.listen(&f4, true);
+        e4.move_to(0, false);
+        e4.insert("\n");  // (a line opened above the header)
+        check(w4.rows() == 4 && w4.rows_of(1) == 1 && w4.rows_of(2) == 0 && w4.rows_of(3) == 0, "wrap: an edit after the folds listen again");
+        w4.detach();
+        e4.unlisten(&f4);
     }
     // Random edits: the map kept as it goes is the map made afresh.
     std::mt19937 dice(7);

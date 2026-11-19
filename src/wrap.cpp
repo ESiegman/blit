@@ -53,10 +53,6 @@ void Wrap::breaks(std::string_view t, u32 width, u32 tab, std::vector<u32>* out)
 
 void Wrap::set(Editor* ed, u64 doc, const Folds* folds, u64 folds_gen, u32 width, u32 tab) {
     width = std::max<u32>(width, 8);
-    // (It hears of each edit after the folds do, so that what they hide is
-    // where the edit left it when the lines the edit made are measured. The
-    // folds may have started listening since: it goes after them again.)
-    if (folds && ed && ed == ed_) ed_->listen(this);
     if (ed == ed_ && doc == doc_ && width == width_ && tab == tab_ && folds_gen == folds_gen_ && folds == folds_) return;
     if (ed != ed_) {
         if (ed_) ed_->unlisten(this);
@@ -181,7 +177,9 @@ u64 Wrap::row_at(u64 line, u32 col) const {
 
 void Wrap::on_edit(const TextEdit& e) {
     if (!ed_ || count_.empty()) return;
-    if (folds_) folds_->sync(ed_->buf, ed_->revision());  // (what is hidden now: lines the edit made inside a fold are)
+    // (What is hidden now: lines the edit made inside a fold are. The folds
+    // have heard of the edit already, being the editor's first listener.)
+    if (folds_) folds_->sync(ed_->buf, ed_->revision());
     const u64 first = e.start_row, old_last = e.old_end_row, new_last = e.new_end_row;
     // The lines it replaced make way for the ones it made; those are measured.
     if (new_last != old_last) {

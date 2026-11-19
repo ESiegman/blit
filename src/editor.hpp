@@ -72,10 +72,12 @@ public:
     // Listeners hear about edits (syntax highlighting, the language
     // server, the debugger's breakpoints, what is folded, and the soft wrap
     // of each split that shows the text), as many as there are, in the
-    // order they started listening.
-    void listen(EditListener* l) {
+    // order they started listening; one that asks to be first goes before
+    // them all (what is folded: what else hears of an edit, the soft wrap,
+    // goes by what the folds hide once the edit has moved them).
+    void listen(EditListener* l, bool first = false) {
         unlisten(l);
-        listeners_.push_back(l);
+        listeners_.insert(first ? listeners_.begin() : listeners_.end(), l);
     }
     void unlisten(EditListener* l) { std::erase(listeners_, l); }
 

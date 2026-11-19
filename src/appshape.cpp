@@ -533,7 +533,7 @@ void fold_listen(Doc& d) {
         d.ed.skip = nullptr;
     } else {
         d.folds.attach(&d.ed);
-        d.ed.listen(&d.folds);
+        d.ed.listen(&d.folds, true);
         d.ed.skip = &d.folds;
     }
 }

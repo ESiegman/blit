@@ -246,6 +246,11 @@ if wr "command:Fold every block;folddump" "$dir/fold.c" | tail -1 | grep -q '^fo
 else
     got=$(wr "key:alt+z;command:Fold every block;frame;wrapdump;vim:gg;vim:j;frame;statusdump" "$dir/fold.c" | tail -2 | sed -e 's/^width [0-9]*, \([0-9]*\) rows: \(.*\)/\1 rows: \2/' -e 's/.*| Ln \([0-9]*\),.*/Ln \1/' | tr '\n' ' ')
     check "folded lines take no rows (wrapped or not); j passes over them" "4 rows: 1@0 4@0 5@0 6@0 Ln 4 "
+    # Folded again with nothing new to fold (the folds listen afresh), then
+    # a line opened above the fold before the next frame: the wrap measures
+    # it by the folds as that edit moved them, the header still on show.
+    got=$(wr "key:alt+z;command:Fold every block;frame;command:Fold every block;vim:ggO<Esc>;frame;wrapdump" "$dir/fold.c" | tail -1 | sed -e 's/^width [0-9]*, //')
+    check "an edit straight after folding again: the folds have moved first" "5 rows: 1@0 2@0 5@0 6@0 7@0"
 fi
 printf '%s\nblit.opt.editor.modal = true\nblit.opt.editor.soft_wrap = true\n' "$base" >"$dir/wrapall.lua"
 got=$(wr "wrapdump" "$dir/wrap.c" wrapall | tail -1 | sed -e 's/^width .*/on/')
