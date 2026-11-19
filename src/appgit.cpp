@@ -680,7 +680,10 @@ void App::reload_changed() {
             const i64 stamp = stamp_of(d->ed.path);
             if (!stamp || stamp == d->disk_stamp) continue;
             d->disk_stamp = stamp;
-            if (d->ed.modified()) continue;
+            if (d->ed.modified()) {  // (left alone, but not without a word: saving it writes over what is there now)
+                notify(std::string(name_of(d->ed.path)) + " changed on disk: its changes here are kept, and saving writes over it", 1);
+                continue;
+            }
             reread(*p, *d, nullptr);
         }
     }

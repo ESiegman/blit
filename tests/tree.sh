@@ -72,6 +72,11 @@ if [ -z "$print" ] && [ "$got" != "> |changed" ]; then
     printf 'FAIL: the open file another program writes: read again\n    got %s\n' "$got"
     failed=1
 fi
+got=$(fresh; "$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "key:cmd+B;panel;text:mine ;lua:os.execute('echo changed > $T/x.txt');watchwait;docdump:0" "$T/x.txt" 2>&1 >/dev/null | grep -v '^$' | tail -2 | tr '\n' '#')
+if [ -z "$print" ] && [ "$got" != "blit: x.txt changed on disk: its changes here are kept, and saving writes over it#> mine |x#" ]; then
+    printf 'FAIL: the open file with changes another program writes: kept, and said\n    got %s\n' "$got"
+    failed=1
+fi
 if ! "$blit" --offscreen 1600x900 --info "$T/x.txt" 2>/dev/null | grep -q "cell 16 x 31 px"; then
     echo "skipped: the cell size here is not the one the mouse positions were written for"
     exit 77

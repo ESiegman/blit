@@ -883,7 +883,8 @@ files (a merge tab settles a conflict here too) and stage them, then
 **Files that change on disk** under an open tab (git switched branches,
 pulled, merged or discarded; or another program wrote them) are read again
 when that happens and when the window gets focus, keeping the cursor's
-place. A tab with unsaved changes of its own is left alone.
+place. A tab with unsaved changes of its own is left alone, and a notice
+says so (saving it then writes over what is on disk).
 
 ```lua
 blit.opt.git.enabled = false   -- no git at all
