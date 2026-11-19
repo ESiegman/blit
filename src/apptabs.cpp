@@ -377,9 +377,11 @@ bool App::tab_close(size_t i, bool force, bool quit_if_last) {
         }
     }
     const bool front = pane_->docs[i].get() == pane_->doc;
+    const u64 notebook = pane_->docs[i]->nb ? pane_->docs[i]->id : 0;  // (a notebook's view goes with it)
     if (pane_->docs.size() == 1 && panes_.size() > 1) {  // its last tab: the split goes with it
         stop_lsp();
         remove_pane(pane_);
+        if (notebook) nb_view_close(notebook);
         return true;
     }
     if (pane_->docs.size() == 1) {
@@ -394,6 +396,7 @@ bool App::tab_close(size_t i, bool force, bool quit_if_last) {
         pane_->docs.clear();
         add_doc(0);
         tab_show(0);
+        if (notebook) nb_view_close(notebook);
         return true;
     }
     forget_doc(pane_->docs[i].get());
@@ -409,6 +412,7 @@ bool App::tab_close(size_t i, bool force, bool quit_if_last) {
             if (pane_->docs[k].get() == pane_->doc) pane_->tab = k;
     }
     pane_->bar->reveal = true;
+    if (notebook) nb_view_close(notebook);
     dirty_ = true;
     return true;
 }

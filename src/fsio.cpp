@@ -12,6 +12,7 @@
 #include <algorithm>
 #include <cerrno>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <filesystem>
 #include <memory>
@@ -119,6 +120,17 @@ bool fs_mkdirs(const std::string& path, std::string* err) {
     std::filesystem::create_directories(path, ec);
     if (ec && fs_kind(path) != 2) return *err = ec.message(), false;
     return true;
+}
+
+std::string cache_dir() {
+    if (const char* d = std::getenv("BLIT_CACHE_DIR"); d && *d) return d;
+#if defined(__APPLE__)
+    if (const char* home = std::getenv("HOME"); home && *home) return std::string(home) + "/Library/Caches/blit";
+#else
+    if (const char* x = std::getenv("XDG_CACHE_HOME"); x && *x) return std::string(x) + "/blit";
+    if (const char* home = std::getenv("HOME"); home && *home) return std::string(home) + "/.cache/blit";
+#endif
+    return {};
 }
 
 namespace {

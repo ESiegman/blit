@@ -30,6 +30,9 @@ bool fs_read_whole(const std::string& path, std::string* bytes, std::string* why
 bool fs_write(const std::string& path, std::string_view text, std::string* err);
 // The folder and those above it that are not there yet.
 bool fs_mkdirs(const std::string& path, std::string* err);
+// blit's cache folder, here ("" if there is none): the GPU's compiled
+// pipelines, pictures fetched from the web and a notebook's pictures.
+std::string cache_dir();
 // A command run by a login shell in `dir` (another machine's: run there by
 // blit's agent), its output collected; false if it could not run, failed,
 // or took longer than `ms`. (For small questions: what is installed where.)

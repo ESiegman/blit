@@ -227,6 +227,7 @@ bool App::init(std::string* err) {
                 return;
             }
             file_ok = pane_->doc->ed.open(opt_.file, &file_err);
+            if (file_ok && is_notebook_path(opt_.file)) nb_load(*pane_->doc);  // (a notebook: the script of its cells)
             // Parsing starts right away, so colours are usually ready before
             // the window is.
             if (file_ok) start_syntax(opt_.goto_line > 0 ? opt_.goto_line - 1 : 0, true);
@@ -334,6 +335,7 @@ bool App::init(std::string* err) {
     }
     pane_->target_x = pane_->scroll_x = static_cast<double>(opt_.goto_col) * font_->cell_w();
     if (opt_.select_all) pane_->doc->ed.select_all();
+    if (pane_->doc->nb) md_open();  // (a notebook: drawn beside its script)
     if (win_) {
         SDL_StartTextInput(win_);
         SDL_AddEventWatch(event_watch, this);
@@ -773,6 +775,7 @@ bool App::open_path(const char* p) {
     dirty_ = true;
     if (remote) remote_load(*pane_->docs[at], false);  // (the scripts hear of it when it is here)
     else if (script_) script_opened(pane_->doc->id, pane_->doc->disk_stamp == 0);  // (BufReadPost or BufNewFile, and FileType, at the next tick)
+    if (pane_->doc->nb && !restoring_) md_open();  // (a notebook: drawn beside its script)
     return true;
 }
 

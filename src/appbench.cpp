@@ -1203,6 +1203,32 @@ void App::run_script(const char* script) {
         } else if (verb == "nbdump") {  // the notebook in front's saved outputs on show, as "line: output"
             frame();
             std::fprintf(stderr, "%s\n", nb_dump().c_str());
+        } else if (verb == "nbcells") {  // the notebook in front's cells: kind, count, same/changed/new, its outputs' kinds
+            std::fputs(nb_cells_dump().c_str(), stderr);
+        } else if (verb == "nbview") {  // its view, once drawn: the first row on show (@ its line), then each row as "line: text"
+            std::fputs(nb_view_dump().c_str(), stderr);
+        } else if (verb == "nbset") {  // nbset:CELL,COUNT,FILE, the cell (from 1) given the outputs in FILE (JSON) and that count, as a kernel would
+            int cell = 0, count = -1;
+            char file[1024] = "";
+            std::string text;
+            if (std::sscanf(arg.c_str(), "%d,%d,%1023[^\n]", &cell, &count, file) == 3 && fs_read(file, &text, 64u << 20) && cell > 0) {
+                if (!nb_set_outputs(*pane_->doc, static_cast<size_t>(cell - 1), text, count)) std::fprintf(stderr, "nbset: no such code cell, or not outputs\n");
+            }
+        } else if (verb == "nbclick") {  // nbclick:ROW, a click on that row of the notebook's view (as nbview counts them, from 0)
+            md_wait();
+            float x = 0, y = 0;
+            if (nb_view_point(static_cast<u32>(std::atoi(arg.c_str())), &x, &y)) {
+                e.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+                e.button.button = SDL_BUTTON_LEFT;
+                e.button.x = x;
+                e.button.y = y;
+                e.button.clicks = 1;
+                handle(e);
+                e.type = SDL_EVENT_MOUSE_BUTTON_UP;
+                handle(e);
+            } else {
+                std::fprintf(stderr, "nbclick: that row is not on show\n");
+            }
         } else if (verb == "hierdump") {  // the call or type hierarchy on show: its rows (once the server has answered)
             for (const u64 until = now_ns() + 10'000'000'000ull; hier_dump() == "waiting" && now_ns() < until;) {
                 sync_lsp();

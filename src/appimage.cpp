@@ -136,18 +136,6 @@ std::string leaf_of(const std::string& path) {
 
 bool is_web(std::string_view path) { return path.starts_with("http://") || path.starts_with("https://"); }
 
-// blit's cache folder (where the GPU's compiled pipelines are kept too).
-std::string cache_dir() {
-    if (const char* d = std::getenv("BLIT_CACHE_DIR"); d && *d) return d;
-#if defined(__APPLE__)
-    if (const char* home = std::getenv("HOME"); home && *home) return std::string(home) + "/Library/Caches/blit";
-#else
-    if (const char* x = std::getenv("XDG_CACHE_HOME"); x && *x) return std::string(x) + "/blit";
-    if (const char* home = std::getenv("HOME"); home && *home) return std::string(home) + "/.cache/blit";
-#endif
-    return {};
-}
-
 // A picture on the web: the copy in blit's cache, if it was fetched in the
 // last day; else fetched (by the system) and kept there. One that cannot
 // be fetched now is shown from an older copy, if there is one.
@@ -359,10 +347,11 @@ void App::svg_preview() {
     dirty_ = true;
 }
 
-// Cmd+Shift+V: an SVG's picture, or a Markdown preview.
+// Cmd+Shift+V: an SVG's picture, a notebook's view (shown or closed), or a Markdown preview.
 void App::preview_open() {
     const Doc& d = *pane_->doc;
     if ((d.image && d.image->source) || (!d.image && !d.md && is_svg_path(d.ed.path))) svg_preview();
+    else if (d.nb || (d.md && md_notebook(d))) nb_view_toggle();
     else md_open();
 }
 

@@ -320,7 +320,7 @@ void App::commands_create() {
     own("Go to the previous problem", {key(SDLK_F8, kS)}, [this] { problem_step(-1); });
     // Markdown.
     // (Where Ctrl+Shift+V pastes, as in a terminal: Ctrl+Alt+V.)
-    own("Preview beside the file (Markdown, or an SVG's picture)", {key(SDLK_V, kCtrlShared ? kP | kA : kP | kS)}, [this] { preview_open(); });
+    own("Preview beside the file (Markdown, a notebook, or an SVG's picture)", {key(SDLK_V, kCtrlShared ? kP | kA : kP | kS)}, [this] { preview_open(); });
     own("Toggle distraction-free mode", {}, [this] { focus_toggle(kFocusPlain); });
     own("Toggle presentation mode", {}, [this] { focus_toggle(kFocusShow); });
     own("Toggle soft wrap", {key(SDLK_Z, kA)}, [this] { wrap_toggle(); });

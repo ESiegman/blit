@@ -1,0 +1,177 @@
+#!/bin/sh
+# A notebook's view: opened beside the script of its cells (from the
+# command line too), its cells drawn as Jupyter shows them, each kind of
+# output (text, stderr, a DataFrame's table, pictures, Markdown, JSON,
+# LaTeX, an error's traceback in colour), a long one cut; following the
+# script's cursor, a click taking the cursor to a cell; Cmd+Shift+V; a
+# cell changed since it ran; outputs given as a kernel would, shown and
+# saved; and broken notebooks.
+#
+#   tests/notebook.sh path/to/blit            run the cases
+#   tests/notebook.sh path/to/blit --print    show what each case gives
+set -u
+blit=${1:?usage: tests/notebook.sh path/to/blit [--print]}
+print=${2:-}
+command -v python3 >/dev/null 2>&1 || { echo "notebook skipped: no python3 to write the notebooks with"; exit 77; }
+dir=$(mktemp -d)
+trap 'rm -rf "$dir"' EXIT
+dir=$(cd "$dir" && pwd -P)
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/init.lua"
+export BLIT_INIT="$dir/init.lua" BLIT_RECENT_FILE="$dir/recent" BLIT_CACHE_DIR="$dir/cache" BLIT_APPEARANCE=dark
+case $(uname -s) in
+    Darwin) close=cmd+W ;;
+    *) close=ctrl+F4 ;;
+esac
+
+failed=0
+check() {
+    if [ -n "$print" ]; then
+        printf '%s\n%s\n' "$1" "$got"
+    elif [ "$got" != "$2" ]; then
+        printf 'FAIL: %s\n' "$1"
+        printf '%s\n' "$2" >"$dir/want"
+        printf '%s\n' "$got" >"$dir/got"
+        diff "$dir/want" "$dir/got" | head -20
+        failed=1
+    fi
+}
+# view SCRIPT: the notebook's view as nbview gives it (rows as "line: text"), its trailing spaces gone.
+view() {
+    got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/n.ipynb;mdwait;imagewait;mdwait;$1;nbview" 2>&1 >/dev/null | sed -e 's/ *$//')
+}
+
+# A notebook with an output of each kind (a picture made here: a PNG's bytes).
+cat >"$dir/make.py" <<'EOF'
+import base64, json, struct, sys, zlib
+def png(w, h):
+    raw = b''.join(b'\x00' + bytes([200, 40, 40]) * w for _ in range(h))
+    def chunk(t, d): return struct.pack('>I', len(d)) + t + d + struct.pack('>I', zlib.crc32(t + d) & 0xffffffff)
+    return b'\x89PNG\r\n\x1a\n' + chunk(b'IHDR', struct.pack('>IIBBBBB', w, h, 8, 2, 0, 0, 0)) + chunk(b'IDAT', zlib.compress(raw)) + chunk(b'IEND', b'')
+def src(s): return [l + '\n' for l in s.split('\n')[:-1]] + [s.split('\n')[-1]]
+def code(n, s, outputs): return {"cell_type": "code", "execution_count": n, "metadata": {}, "outputs": outputs, "source": src(s)}
+table = ('<div><style scoped>.dataframe { x: y; }</style><table border="1" class="dataframe"><thead><tr style="text-align: right;">'
+         '<th></th><th>planet</th><th>moons</th></tr></thead><tbody><tr><th>0</th><td>Earth &amp; Moon</td><td>1</td></tr>'
+         '<tr><th>1</th><td>Mars</td><td>2</td></tr></tbody></table><p>2 rows</p></div>')
+tb = ["\u001b[0;31mZeroDivisionError\u001b[0m   Traceback (most recent call last)",
+      "Cell \u001b[0;32mIn[6], line 1\u001b[0m\n\u001b[0;32m----> 1\u001b[0m \u001b[38;5;241m1\u001b[39m\u001b[38;5;241m/\u001b[39m\u001b[38;5;241m0\u001b[39m",
+      "\u001b[0;31mZeroDivisionError\u001b[0m: division by zero"]
+cells = [
+    {"cell_type": "markdown", "metadata": {}, "source": src("# Orbits\n\nThe **planets**.")},
+    code(1, "print('hello')", [{"name": "stdout", "output_type": "stream", "text": ["hel", "lo\n"]},
+                               {"name": "stderr", "output_type": "stream", "text": "careful\n"}]),
+    code(2, "df", [{"data": {"text/html": table, "text/plain": "   planet"}, "execution_count": 2, "metadata": {}, "output_type": "execute_result"}]),
+    code(3, "plot()", [{"data": {"image/png": base64.b64encode(png(64, 32)).decode(), "text/plain": "<Figure size 64x32>"}, "metadata": {}, "output_type": "display_data"}]),
+    code(4, "show()", [{"data": {"text/markdown": "**bold** words", "text/plain": "md"}, "metadata": {}, "output_type": "display_data"},
+                       {"data": {"application/json": {"name": "Earth", "moons": [1]}, "text/plain": "js"}, "metadata": {}, "output_type": "display_data"},
+                       {"data": {"text/latex": "$E = mc^2$", "text/plain": "latex"}, "metadata": {}, "output_type": "display_data"},
+                       {"data": {"text/plain": "42"}, "execution_count": 4, "metadata": {}, "output_type": "execute_result"}]),
+    code(5, "logo()", [{"data": {"image/svg+xml": '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="40"><rect width="80" height="40" fill="#4c9be8"/></svg>',
+                                 "text/plain": "<SVG logo>"}, "metadata": {}, "output_type": "display_data"}]),
+    code(6, "1/0", [{"ename": "ZeroDivisionError", "evalue": "division by zero", "output_type": "error", "traceback": tb}]),
+    code(7, "loop()", [{"name": "stdout", "output_type": "stream", "text": "".join("step %d\n" % i for i in range(100))}]),
+    {"cell_type": "raw", "metadata": {}, "source": src("as it is")},
+    code(None, "x = 1", []),
+]
+json.dump({"cells": cells, "metadata": {"language_info": {"name": "python"}}, "nbformat": 4, "nbformat_minor": 5}, open(sys.argv[1], "w"), indent=1, sort_keys=True)
+EOF
+python3 "$dir/make.py" "$dir/n.ipynb"
+
+# Opened: the script, and beside it the view (the keyboard on the script).
+got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/n.ipynb;mdwait;dump" 2>&1 >/dev/null | tail -1)
+check "opened: the script, and the notebook beside it" 'H(>[n.ipynb*] | [Notebook: n.ipynb*])0.50'
+# From the command line too: the script of its cells, not its JSON.
+got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "mdwait;dump;lsptext;nbview" "$dir/n.ipynb" 2>&1 >/dev/null | sed -n '1,2p;4p' | cut -c1-50 | sed -e 's/ *$//')
+check "from the command line: the script of its cells, and the notebook beside it" 'H(>[n.ipynb*] | [Notebook: n.ipynb*])0.50
+# %% [markdown] / # # Orbits / # / # The **planets
+2:         Orbits'
+
+# What it draws (each row as the script's line it is of, and its text).
+view ""
+all=$got
+got=$(printf '%s\n' "$all" | grep -E 'In \[|Out\[' | sed -e 's/^[0-9]*: *//' | tr '\n' '|')
+check "code cells with In [n]: beside them, a result's Out[n]:" "In [1]:  print('hello')|In [2]:  df|Out[2]: ┌───┬──────────────┬───────┐|In [3]:  plot()|In [4]:  show()|Out[4]: 42|In [5]:  logo()|In [6]:  1/0|In [7]:  loop()|In [ ]:  x = 1|"
+got=$(printf '%s\n' "$all" | grep -E '^(2|4|7|10): ' | grep -v ━ | grep -v 'In \[' | tr -s ' ' | grep -v ': *$' | tr '\n' '|')
+check "Markdown drawn; a stream written in parts, one text; stderr; a DataFrame as a table" "2: Orbits|4: The planets.|7: hello|7: careful|10: Out[2]: ┌───┬──────────────┬───────┐|10: │ │ planet │ moons │|10: ├───┼──────────────┼───────┤|10: │ 0 │ Earth & Moon │ 1 │|10: │ 1 │ Mars │ 2 │|10: └───┴──────────────┴───────┘|10: 2 rows|"
+got=$(printf '%s\n' "$all" | grep -E '^(13|16): ' | grep -v 'In \[' | sed -e 's/^[0-9]*: *//' | grep . | tr '\n' '|' | sed -e 's/nb-[0-9a-f]*\.png [0-9]*x[0-9]*/nb-HASH.png/')
+check "a picture shown from blit's cache; Markdown, JSON indented, LaTeX as text" "picture: nb-HASH.png|bold words|{|\"moons\": [|1|],|\"name\": \"Earth\"|}|\$E = mc^2\$|Out[4]: 42|"
+got=$(ls "$dir/cache/pictures" | grep -c '^nb-[0-9a-f]*\.png$')
+check "the picture written once, named by what is in it" "1"
+svg=$(printf '%s\n' "$all" | grep -E '^19: ' | grep -v 'In \[' | sed -e 's/^[0-9]*: *//' | grep . | sed -e 's/nb-[0-9a-f]*\.svg [0-9]*x[0-9]*/nb-HASH.svg/')
+case $svg in
+    "picture: nb-HASH.svg" | "<SVG logo>") got=ok ;;
+    *) got=$svg ;;
+esac
+check "an SVG drawn where the system reads them, else its text" "ok"
+got=$(printf '%s\n' "$all" | grep -E '^(22|25|28): ' | grep -v 'In \[' | sed -e 's/^[0-9]*: *//' | grep . | tr '\n' '|')
+check "an error's traceback, a long output cut and how much more said, a raw cell" "ZeroDivisionError   Traceback (most recent call last)|Cell In[6], line 1|----> 1 1/0|ZeroDivisionError: division by zero|$(seq 0 59 | sed -e 's/^/step /' | tr '\n' '|')… 40 more lines|as it is|"
+# The traceback's colours: the theme's (the error's name in its colour for errors, not the text's).
+got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/n.ipynb;mdwait;mdinks" 2>&1 >/dev/null | sed -n 's/.*\[#\([0-9a-f]*\)\]ZeroDivisionError\[#\([0-9a-f]*\)\]: division.*/\1 \2/p')
+[ -n "$got" ] && [ "${got% *}" != "${got#* }" ] && got=coloured
+check "a traceback's colours turned into the theme's" "coloured"
+
+# Following the script's cursor to its cell (from the blank row above it),
+# and a click on a cell taking the cursor there, the keyboard back on the script.
+got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/n.ipynb;mdwait;imagewait;vim:25G;mdwait;nbview" 2>&1 >/dev/null | head -1)
+row=$(printf '%s\n' "$all" | tail -n +2 | grep -n "^24: *$" | head -1 | cut -d: -f1)
+check "the view follows the cursor to its cell" "top $((row - 1)) @24"
+mars=$(printf '%s\n' "$all" | tail -n +2 | grep -n "^10: .* Mars " | cut -d: -f1)
+words=$(printf '%s\n' "$all" | tail -n +2 | grep -n "^4: .*The planets" | cut -d: -f1)
+got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/n.ipynb;mdwait;imagewait;mdwait;nbclick:$((mars - 1));docdump:0;dump;nbclick:$((words - 1));docdump:0" 2>&1 >/dev/null | tr '\n' '#')
+check "a click on an output: the cursor to its cell's first line; on Markdown, to its line" "#> |df#H(>[n.ipynb*] | [Notebook: n.ipynb*])0.50##> |# The **planets**.#"
+
+# Cmd+Shift+V: the view closed, and opened again; closing the script closes it.
+got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/n.ipynb;mdwait;keyof:Preview beside the file;dump;keyof:Preview beside the file;mdwait;dump;key:$close;dump" 2>&1 >/dev/null | tr '\n' '#')
+check "Cmd+Shift+V closes the view and opens it again; closing the script closes it" ">[n.ipynb*]#H(>[n.ipynb*] | [Notebook: n.ipynb*])0.50#>[untitled*]#"
+
+# A cell changed since it ran: said, its outputs quieter; the model's cells.
+got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/n.ipynb;mdwait;vim:10GAx<Esc>;mdwait;nbview;nbcells" 2>&1 >/dev/null | sed -e 's/ *$//')
+got=$(printf '%s\n' "$got" | grep -E '^10: ' | grep -E 'In|edited|Out'; printf '%s\n' "$got" | grep -E '^[0-9]+ (code|markdown|raw)' | head -4)
+check "a changed cell: edited, under its label; the model's cells" "10: In [2]:  dfx
+10:  edited
+10: Out[2]: ┌───┬──────────────┬───────┐
+1 markdown same
+2 code [1] same stream stream
+3 code [2] changed execute_result
+4 code [3] same display_data"
+got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/n.ipynb;mdwait;vim:10GAx<Esc>;mdwait;mdinks" 2>&1 >/dev/null | grep -E 'Mars' | grep -o '\[#[0-9a-f]*\]Mars')
+plain=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/n.ipynb;mdwait;mdinks" 2>&1 >/dev/null | grep -E 'Mars' | grep -o '\[#[0-9a-f]*\]Mars')
+[ -n "$got" ] && [ "$got" != "$plain" ] && got=quieter
+check "a changed cell's outputs quieter" "quieter"
+
+# Outputs given as a kernel gives them: drawn with the count, the line
+# after the cell, and saved.
+cp "$dir/n.ipynb" "$dir/k.ipynb"
+printf '[{"output_type": "stream", "name": "stdout", "text": "ran\\n"}, {"output_type": "execute_result", "execution_count": 8, "data": {"text/plain": "1"}, "metadata": {}}]' >"$dir/out.json"
+got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/k.ipynb;mdwait;nbset:10,8,$dir/out.json;nbset:9,8,$dir/out.json;nbview;nbdump;save" 2>&1 >/dev/null | grep -E '^31: |nbset|^[0-9]+: .* \| ' | sed -e 's/ *$//')
+check "a kernel's outputs: drawn, the count beside the cell, the line after it" 'nbset: no such code cell, or not outputs
+31: In [8]:  x = 1
+31:
+31:         ran
+31: Out[8]: 1
+7: careful | 10:    planet | 13: [image/png] | 16: 42 | 19: [image/svg+xml] | 22: ZeroDivisionError: division by zero | 25: step 99 | 31: 1'
+
+# Broken notebooks: JSON that is not a notebook opens as text, without a
+# view; outputs that are not what they should be are drawn as far as they go.
+printf '{"cells": "no"}\n' >"$dir/bad.ipynb"
+got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/bad.ipynb;mdwait;dump;nbview" 2>&1 >/dev/null | tr '\n' '#')
+check "JSON that is not a notebook: as text, no view" ">[bad.ipynb*]#no notebook view#"
+cat >"$dir/broken.ipynb" <<'EOF'
+{"cells": [
+ {"cell_type": "code", "execution_count": "seven", "metadata": {}, "outputs": {"not": "a list"}, "source": "a = 1"},
+ {"cell_type": "code", "execution_count": 2, "metadata": {}, "outputs": [
+   {"output_type": "display_data", "data": {"image/png": "!!!", "text/plain": "<Figure>"}, "metadata": {}},
+   {"output_type": "display_data", "data": {"image/png": "iVBORw0KGgo="}, "metadata": {"image/png": {"width": -5}}},
+   {"output_type": "execute_result", "data": {"text/plain": 42}, "metadata": {}},
+   {"output_type": "error", "ename": "E", "evalue": "v", "traceback": "not a list"},
+   {"output_type": "stream", "name": "stdout", "text": "\u001b[38;5;999modd\u001b[38;2;300m \u001b]8;;http://x\u001b\\link\u001b]8;;\u001b\\ \u001b["},
+   {"output_type": "display_data", "data": {"application/vnd.plotly.v1+json": {}}, "metadata": {}},
+   {"output_type": "execute_result", "execution_count": 2, "data": {"text/html": "<table><tr><td colspan=\"2\">wide</td></tr><tr><td rowspan=\"9\">tall</td><td>x"}, "metadata": {}},
+   {"output_type": "nonsense"}, 42, "text"], "source": "b"},
+ {"cell_type": "markdown", "metadata": {}, "source": 5},
+ {"cell_type": "mystery", "source": ["c = 3"]}], "metadata": {"kernelspec": 1}, "nbformat": 4, "nbformat_minor": 5}
+EOF
+got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/broken.ipynb;mdwait;imagewait;mdwait;nbview;nbdump" 2>&1 >/dev/null | sed -e 's/^[0-9]*: *//' -e 's/ *$//' | grep . | tr '\n' '|')
+check "broken outputs drawn as far as they go" 'top 0 @1|In [ ]:  a = 1|In [2]:  b|<Figure>|[image/png]|E: v|odd link|[application/vnd.plotly.v1+json]|Out[2]: ┌──────┬───┐|│ wide │   │|├──────┼───┤|│ tall │ x │|└──────┴───┘|In [ ]:  c = 3|odd link|'
+
+[ -n "$print" ] || [ $failed = 1 ] || echo "notebook ok"
+exit $failed

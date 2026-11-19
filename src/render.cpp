@@ -10,6 +10,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "fsio.hpp"
+
 namespace blit {
 
 // Inserts (inlay hints) take room in their line, left of the view as well:
@@ -227,18 +229,6 @@ struct PictureUniforms {
     float rect[4], fx[4], check_a[4], check_b[4];
 };
 static_assert(sizeof(PictureUniforms) <= sizeof(Uniforms));
-
-// Where compiled pipelines are kept from one run to the next.
-std::string cache_dir() {
-    if (const char* d = std::getenv("BLIT_CACHE_DIR"); d && *d) return d;
-#if defined(__APPLE__)
-    if (const char* home = std::getenv("HOME"); home && *home) return std::string(home) + "/Library/Caches/blit";
-#else
-    if (const char* x = std::getenv("XDG_CACHE_HOME"); x && *x) return std::string(x) + "/blit";
-    if (const char* home = std::getenv("HOME"); home && *home) return std::string(home) + "/.cache/blit";
-#endif
-    return {};
-}
 
 }  // namespace
 

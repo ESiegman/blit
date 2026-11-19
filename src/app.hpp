@@ -1056,6 +1056,7 @@ private:
     void nb_view_toggle();
     void nb_view_close(u64 source);
     std::string nb_view_dump();
+    bool nb_view_point(u32 row, float* x, float* y);
     std::vector<GridNote> nb_notes_[kMaxViews];
     // The terminals' split along the bottom, the one the build's output
     // uses too: Ctrl+` shows it with the keyboard on its terminal, and

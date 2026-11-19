@@ -35,6 +35,7 @@
 #include "snippet.hpp"
 #include "asm.hpp"
 #include "notebook.hpp"
+#include "nbview.hpp"
 #include "history.hpp"
 #include "wrap.hpp"
 #include "tests.hpp"
@@ -500,6 +501,81 @@ void notebook_test() {
           "notebook: written with the model's outputs and counts, the cell's id kept");
     check(notebook_set_outputs(&model[1], "[]", -1) && !model[1].outputs && model[1].output.empty() && notebook_write(nb, edited, &model).find("\"execution_count\": null") != std::string::npos,
           "notebook: outputs cleared");
+}
+
+// A notebook drawn (nbview.cpp): its rows as text, each with the script's
+// line it is of; a terminal's colours as the theme's inks; a DataFrame's
+// HTML as a table; pictures kept and shown, or what stands for them; long
+// outputs cut; labels beside the cells, or above them when narrow.
+void notebook_view_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    // Colours: 16 of them, 256, 24-bit; bold; the rest of an escape dropped.
+    const std::vector<MdRun> runs = nb_ansi("\x1b[0;31mZeroDivisionError\x1b[0m: x \x1b[38;5;28;01mdef\x1b[39;00m \x1b[38;5;241mgrey\x1b[38;2;20;40;220mblue\x1b]8;;u\x1b\\\x1b[K\x1b[mend", kMdText);
+    check(runs.size() == 7 && runs[0].text == "ZeroDivisionError" && runs[0].ink == kMdError && runs[1].ink == kMdText && runs[2].text == "def" &&
+              runs[2].ink == kMdAnsiGreen && runs[2].style == kMdBold && runs[4].ink == kMdMuted && runs[5].ink == kMdAnsiBlue && runs[6].text == "end",
+          "notebook view: a terminal's colours as the theme's inks");
+    std::string script;
+    std::vector<NotebookCell> cells;
+    const std::string json = R"NB({"cells": [
+ {"cell_type": "markdown", "metadata": {}, "source": "# Title"},
+ {"cell_type": "code", "execution_count": 12, "metadata": {}, "source": "df", "outputs": [
+  {"output_type": "stream", "name": "stderr", "text": "careful\n"},
+  {"output_type": "execute_result", "execution_count": 12, "metadata": {}, "data": {"text/plain": "df", "text/html":
+   "<style>x</style><table><thead><tr style=\"text-align: right;\"><th></th><th>a &amp; b</th></tr></thead><tbody><tr><th>0</th><td>1|2</td></tr></tbody></table><p>1 row</p>"}},
+  {"output_type": "display_data", "metadata": {"image/png": {"width": 100}}, "data": {"image/png": "iVBORw0KGgo=", "text/plain": "<Figure>"}},
+  {"output_type": "display_data", "metadata": {}, "data": {"application/json": {"k": [1]}, "text/plain": "J"}},
+  {"output_type": "display_data", "metadata": {}, "data": {"application/pdf": "JVBERi0="}}]},
+ {"cell_type": "code", "execution_count": 13, "metadata": {}, "source": "loop()", "outputs": [{"output_type": "stream", "name": "stdout", "text": "%LINES%"}]},
+ {"cell_type": "raw", "metadata": {}, "source": "as is"}], "metadata": {}, "nbformat": 4, "nbformat_minor": 5})NB";
+    std::string lines;
+    for (int k = 0; k < 100; ++k) lines += "line " + std::to_string(k) + "\\n";
+    std::string text = json;
+    text.replace(text.find("%LINES%"), 7, lines);
+    check(notebook_read(text, &cells, &script), "notebook view: read");
+    std::vector<std::string> kept;
+    NbLook look;
+    look.width = 60;
+    look.keep = [&](std::string_view bytes, std::string_view kind) {
+        kept.push_back(std::string(kind) + ":" + std::to_string(bytes.size()));
+        return std::string("/cache/pictures/nb.png");
+    };
+    look.picture = [](const std::string& src, u32 room, u32 want_w, u32, MdPic* out) {
+        out->cols = std::min(room, want_w / 10), out->rows = 3, out->w = out->cols * 10, out->h = 30;
+        return src.empty() ? kNbPictureFailed : kNbPictureReady;
+    };
+    NbCache cache;
+    auto text_of = [](const std::vector<MdRow>& rows) {
+        std::string out;
+        for (const MdRow& r : rows) out += std::to_string(r.line + 1) + ":" + md_row_text(r) + "\n";
+        return out;
+    };
+    const std::vector<MdRow> rows = nb_render(script, cells, look, &cache);
+    const std::string got = text_of(rows);
+    check(got.find("2:         Title\n") != std::string::npos && got.find("5:In [12]:  df\n") != std::string::npos, "notebook view: a Markdown cell drawn, a code cell with its label beside it");
+    check(got.find("5:         careful\n") != std::string::npos && got.find("5:Out[12]: \xE2\x94\x8C") != std::string::npos && got.find("\xE2\x94\x82 a & b \xE2\x94\x82") != std::string::npos &&
+              got.find("\xE2\x94\x82 0 \xE2\x94\x82   1|2 \xE2\x94\x82") != std::string::npos && got.find("5:         1 row\n") != std::string::npos,
+          "notebook view: stderr, and a DataFrame's HTML as a table (its index, its cells' text as it is, aligned right), the result's label beside it");
+    check(kept.size() == 1 && kept[0] == "png:8" && got.find("picture: /cache/pictures/nb.png 10x3") != std::string::npos, "notebook view: a picture kept as a file, and shown from it");
+    check(got.find("\"k\": [\n") != std::string::npos && got.find("[application/pdf]") != std::string::npos, "notebook view: JSON indented; data blit cannot draw, named");
+    check(got.find("line 59\n") != std::string::npos && got.find("line 60\n") == std::string::npos && got.find("\xE2\x80\xA6 40 more lines") != std::string::npos,
+          "notebook view: a long output cut, and how much more there is said");
+    check(got.find(":         as is\n") != std::string::npos, "notebook view: a raw cell as it is");
+    bool tinted = false;
+    for (const MdRow& r : rows) tinted = tinted || (md_row_text(r).ends_with("careful") && r.fill == kMdErrorTone);
+    check(tinted, "notebook view: stderr tinted as an error");
+    // Drawn again with the cache: the outputs not read again, the rows the same.
+    check(text_of(nb_render(script, cells, look, &cache)) == got && kept.size() == 1, "notebook view: drawn again from what was kept");
+    // A changed cell: its label quieter and said, its outputs quieter; narrow, labels above.
+    std::string edited = script;
+    edited.replace(edited.find("\ndf\n"), 4, "\ndf2\n");
+    look.width = 40;
+    const std::string narrow = text_of(nb_render(edited, cells, look, &cache));
+    check(narrow.find("In [12]: edited\n") != std::string::npos && narrow.find("Out[12]:\n") != std::string::npos, "notebook view: narrow, labels above; a changed cell said so");
+    look.picture = [](const std::string&, u32, u32, u32, MdPic*) { return kNbPictureFailed; };
+    cache = NbCache();
+    check(text_of(nb_render(script, cells, look, &cache)).find("<Figure>") != std::string::npos, "notebook view: a picture that cannot be read, its text instead");
 }
 
 // Local history: versions kept newest first, read back as they were; the
@@ -1965,6 +2041,12 @@ void parsers_test(int seeds) {
  {"cell_type": "code", "execution_count": null, "id": "c3", "metadata": {}, "outputs": [{"ename": "E", "evalue": "v", "output_type": "error", "traceback": ["t"]}], "source": "plot()"}],
  "metadata": {"kernelspec": {"display_name": "Python 3", "name": "python3"}, "language_info": {"version": "3.12.1"}}, "nbformat": 4, "nbformat_minor": 5}
 )NB");
+    notebooks.push_back(R"NB({"cells": [{"cell_type": "code", "execution_count": 1, "metadata": {}, "source": "df", "outputs": [
+ {"output_type": "execute_result", "execution_count": 1, "metadata": {}, "data": {"text/html": "<table><thead><tr><th colspan=\"2\">a</th></tr><tr><th>x</th><th align=center>y</th></tr></thead><tr><td rowspan=2>1 &lt; 2</td><td>z</td></tr><tr><td>w<br>v</td></tr></table><p>after</p>"}},
+ {"output_type": "display_data", "metadata": {}, "data": {"image/svg+xml": ["<svg>", "</svg>"], "text/markdown": "**b** ![p](p.png)", "application/json": {"k": [1, {"n": null}]}}},
+ {"output_type": "error", "ename": "E", "evalue": "v", "traceback": ["\u001b[0;31mE\u001b[0m\n\u001b[38;5;241mx\u001b[39m", "\r\u001b[1mbold\u001b[22m\b\u0007"]},
+ {"output_type": "stream", "name": "stdout", "text": "a\rb\n\tc\n"}]}], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}
+)NB");
     jsons.push_back(R"({"a": 1, "b": [true, false, null, -2.5e2, "x\ty"], "s": "caf\u00e9 \ud83d\ude00 \ud800 x \"q\" \\ \/", "o": {"k": {"deep": [1, [2, [3]]]}}, "e": [], "eo": {}})");
     jsons.push_back(R"({"kind":"ctestInfo","tests":[{"name":"Math.Adds","command":["/b/t","--gtest_filter=Math.Adds"],"properties":[{"name":"WORKING_DIRECTORY","value":"/b"}]},{"name":"plain","command":["/b/p"]}]})");
     jsons.push_back(R"({"format_version":"2","current_working_directory":"/b","files":[{"file":"../p/a.cpp","lines":[{"line_number":3,"count":2},{"line_number":4,"count":0}]}]})");
@@ -2031,6 +2113,14 @@ void parsers_test(int seeds) {
             std::vector<NotebookCell> cells;
             std::string script;
             if (notebook_read(s, &cells, &script)) seen += cells.size() + notebook_cell_lines(script).size();
+            NbLook look;  // (drawn as the view draws it, at a width, its pictures all there)
+            look.width = static_cast<u32>(rnd(100));
+            look.keep = [](std::string_view bytes, std::string_view) { return bytes.empty() ? std::string() : std::string("/p.png"); };
+            look.picture = [](const std::string&, u32 room, u32, u32, MdPic* out) {
+                out->cols = std::max<u32>(1, room / 2), out->rows = 2, out->w = 10, out->h = 10;
+                return kNbPictureReady;
+            };
+            seen += nb_render(spoil(script), cells, look).size() + nb_ansi(spoil("\x1b[38;5;1;48;2;1;2;3m\x1b]0;t\x07x\x1b[1"), kMdText).size();
             seen += notebook_write(s, spoil(script.empty() ? "# %%\nx = 1\n\n# %% [markdown]\n# hi\n" : script)).size();
             seen += notebook_cells(spoil("import os\n\n# %%\nprint(1)\n# %% [markdown]\n# a\n")).size();
         }
@@ -6061,6 +6151,7 @@ int main(int argc, char** argv) {
     snippets_test();
     asm_test();
     notebook_test();
+    notebook_view_test();
     history_test();
     wrap_test();
     find_test();

@@ -1122,6 +1122,7 @@ struct Layout {
     std::vector<Level> levels;
     const MdPictureFn* picture = nullptr;
     const MdCodeFn* colour = nullptr;
+    bool named = true;  // a code block's language named over it
 
     u32 indent() const {
         u32 n = 0;
@@ -1255,7 +1256,7 @@ struct Layout {
         // The language, at the top on the right.
         const std::string lang = b.info.substr(0, b.info.find(' '));
         std::vector<MdRun> top;
-        if (!lang.empty() && room_cols > cols_of(lang) + 2) top.push_back({std::string(room_cols - cols_of(lang) - 1, ' ') + lang, kMdMuted, 0, kMdCodeTone});
+        if (named && !lang.empty() && room_cols > cols_of(lang) + 2) top.push_back({std::string(room_cols - cols_of(lang) - 1, ' ') + lang, kMdMuted, 0, kMdCodeTone});
         fill(row(std::move(top), b.line));
         // Its colours, when it is in a language there is a grammar for: an
         // ink for each byte of its lines (each ended by a newline).
@@ -1522,6 +1523,54 @@ std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn
     Layout layout{rows, width, refs, {}, &picture, &colour};
     layout.blocks(blocks, false, kMdText);
     return rows;
+}
+
+std::vector<MdRow> md_code(std::string_view lang, std::string_view code, u32 width, const MdCodeFn& colour) {
+    Block b;
+    b.kind = Block::kCode;
+    b.info = std::string(lang);
+    for (size_t at = 0; at < code.size();) {
+        size_t nl = code.find('\n', at);
+        if (nl == std::string_view::npos) nl = code.size();
+        std::string_view l = code.substr(at, nl - at);
+        if (l.ends_with('\r')) l.remove_suffix(1);
+        b.nos.push_back(static_cast<u32>(b.text.size()));
+        b.text.emplace_back(l);
+        at = nl + 1;
+    }
+    std::vector<MdRow> rows;
+    const Refs refs;
+    const MdPictureFn none;
+    Layout layout{rows, std::max<u32>(width, 12), refs, {}, &none, &colour};
+    layout.named = false;
+    layout.code(b);
+    return rows;
+}
+
+std::vector<MdRow> md_table(const std::vector<std::vector<std::string>>& cells, const std::vector<int>& align, u32 width) {
+    Block b;
+    b.kind = Block::kTable;
+    b.table = cells;
+    b.align = align;
+    size_t cols = 0;
+    for (const std::vector<std::string>& r : cells) cols = std::max(cols, r.size());
+    b.align.resize(std::max<size_t>(cols, 1), -1);
+    for (u32 r = 0; r < cells.size(); ++r) b.nos.push_back(r);
+    std::vector<MdRow> rows;
+    const Refs refs;
+    Layout layout{rows, std::max<u32>(width, 12), refs, {}, nullptr, nullptr};
+    layout.table(b);
+    return rows;
+}
+
+std::string md_escape(std::string_view text) {
+    std::string out;
+    out.reserve(text.size());
+    for (const char c : text) {
+        if (std::ispunct(static_cast<unsigned char>(c))) out += '\\';
+        out += c == '\n' || c == '\t' || c == '\r' ? ' ' : c;
+    }
+    return out;
 }
 
 std::string md_row_text(const MdRow& r) {

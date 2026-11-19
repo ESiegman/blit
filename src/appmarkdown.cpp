@@ -12,6 +12,13 @@
 // README of 1,600 lines made each key cost 1.7 ms instead of 41 µs.) Code
 // blocks are coloured there too, by the editor's grammars, the theme's
 // colours of a few kinds of token standing for all of them.
+//
+// A notebook's view is one of these too (nbview.cpp draws it, on the same
+// thread): beside the script of its cells, opened with it, following its
+// cursor from cell to cell; a click on a cell takes the cursor there.
+// Typing in one cell draws only that one again: the worker keeps the rest
+// (NbCache), and each output's pictures are written to blit's cache once,
+// named by what is in them, and shown from there as any picture is.
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -23,7 +30,9 @@
 #include <thread>
 
 #include "app.hpp"
+#include "fsio.hpp"
 #include "markdown.hpp"
+#include "nbview.hpp"
 #include "remote.hpp"
 #include "syntax.hpp"
 #include "textbox.hpp"
@@ -33,7 +42,12 @@ namespace blit {
 
 struct MdView {
     u64 source = 0;  // the document it shows
+    bool notebook = false;  // a notebook's view (the source is the script of its cells)
     std::vector<MdRow> rows;
+    std::vector<u32> heads;  // a notebook's: the line each of its cells starts on, as drawn
+    u64 asked_nb = ~0ull;    // (and its outputs' generation, as last handed over)
+    u64 followed_head = ~0ull;  // (the cell it last followed the cursor into)
+    bool at_cell = false;       // (and that cell's top was put at its top: kept there as the rows change)
     // What the text was last handed to the worker at: its revision, the
     // width and height, and the pictures' generation (asked again when one
     // of them changes); how many times rows have come; whether they have
@@ -87,6 +101,8 @@ std::string picture_source(const std::string& base, std::string_view src, bool w
         }
     }
     if (path.empty()) return {};
+    static const std::string kept = cache_dir() + "/pictures/";
+    if (path.starts_with(kept)) return path;  // (a notebook's picture, kept here whatever machine it is on)
     std::string host, there;
     const bool remote = split_remote(base, &host, &there);
     if (path.starts_with('/')) return remote ? remote_path(host, path) : path;
@@ -134,14 +150,21 @@ void colours(const ThemeColors& tc, const float* bg, MdView& v) {
     set(kMdCodeConstant, pick(tc, {"number", "constant", "boolean"}, tc.foreground));
     set(kMdCodeOperator, pick(tc, {"operator", "punctuation"}, tc.foreground));
     set(kMdCodePlain, tc.foreground);
-    // Backgrounds: the text's own, a little towards its colour.
-    auto tone = [&](u32 i, float k) {
-        for (int c = 0; c < 3; ++c) v.tones[i][c] = bg[c] + (v.palette[kMdText][c] - bg[c]) * k;
+    set(kMdAnsiGreen, pick(tc, {"string", "markup.inserted"}, tc.hint));
+    set(kMdAnsiYellow, tc.warning);
+    set(kMdAnsiBlue, tc.info);
+    set(kMdAnsiMagenta, pick(tc, {"keyword", "constant"}, tc.accent));
+    set(kMdAnsiCyan, pick(tc, {"type", "function"}, tc.info));
+    // Backgrounds: the text's own, a little towards its colour (an
+    // error's, towards the theme's colour for errors).
+    auto tone = [&](u32 i, float k, u32 to = kMdText) {
+        for (int c = 0; c < 3; ++c) v.tones[i][c] = bg[c] + (v.palette[to][c] - bg[c]) * k;
         v.tones[i][3] = 1;
     };
     tone(kMdCodeTone, 0.07f);
     tone(kMdHeaderTone, 0.12f);
     tone(kMdNodeTone, 0.05f);
+    tone(kMdErrorTone, 0.12f, kMdError);
 }
 
 // The preview's ink for a capture of a highlight query: by the first part
@@ -166,11 +189,32 @@ u8 code_ink(std::string_view capture) {
     return kMdCodePlain;
 }
 
-// The size of a picture known to the worker: read (and its own size), or not to be shown.
+// The size of a picture known to the worker: read (and its own size), or
+// not to be shown (being read, or it cannot be).
 struct PicSize {
     bool ready = false;
     int w = 0, h = 0;
+    bool failed = false;
 };
+
+// A notebook's picture (an output's bytes) kept in blit's cache, named by
+// what is in it: its file ("" if it cannot be written). Written once, and
+// put in place whole (a reader never sees half of it).
+std::string keep_picture(std::string_view bytes, std::string_view kind) {
+    if (bytes.empty()) return {};
+    u64 h = 1469598103934665603ull;
+    for (const char c : bytes) h = (h ^ static_cast<u8>(c)) * 1099511628211ull;
+    char name[48];
+    std::snprintf(name, sizeof name, "nb-%016llx.%.*s", static_cast<unsigned long long>(h), static_cast<int>(kind.size()), kind.data());
+    const std::string dir = cache_dir();
+    if (dir.empty()) return {};
+    const std::string path = dir + "/pictures/" + name;
+    if (fs_kind(path) == 1) return path;
+    std::string err;
+    const std::string part = path + ".part";
+    if (!fs_mkdirs(dir + "/pictures", &err) || !fs_write(part, bytes, &err) || std::rename(part.c_str(), path.c_str()) != 0) return {};
+    return path;
+}
 
 void wake() {
     SDL_Event ev{};
@@ -196,11 +240,16 @@ struct App::MdWorker {
         bool colour = false;
         SyntaxOptions syntax;
         std::vector<GrammarSource> grammars;
+        // A notebook's view: the text is the script of its cells, these
+        // their outputs (notebook.hpp), its code in this language.
+        std::shared_ptr<const std::vector<NotebookCell>> notebook;
+        std::string lang;
     };
     struct Done {
         u64 view = 0, rev = 0, pictures = 0;
         u32 width = 0, tall = 0;
         std::vector<MdRow> rows;
+        std::vector<u32> heads;  // a notebook's: each cell's first line
         std::vector<std::string> wanted;  // pictures it names that were not known yet
     };
     std::mutex mu;
@@ -213,6 +262,7 @@ struct App::MdWorker {
     // typing in a file redraws all of it, and its code blocks are mostly
     // as they were. Only the worker uses it.
     std::map<std::string, std::vector<u8>> coloured;
+    std::map<u64, NbCache> notebooks;  // (each notebook view's: its cells as drawn last)
     std::jthread worker;
 
     MdWorker() {
@@ -226,19 +276,20 @@ struct App::MdWorker {
     // The rows of a job's text. A picture's size: one of its pixels to a
     // point (or the size the text asks for), made smaller to fit across,
     // and to fit in the view.
-    static Done draw(Job& j, std::map<std::string, std::vector<u8>>* coloured = nullptr) {
+    static Done draw(Job& j, std::map<std::string, std::vector<u8>>* coloured = nullptr, NbCache* nb = nullptr) {
         Done d;
         d.view = j.view, d.rev = j.rev, d.pictures = j.pictures, d.width = j.width, d.tall = j.tall;
-        const MdPictureFn size = [&](const std::string& s, u32 room, u32 want_w, u32 want_h, MdPic* out) {
+        const NbPictureFn sized = [&](const std::string& s, u32 room, u32 want_w, u32 want_h, MdPic* out) {
             const std::string path = picture_source(j.base, s, j.web);
-            if (path.empty()) return false;
+            if (path.empty()) return kNbPictureFailed;
             const auto it = j.known.find(path);
             if (it == j.known.end()) {
                 d.wanted.push_back(path);
                 j.known[path] = {};
-                return false;
+                return kNbPictureWaiting;
             }
-            if (!it->second.ready || it->second.w <= 0 || it->second.h <= 0) return false;
+            if (it->second.failed) return kNbPictureFailed;
+            if (!it->second.ready || it->second.w <= 0 || it->second.h <= 0) return kNbPictureWaiting;
             double pw = it->second.w, ph = it->second.h;
             if (want_w && want_h) pw = want_w, ph = want_h;
             else if (want_w) ph = ph * want_w / pw, pw = want_w;
@@ -249,8 +300,9 @@ struct App::MdWorker {
             out->h = static_cast<u32>(std::max(1.0, std::round(ph * k)));
             out->cols = (out->w + static_cast<u32>(j.cw) - 1) / static_cast<u32>(j.cw);
             out->rows = (out->h + static_cast<u32>(j.ch) - 1) / static_cast<u32>(j.ch);
-            return true;
+            return kNbPictureReady;
         };
+        const MdPictureFn size = [&](const std::string& s, u32 room, u32 want_w, u32 want_h, MdPic* out) { return sized(s, room, want_w, want_h, out) == kNbPictureReady; };
         const MdCodeFn colour = [&](std::string_view word, std::string_view code, std::vector<u8>* inks) {
             const std::string lang = Syntax::language_named(word, j.grammars, j.syntax);
             if (lang.empty()) return false;
@@ -267,10 +319,23 @@ struct App::MdWorker {
             for (size_t s = 1; s < names.size(); ++s) by_style[s] = code_ink(names[s]);
             inks->resize(styles.size());
             for (size_t k = 0; k < styles.size(); ++k) (*inks)[k] = styles[k] < by_style.size() ? by_style[styles[k]] : static_cast<u8>(kMdCodePlain);
-            if (coloured->size() >= 256) coloured->clear();
+            if (coloured->size() >= 1024) coloured->clear();  // (a notebook's cells each a block)
             coloured->emplace(std::move(key), *inks);
             return true;
         };
+        if (j.notebook) {
+            NbLook look;
+            look.width = j.width;
+            look.lang = j.lang;
+            look.colour = j.colour && coloured ? colour : MdCodeFn{};
+            look.picture = sized;
+            look.keep = keep_picture;
+            // (the rows kept depend on the pictures known, and the room they have)
+            look.key = std::to_string(j.pictures) + " " + std::to_string(j.tall) + " " + std::to_string(j.cw) + "x" + std::to_string(j.ch) + " " + std::to_string(j.density) + (j.colour ? " c" : "");
+            d.rows = nb_render(j.text, *j.notebook, look, nb);
+            for (const CellLines& c : notebook_cell_lines(j.text)) d.heads.push_back(static_cast<u32>(c.head));
+            return d;
+        }
         d.rows = md_render(j.text, j.width, size, j.colour && coloured ? colour : MdCodeFn{});
         return d;
     }
@@ -285,7 +350,8 @@ struct App::MdWorker {
                 todo.erase(it);
                 busy = j.view;
             }
-            Done d = draw(j, &coloured);
+            if (j.notebook && !notebooks.contains(j.view) && notebooks.size() >= 8) notebooks.clear();  // (views gone, mostly)
+            Done d = draw(j, &coloured, j.notebook ? &notebooks[j.view] : nullptr);
             {
                 std::lock_guard l(mu);
                 busy = 0;
@@ -309,6 +375,7 @@ void App::md_sync() {
         if (!doc || !doc->md) continue;
         MdView& v = *doc->md;
         v.rows = std::move(d.rows);
+        v.heads = std::move(d.heads);
         ++v.renders;
         v.fresh = true;
         for (const std::string& path : d.wanted) {
@@ -368,19 +435,56 @@ void App::md_open() {
                 return;
             }
     const u64 id = src.id;
+    const bool notebook = src.nb != nullptr;
     const std::string name = src.ed.path.empty() ? std::string("untitled") : src.ed.path.substr(src.ed.path.find_last_of('/') + 1);
     Pane* const editing = pane_;
-    Pane* into = split_pane(editing, kEdgeRight);
+    Pane* into = nullptr;
+    if (notebook)  // (with another notebook's view: beside it)
+        for (const std::unique_ptr<Pane>& p : panes_)
+            if (p.get() != editing && !p->floating && std::ranges::any_of(p->docs, [](const std::shared_ptr<Doc>& d) { return d->md && d->md->notebook; })) into = p.get();
+    if (!into) into = split_pane(editing, kEdgeRight);
     if (!into) into = editing;
     pane_ = into;
     Doc* d = add_doc(pane_->tab + 1);
-    d->title = "Preview: " + name;
+    d->title = (notebook ? "Notebook: " : "Preview: ") + name;
     d->read_only = true;
     d->md = std::make_shared<MdView>();
     d->md->source = id;
+    d->md->notebook = notebook;
     for (size_t i = 0; i < pane_->docs.size(); ++i)
         if (pane_->docs[i].get() == d) tab_show(i);
     focus_pane(editing);
+    dirty_ = true;
+}
+
+// Cmd+Shift+V in a notebook (its script, or its view): the view shown
+// beside the script if it is not, else closed.
+void App::nb_view_toggle() {
+    const Doc& d = *pane_->doc;
+    const u64 source = d.md ? d.md->source : d.id;
+    for (const std::unique_ptr<Pane>& p : panes_)
+        for (const std::shared_ptr<Doc>& v : p->docs)
+            if (v->md && v->md->notebook && v->md->source == source) return nb_view_close(source);
+    md_open();
+}
+
+// The views of a notebook closed (their split too, if nothing else is in
+// it); the keyboard stays where it was, if that is still there.
+void App::nb_view_close(u64 source) {
+    Pane* const editing = pane_;
+    for (;;) {
+        Pane* where = nullptr;
+        size_t at = 0;
+        for (const std::unique_ptr<Pane>& p : panes_)
+            for (size_t i = 0; i < p->docs.size() && !where; ++i)
+                if (p->docs[i]->md && p->docs[i]->md->notebook && p->docs[i]->md->source == source) where = p.get(), at = i;
+        if (!where) break;
+        Pane* const was = pane_;
+        pane_ = where;
+        tab_close(at, true);
+        if (pane_ == where && was != where) pane_ = was;  // (the split stayed: back to the one that had the keyboard)
+    }
+    if (std::ranges::any_of(panes_, [&](const std::unique_ptr<Pane>& p) { return p.get() == editing; })) focus_pane(editing);
     dirty_ = true;
 }
 
@@ -409,8 +513,10 @@ void App::md_layout(FrameDesc& fd) {
         size_t src_at = 0;
         Doc* src = find_doc(v.source, &src_pane, &src_at);
         const u32 width = cols > 2 * kMargin + 12 ? cols - 2 * kMargin : cols;
+        u64 nb_gen = 0;  // (a notebook's outputs: how many times they have changed)
+        if (v.notebook && src) nb_model(*src, &nb_gen);
         // Its text handed to the worker when it, the width or the height change, or a picture comes.
-        if (src && (src->ed.revision() != v.asked_rev || width != v.asked_width || rows != v.asked_tall || pictures_gen_ != v.asked_pictures || cfg_.markdown_web_pictures != v.asked_web)) {
+        if (src && (src->ed.revision() != v.asked_rev || width != v.asked_width || rows != v.asked_tall || pictures_gen_ != v.asked_pictures || cfg_.markdown_web_pictures != v.asked_web || nb_gen != v.asked_nb)) {
             if (!md_worker_) md_worker_ = std::make_shared<MdWorker>();
             v.base = !src->ed.path.empty() ? parent_of(full_path(src->ed.path)) : std::string();
             MdWorker::Job j;
@@ -422,20 +528,24 @@ void App::md_layout(FrameDesc& fd) {
             j.density = density_, j.cw = cw, j.ch = ch;
             for (const std::string& path : v.pics) {
                 const PictureInfo* p = picture(path);
-                j.known[path] = {p->state == PictureInfo::kReady, p->full_w, p->full_h};
+                j.known[path] = {p->state == PictureInfo::kReady, p->full_w, p->full_h, p->state == PictureInfo::kFailed};
             }
             j.colour = cfg_.syntax;
             j.syntax.parser_dirs = cfg_.parser_dirs;
             j.syntax.query_dirs = cfg_.query_dirs;
             j.grammars = cfg_.grammars;
-            v.asked_rev = j.rev, v.asked_width = width, v.asked_tall = rows, v.asked_pictures = j.pictures, v.asked_web = j.web;
-            const bool first = v.renders == 0 && v.rows.empty();
-            if (first) {  // (the first time: at once, so that it opens drawn; its code is coloured on the worker)
+            if (v.notebook && !nb_model(*src, &nb_gen, &j.notebook, &j.lang)) j.notebook = std::make_shared<const std::vector<NotebookCell>>();
+            v.asked_rev = j.rev, v.asked_width = width, v.asked_tall = rows, v.asked_pictures = j.pictures, v.asked_web = j.web, v.asked_nb = nb_gen;
+            // (the first time: at once, so that it opens drawn; its code is
+            // coloured on the worker. A notebook's, only there: its pictures
+            // are written out as it is drawn.)
+            const bool first = v.renders == 0 && v.rows.empty() && !v.notebook;
+            if (first) {
                 MdWorker::Done d = MdWorker::draw(j);
                 std::lock_guard l(md_worker_->mu);
                 md_worker_->done.push_back(std::move(d));
             }
-            if (!first || (j.colour && (j.text.find("```") != std::string::npos || j.text.find("~~~") != std::string::npos))) {
+            if (!first || v.notebook || (j.colour && (j.text.find("```") != std::string::npos || j.text.find("~~~") != std::string::npos))) {
                 std::lock_guard l(md_worker_->mu);
                 md_worker_->todo[j.view] = std::move(j);
                 ++md_worker_->posted;
@@ -446,7 +556,30 @@ void App::md_layout(FrameDesc& fd) {
         const bool fresh = v.fresh;
         v.fresh = false;
         // Scrolled to where the file's cursor is, while the file is being worked on (not the preview).
-        if (src && src_pane && src_pane->doc == src && pane.get() != pane_) {
+        if (src && src_pane && src_pane->doc == src && pane.get() != pane_ && v.notebook) {
+            // A notebook's: to the cell the cursor is in, from its top when
+            // it fits (and as the cursor moves in it, only when its row is
+            // not on show; with rows drawn again, the cell's top kept at
+            // the top if it was put there).
+            const u64 line = src->ed.buf.line_of(src->ed.cursor());
+            if ((line != v.followed || fresh) && !v.rows.empty()) {
+                v.followed = line;
+                const auto in = std::upper_bound(v.heads.begin(), v.heads.end(), line);
+                const u64 head = in == v.heads.begin() ? 0 : *(in - 1);
+                u32 first = 0, row = ~0u;
+                for (u32 k = 0; k < v.rows.size(); ++k) {
+                    if (v.rows[k].line < head) first = k + 1;
+                    if (row == ~0u && v.rows[k].line >= line) row = k;
+                }
+                first = std::min<u32>(first, static_cast<u32>(v.rows.size()) - 1);
+                if (row == ~0u || row < first) row = first;
+                if (head != v.followed_head || row < v.top || row >= v.top + rows || v.at_cell) {
+                    v.at_cell = row - first < rows * 2 / 3;
+                    v.top = v.at_cell ? first : row - rows / 3;
+                }
+                v.followed_head = head;
+            }
+        } else if (src && src_pane && src_pane->doc == src && pane.get() != pane_) {
             const u64 line = src->ed.buf.line_of(src->ed.cursor());
             if (line != v.followed || fresh) {
                 const bool moved = line != v.followed;
@@ -571,6 +704,7 @@ bool App::md_key(const SDL_KeyboardEvent& k) {
         default: return false;
     }
     term_drop_text_ = true;  // (a letter's text is not typed after it)
+    v.at_cell = false;
     dirty_ = true;
     return true;
 }
@@ -585,6 +719,7 @@ bool App::md_wheel(const SDL_MouseWheelEvent& w) {
     const int step = static_cast<int>(v.wheel);
     v.wheel -= step;
     v.top = static_cast<u32>(std::clamp(static_cast<i64>(v.top) + step, i64{0}, static_cast<i64>(v.rows.size())));
+    v.at_cell = false;  // (scrolled by hand: where it is left)
     dirty_ = true;
     return true;
 }
@@ -595,9 +730,34 @@ bool App::md_mouse_down(const SDL_MouseButtonEvent& b) {
     Pane* pane = nullptr;
     u32 row = 0, col = 0;
     if (!md_hit(static_cast<int>(b.x * density_), static_cast<int>(b.y * density_), &pane, &row, &col)) return false;
-    focus_pane(pane);
     MdView& v = *pane->doc->md;
     dirty_ = true;
+    const bool on_link = std::ranges::any_of(v.hits, [&](const MdView::Hit& h) { return h.row == row && col >= h.c0 && col < h.c1; });
+    if (v.notebook && b.button == SDL_BUTTON_LEFT && !on_link) {
+        // A notebook's cell: the script's cursor to the line it is of (its
+        // first, for its outputs and what is between cells), the keyboard
+        // to the script, the view staying where it is.
+        const u32 all_rows = static_cast<u32>((pane->y1 - v.y) / font_->cell_h()), top_row = all_rows > v.shown ? all_rows - v.shown : 0;
+        Pane* p = nullptr;
+        size_t at = 0;
+        Doc* src = find_doc(v.source, &p, &at);
+        if (!src || row < top_row || v.top + row - top_row >= v.rows.size()) return true;
+        u64 line = v.rows[v.top + row - top_row].line;
+        const auto in = std::upper_bound(v.heads.begin(), v.heads.end(), line);
+        const u64 head = in == v.heads.begin() ? 0 : *(in - 1);
+        for (const CellLines& c : notebook_cell_lines(src->ed.buf.text(0, src->ed.buf.size())))
+            if (c.head == head && (line < c.first || line >= c.end)) line = c.first;
+        focus_pane(p);
+        tab_show(at);
+        Editor& ed = src->ed;
+        line = std::min<u64>(line, ed.buf.line_count() ? ed.buf.line_count() - 1 : 0);
+        if (cfg_.modal) vim_attach();
+        ed.move_to(ed.buf.line_start(line), false);
+        scroll_to_cursor();
+        v.followed = line, v.followed_head = head, v.at_cell = false;  // (it stays as it is: the click was on what is on show)
+        return true;
+    }
+    focus_pane(pane);
     if (b.button != SDL_BUTTON_LEFT) return true;
     for (const MdView::Hit& h : v.hits) {
         if (h.row != row || col < h.c0 || col >= h.c1) continue;
@@ -653,6 +813,42 @@ std::string App::md_dump(bool inks) {
         return out;
     }
     return "no preview\n";
+}
+
+bool App::md_notebook(const Doc& d) { return d.md && d.md->notebook; }
+
+// For the tests: where the notebook's view shows its row `row` (from 0),
+// in the window's points (its middle, a few columns in). False: not on show.
+bool App::nb_view_point(u32 row, float* x, float* y) {
+    for (const std::unique_ptr<Pane>& p : panes_) {
+        if (!p->doc || !p->doc->md || !p->doc->md->notebook) continue;
+        const MdView& v = *p->doc->md;
+        const u32 all_rows = static_cast<u32>((p->y1 - v.y) / font_->cell_h()), top_row = all_rows > v.shown ? all_rows - v.shown : 0;
+        if (row < v.top || row >= v.top + v.shown) return false;
+        *x = static_cast<float>((v.x + v.pad_x + static_cast<int>(kMargin + 12) * font_->cell_w()) / density_);
+        *y = static_cast<float>((v.y + v.pad_y + static_cast<int>(row - v.top + top_row) * font_->cell_h() + font_->cell_h() / 2) / density_);
+        return true;
+    }
+    return false;
+}
+
+// For the tests: the notebook's view (the first there is, once drawn): the
+// first row on show and the script's line it is of, then each row, as the
+// line (from 1) it is of and its text (a picture by its file's name).
+std::string App::nb_view_dump() {
+    md_wait();
+    for (const std::unique_ptr<Pane>& p : panes_) {
+        if (!p->doc || !p->doc->md || !p->doc->md->notebook) continue;
+        const MdView& v = *p->doc->md;
+        std::string out = "top " + std::to_string(v.top) + " @" + std::to_string(v.top < v.rows.size() ? v.rows[v.top].line + 1 : 0) + "\n";
+        for (const MdRow& r : v.rows) {
+            MdRow named = r;
+            for (MdPic& pic : named.pics) pic.src = pic.src.substr(pic.src.find_last_of('/') + 1);
+            out += std::to_string(r.line + 1) + ": " + md_row_text(named) + "\n";
+        }
+        return out;
+    }
+    return "no notebook view\n";
 }
 
 }  // namespace blit

@@ -596,6 +596,18 @@ void App::session_apply(Session& st) {
         });
         lsp_pending_ = grammars_pending_ = true;
         vim_attach();
+        // (A notebook in front of a split: its view beside it, as opening one shows it.)
+        std::vector<Pane*> notebooks;
+        for (const std::unique_ptr<Pane>& p : panes_)
+            if (p->doc && p->doc->nb && !p->floating && p.get() != dock_pane()) notebooks.push_back(p.get());
+        for (Pane* p : notebooks) {
+            pane_ = p;
+            md_open();
+        }
+        if (!notebooks.empty()) {
+            pane_ = notebooks.back();
+            focus_pane(focused);
+        }
     }
     if (st.panel) panel_session_set(st.panel_open, st.panel_tab, st.panel_cols);
     if (!st.build.empty()) build_choose(st.build);

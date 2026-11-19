@@ -43,10 +43,18 @@ enum MdInk : u8 {
     kMdCodeConstant,  // numbers, booleans, constants
     kMdCodeOperator,  // operators and punctuation
     kMdCodePlain,     // the rest of such a block
+    // The colours a terminal's text names (a notebook's outputs), as the
+    // theme has them: red is kMdError, black and white the text's own.
+    kMdAnsiGreen,
+    kMdAnsiYellow,
+    kMdAnsiBlue,
+    kMdAnsiMagenta,
+    kMdAnsiCyan,
     kMdInkCount
 };
-// Backgrounds behind runs or rows (the preview's tones).
-enum MdTone : u8 { kMdNoTone, kMdCodeTone, kMdHeaderTone, kMdNodeTone };
+static_assert(kMdInkCount <= 32);  // (a popup's palette)
+// Backgrounds behind runs or rows (the preview's tones; an error's in a notebook).
+enum MdTone : u8 { kMdNoTone, kMdCodeTone, kMdHeaderTone, kMdNodeTone, kMdErrorTone };
 // Styles, which the preview maps to the font's.
 enum : u8 { kMdBold = 1, kMdItalic = 2, kMdStrike = 4 };
 
@@ -87,6 +95,13 @@ using MdCodeFn = std::function<bool(std::string_view lang, std::string_view code
 
 // The text drawn `width` columns wide.
 std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn& picture = {}, const MdCodeFn& code = {});
+// Code drawn as a fenced block of it in `lang` is (without the language's
+// name over it), and a table as one in Markdown is, its first row the
+// header; align, for each column: -1 left, 0 centre, 1 right. The table's
+// cells are Markdown (md_escape: text that says only itself).
+std::vector<MdRow> md_code(std::string_view lang, std::string_view code, u32 width, const MdCodeFn& colour = {});
+std::vector<MdRow> md_table(const std::vector<std::vector<std::string>>& cells, const std::vector<int>& align, u32 width);
+std::string md_escape(std::string_view text);
 // A row as plain text (for the tests): what its runs say.
 std::string md_row_text(const MdRow& r);
 
