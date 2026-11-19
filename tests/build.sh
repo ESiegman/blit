@@ -316,5 +316,7 @@ printf 'int broken( {\n' >"$A/plain/bad.c"
 run "$A/plain" "open:$A/plain/bad.c;command:Show the assembly beside the file;asmdump"
 case $got in *error*) got=said ;; esac
 check "a file that does not compile: the compiler's errors in the tab" 'said'
+run "$A/plain" "command:Show the assembly beside the file"
+check "a file not saved yet: said" 'blit: The assembly is made from the file on disk: save it first'
 
 exit $failed

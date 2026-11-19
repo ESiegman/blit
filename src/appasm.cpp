@@ -74,7 +74,9 @@ void App::asm_open() {
         }
         return;
     }
-    if (src.ed.path.empty() || is_remote(src.ed.path) || src.read_only) return;
+    if (src.ed.path.empty() && !src.read_only) return notify("The assembly is made from the file on disk: save it first");
+    if (is_remote(src.ed.path)) return notify("The assembly is made only of a file on this machine");
+    if (src.ed.path.empty() || src.read_only) return notify("Not a file the compiler can be run on");
     const std::string path = full_path(src.ed.path);
     for (const std::unique_ptr<Pane>& p : panes_)
         for (size_t i = 0; i < p->docs.size(); ++i)
