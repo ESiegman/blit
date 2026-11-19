@@ -152,7 +152,7 @@ u32 Wrap::line_rows(const Editor& ed, u64 line, u32 width, u32 tab, std::vector<
     return 1 + static_cast<u32>(starts->size());
 }
 
-void Wrap::set_hints(std::vector<Hint> hints, u64 key) {
+bool Wrap::set_hints(std::vector<Hint> hints, u64 key) {
     hints_key_ = key;
     std::vector<Note> notes;
     if (ed_) {
@@ -163,19 +163,21 @@ void Wrap::set_hints(std::vector<Hint> hints, u64 key) {
             notes.push_back({line, static_cast<u32>(off - b.line_start(line)), h.width});
         }
     }
-    if (notes == notes_) return;
+    if (notes == notes_) return false;
     std::vector<u64> lines;  // (those with notes, before or now: measured again)
     for (const Note& n : notes_) lines.push_back(n.line);
     for (const Note& n : notes) lines.push_back(n.line);
     notes_ = std::move(notes);
     std::ranges::sort(lines);
     lines.erase(std::unique(lines.begin(), lines.end()), lines.end());
+    bool changed = false;
     for (const u64 l : lines) {
         if (l >= count_.size()) continue;
         const u32 was = count_[l];
         measure(l);
-        if (count_[l] != was) add(l, static_cast<i64>(count_[l]) - static_cast<i64>(was));
+        if (count_[l] != was) add(l, static_cast<i64>(count_[l]) - static_cast<i64>(was)), changed = true;
     }
+    return changed;
 }
 
 double Wrap::top_line(double rows) const {

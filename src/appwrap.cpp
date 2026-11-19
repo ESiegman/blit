@@ -67,7 +67,15 @@ void App::wrap_sync(Pane& p) {
             h.reserve(hints->size());
             for (const InlayHint& x : *hints) h.push_back({x.off, std::max<u32>(1, width_of(hint_text(x)))});
         }
-        p.wrap->set_hints(std::move(h), key);
+        // A server answers for the lines near the view only, so its new
+        // hints give rows to some lines and take them from others above
+        // it: the view stays on the line it was on.
+        const double ch = font_->cell_h(), top = p.wrap->top_line(p.scroll_y / ch), target = p.wrap->top_line(p.target_y / ch);
+        if (p.wrap->set_hints(std::move(h), key)) {
+            p.scroll_y = p.wrap->top_rows(top) * ch;
+            p.target_y = p.wrap->top_rows(target) * ch;
+            p.cache_rev = ~0ull;
+        }
     }
     if (p.wrap->rows() != before) p.cache_rev = ~0ull;
     if (&p == pane_) d.ed.skip = p.wrap.get();

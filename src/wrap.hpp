@@ -40,7 +40,8 @@ public:
     // measured again; meanwhile each edit moves them as it moves the text
     // (and takes one inside what it replaced with it), as the language
     // server's own are moved. Let go of with the text.
-    void set_hints(std::vector<Hint> hints, u64 key);
+    // (True if any line's room changed.)
+    bool set_hints(std::vector<Hint> hints, u64 key);
     u64 hints_key() const { return hints_key_; }
     u64 doc() const { return doc_; }
     u32 width() const { return width_; }

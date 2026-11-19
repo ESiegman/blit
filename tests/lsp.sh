@@ -340,6 +340,19 @@ check "the cursor's line: no hints drawn, its rows as they were" "$long / $rows"
 wrapped "key:End;key:Return;text:int z;frame" 3
 below=$(printf '%s' "$rows" | awk '{ for (i = 1; i <= NF; i++) { split($i, p, "@"); n = p[1] + (p[1] >= 2); out = out (i > 1 ? " " : "") n "@" p[2] (i == 1 ? " 2@0" : "") } print out }')
 check "a line put in above: the hints move with their text, before they are asked for again" "$drawn / $below"
+# Hints come for the lines near the view only, so they give rows to some
+# lines and take them from others above it: the view stays on its line.
+# Many hinted lines, wrapped: the hints at the top come, the view goes far
+# down, and the row at its top (line@column) is the same before and after
+# the hints there come (and those at the top go).
+printf '%s\nblit.opt.look.animations = false\n' "$(cat "$dir/hints.lua")" >"$dir/hintsnow.lua"
+fresh
+i=0
+while [ $i -lt 400 ]; do echo 'int r = call(alpha, beta, gamma); and some words after it to wrap'; i=$((i + 1)); done >"$P/many.cpp"
+got=$(BLIT_INIT="$dir/hintsnow.lua" "$blit" --offscreen 400x400 --shot "$dir/shot.bmp" --script "workdir:$P;frame;command:Toggle soft wrap;frame;lspsettle;frame;wait:100;frame;line:1000;frame;wrapdump;lspsettle;frame;wait:100;frame;wait:100;frame;wrapdump" "$P/many.cpp" 2>&1 >/dev/null |
+    grep '^width ' | sed 's/.*rows: \([0-9]*@[0-9]*\).*/\1/' | tr '\n' ' ')
+case $got in "199@0 199@0 ") got=kept ;; esac
+check "soft wrap: the hints near the view come after a scroll, and the view stays where it was" "kept"
 run "frame;wait:100;frame;lspextras" "$P/h.cpp"
 check "no hints unless lsp.inlay_hints is on" 'hints: | colours: call=function p_size=variable.parameter Widget=type MAX_SIZE=function.macro'
 with themed "frame;wait:100;frame;lspextras" "$P/h.cpp"
