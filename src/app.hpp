@@ -205,6 +205,7 @@ struct Doc {
     bool loading = false;  // a file on another machine, on its way (read only until it is here: see appremote.cpp)
     u64 goto_line = ~0ull;  // and where the cursor goes when it is (a line from 0, and a byte in it)
     u32 goto_col = 0;
+    bool goto_utf16 = false;  // (goto_col is a language server's that counts UTF-16 units, not bytes)
     std::shared_ptr<ProfView> prof;  // a profile's tab: drawn over the text area (appprofile.cpp)
     std::shared_ptr<TermView> term;  // a terminal's tab: drawn over it too (appterm.cpp)
     std::shared_ptr<MdView> md;      // a Markdown preview's tab: drawn over it too (appmarkdown.cpp)

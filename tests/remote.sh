@@ -142,6 +142,13 @@ if [ -x "$(dirname "$blit")/blit_fakelsp" ]; then
     INIT="$dir/lsp.lua"
     run "remotewait;frame;ready;diag;frame;text:];text:d;vimdump" "ssh://box$dir/proj/src/e.cpp"
     check "its diagnostics, in the file here" 'NORMAL |  | 2:14 | int b; // an ERROR here'
+    # A symbol in a file there not open yet, past letters a server counting
+    # UTF-16 counts one unit each: the cursor at its name once the file is here.
+    printf 'blit.opt.git.enabled = false\nblit.opt.lsp.servers.fake = { command = { "%s" }, languages = { "cpp" }, roots = { "CMakeLists.txt" } }\n' "$(cd "$(dirname "$blit")" && pwd)/blit_fakelsp" >"$dir/lsp16.lua"
+    printf '/*\303\251\303\251\303\251\303\251\303\251\303\251\303\251\303\251\303\251\303\251*/ int wide(int n) {\n}\n' >"$dir/proj/w.cpp"
+    INIT="$dir/lsp16.lua"
+    run "remotewait;frame;ready;key:cmd+alt+P;frame;text:wide;frame;wait:300;frame;key:Return;remotewait;frame;vimdump" "ssh://box$dir/proj/src/e.cpp"
+    check "a symbol in a file not open there yet: at its name" 'NORMAL |  | 1:30 | /*éééééééééé*/ int wide(int n) {'
 fi
 
 # The tree, on a slow host: new, rename and the Trash are done on its

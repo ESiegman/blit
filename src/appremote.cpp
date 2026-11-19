@@ -474,8 +474,11 @@ void App::remote_opened(Pane& p, Doc& d, bool fresh) {
     if (d.goto_line != ~0ull) {  // a line it was opened to go to (a search's)
         Editor& ed = d.ed;
         const u64 line = std::min<u64>(d.goto_line, ed.buf.line_count() - 1), start = ed.buf.line_start(line);
-        ed.move_to(std::min(start + d.goto_col, ed.line_end(line)), false);
+        // (A language server's column may count UTF-16 units: a byte for each would fall short past
+        // letters outside ASCII, even inside one.)
+        ed.move_to(d.goto_utf16 ? Lsp::offset_at(ed.buf, static_cast<u32>(line), d.goto_col, true) : std::min(start + d.goto_col, ed.line_end(line)), false);
         d.goto_line = ~0ull;
+        d.goto_utf16 = false;
         if (&d == front) {
             if (pane_ == focused) vim_mouse();
             const double ch = font_->cell_h();

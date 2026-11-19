@@ -59,6 +59,7 @@ void App::peek_show(LspLocation loc) {
     if (d.loading) {
         d.goto_line = loc.line;
         d.goto_col = loc.character;
+        d.goto_utf16 = lsp_.counts_utf16();
     } else {
         d.ed.move_to(Lsp::offset_at(d.ed.buf, loc.line, loc.character, lsp_.counts_utf16()), false);
     }
