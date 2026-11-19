@@ -50,6 +50,7 @@
 #include "job.hpp"
 #include "json.hpp"
 #include "keymap.hpp"
+#include "look.hpp"
 #include "lsp.hpp"
 #include "match.hpp"
 #include "syntax.hpp"
@@ -1476,6 +1477,38 @@ void edge_test() {
             for (u32 c = 0; c < cols && same; ++c) same = part[c] == (c < len ? whole[from + c] : 0);
             if (!same) std::printf("wrapped row: line \"%s\", tab %u, from %u to %u, %u columns\n", line.c_str(), g.tab_width, from, end, cols);
             check(same, "window: a wrapped line's row shows its part of the line");
+        }
+    }
+}
+
+// Text cut to a number of columns (fit_text): never wider than that, and
+// what follows the ellipsis of a path starts with a character of its own
+// (before, a mark or a selector whose character was cut off was kept, and
+// drawn over the ellipsis).
+void fit_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    check(fit_text("abcdef", 6) == "abcdef" && fit_text("abcdef", 4) == "abc\xE2\x80\xA6", "fit: cut at the end, an ellipsis there");
+    check(fit_text("abcdef", 4, true) == "\xE2\x80\xA6" "def", "fit: a path keeps its end");
+    check(fit_text("aaaae\xCC\x81xyz", 4, true) == "\xE2\x80\xA6xyz", "fit: a path cut at a decomposed letter keeps none of its mark");
+    check(fit_text("\xE2\x9C\x85\xEF\xB8\x8F" "ab", 3, true) == "\xE2\x80\xA6" "ab", "fit: nor the selector of an emoji cut off");
+    check(fit_text("a/\xE6\xBC\xA2\xE6\xBC\xA2", 4, true) == "\xE2\x80\xA6\xE6\xBC\xA2", "fit: a wide character that does not fit goes whole");
+    static const char* const kBits[] = {"a", "/", "\xE6\xBC\xA2", "e\xCC\x81", "\xCC\x81", "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9",
+                                        "\xE2\x9C\x85\xEF\xB8\x8F", "\xF0\x9F\x87\xAF\xF0\x9F\x87\xB5"};
+    rng.seed(4242);
+    for (int round = 0; round < 2000; ++round) {
+        std::string s;
+        for (int k = 0, n = static_cast<int>(rnd(12)); k < n; ++k) s += kBits[rnd(std::size(kBits))];
+        const u32 cols = static_cast<u32>(rnd(14));
+        for (const bool path : {false, true}) {
+            const std::string f = fit_text(s, cols, path);
+            check(width_of(f) <= cols, "fit: never wider than asked");
+            if (f == s) continue;
+            check(f.empty() == (cols == 0), "fit: an ellipsis wherever it was cut");
+            if (!path || f.size() <= 3) continue;
+            const u8* p = reinterpret_cast<const u8*>(f.data()) + 3;
+            check(cp_width(decode_utf8(p, f.size() - 3).cp) != 0, "fit: after a path's ellipsis, a character with a cell of its own");
         }
     }
 }
@@ -5694,6 +5727,7 @@ int main(int argc, char** argv) {
     lsp_test();
     styles_test();
     edge_test();
+    fit_test();
     match_test();
     highlights_test();
     syntax_test();

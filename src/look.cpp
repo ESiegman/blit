@@ -170,6 +170,14 @@ std::string fit_text(std::string_view s, u32 cols, bool path) {
         w += cw;
         from = starts[k];
     }
+    // (Nothing of no width of its own right after the ellipsis: a mark, a
+    // joiner or a selector whose character was cut off would be drawn over
+    // the ellipsis. A name written decomposed, as macOS's are, has them.)
+    while (from < s.size()) {
+        const Decoded d = decode_utf8(p + from, s.size() - from);
+        if (cp_width(d.cp) != 0) break;
+        from += d.len ? d.len : 1;
+    }
     return std::string(dots) + std::string(s.substr(from));
 }
 

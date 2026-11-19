@@ -346,7 +346,7 @@ if(BLIT_DEV)
   target_sources(blit PRIVATE src/appbench.cpp)
 
   # Random edits checked against a plain std::string model, and unit tests.
-  add_executable(blit_fuzz tests/fuzz_buffer.cpp src/tree.cpp src/git.cpp src/instance.cpp src/folds.cpp src/tests.cpp src/snippet.cpp src/asm.cpp src/notebook.cpp src/history.cpp src/fsio.cpp src/wrap.cpp src/dap.cpp)
+  add_executable(blit_fuzz tests/fuzz_buffer.cpp src/tree.cpp src/git.cpp src/instance.cpp src/folds.cpp src/tests.cpp src/snippet.cpp src/asm.cpp src/notebook.cpp src/history.cpp src/fsio.cpp src/wrap.cpp src/dap.cpp src/look.cpp)
   target_link_libraries(blit_fuzz PRIVATE blit_view blit_syntax blit_lsp SDL3::SDL3 ZLIB::ZLIB)
   if(NOT WIN32)
     target_compile_definitions(blit_fuzz PRIVATE BLIT_FAKE_SSH="${CMAKE_SOURCE_DIR}/tests/fake-ssh.sh" BLIT_PROFILE_DATA="${CMAKE_SOURCE_DIR}/tests/profile")
