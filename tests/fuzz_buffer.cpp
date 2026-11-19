@@ -1336,6 +1336,15 @@ void edge_test() {
         std::vector<u32> whole(kWide + 1, kGuard), part;
         fill_grid(buf, font, g, whole.data());
         check(whole[kWide] == kGuard, "window: the reference row stays in its cells");
+        {  // (The cells the line takes are as many as the editor's columns, by which the cursor is placed.)
+            Editor ed;
+            ed.tab_width = g.tab_width;
+            ed.insert(line + "\n");
+            u32 n = 0;
+            while (n < kWide && whole[n]) ++n;  // (no glyph's slot is 0: a cell past the end of the line is)
+            if (n != ed.col_between(0, ed.line_end(0))) std::printf("width: line \"%s\", tab %u: %u cells, %u columns\n", line.c_str(), g.tab_width, n, ed.col_between(0, ed.line_end(0)));
+            check(n == ed.col_between(0, ed.line_end(0)), "window: a line takes as many cells as the editor gives it columns");
+        }
         for (int t = 0; t < 8; ++t) {
             const u32 from = static_cast<u32>(rnd(60)), cols = 1 + static_cast<u32>(rnd(40));
             g.cols = cols;
