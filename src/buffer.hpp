@@ -3,8 +3,9 @@
 // Text storage: a piece tree.
 //
 // The document is a sequence of pieces. A piece is a pointer + length into
-// memory that never changes: either the original file (memory mapped, never
-// copied) or an append-only block of typed/pasted text. Pieces live in the
+// memory that never changes: either the original file (memory mapped, its
+// pages copied only at the first edit) or an append-only block of
+// typed/pasted text. Pieces live in the
 // leaves of a B+tree whose inner nodes carry byte and newline counts, so
 // offset lookup, line lookup, insert and erase are all O(log n).
 //
@@ -215,6 +216,7 @@ private:
     void append_text(std::string_view s, std::vector<Piece>& out);
     void clear();
     void drop_map();
+    void own_map();
     void free_tree(Node* nd, int depth);
 
     Node* root_ = nullptr;
@@ -234,6 +236,7 @@ private:
     void* map_ = nullptr;
     size_t map_len_ = 0;
     bool map_is_mmap_ = false;
+    bool map_owned_ = false;  // its pages copied, at the first edit (own_map)
 
     mutable std::vector<Piece> scratch_;
 };

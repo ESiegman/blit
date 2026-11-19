@@ -737,6 +737,25 @@ void truncated_file_test() {
     std::fclose(f);
     std::string now = b.text(0, b.size());
     if (now.size() != body.size()) fail("size after truncate", 0, 0);
+    // Once edited, the file's text is the buffer's own: another program
+    // writing over the file where it is, or cutting it short, changes
+    // nothing under the edit (it did on Linux, where a private mapping's
+    // pages show the file until they are written to).
+    for (const bool cut : {false, true}) {
+        f = std::fopen(path.c_str(), "wb");
+        std::fwrite(body.data(), 1, body.size(), f);
+        std::fclose(f);
+        Buffer e;
+        if (!e.load_file(path.c_str(), &err)) fail("load for the written-over test", 0, 0);
+        e.insert(0, "mine ");
+        f = std::fopen(path.c_str(), cut ? "wb" : "r+b");
+        if (!cut) {
+            const std::string other(body.size(), 'X');
+            std::fwrite(other.data(), 1, other.size(), f);
+        }
+        std::fclose(f);
+        if (e.text(0, e.size()) != "mine " + body) fail(cut ? "an edited file cut short on disk" : "an edited file written over on disk", 0, 0);
+    }
     std::remove(path.c_str());
 #endif
 }

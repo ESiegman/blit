@@ -134,9 +134,10 @@ size_t char_boundary(const char* s, size_t want) {
 
 // ---------------------------------------------------------------- mapped files
 //
-// The original file is memory mapped, never copied. The price of that is
-// that another program can shrink the file underneath us, and touching a
-// page past its new end raises SIGBUS. Instead of dying (and taking unsaved
+// The original file is memory mapped, and copied only at the first edit
+// (own_map). The price of that is that another program can shrink the file
+// underneath us before then, and touching a page past its new end raises
+// SIGBUS. Instead of dying (and taking unsaved
 // edits along), the handler below backs such a page with zeros and lets the
 // read continue: the lost text shows up as blanks.
 
@@ -158,7 +159,8 @@ void on_bad_page(int sig, siginfo_t* info, void* ctx) {
         if (!base || addr < base || addr >= base + m.len.load(std::memory_order_acquire)) continue;
         const size_t page = static_cast<size_t>(sysconf(_SC_PAGESIZE));
         char* at = reinterpret_cast<char*>(reinterpret_cast<uintptr_t>(addr) & ~(page - 1));
-        if (mmap(at, page, PROT_READ, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0) != MAP_FAILED) return;
+        // (Writable, as own_map writes to every page of the mapping.)
+        if (mmap(at, page, PROT_READ | PROT_WRITE, MAP_FIXED | MAP_PRIVATE | MAP_ANON, -1, 0) != MAP_FAILED) return;
     }
     // Not ours: hand over to whoever was there before, or the default.
     struct sigaction* old = sig == SIGBUS ? &g_old_bus : &g_old_segv;
@@ -210,6 +212,42 @@ void Buffer::drop_map() {
     if (map_ && !map_is_mmap_) std::free(map_);
     map_ = nullptr;
     map_len_ = 0;
+    map_owned_ = false;
+}
+
+// The first edit makes the file's text the buffer's own. A private mapping's
+// pages show what is in the file now until they are written to: another
+// program writing over the file where it is (not putting a new one in its
+// place, as git and blit's own saves do) would change the text under the
+// edits, which are kept, and saving would write the mix. On Linux, cutting
+// the file short drops even the pages written to. So the text is copied,
+// at the same address (every pointer into it stays good, and a reader on
+// another thread sees nothing change), and the file is read no more. A file
+// that is only read is never copied.
+void Buffer::own_map() {
+    map_owned_ = true;
+#if !defined(_WIN32)
+    char* base = static_cast<char*>(map_);
+#if defined(__linux__)
+    // Copied into memory of its own, put in the mapping's place in one step.
+    void* own = mmap(nullptr, map_len_, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+    if (own != MAP_FAILED) {
+        std::memcpy(own, base, map_len_);
+        mprotect(own, map_len_, PROT_READ);
+        if (mremap(own, map_len_, map_len_, MREMAP_MAYMOVE | MREMAP_FIXED, base) != MAP_FAILED) return;
+        munmap(own, map_len_);
+    }
+#endif
+    // Elsewhere (and if that failed), each page written to with the byte
+    // already there, which makes the system copy it.
+    if (mprotect(base, map_len_, PROT_READ | PROT_WRITE) != 0) return;
+    const size_t page = static_cast<size_t>(sysconf(_SC_PAGESIZE));
+    for (size_t at = 0; at < map_len_; at += page) {  // (a store: a no-op read-modify-write can be compiled to a read)
+        std::atomic_ref<char> c(base[at]);
+        c.store(c.load(std::memory_order_relaxed), std::memory_order_relaxed);
+    }
+    mprotect(base, map_len_, PROT_READ);
+#endif
 }
 
 Buffer::~Buffer() {
@@ -589,6 +627,7 @@ void Buffer::append_text(std::string_view s, std::vector<Piece>& out) {
 
 void Buffer::insert(u64 off, std::string_view s) {
     if (s.empty()) return;
+    if (map_is_mmap_ && !map_owned_) own_map();
     off = std::min(off, bytes_);
     Path path;
     Pos pos = locate(off, true, path);
@@ -615,6 +654,7 @@ void Buffer::insert(u64 off, std::string_view s) {
 
 void Buffer::insert_pieces(u64 off, std::span<const Piece> ps) {
     if (ps.empty()) return;
+    if (map_is_mmap_ && !map_owned_) own_map();
     Path path;
     Pos pos = locate(std::min(off, bytes_), true, path);
     insert_at(pos, path, ps);
@@ -753,6 +793,7 @@ void Buffer::spread_up(Path& path, int level, std::vector<Entry>& es) {
 
 void Buffer::erase(u64 off, u64 len, std::vector<Piece>* out) {
     if (off >= bytes_) return;
+    if (map_is_mmap_ && !map_owned_) own_map();
     len = std::min(len, bytes_ - off);
     while (len > 0) {
         Path path;
