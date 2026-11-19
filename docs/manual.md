@@ -1149,11 +1149,14 @@ default) and what it does. Enter (or Space) changes the one under the
 cursor: a switch flips, a theme is picked from a list, anything else is
 typed (a list's items with commas between). Delete puts it back to its
 default, and O opens init.lua at its line. A change is written into
-init.lua as a line, over the line that sets it, else over the template's
-commented-out one (its comment kept), else at the end, and applied at
-once; Delete comments the line out. With init.lua open and changes in it
-not saved, the line is put there instead, to be saved with them. init.lua
-stays what counts: the screen only reads and writes it.
+init.lua as a line, over the statement that sets it (on a line of its own,
+after another statement, or inside an `if`; the value as far as Lua takes
+it, over lines if it goes on), else over the template's commented-out one
+(its comment kept), else at the end, and applied at once; Delete comments
+the statement out (what follows it on its line goes to a line of its own).
+With init.lua open and changes in it not saved, the line is put there
+instead, to be saved with them. init.lua stays what counts: the screen
+only reads and writes it.
 
 ```lua
 blit.opt.font.family = "Victor Mono"   -- a family name, or the path of a font file

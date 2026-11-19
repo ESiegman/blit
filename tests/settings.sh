@@ -119,12 +119,45 @@ check "Enter after :set: init.lua already says so, and is what counts again" "$b
 blit.opt.editor.modal = true
 blit.opt.font.ligatures = true" "vim::set noligatures<CR>;settingsopen:font.ligatures;key:Return" \
     'font.ligatures true draw -> != => <= and friends joined, if the font can' "blit.opt.editor.modal = true|blit.opt.font.ligatures = true|"
-# Set where the screen cannot change it (not a line of its own): Delete
+# Wherever a statement can start: inside an if (changed there, or
+# commented out with what follows it on a line of its own), after another
+# statement with nothing between them, and a value as far as Lua's grammar
+# takes it (an expression over lines, a call).
+check "a setting inside an if, changed: there" "$base
+if true then blit.opt.font.size = 16 end" "settingsopen:font.size;key:Return;key:Backspace;key:Backspace;text:18;key:Return" \
+    'font.size 18 points'
+whole "a setting inside an if, changed" 'if true then blit.opt.font.size = 18 end|'
+check "a setting inside an if, back to the default: commented out" "$base
+if true then blit.opt.font.size = 16 end" "settingsopen:font.size;key:Delete" \
+    'font.size 13 points'
+whole "a setting inside an if, commented out" 'if true then -- blit.opt.font.size = 16|end|'
+check "two statements with nothing between them, one changed: the other kept" "$base
+blit.opt.font.size = 16 blit.opt.font.ligatures = true" "settingsopen:font.size;key:Return;key:Backspace;key:Backspace;text:18;key:Return;settingsopen:font.ligatures" \
+    'font.ligatures true draw -> != => <= and friends joined, if the font can'
+whole "two statements with nothing between them, one changed" 'blit.opt.font.size = 18 blit.opt.font.ligatures = true|'
+check "two statements with nothing between them, the second back to the default" "$base
+blit.opt.font.size = 16 blit.opt.font.ligatures = true" "settingsopen:font.ligatures;key:Delete;settingsopen:font.size" \
+    'font.size 16 points'
+whole "two statements with nothing between them, the second commented out" 'blit.opt.font.size = 16 -- blit.opt.font.ligatures = true|'
+check "two statements with nothing between them, the first back to the default" "$base
+blit.opt.font.size = 16 blit.opt.font.ligatures = true" "settingsopen:font.size;key:Delete;settingsopen:font.ligatures" \
+    'font.ligatures true draw -> != => <= and friends joined, if the font can'
+whole "two statements with nothing between them, the first commented out" '-- blit.opt.font.size = 16|blit.opt.font.ligatures = true|'
+check "an expression over two lines, changed: all of it" "$base
+blit.opt.font.size = 10 +
+    6 blit.opt.font.ligatures = true -- mine" "settingsopen:font.size;key:Return;key:Backspace;key:Backspace;text:18;key:Return;settingsopen:font.ligatures" \
+    'font.ligatures true draw -> != => <= and friends joined, if the font can'
+whole "an expression over two lines, changed" 'blit.opt.font.size = 18 blit.opt.font.ligatures = true -- mine|'
+check "a call with a table, back to the default" "$base
+blit.opt.font.family = string.format(\"%s\", { \"x\" }) [[x]] blit.opt.font.size = 15" "settingsopen:font.family;key:Delete;settingsopen:font.size" \
+    'font.size 15 points'
+whole "a call with a table, commented out" '-- blit.opt.font.family = string.format("%s", { "x" }) [[x]]|blit.opt.font.size = 15|'
+# Set where the screen cannot find it (through a table of its own): Delete
 # leaves it, and says why.
-printf '%s\nif true then blit.opt.font.size = 16 end\n' "$base" >"$BLIT_INIT"
+printf '%s\nlocal font = blit.opt.font\nfont.size = 16\n' "$base" >"$BLIT_INIT"
 got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "settingsopen:font.size;key:Delete;frame;settingsdump" "$dir/a.txt" 2>&1 >/dev/null)
 if [ -z "$print" ] && ! printf '%s' "$got" | grep -q 'font.size is set in init.lua where the screen cannot change it'; then
-    printf 'FAIL: Delete on a setting set inside an if: not said\n    %s\n' "$(printf '%s' "$got" | tail -3)"
+    printf 'FAIL: Delete on a setting set through a table of its own: not said\n    %s\n' "$(printf '%s' "$got" | tail -3)"
     failed=1
 fi
 check "Cmd+, opens it" "$base" "key:cmd+," \

@@ -3,9 +3,9 @@
 // template says of it. Enter changes one (a switch is flipped, a theme
 // picked, anything else typed); Delete puts it back to its default; O opens
 // init.lua at its line. A change is written into init.lua as a line
-// (`blit.opt.KEY = VALUE`), which is what counts: the line that sets it
-// changed, else the template's commented-out one taken in, else one at the
-// end; it is saved and run again at once (unless init.lua is open with
+// (`blit.opt.KEY = VALUE`), which is what counts: the statement that sets
+// it changed, else the template's commented-out one taken in, else one at
+// the end; it is saved and run again at once (unless init.lua is open with
 // changes not saved: then the line is put there, for those to be saved
 // with it).
 #include <algorithm>
@@ -115,19 +115,163 @@ size_t next_line(std::string_view t, size_t at) {
     return t.size();
 }
 
-// Where a value that starts at i ends: at its line's end, a ";" or a
-// comment, outside brackets (a table can take lines). npos if it is not
-// closed.
-size_t value_end(std::string_view t, size_t i) {
-    int depth = 0;
-    while (i < t.size()) {
-        const char c = t[i];
-        if (depth == 0 && (c == '\n' || c == ';' || (c == '-' && i + 1 < t.size() && t[i + 1] == '-'))) return i;
-        if (c == '{' || c == '(' || (c == '[' && !long_open(t, i))) ++depth;
-        else if ((c == '}' || c == ')' || c == ']') && --depth < 0) return std::string_view::npos;
-        if ((i = lua_past(t, i)) == std::string_view::npos) return i;
+// A token of Lua's: where it starts and ends, and its kind ('n' a name or
+// a keyword, '0' a number, 's' a string, 'p' punctuation; 0: the text has
+// ended).
+struct LuaTok {
+    size_t at = 0, end = 0;
+    char kind = 0;
+};
+
+// The token at i or after it (past spaces and comments).
+LuaTok lua_tok(std::string_view t, size_t i) {
+    auto u = [](char c) { return static_cast<unsigned char>(c); };
+    for (;;) {
+        while (i < t.size() && std::isspace(u(t[i]))) ++i;
+        if (i >= t.size()) return {t.size(), t.size(), 0};
+        if (t.compare(i, 2, "--") != 0) break;
+        if ((i = lua_past(t, i)) == std::string_view::npos) return {t.size(), t.size(), 0};
     }
-    return depth == 0 ? t.size() : std::string_view::npos;
+    const char c = t[i];
+    if (std::isalpha(u(c)) || c == '_') {
+        size_t j = i + 1;
+        while (j < t.size() && (std::isalnum(u(t[j])) || t[j] == '_')) ++j;
+        return {i, j, 'n'};
+    }
+    if (std::isdigit(u(c)) || (c == '.' && i + 1 < t.size() && std::isdigit(u(t[i + 1])))) {
+        const bool hex = t.compare(i, 2, "0x") == 0 || t.compare(i, 2, "0X") == 0;
+        size_t j = i + 1;
+        auto exponent = [&](char e) { return hex ? e == 'p' || e == 'P' : e == 'e' || e == 'E'; };
+        while (j < t.size() && (std::isalnum(u(t[j])) || t[j] == '.' || ((t[j] == '+' || t[j] == '-') && exponent(t[j - 1])))) ++j;
+        return {i, j, '0'};
+    }
+    if (c == '"' || c == '\'' || long_open(t, i)) {
+        const size_t j = lua_past(t, i);
+        return {i, j == std::string_view::npos ? t.size() : j, 's'};
+    }
+    for (const std::string_view p : {"...", "==", "~=", "<=", ">=", "..", "::", "//", "<<", ">>"})
+        if (t.substr(i, p.size()) == p) return {i, i + p.size(), 'p'};
+    return {i, i + 1, 'p'};
+}
+
+bool lua_keyword(std::string_view w) {
+    for (const std::string_view k : {"and", "break", "do", "else", "elseif", "end", "false", "for", "function", "goto", "if", "in", "local", "nil", "not", "or",
+                                     "repeat", "return", "then", "true", "until", "while"})
+        if (w == k) return true;
+    return false;
+}
+
+// Lua's grammar, as far as where an expression ends needs it: each step
+// takes what it knows, and says false if what is there is not that.
+struct LuaScan {
+    std::string_view t;
+    LuaTok tok;
+    size_t last = 0;  // where the last token taken ends
+
+    LuaScan(std::string_view text, size_t at) : t(text), tok(lua_tok(text, at)), last(at) {}
+    std::string_view word() const { return t.substr(tok.at, tok.end - tok.at); }
+    bool is(char kind, std::string_view w) const { return tok.kind == kind && word() == w; }
+    bool name() const { return tok.kind == 'n' && !lua_keyword(word()); }
+    void next() {
+        last = tok.end;
+        tok = lua_tok(t, tok.end);
+    }
+    // Past the bracket here and the one that closes it.
+    bool brackets() {
+        int depth = 0;
+        do {
+            if (!tok.kind) return false;
+            if (is('p', "(") || is('p', "[") || is('p', "{")) ++depth;
+            else if (is('p', ")") || is('p', "]") || is('p', "}")) --depth;
+            next();
+        } while (depth > 0);
+        return true;
+    }
+    // Past "function" here, its parameters and body, to its "end".
+    bool function() {
+        int depth = 0;
+        do {
+            if (!tok.kind) return false;
+            if (tok.kind == 'n') {
+                const std::string_view w = word();
+                if (w == "function" || w == "if" || w == "do" || w == "repeat") ++depth;
+                else if (w == "end" || w == "until") --depth;
+            }
+            next();
+        } while (depth > 0);
+        return true;
+    }
+    // A value: a literal, a function, a table, or a name (or an expression
+    // in brackets) with its fields, indexes and calls.
+    bool simple() {
+        if (!tok.kind) return false;
+        if (tok.kind == '0' || tok.kind == 's' || is('n', "nil") || is('n', "true") || is('n', "false") || is('p', "...")) return next(), true;
+        if (is('n', "function")) return function();
+        if (is('p', "{")) return brackets();
+        if (is('p', "(")) {
+            if (!brackets()) return false;
+        } else if (name()) {
+            next();
+        } else {
+            return false;
+        }
+        for (;;) {
+            if (is('p', ".") || is('p', ":")) {
+                next();
+                if (!name()) return false;
+                next();
+            } else if (tok.kind == 's') {
+                next();
+            } else if (is('p', "[") || is('p', "(") || is('p', "{")) {
+                if (!brackets()) return false;
+            } else {
+                return true;
+            }
+        }
+    }
+    bool unary() const { return is('n', "not") || is('p', "-") || is('p', "#") || is('p', "~"); }
+    bool binary() const {
+        if (tok.kind == 'n') return word() == "and" || word() == "or";
+        if (tok.kind != 'p') return false;
+        for (const std::string_view op : {"+", "-", "*", "/", "//", "%", "^", "..", "==", "~=", "<", "<=", ">", ">=", "&", "|", "~", "<<", ">>"})
+            if (word() == op) return true;
+        return false;
+    }
+    bool expression() {
+        for (;;) {
+            while (unary()) next();
+            if (!simple()) return false;
+            if (!binary()) return true;
+            next();
+        }
+    }
+    // Expressions with commas between (all that an assignment takes).
+    bool expressions() {
+        if (!expression()) return false;
+        while (is('p', ",")) {
+            next();
+            if (!expression()) return false;
+        }
+        return true;
+    }
+};
+
+// Where a value that starts at i ends: where Lua's grammar ends its
+// expression (a table can take lines; what follows it, on its line or not,
+// is not of it). npos if it is not one.
+size_t value_end(std::string_view t, size_t i) {
+    LuaScan s(t, i);
+    return s.expressions() ? s.last : std::string_view::npos;
+}
+
+// Whether a statement can start after this token: after a ";", a keyword
+// that a block starts or ends with, or anything an expression ends with.
+bool statement_after(std::string_view t, const LuaTok& p) {
+    const std::string_view w = t.substr(p.at, p.end - p.at);
+    if (p.kind == '0' || p.kind == 's') return true;
+    if (p.kind == 'n')
+        return !lua_keyword(w) || w == "then" || w == "do" || w == "else" || w == "repeat" || w == "end" || w == "break" || w == "true" || w == "false" || w == "nil";
+    return w == ";" || w == ")" || w == "]" || w == "}" || w == "::" || w == "...";
 }
 
 bool is_key(std::string_view k) {
@@ -251,35 +395,83 @@ std::string typed_of(const ConfigValue& v) {
 
 }  // namespace
 
-// init.lua's text with a setting's line: `line` in place of the last line
-// that sets it (its comment kept), else of the template's commented-out
-// one, else at the end. With no line: each line that sets it commented
-// out, so that it is the default again. A value can take lines (a table),
-// and what follows it on its line (a comment, another statement) is kept;
-// lines inside a long comment or string (--[[ ]]) set nothing.
+// init.lua's text with a setting's line: `line` in place of the last
+// statement that sets it (its comment kept), else of the template's
+// commented-out line, else at the end. With no line: each statement that
+// sets it commented out, so that it is the default again. A statement is
+// found wherever one can start (a line of its own, after another on the
+// line, inside an if), and its value ends where Lua's grammar ends the
+// expression; it can take lines (a table), and what follows it (a comment,
+// another statement) is kept. Nothing in a string or a comment counts
+// (lines inside a long one, --[[ ]], set nothing), but for the template's
+// commented-out lines.
 std::string App::init_with(std::string text, const std::string& key, const std::string& line) {
     struct Found {
-        size_t start, stop;  // its first line's start, and where what follows its value starts
+        size_t start, stop;  // the statement's start (a commented-out line's: the line's), and where what follows its value starts
         bool comment;
     };
     std::vector<Found> found;
+    auto line_start = [&](size_t at) { return at == 0 ? 0 : text.rfind('\n', at - 1) + 1; };
+    auto line_end = [&](size_t at) { return std::min(text.find('\n', at), text.size()); };
+    // The statements, Lua's tokens read in turn: "blit.opt.KEY =" where a
+    // statement can start, then its value.
+    LuaScan s(text, 0);
+    LuaTok prev;  // (kind 0: none yet)
+    while (s.tok.kind) {
+        if (s.is('n', "blit") && (!prev.kind || statement_after(text, prev))) {
+            const LuaScan back = s;
+            const size_t start = s.tok.at;
+            std::string k;
+            s.next();
+            bool ok = s.is('p', ".");
+            if (ok) s.next(), ok = s.is('n', "opt");
+            if (ok) s.next(), ok = s.is('p', ".");
+            while (ok && s.is('p', ".")) {
+                s.next();
+                if (!(ok = s.tok.kind == 'n')) break;
+                k += (k.empty() ? "" : ".") + std::string(s.word());
+                s.next();
+            }
+            if (ok && !k.empty() && s.is('p', "=")) {
+                s.next();
+                size_t stop = s.last;
+                if (LuaScan v = s; v.expressions()) {
+                    stop = v.last;
+                    s = v;
+                } else {  // (not a value Lua would take: to the end of its line)
+                    stop = line_end(start);
+                    s = LuaScan(text, stop);
+                }
+                if (k == key) found.push_back({start, stop, false});
+                prev = {stop, stop, '0'};  // (an expression has ended)
+                continue;
+            }
+            s = back;
+        }
+        prev = s.tok;
+        s.next();
+    }
+    // The template's commented-out lines ("-- blit.opt.KEY = VALUE").
     for (size_t at = 0; at < text.size(); at = next_line(text, at)) {
-        const size_t end = std::min(text.find('\n', at), text.size());
+        const size_t end = line_end(at);
         const std::string_view l(text.data() + at, end - at);
         std::string k;
         size_t value = 0;
-        if (!setting_line(l, &k, &value) || k != key) continue;
-        const bool comment = trim(l).starts_with("--");
+        if (!trim(l).starts_with("--") || !setting_line(l, &k, &value) || k != key) continue;
         size_t stop = value_end(text, at + value);
-        if (stop == std::string::npos || (comment && stop > end)) stop = end;  // (a commented-out line is one line)
-        found.push_back({at, stop, comment});
+        if (stop == std::string::npos || stop > end) stop = end;  // (a commented-out line is one line)
+        found.push_back({at, stop, true});
     }
-    // Its first line's indent.
-    auto indent_of = [&](const Found& f) { return text.substr(f.start, std::min(text.find_first_not_of(" \t", f.start), f.stop) - f.start); };
+    std::ranges::sort(found, {}, &Found::start);
+    // Its line's indent.
+    auto indent_of = [&](const Found& f) {
+        const size_t from = line_start(f.start);
+        return text.substr(from, std::min(text.find_first_not_of(" \t", from), f.stop) - from);
+    };
     // Where more code after its value on that line starts (past a ";"), or
     // npos if there is none (only a comment, or nothing).
     auto more_code = [&](const Found& f, bool* semicolon) {
-        const size_t eol = std::min(text.find('\n', f.stop), text.size());
+        const size_t eol = line_end(f.stop);
         size_t at = std::min(text.find_first_not_of(" \t", f.stop), eol);
         *semicolon = at < eol && text[at] == ';';
         if (*semicolon) at = std::min(text.find_first_not_of(" \t", at + 1), eol);
@@ -287,12 +479,13 @@ std::string App::init_with(std::string text, const std::string& key, const std::
         return at;
     };
     auto replace_line = [&](const Found& f) {
-        const size_t eol = std::min(text.find('\n', f.stop), text.size());
-        const size_t line0 = f.stop == 0 ? 0 : text.rfind('\n', f.stop - 1) + 1;  // (its value's last line)
+        const size_t from = line_start(f.start), eol = line_end(f.stop);
+        const size_t line0 = line_start(f.stop);  // (its value's last line)
         const std::string rest = text.substr(f.stop, eol - f.stop);
         size_t c = rest.find_first_not_of(" \t");
         if (c != std::string::npos && rest[c] == ';') c = rest.find_first_not_of(" \t", c + 1);
-        std::string now = indent_of(f) + line;
+        // (What is before it on its line kept: a commented-out line's indent.)
+        std::string now = (f.comment ? indent_of(f) : text.substr(from, f.start - from)) + line;
         bool semicolon = false;
         if (c != std::string::npos && rest.compare(c, 2, "--") == 0) {
             // (the comment where it was, if the line is no longer than that)
@@ -300,9 +493,9 @@ std::string App::init_with(std::string text, const std::string& key, const std::
             now += now.size() + 1 < col ? std::string(col - now.size(), ' ') : std::string("  ");
             now += rest.substr(c);
         } else if (more_code(f, &semicolon) != std::string::npos) {
-            now += rest;  // (another statement after it, as it was)
+            now += f.comment ? "  --" + rest : rest;  // (another statement after it, as it was: in a commented-out line, still in the comment)
         }
-        text.replace(f.start, eol - f.start, now);
+        text.replace(from, eol - from, now);
     };
     if (line.empty()) {
         for (auto it = found.rbegin(); it != found.rend(); ++it) {
@@ -314,7 +507,7 @@ std::string App::init_with(std::string text, const std::string& key, const std::
                 text.replace(it->stop, more - it->stop, (semicolon ? ";\n" : "\n") + indent_of(*it));
             std::vector<size_t> starts{it->start};
             for (size_t nl = text.find('\n', it->start); nl < it->stop; nl = text.find('\n', nl + 1)) starts.push_back(nl + 1);
-            for (auto s = starts.rbegin(); s != starts.rend(); ++s) text.insert(std::min(text.find_first_not_of(" \t", *s), text.size()), "-- ");
+            for (auto st = starts.rbegin(); st != starts.rend(); ++st) text.insert(std::min(text.find_first_not_of(" \t", *st), text.size()), "-- ");
         }
         return text;
     }
