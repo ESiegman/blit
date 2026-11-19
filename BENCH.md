@@ -3107,6 +3107,38 @@ a blit.app put in place, a wrong SHA-256 refused, once a day at the start)
 and container.sh (made, started again, rebuilt, a Dockerfile built,
 docker:// opened, all against a stand-in for docker).
 
+### Round 67: fixes, prevention and finish
+
+A sweep over what is there, area by area (the editor and Vim, drawing,
+language servers and remote files, files and git, speed, prevention,
+finish), each fix with a test that fails without it. For speed: the indent
+lines keep the rows above an edit while the view is scrolled sideways, the
+servers' colours are merged for half a screen more so scrolling does not
+merge them every frame, a minimap tile reads its lines one after another,
+the first frame does not send the empty colour atlas, the breadcrumbs are
+not made again while they would be the same, and a key typed rewrites only
+the status bar's Ln, Col. The syntax thread now has a 64 MB stack, so
+code nested thousands deep no longer crashes it. Turn about, five rounds,
+2560x1600, against the build before (8187eaa):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 13,861 / 56.75 µs / 2.29 µs | 14,558 / 56.46 µs / 2.08 µs |
+| Typing, everything on: the same, and the grid's fill p50 | 15,717 / 50.92 µs / 4.54 µs, 4.71 µs | 15,456 / 51.12 µs / 3.79 µs, 1.25 µs |
+| Scrolling code-100m.txt, plain: frames a second / CPU p50 / layout p50 | 15,815 / 51.38 µs / 0.92 µs | 16,164 / 51.54 µs / 0.88 µs |
+
+A key typed lays out 17% faster and fills the grid in a quarter of the
+time; scrolling with everything on lays out 9% faster. Whole frames are
+the GPU's and do not move beyond the noise (a browser playing video
+meanwhile, the same for both sides). Tests: new cases in the fuzz suite
+(Vim against Neovim's behaviour, wrap and folds against a wrap made from
+scratch, spoiled input to every reader of files and tools' output, the
+terminal's kitty pictures), shape.sh (2,000 nested parentheses, 150
+else-ifs, the breadcrumbs after the project's folder changes), look.sh,
+lsp.sh, tree.sh, markdown.sh and others. BLIT_SANITIZE=ON builds a Debug
+blit with AddressSanitizer, UBSan and libstdc++'s checks, and the whole
+suite passes on it.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
