@@ -1817,6 +1817,26 @@ What it needs:
   The Mac's own is built with blit.
 - `/bin/sh`, `uname`, `head` and `mkdir` there, which every such machine has.
 
+### Dev containers
+
+A running container is another machine too: `docker://NAME/path` is a
+file or a folder in it, reached through `docker exec` instead of ssh, with
+blit's agent copied in the same way (into the container's `$HOME`, so the
+first open in a new container takes a moment).
+
+"Open in the dev container" opens the working folder in the container its
+`.devcontainer/devcontainer.json` (or `.devcontainer.json`) describes. The
+first time, the container is made: its `image`, or one built from its
+`build.dockerfile` (`dockerFile`) with `build.context` (`context`; by
+default the Dockerfile's folder). The folder is mounted at
+`workspaceFolder` (by default `/workspaces/NAME`, or as `workspaceMount`
+says), with `containerEnv` and `runArgs`, and `postCreateCommand` is run
+in it once. After that the same container is started again if it has
+stopped, and opened as it is if it runs. "Rebuild the dev container"
+removes it and makes it anew. Comments and trailing commas in
+devcontainer.json are fine. Nothing else in it (features, forwarded ports,
+remoteUser, the lifecycle commands but postCreateCommand) is acted on.
+
 ## Profiling
 
 The side panel's **Profile** tab records a program with the system's

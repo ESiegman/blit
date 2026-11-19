@@ -107,8 +107,9 @@ std::string tilde(const std::string& path) {
 // working directory is on one), "~" is the home folder there, once the
 // connection has said where that is.
 std::string in_full(std::string_view typed, const std::string& base) {
-    // ("ssh://" typed after the folder the box starts in begins again there.)
+    // ("ssh://" or "docker://" typed after the folder the box starts in begins again there.)
     if (const size_t at = typed.rfind("ssh://"); at != std::string_view::npos) typed.remove_prefix(at);
+    if (const size_t at = typed.rfind("docker://"); at != std::string_view::npos) typed.remove_prefix(at);
     std::string host, there;
     auto home_there = [&](std::string_view rest) {  // rest: what follows "~"
         for (const std::shared_ptr<Remote>& r : Remote::all())

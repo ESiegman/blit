@@ -1540,7 +1540,7 @@ struct ProfileJob::Impl {
             const std::string why = last_line(rec_err.empty() ? err : rec_err);
             return fail(tool + " could not record it" + (why.empty() ? std::string() : ": " + why));
         }
-        const std::string prefix = host.empty() ? std::string() : "ssh://" + host;
+        const std::string prefix = host.empty() ? std::string() : remote_prefix(host);
         std::string perr;
         bool ok;
         if (tool != "perf") {
@@ -1558,7 +1558,7 @@ struct ProfileJob::Impl {
             const std::string why = last_line(rec_err);
             return fail(perr + (why.empty() ? std::string() : " (" + why + ")"));
         }
-        if (!host.empty()) p->program = "ssh://" + host + there;
+        if (!host.empty()) p->program = remote_prefix(host) + there;
         p->finish();
         {
             std::lock_guard lock(mu);

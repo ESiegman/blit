@@ -271,7 +271,7 @@ target_link_libraries(blit_lsp PUBLIC blit_core)
 
 # The editor. Shaders are compiled offline by shaders/build.sh and the results
 # are checked in under shaders/gen, so this needs no shader tools.
-add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src/apptabs.cpp src/appsplit.cpp src/appgit.cpp src/appvim.cpp src/appshape.cpp src/appedit.cpp src/apptest.cpp src/folds.cpp src/snippet.cpp src/appsnippet.cpp src/appfx.cpp src/appfind.cpp src/appstatus.cpp src/appstart.cpp src/appsession.cpp src/appremote.cpp src/appprofile.cpp src/appterm.cpp src/appcommands.cpp src/appdebug.cpp src/appbuild.cpp src/appmarkdown.cpp src/appasm.cpp src/asm.cpp src/appnotebook.cpp src/notebook.cpp src/apppeek.cpp src/apphistory.cpp src/wrap.cpp src/appwrap.cpp src/apppr.cpp src/appfocus.cpp src/appsettings.cpp src/appupdate.cpp src/watch.cpp src/appminimap.cpp src/appspell.cpp src/spell.cpp src/appimage.cpp src/apppdf.cpp src/appinstance.cpp src/instance.cpp src/loginpath.cpp src/look.cpp src/build.cpp src/tests.cpp src/fsio.cpp src/project.cpp src/libraries.cpp src/markdown.cpp src/mermaid.cpp src/dap.cpp src/applua.cpp src/luaapi.cpp src/git.cpp src/tree.cpp src/render.cpp)
+add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src/apptabs.cpp src/appsplit.cpp src/appgit.cpp src/appvim.cpp src/appshape.cpp src/appedit.cpp src/apptest.cpp src/folds.cpp src/snippet.cpp src/appsnippet.cpp src/appfx.cpp src/appfind.cpp src/appstatus.cpp src/appstart.cpp src/appsession.cpp src/appremote.cpp src/appprofile.cpp src/appterm.cpp src/appcommands.cpp src/appdebug.cpp src/appbuild.cpp src/appmarkdown.cpp src/appasm.cpp src/asm.cpp src/appnotebook.cpp src/notebook.cpp src/apppeek.cpp src/apphistory.cpp src/wrap.cpp src/appwrap.cpp src/apppr.cpp src/appfocus.cpp src/appsettings.cpp src/appupdate.cpp src/appcontainer.cpp src/watch.cpp src/appminimap.cpp src/appspell.cpp src/spell.cpp src/appimage.cpp src/apppdf.cpp src/appinstance.cpp src/instance.cpp src/loginpath.cpp src/look.cpp src/build.cpp src/tests.cpp src/fsio.cpp src/project.cpp src/libraries.cpp src/markdown.cpp src/mermaid.cpp src/dap.cpp src/applua.cpp src/luaapi.cpp src/git.cpp src/tree.cpp src/render.cpp)
 target_include_directories(blit PRIVATE ${LUA_INCLUDE_DIR})
 target_link_libraries(blit PRIVATE blit_view blit_syntax blit_lsp blit_gpu SDL3::SDL3 ${LUA_LIBRARY})
 
@@ -359,6 +359,8 @@ if(BLIT_DEV)
     # Updates, against a release made in a scratch folder (file:// URLs).
     add_test(NAME update COMMAND sh ${CMAKE_SOURCE_DIR}/tests/update.sh $<TARGET_FILE:blit>)
     set_tests_properties(update PROPERTIES SKIP_RETURN_CODE 77)
+    # Dev containers, with a stand-in for docker.
+    add_test(NAME container COMMAND sh ${CMAKE_SOURCE_DIR}/tests/container.sh $<TARGET_FILE:blit>)
     # The status bar's parts and clicks, a language with no colours, the window's title.
     add_test(NAME status COMMAND sh ${CMAKE_SOURCE_DIR}/tests/status.sh $<TARGET_FILE:blit>)
     add_test(NAME find COMMAND sh ${CMAKE_SOURCE_DIR}/tests/find.sh $<TARGET_FILE:blit>)

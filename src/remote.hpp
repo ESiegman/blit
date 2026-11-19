@@ -1,6 +1,7 @@
 #pragma once
 // Working on another machine's files, over ssh. A path there is written
-// "ssh://host/path/on/it" (the host as ~/.ssh/config or ssh knows it), and
+// "ssh://host/path/on/it" (the host as ~/.ssh/config or ssh knows it), or,
+// in a running container, "docker://NAME/path" (through docker exec), and
 // everywhere blit goes to the files themselves (opening, saving, listing a
 // folder, the finder, git, a language server) it asks remote.hpp when the
 // path is such a one. blit's agent (agent/blit-agent.cpp) does the work on
@@ -38,6 +39,9 @@ bool is_remote(std::string_view path);
 bool split_remote(std::string_view path, std::string* host, std::string* there);
 #endif
 std::string remote_path(std::string_view host, std::string_view there);
+// What a host's paths start with: "ssh://host", or "docker://NAME" for a
+// container (whose host is "docker:NAME").
+std::string remote_prefix(std::string_view host);
 
 class Remote;
 // How long a worker thread waits for a machine's connection.

@@ -2107,7 +2107,7 @@ bool Lsp::open(u64 key, Editor& ed, const std::string& path, const std::string& 
         for (const LspServer& s : servers)
             if (s.enabled && !s.command.empty() && std::ranges::find(s.languages, language) != s.languages.end()) candidates.push_back(s);
         if (candidates.empty()) return false;
-        const std::string remote = "ssh://" + host;
+        const std::string remote = remote_prefix(host);
         for (const std::unique_ptr<Server>& s : servers_) {
             if (s->remote != remote) continue;
             const bool same = s->ready ? std::ranges::any_of(candidates, [&](const LspServer& c) { return c.name == s->name; })

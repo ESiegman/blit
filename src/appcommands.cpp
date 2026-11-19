@@ -211,6 +211,8 @@ void App::commands_create() {
     own("New project\xE2\x80\xA6", {key(SDLK_N, kP | kA)}, [this] { project_anywhere(); });
     own("Connect to a server\xE2\x80\xA6", {}, [this] { find_open(kFindFolder, "ssh://"); });
     own("Reconnect to the servers that dropped", {}, [this] { remote_reconnect(); });
+    own("Open in the dev container", {}, [this] { container_open(false); });
+    own("Rebuild the dev container", {}, [this] { container_open(true); });
     sent("Save", {key(SDLK_S, kP)});
     own("Save as\xE2\x80\xA6", {key(SDLK_S, kP | kS)}, [this] { save_as(); });
     own("Save all", {key(SDLK_S, kP | kA)}, [this] { save_all(); });

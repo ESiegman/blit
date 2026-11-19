@@ -324,7 +324,7 @@ std::vector<BuildTask> read_run_configs(const std::string& root, std::string* pr
             *problem = std::string(kRunConfigs) + ": a configuration needs a \"name\" and a \"program\"";
             continue;
         }
-        t.program = program[0] == '/' || program.starts_with("ssh://") ? program : root + "/" + program;
+        t.program = program[0] == '/' || program.starts_with("ssh://") || program.starts_with("docker://") ? program : root + "/" + program;
         if (c["args"].is_array()) {
             for (const json::Value a : c["args"]) t.args += (t.args.empty() ? "" : " ") + sh_quote(a.str());
         } else {

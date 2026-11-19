@@ -129,6 +129,12 @@ struct PictureInfo {
 
 class App;
 
+// A dev container, as its devcontainer.json says it is made (appcontainer.cpp).
+struct ContainerPlan {
+    std::string root, name, image, dockerfile, context, workspace, mount;
+    std::vector<std::string> run_args, env, post;
+};
+
 // What a new init.lua starts as: every setting, commented out (init.example.lua).
 std::string_view init_template();
 struct Doc;
@@ -626,6 +632,9 @@ private:
     void pr_marks(FrameDesc& fd);
     std::string pr_dump();
     std::shared_ptr<struct PrUi> pr_;
+    // Dev containers (appcontainer.cpp).
+    bool container_plan(const std::string& root, ContainerPlan* plan, std::string* err);
+    void container_open(bool anew);
     // Updates (appupdate.cpp).
     static std::string version();
     void update_check(bool asked);

@@ -84,8 +84,8 @@ std::string tidy_path(std::string_view path) {
 }
 
 BuildScan::BuildScan(std::string dir, std::function<bool(const std::string&)> exists) : exists_(std::move(exists)) {
-    if (dir.starts_with("ssh://")) {
-        const size_t slash = dir.find('/', 6);
+    if (dir.starts_with("ssh://") || dir.starts_with("docker://")) {
+        const size_t slash = dir.find('/', dir.find("://") + 3);
         prefix_ = dir.substr(0, slash);
         dir = slash == std::string::npos ? "/" : dir.substr(slash);
     }

@@ -29,6 +29,7 @@ void usage() {
         "       blit [options] file:LINE[:COL]    (a file at a line, as compilers and grep write it)\n"
         "       blit [options] folder             (a folder to work in: its session, if it has one)\n"
         "       blit [options] ssh://host/path    (a file or a folder on another machine)\n"
+        "       blit [options] docker://name/path (one in a running container)\n"
         "With a blit already running, the files open in its window and this one goes.\n"
         "  -n, --new          a blit of its own, even with one running\n"
         "  -w, --wait         wait until the files' tabs are closed (git's editor: blit -w)\n"

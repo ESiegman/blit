@@ -614,7 +614,7 @@ std::string App::debug_target() const {
 bool App::debug_open(const std::string& near, const std::string& dir, bool python) {
     DebugUi& u = *debugui_;
     std::string host, there;
-    u.remote = split_remote(near, &host, &there) ? "ssh://" + host : std::string();
+    u.remote = split_remote(near, &host, &there) ? remote_prefix(host) : std::string();
     u.dap = std::make_unique<Dap>();
     u.gdb = u.rocm = false;
     u.going = false;
@@ -1664,7 +1664,7 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
     // What it is doing.
     static const char* const kState[] = {"Not running", "Starting\xE2\x80\xA6", "Running", "Stopped"};
     std::string status = kState[u.state];
-    if (u.state == DebugUi::kStarting && !u.remote.empty()) status = "Starting on " + u.remote.substr(6) + "\xE2\x80\xA6";  // (ssh://host)
+    if (u.state == DebugUi::kStarting && !u.remote.empty()) status = "Starting on " + u.remote.substr(u.remote.find("://") + 3) + "\xE2\x80\xA6";  // (ssh://host, docker://name)
     if (u.state == DebugUi::kStopped && !u.reason.empty()) status += " (" + u.reason + ")";
     if (u.state == DebugUi::kIdle && u.exit_code >= 0) status += ": exited with code " + std::to_string(u.exit_code);
     put(box, font, 1, 0, fit_text(status, cols), u.state == DebugUi::kStopped ? ink::kStrong : ink::kMuted);

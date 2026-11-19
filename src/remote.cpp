@@ -301,20 +301,28 @@ constexpr size_t kPart = 256u << 10, kBulkMost = 1u << 20;
 }  // namespace
 
 #if !defined(BLIT_NO_REMOTE)
-bool is_remote(std::string_view path) { return path.starts_with("ssh://"); }
+bool is_remote(std::string_view path) { return path.starts_with("ssh://") || path.starts_with("docker://"); }
 
+// (A container's "host" is "docker:NAME": a name ssh never has.)
 bool split_remote(std::string_view path, std::string* host, std::string* there) {
     if (!is_remote(path)) return false;
-    path.remove_prefix(6);
+    const bool docker = path.starts_with("docker://");
+    path.remove_prefix(docker ? 9 : 6);
     const size_t slash = path.find('/');
     *host = std::string(path.substr(0, slash));
     *there = slash == std::string_view::npos ? std::string("/") : std::string(path.substr(slash));
-    return !host->empty() && host->front() != '-';  // (never one ssh would take for an option)
+    if (host->empty() || host->front() == '-') return false;  // (never one ssh or docker would take for an option)
+    if (docker) *host = "docker:" + *host;
+    return true;
 }
 #endif
 
+std::string remote_prefix(std::string_view host) {
+    return host.starts_with("docker:") ? std::format("docker://{}", host.substr(7)) : std::format("ssh://{}", host);
+}
+
 std::string remote_path(std::string_view host, std::string_view there) {
-    return std::format("ssh://{}{}{}", host, there.starts_with('/') ? "" : "/", there);
+    return std::format("{}{}{}", remote_prefix(host), there.starts_with('/') ? "" : "/", there);
 }
 
 std::string program_path() { return this_program(); }
@@ -542,6 +550,11 @@ struct Remote::Impl {
         std::vector<std::string> words = {ssh_env && *ssh_env ? ssh_env : "ssh", "-T", "-o", asking ? "BatchMode=no" : "BatchMode=yes", "-o", "ServerAliveInterval=15",
                                           "-o", "ServerAliveCountMax=4", "-o", "ConnectTimeout=20", "--", host,
                                           std::format("exec /bin/sh -c '{}'", kBootstrap)};
+        if (host.starts_with("docker:")) {  // a container: the same, through docker exec (nothing to ask)
+            const char* docker_env = std::getenv("BLIT_DOCKER");  // (the tests' stand-in for docker)
+            words = {docker_env && *docker_env ? docker_env : "docker", "exec", "-i", host.substr(7), "/bin/sh", "-c", std::string(kBootstrap)};
+            asking.reset();
+        }
         std::vector<char*> argv;
         for (std::string& w : words) argv.push_back(w.data());
         argv.push_back(nullptr);
