@@ -89,6 +89,12 @@ struct Picture {
     VkFence upload = VK_NULL_HANDLE;  // its copy and mipmaps, until they are done (owned by the upload)
 };
 
+// Staging memory a picture's copy is done with: a few kept, each for the
+// next picture (a minimap's tile is about a megabyte), and a bigger one
+// (a page, a photograph) let go.
+constexpr size_t kSpareStagings = 4;
+constexpr VkDeviceSize kSpareStagingMost = 4 << 20;
+
 // A copy to the GPU that is not waited for (a picture's): freed once done.
 struct Upload {
     VkCommandBuffer cmd = VK_NULL_HANDLE;
@@ -181,6 +187,7 @@ struct BlitGpu {
     std::vector<Picture> dropped;  // done with, but perhaps still drawn by frames under way
     uint32_t next_picture = 0;
     std::vector<Upload> uploads;
+    std::vector<Buffer> spare_stagings;  // (see kSpareStagings)
 
     char name[288] = "vulkan";  // (room for the longest name a device may have)
     uint64_t library_ns = 0, pipelines_ns = 0;
@@ -354,6 +361,35 @@ void picture_free(BlitGpu* g, Picture& p) {
     p = Picture{};
 }
 
+// A finished copy's staging memory: kept for the next picture, in place of
+// a smaller one kept if there are as many as are kept, or let go.
+void spare_staging(BlitGpu* g, Buffer& b) {
+    std::vector<Buffer>& spare = g->spare_stagings;
+    if (b.size <= kSpareStagingMost && spare.size() < kSpareStagings) {
+        spare.push_back(b);
+        b = Buffer{};
+        return;
+    }
+    for (Buffer& kept : spare)
+        if (b.size <= kSpareStagingMost && kept.size < b.size) std::swap(kept, b);
+    buffer_free(g, b);
+}
+
+// Staging memory for a picture of `bytes`: the smallest kept one that is
+// large enough, else new. (Made afresh each time, its memory was allocated
+// and mapped for every tile of the minimap as the view jumped.)
+bool take_staging(BlitGpu* g, Buffer& b, VkDeviceSize bytes) {
+    std::vector<Buffer>& spare = g->spare_stagings;
+    size_t pick = spare.size();
+    for (size_t k = 0; k < spare.size(); ++k)
+        if (spare[k].size >= bytes && (pick == spare.size() || spare[k].size < spare[pick].size)) pick = k;
+    if (pick == spare.size()) return buffer_make(g, b, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT);
+    b = spare[pick];
+    spare[pick] = spare.back();
+    spare.pop_back();
+    return true;
+}
+
 // What frames and copies have finished: their memory and the pictures
 // dropped since are let go.
 void collect(BlitGpu* g) {
@@ -369,7 +405,7 @@ void collect(BlitGpu* g) {
             if (p.upload == u.done) p.upload = VK_NULL_HANDLE;
         vkDestroyFence(g->dev, u.done, nullptr);
         vkFreeCommandBuffers(g->dev, g->commands, 1, &u.cmd);
-        buffer_free(g, u.staging);
+        spare_staging(g, u.staging);
         g->uploads[i] = g->uploads.back();
         g->uploads.pop_back();
     }
@@ -1057,6 +1093,7 @@ void blit_gpu_destroy(BlitGpu* g) {
         for (auto& [id, p] : g->pictures) picture_free(g, p);
         for (Picture& p : g->dropped) picture_free(g, p);
         for (VkDescriptorPool pool : g->picture_pools) vkDestroyDescriptorPool(g->dev, pool, nullptr);
+        for (Buffer& b : g->spare_stagings) buffer_free(g, b);
         for (Frame& f : g->frames) {
             buffer_free(g, f.cells);
             buffer_free(g, f.uniforms);
@@ -1257,7 +1294,7 @@ uint32_t blit_gpu_image_add(BlitGpu* g, const uint8_t* rgba, int w, int h) {
     }
     Upload u;
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(w) * static_cast<VkDeviceSize>(h) * 4;
-    if (!p.set || !buffer_make(g, u.staging, bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT)) {
+    if (!p.set || !take_staging(g, u.staging, bytes)) {
         picture_free(g, p);
         return 0;
     }
