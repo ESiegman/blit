@@ -149,7 +149,8 @@ void App::spell_marks(FrameDesc& fd) {
             SpellWork::Ask a;
             a.doc = d.id;
             a.tag = ++u.tag;
-            const Highlights& hl = d.syntax.active() ? d.syntax.highlights() : Highlights();
+            static const Highlights kNone;  // (not a temporary: with one, the file's highlights were copied for each request)
+            const Highlights& hl = d.syntax.active() ? d.syntax.highlights() : kNone;
             const std::vector<std::string>& names = d.syntax.style_names();
             const Buffer& b = d.ed.buf;
             for (u64 l = g.top_line; l < g.bottom() && l < b.line_count(); ++l) {

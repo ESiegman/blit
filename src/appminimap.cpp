@@ -128,7 +128,8 @@ void App::minimap_tile(Doc& d, u64 index, std::vector<u8>& rgba) {
     for (size_t k = 0; k < row_bytes; k += 4) std::memcpy(&rgba[k], bg, 4);
     for (size_t k = row_bytes; k < rgba.size(); k += row_bytes) std::memcpy(&rgba[k], rgba.data(), row_bytes);  // (the first row, again and again)
     const Buffer& b = d.ed.buf;
-    const Highlights& hl = d.syntax.active() ? d.syntax.highlights() : Highlights();
+    static const Highlights kNone;  // (not a temporary: with one, the file's highlights were copied for each tile)
+    const Highlights& hl = d.syntax.active() ? d.syntax.highlights() : kNone;
     // Each ink's colour, a little softer than the text's.
     u8 inks[32][3];
     for (u32 ink = 0; ink < 32; ++ink) {
