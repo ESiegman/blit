@@ -1265,6 +1265,52 @@ void styles_test() {
     }
 }
 
+// A character two cells wide in the last column of a row, cut by the edge,
+// with what is drawn over it after: a mark over both its cells, the rest of
+// an emoji sequence. Only the cell in the row takes it; the cell past the
+// row's end (here a guard) is not written. (Before, it was: the first cell
+// of the next row, or past the end of the cells after the last.)
+void edge_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    Font font;
+    FontSpec spec;
+    spec.px = 20;
+    std::string err;
+    if (!font.init(spec, &err)) {
+        std::printf("edge test skipped: %s\n", err.c_str());
+        return;
+    }
+    constexpr u32 kGuard = 0xDEADBEEFu;
+    auto fill = [&](const std::string& text, u32 first_col, std::vector<u32>* cells) {
+        Buffer buf;
+        buf.insert(0, text);
+        GridSpec g;
+        g.cols = 10;
+        g.rows = 1;
+        g.first_col = first_col;
+        cells->assign(g.cols + 1, kGuard);
+        fill_grid(buf, font, g, cells->data());
+    };
+    std::vector<u32> cells;
+    const u32 han = font.glyph(0x6F22) & (Font::kWide - 1);
+    fill("aaaaaaaaa\xE6\xBC\xA2\xCC\x81x\n", 0, &cells);  // (a, ..., the Han character for "Han", a combining acute)
+    check(cells[10] == kGuard, "edge: a mark over a wide character cut by the right edge stays in the row");
+    check((cells[9] & 0xFFFF) == font.mark(han, 0x301, 1), "edge: the mark is drawn over the half that shows");
+    fill("aaaaaaaa\xE6\xBC\xA2\xE6\xBC\xA2\xCC\x81x\n", 1, &cells);  // (scrolled one column: the second one cut)
+    check(cells[10] == kGuard, "edge: and scrolled sideways");
+    // Emoji sequences: a family (joined by zero width joiners), a flag, a
+    // skin tone. (With no colour font they are each their first emoji, and
+    // nothing is written over them.)
+    for (const char* seq : {"\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7", "\xF0\x9F\x87\xAF\xF0\x9F\x87\xB5",
+                            "\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD"}) {
+        fill(std::string("aaaaaaaaa") + seq + "x\n", 0, &cells);
+        check(cells[10] == kGuard, "edge: an emoji sequence cut by the right edge stays in the row");
+        check(cells[9] != 0 && cells[9] != kGuard, "edge: its first cell shows");
+    }
+}
+
 // The two pattern matchers used by highlight queries, on the patterns those
 // queries actually contain.
 void match_test() {
@@ -5255,6 +5301,7 @@ int main(int argc, char** argv) {
     json_test();
     lsp_test();
     styles_test();
+    edge_test();
     match_test();
     highlights_test();
     syntax_test();

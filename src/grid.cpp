@@ -62,6 +62,7 @@ struct Cluster {
     u32 seq[12] = {};
     u32 seq_n = 0, seq_col = 0;
     u64 seq_end = ~0ull;
+    u32 end = 0;  // one past the row's last column (what is drawn over a cell stays in the row)
 };
 // The glyph bits that send a character to no_cell().
 constexpr u32 kAttention = Font::kJoin | Font::kPict;
@@ -111,7 +112,7 @@ bool wide_before(Font& font, const u8* p, size_t i) {
         if (!slot) return;
         cl.pict = true;  // (a flag's letters are not pictographs: the row has one now)
         for (u32 k = 0; k < 2; ++k)
-            if (cl.seq_col + k >= first_col) {
+            if (cl.seq_col + k >= first_col && cl.seq_col + k < cl.end) {
                 u32& cell = row[cl.seq_col + k - first_col];
                 cell = (cell & ~0xFFFFu) | (slot + k);
             }
@@ -150,7 +151,7 @@ bool wide_before(Font& font, const u8* p, size_t i) {
         return true;
     }
     auto over = [&](u32 c, u32 half) {
-        if (c < first_col + 1) return;  // (the cell before is out of view)
+        if (c < first_col + 1 || c > cl.end) return;  // (the cell before is out of view)
         u32& cell = row[c - 1 - first_col];
         cell = (cell & ~0xFFFFu) | font.mark(cell, cp, half);
     };
@@ -393,6 +394,7 @@ void fill_grid(const Buffer& buf, Font& font, const GridSpec& g, u32* cells, Anc
         const u64 row_end = g.end_at(r);
         const u32 part = row_end == ~0ull ? cols : static_cast<u32>(std::min<u64>(cols, row_end > row_col ? row_end - row_col : 0));
         const bool far = anchors && row_col >= LineAnchors::kStep;
+        cl.end = first_col + wide;
         if (g.row_cols && line == prev_line) positioned = false;  // (the same line again: read from its start)
         prev_line = line;
 
