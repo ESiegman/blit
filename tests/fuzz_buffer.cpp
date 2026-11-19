@@ -5258,6 +5258,21 @@ void lsp_test() {
     ed.unlisten(&loud);
     loud.detach();
 
+    // A server that says only "the word there" before a rename: each time,
+    // the word where it was asked, not the one an earlier rename was about.
+    LspServer plain = fake;
+    plain.command = {BLIT_FAKE_LSP, "--default-rename"};
+    ed.replace(0, ed.buf.size(), "int first;\nint second;\n");
+    Lsp ren;
+    check(ren.attach(ed.buf, path, "cpp", {plain}) && (lsp_wait(ren, Lsp::kState) & Lsp::kState), "default-rename server becomes ready");
+    ren.prepare_rename(6);
+    check((lsp_wait(ren, Lsp::kRenameRange) & Lsp::kRenameRange) && ren.rename_lo() == 4 && ren.rename_hi() == 9 && ren.rename_placeholder() == "first",
+          "the word there, to rename");
+    ren.prepare_rename(17);
+    check((lsp_wait(ren, Lsp::kRenameRange) & Lsp::kRenameRange) && ren.rename_lo() == 15 && ren.rename_hi() == 21 && ren.rename_placeholder() == "second",
+          "and the next time, the word there then");
+    ren.detach();
+
     LspServer missing;
     missing.name = "missing";
     missing.command = {"blit-no-such-language-server"};

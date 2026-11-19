@@ -2679,6 +2679,10 @@ void Lsp::prepare_rename(u64 offset) {
         inbox_->push(std::move(m));
         return;
     }
+    // (What an earlier answer said is not this one's: a server that answers
+    // "the word there" has the word found where this was asked.)
+    rename_lo_ = rename_hi_ = offset;
+    rename_text_.clear();
     ask(front_, "textDocument/prepareRename", offset, kInPrepareRename, {}, &prepare_id_);
 }
 

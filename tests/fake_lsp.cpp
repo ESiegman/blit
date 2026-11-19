@@ -1,7 +1,8 @@
 // A language server with predictable answers, for the tests and benchmarks.
 //
 //   blit_fakelsp [--utf8] [--full] [--slow MS] [--die-after N] [--items N] [--quiet]
-//                [--pull] [--workspace] [--no-prepare] [--changes] [--noise] [--name NAME]
+//                [--pull] [--workspace] [--no-prepare] [--default-rename] [--changes] [--noise]
+//                [--name NAME]
 //
 // --utf8        agree to count columns in bytes (the default is UTF-16)
 // --full        ask for the whole document on every change
@@ -13,6 +14,8 @@
 // --workspace   and the whole project's too (workspace/diagnostic): its folder's
 //               files that are not open
 // --no-prepare  rename without saying first what would be renamed
+// --default-rename  say first only that the word there is what would be renamed
+//               ({"defaultBehavior": true})
 // --changes     workspace edits as "changes" (by file) rather than "documentChanges"
 // --noise       print a line of its own on its output before every message (as
 //               servers that log to stdout do)
@@ -77,7 +80,7 @@ int sync_kind = 2;
 int slow_ms = 0;
 long die_after = -1;
 long pad_items = 0;
-bool quiet = false, pull = false, workspace = false, prepare = true, by_changes = false, noise = false;
+bool quiet = false, pull = false, workspace = false, prepare = true, by_changes = false, noise = false, default_rename = false;
 long handled = 0;
 std::string source = "fake";
 
@@ -598,6 +601,7 @@ void prepare_rename(Value id, Value params) {
     const std::string w = word_at(offset_of(params["position"]), &start);
     if (w.empty()) return reply(id, "null");
     if (w == "ERROR") return reply_error(id, "ERROR cannot be renamed");
+    if (default_rename) return reply(id, R"({"defaultBehavior":true})");
     std::string r = "{\"range\":";
     range_json(r, start, start + w.size());
     r += ",\"placeholder\":";
@@ -1059,6 +1063,7 @@ int main(int argc, char** argv) {
         else if (a == "--no-prepare") prepare = false;
         else if (a == "--changes") by_changes = true;
         else if (a == "--noise") noise = true;
+        else if (a == "--default-rename") default_rename = true;
         else if (a == "--name" && i + 1 < argc) source = argv[++i];
     }
     std::string body;
