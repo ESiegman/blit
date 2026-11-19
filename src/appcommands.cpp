@@ -411,6 +411,9 @@ void App::commands_create() {
     git("Git: Continue the rebase or cherry-pick", "continue");
     git_named("Git: New tag\xE2\x80\xA6", "New tag", "tag");
     git_named("Git: New worktree\xE2\x80\xA6", "New worktree for branch", "worktree");
+    own("Git: Pull requests\xE2\x80\xA6", {}, [this] {
+        if (Commands::git_ready(*this)) pr_list();
+    });
     git("Git: Update the submodules", "submodules");
     // (In a diff tab, Enter stages the hunk or the lines chosen, or
     // unstages them; in a file, these take the change the cursor is on.)

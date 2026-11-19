@@ -411,6 +411,9 @@ struct App::GitUi {
 
 void App::git_create() { gitui_ = std::make_shared<GitUi>(); }
 
+// The top of the repository being worked in (empty: none).
+std::string App::git_root() const { return gitui_ && gitui_->status.repo ? gitui_->status.root : std::string(); }
+
 bool App::confirm(const std::string& what, const char* yes) {
     const SDL_MessageBoxButtonData buttons[] = {
         {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, yes},

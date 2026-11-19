@@ -451,5 +451,33 @@ check "one not checked out, updated: checked out" "submodules -lib,submodules li
 got=$(git -C "$dir/ada" submodule status | cut -c1)
 check "(git says so too)" " "
 
+# Pull requests, through a stand-in for gh: listed; one's comments on its
+# lines (threads), checked out (its comments after their lines), its
+# changes, approved and answered (each asked first), as gh was told.
+fresh
+export BLIT_GH="$(cd "$(dirname "$0")" && pwd)/fake-gh.sh" GH_LOG="$dir/gh.log"
+: >"$GH_LOG"
+prs="frame;gitwait;command:Git: Pull requests;luawait;frame"
+run "$dir/ada/poem.txt" "$prs;finddump"
+check "the open pull requests" "pick [] 2 : >#12  Louder poem  · bo, loud #9  Draft idea  · cy, idea  · draft"
+run "$dir/ada/poem.txt" "$prs;key:Return;frame;key:Down;key:Down;key:Return;luawait;frame;finddump"
+check "the comments on its lines, as threads" "pick [] 3 : >poem.txt:2  ada: Why shout?     poem.txt:2  bo: For effect. poem.txt:4  ada: Nice."
+run "$dir/ada/poem.txt" "$prs;key:Return;frame;key:Return;luawait;luawait;frame;prdump"
+check "checked out: its comments after their lines" "#12: poem.txt:2 ada poem.txt:2 bo(answer) poem.txt:4 ada | notes 2"
+got=$(grep -c '^pr checkout 12$' "$GH_LOG")
+check "(gh checked it out)" "1"
+run "$dir/ada/poem.txt" "$prs;key:Return;frame;key:Down;key:Return;luawait;frame;lsptext"
+check "its changes in a tab" "diff --git a/poem.txt b/poem.txt / index 1111111..2222222 100644 / --- a/poem.txt / +++ b/poem.txt / @@ -1,3 +1,3 @@ /  one / -two / +TWO /  three"
+: >"$GH_LOG"
+run "$dir/ada/poem.txt" "$prs;key:Return;frame;key:Down;key:Down;key:Down;key:Return;luawait;asked"
+check "approved, asked first" "Approve #12 on GitHub?"
+got=$(grep '^pr review' "$GH_LOG")
+check "(gh approved it)" "pr review 12 --approve"
+: >"$GH_LOG"
+run "$dir/ada/poem.txt" "$prs;key:Return;frame;key:Down;key:Down;key:Return;luawait;frame;key:Down;key:Return;frame;key:Down;key:Return;frame;text:Fair enough;key:Return;luawait"
+got=$(grep '^api -X POST' "$GH_LOG")
+check "an answer, to its thread" "api -X POST repos/{owner}/{repo}/pulls/12/comments/101/replies -f body=Fair enough"
+unset BLIT_GH GH_LOG
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "git ok"
 exit $failed

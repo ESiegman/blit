@@ -1494,6 +1494,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     asm_marks(fd);      // the lines of a file and of its assembly that go together
     nb_marks(fd);       // a notebook's saved outputs
     lens_marks(fd);     // how many references each definition on show has
+    pr_marks(fd);       // a pull request's comments, after their lines
     history_tick();     // (typed in for a while: a version of it kept)
     spell_marks(fd);    // words not known, underlined
     if (script_) script_layout(w, h, fd);  // marks, boxes and messages of the scripts'

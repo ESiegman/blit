@@ -607,6 +607,19 @@ private:
     std::string spell_dump();
     std::shared_ptr<struct SpellWork> spell_work_;
     std::shared_ptr<struct SpellUi> spell_;
+    // Pull requests, through gh (apppr.cpp).
+    std::string git_root() const;
+    void pr_run(std::vector<std::string> args, std::function<void(int, const std::string&, const std::string&)> done);
+    void pr_list();
+    void pr_menu(i64 n);
+    void pr_checkout(i64 n);
+    void pr_changes(i64 n);
+    void pr_comments(i64 n, bool show);
+    void pr_comment_menu(size_t i);
+    void pr_review(i64 n, const std::string& kind);
+    void pr_marks(FrameDesc& fd);
+    std::string pr_dump();
+    std::shared_ptr<struct PrUi> pr_;
     // Soft wrap (appwrap.cpp).
     bool wrap_wanted(const Pane& p) const;
     void wrap_sync(Pane& p);

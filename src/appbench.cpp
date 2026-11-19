@@ -1156,6 +1156,13 @@ void App::run_script(const char* script) {
         } else if (verb == "wrapdump") {  // the split in front's soft wrap: its width and rows, and each row on show (line@column), or off
             frame();
             std::fprintf(stderr, "%s\n", wrap_dump().c_str());
+        } else if (verb == "prdump") {  // a pull request's comments, once gh has answered (as "path:line author")
+            for (const u64 until = now_ns() + 10'000'000'000ull; script_ && script_busy() && now_ns() < until;) {
+                script_jobs();
+                SDL_Delay(5);
+            }
+            frame();
+            std::fprintf(stderr, "%s\n", pr_dump().c_str());
         } else if (verb == "caretdump") {  // every caret of the file in front: line:column (from 1), a selection's other end after a dash, the primary starred
             std::fprintf(stderr, "%s\n", caret_dump().c_str());
         } else if (verb == "docdump") {  // docdump:N, the tab in front's title, then its lines from N before the cursor's to N after (the cursor's marked >, and in it the cursor |)
