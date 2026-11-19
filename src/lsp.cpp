@@ -365,13 +365,8 @@ void Lsp::markdown_lines(std::string_view text, bool markdown, std::vector<InfoL
 namespace {
 
 // A read or write on a pipe that would have waited, or was cut short: try
-// again later. (EWOULDBLOCK is EAGAIN on Linux and macOS, but needn't be.)
-bool try_later(int e) {
-#if EWOULDBLOCK != EAGAIN
-    if (e == EWOULDBLOCK) return true;
-#endif
-    return e == EAGAIN || e == EINTR;
-}
+// again later.
+bool try_later(int e) { return would_block(e) || e == EINTR; }
 
 struct RawRange {
     u32 l0 = 0, c0 = 0, l1 = 0, c1 = 0;

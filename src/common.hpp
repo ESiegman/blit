@@ -1,4 +1,5 @@
 #pragma once
+#include <cerrno>
 #include <cstddef>
 #include <cstdint>
 #include <ctime>
@@ -25,6 +26,16 @@ inline u64 now_ns() {
     clock_gettime(CLOCK_MONOTONIC, &ts);
     return static_cast<u64>(ts.tv_sec) * 1'000'000'000ull + static_cast<u64>(ts.tv_nsec);
 #endif
+}
+
+// A read or write on a pipe set not to wait that would have waited.
+// (EWOULDBLOCK is EAGAIN on Linux and macOS, but needn't be; asked for
+// once, so that GCC's -Wlogical-op does not take it for the same test twice.)
+inline bool would_block(int e) {
+#if EWOULDBLOCK != EAGAIN
+    if (e == EWOULDBLOCK) return true;
+#endif
+    return e == EAGAIN;
 }
 
 }  // namespace blit

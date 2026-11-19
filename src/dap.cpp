@@ -171,7 +171,7 @@ void Dap::Link::write_pending() {
         const ssize_t k = ::write(in, pending.data() + at, pending.size() - at);
         if (k > 0) at += static_cast<size_t>(k);
         else if (k < 0 && errno == EINTR) continue;
-        else if (k < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+        else if (k < 0 && would_block(errno)) break;
         else in_gone = true;
     }
     if (in_gone) pending.clear();
