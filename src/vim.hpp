@@ -232,6 +232,7 @@ private:
     void put(Editor& ed, bool before, u32 count, bool then_after = false);
     void enter_insert(Editor& ed, u32 count, Mode mode = kInsert);
     void leave_insert(Editor& ed);
+    bool drop_indent(Editor& ed, u64 at);
     void leave_visual(Editor& ed);
     void run_command(Editor& ed, std::string line);
     void substitute(Editor& ed, u64 line0, u64 line1, std::string_view rest, bool flags = true);
@@ -282,6 +283,7 @@ private:
     bool once_eol_ = false;     // <C-o> was pressed with the cursor after the end of line once_line_
     u64 once_line_ = 0;
     std::string insert_prefix_; // o and O with a count: what starts each further line
+    bool auto_indent_ = false;  // the line's indent was put there (o, O, cc, S, Enter) and nothing has been typed after it
     std::string last_inserted_; // the "." register
     u64 last_insert_at_ = 0;    // where Insert mode was last left (gi)
     std::vector<std::string> replaced_;  // Replace mode: what each character typed went over, for Backspace

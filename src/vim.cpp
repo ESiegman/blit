@@ -1952,6 +1952,7 @@ void Vim::operate(Editor& ed, char op, u64 lo, u64 hi, bool linewise) {
                 ed.move_to(lo, false);
             }
             enter_insert(ed, 1);
+            auto_indent_ = linewise;
             ed.end_group();  // (the one opened here: Insert mode has its own, around all of it)
             break;
         }
@@ -2172,6 +2173,7 @@ void Vim::enter_insert(Editor& ed, u32 count, Mode mode) {
     insert_from_ = ed.cursor();
     insert_plain_ = true;
     insert_prefix_.clear();
+    auto_indent_ = false;
     replaced_.clear();
     changing_ = true;
     // Everything typed until Esc is one step to undo. (After <C-o> in
@@ -2180,7 +2182,32 @@ void Vim::enter_insert(Editor& ed, u32 count, Mode mode) {
     insert_once_ = 0;
 }
 
+// An indent that o, O, cc, S or Enter put in, with nothing typed after it,
+// goes again (as Vim's 'autoindent' has it) when Insert mode ends, Enter is
+// pressed, <C-o> or an arrow takes the cursor off the line: no line is left
+// holding only blanks. `at` is where the cursor was on that line; true if
+// there were blanks to take out.
+bool Vim::drop_indent(Editor& ed, u64 at) {
+    if (!auto_indent_) return false;
+    auto_indent_ = false;
+    const u64 line = ed.buf.line_of(at), start = ed.buf.line_start(line);
+    if (at != ed.line_end(line)) return false;
+    Peek p(ed.buf);
+    u64 from = at;
+    while (from > start && (p.at(from - 1) == ' ' || p.at(from - 1) == '\t')) --from;
+    if (from == at) return false;
+    const u64 cur = ed.cursor();
+    ed.replace(from, at, "");
+    ed.move_to(cur >= at ? cur - (at - from) : cur, false);
+    return true;
+}
+
 void Vim::leave_insert(Editor& ed) {
+    // ("3o<Esc>": the further lines are empty too. The column the cursor
+    // keeps for j and k is still the one the indent went to.)
+    const u32 indent_col = auto_indent_ ? ed.col_of(ed.cursor()) : 0;
+    const bool dropped = drop_indent(ed, ed.cursor());
+    if (dropped && !insert_prefix_.empty()) insert_prefix_ = "\n";
     const std::string typed = insert_plain_ && ed.cursor() >= insert_from_ ? ed.buf.text(insert_from_, ed.cursor() - insert_from_) : std::string();
     if (insert_plain_) last_inserted_ = typed;
     if (insert_count_ > 1 && !(insert_prefix_ + typed).empty()) {  // "3ix": the text, twice more; "3o": two more lines of it
@@ -2218,6 +2245,7 @@ void Vim::leave_insert(Editor& ed) {
     const u64 cur = ed.cursor();
     if (cur > ed.buf.line_start(ed.buf.line_of(cur))) ed.move_to(ed.prev_char(cur), false);  // Esc steps back onto the last character typed
     go(ed, block_home == kNone ? ed.cursor() : block_home);
+    if (dropped) want_col_ = indent_col;
 }
 
 u32 Vim::insert_key(Editor& ed, const VimKey& k) {
@@ -2267,6 +2295,7 @@ u32 Vim::insert_key(Editor& ed, const VimKey& k) {
                 break;
             case 'r': await_ = kInsertRegister; break;
             case 'o': {
+                drop_indent(ed, ed.cursor());
                 insert_once_ = 2, mode_ = kNormal;
                 insert_plain_ = false;
                 once_line_ = ed.buf.line_of(ed.cursor());
@@ -2341,13 +2370,26 @@ u32 Vim::insert_key(Editor& ed, const VimKey& k) {
             return kHandled | kTyped;
         }
         case VimKey::kEnter: {
-            // The new line starts as far in as this one does (autoindent).
-            const u64 line = ed.buf.line_of(ed.cursor());
-            const u64 start = ed.buf.line_start(line), text = std::min(first_nonblank(ed, line), ed.cursor());
+            // The new line starts as far in as this one does (autoindent),
+            // at the text after the cursor: blanks before that go.
+            const u64 cur = ed.cursor(), line = ed.buf.line_of(cur), end = ed.line_end(line);
+            const u64 start = ed.buf.line_start(line), text = std::min(first_nonblank(ed, line), cur);
+            const std::string indent = ed.buf.text(start, text - start);
+            Peek p(ed.buf);
+            u64 skip = cur;
+            while (skip < end && (p.at(skip) == ' ' || p.at(skip) == '\t')) ++skip;
+            if (skip > cur && skip < end && p.at(skip) >= 0x80) skip = std::max(cur, ed.prev_char(ed.next_char(skip)));  // (a mark on the last blank keeps it)
+            // A line that holds only the indent put in for it is left empty.
+            const u64 from = mode_ == kInsert && auto_indent_ && text == cur ? start : cur;
             typed_ = "\n";
-            // (Replace mode: the line break and each character of the indent go over nothing, so Backspace takes them back out one at a time.)
-            if (mode_ == kReplace) replaced_.resize(replaced_.size() + 1 + (text - start));
-            ed.insert("\n" + ed.buf.text(start, text - start));
+            // (Replace mode: the line break and each character of the indent go over nothing, so Backspace takes them back out one at a time, the line break putting back the blanks it took.)
+            if (mode_ == kReplace) {
+                replaced_.push_back(ed.buf.text(cur, skip - cur));
+                replaced_.resize(replaced_.size() + indent.size());
+            }
+            ed.replace(from, skip, "\n" + indent);
+            insert_from_ = std::min(insert_from_, from);
+            auto_indent_ = mode_ == kInsert;
             return kHandled | kTyped;
         }
         case VimKey::kTab:
@@ -2375,17 +2417,27 @@ u32 Vim::insert_key(Editor& ed, const VimKey& k) {
         case VimKey::kDelete:
             ed.del();
             insert_plain_ = false;
+            auto_indent_ = false;
             break;
         case VimKey::kLeft: ed.left(false), moved(); break;
         case VimKey::kRight: ed.right(false), moved(); break;
-        case VimKey::kUp: ed.up(false), moved(); break;
-        case VimKey::kDown: ed.down(false), moved(); break;
         case VimKey::kHome: ed.home(false), moved(); break;
         case VimKey::kEnd: ed.end(false), moved(); break;
-        case VimKey::kPageUp: ed.vertical(-static_cast<i64>(std::max<u32>(1, view_rows - 1)), false), moved(); break;
-        case VimKey::kPageDown: ed.vertical(std::max<u32>(1, view_rows - 1), false), moved(); break;
+        case VimKey::kUp:
+        case VimKey::kDown:
+        case VimKey::kPageUp:
+        case VimKey::kPageDown: {
+            const u64 was = ed.cursor();
+            const i64 page = std::max<u32>(1, view_rows - 1);
+            ed.vertical(k.kind == VimKey::kUp ? -1 : k.kind == VimKey::kDown ? 1 : k.kind == VimKey::kPageUp ? -page : page, false);
+            if (ed.buf.line_of(ed.cursor()) != ed.buf.line_of(was)) drop_indent(ed, was);  // (off the line that held only its indent)
+            auto_indent_ = false;
+            moved();
+            break;
+        }
         default: break;
     }
+    if (k.kind == VimKey::kLeft || k.kind == VimKey::kRight || k.kind == VimKey::kHome || k.kind == VimKey::kEnd) auto_indent_ = false;
     return kHandled;
 }
 
@@ -3174,6 +3226,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
             }
             enter_insert(ed, times);
             insert_prefix_ = "\n" + indent;  // "3o": two more lines of what is typed
+            auto_indent_ = true;
             ed.end_group();
             return kHandled;
         }
@@ -3922,7 +3975,10 @@ u32 Vim::feed(Editor& ed, const VimKey& k) {
     if (confirm_.on) return confirm_key(ed, k);  // (:s///c asks about each match)
     switch (mode_) {
         case kInsert:
-        case kReplace: r = insert_key(ed, k); break;
+        case kReplace:
+            r = insert_key(ed, k);
+            if ((r & kTyped) && k.kind != VimKey::kEnter && !(k.ctrl && (k.ch == 'j' || k.ch == 'm'))) auto_indent_ = false;  // (something typed after the indent: it stays)
+            break;
         case kCommand: r = command_key(ed, k); break;
         default: r = normal_key(ed, k); break;
     }

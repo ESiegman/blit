@@ -3597,6 +3597,25 @@ void vim_test() {
         {"  \xCC\x81|x", "<<", " \xCC\x81|x"},
         {"|a\n   \xCC\x81x", "J", "a|  \xCC\x81x"},
         {"|\"a\"  \xCC\x81x", "da\"", "| \xCC\x81x"},
+        // An indent put in by o, O, S or Enter goes again if nothing is typed
+        // after it (Esc, Enter, <C-o>, an arrow off the line); Enter leaves the
+        // blanks after the cursor behind.
+        {"    |x\nz", "o<Esc>", "    x\n|\nz"},
+        {"    |x\nz", "O<Esc>", "|\n    x\nz"},
+        {"  |a\nb", "S<Esc>", "|\nb"},
+        {"    |x\nz", "o<CR>y<Esc>", "    x\n\n    |y\nz"},
+        {"    |x\nz", "3o<Esc>", "    x\n\n\n|\nz"},
+        {"    |x\nz", "oy<BS><Esc>", "    x\n   | \nz"},
+        {"    |x\nz", "o<BS><Esc>", "    x\n|\nz"},
+        {"    |x\nz", "o<C-t><Esc>", "    x\n|\nz"},
+        {"  |a\nz", "A<CR><Esc>", "  a\n|\nz"},
+        {"  |a\nz", "o<C-o>~<Esc>", "  a\n|\nz"},
+        {"    |x\ny", "o<Up><Esc>", "   | x\n\ny"},
+        {"  a\n    |x\nz", "o<Down><Esc>", "  a\n    x\n\n|z"},
+        {"  |abc\nx", "o<Esc>kj", "  abc\n|\nx"},
+        {"foo| bar", "i<CR><Esc>", "foo\n|bar"},
+        {" | foo   bar\nend", "i<CR><Esc>", " \n| foo   bar\nend"},
+        {"  a|  b", "R<CR><BS><BS><BS><Esc>", "  |a  b"},
     };
     int wrong = 0;
     for (const Case& c : cases) {
