@@ -269,26 +269,234 @@ std::pair<u64, u64> columns_of(const Editor& ed, u64 line, u32 col0, u32 col1) {
     return {a, std::max(a, b)};
 }
 
-// Does a sentence start at `i`? After a full stop, "!" or "?" (and any
-// closing brackets and quotes) and white space; at the first character
-// after an empty line; and an empty line is one by itself.
-bool sentence_start(Peek& p, u64 i, u64 size) {
-    if (i >= size) return false;
-    const u8 ch = p.at(i);
-    if (ch == '\n') return i == 0 || p.at(i - 1) == '\n';
-    if (ch == ' ' || ch == '\t') return false;
-    u64 j = i;
-    bool gap = false;  // an empty line in the white space before it
-    while (j > 0) {
-        const u8 b = p.at(j - 1);
-        if (b != ' ' && b != '\t' && b != '\n') break;
-        if (b == '\n' && j >= 2 && p.at(j - 2) == '\n') gap = true;
-        --j;
+// A place in the text as Vim's own loops step through it (its inc(),
+// dec(), incl() and decl()): a character at a time, with the end of each
+// line, where Vim's lines have their NUL, a place of its own. The word and
+// sentence objects and ( and ) are Vim's code over this, so that they go
+// where Vim's go, counts and ends of the text and all.
+struct Walk {
+    const Editor& ed;
+    Peek& p;
+    u64 at;
+    bool eol() {  // at the end of a line ("\r\n" is one place)
+        if (at >= ed.buf.size()) return true;
+        const u8 b = p.at(at);
+        return b == '\n' || (b == '\r' && p.at(at + 1) == '\n');
     }
-    if (j == 0 || gap) return true;
-    if (j == i) return false;
-    while (j > 0 && p.at(j - 1) && std::strchr(")]\"'", p.at(j - 1))) --j;
-    return j > 0 && (p.at(j - 1) == '.' || p.at(j - 1) == '!' || p.at(j - 1) == '?');
+    bool bol() { return at == 0 || p.at(at - 1) == '\n'; }
+    bool empty() { return bol() && eol(); }    // on an empty line
+    u8 ch() { return eol() ? 0 : p.at(at); }  // (0 at a line's end, as Vim's gchar_pos() has it)
+    bool white() { return ch() == ' ' || ch() == '\t'; }
+    int cls(bool big) { return kind_of(ch(), big); }
+    bool last_line() {
+        const u64 e = ed.line_end(ed.buf.line_of(at));
+        return e >= ed.buf.size() || e + (p.at(e) == '\r' ? 2 : 1) >= ed.buf.size();
+    }
+    // Along the line: 0, or 2 onto its end. From the end of a line: 1 onto
+    // the next, or -1 (staying) if it was the last.
+    int inc() {
+        if (!eol()) {
+            at = char_after(ed, p, at);
+            return eol() ? 2 : 0;
+        }
+        if (last_line()) return -1;
+        at += p.at(at) == '\r' ? 2 : 1;
+        return 1;
+    }
+    // Back along the line: 0. From its start: 1 onto the end of the line
+    // before, or -1 (staying) at the start of the text.
+    int dec() {
+        if (!bol()) {
+            at = char_before(ed, p, at);
+            return 0;
+        }
+        if (at == 0) return -1;
+        at -= at >= 2 && p.at(at - 2) == '\r' ? 2 : 1;
+        return 1;
+    }
+    int incl() {  // inc(), and past the end of a line it gets to
+        const int r = inc();
+        return r >= 1 && !bol() ? inc() : r;
+    }
+    int decl() {  // dec(), and back over the end of a line it gets to
+        const int r = dec();
+        return r == 1 && !bol() ? dec() : r;
+    }
+    bool left() {  // Vim's oneleft(): back along the line, if there is any of it
+        if (bol()) return false;
+        at = char_before(ed, p, at);
+        return true;
+    }
+};
+
+// Vim's back_in_line(): back to where the run (a word, signs or blanks)
+// that w is in starts on its line.
+void back_in_line(Walk& w, bool big) {
+    const int k = w.cls(big);
+    while (!w.bol()) {
+        w.dec();
+        if (w.cls(big) != k) {
+            w.inc();
+            break;
+        }
+    }
+}
+
+// Vim's fwd_word() for one word, stopping at the end of a line (as "aw"
+// uses it): past the word and the blanks after it. False when w was at the
+// end of the last line, or got to it.
+bool fwd_word(Walk& w, bool big) {
+    const int k = w.cls(big);
+    const bool last = w.last_line();
+    const int i = w.inc();
+    if (i == -1 || (i >= 1 && last)) return false;
+    if (i >= 1) return true;
+    if (k != 0)
+        while (w.cls(big) == k)
+            if (w.inc() != 0) return true;
+    while (w.cls(big) == 0 && !w.empty())  // (an empty line is a word)
+        if (w.inc() != 0) return true;
+    return true;
+}
+
+// Vim's end_word() for one word, stopping at an empty line: onto the last
+// character of this word, or (if w is at its end and `stop` is not set,
+// or on blanks) of the next. False at the end of the text.
+bool end_word(Walk& w, bool big, bool stop) {
+    const int k = w.cls(big);
+    if (w.inc() == -1) return false;
+    if (k != 0 && w.cls(big) == k) {
+        while (w.cls(big) == k)
+            if (w.inc() == -1) return false;
+    } else if (!stop || k == 0) {
+        while (w.cls(big) == 0) {
+            if (w.empty()) return true;
+            if (w.inc() == -1) return false;
+        }
+        const int next = w.cls(big);
+        while (w.cls(big) == next)
+            if (w.inc() == -1) return false;
+    }
+    w.dec();  // (one past it)
+    return true;
+}
+
+bool sentence_mark(u8 c, const char* set) { return c && std::strchr(set, c); }
+
+// Vim's findsent(): on from w to where the count-th sentence after it
+// starts, or back to where this one (then the one before) starts. A
+// sentence ends at ".", "!" or "?" (and any ")", "]", '"' and "'" after
+// it) with a blank or the end of a line after that; an empty line is one
+// of its own. False, w as it was, when the text runs out with sentences
+// still to go (the last sentence's end, if it ends with a full stop,
+// counts as one more).
+bool find_sentence(Walk& w, bool forward, u32 count) {
+    constexpr u64 kFar = 1 << 20;  // (a sentence longer than this is not looked through)
+    Walk pos = w;
+    auto step = [&](Walk& x) { return forward ? x.incl() : x.decl(); };
+    while (count--) {
+        const u64 prev = pos.at;
+        bool noskip = false, found = false;
+        if (pos.ch() == 0) {  // on an empty line: on to one that is not (going on, that is where the next starts)
+            do {
+                if (step(pos) == -1) break;
+            } while (pos.ch() == 0);
+            found = forward;
+        } else if (!forward) {
+            pos.decl();
+        }
+        if (!found) {
+            // Back to the last character that is no blank, full stop or the like.
+            for (bool dot = false; pos.white() || sentence_mark(pos.ch(), ".!?)]\"'");) {
+                Walk t = pos;
+                if (t.decl() == -1 || (t.empty() && forward) || dot) break;
+                const u8 c = pos.ch();
+                if (sentence_mark(c, ".!?")) dot = true;
+                if (sentence_mark(c, ")]\"'") && !sentence_mark(t.ch(), ".!?)]\"'")) break;
+                pos.decl();
+            }
+            // Then on (or back) to where the sentence ends.
+            const u64 from_line = w.ed.buf.line_of(pos.at);
+            for (u64 steps = 0;; ++steps) {
+                const u8 c = pos.ch();
+                if (c == 0) {  // an empty line (going back: the sentence starts at the line after it)
+                    if (!forward && w.ed.buf.line_of(pos.at) != from_line) pos.at += pos.p.at(pos.at) == '\r' ? 2 : 1;
+                    break;
+                }
+                if (sentence_mark(c, ".!?")) {
+                    Walk t = pos;
+                    int r;
+                    do r = t.inc();
+                    while (r != -1 && sentence_mark(t.ch(), ")]\"'"));
+                    if (r == -1 || t.white() || t.ch() == 0) {
+                        pos.at = t.at;
+                        if (pos.ch() == 0) pos.inc();  // (past the end of the line)
+                        break;
+                    }
+                }
+                if (step(pos) == -1 || steps > kFar) {
+                    if (count) return false;
+                    noskip = true;
+                    break;
+                }
+            }
+        }
+        while (!noskip && pos.white())
+            if (pos.incl() == -1) break;
+        if (pos.at == prev) {  // it did not move: one step, and look again
+            if (step(pos) == -1) {
+                if (count) return false;
+                break;
+            }
+            ++count;
+        }
+    }
+    w.at = pos.at;
+    return true;
+}
+
+// Vim's find_first_blank(): back to the first of the blanks before w (or
+// it stays).
+void first_blank(Walk& w) {
+    while (w.decl() != -1) {
+        if (!w.white()) {
+            w.incl();
+            break;
+        }
+    }
+}
+
+// Vim's findsent_forward(): over `count` halves, sentences and the blanks
+// between them in turn, from the start of a sentence (`at_start`) or from
+// blanks.
+void sentences_on(Walk& w, u32 count, bool at_start) {
+    while (count--) {
+        find_sentence(w, true, 1);
+        if (at_start) first_blank(w);
+        if (count == 0 || at_start) w.decl();
+        at_start = !at_start;
+    }
+}
+
+// What a text object went over, from `start` to w (and the later of the
+// two itself, if inclusive), as the bytes [lo, hi). One that ends at the
+// start of a later line without it ends at the end of the line before, as
+// an exclusive motion does there, and is of whole lines if it starts at or
+// before its first line's first non-blank (exclusive_trim()); not in
+// Visual mode.
+bool walked(const Editor& ed, Walk& w, u64 start, bool inclusive, bool trim, u64* lo, u64* hi, bool* linewise) {
+    if (w.eol()) w.left();  // (the cursor, which the end is, stands on a line's last character, not past it)
+    Walk end{ed, w.p, std::max(start, w.at)};
+    *lo = std::min(start, w.at);
+    *hi = inclusive ? (end.eol() ? end.at : ed.next_char(end.at)) : end.at;
+    if (!trim && inclusive && end.empty() && !end.last_line()) *hi = ed.buf.line_start(ed.buf.line_of(end.at) + 1);  // (Visual mode: selected, an empty line is its line break)
+    if (!inclusive && trim && exclusive_trim(ed, lo, hi)) {
+        *linewise = true;
+        const u64 last = ed.buf.line_of(*hi);
+        *lo = ed.buf.line_start(ed.buf.line_of(*lo));
+        *hi = last + 1 < ed.buf.line_count() ? ed.buf.line_start(last + 1) : ed.buf.size();
+    }
+    return true;
 }
 
 bool wordish(char c) { return kind_of(static_cast<u8>(c), false) == 2; }
@@ -1634,21 +1842,9 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
         case '(':
         case ')': {
             // To where a sentence starts: the next one, or this one (and then the one before).
-            constexpr u64 kFar = 1 << 20;
-            u64 at = cur;
-            for (u32 i = 0; i < count; ++i) {
-                u64 steps = 0;
-                // (Where a character starts: a mark on the space before a sentence is no start of one.)
-                if (c == ')') {
-                    for (++at; at < size && steps < kFar && !(sentence_start(p, at, size) && at_char(ed, p, at)); ++at) ++steps;
-                    at = std::min(at, size);
-                } else {
-                    while (at > 0 && steps++ < kFar)
-                        if (sentence_start(p, --at, size) && at_char(ed, p, at)) break;
-                }
-            }
-            m.to = at;
-            m.ok = at != cur;
+            Walk w{ed, p, cur};
+            m.ok = find_sentence(w, c == ')', count);
+            m.to = w.at;  // (at the end of the last line: with an operator, up to it; without, the cursor stops on its last character)
             m.jump = true;
             break;
         }
@@ -1779,53 +1975,131 @@ bool Vim::text_object(Editor& ed, u32 c, bool around, u32 count, u64* lo, u64* h
     switch (c) {
         case 'w':
         case 'W': {
-            if (le == ls) return false;
+            // Vim's current_word(): the word (or the blanks) the cursor is
+            // in, for "aw" with the blanks after it (or, if there are none,
+            // those before it), and with a count that many more, going on
+            // past the ends of lines; with fewer left, nothing.
             const bool big = c == 'W';
-            const int k = kind_of(p.at(cur), big);
-            u64 a = cur, b = cur;
-            while (a > ls && kind_of(p.at(ed.prev_char(a)), big) == k) a = ed.prev_char(a);
-            while (b < le && kind_of(p.at(b), big) == k) b = ed.next_char(b);
-            if (around) {
-                // The white space after it; if there is none, the white space before.
-                const u64 b0 = b;
-                if (k != 0)
-                    while (b < le && kind_of(p.at(b), big) == 0) b = char_after(ed, p, b);
-                else
-                    while (b < le && kind_of(p.at(b), big) != 0 && kind_of(p.at(b), big) == kind_of(p.at(b0), big)) b = ed.next_char(b);
-                if (b == b0 && k != 0)
-                    while (a > ls && kind_of(p.at(char_before(ed, p, a)), big) == 0) a = char_before(ed, p, a);
+            Walk w{ed, p, cur};
+            u64 start = cur;
+            bool begun = false;  // the first is found
+            auto fail = [&] {
+                // (The cursor goes where it got to, as in Vim; in Visual
+                // mode the selection with it, from where it started.)
+                if (visual()) return walked(ed, w, begun ? start : cur, true, false, lo, hi, linewise);
+                go(ed, w.at);
+                return false;
+            };
+            back_in_line(w, big);
+            start = w.at;
+            bool inclusive = true, blanks_before = false;
+            if ((w.cls(big) == 0) == around) {
+                if (!end_word(w, big, true)) return fail();
+            } else {
+                fwd_word(w, big);
+                if (w.bol()) w.decl();
+                else w.left();
+                blanks_before = around;
             }
-            for (u32 i = 1; i < count && b < le; ++i) {  // "3aw": and the two after it
-                const int next = kind_of(p.at(b), big);
-                while (b < le && kind_of(p.at(b), big) == next) b = ed.next_char(b);
-                if (!around || b >= le) continue;
-                const int after = kind_of(p.at(b), big);
-                if (next != 0 ? after == 0 : true)
-                    while (b < le && kind_of(p.at(b), big) == after) b = ed.next_char(b);
+            begun = true;
+            for (u32 i = 1; i < count; ++i) {
+                inclusive = true;
+                if (w.incl() == -1) return fail();
+                if (around != (w.cls(big) == 0)) {
+                    if (!fwd_word(w, big) && i + 1 < count) return fail();
+                    if (!w.left()) inclusive = false;  // (on the next line: up to it)
+                } else if (!end_word(w, big, true)) {
+                    return fail();
+                }
             }
-            *lo = a;
-            *hi = b;
-            return true;
+            if (blanks_before && (w.cls(big) != 0 || (w.bol() && !inclusive))) {
+                // No blanks after it: the ones before it (not an indent).
+                Walk b{ed, p, start};
+                if (b.left()) {
+                    back_in_line(b, big);
+                    if (b.cls(big) == 0 && !b.bol()) start = b.at;
+                }
+            }
+            return walked(ed, w, start, inclusive, !visual(), lo, hi, linewise);
         }
         case 's': {
-            // The sentence the cursor is in: from where it starts to its last
-            // character, and for "as" the spaces after it as well.
-            constexpr u64 kFar = 1 << 20;
-            u64 a = cur, b = cur + 1, steps = 0;
-            auto starts = [&](u64 at) { return sentence_start(p, at, size) && at_char(ed, p, at); };
-            while (a > 0 && !starts(a) && steps++ < kFar) --a;
-            for (u32 i = 0; i < count; ++i) {
-                if (i) ++b;
-                for (steps = 0; b < size && !starts(b) && steps < kFar; ++b) ++steps;
+            // Vim's current_sent(): the sentence the cursor is in (or the
+            // blanks before the next), for "as" with the blanks after it
+            // (or before it); with a count, that many more, sentences and
+            // blanks taken in turn.
+            Walk w{ed, p, cur};
+            u64 start = cur;
+            find_sentence(w, true, 1);
+            Walk b{ed, p, cur};
+            while (b.white()) b.incl();
+            const bool on_blanks = b.at == w.at;  // the cursor was on the blanks before the next sentence
+            if (on_blanks) {
+                Walk s{ed, p, start};
+                first_blank(s);
+                start = s.at;
+            } else {
+                find_sentence(w, false, 1);
+                start = w.at;
             }
-            b = std::min(b, size);
-            u64 e = b;
-            while (e > a && (p.at(e - 1) == ' ' || p.at(e - 1) == '\t' || p.at(e - 1) == '\n')) --e;
-            if (around)
-                while (e < b && (p.at(e) == ' ' || p.at(e) == '\t')) e = std::min(b, char_after(ed, p, e));
-            *lo = a;
-            *hi = e;
-            return e > a;
+            const u32 halves = around ? count * 2 : count - (on_blanks ? 1 : 0);
+            if (halves > 0) sentences_on(w, halves, true);
+            else w.decl();
+            if (around) {
+                if (on_blanks) {
+                    first_blank(w);
+                    if (w.white()) w.decl();
+                } else if (!w.white()) {
+                    Walk s{ed, p, start};
+                    first_blank(s);
+                    start = s.at;
+                }
+            }
+            if (visual() && start != w.at) return walked(ed, w, start, true, false, lo, hi, linewise);  // (Visual mode: up to the cursor, with it)
+            if (visual()) {
+                // Stuck where it began ("is" on a blank before a sentence):
+                // as Vim does, on (or back) from where Visual mode began instead.
+                Walk to{ed, p, start};
+                u32 times = around ? count * 2 : count;
+                if (start < cur) {
+                    bool at_start = true;
+                    while (b.at < to.at) {
+                        if (!b.white()) {
+                            at_start = false;
+                            break;
+                        }
+                        if (b.incl() == -1) break;
+                    }
+                    if (!at_start) {
+                        find_sentence(to, false, 1);
+                        if (to.at == start) at_start = true;
+                        else find_sentence(to, true, 1);
+                    }
+                    while (times--) {
+                        if (at_start) first_blank(to);
+                        if (!at_start || (!around && !to.white())) find_sentence(to, false, 1);
+                        at_start = !at_start;
+                    }
+                } else {
+                    b.incl();
+                    bool at_start = true;
+                    if (b.at != to.at) {
+                        at_start = false;
+                        while (b.at < to.at) {
+                            if (!b.white()) {
+                                at_start = true;
+                                break;
+                            }
+                            if (b.incl() == -1) break;
+                        }
+                        if (at_start) find_sentence(to, false, 1);
+                        else to.at = start;
+                    }
+                    sentences_on(to, times, at_start);
+                }
+                return walked(ed, to, cur, true, false, lo, hi, linewise);
+            }
+            const bool inclusive = w.incl() == -1;  // (the line break after it, if there is one)
+            return walked(ed, w, start, inclusive, true, lo, hi, linewise);
         }
         case 't': {
             // The tags around the cursor, "<a ...>" to "</a>". Looked for in
@@ -1962,21 +2236,35 @@ bool Vim::text_object(Editor& ed, u32 c, bool around, u32 count, u64* lo, u64* h
         }
         case 'p': {
             const u64 n = lines_of(ed);
-            auto blank = [&](u64 l) { return ed.line_end(l) == ed.buf.line_start(l); };
+            auto blank = [&](u64 l) { return first_nonblank(ed, l) == ed.line_end(l); };  // (only blanks, or nothing: Vim's linewhite())
+            // Vim's current_par(): the paragraph (or the empty lines) the
+            // cursor is in, for "ap" with the empty lines after it (or, if
+            // there are none, those before it); with a count, that many
+            // more, a paragraph and its empty lines at a time for "ap"; with
+            // fewer left, nothing.
             const bool on_blank = blank(line);
-            u64 a = line, b = line;
+            u64 a = line;
             while (a > 0 && blank(a - 1) == on_blank) --a;
-            while (b + 1 < n && blank(b + 1) == on_blank) ++b;
-            if (around)
-                while (b + 1 < n && blank(b + 1) != on_blank) ++b;
-            for (u32 i = 1; i < count && b + 1 < n; ++i) {  // "2ap": and the one after
-                const bool next = blank(++b);
-                while (b + 1 < n && blank(b + 1) == next) ++b;
-                if (around)
-                    while (b + 1 < n && blank(b + 1) != next) ++b;
+            i64 b = static_cast<i64>(a);
+            while (static_cast<u64>(b) < n && blank(static_cast<u64>(b))) ++b;
+            --b;
+            auto empty_after = [&](i64 l) { return static_cast<u64>(l + 1) < n && blank(static_cast<u64>(l + 1)); };
+            for (u32 i = count - (!around && on_blank ? 1 : 0); i-- > 0;) {
+                if (static_cast<u64>(b + 1) == n) return false;
+                const bool to_blanks = !around && empty_after(b);  // ("2ip" on the last line of one: the empty lines are the second)
+                if (around || !to_blanks) {
+                    ++b;
+                    while (static_cast<u64>(b + 1) < n && !blank(static_cast<u64>(b + 1))) ++b;
+                }
+                if (i == 0 && on_blank && around) break;
+                if (around || to_blanks)
+                    while (empty_after(b)) ++b;
             }
+            const u64 last = static_cast<u64>(b);
+            if (!on_blank && around && !blank(last))
+                while (a > 0 && blank(a - 1)) --a;
             *lo = ed.buf.line_start(a);
-            *hi = b + 1 < ed.buf.line_count() ? ed.buf.line_start(b + 1) : size;
+            *hi = last + 1 < ed.buf.line_count() ? ed.buf.line_start(last + 1) : size;
             *linewise = true;
             return true;
         }
@@ -2928,6 +3216,26 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
                     visual_range(ed, &slo, &shi);
                     const bool grown = vstart_ != cur;  // more is selected than the one character Visual mode starts with
                     bool ok;
+                    if (grown && (c == 'w' || c == 'W') && cur > vstart_ && mode_ != kVisualBlock) {
+                        // More words, as Vim's current_word() adds them: on
+                        // from the cursor at the end of what is selected (and
+                        // if they run out, as far as they went).
+                        const bool big = c == 'W';
+                        Peek pk(ed.buf);
+                        Walk w{ed, pk, cur};
+                        for (u32 i = 0, more = total(); i < more; ++i) {
+                            if (w.incl() == -1) break;
+                            if (around != (w.cls(big) == 0)) {
+                                if (!fwd_word(w, big) && i + 1 < more) break;
+                                w.left();
+                            } else if (!end_word(w, big, true)) {
+                                break;
+                            }
+                        }
+                        if (mode_ == kVisualLine) mode_ = kVisual;
+                        go(ed, w.empty() || !w.eol() ? w.at : ed.prev_char(w.at));
+                        return done();
+                    }
                     if (grown && (c == 'w' || c == 'W' || c == 'p' || c == 's')) {
                         // More of the same: the next one joins what is selected.
                         if (shi >= ed.buf.size()) return done();
@@ -2950,16 +3258,24 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
                     if (!ok) return done();
                     mode_ = linewise ? kVisualLine : kVisual;
                     vstart_ = lo;
-                    go(ed, hi > lo ? ed.prev_char(hi) : lo);
+                    if (c == 'p' && hi > lo) go(ed, ed.buf.line_start(ed.buf.line_of(hi - 1)));  // (a paragraph: at the start of its last line, as Vim leaves it)
+                    else go(ed, hi > lo ? ed.prev_char(hi) : lo);
                     return done();
                 }
                 if (!text_object(ed, c, around, total(), &lo, &hi, &linewise)) return fail();
+                if (hi <= lo && !linewise) {  // (nothing: as in Vim, the cursor goes to it, "c" inserts there, and no register changes)
+                    if (op_ == 'c') return insert_at(lo, 1);
+                    go(ed, lo);
+                    return done();
+                }
+                const bool adjusted = linewise && (c == 'w' || c == 'W' || c == 's');  // (whole lines only by exclusive_trim()'s rule)
                 if (!linewise && op_ == 'd' && deletes_lines(ed, lo, hi, n)) {
                     linewise = true;
                     lines_from(ed.buf.line_of(lo), ed.buf.line_of(hi) - ed.buf.line_of(lo) + 1, &lo, &hi);
                 }
                 const char op = op_;
                 operate(ed, op, lo, hi, linewise);
+                if (adjusted && op == 'd') go(ed, first_nonblank(ed, ed.buf.line_of(ed.cursor())));  // (as for a motion)
                 return settle();
             }
             case kPrefixG: c |= kG; break;

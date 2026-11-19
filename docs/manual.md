@@ -389,8 +389,9 @@ selection. A search is a motion too (`d/word` Enter), and `gn` is the next
 match of the last search (`cgn`, then `.` for each one after). Text
 objects: `iw aw iW aW`, `is as` (sentences), `ip ap`, `i( a(` (also `)` and
 `b`), `i[ a[`, `i{ a{` (also `B`), `i< a<`, `it at` (tags), `i" a" i' a'`
-and the backtick ones. A count takes more of them (`d2aw`) or goes further
-out (`d2i(`).
+and the backtick ones. A count takes more of them (`d2aw`, on past the end
+of a line) or goes further out (`d2i(`); with fewer left than it asks for,
+nothing is done, as in Vim.
 
 **Comments**: `gc` with a motion or on a selection, and `gcc` for the line
 (`3gcc` for three), turn lines into comments or back, the way Neovim's own
