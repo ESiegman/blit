@@ -1248,6 +1248,7 @@ struct Lsp::Conn::Worker {
             } else {
                 p.col = r.c0;  // (as the server counts: converted where the text is known)
                 p.end_col = r.l1 == r.l0 ? r.c1 : r.c0;
+                p.utf16 = utf16;
             }
             m.places.push_back(std::move(p));
         }
@@ -3119,6 +3120,7 @@ u32 Lsp::poll() {
                     if (!line.empty() && line.back() == '\r') line.pop_back();
                     p.col = static_cast<u32>(column_in(line, r.c0, s->caps.utf16));
                     p.end_col = r.l1 == r.l0 ? static_cast<u32>(column_in(line, r.c1, s->caps.utf16)) : static_cast<u32>(line.size());
+                    p.utf16 = false;
                     if (line.size() > 400) line.resize(400);
                     p.text = std::move(line);
                 }

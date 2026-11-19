@@ -863,13 +863,23 @@ bool App::lsp_step(int by) {
     const u64 key = lsp_.key_of(p.path);
     Pane* where = nullptr;
     size_t at = 0;
+    // (A column as the server counts, found in a file whose text could not be
+    // read then: worked out against its text, here or once it has come.)
+    auto column = [&p](const Doc& d) -> u64 {
+        if (!p.utf16 || p.line >= d.ed.buf.line_count()) return p.col;
+        return Lsp::offset_at(d.ed.buf, p.line, p.col, true) - d.ed.buf.line_start(p.line);
+    };
     if (key && find_doc(key, &where, &at)) {
         remember_place();
         focus_pane(where);
         tab_show(at);
-        show_place(p.line, p.col);
+        show_place(p.line, column(*where->docs[at]));
     } else if (!go_to_place(p.path, p.line + 1, p.col + 1)) {
         return true;
+    } else if (p.utf16) {
+        Doc& d = *pane_->doc;
+        if (d.loading) d.goto_utf16 = true;  // (goto_col is p.col: show_place)
+        else show_place(p.line, column(d));
     }
     notify(a.refs_word + " " + std::to_string(a.refs_at + 1) + " of " + std::to_string(n));
     return true;

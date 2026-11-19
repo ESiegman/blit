@@ -149,6 +149,15 @@ if [ -x "$(dirname "$blit")/blit_fakelsp" ]; then
     INIT="$dir/lsp16.lua"
     run "remotewait;frame;ready;key:cmd+alt+P;frame;text:wide;frame;wait:300;frame;key:Return;remotewait;frame;vimdump" "ssh://box$dir/proj/src/e.cpp"
     check "a symbol in a file not open there yet: at its name" 'NORMAL |  | 1:30 | /*éééééééééé*/ int wide(int n) {'
+    # And a reference found there, in a file not open yet (whose line could
+    # not be read when it was found): at its name too, once the file is here.
+    printf 'int wide;\n' >"$dir/proj/src/f.cpp"
+    INIT="$dir/lsp16.lua"
+    run "remotewait;frame;ready;key:Right;key:Right;key:Right;key:Right;key:shift+F12;wait:300;key:Down;key:Return;remotewait;frame;vimdump" "ssh://box$dir/proj/src/f.cpp"
+    check "a reference in a file not open there yet: at its name" 'blit: Reference 2 of 2 ;; NORMAL |  | 1:30 | /*éééééééééé*/ int wide(int n) {'
+    INIT="$dir/lsp16.lua"
+    run "remotewait;frame;ready;key:Right;key:Right;key:Right;key:Right;key:shift+F12;wait:300;key:Down;key:Return;remotewait;frame;wait:300;key:F4;key:F4;frame;vimdump" "ssh://box$dir/proj/src/f.cpp"
+    check "and again by F4, once it is open" 'blit: Reference 2 of 2 ;; blit: Reference 1 of 2 ;; blit: Reference 2 of 2 ;; NORMAL |  | 1:30 | /*éééééééééé*/ int wide(int n) {'
 fi
 
 # The tree, on a slow host: new, rename and the Trash are done on its

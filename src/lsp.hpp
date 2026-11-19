@@ -96,10 +96,13 @@ struct LspLocation {
 
 // A place in a file, as found references are: the line (from 0), the
 // bytes of the name on it, and the line's text where it could be read.
+// (Where it could not, on another machine, the columns are as the server
+// counts, UTF-16 units if `utf16`: bytes once the file's text is here.)
 struct LspPlace {
     std::string path;
     u32 line = 0, col = 0, end_col = 0;
     std::string text;
+    bool utf16 = false;
 };
 
 // An item of a call or type hierarchy: what it is, where to go for it
