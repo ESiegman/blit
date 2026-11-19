@@ -71,9 +71,10 @@ got=$("$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;keyof
 check "Cmd+Shift+V: beside it, once" "H(>[edge.md*] | [Preview: edge.md*])0.50"
 
 # At most so many seconds: timeout(1) where there is one (GitHub's macOS 26
-# machines have none), perl's alarm where there is not.
+# machines have none), perl's alarm where there is not. (Killed if it is
+# still there 5 seconds after being told to stop: busy drawing, it would not.)
 limit() {
-    if command -v timeout >/dev/null 2>&1; then timeout "$@"; else perl -e 'alarm shift; exec @ARGV' "$@"; fi
+    if command -v timeout >/dev/null 2>&1; then timeout -k 5 "$@"; else perl -e 'alarm shift; exec @ARGV' "$@"; fi
 }
 
 # Odd text: wide characters in a code block a few columns wide (it once
@@ -88,6 +89,9 @@ awk 'BEGIN { s = ""; for (i = 0; i < 5000; i++) s = s ">"; print s " deep" }' >"
 got=$(limit 20 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mddump" "$dir/deep.md" 2>&1 >/dev/null | grep -c '>')
 [ "$got" -ge 1 ] && got=drawn
 check "quotes nested 5,000 deep: drawn (the deepest as text), no crash" "drawn"
+awk 'BEGIN { print "```mermaid"; print "sequenceDiagram"; for (i = 0; i < 2000; i++) print "loop x" i; print "A->>B: hi"; for (i = 0; i < 2000; i++) print "end"; print "```" }' >"$dir/loops.md"
+got=$(limit 20 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mddump" "$dir/loops.md" 2>&1 >/dev/null | grep -c 'loop x1999')
+check "a sequence diagram's loops nested 2,000 deep: drawn, in time (each row once copied the whole picture)" "1"
 printf '<!--\nhidden\n\nstill hidden\n-->\nshown\n\n```mermaid\npie title Pets\n  "Dogs" : 3\n  "Cats" : 1\n```\n' >"$dir/odd.md"
 run 1600x1100 "$dir/odd.md" ""
 got=$(printf '%s\n' "$got" | grep -c 'hidden'),$(printf '%s\n' "$got" | grep -c 'shown'),$(printf '%s\n' "$got" | grep -c 'Pets')

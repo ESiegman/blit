@@ -103,6 +103,11 @@ struct Canvas {
 
     void fit(int x, int y) {
         if (x < w && y < h) return;
+        if (x < w) {  // (rows added below: those there stay where they are, and the vector grows by more than a row at a time)
+            h = y + 1;
+            cells.resize(static_cast<size_t>(w) * static_cast<size_t>(h));
+            return;
+        }
         const int nw = std::max(w, x + 1), nh = std::max(h, y + 1);
         std::vector<Cell> next(static_cast<size_t>(nw) * static_cast<size_t>(nh));
         for (int r = 0; r < h; ++r)
@@ -1117,7 +1122,8 @@ bool draw_sequence(const std::vector<std::string>& st, Canvas* out, std::string*
             }
             case Event::kOpen:
             case Event::kElse: {
-                const int depth = static_cast<int>(frames.size()) - (e.kind == Event::kElse ? 1 : 0);
+                // (Each frame inside another a column in from its sides, while there is room.)
+                const int depth = std::min(static_cast<int>(frames.size()) - (e.kind == Event::kElse ? 1 : 0), right / 2 - 1);
                 const int x0 = std::max(0, depth), x1 = right - depth;
                 if (e.kind == Event::kOpen) frames.push_back({y, depth});
                 cv.line(x0, y, x1, y, kDotted, kMdMuted);
