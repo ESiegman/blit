@@ -12,6 +12,8 @@
 #include <atomic>
 #include <cctype>
 #include <climits>
+#include <cmath>
+#include <limits>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -27,6 +29,7 @@
 
 #include "buffer.hpp"
 #include "config.hpp"
+#include "raster.hpp"
 #include "dap.hpp"
 #include "editor.hpp"
 #include "finder.hpp"
@@ -2071,6 +2074,155 @@ void highlights_test() {
             sc.advance(lo + model.size() + 5);
             if (sc.bits != 0) fail("style past the range", seed, step);
         }
+    }
+}
+
+// The diagrams' rasterizer (raster.hpp): shapes cover the area they
+// should, nothing is written outside the picture, and inputs that are huge,
+// degenerate or not numbers are borne in bounded time.
+void raster_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    const float white[4] = {1, 1, 1, 1};
+    auto area = [](const RasterImage& img) {
+        double a = 0;
+        for (size_t k = 3; k < img.pixels().size(); k += 4) a += img.pixels()[k] / 255.0;
+        return a;
+    };
+    auto filled = [&](const RasterPath& p, int w = 40, int h = 40) {
+        RasterImage img(w, h);
+        img.fill(raster_flatten(p, 1, 0, 0), white);
+        return area(img);
+    };
+    auto near = [](double a, double b, double tol) { return std::fabs(a - b) <= tol; };
+    {
+        RasterPath p;
+        p.rect(2, 3, 10, 5);
+        check(near(filled(p), 50, 0.3), "raster: a rectangle on whole pixels covers its area");
+        RasterPath q;
+        q.rect(2.5f, 3.25f, 5, 2.5f);
+        check(near(filled(q), 12.5, 0.3), "raster: a rectangle between pixels covers its area");
+        RasterPath c;
+        c.ellipse(20, 20, 12, 12);
+        check(near(filled(c), 3.14159265 * 144, 1.5), "raster: a circle covers pi r squared");
+        RasterPath t;
+        const RasterPoint tri[] = {{1, 1}, {31, 1}, {1, 21}};
+        t.polygon(tri, 3);
+        check(near(filled(t), 300, 0.6), "raster: a triangle covers half its box");
+        RasterPath r;
+        r.rect(4, 4, 10, 10, 3);
+        check(near(filled(r), 100 - (4 - 3.14159265) * 9, 0.5), "raster: a rounded rectangle loses its corners");
+        // Two rectangles over each other, the same way round: their union (non-zero).
+        RasterPath two;
+        two.rect(0, 0, 10, 10), two.rect(5, 0, 10, 10);
+        check(near(filled(two), 150, 0.4), "raster: shapes overlapping are filled once");
+        // A hole: the inner figure the other way round.
+        RasterPath ring;
+        ring.rect(0, 0, 20, 20);
+        const RasterPoint hole[] = {{5, 5}, {5, 15}, {15, 15}, {15, 5}};
+        ring.polygon(hole, 4);
+        check(near(filled(ring), 300, 0.5), "raster: a figure the other way round is a hole");
+    }
+    {
+        RasterPath line;
+        line.move_to(5, 10), line.line_to(25, 10);
+        RasterStroke st;
+        st.width = 2;
+        RasterImage img(40, 40);
+        img.fill(raster_stroke(raster_flatten(line, 1, 0, 0), st), white);
+        check(near(area(img), 40, 0.4), "raster: a line stroked covers its length by its width");
+        st.cap = RasterStroke::kSquare;
+        RasterImage sq(40, 40);
+        sq.fill(raster_stroke(raster_flatten(line, 1, 0, 0), st), white);
+        check(near(area(sq), 44, 0.4), "raster: square caps add half the width at each end");
+        RasterPath corner;
+        corner.move_to(5, 5), corner.line_to(25, 5), corner.line_to(25, 25);
+        st.cap = RasterStroke::kButt, st.join = RasterStroke::kMiter;
+        RasterImage cj(40, 40);
+        cj.fill(raster_stroke(raster_flatten(corner, 1, 0, 0), st), white);
+        check(near(area(cj), 80, 0.6), "raster: a mitred corner is covered once");
+        RasterPath box;
+        box.rect(5, 5, 20, 20);
+        RasterImage ring(40, 40);
+        ring.fill(raster_stroke(raster_flatten(box, 1, 0, 0), st), white);
+        check(near(area(ring), 22 * 22 - 18 * 18, 0.8), "raster: a closed figure stroked is a ring");
+        const float dash[] = {5, 5};
+        const RasterLines dashed = raster_dash(raster_flatten(line, 1, 0, 0), dash, 2);
+        check(dashed.figures() == 2, "raster: 20 pixels dashed 5 on, 5 off: two dashes");
+        RasterImage dl(40, 40);
+        dl.fill(raster_stroke(dashed, st), white);
+        check(near(area(dl), 20, 0.4), "raster: dashes cover half the line");
+        const float dots[] = {0, 4};
+        RasterStroke round;
+        round.width = 2, round.cap = RasterStroke::kRound;
+        RasterImage dd(40, 40);
+        RasterPath dotted;
+        dotted.move_to(5, 10), dotted.line_to(27, 10);  // (dots at 0, 4, ..., 20 along it)
+        dd.fill(raster_stroke(raster_dash(raster_flatten(dotted, 1, 0, 0), dots, 2), round), white);
+        check(near(area(dd), 6 * 3.14159265, 1.0), "raster: dashes of no length with round caps are dots");
+    }
+    {
+        // Off the picture: only what is on it is covered, and nothing
+        // around it is written (the picture is inside a larger one, by rows).
+        RasterPath p;
+        p.rect(-5, -5, 13, 13);
+        check(near(filled(p, 16, 16), 64, 0.3), "raster: a shape partly off the picture covers what is on it");
+        RasterPath off;
+        off.rect(100, 100, 10, 10), off.rect(-50, 2, 10, 10), off.rect(2, -50, 10, 10), off.rect(30, 2, 10, 10);
+        check(filled(off, 16, 16) == 0, "raster: shapes wholly off the picture cover nothing");
+        RasterPath left;
+        left.rect(-30, 0, 32, 4);  // (reaches in 2 pixels from the left)
+        check(near(filled(left, 16, 16), 8, 0.2), "raster: a shape from far left covers only its part");
+        RasterImage img(8, 8);
+        RasterPath all;
+        all.rect(-1e30f, -1e30f, 2e30f, 2e30f);
+        img.fill(raster_flatten(all, 1, 0, 0), white);
+        check(img.pixels().size() == 8 * 8 * 4 && near(area(img), 64, 0.01), "raster: a huge rectangle covers the whole picture, and no more");
+    }
+    {
+        const u64 t0 = now_ns();
+        RasterImage img(64, 64);
+        RasterPath huge;
+        huge.ellipse(32, 32, 1e20f, 1e20f);
+        huge.move_to(0, 0), huge.cubic_to(1e38f, -1e38f, -1e38f, 1e38f, 64, 64), huge.close();
+        img.fill(raster_flatten(huge, 1, 0, 0), white);
+        RasterPath far;
+        far.move_to(-1e9f, 5), far.line_to(1e9f, 6);
+        const float tiny[] = {1e-9f, 1e-9f};
+        RasterStroke st;
+        st.width = 1e9f;
+        img.fill(raster_stroke(raster_dash(raster_flatten(far, 1, 0, 0), tiny, 2), st), white);
+        RasterPath many;
+        for (int k = 0; k < 2000; ++k) many.arc(32, 32, 30, 30, 0, 1e9f);
+        img.fill(raster_flatten(many, 1, 0, 0), white);
+        RasterImage none(0, 0), wide(1 << 30, 1);
+        none.fill(raster_flatten(huge, 1, 0, 0), white);
+        check(wide.w() <= 1 << 14 && none.pixels().empty(), "raster: a picture's size is bounded");
+        check(now_ns() - t0 < 5'000'000'000ull, "raster: huge and degenerate shapes take bounded time");
+    }
+    {
+        const float nan = std::numeric_limits<float>::quiet_NaN(), inf = std::numeric_limits<float>::infinity();
+        RasterPath t;
+        const RasterPoint tri[] = {{1, 1}, {31, 1}, {1, 21}};
+        t.polygon(tri, 3);
+        RasterPath bad;
+        bad.move_to(nan, 3), bad.line_to(nan, nan);
+        bad.move_to(1, 1), bad.line_to(31, 1), bad.line_to(inf, nan), bad.quad_to(nan, 0, 5, 5), bad.cubic_to(1, nan, 2, 2, 3, 3);
+        bad.line_to(1, 21), bad.close();
+        check(near(filled(bad), filled(t), 0.01), "raster: points that are not numbers are left out");
+        RasterStroke st;
+        st.width = nan;
+        check(raster_stroke(raster_flatten(t, 1, 0, 0), st).pts.empty(), "raster: a stroke of no number's width is nothing");
+        check(raster_flatten(t, nan, 0, 0).pts.empty(), "raster: a scale that is not a number draws nothing");
+        RasterPath zero;
+        zero.rect(5, 5, 0, 10), zero.move_to(3, 3), zero.line_to(3, 3), zero.close();
+        check(filled(zero) == 0, "raster: shapes of no area cover nothing");
+    }
+    for (double a = -20; a <= 20; a += 0.37) {
+        double s, c;
+        raster_sincos(a, &s, &c);
+        if (std::fabs(s - std::sin(a)) > 1e-12 || std::fabs(c - std::cos(a)) > 1e-12) fail("raster: its own sine and cosine", 0, 0);
     }
 }
 
@@ -6401,6 +6553,7 @@ int main(int argc, char** argv) {
     match_test();
     highlights_test();
     syntax_test();
+    raster_test();
 #if !defined(_WIN32)
     std::system(("rm -rf '" + scratch + "'").c_str());
 #endif
