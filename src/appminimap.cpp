@@ -123,23 +123,58 @@ void App::minimap_tile(Doc& d, u64 index, std::vector<u8>& rgba) {
     const int inset = static_cast<int>(std::lround(3 * scale_));
     // On the text's background (each tile opaque: nothing under it is drawn).
     const u8 bg[4] = {static_cast<u8>(theme_.bg[0] * 255), static_cast<u8>(theme_.bg[1] * 255), static_cast<u8>(theme_.bg[2] * 255), 255};
-    rgba.resize(static_cast<size_t>(pw) * static_cast<size_t>(ph) * 4);
-    for (size_t k = 0; k < rgba.size(); k += 4) std::memcpy(&rgba[k], bg, 4);
+    const size_t row_bytes = static_cast<size_t>(pw) * 4;
+    rgba.resize(row_bytes * static_cast<size_t>(ph));
+    for (size_t k = 0; k < row_bytes; k += 4) std::memcpy(&rgba[k], bg, 4);
+    for (size_t k = row_bytes; k < rgba.size(); k += row_bytes) std::memcpy(&rgba[k], rgba.data(), row_bytes);  // (the first row, again and again)
     const Buffer& b = d.ed.buf;
     const Highlights& hl = d.syntax.active() ? d.syntax.highlights() : Highlights();
-    const float* fg = theme_.palette[0];
+    // Each ink's colour, a little softer than the text's.
+    u8 inks[32][3];
+    for (u32 ink = 0; ink < 32; ++ink) {
+        const float* rgb = theme_.palette[ink];
+        const float a = 0.8f;
+        for (int ch = 0; ch < 3; ++ch) inks[ink][ch] = static_cast<u8>((rgb[ch] * a + theme_.bg[ch] * (1 - a)) * 255);
+    }
     const u64 first = index * kTileLines, last = std::min<u64>(b.line_count(), first + kTileLines);
+    // The lines are read one after another; the rest of a long one is not
+    // read through but stepped over (the next line looked up).
+    constexpr size_t kRead = 4 * kColumns;
     std::string text;
+    text.reserve(kRead + 1);
+    u64 s = 0;  // where line l starts
+    Buffer::Reader rd = b.line_reader(first, &s);
     for (u64 l = first; l < last; ++l) {
-        const u64 s = b.line_start(l), e = d.ed.line_end(l);
-        text = b.text(s, std::min<u64>(e - s, 4 * kColumns));
+        // Its first kRead bytes, without its line break (or a CR before that).
+        text.clear();
+        bool ended = false;  // (its line break read: the reader is at the next line)
+        u64 next = s;
+        while (text.size() <= kRead) {
+            const std::string_view c = rd.chunk();
+            if (c.empty()) break;
+            const size_t want = std::min(c.size(), kRead + 1 - text.size());
+            const char* nl = static_cast<const char*>(std::memchr(c.data(), '\n', want));
+            const size_t n = nl ? static_cast<size_t>(nl - c.data()) : want;
+            text.append(c.data(), n);
+            rd.advance(static_cast<u32>(nl ? n + 1 : n));
+            next += nl ? n + 1 : n;
+            if (nl) {
+                ended = true;
+                break;
+            }
+        }
+        if (ended && !text.empty() && text.back() == '\r') text.pop_back();
+        if (text.size() > kRead) text.resize(kRead);
         u32 col = 0;
         size_t m = hl.empty() ? 0 : hl.upper(s);
-        u8 st = m && !hl.empty() ? hl.style[m - 1] : 0;
+        u8 st = m ? hl.style[m - 1] : 0;
+        u64 change = m < hl.size() ? hl.at(m) : ~0ull;  // (where the next mark is)
         for (size_t i = 0; i < text.size() && col < kColumns; ++i) {
             const unsigned char c = static_cast<unsigned char>(text[i]);
-            if (!hl.empty())
+            if (s + i >= change) {
                 while (m < hl.size() && hl.at(m) <= s + i) st = hl.style[m++];
+                change = m < hl.size() ? hl.at(m) : ~0ull;
+            }
             if (c == '\t') {
                 col = (col / d.ed.tab_width + 1) * d.ed.tab_width;
                 continue;
@@ -149,15 +184,14 @@ void App::minimap_tile(Doc& d, u64 index, std::vector<u8>& rgba) {
                 ++col;
                 continue;
             }
-            const u32 ink = st ? (d.style_bits[st] >> kCellInkShift) & 31 : 0;
-            const float* rgb = ink ? theme_.palette[ink] : fg;
+            const u8* rgb = inks[st ? (d.style_bits[st] >> kCellInkShift) & 31 : 0];
             for (int y = 0; y < lp; ++y)
-                for (int x = 0; x < cp; ++x) {
-                    u8* px = &rgba[((static_cast<size_t>(l - first) * lp + y) * pw + inset + col * cp + x) * 4];
-                    const float a = 0.8f;  // (a little softer than the text)
-                    for (int ch = 0; ch < 3; ++ch) px[ch] = static_cast<u8>((rgb[ch] * a + theme_.bg[ch] * (1 - a)) * 255);
-                }
+                for (int x = 0; x < cp; ++x) std::memcpy(&rgba[((static_cast<size_t>(l - first) * lp + y) * pw + inset + col * cp + x) * 4], rgb, 3);
             ++col;
+        }
+        if (l + 1 < last) {
+            if (!ended) rd = b.line_reader(l + 1, &next);
+            s = next;
         }
     }
 }
