@@ -104,5 +104,29 @@ if command -v ditto >/dev/null 2>&1; then
     [ "$(cat "$dir/apps/blit.app/Contents/MacOS/blit" 2>/dev/null)" = "new 99.0.0" ] || fail "a newer blit.app: put in place" "$got"
     [ -z "$(ls -A "$dir/apps" | grep -v -e '^blit.AppImage$' -e '^blit.app$')" ] || fail "blit.app: nothing left beside it" "blit: left: $(ls -A "$dir/apps" | tr "\n" " ")"
 fi
+# Pre-releases, in semver's order: a release after its pre-releases, and
+# these by their words in turn (numbers as numbers, and before any other
+# word; fewer words first); a "+build" counts for nothing.
+# order RUNNING RELEASE newer|latest: what this blit (as RUNNING) says of RELEASE.
+order() {
+    release "$2"
+    got=$(BLIT_UPDATE_VERSION=$1 BLIT_UPDATE_TARGET= run "command:Check for updates")
+    if [ "$3" = newer ]; then
+        printf '%s' "$got" | grep -qF "blit: blit $2 is out (this one is $1)" || fail "$1, then $2: newer" "$got"
+    else
+        printf '%s' "$got" | grep -qF "blit: blit $1 is the latest" || fail "$1, then $2: the latest" "$got"
+    fi
+}
+unset APPIMAGE
+order 1.0.0-rc1 1.0.0 newer
+order 1.0.0 1.0.0-rc1 latest
+order 1.0.0-rc.2 1.0.0-rc.10 newer
+order 1.0.0-rc.10 1.0.0-rc.2 latest
+order 1.0.0-alpha 1.0.0-alpha.1 newer
+order 1.0.0-alpha.1 1.0.0-alpha.beta newer
+order 1.0.0-beta 1.0.0-alpha.9 latest
+order 1.0.0-rc.1 1.0.0-rc.1+build.5 latest
+order 0.9.9 1.0.0-alpha newer
+order 1.0.0-rc1 1.0.1-rc1 newer
 [ $failed = 0 ] && echo "update ok"
 exit $failed

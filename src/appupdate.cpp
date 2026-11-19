@@ -8,10 +8,12 @@
 // tarball, Homebrew, a build) is only told of it.
 //
 // BLIT_UPDATES_URL names another place to ask (the tests: a file:// one),
-// and BLIT_UPDATE_TARGET another blit to replace.
+// BLIT_UPDATE_TARGET another blit to replace, and BLIT_UPDATE_VERSION
+// another version for this one.
 #include <SDL3/SDL.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
 
@@ -40,22 +42,62 @@ std::string latest_url() {
     return own.empty() ? "https://api.github.com/repos/ESiegman/blit/releases/latest" : own;
 }
 
-// "1.2.3" (a "v" in front, anything after a "-" left out) as numbers.
-std::vector<long> version_parts(std::string_view v) {
-    if (!v.empty() && (v.front() == 'v' || v.front() == 'V')) v.remove_prefix(1);
-    v = v.substr(0, v.find('-'));
-    std::vector<long> out;
-    for (size_t at = 0; at <= v.size();) {
-        size_t dot = v.find('.', at);
-        if (dot == std::string_view::npos) dot = v.size();
-        out.push_back(std::strtol(std::string(v.substr(at, dot - at)).c_str(), nullptr, 10));
-        at = dot + 1;
+// Whether version a comes after `than`, as semver orders them: "1.2.3"
+// (a "v" in front, and a "+build" after, left out) by its numbers; then a
+// pre-release ("-rc.1") before the release, and two of them by their
+// dot-separated words in turn (numbers as numbers and before any other
+// word, which go in ASCII order; fewer words first, the rest the same).
+bool newer(std::string_view a, std::string_view than) {
+    struct Version {
+        std::vector<long> core;
+        std::vector<std::string_view> pre;
+    };
+    auto parse = [](std::string_view v) {
+        if (!v.empty() && (v.front() == 'v' || v.front() == 'V')) v.remove_prefix(1);
+        v = v.substr(0, v.find('+'));
+        Version out;
+        const size_t dash = v.find('-');
+        const std::string_view core = v.substr(0, dash);
+        for (size_t at = 0; at <= core.size();) {
+            size_t dot = core.find('.', at);
+            if (dot == std::string_view::npos) dot = core.size();
+            out.core.push_back(std::strtol(std::string(core.substr(at, dot - at)).c_str(), nullptr, 10));
+            at = dot + 1;
+        }
+        while (out.core.size() < 3) out.core.push_back(0);
+        if (dash != std::string_view::npos)
+            for (size_t at = dash + 1; at <= v.size();) {
+                size_t dot = v.find('.', at);
+                if (dot == std::string_view::npos) dot = v.size();
+                out.pre.push_back(v.substr(at, dot - at));
+                at = dot + 1;
+            }
+        return out;
+    };
+    auto numeric = [](std::string_view w) { return !w.empty() && std::ranges::all_of(w, [](char c) { return c >= '0' && c <= '9'; }); };
+    const Version x = parse(a), y = parse(than);
+    if (x.core != y.core) return x.core > y.core;
+    if (x.pre.empty() || y.pre.empty()) return x.pre.empty() && !y.pre.empty();  // (the release after its pre-releases)
+    for (size_t i = 0; i < x.pre.size() && i < y.pre.size(); ++i) {
+        const std::string_view p = x.pre[i], q = y.pre[i];
+        if (p == q) continue;
+        const bool pn = numeric(p), qn = numeric(q);
+        if (pn && qn) {  // (as numbers, of any length)
+            const std::string_view m = p.substr(std::min(p.find_first_not_of('0'), p.size())), n = q.substr(std::min(q.find_first_not_of('0'), q.size()));
+            if (m == n) continue;
+            return m.size() != n.size() ? m.size() > n.size() : m > n;
+        }
+        if (pn != qn) return qn;
+        return p > q;
     }
-    while (out.size() < 3) out.push_back(0);
-    return out;
+    return x.pre.size() > y.pre.size();
 }
 
-bool newer(std::string_view a, std::string_view than) { return version_parts(a) > version_parts(than); }
+// This blit's version, as the updates see it.
+std::string running() {
+    const std::string own = env("BLIT_UPDATE_VERSION");
+    return own.empty() ? std::string(BLIT_VERSION) : own;
+}
 
 // The blit this one would be replaced as: its blit.app, or its AppImage
 // (empty: installed some other way).
@@ -135,12 +177,12 @@ void App::update_check(bool asked) {
                    if (!doc.parse(out)) return asked ? notify("The answer about the latest release was not JSON", 2) : void();
                    const std::string tag(doc.root()["tag_name"].str());
                    const std::string version = tag.starts_with('v') ? tag.substr(1) : tag;
-                   if (version.empty() || !newer(version, App::version())) {
-                       if (asked) notify("blit " + App::version() + " is the latest");
+                   if (version.empty() || !newer(version, running())) {
+                       if (asked) notify("blit " + running() + " is the latest");
                        return;
                    }
                    const std::string where = target();
-                   if (where.empty()) return notify("blit " + version + " is out (this one is " + App::version() + ")");
+                   if (where.empty()) return notify("blit " + version + " is out (this one is " + running() + ")");
                    const std::string want = asset_for(where, version);
                    std::string url, sum;
                    for (const json::Value a : doc.root()["assets"]) {
@@ -149,7 +191,7 @@ void App::update_check(bool asked) {
                        if (name == want + ".sha256") sum = std::string(a["browser_download_url"].str());
                    }
                    if (url.empty() || sum.empty()) return notify("blit " + version + " is out, with no " + want + " (and its .sha256) to install", 1);
-                   if (!confirm("blit " + version + " is out (this one is " + App::version() + "). Install it? It starts next time.", "Install")) return;
+                   if (!confirm("blit " + version + " is out (this one is " + running() + "). Install it? It starts next time.", "Install")) return;
                    update_fetch(version, where, url, sum);
                });
 }
