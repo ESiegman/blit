@@ -194,6 +194,7 @@ struct Crumbs {
     std::vector<Part> parts;
     TextBox box;
     u64 asked = 0;  // (what they were made from: unchanged, nothing is made again)
+    u64 made = 0;   // (and what they are: the file, the room, the definitions the cursor is in)
 };
 
 int App::crumbs_px(const Pane& p) const {
@@ -269,8 +270,33 @@ void App::crumbs_layout(FrameDesc& fd, bool focused) {
     mix(cols);
     mix(font.generation());
     mix(focused);
-    if (key != c.asked) {
+    bool remake = key != c.asked;
+    if (remake) {
         c.asked = key;
+        // Then what they show: the file, the room, and the definitions the
+        // cursor is in (where each one's name is, its kind, its name). The
+        // cursor moved, or the text changed, inside the same ones, and the
+        // parts and their cells are as they were.
+        u64 shown = 1469598103934665603ull;
+        auto add = [&](u64 v) { shown = (shown ^ v) * 1099511628211ull; };
+        add(d.id);
+        add(std::hash<std::string>{}(d.ed.path));
+        add(reinterpret_cast<uintptr_t>(panel_root()));
+        add(cols);
+        add(font.generation());
+        add(focused);
+        add(d.syntax.active());
+        if (d.syntax.active())
+            for (const SyntaxScope& sc : d.syntax.structure().scopes)
+                if (cur >= sc.start && cur < sc.end) {
+                    add(sc.name_at);
+                    add(sc.kind);
+                    add(std::hash<std::string>{}(sc.name));
+                }
+        remake = shown != c.made;
+        c.made = shown;
+    }
+    if (remake) {
         std::vector<Crumbs::Part> parts = crumb_parts(d, cur, panel_root());
         // " › " between parts; too wide, the first ones go (folders first), an ellipsis for them.
         const std::string_view sep = " \xE2\x80\xBA ";

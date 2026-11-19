@@ -140,6 +140,19 @@ run "workdir:$dir/proj;frame;key:Down;key:Down;key:Down;key:Down;key:Down;frame;
 check "in Python" 's.py > make()'
 with nocrumbs "workdir:$dir/proj;frame;crumbsdump" "$S"
 check "editor.breadcrumbs = false" 'none'
+# What is drawn of them, made from frame to frame as the cursor moves and
+# the text changes, against the same drawn only once, at the end.
+printf '%s\nblit.opt.editor.modal = false\nblit.opt.editor.minimap = false\nblit.opt.editor.spell_check = false\nblit.opt.look.animations = false\nblit.opt.look.cursor_glide_ms = 0\n' "$base" >"$dir/still.lua"
+crumbshot() {
+    fresh
+    BLIT_INIT="$dir/still.lua" "$blit" --offscreen 1200x800 --shot "$dir/$1.bmp" --script "workdir:$dir/proj;$2" "$S" >/dev/null 2>&1
+}
+crumbshot steps "frame;$down4;frame;text:y;frame;key:Left;frame;$down4;frame"
+crumbshot once "$down4;text:y;key:Left;$down4"
+cmp -s "$dir/steps.bmp" "$dir/once.bmp" || { echo "FAIL: the breadcrumbs drawn after typing in a method, then moving into a function, as drawn at once"; failed=1; }
+crumbshot steps "frame;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Right;key:Right;key:Right;key:Right;key:Right;frame;text:Z;frame"
+crumbshot once "key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Right;key:Right;key:Right;key:Right;key:Right;text:Z"
+cmp -s "$dir/steps.bmp" "$dir/once.bmp" || { echo "FAIL: the breadcrumbs drawn after a function's name is typed in, as drawn at once"; failed=1; }
 run "workdir:$dir/proj;frame;$down4;frame;key:cmd+alt+O;frame;finddump" "$S"
 check "the outline without a server: the tree's definitions, nested, the one the cursor is in chosen" 'pick [] 4 : geo  · namespace   Point  · struct >    len  · method   area  · function'
 run "workdir:$dir/proj;frame;key:cmd+alt+O;frame;text:are;key:Return;vimdump" "$S"
