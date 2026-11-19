@@ -46,6 +46,38 @@ void sizes(double scale, int* lp, int* cp, int* width) {
     *width = *cp * static_cast<int>(kColumns) + static_cast<int>(std::lround(6 * scale));
 }
 
+// The column is in the file's lines and a view scrolls by rows, which
+// differ when lines are wrapped or folded away. The line at a place down a
+// split's rows (with the fraction of the way through it: through a wrapped
+// line's rows, or a fold's lines), and the row at a place down the lines.
+double line_at_row(const Pane& p, double row) {
+    const Doc& d = *p.doc;
+    const Wrap* w = p.wrap && p.wrap->doc() == d.id ? p.wrap.get() : nullptr;
+    const Folds* f = d.folds.empty() ? nullptr : &d.folds;
+    if ((!w && !f) || row <= 0) return row;
+    const u64 lines = d.ed.buf.line_count();
+    if (f) f->sync(d.ed.buf, d.ed.revision());
+    const u64 rows = w ? w->rows() : f->rows(lines);
+    if (row >= static_cast<double>(rows)) return static_cast<double>(lines) + (row - static_cast<double>(rows));  // (past the end)
+    const u64 r = static_cast<u64>(row);
+    const u64 line = w ? w->line_at(r) : f->line_at(r);
+    const u64 first = w ? w->row_of(line) : r, n = w ? std::max<u32>(1, w->rows_of(line)) : 1;
+    const u64 next = first + n < rows ? (w ? w->line_at(first + n) : f->line_at(first + n)) : lines;
+    return static_cast<double>(line) + (static_cast<double>(r - first) + (row - static_cast<double>(r))) / static_cast<double>(n) * static_cast<double>(next - line);
+}
+
+double row_at_line(const Pane& p, double line) {
+    const Doc& d = *p.doc;
+    const Wrap* w = p.wrap && p.wrap->doc() == d.id ? p.wrap.get() : nullptr;
+    const Folds* f = d.folds.empty() ? nullptr : &d.folds;
+    const u64 lines = d.ed.buf.line_count();
+    if ((!w && !f) || line <= 0 || !lines) return line;
+    if (f) f->sync(d.ed.buf, d.ed.revision());
+    const u64 l = std::min<u64>(static_cast<u64>(line), lines - 1);
+    if (!w) return static_cast<double>(f->row_of(l));  // (a line folded away: its fold's row)
+    return static_cast<double>(w->row_of(l)) + (line - static_cast<double>(l)) * w->rows_of(l);  // (one folded away has no rows: its fold's)
+}
+
 }  // namespace
 
 bool App::minimap_on(const Pane& p) const {
@@ -74,8 +106,9 @@ bool App::minimap_place(const Pane& p, int* x0, int* y0, int* x1, int* y1, doubl
     *y1 = p.y1;
     const double lines = static_cast<double>(p.doc->ed.buf.line_count()), shown = static_cast<double>(*y1 - *y0) / *lp;
     // All of it, if it fits; else as far down it as the view is down the file.
-    const double ch = font_->cell_h(), view_lines = static_cast<double>(p.y1 - p.text_y) / ch;
-    const double most = std::max(1.0, lines - view_lines), frac = std::clamp(p.scroll_y / ch / most, 0.0, 1.0);
+    const double ch = font_->cell_h(), view_rows = static_cast<double>(p.y1 - p.text_y) / ch;
+    const double first = line_at_row(p, p.scroll_y / ch), view_lines = line_at_row(p, p.scroll_y / ch + view_rows) - first;
+    const double most = std::max(1.0, lines - view_lines), frac = std::clamp(first / most, 0.0, 1.0);
     *top_line = lines <= shown ? 0.0 : frac * (lines - shown);
     return true;
 }
@@ -228,14 +261,14 @@ void App::minimap_layout(FrameDesc& fd) {
             minimap_box_ = gpu_.image_add(white, 1, 1);
         }
         if (minimap_box_ && fd.picture_count < kMaxPictures) {
-            const double ch = font_->cell_h(), first = p.scroll_y / ch, view = static_cast<double>(p.y1 - p.text_y) / ch;
+            const double ch = font_->cell_h(), row = p.scroll_y / ch, view = static_cast<double>(p.y1 - p.text_y) / ch;
             PictureDraw& pd = fd.pictures[fd.picture_count++];
             pd = {};
             pd.image = minimap_box_;
             pd.rect[0] = static_cast<float>(x0);
-            pd.rect[1] = static_cast<float>(y0 + (first - top) * lp);
+            pd.rect[1] = static_cast<float>(y0 + (line_at_row(p, row) - top) * lp);
             pd.rect[2] = static_cast<float>(x1);
-            pd.rect[3] = static_cast<float>(y0 + (first + view - top) * lp);
+            pd.rect[3] = static_cast<float>(y0 + (line_at_row(p, row + view) - top) * lp);
             pd.clip[0] = x0, pd.clip[1] = y0, pd.clip[2] = x1, pd.clip[3] = y1;
             pd.opacity = minimap_drag_ == p.id ? 0.16f : 0.08f;
             pd.radius = static_cast<float>(2 * scale_);
@@ -267,7 +300,7 @@ bool App::minimap_mouse(float x, float y, bool down) {
     const double line = top + static_cast<double>(std::clamp(py, y0, y1) - y0) / lp;
     Pane* const keep = pane_;
     pane_ = p;
-    p->target_y = std::clamp((line - view / 2) * ch, 0.0, std::max(0.0, max_scroll_y()));
+    p->target_y = std::clamp((row_at_line(*p, line) - view / 2) * ch, 0.0, std::max(0.0, max_scroll_y()));
     p->scroll_y = p->target_y;
     pane_ = keep;
     dirty_ = true;
@@ -301,7 +334,10 @@ std::string App::minimap_dump() {
             continue;
         }
         size_t tiles = p->doc->minimap ? p->doc->minimap->tiles.size() : 0;
-        out += (out.empty() ? "" : " | ") + std::string("top ") + std::to_string(static_cast<u64>(top)) + " tiles " + std::to_string(tiles);
+        // (And the lines the view's box spans, [from, to).)
+        const double ch = font_->cell_h(), row = p->scroll_y / ch, view = static_cast<double>(p->y1 - p->text_y) / ch;
+        out += (out.empty() ? "" : " | ") + std::string("top ") + std::to_string(static_cast<u64>(top)) + " tiles " + std::to_string(tiles) + " box " +
+               std::to_string(std::llround(line_at_row(*p, row))) + "-" + std::to_string(std::llround(line_at_row(*p, row + view)));
     }
     return out;
 }

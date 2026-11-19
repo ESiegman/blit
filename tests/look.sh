@@ -104,6 +104,36 @@ cp "$dir/nomap-mm.bmp" "$dir/maptwo.bmp"
 got=$(mm map 1600x700 "click:795,200;frame")
 case $got in "top 0 "*) echo "FAIL: a click on the minimap scrolled nothing: $got"; failed=1 ;; esac
 differ mapone maptwo "the minimap drew nothing"
+# The view's box on it, with lines folded away or wrapped (the view scrolls
+# by rows, the minimap is in lines): at the end of the file at its end, and
+# a click puts the view over the line clicked on.
+{
+    echo "int f() {"
+    i=0
+    while [ $i -lt 2000 ]; do echo "    int a_$i = $i;"; i=$((i + 1)); done
+    echo "}"
+    i=0
+    while [ $i -lt 1000 ]; do echo "int b_$i = $i;"; i=$((i + 1)); done
+} >"$dir/work/fold.cpp"
+i=0
+while [ $i -lt 3000 ]; do
+    if [ $i -lt 1000 ]; then echo "int long_$i = $i; // a comment long enough to go on into the rows under it when wrapped, further than any split is wide, and on past that"
+    else echo "int line_$i = $i;"; fi
+    i=$((i + 1))
+done >"$dir/work/wrap.cpp"
+mmbox() { BLIT_INIT="$dir/map.lua" "$blit" --offscreen 1600x700 --shot "$dir/box.bmp" --script "workdir:$dir/work;frame;$2;frame;minimapdump" "$dir/work/$1" 2>&1 >/dev/null | tail -1 | sed -e 's/.* box //'; }
+got=$(mmbox fold.cpp "command:Fold every block;frame;vim:G")
+case $got in 29[89][0-9]-300[0-9]) ;; *) echo "FAIL: the minimap's box at the end of a file with a fold: $got"; failed=1 ;; esac
+got=$(mmbox wrap.cpp "command:Toggle soft wrap;frame;vim:G")
+case $got in 29[89][0-9]-300[0-9]) ;; *) echo "FAIL: the minimap's box at the end of a wrapped file: $got"; failed=1 ;; esac
+got=$(mmbox wrap.cpp "command:Toggle soft wrap;frame;vim:500G")
+case $got in 49[0-9]-5[01][0-9]) ;; *) echo "FAIL: the minimap's box over line 500 of a wrapped file: $got"; failed=1 ;; esac
+# (Two clicks some way apart: the box lands as many lines apart as in a
+# file with nothing wrapped.)
+apart() { a=$(mmbox "$1" "$2;click:795,200") b=$(mmbox "$1" "$2;click:795,260"); echo $((${b%-*} - ${a%-*})); }
+want=$(apart long.cpp "frame")
+got=$(apart wrap.cpp "command:Toggle soft wrap;frame;vim:500G;frame")
+[ "$got" -ge $((want - 1)) ] && [ "$got" -le $((want + 1)) ] || { echo "FAIL: clicks on the minimap of a wrapped file land $got lines apart, not $want"; failed=1; }
 
 # Distraction-free and presentation modes: the chrome gone (and back), the
 # text larger for showing.
