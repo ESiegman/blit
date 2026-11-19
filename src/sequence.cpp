@@ -8,7 +8,6 @@
 // participants are made as wide as what passes between them needs.
 #include <algorithm>
 #include <cmath>
-#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -52,7 +51,8 @@ struct Event {
     int side = 0;                               // a note: -1 left of, 1 right of, 0 over
     std::string word;                           // a frame's kind (loop, alt, ...; and, else ...)
     DiagramColour fill;                         // a rect's
-    int number = -1;                            // autonumber's
+    bool numbered = false;                      // autonumber's: its number shown
+    long long number = 0;                       // (64 bits: a big start, a big step and many messages go past an int)
     int frame = -1;                             // the frame it opens, divides or ends
     // Where it was put: its line (a message's), or its top; a note's box.
     float y = 0, text_y = 0, x0 = 0, x1 = 0, h = 0;
@@ -130,7 +130,7 @@ bool Sequence::parse(const std::vector<std::string>& st, std::string* err) {
     std::vector<int> frame_stack;
     int group = -1;
     bool numbered = false;
-    int number = 1, step = 1;
+    long long number = 1, step = 1;
     std::string create, destroy;  // (a create or destroy said, for the next message)
     auto fail = [&](size_t k, const std::string& why) {
         *err = "line " + std::to_string(k + 1) + ": " + why;
@@ -305,11 +305,11 @@ bool Sequence::parse(const std::vector<std::string>& st, std::string* err) {
             numbered = true;
             char* end = nullptr;
             const std::string r(rest);
-            const long first = std::strtol(r.c_str(), &end, 10);
+            const long long first = std::strtoll(r.c_str(), &end, 10);
             if (end != r.c_str()) {
-                number = static_cast<int>(std::clamp(first, -1000000L, 1000000L));
-                const long by = std::strtol(end, nullptr, 10);
-                if (by != 0) step = static_cast<int>(std::clamp(by, -1000000L, 1000000L));
+                number = std::clamp(first, -1000000LL, 1000000LL);
+                const long long by = std::strtoll(end, nullptr, 10);
+                if (by != 0) step = std::clamp(by, -1000000LL, 1000000LL);
             }
             continue;
         }
@@ -359,7 +359,7 @@ bool Sequence::parse(const std::vector<std::string>& st, std::string* err) {
         e.dotted = arrow.starts_with("--") || arrow.starts_with("<<--");
         e.both = arrow.starts_with("<<");
         e.head = arrow.ends_with('x') ? kHeadCross : arrow.ends_with(')') ? kHeadOpen : arrow.ends_with(">>") ? kHeadArrow : kHeadNone;
-        if (numbered) e.number = number, number += step;
+        if (numbered) e.numbered = true, e.number = number, number += step;
         const int here = static_cast<int>(events_.size());
         if (!create.empty()) {
             Part& c = parts_[static_cast<size_t>(part(create))];
@@ -421,6 +421,9 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
     const float note_pad = 9 * u, frame_pad = 16 * u, inset = 9 * u, group_pad = 10 * u;
     const float number_r = 9 * u;
     const float number_size = size_ * 0.74f;
+    // A message's number, and half its circle's width (wider for a long number); 0 for none.
+    auto number_of = [](const Event& e) { return e.numbered ? std::to_string(e.number) : std::string(); };
+    auto number_half = [&](const Event& e) { return e.numbered ? std::max(number_r, font_.width(number_of(e), number_size, true) / 2 + 4 * u) : 0.0f; };
     const bool dark = p_.dark();
     bars_.clear();
 
@@ -496,7 +499,7 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
     const float activation = bw * 1.5f;  // (room for a bar or two at an end)
     for (const Event& e : events_) {
         if (e.kind == kMessage) {
-            const float number = e.number >= 0 ? 2 * number_r + 4 * u : 0;
+            const float number = e.numbered ? 2 * number_half(e) + 4 * u : 0;
             if (e.a == e.b) out_right(e.a, std::max(8 * u + e.tw, loop_w) + activation + number);
             else if (parts_[static_cast<size_t>(e.b)].created >= 0 && &events_[static_cast<size_t>(parts_[static_cast<size_t>(e.b)].created)] == &e)
                 need(e.a, e.b, e.tw + 2 * 14 * u + activation + number + parts_[static_cast<size_t>(e.b)].w / 2);
@@ -645,7 +648,7 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
             const Part &a = parts_[static_cast<size_t>(e.a)], &b = parts_[static_cast<size_t>(e.b)];
             if (e.a == e.b) {
                 e.x0 = edge_at(e.a, e.y, 1);
-                e.x1 = e.x0 + std::max(loop_w, 8 * u + (e.number >= 0 ? number_r : 0) + e.tw);
+                e.x1 = e.x0 + std::max(loop_w, 8 * u + number_half(e) + e.tw);
                 continue;
             }
             const int s = b.x > a.x ? 1 : -1;
@@ -926,7 +929,7 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
             d->shape(std::move(path), {}, edge_c, edge_w, dash, RasterStroke::kButt);
             if (e.head != kHeadNone) diagram_head(*d, e.head, {back, y1}, {-1, 0}, head, edge_c, edge_w);
             if (!e.lines.empty()) {
-                const float tx = x0 + 8 * u + (e.number >= 0 ? number_r : 0);  // (clear of its number)
+                const float tx = x0 + 8 * u + number_half(e);  // (clear of its number)
                 text_block(d, e.lines, tx, e.text_y, text, 0);
                 if (geo) geo->boxes.push_back({"label", "message:" + std::to_string(i), tx, e.text_y, e.tw, e.th});
             }
@@ -937,11 +940,7 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
             const float a = e.x0, b = e.x1;
             // (a head at its start begins at its number's circle, not under it)
             float start = a;
-            if (e.number >= 0 && e.both) {
-                char num[16];
-                std::snprintf(num, sizeof num, "%d", e.number);
-                start += s * std::max(number_r, font_.width(num, number_size, true) / 2 + 4 * u);
-            }
+            if (e.both) start += s * number_half(e);
             const u8 back_head = e.head == kHeadNone ? static_cast<u8>(kHeadArrow) : e.head;  // (<<->>: a head at each end)
             const float ha = e.both ? diagram_head_length(back_head, head) : 0;
             const bool ended = parts_[static_cast<size_t>(e.b)].destroyed == static_cast<int>(i) && e.head == kHeadCross;  // (its lifeline's cross is its head)
@@ -962,15 +961,14 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
                 if (geo) geo->boxes.push_back({"label", "message:" + std::to_string(i), mid - e.tw / 2, e.text_y, e.tw, e.th});
             }
         }
-        if (e.number >= 0) {  // autonumber: in a circle at its start
-            char num[16];
-            std::snprintf(num, sizeof num, "%d", e.number);
-            const float nw = font_.width(num, number_size, true);
-            const float r = number_r, half = std::max(r, nw / 2 + 4 * u);
+        if (e.numbered) {  // autonumber: in a circle at its start
+            const std::string num = number_of(e);
+            const float r = number_r, half = number_half(e);
             RasterPath c;
             c.rect(e.x0 - half, e.y - r, 2 * half, 2 * r, r);
             d->shape(std::move(c), edge_c);
             d->text(num, e.x0, e.y + (font_.ascent(number_size) - font_.descent(number_size)) / 2, number_size, bg, font_, 1, true);
+            if (geo) geo->boxes.push_back({"number", "number:" + num, e.x0 - half, e.y - r, 2 * half, 2 * r});
         }
     }
     // Ends of lifelines that were destroyed: a cross.

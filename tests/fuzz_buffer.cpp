@@ -2613,6 +2613,27 @@ void sequence_test() {
         check(narrow.w < wide.w * 0.9f, "sequence: narrower in a narrow room");
         st.room = 2000;
     }
+    // autonumber's numbers in 64 bits: a big start and step over many
+    // messages go past an int's 2,147,483,647 (once undefined, and wrapped
+    // round to numbers less than 0, not shown); one less than 0 shown too.
+    {
+        std::string big = "sequenceDiagram\n autonumber 1000000 1000000\n";
+        for (int k = 0; k < 3000; ++k) big += " A->>B: m\n";
+        Drawing d;
+        DiagramGeometry geo;
+        std::string err;
+        diagram_make(big, st, &d, &err, &geo);
+        std::vector<std::string> numbers;
+        for (const auto& b : geo.boxes)
+            if (b.kind == "number") numbers.push_back(b.name);
+        check(numbers.size() == 3000 && numbers.front() == "number:1000000" && numbers.back() == "number:3000000000", "sequence: autonumber past an int, each numbered");
+        geo = {};
+        diagram_make("sequenceDiagram\n autonumber -2\n A->>B: m\n A->>B: m\n A->>B: m\n", st, &d, &err, &geo);
+        numbers.clear();
+        for (const auto& b : geo.boxes)
+            if (b.kind == "number") numbers.push_back(b.name);
+        check(numbers == std::vector<std::string>{"number:-2", "number:-1", "number:0"}, "sequence: autonumber from less than 0");
+    }
     // Mistakes, with their lines.
     const struct {
         const char* src;
