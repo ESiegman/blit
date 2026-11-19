@@ -236,7 +236,7 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | The Problems / Git / Profile tab of the side panel (again: the keyboard back to the text) | Cmd+Shift+M / Ctrl+Shift+G / Cmd+Shift+R | Ctrl+Shift+M / G / R |
 | The Build tab; run its chosen task (the Run button); stop it | Cmd+Shift+U; Cmd+Shift+B; Cmd+. | Ctrl+Shift+U; Ctrl+Shift+B; Ctrl+. |
 | A new project (the start screen's New project tab, in a tab of its own) | Cmd+Option+N | Ctrl+Alt+N |
-| Markdown preview, or an SVG's picture, beside the file | Cmd+Shift+V | Ctrl+Alt+V (Ctrl+Shift+V pastes) |
+| Markdown preview, a notebook's view, or an SVG's picture, beside the file | Cmd+Shift+V | Ctrl+Alt+V (Ctrl+Shift+V pastes) |
 | Blame column on or off | Cmd+Option+B | Ctrl+Alt+B |
 | Back / forward through the places jumps started from (Go to file, Search in files, a problem, a definition or any place a name leads, Vim's G, a search, a mark) | Ctrl+- / Ctrl+Shift+- | Alt+Left / Alt+Right |
 | Font size | Cmd+= / Cmd+- / Cmd+0 | Ctrl+= / Ctrl+- / Ctrl+0 |
@@ -2514,6 +2514,63 @@ a line: the last line it printed, its result, `[image/png]` for a picture,
 or the error's name and message. A cell changed since the notebook was
 saved shows none.
 
+### The notebook's view
+
+Opening a notebook (from the side panel, the finder, the command line or
+a session) shows the notebook itself in a split to the right of its
+script, as Jupyter shows it, read only: the script is what is typed in.
+**Cmd+Shift+V** (Ctrl+Alt+V off a Mac), in the script or the view, closes
+the view and opens it again; closing the script closes it too. A second
+notebook's view goes beside the first's.
+
+- A Markdown cell is drawn as the [Markdown preview](#markdown-preview)
+  draws a file: headings, tables, code, pictures beside the notebook.
+- A code cell is a block of code coloured by the notebook's language (its
+  metadata says which), with Jupyter's `In [n]:` beside it (`In [ ]:` if
+  it has not run). One changed since it ran says `edited` under its label,
+  and its outputs are quieter: they are of other code, and saving leaves
+  them out.
+- A raw cell is its text, as it is.
+- Under a code cell, every output in full, in order. Text a program
+  printed is plain, what it wrote to stderr is tinted as an error is. A
+  result has `Out[n]:` beside it. Of the kinds of data an output has, the
+  richest blit draws is shown: an HTML table (a pandas DataFrame: its
+  header, its index in bold, its columns aligned as it says, else to the
+  right) as a table, with any text around it; a PNG or JPEG as a picture;
+  an SVG as a picture where the system reads SVG (on Linux, with
+  librsvg), else its text; Markdown drawn; other HTML as its text; LaTeX
+  and plain text as text; JSON indented. Data blit cannot draw (a widget,
+  a PDF) is named, `[application/pdf]`, never shown as its base64.
+- An error is its traceback, in the theme's colours: the colours IPython
+  writes in (16 of them, 256, or any) are each the theme's colour nearest
+  them in hue, on the tint for errors.
+- An output longer than 60 rows is cut, with a line that says how many
+  more lines there are.
+
+When the view is narrower than 50 columns the labels go above the cells
+instead of beside them.
+
+The view follows the script's cursor: moving into another cell brings
+that cell to the top of the view (if it is taller than the view, the
+cursor's line a third of the way down); moving within a cell scrolls only
+when the cursor's line is not on show. A click on a cell puts the
+cursor on that line of the script (on an output, the cell's first line)
+and gives the keyboard back to the script; the view stays where it is.
+The wheel, the arrow keys, Page Up and Page Down scroll it, as the
+preview's do.
+
+The view is drawn on a thread of its own, as the preview is, so typing
+never waits for it; typing in one cell draws only that cell again, the
+rest being kept as drawn. An output's picture is written once to blit's
+cache (`~/Library/Caches/blit/pictures` on a Mac, `~/.cache/blit/pictures`
+on Linux), named by what is in it, and shown from there as any picture
+is.
+
+The cells read from the notebook are its model: each code cell's outputs
+as the file has them, and its count. Outputs a cell is given when it runs
+replace its own in the model, are drawn in the view and the line after
+the cell, and are what saving writes.
+
 **Shift+Return** in a notebook runs the cell the cursor is in, in the
 [Python console](#the-python-console) (started if it is not), and the
 cursor goes to the next cell's first line; in a Markdown cell only the
@@ -2960,6 +3017,7 @@ tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and thro
 tests/lsp.sh build-debug/blit      # language servers against the test server: several at once, Problems across files, references, rename, formatting, code actions, hints, colours
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running), a fake build's problems (F8, Cmd+click) and new projects (a stand-in vcpkg)
 tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md against what they should draw, Mermaid, typing, Cmd+Shift+V, coloured code
+tests/notebook.sh build-debug/blit # a notebook's view: each kind of output, from the command line, following the cursor, clicks, Cmd+Shift+V, a kernel's outputs, broken notebooks
 tests/unicode.sh build-debug/blit  # characters made of several code points: the cursor over them, their widths, accents drawn over their letter
 tests/images.sh build-debug/blit   # pictures and PDFs (tests/images): the tabs, their pixels, zoom, pages, too large, broken, changed, over ssh, in the preview
 ```
