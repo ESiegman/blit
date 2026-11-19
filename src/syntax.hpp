@@ -27,6 +27,7 @@
 #include "config.hpp"
 #include "editor.hpp"
 #include "highlight.hpp"
+#include "threads.hpp"
 
 namespace blit {
 
@@ -239,7 +240,7 @@ private:
     SyntaxStats stats_;
 
     // Worker.
-    std::thread thread_;
+    DeepThread thread_;  // (its stack kSyntaxStack: shape() walks the tree by recursion)
     Engine* engine_ = nullptr;
 };
 

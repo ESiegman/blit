@@ -93,6 +93,22 @@ check "Vim: the one under the block" '| match 2:8 2:13'
 run "key:Down;key:Home;text:x;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;shapedump"
 got=${got#*| inks 3 }
 check "after an edit, where it is now" '| match 2:9 2:14'
+# Parentheses 2,000 deep (they once ran the syntax thread out of stack),
+# and a chain of 150 else-ifs (two levels each): every bracket coloured.
+awk 'BEGIN { s = "int x = "; for (i = 0; i < 2000; i++) s = s "("; s = s "1"; for (i = 0; i < 2000; i++) s = s ")"; print s ";" }' >"$dir/deep.cpp"
+run "shapedump" "$dir/deep.cpp"
+case "$got" in
+"brackets 1:9=0 1:10=1 1:11=2 "*=-*) ;;
+"brackets 1:9=0 1:10=1 1:11=2 "*) got=shaped ;;
+esac
+check "parentheses 2,000 deep" 'shaped'
+awk 'BEGIN { print "void f(int v) {"; print "    if (v == 0) {"; for (i = 1; i < 150; i++) { print "    } else if (v == " i ") {"; print "        g(" i ");" }; print "    }"; print "}" }' >"$dir/chain.cpp"
+run "key:cmd+Down;frame;shapedump" "$dir/chain.cpp"
+case "$got" in
+*=-*) ;;
+*" 300:10=2 300:14=2 301:5=1 302:1=0 | inks 3 "*) got=shaped ;;
+esac
+check "the end of 150 else-ifs" 'shaped'
 
 # Expand the selection to the tree's node around it, then its parent; shrink back.
 grow="keyof:Expand the selection"
@@ -153,6 +169,9 @@ cmp -s "$dir/steps.bmp" "$dir/once.bmp" || { echo "FAIL: the breadcrumbs drawn a
 crumbshot steps "frame;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Right;key:Right;key:Right;key:Right;key:Right;frame;text:Z;frame"
 crumbshot once "key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Right;key:Right;key:Right;key:Right;key:Right;text:Z"
 cmp -s "$dir/steps.bmp" "$dir/once.bmp" || { echo "FAIL: the breadcrumbs drawn after a function's name is typed in, as drawn at once"; failed=1; }
+crumbshot steps "frame;workdir:$dir;key:Right;frame"
+crumbshot once "workdir:$dir;key:Right"
+cmp -s "$dir/steps.bmp" "$dir/once.bmp" || { echo "FAIL: the breadcrumbs drawn after the project's folder changes, as drawn at once"; failed=1; }
 run "workdir:$dir/proj;frame;$down4;frame;key:cmd+alt+O;frame;finddump" "$S"
 check "the outline without a server: the tree's definitions, nested, the one the cursor is in chosen" 'pick [] 4 : geo  · namespace   Point  · struct >    len  · method   area  · function'
 run "workdir:$dir/proj;frame;key:cmd+alt+O;frame;text:are;key:Return;vimdump" "$S"

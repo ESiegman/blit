@@ -77,6 +77,14 @@ constexpr u8 kSkip = 0xFF;  // a capture that is not a colour (@spell, @_interna
 // The styles a bracket gets by how deep it is, round and round.
 constexpr const char* kBracketStyles[] = {"bracket.0", "bracket.1", "bracket.2"};
 constexpr u32 kBracketDepths = 3;
+// The syntax thread's stack, and how deep shape() walks into a tree by
+// recursion on it: a level takes two calls (well under 4 KB with the
+// sanitizers' larger frames), and code is rarely more than a few hundred
+// deep (each `else if` of a chain is two levels). Generated code a
+// thousand parentheses deep and more once ran the system's 512 KB out and
+// crashed blit; past kMostLevels the rest of a node is left unseen.
+constexpr size_t kSyntaxStack = 64u << 20;
+constexpr u32 kMostLevels = 8192;
 
 // ---------------------------------------------------------------- files and folders
 
@@ -891,6 +899,7 @@ void Syntax::Engine::shape(u32 lo, u32 hi, SyntaxStructure* out, bool paint_brac
     };
     auto in_range = [&](u32 at) { return at >= lo && at < hi; };
     auto closer = [](char ch) { return ch == '(' ? ')' : ch == '[' ? ']' : '}'; };
+    u32 levels = 0;  // (how deep in the tree the walk is: at most kMostLevels)
     auto pair = [&](u32 at, u32 row, u32 close, u32 close_row, u32 depth) {
         paint_one(at, depth);
         paint_one(close, depth);
@@ -990,7 +999,10 @@ void Syntax::Engine::shape(u32 lo, u32 hi, SyntaxStructure* out, bool paint_brac
                 inner_kind = kind;
             }
         }
+        if (levels >= kMostLevels) return;  // (its children's brackets, folds and definitions go unseen)
+        ++levels;
         visit_(visit_, self, depth, row, inner_depth, inner_kind);
+        --levels;
     };
     visit(visit, one, 0, 0, 0, 0);
     ts_tree_cursor_delete(&c);
@@ -1178,7 +1190,7 @@ bool Syntax::attach(const Buffer& buf, const std::string& lang, const SyntaxOpti
     held_.store(opt.hold_full_parse);
     attached_ns_ = now_ns();
     engine_ = new Engine;
-    thread_ = std::thread([this] { run(); });
+    thread_ = DeepThread(kSyntaxStack, [this] { run(); });
     return true;
 }
 
