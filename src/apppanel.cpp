@@ -529,6 +529,19 @@ void App::watch_follow() {
     watch_->add(root);
 }
 
+namespace {
+
+// Git's own folder (.git under the top folder), or a folder in it: not one
+// whose name only starts so (.github), nor a .git above the top folder.
+bool in_git_dir(std::string_view dir, std::string_view root) {
+    if (root.size() > 1 && dir.starts_with(root)) dir.remove_prefix(root.size());
+    for (size_t at = dir.find("/.git"); at != std::string_view::npos; at = dir.find("/.git", at + 1))
+        if (at + 5 == dir.size() || dir[at + 5] == '/') return true;
+    return false;
+}
+
+}  // namespace
+
 // Something changed on disk: the folders it changed in read again (those
 // the tree has read); the open files and git looked at again a moment
 // later, once it has settled.
@@ -541,7 +554,7 @@ void App::watch_take() {
     bool files = false;
     for (std::string dir : heard) {
         if (!watch_real_.empty() && watch_real_ != root && dir.starts_with(watch_real_)) dir = root + dir.substr(watch_real_.size());
-        if (dir.find("/.git") != std::string::npos) {  // (git's own: what it says may have changed)
+        if (in_git_dir(dir, root)) {  // (git's own: what it says may have changed)
             files = true;
             continue;
         }

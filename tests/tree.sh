@@ -78,6 +78,9 @@ if ! "$blit" --offscreen 1600x900 --info "$T/x.txt" 2>/dev/null | grep -q "cell 
 fi
 check "as it starts" "frame" \
     "tree: sub/@42 x.txt@57 y.txt@73 z.txt@88"
+check "a file made in an open .github folder: shown (that is not git's own folder)" \
+    "lua:os.execute('mkdir $T/.github');watchwait;click:60,42;release;panel;lua:os.execute('echo w > $T/.github/ci.yml');watchwait" \
+    "tree: >.github/@42 .github/ci.yml@57 sub/@73 x.txt@88 y.txt@104 z.txt@119"
 check "Cmd+click: one more chosen" "click:60,57;release;click:60,88,1,cmd;release" \
     "tree: sub/@42 *x.txt@57 y.txt@73 >*z.txt@88"
 check "Cmd+click on one chosen: not any more" "click:60,57;release;click:60,88,1,cmd;release;click:60,57,1,cmd;release" \
