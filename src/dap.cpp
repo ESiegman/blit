@@ -49,11 +49,15 @@ struct Dap::Link {
     // On another machine: where, and what is run there (by the reader).
     std::string remote_dir;
     std::vector<std::string> argv;
-    // Writing. Until the adapter has started (there), what is sent waits in `pending`.
+    // Writing, which never waits: what the adapter has not taken yet (and,
+    // until it has started there, all that is sent) waits in `pending`, and
+    // the reader writes it as the adapter takes it (a byte to `wake_w` has
+    // it look). One that stops taking it holds up nothing here.
     std::mutex write_mu;
     int in = -1;
-    bool up = false;
+    bool up = false, in_gone = false;
     std::string pending;
+    int wake_r = -1, wake_w = -1;
     // What it has said, for poll().
     std::mutex mu;
     std::deque<Message> queue;
@@ -64,6 +68,7 @@ struct Dap::Link {
     bool start_remote(std::stop_token stop);
     void read_loop(std::stop_token stop);
     void send(const std::string& frame);
+    void write_pending();
     void kill_now(int sig);
     void end(int grace_ms);
 };
@@ -73,13 +78,20 @@ Dap::~Dap() { stop(); }
 bool Dap::start(const std::vector<std::string>& argv, const std::string& dir, std::function<void()> notify, std::string* err) {
     auto l = std::make_shared<Link>();
     l->notify = std::move(notify);
+    int wake[2];
+    if (::pipe(wake)) return *err = "cannot make a pipe", false;
+    for (const int fd : wake) ::fcntl(fd, F_SETFD, FD_CLOEXEC), ::fcntl(fd, F_SETFL, ::fcntl(fd, F_GETFL) | O_NONBLOCK);
+    l->wake_r = wake[0], l->wake_w = wake[1];
     std::string host, there;
     if (split_remote(dir, &host, &there)) {
         l->remote_dir = dir;  // (connected to, and started there, on the reader's thread)
         l->argv = argv;
     } else {
         int in[2], out[2], er[2];
-        if (::pipe(in) || ::pipe(out) || ::pipe(er)) return *err = "cannot make a pipe", false;
+        if (::pipe(in) || ::pipe(out) || ::pipe(er)) {
+            ::close(wake[0]), ::close(wake[1]);
+            return *err = "cannot make a pipe", false;
+        }
         for (const int fd : {in[1], out[0], er[0]}) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
         posix_spawn_file_actions_t fa;
         posix_spawn_file_actions_init(&fa);
@@ -104,9 +116,11 @@ bool Dap::start(const std::vector<std::string>& argv, const std::string& dir, st
         ::close(in[0]), ::close(out[1]), ::close(er[1]);
         if (rc != 0) {
             ::close(in[1]), ::close(out[0]), ::close(er[0]);
+            ::close(wake[0]), ::close(wake[1]);
             l->pid = -1;
             return *err = std::string("cannot run ") + argv[0] + ": " + std::strerror(rc), false;
         }
+        ::fcntl(in[1], F_SETFL, ::fcntl(in[1], F_GETFL) | O_NONBLOCK);  // (what it does not take at once waits: send)
         l->in = in[1], l->out = out[0], l->err = er[0];
         l->up = true;
     }
@@ -142,17 +156,26 @@ bool Dap::Link::start_remote(std::stop_token stop) {
         proc = p;
     }
     out = p.out, err = p.err;
+    ::fcntl(p.in, F_SETFL, ::fcntl(p.in, F_GETFL) | O_NONBLOCK);
     std::lock_guard lock(write_mu);
     in = p.in;
-    up = true;
-    for (size_t at = 0; at < pending.size();) {
+    up = true;  // (what was sent meanwhile is written by the reader's loop)
+    return true;
+}
+
+// As much of what waits as the adapter takes now (write_mu held). One that
+// has gone takes nothing more: what waits is dropped.
+void Dap::Link::write_pending() {
+    size_t at = 0;
+    while (at < pending.size() && in >= 0 && !in_gone) {
         const ssize_t k = ::write(in, pending.data() + at, pending.size() - at);
         if (k > 0) at += static_cast<size_t>(k);
         else if (k < 0 && errno == EINTR) continue;
-        else break;
+        else if (k < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) break;
+        else in_gone = true;
     }
-    pending.clear();
-    return true;
+    if (in_gone) pending.clear();
+    else pending.erase(0, at);
 }
 
 // Messages, as they come: a header ("Content-Length: n"), a blank line, n
@@ -165,16 +188,28 @@ void Dap::Link::read_loop(std::stop_token stop) {
     }
     std::string in_text;
     char buf[65536];
-    pollfd fds[2] = {{out, POLLIN, 0}, {err, POLLIN, 0}};
-    nfds_t watched = err >= 0 ? 2 : 1;
+    // (Its output, its errors, the wake, and its input while something waits
+    // to be written: a descriptor of -1 is not looked at.)
+    pollfd fds[4] = {{out, POLLIN, 0}, {err, POLLIN, 0}, {wake_r, POLLIN, 0}, {-1, POLLOUT, 0}};
     while (!stop.stop_requested()) {
-        const int r = ::poll(fds, watched, 100);
+        {
+            std::lock_guard lock(write_mu);
+            fds[3].fd = pending.empty() || in_gone ? -1 : in;
+        }
+        const int r = ::poll(fds, 4, 100);
         if (r < 0 && errno != EINTR) break;
         if (r <= 0) continue;
-        if (watched == 2 && fds[1].revents) {
+        if (fds[2].revents)
+            while (::read(wake_r, buf, sizeof buf) > 0) {
+            }
+        if (fds[3].fd >= 0 && fds[3].revents) {
+            std::lock_guard lock(write_mu);
+            write_pending();
+        }
+        if (fds[1].fd >= 0 && fds[1].revents) {
             const ssize_t k = ::read(err, buf, sizeof buf);
             if (k <= 0) {
-                watched = 1;  // (its errors have ended: its output may not have)
+                fds[1].fd = -1;  // (its errors have ended: its output may not have)
             } else {
                 std::lock_guard lock(mu);
                 errors.append(buf, static_cast<size_t>(k));
@@ -248,18 +283,21 @@ void Dap::Link::read_loop(std::stop_token stop) {
     if (notify) notify();
 }
 
+// (On the main thread: what the adapter does not take at once, the reader writes when it does.)
 void Dap::Link::send(const std::string& frame) {
     std::lock_guard lock(write_mu);
     if (!up) {  // (not started there yet: sent when it has, unless it never will be)
         if (!ended) pending += frame;
         return;
     }
-    size_t at = 0;
-    while (at < frame.size() && in >= 0) {
-        const ssize_t k = ::write(in, frame.data() + at, frame.size() - at);
-        if (k > 0) at += static_cast<size_t>(k);
-        else if (k < 0 && errno == EINTR) continue;
-        else break;
+    if (in_gone) return;
+    const bool waiting = !pending.empty();
+    pending += frame;
+    if (waiting) return;  // (the reader is writing what waits already: after it)
+    write_pending();
+    if (!pending.empty()) {
+        const char byte = 1;
+        [[maybe_unused]] const ssize_t n = ::write(wake_w, &byte, 1);
     }
 }
 
@@ -291,6 +329,7 @@ void Dap::Link::end(int grace_ms) {
     }
     if (out >= 0) ::close(out);
     if (err >= 0) ::close(err);
+    ::close(wake_r), ::close(wake_w);
     if (pid > 0) {
         int st = 0;
         for (int i = 0; i < 50 && ::waitpid(pid, &st, WNOHANG) == 0; ++i) ::usleep(10'000);

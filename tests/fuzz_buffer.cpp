@@ -3212,6 +3212,36 @@ void dap_test() {
     check(said.size() == 3 && said[0] == "output:one line\n" && said[1] == "stopped:step" && said[2] == "output:hi\n",
           "dap: messages, and the program's lines between them");
     dap.stop();
+
+    // An adapter that takes none of what it is sent for a while (far more
+    // than a pipe holds): sending waits for none of it, and all of it comes
+    // to it, in order, once it reads.
+    {
+        const std::string args = "{\"pad\":\"" + std::string(65536, 'x') + "\"}";
+        size_t total = 0;
+        for (int seq = 1; seq <= 32; ++seq) {
+            const std::string json = "{\"seq\":" + std::to_string(seq) + ",\"type\":\"request\",\"command\":\"pad\",\"arguments\":" + args + "}";
+            total += ("Content-Length: " + std::to_string(json.size()) + "\r\n\r\n" + json).size();
+        }
+        const std::string taker = "sleep 2; n=$(head -c " + std::to_string(total) +
+                                  " | wc -c | tr -d ' '); body=\"{\\\"seq\\\":1,\\\"type\\\":\\\"event\\\",\\\"event\\\":\\\"took\\\",\\\"body\\\":{\\\"reason\\\":\\\"$n\\\"}}\"; "
+                                  "printf 'Content-Length: %d\\r\\n\\r\\n%s' ${#body} \"$body\"; sleep 5";
+        Dap slow;
+        check(slow.start({"/bin/sh", "-c", taker}, "", {}, &err), "dap: an adapter that does not read yet starts");
+        const auto t0 = std::chrono::steady_clock::now();
+        for (int i = 0; i < 32; ++i) slow.request("pad", args);
+        const auto took = std::chrono::steady_clock::now() - t0;
+        check(took < std::chrono::milliseconds(500), "dap: sending to an adapter that does not read waits for nothing");
+        std::string got;
+        const auto end = std::chrono::steady_clock::now() + std::chrono::seconds(6);
+        while (got.empty() && std::chrono::steady_clock::now() < end) {
+            for (const Dap::Message& m : slow.poll())
+                if (m.name == "took") got = m.body()["reason"].str();
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        }
+        check(got == std::to_string(total), "dap: what waited is all written once the adapter reads");
+        slow.stop();
+    }
 }
 
 void remote_test() {

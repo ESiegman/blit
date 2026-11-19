@@ -7,7 +7,8 @@
 //
 // The adapter is read on a thread of the client's own; what it says is
 // queued, and poll() (on the main thread) runs the answers' callbacks and
-// hands back the events. Nothing on the main thread waits for it: on
+// hands back the events. Nothing on the main thread waits for it: what it
+// does not take at once is written by that thread as it takes it; on
 // another machine it is started on that thread (the connection waited for,
 // the adapter started there), and it is let go of on a thread of its own.
 #include <functional>
