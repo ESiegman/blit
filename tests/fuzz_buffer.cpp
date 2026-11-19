@@ -3865,6 +3865,11 @@ void vim_test() {
         {"a foo b foo |c", "?foo<CR>", "a foo b |foo c"},
         {"a |foo b food foo", "*", "a foo b food |foo"},
         {"a foo b food |foo", "#", "a |foo b food foo"},
+        // (No word from the cursor on: the signs there, as they stand.)
+        {"a b |+=\nc += d\ne +=", "*", "a b +=\nc |+= d\ne +="},
+        {"a b |+=\nc += d\ne +=", "#", "a b +=\nc += d\ne |+="},
+        {"x y+|=\nc += d\n+=", "*", "x y+=\nc |+= d\n+="},
+        {"x y |->\na->b", "*", "x y ->\na|->b"},
         {"|a Foo foo", "/foo\\c<CR>", "a |Foo foo"},
         {"|a foo b", "/nothere<CR>", "|a foo b"},
         {"|a foo b", "/fo<Esc>", "|a foo b"},

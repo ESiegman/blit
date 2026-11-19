@@ -1681,18 +1681,27 @@ bool Vim::motion(Editor& ed, u32 c, bool ctrl, u32 count, bool counted, Motion* 
         case kG | '#': {
             const u32 key = c & 0xFF;
             if (key == '*' || key == '#') {
-                // The word under the cursor (or the next one on the line), as a whole word.
+                // The word under the cursor (or the next one on the line), as
+                // a whole word; with no word from there on, the signs there
+                // (or next), to the next blank, as they stand (as Vim does).
                 u64 at = cur;
                 const u64 end = ed.line_end(line);
                 while (at < end && kind_of(p.at(at), false) != 2) ++at;
-                if (at >= end) return m.ok = false, true;
+                const bool keyword = at < end;
+                if (!keyword)
+                    for (at = cur; at < end && kind_of(p.at(at), false) == 0;) ++at;
+                if (at >= end) {
+                    message_ = "E348: No string under cursor";
+                    return m.ok = false, true;
+                }
+                const int kind = kind_of(p.at(at), false);
                 u64 lo = at, hi = at;
-                while (lo > ed.buf.line_start(line) && kind_of(p.at(lo - 1), false) == 2) --lo;
-                while (hi < end && kind_of(p.at(hi), false) == 2) ++hi;
+                while (lo > ed.buf.line_start(line) && kind_of(p.at(lo - 1), false) == kind) --lo;
+                while (hi < end && (keyword ? kind_of(p.at(hi), false) == 2 : kind_of(p.at(hi), false) != 0)) ++hi;
                 // (A mark on the sign or space before the word is that character's, not the word's.)
                 if (!at_char(ed, p, lo)) lo = ed.next_char(ed.prev_char(lo));
                 if (lo >= hi) return m.ok = false, true;
-                pattern_ = Pattern{ed.buf.text(lo, hi - lo), false, c == key, nullptr, {}};  // (g* and g#: also as part of a longer word)
+                pattern_ = Pattern{ed.buf.text(lo, hi - lo), false, keyword && c == key, nullptr, {}};  // (g* and g#: also as part of a longer word)
                 search_forward_ = key == '*';
                 ed.move_to(lo, false);
             }
