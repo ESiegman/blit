@@ -1229,6 +1229,9 @@ struct Ran {
 // The git running now, to stop it: a process here, or one on another
 // machine (its number there, negated, and the connection to that machine).
 // A stop asked for while it is still starting is carried out once it has.
+// A stop sends its signal holding the lock under which the process is
+// reaped and forgotten: never to another that has since been given its
+// number.
 struct Child {
     std::atomic<int> pid{0};
     std::atomic<bool> stopping{false};
@@ -1243,13 +1246,10 @@ struct Child {
         if (stopping) kill_now();
     }
     void kill_now() {
+        std::lock_guard lock(mu);
         const int p = pid;
-        if (p > 0) {
-            ::kill(p, SIGTERM);
-        } else if (p < 0) {
-            std::lock_guard lock(mu);
-            if (conn) conn->kill(static_cast<u32>(-p), SIGTERM);  // (sent, not waited for)
-        }
+        if (p > 0) ::kill(p, SIGTERM);
+        else if (p < 0 && conn) conn->kill(static_cast<u32>(-p), SIGTERM);  // (sent, not waited for)
     }
 };
 
@@ -1311,7 +1311,10 @@ Ran run_git_remote(Child& child, const std::string& root, const std::vector<std:
     for (const int fd : {p.in, p.out, p.err}) fcntl(fd, F_SETFL, fcntl(fd, F_GETFL) | O_NONBLOCK);
     pump(p.in, p.out, p.err, input, r);
     r.code = conn->wait(p.id);
-    child.pid = 0;
+    {
+        std::lock_guard lock(child.mu);
+        child.pid = 0;
+    }
     if (r.code < 0) {
         r.code = 128;
         if (r.err.empty()) r.err = remote_error(root);
@@ -1393,8 +1396,15 @@ Ran run_git(Child& child, const std::string& program, const std::string& root, c
     child.started(pid);
     pump(in[1], out[0], err[0], input, r);
     int status = 0;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
-    child.pid = 0;
+    // Waited for without letting go of it, so that a stop can still signal
+    // it; then reaped, and forgotten, under the lock a stop takes.
+    siginfo_t info{};
+    while (waitid(P_PID, static_cast<id_t>(pid), &info, WEXITED | WNOWAIT) < 0 && errno == EINTR) {}
+    {
+        std::lock_guard lock(child.mu);
+        while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {}
+        child.pid = 0;
+    }
     r.code = WIFEXITED(status) ? WEXITSTATUS(status) : 128;
     return r;
 }
