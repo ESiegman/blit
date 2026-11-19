@@ -549,24 +549,31 @@ bool in_git_dir(std::string_view dir, std::string_view root) {
 }  // namespace
 
 // Something changed on disk: the folders it changed in read again (those
-// the tree has read); the open files and git looked at again a moment
-// later, once it has settled.
+// the tree has read; where the system lost track, every open one under
+// it); the open files and git looked at again a moment later, once it has
+// settled.
 void App::watch_take() {
     if (!watch_) return;
     Side& s = *side_;
     const std::string root = s.tree.root();
-    const std::vector<std::string> heard = watch_->take();
-    if (heard.empty()) return;
+    DirWatch::Changed heard = watch_->take();
+    if (heard.dirs.empty() && heard.trees.empty()) return;
     bool files = false;
-    for (std::string dir : heard) {
-        if (!watch_real_.empty() && watch_real_ != root && dir.starts_with(watch_real_)) dir = root + dir.substr(watch_real_.size());
-        if (in_git_dir(dir, root)) {  // (git's own: what it says may have changed)
+    for (std::vector<std::string>* list : {&heard.dirs, &heard.trees}) {
+        const bool tree = list == &heard.trees;
+        for (std::string dir : *list) {
+            if (!watch_real_.empty() && watch_real_ != root && dir.starts_with(watch_real_)) dir = root + dir.substr(watch_real_.size());
             files = true;
-            continue;
+            if (tree && (root.starts_with(dir + "/") || dir == "/")) {  // (above the top folder: all of it)
+                s.tree.refresh();
+                continue;
+            }
+            if (in_git_dir(dir, root)) continue;  // (git's own: what it says may have changed)
+            FileTree::Node* node = s.tree.find(dir);
+            if (!node || !node->dir || !node->loaded) continue;
+            if (tree) s.tree.refresh_under(node);
+            else s.tree.refresh(node);
         }
-        files = true;
-        FileTree::Node* node = s.tree.find(dir);
-        if (node && node->dir && node->loaded) s.tree.refresh(node);
     }
     if (files && !watch_due_ns_) watch_due_ns_ = now_ns() + 300'000'000ull;
     ++watch_events_;

@@ -58,6 +58,8 @@ public:
     void toggle(Node* folder);
     // Reads a folder again (every open one, if null): something changed.
     void refresh(Node* folder = nullptr);
+    // Reads a folder again, and every open one under it.
+    void refresh_under(Node* folder);
     // Takes in folders that have been read. True if the rows changed.
     bool poll();
     // Counts up whenever the rows may have changed.

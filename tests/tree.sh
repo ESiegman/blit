@@ -67,6 +67,24 @@ fresh
 suby=$("$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "key:cmd+B;panel;treedump" "$T/x.txt" 2>&1 >/dev/null | grep '^tree:' | sed 's/.* sub\/@\([0-9]*\).*/\1/')
 names "a file made in an open folder: shown in it" "click:60,$suby;release;panel;lua:os.execute('echo r > $T/sub/r.txt');watchwait" \
     "tree: >sub/ sub/q.txt sub/r.txt x.txt y.txt z.txt"
+names "an open folder removed and made again: watched again" \
+    "click:60,$suby;release;panel;lua:os.execute('rm -rf $T/sub && mkdir $T/sub');watchwait;lua:os.execute('echo r > $T/sub/r.txt');watchwait" \
+    "tree: >sub/ sub/r.txt x.txt y.txt z.txt"
+names "an open folder moved away and another made in its place: that one watched" \
+    "click:60,$suby;release;panel;lua:os.execute('mv $T/sub $T/gone && mkdir $T/sub');watchwait;lua:os.execute('echo r > $T/sub/r.txt');watchwait" \
+    "tree: gone/ >sub/ sub/r.txt x.txt y.txt z.txt"
+# (Linux: more changes than inotify's queue holds while nothing is taken
+# from it, so that it overflows and what came after is lost.)
+if [ -r /proc/sys/fs/inotify/max_queued_events ]; then
+    many=$(cat /proc/sys/fs/inotify/max_queued_events)
+    flood="cd $T/sub && seq $many | xargs touch && seq $many | xargs rm"
+    names "inotify's queue overflowing: everything read again" \
+        "click:60,$suby;release;panel;watchheld:$flood && echo n > $T/new.txt;watchwait" \
+        "tree: >sub/ sub/q.txt new.txt x.txt y.txt z.txt"
+    names "and an open folder moved away in what was lost: the one in its place watched" \
+        "click:60,$suby;release;panel;watchheld:$flood && mv $T/sub $T/gone && mkdir $T/sub;watchwait;lua:os.execute('echo r > $T/sub/r.txt');watchwait" \
+        "tree: gone/ >sub/ sub/r.txt x.txt y.txt z.txt"
+fi
 got=$(fresh; "$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "key:cmd+B;panel;lua:os.execute('echo changed > $T/x.txt');watchwait;docdump:0" "$T/x.txt" 2>&1 >/dev/null | tail -1)
 if [ -z "$print" ] && [ "$got" != "> |changed" ]; then
     printf 'FAIL: the open file another program writes: read again\n    got %s\n' "$got"
@@ -88,6 +106,7 @@ if [ -z "$print" ] && [ "$got" != "> mine |x" ]; then
 fi
 if ! "$blit" --offscreen 1600x900 --info "$T/x.txt" 2>/dev/null | grep -q "cell 16 x 31 px"; then
     echo "skipped: the cell size here is not the one the mouse positions were written for"
+    [ "$failed" = 0 ] || exit 1  # (the cases before this one ran)
     exit 77
 fi
 check "as it starts" "frame" \

@@ -393,7 +393,12 @@ void FileTree::toggle(Node* folder) {
 void FileTree::refresh(Node* folder) {
     if (!root_) return;
     if (folder) return request(folder);
-    std::vector<Node*> todo{root_.get()};
+    refresh_under(root_.get());
+}
+
+void FileTree::refresh_under(Node* folder) {
+    if (!folder || !folder->dir) return;
+    std::vector<Node*> todo{folder};
     while (!todo.empty()) {
         Node* n = todo.back();
         todo.pop_back();

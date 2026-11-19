@@ -5,6 +5,7 @@
 #include <cerrno>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <ctime>
 #include <thread>
@@ -1024,6 +1025,8 @@ void App::run_script(const char* script) {
             }
         } else if (verb == "treedump") {
             std::fprintf(stderr, "%s\n", tree_dump().c_str());
+        } else if (verb == "watchheld") {  // watchheld:COMMAND, a shell command run while what is heard of the disk is held back
+            if (watch_) watch_->held([&] { (void)std::system(arg.c_str()); });
         } else if (verb == "watchwait") {  // something changed on disk: heard (3 s at most), the tree read again, the open files looked at
             const u64 seen = watch_events_, until = now_ns() + 3'000'000'000ull;
             while (watch_events_ == seen && now_ns() < until) {
@@ -1031,7 +1034,10 @@ void App::run_script(const char* script) {
                 SDL_Delay(2);
             }
             if (watch_events_ == seen) std::fprintf(stderr, "watchwait: nothing heard\n");
-            while (watch_due_ns_ && now_ns() < watch_due_ns_) SDL_Delay(5);
+            while (watch_due_ns_ && now_ns() < watch_due_ns_) {  // (and what is heard meanwhile, as the event loop would)
+                watch_take();
+                SDL_Delay(5);
+            }
             watch_tick();
             const u64 calm = now_ns() + 2'000'000'000ull;
             while (panel_busy() && now_ns() < calm) {
