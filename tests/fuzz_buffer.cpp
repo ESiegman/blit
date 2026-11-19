@@ -1309,6 +1309,60 @@ void edge_test() {
         check(cells[10] == kGuard, "edge: an emoji sequence cut by the right edge stays in the row");
         check(cells[9] != 0 && cells[9] != kGuard, "edge: its first cell shows");
     }
+
+    // Any window onto a line shows what a wider one from its start shows
+    // there: scrolled sideways, cut at either edge, or a wrapped line's
+    // row (its part, then blanks). Random lines of everything that takes
+    // other than one cell, made in pieces (so that characters cross the
+    // text's chunks).
+    static const char* const kBits[] = {"ab", "x", " ", "\t", "\r", "\x01", "\xE6\xBC\xA2", "e\xCC\x81", "\xCC\x81", "\xE6\xBC\xA2\xCC\x81",
+                                        "\xF0\x9F\x98\x80", "\xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9", "\xF0\x9F\x87\xAF\xF0\x9F\x87\xB5",
+                                        "\xF0\x9F\x91\x8D\xF0\x9F\x8F\xBD", "\xE2\x9C\x85\xEF\xB8\x8F", "\xE2\x80\x8B", "\xFF", "\xE6\xBC"};
+    rng.seed(777);
+    for (int round = 0; round < 300; ++round) {
+        Buffer buf;
+        std::string line;
+        for (int k = 0, n = 1 + static_cast<int>(rnd(40)); k < n; ++k) {
+            const std::string bit = kBits[rnd(std::size(kBits))];
+            buf.insert(buf.size(), bit);  // (a piece each)
+            line += bit;
+        }
+        buf.insert(buf.size(), "\n");
+        constexpr u32 kWide = 200;
+        GridSpec g;
+        g.rows = 1;
+        g.tab_width = 1 + static_cast<u32>(rnd(8));
+        g.cols = kWide;
+        std::vector<u32> whole(kWide + 1, kGuard), part;
+        fill_grid(buf, font, g, whole.data());
+        check(whole[kWide] == kGuard, "window: the reference row stays in its cells");
+        for (int t = 0; t < 8; ++t) {
+            const u32 from = static_cast<u32>(rnd(60)), cols = 1 + static_cast<u32>(rnd(40));
+            g.cols = cols;
+            g.first_col = from;
+            part.assign(cols + 1, kGuard);
+            fill_grid(buf, font, g, part.data());
+            bool same = part[cols] == kGuard;
+            for (u32 c = 0; c < cols && same; ++c) same = part[c] == whole[from + c];
+            if (!same) std::printf("window: line \"%s\", tab %u, from %u, %u columns\n", line.c_str(), g.tab_width, from, cols);
+            check(same, "window: a window onto a line shows what the line shows there");
+            // As a wrapped line's row: from `from`, its part `len` columns.
+            const u32 len = static_cast<u32>(rnd(cols + 1)), end = from + len;
+            const u64 row_line = 0;
+            g.first_col = 0;
+            g.row_lines = &row_line;
+            g.row_cols = &from;
+            g.row_ends = &end;
+            part.assign(cols + 1, kGuard);
+            fill_grid(buf, font, g, part.data());
+            g.row_lines = nullptr;
+            g.row_cols = g.row_ends = nullptr;
+            same = part[cols] == kGuard;
+            for (u32 c = 0; c < cols && same; ++c) same = part[c] == (c < len ? whole[from + c] : 0);
+            if (!same) std::printf("wrapped row: line \"%s\", tab %u, from %u to %u, %u columns\n", line.c_str(), g.tab_width, from, end, cols);
+            check(same, "window: a wrapped line's row shows its part of the line");
+        }
+    }
 }
 
 // The two pattern matchers used by highlight queries, on the patterns those
