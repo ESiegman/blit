@@ -2501,18 +2501,18 @@ added, moved and taken away by typing the lines.
 
 Saving writes the notebook back, as Jupyter writes one (two members a
 line, keys in order, one space an indent), so that what changed is all
-that differs. A cell whose text is as it was keeps everything the
-notebook had of it: its outputs, its count, its id and metadata. A
-changed one keeps its id and metadata and loses its outputs (they were of
-other code); a new one is given an id. The notebook's own metadata (its
-kernel, its language) stays. A new `.ipynb`, typed in blit, is saved as a
-notebook too. When the file changes on disk it is read again, as any
-file is.
+that differs. Each cell keeps everything the notebook had of it: its
+outputs, its count, its id and metadata. One changed since it ran keeps
+its outputs and count too, as Jupyter keeps them, until it runs again; a
+new one is given an id. The notebook's own metadata (its kernel, its
+language) stays. A new `.ipynb`, typed in blit, is saved as a notebook
+too. When the file changes on disk it is read again, as any file is (a
+kernel running goes on). A notebook on another machine (`ssh://`, or a
+container's) is read and saved as one too.
 
-Each code cell's saved outputs are shown after its last line, quieter, in
-a line: the last line it printed, its result, `[image/png]` for a picture,
-or the error's name and message. A cell changed since the notebook was
-saved shows none.
+Each code cell's outputs are shown after its last line, quieter, in a
+line: the last line it printed, its result, `[image/png]` for a picture,
+or the error's name and message. A cell changed since it ran shows none.
 
 ### The notebook's view
 
@@ -2527,9 +2527,9 @@ notebook's view goes beside the first's.
   draws a file: headings, tables, code, pictures beside the notebook.
 - A code cell is a block of code coloured by the notebook's language (its
   metadata says which), with Jupyter's `In [n]:` beside it (`In [ ]:` if
-  it has not run). One changed since it ran says `edited` under its label,
-  and its outputs are quieter: they are of other code, and saving leaves
-  them out.
+  it has not run, `In [*]:` while it runs or waits to). One changed since
+  it ran says `edited` under its label, and its outputs are quieter: they
+  are of other code (saving keeps them, as Jupyter does).
 - A raw cell is its text, as it is.
 - Under a code cell, every output in full, in order. Text a program
   printed is plain, what it wrote to stderr is tinted as an error is. A
@@ -2571,12 +2571,63 @@ as the file has them, and its count. Outputs a cell is given when it runs
 replace its own in the model, are drawn in the view and the line after
 the cell, and are what saving writes.
 
-**Shift+Return** in a notebook runs the cell the cursor is in, in the
-[Python console](#the-python-console) (started if it is not), and the
-cursor goes to the next cell's first line; in a Markdown cell only the
-cursor goes. "Run the cell (# %%) in the Python console" does the same in
-any script with `# %%` cells (Shift+Return is a file's own there). What a
-cell prints is shown in the console; it is not put in the notebook.
+### Running cells
+
+**Shift+Return** in a notebook (or "Run the cell (# %%)") runs the cell
+the cursor is in, in the notebook's kernel, and the cursor goes to the
+next cell's first line; in a Markdown cell only the cursor goes. "Run all
+the cells" runs each code cell in turn. As in Jupyter:
+
+- Cells wait their turn and run one at a time, each with its code as it
+  was when it was run (typing in it meanwhile changes nothing). A cell
+  running or waiting is `In [*]:`.
+- When a cell starts, its outputs go; what it gives comes into the view
+  as it comes (what it prints, a few times a second), and its count is
+  the kernel's next. Printed text joins the text printed before it, and a
+  carriage return writes over its line (a progress bar stays one line).
+  What C code or a program the cell runs prints is caught too.
+- Its outputs and count are put in the notebook, as Jupyter's JSON (what
+  saving writes), the line after the cell shows the last of them, and
+  the notebook has changed.
+- An error (an interrupt is one) ends the run: the cells still waiting do
+  not run.
+
+"Interrupt the kernel" stops the cell running (Ctrl+C in it:
+`KeyboardInterrupt`). "Restart the kernel" ends it, with what it was
+running and what was waiting (their outputs so far stay), and starts it
+again, its counts from 1. None of the three has a key of its own; map
+them in init.lua.
+
+The kernel is a small Python program blit carries, written to blit's
+cache folder the first time it is needed, started the first time a cell
+of the notebook runs. It runs with the Python the [Python
+console](#the-python-console) would have, in the folder being worked in
+if the notebook is in it, else in the notebook's own: the `.venv`'s
+Python, `uv run python` for a uv project, else `python3`; it works in the
+notebook's folder (the notebook's imports are found there). blit and it
+talk in lines of JSON over its input and output: no Jupyter server, no
+ZMQ. If it can import IPython, cells run in IPython's shell: its rich
+results (a DataFrame's table, Markdown, pictures), `display()`, `%` and
+`%%` magics, `!` commands, and tracebacks in colour; with
+`matplotlib-inline` installed a plot is shown as Jupyter shows one, a
+PNG under its cell. Without IPython the cell is run by plain Python: the
+last line's value is its result (and what it says of itself, an object
+with a `_repr_html_`, say), what it prints is caught, and an error is its
+traceback, the cell's own lines in it. A cell cannot read input.
+
+The kernel ends with the notebook's tab and with blit, with everything a
+cell started (it runs as a group of its own); if blit itself is killed,
+it ends of itself as soon as its input closes. One that ends on its own
+(it could not start, or a cell ended it) is said, with the last line of
+what it wrote; the next cell run starts another.
+
+For a notebook on another machine the kernel runs there, through blit's
+agent as everything else there does: the program is written to
+`~/.cache/blit` there, and the Python is chosen there as above.
+
+"Run the cell (# %%)" in any other script with `# %%` cells sends the
+cell to the [Python console](#the-python-console) instead (started if it
+is not), and what it prints is shown there.
 
 ## Pictures
 
@@ -3017,7 +3068,7 @@ tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and thro
 tests/lsp.sh build-debug/blit      # language servers against the test server: several at once, Problems across files, references, rename, formatting, code actions, hints, colours
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running), a fake build's problems (F8, Cmd+click) and new projects (a stand-in vcpkg)
 tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md against what they should draw, Mermaid, typing, Cmd+Shift+V, coloured code
-tests/notebook.sh build-debug/blit # a notebook's view: each kind of output, from the command line, following the cursor, clicks, Cmd+Shift+V, a kernel's outputs, broken notebooks
+tests/notebook.sh build-debug/blit # a notebook's view: each kind of output, from the command line, following the cursor, clicks, Cmd+Shift+V, broken notebooks; cells run in its kernel: outputs shown and saved, errors, an interrupt, a restart, run all, on another machine, IPython where python3 has it, no process left
 tests/unicode.sh build-debug/blit  # characters made of several code points: the cursor over them, their widths, accents drawn over their letter
 tests/images.sh build-debug/blit   # pictures and PDFs (tests/images): the tabs, their pixels, zoom, pages, too large, broken, changed, over ssh, in the preview
 ```
