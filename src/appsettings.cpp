@@ -136,6 +136,9 @@ std::vector<SettingsView::Item> items_of_template() {
         last = nullptr;
         if (!words.empty()) para += (para.empty() ? "" : " ") + std::string(words);
     }
+    // (A heading with no settings under it, as the template has for what is not a setting: left out.)
+    for (size_t i = out.size(); i-- > 0;)
+        if (out[i].key.empty() && (i + 1 == out.size() || out[i + 1].key.empty())) out.erase(out.begin() + static_cast<std::ptrdiff_t>(i));
     // Whatever the template leaves out, at the end.
     bool others = false;
     for (const char* k : config_keys()) {
@@ -371,7 +374,7 @@ bool App::settings_key(const SDL_KeyboardEvent& k) {
             break;
         default: return false;
     }
-    term_drop_text_ = true;
+    if (k.key == SDLK_SPACE || k.key == SDLK_O) term_drop_text_ = true;  // (only these make text, which would be typed; another's flag would eat the next key's)
     dirty_ = true;
     return true;
 }

@@ -694,7 +694,7 @@ void App::start_layout(FrameDesc& fd) {
         s.items.push_back({kSearch, "Search in files", "s", chord(SDLK_F, SDL_KMOD_SHIFT), {}});
         s.items.push_back({kFolder, "Open a folder\xE2\x80\xA6", "d", chord(SDLK_O, SDL_KMOD_SHIFT), {}});
         s.items.push_back({kRemote, "Connect to a server\xE2\x80\xA6", "r", "", {}});
-        s.items.push_back({kSettings, "Settings (init.lua)", "c", chord(SDLK_COMMA, 0), {}});
+        s.items.push_back({kSettings, "Settings", "c", chord(SDLK_COMMA, 0), {}});
         s.items.push_back({kQuit, "Quit", "q", chord(SDLK_Q, 0), {}});
         const size_t actions = s.items.size();
         u32 shown = 0;

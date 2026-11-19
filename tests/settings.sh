@@ -77,6 +77,9 @@ if [ -z "$print" ] && ! printf '%s' "$got" | grep -q 'changes not saved'; then
     printf 'FAIL: init.lua with changes not saved: not said\n    %s\n' "$(printf '%s' "$got" | tail -3)"
     failed=1
 fi
+check "after Enter, the next key is still the next key (a search here)" "$base
+blit.opt.editor.modal = true" "settingsopen:font.ligatures;key:Return;text:/font.size;key:Return" \
+    'font.size 13 points'
 check "Cmd+, opens it" "$base" "key:cmd+," \
     'font.family "" A family name ("JetBrains Mono") or the path of a font file.'
 exit $failed

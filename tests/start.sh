@@ -37,7 +37,7 @@ run() {
     got=$(BLIT_INIT="${INIT:-$dir/init.lua}" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$W;frame;$1" ${2:+"$2"} 2>&1 >/dev/null | sed -e "s#$dir#~#g" | tail -1)
     INIT=
 }
-actions='n:New file p:New project… o:Open a file… f:Go to file s:Search in files d:Open a folder… r:Connect to a server… c:Settings (init.lua) q:Quit'
+actions='n:New file p:New project… o:Open a file… f:Go to file s:Search in files d:Open a folder… r:Connect to a server… c:Settings q:Quit'
 
 rm -f "$dir/recent"
 run "startdump"
@@ -55,7 +55,7 @@ check "n: an empty file, and what is typed goes into it" 'untitled ● | Ln 1, C
 run "key:Escape;frame;startdump"
 check "Esc: gone" 'no start screen'
 run "text:j;text:j;text:j;key:Down;key:Up;frame;startdump"
-check "j and k, Down and Up choose" "start n:New file p:New project… o:Open a file… >f:Go to file s:Search in files d:Open a folder… r:Connect to a server… c:Settings (init.lua) q:Quit"
+check "j and k, Down and Up choose" "start n:New file p:New project… o:Open a file… >f:Go to file s:Search in files d:Open a folder… r:Connect to a server… c:Settings q:Quit"
 run "text:j;text:j;text:j;key:Return;findwait;finddump"
 check "Enter does what is chosen: the box that finds files" 'names [] 2 of 2 : >notes.txt src/main.cpp'
 run "text:o;finddump"

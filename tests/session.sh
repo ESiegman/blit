@@ -84,7 +84,7 @@ run "frame;key:cmd+alt+Left;key:cmd+1;frame;statusdump" "$W"
 check "each file's cursor" 'notes.txt | Ln 2, Col 12 Tabs LF Plain text'
 run "frame;startdump"
 check "Recent says what will come back" \
-    'start >n:New file p:New project… o:Open a file… f:Go to file s:Search in files d:Open a folder… r:Connect to a server… c:Settings (init.lua) q:Quit 1:~/work/(3) 2:~/work/src/main.cpp 3:~/work/long.txt 4:~/work/notes.txt'
+    'start >n:New file p:New project… o:Open a file… f:Go to file s:Search in files d:Open a folder… r:Connect to a server… c:Settings q:Quit 1:~/work/(3) 2:~/work/src/main.cpp 3:~/work/long.txt 4:~/work/notes.txt'
 run "frame;text:1;frame;dump;startdump"
 check "and the start screen's Recent brings it back" 'H([notes.txt long.txt*]@282 | >[main.cpp*])0.50 ;; no start screen'
 run "workdir:$dir;frame;text:d;text:work;key:Return;key:Return;frame;dump"
@@ -95,7 +95,7 @@ check "editor.restore = false: nothing comes back" '>[untitled*]'
 INIT="$dir/off.lua"
 run "frame;startdump"
 check "and Recent says nothing of it" \
-    'start >n:New file p:New project… o:Open a file… f:Go to file s:Search in files d:Open a folder… r:Connect to a server… c:Settings (init.lua) q:Quit 1:~/work/ 2:~/work/src/main.cpp 3:~/work/long.txt 4:~/work/notes.txt'
+    'start >n:New file p:New project… o:Open a file… f:Go to file s:Search in files d:Open a folder… r:Connect to a server… c:Settings q:Quit 1:~/work/ 2:~/work/src/main.cpp 3:~/work/long.txt 4:~/work/notes.txt'
 
 # The panel's tab and width, as kept.
 f=$(grep -lx "folder	$W" "$S"/*)
