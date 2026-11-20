@@ -116,6 +116,14 @@ for f in diagrams layout; do
     done
 done
 
+# The same pixels on every system: the diagrams' code calls none of the
+# maths library's functions whose last bit may differ from one system's to
+# another's (hypot, sin, pow...; sqrt is exact everywhere, and the
+# rasterizer has a sine and cosine of its own).
+got=$(grep -nE 'std::(hypot|sin|cos|tan|asin|acos|atan2?|pow|exp|log|log2|log10|cbrt|erf)\(|[^_a-z](hypotf?|sinf|cosf|atan2f?|powf|expf|logf)\(' \
+    "$here/../src/diagram.cpp" "$here/../src/flowchart.cpp" "$here/../src/raster.cpp" | grep -v raster_sincos)
+check "diagrams: no maths whose results differ between systems" ""
+
 # Typing elsewhere in the file lays no diagram out again (the worker keeps
 # them); typing in one lays out only that one.
 cp "$here/markdown/layout.md" "$dir/typed.md"

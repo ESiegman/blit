@@ -661,7 +661,10 @@ std::vector<RasterPoint> diagram_sample(const RasterPath& p, int n) {
     std::vector<RasterPoint> out;
     if (l.pts.empty() || n < 2) return out;
     std::vector<double> at(l.pts.size(), 0);
-    for (size_t i = 1; i < l.pts.size(); ++i) at[i] = at[i - 1] + std::hypot(l.pts[i].x - l.pts[i - 1].x, l.pts[i].y - l.pts[i - 1].y);
+    for (size_t i = 1; i < l.pts.size(); ++i) {
+        const double dx = l.pts[i].x - l.pts[i - 1].x, dy = l.pts[i].y - l.pts[i - 1].y;
+        at[i] = at[i - 1] + std::sqrt(dx * dx + dy * dy);  // (not hypot: the system's may differ from one to another)
+    }
     size_t j = 0;
     for (int k = 0; k < n; ++k) {
         const double want = at.back() * k / (n - 1);
