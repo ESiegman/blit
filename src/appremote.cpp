@@ -26,6 +26,7 @@ struct App::RemoteUi {
         std::string path;
         bool reload = false;  // only if it has changed there since known
         i64 known = 0;
+        bool compare = false;  // (read for "Compare with disk")
     };
     struct Done {
         u64 doc = 0;
@@ -35,6 +36,7 @@ struct App::RemoteUi {
         i64 modified = 0;
         bool reload = false;
         i64 known = 0;  // (a reload: the time of the file it was asked against)
+        bool compare = false;
     };
     std::map<std::string, Remote::State> seen;  // (main thread) each connection as it was last time
     std::mutex mu;
@@ -54,6 +56,7 @@ struct App::RemoteUi {
         std::string text;  // (the copy, once there is one)
         u64 point = 0;     // where the document's history was (Editor::save_point)
         std::optional<std::string> was;  // (Save as: the name it had)
+        i64 known = 0;  // the time of the file there it was read from (0: written whatever is there)
     };
     struct Saved {
         u64 doc = 0;
@@ -63,6 +66,7 @@ struct App::RemoteUi {
         std::string error;
         i64 modified = 0;
         std::optional<std::string> was;
+        bool moved = false;  // (not written: the file there changed since it was read)
     };
     std::deque<Save> saves;    // waiting their turn
     std::vector<Saved> saved;  // written (or not), for the main thread
@@ -172,7 +176,7 @@ void App::remote_start() {
                 u->jobs.pop_front();
                 ++u->busy;
             }
-            RemoteUi::Done d{j.doc, j.path, 0, {}, {}, 0, j.reload};
+            RemoteUi::Done d{j.doc, j.path, 0, {}, {}, 0, j.reload, 0, j.compare};
             std::string there;
             bool keep = true;
             if (const std::shared_ptr<Remote> r = remote_for(j.path, &there, kRemoteWaitMs); !r) {
@@ -218,7 +222,9 @@ void App::remote_start() {
             }
             RemoteUi::Saved d{s.doc, s.path, s.point, false, {}, 0, std::move(s.was)};
             std::string there;
+            RemoteStat st;
             if (const std::shared_ptr<Remote> r = connection(s.path, &there, stop); !r) d.error = remote_error(s.path);
+            else if (s.known && r->stat(there, &st) && st.kind == 1 && st.modified_ns != s.known) d.moved = true, d.modified = st.modified_ns;  // (asked about first)
             else d.ok = r->write(there, std::move(s.text), &d.error, &d.modified);
             {
                 std::lock_guard lock(u->mu);
@@ -287,10 +293,20 @@ void App::remote_load(const Doc& d, bool reload) {
     {
         std::lock_guard lock(remote_->mu);
         for (const RemoteUi::Job& j : remote_->jobs)
-            if (j.doc == d.id) return;  // (asked for already)
+            if (j.doc == d.id && !j.compare) return;  // (asked for already)
         remote_->jobs.push_back({d.id, d.ed.path, reload, d.disk_stamp});
     }
     remote_->cv.notify_all();  // (the saver and the lister wait on it too)
+}
+
+// "Compare with disk" on a file there: read on the worker, and compared when it is here.
+void App::remote_compare(const Doc& d) {
+    if (!remote_) return;
+    {
+        std::lock_guard lock(remote_->mu);
+        remote_->jobs.push_back({d.id, d.ed.path, false, 0, true});
+    }
+    remote_->cv.notify_all();
 }
 
 bool App::remote_busy() const {
@@ -304,7 +320,7 @@ bool App::remote_busy() const {
 
 // The text as it is now, written there on the saver's thread. A save of the
 // same document still waiting its turn gives way to this one.
-void App::remote_save(Doc& d) {
+void App::remote_save(Doc& d, bool over) {
     if (!remote_) return;
     RemoteUi& u = *remote_;
     RemoteUi::Save s;
@@ -312,6 +328,7 @@ void App::remote_save(Doc& d) {
     s.path = d.ed.path;
     s.point = d.ed.save_point();
     s.was = std::exchange(d.renamed_from, std::nullopt);
+    s.known = over || s.was ? 0 : d.disk_stamp;  // (a Save as writes over what is there: it has been asked about)
     if (d.nb) s.text = nb_json(d);  // (a notebook: written as one)
     else d.ed.buf.snapshot(&s.pieces);
     bool instead = false;
@@ -442,6 +459,12 @@ void App::remote_saved() {
     for (RemoteUi::Saved& x : saved) {
         Doc* d = find_doc(x.doc);
         if (!d || d->ed.path != x.path) continue;  // closed, or saved under another name since
+        if (x.moved) {  // changed there since it was read: whether to write over it is asked
+            d->disk_stamp = x.modified;
+            d->disk_moved = true;
+            save_ask(x.doc);
+            continue;
+        }
         if (!x.ok) {
             const std::string why = x.error.starts_with("cannot ") ? x.error : "cannot save " + name_of(x.path) + ": " + x.error;
             notify(why);
@@ -454,6 +477,7 @@ void App::remote_saved() {
         }
         d->ed.mark_saved_at(x.point);
         d->disk_stamp = x.modified;
+        d->disk_moved = false;
         if (lsp_doc_ == d && lsp_.attached()) lsp_.did_save();
         else if (d == pane_->doc) lsp_pending_ = true;  // (a new file has a name now: a server can have it)
         if (cfg_.git) git_.refresh();  // git has something new to say about it
@@ -612,11 +636,17 @@ void App::remote_sync() {
         size_t at = 0;
         Doc* d = find_doc(x.doc, &where, &at);
         if (!d || d->ed.path != x.path) continue;  // closed, or another file now
+        if (x.compare) {  // "Compare with disk"
+            if (x.status == 0) disk_compare_show(x.doc, x.bytes);
+            else notify(x.status == 5 ? x.error : "cannot read " + x.path);
+            continue;
+        }
         if (x.reload) {  // it changed there
             // (Not if it was written from here since it was asked about: what was read may be from before that.)
             if (x.status != 0 || d->loading || d->read_only || remote_saving(d->id) || d->disk_stamp != x.known) continue;
             d->disk_stamp = x.modified;
             if (!d->ed.modified()) reread(*where, *d, &x.bytes);
+            else disk_changed_under(*d);  // (its changes are kept: saving asks first)
             continue;
         }
         if (!d->loading) continue;

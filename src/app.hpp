@@ -203,6 +203,8 @@ struct Doc {
     bool hist_disk = false;                // the text it had on disk kept, at its first save this session (apphistory.cpp)
     i64 disk_stamp = 0;                    // the file's change time when it was last read or written
     std::optional<std::string> renamed_from;  // (Save as: the name it had, back again if the save fails)
+    bool disk_moved = false;               // its file changed on disk under changes of its own: the next save asks first
+    bool save_over = false;                // (and the answer was to save over it)
     // A tab that shows something made and not a file (a diff, a commit):
     // what it is called, that it is not to be typed in, and its colours.
     std::string title;
@@ -436,6 +438,10 @@ private:
     bool open_path(const char* p, bool must_exist = false);
     void open_named(std::string name);
     bool save();  // false: not written (nor on its way to another machine)
+    void disk_changed_under(Doc& d);  // its file changed on disk under its own changes: a notice, and the next save asks
+    void save_ask(u64 doc);           // whether to save over what is on disk now, asked in the box
+    void disk_compare();              // "Compare with disk": the file in front against what is on disk (apphistory.cpp)
+    void disk_compare_show(u64 doc, std::string_view disk);
     void request_quit();
     int view_h() const { return std::max(1, pane_->y1 - pane_->text_y); }  // height of the focused pane's text area
     int view_w() const { return std::max(1, pane_->x1 - pane_->text_x); }
@@ -612,6 +618,7 @@ private:
     void find_drop_ask();
     void find_choose(int mode, const std::string& prompt, const std::string& typed, std::function<void(const std::string&)> chose);
     void find_choose_item(const std::string& prompt, std::vector<std::string> items, std::function<void(int)> chose, const std::string& typed = {});
+    void find_ask_footer(const std::string& question);
     void remote_asks();
     void save_named(const std::string& path, u64 doc);
     void remember_place();  // where the cursor is now is somewhere to come back to
@@ -915,7 +922,8 @@ private:
     // Saving one: the text as it is, written there on a thread of its own
     // while typing goes on; closing its tab, or quitting, waits for that in a
     // box that says so (true: it waits; Esc calls the close or quit off).
-    void remote_save(Doc& d);
+    void remote_save(Doc& d, bool over = false);  // (over: written even if it has changed there since it was read)
+    void remote_compare(const Doc& d);           // read there for "Compare with disk"
     bool remote_saving(u64 doc) const;       // a save of it is under way
     bool remote_saving_all(const Doc& d) const;  // and nothing but that has changed it
     void remote_saved();

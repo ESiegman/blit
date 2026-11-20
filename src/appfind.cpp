@@ -255,6 +255,7 @@ struct App::Find {
     // offers, and the word that says what it is for.
     std::vector<std::string> items;
     std::string prompt;
+    std::string question;  // (a list of blit's own: what it asks, in the footer: find_ask_footer)
     bool script() const { return mode == kFindPick || mode == kFindInput; }
     // ssh's question (kFindAsk): which, from where, whether it is hidden as
     // typed, and the box that was open before it (to open again after).
@@ -837,6 +838,7 @@ void App::find_open(int mode, const std::string& typed) {
     f.chose_typed = nullptr;
     f.moved = nullptr;
     f.on_side = nullptr;
+    f.question.clear();
     if (auto back = std::exchange(f.cancelled, nullptr)) back();  // (what a list tried out is put back)
     if (mode != kFindNames && mode != kFindText) f.into_pane = 0;  // (Tab between those two keeps it)
     if (find_open_ && f.mode == kFindAsk && mode != kFindAsk) {  // (ssh's question waits, and comes back when this box shuts)
@@ -1108,6 +1110,15 @@ void App::find_live_items(const std::string& prompt, std::function<void(const st
     f.typed_changed = std::move(typed);
     f.typed_asked = f.typed;
     f.typed_changed(f.typed);
+}
+
+// A list of blit's own that is a question about something (the rows its
+// answers): the question, in the footer, where the box says what it looks in.
+void App::find_ask_footer(const std::string& question) {
+    if (!find_open_ || find_->mode != kFindPick) return;
+    find_->question = question;
+    find_->touch();
+    dirty_ = true;
 }
 
 // A line being typed (kFindInput, blit's own): Tab hears it (to complete it), and what is typed is changed.
@@ -1492,12 +1503,14 @@ void App::save_named(const std::string& path, u64 doc) {
     const std::string was = pane_->doc->ed.path;
     pane_->doc->ed.path = path;
     pane_->doc->renamed_from = was;  // (to another machine: the saver puts it back if the write fails)
+    const bool moved = std::exchange(pane_->doc->disk_moved, pane_->doc->disk_moved && path == was);  // (another file: what became of the old one is not asked about)
     const bool saved = save();
     Doc* const d = find_doc(doc, &where, &at);
     if (!d) return;
     d->renamed_from.reset();
     if (!saved && d->ed.path == path) {  // (not written: the tab keeps the name it had, and its file)
         d->ed.path = was;
+        d->disk_moved = moved;
         lsp_pending_ = true;
         return;
     }
@@ -2151,6 +2164,9 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
         if (toggles && f.pattern.bad()) {
             where = f.pattern.error;
             where_ink = ink::kError;
+        } else if (f.mode == kFindPick && !f.question.empty()) {
+            where = f.question;
+            where_ink = ink::kAccentStrong;
         } else if (f.asking) {
             where = "Replace " + std::to_string(f.ask_hits) + (f.ask_hits == 1 ? " hit in " : " hits in ") + std::to_string(f.ask_files) + (f.ask_files == 1 ? " file?" : " files?");
             where_ink = ink::kAccentStrong;
@@ -2523,6 +2539,7 @@ std::string App::find_dump() {
     if (f.replacing && (f.mode == kFindText || f.mode == kFindFile)) extra += std::string(" with") + (f.in_with ? ">" : "") + " [" + f.with + "]";
     if (f.mode == kFindText || f.mode == kFindFile) extra += std::string(f.regex ? " .*" : "") + (f.exact ? " Aa" : "") + (f.pattern.bad() ? " (" + f.pattern.error + ")" : "");
     if (f.asking) extra += " asking " + std::to_string(f.ask_hits) + " in " + std::to_string(f.ask_files);
+    if (f.mode == kFindPick && !f.question.empty()) extra += " (" + f.question + ")";
     if (f.mode == kFindFile) {
         Find::file_count(*this);
         std::string out = "file [" + f.typed + "]" + extra;

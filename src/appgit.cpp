@@ -681,8 +681,8 @@ void App::reload_changed() {
             const i64 stamp = stamp_of(d->ed.path);
             if (!stamp || stamp == d->disk_stamp) continue;
             d->disk_stamp = stamp;
-            if (d->ed.modified()) {  // (left alone, but not without a word: saving it writes over what is there now)
-                notify(std::string(name_of(d->ed.path)) + " changed on disk: its changes here are kept, and saving writes over it", 1);
+            if (d->ed.modified()) {  // (left alone, but not without a word: saving it asks first)
+                disk_changed_under(*d);
                 continue;
             }
             reread(*p, *d, nullptr);
@@ -710,6 +710,7 @@ void App::reread(Pane& p, Doc& d, const std::string* bytes) {
     git_.forget(d.id);
     remote_forget(d.id);
     d.measurer = {};
+    d.disk_moved = false;  // (what is on disk is what it has now)
     std::string err;
     bool read = true;
     if (bytes) d.ed.open_bytes(d.ed.path, *bytes);

@@ -295,6 +295,74 @@ void App::history_put_back(int i) {
     dirty_ = true;
 }
 
+// A file changed on disk (or on its machine) under a tab with changes of
+// its own: the tab keeps them, a notice says so, and the next save asks
+// first whether to write over what is there now.
+void App::disk_changed_under(Doc& d) {
+    d.disk_moved = true;
+    notify(base_name(d.ed.path) + " changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two)", 1);
+}
+
+// Saving a file that changed on disk under it: asked in the box (its footer
+// says why), with what is on disk compared on the way if wanted.
+void App::save_ask(u64 doc) {
+    const Doc* d = find_doc(doc);
+    if (!d) return;
+    const std::string name = base_name(d->ed.path);
+    find_choose_item("Save " + name, {"Save over it", "Compare with disk"}, [this, doc](int i) {
+        Pane* where = nullptr;
+        size_t at = 0;
+        Doc* const now = find_doc(doc, &where, &at);
+        if (!now || i < 0) return;
+        focus_pane(where);
+        tab_show(at);
+        if (i == 1) return disk_compare();
+        now->save_over = true;
+        save();
+    });
+    find_ask_footer(name + " changed on disk since it was read here");
+}
+
+// "Compare with disk": what the file in front has here against what its
+// file has on disk now (another machine's is read there first, on a thread).
+void App::disk_compare() {
+    const Doc& d = *pane_->doc;
+    if (d.ed.path.empty() || d.read_only || d.loading || d.term || d.prof || d.md || d.image || d.pdf) return notify("Not a file");
+    if (is_remote(d.ed.path)) return remote_compare(d);  // (shown when it has been read: disk_compare_show)
+    std::string disk;
+    if (!fs_read(d.ed.path, &disk, 1ull << 30)) return notify("Cannot read " + base_name(d.ed.path));
+    disk_compare_show(d.id, disk);
+}
+
+// The comparison, in a tab beside the file (the same one again, if it is still there).
+void App::disk_compare_show(u64 doc, std::string_view disk) {
+    Pane* where = nullptr;
+    size_t at = 0;
+    const Doc* src = find_doc(doc, &where, &at);
+    if (!src) return;
+    std::string text;
+    std::vector<u32> off;
+    std::vector<u8> style;
+    i64 first = 0;
+    diff_text(disk, src->ed.buf.text(0, src->ed.buf.size()), &text, &off, &style, &first);
+    const std::string title = base_name(src->ed.path) + " (against disk)";
+    Pane* const keep = pane_;
+    pane_ = where;
+    Doc* tab = nullptr;
+    for (size_t i = 0; i < where->docs.size() && !tab; ++i)
+        if (where->docs[i]->read_only && where->docs[i]->title == title) tab = where->docs[i].get(), at = i;
+    if (!tab) {
+        tab = add_doc(++at);
+        tab->title = title;
+        tab->read_only = true;
+    }
+    debug_tab_fill(*tab, std::move(text), std::move(off), std::move(style), std::max<i64>(0, first), 0);
+    tab_show(at);
+    pane_ = keep;
+    pick_theme();
+    dirty_ = true;
+}
+
 // For the tests: the versions kept of the file in front (saved or typed,
 // newest first), once what is being written has been.
 std::string App::history_dump() {

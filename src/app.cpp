@@ -892,6 +892,12 @@ bool App::save() {
         return false;
     }
     const u64 id = pane_->doc->id;
+    // (Its file changed on disk under its changes here: asked about first, once.)
+    const bool over = std::exchange(pane_->doc->save_over, false);
+    if (pane_->doc->disk_moved && !over) {
+        save_ask(id);
+        return false;
+    }
     if (script_ && !script_write(false, id)) return false;  // (BufWritePre: a handler may change it first, or close it)
     if (find_doc(id) != pane_->doc) {
         size_t at = 0;
@@ -902,7 +908,7 @@ bool App::save() {
     }
     lsp_format_on_save();  // (lsp.format_on_save: its server formats it first)
     if (is_remote(pane_->doc->ed.path)) {  // to another machine: written on a thread, and saved once it has been (appremote.cpp)
-        remote_save(*pane_->doc);
+        remote_save(*pane_->doc, over);
         return true;
     }
     history_before_save(*pane_->doc);  // (the first save this session: the text on disk kept first)
@@ -912,7 +918,10 @@ bool App::save() {
     if (!saved) tell(SDL_MESSAGEBOX_ERROR, err.c_str());
     else if (lsp_.attached()) lsp_.did_save();
     else lsp_pending_ = true;  // a new file has a name now: a server can have it
-    if (saved) pane_->doc->disk_stamp = file_stamp(pane_->doc->ed.path);
+    if (saved) {
+        pane_->doc->disk_stamp = file_stamp(pane_->doc->ed.path);
+        pane_->doc->disk_moved = false;
+    }
     if (cfg_.git) git_.refresh();  // git has something new to say about it
     const std::string path = pane_->doc->ed.path;
     if (saved) {

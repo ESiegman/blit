@@ -326,6 +326,7 @@ void App::commands_create() {
     own("Toggle presentation mode", {}, [this] { focus_toggle(kFocusShow); });
     own("Toggle soft wrap", {key(SDLK_Z, kA)}, [this] { wrap_toggle(); });
     own("Show the file's local history", {}, [this] { history_show(); });
+    own("Compare with disk", {}, [this] { disk_compare(); });
     own("Show the assembly beside the file", {}, [this] { asm_open(); });
     // Terminals: in the split along the bottom.
     own("Show or hide the terminal", {key(SDLK_GRAVE, ctl)}, [this] { term_toggle(); });

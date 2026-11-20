@@ -71,6 +71,35 @@ got="$got | $(tr '\n' ' ' <"$W/copy.txt")"
 check "and one that is written: the tab has the new name" 'box ~/work/copy.txt | Ln 1, Col 1 Tabs LF Plain text ;; >[copy.txt*] | Xhello world '
 rm "$W/copy.txt"
 
+# A file changed there under changes here: the tab keeps them, a notice
+# says so, and the first save asks (Esc: not saved; or compared first, or
+# saved over it). And one changed there with nothing to say so yet (the
+# window not come back to): the save finds it, and asks too.
+mkdir -p "$T/.moved"
+there="lua:local f = io.open('$T/.moved/m.txt', 'w') f:write('alpha\\nTHERE\\n') f:close()"
+fresh_m() { printf 'alpha\nbeta\n' >"$T/.moved/m.txt"; }
+fresh_m
+run "remotewait;frame;key:cmd+Down;text:MINE;$there;reload;remotewait;frame;save;remotewait;finddump;key:Escape;frame;statusdump" "ssh://box$T/.moved/m.txt"
+got="$got | $(tr '\n' ' ' <"$T/.moved/m.txt")"
+check "changed there under changes here: said, and saving asks" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; pick [] (m.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; box ~/.moved/m.txt ● | Ln 3, Col 5 Tabs LF Plain text | alpha THERE '
+fresh_m
+run "remotewait;frame;key:cmd+Down;text:MINE;$there;reload;remotewait;frame;save;key:Down;key:Return;remotewait;frame;dump;lsptext" "ssh://box$T/.moved/m.txt"
+check "and compared with what is there" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; >[m.txt m.txt (against disk)*] ;; @@ -1 +1 @@ /  alpha / -THERE / +beta / +MINE'
+fresh_m
+run "remotewait;frame;key:cmd+Down;text:MINE;$there;save;remotewait;finddump;key:Return;remotewait;frame;statusdump" "ssh://box$T/.moved/m.txt"
+got="$got | $(tr '\n' ' ' <"$T/.moved/m.txt")"
+check "changed there unseen: the save asks, and saves over it" 'pick [] (m.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; box ~/.moved/m.txt | Ln 3, Col 5 Tabs LF Plain text | alpha beta MINE'
+fresh_m
+run "remotewait;frame;key:cmd+Down;text:MINE;save;remotewait;text:X;save;remotewait;frame;statusdump" "ssh://box$T/.moved/m.txt"
+got="$got | $(tr '\n' ' ' <"$T/.moved/m.txt")"
+check "saved twice, nothing changed there: no question" 'box ~/.moved/m.txt | Ln 3, Col 6 Tabs LF Plain text | alpha beta MINEX'
+fresh_m
+there=$(printf '%s' "$there" | sed -e "s#$T/.moved#$dir#")
+printf 'alpha\nbeta\n' >"$dir/m.txt"
+run "frame;key:cmd+Down;text:MINE;$there;reload;frame;save;finddump;key:Return;frame;statusdump" "$dir/m.txt"
+got="$got | $(tr '\n' ' ' <"$dir/m.txt")"
+check "and the same on this machine" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; pick [] (m.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; m.txt | Ln 3, Col 5 Tabs LF Plain text | alpha beta MINE'
+
 # A slow host (each answer held half a second): saving goes back to the keys at
 # once, and the file is saved as it was then when the write has been made
 # (typing meanwhile is kept, and is not saved). Closing its tab, or

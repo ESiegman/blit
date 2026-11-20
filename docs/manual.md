@@ -928,7 +928,9 @@ files (a merge tab settles a conflict here too) and stage them, then
 pulled, merged or discarded; or another program wrote them) are read again
 when that happens and when the window gets focus, keeping the cursor's
 place. A tab with unsaved changes of its own is left alone, and a notice
-says so (saving it then writes over what is on disk).
+says so. Its next save asks first, in the box, whether to save over what
+is on disk now; **Compare with disk** (there, or as a command) shows what
+the tab has against what is on disk, in a tab beside it.
 
 ```lua
 blit.opt.git.enabled = false   -- no git at all
@@ -1905,7 +1907,9 @@ over the one ssh connection:
   a terminal there are not held up behind a save. Writing goes through a temporary file and keeps the
   file's permissions. A file changed there (a `git pull` in a terminal on
   that machine) is read again when blit's window comes back to the front,
-  as a local one is.
+  as a local one is; under unsaved changes it is left alone, as a local
+  one is, and saving asks first. A save also looks first whether the file
+  there changed since it was read, and asks if it has.
 - **The tree** lists folders there; new, rename and delete work as they do
   here (delete moves to the freedesktop Trash of the user the agent runs
   as), on the tree's own thread: the tree shows them when they are done,

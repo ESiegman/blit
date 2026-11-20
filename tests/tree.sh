@@ -120,7 +120,7 @@ fi
 # (The new file put in its place, as git and most editors do: one written
 # over where it is shows through the tab's mapping of it on Linux.)
 got=$(fresh; "$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "key:cmd+B;panel;text:mine ;lua:os.execute('echo changed > $T/x.new && mv $T/x.new $T/x.txt');watchwait;docdump:0" "$T/x.txt" 2>&1 >/dev/null | grep -v '^$' | tail -2 | tr '\n' '#')
-if [ -z "$print" ] && [ "$got" != "blit: x.txt changed on disk: its changes here are kept, and saving writes over it#> mine |x#" ]; then
+if [ -z "$print" ] && [ "$got" != "blit: x.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two)#> mine |x#" ]; then
     printf 'FAIL: the open file with changes another program writes: kept, and said\n    got %s\n' "$got"
     failed=1
 fi
