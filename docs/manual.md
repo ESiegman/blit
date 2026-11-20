@@ -539,7 +539,7 @@ replacement's).
 What Neovim has and this does not, yet: in patterns, `\z(`, and the `\%`
 items that are about the cursor, the Visual area, marks or display columns
 (`\%#`, `\%V`, `\%'m`, `\%23v`); 'ignorecase' and
-'smartcase'; Ctrl-E and Ctrl-Y while `:s///c` asks; `=`, `!`, `gq` and `gw`; folds made by hand (`zf`, `zd`) and fold levels; `:g`, `:normal`; the change list beyond its last entry
+'smartcase'; Ctrl-E and Ctrl-Y while `:s///c` asks; `=`, `!` and `gw`; folds made by hand (`zf`, `zd`) and fold levels; `:g`, `:normal`; the change list beyond its last entry
 (`g;` goes to the last change only); `U`; digraphs and Ctrl-X completion in
 Insert mode (completion is the language server's); Select mode and
 `virtualedit`; a motion forced to another kind (`dv}`); Ctrl-A and Ctrl-X
@@ -3450,7 +3450,7 @@ does not finish and takes all the memory the machine has.
 
 ## Limits
 
-- Monospace fonts only. No line wrap, and no code folding.
+- Monospace fonts only.
 - A character the italic or bold face lacks is drawn upright in the regular
   face (or a fallback font).
 - Highlighting covers one language per file: code blocks inside Markdown
@@ -3484,23 +3484,25 @@ does not finish and takes all the memory the machine has.
   conjunct draw part by part, each in its own cells (blit does not shape
   text beyond ligatures).
 - Language servers: underlines and completions show in the split that
-  has the keyboard; the other splits get hints and colours. Snippets are
-  inserted as plain text. Inlay hints are not drawn on the cursor's line,
+  has the keyboard; the other splits get hints and colours. A snippet in a
+  rename's or a fix's edits is put in as plain text (a completion's has its
+  tab stops). Inlay hints are not drawn on the cursor's line,
   and a click on a line with hints lands as if they were not there. A
   rename or fix that creates, renames or deletes a file does its edits and
-  says what it left undone. Not available on Windows yet. Only tried with
-  clangd and the test server.
-- Another machine: over ssh only, to
+  says what it left undone. Not available on Windows yet. Tried most with
+  clangd, basedpyright, Ruff and the test server; less with
+  lua-language-server, taplo, bash-language-server,
+  vscode-json-language-server and verible.
+- Another machine: over ssh, or `docker exec` into a running container, to
   Linux on x86-64 or ARM64 or a Mac like this one. Files up to 1 GB. The
   finder lists the whole folder again when it opens (as above), across the
   connection. A language server's own output there is not kept
   (`BLIT_LSP_LOG` is for local ones). Programs a script starts run on this
   machine, not that one. The project folder for a file opened there on its
   own is its own folder (opening the project's folder sets it).
-- Debugging: one session at a time, started by blit (no attaching to a
-  running process, no core files), and no disassembly or memory view. With gdb
-  the program's output reaches the Debug tab a line at a time where
-  `stdbuf` (coreutils) is there, and when it flushes it where not.
+- Debugging: with gdb the program's output reaches the Debug tab a line at
+  a time where `stdbuf` (coreutils) is there, and when it flushes it where
+  not.
 - Pictures: on Linux PNG, JPEG, GIF and WebP only (no BMP, TIFF, HEIC or
   AVIF), with no colour profiles applied. An SVG's picture shows the file
   as saved, not as it is being typed.
@@ -3510,18 +3512,19 @@ does not finish and takes all the memory the machine has.
   is for the mouse and the wheel.
 - Terminal: no ligatures. A screen with more than 32 text colours or 6
   background colours at once draws the rest in the nearest of those.
-- Profiling: one run at a time. Memory is the pages first touched, not
-  every allocation (blocks reused from the heap do not show), and waiting
-  on Linux needs `kernel.perf_event_paranoid` at 1 or lower. A function's label goes on
-  the line above its hottest line that names it with a bracket after it,
-  or on that line if none does.
-- Git: what is listed above and no more. No interactive rebase, no
-  submodules, no editing of a hunk before it is staged, and no way to
-  answer a question git asks on a terminal (a password, a passphrase): set
-  up a credential helper or an ssh agent, as for any program that runs git
-  for you. The changed-line marks compare with the last commit, not with
-  what is staged (a staged change's mark looks the same; its offer is to
-  unstage it). Not on Windows yet.
+- Profiling: one run at a time. Memory first touched is pages, not
+  allocations (blocks reused from the heap do not show); Every allocation
+  samples them, on this machine only and not for a program the system
+  protects. Waiting on Linux needs `kernel.perf_event_paranoid` at 1 or
+  lower. A function's label goes on the nearest line at or above the first
+  of its lines with time on it that names it with a bracket after it, or
+  on that first line if none does.
+- Git: what is listed above and no more. No editing of a hunk before it
+  is staged, and no way to answer a question git asks on a terminal (a
+  password, a passphrase): set up a credential helper or an ssh agent, as
+  for any program that runs git for you. The changed-line marks compare
+  with the last commit, not with what is staged (a staged change keeps its
+  mark, a thinner one; its offer is to unstage it). Not on Windows yet.
 - Regular expressions: Vim's, without `\z(` and the `\%` items about the
   cursor, the Visual area, marks and display columns (see [Modal
   editing](#modal-editing)); a pattern that would take more steps than its
@@ -3535,9 +3538,10 @@ does not finish and takes all the memory the machine has.
   across lines is not found there. Replacing in files stops at the 3,000
   lines a search keeps, and passes over a file over 8 MB. The count in the
   in-file box ("3 of 12") is left out in a file over 64 MB (8 MB with
-  regular expressions on). There are at most sixteen splits. Tabs and
-  splits are remembered for a folder opened to work in (its session), not
-  for files opened on their own.
+  regular expressions on).
+- There are at most sixteen splits. Tabs and splits are remembered for a
+  folder opened to work in (its session), not for files opened on their
+  own.
 - Linux: the Vulkan renderer and the keys above; no momentum after a
   flick (as below), and the blit started from a
   desktop's launcher has the PATH the desktop has (no login shell is asked,
@@ -3552,10 +3556,10 @@ does not finish and takes all the memory the machine has.
 - Momentum after a touchpad flick comes from the system and is macOS only;
   elsewhere a touchpad stops when the fingers do, unless the system adds a
   glide of its own.
-- The side panel: names too long for it are cut off; the tree does not
-  watch the disk, it reads folders again when the window gets focus, on Cmd+R,
-  and after its own changes; no drag and drop, no multiple selection, and
-  hidden files other than `.git` and `.DS_Store` are always shown.
+- The side panel: names too long for it are cut short (ending in "…");
+  a folder on another machine is not watched (it is read again when the
+  window gets focus, on Cmd+R, and after the tree's own changes); hidden
+  files other than `.git` and `.DS_Store` are always shown.
 - A line longer than 4 billion columns will not display correctly.
 - If another program truncates the open file, the missing part reads as
   blanks instead of crashing the editor.
