@@ -119,6 +119,7 @@ struct Node {
     float loop_room = 0;  // across, after it: its loops' (edges from it to itself) and their labels'
     float loop_back = 0;  // (before it, and how far from its middle along the ranks: the loops of a kind that draws its own, layered_loops())
     float loop_along = 0;
+    float end_room = 0;  // how far out of it along the ranks its edges' ends reach (diagram_layered's kinds)
     bool fixed = false;  // its size given (by a kind that draws its own: diagram_layered)
     float w = 0, h = 0;  // laid out: its size, and its middle (in its level's box, then in the whole)
     float x = 0, y = 0;
@@ -790,6 +791,27 @@ std::map<int, std::vector<LayeredLoop>> layered_loops(const Graph& g, const Diag
     // its middle) on their curves and round their labels.
     std::map<std::pair<int, bool>, std::vector<DiagramVec>> taken;
     std::map<std::pair<int, bool>, float> wide;  // (how far across the last one's ends reach)
+    // How far the ends (and words) of each side's loops reach out from the
+    // first's ends: when the side is short for them, the first's go nearer
+    // its middle.
+    std::map<std::pair<int, bool>, float> beyond;
+    {
+        std::map<int, int> count;
+        std::map<std::pair<int, bool>, const Edge*> last;
+        for (const Edge& e : g.edges) {
+            if (e.from != e.to || e.from < 0 || !e.laid) continue;
+            const Node& n = g.nodes[static_cast<size_t>(e.from)];
+            if (n.dead || (c >= -1 && n.cluster != c)) continue;
+            const std::pair<int, bool> at{e.from, count[e.from]++ % 2 == 1};
+            const float half = e.end_half >= 0 ? e.end_half : 5 * u;
+            if (const auto it = last.find(at); it != last.end()) {
+                const Edge& p = *it->second;
+                beyond[at] += (p.end_half >= 0 ? p.end_half : 5 * u) + p.end_word + half + 4 * u;
+            }
+            last[at] = &e;
+        }
+        for (const auto& [at, e] : last) beyond[at] += (e->end_half >= 0 ? e->end_half : 5 * u) + e->end_word + 4 * u;
+    }
     // A loop's curve: its ends ±h, straight out to `reach`, round through
     // control points `bulge` beyond that and ±w across.
     constexpr int kSteps = 24;
@@ -813,7 +835,7 @@ std::map<int, std::vector<LayeredLoop>> layered_loops(const Graph& g, const Diag
         for (const std::string& l : e.label) lw = std::max(lw, font.width(l, size));
         const float lh = static_cast<float>(e.label.size()) * line;
         // Its ends: outside the ends before (and their words), on the side.
-        float h = std::max(span * 0.22f, half + 2 * u);
+        float h = std::max(std::min(span * 0.22f, span / 2 - beyond[{e.from, back}]), half + 2 * u);
         if (!inner.empty()) h = std::max(h, wide[{e.from, back}] + half + 4 * u);
         h = std::min(h, std::max(span * 0.46f, span * 0.22f));
         // Its curve: the closest that has all that is before inside it, a
@@ -1606,7 +1628,12 @@ struct Layout {
             for (const int v : layer[r]) {
                 const LNode& x = ln[static_cast<size_t>(v)];
                 depth_of[r] = std::max(depth_of[r], x.along);
-                if (x.kind == LNode::kItem && x.ref >= 0) depth_of[r] = std::max(depth_of[r], 2 * g.nodes[static_cast<size_t>(x.ref)].loop_along);  // (its loops' too)
+                if (x.kind == LNode::kItem && x.ref >= 0) {
+                    const Node& n = g.nodes[static_cast<size_t>(x.ref)];
+                    depth_of[r] = std::max(depth_of[r], 2 * n.loop_along);  // (its loops' too)
+                    // (and its edges' ends, beyond half the gap to the next rank)
+                    depth_of[r] = std::max(depth_of[r], x.along + 2 * std::max(0.0f, n.end_room + 6 * u - ranksep / 2));
+                }
             }
         {
             float y = 0;
@@ -2395,6 +2422,7 @@ bool diagram_layered(LayeredGraph* lg, const DiagramStyle& style, std::string* e
         n.w = ln.w, n.h = ln.h;
         n.cluster = ln.cluster;
         n.note_of = ln.note_of, n.note_left = ln.note_left;
+        n.end_room = ln.end_room;
         g.nodes.push_back(std::move(n));
     }
     for (const LayeredGraph::Cluster& lc : lg->clusters) {

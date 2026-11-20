@@ -49,17 +49,19 @@ for f in sample edge diagrams code; do
 done
 
 # What is wrong in a diagram's layout (diagramdump): an edge not drawn,
-# two nodes over each other, a label over a node, an edge that does not
-# end on its nodes or that passes through another node (or a subgraph
-# neither end is in, or under a subgraph's title), a subgraph partly over
-# another; a line each, nothing when all is well.
+# two nodes over each other, a label over a node, how many at a relation's
+# end (a label named A:word) over another label or with a line through it,
+# an edge that does not end on its nodes or that passes through another
+# node (or a subgraph neither end is in, or under a subgraph's title), a
+# subgraph partly over another; a line each, nothing when all is well.
 layout_problems() {
     awk '
-    function flush(   i, j, e, k, q, p, xy) {
+    function word(i) { return bk[i] == "label" && index(bn[i], ":") && !index(bn[i], "->") }
+    function flush(   i, j, e, k, q, p, xy, a, f) {
         if (want != "" && ne != want) print d ": " want " edges, " ne " drawn"
         want = ""
         for (i = 1; i <= nb; i++) for (j = i + 1; j <= nb; j++) {
-            if (bk[i] == "label" && bk[j] == "label") continue
+            if (bk[i] == "label" && bk[j] == "label" && !word(i) && !word(j)) continue
             if (bk[i] == "cluster" || bk[j] == "cluster") {
                 if ((bk[i] == "cluster" && bk[j] == "cluster") && !apart(i, j) && !within(i, j) && !within(j, i)) print d ": subgraphs " bn[i] " and " bn[j] " overlap"
                 continue
@@ -68,6 +70,18 @@ layout_problems() {
         }
         for (e = 1; e <= ne; e++) {
             k = split(ep[e], p, " ")
+            for (i = 1; i <= nb; i++) {
+                if (!word(i)) continue
+                for (q = 1; q < k; q++) {
+                    split(p[q], a, ","); split(p[q + 1], xy, ",")
+                    for (f = 0; f <= 1; f += 0.125)
+                        if (a[1] + (xy[1] - a[1]) * f > bx[i] + 1 && a[1] + (xy[1] - a[1]) * f < bx[i] + bw[i] - 1 && a[2] + (xy[2] - a[2]) * f > by[i] + 1 && a[2] + (xy[2] - a[2]) * f < by[i] + bh[i] - 1) {
+                            print d ": edge " ef[e] " to " et[e] " passes through " bn[i]
+                            q = k
+                            break
+                        }
+                }
+            }
             if (!on(ef[e], p[1]) || !on(et[e], p[k])) print d ": edge " ef[e] " to " et[e] " does not end on its nodes"
             if (ef[e] == et[e]) continue
             for (q = 2; q < k; q++) {
@@ -154,14 +168,14 @@ for size in 3600x1100 1200x1100; do
     layout=$got
     got=$(printf '%s\n' "$layout" | layout_problems)
     check "classes.md at $size: laid out with nothing over anything" ""
-    got=$(printf '%s\n' "$layout" | awk '/^diagram / { d = $2 } /^edge / { n[d]++ } /^label .*:/ { c[d]++ } END { for (i = 1; i <= 6; i++) printf "%d:%d,%d ", i, n[i], c[i] }')
-    check "classes.md at $size: relations and their ends' words" "1:3,0 2:8,0 3:7,6 4:4,0 5:4,0 6:4,0 "
+    got=$(printf '%s\n' "$layout" | awk '/^diagram / { d = $2 } /^edge / { n[d]++ } /^label [^ ]*:/ && !/^label [^ ]*->/ { c[d]++ } END { for (i = 1; i <= 7; i++) printf "%d:%d,%d ", i, n[i], c[i] }')
+    check "classes.md at $size: relations and their ends' words" "1:3,0 2:8,0 3:7,6 4:4,0 5:4,0 6:4,0 7:15,14 "
     got=$(printf '%s\n' "$layout" | grep -E '^edge (Customer Ticket|CUSTOMER ORDER|p a|Square Drawable) ' | cut -d' ' -f1-3 | tr '\n' ,)
     check "classes.md at $size: relations from the first named to the second" "edge Customer Ticket,edge Square Drawable,edge CUSTOMER ORDER,edge p a,"
     laid=$(printf '%s\n' "$layout" | grep -c '^diagram [0-9]* [0-9]*x[0-9]*$')
     run $size "$here/markdown/classes.md" ""
     got="$laid $(printf '%s\n' "$got" | grep -c '^picture: diagram:')"
-    check "classes.md at $size: a picture for each diagram laid out" "6 6"
+    check "classes.md at $size: a picture for each diagram laid out" "7 7"
 done
 # The same pixels on every system: the diagrams' code calls none of the
 # maths library's functions whose last bit may differ from one system's to

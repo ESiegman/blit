@@ -2231,6 +2231,7 @@ void raster_test() {
 // Flowcharts, state, class and entity relationship diagrams laid out
 // (diagram.hpp, with the measure of a font that could not be opened: a
 // monospace one): no two nodes over each other, labels clear of nodes,
+// how many at a relation's end clear of other labels and of lines,
 // each edge ending on its nodes' borders and passing no other node,
 // subgraphs nested or apart; the same pixels each time it is drawn;
 // mistakes said with their line.
@@ -2275,6 +2276,9 @@ void diagram_test() {
         " CUSTOMER {\n string name\n string custNumber PK, FK \"a comment\"\n }\n ORDER {\n int orderNumber PK\n }\n",
         "erDiagram\n direction LR\n p[Person] {\n string name\n }\n p ||--o| a : has\n CAR ||--o{ NAMED-DRIVER : allows\n"
         " PERSON only one to zero or more NAMED-DRIVER : is\n CAR }o..o{ GARAGE : \"parked in\"\n GARAGE one or more optionally to 1 CAR : holds\n",
+        "classDiagram\n A \"0..1\" --> \"many\" B : x\n A \"1\" *-- \"2\" B : y\n Car \"1\" *-- \"4\" Wheel : has wheels\n Truck \"1\" *-- \"6..18\" Wheel : more\n"
+        " Bike \"1\" *-- \"2\" Wheel : two\n Engine <|--|> Wheel : both\n Car \"1\" o-- \"1\" Engine\n Car --> Car : self one\n Car \"1\" ..> \"many\" Car : self two\n",
+        "classDiagram\n direction LR\n A \"0..1\" --> \"many\" B : x\n A \"1\" *-- \"2\" B : y\n A \"one\" o-- \"several\" B\n C \"1\" --> \"0..*\" B\n",
     };
     for (const char* src : sources) {
         Drawing d;
@@ -2298,6 +2302,20 @@ void diagram_test() {
             for (auto b = std::next(a); b != nodes.end(); ++b) check(apart(a->second, b->second, 1), "diagram: nodes " + a->first + " and " + b->first + " apart" + what);
         for (const auto& l : labels)
             for (const auto& [name, n] : nodes) check(apart(l, n, 0), "diagram: label " + l.name + " clear of node " + name + what);
+        // (how many at an end: a label named A:word)
+        auto word = [](const DiagramGeometry::Box& b) { return b.name.find(':') != std::string::npos && b.name.find("->") == std::string::npos; };
+        for (size_t i = 0; i < labels.size(); ++i)
+            for (size_t j = i + 1; j < labels.size(); ++j)
+                if (word(labels[i]) || word(labels[j])) check(apart(labels[i], labels[j], 0), "diagram: " + labels[i].name + " clear of " + labels[j].name + what);
+        for (const auto& l : labels) {
+            if (!word(l)) continue;
+            for (const auto& ln : geo.lines)
+                for (size_t q = 0; q + 1 < ln.pts.size(); ++q)
+                    for (int f = 0; f <= 8; ++f) {
+                        const float x = ln.pts[q].x + (ln.pts[q + 1].x - ln.pts[q].x) * static_cast<float>(f) / 8, y = ln.pts[q].y + (ln.pts[q + 1].y - ln.pts[q].y) * static_cast<float>(f) / 8;
+                        check(!(x > l.x + 1 && x < l.x + l.w - 1 && y > l.y + 1 && y < l.y + l.h - 1), "diagram: " + l.name + " clear of the line " + ln.from + " to " + ln.to + what);
+                    }
+        }
         for (size_t i = 0; i < clusters.size(); ++i)
             for (size_t j = i + 1; j < clusters.size(); ++j) {
                 const auto &a = clusters[i], &b = clusters[j];

@@ -140,3 +140,22 @@ erDiagram
         string[] parts
     }
 ```
+
+```mermaid
+classDiagram
+    Vehicle <|-- Car
+    Vehicle <|-- Truck
+    Vehicle <|-- Bike
+    Car "1" *-- "4" Wheel : has wheels
+    Truck "1" *-- "6..18" Wheel : has many more wheels
+    Bike "1" *-- "2" Wheel : two
+    Car "1" o-- "1" Engine : powered by
+    Truck o-- Engine
+    Engine --> Car : back
+    A "0..1" --> "many" B : x
+    A "1" *-- "2" B : y
+    Car --> Car : self one
+    Car ..> Car : self two
+    Car "1" *-- "many" Car : parts
+    Notebook <|-- Page
+```

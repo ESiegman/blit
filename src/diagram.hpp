@@ -253,6 +253,7 @@ struct LayeredGraph {
         int cluster = -1;       // the innermost cluster it is in
         int note_of = -1;       // a note: the node it is beside
         bool note_left = false;
+        float end_room = 0;  // how far out of it along the ranks its edges' ends (and words beside them) reach
         float x = 0, y = 0;  // laid out: its middle
     };
     struct Edge {

@@ -4,6 +4,7 @@
 // a class's parent, diamonds for its parts, crow's feet for how many),
 // laid out in layers as flowcharts are (diagram_layered) and drawn here.
 #include <algorithm>
+#include <array>
 #include <cctype>
 #include <cmath>
 #include <cstdlib>
@@ -292,7 +293,16 @@ struct Relation {
     std::vector<std::string> label;
 };
 
-void draw_relation(Drawing& d, const Look& k, const LayeredGraph& lg, const LayeredGraph::Edge& e, const Relation& r, DiagramGeometry* geo, std::vector<DiagramGeometry::Box>* labels) {
+// Which side of its line the words at each end go (spread_ends says): 0,
+// to the right of it or below it; -1 or 1, toward less or more x (or y,
+// for a line into a box's side).
+using WordSides = std::array<signed char, 2>;
+
+// How many, at an end: its size, and how far across it is (from the line).
+float card_size(const Look& k) { return k.size * 0.9f; }
+float card_half(u8 end, float u) { return std::max(end_half(end, u), 2 * u); }
+
+void draw_relation(Drawing& d, const Look& k, const LayeredGraph& lg, const LayeredGraph::Edge& e, const Relation& r, WordSides words, DiagramGeometry* geo, std::vector<DiagramGeometry::Box>* labels) {
     const float u = k.u, width = k.edge_w;
     const DiagramColour c = k.ink.edge;
     std::vector<float> dash;
@@ -304,6 +314,8 @@ void draw_relation(Drawing& d, const Look& k, const LayeredGraph& lg, const Laye
         return l > 0 ? DiagramVec{v.x / l, v.y / l} : DiagramVec{0, 1};
     };
     if (e.pts.size() < 2) return;
+    const DiagramFont& font = *k.style->font;
+    const float cs = card_size(k), ch = font.line(cs);
     std::vector<DiagramVec> pts = e.pts;
     DiagramVec in_a, in_b;  // the way each end goes into its box
     if (e.loop) {
@@ -313,18 +325,24 @@ void draw_relation(Drawing& d, const Look& k, const LayeredGraph& lg, const Laye
         in_a = in_b = unit({-e.out.x, -e.out.y});
     } else {
         in_a = {-e.axis.x, -e.axis.y}, in_b = e.axis;
-        // Straight where the ends are, as long as they are (when there is room).
-        const float la = r.end_a ? end_length(r.end_a, u) + 6 * u : 0, lb = r.end_b ? end_length(r.end_b, u) + 6 * u : 0;
+        // Straight where the ends are, as long as they are, and the words
+        // beside them (when there is room).
+        auto straight = [&](u8 end, const std::string& card) {
+            float l = end ? end_length(end, u) : 0;
+            if (!card.empty()) l = std::max(l, 4 * u + (std::fabs(e.axis.y) > 0.5f ? ch : font.width(card, cs)));
+            return l > 0 ? l + 6 * u : 0;
+        };
+        const float la = straight(r.end_a, r.card_a), lb = straight(r.end_b, r.card_b);
         const DiagramVec p0 = pts.front(), p1 = pts.back();
         const float along = (p1.x - p0.x) * e.axis.x + (p1.y - p0.y) * e.axis.y;
-        if (la > 0 && along > (la + lb) * 1.4f + 8 * u) {
+        if (la > 0 && along > la + lb + 8 * u) {
             const float first = (pts[1].x - p0.x) * e.axis.x + (pts[1].y - p0.y) * e.axis.y;
-            if (first > la * 1.3f) pts.insert(pts.begin() + 1, DiagramVec{p0.x + e.axis.x * la, p0.y + e.axis.y * la});
+            if (first > la + 4 * u) pts.insert(pts.begin() + 1, DiagramVec{p0.x + e.axis.x * la, p0.y + e.axis.y * la});
         }
-        if (lb > 0 && along > (la + lb) * 1.4f + 8 * u) {
+        if (lb > 0 && along > la + lb + 8 * u) {
             const DiagramVec q = pts[pts.size() - 2];
             const float last = (p1.x - q.x) * e.axis.x + (p1.y - q.y) * e.axis.y;
-            if (last > lb * 1.3f) pts.insert(pts.end() - 1, DiagramVec{p1.x - e.axis.x * lb, p1.y - e.axis.y * lb});
+            if (last > lb + 4 * u) pts.insert(pts.end() - 1, DiagramVec{p1.x - e.axis.x * lb, p1.y - e.axis.y * lb});
         }
     }
     const DiagramVec tip_a = pts.front(), tip_b = pts.back();
@@ -348,24 +366,34 @@ void draw_relation(Drawing& d, const Look& k, const LayeredGraph& lg, const Laye
         gl.pts.front() = {tip_a.x, tip_a.y}, gl.pts.back() = {tip_b.x, tip_b.y};
         geo->lines.push_back(std::move(gl));
     }
+    // (where the line is, for the words beside it)
+    const std::vector<RasterPoint> drawn = r.card_a.empty() && r.card_b.empty() ? std::vector<RasterPoint>{} : diagram_sample(path, 64);
     d.shape(std::move(path), {}, c, width, dash, dash.empty() ? RasterStroke::kButt : RasterStroke::kRound);
     for (DiagramItem& it : ends.items) d.items.push_back(std::move(it));
-    // How many, at each end: beside the line, just off the box.
-    const DiagramFont& font = *k.style->font;
-    const float cs = k.size * 0.9f, ch = font.line(cs);
+    // How many, at each end: beside the line, just off the box (and further
+    // off it, if the line bends toward them there: when the boxes are too
+    // near for it to run straight for as long as they are).
     for (const bool first : {true, false}) {
         const std::string& card = first ? r.card_a : r.card_b;
         if (card.empty()) continue;
         const DiagramVec tip = first ? tip_a : tip_b, in = first ? in_a : in_b;
         const float tw = font.width(card, cs);
-        const float half = std::max(end_half(first ? r.end_a : r.end_b, u), 2 * u);
+        const float half = card_half(first ? r.end_a : r.end_b, u);
         // (to the right of the line as it leaves the box, or below it; a
-        // loop's away from its other end)
+        // loop's away from its other end; where spread_ends said, away from
+        // the ends beside it)
         DiagramVec side{-in.y, in.x};
         if (side.x < -0.5f || side.y < -0.5f) side = {-side.x, -side.y};
         if (e.loop && first) side = {-side.x, -side.y};
-        const float off_across = half + 5 * u + (std::fabs(side.x) > 0.5f ? tw / 2 : ch / 2);
-        const float off_along = 4 * u + (std::fabs(in.y) > 0.5f ? ch / 2 : tw / 2);
+        if (const signed char w = words[first ? 0 : 1]; !e.loop && w != 0) side = {std::fabs(side.x) * w, std::fabs(side.y) * w};
+        const float wide = std::fabs(side.x) > 0.5f ? tw : ch, deep = std::fabs(in.y) > 0.5f ? ch : tw;
+        float bend = 0;
+        for (const RasterPoint& p : drawn) {
+            const float out = -((p.x - tip.x) * in.x + (p.y - tip.y) * in.y);
+            if (out >= -1 && out <= 6 * u + deep) bend = std::max(bend, (p.x - tip.x) * side.x + (p.y - tip.y) * side.y);
+        }
+        const float off_across = std::max(half, bend) + 5 * u + wide / 2;
+        const float off_along = 4 * u + deep / 2;
         const DiagramVec m{tip.x - in.x * off_along + side.x * off_across, tip.y - in.y * off_along + side.y * off_across};
         const float y = m.y - ch / 2 + (ch - font.ascent(cs) - font.descent(cs)) / 2 + font.ascent(cs);
         say(d, card, m.x, y, cs, k.ink.quiet, font, 1, false);
@@ -393,6 +421,27 @@ void loop_ends(const Look& k, const Relation& r, char dir, LayeredGraph::Edge* e
     e->end_word = 0;
     for (const std::string* card : {&r.card_a, &r.card_b})
         if (!card->empty()) e->end_word = std::max(e->end_word, 5 * u + (dir == 'D' || dir == 'U' ? font.line(cs) : font.width(*card, cs)));
+}
+
+// How far out of their boxes along the ranks (going `dir`) relations' ends
+// and the words beside them reach, for each box.
+void end_rooms(const Look& k, const std::vector<Relation>& rels, char dir, LayeredGraph* g) {
+    const float u = k.u;
+    const DiagramFont& font = *k.style->font;
+    const float cs = card_size(k), ch = font.line(cs);
+    const bool vert = dir == 'D' || dir == 'U';
+    for (const Relation& r : rels) {
+        if (r.a == r.b) continue;
+        for (const bool first : {true, false}) {
+            const u8 end = first ? r.end_a : r.end_b;
+            const std::string& card = first ? r.card_a : r.card_b;
+            float room = end_length(end, u);
+            if (!card.empty()) room = std::max(room, 4 * u + (vert ? ch : font.width(card, cs)));
+            if (room > 0) room += 6 * u;  // (and a little, as draw_relation runs straight)
+            float& at = g->nodes[static_cast<size_t>(first ? r.a : r.b)].end_room;
+            at = std::max(at, room);
+        }
+    }
 }
 
 // A cluster's box and its title at the top (as a flowchart's subgraph:
@@ -454,64 +503,145 @@ void draw_box(Drawing& d, float x, float y, float w, float h, float head, float 
     d.shape(std::move(outline), {}, stroke, width);
 }
 
-// Ends that share a side of a box, at least `gap` apart (their crow's
-// feet and diamonds are wider than an arrow's head): moved along the side,
-// in the order they were, as little as keeps them apart.
-void spread_ends(LayeredGraph* lg, float gap) {
+// Ends that share a side of a box, kept apart: by `gap` at least, and by
+// what is between them (their ends' halves, and the words of how many of
+// either that are on that side of it). The words of the first go before
+// it and of the last after it (away from the rest), of each between to the
+// side nearer its end of the row. Moved along the side, in the order they
+// were, as little as keeps them apart (squeezed, if the side is too short
+// for them); which side each end's words go, in `words`; how wide and how
+// tall each box would have to be for none to be squeezed, in `least`.
+void spread_ends(LayeredGraph* lg, const std::vector<Relation>& rels, const Look& k, float gap, std::vector<WordSides>* words, std::vector<DiagramVec>* least = nullptr) {
     struct At {
         size_t edge;
         bool first;
         float across, toward;
+        float half = 0, word = 0;  // (its end's half, its words' room across)
+        signed char side = 0;
     };
+    const float u = k.u;
+    const DiagramFont& font = *k.style->font;
+    const float cs = card_size(k), ch = font.line(cs);
+    words->assign(lg->edges.size(), WordSides{0, 0});
+    if (least) least->assign(lg->nodes.size(), DiagramVec{});
     std::map<std::pair<int, int>, std::vector<At>> sides;  // (a node, the way its ends go into it)
-    for (size_t k = 0; k < lg->edges.size(); ++k) {
-        const LayeredGraph::Edge& e = lg->edges[k];
+    for (size_t q = 0; q < lg->edges.size(); ++q) {
+        const LayeredGraph::Edge& e = lg->edges[q];
         if (e.loop || e.pts.size() < 2) continue;
         const DiagramVec across{std::fabs(e.axis.y), std::fabs(e.axis.x)};
         auto along = [&](DiagramVec p) { return p.x * across.x + p.y * across.y; };
         const int way = e.axis.x > 0.5f ? 0 : e.axis.x < -0.5f ? 1 : e.axis.y > 0.5f ? 2 : 3;
         // (the first end goes into its box against the axis, the last along it)
-        sides[{e.from, way ^ 1}].push_back({k, true, along(e.pts.front()), along(e.pts[1])});
-        sides[{e.to, way}].push_back({k, false, along(e.pts.back()), along(e.pts[e.pts.size() - 2])});
+        sides[{e.from, way ^ 1}].push_back({q, true, along(e.pts.front()), along(e.pts[1])});
+        sides[{e.to, way}].push_back({q, false, along(e.pts.back()), along(e.pts[e.pts.size() - 2])});
     }
     for (auto& [side, list] : sides) {
         if (list.size() < 2) continue;
         const LayeredGraph::Node& n = lg->nodes[static_cast<size_t>(side.first)];
         const bool across_x = side.second >= 2;  // (ends into its top or bottom: spread across x)
-        const float mid = across_x ? n.x : n.y, span = (across_x ? n.w : n.h) * 0.8f;
+        const float mid = across_x ? n.x : n.y, length = across_x ? n.w : n.h;
         std::stable_sort(list.begin(), list.end(), [](const At& a, const At& b) { return a.across != b.across ? a.across < b.across : a.toward < b.toward; });
-        bool tight = false;
-        for (size_t i = 1; i < list.size(); ++i) tight = tight || list[i].across - list[i - 1].across < gap - 0.01f;
-        if (!tight) continue;
-        const float step = std::min(gap, span / static_cast<float>(list.size() - 1));
-        float centre = 0;
-        for (const At& a : list) centre += a.across;
-        centre /= static_cast<float>(list.size());
-        const float half = step * static_cast<float>(list.size() - 1) / 2;
-        centre = std::clamp(centre, mid - span / 2 + half, mid + span / 2 - half);
         for (size_t i = 0; i < list.size(); ++i) {
-            LayeredGraph::Edge& e = lg->edges[list[i].edge];
-            DiagramVec& p = list[i].first ? e.pts.front() : e.pts.back();
-            (across_x ? p.x : p.y) = centre - half + step * static_cast<float>(i);
+            At& a = list[i];
+            const Relation& r = rels[a.edge];
+            const std::string& card = a.first ? r.card_a : r.card_b;
+            a.half = card_half(a.first ? r.end_a : r.end_b, u);
+            if (!card.empty()) a.word = 5 * u + (across_x ? font.width(card, cs) : ch);
+            a.side = i == 0 ? -1 : i + 1 == list.size() ? 1 : static_cast<signed char>(2 * i + 1 < list.size() ? -1 : 1);
         }
+        // How far apart each two must be, and are.
+        std::vector<float> need(list.size() - 1);
+        bool tight = false;
+        float total = 0;
+        for (size_t i = 0; i + 1 < list.size(); ++i) {
+            need[i] = std::max(gap, list[i].half + list[i + 1].half + 6 * u + (list[i].side > 0 ? list[i].word : 0) + (list[i + 1].side < 0 ? list[i + 1].word : 0));
+            tight = tight || list[i + 1].across - list[i].across < need[i] - 0.01f;
+            total += need[i];
+        }
+        if (least) {
+            float& want = across_x ? (*least)[static_cast<size_t>(side.first)].x : (*least)[static_cast<size_t>(side.first)].y;
+            want = std::max(want, total + 8 * u);
+        }
+        if (tight) {
+            // (along the side, within its corners: squeezed if it must be)
+            const float span = std::max(length * 0.8f, std::min(total, length - 8 * u));
+            const float squeeze = total > span ? span / total : 1;
+            float centre = 0;
+            for (const At& a : list) centre += a.across;
+            centre /= static_cast<float>(list.size());
+            const float half = total * squeeze / 2;
+            centre = std::clamp(centre, mid - span / 2 + half, mid + span / 2 - half);
+            float at = centre - half;
+            for (size_t i = 0; i < list.size(); ++i) {
+                LayeredGraph::Edge& e = lg->edges[list[i].edge];
+                DiagramVec& p = list[i].first ? e.pts.front() : e.pts.back();
+                (across_x ? p.x : p.y) = at;
+                if (i + 1 < list.size()) at += need[i] * squeeze;
+            }
+        }
+        for (const At& a : list) (*words)[a.edge][a.first ? 0 : 1] = a.side;
     }
 }
 
 // Laid out in the direction asked, or, when that is too wide for the room
-// and the other way fits better, that way. False if the layout gave up
-// (why in `err`: too large to draw, or asked to stop).
+// and the other way fits better, that way. (build() makes the graph for
+// the direction it is given, in g->dir: how far ends reach depends on it.)
+// False if the layout gave up (why in `err`: too large to draw, or asked
+// to stop).
 template <typename Build>
-bool lay_out_fitting(LayeredGraph* lg, const DiagramStyle& style, Build build, std::string* err) {
+bool lay_out_fitting(LayeredGraph* lg, const DiagramStyle& style, char dir, Build build, std::string* err) {
+    lg->dir = dir;
     build(lg);
     if (!diagram_layered(lg, style, err)) return false;
     if (lg->w <= style.room) return true;
     LayeredGraph other;
-    other.dir = lg->dir == 'R' || lg->dir == 'L' ? 'D' : 'R';
+    other.dir = dir == 'R' || dir == 'L' ? 'D' : 'R';
     build(&other);
-    other.dir = lg->dir == 'R' || lg->dir == 'L' ? 'D' : 'R';
     std::string why;
     if (diagram_layered(&other, style, &why) && std::min(1.0f, style.room / std::max(1.0f, other.w)) > std::min(1.0f, style.room / lg->w) * 1.25f) *lg = std::move(other);
     return true;
+}
+
+// Laid out (as lay_out_fitting does) with the ends spread on their sides
+// (and which side their words go, in `words`); and, if the ends on a side
+// of a box would be squeezed, laid out again with that box as wide or as
+// tall as they want (`grow`: each box's least size, which build() takes),
+// a few times at most (laid out again, it may go the other way). False if
+// the layout gave up (why in `err`).
+template <typename Build>
+bool lay_out_spread(LayeredGraph* lg, const DiagramStyle& style, char dir, const std::vector<Relation>& rels, const Look& k, std::vector<DiagramVec>* grow, std::vector<WordSides>* words, Build build, std::string* err) {
+    const float u = k.u;
+    grow->clear();
+    for (int pass = 0;; ++pass) {
+        *lg = LayeredGraph{};
+        if (!lay_out_fitting(lg, style, dir, build, err)) return false;
+        std::vector<DiagramVec> least;
+        spread_ends(lg, rels, k, 22 * u, words, &least);
+        if (pass == 2) return true;
+        // (and the sides a box's loops leave from long enough that their
+        // ends and words are within its corners: as layered_loops() puts them,
+        // on two sides in turn, the first on each as near the side's middle
+        // as its own ends let it (when the side is short), each next one
+        // outside the ends and words before)
+        std::map<std::pair<int, bool>, std::vector<const LayeredGraph::Edge*>> sides;
+        std::map<int, int> count;
+        for (const LayeredGraph::Edge& e : lg->edges)
+            if (e.loop) sides[{e.from, count[e.from]++ % 2 == 1}].push_back(&e);
+        const bool vert = lg->dir == 'D' || lg->dir == 'U';
+        for (const auto& [side, loops] : sides) {
+            float out = 0;  // (from the first's ends to the last's words, and a little)
+            for (size_t i = 1; i < loops.size(); ++i) out += loops[i - 1]->end_half + loops[i - 1]->end_word + loops[i]->end_half + 4 * u;
+            out += loops.back()->end_half + loops.back()->end_word + 4 * u;
+            const float span = 2 * (loops.front()->end_half + 2 * u + out);
+            float& want = vert ? least[static_cast<size_t>(side.first)].y : least[static_cast<size_t>(side.first)].x;
+            want = std::max(want, span);
+        }
+        bool short_side = false;
+        for (size_t i = 0; i < least.size(); ++i) short_side = short_side || least[i].x > lg->nodes[i].w + 0.01f || least[i].y > lg->nodes[i].h + 0.01f;
+        if (!short_side) return true;
+        grow->resize(least.size());
+        for (size_t i = 0; i < least.size(); ++i) (*grow)[i] = {std::max((*grow)[i].x, least[i].x), std::max((*grow)[i].y, least[i].y)};
+    }
 }
 
 // ---------------------------------------------------------------- class diagrams
@@ -962,15 +1092,16 @@ bool classdiagram(const std::vector<std::string>& st, const DiagramStyle& style,
     for (size_t i = 0; i < m.notes.size(); ++i) note_lines[i] = diagram_wrap(m.notes[i].lines, wrap * 0.8f, size, font);
     // Laid out.
     LayeredGraph lg;
+    std::vector<DiagramVec> grow;
     auto build = [&](LayeredGraph* g) {
         g->nodes.clear(), g->edges.clear();
         g->clusters = m.spaces;
-        g->dir = m.dir;
         g->sep = 1.5f;
         for (size_t i = 0; i < m.classes.size(); ++i) {
             LayeredGraph::Node n;
             n.id = m.classes[i].id;
             n.w = boxes[i].w, n.h = boxes[i].h;
+            if (i < grow.size()) n.w = std::max(n.w, grow[i].x), n.h = std::max(n.h, grow[i].y);
             n.cluster = m.classes[i].ns;
             g->nodes.push_back(std::move(n));
         }
@@ -992,9 +1123,10 @@ bool classdiagram(const std::vector<std::string>& st, const DiagramStyle& style,
             if (r.a == r.b) loop_ends(k, r, g->dir, &e);
             g->edges.push_back(std::move(e));
         }
+        end_rooms(k, m.rels, g->dir, g);
     };
-    if (!lay_out_fitting(&lg, style, build, err)) return false;
-    spread_ends(&lg, 22 * u);
+    std::vector<WordSides> words;
+    if (!lay_out_spread(&lg, style, m.dir, m.rels, k, &grow, &words, build, err)) return false;
     // Drawn.
     Drawing& d = *out;
     d.w = lg.w, d.h = lg.h;
@@ -1015,7 +1147,7 @@ bool classdiagram(const std::vector<std::string>& st, const DiagramStyle& style,
     }
     std::vector<DiagramGeometry::Box> labels;
     if (geo) geo->edges = static_cast<int>(m.rels.size());  // (each relation should have a line)
-    for (size_t i = 0; i < m.rels.size(); ++i) draw_relation(d, k, lg, lg.edges[i], m.rels[i], geo, geo ? &labels : nullptr);
+    for (size_t i = 0; i < m.rels.size(); ++i) draw_relation(d, k, lg, lg.edges[i], m.rels[i], words[i], geo, geo ? &labels : nullptr);
     for (size_t i = 0; i < m.notes.size(); ++i) {
         const LayeredGraph::Node& n = lg.nodes[m.classes.size() + i];
         draw_note(d, k, lg, n, note_lines[i]);
@@ -1349,14 +1481,15 @@ bool erdiagram(const std::vector<std::string>& st, const DiagramStyle& style, Dr
         if (e.attrs.empty()) b.h = b.head = std::max(b.head, 44 * u), b.w = std::max(b.w, 100 * u);
     }
     LayeredGraph lg;
+    std::vector<DiagramVec> grow;
     auto build = [&](LayeredGraph* g) {
         g->nodes.clear(), g->edges.clear();
-        g->dir = m.dir;
         g->sep = 2.1f;
         for (size_t i = 0; i < m.ents.size(); ++i) {
             LayeredGraph::Node n;
             n.id = m.ents[i].id;
             n.w = boxes[i].w, n.h = boxes[i].h;
+            if (i < grow.size()) n.w = std::max(n.w, grow[i].x), n.h = std::max(n.h, grow[i].y);
             g->nodes.push_back(std::move(n));
         }
         for (const Relation& r : m.rels) {
@@ -1366,20 +1499,28 @@ bool erdiagram(const std::vector<std::string>& st, const DiagramStyle& style, Dr
             if (r.a == r.b) loop_ends(k, r, g->dir, &e);
             g->edges.push_back(std::move(e));
         }
+        end_rooms(k, m.rels, g->dir, g);
     };
-    if (!lay_out_fitting(&lg, style, build, err)) return false;
-    spread_ends(&lg, 22 * u);
+    std::vector<WordSides> words;
+    if (!lay_out_spread(&lg, style, m.dir, m.rels, k, &grow, &words, build, err)) return false;
     Drawing& d = *out;
     d.w = lg.w, d.h = lg.h;
     std::vector<DiagramGeometry::Box> labels;
     if (geo) geo->edges = static_cast<int>(m.rels.size());  // (each relation should have a line)
-    for (size_t i = 0; i < m.rels.size(); ++i) draw_relation(d, k, lg, lg.edges[i], m.rels[i], geo, geo ? &labels : nullptr);
+    for (size_t i = 0; i < m.rels.size(); ++i) draw_relation(d, k, lg, lg.edges[i], m.rels[i], words[i], geo, geo ? &labels : nullptr);
     const float small = size * 0.92f;
     for (size_t i = 0; i < m.ents.size(); ++i) {
         const Entity& e = m.ents[i];
         const EntityBox& b = boxes[i];
         const LayeredGraph::Node& n = lg.nodes[i];
         const float x = n.x - n.w / 2, y = n.y - n.h / 2, r = 4 * u;
+        // (its columns share what it was made wider by, for the ends on it)
+        float col[4] = {b.col[0], b.col[1], b.col[2], b.col[3]};
+        if (n.w > b.w + 0.01f && !e.attrs.empty()) {
+            const float more = (n.w - b.w) / static_cast<float>((col[0] > 0) + (col[1] > 0) + (col[2] > 0) + (col[3] > 0));
+            for (float& c : col)
+                if (c > 0) c += more;
+        }
         if (geo) geo->boxes.push_back({"node", e.id, x, y, n.w, n.h});
         const bool own = !e.paint.fill.none();
         const DiagramColour stroke = !e.paint.stroke.none() ? e.paint.stroke : k.ink.stroke;
@@ -1424,10 +1565,10 @@ bool erdiagram(const std::vector<std::string>& st, const DiagramStyle& style, Dr
             RasterPath cols;
             float cx = x;
             for (int c = 0; c < 3; ++c) {
-                cx += b.col[c];
-                if (b.col[c] <= 0 || cx >= x + n.w - 1) continue;
+                cx += col[c];
+                if (col[c] <= 0 || cx >= x + n.w - 1) continue;
                 bool after = false;
-                for (int q = c + 1; q < 4; ++q) after = after || b.col[q] > 0;
+                for (int q = c + 1; q < 4; ++q) after = after || col[q] > 0;
                 if (!after) continue;
                 cols.move_to(cx, y + b.head), cols.line_to(cx, y + n.h);
             }
@@ -1451,12 +1592,12 @@ bool erdiagram(const std::vector<std::string>& st, const DiagramStyle& style, Dr
             const float yy = ry + rp + (line - font.ascent(size) - font.descent(size)) / 2 + font.ascent(size);
             float cx = x + cell;
             say(d, a.type, cx, yy, size, own ? tc : k.ink.quiet, font, 0, false);
-            cx += b.col[0];
+            cx += col[0];
             say(d, a.name, cx, yy, size, tc, font, 0, false);
-            cx += b.col[1];
-            if (b.col[2] > 0) {
+            cx += col[1];
+            if (col[2] > 0) {
                 say(d, a.keys, cx, yy, small, own ? tc : k.ink.key, font, 0, true);
-                cx += b.col[2];
+                cx += col[2];
             }
             float cy = yy;
             for (const std::string& c : b.comments[j]) {
