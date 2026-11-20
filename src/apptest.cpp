@@ -172,8 +172,7 @@ void App::test_find() {
         std::string said;  // (pytest's last line, or its Python's: why none were found)
         if (python) {
             f.python = App::python_for(root, false);
-            std::string host, there;  // (another machine's: its path there)
-            if (const size_t at = f.python.find(root); at != std::string::npos && split_remote(root, &host, &there)) f.python.replace(at, root.size(), there);
+            if (const size_t at = f.python.find(root); at != std::string::npos && remote) f.python.replace(at, root.size(), there);  // (another machine's: its path there)
             std::string out;
             fs_run(root, python_module(f.python, "pytest") + " --collect-only -q 2>&1", &out, 60000);
             for (TestCase& t : parse_pytest_collect(out)) f.tests.push_back(std::move(t));
