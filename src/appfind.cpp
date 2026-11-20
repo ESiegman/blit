@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 
@@ -105,6 +106,21 @@ void split_place(std::string_view t, std::string* name, u64* line, u64* col) {
         }
     }
     name->assign(t);
+}
+
+// Why the machine a folder is on cannot be asked now, as Go to file says it
+// ("": it can, or the folder is this machine's). Asked of the connection as
+// it stands: nothing waits.
+std::string host_down(const std::string& root) {
+    std::string host, there;
+    if (!split_remote(root, &host, &there)) return {};
+    for (const std::shared_ptr<Remote>& r : Remote::all()) {
+        if (r->host() != host || r->state() == Remote::kReady) continue;
+        std::string why = remote_error(root);
+        if (!why.empty()) why[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(why[0])));
+        return why;
+    }
+    return {};
 }
 
 std::string home_dir() {
@@ -236,6 +252,7 @@ struct App::Find {
     u64 walked_ns = 0;
     bool stale = true;
     FinderOptions walked_opt;
+    const FileIndex* unlisted = nullptr;  // (another machine's that could not be listed, and has been asked for again)
 
     // A path: the folder typed so far (in full, with its slash), what is
     // in it, and of that what the rest of what is typed matches.
@@ -295,8 +312,8 @@ struct App::Find {
     // last), then those opened lately, each kind under its heading. What is
     // looked for is what is typed without the line (and column) on its end.
     struct Near {
-        enum : u8 { kFile, kSymbol, kCommand, kSetting };
-        std::string heading;  // a heading's words; empty: a row
+        enum : u8 { kFile, kSymbol, kCommand, kSetting, kNote };
+        std::string heading;  // a heading's words; empty: a row (kNote: why a kind is missing, never chosen either)
         std::string full, name, folder;  // (Search everywhere's other kinds: the name, and in folder what it is)
         u8 kind = kFile;
         u32 index = 0;  // (a symbol's or a command's)
@@ -883,7 +900,8 @@ void App::find_open(int mode, const std::string& typed) {
         o.gitignore = cfg_.search_gitignore;
         const bool other = f.root != workdir || o.ignore != f.walked_opt.ignore || o.hidden != f.walked_opt.hidden || o.gitignore != f.walked_opt.gitignore;
         const u64 now = SDL_GetTicksNS();
-        const bool walk = other || f.stale || !f.walked_ns || now - f.walked_ns > kWalkAgainNs;
+        const bool unread = f.shown && f.shown->index && !f.shown->index->error.empty();  // (another machine's that could not be listed: asked again)
+        const bool walk = other || f.stale || unread || !f.walked_ns || now - f.walked_ns > kWalkAgainNs;
         f.walked_opt = o;
         f.engine->set_options(std::move(o));
         if (f.root != workdir) f.shown = nullptr;
@@ -1019,8 +1037,17 @@ void App::Find::build_all(App& a) {
         auto close = [&](size_t from) {  // (a heading with nothing under it goes)
             if (f.near.size() == from) f.near.pop_back();
         };
+        // (Another machine's folder with no connection to it: why its files
+        // and symbols are missing, or may be old, first; the rest is here.)
+        const bool ours = f.shown && !f.shown->text && f.shown->index && f.shown->index->root == f.root;
+        if (std::string why = host_down(f.root); !why.empty() || (ours && !f.shown->note.empty())) {
+            Near e;
+            e.kind = Near::kNote;
+            e.heading = why.empty() ? f.shown->note : std::move(why);
+            f.near.push_back(std::move(e));
+        }
         size_t from = section("Files");
-        if (f.shown && !f.shown->text && f.shown->index && f.shown->index->root == f.root) {
+        if (ours) {
             const bool current = f.shown->serial == f.serial;
             for (size_t i = 0; i < f.shown->hits.size() && f.near.size() - from < kAllFiles; ++i) {
                 const std::string_view rel = f.shown->index->path(f.shown->hits[i].file);
@@ -2375,7 +2402,8 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
             if (f.sections()) {
                 const Find::Near& e = f.near[i];
                 if (!e.heading.empty()) {  // (never chosen, nor lit under the mouse)
-                    put(box, font, row, 0, e.heading, ink::kHeading);
+                    if (e.kind == Find::Near::kNote) put(box, font, row, 0, fit_text(e.heading, cols), ink::kMuted);
+                    else put(box, font, row, 0, e.heading, ink::kHeading);
                     continue;
                 }
                 // A file with its icon; the other kinds level with it. The
@@ -2562,7 +2590,7 @@ std::string App::find_dump() {
         for (size_t i = 0; i < f.near.size() && i < 32; ++i) {
             const Find::Near& e = f.near[i];
             if (!e.heading.empty()) {
-                out += " " + e.heading + ":";
+                out += e.kind == Find::Near::kNote ? " (" + e.heading + ")" : " " + e.heading + ":";
                 continue;
             }
             out += i == f.sel ? " >" : " ";
@@ -2612,6 +2640,20 @@ void App::find_remote_ready() {
     if (!find_open_ || !find_) return;
     Find& f = *find_;
     if ((f.mode == kFindOpen || f.mode == kFindFolder || f.mode == kFindSave) && f.listed != f.dir && is_remote(f.dir)) find_query();
+    // Search everywhere in a folder there: whether its connection is lost
+    // said or unsaid, and one that could not be listed for want of it
+    // listed again now that it can be.
+    if (f.mode == kFindAll && is_remote(f.root)) {
+        const FileIndex* failed = f.shown && f.shown->index && !f.shown->index->error.empty() ? f.shown->index.get() : nullptr;
+        if (failed && failed != f.unlisted && host_down(f.root).empty()) {
+            f.unlisted = failed;
+            f.walked_ns = SDL_GetTicksNS();
+            f.stale = false;
+            f.engine->index(f.root);
+            if (!f.query.empty()) f.serial = f.engine->find_names(f.query);
+        }
+        Find::build_all(*this);
+    }
 }
 
 void App::find_settle(bool listing) {

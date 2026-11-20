@@ -188,6 +188,10 @@ run "remotewait;find:text;text:main;findwait;key:Escape;$drop;find:text;text:mai
 check "the connection lost: a search there says so, not that no line has it" 'text [main] 0 of 0 : (The connection to box was lost)'
 run "remotewait;$drop;find:names;text:ma;findwait;finddump;key:cmd+shift+F;findwait;finddump" "$R"
 check "and a folder there that could not be listed: why, in both" 'names [ma] 0 of 0 : (The connection to box was lost) ;; text [ma] 0 of 0 : (The connection to box was lost)'
+run "remotewait;$drop;key:cmd+K;text:reconn;findwait;finddump;key:Return;remotewait;key:cmd+K;text:main;findwait;finddump" "$R"
+check "and Search everywhere: why, the commands still there; connected again, the files" 'everywhere [reconn] 1 : (The connection to box was lost) Commands: >Reconnect to the servers that dropped ;; everywhere [main] 1 : Files: >src/main.cpp'
+run "remotewait;$drop;key:cmd+K;text:main;findwait;finddump;command:Reconnect to the servers that dropped;remotewait;findwait;finddump" "$R"
+check "connected again while it is open: the files come" 'everywhere [main] 0 : (The connection to box was lost) ;; everywhere [main] 1 : Files: >src/main.cpp'
 run "remotewait;find:open;remotewait;finddump;text:src/;remotewait;finddump" "$R"
 check "the box that opens files, in a folder there" 'open [ssh://box~/work/] 4 : >../ src/ fresh.txt notes.txt ;; open [ssh://box~/work/src/] 2 : >../ main.cpp'
 slow "remotewait;find:open;remotewait;clock;text:src/;within:300;finddump;text:m;remotewait;finddump" "$R"

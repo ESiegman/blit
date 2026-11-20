@@ -1934,7 +1934,11 @@ over the one ssh connection:
 - **Finding files and text** (Cmd+P, Cmd+Shift+F): the agent walks the
   folder and searches the files on that machine, on as many threads as it
   has cores, and sends back the names and the lines found; the files
-  themselves never cross the connection.
+  themselves never cross the connection. With no connection to it, they
+  say why (*The connection to box was lost*), not that nothing matches;
+  Search everywhere (Cmd+K) says so above what it can still find (the
+  commands and settings), and finds the files there again once the
+  connection is back.
 - **Git** is that machine's own git, run there.
 - **Programs** run there (a terminal, a build, a language server) send
   their output as they write it. Their tabs name the machine (`Terminal:
