@@ -96,11 +96,20 @@ run "remotewait;frame;key:cmd+Down;text:MINE;save;remotewait;text:X;save;remotew
 got="$got | $(tr '\n' ' ' <"$T/.moved/m.txt")"
 check "saved twice, nothing changed there: no question" 'box ~/.moved/m.txt | Ln 3, Col 6 Tabs LF Plain text | alpha beta MINEX'
 fresh_m
+run "remotewait;frame;key:cmd+Down;text:MINE;$there;save;find:names;text:m.;remotewait;frame;finddump;key:Escape;finddump" "ssh://box$T/.moved/m.txt"
+check "the save's question with another box open: it waits for that one to close" 'names [m.] 1 of 1 : >m.txt ;; pick [] (m.txt changed on disk since it was read here) 2 : >Save over it Compare with disk'
+fresh_m
 there=$(printf '%s' "$there" | sed -e "s#$T/.moved#$dir#")
 printf 'alpha\nbeta\n' >"$dir/m.txt"
 run "frame;key:cmd+Down;text:MINE;$there;reload;frame;save;finddump;key:Return;frame;statusdump" "$dir/m.txt"
 got="$got | $(tr '\n' ' ' <"$dir/m.txt")"
 check "and the same on this machine" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; pick [] (m.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; m.txt | Ln 3, Col 5 Tabs LF Plain text | alpha beta MINE'
+# Save all with two of them: each is asked about in turn.
+printf 'a\n' >"$dir/a.txt" && printf 'b\n' >"$dir/b.txt"
+run "frame;text:X;open:$dir/b.txt;frame;text:Y;lua:local f = io.open('$dir/a.txt', 'w') f:write('A2\\n') f:close();lua:local f = io.open('$dir/b.txt', 'w') f:write('B2\\n') f:close();reload;frame;command:Save all;frame;finddump;key:Return;frame;finddump;key:Return;frame;statusdump" "$dir/a.txt"
+got="$got | $(cat "$dir/a.txt" "$dir/b.txt" | tr '\n' ' ')"
+check "Save all with two changed on disk: asked about each" 'blit: a.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; blit: b.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; pick [] (a.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; pick [] (b.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; b.txt | Ln 1, Col 2 Tabs LF Plain text | Xa Yb '
+rm "$dir/a.txt" "$dir/b.txt"
 
 # A slow host (each answer held half a second): saving goes back to the keys at
 # once, and the file is saved as it was then when the write has been made

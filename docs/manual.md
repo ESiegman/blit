@@ -930,7 +930,10 @@ when that happens and when the window gets focus, keeping the cursor's
 place. A tab with unsaved changes of its own is left alone, and a notice
 says so. Its next save asks first, in the box, whether to save over what
 is on disk now; **Compare with disk** (there, or as a command) shows what
-the tab has against what is on disk, in a tab beside it.
+the tab has against what is on disk, in a tab beside it. **Save all** asks
+about each such file in turn, and the question of a save on another
+machine that comes back while another box is open waits for that box to
+close.
 
 ```lua
 blit.opt.git.enabled = false   -- no git at all

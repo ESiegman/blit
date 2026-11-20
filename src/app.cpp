@@ -896,7 +896,7 @@ bool App::save() {
     // (Its file changed on disk under its changes here: asked about first, once.)
     const bool over = std::exchange(pane_->doc->save_over, false);
     if (pane_->doc->disk_moved && !over) {
-        save_ask(id);
+        save_ask(id, saving_all_);
         return false;
     }
     if (script_ && !script_write(false, id)) return false;  // (BufWritePre: a handler may change it first, or close it)
@@ -987,13 +987,16 @@ void App::save_docs(const std::vector<u64>& wanted) {
     const u64 focused = pane_->doc->id;
     Pane* where = nullptr;
     size_t at = 0;
-    // (By id, not by place: a script's handler may close a tab or open one while a file is saved.)
+    // (By id, not by place: a script's handler may close a tab or open one
+    // while a file is saved. Files changed on disk are asked about in turn.)
+    saving_all_ = true;
     for (const u64 id : wanted)
         if (find_doc(id, &where, &at)) {
             focus_pane(where);
             tab_show(at);
             save();
         }
+    saving_all_ = false;
     for (const u64 id : fronts)
         if (find_doc(id, &where, &at)) {
             focus_pane(where);
@@ -1786,6 +1789,11 @@ bool App::event_watch(void* self, SDL_Event* e) {
 }
 
 void App::handle(const SDL_Event& e) {
+    handle_event(e);
+    if (!save_waiting_.empty()) save_ask_next();  // (a save's question waiting for the box: asked once it is free)
+}
+
+void App::handle_event(const SDL_Event& e) {
     switch (e.type) {
         case SDL_EVENT_QUIT:
             request_quit();

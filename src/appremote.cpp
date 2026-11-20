@@ -472,7 +472,7 @@ void App::remote_saved() {
         if (x.moved) {  // changed there since it was read: whether to write over it is asked
             d->disk_stamp = x.modified;
             d->disk_moved = true;
-            save_ask(x.doc);
+            save_ask(x.doc, true);  // (a box opened meanwhile is not taken from under the typing)
             continue;
         }
         if (!x.ok) {

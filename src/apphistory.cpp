@@ -304,10 +304,16 @@ void App::disk_changed_under(Doc& d) {
 }
 
 // Saving a file that changed on disk under it: asked in the box (its footer
-// says why), with what is on disk compared on the way if wanted.
-void App::save_ask(u64 doc) {
+// says why), with what is on disk compared on the way if wanted. (wait: a
+// box that is open is not taken; the question waits for it to close, as
+// the second file of Save all waits for the first's answer.)
+void App::save_ask(u64 doc, bool wait) {
     const Doc* d = find_doc(doc);
     if (!d) return;
+    if (wait && find_is_open()) {
+        if (std::ranges::find(save_waiting_, doc) == save_waiting_.end()) save_waiting_.push_back(doc);
+        return;
+    }
     const std::string name = base_name(d->ed.path);
     find_choose_item("Save " + name, {"Save over it", "Compare with disk"}, [this, doc](int i) {
         Pane* where = nullptr;
@@ -321,6 +327,16 @@ void App::save_ask(u64 doc) {
         save();
     });
     find_ask_footer(name + " changed on disk since it was read here");
+}
+
+// The box is free: the next file waiting to be asked about (one closed,
+// saved or no longer changed since is passed over).
+void App::save_ask_next() {
+    while (!save_waiting_.empty() && !find_is_open()) {
+        const u64 doc = save_waiting_.front();
+        save_waiting_.erase(save_waiting_.begin());
+        if (const Doc* d = find_doc(doc); d && d->disk_moved && d->ed.modified()) save_ask(doc);
+    }
 }
 
 // "Compare with disk": what the file in front has here against what its
