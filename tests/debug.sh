@@ -265,6 +265,17 @@ if [ "$scope" = 0 ] || [ "$(id -u)" = 0 ]; then
     wait "$waiting" 2>/dev/null
     got=$(printf '%s' "$got" | sed -e 's/rounds=[0-9]*/rounds=N/' -e 's/ start\(@[0-9]*\)\{0,1\};/;/')
     check "attached to a process: it stops at a breakpoint as one launched would" 'stopped (breakpoint); stack: main@13; vars: rounds=N'
+    # And one on another machine, from a folder there: the breakpoint set
+    # there by its path there, and the frame's source opened from there.
+    cp "$here/debug/waits.c" "$T/" && (cd "$T" && cc -g -O0 -o waits waits.c) || exit 1
+    "$T/waits" &
+    waiting=$!
+    sleep 0.3
+    run "remotewait;break:13;debugattach:$waiting;debugwait:stopped;debugdump;frame;statusdump;tabsdump" "ssh://box$T/waits.c"
+    kill "$waiting" 2>/dev/null
+    wait "$waiting" 2>/dev/null
+    got=$(printf '%s' "$got" | sed -e 's/rounds=[0-9]*/rounds=N/' -e 's/ start\(@[0-9]*\)\{0,1\};/;/')
+    check "attached on another machine: the same" 'stopped (breakpoint); stack: main@13; vars: rounds=N ;; box waits.c | Ln 13, Col 1 Spaces: 4 LF C ;; waits.c'
 fi
 # (A core file as the debugger writes it: lldb's save-core, gdb's generate-core-file.)
 core="$dir/here/crash.core"

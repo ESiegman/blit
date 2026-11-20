@@ -614,7 +614,9 @@ std::string App::debug_target() const {
 bool App::debug_open(const std::string& near, const std::string& dir, bool python) {
     DebugUi& u = *debugui_;
     std::string host, there;
-    u.remote = split_remote(near, &host, &there) ? remote_prefix(host) : std::string();
+    // (Attaching names no program: the machine is the folder's.)
+    const bool remote = split_remote(near.empty() ? dir : near, &host, &there);
+    u.remote = remote ? remote_prefix(host) : std::string();
     u.dap = std::make_unique<Dap>();
     u.gdb = u.rocm = false;
     u.going = false;
@@ -633,7 +635,7 @@ bool App::debug_open(const std::string& near, const std::string& dir, bool pytho
     std::string err;
     std::string exports;  // (the debugger has them, and the program it starts)
     for (const std::string& e : u.env) exports += "export " + sh_word(e) + "; ";
-    if (const std::string prog = u.remote.empty() ? near : there; !prog.empty() && !python)
+    if (const std::string prog = near.empty() || !remote ? near : there; !prog.empty() && !python)
         exports += "BLIT_DEBUG_PROGRAM=" + sh_word(prog) + "; export BLIT_DEBUG_PROGRAM; ";  // (what it debugs: HIP's gets rocgdb)
     if (!u.dap->start({"/bin/sh", "-c", exports + (python ? kPython : kNative)}, dir, wake, &err)) {
         u.error = err;
