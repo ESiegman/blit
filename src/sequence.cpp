@@ -579,6 +579,41 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
     }
     parts_[0].x = 0;
     for (size_t k = 1; k < n; ++k) parts_[k].x = parts_[k - 1].x + gap[k - 1];
+    // What a message or a note says was wrapped short, before the gaps were
+    // known; where they have made more room for it (an arrow across many
+    // participants, a note over many), it is wrapped again, to that room.
+    // (It is only made less tall: no wider than the room it already has.)
+    auto free_right = [&](int a) {  // how far right of a's lifeline something may reach
+        if (static_cast<size_t>(a) + 1 < n) return gap[static_cast<size_t>(a)] - std::max(12 * u, cross_right(a));
+        return right;
+    };
+    auto free_left = [&](int a) {
+        if (a > 0) return gap[static_cast<size_t>(a) - 1] - std::max(12 * u + reach_r[static_cast<size_t>(a) - 1], cross_left(a));
+        return left;
+    };
+    for (size_t i = 0; i < events_.size(); ++i) {
+        Event& e = events_[i];
+        if ((e.kind != kMessage && e.kind != kNote) || e.lines.size() <= e.said.size()) continue;
+        const Part &a = parts_[static_cast<size_t>(e.a)], &b = parts_[static_cast<size_t>(e.b)];
+        float most = 0;
+        if (e.kind == kMessage) {
+            const float number = e.numbered ? 2 * number_half(e) + 4 * u : 0;
+            const int lo = std::min(e.a, e.b), hi = std::max(e.a, e.b);
+            const float bars = std::max(activation, reach_r[static_cast<size_t>(lo)] + reach_l[static_cast<size_t>(hi)]);
+            if (e.a == e.b) most = free_right(e.a) - bars_r(e.a) - number - 8 * u;
+            else most = std::fabs(b.x - a.x) - 2 * 14 * u - bars - number - (b.created == static_cast<int>(i) ? b.w / 2 : 0);
+        } else {
+            if (e.side == 1) most = free_right(e.a) - 12 * u - std::max(activation, reach_r[static_cast<size_t>(e.a)]);
+            else if (e.side == -1) most = free_left(e.a) - 12 * u - reach_l[static_cast<size_t>(e.a)];
+            else if (e.a == e.b) most = 2 * std::min(free_left(e.a), free_right(e.a));
+            else most = b.x - a.x + 2 * 22 * u;
+            most -= 2 * note_pad;
+        }
+        if (most <= e.tw + 0.5f) continue;
+        e.lines = diagram_wrap(e.said, most, size_, font_);
+        e.tw = widest(e.lines);
+        e.th = static_cast<float>(e.lines.size()) * line;
+    }
 
     // ---- down: each thing in its band
     float y = 0;

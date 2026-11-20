@@ -2680,6 +2680,27 @@ void sequence_test() {
         for (const auto& b : out) check(apart_x(boxes[0], b) && apart_x(boxes[1], b), "sequence: " + b.name + " clear of the boxes, room " + std::to_string(room));
     }
     st.room = 2000;
+    // What a message across many participants says, and a note over many,
+    // on one line where the arrow (the note) is long enough for it, not
+    // wrapped as if it were short.
+    {
+        Drawing d;
+        DiagramGeometry geo;
+        std::string err;
+        diagram_make("sequenceDiagram\n participant a\n participant b\n participant c\n participant d\n participant e\n participant f\n"
+                     " a->>f: across them all, a message that says rather a lot about it\n f-->>a: back\n"
+                     " Note over a,f: a note over all six of them, which says rather more than a short one\n Note over c: x\n",
+                     st, &d, &err, &geo);
+        float across = 0, back = 0, wide_note = 0, note = 0;
+        for (const auto& b : geo.boxes) {
+            if (b.name == "message:0") across = b.h;
+            if (b.name == "message:1") back = b.h;
+            if (b.name == "note:2") wide_note = b.h;
+            if (b.name == "note:3") note = b.h;
+        }
+        check(back > 0 && across == back, "sequence: a long arrow's text on one line");
+        check(note > 0 && wide_note == note, "sequence: a note over many on one line");
+    }
     // Mistakes, with their lines.
     const struct {
         const char* src;
