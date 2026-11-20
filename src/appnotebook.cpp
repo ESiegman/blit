@@ -521,7 +521,7 @@ std::string App::nb_kernel_status(Doc& d) {
     if (const size_t venv = where.find("/.venv/"); venv != std::string::npos) where = ".venv";
     else where = where.substr(where.find_last_of('/') + 1);
     const bool busy = nb.running.key || !nb.waiting.empty();
-    return std::string(nb.ipython ? "IPython" : "Python") + " " + nb.version + (where.empty() ? "" : " (" + where + ")") + (busy ? " \xC2\xB7 busy" : " \xC2\xB7 idle");
+    return std::string(nb.ipython ? "IPython, Python " : "Python ") + nb.version + (where.empty() ? "" : " (" + where + ")") + (busy ? " \xC2\xB7 busy" : " \xC2\xB7 idle");
 }
 
 // For the tests: the kernel of the notebook in front: what it is, its
