@@ -49,10 +49,10 @@ for f in sample edge diagrams code; do
 done
 
 # What is wrong in a diagram's layout (diagramdump): an edge not drawn,
-# two nodes over each other, a label over a node, an edge that does not end on its nodes or
-# that passes through another node (or a subgraph neither end is in, or
-# under a subgraph's title), a subgraph partly over another; a line each,
-# nothing when all is well.
+# two nodes over each other, a label over a node, an edge that does not
+# end on its nodes or that passes through another node (or a subgraph
+# neither end is in, or under a subgraph's title), a subgraph partly over
+# another; a line each, nothing when all is well.
 layout_problems() {
     awk '
     function flush(   i, j, e, k, q, p, xy) {
