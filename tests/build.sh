@@ -66,6 +66,10 @@ run "$dir/cm" "builddump"
 check "CMakeLists.txt, never configured" 'CMake: >Build Configure Test'
 run "$dir/pre" "builddump"
 check "presets: the ones shown, a build preset's folder by its preset" 'CMake: Configure (dev) >Build (dev)'
+mkdir -p "$dir/pre/out/dev"
+: >"$dir/pre/out/dev/CMakeCache.txt"
+run "$dir/pre" "builddump"
+check "configured: its folder (an inherited \${presetName}, the preset's own name) is still its preset's" 'CMake: Configure (dev) >Build (dev)'
 run "$dir/mk" "builddump"
 check "a Makefile: make, and its targets (not files, patterns or variables)" 'Make: >make make all make test make install make clean make fail'
 run "$dir/ms" "builddump"

@@ -88,9 +88,11 @@ struct Look {
 // ---------------------------------------------------------------- CMake
 
 // A configure preset's binaryDir, through what it inherits, with the macros
-// that can be known here filled in.
-std::string preset_dir(const json::Value& presets, std::string_view name, int depth = 0) {
+// that can be known here filled in (${presetName} is the one asked about,
+// not the one it inherits the binaryDir from).
+std::string preset_dir(const json::Value& presets, std::string_view name, std::string_view asked = {}, int depth = 0) {
     if (depth > 8) return {};
+    if (asked.empty()) asked = name;
     for (json::Value p : presets) {
         if (p["name"].str() != name) continue;
         std::string dir(p["binaryDir"].str());
@@ -100,13 +102,13 @@ std::string preset_dir(const json::Value& presets, std::string_view name, int de
             };
             put("${sourceDir}/", "");
             put("${sourceDir}", ".");
-            put("${presetName}", name);
+            put("${presetName}", asked);
             return dir.find("${") == std::string::npos ? dir : std::string();
         }
         const json::Value up = p["inherits"];
-        if (up.is_string()) return preset_dir(presets, up.str(), depth + 1);
+        if (up.is_string()) return preset_dir(presets, up.str(), asked, depth + 1);
         for (json::Value u : up)
-            if (std::string d = preset_dir(presets, u.str(), depth + 1); !d.empty()) return d;
+            if (std::string d = preset_dir(presets, u.str(), asked, depth + 1); !d.empty()) return d;
         return {};
     }
     return {};
