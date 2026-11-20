@@ -240,6 +240,10 @@ run "$P/cm" "buildrun:make test;buildwait;builddump"
 check "and it builds, and its test passes" 'Make: make make all make run >make test make release make clean (last: 0)'
 run "$dir/none" "newproject;project:where=$P;project:kind=Python;project:manager=pip;project:type=Script;project:install=false;project:name=tool;projectcreate;projectwait;projectdump"
 check "Python: a script with pip" 'kind=Python name=tool where=~/projects git=on | manager=pip type=Script python=3.13 backend_pip=hatchling deps= ruff=true types=mypy readme=true install=false | at 0 | made ~/projects/tool'
+run "$dir/none" "newproject;project:where=$P;project:kind=HIP;project:configure=false;project:git=false;project:name=stencil;projectcreate;projectwait"
+run "$P/stencil" "builddump"
+got="$got | $(sed -n 's/^ *CompilationDatabase: //p' "$P/stencil/.clangd")"
+check "HIP: the Run button builds release, the preset it configures and .clangd reads" 'CMake: Configure (release) Configure (debug) Configure (ci) >Build (release) Build (debug) Build (ci) Test (release) Test (debug) Test (ci) | build/release'
 
 printf 'notes\n' >"$dir/notes.txt"
 run "$dir/none" "open:$dir/notes.txt;frame;key:cmd+alt+n;frame;startdump"

@@ -2522,7 +2522,9 @@ search when it does.
 Headers go in `include/NAME/`, sources in `src/`; a program is a library
 of what it does and a small `main`, so its tests have something to link.
 Flags are a target's own (never global), and a CMake project has presets
-(debug with the sanitizers, release, and ci with warnings as errors).
+(debug with the sanitizers, release, and ci with warnings as errors; a
+HIP project's release comes first, the one it configures, builds with the
+Run button and points `.clangd` at).
 Once the files are written blit runs `git init` and the configure (or
 the venv, or `uv add`) in the Build tab's output terminal, opens the main
 file, and makes the folder the working folder.

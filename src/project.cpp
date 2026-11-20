@@ -503,9 +503,10 @@ ProjectPlan cmake_plan(const ProjectValues& values, Lang lang) {
             const char* type;
             bool werror;
         };
-        const Preset presets[] = {{"debug", "Debug", "Debug", false},
-                                  {"release", hip ? "Release, with debug information" : "Release", hip ? "RelWithDebInfo" : "Release", false},
-                                  {"ci", "CI (warnings are errors)", "Release", true}};
+        Preset presets[] = {{"debug", "Debug", "Debug", false},
+                            {"release", hip ? "Release, with debug information" : "Release", hip ? "RelWithDebInfo" : "Release", false},
+                            {"ci", "CI (warnings are errors)", "Release", true}};
+        if (hip) std::swap(presets[0], presets[1]);  // (the one configured comes first: the Run button builds the first build preset)
         std::string pr = "{\n  \"version\": 6,\n  \"configurePresets\": [\n";
         for (size_t i = 0; i < std::size(presets); ++i) {
             const Preset& s = presets[i];
