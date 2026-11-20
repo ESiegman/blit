@@ -677,6 +677,51 @@ void notebook_kept_test() {
     check(coloured == 1 && again.size() == first.size(), "notebook kept: typed in one cell, only it coloured again");
 }
 
+// The script's cells matched to the model's: as the plain search of the
+// model for each cell does it (on cells of a few kinds and texts, many
+// alike), and in time that grows as the cells do, not as their square.
+void notebook_match_test(int seeds) {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    auto plain = [](const std::vector<NotebookCell>& now, const std::vector<NotebookCell>& model) {
+        std::vector<CellMatch> out(now.size());
+        std::vector<bool> taken(model.size(), false);
+        for (size_t i = 0; i < now.size(); ++i)
+            for (size_t j = 0; j < model.size(); ++j)
+                if (!taken[j] && model[j].kind == now[i].kind && model[j].source == now[i].source) {
+                    out[i] = {static_cast<int>(j), true};
+                    taken[j] = true;
+                    break;
+                }
+        for (size_t i = 0; i < now.size(); ++i)
+            if (out[i].at < 0 && i < model.size() && !taken[i] && model[i].kind == now[i].kind) out[i].at = static_cast<int>(i), taken[i] = true;
+        return out;
+    };
+    static const char* const kinds[] = {"code", "markdown", "raw"};
+    for (int s = 1; s <= seeds; ++s) {
+        std::mt19937_64 pick(static_cast<u64>(s));
+        auto cells = [&](size_t n) {
+            std::vector<NotebookCell> v(n);
+            for (NotebookCell& c : v) c.kind = kinds[pick() % 3], c.source = std::string(pick() % 4, 'x');
+            return v;
+        };
+        const std::vector<NotebookCell> now = cells(pick() % 30), model = cells(pick() % 30);
+        const std::vector<CellMatch> a = notebook_match(now, model), b = plain(now, model);
+        bool same = a.size() == b.size();
+        for (size_t i = 0; same && i < a.size(); ++i) same = a[i].at == b[i].at && a[i].same == b[i].same;
+        check(same, "notebook match: as the plain search does it");
+    }
+    std::vector<NotebookCell> many(50000), changed;
+    for (size_t k = 0; k < many.size(); ++k) many[k].kind = "code", many[k].source = "x = " + std::to_string(k);
+    changed = many;
+    for (size_t k = 0; k < changed.size(); k += 2) changed[k].source += " + 1";
+    const auto t0 = std::chrono::steady_clock::now();
+    const std::vector<CellMatch> m = notebook_match(changed, many);
+    const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    check(took < 0.3 && m[0].at == 0 && !m[0].same && m[1].at == 1 && m[1].same, "notebook match: 50000 cells, half changed, at once");
+}
+
 // Local history: versions kept newest first, read back as they were; the
 // same text not kept twice (a save marks it saved); the oldest let go past
 // the most kept; and each file's folder its own.
@@ -6253,6 +6298,7 @@ int main(int argc, char** argv) {
     notebook_view_test();
     notebook_bounds_test();
     notebook_kept_test();
+    notebook_match_test(seeds * 10);
     history_test();
     wrap_test();
     find_test();

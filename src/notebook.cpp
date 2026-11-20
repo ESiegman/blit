@@ -6,6 +6,7 @@
 #include <cmath>
 #include <map>
 #include <random>
+#include <unordered_map>
 
 #include "json.hpp"
 
@@ -296,13 +297,24 @@ bool notebook_add_output(std::vector<std::string>* outputs, std::string_view out
 std::vector<CellMatch> notebook_match(const std::vector<NotebookCell>& now, const std::vector<NotebookCell>& model) {
     std::vector<CellMatch> out(now.size());
     std::vector<bool> taken(model.size(), false);
-    for (size_t i = 0; i < now.size(); ++i)
-        for (size_t j = 0; j < model.size(); ++j)
-            if (!taken[j] && model[j].kind == now[i].kind && model[j].source == now[i].source) {
-                out[i] = {static_cast<int>(j), true};
-                taken[j] = true;
-                break;
-            }
+    // The model's cells by their kind and text, each such list in order
+    // (the first not taken is at `next`): found at once however many
+    // cells there are, as notebook_match runs on each change.
+    struct Same {
+        std::vector<size_t> at;
+        size_t next = 0;
+    };
+    std::map<std::string_view, std::unordered_map<std::string_view, Same>> by;
+    for (size_t j = 0; j < model.size(); ++j) by[model[j].kind][model[j].source].at.push_back(j);
+    for (size_t i = 0; i < now.size(); ++i) {
+        const auto kind = by.find(now[i].kind);
+        if (kind == by.end()) continue;
+        const auto it = kind->second.find(now[i].source);
+        if (it == kind->second.end() || it->second.next == it->second.at.size()) continue;
+        const size_t j = it->second.at[it->second.next++];
+        out[i] = {static_cast<int>(j), true};
+        taken[j] = true;
+    }
     for (size_t i = 0; i < now.size(); ++i)
         if (out[i].at < 0 && i < model.size() && !taken[i] && model[i].kind == now[i].kind) out[i].at = static_cast<int>(i), taken[i] = true;
     return out;
