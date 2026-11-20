@@ -347,12 +347,16 @@ void App::svg_preview() {
     dirty_ = true;
 }
 
-// Cmd+Shift+V: an SVG's picture, a notebook's view (shown or closed), or a Markdown preview.
+// Cmd+Shift+V: an SVG's picture, a notebook's view (shown or closed), or a
+// Markdown preview (of a Markdown file, or a new one of no language yet).
+// Anything else is refused on the bottom line: a report or a log drawn as
+// Markdown is mangled.
 void App::preview_open() {
     const Doc& d = *pane_->doc;
     if ((d.image && d.image->source) || (!d.image && !d.md && is_svg_path(d.ed.path))) svg_preview();
     else if (d.nb || (d.md && md_notebook(d))) nb_view_toggle();
-    else md_open();
+    else if (d.md || (!d.term && !d.prof && !d.image && !d.pdf && (file_language() == "markdown" || (d.ed.path.empty() && d.lang.empty())))) md_open();
+    else notify("No preview: " + (!d.title.empty() ? d.title : d.ed.path.empty() ? std::string("untitled") : d.ed.path.substr(d.ed.path.find_last_of('/') + 1)) + " is not Markdown, a notebook or an SVG");
 }
 
 // The picture of this file: being read (asked for now, the first time),

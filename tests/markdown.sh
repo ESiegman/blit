@@ -404,6 +404,11 @@ check "what is typed in the file is in the preview" "Typed"
 # Cmd+Shift+V: the preview in a split to the right, the keyboard left with the file; again, the same preview.
 got=$("$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;keyof:Preview beside the file;frame;keyof:Preview beside the file;frame;dump" "$here/markdown/edge.md" 2>&1 >/dev/null | grep -v '^\[' | tail -1)
 check "Cmd+Shift+V: beside it, once" "H(>[edge.md*] | [Preview: edge.md*])0.50"
+# On a file that is not Markdown (a tool's report), it refuses on the
+# bottom line rather than drawing the report as Markdown.
+printf 'Copyright 1986-2025 Xilinx, Inc. All Rights Reserved.\n# Utilization\n| Site Type | Used |\n' >"$dir/synth.rpt"
+got=$("$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;keyof:Preview beside the file;frame;dump" "$dir/synth.rpt" 2>&1 >/dev/null | grep -v '^\[' | tr '\n' ' ')
+check "Cmd+Shift+V on a file that is not Markdown: refused" "blit: No preview: synth.rpt is not Markdown, a notebook or an SVG >[synth.rpt*] "
 
 # At most so many seconds: timeout(1) where there is one (GitHub's macOS 26
 # machines have none), perl's alarm where there is not. (Killed if it is

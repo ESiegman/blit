@@ -2515,7 +2515,10 @@ again brings it to the front; from the preview, it (or Esc) goes back to
 the file. In the preview the arrows, `j` and `k`, Page Up and Page Down
 (or Space and `b`), Home and End (or `g` and `G`) and the wheel scroll it;
 a click on a link opens a web address in the browser, another file beside
-this one in a tab, and `#heading` goes to that heading.
+this one in a tab, and `#heading` goes to that heading. In a file that is
+not Markdown (by its name, or the language chosen in the status bar), a
+notebook or an SVG, it draws nothing and says so on the bottom line; a new
+file of no language yet is taken as Markdown.
 
 ![the preview of a note: a sequence diagram, a table, coloured code and a pie](media/markdown.png)
 
