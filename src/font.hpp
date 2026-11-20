@@ -30,6 +30,20 @@ typedef struct FT_FaceRec_* FT_Face;
 
 namespace blit {
 
+// A font file (and the face in it), for those that read fonts on their own.
+struct FontFile {
+    std::string path;
+    int index = 0;
+    bool operator==(const FontFile&) const = default;
+};
+// The fonts tried, in order, for characters a font lacks: those of blit's
+// list this system has. Then, for a character none of them has, the fonts
+// fontconfig knows that have it, nearest to a monospace one first (not a
+// colour one: its glyphs are pictures, not outlines; none where there is no
+// fontconfig). Either may be asked from any thread.
+const std::vector<FontFile>& font_fallbacks();
+std::vector<FontFile> font_fallbacks_for(u32 cp);
+
 struct FontSpec {
     std::string family;             // family name or a font file path; empty = a system monospace font
     std::string style = "Regular";  // "Italic", "Medium", "Bold Italic", ...

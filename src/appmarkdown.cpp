@@ -290,10 +290,12 @@ struct App::MdWorker {
         // their outputs (notebook.hpp), its code in this language.
         std::shared_ptr<const std::vector<NotebookCell>> notebook;
         std::string lang;
-        // Diagrams: the colours, the font (its file, and its size in pixels).
+        // Diagrams: the colours, the font (its file, and its size in pixels),
+        // and the fonts for characters it lacks.
         DiagramPalette palette;
         std::string font_path;
         int font_index = 0;
+        std::vector<FontFile> fallbacks;
         float font_px = 26;
     };
     struct Done {
@@ -348,6 +350,7 @@ struct App::MdWorker {
         mix(&j.palette, sizeof j.palette);
         mix(j.font_path.data(), j.font_path.size());
         mix(&j.font_index, sizeof j.font_index), mix(&j.font_px, sizeof j.font_px), mix(&room_px, sizeof room_px), mix(&j.density, sizeof j.density);
+        for (const FontFile& f : j.fallbacks) mix(f.path.data(), f.path.size() + 1), mix(&f.index, sizeof f.index);
         *key = h;
         *cells = false;
         ++asked;
@@ -355,7 +358,7 @@ struct App::MdWorker {
             it->second->used = asked;
             return it->second;
         }
-        font.open(j.font_path, j.font_index);
+        font.open(j.font_path, j.font_index, j.fallbacks);
         ++laid;
         const float density = static_cast<float>(std::max(1.0, j.density));
         DiagramStyle st;
@@ -688,6 +691,13 @@ void App::md_layout(FrameDesc& fd) {
             mix(v.palette, sizeof v.palette), mix(theme_.bg, sizeof(float) * 3), mix(font.path().data(), font.path().size());
             const float px = font.px();
             mix(&px, sizeof px), mix(&density_, sizeof density_);
+            static const u64 fallbacks = [] {  // (the same while blit runs: worked out once, not each frame)
+                u64 k = 1469598103934665603ull;
+                for (const FontFile& f : font_fallbacks())
+                    for (const char c : f.path + '\n' + std::to_string(f.index)) k = (k ^ static_cast<u8>(c)) * 1099511628211ull;
+                return k;
+            }();
+            mix(&fallbacks, sizeof fallbacks);
         }
         // Its text handed to the worker when it, the width or the height change, a picture comes, a notebook's outputs change, or the diagrams' look changes.
         if (src && (src->ed.revision() != v.asked_rev || width != v.asked_width || rows != v.asked_tall || pictures_gen_ != v.asked_pictures || cfg_.markdown_web_pictures != v.asked_web ||
@@ -713,6 +723,7 @@ void App::md_layout(FrameDesc& fd) {
             for (u32 i = 0; i < kMdInkCount; ++i) std::copy(v.palette[i], v.palette[i] + 3, j.palette.ink[i]);
             std::copy(theme_.bg, theme_.bg + 3, j.palette.bg);
             j.font_path = font.path(), j.font_index = font.index(), j.font_px = font.px();
+            j.fallbacks = font_fallbacks();
             v.asked_rev = j.rev, v.asked_width = width, v.asked_tall = rows, v.asked_pictures = j.pictures, v.asked_web = j.web, v.asked_nb = nb_gen, v.asked_look = look;
             // (the first time: at once, so that it opens drawn; its code is
             // coloured on the worker. A notebook's, only there: its pictures
@@ -1061,7 +1072,7 @@ std::string App::md_diagram_dump() {
         const Doc* src = find_doc(v.source);
         if (!src) return "no file\n";
         DiagramFont f;
-        f.open(font_->path(), font_->index());
+        f.open(font_->path(), font_->index(), font_fallbacks());
         DiagramStyle st;
         st.font = &f;
         const float density = std::max(1.0f, static_cast<float>(density_));

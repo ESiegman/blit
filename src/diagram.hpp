@@ -19,6 +19,7 @@
 #include <vector>
 
 #include "common.hpp"
+#include "font.hpp"
 #include "markdown.hpp"
 #include "raster.hpp"
 
@@ -46,16 +47,18 @@ struct DiagramPalette {
 
 // The font text is measured and drawn in: a face of its own (FreeType's
 // faces are not to be used by two threads, and this one is used by the
-// preview's). Without a face (it could not be opened) text is measured as
-// a monospace font would be, and drawn as boxes.
+// preview's), and for characters it lacks, the editor's fallbacks (each
+// opened the first time it is needed), then those fontconfig names; a
+// character none has is a box. Without a face (it could not be opened)
+// text is measured as a monospace font would be, and drawn as boxes.
 class DiagramFont {
 public:
     DiagramFont() = default;
     DiagramFont(const DiagramFont&) = delete;
     DiagramFont& operator=(const DiagramFont&) = delete;
     ~DiagramFont();
-    bool open(const std::string& path, int index);
-    bool same(const std::string& path, int index) const { return path == path_ && index == index_; }
+    bool open(const std::string& path, int index, const std::vector<FontFile>& fallbacks = {});
+    bool same(const std::string& path, int index, const std::vector<FontFile>& fallbacks) const { return path == path_ && index == index_ && fallbacks == fallback_files_; }
     bool ok() const { return face_ != nullptr; }
     // In points at `size` points (an em): how wide text is, and how far
     // above and below its baseline a line reaches.
@@ -72,12 +75,21 @@ private:
         RasterPath shape;   // in ems, y down
         bool done = false;
     };
+    struct Fallback {
+        FontFile file;
+        FT_Face face = nullptr;
+        float units = 1000;
+        bool tried = false;
+    };
     const Glyph& glyph(u32 cp) const;
+    FT_Face face_for(u32 cp, unsigned* gi, float* units) const;
     FT_Library lib_ = nullptr;
     FT_Face face_ = nullptr;
     std::string path_;
     int index_ = -1;
     float ascent_ = 0.8f, descent_ = 0.2f, units_ = 1000;
+    std::vector<FontFile> fallback_files_;
+    mutable std::vector<Fallback> fallbacks_;
     mutable std::map<u32, Glyph> glyphs_;
 };
 

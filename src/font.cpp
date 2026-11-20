@@ -1279,19 +1279,47 @@ FT_Face Font::face_for(u32 cp, u32* gi) {
 }
 
 #if BLIT_FONTCONFIG
-// The fonts fontconfig knows, nearest to a monospace one first, for one
-// that has a character none of the faces loaded so far has. Not a colour
-// font: the atlas holds coverage, and FreeType gives such a font's glyphs
-// as colour bitmaps. Each character is asked about once (the answer, if
-// there is one, is then among the fallbacks).
+// A font fontconfig knows that has a character none of the faces loaded so
+// far has. Each character is asked about once (the answer, if there is one,
+// is then among the fallbacks).
 FT_Face Font::fallback_for(u32 cp) {
     if (!asked_.insert(cp).second) return nullptr;
+    for (const FontFile& file : font_fallbacks_for(cp)) {
+        FT_Face face;
+        if (FT_New_Face(lib_, file.path.c_str(), file.index, &face)) continue;
+        if (!FT_IS_SCALABLE(face) || FT_Set_Char_Size(face, 0, static_cast<FT_F26Dot6>(std::lround(px_ * 64)), 72, 72) || !FT_Get_Char_Index(face, cp)) {
+            FT_Done_Face(face);
+            continue;
+        }
+        fallbacks_.push_back(face);
+        return face;
+    }
+    return nullptr;
+}
+#endif
+
+const std::vector<FontFile>& font_fallbacks() {
+    static const std::vector<FontFile> files = [] {
+        std::vector<FontFile> out;
+        for (const char* p : kFallbackFonts)
+            if (FILE* f = std::fopen(p, "rb")) {
+                std::fclose(f);
+                out.push_back({p, 0});
+            }
+        return out;
+    }();
+    return files;
+}
+
+std::vector<FontFile> font_fallbacks_for(u32 cp) {
+    std::vector<FontFile> out;
+#if BLIT_FONTCONFIG
     FcPattern* want = FcPatternCreate();
     FcCharSet* chars = FcCharSetCreate();
     if (!want || !chars) {
         if (want) FcPatternDestroy(want);
         if (chars) FcCharSetDestroy(chars);
-        return nullptr;
+        return out;
     }
     FcCharSetAddChar(chars, cp);
     FcPatternAddCharSet(want, FC_CHARSET, chars);
@@ -1302,9 +1330,8 @@ FT_Face Font::fallback_for(u32 cp) {
     FcFontSet* fonts = FcFontSort(nullptr, want, FcTrue, nullptr, &result);
     FcPatternDestroy(want);
     FcCharSetDestroy(chars);
-    if (!fonts) return nullptr;
-    FT_Face found = nullptr;
-    for (int i = 0; i < fonts->nfont && !found; ++i) {
+    if (!fonts) return out;
+    for (int i = 0; i < fonts->nfont && out.size() < 8; ++i) {
         FcPattern* f = fonts->fonts[i];
         FcCharSet* has = nullptr;
         FcBool colour = FcFalse;
@@ -1314,19 +1341,14 @@ FT_Face Font::fallback_for(u32 cp) {
         if (FcPatternGetBool(f, FC_COLOR, 0, &colour) == FcResultMatch && colour) continue;
         if (FcPatternGetString(f, FC_FILE, 0, &file) != FcResultMatch || !file) continue;
         FcPatternGetInteger(f, FC_INDEX, 0, &index);
-        FT_Face face;
-        if (FT_New_Face(lib_, reinterpret_cast<const char*>(file), index, &face)) continue;
-        if (!FT_IS_SCALABLE(face) || FT_Set_Char_Size(face, 0, static_cast<FT_F26Dot6>(std::lround(px_ * 64)), 72, 72) || !FT_Get_Char_Index(face, cp)) {
-            FT_Done_Face(face);
-            continue;
-        }
-        fallbacks_.push_back(face);
-        found = face;
+        out.push_back({reinterpret_cast<const char*>(file), index});
     }
     FcFontSetDestroy(fonts);
-    return found;
-}
+#else
+    (void)cp;
 #endif
+    return out;
+}
 
 void Font::draw_tofu(u32 slot, u32 width) {
     const int sx = static_cast<int>(slot % cols_) * cell_w_, sy = static_cast<int>(slot / cols_) * cell_h_;

@@ -93,13 +93,20 @@ bool diagram_colour(std::string_view s, DiagramColour* out) {
 // ---------------------------------------------------------------- the font
 
 DiagramFont::~DiagramFont() {
+    for (Fallback& f : fallbacks_)
+        if (f.face) FT_Done_Face(f.face);
     if (face_) FT_Done_Face(face_);
     if (lib_) FT_Done_FreeType(lib_);
 }
 
-bool DiagramFont::open(const std::string& path, int index) {
-    if (same(path, index) && (face_ || lib_)) return face_ != nullptr;
+bool DiagramFont::open(const std::string& path, int index, const std::vector<FontFile>& fallbacks) {
+    if (same(path, index, fallbacks) && (face_ || lib_)) return face_ != nullptr;
     if (face_) FT_Done_Face(face_), face_ = nullptr;
+    for (Fallback& f : fallbacks_)
+        if (f.face) FT_Done_Face(f.face);
+    fallbacks_.clear();
+    for (const FontFile& f : fallbacks) fallbacks_.push_back({f});
+    fallback_files_ = fallbacks;
     glyphs_.clear();
     path_ = path, index_ = index;
     if (!lib_ && FT_Init_FreeType(&lib_)) {
@@ -149,6 +156,36 @@ int ft_cubic(const FT_Vector* c1, const FT_Vector* c2, const FT_Vector* to, void
 
 }  // namespace
 
+FT_Face DiagramFont::face_for(u32 cp, unsigned* gi, float* units) const {
+    if ((*gi = FT_Get_Char_Index(face_, cp))) {
+        *units = units_;
+        return face_;
+    }
+    auto has = [&](Fallback& f) {
+        if (!f.tried) {
+            f.tried = true;
+            if (FT_New_Face(lib_, f.file.path.c_str(), f.file.index, &f.face) || !FT_IS_SCALABLE(f.face)) {
+                if (f.face) FT_Done_Face(f.face);
+                f.face = nullptr;
+            } else {
+                f.units = f.face->units_per_EM ? static_cast<float>(f.face->units_per_EM) : 1000;
+            }
+        }
+        if (!f.face || !(*gi = FT_Get_Char_Index(f.face, cp))) return false;
+        *units = f.units;
+        return true;
+    };
+    for (Fallback& f : fallbacks_)
+        if (has(f)) return f.face;
+    if (cp < 0x20) return nullptr;
+    for (const FontFile& file : font_fallbacks_for(cp)) {
+        if (std::ranges::any_of(fallbacks_, [&](const Fallback& f) { return f.file == file; })) continue;
+        fallbacks_.push_back({file});
+        if (has(fallbacks_.back())) return fallbacks_.back().face;
+    }
+    return nullptr;
+}
+
 const DiagramFont::Glyph& DiagramFont::glyph(u32 cp) const {
     Glyph& g = glyphs_[cp];
     if (g.done) return g;
@@ -161,18 +198,29 @@ const DiagramFont::Glyph& DiagramFont::glyph(u32 cp) const {
         if (w && base != ' ') g.shape.rect(0.08f, -0.7f, 0.6f * w - 0.16f, 0.7f, 0);
         return g;
     }
-    const FT_UInt gi = FT_Get_Char_Index(face_, base);
+    unsigned gi = 0;
+    float units = units_;
+    FT_Face face = face_for(base, &gi, &units);
+    if (!face) {
+        // In no font: a box, as wide as the character is (a space is a space).
+        if (w && base != ' ' && base >= 0x20) {
+            const float x0 = 0.1f, x1 = 0.6f * static_cast<float>(w) - 0.1f, y0 = -0.72f, y1 = 0.02f, t = 0.06f;
+            const RasterPoint outer[] = {{x0, y0}, {x1, y0}, {x1, y1}, {x0, y1}}, inner[] = {{x0 + t, y0 + t}, {x0 + t, y1 - t}, {x1 - t, y1 - t}, {x1 - t, y0 + t}};
+            g.shape.polygon(outer, 4);
+            g.shape.polygon(inner, 4);
+        }
+        return g;
+    }
     // In the font's own units, unhinted: the same outline on every system,
     // at every size.
-    if (FT_Load_Glyph(face_, gi, FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP)) return g;
-    g.advance = face_->glyph->advance.x / units_;
-    if (gi == 0 && w > 1) g.advance = std::max(g.advance, 0.6f * w);
-    if (face_->glyph->format != FT_GLYPH_FORMAT_OUTLINE) return g;
-    FT_Outline& ol = face_->glyph->outline;
-    if (bold) FT_Outline_Embolden(&ol, static_cast<FT_Pos>(units_ / 28));
+    if (FT_Load_Glyph(face, gi, FT_LOAD_NO_SCALE | FT_LOAD_NO_HINTING | FT_LOAD_NO_BITMAP)) return g;
+    g.advance = face->glyph->advance.x / units;
+    if (face->glyph->format != FT_GLYPH_FORMAT_OUTLINE) return g;
+    FT_Outline& ol = face->glyph->outline;
+    if (bold) FT_Outline_Embolden(&ol, static_cast<FT_Pos>(units / 28));
     FT_Outline_Funcs fns{};
     fns.move_to = ft_move, fns.line_to = ft_line, fns.conic_to = ft_conic, fns.cubic_to = ft_cubic;
-    Outliner o{&g.shape, 1 / units_};
+    Outliner o{&g.shape, 1 / units};
     FT_Outline_Decompose(&ol, &fns, &o);
     if (o.open) g.shape.close();
     if (bold) g.advance += 1 / 28.0f;

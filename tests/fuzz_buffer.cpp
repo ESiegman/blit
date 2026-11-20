@@ -2321,6 +2321,36 @@ void diagram_test() {
         for (size_t k = 3; k < one.pixels().size() && !any; k += 4) any = one.pixels()[k] != 0;
         check(any && one.pixels() == two.pixels(), "diagram: drawn, the same pixels each time" + what);
     }
+    // Characters the editor's font lacks come from its fallbacks, as they do
+    // in the editor (they were drawn as the font's empty .notdef, leaving
+    // holes in the boxes); one in no font at all is a box, never nothing.
+    {
+        Font sys;
+        FontSpec spec;
+        spec.px = 20;
+        std::string ferr;
+        if (sys.init(spec, &ferr)) {
+            DiagramFont real;
+            real.open(sys.path(), sys.index(), font_fallbacks());
+            auto shape_of = [&](const char* text) {
+                RasterPath p;
+                real.outline(text, 0, 20, 20, false, &p);
+                return p;
+            };
+            const char* const nowhere = "\xf4\x8f\xbf\xbd";  // (U+10FFFD, a private character: in no font)
+            const RasterPath none = shape_of(nowhere);
+            check(!none.verbs.empty() && real.width(nowhere, 20) > 0, "diagram: a character in no font is a box");
+            int tried = 0;
+            const std::pair<u32, const char*> wanted[] = {{0x65E5, "\xe6\x97\xa5"}, {0x2665, "\xe2\x99\xa5"}, {0x524D, "\xe5\x89\x8d"}};  // 日 ♥ 前
+            for (const auto& [cp, text] : wanted) {
+                if (sys.has(cp) || !sys.can_draw(cp)) continue;
+                ++tried;
+                const RasterPath p = shape_of(text);
+                check(!p.verbs.empty() && (p.verbs != none.verbs || p.pts != none.pts), "diagram: a character from the editor's fallback fonts, U+" + std::to_string(cp));
+            }
+            if (!tried) std::printf("diagram fallback fonts skipped: the editor's font has them all, or no font does\n");
+        }
+    }
     // An edge's end exactly on a rectangle's border.
     {
         Drawing d;
