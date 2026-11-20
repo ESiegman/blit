@@ -1934,6 +1934,21 @@ struct Layout {
             }
             if (!(*colour)(lang, src, &inks) || inks.size() != src.size()) inks.clear();
         }
+        // A diff (or patch): its lines in the Git views' inks, added and
+        // removed; a hunk's @@ header in the accent, a file's header quiet.
+        if (const std::string l = lower(lang); (l == "diff" || l == "patch") && !b.text.empty()) {
+            inks.clear();
+            starts.clear();
+            size_t at = 0;
+            for (const std::string& t : b.text) {
+                static constexpr std::string_view kHeads[] = {"+++", "---", "diff ", "index ", "new file", "deleted file", "similarity", "rename ", "old mode", "new mode", "Binary files", "\\ No newline"};
+                const bool head = std::ranges::any_of(kHeads, [&](std::string_view h) { return t.starts_with(h); });
+                const u8 ink = head ? kMdMuted : t.starts_with("@@") ? kMdAccent : t.starts_with('+') ? kMdAdded : t.starts_with('-') ? kMdError : kMdCodePlain;
+                starts.push_back(at);
+                inks.insert(inks.end(), t.size() + 1, ink);
+                at += t.size() + 1;
+            }
+        }
         for (size_t k = 0; k < b.text.size(); ++k) {
             std::vector<u8> li;  // (the ink of each byte of l)
             std::string l = expand_tabs(b.text[k], inks.empty() ? nullptr : inks.data() + starts[k], &li);

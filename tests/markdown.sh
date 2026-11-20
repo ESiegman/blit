@@ -352,6 +352,13 @@ else
     echo "code colours skipped: the cpp, python and bash grammars are not all installed"
 fi
 
+# Fenced diffs and patches: added lines in the Git views' colour for
+# them, removed ones in the errors', a hunk's header in the accent, a
+# file's header and git's notes quiet, the rest as code is.
+inks "$here/markdown/code.md"
+got=$(printf '%s\n' "$got" | sed -n '/diff --git/,/hello, world/p' | sed -e 's/^\[#dbdedb\] //' | cut -c1-12 | tr '\n' ',')
+check "diffs: added, removed, hunks and headers in their colours" "[#7f848e]dif,[#7f848e]ind,[#7f848e]---,[#7f848e]+++,[#61afef]@@ ,[#dbdedb]   ,[#e06c75]-  ,[#98c379]+  ,[#98c379]+  ,[#dbdedb]   ,[#7f848e]\\ N,,,[#7f848e]   ,[#61afef]@@ ,[#e06c75]-he,[#98c379]+he,"
+
 # It follows the file: typed at the top, drawn at once.
 cp "$here/markdown/edge.md" "$dir/live.md"
 run 1600x1100 "$dir/live.md" "key:ctrl+Home;text:# Typed;key:Return;key:Return;frame"

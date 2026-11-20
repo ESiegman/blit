@@ -920,6 +920,16 @@ void markdown_test() {
     nested += "\ndeep\n";
     check(drawn(nested, 60).ends_with("\n" + std::string(16, ' ') + "deep\n"), "HTML blocks: details nested 40 deep indented 8 deep at most");
 
+    // A diff (or a patch): each line's ink by its first characters; in a
+    // notebook's Markdown too (md_render), and drawn as code (md_code).
+    std::string diff_inks;
+    for (const MdRow& r : md_code("diff", "--- a\n+++ b\n@@ -1 +1 @@\n-x\n+y\n z\n", 40))
+        if (r.runs.size() > 1) diff_inks += std::to_string(r.runs[1].ink) + " ";
+    check(diff_inks == std::to_string(kMdMuted) + " " + std::to_string(kMdMuted) + " " + std::to_string(kMdAccent) + " " + std::to_string(kMdError) + " " + std::to_string(kMdAdded) + " " +
+                           std::to_string(kMdCodePlain) + " ",
+          "diffs: headers quiet, hunks in the accent, removed and added lines in their inks");
+    check(drawn("```PATCH\n+a\n```\n", 40, true).find(ink(kMdAdded) + "0.1>+a") != std::string::npos, "diffs: a patch, its name in any case");
+
     // Tables: lines in the muted ink; the header's tint across its cells
     // and the lines between them (not the outer two); a line between the
     // body's rows only when a cell wraps; columns in line with a family

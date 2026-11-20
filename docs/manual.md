@@ -2434,7 +2434,10 @@ quotes (nested), tables (aligned as their `:--:` says, cells wrapped to
 fit, below), fenced and indented code (on a tinted band, the language at its
 top right; a block in a language blit has a grammar for, by its name,
 `c++`, `py`, `sh`, `yml` or another file ending, is coloured by that
-grammar in the theme's colours, on the preview's thread), rules, line breaks, HTML (below; comments
+grammar in the theme's colours, on the preview's thread; a `diff` or
+`patch` block has its added lines in the colour the Git views give them,
+its removed ones in the errors' colour, a hunk's `@@` header in the accent
+and a file's header quiet), rules, line breaks, HTML (below; comments
 left out), math (below), `==highlighted==` text, and leaves out front matter.
 
 **Headings** are told apart by what a grid of cells has. The top three

@@ -54,3 +54,23 @@ no language at all
 ```cpp
 const char* s = "a long line that has to wrap round, because it is wider than the preview is, which is narrow";
 ```
+
+```diff
+diff --git a/src/app.cpp b/src/app.cpp
+index 3f2a1b0..9c8d7e4 100644
+--- a/src/app.cpp
++++ b/src/app.cpp
+@@ -12,7 +12,8 @@ void App::run() {
+     frame();
+-    draw(old_view);
++    draw(view);
++    present();
+     idle();
+\ No newline at end of file
+```
+
+```patch
+@@ -1 +1 @@
+-hello
++hello, world
+```

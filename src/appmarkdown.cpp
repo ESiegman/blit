@@ -206,6 +206,9 @@ void colours(const ThemeColors& tc, const float* bg, MdView& v) {
     set(kMdAnsiBlue, tc.info);
     set(kMdAnsiMagenta, pick(tc, {"keyword", "constant"}, tc.accent));
     set(kMdAnsiCyan, pick(tc, {"type", "function"}, tc.info));
+    // (a diff's added lines in the Git views' colour: the theme's for them, else its blue)
+    const Rgb plus = tc.syntax_color("diff.plus");
+    set(kMdAdded, plus.r == tc.foreground.r && plus.g == tc.foreground.g && plus.b == tc.foreground.b ? tc.info : plus);
     // Backgrounds: the text's own, a little towards its colour (an
     // error's, towards the theme's colour for errors).
     auto tone = [&](u32 i, float k, u32 to = kMdText) {

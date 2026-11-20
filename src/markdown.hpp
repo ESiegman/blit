@@ -50,6 +50,7 @@ enum MdInk : u8 {
     kMdAnsiBlue,
     kMdAnsiMagenta,
     kMdAnsiCyan,
+    kMdAdded,  // a diff's added lines, as the Git views have them (its removed ones are kMdError)
     kMdInkCount
 };
 static_assert(kMdInkCount <= 32);  // (a popup's palette)
