@@ -247,10 +247,14 @@ bool buffer_make(BlitGpu* g, Buffer& b, VkDeviceSize size, VkBufferUsageFlags us
 }
 
 // The buffer, at least `bytes` long: made larger (half again what is asked)
-// if it is not. Only for a buffer no frame under way uses.
-bool buffer_at_least(BlitGpu* g, Buffer& b, VkDeviceSize bytes, VkBufferUsageFlags usage, bool cpu_reads = false) {
+// if it is not, and `made` set when it was (a descriptor set that points at
+// it is to be written again: the new one's handle may well be the old
+// one's, the driver reusing what it freed, so comparing handles does not
+// tell). Only for a buffer no frame under way uses.
+bool buffer_at_least(BlitGpu* g, Buffer& b, VkDeviceSize bytes, VkBufferUsageFlags usage, bool cpu_reads = false, bool* made = nullptr) {
     if (b.buf && b.size >= bytes) return true;
     buffer_free(g, b);
+    if (made) *made = true;
     return buffer_make(g, b, bytes + bytes / 2, usage, cpu_reads);
 }
 
@@ -1478,9 +1482,7 @@ uint32_t* blit_gpu_cells(BlitGpu* g, uint32_t count) {
     if (!g->begun) return nullptr;
     Frame& f = g->frames[g->slot];
     const VkDeviceSize bytes = static_cast<VkDeviceSize>(count ? count : 1) * sizeof(uint32_t);
-    const VkBuffer was = f.cells.buf;
-    if (!buffer_at_least(g, f.cells, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true)) return nullptr;  // (the grid reads what it has written)
-    if (f.cells.buf != was) f.text_stale = true;
+    if (!buffer_at_least(g, f.cells, bytes, VK_BUFFER_USAGE_STORAGE_BUFFER_BIT, true, &f.text_stale)) return nullptr;  // (the grid reads what it has written)
     return static_cast<uint32_t*>(f.cells.map);
 }
 
@@ -1524,12 +1526,10 @@ int blit_gpu_end(BlitGpu* g, const void* uniforms, size_t stride, size_t blocks,
 
     // The uniform blocks, each where a dynamic offset can point.
     const size_t step = (stride + g->ubo_align - 1) / g->ubo_align * g->ubo_align;
-    const VkBuffer was = f.uniforms.buf;
-    if (!buffer_at_least(g, f.uniforms, std::max<size_t>(blocks, 1) * step, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT)) {
+    if (!buffer_at_least(g, f.uniforms, std::max<size_t>(blocks, 1) * step, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, false, &f.uniform_stale)) {
         blit_gpu_cancel(g);
         return BLIT_FRAME_FAILED;
     }
-    if (f.uniforms.buf != was) f.uniform_stale = true;
     if (step == stride) {
         std::memcpy(f.uniforms.map, uniforms, blocks * stride);
     } else {

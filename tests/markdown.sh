@@ -318,6 +318,25 @@ check "typing in the first diagram: that one laid out again" "laid out 11"
 dump 3600x1100 "$dir/typed.md" "mdwait;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:End;text: & a1;frame;mdwait;text: & a2;frame;mdwait;text: & a3;frame;mdwait"
 got=$(printf '%s\n' "$got" | grep '^kept ')
 check "typing in a diagram: the pictures of its old versions let go of" "kept 10"
+# Frames that draw more than those before (the preview's pictures coming
+# in, a diagram typed in made again) are drawn, and the shot taken: the GPU
+# reads only memory that is there. (Vulkan: a frame's uniforms, made larger,
+# came back with the old buffer's handle, so its descriptor set was not
+# written again and pointed at the freed memory, and the AMD card faulted
+# and lost the device, Nov 2026.) Where Vulkan's validation layers are
+# installed, the same under them, which find nothing to say.
+grown="frame;mdpreview;frame;mdwait;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:End;text: & a1;frame;mdwait;text: & a2;frame;mdwait;text: & a3;frame;mdwait"
+cp "$here/markdown/layout.md" "$dir/grown.md"
+rm -f "$dir/grown.bmp"
+"$blit" --offscreen 3600x1100 --shot "$dir/grown.bmp" --script "$grown" "$dir/grown.md" >/dev/null 2>"$dir/err"
+got="$? $([ -s "$dir/grown.bmp" ] && echo shot) $(grep -ci 'gpuvm\|context is lost\|device lost\|blit: vulkan' "$dir/err")"
+check "frames drawing more and more pictures: all drawn, the GPU never lost" "0 shot 0"
+if [ "$(uname -s)" != Darwin ] && ls /usr/share/vulkan/explicit_layer.d/*khronos_validation* /etc/vulkan/explicit_layer.d/*khronos_validation* >/dev/null 2>&1; then
+    cp "$here/markdown/layout.md" "$dir/grown.md"
+    "$blit" --debug-gpu --offscreen 3600x1100 --shot "$dir/grown.bmp" --script "$grown" "$dir/grown.md" >/dev/null 2>"$dir/err"
+    got="$? $(grep -c '^blit: vulkan' "$dir/err")"
+    check "the same under Vulkan's validation layers: nothing said" "0 0"
+fi
 
 # A flowchart too wide across for the view is drawn down instead: wide, its
 # nodes in a row; narrow, one under another.
