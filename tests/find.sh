@@ -264,7 +264,7 @@ check "Cmd+K with nothing typed: the files open and opened lately" 'everywhere [
 run "key:cmd+K;text:help;wait:200;frame;finddump"
 check "a file by its name" 'everywhere [help] 1 : Files: >src/helper.hpp'
 run "key:cmd+K;text:wid;wait:200;frame;finddump"
-check "each kind under its heading" 'everywhere [wid] 5 : Commands: >Make the split wider Settings: editor.tab_width=4 editor.indent_width=0 panel.width=32 window.width=1100'
+check "each kind under its heading" 'everywhere [wid] 6 : Commands: >Make the split wider Compare with disk Settings: editor.tab_width=4 editor.indent_width=0 panel.width=32 window.width=1100'
 run "key:cmd+K;text:line num;finddump"
 check "a setting, with its value" 'everywhere [line num] 1 : Settings: >editor.line_numbers=true'
 run "key:cmd+K;text:tot;finddump"
@@ -272,7 +272,7 @@ check "commands and settings by the starts of their words, not any letters in or
 run "key:cmd+K;text:qqqzzz;wait:200;frame;finddump"
 check "nothing" 'everywhere [qqqzzz] 0 :'
 run "key:cmd+K;text:wid;wait:200;frame;key:Tab;finddump"
-check "Tab goes to the next kind" 'everywhere [wid] 5 : Commands: Make the split wider Settings: >editor.tab_width=4 editor.indent_width=0 panel.width=32 window.width=1100'
+check "Tab goes to the next kind" 'everywhere [wid] 6 : Commands: Make the split wider Compare with disk Settings: >editor.tab_width=4 editor.indent_width=0 panel.width=32 window.width=1100'
 run "key:cmd+K;text:help;key:Return;dump"
 check "Enter opens a file (the files waited for)" '>[README.md helper.hpp*]'
 run "key:cmd+K;text:gofile;key:Return;finddump"
