@@ -373,7 +373,10 @@ bool App::tab_close(size_t i, bool force, bool quit_if_last) {
             }
             save();
             if (remote_hold_close(i)) return false;  // (to another machine: it closes once that is written)
-            if (pane_->doc->ed.modified()) return false;  // it would not save
+            if (pane_->doc->ed.modified()) {  // it would not save (or asks first: it closes once saved over what is on disk)
+                if (pane_->doc->disk_moved) close_after_ask_ = pane_->doc->id;
+                return false;
+            }
         }
     }
     const bool front = pane_->docs[i].get() == pane_->doc;

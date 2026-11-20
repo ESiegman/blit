@@ -306,7 +306,9 @@ void App::disk_changed_under(Doc& d) {
 // Saving a file that changed on disk under it: asked in the box (its footer
 // says why), with what is on disk compared on the way if wanted. (wait: a
 // box that is open is not taken; the question waits for it to close, as
-// the second file of Save all waits for the first's answer.)
+// the second file of Save all waits for the first's answer.) Closing its
+// tab, or quitting, that saved it goes on once it is saved over it, and is
+// called off by anything else (Compare with disk, Esc, or another box).
 void App::save_ask(u64 doc, bool wait) {
     const Doc* d = find_doc(doc);
     if (!d) return;
@@ -315,27 +317,56 @@ void App::save_ask(u64 doc, bool wait) {
         return;
     }
     const std::string name = base_name(d->ed.path);
-    find_choose_item("Save " + name, {"Save over it", "Compare with disk"}, [this, doc](int i) {
+    auto off = [this, doc] {
+        if (close_after_ask_ == doc) close_after_ask_ = 0;
+        quit_after_ask_ = false;
+    };
+    find_preview_item("Save " + name, {"Save over it", "Compare with disk"}, 0, nullptr, [this, doc, off](int i) {
         Pane* where = nullptr;
         size_t at = 0;
         Doc* const now = find_doc(doc, &where, &at);
+        if (!now || i != 0) off();
         if (!now || i < 0) return;
         focus_pane(where);
         tab_show(at);
         if (i == 1) return disk_compare();
         now->save_over = true;
-        save();
-    });
+        const bool saved = save();
+        const bool closing = close_after_ask_ == doc;
+        if (closing) close_after_ask_ = 0;
+        if (saved && closing && find_doc(doc, &where, &at)) {  // (a script's handler may have closed it meanwhile)
+            focus_pane(where);
+            tab_close(at);  // (another machine's: once it has been written there)
+        }
+        if (!saved) quit_after_ask_ = false;
+        else if (quit_after_ask_ && !save_asks_waiting()) {  // (the last one asked about: on to what is left, or out)
+            quit_after_ask_ = false;
+            request_quit();
+        }
+    }, off);
     find_ask_footer(name + " changed on disk since it was read here");
 }
 
+// Whether a file is still waiting to be asked about.
+bool App::save_asks_waiting() {
+    return std::ranges::any_of(save_waiting_, [this](u64 doc) {
+        const Doc* d = find_doc(doc);
+        return d && d->disk_moved && d->ed.modified();
+    });
+}
+
 // The box is free: the next file waiting to be asked about (one closed,
-// saved or no longer changed since is passed over).
+// saved or no longer changed since is passed over; a quit waiting for the
+// answers goes on when there is none left to ask about).
 void App::save_ask_next() {
     while (!save_waiting_.empty() && !find_is_open()) {
         const u64 doc = save_waiting_.front();
         save_waiting_.erase(save_waiting_.begin());
         if (const Doc* d = find_doc(doc); d && d->disk_moved && d->ed.modified()) save_ask(doc);
+    }
+    if (quit_after_ask_ && save_waiting_.empty() && !find_is_open()) {
+        quit_after_ask_ = false;
+        request_quit();
     }
 }
 

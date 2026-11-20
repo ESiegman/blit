@@ -447,6 +447,7 @@ private:
     void disk_changed_under(Doc& d);  // its file changed on disk under its own changes: a notice, and the next save asks
     void save_ask(u64 doc, bool wait = false);  // whether to save over what is on disk now, asked in the box (wait: once it is free)
     void save_ask_next();             // the next of those waiting for the box, asked when it is free
+    bool save_asks_waiting();          // (one of those still to be asked about)
     void disk_compare();              // "Compare with disk": the file in front against what is on disk (apphistory.cpp)
     void disk_compare_show(u64 doc, std::string_view disk);
     void request_quit();
@@ -1666,6 +1667,8 @@ private:
     bool close_after_save_ = false;  // the tab whose new file is being named closes once it is saved
     bool saving_all_ = false;        // (Save all: a second file to ask about waits for the first's answer)
     std::vector<u64> save_waiting_;  // files whose save asks first, waiting for the box to be free (apphistory.cpp)
+    u64 close_after_ask_ = 0;        // the tab that closes once its save's question is answered "Save over it"
+    bool quit_after_ask_ = false;    // and quitting, once each file asked about is
     bool lsp_pending_ = false;  // start a language server after the next frame
     bool grammars_pending_ = false;  // and see whether a grammar should be fetched
     u64 grammars_gen_ = 0;           // counts up whenever a grammar has been installed (the status bar's "no colours")

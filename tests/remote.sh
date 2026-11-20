@@ -112,6 +112,50 @@ run "frame;text:X;open:$dir/b.txt;frame;text:Y;lua:local f = io.open('$dir/a.txt
 got="$got | $(cat "$dir/a.txt" "$dir/b.txt" | tr '\n' ' ')"
 check "Save all with two changed on disk: asked about each" 'blit: a.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; blit: b.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; pick [] (a.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; pick [] (b.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; b.txt | Ln 1, Col 2 Tabs LF Plain text | Xa Yb '
 rm "$dir/a.txt" "$dir/b.txt"
+# Closing its tab with Save, or quitting with Save: the save's question is
+# part of that, which goes on once it is answered "Save over it" (and is
+# called off by "Compare with disk", or Esc, the tab kept with its changes).
+printf 'alpha\nbeta\n' >"$dir/m.txt"
+run "frame;$docend;text:MINE;$there;reload;frame;answer:save;key:cmd+W;finddump;key:Return;frame;finddump;dump" "$dir/m.txt"
+got="$got | $(tr '\n' ' ' <"$dir/m.txt")"
+check "closed with Save, then Save over it: saved, and closed" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; pick [] (m.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; closed ;; >[untitled*] | alpha beta MINE'
+printf 'alpha\nbeta\n' >"$dir/m.txt"
+run "frame;$docend;text:MINE;$there;reload;frame;answer:save;key:cmd+W;key:Down;key:Return;frame;finddump;dump" "$dir/m.txt"
+got="$got | $(tr '\n' ' ' <"$dir/m.txt")"
+check "and with Compare with disk: it stays, beside what is on disk" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; closed ;; >[m.txt m.txt (against disk)*] | alpha THERE '
+printf 'alpha\nbeta\n' >"$dir/m.txt"
+run "frame;$docend;text:MINE;$there;reload;frame;answer:save;key:cmd+W;key:Escape;frame;finddump;dump;statusdump;save;key:Return;frame;dump" "$dir/m.txt"
+got="$got | $(tr '\n' ' ' <"$dir/m.txt")"
+check "or Esc: it stays (and saving it later does not close it)" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; closed ;; >[m.txt*] ;; m.txt ● | Ln 3, Col 5 Tabs LF Plain text ;; >[m.txt*] | alpha beta MINE'
+printf 'a\n' >"$dir/a.txt" && printf 'b\n' >"$dir/b.txt"
+run "frame;text:X;open:$dir/b.txt;frame;text:Y;lua:local f = io.open('$dir/a.txt', 'w') f:write('A2\\n') f:close();lua:local f = io.open('$dir/b.txt', 'w') f:write('B2\\n') f:close();reload;frame;answer:save;quit;finddump;key:Return;frame;finddump;alive;key:Return;frame;finddump;alive" "$dir/a.txt"
+got="$got | $(cat "$dir/a.txt" "$dir/b.txt" | tr '\n' ' ')"
+check "quitting with two of them: asked about each, then out" 'blit: a.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; blit: b.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; pick [] (a.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; pick [] (b.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; running ;; closed ;; quitting | Xa Yb '
+printf 'a\n' >"$dir/a.txt" && printf 'b\n' >"$dir/b.txt"
+run "frame;text:X;open:$dir/b.txt;frame;text:Y;lua:local f = io.open('$dir/a.txt', 'w') f:write('A2\\n') f:close();lua:local f = io.open('$dir/b.txt', 'w') f:write('B2\\n') f:close();reload;frame;answer:save;quit;key:Escape;frame;finddump;key:Return;frame;finddump;alive" "$dir/a.txt"
+got="$got | $(cat "$dir/a.txt" "$dir/b.txt" | tr '\n' ' ')"
+check "and Esc to the first: still asked about the second, but not out" 'blit: a.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; blit: b.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; pick [] (b.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; closed ;; running | A2 Yb '
+rm "$dir/a.txt" "$dir/b.txt" "$dir/m.txt"
+# And there: the file changed there seen (the window come back to), or
+# found by the save itself while the close or the quit waits for it.
+fresh_m
+there=$(printf '%s' "$there" | sed -e "s#$dir#$T/.moved#")
+run "remotewait;frame;$docend;text:MINE;$there;reload;remotewait;frame;answer:save;key:cmd+W;finddump;key:Return;remotewait;frame;finddump;dump" "ssh://box$T/.moved/m.txt"
+got="$got | $(tr '\n' ' ' <"$T/.moved/m.txt")"
+check "there: closed with Save, then Save over it" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; pick [] (m.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; closed ;; >[untitled*] | alpha beta MINE'
+fresh_m
+run "remotewait;frame;$docend;text:MINE;$there;answer:save;key:cmd+W;remotewait;finddump;key:Return;remotewait;frame;finddump;dump" "ssh://box$T/.moved/m.txt"
+got="$got | $(tr '\n' ' ' <"$T/.moved/m.txt")"
+check "there, found by the save the close waits for: asked, then closed" 'pick [] (m.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; closed ;; >[untitled*] | alpha beta MINE'
+fresh_m
+run "remotewait;frame;$docend;text:MINE;$there;answer:save;key:cmd+W;remotewait;key:Escape;remotewait;frame;finddump;dump;statusdump" "ssh://box$T/.moved/m.txt"
+got="$got | $(tr '\n' ' ' <"$T/.moved/m.txt")"
+check "and Esc: it stays" 'closed ;; >[m.txt*] ;; box ~/.moved/m.txt ● | Ln 3, Col 5 Tabs LF Plain text | alpha THERE '
+printf 'a\n' >"$T/.moved/a.txt" && printf 'b\n' >"$T/.moved/b.txt"
+run "remotewait;frame;text:X;open:ssh://box$T/.moved/b.txt;remotewait;frame;text:Y;lua:local f = io.open('$T/.moved/a.txt', 'w') f:write('A2\\n') f:close();lua:local f = io.open('$T/.moved/b.txt', 'w') f:write('B2\\n') f:close();answer:save;quit;remotewait;finddump;key:Return;frame;finddump;alive;key:Return;remotewait;frame;alive" "ssh://box$T/.moved/a.txt"
+got="$got | $(cat "$T/.moved/a.txt" "$T/.moved/b.txt" | tr '\n' ' ')"
+check "there, quitting with two the saves find changed: asked about each, then out" 'pick [] (a.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; pick [] (b.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; running ;; quitting | Xa Yb '
+rm "$T/.moved/a.txt" "$T/.moved/b.txt"
 
 # A slow host (each answer held half a second): saving goes back to the keys at
 # once, and the file is saved as it was then when the write has been made

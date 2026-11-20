@@ -472,6 +472,13 @@ void App::remote_saved() {
         if (x.moved) {  // changed there since it was read: whether to write over it is asked
             d->disk_stamp = x.modified;
             d->disk_moved = true;
+            if (u.hold == RemoteUi::kHoldClose && u.hold_doc == x.doc) {  // (closing it waited for this save: it waits for the answer now)
+                u.hold = RemoteUi::kHoldNone;
+                find_drop_script();
+                close_after_ask_ = x.doc;
+            } else if (u.hold == RemoteUi::kHoldQuit) {
+                quit_after_ask_ = true;  // (quitting with Save waited for it: it goes on once this is answered)
+            }
             save_ask(x.doc, true);  // (a box opened meanwhile is not taken from under the typing)
             continue;
         }
@@ -499,7 +506,9 @@ void App::remote_saved() {
     if (hold == RemoteUi::kHoldNone || (hold == RemoteUi::kHoldClose ? remote_saving(doc) : !u.saving.empty())) return;
     u.hold = RemoteUi::kHoldNone;
     find_drop_script();  // (the box that said so)
-    if (hold == RemoteUi::kHoldQuitNow) {
+    if (quit_after_ask_) {
+        save_ask_next();  // (a save found its file changed there: asked about first, and quitting goes on after)
+    } else if (hold == RemoteUi::kHoldQuitNow) {
         running_ = false;
     } else if (hold == RemoteUi::kHoldQuit) {
         request_quit();
@@ -605,7 +614,9 @@ void App::remote_reconnect() {
 // longer waiting (its connection went) leaves it. (Called too whenever the
 // box shuts: a close or quit that was waiting for saves in it is called off.)
 void App::remote_asks() {
-    if (remote_ && remote_->hold != RemoteUi::kHoldNone && !find_is_open()) remote_->hold = RemoteUi::kHoldNone;
+    if (remote_ && remote_->hold != RemoteUi::kHoldNone && !find_is_open()) {
+        if (std::exchange(remote_->hold, RemoteUi::kHoldNone) != RemoteUi::kHoldClose) quit_after_ask_ = false;
+    }
     const std::vector<RemoteAsk> asks = Remote::asks();
     if (const u64 showing = find_ask_id()) {
         for (const RemoteAsk& a : asks)

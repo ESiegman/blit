@@ -936,7 +936,10 @@ is on disk now; **Compare with disk** (there, or as a command) shows what
 the tab has against what is on disk, in a tab beside it. **Save all** asks
 about each such file in turn, and the question of a save on another
 machine that comes back while another box is open waits for that box to
-close.
+close. Closing such a tab with **Save**, or quitting with **Save**, asks
+the same (quitting, about each file in turn): **Save over it** saves, and
+the tab closes or blit quits once it is written; **Compare with disk**
+or Esc keeps the tab open with its changes, and nothing closes or quits.
 
 ```lua
 blit.opt.git.enabled = false   -- no git at all

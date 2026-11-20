@@ -1074,15 +1074,28 @@ void App::request_quit() {
         // Files with names are saved here and now (one on another machine
         // has its save started). One without a name needs the save dialog,
         // which answers later: quitting carries on from there (see the
-        // handling of user event 1).
+        // handling of user event 1). One changed on disk asks first (the
+        // next such waits its turn), and quitting goes on once each has
+        // been answered (save_ask).
+        quit_after_ask_ = false;
         for (size_t k = 0; k < panes_.size(); ++k)
             for (size_t i = 0; i < panes_[k]->docs.size(); ++i) {
                 if (!unsaved_doc(*panes_[k]->docs[i]) || panes_[k]->docs[i]->ed.path.empty()) continue;
                 focus_pane(panes_[k].get());
                 tab_show(i);
-                save();
-                if (pane_->doc->ed.modified() && !remote_saving(pane_->doc->id)) return;  // it would not save: stay
+                saving_all_ = quit_after_ask_;
+                const bool saved = save();
+                saving_all_ = false;
+                if (!saved && pane_->doc->disk_moved && pane_->doc->ed.modified()) {
+                    quit_after_ask_ = true;
+                    continue;
+                }
+                if (pane_->doc->ed.modified() && !remote_saving(pane_->doc->id)) {  // it would not save: stay
+                    quit_after_ask_ = false;
+                    return;
+                }
             }
+        if (quit_after_ask_) return;
         for (size_t k = 0; k < panes_.size(); ++k)
             for (size_t i = 0; i < panes_[k]->docs.size(); ++i) {
                 if (!panes_[k]->docs[i]->ed.modified() || remote_saving(panes_[k]->docs[i]->id)) continue;
