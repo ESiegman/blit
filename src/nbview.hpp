@@ -49,6 +49,7 @@ struct NbPart {
     u32 want_w = 0, want_h = 0;  // and the size it asks for (in points; 0: its own)
     std::vector<std::vector<std::string>> cells;  // a table's (Markdown), its header first
     std::vector<int> align;
+    u32 more = 0;  // and how many of its rows were not read (past what is shown)
 };
 struct NbOutput {
     i64 count = -1;

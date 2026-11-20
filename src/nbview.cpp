@@ -17,7 +17,8 @@ namespace {
 // An output's rows at most (as Jupyter scrolls a long one): the rest is a
 // line that says how much more there is.
 constexpr u32 kMostRows = 60;
-constexpr u32 kTab = 8;  // a terminal's tab stops
+constexpr u32 kMostColumns = 64;  // a table's, read
+constexpr u32 kTab = 8;           // a terminal's tab stops
 
 // ---------------------------------------------------------------- text
 
@@ -141,17 +142,32 @@ int align_of(std::string_view tag) {
 }
 
 // HTML without what is not shown: comments, scripts, styles.
-std::string shown_html(std::string html) {
-    auto cut = [&](std::string_view open, std::string_view close) {
-        for (size_t c; (c = lower(html).find(open)) != std::string::npos;) {
-            const size_t e = lower(html).find(close, c + open.size());
-            html.erase(c, e == std::string::npos ? std::string::npos : e + close.size() - c);
+// (Read once, from the start: what is left is kept as it comes.)
+std::string shown_html(std::string_view html) {
+    static constexpr std::string_view kCut[][2] = {{"<!--", "-->"}, {"<script", "</script>"}, {"<style", "</style>"}};
+    const std::string low = lower(html);
+    std::string out;
+    out.reserve(html.size());
+    size_t kept = 0;
+    for (size_t at = 0; (at = low.find('<', at)) != std::string::npos;) {
+        size_t end = std::string::npos;
+        bool cut = false;
+        for (const auto& [open, close] : kCut) {
+            if (low.compare(at, open.size(), open) != 0) continue;
+            const size_t e = low.find(close, at + open.size());
+            end = e == std::string::npos ? low.size() : e + close.size();
+            cut = true;
+            break;
         }
-    };
-    cut("<!--", "-->");
-    cut("<script", "</script>");
-    cut("<style", "</style>");
-    return html;
+        if (!cut) {
+            ++at;
+            continue;
+        }
+        out.append(html.substr(kept, at - kept));
+        kept = at = end;
+    }
+    out.append(html.substr(std::min(kept, html.size())));
+    return out;
 }
 
 // HTML's text as Markdown paragraphs: each block (a paragraph, a line
@@ -186,7 +202,9 @@ std::string html_paragraphs(std::string_view html) {
 // headings in turn), the index's cells (<th> in its body) in bold; and how
 // each column is aligned (to the right, as Jupyter shows a table, unless
 // it says otherwise). Cells over more than one column or row fill each.
-bool html_table(std::string_view table, std::vector<std::vector<std::string>>* cells, std::vector<int>* align) {
+// Only what can be shown is read: the first kMostRows + 1 rows of its
+// body (`more`: how many rows come after them), kMostColumns columns.
+bool html_table(std::string_view table, std::vector<std::vector<std::string>>* cells, std::vector<int>* align, u32* more) {
     struct Cell {
         std::string text;
         bool head = false;
@@ -197,8 +215,22 @@ bool html_table(std::string_view table, std::vector<std::vector<std::string>>* c
     std::vector<u32> spanned;  // for each column, rows still taken by a cell above
     std::vector<Cell> spanning;
     const std::string low = lower(table);
+    // Where each tag that ends a cell's text is next, looked for again only
+    // once passed (a table without one is not searched to its end for each cell).
+    struct Next {
+        std::string_view what;
+        size_t at = 0;
+        bool known = false;
+    };
+    Next next_td{"<td"}, next_th{"<th"}, end_tr{"</tr"}, end_td{"</td"}, end_th{"</th"};
+    auto find = [&](Next& n, size_t from) {
+        if (!n.known || (n.at != std::string::npos && n.at < from)) n.at = low.find(n.what, from), n.known = true;
+        return n.at;
+    };
     bool head = false;
     int row_align = 2;
+    size_t body_rows = 0;
+    *more = 0;
     std::vector<Cell>* row = nullptr;
     for (size_t i = 0; i < table.size();) {
         const size_t open = low.find('<', i);
@@ -206,34 +238,39 @@ bool html_table(std::string_view table, std::vector<std::vector<std::string>>* c
         const size_t close = low.find('>', open);
         if (close == std::string::npos) break;
         const std::string_view tag = table.substr(open, close - open + 1);
-        std::string name = low.substr(open + 1, close - open - 1);
+        std::string name = low.substr(open + 1, std::min<size_t>(close - open - 1, 16));
         name = name.substr(0, name.find_first_of(" \t\n/>"));
         i = close + 1;
         if (name == "thead") head = true;
         else if (low.compare(open, 8, "</thead>") == 0 || name == "tbody") head = false;
         else if (name == "tr") {
+            if (!head && ++body_rows > kMostRows + 1) {  // (the rest only counted)
+                for (size_t at = open; (at = low.find("<tr", at)) != std::string::npos; at += 3)
+                    if (at + 3 < low.size() && (low[at + 3] == '>' || std::isspace(static_cast<unsigned char>(low[at + 3])))) ++*more;
+                break;
+            }
             rows.emplace_back();
             in_head.push_back(head);
             row = &rows.back();
             row_align = align_of(tag);
         } else if ((name == "td" || name == "th") && row) {
             // Its text: to its end (or the next cell's start), without tags.
-            size_t end = low.find(name == "td" ? "</td" : "</th", i);
-            const size_t next = std::min({low.find("<td", i), low.find("<th", i), low.find("</tr", i)});
-            end = std::min(end, next);
+            size_t end = std::min({find(name == "td" ? end_td : end_th, i), find(next_td, i), find(next_th, i), find(end_tr, i)});
             if (end == std::string::npos) end = table.size();
+            const size_t from = i;
+            i = end;
+            if (row->size() >= kMostColumns) continue;  // (past what is shown)
             std::string text;
-            for (size_t k = i; k < end; ++k) {
+            for (size_t k = from; k < end; ++k) {
                 if (table[k] == '<') {
                     const size_t gt = table.find('>', k);
                     if (gt == std::string_view::npos || gt >= end) break;
-                    if (lower(table.substr(k, 3)) == "<br") text += ' ';
+                    if (low.compare(k, 3, "<br") == 0) text += ' ';
                     k = gt;
                     continue;
                 }
                 text += table[k];
             }
-            i = end;
             Cell c{html_markdown(trim(text)), name == "th", align_of(tag) != 2 ? align_of(tag) : row_align};
             // (the columns cells above still take, filled)
             auto fill_spanned = [&] {
@@ -245,9 +282,9 @@ bool html_table(std::string_view table, std::vector<std::vector<std::string>>* c
                 }
             };
             fill_spanned();
-            const int across = std::clamp(std::atoi(attribute(tag, "colspan").c_str()), 1, 1000);
-            const int down = std::clamp(std::atoi(attribute(tag, "rowspan").c_str()), 1, 100000);
-            for (int k = 0; k < across; ++k) {
+            const int across = std::clamp(std::atoi(attribute(tag, "colspan").c_str()), 1, static_cast<int>(kMostColumns));
+            const int down = std::clamp(std::atoi(attribute(tag, "rowspan").c_str()), 1, static_cast<int>(kMostRows) + 2);  // (no more rows are read)
+            for (int k = 0; k < across && row->size() < kMostColumns; ++k) {
                 Cell part = c;
                 if (k > 0 && !in_head.back()) part.text.clear();  // (a heading over columns names each)
                 if (row->size() >= spanned.size()) spanned.resize(row->size() + 1, 0), spanning.resize(row->size() + 1);
@@ -257,7 +294,7 @@ bool html_table(std::string_view table, std::vector<std::vector<std::string>>* c
             }
             fill_spanned();
         }
-        if (rows.size() > 100000) break;
+        if (rows.size() > 4 * kMostRows) break;  // (rows of a header without end)
     }
     if (rows.empty()) return false;
     // With no <thead>: the first rows that are all headings are the header
@@ -452,7 +489,7 @@ NbOutput read_output(json::Value o, const NbKeepFn& keep) {
             words(std::string_view(h).substr(at, t - at));
             NbPart p;
             p.kind = NbPart::kTable;
-            if (html_table(std::string_view(h).substr(t, e - t), &p.cells, &p.align)) parts.push_back(std::move(p));
+            if (html_table(std::string_view(h).substr(t, e - t), &p.cells, &p.align, &p.more)) parts.push_back(std::move(p));
             at = e;
         }
         words(std::string_view(h).substr(at));
@@ -570,12 +607,12 @@ struct Drawer {
     }
 
     // Rows of something drawn (a table, Markdown), cut as text is (not
-    // through a picture).
-    static void cut(std::vector<MdRow>& part) {
-        if (part.size() <= kMostRows + 1) return;
-        size_t at = kMostRows;
-        while (at > 0 && std::ranges::any_of(part[at].pics, [](const MdPic& p) { return p.part > 0; })) --at;
-        const size_t more = part.size() - at;
+    // through a picture); `unread` rows more that were not drawn.
+    static void cut(std::vector<MdRow>& part, u32 unread = 0) {
+        if (part.size() <= kMostRows + 1 && !unread) return;
+        size_t at = std::min<size_t>(kMostRows, part.size());
+        while (at > 0 && at < part.size() && std::ranges::any_of(part[at].pics, [](const MdPic& p) { return p.part > 0; })) --at;
+        const size_t more = part.size() - at + unread;
         part.resize(at);
         MdRow r;
         r.runs.push_back({"\xE2\x80\xA6 " + std::to_string(more) + " more rows", kMdMuted, kMdItalic});
@@ -613,7 +650,7 @@ struct Drawer {
                     case NbPart::kMarkdown: rows_of = md_render(p.text, room, md_picture(), look.colour); break;
                 }
                 if (p.kind == NbPart::kTable || p.kind == NbPart::kMarkdown) {
-                    cut(rows_of);
+                    cut(rows_of, p.more);
                     if (stale)
                         for (MdRow& r : rows_of)
                             for (MdRun& run : r.runs) run.ink = kMdMuted;

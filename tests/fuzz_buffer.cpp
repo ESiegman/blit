@@ -597,6 +597,43 @@ void notebook_view_test() {
     check(text_of(nb_render(script, cells, look, &cache)).find("<Figure>") != std::string::npos, "notebook view: a picture that cannot be read, its text instead");
 }
 
+// A notebook's outputs made to cost: the work drawing them does is what
+// can be shown, not what they say (a table's spans, comments by the
+// thousand).
+void notebook_bounds_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    auto one = [](const std::string& data) {
+        std::string json = R"({"cells": [{"cell_type": "code", "execution_count": 1, "metadata": {}, "source": "x", "outputs": [)"
+                           R"({"output_type": "execute_result", "execution_count": 1, "metadata": {}, "data": )" +
+                           data + "}]}], \"metadata\": {}, \"nbformat\": 4, \"nbformat_minor\": 5}";
+        std::vector<NotebookCell> cells;
+        std::string script;
+        notebook_read(json, &cells, &script);
+        NbLook look;
+        look.width = 60;
+        const auto t0 = std::chrono::steady_clock::now();
+        std::string out;
+        for (const MdRow& r : nb_render(script, cells, look)) out += md_row_text(r) + "\n";
+        return std::pair(out, std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count());
+    };
+    auto quoted = [](const std::string& s) {
+        std::string q;
+        json::quote(q, s);
+        return q;
+    };
+    std::string spans = "<table><tbody>";
+    for (int r = 0; r < 3000; ++r) spans += "<tr><td colspan=1000 rowspan=100000>x</td></tr>";
+    auto [table, took] = one("{\"text/html\": " + quoted(spans + "</tbody></table>") + "}");
+    check(took < 0.5 && table.find("2943 more rows") != std::string::npos,
+          "notebook bounds: a table's spans and rows read as far as they are shown (and the rows after them counted)");
+    std::string comments;
+    for (int k = 0; k < 40000; ++k) comments += "<!-- -->";
+    std::tie(table, took) = one("{\"text/html\": " + quoted(comments + "<table><tr><th>a</th></tr><tr><td>1</td></tr></table>") + "}");
+    check(took < 0.5 && table.find("\xE2\x94\x82 1 \xE2\x94\x82") != std::string::npos, "notebook bounds: comments by the thousand, read once");
+}
+
 // Local history: versions kept newest first, read back as they were; the
 // same text not kept twice (a save marks it saved); the oldest let go past
 // the most kept; and each file's folder its own.
@@ -6171,6 +6208,7 @@ int main(int argc, char** argv) {
     asm_test();
     notebook_test();
     notebook_view_test();
+    notebook_bounds_test();
     history_test();
     wrap_test();
     find_test();
