@@ -256,6 +256,37 @@ run "remotewait;frame;buildrun;buildwait;builddump" "$R/run"
 got="$got | $(cat "$T/ran.txt" 2>/dev/null) | $(LC_ALL=C ls "$W/run" | tr '\n' ' ')"
 check "and with its build first, in its own folder" 'Run: >hello | Make: make make all (last: 0) | ran 6 in bin | Makefile bin built '
 
+# The Python console in a folder there with a virtual environment: its
+# IPython, by its path there; chosen there, so that opening it waits for
+# nothing on a slow host.
+mkdir -p "$W/py/.venv/bin"
+printf '#!/bin/sh\nprintf "In [1]: "\nread line\n' >"$W/py/.venv/bin/ipython" && chmod +x "$W/py/.venv/bin/ipython"
+run "remotewait;command:Open the Python console;frame;termwait:In [1];termdump" "$R/py"
+got=$(printf '%s' "$got" | sed -e 's/ @[0-9,]* [0-9x]*$//')
+check "the Python console there: the folder's IPython" 'In [1]:'
+slow "remotewait;clock;command:Open the Python console;within:300;termwait:In [1];termdump" "$R/py"
+got=$(printf '%s' "$got" | sed -e 's/ @[0-9,]* [0-9x]*$//')
+check "opened at once on a slow host" 'within 300 ms ;; In [1]:'
+
+# pytest there (a stand-in, on the PATH the host is given: one test that
+# passes, one that fails, and its report where it is told to write it).
+mkdir -p "$dir/bin" "$W/py/tests"
+cat >"$dir/bin/pytest" <<'EOF'
+#!/bin/sh
+for a in "$@"; do
+    case $a in
+        --collect-only) printf 'tests/test_a.py::test_one\ntests/test_a.py::test_two\n'; exit 0 ;;
+        --junitxml=*) out=${a#--junitxml=} ;;
+    esac
+done
+printf '<testsuites><testsuite><testcase classname="tests.test_a" name="test_one" time="0.01"/><testcase classname="tests.test_a" name="test_two" time="0.01"><failure message="1 is not 2">x</failure></testcase></testsuite></testsuites>\n' >"$out" || exit 1
+exit 1
+EOF
+chmod +x "$dir/bin/pytest"
+printf 'def test_one():\n    pass\n\n\ndef test_two():\n    assert 1 == 2\n' >"$W/py/tests/test_a.py"
+PATH="$dir/bin:$PATH" slow "remotewait;testdump;clock;command:Run the tests;within:300;testdump" "$R/py"
+check "the tests run on a slow host: at once, and how they went" 'tests/test_a.py: .test_one .test_two ;; within 300 ms ;; blit: 1 failed, 1 passed ;; tests/test_a.py: +test_one xtest_two'
+
 # The agent was copied there once, into the cache blit keeps in that home.
 got=$(ls "$T/.cache/blit" | sed -e 's/-[0-9a-f]*$//')
 check "the agent, copied once" "blit-agent-$(uname -s)-$(uname -m)"

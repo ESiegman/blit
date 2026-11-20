@@ -46,8 +46,10 @@ std::string exactly(std::string_view name) {
 bool python_path(std::string_view p) { return p.ends_with(".py"); }
 
 // How a folder runs pytest: through uv where it is a uv project; else the
-// pytest on the PATH, else Python's own.
+// pytest on the PATH, else Python's own. (On another machine, chosen there,
+// in the folder: asking it from here would wait on the connection.)
 std::string pytest_command(const std::string& root) {
+    if (is_remote(root)) return "$(sh -c 'if [ -e uv.lock ]; then echo uv run pytest; else command -v pytest || echo python3 -m pytest; fi')";
     if (fs_kind(root + "/uv.lock") == 1) return "uv run pytest";
     return "$(command -v pytest || echo python3 -m pytest)";  // (unquoted: the second, three words)
 }

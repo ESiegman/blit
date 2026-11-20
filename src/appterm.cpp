@@ -664,6 +664,11 @@ void App::term_new() { TermDock::enter(*this, true); }
 // IPython, if it has it), uv's for a uv project, else the one on the PATH.
 // (A notebook's kernel on another machine has the same chosen there: kernel.cpp.)
 std::string App::python_for(const std::string& root, bool console) {
+    // On another machine, chosen there by the command itself, in the folder:
+    // asking it from here would wait on the connection.
+    if (is_remote(root))
+        return std::string("sh -c '") + (console ? "[ -x .venv/bin/ipython ] && exec .venv/bin/ipython; " : "") +
+               "[ -x .venv/bin/python ] && exec .venv/bin/python; { [ -e uv.lock ] || [ -e pyproject.toml ]; } && exec uv run python; exec python3'";
     auto quoted = [](const std::string& path) { return "'" + path + "'"; };  // (a folder's path with no quote in it)
     if (root.find('\'') == std::string::npos) {
         if (console && fs_kind(root + "/.venv/bin/ipython") == 1) return quoted(root + "/.venv/bin/ipython");
