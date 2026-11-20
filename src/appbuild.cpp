@@ -679,6 +679,19 @@ void App::build_option(int row) {
         if (!name.empty() && name.find('/') == std::string::npos && !file && std::ranges::find(kOwn, name) == std::end(kOwn) && std::ranges::find(targets, name) == targets.end())
             targets.push_back(name);
     }
+    // (Ninja's help lists phony names alone: an executable of the top
+    // folder is a file it makes, which Ninja's own list of targets has.)
+    if (out.find(": phony") != std::string::npos && fs_run(u.root, build + " -- -t targets all", &out, 30000))
+        for (size_t at = 0; at < out.size();) {
+            size_t nl = out.find('\n', at);
+            if (nl == std::string::npos) nl = out.size();
+            const std::string_view line = std::string_view(out).substr(at, nl - at);
+            at = nl + 1;
+            const size_t c = line.find(": ");
+            if (c == std::string_view::npos || line.substr(c).find("_EXECUTABLE_LINKER__") == std::string_view::npos) continue;
+            const std::string name(line.substr(0, c));
+            if (name.find('/') == std::string::npos && std::ranges::find(targets, name) == targets.end()) targets.push_back(name);
+        }
     find_choose_item("Target", targets, [this, targets](int i) {
         if (i < 0 || static_cast<size_t>(i) >= targets.size()) return;
         buildui_->cmake_target = i == 0 ? std::string() : targets[static_cast<size_t>(i)];

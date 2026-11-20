@@ -2371,7 +2371,8 @@ Under **CMake** the tab has two rows of its own. **Build type**: Enter goes
 from the project's own (what the build folder was configured with) to
 Debug, Release, RelWithDebInfo, MinSizeRel and round. **Target**: Enter
 lists the build folder's targets, as CMake's `help` target has them
-(CMake's own, and one for each file, left out); the first, "all", builds
+(CMake's own, and one for each file, left out; with Ninja, whose `help`
+has phony names alone, the executables `ninja -t targets` adds); the first, "all", builds
 everything. CMake's tasks run with them: a configure is given
 `-DCMAKE_BUILD_TYPE`, a build `--target` (and, with a type chosen, is
 configured first, so that the folder has that type), and each task's row
