@@ -2500,12 +2500,14 @@ there and read back (on a thread) when the run ends.
 they ran. For C and C++ that is GCC's gcov, over a build folder built
 with `--coverage` (`-DCMAKE_CXX_FLAGS=--coverage`; its old `.gcda` files
 are cleared first, and the gcov is the one beside the compiler CMake
-chose); for Python, coverage.py, with the same Python as pytest (and the
-run configuration's environment). Lines that ran have green numbers and
-lines that did not red, while the file is as it was then; the Tests tab
-lists each file's share, Enter opening it, and "Show or hide coverage"
-switches it. On another machine the build folder's compiler is read there
-first, and a run asked for while that is on its way is not started again.
+chose; LLVM's gcov, the one Apple's compilers bring, cannot be read, and
+is said to be); for Python, coverage.py, with the same Python as pytest
+(and the run configuration's environment). Lines that ran have green
+numbers and lines that did not red, while the file is as it was then; the
+Tests tab lists each file's share, Enter opening it, and "Show or hide
+coverage" switches it. On another machine the build folder's compiler is
+read there first, and a run asked for while that is on its way is not
+started again.
 
 ## New projects
 

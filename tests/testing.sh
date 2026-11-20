@@ -237,6 +237,16 @@ EOF
     got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$C;frame;command:Run the tests with coverage;testdump;key:End;text:x;coveragedump" "$C/run.cpp" 2>&1 >/dev/null | tail -1)
     check "not on a file changed since" 'here: none | files: run.cpp=67%'
 fi
+# Where the gcov on the PATH is LLVM's (Apple's), which has no JSON: said.
+if gcov --version 2>/dev/null | head -1 | grep -q LLVM && command -v c++ >/dev/null 2>&1; then
+    L="$dir/llvmcov"
+    mkdir -p "$L"
+    printf 'cmake_minimum_required(VERSION 3.21)\nproject(cov CXX)\nenable_testing()\nadd_executable(run run.cpp)\nadd_test(NAME runs COMMAND run)\n' >"$L/CMakeLists.txt"
+    printf 'int main() { return 0; }\n' >"$L/run.cpp"
+    cmake -S "$L" -B "$L/build" -DCMAKE_CXX_COMPILER=c++ -DCMAKE_CXX_FLAGS=--coverage >/dev/null 2>&1 && cmake --build "$L/build" >/dev/null 2>&1 || { echo "testing: cannot build with clang's coverage"; exit 1; }
+    got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$L;frame;command:Run the tests with coverage;testdump" "$L/run.cpp" 2>&1 >/dev/null | grep '^blit: ' | tail -1 | sed 's/LLVM'"'"'s (.*), which/LLVM'"'"'s (VERSION), which/')
+    check "LLVM's gcov: named as one that cannot be read" "blit: No coverage could be read: the gcov here is LLVM's (VERSION), which cannot write the JSON blit reads; GCC's gcov can"
+fi
 # A preset's layout: configured into build/debug, one level in.
 Q="$dir/q"
 mkdir -p "$Q"

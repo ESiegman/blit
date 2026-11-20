@@ -319,7 +319,9 @@ void App::test_run(const std::vector<size_t>& which, bool coverage) {
             u.cov_reports.push_back({out, d, false});
             // (Arch's gcc15 has g++-15 but its gcov only in GCC's own folder, which -print-prog-name knows.)
             const std::string run = compiler.empty() ? sh_word(gcov) : "\"$(command -v " + sh_word(gcov) + " || " + sh_word(compiler) + " -print-prog-name=gcov)\"";
-            parts.push_back("(cd " + here(d) + " && " + run + " --json-format --stdout $(find . -name '*.gcda') > " + here(out) + " 2>/dev/null)");
+            // (LLVM's gcov, Apple's, has no JSON: which it is, kept beside the report to say so.)
+            parts.push_back("(cd " + here(d) + " && " + run + " --json-format --stdout $(find . -name '*.gcda') > " + here(out) + " 2>/dev/null || { v=$(" + run +
+                            " --version 2>/dev/null | head -1); case \"$v\" in *LLVM*) echo \"$v\" > " + here(out + ".llvm") + ";; esac; })");
         }
     }
     u.caches.reset();
@@ -365,6 +367,8 @@ void App::test_ended(u64 doc) {
     std::vector<std::pair<std::string, u64>> paths;  // (the reports', then the coverage reports', with how large each may be)
     for (const auto& [r, of] : u.reports) paths.emplace_back(r, 64u << 20);
     for (const TestUi::CovReport& r : u.cov_reports) paths.emplace_back(r.path, 256u << 20);
+    for (const TestUi::CovReport& r : u.cov_reports)  // (beside gcov's: which gcov it was, if LLVM's, which cannot be read)
+        if (!r.python) paths.emplace_back(r.path + ".llvm", 4096);
     if (!is_remote(u.root)) {
         std::vector<std::string> texts(paths.size());
         for (size_t i = 0; i < paths.size(); ++i) {
@@ -399,7 +403,7 @@ void App::test_take(std::vector<std::string> texts) {
     std::string uncollected;  // (the first module pytest could not collect, and why: the run stopped there)
     u32 more = 0;
     size_t k = 0;
-    texts.resize(u.reports.size() + u.cov_reports.size());
+    texts.resize(u.reports.size() + u.cov_reports.size() + std::ranges::count(u.cov_reports, false, &TestUi::CovReport::python));
     for (const auto& [r, of] : u.reports) {
         const std::string& xml = texts[k++];
         for (const TestOutcome& o : parse_junit(xml)) {
@@ -431,6 +435,7 @@ void App::test_take(std::vector<std::string> texts) {
         u.coverage.clear();
         u.cov_files.clear();
         size_t hit = 0, all = 0;
+        std::string llvm;  // (a gcov that is LLVM's, which cannot be read: its version)
         const bool python = std::ranges::all_of(u.cov_reports, &TestUi::CovReport::python);  // (coverage.py's alone: what to ask of the Python)
         for (const TestUi::CovReport& r : u.cov_reports) {
             const std::string& text = texts[k++];
@@ -448,7 +453,12 @@ void App::test_take(std::vector<std::string> texts) {
         std::ranges::sort(u.cov_files);
         u.cov_files.erase(std::ranges::unique(u.cov_files).begin(), u.cov_files.end());
         u.cov_shown = !u.coverage.empty();
-        notify(!uncollected.empty() ? uncollected
+        for (const TestUi::CovReport& r : u.cov_reports)
+            if (!r.python)
+                if (const std::string& v = texts[k++]; !v.empty()) llvm = v;
+        while (!llvm.empty() && (llvm.back() == '\n' || llvm.back() == ' ')) llvm.pop_back();
+        notify(!uncollected.empty()                    ? uncollected
+               : u.coverage.empty() && !llvm.empty() ? "No coverage could be read: the gcov here is LLVM's (" + llvm + "), which cannot write the JSON blit reads; GCC's gcov can"
                : u.coverage.empty() ? std::string(python ? "No coverage was recorded (coverage.py installed for " + python_named(u.python, u.root) + "?)" : "No coverage was recorded (built with --coverage?)")
                                     : "Coverage: " + std::to_string(static_cast<int>(100.0 * static_cast<double>(hit) / static_cast<double>(std::max<size_t>(all, 1)) + 0.5)) + "% of the lines in " + std::to_string(u.cov_files.size()) + " files");
         ++test_gen_;
