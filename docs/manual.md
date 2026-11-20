@@ -2338,7 +2338,8 @@ What the build prints is read for problems as it comes, on the terminal's
 own reading thread (nothing per frame): GCC's and Clang's
 `path:line:col: error: message` (and `warning`, `fatal error`; Clang's
 message wrapped to the terminal's width onto the lines under it is
-joined), CMake's
+joined, but not the source line above the carets, which without line
+numbers looks the same), CMake's
 `CMake Error at path:line (command):` with the paragraph under it (one in
 a file outside the project, as a module of CMake's own, is placed at the
 first frame of its `Call Stack` in the project, saying where it was), make's

@@ -164,12 +164,19 @@ void BuildScan::line(std::string_view text) {
     while (!text.empty() && (text.back() == ' ' || text.back() == '\r')) text.remove_suffix(1);
     if (wrap_) {
         // Clang's wrapped message goes on six spaces in (its source line,
-        // "    3 | x", and carets, "      |   ^", are not part of it).
-        if (text.size() > 6 && text.starts_with("      ") && text[6] != ' ' && text[6] != '|' && text[6] != '^' && text[6] != '~') {
-            std::string& m = wrap_problem_.message;
-            if (m.size() < kMaxMessage) m += (m.empty() ? "" : " ") + std::string(text.substr(6, kMaxMessage - std::min(kMaxMessage, m.size())));
+        // "    3 | x", and carets, "      |   ^", are not part of it). With
+        // no line numbers (Clang before 17, or told not to) the source line
+        // is as it is, and one six spaces in looks the same: so the last
+        // such line is held until the next shows it was not the source
+        // line above the carets.
+        const bool carets = text.starts_with("      |") || (text.find_first_not_of(" ^~") == std::string_view::npos && text.find_first_of("^~") != std::string_view::npos);
+        if (!carets && text.size() > 6 && text.starts_with("      ") && text[6] != ' ' && text[6] != '|' && text[6] != '^' && text[6] != '~') {
+            wrapped_join();
+            wrap_held_ = true;
+            wrap_line_.assign(text.substr(6, kMaxMessage));
             return;
         }
+        if (carets) wrap_held_ = false;
         wrapped_end();
     }
     if (cmake_ && cmake_line(text)) return;
@@ -411,6 +418,7 @@ bool BuildScan::compiler_line(std::string_view text) {
             return true;
         }
         wrap_ = true;  // (added once the next line is not more of its message)
+        wrap_held_ = false;
         wrap_problem_.path = std::string(path);
         wrap_problem_.line = std::max(line, 1u);
         wrap_problem_.col = col;
@@ -420,8 +428,17 @@ bool BuildScan::compiler_line(std::string_view text) {
     }
 }
 
+// The line held under a compiler's problem: more of its message.
+void BuildScan::wrapped_join() {
+    if (!wrap_held_) return;
+    wrap_held_ = false;
+    std::string& m = wrap_problem_.message;
+    if (m.size() < kMaxMessage) m += (m.empty() ? "" : " ") + wrap_line_.substr(0, kMaxMessage - m.size());
+}
+
 void BuildScan::wrapped_end() {
     if (!wrap_) return;
+    wrapped_join();
     wrap_ = false;
     add(wrap_problem_.path, wrap_problem_.line, wrap_problem_.col, wrap_problem_.severity, wrap_problem_.message);
 }
