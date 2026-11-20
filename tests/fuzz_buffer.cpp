@@ -939,6 +939,18 @@ void markdown_test() {
           "definition lists: terms and their definitions");
     check(drawn("T\n: d\n", 60, true) == ink(kMdText) + "1.0>T\n" + ink(kMdText) + "0.0>    " + ink(kMdText) + "0.0>d\n", "definition lists: the term bold");
 
+    // Lists: numbers past 9 and 99 right-aligned, what is nested under them
+    // in line with their text; a hard break (two spaces, a backslash) in an
+    // item; a task's square, crossed when done.
+    std::string ten;
+    for (int k = 1; k <= 10; ++k) ten += std::to_string(k) + ". i\n";
+    ten += "    - n\n";
+    const std::string tens = drawn(ten);
+    check(tens.starts_with(" 1. i\n 2. i\n") && tens.ends_with(" 9. i\n10. i\n    \xE2\x97\xA6 n\n") && drawn("99. a\n100. b\n     1. c\n") == " 99. a\n100. b\n     1. c\n",
+          "lists: numbers past 9 and 99 in a column, nested lists under their text");
+    check(drawn("- one  \n  two\n- three\\\n  four\n1. five  \n   six\n") == "\xE2\x80\xA2 one\n  two\n\xE2\x80\xA2 three\n  four\n\n1. five\n   six\n", "lists: hard breaks in items");
+    check(drawn("- [ ] a\n- [x] b\n") == "\xE2\x96\xA1 a\n\xE2\x8A\xA0 b\n", "lists: tasks' squares");
+
     // Tables: lines in the muted ink; the header's tint across its cells
     // and the lines between them (not the outer two); a line between the
     // body's rows only when a cell wraps; columns in line with a family

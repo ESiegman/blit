@@ -40,7 +40,7 @@ pictures() {
          { if (skip) print ""; skip = 0; print }'
 }
 
-for f in sample edge diagrams code alerts notes headings tables math html defs; do
+for f in sample edge diagrams code alerts notes headings tables math html defs lists; do
     size=1600x1100
     [ $f = sample ] || [ $f = diagrams ] && size=3600x1100
     run $size "$here/markdown/$f.md" ""
@@ -128,6 +128,15 @@ all=$got
 got=$(printf '%s\n' "$all" | grep -c '^\[#dbdedb b\]Apple$'),$(printf '%s\n' "$all" | grep -c '^\[#7f848e\] 1\. \[#dbdedb\]A fruit'),$(printf '%s\n' "$all" | grep -c '^\[#7f848e\] 2\. \[#dbdedb\]A company')
 got=$got,$(printf '%s\n' "$all" | grep -c '^\[#dbdedb b\]Orange$'),$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]    \[#dbdedb\]A citrus fruit\.$')
 check "definition lists: terms bold, definitions under them" "1,1,1,1,1"
+
+# Task lists: an open task's square quiet, a done one's crossed square in
+# the accent and its text quiet; in the light theme too.
+looks "$here/markdown/lists.md"
+got=$(printf '%s\n' "$got" | sed -n 3,4p | tr '\n' ,)
+check "task lists: their squares in both themes (dark)" "[#7f848e]□ [#dbdedb]to do,[#61afef]⊠ [#7f848e]done,"
+looks "$here/markdown/lists.md" 'blit.opt.theme.dark = "blit-light"; blit.opt.theme.light = "blit-light"'
+got=$(printf '%s\n' "$got" | sed -n 3,4p | tr '\n' ,)
+check "task lists: their squares in both themes (light)" "[#8e9096]□ [#1a1a1c]to do,[#325cc0]⊠ [#8e9096]done,"
 
 # Footnotes: a mark is a link to its text at the end, the row that text
 # starts on is named for it, and the mark after the text is a link back;

@@ -2429,7 +2429,8 @@ this one in a tab, and `#heading` goes to that heading.
 
 It draws headings (each level its own, below), **bold**, *italic*, `code`,
 ~~struck~~ text, links and autolinks (and links defined elsewhere with
-`[name]: url`), lists (nested, numbered from any number, `- [ ]` tasks),
+`[name]: url`), lists (nested, numbered from any number in a column,
+`- [ ]` tasks as a square, crossed when done),
 quotes (nested), tables (aligned as their `:--:` says, cells wrapped to
 fit, below), fenced and indented code (on a tinted band, the language at its
 top right; a block in a language blit has a grammar for, by its name,

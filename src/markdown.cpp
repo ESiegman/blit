@@ -2373,8 +2373,8 @@ struct Layout {
                     if (k > 0 && b.loose) gap(item.line);
                     std::string mark;
                     u8 mark_ink = kMdAccent;
-                    if (item.task >= 0) {
-                        mark = item.task ? "\xE2\x98\x91" : "\xE2\x98\x90";
+                    if (item.task >= 0) {  // (a square, crossed when done: ☐ and ☑ are small in most fonts, their tick hard to see)
+                        mark = item.task ? "\xE2\x8A\xA0" : "\xE2\x96\xA1";
                         mark_ink = item.task ? kMdAccent : kMdMuted;
                     } else if (b.ordered) {
                         const std::string num = std::to_string(b.start + static_cast<int>(k)) + ".";

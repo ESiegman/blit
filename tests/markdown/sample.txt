@@ -8,8 +8,8 @@ A list
 • one
 • two with code
   ◦ nested
-☑ done
-☐ not done
+⊠ done
+□ not done
 
 1. first
 2. second
