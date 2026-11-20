@@ -392,6 +392,10 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                     std::vector<bool> taken(built.size());
                     for (const Diagnostic& x : *diags) {
                         if (x.severity != 1 && x.severity != 2) continue;
+                        if (built.empty()) {  // (the usual case: nothing to match, so no line looked up)
+                            ++(x.severity == 1 ? u.errors : u.warnings);
+                            continue;
+                        }
                         const std::pair<u32, u8> at{static_cast<u32>(ed.buf.line_of(std::min(x.start, ed.buf.size())) + 1), x.severity};
                         size_t i = static_cast<size_t>(std::ranges::lower_bound(built, at) - built.begin());
                         while (i < built.size() && built[i] == at && taken[i]) ++i;
