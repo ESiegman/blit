@@ -161,6 +161,17 @@ run "$F" "buildrun:make errors;frame;buildwait;frame;termclick:Linking;frame;sta
 check "Cmd+click on what is not a place: nothing opens (the click is the terminal's)" 'make errors | × 4 ▲ 3'
 run "$F" "buildrun:make errors;buildwait;buildrun:make ok;buildwait;problemsdump"
 check "the next run starts with none" 'button: ▶ make ok | file 0'
+# Clang writing to a terminal (under make) wraps its message to the
+# terminal's width: a long path leaves none on the first line.
+cat >"$F/wrapped.sh" <<'EOF'
+printf 'src/a.c:5:1: error: \n      use of undeclared identifier '"'"'x'"'"'\n    5 | int e;\n      | ^\n'
+printf 'src/a.c:6:1: warning: no member named\n      '"'"'y'"'"' in '"'"'S'"'"'\n    6 | int f;\n'
+printf 'src/a.c:7:1: error: not wrapped\n'
+exit 2
+EOF
+printf 'wrapped:\n\tsh wrapped.sh\n' >>"$F/Makefile"
+run "$F" "buildrun:make wrapped;buildwait;problemsdump"
+check "clang's message wrapped onto the lines under it: joined" 'button: ▶ make wrapped · 2 errors | Build 3 | file src/a.c | >E 5:1 use of undeclared identifier '"'"'x'"'"' | W 6:1 no member named '"'"'y'"'"' in '"'"'S'"'"' | E 7:1 not wrapped'
 # CMake's build type and target, chosen in the Build tab (Enter on each):
 # Release, then the target app of the folder's own (CMake's help lists
 # them); Build configures with the type and builds that target alone.

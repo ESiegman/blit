@@ -2333,7 +2333,9 @@ tasks then show). Each task's row says how its last run went ("running…",
 
 What the build prints is read for problems as it comes, on the terminal's
 own reading thread (nothing per frame): GCC's and Clang's
-`path:line:col: error: message` (and `warning`, `fatal error`), CMake's
+`path:line:col: error: message` (and `warning`, `fatal error`; Clang's
+message wrapped to the terminal's width onto the lines under it is
+joined), CMake's
 `CMake Error at path:line (command):` with the paragraph under it, make's
 `path:line: *** message`, Python's tracebacks (the innermost frame in a
 file of the program's own, with the exception) and its warnings, and

@@ -151,6 +151,7 @@ void BuildScan::finish() {
     line_.clear();
     cr_ = false;
     esc_ = kText;
+    wrapped_end();
     if (cmake_) {
         cmake_ = false;
         add(cmake_problem_.path, cmake_problem_.line, 0, cmake_problem_.severity, cmake_problem_.message);
@@ -163,6 +164,16 @@ void BuildScan::finish() {
 void BuildScan::line(std::string_view text) {
     ++lines_;
     while (!text.empty() && (text.back() == ' ' || text.back() == '\r')) text.remove_suffix(1);
+    if (wrap_) {
+        // Clang's wrapped message goes on six spaces in (its source line,
+        // "    3 | x", and carets, "      |   ^", are not part of it).
+        if (text.size() > 6 && text.starts_with("      ") && text[6] != ' ' && text[6] != '|' && text[6] != '^' && text[6] != '~') {
+            std::string& m = wrap_problem_.message;
+            if (m.size() < kMaxMessage) m += (m.empty() ? "" : " ") + std::string(text.substr(6, kMaxMessage - std::min(kMaxMessage, m.size())));
+            return;
+        }
+        wrapped_end();
+    }
     if (cmake_ && cmake_line(text)) return;
     if (sanitizer_line(text)) return;
     if (python_line(text)) return;
@@ -360,9 +371,24 @@ bool BuildScan::compiler_line(std::string_view text) {
         if (python && !path.ends_with(".py")) continue;
         std::string_view message = python ? after : trim(after.substr(skip));
         if (skip == 4 && message.ends_with("Stop.")) message = trim(message.substr(0, message.size() - 5));
-        add(path, std::max(line, 1u), col, sev, message);
+        if (python) {
+            add(path, std::max(line, 1u), col, sev, message);
+            return true;
+        }
+        wrap_ = true;  // (added once the next line is not more of its message)
+        wrap_problem_.path = std::string(path);
+        wrap_problem_.line = std::max(line, 1u);
+        wrap_problem_.col = col;
+        wrap_problem_.severity = sev;
+        wrap_problem_.message = std::string(message.substr(0, kMaxMessage));
         return true;
     }
+}
+
+void BuildScan::wrapped_end() {
+    if (!wrap_) return;
+    wrap_ = false;
+    add(wrap_problem_.path, wrap_problem_.line, wrap_problem_.col, wrap_problem_.severity, wrap_problem_.message);
 }
 
 // make's and Ninja's "Entering directory 'x'" (and make's "Leaving").
