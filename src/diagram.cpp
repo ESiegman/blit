@@ -549,7 +549,10 @@ DiagramVec diagram_shape_size(u8 shape, float tw, float th, float px, float py) 
             // The text's box (padded a little) within the diamond: a diamond
             // with half-diagonals a and b holds a box w by h when w / 2a +
             // h / 2b <= 1; this share of it goes across.
+            // Never taller than wide: text taller than it is wide (blank
+            // lines, say) is in a square one.
             const float bw = tw + px * 0.8f, bh = th + py * 0.8f, t = 0.38f;
+            if (bh / t > bw / (1 - t)) return {bw + bh, bw + bh};
             return {bw / (1 - t), bh / t};
         }
         case kShapeStadium: {

@@ -881,7 +881,8 @@ struct Layout {
         const float th = static_cast<float>(std::max<size_t>(1, n.lines.size())) * line;
         const bool note = n.shape == kShapeNote;
         const DiagramVec s = diagram_shape_size(n.shape, tw, th, note ? 10 * u : px, note ? 7 * u : py);
-        n.w = std::max(s.x, g.state ? 40 * u : 30 * u), n.h = s.y;
+        // (at least twice as wide as a line is tall: blank lines are not a needle)
+        n.w = std::max({s.x, g.state ? 40 * u : 30 * u, 2 * line}), n.h = s.y;
     }
 
     // ------------------------------------------------ one level

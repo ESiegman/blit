@@ -2351,6 +2351,17 @@ void diagram_test() {
             if (!tried) std::printf("diagram fallback fonts skipped: the editor's font has them all, or no font does\n");
         }
     }
+    // A diamond of blank lines is no needle: never taller than wide.
+    {
+        Drawing d;
+        DiagramGeometry geo;
+        std::string err;
+        diagram_make("flowchart TD\n D --> E{\"<br><br><br>\"}\n", st, &d, &err, &geo);
+        bool found = false;
+        for (const auto& b : geo.boxes)
+            if (b.name == "E") found = true, check(b.w >= b.h, "diagram: a diamond of blank lines no taller than wide (" + std::to_string(b.w) + " by " + std::to_string(b.h) + ")");
+        check(found, "diagram: a diamond of blank lines drawn");
+    }
     // An edge's end exactly on a rectangle's border.
     {
         Drawing d;
