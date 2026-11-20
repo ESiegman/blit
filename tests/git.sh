@@ -468,7 +468,9 @@ git -C "$dir/ada" worktree add -q -b feature "$dir/ada-feature" 2>/dev/null
 run "$dir/ada/poem.txt" "frame;gitwait;gitdump"
 got=$(printf '%s' "$got" | sed -n 's/.*| \(worktrees [^|]*\).*/\1/p' | sed 's/ $//')
 check "the worktrees, this one first" "worktrees main@ada feature@ada-feature"
-run "$dir/ada/poem.txt" "frame;gitwait;command:Git: New worktree;text:topic;key:Return;gitwait;gitdump"
+got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;gitwait;command:Git: New worktree;text:topic;key:Return;gitwait;frame;statusdump;lua:print(blit.workdir())" "$dir/ada/poem.txt" 2>&1 >/dev/null |
+    grep -v '^blit: git' | sed "s#$dir#~#g" | tr '\n' '/')
+check "a new one, then opened: the folder worked in, the file in front that tree's" 'topic poem.txt | Ln 1, Col 1 Tabs LF Plain text/blit: ~/ada-topic/'
 got=$(git -C "$dir/ada" worktree list --porcelain | grep -c '^worktree .*ada-topic$')
 check "one made for a new branch, beside the repository" "1"
 run "$dir/ada/poem.txt" "frame;gitwait;git:opentree:$dir/ada-feature;gitwait;frame;gitwait;gitdump"

@@ -807,7 +807,8 @@ from outside that repository gets no marks and no blame. From the top:
   folder). Backspace removes it, after asking (its branch stays).
   "Git: New worktree…" makes one for a branch, beside the repository and
   named after it and the branch (`blit-feature` for `feature`), the branch
-  made from the one checked out if there is none.
+  made from the one checked out if there is none, and opens it as Enter
+  does.
 - **Submodules**, when there are any: each one's path, how it stands (●
   as the repository wants it, `+` at another commit, ○ not checked out,
   `U` in a conflict) and its commit. Enter opens one that is checked out as
@@ -1939,7 +1940,8 @@ over the one ssh connection:
   Search everywhere (Cmd+K) says so above what it can still find (the
   commands and settings), and finds the files there again once the
   connection is back.
-- **Git** is that machine's own git, run there.
+- **Git** is that machine's own git, run there. A worktree opened from
+  the Git tab, or made by New worktree, is a folder there too.
 - **Programs** run there (a terminal, a build, a language server) send
   their output as they write it. Their tabs name the machine (`Terminal:
   box`, `make (box)`, `notes.txt (changes, box)`, `notes.txt (against

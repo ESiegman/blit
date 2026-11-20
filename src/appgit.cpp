@@ -328,6 +328,7 @@ struct App::GitUi {
     bool started = false, rooted = false, known = false;
     std::string busy;   // the command that is running
     std::string note;   // how the last one went
+    std::string new_tree;  // the working tree New worktree is making (opened once it is made)
     bool note_bad = false;
     bool two_columns = false;  // diff tabs open in two columns (as the last one was turned to)
 
@@ -487,6 +488,10 @@ void App::sync_git() {
                     g.field_top = 0;
                     wrap_message(g.message, g.wrap ? g.wrap : 40, &g.segs);
                     g.field_rows = 1;
+                }
+                if (r.label == "New worktree" && !g.new_tree.empty()) {  // made: opened as another tree is (kActOpenTree)
+                    const std::string tree = std::exchange(g.new_tree, {});
+                    if (r.ok) worktree_open(tree, std::string(g.status.root));
                 }
                 shows = true;
                 reload_changed();  // a pull, a merge, a change of branch: files may be other files now
@@ -1968,9 +1973,13 @@ void App::git_do(u32 action, const std::string& arg) {
             std::string leaf = std::string(name_of(g.status.root)) + "-" + arg;
             std::ranges::replace(leaf, '/', '-');
             const std::string where = parent_of(g.status.root) + "/" + leaf;
+            // (On another machine git there is given the path there, without the host.)
+            std::string host, there = where;
+            split_remote(where, &host, &there);
             const bool have = std::ranges::any_of(g.branches, [&](const GitBranch& b) { return !b.remote && b.name == arg; });
-            if (have) run({"worktree", "add", where, arg}, "New worktree");
-            else run({"worktree", "add", "-b", arg, where}, "New worktree");
+            if (have) run({"worktree", "add", there, arg}, "New worktree");
+            else run({"worktree", "add", "-b", arg, there}, "New worktree");
+            g.new_tree = where;
             break;
         }
         case kActRemoveTree: {

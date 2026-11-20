@@ -234,6 +234,12 @@ check "a tab closed while a slow blame of it runs: at once (the blame is stopped
 INIT="$dir/git.lua"
 run "remotewait;panel;frame;gitwait;frame;open:ssh://box$dir/repo/notes.txt;remotewait;frame;gitwait;git:opentree:$dir/repo-feature;gitwait;remotewait;frame;statusdump;lua:print(blit.workdir())" "ssh://box$dir/repo"
 check "another worktree there: opened there" 'box feature notes.txt | Ln 1, Col 1 Tabs LF Plain text ;; blit: ssh://box@/repo-feature'
+# A new worktree there: git there is given the path there (beside the
+# repository), and the tree made is then opened there as another is.
+INIT="$dir/git.lua"
+run "remotewait;panel;frame;gitwait;frame;open:ssh://box$dir/repo/notes.txt;remotewait;frame;gitwait;git:worktree:topic;gitwait;remotewait;frame;statusdump;lua:print(blit.workdir())" "ssh://box$dir/repo"
+got="$got | $(cd "$dir/repo" && HOME="$T" git worktree list --porcelain | grep -c "^worktree $dir/repo-topic\$")"
+check "a new worktree there: made there, and opened" 'box topic notes.txt | Ln 1, Col 1 Tabs LF Plain text ;; blit: ssh://box@/repo-topic | 1'
 
 # A language server, run there (the test one, next to blit).
 if [ -x "$(dirname "$blit")/blit_fakelsp" ]; then
