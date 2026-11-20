@@ -3168,6 +3168,31 @@ Tests: markdown.sh (every diagram kind's geometry, 140 pictures hashed
 the same on both systems, frames drawing more and more pictures without
 losing the GPU), notebook.sh, and blit_fuzz's new cases.
 
+### Round 69: milestone 1, what the trials broke
+
+The first milestone of the never-leaving-blit plan: clangd's background
+index on with its progress, partial answers said, Vim's `|` and `:e!`,
+Tab and Enter indentation, jumps a third down, inactive preprocessor
+lines dimmed, the find box's chords, Normal-mode keys for the daily
+commands, the remote fixes (run configurations, the console, CTest and
+attach on the host; what a dropped connection says), the debugger's,
+Python's and CMake's fixes. Turn about, five rounds, 2560x1600, against
+the build before it (e381b2e):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 15,680 / 56.92 µs / 2.17 µs | 15,649 / 56.88 µs / 2.25 µs |
+| Typing, everything on: the same | 16,647 / 52.00 µs / 3.42 µs | 17,138 / 49.67 µs / 3.50 µs |
+| Scrolling code-100m.txt, plain: the same | 17,234 / 51.92 µs / 0.92 µs | 17,293 / 51.83 µs / 0.88 µs |
+
+The first run had typing's layout p50 at 4.04 µs. Bisected to the status
+bar's problem count, which, to count a problem the build and the server
+both found once, looked up the line of each of the server's problems
+every time the server sent them (on most typing frames); with no build
+problem in the file it no longer does. Typing's frame is 2.3 µs cheaper
+than before; it came in between the Vim and the looks commits and was
+not chased further.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
