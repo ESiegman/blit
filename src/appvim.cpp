@@ -307,6 +307,17 @@ void App::vim_after(u32 result) {
                 open_path(path.c_str());
                 break;
             }
+            case VimRequest::kReload: {  // :e!, as Vim has it: the file as it is on disk, what was typed in it gone
+                Doc& d = *pane_->doc;
+                if (d.ed.path.empty() || d.read_only) vim_.say("E32: No file name");
+                else if (is_remote(d.ed.path)) vim_.say("Not read again: " + d.ed.path + " is on another machine");
+                else if (SDL_PathInfo info; !SDL_GetPathInfo(d.ed.path.c_str(), &info) || info.type != SDL_PATHTYPE_FILE) vim_.say("No file " + d.ed.path);
+                else {
+                    d.disk_stamp = static_cast<i64>(info.modify_time);
+                    reread(*pane_, d, nullptr);
+                }
+                break;
+            }
             case VimRequest::kTab:
                 if (q.arg == "first") tab_show(0);
                 else if (q.arg == "last") tab_show(pane_->docs.size() - 1);

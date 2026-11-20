@@ -4208,6 +4208,10 @@ void Vim::substitute(Editor& ed, u64 line0, u64 line1, std::string_view rest, bo
             parts[part] += rest[i];
         }
     }
+    if (const size_t bar = parts[2].find('|'); flags && bar != std::string::npos) {  // (after the flags: another command, which is not run)
+        message_ = "E488: Trailing characters: " + parts[2].substr(bar);
+        return;
+    }
     std::string fl = flags ? parts[2] : std::string();
     if (fl.starts_with('&')) fl = last_flags_ + fl.substr(1);
     auto has = [&](char f) { return fl.find(f) != std::string::npos; };
@@ -4440,7 +4444,10 @@ void Vim::run_command(Editor& ed, std::string line) {
         return;
     }
     // :s and its delimiter, :> and :<, then the commands that are words.
+    auto trailing = [&](std::string_view rest) { message_ = "E488: Trailing characters: " + std::string(rest); };
+    if (line[at] == 's' && at + 1 < line.size() && line[at + 1] == '|') return trailing(line.substr(at + 1));  // (not a delimiter, as in Vim)
     if (line[at] == 's' && at + 1 < line.size() && !std::isalpha(static_cast<u8>(line[at + 1]))) return substitute(ed, line0, line1, std::string_view(line).substr(at + 1));
+    if ((line[at] == '&' || line[at] == '>' || line[at] == '<') && line.find('|', at) != std::string::npos) return trailing(line.substr(line.find('|', at)));
     if ((line[at] == '&' || line.substr(at) == "s") && !last_sub_.empty()) return substitute(ed, line0, line1, last_sub_, line.substr(at) == "&&");  // :s and :& again, :&& with its flags
     if (line[at] == '>' || line[at] == '<') return operate_lines(ed, line[at], line0, line1);
     // What the application or a script does: :=EXPR, :lua and the like, :set, and commands with a capital.
@@ -4465,6 +4472,12 @@ void Vim::run_command(Editor& ed, std::string line) {
             if (name == x) return true;
         return false;
     };
+    // "|" does not run a second command: it is said, rather than taken
+    // into a file's name or left out. (:lua, the mappings, :command and
+    // the searches in files keep it as part of what they are given, as a
+    // script's own command does.)
+    if (const size_t bar = arg.find('|'); bar != std::string::npos && !is({"lua", "command", "com", "gr", "grep", "vim", "vimgrep", "Rg"}) && !name.ends_with("map"))
+        return trailing(arg.substr(bar));
     auto lines_range = [&](u64* lo, u64* hi) {
         *lo = ed.buf.line_start(line0);
         *hi = line1 + 1 < ed.buf.line_count() ? ed.buf.line_start(line1 + 1) : ed.buf.size();
@@ -4475,6 +4488,7 @@ void Vim::run_command(Editor& ed, std::string line) {
     else if (is({"wa", "wall"})) requests_.push_back({VimRequest::kSaveAll, {}});
     else if (is({"qa", "qall", "quita", "quitall"})) requests_.push_back({VimRequest::kQuitAll, {}, 0, bang});
     else if (is({"wqa", "wqall", "xa", "xall"})) requests_.push_back({VimRequest::kSaveAll, {}, 0, false, true});
+    else if (is({"e", "edit"}) && bang && arg.empty()) requests_.push_back({VimRequest::kReload, {}});
     else if (is({"e", "edit", "tabe", "tabedit", "tabnew", "new", "enew"})) requests_.push_back(arg.empty() ? VimRequest{VimRequest::kTab, {}, 0} : VimRequest{VimRequest::kOpen, arg});
     else if (is({"bn", "bnext", "tabn", "tabnext"})) requests_.push_back({VimRequest::kTab, {}, 1});
     else if (is({"bp", "bprev", "bprevious", "bN", "bNext", "tabp", "tabprevious", "tabN", "tabNext"})) requests_.push_back({VimRequest::kTab, {}, -1});

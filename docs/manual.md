@@ -493,7 +493,8 @@ or by the DFA; it has a budget of steps, and a pattern that would take too
 long stops with E363 instead of holding the editor.
 
 **The command line**: `:w`, `:q` (closes the tab), `:q!`, `:wq`, `:x`, `:wa`,
-`:qa`, `:wqa`, `:e FILE`, `:bn :bp :bd`, `:tabnew`, `:sp`, `:vs`, `:noh`,
+`:qa`, `:wqa`, `:e FILE`, `:e!` (the file read again from disk, its changes
+here dropped), `:bn :bp :bd`, `:tabnew`, `:sp`, `:vs`, `:noh`,
 `:{number}`, `:d`, `:y`, `:>`, `:<`, `:u`, `:red`, and `:s/this/that/` with
 the flags `g` (every match on a line), `c` (asks of each: `y` `n` `a` `q`
 `l`), `i` and `I` (case ignored or not), `n` (only counts them), `e` (says
@@ -505,7 +506,11 @@ character in upper or lower case, `\U` `\L` all that follows until `\E`
 `:&` alone does the last one again, `:&&` with its flags). A `:s` changes
 only the lines it matched, all in one undo step. Lines are
 given as numbers, `.`, `$`, `%` or `'<,'>` (which `:` in Visual mode fills
-in). Up and Down recall earlier lines.
+in). Up and Down recall earlier lines. One command to a line: `|` does not
+start another, and a command with `|` after it is refused with E488
+(`:lua`, the mappings, `:command`, `:grep` and a script's command keep it as
+part of what they are given; in `:s` it is the pattern's or the
+replacement's).
 
 What Neovim has and this does not, yet: in patterns, `\z(`, and the `\%`
 items that are about the cursor, the Visual area, marks or display columns

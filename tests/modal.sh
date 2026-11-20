@@ -160,6 +160,19 @@ fresh
 got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;text:x;text::;text:w;key:Return;vimdump" "$dir/a.txt" 2>&1 >/dev/null | tail -1)
 got="$got / $(head -1 "$dir/a.txt")"
 check ":w saves" 'NORMAL |  | 1:1 | ello world / ello world'
+fresh
+got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;text:x;text::;text:w|noh;key:Return;vimdump;tabsdump" "$dir/a.txt" 2>&1 >/dev/null | tail -2 | tr '\n' ' ')
+got="$got/ $(head -1 "$dir/a.txt") $(ls "$dir" | grep -c noh)"
+check ":w|noh writes nothing: | is refused, not taken into the name" 'NORMAL | E488: Trailing characters: |noh | 1:1 | ello world a.txt / hello world 0'
+run "frame;text:x;text::;text:noh|w;key:Return;vimdump"
+check "nor is what follows it left out without a word" 'NORMAL | E488: Trailing characters: |w | 1:1 | ello world'
+run "frame;text::;text:s/l/L/g|s/o/0/g;key:Return;vimdump"
+check ":s with | after its flags runs neither" 'NORMAL | E488: Trailing characters: |s/o/0/g | 1:1 | hello world'
+run "frame;text::;text:s/x\\|w/0/;key:Return;vimdump"
+check "while | inside the pattern is the pattern's" 'NORMAL |  | 1:1 | hello 0orld'
+fresh
+got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;text:x;text:j;text::;text:e!;key:Return;text:k;vimdump;tabsdump;statusdump" "$dir/a.txt" 2>&1 >/dev/null | tail -3 | cut -c1-40 | tr '\n' ' ' | sed 's/ *$//')
+check ":e! reads the file again, its changes dropped (no new tab)" 'NORMAL |  | 1:1 | hello world a.txt NORMAL a.txt | Ln 1, Col 1 Spaces: 4 LF'
 run "frame;text::;text:e b.txt;key:Return;dump"
 check ":e opens a file in a tab" '>[a.txt b.txt*]'
 run "frame;text::;text:e b.txt;key:Return;text:g;text:T;dump"
