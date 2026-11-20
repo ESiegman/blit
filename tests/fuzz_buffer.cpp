@@ -2509,6 +2509,16 @@ void diagram_test() {
         check(diagram_make("classDiagram\n A <|-- B\n what is this\n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: a class diagram's unknown line");
         check(diagram_make("erDiagram\n A ||--o{ B : x\n A ||--o< B : y\n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: an ER diagram's mistake, with its line");
         check(diagram_make("erDiagram\n A {\n string\n }\n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: an attribute wants a type and a name");
+        // Classes whose names start as a keyword does (Notebook, accTitleBar):
+        // classes, in a relation; note and accTitle themselves, not.
+        {
+            DiagramGeometry g;
+            check(diagram_make("classDiagram\n Notebook <|-- Page\n Notes <|-- Page\n accTitleBar --> Page\n note \"a real note\"\n note for Page \"another\"\n accTitle: a title\n", st, &d, &err, &g) == kDiagramDrawn && g.lines.size() == 3,
+                  "diagram: a class named Notebook, in a relation (not a note)");
+            int notes = 0, classes = 0;
+            for (const auto& b : g.boxes) notes += b.kind == "node" && b.name.starts_with("note"), classes += b.kind == "node" && (b.name == "Notebook" || b.name == "Notes" || b.name == "accTitleBar");
+            check(notes == 2 && classes == 3, "diagram: Notebook and Notes are classes; the two notes are notes");
+        }
         // Nested thousands deep (laid out by recursion: it ran out of stack), a mistake.
         std::string deep = "flowchart TD\n", spaces = "classDiagram\n";
         for (int k = 0; k < 20000; ++k) deep += " subgraph s" + std::to_string(k) + "\n", spaces += " namespace n" + std::to_string(k) + " {\n";

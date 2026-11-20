@@ -92,6 +92,15 @@ size_t find_bare(std::string_view s, char c, size_t from = 0) {
     return std::string_view::npos;
 }
 
+// Whether a statement (in lower case) starts with a keyword: the word
+// itself, then its end (a class named Notebook is not a note).
+bool keyword(std::string_view l, std::string_view word) {
+    if (!l.starts_with(word)) return false;
+    if (l.size() == word.size()) return true;
+    const char c = l[word.size()];
+    return c == ' ' || c == '\t' || c == '"' || c == ':' || c == '{';
+}
+
 // The colon a label or a member follows (not one of :::'s).
 size_t label_colon(std::string_view s) {
     for (size_t at = find_bare(s, ':'); at != std::string_view::npos; at = find_bare(s, ':', at + 1)) {
@@ -689,7 +698,7 @@ bool parse_class(const std::vector<std::string>& st, ClassModel& m, std::string*
             m.dir = direction_of(l.substr(10));
             continue;
         }
-        if (l.starts_with("click ") || l.starts_with("link ") || l.starts_with("callback ") || l.starts_with("acctitle") || l.starts_with("accdescr") || l.starts_with("title ")) continue;
+        if (l.starts_with("click ") || l.starts_with("link ") || l.starts_with("callback ") || keyword(l, "acctitle") || keyword(l, "accdescr") || l.starts_with("title ")) continue;
         if (l.starts_with("namespace ")) {
             std::string_view name = diagram_trim(s.substr(10));
             const bool block = name.ends_with('{');
@@ -754,7 +763,7 @@ bool parse_class(const std::vector<std::string>& st, ClassModel& m, std::string*
             m.classes[static_cast<size_t>(class_of(m, who, space()))].notes.push_back(std::string(diagram_trim(s.substr(2, close - 2))));
             continue;
         }
-        if (l.starts_with("note")) {
+        if (keyword(l, "note")) {
             std::string_view rest = diagram_trim(s.substr(4));
             Note n;
             if (diagram_lower(rest).starts_with("for ")) {
@@ -1157,7 +1166,7 @@ bool parse_er(const std::vector<std::string>& st, ErModel& m, std::string* err) 
             m.dir = direction_of(l.substr(10));
             continue;
         }
-        if (l.starts_with("acctitle") || l.starts_with("accdescr") || l.starts_with("title ") || l.starts_with("click ")) continue;
+        if (keyword(l, "acctitle") || keyword(l, "accdescr") || l.starts_with("title ") || l.starts_with("click ")) continue;
         if (l.starts_with("classdef ")) {
             const std::vector<std::string> w = words(s.substr(9));
             if (w.size() < 2) return fail("a classDef wants a name and a style");
