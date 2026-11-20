@@ -132,8 +132,8 @@ struct App::StatusUi {
     // at the disk).
     u64 base_doc = ~0ull;
     std::string base_path, base;
-    // The language server's problems, counted once for each set of them.
-    u64 diag_gen = ~0ull;
+    // The language server's problems in the file, counted once for each set of them.
+    u64 diag_gen = ~0ull, diag_doc = ~0ull;
     size_t errors = 0, warnings = 0;
     float tones[8][4] = {};  // (Popup::tones)
 };
@@ -179,7 +179,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
     mix(ed.crlf() ? 1 : 0);
     mix(git_gen_);
     mix(d.hunks_gen);
-    mix(lsp_.attached() ? lsp_.diagnostics_generation() * 4 + (lsp_.ready() ? 2 : 1) : 0);
+    mix(lsp_.diagnostics_generation() * 1000003 + lsp_.state_generation());
     mix(build_prob_gen_);
     mix(std::hash<std::string>{}(script_status_));
     mix(d.indent_tabs ? indent_step() + 1000 : indent_step());
@@ -370,11 +370,14 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
             // The problems: the language server's in the open file, and the
             // last build's across files.
             u32 errors = build_errors_, warnings = build_warnings_;
-            if (lsp_.attached()) {
-                if (u.diag_gen != lsp_.diagnostics_generation()) {
+            bool server_ready = false;
+            const std::string* server = lsp_.server_of(d.id, &server_ready);
+            if (const std::vector<Diagnostic>* diags = server ? lsp_.diagnostics_of(d.id) : nullptr) {
+                if (u.diag_gen != lsp_.diagnostics_generation() || u.diag_doc != d.id) {
                     u.diag_gen = lsp_.diagnostics_generation();
+                    u.diag_doc = d.id;
                     u.errors = u.warnings = 0;
-                    for (const Diagnostic& x : lsp_.diagnostics()) {
+                    for (const Diagnostic& x : *diags) {
                         if (x.severity == 1) ++u.errors;
                         else if (x.severity == 2) ++u.warnings;
                     }
@@ -407,8 +410,8 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                 u.right.push_back({u.lang.empty() ? std::string("Plain text") : language_name(u.lang), ink::kMuted, kLanguage, 2, 3});
                 // (What a narrow window drops first: the rest stays where it was without it.)
                 if (u.no_colours) u.right.push_back({"(no colours)", ink::kMuted, kLanguage, 1, 1});
-                if (lsp_.attached() && !lsp_.server_name().empty())
-                    u.right.push_back({"\xC2\xB7 " + lsp_.server_name() + (lsp_.ready() ? "" : " (starting)"), ink::kMuted, kNone, 1, 2});  // (before the language)
+                if (server && !server->empty())  // (the tab's own: none for a tab on no server)
+                    u.right.push_back({"\xC2\xB7 " + *server + (server_ready ? "" : " (starting)"), ink::kMuted, kNone, 1, 2});  // (before the language)
             }
         }
 

@@ -56,6 +56,7 @@ fresh() {
     printf '/* \303\251\303\251 */ int wide(int n) {\n}\n' >"$P/w.cpp"
     printf 'struct Shape {\n};\nstruct Circle : public Shape {\n};\nstruct Square : Shape {\n};\nint leaf(int n) {\n    return n;\n}\nint middle(int n) {\n    return leaf(n) + leaf(1);\n}\nint top() {\n    return middle(2);\n}\n' >"$P/calls.cpp"
     printf 'struct Ring {\n    void push(int v);\n    int pop();\n};\nvoid Ring::push(int v) {\n}\nint Ring::pop() {\n    return 0;\n}\nint drain(Ring& r) {\n    return r.pop();\n}\n' >"$P/ring.cpp"
+    printf 'plain words\n' >"$P/notes.txt"
 }
 
 failed=0
@@ -92,6 +93,14 @@ run "lspidle:150;open:$P/b.py;open:$P/c.cpp;lspsettle;open:$P/b.py;key:cmd+W;lsp
 check "the last Python tab closed: its server stops a while after" 'fakec proj 2 | a.cpp+ c.cpp+ | front followed 2'
 run "open:$P/b.py;open:$P/c.cpp;lspsettle;open:$P/a.cpp;key:cmd+W;wait:100;lspdump"
 check "a tab closed: its file is closed on its server, which stays for the others" 'fakec proj 1; fakepy proj 1 | b.py+ c.cpp+ | front followed 2'
+
+# The status bar: the server of the tab in front, and its problems.
+run "frame;statusdump"
+check "the status bar names the tab's server, and counts its problems" 'a.cpp | × 1 ▲ 1 Ln 1, Col 1 Tabs LF C++ · fakec'
+run "open:$P/notes.txt;lspsettle;frame;statusdump"
+check "a tab on no server: none named" 'notes.txt | Ln 1, Col 1 Tabs LF Plain text'
+run "open:$P/notes.txt;lspsettle;open:$P/a.cpp;frame;statusdump"
+check "and back: its server and its problems at once" 'a.cpp | × 1 ▲ 1 Ln 1, Col 1 Tabs LF C++ · fakec'
 
 # Problems for the whole project, by file; F8 walks them across files.
 run "open:$P/b.py;open:$P/c.cpp;lspsettle;problemsdump"

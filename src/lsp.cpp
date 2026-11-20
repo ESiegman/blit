@@ -2045,6 +2045,7 @@ Lsp::Document* Lsp::add_document(Server* s, u64 key, Editor* ed, const Buffer* b
     Document* raw = d.get();
     docs_.push_back(std::move(d));
     unopened_ = true;
+    ++state_gen_;
     return raw;  // (told to its server by flush_opens(), once it is known whether it is the one in front)
 }
 
@@ -2097,6 +2098,7 @@ void Lsp::drop_document(Document* d, bool tell) {
     if (format_key_ == d->key) format_id_ = 0;
     if (!d->diags.empty()) ++diags_gen_, ++problems_gen_;
     std::erase_if(docs_, [&](const std::unique_ptr<Document>& x) { return x.get() == d; });
+    ++state_gen_;
 }
 
 bool Lsp::open(u64 key, Editor& ed, const std::string& path, const std::string& language, const std::vector<LspServer>& servers, bool* wait) {
@@ -2215,6 +2217,12 @@ u64 Lsp::key_of(const std::string& path) const {
     for (const std::unique_ptr<Document>& d : docs_)
         if (d->path == path && d->key != ~0ull) return d->key;
     return 0;
+}
+
+const std::string* Lsp::server_of(u64 key, bool* ready) const {
+    const Document* d = doc_of(key);
+    if (ready) *ready = d && d->server->ready;
+    return d ? &d->server->shown : nullptr;
 }
 
 void Lsp::refresh(u64 key) {
@@ -3004,6 +3012,7 @@ u32 Lsp::poll() {
                 }
                 if (s->caps.workspace_pull) pull_workspace(s);
                 unopened_ = true;  // (its documents go to it below)
+                ++state_gen_;
                 news |= kState;
                 break;
             }

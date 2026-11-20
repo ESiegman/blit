@@ -248,6 +248,11 @@ public:
     const std::string* opened_as(u64 key) const;
     // The open document a server's path is (0: none).
     u64 key_of(const std::string& path) const;
+    // The server a document is open on, as server_name() names it (null:
+    // none), and whether it is up. What it says changes only with
+    // state_generation().
+    const std::string* server_of(u64 key, bool* ready = nullptr) const;
+    u64 state_generation() const { return state_gen_; }
     // Its text was replaced without an edit (read again from disk): the
     // server is sent it whole. Cheap when it was not.
     void refresh(u64 key);
@@ -467,6 +472,7 @@ private:
     std::string message_;
     std::vector<std::string> failed_;
 
+    u64 state_gen_ = 0;  // which documents are on which servers, and how those are
     u64 diags_gen_ = 0, problems_gen_ = 0, problems_built_ = ~0ull;
     std::vector<ProblemFile> problems_;
     std::vector<CompletionItem> items_;
