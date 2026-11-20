@@ -3,8 +3,10 @@
 // its two sides (the first to the right, by how tall each is, until half
 // of them are there), and each grows outwards, a node's children stacked
 // beside it and centred on it, joined to it by curves in the branch's
-// colour; a mindmap too wide for the room grows to the right only, if that
-// is narrower. Nested by indentation, as Mermaid's are.
+// colour. A mindmap too wide for the room keeps the root in the middle and
+// hangs each branch's nodes under it instead, indented away from the root
+// (as wide as its deepest label and no more); only one too wide even so
+// grows to one side. Nested by indentation, as Mermaid's are.
 #include <algorithm>
 #include <cmath>
 
@@ -84,8 +86,12 @@ bool parse(const std::vector<DiagramLine>& lines, std::vector<Node>& nodes, std:
 
 struct Look {
     float u, size, root_size, line, root_line, most, widest, px, py;  // (most: what labels are wrapped to; widest: at the widest)
-    float hgap(int depth) const { return (depth == 0 ? 52 : 34) * u; }
+    bool hang = false;  // a branch's nodes under it, indented, not beside it
+    float hgap(int depth) const { return (depth == 0 ? (hang ? 40 : 52) : 34) * u; }
     float vgap(int depth) const { return (depth == 0 ? 18 : 9) * u; }
+    float indent() const { return 22 * u; }  // (how far in a node hung under another is; how far under)
+    float drop() const { return 7 * u; }
+    bool under(int depth) const { return hang && depth >= 1; }  // whether a node this deep has its children under it
 };
 
 void measure(std::vector<Node>& nodes, const Look& lk, const DiagramFont& font) {
@@ -108,7 +114,12 @@ void measure(std::vector<Node>& nodes, const Look& lk, const DiagramFont& font) 
         const float px = lk.px * (root ? 1.4f : 1), py = lk.py * (root ? 1.4f : 1);
         DiagramVec s;
         switch (n.shape) {
-            case kCircle: s = diagram_shape_size(kShapeCircle, n.tw, n.th, px, py); break;
+            case kCircle: {
+                // (round its text's corners, and nearly as far from them as a box's sides are from its text)
+                const float across = std::sqrt(n.tw * n.tw + n.th * n.th) + 1.2f * px;
+                s = {across, across};
+                break;
+            }
             case kHexagon: s = diagram_shape_size(kShapeHexagon, n.tw, n.th, px, py); break;
             case kBang:
             case kCloud: s = {n.tw * 1.25f + 3 * px, n.th * 1.3f + 4 * py}; break;
@@ -125,14 +136,32 @@ void subtrees(std::vector<Node>& nodes, const Look& lk) {
     for (size_t i = nodes.size(); i-- > 0;) {
         Node& n = nodes[i];
         float kids = 0;
+        if (lk.under(n.depth)) {
+            for (const int c : n.kids) kids += lk.drop() + nodes[static_cast<size_t>(c)].tall;
+            n.tall = n.h + kids;
+            continue;
+        }
         for (size_t k = 0; k < n.kids.size(); ++k) kids += nodes[static_cast<size_t>(n.kids[k])].tall + (k ? lk.vgap(n.depth) : 0);
         n.tall = std::max(n.h, kids);
     }
 }
 
-// A node's children beside it, on its side, stacked and centred on it.
+// A node's children beside it, on its side, stacked and centred on it; or
+// under it, each further from the root than it by the indent.
 void place_kids(std::vector<Node>& nodes, int i, const std::vector<int>& kids, int side, const Look& lk) {
     const Node& n = nodes[static_cast<size_t>(i)];
+    if (lk.under(n.depth)) {
+        float y = n.y + n.h / 2;
+        const float edge = n.x - static_cast<float>(side) * (n.w / 2 - lk.indent());
+        for (const int c : kids) {
+            Node& kid = nodes[static_cast<size_t>(c)];
+            kid.side = side;
+            kid.x = edge + static_cast<float>(side) * kid.w / 2;
+            kid.y = y + lk.drop() + kid.h / 2;
+            y += lk.drop() + kid.tall;
+        }
+        return;
+    }
     float total = 0;
     for (size_t k = 0; k < kids.size(); ++k) total += nodes[static_cast<size_t>(kids[k])].tall + (k ? lk.vgap(n.depth) : 0);
     float y = n.y - total / 2;
@@ -141,13 +170,13 @@ void place_kids(std::vector<Node>& nodes, int i, const std::vector<int>& kids, i
         Node& kid = nodes[static_cast<size_t>(c)];
         kid.side = side;
         kid.x = edge + static_cast<float>(side) * kid.w / 2;
-        kid.y = y + kid.tall / 2;
+        kid.y = y + (lk.under(kid.depth) ? kid.h : kid.tall) / 2;  // (a branch hung under its first node: that node at its top)
         y += kid.tall + lk.vgap(n.depth);
     }
 }
 
-// Laid out with the root's branches on both sides, or to the right only;
-// how wide that is.
+// Laid out with the root's branches on both sides, or to the right only
+// (beside each other or hung, as the look says); how wide that is.
 float place(std::vector<Node>& nodes, bool both, const Look& lk) {
     subtrees(nodes, lk);
     Node& root = nodes[0];
@@ -211,10 +240,17 @@ void outline(const Node& n, float u, RasterPath* p) {
     }
 }
 
-// Where a line to or from the node meets its side (the side towards `side`).
-DiagramVec side_point(const Node& n, int side) {
+// Where a line to or from the node meets its side (the side towards
+// `side`), `up` of the way from its middle to its top or its foot (-1 to
+// 1: a node's branches leave it apart from each other, not from one
+// point). A round node's side is nearer its middle away from its middle
+// height.
+DiagramVec side_point(const Node& n, int side, float up = 0) {
     const float in = n.shape == kCloud ? 0.03f : n.shape == kBang ? 0.01f : 0;
-    return {n.x + static_cast<float>(side) * n.w / 2 * (1 - in), n.y};
+    if (n.shape == kHexagon || n.shape == kBang || n.shape == kCloud) up = 0;  // (these come to a point at the side, or are not smooth)
+    const float t = up * 0.6f;  // (within the middle 60% of its height)
+    const float across = n.shape == kCircle ? std::sqrt(1 - t * t) : 1;
+    return {n.x + static_cast<float>(side) * n.w / 2 * (1 - in) * across, n.y + t * n.h / 2};
 }
 
 }  // namespace
@@ -233,18 +269,34 @@ bool mindmap_layout(const std::vector<DiagramLine>& lines, const DiagramStyle& s
     lk.u = style.unit(), lk.size = style.size, lk.root_size = style.size * 1.15f;
     lk.line = font.line(lk.size), lk.root_line = font.line(lk.root_size);
     lk.px = 13 * lk.u, lk.py = 8 * lk.u;
-    // On both sides; to the right only if that is narrower and both are too
-    // wide; and long labels wrapped narrower while it is still too wide.
+    // The first of these that fits the room: on both sides, each node's
+    // children beside it; on both sides, a branch's nodes hung under it;
+    // the same, drawn a little smaller (the root in the middle is worth
+    // that); to the right only, hung. Each with long labels wrapped
+    // narrower while it is still too wide. The narrowest of them if none
+    // fits (it is drawn as much smaller as it must be).
     const float most = std::max(font.width("abcdefghijklmnopqrstuvwxyz", lk.size) * 0.85f, 150 * lk.u);
-    for (const float k : {1.0f, 0.7f, 0.5f}) {
-        lk.most = std::max(most * k, 80 * lk.u), lk.widest = most;
-        measure(nodes, lk, font);
-        float wide = place(nodes, true, lk);
-        if (wide > style.room - 28 * lk.u) {
-            std::vector<Node> one = nodes;
-            if (const float w1 = place(one, false, lk); w1 < wide) nodes = std::move(one), wide = w1;
+    {
+        struct Way {
+            bool both, hang;
+            float smaller;
+        };
+        std::vector<Node> best;
+        float best_w = 1e30f;
+        bool best_hang = false, fits = false;
+        for (const Way way : {Way{true, false, 1}, Way{true, true, 1}, Way{true, true, 0.8f}, Way{false, true, 1}}) {
+            for (const float k : {1.0f, 0.7f, 0.5f}) {
+                lk.most = std::max(most * k, 80 * lk.u), lk.widest = most, lk.hang = way.hang;
+                std::vector<Node> tried = nodes;
+                measure(tried, lk, font);
+                const float wide = place(tried, way.both, lk);
+                fits = wide * way.smaller <= style.room - 28 * lk.u;
+                if (fits || wide < best_w) best = std::move(tried), best_w = wide, best_hang = way.hang;
+                if (fits) break;
+            }
+            if (fits) break;
         }
-        if (wide <= style.room - 28 * lk.u) break;
+        nodes = std::move(best), lk.hang = best_hang;
     }
 
     const float u = lk.u, pad = 14 * u;
@@ -260,11 +312,27 @@ bool mindmap_layout(const std::vector<DiagramLine>& lines, const DiagramStyle& s
     for (size_t i = 1; i < nodes.size(); ++i) {
         const Node& n = nodes[i];
         const Node& par = nodes[static_cast<size_t>(n.parent)];
-        const DiagramVec a = side_point(par, n.side), b = side_point(n, -n.side);
-        const float k = (b.x - a.x) * 0.5f;
+        const DiagramVec b = side_point(n, -n.side);
         RasterPath curve;
-        curve.move_to(a.x, a.y);
-        curve.cubic_to(a.x + k, a.y, b.x - k, b.y, b.x, b.y);
+        if (lk.under(par.depth)) {
+            // Hung under its parent: down from the parent's foot, and round
+            // a corner to its side.
+            const float side = static_cast<float>(n.side), x = b.x - side * lk.indent() * 0.55f, r = std::min(lk.indent() * 0.55f, b.y - (par.y + par.h / 2));
+            curve.move_to(x, par.y + par.h / 2);
+            curve.line_to(x, b.y - r);
+            curve.quad_to(x, b.y, x + side * r, b.y);
+            curve.line_to(b.x, b.y);
+        } else {
+            // Beside it: from the parent's side, as far up or down it as
+            // the node is among those on that side.
+            float reach = 0;
+            for (const int c : par.kids)
+                if (nodes[static_cast<size_t>(c)].side == n.side) reach = std::max(reach, std::fabs(nodes[static_cast<size_t>(c)].y - par.y));
+            const DiagramVec a = side_point(par, n.side, reach > 0 ? (n.y - par.y) / reach : 0);
+            const float k = (b.x - a.x) * 0.5f;
+            curve.move_to(a.x, a.y);
+            curve.cubic_to(a.x + k, a.y, b.x - k, b.y, b.x, b.y);
+        }
         const float width = (n.depth == 1 ? 2.8f : n.depth == 2 ? 2 : 1.5f) * u;
         if (geo) geo->lines.push_back({"n" + std::to_string(n.parent), "n" + std::to_string(i), diagram_sample(curve, 12)});
         out->shape(std::move(curve), {}, p.tone(ink_of(n), 0.8f), width, {}, RasterStroke::kRound);

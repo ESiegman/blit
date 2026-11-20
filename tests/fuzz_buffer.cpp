@@ -3019,6 +3019,43 @@ void plans_test() {
         }
         check(made == kDiagramDrawn, "plans: a mindmap 2,000 deep, on a small stack");
     }
+    // A mindmap too wide for its room keeps its root in the middle, with
+    // branches on both sides of it (their nodes hung under them), not at
+    // the far left with every branch to its right.
+    {
+        DiagramStyle narrow = st;
+        narrow.room = 480;
+        Drawing d;
+        DiagramGeometry geo;
+        std::string err;
+        diagram_make(sources[3], narrow, &d, &err, &geo);
+        Box root;
+        int left = 0, right = 0;
+        for (const Box& x : geo.boxes) {
+            if (x.name == "n0") root = x;
+        }
+        for (const Box& x : geo.boxes) left += x.x + x.w <= root.x, right += x.x >= root.x + root.w;
+        const float mid = root.x + root.w / 2;
+        check(left >= 2 && right >= 2 && mid > d.w * 0.3f && mid < d.w * 0.7f && d.w <= narrow.room / 0.8f, "plans: a mindmap in a narrow room, its root in the middle");
+        // A node's branches leave its side apart from each other (not all
+        // from one point), in the order they arrive in.
+        geo = {};
+        diagram_make("mindmap\n root((r))\n  a\n  b\n  c\n  d\n  e\n  f\n", st, &d, &err, &geo);
+        std::vector<std::pair<float, float>> ends[2];  // (where a line leaves the root, where it arrives; by side)
+        for (const auto& l : geo.lines)
+            if (l.from == "n0" && l.pts.size() >= 2) ends[l.pts.back().x > l.pts.front().x].push_back({l.pts.front().y, l.pts.back().y});
+        bool spread = ends[0].size() == 3 && ends[1].size() == 3;
+        for (auto& side : ends) {
+            std::sort(side.begin(), side.end(), [](const auto& x, const auto& y) { return x.second < y.second; });
+            for (size_t k = 1; k < side.size(); ++k) spread = spread && side[k].first > side[k - 1].first + 2;
+        }
+        check(spread, "plans: a mindmap node's branches leave it apart from each other");
+        // A circle's text is clear of its line (as far as a box's is of its sides).
+        geo = {};
+        diagram_make("mindmap\n r\n  c((A circle))\n", st, &d, &err, &geo);
+        for (const Box& x : geo.boxes)
+            if (x.name == "n1") check(x.w >= font.width("A circle", st.size) + 14 * st.unit(), "plans: a circle's text clear of its line");
+    }
     // A section's colour is never the critical tasks' red (a dark theme's
     // fourth slice is its keyword colour, often its error colour too): only
     // the critical bar is filled in it.
