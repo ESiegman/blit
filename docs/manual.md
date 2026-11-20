@@ -1124,7 +1124,9 @@ floating box is rounded by that bar's radius and those 4 points, so the two
 curves share a centre. The accent colour means "you are here, or yours":
 the caret, matched letters, the item in front, the active tab of a panel,
 the one button that does it. Headings are muted and bold, secondary text
-muted, and keys are written as macOS writes them (⇧⌘P) where the font, or a
+muted (on the chosen row of a list, a colour between the muted one and the
+text's, as far toward the text's as it takes to read there), and keys are
+written as macOS writes them (⇧⌘P) where the font, or a
 fallback, has the symbols; a box's hints are a line of keys and what they
 do. Nothing is cut off without an ellipsis, and the chrome has no italics.
 

@@ -143,16 +143,16 @@ void add_builtin_themes(Config& c) {
     const Sty plain_styles = {{"comment", "italic"}, {"markup.italic", "italic"}, {"markup.strong", "bold"},
                               {"markup.heading", "bold"}, {"markup.link.url", "underline"}, {"markup.strikethrough", "strikethrough"}};
     style_all(c.themes["blit-dark"], plain_styles);
-    c.themes["blit-light"] = base(0xffffff, 0x1a1a1c, 0xb3d4ff, 0x000000, 0x9a9aa0, 0xca3c2c, 0xa87b00, 0x325cc0, 0x0184bc, 0x8e9096, 0x325cc0, 0xf3f3f5, 0xcfd0d6);
+    c.themes["blit-light"] = base(0xffffff, 0x1a1a1c, 0xb3d4ff, 0x000000, 0x9a9aa0, 0xca3c2c, 0xa87b00, 0x325cc0, 0x0184bc, 0x75777e, 0x325cc0, 0xf3f3f5, 0xcfd0d6);
     set_all(c.themes["blit-light"], {
-        {"comment", 0x8e9096}, {"string", 0x448c27}, {"string.escape", 0x0184bc}, {"string.regexp", 0x0184bc},
+        {"comment", 0x75777e}, {"string", 0x448c27}, {"string.escape", 0x0184bc}, {"string.regexp", 0x0184bc},
         {"character", 0x448c27}, {"number", 0x986801}, {"boolean", 0x986801}, {"constant", 0x986801},
         {"function", 0x325cc0}, {"constructor", 0xa87b00}, {"keyword", 0xa626a4}, {"keyword.operator", 0xa626a4},
         {"operator", 0x5c5f69}, {"punctuation", 0x5c5f69}, {"type", 0xa87b00}, {"attribute", 0x986801},
         {"property", 0xca3c2c}, {"variable.builtin", 0xca3c2c}, {"variable.member", 0xca3c2c},
         {"module", 0xa87b00}, {"label", 0xca3c2c}, {"tag", 0xca3c2c}, {"tag.attribute", 0x986801},
         {"tag.delimiter", 0x5c5f69}, {"markup.heading", 0xca3c2c}, {"markup.link", 0x325cc0}, {"markup.raw", 0x448c27},
-        {"markup.list", 0xa626a4}, {"markup.quote", 0x8e9096}, {"diff.plus", 0x448c27}, {"diff.minus", 0xca3c2c},
+        {"markup.list", 0xa626a4}, {"markup.quote", 0x75777e}, {"diff.plus", 0x448c27}, {"diff.minus", 0xca3c2c},
         {"diff.delta", 0xa87b00},
     });
     c.themes["blit-light"].guides = guide_colours(0xffffff, {0x325cc0, 0xa87b00, 0x448c27, 0xa626a4, 0xca3c2c, 0x0184bc});
@@ -162,6 +162,9 @@ void add_builtin_themes(Config& c) {
     c.themes["rose-pine"] = rose_pine(0x191724, 0x1f1d2e, 0xe0def4, 0x403d52, 0x524f67, 0x6e6a86, 0x908caa, 0xeb6f92, 0xf6c177, 0xebbcba, 0x31748f, 0x9ccfd8, 0xc4a7e7);
     c.themes["rose-pine-moon"] = rose_pine(0x232136, 0x2a273f, 0xe0def4, 0x44415a, 0x56526e, 0x6e6a86, 0x908caa, 0xeb6f92, 0xf6c177, 0xea9a97, 0x3e8fb0, 0x9ccfd8, 0xc4a7e7);
     c.themes["rose-pine-dawn"] = rose_pine(0xfaf4ed, 0xfffaf3, 0x575279, 0xdfdad9, 0xcecacd, 0x9893a5, 0x797593, 0xb4637a, 0xea9d34, 0xd7827e, 0x286983, 0x56949f, 0x907aa9);
+    // (Dawn's muted is 2.7:1 on its base: secondary text, line numbers and
+    // the status bar take the palette's next step, subtle, 4:1.)
+    c.themes["rose-pine-dawn"].muted = hex(0x797593);
 }
 
 std::string_view trim(std::string_view s) {

@@ -136,7 +136,7 @@ got=$(printf '%s\n' "$got" | sed -n 3,4p | tr '\n' ,)
 check "task lists: their squares in both themes (dark)" "[#7f848e]□ [#dbdedb]to do,[#61afef]⊠ [#7f848e]done,"
 looks "$here/markdown/lists.md" 'blit.opt.theme.dark = "blit-light"; blit.opt.theme.light = "blit-light"'
 got=$(printf '%s\n' "$got" | sed -n 3,4p | tr '\n' ,)
-check "task lists: their squares in both themes (light)" "[#8e9096]□ [#1a1a1c]to do,[#325cc0]⊠ [#8e9096]done,"
+check "task lists: their squares in both themes (light)" "[#75777e]□ [#1a1a1c]to do,[#325cc0]⊠ [#75777e]done,"
 
 # Footnotes: a mark is a link to its text at the end, the row that text
 # starts on is named for it, and the mark after the text is a link back;

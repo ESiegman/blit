@@ -63,7 +63,15 @@ run "key:cmd+P;text:src e;findinks"
 check "the chosen row's folder in an ink that reads there, dark" 'muted #7f848e 3.92, chosen #c4c8c8 4.85'
 BLIT_APPEARANCE=light
 run "key:cmd+P;text:src e;findinks"
-check "and light" 'muted #8e9096 2.88, chosen #545559 4.88'
+check "and light" 'muted #75777e 4.03, chosen #535459 4.95'
+# (The muted ink of the two light themes is a step darker than it was, 4:1
+# on a box's background: blit-light's, and rose-pine-dawn's, its palette's
+# subtle.)
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.theme.light = "rose-pine-dawn"\n' >"$dir/dawn.lua"
+BLIT_INIT="$dir/dawn.lua"
+run "key:cmd+P;text:src e;findinks"
+check "and rose-pine-dawn" 'muted #797593 4.23, chosen #605b80 4.61'
+BLIT_INIT="$dir/init.lua"
 unset BLIT_APPEARANCE
 run "key:cmd+P;text:s;key:Down;key:Return;dump"
 check "Down chooses the next" '>[README.md helper.hpp*]'
