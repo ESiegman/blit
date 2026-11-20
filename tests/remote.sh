@@ -240,6 +240,12 @@ INIT="$dir/git.lua"
 run "remotewait;panel;frame;gitwait;frame;open:ssh://box$dir/repo/notes.txt;remotewait;frame;gitwait;git:worktree:topic;gitwait;remotewait;frame;statusdump;lua:print(blit.workdir())" "ssh://box$dir/repo"
 got="$got | $(cd "$dir/repo" && HOME="$T" git worktree list --porcelain | grep -c "^worktree $dir/repo-topic\$")"
 check "a new worktree there: made there, and opened" 'box topic notes.txt | Ln 1, Col 1 Tabs LF Plain text ;; blit: ssh://box@/repo-topic | 1'
+# One git there will not make (its folder is there already): the Git tab
+# says why (not what git said it was doing first), and the folder stays.
+INIT="$dir/git.lua"
+run "remotewait;panel;frame;gitwait;frame;git:worktree:feature;gitwait;gitdump;lua:print(blit.workdir())" "ssh://box$dir/repo"
+got=$(printf '%s' "$got" | sed -n 's/.* | note \(.*\) ;; \(blit: ssh:[^ ]*\)$/\1 ;; \2/p')
+check "a new worktree there that git refuses: why, and the folder stays" "New worktree: fatal: '@/repo-feature' already exists ;; blit: ssh://box@/repo"
 
 # A language server, run there (the test one, next to blit).
 if [ -x "$(dirname "$blit")/blit_fakelsp" ]; then

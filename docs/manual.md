@@ -808,7 +808,8 @@ from outside that repository gets no marks and no blame. From the top:
   "Git: New worktree…" makes one for a branch, beside the repository and
   named after it and the branch (`blit-feature` for `feature`), the branch
   made from the one checked out if there is none, and opens it as Enter
-  does.
+  does. A git command that fails leaves why in the Git tab (git's
+  `fatal:` or `error:` line).
 - **Submodules**, when there are any: each one's path, how it stands (●
   as the repository wants it, `+` at another commit, ○ not checked out,
   `U` in a conflict) and its commit. Enter opens one that is checked out as

@@ -124,6 +124,20 @@ std::string first_line(const std::string& s) {
     return cr == std::string::npos ? line : line.substr(cr + 1);
 }
 
+// Why a git command failed: the first line git said so on ("fatal:" or
+// "error:", after what it said it was doing, as worktree add does), else
+// the first line.
+std::string why_failed(const std::string& s) {
+    for (size_t at = 0; at < s.size();) {
+        const size_t nl = s.find('\n', at);
+        const std::string line = first_line(s.substr(at, nl == std::string::npos ? std::string::npos : nl - at));
+        if (line.starts_with("fatal:") || line.starts_with("error:")) return line;
+        if (nl == std::string::npos) break;
+        at = nl + 1;
+    }
+    return first_line(s);
+}
+
 std::string_view name_of(std::string_view path) {
     while (path.size() > 1 && path.back() == '/') path.remove_suffix(1);
     const size_t slash = path.find_last_of('/');
@@ -478,7 +492,7 @@ void App::sync_git() {
                 break;
             }
             case Git::kAction: {
-                g.note = r.ok ? r.label + ": done" : r.label + ": " + first_line(r.text);
+                g.note = r.ok ? r.label + ": done" : r.label + ": " + why_failed(r.text);
                 if (r.ok && !r.text.empty() && r.text.size() < 120 && r.text.find('\n') == std::string::npos) g.note = r.label + ": " + r.text;
                 g.note_bad = !r.ok;
                 if (!r.ok) std::fprintf(stderr, "blit: git %s: %s\n", r.label.c_str(), r.text.c_str());

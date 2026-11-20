@@ -473,6 +473,9 @@ got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;gitwai
 check "a new one, then opened: the folder worked in, the file in front that tree's" 'topic poem.txt | Ln 1, Col 1 Tabs LF Plain text/blit: ~/ada-topic/'
 got=$(git -C "$dir/ada" worktree list --porcelain | grep -c '^worktree .*ada-topic$')
 check "one made for a new branch, beside the repository" "1"
+run "$dir/ada/poem.txt" "frame;gitwait;git:worktree:feature;gitwait;gitdump"
+got=$(printf '%s' "$got" | sed -n 's/.* | note //p' | sed "s#$dir#~#g")
+check "one git will not make (its folder is there): the Git tab says why" "New worktree: fatal: '~/ada-feature' already exists"
 run "$dir/ada/poem.txt" "frame;gitwait;git:opentree:$dir/ada-feature;gitwait;frame;gitwait;gitdump"
 got=$(printf '%s' "$got" | sed -n 's/.*| branches \([^|]*\).*/\1/p' | tr ' ' '\n' | grep '^\*')
 check "opened: the folder worked in, its branch the one checked out" "*feature"
