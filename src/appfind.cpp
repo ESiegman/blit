@@ -1489,9 +1489,19 @@ void App::save_named(const std::string& path, u64 doc) {
     focus_pane(where);
     tab_show(at);
     stop_lsp();  // it knows the file by its name
+    const std::string was = pane_->doc->ed.path;
     pane_->doc->ed.path = path;
-    save();
-    if (!pane_->doc->ed.modified() || remote_saving(doc)) {  // (to another machine: closing and quitting wait for it)
+    pane_->doc->renamed_from = was;  // (to another machine: the saver puts it back if the write fails)
+    const bool saved = save();
+    Doc* const d = find_doc(doc, &where, &at);
+    if (!d) return;
+    d->renamed_from.reset();
+    if (!saved && d->ed.path == path) {  // (not written: the tab keeps the name it had, and its file)
+        d->ed.path = was;
+        lsp_pending_ = true;
+        return;
+    }
+    if (!d->ed.modified() || remote_saving(doc)) {  // (to another machine: closing and quitting wait for it)
         if (closing) tab_close(at);
         if (quitting) request_quit();  // on to the next unsaved file, or out
     }

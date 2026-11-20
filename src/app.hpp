@@ -6,6 +6,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <optional>
 #include <string>
 #include <thread>
 #include <unordered_map>
@@ -201,6 +202,7 @@ struct Doc {
     u64 hist_rev = ~0ull, hist_ns = 0;     // the text last kept in its local history, and when (apphistory.cpp; 0: not yet this session)
     bool hist_disk = false;                // the text it had on disk kept, at its first save this session (apphistory.cpp)
     i64 disk_stamp = 0;                    // the file's change time when it was last read or written
+    std::optional<std::string> renamed_from;  // (Save as: the name it had, back again if the save fails)
     // A tab that shows something made and not a file (a diff, a commit):
     // what it is called, that it is not to be typed in, and its colours.
     std::string title;
@@ -433,7 +435,7 @@ private:
     void zoom(float dpt);
     bool open_path(const char* p, bool must_exist = false);
     void open_named(std::string name);
-    void save();
+    bool save();  // false: not written (nor on its way to another machine)
     void request_quit();
     int view_h() const { return std::max(1, pane_->y1 - pane_->text_y); }  // height of the focused pane's text area
     int view_w() const { return std::max(1, pane_->x1 - pane_->text_x); }

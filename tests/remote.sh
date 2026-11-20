@@ -61,6 +61,15 @@ got="$got | $(cat "$W/fresh.txt")"
 check "one that is not there: made when saved" 'box ~/work/fresh.txt | Ln 1, Col 4 Tabs LF Plain text | new'
 run "remotewait;text:lost;save;remotewait;frame;statusdump" "$R/nowhere/lost.txt"
 check "a save that fails: the bottom line says why, and it is still changed" 'blit: cannot write ~/work/nowhere/lost.txt.blit-tmp: No such file or directory ;; box ~/work/nowhere/lost.txt ● | Ln 1, Col 5 Tabs LF Plain text'
+saveas="command:Save as…;key:ctrl+U;text:"
+run "remotewait;frame;${saveas}$R/nowhere/x.txt;remotewait;findwait;key:Return;remotewait;frame;statusdump;dump" "$R/notes.txt"
+check "a Save as that fails: the tab keeps its name (and is still saved)" 'blit: cannot write ~/work/nowhere/x.txt.blit-tmp: No such file or directory ;; box ~/work/notes.txt | Ln 1, Col 1 Tabs LF Plain text ;; >[notes.txt*]'
+run "frame;${saveas}$W/nowhere/x.txt;findwait;key:Return;frame;statusdump;dump" "$W/notes.txt"
+check "and one on this machine" 'blit: cannot write: ~/work/nowhere/x.txt.blit-tmp ;; notes.txt | Ln 1, Col 1 Tabs LF Plain text ;; >[notes.txt*]'
+run "remotewait;frame;${saveas}$R/copy.txt;remotewait;findwait;key:Return;remotewait;frame;statusdump;dump" "$R/notes.txt"
+got="$got | $(tr '\n' ' ' <"$W/copy.txt")"
+check "and one that is written: the tab has the new name" 'box ~/work/copy.txt | Ln 1, Col 1 Tabs LF Plain text ;; >[copy.txt*] | Xhello world '
+rm "$W/copy.txt"
 
 # A slow host (each answer held half a second): saving goes back to the keys at
 # once, and the file is saved as it was then when the write has been made

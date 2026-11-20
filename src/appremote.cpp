@@ -53,6 +53,7 @@ struct App::RemoteUi {
         std::vector<Piece> pieces;
         std::string text;  // (the copy, once there is one)
         u64 point = 0;     // where the document's history was (Editor::save_point)
+        std::optional<std::string> was;  // (Save as: the name it had)
     };
     struct Saved {
         u64 doc = 0;
@@ -61,6 +62,7 @@ struct App::RemoteUi {
         bool ok = false;
         std::string error;
         i64 modified = 0;
+        std::optional<std::string> was;
     };
     std::deque<Save> saves;    // waiting their turn
     std::vector<Saved> saved;  // written (or not), for the main thread
@@ -214,7 +216,7 @@ void App::remote_start() {
                 }
                 u->copied.notify_all();
             }
-            RemoteUi::Saved d{s.doc, s.path, s.point, false, {}, 0};
+            RemoteUi::Saved d{s.doc, s.path, s.point, false, {}, 0, std::move(s.was)};
             std::string there;
             if (const std::shared_ptr<Remote> r = connection(s.path, &there, stop); !r) d.error = remote_error(s.path);
             else d.ok = r->write(there, std::move(s.text), &d.error, &d.modified);
@@ -309,6 +311,7 @@ void App::remote_save(Doc& d) {
     s.doc = d.id;
     s.path = d.ed.path;
     s.point = d.ed.save_point();
+    s.was = std::exchange(d.renamed_from, std::nullopt);
     if (d.nb) s.text = nb_json(d);  // (a notebook: written as one)
     else d.ed.buf.snapshot(&s.pieces);
     bool instead = false;
@@ -442,6 +445,11 @@ void App::remote_saved() {
         if (!x.ok) {
             const std::string why = x.error.starts_with("cannot ") ? x.error : "cannot save " + name_of(x.path) + ": " + x.error;
             notify(why);
+            if (x.was) {  // (a Save as: the tab keeps the name it had, and its file)
+                if (lsp_doc_ == d) stop_lsp();
+                d->ed.path = *x.was;
+                lsp_pending_ = true;
+            }
             continue;
         }
         d->ed.mark_saved_at(x.point);

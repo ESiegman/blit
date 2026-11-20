@@ -884,26 +884,26 @@ void App::open_setting(const std::string& key) {
     dirty_ = true;
 }
 
-void App::save() {
-    if (pane_->doc->read_only) return;  // a diff is not a file
+bool App::save() {
+    if (pane_->doc->read_only) return false;  // a diff is not a file
     if (pane_->doc->ed.path.empty()) {  // a new file: a name for it is asked for (appfind.cpp), and it is saved when there is one
         find_open(kFindSave);
         find_save_for(pane_->doc->id);
-        return;
+        return false;
     }
     const u64 id = pane_->doc->id;
-    if (script_ && !script_write(false, id)) return;  // (BufWritePre: a handler may change it first, or close it)
+    if (script_ && !script_write(false, id)) return false;  // (BufWritePre: a handler may change it first, or close it)
     if (find_doc(id) != pane_->doc) {
         size_t at = 0;
         Pane* where = nullptr;
-        if (!find_doc(id, &where, &at)) return;
+        if (!find_doc(id, &where, &at)) return false;
         focus_pane(where);
         tab_show(at);
     }
     lsp_format_on_save();  // (lsp.format_on_save: its server formats it first)
     if (is_remote(pane_->doc->ed.path)) {  // to another machine: written on a thread, and saved once it has been (appremote.cpp)
         remote_save(*pane_->doc);
-        return;
+        return true;
     }
     history_before_save(*pane_->doc);  // (the first save this session: the text on disk kept first)
     std::string err;
@@ -924,6 +924,7 @@ void App::save() {
         if (script_) script_write(true, id);
     }
     dirty_ = true;
+    return saved;
 }
 
 // Cmd+Shift+S: the file in front, under a name asked for in the box that
