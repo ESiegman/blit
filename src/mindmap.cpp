@@ -317,8 +317,13 @@ bool mindmap_layout(const std::vector<DiagramLine>& lines, const DiagramStyle& s
         if (lk.under(par.depth)) {
             // Hung under its parent: down from the parent's foot, and round
             // a corner to its side.
-            const float side = static_cast<float>(n.side), x = b.x - side * lk.indent() * 0.55f, r = std::min(lk.indent() * 0.55f, b.y - (par.y + par.h / 2));
-            curve.move_to(x, par.y + par.h / 2);
+            const float side = static_cast<float>(n.side), x = b.x - side * lk.indent() * 0.55f;
+            // (from where the parent's outline is there: a circle's foot is at its middle only)
+            float foot = par.y + par.h / 2;
+            if (par.shape == kCircle) foot = par.y + std::sqrt(std::max(0.0f, par.w * par.w / 4 - (x - par.x) * (x - par.x)));
+            else if (par.shape == kHexagon || par.shape == kBang || par.shape == kCloud) foot = par.y + par.h / 4;
+            const float r = std::min(lk.indent() * 0.55f, b.y - foot);
+            curve.move_to(x, foot);
             curve.line_to(x, b.y - r);
             curve.quad_to(x, b.y, x + side * r, b.y);
             curve.line_to(b.x, b.y);

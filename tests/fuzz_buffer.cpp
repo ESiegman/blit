@@ -3050,6 +3050,18 @@ void plans_test() {
             for (size_t k = 1; k < side.size(); ++k) spread = spread && side[k].first > side[k - 1].first + 2;
         }
         check(spread, "plans: a mindmap node's branches leave it apart from each other");
+        // Nodes hung under a circle are joined to it from its outline (not
+        // from its box's foot, off the circle).
+        geo = {};
+        diagram_make("mindmap\n root\n  c((Circle parent))\n   first child of the circle\n   second child of the circle, long enough\n  d((Another circle))\n   under it, and long enough too\n", narrow, &d, &err, &geo);
+        Box circle;
+        for (const Box& x : geo.boxes)
+            if (x.name == "n1") circle = x;
+        for (const auto& l : geo.lines) {
+            if (l.from != "n1" || l.pts.empty()) continue;
+            const float dx = l.pts.front().x - (circle.x + circle.w / 2), dy = l.pts.front().y - (circle.y + circle.h / 2);
+            check(std::fabs(std::sqrt(dx * dx + dy * dy) - circle.w / 2) < 1 && dy > 0 && std::fabs(l.pts.front().x - l.pts[1].x) < 0.01f, "plans: a node hung under a circle joined from the circle's line");
+        }
         // A circle's text is clear of its line (as far as a box's is of its sides).
         geo = {};
         diagram_make("mindmap\n r\n  c((A circle))\n", st, &d, &err, &geo);
