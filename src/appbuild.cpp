@@ -434,6 +434,9 @@ void App::build_go(size_t i) {
     u.at = static_cast<i64>(i);
     const BuildProblem p = u.problems[i];  // (opening a file may run init.lua's handlers)
     panel_problem_seen(i);
+    // (A place whose file is nowhere, as Metal's run-time "program_source", is
+    // a problem all the same: counted and listed, with nowhere to go.)
+    if (!is_remote(p.path) && !SDL_GetPathInfo(p.path.c_str(), nullptr)) return;
     go_to_place(p.path, p.line, p.col);
 }
 

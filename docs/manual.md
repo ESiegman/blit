@@ -2351,7 +2351,9 @@ They fill the **Build** section of the side panel's Problems tab (above),
 F8 goes through them, the status bar counts them, and the Run button says
 how many: `▶ Build (debug) · 3 errors` (warnings, when there are no
 errors). The next run starts with none. Notes (`note:`) and problems with
-no place (a linker's `undefined reference`) are not listed. **Cmd+click**
+no place (a linker's `undefined reference`) are not listed; one whose
+file is nowhere (Metal's run-time `program_source`) is listed and counted,
+and F8 says it without going anywhere. **Cmd+click**
 on a `path:line` (or `path:line:col`, or Python's `File "path", line N`)
 in any terminal tab opens the file there, in a split with text: a
 relative path from the shell's folder, the folders the build went into,

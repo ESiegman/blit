@@ -180,8 +180,11 @@ printf 'CMake Error at /opt/cmake/Modules/Lone.cmake:1 (message):\n  No stack.\n
 exit 1
 EOF
 printf 'stack:\n\tsh stack.sh\n' >>"$F/Makefile"
+printf 'phantom:\n\t@echo "program_source:26:30: error: use of undeclared identifier '"'"'pulze'"'"'"; exit 1\n' >>"$F/Makefile"
 run "$F" "buildrun:make wrapped;buildwait;problemsdump"
 check "clang's message wrapped onto the lines under it: joined" 'button: ▶ make wrapped · 2 errors | Build 3 | file src/a.c | >E 5:1 use of undeclared identifier '"'"'x'"'"' | W 6:1 no member named '"'"'y'"'"' in '"'"'S'"'"' | E 7:1 not wrapped'
+got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$F;frame;buildrun:make phantom;buildwait;problemsdump;key:F8" 2>&1 >/dev/null | sed -e "s#$dir#~#g" | tail -3 | tr '\n' '/')
+check "a problem whose file is nowhere (Metal's run-time program_source): counted and listed, F8 says it and goes nowhere" 'button: ▶ make phantom · 1 error | Build 1 | file program_source | >E 26:30 use of undeclared identifier '"'"'pulze'"'"'/blit: Problem 1 of 1: use of undeclared identifier '"'"'pulze'"'"'/'
 run "$F" "buildrun:make stack;buildwait;problemsdump"
 check "CMake's error in its own module: at the project's frame of its call stack" 'button: ▶ make stack · 3 errors | Build 4 | file CMakeLists.txt | >E 9 Failed to find ROCm. (from /opt/cmake/Modules/CMakeDetermineHIPCompiler.cmake:210) | file cmake/x.cmake | W 2 First. (from /opt/cmake/Modules/Find.cmake:7) | E 2 In the project. | file /opt/cmake/Modules/Lone.cmake | E 1 No stack.'
 # CMake's build type and target, chosen in the Build tab (Enter on each):
