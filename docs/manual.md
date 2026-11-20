@@ -2269,7 +2269,7 @@ program printed.
 - **Completing what is evaluated.** Tab in the Evaluate box completes
   what is typed as the debugger would: one answer goes in, several that
   share more than is typed that much, else a list of them to choose from.
-  (lldb-dap completes; gdb does not.)
+  (lldb-dap and debugpy complete; gdb does not.)
 - **The standard library's containers** read as they should: a vector's
   or a map's size, its elements under it, a string as text (lldb's
   formatters for libc++ and libstdc++, gdb's printers as the system

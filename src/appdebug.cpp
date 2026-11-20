@@ -1332,9 +1332,12 @@ void App::debug_complete(const std::string& typed) {
             std::string whole;
             if (t["start"].exists()) {
                 // (Its start is counted from 1, as blit asked; debugpy counts
-                // from 0 all the same. What a completion takes the place of is
-                // the start of it ("desc" of "describe"): where that is so only
-                // counted from 0, it is counted from 0.)
+                // from 0 all the same. blit asks at the end of what is typed,
+                // so a range counted from 0 ends just there and one counted
+                // from 1 never does: that settles it, even for a length of 0
+                // (Tab straight after a dot). Else what a completion takes the
+                // place of is the start of it ("desc" of "describe"): where
+                // that is so only counted from 0, it is counted from 0.)
                 const i64 start = std::max<i64>(0, t["start"].integer()), length = std::max<i64>(0, t["length"].integer());
                 auto begins = [&](size_t at) {
                     if (at > typed.size()) return false;
@@ -1342,7 +1345,7 @@ void App::debug_complete(const std::string& typed) {
                     return text.starts_with(was);
                 };
                 size_t at = static_cast<size_t>(std::max<i64>(0, start - 1));
-                if (start > 0 && !begins(at) && begins(static_cast<size_t>(start))) at = static_cast<size_t>(start);
+                if (start > 0 && (static_cast<size_t>(start + length) == typed.size() || (!begins(at) && begins(static_cast<size_t>(start))))) at = static_cast<size_t>(start);
                 at = std::min(at, typed.size());
                 const size_t len = std::min<size_t>(static_cast<size_t>(length), typed.size() - at);
                 whole = typed.substr(0, at) + text + typed.substr(at + len);

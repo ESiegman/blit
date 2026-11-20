@@ -350,6 +350,10 @@ if [ -x "$fakedap" ]; then
     # Completions whose start is counted from 0 (debugpy's), though blit asked for 1: after a dot, and a name alone.
     fake "debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+shift+y;text:df.desc;key:Tab;debugwait:answers;finddump;key:Escape;key:cmd+shift+y;text:tot;key:Tab;debugwait:answers;finddump;key:Return;debugwait:stopped;debugdump" "$F/prog"
     check "evaluate: completions counted from 0 go where they should" 'input [df.describe] 0 : ;; input [total] 0 : ;; stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain | total = <total>'
+
+    # Tab straight after a dot: nothing of the word typed yet (debugpy's length 0), still counted from 0.
+    fake "debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+shift+y;text:df.;key:Tab;debugwait:answers;finddump" "$F/prog"
+    check "evaluate: completions straight after a dot go after it" 'pick [] 4 : >df.describe df.dtypes df.shape df.total'
 fi
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "debug ok"
