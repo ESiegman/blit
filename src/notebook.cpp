@@ -69,6 +69,9 @@ std::string output_of(json::Value outputs) {
                 else
                     for (const json::Value l : t) text += l.str();
                 out = last_line(text);
+                // (A table's last line is its last row, which says little of it: unless
+                // it says its size, as pandas does of a long one, it is said to be one.)
+                if (source_of_text(data["text/html"]).find("<table") != std::string::npos && !out.starts_with('[')) out = "[table]";
             }
         }
     }
