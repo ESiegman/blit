@@ -207,6 +207,10 @@ void App::remote_start() {
     // Saves, in the order they were asked for.
     u->saver = std::jthread([u](std::stop_token stop) {
         thread_soon(Soon::kWaitedFor);
+        // The time of this thread's last write of each file: a second save
+        // asked for before the first was written knows the time from before
+        // it (the file has not changed there for having been written here).
+        std::map<std::string, i64> written;
         for (;;) {
             RemoteUi::Save s;
             {
@@ -229,8 +233,9 @@ void App::remote_start() {
             std::string there;
             RemoteStat st;
             if (const std::shared_ptr<Remote> r = connection(s.path, &there, stop); !r) d.error = remote_error(s.path);
-            else if (s.known && r->stat(there, &st) && st.kind == 1 && st.modified_ns != s.known) d.moved = true, d.modified = st.modified_ns;  // (asked about first)
-            else d.ok = r->write(there, std::move(s.text), &d.error, &d.modified);
+            else if (s.known && r->stat(there, &st) && st.kind == 1 && st.modified_ns != s.known && st.modified_ns != written[s.path])
+                d.moved = true, d.modified = st.modified_ns;  // (asked about first)
+            else if ((d.ok = r->write(there, std::move(s.text), &d.error, &d.modified))) written[s.path] = d.modified;
             {
                 std::lock_guard lock(u->mu);
                 u->saved.push_back(std::move(d));

@@ -129,6 +129,10 @@ check "closed without waiting: the save goes on" '>[untitled*] | NEChello world 
 slow "remotewait;text:Q;save;quit;finddump;alive;remotewait;finddump;alive" "$L/slow.txt"
 got="$got | $(tr '\n' ' ' <"$T/.slow/slow.txt")"
 check "quitting waits for it too" 'pick [] 1 : >Quit without waiting ;; running ;; closed ;; quitting | QNEChello world '
+fresh_m
+slow "remotewait;frame;key:cmd+Down;text:ONE;save;wait:300;text:TWO;save;remotewait;frame;finddump;statusdump" "ssh://box$T/.moved/m.txt"
+got="$got | $(tr '\n' ' ' <"$T/.moved/m.txt")"
+check "saved again before the first is written: no question (it is blit's own write there)" 'closed ;; box ~/.moved/m.txt | Ln 3, Col 7 Tabs LF Plain text | alpha beta ONETWO'
 run "remotewait;frame;lua:print(blit.workdir())" "$R"
 check "a folder: the working directory" "blit: ssh://box~/work"
 got=$(BLIT_FAKE_FAIL=refused BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "remotewait;frame;statusdump;remotedump" "$R/notes.txt" 2>&1 >/dev/null | join)
