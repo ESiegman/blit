@@ -26,6 +26,7 @@
 
 #include "app.hpp"
 #include "buildscan.hpp"
+#include "finder.hpp"
 #include "look.hpp"
 #include "picture.h"
 #include "pty.hpp"
@@ -56,6 +57,19 @@ bool read_picture(std::string_view bytes, std::vector<u8>* rgba, u32* w, u32* h)
     *w = static_cast<u32>(p.w), *h = static_cast<u32>(p.h);
     blit_picture_free(&p);
     return true;
+}
+
+// The full path of the one file of the list called `name`; nothing when
+// none is, or several are.
+std::string file_named(const FileIndex& files, std::string_view name) {
+    std::string found;
+    for (size_t i = 0; i < files.size(); ++i) {
+        const std::string_view p = files.path(i);
+        if (p != name && !(p.ends_with(name) && p[p.size() - name.size() - 1] == '/')) continue;
+        if (!found.empty()) return {};
+        found = files.root + "/" + std::string(p);
+    }
+    return found;
 }
 
 // The 16 colours programs name, for a dark background and a light one.
@@ -92,6 +106,10 @@ struct TermView {
     std::vector<std::string> scan_dirs;  // (scan_mu) the folders the build said it went into
     u64 scan_dirs_gen = 0;
     std::atomic<bool> scan_news{false};
+    // (scan_mu) The folder's files, listed on the reader's thread the first
+    // time a bare name is in none of the folders tried: the scan's, and
+    // Cmd+click's once there.
+    std::shared_ptr<const FileIndex> scan_files;
     u64 started_ns = 0;
     std::atomic<int> status{0};
     // The Python console's: what was sent to it before it could take a
@@ -474,11 +492,30 @@ u64 App::term_open(const std::string& dir_given, const std::string& command, con
     v->command = command;
     v->title = title;
     v->dir = dir;
-    if (v->keep && !console)  // (a file is looked for there when a relative path could be from more than one folder; not on another machine: a round trip each)
-        v->scan = std::make_unique<BuildScan>(dir, remote ? std::function<bool(const std::string&)>{} : [](const std::string& p) {
-            struct stat st;
-            return ::stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode);
-        });
+    if (v->keep && !console && remote)  // (not looked for on another machine: a round trip each)
+        v->scan = std::make_unique<BuildScan>(dir);
+    else if (v->keep && !console) {  // (a file is looked for there when a relative path could be from more than one folder, or is a bare name)
+        TermView* const tv = v.get();
+        v->scan = std::make_unique<BuildScan>(
+            dir,
+            [](const std::string& p) {
+                struct stat st;
+                return ::stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+            },
+            [tv](const std::string& name) {
+                std::shared_ptr<const FileIndex> files;
+                {
+                    std::lock_guard lock(tv->scan_mu);
+                    files = tv->scan_files;
+                }
+                if (!files) {
+                    files = Finder::walk(tv->dir, FinderOptions{});
+                    std::lock_guard lock(tv->scan_mu);
+                    tv->scan_files = files;
+                }
+                return file_named(*files, name);
+            });
+    }
     v->started_ns = now_ns();
     const std::vector<std::string> env = {"TERM=xterm-256color", "COLORTERM=truecolor", "TERM_PROGRAM=blit"};
     std::string err;
@@ -1528,6 +1565,10 @@ bool App::term_go_place(TermView& v, u64 line, u32 col) {
                 path = full;
                 break;
             }
+        }
+        if (path.empty() && place.path.find('/') == std::string::npos) {  // (a bare name: the project's one file of it, once the build's scan has listed them)
+            std::lock_guard lock(v.scan_mu);
+            if (v.scan_files) path = file_named(*v.scan_files, place.path);
         }
     }
     if (path.empty() || (prefix.empty() && !SDL_GetPathInfo(path.c_str(), nullptr))) return false;  // (not a file: the click is a click)

@@ -2371,7 +2371,11 @@ at the first frame of its stack in the program's own files (not the
 system's or the compiler's), saying what was wrong and what was read or
 written ("READ of size 4"); each leak of a leak report is one of its own.
 UndefinedBehaviorSanitizer's `path:line:col: runtime error:` lines are
-read as they come. Each frame of a stack is a `path:line` to Cmd+click.
+read as they come. Each frame of a stack is a `path:line` to Cmd+click. A
+bare file name in none of the folders tried (macOS's ASan symbolises with
+`atos`, into `ring.cpp:16`) is the project's one file of that name, from
+a list of the folder's files made on the reading thread the first time
+one is needed (none when several have it).
 
 Under **CMake** the tab has two rows of its own. **Build type**: Enter goes
 from the project's own (what the build folder was configured with) to

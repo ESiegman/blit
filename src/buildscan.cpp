@@ -83,7 +83,8 @@ std::string tidy_path(std::string_view path) {
     return out.empty() ? "." : out;
 }
 
-BuildScan::BuildScan(std::string dir, std::function<bool(const std::string&)> exists) : exists_(std::move(exists)) {
+BuildScan::BuildScan(std::string dir, std::function<bool(const std::string&)> exists, std::function<std::string(const std::string&)> by_name)
+    : exists_(std::move(exists)), by_name_(std::move(by_name)) {
     if (dir.starts_with("ssh://") || dir.starts_with("docker://")) {
         const size_t slash = dir.find('/', dir.find("://") + 3);
         prefix_ = dir.substr(0, slash);
@@ -461,6 +462,8 @@ std::string BuildScan::resolve(std::string_view path) {
             if (exists_(prefix_ + full)) pick = std::move(full);
         }
     }
+    if (pick.empty() && by_name_ && key.find('/') == std::string::npos)  // (a bare name: the project's one file of that name)
+        if (std::string named = by_name_(key); !named.empty()) pick = tidy_path(named);
     if (pick.empty()) pick = tidy_path((dirs_.empty() ? base_ : dirs_.back()) + "/" + key);
     pick = prefix_ + pick;
     if (resolved_.size() < 4096) resolved_.emplace(key, pick);

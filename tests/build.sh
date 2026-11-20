@@ -240,6 +240,26 @@ if (cd "$S" && printf 'int main(void){return 0;}\n' | cc -fsanitize=address -x c
     got=$(printf '%s' "$got" | sed -e 's/^button: [^|]*| //' -e 's/Build [0-9]* | //' -e 's/E 5:[0-9]* /E 5 /')  # (a column, or none, as the symbolizer has it)
     check "a program built with AddressSanitizer, run: its report read" 'file a.c | >E 5 AddressSanitizer: heap-buffer-overflow: READ of size 4'
 fi
+# On macOS ASan symbolises with atos, into bare names: each the project's
+# one file of that name, wherever it is.
+AS="$dir/asanbare"
+mkdir -p "$AS/src" "$AS/tests"
+printf '1\n2\n3\n4\nvoid push(double);\n' >"$AS/src/ring.cpp"
+printf '1\n2\nint main() {}\n' >"$AS/tests/test_ring.cpp"
+cat >"$AS/report.sh" <<'EOF'
+sleep 0.2
+printf '==1==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x1 at pc 0x1 bp 0x2 sp 0x3\nWRITE of size 8 at 0x1 thread T0\n'
+printf '    #0 0x1 in ring::push(double) ring.cpp:5\n    #1 0x2 in main test_ring.cpp:3\n    #2 0x3 in start (dyld:arm64e+0x1)\n'
+printf 'SUMMARY: AddressSanitizer: heap-buffer-overflow ring.cpp:5 in ring::push(double)\n'
+exit 1
+EOF
+printf 'asan:\n\tsh report.sh\n' >"$AS/Makefile"
+run "$AS" "buildrun:make asan;buildwait;problemsdump"
+check "a bare name: the project's file of it" 'button: ▶ make asan · 1 error | Build 1 | file src/ring.cpp | >E 5 AddressSanitizer: heap-buffer-overflow: WRITE of size 8'
+run "$AS" "buildrun:make asan;buildwait;key:F8;frame;statusdump"
+check "F8 goes there" 'NORMAL ring.cpp | × 1 ▲ 0 Ln 5, Col 1 Tabs LF C++'
+run "$AS" "buildrun:make asan;frame;buildwait;frame;termclick:test_ring.cpp:3;frame;statusdump"
+check "and Cmd+click on another frame's" 'NORMAL test_ring.cpp | × 1 ▲ 0 Ln 3, Col 1 LF C++'
 printf 'one\ntwo\n' >"$dir/notes.txt"
 export BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i"
 run "$dir/none" "open:$dir/notes.txt;frame;term;frame;text:echo ../notes.txt:2:3: here;key:Return;termwait:here;frame;termclick:notes.txt:2;frame;statusdump"

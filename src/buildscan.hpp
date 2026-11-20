@@ -40,7 +40,10 @@ public:
     // dir: the folder the build runs in, a path here or "ssh://host/path"
     // there. exists: whether a file is there, for a relative path that
     // could be from more than one folder (none: the latest folder entered).
-    explicit BuildScan(std::string dir, std::function<bool(const std::string&)> exists = {});
+    // by_name: the full path of the one file of the project with a name, for
+    // a bare name that is in none of those folders (ASan's on macOS,
+    // symbolised by atos: "ring.cpp:16"); empty when it is not one file's.
+    explicit BuildScan(std::string dir, std::function<bool(const std::string&)> exists = {}, std::function<std::string(const std::string&)> by_name = {});
 
     void feed(std::string_view bytes);
     void finish();  // the end: the last line, and what waited on lines after it
@@ -71,6 +74,7 @@ private:
     std::string prefix_;  // "ssh://host" for a folder there; empty here
     std::string base_;    // the folder the build runs in (a path, after the prefix)
     std::function<bool(const std::string&)> exists_;
+    std::function<std::string(const std::string&)> by_name_;
     std::vector<std::string> dirs_;  // entered and not yet left
     std::vector<std::string> seen_;  // every folder entered, with the prefix
     std::vector<std::string> hints_; // folders "make -C" was told to go into
