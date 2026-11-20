@@ -438,8 +438,11 @@ far in as the one before (autoindent), and in a language whose blocks are
 known a level further after a line that opens one: one that ends in `{`,
 `(` or `[`, in `:` in Python, in `then`, `do` or `begin`, or starts with
 `module`, `case`, `function` and the like (SystemVerilog, Lua, the shell,
-Ruby, CMake). In Python a line after `return`, `pass`, `raise`, `break`
-or `continue` starts a level out. A closer typed at the start of a line
+Ruby, CMake). In Lua a line with `function` anywhere in it opens one,
+unless its `end` is on the line too
+(`blit.map("n", "x", function() ... end)`); a word in a string does not
+count. In Python a line after `return`, `pass`, `raise`, `break` or
+`continue` starts a level out. A closer typed at the start of a line
 (`}`, `)`, `]`, `end` and its kin, `else`, `fi`, `done`) takes it a level
 out from the line above, when the sign or blank after it, Enter or Esc is
 typed; `o` indents as Enter does. Everything typed in one stay in

@@ -302,17 +302,41 @@ bool opens(const IndentRules& r, std::string_view t) {
     if (one_of(r.last, last)) return true;
     if (one_of(r.closers, last)) return false;  // (it closed what it opened: "if x then return end")
     if (one_of(r.first, first_word(t))) return true;
-    if (*r.anywhere)
-        for (size_t i = 0; i < t.size();) {
-            if (!word_byte(t[i])) {
-                ++i;
-                continue;
-            }
-            const std::string_view w = first_word(t.substr(i));
-            if (one_of(r.anywhere, w)) return true;
-            i += w.size();
+    if (!*r.anywhere) return false;
+    // One of those words (Lua's function) opens a level unless the line
+    // closes it again: each opener on the line counts one in, each closer
+    // one out ("f(function() if a then b() end end)" opens none, as "else"
+    // and "elseif ... then" open none). Words in a string are text.
+    int open = 0;
+    bool seen = false;
+    for (size_t i = 0; i < t.size();) {
+        if (t[i] == '"' || t[i] == '\'') {
+            const char q = t[i];
+            for (++i; i < t.size() && t[i] != q; ++i)
+                if (t[i] == '\\') ++i;
+            ++i;
+            continue;
         }
-    return false;
+        if (t[i] == '[' && i + 1 < t.size() && t[i + 1] == '[') {  // (Lua's [[long string]])
+            const size_t close = t.find("]]", i + 2);
+            i = close == std::string_view::npos ? t.size() : close + 2;
+            continue;
+        }
+        if (!word_byte(t[i])) {
+            ++i;
+            continue;
+        }
+        const std::string_view w = first_word(t.substr(i));
+        if (one_of(r.anywhere, w)) {
+            seen = true;
+            ++open;
+        } else if (one_of(r.last, w)) {
+            ++open;
+        }
+        if (one_of(r.closers, w)) --open;
+        i += w.size();
+    }
+    return seen && open > 0;
 }
 
 // Whether this code starts by closing a level.

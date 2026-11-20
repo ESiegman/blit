@@ -129,6 +129,8 @@ typed c.c "text:o;text:if (x) {;key:Return;text:y();key:Return;text:};key:Escape
 check "C: after { a level in, } a level out; o goes in as Enter does" 'int x;|if (x) {|    y()|    z|}|    int y;|'
 typed l.lua "text:o;text:for i = 1, 3 do;key:Return;text:f(i);key:Return;text:end;key:Return;text:g = function();key:Return;text:return 1;key:Return;text:end;key:Escape"
 check "Lua: then, do and function open; end closes (Enter after it, or Esc)" 'if x then|>for i = 1, 3 do|>>f(i)|>end|>g = function()|>>return 1|>end|end|'
+typed l.lua "text:o;text:table.sort(t, function(a, b) return a < b end);key:Return;text:blit.map(\"n\", \"x\", function() blit.feed(\"y\") end);key:Return;text:print(\"no function here\");key:Return;text:if ok then f(function() g() end);key:Return;text:h();key:Escape"
+check "Lua: a function closed on its line, or in a string, opens nothing" 'if x then|>table.sort(t, function(a, b) return a < b end)|>blit.map("n", "x", function() blit.feed("y") end)|>print("no function here")|>if ok then f(function() g() end)|>>h()|end|'
 typed m.sv "text:o;text:always_comb begin;key:Return;text:unique case (s);key:Return;text:0: y = 1;key:Return;text:endcase ;key:Return;text:end else begin;key:Return;text:y = 0;key:Return;text:end;key:Escape"
 check "SystemVerilog: begin and case open, endcase and end close" 'module m;|>always_comb begin|>>unique case (s)|>>>0: y = 1|>>endcase |>end else begin|>>y = 0|>end|endmodule|'
 run "frame;text:d;text:/;text:wor;key:Return;vimdump"
