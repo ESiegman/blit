@@ -235,6 +235,8 @@ printf '%s\n' "$none" >"$dir/none.lua"
 INIT="$dir/none.lua"
 run "remotewait;frame;lspsettle;wait:300;frame;lspsettle" "$R/src/a.cpp"
 check "no server there: said once" 'blit: language server: no language server for this file is installed on box'
+INIT="$dir/none.lua" run "remotewait;frame;lspsettle;wait:300;frame;lspsettle;wait:300;frame;lspsettle" "ssh://tester@box$W/src/a.cpp"
+check "and the same with a user named" 'blit: language server: no language server for this file is installed on tester@box'
 INIT="$dir/none.lua" slow "remotewait;frame;wait:300;$drop;lspsettle;wait:300;lspsettle" "$R/src/a.cpp"
 check "the connection lost while one is looked for there: said, once" 'blit: language server: the connection to box was lost'
 rm "$W/src/a.cpp"

@@ -133,5 +133,14 @@ echo true >"$dir/state/box"
 got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "remotewait;frame;statusdump;docdump:0" "docker://box$W/notes.txt" 2>&1 >/dev/null | sed "s#$dir#@#g")
 printf '%s' "$got" | grep -q '^docker:box .*/work/notes.txt ' || fail "docker://box/path: opened there" "$got"
 printf '%s' "$got" | grep -q '^> |hi$' || fail "docker://box/path: its text" "$got"
+
+# No server for the language in it (three are named): said once, not once for each.
+none="blit.opt.lsp.servers.clangd = { enabled = false }"
+for n in 1 2 3; do none="$none
+blit.opt.lsp.servers.none$n = { command = { \"blit-no-such-server-$n\" }, languages = { \"cpp\" } }"; done
+printf 'blit.opt.git.enabled = false\nblit.opt.editor.modal = false\n%s\n' "$none" >"$dir/none.lua"
+printf 'int a;\n' >"$W/a.cpp"
+got=$(BLIT_INIT="$dir/none.lua" "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "remotewait;frame;lspsettle;wait:300;frame;lspsettle;wait:300;frame;lspsettle" "docker://box$W/a.cpp" 2>&1 >/dev/null)
+[ "$got" = "blit: language server: no language server for this file is installed on docker:box" ] || fail "no server in it: said once" "$got"
 [ $failed = 0 ] && echo "container ok"
 exit $failed

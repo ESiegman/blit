@@ -652,6 +652,14 @@ struct Lsp::Inbox {
     }
 };
 
+// "@host" for a server there ("ssh://tester@box": "@tester@box"; a
+// container: "@docker:NAME"), as the tabs' paths name the machine (the
+// servers that cannot be had there are kept by that name).
+static std::string at_host(const std::string& remote) {
+    std::string host, there;
+    return "@" + (split_remote(remote, &host, &there) ? host : remote);
+}
+
 struct Lsp::Conn {
     struct Out {
         std::string head, tail;                            // the message, around the document text if there is one
@@ -1080,7 +1088,7 @@ struct Lsp::Conn::Worker {
         In m;
         m.kind = kInReady;
         m.caps = std::move(caps);
-        if (!c.remote.empty()) m.text = c.server.name + "@" + c.remote.substr(6) + "\n" + c.server.name + "\n" + c.root;  // (the one chosen there, and the project's folder found there)
+        if (!c.remote.empty()) m.text = c.server.name + at_host(c.remote) + "\n" + c.server.name + "\n" + c.root;  // (the one chosen there, and the project's folder found there)
         c.push(std::move(m));
     }
 
@@ -2374,7 +2382,7 @@ Lsp::Server* Lsp::start_server(const LspServer& server, const std::string& progr
     s->root = root;
     s->remote = remote;
     if (!remote.empty()) {
-        s->shown += "@" + remote.substr(6);  // (one that fails there may yet do here, and the other way round)
+        s->shown += at_host(remote);  // (one that fails there may yet do here, and the other way round)
         for (const LspServer& c : candidates) s->candidates.push_back(c.name);
         conn->candidates = std::move(candidates);
     }
@@ -3155,7 +3163,7 @@ void Lsp::server_gone(Server* s, const std::string& why, bool none_there) {
     message_ = "language server: " + why;
     failed_.push_back(s->shown);
     if (none_there)
-        for (const std::string& name : s->candidates) failed_.push_back(name + s->shown.substr(s->shown.rfind('@')));
+        for (const std::string& name : s->candidates) failed_.push_back(name + s->shown.substr(s->name.size()));  // (shown is the name and "@host")
     // (Nobody is left to say goodbye to.)
     for (const std::unique_ptr<Document>& d : docs_)
         if (d->server == s) d->opened = false;
