@@ -641,6 +641,11 @@ void notebook_view_test() {
               wrapped.find(":call last)\n") != std::string::npos && wrapped.find(":" + std::string(24, 'w') + "\n") != std::string::npos &&
               wrapped.find(":wwwwww\n") != std::string::npos,
           "notebook view: text wrapped after a space, a long word where the room ends");
+    std::string code_rows;
+    for (const MdRow& r : md_code("python", "total = first_value + second_value\n" + std::string(30, 'z'), 26)) code_rows += md_row_text(r) + "\n";
+    check(code_rows.find(" total = first_value +\n") != std::string::npos && code_rows.find(" second_value\n") != std::string::npos &&
+              code_rows.find(" " + std::string(24, 'z') + "\n") != std::string::npos,
+          "code blocks: a long line wrapped after a space, a long word where the room ends");
 }
 
 // A notebook's outputs made to cost: the work drawing them does is what

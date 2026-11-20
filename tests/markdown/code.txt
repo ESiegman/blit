@@ -54,7 +54,7 @@ are coloured as the editor colours them.
 
 
                                           cpp
- const char* s = "a long line that has to wra
- p round, because it is wider than the previe
- w is, which is narrow";
+ const char* s = "a long line that has to
+ wrap round, because it is wider than the
+ preview is, which is narrow";
 

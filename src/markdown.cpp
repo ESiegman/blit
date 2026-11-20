@@ -1281,6 +1281,10 @@ struct Layout {
                 size_t cut = room_cols > 2 ? fit(rest, room_cols - 2) : rest.size();
                 if (cut == 0) cut = first_char(rest);  // (a wide character in one column: over the edge, whole)
                 cut = std::min(cut, rest.size());
+                if (cut < rest.size() && rest[cut] != ' ') {  // (after the last space that fits, as an editor wraps, if that is not far back)
+                    const size_t space = rest.find_last_of(' ', cut - 1);
+                    if (space != std::string_view::npos && space + 1 > cut / 2 && rest.find_first_not_of(' ') < space) cut = space + 1;
+                }
                 std::vector<MdRun> runs;
                 if (li.empty()) {
                     runs.push_back({" " + std::string(rest.substr(0, cut)), kMdCode, 0, kMdCodeTone});
