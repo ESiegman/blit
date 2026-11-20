@@ -301,8 +301,11 @@ add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src
 # The diagrams' pictures (raster.cpp, diagram.cpp and the kinds' files) are the
 # same pixels on every system: no multiply and add fused into one, which
 # rounds once where two steps round twice, and which one processor does
-# where another does not.
-set_source_files_properties(src/raster.cpp src/diagram.cpp src/flowchart.cpp src/classdiagram.cpp src/sequence.cpp src/pie.cpp src/gantt.cpp src/mindmap.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off")
+# where another does not. And kept out of link-time optimization, which on
+# x86 (GCC 16) fuses them again across the files (Nov 2026: half the
+# diagrams' pixels differed from a Mac's with BLIT_LTO on, none with it
+# off). They are drawn on the preview's thread, never on a frame's path.
+set_source_files_properties(src/raster.cpp src/diagram.cpp src/flowchart.cpp src/classdiagram.cpp src/sequence.cpp src/pie.cpp src/gantt.cpp src/mindmap.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off;-fno-lto")
 target_include_directories(blit PRIVATE ${LUA_INCLUDE_DIR})
 target_link_libraries(blit PRIVATE blit_view blit_syntax blit_lsp blit_gpu SDL3::SDL3 ${LUA_LIBRARY})
 
