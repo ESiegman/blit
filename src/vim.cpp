@@ -2868,11 +2868,16 @@ u32 Vim::insert_key(Editor& ed, const VimKey& k) {
             auto_indent_ = mode_ == kInsert;
             return kHandled | kTyped;
         }
-        case VimKey::kTab:
-            typed_ = "\t";
-            if (mode_ == kReplace) replaced_.emplace_back();
+        case VimKey::kTab: {
+            // The file's indentation (what > puts in): a tab, or spaces to
+            // the next level, as with 'expandtab' and 'softtabstop'.
+            const u64 cur = ed.cursor();
+            const u32 width = static_cast<u32>(shift.size());
+            typed_ = shift == "\t" || shift.empty() ? std::string("\t") : std::string(width - ed.col_between(ed.buf.line_start(ed.buf.line_of(cur)), cur) % width, ' ');
+            if (mode_ == kReplace) replaced_.resize(replaced_.size() + typed_.size());
             ed.insert(typed_);
             return kHandled | kTyped;
+        }
         case VimKey::kBackspace:
             if (mode_ == kReplace) {
                 // Back over what was typed, putting back what it went over.

@@ -111,6 +111,10 @@ run "frame;text:j;text:m;text:a;text:g;text:g;text:O;text:new;key:Escape;text:G;
 check "a mark stays with its line when lines are added above" 'NORMAL |  | 3:1 | second line'
 run "frame;text:i;key:ctrl+T;text:x;key:Escape;vimdump"
 check "Ctrl-T in Insert mode indents the line" 'NORMAL |  | 1:5 |     xhello world'
+run "frame;open:$dir/d.py;text:o;key:Tab;text:y;key:Tab;text:z;key:Escape;vimdump"
+check "Tab in Insert mode puts in the file's indentation: spaces to the next level" 'NORMAL |  | 2:9 |     y   z'
+run "frame;text:l;text:R;key:Tab;text:X;key:Backspace;key:Backspace;key:Backspace;key:Backspace;key:Escape;vimdump"
+check "and in Replace mode Backspace takes it back out" 'NORMAL |  | 1:1 | hello world'
 run "frame;text:d;text:/;text:wor;key:Return;vimdump"
 check "a search as an operator's motion" 'NORMAL |  | 1:1 | world'
 run "frame;text:v;text:/;text:wor;key:Return;vimdump"
@@ -200,6 +204,10 @@ fresh
 got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;text:x;key:End;text:!;save" "$dir/a.txt" 2>&1 >/dev/null | tail -1)
 got="$got$(head -1 "$dir/a.txt")"
 check "modal = false: typing types" 'xhello world!'
+fresh
+got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;key:Tab;text:x;key:Down;key:Down;key:Home;key:Tab;save" "$dir/a.txt" 2>&1 >/dev/null | tail -1)
+got="$got$(head -3 "$dir/a.txt" | tr '\n' '|')"
+check "modal = false: Tab puts in the file's indentation too" '    xhello world|second line|        third|'
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "modal ok"
 exit $failed

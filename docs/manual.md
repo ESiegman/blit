@@ -418,7 +418,9 @@ a motion (`gqq` a line; on a Visual selection, its lines) to format, and
 `]d [d` to the next and the previous diagnostic (`]D [D` the last and
 first), going round at the ends of the file.
 
-**Insert mode**: Esc (or Ctrl-[ or Ctrl-C) leaves it; Ctrl-W, Ctrl-U and
+**Insert mode**: Esc (or Ctrl-[ or Ctrl-C) leaves it; Tab puts in the
+file's indentation (what the status bar says: a tab, or spaces to the next
+level, as with Vim's `expandtab` and `softtabstop`); Ctrl-W, Ctrl-U and
 Ctrl-H delete a word, to the start of the line, a character; Ctrl-T and
 Ctrl-D indent the line a level more or less; Ctrl-R and a register's name
 puts its text in, Ctrl-A what was typed last time; Ctrl-V (or Ctrl-Q) takes
@@ -575,8 +577,8 @@ repository part opens the side panel's Git tab, one on the problems its
 Problems tab, and one on the line and column Go to file with `:` typed, for
 a line. A click on the indentation, the line endings or the language opens
 a short list that changes it for that file: tabs or 2, 3, 4 or 8 spaces
-(what the indent lines and Vim's `>` go by; the file's text stays as it
-is), LF or CRLF (every line end made so, as one step to undo, and Enter
+(what the indent lines, the Tab key and Vim's `>` go by; the file's text
+stays as it is), LF or CRLF (every line end made so, as one step to undo, and Enter
 puts that in), or another language (its colours and the scripts'
 `FileType` follow; its language server stays the one its name says), with
 getting its grammar first when it has none. When the

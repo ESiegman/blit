@@ -2221,7 +2221,17 @@ void App::edit_key(const SDL_KeyboardEvent& k, i64 page) {
             break;
         case SDLK_RETURN:
         case SDLK_KP_ENTER: pane_->doc->ed.newline(); break;
-        case SDLK_TAB: pane_->doc->ed.insert("\t"); break;
+        case SDLK_TAB: {  // the file's indentation: a tab, or spaces to the next level
+            Editor& ed = pane_->doc->ed;
+            const u32 step = indent_step();
+            if (pane_->doc->indent_tabs) {
+                ed.insert("\t");
+                break;
+            }
+            const u64 at = ed.sel_min();
+            ed.insert(std::string(step - ed.col_between(ed.buf.line_start(ed.buf.line_of(at)), at) % step, ' '));
+            break;
+        }
         default: break;
     }
 }
