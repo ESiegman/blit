@@ -1576,8 +1576,10 @@ The tree keeps up with the disk by itself: what another program, a build or
 git makes, removes or renames in the working folder shows at once (FSEvents
 on a Mac, inotify on Linux), and an open file written elsewhere is read
 again, with git's view, a moment later. Not for a folder on another
-machine, where Cmd+R reads it again. `blit.opt.panel.watch = false` turns
-it off.
+machine, where Cmd+R reads it again. What tools write to their caches in
+the project's `.cache` folder (clangd's index, for minutes while it is
+built) is left alone, unless that folder is open in the tree.
+`blit.opt.panel.watch = false` turns it off.
 
 **Problems** lists what the language servers report, for every file they
 report on (each open file, and with a server that offers it the whole

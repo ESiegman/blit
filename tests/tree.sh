@@ -62,6 +62,16 @@ names "a file another program makes: shown" "lua:os.execute('echo n > $T/new.txt
     "tree: sub/ new.txt x.txt y.txt z.txt"
 names "a file another program removes: gone" "lua:os.execute('rm $T/y.txt');watchwait" \
     "tree: sub/ x.txt z.txt"
+# A tool writing its cache in the project (clangd's index, in .cache/clangd,
+# for minutes as it builds): not heard at all, so an idle window is left
+# idle. (The second watchwait hears nothing.)
+got=$(fresh; "$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "key:cmd+B;panel;lua:os.execute('mkdir -p $T/.cache/clangd/index');watchwait;lua:os.execute('echo s > $T/.cache/clangd/index/a.idx');watchwait;treedump" "$T/x.txt" 2>&1 >/dev/null | grep '^tree:\|watchwait' | tr '\n' '#' | sed 's/@[0-9]*//g')
+if [ -n "$print" ]; then
+    printf 'a cache written in the project: not heard\n    %s\n' "$got"
+elif [ "$got" != "watchwait: nothing heard#tree: .cache/ sub/ x.txt y.txt z.txt#" ]; then
+    printf 'FAIL: a cache written in the project: not heard\n    expected %s\n    got      %s\n' "watchwait: nothing heard#tree: .cache/ sub/ x.txt y.txt z.txt#" "$got"
+    failed=1
+fi
 # (Where the folder's row is, with this font, to open it with a click.)
 fresh
 suby=$("$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "key:cmd+B;panel;treedump" "$T/x.txt" 2>&1 >/dev/null | grep '^tree:' | sed 's/.* sub\/@\([0-9]*\).*/\1/')

@@ -551,18 +551,29 @@ bool in_git_dir(std::string_view dir, std::string_view root) {
 // Something changed on disk: the folders it changed in read again (those
 // the tree has read; where the system lost track, every open one under
 // it); the open files and git looked at again a moment later, once it has
-// settled.
+// settled. (Not what tools write to their caches in the project's .cache
+// folder, clangd's index among them, for minutes on end as it is built:
+// only read again if the tree has that folder open.)
 void App::watch_take() {
     if (!watch_) return;
     Side& s = *side_;
     const std::string root = s.tree.root();
     DirWatch::Changed heard = watch_->take();
     if (heard.dirs.empty() && heard.trees.empty()) return;
-    bool files = false;
+    const std::string cache = root + "/.cache";
+    bool files = false, shown = false;
     for (std::vector<std::string>* list : {&heard.dirs, &heard.trees}) {
         const bool tree = list == &heard.trees;
         for (std::string dir : *list) {
             if (!watch_real_.empty() && watch_real_ != root && dir.starts_with(watch_real_)) dir = root + dir.substr(watch_real_.size());
+            if (dir == cache || (dir.starts_with(cache) && dir[cache.size()] == '/')) {
+                FileTree::Node* node = s.tree.find(dir);
+                if (!node || !node->dir || !node->loaded) continue;
+                if (tree) s.tree.refresh_under(node);
+                else s.tree.refresh(node);
+                shown = true;
+                continue;
+            }
             files = true;
             if (tree && (root.starts_with(dir + "/") || dir == "/")) {  // (above the top folder: all of it)
                 s.tree.refresh();
@@ -575,6 +586,7 @@ void App::watch_take() {
             else s.tree.refresh(node);
         }
     }
+    if (!files && !shown) return;
     if (files && !watch_due_ns_) watch_due_ns_ = now_ns() + 300'000'000ull;
     ++watch_events_;
     dirty_ = true;
