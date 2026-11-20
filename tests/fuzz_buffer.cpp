@@ -2701,6 +2701,23 @@ void sequence_test() {
         check(back > 0 && across == back, "sequence: a long arrow's text on one line");
         check(note > 0 && wide_note == note, "sequence: a note over many on one line");
     }
+    // A pie of many slices: the lines between them stop short of its
+    // middle, which is the slices' colours, not a blot of the background.
+    {
+        std::string many = "pie\n";
+        for (int k = 0; k < 24; ++k) many += " \"s" + std::to_string(k) + "\" : 1\n";
+        Drawing d;
+        DiagramGeometry geo;
+        std::string err;
+        diagram_make(many, st, &d, &err, &geo);
+        float cx = -1, cy = -1;
+        for (const auto& b : geo.boxes)
+            if (b.name == "pie") cx = b.x + b.w / 2, cy = b.y + b.h / 2;
+        RasterImage img(static_cast<int>(d.w) + 1, static_cast<int>(d.h) + 1);
+        diagram_paint(d, 1, font, &img);
+        const size_t at = (static_cast<size_t>(cy) * static_cast<size_t>(img.w()) + static_cast<size_t>(cx)) * 4;
+        check(cx > 0 && at + 3 < img.pixels().size() && img.pixels()[at] > 60, "pie: its middle the slices' colours, not the background's");
+    }
     // Mistakes, with their lines.
     const struct {
         const char* src;

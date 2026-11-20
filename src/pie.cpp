@@ -40,7 +40,9 @@ std::string value_text(double v) {
 }
 
 // Colours for n slices: the theme's own colours that are not too like one
-// another, the background or grey; then the same again, quieter.
+// another, the background or grey; then the same again nearer the text's
+// colour (lighter in a dark theme), then again nearer the background. (Made
+// quieter each time, the repeats were muddy: greys and navies alike.)
 std::vector<DiagramColour> slice_colours(const DiagramPalette& p, size_t n) {
     static const u8 kInks[] = {kMdSlice0,     kMdSlice1,      kMdSlice2,       kMdSlice3,       kMdHeading1,     kMdHeading2, kMdHeading3, kMdAccent,
                                kMdLink,       kMdCodeString,  kMdCodeType,     kMdCodeFunction, kMdCodeKeyword,  kMdCodeConstant, kMdError,  kMdLabel};
@@ -59,11 +61,14 @@ std::vector<DiagramColour> slice_colours(const DiagramPalette& p, size_t n) {
         if (apart) got.push_back(c);
     }
     if (got.empty()) got.push_back(p.of(kMdText));
+    const DiagramColour fg = p.of(kMdText);
     std::vector<DiagramColour> out;
     for (size_t k = 0; k < n; ++k) {
         const DiagramColour c = got[k % got.size()];
-        const float t = k / got.size() == 0 ? 1.0f : (k / got.size()) % 2 == 1 ? 0.6f : 0.4f;
-        out.push_back({bg.r + (c.r - bg.r) * t, bg.g + (c.g - bg.g) * t, bg.b + (c.b - bg.b) * t, 1});
+        const size_t round = (k / got.size()) % 3;
+        const DiagramColour to = round == 1 ? fg : bg;
+        const float t = round == 0 ? 0 : round == 1 ? 0.45f : 0.5f;
+        out.push_back({c.r + (to.r - c.r) * t, c.g + (to.g - c.g) * t, c.b + (to.b - c.b) * t, 1});
     }
     return out;
 }
@@ -169,12 +174,16 @@ bool pie_layout(const std::vector<std::string>& st, const DiagramStyle& style, D
     };
     for (size_t k = 0; k < title_lines.size(); ++k) text_at(title_lines[k], w / 2, edge + static_cast<float>(k) * font.line(title_size), title_size, text, 1, true);
     if (geo && !title.empty()) geo->boxes.push_back({"node", "title", w / 2 - title_w / 2, edge, title_w, title_h - 14 * u});
-    // The wedges, from the top round clockwise; a line of the background between them.
+    // The wedges, from the top round clockwise; a line of the background
+    // between them. (Each line stops short of the middle, where the wedges
+    // beside it are narrower than a few lines: many lines met there in a
+    // blot of the background.)
     const double kPi = 3.14159265358979323846;
     double at = -kPi / 2;
     int drawn = 0;
     for (const Slice& s : slices)
         if (s.value > 0) ++drawn;
+    std::vector<double> starts, sweeps;
     for (const Slice& s : slices) {
         if (!(s.value > 0)) continue;
         const double sweep = s.value / total * 2 * kPi;
@@ -186,8 +195,20 @@ bool pie_layout(const std::vector<std::string>& st, const DiagramStyle& style, D
             wedge.arc(cx, cy, r, r, static_cast<float>(at), static_cast<float>(at + sweep));
             wedge.close();
         }
-        out->shape(std::move(wedge), s.colour, drawn == 1 ? DiagramColour{} : bg, 2 * u);
+        out->shape(std::move(wedge), s.colour);
+        starts.push_back(at), sweeps.push_back(sweep);
         at += sweep;
+    }
+    const float sep = 2 * u;
+    for (size_t k = 0; k < starts.size() && drawn > 1; ++k) {
+        const double narrow = std::min({sweeps[k], sweeps[(k + starts.size() - 1) % starts.size()], kPi});
+        const float from = std::min(r * 0.85f, static_cast<float>(1.6 * sep / narrow));
+        double sn = 0, cs = 1;
+        raster_sincos(starts[k], &sn, &cs);
+        RasterPath cut;
+        cut.move_to(cx + from * static_cast<float>(cs), cy + from * static_cast<float>(sn));
+        cut.line_to(cx + r * static_cast<float>(cs), cy + r * static_cast<float>(sn));
+        out->shape(std::move(cut), {}, bg, sep);
     }
     // Their shares on them, where they fit.
     at = -kPi / 2;
