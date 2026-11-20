@@ -13,7 +13,12 @@ done
 [ -n "${BLIT_FAKE_HOME:-}" ] && HOME=$BLIT_FAKE_HOME && export HOME
 [ -n "${BLIT_FAKE_FAIL:-}" ] && { echo "ssh: connect to host: $BLIT_FAKE_FAIL" >&2; exit 255; }
 # BLIT_FAKE_DOWN=FILE: the host cannot be reached while that file is there
-# (it says why), so that a test can bring it back.
+# (it says why), so that a test can bring it back. One that says "hang" is a
+# host that does not answer at all (as when the link is down: ssh waits)
+# until the file goes.
+if [ -n "${BLIT_FAKE_DOWN:-}" ] && [ "$(cat "$BLIT_FAKE_DOWN" 2>/dev/null)" = hang ]; then
+    while [ -e "$BLIT_FAKE_DOWN" ]; do sleep 0.05; done
+fi
 [ -n "${BLIT_FAKE_DOWN:-}" ] && [ -e "$BLIT_FAKE_DOWN" ] && { echo "ssh: connect to host: $(cat "$BLIT_FAKE_DOWN")" >&2; exit 255; }
 # BLIT_FAKE_PASSWORD: the "host" has no key for us and asks for that
 # password, as ssh does, through $SSH_ASKPASS (which blit sets to itself).

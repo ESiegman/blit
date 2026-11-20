@@ -192,6 +192,13 @@ run "remotewait;$drop;key:cmd+K;text:reconn;findwait;finddump;key:Return;remotew
 check "and Search everywhere: why, the commands still there; connected again, the files" 'everywhere [reconn] 1 : (The connection to box was lost) Commands: >Reconnect to the servers that dropped ;; everywhere [main] 1 : Files: >src/main.cpp'
 run "remotewait;$drop;key:cmd+K;text:main;findwait;finddump;command:Reconnect to the servers that dropped;remotewait;findwait;finddump" "$R"
 check "connected again while it is open: the files come" 'everywhere [main] 0 : (The connection to box was lost) ;; everywhere [main] 1 : Files: >src/main.cpp'
+# A host that does not answer when it is connected to again (the link down:
+# ssh waits): Enter just after typing does not wait for the files there.
+hang="lua:os.execute('echo hang > $dir/down')"
+got=$(BLIT_FAKE_DOWN="$dir/down" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+    --script "remotewait;$drop;$hang;wait:3200;key:cmd+K;text:main;clock;key:Return;within:300;lua:os.remove('$dir/down');remotewait;findwait;finddump" "$R" 2>&1 >/dev/null | join)
+rm -f "$dir/down"
+check "and Enter in it with no answer from there: no waiting" 'within 300 ms ;; everywhere [main] 1 : Files: >src/main.cpp'
 run "remotewait;find:open;remotewait;finddump;text:src/;remotewait;finddump" "$R"
 check "the box that opens files, in a folder there" 'open [ssh://box~/work/] 4 : >../ src/ fresh.txt notes.txt ;; open [ssh://box~/work/src/] 2 : >../ main.cpp'
 slow "remotewait;find:open;remotewait;clock;text:src/;within:300;finddump;text:m;remotewait;finddump" "$R"

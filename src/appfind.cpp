@@ -1552,8 +1552,10 @@ void App::save_named(const std::string& path, u64 doc) {
 void App::find_accept() {
     Find& f = *find_;
     if (f.mode == kFindAll) {
-        // (Enter just after typing: the files for what was typed, waited for a moment.)
-        if (!f.query.empty() && f.engine && !(f.shown && f.shown->serial == f.serial)) {
+        // (Enter just after typing: the files for what was typed, waited for
+        // a moment; not for a machine there is no connection to, which may
+        // be waited for by the worker for a long while.)
+        if (!f.query.empty() && f.engine && !(f.shown && f.shown->serial == f.serial) && host_down(f.root).empty()) {
             f.engine->wait_idle_for(400);
             find_sync();
         }
