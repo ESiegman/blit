@@ -86,9 +86,38 @@ std::string output_of(json::Value outputs) {
     return out;
 }
 
+// A text's lines, each with what ends it, as Python's splitlines(True)
+// makes them (a newline, a carriage return or both, and the rarer breaks
+// it knows: \v, \f, \x1c-\x1e, NEL, U+2028, U+2029).
+std::vector<std::string_view> split_lines(std::string_view s) {
+    std::vector<std::string_view> out;
+    size_t start = 0;
+    for (size_t i = 0; i < s.size();) {
+        const unsigned char c = static_cast<unsigned char>(s[i]);
+        size_t len = 0;
+        if (c == '\r') len = i + 1 < s.size() && s[i + 1] == '\n' ? 2 : 1;
+        else if (c == '\n' || c == '\v' || c == '\f' || (c >= 0x1c && c <= 0x1e)) len = 1;
+        else if (c == 0xC2 && i + 1 < s.size() && static_cast<unsigned char>(s[i + 1]) == 0x85) len = 2;
+        else if (c == 0xE2 && i + 2 < s.size() && s[i + 1] == '\x80' && (s[i + 2] == '\xA8' || s[i + 2] == '\xA9')) len = 3;
+        if (!len) {
+            ++i;
+            continue;
+        }
+        out.push_back(s.substr(start, i + len - start));
+        start = i += len;
+    }
+    if (start < s.size()) out.push_back(s.substr(start));
+    return out;
+}
+
+// What of an output Jupyter writes as its lines (nbformat's split_lines):
+// a stream's text, and the text/*, SVG and JavaScript in its data.
+enum Split : u8 { kWhole, kOutputs, kOutput, kData };
+
 // JSON as Jupyter writes it (Python's json.dumps with indent=1 and its keys
-// sorted), so that a notebook written back differs only where it changed.
-void pretty(std::string& out, json::Value v, int depth) {
+// sorted), so that a notebook written back differs only where it changed;
+// `split`: the list of a cell's outputs, or part of one.
+void pretty(std::string& out, json::Value v, int depth, Split split = kWhole) {
     auto line = [&](int d) {
         out += '\n';
         out.append(static_cast<size_t>(d), ' ');
@@ -119,7 +148,7 @@ void pretty(std::string& out, json::Value v, int depth) {
                 if (!first) out += ',';
                 first = false;
                 line(depth + 1);
-                pretty(out, e, depth + 1);
+                pretty(out, e, depth + 1, split == kOutputs ? kOutput : kWhole);
             }
             line(depth);
             out += ']';
@@ -135,13 +164,32 @@ void pretty(std::string& out, json::Value v, int depth) {
             std::stable_sort(members.begin(), members.end(), [](const json::Value& a, const json::Value& b) { return a.key() < b.key(); });
             out += '{';
             bool first = true;
+            const bool stream = split == kOutput && v["output_type"].str() == "stream";
             for (const json::Value& m : members) {
                 if (!first) out += ',';
                 first = false;
                 line(depth + 1);
                 json::quote(out, m.key());
                 out += ": ";
-                pretty(out, m, depth + 1);
+                const std::string_view k = m.key();
+                const bool lines = m.is_string() && ((stream && k == "text") || (split == kData && (k.starts_with("text/") || k == "image/svg+xml" || k == "application/javascript")));
+                if (!lines) {
+                    pretty(out, m, depth + 1, split == kOutput && k == "data" ? kData : kWhole);
+                    continue;
+                }
+                const std::vector<std::string_view> each = split_lines(m.str());
+                if (each.empty()) {
+                    out += "[]";
+                    continue;
+                }
+                out += '[';
+                for (size_t n = 0; n < each.size(); ++n) {
+                    if (n) out += ',';
+                    line(depth + 2);
+                    json::quote(out, each[n]);
+                }
+                line(depth + 1);
+                out += ']';
             }
             line(depth);
             out += '}';
@@ -245,7 +293,7 @@ bool notebook_set_outputs(NotebookCell* cell, std::string_view outputs, i64 coun
     cell->outputs = nullptr;
     if (doc.root().size()) {
         std::string s;
-        pretty(s, doc.root(), 3);  // (as the file has them)
+        pretty(s, doc.root(), 3, kOutputs);  // (as Jupyter writes them in the file)
         cell->outputs = std::make_shared<const std::string>(std::move(s));
     }
     return true;

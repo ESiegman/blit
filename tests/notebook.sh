@@ -261,6 +261,11 @@ got=$(outputs "$run/r.ipynb")
 check "saved: the cell's outputs and count, as Jupyter writes them" "1: stream(half of 42) execute_result
 None:
 None:"
+got=$(python3 -c '
+import json, sys
+outs = json.load(open(sys.argv[1]))["cells"][1]["outputs"]
+print(json.dumps(outs[0]["text"]), json.dumps(outs[1]["data"]["text/plain"]))' "$run/r.ipynb")
+check "saved: a stream's text and text/plain as their lines, as Jupyter writes them" '["half of 42\n"] ["42"]'
 
 # An error: its traceback (the cell's own lines, not the kernel's), and
 # with it the cells after it, run with it, do not run (as in Jupyter).

@@ -520,6 +520,17 @@ void notebook_test() {
     std::string list = "[";
     for (const std::string& o : outs) list += (list.size() > 1 ? "," : "") + o;
     check(notebook_set_outputs(&model[1], list + "]", 2) && model[1].output == "late", "notebook: outputs made one by one, put in the model");
+    // Put in the model as Jupyter writes them: a stream's text and the
+    // text/*, SVG and JavaScript in data as their lines (split where
+    // Python's splitlines splits), the rest as they are.
+    check(notebook_set_outputs(&model[1], R"([{"output_type": "stream", "name": "stdout", "text": "a\nb\r\nc\rd\u2028e"},
+        {"output_type": "display_data", "metadata": {}, "data": {"text/plain": "", "image/svg+xml": "<svg>\n</svg>", "image/png": "iVBO\nRw==\n", "application/json": {"t": "x\ny"}}}])", 2),
+          "notebook: outputs to split into lines");
+    const std::string split = *model[1].outputs;
+    check(split.find("\"text\": [\n      \"a\\n\",\n      \"b\\r\\n\",\n      \"c\\r\",\n      \"d\xE2\x80\xA8\",\n      \"e\"\n     ]") != std::string::npos &&
+              split.find("\"text/plain\": []") != std::string::npos && split.find("\"image/svg+xml\": [\n       \"<svg>\\n\",\n       \"</svg>\"\n      ]") != std::string::npos &&
+              split.find("\"image/png\": \"iVBO\\nRw==\\n\"") != std::string::npos && split.find("\"t\": \"x\\ny\"") != std::string::npos,
+          "notebook: a stream's text, and text and SVG data, as their lines; a picture's base64 and JSON as they are");
 }
 
 // A notebook drawn (nbview.cpp): its rows as text, each with the script's
