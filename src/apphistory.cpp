@@ -345,7 +345,8 @@ void App::disk_compare_show(u64 doc, std::string_view disk) {
     std::vector<u8> style;
     i64 first = 0;
     diff_text(disk, src->nb ? nb_json(*src) : src->ed.buf.text(0, src->ed.buf.size()), &text, &off, &style, &first);  // (a notebook: as it would be saved)
-    const std::string title = base_name(src->ed.path) + " (against disk)";
+    std::string host, there;
+    const std::string title = base_name(src->ed.path) + (split_remote(src->ed.path, &host, &there) ? " (against disk, " + host + ")" : " (against disk)");  // (another machine's names it)
     Pane* const keep = pane_;
     pane_ = where;
     Doc* tab = nullptr;

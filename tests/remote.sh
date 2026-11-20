@@ -86,7 +86,7 @@ got="$got | $(tr '\n' ' ' <"$T/.moved/m.txt")"
 check "changed there under changes here: said, and saving asks" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; pick [] (m.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; box ~/.moved/m.txt ● | Ln 3, Col 5 Tabs LF Plain text | alpha THERE '
 fresh_m
 run "remotewait;frame;key:cmd+Down;text:MINE;$there;reload;remotewait;frame;save;key:Down;key:Return;remotewait;frame;dump;lsptext" "ssh://box$T/.moved/m.txt"
-check "and compared with what is there" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; >[m.txt m.txt (against disk)*] ;; @@ -1 +1 @@ /  alpha / -THERE / +beta / +MINE'
+check "and compared with what is there" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; >[m.txt m.txt (against disk, box)*] ;; @@ -1 +1 @@ /  alpha / -THERE / +beta / +MINE'
 fresh_m
 run "remotewait;frame;key:cmd+Down;text:MINE;$there;save;remotewait;finddump;key:Return;remotewait;frame;statusdump" "ssh://box$T/.moved/m.txt"
 got="$got | $(tr '\n' ' ' <"$T/.moved/m.txt")"

@@ -1922,7 +1922,11 @@ over the one ssh connection:
   themselves never cross the connection.
 - **Git** is that machine's own git, run there.
 - **Programs** run there (a terminal, a build, a language server) send
-  their output as they write it. One that writes faster than blit reads it
+  their output as they write it. Their tabs name the machine (`Terminal:
+  box`, `make (box)`, `notes.txt (changes, box)`, `notes.txt (against
+  disk, box)`). A terminal there whose connection is lost ends with
+  *[connection to box lost]*, not an exit code, and one opened just after
+  says *the connection to box was lost*. One that writes faster than blit reads it
   (`yes` in a terminal) is paused there after a few MB rather than filling
   memory, and a language server's error output stays there. The other way
   round too: a program there that does not take what it is sent (a paste
@@ -1975,7 +1979,9 @@ default the Dockerfile's folder). The folder is mounted at
 says), with `containerEnv` and `runArgs`, and `postCreateCommand` is run
 in it once. After that the same container is started again if it has
 stopped, and opened as it is if it runs. "Rebuild the dev container"
-removes it and makes it anew. Comments and trailing commas in
+removes it and makes it anew. When docker's daemon is not running, both
+say *docker is not running* (and docker's own words), not that the image
+did not build. Comments and trailing commas in
 devcontainer.json are fine. Nothing else in it (features, forwarded ports,
 remoteUser, the lifecycle commands but postCreateCommand) is acted on.
 
