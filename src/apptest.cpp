@@ -45,6 +45,13 @@ std::string exactly(std::string_view name) {
 
 bool python_path(std::string_view p) { return p.ends_with(".py"); }
 
+// A path as a command run in a folder on another machine names it: without
+// ssh://host. (One here, as it is.)
+std::string on_host(const std::string& path) {
+    std::string host, there;
+    return split_remote(path, &host, &there) ? there : path;
+}
+
 // How a folder runs pytest: through uv where it is a uv project; else the
 // pytest on the PATH, else Python's own. (On another machine, chosen there,
 // in the folder: asking it from here would wait on the connection.)
@@ -106,6 +113,11 @@ struct App::TestUi {
         bool python = false;
     };
     std::vector<CovReport> cov_reports;
+    // On another machine: the build folders' CMakeCache.txt, read there
+    // before a run with coverage starts; and the reports being read back
+    // after one, on an errand there.
+    std::optional<std::unordered_map<std::string, std::string>> caches;
+    bool preparing = false, reading = false;
     std::unordered_map<std::string, FileCoverage> coverage;
     std::vector<std::string> cov_files;  // (their paths, in order, for the tab)
     bool cov_shown = false;
@@ -143,10 +155,18 @@ void App::test_find() {
                 for (const FsEntry& s : fs_list(d))
                     if (s.dir && configured(d + "/" + s.name)) dirs.push_back(d + "/" + s.name);
         }
+        std::string host, there;
+        const bool remote = split_remote(root, &host, &there);
         for (const std::string& d : dirs) {
             std::string out;
-            if (fs_run(root, "ctest --show-only=json-v1 --test-dir " + sh_word(d), &out, 30000))
-                for (TestCase& t : parse_ctest_json(out, d)) f.tests.push_back(std::move(t));
+            if (fs_run(root, "ctest --show-only=json-v1 --test-dir " + sh_word(on_host(d)), &out, 30000))
+                for (TestCase& t : parse_ctest_json(out, d)) {
+                    if (remote) {  // (what it runs, and where, are paths there: debugged there)
+                        if (!t.command.empty() && t.command[0].starts_with('/')) t.command[0] = remote_path(host, t.command[0]);
+                        if (t.cwd.starts_with('/')) t.cwd = remote_path(host, t.cwd);
+                    }
+                    f.tests.push_back(std::move(t));
+                }
         }
         if (python) {
             std::string out;
@@ -223,19 +243,45 @@ void App::test_run(const std::vector<size_t>& which, bool coverage) {
         env += " ";
     }
     const bool all = which.empty();
-    std::error_code ec;
-    const std::string tmp = std::filesystem::temp_directory_path(ec).string();
-    std::vector<std::string> parts;
-    u.reports.clear();
-    u.cov_reports.clear();
-    auto report = [&](const std::string& of = {}) {
-        u.reports.emplace_back((tmp.empty() ? std::string("/tmp") : tmp) + "/blit-tests-" + std::to_string(::getpid()) + "-" + std::to_string(++u.runs) + ".xml", of);
-        return u.reports.back().first;
-    };
     // CTest: each build folder's in one command; pytest's in one.
     std::vector<std::string> dirs;
     for (const size_t i : pick)
         if (u.tests[i].runner == TestCase::kCTest && std::ranges::find(dirs, u.tests[i].dir) == dirs.end()) dirs.push_back(u.tests[i].dir);
+    // The reports are written where the tests run: on another machine, in
+    // blit's cache there (read back once the run has ended, test_ended).
+    std::string host, there, tmp;
+    const bool remote = split_remote(u.root, &host, &there);
+    if (remote) {
+        if (coverage && !dirs.empty() && !u.caches) {  // (the folders' compilers first, read there: then it runs)
+            u.preparing = true;
+            remote_errand([this, dirs, which, coverage](std::stop_token stop) -> std::function<void()> {
+                std::unordered_map<std::string, std::string> caches;
+                std::string why;
+                for (const std::string& d : dirs) fs_read_whole(d + "/CMakeCache.txt", &caches[d], &why, 16u << 20, stop);
+                return [this, caches = std::move(caches), which, coverage] {
+                    testui_->preparing = false;
+                    testui_->caches = std::move(caches);
+                    test_run(which, coverage);
+                };
+            });
+            return;
+        }
+        std::string in;
+        const std::shared_ptr<Remote> r = remote_for(u.root, &in);
+        tmp = remote_path(host, r && !r->home().empty() ? r->home() + "/.cache/blit" : std::string("/tmp"));
+    } else {
+        std::error_code ec;
+        tmp = std::filesystem::temp_directory_path(ec).string();
+        if (tmp.empty()) tmp = "/tmp";
+    }
+    std::vector<std::string> parts;
+    u.reports.clear();
+    u.cov_reports.clear();
+    auto report = [&](const std::string& of = {}) {
+        u.reports.emplace_back(tmp + "/blit-tests-" + std::to_string(::getpid()) + "-" + std::to_string(++u.runs) + ".xml", of);
+        return u.reports.back().first;
+    };
+    auto here = [](const std::string& path) { return sh_word(on_host(path)); };  // (a path as the command there names it)
     for (const std::string& d : dirs) {
         std::string names;
         for (const size_t i : pick)
@@ -244,7 +290,8 @@ void App::test_run(const std::vector<size_t>& which, bool coverage) {
         std::string compiler;  // (and where that one says its gcov is, when it is not on the PATH)
         if (coverage) {
             std::string cache;
-            fs_read(d + "/CMakeCache.txt", &cache);
+            if (u.caches) cache = (*u.caches)[d];
+            else fs_read(d + "/CMakeCache.txt", &cache);
             const size_t at = cache.find("CMAKE_CXX_COMPILER:");
             std::string cc = at == std::string::npos ? std::string() : cache.substr(cache.find('=', at) + 1, cache.find('\n', at) - cache.find('=', at) - 1);
             const size_t slash = cc.rfind('/'), gpp = cc.rfind("g++");
@@ -254,30 +301,31 @@ void App::test_run(const std::vector<size_t>& which, bool coverage) {
             } else if (cc.empty() || cc.ends_with("/c++")) gcov = "gcov";
             else notify("Coverage is read with GCC's gcov: " + d.substr(d.rfind('/') + 1) + " builds with " + cc.substr(slash + 1));
         }
-        const std::string clear = gcov.empty() ? std::string() : "find " + sh_word(d) + " -name '*.gcda' -delete; ";  // (this run's alone)
-        parts.push_back(clear + env + "ctest --test-dir " + sh_word(d) + " --output-on-failure --output-junit " + sh_word(report(d)) + (all ? "" : " -R " + sh_word("^(" + names + ")$")));
+        const std::string clear = gcov.empty() ? std::string() : "find " + here(d) + " -name '*.gcda' -delete; ";  // (this run's alone)
+        parts.push_back(clear + env + "ctest --test-dir " + here(d) + " --output-on-failure --output-junit " + here(report(d)) + (all ? "" : " -R " + sh_word("^(" + names + ")$")));
         if (!gcov.empty()) {
             const std::string out = report();
             u.reports.pop_back();
             u.cov_reports.push_back({out, d, false});
             // (Arch's gcc15 has g++-15 but its gcov only in GCC's own folder, which -print-prog-name knows.)
             const std::string run = compiler.empty() ? sh_word(gcov) : "\"$(command -v " + sh_word(gcov) + " || " + sh_word(compiler) + " -print-prog-name=gcov)\"";
-            parts.push_back("(cd " + sh_word(d) + " && " + run + " --json-format --stdout $(find . -name '*.gcda') > " + sh_word(out) + " 2>/dev/null)");
+            parts.push_back("(cd " + here(d) + " && " + run + " --json-format --stdout $(find . -name '*.gcda') > " + here(out) + " 2>/dev/null)");
         }
     }
+    u.caches.reset();
     std::string ids;
     for (const size_t i : pick)
         if (u.tests[i].runner == TestCase::kPytest) ids += " " + sh_word(u.tests[i].id);
     if (!ids.empty()) {
         if (coverage) {  // (through coverage.py, which writes what ran as JSON after)
             const std::string cov = "$(command -v coverage || echo python3 -m coverage)";
-            parts.push_back(env + cov + " run -m pytest -q --junitxml=" + sh_word(report()) + (all ? "" : ids));
+            parts.push_back(env + cov + " run -m pytest -q --junitxml=" + here(report()) + (all ? "" : ids));
             const std::string out = report();
             u.reports.pop_back();
             u.cov_reports.push_back({out, u.root, true});
-            parts.push_back(cov + " json -q -o " + sh_word(out));
+            parts.push_back(cov + " json -q -o " + here(out));
         } else {
-            parts.push_back(env + pytest_command(u.root) + " -q --junitxml=" + sh_word(report()) + (all ? "" : ids));
+            parts.push_back(env + pytest_command(u.root) + " -q --junitxml=" + here(report()) + (all ? "" : ids));
         }
     }
     std::string cmd;
@@ -297,15 +345,51 @@ void App::test_run_failed() {
     test_run(failed);
 }
 
-// The run's terminal has ended: its reports say how each test went.
+// The run's terminal has ended: its reports say how each test went. Here
+// they are read at once; from another machine, on an errand there (which
+// takes them away there too), and taken in when they have come.
 void App::test_ended(u64 doc) {
     TestUi& u = *testui_;
     if (!u.running || doc != u.term) return;
     u.running = false;
+    std::vector<std::pair<std::string, u64>> paths;  // (the reports', then the coverage reports', with how large each may be)
+    for (const auto& [r, of] : u.reports) paths.emplace_back(r, 64u << 20);
+    for (const TestUi::CovReport& r : u.cov_reports) paths.emplace_back(r.path, 256u << 20);
+    if (!is_remote(u.root)) {
+        std::vector<std::string> texts(paths.size());
+        for (size_t i = 0; i < paths.size(); ++i) {
+            fs_read(paths[i].first, &texts[i], paths[i].second);
+            std::error_code ec;
+            std::filesystem::remove(paths[i].first, ec);
+        }
+        return test_take(std::move(texts));
+    }
+    u.reading = true;
+    remote_errand([this, paths, root = u.root, run = u.runs](std::stop_token stop) -> std::function<void()> {
+        std::vector<std::string> texts(paths.size());
+        std::string why, gone = "rm -f", out;
+        for (size_t i = 0; i < paths.size(); ++i) {
+            if (!fs_read_whole(paths[i].first, &texts[i], &why, paths[i].second, stop)) texts[i].clear();
+            gone += " " + sh_word(on_host(paths[i].first));
+        }
+        if (!paths.empty()) fs_run(root, gone, &out);
+        return [this, texts = std::move(texts), run] mutable {
+            testui_->reading = false;
+            if (testui_->runs == run) test_take(std::move(texts));  // (not if another run has started since)
+        };
+    });
+}
+
+// The reports' text (as test_ended read them, in its order) taken in.
+void App::test_take(std::vector<std::string> texts) {
+    TestUi& u = *testui_;
+    std::string host, there;
+    const bool remote = split_remote(u.root, &host, &there);
     u32 passed = 0, failed = 0;
+    size_t k = 0;
+    texts.resize(u.reports.size() + u.cov_reports.size());
     for (const auto& [r, of] : u.reports) {
-        std::string xml;
-        if (!fs_read(r, &xml, 64u << 20)) continue;
+        const std::string& xml = texts[k++];
         for (const TestOutcome& o : parse_junit(xml))
             for (TestCase& t : u.tests)
                 if ((t.runner == TestCase::kCTest ? t.dir == of : of.empty()) && outcome_is(o, t)) {  // (two build folders have tests of the same name)
@@ -316,8 +400,6 @@ void App::test_ended(u64 doc) {
                     failed += o.result == TestCase::kFailed;
                     break;
                 }
-        std::error_code ec;
-        std::filesystem::remove(r, ec);
     }
     u.reports.clear();
     // What a run with coverage ran.
@@ -326,17 +408,16 @@ void App::test_ended(u64 doc) {
         u.cov_files.clear();
         size_t hit = 0, all = 0;
         for (const TestUi::CovReport& r : u.cov_reports) {
-            std::string text;
-            if (fs_read(r.path, &text, 256u << 20))
-                for (auto& [path, c] : r.python ? parse_coverage_py(text, r.dir) : parse_gcov_json(text, r.dir)) {
+            const std::string& text = texts[k++];
+            if (!text.empty())
+                for (auto& [whole, c] : r.python ? parse_coverage_py(text, on_host(r.dir)) : parse_gcov_json(text, on_host(r.dir))) {
+                    const std::string path = remote && whole.starts_with('/') ? remote_path(host, whole) : whole;  // (another machine's: its paths there)
                     if (!path.starts_with(u.root + "/") || path.find("/_deps/") != std::string::npos || path.find("/CMakeFiles/") != std::string::npos) continue;  // (the project's own)
                     hit += c.hit.size();
                     all += c.hit.size() + c.missed.size();
                     u.cov_files.push_back(path);
                     u.coverage[path] = std::move(c);
                 }
-            std::error_code ec;
-            std::filesystem::remove(r.path, ec);
         }
         u.cov_reports.clear();
         std::ranges::sort(u.cov_files);
@@ -368,7 +449,7 @@ const std::vector<std::pair<u32, int>>& App::test_defs(const Doc& d) {
     const bool py = python_path(path);
     // (Test files are small: a larger file is not looked through, nor any
     // once the project is known to have no tests.)
-    if ((!py && !cpp_path(path)) || d.ed.buf.size() > (256u << 10) || is_remote(path) || (u.looked && u.tests.empty())) return x.at;
+    if ((!py && !cpp_path(path)) || d.ed.buf.size() > (256u << 10) || (u.looked && u.tests.empty())) return x.at;
     const std::string text = d.ed.buf.text(0, d.ed.buf.size());
     const std::string full = full_path(path);
     const std::vector<std::pair<u32, std::string>> defs = find_test_defs(text, py);
@@ -632,10 +713,14 @@ bool App::test_panel_key(const SDL_KeyboardEvent& k) {
 std::string App::test_dump() {
     TestUi& u = *testui_;
     if (!u.looked && !u.looking) test_find();
-    for (int i = 0; i < 600 && (u.looking || u.running); ++i) {  // (finding them and running them, waited for: 60 s at most)
+    for (int i = 0; i < 600 && (u.looking || u.running || u.preparing || u.reading); ++i) {  // (finding them and running them, waited for: 60 s at most)
         if (u.looking) {
             if (u.worker.joinable()) u.worker.join();
             test_sync();
+        }
+        if (u.preparing || u.reading) {  // (on another machine: what is asked there, waited for)
+            remote_sync();
+            SDL_Delay(100);
         }
         if (u.running) {
             build_wait();

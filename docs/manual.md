@@ -2434,7 +2434,9 @@ is defined (`TEST(A, B)`, `TEST_F`, `TEST_CASE("x")`, `SCENARIO`; `def
 test_x`, in a `Test` class or not) its mark beside the line number shows
 how it went, and a click on it runs it (Option-click debugs it). A run
 asked for before the tests are found runs once they are; opening a file
-with tests in it looks for them.
+with tests in it looks for them. In a project on another machine they
+are found and run there, and the reports are written in blit's cache
+there and read back (on a thread) when the run ends.
 
 **Coverage**: "Run the tests with coverage" runs them, then reads what
 they ran. For C and C++ that is GCC's gcov, over a build folder built

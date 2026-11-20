@@ -312,6 +312,58 @@ printf 'def test_one():\n    pass\n\n\ndef test_two():\n    assert 1 == 2\n' >"$
 PATH="$dir/bin:$PATH" slow "remotewait;testdump;clock;command:Run the tests;within:300;testdump" "$R/py"
 check "the tests run on a slow host: at once, and how they went" 'tests/test_a.py: .test_one .test_two ;; within 300 ms ;; blit: 1 failed, 1 passed ;; tests/test_a.py: +test_one xtest_two'
 
+# Their reports are written there and read back, not in this machine's temp
+# folder (which the host cannot write in here: on a real host it is not
+# there); and the marks beside the tests in a file there. With coverage too
+# (coverage.py's stand-in: the run through pytest's, and what ran as JSON).
+cat >"$dir/bin/coverage" <<'EOF'
+#!/bin/sh
+case $1 in
+    run) shift 3; exec pytest "$@" ;;
+    json) while [ $# -gt 0 ]; do [ "$1" = -o ] && out=$2; shift; done
+          printf '{"files": {"tests/test_a.py": {"executed_lines": [1, 2, 5, 6], "missing_lines": [3]}}}\n' >"$out" ;;
+esac
+EOF
+chmod +x "$dir/bin/coverage"
+mkdir -p "$dir/ro" && chmod 555 "$dir/ro"
+reports() { ls "$T/.cache/blit" | grep -c blit-tests; }
+got=$(TMPDIR="$dir/ro" PATH="$dir/bin:$PATH" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+    --script "workdir:$R/py;remotewait;testdump;command:Run the tests;testdump" "$R/py/tests/test_a.py" 2>&1 >/dev/null | join)
+got="$got | $(reports)"
+check "pytest's report read back from there, and the marks in the file there" \
+    'tests/test_a.py: .test_one .test_two | here: 1. 5. ;; blit: 1 failed, 1 passed ;; tests/test_a.py: +test_one xtest_two | here: 1+ 5x | 0'
+got=$(TMPDIR="$dir/ro" PATH="$dir/bin:$PATH" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+    --script "workdir:$R/py;remotewait;command:Run the tests with coverage;testdump;coveragedump" "$R/py/tests/test_a.py" 2>&1 >/dev/null | join)
+got="$got | $(reports)"
+check "and coverage.py's" 'blit: Looking for the tests… ;; blit: Coverage: 80% of the lines in 1 files ;; tests/test_a.py: +test_one xtest_two | here: 1+ 5x ;; here: ran 1 2 5 6, missed 3 | files: tests/test_a.py=80% | 0'
+# CTest's, in a build folder there (where cmake is, to configure it).
+if command -v cmake >/dev/null 2>&1; then
+    mkdir -p "$W/ct"
+    printf 'cmake_minimum_required(VERSION 3.21)\nproject(ct NONE)\nenable_testing()\nadd_test(NAME passes COMMAND sh -c "exit 0")\nadd_test(NAME fails COMMAND sh -c "exit 1")\n' >"$W/ct/CMakeLists.txt"
+    cmake -S "$W/ct" -B "$W/ct/build" >/dev/null 2>&1 || exit 1
+    got=$(TMPDIR="$dir/ro" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+        --script "remotewait;testdump;command:Run the tests;testdump" "$R/ct" 2>&1 >/dev/null | join)
+    got="$got | $(reports)"
+    check "CTest's tests there: found, run, and their report read back" 'build: .passes .fails ;; blit: 1 failed, 1 passed ;; build: +passes xfails | 0'
+    # And with GCC's coverage (where there is a GCC): the build folder's
+    # compiler read there first, gcov's report read back.
+    gcc=
+    for c in g++-16 g++-15 g++-14 g++-13 g++; do
+        if command -v "$c" >/dev/null 2>&1 && "$c" --version 2>/dev/null | grep -q 'Free Software Foundation'; then gcc=$c; break; fi
+    done
+    if [ -n "$gcc" ]; then
+        mkdir -p "$W/cov"
+        printf 'cmake_minimum_required(VERSION 3.21)\nproject(cov CXX)\nenable_testing()\nadd_executable(run run.cpp)\nadd_test(NAME runs COMMAND run)\n' >"$W/cov/CMakeLists.txt"
+        printf 'int never() {\n    return 3;\n}\n\nint main() {\n    int sum = 0;\n    for (int i = 0; i < 3; ++i) sum += i;\n    return sum == 3 ? 0 : 1;\n}\n' >"$W/cov/run.cpp"
+        cmake -S "$W/cov" -B "$W/cov/build" -DCMAKE_CXX_COMPILER="$gcc" -DCMAKE_CXX_FLAGS=--coverage >/dev/null 2>&1 && cmake --build "$W/cov/build" >/dev/null 2>&1 || exit 1
+        got=$(TMPDIR="$dir/ro" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+            --script "workdir:$R/cov;remotewait;command:Run the tests with coverage;testdump;coveragedump" "$R/cov/run.cpp" 2>&1 >/dev/null | tail -1)
+        got="$got | $(reports)"
+        check "GCC's coverage there" 'here: ran 5 6 7 8, missed 1 2 | files: run.cpp=67% | 0'
+    fi
+fi
+chmod 755 "$dir/ro"
+
 # When blit goes, all its agent started there goes, and the agent too: a
 # language server whose worker will not end on SIGTERM and holds the
 # server's output open is ended with its process group, killed if it must.
