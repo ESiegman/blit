@@ -13,6 +13,7 @@
 #include <cstring>
 #include <deque>
 #include <mutex>
+#include <random>
 #include <stop_token>
 #include <thread>
 
@@ -174,7 +175,10 @@ bool Kernel::Link::start_remote(std::stop_token stop) {
     std::string why;
     RemoteStat st;
     if (!c->stat(helper, &st) || st.kind != 1) {
-        const std::string part = helper + ".part";
+        // (Its own .part: another blit, from this machine or another, may be writing it there too.)
+        char tag[40];
+        std::snprintf(tag, sizeof tag, ".part%d-%08x", static_cast<int>(::getpid()), static_cast<unsigned>(std::random_device{}()));
+        const std::string part = helper + tag;
         if (!c->make_dir(cache, true, &why) || !c->write(part, kHelper, &why) || !c->rename(part, helper, &why))
             return failed("cannot write the kernel's helper there: " + why);
     }

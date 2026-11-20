@@ -438,6 +438,15 @@ python3 "$dir/make-run.py" "$there/work/r.ipynb"
 got=$(BLIT_FAKE_SLOW=0.3 BLIT_SSH="$(cd "$(dirname "$0")" && pwd)/fake-ssh.sh" BLIT_FAKE_HOME="$there" "$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" \
     --script "open:ssh://box$there/work/r.ipynb;key:cmd+\\;key:Escape;frame;dump;remotewait;mdwait;frame;dump" 2>&1 >/dev/null | tr '\n' '|')
 check "a slow host: the view opens, the keyboard stays where it went" "H([r.ipynb*] | >[untitled*])0.50|H(H([r.ipynb*] | [Notebook: r.ipynb*])0.50 | >[untitled*])0.50|"
+# Two blits writing the helper there at once each write their own file
+# first (here: another's half-written one is in the way).
+helper=$(ls "$there/.cache/blit" | grep '^kernel-[0-9a-f]*\.py$')
+rm "$there/.cache/blit/$helper" && mkdir "$there/.cache/blit/$helper.part"
+got=$(BLIT_SSH="$(cd "$(dirname "$0")" && pwd)/fake-ssh.sh" BLIT_FAKE_HOME="$there" "$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" \
+    --script "open:ssh://box$there/work/r.ipynb;remotewait;mdwait;vim:7G;key:shift+Return;nbwait;nbcells" 2>&1 >/dev/null | grep -E '^2 code|kernel')
+check "the helper written there beside another's half-written one" "2 code [1] same stream execute_result"
+rmdir "$there/.cache/blit/$helper.part"
+
 # With IPython, where python3 has it: its display hooks, magics and tracebacks.
 if python3 -c 'import IPython' 2>/dev/null; then
     mkdir -p "$dir/ipython" && python3 "$dir/make-run.py" "$dir/ipython/r.ipynb"
