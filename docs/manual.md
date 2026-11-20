@@ -2440,9 +2440,9 @@ grammar in the theme's colours, on the preview's thread; a `diff` or
 its removed ones in the errors' colour, a hunk's `@@` header in the accent
 and a file's header quiet), rules, line breaks, HTML (below; comments
 left out), math (below), `==highlighted==` text, definition lists (a
-term's line, then `: what it means` lines: the term bold, each definition
-indented under it, numbered quietly when there are more than one), and
-leaves out front matter.
+term on a line of its own, then `: what it means` lines: the term bold,
+each definition indented under it, numbered quietly when there are more
+than one), and leaves out front matter.
 
 **Headings** are told apart by what a grid of cells has. The top three
 levels have a colour each and the lower three share a fourth. Levels one
@@ -2466,8 +2466,8 @@ whose cells all fit on a line has none. Columns stay in line with wide
 characters and emoji (a family or a flag in one cell's width) in them.
 
 **Math** is drawn as text, in italics, by GitHub's rules: `$...$` and
-`` $`...`$ `` in a line (not `$5 and $6`, nor with a space just inside a
-`$`, nor in code), `\(...\)` too, and display math (`$$...$$` or
+`` $`...`$ `` within a paragraph, not past a hard line break (not `$5
+and $6`, nor with a space just inside a `$`, nor in code), `\(...\)` too, and display math (`$$...$$` or
 `\[...\]`, on lines of their own) on rows of its own, each of its rows
 (TeX's `\\`) in the middle. Greek letters, operators, relations and
 arrows are Unicode's (`\alpha` α, `\le` ≤, `\to` →, `\int` ∫); a power or

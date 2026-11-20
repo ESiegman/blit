@@ -1535,6 +1535,9 @@ void parse_into(const std::vector<Line>& lines, Refs& refs, std::vector<Block>& 
         }
         // A term and its definitions (": what it means" lines under it, with
         // the lines indented under each, or a paragraph's lines that run on).
+        // Only a term on a line of its own, at a block's start: GitHub has no
+        // definition lists, and a paragraph whose later line is followed by a
+        // ": ..." line stays one paragraph, as GitHub draws it.
         if (i + 1 < n && is_definition(lines[i + 1].text) && !is_definition(t)) {
             Block term;
             term.kind = Block::kTerm;
@@ -1593,7 +1596,7 @@ void parse_into(const std::vector<Line>& lines, Refs& refs, std::vector<Block>& 
                     ++i;
                     break;
                 }
-                if (starts_block(l) || (indent_of(l) <= 3 && note_start(trim(l))) || (i + 1 < n && is_definition(lines[i + 1].text))) break;  // (a term's line ends it too)
+                if (starts_block(l) || (indent_of(l) <= 3 && note_start(trim(l)))) break;
                 std::vector<int> align;  // (a table's head: the table starts here)
                 if (l.find('|') != std::string_view::npos && i + 1 < n && table_delims(lines[i + 1].text, &align) && table_cells(l).size() == align.size()) break;
             }

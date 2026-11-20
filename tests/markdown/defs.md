@@ -18,3 +18,7 @@ Term after it
 : Its definition.
 
 Not a definition: the colon is in the middle of the line.
+
+A paragraph
+that runs on
+: is not a term, and stays one paragraph.
