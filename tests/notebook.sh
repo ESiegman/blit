@@ -288,6 +288,10 @@ got=$(outputs "$run/r.ipynb")
 check "run all, saved" "1: stream(half of 42) execute_result
 2: stream(careful)
 3: execute_result"
+# Compared with disk once saved: the notebook as it would be saved, the same.
+run "save;command:Compare with disk;frame;lsptext"
+got=$(printf '%s\n' "$got" | tail -1)
+check "a notebook compared with disk, as it is saved" "(the same as now)"
 
 # While a cell runs: In [*], it and those waiting; what it has printed so
 # far shown. An interrupt: KeyboardInterrupt in it, at once, and the cells

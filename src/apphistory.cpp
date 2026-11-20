@@ -338,13 +338,13 @@ void App::disk_compare() {
 void App::disk_compare_show(u64 doc, std::string_view disk) {
     Pane* where = nullptr;
     size_t at = 0;
-    const Doc* src = find_doc(doc, &where, &at);
+    Doc* src = find_doc(doc, &where, &at);
     if (!src) return;
     std::string text;
     std::vector<u32> off;
     std::vector<u8> style;
     i64 first = 0;
-    diff_text(disk, src->ed.buf.text(0, src->ed.buf.size()), &text, &off, &style, &first);
+    diff_text(disk, src->nb ? nb_json(*src) : src->ed.buf.text(0, src->ed.buf.size()), &text, &off, &style, &first);  // (a notebook: as it would be saved)
     const std::string title = base_name(src->ed.path) + " (against disk)";
     Pane* const keep = pane_;
     pane_ = where;
