@@ -46,6 +46,7 @@ printf 'blit.opt.lsp.servers.clangd = { command = { "%s", "--background-index=fa
 # files only), and while it is built (in files that are not open too).
 printf 'blit.opt.lsp.servers.clangd = { command = { "%s", "--background-index=false", "--defs", "open", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/defsoff.lua"
 printf 'blit.opt.lsp.servers.clangd = { command = { "%s", "--index", "5000", "--defs", "all", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/defsindex.lua"
+printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--comments", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/comments.lua"
 export BLIT_RECENT_FILE="$dir/recent"
 init=
 fresh() {
@@ -67,6 +68,7 @@ fresh() {
     printf '/* \303\251\303\251 */ int wide(int n) {\n}\n' >"$P/w.cpp"
     awk 'BEGIN { for (i = 1; i < 300; i++) print (i == 150 ? "int zeta = 1;" : "int l" i " = " i ";"); print "int last = zeta;" }' >"$P/long.cpp"
     printf '#if 0\nint off = 1;\n#elif 0\nint neither;\n#endif\n#ifdef __HIP_DEVICE_COMPILE__\nint device;\n#if 0\nint inner;\n#endif\n#else\nint host;\n#endif\n#ifndef __CUDA_ARCH__\nint host_too;\n#else\nint device_too;\n#endif\n#if defined(FOO) || \\\n    defined(__HIP_DEVICE_COMPILE__)\nint either;\n#endif\n' >"$P/k.hip"
+    printf '#if defined(__HIP_PLATFORM_NVIDIA__)\nint nv_side;\n#elif defined(__HIP_DEVICE_COMPILE__)\nint device_side;\n#else\nint host_side;\n#endif\n#if 0\n#elif defined(__CUDA_ARCH__)\nint arch_side;\n#endif\n#ifdef NOPE\n#ifdef __CUDA_ARCH__\nint deep;\n#else\nint deeper;\n#endif\n#elif defined(__CUDA_ARCH__)\nint arch_too;\n#endif\n' >"$P/n.hip"
     printf 'struct Shape {\n};\nstruct Circle : public Shape {\n};\nstruct Square : Shape {\n};\nint leaf(int n) {\n    return n;\n}\nint middle(int n) {\n    return leaf(n) + leaf(1);\n}\nint top() {\n    return middle(2);\n}\n' >"$P/calls.cpp"
     printf 'struct Ring {\n    void push(int v);\n    int pop();\n};\nvoid Ring::push(int v) {\n}\nint Ring::pop() {\n    return 0;\n}\nint drain(Ring& r) {\n    return r.pop();\n}\n' >"$P/ring.cpp"
     printf 'plain words\n' >"$P/notes.txt"
@@ -445,7 +447,21 @@ check "no colours of the server's with lsp.semantic_colors off" 'hints: | colour
 # The lines the preprocessor leaves out (clangd's comment tokens) are drawn
 # as comments, but for a HIP device branch's: clangd sees the host's side.
 run "frame;wait:100;frame;lspextras" "$P/k.hip"
-check "lines left out drawn as comments, a HIP device branch's not" 'hints: | colours: int off = 1;=comment int neither;=comment __HIP_DEVICE_COMPILE__=function.macro __CUDA_ARCH__=function.macro FOO=function.macro __HIP_DEVICE_COMPILE__=function.macro'
+check "lines left out drawn as comments, a HIP device branch's not" 'hints: | colours: int off = 1;=comment #elif 0=comment int neither;=comment __HIP_DEVICE_COMPILE__=function.macro __CUDA_ARCH__=function.macro FOO=function.macro __HIP_DEVICE_COMPILE__=function.macro'
+# clangd's run of lines left out goes on through an #elif or #else that
+# follows a branch not taken: each branch in the run is judged by its own
+# chain, so a device #elif after a skipped #if keeps its colours (but a
+# device conditional nested in a run is left out on either side).
+run "frame;wait:100;frame;lspextras" "$P/n.hip"
+check "a HIP device #elif in the run of a branch not taken" 'hints: | colours: __HIP_PLATFORM_NVIDIA__=function.macro int nv_side;=comment NOPE=function.macro #ifdef __CUDA_ARCH__=comment int deep;=comment #else=comment int deeper;=comment #endif=comment'
+# A server that sends real comments as comment tokens: none of them is
+# under a directive, so none is walked back from to find one (which took
+# 16 s for this file's 10000 comments).
+mkdir -p "$dir/many"
+: >"$dir/many/.root"
+awk 'BEGIN { for (i = 0; i < 10000; ++i) printf "int a;\n// c\n" }' >"$dir/many/comments.cpp"
+with comments "clock;frame;wait:400;frame;wait:100;frame;within:3000" "$dir/many/comments.cpp"
+check "comment tokens for 10000 comments: taken in at once" 'within 3000 ms'
 # The servers' colours are the theme's of the appearance the window has,
 # whichever the system is in (a test build's BLIT_APPEARANCE pins it).
 export BLIT_APPEARANCE=light

@@ -2,7 +2,7 @@
 //
 //   blit_fakelsp [--utf8] [--full] [--slow MS] [--late MS] [--die-after N] [--items N] [--quiet]
 //                [--pull] [--workspace] [--no-prepare] [--default-rename] [--changes] [--noise]
-//                [--close-input MS] [--hints-once] [--index MS] [--defs open|all] [--name NAME]
+//                [--close-input MS] [--hints-once] [--index MS] [--defs open|all] [--comments] [--name NAME]
 //
 // --utf8        agree to count columns in bytes (the default is UTF-16)
 // --full        ask for the whole document on every change
@@ -31,6 +31,7 @@
 //               with its index off) or in the project's files that are not
 //               open too (as a partly built index); where there is none,
 //               where it is declared (as a declaration answers)
+// --comments    send each // comment as a comment token too (as some servers do)
 // --name NAME   what diagnostics give as their source (default "fake")
 //
 // It keeps every document it is sent. What it does with one:
@@ -104,6 +105,7 @@ long long index_end = -1;  // when the indexing under way ends (ms of the steady
 long die_after = -1;
 long pad_items = 0;
 bool quiet = false, pull = false, workspace = false, prepare = true, by_changes = false, noise = false, default_rename = false, hints_once = false;
+bool comment_tokens = false;
 long hints_answered = 0;
 long handled = 0;
 std::string source = "fake";
@@ -909,10 +911,14 @@ std::vector<bool> left_out(const std::string& t) {
                 out.back() = !stack.back().outer_on;
             } else if (!stack.empty() && (d.starts_with("elif") || d.starts_with("else"))) {
                 Branch& b = stack.back();
+                const bool was_on = b.on;
                 b.on = b.outer_on && !b.taken && (d.starts_with("else") || taken(d.substr(4), false));
                 b.taken = b.taken || b.on;
                 on = b.on;
-                out.back() = !b.outer_on;
+                // (clangd's run of lines left out goes on through an #elif
+                // or #else that takes no branch after one not taken: the
+                // directive is in the run.)
+                out.back() = !b.outer_on || (!was_on && !b.on);
             } else if (!stack.empty() && d.starts_with("endif")) {
                 on = stack.back().outer_on;
                 stack.pop_back();
@@ -968,6 +974,15 @@ std::vector<unsigned> tokens_of(const std::string& t) {
                 i = e;
                 continue;
             }
+        }
+        if (comment_tokens && t.compare(i, 2, "//") == 0) {
+            const size_t e = std::min(t.find('\n', i), t.size());
+            long line, ch, line_e, ch_e;
+            position(i, &line, &ch);
+            position(e, &line_e, &ch_e);
+            emit(line, ch, ch_e - ch, 4, 0);
+            i = e;
+            continue;
         }
         if (!word_char(t[i]) || (i > 0 && word_char(t[i - 1]))) {
             ++i;
@@ -1225,6 +1240,7 @@ int main(int argc, char** argv) {
         else if (a == "--hints-once") hints_once = true;
         else if (a == "--index" && i + 1 < argc) index_ms = std::atoi(argv[++i]);
         else if (a == "--defs" && i + 1 < argc) defs = argv[++i];
+        else if (a == "--comments") comment_tokens = true;
         else if (a == "--name" && i + 1 < argc) source = argv[++i];
     }
     if (close_input_ms > 0 || index_ms >= 0) setvbuf(stdin, nullptr, _IONBF, 0);  // (what has come is all read: poll() says when more has)

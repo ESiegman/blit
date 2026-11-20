@@ -465,33 +465,35 @@ u64 steady_ms() {
 // A line as the preprocessor sees it: blank, or a directive (its word:
 // "if", "ifdef", "elif", "endif"...; empty for any other line), and whether
 // its condition (with the lines a backslash carries it on to) names the
-// device pass's macros, which make it a HIP device branch.
+// device pass's macros, which make it a HIP device branch (the condition
+// is read only when asked for: whether a line is blank needs none of it).
 struct Directive {
     char letters[8] = {};
     u8 size = 0;
     bool blank = false, device = false;
     std::string_view word() const { return {letters, size}; }
 };
-Directive directive_at(const Buffer& b, u64 line) {
+Directive directive_at(const Buffer& b, u64 line, bool condition = true) {
     Directive d;
     const u64 lines = b.line_count();
     if (line >= lines) return d;
     auto end_of = [&](u64 l) { return l + 1 < lines ? b.line_start(l + 1) : b.size(); };
     char text[1024];
-    u64 n = b.read(b.line_start(line), text, std::min<u64>(end_of(line) - b.line_start(line), 64));
+    u64 start = b.line_start(line), end = end_of(line);
+    u64 n = b.read(start, text, std::min<u64>(end - start, 64));
     u64 i = 0;
     while (i < n && (text[i] == ' ' || text[i] == '\t')) ++i;
     d.blank = i == n ? n < 64 : text[i] == '\n' || text[i] == '\r';
     if (i == n || text[i] != '#') return d;
     for (++i; i < n && (text[i] == ' ' || text[i] == '\t');) ++i;
     while (i < n && d.size < sizeof d.letters && text[i] >= 'a' && text[i] <= 'z') d.letters[d.size++] = text[i++];
-    if (!d.word().starts_with("if") && !d.word().starts_with("elif")) return d;
-    // The condition, whole.
+    if (!condition || (!d.word().starts_with("if") && !d.word().starts_with("elif"))) return d;
+    // The condition, whole (a line's end is the next one's start).
     n = 0;
-    for (u64 l = line; l < lines && n < sizeof text; ++l) {
-        n += b.read(b.line_start(l), text + n, std::min<u64>(end_of(l) - b.line_start(l), sizeof text - n));
+    for (u64 l = line; n < sizeof text; start = end, end = end_of(l)) {
+        n += b.read(start, text + n, std::min<u64>(end - start, sizeof text - n));
         while (n > 0 && (text[n - 1] == '\n' || text[n - 1] == '\r')) --n;
-        if (n == 0 || text[n - 1] != '\\') break;
+        if (n == 0 || text[n - 1] != '\\' || ++l >= lines) break;
         --n;
     }
     const std::string_view cond(text, n);
@@ -519,18 +521,27 @@ bool device_branch(const Buffer& b, u64 line) {
 // device branch is a run of lines the preprocessor leaves out ("comment"
 // tokens). Those are dropped, so that the device code keeps its colours:
 // for each run, the directive above it (past blank lines) and its chain.
+// A run goes on through an #elif or #else that follows a branch not taken
+// (clangd leaves the skipping on until a branch is taken), so each of
+// those in the run, outside the conditionals nested in it, is judged by
+// its own chain: by its own condition, in a run a branch's directive opens
+// (whose chain up to there the run's judgement already covers).
 void drop_device_lines(const Buffer& b, std::vector<SemanticToken>& tokens, u16 comment) {
     u64 run_last = ~0ull;  // the last line of the run so far
-    bool spared = false;
+    bool spared = false, opened = false;  // (opened: by a branch's directive)
+    int depth = 0;  // (the conditionals opened in the run and not closed)
+    Buffer::Reader at = b.reader(0);
+    u64 at_off = 0;
     std::erase_if(tokens, [&](const SemanticToken& k) {
         if (k.type != comment) return false;
         const u64 line = b.line_of(k.start);
+        if (line == run_last) return spared;  // (another token on the line)
         // (A run goes on past blank lines, which have no token.)
         u64 gap = run_last == ~0ull ? line : run_last + 1;
-        while (gap < line && directive_at(b, gap).blank) ++gap;
+        while (gap < line && directive_at(b, gap, false).blank) ++gap;
         if (gap < line || run_last == ~0ull) {
             u64 head = line;
-            while (head > 0 && directive_at(b, head - 1).blank) --head;
+            while (head > 0 && directive_at(b, head - 1, false).blank) --head;
             while (head > 1) {  // (the first line of a directive carried on by backslashes)
                 char tail[3];
                 const u64 end = b.line_start(head - 1);
@@ -539,9 +550,40 @@ void drop_device_lines(const Buffer& b, std::vector<SemanticToken>& tokens, u16 
                 if (n == 0 || tail[n - 1] != '\\') break;
                 --head;
             }
-            spared = head > 0 && device_branch(b, head - 1);
+            // (Only a branch's directive opens a run to judge: a server
+            // that sends real comments as comment tokens is not walked back
+            // from for each.)
+            const Directive above = head > 0 ? directive_at(b, head - 1) : Directive();
+            const std::string_view word = above.word();
+            opened = word.starts_with("if") || word.starts_with("elif") || word == "else";
+            spared = opened && (word.starts_with("if") ? above.device : device_branch(b, head - 1));
+            depth = 0;
         }
         run_last = line;
+        // (Most lines in a run are not directives. The token's first bytes
+        // say so, read by a reader that goes along with the tokens (which
+        // come in order) rather than by a walk of the buffer for each.)
+        if (k.start < at_off) at = b.reader(k.start), at_off = k.start;
+        while (at_off < k.start) {
+            const u64 n = std::min<u64>(at.chunk().size(), k.start - at_off);
+            if (n == 0) break;  // (the text's end)
+            at.advance(static_cast<u32>(n));
+            at_off += n;
+        }
+        bool hash = false;
+        for (Buffer::Reader r = at; !r.at_end();) {
+            const std::string_view c = r.chunk();
+            const size_t i = c.find_first_not_of(" \t");
+            if (i != std::string_view::npos) {
+                hash = c[i] == '#';
+                break;
+            }
+            r.advance(static_cast<u32>(c.size()));
+        }
+        const Directive d = hash ? directive_at(b, line) : Directive();
+        if (depth == 0 && (d.word().starts_with("elif") || d.word() == "else")) spared = opened ? spared || d.device : device_branch(b, line);
+        if (d.word().starts_with("if")) ++depth;
+        else if (d.word() == "endif" && depth > 0) --depth;
         return spared;
     });
 }
