@@ -51,6 +51,7 @@ public:
     void set_root(const std::string& path);
     const std::string& root() const { return root_path_; }
     bool listed() const { return root_ && root_->loaded; }  // (the top folder has been read once)
+    const std::string& unread() const { return unread_; }  // why the top folder could not be read the last time ("": it was)
     std::string path_of(const Node* n) const;
 
     // The rows on show: everything under an open folder, top to bottom.
@@ -103,6 +104,7 @@ private:
     Node* node_at(const std::string& path);
 
     std::string root_path_;
+    std::string unread_;
     std::unique_ptr<Node> root_;
     std::vector<Row> rows_;
     bool rows_stale_ = true;

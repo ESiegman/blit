@@ -274,9 +274,15 @@ check "the tree's changes there" 'within 300 ms ;; blit: "src" is already there 
 # come (not "This folder is empty"), and then what is in it.
 mkdir -p "$T/.listed/some" "$T/.listed/none" && : >"$T/.listed/some/one.txt"
 SLOW=0.3 slow "remotewait;key:cmd+shift+E;frame;treedump;treewait;frame;treedump" "ssh://box$T/.listed/some"
-check "a folder there on its way: listing, then its files" 'tree: (listing) ;; tree: one.txt@42'
+check "a folder there on its way: listing, then its files" 'tree: (Listing…) ;; tree: one.txt@42'
 SLOW=0.3 slow "remotewait;key:cmd+shift+E;frame;treedump;treewait;frame;treedump" "ssh://box$T/.listed/none"
-check "and an empty one" 'tree: (listing) ;; tree: (empty)'
+check "and an empty one" 'tree: (Listing…) ;; tree: (This folder is empty)'
+# And one that cannot be listed for want of the connection: why, not that it is empty.
+down="lua:os.execute('echo refused > $dir/down');lua:os.execute('pkill -9 -f $T/.cache/blit/blit-agent');remotelost"
+got=$(BLIT_FAKE_DOWN="$dir/down" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+    --script "remotewait;key:cmd+shift+E;treewait;frame;treedump;$down;workdir:ssh://box$T/.listed/none;treewait;frame;treedump" "ssh://box$T/.listed/some" 2>&1 >/dev/null | join)
+rm -f "$dir/down"
+check "a folder there with no connection: why" 'tree: one.txt@42 ;; tree: (The connection to box was lost)'
 
 # The New project tab, making a project there on a slow host: Create goes
 # back to the keys at once (the form says it is creating), the project is

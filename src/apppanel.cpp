@@ -116,6 +116,13 @@ std::string shown_path(const std::string& path, const std::string* root) {
     return path;
 }
 
+// What the tree says in place of its rows when there are none: not read
+// yet, read and empty, or (another machine's, with no connection) why not.
+std::string tree_word(const FileTree& tree) {
+    if (!tree.listed()) return "Listing\xE2\x80\xA6";
+    return tree.unread().empty() ? "This folder is empty" : tree.unread();
+}
+
 }  // namespace
 
 struct App::Side {
@@ -618,7 +625,7 @@ std::string App::tree_dump() {
         if (std::ranges::find(s.chosen, path) != s.chosen.end()) out += "*";
         out += name + "@" + std::to_string(static_cast<int>(y / density_));
     }
-    if (rows.empty()) out += s.tree.listed() ? " (empty)" : " (listing)";  // (what it says in their place)
+    if (rows.empty()) out += " (" + tree_word(s.tree) + ")";  // (what it says in their place)
     return out;
 }
 
@@ -1407,7 +1414,7 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
                 if (input_after == static_cast<int>(i) && r < rows) input_line(r++, input_depth, s.input == Side::kNewFolder);
             }
             if (tree_rows.empty() && s.input == Side::kNoInput && rows > kHeadRows)  // (or not read yet: another machine's may take a while)
-                put(box, font, kHeadRows, 0, s.tree.listed() ? "This folder is empty" : "Listing\xE2\x80\xA6", ink::kMuted);
+                put(box, font, kHeadRows, 0, fit_text(tree_word(s.tree), cols), ink::kMuted);
         } else if (s.tab == kTabGit) {
             git_panel_draw(box, s.focus);
         } else if (s.tab == kTabProfile) {

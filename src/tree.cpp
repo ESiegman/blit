@@ -105,13 +105,21 @@ bool before(const Entry& a, const Entry& b) {
 
 // What a folder holds. The kind of each thing comes with its name (no
 // looking up each one), but for a link, which is asked where it leads.
-std::vector<Entry> read_folder(const std::string& path) {
+// (why: another machine's that could not be asked, for want of the
+// connection: why, as the tree says it in place of its names.)
+std::vector<Entry> read_folder(const std::string& path, std::string* why) {
     std::vector<Entry> out;
     if (is_remote(path)) {  // another machine's, asked of it (on the reader's thread: it may wait for the connection)
         std::string there;
         std::vector<RemoteEntry> list;
         const std::shared_ptr<Remote> r = remote_for(path, &there, kRemoteWaitMs);
-        if (!r || !r->list(there, &list)) return out;
+        if (!r || !r->list(there, &list)) {
+            if (!r || r->state() != Remote::kReady) {
+                *why = remote_error(path);
+                if (!why->empty()) (*why)[0] = static_cast<char>(std::toupper(static_cast<unsigned char>((*why)[0])));
+            }
+            return out;
+        }
         for (RemoteEntry& x : list) {
             if (left_out(x.name)) continue;
             Entry e;
@@ -235,7 +243,12 @@ struct FileTree::Reader {
     std::deque<Op> ops;                                                // changes to make (before folders are read)
     std::vector<std::string> wanted;                                   // folders to read
     std::vector<Change> changed;                                       // changes made
-    std::vector<std::pair<std::string, std::vector<Entry>>> finished;  // folders read
+    struct Read {
+        std::string path;
+        std::vector<Entry> entries;
+        std::string why;  // (not read: why)
+    };
+    std::vector<Read> finished;  // folders read
     std::function<void()> notify;
     bool stop = false, running = false;
     bool working = false;  // reading a folder, or making a change, now
@@ -274,12 +287,13 @@ struct FileTree::Reader {
                 if (notify) notify();
                 continue;
             }
-            std::vector<Entry> entries = read_folder(path);
+            std::string why;
+            std::vector<Entry> entries = read_folder(path, &why);
             std::function<void()> notify;
             {
                 std::lock_guard lock(r->mu);
                 if (r->stop) return;
-                r->finished.emplace_back(std::move(path), std::move(entries));
+                r->finished.push_back({std::move(path), std::move(entries), std::move(why)});
                 notify = r->notify;
             }
             if (notify) notify();
@@ -337,6 +351,7 @@ void FileTree::set_root(const std::string& path) {
     std::string clean = path;
     while (clean.size() > 1 && (clean.back() == '/' || clean.back() == '\\')) clean.pop_back();
     root_path_ = clean;
+    unread_.clear();
     root_ = std::make_unique<Node>();
     root_->dir = root_->open = true;
     const size_t slash = clean.find_last_of("/\\");
@@ -426,7 +441,7 @@ void FileTree::refresh_under(Node* folder) {
 }
 
 bool FileTree::poll() {
-    std::vector<std::pair<std::string, std::vector<Entry>>> done;
+    std::vector<Reader::Read> done;
     std::vector<Change> made;
     {
         std::lock_guard lock(reader_->mu);
@@ -451,9 +466,15 @@ bool FileTree::poll() {
         }
         changes_.push_back(std::move(c));
     }
-    for (auto& [path, entries] : done) {
+    for (auto& [path, entries, why] : done) {
         Node* folder = node_at(path);
         if (!folder || !folder->dir) continue;  // it has gone, or the root moved on
+        if (folder == root_.get()) unread_ = why;
+        if (!why.empty()) {  // (no connection: what was known of it is kept, and it is not taken for empty)
+            folder->loaded = true;
+            changed = true;
+            continue;
+        }
         // Nodes that are still there keep their place in memory, and with
         // it whether they are open and what is under them.
         std::unordered_map<std::string_view, size_t> have;

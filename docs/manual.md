@@ -1918,7 +1918,9 @@ over the one ssh connection:
   as), on the tree's own thread: the tree shows them when they are done,
   and one that fails says why on the bottom line. A folder there in the
   tree, and in the boxes that open files and folders, says *Listing…*
-  until its names come.
+  until its names come. One that cannot be listed for want of the
+  connection says why (*The connection to box was lost*), not that it is
+  empty, and the tree keeps what it last knew of its folders meanwhile.
 - **Finding files and text** (Cmd+P, Cmd+Shift+F): the agent walks the
   folder and searches the files on that machine, on as many threads as it
   has cores, and sends back the names and the lines found; the files
