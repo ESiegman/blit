@@ -175,6 +175,8 @@ struct App::Pictures {
         std::string path;
         int w = 0, h = 0;  // the size to draw it at (0: read the file)
         std::shared_ptr<const std::string> source = {};
+        bool check = false;  // (another machine's: read again only if its time there is not `known`)
+        i64 known = 0;
     };
     struct Done {
         std::string path;
@@ -186,6 +188,7 @@ struct App::Pictures {
         i64 stamp = 0;
         bool clear = false;
         bool redraw = false;  // drawn again at another size
+        bool same = false;    // (a check: not changed there, or not to be asked now)
     };
     std::mutex mu;
     std::condition_variable_any cv;
@@ -239,10 +242,12 @@ struct App::Pictures {
             if (job.w > 0) {
                 d.redraw = true;
                 if (!blit_picture_draw(job.source->data(), job.source->size(), job.w, job.h, &d.pic, why, sizeof why)) d.error = why;
+            } else if (const i64 there = job.check ? fs_remote_stamp(job.path) : 0; job.check && (!there || there == job.known)) {
+                d.same = true;
             } else {
                 d.stamp = stamp_of(job.path);
                 std::string bytes;
-                if (is_web(job.path) ? web_read(job.path, &bytes, &d.error, st) : fs_read_whole(job.path, &bytes, &d.error, kMostBytes, st)) {
+                if (is_web(job.path) ? web_read(job.path, &bytes, &d.error, st) : fs_read_whole(job.path, &bytes, &d.error, kMostBytes, st, &d.stamp)) {
                     if (!blit_picture_read(bytes.data(), bytes.size(), kMostSide, &d.pic, why, sizeof why)) d.error = why;
                     else if (d.pic.frames > 1) blit_frames_read(bytes.data(), bytes.size(), kMostSide, kMostFrameBytes, &d.frames);
                 }
@@ -446,6 +451,8 @@ void App::picture_sync() {
                     p.clear = d.clear;
                 }
             dirty_ = true;
+        } else if (it != pictures_->known.end() && d.same) {
+            it->second.again = false;
         } else if (it != pictures_->known.end()) {
             PictureInfo& p = it->second;
             p.stamp = d.stamp;
@@ -569,14 +576,16 @@ void App::picture_due(u64 at_ns) {
     s.timer = SDL_AddTimerNS(std::max<u64>(at_ns > now ? at_ns - now : 0, 1'000'000), frame_due, reinterpret_cast<void*>(static_cast<uintptr_t>(s.timer_number)));
 }
 
-// Pictures whose files have changed (here: on another machine they are not watched) are read again.
+// Pictures whose files have changed are read again (another machine's
+// looked at there first, on its reader's thread).
 void App::picture_recheck() {
     if (!pictures_) return;
     for (auto& [path, p] : pictures_->known) {
-        if (p.state == PictureInfo::kReading || p.again || p.made || is_remote(path)) continue;
-        if (stamp_of(path) == p.stamp) continue;
+        if (p.state == PictureInfo::kReading || p.again || p.made || is_web(path)) continue;
+        const bool there = is_remote(path);
+        if (!there && stamp_of(path) == p.stamp) continue;
         p.again = true;
-        pictures_->want({path});
+        pictures_->want({path, 0, 0, {}, there, p.stamp});
     }
 }
 

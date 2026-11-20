@@ -26,7 +26,12 @@ bool fs_read(const std::string& path, std::string* text, u64 most = 4u << 20);
 // another machine, whose connection is waited for a while (it may be coming
 // up; not past `stop`, so that quitting does not wait). False, and why, if
 // it cannot be read or is larger.
-bool fs_read_whole(const std::string& path, std::string* bytes, std::string* why, u64 most, std::stop_token stop);
+// (modified: another machine's file's change time, as that machine has it.)
+bool fs_read_whole(const std::string& path, std::string* bytes, std::string* why, u64 most, std::stop_token stop, i64* modified = nullptr);
+// A file's change time on another machine (a worker's call: it waits for
+// the answer, though not for a connection); 0 if it is not there, or there
+// is no connection now.
+i64 fs_remote_stamp(const std::string& path);
 bool fs_write(const std::string& path, std::string_view text, std::string* err);
 // The folder and those above it that are not there yet.
 bool fs_mkdirs(const std::string& path, std::string* err);

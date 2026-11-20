@@ -203,6 +203,8 @@ struct PdfJob {
     int page2 = 0;
     u32 at = 0, at2 = 0;
     u64 serial = 0;  // (a find: which; a newer one makes it stale)
+    bool check = false;  // (a read of another machine's: only if its time there is not `known`)
+    i64 known = 0;
     std::vector<PdfMatch> found;  // (a find: what it has found so far)
     Secret password;
     bool operator==(const PdfJob& o) const {
@@ -243,6 +245,7 @@ struct App::Pdfs {
         bool locked = false;                           // (it wants a password)
         u64 bytes = 0;
         i64 stamp = 0;
+        bool same = false;  // (a read that was a check: not changed there, or not to be asked now)
         BlitPicture pic{};  // a page drawn
         std::shared_ptr<const PdfText> text;  // a page's text read
         std::vector<PdfMatch> found;          // what a find found
@@ -332,9 +335,13 @@ struct App::Pdfs {
             Done d;
             switch (job.kind) {
                 case PdfJob::kRead: {
+                    if (const i64 there = job.check ? fs_remote_stamp(job.path) : 0; job.check && (!there || there == job.known)) {
+                        d.same = true;
+                        break;
+                    }
                     std::string bytes;
                     d.stamp = stamp_of(job.path);
-                    if (fs_read_whole(job.path, &bytes, &d.error, kMostBytes, st)) {
+                    if (fs_read_whole(job.path, &bytes, &d.error, kMostBytes, st, &d.stamp)) {
                         char why[160] = "";
                         if (BlitPdf* pdf = blit_pdf_open(bytes.data(), bytes.size(), why, sizeof why)) {
                             d.file = std::make_shared<PdfFile>();
@@ -664,6 +671,7 @@ void App::pdf_sync() {
         if (v && (d.job.kind == PdfJob::kRead || d.job.kind == PdfJob::kUnlock)) {  // the document
             if (d.job.kind == PdfJob::kRead) {
                 v->again = false;
+                if (d.same) continue;
                 v->stamp = d.stamp;
                 v->bytes = d.bytes;
             } else {
@@ -752,15 +760,20 @@ void App::pdf_sync() {
     }
 }
 
-// PDFs whose files have changed are read again.
+// PDFs whose files have changed are read again (another machine's looked
+// at there first, on the reader's thread).
 void App::pdf_recheck() {
     if (!pdfs_) return;
     for (const std::unique_ptr<Pane>& pane : panes_)
         for (const std::shared_ptr<Doc>& d : pane->docs) {
-            if (!d->pdf || d->pdf->again || d->pdf->state == PictureInfo::kReading || is_remote(d->pdf->path)) continue;
-            if (stamp_of(d->pdf->path) == d->pdf->stamp) continue;
+            if (!d->pdf || d->pdf->again || d->pdf->state == PictureInfo::kReading) continue;
+            const bool there = is_remote(d->pdf->path);
+            if (!there && stamp_of(d->pdf->path) == d->pdf->stamp) continue;
             d->pdf->again = true;
-            pdfs_->post(pdfs_->reads, read_job(d->id, d->pdf->path));
+            PdfJob j = read_job(d->id, d->pdf->path);
+            j.check = there;
+            j.known = d->pdf->stamp;
+            pdfs_->post(pdfs_->reads, std::move(j));
         }
 }
 

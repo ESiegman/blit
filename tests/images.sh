@@ -231,6 +231,14 @@ check "a picture on another machine" "quad.png: ready PNG 64x48 read 64x48 clear
 run 1200x900 "remotewait;frame;pdfwait;frame;pdfdump" "ssh://box$T/work/pages.pdf"
 got=$(printf '%s' "$got" | sed -e 's/, drawn.*//')
 check "a PDF on another machine" "pages.pdf: ready, 3 pages, page 1, zoom 74%"
+# Their files written again there: read again when blit comes back to the front, as here.
+cp "$pics/quad.png" "$T/work/live.png"
+run 800x600 "remotewait;frame;imagewait;frame;imagedump;lua:blit.fs.write('$T/work/live.png', blit.fs.read('$pics/wide.png'));reload;imagewait;frame;imagedump" "ssh://box$T/work/live.png"
+check "a picture there written again: read again" "live.png: ready PNG 64x48 read 64x48 clear zoom 200% middle 0.50,0.50 ;; live.png: ready PNG 5000x20 read 4096x16 zoom 8% middle 0.50,0.50"
+cp "$pics/pages.pdf" "$T/work/live.pdf"
+run 1200x900 "remotewait;frame;pdfwait;frame;pdfdump;lua:blit.fs.write('$T/work/live.pdf', blit.fs.read('$pics/text.pdf'));reload;pdfwait;frame;pdfwait;pdfdump" "ssh://box$T/work/live.pdf"
+got=$(printf '%s' "$got" | sed -e 's/, zoom.*;;/ ;;/' -e 's/, zoom.*//')
+check "and a PDF there" "live.pdf: ready, 3 pages, page 1 ;; live.pdf: ready, 2 pages, page 1"
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "images ok"
 exit $failed

@@ -73,14 +73,14 @@ bool fs_read(const std::string& path, std::string* text, u64 most) {
     return true;
 }
 
-bool fs_read_whole(const std::string& path, std::string* bytes, std::string* why, u64 most, std::stop_token stop) {
+bool fs_read_whole(const std::string& path, std::string* bytes, std::string* why, u64 most, std::stop_token stop, i64* modified) {
     const std::string too_big = "the file is too big (over " + std::to_string(most >> 20) + " MB)";
     if (is_remote(path)) {
         std::string there;
         std::shared_ptr<Remote> r;
         for (int waited = 0; !r && waited < 30000 && !stop.stop_requested(); waited += 200) r = remote_for(path, &there, 200);
         if (!r) return *why = remote_error(path), false;
-        switch (r->read(there, most, bytes)) {
+        switch (r->read(there, most, bytes, modified)) {
             case 0: return true;
             case 1: *why = "there is no such file"; break;
             case 2: *why = "it is not a file"; break;
@@ -93,6 +93,13 @@ bool fs_read_whole(const std::string& path, std::string* bytes, std::string* why
     if (!fs_read(path, bytes, most + 1)) return *why = fs_kind(path) == 0 ? "there is no such file" : "the file could not be read", false;
     if (bytes->size() > most) return *why = too_big, false;
     return true;
+}
+
+i64 fs_remote_stamp(const std::string& path) {
+    std::string there;
+    const std::shared_ptr<Remote> r = remote_for(path, &there);
+    RemoteStat st;
+    return r && r->stat(there, &st) && st.kind == 1 ? st.modified_ns : 0;
 }
 
 bool fs_write(const std::string& path, std::string_view text, std::string* err) {
