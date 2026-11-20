@@ -149,6 +149,8 @@ typed l.lua "text:o;text:table.sort(t, function(a, b) return a < b end);key:Retu
 check "Lua: a function closed on its line, or in a string, opens nothing" 'if x then|>table.sort(t, function(a, b) return a < b end)|>blit.map("n", "x", function() blit.feed("y") end)|>print("no function here")|>if ok then f(function() g() end)|>>h()|end|'
 typed m.sv "text:o;text:always_comb begin;key:Return;text:unique case (s);key:Return;text:0: y = 1;key:Return;text:endcase ;key:Return;text:end else begin;key:Return;text:y = 0;key:Return;text:end;key:Escape"
 check "SystemVerilog: begin and case open, endcase and end close" 'module m;|>always_comb begin|>>unique case (s)|>>>0: y = 1|>>endcase |>end else begin|>>y = 0|>end|endmodule|'
+typed b.txt "text:A;key:Return;key:Escape;statusclick:Plain;text:python;key:Return;text:A;text:if y:;key:Return;text:z;key:Escape"
+check "a language chosen for the file: its rules from then on" 'other|if y:|>z|'
 run "frame;text:d;text:/;text:wor;key:Return;vimdump"
 check "a search as an operator's motion" 'NORMAL |  | 1:1 | world'
 run "frame;text:v;text:/;text:wor;key:Return;vimdump"

@@ -109,9 +109,9 @@ struct App::VimUi {
     int cursor = -2;
     bool selected = false;  // (the command line's text is selected)
     u32 font = ~0u;
-    // The file the comment markers were looked up for.
+    // The file the comment markers were looked up for, and its language as chosen.
     u64 comment_doc = ~0ull;
-    std::string comment_path;
+    std::string comment_path, comment_lang;
     // Search matches on screen and Visual Block mode's rectangle, with
     // whatever else underlines the text.
     std::vector<GridDeco> marks, block, all;
@@ -162,9 +162,10 @@ void App::vim_attach() {
     const u32 step = indent_step();
     vim_.shift = d.indent_tabs ? std::string("\t") : std::string(step, ' ');
     VimUi& u = *vimui_;
-    if (u.comment_doc != d.id || u.comment_path != d.ed.path) {
+    if (u.comment_doc != d.id || u.comment_path != d.ed.path || u.comment_lang != d.lang) {
         u.comment_doc = d.id;
         u.comment_path = d.ed.path;
+        u.comment_lang = d.lang;
         const std::string lang = file_language();
         comment_marks(lang, &vim_.comment_left, &vim_.comment_right);
         vim_.indent_rules = indent_rules(lang);
