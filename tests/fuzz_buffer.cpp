@@ -651,6 +651,24 @@ void notebook_view_test() {
     check(math_rows.find("2:        \xE2\x88\xAB\xE2\x82\x80\xC2\xB9 x\xC2\xB2 dx = 1/3 and \xCE\xB1_i \xE2\x89\xA4 \xCE\xB2 cost $5 and $10, $a_b$ stays\n") != std::string::npos &&
               math_rows.find("4:        \xE2\x88\x91_(n=1)^\xE2\x88\x9E 1/n\xC2\xB2 = \xCF\x80\xC2\xB2/6\n") != std::string::npos && math_rows.find("7:         $x_1$\n") != std::string::npos,
           "notebook view: math as text, its lines where they were; money, code and a fenced block as they are");
+    // A huge count does not widen the gutter for every cell (its label goes
+    // above its cell); stderr and an error after it are apart; code with
+    // no grammar is in the text's colour, not a string's.
+    const std::string counts = R"({"cells": [{"cell_type": "code", "execution_count": 1000000000000000000, "metadata": {}, "source": "a", "outputs": [)"
+                               R"({"output_type": "stream", "name": "stderr", "text": "careful\n"}, {"output_type": "error", "ename": "E", "evalue": "v", "traceback": ["E: v"]}]},)"
+                               R"( {"cell_type": "code", "execution_count": 2, "metadata": {}, "source": "b", "outputs": []}], "metadata": {}, "nbformat": 4, "nbformat_minor": 5})";
+    check(notebook_read(counts, &cells, &script), "notebook view: read the counts");
+    look.width = 60;
+    look.colour = {};
+    const std::vector<MdRow> counted = nb_render(script, cells, look);
+    std::string counted_text;
+    for (const MdRow& r : counted) counted_text += md_row_text(r) + "\n";
+    bool plain_ink = true;
+    for (const MdRow& r : counted)
+        for (const MdRun& run : r.runs) plain_ink = plain_ink && run.ink != kMdCode;
+    check(counted_text.starts_with("In [1000000000000000000]:\n") && counted_text.find("\n   In [2]:  b\n") != std::string::npos &&
+              counted_text.find("careful\n\n") != std::string::npos && plain_ink,
+          "notebook view: a huge count above its cell, the gutter as it was; stderr and an error apart; code without a grammar plain");
     std::string code_rows;
     for (const MdRow& r : md_code("python", "total = first_value + second_value\n" + std::string(30, 'z'), 26)) code_rows += md_row_text(r) + "\n";
     check(code_rows.find(" total = first_value +\n") != std::string::npos && code_rows.find(" second_value\n") != std::string::npos &&

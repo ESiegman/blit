@@ -1002,6 +1002,7 @@ struct Drawer {
             if (part.empty()) continue;
             shift(part);
             if (o.count >= 0) put_label(part, 0, "Out[" + std::to_string(o.count) + "]:", stale ? kMdMuted : kMdAnsiYellow, out.empty() ? 0 : 1);
+            if (!out.empty() && out.back().fill != kMdNoTone && part.front().fill != kMdNoTone) out.emplace_back();  // (two tinted, stderr and an error: apart)
             out.insert(out.end(), std::make_move_iterator(part.begin()), std::make_move_iterator(part.end()));
         }
         return out;
@@ -1022,6 +1023,15 @@ struct Drawer {
     // its own above them when there is no gutter; `before` blank rows above
     // that one.
     void put_label(std::vector<MdRow>& part, size_t at, const std::string& label, u8 ink, u32 before = 0, const std::string& more = {}) const {
+        if (gutter && cols_of(label) + 1 > gutter) {  // (too long for the gutter: on a row of its own above)
+            MdRow r;
+            r.runs.push_back(MdRun(label, ink));
+            if (!more.empty()) r.runs.push_back(MdRun(" " + more, kMdMuted, kMdItalic));
+            at = at ? at - 1 : 0;  // (above the row it would be beside)
+            r.line = at < part.size() ? part[at].line : 0;
+            part.insert(part.begin() + static_cast<std::ptrdiff_t>(std::min(at, part.size())), std::move(r));
+            return;
+        }
         if (gutter) {
             if (part.empty()) part.emplace_back();
             at = std::min(at, part.size() - 1);
@@ -1079,6 +1089,9 @@ struct Drawer {
                 part = cache->rows[code_key];
             } else {
                 part = md_code(look.lang, now.source, room, look.colour);
+                for (MdRow& r : part)  // (with no grammar for it: the text's colour, not a string's)
+                    for (MdRun& run : r.runs)
+                        if (run.ink == kMdCode) run.ink = kMdCodePlain;
                 if (cache) cache->rows[code_key] = part;
             }
             for (size_t k = 0; k < part.size(); ++k) part[k].line = k == 0 ? head : first + part[k].line;
@@ -1204,6 +1217,7 @@ namespace {
 u32 gutter_of(u32 width, const std::vector<NotebookCell>& model) {
     u32 label = 7;  // "In [1]:"
     for (const NotebookCell& c : model) label = std::max(label, 6 + static_cast<u32>(std::to_string(std::max<i64>(c.count, 0)).size()));
+    label = std::min(label, 10u);  // (a longer count, "In [12345]:", goes above its cell: the rest do not move over for it)
     return std::max<u32>(width, 12) >= 50 ? label + 1 : 0;
 }
 }  // namespace
