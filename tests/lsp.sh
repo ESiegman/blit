@@ -55,6 +55,7 @@ fresh() {
     printf '// included\n' >"$P/include/util.hpp"
     printf '/* \303\251\303\251 */ int wide(int n) {\n}\n' >"$P/w.cpp"
     printf 'struct Shape {\n};\nstruct Circle : public Shape {\n};\nstruct Square : Shape {\n};\nint leaf(int n) {\n    return n;\n}\nint middle(int n) {\n    return leaf(n) + leaf(1);\n}\nint top() {\n    return middle(2);\n}\n' >"$P/calls.cpp"
+    printf 'struct Ring {\n    void push(int v);\n    int pop();\n};\nvoid Ring::push(int v) {\n}\nint Ring::pop() {\n    return 0;\n}\nint drain(Ring& r) {\n    return r.pop();\n}\n' >"$P/ring.cpp"
 }
 
 failed=0
@@ -214,6 +215,8 @@ check "typed in the box: the file's" 'NORMAL |  | 2:22 | int two = one; // seen'
 # click on one lists them.
 run "lensdump" "$P/src/app.cpp"
 check "each definition's references, counted" '1: 2 references | 3: 1 reference | 6: 1 reference'
+run "lensdump" "$P/ring.cpp"
+check "a member defined outside its class: its own count, not the class's" '1: 4 references | 5: 2 references | 7: 3 references | 10: 1 reference'
 with nolens "lensdump" "$P/src/app.cpp"
 check "lsp.reference_counts = false: none" 'no counts'
 

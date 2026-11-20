@@ -211,6 +211,34 @@ void sort_changes(std::vector<Change>& c) {
     });
 }
 
+// Where the last part of a qualified name starting at `at` is ("push" in
+// `Ring::push`, `Ring<T>::push`, `~Ring` in `Ring::~Ring`): what a server
+// is asked about for the member itself rather than its class.
+u64 last_name_part(const Buffer& b, u64 at) {
+    const std::string t = b.text(at, std::min<u64>(b.size() - std::min(at, b.size()), 256));
+    auto word = [](char c) { return std::isalnum(static_cast<unsigned char>(c)) || c == '_' || static_cast<u8>(c) >= 0x80; };
+    size_t i = 0, last = 0;
+    for (;;) {
+        while (i < t.size() && word(t[i])) ++i;
+        if (i < t.size() && t[i] == '<') {  // (a template's arguments, nested)
+            int depth = 0;
+            for (; i < t.size(); ++i) {
+                if (t[i] == '<') ++depth;
+                else if (t[i] == '>' && --depth == 0) break;
+                else if (t[i] == ';' || t[i] == '{' || t[i] == '\n') break;
+            }
+            if (i >= t.size() || t[i] != '>') break;
+            ++i;
+        }
+        if (i + 1 >= t.size() || t[i] != ':' || t[i + 1] != ':') break;
+        i += 2;
+        if (i < t.size() && t[i] == '~') ++i;
+        if (i >= t.size() || !word(t[i])) break;
+        last = i;
+    }
+    return at + last;
+}
+
 }  // namespace
 
 // A call or type hierarchy being looked through (the find box's list, a
@@ -2490,7 +2518,7 @@ void App::lens_marks(FrameDesc& fd) {
             const u64 line = d.ed.buf.line_of(sc.name_at);
             if (line < g.top_line || line >= g.bottom()) continue;
             a.lens_asked.insert(sc.name_at);
-            lsp_.count_references(sc.name_at, a.lens_tag);
+            lsp_.count_references(last_name_part(d.ed.buf, sc.name_at), a.lens_tag);  // (a member defined out of its class: its own count, not the class's)
             if (++asked == 40) break;
         }
     } else if (!a.lens_due_ns) {  // (scrolled to more: asked for in a moment)
