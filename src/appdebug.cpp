@@ -215,9 +215,33 @@ struct DebugSession {
     std::string partial;
     int exit_code = -1;
     bool end_soon = false;  // (the session ends once the debugger's answers have been run: not inside one)
+    // A terminal's escape sequences (colours, mostly) are left out, as the
+    // build's scanner leaves them out; one may be cut between two events.
+    enum Esc : u8 { kText, kEsc, kEscMore, kCsi, kString, kStringEsc } esc = kText;
     void print(std::string_view text) {
-        for (const char c : text)
-            if (c != '\r') partial += c;  // (a program on a terminal ends its lines with \r\n)
+        for (const char ch : text) {
+            const u8 c = static_cast<u8>(ch);
+            switch (esc) {
+                case kText:
+                    if (c == 0x1B) esc = kEsc;
+                    else if (c != '\r') partial += ch;  // (a program on a terminal ends its lines with \r\n)
+                    break;
+                case kEsc:
+                    esc = c == '[' ? kCsi : (c == ']' || c == 'P' || c == '_' || c == '^' || c == 'X') ? kString : (c >= 0x20 && c <= 0x2F) ? kEscMore : kText;
+                    break;
+                case kEscMore:  // ESC ( B and the like
+                    if (c >= 0x30) esc = kText;
+                    break;
+                case kCsi:
+                    if (c >= 0x40 && c <= 0x7E) esc = kText;
+                    break;
+                case kString:  // OSC (a title, a link) and the like: to BEL or ESC backslash
+                    if (c == 0x07) esc = kText;
+                    else if (c == 0x1B) esc = kStringEsc;
+                    break;
+                case kStringEsc: esc = c == '\\' ? kText : kString; break;
+            }
+        }
         size_t nl;
         while ((nl = partial.find('\n')) != std::string::npos) {
             output.push_back(partial.substr(0, nl));
@@ -625,6 +649,7 @@ bool App::debug_open(const std::string& near, const std::string& dir, bool pytho
     u.vars.clear();
     u.output.clear();
     u.partial.clear();
+    u.esc = DebugSession::kText;
     u.error.clear();
     u.reason.clear();
     u.exit_code = -1;

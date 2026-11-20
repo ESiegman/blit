@@ -338,6 +338,10 @@ if [ -x "$fakedap" ]; then
     # A launch refused with no message: the reason is the error's own (lldb-dap's way).
     fake "debug:program=$F/no-such;key:F5;debugwait:idle;debugdump"
     check "a launch refused: why, from the error the debugger gave" "idle error: cannot launch it: '@/fake/no-such' does not exist"
+
+    # What the program printed in colour: the escape sequences left out (one cut between two events).
+    fake "debug:program=$F/prog;key:F5;debugwait:stopped;debugdump" "$F/prog"
+    check "what the program printed, without its escape sequences" 'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain'
 fi
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "debug ok"
