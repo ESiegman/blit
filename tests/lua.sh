@@ -320,6 +320,15 @@ blit.system({ "sleep", "5" })
 EOF
 run ""
 check "a program waited for longer than it may be" 'init.lua:2: blit.system: sleep did not finish in time (it was stopped)'
+fresh
+init <<'EOF'
+local r = blit.system({ "sh", "-c", "pwd" }, { cwd = "/nonexistent/dir" })
+print(r.code .. " " .. r.stderr)
+r = blit.system({ "sh", "-c", "pwd" }, { cwd = "ssh://box/home" })
+print(r.code .. " " .. r.stderr)
+EOF
+run "luawait"
+check "a folder that is not there: the folder blamed, not the program" '-1 cannot run sh in /nonexistent/dir: no such folder ; -1 cannot run sh in ssh://box/home: no such folder here (programs are run on this machine)'
 
 # ---------------------------------------------------------------- the documents
 fresh

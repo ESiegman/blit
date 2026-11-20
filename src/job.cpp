@@ -9,6 +9,7 @@
 #include <poll.h>
 #include <signal.h>
 #include <spawn.h>
+#include <sys/stat.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -211,7 +212,13 @@ void Jobs::run(Job* job, JobSpec spec) {
     close(in[0]), close(out[1]), close(err[1]);
     if (rc != 0) {
         close(in[1]), close(out[0]), close(err[0]);
-        last.err = "cannot run " + spec.argv[0] + ": " + std::strerror(rc);
+        // (A folder that is not there fails as the program would: the folder is to blame.)
+        struct stat st;
+        if (!spec.cwd.empty() && (::stat(spec.cwd.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)))
+            last.err = "cannot run " + spec.argv[0] + " in " + spec.cwd + ": no such folder" +
+                       (spec.cwd.find("://") != std::string::npos ? " here (programs are run on this machine)" : "");
+        else
+            last.err = "cannot run " + spec.argv[0] + ": " + std::strerror(rc);
         return finish();
     }
     job->pid = pid;

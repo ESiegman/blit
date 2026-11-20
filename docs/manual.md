@@ -1367,7 +1367,7 @@ front):
 | `blit.build.add(name, spec)`, `blit.build.remove(name)`, `blit.build.systems()`, `blit.build.tasks()`, `blit.build.run(name)` | build systems for the Build tab; see [Building](#building) |
 | `blit.project.add(name, spec)`, `blit.project.remove(name)` | kinds of project for the New project tab; see [New projects](#new-projects) |
 | `blit.defer(ms, fn)`, `blit.every(ms, fn)`, `blit.schedule(fn)`, `blit.stop(id)` | timers |
-| `blit.system(argv, opts, on_exit)`, `blit.kill(id)` | a program in the background; opts: `cwd`, `stdin`, `env`, `stdout` and `stderr` (functions: output as it comes), `timeout`; on_exit gets `code`, `stdout`, `stderr`. Without on_exit it is waited for and that is returned |
+| `blit.system(argv, opts, on_exit)`, `blit.kill(id)` | a program in the background, on this machine; opts: `cwd` (a folder here; one that is not there is said), `stdin`, `env`, `stdout` and `stderr` (functions: output as it comes), `timeout`; on_exit gets `code`, `stdout`, `stderr`. Without on_exit it is waited for and that is returned |
 | `blit.notify(text, level)`, `print(...)`, `blit.messages()` | levels `info`, `warn`, `error`; `:messages` shows the last ones |
 | `blit.ui.float(text_or_lines, opts)` → id, `blit.ui.set(id, text)`, `blit.ui.close(id)` | a box; opts: `title`, `at` (`cursor`, `center`, `editor` with `row`/`col`, `top-right`, `bottom-right`), `width`, `height`, `close` (`esc`, `move`, `never`), `timeout`, `ink` |
 | `blit.ui.select(items, opts, fn)`, `blit.ui.input(opts, fn)` | the finder box as a picker (fuzzy, as Cmd+P) or a line to type; opts: `prompt`, `format`, `default` |
