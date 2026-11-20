@@ -699,12 +699,12 @@ void App::vim_marks(FrameDesc& fd) {
     grid.decos = u.all;
 }
 
-// Where things stand, on one line (for the tests): the mode, the bottom
-// line, the cursor's line and column, and the text of the cursor's line.
 // The bottom line as last drawn, for the tests: what is on its left, and
 // on its right (the keys of a command or a mapping under way).
 std::string App::vim_line_dump() const { return vimui_->status + " | " + vimui_->right; }
 
+// Where things stand, on one line (for the tests): the mode, the bottom
+// line, the cursor's line and column, and the text of the cursor's line.
 std::string App::vim_dump() {
     vim_attach();
     static const char* const modes[] = {"NORMAL", "INSERT", "REPLACE", "VISUAL", "V-LINE", "COMMAND", "V-BLOCK"};
