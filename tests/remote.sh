@@ -23,6 +23,8 @@ printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.edi
 printf 'blit.opt.lsp.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/git.lua"
 export BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T" BLIT_RECENT_FILE="$dir/recent"
 R="ssh://box$W"
+# The connection dropped, as a lost link would: blit's agent there killed, and that seen.
+drop="lua:os.execute('pkill -9 -f $T/.cache/blit/blit-agent');remotelost"
 
 failed=0
 check() {
@@ -203,6 +205,23 @@ if [ -x "$(dirname "$blit")/blit_fakelsp" ]; then
     run "remotewait;frame;ready;key:Right;key:Right;key:Right;key:Right;key:shift+F12;wait:300;key:Down;key:Return;remotewait;frame;wait:300;key:F4;key:F4;frame;vimdump" "ssh://box$dir/proj/src/f.cpp"
     check "and again by F4, once it is open" 'blit: Reference 2 of 2 ;; blit: Reference 1 of 2 ;; blit: Reference 2 of 2 ;; NORMAL |  | 1:30 | /*éééééééééé*/ int wide(int n) {'
 fi
+
+# No server for the language there (three are named): said once, not once
+# for each. And the connection lost while they are looked for there: that
+# is said (once), not that none is installed.
+printf 'int a;\n' >"$W/src/a.cpp"
+none="blit.opt.git.enabled = false
+blit.opt.editor.modal = false
+blit.opt.lsp.servers.clangd = { enabled = false }"
+for n in 1 2 3; do none="$none
+blit.opt.lsp.servers.none$n = { command = { \"blit-no-such-server-$n\" }, languages = { \"cpp\" } }"; done
+printf '%s\n' "$none" >"$dir/none.lua"
+INIT="$dir/none.lua"
+run "remotewait;frame;lspsettle;wait:300;frame;lspsettle" "$R/src/a.cpp"
+check "no server there: said once" 'blit: language server: no language server for this file is installed on box'
+INIT="$dir/none.lua" slow "remotewait;frame;wait:300;$drop;lspsettle;wait:300;lspsettle" "$R/src/a.cpp"
+check "the connection lost while one is looked for there: said, once" 'blit: language server: the connection to box was lost'
+rm "$W/src/a.cpp"
 
 # The tree, on a slow host: new, rename and the Trash are done on its
 # thread (the keys go on at once), and it shows them when they are done; a
@@ -445,6 +464,7 @@ fi
 # The connection lost (blit's agent there killed): a terminal there says so,
 # not that its program failed.
 drop="lua:os.execute('pkill -9 -f $T/.cache/blit/blit-agent');remotelost"
+# The connection lost: a terminal there says so, not that its program failed.
 got=$(BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
     --script "remotewait;key:ctrl+\`;frame;termwait:\$;$drop;termend;termdump" "$R/notes.txt" 2>&1 >/dev/null | sed -e 's/ @.*ended/ ended/' | join)
 check "a terminal there whose connection is lost" 'Ctrl+` back to the file|$|[connection to box lost] ended -1'

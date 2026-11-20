@@ -691,6 +691,7 @@ struct Lsp::Conn {
     std::vector<LspServer> candidates;
     std::shared_ptr<Remote> rconn;
     u32 rproc = 0;
+    bool none_there = false;  // (the worker's: none of the candidates can be had there, now: none is installed, or no connection)
 
     void push(In&& m) {
         m.server = server_id;
@@ -839,6 +840,7 @@ struct Lsp::Conn::Worker {
         c.rconn = remote_for(c.root, &dir, kRemoteWaitMs);
         if (!c.rconn) {
             *why = remote_error(c.root);
+            c.none_there = true;
             return false;
         }
         c.program.clear();
@@ -849,8 +851,9 @@ struct Lsp::Conn::Worker {
             c.program = found;
             break;
         }
-        if (c.program.empty()) {
-            *why = "no language server for this file is installed on " + host;
+        if (c.program.empty()) {  // (none is there; or the connection went while it was asked, and that is all that is known)
+            c.none_there = true;
+            *why = c.rconn->state() == Remote::kReady ? "no language server for this file is installed on " + host : remote_error(c.root);
             return false;
         }
         std::vector<std::string> argv = {"/bin/sh", "-c",
@@ -1851,6 +1854,7 @@ struct Lsp::Conn::Worker {
             In m;
             m.kind = kInFailed;
             m.text = why;
+            m.flag = c.none_there;  // (then none of them is to be tried again there)
             c.push(std::move(m));
             return;
         }
@@ -3144,9 +3148,14 @@ const std::vector<std::string>* Lsp::token_modifiers(u64 key) const {
 
 // ---------------------------------------------------------------- taking in answers
 
-void Lsp::server_gone(Server* s, const std::string& why) {
+// (none_there: no server for its language can be had on its machine (none is
+// installed, or there is no connection), and none of them is tried there
+// again until its connection is made again.)
+void Lsp::server_gone(Server* s, const std::string& why, bool none_there) {
     message_ = "language server: " + why;
     failed_.push_back(s->shown);
+    if (none_there)
+        for (const std::string& name : s->candidates) failed_.push_back(name + s->shown.substr(s->shown.rfind('@')));
     // (Nobody is left to say goodbye to.)
     for (const std::unique_ptr<Document>& d : docs_)
         if (d->server == s) d->opened = false;
@@ -3213,7 +3222,7 @@ u32 Lsp::poll() {
             }
             case kInFailed:
             case kInStopped:
-                server_gone(s, m.text);
+                server_gone(s, m.text, m.flag && m.kind == kInFailed);
                 news |= kState | kDiagnostics;
                 break;
             case kInDiagnostics: {

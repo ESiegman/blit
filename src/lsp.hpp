@@ -461,7 +461,7 @@ private:
     void drop_document(Document* d, bool tell);
     void flush_opens();
     void stop_server(Server* s, bool kill_now);
-    void server_gone(Server* s, const std::string& why);
+    void server_gone(Server* s, const std::string& why, bool none_there = false);
     void materialize(Document* d);
     u32 ask(Document* d, const char* method, u64 offset, u8 kind, std::string_view extra, u32* latest);
     void cancel(Server* s, u32* latest);
