@@ -781,6 +781,11 @@ void markdown_test() {
         return out;
     };
     auto ink = [](u8 i) { return "<" + std::to_string(i) + "."; };
+    auto rule_of = [](u32 cols) {  // (a light line that long)
+        std::string out;
+        for (u32 k = 0; k < cols; ++k) out += "\xE2\x94\x80";
+        return out;
+    };
     // Alerts: a title in the kind's colour, bold, the bar beside every row
     // in it; the tag in any case; what it says in the text's colour.
     const std::string bar = "\xE2\x96\x8C ", quote = "\xE2\x96\x8E ";
@@ -799,6 +804,17 @@ void markdown_test() {
           "alerts: a list and code inside one");
     check(drawn("> [!NOPE]\n> said\n") == quote + "[!NOPE] said\n" && drawn("> [!NOTE] said\n") == quote + "[!NOTE] said\n" && drawn("> text\n> [!NOTE]\n") == quote + "text [!NOTE]\n",
           "alerts: an unknown tag, one with text after it, one not on the first line: quotes");
+
+    // Headings: a colour for each of the top three levels and one for the
+    // rest; bold, the fifth slanted too, the sixth only slanted; a line
+    // under the top two; two blank rows above those (one right under
+    // another's line), one above the rest.
+    const std::string heads = drawn("# a\n## b\n### c\n#### d\n##### e\n###### f\ntext\n\n## g\n", 12, true);
+    const std::string heavy = "\xE2\x94\x81\xE2\x94\x81\xE2\x94\x81\xE2\x94\x81\xE2\x94\x81\xE2\x94\x81\xE2\x94\x81\xE2\x94\x81\xE2\x94\x81\xE2\x94\x81\xE2\x94\x81\xE2\x94\x81";
+    const std::string light = rule_of(12);
+    check(heads == ink(kMdHeading1) + "1.0>a\n" + ink(kMdHeading1) + "0.0>" + heavy + "\n\n" + ink(kMdHeading2) + "1.0>b\n" + ink(kMdMuted) + "0.0>" + light + "\n\n" + ink(kMdHeading3) + "1.0>c\n\n" +
+                       ink(kMdHeading) + "1.0>d\n\n" + ink(kMdHeading) + "3.0>e\n\n" + ink(kMdHeading) + "2.0>f\n\n" + ink(kMdText) + "0.0>text\n\n\n" + ink(kMdHeading2) + "1.0>g\n" + ink(kMdMuted) + "0.0>" + light + "\n",
+          "headings: each level's colour, weight and slant, the lines under the top two, the room above");
 
     // Footnotes: numbered in the order they are first referred to (not the
     // order their texts come in), a mark a link to its text, the texts at

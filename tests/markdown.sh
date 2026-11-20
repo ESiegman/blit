@@ -40,7 +40,7 @@ pictures() {
          { if (skip) print ""; skip = 0; print }'
 }
 
-for f in sample edge diagrams code alerts notes; do
+for f in sample edge diagrams code alerts notes headings; do
     size=1600x1100
     [ $f = sample ] || [ $f = diagrams ] && size=3600x1100
     run $size "$here/markdown/$f.md" ""
@@ -61,6 +61,34 @@ inks() {
 inks "$here/markdown/alerts.md"
 got=$(printf '%s\n' "$got" | grep -E '\](Note|Tip|Important|Warning|Caution|Risks\.|A plain quote.*)$' | sed -e 's/ *$//' | tr '\n' ' ')
 check "alerts: a bar and a title in each kind's colour" "[#61afef]▎ [#7f848e]A plain quote stays a quote. [#61afef]▌ [#61afef]Note [#98c379]▌ [#98c379]Tip [#c678dd]▌ [#c678dd]Important [#e5c07b]▌ [#e5c07b]Warning [#e06c75]▌ [#e06c75]Caution [#e06c75]▌ [#dbdedb]Risks. [#e06c75]▌ [#61afef]▌ [#61afef]Note [#e06c75]▌ [#e06c75]Caution [#61afef]• [#98c379]▌ [#98c379]Tip "
+
+# Headings: every level its own. The built-in themes name one colour for
+# all headings: the first level has it, the levels under it other colours
+# of the theme's (the fourth to sixth one between them), bold, the fifth
+# slanted too and the sixth only slanted; a heavy line in the first
+# level's colour under it, a quiet light one under the second. In the
+# light theme too. A level the theme names a colour for has that; a
+# colour a level above has is not taken again.
+# looks FILE [LUA]: each run with its colour and style (mdlooks), with LUA after the settings.
+looks() {
+    { cat "$dir/dark.lua"; printf '%s\n' "${2:-}"; } >"$dir/looks.lua"
+    got=$(BLIT_INIT="$dir/looks.lua" "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mdwait;mdlooks" "$1" 2>&1 >/dev/null)
+}
+levels() { printf '%s\n' "$got" | grep -E '\](One|Two|Three|Four|Five|Six)$' | tr '\n' ' '; }
+looks "$here/markdown/headings.md"
+all=$got
+got=$(levels)
+check "headings: each level its own colour or style" "[#e06c75 b]One [#61afef b]Two [#e5c07b b]Three [#c678dd b]Four [#c678dd bi]Five [#c678dd i]Six "
+got=$(printf '%s\n' "$all" | grep -E '^\[#[0-9a-f]*\](━|─)' | cut -c1-12 | sort | uniq -c | tr -s ' ' | tr '\n' ',')
+check "headings: a heavy line under the first level in its colour, a light quiet one under the second" " 4 [#7f848e]─, 3 [#e06c75]━,"
+got=$(printf '%s\n' "$all" | grep -c '^\[#c678dd b\]Four with \[#c678dd bi\]emphasis\[#c678dd b\] and \[#98c379 b t1\]code$')
+check "headings: emphasis and code in one" "1"
+looks "$here/markdown/headings.md" 'blit.opt.theme.dark = "blit-light"; blit.opt.theme.light = "blit-light"'
+got=$(levels)
+check "headings: in the light theme" "[#ca3c2c b]One [#325cc0 b]Two [#a87b00 b]Three [#a626a4 b]Four [#a626a4 bi]Five [#a626a4 i]Six "
+looks "$here/markdown/headings.md" 'blit.opt.themes["blit-dark"] = { syntax = { ["markup.heading"] = "#61afef", ["markup.heading.3"] = "#00ff00" } }'
+got=$(levels)
+check "headings: a level's own colour from the theme; one a level above has, not again" "[#61afef b]One [#e5c07b b]Two [#00ff00 b]Three [#c678dd b]Four [#c678dd bi]Five [#c678dd i]Six "
 
 # Footnotes: a mark is a link to its text at the end, the row that text
 # starts on is named for it, and the mark after the text is a link back;

@@ -152,10 +152,34 @@ void colours(const ThemeColors& tc, const float* bg, MdView& v) {
         v.palette[i][0] = c.r, v.palette[i][1] = c.g, v.palette[i][2] = c.b, v.palette[i][3] = 1;
     };
     set(kMdText, tc.foreground);
-    set(kMdHeading1, pick(tc, {"markup.heading.1", "markup.heading", "keyword"}, tc.accent));
-    set(kMdHeading2, pick(tc, {"markup.heading.2", "function", "type"}, tc.accent));
-    set(kMdHeading3, pick(tc, {"markup.heading.3", "type", "string"}, tc.accent));
-    set(kMdHeading, pick(tc, {"markup.heading", "keyword"}, tc.foreground));
+    // The headings' colours: the one the theme names for that level
+    // (markup.heading.2) where it does. Most name one for all headings, or
+    // none: then the first level has it, and each level under it the first of
+    // a few of the theme's other colours that no level above has, so that
+    // the levels can be told apart.
+    Rgb heads[4];
+    int levels = 0;
+    auto heading = [&](const char* capture, std::initializer_list<const char*> others, Rgb otherwise) {
+        Rgb c = otherwise;
+        const auto own = std::ranges::find_if(tc.syntax, [&](const ThemeColors::Entry& e) { return e.capture == capture && e.has_color; });
+        if (own != tc.syntax.end()) {
+            c = own->color;
+        } else {
+            for (const char* o : others) {
+                const Rgb t = tc.syntax_style(o).color;
+                const bool is_text = t.r == tc.foreground.r && t.g == tc.foreground.g && t.b == tc.foreground.b;
+                const bool taken = std::any_of(heads, heads + levels, [&](const Rgb& h) { return std::abs(h.r - t.r) + std::abs(h.g - t.g) + std::abs(h.b - t.b) < 0.15f; });
+                if (is_text || taken) continue;
+                c = t;
+                break;
+            }
+        }
+        return heads[levels++] = c;
+    };
+    set(kMdHeading1, heading("markup.heading.1", {"markup.heading", "keyword"}, tc.accent));
+    set(kMdHeading2, heading("markup.heading.2", {"function", "type", "keyword", "string"}, tc.info));
+    set(kMdHeading3, heading("markup.heading.3", {"type", "string", "constant", "function", "keyword"}, tc.hint));
+    set(kMdHeading, heading("markup.heading.4", {"keyword", "constant", "string", "type", "function"}, tc.warning));
     set(kMdCode, pick(tc, {"markup.raw", "string"}, tc.foreground));
     set(kMdLink, pick(tc, {"markup.link.url", "markup.link", "string.special.url", "function"}, tc.info));
     set(kMdQuote, pick(tc, {"markup.quote", "comment"}, tc.muted));

@@ -1298,8 +1298,12 @@ struct Layout {
             // (A heading of the top two levels is underlined: what follows
             // starts right under its line, so that it belongs to the heading,
             // with the blank row above the heading setting it off.)
+            // A heading of those levels starts a part of the text: two blank
+            // rows above it. (A heading right under another's line: one.)
             const bool under_rule = before && before->kind == Block::kHeading && before->level <= 2;
-            if (before && !tight && !under_rule) gap(b.line);
+            const bool heading = b.kind == Block::kHeading;
+            if (before && !tight && (!under_rule || heading)) gap(b.line);
+            if (before && !tight && !under_rule && heading && b.level <= 2) gap(b.line);
             block(b, tight, ink);
             before = &b;
         }
@@ -1622,8 +1626,12 @@ struct Layout {
         switch (b.kind) {
             case Block::kPara: paragraph(b.text, b.nos, b.line, ink, 0); break;
             case Block::kHeading: {
+                // Each level its own: a colour for each of the top three (and
+                // one for the rest), a heavy line under the first and a light
+                // one under the second, and the last three told apart by
+                // weight and slant (bold, bold and slanted, slanted).
                 const u8 hink = b.level == 1 ? kMdHeading1 : b.level == 2 ? kMdHeading2 : b.level == 3 ? kMdHeading3 : kMdHeading;
-                paragraph(b.text, {}, b.line, hink, kMdBold);
+                paragraph(b.text, {}, b.line, hink, b.level <= 4 ? kMdBold : b.level == 5 ? kMdBold | kMdItalic : kMdItalic);
                 if (b.level <= 2) {  // a line under the top two levels
                     std::string rule;
                     for (u32 k = 0; k < room(); ++k) rule += b.level == 1 ? "\xE2\x94\x81" : "\xE2\x94\x80";

@@ -2427,7 +2427,7 @@ this one in a tab, and `#heading` goes to that heading.
 
 ![the preview of a note: a sequence diagram, a table, coloured code and a pie](media/markdown.png)
 
-It draws headings (the top two underlined), **bold**, *italic*, `code`,
+It draws headings (each level its own, below), **bold**, *italic*, `code`,
 ~~struck~~ text, links and autolinks (and links defined elsewhere with
 `[name]: url`), lists (nested, numbered from any number, `- [ ]` tasks),
 quotes (nested), tables (aligned as their `:--:` says, cells wrapped to
@@ -2436,6 +2436,18 @@ top right; a block in a language blit has a grammar for, by its name,
 `c++`, `py`, `sh`, `yml` or another file ending, is coloured by that
 grammar in the theme's colours, on the preview's thread), rules, line breaks, HTML (its text without the tags; comments
 left out), and leaves out front matter.
+
+**Headings** are told apart by what a grid of cells has. The top three
+levels have a colour each and the lower three share a fourth. Levels one
+to four are bold, the fifth bold and slanted, the sixth slanted only. The
+first has a heavy line under it in its own colour, the second a light,
+quiet one; those two have two blank rows above them, the others one. The
+colours are the theme's: `markup.heading.1` to `markup.heading.4` (the
+last for levels four to six) where it names them. Where it names only
+`markup.heading`, as the built-in themes do, or none, the first level has
+that colour and each level under it the first of the theme's other
+colours (its functions', types', keywords', strings') that no level above
+has taken.
 
 **Alerts** (GitHub's: a quote whose first line is `[!NOTE]`, `[!TIP]`,
 `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]`, in any case, alone on its

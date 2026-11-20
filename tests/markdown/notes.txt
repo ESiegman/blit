@@ -9,6 +9,7 @@ A paragraph in between, so that the notes are
 numbered by where they are first referred to
 and not by where their text is.
 
+
 After
 ──────────────────────────────────────────────
 Text after the definitions, which are drawn at
