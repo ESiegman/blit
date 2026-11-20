@@ -2698,6 +2698,8 @@ std::string indent_after(const IndentRules& r, const Editor& ed, u64 line, u64 e
 
 bool closer_typed(const IndentRules& r, const Editor& ed, u64 sign, u32 ch) {
     if (ch >= 0x80 || word_byte(static_cast<char>(ch))) return false;
+    // (With no closing words, as in the C-like languages, only a closing bracket itself can be one: nothing read.)
+    if (!*r.closers) return r.brackets && (ch == ')' || ch == ']' || ch == '}') && first_nonblank(ed, ed.buf.line_of(sign)) == sign;
     // (Looked for in the few bytes before it, read at once: most signs are typed far from a line's start.)
     char w[64];
     const size_t n = static_cast<size_t>(std::min<u64>(sign, sizeof w));
