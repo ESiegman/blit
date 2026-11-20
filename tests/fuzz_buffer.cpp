@@ -2509,6 +2509,50 @@ void diagram_test() {
         check(diagram_make("classDiagram\n A <|-- B\n what is this\n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: a class diagram's unknown line");
         check(diagram_make("erDiagram\n A ||--o{ B : x\n A ||--o< B : y\n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: an ER diagram's mistake, with its line");
         check(diagram_make("erDiagram\n A {\n string\n }\n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: an attribute wants a type and a name");
+        // Several loops on one class, each its own (they were all one curve,
+        // their labels one over another), half on each side; on a flowchart's
+        // node too.
+        for (const char* src : {"classDiagram\n Car --> Car : self one\n Car ..> Car : self two\n Car \"1\" *-- \"many\" Car : parts\n Car --> Wheel\n",
+                                "classDiagram\n direction LR\n Node --> Node : next\n Node o-- Node : parent\n Node --> Leaf\n",
+                                "graph TD\n A -->|one| A\n A -->|two| A\n A -->|three| A\n A --> B\n"}) {
+            DiagramGeometry g;
+            check(diagram_make(src, st, &d, &err, &g) == kDiagramDrawn, std::string("diagram: loops drawn: ") + src);
+            std::vector<const DiagramGeometry::Line*> loops;
+            for (const auto& l : g.lines)
+                if (l.from == l.to) loops.push_back(&l);
+            std::vector<DiagramGeometry::Box> labels;
+            for (const auto& b : g.boxes)
+                if (b.kind == "label" && b.name.find("->") != std::string::npos) labels.push_back(b);
+            check(loops.size() >= 2 && labels.size() == loops.size(), std::string("diagram: each loop and its label: ") + src);
+            for (size_t i = 0; i < loops.size(); ++i)
+                for (size_t j = i + 1; j < loops.size(); ++j) {
+                    float most = 0;
+                    for (size_t q = 0; q < loops[i]->pts.size() && q < loops[j]->pts.size(); ++q) most = std::max(most, std::hypot(loops[i]->pts[q].x - loops[j]->pts[q].x, loops[i]->pts[q].y - loops[j]->pts[q].y));
+                    check(most > 10, std::string("diagram: two loops on one node drawn apart: ") + src);
+                }
+            for (size_t i = 0; i < labels.size(); ++i)
+                for (size_t j = i + 1; j < labels.size(); ++j) {
+                    const auto &a = labels[i], &b = labels[j];
+                    check(a.x + a.w <= b.x || b.x + b.w <= a.x || a.y + a.h <= b.y || b.y + b.h <= a.y, std::string("diagram: loops' labels apart: ") + src);
+                }
+        }
+        // An entity's loop: its ends (crow's feet, rings) straight out of the
+        // side it is on, not slanting to the curve (the foot was skewed and
+        // the ring off the line).
+        {
+            DiagramGeometry g;
+            check(diagram_make("erDiagram\n A ||--o{ A : self\n CUSTOMER |o--|| CUSTOMER : refers\n CUSTOMER }|--o{ CUSTOMER : knows\n A ||--|| B : x\n", st, &d, &err, &g) == kDiagramDrawn, "diagram: an entity's loops drawn");
+            int loops = 0;
+            for (const auto& l : g.lines) {
+                if (l.from != l.to || l.pts.size() < 4) continue;
+                ++loops;
+                for (const bool first : {true, false}) {
+                    const RasterPoint tip = first ? l.pts.front() : l.pts.back(), next = first ? l.pts[1] : l.pts[l.pts.size() - 2];
+                    check(std::fabs(next.y - tip.y) < 0.02f * std::fabs(next.x - tip.x) && std::fabs(next.x - tip.x) > 1, "diagram: an entity's loop leaves its side straight");
+                }
+            }
+            check(loops == 3, "diagram: an entity's loops, three");
+        }
         // Classes whose names start as a keyword does (Notebook, accTitleBar):
         // classes, in a relation; note and accTitle themselves, not.
         {

@@ -307,8 +307,10 @@ void draw_relation(Drawing& d, const Look& k, const LayeredGraph& lg, const Laye
     std::vector<DiagramVec> pts = e.pts;
     DiagramVec in_a, in_b;  // the way each end goes into its box
     if (e.loop) {
-        in_a = unit({pts[0].x - pts[1].x, pts[0].y - pts[1].y});
-        in_b = unit({pts[3].x - pts[2].x, pts[3].y - pts[2].y});
+        // (straight into the side it leaves and comes back to, for as long
+        // as its ends are: diagram_layered was told how long)
+        if (pts.size() != 6) return;
+        in_a = in_b = unit({-e.out.x, -e.out.y});
     } else {
         in_a = {-e.axis.x, -e.axis.y}, in_b = e.axis;
         // Straight where the ends are, as long as they are (when there is room).
@@ -335,7 +337,9 @@ void draw_relation(Drawing& d, const Look& k, const LayeredGraph& lg, const Laye
     RasterPath path;
     if (e.loop) {
         path.move_to(pts[0].x, pts[0].y);
-        path.cubic_to(pts[1].x, pts[1].y, pts[2].x, pts[2].y, pts[3].x, pts[3].y);
+        path.line_to(pts[1].x, pts[1].y);
+        path.cubic_to(pts[2].x, pts[2].y, pts[3].x, pts[3].y, pts[4].x, pts[4].y);
+        path.line_to(pts[5].x, pts[5].y);
     } else {
         diagram_curve(pts, e.axis, e.axis, &path);
     }
@@ -355,9 +359,11 @@ void draw_relation(Drawing& d, const Look& k, const LayeredGraph& lg, const Laye
         const DiagramVec tip = first ? tip_a : tip_b, in = first ? in_a : in_b;
         const float tw = font.width(card, cs);
         const float half = std::max(end_half(first ? r.end_a : r.end_b, u), 2 * u);
-        // (to the right of the line as it leaves the box, or below it)
+        // (to the right of the line as it leaves the box, or below it; a
+        // loop's away from its other end)
         DiagramVec side{-in.y, in.x};
         if (side.x < -0.5f || side.y < -0.5f) side = {-side.x, -side.y};
+        if (e.loop && first) side = {-side.x, -side.y};
         const float off_across = half + 5 * u + (std::fabs(side.x) > 0.5f ? tw / 2 : ch / 2);
         const float off_along = 4 * u + (std::fabs(in.y) > 0.5f ? ch / 2 : tw / 2);
         const DiagramVec m{tip.x - in.x * off_along + side.x * off_across, tip.y - in.y * off_along + side.y * off_across};
@@ -373,6 +379,20 @@ void draw_relation(Drawing& d, const Look& k, const LayeredGraph& lg, const Laye
         text_block(d, k, e.label, e.label_at.x, e.label_at.y, k.ink.text, false);
         if (labels) labels->push_back({"label", name_a + "->" + name_b, lx, ly, e.label_w, e.label_h});
     }
+}
+
+// A relation from a box to itself: how long its ends are (it runs straight
+// out of the box for so long) and how wide, and how much room the words
+// beside them take across (the ranks going `dir`), for diagram_layered.
+void loop_ends(const Look& k, const Relation& r, char dir, LayeredGraph::Edge* e) {
+    const float u = k.u;
+    const DiagramFont& font = *k.style->font;
+    const float cs = k.size * 0.9f;
+    e->end_reach = std::max(end_length(r.end_a, u), end_length(r.end_b, u)) + 6 * u;
+    e->end_half = std::max({end_half(r.end_a, u), end_half(r.end_b, u), 2 * u});
+    e->end_word = 0;
+    for (const std::string* card : {&r.card_a, &r.card_b})
+        if (!card->empty()) e->end_word = std::max(e->end_word, 5 * u + (dir == 'D' || dir == 'U' ? font.line(cs) : font.width(*card, cs)));
 }
 
 // A cluster's box and its title at the top (as a flowchart's subgraph:
@@ -969,6 +989,7 @@ bool classdiagram(const std::vector<std::string>& st, const DiagramStyle& style,
             LayeredGraph::Edge e;
             e.from = r.a, e.to = r.b;
             e.label = r.label;
+            if (r.a == r.b) loop_ends(k, r, g->dir, &e);
             g->edges.push_back(std::move(e));
         }
     };
@@ -1342,6 +1363,7 @@ bool erdiagram(const std::vector<std::string>& st, const DiagramStyle& style, Dr
             LayeredGraph::Edge e;
             e.from = r.a, e.to = r.b;
             e.label = r.label;
+            if (r.a == r.b) loop_ends(k, r, g->dir, &e);
             g->edges.push_back(std::move(e));
         }
     };

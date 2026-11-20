@@ -117,6 +117,8 @@ struct Node {
     int note_of = -1;  // a note: what it is beside
     bool note_left = false;
     float loop_room = 0;  // across, after it: its loops' (edges from it to itself) and their labels'
+    float loop_back = 0;  // (before it, and how far from its middle along the ranks: the loops of a kind that draws its own, layered_loops())
+    float loop_along = 0;
     bool fixed = false;  // its size given (by a kind that draws its own: diagram_layered)
     float w = 0, h = 0;  // laid out: its size, and its middle (in its level's box, then in the whole)
     float x = 0, y = 0;
@@ -147,6 +149,10 @@ struct Edge {
     int label_level = -1;
     DiagramVec label_at;
     float label_w = 0, label_h = 0;
+    // A loop (from a node to itself): how far its ends run straight out of
+    // the node, how wide they are across (half; < 0: an arrowhead's), and
+    // how much more the words beside them take (diagram_layered's kinds).
+    float end_reach = 0, end_half = -1, end_word = 0;
 };
 
 struct Cluster {
@@ -174,6 +180,7 @@ struct Graph {
     Style link_default;
     char dir = 'D';
     bool state = false;
+    bool layered = false;  // a kind that draws its own boxes (diagram_layered): its loops are layered_loops()'
     float sep = 1;  // the gaps between nodes and between ranks, times this
 
     int node(const std::string& id, int cluster) {
@@ -755,6 +762,127 @@ bool parse_state(const std::vector<std::string>& st, Graph& g, std::string* err)
     }
     if (deep) return too_deep(st.size());
     return true;
+}
+
+// A loop from a node to itself in a kind that draws its own boxes
+// (diagram_layered's: a flowchart's loops are loop_of()'s), beside it (to
+// the right of it when the ranks go down, under it when they go across;
+// every other one left of it, or over it): where it leaves (s), runs
+// straight out to (a), curves round through two control points to (b) and
+// comes straight back in (t); the way out of the node; the middle of its
+// label beyond it; how far out from the node it and its label reach.
+struct LayeredLoop {
+    DiagramVec s, a, c1, c2, b, t, out, label;
+    bool back = false;  // (before the node across the ranks: left of it, or over it)
+    float far = 0, along = 0;  // (along: how far it reaches across, from the side's middle)
+};
+
+// The loops of the nodes in subgraph c (all of them: c < -1), each node's
+// in the order of their edges, on the two sides in turn: on each side the
+// first close round the side's middle, each next one with its ends outside
+// the ends (and the words beside them) before it, and its curve round the
+// curves and labels before it (out further, and wider across if it must).
+// Where the nodes are is taken as it is (their places, once laid out; only
+// how far the loops reach, before).
+std::map<int, std::vector<LayeredLoop>> layered_loops(const Graph& g, const DiagramFont& font, float size, float line, float u, int c) {
+    std::map<int, std::vector<LayeredLoop>> out;
+    // What the loops before take: points (out from the side, across from
+    // its middle) on their curves and round their labels.
+    std::map<std::pair<int, bool>, std::vector<DiagramVec>> taken;
+    std::map<std::pair<int, bool>, float> wide;  // (how far across the last one's ends reach)
+    // A loop's curve: its ends ±h, straight out to `reach`, round through
+    // control points `bulge` beyond that and ±w across.
+    constexpr int kSteps = 24;
+    auto curve = [](float h, float reach, float bulge, float w, float t) {
+        const float r = 1 - t;
+        return DiagramVec{reach + 3 * r * t * bulge, -h * r * r * r - 3 * w * r * r * t + 3 * w * r * t * t + h * t * t * t};
+    };
+    for (const Edge& e : g.edges) {
+        if (e.from != e.to || e.from < 0 || !e.laid) continue;
+        const Node& n = g.nodes[static_cast<size_t>(e.from)];
+        if (n.dead || (c >= -1 && n.cluster != c)) continue;
+        std::vector<LayeredLoop>& list = out[e.from];
+        const bool back = list.size() % 2 == 1;
+        std::vector<DiagramVec>& inner = taken[{e.from, back}];
+        const bool vert = e.dir == 'D' || e.dir == 'U';
+        const float sign = back ? -1.0f : 1.0f;
+        const DiagramVec way = vert ? DiagramVec{sign, 0} : DiagramVec{0, sign}, side = vert ? DiagramVec{0, 1} : DiagramVec{1, 0};
+        const float span = vert ? n.h : n.w, to_side = (vert ? n.w : n.h) / 2;
+        const float half = e.end_half >= 0 ? e.end_half : 5 * u, gap = 5 * u, reach = e.end_reach;
+        float lw = 0;
+        for (const std::string& l : e.label) lw = std::max(lw, font.width(l, size));
+        const float lh = static_cast<float>(e.label.size()) * line;
+        // Its ends: outside the ends before (and their words), on the side.
+        float h = std::max(span * 0.22f, half + 2 * u);
+        if (!inner.empty()) h = std::max(h, wide[{e.from, back}] + half + 4 * u);
+        h = std::min(h, std::max(span * 0.46f, span * 0.22f));
+        // Its curve: the closest that has all that is before inside it, a
+        // gap from it.
+        float bulge = 22 * u, w = 2 * h;
+        if (!inner.empty()) {
+            auto clear = [&](float b, float ww) {
+                std::vector<DiagramVec> poly{{0, -h}};
+                for (int i = 0; i <= kSteps; ++i) poly.push_back(curve(h, reach, b, ww, static_cast<float>(i) / kSteps));
+                poly.push_back({0, h});
+                for (const DiagramVec& q : inner) {
+                    bool in = false;
+                    for (size_t i = 0, j = poly.size() - 1; i < poly.size(); j = i++) {
+                        const DiagramVec& p0 = poly[i];
+                        const DiagramVec& p1 = poly[j];
+                        if ((p0.y > q.y) != (p1.y > q.y) && q.x < (p1.x - p0.x) * (q.y - p0.y) / (p1.y - p0.y) + p0.x) in = !in;
+                        if (i == 0) continue;  // (the side itself: no gap wanted from it)
+                        const float dx = p1.x - p0.x, dy = p1.y - p0.y, l2 = dx * dx + dy * dy;
+                        const float t = l2 > 0 ? std::clamp(((q.x - p0.x) * dx + (q.y - p0.y) * dy) / l2, 0.0f, 1.0f) : 0;
+                        const float ox = q.x - p0.x - dx * t, oy = q.y - p0.y - dy * t;
+                        if (ox * ox + oy * oy < gap * gap) return false;
+                    }
+                    if (!in) return false;
+                }
+                return true;
+            };
+            // (further out first, then wider; by multiplying, not pow(),
+            // for the same numbers on every system)
+            bool found = false;
+            float b = 22 * u;
+            for (int i = 0; i < 28 && !found; ++i, b *= 1.15f) {
+                float ww = 2 * h;
+                for (int j = 0; j < 10 && !found; ++j, ww *= 1.25f)
+                    if (clear(b, ww)) bulge = b, w = ww, found = true;
+            }
+            if (!found) {  // (out beyond them all, at least)
+                float far = 0;
+                for (const DiagramVec& q : inner) far = std::max(far, q.x);
+                bulge = std::max(bulge, (far + gap - reach) / 0.75f);
+            }
+        }
+        LayeredLoop l;
+        l.out = way, l.back = back;
+        for (int i = 0; i <= kSteps; ++i) l.along = std::max(l.along, std::fabs(curve(h, reach, bulge, w, static_cast<float>(i) / kSteps).y));
+        l.along = std::max(l.along, h + half + e.end_word);
+        const DiagramVec m{n.x + way.x * to_side, n.y + way.y * to_side};
+        auto at = [&](float o, float a) { return DiagramVec{m.x + way.x * o + side.x * a, m.y + way.y * o + side.y * a}; };
+        l.s = at(0, -h), l.a = at(reach, -h), l.c1 = at(reach + bulge, -w), l.c2 = at(reach + bulge, w), l.b = at(reach, h), l.t = at(0, h);
+        for (int i = 1; i < kSteps; ++i) inner.push_back(curve(h, reach, bulge, w, static_cast<float>(i) / kSteps));
+        // Its label beyond it; how far it all reaches.
+        if (lw > 0) {
+            const float pw = lw + 12 * u, ph = lh + 6 * u;
+            const float from = vert ? reach + bulge : reach + bulge + 6 * u, deep = vert ? pw : ph, across = (vert ? ph : pw) / 2;
+            l.label = at(from + deep / 2, 0);
+            l.far = from + deep;
+            l.along = std::max(l.along, across);
+            for (int i = 0; i <= 4; ++i) {
+                const float f = static_cast<float>(i) / 4;
+                inner.push_back({from + deep * f, -across}), inner.push_back({from + deep * f, across});
+                inner.push_back({from, across * (2 * f - 1)}), inner.push_back({from + deep, across * (2 * f - 1)});
+            }
+        } else {
+            l.label = m;
+            l.far = reach + bulge;
+        }
+        wide[{e.from, back}] = h + half + e.end_word;
+        list.push_back(l);
+    }
+    return out;
 }
 
 // ---------------------------------------------------------------- laying out
@@ -1356,8 +1484,24 @@ struct Layout {
             }
         }
         // Loops: room beside their node or subgraph, for them and their
-        // labels (beyond the outermost, one under another).
-        {
+        // labels (beyond the outermost, one under another). A kind that
+        // draws its own boxes has all of a node's on its two sides in turn,
+        // each round the ones before and their labels (layered_loops()).
+        if (g.layered) {
+            for (Edge& ed : g.edges)
+                if (ed.from == ed.to && ed.from >= 0 && g.nodes[static_cast<size_t>(ed.from)].cluster == c && !g.nodes[static_cast<size_t>(ed.from)].dead) {
+                    ed.label = diagram_wrap(ed.label, wrap, size, font);
+                    ed.dir = dir;
+                    ed.laid = true;
+                }
+            for (const auto& [node, loops] : layered_loops(g, font, size, line, u, c))
+                for (const LayeredLoop& lp : loops) {
+                    Node& n = g.nodes[static_cast<size_t>(node)];
+                    float& room = lp.back ? n.loop_back : n.loop_room;
+                    room = std::max(room, lp.far);
+                    n.loop_along = std::max(n.loop_along, lp.along);
+                }
+        } else {
             struct Room {
                 int loops = 0;
                 float labels = 0;  // across: the widest (down) or all of them, one under another (across)
@@ -1393,6 +1537,7 @@ struct Layout {
                               (b.kind == LNode::kItem && b.ref >= 0 && g.nodes[static_cast<size_t>(b.ref)].note_of != -1);
             if (note) gp = nodesep * 0.6f;
             if (a.kind == LNode::kItem) gp += loop_room_of(a.ref);
+            if (b.kind == LNode::kItem && b.ref >= 0) gp += g.nodes[static_cast<size_t>(b.ref)].loop_back;
             return gp + (a.across + b.across) / 2;
         };
         for (std::vector<int>& l : layer) {
@@ -1458,7 +1603,11 @@ struct Layout {
         const bool has_in = !layer.empty() && fixed(layer.front()) && ln[static_cast<size_t>(layer.front()[0])].kind == LNode::kPortIn;
         const bool has_out = !layer.empty() && fixed(layer.back()) && ln[static_cast<size_t>(layer.back()[0])].kind == LNode::kPortOut;
         for (size_t r = 0; r < layer.size(); ++r)
-            for (const int v : layer[r]) depth_of[r] = std::max(depth_of[r], ln[static_cast<size_t>(v)].along);
+            for (const int v : layer[r]) {
+                const LNode& x = ln[static_cast<size_t>(v)];
+                depth_of[r] = std::max(depth_of[r], x.along);
+                if (x.kind == LNode::kItem && x.ref >= 0) depth_of[r] = std::max(depth_of[r], 2 * g.nodes[static_cast<size_t>(x.ref)].loop_along);  // (its loops' too)
+            }
         {
             float y = 0;
             bool first = true;
@@ -1477,13 +1626,18 @@ struct Layout {
                 const LNode& x = ln[static_cast<size_t>(v)];
                 if (x.kind == LNode::kPortIn || x.kind == LNode::kPortOut) continue;
                 const float a0 = static_cast<float>(x.pos) - x.across / 2, a1 = static_cast<float>(x.pos) + x.across / 2;
-                const float l0 = at[r] - x.along / 2, l1 = at[r] + x.along / 2;
+                const float deep = std::max(x.along, x.kind == LNode::kItem && x.ref >= 0 ? 2 * g.nodes[static_cast<size_t>(x.ref)].loop_along : 0.0f);
+                const float l0 = at[r] - deep / 2, l1 = at[r] + deep / 2;
                 if (!any) lo_a = a0, hi_a = a1, lo_l = l0, hi_l = l1, any = true;
                 lo_a = std::min(lo_a, a0), hi_a = std::max(hi_a, a1), lo_l = std::min(lo_l, l0), hi_l = std::max(hi_l, l1);
             }
         // Room for self loops' bulges.
         for (size_t v = 0; v < items; ++v)
             if (loop_room_of(ln[v].ref) > 0) hi_a = std::max(hi_a, static_cast<float>(ln[v].pos) + ln[v].across / 2 + loop_room_of(ln[v].ref));
+        // (and before them: a kind that draws its own has them on both sides)
+        for (size_t v = 0; v < items; ++v)
+            if (ln[v].ref >= 0 && g.nodes[static_cast<size_t>(ln[v].ref)].loop_back > 0)
+                lo_a = std::min(lo_a, static_cast<float>(ln[v].pos) - ln[v].across / 2 - g.nodes[static_cast<size_t>(ln[v].ref)].loop_back);
         const bool titled = c >= 0 && !g.clusters[static_cast<size_t>(c)].title.empty() && !(g.clusters[static_cast<size_t>(c)].title.size() == 1 && g.clusters[static_cast<size_t>(c)].title[0].empty());
         float title_w = 0;
         if (titled)
@@ -2231,7 +2385,7 @@ bool flowchart_layout(const std::vector<std::string>& st, bool state, const Diag
 
 bool diagram_layered(LayeredGraph* lg, const DiagramStyle& style, std::string* err) {
     Graph g;
-    g.dir = lg->dir, g.sep = lg->sep;
+    g.dir = lg->dir, g.sep = lg->sep, g.layered = true;
     for (const LayeredGraph::Node& ln : lg->nodes) {
         Node n;
         n.id = ln.id;
@@ -2255,6 +2409,7 @@ bool diagram_layered(LayeredGraph* lg, const DiagramStyle& style, std::string* e
         e.from = le.from, e.to = le.to;
         e.label = le.label;
         e.minlen = std::max(1, le.minlen);
+        e.end_reach = le.end_reach, e.end_half = le.end_half, e.end_word = le.end_word;
         g.edges.push_back(std::move(e));
     }
     // (As a flowchart's: its work bounded, and given up when asked to stop.)
@@ -2275,7 +2430,8 @@ bool diagram_layered(LayeredGraph* lg, const DiagramStyle& style, std::string* e
         lc.x = c.x, lc.y = c.y, lc.w = c.w, lc.h = c.h;
         lc.title_x = c.title_x >= 0 ? c.x + c.title_x : c.x + c.w / 2;
     }
-    std::map<int, LoopLabels> loop_labels = loop_labels_of(g, lay.u);
+    const std::map<int, std::vector<LayeredLoop>> loops = layered_loops(g, lay.font, lay.size, lay.line, lay.u, -2);
+    std::map<int, size_t> loops_done;
     for (size_t k = 0; k < g.edges.size(); ++k) {
         const Edge& e = g.edges[k];
         LayeredGraph::Edge& le = lg->edges[k];
@@ -2283,11 +2439,14 @@ bool diagram_layered(LayeredGraph* lg, const DiagramStyle& style, std::string* e
         if (!e.laid) continue;
         const DiagramVec axis = axis_of(e.dir);
         if (e.from == e.to) {
-            const Loop lp = loop_of(g, e, lay.u);
+            float lw = 0;
+            for (const std::string& l : e.label) lw = std::max(lw, lay.font.width(l, lay.size));
+            const LayeredLoop& lp = loops.at(e.from)[loops_done[e.from]++];
             le.loop = true;
-            le.pts = {lp.s, lp.c1, lp.c2, lp.t};
+            le.pts = {lp.s, lp.a, lp.c1, lp.c2, lp.b, lp.t};
+            le.out = lp.out;
             le.axis = axis;
-            if (!e.label.empty() && e.label_w > 0) le.label_at = loop_label_at(g, e, lay.u, loop_labels[e.from]), le.label_w = e.label_w, le.label_h = e.label_h;
+            if (!e.label.empty()) le.label_at = lp.label, le.label_w = lw + 12 * lay.u, le.label_h = static_cast<float>(e.label.size()) * lay.line + 6 * lay.u;
             continue;
         }
         le.pts = lines[k].pts;

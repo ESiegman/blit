@@ -259,12 +259,19 @@ struct LayeredGraph {
         int from = 0, to = 0;
         std::vector<std::string> label;  // its lines (wrapped, once laid out)
         int minlen = 1;
+        // A loop (from a node to itself): how far its ends run straight out
+        // of the node, how wide they are across (half), and how much more
+        // the words beside them take. (Several loops on a node go each round
+        // the one before.)
+        float end_reach = 0, end_half = 0, end_word = 0;
         // Laid out: its points from `from` to `to` (a loop: where it leaves,
-        // two control points, where it comes back), the way the ranks go
-        // along it at both ends, and its label's middle and size.
+        // where its straight part ends, two control points, where its
+        // straight part back begins, where it comes back), the way the
+        // ranks go along it at both ends, and its label's middle and size.
         std::vector<DiagramVec> pts;
         DiagramVec axis;
         bool loop = false;
+        DiagramVec out;  // a loop: the way out of its node
         DiagramVec label_at;
         float label_w = 0, label_h = 0;
     };
