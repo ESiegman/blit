@@ -1088,6 +1088,9 @@ private:
     // shell (the console's: IPython where the folder's environment has it;
     // else, and for a notebook's kernel, Python).
     static std::string python_for(const std::string& root, bool console = true);
+    // python_in: the same, looked at where the folder is (over the link, for
+    // one on another machine: never from the main thread).
+    static std::string python_in(const std::string& root, bool console);
     static std::string python_named(const std::string& python, const std::string& root);  // (as a message names it)
     TermView* py_console(bool keyboard);
     void py_send(std::string code);

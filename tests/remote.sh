@@ -184,7 +184,7 @@ run "remotewait;find:text;text:main;findwait;finddump;key:Return;remotewait;fram
 check "text searched for there, and a line found opened" 'text [main] 1 of 1 : >src/main.cpp:1:5 ;; box src/main.cpp | Ln 1, Col 5 Tabs LF C++'
 run "remotewait;find:text;text:main;findwait;key:Escape;$drop;find:text;text:main;findwait;finddump" "$R"
 check "the connection lost: a search there says so, not that no line has it" 'text [main] 0 of 0 : (The connection to box was lost)'
-run "remotewait;$drop;find:names;text:ma;findwait;finddump;key:Tab;findwait;finddump" "$R"
+run "remotewait;$drop;find:names;text:ma;findwait;finddump;key:cmd+shift+F;findwait;finddump" "$R"
 check "and a folder there that could not be listed: why, in both" 'names [ma] 0 of 0 : (The connection to box was lost) ;; text [ma] 0 of 0 : (The connection to box was lost)'
 run "remotewait;find:open;remotewait;finddump;text:src/;remotewait;finddump" "$R"
 check "the box that opens files, in a folder there" 'open [ssh://box~/work/] 4 : >../ src/ fresh.txt notes.txt ;; open [ssh://box~/work/src/] 2 : >../ main.cpp'

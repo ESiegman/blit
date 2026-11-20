@@ -767,8 +767,12 @@ std::string App::python_for(const std::string& root, bool console) {
     // On another machine, chosen there by the command itself, in the folder:
     // asking it from here would wait on the connection.
     if (is_remote(root))
-        return std::string("sh -c '") + (console ? "[ -x .venv/bin/ipython ] && exec .venv/bin/ipython; " : "") +
-               "[ -x .venv/bin/python ] && exec .venv/bin/python; { [ -e uv.lock ] || [ -e pyproject.toml ]; } && exec uv run python; exec python3'";
+        return std::string("sh -c 'for e in .venv venv; do ") + (console ? "[ -x $e/bin/ipython ] && exec $e/bin/ipython; " : "") +
+               "[ -x $e/bin/python ] && exec $e/bin/python; done; "
+               "{ [ -e uv.lock ] || grep -q -e uv_build -e \"\\[tool\\.uv\" pyproject.toml 2>/dev/null; } && exec uv run python; exec python3'";
+    return python_in(root, console);
+}
+std::string App::python_in(const std::string& root, bool console) {
     auto quoted = [](const std::string& path) { return "'" + path + "'"; };  // (a folder's path with no quote in it)
     if (root.find('\'') == std::string::npos)
         for (const char* env : {"/.venv/bin/", "/venv/bin/"}) {

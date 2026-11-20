@@ -171,7 +171,7 @@ void App::test_find() {
         }
         std::string said;  // (pytest's last line, or its Python's: why none were found)
         if (python) {
-            f.python = App::python_for(root, false);
+            f.python = App::python_in(root, false);  // (on this worker thread: for a folder there, looked at over the link)
             if (const size_t at = f.python.find(root); at != std::string::npos && remote) f.python.replace(at, root.size(), there);  // (another machine's: its path there)
             std::string out;
             fs_run(root, python_module(f.python, "pytest") + " --collect-only -q 2>&1", &out, 60000);
@@ -448,13 +448,13 @@ void App::test_take(std::vector<std::string> texts) {
                     u.coverage[path] = std::move(c);
                 }
         }
+        for (const TestUi::CovReport& r : u.cov_reports)
+            if (!r.python)
+                if (const std::string& v = texts[k++]; !v.empty()) llvm = v;
         u.cov_reports.clear();
         std::ranges::sort(u.cov_files);
         u.cov_files.erase(std::ranges::unique(u.cov_files).begin(), u.cov_files.end());
         u.cov_shown = !u.coverage.empty();
-        for (const TestUi::CovReport& r : u.cov_reports)
-            if (!r.python)
-                if (const std::string& v = texts[k++]; !v.empty()) llvm = v;
         while (!llvm.empty() && (llvm.back() == '\n' || llvm.back() == ' ')) llvm.pop_back();
         notify(!uncollected.empty()                    ? uncollected
                : u.coverage.empty() && !llvm.empty() ? "No coverage could be read: the gcov here is LLVM's (" + llvm + "), which cannot write the JSON blit reads; GCC's gcov can"
