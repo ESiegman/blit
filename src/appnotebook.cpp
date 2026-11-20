@@ -83,7 +83,7 @@ struct NotebookTab {
     // comes: clear_output(wait=True)).
     std::unique_ptr<Kernel> kernel;
     bool ipython = false;
-    std::string version;
+    std::string version, python;  // (and the program it runs in)
     struct Run {
         u64 key = 0;
         std::string code;
@@ -162,7 +162,7 @@ bool App::nb_load(Doc& d) {
     if (d.nb) {  // (read again: its kernel goes on, what it is running with it)
         NotebookTab& was = *d.nb;
         nb->kernel = std::move(was.kernel);
-        nb->ipython = was.ipython, nb->version = std::move(was.version);
+        nb->ipython = was.ipython, nb->version = std::move(was.version), nb->python = std::move(was.python);
         nb->waiting = std::move(was.waiting), nb->running = std::move(was.running);
         nb->started = was.started, nb->count = was.count, nb->outs = std::move(was.outs), nb->clear_next = was.clear_next, nb->keys = was.keys;
     }
@@ -317,6 +317,7 @@ bool App::nb_start(Doc& d) {
     nb.kernel = std::move(k);
     nb.ipython = false;
     nb.version.clear();
+    nb.python.clear();
     return true;
 }
 
@@ -354,10 +355,13 @@ void App::nb_sync() {
         for (const Kernel::Event& e : events) {
             const bool its = nb.running.key && e.cell == nb.running.key;
             switch (e.kind) {
-                case Kernel::Event::kReady:
+                case Kernel::Event::kReady: {
                     nb.ipython = e.flag;
-                    nb.version = e.text;
+                    const size_t nl = e.text.find('\n');
+                    nb.version = e.text.substr(0, nl);
+                    nb.python = nl == std::string::npos ? std::string() : e.text.substr(nl + 1);
                     break;
+                }
                 case Kernel::Event::kStart:
                     if (!its) break;
                     nb.started = true;
@@ -501,6 +505,23 @@ bool App::nb_kernel_wait(bool started) {
     }
     frame();
     return true;
+}
+
+// The kernel of a notebook (or of the one a view shows), for the status
+// bar: what it is (IPython or Python, its version, and the virtual
+// environment, or the program, it runs in) and whether it is running a
+// cell; "" when the tab is neither.
+std::string App::nb_kernel_status(Doc& d) {
+    Doc* src = nb_of(d);
+    if (!src) return {};
+    const NotebookTab& nb = *src->nb;
+    if (!nb.kernel) return "no kernel";
+    if (nb.kernel->pid() < 0) return "kernel starting\xE2\x80\xA6";
+    std::string where = nb.python;
+    if (const size_t venv = where.find("/.venv/"); venv != std::string::npos) where = ".venv";
+    else where = where.substr(where.find_last_of('/') + 1);
+    const bool busy = nb.running.key || !nb.waiting.empty();
+    return std::string(nb.ipython ? "IPython" : "Python") + " " + nb.version + (where.empty() ? "" : " (" + where + ")") + (busy ? " \xC2\xB7 busy" : " \xC2\xB7 idle");
 }
 
 // For the tests: the kernel of the notebook in front: what it is, its

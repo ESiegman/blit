@@ -1072,6 +1072,7 @@ private:
     void nb_forget(const Doc& d);
     bool nb_kernel_wait(bool started);
     std::string nb_kernel_dump();
+    std::string nb_kernel_status(Doc& d);
     // Its view (appmarkdown.cpp): the notebook drawn beside its script.
     void nb_view_toggle();
     void nb_view_close(u64 source);

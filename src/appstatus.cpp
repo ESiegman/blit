@@ -189,6 +189,8 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
     mix(modal ? vim_.mode() + 1u : 0);
     mix(round ? 1 : 0);
     mix(root ? std::hash<std::string>{}(*root) : 0);
+    const std::string kernel = start ? std::string() : nb_kernel_status(d);  // (a notebook's)
+    mix(std::hash<std::string>{}(kernel));
     // And apart from those, where the cursor is and what is selected (the
     // text's revision for what that holds): when only these change, as with
     // every key typed, and the words for them are as wide as they were, they
@@ -386,6 +388,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                 u.right.push_back({err + count_text(errors), errors ? ink::kError : ink::kMuted, kProblemsTab, 2, 4});
                 u.right.push_back({warn + count_text(warnings), warnings ? ink::kWarning : ink::kMuted, kProblemsTab, 1, 4});
             }
+            if (!kernel.empty()) u.right.push_back({kernel, ink::kMuted, kNone, 2, 3});
             if (text) u.right.push_back({at_text(), ink::kMuted, kGoLine, 2, 5});
             const u32 step = text ? indent_step() : 0;
             if (text) u.right.push_back({d.indent_tabs ? std::string("Tabs") : "Spaces: " + count_text(step), ink::kMuted, kIndent, 2, 2});

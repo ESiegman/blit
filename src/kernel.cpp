@@ -210,7 +210,7 @@ void Kernel::Link::heard(std::string_view line) {
     if (type == "ready") {
         e.kind = Event::kReady;
         e.flag = v["ipython"].boolean();
-        e.text = v["version"].str();
+        e.text = std::string(v["version"].str()) + "\n" + std::string(v["python"].str());
         helper_pid = v["pid"].integer(-1);
     } else if (type == "start") {
         e.kind = Event::kStart;
@@ -699,7 +699,7 @@ def reader():  # what blit asks; when blit has gone, so does this
 
 threading.Thread(target=reader, daemon=True).start()
 threading.Thread(target=flusher, daemon=True).start()
-send({"type": "ready", "pid": os.getpid(), "ipython": shell is not None, "version": sys.version.split()[0]})
+send({"type": "ready", "pid": os.getpid(), "ipython": shell is not None, "version": sys.version.split()[0], "python": sys.executable})
 while True:
     msg = todo.get()
     cell = msg.get("id", 0)

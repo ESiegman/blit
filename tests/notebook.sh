@@ -336,6 +336,12 @@ got=$(printf '%s\n' "$got" | grep -E '^2 code|^7: ')
 check "run again: its own outputs" "2 code [1] same stream execute_result
 7: 43"
 
+# The status bar says what the kernel is (Python or IPython, its version,
+# what it runs in) and whether it is running a cell; on the view's tab too.
+run "frame;statusdump;vim:7GA<CR>import time<CR>time.sleep(30)<Esc>;vim:7G;key:shift+Return;nbwait:started;frame;statusdump;command:Interrupt the kernel;nbwait;frame;statusdump;key:cmd+alt+Right;frame;statusdump"
+got=$(printf '%s\n' "$got" | grep 'r.ipynb' | sed -e 's/.*| //' -e 's/Python [0-9][0-9.a-z+]* ([^)]*)/Python V (P)/' -e 's/ Ln .*//' | tr '\n' '|')
+check "the status bar: the kernel, and whether it is busy" "no kernel|Python V (P) · busy|Python V (P) · idle|Python V (P) · idle|"
+
 # A result whose JSON has NaN and infinities (which JSON has no word for):
 # shown, as null, and text that says NaN as it is.
 python3 - "$run/nan.ipynb" <<'EOF'
