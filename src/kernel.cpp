@@ -63,7 +63,8 @@ std::string helper_here(std::string* err) {
 // the folder's virtual environment's, uv's for a uv project, else python3.
 constexpr const char* kChoose =
     "if [ -x .venv/bin/python ]; then exec .venv/bin/python \"$@\"; fi; "
-    "if [ -e uv.lock ] || [ -e pyproject.toml ]; then exec uv run python \"$@\"; fi; "
+    "if [ -x venv/bin/python ]; then exec venv/bin/python \"$@\"; fi; "
+    "if [ -e uv.lock ] || grep -q -e uv_build -e '\\[tool\\.uv' pyproject.toml 2>/dev/null; then exec uv run python \"$@\"; fi; "
     "exec python3 \"$@\"";
 
 }  // namespace

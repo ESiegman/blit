@@ -177,6 +177,18 @@ check "lines sent whole, blank lines in them and between them kept" '1'
 printf 'print("six", 6 * 7)\nprint("next")\n' >"$P/line.py"
 got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$P;open:$P/line.py;command:Send the lines to the Python console;docdump:0;command:Open the Python console;termwait:>>>;termwait:six 42;termdump" 2>&1 >/dev/null | grep -E '^>|six 42' | sed -e 's/.*\(six 42\).*/\1/' | tr '\n' ' ')
 check "the cursor's line, and the cursor to the next" '> |print("next") six 42 '
+# Which Python: a project's venv/ (not only .venv), and never uv's in a
+# project that is not uv's (uv run would make a .venv and a uv.lock there).
+V="$dir/pipproj"
+mkdir -p "$V/venv/bin"
+printf '[build-system]\nrequires = ["setuptools"]\n\n[project]\nname = "pkg"\nversion = "0.1"\n' >"$V/pyproject.toml"
+printf '#!/bin/sh\necho "the venv/ Python"\nexec python3 "$@"\n' >"$V/venv/bin/python" && chmod +x "$V/venv/bin/python"
+got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$V;open:$V/pyproject.toml;command:Open the Python console;termwait:>>>;termdump" 2>&1 >/dev/null | grep -c 'the venv/ Python')
+check "the console in a project with venv/: its Python" '1'
+rm -rf "$V/venv"
+got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$V;open:$V/pyproject.toml;command:Open the Python console;termwait:>>>;termdump" 2>&1 >/dev/null | grep -c '>>>')
+got="$got $(ls -A "$V" | tr '\n' ' ')"
+check "and in one with no environment, not uv's: python3, nothing made in it" '1 pyproject.toml '
 
 # A notebook: opened as the script of its cells, its saved outputs after
 # them; edited and saved, written back as a notebook (a changed cell's

@@ -2154,10 +2154,11 @@ or drag it into a split of its own.
 ### The Python console
 
 "Open the Python console" starts Python in the terminals' split, in the
-folder being worked in, as a tab named Python: the folder's `.venv`'s
-IPython or Python if it has one, `uv run python` for a uv project (a
-`uv.lock` or a `pyproject.toml`), else `python3`. Once started it is used
-again, until it ends.
+folder being worked in, as a tab named Python: the IPython or Python of
+the folder's `.venv` (or `venv`) if it has one, `uv run python` for a uv
+project (a `uv.lock`, or a `pyproject.toml` that names `uv_build` or
+`[tool.uv]`, as the Build tab knows one), else `python3`. Once started it
+is used again, until it ends.
 
 "Send the lines to the Python console" sends the lines selected (in Vim,
 Visual mode's), or the cursor's line, after which the cursor goes to the
@@ -2947,13 +2948,13 @@ The kernel is a small Python program blit carries, written to blit's
 cache folder the first time it is needed, started the first time a cell
 of the notebook runs. It runs with the Python the [Python
 console](#the-python-console) would have, in the folder being worked in
-if the notebook is in it, else in the notebook's own: the `.venv`'s
-Python, `uv run python` for a uv project, else `python3`; it works in the
-notebook's folder (the notebook's imports are found there). blit and it
-talk in lines of JSON over its input and output: no Jupyter server, no
-ZMQ. If it can import IPython, cells run in IPython's shell: its rich
-results (a DataFrame's table, Markdown, pictures), `display()`, `%` and
-`%%` magics, `!` commands, and tracebacks in colour; with
+if the notebook is in it, else in the notebook's own: the `.venv`'s (or
+`venv`'s) Python, `uv run python` for a uv project, else `python3`; it
+works in the notebook's folder (the notebook's imports are found there).
+blit and it talk in lines of JSON over its input and output: no Jupyter
+server, no ZMQ. If it can import IPython, cells run in IPython's shell:
+its rich results (a DataFrame's table, Markdown, pictures), `display()`,
+`%` and `%%` magics, `!` commands, and tracebacks in colour; with
 `matplotlib-inline` installed a plot is shown as Jupyter shows one, a
 PNG under its cell. Without IPython the cell is run by plain Python: the
 last line's value is its result (and what it says of itself, an object

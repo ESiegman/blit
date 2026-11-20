@@ -667,9 +667,12 @@ void App::term_new() { TermDock::enter(*this, true); }
 
 // ---------------------------------------------------------------- the Python console
 
-// The Python for a folder: its virtual environment's (for the console,
-// IPython, if it has it), uv's for a uv project, else the one on the PATH.
-// (A notebook's kernel on another machine has the same chosen there: kernel.cpp.)
+// The Python for a folder: its virtual environment's, .venv's or venv's
+// (for the console, IPython, if it has it), uv's for a uv project (as the
+// Build tab knows one: a uv.lock, or uv named in pyproject.toml), else the
+// one on the PATH. (Not uv's in any other project: uv run would make a
+// .venv and a uv.lock in it. A notebook's kernel on another machine has the
+// same chosen there: kernel.cpp.)
 std::string App::python_for(const std::string& root, bool console) {
     // On another machine, chosen there by the command itself, in the folder:
     // asking it from here would wait on the connection.
@@ -677,11 +680,15 @@ std::string App::python_for(const std::string& root, bool console) {
         return std::string("sh -c '") + (console ? "[ -x .venv/bin/ipython ] && exec .venv/bin/ipython; " : "") +
                "[ -x .venv/bin/python ] && exec .venv/bin/python; { [ -e uv.lock ] || [ -e pyproject.toml ]; } && exec uv run python; exec python3'";
     auto quoted = [](const std::string& path) { return "'" + path + "'"; };  // (a folder's path with no quote in it)
-    if (root.find('\'') == std::string::npos) {
-        if (console && fs_kind(root + "/.venv/bin/ipython") == 1) return quoted(root + "/.venv/bin/ipython");
-        if (fs_kind(root + "/.venv/bin/python") == 1) return quoted(root + "/.venv/bin/python");
-    }
-    if (fs_kind(root + "/uv.lock") == 1 || fs_kind(root + "/pyproject.toml") == 1) return "uv run python";
+    if (root.find('\'') == std::string::npos)
+        for (const char* env : {"/.venv/bin/", "/venv/bin/"}) {
+            if (console && fs_kind(root + env + "ipython") == 1) return quoted(root + env + "ipython");
+            if (fs_kind(root + env + "python") == 1) return quoted(root + env + "python");
+        }
+    if (fs_kind(root + "/uv.lock") == 1) return "uv run python";
+    std::string pyproject;
+    if (fs_read(root + "/pyproject.toml", &pyproject, 1u << 20) && (pyproject.find("uv_build") != std::string::npos || pyproject.find("[tool.uv") != std::string::npos))
+        return "uv run python";
     return "python3";
 }
 
