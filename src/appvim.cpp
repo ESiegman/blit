@@ -482,7 +482,7 @@ void App::vim_layout(int w, int h, FrameDesc& fd) {
         const size_t end = status.find(" --", 3);
         if (end != std::string::npos) status.erase(0, status.find_first_not_of(' ', end + 3));
     }
-    std::string right = vim_.showcmd();
+    std::string right = vim_.showcmd() + script_pending_keys();  // (a count, then what a mapping waits on: "2<Space>f")
     // (With the status bar, the cursor's place and a script's text are there.)
     if (!status_px()) {
         right.resize(std::max<size_t>(right.size(), 10), ' ');
@@ -635,6 +635,10 @@ void App::vim_marks(FrameDesc& fd) {
 
 // Where things stand, on one line (for the tests): the mode, the bottom
 // line, the cursor's line and column, and the text of the cursor's line.
+// The bottom line as last drawn, for the tests: what is on its left, and
+// on its right (the keys of a command or a mapping under way).
+std::string App::vim_line_dump() const { return vimui_->status + " | " + vimui_->right; }
+
 std::string App::vim_dump() {
     vim_attach();
     static const char* const modes[] = {"NORMAL", "INSERT", "REPLACE", "VISUAL", "V-LINE", "COMMAND", "V-BLOCK"};

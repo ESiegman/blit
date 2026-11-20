@@ -1303,7 +1303,9 @@ defaults and what `blit.opt` sets goes on top.
 a function. Keys are written in Vim's notation: `<leader>`, `<C-s>`,
 `<M-j>` (Option), `<D-k>` (Cmd), `<S-Tab>`, `<F5>`, `<Space>`, `<CR>`,
 `<Esc>`. The first keys of a mapping wait up to `keys.timeout_ms` for the
-rest, and go through as typed if the rest does not come. A count typed
+rest, and go through as typed if the rest does not come; while they wait,
+the bottom line shows them on its right (`<Space>f`), as it does the keys
+of a Vim command under way. A count typed
 before a mapping is `blit.count()`. Keys a mapping types are not mapped
 again unless `{ remap = true }`. With `modal = false` the `i` mappings are
 the ones that apply. All the changes a function makes to a document are

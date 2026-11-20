@@ -1312,6 +1312,7 @@ private:
     GitSummary git_summary() const;
     void vim_marks(FrameDesc& fd);
     std::string vim_dump();
+    std::string vim_line_dump() const;
 
     // Git (appgit.cpp).
     struct GitUi;
@@ -1482,6 +1483,7 @@ private:
     bool script_key(const SDL_KeyboardEvent& k);
     bool script_text(const char* text);
     void script_dropped(const char* text);
+    std::string script_pending_keys() const;
     bool script_take(ScriptKey p);
     bool script_match(bool late);
     void script_replay(const ScriptKey& p);

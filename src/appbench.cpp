@@ -802,6 +802,8 @@ void App::run_script(const char* script) {
             vim_after(Vim::kHandled);
         } else if (verb == "vimdump") {
             std::fprintf(stderr, "%s\n", vim_dump().c_str());
+        } else if (verb == "vimline") {  // the bottom line as the last frame drew it: left | right
+            std::fprintf(stderr, "%s\n", vim_line_dump().c_str());
         } else if (verb == "startdump") {
             std::fprintf(stderr, "%s\n", start_dump().c_str());
         } else if (verb == "statusdump") {

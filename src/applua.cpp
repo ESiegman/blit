@@ -746,6 +746,16 @@ bool App::script_text(const char* text) {
     return script_take(std::move(p));
 }
 
+// The keys a mapping is waiting on the rest of (the leader, and what came
+// after it), in Vim's notation: shown on the bottom line as Vim's own
+// pending keys are.
+std::string App::script_pending_keys() const {
+    if (!script_ || script_->pending.empty()) return {};
+    std::vector<MapKey> keys;
+    for (const ScriptUi::Pending& p : script_->pending) keys.push_back(p.key);
+    return key_notation(keys);
+}
+
 // One more key for the mappings. False: no mapping starts with the keys
 // waiting and this one, which was the only one (it goes on as it is).
 bool App::script_take(ScriptUi::Pending p) {

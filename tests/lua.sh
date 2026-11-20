@@ -160,6 +160,10 @@ blit.map("i", "jk", "<Esc>")
 EOF
 run "text: w;text:3 w;text:ihijk;vimdump"
 check "a leader mapping with a count, and jk for Esc" 'w with count 0 ; w with count 3 ; NORMAL |  | 1:2 | hione'
+run "text:3 ;frame;vimline;text:w;frame;vimline"
+check "the leader waiting for the rest shows on the bottom line, as Vim's own keys do" ' | 3<Space> ; w with count 3 ;  | '
+run "text:ij;frame;vimline"
+check "in Insert mode too" ' | j'
 run "text:ij;luawait:1100;vimdump"
 check "the first key of a mapping goes in after the time has passed" 'INSERT | -- INSERT -- | 1:2 | jone'
 run "text:ijx;vimdump"
