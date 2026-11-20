@@ -595,6 +595,7 @@ private:
     void find_layout(int w, int h, FrameDesc& fd);
     std::string find_dump();
     std::string find_heading() const;  // (the tests: what the box says it lists, "References (4)")
+    std::string find_inks_dump();  // (tests) the inks of the rows' secondary text
     void find_settle(bool listing = false);
     void find_save_for(u64 doc);  // the document the name being asked for is for
     // The box as a picker for a script (input: a line to type, no list).

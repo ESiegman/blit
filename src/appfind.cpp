@@ -29,6 +29,10 @@ constexpr u32 kMaxRows = 14;  // results shown at once
 constexpr u64 kWalkAgainNs = 2'000'000'000;  // the folder is read again at most this often (unless something says it changed)
 constexpr u32 kTypeRoom = 24;  // the field has room for this much typed, however little is
 constexpr u32 kFieldTone = 1;  // (Popup::tones: the field's cells)
+// The secondary text (muted) of the row chosen: an ink of the box's own
+// palette, a syntax ink's (the box shows no code), in a colour that reads
+// on the chosen row's background.
+constexpr u32 kInkChosenMuted = 1;
 constexpr size_t kMostRecent = 8;  // Go to file with nothing typed: how many files opened lately it lists
 
 // The keys the footer names, by what the box is for.
@@ -60,6 +64,16 @@ constexpr Hint kHintsFolder[] = {{"Enter", "choose"}, {"Tab", "go into"}};
 constexpr Hint kHintsPick[] = {{"Enter", "choose"}, {"Esc", "cancel"}};
 constexpr Hint kHintsInput[] = {{"Enter", "accept"}, {"Esc", "cancel"}};
 constexpr Hint kHintsAsk[] = {{"Enter", "send"}, {"Esc", "cancel connecting"}};
+
+// How far apart two colours are to the eye: WCAG's contrast ratio, 1 to 21.
+float contrast(const float* a, const float* b) {
+    auto lum = [](const float* c) {
+        auto lin = [](float v) { return v <= 0.04045f ? v / 12.92f : std::pow((v + 0.055f) / 1.055f, 2.4f); };
+        return 0.2126f * lin(c[0]) + 0.7152f * lin(c[1]) + 0.0722f * lin(c[2]);
+    };
+    const float x = lum(a), y = lum(b);
+    return (std::max(x, y) + 0.05f) / (std::min(x, y) + 0.05f);
+}
 
 // What Go to file is asked, apart: a name, and a line (and a column) to go
 // to in the file chosen ("render.cpp:120", "render.cpp:120:5"; ":120" is
@@ -342,6 +356,8 @@ struct App::Find {
     u32 drawn_font = ~0u, drawn_cap = 0, drawn_rows = 0;
     u32 seen_cols = 0;  // the widest it has needed since it opened: it grows to fit, and does not shrink back and forth as rows come and go
     float tones[8][4] = {};
+    float palette[32][4] = {};  // the theme's inks, and the chosen row's muted (kInkChosenMuted)
+    u64 palette_gen = ~0ull;    // the theme they were made from
     void touch() { ++state; }
 
     size_t count() const {
@@ -2012,6 +2028,19 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
     // row's. (Each frame: it is not in the cells, and the theme may change.)
     for (int k = 0; k < 3; ++k) f.tones[kFieldTone][k] = theme_.popup_bg[k] + (theme_.sel[k] - theme_.popup_bg[k]) * 0.35f;
     f.tones[kFieldTone][3] = 1;
+    // The inks: the theme's, and the muted of the row chosen, taken toward
+    // the text's colour until it reads on that row's background (4.5:1),
+    // or as far as the text's colour itself. (Made again with the theme.)
+    if (f.palette_gen != theme_gen_) {
+        f.palette_gen = theme_gen_;
+        std::memcpy(f.palette, theme_.palette, sizeof f.palette);
+        float* lit = f.palette[kInkChosenMuted];
+        for (int step = 0; step <= 8; ++step) {
+            for (int k = 0; k < 3; ++k) lit[k] = theme_.palette[kInkMuted][k] + (theme_.fg[k] - theme_.palette[kInkMuted][k]) * static_cast<float>(step) / 8;
+            if (contrast(lit, theme_.sel) >= 4.5f) break;
+        }
+        lit[3] = 1;
+    }
 
     if (f.drawn != f.state || f.drawn_font != font.generation() || f.drawn_cap != cap || f.drawn_rows != rows) {
         f.drawn = f.state;
@@ -2395,8 +2424,13 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
                     if (e.dir) put(box, font, row, col, "/", ink::kMuted);
                 }
             }
-            if (i == f.sel) box.select_row(row);
-            else if (static_cast<int>(i) == f.hover)
+            if (i == f.sel) {
+                box.select_row(row);
+                for (u32 k = 0; k < cols; ++k) {  // (its muted text in the ink that reads there)
+                    u32& cell = box.cells[static_cast<size_t>(row) * cols + k];
+                    if (((cell >> kCellInkShift) & 31) == kInkMuted) cell = (cell & ~(31u << kCellInkShift)) | (kInkChosenMuted << kCellInkShift);
+                }
+            } else if (static_cast<int>(i) == f.hover)
                 for (u32 k = 0; k < cols; ++k) box.cells[static_cast<size_t>(row) * cols + k] |= kCellHover;
         }
 
@@ -2427,11 +2461,36 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
     }
     p.border_px = static_cast<float>(l.hair);
     p.tones = &f.tones[0][0];
+    p.palette = &f.palette[0][0];
     f.rect = {p.x, p.y, p.w, p.h};
     fx_float(p, kFxFinder);
 }
 
 std::string App::find_heading() const { return find_open_ ? find_->prompt : "closed"; }
+// (Tests.) The colour of the secondary text of the first row not chosen
+// and of the row chosen, each with its contrast on its row's background.
+std::string App::find_inks_dump() {
+    Find& f = *find_;
+    if (!find_open_) return "closed";
+    const TextBox& box = f.box;
+    std::string muted = "none", chosen = "none";
+    for (u32 r = 0; r < f.list_rows; ++r) {
+        const u32 row = f.fields() + r;
+        const bool lit = f.top + r == f.sel;
+        if ((lit ? chosen : muted) != "none") continue;
+        for (u32 k = 3; k < box.cols; ++k) {
+            const u32 cell = box.cells[static_cast<size_t>(row) * box.cols + k], ink = (cell >> kCellInkShift) & 31;
+            if ((cell & 0xFFFF) <= 32 || ink == 0 || ink == kInkAccent) continue;
+            const float* c = f.palette[ink];
+            char text[32];
+            std::snprintf(text, sizeof text, "#%02x%02x%02x %.2f", static_cast<int>(c[0] * 255 + 0.5f), static_cast<int>(c[1] * 255 + 0.5f), static_cast<int>(c[2] * 255 + 0.5f),
+                          static_cast<double>(contrast(c, lit ? theme_.sel : theme_.popup_bg)));
+            (lit ? chosen : muted) = text;
+            break;
+        }
+    }
+    return "muted " + muted + ", chosen " + chosen;
+}
 
 // Where things stand, on one line (for the tests): what the box is for,
 // what is typed, how many rows there are, and the first few of them, the

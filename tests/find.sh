@@ -56,6 +56,15 @@ run "key:cmd+P;text:src e;finddump"
 check "every word typed has to match; the best match is first" 'names [src e] 2 of 2 : >src/helper.hpp src/deep/inner.txt'
 run "key:cmd+P;text:inner;key:Return;dump"
 check "Enter opens the one chosen, in a tab" '>[README.md inner.txt*]'
+# The row chosen: its folder in an ink of its own, one that reads on that
+# row's background (4.5:1), where the muted ink of the others would not.
+export BLIT_APPEARANCE=dark
+run "key:cmd+P;text:src e;findinks"
+check "the chosen row's folder in an ink that reads there, dark" 'muted #7f848e 3.92, chosen #c4c8c8 4.85'
+BLIT_APPEARANCE=light
+run "key:cmd+P;text:src e;findinks"
+check "and light" 'muted #8e9096 2.88, chosen #545559 4.88'
+unset BLIT_APPEARANCE
 run "key:cmd+P;text:s;key:Down;key:Return;dump"
 check "Down chooses the next" '>[README.md helper.hpp*]'
 run "key:cmd+P;text:zzzz;finddump"
