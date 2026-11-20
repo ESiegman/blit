@@ -364,6 +364,12 @@ printf '#!/bin/sh\necho "$0: Error while finding module specification for '"'"'d
 chmod +x "$Y/.venv/bin/python"
 run "workdir:$Y;debug:program=$Y/scripts/one.py;key:F5;debugwait:idle;debugdump" "$Y/scripts/one.py"
 check "a .py program: the project's Python, and debugpy missing there said so" 'idle error: debugpy is not installed for .venv/bin/python'
+# On another machine, the same: its .venv's Python there (not the PATH's
+# python3 there), chosen in the project's folder there.
+mkdir -p "$T/py/.venv/bin" "$T/py/scripts"
+cp "$Y/scripts/one.py" "$T/py/scripts/" && cp "$Y/.venv/bin/python" "$T/py/.venv/bin/python"
+run "remotewait;workdir:ssh://box$T/py;debug:program=ssh://box$T/py/scripts/one.py;key:F5;debugwait:idle;debugdump" "ssh://box$T/py/scripts/one.py"
+check "a .py program on another machine: the project's Python there" 'idle error: debugpy is not installed for .venv/bin/python'
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "debug ok"
 exit $failed

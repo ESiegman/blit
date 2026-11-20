@@ -82,6 +82,17 @@ const char* kNative =
 // (debugpy's adapter is run with the project's Python, App::python_for(),
 // and starts the program with the same.)
 const char* kPython = " -m debugpy.adapter";
+// On another machine: the Python python_for() would choose, chosen there in
+// the project's folder (`root`, its path there: nothing is looked at over
+// the link from here), and debugpy's adapter run with it.
+std::string python_there(const std::string& root) {
+    return "py=$(cd " + sh_word(root) + " 2>/dev/null && "
+           "if [ -x .venv/bin/python ]; then echo \"$PWD/.venv/bin/python\"; "
+           "elif [ -x venv/bin/python ]; then echo \"$PWD/venv/bin/python\"; "
+           "elif [ -e uv.lock ] || grep -q -e uv_build -e '\\[tool\\.uv' pyproject.toml 2>/dev/null; then echo uv; fi); "
+           "if [ \"$py\" = uv ]; then exec uv run python" + std::string(kPython) + "; fi; "
+           "exec \"${py:-python3}\"" + kPython;
+}
 // What kNative says on the error stream when the debugger it starts is gdb
 // (which counts a breakpoint's hits from 0, where the others count from 1).
 constexpr std::string_view kGdbSays = "blit-debugger: gdb";
@@ -176,7 +187,7 @@ struct DebugSession {
     std::string remote;  // "ssh://host" when the program is on another machine
     bool gdb = false;    // the debugger is gdb (its hit counts are from 0)
     bool rocm = false;   // and ROCm's rocgdb: the GPU's waves are threads, named by `info threads`
-    std::string python;  // a .py program's: the Python debugpy runs in (as words for a shell)
+    std::string python;  // a .py program's: the Python debugpy runs in (as words for a shell; there, the shell that chooses it)
     bool going = false;  // the program has started (the "process" event): what gdb says before is its own
     i64 thread = 0;      // the thread whose stack is shown (and which the steps step)
     i64 stopped_thread = 0;
@@ -778,9 +789,18 @@ bool App::debug_open(const std::string& near, const std::string& dir, bool pytho
     for (const std::string& e : u.env) exports += "export " + sh_word(e) + "; ";
     if (const std::string prog = near.empty() || !remote ? near : there; !prog.empty() && !python)
         exports += "BLIT_DEBUG_PROGRAM=" + sh_word(prog) + "; export BLIT_DEBUG_PROGRAM; ";  // (what it debugs: HIP's gets rocgdb)
-    // (On another machine, the Python on the PATH there.)
-    u.python = !python ? std::string() : u.remote.empty() ? python_for(build_root(), false) : "python3";
-    if (!u.dap->start({"/bin/sh", "-c", exports + (python ? "exec " + u.python + kPython : kNative)}, dir, wake, &err)) {
+    // (On another machine, chosen there: in the project's folder if that is
+    // on the same machine, else in the program's.)
+    std::string launch = kNative;
+    u.python.clear();
+    if (python && u.remote.empty()) {
+        u.python = python_for(build_root(), false);
+        launch = "exec " + u.python + kPython;
+    } else if (python) {
+        std::string root_host, root_there;
+        u.python = launch = python_there(split_remote(build_root(), &root_host, &root_there) && root_host == host ? root_there : parent_of(there));
+    }
+    if (!u.dap->start({"/bin/sh", "-c", exports + launch}, dir, wake, &err)) {
         u.error = err;
         u.dap.reset();
         ++debug_gen_;
@@ -1289,7 +1309,14 @@ void App::debug_sync_session(bool* stopped) {
             while (!why.empty() && (why.back() == '\n' || why.back() == '\r')) why.pop_back();
             if (const size_t nl = why.rfind('\n'); nl != std::string::npos) why = why.substr(nl + 1);
             if (!u.python.empty() && (why.find("No module named 'debugpy'") != std::string::npos || why.find("No module named debugpy") != std::string::npos)) {
-                const std::string py = python_named(u.python, build_root());
+                // (There, the Python it was is the one the error names: Python
+                // starts its message with its own path.)
+                std::string py = python_named(u.python, build_root());
+                if (!u.remote.empty()) {
+                    std::string root_host, root_there;
+                    py = why.substr(0, why.find(": "));
+                    if (split_remote(build_root(), &root_host, &root_there) && py.starts_with(root_there + "/")) py.erase(0, root_there.size() + 1);
+                }
                 why = "debugpy is not installed for " + py + (py.starts_with("uv run") ? " (uv add --dev debugpy)" : "");
             }
             if (u.error.empty() && !why.empty()) u.error = why;

@@ -2293,8 +2293,9 @@ The debugger is the one the machine has: Xcode's `lldb-dap` on a Mac
 itself) or `lldb-dap` on Linux, and debugpy for a `.py` program, run
 with the folder's Python, chosen as the [Python
 console](#the-python-console)'s is (so debugpy is installed there: in a
-uv project, `uv add --dev debugpy`; on another machine, the `python3`
-there). A program with HIP's code for the GPU in it is debugged with
+uv project, `uv add --dev debugpy`). On another machine it is chosen the
+same way there, in the folder being worked in (or the program's, if that
+folder is not on the same machine). A program with HIP's code for the GPU in it is debugged with
 ROCm's `rocgdb`, where there is one (on the PATH or in
 `/opt/rocm/bin`): a breakpoint in a kernel stops a GPU wave there, with the
 kernel's frame and variables, and the GPU's waves are among the threads,
