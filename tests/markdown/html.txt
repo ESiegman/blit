@@ -12,9 +12,9 @@ Press  Cmd + Shift + P  for the commands,
 highlighted words and highlighted too, but a
 == b is not. Underlined, inserted, struck,
 deleted, bold, strong, italic, emphasis,
-code(). A link in HTML, a comment  gone, a
-line
-broken.
+code(). A link in HTML, a comment gone, a line
+broken. Code says if a==b and c==d then, and
+an empty tag is gone.
 
 ▾ More about it
 

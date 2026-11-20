@@ -905,7 +905,7 @@ void markdown_test() {
               drawn("x<sup>st</sup> y<sub>ab</sub>", 60) != "" && md_render("x<sup>st</sup> y<sub>2</sub>", 60, {}, {}, {}, 0).size() == 1 &&
               md_row_text(md_render("x<sup>st</sup> y<sub>2</sub>", 60, {}, {}, {}, 0)[0]) == "x^(st) y_2",
           "inline HTML: raised and lowered where the font has them, else ^ and _");
-    check(drawn("<kbd>a</kbd> and\nmore <!-- gone --> text <span>kept</span> <b>open") == nb + "a" + nb + " and more  text kept open\n" && drawn("a == b and == c") == "a == b and == c\n",
+    check(drawn("<kbd>a</kbd> and\nmore <!-- gone --> text <span>kept</span> <b>open") == nb + "a" + nb + " and more text kept open\n" && drawn("a == b and == c") == "a == b and == c\n",
           "inline HTML: a paragraph that starts with a tag, a comment, unknown and unclosed tags; == with spaces");
     // Blocks: a heading, a centred paragraph, a rule, details open with
     // their summary after a marker and what they hold indented (Markdown

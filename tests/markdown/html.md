@@ -11,6 +11,7 @@ Water is H<sub>2</sub>O, and E = mc<sup>2</sup>; the 1<sup>st</sup> and x<sub>ij
 Some <mark>highlighted words</mark> and ==highlighted too==, but a == b is not.
 <u>Underlined</u>, <ins>inserted</ins>, <s>struck</s>, <del>deleted</del>, <b>bold</b>, <strong>strong</strong>, <i>italic</i>, <em>emphasis</em>, <code>code()</code>.
 A <a href="https://example.com/docs">link in HTML</a>, a comment <!-- hidden --> gone, a line<br>broken.
+Code says if a==b and c==d then, and an empty <span></span> tag is gone.
 
 <details>
 <summary>More about it</summary>

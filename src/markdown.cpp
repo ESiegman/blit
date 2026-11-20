@@ -514,9 +514,13 @@ void tex_into(std::string_view tex, u8 glyphs, int depth, std::string& out) {
 // partners, runs of backticks, the next of a few characters. (A long line
 // of marks that close nothing, thousands of `*`, `[` or `<`, once took time
 // with the square of its length: each mark looked to its end.)
+// The kinds of inline HTML whose closing tag Marks finds: parse_inline's
+// tags (<b>, <kbd>, ...), then a comment's "-->".
+constexpr size_t kCommentTag = 15, kTagKinds = kCommentTag + 1;
+
 class Marks {
   public:
-    explicit Marks(std::string_view s) : s_(s) {}
+    explicit Marks(std::string_view s) : s_(s) { std::ranges::fill(tags_, kUnknown); }
 
     // Where the run of c (exactly n long) that closes one opened before `from`
     // is, or npos. (Most are a few words on. Once a scan goes far, what a scan
@@ -654,7 +658,8 @@ class Marks {
     }
 
     // The first `what` at `from` or after, `what` being the closing tag of
-    // inline HTML's kind `kind` (each kind asked with `from` never going back).
+    // inline HTML's kind `kind` (each kind asked with `from` never going back;
+    // the kinds are parse_inline's kTags, then kCommentTag for "-->").
     size_t tag_close(size_t kind, std::string_view what, size_t from) {
         size_t& at = tags_[kind];
         if (at == kUnknown || (at != std::string_view::npos && at < from)) at = s_.find(what, from);
@@ -703,8 +708,7 @@ class Marks {
     size_t next_[7] = {kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown};
     size_t found_[2] = {kUnknown, kUnknown};
     size_t dollar_ = kUnknown;
-    size_t tags_[16] = {kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown,
-                        kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown};
+    size_t tags_[kTagKinds];
     size_t trimmed_for_ = std::string_view::npos, trimmed_ = 0;
 };
 
@@ -728,6 +732,12 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
         sp.text = std::move(buf);
         out.push_back(std::move(sp));
         buf.clear();
+    };
+    // Where something is taken out (a comment, a tag), one space after it
+    // goes too when there is one before: "a <!-- x --> b" is "a b".
+    auto past_gap = [&](size_t at) {
+        const bool space_before = !buf.empty() ? buf.back() == ' ' : !out.empty() && out.back().text.ends_with(' ');
+        return space_before && at < s.size() && s[at] == ' ' ? at + 1 : at;
     };
     auto link_span = [&](std::string_view text, const std::string& url) {
         flush();
@@ -869,6 +879,7 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
                 // <b>, <i>, <u>, <s>, <code> as their Markdown is; <kbd> a key;
                 // <sub> and <sup> lowered and raised; <mark> highlighted; <a href> a link.
                 static constexpr std::string_view kTags[] = {"b", "strong", "i", "em", "u", "ins", "s", "del", "strike", "code", "kbd", "sub", "sup", "mark", "a"};
+                static_assert(std::size(kTags) == kCommentTag);
                 size_t name_end = from;
                 while (name_end < end && name_end - from < 8 && std::isalnum(static_cast<unsigned char>(s[name_end]))) ++name_end;
                 const std::string name = lower(s.substr(from, name_end - from));
@@ -913,15 +924,15 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
                 }
                 // A comment goes, to its end.
                 if (s.substr(i, 4) == "<!--") {
-                    const size_t close = marks.tag_close(15, "-->", i + 4);
+                    const size_t close = marks.tag_close(kCommentTag, "-->", i + 4);
                     if (close != std::string_view::npos) {
-                        i = close + 3;
+                        i = past_gap(close + 3);
                         continue;
                     }
                 }
                 // Inline HTML (<span>, </b> ...): its tags go, its text stays.
                 if (!inner.empty() && (std::isalpha(static_cast<unsigned char>(inner[0])) || inner[0] == '/') && !in_it('<')) {
-                    i = end + 1;
+                    i = past_gap(end + 1);
                     continue;
                 }
             }
@@ -992,7 +1003,7 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
             while (k < s.size() && s[k] == c) ++k;
             const size_t run = std::min<size_t>(k - i, c == '~' || c == '=' ? 2 : 3);
             const bool space_after = k >= s.size() || s[k] == ' ' || s[k] == '\t' || s[k] == '\n';
-            const bool intraword = c == '_' && i > 0 && std::isalnum(static_cast<unsigned char>(s[i - 1]));
+            const bool intraword = (c == '_' || c == '=') && i > 0 && std::isalnum(static_cast<unsigned char>(s[i - 1]));  // ("a==b" is no highlight)
             if (!space_after && !intraword && ((c != '~' && c != '=') || k - i == 2)) {
                 const size_t end = marks.closer(i + run, c, run);
                 if (end != std::string_view::npos) {
