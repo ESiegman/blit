@@ -583,22 +583,144 @@ void spread_ends(LayeredGraph* lg, const std::vector<Relation>& rels, const Look
     }
 }
 
+// The parts of a graph that nothing joins (a namespace's boxes are one
+// part with all in it, a note goes with what it is beside): each part's
+// nodes, edges and clusters, the parts in the order of their first nodes.
+struct Part {
+    std::vector<int> nodes, edges, clusters;
+};
+std::vector<Part> parts_of(const LayeredGraph& g) {
+    const size_t n = g.nodes.size(), all = n + g.clusters.size();
+    std::vector<size_t> up(all);
+    for (size_t i = 0; i < all; ++i) up[i] = i;
+    auto find = [&](size_t i) {
+        while (up[i] != i) i = up[i] = up[up[i]];
+        return i;
+    };
+    auto unite = [&](size_t a, size_t b) {
+        a = find(a), b = find(b);
+        if (a != b) up[std::max(a, b)] = std::min(a, b);
+    };
+    for (size_t i = 0; i < n; ++i) {
+        if (g.nodes[i].cluster >= 0) unite(i, n + static_cast<size_t>(g.nodes[i].cluster));
+        if (g.nodes[i].note_of >= 0) unite(i, static_cast<size_t>(g.nodes[i].note_of));
+    }
+    for (size_t c = 0; c < g.clusters.size(); ++c)
+        if (g.clusters[c].parent >= 0) unite(n + c, n + static_cast<size_t>(g.clusters[c].parent));
+    for (const LayeredGraph::Edge& e : g.edges) unite(static_cast<size_t>(e.from), static_cast<size_t>(e.to));
+    // (a namespace with no boxes in it goes with the first part)
+    for (size_t c = 0; c < g.clusters.size() && n > 0; ++c)
+        if (find(n + c) >= n) unite(n + c, 0);
+    std::vector<Part> parts;
+    std::map<size_t, size_t> which;  // (a part's root: the part)
+    for (size_t i = 0; i < n; ++i) {
+        const auto [it, made] = which.try_emplace(find(i), parts.size());
+        if (made) parts.emplace_back();
+        parts[it->second].nodes.push_back(static_cast<int>(i));
+    }
+    for (size_t k = 0; k < g.edges.size(); ++k) parts[which[find(static_cast<size_t>(g.edges[k].from))]].edges.push_back(static_cast<int>(k));
+    for (size_t c = 0; c < g.clusters.size() && n > 0; ++c) parts[which[find(n + c)]].clusters.push_back(static_cast<int>(c));
+    return parts;
+}
+
+// A part of a graph as a graph of its own.
+LayeredGraph part_graph(const LayeredGraph& g, const Part& p) {
+    LayeredGraph out;
+    out.dir = g.dir, out.sep = g.sep;
+    std::map<int, int> node, cluster;
+    for (const int c : p.clusters) cluster[c] = static_cast<int>(cluster.size());
+    for (const int i : p.nodes) node[i] = static_cast<int>(node.size());
+    for (const int c : p.clusters) {
+        LayeredGraph::Cluster cl = g.clusters[static_cast<size_t>(c)];
+        cl.parent = cl.parent >= 0 ? cluster.at(cl.parent) : -1;
+        out.clusters.push_back(std::move(cl));
+    }
+    for (const int i : p.nodes) {
+        LayeredGraph::Node nd = g.nodes[static_cast<size_t>(i)];
+        nd.cluster = nd.cluster >= 0 ? cluster.at(nd.cluster) : -1;
+        nd.note_of = nd.note_of >= 0 ? node.at(nd.note_of) : -1;
+        out.nodes.push_back(std::move(nd));
+    }
+    for (const int k : p.edges) {
+        LayeredGraph::Edge e = g.edges[static_cast<size_t>(k)];
+        e.from = node.at(e.from), e.to = node.at(e.to);
+        out.edges.push_back(std::move(e));
+    }
+    return out;
+}
+
 // Laid out in the direction asked, or, when that is too wide for the room
-// and the other way fits better, that way. (build() makes the graph for
-// the direction it is given, in g->dir: how far ends reach depends on it.)
-// False if the layout gave up (why in `err`: too large to draw, or asked
-// to stop).
+// and the other way fits better, that way. A graph in parts that nothing
+// joins: each part so, by itself, and the parts in rows as wide as the
+// room, each row in the middle. (build() makes the graph for the direction
+// it is given, in g->dir: how far ends reach depends on it.) False if the
+// layout gave up (why in `err`: too large to draw, or asked to stop).
 template <typename Build>
 bool lay_out_fitting(LayeredGraph* lg, const DiagramStyle& style, char dir, Build build, std::string* err) {
     lg->dir = dir;
     build(lg);
-    if (!diagram_layered(lg, style, err)) return false;
-    if (lg->w <= style.room) return true;
-    LayeredGraph other;
+    const std::vector<Part> parts = parts_of(*lg);
+    LayeredGraph other;  // (the graph made the other way, once it is wanted)
     other.dir = dir == 'R' || dir == 'L' ? 'D' : 'R';
-    build(&other);
-    std::string why;
-    if (diagram_layered(&other, style, &why) && std::min(1.0f, style.room / std::max(1.0f, other.w)) > std::min(1.0f, style.room / lg->w) * 1.25f) *lg = std::move(other);
+    bool made = false;
+    auto fit = [&](LayeredGraph* g, const Part* p) {
+        if (!diagram_layered(g, style, err)) return false;
+        if (g->w <= style.room) return true;
+        if (!made) build(&other), made = true;
+        LayeredGraph o = p ? part_graph(other, *p) : other;
+        std::string why;
+        if (diagram_layered(&o, style, &why) && std::min(1.0f, style.room / std::max(1.0f, o.w)) > std::min(1.0f, style.room / g->w) * 1.25f) *g = std::move(o);
+        return true;
+    };
+    if (parts.size() <= 1) return fit(lg, nullptr);
+    std::vector<LayeredGraph> laid;
+    for (const Part& p : parts) {
+        laid.push_back(part_graph(*lg, p));
+        if (!fit(&laid.back(), &p)) return false;
+    }
+    // In rows: as many parts in each as fit the room (one, at least).
+    const float gap = 40 * style.unit() * lg->sep, row_gap = gap * 0.6f;  // (across, and between rows)
+    struct Row {
+        size_t from, to;
+        float w, h;
+    };
+    std::vector<Row> rows;
+    for (size_t i = 0; i < laid.size(); ++i) {
+        if (rows.empty() || rows.back().w + gap + laid[i].w > style.room) rows.push_back({i, i, -gap, 0});
+        Row& r = rows.back();
+        r.to = i + 1, r.w += gap + laid[i].w, r.h = std::max(r.h, laid[i].h);
+    }
+    float w = 0, h = -row_gap;
+    for (const Row& r : rows) w = std::max(w, r.w), h += row_gap + r.h;
+    lg->w = w, lg->h = h;
+    float y = 0;
+    for (const Row& r : rows) {
+        float x = (w - r.w) / 2;
+        for (size_t i = r.from; i < r.to; ++i) {
+            const LayeredGraph& g = laid[i];
+            const Part& p = parts[i];
+            for (size_t j = 0; j < p.nodes.size(); ++j) {
+                LayeredGraph::Node& nd = lg->nodes[static_cast<size_t>(p.nodes[j])];
+                nd.x = g.nodes[j].x + x, nd.y = g.nodes[j].y + y;
+                nd.w = g.nodes[j].w, nd.h = g.nodes[j].h;
+            }
+            for (size_t j = 0; j < p.clusters.size(); ++j) {
+                LayeredGraph::Cluster& cl = lg->clusters[static_cast<size_t>(p.clusters[j])];
+                cl.x = g.clusters[j].x + x, cl.y = g.clusters[j].y + y, cl.w = g.clusters[j].w, cl.h = g.clusters[j].h;
+                cl.title_x = g.clusters[j].title_x + x;
+            }
+            for (size_t j = 0; j < p.edges.size(); ++j) {
+                LayeredGraph::Edge& e = lg->edges[static_cast<size_t>(p.edges[j])];
+                const int from = e.from, to = e.to;
+                e = g.edges[j];
+                e.from = from, e.to = to;
+                for (DiagramVec& q : e.pts) q.x += x, q.y += y;
+                e.label_at.x += x, e.label_at.y += y;
+            }
+            x += g.w + gap;
+        }
+        y += r.h + row_gap;
+    }
     return true;
 }
 
@@ -627,8 +749,8 @@ bool lay_out_spread(LayeredGraph* lg, const DiagramStyle& style, char dir, const
         std::map<int, int> count;
         for (const LayeredGraph::Edge& e : lg->edges)
             if (e.loop) sides[{e.from, count[e.from]++ % 2 == 1}].push_back(&e);
-        const bool vert = lg->dir == 'D' || lg->dir == 'U';
         for (const auto& [side, loops] : sides) {
+            const bool vert = std::fabs(loops.front()->out.x) > 0.5f;  // (the ranks going down: loops beside it, on its left and right sides)
             float out = 0;  // (from the first's ends to the last's words, and a little)
             for (size_t i = 1; i < loops.size(); ++i) out += loops[i - 1]->end_half + loops[i - 1]->end_word + loops[i]->end_half + 4 * u;
             out += loops.back()->end_half + loops.back()->end_word + 4 * u;

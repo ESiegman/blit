@@ -2571,6 +2571,21 @@ void diagram_test() {
             }
             check(loops == 3, "diagram: an entity's loops, three");
         }
+        // Parts that nothing joins, too wide in a row for the room: in rows
+        // that fit it, side by side in each (they were all turned into one
+        // long column); one part alone, as it was.
+        {
+            DiagramStyle narrow = st;
+            narrow.room = 600;
+            DiagramGeometry g;
+            check(diagram_make("classDiagram\n classA <|-- classB : Inheritance\n classC *-- classD : Composition\n classE o-- classF : Aggregation\n classG <-- classH : Association\n"
+                               " classI -- classJ : Link\n classK <.. classL : Dependency\n classM <|.. classN : Realization\n classO .. classP : Dashed\n", narrow, &d, &err, &g) == kDiagramDrawn,
+                  "diagram: parts in rows, drawn");
+            std::map<std::string, DiagramGeometry::Box> at;
+            for (const auto& b : g.boxes) at[b.name] = b;
+            check(d.w <= narrow.room && at["classA"].y == at["classC"].y && at["classA"].x < at["classC"].x && at["classA"].y < at["classO"].y && at["classA"].y + at["classA"].h < at["classB"].y,
+                  "diagram: parts in rows that fit, each part down as asked");
+        }
         // Classes whose names start as a keyword does (Notebook, accTitleBar):
         // classes, in a relation; note and accTitle themselves, not.
         {
