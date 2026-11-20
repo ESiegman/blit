@@ -8,11 +8,11 @@ Inline HTML
 ──────────────────────────────────────────────
 Press  Cmd + Shift + P  for the commands,
  Esc  to close. Water is H₂O, and E = mc²; the
-1ˢᵗ and x_(ij); a note^[note]. Some
-highlighted words and highlighted too, but a
-== b is not. Underlined, inserted, struck,
-deleted, bold, strong, italic, emphasis,
-code(). A link in HTML, a comment gone, a line
+1ˢᵗ and x₁₂; a note^[note]. Some highlighted
+words and highlighted too, but a == b is not.
+Underlined, inserted, struck, deleted, bold,
+strong, italic, emphasis, code(). A link in
+HTML, a comment gone, a line
 broken. Code says if a==b and c==d then, and
 an empty tag is gone.
 

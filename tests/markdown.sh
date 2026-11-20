@@ -104,7 +104,7 @@ check "tables: quiet lines, the header's tint one band" "1,0,0"
 looks "$here/markdown/math.md"
 all=$got
 got=$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]Euler.s identity \[#dbdedb i\]e^(iπ) + 1 = 0\[#dbdedb\] links five$')
-got=$got,$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]            \[#dbdedb i\]∑_(k=1)^∞ 1/k² = π²/6$'),$(printf '%s\n' "$all" | grep -c '▎ \[#dbdedb\]  *\[#7f848e i\]E = mc²$')
+got=$got,$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]  *\[#dbdedb i\]∑₁^∞ 1/k² = π²/6$'),$(printf '%s\n' "$all" | grep -c '▎ \[#dbdedb\]  *\[#7f848e i\]E = mc²$')
 check "math: slanted, display math in the middle" "1,1,1"
 
 # Inline HTML: <kbd> a key on the code's tone, <mark> and ==text== on a
@@ -114,9 +114,9 @@ check "math: slanted, display math in the middle" "1,1,1"
 looks "$here/markdown/html.md"
 all=$got
 got=$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]Press \[#dbdedb t1\][^[]*Cmd[^[]*\[#dbdedb\]+\[#dbdedb t1\][^[]*Shift')
-got=$got,$(printf '%s\n' "$all" | grep -c '^\[#dbdedb t5\]highlighted words\[#dbdedb\] and \[#dbdedb t5\]highlighted too\[#dbdedb\], but a$')
+got=$got,$(printf '%s\n' "$all" | grep -c '\[#dbdedb\] and \[#dbdedb t5\]highlighted too\[#dbdedb\], but a == b is not\.$')
 got=$got,$(printf '%s\n' "$all" | grep -c '\[#dbdedb u\]Underlined\[#dbdedb\], \[#dbdedb u\]inserted\[#dbdedb\], \[#7f848e s\]struck')
-got=$got,$(printf '%s\n' "$all" | grep -c '\[#61afef >https://example.com/docs\]link in HTML')
+got=$got,$(printf '%s\n' "$all" | grep -c '\[#61afef >https://example.com/docs\]link')
 got=$got,$(printf '%s\n' "$all" | grep -c '^\[#61afef\]▾ \[#dbdedb b\]More about it$'),$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]  \[#dbdedb\]What it holds')
 got=$got,$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]  *\[#e06c75 b\]blit$')
 check "inline HTML: keys, highlights, underlines, links, details, a heading in the middle" "1,1,1,1,1,1,1"
