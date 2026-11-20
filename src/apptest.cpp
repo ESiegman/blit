@@ -481,31 +481,42 @@ const std::vector<std::pair<u32, int>>& App::test_defs(const Doc& d) {
     const std::string full = full_path(path);
     const std::vector<std::pair<u32, std::string>> defs = find_test_defs(text, py);
     if (!defs.empty() && !u.looked && !u.looking) test_find();  // (a file with tests in it: the project's are looked for)
+    // (A parametrised pytest test is a case for each of its parameters,
+    // "test_x[1-2]": each is the def's, one after another.)
+    auto unparametrised = [](std::string_view id) { return id.ends_with(']') ? id.substr(0, id.find('[', id.find("::"))) : id; };
     for (const auto& [line, name] : defs) {
-        int found = -1;
-        for (size_t i = 0; i < u.tests.size() && found < 0; ++i) {
+        const size_t before = x.at.size();
+        for (size_t i = 0; i < u.tests.size(); ++i) {
             const TestCase& t = u.tests[i];
-            if (py ? t.runner == TestCase::kPytest && t.id.ends_with("::" + name) && full.ends_with("/" + t.group)
-                   : t.runner == TestCase::kCTest && (t.id == name || t.id.ends_with("." + name) || t.id.ends_with("/" + name)))
-                found = static_cast<int>(i);
+            if (py ? t.runner == TestCase::kPytest && unparametrised(t.id).ends_with("::" + name) && full.ends_with("/" + t.group)
+                   : t.runner == TestCase::kCTest && (t.id == name || t.id.ends_with("." + name) || t.id.ends_with("/" + name))) {
+                x.at.emplace_back(line, static_cast<int>(i));
+                if (!py) break;
+            }
         }
-        x.at.emplace_back(line, found);
+        if (x.at.size() == before) x.at.emplace_back(line, -1);
     }
     return x.at;
 }
 
 // The first gutter cell of a line a test is defined on: how its last run
-// went (a tick, a cross; an open triangle, not run yet).
+// went (a tick, a cross; an open triangle, not run yet). A parametrised
+// test's: a cross if a case failed, a tick if all passed.
 u32 App::test_gutter(const Doc& d, u64 line) {
-    if (!testui_ || d.ed.path.empty()) return 0;
-    for (const auto& [l, i] : test_defs(d)) {
-        if (l != line || i < 0) continue;
-        const TestCase& t = testui_->tests[static_cast<size_t>(i)];
-        const u32 cp = t.result == TestCase::kPassed ? 0x2713 : t.result == TestCase::kFailed ? 0x2717 : 0x25B7;
-        const u32 in = t.result == TestCase::kPassed ? kInkAdded : t.result == TestCase::kFailed ? kInkDiagnostic : kInkMuted;
-        return (font_->glyph(cp) & (Font::kWide - 1)) | (in << kCellInkShift);
+    if (!testui_ || d.ed.path.empty() || line > ~0u) return 0;
+    const std::vector<std::pair<u32, int>>& at = test_defs(d);  // (in the order of their lines: a def's cases together)
+    bool any = false, failed = false, passed = true;
+    for (auto it = std::ranges::lower_bound(at, static_cast<u32>(line), {}, &std::pair<u32, int>::first); it != at.end() && it->first == line; ++it) {
+        if (it->second < 0) continue;
+        const TestCase& t = testui_->tests[static_cast<size_t>(it->second)];
+        any = true;
+        failed = failed || t.result == TestCase::kFailed;
+        passed = passed && t.result == TestCase::kPassed;
     }
-    return 0;
+    if (!any) return 0;
+    const u32 cp = failed ? 0x2717 : passed ? 0x2713 : 0x25B7;
+    const u32 in = failed ? kInkDiagnostic : passed ? kInkAdded : kInkMuted;
+    return (font_->glyph(cp) & (Font::kWide - 1)) | (in << kCellInkShift);
 }
 
 // A click on that mark runs the test (debugs it, with Option held).
@@ -516,23 +527,29 @@ bool App::test_gutter_click(const SDL_MouseButtonEvent& b) {
     const i64 y = py - pane_->text_y + std::llround(pane_->scroll_y);
     if (y < 0 || static_cast<u64>(y / ch) >= view_line_count()) return false;
     const u64 line = line_of_row(static_cast<u64>(y / ch));
+    std::vector<size_t> which;  // (a parametrised test's: all its cases)
     for (const auto& [l, i] : test_defs(*pane_->doc))
-        if (l == line && i >= 0) {
-            if (SDL_GetModState() & SDL_KMOD_ALT) test_debug(static_cast<size_t>(i));
-            else test_run({static_cast<size_t>(i)});
-            return true;
-        }
-    return false;
+        if (l == line && i >= 0) which.push_back(static_cast<size_t>(i));
+    if (which.empty()) return false;
+    if (SDL_GetModState() & SDL_KMOD_ALT) test_debug(which[0]);
+    else test_run(which);
+    return true;
 }
 
-// The test defined at or above the cursor, in the file in front (-1: none).
-int App::test_at_cursor() {
+// The test defined at or above the cursor, in the file in front (a
+// parametrised one's cases; none: the nearest such definition is not a
+// test the runner has).
+std::vector<size_t> App::test_at_cursor() {
     const Doc& d = *pane_->doc;
     const u64 line = d.ed.buf.line_of(d.ed.cursor());
-    int best = -1;
-    for (const auto& [l, i] : test_defs(d))
-        if (l <= line && i >= 0) best = i;
-    return best;
+    std::vector<size_t> out;
+    u32 at = ~0u;
+    for (const auto& [l, i] : test_defs(d)) {
+        if (l > line) break;
+        if (l != at) out.clear(), at = l;
+        if (i >= 0) out.push_back(static_cast<size_t>(i));
+    }
+    return out;
 }
 
 void App::test_run_here() {
@@ -542,9 +559,9 @@ void App::test_run_here() {
         test_find();
         return notify("Looking for the tests\xE2\x80\xA6");
     }
-    const int i = test_at_cursor();
-    if (i < 0) return notify("No test here");
-    test_run({static_cast<size_t>(i)});
+    const std::vector<size_t> which = test_at_cursor();
+    if (which.empty()) return notify("No test here");
+    test_run(which);
 }
 
 void App::test_debug(size_t i) {
@@ -561,9 +578,9 @@ void App::test_debug(size_t i) {
 }
 
 void App::test_debug_here() {
-    const int i = test_at_cursor();
-    if (i < 0) return notify("No test here");
-    test_debug(static_cast<size_t>(i));
+    const std::vector<size_t> which = test_at_cursor();
+    if (which.empty()) return notify("No test here");
+    test_debug(which[0]);
 }
 
 const FileCoverage* App::test_coverage(const Doc& d) {

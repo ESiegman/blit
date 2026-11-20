@@ -1270,7 +1270,7 @@ private:
     void test_debug_here();
     void test_ended(u64 doc);
     void test_take(std::vector<std::string> texts);  // (the run's reports, as read)
-    int test_at_cursor();
+    std::vector<size_t> test_at_cursor();
     const std::vector<std::pair<u32, int>>& test_defs(const Doc& d);
     u32 test_gutter(const Doc& d, u64 line);
     bool test_gutter_click(const SDL_MouseButtonEvent& b);

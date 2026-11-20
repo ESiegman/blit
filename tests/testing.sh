@@ -91,7 +91,7 @@ fi
 # report made in the run configuration's environment too.
 V="$dir/venv"
 mkdir -p "$V/.venv/bin" "$V/tests" "$V/.blit"
-printf 'def test_one():\n    pass\n\n\ndef test_two():\n    pass\n' >"$V/tests/test_v.py"
+printf 'def test_one():\n    pass\n\n\ndef test_two():\n    pass\n\n\n@pytest.mark.parametrize("n", [1, 2])\ndef test_p(n):\n    assert n\n' >"$V/tests/test_v.py"
 printf '{ "configurations": [ { "name": "t", "program": "tests/test_v.py", "env": { "FAKE_ENV": "yes" } } ] }\n' >"$V/.blit/run.json"
 cat >"$V/.venv/bin/python" <<'EOF'
 #!/bin/sh
@@ -105,21 +105,33 @@ if [ "$module" = coverage ]; then
     fi
     shift 3  # run -m pytest
 fi
+set -f  # (the ids are not patterns)
+ids=
 for a in "$@"; do
     case $a in
-        --collect-only) printf 'tests/test_v.py::test_one\ntests/test_v.py::test_two\n\n2 tests collected in 0.01s\n'; exit 0 ;;
+        --collect-only) printf 'tests/test_v.py::test_one\ntests/test_v.py::test_two\ntests/test_v.py::test_p[1]\ntests/test_v.py::test_p[2]\n\n4 tests collected in 0.01s\n'; exit 0 ;;
         --junitxml=*) report=${a#--junitxml=} ;;
+        *::*) ids="$ids ${a#*::}" ;;
     esac
 done
 if [ -e tests/test_bad.py ]; then  # (as pytest reports a module it cannot import: and nothing runs)
     printf '<testsuites><testsuite><testcase classname="" name="tests.test_bad" time="0"><error message="collection failure">tests/test_bad.py:1: in &lt;module&gt;\nE   ModuleNotFoundError: No module named &apos;nosuch&apos;</error></testcase></testsuite></testsuites>' >"$report"
     exit 2
 fi
-printf '<testsuites><testsuite><testcase classname="tests.test_v" name="test_one" time="0.1"/><testcase classname="tests.test_v" name="test_two" time="0.1"><failure message="no"/></testcase></testsuite></testsuites>' >"$report"
+{
+    printf '<testsuites><testsuite>'
+    for t in ${ids:-test_one test_two test_p[1] test_p[2]}; do  # (those asked for; none: all, test_two failing)
+        if [ "$t" = test_two ]; then printf '<testcase classname="tests.test_v" name="%s" time="0.1"><failure message="no"/></testcase>' "$t"
+        else printf '<testcase classname="tests.test_v" name="%s" time="0.1"/>' "$t"; fi
+    done
+    printf '</testsuite></testsuites>'
+} >"$report"
 EOF
 chmod +x "$V/.venv/bin/python"
 got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$V;frame;builddump;command:Run the tests;testdump" "$V/tests/test_v.py" 2>&1 >/dev/null | tail -1)
-check "pytest in the project's .venv: found and run" 'tests/test_v.py: +test_one xtest_two | here: 1+ 5x'
+check "pytest in the project's .venv: found and run" 'tests/test_v.py: +test_one xtest_two +test_p[1] +test_p[2] | here: 1+ 5x 10+ 10+'
+got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$V;frame;testdump;vim:11G;command:Run the test at the cursor;testdump" "$V/tests/test_v.py" 2>&1 >/dev/null | tail -1)
+check "a parametrised test at the cursor: its cases run, not the test before it" 'tests/test_v.py: .test_one .test_two +test_p[1] +test_p[2] | here: 1. 5. 10+ 10+'
 got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$V;frame;builddump;command:Run the tests with coverage;testdump;coveragedump" "$V/tests/test_v.py" 2>&1 >/dev/null | tail -1)
 check "and coverage.py there, its report in the run configuration's environment" 'here: ran 1 2 5, missed 6 | files: tests/test_v.py=75%'
 printf 'import nosuch\n' >"$V/tests/test_bad.py"
