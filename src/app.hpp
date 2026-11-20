@@ -1118,6 +1118,7 @@ private:
     void dock_hide();
     bool term_may_close(size_t i);  // the tab's program still running: asked first (false: the user said no)
     size_t term_busy_count();       // programs still running in terminals, hidden ones too
+    static const std::string& term_folder(const TermView& v);  // where it was started (ssh://host/... there)
     void term_sync();
     void term_layout(FrameDesc& fd);
     void term_pictures(FrameDesc& fd, TermView& v, int x, int y, int w, int h);

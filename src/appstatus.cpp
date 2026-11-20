@@ -275,10 +275,13 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                 u.left.push_back(std::move(s));
             }
 
-            // The machine, when the file or the folder is on another one, and how its connection is.
+            // The machine, when the tab in front is on another one (a file's
+            // own, a terminal's; for one with neither, the folder's), and how
+            // its connection is.
             {
+                const std::string& own = d.term ? term_folder(*d.term) : ed.path;
                 std::string host, there;
-                if (split_remote(ed.path, &host, &there) || (root && split_remote(*root, &host, &there))) {
+                if (split_remote(own, &host, &there) || (own.empty() && root && split_remote(*root, &host, &there))) {
                     std::shared_ptr<Remote> r;
                     for (const std::shared_ptr<Remote>& c : Remote::all())
                         if (c->host() == host) r = c;

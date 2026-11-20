@@ -225,7 +225,7 @@ keys="remotewait;text:X;key:ctrl+\`;frame;termwait:\$;key:space;key:ctrl+\`;fram
 got=$(BLIT_SSH="$dir/narrow-ssh.sh" BLIT_NARROW=8000000 BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
     --script "$keys" "$R/big/big.txt" 2>&1 >/dev/null | join)
 got="$got | $(head -c 3 "$W/big/big.txt") $(wc -c <"$W/big/big.txt" | tr -d ' ')"
-check "a big save there: keys to a terminal there go between its parts" 'within 1000 ms ;; Terminal: box | | X00 16777217'
+check "a big save there: keys to a terminal there go between its parts" 'within 1000 ms ;; box Terminal: box | | X00 16777217'
 got=$(BLIT_AGENT_LEVEL=2 BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "remotewait;text:Y;save;remotewait;frame;statusdump" "$R/big/big.txt" 2>&1 >/dev/null |
     sed -e "s#$T#~#g" | join)
 got="$got | $(head -c 3 "$W/big/big.txt") $(wc -c <"$W/big/big.txt" | tr -d ' ')"
@@ -242,6 +242,16 @@ check "one that is not there is said so, and leaves no tab" 'blit: No file ssh:/
 INIT="$dir/vim.lua" run "remotewait;vim:2jgf;remotewait;frame;dump" "$R/links.txt"
 check "nor does it at a line (as a click on a path:line does)" 'blit: No file ssh://box~/work/missing.cpp ;; >[links.txt*]'
 rm "$W/links.txt"
+# The status bar names the machine of the tab in front: none for a file
+# here, with the folder there; a terminal's own, with the folder on another.
+printf 'here\n' >"$dir/local.txt"
+run "remotewait;open:$dir/local.txt;frame;statusdump" "$R"
+got=$(printf '%s' "$got" | sed -e 's#[^ ]*/local.txt.*#local.txt#')  # (the file's path, and what follows it, as wide as the window allows)
+check "a file here, the folder there: no machine" 'local.txt'
+got=$(BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+    --script "remotewait;key:ctrl+\`;frame;termwait:\$;workdir:$R;remotewait;frame;statusdump" "ssh://other$W" 2>&1 >/dev/null | join)
+check "a terminal on one machine, the folder on another: the terminal's" 'other Terminal: other |'
+
 # A project's run configurations there: the Run button runs the program
 # there, by its path there (not ssh://...), in its folder, after its build.
 mkdir -p "$W/run/bin" "$W/run/.blit"
