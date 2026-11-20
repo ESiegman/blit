@@ -119,6 +119,12 @@ printf 'alpha\nbeta\n' >"$dir/m.txt"
 run "frame;$docend;text:MINE;$there;reload;frame;answer:save;key:cmd+W;finddump;key:Return;frame;finddump;dump" "$dir/m.txt"
 got="$got | $(tr '\n' ' ' <"$dir/m.txt")"
 check "closed with Save, then Save over it: saved, and closed" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; pick [] (m.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; closed ;; >[untitled*] | alpha beta MINE'
+# Vim's :wq is the same: it closes once saved over what is on disk.
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/wq.lua"
+printf 'alpha\nbeta\n' >"$dir/m.txt"
+INIT="$dir/wq.lua" run "frame;vim:GoMINE<Esc>;$there;reload;frame;vim::wq<CR>;finddump;key:Return;frame;finddump;dump" "$dir/m.txt"
+got="$got | $(tr '\n' ' ' <"$dir/m.txt")"
+check ":wq, then Save over it: saved, and closed" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; pick [] (m.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; closed ;; >[untitled*] | alpha beta MINE '
 printf 'alpha\nbeta\n' >"$dir/m.txt"
 run "frame;$docend;text:MINE;$there;reload;frame;answer:save;key:cmd+W;key:Down;key:Return;frame;finddump;dump" "$dir/m.txt"
 got="$got | $(tr '\n' ' ' <"$dir/m.txt")"

@@ -402,6 +402,7 @@ void App::vim_after(u32 result) {
                 }
                 save();
                 if (q.then_close && (!pane_->doc->ed.modified() || remote_saving(pane_->doc->id))) tab_close(pane_->tab);  // (another machine's: once written)
+                else if (q.then_close && pane_->doc->disk_moved) close_after_ask_ = pane_->doc->id;  // (asked first: closed once saved over what is on disk)
                 break;
             case VimRequest::kSaveAll:
                 save_all();
