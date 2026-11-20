@@ -848,7 +848,7 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
     const DiagramColour lifeline = p_.tone(kMdText, dark ? 0.3f : 0.32f);
     const DiagramColour edge_c = p_.tone(kMdText, dark ? 0.62f : 0.68f);
     const DiagramColour note_fill = p_.tone(kMdSlice1, dark ? 0.2f : 0.16f), note_stroke = p_.tone(kMdSlice1, 0.7f);
-    const DiagramColour frame_c = p_.tone(kMdAccent, dark ? 0.5f : 0.55f), tab_fill = p_.tone(kMdAccent, dark ? 0.16f : 0.12f);
+    const DiagramColour frame_c = p_.tone(kMdAccent, dark ? 0.6f : 0.85f), tab_fill = p_.tone(kMdAccent, dark ? 0.16f : 0.12f);
     const DiagramColour bar_fill = p_.tone(kMdBorder, dark ? 0.3f : 0.2f);
     const DiagramColour bg{p_.bg[0], p_.bg[1], p_.bg[2], 1};
     const float stroke_w = 1.3f * u, edge_w = 1.5f * u;
