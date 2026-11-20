@@ -322,6 +322,11 @@ struct App::MdWorker {
     std::map<u64, std::shared_ptr<MdDiagramPicture>> drawn;
     u64 asked = 0;
     std::atomic<u64> laid = 0;  // how many it has laid out (for the tests: not one again when it has not changed)
+    std::atomic<i64> day = kDiagramNoDay;  // the date the tests say it is (else the clock's)
+    i64 today() const {
+        const i64 d = day.load();
+        return d != kDiagramNoDay ? d : diagram_today();
+    }
     DiagramFont font;
     std::stop_token stop;  // (the worker's: a diagram being laid out gives up when blit quits)
     std::jthread worker;
@@ -351,6 +356,9 @@ struct App::MdWorker {
         mix(j.font_path.data(), j.font_path.size());
         mix(&j.font_index, sizeof j.font_index), mix(&j.font_px, sizeof j.font_px), mix(&room_px, sizeof room_px), mix(&j.density, sizeof j.density);
         for (const FontFile& f : j.fallbacks) mix(f.path.data(), f.path.size() + 1), mix(&f.index, sizeof f.index);
+        // (a Gantt chart that marks today: another picture each day)
+        const i64 date = diagram_dated(src) ? today() : kDiagramNoDay;
+        mix(&date, sizeof date);
         *key = h;
         ++asked;
         if (const auto it = drawn.find(h); it != drawn.end()) {
@@ -366,6 +374,7 @@ struct App::MdWorker {
         st.room = room_px / density;
         st.palette = j.palette;
         st.stop = stop;
+        st.today = date;
         Drawing d;
         auto pic = std::make_shared<MdDiagramPicture>();
         const u8 made = diagram_make(src, st, &d, &pic->error);  // (a kind not drawn: why, in error)
@@ -1055,6 +1064,13 @@ std::string App::nb_view_dump() {
     return "no notebook view\n";
 }
 
+// The date the preview's diagrams are drawn for, from now on (for the
+// tests: a Gantt chart's today marker on a day of their own).
+void App::md_set_today(i64 day) {
+    if (!md_worker_) md_worker_ = std::make_shared<MdWorker>();
+    md_worker_->day = day;
+}
+
 // The preview in front's Mermaid diagrams, laid out as its worker lays
 // them out (for the tests): each one's size in points (or why it is not a
 // picture), then where its nodes, subgraphs and labels are, and points
@@ -1075,6 +1091,7 @@ std::string App::md_diagram_dump() {
         st.room = static_cast<float>(v.asked_width) * static_cast<float>(font_->cell_w()) / density;
         for (u32 i = 0; i < kMdInkCount; ++i) std::copy(v.palette[i], v.palette[i] + 3, st.palette.ink[i]);
         std::copy(theme_.bg, theme_.bg + 3, st.palette.bg);
+        st.today = md_worker_ ? md_worker_->today() : diagram_today();
         const std::string text = src->ed.buf.text(0, src->ed.buf.size());
         std::string out = "laid out " + std::to_string(md_worker_ ? md_worker_->laid.load() : 0) + "\n", block;
         // The pictures on show: their sizes and a hash of their pixels (the

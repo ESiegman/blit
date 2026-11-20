@@ -559,6 +559,28 @@ bool resolve(Gantt& g, std::string* err) {
 // boundaries (midnight, the week's first day, the 1st, 1 January).
 enum Unit : u8 { kMs, kSec, kMin, kHourU, kDayU, kWeek, kMonth, kYear };
 
+// The finest unit an axisFormat tells apart: ticks finer than it would
+// all say the same (6 hours apart, each '2024-01-01').
+Unit finest(std::string_view fmt) {
+    Unit u = kYear;
+    bool any = false;
+    for (size_t i = 0; i + 1 < fmt.size(); ++i) {
+        if (fmt[i] != '%') continue;
+        char k = fmt[++i];
+        if ((k == '-' || k == '_' || k == '0') && i + 1 < fmt.size()) k = fmt[++i];
+        Unit of = kYear;
+        switch (k) {
+            case 'H': case 'I': case 'M': case 'S': case 'L': case 'p': of = kMs; break;
+            case 'd': case 'e': case 'j': case 'a': case 'A': of = kDayU; break;
+            case 'm': case 'b': case 'B': of = kMonth; break;
+            case 'Y': case 'y': of = kYear; break;
+            default: continue;
+        }
+        u = any ? std::min(u, of) : of, any = true;
+    }
+    return any ? u : kDayU;  // (no dates in it at all: as days)
+}
+
 std::vector<i64> ticks(i64 t0, i64 t1, Unit unit, i64 step, int week_from, size_t most) {
     std::vector<i64> out;
     if (step <= 0) return out;
@@ -602,7 +624,8 @@ void draw_gantt(Gantt& g, const DiagramStyle& style, Drawing* d, DiagramGeometry
     const bool dark = p.dark();
     const float u = style.unit(), size = style.size, small = style.size * 0.86f;
     const float line = font.line(size), pad = 14 * u;
-    const std::vector<u8> series = diagram_series(p);
+    // (none near the critical tasks' red: a section's tasks would look critical)
+    const std::vector<u8> series = diagram_series(p, kMdError);
     auto ink_of = [&](int section) { return series[static_cast<size_t>(section) % series.size()]; };
 
     // The sections' names, in a column at the left (if any is named).
@@ -619,7 +642,11 @@ void draw_gantt(Gantt& g, const DiagramStyle& style, Drawing* d, DiagramGeometry
         col = std::max(col, 40 * u) + 26 * u;
     }
     const float w = std::max(style.room, col + 2 * pad + 260 * u);
-    const float x0 = pad + col + 10 * u, x1 = w - pad - 8 * u;
+    // (room at the ends for half a milestone's diamond, at the first date or the last)
+    const float bar_h = line + 9 * u, gap = 7 * u, band_pad = 6 * u, diamond = bar_h * 0.8f;
+    bool milestones = false;
+    for (const Task& t : g.tasks) milestones = milestones || t.milestone;
+    const float x0 = pad + col + std::max(10 * u, milestones ? diamond / 2 + 3 * u : 0), x1 = w - pad - std::max(8 * u, milestones ? diamond / 2 + 3 * u : 0);
 
     i64 t0 = g.tasks[0].from, t1 = g.tasks[0].shown_to;
     for (const Task& t : g.tasks) t0 = std::min(t0, t.from), t1 = std::max({t1, t.shown_to, t.from});
@@ -650,7 +677,9 @@ void draw_gantt(Gantt& g, const DiagramStyle& style, Drawing* d, DiagramGeometry
         static const std::pair<Unit, int> kSteps[] = {{kSec, 1},   {kSec, 5},   {kSec, 15},  {kSec, 30},  {kMin, 1},  {kMin, 5},  {kMin, 15},  {kMin, 30},
                                                       {kHourU, 1}, {kHourU, 3}, {kHourU, 6}, {kHourU, 12}, {kDayU, 1}, {kDayU, 2}, {kWeek, 1},  {kMonth, 1},
                                                       {kMonth, 3}, {kYear, 1},  {kYear, 2},  {kYear, 5},  {kYear, 10}, {kYear, 25}, {kYear, 50}, {kYear, 100}};
+        const Unit least = finest(axis_format);
         for (const auto& [un, step] : kSteps) {
+            if (un < least) continue;
             const i64 per = un == kSec ? kSecond : un == kMin ? kMinute : un == kHourU ? kHour : un == kDayU ? kDay : un == kWeek ? 7 * kDay : un == kMonth ? 28 * kDay : 365 * kDay;
             if (span / static_cast<double>(per * step) > 200) continue;
             marks = ticks(t0, t1, un, step, g.week_from, 400);
@@ -659,7 +688,6 @@ void draw_gantt(Gantt& g, const DiagramStyle& style, Drawing* d, DiagramGeometry
     }
 
     // Rows: a task each, as tall as its label (wrapped beside the bar).
-    const float bar_h = line + 9 * u, gap = 7 * u, band_pad = 6 * u;
     struct Row {
         float y = 0, h = 0;
         float bx = 0, bw = 0;           // the bar
@@ -672,8 +700,7 @@ void draw_gantt(Gantt& g, const DiagramStyle& style, Drawing* d, DiagramGeometry
         Row& r = rows[i];
         const float a = x_of(t.from), b = x_of(t.shown_to);
         if (t.milestone) {
-            const float m = bar_h * 0.8f;
-            r.bx = (a + b) / 2 - m / 2, r.bw = m;
+            r.bx = (a + b) / 2 - diamond / 2, r.bw = diamond;
         } else {
             r.bx = a, r.bw = std::max(b - a, 3 * u);
             if (r.bx + r.bw > x1 + 3 * u) r.bx = x1 + 3 * u - r.bw;
@@ -821,18 +848,11 @@ void draw_gantt(Gantt& g, const DiagramStyle& style, Drawing* d, DiagramGeometry
         }
     }
 
-    // Today, if todayMarker asks for it (stroke and stroke-width as it says).
-    if (g.today) {
-        const std::time_t now = std::time(nullptr);
-        std::tm tm{};
-#ifdef _WIN32
-        localtime_s(&tm, &now);
-#else
-        localtime_r(&now, &tm);
-#endif
-        Civil c;
-        c.y = tm.tm_year + 1900, c.mo = tm.tm_mon + 1, c.d = tm.tm_mday, c.h = tm.tm_hour, c.mi = tm.tm_min, c.s = std::min(tm.tm_sec, 59);
-        const i64 t = time_of(c);
+    // Today, if todayMarker asks for it (stroke and stroke-width as it
+    // says): at its midnight, the day the style says (so the picture is the
+    // same all day, and is laid out again the next).
+    if (g.today && style.today != kDiagramNoDay && style.today > kEarliest / kDay && style.today < kLatest / kDay) {
+        const i64 t = style.today * kDay;
         if (t >= t0 && t <= t1) {
             DiagramColour mark = p.of(kMdError);
             float width = 2 * u;
@@ -848,6 +868,7 @@ void draw_gantt(Gantt& g, const DiagramStyle& style, Drawing* d, DiagramGeometry
             RasterPath m;
             m.move_to(x_of(t), bands_top), m.line_to(x_of(t), bands_bottom);
             d->shape(std::move(m), {}, mark, width);
+            if (geo) geo->boxes.push_back({"today", "today", x_of(t), bands_top, 0, bands_bottom - bands_top});
         }
     }
 }
@@ -1044,6 +1065,27 @@ void draw_timeline(const Timeline& t, const DiagramStyle& style, Drawing* d, Dia
 }
 
 }  // namespace
+
+bool diagram_dated(std::string_view source) {
+    const std::vector<DiagramLine> lines = diagram_lines(source);
+    if (lines.empty()) return false;
+    const std::string_view head = diagram_trim(lines[0].text);
+    if (diagram_lower(head.substr(0, head.find_first_of(" \t"))) != "gantt") return false;
+    Gantt g;
+    std::string err;
+    return parse_gantt(lines, g, &err) && g.today;
+}
+
+i64 diagram_today() {
+    const std::time_t now = std::time(nullptr);
+    std::tm tm{};
+#ifdef _WIN32
+    localtime_s(&tm, &now);
+#else
+    localtime_r(&now, &tm);
+#endif
+    return days_from_civil(tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday);
+}
 
 bool gantt_layout(const std::vector<DiagramLine>& lines, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo) {
     if (!style.font) {

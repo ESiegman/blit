@@ -118,12 +118,16 @@ void measure(std::vector<Node>& nodes, const Look& lk, const DiagramFont& font) 
     }
 }
 
-float subtree(std::vector<Node>& nodes, int i, const Look& lk) {
-    Node& n = nodes[static_cast<size_t>(i)];
-    float kids = 0;
-    for (size_t k = 0; k < n.kids.size(); ++k) kids += subtree(nodes, n.kids[k], lk) + (k ? lk.vgap(n.depth) : 0);
-    n.tall = std::max(n.h, kids);
-    return n.tall;
+// Each subtree's height: the last node first (a node's children come after
+// it), not by recursion (a chain of 2,000 would be as deep on the
+// preview's thread).
+void subtrees(std::vector<Node>& nodes, const Look& lk) {
+    for (size_t i = nodes.size(); i-- > 0;) {
+        Node& n = nodes[i];
+        float kids = 0;
+        for (size_t k = 0; k < n.kids.size(); ++k) kids += nodes[static_cast<size_t>(n.kids[k])].tall + (k ? lk.vgap(n.depth) : 0);
+        n.tall = std::max(n.h, kids);
+    }
 }
 
 // A node's children beside it, on its side, stacked and centred on it.
@@ -139,14 +143,13 @@ void place_kids(std::vector<Node>& nodes, int i, const std::vector<int>& kids, i
         kid.x = edge + static_cast<float>(side) * kid.w / 2;
         kid.y = y + kid.tall / 2;
         y += kid.tall + lk.vgap(n.depth);
-        place_kids(nodes, c, kid.kids, side, lk);
     }
 }
 
 // Laid out with the root's branches on both sides, or to the right only;
 // how wide that is.
 float place(std::vector<Node>& nodes, bool both, const Look& lk) {
-    subtree(nodes, 0, lk);
+    subtrees(nodes, lk);
     Node& root = nodes[0];
     root.x = root.y = 0;
     std::vector<int> right, left;
@@ -159,6 +162,8 @@ float place(std::vector<Node>& nodes, bool both, const Look& lk) {
     }
     place_kids(nodes, 0, right, 1, lk);
     place_kids(nodes, 0, left, -1, lk);
+    // (each node is placed before its children: in order, not by recursion)
+    for (size_t i = 1; i < nodes.size(); ++i) place_kids(nodes, static_cast<int>(i), nodes[i].kids, nodes[i].side, lk);
     float lo = 1e30f, hi = -1e30f;
     for (const Node& n : nodes) lo = std::min(lo, n.x - n.w / 2), hi = std::max(hi, n.x + n.w / 2);
     return hi - lo;

@@ -1316,6 +1316,8 @@ void App::run_script(const char* script) {
             std::fputs(md_dump(true).c_str(), stderr);
         } else if (verb == "diagramdump") {  // the preview's diagrams as laid out: boxes of nodes, subgraphs and labels, points along edges
             std::fputs(md_diagram_dump().c_str(), stderr);
+        } else if (verb == "mdtoday") {  // mdtoday:DAYS, the date diagrams are drawn for from now on (days from 1970)
+            md_set_today(std::atoll(arg.c_str()));
         } else if (verb == "imagewait") {  // every picture asked for has been read (10 s at most)
             picture_wait();
         } else if (verb == "imagedump") {  // the image tab in front: what it shows, and how

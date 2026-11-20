@@ -232,6 +232,14 @@ for size in 3600x1100 1200x1100; do
     check "plans.md at $size: a picture for each, the mistake's code under it" "6,1"
 done
 
+# A Gantt chart that marks today is laid out again when the day changes
+# (and not before: its marker is at the day's midnight), at that day; one
+# that does not is kept. (16081 is 11 January 2014.)
+printf '```mermaid\ngantt\n  dateFormat YYYY-MM-DD\n  todayMarker stroke:#0f0\n  A :a, 2014-01-01, 30d\n  B :b, 2014-01-11, 2d\n```\n\n```mermaid\ngantt\n  A :c, 2014-01-01, 30d\n```\n' >"$dir/today.md"
+dump 3600x1100 "$dir/today.md" "mdwait;mdtoday:16080;key:ctrl+Home;text:x;key:Return;key:Left;frame;mdwait;text:y;frame;mdwait;mdtoday:16081;text:z;frame;mdwait"
+got=$(printf '%s\n' "$got" | awk '/^laid out/ { n = $3 } /^node b / { b = $3 } /^today / { t = $3 } END { print n, (b != "" && b == t) }')
+check "a chart marking today: laid out again the next day, its marker at that day" "4 1"
+
 # Code blocks in colour: each run of a row in the colour it is drawn in,
 # with the theme's keywords made red. A language with a grammar is coloured
 # by it, by its name or another (c++, py, sh); one with none stays as it was,

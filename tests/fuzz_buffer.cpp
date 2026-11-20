@@ -60,6 +60,7 @@
 #include "lsp.hpp"
 #include "match.hpp"
 #include "syntax.hpp"
+#include "threads.hpp"
 #include "tree.hpp"
 #include "utf8.hpp"
 #include "vim.hpp"
@@ -3002,6 +3003,89 @@ void plans_test() {
             const auto b2 = bars(other);
             check(b2.size() == 2 && near(b2.at("a").x, iso.at("a").x) && near(b2.at("b").x, iso.at("b").x) && near(b2.at("b").w, iso.at("b").w), std::string("plans: dates read by dateFormat: ") + other);
         }
+    }
+    // A mindmap 2,000 deep (each node the one before's child) laid out on a
+    // thread with a small stack: not by recursion.
+    {
+        std::string chain = "mindmap\n";
+        for (int k = 0; k < 1999; ++k) chain += std::string(static_cast<size_t>(k) + 1, ' ') + "n" + std::to_string(k) + "\n";
+        u8 made = kDiagramNone;
+        {
+            DeepThread t(64 << 10, [&] {
+                Drawing d;
+                std::string err;
+                made = diagram_make(chain, st, &d, &err);
+            });
+        }
+        check(made == kDiagramDrawn, "plans: a mindmap 2,000 deep, on a small stack");
+    }
+    // A section's colour is never the critical tasks' red (a dark theme's
+    // fourth slice is its keyword colour, often its error colour too): only
+    // the critical bar is filled in it.
+    {
+        DiagramStyle red = st;
+        for (u32 i = 0; i < kMdInkCount; ++i) red.palette.ink[i][0] = red.palette.ink[i][1] = red.palette.ink[i][2] = 0.5f;
+        const float inks[][3] = {{0.3f, 0.6f, 0.9f}, {0.9f, 0.8f, 0.3f}, {0.4f, 0.8f, 0.4f}, {0.9f, 0.35f, 0.4f}};
+        for (u32 k = 0; k < 4; ++k) std::copy(inks[k], inks[k] + 3, red.palette.ink[kMdSlice0 + k]);
+        std::copy(inks[3], inks[3] + 3, red.palette.ink[kMdError]);
+        Drawing d;
+        std::string err;
+        diagram_make("gantt\n dateFormat YYYY-MM-DD\n section A\n a :2024-01-01, 2d\n section B\n b :2d\n section C\n c :2d\n section D\n d :2d\n e :crit, 2d\n", red, &d, &err);
+        const DiagramColour crit = red.palette.tone(kMdError, red.palette.dark() ? 0.4f : 0.32f);
+        int same = 0;
+        for (const DiagramItem& it : d.items)
+            same += it.kind == DiagramItem::kShape && std::fabs(it.fill.r - crit.r) + std::fabs(it.fill.g - crit.g) + std::fabs(it.fill.b - crit.b) < 0.1f;
+        check(same == 1, "plans: no section's bars in the critical tasks' red");
+    }
+    // The axis's ticks are never finer than its format tells apart: three
+    // milestones over two days, written %Y-%m-%d, say each day once.
+    {
+        Drawing d;
+        std::string err;
+        diagram_make("gantt\n dateFormat YYYY-MM-DD\n A :milestone, 2024-01-01, 0d\n B :milestone, 2024-01-01, 0d\n C :milestone, 2024-01-02, 0d\n", st, &d, &err);
+        int first = 0;
+        for (const DiagramItem& it : d.items) first += it.kind == DiagramItem::kText && it.text == "2024-01-01";
+        check(first == 1, "plans: an axis over a day, written without the time: each date once");
+        diagram_make("gantt\n dateFormat YYYY-MM-DD\n axisFormat %b %Y\n A :a, 2024-01-03, 20d\n B :b, after a, 30d\n", st, &d, &err);
+        int jan = 0;
+        for (const DiagramItem& it : d.items) jan += it.kind == DiagramItem::kText && it.text == "Feb 2024";
+        check(jan == 1, "plans: an axis written in months: each month once");
+    }
+    // Today's marker at the midnight of the day the style says (not the
+    // clock's second), the same pixels however often it is drawn; none
+    // without a day.
+    {
+        auto today = [&](i64 day, Drawing* d) {
+            DiagramStyle s = st;
+            s.today = day;
+            DiagramGeometry geo;
+            std::string err;
+            diagram_make("gantt\n dateFormat YYYY-MM-DD\n todayMarker stroke:#0f0\n A :a, 2024-01-01, 4d\n B :b, 2024-01-03, 1d\n", s, d, &err, &geo);
+            float at = -1, b = -2;
+            for (const Box& x : geo.boxes) {
+                if (x.kind == "today") at = x.x;
+                if (x.name == "b") b = x.x;
+            }
+            return std::fabs(at - b) < 0.05f ? 1 : at < 0 ? 0 : -1;
+        };
+        Drawing one, two;
+        check(today(19725, &one) == 1 && today(19725, &two) == 1, "plans: today marked at its midnight");  // (2024-01-03)
+        check(one.items.size() == two.items.size() && today(kDiagramNoDay, &two) == 0 && today(19800, &two) == 0, "plans: today marked only when it is known and on the chart");
+        check(diagram_dated("gantt\n todayMarker stroke:red\n A :2024-01-01, 1d\n") && !diagram_dated("gantt\n todayMarker off\n A :2024-01-01, 1d\n") && !diagram_dated("gantt\n A :2024-01-01, 1d\n"),
+              "plans: a chart is another picture each day only when it marks today");
+    }
+    // A milestone at the first date or the last is within its band.
+    {
+        Drawing d;
+        DiagramGeometry geo;
+        std::string err;
+        diagram_make("gantt\n dateFormat YYYY-MM-DD\n section S\n start :milestone, m0, 2024-01-01, 0d\n A :a, 2024-01-01, 5d\n end :milestone, m1, 2024-01-06, 0d\n", st, &d, &err, &geo);
+        Box band, m0, m1, a;
+        for (const Box& x : geo.boxes) {
+            if (x.kind == "cluster") band = x;
+            if (x.kind == "node") (x.name == "m0" ? m0 : x.name == "m1" ? m1 : a) = x;
+        }
+        check(m0.x >= band.x && m1.x + m1.w <= band.x + band.w && near(m0.x + m0.w / 2, a.x) && near(m1.x + m1.w / 2, a.x + a.w), "plans: milestones at the ends within the band, at their dates");
     }
     {
         Drawing d;

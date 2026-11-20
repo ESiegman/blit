@@ -141,14 +141,19 @@ struct DiagramGeometry {
     std::string dump() const;
 };
 
-// What a diagram is laid out for: the font and its size, the colours, and
-// the room it has across (points).
+// No day (a Gantt chart's todayMarker then marks nothing).
+constexpr i64 kDiagramNoDay = INT64_MIN;
+
+// What a diagram is laid out for: the font and its size, the colours, the
+// room it has across (points), and the date (a picture is the same however
+// often it is drawn on one day: the clock is not read while laying out).
 struct DiagramStyle {
     const DiagramFont* font = nullptr;
     float size = 13;      // the text's size, points
     float room = 600;     // how wide it may be (it is made smaller to fit, if it is wider)
     DiagramPalette palette;
     std::stop_token stop;  // (asked to stop: it gives up, "stopped")
+    i64 today = kDiagramNoDay;  // the local date, in days from 1 January 1970
     float unit() const { return size / 16; }  // (Mermaid's sizes are for 16 pixel text: in proportion)
 };
 
@@ -306,10 +311,15 @@ struct DiagramLine {
 std::vector<DiagramLine> diagram_lines(std::string_view src, std::string* title = nullptr);
 // The palette's inks that tell one series from another (a mindmap's
 // branches, a timeline's sections, a Gantt chart's): its slices first, then
-// other inks unlike them, each different enough from the rest.
-std::vector<u8> diagram_series(const DiagramPalette& p);
+// other inks unlike them, each different enough from the rest (and from
+// `avoid`, an ink that means something else where they are drawn).
+std::vector<u8> diagram_series(const DiagramPalette& p, u8 avoid = kMdInkCount);
 
 // Gantt charts and timelines (gantt.cpp), mindmaps (mindmap.cpp).
+// Whether a source is a Gantt chart that marks today (so its picture is
+// another one each day); and today's local date, in days from 1970.
+bool diagram_dated(std::string_view source);
+i64 diagram_today();
 bool gantt_layout(const std::vector<DiagramLine>& lines, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo);
 bool timeline_layout(const std::vector<DiagramLine>& lines, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo);
 bool mindmap_layout(const std::vector<DiagramLine>& lines, const DiagramStyle& style, Drawing* out, std::string* err, DiagramGeometry* geo);

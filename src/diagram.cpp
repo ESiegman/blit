@@ -26,8 +26,12 @@ DiagramColour DiagramPalette::tone(u8 which, float k) const {
     return {bg[0] + (c[0] - bg[0]) * k, bg[1] + (c[1] - bg[1]) * k, bg[2] + (c[2] - bg[2]) * k, 1};
 }
 
-std::vector<u8> diagram_series(const DiagramPalette& p) {
+std::vector<u8> diagram_series(const DiagramPalette& p, u8 avoid) {
     std::vector<u8> out;
+    auto near_to = [&](const float* c, u8 o) {
+        const float* q = p.ink[o];
+        return std::fabs(c[0] - q[0]) + std::fabs(c[1] - q[1]) + std::fabs(c[2] - q[2]) < 0.24f;
+    };
     for (const u8 i : {kMdSlice0, kMdSlice1, kMdSlice2, kMdSlice3, kMdHeading1, kMdHeading2, kMdHeading3, kMdAccent, kMdLink, kMdLabel, kMdCodeConstant, kMdCodeKeyword, kMdCodeType,
                        kMdCodeString}) {
         const float* c = p.ink[i];
@@ -35,11 +39,8 @@ std::vector<u8> diagram_series(const DiagramPalette& p) {
         // brightness; and not near one already taken)
         if (std::max({c[0], c[1], c[2]}) - std::min({c[0], c[1], c[2]}) < 0.12f) continue;
         if (std::fabs(c[0] * 0.3f + c[1] * 0.59f + c[2] * 0.11f - (p.bg[0] * 0.3f + p.bg[1] * 0.59f + p.bg[2] * 0.11f)) < 0.15f) continue;
-        bool near = false;
-        for (const u8 o : out) {
-            const float* q = p.ink[o];
-            near = near || std::fabs(c[0] - q[0]) + std::fabs(c[1] - q[1]) + std::fabs(c[2] - q[2]) < 0.24f;
-        }
+        bool near = avoid < kMdInkCount && near_to(c, avoid);
+        for (const u8 o : out) near = near || near_to(c, o);
         if (!near) out.push_back(i);
         if (out.size() == 8) break;
     }
