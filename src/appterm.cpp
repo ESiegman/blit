@@ -500,13 +500,14 @@ void App::term_sync() {
                 d.term_closed = true;
                 // (One on another machine whose connection went did not fail or exit: it is not known how it went.)
                 const bool lost = v.status == -1 && v.conn && v.conn->state() == Remote::kFailed;
-                if (v.keep) {  // (a build's: how it went, and the time it took)
+                if (v.keep) {  // (a build's: how it went, and the time it took; one that never started has said why)
                     char took[48];
                     std::snprintf(took, sizeof took, "%.1f s", static_cast<double>(now_ns() - v.started_ns) * 1e-9);
                     std::lock_guard lock(v.mu);
-                    v.term.feed(v.status == 0 ? std::string("\r\n\x1b[32m[done in ") + took + "]\x1b[0m"
-                                : lost        ? "\r\n\x1b[31m[connection to " + v.host + " lost after " + took + "]\x1b[0m"
-                                              : "\r\n\x1b[31m[failed with " + std::to_string(v.status.load()) + " after " + took + "]\x1b[0m");
+                    if (!v.unstarted)
+                        v.term.feed(v.status == 0 ? std::string("\r\n\x1b[32m[done in ") + took + "]\x1b[0m"
+                                    : lost        ? "\r\n\x1b[31m[connection to " + v.host + " lost after " + took + "]\x1b[0m"
+                                                  : "\r\n\x1b[31m[failed with " + std::to_string(v.status.load()) + " after " + took + "]\x1b[0m");
                     build_ended(d.id, v.status);
                     continue;
                 }

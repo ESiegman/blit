@@ -522,6 +522,8 @@ check "and one opened just after: why, and no exit code" 'Ctrl+` back to the fil
 mkdir -p "$T/.mk" && printf 'all:\n\t@echo built\n' >"$T/.mk/Makefile"
 run "remotewait;frame;buildpanel;frame;buildrun;buildwait;frame;dump" "ssh://box$T/.mk"
 check "a build there: its tab names the machine" 'V(>[untitled*] / [make (box)*])0.70'
+run "remotewait;frame;buildpanel;frame;$drop;buildrun;buildwait;frame;key:cmd+alt+Down;termend;termdump" "ssh://box$T/.mk"
+check "one started just after the connection is lost: why, and no exit code" 'the connection to box was lost @1,0 4x64 ended 1'
 
 # The agent was copied there once, into the cache blit keeps in that home.
 got=$(ls "$T/.cache/blit" | sed -e 's/-[0-9a-f]*$//')
