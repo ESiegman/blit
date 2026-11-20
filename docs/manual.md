@@ -2954,7 +2954,9 @@ what it wrote; the next cell run starts another.
 
 For a notebook on another machine the kernel runs there, through blit's
 agent as everything else there does: the program is written to
-`~/.cache/blit` there, and the Python is chosen there as above.
+`~/.cache/blit` there, and the Python is chosen there as above. If the
+connection is lost, the kernel goes with it: that is said, and the status
+bar reads `kernel lost with HOST` in red until a cell is run again.
 
 "Run the cell (# %%)" in any other script with `# %%` cells sends the
 cell to the [Python console](#the-python-console) instead (started if it

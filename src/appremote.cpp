@@ -609,6 +609,7 @@ void App::remote_sync() {
             up = true;
             lsp_forget_failed("@" + r->host());
         }
+        if (st == Remote::kFailed && was != Remote::kFailed) nb_connections();  // (a kernel there went with it)
         was = st;
     }
     if (up) {

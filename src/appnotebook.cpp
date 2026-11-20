@@ -82,6 +82,7 @@ struct NotebookTab {
     // so far (its count, its outputs, and that they are to go when the next
     // comes: clear_output(wait=True)).
     std::unique_ptr<Kernel> kernel;
+    std::string lost;  // the machine whose connection its kernel went with (until one starts again)
     bool ipython = false;
     std::string version, python;  // (and the program it runs in)
     struct Run {
@@ -315,6 +316,7 @@ bool App::nb_start(Doc& d) {
         return false;
     }
     nb.kernel = std::move(k);
+    nb.lost.clear();
     nb.ipython = false;
     nb.version.clear();
     nb.python.clear();
@@ -388,6 +390,14 @@ void App::nb_sync() {
                     if (!e.flag) drop_waiting(d);  // (as Jupyter: after an error, nothing more)
                     break;
                 case Kernel::Event::kEnded: {
+                    if (nb.lost.empty()) nb.lost = nb_host_down(d);
+                    if (!nb.lost.empty()) {  // (its connection went: that is why)
+                        notify("The kernel has stopped: the connection to " + nb.lost + " was lost", 2);
+                        if (nb.running.key) put_running(d, false), touched = false;
+                        nb.running = {};
+                        drop_waiting(d);
+                        break;
+                    }
                     // (Said with the last line of what it wrote as errors; all of it in the messages.)
                     std::string why = e.text;
                     while (!why.empty() && (why.back() == '\n' || why.back() == ' ')) why.pop_back();
@@ -511,10 +521,14 @@ bool App::nb_kernel_wait(bool started) {
 // bar: what it is (IPython or Python, its version, and the virtual
 // environment, or the program, it runs in) and whether it is running a
 // cell; "" when the tab is neither.
-std::string App::nb_kernel_status(Doc& d) {
+std::string App::nb_kernel_status(Doc& d, bool* lost) {
     Doc* src = nb_of(d);
     if (!src) return {};
     const NotebookTab& nb = *src->nb;
+    if (!nb.lost.empty()) {  // (gone with its connection: red, until a kernel starts again)
+        *lost = true;
+        return "kernel lost with " + nb.lost;
+    }
     if (!nb.kernel) return "no kernel";
     if (nb.kernel->pid() < 0) return "kernel starting\xE2\x80\xA6";
     std::string where = nb.python;
@@ -524,12 +538,30 @@ std::string App::nb_kernel_status(Doc& d) {
     return std::string(nb.ipython ? "IPython, Python " : "Python ") + nb.version + (where.empty() ? "" : " (" + where + ")") + (busy ? " \xC2\xB7 busy" : " \xC2\xB7 idle");
 }
 
+// The machine a notebook's kernel runs on, when its connection there is
+// down ("" if it is up, or the kernel is here).
+std::string App::nb_host_down(const Doc& d) {
+    std::string host, there;
+    if (!d.nb || !d.nb->kernel || !d.nb->kernel->remote() || !split_remote(d.ed.path, &host, &there)) return {};
+    for (const std::shared_ptr<Remote>& r : Remote::all())
+        if (r->host() == host) return r->state() == Remote::kReady ? std::string() : host;
+    return {};
+}
+
+// A connection has come up or gone down: a kernel there that went with it
+// says so (in red, in the status bar).
+void App::nb_connections() {
+    for (Doc* d : open_docs())
+        if (d->nb && d->nb->lost.empty()) d->nb->lost = nb_host_down(*d);
+}
+
 // For the tests: the kernel of the notebook in front: what it is, its
 // process, whether a cell is running, and how many wait.
 std::string App::nb_kernel_dump() {
     Doc* d = nb_of(*pane_->doc);
     if (!d) return "not a notebook";
     const NotebookTab& nb = *d->nb;
+    if (!nb.lost.empty()) return "lost with " + nb.lost;
     if (!nb.kernel) return "no kernel";
     std::string out = std::string(nb.ipython ? "ipython" : "python") + " pid " + std::to_string(nb.kernel->pid());
     out += nb.running.key ? std::string(nb.started ? " running" : " sent") : std::string(" idle");
