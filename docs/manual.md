@@ -1933,6 +1933,10 @@ terminal's; for a tab with neither, the working folder's), and says while it is 
 so in red; click it to connect again (it is also made again by itself the
 next time something is opened or saved there, after a few seconds).
 
+When the connection ends (blit quits, or the link drops), the agent ends
+what it started there, each program with all that program started in turn,
+kills what has not ended two seconds later, and then ends itself.
+
 What it needs:
 
 - ssh. Without a key, what ssh asks (a password, a key's passphrase,

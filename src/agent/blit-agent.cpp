@@ -21,6 +21,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <chrono>
 #include <cerrno>
 #include <climits>
 #include <csignal>
@@ -331,8 +332,15 @@ bool spawn(uint32_t id, const std::string& cwd, std::vector<std::string> argv, s
     else posix_spawn_file_actions_adddup2(&fa, er[1], 2);
     for (const int fd : {in[0], out[1], er[1]})
         if (fd >= 0) posix_spawn_file_actions_addclose(&fa, fd);
+    // (A process group of its own: what it starts in turn, a language
+    // server's worker, is ended with it when blit goes.)
+    posix_spawnattr_t attr;
+    posix_spawnattr_init(&attr);
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+    posix_spawnattr_setpgroup(&attr, 0);
     pid_t pid = 0;
-    const int rc = ::posix_spawnp(&pid, args[0], &fa, nullptr, args.data(), envp.data());
+    const int rc = ::posix_spawnp(&pid, args[0], &fa, &attr, args.data(), envp.data());
+    posix_spawnattr_destroy(&attr);
     posix_spawn_file_actions_destroy(&fa);
     ::close(in[0]), ::close(out[1]);
     if (er[1] >= 0) ::close(er[1]);
@@ -635,15 +643,54 @@ void handle(uint8_t op, uint32_t id, std::string_view body) {
     }
 }
 
+// Once blit has gone, what it started is told to end; whatever has not by
+// kKillAfter is killed, and whatever still holds a pipe open by kLeaveAfter
+// (a program that has left its group) is left: the agent ends all the same.
+constexpr auto kKillAfter = std::chrono::seconds(2), kLeaveAfter = std::chrono::seconds(3);
+
+// Each program's process group (its own: spawn), and the program, if it is
+// still there: a terminal's hung up on, another's sent `sig`. (The group
+// even when the program has exited: what it started may still be running.)
+void end_children(int sig) {
+    for (auto& [id, c] : children) {
+        if (c.pid <= 0) continue;
+        const int s = c.pty && sig == SIGTERM ? SIGHUP : sig;  // (a shell does not end on SIGTERM; a terminal that hangs up ends it)
+        ::kill(-c.pid, s);
+        if (!c.exited) ::kill(c.pid, s);
+    }
+}
+
+// Told to end (SIGTERM, SIGHUP: what ssh here is sent, where it is the
+// agent itself, or what someone ends it with there): as when blit goes.
+volatile std::sig_atomic_t told_to_end = 0;
+
 }  // namespace
 
 int main() {
     std::signal(SIGPIPE, SIG_IGN);
+    for (const int sig : {SIGTERM, SIGHUP}) std::signal(sig, [](int) { told_to_end = 1; });
     ::fcntl(0, F_SETFL, ::fcntl(0, F_GETFL) | O_NONBLOCK);
     std::string in;  // what has come from blit and is not yet a whole frame
     char buf[65536];
     bool open = true;
+    std::chrono::steady_clock::time_point gone{};  // (when blit went)
+    bool killed = false;
+    auto blit_gone = [&] {  // the programs it started go too
+        open = false;
+        gone = std::chrono::steady_clock::now();
+        for (auto& [pid, c] : children) c.paused = false;  // (what they still write is read, so that they can end)
+        end_children(SIGTERM);
+    };
     while (open || working.load() > 0 || !children.empty()) {
+        if (open && told_to_end) blit_gone();
+        if (!open) {
+            const auto waited = std::chrono::steady_clock::now() - gone;
+            if (waited >= kLeaveAfter) std::_Exit(0);  // (no waiting for the finder's threads either)
+            if (waited >= kKillAfter && !killed) {
+                killed = true;
+                end_children(SIGKILL);
+            }
+        }
         // What to wait for: blit, and each program's output and input.
         std::vector<pollfd> fds;
         std::vector<std::pair<uint32_t, int>> who;  // for each after blit's: (process, 0 input / 1 output / 2 errors)
@@ -669,17 +716,7 @@ int main() {
                     if (got > 0) {
                         in.append(buf, static_cast<size_t>(got));
                     } else if (got == 0) {
-                        open = false;  // blit has gone: the programs it started go too
-                        for (auto& [pid, c] : children) {
-                            c.paused = false;  // (what they still write is read, so that they can end)
-                            if (c.pid <= 0 || c.exited) continue;
-                            if (c.pty) {  // (a shell does not end on SIGTERM; a terminal that hangs up ends it)
-                                ::kill(-c.pid, SIGHUP);
-                                ::kill(c.pid, SIGHUP);
-                            } else {
-                                ::kill(c.pid, SIGTERM);
-                            }
-                        }
+                        blit_gone();
                         break;
                     } else {
                         break;

@@ -297,6 +297,30 @@ printf 'def test_one():\n    pass\n\n\ndef test_two():\n    assert 1 == 2\n' >"$
 PATH="$dir/bin:$PATH" slow "remotewait;testdump;clock;command:Run the tests;within:300;testdump" "$R/py"
 check "the tests run on a slow host: at once, and how they went" 'tests/test_a.py: .test_one .test_two ;; within 300 ms ;; blit: 1 failed, 1 passed ;; tests/test_a.py: +test_one xtest_two'
 
+# When blit goes, all its agent started there goes, and the agent too: a
+# language server whose worker will not end on SIGTERM and holds the
+# server's output open is ended with its process group, killed if it must.
+if [ -x "$(dirname "$blit")/blit_fakelsp" ]; then
+    mkdir -p "$dir/srv" && : >"$dir/srv/CMakeLists.txt" && printf 'int a;\n' >"$dir/srv/a.cpp"
+    cat >"$dir/lingers.sh" <<EOF
+#!/bin/sh
+trap '' TERM
+sleep 600 &
+echo \$! >"$dir/lingers.pid"
+exec "$(cd "$(dirname "$blit")" && pwd)/blit_fakelsp" "\$@"
+EOF
+    chmod +x "$dir/lingers.sh"
+    printf 'blit.opt.git.enabled = false\nblit.opt.lsp.servers.fake = { command = { "%s" }, languages = { "cpp" }, roots = { "CMakeLists.txt" } }\n' "$dir/lingers.sh" >"$dir/lingers.lua"
+    INIT="$dir/lingers.lua"
+    run "remotewait;frame;ready" "ssh://box$dir/srv/a.cpp"
+    worker=$(cat "$dir/lingers.pid" 2>/dev/null)
+    alive() { if kill -0 "$worker" 2>/dev/null || pgrep -f "$T/.cache/blit/blit-agent" >/dev/null; then echo running; else echo ended; fi; }
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do [ "$(alive)" = ended ] && break; sleep 0.2; done
+    got="${worker:+a worker} $(alive)"
+    kill -9 "$worker" 2>/dev/null; pkill -9 -f "$T/.cache/blit/blit-agent"  # (where it failed: none left behind by the test)
+    check "blit gone: the agent and a language server's stubborn worker end there" 'a worker ended'
+fi
+
 # The agent was copied there once, into the cache blit keeps in that home.
 got=$(ls "$T/.cache/blit" | sed -e 's/-[0-9a-f]*$//')
 check "the agent, copied once" "blit-agent-$(uname -s)-$(uname -m)"
