@@ -180,6 +180,9 @@ printf 'one\nTWO\nthree\nfour\n' >"$dir/repo/notes.txt"
 INIT="$dir/git.lua"
 run "remotewait;panel;frame;gitwait;frame;open:ssh://box$dir/repo/notes.txt;remotewait;frame;gitwait;frame;gitwait;frame;gitdump" "ssh://box$dir/repo"
 check "git's view of a repository there" 'main | changes M:notes.txt | branches *main | commits 1 "first" | lines 2~ 4+'
+INIT="$dir/git.lua"
+run "remotewait;panel;frame;gitwait;frame;git:diff:notes.txt;gitwait;dump" "ssh://box$dir/repo"
+check "a diff there: its tab names the machine" '>[untitled notes.txt (changes, box)*]'
 INIT="$dir/git.lua" SLOW=0.5 slow "remotewait;panel;frame;gitwait;frame;open:ssh://box$dir/repo/notes.txt;remotewait;frame;gitwait;frame;gitwait;command:Show or hide who changed each line (git blame);frame;gitbusy;clock;key:cmd+W;within:300;dump" "ssh://box$dir/repo"
 check "a tab closed while a slow blame of it runs: at once (the blame is stopped)" 'within 300 ms ;; >[untitled*]'
 # Another worktree there, opened from the Git tab: git there names it without
@@ -488,6 +491,11 @@ check "a terminal there whose connection is lost" 'Ctrl+` back to the file|$|[co
 got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
     --script "remotewait;$drop;key:ctrl+\`;frame;termend;termdump" "$R/notes.txt" 2>&1 >/dev/null | sed -e 's/ @.*ended/ ended/' | join)
 check "and one opened just after: why, and no exit code" 'Ctrl+` back to the file|the connection to box was lost ended 1'
+
+# A build there: its output's tab names the machine, as a terminal's does.
+mkdir -p "$T/.mk" && printf 'all:\n\t@echo built\n' >"$T/.mk/Makefile"
+run "remotewait;frame;buildpanel;frame;buildrun;buildwait;frame;dump" "ssh://box$T/.mk"
+check "a build there: its tab names the machine" 'V(>[untitled*] / [make (box)*])0.70'
 
 # The agent was copied there once, into the cache blit keeps in that home.
 got=$(ls "$T/.cache/blit" | sed -e 's/-[0-9a-f]*$//')

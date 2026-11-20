@@ -455,7 +455,7 @@ u64 App::term_open(const std::string& dir_given, const std::string& command, con
     v->reader = std::jthread([raw](std::stop_token stop) { raw->read_loop(stop); });
     const size_t at = std::min(pane_->tab + 1, pane_->docs.size());  // (after the tab in front; first in a split with none yet)
     Doc* d = add_doc(at);
-    d->title = !title.empty() ? title : remote ? "Terminal: " + host : "Terminal";
+    d->title = !title.empty() ? (remote ? title + " (" + host + ")" : title) : remote ? "Terminal: " + host : "Terminal";  // (a build's there names its machine)
     d->read_only = true;  // (its text is the program's: saving it is no saving)
     d->term = v;
     tab_show(at);

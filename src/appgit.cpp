@@ -754,6 +754,8 @@ void App::git_open_view(std::vector<std::string> args, const std::string& title,
         }
     Doc* d = add_doc(pane_->tab + 1);
     d->title = title;
+    if (std::string host, there; split_remote(g.dir, &host, &there))  // (a repository on another machine: which, "notes.txt (changes, box)")
+        d->title = title.ends_with(')') ? title.substr(0, title.size() - 1) + ", " + host + ")" : title + " (" + host + ")";
     d->read_only = true;
     d->gitview = std::make_shared<GitView>();
     GitView& v = *d->gitview;
