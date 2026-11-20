@@ -231,7 +231,7 @@ if command -v cmake >/dev/null 2>&1; then
     printf 'int main(void) { return 0; }\n' >"$T/app.c"
     cp "$T/app.c" "$T/tool.c"
     (cd "$T" && cmake -S . -B build >/dev/null 2>&1)
-    got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$T;frame;key:cmd+shift+u;builddump;frame;key:Up;key:Up;key:Return;key:Return;key:Down;key:Return;finddump;key:Down;key:Return;frame;buildrun:Build;buildwait;builddump" "$T/CMakeLists.txt" 2>&1 >/dev/null | tail -2 | tr '\n' '/')
+    got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$T;frame;key:cmd+shift+u;builddump;frame;key:Up;key:Up;key:Return;key:Return;key:Down;key:Return;buildwait;finddump;key:Down;key:Return;frame;buildrun:Build;buildwait;builddump" "$T/CMakeLists.txt" 2>&1 >/dev/null | tail -2 | tr '\n' '/')
     got="$got $(sed -n 's/^CMAKE_BUILD_TYPE:STRING=//p' "$T/build/CMakeCache.txt") $(ls "$T/build" | grep -E '^(app|tool)$' | tr '\n' ' ')"
     check "CMake: the build type and a target chosen, and built so" 'pick [] 3 : >all app tool/CMake: >Build Test Clean Configure (last: 0)/ Release app '
     if command -v ninja >/dev/null 2>&1; then
@@ -242,9 +242,20 @@ if command -v cmake >/dev/null 2>&1; then
         printf 'int main(void) { return 0; }\n' >"$TN/app.c"
         printf 'int core(void) { return 0; }\n' >"$TN/core.c"
         (cd "$TN" && cmake -S . -B build -G Ninja >/dev/null 2>&1)
-        run "$TN" "key:cmd+shift+u;builddump;frame;key:Up;key:Return;finddump"
+        run "$TN" "key:cmd+shift+u;builddump;frame;key:Up;key:Return;buildwait;finddump"
         check "with Ninja: the executables of the top folder too (its help has phony names alone)" 'pick [] 4 : >all core tool app'
     fi
+    # The targets are listed on a thread of their own (on another machine
+    # the listing is a round trip): a slow cmake does not hold the window,
+    # and the picker opens once they are listed.
+    mkdir -p "$dir/slow"
+    printf '#!/bin/sh\nsleep 1\nexec "%s" "$@"\n' "$(command -v cmake)" >"$dir/slow/cmake"
+    chmod +x "$dir/slow/cmake"
+    path=$PATH
+    PATH="$dir/slow:$PATH"
+    got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$T;frame;key:cmd+shift+u;builddump;frame;key:Up;key:Return;finddump;buildwait;finddump" 2>&1 >/dev/null | tail -2 | tr '\n' '/')
+    PATH=$path
+    check "a slow listing of the targets: the window not held, the picker opened after" 'closed/pick [] 3 : >all app tool/'
 fi
 
 # The sanitizers' reports, as a program run prints them: AddressSanitizer

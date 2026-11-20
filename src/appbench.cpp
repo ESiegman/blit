@@ -1400,7 +1400,7 @@ void App::run_script(const char* script) {
         } else if (verb == "buildrun") {  // buildrun:name runs that task (buildrun alone: the Run button's)
             build_settle();
             if (!build_run_named(arg)) std::fprintf(stderr, "buildrun: no \"%s\"\n", arg.c_str());
-        } else if (verb == "buildwait") {  // the task run has ended (60 s at most)
+        } else if (verb == "buildwait") {  // the task run has ended, and the targets being listed are (60 s at most)
             build_wait();
         } else if (verb == "problemsdump") {  // the Run button's words and the Problems tab's rows (> the one picked)
             std::fprintf(stderr, "%s\n", problems_dump().c_str());

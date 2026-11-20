@@ -88,6 +88,14 @@ struct App::BuildUi {
     // CMake's build type and target, chosen in the Build tab (empty: the
     // project's own, and all), put into its tasks as they run.
     std::string cmake_type, cmake_target;
+    // The build folder's targets, listed on a thread of its own (on another
+    // machine the listing is a round trip), and what it found.
+    struct Listed {
+        bool ran = false;  // (else: CMake listed none)
+        std::vector<std::string> targets;
+    };
+    std::optional<Listed> listed;  // (mu)
+    bool listing = false;
     // The Build tab: a row for each system and for each task, and the one chosen.
     struct Row {
         int task = -1;  // -1: a system's heading; kTypeRow, kTargetRow: CMake's build type and target
@@ -137,6 +145,46 @@ std::string with_cmake(std::string cmd, const std::string& type, const std::stri
     return cmd;
 }
 
+template <class Fn>
+void each_line(std::string_view text, Fn fn) {
+    while (!text.empty()) {
+        const size_t nl = text.find('\n');
+        fn(text.substr(0, nl));
+        if (nl == std::string_view::npos) break;
+        text.remove_prefix(nl + 1);
+    }
+}
+
+// A build folder's targets, "all" first, from what build_option's command
+// printed: CMake's help, then a form feed and (with Ninja) Ninja's own list
+// of what it makes. `said`: the help printed anything.
+std::vector<std::string> cmake_targets(std::string_view out, bool* said) {
+    const size_t ff = out.find("\n\f\n");
+    const std::string_view help = out.substr(0, ff), made = ff == std::string_view::npos ? std::string_view{} : out.substr(ff + 3);
+    *said = !help.empty();
+    std::vector<std::string> targets{"all"};
+    each_line(help, [&](std::string_view line) {
+        std::string name;
+        if (line.starts_with("... ")) name = std::string(line.substr(4, line.find(' ', 4) - 4));  // (make's "... name")
+        else if (const size_t c = line.find(": phony"); c != std::string_view::npos) name = std::string(line.substr(0, c));  // (Ninja's "name: phony")
+        else return;
+        // (CMake's own targets, and a file's object, preprocessed and assembly ones, are no target of the project's.)
+        static constexpr std::string_view kOwn[] = {"all", "clean", "depend", "edit_cache", "rebuild_cache", "install", "list_install_components", "help", "test", "package", "package_source", "ZERO_CHECK", "ALL_BUILD", "RUN_TESTS"};
+        const bool file = name.ends_with(".o") || name.ends_with(".obj") || name.ends_with(".i") || name.ends_with(".s");
+        if (!name.empty() && name.find('/') == std::string::npos && !file && std::ranges::find(kOwn, name) == std::end(kOwn) && std::ranges::find(targets, name) == targets.end())
+            targets.push_back(name);
+    });
+    // (Ninja's help lists phony names alone: an executable of the top
+    // folder is a file it makes, which Ninja's own list of targets has.)
+    each_line(made, [&](std::string_view line) {
+        const size_t c = line.find(": ");
+        if (c == std::string_view::npos || line.substr(c).find("_EXECUTABLE_LINKER__") == std::string_view::npos) return;
+        const std::string name(line.substr(0, c));
+        if (name.find('/') == std::string::npos && std::ranges::find(targets, name) == targets.end()) targets.push_back(name);
+    });
+    return targets;
+}
+
 }  // namespace
 
 std::string App::build_root() const {
@@ -169,13 +217,29 @@ void App::build_follow() {
     });
 }
 
-// What the worker found: and with it what init.lua's systems find.
+// What the worker found: and with it what init.lua's systems find. (And
+// the build folder's targets, once listed: to choose from.)
 void App::build_sync() {
     BuildUi& u = *buildui_;
     std::optional<BuildUi::Found> f;
+    std::optional<BuildUi::Listed> l;
     {
         std::lock_guard lock(u.mu);
         f.swap(u.found);
+        l.swap(u.listed);
+    }
+    if (l) {
+        u.listing = false;
+        if (!l->ran) {
+            notify("CMake did not list the targets");
+        } else {
+            find_choose_item("Target", l->targets, [this, targets = l->targets](int i) {
+                if (i < 0 || static_cast<size_t>(i) >= targets.size()) return;
+                buildui_->cmake_target = i == 0 ? std::string() : targets[static_cast<size_t>(i)];
+                ++build_gen_;
+                dirty_ = true;
+            });
+        }
     }
     if (!f) return;
     u.looking = false;
@@ -662,45 +726,30 @@ void App::build_option(int row) {
         if (t.system == "CMake" && t.cmd.find("cmake --build ") != std::string::npos && t.cmd.find("--target") == std::string::npos && (build.empty() || task_key(t) == u.current))
             build = t.cmd.substr(t.cmd.rfind("cmake --build "));
     if (build.empty()) return notify("Configure the project first: its targets are the build folder's");
+    if (u.listing) return;  // (the picker opens when they are listed)
     // ("cmake --build DIR --parallel" or "cmake --build --preset P": its help.)
     if (const size_t par = build.find(" --parallel"); par != std::string::npos) build.resize(par);
-    std::string out;
-    if (!fs_run(u.root, build + " --target help", &out, 30000) && out.empty()) return notify("CMake did not list the targets");
-    std::vector<std::string> targets{"all"};
-    for (size_t at = 0; at < out.size();) {
-        size_t nl = out.find('\n', at);
-        if (nl == std::string::npos) nl = out.size();
-        std::string_view line = std::string_view(out).substr(at, nl - at);
-        at = nl + 1;
-        std::string name;
-        if (line.starts_with("... ")) name = std::string(line.substr(4, line.find(' ', 4) - 4));  // (make's "... name")
-        else if (const size_t c = line.find(": phony"); c != std::string_view::npos) name = std::string(line.substr(0, c));  // (Ninja's "name: phony")
-        else continue;
-        // (CMake's own targets, and a file's object, preprocessed and assembly ones, are no target of the project's.)
-        static constexpr std::string_view kOwn[] = {"all", "clean", "depend", "edit_cache", "rebuild_cache", "install", "list_install_components", "help", "test", "package", "package_source", "ZERO_CHECK", "ALL_BUILD", "RUN_TESTS"};
-        const bool file = name.ends_with(".o") || name.ends_with(".obj") || name.ends_with(".i") || name.ends_with(".s");
-        if (!name.empty() && name.find('/') == std::string::npos && !file && std::ranges::find(kOwn, name) == std::end(kOwn) && std::ranges::find(targets, name) == targets.end())
-            targets.push_back(name);
-    }
-    // (Ninja's help lists phony names alone: an executable of the top
-    // folder is a file it makes, which Ninja's own list of targets has.)
-    if (out.find(": phony") != std::string::npos && fs_run(u.root, build + " -- -t targets all", &out, 30000))
-        for (size_t at = 0; at < out.size();) {
-            size_t nl = out.find('\n', at);
-            if (nl == std::string::npos) nl = out.size();
-            const std::string_view line = std::string_view(out).substr(at, nl - at);
-            at = nl + 1;
-            const size_t c = line.find(": ");
-            if (c == std::string_view::npos || line.substr(c).find("_EXECUTABLE_LINKER__") == std::string_view::npos) continue;
-            const std::string name(line.substr(0, c));
-            if (name.find('/') == std::string::npos && std::ranges::find(targets, name) == targets.end()) targets.push_back(name);
+    // One command for both (one round trip on another machine): CMake's
+    // help, then, after a form feed, Ninja's own list of what it makes when
+    // the help is Ninja's (make would take -t for touch).
+    const std::string sh = "o=$(" + build + " --target help); s=$?; printf '%s\\n\\f\\n' \"$o\"; case \"$o\" in *': phony'*) " + build +
+                           " -- -t targets all;; esac; exit $s";
+    u.listing = true;
+    std::thread([wp = std::weak_ptr<BuildUi>(buildui_), root = u.root, sh] {
+        std::string out;
+        const bool ok = fs_run(root, sh, &out, 60000);
+        BuildUi::Listed l;
+        bool said = false;
+        l.targets = cmake_targets(out, &said);
+        l.ran = ok || said;
+        const std::shared_ptr<BuildUi> sp = wp.lock();
+        if (!sp) return;
+        {
+            std::lock_guard lock(sp->mu);
+            sp->listed = std::move(l);
         }
-    find_choose_item("Target", targets, [this, targets](int i) {
-        if (i < 0 || static_cast<size_t>(i) >= targets.size()) return;
-        buildui_->cmake_target = i == 0 ? std::string() : targets[static_cast<size_t>(i)];
-        ++build_gen_;
-        dirty_ = true;
-    });
+        wake();
+    }).detach();
 }
 
 // ---------------------------------------------------------------- the Run button
@@ -795,7 +844,7 @@ std::string App::build_dump() {
     return out;
 }
 
-void App::build_wait() {  // the build's program has ended (60 s at most)
+void App::build_wait() {  // the build's program has ended, and the targets being listed are (60 s at most)
     BuildUi& u = *buildui_;
     const u64 until = now_ns() + 60'000'000'000ull;
     while (u.running && now_ns() < until) {
@@ -803,6 +852,10 @@ void App::build_wait() {  // the build's program has ended (60 s at most)
         SDL_Delay(5);
     }
     term_sync();
+    while (u.listing && now_ns() < until) {
+        SDL_Delay(5);
+        build_sync();
+    }
 }
 
 }  // namespace blit
