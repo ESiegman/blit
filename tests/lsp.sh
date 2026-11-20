@@ -57,6 +57,7 @@ fresh() {
     printf 'struct Shape {\n};\nstruct Circle : public Shape {\n};\nstruct Square : Shape {\n};\nint leaf(int n) {\n    return n;\n}\nint middle(int n) {\n    return leaf(n) + leaf(1);\n}\nint top() {\n    return middle(2);\n}\n' >"$P/calls.cpp"
     printf 'struct Ring {\n    void push(int v);\n    int pop();\n};\nvoid Ring::push(int v) {\n}\nint Ring::pop() {\n    return 0;\n}\nint drain(Ring& r) {\n    return r.pop();\n}\n' >"$P/ring.cpp"
     printf 'plain words\n' >"$P/notes.txt"
+    printf 'twice:\n\t@echo "a.cpp:1:17: error: the same one, found by the build"\n\t@echo "a.cpp:2:1: error: one only the build found"\n\t@exit 2\n' >"$P/Makefile"
 }
 
 failed=0
@@ -101,6 +102,8 @@ run "open:$P/notes.txt;lspsettle;frame;statusdump"
 check "a tab on no server: none named" 'notes.txt | Ln 1, Col 1 Tabs LF Plain text'
 run "open:$P/notes.txt;lspsettle;open:$P/a.cpp;frame;statusdump"
 check "and back: its server and its problems at once" 'a.cpp | × 1 ▲ 1 Ln 1, Col 1 Tabs LF C++ · fakec'
+run "buildrun:make twice;buildwait;lspsettle;frame;statusdump"
+check "a problem both the build and the server found: counted once" 'a.cpp | × 2 ▲ 1 Ln 1, Col 1 Tabs LF C++ · fakec'
 
 # Problems for the whole project, by file; F8 walks them across files.
 run "open:$P/b.py;open:$P/c.cpp;lspsettle;problemsdump"

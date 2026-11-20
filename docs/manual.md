@@ -560,7 +560,8 @@ differ from the last commit (saved ones: what git sees), then the file's
 path in the repository, with a dot while it has unsaved changes. On its
 right: what a script put there (`blit.ui.status`), the errors and warnings
 (the language servers' in the open file and the last build's in all of
-them), the cursor's line and column (and what is selected:
+them, one that both found on the same line counted once), the cursor's
+line and column (and what is selected:
 characters, or lines), the indentation, the line endings, and the language
 with its server; `C++ (no colours)` when that language's grammar is not
 installed (see [Syntax highlighting](#syntax-highlighting)). A click on the

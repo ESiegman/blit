@@ -132,8 +132,9 @@ struct App::StatusUi {
     // at the disk).
     u64 base_doc = ~0ull;
     std::string base_path, base;
-    // The language server's problems in the file, counted once for each set of them.
-    u64 diag_gen = ~0ull, diag_doc = ~0ull;
+    // The language server's problems in the file, counted once for each set
+    // of them (and of the build's, which may have found some of them too).
+    u64 diag_gen = ~0ull, diag_doc = ~0ull, diag_build = ~0ull;
     size_t errors = 0, warnings = 0;
     float tones[8][4] = {};  // (Popup::tones)
 };
@@ -368,18 +369,33 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
             // On the right, what is least needed first to go.
             if (!script_status_.empty()) u.right.push_back({script_status_, ink::kText, kNone, 2, 4});  // (the user's own: kept over the indentation and line ends)
             // The problems: the language server's in the open file, and the
-            // last build's across files.
+            // last build's across files. One both found (in the file, on the
+            // same line, as serious) is counted once.
             u32 errors = build_errors_, warnings = build_warnings_;
             bool server_ready = false;
             const std::string* server = lsp_.server_of(d.id, &server_ready);
             if (const std::vector<Diagnostic>* diags = server ? lsp_.diagnostics_of(d.id) : nullptr) {
-                if (u.diag_gen != lsp_.diagnostics_generation() || u.diag_doc != d.id) {
+                if (u.diag_gen != lsp_.diagnostics_generation() || u.diag_doc != d.id || u.diag_build != build_prob_gen_) {
                     u.diag_gen = lsp_.diagnostics_generation();
                     u.diag_doc = d.id;
+                    u.diag_build = build_prob_gen_;
                     u.errors = u.warnings = 0;
+                    const std::string file = is_remote(ed.path) ? ed.path : full_path(ed.path);
+                    std::vector<std::pair<u32, u8>> built;  // (line from 1, severity)
+                    for (const BuildProblem& p : build_problems())
+                        if (p.path == file) built.emplace_back(p.line, p.severity);
+                    std::ranges::sort(built);
+                    std::vector<bool> taken(built.size());
                     for (const Diagnostic& x : *diags) {
-                        if (x.severity == 1) ++u.errors;
-                        else if (x.severity == 2) ++u.warnings;
+                        if (x.severity != 1 && x.severity != 2) continue;
+                        const std::pair<u32, u8> at{static_cast<u32>(ed.buf.line_of(std::min(x.start, ed.buf.size())) + 1), x.severity};
+                        size_t i = static_cast<size_t>(std::ranges::lower_bound(built, at) - built.begin());
+                        while (i < built.size() && built[i] == at && taken[i]) ++i;
+                        if (i < built.size() && built[i] == at) {
+                            taken[i] = true;
+                            continue;
+                        }
+                        ++(x.severity == 1 ? u.errors : u.warnings);
                     }
                 }
                 errors += static_cast<u32>(u.errors), warnings += static_cast<u32>(u.warnings);
