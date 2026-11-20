@@ -19,7 +19,8 @@ printf '%s\nblit.opt.editor.modal = true\n' "$base" >"$dir/vim.lua"
 printf '%s\nblit.opt.editor.modal = false\nblit.opt.editor.close_pairs = false\n' "$base" >"$dir/off.lua"
 snips='blit.snippet("fn", "int ${1:name}(${2:void})\n{\n\t$0\n}", {lang = "cpp", desc = "a function"})
 blit.snippet("pair", "${1:a} = ${1:a} + ${2|one,two|};")
-blit.snippet("wrap", "(${TM_SELECTED_TEXT:nothing})$0")'
+blit.snippet("wrap", "(${TM_SELECTED_TEXT:nothing})$0")
+blit.snippet("rst", "if (!${1:rst_n}) ${2:q} <= 0; else $2 <= ${1};$0")'
 printf '%s\nblit.opt.editor.modal = false\n%s\n' "$base" "$snips" >"$dir/snip.lua"
 printf '%s\nblit.opt.editor.modal = true\n%s\n' "$base" "$snips" >"$dir/snipv.lua"
 export BLIT_RECENT_FILE="$dir/recent"
@@ -144,6 +145,10 @@ snip "text:A;key:Return;text:fn;key:Tab;text:add;key:Tab;text:int a;key:Tab;text
 check "with Vim, in Insert mode" 'x / int add(int a) / { / 	return a / } /  @ *4:12'
 snip "key:End;key:Return;text:pair;key:Tab;text:k;key:Tab;key:Down;key:Return"
 check "a stop in two places, then a choice" 'x / k = k + two; /  @ *2:12'
+snip "key:End;key:Return;text:rst;key:Tab;key:Tab;key:Tab"
+check "a stop's other places show its placeholder, not nothing" 'x / if (!rst_n) q <= 0; else q <= rst_n; /  @ *2:37'
+snip "key:End;key:Return;text:rst;key:Tab;key:Tab;text:r"
+check "and what is typed at the stop goes in each" 'x / if (!rst_n) r <= 0; else r <= rst_n; /  @ *2:14 2:27'
 snip "key:shift+End;command:Insert a snippet…;text:wrap;key:Return;text:!"
 check "one wrapping what is selected, from the list" '(x)! /  @ *1:5'
 snip "key:End;key:Return;text:fn;key:Tab;key:cmd+z;key:Tab"

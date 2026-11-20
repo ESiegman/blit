@@ -12,6 +12,7 @@ struct Parser {
     std::string_view s;
     size_t i = 0;
     const SnippetVars& vars;
+    const std::map<u32, std::string>* mirrored;  // a stop's placeholder, for its places that have none of their own
     std::string out;
     std::map<u32, Snippet::Stop> stops;
 
@@ -21,6 +22,13 @@ struct Parser {
         u32 n = 0;
         while (digit(i)) n = n * 10 + static_cast<u32>(s[i++] - '0');
         return n;
+    }
+    // A place of a stop with nothing of its own in it ($1, ${1}): the
+    // stop's placeholder, if it has one elsewhere.
+    void mirror_at(u32 index, u32 start) {
+        if (mirrored)
+            if (const auto m = mirrored->find(index); m != mirrored->end()) out += m->second;
+        stop_at(index, start, static_cast<u32>(out.size()));
     }
     void stop_at(u32 index, u32 start, u32 end) {
         Snippet::Stop& st = stops[index];
@@ -56,7 +64,7 @@ struct Parser {
         ++i;  // ($)
         if (digit(i)) {  // $1
             const u32 at = static_cast<u32>(out.size());
-            stop_at(number(), at, at);
+            mirror_at(number(), at);
             return;
         }
         if (name_char(i)) {  // $NAME
@@ -95,7 +103,7 @@ struct Parser {
                     if (st.choices.empty()) st.choices = std::move(choices);
                 } else {  // ${1}, or ${1/re/fmt/opts} (the transformation left out)
                     skip_braces();
-                    stop_at(index, start, start);
+                    mirror_at(index, start);
                 }
                 return;
             }
@@ -123,10 +131,10 @@ struct Parser {
     }
 };
 
-}  // namespace
-
-Snippet parse_snippet(std::string_view body, const SnippetVars& vars) {
-    Parser p{body, 0, vars, {}, {}};
+// The text and its stops, read once (`mirrored`: what goes in a stop's
+// places that have nothing of their own).
+Snippet parse_once(std::string_view body, const SnippetVars& vars, const std::map<u32, std::string>* mirrored) {
+    Parser p{body, 0, vars, mirrored, {}, {}};
     while (p.i < body.size()) {
         if (body[p.i] == '\\' && p.i + 1 < body.size() && (body[p.i + 1] == '$' || body[p.i + 1] == '}' || body[p.i + 1] == '\\')) {
             p.out += body[p.i + 1];
@@ -145,6 +153,25 @@ Snippet parse_snippet(std::string_view body, const SnippetVars& vars) {
     if (const auto zero = p.stops.find(0); zero != p.stops.end()) s.stops.push_back(std::move(zero->second));
     else s.stops.push_back({0, {{static_cast<u32>(s.text.size()), static_cast<u32>(s.text.size())}}, {}});
     return s;
+}
+
+}  // namespace
+
+Snippet parse_snippet(std::string_view body, const SnippetVars& vars) {
+    Snippet s = parse_once(body, vars, nullptr);
+    // A stop in more than one place shows its placeholder in each, as
+    // TextMate's and the language servers' snippets have it: "if (!${2})"
+    // after "${2:rst_n}" reads "if (!rst_n)". (Read again, with each such
+    // stop's first placeholder put in its empty places.)
+    std::map<u32, std::string> mirrored;
+    for (const Snippet::Stop& st : s.stops)
+        if (st.spans.size() > 1)
+            for (const Snippet::Span& sp : st.spans)
+                if (sp.end > sp.start && sp.end <= s.text.size()) {  // (a stop inside a choice's text, or a variable's default, has no text left)
+                    mirrored[st.index] = s.text.substr(sp.start, sp.end - sp.start);
+                    break;
+                }
+    return mirrored.empty() ? s : parse_once(body, vars, &mirrored);
 }
 
 void indent_snippet(Snippet& s, std::string_view lead, std::string_view indent) {

@@ -15,7 +15,7 @@
 namespace blit {
 
 struct Snippet {
-    std::string text;  // what goes in, each stop's first placeholder (or choice) in it
+    std::string text;  // what goes in, each stop's placeholder (or first choice) in each of its places
     struct Span {
         u32 start = 0, end = 0;  // bytes of text
     };

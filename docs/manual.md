@@ -1513,8 +1513,9 @@ line, a search, `u` and Ctrl+R (after which one caret is left), macros.
 **Snippets.** A language server's completion that is a snippet goes in
 with its tab stops: the first placeholder selected, so that typing takes
 its place; Tab goes on to the next, Shift+Tab back. A stop in more than
-one place has a caret at each, so what is typed goes in at all of them; a
-stop with choices offers them. The stops still to come are marked. The
+one place shows its placeholder in each (`${2:rst_n}` and a later `$2` both
+read `rst_n`) and has a caret at each, so what is typed goes in at all of
+them; a stop with choices offers them. The stops still to come are marked. The
 last stop (where the snippet says the cursor ends), Esc, an undo, or Tab
 with the cursor gone from the snippet ends it. With Vim's modes on the
 stops are filled in from Insert mode. Snippets of your own are made in

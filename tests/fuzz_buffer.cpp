@@ -332,6 +332,12 @@ void snippets_test() {
     check(nested.text == "second call(arg)" && nested.stops.size() == 4 && nested.stops[0].index == 1 && spans(nested, 0) == "7-16" && spans(nested, 1) == "0-6" &&
               spans(nested, 2) == "12-15" && spans(nested, 3) == "16-16",
           "snippet: one inside another; no $0, the end");
+    const Snippet mirror = parse_snippet("always_ff @(posedge ${1:clk} or negedge ${2:rst_n}) if (!${2}) ${3:q} <= 0; else $3 <= ${4:d};$0");
+    check(mirror.text == "always_ff @(posedge clk or negedge rst_n) if (!rst_n) q <= 0; else q <= d;" && spans(mirror, 1) == "35-40,47-52" && spans(mirror, 2) == "54-55,67-68" &&
+              spans(mirror, 3) == "72-73",
+          "snippet: a stop's other places ($2, ${2}) show its placeholder");
+    const Snippet before = parse_snippet("end : $1 / ${1|a,b|}");
+    check(before.text == "end : a / a" && spans(before, 0) == "6-7,10-11", "snippet: and a place before the placeholder, or a choice's, too");
     const Snippet choice = parse_snippet("x = ${1|left,right|};");
     check(choice.text == "x = left;" && choice.stops[0].choices == std::vector<std::string>{"left", "right"} && spans(choice, 0) == "4-8", "snippet: choices, the first in place");
     const Snippet escaped = parse_snippet("\\$1 costs \\${2} \\\\ ${1:a\\}b}");
