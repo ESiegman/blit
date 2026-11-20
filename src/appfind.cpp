@@ -1328,6 +1328,8 @@ void App::find_query() {
                     at = gap + 2;
                 }
             }
+            // (A script's mapping of those keys first: in its modes it is what they do.)
+            std::ranges::stable_partition(f.entries, [&](const Find::Entry& e) { return (f.item_ids[e.index] & 0xC0000000u) == kMappingItem; });
             if (!f.entries.empty() || f.chord_query) return;
         }
         const std::vector<FuzzyTerm> terms = fuzzy_terms(f.typed);

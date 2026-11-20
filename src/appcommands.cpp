@@ -563,10 +563,31 @@ std::vector<App::PaletteItem> App::palette_items() {
             const auto& sc = script_->commands[i];
             out.push_back({":" + sc.name + (sc.desc.empty() ? "" : "  " + sc.desc), {}, 0x80000000u | i});
         }
+    // The scripts' mappings of one chord (Cmd+B, F5, Alt+J...), which take
+    // that key from a command in their modes: keys looked up find them too.
+    if (script_)
+        for (u32 i = 0; i < script_->maps.all().size(); ++i) {
+            const Keymaps::Map& m = script_->maps.all()[i];
+            if (m.lhs.size() != 1 || (m.lhs[0].kind == MapKey::kChar && !(m.lhs[0].mods & (MapKey::kCtrl | MapKey::kAlt | MapKey::kCmd)))) continue;
+            std::string modes;
+            for (const auto& [bit, letter] : {std::pair{Keymaps::kNormal, 'n'}, {Keymaps::kInsert, 'i'}, {Keymaps::kVisual, 'v'}, {Keymaps::kPending, 'o'}, {Keymaps::kCommand, 'c'}})
+                if (m.modes & bit) modes += letter;
+            const std::string what = m.fn >= 0 ? (m.desc.empty() ? std::string("<function>") : m.desc) : m.keys + (m.desc.empty() ? "" : "  " + m.desc);
+            const SDL_KeyboardEvent press = press_of(m.lhs[0]);
+            out.push_back({"Mapping " + key_notation(m.lhs) + " (" + modes + "): " + what, chord_text(press.key, press.mod), kMappingItem | i});
+        }
     return out;
 }
 
 void App::palette_run(u32 id) {
+    if ((id & 0xC0000000u) == kMappingItem) {  // a mapping, as its key would run it
+        const u32 i = id & ~kMappingItem;
+        if (!script_ || i >= script_->maps.all().size()) return;
+        const Keymaps::Map m = script_->maps.all()[i];
+        script_run_map(m);
+        dirty_ = true;
+        return;
+    }
     if (id & 0x80000000u) {
         const u32 i = id & 0x7FFFFFFFu;
         if (!script_ || i >= script_->commands.size()) return;

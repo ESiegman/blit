@@ -671,6 +671,8 @@ bool map_key_of(const SDL_KeyboardEvent& k, MapKey* out) {
     return true;
 }
 
+}  // namespace
+
 // And back: the press a mapping's key stands for.
 SDL_KeyboardEvent press_of(const MapKey& m) {
     SDL_KeyboardEvent e{};
@@ -684,8 +686,6 @@ SDL_KeyboardEvent press_of(const MapKey& m) {
     else e.key = m.ch >= 'A' && m.ch <= 'Z' ? m.ch + 32 : m.ch;
     return e;
 }
-
-}  // namespace
 
 // A key press, before anything else has it. True if a mapping took it (or
 // may: it is waiting for the keys after it).

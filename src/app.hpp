@@ -1142,6 +1142,7 @@ private:
         std::string title, keys;
         u32 id = 0;
     };
+    static constexpr u32 kMappingItem = 0x40000000u;  // (a PaletteItem's id: a script's mapping of one chord, by its place)
     void commands_create();
     bool command_key(const SDL_KeyboardEvent& k);
     std::vector<PaletteItem> palette_items();

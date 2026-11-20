@@ -47,10 +47,12 @@ run() {
 if [ "$(uname -s)" = Darwin ]; then
     split_keys='Split to the right (Cmd+\) Go to the split on the right (Cmd+Option+Right) Move the tab to the split on the right (Cmd+Option+Shift+Right) Make the split wider (Cmd+Ctrl+Right)'
     panel_typed=cmd+b panel_keys='Show or hide the side panel (Cmd+B)'
+    panel_map='<D-b>' panel_chord='Cmd+B'
     next_keys='Go to the next tab (Ctrl+Tab  Cmd+Shift+])'
 else
     split_keys='Split to the right (Ctrl+\) Go to the split on the right (Ctrl+Alt+Right) Move the tab to the split on the right (Ctrl+Alt+Shift+Right) Make the split wider (Alt+Shift+Right)'
     panel_typed=ctrl+b panel_keys='Show or hide the side panel (Ctrl+B  Alt+B)'
+    panel_map='<C-b>' panel_chord='Ctrl+B'
     next_keys='Go to the next tab (Ctrl+Tab  Ctrl+Shift+]  Ctrl+PageDown)'
 fi
 run "key:cmd+shift+p;text:split right;finddump"
@@ -64,6 +66,18 @@ check "and Option+K again: back to typing" "commands [split right] 4 : >$split_k
 run "key:cmd+shift+p;key:Tab;key:ctrl+Tab;finddump"
 case $got in "commands [] "*) got="nothing looked up" ;; esac
 check "Tab does not look keys up" "nothing looked up"
+# A script's mapping that takes a command's key: keys looked up name it
+# first, and Enter runs it, as the key would.
+mapped="frame;lua:blit.map('n','$panel_map',function() blit.notify('mine') end, { desc = 'mine' })"
+INIT="$dir/modal.lua"
+run "$mapped;key:cmd+shift+p;key:alt+K;key:cmd+B;finddump"
+check "a mapping that takes a command's key: named first" "commands [$panel_chord] 2 : >Mapping $panel_map (n): mine ($panel_chord) $panel_keys"
+INIT="$dir/modal.lua"
+run "$mapped;key:cmd+shift+p;text:$panel_typed;finddump"
+check "and the same for its keys typed" "commands [$panel_typed] 2 : >Mapping $panel_map (n): mine ($panel_chord) $panel_keys"
+INIT="$dir/modal.lua"
+run "$mapped;key:cmd+shift+p;key:alt+K;key:cmd+B;key:Return;frame"
+check "Enter on it runs the mapping" 'blit: mine'
 run "key:cmd+shift+p;text:split below;key:Return;frame;dump"
 check "a command run from the search: as its keys would" 'V([notes.txt*] / >[untitled*])0.50'
 run 'key:cmd+\;key:Escape;keyof:Make the split wider;keyof:Make the split wider;frame;dump'

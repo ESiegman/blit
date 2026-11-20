@@ -330,6 +330,9 @@ struct ScriptKey {
     std::string text;        // the text: typed, or what the press typed too (Option and a letter)
 };
 
+// The press a mapping's key stands for (applua.cpp).
+SDL_KeyboardEvent press_of(const MapKey& m);
+
 struct App::ScriptUi {
     lua_State* L = nullptr;
     int api = LUA_NOREF;   // the table `blit`, in the registry

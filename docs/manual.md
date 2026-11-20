@@ -1328,7 +1328,10 @@ of a Vim command under way. A count typed
 before a mapping is `blit.count()`. Keys a mapping types are not mapped
 again unless `{ remap = true }`. With `modal = false` the `i` mappings are
 the ones that apply. All the changes a function makes to a document are
-one undo step.
+one undo step. A mapping of one chord (`<D-b>`, `<F5>`, `<M-j>`) is in the
+command search as "Mapping <D-b> (n): …", its description or its keys,
+and keys looked up there name it first: where it takes a command's key,
+the command comes after it.
 
 **The API**, in the table `blit` (lines are numbered from 1, -1 is the
 last; columns are bytes from 1; `buf` is a number, 0 or nil for the file in
