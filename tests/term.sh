@@ -189,6 +189,48 @@ rm -rf "$V/venv"
 got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$V;open:$V/pyproject.toml;command:Open the Python console;termwait:>>>;termdump" 2>&1 >/dev/null | grep -c '>>>')
 got="$got $(ls -A "$V" | tr '\n' ' ')"
 check "and in one with no environment, not uv's: python3, nothing made in it" '1 pyproject.toml '
+# A console that runs a whole pasted block on one Return, as IPython does
+# (here a few lines of Python that do the same): no second Return, so no
+# empty prompt after it. One that asks for more (a block that ends
+# indented) is given it.
+I="$dir/ipy"
+mkdir -p "$I/.venv/bin"
+cat >"$I/.venv/bin/ipython" <<'EOF'
+#!/usr/bin/env python3
+import codeop, sys
+sys.stdout.write("\033[?2004h")
+n = 1
+def whole(src):  # (a block that ends indented wants an empty line)
+    if src.split("\n")[-1][:1] in (" ", "\t"):
+        return False
+    try:
+        return codeop.compile_command(src + "\n", "<in>", "exec") is not None
+    except SyntaxError:
+        return True
+while True:
+    try:
+        lines = [input("In [%d]: " % n)]
+        while "\033[200~" in lines[0] and "\033[201~" not in lines[-1]:
+            lines.append(input())
+        src = "\n".join(lines).replace("\033[200~", "").replace("\033[201~", "")
+        while src.strip() and not whole(src):
+            more = input("   ...: ")
+            if not more:
+                break
+            src += "\n" + more
+    except EOFError:
+        break
+    if src.strip():
+        exec(compile(src + "\n", "<in>", "exec"))
+        n += 1
+EOF
+chmod +x "$I/.venv/bin/ipython"
+printf 'total = 10\nfor a in range(3):\n    print("got", a + total)\nprint("done")\n' >"$I/whole.py"
+printf 'total = 10\nfor a in range(3):\n    print("got", a + total)\n' >"$I/open.py"
+for f in whole open; do
+    got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$I;open:$I/$f.py;vim:ggVG;command:Send the lines to the Python console;command:Open the Python console;termwait:got 12;wait:500;termdump" 2>&1 >/dev/null | tail -1 | tr '|' '\n' | grep -c '^In \[2\]:')
+    check "a block sent to a console like IPython ($f.py): run once, one prompt after it" '1'
+done
 
 # A notebook: opened as the script of its cells, its saved outputs after
 # them; edited and saved, written back as a notebook (a changed cell's

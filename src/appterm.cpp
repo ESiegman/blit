@@ -242,7 +242,7 @@ struct TermView {
             int wait = 100;
             {
                 std::lock_guard lock(out_mu);
-                if (!later.empty()) wait = static_cast<int>(std::clamp<i64>((static_cast<i64>(later.front().first) - static_cast<i64>(now_ns())) / 1'000'000, 0, 100));
+                if (!later.empty()) wait = static_cast<int>(std::clamp<i64>((static_cast<i64>(later.front().due) - static_cast<i64>(now_ns())) / 1'000'000, 0, 100));
             }
             const int r = ::poll(p, wi + 1, wait);
             if (r < 0 && errno != EINTR) break;
@@ -339,25 +339,65 @@ struct TermView {
 
     // Bytes to send at a time of their own (the Returns after a paste to
     // Python's prompt: one that comes in the same read as the paste is taken
-    // as part of it).
-    std::deque<std::pair<u64, std::string>> later;  // (out_mu) in time's order
+    // as part of it). One `asked` is sent only if the prompt then asks for
+    // more: the cursor after a continuation prompt ("...:", "...") with
+    // nothing on it. (IPython runs a whole block on one Return, Python's own
+    // prompt and a block that ends indented want a second.) While the line
+    // before it is still the paste's last, it is looked at again a little
+    // later, for a second at most.
+    struct Later {
+        u64 due = 0;
+        std::string bytes;
+        bool asked = false;
+        u32 looks = 0;
+    };
+    std::deque<Later> later;  // (out_mu) in time's order
 
-    void send_later(u64 due, std::string s) {
+    void send_later(u64 due, std::string s, bool asked = false) { send_later(Later{due, std::move(s), asked, 0}); }
+    void send_later(Later l) {
         std::lock_guard lock(out_mu);
-        later.emplace_back(due, std::move(s));
+        const u64 due = l.due;
+        later.insert(std::ranges::upper_bound(later, due, {}, &Later::due), std::move(l));
+    }
+
+    // 1: the cursor's line is a continuation prompt with nothing on it (but
+    // IPython's indent for the next line); 0: one with the line the paste
+    // ended with (not taken yet); -1: neither.
+    int asks_for_more() {
+        std::string row;
+        {
+            std::lock_guard lock(mu);
+            row = term.row_text(term.cursor_row());
+        }
+        const size_t at = row.find_first_not_of(' ');
+        if (at == std::string::npos || row.compare(at, 3, "...") != 0) return -1;
+        size_t rest = at + 3;
+        if (rest < row.size() && row[rest] == ':') ++rest;
+        if (rest < row.size() && row[rest] != ' ') return -1;
+        return row.find_first_not_of(' ', rest) == std::string::npos ? 1 : 0;
     }
 
     void send_due() {
-        std::vector<std::string> due;
+        std::vector<Later> due;
         {
             std::lock_guard lock(out_mu);
             const u64 now = now_ns();
-            while (!later.empty() && later.front().first <= now) {
-                due.push_back(std::move(later.front().second));
+            while (!later.empty() && later.front().due <= now) {
+                due.push_back(std::move(later.front()));
                 later.pop_front();
             }
         }
-        for (const std::string& d : due) send(d);
+        for (Later& d : due) {
+            if (d.asked) {
+                const int more = asks_for_more();
+                if (more == 0 && ++d.looks < 25) {
+                    d.due = now_ns() + 40'000'000ull;
+                    send_later(std::move(d));
+                }
+                if (more != 1) continue;
+            }
+            send(d.bytes);
+        }
     }
 
     void flush_backlog() {
@@ -786,13 +826,15 @@ void App::py_flush(TermView& v) {
         v.send(out + (indented ? "\r\r" : "\r"));
     } else {
         // Each Return a moment after (in a read of its own: with the paste
-        // it would be part of it): one runs a line; more than one line wants
-        // a second, on the empty line the first leaves.
+        // it would be part of it): one runs a line; more than one line may
+        // want a second, on the empty line the first leaves, sent only if
+        // the prompt asks for it (where none is wanted, it would leave an
+        // empty prompt).
         v.send("\x1b[200~" + out + "\x1b[201~");
         const bool lines = out.find('\r') != std::string::npos;
         const u64 now = now_ns();
         v.send_later(now + 80'000'000ull, "\r");
-        if (lines) v.send_later(now + 160'000'000ull, "\r");
+        if (lines) v.send_later(now + 160'000'000ull, "\r", true);
     }
     dirty_ = true;
 }

@@ -2168,7 +2168,10 @@ bracketed paste, which Python's own prompt (from 3.13) and IPython take
 whole, so a block keeps its indentation and the blank lines in it. Each
 Return after the paste is sent a moment later, in a read of its own (one
 in the same read as the paste is taken as part of it): one runs a line,
-and a second runs more than one. Lines sent before the console has started
+and for more than one a second is sent if the prompt then asks for more
+(a continuation prompt with nothing on it: Python's own prompt, or a
+block that ends indented), never leaving an empty prompt after a block
+IPython ran on the first. Lines sent before the console has started
 wait for it. A Python that never asks for pastes is sent the lines one by
 one after five seconds, without their blank lines.
 
