@@ -2445,11 +2445,14 @@ tests run with.
 The side panel's **Tests** tab lists the project's tests, found on a
 thread: CTest's in every build folder that has been configured (so the
 GoogleTest, Catch2 and doctest tests registered with it too:
-`ctest --show-only=json-v1`), and pytest's (`--collect-only`; through `uv
-run` in a uv project, else the `pytest` on the PATH, else `python3 -m
-pytest`). They are grouped by build folder and by file, each with how its
-last run went: a tick, a cross with the failure's message, a dash for one
-skipped, a dot for one not run.
+`ctest --show-only=json-v1`), and pytest's (`--collect-only`; `-m
+pytest` of the folder's Python, chosen as the [Python
+console](#the-python-console)'s is, so its `.venv`'s or `uv run`'s; with
+none, the `pytest` on the PATH, else `python3 -m pytest`). They are
+grouped by build folder and by file, each with how its last run went: a
+tick, a cross with the failure's message, a dash for one skipped, a dot
+for one not run. Where none are found, the tab says what pytest (or the
+Python) last said.
 
 Enter runs the test chosen (a heading: all under it), **a** all of them,
 **f** the failed ones again, **d** debugs a CTest test (its own command,
@@ -2470,7 +2473,8 @@ there and read back (on a thread) when the run ends.
 they ran. For C and C++ that is GCC's gcov, over a build folder built
 with `--coverage` (`-DCMAKE_CXX_FLAGS=--coverage`; its old `.gcda` files
 are cleared first, and the gcov is the one beside the compiler CMake
-chose); for Python, coverage.py. Lines that ran have green numbers and
+chose); for Python, coverage.py, with the same Python as pytest (and the
+run configuration's environment). Lines that ran have green numbers and
 lines that did not red, while the file is as it was then; the Tests tab
 lists each file's share, Enter opening it, and "Show or hide coverage"
 switches it. On another machine the build folder's compiler is read there

@@ -52,13 +52,12 @@ std::string on_host(const std::string& path) {
     return split_remote(path, &host, &there) ? there : path;
 }
 
-// How a folder runs pytest: through uv where it is a uv project; else the
-// pytest on the PATH, else Python's own. (On another machine, chosen there,
-// in the folder: asking it from here would wait on the connection.)
-std::string pytest_command(const std::string& root) {
-    if (is_remote(root)) return "$(sh -c 'if [ -e uv.lock ]; then echo uv run pytest; else command -v pytest || echo python3 -m pytest; fi')";
-    if (fs_kind(root + "/uv.lock") == 1) return "uv run pytest";
-    return "$(command -v pytest || echo python3 -m pytest)";  // (unquoted: the second, three words)
+// How a folder's Python (App::python_for: its venv's, uv's in a uv
+// project) runs a module of its, pytest or coverage; with no project's
+// Python, the program on the PATH, else python3's module.
+std::string python_module(const std::string& python, const char* module) {
+    if (python != "python3") return python + " -m " + module;
+    return std::string("$(command -v ") + module + " || echo python3 -m " + module + ")";  // (unquoted: the second, three words)
 }
 bool cpp_path(std::string_view p) {
     for (const char* e : {".cpp", ".cc", ".cxx", ".c", ".hpp", ".h", ".hh", ".cu", ".hip", ".mm"})
@@ -71,10 +70,11 @@ bool cpp_path(std::string_view p) {
 struct App::TestUi {
     std::vector<TestCase> tests;
     std::string root;  // the folder they were found in
+    std::string python;  // and its Python, as found then (App::python_for: pytest's are run with it)
     bool looked = false, looking = false;
     std::string note;  // what finding them said, when there are none
     struct Found {
-        std::string root;
+        std::string root, python;
         std::vector<TestCase> tests;
         std::string note;
     };
@@ -169,14 +169,21 @@ void App::test_find() {
                     f.tests.push_back(std::move(t));
                 }
         }
+        std::string said;  // (pytest's last line, or its Python's: why none were found)
         if (python) {
+            f.python = App::python_for(root, false);
+            std::string host, there;  // (another machine's: its path there)
+            if (const size_t at = f.python.find(root); at != std::string::npos && split_remote(root, &host, &there)) f.python.replace(at, root.size(), there);
             std::string out;
-            fs_run(root, pytest_command(root) + " --collect-only -q", &out, 60000);
+            fs_run(root, python_module(f.python, "pytest") + " --collect-only -q 2>&1", &out, 60000);
             for (TestCase& t : parse_pytest_collect(out)) f.tests.push_back(std::move(t));
+            while (!out.empty() && std::isspace(static_cast<unsigned char>(out.back()))) out.pop_back();
+            said = out.substr(out.find_last_of('\n') + 1);  // (npos + 1: all of it)
         }
         if (f.tests.empty())
             f.note = dirs.empty() && !python ? "No tests found: CTest's are found in a build folder that has been configured, pytest's beside a test_*.py"
-                                             : "No tests found";
+                     : said.empty()          ? "No tests found"
+                                             : "No tests found: " + said;
         {
             std::lock_guard lock(u.mu);
             u.found = std::move(f);
@@ -206,6 +213,7 @@ void App::test_sync() {
             }
     u.tests = std::move(f->tests);
     u.root = f->root;
+    u.python = std::move(f->python);
     u.note = std::move(f->note);
     u.sel = 0;
     ++test_gen_;
@@ -320,14 +328,14 @@ void App::test_run(const std::vector<size_t>& which, bool coverage) {
         if (u.tests[i].runner == TestCase::kPytest) ids += " " + sh_word(u.tests[i].id);
     if (!ids.empty()) {
         if (coverage) {  // (through coverage.py, which writes what ran as JSON after)
-            const std::string cov = "$(command -v coverage || echo python3 -m coverage)";
+            const std::string cov = python_module(u.python, "coverage");
             parts.push_back(env + cov + " run -m pytest -q --junitxml=" + here(report()) + (all ? "" : ids));
             const std::string out = report();
             u.reports.pop_back();
             u.cov_reports.push_back({out, u.root, true});
-            parts.push_back(cov + " json -q -o " + here(out));
+            parts.push_back(env + cov + " json -q -o " + here(out));  // (in the run configuration's environment too)
         } else {
-            parts.push_back(env + pytest_command(u.root) + " -q --junitxml=" + here(report()) + (all ? "" : ids));
+            parts.push_back(env + python_module(u.python, "pytest") + " -q --junitxml=" + here(report()) + (all ? "" : ids));
         }
     }
     std::string cmd;
@@ -409,6 +417,7 @@ void App::test_take(std::vector<std::string> texts) {
         u.coverage.clear();
         u.cov_files.clear();
         size_t hit = 0, all = 0;
+        const bool python = std::ranges::all_of(u.cov_reports, &TestUi::CovReport::python);  // (coverage.py's alone: what to ask of the Python)
         for (const TestUi::CovReport& r : u.cov_reports) {
             const std::string& text = texts[k++];
             if (!text.empty())
@@ -425,7 +434,7 @@ void App::test_take(std::vector<std::string> texts) {
         std::ranges::sort(u.cov_files);
         u.cov_files.erase(std::ranges::unique(u.cov_files).begin(), u.cov_files.end());
         u.cov_shown = !u.coverage.empty();
-        notify(u.coverage.empty() ? std::string("No coverage was recorded (built with --coverage?)")
+        notify(u.coverage.empty() ? std::string(python ? "No coverage was recorded (coverage.py installed for " + python_named(u.python, u.root) + "?)" : "No coverage was recorded (built with --coverage?)")
                                   : "Coverage: " + std::to_string(static_cast<int>(100.0 * static_cast<double>(hit) / static_cast<double>(std::max<size_t>(all, 1)) + 0.5)) + "% of the lines in " + std::to_string(u.cov_files.size()) + " files");
         ++test_gen_;
         dirty_ = true;

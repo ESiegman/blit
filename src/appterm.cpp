@@ -692,6 +692,14 @@ std::string App::python_for(const std::string& root, bool console) {
     return "python3";
 }
 
+// That Python as a message names it: a venv's by its path in the folder.
+std::string App::python_named(const std::string& python, const std::string& root) {
+    std::string py = python;
+    if (py.size() > 2 && py.front() == '\'' && py.back() == '\'') py = py.substr(1, py.size() - 2);
+    if (py.starts_with(root + "/")) py.erase(0, root.size() + 1);
+    return py;
+}
+
 // The Python console's tab: brought into view in the terminals' split
 // (started there, the first time, with the folder's Python); the keyboard
 // on it if `keyboard`. Its terminal, or null if it could not start.

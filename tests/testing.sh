@@ -86,6 +86,42 @@ if [ "$pytest" = yes ]; then
     run "$P/tests/test_math.py" "command:Run the tests;testdump;command:Run the failed tests again;testdump"
     check "the failed ones again" 'build: +adds xbreaks | tests/test_math.py: +test_adds xtest_fails | here: 1+ 6x'
 fi
+# pytest and coverage.py as the project's Python has them (its .venv's,
+# here one that answers as they would), not the PATH's; the coverage
+# report made in the run configuration's environment too.
+V="$dir/venv"
+mkdir -p "$V/.venv/bin" "$V/tests" "$V/.blit"
+printf 'def test_one():\n    pass\n\n\ndef test_two():\n    pass\n' >"$V/tests/test_v.py"
+printf '{ "configurations": [ { "name": "t", "program": "tests/test_v.py", "env": { "FAKE_ENV": "yes" } } ] }\n' >"$V/.blit/run.json"
+cat >"$V/.venv/bin/python" <<'EOF'
+#!/bin/sh
+[ "$1" = -m ] || exit 1
+module=$2
+shift 2
+if [ "$module" = coverage ]; then
+    if [ "$1" = json ]; then  # json -q -o FILE
+        [ "$FAKE_ENV" = yes ] && printf '{"files": {"tests/test_v.py": {"executed_lines": [1, 2, 5], "missing_lines": [6]}}}' >"$4"
+        exit 0
+    fi
+    shift 3  # run -m pytest
+fi
+for a in "$@"; do
+    case $a in
+        --collect-only) printf 'tests/test_v.py::test_one\ntests/test_v.py::test_two\n\n2 tests collected in 0.01s\n'; exit 0 ;;
+        --junitxml=*) report=${a#--junitxml=} ;;
+    esac
+done
+printf '<testsuites><testsuite><testcase classname="tests.test_v" name="test_one" time="0.1"/><testcase classname="tests.test_v" name="test_two" time="0.1"><failure message="no"/></testcase></testsuite></testsuites>' >"$report"
+EOF
+chmod +x "$V/.venv/bin/python"
+got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$V;frame;builddump;command:Run the tests;testdump" "$V/tests/test_v.py" 2>&1 >/dev/null | tail -1)
+check "pytest in the project's .venv: found and run" 'tests/test_v.py: +test_one xtest_two | here: 1+ 5x'
+got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$V;frame;builddump;command:Run the tests with coverage;testdump;coveragedump" "$V/tests/test_v.py" 2>&1 >/dev/null | tail -1)
+check "and coverage.py there, its report in the run configuration's environment" 'here: ran 1 2 5, missed 6 | files: tests/test_v.py=75%'
+rm "$V/.venv/bin/python"
+got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$V;frame;testdump" "$V/tests/test_v.py" 2>&1 >/dev/null | tail -1)
+case "$got" in "No tests found: "*"No module named pytest") got="said" ;; esac
+[ "$pytest" = yes ] || check "with no pytest: why none were found" 'said'
 # Coverage, read with GCC's gcov from a build made with --coverage: the
 # lines run and missed, each file's share (none of a function no test calls).
 gcc=

@@ -1289,10 +1289,7 @@ void App::debug_sync_session(bool* stopped) {
             while (!why.empty() && (why.back() == '\n' || why.back() == '\r')) why.pop_back();
             if (const size_t nl = why.rfind('\n'); nl != std::string::npos) why = why.substr(nl + 1);
             if (!u.python.empty() && (why.find("No module named 'debugpy'") != std::string::npos || why.find("No module named debugpy") != std::string::npos)) {
-                // (Named as it was run: a venv's Python by its path in the project.)
-                std::string py = u.python;
-                if (py.size() > 2 && py.front() == '\'' && py.back() == '\'') py = py.substr(1, py.size() - 2);
-                if (const std::string root = build_root() + "/"; py.starts_with(root)) py.erase(0, root.size());
+                const std::string py = python_named(u.python, build_root());
                 why = "debugpy is not installed for " + py + (py.starts_with("uv run") ? " (uv add --dev debugpy)" : "");
             }
             if (u.error.empty() && !why.empty()) u.error = why;
