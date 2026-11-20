@@ -799,6 +799,7 @@ struct Layout {
     float nodesep, ranksep, edgesep, pad, title_h, px, py, wrap;
     std::vector<std::vector<Port>> ports;  // each subgraph's
     std::vector<int> depth;                // each subgraph's
+    std::vector<int> ends_in, ends_out;    // each node's: how many edges end at it, and start
     long long points = 0;                  // laid out so far, in every level
     std::string gave_up;                   // why it stopped, if it did
 
@@ -818,6 +819,12 @@ struct Layout {
         px = 15 * u, py = 9 * u;
         wrap = std::max(f.width("abcdefghijklmnopqrstuvwxyz", size) * 1.0f, 160 * u);
         ports.assign(g.clusters.size(), {});
+        ends_in.assign(g.nodes.size(), 0), ends_out.assign(g.nodes.size(), 0);
+        for (const Edge& e : g.edges) {
+            if (e.from == e.to || e.line == kInvisible) continue;
+            if (e.from >= 0) ++ends_out[static_cast<size_t>(e.from)];
+            if (e.to >= 0) ++ends_in[static_cast<size_t>(e.to)];
+        }
         depth.assign(g.clusters.size(), 0);
         for (size_t c = 0; c < g.clusters.size(); ++c) {
             int d = 0;
@@ -885,6 +892,11 @@ struct Layout {
         const DiagramVec s = diagram_shape_size(n.shape, tw, th, note ? 10 * u : px, note ? 7 * u : py);
         // (at least twice as wide as a line is tall: blank lines are not a needle)
         n.w = std::max({s.x, g.state ? 40 * u : 30 * u, 2 * line}), n.h = s.y;
+        // Wide enough across for the edges at a side of it to be told apart
+        // (five arrowheads on a small state's side were a heap).
+        const size_t self = static_cast<size_t>(&n - g.nodes.data());
+        const int in = ends_in[self], out = ends_out[self], most = std::max({in, out, 3 * (in + out) / 4});  // (back edges come in on the side others leave)
+        if (most >= 3 && n.shape != kShapeNote) (vertical(dir) ? n.w : n.h) = std::max(vertical(dir) ? n.w : n.h, 20 * u * static_cast<float>(most));
     }
 
     // ------------------------------------------------ one level
@@ -1852,7 +1864,7 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
             const bool vert = Layout::vertical(g.edges[list[0].second].dir);
             const float span = vert ? bw : bh;
             const bool dot = shape == kShapeStart || shape == kShapeEnd;
-            const float share = dot ? 0.08f : shape == kShapeDiamond ? (list.size() > 1 ? 0.2f : 0.06f) : shape == kShapeCircle || shape == kShapeDoubleCircle ? 0.22f : 0.32f;
+            const float share = dot ? 0.08f : shape == kShapeDiamond ? (list.size() > 1 ? 0.2f : 0.06f) : shape == kShapeCircle || shape == kShapeDoubleCircle ? 0.22f : list.size() >= 3 ? 0.4f : 0.32f;
             const float most = span * share;
             std::stable_sort(list.begin(), list.end());
             // A diamond's: one going off further left than its left corner

@@ -2412,6 +2412,20 @@ void diagram_test() {
         }
         check(leaving == 5, "diagram: a decision's edges drawn");
     }
+    // A small node with many edges is wide enough for them to be told apart
+    // where they leave it (five were heaped on a small state's side).
+    {
+        Drawing d;
+        DiagramGeometry geo;
+        std::string err;
+        diagram_make("flowchart TD\n H --> a\n H --> b\n H --> c\n H --> e\n H --> f\n", st, &d, &err, &geo);
+        std::vector<float> xs;
+        for (const auto& l : geo.lines) xs.push_back(l.pts.front().x);
+        std::sort(xs.begin(), xs.end());
+        float gap = 1e9f;
+        for (size_t i = 1; i < xs.size(); ++i) gap = std::min(gap, xs[i] - xs[i - 1]);
+        check(xs.size() == 5 && gap >= 8 * st.unit(), "diagram: five edges leaving a small node apart (" + std::to_string(gap) + ")");
+    }
     // A diamond of blank lines is no needle: never taller than wide.
     {
         Drawing d;
