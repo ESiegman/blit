@@ -271,6 +271,10 @@ void App::vim_after(u32 result) {
     if (vim_.mode() != Vim::kInsert && vim_.mode() != Vim::kReplace) lsp_close(kPopCompletion | kPopSignature);
     pane_->cache_rev = ~0ull;  // (the selection may have changed with the cursor where it was)
     bool scrolled = false;
+    auto keep_errors = [&] {  // (what Vim said was wrong, for :messages)
+        for (const std::string& e : vim_.take_errors()) keep_message(e);
+    };
+    keep_errors();
     for (const VimRequest& q : vim_.take()) {
         switch (q.kind) {
             case VimRequest::kSave:
@@ -394,6 +398,7 @@ void App::vim_after(u32 result) {
             default: break;
         }
     }
+    keep_errors();  // (and what the application said was wrong in doing what was asked)
     vim_attach();  // (what was asked for may have brought another document to the front)
     if (!scrolled) scroll_to_cursor();
     if (script_modes_) script_mode_seen();

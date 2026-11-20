@@ -1477,6 +1477,7 @@ private:
     void theme_write(bool dark, const std::string& name);
     // 0 information, 1 a warning, 2 an error; `detail` (a traceback) goes to :messages and the standard error, not the box.
     void notify(const std::string& text, int level = 0, const std::string& detail = {});
+    void keep_message(const std::string& text);
     char script_mode_char() const;
     bool script_key(const SDL_KeyboardEvent& k);
     bool script_text(const char* text);

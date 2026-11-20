@@ -505,6 +505,9 @@ blit.map("n", "R", function() blit.feed("R", true) end)
 EOF
 run "text:E;text:R;text::messages;key:Return;luadump"
 check "a mapping that fails, one that types itself" 'mapping E: init.lua:1: on purpose ; mapping R: init.lua:2: blit.feed: mappings that type mappings, more than 20 deep ; lua | maps 2 | commands 4 | handlers 0 | timers 0 | floats 1 [mapping E: init.lua:1: on purpose] | toasts 2'
+fresh
+run "text::frobnicate;key:Return;text:/zzz;key:Return;lua:print(table.concat(blit.messages(), ' / '));text::messages;key:Return;luadump"
+check "Vim's own errors are kept for :messages too" 'E492: Not an editor command: frobnicate / E486: Pattern not found: zzz ; lua | maps 0 | commands 4 | handlers 0 | timers 0 | floats 1 [E492: Not an editor command: frobnicate] | toasts 1'
 
 # Commands named like :map commands, <args> in what a command runs, a
 # command that runs itself, lines counted as Vim does (a final newline is no

@@ -120,8 +120,15 @@ public:
     // application keeps them, and puts each back before that caret's key).
     u64 visual_start() const { return vstart_; }
     void set_visual_start(u64 at) { vstart_ = at; }
-    void say(std::string message) { message_ = std::move(message); }
-    const std::string& message() const { return message_; }
+    // (kept: an error said is kept for :messages too; false for one that is there already.)
+    void say(std::string message, bool kept = true) {
+        if (kept) message_ = std::move(message);
+        else message_.text = std::move(message);
+    }
+    const std::string& message() const { return message_.text; }
+    // The errors said since the application last took them (E492 and the
+    // like), for :messages.
+    std::vector<std::string> take_errors() { return std::exchange(message_.errors, {}); }
     // The cursor to another place in the document, as a jump (<C-o> comes back).
     void jump(Editor& ed, u64 off);
     // Set: the application keeps the jump list, across files. It hears where each long move starts, and <C-o> and <C-i> ask it (kBack, n back or forward).
@@ -343,7 +350,21 @@ private:
     std::string cmd_;
     bool cmd_selected_ = false;  // what is on it is selected: typing takes its place
     u64 cmd_origin_ = 0;  // where the cursor was when a search began
-    std::string message_;
+    // What the bottom line says. An error ("E486: Pattern not found") is
+    // kept as well, until the application takes it for :messages.
+    struct Said {
+        std::string text;
+        std::vector<std::string> errors;
+        Said& operator=(std::string s) {
+            if (s.size() > 2 && s[0] == 'E' && s[1] >= '0' && s[1] <= '9') {
+                if (errors.size() >= 64) errors.erase(errors.begin());
+                errors.push_back(s);
+            }
+            text = std::move(s);
+            return *this;
+        }
+        void clear() { text.clear(); }
+    } message_;
     std::vector<std::string> history_;
     size_t history_at_ = 0;
 

@@ -1255,7 +1255,7 @@ void Vim::visual_range(const Editor& ed, u64* lo, u64* hi) const {
 
 std::string Vim::status() const {
     if (mode_ == kCommand) return std::string(1, cmd_kind_) + cmd_;
-    std::string s = message_;
+    std::string s = message_.text;
     if (s.empty()) s = mode_ == kInsert ? "-- INSERT --" : mode_ == kReplace ? "-- REPLACE --" : mode_ == kVisual ? "-- VISUAL --" : mode_ == kVisualLine ? "-- VISUAL LINE --" : mode_ == kVisualBlock ? "-- VISUAL BLOCK --" : "";
     if (macro_into_) s += std::string(s.empty() ? "" : "  ") + "recording @" + macro_into_;
     return s;

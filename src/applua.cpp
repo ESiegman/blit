@@ -572,13 +572,11 @@ std::string App::script_set(const std::string& key, const std::string& value, co
 void App::notify(const std::string& text, int level, const std::string& detail) {
     const std::string& full = detail.empty() ? text : detail;
     std::fprintf(stderr, "blit: %s\n", full.c_str());
-    if (!script_) script_ = std::make_shared<ScriptUi>();
+    keep_message(full);
     ScriptUi& s = *script_;
-    s.messages.push_back(full);
-    if (s.messages.size() > 200) s.messages.erase(s.messages.begin());
     if (level == kError) ++s.errors;
     if (level == kInfo && cfg_.modal && text.find('\n') == std::string::npos && width_of(text) < 120 && win_) {
-        vim_.say(text);
+        vim_.say(text, false);  // (kept already)
     } else {
         ScriptUi::Toast t;
         t.text = text;
@@ -587,6 +585,15 @@ void App::notify(const std::string& text, int level, const std::string& detail) 
         if (s.toasts.size() > 4) s.toasts.erase(s.toasts.begin());
     }
     dirty_ = true;
+}
+
+// A line for the list :messages shows (and nowhere else: Vim's errors,
+// which the bottom line has said).
+void App::keep_message(const std::string& text) {
+    if (!script_) script_ = std::make_shared<ScriptUi>();
+    ScriptUi& s = *script_;
+    s.messages.push_back(text);
+    if (s.messages.size() > 200) s.messages.erase(s.messages.begin());
 }
 
 // ---------------------------------------------------------------- keys

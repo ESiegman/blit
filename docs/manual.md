@@ -1335,7 +1335,8 @@ is saved; the others run just after the input that caused them.
 
 **Commands on the `:` line**: `:lua CODE`, `:lua =EXPR` and `:=EXPR`
 (prints it), `:'<,'>lua` (runs those lines), `:luafile FILE`, `:source
-FILE`, `:messages`; `:set name=value` (`:set tab_width=2`, `:set
+FILE`, `:messages` (the scripts' messages, the editor's notices and Vim's
+errors, E492 and the like); `:set name=value` (`:set tab_width=2`, `:set
 noligatures`, `:set font.size?`, and Vim's `ts`, `sw`, `nu`); `:map`,
 `:nmap`, `:inoremap`, `:nunmap` and the rest; `:command Name line`.
 
