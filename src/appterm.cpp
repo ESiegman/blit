@@ -896,6 +896,9 @@ size_t App::term_busy_count() {
     return n;
 }
 
+// The folder a terminal was started in (ssh://host/... for one on a host).
+const std::string& App::term_folder(const TermView& v) { return v.dir; }
+
 // ---------------------------------------------------------------- drawing
 
 namespace {
@@ -1562,8 +1565,6 @@ bool App::term_wheel(const SDL_MouseWheelEvent& w) {
 // ---------------------------------------------------------------- for the tests
 
 // The screen of the terminal in front, its non-empty rows joined by "|", and the cursor.
-const std::string& App::term_folder(const TermView& v) { return v.dir; }
-
 std::string App::term_dump() {
     if (!pane_->doc->term) return "no terminal";
     TermView& v = *pane_->doc->term;
