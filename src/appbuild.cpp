@@ -124,14 +124,19 @@ bool choosable(int task) { return task >= 0 || task == kTypeRow || task == kTarg
 // A CMake task's command with the build type and target chosen: a
 // configure given -DCMAKE_BUILD_TYPE (and, where a build is all it does, a
 // configure first, so that the type is the folder's), a build given
-// --target. A preset's says its own.
+// --target. A preset's build type is its own, and its build is given the
+// target after the preset's name.
 std::string with_cmake(std::string cmd, const std::string& type, const std::string& target) {
-    if (cmd.find("--preset") != std::string::npos) return cmd;
-    auto word_end = [&](size_t from) {
-        size_t e = cmd.find(' ', from);
-        return e == std::string::npos ? cmd.size() : e;
+    auto word_end = [&](size_t from) {  // (a word sh_quote quoted ends at a space outside its quotes)
+        bool quoted = false;
+        size_t e = from;
+        for (; e < cmd.size() && (quoted || cmd[e] != ' '); ++e) {
+            if (cmd[e] == '\'') quoted = !quoted;
+            else if (cmd[e] == '\\' && !quoted) ++e;
+        }
+        return std::min(e, cmd.size());
     };
-    if (!type.empty()) {
+    if (!type.empty() && cmd.find("--preset") == std::string::npos) {
         const size_t conf = cmd.find("cmake -S . -B ");
         if (conf != std::string::npos) {
             cmd.insert(word_end(conf + 14), " -DCMAKE_BUILD_TYPE=" + type);
@@ -141,7 +146,10 @@ std::string with_cmake(std::string cmd, const std::string& type, const std::stri
         }
     }
     if (!target.empty() && cmd.find("--target") == std::string::npos)
-        if (const size_t build = cmd.find("cmake --build "); build != std::string::npos) cmd.insert(word_end(build + 14), " --target " + sh_word(target));
+        if (const size_t build = cmd.find("cmake --build "); build != std::string::npos) {
+            const size_t preset = std::string_view(cmd).substr(build + 14).starts_with("--preset ") ? build + 23 : build + 14;
+            cmd.insert(word_end(preset), " --target " + sh_word(target));
+        }
     return cmd;
 }
 

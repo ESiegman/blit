@@ -2390,7 +2390,11 @@ has phony names alone, the executables `ninja -t targets` adds); the first, "all
 everything. CMake's tasks run with them: a configure is given
 `-DCMAKE_BUILD_TYPE`, a build `--target` (and, with a type chosen, is
 configured first, so that the folder has that type), and each task's row
-shows its command as it will run. A preset's tasks keep the preset's.
+shows its command as it will run. A preset's tasks keep the preset's
+build type; a preset's build is given the target
+(`cmake --build --preset debug --target app`). The targets are listed on
+a thread of their own (on another machine, a round trip), and the
+picker opens once they are.
 
 ### The assembly beside the file
 

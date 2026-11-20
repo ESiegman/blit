@@ -256,6 +256,15 @@ if command -v cmake >/dev/null 2>&1; then
     got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$T;frame;key:cmd+shift+u;builddump;frame;key:Up;key:Return;finddump;buildwait;finddump" 2>&1 >/dev/null | tail -2 | tr '\n' '/')
     PATH=$path
     check "a slow listing of the targets: the window not held, the picker opened after" 'closed/pick [] 3 : >all app tool/'
+    # A preset project: the target chosen is built (after the preset's name).
+    TP="$dir/types-preset"
+    mkdir -p "$TP"
+    cp "$T/CMakeLists.txt" "$T/app.c" "$T/tool.c" "$TP/"
+    printf '{"version": 3, "configurePresets": [{"name": "dev", "binaryDir": "${sourceDir}/build/${presetName}"}], "buildPresets": [{"name": "dev", "configurePreset": "dev"}]}\n' >"$TP/CMakePresets.json"
+    (cd "$TP" && cmake --preset dev >/dev/null 2>&1)
+    run "$TP" "key:cmd+shift+u;builddump;frame;key:Up;key:Up;key:Return;buildwait;key:Down;key:Return;frame;buildrun:Build (dev);buildwait;builddump"
+    got="$got $(ls "$TP/build/dev" | grep -E '^(app|tool)$' | tr '\n' ' ')"
+    check "a preset's build: the target chosen, and built so" 'CMake: Configure (dev) >Build (dev) (last: 0) app '
 fi
 
 # The sanitizers' reports, as a program run prints them: AddressSanitizer
