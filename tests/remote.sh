@@ -391,6 +391,18 @@ EOF
     got="${worker:+a worker} $(alive)"
     kill -9 "$worker" 2>/dev/null; pkill -9 -f "$T/.cache/blit/blit-agent"  # (where it failed: none left behind by the test)
     check "blit gone: the agent and a language server's stubborn worker end there" 'a worker ended'
+    # A server that has exited while what it started still holds its
+    # output: its pid is kept (not waited for) until that output closes, so
+    # that what is sent to its process group cannot reach another program
+    # given the pid meanwhile.
+    printf '#!/bin/sh\necho $$ >"%s/leaves.pid"\nsleep 30 &\n' "$dir" >"$dir/leaves.sh" && chmod +x "$dir/leaves.sh"
+    printf 'blit.opt.git.enabled = false\nblit.opt.lsp.servers.fake = { command = { "%s" }, languages = { "cpp" }, roots = { "CMakeLists.txt" } }\n' "$dir/leaves.sh" >"$dir/leaves.lua"
+    INIT="$dir/leaves.lua"
+    run "remotewait;frame;wait:1500;lua:print('held ' .. blit.system({ 'sh', '-c', 'ps -o stat= -p \$(cat $dir/leaves.pid)' }).stdout:sub(1, 1))" "ssh://box$dir/srv/a.cpp"
+    leader=$(cat "$dir/leaves.pid" 2>/dev/null)
+    for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15 16 17 18 19 20 21 22 23 24 25 26 27 28 29 30; do kill -0 "$leader" 2>/dev/null || break; sleep 0.2; done
+    kill -0 "$leader" 2>/dev/null && got="$got, still there" || got="$got, then gone"
+    check "a server that exited before its worker: its pid kept until the worker has gone" 'blit: held Z, then gone'
 fi
 
 # The agent was copied there once, into the cache blit keeps in that home.

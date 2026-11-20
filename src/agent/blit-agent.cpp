@@ -356,14 +356,20 @@ bool spawn(uint32_t id, const std::string& cwd, std::vector<std::string> argv, s
 }
 
 // A program's end is told once all it wrote has gone, and it has exited.
+// (It is waited for only then: until that its pid, and so its process
+// group's, is not given to another program, which end_children would
+// otherwise reach.)
 void finish_children() {
     for (auto it = children.begin(); it != children.end();) {
         Child& c = it->second;
         if (!c.exited && c.pid > 0) {
-            int st = 0;
-            if (::waitpid(c.pid, &st, WNOHANG) == c.pid) c.exited = true, c.status = WIFEXITED(st) ? WEXITSTATUS(st) : WIFSIGNALED(st) ? 128 + WTERMSIG(st) : 1;
+            siginfo_t si{};
+            if (::waitid(P_PID, static_cast<id_t>(c.pid), &si, WEXITED | WNOHANG | WNOWAIT) == 0 && si.si_pid == c.pid)
+                c.exited = true, c.status = si.si_code == CLD_EXITED ? si.si_status : 128 + si.si_status;
         }
         if (c.exited && c.out < 0 && c.err < 0) {
+            int st = 0;
+            if (c.pid > 0) ::waitpid(c.pid, &st, WNOHANG);  // (now let go of)
             if (c.in >= 0) ::close(c.in);
             Writer w;
             w.u32(it->first).u32(static_cast<uint32_t>(c.status));
@@ -650,7 +656,8 @@ constexpr auto kKillAfter = std::chrono::seconds(2), kLeaveAfter = std::chrono::
 
 // Each program's process group (its own: spawn), and the program, if it is
 // still there: a terminal's hung up on, another's sent `sig`. (The group
-// even when the program has exited: what it started may still be running.)
+// even when the program has exited: what it started may still be running.
+// Its pid is not another program's meanwhile: finish_children.)
 void end_children(int sig) {
     for (auto& [id, c] : children) {
         if (c.pid <= 0) continue;
