@@ -199,6 +199,12 @@ got=$(BLIT_FAKE_DOWN="$dir/down" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1
     --script "remotewait;$drop;$hang;wait:3200;key:cmd+K;text:main;clock;key:Return;within:300;lua:os.remove('$dir/down');remotewait;findwait;finddump" "$R" 2>&1 >/dev/null | join)
 rm -f "$dir/down"
 check "and Enter in it with no answer from there: no waiting" 'within 300 ms ;; everywhere [main] 1 : Files: >src/main.cpp'
+for box in cmd+P cmd+shift+F; do
+    got=$(BLIT_FAKE_DOWN="$dir/down" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+        --script "remotewait;$drop;$hang;wait:3200;key:$box;text:main;clock;key:Return;within:300;lua:os.remove('$dir/down')" "$R" 2>&1 >/dev/null | join)
+    rm -f "$dir/down"
+    check "and Enter in Go to file or Search in files ($box) with no answer from there: no waiting" 'within 300 ms'
+done
 run "remotewait;find:open;remotewait;finddump;text:src/;remotewait;finddump" "$R"
 check "the box that opens files, in a folder there" 'open [ssh://box~/work/] 4 : >../ src/ fresh.txt notes.txt ;; open [ssh://box~/work/src/] 2 : >../ main.cpp'
 slow "remotewait;find:open;remotewait;clock;text:src/;within:300;finddump;text:m;remotewait;finddump" "$R"

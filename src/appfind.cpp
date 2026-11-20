@@ -1504,13 +1504,14 @@ void App::find_sync() {
 // Are the rows on show the answer to what is typed now? A key that acts
 // on a row (Enter, an arrow) may come before the worker has answered the
 // last letter; it waits a moment for the answer rather than act on the rows
-// of an earlier search, or on none.
+// of an earlier search, or on none. (Not with the connection to the
+// folder's machine lost: then the rows on show are what it acts on.)
 bool App::find_current(int wait_ms) {
     Find& f = *find_;
     if ((f.mode != kFindNames && f.mode != kFindText) || f.nearby() || f.line_only()) return true;  // (the rows are not the worker's)
     if (!f.engine) return false;
     auto current = [&] { return f.shown && f.shown->serial == f.serial && f.shown->index && f.shown->index->root == f.root; };
-    if (!current()) {
+    if (!current() && host_down(f.root).empty()) {  // (not for a machine there is no connection to: its worker may wait on it for long)
         f.engine->wait_idle_for(wait_ms);
         find_sync();
     }
