@@ -2451,7 +2451,9 @@ tests run with.
 ## Tests
 
 The side panel's **Tests** tab lists the project's tests, found on a
-thread: CTest's in every build folder that has been configured (so the
+thread: CTest's in every build folder that has been configured (the
+project's own folders, and one level into `build*`, `cmake-build*` and
+`out`, as a preset's `build/debug`; so the
 GoogleTest, Catch2 and doctest tests registered with it too:
 `ctest --show-only=json-v1`), and pytest's (`--collect-only`; `-m
 pytest` of the folder's Python, chosen as the [Python

@@ -152,7 +152,7 @@ void App::test_find() {
             if (e.name == "tests" || e.name == "test")
                 for (const FsEntry& t : fs_list(d)) python = python || (t.name.starts_with("test_") && t.name.ends_with(".py"));
             if (configured(d)) dirs.push_back(d);
-            else if (e.name == "out" || e.name == "cmake-build")
+            else if (e.name.starts_with("build") || e.name.starts_with("cmake-build") || e.name == "out")  // (one level in: a preset's build/debug)
                 for (const FsEntry& s : fs_list(d))
                     if (s.dir && configured(d + "/" + s.name)) dirs.push_back(d + "/" + s.name);
         }

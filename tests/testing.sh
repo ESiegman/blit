@@ -237,6 +237,13 @@ EOF
     got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$C;frame;command:Run the tests with coverage;testdump;key:End;text:x;coveragedump" "$C/run.cpp" 2>&1 >/dev/null | tail -1)
     check "not on a file changed since" 'here: none | files: run.cpp=67%'
 fi
+# A preset's layout: configured into build/debug, one level in.
+Q="$dir/q"
+mkdir -p "$Q"
+cp "$P/CMakeLists.txt" "$P/check.cpp" "$Q/"
+cmake -S "$Q" -B "$Q/build/debug" >/dev/null 2>&1 || { echo "testing: cannot configure build/debug"; exit 1; }
+got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$Q;frame;testdump" "$Q/check.cpp" 2>&1 >/dev/null | tail -1)
+check "a build folder one level in (build/debug)" 'debug: .adds .breaks'
 mkdir -p "$dir/empty"
 : >"$dir/empty/a.txt"
 got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$dir/empty;frame;testdump" "$dir/empty/a.txt" 2>&1 >/dev/null | tail -1)
