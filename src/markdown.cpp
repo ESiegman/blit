@@ -1242,6 +1242,12 @@ struct Layout {
             auto line_of = [&](size_t k, size_t n) { return b.nos.empty() ? b.line : b.nos[std::min(k * b.nos.size() / std::max<size_t>(1, n), b.nos.size() - 1)]; };
             std::string note;
             MdPic pic;
+            // (a line about it, wrapped to the room as a paragraph is)
+            auto say = [&](const std::string& text, u8 ink) {
+                Span sp;
+                sp.text = text, sp.ink = ink, sp.style = kMdItalic;
+                for (std::vector<MdRun>& l : wrap({sp}, room_cols)) row(std::move(l), b.line);
+            };
             const u8 got = diagram && *diagram ? (*diagram)(src, room_cols, &pic, &note) : static_cast<u8>(kMdDiagramLater);
             if (got == kMdDiagramPicture && pic.cols && pic.rows) {
                 pic.col = indent() + (room_cols > pic.cols ? (room_cols - pic.cols) / 2 : 0);
@@ -1252,7 +1258,7 @@ struct Layout {
                 }
                 return;
             }
-            if (got != kMdDiagramLater && !note.empty()) row({{"mermaid: " + note, kMdError, kMdItalic}}, b.line);
+            if (got != kMdDiagramLater && !note.empty()) say("mermaid: " + note, kMdError);
         }
         const u32 from = indent();
         auto fill = [&](MdRow& r) {

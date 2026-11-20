@@ -279,6 +279,14 @@ awk 'BEGIN { print "```mermaid"; print "flowchart TD"; for (i = 0; i < 500; i++)
              print "```mermaid"; print "stateDiagram-v2"; for (i = 0; i < 300; i++) { print "state s" i " {"; print "state s" i + 1 " {"; print "}"; print "}" } print "```" }' >"$dir/nested.md"
 got=$(limit 20 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mdwait;mddump" "$dir/nested.md" 2>&1 >/dev/null | grep 'nested too deeply' | tr '\n' ,)
 check "subgraphs, namespaces and states nested hundreds deep: a mistake, no crash" "mermaid: line 34: subgraphs nested too deeply,mermaid: line 34: namespaces nested too deeply,mermaid: line 127: states nested too deeply,"
+# A diagram's mistake in a narrow preview: wrapped, all of it shown (it ran
+# off the right edge).
+printf '```mermaid\nerDiagram\n    CUSTOMER ||--x{ ORDER : places\n```\n' >"$dir/mistake.md"
+run 900x600 "$dir/mistake.md" "mdwait"
+got=$(printf '%s\n' "$got" | sed -n '/^mermaid: line 2/,/x{"$/p')
+got="$(printf '%s\n' "$got" | wc -l | tr -d ' ') rows: $(printf '%s\n' "$got" | tr '\n' ' ')"
+case $got in 1\ *) ;; *) got=${got#* } ;; esac
+check "a diagram's mistake, wrapped" "rows: mermaid: line 2: a relation like ||--o{ is wanted at \"||--x{\" "
 printf '<!--\nhidden\n\nstill hidden\n-->\nshown\n\n```mermaid\npie title Pets\n  "Dogs" : 3\n  "Cats" : 1\n```\n' >"$dir/odd.md"
 run 1600x1100 "$dir/odd.md" "mdwait"
 seen=$(printf '%s\n' "$got" | grep -c 'hidden'),$(printf '%s\n' "$got" | grep -c 'shown')
