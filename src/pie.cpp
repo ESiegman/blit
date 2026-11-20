@@ -224,8 +224,10 @@ bool pie_layout(const std::vector<std::string>& st, const DiagramStyle& style, D
         raster_sincos(mid, &sn, &cs);
         const float tx = cx + lr * static_cast<float>(cs), ty = cy + lr * static_cast<float>(sn);
         // (the text's box within the wedge: its arc there long enough, and its corners inside the disc)
-        if (drawn > 1 && (sweep * lr < std::hypot(tw, th) + 4 * u || sweep < 0.3)) continue;
-        if (std::hypot(std::fabs(tx - cx) + tw / 2, std::fabs(ty - cy) + th / 2) > r - 2 * u) continue;
+        // (sqrt, not hypot, whose last bit differs between systems: the same wedges labelled everywhere)
+        const float fx = std::fabs(tx - cx) + tw / 2, fy = std::fabs(ty - cy) + th / 2;
+        if (drawn > 1 && (sweep * lr < std::sqrt(tw * tw + th * th) + 4 * u || sweep < 0.3)) continue;
+        if (std::sqrt(fx * fx + fy * fy) > r - 2 * u) continue;
         text_at(pct, tx, ty - th / 2, size, text_on(s.colour), 1, true);
         if (geo) geo->boxes.push_back({"label", "share:" + std::to_string(k + 1), tx - tw / 2, ty - th / 2, tw, th});
     }

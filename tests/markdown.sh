@@ -187,7 +187,8 @@ done
 # rasterizer has a sine and cosine of its own).
 got=$(grep -nE 'std::(hypot|sin|cos|tan|asin|acos|atan2?|pow|exp|log|log2|log10|cbrt|erf)\(|[^_a-z](hypotf?|sinf|cosf|atan2f?|powf|expf|logf)\(' \
     "$here/../src/diagram.cpp" "$here/../src/flowchart.cpp" "$here/../src/raster.cpp" \
-    "$here/../src/classdiagram.cpp" "$here/../src/gantt.cpp" "$here/../src/mindmap.cpp" | grep -v raster_sincos)
+    "$here/../src/classdiagram.cpp" "$here/../src/gantt.cpp" "$here/../src/mindmap.cpp" \
+    "$here/../src/sequence.cpp" "$here/../src/pie.cpp" | grep -v raster_sincos)
 check "diagrams: no maths whose results differ between systems" ""
 
 # Typing elsewhere in the file lays no diagram out again (the worker keeps
