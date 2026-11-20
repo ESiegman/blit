@@ -795,12 +795,12 @@ void markdown_test() {
     const std::string bar = "\xE2\x96\x8C ", quote = "\xE2\x96\x8E ";
     check(drawn("> [!NOTE]\n> said\n> here\n") == bar + "Note\n" + bar + "said here\n", "alerts: a title, and what it says under it");
     check(drawn("> [!tip]\n> a\n\n> [!Important]\n> b\n\n> [!WARNING]\n\n>  [!caution]  \n> c\n") ==
-              bar + "Tip\n" + bar + "a\n\n" + bar + "Important\n" + bar + "b\n\n" + bar + "Warning\n\n" + bar + "Caution\n" + bar + "c\n",
-          "alerts: every kind, its tag in any case, one with nothing under it");
+              bar + "Tip\n" + bar + "a\n\n" + bar + "Important\n" + bar + "b\n\n" + quote + "[!WARNING]\n\n" + bar + "Caution\n" + bar + "c\n",
+          "alerts: every kind, its tag in any case, one with nothing under it a quote (as on GitHub)");
     check(drawn("> [!NOTE]\n> said\n", 60, true) ==
               ink(kMdAnsiBlue) + "0.0>" + bar + ink(kMdAnsiBlue) + "1.0>Note\n" + ink(kMdAnsiBlue) + "0.0>" + bar + ink(kMdText) + "0.0>said\n",
           "alerts: the bar and the bold title in the kind's colour, the rest in the text's");
-    const std::string inks = drawn("> [!TIP]\n\n> [!IMPORTANT]\n\n> [!WARNING]\n\n> [!CAUTION]\n", 60, true);
+    const std::string inks = drawn("> [!TIP]\n> a\n\n> [!IMPORTANT]\n> b\n\n> [!WARNING]\n> c\n\n> [!CAUTION]\n> d\n", 60, true);
     check(inks.find(ink(kMdAnsiGreen) + "1.0>Tip") != std::string::npos && inks.find(ink(kMdAnsiMagenta) + "1.0>Important") != std::string::npos &&
               inks.find(ink(kMdAnsiYellow) + "1.0>Warning") != std::string::npos && inks.find(ink(kMdError) + "1.0>Caution") != std::string::npos,
           "alerts: green, purple, yellow and the errors' colour for the others");

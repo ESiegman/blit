@@ -60,7 +60,7 @@ inks() {
 # colour (a quote's is quieter), one inside another in its own.
 inks "$here/markdown/alerts.md"
 got=$(printf '%s\n' "$got" | grep -E '\](Note|Tip|Important|Warning|Caution|Risks\.|A plain quote.*)$' | sed -e 's/ *$//' | tr '\n' ' ')
-check "alerts: a bar and a title in each kind's colour" "[#61afef]▎ [#7f848e]A plain quote stays a quote. [#61afef]▌ [#61afef]Note [#98c379]▌ [#98c379]Tip [#c678dd]▌ [#c678dd]Important [#e5c07b]▌ [#e5c07b]Warning [#e06c75]▌ [#e06c75]Caution [#e06c75]▌ [#dbdedb]Risks. [#e06c75]▌ [#61afef]▌ [#61afef]Note [#e06c75]▌ [#e06c75]Caution [#61afef]• [#98c379]▌ [#98c379]Tip "
+check "alerts: a bar and a title in each kind's colour" "[#61afef]▎ [#7f848e]A plain quote stays a quote. [#61afef]▌ [#61afef]Note [#98c379]▌ [#98c379]Tip [#c678dd]▌ [#c678dd]Important [#e5c07b]▌ [#e5c07b]Warning [#e06c75]▌ [#e06c75]Caution [#e06c75]▌ [#dbdedb]Risks. [#e06c75]▌ [#61afef]▌ [#61afef]Note [#61afef]• [#98c379]▌ [#98c379]Tip "
 
 # Headings: every level its own. The built-in themes name one colour for
 # all headings: the first level has it, the levels under it other colours

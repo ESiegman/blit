@@ -1341,8 +1341,12 @@ void parse_into(const std::vector<Line>& lines, Refs& refs, std::vector<Block>& 
                 sub.push_back({{}, lines[i].no});
                 ++i;
             }
-            // An alert: its tag says what kind, and is not text of it.
-            if (!keep.empty() && (b.level = alert_kind(keep[0])) != 0) keep[0].clear();
+            // An alert: its tag says what kind, and is not text of it. (One
+            // with nothing after its tag is a quote, as on GitHub.)
+            if (!keep.empty() && (b.level = alert_kind(keep[0])) != 0) {
+                if (std::all_of(keep.begin() + 1, keep.end(), [](const std::string& k) { return trim(k).empty(); })) b.level = 0;
+                else keep[0].clear();
+            }
             for (size_t k = 0; k < sub.size(); ++k) sub[k].text = keep[k];
             b.kids = parse_blocks(sub, refs);
             out.push_back(std::move(b));
@@ -1983,7 +1987,9 @@ struct Layout {
         // ink for each byte of its lines (each ended by a newline).
         std::vector<u8> inks;
         std::vector<size_t> starts;
-        if (colour && *colour && !lang.empty() && !b.text.empty()) {
+        const std::string lang_lower = lower(lang);
+        const bool diff = (lang_lower == "diff" || lang_lower == "patch") && !b.text.empty();
+        if (colour && *colour && !lang.empty() && !b.text.empty() && !diff) {  // (a diff's own inks come below)
             std::string src;
             for (const std::string& l : b.text) {
                 starts.push_back(src.size());
@@ -1994,9 +2000,7 @@ struct Layout {
         }
         // A diff (or patch): its lines in the Git views' inks, added and
         // removed; a hunk's @@ header in the accent, a file's header quiet.
-        if (const std::string l = lower(lang); (l == "diff" || l == "patch") && !b.text.empty()) {
-            inks.clear();
-            starts.clear();
+        if (diff) {
             size_t at = 0;
             for (const std::string& t : b.text) {
                 static constexpr std::string_view kHeads[] = {"+++", "---", "diff ", "index ", "new file", "deleted file", "similarity", "rename ", "old mode", "new mode", "Binary files", "\\ No newline"};

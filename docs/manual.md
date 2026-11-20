@@ -2495,8 +2495,8 @@ after a `▾`, what it holds under that, indented (Markdown in it too).
 line) are callouts: a heavier bar and a bold title, both in the kind's
 colour (the theme's blue, green, purple and yellow, and its colour for
 errors), and what the alert says under the title in the text's colour,
-its lists and code as anywhere else. A quote with any other tag stays a
-quote.
+its lists and code as anywhere else. A quote with any other tag, or with
+nothing after its tag, stays a quote.
 
 **Footnotes** (`[^1]` or `[^name]` in the text, and `[^1]: what it says`
 anywhere, with more lines or paragraphs indented under it) are numbered

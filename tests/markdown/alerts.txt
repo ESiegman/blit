@@ -28,7 +28,7 @@
 ▌ ▌ Note
 ▌ ▌ One inside another.
 
-▌ Caution
+▎ [!CAUTION]
 
 ▎ [!UNKNOWN] An unknown tag stays a quote.
 
