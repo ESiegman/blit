@@ -105,18 +105,25 @@ run "key:cmd+shift+F;text:needle;key:Down;key:Down;key:Return;vimdump"
 check "Enter goes to the line, with the cursor on the word" 'NORMAL |  | 2:5 | the needle is here'
 run "key:cmd+shift+F;text:indented;key:Return;key:ctrl+O;dump"
 check "and Ctrl-O comes back from it" '>[README.md* inner.txt]'
+run "key:cmd+P;text:needle;key:cmd+shift+F;finddump"
+check "Cmd+Shift+F turns a search for names into one for text, with what was typed" 'text [needle] 3 of 3 : >src/deep/inner.txt:2:14 src/helper.hpp:2:12 src/main.cpp:2:5'
 run "key:cmd+P;text:needle;key:Tab;finddump"
-check "Tab turns a search for names into one for text, with what was typed" 'text [needle] 3 of 3 : >src/deep/inner.txt:2:14 src/helper.hpp:2:12 src/main.cpp:2:5'
+check "Tab does not (it has one meaning: on to the next)" 'names [needle] 0 of 0 :'
 run "text::;text:find helper;key:Return;finddump"
 check ":find" 'names [helper] 1 of 1 : >src/helper.hpp'
 run "text::;text:grep omega;key:Return;finddump"
 check ":grep" 'text [omega] 1 of 1 : >src/main.cpp:3:1'
 
-# Replacing in files: Tab (or Cmd+Shift+H) gives Search in files a second
-# field; the lines then show what they would become, and what is typed is
-# looked for as it stands (or as a regular expression, Option+R).
-run "key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;finddump"
-check "Tab: Replace with, and each line before and after" 'text [needle] with> [pin] 3 of 3 : >src/deep/inner.txt:2:14=    indented pin line src/helper.hpp:2:12=// another pin, with a capital src/main.cpp:2:5=the pin is here'
+# Replacing in files: Cmd+Shift+H gives Search in files a second field
+# (Tab then goes from one to the other); the lines then show what they
+# would become, and what is typed is looked for as it stands (or as a
+# regular expression, Option+R).
+run "key:cmd+shift+F;text:needle;key:cmd+shift+H;text:pin;findwait;finddump"
+check "Cmd+Shift+H: Replace with, and each line before and after" 'text [needle] with> [pin] 3 of 3 : >src/deep/inner.txt:2:14=    indented pin line src/helper.hpp:2:12=// another pin, with a capital src/main.cpp:2:5=the pin is here'
+run "key:cmd+shift+F;text:needle;key:Tab;text:s;findwait;finddump"
+check "Tab alone does not" 'text [needles] 0 of 0 :'
+run "key:cmd+shift+F;text:needle;key:cmd+shift+H;text:pin;key:Tab;text:s;findwait;finddump"
+check "with it there, Tab goes to the other field" 'text [needles] with [pin] 0 of 0 :'
 run "key:cmd+shift+H;text:Needle;findwait;finddump"
 check "Cmd+Shift+H opens it with that field; a capital typed is a capital found" 'text [Needle] with [] 1 of 1 : >src/helper.hpp:2:12=// another , with a capital'
 run "key:cmd+shift+F;text:needle is;findwait;key:cmd+shift+H;findwait;finddump"
@@ -131,21 +138,21 @@ run "key:cmd+shift+F;key:alt+R;text:n\\(e\\)\\1d;findwait;finddump"
 check "a back-reference" 'text [n\(e\)\1d] .* 3 of 3 : >src/deep/inner.txt:2:14 src/helper.hpp:2:12 src/main.cpp:2:5'
 run "key:cmd+shift+F;key:alt+R;text:\\(the \\)\\@<=needle;findwait;finddump"
 check "look-behind" 'text [\(the \)\@<=needle] .* 1 of 1 : >src/main.cpp:2:5'
-run "key:cmd+shift+F;key:alt+R;text:\\(\\w\\+\\) \\(is\\);key:Tab;text:\\2 \\u\\1;findwait;finddump"
+run "key:cmd+shift+F;key:alt+R;text:\\(\\w\\+\\) \\(is\\);key:cmd+shift+H;text:\\2 \\u\\1;findwait;finddump"
 check "groups in what it becomes" 'text [\(\w\+\) \(is\)] with> [\2 \u\1] .* 1 of 1 : >src/main.cpp:2:5=the is Needle here'
-run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;finddump"
+run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:cmd+shift+H;text:pin;findwait;key:cmd+Return;finddump"
 check "Cmd+Enter asks first" 'text [needle] with> [pin] asking 3 in 3 3 of 3 : >src/deep/inner.txt:2:14=    indented pin line src/helper.hpp:2:12=// another pin, with a capital src/main.cpp:2:5=the pin is here'
-run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Escape;finddump"
+run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:cmd+shift+H;text:pin;findwait;key:cmd+Return;key:Escape;finddump"
 check "Esc: not now" 'text [needle] with> [pin] 3 of 3 : >src/deep/inner.txt:2:14=    indented pin line src/helper.hpp:2:12=// another pin, with a capital src/main.cpp:2:5=the pin is here'
-run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;vim:j;vimdump;dump"
+run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:cmd+shift+H;text:pin;findwait;key:cmd+Return;key:Return;vim:j;vimdump;dump"
 got="$got | $(sed -n 2p "$W/src/main.cpp") | $(sed -n 2p "$W/src/helper.hpp") | $(sed -n 2p "$W/src/deep/inner.txt")"
 check "Enter: a file open in a tab is changed there and saved, the others where they are" '>[README.md main.cpp*] | the pin is here | // another pin, with a capital |     indented pin line'
-run "open:$W/src/main.cpp;vim:Ax<Esc>;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;vimdump"
+run "open:$W/src/main.cpp;vim:Ax<Esc>;key:cmd+shift+F;text:needle;key:cmd+shift+H;text:pin;findwait;key:cmd+Return;key:Return;vimdump"
 got="$got | $(sed -n 2p "$W/src/main.cpp")"
 check "one with changes of its own: changed in its tab, not saved, and said" 'NORMAL | Replaced 3 hits in 3 files; main.cpp changed, not saved (it has changes of its own) | 1:11 | alpha linex | the needle is here'
-run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;vimdump"
+run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:cmd+shift+H;text:pin;findwait;key:cmd+Return;key:Return;vimdump"
 check "and the bottom line says how many" 'NORMAL | Replaced 3 hits in 3 files | 1:1 | alpha line'
-run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;text:j;text:u;text:j;vimdump"
+run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:cmd+shift+H;text:pin;findwait;key:cmd+Return;key:Return;text:j;text:u;text:j;vimdump"
 check "u takes it back in the file that was open (the cursor back where it was, then down onto it)" 'NORMAL |  | 2:1 | the needle is here'
 
 # Finding and replacing in the file in front: Cmd+Option+F (with Vim's modes as without).
@@ -163,7 +170,7 @@ mkdir -p "$T/work/src"
 printf 'the needle\n' >"$T/work/src/a.txt"
 printf 'no\nneedle two needle\n' >"$T/work/b.txt"
 got=$(BLIT_SSH="$(cd "$(dirname "$0")" && pwd)/fake-ssh.sh" BLIT_FAKE_HOME="$T" BLIT_RECENT_FILE="$dir/recent" "$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" \
-    --script "remotewait;find:text;key:alt+R;text:ne\\+dle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;remotewait;vimdump" "ssh://box$T/work" 2>&1 >/dev/null | tail -1)
+    --script "remotewait;find:text;key:alt+R;text:ne\\+dle;key:cmd+shift+H;text:pin;findwait;key:cmd+Return;key:Return;remotewait;vimdump" "ssh://box$T/work" 2>&1 >/dev/null | tail -1)
 got="$got | $(cat "$T/work/src/a.txt") | $(sed -n 2p "$T/work/b.txt")"
 check "a folder on another machine: its files read and written there" 'NORMAL | Replaced 3 hits in 2 files | 1:1 |  | the pin | pin two pin'
 
@@ -237,9 +244,9 @@ runf "key:cmd+F;key:alt+R;text:\\(;finddump"
 check "and one that is not says why" 'file [\(] .* (E54: Unmatched \()'
 runf "key:cmd+F;key:Return;key:Escape;keyof:Find the next match;keyof:Find the next match;vimdump"
 check "Cmd+G goes on with it after the box has gone" 'NORMAL |  | 1:4 | one two one'
-runf "key:cmd+F;text:two;key:Tab;text:2;key:Return;finddump;save"
+runf "key:cmd+F;text:two;key:cmd+alt+F;text:2;key:Return;finddump;save"
 got="$got | $(tr '\n' '/' <"$dir/r.txt")"
-check "Tab: Replace with; Enter replaces the one chosen and chooses the next" 'file [two] with> [2] 1 of 1 at 10-13 | one 2 one/two one/'
+check "Cmd+Option+F in it: Replace with; Enter replaces the one chosen and chooses the next" 'file [two] with> [2] 1 of 1 at 10-13 | one 2 one/two one/'
 runf "key:cmd+alt+F;key:Tab;text:1;key:cmd+Return;save"
 got=$(tr '\n' '/' <"$dir/r.txt")
 check "Cmd+Option+F, then Cmd+Enter: all of them" '1 two 1/two 1/'

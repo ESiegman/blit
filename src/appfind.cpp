@@ -39,11 +39,17 @@ constexpr size_t kMostRecent = 8;  // Go to file with nothing typed: how many fi
 constexpr std::string_view kCmdEnter = kPrimaryMod == SDL_KMOD_GUI ? "Cmd+Enter" : "Ctrl+Enter";
 constexpr std::string_view kCmdShiftO = kPrimaryMod == SDL_KMOD_GUI ? "Cmd+Shift+O" : "Ctrl+Shift+O";
 constexpr std::string_view kCmdShiftF = kPrimaryMod == SDL_KMOD_GUI ? "Cmd+Shift+F" : "Ctrl+Shift+F";
-constexpr Hint kHintsNames[] = {{"Enter", "open"}, {kCmdEnter, "open beside"}, {"Tab", "search in files"}};
+constexpr std::string_view kCmdShiftH = kPrimaryMod == SDL_KMOD_GUI ? "Cmd+Shift+H" : "Ctrl+Shift+H";
+constexpr std::string_view kCmdOptionF = kPrimaryMod == SDL_KMOD_GUI ? "Cmd+Option+F" : "Ctrl+Alt+F";
+constexpr std::string_view kOptionK = kPrimaryMod == SDL_KMOD_GUI ? "Option+K" : "Alt+K";
+// (Tab has one meaning in the box: on to the next, the other field, the
+// next kind, the name completed. What turns one search into another has a
+// chord: the one that opens that search.)
+constexpr Hint kHintsNames[] = {{"Enter", "open"}, {kCmdEnter, "open beside"}, {kCmdShiftF, "search in files"}};
 constexpr Hint kHintsLine[] = {{"Enter", "go to the line"}};
-constexpr Hint kHintsText[] = {{"Enter", "open"}, {kCmdEnter, "open beside"}, {"Tab", "replace"}};
+constexpr Hint kHintsText[] = {{"Enter", "open"}, {kCmdEnter, "open beside"}, {kCmdShiftH, "replace"}};
 constexpr Hint kHintsTextReplace[] = {{kCmdEnter, "replace all"}, {"Enter", "open"}, {"Tab", "other field"}};
-constexpr Hint kHintsFile[] = {{"Enter", "next"}, {"Shift+Enter", "previous"}, {"Tab", "replace"}};
+constexpr Hint kHintsFile[] = {{"Enter", "next"}, {"Shift+Enter", "previous"}, {kCmdOptionF, "replace"}};
 constexpr Hint kHintsFileReplace[] = {{"Enter", "replace"}, {kCmdEnter, "all"}, {"Tab", "other field"}};
 constexpr Hint kHintsSure[] = {{"Enter", "replace"}, {"Esc", "not now"}};
 constexpr std::string_view kWithLabel = "Replace with";
@@ -53,8 +59,8 @@ constexpr std::string_view kWithLabel = "Replace with";
 // at several).
 constexpr u64 kMostCounted = 100000;
 constexpr u64 kCountBytes = 64ull << 20, kCountBytesRegex = 8ull << 20;
-constexpr Hint kHintsCommand[] = {{"Enter", "run"}, {"Tab", "find by keys"}};
-constexpr Hint kHintsCapture[] = {{"Tab", "back to typing"}};
+constexpr Hint kHintsCommand[] = {{"Enter", "run"}, {kOptionK, "find by keys"}};
+constexpr Hint kHintsCapture[] = {{kOptionK, "back to typing"}};
 constexpr Hint kHintsAll[] = {{"Enter", "open"}, {"Tab", "next kind"}};
 // Search everywhere: how many of each kind at most.
 constexpr size_t kAllFiles = 8, kAllSymbols = 6, kAllCommands = 6, kAllSettings = 5;
@@ -945,6 +951,12 @@ void App::palette_open() {
     find_open(kFindCommand);
 }
 
+// The command search, looking up the next keys pressed (Option+K in it).
+void App::palette_keys() {
+    palette_open();
+    find_->capture = true;
+}
+
 // Search everywhere: the commands searched as the command search has them.
 void App::find_everywhere() {
     Find& f = *find_;
@@ -1654,21 +1666,15 @@ void App::find_accept() {
 // places (what is typed stays).
 void App::find_tab() {
     Find& f = *find_;
-    // Search in files and Find: "Replace with" opens, and then Tab goes from one field to the other.
+    // Search in files and Find, with "Replace with": from one field to the other.
     if (f.mode == kFindText || f.mode == kFindFile) {
-        if (!f.replacing) {
-            f.replacing = f.in_with = true;
-            f.with_all = !f.with.empty();
-            if (f.mode == kFindText) find_query();  // (what is typed is then looked for as it stands)
-        } else {
-            f.in_with = !f.in_with;
-        }
+        if (!f.replacing) return;
+        f.in_with = !f.in_with;
         f.asking = false;
         f.touch();
         dirty_ = true;
         return;
     }
-    if (f.mode == kFindNames) return find_open(kFindText, f.typed);
     if (f.mode == kFindAll) {  // the first row of the next kind, round from the last
         const size_t n = f.near.size();
         size_t i = f.sel + 1;
@@ -1687,7 +1693,7 @@ void App::find_tab() {
         fn(f.typed);
         return;
     }
-    if (f.script() || f.sel >= f.entries.size()) return;
+    if (!f.path() || f.sel >= f.entries.size()) return;
     const Find::Entry& e = f.entries[f.sel];
     if (e.kind != Find::Entry::kPlain) return;
     f.typed = f.dir == "ssh://" ? f.dir + e.name + "/~/" : tilde(f.dir + e.name) + (e.dir ? "/" : "");
@@ -1780,6 +1786,13 @@ bool App::find_key(const SDL_KeyboardEvent& k) {
         f.drop_option = true;  // (Option+R types "®", Option+C "ç")
         return true;
     }
+    if (f.mode == kFindCommand && alt && !cmd && !ctrl && k.key == SDLK_K) {  // Option+K: the next keys pressed are looked up (again: back to typing)
+        f.capture = !f.capture;
+        f.drop_option = true;  // (Option+K types "˚")
+        f.touch();
+        dirty_ = true;
+        return true;
+    }
     if (f.mode == kFindFile && ((cmd && k.key == SDLK_G) || k.key == SDLK_F3 || k.key == SDLK_UP || k.key == SDLK_DOWN)) {  // the next match, or the one before
         const bool back = k.key == SDLK_UP || ((k.key == SDLK_G || k.key == SDLK_F3) && shift);
         Find::file_go(*this, f.cur_ok ? f.cur.start : pane_->doc->ed.cursor(), !back, false);
@@ -1802,12 +1815,6 @@ bool App::find_key(const SDL_KeyboardEvent& k) {
         f.chord_query = false;
         f.typed.clear();
         find_query();
-        return true;
-    }
-    if (f.mode == kFindCommand && k.key == SDLK_TAB) {  // Tab: the next keys pressed are looked up
-        f.capture = !f.capture;
-        f.touch();
-        dirty_ = true;
         return true;
     }
     if (f.asking && k.key != SDLK_RETURN && k.key != SDLK_KP_ENTER) {  // the question has its answer: anything but Enter is "no"

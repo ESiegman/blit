@@ -176,8 +176,8 @@ file opened on its own (`blit FILE`) leaves the sessions alone.
 Everything blit does can be done from the keyboard. **Cmd+Shift+P**
 (Ctrl+Shift+P elsewhere) searches every command by its name or its keys,
 shows the keys of each, and runs the one chosen; typing `cmd+b` finds what
-Cmd+B does, and Tab, then any keys, looks those keys up. The scripts'
-commands are there too.
+Cmd+B does, and Option+K (Alt+K elsewhere), then any keys, looks those keys
+up. The scripts' commands are there too.
 
 blit is a modal editor: it starts in Normal mode, where keys are commands,
 and `i` is what makes typing type. The modes and keys are Neovim's defaults;
@@ -210,11 +210,11 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | Save / open (in a new tab) | Cmd+S / Cmd+O | Ctrl+S / Ctrl+O (or Alt+O) |
 | Save as… / save all | Cmd+Shift+S / Cmd+Option+S | Ctrl+Shift+S / Ctrl+Alt+S |
 | Open a folder | Cmd+Shift+O | Ctrl+Shift+O |
-| Command search: every command, by its name or its keys | Cmd+Shift+P | Ctrl+Shift+P |
+| Command search: every command, by its name or its keys; in it, look up the keys pressed next | Cmd+Shift+P; Option+K | Ctrl+Shift+P; Alt+K |
 | Search everywhere: files, the project's symbols, commands and settings | Cmd+K | Ctrl+K |
-| Go to file / Search in files | Cmd+P / Cmd+Shift+F | Ctrl+P / Ctrl+Shift+F |
+| Go to file / Search in files (from one to the other, keeping what is typed) | Cmd+P / Cmd+Shift+F | Ctrl+P / Ctrl+Shift+F |
 | Find in this file; the next / previous match | Cmd+F; Cmd+G / Cmd+Shift+G | Ctrl+F (or Alt+F); F3 / Shift+F3 |
-| Replace in this file / in files | Cmd+Option+F / Cmd+Shift+H | Ctrl+Alt+F / Ctrl+Shift+H |
+| Replace in this file / in files (in Find or Search in files, the field Replace with) | Cmd+Option+F / Cmd+Shift+H | Ctrl+Alt+F / Ctrl+Shift+H |
 | The next / previous hit of Search in files (or of the references found, after them) | F4 / Shift+F4 | F4 / Shift+F4 |
 | The next / previous problem: the last build's, across files (else the language servers', across files) | F8 / Shift+F8 | F8 / Shift+F8 |
 | Go to the definition; peek at it; find references; rename | F12; Option+Shift+F12; Shift+F12; F2 | F12; Alt+Shift+F12; Shift+F12; F2 |
@@ -967,9 +967,10 @@ or Cmd+G) chooses the next, Shift+Enter (or Up) the one before, round the
 ends; Esc leaves the one chosen selected, and Cmd+G and Cmd+Shift+G go on
 from it. Small letters match either case; a capital typed is a capital
 found. **Cmd+Option+F** (with Vim's modes as without) opens it with a second
-field, Replace with (Tab goes from one field to the other, and opens it
-from Cmd+F): Enter replaces the match chosen and chooses the next, Cmd+Enter
-replaces them all, in one undo step. With modes on, the match chosen is
+field, Replace with (and adds that field to a box Cmd+F opened; Tab
+goes from one field to the other): Enter replaces the match chosen and
+chooses the next, Cmd+Enter replaces them all, in one undo step. With
+modes on, the match chosen is
 selected as in Visual mode, and when the box shuts what it found is the
 last search (`n` goes on with it).
 
@@ -1004,9 +1005,11 @@ window has come back to the front since, or the file tree has seen a
 change; the list as it was is searched meanwhile, and again when the new
 one is in (switching between names and text reads nothing).
 
-**Replacing in files**: Tab in Search in files (or **Cmd+Shift+H**) adds
-Replace with. What is typed is then looked for as it stands, spaces and
-all (or as a pattern, Option+R), the count is of matches, and each line
+**Replacing in files**: **Cmd+Shift+H** opens Search in files with a
+second field, Replace with, or in Search in files adds it (again: takes it
+away); Tab goes from one field to the other. What is typed is then looked
+for as it stands, spaces and all (or as a pattern, Option+R), the count is
+of matches, and each line
 found shows what it is and, after an arrow, what it would become, the parts
 that change lit. Cmd+Enter asks first, in the box: "Replace 37 hits in 5
 files?" (Enter yes; anything else no). A file open in a tab is changed
@@ -1021,9 +1024,10 @@ a narrower one first.)
 
 In the box: Up and Down (or Ctrl-P and Ctrl-N, Ctrl-K and Ctrl-J) choose,
 Page Up and Page Down go by a page, Enter opens, Esc (or a click beside the
-box, or the key that opened it) shuts it. Tab turns a search for names
-into one for text, keeping what is typed (and in a search for text adds
-Replace with; Cmd+P goes back to names). Option+Backspace (or
+box, or the key that opened it) shuts it. Cmd+Shift+F turns a search for
+names into one for text, keeping what is typed, and Cmd+P goes back to
+names. Tab has one meaning in the box, on to the next: the other field,
+the next kind, the name chosen completed. Option+Backspace (or
 Ctrl-W) takes a word back, Cmd+Backspace (or Ctrl-U) all of it, Cmd+V puts
 in what the clipboard holds. A row can be clicked, and the wheel turns the
 list. In Vim's command line, `:find NAME` and `:grep WORDS` open the box

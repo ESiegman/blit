@@ -224,6 +224,7 @@ void App::commands_create() {
     sent("Quit", {key(SDLK_Q, kP)});
     // Finding.
     own("Command search", {key(SDLK_P, kP | kS)}, [this] { palette_open(); });
+    c.push_back({"Command search: find by keys", {key(SDLK_K, kA)}, false, [this] { palette_keys(); }});  // (its key is the box's own)
     sent("Go to file", {key(SDLK_P, kP)});
     sent("Search in files", {key(SDLK_F, kP | kS)});
     own("Find in this file", also({key(SDLK_F, kP)}, {key(SDLK_F, kA)}), [this] { find_in_file(); });

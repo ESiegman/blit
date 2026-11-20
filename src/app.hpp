@@ -1150,6 +1150,7 @@ private:
     // keyof:). False if there is no such command or it has no keys.
     bool command_key_now(std::string_view title, SDL_KeyboardEvent* out);
     void palette_open();
+    void palette_keys();  // appfind.cpp: the command search, looking up the next keys pressed
     void palette_run(u32 id);
     static std::string chord_text(SDL_Keycode key, SDL_Keymod mod);
     void tab_shift(int by);

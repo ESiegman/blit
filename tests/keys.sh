@@ -57,8 +57,13 @@ run "key:cmd+shift+p;text:split right;finddump"
 check "the search: commands by name, with their keys, the best first" "commands [split right] 4 : >$split_keys"
 run "key:cmd+shift+p;text:$panel_typed;finddump"
 check "keys typed: the command they are" "commands [$panel_typed] 1 : >$panel_keys"
+run "key:cmd+shift+p;key:alt+K;key:ctrl+Tab;finddump"
+check "Option+K, then keys pressed: looked up" "commands [Ctrl+Tab] 1 : >$next_keys"
+run "key:cmd+shift+p;key:alt+K;key:alt+K;text:split right;finddump"
+check "and Option+K again: back to typing" "commands [split right] 4 : >$split_keys"
 run "key:cmd+shift+p;key:Tab;key:ctrl+Tab;finddump"
-check "Tab, then keys pressed: looked up" "commands [Ctrl+Tab] 1 : >$next_keys"
+case $got in "commands [] "*) got="nothing looked up" ;; esac
+check "Tab does not look keys up" "nothing looked up"
 run "key:cmd+shift+p;text:split below;key:Return;frame;dump"
 check "a command run from the search: as its keys would" 'V([notes.txt*] / >[untitled*])0.50'
 run 'key:cmd+\;key:Escape;keyof:Make the split wider;keyof:Make the split wider;frame;dump'
