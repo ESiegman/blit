@@ -157,6 +157,14 @@ run "folder:$W;frame;dump;views"
 check "a file two splits showed: two views of it again, each with its own cursor" \
     'H([long.txt*] | >[long.txt*])0.50 ;; views: [long.txt#3 2:0 line 3] [long.txt#3 5:0 line 6]<'
 
+# A notebook: its view beside it again, the keyboard on its script.
+rm -f "$S"/*
+printf '{"cells": [{"cell_type": "code", "execution_count": 1, "metadata": {}, "outputs": [], "source": ["x = 1"]}], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}\n' >"$W/n.ipynb"
+run "folder:$W;open:$W/n.ipynb;mdwait;quit"
+run "folder:$W;frame;mdwait;dump"
+check "a notebook: its view beside it again" 'H(>[n.ipynb*] | [Notebook: n.ipynb*])0.50'
+rm "$W/n.ipynb"
+
 # Another machine's folder: its files come back when the connection is up.
 run "folder:$R;open:$R/a.txt;remotewait;key:Down;key:Right;quit"
 run "remotewait;frame;dump;statusdump" "$R"
