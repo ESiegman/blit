@@ -788,12 +788,13 @@ void App::debug_begin(const std::string& request, const std::string& args_in) {
     dirty_ = true;
 }
 
-// The session over: the debugger let go of (and the program with it), on
-// a thread of its own: nothing here waits for it to end.
+// The session over: the debugger let go of (and the program with it, unless
+// it was attached to: that goes on), on a thread of its own: nothing here
+// waits for it to end.
 void App::debug_end() {
     DebugUi& u = *debugui_;
     if (u.dap && !u.dap->ended()) {
-        u.dap->request("disconnect", "{\"terminateDebuggee\":true}");
+        u.dap->request("disconnect", u.how == "attach" ? "{\"terminateDebuggee\":false}" : "{\"terminateDebuggee\":true}");
         u.dap->stop(300);  // (the adapter lets go of the program as it ends)
     }
     u.dap.reset();

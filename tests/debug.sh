@@ -276,6 +276,19 @@ if [ "$scope" = 0 ] || [ "$(id -u)" = 0 ]; then
     wait "$waiting" 2>/dev/null
     got=$(printf '%s' "$got" | sed -e 's/rounds=[0-9]*/rounds=N/' -e 's/ start\(@[0-9]*\)\{0,1\};/;/')
     check "attached on another machine: the same" 'stopped (breakpoint); stack: main@13; vars: rounds=N ;; box waits.c | Ln 13, Col 1 Spaces: 4 LF C ;; waits.c'
+    "$dir/here/waits" &
+    waiting=$!
+    sleep 0.3
+    run "break:13;debugattach:$waiting;debugwait:stopped;key:shift+F5;debugwait:idle;debugdump" "$dir/here/waits.c"
+    sleep 0.5
+    case "$(ps -o stat= -p "$waiting" 2>/dev/null)" in
+        "") got="$got ;; it was ended" ;;
+        T*) got="$got ;; it was left stopped" ;;
+        *) got="$got ;; it goes on" ;;
+    esac
+    kill "$waiting" 2>/dev/null
+    wait "$waiting" 2>/dev/null
+    check "Shift+F5 lets a process attached to go on" 'idle ;; it goes on'
 fi
 # (A core file as the debugger writes it: lldb's save-core, gdb's generate-core-file.)
 core="$dir/here/crash.core"
@@ -291,6 +304,36 @@ if [ -s "$core" ]; then
     run "debugcore:$dir/here/crash:$core;debugwait:stopped;debugdump" "$dir/here/crash.c"
     got=$(printf '%s' "$got" | sed -e 's/; stack: [^;]*;/;/' -e 's/^stopped ([^)]*)/stopped/')  # (the library frames above the program's: the system's own; gdb's word for why)
     check "a core file: where it stopped, the program's own frame shown with its variables" 'stopped; vars: depth=3 here=21'
+fi
+
+# A stand-in debugger (tests/fake_dap.cpp) as the machine's, started by an
+# xcrun and a gdb of its own first on the PATH: what the debuggers blit
+# meets say, where this machine's would not say it.
+fakedap="$(cd "$(dirname "$blit")" && pwd)/blit_fakedap"
+if [ -x "$fakedap" ]; then
+    F="$dir/fake"
+    mkdir -p "$F/bin"
+    printf '#!/bin/sh\ncase "$1" in --find) echo "%s" ;; lldb-dap) exec "%s" ;; *) exit 1 ;; esac\n' "$fakedap" "$fakedap" >"$F/bin/xcrun"
+    printf '#!/bin/sh\ncase "$1" in --version) echo "GNU gdb (GDB) 15.1" ;; *) exec "%s" ;; esac\n' "$fakedap" >"$F/bin/gdb"
+    chmod +x "$F/bin/xcrun" "$F/bin/gdb"
+    printf 'print("a program")\n' >"$F/prog"
+    # fake SCRIPT [FILE]: as run, with the stand-in; what it was asked is in $F/log.
+    fake() {
+        rm -f "$F/log"
+        was=$PATH
+        PATH="$F/bin:$PATH" BLIT_FAKE_DAP_LOG="$F/log"
+        export BLIT_FAKE_DAP_LOG
+        run "$@"
+        PATH=$was
+        unset BLIT_FAKE_DAP_LOG
+    }
+
+    # Stopping lets go of a process attached to (it goes on), and ends one launched.
+    fake "debug:program=$F/prog;key:F5;debugwait:stopped;key:shift+F5;debugwait:idle"
+    stops=$(grep '^disconnect' "$F/log")
+    fake "debugattach:4242;debugwait:stopped;key:shift+F5;debugwait:idle"
+    got="$stops ;; $(grep '^disconnect' "$F/log")"
+    check "stopping: a program launched ends, a process attached to goes on" 'disconnect {"terminateDebuggee":true} ;; disconnect {"terminateDebuggee":false}'
 fi
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "debug ok"
