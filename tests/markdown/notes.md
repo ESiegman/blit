@@ -17,7 +17,7 @@ A paragraph in between, so that the notes are numbered by where they are first r
     code in a footnote
     ```
 
-[^unused]: Never referred to, shown last.
+[^unused]: Never referred to, not drawn.
 
 [^inner]: Only a footnote refers to this one.
 

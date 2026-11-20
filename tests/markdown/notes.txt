@@ -34,4 +34,3 @@ the end all the same.
 3. Named footnotes still get numbers. They
    refer to another⁴. ↩
 4. Only a footnote refers to this one. ↩
-5. Never referred to, shown last.

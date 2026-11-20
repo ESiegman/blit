@@ -140,13 +140,13 @@ check "task lists: their squares in both themes (light)" "[#8e9096]□ [#1a1a1c]
 
 # Footnotes: a mark is a link to its text at the end, the row that text
 # starts on is named for it, and the mark after the text is a link back;
-# one nothing refers to has no way back. A click on a mark puts its text
+# one nothing refers to is not drawn (as on GitHub). A click on a mark puts its text
 # on show (it was not), a click on the mark after the text puts the row
 # that first referred to it at the top.
 looks=$(BLIT_INIT="$dir/dark.lua" "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mdwait;mdlooks" "$here/markdown/notes.md" 2>&1 >/dev/null)
 got=$(printf '%s\n' "$looks" | grep -c 'footnote\[#61afef >#fn-1\]¹\[#dbdedb\]\. A'),$(printf '%s\n' "$looks" | grep -c '^#fn-1 \[#61afef\]1\. \[#dbdedb\]My reference'),$(printf '%s\n' "$looks" | grep -c '\[#61afef >#fnref-1\]↩$')
-got=$got,$(printf '%s\n' "$looks" | grep -c '^#fn-5 \[#61afef\]5\. \[#dbdedb\]Never referred to, shown last\.$'),$(printf '%s\n' "$looks" | grep -c 'fnref-5')
-check "footnotes: marks that go to their text, text that goes back" "1,1,1,1,0"
+got=$got,$(printf '%s\n' "$looks" | grep -c 'Never referred to'),$(printf '%s\n' "$looks" | grep -c 'fn-5')
+check "footnotes: marks that go to their text, text that goes back" "1,1,1,0,0"
 {
     printf 'First[^a] words.\n\n'
     i=0

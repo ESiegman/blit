@@ -1828,13 +1828,14 @@ struct Layout {
 
     // The footnotes, under a short rule at the end: those referred to, in
     // the order of their numbers (one that only another's text refers to is
-    // numbered as that is drawn), then those nothing refers to. Each has its
-    // number in front, its first row's id ("fn-1") is what its marks go to,
-    // and the mark after its text goes back to the first of them.
+    // numbered as that is drawn). One nothing refers to is not drawn, as on
+    // GitHub. Each has its number in front, its first row's id ("fn-1") is
+    // what its marks go to, and the mark after its text goes back to the
+    // first of them.
     void footnotes(const std::vector<const Block*>& defs) {
         std::map<std::string, const Block*> by_label;  // (the first of a label is the one)
         for (const Block* b : defs) by_label.emplace(b->info, b);
-        if (by_label.empty()) return;
+        if (by_label.empty() || refs.noted.empty()) return;
         const size_t from = rows.size();
         u32 line = rows.empty() ? 0 : rows.back().line;
         gap(line);
@@ -1842,15 +1843,8 @@ struct Layout {
         for (u32 k = 0; k < std::min<u32>(room(), 24); ++k) rule += "\xE2\x94\x80";
         row({{rule, kMdMuted}}, line);
         const size_t numw = std::to_string(by_label.size()).size() + 1;
-        size_t done = 0, unused = 0;
-        for (;;) {
-            bool referred = true;
-            if (done == refs.noted.size()) {  // (the next that nothing refers to)
-                while (unused < defs.size() && (by_label[defs[unused]->info] != defs[unused] || refs.notes[defs[unused]->info] != 0)) ++unused;
-                if (unused == defs.size()) break;
-                refs.number(defs[unused]->info);
-                referred = false;
-            }
+        size_t done = 0;
+        while (done < refs.noted.size()) {  // (a note's text can refer to another: noted grows as they are drawn)
             const int n = static_cast<int>(++done);
             const Block& def = *by_label[refs.noted[done - 1]];
             const std::string num = std::to_string(n) + ".";
@@ -1859,15 +1853,13 @@ struct Layout {
             blocks(def.kids, false, kMdText);
             if (rows.size() == first) row({}, def.line);  // (one that says nothing)
             rows[first].id = "fn-" + std::to_string(n);
-            if (referred) {
-                MdRun back("\xE2\x86\xA9", kMdLink, 0, kMdNoTone, "#fnref-" + std::to_string(n));
-                MdRow& last = rows.back();
-                if (!last.fill && last.pics.empty() && !last.runs.empty() && cols_of_runs(last.runs) + 2 <= width) {
-                    if (!last.runs.back().text.ends_with(' ')) last.runs.push_back({" "});
-                    last.runs.push_back(std::move(back));
-                } else {
-                    row({std::move(back)}, last.line);
-                }
+            MdRun back("\xE2\x86\xA9", kMdLink, 0, kMdNoTone, "#fnref-" + std::to_string(n));
+            MdRow& last = rows.back();
+            if (!last.fill && last.pics.empty() && !last.runs.empty() && cols_of_runs(last.runs) + 2 <= width) {
+                if (!last.runs.back().text.ends_with(' ')) last.runs.push_back({" "});
+                last.runs.push_back(std::move(back));
+            } else {
+                row({std::move(back)}, last.line);
             }
             levels.pop_back();
         }

@@ -823,12 +823,12 @@ void markdown_test() {
     // Footnotes: numbered in the order they are first referred to (not the
     // order their texts come in), a mark a link to its text, the texts at
     // the end under a rule, each with a mark that goes back; one only
-    // another's text refers to after those; one nothing refers to last, with
-    // no way back; a mark with no text as it is.
+    // another's text refers to after those; one nothing refers to not drawn
+    // (as on GitHub); a mark with no text as it is.
     const std::string rule = "\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80", back = " \xE2\x86\xA9";
     const std::string notes = "A[^b] b[^a] c[^b] d[^none].\n\n[^a]: first *text*\n[^unused]: never\n[^b]: second, see[^c]\n    more of it\n\n    another paragraph\n[^c]: third\n\nafter\n";
     check(drawn(notes) == "A\xC2\xB9 b\xC2\xB2 c\xC2\xB9 d[^none].\n\nafter\n\n" + rule + rule + rule + "\n1. second, see\xC2\xB3 more of it\n\n   another paragraph" + back + "\n2. first text" + back +
-                              "\n3. third" + back + "\n4. never\n",
+                              "\n3. third" + back + "\n",
           "footnotes: numbered as they are first referred to, their texts at the end");
     const std::string note_looks = drawn(notes, 60, true);
     const std::string link = ink(kMdLink) + "0.0>";
@@ -840,14 +840,14 @@ void markdown_test() {
         for (const MdRun& run : r.runs)
             if (!run.link.empty()) links += run.link + " ";
     }
-    check(ids == "fn-1:1. s fn-2:2. f fn-3:3. t fn-4:4. n " && links == "#fn-1 #fn-2 #fn-1 #fn-3 #fnref-1 #fnref-2 #fnref-3 ",
+    check(ids == "fn-1:1. s fn-2:2. f fn-3:3. t " && links == "#fn-1 #fn-2 #fn-1 #fn-3 #fnref-1 #fnref-2 #fnref-3 ",
           "footnotes: each text's first row named for its number, marks that go there and back");
     std::string plain;
     for (const MdRow& r : md_render("x[^1] y[^2]\n\n[^2]: two\n[^1]: one\n", 60, {}, {}, {}, 0)) plain += md_row_text(r) + "\n";
     check(plain.starts_with("x[1] y[2]\n"), "footnotes: a font with no raised digits: the number in brackets");
-    check(drawn("[^1]: only this\n") == rule + rule + rule + "\n1. only this\n" && drawn("a[^1]\n\n[^1]:\n") == "a\xC2\xB9\n\n" + rule + rule + rule + "\n1." + back + "\n" &&
+    check(drawn("[^1]: only this\n").empty() && drawn("a[^1]\n\n[^1]:\n") == "a\xC2\xB9\n\n" + rule + rule + rule + "\n1." + back + "\n" &&
               drawn("> q[^1]\n>\n> [^1]: in a quote\n").ends_with("1. in a quote" + back + "\n"),
-          "footnotes: only a text, an empty one, one defined in a quote");
+          "footnotes: only a text (not drawn), an empty one, one defined in a quote");
     std::string many = "t";
     for (int k = 1; k <= 12; ++k) many += "[^" + std::to_string(k) + "]";
     many += "\n\n";

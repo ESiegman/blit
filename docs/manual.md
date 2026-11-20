@@ -2505,8 +2505,8 @@ Each reference is a small raised number (`¹`; `[1]` in a font that has
 no raised digits), and a link: a click on it goes to the footnote. The
 footnotes are drawn at the end under a short rule, each with its number
 and its text as Markdown, then `↩`, a link back to the first place that
-referred to it. A footnote nothing refers to is still shown, after the
-others; a reference to one that is not defined stays as it was typed.
+referred to it. A footnote nothing refers to is not shown, as on GitHub;
+a reference to one that is not defined stays as it was typed.
 
 **Pictures** that are a paragraph of their own (`![alt](file.png)`, or a
 row of them; one inside a link too) and HTML's `<img src=... width=...>`
