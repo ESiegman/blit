@@ -2351,6 +2351,25 @@ void diagram_test() {
             if (!tried) std::printf("diagram fallback fonts skipped: the editor's font has them all, or no font does\n");
         }
     }
+    // A Markdown string's **bold** and *italic* are marked in its line (they
+    // were dropped), measured bold, and carried over a line's breaks.
+    {
+        const std::vector<std::string> l = diagram_label("\"`**bold** and *slanted*`\"");
+        check(l.size() == 1 && l[0] == "\x02" "bold\x02 and \x03slanted\x03", "diagram: a Markdown string's bold and italic marked");
+        Font sys;
+        FontSpec spec;
+        spec.px = 20;
+        std::string ferr;
+        if (sys.init(spec, &ferr)) {
+            DiagramFont real;
+            real.open(sys.path(), sys.index());
+            check(real.width("\x02" "bold\x02", 20) > real.width("bold", 20) && real.width("\x02" "bold\x02", 20) == real.width("bold", 20, true), "diagram: bold text measured bold");
+            const std::vector<std::string> rows = diagram_wrap({"\x02" "one two three four five six seven\x02"}, real.width("one two", 20, true), 20, real);
+            bool marked = rows.size() > 1;
+            for (const std::string& r : rows) marked = marked && r.front() == '\x02' && r.back() == '\x02';
+            check(marked, "diagram: bold carried over a line's breaks");
+        }
+    }
     // A diamond of blank lines is no needle: never taller than wide.
     {
         Drawing d;

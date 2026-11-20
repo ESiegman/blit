@@ -45,6 +45,10 @@ struct DiagramPalette {
     bool dark() const { return bg[0] * 0.3f + bg[1] * 0.59f + bg[2] * 0.11f < 0.5f; }
 };
 
+// In a line of text, marks that start and end bold and italic (from a
+// Markdown string's ** and *).
+constexpr u32 kDiagramBold = 2, kDiagramItalic = 3;
+
 // The font text is measured and drawn in: a face of its own (FreeType's
 // faces are not to be used by two threads, and this one is used by the
 // preview's), and for characters it lacks, the editor's fallbacks (each

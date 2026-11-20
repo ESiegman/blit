@@ -232,27 +232,36 @@ float DiagramFont::width(std::string_view text, float size, bool bold) const {
     const u8* p = reinterpret_cast<const u8*>(text.data());
     for (size_t i = 0; i < text.size();) {
         const Decoded d = decode_utf8(p + i, text.size() - i);
-        w += glyph(d.cp | (bold ? 0x80000000u : 0)).advance;
         i += d.len ? d.len : 1;
+        if (d.cp == kDiagramBold) bold = !bold;
+        if (d.cp == kDiagramBold || d.cp == kDiagramItalic) continue;
+        w += glyph(d.cp | (bold ? 0x80000000u : 0)).advance;
     }
     return w * size;
 }
 
 void DiagramFont::outline(std::string_view text, float x, float y, float size, bool bold, RasterPath* out) const {
     const u8* p = reinterpret_cast<const u8*>(text.data());
+    bool italic = false;
     for (size_t i = 0; i < text.size();) {
         const Decoded d = decode_utf8(p + i, text.size() - i);
         i += d.len ? d.len : 1;
+        if (d.cp == kDiagramBold) bold = !bold;
+        if (d.cp == kDiagramItalic) italic = !italic;
+        if (d.cp == kDiagramBold || d.cp == kDiagramItalic) continue;
         const Glyph& g = glyph(d.cp | (bold ? 0x80000000u : 0));
+        // (italic: the upright outline slanted, a fifth of its height across)
+        const float slant = italic ? 0.2f : 0;
+        auto px = [&](const float* q) { return x + (q[0] - q[1] * slant) * size; };
         size_t at = 0;
         for (const u8 v : g.shape.verbs) {
             const float* q = g.shape.pts.data() + at;
             switch (v) {
-                case RasterPath::kMove: out->move_to(x + q[0] * size, y + q[1] * size), at += 2; break;
-                case RasterPath::kLine: out->line_to(x + q[0] * size, y + q[1] * size), at += 2; break;
-                case RasterPath::kQuad: out->quad_to(x + q[0] * size, y + q[1] * size, x + q[2] * size, y + q[3] * size), at += 4; break;
+                case RasterPath::kMove: out->move_to(px(q), y + q[1] * size), at += 2; break;
+                case RasterPath::kLine: out->line_to(px(q), y + q[1] * size), at += 2; break;
+                case RasterPath::kQuad: out->quad_to(px(q), y + q[1] * size, px(q + 2), y + q[3] * size), at += 4; break;
                 case RasterPath::kCubic:
-                    out->cubic_to(x + q[0] * size, y + q[1] * size, x + q[2] * size, y + q[3] * size, x + q[4] * size, y + q[5] * size);
+                    out->cubic_to(px(q), y + q[1] * size, px(q + 2), y + q[3] * size, px(q + 4), y + q[5] * size);
                     at += 6;
                     break;
                 default: out->close(); break;
@@ -398,7 +407,10 @@ std::vector<std::string> diagram_label(std::string_view s) {
         for (size_t at = 0; (at = t.find(from, at)) != std::string::npos; at += to.size()) t.replace(at, from.size(), to);
     };
     for (const char* br : {"<br/>", "<br />", "<br>", "<BR>", "<BR/>", "\\n"}) replace(br, "\n");
-    if (markdown) replace("**", ""), replace("__", "");
+    if (markdown) {  // (**bold** and __bold__, *italic*: the font's marks for them, kDiagramBold and kDiagramItalic)
+        replace("**", "\x02"), replace("__", "\x02");
+        if (std::ranges::count(t, '*') % 2 == 0) replace("*", "\x03");
+    }
     for (const auto& [e, r] : std::initializer_list<std::pair<const char*, const char*>>{
              {"&quot;", "\""}, {"&amp;", "&"}, {"&lt;", "<"}, {"&gt;", ">"}, {"&nbsp;", " "}, {"#quot;", "\""}, {"#amp;", "&"}, {"#lt;", "<"}, {"#gt;", ">"}})
         replace(e, r);
@@ -467,6 +479,17 @@ std::vector<std::string> diagram_wrap(const std::vector<std::string>& lines, flo
             row = part;
         }
         out.push_back(row);
+    }
+    // Bold and italic carried over the breaks: each row closes what is open
+    // at its end, and the next opens it again.
+    bool bold = false, italic = false;
+    for (std::string& row : out) {
+        const std::string open = std::string(bold ? "\x02" : "") + (italic ? "\x03" : "");
+        for (const char c : row) {
+            if (c == '\x02') bold = !bold;
+            if (c == '\x03') italic = !italic;
+        }
+        row = open + row + (bold ? "\x02" : "") + (italic ? "\x03" : "");
     }
     return out;
 }
