@@ -2090,7 +2090,9 @@ or drag it into a split of its own.
 - Keys go to the program, Vim's keys included. The editor keeps its Cmd
   shortcuts (switching tabs, closing one), except: **Cmd+C** copies what is
   selected, **Cmd+V** pastes, **Cmd+K** clears the history. (On Linux:
-  Ctrl+Shift+C and Ctrl+Shift+V.)
+  Ctrl+Shift+C and Ctrl+Shift+V.) There is no search in a terminal yet:
+  Cmd+F (or Find in this file from the command search) says so on the
+  bottom line, and what is typed after it goes to the program as ever.
 - Drag to select; double-click a word, triple-click a line; middle or
   right click pastes.
 - A program that asks for the mouse (htop, less with `--mouse`, vim with

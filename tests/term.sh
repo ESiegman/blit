@@ -59,6 +59,16 @@ run "term;frame;termwait:\$;text:echo copy-m''e;key:Return;termwait:copy-me;clic
 check "a word chosen with a double click, copied, and pasted after the prompt" "\$ echo copy-m''e|copy-me|\$ copy-me @2,9 15x74"
 run "term;frame;termwait:\$;text:exit;key:Return;termend;frame;dump"
 check "the shell ends: its tab goes" '>[untitled*]'
+# Cmd+F (and the command) in a terminal: no search there yet, and it says so
+# on the bottom line, rather than nothing showing while what is typed next
+# goes to the program.
+# (Elsewhere Ctrl+F and Ctrl+Alt+F are the program's: the commands, then.)
+case $(uname -s) in
+    Darwin) find=key:cmd+F replace=key:cmd+alt+F ;;
+    *) find="command:Find in this file" replace="command:Replace in this file" ;;
+esac
+got=$("$blit" --offscreen 1200x600 --shot "$dir/shot.bmp" --script "workdir:$dir/work;term;frame;termwait:\$;$find;finddump;lua:blit.opt.editor.modal = true;$replace;finddump" 2>&1 >/dev/null | tr '\n' ' ')
+check "Cmd+F in a terminal: refused, said" 'blit: No search in a terminal yet closed blit: No search in a terminal yet closed '
 run "term;frame;termwait:\$;text:exit 3;key:Return;termend;frame;termdump"
 case "$got" in *"[exited with code 3]"*" ended 3") got="ended 3, tab kept" ;; esac
 check "a shell that ends badly: the tab stays and says so" "ended 3, tab kept"

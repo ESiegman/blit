@@ -478,6 +478,10 @@ void App::commands_create() {
 // either case, the box that finds (and replaces) in the file.
 void App::find_in_file(bool replace) {
     Doc& d = *pane_->doc;
+    // (A terminal has no search yet. That is said, so that what is typed
+    // next is not taken for a search while it goes to the program: on a
+    // serial line, to the device.)
+    if (d.term) return notify("No search in a terminal yet");
     if (!has_text(d) || d.ed.buf.size() == 0) return;  // (the start screen's empty file too)
     if (panel_has_keyboard()) panel_focus(false);
     Editor& ed = d.ed;
