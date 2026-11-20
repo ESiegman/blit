@@ -35,12 +35,24 @@ namespace {
 
 // The command that makes `file`'s assembly: its own from a
 // compile_commands.json in its folder or one above it (or in a build folder
-// of one), else the plain compiler for its kind. False: not a file that has one.
+// of one, or one level into that: a preset's build/debug; the one its
+// .clangd names first), else the plain compiler for its kind. False: not a
+// file that has one.
 bool command_for(const std::string& file, const std::string& root, std::vector<std::string>* argv, std::string* dir) {
     for (std::string at = parent_of(file); !at.empty();) {
         std::vector<std::string> dbs{at + "/compile_commands.json"};
-        for (const FsEntry& e : fs_list(at))
-            if (e.dir && e.name.starts_with("build")) dbs.push_back(at + "/" + e.name + "/compile_commands.json");
+        if (std::string clangd; fs_read(at + "/.clangd", &clangd, 64u << 10))
+            if (const size_t key = clangd.find("CompilationDatabase:"); key != std::string::npos) {
+                std::string db = clangd.substr(key + 20, clangd.find('\n', key) - key - 20);
+                std::erase_if(db, [](char c) { return c == ' ' || c == '\t' || c == '\r' || c == '"' || c == '\''; });
+                if (!db.empty()) dbs.insert(dbs.begin(), (db.starts_with('/') ? db : at + "/" + db) + "/compile_commands.json");
+            }
+        for (const FsEntry& e : fs_list(at)) {
+            if (!e.dir || !e.name.starts_with("build")) continue;
+            dbs.push_back(at + "/" + e.name + "/compile_commands.json");
+            for (const FsEntry& in : fs_list(at + "/" + e.name))
+                if (in.dir) dbs.push_back(at + "/" + e.name + "/" + in.name + "/compile_commands.json");
+        }
         for (const std::string& db : dbs) {
             std::string text;
             if (fs_read(db, &text, 256u << 20) && asm_command(text, file, argv, dir)) return true;

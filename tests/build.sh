@@ -321,6 +321,19 @@ check "the loop's line: its instructions" 'lines'
 moved=${first#*|}
 got=${moved%|}
 check "a line put above it and saved: made again, the same instructions now the next line's" "5:${loop#4:}"
+AP="$dir/asmpre"
+mkdir -p "$AP/build/debug" "$AP/build/release"
+printf '// sums\nint sum(const int* a, int n) {\n    int s = 0;\n    for (int i = 0; i < n; ++i) s += a[i];\n    return s;\n}\n#ifndef STEP\n#error no STEP\n#endif\n' >"$AP/sum.c"
+printf '[{"directory": "%s", "command": "cc -O0 -DSTEP=1 -c sum.c -o build/debug/sum.o", "file": "sum.c"}]\n' "$AP" >"$AP/build/debug/compile_commands.json"
+run "$AP" "open:$AP/sum.c;command:Show the assembly beside the file;key:Down;key:Down;key:Down;asmdump"
+case $got in "4: "[0-9]*) got=lines ;; esac
+check "a preset's database, one level into build (build/debug)" 'lines'
+printf '[{"directory": "%s", "command": "cc -O0 -c sum.c -o build/release/sum.o", "file": "sum.c"}]\n' "$AP" >"$AP/build/release/compile_commands.json"
+mv "$AP/build/debug" "$AP/build/zdebug"
+printf 'CompileFlags:\n  CompilationDatabase: build/zdebug\n' >"$AP/.clangd"
+run "$AP" "open:$AP/sum.c;command:Show the assembly beside the file;key:Down;key:Down;key:Down;asmdump"
+case $got in "4: "[0-9]*) got=lines ;; esac
+check "of two, the one .clangd names" 'lines'
 printf 'int twice(int x) { return 2 * x; }\n' >"$A/plain/two.c"
 run "$A/plain" "open:$A/plain/two.c;command:Show the assembly beside the file;asmdump"
 case $got in "1: "[0-9]*) got=lines ;; esac

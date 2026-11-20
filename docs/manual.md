@@ -2383,7 +2383,8 @@ shows its command as it will run. A preset's tasks keep the preset's.
 its right with what the compiler makes of the file (C, C++, Objective-C,
 and what a `compile_commands.json` has a command for): the file's own
 command, from a `compile_commands.json` in its folder, one above it, or a
-`build*` folder of one, with `-S -g` and its object, its dependency files
+`build*` folder of one or a folder in that (a preset's `build/debug`; the
+one a `.clangd` beside it names first), with `-S -g` and its object, its dependency files
 and link-time optimization left out; with none, `cc` or `c++ -O2`. The
 compiler runs in the background, and its output is read on a thread of
 its own (a large file's is many megabytes). Shown are the code's labels
