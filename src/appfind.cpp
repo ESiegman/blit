@@ -2189,6 +2189,7 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
                 empty_plain = f.go_line != 0;
             } else if (names) {
                 empty = reading && !files   ? std::string("Reading the folder\xE2\x80\xA6")
+                        : f.shown && !f.shown->note.empty() ? f.shown->note  // (another machine's that cannot be listed: why)
                         : !asked.empty()    ? "No file matches " + quoted
                         : !panel_root()     ? "Choose a project folder: " + key_symbols(kCmdShiftO, font)
                                             : "No files in " + tilde(f.root);
@@ -2601,6 +2602,7 @@ std::string App::find_dump() {
         else if (f.mode == kFindCommand) out += f.entries[i].name + (f.item_keys[f.entries[i].index].empty() ? "" : " (" + f.item_keys[f.entries[i].index] + ")");
         else out += f.entries[i].kind == Find::Entry::kNew ? "+" + f.entries[i].name : f.entries[i].name + (f.entries[i].dir ? "/" : "");
     }
+    if ((f.mode == kFindNames || f.mode == kFindText) && f.shown && f.count() == 0 && !f.shown->note.empty()) out += " (" + f.shown->note + ")";  // (why there is nothing)
     return out;
 }
 

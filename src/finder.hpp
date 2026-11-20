@@ -39,6 +39,7 @@ struct FileIndex {
     std::vector<u32> offs;  // where each path starts in names; one more at the end
     bool truncated = false; // there were more than max_files
     u32 remote_walk = 0;    // a folder on another machine: the list as its agent keeps it (remote.hpp), searched there
+    std::string error;      // (one that could not be listed: why, as a search of it says)
     size_t size() const { return offs.empty() ? 0 : offs.size() - 1; }
     std::string_view path(size_t i) const { return std::string_view(names).substr(offs[i], offs[i + 1] - offs[i]); }
 };
@@ -70,7 +71,7 @@ struct FindResults {
     bool searching = false;     // the search is still under way: these are the hits so far
     bool capped = false;        // text: it stopped at kMaxLines; there may be more
     u64 serial = 0;             // of the search they answer
-    std::string note;           // text: why there is nothing (a pattern another machine cannot be asked for)
+    std::string note;           // why there is nothing (a pattern another machine cannot be asked for, or no connection to it)
 };
 
 class Finder {

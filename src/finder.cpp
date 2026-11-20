@@ -11,6 +11,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstring>
 
@@ -205,8 +206,13 @@ std::shared_ptr<FileIndex> Finder::walk(const std::string& root, const FinderOpt
         u32 id = 0;
         const std::shared_ptr<Remote> r = remote_for(root, &there, kRemoteWaitMs);
         while (there.size() > 1 && there.back() == '/') there.pop_back();
-        if (r && r->walk(there, o, ix.get(), &id)) ix->remote_walk = id;
-        else ix->root = root;
+        if (r && r->walk(there, o, ix.get(), &id)) {
+            ix->remote_walk = id;
+        } else {
+            ix->root = root;
+            ix->error = remote_error(root);  // (said by a search of it, not taken for a folder with nothing in it)
+            if (!ix->error.empty()) ix->error[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(ix->error[0])));
+        }
         return ix;
     }
 #endif
@@ -543,6 +549,11 @@ void Finder::search_names(u64 serial, const std::string& typed, std::shared_ptr<
             pref_files_ = files_named(*ix, paths);
         }
     }
+    if (ix && !ix->error.empty()) {  // (another machine's that could not be listed: why)
+        r->note = ix->error;
+        if (search_epoch_.load() == mine) publish(std::move(r));
+        return;
+    }
     std::vector<u32> matched;
     if (ix) rank_names(*ix, terms, r.get(), &search_epoch_, mine, b ? &b->files : nullptr, &matched, pref_ix_ == ix ? std::span<const u32>(pref_files_) : std::span<const u32>());
     if (search_epoch_.load() != mine) return;  // overtaken: its answer is no longer wanted
@@ -581,6 +592,12 @@ void Finder::search_text(u64 serial, const std::string& typed, TextQuery how, st
     };
     if (!ix || longest < 2) {  // (one letter is on every line)
         publish(fresh());
+        return;
+    }
+    if (!ix->error.empty()) {  // (another machine's that could not be listed: why)
+        auto r = fresh();
+        r->note = ix->error;
+        publish(std::move(r));
         return;
     }
     u64 max_bytes;
@@ -673,7 +690,11 @@ void Finder::search_text(u64 serial, const std::string& typed, TextQuery how, st
         bool capped = false;
         const std::shared_ptr<Remote> r = remote_for(ix->root, &there, kRemoteWaitMs);
         if (!r || !r->grep(ix->remote_walk, among, asked, max_bytes, kMaxLines, &hits, &hit_files, &capped)) {
-            if (search_epoch_.load() == mine) publish(fresh());
+            if (search_epoch_.load() != mine) return;
+            auto none = fresh();  // (no answer: why, not that no line has it)
+            none->note = remote_error(ix->root);
+            if (!none->note.empty()) none->note[0] = static_cast<char>(std::toupper(static_cast<unsigned char>(none->note[0])));
+            publish(std::move(none));
             return;
         }
         if (search_epoch_.load() != mine) return;
