@@ -1112,8 +1112,9 @@ Down the right of a split wide enough for it (80 columns of text besides),
 the file small: each line a couple of pixels high, each character a pixel
 in its syntax colour (the text's colour where the colours are not in
 yet: they are worked out for what has been on show). It goes over the
-ends of long lines and over the scroll bar, whose place the view's box on
-it takes: a lighter box shows the lines on show. A click there brings
+ends of long lines (a diff's two columns and a merge's three are laid out
+left of it) and over the scroll bar, whose place the view's box on it
+takes: a lighter box shows the lines on show. A click there brings
 that place into the middle of the view; dragging scrolls with the mouse.
 A file that fits is all there from its top; a longer one moves down the
 column as the view moves down the file.

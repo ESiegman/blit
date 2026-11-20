@@ -195,6 +195,16 @@ printf 'int parse(const char* text, int n) {\n    return n;\n}\n' >"$dir/ada/cod
 view "$dir/ada/code.c" "frame;gitwait;git:diff:code.c;gitwait;git:columns;gitwait;gitview"
 got=$(printf '%s' "$got" | sed 's/.* \/ @@ -1,3 +1,3 @@ \/ //; s/ \/ .*//')
 check "within a line that changed, only what changed is marked" '  1 int parse(const char* [-s-], int  │   1 int parse(const char* {+text+}, i'
+# In a window wide enough for the minimap, the two columns are laid out
+# left of it, not under it: narrower than with no minimap.
+printf 'blit.opt.lsp.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.minimap = false\n' >"$dir/nomap.lua"
+# beside FILE SCRIPT [INIT]: in a window that wide, how far in the first
+# row of columns its last │ is.
+beside() { BLIT_INIT="${3:-$BLIT_INIT}" "$blit" --offscreen 2000x700 --shot "$dir/shot.bmp" --script "$2" "$1" 2>&1 >/dev/null | grep '│' | head -1 | awk -F'│' '{ print length($0) - length($NF) }'; }
+narrower() { if [ -n "$1" ] && [ -n "$2" ] && [ "$1" -lt "$2" ]; then echo narrower; else echo "as wide ($1, $2)"; fi; }
+got=$(narrower "$(beside "$dir/ada/code.c" "frame;gitwait;git:diff:code.c;gitwait;git:columns;gitwait;gitview")" \
+    "$(beside "$dir/ada/code.c" "frame;gitwait;git:diff:code.c;gitwait;git:columns;gitwait;gitview" "$dir/nomap.lua")")
+check "two columns beside the minimap: laid out left of it" 'narrower'
 git -C "$dir/ada" checkout -q code.c
 
 # A change's mark beside the line numbers: a click on it offers to stage
@@ -365,6 +375,9 @@ got=$(merge "mergedump;docdump:1")
 check "a conflicted file in three columns: two conflicts, one simple; the cursor at the first" 'conflict:open conflict(simple):open | open 2/poem.txt (merge)/  one                   │ one                   │ one/> |TWO                   │ <<<<<<< yours         │ two./                        │ two.                  │ /'
 got=$(merge "key:t;mergedump;key:];key:x;key:a;mergedump;key:]")
 check "theirs taken, then each side's in the simple one; ] past the last stays" 'conflict:theirs conflict(simple):open | open 1/conflict:theirs conflict(simple):each | open 0/'
+got=$(narrower "$(beside "$dir/ada/poem.txt" "frame;gitwait;command:Git: Merge the file's conflicts;gitwait;docdump:1")" \
+    "$(beside "$dir/ada/poem.txt" "frame;gitwait;command:Git: Merge the file's conflicts;gitwait;docdump:1" "$dir/nomap.lua")")
+check "the three columns beside the minimap: laid out left of it" 'narrower'
 got="$(merge "key:t;key:a;key:cmd+s;gitwait;gitdump" | sed 's/ | branches.*//') $(tr '\n' '/' <"$dir/ada/poem.txt")"
 check "saved: the file as merged, and staged" 'blit: Saved and staged poem.txt/main +1 merging | staged M:poem.txt one/TWO/three/four!/FIVE/'
 

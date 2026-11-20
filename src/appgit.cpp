@@ -196,9 +196,10 @@ std::vector<std::string> diff_args(const std::string& rel, bool staged) {
     return args;
 }
 
-// The columns of text a split shows, for laying a diff out in two (or a merge in three). (Less
-// one: the scroll bar's strip is over the last.)
-u32 text_cols(const Pane& p, int cell_w) { return static_cast<u32>(std::max(1, (p.x1 - p.text_x) / std::max(1, cell_w) - 1)); }
+// The columns of text a split shows, for laying a diff out in two (or a merge in three):
+// left of its minimap, `map_px` wide (0: none). (Less one: the scroll bar's strip is over
+// the last.)
+u32 text_cols(const Pane& p, int cell_w, int map_px) { return static_cast<u32>(std::max(1, (p.x1 - p.text_x - map_px) / std::max(1, cell_w) - 1)); }
 
 // A character as UTF-8 (the graph's are all below U+10000).
 std::string utf8_of(char32_t c) {
@@ -621,7 +622,7 @@ void App::git_want(Doc& d) {
     const GitUi& g = *gitui_;
     if (d.gitview) return git_view_want(d);
     if (d.merge) {  // (laid out again for another width)
-        if (d.merge->m && text_cols(*pane_, font_->cell_w()) != d.merge->cols && pane_->doc == &d) git_merge_lay(d, -1);
+        if (d.merge->m && text_cols(*pane_, font_->cell_w(), minimap_px(*pane_)) != d.merge->cols && pane_->doc == &d) git_merge_lay(d, -1);
         return;
     }
     if (!cfg_.git || !g.status.repo || d.ed.path.empty() || d.read_only || d.ed.buf.size() > kGitMaxBytes) return;
@@ -772,7 +773,8 @@ void App::git_view_ask(Doc& d, bool again) {
     Pane* where = nullptr;
     find_doc(d.id, &where);
     v.asked = true;
-    const u32 cols = v.two ? text_cols(where ? *where : *pane_, font_->cell_w()) : 0;
+    const Pane& at = where ? *where : *pane_;
+    const u32 cols = v.two ? text_cols(at, font_->cell_w(), minimap_px(at)) : 0;
     git_.view(d.id, v.args, again ? v.source : nullptr, cols, d.ed.tab_width);
 }
 
@@ -852,7 +854,7 @@ void App::git_view_set(Pane& p, Doc& d, Git::Result& r) {
 void App::git_view_want(Doc& d) {
     GitView& v = *d.gitview;
     if (!v.two || !v.source || v.asked) return;
-    const u32 now = text_cols(*pane_, font_->cell_w());
+    const u32 now = text_cols(*pane_, font_->cell_w(), minimap_px(*pane_));
     if (now < v.cols || now > v.cols + 2) git_view_ask(d, true);
 }
 
@@ -1450,7 +1452,8 @@ void App::git_merge_lay(Doc& d, i64 chunk) {
     if (!mv.m) return;
     Pane* where = nullptr;
     find_doc(d.id, &where);
-    const u32 cols = text_cols(where ? *where : *pane_, font_->cell_w());
+    const Pane& at = where ? *where : *pane_;
+    const u32 cols = text_cols(at, font_->cell_w(), minimap_px(at));
     GitMergeView view;
     merge_view(*mv.m, cols, d.ed.tab_width, &view);
     const u64 row = d.ed.buf.line_of(d.ed.cursor());
