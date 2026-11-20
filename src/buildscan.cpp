@@ -152,10 +152,7 @@ void BuildScan::finish() {
     cr_ = false;
     esc_ = kText;
     wrapped_end();
-    if (cmake_) {
-        cmake_ = false;
-        add(cmake_problem_.path, cmake_problem_.line, 0, cmake_problem_.severity, cmake_problem_.message);
-    }
+    cmake_end();
     py_ = false;
 }
 
@@ -197,6 +194,8 @@ void BuildScan::line(std::string_view text) {
                 cmake_problem_.line = std::max(line, 1u);
                 cmake_problem_.severity = kind.find("Error") != std::string_view::npos ? 1 : 2;
                 cmake_problem_.message.clear();
+                cmake_outside_ = path.starts_with('/') && !path.starts_with(base_ + "/");
+                cmake_held_ = cmake_stack_ = false;
                 return;
             }
         }
@@ -225,10 +224,35 @@ void BuildScan::line(std::string_view text) {
 }
 
 // The lines under CMake's: the message is the first paragraph of them.
-// False: the line is not one of them (it is read as itself).
+// One placed outside the project (in a module of CMake's own) waits for
+// the call stack under it, and is placed at its first frame in the project
+// (relative, or under the build's folder), saying where it was. False: the
+// line is not one of them (it is read as itself).
 bool BuildScan::cmake_line(std::string_view text) {
     BuildProblem& p = cmake_problem_;
     const std::string_view t = trim(text);
+    if (cmake_stack_) {
+        if (t.empty() || text[0] != ' ') return cmake_end(), t.empty();
+        std::string_view where = t, path;
+        if (const size_t paren = where.rfind(" ("); paren != std::string_view::npos && where.ends_with(')')) where = where.substr(0, paren);
+        u32 line = 0, col = 0;
+        if (cmake_outside_ && split_location(where, &path, &line, &col) && (!path.starts_with('/') || path.starts_with(base_ + "/"))) {
+            if (p.message.empty()) p.message = p.severity == 1 ? "CMake Error" : "CMake Warning";
+            p.message += " (from " + p.path + ":" + std::to_string(p.line) + ")";
+            p.path = std::string(path);
+            p.line = std::max(line, 1u);
+            cmake_outside_ = false;
+        }
+        return true;
+    }
+    if (cmake_outside_ && t == "Call Stack (most recent call first):") {
+        cmake_stack_ = true;
+        return true;
+    }
+    if (cmake_held_) {  // (its first paragraph read: what is under it is read as itself, until the call stack)
+        if (t.empty() || text[0] == ' ') return false;
+        return cmake_end(), false;
+    }
     if (t.empty() || text[0] == ' ') {
         if (t.empty() && (p.message.empty() || p.message.ends_with(':'))) return true;  // (the blank line before it, or before what it says it is about)
         if (!t.empty()) {
@@ -238,11 +262,21 @@ bool BuildScan::cmake_line(std::string_view text) {
             }
             return true;
         }
+        if (cmake_outside_) {
+            cmake_held_ = true;
+            return true;
+        }
     }
-    cmake_ = false;
+    cmake_end();
+    return t.empty();
+}
+
+void BuildScan::cmake_end() {
+    if (!cmake_) return;
+    cmake_ = cmake_held_ = cmake_stack_ = false;
+    BuildProblem& p = cmake_problem_;
     if (p.message.empty()) p.message = p.severity == 1 ? "CMake Error" : "CMake Warning";
     add(p.path, p.line, 0, p.severity, p.message);
-    return t.empty();
 }
 
 // Python's tracebacks: each frame ("  File "path", line 3, in f"), the

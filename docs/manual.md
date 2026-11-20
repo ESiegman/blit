@@ -2336,7 +2336,9 @@ own reading thread (nothing per frame): GCC's and Clang's
 `path:line:col: error: message` (and `warning`, `fatal error`; Clang's
 message wrapped to the terminal's width onto the lines under it is
 joined), CMake's
-`CMake Error at path:line (command):` with the paragraph under it, make's
+`CMake Error at path:line (command):` with the paragraph under it (one in
+a file outside the project, as a module of CMake's own, is placed at the
+first frame of its `Call Stack` in the project, saying where it was), make's
 `path:line: *** message`, Python's tracebacks (the innermost frame in a
 file of the program's own, with the exception) and its warnings, and
 pytest's `path.py:line: AssertionError`, and the sanitizers' reports

@@ -170,8 +170,20 @@ printf 'src/a.c:7:1: error: not wrapped\n'
 exit 2
 EOF
 printf 'wrapped:\n\tsh wrapped.sh\n' >>"$F/Makefile"
+# CMake's error in a module of its own: at the first frame of the call
+# stack under it that is in the project (relative, or under the folder).
+cat >"$F/stack.sh" <<EOF
+printf 'CMake Error at /opt/cmake/Modules/CMakeDetermineHIPCompiler.cmake:210 (message):\n  Failed to find ROCm.\nCall Stack (most recent call first):\n  /opt/cmake/Modules/CMakeOther.cmake:3 (include)\n  CMakeLists.txt:9 (project)\n\n\n'
+printf 'CMake Warning at /opt/cmake/Modules/Find.cmake:7 (message):\n  First.\n\n  Second.\nCall Stack (most recent call first):\n  $F/cmake/x.cmake:2 (find_package)\n\n'
+printf 'CMake Error at cmake/x.cmake:2 (message):\n  In the project.\nCall Stack (most recent call first):\n  CMakeLists.txt:4 (include)\n\n'
+printf 'CMake Error at /opt/cmake/Modules/Lone.cmake:1 (message):\n  No stack.\n\n-- Configuring incomplete, errors occurred!\n'
+exit 1
+EOF
+printf 'stack:\n\tsh stack.sh\n' >>"$F/Makefile"
 run "$F" "buildrun:make wrapped;buildwait;problemsdump"
 check "clang's message wrapped onto the lines under it: joined" 'button: ▶ make wrapped · 2 errors | Build 3 | file src/a.c | >E 5:1 use of undeclared identifier '"'"'x'"'"' | W 6:1 no member named '"'"'y'"'"' in '"'"'S'"'"' | E 7:1 not wrapped'
+run "$F" "buildrun:make stack;buildwait;problemsdump"
+check "CMake's error in its own module: at the project's frame of its call stack" 'button: ▶ make stack · 3 errors | Build 4 | file CMakeLists.txt | >E 9 Failed to find ROCm. (from /opt/cmake/Modules/CMakeDetermineHIPCompiler.cmake:210) | file cmake/x.cmake | W 2 First. (from /opt/cmake/Modules/Find.cmake:7) | E 2 In the project. | file /opt/cmake/Modules/Lone.cmake | E 1 No stack.'
 # CMake's build type and target, chosen in the Build tab (Enter on each):
 # Release, then the target app of the folder's own (CMake's help lists
 # them); Build configures with the type and builds that target alone.

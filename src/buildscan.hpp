@@ -64,6 +64,7 @@ private:
     bool sanitizer_line(std::string_view text);
     void entered(std::string_view text);
     void wrapped_end();
+    void cmake_end();
     void add(std::string_view path, u32 line, u32 col, u8 severity, std::string_view message);
     std::string resolve(std::string_view path);
 
@@ -86,8 +87,10 @@ private:
     // wraps its message to the terminal's width, onto lines under it.
     bool wrap_ = false;
     BuildProblem wrap_problem_;  // (its path as written)
-    // CMake's problem, whose message is the lines under it.
+    // CMake's problem, whose message is the lines under it; one outside the
+    // project (in a module of CMake's), held for its call stack's frames.
     bool cmake_ = false;
+    bool cmake_outside_ = false, cmake_held_ = false, cmake_stack_ = false;
     BuildProblem cmake_problem_;
     // A sanitizer's report: what it says is wrong (and what was read or
     // written, or leaked), and whether a frame of its stack has been taken.
