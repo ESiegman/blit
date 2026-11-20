@@ -175,6 +175,33 @@ rm "$V/.venv/bin/python"
 got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$V;frame;testdump" "$V/tests/test_v.py" 2>&1 >/dev/null | tail -1)
 case "$got" in "No tests found: "*"No module named pytest") got="said" ;; esac
 [ "$pytest" = yes ] || check "with no pytest: why none were found" 'said'
+# On another machine (tests/fake-ssh.sh's): found and run with the .venv's
+# Python there, and a run with coverage that recorded none names it by its
+# path in the project, as here.
+R="$dir/there/r"
+mkdir -p "$R/.venv/bin" "$R/tests"
+printf 'def test_r():\n    pass\n' >"$R/tests/test_r.py"
+cat >"$R/.venv/bin/python" <<'EOF'
+#!/bin/sh
+[ "$1" = -m ] || exit 1
+module=$2
+shift 2
+if [ "$module" = coverage ]; then
+    [ "$1" = json ] && exit 0  # (nothing recorded)
+    shift 3  # run -m pytest
+fi
+for a in "$@"; do
+    case $a in
+        --collect-only) printf 'tests/test_r.py::test_r\n\n1 test collected in 0.01s\n'; exit 0 ;;
+        --junitxml=*) printf '<testsuites><testsuite><testcase classname="tests.test_r" name="test_r" time="0.1"/></testsuite></testsuites>' >"${a#--junitxml=}" ;;
+    esac
+done
+EOF
+chmod +x "$R/.venv/bin/python"
+got=$(BLIT_SSH="$(cd "$(dirname "$0")" && pwd)/fake-ssh.sh" BLIT_FAKE_HOME="$dir/there" "$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "remotewait;workdir:ssh://box$R;frame;testdump;command:Run the tests with coverage;testdump" "ssh://box$R/tests/test_r.py" 2>&1 >/dev/null | grep -v '^blit: ' | tail -1)
+check "on another machine: the .venv's pytest there" 'tests/test_r.py: +test_r'
+got=$(BLIT_SSH="$(cd "$(dirname "$0")" && pwd)/fake-ssh.sh" BLIT_FAKE_HOME="$dir/there" "$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "remotewait;workdir:ssh://box$R;frame;testdump;command:Run the tests with coverage;testdump" "ssh://box$R/tests/test_r.py" 2>&1 >/dev/null | grep '^blit: ' | tail -1)
+check "and coverage.py not there: named by its path in the project" 'blit: No coverage was recorded (coverage.py installed for .venv/bin/python?)'
 # Coverage, read with GCC's gcov from a build made with --coverage: the
 # lines run and missed, each file's share (none of a function no test calls).
 gcc=

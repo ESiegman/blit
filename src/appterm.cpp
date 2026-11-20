@@ -749,7 +749,9 @@ std::string App::python_for(const std::string& root, bool console) {
 std::string App::python_named(const std::string& python, const std::string& root) {
     std::string py = python;
     if (py.size() > 2 && py.front() == '\'' && py.back() == '\'') py = py.substr(1, py.size() - 2);
+    std::string host, there;  // (in a folder on another machine: by its path there too)
     if (py.starts_with(root + "/")) py.erase(0, root.size() + 1);
+    else if (split_remote(root, &host, &there) && py.starts_with(there + "/")) py.erase(0, there.size() + 1);
     return py;
 }
 

@@ -1311,13 +1311,8 @@ void App::debug_sync_session(bool* stopped) {
             if (!u.python.empty() && (why.find("No module named 'debugpy'") != std::string::npos || why.find("No module named debugpy") != std::string::npos)) {
                 // (There, the Python it was is the one the error names: Python
                 // starts its message with its own path.)
-                std::string py = python_named(u.python, build_root());
-                if (!u.remote.empty()) {
-                    std::string root_host, root_there;
-                    py = why.substr(0, why.find(": "));
-                    if (split_remote(build_root(), &root_host, &root_there) && py.starts_with(root_there + "/")) py.erase(0, root_there.size() + 1);
-                }
-                why = "debugpy is not installed for " + py + (py.starts_with("uv run") ? " (uv add --dev debugpy)" : "");
+                const std::string py = python_named(u.remote.empty() ? u.python : why.substr(0, why.find(": ")), build_root());
+                why ="debugpy is not installed for " + py + (py.starts_with("uv run") ? " (uv add --dev debugpy)" : "");
             }
             if (u.error.empty() && !why.empty()) u.error = why;
         }
