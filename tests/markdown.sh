@@ -40,13 +40,27 @@ pictures() {
          { if (skip) print ""; skip = 0; print }'
 }
 
-for f in sample edge diagrams code; do
+for f in sample edge diagrams code alerts; do
     size=1600x1100
     [ $f = sample ] || [ $f = diagrams ] && size=3600x1100
     run $size "$here/markdown/$f.md" ""
     got=$(printf '%s\n' "$got" | pictures)
     check "$f.md drawn" "$(cat "$here/markdown/$f.txt")"
 done
+
+# inks FILE: each run of the preview's rows in its colour, in blit-dark
+# whatever the system's appearance is.
+{ cat "$dir/init.lua"; printf 'blit.opt.theme.dark = "blit-dark"\nblit.opt.theme.light = "blit-dark"\n'; } >"$dir/dark.lua"
+inks() {
+    got=$(BLIT_INIT="$dir/dark.lua" "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mdwait;mdinks" "$1" 2>&1 >/dev/null)
+}
+
+# Alerts: each kind's bar and title in a colour of its own (the theme's
+# blue, green, purple, yellow and its errors'), what it says in the text's
+# colour (a quote's is quieter), one inside another in its own.
+inks "$here/markdown/alerts.md"
+got=$(printf '%s\n' "$got" | grep -E '\](Note|Tip|Important|Warning|Caution|Risks\.|A plain quote.*)$' | sed -e 's/ *$//' | tr '\n' ' ')
+check "alerts: a bar and a title in each kind's colour" "[#61afef]▎ [#7f848e]A plain quote stays a quote. [#61afef]▌ [#61afef]Note [#98c379]▌ [#98c379]Tip [#c678dd]▌ [#c678dd]Important [#e5c07b]▌ [#e5c07b]Warning [#e06c75]▌ [#e06c75]Caution [#e06c75]▌ [#dbdedb]Risks. [#e06c75]▌ [#61afef]▌ [#61afef]Note [#e06c75]▌ [#e06c75]Caution [#61afef]• [#98c379]▌ [#98c379]Tip "
 
 # What is wrong in a diagram's layout (diagramdump): an edge not drawn,
 # two nodes over each other, a label over a node, how many at a relation's

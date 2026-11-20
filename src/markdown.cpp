@@ -641,6 +641,19 @@ bool is_rule(std::string_view s) {
     return n >= 3;
 }
 
+// An alert's kind (GitHub's "[!NOTE]" and its like, alone on a quote's first
+// line, in any case): 1 note, 2 tip, 3 important, 4 warning, 5 caution; 0 for
+// anything else (a quote that starts with a bracket).
+int alert_kind(std::string_view s) {
+    s = trim(s);
+    if (s.size() < 6 || s.size() > 12 || !s.starts_with("[!") || s.back() != ']') return 0;
+    static const char* const kKinds[] = {"note", "tip", "important", "warning", "caution"};
+    const std::string name = lower(s.substr(2, s.size() - 3));
+    for (int k = 0; k < 5; ++k)
+        if (name == kKinds[k]) return k + 1;
+    return 0;
+}
+
 bool is_fence(std::string_view s, char* fc, size_t* len) {
     s = trim(s);
     if (s.size() < 3 || (s[0] != '`' && s[0] != '~')) return false;
@@ -843,6 +856,8 @@ void parse_into(const std::vector<Line>& lines, Refs& refs, std::vector<Block>& 
                 sub.push_back({{}, lines[i].no});
                 ++i;
             }
+            // An alert: its tag says what kind, and is not text of it.
+            if (!keep.empty() && (b.level = alert_kind(keep[0])) != 0) keep[0].clear();
             for (size_t k = 0; k < sub.size(); ++k) sub[k].text = keep[k];
             b.kids = parse_blocks(sub, refs);
             out.push_back(std::move(b));
@@ -1458,11 +1473,22 @@ struct Layout {
                 break;
             }
             case Block::kHtml: html(b, ink); break;
-            case Block::kQuote:
-                levels.push_back({{{"\xE2\x96\x8E ", kMdAccent}}, {{"\xE2\x96\x8E ", kMdAccent}}, false});
-                blocks(b.kids, false, kMdQuote);
+            case Block::kQuote: {
+                // An alert is a callout: a heavier bar and a title in its kind's
+                // colour, and what it says under that, in the text's own.
+                static const struct {
+                    const char* title;
+                    u8 ink;
+                } kAlerts[] = {{"Note", kMdAnsiBlue}, {"Tip", kMdAnsiGreen}, {"Important", kMdAnsiMagenta}, {"Warning", kMdAnsiYellow}, {"Caution", kMdError}};
+                const bool alert = b.level >= 1 && b.level <= 5;
+                const u8 bar_ink = alert ? kAlerts[b.level - 1].ink : static_cast<u8>(kMdAccent);
+                const char* bar = alert ? "\xE2\x96\x8C " : "\xE2\x96\x8E ";
+                levels.push_back({{{bar, bar_ink}}, {{bar, bar_ink}}, false});
+                if (alert) row({{kAlerts[b.level - 1].title, bar_ink, kMdBold}}, b.line);
+                blocks(b.kids, false, alert ? kMdText : kMdQuote);
                 levels.pop_back();
                 break;
+            }
             case Block::kList: {
                 int depth = 0;
                 for (const Level& l : levels) depth += l.list ? 1 : 0;

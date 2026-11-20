@@ -1,0 +1,38 @@
+▎ A plain quote stays a quote.
+
+▌ Note
+▌ Useful information that users should know,
+▌ even when skimming content. It runs on long
+▌ enough to wrap, so that the bar goes down
+▌ beside every row of it.
+
+▌ Tip
+▌ Helpful advice.
+▌
+▌ • a list item
+▌ • another, with code
+▌
+▌
+▌  make test
+▌
+
+▌ Important
+▌ Key information, its tag in small letters.
+
+▌ Warning
+▌ Urgent info, spaces round its tag.
+
+▌ Caution
+▌ Risks.
+▌
+▌ ▌ Note
+▌ ▌ One inside another.
+
+▌ Caution
+
+▎ [!UNKNOWN] An unknown tag stays a quote.
+
+▎ [!NOTE] with text after it stays a quote
+
+• ▌ Tip
+  ▌ In a list item.

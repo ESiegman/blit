@@ -762,6 +762,45 @@ void notebook_kept_test() {
     check(coloured == 1 && again.size() == first.size(), "notebook kept: typed in one cell, only it coloured again");
 }
 
+// The Markdown preview's rows (md_render): what each kind of text is drawn
+// as, where that is worked out with no font and no window.
+void markdown_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    // Rows as text; with `looks`, each run as its ink, style and tone, then its text: "<ink.style.tone>text".
+    auto drawn = [](std::string_view md, u32 width = 60, bool looks = false) {
+        std::string out;
+        for (const MdRow& r : md_render(md, width)) {
+            if (looks)
+                for (const MdRun& run : r.runs) out += "<" + std::to_string(run.ink) + "." + std::to_string(run.style) + "." + std::to_string(run.tone) + ">" + run.text;
+            else
+                out += md_row_text(r);
+            out += "\n";
+        }
+        return out;
+    };
+    auto ink = [](u8 i) { return "<" + std::to_string(i) + "."; };
+    // Alerts: a title in the kind's colour, bold, the bar beside every row
+    // in it; the tag in any case; what it says in the text's colour.
+    const std::string bar = "\xE2\x96\x8C ", quote = "\xE2\x96\x8E ";
+    check(drawn("> [!NOTE]\n> said\n> here\n") == bar + "Note\n" + bar + "said here\n", "alerts: a title, and what it says under it");
+    check(drawn("> [!tip]\n> a\n\n> [!Important]\n> b\n\n> [!WARNING]\n\n>  [!caution]  \n> c\n") ==
+              bar + "Tip\n" + bar + "a\n\n" + bar + "Important\n" + bar + "b\n\n" + bar + "Warning\n\n" + bar + "Caution\n" + bar + "c\n",
+          "alerts: every kind, its tag in any case, one with nothing under it");
+    check(drawn("> [!NOTE]\n> said\n", 60, true) ==
+              ink(kMdAnsiBlue) + "0.0>" + bar + ink(kMdAnsiBlue) + "1.0>Note\n" + ink(kMdAnsiBlue) + "0.0>" + bar + ink(kMdText) + "0.0>said\n",
+          "alerts: the bar and the bold title in the kind's colour, the rest in the text's");
+    const std::string inks = drawn("> [!TIP]\n\n> [!IMPORTANT]\n\n> [!WARNING]\n\n> [!CAUTION]\n", 60, true);
+    check(inks.find(ink(kMdAnsiGreen) + "1.0>Tip") != std::string::npos && inks.find(ink(kMdAnsiMagenta) + "1.0>Important") != std::string::npos &&
+              inks.find(ink(kMdAnsiYellow) + "1.0>Warning") != std::string::npos && inks.find(ink(kMdError) + "1.0>Caution") != std::string::npos,
+          "alerts: green, purple, yellow and the errors' colour for the others");
+    check(drawn("> [!NOTE]\n> - one\n> - two\n>\n> ```\n> code\n> ```\n") == bar + "Note\n" + bar + "\xE2\x80\xA2 one\n" + bar + "\xE2\x80\xA2 two\n\xE2\x96\x8C\n\xE2\x96\x8C\n" + bar + " code\n\xE2\x96\x8C\n",
+          "alerts: a list and code inside one");
+    check(drawn("> [!NOPE]\n> said\n") == quote + "[!NOPE] said\n" && drawn("> [!NOTE] said\n") == quote + "[!NOTE] said\n" && drawn("> text\n> [!NOTE]\n") == quote + "text [!NOTE]\n",
+          "alerts: an unknown tag, one with text after it, one not on the first line: quotes");
+}
+
 // The script's cells matched to the model's: as the plain search of the
 // model for each cell does it (on cells of a few kinds and texts, many
 // alike), and in time that grows as the cells do, not as their square.
@@ -3424,6 +3463,7 @@ void parsers_test(int seeds) {
     junits.push_back(R"(<?xml version="1.0"?><testsuite><testcase name="Math.Adds" classname="Math.Adds" time="0.25"/><testcase name="plain" time="1"><failure message="x &lt; 2 &#65; &amp;">trace</failure></testcase><testcase name="s"><skipped/></testcase><![CDATA[x]]><!-- c --></testsuite>)");
     snippets.push_back("for (${1:i} = 0; ${1:i} < ${2:n}; ++${1:i}) {$0} ${3:call(${4:arg})} ${5|left,right|} \\$1 \\${2} \\\\ ${6:a\\}b} $TM_FILENAME ${USER:nobody} ${TM_SELECTED_TEXT/(.*)/$1/}");
     markdowns.push_back("### Title\n\nSome **bold** and `code` and a [link](http://x) \\_ok\\_ &lt;T&gt; &#x41;\n\n```cpp\nint  x;\n\ty();\n```\n---\n- a\n  1. b\n> q\n| a | b |\n|---|---|\n");
+    markdowns.push_back("> [!NOTE]\n> said\n>\n> - a\n>   > [!tip]\n>   > ```\n>   > x\n>   > ```\n\n> [!CAUTION]\n\n> [!WARNING] not one\n");
 #if defined(BLIT_PROFILE_DATA)
     auto slurp = [](const char* name, size_t most) {
         std::string s;
@@ -3518,6 +3558,7 @@ void parsers_test(int seeds) {
             std::vector<InfoLine> lines;
             Lsp::markdown_lines(spoil(t), rnd(2), &lines);
             seen += lines.size();
+            seen += md_render(spoil(t), static_cast<u32>(rnd(100))).size();  // (and as the preview draws it, at a width)
         }
         for (const std::string& t : perfs) {
             Profile p;
@@ -7511,6 +7552,7 @@ int main(int argc, char** argv) {
     notebook_view_test();
     notebook_bounds_test();
     notebook_kept_test();
+    markdown_test();
     notebook_match_test(seeds * 10);
     history_test();
     wrap_test();

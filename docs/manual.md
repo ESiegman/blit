@@ -2437,6 +2437,14 @@ top right; a block in a language blit has a grammar for, by its name,
 grammar in the theme's colours, on the preview's thread), rules, line breaks, HTML (its text without the tags; comments
 left out), and leaves out front matter.
 
+**Alerts** (GitHub's: a quote whose first line is `[!NOTE]`, `[!TIP]`,
+`[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]`, in any case, alone on its
+line) are callouts: a heavier bar and a bold title, both in the kind's
+colour (the theme's blue, green, purple and yellow, and its colour for
+errors), and what the alert says under the title in the text's colour,
+its lists and code as anywhere else. A quote with any other tag stays a
+quote.
+
 **Pictures** that are a paragraph of their own (`![alt](file.png)`, or a
 row of them; one inside a link too) and HTML's `<img src=... width=...>`
 are drawn, from files beside the Markdown file or anywhere on its machine
