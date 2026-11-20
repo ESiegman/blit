@@ -3174,13 +3174,32 @@ void Lsp::server_gone(Server* s, const std::string& why, bool none_there) {
     stop_server(s, false);
 }
 
+// Whether nothing but blank lines and comments follow `at` in its cell of
+// a notebook's script (whose next cell starts at a "# %%" line).
+static bool ends_cell(const Buffer& b, u64 at) {
+    for (u64 line = b.line_of(at), n = 0; line < b.line_count() && n < 4096; ++line, ++n) {
+        const u64 from = n ? b.line_start(line) : at, to = line + 1 < b.line_count() ? b.line_start(line + 1) : b.size();
+        const std::string text = b.text(from, to - from);
+        const size_t c = text.find_first_not_of(" \t\r\n");
+        if (c == std::string::npos) continue;
+        if (n && text.compare(c, 4, "# %%") == 0) return true;
+        if (text[c] != '#') return false;
+    }
+    return true;
+}
+
 static void convert_diags(Lsp::Document& d, std::vector<RawDiag>& raw, bool utf16) {
     d.diags.clear();
     d.diags.reserve(raw.size());
+    const bool notebook = d.path.ends_with(".ipynb");
     for (RawDiag& r : raw) {
         Diagnostic x;
         x.start = Lsp::offset_at(*d.buf, r.r.l0, r.r.c0, utf16);
         x.end = std::max(x.start, Lsp::offset_at(*d.buf, r.r.l1, r.r.c1, utf16));
+        // (A notebook's cell shows the value it ends with: the server, which
+        // sees the script of the cells, calls that value unused. basedpyright's
+        // code for it, and Ruff's.)
+        if (notebook && (r.code == "reportUnusedExpression" || r.code == "B018") && ends_cell(*d.buf, x.end)) continue;
         x.severity = r.severity;
         x.fixes = r.fixes;
         x.message = std::move(r.message);

@@ -2839,7 +2839,10 @@ steps.mean()
 A Markdown cell's lines are commented, under `# %% [markdown]`; a raw
 cell is under `# %% [raw]`. A blank line separates the cells, and is not
 part of them. Text before the first `# %%` is a code cell. Cells are
-added, moved and taken away by typing the lines.
+added, moved and taken away by typing the lines. The language server
+sees the script; its word that the expression a cell ends with is unused
+(basedpyright's `reportUnusedExpression`, Ruff's `B018`) is left out,
+that being the value the cell shows.
 
 Saving writes the notebook back, as Jupyter writes one (two members a
 line, keys in order, one space an indent), so that what changed is all

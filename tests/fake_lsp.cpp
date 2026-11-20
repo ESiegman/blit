@@ -281,6 +281,14 @@ std::string diagnostics_of(const std::string& t, const std::string& u) {
             m += "}";
         }
     }
+    // (And a value left unused, as basedpyright says of a bare name.)
+    for (size_t at = t.find("UNUSED"); at != std::string::npos; at = t.find("UNUSED", at + 6)) {
+        m += ",{\"range\":";
+        range_json(m, at, at + 6, t);
+        m += R"(,"severity":2,"source":)";
+        json::quote(m, source);
+        m += R"(,"code":"reportUnusedExpression","message":"Expression value is unused"})";
+    }
     m += "]";
     return m;
 }

@@ -491,5 +491,15 @@ check "a tall hover in a short window: cut to the room there is" 'cut, on the wi
 with closing "wait:500;cpuquiet:1000"
 check "a server's input closed, its output open: nothing spins" 'quiet'
 
+# A notebook: a cell's last expression is its value shown, not unused,
+# whatever the server (which sees the script of its cells) says.
+fresh
+printf '{"cells": [{"cell_type": "code", "source": ["x = 1\\n", "UNUSED"], "metadata": {}, "outputs": [], "execution_count": null},
+ {"cell_type": "code", "source": ["UNUSED\\n", "y = 2"], "metadata": {}, "outputs": [], "execution_count": null},
+ {"cell_type": "code", "source": ["UNUSED  # shown\\n", "# a note"], "metadata": {}, "outputs": [], "execution_count": null}],
+ "metadata": {}, "nbformat": 4, "nbformat_minor": 5}\n' >"$P/n.ipynb"
+got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$P;frame;lspsettle;problemsdump" "$P/n.ipynb" 2>&1 >/dev/null | tail -1 | sed -e 's/ | >H 1 text:[0-9a-f]*//')
+check "a notebook: no unused value at a cell's end, but before it" 'button: ▶  | file 2 | file n.ipynb | W 6 Expression value is unused'
+
 [ "$failed" = 0 ] && echo "lsp: all passed"
 exit "$failed"
