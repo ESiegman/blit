@@ -408,7 +408,9 @@ mode was last left), `x X s S D C Y` (`Y` is `y$`, as in Neovim), `r` and
 on numbers, `q` and `@` for macros (`@@` again, `Q` the one recorded last),
 `v V` Ctrl-V and `gv`, `&` and `g&` (the last `:s` again), `gt gT` and
 `[b ]b` (the tab before and after; `[B ]B` the first and last), `gf` (the
-file named under the cursor), `[<Space>` and `]<Space>` (an empty line
+file named under the cursor: beside the file it is in first, as a quoted
+include is, then in the working folder; `path:line` at that line; "No file
+NAME" when it is in neither), `[<Space>` and `]<Space>` (an empty line
 above or below), `ZZ ZQ`, Ctrl-D Ctrl-U Ctrl-F Ctrl-B Ctrl-E Ctrl-Y,
 `zz zt zb`, `zc zo za zM zR` (folding, below), Ctrl-L (as `:noh`), Ctrl-W with `h j k l w` (to another split),
 `v s` (split) and `c q` (close), and with a language server `gd` (or
@@ -503,8 +505,9 @@ or by the DFA; it has a budget of steps, and a pattern that would take too
 long stops with E363 instead of holding the editor.
 
 **The command line**: `:w`, `:q` (closes the tab), `:q!`, `:wq`, `:x`, `:wa`,
-`:qa`, `:wqa`, `:e FILE`, `:e!` (the file read again from disk, its changes
-here dropped), `:bn :bp :bd`, `:tabnew`, `:sp`, `:vs`, `:noh`,
+`:qa`, `:wqa`, `:e FILE` (a new file, made when it is saved, but not in a
+folder that is not there: "No file NAME"), `:e!` (the file read again from
+disk, its changes here dropped), `:bn :bp :bd`, `:tabnew`, `:sp`, `:vs`, `:noh`,
 `:{number}`, `:d`, `:y`, `:>`, `:<`, `:u`, `:red`, and `:s/this/that/` with
 the flags `g` (every match on a line), `c` (asks of each: `y` `n` `a` `q`
 `l`), `i` and `I` (case ignored or not), `n` (only counts them), `e` (says
@@ -2272,7 +2275,9 @@ no place (a linker's `undefined reference`) are not listed. **Cmd+click**
 on a `path:line` (or `path:line:col`, or Python's `File "path", line N`)
 in any terminal tab opens the file there, in a split with text: a
 relative path from the shell's folder, the folders the build went into,
-or the one the terminal started in. Cmd+R in the
+or the one the terminal started in. A file that is not there is said so
+("No file NAME"; on another machine, when its answer comes) and opens no
+tab. Cmd+R in the
 tab looks again by hand; with nothing found the tab says so, and how to
 add a system (below). On another
 machine (`ssh://`) the folder is looked at, and the tasks run, there.

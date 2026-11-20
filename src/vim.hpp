@@ -47,7 +47,7 @@ struct VimRequest {
         kSaveAll,     // :wa  (then_close: :wqa, :xa)
         kClose,       // :q, ZQ, <C-w>c  (force: without asking about changes)
         kQuitAll,     // :qa
-        kOpen,        // :e FILE
+        kOpen,        // :e FILE (n 1: gf, the name under the cursor)
         kTab,         // n: +1 the next tab, -1 the one before; 0 a new one; arg "first" or "last": that one
         kSplit,       // n: 0 to the right, 1 below
         kFocus,       // n: 0 left, 1 right, 2 up, 3 down: the keyboard to that split

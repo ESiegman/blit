@@ -203,6 +203,24 @@ got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;text:x
 check ":e! reads the file again, its changes dropped (no new tab)" 'NORMAL |  | 1:1 | hello world a.txt NORMAL a.txt | Ln 1, Col 1 Spaces: 4 LF'
 run "frame;text::;text:e b.txt;key:Return;dump"
 check ":e opens a file in a tab" '>[a.txt b.txt*]'
+# gf: beside the file first, then the working folder; a name in neither is said so.
+gf() {
+    fresh
+    mkdir -p "$dir/gf/sh/include" "$dir/gf/include"
+    printf 'float x;\nfloat y;\n' >"$dir/gf/sh/include/common.glsl"
+    printf '#version 450\n#include "include/common.glsl"\n#include "missing.h"\nsh/include/common.glsl:2: here\ninclude\n' >"$dir/gf/sh/a.frag"
+    got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "workdir:$dir/gf;frame;$1;vimdump;dump" "$dir/gf/sh/a.frag" 2>&1 >/dev/null | tail -2 | tr '\n' ' ')
+}
+gf "text:j;text:\$;text:h;text:h;text:gf"
+check "gf on a quoted include: the file beside the one it is in" 'NORMAL |  | 1:1 | float x; >[a.frag common.glsl*] '
+gf "text:j;text:j;text:\$;text:h;text:h;text:gf"
+check "a name found nowhere is said so, and no tab is opened" 'NORMAL | No file missing.h | 3:18 | #include "missing.h" >[a.frag*] '
+gf "text:G;text:gf"
+check "nor for a folder (include is one, in the working folder)" 'NORMAL | No file include | 5:1 | include >[a.frag*] '
+gf "text:4;text:G;text:gf"
+check "path:line, from the working folder, at that line" 'NORMAL |  | 2:1 | float y; >[a.frag common.glsl*] '
+gf "text::;text:e /nonexistent/dir/x.c;key:Return"
+check ":e in a folder that is not there says so" 'NORMAL | No file /nonexistent/dir/x.c | 1:1 | #version 450 >[a.frag*] '
 run "frame;text::;text:e b.txt;key:Return;text:g;text:T;dump"
 check "gT goes to the tab before" '>[a.txt* b.txt]'
 run "frame;text::;text:e b.txt;key:Return;text::;text:q;key:Return;dump"

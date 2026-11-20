@@ -576,6 +576,14 @@ void App::remote_sync() {
             pane_ = focused;
             continue;
         }
+        if (d->must_exist && (x.status == 1 || x.status == 6)) {  // (asked for as a file that is there, by gf or a click: none is)
+            Pane* const focused = pane_;
+            pane_ = where;
+            tab_close(at, true);
+            pane_ = focused;
+            notify("No file " + x.path, 1);
+            continue;
+        }
         switch (x.status) {
             case 0:
                 d->ed.open_bytes(x.path, x.bytes);

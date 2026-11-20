@@ -4066,7 +4066,7 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
             if (!in_name(a)) return done();
             while (a > 0 && in_name(a - 1)) --a;
             while (in_name(b)) ++b;
-            requests_.push_back({VimRequest::kOpen, text.substr(a, b - a)});
+            requests_.push_back({VimRequest::kOpen, text.substr(a, b - a), 1});
             return done();
         }
         case 'u':

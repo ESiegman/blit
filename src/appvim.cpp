@@ -8,6 +8,7 @@
 #include <cstring>
 
 #include "app.hpp"
+#include "buildscan.hpp"
 #include "look.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
@@ -306,6 +307,62 @@ void App::vim_text(const char* text) {
     if (!typed.empty()) lsp_typed(typed);
 }
 
+// gf: the file named under the cursor; "path:line[:col]", as a compiler
+// or a log writes it, at that line. A name that is not a whole path is
+// looked for beside the file in front first (where a quoted include is
+// from), then in the working folder. One that is in neither is said so,
+// rather than opened as a new, empty file. (On another machine it cannot
+// be looked for here: it is asked for beside the file, and said so there
+// if it is not.)
+void App::open_named(std::string name) {
+    if (!name.empty() && name[0] == '~' && SDL_getenv("HOME")) name = std::string(SDL_getenv("HOME")) + name.substr(1);
+    while (name.size() > 1 && name.back() == ':') name.pop_back();
+    u32 at[2] = {0, 0};
+    int numbers = 0;
+    for (; numbers < 2; ++numbers) {
+        const size_t colon = name.rfind(':');
+        if (colon == std::string::npos || colon == 0 || colon + 1 == name.size() || name.size() - colon > 9 ||
+            !std::all_of(name.begin() + static_cast<std::ptrdiff_t>(colon) + 1, name.end(), [](char c) { return c >= '0' && c <= '9'; }))
+            break;
+        at[numbers] = static_cast<u32>(std::atoi(name.c_str() + colon + 1));
+        name.resize(colon);
+    }
+    const u32 line = numbers == 2 ? at[1] : at[0], col = numbers == 2 ? at[0] : 0;
+    // A folder and the name in it, each on its machine ("ssh://host" and the path there).
+    auto join = [&](const std::string& dir) {
+        std::string host, there;
+        if (!split_remote(dir, &host, &there)) return tidy_path(name[0] == '/' ? name : dir + "/" + name);
+        return dir.substr(0, dir.size() - there.size()) + tidy_path(name[0] == '/' ? name : there + "/" + name);
+    };
+    std::vector<std::string> dirs;
+    const std::string& here = pane_->doc->ed.path;
+    if (const size_t slash = here.rfind('/'); slash != std::string::npos) dirs.push_back(here.substr(0, slash));
+    if (name.empty()) return;
+    if (name[0] != '/' || dirs.empty()) {
+        const std::string* root = panel_root();
+        dirs.push_back(root ? *root : default_workdir());
+    }
+    std::string path;
+    for (const std::string& dir : dirs) {
+        const std::string full = join(dir);
+        SDL_PathInfo info;
+        if (is_remote(full) || (SDL_GetPathInfo(full.c_str(), &info) && info.type == SDL_PATHTYPE_FILE)) {
+            path = full;
+            break;
+        }
+    }
+    if (path.empty()) {
+        vim_.say("No file " + name);
+        return;
+    }
+    if (line) {
+        go_to_place(path, line, col);
+        return;
+    }
+    remember_place();
+    open_path(path.c_str(), true);
+}
+
 // After Vim has had keys: carry out what it asked for, follow the cursor.
 void App::vim_after(u32 result) {
     (void)result;
@@ -342,12 +399,21 @@ void App::vim_after(u32 result) {
                 else request_quit();
                 break;
             case VimRequest::kOpen: {
+                if (q.n == 1) {  // gf
+                    open_named(q.arg);
+                    break;
+                }
                 // A name that is not a whole path is taken from the working directory.
                 std::string path = q.arg;
                 if (!path.empty() && path[0] == '~' && SDL_getenv("HOME")) path = std::string(SDL_getenv("HOME")) + path.substr(1);
                 if (!path.empty() && path[0] != '/') {
                     const std::string* root = panel_root();
                     path = (root ? *root : default_workdir()) + "/" + path;
+                }
+                // A new file is made when it is saved, but not in a folder that is not there, nor over a folder.
+                if (SDL_PathInfo info; !is_remote(path) && (SDL_GetPathInfo(path.c_str(), &info) ? info.type == SDL_PATHTYPE_DIRECTORY : !SDL_GetPathInfo(path.substr(0, path.rfind('/')).c_str(), nullptr))) {
+                    vim_.say("No file " + path);
+                    break;
                 }
                 open_path(path.c_str());
                 break;

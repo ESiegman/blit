@@ -708,7 +708,9 @@ void App::rescale_scroll(int old_cw, int old_ch) {
 // a PDF or the like is gone to where it is instead); else in a new tab next
 // to the one in front (or in that one, if it is a new file nobody has
 // typed in). False if it could not be opened; nothing has changed then.
-bool App::open_path(const char* p) {
+// `must_exist`: a file that is not there is not a new one to make; it is
+// said so (another machine's, when its answer comes), and no tab is left.
+bool App::open_path(const char* p, bool must_exist) {
     const std::string full = full_path(p);
     Pane* where = nullptr;
     size_t have = 0;
@@ -721,6 +723,10 @@ bool App::open_path(const char* p) {
         tab_show(have);
         return true;
     }
+    if (SDL_PathInfo info; must_exist && !is_remote(full) && (!SDL_GetPathInfo(p, &info) || info.type != SDL_PATHTYPE_FILE)) {
+        notify("No file " + full, 1);
+        return false;
+    }
     if (is_picture_path(full)) return image_open(full);  // a picture: in a tab of its own (appimage.cpp)
     if (is_pdf_path(full)) return pdf_open(full);        // a PDF too (apppdf.cpp)
     auto fresh = std::make_shared<Doc>();
@@ -730,6 +736,7 @@ bool App::open_path(const char* p) {
     if (remote) {  // another machine's: its tab now, and the file when it comes (appremote.cpp)
         fresh->ed.path = full;
         fresh->loading = fresh->read_only = true;
+        fresh->must_exist = must_exist;
     } else if (fresh->ed.open(p, &err)) {
         if (is_notebook_path(full)) nb_load(*fresh);  // (a notebook: the script of its cells)
     } else {

@@ -463,7 +463,7 @@ bool App::go_to_place(const std::string& path, u32 line, u32 col) {
                 break;
             }
     remember_place();
-    if (!open_path(path.c_str())) return false;
+    if (!open_path(path.c_str(), true)) return false;  // (another machine's: its tab goes if it is not there)
     show_place(line ? line - 1 : 0, col ? col - 1 : 0);
     return true;
 }

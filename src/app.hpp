@@ -206,6 +206,7 @@ struct Doc {
     std::string title;
     bool read_only = false;
     bool loading = false;  // a file on another machine, on its way (read only until it is here: see appremote.cpp)
+    bool must_exist = false;  // (and asked for as one that is there, by gf or a click: if it is not, its tab goes)
     u64 goto_line = ~0ull;  // and where the cursor goes when it is (a line from 0, and a byte in it)
     u32 goto_col = 0;
     bool goto_utf16 = false;  // (goto_col is a language server's that counts UTF-16 units, not bytes)
@@ -430,7 +431,8 @@ private:
     void apply_present_mode();
     void update_refresh();
     void zoom(float dpt);
-    bool open_path(const char* p);
+    bool open_path(const char* p, bool must_exist = false);
+    void open_named(std::string name);
     void save();
     void request_quit();
     int view_h() const { return std::max(1, pane_->y1 - pane_->text_y); }  // height of the focused pane's text area

@@ -225,6 +225,18 @@ got=$(BLIT_AGENT_LEVEL=2 BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 
 got="$got | $(head -c 3 "$W/big/big.txt") $(wc -c <"$W/big/big.txt" | tr -d ' ')"
 check "and to an agent from before parts: whole" 'box ~/work/big/big.txt | Ln 1, Col 2 Tabs LF Plain text | YX0 16777218'
 
+# gf and a click on a path there (Cmd+click in a terminal takes the same
+# way): the file there, or, if it is not there, no new tab but a word.
+printf 'src/main.cpp\nmissing.cpp\nmissing.cpp:3\n' >"$W/links.txt"
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/vim.lua"
+INIT="$dir/vim.lua" run "remotewait;vim:gf;remotewait;frame;dump" "$R/links.txt"
+check "gf on a name there opens the file there" '>[links.txt main.cpp*]'
+INIT="$dir/vim.lua" run "remotewait;vim:jgf;remotewait;frame;dump" "$R/links.txt"
+check "one that is not there is said so, and leaves no tab" 'blit: No file ssh://box~/work/missing.cpp ;; >[links.txt*]'
+INIT="$dir/vim.lua" run "remotewait;vim:2jgf;remotewait;frame;dump" "$R/links.txt"
+check "nor does it at a line (as a click on a path:line does)" 'blit: No file ssh://box~/work/missing.cpp ;; >[links.txt*]'
+rm "$W/links.txt"
+
 # The agent was copied there once, into the cache blit keeps in that home.
 got=$(ls "$T/.cache/blit" | sed -e 's/-[0-9a-f]*$//')
 check "the agent, copied once" "blit-agent-$(uname -s)-$(uname -m)"
