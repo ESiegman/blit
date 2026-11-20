@@ -141,6 +141,8 @@ typed d.py "text:o;text:def f(rows):;key:Return;text:for r in rows:  # each;key:
 check "Python: Enter after a colon goes a level in, after return a level out; else and ] go out" 'x = 1|def f(rows):|    for r in rows:  # each|        if r:|            return 1|        else:|            pass|        y = [|            1,|        ]|'
 typed c.c "text:o;text:if (x) {;key:Return;text:y();key:Return;text:};key:Escape;text:k;text:o;text:z;key:Escape"
 check "C: after { a level in, } a level out; o goes in as Enter does" 'int x;|if (x) {|    y()|    z|}|    int y;|'
+typed c.c "text:o;text:};key:Escape;text:I;text:  ;key:Escape"
+check "blanks typed in front of a closer stay" 'int x;|  }|    int y;|'
 typed l.lua "text:o;text:for i = 1, 3 do;key:Return;text:f(i);key:Return;text:end;key:Return;text:g = function();key:Return;text:return 1;key:Return;text:end;key:Escape"
 check "Lua: then, do and function open; end closes (Enter after it, or Esc)" 'if x then|>for i = 1, 3 do|>>f(i)|>end|>g = function()|>>return 1|>end|end|'
 typed l.lua "text:o;text:table.sort(t, function(a, b) return a < b end);key:Return;text:blit.map(\"n\", \"x\", function() blit.feed(\"y\") end);key:Return;text:print(\"no function here\");key:Return;text:if ok then f(function() g() end);key:Return;text:h();key:Escape"

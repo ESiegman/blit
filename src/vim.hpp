@@ -22,8 +22,8 @@
 namespace blit {
 
 // How a language's lines open and close a level of indentation, for
-// Enter and o, and for a closer typed at the start of a line in Insert
-// mode. The words are between spaces.
+// Enter and o, and for a closer typed at the start of a line (in Insert
+// mode, or without Vim). The words are between spaces.
 struct IndentRules {
     bool brackets = false;      // a line that ends in ( [ or { opens a level; one that starts with ) ] or } closes one
     bool colon = false;         // a line that ends in ":" opens one (Python)
@@ -33,6 +33,26 @@ struct IndentRules {
     const char* closers = "";   // words that close one when they start a line
     const char* enders = "";    // words whose line is the last of its level (Python's return)
 };
+
+// The rules at work, in Vim's Insert mode and without Vim. `unit` is a
+// level of indentation (a tab, or so many spaces), `marker` what starts a
+// comment (one at the end of a line is not its code).
+//
+// How far in the line after `line` starts: a level further than `indent`
+// (that line's) if its code up to `end` opens one, a level less if it ends
+// its level (Python's return).
+std::string indent_after(const IndentRules& r, const Editor& ed, u64 line, u64 end, std::string indent, std::string_view unit, std::string_view marker);
+// Whether `ch`, a sign or a blank typed at `sign`, makes a closer of the
+// start of its line: it is "}" there, or it comes after "end" or "else"
+// there. (It reads only the few bytes before the sign.)
+bool closer_typed(const IndentRules& r, const Editor& ed, u64 sign, u32 ch);
+// How far in a line that starts with a closer goes (*want), if that is
+// further out than it is: a level out from the code line above, or as far
+// in as that line if it opened the level.
+bool closer_indent(const IndentRules& r, const Editor& ed, u64 line, std::string_view unit, std::string_view marker, std::string* want);
+// That done to the line, the cursor and `follow` (a place, if given)
+// moving with its text. True if it moved.
+bool indent_closer(const IndentRules& r, Editor& ed, u64 line, std::string_view unit, std::string_view marker, u64* follow = nullptr);
 
 struct VimKey {
     enum : u8 { kChar, kEsc, kEnter, kBackspace, kTab, kLeft, kRight, kUp, kDown, kHome, kEnd, kPageUp, kPageDown, kDelete };
@@ -276,8 +296,6 @@ private:
     void enter_insert(Editor& ed, u32 count, Mode mode = kInsert);
     void leave_insert(Editor& ed);
     bool drop_indent(Editor& ed, u64 at);
-    std::string indent_after(const Editor& ed, u64 line, u64 end, std::string indent) const;
-    std::string outdent(const Editor& ed, std::string indent) const;
     void indent_closer(Editor& ed, u64 line);
     void leave_visual(Editor& ed);
     void run_command(Editor& ed, std::string line);
