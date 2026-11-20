@@ -24,12 +24,14 @@ constexpr u32 kTab = 8;           // a terminal's tab stops
 
 // ---------------------------------------------------------------- text
 
+// (As the view draws it: an emoji joined to the one before takes no columns of its own.)
 u32 cols_of(std::string_view s) {
     u32 w = 0;
     const u8* p = reinterpret_cast<const u8*>(s.data());
+    Joiner j;
     for (size_t i = 0; i < s.size();) {
         const Decoded d = decode_utf8(p + i, s.size() - i);
-        w += cp_width(d.cp);
+        w += j.width(d.cp);
         i += d.len;
     }
     return w;
@@ -508,9 +510,11 @@ bool html_table(std::string_view table, std::vector<std::vector<std::string>>* c
 u32 shown_cols(std::string_view md) {
     u32 w = 0;
     const u8* p = reinterpret_cast<const u8*>(md.data());
+    Joiner j;
     for (size_t i = 0; i < md.size();) {
         if (md[i] == '\\' && i + 1 < md.size() && std::ispunct(static_cast<unsigned char>(md[i + 1]))) {
             ++w, i += 2;
+            j.reset();
             continue;
         }
         if (md.substr(i, 2) == "**") {
@@ -521,11 +525,12 @@ u32 shown_cols(std::string_view md) {
             const size_t semi = md.find(';', i);
             if (semi != std::string_view::npos && semi - i <= 12) {
                 ++w, i = semi + 1;
+                j.reset();
                 continue;
             }
         }
         const Decoded d = decode_utf8(p + i, md.size() - i);
-        w += cp_width(d.cp);
+        w += j.width(d.cp);
         i += d.len;
     }
     return w;

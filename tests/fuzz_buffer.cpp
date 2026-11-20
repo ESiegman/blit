@@ -856,6 +856,43 @@ void markdown_test() {
     bool forward = true;
     for (const MdRow& r : md_render("a[^1]\n\n[^1]: early\n\nb\n\nc\n", 60)) forward = forward && r.line >= last_line, last_line = r.line;
     check(forward, "footnotes: the lines of the rows at the end not before those above them");
+
+    // Tables: lines in the muted ink; the header's tint across its cells
+    // and the lines between them (not the outer two); a line between the
+    // body's rows only when a cell wraps; columns in line with a family
+    // emoji and a flag (each one cell's width) in them.
+    const std::string table = drawn("| a | b |\n|---|---|\n| x | y |\n| z | w |\n", 60, true);
+    check(table.starts_with(ink(kMdMuted) + "0.0>\xE2\x94\x8C") && table.find(ink(kMdMuted) + "0.0>\xE2\x94\x82" + ink(kMdText) + "0.2> " + ink(kMdText) + "1.2>a" + ink(kMdText) + "0.2> " + ink(kMdMuted) + "0.2>\xE2\x94\x82") != std::string::npos &&
+              table.find("b" + ink(kMdText) + "0.2> " + ink(kMdMuted) + "0.0>\xE2\x94\x82\n") != std::string::npos,
+          "tables: quiet lines, the header's tint one band");
+    check(drawn("| a | b |\n|---|---|\n| x | y |\n| z | w |\n") == "\xE2\x94\x8C\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\xAC\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x90\n\xE2\x94\x82 a \xE2\x94\x82 b \xE2\x94\x82\n"
+                                                                    "\xE2\x94\x9C\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\xBC\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\xA4\n\xE2\x94\x82 x \xE2\x94\x82 y \xE2\x94\x82\n\xE2\x94\x82 z \xE2\x94\x82 w \xE2\x94\x82\n"
+                                                                    "\xE2\x94\x94\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\xB4\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x98\n",
+          "tables: no line between rows that do not wrap");
+    const std::string wrapped = drawn("| a | b |\n|---|---|\n| one two three four | y |\n| z | w |\n", 16);
+    check(std::count(wrapped.begin(), wrapped.end(), '\n') == 9 && wrapped.find("\xE2\x94\x82 z") != std::string::npos &&
+              wrapped.substr(0, wrapped.find("\xE2\x94\x82 z")).ends_with("\xE2\x94\xA4\n"),
+          "tables: a line between the body's rows when a cell wraps");
+    // Too wide: each column its longest word, and the room left shared as
+    // each would take more (about twice the text, twice the room); no word cut.
+    const std::string shared = drawn("| a | b |\n|---|---|\n| " + std::string("aaaa ") + "aaaa aaaa aaaa aaaa aaaa | " + "bbbb bbbb bbbb bbbb bbbb bbbb bbbb bbbb bbbb bbbb bbbb bbbb |\n", 44);
+    const std::string first_body = shared.substr(shared.find("\xE2\x94\x82 aaaa"), shared.find('\n', shared.find("\xE2\x94\x82 aaaa")) - shared.find("\xE2\x94\x82 aaaa"));
+    check(first_body == "\xE2\x94\x82 aaaa aaaa aaaa \xE2\x94\x82 bbbb bbbb bbbb bbbb     \xE2\x94\x82", "tables: the room shared as each column would take it");
+    bool level = true;
+    u32 cols = 0;
+    for (const MdRow& r : md_render("| w | m |\n|---|:-:|\n| \xE6\xBC\xA2 | \xF0\x9F\x91\xA8\xE2\x80\x8D\xF0\x9F\x91\xA9\xE2\x80\x8D\xF0\x9F\x91\xA7 |\n| x | \xF0\x9F\x87\xAF\xF0\x9F\x87\xB5 |\n| y | z |\n", 60)) {
+        u32 n = 0;
+        const std::string t = md_row_text(r);
+        Joiner j;
+        for (size_t i = 0; i < t.size();) {
+            const Decoded d = decode_utf8(reinterpret_cast<const u8*>(t.data()) + i, t.size() - i);
+            n += j.width(d.cp);
+            i += d.len ? d.len : 1;
+        }
+        level = level && (cols == 0 || n == cols);
+        cols = n;
+    }
+    check(level, "tables: wide characters, a family and a flag keep the columns in line");
 }
 
 // The script's cells matched to the model's: as the plain search of the

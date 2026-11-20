@@ -2431,7 +2431,7 @@ It draws headings (each level its own, below), **bold**, *italic*, `code`,
 ~~struck~~ text, links and autolinks (and links defined elsewhere with
 `[name]: url`), lists (nested, numbered from any number, `- [ ]` tasks),
 quotes (nested), tables (aligned as their `:--:` says, cells wrapped to
-fit), fenced and indented code (on a tinted band, the language at its
+fit, below), fenced and indented code (on a tinted band, the language at its
 top right; a block in a language blit has a grammar for, by its name,
 `c++`, `py`, `sh`, `yml` or another file ending, is coloured by that
 grammar in the theme's colours, on the preview's thread), rules, line breaks, HTML (its text without the tags; comments
@@ -2448,6 +2448,15 @@ last for levels four to six) where it names them. Where it names only
 that colour and each level under it the first of the theme's other
 colours (its functions', types', keywords', strings') that no level above
 has taken.
+
+**Tables** have quiet lines (the theme's muted colour) and a tinted
+header, one band across all its cells. One too wide for the preview
+gives each column room for its longest word and shares out the rest as
+each would take it, so that a column of long text wraps least. When a
+cell's text wraps, a line
+between the rows below the header keeps each row's lines apart; a table
+whose cells all fit on a line has none. Columns stay in line with wide
+characters and emoji (a family or a flag in one cell's width) in them.
 
 **Alerts** (GitHub's: a quote whose first line is `[!NOTE]`, `[!TIP]`,
 `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]`, in any case, alone on its

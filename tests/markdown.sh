@@ -40,7 +40,7 @@ pictures() {
          { if (skip) print ""; skip = 0; print }'
 }
 
-for f in sample edge diagrams code alerts notes headings; do
+for f in sample edge diagrams code alerts notes headings tables; do
     size=1600x1100
     [ $f = sample ] || [ $f = diagrams ] && size=3600x1100
     run $size "$here/markdown/$f.md" ""
@@ -89,6 +89,15 @@ check "headings: in the light theme" "[#ca3c2c b]One [#325cc0 b]Two [#a87b00 b]T
 looks "$here/markdown/headings.md" 'blit.opt.themes["blit-dark"] = { syntax = { ["markup.heading"] = "#61afef", ["markup.heading.3"] = "#00ff00" } }'
 got=$(levels)
 check "headings: a level's own colour from the theme; one a level above has, not again" "[#61afef b]One [#e5c07b b]Two [#00ff00 b]Three [#c678dd b]Four [#c678dd bi]Five [#c678dd i]Six "
+
+# Tables: their lines in the quiet muted colour (not an accent's), the
+# header's tint one band from the first line to the last (the lines
+# between its cells tinted too, the outer ones not), body rows plain.
+looks "$here/markdown/tables.md"
+all=$got
+got=$(printf '%s\n' "$all" | grep -c '^\[#7f848e\]│\[#dbdedb t2\] \[#dbdedb b t2\]Name\[#dbdedb t2\]      \[#7f848e t2\]│\[#dbdedb t2\] \[#dbdedb b t2\]Size\[#dbdedb t2\] \[#7f848e t2\]│\[#dbdedb t2\]  \[#dbdedb b t2\]Kind\[#dbdedb t2\]  \[#7f848e\]│$')
+got=$got,$(printf '%s\n' "$all" | grep -E '^\[#[0-9a-f]*\](┌|├|└)' | grep -vc '^\[#7f848e\]'),$(printf '%s\n' "$all" | grep '│' | grep -c 't2.*main.cpp')
+check "tables: quiet lines, the header's tint one band" "1,0,0"
 
 # Footnotes: a mark is a link to its text at the end, the row that text
 # starts on is named for it, and the mark after the text is a link back;

@@ -14,12 +14,16 @@ namespace {
 
 // ---------------------------------------------------------------- text
 
+// The columns s takes, as the preview draws it (TextBox::put): an emoji
+// joined to the one before it (a family, a flag's second half) takes none
+// of its own.
 u32 cols_of(std::string_view s) {
     u32 w = 0;
     const u8* p = reinterpret_cast<const u8*>(s.data());
+    Joiner j;
     for (size_t i = 0; i < s.size();) {
         const Decoded d = decode_utf8(p + i, s.size() - i);
-        w += cp_width(d.cp);
+        w += j.width(d.cp);
         i += d.len ? d.len : 1;
     }
     return w;
@@ -37,9 +41,10 @@ size_t fit(std::string_view s, u32 n) {
     u32 w = 0;
     const u8* p = reinterpret_cast<const u8*>(s.data());
     size_t i = 0;
+    Joiner j;
     while (i < s.size()) {
         const Decoded d = decode_utf8(p + i, s.size() - i);
-        const u32 cw = cp_width(d.cp);
+        const u32 cw = j.width(d.cp);
         if (w + cw > n) break;
         w += cw;
         i += d.len ? d.len : 1;
@@ -1505,19 +1510,33 @@ struct Layout {
     void table(const Block& b) {
         const size_t ncols = b.align.size();
         std::vector<std::vector<std::vector<Span>>> cells(b.table.size());
-        std::vector<u32> natural(ncols, 1);
+        std::vector<u32> natural(ncols, 1), word(ncols, 1);  // (each column's widest cell, and its longest word)
         for (size_t r = 0; r < b.table.size(); ++r) {
             cells[r].resize(ncols);
             for (size_t c = 0; c < ncols; ++c) {
                 Span as;
                 if (r == 0) as.style = kMdBold;
                 parse_inline(c < b.table[r].size() ? b.table[r][c] : std::string(), as, refs, cells[r][c]);
-                u32 w = 0;
-                for (const Span& sp : cells[r][c]) w += cols_of(sp.text);
+                u32 w = 0, in_word = 0;
+                for (const Span& sp : cells[r][c]) {
+                    w += cols_of(sp.text);
+                    for (std::string_view t = sp.text; !t.empty();) {  // (a word may go on from one run to the next)
+                        const size_t space = t.find(' ');
+                        in_word += cols_of(t.substr(0, space));
+                        word[c] = std::max(word[c], in_word);
+                        if (space == std::string_view::npos) break;
+                        in_word = 0;
+                        t.remove_prefix(space + 1);
+                    }
+                }
                 natural[c] = std::max(natural[c], w);
             }
         }
-        // Each column as wide as its widest cell, the widest made narrower until it fits.
+        // Each column as wide as its widest cell. When they do not all fit,
+        // each is as wide as its longest word, and what room is left is
+        // shared in proportion to what more each would take (so that a
+        // column of long text gets the most of it); when even the words do
+        // not fit, the widest is made narrower until they do.
         const u32 frame = static_cast<u32>(3 * ncols + 1);
         const u32 room_cols = room() > frame ? room() - frame : static_cast<u32>(ncols);
         std::vector<u32> w = natural;
@@ -1526,47 +1545,76 @@ struct Layout {
             for (const u32 x : w) t += x;
             return t;
         };
-        while (total() > room_cols) {
-            const auto widest = std::max_element(w.begin(), w.end());
-            if (*widest <= 3) break;
-            --*widest;
+        if (total() > room_cols) {
+            u32 more = 0;  // (what all would take past their words)
+            for (size_t c = 0; c < ncols; ++c) {
+                w[c] = std::min(word[c], natural[c]);
+                more += natural[c] - w[c];
+            }
+            if (total() < room_cols && more > 0) {
+                const u32 spare = room_cols - total();
+                u32 given = 0;
+                for (size_t c = 0; c < ncols; ++c) {
+                    const u32 share = static_cast<u32>(static_cast<u64>(spare) * (natural[c] - w[c]) / more);
+                    w[c] += share;
+                    given += share;
+                }
+                for (size_t c = 0; given < spare && c < ncols; ++c)  // (what rounding left, to the first that can take it)
+                    if (w[c] < natural[c]) ++w[c], ++given;
+            }
+            while (total() > room_cols) {
+                const auto widest = std::max_element(w.begin(), w.end());
+                if (*widest <= 3) break;
+                --*widest;
+            }
         }
+        // Its lines quiet (the theme's muted colour: the text is what matters).
         auto border = [&](const char* l, const char* m, const char* r, u32 line) {
             std::string s = l;
             for (size_t c = 0; c < ncols; ++c) {
                 for (u32 k = 0; k < w[c] + 2; ++k) s += "\xE2\x94\x80";
                 s += c + 1 < ncols ? m : r;
             }
-            row({{s, kMdBorder}}, line);
+            row({{s, kMdMuted}}, line);
         };
+        std::vector<std::vector<std::vector<std::vector<MdRun>>>> wrapped(cells.size());  // (each row's cells, as lines)
+        bool wraps = false;  // (a body cell over more than one line)
+        for (size_t r = 0; r < cells.size(); ++r) {
+            wrapped[r].resize(ncols);
+            for (size_t c = 0; c < ncols; ++c) {
+                wrapped[r][c] = wrap(cells[r][c], w[c]);
+                wraps = wraps || (r > 0 && wrapped[r][c].size() > 1);
+            }
+        }
         const char* bar = "\xE2\x94\x82";
         border("\xE2\x94\x8C", "\xE2\x94\xAC", "\xE2\x94\x90", b.line);
         for (size_t r = 0; r < cells.size(); ++r) {
             const u32 line = r < b.nos.size() ? b.nos[r] : b.line;
-            std::vector<std::vector<std::vector<MdRun>>> wrapped(ncols);
             size_t height = 1;
-            for (size_t c = 0; c < ncols; ++c) {
-                wrapped[c] = wrap(cells[r][c], w[c]);
-                height = std::max(height, wrapped[c].size());
-            }
+            for (size_t c = 0; c < ncols; ++c) height = std::max(height, wrapped[r][c].size());
+            // The header's tint one band, from the first line to the last
+            // (the lines between its cells in it too).
+            const u8 tone = r == 0 ? kMdHeaderTone : kMdNoTone;
             for (size_t k = 0; k < height; ++k) {
-                std::vector<MdRun> runs{{bar, kMdBorder}};
+                std::vector<MdRun> runs{{bar, kMdMuted}};
                 for (size_t c = 0; c < ncols; ++c) {
-                    std::vector<MdRun> cell = k < wrapped[c].size() ? wrapped[c][k] : std::vector<MdRun>{};
+                    std::vector<MdRun> cell = k < wrapped[r][c].size() ? wrapped[r][c][k] : std::vector<MdRun>{};
                     const u32 used = cols_of_runs(cell);
                     const u32 spare = w[c] > used ? w[c] - used : 0;
                     const u32 before = b.align[c] == 1 ? spare : b.align[c] == 0 ? spare / 2 : 0;
-                    runs.push_back({std::string(1 + before, ' '), kMdText, 0, r == 0 ? kMdHeaderTone : kMdNoTone});
+                    runs.push_back({std::string(1 + before, ' '), kMdText, 0, tone});
                     for (MdRun& run : cell) {
                         if (r == 0 && run.tone == kMdNoTone) run.tone = kMdHeaderTone;
                         runs.push_back(std::move(run));
                     }
-                    runs.push_back({std::string(spare - before + 1, ' '), kMdText, 0, r == 0 ? kMdHeaderTone : kMdNoTone});
-                    runs.push_back({bar, kMdBorder});
+                    runs.push_back({std::string(spare - before + 1, ' '), kMdText, 0, tone});
+                    runs.push_back({bar, kMdMuted, 0, c + 1 < ncols ? tone : static_cast<u8>(kMdNoTone)});
                 }
                 row(std::move(runs), line);
             }
-            if (r == 0) border("\xE2\x94\x9C", "\xE2\x94\xBC", "\xE2\x94\xA4", line);
+            // Under the header a line; between the other rows one too when a
+            // cell wraps (its lines would run into the next row's).
+            if (r == 0 || (wraps && r + 1 < cells.size())) border("\xE2\x94\x9C", "\xE2\x94\xBC", "\xE2\x94\xA4", line);
         }
         border("\xE2\x94\x94", "\xE2\x94\xB4", "\xE2\x94\x98", b.nos.empty() ? b.line : b.nos.back());
     }
