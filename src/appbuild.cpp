@@ -321,7 +321,9 @@ void App::build_run(int index) {
     if (!t.before.empty()) {  // a run configuration's build first: then, if it went well, the program
         const auto it = std::ranges::find_if(u.tasks, [&](const BuildTask& b) { return !b.config && (b.name == t.before || b.system + ": " + b.name == t.before); });
         if (it == u.tasks.end()) return notify("No task called " + t.before + " to run before " + t.name);
-        const std::string first = it->cwd.empty() ? u.root : u.root + "/" + it->cwd, then = t.cwd.empty() ? u.root : u.root + "/" + t.cwd;
+        std::string host, there;  // (on another machine the command runs there: its folders without ssh://host)
+        const std::string root = split_remote(u.root, &host, &there) ? there : u.root;
+        const std::string first = it->cwd.empty() ? root : root + "/" + it->cwd, then = t.cwd.empty() ? root : root + "/" + t.cwd;
         cmd = "cd " + sh_word(first) + " && " + it->cmd + " && cd " + sh_word(then) + " && " + t.cmd;
     }
     build_command(t.cwd.empty() || !t.before.empty() ? u.root : u.root + "/" + t.cwd, cmd, t.name);

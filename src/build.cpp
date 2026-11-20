@@ -6,6 +6,7 @@
 #include <string_view>
 
 #include "json.hpp"
+#include "remote.hpp"
 
 namespace blit {
 
@@ -314,6 +315,11 @@ std::vector<BuildTask> read_run_configs(const std::string& root, std::string* pr
         *problem = std::string(kRunConfigs) + " has no \"configurations\" list";
         return out;
     }
+    // (In a project on another machine the command runs there, where its
+    // paths have no ssh://host; Debug and Profile take them whole.)
+    std::string host, there;
+    const bool remote = split_remote(root, &host, &there);
+    const std::string prefix = remote ? remote_prefix(host) : std::string();
     for (const json::Value c : list) {
         BuildTask t;
         t.system = "Run";
@@ -324,7 +330,10 @@ std::vector<BuildTask> read_run_configs(const std::string& root, std::string* pr
             *problem = std::string(kRunConfigs) + ": a configuration needs a \"name\" and a \"program\"";
             continue;
         }
-        t.program = program[0] == '/' || program.starts_with("ssh://") || program.starts_with("docker://") ? program : root + "/" + program;
+        t.program = program.starts_with("ssh://") || program.starts_with("docker://") ? program
+                    : program[0] != '/'                                                ? root + "/" + program
+                    : remote                                                           ? prefix + program  // (a whole path in a project there is a path there)
+                                                                                       : program;
         if (c["args"].is_array()) {
             for (const json::Value a : c["args"]) t.args += (t.args.empty() ? "" : " ") + sh_quote(a.str());
         } else {
@@ -341,7 +350,8 @@ std::vector<BuildTask> read_run_configs(const std::string& root, std::string* pr
             for (const std::string& e : t.env) cmd += " " + sh_quote(e);
             cmd += " ";
         }
-        t.cmd = cmd + sh_quote(t.program) + (t.args.empty() ? "" : " " + t.args);
+        std::string h, program_there;
+        t.cmd = cmd + sh_quote(split_remote(t.program, &h, &program_there) ? program_there : t.program) + (t.args.empty() ? "" : " " + t.args);
         out.push_back(std::move(t));
     }
     if (!out.empty()) out.front().def = true;

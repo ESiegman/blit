@@ -2392,7 +2392,9 @@ reads it again):
 ] }
 ```
 
-`program` and `cwd` are from the project's folder; `args` may also be one
+`program` and `cwd` are from the project's folder (in a project on
+another machine, a whole path for `program` is one there, and it runs
+there); `args` may also be one
 line (`"--steps 100"`), split as a shell splits it; `build`, a task of
 the Build tab's to run first, may be left out.
 

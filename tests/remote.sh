@@ -242,6 +242,19 @@ check "one that is not there is said so, and leaves no tab" 'blit: No file ssh:/
 INIT="$dir/vim.lua" run "remotewait;vim:2jgf;remotewait;frame;dump" "$R/links.txt"
 check "nor does it at a line (as a click on a path:line does)" 'blit: No file ssh://box~/work/missing.cpp ;; >[links.txt*]'
 rm "$W/links.txt"
+# A project's run configurations there: the Run button runs the program
+# there, by its path there (not ssh://...), in its folder, after its build.
+mkdir -p "$W/run/bin" "$W/run/.blit"
+printf '#!/bin/sh\necho "ran $1 in $(basename "$PWD")" >"$HOME/ran.txt"\n' >"$W/run/bin/hello" && chmod +x "$W/run/bin/hello"
+printf 'all:\n\ttouch built\n' >"$W/run/Makefile"
+printf '{ "configurations": [ { "name": "hello", "program": "bin/hello", "args": ["5"] } ] }\n' >"$W/run/.blit/run.json"
+run "remotewait;frame;buildrun;buildwait;builddump" "$R/run"
+got="$got | $(cat "$T/ran.txt" 2>/dev/null)"
+check "a run configuration there: run there" 'Run: >hello | Make: make make all (last: 0) | ran 5 in run'
+printf '{ "configurations": [ { "name": "hello", "program": "bin/hello", "args": ["6"], "cwd": "bin", "build": "make" } ] }\n' >"$W/run/.blit/run.json"
+run "remotewait;frame;buildrun;buildwait;builddump" "$R/run"
+got="$got | $(cat "$T/ran.txt" 2>/dev/null) | $(LC_ALL=C ls "$W/run" | tr '\n' ' ')"
+check "and with its build first, in its own folder" 'Run: >hello | Make: make make all (last: 0) | ran 6 in bin | Makefile bin built '
 
 # The agent was copied there once, into the cache blit keeps in that home.
 got=$(ls "$T/.cache/blit" | sed -e 's/-[0-9a-f]*$//')
