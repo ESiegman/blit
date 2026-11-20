@@ -3599,9 +3599,18 @@ void json_test() {
     for (const LspServer& s : servers) clangds += s.name == "clangd";
     check(clangds == 1 && servers.size() == builtin_lsp_servers().size() + 1, "built-in servers are not listed twice");
     auto clangd_has = [](const char* flag) { return std::ranges::count(builtin_lsp_servers()[0].command, std::string(flag)) == 1; };
-    check(builtin_lsp_servers()[0].name == "clangd" && clangd_has("--background-index") && clangd_has("--background-index-priority=background") &&
-              clangd_has("-j=4"),
-          "clangd indexes the project in the background, at the lowest priority, on four threads at most");
+    check(builtin_lsp_servers()[0].name == "clangd" && clangd_has("--background-index") && clangd_has("-j=4"),
+          "clangd indexes the project in the background, on four threads at most");
+    {
+        // (clangd stops at a flag it does not know: none newer than
+        // clangd 14's, Ubuntu 22.04's and Debian 12's, which has no
+        // --background-index-priority.)
+        static constexpr std::string_view kClangd14[] = {"--background-index", "-j=4"};
+        bool known = true;
+        const std::vector<std::string>& command = builtin_lsp_servers()[0].command;
+        for (size_t i = 1; i < command.size(); ++i) known &= std::ranges::find(kClangd14, std::string_view(command[i])) != std::end(kClangd14);
+        check(known, "the built-in clangd command has no flag clangd 14 does not know");
+    }
     check(Lsp::pick(servers, "markdown", nullptr) == nullptr, "a switched-off server is never picked");
     for (const LspServer& s : builtin_lsp_servers())
         for (const std::string& l : s.languages)

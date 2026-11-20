@@ -1780,8 +1780,12 @@ The project folder handed to the server is the nearest one above the file
 that holds one of the server's `roots`; files in two projects get a server
 each. clangd is started with its background index on, so that references,
 rename and the reference counts reach files that are not open:
-`--background-index --background-index-priority=background -j=4`, at the
-lowest priority and on four threads at most, whatever the machine. While
+`--background-index -j=4`, at clangd's own low priority (the lowest on
+Linux) and on four threads at most, whatever the machine; those four
+threads are also the ones it answers the open files with. (clangd 15 and
+later take `--background-index-priority=background` too, for the lowest
+on macOS as well; blit leaves it out because clangd 14, Ubuntu 22.04's and
+Debian 12's, stops at a flag it does not know.) While
 it indexes, the status bar says how far it has got beside its name
 (`clangd (indexing 31/72)`). It keeps the index in `.cache/clangd` in the
 project's folder (a `.gitignore` entry for `.cache/` keeps it out of git),

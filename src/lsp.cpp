@@ -42,10 +42,14 @@ const std::vector<LspServer>& builtin_lsp_servers() {
     static const std::vector<LspServer> list = {
         // (clangd indexes the whole project in the background, so that
         // references, rename and the counts reach files that are not open:
-        // at the lowest priority, on four threads at most whatever the
-        // machine, so that it never competes with typing or a build. How
-        // far it has got comes as $/progress, shown beside its name.)
-        {"clangd", {"clangd", "--background-index", "--background-index-priority=background", "-j=4"}, {"c", "cpp"},
+        // at its own low priority (the lowest on Linux), on four threads at
+        // most whatever the machine, so that it never competes much with a
+        // build; those four are its workers for the open files too. Only
+        // flags clangd 14 knows, Ubuntu 22.04's and Debian 12's: it stops at
+        // one it does not, so --background-index-priority, which came in
+        // 15, is not given. How far it has got comes as $/progress, shown
+        // beside its name.)
+        {"clangd", {"clangd", "--background-index", "-j=4"}, {"c", "cpp"},
          {"compile_commands.json", "compile_flags.txt", ".clangd", ".git"}, "", "", true},
         {"pyright", {"pyright-langserver", "--stdio"}, {"python"},
          {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "pyrightconfig.json", ".git"}, "", "", true},
