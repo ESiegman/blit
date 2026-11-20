@@ -974,6 +974,7 @@ private:
     bool md_mouse_down(const SDL_MouseButtonEvent& b);
     std::string md_dump(bool inks = false);
     static bool md_notebook(const Doc& d);  // (a notebook's view)
+    u32 nb_view_room(const Doc& src);
     struct MdWorker;  // draws previews on a thread of its own, so that typing never waits for one
     void md_sync();   // (event 20: a preview has been drawn)
     void md_wait();   // (for the tests: until every preview asked for is drawn)

@@ -323,9 +323,9 @@ void Kernel::Link::end() {
     if (c && id && c->wait(id, 3000) == -2) c->wait(id, 3000);
 }
 
-void Kernel::run(u64 cell, std::string_view code) {
+void Kernel::run(u64 cell, std::string_view code, u32 columns) {
     if (!link_) return;
-    std::string line = "{\"op\":\"run\",\"id\":" + std::to_string(cell) + ",\"code\":";
+    std::string line = "{\"op\":\"run\",\"id\":" + std::to_string(cell) + ",\"columns\":" + std::to_string(columns) + ",\"code\":";
     json::quote(line, code);
     line += "}\n";
     link_->send(line);
@@ -549,7 +549,6 @@ os.chdir(sys.argv[1] if len(sys.argv) > 1 and sys.argv[1] else os.getcwd())
 sys.path[0] = ""  # (the notebook's folder, not the helper's)
 sys.argv = [""]
 
-os.environ["COLUMNS"] = "58"  # (as wide as a traceback's rules and a progress bar are drawn: a notebook's view beside the script)
 shell = None
 try:
     import importlib.util
@@ -704,6 +703,8 @@ send({"type": "ready", "pid": os.getpid(), "ipython": shell is not None, "versio
 while True:
     msg = todo.get()
     cell = msg.get("id", 0)
+    if msg.get("columns"):  # (as wide as the view draws its outputs: a traceback's rules, a progress bar, pandas)
+        os.environ["COLUMNS"] = str(msg["columns"])
     ok = False
     busy.set()
     try:

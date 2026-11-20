@@ -331,7 +331,7 @@ void App::nb_next(Doc& d) {
     nb.started = false;
     nb.outs.clear();
     nb.clear_next = false;
-    nb.kernel->run(nb.running.key, nb.running.code);
+    nb.kernel->run(nb.running.key, nb.running.code, nb_view_room(d));
 }
 
 // What the kernels have said, put in their notebooks: a cell started (its

@@ -1017,6 +1017,18 @@ std::vector<MdRun> nb_ansi(std::string_view text, u8 ink) {
     return out;
 }
 
+namespace {
+// The labels' columns (In [n]:, as wide as the widest needs; and a space),
+// 0 when there is not room for them beside the cells.
+u32 gutter_of(u32 width, const std::vector<NotebookCell>& model) {
+    u32 label = 7;  // "In [1]:"
+    for (const NotebookCell& c : model) label = std::max(label, 6 + static_cast<u32>(std::to_string(std::max<i64>(c.count, 0)).size()));
+    return std::max<u32>(width, 12) >= 50 ? label + 1 : 0;
+}
+}  // namespace
+
+u32 nb_room(u32 width, const std::vector<NotebookCell>& model) { return std::max<u32>(width, 12) - gutter_of(width, model); }
+
 std::vector<MdRow> nb_render(std::string_view script, const std::vector<NotebookCell>& model, const NbLook& look, NbCache* cache) {
     std::vector<MdRow> rows;
     const std::vector<NotebookCell> now = notebook_cells(script);
@@ -1024,11 +1036,9 @@ std::vector<MdRow> nb_render(std::string_view script, const std::vector<Notebook
     const std::vector<CellMatch> match = notebook_match(now, model);
     // The labels beside the cells, as wide as the widest needs, when there
     // is room for them; else above.
-    u32 label = 7;  // "In [1]:"
-    for (const NotebookCell& c : model) label = std::max(label, 6 + static_cast<u32>(std::to_string(std::max<i64>(c.count, 0)).size()));
     const u32 width = std::max<u32>(look.width, 12);
     Drawer dr{look, cache, rows};
-    if (width >= 50) dr.gutter = label + 1;
+    dr.gutter = gutter_of(look.width, model);
     dr.room = width - dr.gutter;
     if (cache) {
         const std::string key = look.key + "\n" + std::to_string(width) + "\n" + std::to_string(dr.gutter) + "\n" + look.lang;

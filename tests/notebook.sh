@@ -348,6 +348,21 @@ got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$run/n
     grep -E '^1 code|"[abc]"|null|1\.5' | grep -v "inf'" | sed -e 's/^[0-9]*: *//' -e 's/^Out\[1\]: *//' | tr -s ' ' | tr '\n' '|')
 check "a result with NaN in its JSON: shown, as null" '1 code [1] same execute_result|"a": null,|"b": "NaN here",|"c": [|null,|1.5|'
 
+# A cell's terminal (COLUMNS) is as wide as the view draws its outputs: a
+# rule as wide as it fills a row, whatever the window's width.
+python3 - "$run/cols.ipynb" <<'EOF'
+import json, sys
+cells = [{"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": "import shutil\nprint('-' * shutil.get_terminal_size().columns)"}]
+json.dump({"cells": cells, "metadata": {}, "nbformat": 4, "nbformat_minor": 5}, open(sys.argv[1], "w"))
+EOF
+rule() {
+    "$blit" --offscreen "$1" --shot "$dir/shot.bmp" --script "open:$run/cols.ipynb;mdwait;vim:2G;key:shift+Return;nbwait;mdwait;nbview" 2>&1 >/dev/null |
+        grep -E '^[0-9]+: *-+ *$' | sed -e 's/^[0-9]*: *//' | awk '{ print length($0) }' | tr '\n' ' '
+}
+wide=$(rule 2400x1500) narrow=$(rule 1400x1000)
+got=$([ "${wide% }" != "${narrow% }" ] && [ "${wide% * }" = "$wide" ] && [ "${narrow% * }" = "$narrow" ] && echo fits || echo "$wide/$narrow")
+check "a cell's terminal as wide as the view's outputs" "fits"
+
 # 20 MB printed over a few seconds: the main thread takes it in in time
 # that grows as the output does (the model given it a few times a second,
 # a long text cut to what the view shows), and all of it is saved.

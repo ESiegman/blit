@@ -75,6 +75,10 @@ struct NbCache {
     std::set<std::string> drawn;  // (the rows the last drawing has: the rest let go of)
 };
 
+// The columns a notebook's outputs are drawn in, in a view `width` columns
+// wide (beside the labels, when there is room for them).
+u32 nb_room(u32 width, const std::vector<NotebookCell>& model);
+
 // The notebook whose script this is, with the outputs in `model`: its rows
 // (each row's line, its script's).
 std::vector<MdRow> nb_render(std::string_view script, const std::vector<NotebookCell>& model, const NbLook& look, NbCache* cache = nullptr);

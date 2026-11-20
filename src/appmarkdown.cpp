@@ -853,6 +853,18 @@ std::string App::md_dump(bool inks) {
 
 bool App::md_notebook(const Doc& d) { return d.md && d.md->notebook; }
 
+// The columns a notebook's view (the first) draws its outputs in, by the
+// width it last had (0: it has none, or has not been drawn yet).
+u32 App::nb_view_room(const Doc& src) {
+    u64 gen = 0;
+    std::shared_ptr<const std::vector<NotebookCell>> cells;
+    if (!nb_model(src, &gen, &cells)) return 0;
+    for (const std::unique_ptr<Pane>& p : panes_)
+        for (const std::shared_ptr<Doc>& d : p->docs)
+            if (d->md && d->md->notebook && d->md->source == src.id && d->md->asked_width) return nb_room(d->md->asked_width, *cells);
+    return 0;
+}
+
 // For the tests: where the notebook's view shows its row `row` (from 0),
 // in the window's points (its middle, a few columns in). False: not on show.
 bool App::nb_view_point(u32 row, float* x, float* y) {

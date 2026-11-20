@@ -48,7 +48,7 @@ public:
     // thread: cells asked for meanwhile are sent once it has started.
     bool start(const std::string& python, const std::string& dir, const std::string& notebook_dir, std::function<void()> notify, std::string* err);
     // A cell's code run, once those before it have (blit's name for it: `cell`).
-    void run(u64 cell, std::string_view code);
+    void run(u64 cell, std::string_view code, u32 columns = 0);
     // The cell running stopped: Ctrl+C in it (SIGINT to the helper).
     void interrupt();
     std::vector<Event> poll();
