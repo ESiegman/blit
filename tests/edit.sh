@@ -78,27 +78,53 @@ check "Vim: Visual mode's lines" 'two / three / one / four @ 2:5'
 # Brackets and quotes closed as they are typed.
 F="$dir/p.cpp"
 run "key:Down;key:End;key:Return;text:h;text:(" "$F"
-check "an opening bracket puts its closer after the cursor" 'int f() { /     g(x); / h() / } /  @ 3:3'
+check "an opening bracket puts its closer after the cursor" 'int f() { /     g(x); /     h() / } /  @ 3:7'
 run "key:Down;key:End;key:Return;text:h;text:(;text:a;text:)" "$F"
-check "the closer typed steps over it" 'int f() { /     g(x); / h(a) / } /  @ 3:5'
+check "the closer typed steps over it" 'int f() { /     g(x); /     h(a) / } /  @ 3:9'
 run "key:Down;key:End;key:Return;text:h;text:(;key:Backspace" "$F"
-check "Backspace between them takes both" 'int f() { /     g(x); / h / } /  @ 3:2'
+check "Backspace between them takes both" 'int f() { /     g(x); /     h / } /  @ 3:6'
 run "key:Down;key:End;key:Return;text:s = \";text:x;text:\"" "$F"
-check "quotes the same way" 'int f() { /     g(x); / s = "x" / } /  @ 3:8'
+check "quotes the same way" 'int f() { /     g(x); /     s = "x" / } /  @ 3:12'
 run "key:Down;key:End;key:Return;text:{;key:Return;text:y" "$F"
-check "Enter between braces: an indented line between them" 'int f() { /     g(x); / { /     y / } / } /  @ 4:6'
+check "Enter between braces: an indented line between them" 'int f() { /     g(x); /     { /         y /     } / } /  @ 4:10'
 run "key:Down;key:End;key:Left;key:Left;key:Left;key:shift+Right;text:[" "$F"
 check "with a selection: round it" 'int f() { /     g([x]); / } /  @ 2:9'
 run "key:Down;key:End;key:Left;key:Left;key:Left;text:(" "$F"
 check "not before a word" 'int f() { /     g((x); / } /  @ 2:8'
 run "key:Down;key:End;key:Return;text:// it's (fine" "$F"
-check "nor a quote after a letter, nor in a comment" 'int f() { /     g(x); / // it'"'"'s (fine / } /  @ 3:14'
+check "nor a quote after a letter, nor in a comment" 'int f() { /     g(x); /     // it'"'"'s (fine / } /  @ 3:18'
 run "key:Down;key:End;key:Left;key:Left;text:)" "$F"
 check "a closer it did not put in is typed" 'int f() { /     g(x)); / } /  @ 2:9'
 with off "key:Down;key:End;key:Return;text:h;text:(" "$F"
-check "editor.close_pairs = false" 'int f() { /     g(x); / h( / } /  @ 3:3'
+check "editor.close_pairs = false" 'int f() { /     g(x); /     h( / } /  @ 3:7'
 with vim "text:jA;text: q(;text:1;text:);key:Escape" "$F"
 check "Vim's Insert mode" 'int f() { /     g(x); q(1) / } /  @ 2:14'
+
+# Enter without Vim: the new line as far in as the one before, a level
+# further after a line that opens one (by the language's rules, Vim's), a
+# closer typed at the start of a line a level out; a line left holding only
+# blanks is left empty; with no language known, only the line's own indent.
+T=$(printf '\t')
+printf 'def f(x):\n' >"$dir/q.py"
+printf 'if x then\n' >"$dir/q.lua"
+printf '    one {\n' >"$dir/q.txt"
+with off "key:End;key:Return;text:if (x) {;key:Return;text:y();key:Return;text:}" "$F"
+check "C++: after { a level in, } typed goes a level out" 'int f() { /     if (x) { /         y() /     } /     g(x); / } /  @ 4:6'
+with off "key:End;key:Return;text:if (x) {;key:Return;text:y();key:Return;text:};key:cmd+z" "$F"
+check "the closer and its going out: one undo step" 'int f() { /     if (x) { /         y() /          /     g(x); / } /  @ 4:9'
+run "key:Down;key:End;key:Left;key:Left;key:Left;key:shift+Right;key:Return" "$F"
+check "what is selected replaced; a closer that comes down goes out" 'int f() { /     g( /     ); / } /  @ 3:5'
+run "key:End;key:Return;text:for r in x:  # each;key:Return;text:if r:;key:Return;text:y = 1;key:Return;text:else:;key:Return;text:return 2;key:Return;text:z = 3" "$dir/q.py"
+check "Python: after a colon a level in, after return a level out; else goes out" 'def f(x): /     for r in x:  # each /         if r: /             y = 1 /         else: /             return 2 /         z = 3 /  @ 7:14'
+run "key:End;key:Return;text:f();key:Return;text:end;key:Return;text:g()" "$dir/q.lua"
+check "Lua: then opens; end, then Enter, closes" "if x then / ${T}f() / end / g() /  @ 4:4"
+run "key:End;key:Return;text:f();key:Return;text:end;key:Return;key:cmd+z" "$dir/q.lua"
+check "Enter and the line going out: one undo step" "if x then / ${T}f() / ${T}end /  @ 3:5"
+run "key:End;key:Return;key:Return;text:two" "$dir/q.txt"
+check "no language: the line's indent, and a line of only blanks left empty" '    one { /  /     two /  @ 3:8'
+printf 'x\n' >"$dir/r.txt"
+run "key:End;key:Return;statusclick:Plain;text:python;key:Return;text:if y:;key:Return;text:z" "$dir/r.txt"
+check "a language chosen for the file: its rules from then on" 'x / if y: /     z /  @ 3:6'
 
 # More carets than one: added on the lines below, at the next match and at
 # every match; typing, deleting and moving at each, one undo for all; Esc
@@ -133,6 +159,11 @@ carets "$next;$next;$next;text:cX;key:Escape" "$dir/m.txt" "$dir/vim.lua"
 check "Vim: the matches as Visual mode's, changed at each" 'X one / X two / bar X / end /  @ 1:1 2:1 *3:5'
 carets "$below;$below;text:dw;text:u" "$dir/m.txt" "$dir/vim.lua"
 check "Vim: undone once, for all" 'foo one / foo two / bar foo / end /  @ *1:1'
+printf 'def a():\ndef b():\n' >"$dir/q2.py"
+carets "$below;key:End;key:Return;text:x" "$dir/q2.py"
+check "Enter at each, indented by the language's rules" 'def a(): /     x / def b(): /     x /  @ *2:6 4:6'
+carets "$below;key:End;key:Return;key:cmd+z" "$dir/q2.py"
+check "and undone once, for all" 'def a(): / def b(): /  @ *1:9'
 # Snippets of one's own: Tab after the trigger puts one in, indented, and
 # goes from stop to stop; a stop in two places takes what is typed at both;
 # a choice is chosen; one wraps what is selected (from the list of them);
@@ -141,6 +172,8 @@ printf 'x\n' >"$dir/s0.cpp"
 snip() { cp "$dir/s0.cpp" "$dir/s.cpp"; carets "$1" "$dir/s.cpp" "$dir/${2:-snip}.lua"; }
 snip "key:End;key:Return;text:fn;key:Tab;text:add;key:Tab;key:Tab;text:return 1"
 check "Tab after a trigger: the snippet, filled in from stop to stop" 'x / int add(void) / { / 	return 1 / } /  @ *4:13'
+snip "key:End;key:Return;text:fn;key:Tab;text:add;key:Tab;key:Tab;text:a = 1;key:Return;text:return a"
+check "Enter in one: as far in as the line" 'x / int add(void) / { / 	a = 1 / 	return a / } /  @ *5:13'
 snip "text:A;key:Return;text:fn;key:Tab;text:add;key:Tab;text:int a;key:Tab;text:return a;key:Escape" snipv
 check "with Vim, in Insert mode" 'x / int add(int a) / { / 	return a / } /  @ *4:12'
 snip "key:End;key:Return;text:pair;key:Tab;text:k;key:Tab;key:Down;key:Return"

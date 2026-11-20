@@ -411,6 +411,11 @@ private:
     bool pair_text(const char* text);
     bool pair_key(const SDL_KeyboardEvent& k);
     void pairs_follow(u64 cursor_before, u64 size_before, u64 rev_before);
+    // Without Vim, by the language's indentation rules (appedit.cpp): Enter
+    // at a caret, and a closer typed at the start of a line.
+    void enter_indent();
+    bool closer_coming(const char* text);
+    void closer_out(u64 line);
     std::vector<u64> pair_closers_;
     u64 pair_doc_ = 0, pair_rev_ = ~0ull;
     // The breadcrumbs under a split's tabs: how tall (none for a tab that is
@@ -848,6 +853,8 @@ private:
     struct VimUi;
     void vim_create();
     void vim_attach();
+    void vim_language();
+    std::string indent_unit();
     bool vim_selection(u64* lo, u64* hi) const;
     bool vim_key(const SDL_KeyboardEvent& k);
     bool vim_owns_key(const SDL_KeyboardEvent& k);  // a Ctrl key that is Vim's before it is the editor's (kCtrlShared)

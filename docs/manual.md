@@ -1513,6 +1513,16 @@ definitions are the tree's (any node whose type says it is a function, a
 method, a class, a struct, a namespace and so on, and that has a body),
 so both work for any language with a grammar, without a language server.
 
+**Enter indents** without modes as Insert mode's does (see [Modal
+editing](#modal-editing)): the new line starts as far in as the one it
+leaves (at the text after the cursor, the blanks before that left out), in
+a language whose blocks are known a level further after a line that opens
+one, and a level out after Python's `return` and its kin. A closer typed at
+the start of a line (`}`, `end`, `else`...) takes it a level out, when the
+sign or blank after it, or Enter, is typed. A line left holding only blanks
+is left empty. Enter is one step to undo, and so is a closer with its move;
+with more carets than one, each indents its own line.
+
 **Brackets and quotes close themselves**: `(`, `[`, `{`, `"`, `'` and a
 backtick typed put their closer after the cursor, when what follows is
 nothing, a space or another closer (a quote not just after a letter, and

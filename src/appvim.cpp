@@ -159,8 +159,15 @@ void App::vim_attach() {
     const u64 ch = static_cast<u64>(font_->cell_h());
     vim_.view_top = static_cast<u64>(std::max(0.0, pane_->target_y)) / ch;
     vim_.view_rows = static_cast<u32>(std::max(1, visible_rows()));
-    const u32 step = indent_step();
-    vim_.shift = d.indent_tabs ? std::string("\t") : std::string(step, ' ');
+    vim_.shift = indent_unit();
+    vim_language();
+}
+
+// The comment markers and indentation rules of the document in front's
+// language, for Vim (and for Enter and a closer typed without it):
+// looked up again for another document, file or language.
+void App::vim_language() {
+    const Doc& d = *pane_->doc;
     VimUi& u = *vimui_;
     if (u.comment_doc != d.id || u.comment_path != d.ed.path || u.comment_lang != d.lang) {
         u.comment_doc = d.id;
@@ -170,6 +177,12 @@ void App::vim_attach() {
         comment_marks(lang, &vim_.comment_left, &vim_.comment_right);
         vim_.indent_rules = indent_rules(lang);
     }
+}
+
+// A level of indentation in the document in front: a tab, or so many spaces.
+std::string App::indent_unit() {
+    const u32 step = indent_step();  // (first: it may guess whether the file has tabs)
+    return pane_->doc->indent_tabs ? std::string("\t") : std::string(step, ' ');
 }
 
 bool App::vim_selection(u64* lo, u64* hi) const {

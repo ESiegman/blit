@@ -233,6 +233,68 @@ void App::pairs_follow(u64 cursor_before, u64 size_before, u64 rev_before) {
     }
 }
 
+// ---------------------------------------------------------------- indentation without Vim
+
+namespace {
+
+// Where the blanks from `at` on end, before `limit`. (A mark on the last
+// blank makes a character of it that is not one.)
+u64 past_blanks(const Editor& ed, u64 at, u64 limit) {
+    const u64 from = at;
+    for (char c = char_at(ed, at); at < limit && (c == ' ' || c == '\t'); c = char_at(ed, ++at)) {}
+    if (at > from && at < limit && static_cast<unsigned char>(char_at(ed, at)) >= 0x80) at = std::max(from, ed.prev_char(ed.next_char(at)));
+    return at;
+}
+
+}  // namespace
+
+// Enter at a caret: a new line as far in as this one, at the text after
+// the caret (blanks before that go), what is selected replaced. By the
+// language's rules (Vim's), a level further in after a line that opens one,
+// this line a level out first if it starts with a closer ("end" typed, then
+// Enter), and the new one too if what goes down to it does. A caret in a
+// line's leading blanks takes them along: no line is left holding only
+// blanks. One undo step.
+void App::enter_indent() {
+    Editor& ed = pane_->doc->ed;
+    vim_language();
+    const IndentRules* rules = vim_.indent_rules;
+    const std::string unit = rules ? indent_unit() : std::string(), &marker = vim_.comment_left;
+    const u64 lo = ed.sel_min(), hi = ed.sel_max(), line = ed.buf.line_of(lo), start = ed.buf.line_start(line);
+    const u64 text = past_blanks(ed, start, lo), from = text == lo ? start : lo;
+    const u64 skip = past_blanks(ed, hi, ed.line_end(ed.buf.line_of(hi)));
+    std::string indent = ed.buf.text(start, text - start), out;
+    const bool code = rules && text < lo;  // (code before the caret, staying on this line)
+    const bool closer = code && closer_indent(*rules, ed, line, unit, marker, &out);
+    if (closer) indent = out;
+    if (code) indent = indent_after(*rules, ed, line, lo, std::move(indent), unit, marker);
+    const std::string nl = ed.crlf() ? "\r\n" : "\n";
+    ed.begin_group();
+    ed.replace(from, skip, nl + indent);
+    u64 at = from + nl.size() + indent.size();
+    if (closer) {  // (after: the place of the line break stays as it was worked out)
+        ed.replace(start, text, out);
+        at = at - (text - start) + out.size();
+    }
+    ed.move_to(at, false);
+    if (rules && at < ed.line_end(ed.buf.line_of(at))) indent_closer(*rules, ed, ed.buf.line_of(at), unit, marker);
+    ed.end_group();
+}
+
+// A character about to be typed at the caret, without Vim: whether it makes
+// a closer of the start of its line ("}", or "end" with the sign or blank
+// after it), by the language's rules. (Letters, most of what is typed, go
+// no further than a look at the character.)
+bool App::closer_coming(const char* text) {
+    const char c = text[0];
+    if (!c || text[1] || static_cast<unsigned char>(c) >= 0x80 || word_char(c)) return false;
+    vim_language();
+    return vim_.indent_rules && closer_typed(*vim_.indent_rules, pane_->doc->ed, pane_->doc->ed.sel_min(), static_cast<u8>(c));
+}
+
+// And once it is in: the line a level out, if it is not out that far.
+void App::closer_out(u64 line) { indent_closer(*vim_.indent_rules, pane_->doc->ed, line, indent_unit(), vim_.comment_left); }
+
 // ---------------------------------------------------------------- more carets than one
 
 // The other carets of the split with the keyboard, drawn: each a bar in the

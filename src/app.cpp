@@ -2033,14 +2033,30 @@ void App::on_text(const char* text) {
         return;
     }
     if (pane_->doc->read_only) return;  // a diff is for reading
+    // (A closer typed at the start of a line takes it a level out, in the same undo step: appedit.cpp.)
     if (ed.multi()) {  // (at every caret; brackets are not closed for them)
-        pane_->doc->ed.each_caret([&] { pane_->doc->ed.insert(text); });
+        pane_->doc->ed.each_caret([&] {
+            const bool closer = closer_coming(text);
+            const u64 at = ed.sel_min();
+            pane_->doc->ed.insert(text);
+            if (closer) closer_out(ed.buf.line_of(at));
+        });
         scroll_to_cursor();
         lsp_typed(text);
         return;
     }
-    if (pair_text(text)) return;
+    const bool closer = closer_coming(text);
+    if (closer) pane_->doc->ed.begin_group();
+    if (pair_text(text)) {  // (a closer stepped over: nothing typed)
+        if (closer) pane_->doc->ed.end_group();
+        return;
+    }
+    const u64 at = ed.sel_min();
     pane_->doc->ed.insert(text);
+    if (closer) {
+        closer_out(ed.buf.line_of(at));
+        pane_->doc->ed.end_group();
+    }
     pairs_follow(cursor, size, rev);
     scroll_to_cursor();
     lsp_typed(text);
@@ -2255,7 +2271,7 @@ void App::edit_key(const SDL_KeyboardEvent& k, i64 page) {
             else pane_->doc->ed.del();
             break;
         case SDLK_RETURN:
-        case SDLK_KP_ENTER: pane_->doc->ed.newline(); break;
+        case SDLK_KP_ENTER: enter_indent(); break;
         case SDLK_TAB: {  // the file's indentation: a tab, or spaces to the next level
             Editor& ed = pane_->doc->ed;
             const u32 step = indent_step();
