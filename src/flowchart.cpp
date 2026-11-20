@@ -877,7 +877,7 @@ struct Layout {
                 break;
             default: break;
         }
-        n.lines = diagram_wrap(n.lines, n.shape == kShapeDiamond ? wrap * 0.6f : wrap, size, font);
+        n.lines = diagram_wrap(n.lines, n.shape == kShapeDiamond ? wrap * 0.9f : wrap, size, font);
         float tw = 0;
         for (const std::string& l : n.lines) tw = std::max(tw, font.width(l, size, n.style.bold));
         const float th = static_cast<float>(std::max<size_t>(1, n.lines.size())) * line;
@@ -1829,6 +1829,7 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
     // meeting) the same side spread along it, in the order of where they go;
     // one alone a little off the middle towards where it goes.
     std::map<std::pair<size_t, bool>, float> spread;
+    std::map<std::pair<size_t, bool>, int> corner;  // (an end at a diamond's left corner, -1, or right, 1)
     // (An end at a subgraph that the other end is in: at its own port, on its border, as it is.)
     auto own_end = [&](const Edge& e, bool a) {
         const int ref = a ? e.a : e.b, other = a ? e.b : e.a;
@@ -1854,6 +1855,16 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
             const float share = dot ? 0.08f : shape == kShapeDiamond ? (list.size() > 1 ? 0.2f : 0.06f) : shape == kShapeCircle || shape == kShapeDoubleCircle ? 0.22f : 0.32f;
             const float most = span * share;
             std::stable_sort(list.begin(), list.end());
+            // A diamond's: one going off further left than its left corner
+            // leaves from that corner, one further right from its right; the
+            // rest from its tip (not its slanted sides).
+            if (shape == kShapeDiamond && list.size() > 1) {
+                if (list.back().first > span * 0.6f) corner[{list.back().second, side.second}] = 1, list.pop_back();
+                if (list.front().first < -span * 0.6f) corner[{list.front().second, side.second}] = -1, list.erase(list.begin());
+                for (size_t i = 0; i < list.size(); ++i)
+                    spread[{list[i].second, side.second}] = std::clamp((static_cast<float>(i) - static_cast<float>(list.size() - 1) / 2) * 5 * u, -span * 0.12f, span * 0.12f);
+                continue;
+            }
             const size_t n = list.size();
             for (size_t i = 0; i < n; ++i) {
                 float off = std::clamp(list[i].first * 0.5f, -most, most);
@@ -1958,17 +1969,30 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
             const DiagramVec from{base.x + axis.x * far * sgn, base.y + axis.y * far * sgn};
             return diagram_shape_hit(shape, bx, by, bw, bh, u, from, base);
         };
-        const DiagramVec start = own_end(e, true) ? pts.front() : attach(e.a, pts.front(), true);
-        const DiagramVec end = own_end(e, false) ? pts.back() : attach(e.b, pts.back(), false);
+        // (at a diamond's corner: there, leaving or meeting it across)
+        auto at_corner = [&](int ref, bool start_end, DiagramVec* at, DiagramVec* dir) {
+            const auto it = corner.find({k, start_end});
+            if (it == corner.end()) return false;
+            float bx, by, bw, bh;
+            u8 shape;
+            end_box(ref, &bx, &by, &bw, &bh, &shape);
+            const float side = static_cast<float>(it->second);
+            *at = {bx + bw / 2 + across.x * side * bw / 2, by + bh / 2 + across.y * side * bh / 2};
+            *dir = {across.x * side * (start_end ? 1.0f : -1.0f), across.y * side * (start_end ? 1.0f : -1.0f)};
+            return true;
+        };
+        DiagramVec start, end, dir_a = axis, dir_b = axis;
+        if (!at_corner(e.a, true, &start, &dir_a)) start = own_end(e, true) ? pts.front() : attach(e.a, pts.front(), true);
+        if (!at_corner(e.b, false, &end, &dir_b)) end = own_end(e, false) ? pts.back() : attach(e.b, pts.back(), false);
         pts.front() = start, pts.back() = end;
         // Heads: the line stops short of a tip by the head's length.
-        const float back_b = diagram_head(*d, head_b, end, axis, head, colour, width);
-        const float back_a = diagram_head(*d, head_a, start, {-axis.x, -axis.y}, head, colour, width);
+        const float back_b = diagram_head(*d, head_b, end, dir_b, head, colour, width);
+        const float back_a = diagram_head(*d, head_a, start, {-dir_a.x, -dir_a.y}, head, colour, width);
         std::vector<DiagramVec> line_pts = pts;
-        line_pts.front() = {start.x + axis.x * back_a, start.y + axis.y * back_a};
-        line_pts.back() = {end.x - axis.x * back_b, end.y - axis.y * back_b};
+        line_pts.front() = {start.x + dir_a.x * back_a, start.y + dir_a.y * back_a};
+        line_pts.back() = {end.x - dir_b.x * back_b, end.y - dir_b.y * back_b};
         RasterPath path;
-        diagram_curve(line_pts, axis, axis, &path);
+        diagram_curve(line_pts, dir_a, dir_b, &path, axis);
         if (geo) {
             const int from = e.reversed ? e.b : e.a, to = e.reversed ? e.a : e.b;
             auto name = [&](int ref) { return is_cluster(ref) ? g.clusters[static_cast<size_t>(cluster_of(ref))].id : g.nodes[static_cast<size_t>(ref)].id; };

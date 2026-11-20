@@ -2388,6 +2388,30 @@ void diagram_test() {
             check(marked, "diagram: bold carried over a line's breaks");
         }
     }
+    // A decision with a long question is wider than tall (it was a tall
+    // diamond that dwarfed the rest), and its edges leave from its tip, or
+    // from a corner when they go off further aside than it (they left from
+    // its slanted sides).
+    {
+        Drawing d;
+        DiagramGeometry geo;
+        std::string err;
+        diagram_make("flowchart TD\n Q{Is the configuration valid and complete?} -->|yes| A[one]\n Q -->|no| B[two]\n Q --> C[three]\n Q --> E[four]\n Q --> F[five]\n", st, &d, &err, &geo);
+        DiagramGeometry::Box q;
+        for (const auto& b : geo.boxes)
+            if (b.name == "Q") q = b;
+        check(q.w > q.h * 1.5f, "diagram: a decision with a long question wider than tall");
+        int leaving = 0;
+        for (const auto& l : geo.lines) {
+            if (l.from != "Q") continue;
+            ++leaving;
+            const RasterPoint p = l.pts.front();
+            const bool tip = std::fabs(p.x - (q.x + q.w / 2)) <= q.w * 0.13f && p.y >= q.y + q.h * 0.85f;
+            const bool side = std::fabs(p.y - (q.y + q.h / 2)) < 0.5f && (std::fabs(p.x - q.x) < 0.5f || std::fabs(p.x - q.x - q.w) < 0.5f);
+            check(tip || side, "diagram: an edge leaves a decision from its tip or a corner (" + std::to_string(p.x - q.x) + ", " + std::to_string(p.y - q.y) + ")");
+        }
+        check(leaving == 5, "diagram: a decision's edges drawn");
+    }
     // A diamond of blank lines is no needle: never taller than wide.
     {
         Drawing d;

@@ -686,7 +686,7 @@ float diagram_head(Drawing& d, u8 head, DiagramVec tip, DiagramVec dir, float si
     return diagram_head_length(head, size);
 }
 
-void diagram_curve(const std::vector<DiagramVec>& pts, DiagramVec a0, DiagramVec a1, RasterPath* out) {
+void diagram_curve(const std::vector<DiagramVec>& pts, DiagramVec a0, DiagramVec a1, RasterPath* out, DiagramVec mid_axis) {
     const size_t n = pts.size();
     if (n == 0) return;
     out->move_to(pts[0].x, pts[0].y);
@@ -702,10 +702,20 @@ void diagram_curve(const std::vector<DiagramVec>& pts, DiagramVec a0, DiagramVec
     // either side of it (along the axis), so that it never doubles back.
     const bool axis = a0.x != 0 || a0.y != 0;
     if (axis) {
-        const float d0 = along({pts[1].x - pts[0].x, pts[1].y - pts[0].y}, a0);
+        // (an end leaving across the axis, from a diamond's corner, leaves
+        // as far as half the way to the next point, even when that is not
+        // the way it leaves)
+        const DiagramVec m = mid_axis.x != 0 || mid_axis.y != 0 ? mid_axis : a0;
+        auto leave = [&](DiagramVec a, DiagramVec d) {
+            const float on = along(d, a);
+            if (a.x == m.x && a.y == m.y) return on;
+            return std::max(on, 0.5f * std::sqrt(d.x * d.x + d.y * d.y));
+        };
+        const float d0 = leave(a0, {pts[1].x - pts[0].x, pts[1].y - pts[0].y});
         t[0] = {a0.x * d0 * 1.5f, a0.y * d0 * 1.5f};
-        const float d1 = along({pts[n - 1].x - pts[n - 2].x, pts[n - 1].y - pts[n - 2].y}, a1);
+        const float d1 = leave(a1, {pts[n - 1].x - pts[n - 2].x, pts[n - 1].y - pts[n - 2].y});
         t[n - 1] = {a1.x * d1 * 1.5f, a1.y * d1 * 1.5f};
+        a0 = m;
         const DiagramVec across{a0.y, -a0.x};
         for (size_t i = 1; i + 1 < n; ++i) {
             // (on a straight run along the axis: along it)

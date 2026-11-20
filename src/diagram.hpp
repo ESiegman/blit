@@ -218,8 +218,9 @@ enum DiagramHead : u8 { kHeadNone, kHeadArrow, kHeadCircle, kHeadCross, kHeadOpe
 float diagram_head(Drawing& d, u8 head, DiagramVec tip, DiagramVec dir, float size, DiagramColour c, float width);
 float diagram_head_length(u8 head, float size);
 // A smooth curve through points, leaving the first and reaching the last
-// along `axis` (a unit vector; 0, 0: along the line).
-void diagram_curve(const std::vector<DiagramVec>& pts, DiagramVec axis_start, DiagramVec axis_end, RasterPath* out);
+// along their axes (unit vectors; 0, 0: along the line), the points between
+// kept from doubling back along `axis` (0, 0: the first's).
+void diagram_curve(const std::vector<DiagramVec>& pts, DiagramVec axis_start, DiagramVec axis_end, RasterPath* out, DiagramVec axis = {});
 // A curve's points (for the tests' geometry): `n` of them along it.
 std::vector<RasterPoint> diagram_sample(const RasterPath& p, int n);
 
