@@ -203,7 +203,7 @@ public:
         kHints = 2048,        // some document's inlay hints
         kTokens = 4096,       // some document's semantic tokens
         kApplyEdit = 8192,    // a server asks for an edit to be made (see take_apply())
-        kPlaces = 16384,      // implementations, type definitions or declarations (see places())
+        kPlaces = 16384,      // implementations, type definitions, declarations or definitions (see places())
         kHighlights = 32768,  // the uses of the symbol at a place, in the document in front
         kOutline = 65536,     // the document in front's symbols
         kSymbols = 131072,    // the project's symbols that match what was asked
@@ -214,8 +214,9 @@ public:
     };
     // The levels of a hierarchy asked for under an item.
     enum HierKind : u8 { kCallsIn, kCallsOut, kSupertypes, kSubtypes };
-    // What places() asks for.
-    enum PlaceKind : u8 { kImplementation, kTypeDefinition, kDeclaration };
+    // What places() asks for. (kDefinitions: as definition() asks, but
+    // every place, as a list.)
+    enum PlaceKind : u8 { kImplementation, kTypeDefinition, kDeclaration, kDefinitions };
 
     Lsp();
     Lsp(const Lsp&) = delete;

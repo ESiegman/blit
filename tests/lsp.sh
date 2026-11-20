@@ -42,6 +42,10 @@ for ms in 5000 0; do
 done
 # and with its index turned off.
 printf 'blit.opt.lsp.servers.clangd = { command = { "%s", "--background-index=false", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/indexoff.lua"
+# Finding definitions as clangd does: with its index off (in the open
+# files only), and while it is built (in files that are not open too).
+printf 'blit.opt.lsp.servers.clangd = { command = { "%s", "--background-index=false", "--defs", "open", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/defsoff.lua"
+printf 'blit.opt.lsp.servers.clangd = { command = { "%s", "--index", "5000", "--defs", "all", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/defsindex.lua"
 export BLIT_RECENT_FILE="$dir/recent"
 init=
 fresh() {
@@ -66,6 +70,8 @@ fresh() {
     printf 'plain words\n' >"$P/notes.txt"
     printf 'int format_record(int n);\n' >"$P/fmt.hpp"
     printf 'int format_record(int n) {\n    return n;\n}\n' >"$P/fmt.cpp"
+    mkdir -p "$P/lib"
+    printf 'int n = format_record(2);\n' >"$P/lib/sink.cpp"
     printf 'twice:\n\t@echo "a.cpp:1:17: error: the same one, found by the build"\n\t@echo "a.cpp:2:1: error: one only the build found"\n\t@exit 2\n' >"$P/Makefile"
 }
 
@@ -288,6 +294,25 @@ with clangd "open:$P/fmt.hpp;open:$P/fmt.cpp;lspsettle;$on_fmt;key:F2;wait:200;f
 check "with that file open, renamed" 'input [format_record] 0 :'
 with index0 "$on_fmt;key:F2;wait:200;key:ctrl+U;text:fmt_record;key:Return;wait:200;finddump" "$P/fmt.cpp"
 check "and with the index built, renamed everywhere" 'pick [] 3 : >Rename to fmt_record: 2 edits in 2 files fmt.cpp  1 edit fmt.hpp  1 edit'
+# Declared in an open header, called in an open file, defined in one that
+# is not open: clangd with its index off gives the header's declaration as
+# the definition (it cannot see the other); while it indexes, the file
+# that defines it.
+on_sink="$on_fmt;key:Right;key:Right;key:Right"
+with defsoff "open:$P/fmt.hpp;open:$P/lib/sink.cpp;lspsettle;$on_sink;key:F2;wait:200;finddump" "$P/lib/sink.cpp"
+got="$got / $said"
+check "defined in a file that is not open, and only a header's declaration known: not renamed" "closed / blit: Cannot rename: it is declared in fmt.hpp, a header that files not open may use, and clangd's background index is off"
+with defsoff "$on_fmt;key:F2;wait:200;finddump" "$P/fmt.hpp"
+got="$got / $said"
+check "the same from the header's declaration, with the header alone open" "closed / blit: Cannot rename: it is declared in fmt.hpp, a header that files not open may use, and clangd's background index is off"
+with defsindex "open:$P/fmt.hpp;open:$P/lib/sink.cpp;lspsettle;$on_sink;key:F2;wait:200;finddump" "$P/lib/sink.cpp"
+got="$got / $said"
+check "the index part built: defined in a file that is not open, not renamed" "closed / blit: Cannot rename: it is defined in fmt.cpp, which is not open, and clangd's index is not built yet"
+with defsoff "open:$P/fmt.hpp;open:$P/fmt.cpp;open:$P/lib/sink.cpp;lspsettle;$on_sink;key:F2;wait:200;key:ctrl+U;text:fr2;key:Return;wait:200;finddump" "$P/lib/sink.cpp"
+check "with the file that defines it open too, renamed" 'pick [] 4 : >Rename to fr2: 3 edits in 3 files (open files only) lib/sink.cpp  1 edit fmt.cpp  1 edit fmt.hpp  1 edit'
+with defsoff "open:$P/fmt.hpp;open:$P/fmt.cpp;open:$P/lib/sink.cpp;lspsettle;$on_sink;key:F2;wait:200;key:ctrl+U;text:fr2;key:Return;wait:200;key:Return;wait:100" "$P/lib/sink.cpp"
+got="$said / $(cat "$P/fmt.cpp" "$P/lib/sink.cpp" | tr '\n' '|')"
+check "and once renamed, said again to be the open files' only" 'blit: Renamed: 3 edits in 3 files (open files only) / int fr2(int n) {|    return n;|}|int n = fr2(2);|'
 run "key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;key:ctrl+U;text:common;key:Return;wait:200;key:Return;lsptext"
 got="$got / $said / $(cat "$P/d.cpp") / $(head -1 "$P/a.cpp")"
 check "Enter renames: the open file through its tab (and saves it), the other on disk" 'int common = 1; // ERROR / call(1,   2, 3);    / WARN common   /  / blit: Renamed: 4 edits in 3 files / common in d, not open / int common = 1; // ERROR'

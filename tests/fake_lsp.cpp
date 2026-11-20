@@ -2,7 +2,7 @@
 //
 //   blit_fakelsp [--utf8] [--full] [--slow MS] [--late MS] [--die-after N] [--items N] [--quiet]
 //                [--pull] [--workspace] [--no-prepare] [--default-rename] [--changes] [--noise]
-//                [--close-input MS] [--hints-once] [--index MS] [--name NAME]
+//                [--close-input MS] [--hints-once] [--index MS] [--defs open|all] [--name NAME]
 //
 // --utf8        agree to count columns in bytes (the default is UTF-16)
 // --full        ask for the whole document on every change
@@ -26,6 +26,11 @@
 // --hints-once  answer inlay hints the first time, and with an error after
 // --index MS    index the project as clangd does, saying so through $/progress:
 //               begun ("indexing", "1/2") once initialized, ended MS ms later
+// --defs open|all  find definitions as clangd does: the first line the word
+//               is on that ends in "{", in the open documents (as clangd
+//               with its index off) or in the project's files that are not
+//               open too (as a partly built index); where there is none,
+//               where it is declared (as a declaration answers)
 // --name NAME   what diagnostics give as their source (default "fake")
 //
 // It keeps every document it is sent. What it does with one:
@@ -97,6 +102,7 @@ bool quiet = false, pull = false, workspace = false, prepare = true, by_changes 
 long hints_answered = 0;
 long handled = 0;
 std::string source = "fake";
+std::string defs;  // --defs: "open" or "all"
 
 struct Document {
     std::string text;
@@ -435,8 +441,28 @@ void signature(Value id, Value params) {
                   std::to_string(commas) + "}");
 }
 
+void places(Value id, Value params, std::string_view method);
+
 void definition(Value id, Value params) {
     const size_t off = offset_of(params["position"]);
+    if (!defs.empty()) {  // (as clangd: the first line the word is on that ends in "{", or else where it is declared)
+        const std::string w = word_at(off);
+        for (const auto& [u, found] : everywhere(w)) {
+            if (defs == "open" && u != uri && !docs.count(u)) continue;
+            for (const auto& [at, t] : found) {
+                size_t end = std::min(t.find('\n', at), t.size());
+                while (end > at && (t[end - 1] == ' ' || t[end - 1] == '\r')) --end;
+                if (end == 0 || t[end - 1] != '{') continue;
+                std::string r = "[{\"uri\":";
+                json::quote(r, u);
+                r += ",\"range\":";
+                range_json(r, at, at + w.size(), t);
+                r += "}]";
+                return reply(id, r);
+            }
+        }
+        return places(id, params, "textDocument/declaration");
+    }
     const std::vector<size_t> at = places_of(text, word_at(off));
     if (at.empty()) return reply(id, "null");
     std::string r = "[{\"uri\":";
@@ -1128,6 +1154,7 @@ int main(int argc, char** argv) {
         else if (a == "--close-input" && i + 1 < argc) close_input_ms = std::atoi(argv[++i]);
         else if (a == "--hints-once") hints_once = true;
         else if (a == "--index" && i + 1 < argc) index_ms = std::atoi(argv[++i]);
+        else if (a == "--defs" && i + 1 < argc) defs = argv[++i];
         else if (a == "--name" && i + 1 < argc) source = argv[++i];
     }
     if (close_input_ms > 0 || index_ms >= 0) setvbuf(stdin, nullptr, _IONBF, 0);  // (what has come is all read: poll() says when more has)

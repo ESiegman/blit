@@ -195,6 +195,15 @@ std::string shown_name(const std::string& path, const std::string* root) {
     return path;
 }
 
+// C and C++'s headers and sources, by their extensions.
+constexpr std::string_view kHeaders[] = {".h", ".hpp", ".hh", ".hxx", ".inl", ".cuh"};
+constexpr std::string_view kSources[] = {".cpp", ".cc", ".cxx", ".c", ".cu", ".hip", ".m", ".mm"};
+bool header_file(std::string_view path) {
+    const size_t slash = path.rfind('/'), dot = path.rfind('.');
+    if (dot == std::string_view::npos || (slash != std::string_view::npos && dot < slash)) return false;
+    return std::ranges::find(kHeaders, path.substr(dot)) != std::end(kHeaders);
+}
+
 // Edits as byte ranges, applied last first so that the earlier ones' places
 // hold; ones that overlap one already made are left out.
 struct Change {
@@ -345,8 +354,10 @@ struct App::Assist {
     std::vector<GridDeco> decos_all;  // (the problems' marks and the uses', together)
     // A rename under way: asked where the name is, then for the new name.
     // (While the server knows the open files only, first where the name is
-    // declared: one declared in a file that is not open is not renamed.)
-    bool rename_pending = false, rename_checking = false;
+    // declared, then where it is defined: see lsp_rename_checked.)
+    bool rename_pending = false;
+    u8 rename_checking = 0;  // 1: where it is declared asked, 2: where it is defined
+    std::vector<LspPlace> rename_declared;
     u64 rename_doc = 0, rename_off = 0;
     std::string rename_to;
     // Formatting asked for (and, before a save, waited for).
@@ -596,12 +607,13 @@ void App::sync_lsp() {
 
     // Implementations and the like: one gone to, several listed.
     if ((news & Lsp::kPlaces) && a.rename_checking) {
-        a.rename_checking = false;
-        lsp_rename_checked(lsp_.place_list());
+        const bool defined = a.rename_checking == 2;
+        a.rename_checking = 0;
+        lsp_rename_checked(lsp_.place_list(), defined);
     }
     if ((news & Lsp::kPlaces) && a.places_pending) {
         a.places_pending = false;
-        static const char* const kWords[] = {"Implementation", "Type definition", "Declaration"};
+        static const char* const kWords[] = {"Implementation", "Type definition", "Declaration", "Definition"};
         lsp_show_places(lsp_.place_list(), kWords[lsp_.place_kind()]);
     }
     if ((news & Lsp::kSwitch) && a.switch_pending) {
@@ -680,8 +692,9 @@ void App::sync_lsp() {
             size_t edits = 0;
             for (const LspFileEdit& f : e.files) edits += f.edits.size();
             std::vector<std::string> items;
+            const bool partial = lsp_.partial();  // (said in the box, and once it is done)
             items.push_back("Rename to " + a.rename_to + ": " + std::to_string(edits) + (edits == 1 ? " edit in " : " edits in ") + std::to_string(e.files.size()) +
-                            (e.files.size() == 1 ? " file" : " files") + (lsp_.partial() ? " (open files only)" : ""));
+                            (e.files.size() == 1 ? " file" : " files") + (partial ? " (open files only)" : ""));
             const std::string* root = panel_root();
             for (const LspFileEdit& f : e.files)
                 items.push_back(shown_name(f.path, root) + "  " + std::to_string(f.edits.size()) + (f.edits.size() == 1 ? " edit" : " edits"));
@@ -691,7 +704,7 @@ void App::sync_lsp() {
             for (const LspFileEdit& f : e.files)
                 if (const Doc* d = lsp_edit_doc(f.path)) revs.emplace_back(d->id, d->ed.revision());
             auto edit = std::make_shared<LspWorkspaceEdit>(e);
-            find_choose_item("Rename", std::move(items), [this, edit, revs](int) {
+            find_choose_item("Rename", std::move(items), [this, edit, revs, partial](int) {
                 std::vector<u64> clean, dirty;  // (the open files it changes: saved with it, unless they had changes of their own)
                 for (const auto& [id, rev] : revs) {
                     const Doc* d = find_doc(id);
@@ -700,6 +713,7 @@ void App::sync_lsp() {
                 }
                 std::string said;
                 lsp_apply(*edit, &said);
+                if (partial) said.insert(std::min(said.find(';'), said.size()), " (open files only)");  // (after how much changed)
                 auto unchanged = [&](u64 id) {  // (one it could not change: read only, or still loading)
                     const Doc* d = find_doc(id);
                     return !d || std::ranges::count(revs, std::pair<u64, u64>{id, d->ed.revision()}) > 0;
@@ -977,7 +991,7 @@ void App::lsp_show_places(std::vector<LspPlace> list, const std::string& word) {
 
 void App::lsp_places(Lsp::PlaceKind kind) {
     Assist& a = *assist_;
-    static const char* const kWhat[] = {"implementations", "type definitions", "declarations"};
+    static const char* const kWhat[] = {"implementations", "type definitions", "declarations", "definitions"};
     if (!lsp_.ready() || lsp_doc_ != pane_->doc) {
         if (server_text(*pane_->doc)) notify(why_no_server(cfg_, lsp_, lsp_doc_ == pane_->doc, a.failed, *pane_->doc));
         return;
@@ -992,7 +1006,7 @@ void App::lsp_places(Lsp::PlaceKind kind) {
     }
     lsp_close(kPopAll);
     a.places_pending = true;
-    a.rename_checking = false;
+    a.rename_checking = 0;
     lsp_.places(pane_->doc->ed.cursor(), kind);
 }
 
@@ -1001,8 +1015,6 @@ void App::lsp_places(Lsp::PlaceKind kind) {
 // anywhere in the project (the nearest to it), a few thousand entries at most.
 std::string App::other_half(const std::string& path) const {
     if (path.empty() || is_remote(path)) return {};
-    static constexpr std::string_view kHeaders[] = {".h", ".hpp", ".hh", ".hxx", ".inl", ".cuh"};
-    static constexpr std::string_view kSources[] = {".cpp", ".cc", ".cxx", ".c", ".cu", ".hip", ".m", ".mm"};
     const std::string full = full_path(path);
     const size_t slash = full.rfind('/'), dot = full.rfind('.');
     if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) return {};
@@ -1281,26 +1293,48 @@ void App::lsp_rename() {
     }
     lsp_close(kPopAll);
     a.rename_doc = pane_->doc->id;
-    if (lsp_.partial() && lsp_.can_place(Lsp::kDeclaration)) {  // (where it is declared, first)
-        a.rename_checking = true;
+    a.rename_declared.clear();
+    if (lsp_.partial() && (lsp_.can_place(Lsp::kDeclaration) || lsp_.can_place(Lsp::kDefinitions))) {  // (where it is declared and defined, first)
+        const bool declared = lsp_.can_place(Lsp::kDeclaration);
+        a.rename_checking = declared ? 1 : 2;
         a.places_pending = false;
-        lsp_.places(pane_->doc->ed.cursor(), Lsp::kDeclaration);
+        lsp_.places(pane_->doc->ed.cursor(), declared ? Lsp::kDeclaration : Lsp::kDefinitions);
         return;
     }
     a.rename_pending = true;
     lsp_.prepare_rename(pane_->doc->ed.cursor());
 }
 
-// While the server knows the open files only, a name declared in a file
-// that is not open would be renamed in the open files and nowhere else
-// (the declaration left as it was): it is not renamed. Otherwise the
-// rename goes on.
-void App::lsp_rename_checked(const std::vector<LspPlace>& declared) {
+// While the server knows the open files only, a rename changes the open
+// files and no others. So a name is not renamed when it is declared or
+// defined in a file that is not open (left as it was, the build would
+// break there), nor when all the server knows of where it is defined is a
+// declaration in a header: clangd with its index off answers so when the
+// file that defines it is not open, and a header is there for files that
+// use it, which it cannot see either. Asked first where it is declared,
+// then where it is defined; then the rename goes on.
+void App::lsp_rename_checked(const std::vector<LspPlace>& found, bool defined) {
     Assist& a = *assist_;
     if (lsp_.front() != a.rename_doc || pane_->doc->id != a.rename_doc) return notify("The file changed: rename again");
-    for (const LspPlace& p : declared)
+    const std::string* root = panel_root();
+    for (const LspPlace& p : found)
         if (!lsp_edit_doc(p.path))
-            return notify("Cannot rename: it is declared in " + shown_name(p.path, panel_root()) + ", which is not open, and " + lsp_.partial_why());
+            return notify(std::string("Cannot rename: it is ") + (defined ? "defined" : "declared") + " in " + shown_name(p.path, root) + ", which is not open, and " +
+                          lsp_.partial_why());
+    if (!defined) {
+        a.rename_declared = found;
+        if (lsp_.can_place(Lsp::kDefinitions)) {
+            a.rename_checking = 2;
+            lsp_.places(pane_->doc->ed.cursor(), Lsp::kDefinitions);
+            return;
+        }
+    } else if (!found.empty() && std::ranges::all_of(found, [&](const LspPlace& p) {
+                   return header_file(p.path) && std::ranges::any_of(a.rename_declared, [&](const LspPlace& d) {
+                              return d.path == p.path && d.line == p.line && d.col == p.col;
+                          });
+               })) {
+        return notify("Cannot rename: it is declared in " + shown_name(found[0].path, root) + ", a header that files not open may use, and " + lsp_.partial_why());
+    }
     a.rename_pending = true;
     lsp_.prepare_rename(pane_->doc->ed.cursor());
 }

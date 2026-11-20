@@ -2566,7 +2566,13 @@ bool Lsp::can_references() const { return front_ready() && front_->server->caps.
 bool Lsp::can_place(PlaceKind kind) const {
     if (!front_ready()) return false;
     const Caps& c = front_->server->caps;
-    return kind == kImplementation ? c.implementation : kind == kTypeDefinition ? c.type_definition : c.declaration;
+    switch (kind) {
+        case kImplementation: return c.implementation;
+        case kTypeDefinition: return c.type_definition;
+        case kDeclaration: return c.declaration;
+        case kDefinitions: return c.definition;
+    }
+    return false;
 }
 bool Lsp::can_highlight() const { return front_ready() && front_->server->caps.highlight; }
 bool Lsp::can_hierarchy(bool types) const { return front_ready() && (types ? front_->server->caps.types : front_->server->caps.calls); }
@@ -2655,7 +2661,7 @@ void Lsp::references(u64 offset, bool declaration) {
 
 void Lsp::places(u64 offset, PlaceKind kind) {
     if (!can_place(kind)) return;
-    static const char* const kMethods[] = {"textDocument/implementation", "textDocument/typeDefinition", "textDocument/declaration"};
+    static const char* const kMethods[] = {"textDocument/implementation", "textDocument/typeDefinition", "textDocument/declaration", "textDocument/definition"};
     place_kind_ = kind;
     ask(front_, kMethods[kind], offset, kInPlaces, {}, &place_id_);
 }

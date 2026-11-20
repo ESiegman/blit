@@ -521,7 +521,7 @@ private:
     bool lsp_uses_shown() const;
     std::string lsp_uses_dump();  // (the tests: the uses marked in the split in front, as line:column ranges)
     void lsp_rename();   // F2
-    void lsp_rename_checked(const std::vector<LspPlace>& declared);  // (where the name is declared, while the server knows the open files only)
+    void lsp_rename_checked(const std::vector<LspPlace>& found, bool defined);  // (where the name is declared or defined, while the server knows the open files only)
     // Option+Shift+F: the selection's lines, or the whole file (Vim's gq: lines l0 to l1).
     void lsp_format();
     void lsp_format_lines(u64 l0, u64 l1);

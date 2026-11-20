@@ -1796,8 +1796,12 @@ your own replaces those flags; the example above turns the index off.
 Until its first indexing has ended, and always with the index off (or in
 a project with no compile database, which it cannot index), clangd knows
 only the open files: references and rename say `open files only`, the
-reference counts are not shown, and a name declared in a file that is
-not open is not renamed.
+reference counts are not shown, and a name is not renamed when it is
+declared or defined in a file that is not open, or when all clangd knows
+of it is a header's declaration (with the index off it gives that as the
+definition when the file that defines it is not open). Callers in files
+that are not open are still not seen: open them too, or let the index
+finish.
 
 The server's own output goes nowhere; `BLIT_LSP_LOG=/some/file blit ...`
 keeps it for when a server misbehaves.
