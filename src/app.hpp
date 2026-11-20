@@ -1622,6 +1622,7 @@ private:
     u64 prof_gen_ = 1;                // counts up whenever what the Profile tab shows may have changed
     bool term_drop_text_ = false;     // the text a key sent to a terminal as itself also brings is not typed again
     std::string asked_;               // (scripted runs: the last question there was nobody to ask, for the tests)
+    bool answer_save_ = false;        // (and closing or quitting with changes answered Save there, not Don't Save)
     std::shared_ptr<RemoteUi> remote_;
     u64 remote_gen_ = 0;      // counts up whenever a connection or a file on its way has news
     u64 git_gen_ = 1;         // counts up whenever what the Git tab shows may have changed

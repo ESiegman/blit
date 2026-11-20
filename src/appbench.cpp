@@ -641,6 +641,7 @@ int App::run_bench() {
 //                          (:colours, with the colour each is drawn in, #rrggbb)
 //   compdump               print the completion list's rows (label and detail), joined by " | "
 //   asked                  print the last question a box would have asked (scripted runs answer yes, or Don't Save)
+//   answer:save            closing a tab or quitting with changes is answered Save from here on (answer:dontsave: back)
 //   clock; within:MS       start a stopwatch; print whether the main thread got here within MS milliseconds
 //   lap:LABEL              print the milliseconds since the stopwatch started (or the last lap), and start it again
 //   treewait               wait for the side panel's tree to finish reading folders and changing files (20 s at most)
@@ -1422,6 +1423,8 @@ void App::run_script(const char* script) {
             if (!ran) std::fprintf(stderr, "command: no \"%s\"\n", arg.c_str());
         } else if (verb == "termend") {  // the terminal's program has ended (10 s at most)
             term_end();
+        } else if (verb == "answer") {
+            answer_save_ = arg == "save";
         } else if (verb == "asked") {  // the last question there was nobody to ask (a box would have asked it)
             std::fprintf(stderr, "%s\n", asked_.empty() ? "nothing asked" : asked_.c_str());
             asked_.clear();

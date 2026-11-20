@@ -358,7 +358,7 @@ bool App::tab_close(size_t i, bool force, bool quit_if_last) {
         box.buttons = buttons;
         int hit = 0;
 #if BLIT_DEV
-        if (!win_) hit = 2;  // scripted runs have nobody to ask
+        if (!win_) hit = answer_save_ ? 1 : 2;  // scripted runs have nobody to ask
         else
 #endif
         SDL_ShowMessageBox(&box, &hit);

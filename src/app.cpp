@@ -1063,7 +1063,7 @@ void App::request_quit() {
     box.buttons = buttons;
     int hit = 0;
 #if BLIT_DEV
-    if (!win_) hit = 2, asked_ = what;  // scripted runs have nobody to ask (the tests read what was asked)
+    if (!win_) hit = answer_save_ ? 1 : 2, asked_ = what;  // scripted runs have nobody to ask (the tests read what was asked)
     else
 #endif
     SDL_ShowMessageBox(&box, &hit);
