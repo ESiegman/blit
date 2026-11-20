@@ -462,6 +462,90 @@ u64 steady_ms() {
     return static_cast<u64>(std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::steady_clock::now().time_since_epoch()).count());
 }
 
+// A line as the preprocessor sees it: blank, or a directive (its word:
+// "if", "ifdef", "elif", "endif"...; empty for any other line), and whether
+// its condition (with the lines a backslash carries it on to) names the
+// device pass's macros, which make it a HIP device branch.
+struct Directive {
+    char letters[8] = {};
+    u8 size = 0;
+    bool blank = false, device = false;
+    std::string_view word() const { return {letters, size}; }
+};
+Directive directive_at(const Buffer& b, u64 line) {
+    Directive d;
+    const u64 lines = b.line_count();
+    if (line >= lines) return d;
+    auto end_of = [&](u64 l) { return l + 1 < lines ? b.line_start(l + 1) : b.size(); };
+    char text[1024];
+    u64 n = b.read(b.line_start(line), text, std::min<u64>(end_of(line) - b.line_start(line), 64));
+    u64 i = 0;
+    while (i < n && (text[i] == ' ' || text[i] == '\t')) ++i;
+    d.blank = i == n ? n < 64 : text[i] == '\n' || text[i] == '\r';
+    if (i == n || text[i] != '#') return d;
+    for (++i; i < n && (text[i] == ' ' || text[i] == '\t');) ++i;
+    while (i < n && d.size < sizeof d.letters && text[i] >= 'a' && text[i] <= 'z') d.letters[d.size++] = text[i++];
+    if (!d.word().starts_with("if") && !d.word().starts_with("elif")) return d;
+    // The condition, whole.
+    n = 0;
+    for (u64 l = line; l < lines && n < sizeof text; ++l) {
+        n += b.read(b.line_start(l), text + n, std::min<u64>(end_of(l) - b.line_start(l), sizeof text - n));
+        while (n > 0 && (text[n - 1] == '\n' || text[n - 1] == '\r')) --n;
+        if (n == 0 || text[n - 1] != '\\') break;
+        --n;
+    }
+    const std::string_view cond(text, n);
+    d.device = cond.find("__HIP_DEVICE_COMPILE__") != std::string_view::npos || cond.find("__CUDA_ARCH__") != std::string_view::npos;
+    return d;
+}
+
+// Whether the branch a directive opens (#if, #elif or #else, at `line`)
+// is a HIP device branch: a condition of its chain, from its #if up to
+// it, names the device pass's macros.
+bool device_branch(const Buffer& b, u64 line) {
+    Directive d = directive_at(b, line);
+    for (int depth = 0;;) {
+        if (depth == 0 && d.device) return true;
+        if (depth == 0 && d.word().starts_with("if")) return false;  // (the chain's head)
+        if (line == 0) return false;
+        // (A directive carried on by backslashes is read from its first line.)
+        d = directive_at(b, --line);
+        if (d.word() == "endif") ++depth;
+        else if (d.word().starts_with("if") && depth > 0) --depth, d = {};
+    }
+}
+
+// clangd reads a HIP file as the host's compile sees it, so to it every
+// device branch is a run of lines the preprocessor leaves out ("comment"
+// tokens). Those are dropped, so that the device code keeps its colours:
+// for each run, the directive above it (past blank lines) and its chain.
+void drop_device_lines(const Buffer& b, std::vector<SemanticToken>& tokens, u16 comment) {
+    u64 run_last = ~0ull;  // the last line of the run so far
+    bool spared = false;
+    std::erase_if(tokens, [&](const SemanticToken& k) {
+        if (k.type != comment) return false;
+        const u64 line = b.line_of(k.start);
+        // (A run goes on past blank lines, which have no token.)
+        u64 gap = run_last == ~0ull ? line : run_last + 1;
+        while (gap < line && directive_at(b, gap).blank) ++gap;
+        if (gap < line || run_last == ~0ull) {
+            u64 head = line;
+            while (head > 0 && directive_at(b, head - 1).blank) --head;
+            while (head > 1) {  // (the first line of a directive carried on by backslashes)
+                char tail[3];
+                const u64 end = b.line_start(head - 1);
+                u64 n = b.read(end - std::min<u64>(end, 3), tail, std::min<u64>(end, 3));
+                while (n > 0 && (tail[n - 1] == '\n' || tail[n - 1] == '\r')) --n;
+                if (n == 0 || tail[n - 1] != '\\') break;
+                --head;
+            }
+            spared = head > 0 && device_branch(b, head - 1);
+        }
+        run_last = line;
+        return spared;
+    });
+}
+
 struct Caps {
     bool utf16 = true;
     int sync = 1;  // 0 none, 1 whole document on every change, 2 just the changes
@@ -3407,6 +3491,8 @@ u32 Lsp::poll() {
                     t.mods = m.tokens[i + 4];
                     d->tokens.push_back(t);
                 }
+                if (auto c = std::ranges::find(s->caps.token_types, std::string_view("comment")); c != s->caps.token_types.end())
+                    drop_device_lines(b, d->tokens, static_cast<u16>(c - s->caps.token_types.begin()));
                 ++d->tokens_gen;
                 news |= kTokens;
                 break;

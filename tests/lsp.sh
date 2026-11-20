@@ -66,6 +66,7 @@ fresh() {
     printf '// included\n' >"$P/include/util.hpp"
     printf '/* \303\251\303\251 */ int wide(int n) {\n}\n' >"$P/w.cpp"
     awk 'BEGIN { for (i = 1; i < 300; i++) print (i == 150 ? "int zeta = 1;" : "int l" i " = " i ";"); print "int last = zeta;" }' >"$P/long.cpp"
+    printf '#if 0\nint off = 1;\n#elif 0\nint neither;\n#endif\n#ifdef __HIP_DEVICE_COMPILE__\nint device;\n#if 0\nint inner;\n#endif\n#else\nint host;\n#endif\n#ifndef __CUDA_ARCH__\nint host_too;\n#else\nint device_too;\n#endif\n#if defined(FOO) || \\\n    defined(__HIP_DEVICE_COMPILE__)\nint either;\n#endif\n' >"$P/k.hip"
     printf 'struct Shape {\n};\nstruct Circle : public Shape {\n};\nstruct Square : Shape {\n};\nint leaf(int n) {\n    return n;\n}\nint middle(int n) {\n    return leaf(n) + leaf(1);\n}\nint top() {\n    return middle(2);\n}\n' >"$P/calls.cpp"
     printf 'struct Ring {\n    void push(int v);\n    int pop();\n};\nvoid Ring::push(int v) {\n}\nint Ring::pop() {\n    return 0;\n}\nint drain(Ring& r) {\n    return r.pop();\n}\n' >"$P/ring.cpp"
     printf 'plain words\n' >"$P/notes.txt"
@@ -441,6 +442,10 @@ with themed "frame;wait:100;frame;lspextras" "$P/h.cpp"
 check "a theme's own colour for a kind of token" 'hints: | colours: call=function p_size=lsp.parameter Widget=type MAX_SIZE=function.macro'
 with plain "frame;wait:100;frame;lspextras" "$P/h.cpp"
 check "no colours of the server's with lsp.semantic_colors off" 'hints: | colours:'
+# The lines the preprocessor leaves out (clangd's comment tokens) are drawn
+# as comments, but for a HIP device branch's: clangd sees the host's side.
+run "frame;wait:100;frame;lspextras" "$P/k.hip"
+check "lines left out drawn as comments, a HIP device branch's not" 'hints: | colours: int off = 1;=comment int neither;=comment __HIP_DEVICE_COMPILE__=function.macro __CUDA_ARCH__=function.macro FOO=function.macro __HIP_DEVICE_COMPILE__=function.macro'
 # The servers' colours are the theme's of the appearance the window has,
 # whichever the system is in (a test build's BLIT_APPEARANCE pins it).
 export BLIT_APPEARANCE=light

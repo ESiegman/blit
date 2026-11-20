@@ -68,7 +68,11 @@
 //                ": int" after a name that follows "auto "
 //   tokens       Widget a type, a word starting p_ a parameter, call a
 //                function, a word all in capitals (not the four above) a
-//                macro; whole or as a change to the last list
+//                macro; whole or as a change to the last list. As clangd
+//                does, each line the preprocessor would leave out (between
+//                the directives) is a comment, whole: no macro is defined,
+//                so #ifdef, #if defined(...) and #if 0 are not taken, and
+//                #ifndef, #if 1 and #else (after none taken) are
 #include <dirent.h>
 #include <poll.h>
 #include <strings.h>
@@ -83,6 +87,7 @@
 #include <tuple>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "json.hpp"
@@ -873,10 +878,57 @@ void inlay_hints(Value id, Value params) {
     reply(id, r);
 }
 
-// Semantic tokens: the legend is type, parameter, function, macro; the one
-// modifier, readonly, is on the macros.
+// The lines the preprocessor would leave out, as clangd sees them with no
+// macro defined: those between the directives of a branch not taken.
+std::vector<bool> left_out(const std::string& t) {
+    std::vector<bool> out;
+    struct Branch {
+        bool outer_on, on, taken;  // (whether the lines around it are kept, this branch is, one was)
+    };
+    std::vector<Branch> stack;
+    bool on = true, carried = false;  // (carried: the line is a directive's, carried on by a backslash)
+    for (size_t at = 0; at <= t.size();) {
+        size_t end = t.find('\n', at);
+        if (end == std::string::npos) end = t.size();
+        std::string_view line(t.data() + at, end - at);
+        out.push_back(carried ? out.back() : !on);
+        size_t i = line.find_first_not_of(" \t");
+        const bool was_carried = std::exchange(carried, line.ends_with('\\'));
+        if (!was_carried && i != std::string_view::npos && line[i] == '#') {
+            std::string_view d = line.substr(i + 1);
+            d.remove_prefix(std::min(d.find_first_not_of(" \t"), d.size()));
+            auto taken = [&](std::string_view cond, bool ifndef) {
+                if (ifndef) return true;
+                cond.remove_prefix(std::min(cond.find_first_not_of(" \t"), cond.size()));
+                return cond.starts_with("1");
+            };
+            if (d.starts_with("if")) {
+                const bool yes = on && taken(d.substr(d.starts_with("ifdef") ? 5 : d.starts_with("ifndef") ? 6 : 2), d.starts_with("ifndef"));
+                stack.push_back({on, yes, yes});
+                on = yes;
+                out.back() = !stack.back().outer_on;
+            } else if (!stack.empty() && (d.starts_with("elif") || d.starts_with("else"))) {
+                Branch& b = stack.back();
+                b.on = b.outer_on && !b.taken && (d.starts_with("else") || taken(d.substr(4), false));
+                b.taken = b.taken || b.on;
+                on = b.on;
+                out.back() = !b.outer_on;
+            } else if (!stack.empty() && d.starts_with("endif")) {
+                on = stack.back().outer_on;
+                stack.pop_back();
+                out.back() = !on;
+            }
+        }
+        at = end + 1;
+    }
+    return out;
+}
+
+// Semantic tokens: the legend is type, parameter, function, macro, comment;
+// the one modifier, readonly, is on the macros.
 std::vector<unsigned> tokens_of(const std::string& t) {
     std::vector<unsigned> out;
+    const std::vector<bool> out_lines = left_out(t);
     long last_line = 0, last_ch = 0;
     // (Where the walk is, as a line and column, so that a big text is gone
     // through once rather than from its start for every token.)
@@ -892,7 +944,31 @@ std::vector<unsigned> tokens_of(const std::string& t) {
         *line = at_line;
         *ch = at_ch;
     };
+    // (A line left out, the first time the walk comes to it: a comment, whole.)
+    long left_line = -1;
+    auto emit = [&](long line, long ch, long len, unsigned type, unsigned mods) {
+        out.push_back(static_cast<unsigned>(line - last_line));
+        out.push_back(static_cast<unsigned>(line == last_line ? ch - last_ch : ch));
+        out.push_back(static_cast<unsigned>(len));
+        out.push_back(type);
+        out.push_back(mods);
+        last_line = line;
+        last_ch = ch;
+    };
     for (size_t i = 0; i < t.size();) {
+        if (t[i] != '\n' && (i == 0 || t[i - 1] == '\n')) {
+            long line, ch;
+            position(i, &line, &ch);
+            if (line > left_line && static_cast<size_t>(line) < out_lines.size() && out_lines[static_cast<size_t>(line)]) {
+                left_line = line;
+                const size_t e = std::min(t.find('\n', i), t.size());
+                long line_e, ch_e;
+                position(e, &line_e, &ch_e);
+                emit(line, 0, ch_e, 4, 0);
+                i = e;
+                continue;
+            }
+        }
         if (!word_char(t[i]) || (i > 0 && word_char(t[i - 1]))) {
             ++i;
             continue;
@@ -911,13 +987,7 @@ std::vector<unsigned> tokens_of(const std::string& t) {
             long line, ch, line_e, ch_e;
             position(i, &line, &ch);
             position(e, &line_e, &ch_e);
-            out.push_back(static_cast<unsigned>(line - last_line));
-            out.push_back(static_cast<unsigned>(line == last_line ? ch - last_ch : ch));
-            out.push_back(static_cast<unsigned>(ch_e - ch));
-            out.push_back(static_cast<unsigned>(type));
-            out.push_back(type == 3 ? 1u : 0u);
-            last_line = line;
-            last_ch = ch;
+            emit(line, ch, ch_e - ch, static_cast<unsigned>(type), type == 3 ? 1u : 0u);
         }
         i = e;
     }
@@ -1184,7 +1254,7 @@ int main(int argc, char** argv) {
                                R"("inlayHintProvider":true,"implementationProvider":true,"typeDefinitionProvider":true,)"
                                R"("declarationProvider":true,"documentHighlightProvider":true,"documentSymbolProvider":true,)"
                                R"("workspaceSymbolProvider":true,"callHierarchyProvider":true,"typeHierarchyProvider":true,)"
-                               R"("semanticTokensProvider":{"legend":{"tokenTypes":["type","parameter","function","macro"],)"
+                               R"("semanticTokensProvider":{"legend":{"tokenTypes":["type","parameter","function","macro","comment"],)"
                                R"("tokenModifiers":["readonly"]},"full":{"delta":true}})";
             if (pull) caps += std::string(R"(,"diagnosticProvider":{"interFileDependencies":false,"workspaceDiagnostics":)") + (workspace ? "true" : "false") + "}";
             caps += "}}";

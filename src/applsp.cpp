@@ -392,6 +392,11 @@ struct App::Assist {
         std::vector<u8> builtin_style;         // the same, for one from the language's own library
         std::vector<std::pair<u32, Rgb>> inks;  // the palette entries the table took, and their colours
         std::vector<std::string> made;         // the capture each style past tree-sitter's is
+        // The lines the preprocessor leaves out (clangd's "comment" tokens):
+        // that kind of token, and which of tree-sitter's styles are
+        // comments already.
+        int comment_type = -1;
+        std::vector<bool> ts_comment;
     };
     Extras extras[kMaxViews];
     u64 extras_due_ns = 0;  // when a text will have stood still long enough to ask about it
@@ -2213,8 +2218,10 @@ constexpr u64 kSettleNs = 250'000'000;
 
 // The servers' kinds of token that say more than tree-sitter does, and the
 // capture each is coloured as when the theme has no "lsp.KIND" of its own.
-// (Keywords, strings, numbers, comments and operators are left to
-// tree-sitter, which tells more of them apart; so are plain variables.)
+// (Keywords, strings, numbers and operators are left to tree-sitter, which
+// tells more of them apart; so are plain variables. A comment is clangd's
+// line that the preprocessor leaves out, drawn as a comment is: see
+// Lsp's drop_device_lines() for those of a HIP device branch.)
 struct TokenCapture {
     std::string_view type, capture, builtin;
 };
@@ -2234,6 +2241,7 @@ constexpr TokenCapture kTokenCaptures[] = {
     {"method", "function.method", "function.builtin"},
     {"macro", "function.macro", "function.macro"},
     {"decorator", "attribute", "attribute"},
+    {"comment", "comment", "comment"},
 };
 
 }  // namespace
@@ -2365,6 +2373,12 @@ void App::lsp_extras(FrameDesc& fd) {
                         x.type_style[t] = style_of(themed ? theme_key : std::string(tcap.capture));
                         x.builtin_style[t] = style_of(themed ? theme_key : std::string(tcap.builtin));
                     }
+                x.comment_type = -1;
+                for (size_t t = 0; t < types.size() && x.comment_type < 0; ++t)
+                    if (types[t] == "comment" && x.type_style[t]) x.comment_type = static_cast<int>(t);
+                x.ts_comment.assign(styles, false);
+                if (own)
+                    for (u32 i = 0; i < styles; ++i) x.ts_comment[i] = d.syntax.style_names()[i].starts_with("comment");
                 dirty_ = true;
             }
             // The marks for the lines on show: tree-sitter's, with the
@@ -2416,6 +2430,10 @@ void App::lsp_extras(FrameDesc& fd) {
                     const u8 style = (t->mods & library) ? x.builtin_style[t->type] : x.type_style[t->type];
                     const u64 s0 = std::max(t->start, lo), s1 = std::min(t->end, hi);
                     if (!style || s0 < pos || s1 <= s0) continue;
+                    if (t->type == x.comment_type) {  // a line left out: not over a comment of tree-sitter's
+                        const size_t at = hl.empty() || s0 >= hl.end ? 0 : hl.upper(s0);
+                        if (at > 0 && hl.style[at - 1] < x.ts_comment.size() && x.ts_comment[hl.style[at - 1]]) continue;
+                    }
                     if (s0 > pos) syntax_to(pos, s0);
                     put_mark(s0, style);
                     pos = s1;

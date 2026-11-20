@@ -1737,7 +1737,12 @@ A server whose last file has been closed stops half a minute later.
   for: clangd, pyright and ruff send none.)
 - **The server's colours** (semantic tokens) over tree-sitter's, where they
   say more: a type, a parameter, a macro, a namespace, a member of an enum.
-  A file that tree-sitter does not colour gets the server's alone.
+  A file that tree-sitter does not colour gets the server's alone. Lines
+  the preprocessor leaves out (clangd's inactive code, under an `#if` not
+  taken) are drawn as comments are, but for a HIP device branch's: clangd
+  reads a HIP file as the host's compile sees it, so a branch of a
+  conditional any of whose conditions, up to that branch, names
+  `__HIP_DEVICE_COMPILE__` or `__CUDA_ARCH__` keeps its colours.
 
 Hints and colours are asked for once the text has stood still a quarter
 of a second, for what is on show.
@@ -1752,7 +1757,8 @@ blit.opt.lsp.reference_counts = false -- no counts of references after the defin
 
 The server's colours use the theme's colour for what tree-sitter calls the
 same thing (`type`, `variable.parameter`, `function.macro`, `module`,
-`constant`, `property`, `function`, `function.method`, `attribute`), unless
+`constant`, `property`, `function`, `function.method`, `attribute`,
+`comment`), unless
 the theme has one of its own for the kind, as `lsp.KIND`:
 
 ```lua

@@ -4319,7 +4319,8 @@ void lsp_many_test() {
     check(lsp.hints(1)->at(0).off == at.find("call(") + 7 && !lsp.hints_cover(1, 0, 3), "many: hints move with an edit, and are asked for again");
 
     // Semantic tokens, whole and then as a change.
-    check(lsp.can_tokens(1) && lsp.token_types(1)->size() == 4 && lsp.token_types(1)->at(1) == "parameter", "many: the server's legend");
+    check(lsp.can_tokens(1) && lsp.token_types(1)->size() == 5 && lsp.token_types(1)->at(1) == "parameter" && lsp.token_types(1)->at(4) == "comment",
+          "many: the server's legend");
     lsp.ask_tokens(1);
     check(until([&] { return lsp.tokens(1)->size() == 4 && lsp.tokens_current(1); }), "many: tokens arrive");
     std::string now = a.buf.text(0, a.buf.size());
