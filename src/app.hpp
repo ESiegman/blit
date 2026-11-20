@@ -509,6 +509,7 @@ private:
     void lsp_show_places(std::vector<LspPlace> list, const std::string& word);
     void lsp_switch_header();
     std::string other_half(const std::string& path) const;
+    void other_half_open(const std::string& path);  // (another machine's looked for on an errand there)
     void lsp_outline();
     // The file's outline in the box, `pick` (a symbol's offset; ~0: the one
     // the cursor is in) chosen to start with.
@@ -924,6 +925,11 @@ private:
     // false while they are on their way (find_remote_ready() is called when they come).
     bool remote_listing(const std::string& dir, std::vector<RemoteEntry>* out);
     bool remote_listing_busy() const;
+    // An errand to another machine for the main thread (a file looked for
+    // there, a report read back), run on a thread of its own in the order
+    // asked: `work` returns what the main thread then does (remote_sync).
+    using RemoteErrand = std::function<std::function<void()>(std::stop_token)>;
+    void remote_errand(RemoteErrand work);
     bool panel_busy() const;  // (apppanel.cpp) the file tree is reading folders, or changing another machine's files
 
     // Profiling (appprofile.cpp): the side panel's Profile tab, a tab for

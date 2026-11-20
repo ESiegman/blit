@@ -93,12 +93,19 @@ struct App::RemoteUi {
     std::optional<Listing> listed;
     std::string list_failed;  // (main thread) one that had no connection
 
-    std::jthread worker, saver, lister;  // (last: stopped first)
+    // Errands (remote_errand): those waiting, how many are under way, and
+    // what the main thread is to do with what they found.
+    std::deque<RemoteErrand> errands;
+    size_t running = 0;
+    std::vector<std::function<void()>> errands_done;
+
+    std::jthread worker, saver, lister, errander;  // (last: stopped first)
 
     ~RemoteUi() {
         worker.request_stop();
         saver.request_stop();
         lister.request_stop();
+        errander.request_stop();
         Remote::close_all();  // (a call they are waiting on fails at once)
     }
 
@@ -240,6 +247,36 @@ void App::remote_start() {
             wake();
         }
     });
+    // Errands, in the order they were asked for.
+    u->errander = std::jthread([u](std::stop_token stop) {
+        thread_soon(Soon::kWaitedFor);
+        for (;;) {
+            RemoteErrand e;
+            {
+                std::unique_lock lock(u->mu);
+                if (!u->cv.wait(lock, stop, [&] { return !u->errands.empty(); })) return;
+                e = std::move(u->errands.front());
+                u->errands.pop_front();
+                ++u->running;
+            }
+            std::function<void()> then = e(stop);
+            {
+                std::lock_guard lock(u->mu);
+                --u->running;
+                if (then) u->errands_done.push_back(std::move(then));
+            }
+            wake();
+        }
+    });
+}
+
+void App::remote_errand(RemoteErrand work) {
+    if (!remote_) return;
+    {
+        std::lock_guard lock(remote_->mu);
+        remote_->errands.push_back(std::move(work));
+    }
+    remote_->cv.notify_all();  // (the others wait on it too)
 }
 
 void App::remote_load(const Doc& d, bool reload) {
@@ -258,7 +295,7 @@ bool App::remote_busy() const {
     if (!remote_) return false;
     std::lock_guard lock(remote_->mu);
     return !remote_->jobs.empty() || remote_->busy || !remote_->done.empty() || !remote_->saving.empty() || !remote_->saved.empty() ||
-           !remote_->list_wanted.empty() || !remote_->list_doing.empty();
+           !remote_->list_wanted.empty() || !remote_->list_doing.empty() || !remote_->errands.empty() || remote_->running || !remote_->errands_done.empty();
 }
 
 // ---------------------------------------------------------------- saving
@@ -551,6 +588,12 @@ void App::remote_sync() {
     }
     find_remote_ready();  // (a folder typed into the box, listed now)
     remote_saved();
+    std::vector<std::function<void()>> errands;
+    {
+        std::lock_guard lock(remote_->mu);
+        errands.swap(remote_->errands_done);
+    }
+    for (const std::function<void()>& then : errands) then();
     std::vector<RemoteUi::Done> done;
     {
         std::lock_guard lock(remote_->mu);

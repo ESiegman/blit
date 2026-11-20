@@ -623,9 +623,8 @@ void App::sync_lsp() {
     }
     if ((news & Lsp::kSwitch) && a.switch_pending) {
         a.switch_pending = false;
-        std::string other = lsp_.switch_target();
-        if (other.empty()) other = other_half(pane_->doc->ed.path);  // (clangd did not know: looked for beside it)
-        if (other.empty()) notify("No header or source found for " + std::string(base_name(pane_->doc->ed.path)));
+        const std::string other = lsp_.switch_target();
+        if (other.empty()) other_half_open(pane_->doc->ed.path);  // (clangd did not know: looked for beside it)
         else if (remember_place(), !open_path(other.c_str())) notify("Cannot open " + other);
     }
     if ((news & Lsp::kHierarchy) && a.hier_waiting) hier_take();
@@ -1015,37 +1014,96 @@ void App::lsp_places(Lsp::PlaceKind kind) {
     lsp_.places(pane_->doc->ed.cursor(), kind);
 }
 
-// The file of the same name with the other kind of extension: beside it;
-// then in the include and source folders of the folders above it; then
-// anywhere in the project (the nearest to it), a few thousand entries at most.
-std::string App::other_half(const std::string& path) const {
-    if (path.empty() || is_remote(path)) return {};
-    const std::string full = full_path(path);
+namespace {
+
+// Where the other half of a file is looked for first, in order (a file's
+// whole path, without ssh://host for another machine's; and its project's
+// folder, or ""): the file of the same name with the other kind of
+// extension beside it, then in the include and source folders of the
+// folders above it, as far as the project's. False if it has no other half.
+struct Halves {
+    std::string stem;
+    std::span<const std::string_view> exts;  // (the other kind's)
+    std::vector<std::string> near;
+};
+bool halves_of(const std::string& full, const std::string& root, Halves* h) {
     const size_t slash = full.rfind('/'), dot = full.rfind('.');
-    if (dot == std::string::npos || (slash != std::string::npos && dot < slash)) return {};
-    const std::string dir = full.substr(0, slash), stem = full.substr(slash + 1, dot - slash - 1), ext = full.substr(dot);
+    if (slash == std::string::npos || dot == std::string::npos || dot < slash) return false;
+    const std::string dir = full.substr(0, slash), ext = full.substr(dot);
+    h->stem = full.substr(slash + 1, dot - slash - 1);
     const bool header = std::ranges::find(kHeaders, std::string_view(ext)) != std::end(kHeaders);
     const bool source = std::ranges::find(kSources, std::string_view(ext)) != std::end(kSources);
-    if (!header && !source) return {};
-    auto exts = [&]() -> std::span<const std::string_view> { return header ? std::span<const std::string_view>(kSources) : std::span<const std::string_view>(kHeaders); };
-    auto is_file = [](const std::string& p) {
-        struct stat st;
-        return ::stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode);
-    };
-    for (const std::string_view e : exts())
-        if (const std::string p = dir + "/" + stem + std::string(e); is_file(p)) return p;
-    // include/ and src/ beside each folder up from it (as far as the project's).
-    const std::string* root = panel_root();
+    if (!header && !source) return false;
+    h->exts = header ? std::span<const std::string_view>(kSources) : std::span<const std::string_view>(kHeaders);
+    for (const std::string_view e : h->exts) h->near.push_back(dir + "/" + h->stem + std::string(e));
     std::string up = dir;
     for (int levels = 0; levels < 4 && !up.empty(); ++levels) {
         for (const char* sub : {"/include/", "/src/", "/source/", "/inc/", "/lib/"})
-            for (const std::string_view e : exts())
-                if (const std::string p = up + sub + stem + std::string(e); is_file(p)) return p;
-        if (root && up == *root) break;
+            for (const std::string_view e : h->exts) h->near.push_back(up + sub + h->stem + std::string(e));
+        if (up == root) break;
         const size_t s = up.rfind('/');
         if (s == std::string::npos || s == 0) break;
         up.resize(s);
     }
+    return true;
+}
+
+// Of the files found in the project with that name, the one whose folder
+// shares most of the path with it.
+void nearer(const std::string& p, const std::string& full, std::string* best, size_t* best_common) {
+    size_t common = 0;
+    while (common < p.size() && common < full.size() && p[common] == full[common]) ++common;
+    if (common > *best_common) *best = p, *best_common = common;
+}
+
+// The same on another machine, on an errand's thread: the places near it
+// looked at in one command there, then the project's files of that name
+// listed in another. (Each by sh, whatever the login shell there is.)
+std::string other_half_there(const std::string& path, const std::string& project) {
+    std::string host, full, root_host, root;
+    if (!split_remote(path, &host, &full)) return {};
+    if (!split_remote(project, &root_host, &root) || root_host != host) root.clear();
+    Halves h;
+    if (!halves_of(full, root, &h)) return {};
+    const std::string at = remote_path(host, full.substr(0, full.rfind('/')));
+    std::string cmd = "for p in";
+    for (const std::string& p : h.near) cmd += " " + sh_word(p);
+    cmd += "; do [ -f \"$p\" ] && { printf '%s\\n' \"$p\"; exit 0; }; done; exit 1";
+    std::string out;
+    if (fs_run(at, "sh -c " + sh_word(cmd), &out, 30'000) && !out.empty()) return remote_path(host, out.substr(0, out.find('\n')));
+    if (root.empty()) return {};
+    cmd = "find " + sh_word(root) + " -mindepth 1 \\( -type d \\( -name '.*' -o -name 'build*' -o -name node_modules -o -name out \\) -prune \\) -o \\( -type f \\(";
+    for (size_t i = 0; i < h.exts.size(); ++i) cmd += std::string(i ? " -o" : "") + " -name " + sh_word(h.stem + std::string(h.exts[i]));
+    cmd += " \\) -print \\) 2>/dev/null | head -n 1000";
+    fs_run(at, "sh -c " + sh_word(cmd), &out, 30'000);
+    std::string best;
+    size_t best_common = 0;
+    for (size_t a = 0; a < out.size();) {
+        const size_t nl = std::min(out.find('\n', a), out.size());
+        if (nl > a) nearer(out.substr(a, nl - a), full, &best, &best_common);
+        a = nl + 1;
+    }
+    return best.empty() ? best : remote_path(host, best);
+}
+
+}  // namespace
+
+// The file of the same name with the other kind of extension: beside it;
+// then in the include and source folders of the folders above it; then
+// anywhere in the project (the nearest to it), a few thousand entries at most.
+// (Not another machine's: other_half_open looks for that there.)
+std::string App::other_half(const std::string& path) const {
+    if (path.empty() || is_remote(path)) return {};
+    const std::string full = full_path(path);
+    const std::string* root = panel_root();
+    Halves h;
+    if (!halves_of(full, root ? *root : std::string(), &h)) return {};
+    auto is_file = [](const std::string& p) {
+        struct stat st;
+        return ::stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+    };
+    for (const std::string& p : h.near)
+        if (is_file(p)) return p;
     // Anywhere in the project: the one whose folder shares most of the path.
     if (!root) return {};
     std::string best;
@@ -1060,14 +1118,30 @@ std::string App::other_half(const std::string& path) const {
             continue;
         }
         const size_t d = name.rfind('.');
-        if (d == std::string::npos || name.substr(0, d) != stem) continue;
-        if (std::ranges::find(exts(), std::string_view(name).substr(d)) == exts().end()) continue;
-        const std::string p = it->path().string();
-        size_t common = 0;
-        while (common < p.size() && common < full.size() && p[common] == full[common]) ++common;
-        if (common > best_common) best = p, best_common = common;
+        if (d == std::string::npos || name.substr(0, d) != h.stem) continue;
+        if (std::ranges::find(h.exts, std::string_view(name).substr(d)) == h.exts.end()) continue;
+        nearer(it->path().string(), full, &best, &best_common);
     }
     return best;
+}
+
+// The other half opened, where there is one (and the place left
+// remembered); else the bottom line says there is none. Another machine's
+// is looked for there, on an errand: it opens when found, if the file is
+// still the one in front.
+void App::other_half_open(const std::string& path) {
+    auto open_it = [this, path](const std::string& other) {
+        if (other.empty()) notify("No header or source found for " + std::string(base_name(path)));
+        else if (remember_place(), !open_path(other.c_str())) notify("Cannot open " + other);
+    };
+    if (!is_remote(path)) return open_it(other_half(path));
+    const std::string* root = panel_root();
+    remote_errand([this, path, project = root ? *root : std::string(), doc = pane_->doc->id, open_it](std::stop_token) -> std::function<void()> {
+        std::string other = other_half_there(path, project);
+        return [this, path, doc, open_it, other = std::move(other)] {
+            if (pane_->doc && pane_->doc->id == doc && pane_->doc->ed.path == path) open_it(other);
+        };
+    });
 }
 
 void App::lsp_switch_header() {
@@ -1079,10 +1153,7 @@ void App::lsp_switch_header() {
         lsp_.switch_header();
         return;
     }
-    const std::string other = other_half(path);
-    if (other.empty()) return notify("No header or source found for " + std::string(base_name(path)));
-    remember_place();
-    if (!open_path(other.c_str())) notify("Cannot open " + other);
+    other_half_open(path);
 }
 
 void App::outline_show(std::vector<LspSymbol> symbols, u64 pick) {

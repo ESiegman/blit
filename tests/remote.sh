@@ -252,6 +252,21 @@ got=$(BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i" BLIT_INIT="$dir/init.lua" 
     --script "remotewait;key:ctrl+\`;frame;termwait:\$;workdir:$R;remotewait;frame;statusdump" "ssh://other$W" 2>&1 >/dev/null | join)
 check "a terminal on one machine, the folder on another: the terminal's" 'other Terminal: other |'
 
+# The header for a source and the other way round, looked for there (with
+# no language server to ask): beside it, elsewhere in the project (not in a
+# build folder), or none; on a slow host, the keys go on meanwhile.
+mkdir -p "$W/sw/include" "$W/sw/src/gpu" "$W/sw/build"
+printf 'int a();\n' >"$W/sw/a.hpp" && printf 'int a() { return 1; }\n' >"$W/sw/a.cpp" && printf 'int z;\n' >"$W/sw/z.hpp"
+printf 'int k();\n' >"$W/sw/include/kernels.hpp" && printf 'int k() { return 2; }\n' >"$W/sw/src/gpu/kernels.hip" && : >"$W/sw/build/kernels.cpp"
+sw="command:Switch between header and source;remotewait;frame;statusdump"
+nocolours() { got=$(printf '%s' "$got" | sed -e 's/ (no colours)//g'); }  # (whether this machine has C++'s grammar is not the question here)
+run "remotewait;open:$R/sw/a.hpp;remotewait;$sw;open:$R/sw/include/kernels.hpp;remotewait;$sw;open:$R/sw/z.hpp;remotewait;$sw" "$R/sw"
+nocolours
+check "the other half, there" 'box a.cpp | Ln 1, Col 1 Tabs LF C++ ;; box src/gpu/kernels.hip | Ln 1, Col 1 Tabs LF C++ ;; blit: No header or source found for z.hpp ;; box z.hpp | Ln 1, Col 1 Tabs LF C++'
+slow "remotewait;open:$R/sw/include/kernels.hpp;remotewait;clock;command:Switch between header and source;within:300;remotewait;frame;statusdump" "$R/sw"
+nocolours
+check "and on a slow host" 'within 300 ms ;; box src/gpu/kernels.hip | Ln 1, Col 1 Tabs LF C++'
+
 # A project's run configurations there: the Run button runs the program
 # there, by its path there (not ssh://...), in its folder, after its build.
 mkdir -p "$W/run/bin" "$W/run/.blit"

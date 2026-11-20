@@ -1706,7 +1706,8 @@ A server whose last file has been closed stops half a minute later.
   knows from what includes what; otherwise a file of the same name beside
   this one, then in an `include`, `src`, `source`, `inc` or `lib` folder
   beside each of the four folders above it, then the one anywhere in the
-  project whose path is most like this one's.
+  project whose path is most like this one's. (For a file on another
+  machine, looked for there, on a thread: it opens when it is found.)
 - **The file's outline** with Cmd+Option+O (Vim's `gO`): its classes,
   functions and the rest, nested, each with its kind, starting at the one
   the cursor is in. Typing narrows them, moving through them shows each,
