@@ -595,6 +595,18 @@ void notebook_view_test() {
     look.picture = [](const std::string&, u32, u32, u32, MdPic*) { return kNbPictureFailed; };
     cache = NbCache();
     check(text_of(nb_render(script, cells, look, &cache)).find("<Figure>") != std::string::npos, "notebook view: a picture that cannot be read, its text instead");
+    // Text wrapped as Jupyter wraps it: after the last space that fits; a
+    // word longer than the room where the room ends.
+    const std::string tb = R"({"cells": [{"cell_type": "code", "execution_count": 1, "metadata": {}, "source": "x", "outputs": [)"
+                           R"({"output_type": "stream", "name": "stdout", "text": "ZeroDivisionError   Traceback (most recent call last)\n)" +
+                           std::string(30, 'w') + R"("}]}], "metadata": {}, "nbformat": 4, "nbformat_minor": 5})";
+    check(notebook_read(tb, &cells, &script), "notebook view: read again");
+    look.width = 24;
+    const std::string wrapped = text_of(nb_render(script, cells, look));
+    check(wrapped.find(":ZeroDivisionError\n") != std::string::npos && wrapped.find(":Traceback (most recent\n") != std::string::npos &&
+              wrapped.find(":call last)\n") != std::string::npos && wrapped.find(":" + std::string(24, 'w') + "\n") != std::string::npos &&
+              wrapped.find(":wwwwww\n") != std::string::npos,
+          "notebook view: text wrapped after a space, a long word where the room ends");
 }
 
 // A notebook's outputs made to cost: the work drawing them does is what

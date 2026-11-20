@@ -420,55 +420,77 @@ u8 ink_of_index(int i) {
     return ink_of_rgb(grey, grey, grey);
 }
 
-// Lines of runs at most `width` columns wide (a long line goes on in the
-// next), tabs to a terminal's stops; and which of the text's lines each is of.
-std::vector<std::vector<MdRun>> wrap_runs(const std::vector<MdRun>& runs, u32 width, std::vector<u32>* of) {
-    std::vector<std::vector<MdRun>> lines(1);
-    of->assign(1, 0);
-    u32 col = 0, source = 0;
-    auto add = [&](const MdRun& as, std::string_view text) {
-        if (text.empty()) return;
-        std::vector<MdRun>& line = lines.back();
-        if (!line.empty() && line.back().ink == as.ink && line.back().style == as.style && line.back().tone == as.tone) line.back().text += text;
-        else line.push_back({std::string(text), as.ink, as.style, as.tone});
+// Lines of runs at most `width` columns wide, tabs to a terminal's stops: a
+// long line goes on in the next after its last space, as Jupyter wraps
+// one (a word longer than the width, where the width ends); and which of
+// the text's lines each is of. No more than `most` + 1 are made.
+std::vector<std::vector<MdRun>> wrap_runs(const std::vector<MdRun>& runs, u32 width, std::vector<u32>* of, size_t most = SIZE_MAX) {
+    std::vector<std::vector<MdRun>> lines;
+    of->clear();
+    std::string row;          // the line being made: its bytes,
+    std::vector<u32> from;    // the run each is of,
+    u32 col = 0, source = 0;  // its columns, and the text's line it is of
+    size_t space = std::string::npos;  // where it may break (after its last space), and its columns before that
+    u32 space_col = 0;
+    // Its first n bytes, a line.
+    auto line = [&](size_t n) {
+        std::vector<MdRun> out;
+        for (size_t k = 0; k < n;) {
+            const MdRun& as = runs[from[k]];
+            size_t e = k + 1;
+            while (e < n && runs[from[e]].ink == as.ink && runs[from[e]].style == as.style && runs[from[e]].tone == as.tone) ++e;
+            out.push_back({row.substr(k, e - k), as.ink, as.style, as.tone});
+            k = e;
+        }
+        lines.push_back(std::move(out));
+        of->push_back(source);
+        row.erase(0, n);
+        from.erase(from.begin(), from.begin() + static_cast<std::ptrdiff_t>(n));
+        space = std::string::npos;
     };
-    for (const MdRun& run : runs) {
-        const std::string_view s = run.text;
+    for (u32 r = 0; r < runs.size(); ++r) {
+        const std::string_view s = runs[r].text;
         const u8* p = reinterpret_cast<const u8*>(s.data());
-        size_t start = 0;
         for (size_t i = 0; i < s.size();) {
+            if (lines.size() > most) return lines;
             if (s[i] == '\n') {
-                add(run, s.substr(start, i - start));
-                lines.emplace_back();
-                of->push_back(++source);
+                line(row.size());
+                ++source;
                 col = 0;
-                start = ++i;
+                ++i;
                 continue;
             }
             if (s[i] == '\t') {
-                add(run, s.substr(start, i - start));
-                u32 to = (col / kTab + 1) * kTab;
-                if (to > width) to = width;
-                add(run, std::string(to > col ? to - col : 0, ' '));
+                const u32 to = std::min((col / kTab + 1) * kTab, width);
+                row.append(to > col ? to - col : 0, ' ');
+                from.resize(row.size(), r);
                 col = to;
-                start = ++i;
-                if (col >= width) lines.emplace_back(), of->push_back(source), col = 0;
+                ++i;
+                if (col >= width) line(row.size()), col = 0;
+                else space = row.size(), space_col = col;
                 continue;
             }
             const Decoded d = decode_utf8(p + i, s.size() - i);
             const u32 w = cp_width(d.cp);
             if (col + w > width && col > 0) {
-                add(run, s.substr(start, i - start));
-                lines.emplace_back();
-                of->push_back(source);
-                col = 0;
-                start = i;
+                if (space != std::string::npos && space < row.size()) {
+                    col -= space_col;
+                    line(space);
+                } else {
+                    line(row.size());
+                    col = 0;
+                }
+                if (col + w > width && col > 0) line(row.size()), col = 0;  // (a wide character after what was carried over)
+                if (lines.size() > most) return lines;
             }
+            row.append(s.substr(i, d.len));
+            from.resize(row.size(), r);
             col += w;
             i += d.len;
+            if (d.cp == ' ') space = row.size(), space_col = col;
         }
-        add(run, s.substr(start));
     }
+    line(row.size());
     return lines;
 }
 
@@ -648,13 +670,21 @@ struct Drawer {
     void text(std::vector<MdRow>& out, std::string_view s, u8 ink, u8 tone, bool stale) {
         std::string_view body = s;
         while (body.ends_with('\n')) body.remove_suffix(1);
-        std::vector<MdRun> runs = nb_ansi(body, ink);
+        // (Only as much as can be shown is read: the first lines, a
+        // megabyte at most; the rest only counted.)
+        const u32 last = static_cast<u32>(std::count(body.begin(), body.end(), '\n'));
+        size_t upto = 0;
+        for (u32 k = 0; k <= kMostRows && upto < body.size(); ++k) {
+            const size_t nl = body.find('\n', upto);
+            upto = nl == std::string_view::npos ? body.size() : nl + 1;
+        }
+        std::vector<MdRun> runs = nb_ansi(body.substr(0, std::min<size_t>(upto, 1 << 20)), ink);
         if (stale)
             for (MdRun& r : runs) r.ink = kMdMuted;
         for (MdRun& r : runs)
             if (r.tone == kMdNoTone) r.tone = tone;
         std::vector<u32> of;
-        const std::vector<std::vector<MdRun>> lines = wrap_runs(runs, room, &of);
+        const std::vector<std::vector<MdRun>> lines = wrap_runs(runs, room, &of, kMostRows);
         const u32 shown = static_cast<u32>(std::min<size_t>(lines.size(), kMostRows));
         for (u32 k = 0; k < shown; ++k) {
             MdRow r;
@@ -662,8 +692,8 @@ struct Drawer {
             if (tone) r.fill = tone, r.fill_from = 0, r.fill_to = room;
             out.push_back(std::move(r));
         }
-        if (shown < lines.size()) {  // (how many of the text's own lines are not begun)
-            const u32 more = of.back() - of[shown - 1];
+        if (shown < lines.size() || (shown && of[shown - 1] < last)) {  // (how many of the text's own lines are not begun)
+            const u32 more = last - of[shown - 1];
             MdRow r;
             const std::string say = more ? "\xE2\x80\xA6 " + std::to_string(more) + (more == 1 ? " more line" : " more lines") : "\xE2\x80\xA6 more of this line";
             r.runs.push_back({say, kMdMuted, kMdItalic, tone});
