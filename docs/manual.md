@@ -1682,7 +1682,8 @@ A server whose last file has been closed stops half a minute later.
 - **Completions** appear while typing and narrow as more is typed; the
   letters that matched are picked out, and the selected item's type and
   documentation show beside the list. An item that needs something added
-  elsewhere, such as an import, adds it.
+  elsewhere, such as an import, adds it; where the server says where it
+  is from (the module an auto-import takes it from), each row says so.
 - **Hover**: rest the mouse on a name (or press Cmd+I) for its type and
   documentation, above the line or below it; one taller than the room
   on either side is cut short to the room there is, with "…" at its end.

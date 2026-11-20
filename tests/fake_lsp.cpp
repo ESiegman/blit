@@ -416,6 +416,13 @@ void completion(Value id, Value params) {
     // Sent backwards: the client has to put them in sortText order.
     for (size_t i = std::size(words); i-- > 0;) item(words[i].label, words[i].kind, words[i].detail, static_cast<int>(i));
     order = static_cast<int>(std::size(words));
+    // One name from two modules, as basedpyright offers to import it: the
+    // same detail, the module in labelDetails.
+    for (const char* module : {"orbit.kepler", "orbit.other"}) {
+        item("kepler_dv", 3, "Auto-import", order++);
+        r.pop_back();  // (its "}")
+        r += ",\"labelDetails\":{\"description\":\"" + std::string(module) + "\"}}";
+    }
     for (long i = 0; i + static_cast<long>(std::size(words)) < pad_items; ++i)
         item("item_" + std::to_string(i) + (i % 3 ? "_value" : "Name"), 6, "int", order++);
     r += "]}";

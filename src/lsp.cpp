@@ -1223,7 +1223,11 @@ struct Lsp::Conn::Worker {
             o.kind = static_cast<u8>(std::clamp<i64>(it["kind"].integer(0), 0, 255));
             o.detail = it["detail"].str();
             const Value ld = it["labelDetails"];
-            if (o.detail.empty()) o.detail = ld["description"].str();
+            // (Its description beside the detail, first, where it says more:
+            // basedpyright's detail is "Auto-import" on every such row, and
+            // the description is the module it is from.)
+            if (const std::string_view about = ld["description"].str(); o.detail.empty()) o.detail = about;
+            else if (!about.empty() && o.detail.find(about) == std::string::npos) o.detail = std::string(about) + " \xC2\xB7 " + o.detail;
             if (const std::string_view sig = ld["detail"].str(); !sig.empty()) o.label += sig;
             o.filter = it["filterText"].str();
             if (o.filter.empty()) o.filter = it["label"].str();

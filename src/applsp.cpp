@@ -1542,6 +1542,15 @@ std::string App::lsp_extras_dump(bool colours) {
     return out;
 }
 
+std::string App::completion_dump() {
+    const Assist& a = *assist_;
+    if (!a.comp_open) return "no completions";
+    const std::vector<CompletionItem>& items = lsp_.completions();
+    std::string out;
+    for (const auto& s : a.shown) out += (out.empty() ? "" : " | ") + items[s.item].label + (items[s.item].detail.empty() ? "" : "  " + items[s.item].detail);
+    return out;
+}
+
 std::string App::lsp_dump() {
     std::string out = lsp_.servers_dump() + " |";
     for (Doc* d : open_docs()) {

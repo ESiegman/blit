@@ -346,6 +346,9 @@ run "key:$text_end;text:for_l;key:ctrl+space;wait:200;key:Return;snippetdump"
 check "a snippet completed: its stops, the first in three places" '[4:6-4:7,4:13-4:14,4:22-4:23] 4:17-4:18 4:26-4:26'
 run "key:$text_end;text:for_l;key:ctrl+space;wait:200;key:Return;text:j;key:Tab;text:10;key:Tab;text:go();lsptext"
 check "filled in at each stop" 'int shared = 1; // ERROR / call(1,   2, 3);    / WARN shared   / for (j = 0; j < 10; ++j) {go()}'
+# One name offered from two modules to import: each row says which.
+run "key:$text_end;text:kepler;key:ctrl+space;wait:200;compdump"
+check "completions alike but for their module: the module beside each" 'kepler_dv  orbit.kepler · Auto-import | kepler_dv  orbit.other · Auto-import'
 run "key:alt+shift+F;wait:200;lsptext"
 got="$got / $said"
 check "Option+Shift+F formats the file" 'int shared = 1; // ERROR / call(1, 2, 3); / WARN shared /  / blit: Formatted'

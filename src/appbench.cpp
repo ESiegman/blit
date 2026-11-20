@@ -639,6 +639,7 @@ int App::run_bench() {
 //   lsptext                print the text of the file in front, its lines joined by " / "
 //   lspextras[:colours]    print the inlay hints on show in the file in front, and the servers' colours there
 //                          (:colours, with the colour each is drawn in, #rrggbb)
+//   compdump               print the completion list's rows (label and detail), joined by " | "
 //   asked                  print the last question a box would have asked (scripted runs answer yes, or Don't Save)
 //   clock; within:MS       start a stopwatch; print whether the main thread got here within MS milliseconds
 //   lap:LABEL              print the milliseconds since the stopwatch started (or the last lap), and start it again
@@ -736,6 +737,8 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s\n", t.c_str());
         } else if (verb == "lspextras") {
             std::fprintf(stderr, "%s\n", lsp_extras_dump(arg == "colours").c_str());
+        } else if (verb == "compdump") {  // the completion list's rows: label and detail
+            std::fprintf(stderr, "%s\n", completion_dump().c_str());
         } else if (verb == "cpuquiet") {  // cpuquiet:MS, the CPU time every thread took while the main one slept MS ms: "quiet" under a quarter of it
             const std::clock_t c0 = std::clock();
             const u64 t0 = now_ns();

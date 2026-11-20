@@ -4030,8 +4030,10 @@ void lsp_case(bool utf8, bool full, u64 seed) {
     lsp.complete(at, 0);
     check(lsp_wait(lsp, Lsp::kCompletion) & Lsp::kCompletion, "completion arrives");
     const std::vector<CompletionItem>& items = lsp.completions();
-    check(items.size() == 13 && items[0].label == "alpha" && items[1].label == "alphabet" && items[12].label == "r\xC3\xA9sum\xC3\xA9",
+    check(items.size() == 15 && items[0].label == "alpha" && items[1].label == "alphabet" && items[12].label == "r\xC3\xA9sum\xC3\xA9",
           "completion items in the server's order");
+    check(items[13].label == "kepler_dv" && items[13].detail == "orbit.kepler \xC2\xB7 Auto-import" && items[14].detail == "orbit.other \xC2\xB7 Auto-import",
+          "an item's labelDetails description (an auto-import's module) beside its detail");
     check(items[0].replace_from == at - 2 && items[0].insert == "alpha" && items[0].detail == "int" && items[0].kind == 6 &&
               items[0].doc == "About alpha.",
           "completion item fields");
