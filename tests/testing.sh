@@ -132,6 +132,39 @@ got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$V;f
 check "pytest in the project's .venv: found and run" 'tests/test_v.py: +test_one xtest_two +test_p[1] +test_p[2] | here: 1+ 5x 10+ 10+'
 got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$V;frame;testdump;vim:11G;command:Run the test at the cursor;testdump" "$V/tests/test_v.py" 2>&1 >/dev/null | tail -1)
 check "a parametrised test at the cursor: its cases run, not the test before it" 'tests/test_v.py: .test_one .test_two +test_p[1] +test_p[2] | here: 1. 5. 10+ 10+'
+# One name at a module's level and in its Test class: each def is its own
+# test, and the cursor on one runs that one alone.
+K="$dir/same"
+mkdir -p "$K/.venv/bin" "$K/tests"
+printf 'def test_x():\n    pass\n\n\nclass TestK:\n    def test_x(self):\n        pass\n' >"$K/tests/test_k.py"
+cat >"$K/.venv/bin/python" <<'EOF'
+#!/bin/sh
+shift 2  # -m pytest
+set -f
+ids=
+for a in "$@"; do
+    case $a in
+        --collect-only) printf 'tests/test_k.py::test_x\ntests/test_k.py::TestK::test_x\n\n2 tests collected in 0.01s\n'; exit 0 ;;
+        --junitxml=*) report=${a#--junitxml=} ;;
+        *::*) ids="$ids ${a#*::}" ;;
+    esac
+done
+{
+    printf '<testsuites><testsuite>'
+    for t in ${ids:-test_x TestK::test_x}; do
+        case $t in
+            TestK::*) printf '<testcase classname="tests.test_k.TestK" name="%s" time="0.1"/>' "${t#TestK::}" ;;
+            *) printf '<testcase classname="tests.test_k" name="%s" time="0.1"/>' "$t" ;;
+        esac
+    done
+    printf '</testsuite></testsuites>'
+} >"$report"
+EOF
+chmod +x "$K/.venv/bin/python"
+got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$K;frame;testdump;vim:1G;command:Run the test at the cursor;testdump" "$K/tests/test_k.py" 2>&1 >/dev/null | tail -1)
+check "one name at a module's level and in a Test class: the cursor's alone" 'tests/test_k.py: +test_x .test_x | here: 1+ 6.'
+got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$K;frame;testdump;vim:6G;command:Run the test at the cursor;testdump" "$K/tests/test_k.py" 2>&1 >/dev/null | tail -1)
+check "and the cursor on the class's" 'tests/test_k.py: .test_x +test_x | here: 1. 6+'
 got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$V;frame;builddump;command:Run the tests with coverage;testdump;coveragedump" "$V/tests/test_v.py" 2>&1 >/dev/null | tail -1)
 check "and coverage.py there, its report in the run configuration's environment" 'here: ran 1 2 5, missed 6 | files: tests/test_v.py=75%'
 printf 'import nosuch\n' >"$V/tests/test_bad.py"

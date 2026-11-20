@@ -2468,7 +2468,8 @@ same from anywhere. A run goes to the output terminal, where its output
 shows; each runner writes a JUnit report, read when it ends (a module
 pytest could not collect, which stops its run, is said, with why). Where
 a test is defined (`TEST(A, B)`, `TEST_F`, `TEST_CASE("x")`, `SCENARIO`;
-`def test_x`, in a `Test` class or not) its mark beside the line number
+`def test_x`, in a `Test` class or not: each its own, though a module and
+its class have one of the same name) its mark beside the line number
 shows how it went, and a click on it runs it (Option-click debugs it); a
 parametrised test's mark is all its cases', a cross if one failed, and
 they all run. The test at the cursor is the one defined nearest above it

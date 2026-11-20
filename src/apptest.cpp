@@ -482,13 +482,14 @@ const std::vector<std::pair<u32, int>>& App::test_defs(const Doc& d) {
     const std::vector<std::pair<u32, std::string>> defs = find_test_defs(text, py);
     if (!defs.empty() && !u.looked && !u.looking) test_find();  // (a file with tests in it: the project's are looked for)
     // (A parametrised pytest test is a case for each of its parameters,
-    // "test_x[1-2]": each is the def's, one after another.)
+    // "test_x[1-2]": each is the def's, one after another. Its id matched
+    // whole: a module's test_x is not its TestK::test_x.)
     auto unparametrised = [](std::string_view id) { return id.ends_with(']') ? id.substr(0, id.find('[', id.find("::"))) : id; };
     for (const auto& [line, name] : defs) {
         const size_t before = x.at.size();
         for (size_t i = 0; i < u.tests.size(); ++i) {
             const TestCase& t = u.tests[i];
-            if (py ? t.runner == TestCase::kPytest && unparametrised(t.id).ends_with("::" + name) && full.ends_with("/" + t.group)
+            if (py ? t.runner == TestCase::kPytest && unparametrised(t.id) == t.group + "::" + name && full.ends_with("/" + t.group)
                    : t.runner == TestCase::kCTest && (t.id == name || t.id.ends_with("." + name) || t.id.ends_with("/" + name))) {
                 x.at.emplace_back(line, static_cast<int>(i));
                 if (!py) break;
