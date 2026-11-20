@@ -334,6 +334,10 @@ if [ -x "$fakedap" ]; then
     fake "debugattach:4242;debugwait:stopped;key:shift+F5;debugwait:idle"
     got="$stops ;; $(grep '^disconnect' "$F/log")"
     check "stopping: a program launched ends, a process attached to goes on" 'disconnect {"terminateDebuggee":true} ;; disconnect {"terminateDebuggee":false}'
+
+    # A launch refused with no message: the reason is the error's own (lldb-dap's way).
+    fake "debug:program=$F/no-such;key:F5;debugwait:idle;debugdump"
+    check "a launch refused: why, from the error the debugger gave" "idle error: cannot launch it: '@/fake/no-such' does not exist"
 fi
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "debug ok"

@@ -30,7 +30,7 @@ public:
         std::string name;      // the command or the event
         i64 seq = 0, request_seq = 0;
         bool success = true;
-        std::string message;   // why a request failed
+        std::string message;   // why a request failed (its message, else its body.error's format filled in)
         std::shared_ptr<json::Doc> doc;
         json::Value body() const { return doc ? doc->root()["body"] : json::Value(); }
     };

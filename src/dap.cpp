@@ -32,6 +32,30 @@ inline int spawn_chdir(posix_spawn_file_actions_t* fa, const char* dir) {
 #endif
 }
 
+// Why a request failed: its message, or where it has none (lldb-dap's way
+// with a launch it refuses) the long form, body.error.format, its {names}
+// filled in from body.error.variables.
+std::string failure(const json::Value& v) {
+    if (const std::string_view m = v["message"].str(); !m.empty()) return std::string(m);
+    const json::Value e = v["body"]["error"];
+    const std::string_view format = e["format"].str();
+    std::string out;
+    for (size_t at = 0; at < format.size();) {
+        const size_t open = format.find('{', at), close = open == std::string_view::npos ? open : format.find('}', open);
+        const json::Value var = close == std::string_view::npos ? json::Value() : e["variables"][format.substr(open + 1, close - open - 1)];
+        if (!var.is_string()) {  // (none, or none of that name: as written)
+            const size_t to = close == std::string_view::npos ? format.size() : close + 1;
+            out += format.substr(at, to - at);
+            at = to;
+            continue;
+        }
+        out += format.substr(at, open - at);
+        out += var.str();
+        at = close + 1;
+    }
+    return out;
+}
+
 }  // namespace
 
 // The adapter's end of things, shared by the Dap (on the main thread), the
@@ -272,7 +296,7 @@ void Dap::Link::read_loop(std::stop_token stop) {
             m.seq = v["seq"].integer();
             m.request_seq = v["request_seq"].integer();
             m.success = v["success"].boolean(true);
-            m.message = std::string(v["message"].str());
+            m.message = m.success ? std::string(v["message"].str()) : failure(v);
             m.doc = std::move(doc);
             std::lock_guard lock(mu);
             queue.push_back(std::move(m));
