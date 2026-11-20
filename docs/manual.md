@@ -2464,10 +2464,12 @@ rasterizer and the text from the editor's font's own outlines, at the
 size they are shown at (the display's density, the preview's width), so
 they are the same pixels on a Mac and on Linux. Their colours are the
 theme's (the boxes in its type colour, the text in its text colour, the
-lines a little quieter), the text the editor's font at its size. One
-wider than the preview is made smaller to fit (a left-to-right one is
-laid out top to bottom first, if that fits better), never cut off; it is
-drawn again when the width, the theme, the font or the display changes.
+lines a little quieter), the text the editor's font at its size, and a
+character it lacks from the editor's fallback fonts (one in no font, an
+emoji, is a box). One wider than the preview is made smaller to fit (a
+left-to-right one is laid out top to bottom first, and then closer
+together, if that fits better), never cut off; it is drawn again when
+the width, the theme, the font or the display changes.
 The pictures drawn lately are kept, so that typing elsewhere in the file
 never lays one out again. A click on one does nothing.
 
@@ -2480,17 +2482,23 @@ never lays one out again. A click on one does nothing.
   without heads (`---`), with circles or crosses, both ways (`<-->`),
   longer for each dash more (`--->`), with text (`-->|yes|`,
   `-- yes -->`, on a pill over the line), chains (`A --> B --> C`) and
-  `&`. Subgraphs are titled boxes round their nodes, nested, each in its
-  own `direction` when no edge goes into it (as Mermaid's rule is); an
-  edge may go to a subgraph itself. `classDef`, `class`, `:::name`,
+  `&`. Subgraphs are titled boxes round their nodes, nested (32 deep at
+  most), each in its own `direction` when no edge goes into it (as
+  Mermaid's rule is); an edge may go to a subgraph itself, from it to
+  something in it, or round from it to itself, and edges that come in at
+  its title pass beside it. `classDef`, `class`, `:::name`,
   `style` and `linkStyle` colours (fill, stroke, its width and dashes, the
   text's colour) are used; `%%` comments and a front matter `title:` too.
   Nodes go in ranks (Sugiyama's way, as Mermaid's dagre does), ordered to
   cross as little as they can and placed in balance with their
   neighbours; edges are smooth curves that leave and meet their nodes'
-  borders, spread along a side when several share it, and go round what
-  is in their way; an edge back up a loop goes round beside the others.
-  Long text wraps.
+  borders (a decision's from its tip, or a corner when they go off to
+  the side), spread along a side when several share it, and go round
+  what is in their way; an edge back up a loop goes round beside the
+  others, and a loop on a node is a round one beside it. Long text
+  wraps; a Markdown string's `**bold**` and `*italic*` are drawn so. One
+  too large to lay out in good time (many thousands of edges' worth of
+  ranks) says so.
 - `stateDiagram` / `stateDiagram-v2`: states (`state "..." as X`,
   `X : text`), `[*]` as start and end dots (each composite state's its
   own), transitions with what they say, composite states as boxes with
