@@ -441,6 +441,15 @@ with themed "frame;wait:100;frame;lspextras" "$P/h.cpp"
 check "a theme's own colour for a kind of token" 'hints: | colours: call=function p_size=lsp.parameter Widget=type MAX_SIZE=function.macro'
 with plain "frame;wait:100;frame;lspextras" "$P/h.cpp"
 check "no colours of the server's with lsp.semantic_colors off" 'hints: | colours:'
+# The servers' colours are the theme's of the appearance the window has,
+# whichever the system is in (a test build's BLIT_APPEARANCE pins it).
+export BLIT_APPEARANCE=light
+run "frame;wait:100;frame;lspextras:colours" "$P/h.cpp"
+check "the servers' colours in a light appearance: the light theme's" 'hints: | colours: call=function#325cc0 p_size=variable.parameter#1a1a1c Widget=type#a87b00 MAX_SIZE=function.macro#325cc0'
+BLIT_APPEARANCE=dark
+run "frame;wait:100;frame;lspextras:colours" "$P/h.cpp"
+check "the servers' colours in a dark appearance: the dark theme's" 'hints: | colours: call=function#61afef p_size=variable.parameter#dbdedb Widget=type#e5c07b MAX_SIZE=function.macro#61afef'
+unset BLIT_APPEARANCE
 
 # A server that closes its input and keeps its output open: its output is
 # waited for, with nothing spinning meanwhile.

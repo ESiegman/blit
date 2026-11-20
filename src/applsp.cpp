@@ -1442,8 +1442,9 @@ u32 App::lsp_gutter(const Doc& d, u64 line) {
 }
 
 // (Tests.) The view in front's inlay hints as they are put in ("line:col
-// label"), and the servers' colours laid over tree-sitter's ("text=capture").
-std::string App::lsp_extras_dump() {
+// label"), and the servers' colours laid over tree-sitter's ("text=capture",
+// or with `colours` "text=capture#rrggbb").
+std::string App::lsp_extras_dump(bool colours) {
     const Assist::Extras& x = assist_->extras[pane_->view];
     std::string out = "hints:";
     for (size_t i = 0; i < x.notes.size() && i < x.labels.size(); ++i)
@@ -1455,6 +1456,12 @@ std::string App::lsp_extras_dump() {
             if (m.style[i] < x.styles || m.style[i] - x.styles >= x.made.size()) continue;
             const u64 a = m.at(i), b = i + 1 < m.size() ? m.at(i + 1) : m.end;
             out += " " + pane_->doc->ed.buf.text(a, std::min<u64>(b - a, 40)) + "=" + x.made[m.style[i] - x.styles];
+            if (colours) {
+                const float* c = theme_.palette[(x.lut[m.style[i]] >> kCellInkShift) & 31];
+                char hex[8];
+                std::snprintf(hex, sizeof hex, "#%02x%02x%02x", static_cast<int>(c[0] * 255 + 0.5f), static_cast<int>(c[1] * 255 + 0.5f), static_cast<int>(c[2] * 255 + 0.5f));
+                out += hex;
+            }
         }
     return out;
 }
@@ -2313,7 +2320,7 @@ void App::lsp_extras(FrameDesc& fd) {
             bool inks_hold = true;
             for (const auto& [ink, c] : x.inks)
                 inks_hold = inks_hold && theme_.palette[ink][0] == c.r && theme_.palette[ink][1] == c.g && theme_.palette[ink][2] == c.b && theme_.palette[ink][3] == 1;
-            const u64 lut_key = (reinterpret_cast<u64>(&types) * 31 + styles) * 2 + (SDL_GetSystemTheme() != SDL_SYSTEM_THEME_LIGHT ? 1 : 0);
+            const u64 lut_key = (reinterpret_cast<u64>(&types) * 31 + styles) * 2 + (dark() ? 1 : 0);
             if (lut_key != x.lut_key || !inks_hold || x.styles != styles || (own && std::memcmp(x.lut, d.style_bits, styles * sizeof(u32)) != 0)) {
                 x.lut_key = lut_key;
                 x.styles = styles;
@@ -2323,7 +2330,7 @@ void App::lsp_extras(FrameDesc& fd) {
                 x.inks.clear();
                 x.type_style.assign(types.size(), 0);
                 x.builtin_style.assign(types.size(), 0);
-                const ThemeColors& tc = cfg_.theme(SDL_GetSystemTheme() != SDL_SYSTEM_THEME_LIGHT);
+                const ThemeColors& tc = cfg_.theme(dark());  // (as pick_theme() chose it)
                 u32 next = styles;
                 std::vector<std::string>& made = x.made;
                 made.clear();

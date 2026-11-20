@@ -636,7 +636,8 @@ int App::run_bench() {
 //   lspdump                print the language servers (name, project, documents) and which tabs are on one
 //   lspidle:MS             a server with no documents left stops after MS milliseconds
 //   lsptext                print the text of the file in front, its lines joined by " / "
-//   lspextras              print the inlay hints on show in the file in front, and the servers' colours there
+//   lspextras[:colours]    print the inlay hints on show in the file in front, and the servers' colours there
+//                          (:colours, with the colour each is drawn in, #rrggbb)
 //   asked                  print the last question a box would have asked (scripted runs answer yes, or Don't Save)
 //   clock; within:MS       start a stopwatch; print whether the main thread got here within MS milliseconds
 //   lap:LABEL              print the milliseconds since the stopwatch started (or the last lap), and start it again
@@ -730,7 +731,7 @@ void App::run_script(const char* script) {
             for (size_t at = t.find('\n'); at != std::string::npos; at = t.find('\n', at + 3)) t.replace(at, 1, " / ");
             std::fprintf(stderr, "%s\n", t.c_str());
         } else if (verb == "lspextras") {
-            std::fprintf(stderr, "%s\n", lsp_extras_dump().c_str());
+            std::fprintf(stderr, "%s\n", lsp_extras_dump(arg == "colours").c_str());
         } else if (verb == "cpuquiet") {  // cpuquiet:MS, the CPU time every thread took while the main one slept MS ms: "quiet" under a quarter of it
             const std::clock_t c0 = std::clock();
             const u64 t0 = now_ns();
