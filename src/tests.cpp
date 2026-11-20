@@ -129,6 +129,18 @@ std::vector<TestOutcome> parse_junit(std::string_view xml) {
                 o.result = TestCase::kFailed;
                 const size_t fc = body.find('>', f);
                 o.message = attribute(body.substr(f, fc == std::string_view::npos ? std::string_view::npos : fc - f), "message");
+                // (pytest's for a module it could not collect says only that:
+                // why is the last of the "E   " lines its text ends with.)
+                if (o.message == "collection failure")
+                    for (size_t l = 0; l < body.size();) {
+                        size_t nl = body.find('\n', l);
+                        if (nl == std::string_view::npos) nl = body.size();
+                        std::string_view line = body.substr(l, nl - l);
+                        if (const size_t lt = line.find('<'); lt != std::string_view::npos) line = line.substr(0, lt);  // ("...</error>")
+                        if (line.starts_with("E ") && line.find_first_not_of(' ', 1) != std::string_view::npos)
+                            o.message = unescape(line.substr(line.find_first_not_of(' ', 1)));
+                        l = nl + 1;
+                    }
             } else if (body.find("<skipped") != std::string_view::npos) {
                 o.result = TestCase::kSkipped;
             }

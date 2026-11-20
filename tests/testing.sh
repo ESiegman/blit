@@ -111,6 +111,10 @@ for a in "$@"; do
         --junitxml=*) report=${a#--junitxml=} ;;
     esac
 done
+if [ -e tests/test_bad.py ]; then  # (as pytest reports a module it cannot import: and nothing runs)
+    printf '<testsuites><testsuite><testcase classname="" name="tests.test_bad" time="0"><error message="collection failure">tests/test_bad.py:1: in &lt;module&gt;\nE   ModuleNotFoundError: No module named &apos;nosuch&apos;</error></testcase></testsuite></testsuites>' >"$report"
+    exit 2
+fi
 printf '<testsuites><testsuite><testcase classname="tests.test_v" name="test_one" time="0.1"/><testcase classname="tests.test_v" name="test_two" time="0.1"><failure message="no"/></testcase></testsuite></testsuites>' >"$report"
 EOF
 chmod +x "$V/.venv/bin/python"
@@ -118,6 +122,10 @@ got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$V;f
 check "pytest in the project's .venv: found and run" 'tests/test_v.py: +test_one xtest_two | here: 1+ 5x'
 got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$V;frame;builddump;command:Run the tests with coverage;testdump;coveragedump" "$V/tests/test_v.py" 2>&1 >/dev/null | tail -1)
 check "and coverage.py there, its report in the run configuration's environment" 'here: ran 1 2 5, missed 6 | files: tests/test_v.py=75%'
+printf 'import nosuch\n' >"$V/tests/test_bad.py"
+got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$V;frame;testdump;command:Run the tests;testdump" "$V/tests/test_v.py" 2>&1 >/dev/null | grep '^blit: ' | tail -1)
+check "a module pytest could not collect: said, and why" "blit: pytest could not collect tests/test_bad.py: ModuleNotFoundError: No module named 'nosuch'"
+rm "$V/tests/test_bad.py"
 rm "$V/.venv/bin/python"
 got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$V;frame;testdump" "$V/tests/test_v.py" 2>&1 >/dev/null | tail -1)
 case "$got" in "No tests found: "*"No module named pytest") got="said" ;; esac

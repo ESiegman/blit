@@ -396,11 +396,14 @@ void App::test_take(std::vector<std::string> texts) {
     std::string host, there;
     const bool remote = split_remote(u.root, &host, &there);
     u32 passed = 0, failed = 0;
+    std::string uncollected;  // (the first module pytest could not collect, and why: the run stopped there)
+    u32 more = 0;
     size_t k = 0;
     texts.resize(u.reports.size() + u.cov_reports.size());
     for (const auto& [r, of] : u.reports) {
         const std::string& xml = texts[k++];
-        for (const TestOutcome& o : parse_junit(xml))
+        for (const TestOutcome& o : parse_junit(xml)) {
+            bool known = false;
             for (TestCase& t : u.tests)
                 if ((t.runner == TestCase::kCTest ? t.dir == of : of.empty()) && outcome_is(o, t)) {  // (two build folders have tests of the same name)
                     t.result = o.result;
@@ -408,10 +411,21 @@ void App::test_take(std::vector<std::string> texts) {
                     t.seconds = o.seconds;
                     passed += o.result == TestCase::kPassed;
                     failed += o.result == TestCase::kFailed;
+                    known = true;
                     break;
                 }
+            if (known || !of.empty() || !o.classname.empty() || o.result != TestCase::kFailed) continue;
+            if (!uncollected.empty()) {
+                ++more;
+                continue;
+            }
+            std::string file = o.name;  // ("tests.test_a": tests/test_a.py)
+            std::ranges::replace(file, '.', '/');
+            uncollected = "pytest could not collect " + file + ".py" + (o.message.empty() ? std::string() : ": " + o.message);
+        }
     }
     u.reports.clear();
+    if (more) uncollected += " (and " + std::to_string(more) + " more)";
     // What a run with coverage ran.
     if (!u.cov_reports.empty()) {
         u.coverage.clear();
@@ -434,13 +448,15 @@ void App::test_take(std::vector<std::string> texts) {
         std::ranges::sort(u.cov_files);
         u.cov_files.erase(std::ranges::unique(u.cov_files).begin(), u.cov_files.end());
         u.cov_shown = !u.coverage.empty();
-        notify(u.coverage.empty() ? std::string(python ? "No coverage was recorded (coverage.py installed for " + python_named(u.python, u.root) + "?)" : "No coverage was recorded (built with --coverage?)")
-                                  : "Coverage: " + std::to_string(static_cast<int>(100.0 * static_cast<double>(hit) / static_cast<double>(std::max<size_t>(all, 1)) + 0.5)) + "% of the lines in " + std::to_string(u.cov_files.size()) + " files");
+        notify(!uncollected.empty() ? uncollected
+               : u.coverage.empty() ? std::string(python ? "No coverage was recorded (coverage.py installed for " + python_named(u.python, u.root) + "?)" : "No coverage was recorded (built with --coverage?)")
+                                    : "Coverage: " + std::to_string(static_cast<int>(100.0 * static_cast<double>(hit) / static_cast<double>(std::max<size_t>(all, 1)) + 0.5)) + "% of the lines in " + std::to_string(u.cov_files.size()) + " files");
         ++test_gen_;
         dirty_ = true;
         return;
     }
-    if (passed + failed) notify(failed ? std::to_string(failed) + " failed, " + std::to_string(passed) + " passed" : "All " + std::to_string(passed) + " passed");
+    if (!uncollected.empty()) notify(uncollected);
+    else if (passed + failed) notify(failed ? std::to_string(failed) + " failed, " + std::to_string(passed) + " passed" : "All " + std::to_string(passed) + " passed");
     ++test_gen_;
     dirty_ = true;
 }

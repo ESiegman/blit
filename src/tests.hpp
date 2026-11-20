@@ -33,7 +33,8 @@ std::vector<TestCase> parse_ctest_json(std::string_view text, const std::string&
 std::vector<TestCase> parse_pytest_collect(std::string_view text);
 
 // One test's outcome in a JUnit XML report (CTest's --output-junit,
-// pytest's --junitxml).
+// pytest's --junitxml; and pytest's for a module it could not collect: no
+// classname, the module's dotted name, failed, why as its message).
 struct TestOutcome {
     std::string name, classname;
     TestCase::Result result = TestCase::kPassed;

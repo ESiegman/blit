@@ -5198,6 +5198,13 @@ void tests_test() {
     const std::vector<TestOutcome> ju = parse_junit(R"(<testsuite><testcase name="Math.Adds" classname="Math.Adds" time="0.25"/><testcase name="plain" time="1"><failure message="x &lt; 2">trace</failure></testcase><testcase name="s"><skipped/></testcase></testsuite>)");
     check(ju.size() == 3 && ju[0].result == TestCase::kPassed && ju[0].seconds == 0.25 && ju[1].result == TestCase::kFailed && ju[1].message == "x < 2" && ju[2].result == TestCase::kSkipped,
           "a JUnit report: passed, failed with its message, skipped");
+    const std::vector<TestOutcome> cf = parse_junit(R"(<testsuite><testcase classname="" name="tests.test_b" time="0.000"><error message="collection failure">ImportError while importing test module 'b'.
+Traceback:
+tests/test_b.py:1: in &lt;module&gt;
+    import nosuch
+E   ModuleNotFoundError: No module named 'nosuch'</error></testcase></testsuite>)");
+    check(cf.size() == 1 && cf[0].result == TestCase::kFailed && cf[0].classname.empty() && cf[0].name == "tests.test_b" && cf[0].message == "ModuleNotFoundError: No module named 'nosuch'",
+          "pytest's report of a module it could not collect: why, as its last E line says");
     TestOutcome o;
     o.name = "test_y";
     o.classname = "tests.test_a.TestK";

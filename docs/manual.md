@@ -2460,10 +2460,11 @@ as CTest has it), **c** runs them all with coverage, and Cmd+R looks for
 them again. The commands "Run the tests", "Run the failed tests again",
 "Run the test at the cursor" and "Debug the test at the cursor" do the
 same from anywhere. A run goes to the output terminal, where its output
-shows; each runner writes a JUnit report, read when it ends. Where a test
-is defined (`TEST(A, B)`, `TEST_F`, `TEST_CASE("x")`, `SCENARIO`; `def
-test_x`, in a `Test` class or not) its mark beside the line number shows
-how it went, and a click on it runs it (Option-click debugs it). A run
+shows; each runner writes a JUnit report, read when it ends (a module
+pytest could not collect, which stops its run, is said, with why). Where
+a test is defined (`TEST(A, B)`, `TEST_F`, `TEST_CASE("x")`, `SCENARIO`;
+`def test_x`, in a `Test` class or not) its mark beside the line number
+shows how it went, and a click on it runs it (Option-click debugs it). A run
 asked for before the tests are found runs once they are; opening a file
 with tests in it looks for them. In a project on another machine they
 are found and run there, and the reports are written in blit's cache
