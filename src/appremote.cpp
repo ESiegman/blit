@@ -582,9 +582,11 @@ void App::remote_sync() {
                 if (is_notebook_path(x.path)) nb_load(*d);  // (a notebook: the script of its cells)
                 d->disk_stamp = x.modified;
                 remote_opened(*where, *d, false);
-                if (d->nb && where->doc == d && !restoring_) {  // (and drawn beside it)
+                if (d->nb && where->doc == d && !restoring_) {  // (and drawn beside it; the keyboard stays where it is now)
+                    Pane* const focused = pane_;
                     pane_ = where;
                     md_open();
+                    focus_pane(focused);
                 }
                 break;
             case 1:  // not there: a new file, made when it is saved

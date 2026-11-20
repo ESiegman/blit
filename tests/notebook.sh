@@ -432,7 +432,12 @@ got=$(printf '%s\n' "$got" | grep -E '^H\(|^[0-9] code|KeyboardInterrupt$|^5: +h
 check "on another machine: run there, interrupted there" "H(>[r.ipynb*] | [Notebook: r.ipynb*])0.50|2 code [1] same stream execute_result|3 code [2] same stream error|4 code [ ] same|half of 42|KeyboardInterrupt|"
 got="$(ls "$there/.cache/blit" | grep -c '^kernel-[0-9a-f]*\.py$') $(outputs "$there/work/r.ipynb" | tr '\n' '|') $(alive $kernel)"
 check "on another machine: the helper written there once, saved as a notebook, nothing left running" "1 1: stream(half of 42) execute_result|2: stream(careful) error|None:| gone"
-
+# A slow host: the notebook comes after the keyboard has gone to another
+# split, and its view opens beside it without taking the keyboard back.
+python3 "$dir/make-run.py" "$there/work/r.ipynb"
+got=$(BLIT_FAKE_SLOW=0.3 BLIT_SSH="$(cd "$(dirname "$0")" && pwd)/fake-ssh.sh" BLIT_FAKE_HOME="$there" "$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" \
+    --script "open:ssh://box$there/work/r.ipynb;key:cmd+\\;key:Escape;frame;dump;remotewait;mdwait;frame;dump" 2>&1 >/dev/null | tr '\n' '|')
+check "a slow host: the view opens, the keyboard stays where it went" "H([r.ipynb*] | >[untitled*])0.50|H(H([r.ipynb*] | [Notebook: r.ipynb*])0.50 | >[untitled*])0.50|"
 # With IPython, where python3 has it: its display hooks, magics and tracebacks.
 if python3 -c 'import IPython' 2>/dev/null; then
     mkdir -p "$dir/ipython" && python3 "$dir/make-run.py" "$dir/ipython/r.ipynb"
