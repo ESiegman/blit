@@ -114,15 +114,34 @@ std::string preset_dir(const json::Value& presets, std::string_view name, std::s
     return {};
 }
 
+// The configure preset a build preset builds, through what it inherits.
+std::string build_configure(const json::Value& presets, std::string_view name, int depth = 0) {
+    if (depth > 8) return {};
+    for (json::Value p : presets) {
+        if (p["name"].str() != name) continue;
+        if (!p["configurePreset"].str().empty()) return std::string(p["configurePreset"].str());
+        const json::Value up = p["inherits"];
+        if (up.is_string()) return build_configure(presets, up.str(), depth + 1);
+        for (json::Value u : up)
+            if (std::string conf = build_configure(presets, u.str(), depth + 1); !conf.empty()) return conf;
+        return {};
+    }
+    return {};
+}
+
 void cmake(Look& c) {
     if (!c.file("CMakeLists.txt")) return;
     bool presets = false, built = false;
     std::vector<std::string> preset_dirs;
-    for (const char* name : {"CMakePresets.json", "CMakeUserPresets.json"}) {
-        if (!c.file(name)) continue;
-        json::Doc d;
-        if (!d.parse(c.read(name))) continue;
-        const json::Value root = d.root();
+    auto configured = [&](const std::string& dir) { return fs_kind(c.root + "/" + dir + "/CMakeCache.txt") == 1; };
+    // (Either file's presets may name the other's.)
+    const char* const names[2] = {"CMakePresets.json", "CMakeUserPresets.json"};
+    json::Doc docs[2];
+    bool read[2] = {};
+    for (int i = 0; i < 2; ++i) read[i] = c.file(names[i]) && docs[i].parse(c.read(names[i]));
+    for (int i = 0; i < 2; ++i) {
+        if (!read[i]) continue;
+        const json::Value root = docs[i].root();
         auto shown = [&](const char* key, auto fn) {
             for (json::Value p : root[key])
                 if (!p["hidden"].boolean() && !p["name"].str().empty()) fn(std::string(p["name"].str()));
@@ -133,14 +152,20 @@ void cmake(Look& c) {
             if (std::string dir = preset_dir(root["configurePresets"], n); !dir.empty()) preset_dirs.push_back(dir);
         });
         shown("buildPresets", [&](const std::string& n) {
-            c.add("Build (" + n + ")", "cmake --build --preset " + sh_quote(n), !built);
+            std::string cmd = "cmake --build --preset " + sh_quote(n);
+            // Its folder not configured yet (a fresh clone): configured first.
+            if (const std::string conf = build_configure(root["buildPresets"], n); !conf.empty()) {
+                std::string dir = preset_dir(root["configurePresets"], conf);
+                if (dir.empty() && read[1 - i]) dir = preset_dir(docs[1 - i].root()["configurePresets"], conf);
+                if (!dir.empty() && !configured(dir)) cmd = "cmake --preset " + sh_quote(conf) + " && " + cmd;
+            }
+            c.add("Build (" + n + ")", cmd, !built);
             built = true;
         });
         shown("testPresets", [&](const std::string& n) { c.add("Test (" + n + ")", "ctest --preset " + sh_quote(n)); });
     }
     // Folders configured already: build*, cmake-build-*, out, and those one level in (build/debug).
     std::vector<std::string> dirs;
-    auto configured = [&](const std::string& dir) { return fs_kind(c.root + "/" + dir + "/CMakeCache.txt") == 1; };
     for (const FsEntry& e : c.files) {
         if (!e.dir || !(e.name.starts_with("build") || e.name.starts_with("cmake-build") || e.name == "out")) continue;
         if (configured(e.name)) {

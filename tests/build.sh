@@ -66,10 +66,15 @@ run "$dir/cm" "builddump"
 check "CMakeLists.txt, never configured" 'CMake: >Build Configure Test'
 run "$dir/pre" "builddump"
 check "presets: the ones shown, a build preset's folder by its preset" 'CMake: Configure (dev) >Build (dev)'
+build_dev="lua:for _, t in ipairs(blit.build.tasks()) do if t.name == 'Build (dev)' then print(t.cmd) end end"
+run "$dir/pre" "$build_dev"
+check "a build preset whose folder is not configured yet: configured first" 'blit: cmake --preset dev && cmake --build --preset dev'
 mkdir -p "$dir/pre/out/dev"
 : >"$dir/pre/out/dev/CMakeCache.txt"
 run "$dir/pre" "builddump"
 check "configured: its folder (an inherited \${presetName}, the preset's own name) is still its preset's" 'CMake: Configure (dev) >Build (dev)'
+run "$dir/pre" "$build_dev"
+check "and built alone" 'blit: cmake --build --preset dev'
 run "$dir/mk" "builddump"
 check "a Makefile: make, and its targets (not files, patterns or variables)" 'Make: >make make all make test make install make clean make fail'
 run "$dir/ms" "builddump"

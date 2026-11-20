@@ -2316,7 +2316,9 @@ folder it was configured in: `build*`, `cmake-build-*`, `out`), Meson,
 make (with its targets), autotools and Ninja for C, C++ and HIP, and uv
 or pip for Python (its `.venv`, `pytest` when there are tests, `python -m`
 for a package with a `__main__`). Other languages' build systems are
-init.lua's to add, with `blit.build.add` (below).
+init.lua's to add, with `blit.build.add` (below). A build preset whose
+folder has not been configured yet (a fresh clone) configures it first
+(`cmake --preset debug && cmake --build --preset debug`).
 
 Each task is a command run by the shell. Enter runs the one chosen; Space
 makes it the one the **Run button** at the window's top right runs
