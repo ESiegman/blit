@@ -2318,7 +2318,10 @@ or pip for Python (its `.venv`, `pytest` when there are tests, `python -m`
 for a package with a `__main__`). Other languages' build systems are
 init.lua's to add, with `blit.build.add` (below). A build preset whose
 folder has not been configured yet (a fresh clone) configures it first
-(`cmake --preset debug && cmake --build --preset debug`).
+(`cmake --preset debug && cmake --build --preset debug`). Its folder may
+be outside the project (an absolute `binaryDir`), and its configure
+preset may be the other presets file's; one whose `binaryDir` has a macro
+blit cannot know (`$env{}`, `$penv{}`) is built alone.
 
 Each task is a command run by the shell. Enter runs the one chosen; Space
 makes it the one the **Run button** at the window's top right runs

@@ -75,6 +75,28 @@ run "$dir/pre" "builddump"
 check "configured: its folder (an inherited \${presetName}, the preset's own name) is still its preset's" 'CMake: Configure (dev) >Build (dev)'
 run "$dir/pre" "$build_dev"
 check "and built alone" 'blit: cmake --build --preset dev'
+# A binaryDir outside the folder: an absolute one, looked at where it is;
+# one with a macro not known here ($env{}), never configured again and again.
+mkdir -p "$dir/pre-abs" "$dir/pre-env"
+cp "$dir/cm/CMakeLists.txt" "$dir/pre-abs/CMakeLists.txt"
+cp "$dir/cm/CMakeLists.txt" "$dir/pre-env/CMakeLists.txt"
+printf '{"version": 6, "configurePresets": [{"name": "dev", "binaryDir": "%s/elsewhere/${presetName}"}], "buildPresets": [{"name": "dev", "configurePreset": "dev"}]}\n' "$dir" >"$dir/pre-abs/CMakePresets.json"
+printf '{"version": 6, "configurePresets": [{"name": "dev", "binaryDir": "$env{TMPDIR}/blit-never/${presetName}"}], "buildPresets": [{"name": "dev", "configurePreset": "dev"}]}\n' >"$dir/pre-env/CMakePresets.json"
+run "$dir/pre-abs" "$build_dev"
+check "an absolute binaryDir not configured yet: configured first" 'blit: cmake --preset dev && cmake --build --preset dev'
+mkdir -p "$dir/elsewhere/dev"
+: >"$dir/elsewhere/dev/CMakeCache.txt"
+run "$dir/pre-abs" "$build_dev"
+check "an absolute binaryDir configured: built alone" 'blit: cmake --build --preset dev'
+run "$dir/pre-env" "$build_dev"
+check "a binaryDir with \$env{}: built alone (where it is is not known here)" 'blit: cmake --build --preset dev'
+# A build preset of CMakeUserPresets.json that inherits one of CMakePresets.json.
+mkdir -p "$dir/pre-user"
+cp "$dir/cm/CMakeLists.txt" "$dir/pre-user/CMakeLists.txt"
+printf '{"version": 6, "configurePresets": [{"name": "base", "binaryDir": "${sourceDir}/build/${presetName}"}], "buildPresets": [{"name": "base", "hidden": true, "configurePreset": "base"}]}\n' >"$dir/pre-user/CMakePresets.json"
+printf '{"version": 6, "buildPresets": [{"name": "dev", "inherits": "base"}]}\n' >"$dir/pre-user/CMakeUserPresets.json"
+run "$dir/pre-user" "$build_dev"
+check "a user build preset inheriting the project's: its configure preset found there" 'blit: cmake --preset base && cmake --build --preset dev'
 run "$dir/mk" "builddump"
 check "a Makefile: make, and its targets (not files, patterns or variables)" 'Make: >make make all make test make install make clean make fail'
 run "$dir/ms" "builddump"

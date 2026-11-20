@@ -87,45 +87,62 @@ struct Look {
 
 // ---------------------------------------------------------------- CMake
 
+// A preset kind's lists, both files' (either file's presets may name, and
+// inherit from, the other's).
+using PresetLists = std::vector<json::Value>;
+
+// A macro of CMake's still in it (${sourceParentDir}, $env{HOME},
+// $penv{PATH}, $vendor{x}): what it stands for is not known here.
+bool unexpanded(std::string_view dir) {
+    for (size_t at = dir.find('$'); at != std::string_view::npos; at = dir.find('$', at + 1)) {
+        size_t i = at + 1;
+        while (i < dir.size() && std::isalpha(static_cast<unsigned char>(dir[i]))) ++i;
+        if (i < dir.size() && dir[i] == '{') return true;
+    }
+    return false;
+}
+
 // A configure preset's binaryDir, through what it inherits, with the macros
 // that can be known here filled in (${presetName} is the one asked about,
-// not the one it inherits the binaryDir from).
-std::string preset_dir(const json::Value& presets, std::string_view name, std::string_view asked = {}, int depth = 0) {
+// not the one it inherits the binaryDir from); "" when one cannot be.
+std::string preset_dir(const PresetLists& lists, std::string_view name, std::string_view asked = {}, int depth = 0) {
     if (depth > 8) return {};
     if (asked.empty()) asked = name;
-    for (json::Value p : presets) {
-        if (p["name"].str() != name) continue;
-        std::string dir(p["binaryDir"].str());
-        if (!dir.empty()) {
-            auto put = [&](std::string_view macro, std::string_view with) {
-                for (size_t at; (at = dir.find(macro)) != std::string::npos;) dir.replace(at, macro.size(), with);
-            };
-            put("${sourceDir}/", "");
-            put("${sourceDir}", ".");
-            put("${presetName}", asked);
-            return dir.find("${") == std::string::npos ? dir : std::string();
+    for (const json::Value& presets : lists)
+        for (json::Value p : presets) {
+            if (p["name"].str() != name) continue;
+            std::string dir(p["binaryDir"].str());
+            if (!dir.empty()) {
+                auto put = [&](std::string_view macro, std::string_view with) {
+                    for (size_t at; (at = dir.find(macro)) != std::string::npos;) dir.replace(at, macro.size(), with);
+                };
+                put("${sourceDir}/", "");
+                put("${sourceDir}", ".");
+                put("${presetName}", asked);
+                return unexpanded(dir) ? std::string() : dir;
+            }
+            const json::Value up = p["inherits"];
+            if (up.is_string()) return preset_dir(lists, up.str(), asked, depth + 1);
+            for (json::Value u : up)
+                if (std::string d = preset_dir(lists, u.str(), asked, depth + 1); !d.empty()) return d;
+            return {};
         }
-        const json::Value up = p["inherits"];
-        if (up.is_string()) return preset_dir(presets, up.str(), asked, depth + 1);
-        for (json::Value u : up)
-            if (std::string d = preset_dir(presets, u.str(), asked, depth + 1); !d.empty()) return d;
-        return {};
-    }
     return {};
 }
 
 // The configure preset a build preset builds, through what it inherits.
-std::string build_configure(const json::Value& presets, std::string_view name, int depth = 0) {
+std::string build_configure(const PresetLists& lists, std::string_view name, int depth = 0) {
     if (depth > 8) return {};
-    for (json::Value p : presets) {
-        if (p["name"].str() != name) continue;
-        if (!p["configurePreset"].str().empty()) return std::string(p["configurePreset"].str());
-        const json::Value up = p["inherits"];
-        if (up.is_string()) return build_configure(presets, up.str(), depth + 1);
-        for (json::Value u : up)
-            if (std::string conf = build_configure(presets, u.str(), depth + 1); !conf.empty()) return conf;
-        return {};
-    }
+    for (const json::Value& presets : lists)
+        for (json::Value p : presets) {
+            if (p["name"].str() != name) continue;
+            if (!p["configurePreset"].str().empty()) return std::string(p["configurePreset"].str());
+            const json::Value up = p["inherits"];
+            if (up.is_string()) return build_configure(lists, up.str(), depth + 1);
+            for (json::Value u : up)
+                if (std::string conf = build_configure(lists, u.str(), depth + 1); !conf.empty()) return conf;
+            return {};
+        }
     return {};
 }
 
@@ -133,12 +150,26 @@ void cmake(Look& c) {
     if (!c.file("CMakeLists.txt")) return;
     bool presets = false, built = false;
     std::vector<std::string> preset_dirs;
-    auto configured = [&](const std::string& dir) { return fs_kind(c.root + "/" + dir + "/CMakeCache.txt") == 1; };
-    // (Either file's presets may name the other's.)
+    // (A binaryDir may be outside the folder: an absolute one is on the
+    // folder's machine, so another machine's starts with its ssh://host.)
+    auto configured = [&](const std::string& dir) {
+        std::string at = c.root + "/" + dir;
+        if (dir.starts_with('/')) {
+            at = dir;
+            if (const size_t scheme = c.root.find("://"); scheme != std::string::npos) at = c.root.substr(0, c.root.find('/', scheme + 3)) + dir;
+        }
+        return fs_kind(at + "/CMakeCache.txt") == 1;
+    };
     const char* const names[2] = {"CMakePresets.json", "CMakeUserPresets.json"};
     json::Doc docs[2];
     bool read[2] = {};
-    for (int i = 0; i < 2; ++i) read[i] = c.file(names[i]) && docs[i].parse(c.read(names[i]));
+    PresetLists configures, builds;
+    for (int i = 0; i < 2; ++i) {
+        read[i] = c.file(names[i]) && docs[i].parse(c.read(names[i]));
+        if (!read[i]) continue;
+        configures.push_back(docs[i].root()["configurePresets"]);
+        builds.push_back(docs[i].root()["buildPresets"]);
+    }
     for (int i = 0; i < 2; ++i) {
         if (!read[i]) continue;
         const json::Value root = docs[i].root();
@@ -149,14 +180,15 @@ void cmake(Look& c) {
         shown("configurePresets", [&](const std::string& n) {
             presets = true;
             c.add("Configure (" + n + ")", "cmake --preset " + sh_quote(n));
-            if (std::string dir = preset_dir(root["configurePresets"], n); !dir.empty()) preset_dirs.push_back(dir);
+            if (std::string dir = preset_dir(configures, n); !dir.empty()) preset_dirs.push_back(dir);
         });
         shown("buildPresets", [&](const std::string& n) {
             std::string cmd = "cmake --build --preset " + sh_quote(n);
-            // Its folder not configured yet (a fresh clone): configured first.
-            if (const std::string conf = build_configure(root["buildPresets"], n); !conf.empty()) {
-                std::string dir = preset_dir(root["configurePresets"], conf);
-                if (dir.empty() && read[1 - i]) dir = preset_dir(docs[1 - i].root()["configurePresets"], conf);
+            // Its folder not configured yet (a fresh clone): configured
+            // first. (Not when where it is cannot be known here: a
+            // $env{} one, say, would be configured again at every build.)
+            if (const std::string conf = build_configure(builds, n); !conf.empty()) {
+                const std::string dir = preset_dir(configures, conf);
                 if (!dir.empty() && !configured(dir)) cmd = "cmake --preset " + sh_quote(conf) + " && " + cmd;
             }
             c.add("Build (" + n + ")", cmd, !built);
