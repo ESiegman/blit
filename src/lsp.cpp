@@ -40,10 +40,12 @@ const std::vector<LspServer>& builtin_lsp_servers() {
     // Each server's usual command line. Where several servers handle one
     // language, the first one that is installed is used.
     static const std::vector<LspServer> list = {
-        // (clangd would otherwise index the whole project in the background,
-        // on every core; an editor for one file at a time has little use for
-        // that. blit.opt.lsp.servers.clangd in init.lua can turn it back on.)
-        {"clangd", {"clangd", "--background-index=false"}, {"c", "cpp"},
+        // (clangd indexes the whole project in the background, so that
+        // references, rename and the counts reach files that are not open:
+        // at the lowest priority, on four threads at most whatever the
+        // machine, so that it never competes with typing or a build. How
+        // far it has got comes as $/progress, shown beside its name.)
+        {"clangd", {"clangd", "--background-index", "--background-index-priority=background", "-j=4"}, {"c", "cpp"},
          {"compile_commands.json", "compile_flags.txt", ".clangd", ".git"}, "", "", true},
         {"pyright", {"pyright-langserver", "--stdio"}, {"python"},
          {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "pyrightconfig.json", ".git"}, "", "", true},
@@ -402,7 +404,7 @@ enum : u8 {
     kInReady = 1, kInFailed, kInStopped, kInDiagnostics, kInCompletion, kInHover, kInSignature, kInDefinition,
     kInReferences, kInPrepareRename, kInRename, kInFormat, kInActions, kInResolve, kInHints, kInTokens,
     kInPull, kInWorkspacePull, kInApplyEdit, kInRefresh, kInIgnore, kInPlaces, kInHighlight, kInOutline, kInSymbols, kInSwitch,
-    kInHierarchy, kInCount,
+    kInHierarchy, kInCount, kInProgress,
 };
 // What a server asks to have asked again (kInRefresh).
 enum : u8 { kRefreshTokens = 1, kRefreshHints = 2, kRefreshDiagnostics = 4 };
@@ -480,6 +482,7 @@ struct In {
     std::string result_id;
     std::vector<LspSymbol> symbols;
     std::vector<LspHierItem> hier;
+    std::string message;  // (a progress's: its title is in result_id, how far in percent in version)
 };
 
 }  // namespace
@@ -577,6 +580,12 @@ struct Lsp::Server {
     // Problems in files that are not open, by path.
     std::map<std::string, std::vector<ProblemFile::Item>> closed;
     u32 workspace_id = 0;   // a workspace/diagnostic under way
+    // What it says it is busy with ($/progress), by token, in the order begun:
+    // its title, and the title with how far it has got.
+    struct Progress {
+        std::string token, title, said;
+    };
+    std::vector<Progress> progress;
 };
 
 // One open document.
@@ -843,7 +852,7 @@ struct Lsp::Conn::Worker {
                  R"("workspace":{"configuration":true,"workspaceFolders":true,"applyEdit":true,"workspaceEdit":{"documentChanges":true},)"
                  R"("executeCommand":{},"semanticTokens":{"refreshSupport":true},"inlayHint":{"refreshSupport":true},)"
                  R"("diagnostics":{"refreshSupport":true}},)"
-                 R"("window":{"workDoneProgress":false}})");
+                 R"("window":{"workDoneProgress":true}})");
         w.end_object().end_object();
         frame(w.out);
     }
@@ -1473,6 +1482,22 @@ struct Lsp::Conn::Worker {
         c.push(std::move(m));
     }
 
+    // Work the server says it is doing (begun, how far, ended), such as
+    // clangd's background index ("indexing", "31/72").
+    void on_progress(Value params) {
+        const Value value = params["value"];
+        const std::string_view kind = value["kind"].str();
+        In m;
+        m.kind = kInProgress;
+        json::dump(m.text, params["token"]);
+        m.id = kind == "begin" ? 1 : kind == "report" ? 2 : kind == "end" ? 3 : 0;
+        if (!m.id) return;
+        m.result_id = value["title"].str();
+        m.message = value["message"].str();
+        m.version = value["percentage"].is_number() ? value["percentage"].integer() : -1;
+        c.push(std::move(m));
+    }
+
     void handle(std::string body) {
         json::Doc doc;
         if (!doc.parse(std::move(body))) return;
@@ -1482,6 +1507,7 @@ struct Lsp::Conn::Worker {
         if (!method.empty()) {
             if (id.exists()) answer_request(id, method, v["params"]);
             else if (method == "textDocument/publishDiagnostics") on_diagnostics(v["params"]);
+            else if (method == "$/progress") on_progress(v["params"]);
             return;
         }
         if (!id.is_number()) return;
@@ -2223,6 +2249,11 @@ const std::string* Lsp::server_of(u64 key, bool* ready) const {
     const Document* d = doc_of(key);
     if (ready) *ready = d && d->server->ready;
     return d ? &d->server->shown : nullptr;
+}
+
+const std::string* Lsp::progress_of(u64 key) const {
+    const Document* d = doc_of(key);
+    return d && !d->server->progress.empty() ? &d->server->progress.back().said : nullptr;
 }
 
 void Lsp::refresh(u64 key) {
@@ -3345,6 +3376,22 @@ u32 Lsp::poll() {
             case kInApplyEdit:
                 applies_.push_back({s, std::move(m.text), std::move(m.result_id), std::move(m.wedit)});
                 break;
+            case kInProgress: {
+                auto at = std::ranges::find(s->progress, m.text, &Server::Progress::token);
+                if (m.id == 3) {  // (ended)
+                    if (at != s->progress.end()) s->progress.erase(at);
+                } else {
+                    if (at == s->progress.end()) at = s->progress.insert(at, {m.text, {}, {}});
+                    if (m.id == 1) at->title = m.result_id;
+                    // ("indexing 31/72": its title, with the message or else the percentage)
+                    at->said = at->title;
+                    if (!m.message.empty()) at->said += (at->said.empty() ? "" : " ") + m.message;
+                    else if (m.version >= 0) at->said += (at->said.empty() ? "" : " ") + std::to_string(m.version) + "%";
+                }
+                ++state_gen_;
+                news |= kProgress;
+                break;
+            }
             case kInRefresh:
                 for (const std::unique_ptr<Document>& d : docs_) {
                     if (d->server != s) continue;

@@ -563,7 +563,8 @@ right: what a script put there (`blit.ui.status`), the errors and warnings
 them, one that both found on the same line counted once), the cursor's
 line and column (and what is selected:
 characters, or lines), the indentation, the line endings, and the language
-with its server; `C++ (no colours)` when that language's grammar is not
+with its server (and what the server says it is busy with: `C++ · clangd
+(indexing 31/72)`); `C++ (no colours)` when that language's grammar is not
 installed (see [Syntax highlighting](#syntax-highlighting)). A click on the
 repository part opens the side panel's Git tab, one on the problems its
 Problems tab, and one on the line and column Go to file with `:` typed, for
@@ -1743,7 +1744,7 @@ which also says which files are that language:
 -- blit.opt.lsp.enabled = false   -- no language servers at all
 
 blit.opt.lsp.servers.clangd = {   -- change a built-in server: only what is listed
-  command = { "clangd", "--background-index", "--clang-tidy" },
+  command = { "clangd", "--background-index=false", "--clang-tidy" },
   init_options = '{"fallbackFlags": ["-std=c++23"]}',
 }
 blit.opt.lsp.servers.marksman = { enabled = false }   -- never start this one
@@ -1764,9 +1765,15 @@ the protocol does when the server cares (`typescript`, `typescriptreact`,
 
 The project folder handed to the server is the nearest one above the file
 that holds one of the server's `roots`; files in two projects get a server
-each. clangd is started with `--background-index=false`: indexing a whole
-project on every core is a lot of work for an editor, and the example
-above turns it back on (references then reach files that are not open).
+each. clangd is started with its background index on, so that references,
+rename and the reference counts reach files that are not open:
+`--background-index --background-index-priority=background -j=4`, at the
+lowest priority and on four threads at most, whatever the machine. While
+it indexes, the status bar says how far it has got beside its name
+(`clangd (indexing 31/72)`). It keeps the index in `.cache/clangd` in the
+project's folder (a `.gitignore` entry for `.cache/` keeps it out of git),
+so the next start reads it rather than building it again. A command of
+your own replaces those flags; the example above turns the index off.
 
 The server's own output goes nowhere; `BLIT_LSP_LOG=/some/file blit ...`
 keeps it for when a server misbehaves.

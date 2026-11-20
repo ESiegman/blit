@@ -35,6 +35,11 @@ printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--workspace", "--name"
 printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--late", "300", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/late.lua"
 printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--hints-once", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\nblit.opt.lsp.inlay_hints = true\n' "$fake" >"$dir/hintsonce.lua"
 printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--close-input", "200", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/closing.lua"
+# clangd (the test server under its name) indexing the project: for long,
+# or done at once.
+for ms in 5000 0; do
+    printf 'blit.opt.lsp.servers.clangd = { command = { "%s", "--index", "%s", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" "$ms" >"$dir/index$ms.lua"
+done
 export BLIT_RECENT_FILE="$dir/recent"
 init=
 fresh() {
@@ -104,6 +109,10 @@ run "open:$P/notes.txt;lspsettle;open:$P/a.cpp;frame;statusdump"
 check "and back: its server and its problems at once" 'a.cpp | × 1 ▲ 1 Ln 1, Col 1 Tabs LF C++ · fakec'
 run "buildrun:make twice;buildwait;lspsettle;frame;statusdump"
 check "a problem both the build and the server found: counted once" 'a.cpp | × 2 ▲ 1 Ln 1, Col 1 Tabs LF C++ · fakec'
+with index5000 "frame;statusdump"
+check "clangd indexing: how far it has got, beside its name" 'a.cpp | × 1 ▲ 1 Ln 1, Col 1 Tabs LF C++ · clangd (indexing 1/2)'
+with index0 "wait:300;frame;statusdump"
+check "and nothing once it has finished" 'a.cpp | × 1 ▲ 1 Ln 1, Col 1 Tabs LF C++ · clangd'
 
 # Problems for the whole project, by file; F8 walks them across files.
 run "open:$P/b.py;open:$P/c.cpp;lspsettle;problemsdump"

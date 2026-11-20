@@ -2,7 +2,7 @@
 //
 //   blit_fakelsp [--utf8] [--full] [--slow MS] [--late MS] [--die-after N] [--items N] [--quiet]
 //                [--pull] [--workspace] [--no-prepare] [--default-rename] [--changes] [--noise]
-//                [--close-input MS] [--hints-once] [--name NAME]
+//                [--close-input MS] [--hints-once] [--index MS] [--name NAME]
 //
 // --utf8        agree to count columns in bytes (the default is UTF-16)
 // --full        ask for the whole document on every change
@@ -24,6 +24,8 @@
 // --close-input MS  once nothing has come for MS ms, close its input and keep
 //               its output open for two seconds more, saying nothing
 // --hints-once  answer inlay hints the first time, and with an error after
+// --index MS    index the project as clangd does, saying so through $/progress:
+//               begun ("indexing", "1/2") once initialized, ended MS ms later
 // --name NAME   what diagnostics give as their source (default "fake")
 //
 // It keeps every document it is sent. What it does with one:
@@ -85,7 +87,8 @@ namespace {
 
 bool utf16 = true;
 int sync_kind = 2;
-int slow_ms = 0, late_ms = 0, close_input_ms = 0;
+int slow_ms = 0, late_ms = 0, close_input_ms = 0, index_ms = -1;
+long long index_end = -1;  // when the indexing under way ends (ms of the steady clock; -1: none under way)
 long die_after = -1;
 long pad_items = 0;
 bool quiet = false, pull = false, workspace = false, prepare = true, by_changes = false, noise = false, default_rename = false, hints_once = false;
@@ -138,6 +141,31 @@ void send(const std::string& body) {
     std::printf("Content-Length: %zu\r\n\r\n", body.size());
     std::fwrite(body.data(), 1, body.size(), stdout);
     std::fflush(stdout);
+}
+
+long long now_ms() {
+    timespec t;
+    clock_gettime(CLOCK_MONOTONIC, &t);
+    return t.tv_sec * 1000LL + t.tv_nsec / 1'000'000;
+}
+
+void progress(const std::string& value) {
+    send(R"({"jsonrpc":"2.0","method":"$/progress","params":{"token":"backgroundIndexProgress","value":)" + value + "}}");
+}
+
+// The indexing under way (--index): ended once its time has come, a
+// message being waited for no longer than that.
+void index_tick() {
+    while (index_end >= 0) {
+        const long long left = index_end - now_ms();
+        if (left <= 0) {
+            progress(R"({"kind":"end"})");
+            index_end = -1;
+            break;
+        }
+        pollfd p{0, POLLIN, 0};
+        if (poll(&p, 1, static_cast<int>(left)) != 0) break;
+    }
 }
 
 bool word_char(char c) {
@@ -1088,11 +1116,12 @@ int main(int argc, char** argv) {
         else if (a == "--default-rename") default_rename = true;
         else if (a == "--close-input" && i + 1 < argc) close_input_ms = std::atoi(argv[++i]);
         else if (a == "--hints-once") hints_once = true;
+        else if (a == "--index" && i + 1 < argc) index_ms = std::atoi(argv[++i]);
         else if (a == "--name" && i + 1 < argc) source = argv[++i];
     }
-    if (close_input_ms > 0) setvbuf(stdin, nullptr, _IONBF, 0);  // (what has come is all read: poll() says when more has)
+    if (close_input_ms > 0 || index_ms >= 0) setvbuf(stdin, nullptr, _IONBF, 0);  // (what has come is all read: poll() says when more has)
     std::string body;
-    while (still_reading() && read_message(&body)) {
+    while ((index_tick(), still_reading()) && read_message(&body)) {
         if (die_after >= 0 && handled++ >= die_after) return 3;
         json::Doc doc;
         if (!doc.parse(body)) continue;
@@ -1124,6 +1153,12 @@ int main(int argc, char** argv) {
             reply(id, caps);
         } else if (method == "initialized") {
             send(R"({"jsonrpc":"2.0","id":9000,"method":"workspace/configuration","params":{"items":[{"section":"fake.level"}]}})");
+            if (index_ms >= 0) {  // (as clangd does: a progress to be shown asked for, begun, and how far it is)
+                send(R"({"jsonrpc":"2.0","id":9001,"method":"window/workDoneProgress/create","params":{"token":"backgroundIndexProgress"}})");
+                progress(R"({"kind":"begin","title":"indexing","percentage":0})");
+                progress(R"({"kind":"report","message":"1/2","percentage":50})");
+                index_end = now_ms() + index_ms;
+            }
         } else if (method.empty() && id.integer() == 9000) {
             std::string value;
             json::dump(value, v["result"].at(0));

@@ -538,7 +538,7 @@ void App::sync_lsp() {
         lsp_pending_ = true;  // (and the tabs it had, or that waited for one to come up, are offered another)
         dirty_ = true;
     }
-    if (news & (Lsp::kDiagnostics | Lsp::kHints | Lsp::kTokens)) dirty_ = true;
+    if (news & (Lsp::kDiagnostics | Lsp::kHints | Lsp::kTokens | Lsp::kProgress)) dirty_ = true;
     if (news & Lsp::kDiagnostics) {  // (the gutter's marks of fixes, looked at again)
         a.action_lines.clear();
         ++lsp_marks_gen_;

@@ -210,6 +210,7 @@ public:
         kSwitch = 262144,     // the header for a source file, or the source for a header
         kHierarchy = 524288,  // a call or type hierarchy's items (see hierarchy_list())
         kCounts = 1048576,    // how many references places have (see take_counts())
+        kProgress = 2097152,  // what a server says it is busy with changed (see progress_of())
     };
     // The levels of a hierarchy asked for under an item.
     enum HierKind : u8 { kCallsIn, kCallsOut, kSupertypes, kSubtypes };
@@ -252,6 +253,9 @@ public:
     // none), and whether it is up. What it says changes only with
     // state_generation().
     const std::string* server_of(u64 key, bool* ready = nullptr) const;
+    // What that server says it is busy with ($/progress: "indexing 31/72"),
+    // the latest of it; null when nothing. Changes with state_generation().
+    const std::string* progress_of(u64 key) const;
     u64 state_generation() const { return state_gen_; }
     // Its text was replaced without an edit (read again from disk): the
     // server is sent it whole. Cheap when it was not.

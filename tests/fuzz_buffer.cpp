@@ -3598,6 +3598,10 @@ void json_test() {
     size_t clangds = 0;
     for (const LspServer& s : servers) clangds += s.name == "clangd";
     check(clangds == 1 && servers.size() == builtin_lsp_servers().size() + 1, "built-in servers are not listed twice");
+    auto clangd_has = [](const char* flag) { return std::ranges::count(builtin_lsp_servers()[0].command, std::string(flag)) == 1; };
+    check(builtin_lsp_servers()[0].name == "clangd" && clangd_has("--background-index") && clangd_has("--background-index-priority=background") &&
+              clangd_has("-j=4"),
+          "clangd indexes the project in the background, at the lowest priority, on four threads at most");
     check(Lsp::pick(servers, "markdown", nullptr) == nullptr, "a switched-off server is never picked");
     for (const LspServer& s : builtin_lsp_servers())
         for (const std::string& l : s.languages)

@@ -426,8 +426,10 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                 u.right.push_back({u.lang.empty() ? std::string("Plain text") : language_name(u.lang), ink::kMuted, kLanguage, 2, 3});
                 // (What a narrow window drops first: the rest stays where it was without it.)
                 if (u.no_colours) u.right.push_back({"(no colours)", ink::kMuted, kLanguage, 1, 1});
-                if (server && !server->empty())  // (the tab's own: none for a tab on no server)
-                    u.right.push_back({"\xC2\xB7 " + *server + (server_ready ? "" : " (starting)"), ink::kMuted, kNone, 1, 2});  // (before the language)
+                if (server && !server->empty()) {  // (the tab's own: none for a tab on no server; what it is busy with, as it says)
+                    const std::string* busy = server_ready ? lsp_.progress_of(d.id) : nullptr;
+                    u.right.push_back({"\xC2\xB7 " + *server + (!server_ready ? " (starting)" : busy ? " (" + *busy + ")" : ""), ink::kMuted, kNone, 1, 2});  // (before the language)
+                }
             }
         }
 
