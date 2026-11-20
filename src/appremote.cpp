@@ -544,6 +544,13 @@ std::string App::remote_unreached() const {
     return remote_ && split_remote(remote_->unreached, &host, &there) ? host : std::string();
 }
 
+// Another file or folder opened since: the user has moved on, and what
+// could not be reached is neither named in the status bar nor opened when
+// its machine comes back.
+void App::remote_unreached_drop(const std::string& opened) {
+    if (remote_ && opened != remote_->unreached) remote_->unreached.clear();
+}
+
 bool App::remote_listing_busy() const {
     if (!remote_) return false;
     std::lock_guard lock(remote_->mu);

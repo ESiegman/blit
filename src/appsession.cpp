@@ -356,6 +356,7 @@ bool App::project_open(const std::string& path) {
     SessionUi& u = *session_;
     const std::string dir = folder_key(path);
     if (dir.empty()) return false;
+    remote_unreached_drop(dir);
     const bool same = dir == u.folder;
     if (!same) session_save();
     panel_set_workdir(dir);

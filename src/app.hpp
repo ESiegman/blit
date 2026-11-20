@@ -941,6 +941,7 @@ private:
     using RemoteErrand = std::function<std::function<void()>(std::stop_token)>;
     void remote_errand(RemoteErrand work);
     std::string remote_unreached() const;  // the machine of what was opened while it could not be reached ("": none)
+    void remote_unreached_drop(const std::string& opened);  // something else opened: that one is not opened when it can be
     bool panel_busy() const;  // (apppanel.cpp) the file tree is reading folders, or changing another machine's files
 
     // Profiling (appprofile.cpp): the side panel's Profile tab, a tab for

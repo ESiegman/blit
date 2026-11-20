@@ -142,6 +142,17 @@ echo refused >"$dir/down"
 got=$(BLIT_FAKE_DOWN="$dir/down" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
     --script "remotewait;frame;statusdump;lua:os.remove('$dir/down');command:Reconnect to the servers that dropped;remotewait;frame;statusdump;dump" "$R/notes.txt" 2>&1 >/dev/null | sed -e "s#$T#~#g" | join)
 check "and connected again: opened then" 'blit: cannot connect to box: ssh: connect to host: refused ;; box: not connected (connect again) untitled | Ln 1, Col 1 Tabs LF Plain text ;; box ~/work/notes.txt | Ln 1, Col 1 Tabs LF Plain text ;; >[notes.txt*]'
+# Unless something else was opened meanwhile: the bar no longer names box, and it is not opened then.
+mkdir -p "$dir/here" && printf 'here\n' >"$dir/here/local.txt"
+echo refused >"$dir/down"
+got=$(BLIT_FAKE_DOWN="$dir/down" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+    --script "remotewait;frame;open:$dir/here/local.txt;frame;statusdump;lua:os.remove('$dir/down');command:Reconnect to the servers that dropped;remotewait;frame;dump" "$R/notes.txt" 2>&1 >/dev/null | sed -e "s#$T#~#g" | join)
+check "a file here opened meanwhile: box not named, and not opened when it can be" 'blit: cannot connect to box: ssh: connect to host: refused ;; local.txt | Ln 1, Col 1 Tabs LF Plain text ;; >[local.txt*]'
+echo refused >"$dir/down"
+got=$(BLIT_FAKE_DOWN="$dir/down" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+    --script "remotewait;frame;folder:$dir/here;frame;statusdump;lua:os.remove('$dir/down');command:Reconnect to the servers that dropped;remotewait;frame;dump;lua:print(blit.workdir())" "$R" 2>&1 >/dev/null | sed -e "s#$T#~#g" -e "s#$dir#@#g" | join)
+check "and a folder here" 'blit: cannot connect to box: ssh: connect to host: refused ;; untitled | Ln 1, Col 1 Tabs LF Plain text ;; >[untitled*] ;; blit: @/here'
+rm -rf "$dir/here"
 
 # No key for the host: ssh's questions come to blit's box, hidden as they
 # are typed. (The password is the test's own, made up here.)

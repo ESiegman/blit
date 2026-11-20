@@ -712,6 +712,7 @@ void App::rescale_scroll(int old_cw, int old_ch) {
 // said so (another machine's, when its answer comes), and no tab is left.
 bool App::open_path(const char* p, bool must_exist) {
     const std::string full = full_path(p);
+    remote_unreached_drop(full);
     Pane* where = nullptr;
     size_t have = 0;
     if (find_open(full, &where, &have)) {

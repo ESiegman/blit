@@ -1940,7 +1940,8 @@ that is lost says so in red; click it to connect again (it is also made
 again by itself the next time something is opened or saved there, after
 a few seconds). So does one that could not be made when a file or folder
 there was opened (from the command line, say): connected again, it opens
-then.
+then (unless another file or folder has been opened since, which the status
+bar then shows instead).
 
 When the connection ends (blit quits, or the link drops), the agent ends
 what it started there, each program with all that program started in turn,
