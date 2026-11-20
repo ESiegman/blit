@@ -284,6 +284,18 @@ std::string format_date(i64 t, std::string_view fmt) {
     return out;
 }
 
+// A date as the axis says it: written by axisFormat, its runs of spaces
+// one space each (%e pads a day to two places, 'Oct  1': Mermaid's labels
+// are SVG text, where the two are one).
+std::string axis_label(i64 t, std::string_view fmt) {
+    const std::string all = format_date(t, fmt);
+    std::string out;
+    for (const char c : all)
+        if (c != ' ' || (!out.empty() && out.back() != ' ')) out += c;
+    while (!out.empty() && out.back() == ' ') out.pop_back();
+    return out;
+}
+
 // ---------------------------------------------------------------- drawing
 
 // Lines of text, their block centred on cy, each from x (align 0),
@@ -660,7 +672,7 @@ void draw_gantt(Gantt& g, const DiagramStyle& style, Drawing* d, DiagramGeometry
     auto labels_fit = [&](const std::vector<i64>& m) {
         if (m.size() < 2) return true;
         float most = 0;
-        for (const i64 t : m) most = std::max(most, font.width(format_date(t, axis_format), small));
+        for (const i64 t : m) most = std::max(most, font.width(axis_label(t, axis_format), small));
         return (x1 - x0) * static_cast<float>(static_cast<double>(m[1] - m[0]) / span) >= most + 14 * u;
     };
     if (!g.tick_interval.empty()) {
@@ -687,13 +699,19 @@ void draw_gantt(Gantt& g, const DiagramStyle& style, Drawing* d, DiagramGeometry
         }
     }
 
-    // Rows: a task each, as tall as its label (wrapped beside the bar).
+    // Rows: a task each. Its name is in its bar if it fits, else beside it
+    // on the side that has the room; a name too long for either side is
+    // wrapped beside the bar, or put on lines of its own above it, across
+    // the chart (whichever makes the lower row: a long name beside a bar
+    // late in the chart would be a column six lines tall).
     struct Row {
         float y = 0, h = 0;
         float bx = 0, bw = 0;           // the bar
         std::vector<std::string> label;
-        int side = 0;                   // 0 in the bar, 1 right of it, -1 left of it
+        int side = 0;                   // 0 in the bar, 1 right of it, -1 left of it, 2 above it
     };
+    // (names beside bars and above them stay this far inside the bands)
+    const float over_gap = 3 * u, chart_left = pad + col + 4 * u, chart_right = w - pad - 4 * u;
     std::vector<Row> rows(g.tasks.size());
     for (size_t i = 0; i < g.tasks.size(); ++i) {
         const Task& t = g.tasks[i];
@@ -707,15 +725,19 @@ void draw_gantt(Gantt& g, const DiagramStyle& style, Drawing* d, DiagramGeometry
         }
         const std::vector<std::string> one = diagram_label(t.name);
         const float tw = widest(one, font, size);
-        const float right = x1 + pad - 2 * u - (r.bx + r.bw + 8 * u), left = r.bx - 8 * u - (pad + col);
+        const float right = chart_right - (r.bx + r.bw + 8 * u), left = r.bx - 8 * u - chart_left;
         if (!t.milestone && one.size() == 1 && tw + 16 * u <= r.bw) r.label = one, r.side = 0;
         else if (tw <= right) r.label = one, r.side = 1;
         else if (tw <= left) r.label = one, r.side = -1;
         else {
             r.side = right >= left ? 1 : -1;
             r.label = diagram_wrap(one, std::max(std::max(right, left), 40 * u), size, font);
+            if (r.label.size() > 2) {
+                std::vector<std::string> over = diagram_wrap(one, chart_right - chart_left, size, font);
+                if (static_cast<float>(over.size()) * line + over_gap + bar_h < static_cast<float>(r.label.size()) * line + 4 * u) r.label = std::move(over), r.side = 2;
+            }
         }
-        r.h = std::max(bar_h, static_cast<float>(r.label.size()) * line + 4 * u);
+        r.h = r.side == 2 ? static_cast<float>(r.label.size()) * line + over_gap + bar_h : std::max(bar_h, static_cast<float>(r.label.size()) * line + 4 * u);
     }
 
     float y = pad;
@@ -790,7 +812,7 @@ void draw_gantt(Gantt& g, const DiagramStyle& style, Drawing* d, DiagramGeometry
         RasterPath gl;
         gl.move_to(x, bands_top), gl.line_to(x, bands_bottom + 5 * u);
         d->shape(std::move(gl), {}, grid, 1 * u);
-        const std::string label = format_date(t, axis_format);
+        const std::string label = axis_label(t, axis_format);
         const float lw = font.width(label, small);
         const float lx = std::clamp(x - lw / 2, 2 * u, w - 2 * u - lw);
         if (lx < last_end + 6 * u) continue;
@@ -820,7 +842,8 @@ void draw_gantt(Gantt& g, const DiagramStyle& style, Drawing* d, DiagramGeometry
         float sw = 1.2f * u;
         if (t.done) fill = p.tone(kMdMuted, dark ? 0.3f : 0.22f), stroke = t.crit ? p.of(kMdError) : p.tone(kMdMuted, 0.6f);
         if (t.active) fill = p.tone(ink, dark ? 0.16f : 0.12f), stroke = p.of(ink), sw = 2 * u;
-        const float cy = r.y + r.h / 2;
+        // (the bar at the row's middle, or at its foot under a name above it)
+        const float cy = r.side == 2 ? r.y + r.h - bar_h / 2 : r.y + r.h / 2;
         RasterPath shape;
         float by = cy - bar_h / 2, bh = bar_h;
         if (t.milestone) {
@@ -835,16 +858,20 @@ void draw_gantt(Gantt& g, const DiagramStyle& style, Drawing* d, DiagramGeometry
         d->shape(std::move(shape), fill, stroke, sw);
         const DiagramColour tc = t.done ? p.tone(kMdText, 0.8f) : p.of(kMdText);
         const float lw = widest(r.label, font, size), lh = static_cast<float>(r.label.size()) * line;
-        float lx = 0;
+        float lx = 0, ly = cy;
         if (r.side == 0) {
             text_block(d, font, r.label, r.bx + r.bw / 2, cy, size, tc, 1, false);
+        } else if (r.side == 2) {
+            // (from the bar's start if it fits from there, else ending at the chart's end)
+            lx = std::max(chart_left, std::min(r.bx, chart_right - lw)), ly = r.y + lh / 2;
+            text_block(d, font, r.label, lx, ly, size, tc, 0, false);
         } else {
             lx = r.side > 0 ? r.bx + r.bw + 8 * u : r.bx - 8 * u - lw;
             text_block(d, font, r.label, lx, cy, size, tc, 0, false);
         }
         if (geo) {
             geo->boxes.push_back({"node", geo_name(t.id), r.bx, by, r.bw, bh});
-            if (r.side != 0) geo->boxes.push_back({"label", geo_name(t.id), lx, cy - lh / 2, lw, lh});
+            if (r.side != 0) geo->boxes.push_back({"label", geo_name(t.id), lx, ly - lh / 2, lw, lh});
         }
     }
 

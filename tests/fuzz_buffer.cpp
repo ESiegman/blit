@@ -3074,6 +3074,37 @@ void plans_test() {
         check(diagram_dated("gantt\n todayMarker stroke:red\n A :2024-01-01, 1d\n") && !diagram_dated("gantt\n todayMarker off\n A :2024-01-01, 1d\n") && !diagram_dated("gantt\n A :2024-01-01, 1d\n"),
               "plans: a chart is another picture each day only when it marks today");
     }
+    // An axis written with %e (a day padded to two places): one space in
+    // its labels, not two.
+    {
+        Drawing d;
+        std::string err;
+        diagram_make("gantt\n dateFormat YYYY-MM-DD\n axisFormat %b %e\n tickInterval 1month\n A :a, 2026-09-20, 60d\n", st, &d, &err);
+        int first = 0, doubled = 0;
+        for (const DiagramItem& it : d.items) {
+            if (it.kind != DiagramItem::kText) continue;
+            first += it.text == "Oct 1" || it.text == "Nov 1";
+            doubled += it.text.find("  ") != std::string::npos;
+        }
+        check(first == 2 && doubled == 0, "plans: %e in an axis's labels without its padding");
+    }
+    // A name far too long for the room beside its bar is on lines above
+    // the bar, across the chart, not a tall column beside it.
+    {
+        std::string name;
+        for (int k = 0; k < 30; ++k) name += "word" + std::to_string(k) + " ";
+        Drawing d;
+        DiagramGeometry geo;
+        std::string err;
+        diagram_make("gantt\n dateFormat YYYY-MM-DD\n section S\n A :a, 2024-01-01, 10d\n " + name + ":b, after a, 2d\n C :c, after b, 10d\n", st, &d, &err, &geo);
+        Box band, bar, label;
+        for (const Box& x : geo.boxes) {
+            if (x.kind == "cluster") band = x;
+            if (x.name == "b") (x.kind == "label" ? label : bar) = x;
+        }
+        check(label.h > 0 && label.y + label.h <= bar.y && label.h <= 3.5f * font.line(st.size) && label.x >= band.x && label.x + label.w <= band.x + band.w && label.w > bar.w * 4,
+              "plans: a very long name above its bar, across the chart");
+    }
     // A milestone at the first date or the last is within its band.
     {
         Drawing d;
