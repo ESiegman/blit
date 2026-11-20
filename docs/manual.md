@@ -2438,7 +2438,10 @@ grammar in the theme's colours, on the preview's thread; a `diff` or
 `patch` block has its added lines in the colour the Git views give them,
 its removed ones in the errors' colour, a hunk's `@@` header in the accent
 and a file's header quiet), rules, line breaks, HTML (below; comments
-left out), math (below), `==highlighted==` text, and leaves out front matter.
+left out), math (below), `==highlighted==` text, definition lists (a
+term's line, then `: what it means` lines: the term bold, each definition
+indented under it, numbered quietly when there are more than one), and
+leaves out front matter.
 
 **Headings** are told apart by what a grid of cells has. The top three
 levels have a colour each and the lower three share a fourth. Levels one

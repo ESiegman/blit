@@ -1043,7 +1043,7 @@ struct Line {
 };
 
 struct Block {
-    enum Kind { kPara, kHeading, kCode, kQuote, kList, kItem, kTable, kRule, kHtml, kNote, kMath } kind = kPara;  // (kNote: a footnote's text, its label in `info`; kMath: display math's TeX)
+    enum Kind { kPara, kHeading, kCode, kQuote, kList, kItem, kTable, kRule, kHtml, kNote, kMath, kTerm } kind = kPara;  // (kNote: a footnote's text, its label in `info`; kMath: display math's TeX; kTerm: a term, its definitions its kids)
     u32 line = 0;
     int level = 0;
     std::vector<std::string> text;
@@ -1203,6 +1203,13 @@ bool starts_block(std::string_view line) {
     if (is_fence(s, &fc, &fl) || atx_level(s) || is_rule(s) || s.starts_with('>') || math_open(trim(s))) return true;
     if (list_marker(line, &m)) return (!m.ordered || m.number == 1) && !blank(std::string_view(s).substr(std::min(s.size(), static_cast<size_t>(m.content - indent_of(line)))));
     return false;
+}
+
+// Whether a line is a definition (": what a term means", under the term).
+bool is_definition(std::string_view s) {
+    if (indent_of(s) > 3) return false;
+    s = trim(s);
+    return s == ":" || (s.size() > 1 && s[0] == ':' && (s[1] == ' ' || s[1] == '\t'));
 }
 
 // Whether a line starts a block of HTML (as CommonMark has it): a comment,
@@ -1515,6 +1522,51 @@ void parse_into(const std::vector<Line>& lines, Refs& refs, std::vector<Block>& 
                 }
             }
         }
+        // A term and its definitions (": what it means" lines under it, with
+        // the lines indented under each, or a paragraph's lines that run on).
+        if (i + 1 < n && is_definition(lines[i + 1].text) && !is_definition(t)) {
+            Block term;
+            term.kind = Block::kTerm;
+            term.line = no;
+            term.text.emplace_back(trim(t));
+            ++i;
+            while (i < n && is_definition(lines[i].text)) {
+                Block def;
+                def.kind = Block::kItem;
+                def.line = lines[i].no;
+                const std::string_view first = trim(lines[i].text);
+                std::vector<std::string> keep{std::string(trim(first.substr(1)))};
+                std::vector<u32> nos{lines[i].no};
+                ++i;
+                bool last_blank = false;
+                while (i < n) {
+                    const std::string_view l = lines[i].text;
+                    if (blank(l)) {  // (a blank line, and more of it indented after)
+                        if (i + 1 < n && !blank(lines[i + 1].text) && indent_of(lines[i + 1].text) >= 2) {
+                            keep.emplace_back();
+                            nos.push_back(lines[i].no);
+                            last_blank = true;
+                            ++i;
+                            continue;
+                        }
+                        break;
+                    }
+                    if (is_definition(l) || (i + 1 < n && is_definition(lines[i + 1].text))) break;  // (the next definition, or the next term)
+                    if (indent_of(l) >= 2) keep.push_back(strip_cols(l, std::min(indent_of(l), 4)));
+                    else if (!last_blank && !starts_block(l)) keep.emplace_back(trim(l));
+                    else break;
+                    nos.push_back(lines[i].no);
+                    last_blank = false;
+                    ++i;
+                }
+                std::vector<Line> sub;
+                for (size_t k = 0; k < keep.size(); ++k) sub.push_back({keep[k], nos[k]});
+                def.kids = parse_blocks(sub, refs);
+                term.kids.push_back(std::move(def));
+            }
+            out.push_back(std::move(term));
+            continue;
+        }
         // A paragraph (or a heading underlined with === or ---).
         Block b;
         b.kind = Block::kPara;
@@ -1530,7 +1582,7 @@ void parse_into(const std::vector<Line>& lines, Refs& refs, std::vector<Block>& 
                     ++i;
                     break;
                 }
-                if (starts_block(l) || (indent_of(l) <= 3 && note_start(trim(l)))) break;
+                if (starts_block(l) || (indent_of(l) <= 3 && note_start(trim(l))) || (i + 1 < n && is_definition(lines[i + 1].text))) break;  // (a term's line ends it too)
                 std::vector<int> align;  // (a table's head: the table starts here)
                 if (l.find('|') != std::string_view::npos && i + 1 < n && table_delims(lines[i + 1].text, &align) && table_cells(l).size() == align.size()) break;
             }
@@ -2342,6 +2394,19 @@ struct Layout {
             case Block::kTable: table(b); break;
             case Block::kNote: break;  // (at the end: footnotes())
             case Block::kMath: math(b, ink); break;
+            case Block::kTerm: {  // the term in bold, each definition indented under it (numbered, quietly, when there are more than one)
+                paragraph(b.text, {}, b.line, ink, kMdBold);
+                const size_t numw = std::max<size_t>(std::to_string(b.kids.size()).size() + 3, 4);
+                for (size_t k = 0; k < b.kids.size(); ++k) {
+                    const Block& def = b.kids[k];
+                    const std::string num = b.kids.size() > 1 ? std::to_string(k + 1) + ". " : "";
+                    levels.push_back({{{std::string(numw - num.size(), ' ') + num, num.empty() ? kMdText : kMdMuted}}, {{std::string(numw, ' '), kMdText}}, false});
+                    if (def.kids.empty()) row({}, def.line);
+                    blocks(def.kids, false, ink);
+                    levels.pop_back();
+                }
+                break;
+            }
         }
     }
 };

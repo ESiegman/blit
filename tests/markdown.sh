@@ -40,7 +40,7 @@ pictures() {
          { if (skip) print ""; skip = 0; print }'
 }
 
-for f in sample edge diagrams code alerts notes headings tables math html; do
+for f in sample edge diagrams code alerts notes headings tables math html defs; do
     size=1600x1100
     [ $f = sample ] || [ $f = diagrams ] && size=3600x1100
     run $size "$here/markdown/$f.md" ""
@@ -120,6 +120,14 @@ got=$got,$(printf '%s\n' "$all" | grep -c '\[#61afef >https://example.com/docs\]
 got=$got,$(printf '%s\n' "$all" | grep -c '^\[#61afef\]▾ \[#dbdedb b\]More about it$'),$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]  \[#dbdedb\]What it holds')
 got=$got,$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]  *\[#e06c75 b\]blit$')
 check "inline HTML: keys, highlights, underlines, links, details, a heading in the middle" "1,1,1,1,1,1,1"
+
+# Definition lists: the term bold, its definitions indented under it,
+# numbered quietly when there are more than one.
+looks "$here/markdown/defs.md"
+all=$got
+got=$(printf '%s\n' "$all" | grep -c '^\[#dbdedb b\]Apple$'),$(printf '%s\n' "$all" | grep -c '^\[#7f848e\] 1\. \[#dbdedb\]A fruit'),$(printf '%s\n' "$all" | grep -c '^\[#7f848e\] 2\. \[#dbdedb\]A company')
+got=$got,$(printf '%s\n' "$all" | grep -c '^\[#dbdedb b\]Orange$'),$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]    \[#dbdedb\]A citrus fruit\.$')
+check "definition lists: terms bold, definitions under them" "1,1,1,1,1"
 
 # Footnotes: a mark is a link to its text at the end, the row that text
 # starts on is named for it, and the mark after the text is a link back;
@@ -419,6 +427,11 @@ awk 'BEGIN { for (i = 0; i < 100000; i++) printf "<kbd>a "; print "\n"
     for (i = 0; i < 20000; i++) print "<details><summary>s</summary>"; print "\n"; print "the end" }' >"$dir/marks.md"
 got=$(limit 10 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mddump" "$dir/marks.md" 2>&1 >/dev/null | grep -c '^ *the end')
 check "inline HTML's tags by the hundred thousand, comments that never end, nested that deep: drawn, in time" "1"
+# Definitions by the hundred thousand, under one term and each under its own.
+awk 'BEGIN { print "term"; for (i = 0; i < 100000; i++) print ": d" i; print ""
+    for (i = 0; i < 50000; i++) { print "t" i; print ": d" }; print ""; print "the end" }' >"$dir/marks.md"
+got=$(limit 10 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mddump" "$dir/marks.md" 2>&1 >/dev/null | grep -c '^the end')
+check "definitions by the hundred thousand: drawn, in time" "1"
 # Math by the hundred thousand: $ that close nothing (each looked to the
 # end of the line for its close), $$ and \( the same, $` with no `$, math
 # that opens a hundred thousand braces and closes none, and math nested

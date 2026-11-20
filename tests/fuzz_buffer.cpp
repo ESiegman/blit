@@ -930,6 +930,15 @@ void markdown_test() {
           "diffs: headers quiet, hunks in the accent, removed and added lines in their inks");
     check(drawn("```PATCH\n+a\n```\n", 40, true).find(ink(kMdAdded) + "0.1>+a") != std::string::npos, "diffs: a patch, its name in any case");
 
+    // Definition lists: the term bold, its definitions indented under it
+    // (numbered when there are more than one), lines that run on and
+    // paragraphs indented under a definition in it; a paragraph's last
+    // line before ": " is the term; ":" in a line's middle is no definition.
+    check(drawn("Term\n: one\n: two\n") == "Term\n 1. one\n 2. two\n" && drawn("Term\n: said\nrun on\n\n  more\n\nafter\n") == "Term\n    said run on\n\n    more\n\nafter\n" &&
+              drawn("text\nTerm\n: it\n") == "text\n\nTerm\n    it\n" && drawn("a: b\n: c\n") == "a: b\n    c\n" && drawn("not: a definition\n") == "not: a definition\n",
+          "definition lists: terms and their definitions");
+    check(drawn("T\n: d\n", 60, true) == ink(kMdText) + "1.0>T\n" + ink(kMdText) + "0.0>    " + ink(kMdText) + "0.0>d\n", "definition lists: the term bold");
+
     // Tables: lines in the muted ink; the header's tint across its cells
     // and the lines between them (not the outer two); a line between the
     // body's rows only when a cell wraps; columns in line with a family
