@@ -523,6 +523,10 @@ check "a terminal there whose connection is lost" 'Ctrl+` back to the file|$|[co
 got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
     --script "remotewait;$drop;key:ctrl+\`;frame;termend;termdump" "$R/notes.txt" 2>&1 >/dev/null | sed -e 's/ @.*ended/ ended/' | join)
 check "and one opened just after: why, and no exit code" 'Ctrl+` back to the file|the connection to box was lost ended 1'
+# A terminal on another machine than the folder's: the status bar names the terminal's.
+got=$(BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+    --script "remotewait;frame;statusdump;term:ssh://other$W;remotewait;termwait:\$;frame;statusdump" "$R" 2>&1 >/dev/null | join)
+check "a terminal on another machine: the bar names its machine" 'box untitled | Ln 1, Col 1 Tabs LF Plain text ;; other Terminal: other |'
 
 # A build there: its output's tab names the machine, as a terminal's does.
 mkdir -p "$T/.mk" && printf 'all:\n\t@echo built\n' >"$T/.mk/Makefile"
