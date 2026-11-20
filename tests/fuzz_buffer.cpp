@@ -654,8 +654,12 @@ void notebook_view_test() {
     std::string math_rows;
     look.width = 120;
     for (const MdRow& r : nb_render(maths, {}, look)) math_rows += std::to_string(r.line + 1) + ":" + md_row_text(r) + "\n";
-    check(math_rows.find("2:        \xE2\x88\xAB\xE2\x82\x80\xC2\xB9 x\xC2\xB2 dx = 1/3 and \xCE\xB1_i \xE2\x89\xA4 \xCE\xB2 cost $5 and $10, $a_b$ stays\n") != std::string::npos &&
-              math_rows.find("4:        \xE2\x88\x91_(n=1)^\xE2\x88\x9E 1/n\xC2\xB2 = \xCF\x80\xC2\xB2/6\n") != std::string::npos && math_rows.find("7:         $x_1$\n") != std::string::npos,
+    // (Display math on a row of its own, in the middle: as the preview draws it, md_math_text.)
+    const std::string shown_sum = "\xE2\x88\x91\xE2\x82\x99\xE2\x82\x8C\xE2\x82\x81^\xE2\x88\x9E 1/n\xC2\xB2 = \xCF\x80\xC2\xB2/6\n";
+    const size_t sum_at = math_rows.find(shown_sum);
+    check(math_rows.find("2:        \xE2\x88\xAB\xE2\x82\x80\xC2\xB9 x\xC2\xB2 dx = 1/3 and \xCE\xB1\xE1\xB5\xA2 \xE2\x89\xA4 \xCE\xB2 cost $5 and $10, $a_b$ stays\n") != std::string::npos &&
+              sum_at != std::string::npos && math_rows.rfind("\n4:", sum_at) != std::string::npos && math_rows.rfind("\n4:", sum_at) + 50 < sum_at &&
+              math_rows.find("7:         $x_1$\n") != std::string::npos,
           "notebook view: math as text, its lines where they were; money, code and a fenced block as they are");
     // A huge count does not widen the gutter for every cell (its label goes
     // above its cell); stderr and an error after it are apart; code with
@@ -856,6 +860,37 @@ void markdown_test() {
     bool forward = true;
     for (const MdRow& r : md_render("a[^1]\n\n[^1]: early\n\nb\n\nc\n", 60)) forward = forward && r.line >= last_line, last_line = r.line;
     check(forward, "footnotes: the lines of the rows at the end not before those above them");
+
+    // Math as text: Greek, operators, relations, arrows; powers and indices
+    // raised and lowered where Unicode has them all (and the font draws
+    // them), else ^ and _ with brackets; fractions with brackets where they
+    // need them; roots; double-struck letters; \text as it is; accents;
+    // what is not known as its TeX, its braces kept.
+    check(md_math_text("\\alpha + \\beta \\le \\Omega \\to \\infty") == "α + β ≤ Ω → ∞", "math: Greek, relations, arrows");
+    check(md_math_text("x^2 + a_{ij} - e^{i\\pi}") == "x² + aᵢⱼ − e^(iπ)", "math: raised and lowered where Unicode has them, a minus sign");
+    check(md_math_text("x^2 + a_{ij} + b_{(k)}", kMdSuperDigits | kMdSubDigits) == "x² + a_(ij) + b_(k)" && md_math_text("x^2_1", 0) == "x^2_1", "math: only what the font draws raised");
+    check(md_math_text("x^{-1} y_{n+1} 10^{10}") == "x⁻¹ yₙ₊₁ 10¹⁰", "math: signs and numbers raised and lowered");
+    check(md_math_text("\\frac{1}{2} \\frac{a+b}{c} \\dfrac{\\pi^2}{6}") == "1/2 (a+b)/c π²/6", "math: fractions, bracketed where they need it");
+    check(md_math_text("\\sqrt{x} \\sqrt{x+1} \\sqrt[3]{8} \\sqrt[n]{y}") == "√x √(x+1) ∛8 ⁿ√y", "math: roots");
+    check(md_math_text("\\sum_{n=1}^{\\infty} \\int_0^1 \\prod_k") == "∑ₙ₌₁^∞ ∫₀¹ ∏ₖ", "math: sums, integrals and products with their limits");
+    check(md_math_text("\\mathbb{R}^n \\mathbb{N} \\mathbb{Z} \\text{for all } x \\mathbf{v}") == "ℝⁿ ℕ ℤ for all  x v", "math: double-struck letters, words, bold as letters");
+    check(md_math_text("\\hat{x} \\vec{v} 45^\\circ \\left( a \\right] \\binom{n}{k}") == "x̂ v⃗ 45° ( a ] C(n,k)", "math: accents, degrees, sizing gone, binomials");
+    check(md_math_text("\\foo{a}{b} \\bar{xy}") == "\\foo{a}{b} \\bar{xy}", "math: what is not known as its TeX");
+    check(md_math_text("a \\, b \\quad c~d \\{x\\}") == "a   b    c d {x}", "math: spacing as spaces, braces escaped kept");
+    std::string deep(200000, '{');
+    deep = "x^" + deep + "a" + std::string(200000, '}') + "^{" + std::string(100000, '{');
+    check(!md_math_text(deep).empty(), "math: braces nested a hundred thousand deep, and never closed");
+    // In the text: $x$, $$x$$, $`x`$ and \(x\) slanted; not "$5 and $6",
+    // not "$ x $", not in code; display math alone on its rows, in the middle.
+    check(drawn("a $x^2$ b $$y_1$$ c $`z`$ d \\(w\\) e", 60, true) ==
+              ink(kMdText) + "0.0>a " + ink(kMdText) + "2.0>x²" + ink(kMdText) + "0.0> b " + ink(kMdText) + "2.0>y₁" + ink(kMdText) + "0.0> c " + ink(kMdText) + "2.0>z" + ink(kMdText) + "0.0> d " +
+                  ink(kMdText) + "2.0>w" + ink(kMdText) + "0.0> e\n",
+          "math: inline, in each of its marks, slanted");
+    check(drawn("costs $5 and $6, $ 7 $, `$x$`, \\$y\\$, $z$5") == "costs $5 and $6, $ 7 $, $x$, $y$, $z$5\n", "math: money, spaces inside, code, an escaped mark, a digit after");
+    check(drawn("$$\n\\frac{1}{2}\n$$\n", 20) == "        1/2\n" && drawn("text\n$$ a \\\\ bb $$\nmore\n", 20) == "text\n\n         a\n         bb\n\nmore\n" &&
+              drawn("\\[\nx\n\\]\n", 21) == "          x\n",
+          "math: display, alone on its rows in the middle, a row each for \\\\");
+    check(drawn("$$\nnever closed\n\nnext\n") == "$$ never closed\n\nnext\n", "math: display never closed: a paragraph");
 
     // Tables: lines in the muted ink; the header's tint across its cells
     // and the lines between them (not the outer two); a line between the

@@ -1,6 +1,6 @@
 #pragma once
-// Markdown, drawn as cells: headings, paragraphs with their emphasis, code
-// and links, lists (and task lists), quotes, tables, code blocks, rules, and
+// Markdown, drawn as cells: headings, paragraphs with their emphasis, code,
+// links and math, lists (and task lists), quotes, tables, code blocks, rules, and
 // Mermaid diagrams (as pictures: diagram.hpp), laid out to a width, with
 // room left for pictures. What blit's preview tab shows (appmarkdown.cpp);
 // nothing here knows about the window, or reads a picture.
@@ -120,6 +120,15 @@ std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn
 std::vector<MdRow> md_code(std::string_view lang, std::string_view code, u32 width, const MdCodeFn& colour = {});
 std::vector<MdRow> md_table(const std::vector<std::vector<std::string>>& cells, const std::vector<int>& align, u32 width);
 std::string md_escape(std::string_view text);
+// TeX's math as text (what the preview draws of $...$ and $$...$$, and a
+// notebook of its math): Greek, operators, relations and arrows as
+// Unicode's characters (\alpha α, \le ≤, \to →, \int ∫), a power or an
+// index raised or lowered where Unicode has every character of it and the
+// font draws them (x², a_{ij} aᵢⱼ; else x^(n+1)), \frac{a}{b} a/b (with
+// brackets round a part that needs them), \sqrt{x} √x, \mathbb{R} ℝ,
+// \text{} as it is, spacing as spaces, braces and sizing gone. What is not
+// known stays as its TeX.
+std::string md_math_text(std::string_view tex, u8 glyphs = kMdAllGlyphs);
 // A row as plain text (for the tests): what its runs say.
 std::string md_row_text(const MdRow& r);
 

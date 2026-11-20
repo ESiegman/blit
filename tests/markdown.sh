@@ -40,7 +40,7 @@ pictures() {
          { if (skip) print ""; skip = 0; print }'
 }
 
-for f in sample edge diagrams code alerts notes headings tables; do
+for f in sample edge diagrams code alerts notes headings tables math; do
     size=1600x1100
     [ $f = sample ] || [ $f = diagrams ] && size=3600x1100
     run $size "$here/markdown/$f.md" ""
@@ -98,6 +98,14 @@ all=$got
 got=$(printf '%s\n' "$all" | grep -c '^\[#7f848e\]│\[#dbdedb t2\] \[#dbdedb b t2\]Name\[#dbdedb t2\]      \[#7f848e t2\]│\[#dbdedb t2\] \[#dbdedb b t2\]Size\[#dbdedb t2\] \[#7f848e t2\]│\[#dbdedb t2\]  \[#dbdedb b t2\]Kind\[#dbdedb t2\]  \[#7f848e\]│$')
 got=$got,$(printf '%s\n' "$all" | grep -E '^\[#[0-9a-f]*\](┌|├|└)' | grep -vc '^\[#7f848e\]'),$(printf '%s\n' "$all" | grep '│' | grep -c 't2.*main.cpp')
 check "tables: quiet lines, the header's tint one band" "1,0,0"
+
+# Math: inline in the text's colour, slanted; display math slanted on a
+# row of its own, in the middle (in a quote, in the quote's colour).
+looks "$here/markdown/math.md"
+all=$got
+got=$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]Euler.s identity \[#dbdedb i\]e^(iπ) + 1 = 0\[#dbdedb\] links five$')
+got=$got,$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]            \[#dbdedb i\]∑_(k=1)^∞ 1/k² = π²/6$'),$(printf '%s\n' "$all" | grep -c '▎ \[#dbdedb\]  *\[#7f848e i\]E = mc²$')
+check "math: slanted, display math in the middle" "1,1,1"
 
 # Footnotes: a mark is a link to its text at the end, the row that text
 # starts on is named for it, and the mark after the text is a link back;
@@ -379,6 +387,19 @@ awk 'BEGIN { for (i = 0; i < 100000; i++) printf "[^a] "; print "\n"
     print "\n[^a]: the end" }' >"$dir/marks.md"
 got=$(limit 10 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mddump" "$dir/marks.md" 2>&1 >/dev/null | grep -c '1\. the end ↩$')
 check "footnotes' marks by the hundred thousand, and footnotes that refer to each other: drawn, in time" "1"
+# Math by the hundred thousand: $ that close nothing (each looked to the
+# end of the line for its close), $$ and \( the same, $` with no `$, math
+# that opens a hundred thousand braces and closes none, and math nested
+# a hundred thousand deep.
+awk 'BEGIN { for (i = 0; i < 100000; i++) printf "$a "; print "\n"
+    for (i = 0; i < 100000; i++) printf "$$a "; print "\n"
+    for (i = 0; i < 100000; i++) printf "\\(a "; print "\n"
+    for (i = 0; i < 100000; i++) printf "$`a "; print "\n"
+    printf "$"; for (i = 0; i < 100000; i++) printf "x^{"; print "$\n"
+    printf "$"; for (i = 0; i < 100000; i++) printf "\\sqrt{"; printf "x"; for (i = 0; i < 100000; i++) printf "}"; print "$\n"
+    print "$$"; for (i = 0; i < 50000; i++) print "\\frac{a}{b} \\\\"; print "$$\n"; print "the end" }' >"$dir/marks.md"
+got=$(limit 10 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mddump" "$dir/marks.md" 2>&1 >/dev/null | grep -c '^the end')
+check "math's marks by the hundred thousand, braces that never close and nested that deep: drawn, in time" "1"
 awk 'BEGIN { print "```mermaid"; print "flowchart TD"; for (i = 0; i < 800; i++) print "subgraph s" i; print "x --> y"; for (i = 0; i < 800; i++) print "end"; print "```" }' >"$dir/nested.md"
 got=$(limit 20 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mdwait;mddump" "$dir/nested.md" 2>&1 >/dev/null | grep -c 'subgraphs nested too deeply')
 check "subgraphs nested 800 deep: said to be too deep (laid out, they ran a Mac's preview thread out of stack)" "1"

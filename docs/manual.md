@@ -2458,6 +2458,19 @@ between the rows below the header keeps each row's lines apart; a table
 whose cells all fit on a line has none. Columns stay in line with wide
 characters and emoji (a family or a flag in one cell's width) in them.
 
+**Math** is drawn as text, in italics, by GitHub's rules: `$...$` and
+`` $`...`$ `` in a line (not `$5 and $6`, nor with a space just inside a
+`$`, nor in code), `\(...\)` too, and display math (`$$...$$` or
+`\[...\]`, on lines of their own) on rows of its own, each of its rows
+(TeX's `\\`) in the middle. Greek letters, operators, relations and
+arrows are Unicode's (`\alpha` α, `\le` ≤, `\to` →, `\int` ∫); a power or
+an index is raised or lowered where Unicode has a character for all of
+it and the font draws them (x², aᵢⱼ, ∑ₙ₌₁), else written `x^(n+1)`;
+`\frac{a}{b}` is a/b (in brackets where a part needs them), `\sqrt` √
+(∛, ∜), `\mathbb{R}` ℝ, `\binom{n}{k}` C(n,k), `\text{...}` its words, and
+accents go over one letter (x̂, v⃗). Sizing, `\left`/`\right` and
+environments' names go; what blit does not know stays as it was written.
+
 **Alerts** (GitHub's: a quote whose first line is `[!NOTE]`, `[!TIP]`,
 `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]`, in any case, alone on its
 line) are callouts: a heavier bar and a bold title, both in the kind's
@@ -2687,12 +2700,8 @@ the view and opens it again; closing the script closes it too. A second
 notebook's view goes beside the first's.
 
 - A Markdown cell is drawn as the [Markdown preview](#markdown-preview)
-  draws a file: headings, tables, code, pictures beside the notebook. Its
-  math (`$...$`, `$$...$$`) is text in italics: Greek letters and the
-  common symbols as themselves (`\int` ∫, `\le` ≤, `\infty` ∞), a
-  fraction as a/b, a power or an index of digits raised or lowered (x²,
-  x₀), and what blit does not know as it is written. `$5 and $10` stays
-  money.
+  draws a file: headings, tables, code, math, pictures beside the
+  notebook.
 - A code cell is a block of code coloured by the notebook's language (its
   metadata says which), with Jupyter's `In [n]:` beside it (`In [ ]:` if
   it has not run, `In [*]:` while it runs or waits to). One changed since
@@ -2707,7 +2716,7 @@ notebook's view goes beside the first's.
   right) as a table, with any text around it; a PNG or JPEG as a picture;
   an SVG as a picture where the system reads SVG (on Linux, with
   librsvg), else its text; Markdown drawn; other HTML as its text; LaTeX
-  as a Markdown cell's math is; plain text as text; JSON indented. Data
+  as display math (in the middle, as the preview draws it); plain text as text; JSON indented. Data
   blit cannot draw (a widget, a PDF) is named, `[application/pdf]`, never
   shown as its base64.
 - A table too wide for the view is not squeezed into it: its output's
