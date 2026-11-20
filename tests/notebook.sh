@@ -99,6 +99,16 @@ got=$(printf '%s\n' "$all" | grep -E '^(13|16): ' | grep -v 'In \[' | sed -e 's/
 check "a picture shown from blit's cache; Markdown, JSON indented, LaTeX as text" "picture: nb-HASH.png|bold words|{|\"moons\": [|1|],|\"name\": \"Earth\"|}|\$E = mc^2\$|Out[4]: 42|"
 got=$(ls "$dir/cache/pictures" | grep -c '^nb-[0-9a-f]*\.png$')
 check "the picture written once, named by what is in it" "1"
+# Pictures not shown for 30 days go from the cache (the next time one is
+# kept); one shown has its time set again, one newer stays.
+shown=$(ls "$dir/cache/pictures" | grep '^nb-[0-9a-f]*\.png$')
+touch -t 202001010000 "$dir/cache/pictures/$shown"
+printf x >"$dir/cache/pictures/nb-00000000000000aa.png" && touch -t 202001010000 "$dir/cache/pictures/nb-00000000000000aa.png"
+printf x >"$dir/cache/pictures/nb-00000000000000bb.png"
+"$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/n.ipynb;mdwait;imagewait" >/dev/null 2>&1
+got="$(ls "$dir/cache/pictures" | grep -c '^nb-') $(find "$dir/cache/pictures" -name 'nb-*' -mtime +29 | wc -l | tr -d ' ')"
+check "pictures not shown for 30 days gone, those shown kept" "$(($(ls "$dir/cache/pictures" | grep -c '^nb-[0-9a-f]*\.svg$') + 2)) 0"
+[ -e "$dir/cache/pictures/$shown" ] && [ -e "$dir/cache/pictures/nb-00000000000000bb.png" ] || echo "FAIL: the picture shown, or the newer one, gone"
 svg=$(printf '%s\n' "$all" | grep -E '^19: ' | grep -v 'In \[' | sed -e 's/^[0-9]*: *//' | grep . | sed -e 's/nb-[0-9a-f]*\.svg [0-9]*x[0-9]*/nb-HASH.svg/')
 case $svg in
     "picture: nb-HASH.svg" | "<SVG logo>") got=ok ;;

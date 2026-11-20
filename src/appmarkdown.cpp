@@ -20,11 +20,15 @@
 // (NbCache), and each output's pictures are written to blit's cache once,
 // named by what is in them, and shown from there as any picture is.
 #include <SDL3/SDL.h>
+#include <unistd.h>
 
 #include <algorithm>
 #include <cctype>
 #include <cmath>
+#include <chrono>
 #include <condition_variable>
+#include <cstdio>
+#include <filesystem>
 #include <map>
 #include <mutex>
 #include <thread>
@@ -197,9 +201,23 @@ struct PicSize {
     bool failed = false;
 };
 
+// A notebook's pictures in blit's cache not shown for 30 days, let go of
+// (each one shown has its time set again when it is kept: those in use stay).
+void prune_pictures(const std::string& dir) {
+    namespace fs = std::filesystem;
+    std::error_code ec;
+    const fs::file_time_type old = fs::file_time_type::clock::now() - std::chrono::days(30);
+    for (fs::directory_iterator it(dir, ec), end; !ec && it != end; it.increment(ec)) {
+        if (!it->path().filename().string().starts_with("nb-")) continue;
+        std::error_code e;
+        if (const fs::file_time_type t = it->last_write_time(e); !e && t < old) fs::remove(it->path(), e);
+    }
+}
+
 // A notebook's picture (an output's bytes) kept in blit's cache, named by
 // what is in it: its file ("" if it cannot be written). Written once, and
-// put in place whole (a reader never sees half of it).
+// put in place whole (a reader never sees half of it, nor another blit's
+// half). (On the worker; the first time in a run, those long unused go.)
 std::string keep_picture(std::string_view bytes, std::string_view kind) {
     if (bytes.empty()) return {};
     u64 h = 1469598103934665603ull;
@@ -208,11 +226,21 @@ std::string keep_picture(std::string_view bytes, std::string_view kind) {
     std::snprintf(name, sizeof name, "nb-%016llx.%.*s", static_cast<unsigned long long>(h), static_cast<int>(kind.size()), kind.data());
     const std::string dir = cache_dir();
     if (dir.empty()) return {};
+    static std::once_flag pruned;
+    std::call_once(pruned, [&] { prune_pictures(dir + "/pictures"); });
     const std::string path = dir + "/pictures/" + name;
-    if (fs_kind(path) == 1) return path;
+    if (fs_kind(path) == 1) {
+        std::error_code e;
+        const auto now = std::filesystem::file_time_type::clock::now();
+        if (const auto t = std::filesystem::last_write_time(path, e); !e && t < now - std::chrono::days(1)) std::filesystem::last_write_time(path, now, e);
+        return path;
+    }
     std::string err;
-    const std::string part = path + ".part";
-    if (!fs_mkdirs(dir + "/pictures", &err) || !fs_write(part, bytes, &err) || std::rename(part.c_str(), path.c_str()) != 0) return {};
+    const std::string part = path + ".part" + std::to_string(::getpid());
+    if (!fs_mkdirs(dir + "/pictures", &err) || !fs_write(part, bytes, &err) || std::rename(part.c_str(), path.c_str()) != 0) {
+        std::remove(part.c_str());
+        return {};
+    }
     return path;
 }
 
