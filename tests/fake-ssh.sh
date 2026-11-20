@@ -12,6 +12,9 @@ while [ $# -gt 1 ]; do
 done
 [ -n "${BLIT_FAKE_HOME:-}" ] && HOME=$BLIT_FAKE_HOME && export HOME
 [ -n "${BLIT_FAKE_FAIL:-}" ] && { echo "ssh: connect to host: $BLIT_FAKE_FAIL" >&2; exit 255; }
+# BLIT_FAKE_DOWN=FILE: the host cannot be reached while that file is there
+# (it says why), so that a test can bring it back.
+[ -n "${BLIT_FAKE_DOWN:-}" ] && [ -e "$BLIT_FAKE_DOWN" ] && { echo "ssh: connect to host: $(cat "$BLIT_FAKE_DOWN")" >&2; exit 255; }
 # BLIT_FAKE_PASSWORD: the "host" has no key for us and asks for that
 # password, as ssh does, through $SSH_ASKPASS (which blit sets to itself).
 if [ -n "${BLIT_FAKE_PASSWORD:-}" ]; then

@@ -105,6 +105,11 @@ struct App::RemoteUi {
     size_t running = 0;
     std::vector<std::function<void()>> errands_done;
 
+    // (Main thread.) A file or folder opened while its machine could not be
+    // reached: the status bar names that machine (to connect again), and it
+    // is opened once the connection is up.
+    std::string unreached;
+
     std::jthread worker, saver, lister, errander;  // (last: stopped first)
 
     ~RemoteUi() {
@@ -529,6 +534,11 @@ bool App::remote_listing(const std::string& dir, std::vector<RemoteEntry>* out) 
     return false;
 }
 
+std::string App::remote_unreached() const {
+    std::string host, there;
+    return remote_ && split_remote(remote_->unreached, &host, &there) ? host : std::string();
+}
+
 bool App::remote_listing_busy() const {
     if (!remote_) return false;
     std::lock_guard lock(remote_->mu);
@@ -616,8 +626,15 @@ void App::remote_sync() {
         panel_refresh();
         if (cfg_.git) git_.refresh();
         lsp_pending_ = true;
-        std::lock_guard lock(remote_->mu);
-        remote_->list_failed.clear();
+        {
+            std::lock_guard lock(remote_->mu);
+            remote_->list_failed.clear();
+        }
+        // (What could not be opened for want of the connection, opened now.)
+        std::string host, there;
+        if (split_remote(remote_->unreached, &host, &there))
+            for (const std::shared_ptr<Remote>& r : Remote::all())
+                if (r->host() == host && r->state() == Remote::kReady) open_path(std::exchange(remote_->unreached, {}).c_str());
     }
     find_remote_ready();  // (a folder typed into the box, listed now)
     remote_saved();
@@ -694,6 +711,7 @@ void App::remote_sync() {
                     if (!project_open(x.path) && !panel_px()) panel_toggle();  // (the folder, shown; its session, if it has one)
                     break;
                 }
+                if (x.status == 5) remote_->unreached = x.path;  // (the status bar names its machine, to connect again)
                 const std::string why = x.status == 5 ? x.error
                                         : x.status == 2 ? "not a file: " + x.path
                                         : x.status == 3 ? "too big to open from another machine: " + x.path

@@ -282,7 +282,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
             {
                 const std::string& own = d.term ? term_folder(*d.term) : ed.path;
                 std::string host, there;
-                if (split_remote(own, &host, &there) || (own.empty() && root && split_remote(*root, &host, &there))) {
+                if (split_remote(own, &host, &there) || (own.empty() && root && split_remote(*root, &host, &there)) || !(host = remote_unreached()).empty()) {
                     std::shared_ptr<Remote> r;
                     for (const std::shared_ptr<Remote>& c : Remote::all())
                         if (c->host() == host) r = c;

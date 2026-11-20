@@ -132,7 +132,12 @@ check "quitting waits for it too" 'pick [] 1 : >Quit without waiting ;; running 
 run "remotewait;frame;lua:print(blit.workdir())" "$R"
 check "a folder: the working directory" "blit: ssh://box~/work"
 got=$(BLIT_FAKE_FAIL=refused BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "remotewait;frame;statusdump;remotedump" "$R/notes.txt" 2>&1 >/dev/null | join)
-check "a host that cannot be reached: why, and the bar says so" 'blit: cannot connect to box: ssh: connect to host: refused ;; untitled | Ln 1, Col 1 Tabs LF Plain text ;; box: failed: cannot connect to box: ssh: connect to host: refused; '
+check "a host that cannot be reached: why, and the bar says so" 'blit: cannot connect to box: ssh: connect to host: refused ;; box: not connected (connect again) untitled | Ln 1, Col 1 Tabs LF Plain text ;; box: failed: cannot connect to box: ssh: connect to host: refused; '
+# And once it can be (connected again from the bar, or its command): what was opened is opened.
+echo refused >"$dir/down"
+got=$(BLIT_FAKE_DOWN="$dir/down" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+    --script "remotewait;frame;statusdump;lua:os.remove('$dir/down');command:Reconnect to the servers that dropped;remotewait;frame;statusdump;dump" "$R/notes.txt" 2>&1 >/dev/null | sed -e "s#$T#~#g" | join)
+check "and connected again: opened then" 'blit: cannot connect to box: ssh: connect to host: refused ;; box: not connected (connect again) untitled | Ln 1, Col 1 Tabs LF Plain text ;; box ~/work/notes.txt | Ln 1, Col 1 Tabs LF Plain text ;; >[notes.txt*]'
 
 # No key for the host: ssh's questions come to blit's box, hidden as they
 # are typed. (The password is the test's own, made up here.)

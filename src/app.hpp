@@ -940,6 +940,7 @@ private:
     // asked: `work` returns what the main thread then does (remote_sync).
     using RemoteErrand = std::function<std::function<void()>(std::stop_token)>;
     void remote_errand(RemoteErrand work);
+    std::string remote_unreached() const;  // the machine of what was opened while it could not be reached ("": none)
     bool panel_busy() const;  // (apppanel.cpp) the file tree is reading folders, or changing another machine's files
 
     // Profiling (appprofile.cpp): the side panel's Profile tab, a tab for
