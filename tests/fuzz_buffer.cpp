@@ -892,6 +892,34 @@ void markdown_test() {
           "math: display, alone on its rows in the middle, a row each for \\\\");
     check(drawn("$$\nnever closed\n\nnext\n") == "$$ never closed\n\nnext\n", "math: display never closed: a paragraph");
 
+    // Inline HTML: each tag as its Markdown is, or its own look; a
+    // paragraph that starts with one stays a paragraph; a comment goes;
+    // a tag with no closing one goes, its text staying.
+    const std::string nb = "\xC2\xA0";
+    check(drawn("<kbd>Esc</kbd> <b>b</b> <i>i</i> <u>u</u> <s>s</s> <code>c</code> <mark>m</mark> ==h== <a href=\"x\">l</a>", 60, true) ==
+              ink(kMdText) + "0.1>" + nb + "Esc" + nb + ink(kMdText) + "0.0> " + ink(kMdText) + "1.0>b" + ink(kMdText) + "0.0> " + ink(kMdText) + "2.0>i" +
+                  ink(kMdText) + "0.0> " + ink(kMdText) + "8.0>u" + ink(kMdText) + "0.0> " + ink(kMdMuted) + "4.0>s" + ink(kMdText) + "0.0> " + ink(kMdCode) + "0.1>c" + ink(kMdText) + "0.0> " +
+                  ink(kMdText) + "0.5>m" + ink(kMdText) + "0.0> " + ink(kMdText) + "0.5>h" + ink(kMdText) + "0.0> " + ink(kMdLink) + "0.0>l\n",
+          "inline HTML: keys, bold, italic, underlined, struck, code, highlighted, links");
+    check(drawn("H<sub>2</sub>O x<sup>2</sup> 1<sup>st</sup> y<sup>[a]</sup> z<sub>n+1</sub>") == "H₂O x² 1ˢᵗ y^[a] zₙ₊₁\n" &&
+              drawn("x<sup>st</sup> y<sub>ab</sub>", 60) != "" && md_render("x<sup>st</sup> y<sub>2</sub>", 60, {}, {}, {}, 0).size() == 1 &&
+              md_row_text(md_render("x<sup>st</sup> y<sub>2</sub>", 60, {}, {}, {}, 0)[0]) == "x^(st) y_2",
+          "inline HTML: raised and lowered where the font has them, else ^ and _");
+    check(drawn("<kbd>a</kbd> and\nmore <!-- gone --> text <span>kept</span> <b>open") == nb + "a" + nb + " and more  text kept open\n" && drawn("a == b and == c") == "a == b and == c\n",
+          "inline HTML: a paragraph that starts with a tag, a comment, unknown and unclosed tags; == with spaces");
+    // Blocks: a heading, a centred paragraph, a rule, details open with
+    // their summary after a marker and what they hold indented (Markdown
+    // too, after a blank line), nothing left for a </details>.
+    check(drawn("<h2 align=\"center\">Title</h2>\n<p align=\"center\">mid</p>\n<hr>\n", 21) == "        Title\n" + rule_of(21) + "\n         mid\n" + rule_of(21) + "\n",
+          "HTML blocks: a heading and a paragraph in the middle, a rule");
+    check(drawn("<details>\n<summary> More </summary>\n\n- a\n\n</details>\n\nafter\n") == "\xE2\x96\xBE More\n\n  \xE2\x80\xA2 a\n\nafter\n" &&
+              drawn("<details><summary>S</summary>said</details>\n\nx\n") == "\xE2\x96\xBE S\n  said\n\nx\n",
+          "HTML blocks: details open, what they hold indented under the summary, to their end");
+    std::string nested;
+    for (int k = 0; k < 40; ++k) nested += "<details><summary>s</summary>\n";
+    nested += "\ndeep\n";
+    check(drawn(nested, 60).ends_with("\n" + std::string(16, ' ') + "deep\n"), "HTML blocks: details nested 40 deep indented 8 deep at most");
+
     // Tables: lines in the muted ink; the header's tint across its cells
     // and the lines between them (not the outer two); a line between the
     // body's rows only when a cell wraps; columns in line with a family

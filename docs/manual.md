@@ -2434,8 +2434,8 @@ quotes (nested), tables (aligned as their `:--:` says, cells wrapped to
 fit, below), fenced and indented code (on a tinted band, the language at its
 top right; a block in a language blit has a grammar for, by its name,
 `c++`, `py`, `sh`, `yml` or another file ending, is coloured by that
-grammar in the theme's colours, on the preview's thread), rules, line breaks, HTML (its text without the tags; comments
-left out), and leaves out front matter.
+grammar in the theme's colours, on the preview's thread), rules, line breaks, HTML (below; comments
+left out), math (below), `==highlighted==` text, and leaves out front matter.
 
 **Headings** are told apart by what a grid of cells has. The top three
 levels have a colour each and the lower three share a fourth. Levels one
@@ -2470,6 +2470,18 @@ it and the font draws them (x², aᵢⱼ, ∑ₙ₌₁), else written `x^(n+1)`;
 (∛, ∜), `\mathbb{R}` ℝ, `\binom{n}{k}` C(n,k), `\text{...}` its words, and
 accents go over one letter (x̂, v⃗). Sizing, `\left`/`\right` and
 environments' names go; what blit does not know stays as it was written.
+
+**HTML** in the text is drawn as GitHub draws it, in blit's own way:
+`<kbd>` is a key, on the code's tint; `<sub>` and `<sup>` are lowered and
+raised in Unicode's characters where it has them all and the font draws
+them (H₂O, x², 1ˢᵗ), else written `_2` and `^2`; `<mark>` (and
+`==text==`) is on a highlighter's tint; `<b>`, `<strong>`, `<i>`, `<em>`,
+`<u>`, `<ins>`, `<s>`, `<del>` and `<code>` look as their Markdown does;
+`<a href>` is a link; `<br>` breaks the line; other tags go and their
+text stays. In blocks of HTML, `<h1>` to `<h6>` are headings, a `<p>`,
+`<div>` or heading with `align="center"` (and `<center>`) is in the
+middle, `<hr>` is a rule, and `<details>` is open: its `<summary>` bold
+after a `▾`, what it holds under that, indented (Markdown in it too).
 
 **Alerts** (GitHub's: a quote whose first line is `[!NOTE]`, `[!TIP]`,
 `[!IMPORTANT]`, `[!WARNING]` or `[!CAUTION]`, in any case, alone on its

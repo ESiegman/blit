@@ -216,6 +216,7 @@ void colours(const ThemeColors& tc, const float* bg, MdView& v) {
     tone(kMdHeaderTone, 0.12f);
     tone(kMdNodeTone, 0.05f);
     tone(kMdErrorTone, 0.12f, kMdError);
+    tone(kMdMarkTone, 0.3f, kMdAnsiYellow);  // (a highlighter's)
 }
 
 // The preview's ink for a capture of a highlight query: by the first part
@@ -842,9 +843,9 @@ void App::md_layout(FrameDesc& fd) {
                     for (u32 c = kMargin + row.fill_from; c < std::min(cols, kMargin + row.fill_to); ++c) line[c] |= kCellSelected | static_cast<u32>(row.fill) << kCellDecoShift;
                 u32 c = kMargin;
                 for (const MdRun& run : row.runs) {
-                    // (A link is underlined, struck-out text has a line through it.)
+                    // (A link is underlined, as is <u>; struck-out text has a line through it.)
                     u32 style = (run.style & kMdBold ? Font::kBold : 0) | (run.style & kMdItalic ? Font::kItalic : 0) |
-                                (run.style & kMdStrike ? Font::kStrike : 0) | (run.link.empty() ? 0 : Font::kUnderline);
+                                (run.style & kMdStrike ? Font::kStrike : 0) | (run.link.empty() && !(run.style & kMdUnderline) ? 0 : Font::kUnderline);
                     if (!font.ensure_style(style)) style &= Font::kFaces - 1;
                     const u32 end = v.box.put(font, r, c, run.text, run.ink, style);
                     if (run.tone)

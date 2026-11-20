@@ -54,9 +54,9 @@ enum MdInk : u8 {
 };
 static_assert(kMdInkCount <= 32);  // (a popup's palette)
 // Backgrounds behind runs or rows (the preview's tones; an error's in a notebook).
-enum MdTone : u8 { kMdNoTone, kMdCodeTone, kMdHeaderTone, kMdNodeTone, kMdErrorTone };
+enum MdTone : u8 { kMdNoTone, kMdCodeTone, kMdHeaderTone, kMdNodeTone, kMdErrorTone, kMdMarkTone };  // (kMdMarkTone: <mark>, ==text==)
 // Styles, which the preview maps to the font's.
-enum : u8 { kMdBold = 1, kMdItalic = 2, kMdStrike = 4 };
+enum : u8 { kMdBold = 1, kMdItalic = 2, kMdStrike = 4, kMdUnderline = 8 };
 
 struct MdRun {
     std::string text;

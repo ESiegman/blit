@@ -33,7 +33,7 @@ break.
 │ x|y   │ z │
 └───────┴───┘
 
-More
+▾ More
 
 Third level
 

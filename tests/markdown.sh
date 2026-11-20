@@ -40,7 +40,7 @@ pictures() {
          { if (skip) print ""; skip = 0; print }'
 }
 
-for f in sample edge diagrams code alerts notes headings tables math; do
+for f in sample edge diagrams code alerts notes headings tables math html; do
     size=1600x1100
     [ $f = sample ] || [ $f = diagrams ] && size=3600x1100
     run $size "$here/markdown/$f.md" ""
@@ -106,6 +106,20 @@ all=$got
 got=$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]Euler.s identity \[#dbdedb i\]e^(iπ) + 1 = 0\[#dbdedb\] links five$')
 got=$got,$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]            \[#dbdedb i\]∑_(k=1)^∞ 1/k² = π²/6$'),$(printf '%s\n' "$all" | grep -c '▎ \[#dbdedb\]  *\[#7f848e i\]E = mc²$')
 check "math: slanted, display math in the middle" "1,1,1"
+
+# Inline HTML: <kbd> a key on the code's tone, <mark> and ==text== on a
+# highlighter's, <u> underlined, <s> struck and quiet, <sup> raised, <a
+# href> a link; <details> open, its summary after a marker, what it holds
+# indented; <h1 align="center"> a heading in the middle.
+looks "$here/markdown/html.md"
+all=$got
+got=$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]Press \[#dbdedb t1\][^[]*Cmd[^[]*\[#dbdedb\]+\[#dbdedb t1\][^[]*Shift')
+got=$got,$(printf '%s\n' "$all" | grep -c '^\[#dbdedb t5\]highlighted words\[#dbdedb\] and \[#dbdedb t5\]highlighted too\[#dbdedb\], but a$')
+got=$got,$(printf '%s\n' "$all" | grep -c '\[#dbdedb u\]Underlined\[#dbdedb\], \[#dbdedb u\]inserted\[#dbdedb\], \[#7f848e s\]struck')
+got=$got,$(printf '%s\n' "$all" | grep -c '\[#61afef >https://example.com/docs\]link in HTML')
+got=$got,$(printf '%s\n' "$all" | grep -c '^\[#61afef\]▾ \[#dbdedb b\]More about it$'),$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]  \[#dbdedb\]What it holds')
+got=$got,$(printf '%s\n' "$all" | grep -c '^\[#dbdedb\]  *\[#e06c75 b\]blit$')
+check "inline HTML: keys, highlights, underlines, links, details, a heading in the middle" "1,1,1,1,1,1,1"
 
 # Footnotes: a mark is a link to its text at the end, the row that text
 # starts on is named for it, and the mark after the text is a link back;
@@ -387,6 +401,17 @@ awk 'BEGIN { for (i = 0; i < 100000; i++) printf "[^a] "; print "\n"
     print "\n[^a]: the end" }' >"$dir/marks.md"
 got=$(limit 10 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mddump" "$dir/marks.md" 2>&1 >/dev/null | grep -c '1\. the end ↩$')
 check "footnotes' marks by the hundred thousand, and footnotes that refer to each other: drawn, in time" "1"
+# Inline HTML by the hundred thousand: tags that close nothing (each
+# looked to the end of the line for its closing tag), comments that never
+# end, == that close nothing, and tags nested that deep.
+awk 'BEGIN { for (i = 0; i < 100000; i++) printf "<kbd>a "; print "\n"
+    for (i = 0; i < 30000; i++) printf "<sup>a <b>b <a href=x>c "; print "\n"
+    printf "a "; for (i = 0; i < 100000; i++) printf "<!-- a "; print "\n"
+    for (i = 0; i < 100000; i++) printf "==a "; print "\n"
+    for (i = 0; i < 50000; i++) printf "<b>"; printf "x"; for (i = 0; i < 50000; i++) printf "</b>"; print "\n"
+    for (i = 0; i < 20000; i++) print "<details><summary>s</summary>"; print "\n"; print "the end" }' >"$dir/marks.md"
+got=$(limit 10 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mddump" "$dir/marks.md" 2>&1 >/dev/null | grep -c '^ *the end')
+check "inline HTML's tags by the hundred thousand, comments that never end, nested that deep: drawn, in time" "1"
 # Math by the hundred thousand: $ that close nothing (each looked to the
 # end of the line for its close), $$ and \( the same, $` with no `$, math
 # that opens a hundred thousand braces and closes none, and math nested

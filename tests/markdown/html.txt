@@ -1,0 +1,33 @@
+                    ▣ logo
+                     blit
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+   A fast editor, drawn on the GPU. Website
+
+
+Inline HTML
+──────────────────────────────────────────────
+Press  Cmd + Shift + P  for the commands,
+ Esc  to close. Water is H₂O, and E = mc²; the
+1ˢᵗ and x_(ij); a note^[note]. Some
+highlighted words and highlighted too, but a
+== b is not. Underlined, inserted, struck,
+deleted, bold, strong, italic, emphasis,
+code(). A link in HTML, a comment  gone, a
+line
+broken.
+
+▾ More about it
+
+  What it holds, in Markdown:
+
+  • a list
+  • code
+
+▾ Short one
+  Said on one line.
+
+An HTML heading
+──────────────────────────────────────────────
+A third level
+──────────────────────────────────────────────
+After the rule.

@@ -298,6 +298,15 @@ bool scripted(std::string_view s, bool up, u8 glyphs, std::string* out) {
     return true;
 }
 
+// What follows a ^ or _ that cannot be raised or lowered: in brackets,
+// when it is more than a character and not in brackets already (x^(n+1)).
+std::string script_mark(char mark, const std::string& s) {
+    size_t chars = 0;
+    for (const char ch : s) chars += !is_cont(static_cast<u8>(ch));
+    const bool own = s.size() >= 2 && ((s.front() == '(' && s.back() == ')') || (s.front() == '[' && s.back() == ']'));
+    return mark + (chars > 1 && !own ? "(" + s + ")" : s);
+}
+
 // TeX's math as text, onto `out` (md_math_text); groups nested deeper
 // than kMostDepth are left as they are (each level looks to its group's end).
 void tex_into(std::string_view tex, u8 glyphs, int depth, std::string& out) {
@@ -478,10 +487,7 @@ void tex_into(std::string_view tex, u8 glyphs, int depth, std::string& out) {
                 continue;
             }
             const std::string body = inner(g);
-            if (!scripted(body, c == '^', glyphs, &out)) {
-                out += c;
-                out += chars(body) > 1 && !(body.starts_with('(') && body.ends_with(')')) ? "(" + body + ")" : body;
-            }
+            if (!scripted(body, c == '^', glyphs, &out)) out += script_mark(c, body);
             continue;
         }
         if (c == '{' || c == '}' || c == '&') {
@@ -516,7 +522,7 @@ class Marks {
     // is, or npos. (Most are a few words on. Once a scan goes far, what a scan
     // finds from each place it passes is kept, and the next to get there stops.)
     size_t closer(size_t from, char c, size_t n) {
-        std::vector<size_t>& found_from = closers_[c == '*' ? n - 1 : c == '_' ? n + 2 : 6];
+        std::vector<size_t>& found_from = closers_[c == '*' ? n - 1 : c == '_' ? n + 2 : c == '~' ? 6 : 7];
         path_.clear();
         size_t steps = 0;
         size_t found = std::string_view::npos;
@@ -647,6 +653,14 @@ class Marks {
         return at;
     }
 
+    // The first `what` at `from` or after, `what` being the closing tag of
+    // inline HTML's kind `kind` (each kind asked with `from` never going back).
+    size_t tag_close(size_t kind, std::string_view what, size_t from) {
+        size_t& at = tags_[kind];
+        if (at == kUnknown || (at != std::string_view::npos && at < from)) at = s_.find(what, from);
+        return at;
+    }
+
     // The first $ at `from` or after that can close math ($x$): not after a
     // space or a backslash, not before a digit (so "$5 and $6" is not math),
     // not one of two. Asked with `from` never going back.
@@ -681,7 +695,7 @@ class Marks {
     static constexpr const char* kNext = "<>:@ `\n";
     static constexpr std::string_view kFound[] = {"$$", "\\)"};
     std::string_view s_;
-    std::vector<size_t> closers_[7];  // for each mark (*, **, ***, _, __, ___, ~~), what a scan from each place finds
+    std::vector<size_t> closers_[8];  // for each mark (*, **, ***, _, __, ___, ~~, ==), what a scan from each place finds
     std::vector<size_t> path_;
     std::vector<size_t> square_, round_;
     bool ticks_found_ = false;
@@ -689,6 +703,8 @@ class Marks {
     size_t next_[7] = {kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown};
     size_t found_[2] = {kUnknown, kUnknown};
     size_t dollar_ = kUnknown;
+    size_t tags_[16] = {kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown,
+                        kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown, kUnknown};
     size_t trimmed_for_ = std::string_view::npos, trimmed_ = 0;
 };
 
@@ -849,7 +865,61 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
                     i = end + 1;
                     continue;
                 }
-                // Inline HTML (<kbd>, <sup>, </b> ...): its tags go, its text stays.
+                // Inline HTML that says how its text looks, to its closing tag:
+                // <b>, <i>, <u>, <s>, <code> as their Markdown is; <kbd> a key;
+                // <sub> and <sup> lowered and raised; <mark> highlighted; <a href> a link.
+                static constexpr std::string_view kTags[] = {"b", "strong", "i", "em", "u", "ins", "s", "del", "strike", "code", "kbd", "sub", "sup", "mark", "a"};
+                size_t name_end = from;
+                while (name_end < end && name_end - from < 8 && std::isalnum(static_cast<unsigned char>(s[name_end]))) ++name_end;
+                const std::string name = lower(s.substr(from, name_end - from));
+                const size_t kind = static_cast<size_t>(std::ranges::find(kTags, name) - std::begin(kTags));
+                if (kind < std::size(kTags) && (name_end == end || s[name_end] == ' ' || s[name_end] == '\t' || s[name_end] == '\n')) {
+                    const std::string close = "</" + name + ">";
+                    if (const size_t at = marks.tag_close(kind, close, end + 1); at != std::string_view::npos) {
+                        flush();
+                        const std::string_view body = s.substr(end + 1, at - end - 1);
+                        Span look = as;
+                        if (name == "b" || name == "strong") look.style |= kMdBold;
+                        else if (name == "i" || name == "em") look.style |= kMdItalic;
+                        else if (name == "u" || name == "ins") look.style |= kMdUnderline;
+                        else if (name == "s" || name == "del" || name == "strike") look.ink = kMdMuted, look.style |= kMdStrike;
+                        else if (name == "code") look.ink = as.link.empty() ? kMdCode : kMdLink, look.tone = kMdCodeTone, look.style &= static_cast<u8>(~kMdItalic);
+                        else if (name == "mark") look.tone = kMdMarkTone;
+                        if (name == "a") {
+                            const std::string href = attribute(inner, "href");
+                            if (href.empty()) parse_inline(body, as, refs, out);
+                            else link_span(body, href);
+                        } else if (name == "kbd") {  // (a key: on the code's tone, a space each side that does not break)
+                            look.tone = kMdCodeTone;
+                            Span edge = look;
+                            edge.text = "\xC2\xA0";
+                            out.push_back(edge);
+                            parse_inline(body, look, refs, out);
+                            out.push_back(edge);
+                        } else if (name == "sub" || name == "sup") {  // (in Unicode's raised or lowered characters where it has them all, else ^x, _x)
+                            std::vector<Span> said;
+                            parse_inline(body, as, refs, said);
+                            std::string text;
+                            for (const Span& sp : said) text += sp.text;
+                            Span sp = as;
+                            if (!scripted(text, name == "sup", refs.glyphs, &sp.text)) sp.text = script_mark(name == "sup" ? '^' : '_', text);
+                            out.push_back(std::move(sp));
+                        } else {
+                            parse_inline(body, look, refs, out);
+                        }
+                        i = at + close.size();
+                        continue;
+                    }
+                }
+                // A comment goes, to its end.
+                if (s.substr(i, 4) == "<!--") {
+                    const size_t close = marks.tag_close(15, "-->", i + 4);
+                    if (close != std::string_view::npos) {
+                        i = close + 3;
+                        continue;
+                    }
+                }
+                // Inline HTML (<span>, </b> ...): its tags go, its text stays.
                 if (!inner.empty() && (std::isalpha(static_cast<unsigned char>(inner[0])) || inner[0] == '/') && !in_it('<')) {
                     i = end + 1;
                     continue;
@@ -917,18 +987,19 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
                 }
             }
         }
-        if (c == '*' || c == '_' || (c == '~' && i + 1 < s.size() && s[i + 1] == '~')) {
+        if (c == '*' || c == '_' || ((c == '~' || c == '=') && i + 1 < s.size() && s[i + 1] == c)) {
             size_t k = i;
             while (k < s.size() && s[k] == c) ++k;
-            const size_t run = std::min<size_t>(k - i, c == '~' ? 2 : 3);
+            const size_t run = std::min<size_t>(k - i, c == '~' || c == '=' ? 2 : 3);
             const bool space_after = k >= s.size() || s[k] == ' ' || s[k] == '\t' || s[k] == '\n';
             const bool intraword = c == '_' && i > 0 && std::isalnum(static_cast<unsigned char>(s[i - 1]));
-            if (!space_after && !intraword && (c != '~' || k - i == 2)) {
+            if (!space_after && !intraword && ((c != '~' && c != '=') || k - i == 2)) {
                 const size_t end = marks.closer(i + run, c, run);
                 if (end != std::string_view::npos) {
                     flush();
                     Span inner = as;
                     if (c == '~') inner.ink = kMdMuted, inner.style |= kMdStrike;  // (struck out: a line through, and quieter)
+                    else if (c == '=') inner.tone = kMdMarkTone;  // (==highlighted==)
                     else inner.style |= static_cast<u8>(run == 1 ? kMdItalic : run == 2 ? kMdBold : kMdBold | kMdItalic);
                     parse_inline(s.substr(i + run, end - i - run), inner, refs, out);
                     i = end + run;
@@ -1132,6 +1203,26 @@ bool starts_block(std::string_view line) {
     if (is_fence(s, &fc, &fl) || atx_level(s) || is_rule(s) || s.starts_with('>') || math_open(trim(s))) return true;
     if (list_marker(line, &m)) return (!m.ordered || m.number == 1) && !blank(std::string_view(s).substr(std::min(s.size(), static_cast<size_t>(m.content - indent_of(line)))));
     return false;
+}
+
+// Whether a line starts a block of HTML (as CommonMark has it): a comment,
+// a tag of a kind that makes blocks (<div>, <p>, <details>, <h1>, <table>
+// ...), or any other tag alone on its line. A paragraph that starts with an
+// inline tag (<kbd>, <b>) is a paragraph.
+bool html_start(std::string_view s) {
+    if (s.size() < 2 || s[0] != '<') return false;
+    if (s[1] == '!') return true;
+    const size_t from = s[1] == '/' ? 2 : 1;
+    size_t end = from;
+    while (end < s.size() && end - from < 12 && std::isalnum(static_cast<unsigned char>(s[end]))) ++end;
+    if (end == from || !std::isalpha(static_cast<unsigned char>(s[from])) || (end < s.size() && !std::strchr(" \t>/", s[end]))) return false;
+    static constexpr std::string_view kBlocks[] = {"address", "article", "aside", "blockquote", "body", "center", "dd", "details", "dialog", "div", "dl", "dt",
+                                                   "fieldset", "figcaption", "figure", "footer", "form", "h1", "h2", "h3", "h4", "h5", "h6", "header", "hr",
+                                                   "html", "li", "main", "nav", "ol", "p", "pre", "script", "section", "style", "summary", "table", "tbody",
+                                                   "td", "tfoot", "th", "thead", "tr", "ul"};
+    if (std::ranges::find(kBlocks, lower(s.substr(from, end - from))) != std::end(kBlocks)) return true;
+    const std::string_view t = trim(s);
+    return t.back() == '>' && t.find('>') == t.size() - 1;
 }
 
 std::vector<Block> parse_blocks(const std::vector<Line>& lines, Refs& refs);
@@ -1351,7 +1442,7 @@ void parse_into(const std::vector<Line>& lines, Refs& refs, std::vector<Block>& 
                 }
             }
         }
-        if (s.starts_with('<') && s.size() > 1 && (std::isalpha(static_cast<unsigned char>(s[1])) || s[1] == '/' || s[1] == '!')) {
+        if (html_start(s)) {
             Block b;
             b.kind = Block::kHtml;
             b.line = no;
@@ -1590,6 +1681,7 @@ struct Level {
     std::vector<MdRun> first, rest;
     bool used = false;
     bool list = false;  // a list item's (how deep lists are, for their bullets)
+    bool details = false;  // what <details> holds (to its </details>, maybe blocks later)
 };
 
 // Whether these spans are pictures and nothing else (but space).
@@ -1611,6 +1703,9 @@ struct Layout {
     const MdCodeFn* colour = nullptr;
     const MdDiagramFn* diagram = nullptr;
     bool named = true;  // a code block's language named over it
+    size_t floor = 0;   // the levels the blocks being drawn are inside (a </details> closes none of them)
+    static constexpr long kMostDetails = 8;  // <details> indented inside each other, at most
+    int details_over = 0;                    // and those open inside the deepest of those
 
     u32 indent() const {
         u32 n = 0;
@@ -1651,6 +1746,9 @@ struct Layout {
     }
 
     void blocks(const std::vector<Block>& bs, bool tight, u8 ink) {
+        const size_t held = levels.size();  // (<details> opened among these and not closed: closed at their end)
+        const size_t was_floor = floor;
+        floor = held;
         const Block* before = nullptr;  // (the one drawn before this one: a footnote's text is drawn at the end)
         for (const Block& b : bs) {
             if (b.kind == Block::kNote) continue;
@@ -1661,11 +1759,19 @@ struct Layout {
             // rows above it. (A heading right under another's line: one.)
             const bool under_rule = before && before->kind == Block::kHeading && before->level <= 2;
             const bool heading = b.kind == Block::kHeading;
+            const size_t had = rows.size();
             if (before && !tight && (!under_rule || heading)) gap(b.line);
             if (before && !tight && !under_rule && heading && b.level <= 2) gap(b.line);
+            const size_t gapped = rows.size();
             block(b, tight, ink);
+            if (rows.size() == gapped && b.kind == Block::kHtml) {  // (HTML that draws nothing, a </details>: no room for it either)
+                rows.resize(had);
+                continue;
+            }
             before = &b;
         }
+        while (levels.size() > held && levels.back().details) levels.pop_back();
+        floor = was_floor;
     }
 
     // The footnotes, under a short rule at the end: those referred to, in
@@ -2001,8 +2107,13 @@ struct Layout {
         }
     }
 
-    // HTML: its text, without the tags (and comments); its pictures drawn,
-    // in the middle if it says align="center" (as a README's top often does).
+    // HTML: its text, without the tags (and comments), its inline tags as
+    // the text says (parse_inline); its pictures drawn. A line in a <p>,
+    // <div> or heading that says align="center" (as a README's top often
+    // does), or in a <center>, is in the middle; one in an <h1> to <h6> is
+    // that heading; <details> is open, its <summary> bold after a marker and
+    // what it holds under that, indented (to its </details>, which may be
+    // blocks later: Markdown in it, after a blank line); <hr> is a rule.
     void html(const Block& b, u8 ink) {
         std::string all;
         for (const std::string& l : b.text) all += l + "\n";
@@ -2019,37 +2130,128 @@ struct Layout {
         cut("<!--", "-->");
         cut("<script", "</script>");
         cut("<style", "</style>");
-        const std::string low = lower(all);
-        const bool centre = low.find("align=\"center\"") != std::string::npos || low.find("align=center") != std::string::npos || low.find("align='center'") != std::string::npos;
+        struct Open {
+            std::string name;
+            bool centre;
+        };
+        std::vector<Open> open;  // (the tags that change how a line is drawn, as they open and close)
         std::vector<Span> pics;  // pictures on lines of their own, gathered (a row of them across lines)
+        bool pics_centre = false;
+        int pending = 0;  // (<details> opened, its indent waiting for its summary)
+        auto indent_details = [&] {
+            for (; pending > 0; --pending) {
+                const auto deep = std::count_if(levels.begin(), levels.end(), [](const Level& l) { return l.details; });
+                if (deep < kMostDetails) levels.push_back({{{"  ", kMdText}}, {{"  ", kMdText}}, false, false, true});
+                else ++details_over;  // (deeper than anyone nests them: at the indent of the deepest)
+            }
+        };
+        // (each line, and what follows a </summary> on it as a line of its own)
+        std::vector<std::pair<std::string_view, u32>> parts;
         size_t k = 0;
         for (size_t at = 0; at < all.size(); ++k) {
             const size_t nl = all.find('\n', at);
-            const std::string_view l = std::string_view(all).substr(at, nl == std::string::npos ? std::string::npos : nl - at);
+            std::string_view l = std::string_view(all).substr(at, nl == std::string::npos ? std::string::npos : nl - at);
             at = nl == std::string::npos ? all.size() : nl + 1;
             const u32 line = k < b.nos.size() ? b.nos[k] : b.line;
+            if (const size_t end = lower(l).find("</summary>"); end != std::string::npos && !blank(l.substr(end + 10))) {
+                parts.emplace_back(l.substr(0, end + 10), line);
+                l.remove_prefix(end + 10);
+            }
+            parts.emplace_back(l, line);
+        }
+        for (const auto& [l, line] : parts) {
+            // Its tags: what is open over it, and what it opens and closes.
+            bool centre = false, summary = false, rule = false;
+            int heading = 0, details = 0;  // (details: <details> opened on it, less those closed)
+            for (const Open& o : open) {
+                centre = centre || o.centre;
+                if (o.name.size() == 2 && o.name[0] == 'h') heading = o.name[1] - '0';
+            }
+            bool heading_ends = false;
+            for (size_t lt = l.find('<'); lt != std::string_view::npos; lt = l.find('<', lt + 1)) {
+                const size_t gt = l.find('>', lt);
+                if (gt == std::string_view::npos) break;
+                const std::string_view tag = l.substr(lt + 1, gt - lt - 1);
+                const bool closing = tag.starts_with('/');
+                size_t e = closing ? 1 : 0;
+                while (e < tag.size() && e < 12 && std::isalnum(static_cast<unsigned char>(tag[e]))) ++e;
+                const std::string name = lower(tag.substr(closing ? 1 : 0, e - (closing ? 1 : 0)));
+                lt = gt;
+                const bool head = name.size() == 2 && name[0] == 'h' && name[1] >= '1' && name[1] <= '6';
+                if (name == "hr" && !closing) rule = true;
+                if (name == "summary" && !closing) summary = true;
+                if (name != "p" && name != "div" && name != "center" && name != "details" && !head) continue;
+                if (!closing) {
+                    const std::string align = lower(attribute(tag, "align"));
+                    open.push_back({name, name == "center" || align == "center"});
+                    centre = centre || open.back().centre;
+                    if (head) heading = name[1] - '0';
+                    if (name == "details") ++details;
+                } else {
+                    for (size_t o = open.size(); o-- > 0;)
+                        if (open[o].name == name) {
+                            open.erase(open.begin() + static_cast<std::ptrdiff_t>(o), open.end());
+                            break;
+                        }
+                    if (head) heading_ends = true;
+                    if (name == "details") --details;
+                }
+            }
+            if (rule) {
+                if (!pics.empty()) pictures(pics, line, pics_centre), pics.clear();
+                std::string r;
+                for (u32 c = 0; c < room(); ++c) r += "\xE2\x94\x80";
+                row({{r, kMdMuted}}, line);
+            }
             Span as;
-            as.ink = ink;
+            as.ink = heading ? static_cast<u8>(heading == 1 ? kMdHeading1 : heading == 2 ? kMdHeading2 : heading == 3 ? kMdHeading3 : kMdHeading) : ink;
+            as.style = heading ? (heading <= 4 ? kMdBold : heading == 5 ? kMdBold | kMdItalic : kMdItalic) : summary ? kMdBold : 0;
             std::vector<Span> spans;
             parse_inline(l, as, refs, spans);
             if (pictures_only(spans)) {
                 for (Span& sp : spans)
                     if (!sp.image.empty()) pics.push_back(std::move(sp));
-                continue;
-            }
-            bool text = false;
-            for (const Span& sp : spans) text = text || (!sp.brk && sp.text.find_first_not_of(" \t") != std::string::npos);
-            if (!text) continue;  // (nothing but tags)
-            if (!pics.empty()) pictures(pics, line, centre), pics.clear();
-            for (std::vector<MdRun>& r : wrap(spans, room())) {
-                if (centre) {
-                    const u32 w = cols_of_runs(r);
-                    if (room() > w) r.insert(r.begin(), MdRun(std::string((room() - w) / 2, ' ')));
+                pics_centre = centre;
+            } else {
+                bool text = false;
+                for (const Span& sp : spans) text = text || (!sp.brk && sp.text.find_first_not_of(" \t") != std::string::npos);
+                if (text) {  // (not nothing but tags)
+                    if (!pics.empty()) pictures(pics, line, pics_centre), pics.clear();
+                    if (!summary) indent_details();
+                    if (summary) {  // (always open: the marker says so)
+                        Span mark;
+                        mark.text = "\xE2\x96\xBE ";
+                        mark.ink = kMdAccent;
+                        while (!spans.empty() && !spans[0].brk && spans[0].image.empty() && spans[0].text.find_first_not_of(" \t") != 0) {  // (from its first word)
+                            const size_t lead = spans[0].text.find_first_not_of(" \t");
+                            if (lead == std::string::npos) spans.erase(spans.begin());
+                            else spans[0].text.erase(0, lead);
+                        }
+                        spans.insert(spans.begin(), mark);
+                    }
+                    for (std::vector<MdRun>& r : wrap(spans, room())) {
+                        if (centre) {
+                            const u32 w = cols_of_runs(r);
+                            if (room() > w) r.insert(r.begin(), MdRun(std::string((room() - w) / 2, ' ')));
+                        }
+                        row(std::move(r), line);
+                    }
+                    if (heading && heading <= 2 && heading_ends) {  // (a line under the top two, as under a Markdown heading)
+                        std::string r;
+                        for (u32 c = 0; c < room(); ++c) r += heading == 1 ? "\xE2\x94\x81" : "\xE2\x94\x80";
+                        row({{r, heading == 1 ? kMdHeading1 : kMdMuted}}, line);
+                    }
                 }
-                row(std::move(r), line);
             }
+            // What <details> holds, indented under its summary; </details> ends that.
+            pending += details;
+            if (summary) indent_details();
+            for (; pending < 0 && details_over > 0; ++pending) --details_over;
+            for (; pending < 0 && levels.size() > floor && levels.back().details; ++pending) levels.pop_back();
+            pending = std::max(pending, 0);
         }
-        if (!pics.empty()) pictures(pics, b.nos.empty() ? b.line : b.nos.back(), centre);
+        if (!pics.empty()) pictures(pics, b.nos.empty() ? b.line : b.nos.back(), pics_centre);
+        indent_details();
     }
 
     void block(const Block& b, bool tight, u8 ink) {
