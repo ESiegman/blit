@@ -644,6 +644,7 @@ int App::run_bench() {
 //   treewait               wait for the side panel's tree to finish reading folders and changing files (20 s at most)
 //   alive                  print whether blit is still running, or has been told to quit
 //   gitbusy                wait until git is running for the file in front (20 s at most)
+//   remotelost             wait for a connection to another machine to have gone (10 s at most)
 //   remotestream:BYTES     a program on the machine of the file in front writes that many bytes, read here only after a
 //                          second; print how many came and whether no more than a few MB were held here meanwhile
 // Scrolling is settled instantly, so the next event sees the final view.
@@ -1004,6 +1005,11 @@ void App::run_script(const char* script) {
                 if ((!loading && !connecting && !remote_busy()) || now_ns() > until) break;
                 SDL_Delay(2);
             }
+        } else if (verb == "remotelost") {  // a connection has been seen to go (10 s at most): what it went with is told
+            const u64 until = now_ns() + 10'000'000'000ull;
+            for (bool lost = false; !lost && now_ns() < until; SDL_Delay(2))
+                for (const std::shared_ptr<Remote>& r : Remote::all()) lost |= r->state() == Remote::kFailed;
+            remote_sync();
         } else if (verb == "clock") {
             clock_ns = now_ns();
             nb_spent_ns_ = 0;

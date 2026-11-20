@@ -442,6 +442,15 @@ EOF
     kill -0 "$leader" 2>/dev/null && got="$got, still there" || got="$got, then gone"
     check "a server that exited before its worker: its pid kept until the worker has gone" 'blit: held Z, then gone'
 fi
+# The connection lost (blit's agent there killed): a terminal there says so,
+# not that its program failed.
+drop="lua:os.execute('pkill -9 -f $T/.cache/blit/blit-agent');remotelost"
+got=$(BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+    --script "remotewait;key:ctrl+\`;frame;termwait:\$;$drop;termend;termdump" "$R/notes.txt" 2>&1 >/dev/null | sed -e 's/ @.*ended/ ended/' | join)
+check "a terminal there whose connection is lost" 'Ctrl+` back to the file|$|[connection to box lost] ended -1'
+got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+    --script "remotewait;$drop;key:ctrl+\`;frame;termend;termdump" "$R/notes.txt" 2>&1 >/dev/null | sed -e 's/ @.*ended/ ended/' | join)
+check "and one opened just after: why, and no exit code" 'Ctrl+` back to the file|the connection to box was lost ended 1'
 
 # The agent was copied there once, into the cache blit keeps in that home.
 got=$(ls "$T/.cache/blit" | sed -e 's/-[0-9a-f]*$//')

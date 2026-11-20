@@ -79,6 +79,7 @@ struct TermView {
     int out = -1;
     std::jthread reader;
     std::atomic<bool> told{false}, ended{false};
+    bool unstarted = false;  // (there: it never started, and the screen says why; set before ended)
     bool keep = false;    // a command's (a build's): the tab stays when it ends, and says how it went
     std::string command;  // (that command)
     std::string title;    // the tab's name, whatever the program calls itself
@@ -225,6 +226,7 @@ struct TermView {
     void read_loop(std::stop_token stop) {
         if (!remote_dir.empty() && !start_remote(stop)) {
             status = 1;
+            unstarted = true;
             ended = true;
             wake();
             return;
@@ -496,11 +498,14 @@ void App::term_sync() {
             }
             if (v.ended && !d.term_closed) {
                 d.term_closed = true;
+                // (One on another machine whose connection went did not fail or exit: it is not known how it went.)
+                const bool lost = v.status == -1 && v.conn && v.conn->state() == Remote::kFailed;
                 if (v.keep) {  // (a build's: how it went, and the time it took)
                     char took[48];
                     std::snprintf(took, sizeof took, "%.1f s", static_cast<double>(now_ns() - v.started_ns) * 1e-9);
                     std::lock_guard lock(v.mu);
                     v.term.feed(v.status == 0 ? std::string("\r\n\x1b[32m[done in ") + took + "]\x1b[0m"
+                                : lost        ? "\r\n\x1b[31m[connection to " + v.host + " lost after " + took + "]\x1b[0m"
                                               : "\r\n\x1b[31m[failed with " + std::to_string(v.status.load()) + " after " + took + "]\x1b[0m");
                     build_ended(d.id, v.status);
                     continue;
@@ -528,8 +533,9 @@ void App::term_sync() {
                     dirty_ = true;
                     return term_sync();  // (the tabs moved: from the start)
                 }
+                if (v.unstarted) continue;  // (why is on the screen already: it did not exit)
                 std::lock_guard lock(v.mu);
-                v.term.feed("\r\n\x1b[2m[exited with code " + std::to_string(v.status.load()) + "]\x1b[0m");
+                v.term.feed(lost ? "\r\n\x1b[31m[connection to " + v.host + " lost]\x1b[0m" : "\r\n\x1b[2m[exited with code " + std::to_string(v.status.load()) + "]\x1b[0m");
             }
         }
     }
