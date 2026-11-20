@@ -335,7 +335,7 @@ void App::open_named(std::string name) {
         return dir.substr(0, dir.size() - there.size()) + tidy_path(name[0] == '/' ? name : there + "/" + name);
     };
     std::vector<std::string> dirs;
-    const std::string& here = pane_->doc->ed.path;
+    const std::string here = full_path(pane_->doc->ed.path);  // (a file named from its own folder is "a.frag")
     if (const size_t slash = here.rfind('/'); slash != std::string::npos) dirs.push_back(here.substr(0, slash));
     if (name.empty()) return;
     if (name[0] != '/' || dirs.empty()) {
