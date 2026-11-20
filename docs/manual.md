@@ -1742,9 +1742,9 @@ A server whose last file has been closed stops half a minute later.
   another machine too. If a file open in a tab has been typed in since the
   changes were found, none is made.
   While clangd knows only the open files, the count of changes ends
-  `(open files only)`, and a name declared in a file that is not open is
-  not renamed (the bottom line says where it is declared): open that file,
-  or wait for the index.
+  `(open files only)`, and a name declared or defined in a file that is
+  not open, or in a header, is not renamed (the bottom line says where):
+  open that file, or wait for the index.
 - **Formatting** with Option+Shift+F: the whole file, or the lines of the
   selection (Vim's `gq` with a motion, `gqq` for a line, or `gq` on a
   Visual selection). One undo takes it back. With `lsp.format_on_save`
@@ -1865,11 +1865,9 @@ Until its first indexing has ended, and always with the index off (or in
 a project with no compile database, which it cannot index), clangd knows
 only the open files: references and rename say `open files only`, the
 reference counts are not shown, and a name is not renamed when it is
-declared or defined in a file that is not open, or when all clangd knows
-of it is a header's declaration (with the index off it gives that as the
-definition when the file that defines it is not open). Callers in files
-that are not open are still not seen: open them too, or let the index
-finish.
+declared or defined in a file that is not open, or in a header, whose
+users clangd cannot see in the files that are not open: let the index
+finish (or turn it on) to rename those.
 
 The server's own output goes nowhere; `BLIT_LSP_LOG=/some/file blit ...`
 keeps it for when a server misbehaves.

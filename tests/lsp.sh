@@ -297,7 +297,8 @@ with indexoff "$on_fmt;key:F2;wait:200;finddump" "$P/fmt.cpp"
 got="$got / $said"
 check "the same with the index off" "closed / blit: Cannot rename: it is declared in fmt.hpp, which is not open, and clangd's background index is off"
 with clangd "open:$P/fmt.hpp;open:$P/fmt.cpp;lspsettle;$on_fmt;key:F2;wait:200;finddump" "$P/fmt.cpp"
-check "with that file open, renamed" 'input [format_record] 0 :'
+got="$got / $said"
+check "with that file open: declared in a header, which files not open may use, not renamed" "closed / blit: Cannot rename: it is declared in fmt.hpp, a header that files not open may use, and clangd's index is not built yet"
 with index0 "$on_fmt;key:F2;wait:200;key:ctrl+U;text:fmt_record;key:Return;wait:200;finddump" "$P/fmt.cpp"
 check "and with the index built, renamed everywhere" 'pick [] 3 : >Rename to fmt_record: 2 edits in 2 files fmt.cpp  1 edit fmt.hpp  1 edit'
 # Declared in an open header, called in an open file, defined in one that
@@ -313,12 +314,13 @@ got="$got / $said"
 check "the same from the header's declaration, with the header alone open" "closed / blit: Cannot rename: it is declared in fmt.hpp, a header that files not open may use, and clangd's background index is off"
 with defsindex "open:$P/fmt.hpp;open:$P/lib/sink.cpp;lspsettle;$on_sink;key:F2;wait:200;finddump" "$P/lib/sink.cpp"
 got="$got / $said"
-check "the index part built: defined in a file that is not open, not renamed" "closed / blit: Cannot rename: it is defined in fmt.cpp, which is not open, and clangd's index is not built yet"
-with defsoff "open:$P/fmt.hpp;open:$P/fmt.cpp;open:$P/lib/sink.cpp;lspsettle;$on_sink;key:F2;wait:200;key:ctrl+U;text:fr2;key:Return;wait:200;finddump" "$P/lib/sink.cpp"
-check "with the file that defines it open too, renamed" 'pick [] 4 : >Rename to fr2: 3 edits in 3 files (open files only) lib/sink.cpp  1 edit fmt.cpp  1 edit fmt.hpp  1 edit'
-with defsoff "open:$P/fmt.hpp;open:$P/fmt.cpp;open:$P/lib/sink.cpp;lspsettle;$on_sink;key:F2;wait:200;key:ctrl+U;text:fr2;key:Return;wait:200;key:Return;wait:100" "$P/lib/sink.cpp"
-got="$said / $(cat "$P/fmt.cpp" "$P/lib/sink.cpp" | tr '\n' '|')"
-check "and once renamed, said again to be the open files' only" 'blit: Renamed: 3 edits in 3 files (open files only) / int fr2(int n) {|    return n;|}|int n = fr2(2);|'
+check "the index part built: still a header's name, not renamed" "closed / blit: Cannot rename: it is declared in fmt.hpp, a header that files not open may use, and clangd's index is not built yet"
+with defsoff "open:$P/fmt.hpp;open:$P/fmt.cpp;open:$P/lib/sink.cpp;lspsettle;$on_sink;key:F2;wait:200;finddump" "$P/lib/sink.cpp"
+got="$got / $said / $(cat "$P/fmt.cpp" "$P/lib/sink.cpp" | tr '\n' '|')"
+check "with every file that uses it open too: still a header's name, not renamed" "closed / blit: Cannot rename: it is declared in fmt.hpp, a header that files not open may use, and clangd's background index is off / int format_record(int n) {|    return n;|}|int n = format_record(2);|"
+with clangd "key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;key:ctrl+U;text:common;key:Return;wait:200;key:Return;wait:100"
+got="$said / $(head -1 "$P/a.cpp")"
+check "a name no header has, renamed, and said to be the open files' only" 'blit: Renamed: 4 edits in 3 files (open files only) / int common = 1; // ERROR'
 run "key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;key:ctrl+U;text:common;key:Return;wait:200;key:Return;lsptext"
 got="$got / $said / $(cat "$P/d.cpp") / $(head -1 "$P/a.cpp")"
 check "Enter renames: the open file through its tab (and saves it), the other on disk" 'int common = 1; // ERROR / call(1,   2, 3);    / WARN common   /  / blit: Renamed: 4 edits in 3 files / common in d, not open / int common = 1; // ERROR'

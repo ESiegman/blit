@@ -357,7 +357,6 @@ struct App::Assist {
     // declared, then where it is defined: see lsp_rename_checked.)
     bool rename_pending = false;
     u8 rename_checking = 0;  // 1: where it is declared asked, 2: where it is defined
-    std::vector<LspPlace> rename_declared;
     u64 rename_doc = 0, rename_off = 0;
     std::string rename_to;
     // Formatting asked for (and, before a save, waited for).
@@ -1369,7 +1368,6 @@ void App::lsp_rename() {
     }
     lsp_close(kPopAll);
     a.rename_doc = pane_->doc->id;
-    a.rename_declared.clear();
     if (lsp_.partial() && (lsp_.can_place(Lsp::kDeclaration) || lsp_.can_place(Lsp::kDefinitions))) {  // (where it is declared and defined, first)
         const bool declared = lsp_.can_place(Lsp::kDeclaration);
         a.rename_checking = declared ? 1 : 2;
@@ -1384,11 +1382,12 @@ void App::lsp_rename() {
 // While the server knows the open files only, a rename changes the open
 // files and no others. So a name is not renamed when it is declared or
 // defined in a file that is not open (left as it was, the build would
-// break there), nor when all the server knows of where it is defined is a
-// declaration in a header: clangd with its index off answers so when the
-// file that defines it is not open, and a header is there for files that
-// use it, which it cannot see either. Asked first where it is declared,
-// then where it is defined; then the rename goes on.
+// break there), nor when it is declared or defined in a header: a header
+// is there for files that use it, and the server cannot see those that
+// are not open (clangd with its index off even gives a header's
+// declaration as the definition when the file that defines it is not
+// open). Asked first where it is declared, then where it is defined; then
+// the rename goes on.
 void App::lsp_rename_checked(const std::vector<LspPlace>& found, bool defined) {
     Assist& a = *assist_;
     if (lsp_.front() != a.rename_doc || pane_->doc->id != a.rename_doc) return notify("The file changed: rename again");
@@ -1397,19 +1396,14 @@ void App::lsp_rename_checked(const std::vector<LspPlace>& found, bool defined) {
         if (!lsp_edit_doc(p.path))
             return notify(std::string("Cannot rename: it is ") + (defined ? "defined" : "declared") + " in " + shown_name(p.path, root) + ", which is not open, and " +
                           lsp_.partial_why());
-    if (!defined) {
-        a.rename_declared = found;
-        if (lsp_.can_place(Lsp::kDefinitions)) {
-            a.rename_checking = 2;
-            lsp_.places(pane_->doc->ed.cursor(), Lsp::kDefinitions);
-            return;
-        }
-    } else if (!found.empty() && std::ranges::all_of(found, [&](const LspPlace& p) {
-                   return header_file(p.path) && std::ranges::any_of(a.rename_declared, [&](const LspPlace& d) {
-                              return d.path == p.path && d.line == p.line && d.col == p.col;
-                          });
-               })) {
-        return notify("Cannot rename: it is declared in " + shown_name(found[0].path, root) + ", a header that files not open may use, and " + lsp_.partial_why());
+    for (const LspPlace& p : found)
+        if (header_file(p.path))
+            return notify(std::string("Cannot rename: it is ") + (defined ? "defined" : "declared") + " in " + shown_name(p.path, root) + ", a header that files not open may use, and " +
+                          lsp_.partial_why());
+    if (!defined && lsp_.can_place(Lsp::kDefinitions)) {
+        a.rename_checking = 2;
+        lsp_.places(pane_->doc->ed.cursor(), Lsp::kDefinitions);
+        return;
     }
     a.rename_pending = true;
     lsp_.prepare_rename(pane_->doc->ed.cursor());
