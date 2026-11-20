@@ -50,8 +50,9 @@ done
 
 # What is wrong in a diagram's layout (diagramdump): an edge not drawn,
 # two nodes over each other, a label over a node, an edge that does not end on its nodes or
-# that passes through another node, a subgraph partly over another; a line
-# each, nothing when all is well.
+# that passes through another node (or a subgraph neither end is in, or
+# under a subgraph's title), a subgraph partly over another; a line each,
+# nothing when all is well.
 layout_problems() {
     awk '
     function flush(   i, j, e, k, q, p, xy) {
@@ -78,20 +79,46 @@ layout_problems() {
                         break
                     }
             }
+            # (nor under the title of a subgraph, which hid it)
+            for (i = 1; i <= nb; i++) {
+                if (bk[i] != "title") continue
+                for (q = 2; q < k; q++) {
+                    split(p[q], xy, ",")
+                    if (xy[1] > bx[i] + 1 && xy[1] < bx[i] + bw[i] - 1 && xy[2] > by[i] + 1 && xy[2] < by[i] + bh[i] - 1) {
+                        print d ": edge " ef[e] " to " et[e] " passes under the title of " bn[i]
+                        break
+                    }
+                }
+            }
+            # (and through no subgraph it has nothing to do with)
+            for (i = 1; i <= nb; i++) {
+                if (bk[i] != "cluster" || bn[i] == ef[e] || bn[i] == et[e] || holds(i, ef[e]) || holds(i, et[e])) continue
+                for (q = 2; q < k; q++) {
+                    split(p[q], xy, ",")
+                    if (xy[1] > bx[i] + 2 && xy[1] < bx[i] + bw[i] - 2 && xy[2] > by[i] + 2 && xy[2] < by[i] + bh[i] - 2) {
+                        print d ": edge " ef[e] " to " et[e] " passes through subgraph " bn[i]
+                        break
+                    }
+                }
+            }
         }
         nb = ne = 0
     }
     function apart(i, j) { return bx[i] + bw[i] <= bx[j] || bx[j] + bw[j] <= bx[i] || by[i] + bh[i] <= by[j] || by[j] + bh[j] <= by[i] }
+    function holds(o, name,   j) {
+        for (j = 1; j <= nb; j++) if (bk[j] != "label" && bk[j] != "title" && bn[j] == name) return within(o, j)
+        return 0
+    }
     function within(o, i) { return bx[i] >= bx[o] && by[i] >= by[o] && bx[i] + bw[i] <= bx[o] + bw[o] && by[i] + bh[i] <= by[o] + bh[o] }
     function on(name, pt,   xy, i) {
         split(pt, xy, ",")
         for (i = 1; i <= nb; i++)
-            if (bk[i] != "label" && bn[i] == name) return xy[1] >= bx[i] - 1 && xy[1] <= bx[i] + bw[i] + 1 && xy[2] >= by[i] - 1 && xy[2] <= by[i] + bh[i] + 1
+            if (bk[i] != "label" && bk[i] != "title" && bn[i] == name) return xy[1] >= bx[i] - 1 && xy[1] <= bx[i] + bw[i] + 1 && xy[2] >= by[i] - 1 && xy[2] <= by[i] + bh[i] + 1
         return 0
     }
     /^diagram / { flush(); d = $1 " " $2; next }
     /^edges / { want = $2; next }
-    /^(node|cluster|label) / { nb++; bk[nb] = $1; bn[nb] = $2; bx[nb] = $(NF - 3); by[nb] = $(NF - 2); bw[nb] = $(NF - 1); bh[nb] = $NF; next }
+    /^(node|cluster|label|title) / { nb++; bk[nb] = $1; bn[nb] = $2; bx[nb] = $(NF - 3); by[nb] = $(NF - 2); bw[nb] = $(NF - 1); bh[nb] = $NF; next }
     /^edge / { ne++; ef[ne] = $2; et[ne] = $3; ep[ne] = ""; for (i = 4; i <= NF; i++) ep[ne] = ep[ne] " " $i; next }
     END { flush() }'
 }
@@ -111,7 +138,7 @@ for f in diagrams layout; do
         laid=$(printf '%s\n' "$layout" | grep -c '^diagram [0-9]* [0-9]*x[0-9]*$')
         run $size "$here/markdown/$f.md" ""
         got="$laid $(printf '%s\n' "$got" | grep -c '^picture: diagram:')"
-        [ $f = diagrams ] && want="2 2" || want="9 9"
+        [ $f = diagrams ] && want="2 2" || want="10 10"
         check "$f.md at $size: a picture for each diagram laid out" "$want"
     done
 done
@@ -129,16 +156,16 @@ check "diagrams: no maths whose results differ between systems" ""
 cp "$here/markdown/layout.md" "$dir/typed.md"
 dump 3600x1100 "$dir/typed.md" "mdwait;key:ctrl+Home;text:# Typed;key:Return;frame;mdwait;text:more;frame;mdwait"
 got=$(printf '%s\n' "$got" | head -1)
-check "typing elsewhere: each diagram laid out once" "laid out 9"
+check "typing elsewhere: each diagram laid out once" "laid out 10"
 dump 3600x1100 "$dir/typed.md" "mdwait;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:End;text: & a1;frame;mdwait"
 got=$(printf '%s\n' "$got" | head -1)
-check "typing in the first diagram: that one laid out again" "laid out 10"
+check "typing in the first diagram: that one laid out again" "laid out 11"
 # Each version of a diagram typed in is a picture of its own: those no
 # preview shows any more are let go of at once (they held megabytes on the
 # GPU each, for a minute).
 dump 3600x1100 "$dir/typed.md" "mdwait;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:End;text: & a1;frame;mdwait;text: & a2;frame;mdwait;text: & a3;frame;mdwait"
 got=$(printf '%s\n' "$got" | grep '^kept ')
-check "typing in a diagram: the pictures of its old versions let go of" "kept 9"
+check "typing in a diagram: the pictures of its old versions let go of" "kept 10"
 
 # A flowchart too wide across for the view is drawn down instead: wide, its
 # nodes in a row; narrow, one under another.

@@ -140,3 +140,23 @@ stateDiagram-v2
         Fetch --> Fetch : again
     }
 ```
+
+```mermaid
+flowchart TB
+    subgraph g0
+        n0_0
+    end
+    subgraph g1
+        n1_0
+    end
+    subgraph g2
+        n2_0 --> n2_1
+        n2_1 --> n2_2
+    end
+    subgraph g3
+        n3_0
+    end
+    n2_0 --> g3
+    x6 --> n2_0
+    n1_0 --> n2_0
+```

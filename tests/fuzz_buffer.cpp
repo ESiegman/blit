@@ -2260,6 +2260,10 @@ void diagram_test() {
         // subgraph and what is in it.
         "flowchart LR\n subgraph one\n a --> b\n end\n one --> one\n one --> two\n subgraph two\n c\n end\n two --> a\n one --> a\n b -->|back| one\n",
         "stateDiagram\n [*] --> A\n A --> A : self\n state B {\n [*] --> B1\n B1 --> B1\n }\n B --> B : again\n B --> B : and again\n A --> B\n",
+        // Edges into subgraphs through their tops, where their titles are.
+        "flowchart TB\n subgraph g0\n n0_0\n end\n subgraph g2\n n2_0 --> n2_1\n n2_1 --> n2_2\n end\n subgraph g3\n n3_0\n end\n n2_0 --> g3\n x6 --> n2_0\n n1_0 --> n2_0\n",
+        "flowchart TD\n subgraph g0\n n0_0 --> n0_1\n end\n subgraph g2\n n2_0 --> n2_1\n end\n n2_0 --> n0_0\n n2_0 --> g0\n n0_1 --> n2_1\n",
+        "flowchart BT\n subgraph g0\n n0_0 --> n0_1\n end\n subgraph g1\n n1_0 --> n1_1\n end\n n1_1 --> g0\n g1 --> n0_1\n n1_1 --> n0_1\n n0_0 --> g1\n",
     };
     for (const char* src : sources) {
         Drawing d;
@@ -2268,10 +2272,11 @@ void diagram_test() {
         check(diagram_make(src, st, &d, &err, &geo) == kDiagramDrawn, std::string("diagram: drawn: ") + src);
         const std::string what = std::string(" (") + src + ")";
         std::map<std::string, DiagramGeometry::Box> nodes;
-        std::vector<DiagramGeometry::Box> labels, clusters;
+        std::vector<DiagramGeometry::Box> labels, clusters, titles;
         for (const auto& b : geo.boxes) {
             if (b.kind == "node") nodes[b.name] = b;
             else if (b.kind == "label") labels.push_back(b);
+            else if (b.kind == "title") titles.push_back(b);
             else clusters.push_back(b);
             check(b.x >= 0 && b.y >= 0 && b.x + b.w <= d.w + 0.01f && b.y + b.h <= d.h + 0.01f, "diagram: everything within the picture" + what);
         }
@@ -2312,6 +2317,19 @@ void diagram_test() {
                     const RasterPoint p = l.pts[k];
                     const bool inside = p.x > n.x + 2 && p.x < n.x + n.w - 2 && p.y > n.y + 2 && p.y < n.y + n.h - 2;
                     check(!inside, "diagram: edge " + l.from + " to " + l.to + " passes clear of " + name + what);
+                }
+            auto within_box = [](const DiagramGeometry::Box& o, const DiagramGeometry::Box& in) { return in.x >= o.x && in.y >= o.y && in.x + in.w <= o.x + o.w && in.y + in.h <= o.y + o.h; };
+            for (const auto& cl : clusters) {
+                if (cl.name == l.from || cl.name == l.to || within_box(cl, a) || within_box(cl, b)) continue;
+                for (size_t k = 1; k + 1 < l.pts.size(); ++k) {
+                    const RasterPoint p = l.pts[k];
+                    check(!(p.x > cl.x + 2 && p.x < cl.x + cl.w - 2 && p.y > cl.y + 2 && p.y < cl.y + cl.h - 2), "diagram: edge " + l.from + " to " + l.to + " clear of subgraph " + cl.name + what);
+                }
+            }
+            for (size_t k = 1; k + 1 < l.pts.size(); ++k)
+                for (const auto& t : titles) {
+                    const RasterPoint p = l.pts[k];
+                    check(!(p.x > t.x + 1 && p.x < t.x + t.w - 1 && p.y > t.y + 1 && p.y < t.y + t.h - 1), "diagram: edge " + l.from + " to " + l.to + " clear of the title of " + t.name + what);
                 }
         }
         RasterImage one(static_cast<int>(d.w) + 1, static_cast<int>(d.h) + 1), two(static_cast<int>(d.w) + 1, static_cast<int>(d.h) + 1);

@@ -129,6 +129,7 @@ struct Node {
 struct Seg {
     int level = -1, depth = 0;
     std::vector<DiagramVec> pts;
+    std::vector<DiagramVec> keep;  // (points straightening must keep: past a title)
 };
 
 struct Edge {
@@ -161,6 +162,7 @@ struct Cluster {
     std::vector<std::string> classes;
     bool state = false;  // a composite state (drawn with its name in a band)
     float loop_room = 0;  // as a node's
+    float title_x = -1;   // the middle of its title, across its box (-1: the box's middle)
     float x = 0, y = 0, w = 0, h = 0;  // its box: in its parent's box, then in the whole
 };
 
@@ -1456,20 +1458,53 @@ struct Layout {
         // Room for self loops' bulges.
         for (size_t v = 0; v < items; ++v)
             if (loop_room_of(ln[v].ref) > 0) hi_a = std::max(hi_a, static_cast<float>(ln[v].pos) + ln[v].across / 2 + loop_room_of(ln[v].ref));
-        const float span_a = hi_a - lo_a, span_l = hi_l - lo_l;
-        // The box: the content, padded, with the title at the top.
         const bool titled = c >= 0 && !g.clusters[static_cast<size_t>(c)].title.empty() && !(g.clusters[static_cast<size_t>(c)].title.size() == 1 && g.clusters[static_cast<size_t>(c)].title[0].empty());
         float title_w = 0;
         if (titled)
             for (const std::string& t : g.clusters[static_cast<size_t>(c)].title) title_w = std::max(title_w, font.width(t, size, true));
+        // Edges that come in through the top of a box laid out down (or go
+        // out of one laid out up) pass under its title, which hid them:
+        // those within its width moved aside, either side of it, in their
+        // order, with the box widened for them if it must be.
+        float title_mid = 0;
+        bool title_set = false;  // (title_mid: where it is, across, when edges come in beside it)
+        if (titled && vert && any) {
+            const u8 top_kind = dir == 'U' ? LNode::kPortOut : LNode::kPortIn;
+            const float centre = (lo_a + hi_a) / 2, half = title_w / 2 + 8 * u;
+            std::vector<LNode*> left, right;
+            bool near = false;  // (one beside it, which could cut its corner on the way in)
+            for (const int p : port_ln) {
+                LNode& x = ln[static_cast<size_t>(p)];
+                if (x.kind != top_kind) continue;
+                const float off = std::fabs(static_cast<float>(x.pos) - centre);
+                if (off < half) (x.pos < centre ? left : right).push_back(&x);
+                near = near || off < half + 2 * nodesep;
+            }
+            if (near) title_mid = centre, title_set = true;
+            if (!left.empty() || !right.empty()) {
+                auto by_pos = [](const LNode* a, const LNode* b) { return a->pos < b->pos; };
+                std::stable_sort(left.begin(), left.end(), by_pos);
+                std::stable_sort(right.begin(), right.end(), by_pos);
+                for (size_t i = 0; i < left.size(); ++i) left[i]->pos = centre - half - static_cast<float>(left.size() - 1 - i) * edgesep;
+                for (size_t i = 0; i < right.size(); ++i) right[i]->pos = centre + half + static_cast<float>(i) * edgesep;
+                if (!left.empty()) lo_a = std::min(lo_a, static_cast<float>(left.front()->pos));
+                if (!right.empty()) hi_a = std::max(hi_a, static_cast<float>(right.back()->pos));
+                lo_a = std::min(lo_a, centre - title_w / 2), hi_a = std::max(hi_a, centre + title_w / 2);
+            }
+        }
+        const float span_a = hi_a - lo_a, span_l = hi_l - lo_l;
+        // The box: the content, padded, with the title at the top.
         const float content_w = vert ? span_a : span_l, content_h = vert ? span_l : span_a;
         const float margin = c < 0 ? 8 * u : pad;
-        const float top = margin + (titled ? title_h * static_cast<float>(g.clusters[static_cast<size_t>(c)].title.size()) : 0) + (titled && g.clusters[static_cast<size_t>(c)].state ? 4 * u : 0);
+        const float title_th = titled ? title_h * static_cast<float>(g.clusters[static_cast<size_t>(c)].title.size()) : 0;
+        // (with edges beside the title, room under it for them to turn in)
+        const float top = margin + title_th + (titled && g.clusters[static_cast<size_t>(c)].state ? 4 * u : 0) + (title_set ? ranksep * 0.5f : 0);
         LevelSize res;
         res.w = std::max(content_w + 2 * margin, titled ? title_w + 2 * pad : 0);
         res.h = content_h + top + margin;
         if (c >= 0) res.w = std::max(res.w, 60 * u), res.h = std::max(res.h, top + margin + 10 * u);
         const float ox = (res.w - content_w) / 2, oy = top;
+        if (c >= 0) g.clusters[static_cast<size_t>(c)].title_x = title_set ? ox + title_mid - lo_a : -1;
         // Layout's (across, along) to this box's (x, y).
         auto place = [&](double a, double l) -> DiagramVec {
             const float ar = static_cast<float>(a) - lo_a, lr = static_cast<float>(l) - lo_l;
@@ -1514,7 +1549,13 @@ struct Layout {
             for (size_t i = 0; i < ch.size(); ++i) {
                 const LNode& x = ln[static_cast<size_t>(ch[i])];
                 if (x.kind == LNode::kPortIn || x.kind == LNode::kPortOut) {
-                    seg.pts.push_back(border(x.pos, x.kind == LNode::kPortOut));
+                    // (beside the title: straight down past it first)
+                    const bool beside = title_set && x.kind == (dir == 'U' ? LNode::kPortOut : LNode::kPortIn);
+                    const DiagramVec b = border(x.pos, x.kind == LNode::kPortOut), past{b.x, pad * 0.5f + title_th + 2 * u};
+                    if (beside && i > 0) seg.pts.push_back(past);
+                    seg.pts.push_back(b);
+                    if (beside && i == 0) seg.pts.push_back(past);
+                    if (beside) seg.keep.push_back(past);
                     continue;
                 }
                 if (x.kind == LNode::kItem && is_cluster(x.ref)) {
@@ -1579,6 +1620,7 @@ struct Layout {
                 for (Seg& s : *list) {
                     const DiagramVec o = at(s.level);
                     for (DiagramVec& p : s.pts) p.x += o.x, p.y += o.y;
+                    for (DiagramVec& p : s.keep) p.x += o.x, p.y += o.y;
                 }
             if (e.label_level >= -1 && !e.label.empty()) {
                 const DiagramVec o = at(e.label_level);
@@ -1692,6 +1734,16 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
             *x = n.x - n.w / 2, *y = n.y - n.h / 2, *bw = n.w, *bh = n.h, *shape = n.shape;
         }
     };
+    // Each subgraph's title: its box (none: zero wide).
+    std::vector<std::pair<DiagramVec, DiagramVec>> titles(g.clusters.size());
+    for (size_t k = 0; k < g.clusters.size(); ++k) {
+        const Cluster& cl = g.clusters[k];
+        if (cl.title.empty() || (cl.title.size() == 1 && cl.title[0].empty())) continue;
+        float tw = 0;
+        for (const std::string& t : cl.title) tw = std::max(tw, font.width(t, size, true));
+        const float mid = cl.title_x >= 0 ? cl.x + cl.title_x : cl.x + cl.w / 2, top = cl.y + lay.pad * 0.5f;
+        titles[k] = {{mid - tw / 2 - 4 * u, top}, {mid + tw / 2 + 4 * u, top + lay.title_h * static_cast<float>(cl.title.size()) - 2 * u}};
+    }
     // Each edge's points, from a to b: out of a's subgraphs, across, into b's.
     std::vector<std::vector<DiagramVec>> chains(g.edges.size());
     long long tries = 40'000'000;  // (straightening's work, at most, for all of them: past it, they keep their points)
@@ -1707,9 +1759,9 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
         std::stable_sort(outs.begin(), outs.end(), [](const Seg& a, const Seg& b) { return a.depth > b.depth; });
         std::stable_sort(ins.begin(), ins.end(), [](const Seg& a, const Seg& b) { return a.depth < b.depth; });
         std::vector<DiagramVec> keep;  // (ports and the label: the line goes through them)
-        for (const Seg& s : outs) add(s.pts), keep.push_back(pts.back());
+        for (const Seg& s : outs) add(s.pts), keep.push_back(pts.back()), keep.insert(keep.end(), s.keep.begin(), s.keep.end());
         add(e.mid.pts);
-        for (const Seg& s : ins) keep.push_back(s.pts.empty() ? DiagramVec{} : s.pts.front()), add(s.pts);
+        for (const Seg& s : ins) keep.push_back(s.pts.empty() ? DiagramVec{} : s.pts.front()), keep.insert(keep.end(), s.keep.begin(), s.keep.end()), add(s.pts);
         if (!e.label.empty() && e.label_w > 0) keep.push_back(e.label_at);
         if (pts.size() < 3) continue;
         // Straightened: the points between left out wherever a straight line
@@ -1726,6 +1778,8 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
             const Cluster& cl = g.clusters[c];
             walls.push_back({{cl.x - spare, cl.y - spare}, {cl.x + cl.w + spare, cl.y + cl.h + spare}});
         }
+        for (const auto& [lo, hi] : titles)
+            if (hi.x > lo.x) walls.push_back({{lo.x - spare / 2, lo.y - spare / 2}, {hi.x + spare / 2, hi.y + spare / 2}});
         for (const Edge& o : g.edges)
             if (&o != &e && !o.label.empty() && o.label_w > 0 && o.from != o.to)
                 walls.push_back({{o.label_at.x - o.label_w / 2 - spare, o.label_at.y - o.label_h / 2 - spare}, {o.label_at.x + o.label_w / 2 + spare, o.label_at.y + o.label_h / 2 + spare}});
@@ -1946,14 +2000,12 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
         if (cl.title.empty() || (cl.title.size() == 1 && cl.title[0].empty())) continue;
         const DiagramColour fill = !cl.style.fill.none() ? cl.style.fill : cl.state ? p.tone(kMdBorder, dark ? 0.07f : 0.05f) : ink.cluster_fill;
         const DiagramColour tc = !cl.style.text.none() ? cl.style.text : !cl.style.fill.none() ? readable_on(cl.style.fill, p) : ink.text;
-        float tw = 0;
-        for (const std::string& t : cl.title) tw = std::max(tw, font.width(t, size, true));
-        const float th = lay.title_h * static_cast<float>(cl.title.size());
-        const float top = cl.y + lay.pad * 0.5f;
+        const auto& [lo, hi] = titles[static_cast<size_t>(k)];
         RasterPath back;
-        back.rect(cl.x + cl.w / 2 - tw / 2 - 4 * u, top, tw + 8 * u, th - 2 * u, 3 * u);
+        back.rect(lo.x, lo.y, hi.x - lo.x, hi.y - lo.y, 3 * u);
         d->shape(std::move(back), fill);
-        text_block(cl.title, cl.x + cl.w / 2, top + (th - 2 * u) / 2, tc, true);
+        text_block(cl.title, (lo.x + hi.x) / 2, (lo.y + hi.y) / 2, tc, true);
+        if (geo) geo->boxes.push_back({"title", cl.id, lo.x, lo.y, hi.x - lo.x, hi.y - lo.y});
     }
 
     // Nodes.
