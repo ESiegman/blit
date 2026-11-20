@@ -796,7 +796,7 @@ struct Layout {
     const DiagramStyle& style;
     const DiagramFont& font;
     float u, size, line;
-    float nodesep, ranksep, edgesep, pad, title_h, px, py, wrap;
+    float nodesep, ranksep, edgesep, pad, title_h, px, py, wrap, wrap_most;
     std::vector<std::vector<Port>> ports;  // each subgraph's
     std::vector<int> depth;                // each subgraph's
     std::vector<int> ends_in, ends_out;    // each node's: how many edges end at it, and start
@@ -809,7 +809,9 @@ struct Layout {
         return !gave_up.empty();
     }
 
-    Layout(Graph& graph, const DiagramStyle& s, const DiagramFont& f) : g(graph), style(s), font(f) {
+    // (compact: closer together across the ranks, and text wrapped
+    // narrower, for a diagram too wide for its room)
+    Layout(Graph& graph, const DiagramStyle& s, const DiagramFont& f, bool compact) : g(graph), style(s), font(f) {
         u = s.unit();
         size = s.size;
         line = f.line(size);
@@ -818,6 +820,8 @@ struct Layout {
         title_h = line + 6 * u;
         px = 15 * u, py = 9 * u;
         wrap = std::max(f.width("abcdefghijklmnopqrstuvwxyz", size) * 1.0f, 160 * u);
+        wrap_most = wrap;
+        if (compact) nodesep *= 0.5f, edgesep *= 0.6f, wrap *= 0.55f;
         ports.assign(g.clusters.size(), {});
         ends_in.assign(g.nodes.size(), 0), ends_out.assign(g.nodes.size(), 0);
         for (const Edge& e : g.edges) {
@@ -884,7 +888,16 @@ struct Layout {
                 break;
             default: break;
         }
-        n.lines = diagram_wrap(n.lines, n.shape == kShapeDiamond ? wrap * 0.9f : wrap, size, font);
+        // (a word no longer than the widest a line may be is not broken)
+        float widest = n.shape == kShapeDiamond ? wrap * 0.9f : wrap;
+        for (const std::string& l : n.lines)
+            for (size_t at = 0; at < l.size();) {
+                const size_t sp = std::min(l.find(' ', at), l.size());
+                const float word = font.width(std::string_view(l).substr(at, sp - at), size, n.style.bold);
+                if (word <= wrap_most) widest = std::max(widest, word);
+                at = sp + 1;
+            }
+        n.lines = diagram_wrap(n.lines, widest, size, font);
         float tw = 0;
         for (const std::string& l : n.lines) tw = std::max(tw, font.width(l, size, n.style.bold));
         const float th = static_cast<float>(std::max<size_t>(1, n.lines.size())) * line;
@@ -2096,9 +2109,9 @@ void draw(Graph& g, const Layout& lay, const DiagramStyle& style, float w, float
     }
 }
 
-bool lay_out(Graph g, const DiagramStyle& style, Drawing* out, DiagramGeometry* geo, std::string* err) {
+bool lay_out(Graph g, const DiagramStyle& style, Drawing* out, DiagramGeometry* geo, std::string* err, bool compact = false) {
     resolve_styles(g);
-    Layout lay(g, style, *style.font);
+    Layout lay(g, style, *style.font, compact);
     float w = 0, h = 0;
     if (!lay.absolute(&w, &h)) {
         *err = lay.gave_up;
@@ -2127,14 +2140,30 @@ bool flowchart_layout(const std::vector<std::string>& st, bool state, const Diag
     }
     DiagramGeometry across_geo;
     if (!lay_out(g, style, out, geo ? &across_geo : nullptr, err)) return false;
-    // Too wide across for the room: down instead, if that is less too wide.
+    // Too wide across for the room: down instead, if that is less too wide;
+    // still too wide, closer together, if that is (it is made smaller to
+    // fit, and its text was too small to read).
+    auto fits = [&](const Drawing& d) { return std::min(1.0f, style.room / std::max(1.0f, d.w)); };
+    char dir = g.dir;
     if (out->w > style.room && (g.dir == 'R' || g.dir == 'L')) {
         Graph down = g;
         down.dir = 'D';
         Drawing d2;
         DiagramGeometry g2;
         std::string why;
-        if (lay_out(down, style, &d2, geo ? &g2 : nullptr, &why) && std::min(1.0f, style.room / d2.w) > std::min(1.0f, style.room / out->w) * 1.25f) {
+        if (lay_out(down, style, &d2, geo ? &g2 : nullptr, &why) && fits(d2) > fits(*out) * 1.25f) {
+            *out = std::move(d2);
+            across_geo = std::move(g2);
+            dir = 'D';
+        }
+    }
+    if (out->w > style.room) {
+        Graph close = g;
+        close.dir = dir;
+        Drawing d2;
+        DiagramGeometry g2;
+        std::string why;
+        if (lay_out(close, style, &d2, geo ? &g2 : nullptr, &why, true) && fits(d2) > fits(*out) * 1.1f) {
             *out = std::move(d2);
             across_geo = std::move(g2);
         }

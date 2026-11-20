@@ -2426,6 +2426,18 @@ void diagram_test() {
         for (size_t i = 1; i < xs.size(); ++i) gap = std::min(gap, xs[i] - xs[i - 1]);
         check(xs.size() == 5 && gap >= 8 * st.unit(), "diagram: five edges leaving a small node apart (" + std::to_string(gap) + ")");
     }
+    // Too wide for its room, a diagram is laid out closer together (it was
+    // only made smaller, until its text could not be read).
+    {
+        const char* wide = "flowchart TD\n A --> B[the first of many steps] & C[the second of many steps] & D[the third of many steps] & E[the fourth of many steps] & F[the fifth of many steps]\n";
+        Drawing roomy, narrow;
+        std::string err;
+        DiagramStyle small = st;
+        small.room = 300;
+        diagram_make(wide, st, &roomy, &err);
+        diagram_make(wide, small, &narrow, &err);
+        check(roomy.w <= st.room && narrow.w < roomy.w * 0.8f, "diagram: too wide for its room, laid out closer together (" + std::to_string(narrow.w) + " of " + std::to_string(roomy.w) + ")");
+    }
     // A diamond of blank lines is no needle: never taller than wide.
     {
         Drawing d;
