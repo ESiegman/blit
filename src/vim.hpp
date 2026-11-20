@@ -65,6 +65,7 @@ struct VimRequest {
         kFormat,      // gq: the lines line0 to line1, formatted by the language server
         kFold,        // zc zo za (n 0, 1, 2: the fold at the cursor closed, opened, switched), zM zR (n 3, 4: all closed, all opened)
         kReload,      // :e!: the file read again, its changes here dropped
+        kCommand,     // gS gL gX gC: a command of the editor's, by its name (arg; kVimCommands)
     };
     u8 kind = 0;
     std::string arg;
@@ -73,6 +74,19 @@ struct VimRequest {
     std::string name{};
     u64 line0 = 0, line1 = 0;  // from 0
     bool ranged = false;
+};
+
+// The editor's daily commands that have keys in Normal mode: g and a
+// capital Vim and Neovim leave free (the rest are in the command search).
+struct VimCommandKey {
+    char key;  // after g
+    std::string_view title;
+};
+inline constexpr VimCommandKey kVimCommands[] = {
+    {'S', "Git: Stage the change at the cursor"},
+    {'L', "Git: The file's history"},
+    {'X', "Run the tests"},
+    {'C', "Reconnect to the servers that dropped"},
 };
 
 class Vim final : public EditWatch {

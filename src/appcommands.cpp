@@ -552,6 +552,9 @@ std::vector<App::PaletteItem> App::palette_items() {
         const Commands::Command& c = commands_->all[i];
         PaletteItem it{c.title, {}, i};
         for (const Chord& ch : c.keys) it.keys += (it.keys.empty() ? "" : "  ") + chord_text(ch.key, keymod_of(ch.mods));
+        if (cfg_.modal)  // (and its keys in Normal mode, for a daily one)
+            for (const VimCommandKey& v : kVimCommands)
+                if (c.title == v.title) it.keys += (it.keys.empty() ? "g" : "  g") + std::string(1, v.key);
         out.push_back(std::move(it));
     }
     // The scripts' commands (:Name), run as Vim's command line would.

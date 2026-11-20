@@ -4198,7 +4198,10 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
             return done();
         case kG | 'O': requests_.push_back({VimRequest::kOutline, {}}); return done();
         case 'K': requests_.push_back({VimRequest::kHover, {}}); return done();
-        default: return done();
+        default:
+            for (const VimCommandKey& v : kVimCommands)
+                if (c == (kG | static_cast<u32>(v.key))) requests_.push_back({VimRequest::kCommand, std::string(v.title)});
+            return done();
     }
 }
 

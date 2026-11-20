@@ -217,6 +217,14 @@ check "a click beside an unchanged line, or Esc, offers nothing" 'main +2 | chan
 run "$dir/ada/long.txt" "frame;gitwait;key:Down;key:End;text: and more;command:Git: Stage the change at the cursor;gitwait;gitdump"
 got="$got / $(git -C "$dir/ada" show :long.txt | sed -n 2p)"
 check "the change at the cursor staged from the command search, as the text is, saved or not" 'main +2 | staged M:long.txt | changes M:long.txt | branches *main origin/main | commits 3 "Code" | lines 2~s 11+3 | note Stage: done / TWO and more'
+# (With Vim's modes, gS.)
+printf 'blit.opt.lsp.enabled = false\n' >"$dir/vim.lua"
+changed
+BLIT_INIT="$dir/vim.lua"
+run "$dir/ada/long.txt" "frame;gitwait;vim:jA and more<Esc>gS;gitwait;gitdump"
+BLIT_INIT="$dir/init.lua"
+got="$got / $(git -C "$dir/ada" show :long.txt | sed -n 2p)"
+check "and with gS in Normal mode" 'main +2 | staged M:long.txt | changes M:long.txt | branches *main origin/main | commits 3 "Code" | lines 2~s 11+3 | note Stage: done / TWO and more'
 # A changed line that wraps: the bar beside each of its rows, its number
 # on the first alone.
 changed
@@ -304,6 +312,8 @@ history() { "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "$2" "$
     awk 'NR == 1 { t = $0; next } /^ *    [A-Z]/ { sub(/^ +/, ""); m = m (m ? ", " : "") $0 } /^ *\+[^+]/ { sub(/^ +/, ""); a = a " " $0 } END { print t " | " m " |" a }'; }
 got=$(history "$dir/ada/verse.txt" "frame;gitwait;command:Git: The file's history;gitwait;docdump:200")
 check "a file's history, through its rename" 'verse.txt (history) | Shout five, Call it a verse, Shout three, Start | +FIVE +THREE +one +two +three +four +five'
+got=$(BLIT_INIT="$dir/vim.lua" history "$dir/ada/verse.txt" "frame;gitwait;vim:gL;gitwait;docdump:200")
+check "the same with gL in Normal mode" 'verse.txt (history) | Shout five, Call it a verse, Shout three, Start | +FIVE +THREE +one +two +three +four +five'
 got=$(history "$dir/ada/verse.txt" "frame;gitwait;key:Down;key:Down;command:Git: The history of the lines chosen;gitwait;docdump:200")
 check "the history of a line" 'verse.txt:3 (history) | Shout three, Start | +THREE +three'
 got=$("$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;gitwait;command:Git: The file's history;gitwait;key:Down;key:Return;gitwait;docdump:0" "$dir/ada/verse.txt" 2>&1 >/dev/null | grep -v '^blit: git' | head -2 | tr '\n' '|')

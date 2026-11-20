@@ -105,6 +105,20 @@ run "frame;text:G;key:ctrl+O;vimdump"
 check "Ctrl-O goes back to where a long move started" 'NORMAL |  | 1:1 | hello world'
 run "frame;text:G;key:ctrl+O;key:Tab;vimdump"
 check "and Tab (Ctrl-I) forward again" 'NORMAL |  | 3:1 |     third'
+
+# The daily commands' keys in Normal mode (g and a capital Vim leaves
+# free), named in the command search beside the commands they run.
+run "frame;key:cmd+shift+p;text:stage the change at;finddump"
+check "gS: stage the change at the cursor" 'commands [stage the change at] 2 : >Git: Stage the change at the cursor (gS) Git: Unstage the change at the cursor'
+run "frame;key:cmd+shift+p;text:the file's history;finddump"
+check "gL: the file's history" "commands [the file's history] 2 : >Show the file's local history Git: The file's history (gL)"
+run "frame;key:cmd+shift+p;text:run the tests;finddump"
+got=$(printf '%s' "$got" | sed 's/ [0-9]* : >/ : >/; s/ Run the failed.*//')
+check "gX: run the tests" 'commands [run the tests] : >Run the tests (gX)'
+run "frame;key:cmd+shift+p;text:reconnect;finddump"
+check "gC: reconnect" 'commands [reconnect] 1 : >Reconnect to the servers that dropped (gC)'
+run "frame;vim:gSgLgXgC;vimdump"
+check "with nothing to stage, no history, no tests and no server, nothing moves" 'NORMAL |  | 1:1 | hello world'
 run "frame;text:G;open:$dir/b.txt;key:cmd+1;key:ctrl+O;vimdump"
 check "the jump list is kept while another file is in front" 'NORMAL |  | 1:1 | hello world'
 run "frame;text:j;text:m;text:a;text:g;text:g;text:O;text:new;key:Escape;text:G;text:';text:a;vimdump"

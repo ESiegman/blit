@@ -420,6 +420,13 @@ a motion (`gqq` a line; on a Visual selection, its lines) to format, and
 `]d [d` to the next and the previous diagnostic (`]D [D` the last and
 first), going round at the ends of the file.
 
+**The editor's daily commands** have keys of their own in Normal mode, `g`
+and a capital that Vim and Neovim leave free: `gS` stages the change at the
+cursor (Git), `gL` shows the file's history (Git), `gX` runs the tests, and
+`gC` reconnects to the servers that dropped. The command search shows these
+keys beside the commands; the other commands are there, and `blit.map`
+gives any of them a key (or takes one of these over).
+
 **Insert mode**: Esc (or Ctrl-[ or Ctrl-C) leaves it; Tab puts in the
 file's indentation (what the status bar says: a tab, or spaces to the next
 level, as with Vim's `expandtab` and `softtabstop`); Ctrl-W, Ctrl-U and

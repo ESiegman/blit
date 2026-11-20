@@ -494,6 +494,13 @@ void App::vim_after(u32 result) {
             case VimRequest::kReferences: lsp_references(); break;
             case VimRequest::kPlaces: lsp_places(static_cast<Lsp::PlaceKind>(q.n)); break;
             case VimRequest::kOutline: lsp_outline(); break;
+            case VimRequest::kCommand:
+                for (const PaletteItem& it : palette_items())
+                    if (it.title == q.arg) {
+                        palette_run(it.id);
+                        break;
+                    }
+                break;
             case VimRequest::kFold:
                 if (q.n == 0) fold_close();
                 else if (q.n == 1) fold_open();
