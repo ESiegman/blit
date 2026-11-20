@@ -257,6 +257,14 @@ check "subgraphs nested 800 deep: said to be too deep (laid out, they ran a Mac'
 awk 'BEGIN { print "```mermaid"; print "graph TD"; for (i = 0; i < 1399; i++) print "a" i " --> a" i + 1; for (i = 0; i < 1500; i++) print "a0 --> a" 1399 - i % 50; print "```" }' >"$dir/long.md"
 got=$(limit 20 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mdwait;mddump" "$dir/long.md" 2>&1 >/dev/null | grep -c 'too large to draw')
 check "edges across thousands of ranks: too large to draw, said at once (they took seconds and gigabytes)" "1"
+# Subgraphs, namespaces and composite states nested hundreds deep (each
+# level laid out by recursion, on the worker: it ran out of stack): a
+# mistake, said with its line.
+awk 'BEGIN { print "```mermaid"; print "flowchart TD"; for (i = 0; i < 500; i++) print "subgraph s" i; print "a --> b"; for (i = 0; i < 500; i++) print "end"; print "```"
+             print "```mermaid"; print "classDiagram"; for (i = 0; i < 500; i++) print "namespace n" i " {"; print "class A"; for (i = 0; i < 500; i++) print "}"; print "```"
+             print "```mermaid"; print "stateDiagram-v2"; for (i = 0; i < 300; i++) { print "state s" i " {"; print "state s" i + 1 " {"; print "}"; print "}" } print "```" }' >"$dir/nested.md"
+got=$(limit 20 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mdwait;mddump" "$dir/nested.md" 2>&1 >/dev/null | grep 'nested too deeply' | tr '\n' ,)
+check "subgraphs, namespaces and states nested hundreds deep: a mistake, no crash" "mermaid: line 34: subgraphs nested too deeply,mermaid: line 34: namespaces nested too deeply,mermaid: line 127: states nested too deeply,"
 printf '<!--\nhidden\n\nstill hidden\n-->\nshown\n\n```mermaid\npie title Pets\n  "Dogs" : 3\n  "Cats" : 1\n```\n' >"$dir/odd.md"
 run 1600x1100 "$dir/odd.md" "mdwait"
 seen=$(printf '%s\n' "$got" | grep -c 'hidden'),$(printf '%s\n' "$got" | grep -c 'shown')

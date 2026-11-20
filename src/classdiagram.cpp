@@ -704,6 +704,11 @@ bool parse_class(const std::vector<std::string>& st, ClassModel& m, std::string*
                 c.id = id;
                 c.title = {id};
                 c.parent = space();
+                // (how deep it is: one opened again elsewhere keeps its
+                // place, so what is open says nothing of it)
+                int deep = 0;
+                for (int p = c.parent; p >= 0 && deep < kDiagramDeepest; p = m.spaces[static_cast<size_t>(p)].parent) ++deep;
+                if (deep >= kDiagramDeepest) return fail("namespaces nested too deeply");
                 m.spaces.push_back(std::move(c));
                 ns = m.space_ids[id] = static_cast<int>(m.spaces.size()) - 1;
             }

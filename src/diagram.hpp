@@ -168,6 +168,12 @@ struct DiagramVec {
     float x = 0, y = 0;
 };
 
+// How deep subgraphs (composite states, namespaces) may be nested: each is
+// laid out by recursion, on the preview's worker, whose stack is small
+// (the system's 512 KB on a Mac). Deeper than any diagram a person draws,
+// and a mistake, said with its line.
+constexpr int kDiagramDeepest = 32;
+
 // Mermaid's statements: its lines (and what ; separates, outside quotes),
 // without comments, front matter (its title in `title`) or directives.
 std::vector<std::string> diagram_statements(std::string_view src, bool split_semicolons, std::string* title = nullptr);

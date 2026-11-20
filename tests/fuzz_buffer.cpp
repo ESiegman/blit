@@ -2509,6 +2509,16 @@ void diagram_test() {
         check(diagram_make("classDiagram\n A <|-- B\n what is this\n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: a class diagram's unknown line");
         check(diagram_make("erDiagram\n A ||--o{ B : x\n A ||--o< B : y\n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: an ER diagram's mistake, with its line");
         check(diagram_make("erDiagram\n A {\n string\n }\n", st, &d, &err) == kDiagramError && err.starts_with("line 3"), "diagram: an attribute wants a type and a name");
+        // Nested thousands deep (laid out by recursion: it ran out of stack), a mistake.
+        std::string deep = "flowchart TD\n", spaces = "classDiagram\n";
+        for (int k = 0; k < 20000; ++k) deep += " subgraph s" + std::to_string(k) + "\n", spaces += " namespace n" + std::to_string(k) + " {\n";
+        deep += " a --> b\n", spaces += " class A\n";
+        check(diagram_make(deep, st, &d, &err) == kDiagramError && err == "line " + std::to_string(kDiagramDeepest + 2) + ": subgraphs nested too deeply", "diagram: subgraphs nested too deep");
+        check(diagram_make(spaces, st, &d, &err) == kDiagramError && err == "line " + std::to_string(kDiagramDeepest + 2) + ": namespaces nested too deeply", "diagram: namespaces nested too deep");
+        std::string states = "stateDiagram-v2\n state s0 {\n }\n";
+        for (int k = 0; k < 20000; ++k) states += " state s" + std::to_string(k) + " {\n state s" + std::to_string(k + 1) + " {\n }\n }\n";
+        check(diagram_make(states, st, &d, &err) == kDiagramError && err.ends_with(": states nested too deeply"), "diagram: states nested too deep, a composite opened again inside another");
+        check(diagram_make("flowchart TD\n subgraph a\n subgraph b\n x --> y\n end\n end\n", st, &d, &err) == kDiagramDrawn, "diagram: subgraphs nested a little, drawn");
         std::string classes = "classDiagram\n";
         for (int k = 0; k < 300; ++k) classes += " C" + std::to_string(k) + " <|-- C" + std::to_string((k * 7 + 3) % 300) + " : x\n C" + std::to_string(k) + " : +int f" + std::to_string(k) + "\n";
         std::string er = "erDiagram\n";

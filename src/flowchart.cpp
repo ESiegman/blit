@@ -22,11 +22,6 @@ namespace blit {
 namespace {
 
 constexpr size_t kMostNodes = 1500, kMostEdges = 3000;
-// Subgraphs (and composite states) within each other at most so deep: each
-// is laid out by a call within its parent's, on the preview's thread, whose
-// stack is the system's (512 KB on a Mac). Deeper than any diagram a person
-// draws.
-constexpr int kDeepest = 32;
 // Points laid out at most (nodes, subgraphs, and the points edges keep
 // between ranks, in every level): an edge across many ranks keeps one at
 // each, and a few thousand long ones made millions.
@@ -457,7 +452,7 @@ bool parse_flowchart(const std::vector<std::string>& st, Graph& g, std::string* 
             continue;
         }
         if (l == "subgraph" || l.starts_with("subgraph ")) {
-            if (open.size() >= static_cast<size_t>(kDeepest)) return fail("subgraphs nested too deeply");
+            if (open.size() >= static_cast<size_t>(kDiagramDeepest)) return fail("subgraphs nested too deeply");
             // subgraph id, subgraph id [title], subgraph id["title"], subgraph "title", subgraph a title
             std::string_view rest = diagram_trim(s.substr(8));
             Cluster c;
@@ -563,7 +558,7 @@ bool parse_state(const std::vector<std::string>& st, Graph& g, std::string* err)
         if (const auto it = g.cluster_ids.find(name); it != g.cluster_ids.end()) return it->second;
         int depth = 1;
         for (int p = scope(); p >= 0; p = g.clusters[static_cast<size_t>(p)].parent) ++depth;
-        if (depth > kDeepest) deep = true;
+        if (depth > kDiagramDeepest) deep = true;
         Cluster c;
         c.id = name;
         c.title = {name};
