@@ -481,6 +481,15 @@ check "opened: the folder worked in, its branch the one checked out" "*feature"
 tree() { "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "$1" ${2:+"$2"} 2>&1 >/dev/null | grep -v '^blit: git' | sed "s#$dir#~#g" | tr '\n' '/'; }
 got=$(tree "frame;gitwait;git:opentree:$dir/ada-feature;gitwait;frame;dump;statusdump" "$dir/ada/poem.txt")
 check "another tree opened: the file in front is that tree's" '>[poem.txt*]/feature poem.txt | Ln 1, Col 1 Tabs LF Plain text/'
+# The same with the folder opened through a link (as /tmp is /private/tmp):
+# git names the tree by its real path, the tabs by the one they were given.
+ln -s "$dir/ada" "$dir/ada-link"
+got=$(tree "folder:$dir/ada-link;open:$dir/ada-link/poem.txt;frame;gitwait;git:opentree:$dir/ada-feature;gitwait;frame;dump;statusdump")
+check "opened through a link: the file in front is still the other tree's" '>[poem.txt*]/feature poem.txt | Ln 1, Col 1 Tabs LF Plain text/'
+printf 'notes\n' >"$dir/ada/notes.txt"
+got=$(tree "folder:$dir/ada-link;open:$dir/ada-link/notes.txt;frame;gitwait;git:opentree:$dir/ada-feature;gitwait;frame;dump")
+check "opened through a link: one the other tree does not have, closed" '>[untitled*]/'
+rm "$dir/ada-link" "$dir/ada/notes.txt"
 printf 'notes\n' >"$dir/ada/notes.txt"
 got=$(tree "frame;gitwait;git:opentree:$dir/ada-feature;gitwait;frame;dump" "$dir/ada/notes.txt")
 check "one the other tree does not have: closed" '>[untitled*]/'

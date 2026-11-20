@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <climits>
 #include <cmath>
 #include <condition_variable>
 #include <cstdio>
@@ -48,6 +49,20 @@ std::string recent_path(const Options& opt) {
     if (const char* p = std::getenv("BLIT_RECENT_FILE"); p && *p) return p;
     if (opt.bench || opt.script || opt.shot || opt.off_w > 0) return {};
     return grammar_dir() + "/recent";
+}
+
+// A file's path with the folders to it as the system names them (/private/tmp
+// for /tmp, a linked folder by where it is), the file's own name kept (a
+// link in the folder is the folder's). One on another machine, or whose
+// folder is not there, as it is.
+std::string real_place(const std::string& path) {
+    if (path.empty() || is_remote(path)) return path;
+    const size_t slash = path.find_last_of('/');
+    if (slash == std::string::npos) return path;
+    char real[PATH_MAX];
+    if (!::realpath(slash == 0 ? "/" : path.substr(0, slash).c_str(), real)) return path;
+    const std::string up = real;
+    return (up == "/" ? std::string() : up) + path.substr(slash);
 }
 
 std::string sessions_dir(const Options& opt) {
@@ -628,6 +643,16 @@ void App::worktree_open(const std::string& path, const std::string& from) {
     SessionUi& u = *session_;
     const std::string dir = folder_key(path), old = folder_key(from), was = u.folder;
     if (dir.empty() || old.empty() || dir == old || dir == was) return (void)project_open(path);
+    // Where in `from` a file is (from its slash on), or nothing. Git names
+    // the tree by its real path; the tabs keep the path they were opened
+    // by, which may go through a link (/tmp, a linked project folder).
+    char buf[PATH_MAX];
+    const std::string real_old = !is_remote(old) && ::realpath(old.c_str(), buf) ? std::string(buf) : old;
+    auto in_old = [&](const std::string& file) -> std::string {
+        if (file.starts_with(old + "/")) return file.substr(old.size());
+        if (const std::string real = real_place(file); real.starts_with(real_old + "/")) return real.substr(real_old.size());
+        return {};
+    };
     const std::string text = session_text();  // (as the window is, before the folder changes)
     if (project_open(dir)) return;
     Session st;
@@ -637,7 +662,7 @@ void App::worktree_open(const std::string& path, const std::string& from) {
         self(self, n->a.get());
         self(self, n->b.get());
         for (Session::File& f : n->files)
-            if (f.path.starts_with(old + "/")) f.path = dir + f.path.substr(old.size());
+            if (const std::string rest = in_old(f.path); !rest.empty()) f.path = dir + rest;
     };
     move(move, st.root.get());
     st.folder = dir;
@@ -649,7 +674,7 @@ void App::worktree_open(const std::string& path, const std::string& from) {
     std::vector<u64> theirs;
     for (const std::unique_ptr<Pane>& p : panes_)
         for (const std::shared_ptr<Doc>& d : p->docs)
-            if (!d->ed.path.empty() && d->title.empty() && full_path(d->ed.path).starts_with(old + "/") && !must_stay(*d)) theirs.push_back(d->id);
+            if (!d->ed.path.empty() && d->title.empty() && !in_old(full_path(d->ed.path)).empty() && !must_stay(*d)) theirs.push_back(d->id);
     Pane* const focused = pane_;
     for (const u64 id : theirs) {
         Pane* where = nullptr;
