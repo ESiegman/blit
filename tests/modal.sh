@@ -12,7 +12,7 @@ blit=${1:?usage: tests/modal.sh path/to/blit [--print]}
 print=${2:-}
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
-printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/init.lua"
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.syntax.grammars.systemverilog = { extensions = { "sv" } }\n' >"$dir/init.lua"
 export BLIT_INIT="$dir/init.lua"
 fresh() { printf 'hello world\nsecond line\n    third\n' >"$dir/a.txt"; printf 'other\n' >"$dir/b.txt"; printf 'int x;\n    int y;\n' >"$dir/c.c"; printf 'x = 1\n' >"$dir/d.py"; printf 'a.b axb [a.b]\n' >"$dir/e.txt"; printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b\n' >"$dir/f.txt"; }
 
@@ -115,6 +115,22 @@ run "frame;open:$dir/d.py;text:o;key:Tab;text:y;key:Tab;text:z;key:Escape;vimdum
 check "Tab in Insert mode puts in the file's indentation: spaces to the next level" 'NORMAL |  | 2:9 |     y   z'
 run "frame;text:l;text:R;key:Tab;text:X;key:Backspace;key:Backspace;key:Backspace;key:Backspace;key:Escape;vimdump"
 check "and in Replace mode Backspace takes it back out" 'NORMAL |  | 1:1 | hello world'
+# typed FILE SCRIPT: the file after the script and a save, its lines joined by "|" (a tab shown as ">").
+typed() {
+    fresh
+    printf 'module m;\nendmodule\n' >"$dir/m.sv"
+    printf 'if x then\nend\n' >"$dir/l.lua"
+    "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "frame;$2;save" "$dir/$1" >/dev/null 2>&1
+    got=$(tr '\t\n' '>|' <"$dir/$1")
+}
+typed d.py "text:o;text:def f(rows):;key:Return;text:for r in rows:  # each;key:Return;text:if r:;key:Return;text:return 1;key:Return;text:else:;key:Return;text:pass;key:Return;text:y = [;key:Return;text:1,;key:Return;text:];key:Escape"
+check "Python: Enter after a colon goes a level in, after return a level out; else and ] go out" 'x = 1|def f(rows):|    for r in rows:  # each|        if r:|            return 1|        else:|            pass|        y = [|            1,|        ]|'
+typed c.c "text:o;text:if (x) {;key:Return;text:y();key:Return;text:};key:Escape;text:k;text:o;text:z;key:Escape"
+check "C: after { a level in, } a level out; o goes in as Enter does" 'int x;|if (x) {|    y()|    z|}|    int y;|'
+typed l.lua "text:o;text:for i = 1, 3 do;key:Return;text:f(i);key:Return;text:end;key:Return;text:g = function();key:Return;text:return 1;key:Return;text:end;key:Escape"
+check "Lua: then, do and function open; end closes (Enter after it, or Esc)" 'if x then|>for i = 1, 3 do|>>f(i)|>end|>g = function()|>>return 1|>end|end|'
+typed m.sv "text:o;text:always_comb begin;key:Return;text:unique case (s);key:Return;text:0: y = 1;key:Return;text:endcase ;key:Return;text:end else begin;key:Return;text:y = 0;key:Return;text:end;key:Escape"
+check "SystemVerilog: begin and case open, endcase and end close" 'module m;|>always_comb begin|>>unique case (s)|>>>0: y = 1|>>endcase |>end else begin|>>y = 0|>end|endmodule|'
 run "frame;text:d;text:/;text:wor;key:Return;vimdump"
 check "a search as an operator's motion" 'NORMAL |  | 1:1 | world'
 run "frame;text:v;text:/;text:wor;key:Return;vimdump"

@@ -60,6 +60,45 @@ void comment_marks(const std::string& lang, std::string* left, std::string* righ
         }
 }
 
+// How a language's lines indent, beside its comment markers: the first
+// column of its structure (what opens a level and what closes one), for
+// Enter, o and a closer typed. None for a language not known, or prose:
+// each line then starts as far in as the one before.
+const IndentRules* indent_rules(const std::string& lang) {
+    static const IndentRules kBrackets{.brackets = true};
+    static const IndentRules kPython{.brackets = true, .colon = true, .closers = "else elif except finally", .enders = "return pass raise break continue"};
+    static const IndentRules kLua{.brackets = true, .last = "then do else repeat", .anywhere = "function", .closers = "end else elseif until"};
+    static const IndentRules kShell{.brackets = true, .last = "then do else in", .closers = "fi done esac else elif"};
+    static const IndentRules kRuby{.brackets = true, .first = "def class module if unless while until case begin for", .last = "do", .closers = "end else elsif when rescue ensure"};
+    static const IndentRules kCmake{.brackets = true,
+                                    .first = "if elseif else foreach while function macro block",
+                                    .closers = "endif elseif else endforeach endwhile endfunction endmacro endblock"};
+    static const IndentRules kVerilog{
+        .brackets = true,
+        .first = "module macromodule interface package program class function task case casex casez randcase generate covergroup property sequence "
+                 "clocking checker config specify primitive table unique unique0 priority",
+        .last = "begin fork",
+        .closers = "end endmodule endinterface endpackage endprogram endclass endfunction endtask endcase endgenerate endgroup endproperty "
+                   "endsequence endclocking endchecker endconfig endspecify endprimitive endtable join join_any join_none"};
+    static const struct {
+        const IndentRules* rules;
+        const char* langs;  // names between spaces
+    } table[] = {
+        {&kBrackets, " c cpp cuda objc rust go zig java kotlin swift c_sharp javascript typescript tsx json json5 jsonc css scss php glsl hlsl wgsl slang metal dart scala "},
+        {&kPython, " python "},
+        {&kLua, " lua "},
+        {&kShell, " bash sh zsh "},
+        {&kRuby, " ruby "},
+        {&kCmake, " cmake "},
+        {&kVerilog, " systemverilog verilog "},
+    };
+    if (lang.empty()) return nullptr;
+    const std::string name = " " + lang + " ";
+    for (const auto& t : table)
+        if (std::strstr(t.langs, name.c_str())) return t.rules;
+    return nullptr;
+}
+
 }  // namespace
 
 struct App::VimUi {
@@ -125,7 +164,9 @@ void App::vim_attach() {
     if (u.comment_doc != d.id || u.comment_path != d.ed.path) {
         u.comment_doc = d.id;
         u.comment_path = d.ed.path;
-        comment_marks(file_language(), &vim_.comment_left, &vim_.comment_right);
+        const std::string lang = file_language();
+        comment_marks(lang, &vim_.comment_left, &vim_.comment_right);
+        vim_.indent_rules = indent_rules(lang);
     }
 }
 

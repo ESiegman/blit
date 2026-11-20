@@ -21,6 +21,19 @@
 
 namespace blit {
 
+// How a language's lines open and close a level of indentation, for
+// Enter and o, and for a closer typed at the start of a line in Insert
+// mode. The words are between spaces.
+struct IndentRules {
+    bool brackets = false;      // a line that ends in ( [ or { opens a level; one that starts with ) ] or } closes one
+    bool colon = false;         // a line that ends in ":" opens one (Python)
+    const char* first = "";     // words that open a level when they start a line
+    const char* last = "";      // and when they end one
+    const char* anywhere = "";  // and wherever they are in it (Lua's function), unless it ends in a closer
+    const char* closers = "";   // words that close one when they start a line
+    const char* enders = "";    // words whose line is the last of its level (Python's return)
+};
+
 struct VimKey {
     enum : u8 { kChar, kEsc, kEnter, kBackspace, kTab, kLeft, kRight, kUp, kDown, kHome, kEnd, kPageUp, kPageDown, kDelete };
     u8 kind = kChar;
@@ -146,6 +159,8 @@ public:
     // What goes before and after a line to make a comment of it (gc): "// "
     // and "", or "<!-- " and " -->". Both empty: the language has none.
     std::string comment_left, comment_right;
+    // How its lines indent (none: each new line as far in as the one before).
+    const IndentRules* indent_rules = nullptr;
     // Whether a command whose name starts with a capital is a script's
     // (it is then asked for with kEx, even if Vim has one of that name).
     std::function<bool(std::string_view)> has_user_command;
@@ -243,6 +258,9 @@ private:
     void enter_insert(Editor& ed, u32 count, Mode mode = kInsert);
     void leave_insert(Editor& ed);
     bool drop_indent(Editor& ed, u64 at);
+    std::string indent_after(const Editor& ed, u64 line, u64 end, std::string indent) const;
+    std::string outdent(const Editor& ed, std::string indent) const;
+    void indent_closer(Editor& ed, u64 line);
     void leave_visual(Editor& ed);
     void run_command(Editor& ed, std::string line);
     void substitute(Editor& ed, u64 line0, u64 line1, std::string_view rest, bool flags = true);

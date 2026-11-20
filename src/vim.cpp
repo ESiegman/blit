@@ -251,6 +251,77 @@ std::string indent_of(const Editor& ed, u64 line) {
     return ed.buf.text(s, first_nonblank(ed, line) - s);
 }
 
+// ---- indentation by the language's rules (Vim::indent_rules)
+
+bool word_byte(char c) { return std::isalnum(static_cast<u8>(c)) || c == '_'; }
+
+// Whether a word is one of those between spaces in `words`.
+bool one_of(const char* words, std::string_view w) {
+    if (w.empty() || !*words) return false;
+    for (const char* at = std::strstr(words, std::string(w).c_str()); at; at = std::strstr(at + 1, std::string(w).c_str()))
+        if ((at == words || at[-1] == ' ') && (at[w.size()] == ' ' || at[w.size()] == 0)) return true;
+    return false;
+}
+
+// The code of a line up to `end`: its blanks at either end and a comment
+// after it left out (one whose marker comes first on the line or after a
+// blank, so that one in a string mostly stays).
+std::string code_of(const Editor& ed, u64 line, u64 end, std::string_view marker) {
+    const u64 start = ed.buf.line_start(line);
+    std::string t = ed.buf.text(start, std::min<u64>(end - start, 4096));
+    while (!marker.empty() && marker.back() == ' ') marker.remove_suffix(1);
+    if (!marker.empty())
+        for (size_t at = t.find(marker); at != std::string::npos; at = t.find(marker, at + 1))
+            if (at == 0 || t[at - 1] == ' ' || t[at - 1] == '\t') {
+                t.resize(at);
+                break;
+            }
+    const size_t a = t.find_first_not_of(" \t\r"), b = t.find_last_not_of(" \t\r");
+    return a == std::string::npos ? std::string() : t.substr(a, b - a + 1);
+}
+
+std::string_view first_word(std::string_view t) {
+    size_t n = 0;
+    while (n < t.size() && word_byte(t[n])) ++n;
+    return t.substr(0, n);
+}
+
+std::string_view last_word(std::string_view t) {
+    size_t n = t.size();
+    while (n > 0 && word_byte(t[n - 1])) --n;
+    return t.substr(n);
+}
+
+// Whether the line after this code is a level further in.
+bool opens(const IndentRules& r, std::string_view t) {
+    if (t.empty()) return false;
+    const char e = t.back();
+    if (r.brackets && (e == '(' || e == '[' || e == '{')) return true;
+    if (r.colon && e == ':') return true;
+    const std::string_view last = last_word(t);
+    if (one_of(r.last, last)) return true;
+    if (one_of(r.closers, last)) return false;  // (it closed what it opened: "if x then return end")
+    if (one_of(r.first, first_word(t))) return true;
+    if (*r.anywhere)
+        for (size_t i = 0; i < t.size();) {
+            if (!word_byte(t[i])) {
+                ++i;
+                continue;
+            }
+            const std::string_view w = first_word(t.substr(i));
+            if (one_of(r.anywhere, w)) return true;
+            i += w.size();
+        }
+    return false;
+}
+
+// Whether this code starts by closing a level.
+bool closes(const IndentRules& r, std::string_view t) {
+    if (t.empty()) return false;
+    if (r.brackets && (t[0] == ')' || t[0] == ']' || t[0] == '}')) return true;
+    return one_of(r.closers, first_word(t));
+}
+
 // The bytes of a line that stand in display columns [col0, col1). (A
 // character that is only partly in them counts.)
 std::pair<u64, u64> columns_of(const Editor& ed, u64 line, u32 col0, u32 col1) {
@@ -2582,7 +2653,57 @@ bool Vim::drop_indent(Editor& ed, u64 at) {
     return true;
 }
 
+// How far in the line after `line` starts, by the language's rules: a
+// level further than `indent` (that line's) if its code up to `end` opens
+// one, a level less if it ends its level (Python's return).
+std::string Vim::indent_after(const Editor& ed, u64 line, u64 end, std::string indent) const {
+    const std::string code = code_of(ed, line, end, comment_left);
+    if (opens(*indent_rules, code)) return indent + shift;
+    if (one_of(indent_rules->enders, first_word(code))) return outdent(ed, std::move(indent));
+    return indent;
+}
+
+// An indent a level further out: a tab fewer, or a level's spaces.
+std::string Vim::outdent(const Editor& ed, std::string indent) const {
+    const size_t width = shift == "\t" ? ed.tab_width : shift.size();
+    if (!indent.empty() && indent.back() == '\t') indent.pop_back();
+    else
+        for (size_t n = 0; n < width && !indent.empty() && indent.back() == ' '; ++n) indent.pop_back();
+    return indent;
+}
+
+// A line that starts with a closer ("}", "end", Python's "else") goes a
+// level further out than the code line above it, unless that one opened
+// the level it closes ("if x then" and "end": as far in as each other).
+// (The line above's own end of its level, Python's return, is the same
+// level, not one more.) It only ever goes further out.
+void Vim::indent_closer(Editor& ed, u64 line) {
+    if (!indent_rules || line == 0) return;
+    const u64 start = ed.buf.line_start(line), text = first_nonblank(ed, line);
+    if (!closes(*indent_rules, code_of(ed, line, ed.line_end(line), comment_left))) return;
+    u64 above = line - 1;
+    while (above > 0 && first_nonblank(ed, above) == ed.line_end(above)) --above;
+    const u64 above_start = ed.buf.line_start(above), above_text = first_nonblank(ed, above);
+    if (above_text == ed.line_end(above)) return;  // (no code above it)
+    std::string want = ed.buf.text(above_start, above_text - above_start);
+    if (!opens(*indent_rules, code_of(ed, above, ed.line_end(above), comment_left))) want = outdent(ed, std::move(want));
+    u32 cols = 0;
+    for (const char c : want) cols = c == '\t' ? (cols / ed.tab_width + 1) * ed.tab_width : cols + 1;
+    if (cols >= ed.col_between(start, text)) return;
+    const u64 cur = ed.cursor();
+    auto moved = [&](u64 at) { return at >= text ? at - (text - start) + want.size() : std::min<u64>(at, start + want.size()); };
+    ed.replace(start, text, want);
+    ed.move_to(moved(cur), false);
+    if (insert_from_ > start) insert_from_ = moved(insert_from_);
+}
+
 void Vim::leave_insert(Editor& ed) {
+    // A closer typed just now alone at the end of its line ("end", then
+    // Esc): a level out, as Enter or a sign after it would have it.
+    if (indent_rules && mode_ == kInsert) {
+        const u64 cur = ed.cursor(), line = ed.buf.line_of(cur), text = first_nonblank(ed, line);
+        if (cur == ed.line_end(line) && cur > text && cur - text <= 16 && insert_from_ <= text && closes(*indent_rules, ed.buf.text(text, cur - text))) indent_closer(ed, line);
+    }
     // "3ix": the text, twice more; "3o": two more lines of it. Typed again
     // key by key, as Vim does, when it was all typing: each Enter puts in
     // its own indent and takes back the one before it, if that is alone on
@@ -2842,15 +2963,34 @@ u32 Vim::insert_key(Editor& ed, const VimKey& k) {
             } else {
                 if (mode_ == kReplace) replaced_.emplace_back();
                 ed.insert(typed_);
+                // A closer just typed at the start of the line ("}", or a
+                // word such as "end" or "else" with the sign or blank after
+                // it): the line goes a level out.
+                if (indent_rules && mode_ == kInsert && k.ch < 0x80 && !word_byte(static_cast<char>(k.ch))) {
+                    // (Looked for in the few bytes before it, read at once: most signs are typed far from a line's start.)
+                    const u64 sign = ed.cursor() - typed_.size();
+                    char w[64];
+                    const size_t n = static_cast<size_t>(std::min<u64>(sign, sizeof w));
+                    ed.buf.read(sign - n, w, n);
+                    size_t word = n, lead = n;
+                    while (word > 0 && n - word <= 16 && word_byte(w[word - 1])) --word;
+                    for (lead = word; lead > 0 && (w[lead - 1] == ' ' || w[lead - 1] == '\t');) --lead;
+                    const bool starts = lead > 0 ? w[lead - 1] == '\n' : sign == n || first_nonblank(ed, ed.buf.line_of(sign)) == sign - (n - word);
+                    if (starts && n - word <= 16 && (word == n || closes(*indent_rules, std::string_view(w + word, n - word)))) indent_closer(ed, ed.buf.line_of(sign));
+                }
             }
             return kHandled | kTyped;
         }
         case VimKey::kEnter: {
             // The new line starts as far in as this one does (autoindent),
-            // at the text after the cursor: blanks before that go.
+            // at the text after the cursor: blanks before that go. With the
+            // language's rules, a level further after a line that opens one
+            // (and this line a level out first if it starts with a closer).
+            if (indent_rules && mode_ == kInsert) indent_closer(ed, ed.buf.line_of(ed.cursor()));
             const u64 cur = ed.cursor(), line = ed.buf.line_of(cur), end = ed.line_end(line);
             const u64 start = ed.buf.line_start(line), text = std::min(first_nonblank(ed, line), cur);
-            const std::string indent = ed.buf.text(start, text - start);
+            std::string indent = ed.buf.text(start, text - start);
+            if (indent_rules && mode_ == kInsert && text < cur) indent = indent_after(ed, line, cur, std::move(indent));
             Peek p(ed.buf);
             u64 skip = cur;
             while (skip < end && (p.at(skip) == ' ' || p.at(skip) == '\t')) ++skip;
@@ -3750,7 +3890,9 @@ u32 Vim::normal_key(Editor& ed, const VimKey& k) {
         case 'O': {
             // A new line below (or above), as far in as this one, and Insert mode on it.
             if (refuse()) return done();
-            const std::string indent = indent_of(ed, line), nl = line_break(ed);
+            std::string indent = indent_of(ed, line);
+            if (indent_rules && c == 'o') indent = indent_after(ed, line, ed.line_end(line), std::move(indent));  // (as Enter at its end would)
+            const std::string nl = line_break(ed);
             clear_pending();
             ed.begin_group();
             if (c == 'o') {

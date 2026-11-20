@@ -432,7 +432,15 @@ command; Ctrl-S asks the
 language server for the signature of the call being typed. Ctrl-U and
 Ctrl-W start an undo step of their own, as Neovim's do, so `u` brings back
 what they took. A new line starts as
-far in as the one before (autoindent). Everything typed in one stay in
+far in as the one before (autoindent), and in a language whose blocks are
+known a level further after a line that opens one: one that ends in `{`,
+`(` or `[`, in `:` in Python, in `then`, `do` or `begin`, or starts with
+`module`, `case`, `function` and the like (SystemVerilog, Lua, the shell,
+Ruby, CMake). In Python a line after `return`, `pass`, `raise`, `break`
+or `continue` starts a level out. A closer typed at the start of a line
+(`}`, `)`, `]`, `end` and its kin, `else`, `fi`, `done`) takes it a level
+out from the line above, when the sign or blank after it, Enter or Esc is
+typed; `o` indents as Enter does. Everything typed in one stay in
 Insert mode is one step for `u`. A count repeats the text (`3ix` Esc, `3o`).
 In Replace mode Backspace puts back what was typed over.
 
