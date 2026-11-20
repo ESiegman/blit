@@ -6,11 +6,14 @@
 # here, in a home of its own ($BLIT_FAKE_HOME), so that blit's agent is
 # copied there and run as it would be in a container.
 echo "$*" >>"${BLIT_FAKE_DOCKER_LOG:-/dev/null}"
+# BLIT_FAKE_DOCKER_DOWN: its daemon is not running, and every call says so.
+[ -z "${BLIT_FAKE_DOCKER_DOWN:-}" ] || { echo "Cannot connect to the Docker daemon at unix:///var/run/docker.sock. Is the docker daemon running?" >&2; exit 1; }
 state=${BLIT_FAKE_DOCKER_STATE:?}
 mkdir -p "$state"
 what=$1
 shift
 case "$what" in
+    info) echo 27.0.0 ;;
     inspect)
         while [ $# -gt 1 ]; do shift; done
         [ -f "$state/$1" ] || { echo "Error: No such object: $1" >&2; exit 1; }

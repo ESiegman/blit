@@ -91,6 +91,15 @@ rm -rf "$dir/state"
 got=$(run "Open in the dev container")
 printf '%s' "$got" | grep -q "blit: The dev container's image did not build: build failed: no such base image" || fail "a build that fails: said" "$got"
 unset BLIT_FAKE_DOCKER_FAIL
+# docker's daemon not running: said so, not that the image did not build,
+# both opening and rebuilding.
+export BLIT_FAKE_DOCKER_DOWN=1
+for what in "Open in the dev container" "Rebuild the dev container"; do
+    got=$(run "$what")
+    printf '%s' "$got" | grep -q '^blit: docker is not running: Cannot connect to the Docker daemon' || fail "docker not running ($what): said" "$got"
+    printf '%s' "$got" | grep -q 'did not build\|did not start' && fail "docker not running ($what): nothing else said" "$got"
+done
+unset BLIT_FAKE_DOCKER_DOWN
 
 # A folder with a comma (and a quote) in its path: mounted as docker reads
 # --mount (CSV), the fields with them in quotes; and the same for a

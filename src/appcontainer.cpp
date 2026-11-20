@@ -222,13 +222,27 @@ void App::container_open(bool anew) {
             run();
         });
     };
+    // docker asked whether it is running, when what was asked of it failed
+    // for another reason than that the container is not there: if it is
+    // not, that is said (and not that an image did not build).
+    auto unless_down = [this, plan, docker](std::function<void()> then) {
+        script_run({docker, "info", "--format", "{{.ServerVersion}}"}, plan->root, [this, then](int code, const std::string&, const std::string& err) {
+            if (code == 0) return then();
+            if (err.starts_with("cannot run ")) return notify(err, 2);  // (no docker here at all)
+            notify("docker is not running", 2, "docker is not running: " + err);
+        });
+    };
     if (anew) {  // (made anew: the one there goes first)
-        script_run({docker, "rm", "-f", plan->name}, plan->root, [make](int, const std::string&, const std::string&) { make(); });
+        script_run({docker, "rm", "-f", plan->name}, plan->root, [make, unless_down](int code, const std::string&, const std::string&) {
+            if (code != 0) return unless_down(make);
+            make();
+        });
         return;
     }
     // Already made: started, if it is not running.
     script_run({docker, "inspect", "-f", "{{.State.Running}}", plan->name}, plan->root,
-               [this, plan, docker, make, opened](int code, const std::string& out, const std::string&) {
+               [this, plan, docker, make, opened, unless_down](int code, const std::string& out, const std::string& err) {
+                   if (code != 0 && err.find("No such") == std::string::npos) return unless_down(make);  // (docker may not be running)
                    if (code != 0) return make();
                    if (out.starts_with("true")) return opened();
                    script_run({docker, "start", plan->name}, plan->root, [this, opened](int code2, const std::string& out2, const std::string& err2) {
