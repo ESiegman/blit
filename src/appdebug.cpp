@@ -1218,8 +1218,20 @@ void App::debug_complete(const std::string& typed) {
             if (const size_t d = text.find(" -- "); d != std::string::npos) text.resize(d);
             std::string whole;
             if (t["start"].exists()) {
-                const size_t at = std::min<size_t>(static_cast<size_t>(std::max<i64>(0, t["start"].integer() - 1)), typed.size());
-                const size_t len = std::min<size_t>(static_cast<size_t>(std::max<i64>(0, t["length"].integer())), typed.size() - at);
+                // (Its start is counted from 1, as blit asked; debugpy counts
+                // from 0 all the same. What a completion takes the place of is
+                // the start of it ("desc" of "describe"): where that is so only
+                // counted from 0, it is counted from 0.)
+                const i64 start = std::max<i64>(0, t["start"].integer()), length = std::max<i64>(0, t["length"].integer());
+                auto begins = [&](size_t at) {
+                    if (at > typed.size()) return false;
+                    const std::string_view was = std::string_view(typed).substr(at, static_cast<size_t>(length));
+                    return text.starts_with(was);
+                };
+                size_t at = static_cast<size_t>(std::max<i64>(0, start - 1));
+                if (start > 0 && !begins(at) && begins(static_cast<size_t>(start))) at = static_cast<size_t>(start);
+                at = std::min(at, typed.size());
+                const size_t len = std::min<size_t>(static_cast<size_t>(length), typed.size() - at);
                 whole = typed.substr(0, at) + text + typed.substr(at + len);
             } else {
                 whole = text.starts_with(typed.substr(word)) ? typed.substr(0, word) + text : typed + text;
