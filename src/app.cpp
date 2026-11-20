@@ -937,13 +937,35 @@ void App::save_as() {
 // alone: each would ask for its own). The tab in front of each split stays
 // in front.
 void App::save_all() {
-    std::vector<u64> wanted, fronts;
-    for (const std::unique_ptr<Pane>& p : panes_) {
-        fronts.push_back(p->doc ? p->doc->id : 0);
+    std::vector<u64> wanted;
+    for (const std::unique_ptr<Pane>& p : panes_)
         for (const std::shared_ptr<Doc>& d : p->docs)
             if (d->ed.modified() && !d->ed.path.empty() && !d->read_only && std::ranges::find(wanted, d->id) == wanted.end()) wanted.push_back(d->id);
-    }
+    save_docs(wanted);
+}
+
+// A change made across files (a rename, Replace in files) changes an open
+// file in its tab: saved with it, so that what is on disk agrees (a build
+// straight after sees all of it), unless the tab had changes of its own
+// before, which are not written for it.
+std::string App::save_changed(const std::vector<u64>& clean, const std::vector<u64>& dirty) {
+    save_docs(clean);
+    std::vector<std::string> names;
+    for (const u64 id : dirty)
+        if (const Doc* d = find_doc(id)) names.push_back(d->ed.path.substr(d->ed.path.rfind('/') + 1));
+    if (names.empty()) return {};
+    std::string list;
+    for (size_t i = 0; i < names.size(); ++i) list += (i == 0 ? "" : i + 1 == names.size() ? " and " : ", ") + names[i];
+    return "; " + list + " changed, not saved (" + (names.size() == 1 ? "it has" : "they have") + " changes of " +
+           (names.size() == 1 ? "its" : "their") + " own)";
+}
+
+// Each of those documents saved (by id), the tab in front of each split
+// staying in front.
+void App::save_docs(const std::vector<u64>& wanted) {
     if (wanted.empty()) return;
+    std::vector<u64> fronts;
+    for (const std::unique_ptr<Pane>& p : panes_) fronts.push_back(p->doc ? p->doc->id : 0);
     const u64 focused = pane_->doc->id;
     Pane* where = nullptr;
     size_t at = 0;

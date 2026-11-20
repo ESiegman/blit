@@ -289,8 +289,11 @@ check "with that file open, renamed" 'input [format_record] 0 :'
 with index0 "$on_fmt;key:F2;wait:200;key:ctrl+U;text:fmt_record;key:Return;wait:200;finddump" "$P/fmt.cpp"
 check "and with the index built, renamed everywhere" 'pick [] 3 : >Rename to fmt_record: 2 edits in 2 files fmt.cpp  1 edit fmt.hpp  1 edit'
 run "key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;key:ctrl+U;text:common;key:Return;wait:200;key:Return;lsptext"
-got="$got / $said / $(cat "$P/d.cpp")"
-check "Enter renames: the open file through its tab, the other on disk" 'int common = 1; // ERROR / call(1,   2, 3);    / WARN common   /  / blit: Renamed: 4 edits in 3 files / common in d, not open'
+got="$got / $said / $(cat "$P/d.cpp") / $(head -1 "$P/a.cpp")"
+check "Enter renames: the open file through its tab (and saves it), the other on disk" 'int common = 1; // ERROR / call(1,   2, 3);    / WARN common   /  / blit: Renamed: 4 edits in 3 files / common in d, not open / int common = 1; // ERROR'
+run "key:Down;key:Down;key:End;text:z;key:Up;key:Up;key:Home;key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;key:ctrl+U;text:common;key:Return;wait:200;key:Return;lsptext"
+got="$got / $said / $(head -1 "$P/a.cpp")"
+check "an open file with changes of its own: changed, not saved, and said" 'int common = 1; // ERROR / call(1,   2, 3);    / WARN common  z /  / blit: Renamed: 4 edits in 3 files; a.cpp changed, not saved (it has changes of its own) / int shared = 1; // ERROR'
 run "key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;key:ctrl+U;text:common;key:Return;wait:200;key:Return;key:cmd+Z;lsptext"
 check "one undo takes it back in the open file" 'int shared = 1; // ERROR / call(1,   2, 3);    / WARN shared   / '
 run "key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;key:ctrl+U;text:common;key:Return;wait:200;lua:blit.insert('x');key:Return;lsptext"

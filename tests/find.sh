@@ -122,7 +122,10 @@ run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;
 check "Esc: not now" 'text [needle] with> [pin] 3 of 3 : >src/deep/inner.txt:2:14=    indented pin line src/helper.hpp:2:12=// another pin, with a capital src/main.cpp:2:5=the pin is here'
 run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;vim:j;vimdump;dump"
 got="$got | $(sed -n 2p "$W/src/main.cpp") | $(sed -n 2p "$W/src/helper.hpp") | $(sed -n 2p "$W/src/deep/inner.txt")"
-check "Enter: a file open in a tab is changed there (and left to be saved), the others where they are" '>[README.md main.cpp*] | the needle is here | // another pin, with a capital |     indented pin line'
+check "Enter: a file open in a tab is changed there and saved, the others where they are" '>[README.md main.cpp*] | the pin is here | // another pin, with a capital |     indented pin line'
+run "open:$W/src/main.cpp;vim:Ax<Esc>;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;vimdump"
+got="$got | $(sed -n 2p "$W/src/main.cpp")"
+check "one with changes of its own: changed in its tab, not saved, and said" 'NORMAL | Replaced 3 hits in 3 files; main.cpp changed, not saved (it has changes of its own) | 1:11 | alpha linex | the needle is here'
 run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;vimdump"
 check "and the bottom line says how many" 'NORMAL | Replaced 3 hits in 3 files | 1:1 | alpha line'
 run "open:$W/src/main.cpp;key:cmd+shift+F;text:needle;key:Tab;text:pin;findwait;key:cmd+Return;key:Return;text:j;text:u;text:j;vimdump"

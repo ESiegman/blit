@@ -692,10 +692,21 @@ void App::sync_lsp() {
                 if (const Doc* d = lsp_edit_doc(f.path)) revs.emplace_back(d->id, d->ed.revision());
             auto edit = std::make_shared<LspWorkspaceEdit>(e);
             find_choose_item("Rename", std::move(items), [this, edit, revs](int) {
-                for (const auto& [id, rev] : revs)
-                    if (const Doc* d = find_doc(id); !d || d->ed.revision() != rev) return notify("Cannot rename: the text changed meanwhile");
+                std::vector<u64> clean, dirty;  // (the open files it changes: saved with it, unless they had changes of their own)
+                for (const auto& [id, rev] : revs) {
+                    const Doc* d = find_doc(id);
+                    if (!d || d->ed.revision() != rev) return notify("Cannot rename: the text changed meanwhile");
+                    (d->ed.modified() ? dirty : clean).push_back(id);
+                }
                 std::string said;
                 lsp_apply(*edit, &said);
+                auto unchanged = [&](u64 id) {  // (one it could not change: read only, or still loading)
+                    const Doc* d = find_doc(id);
+                    return !d || std::ranges::count(revs, std::pair<u64, u64>{id, d->ed.revision()}) > 0;
+                };
+                std::erase_if(clean, unchanged);
+                std::erase_if(dirty, unchanged);
+                said += save_changed(clean, dirty);
                 notify("Renamed: " + said);
             });
         }

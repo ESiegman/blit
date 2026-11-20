@@ -775,6 +775,11 @@ private:
     std::vector<std::string> recent_files(size_t most) const;  // appstart.cpp: files opened lately, the latest first, that are still there
     void save_as();                              // app.cpp: the file in front, under a name asked for
     void save_all();                             // app.cpp: every file with changes that has a name
+    void save_docs(const std::vector<u64>& ids);  // app.cpp: those documents (each with a name), the tabs in front staying in front
+    // app.cpp: after a change across files (a rename, Replace in files), the
+    // open files it changed saved where they had no changes of their own;
+    // the others named, in words to add to what is said (empty: none).
+    std::string save_changed(const std::vector<u64>& clean, const std::vector<u64>& dirty);
     void find_in_file(bool replace = false);     // appcommands.cpp: a search in the file in front (Vim's /, or a box without modes; with "Replace with", the box), from the word or selection
     // The box that finds in the file in front (kFindFile), with "Replace
     // with" under it if asked; Search in files with that field (Cmd+Shift+H);

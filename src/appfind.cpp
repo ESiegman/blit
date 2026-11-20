@@ -651,9 +651,10 @@ void App::Find::files_ask(App& a) {
     a.dirty_ = true;
 }
 
-// Every hit replaced. A file open in a tab is changed there (one undo step,
-// left for its owner to save); any other is read, changed and written, here
-// or on another machine.
+// Every hit replaced. A file open in a tab is changed there (one undo step)
+// and saved, unless it had changes of its own, which are not written for
+// it (the bottom line names it); any other is read, changed and written,
+// here or on another machine.
 void App::Find::files_replace(App& a) {
     Find& f = *a.find_;
     f.asking = false;
@@ -668,6 +669,7 @@ void App::Find::files_replace(App& a) {
     const u64 most = f.walked_opt.max_file_bytes;
     u64 hits = 0, changed = 0;
     std::string failed;
+    std::vector<u64> clean, dirty;  // (the open files changed: saved after, unless they had changes of their own)
     for (const u32 i : files) {
         const std::string rel(r->index->path(i));
         const std::string full = r->index->root + "/" + rel;
@@ -680,8 +682,10 @@ void App::Find::files_replace(App& a) {
                 failed = rel;
                 continue;
             }
+            const bool had_changes = d.ed.modified();
             n = Vim::replace_all(d.ed, p, with, rules, 0, d.ed.buf.size() + 1);
             where->cache_rev = ~0ull;
+            if (n) (had_changes ? dirty : clean).push_back(d.id);
         } else {
             std::string text, err;
             if (!fs_read(full, &text, most + 1) || text.size() > most) {
@@ -698,9 +702,10 @@ void App::Find::files_replace(App& a) {
         changed += n ? 1 : 0;
     }
     a.find_close(true);
+    const std::string unsaved = a.save_changed(clean, dirty);
     if (a.cfg_.modal) a.vim_attach();
     say(a, "Replaced " + std::to_string(hits) + (hits == 1 ? " hit in " : " hits in ") + std::to_string(changed) + (changed == 1 ? " file" : " files") +
-               (failed.empty() ? std::string() : "; not in " + failed));
+               (failed.empty() ? std::string() : "; not in " + failed) + unsaved);
 }
 
 void App::find_file_open(bool replace, const std::string& typed) {

@@ -989,10 +989,13 @@ all (or as a pattern, Option+R), the count is of matches, and each line
 found shows what it is and, after an arrow, what it would become, the parts
 that change lit. Cmd+Enter asks first, in the box: "Replace 37 hits in 5
 files?" (Enter yes; anything else no). A file open in a tab is changed
-there, in one undo step, and left with its changes for you to save; the
-others are read, changed and written where they are, on another machine
-through its connection. The bottom line says how it went: "Replaced 37
-hits in 5 files". (When a search has stopped at 3,000 lines, it asks for
+there, in one undo step, and saved; the others are read, changed and
+written where they are, on another machine through its connection, so
+that a build straight after sees the whole change. An open file that had
+changes of its own is changed but not saved (they are yours to save),
+and the bottom line names it. It says how it went: "Replaced 37 hits in
+5 files", or "...; main.cpp changed, not saved (it has changes of its
+own)". (When a search has stopped at 3,000 lines, it asks for
 a narrower one first.)
 
 In the box: Up and Down (or Ctrl-P and Ctrl-N, Ctrl-K and Ctrl-J) choose,
@@ -1669,9 +1672,11 @@ A server whose last file has been closed stops half a minute later.
   selection, nor for a name used once).
 - **Rename** with F2: the new name is typed in the box, then the box shows
   how many changes that makes in which files, and Enter makes them. A file
-  open in a tab is changed there (one undo takes the whole change back);
-  any other is changed on disk, on another machine too. If a file open in
-  a tab has been typed in since the changes were found, none is made.
+  open in a tab is changed there (one undo takes the whole change back)
+  and saved, unless it had changes of its own (then it is changed but not
+  saved, and the bottom line names it); any other is changed on disk, on
+  another machine too. If a file open in a tab has been typed in since the
+  changes were found, none is made.
   While clangd knows only the open files, the count of changes ends
   `(open files only)`, and a name declared in a file that is not open is
   not renamed (the bottom line says where it is declared): open that file,
