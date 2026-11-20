@@ -882,6 +882,7 @@ private:
     struct Session;
     void session_create();     // init: the Recent folders' tab counts, read on a thread meanwhile
     bool project_open(const std::string& dir);  // a folder opened to work in: the last one's session kept, this one's back (true: it came back)
+    void worktree_open(const std::string& dir, const std::string& from);  // another working tree, so: with no session, from's tabs at their places in it
     void session_save();       // the project folder's, as things are now (on quit, and when the folder changes)
     int session_tabs(const std::string& dir, bool wait = false);  // how many tabs its session brings back; -1: none
     bool session_arrived(Pane& p, Doc& d);      // a file from another machine is in its tab (true: one a session opened)

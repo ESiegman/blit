@@ -474,6 +474,19 @@ check "one made for a new branch, beside the repository" "1"
 run "$dir/ada/poem.txt" "frame;gitwait;git:opentree:$dir/ada-feature;gitwait;frame;gitwait;gitdump"
 got=$(printf '%s' "$got" | sed -n 's/.*| branches \([^|]*\).*/\1/p' | tr ' ' '\n' | grep '^\*')
 check "opened: the folder worked in, its branch the one checked out" "*feature"
+# Opened as a folder is: the file in front is then that tree's (at its
+# place there), not this one's under the other's name; one that tree does
+# not have goes. With sessions kept, each tree's own tabs come back to it.
+# tree SCRIPT [FILE]: what the run printed, its lines joined by "/".
+tree() { "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "$1" ${2:+"$2"} 2>&1 >/dev/null | grep -v '^blit: git' | sed "s#$dir#~#g" | tr '\n' '/'; }
+got=$(tree "frame;gitwait;git:opentree:$dir/ada-feature;gitwait;frame;dump;statusdump" "$dir/ada/poem.txt")
+check "another tree opened: the file in front is that tree's" '>[poem.txt*]/feature poem.txt | Ln 1, Col 1 Tabs LF Plain text/'
+printf 'notes\n' >"$dir/ada/notes.txt"
+got=$(tree "frame;gitwait;git:opentree:$dir/ada-feature;gitwait;frame;dump" "$dir/ada/notes.txt")
+check "one the other tree does not have: closed" '>[untitled*]/'
+rm "$dir/ada/notes.txt"
+got=$(BLIT_RECENT_FILE="$dir/recent" tree "folder:$dir/ada;open:$dir/ada/other.txt;frame;gitwait;git:opentree:$dir/ada-feature;gitwait;frame;open:$dir/ada-feature/poem.txt;frame;dump;git:opentree:$dir/ada;gitwait;frame;dump;git:opentree:$dir/ada-feature;gitwait;frame;dump")
+check "with sessions: each tree's tabs back when it is opened again" '>[other.txt poem.txt*]/>[other.txt*]/>[other.txt poem.txt*]/'
 # Submodules: listed, one not checked out marked, and updated.
 git init -q -b main "$dir/lib"
 git -C "$dir/lib" -c user.name=x -c user.email=x@example.invalid commit -q --allow-empty -m "Lib"

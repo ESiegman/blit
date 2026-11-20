@@ -157,13 +157,14 @@ empty file instead. Ctrl+Tab goes between its two tabs, Start and New
 project.
 
 **Sessions.** A folder opened to work in (from Recent, with `d` or
-Cmd+Shift+O, by `blit DIR`, or made by New project) comes back as it was
-left when it is opened again: the tabs of each split in their order, the
-splits and their sizes, each file's cursor and view, the side panel (shown
-or not, its tab, its width) and the Build tab's task. A folder's row in
-Recent says what will come back (`blit  ~/Dev · 7 tabs`). The session is
-written when blit quits and when another folder is opened, one small file
-per folder in `sessions` beside `recent`. A file that is gone is left out
+Cmd+Shift+O, by `blit DIR`, made by New project, or another worktree from
+the Git tab) comes back as it was left when it is opened again: the tabs
+of each split in their order, the splits and their sizes, each file's
+cursor and view, the side panel (shown or not, its tab, its width) and
+the Build tab's task. A folder's row in Recent says what will come back
+(`blit  ~/Dev · 7 tabs`). The session is written when blit quits and when
+another folder is opened, one small file per folder in `sessions` beside
+`recent`. A file that is gone is left out
 (and a split left with nothing goes); a folder on another machine
 (`ssh://`) gets its tabs at once and their text when the connection is up,
 as any file there does. Opening another folder takes the window over:
@@ -798,8 +799,11 @@ from outside that repository gets no marks and no blame. From the top:
   branch follows, or `origin`) or **Delete** it here (after asking).
 - **Worktrees**, when the repository has another than this one: this one
   first (marked), each with its branch and where it is. Enter on another
-  opens it as the folder worked in (the side panel, the Git tab and the
-  rest follow it); Backspace removes it, after asking (its branch stays).
+  opens it as a folder is opened to work in (the side panel, the Git tab
+  and the rest follow it): its session comes back, or, the first time, the
+  tabs open here go there, each file at its place in that tree (one it
+  does not have closes; one with changes not saved stays, as with any
+  folder). Backspace removes it, after asking (its branch stays).
   "Git: New worktree…" makes one for a branch, beside the repository and
   named after it and the branch (`blit-feature` for `feature`), the branch
   made from the one checked out if there is none.

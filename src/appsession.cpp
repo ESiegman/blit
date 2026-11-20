@@ -9,9 +9,10 @@
 //
 // A window takes a folder's session when the folder is opened to work in:
 // from the start screen's Recent, the box that opens folders (d, Cmd+Shift+O),
-// `blit DIR`, or a new project. It is written when blit quits and when
-// another folder is opened that way, on a thread of its own; the tab counts
-// Recent shows are read on a thread while the window starts. Only a blit
+// `blit DIR`, a new project, or another working tree from the Git tab. It
+// is written when blit quits and when another folder is opened that way,
+// on a thread of its own; the tab counts Recent shows are read on a
+// thread while the window starts. Only a blit
 // with a window of its own keeps sessions, as with `recent`, unless
 // BLIT_RECENT_FILE names a file for scripted runs (the sessions go beside it).
 #include <sys/stat.h>
@@ -615,6 +616,50 @@ void App::session_apply(Session& st) {
     ++session_gen_;
     place_panes(px_w_, px_h_);
     pick_theme();
+    dirty_ = true;
+}
+
+// Another working tree of the repository opened as the folder worked in,
+// from the tree `from`: its session, if it has one. Else it starts with
+// the tabs the window has, each file of `from` at its place in this tree
+// (those it has), and the rest go as for another folder's session; none
+// of `from`'s files is left in front under this tree's name.
+void App::worktree_open(const std::string& path, const std::string& from) {
+    SessionUi& u = *session_;
+    const std::string dir = folder_key(path), old = folder_key(from), was = u.folder;
+    if (dir.empty() || old.empty() || dir == old || dir == was) return (void)project_open(path);
+    const std::string text = session_text();  // (as the window is, before the folder changes)
+    if (project_open(dir)) return;
+    Session st;
+    if (!st.parse(text, was)) return;
+    auto move = [&](auto&& self, Session::Node* n) -> void {
+        if (!n) return;
+        self(self, n->a.get());
+        self(self, n->b.get());
+        for (Session::File& f : n->files)
+            if (f.path.starts_with(old + "/")) f.path = dir + f.path.substr(old.size());
+    };
+    move(move, st.root.get());
+    st.folder = dir;
+    st.panel = false;  // (the side panel as it is, and the Build tab's task is the other tree's)
+    st.build.clear();
+    std::set<std::string> seen;
+    if (Session::prune(st.root, seen) > 0) return session_apply(st);
+    // (None of them is in this tree: the other tree's go all the same.)
+    std::vector<u64> theirs;
+    for (const std::unique_ptr<Pane>& p : panes_)
+        for (const std::shared_ptr<Doc>& d : p->docs)
+            if (!d->ed.path.empty() && d->title.empty() && full_path(d->ed.path).starts_with(old + "/") && !must_stay(*d)) theirs.push_back(d->id);
+    Pane* const focused = pane_;
+    for (const u64 id : theirs) {
+        Pane* where = nullptr;
+        size_t at = 0;
+        while (find_doc(id, &where, &at)) {  // (each split that shows it)
+            pane_ = where;
+            tab_close(at, true);
+        }
+    }
+    if (std::ranges::any_of(panes_, [&](const std::unique_ptr<Pane>& p) { return p.get() == focused; })) pane_ = focused;
     dirty_ = true;
 }
 

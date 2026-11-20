@@ -1951,7 +1951,11 @@ void App::git_do(u32 action, const std::string& arg) {
             } else if (!arg.empty()) {
                 dir = arg.starts_with('/') ? arg : g.status.root + "/" + arg;
             }
-            if (!dir.empty()) panel_set_workdir(dir);
+            while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
+            bool tree = false;  // (another working tree: as a folder is opened, its files in place of this one's)
+            for (size_t i = 1; i < g.worktrees.size(); ++i) tree = tree || g.worktrees[i].path == dir;
+            if (tree) worktree_open(dir, std::string(g.status.root));
+            else if (!dir.empty()) panel_set_workdir(dir);
             break;
         }
         case kActNewTree: {  // beside the repository, named after it and the branch; the branch made if there is none
