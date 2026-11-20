@@ -651,6 +651,32 @@ void notebook_bounds_test() {
     check(whole, "notebook bounds: a table too wide, and its text too: the columns that fit, whole, and how many more");
 }
 
+// A notebook of thousands of code cells, typed in: the cells not changed
+// are not laid out and coloured again (only the one typed in is).
+void notebook_kept_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
+    std::string script;
+    for (int k = 0; k < 3000; ++k) script += "# %%\nx" + std::to_string(k) + " = " + std::to_string(k) + "\n\n";
+    size_t coloured = 0;
+    NbLook look;
+    look.width = 80;
+    look.colour = [&](std::string_view, std::string_view code, std::vector<u8>* inks) {
+        ++coloured;
+        inks->assign(code.size(), kMdCodeKeyword);
+        return true;
+    };
+    NbCache cache;
+    const std::vector<NotebookCell> none;
+    const std::vector<MdRow> first = nb_render(script, none, look, &cache);
+    check(coloured == 3000, "notebook kept: each code cell coloured once");
+    coloured = 0;
+    script.replace(script.find("x17 = 17"), 8, "x17 = 18");
+    const std::vector<MdRow> again = nb_render(script, none, look, &cache);
+    check(coloured == 1 && again.size() == first.size(), "notebook kept: typed in one cell, only it coloured again");
+}
+
 // Local history: versions kept newest first, read back as they were; the
 // same text not kept twice (a save marks it saved); the oldest let go past
 // the most kept; and each file's folder its own.
@@ -6226,6 +6252,7 @@ int main(int argc, char** argv) {
     notebook_test();
     notebook_view_test();
     notebook_bounds_test();
+    notebook_kept_test();
     history_test();
     wrap_test();
     find_test();

@@ -12,6 +12,7 @@
 #include <functional>
 #include <map>
 #include <memory>
+#include <set>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -69,7 +70,8 @@ struct NbCache {
     };
     std::map<const std::string*, Read> read;
     std::string look;
-    std::map<std::string, std::vector<MdRow>> rows;
+    std::map<std::string, std::vector<MdRow>> rows;  // (by "m", "c" and a cell's text, "o" and its outputs)
+    std::set<std::string> drawn;  // (the rows the last drawing has: the rest let go of)
 };
 
 // The notebook whose script this is, with the outputs in `model`: its rows

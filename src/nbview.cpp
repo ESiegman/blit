@@ -633,6 +633,13 @@ struct Drawer {
     u32 gutter = 0;   // columns kept for the labels beside the cells (0: above them)
     u32 room = 80;    // and what is left for the cells
 
+    // Whether rows are kept by that key (cache: there is one); this
+    // drawing has them, so they stay.
+    bool kept(const std::string& key) const {
+        cache->drawn.insert(key);
+        return cache->rows.contains(key);
+    }
+
     MdPictureFn md_picture() const {
         return [this](const std::string& src, u32 r, u32 w, u32 h, MdPic* out) { return look.picture && look.picture(src, r, w, h, out) == kNbPictureReady; };
     }
@@ -816,7 +823,7 @@ struct Drawer {
         std::vector<MdRow> part;
         if (now.kind == "markdown") {
             const std::string key = "m" + now.source;
-            if (cache && cache->rows.contains(key)) {
+            if (cache && kept(key)) {
                 part = cache->rows[key];
             } else {
                 part = md_render(now.source, room, md_picture(), look.colour);
@@ -829,7 +836,13 @@ struct Drawer {
             for (size_t k = 0; k < part.size(); ++k) part[k].line = std::min<u32>(first + static_cast<u32>(k), last);
             shift(part);
         } else {
-            part = md_code(look.lang, now.source, room, look.colour);
+            const std::string code_key = "c" + now.source;  // (kept as a Markdown cell's are: coloured once)
+            if (cache && kept(code_key)) {
+                part = cache->rows[code_key];
+            } else {
+                part = md_code(look.lang, now.source, room, look.colour);
+                if (cache) cache->rows[code_key] = part;
+            }
             for (size_t k = 0; k < part.size(); ++k) part[k].line = k == 0 ? head : first + part[k].line;
             if (!part.empty()) part.back().line = last;
             shift(part);
@@ -844,7 +857,7 @@ struct Drawer {
             if (ran && ran->outputs) {
                 const std::string key = "o" + std::to_string(reinterpret_cast<std::uintptr_t>(ran->outputs.get())) + (same ? "" : "s");
                 std::vector<MdRow> out;
-                if (cache && cache->rows.contains(key)) {
+                if (cache && kept(key)) {
                     out = cache->rows[key];
                 } else {
                     const std::vector<NbOutput>* read = nullptr;
@@ -968,19 +981,25 @@ std::vector<MdRow> nb_render(std::string_view script, const std::vector<Notebook
         }
         // (outputs no longer in the model let go of, and their rows: another's
         // may come to be where they were)
+        std::set<const std::string*> held;
+        for (const NotebookCell& c : model)
+            if (c.outputs) held.insert(c.outputs.get());
         std::erase_if(cache->read, [&](const auto& e) {
-            if (std::ranges::any_of(model, [&](const NotebookCell& c) { return c.outputs.get() == e.first; })) return false;
+            if (held.contains(e.first)) return false;
             const std::string gone = "o" + std::to_string(reinterpret_cast<std::uintptr_t>(e.first));
             cache->rows.erase(gone);
             cache->rows.erase(gone + "s");
             return true;
         });
-        if (cache->rows.size() > 4096) cache->rows.clear();
+        cache->drawn.clear();
     }
     for (size_t i = 0; i < now.size() && i < lines.size(); ++i) {
         const NotebookCell* ran = match[i].at >= 0 ? &model[static_cast<size_t>(match[i].at)] : nullptr;
         dr.cell(now[i], lines[i], ran, match[i].same);
     }
+    // (Kept: the rows this drawing has, so that however many cells the
+    // notebook has, the next drawing finds them all.)
+    if (cache) std::erase_if(cache->rows, [&](const auto& e) { return !cache->drawn.contains(e.first); });
     return rows;
 }
 
