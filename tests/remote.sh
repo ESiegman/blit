@@ -236,6 +236,14 @@ SLOW=0.3 slow "remotewait;treewait;open:ssh://box$T/.tree/a.txt;remotewait;key:c
 got="$got | $(cd "$T/.tree" && ls * | tr '\n' ' ')| $(ls "$T/.local/share/Trash/files")"
 check "the tree's changes there" 'within 300 ms ;; blit: "src" is already there ;; box a.txt | Ln 1, Col 1 Tabs LF Plain text ;; box b.txt | Ln 1, Col 1 Tabs LF Plain text | made.txt main.cpp | b.txt'
 
+# The tree of a folder there, on a slow host: "Listing…" until its names
+# come (not "This folder is empty"), and then what is in it.
+mkdir -p "$T/.listed/some" "$T/.listed/none" && : >"$T/.listed/some/one.txt"
+SLOW=0.3 slow "remotewait;key:cmd+shift+E;frame;treedump;treewait;frame;treedump" "ssh://box$T/.listed/some"
+check "a folder there on its way: listing, then its files" 'tree: (listing) ;; tree: one.txt@42'
+SLOW=0.3 slow "remotewait;key:cmd+shift+E;frame;treedump;treewait;frame;treedump" "ssh://box$T/.listed/none"
+check "and an empty one" 'tree: (listing) ;; tree: (empty)'
+
 # The New project tab, making a project there on a slow host: Create goes
 # back to the keys at once (the form says it is creating), the project is
 # made on its thread once what the host has has been looked at, and its

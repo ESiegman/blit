@@ -1914,7 +1914,8 @@ over the one ssh connection:
   here (delete moves to the freedesktop Trash of the user the agent runs
   as), on the tree's own thread: the tree shows them when they are done,
   and one that fails says why on the bottom line. A folder there in the
-  boxes that open files and folders says *Listing…* until its names come.
+  tree, and in the boxes that open files and folders, says *Listing…*
+  until its names come.
 - **Finding files and text** (Cmd+P, Cmd+Shift+F): the agent walks the
   folder and searches the files on that machine, on as many threads as it
   has cores, and sends back the names and the lines found; the files

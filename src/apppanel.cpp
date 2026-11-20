@@ -618,6 +618,7 @@ std::string App::tree_dump() {
         if (std::ranges::find(s.chosen, path) != s.chosen.end()) out += "*";
         out += name + "@" + std::to_string(static_cast<int>(y / density_));
     }
+    if (rows.empty()) out += s.tree.listed() ? " (empty)" : " (listing)";  // (what it says in their place)
     return out;
 }
 
@@ -1405,7 +1406,8 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
                 ++r;
                 if (input_after == static_cast<int>(i) && r < rows) input_line(r++, input_depth, s.input == Side::kNewFolder);
             }
-            if (tree_rows.empty() && s.input == Side::kNoInput && rows > kHeadRows) put(box, font, kHeadRows, 0, "This folder is empty", ink::kMuted);
+            if (tree_rows.empty() && s.input == Side::kNoInput && rows > kHeadRows)  // (or not read yet: another machine's may take a while)
+                put(box, font, kHeadRows, 0, s.tree.listed() ? "This folder is empty" : "Listing\xE2\x80\xA6", ink::kMuted);
         } else if (s.tab == kTabGit) {
             git_panel_draw(box, s.focus);
         } else if (s.tab == kTabProfile) {
