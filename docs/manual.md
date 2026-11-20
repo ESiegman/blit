@@ -1052,6 +1052,13 @@ Sideways, the view goes as far as the widest line in the file and no
 further. With no line wider than the window it does not move sideways at
 all.
 
+When the cursor goes out of view the view follows it only as far as it
+must, keeping `blit.opt.editor.scrolloff` lines (0, Vim's `:set so=3`)
+above and below it. A jump out of view (a search's match, a definition, a
+reference, Ctrl-O, Vim's `G`, `%` or a mark) puts its line a third of the
+way down instead, so that what follows it is in view (and never past the
+text's end: after `G` the last line is at the bottom).
+
 ### Soft wrap
 
 A line longer than the view can go on in the rows under it instead: it

@@ -1187,7 +1187,7 @@ bool App::jump_go(size_t i) {
     const u64 line = std::min<u64>(p.line, ed.buf.line_count() - 1), start = ed.buf.line_start(line);
     ed.move_to(std::min(start + p.col, ed.line_end(line)), false);
     vim_mouse();  // (Vim takes the cursor's new place as it would a click's)
-    scroll_to_cursor();
+    scroll_to_cursor(true);
     dirty_ = true;
     return true;
 }
@@ -1419,14 +1419,23 @@ void App::refresh_cursor_cache() {
     }
 }
 
-void App::scroll_to_cursor() {
+void App::scroll_to_cursor(bool jump) {
     refresh_cursor_cache();
     const double cw = font_->cell_w(), ch = font_->cell_h(), vh = view_h();
     const double y0 = static_cast<double>(pane_->cur_row) * ch;
-    if (y0 < pane_->target_y) {
-        pane_->target_y = y0;
-    } else if (y0 + ch > pane_->target_y + vh) {
-        pane_->target_y = y0 + ch - vh;
+    // A jump's place out of view (a search's match, a definition) is put a
+    // third of the way down, with what follows it in view, rather than at
+    // the edge it came in at. Otherwise the view moves only as far as it
+    // must, keeping editor.scrolloff rows round the cursor.
+    const double rows = std::max(1.0, std::floor(vh / ch));
+    const double off = std::min<double>(cfg_.scrolloff, std::floor((rows - 1) / 2)) * ch;
+    if (jump && (y0 < pane_->target_y || y0 + ch > pane_->target_y + vh)) {
+        const double content = static_cast<double>(view_line_count()) * ch;  // (and not past the text's end: after G the last line is at the bottom)
+        pane_->target_y = std::max(0.0, std::min(y0 - std::floor(rows / 3) * ch, content - vh));
+    } else if (y0 - off < pane_->target_y) {
+        pane_->target_y = y0 - off;
+    } else if (y0 + ch + off > pane_->target_y + vh) {
+        pane_->target_y = y0 + ch + off - vh;
     }
     const double x = pane_->cur_x * cw, margin = 4 * cw, view_w = pane_->x1 - pane_->text_x - pad_x_ - minimap_px(*pane_);  // (the minimap is over the text's right end)
     if (x - margin < pane_->target_x) {

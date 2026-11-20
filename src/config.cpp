@@ -303,6 +303,7 @@ struct Parser {
         if (key == "theme.light") return text(key, v, &c.theme_light);
         if (key == "editor.tab_width") return number(key, v, 1, 32, &c.tab_width);
         if (key == "editor.indent_width") return number(key, v, 0, 32, &c.indent_width);
+        if (key == "editor.scrolloff") return number(key, v, 0, 999, &c.scrolloff);
         if (key == "look.presentation_size") {
             double n = 0;
             if (!as_number(v, &n) || n < 0 || n > 96) return warn("look.presentation_size should be a size from 6 to 96, or 0");
@@ -749,6 +750,7 @@ const Getter kGetters[] = {
     BLIT_GET("theme.light", str(c.theme_light)),
     BLIT_GET("editor.tab_width", num(c.tab_width)),
     BLIT_GET("editor.indent_width", num(c.indent_width)),
+    BLIT_GET("editor.scrolloff", num(c.scrolloff)),
     BLIT_GET("editor.line_numbers", flag(c.line_numbers)),
     BLIT_GET("editor.relative_numbers", flag(c.relative_numbers)),
     BLIT_GET("editor.indent_guides", flag(c.indent_guides)),

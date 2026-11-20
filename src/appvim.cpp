@@ -441,7 +441,8 @@ void App::vim_after(u32 result) {
     }
     keep_errors();  // (and what the application said was wrong in doing what was asked)
     vim_attach();  // (what was asked for may have brought another document to the front)
-    if (!scrolled) scroll_to_cursor();
+    const bool jumped = vim_.take_jumped();
+    if (!scrolled) scroll_to_cursor(jumped);
     if (script_modes_) script_mode_seen();
     dirty_ = true;
 }

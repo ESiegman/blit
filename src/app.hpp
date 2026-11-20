@@ -330,7 +330,7 @@ private:
     void choose_images();  // how many images of the window may be under way, for what is drawn now
     void layout(int w, int h, FrameDesc& fd);
     bool step_scroll(double dt);
-    void scroll_to_cursor();
+    void scroll_to_cursor(bool jump = false);
     void clamp_scroll();
     double max_scroll_y() const;
     u64 offset_at_point(float x, float y) const;

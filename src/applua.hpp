@@ -311,7 +311,7 @@ const struct {
     const char* vim;
     const char* key;
 } kVimNames[] = {{"ts", "editor.tab_width"},      {"tabstop", "editor.tab_width"},     {"sw", "editor.indent_width"},
-                 {"shiftwidth", "editor.indent_width"}, {"nu", "editor.line_numbers"}, {"number", "editor.line_numbers"},
+                 {"shiftwidth", "editor.indent_width"}, {"so", "editor.scrolloff"}, {"scrolloff", "editor.scrolloff"}, {"nu", "editor.line_numbers"}, {"number", "editor.line_numbers"},
                  {"rnu", "editor.relative_numbers"}, {"relativenumber", "editor.relative_numbers"},
                  {"tm", "keys.timeout_ms"},       {"timeoutlen", "keys.timeout_ms"},   {"guifont", "font.family"},
                  {"mapleader", "keys.leader"},    {"modal", "editor.modal"}};

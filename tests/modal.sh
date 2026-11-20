@@ -14,7 +14,7 @@ dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.syntax.grammars.systemverilog = { extensions = { "sv" } }\n' >"$dir/init.lua"
 export BLIT_INIT="$dir/init.lua"
-fresh() { printf 'hello world\nsecond line\n    third\n' >"$dir/a.txt"; printf 'other\n' >"$dir/b.txt"; printf 'int x;\n    int y;\n' >"$dir/c.c"; printf 'x = 1\n' >"$dir/d.py"; printf 'a.b axb [a.b]\n' >"$dir/e.txt"; printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b\n' >"$dir/f.txt"; }
+fresh() { printf 'hello world\nsecond line\n    third\n' >"$dir/a.txt"; printf 'other\n' >"$dir/b.txt"; printf 'int x;\n    int y;\n' >"$dir/c.c"; printf 'x = 1\n' >"$dir/d.py"; printf 'a.b axb [a.b]\n' >"$dir/e.txt"; printf 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa b\n' >"$dir/f.txt"; awk 'BEGIN { for (i = 1; i <= 300; i++) print "line " i }' >"$dir/n.txt"; }
 
 failed=0
 check() {
@@ -137,6 +137,14 @@ run "frame;text:v;text:/;text:wor;key:Return;vimdump"
 check "a search in Visual mode moves the end of the selection" 'VISUAL | -- VISUAL -- | 1:7 | hello world'
 run "frame;text:\$;text:G;vimdump"
 check "G keeps the column (here the end of the line), as Neovim does" 'NORMAL |  | 3:9 |     third'
+run "frame;open:$dir/n.txt;text:/;text:line 150;key:Return;rowsdump:1"
+check "a search's match out of view is shown a third of the way down" 'rows | line 145'
+run "frame;open:$dir/n.txt;text:G;text:?;text:line 200;key:Return;rowsdump:1"
+check "above the view too" 'rows | line 195'
+run "frame;open:$dir/n.txt;text:3;text:0;text:j;rowsdump:1"
+check "a move that is no jump takes the view only as far as it must" 'rows | line 14'
+run "frame;open:$dir/n.txt;lua:blit.opt.editor.scrolloff = 3;text:3;text:0;text:j;rowsdump:1"
+check "editor.scrolloff keeps lines in view past the cursor" 'rows | line 17'
 run "frame;text:j;key:Backspace;vimdump"
 check "Backspace goes back onto the line before" 'NORMAL |  | 1:11 | hello world'
 run "frame;text:\$;text: ;vimdump"

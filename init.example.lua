@@ -174,6 +174,7 @@
 -- blit.opt.editor.relative_numbers = true  -- as Vim's relativenumber: the cursor's line its number, the others how far away they are
 -- blit.opt.editor.indent_guides = true  -- a coloured line down each level of indentation
 -- blit.opt.editor.indent_width = 0      -- columns per level for those lines; 0 = worked out from each file
+-- blit.opt.editor.scrolloff = 0         -- lines kept in view above and below the cursor (a jump's place is a third of the way down)
 
 ---------------------------------------------------------------- scrolling
 -- blit.opt.scroll.lines = 3         -- lines per mouse wheel notch

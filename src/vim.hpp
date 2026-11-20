@@ -144,6 +144,10 @@ public:
     std::vector<std::string> take_errors() { return std::exchange(message_.errors, {}); }
     // The cursor to another place in the document, as a jump (<C-o> comes back).
     void jump(Editor& ed, u64 off);
+    // Whether the cursor has jumped (a search, G, %, a mark) since the
+    // application last asked: the view shows where it went a third of the
+    // way down, rather than at the edge it came in at.
+    bool take_jumped() { return std::exchange(jumped_, false); }
     // Set: the application keeps the jump list, across files. It hears where each long move starts, and <C-o> and <C-i> ask it (kBack, n back or forward).
     std::function<void(u64 from)> on_jump;
     // Marks, the jump list and the like stay with their text when it
@@ -385,6 +389,7 @@ private:
     } message_;
     std::vector<std::string> history_;
     size_t history_at_ = 0;
+    bool jumped_ = false;  // (see take_jumped())
 
     // Search.
     Pattern pattern_, saved_pattern_;

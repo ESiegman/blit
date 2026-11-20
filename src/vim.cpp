@@ -1377,6 +1377,7 @@ void Vim::list_jump(const Editor& ed, u64 off) {
 
 // A long move is about to start from `off`: <C-o> and '' come back to it.
 void Vim::remember_jump(const Editor& ed, u64 off) {
+    jumped_ = true;
     if (on_jump) on_jump(off);
     prev_jump_ = off;
     list_jump(ed, off);
@@ -4223,6 +4224,7 @@ void Vim::incsearch(Editor& ed) {
     mode_ = kNormal;  // (so that the cursor is put on a character)
     go(ed, hit == kNone ? cmd_origin_ : hit);
     mode_ = keep;
+    jumped_ = true;  // (to the match, or back: shown as a jump's place is)
 }
 
 u32 Vim::command_key(Editor& ed, const VimKey& k) {
@@ -4240,6 +4242,7 @@ u32 Vim::command_key(Editor& ed, const VimKey& k) {
         if (searching) {
             pattern_ = saved_pattern_;
             go(ed, cmd_origin_);
+            jumped_ = true;
         }
         return kHandled;
     }

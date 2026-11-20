@@ -1719,7 +1719,7 @@ void App::goto_definition() {
         return;
     }
     pane_->doc->ed.move_to(Lsp::offset_at(pane_->doc->ed.buf, loc.line, loc.character, utf16), false);
-    scroll_to_cursor();
+    scroll_to_cursor(true);
 }
 
 // Notes where the cursor is, as somewhere go_back() returns to (before
@@ -1739,7 +1739,7 @@ void App::go_back() {
     a.back.pop_back();
     if (place.path != (lsp_.attached() ? lsp_.path() : pane_->doc->ed.path) && !open_path(place.path.c_str())) return;
     pane_->doc->ed.move_to(std::min<u64>(place.off, pane_->doc->ed.buf.size()), false);
-    scroll_to_cursor();
+    scroll_to_cursor(true);
 }
 
 // ---------------------------------------------------------------- input

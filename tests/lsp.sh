@@ -65,6 +65,7 @@ fresh() {
     printf '// beside\n' >"$P/src/util.hpp"
     printf '// included\n' >"$P/include/util.hpp"
     printf '/* \303\251\303\251 */ int wide(int n) {\n}\n' >"$P/w.cpp"
+    awk 'BEGIN { for (i = 1; i < 300; i++) print (i == 150 ? "int zeta = 1;" : "int l" i " = " i ";"); print "int last = zeta;" }' >"$P/long.cpp"
     printf 'struct Shape {\n};\nstruct Circle : public Shape {\n};\nstruct Square : Shape {\n};\nint leaf(int n) {\n    return n;\n}\nint middle(int n) {\n    return leaf(n) + leaf(1);\n}\nint top() {\n    return middle(2);\n}\n' >"$P/calls.cpp"
     printf 'struct Ring {\n    void push(int v);\n    int pop();\n};\nvoid Ring::push(int v) {\n}\nint Ring::pop() {\n    return 0;\n}\nint drain(Ring& r) {\n    return r.pop();\n}\n' >"$P/ring.cpp"
     printf 'plain words\n' >"$P/notes.txt"
@@ -183,6 +184,8 @@ with vim "text:w;text:gy;wait:200;vimdump" "$P/e.cpp"
 check "gy, the type definition" 'NORMAL |  | 3:13 | int three = one + two;'
 with vim "text:G;text:w;text:w;text:w;text:gd;wait:200;vimdump" "$P/e.cpp"
 check "gd is still the definition" 'NORMAL |  | 1:5 | int one = 1;'
+with vim "text:G;text:w;text:w;text:w;text:gd;wait:200;vimdump;rowsdump:1" "$P/long.cpp"
+check "a definition out of view is shown a third of the way down, not on the last row" 'rows | int l144 = 144;'
 run "key:Down;key:End;key:cmd+F12;wait:200;finddump"
 got="$got / $said"
 check "nothing there: it says so" 'closed / blit: No implementation found'
