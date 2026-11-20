@@ -625,6 +625,7 @@ int App::run_bench() {
 //   gitview[:LABEL]        print the diff tab in front: its hunks, and its lines with what is coloured added or taken away
 //   gitfield               print the rows of the commit message as its field shows them
 //   gutterclick:N          a click on the change's mark beside line N of the file in front
+//   breakclick:N           a click in the gutter's first cell beside line N (where a breakpoint's dot goes)
 //   gutterdump             print the rows of the line numbers in front: each one's number (none on a wrapped line's
 //                          later rows) and change mark (+ added, ~ changed, - lines taken out, . neither)
 //   pan:DX,DY              a touchpad stroke; step:MS lets MS milliseconds of scrolling pass
@@ -859,9 +860,10 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s%s\n", arg.empty() ? "" : (arg + ": ").c_str(), git_view_dump().c_str());
         } else if (verb == "gitfield") {
             std::fprintf(stderr, "%s\n", git_field_dump().c_str());
-        } else if (verb == "gutterclick") {  // (where the gutter last drew that line's mark: its last cell)
+        } else if (verb == "gutterclick" || verb == "breakclick") {  // (where the gutter last drew that line's mark: its last cell; or its first)
             const double ch = font_->cell_h(), cw = font_->cell_w();
-            const double py = pane_->text_y + (std::atof(arg.c_str()) - 1) * ch - pane_->scroll_y + ch / 2, px = pane_->text_x - cw / 2;
+            const double py = pane_->text_y + (std::atof(arg.c_str()) - 1) * ch - pane_->scroll_y + ch / 2,
+                         px = verb == "breakclick" ? pane_->x0 + cw / 2 : pane_->text_x - cw / 2;
             e.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
             e.button.button = SDL_BUTTON_LEFT;
             e.button.x = static_cast<float>(px / density_);

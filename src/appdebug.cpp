@@ -12,6 +12,7 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <map>
@@ -430,11 +431,12 @@ void App::debug_start_another() {
 
 // ---------------------------------------------------------------- breakpoints
 
-void App::debug_toggle_break() {
+// A breakpoint on the cursor's line (or the line given, from 0), or not.
+void App::debug_toggle_break(i64 at) {
     DebugUi& u = *debugui_;
     Doc& d = *pane_->doc;
     if (debug_disasm_front()) {  // at the cursor's instruction
-        const u64 line = d.ed.buf.line_of(d.ed.cursor());
+        const u64 line = at >= 0 ? static_cast<u64>(at) : d.ed.buf.line_of(d.ed.cursor());
         const u64 a = line < u.disasm_addrs.size() ? u.disasm_addrs[line] : 0;
         if (!a) return;
         if (!u.can.instruction_breaks) return notify("This debugger cannot break at an instruction");
@@ -446,7 +448,7 @@ void App::debug_toggle_break() {
     }
     if (d.ed.path.empty() || d.term || d.prof) return;
     const std::string path = full_path(d.ed.path);
-    const u32 line = static_cast<u32>(d.ed.buf.line_of(d.ed.cursor()));
+    const u32 line = static_cast<u32>(at >= 0 ? static_cast<u64>(at) : d.ed.buf.line_of(d.ed.cursor()));
     DebugUi::Lines& lines = u.breaks[path];
     if (!lines.erase(line)) lines.emplace(line, DebugUi::Break{});
     if (lines.empty()) {
@@ -594,6 +596,28 @@ u32 App::debug_gutter(const Doc& d, u64 line) {
             return (font_->glyph(!b->second.log.empty() ? 0x25C8 : plain ? 0x25CF : 0x25C6) & (Font::kWide - 1)) | (kInkDiagnostic << kCellInkShift);
         }
     return 0;
+}
+
+// A click in that cell sets a breakpoint on its line, or takes it away. A
+// test's mark there runs the test and a fold's opens it, as before (where
+// a breakpoint is drawn in their place, the click is the breakpoint's).
+bool App::debug_gutter_click(const SDL_MouseButtonEvent& b) {
+    if (!debugui_ || b.button != SDL_BUTTON_LEFT || !gutter_px()) return false;
+    Doc& d = *pane_->doc;
+    const bool disasm = debugui_->disasm_doc && d.id == debugui_->disasm_doc;
+    if (!disasm && (d.ed.path.empty() || d.term || d.prof || d.loading)) return false;
+    const int px = static_cast<int>(b.x * density_), py = static_cast<int>(b.y * density_), cw = font_->cell_w(), ch = font_->cell_h();
+    if (px < pane_->x0 || px >= pane_->x0 + cw + look().edge || py < pane_->text_y || py >= pane_->y1) return false;
+    const i64 y = py - pane_->text_y + std::llround(pane_->scroll_y);
+    if (y < 0 || static_cast<u64>(y / ch) >= view_line_count()) return false;
+    const u64 line = line_of_row(static_cast<u64>(y / ch));
+    if (line >= d.ed.buf.line_count()) return false;
+    if (!debug_gutter(d, line)) {
+        if (test_gutter(d, line)) return false;
+        if (const Folds* f = folds_on(); f && f->header(line)) return false;
+    }
+    debug_toggle_break(static_cast<i64>(line));
+    return true;
 }
 
 std::vector<u64> App::debug_break_lines(const Doc& d) {

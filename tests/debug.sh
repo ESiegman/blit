@@ -114,6 +114,10 @@ got=$(printf '%s' "$got" | sed -e 's/main@22 [^;]*;/main@22;/' -e 's/t=0x[0-9a-f
 check "the threads, and the second one's stack chosen" \
     'stopped (breakpoint); threads: 2, #1 shown; stack: main@22; vars: t=0x ;; stopped (breakpoint); threads: 2, #2 shown; stack: wait_here@9 worker@13; vars:'
 
+# A click in the gutter's first cell (where the dot goes) sets one, and takes it away; it selects nothing.
+run "frame;breakclick:8;breakclick:15;frame;debugbreaks;breakclick:8;debugbreaks;seldump"
+check "a click beside a line's number" 'count.c:8; count.c:15 ;; count.c:15 ;; none'
+
 # Breakpoints move with their lines as the file is edited (as marks do):
 # a line put above takes them down, lines taken away above take them up,
 # one whose line goes stays where the line was; undone, they go back.

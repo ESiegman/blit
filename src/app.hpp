@@ -1186,10 +1186,11 @@ private:
     struct DebugUi;
     void debug_create();
     bool debug_running() const;
-    void debug_toggle_break();
+    void debug_toggle_break(i64 line = -1);  // (-1: the cursor's)
     void debug_edit_break();
     void debug_send_breaks(const std::string& path);
     u32 debug_gutter(const Doc& d, u64 line);
+    bool debug_gutter_click(const SDL_MouseButtonEvent& b);
     std::string debug_session_text() const;  // (the breakpoints and watches, in the folder's session)
     void debug_session_take(const std::vector<std::string>& lines);
     std::vector<u64> debug_break_lines(const Doc& d);  // (the file's breakpoints' lines, from 0: the scroll bar's marks)

@@ -2176,8 +2176,10 @@ Neither has a key of its own; map them in init.lua, for example
 ## Debugging
 
 **F9** puts a breakpoint on the cursor's line (a red dot in the gutter),
-or takes it away. The breakpoints and the expressions watched are kept in
-the folder's session. **F5** starts debugging: the first time it asks which
+or takes it away; so does a click in the gutter left of a line's number,
+where the dot goes (on a test's mark or a fold's, the mark's own click).
+The breakpoints and the expressions watched are kept in the folder's
+session. **F5** starts debugging: the first time it asks which
 program, and the side panel's **Debug** tab (Cmd+Shift+D) keeps it, with
 its arguments and working directory.
 

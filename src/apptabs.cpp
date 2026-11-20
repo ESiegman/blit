@@ -481,6 +481,7 @@ bool App::tabs_key(const SDL_KeyboardEvent& k) {
 }
 
 bool App::tabs_mouse_down(const SDL_MouseButtonEvent& b) {
+    if (debug_gutter_click(b)) return true;  // the cell for a breakpoint's dot: one set or taken away (appdebug.cpp)
     if (test_gutter_click(b)) return true;  // a test's mark: it runs (apptest.cpp)
     if (lens_click(b)) return true;  // a definition's count of references: they are listed (applsp.cpp)
     if (git_gutter_click(b)) return true;  // a change's mark beside the line numbers, or what it offers (appgit.cpp)
