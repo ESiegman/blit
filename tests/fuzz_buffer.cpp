@@ -2256,6 +2256,10 @@ void diagram_test() {
         " state Moving {\n [*] --> Slow\n Slow --> Fast : speed up\n }\n state fork_state <<fork>>\n Still --> fork_state\n fork_state --> State2\n fork_state --> State3\n"
         " state join_state <<join>>\n State2 --> join_state\n State3 --> join_state\n join_state --> Crash\n state if_state <<choice>>\n Crash --> if_state\n"
         " if_state --> Still : if n < 0\n note right of Crash : Important\n",
+        // Loops on a subgraph and a composite state; edges between a
+        // subgraph and what is in it.
+        "flowchart LR\n subgraph one\n a --> b\n end\n one --> one\n one --> two\n subgraph two\n c\n end\n two --> a\n one --> a\n b -->|back| one\n",
+        "stateDiagram\n [*] --> A\n A --> A : self\n state B {\n [*] --> B1\n B1 --> B1\n }\n B --> B : again\n B --> B : and again\n A --> B\n",
     };
     for (const char* src : sources) {
         Drawing d;
@@ -2290,6 +2294,7 @@ void diagram_test() {
                 if (c.name == name) return *out = c, true;
             return false;
         };
+        check(geo.edges == static_cast<int>(geo.lines.size()), "diagram: every edge drawn (" + std::to_string(geo.edges) + " edges, " + std::to_string(geo.lines.size()) + " lines)" + what);
         for (const auto& l : geo.lines) {
             DiagramGeometry::Box a, b;
             check(box_of(l.from, &a) && box_of(l.to, &b) && l.pts.size() >= 2, "diagram: an edge's ends are known" + what);

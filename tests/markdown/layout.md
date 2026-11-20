@@ -114,3 +114,29 @@ flowchart RL
     g --> a
     g --> h
 ```
+
+```mermaid
+flowchart LR
+    subgraph one
+        a --> b
+    end
+    one --> one
+    one --> two
+    subgraph two
+        c
+    end
+    two --> a
+    one --> a
+    b -->|back| one
+```
+
+```mermaid
+stateDiagram-v2
+    [*] --> Running
+    Running --> Running : tick
+    Running --> Running : and tock
+    state Running {
+        [*] --> Fetch
+        Fetch --> Fetch : again
+    }
+```

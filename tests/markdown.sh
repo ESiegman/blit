@@ -48,13 +48,15 @@ for f in sample edge diagrams code; do
     check "$f.md drawn" "$(cat "$here/markdown/$f.txt")"
 done
 
-# What is wrong in a diagram's layout (diagramdump): two nodes over each
-# other, a label over a node, an edge that does not end on its nodes or
+# What is wrong in a diagram's layout (diagramdump): an edge not drawn,
+# two nodes over each other, a label over a node, an edge that does not end on its nodes or
 # that passes through another node, a subgraph partly over another; a line
 # each, nothing when all is well.
 layout_problems() {
     awk '
     function flush(   i, j, e, k, q, p, xy) {
+        if (want != "" && ne != want) print d ": " want " edges, " ne " drawn"
+        want = ""
         for (i = 1; i <= nb; i++) for (j = i + 1; j <= nb; j++) {
             if (bk[i] == "label" && bk[j] == "label") continue
             if (bk[i] == "cluster" || bk[j] == "cluster") {
@@ -88,6 +90,7 @@ layout_problems() {
         return 0
     }
     /^diagram / { flush(); d = $1 " " $2; next }
+    /^edges / { want = $2; next }
     /^(node|cluster|label) / { nb++; bk[nb] = $1; bn[nb] = $2; bx[nb] = $(NF - 3); by[nb] = $(NF - 2); bw[nb] = $(NF - 1); bh[nb] = $NF; next }
     /^edge / { ne++; ef[ne] = $2; et[ne] = $3; ep[ne] = ""; for (i = 4; i <= NF; i++) ep[ne] = ep[ne] " " $i; next }
     END { flush() }'
@@ -108,7 +111,7 @@ for f in diagrams layout; do
         laid=$(printf '%s\n' "$layout" | grep -c '^diagram [0-9]* [0-9]*x[0-9]*$')
         run $size "$here/markdown/$f.md" ""
         got="$laid $(printf '%s\n' "$got" | grep -c '^picture: diagram:')"
-        [ $f = diagrams ] && want="2 2" || want="7 7"
+        [ $f = diagrams ] && want="2 2" || want="9 9"
         check "$f.md at $size: a picture for each diagram laid out" "$want"
     done
 done
@@ -118,10 +121,10 @@ done
 cp "$here/markdown/layout.md" "$dir/typed.md"
 dump 3600x1100 "$dir/typed.md" "mdwait;key:ctrl+Home;text:# Typed;key:Return;frame;mdwait;text:more;frame;mdwait"
 got=$(printf '%s\n' "$got" | head -1)
-check "typing elsewhere: each diagram laid out once" "laid out 7"
+check "typing elsewhere: each diagram laid out once" "laid out 9"
 dump 3600x1100 "$dir/typed.md" "mdwait;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:End;text: & a1;frame;mdwait"
 got=$(printf '%s\n' "$got" | head -1)
-check "typing in the first diagram: that one laid out again" "laid out 8"
+check "typing in the first diagram: that one laid out again" "laid out 10"
 
 # A flowchart too wide across for the view is drawn down instead: wide, its
 # nodes in a row; narrow, one under another.

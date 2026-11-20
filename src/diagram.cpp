@@ -269,6 +269,7 @@ void diagram_paint(const Drawing& d, float scale, const DiagramFont& font, Raste
 std::string DiagramGeometry::dump() const {
     std::string out;
     char buf[160];
+    if (edges >= 0) out += "edges " + std::to_string(edges) + "\n";
     for (const Box& b : boxes) {
         std::snprintf(buf, sizeof buf, " %.1f %.1f %.1f %.1f\n", b.x, b.y, b.w, b.h);
         out += b.kind + " " + b.name + buf;

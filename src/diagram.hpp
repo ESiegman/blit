@@ -118,6 +118,7 @@ struct DiagramGeometry {
     };
     std::vector<Box> boxes;
     std::vector<Line> lines;
+    int edges = -1;  // how many edges the source has that are drawn (each should have a line)
     std::string dump() const;
 };
 
