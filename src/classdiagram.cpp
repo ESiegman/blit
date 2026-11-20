@@ -310,7 +310,7 @@ void draw_relation(Drawing& d, const Look& k, const LayeredGraph& lg, const Laye
     const std::string& name_a = lg.nodes[static_cast<size_t>(r.a)].id;
     const std::string& name_b = lg.nodes[static_cast<size_t>(r.b)].id;
     auto unit = [](DiagramVec v) {
-        const float l = std::hypot(v.x, v.y);
+        const float l = std::sqrt(v.x * v.x + v.y * v.y);  // (not hypot: its last bit differs between systems)
         return l > 0 ? DiagramVec{v.x / l, v.y / l} : DiagramVec{0, 1};
     };
     if (e.pts.size() < 2) return;

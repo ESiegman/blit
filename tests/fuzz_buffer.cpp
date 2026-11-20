@@ -2642,6 +2642,19 @@ void diagram_test() {
         DiagramStyle stopping = st;
         stopping.stop = quit.get_token();
         check(diagram_make(big, stopping, &d, &err) == kDiagramError && err == "stopped", "diagram: asked to stop, it stops");
+        // Class and entity relationship diagrams are laid out by the same
+        // code (diagram_layered): they stop when asked, and theirs with long
+        // relations across a long chain is too large to draw, said at once
+        // (fewer classes and relations than a class diagram may have: it is
+        // the layout that says so).
+        check(diagram_make(classes, stopping, &d, &err) == kDiagramError && err == "stopped", "diagram: a class diagram asked to stop, it stops");
+        check(diagram_make(er, stopping, &d, &err) == kDiagramError && err == "stopped", "diagram: an entity relationship diagram asked to stop, it stops");
+        std::string tall = "classDiagram\n";
+        for (int k = 0; k < 899; ++k) tall += " C" + std::to_string(k) + " <|-- C" + std::to_string(k + 1) + "\n";
+        for (int k = 0; k < 1000; ++k) tall += " C0 <|-- C" + std::to_string(899 - k % 50) + "\n";
+        const u64 t2 = now_ns();
+        check(diagram_make(tall, st, &d, &err) == kDiagramError && err == "too large to draw" && now_ns() - t2 < 5'000'000'000ull,
+              "diagram: a long chain of classes with long relations across it, too large to draw (" + err + ")");
     }
 }
 
@@ -3046,7 +3059,8 @@ void plans_test() {
             if (l.from == "n0" && l.pts.size() >= 2) ends[l.pts.back().x > l.pts.front().x].push_back({l.pts.front().y, l.pts.back().y});
         bool spread = ends[0].size() == 3 && ends[1].size() == 3;
         for (auto& side : ends) {
-            std::sort(side.begin(), side.end(), [](const auto& x, const auto& y) { return x.second < y.second; });
+            // (stable_sort: sort's heap takes a pair of floats by value, which g++ has a note about on arm64)
+            std::stable_sort(side.begin(), side.end(), [](const auto& x, const auto& y) { return x.second < y.second; });
             for (size_t k = 1; k < side.size(); ++k) spread = spread && side[k].first > side[k - 1].first + 2;
         }
         check(spread, "plans: a mindmap node's branches leave it apart from each other");
