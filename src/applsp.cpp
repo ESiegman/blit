@@ -1483,6 +1483,15 @@ std::string App::lsp_dump() {
     return out;
 }
 
+// The hover box as last laid out: its rows, its top and bottom, and the
+// window's height; or none.
+std::string App::hover_dump() {
+    const Assist& a = *assist_;
+    if (!a.hover_open || a.hover_rect.h <= 0) return "no hover";
+    return "hover " + std::to_string(a.hover_box.rows) + " rows, " + std::to_string(a.hover_rect.y) + " to " + std::to_string(a.hover_rect.y + a.hover_rect.h) + " of " +
+           std::to_string(px_h_);
+}
+
 // ---------------------------------------------------------------- completion
 
 void App::request_completion(char trigger) {
@@ -2189,9 +2198,12 @@ void App::lsp_layout(int w, int h, FrameDesc& fd) {
     }
 
     if (a.hover_open && !a.hover_lines.empty()) {
-        set_lines(a.hover_box, *font_, wrap(a.hover_lines, std::min<u32>(max_cols, kInfoCols), 18));
         int x, y;
         at_offset(a.hover_at_cursor ? pane_->doc->ed.cursor() : a.hover_w0, &x, &y);
+        // No more rows than there is room for on the roomier side of the
+        // line (the rest is "…"), so that none of it is off the window.
+        const int room = std::max(y - gap, h - (y + ch + gap)) - 2 * pad_y;
+        set_lines(a.hover_box, *font_, wrap(a.hover_lines, std::min<u32>(max_cols, kInfoCols), static_cast<size_t>(std::clamp(room / ch, 1, 18))));
         if (!place(a.hover_box, x, y, !a.sig_open, &a.hover_rect, kFxHover)) a.hover_rect = {};
     }
     popups_drawn_ = fd.popup_count;

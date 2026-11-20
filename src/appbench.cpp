@@ -726,6 +726,8 @@ void App::run_script(const char* script) {
             }
         } else if (verb == "lspdump") {
             std::fprintf(stderr, "%s\n", lsp_dump().c_str());
+        } else if (verb == "hoverdump") {  // the hover box: its rows and where it is down the window (after a frame)
+            std::fprintf(stderr, "%s\n", hover_dump().c_str());
         } else if (verb == "lsptext") {
             std::string t = pane_->doc->ed.buf.text(0, pane_->doc->ed.buf.size());
             for (size_t at = t.find('\n'); at != std::string::npos; at = t.find('\n', at + 3)) t.replace(at, 1, " / ");

@@ -40,7 +40,8 @@
 //                of the server's copy of the document, so a test can tell
 //                whether the copy is right; a WARN says it has a fix
 //   completion   a fixed vocabulary, replacing the word before the cursor
-//   hover        a description of the word under the cursor
+//   hover        a description of the word under the cursor (thirty rows of
+//                it for "tall")
 //   signature    one signature, for the call the cursor is in
 //   definition   the first place the word appears
 //   references   every place the word appears, in the open documents and in
@@ -427,6 +428,11 @@ void hover(Value id, Value params) {
     if (w.empty()) return reply(id, "null");
     std::string md = "```cpp\nint " + w + "\n```\n---\nAbout **" + w + "**: see [the docs](http://example.com).";
     if (w == "config") md += "\n\nconfig=" + config_value;
+    if (w == "tall") {  // (taller than a short window)
+        md = "```cpp\nint tall\n";
+        for (int i = 1; i <= 30; ++i) md += "row " + std::to_string(i) + "\n";
+        md += "```";
+    }
     std::string r = "{\"contents\":{\"kind\":\"markdown\",\"value\":";
     json::quote(r, md);
     r += "}}";

@@ -472,6 +472,17 @@ run "frame;wait:100;frame;lspextras:colours" "$P/h.cpp"
 check "the servers' colours in a dark appearance: the dark theme's" 'hints: | colours: call=function#61afef p_size=variable.parameter#dbdedb Widget=type#e5c07b MAX_SIZE=function.macro#61afef'
 unset BLIT_APPEARANCE
 
+# The hover is no taller than the room on the roomier side of its line: in
+# a short window the test server's thirty rows about "tall" are cut short
+# ("…"), and all of the box is on the window.
+fresh
+i=1
+while [ $i -le 40 ]; do echo "int tall_$i;"; i=$((i + 1)); done | sed 's/^int tall_12;$/int tall;/' >"$P/tall.cpp"
+downs=$(i=1; while [ $i -lt 12 ]; do printf 'key:Down;'; i=$((i + 1)); done)
+got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1200x500 --shot "$dir/shot.bmp" --script "workdir:$P;frame;lspsettle;${downs}key:Home;key:Right;key:Right;key:Right;key:Right;key:Right;key:cmd+I;wait:300;frame;hoverdump" "$P/tall.cpp" 2>&1 >/dev/null |
+    tail -1 | awk '$1 == "hover" && $2 < 31 && $4 >= 0 && $6 <= $8 { print "cut, on the window"; next } { print }')
+check "a tall hover in a short window: cut to the room there is" 'cut, on the window'
+
 # A server that closes its input and keeps its output open: its output is
 # waited for, with nothing spinning meanwhile.
 with closing "wait:500;cpuquiet:1000"

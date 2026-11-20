@@ -1678,7 +1678,8 @@ A server whose last file has been closed stops half a minute later.
   documentation show beside the list. An item that needs something added
   elsewhere, such as an import, adds it.
 - **Hover**: rest the mouse on a name (or press Cmd+I) for its type and
-  documentation.
+  documentation, above the line or below it; one taller than the room
+  on either side is cut short to the room there is, with "…" at its end.
 - **Signature help** appears after `(` and follows the argument being typed.
 - **Go to definition** with F12 or Cmd+click, and Ctrl+- to come back. A
   definition in another file opens that file.
