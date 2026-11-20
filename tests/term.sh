@@ -231,6 +231,63 @@ for f in whole open; do
     got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$I;open:$I/$f.py;vim:ggVG;command:Send the lines to the Python console;command:Open the Python console;termwait:got 12;wait:500;termdump" 2>&1 >/dev/null | tail -1 | tr '|' '\n' | grep -c '^In \[2\]:')
     check "a block sent to a console like IPython ($f.py): run once, one prompt after it" '1'
 done
+# The same console slow to answer, as one on another machine is (here,
+# like IPython, in raw mode, each answer a third of a second late): the
+# second Return still waits for the prompt's answer to the first.
+D="$dir/slow"
+mkdir -p "$D/.venv/bin"
+cat >"$D/.venv/bin/ipython" <<'EOF'
+#!/usr/bin/env python3
+import codeop, contextlib, io, os, time, tty
+tty.setraw(0)
+def say(text):
+    time.sleep(0.3)
+    os.write(1, text.replace("\n", "\r\n").encode())
+def whole(src):
+    if src.split("\n")[-1][:1] in (" ", "\t"):
+        return False
+    try:
+        return codeop.compile_command(src + "\n", "<in>", "exec") is not None
+    except SyntaxError:
+        return True
+n, src, more, held = 1, "", False, b""
+say("\033[?2004hIn [1]: ")
+while True:
+    got = os.read(0, 4096)
+    if not got:
+        break
+    held += got
+    while held:
+        if held.startswith(b"\033[200~"):
+            end = held.find(b"\033[201~")
+            if end < 0:
+                break
+            src = held[6:end].decode().replace("\r", "\n")
+            held = held[end + 6:]
+            say(src.replace("\n", "\n   ...: "))
+            continue
+        c, held = held[:1], held[1:]
+        if c != b"\r":
+            continue
+        if not src.strip():
+            say("\nIn [%d]: " % n)
+            continue
+        if not more and not whole(src):
+            more = True
+            say("\n   ...: ")
+            continue
+        out = io.StringIO()
+        with contextlib.redirect_stdout(out):
+            exec(compile(src + "\n", "<in>", "exec"))
+        n, src, more = n + 1, "", False
+        say("\n" + out.getvalue() + "In [%d]: " % n)
+EOF
+chmod +x "$D/.venv/bin/ipython"
+cp "$I/whole.py" "$I/open.py" "$D/"
+for f in whole open; do
+    got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$D;open:$D/$f.py;vim:ggVG;command:Send the lines to the Python console;command:Open the Python console;termwait:got 12;wait:1000;termdump" 2>&1 >/dev/null | tail -1 | tr '|' '\n' | grep -c '^In \[2\]:')
+    check "and one slow to answer ($f.py): run once, one prompt after it" '1'
+done
 
 # A notebook: opened as the script of its cells, its saved outputs after
 # them; edited and saved, written back as a notebook (a changed cell's

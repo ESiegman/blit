@@ -259,6 +259,7 @@ struct TermView {
                 pty_resize(pty.fd, term.rows(), term.cols());
             }
             if (k > 0) {
+                heard += static_cast<u64>(k);
                 std::string reply;
                 {
                     std::lock_guard lock(mu);
@@ -342,18 +343,25 @@ struct TermView {
     // as part of it). One `asked` is sent only if the prompt then asks for
     // more: the cursor after a continuation prompt ("...:", "...") with
     // nothing on it. (IPython runs a whole block on one Return, Python's own
-    // prompt and a block that ends indented want a second.) While the line
-    // before it is still the paste's last, it is looked at again a little
-    // later, for a second at most.
+    // prompt and a block that ends indented want a second.) It is looked at
+    // again a little later, for a few seconds at most (a console on another
+    // machine answers a round trip later), while the program has said
+    // nothing since the Return before it was sent, or the line is still the
+    // paste's last; it is let go of only once what the program says has
+    // stopped coming for a moment.
     struct Later {
         u64 due = 0;
         std::string bytes;
         bool asked = false;
         u32 looks = 0;
+        u32 quiet = 0;  // (looks in a row that found nothing more said)
+        u64 heard = 0;  // (as much as had been at the last look)
     };
     std::deque<Later> later;  // (out_mu) in time's order
+    u64 heard = 0;     // (the reader's) bytes read from the program
+    u64 returned = 0;  // (the reader's) as many when the last Later not asked was sent
 
-    void send_later(u64 due, std::string s, bool asked = false) { send_later(Later{due, std::move(s), asked, 0}); }
+    void send_later(u64 due, std::string s, bool asked = false) { send_later(Later{due, std::move(s), asked, 0, 0, 0}); }
     void send_later(Later l) {
         std::lock_guard lock(out_mu);
         const u64 due = l.due;
@@ -390,11 +398,16 @@ struct TermView {
         for (Later& d : due) {
             if (d.asked) {
                 const int more = asks_for_more();
-                if (more == 0 && ++d.looks < 25) {
+                d.quiet = heard == d.heard ? d.quiet + 1 : 0;
+                d.heard = heard;
+                const bool answered = heard != returned && d.quiet >= 2;  // (the Return's answer, all of it)
+                if (more != 1 && (more == 0 || !answered) && ++d.looks < 100) {
                     d.due = now_ns() + 40'000'000ull;
                     send_later(std::move(d));
                 }
                 if (more != 1) continue;
+            } else {
+                returned = heard;
             }
             send(d.bytes);
         }

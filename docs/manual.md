@@ -2170,8 +2170,9 @@ Return after the paste is sent a moment later, in a read of its own (one
 in the same read as the paste is taken as part of it): one runs a line,
 and for more than one a second is sent if the prompt then asks for more
 (a continuation prompt with nothing on it: Python's own prompt, or a
-block that ends indented), never leaving an empty prompt after a block
-IPython ran on the first. Lines sent before the console has started
+block that ends indented) once the console has answered the first (for a
+few seconds at most: one on another machine answers a round trip later),
+never leaving an empty prompt after a block IPython ran on the first. Lines sent before the console has started
 wait for it. A Python that never asks for pastes is sent the lines one by
 one after five seconds, without their blank lines.
 
