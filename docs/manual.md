@@ -2512,7 +2512,11 @@ container's) is read and saved as one too.
 
 Each code cell's outputs are shown after its last line, quieter, in a
 line: the last line it printed, its result, `[image/png]` for a picture,
-or the error's name and message. A cell changed since it ran shows none.
+`[table]` for a table (or the size pandas says of a long one), or the
+error's name and message. A cell changed since it ran shows none.
+
+Outputs are saved as Jupyter saves them: a stream's text, and the text,
+SVG and JavaScript in a result's data, as lists of their lines.
 
 ### The notebook's view
 
@@ -2524,7 +2528,12 @@ the view and opens it again; closing the script closes it too. A second
 notebook's view goes beside the first's.
 
 - A Markdown cell is drawn as the [Markdown preview](#markdown-preview)
-  draws a file: headings, tables, code, pictures beside the notebook.
+  draws a file: headings, tables, code, pictures beside the notebook. Its
+  math (`$...$`, `$$...$$`) is text in italics: Greek letters and the
+  common symbols as themselves (`\int` ∫, `\le` ≤, `\infty` ∞), a
+  fraction as a/b, a power or an index of digits raised or lowered (x²,
+  x₀), and what blit does not know as it is written. `$5 and $10` stays
+  money.
 - A code cell is a block of code coloured by the notebook's language (its
   metadata says which), with Jupyter's `In [n]:` beside it (`In [ ]:` if
   it has not run, `In [*]:` while it runs or waits to). One changed since
@@ -2539,16 +2548,22 @@ notebook's view goes beside the first's.
   right) as a table, with any text around it; a PNG or JPEG as a picture;
   an SVG as a picture where the system reads SVG (on Linux, with
   librsvg), else its text; Markdown drawn; other HTML as its text; LaTeX
-  and plain text as text; JSON indented. Data blit cannot draw (a widget,
-  a PDF) is named, `[application/pdf]`, never shown as its base64.
+  as a Markdown cell's math is; plain text as text; JSON indented. Data
+  blit cannot draw (a widget, a PDF) is named, `[application/pdf]`, never
+  shown as its base64.
+- A table too wide for the view is not squeezed into it: its output's
+  plain text (pandas' own) is shown instead when that fits, else the
+  columns that fit and how many more there are.
 - An error is its traceback, in the theme's colours: the colours IPython
   writes in (16 of them, 256, or any) are each the theme's colour nearest
   them in hue, on the tint for errors.
 - An output longer than 60 rows is cut, with a line that says how many
-  more lines there are.
+  more lines there are. Long lines go on in the next row after a space,
+  as Jupyter wraps them; a code cell's do too.
 
 When the view is narrower than 50 columns the labels go above the cells
-instead of beside them.
+instead of beside them (and a count longer than four digits goes above
+its cell).
 
 The view follows the script's cursor: moving into another cell brings
 that cell to the top of the view (if it is taller than the view, the
@@ -2564,7 +2579,7 @@ never waits for it; typing in one cell draws only that cell again, the
 rest being kept as drawn. An output's picture is written once to blit's
 cache (`~/Library/Caches/blit/pictures` on a Mac, `~/.cache/blit/pictures`
 on Linux), named by what is in it, and shown from there as any picture
-is.
+is; one not shown for 30 days is removed from there.
 
 The cells read from the notebook are its model: each code cell's outputs
 as the file has them, and its count. Outputs a cell is given when it runs
@@ -2585,7 +2600,12 @@ the cells" runs each code cell in turn. As in Jupyter:
   as it comes (what it prints, a few times a second), and its count is
   the kernel's next. Printed text joins the text printed before it, and a
   carriage return writes over its line (a progress bar stays one line).
-  What C code or a program the cell runs prints is caught too.
+  What C code or a program the cell runs prints is caught too. While it
+  runs, a long text is shown as its first lines, how many more there
+  are, and its last; all of it when it ends (or the notebook is saved).
+- The cell's terminal is as wide as the view draws its outputs
+  (`COLUMNS`): a traceback's rules, a progress bar, a DataFrame's text fit
+  it.
 - Its outputs and count are put in the notebook, as Jupyter's JSON (what
   saving writes), the line after the cell shows the last of them, and
   the notebook has changed.
@@ -2614,6 +2634,11 @@ PNG under its cell. Without IPython the cell is run by plain Python: the
 last line's value is its result (and what it says of itself, an object
 with a `_repr_html_`, say), what it prints is caught, and an error is its
 traceback, the cell's own lines in it. A cell cannot read input.
+
+The status bar of the notebook (or its view) says which kernel it has:
+`no kernel` before a cell has run, then IPython or Python, the Python's
+version and what it runs in (`.venv`, or the program), and `busy` while a
+cell runs or waits, else `idle`.
 
 The kernel ends with the notebook's tab and with blit, with everything a
 cell started (it runs as a group of its own); if blit itself is killed,
@@ -3068,7 +3093,7 @@ tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and thro
 tests/lsp.sh build-debug/blit      # language servers against the test server: several at once, Problems across files, references, rename, formatting, code actions, hints, colours
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running), a fake build's problems (F8, Cmd+click) and new projects (a stand-in vcpkg)
 tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md against what they should draw, Mermaid, typing, Cmd+Shift+V, coloured code
-tests/notebook.sh build-debug/blit # a notebook's view: each kind of output, from the command line, following the cursor, clicks, Cmd+Shift+V, broken notebooks; cells run in its kernel: outputs shown and saved, errors, an interrupt, a restart, run all, on another machine, IPython where python3 has it, no process left
+tests/notebook.sh build-debug/blit # a notebook's view: each kind of output, from the command line, following the cursor, clicks, Cmd+Shift+V, broken notebooks; cells run in its kernel: outputs shown and saved, errors, an interrupt, a restart, run all, on another machine (a slow one too), IPython where python3 has it, a long output taken in as it comes, NaN, the terminal's width, the status bar, the picture cache pruned, no process left
 tests/unicode.sh build-debug/blit  # characters made of several code points: the cursor over them, their widths, accents drawn over their letter
 tests/images.sh build-debug/blit   # pictures and PDFs (tests/images): the tabs, their pixels, zoom, pages, too large, broken, changed, over ssh, in the preview
 ```
