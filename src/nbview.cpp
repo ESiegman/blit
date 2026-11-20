@@ -521,6 +521,7 @@ NbOutput read_output(json::Value o, const NbKeepFn& keep) {
     if (type == "stream") {
         NbPart p;
         p.text = as_shown(text_of(o["text"]));
+        p.lines = static_cast<u64>(std::max<i64>(o["blit_lines"].integer(0), 0));  // (a running cell's long text, cut: its lines)
         if (o["name"].str() == "stderr") p.tone = kMdErrorTone;
         out.parts.push_back(std::move(p));
         return out;
@@ -637,7 +638,9 @@ std::vector<NbOutput> read_outputs(const std::string& outputs, const NbKeepFn& k
         const bool more = o["output_type"].str() == "stream" && !stream.empty() && o["name"].str() == stream && !out.empty();
         NbOutput r = read_output(o, keep);
         if (more && !r.parts.empty()) {
-            out.back().parts.back().text += r.parts.back().text;
+            NbPart& last = out.back().parts.back();
+            if (r.parts.back().lines) last.lines = static_cast<u64>(std::count(last.text.begin(), last.text.end(), '\n')) + r.parts.back().lines;
+            last.text += r.parts.back().text;
             continue;
         }
         stream = o["output_type"].str() == "stream" ? o["name"].str() : std::string_view();
@@ -666,13 +669,23 @@ struct Drawer {
         return [this](const std::string& src, u32 r, u32 w, u32 h, MdPic* out) { return look.picture && look.picture(src, r, w, h, out) == kNbPictureReady; };
     }
 
-    // Rows of text, cut after kMostRows with a line that says how many more there are.
-    void text(std::vector<MdRow>& out, std::string_view s, u8 ink, u8 tone, bool stale) {
+    // Rows of text, cut after kMostRows with a line that says how many more
+    // there are. A running cell's text cut short (its first lines and its
+    // last, `said_lines` its newlines): its last line after that one.
+    void text(std::vector<MdRow>& out, std::string_view s, u8 ink, u8 tone, bool stale, u64 said_lines = 0) {
         std::string_view body = s;
         while (body.ends_with('\n')) body.remove_suffix(1);
+        u64 own = static_cast<u64>(std::count(body.begin(), body.end(), '\n'));
+        std::string_view tail;
+        if (said_lines > own && own > 0) {
+            const size_t nl = body.rfind('\n');
+            tail = body.substr(nl + 1);
+            body = body.substr(0, nl);
+            --own;
+        }
         // (Only as much as can be shown is read: the first lines, a
         // megabyte at most; the rest only counted.)
-        const u32 last = static_cast<u32>(std::count(body.begin(), body.end(), '\n'));
+        const u32 last = static_cast<u32>(said_lines > own + 1 ? said_lines - 1 : own);
         size_t upto = 0;
         for (u32 k = 0; k <= kMostRows && upto < body.size(); ++k) {
             const size_t nl = body.find('\n', upto);
@@ -699,6 +712,20 @@ struct Drawer {
             r.runs.push_back({say, kMdMuted, kMdItalic, tone});
             if (tone) r.fill = tone, r.fill_from = 0, r.fill_to = room;
             out.push_back(std::move(r));
+        }
+        if (said_lines > own + 1 && !tail.empty()) {
+            std::vector<MdRun> end = nb_ansi(tail.substr(0, 4096), ink);
+            for (MdRun& r : end) {
+                if (stale) r.ink = kMdMuted;
+                if (r.tone == kMdNoTone) r.tone = tone;
+            }
+            std::vector<u32> end_of;
+            for (std::vector<MdRun>& l : wrap_runs(end, room, &end_of, 3)) {
+                MdRow r;
+                r.runs = std::move(l);
+                if (tone) r.fill = tone, r.fill_from = 0, r.fill_to = room;
+                out.push_back(std::move(r));
+            }
         }
     }
 
@@ -760,7 +787,7 @@ struct Drawer {
                 std::vector<MdRow> rows_of;
                 u32 dropped = 0;  // (a table's columns that do not fit)
                 switch (p.kind) {
-                    case NbPart::kText: text(rows_of, p.text, p.ink, p.tone, stale); break;
+                    case NbPart::kText: text(rows_of, p.text, p.ink, p.tone, stale, p.lines); break;
                     case NbPart::kPicture: picture(rows_of, p, stale); break;
                     case NbPart::kTable: {
                         if (table_cols(p.cells) <= room) {

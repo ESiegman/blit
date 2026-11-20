@@ -336,6 +336,20 @@ got=$(printf '%s\n' "$got" | grep -E '^2 code|^7: ')
 check "run again: its own outputs" "2 code [1] same stream execute_result
 7: 43"
 
+# 20 MB printed over a few seconds: the main thread takes it in in time
+# that grows as the output does (the model given it a few times a second,
+# a long text cut to what the view shows), and all of it is saved.
+python3 - "$run/big.ipynb" <<'EOF'
+import json, sys
+code = "import sys, time\nfor i in range(100):\n    sys.stdout.write(('x' * 99 + '\\n') * 2000)\n    time.sleep(0.02)\nprint('end')"
+cells = [{"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": code}]
+json.dump({"cells": cells, "metadata": {}, "nbformat": 4, "nbformat_minor": 5}, open(sys.argv[1], "w"))
+EOF
+got=$("$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$run/big.ipynb;mdwait;vim:2G;clock;key:shift+Return;nbwait;nbspent:400;mdwait;nbview;save" 2>&1 >/dev/null |
+    grep -E "kernels taken|more lines" | sed -e 's/^[0-9]*: *//' | tr '\n' '|')
+got="$got $(python3 -c 'import json, sys; t = "".join(json.load(open(sys.argv[1]))["cells"][0]["outputs"][0]["text"]); print(len(t), t.count(chr(10)))' "$run/big.ipynb")"
+check "20 MB printed: taken in at once, shown cut, saved whole" "kernels taken in within 400 ms|… 199971 more lines| 20000004 200001"
+
 # No process left behind: the kernel (and what a cell started) ends with
 # the notebook's tab, and with blit.
 cat >"$dir/spawn.txt" <<'EOF'

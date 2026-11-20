@@ -51,6 +51,7 @@ struct NbPart {
     std::vector<std::vector<std::string>> cells;  // a table's (Markdown), its header first
     std::vector<int> align;
     u32 more = 0;  // and how many of its rows were not read (past what is shown)
+    u64 lines = 0;  // a text's lines, when it is cut and has more than it says
 };
 struct NbOutput {
     i64 count = -1;

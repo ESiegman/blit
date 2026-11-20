@@ -1001,6 +1001,7 @@ void App::run_script(const char* script) {
             }
         } else if (verb == "clock") {
             clock_ns = now_ns();
+            nb_spent_ns_ = 0;
         } else if (verb == "lap") {  // (for measuring: not for tests, whose output must not change from run to run)
             const u64 now = now_ns();
             std::fprintf(stderr, "%s %.3f ms\n", arg.c_str(), static_cast<double>(now - clock_ns) / 1e6);
@@ -1216,6 +1217,10 @@ void App::run_script(const char* script) {
             }
         } else if (verb == "nbwait") {  // nbwait: until no notebook's kernel runs a cell or has one waiting (and each is ready); nbwait:started, until a cell is running and has given an output
             if (!nb_kernel_wait(arg == "started")) std::fprintf(stderr, "nbwait: timed out\n");
+        } else if (verb == "nbspent") {  // nbspent:MS, whether the main thread took in what kernels said (since clock) within that many ms
+            const u64 ms = nb_spent_ns_ / 1'000'000, most = static_cast<u64>(std::atoll(arg.c_str()));
+            if (ms <= most) std::fprintf(stderr, "kernels taken in within %llu ms\n", static_cast<unsigned long long>(most));
+            else std::fprintf(stderr, "kernels taken in in %llu ms (over %llu)\n", static_cast<unsigned long long>(ms), static_cast<unsigned long long>(most));
         } else if (verb == "nbkernel") {  // the kernel of the notebook in front: ipython or python, its pid, running or idle, how many cells wait
             std::fprintf(stderr, "%s\n", nb_kernel_dump().c_str());
         } else if (verb == "nbclick") {  // nbclick:ROW, a click on that row of the notebook's view (as nbview counts them, from 0)

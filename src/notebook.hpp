@@ -46,11 +46,31 @@ std::string notebook_language(std::string_view json);
 // A code cell's outputs (Jupyter's JSON list of them) and its count put in
 // it, its line made again. False: that is not a list (nothing changes).
 bool notebook_set_outputs(NotebookCell* cell, std::string_view outputs, i64 count);
-// An output (its JSON) put after a cell's others (each one's JSON), as
-// Jupyter does: text printed to the same stream as the last joins it, and
-// what a carriage return goes back over is gone from it. False: that is not
-// an output (nothing changes).
-bool notebook_add_output(std::vector<std::string>* outputs, std::string_view output);
+// A running cell's outputs, as a kernel sends them: each put after the
+// others as Jupyter does (text printed to the same stream as the last
+// joins it, and what a carriage return goes back over is gone from it).
+// A stream's text is kept as text, so that each piece costs what it is,
+// not what came before it.
+class NotebookOutputs {
+public:
+    // False: that is not an output (nothing changes).
+    bool add(std::string_view output);
+    void clear() { outs_.clear(); }
+    bool empty() const { return outs_.empty(); }
+    // Jupyter's JSON list of them. A stream's text longer than `most`
+    // bytes is cut to its first lines and its last, and says how many
+    // lines it has ("blit_lines": the view's, never saved).
+    std::string list(size_t most = SIZE_MAX) const;
+
+private:
+    struct Out {
+        std::string json;          // an output that is not a stream's
+        std::string stream, text;  // a stream's name and its text, as a terminal leaves it
+        size_t line = 0;           // where its last line starts
+        u64 lines = 0;             // and its newlines
+    };
+    std::vector<Out> outs_;
+};
 // A script's cells (the text before the first "# %%", if any, a code cell).
 std::vector<NotebookCell> notebook_cells(std::string_view script);
 // Each of a script's cells (`now`) matched to one of the model's: the first

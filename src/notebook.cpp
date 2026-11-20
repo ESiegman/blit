@@ -299,32 +299,18 @@ bool notebook_set_outputs(NotebookCell* cell, std::string_view outputs, i64 coun
     return true;
 }
 
-bool notebook_add_output(std::vector<std::string>* outputs, std::string_view output) {
-    json::Doc doc;
-    if (!doc.parse(std::string(output)) || !doc.root().is_object()) return false;
-    const json::Value o = doc.root();
-    if (o["output_type"].str() != "stream") {
-        outputs->emplace_back(output);
-        return true;
-    }
-    const std::string_view name = o["name"].str();
-    std::string text = source_of_text(o["text"]);
-    if (!outputs->empty()) {  // (after the same stream's text: one text)
-        json::Doc last;
-        if (last.parse(outputs->back()) && last.root()["output_type"].str() == "stream" && last.root()["name"].str() == name) {
-            text = source_of_text(last.root()["text"]) + text;
-            outputs->pop_back();
-        }
-    }
-    // Each line as a terminal leaves it: what is after its last carriage
-    // return (one at its end is kept, for what comes next to write over).
+namespace {
+
+// Text as a terminal leaves each of its lines: what is after its last
+// carriage return (one at its end is kept, for what comes next to write over).
+std::string overwritten(std::string_view text) {
     std::string kept;
     kept.reserve(text.size());
     for (size_t at = 0; at <= text.size();) {
         size_t nl = text.find('\n', at);
-        const bool ended = nl != std::string::npos;
+        const bool ended = nl != std::string_view::npos;
         if (!ended) nl = text.size();
-        std::string_view line(text.data() + at, nl - at);
+        std::string_view line = text.substr(at, nl - at);
         const bool back = line.ends_with('\r');
         while (line.ends_with('\r')) line.remove_suffix(1);
         if (const size_t cr = line.rfind('\r'); cr != std::string_view::npos) line.remove_prefix(cr + 1);
@@ -333,13 +319,83 @@ bool notebook_add_output(std::vector<std::string>* outputs, std::string_view out
         else if (back) kept += '\r';
         at = nl + 1;
     }
-    std::string out = "{\"name\": ";
-    json::quote(out, name);
-    out += ", \"output_type\": \"stream\", \"text\": ";
-    json::quote(out, kept);
-    out += "}";
-    outputs->push_back(std::move(out));
+    return kept;
+}
+
+// Where a UTF-8 character starts, at or before `at`.
+size_t char_start(std::string_view s, size_t at) {
+    while (at > 0 && at < s.size() && (static_cast<unsigned char>(s[at]) & 0xC0) == 0x80) --at;
+    return at;
+}
+
+}  // namespace
+
+bool NotebookOutputs::add(std::string_view output) {
+    json::Doc doc;
+    if (!doc.parse(std::string(output)) || !doc.root().is_object()) return false;
+    const json::Value o = doc.root();
+    if (o["output_type"].str() != "stream") {
+        outs_.emplace_back();
+        outs_.back().json = output;
+        return true;
+    }
+    const std::string_view name = o["name"].str();
+    const std::string piece = source_of_text(o["text"]);
+    if (outs_.empty() || !outs_.back().json.empty() || outs_.back().stream != name) {  // (after the same stream's text: one text)
+        outs_.emplace_back();
+        outs_.back().stream = name;
+    }
+    Out& s = outs_.back();
+    // What the piece can write over: its text's last line, if it goes back
+    // over it (a carriage return before its first newline, or one that line
+    // ends with); else nothing before it.
+    const size_t cr = piece.find('\r'), nl = piece.find('\n');
+    const bool back = (cr != std::string::npos && (nl == std::string::npos || cr < nl)) || s.text.ends_with('\r');
+    const size_t from = back ? s.line : s.text.size();
+    const std::string kept = overwritten(back ? s.text.substr(from) + piece : piece);
+    s.text.resize(from);
+    for (size_t k = kept.find('\n'); k != std::string::npos; k = kept.find('\n', k + 1)) ++s.lines, s.line = from + k + 1;
+    s.text += kept;
     return true;
+}
+
+std::string NotebookOutputs::list(size_t most) const {
+    std::string out = "[";
+    for (const Out& o : outs_) {
+        if (out.size() > 1) out += ", ";
+        if (o.stream.empty()) {
+            out += o.json;
+            continue;
+        }
+        out += "{\"name\": ";
+        json::quote(out, o.stream);
+        out += ", \"output_type\": \"stream\", \"text\": ";
+        if (o.text.size() <= most) {
+            json::quote(out, o.text);
+            out += "}";
+            continue;
+        }
+        // Its first lines (as many as a view shows, and some), and its last.
+        const std::string_view text = o.text, body = chomp(text);
+        size_t head = 0;
+        for (int k = 0; k < 64 && head < text.size(); ++k) {
+            const size_t nl = text.find('\n', head);
+            head = nl == std::string_view::npos ? text.size() : nl + 1;
+        }
+        if (head > most / 2) {  // (too long: as many whole lines as fit, else as much of the first)
+            const size_t nl = text.rfind('\n', most / 2 - 1);
+            head = nl != std::string_view::npos ? nl + 1 : char_start(text, most / 2);
+        }
+        const size_t last = body.find_last_of('\n') == std::string_view::npos ? 0 : body.find_last_of('\n') + 1;
+        std::string cut(text.substr(0, head));
+        if (!cut.ends_with('\n')) cut += '\n';
+        if (last >= head) cut += text.substr(char_start(text, std::max(last, text.size() - most / 2)));
+        json::quote(out, cut);
+        const u64 after = static_cast<u64>(std::count(text.begin() + static_cast<std::ptrdiff_t>(body.size()), text.end(), '\n'));  // (the newlines it ends with)
+        out += ", \"blit_lines\": " + std::to_string(o.lines - after) + "}";
+    }
+    out += "]";
+    return out;
 }
 
 std::vector<CellMatch> notebook_match(const std::vector<NotebookCell>& now, const std::vector<NotebookCell>& model) {

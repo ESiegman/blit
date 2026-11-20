@@ -1066,6 +1066,8 @@ private:
     void nb_interrupt();
     void nb_restart();
     void nb_sync();
+    int nb_wait_ms() const;  // (a running cell's outputs, put in the model a few times a second: until the next)
+    void nb_tick();
     void nb_forget(const Doc& d);
     bool nb_kernel_wait(bool started);
     std::string nb_kernel_dump();
@@ -1075,6 +1077,7 @@ private:
     std::string nb_view_dump();
     bool nb_view_point(u32 row, float* x, float* y);
     std::vector<GridNote> nb_notes_[kMaxViews];
+    u64 nb_spent_ns_ = 0;  // (for the tests: the main thread's time taking in what kernels said)
     // The terminals' split along the bottom, the one the build's output
     // uses too: Ctrl+` shows it with the keyboard on its terminal, and
     // with the keyboard there hides it and gives the keyboard back to the

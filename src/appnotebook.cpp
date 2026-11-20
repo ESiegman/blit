@@ -92,9 +92,13 @@ struct NotebookTab {
     Run running;
     bool started = false;
     i64 count = -1;
-    std::vector<std::string> outs;
+    NotebookOutputs outs;
     bool clear_next = false;
     u64 keys = 0;
+    // (Its outputs as they come are put in the model a few times a second:
+    // when they last were, and that more have come since.)
+    u64 put_ns = 0;
+    bool put_due = false;
 };
 
 namespace {
@@ -110,13 +114,19 @@ void remodel(Doc& d, F each) {
     nb.gen = ++models;
 }
 
+// How often a running cell's outputs are put in the model, and how much
+// of a stream's text then (the rest when it ends, or is saved).
+constexpr u64 kPutNs = 250'000'000;
+constexpr size_t kPutMost = 64 << 10;
+
 // The running cell's outputs so far, and its count, put in its cell of the
-// model (with the code they are of); the notebook has changed.
-void put_running(Doc& d, bool busy) {
+// model (with the code they are of); the notebook has changed. `cut`: a
+// long stream's text only as far as the view shows it.
+void put_running(Doc& d, bool busy, bool cut = false) {
     NotebookTab& nb = *d.nb;
-    std::string list = "[";
-    for (const std::string& o : nb.outs) list += (list.size() > 1 ? "," : "") + o;
-    list += "]";
+    const std::string list = nb.outs.list(cut ? kPutMost : SIZE_MAX);
+    nb.put_ns = now_ns();
+    nb.put_due = false;
     remodel(d, [&](NotebookCell& c) {
         if (c.key != nb.running.key) return;
         c.source = nb.running.code;
@@ -208,6 +218,7 @@ bool App::nb_new(Doc& d) {
 // keys, and a cell changed since it ran is still said to be.
 bool App::nb_save(Doc& d, std::string* err) {
     NotebookTab& nb = *d.nb;
+    if (nb.running.key && nb.started) put_running(d, true);  // (all a running cell has given so far)
     const std::string json = notebook_write(nb.original, d.ed.buf.text(0, d.ed.buf.size()), nb.cells.get());
     if (!fs_write(d.ed.path, json, err)) return false;
     nb.original = json;
@@ -220,6 +231,7 @@ bool App::nb_save(Doc& d, std::string* err) {
 // appremote.cpp), and from now on what it was.
 std::string App::nb_json(Doc& d) {
     NotebookTab& nb = *d.nb;
+    if (nb.running.key && nb.started) put_running(d, true);
     nb.original = notebook_write(nb.original, d.ed.buf.text(0, d.ed.buf.size()), nb.cells.get());
     remodel(d, [](NotebookCell&) {});
     return nb.original;
@@ -326,6 +338,12 @@ void App::nb_next(Doc& d) {
 // outputs gone), its outputs as they come, and its end (and the next sent);
 // a kernel that ended without being asked to, said.
 void App::nb_sync() {
+    const u64 began = now_ns();
+    struct Spent {
+        u64& into;
+        u64 began;
+        ~Spent() { into += now_ns() - began; }
+    } spent{nb_spent_ns_, began};
     for (Doc* dp : open_docs()) {
         if (!dp->nb || !dp->nb->kernel) continue;
         Doc& d = *dp;
@@ -350,7 +368,7 @@ void App::nb_sync() {
                 case Kernel::Event::kOutput:
                     if (!its) break;
                     if (nb.clear_next) nb.outs.clear(), nb.clear_next = false;
-                    touched |= notebook_add_output(&nb.outs, e.text);
+                    touched |= nb.outs.add(e.text);
                     break;
                 case Kernel::Event::kClear:
                     if (!its) break;
@@ -379,11 +397,41 @@ void App::nb_sync() {
                 }
             }
         }
-        if (touched) put_running(d, true);
+        if (touched) nb.put_due = true;
+        if (nb.put_due && now_ns() >= nb.put_ns + kPutNs) put_running(d, true, true);
         if (nb.kernel->ended()) nb.kernel.reset();  // (started again when a cell next runs)
         dirty_ = true;
         nb_next(d);
     }
+}
+
+// A running cell's outputs not yet in the model: how long until they are
+// put there (-1: none are waiting).
+int App::nb_wait_ms() const {
+    int wait = -1;
+    const u64 now = now_ns();
+    for (const Doc* d : open_docs()) {
+        if (!d->nb || !d->nb->put_due || !d->nb->running.key) continue;
+        const u64 at = d->nb->put_ns + kPutNs;
+        const int ms = at > now ? static_cast<int>((at - now + 999'999) / 1'000'000) : 0;
+        if (wait < 0 || ms < wait) wait = ms;
+    }
+    return wait;
+}
+
+void App::nb_tick() {
+    if (nb_wait_ms() != 0) return;
+    const u64 now = now_ns();
+    struct Spent {
+        u64& into;
+        u64 began;
+        ~Spent() { into += now_ns() - began; }
+    } spent{nb_spent_ns_, now};
+    for (Doc* d : open_docs())
+        if (d->nb && d->nb->put_due && d->nb->running.key && now >= d->nb->put_ns + kPutNs) {
+            put_running(*d, true, true);
+            dirty_ = true;
+        }
 }
 
 // "Run all the cells": each code cell of the notebook in turn.
@@ -435,6 +483,7 @@ bool App::nb_kernel_wait(bool started) {
     const u64 until = now_ns() + 30'000'000'000ull;
     for (;;) {
         nb_sync();
+        nb_tick();
         bool done = !started;
         for (Doc* d : open_docs()) {
             if (!d->nb) continue;
@@ -442,7 +491,11 @@ bool App::nb_kernel_wait(bool started) {
             if (started && nb.running.key && nb.started && !nb.outs.empty()) done = true;
             if (!started && (nb.running.key || !nb.waiting.empty() || (nb.kernel && nb.kernel->pid() < 0))) done = false;
         }
-        if (done) break;
+        if (done) {
+            for (Doc* d : open_docs())  // (what has come so far, in the model now, not in a moment)
+                if (d->nb && d->nb->put_due && d->nb->running.key) put_running(*d, true, true);
+            break;
+        }
         if (now_ns() >= until) return false;
         SDL_Delay(5);
     }

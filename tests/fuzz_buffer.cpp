@@ -504,22 +504,45 @@ void notebook_test() {
           "notebook: outputs cleared");
     // Outputs as a kernel sends them: a stream's text joined to the last
     // if it is the same stream's, a carriage return's line written over.
-    std::vector<std::string> outs;
-    check(notebook_add_output(&outs, R"({"output_type": "stream", "name": "stdout", "text": "0%\r"})") &&
-              notebook_add_output(&outs, R"({"output_type": "stream", "name": "stdout", "text": "50%\r"})") && outs.size() == 1 &&
-              outs[0] == R"({"name": "stdout", "output_type": "stream", "text": "50%\r"})",
+    NotebookOutputs outs;
+    check(outs.add(R"({"output_type": "stream", "name": "stdout", "text": "0%\r"})") && outs.add(R"({"output_type": "stream", "name": "stdout", "text": "50%\r"})") &&
+              outs.list() == R"([{"name": "stdout", "output_type": "stream", "text": "50%\r"}])",
           "notebook: a stream's text joined, a carriage return's line written over (one at the end kept)");
-    check(notebook_add_output(&outs, R"({"output_type": "stream", "name": "stdout", "text": "done\nnext"})") && outs.size() == 1 &&
-              outs[0] == R"({"name": "stdout", "output_type": "stream", "text": "done\nnext"})",
+    check(outs.add(R"({"output_type": "stream", "name": "stdout", "text": "done\nnext"})") && outs.list() == R"([{"name": "stdout", "output_type": "stream", "text": "done\nnext"}])",
           "notebook: what comes after a carriage return writes over its line");
-    check(notebook_add_output(&outs, R"({"output_type": "stream", "name": "stderr", "text": "warn\n"})") &&
-              notebook_add_output(&outs, R"({"output_type": "execute_result", "execution_count": 2, "data": {"text/plain": "2"}, "metadata": {}})") &&
-              notebook_add_output(&outs, R"({"output_type": "stream", "name": "stderr", "text": "late\n"})") && outs.size() == 4 && !notebook_add_output(&outs, "[1]") &&
-              !notebook_add_output(&outs, "{") && outs.size() == 4,
+    check(outs.add(R"({"output_type": "stream", "name": "stdout", "text": " line\nA\rB\n\rC"})") &&
+              outs.list() == R"([{"name": "stdout", "output_type": "stream", "text": "done\nnext line\nB\nC"}])",
+          "notebook: carriage returns in a piece after its first line: its own lines written over");
+    check(outs.add(R"({"output_type": "stream", "name": "stderr", "text": "warn\n"})") &&
+              outs.add(R"({"output_type": "execute_result", "execution_count": 2, "data": {"text/plain": "2"}, "metadata": {}})") &&
+              outs.add(R"({"output_type": "stream", "name": "stderr", "text": "late\n"})") && !outs.add("[1]") && !outs.add("{"),
           "notebook: another stream, a result, and text after it: each an output of its own; what is not one, refused");
-    std::string list = "[";
-    for (const std::string& o : outs) list += (list.size() > 1 ? "," : "") + o;
-    check(notebook_set_outputs(&model[1], list + "]", 2) && model[1].output == "late", "notebook: outputs made one by one, put in the model");
+    check(notebook_set_outputs(&model[1], outs.list(), 2) && model[1].output == "late" && model[1].outputs->find("\"output_type\": \"stream\"") != std::string::npos &&
+              std::count(model[1].outputs->begin(), model[1].outputs->end(), '{') == 6,
+          "notebook: outputs made one by one, put in the model");
+    // Printed by the line for a long while: each piece costs what it is
+    // (not what came before), and the list for the view is cut to the
+    // first lines and the last, saying how many lines there are.
+    NotebookOutputs many;
+    const auto t0 = std::chrono::steady_clock::now();
+    const std::string piece = R"({"output_type": "stream", "name": "stdout", "text": ")" + std::string(1000, 'x') + R"(\n"})";
+    for (int k = 0; k < 20000; ++k) many.add(piece);
+    many.add(R"({"output_type": "stream", "name": "stdout", "text": "50%\r"})");
+    many.add(R"({"output_type": "stream", "name": "stdout", "text": "100%\r"})");
+    const std::string cut = many.list(64 << 10);
+    const double took = std::chrono::duration<double>(std::chrono::steady_clock::now() - t0).count();
+    check(took < 1.0 && cut.size() < (80 << 10) && cut.find("\"blit_lines\": 20000") != std::string::npos && cut.ends_with("100%\\r\", \"blit_lines\": 20000}]") &&
+              many.list().size() > 20000 * 1000,
+          "notebook: 20 MB printed, joined in time that grows as it does; cut for the view, its lines said; whole when asked");
+    std::vector<NotebookCell> running(1);
+    running[0].kind = "code", running[0].source = "loop()";
+    NbLook wide;
+    wide.width = 2000;
+    check(notebook_set_outputs(&running[0], cut, 1) && running[0].output == "100%",
+          "notebook: the cut list put in the model, its line the last printed");
+    std::string drawn;
+    for (const MdRow& r : nb_render("# %%\nloop()\n", running, wide)) drawn += md_row_text(r) + "\n";
+    check(drawn.find("\xE2\x80\xA6 19968 more lines\n        100%\n") != std::string::npos, "notebook: the cut text drawn: its first lines, how many more, its last");
     // Put in the model as Jupyter writes them: a stream's text and the
     // text/*, SVG and JavaScript in data as their lines (split where
     // Python's splitlines splits), the rest as they are.
