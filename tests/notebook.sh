@@ -96,7 +96,7 @@ check "code cells with In [n]: beside them, a result's Out[n]:" "In [1]:  print(
 got=$(printf '%s\n' "$all" | grep -E '^(2|4|7|10): ' | grep -v ━ | grep -v 'In \[' | tr -s ' ' | grep -v ': *$' | tr '\n' '|')
 check "Markdown drawn; a stream written in parts, one text; stderr; a DataFrame as a table" "2: Orbits|4: The planets.|7: hello|7: careful|10: Out[2]: ┌───┬──────────────┬───────┐|10: │ │ planet │ moons │|10: ├───┼──────────────┼───────┤|10: │ 0 │ Earth & Moon │ 1 │|10: │ 1 │ Mars │ 2 │|10: └───┴──────────────┴───────┘|10: 2 rows|"
 got=$(printf '%s\n' "$all" | grep -E '^(13|16): ' | grep -v 'In \[' | sed -e 's/^[0-9]*: *//' | grep . | tr '\n' '|' | sed -e 's/nb-[0-9a-f]*\.png [0-9]*x[0-9]*/nb-HASH.png/')
-check "a picture shown from blit's cache; Markdown, JSON indented, LaTeX as text" "picture: nb-HASH.png|bold words|{|\"moons\": [|1|],|\"name\": \"Earth\"|}|\$E = mc^2\$|Out[4]: 42|"
+check "a picture shown from blit's cache; Markdown, JSON indented, LaTeX's math as text" "picture: nb-HASH.png|bold words|{|\"moons\": [|1|],|\"name\": \"Earth\"|}|E = mc²|Out[4]: 42|"
 got=$(ls "$dir/cache/pictures" | grep -c '^nb-[0-9a-f]*\.png$')
 check "the picture written once, named by what is in it" "1"
 # Pictures not shown for 30 days go from the cache (the next time one is

@@ -641,6 +641,16 @@ void notebook_view_test() {
               wrapped.find(":call last)\n") != std::string::npos && wrapped.find(":" + std::string(24, 'w') + "\n") != std::string::npos &&
               wrapped.find(":wwwwww\n") != std::string::npos,
           "notebook view: text wrapped after a space, a long word where the room ends");
+    // Math in a Markdown cell as text (its backslashes and underscores not
+    // read as Markdown); money, code and a fenced block as they are.
+    const std::string maths = "# %% [markdown]\n# $\\int_0^1 x^2\\,dx = \\frac{1}{3}$ and $\\alpha_{i} \\le \\beta$ cost $5 and $10, `$a_b$` stays\n#\n"
+                              "# $$\\sum_{n=1}^{\\infty} \\frac{1}{n^2} = \\frac{\\pi^2}{6}$$\n#\n# ```\n# $x_1$\n# ```\n";
+    std::string math_rows;
+    look.width = 120;
+    for (const MdRow& r : nb_render(maths, {}, look)) math_rows += std::to_string(r.line + 1) + ":" + md_row_text(r) + "\n";
+    check(math_rows.find("2:        \xE2\x88\xAB\xE2\x82\x80\xC2\xB9 x\xC2\xB2 dx = 1/3 and \xCE\xB1_i \xE2\x89\xA4 \xCE\xB2 cost $5 and $10, $a_b$ stays\n") != std::string::npos &&
+              math_rows.find("4:        \xE2\x88\x91_(n=1)^\xE2\x88\x9E 1/n\xC2\xB2 = \xCF\x80\xC2\xB2/6\n") != std::string::npos && math_rows.find("7:         $x_1$\n") != std::string::npos,
+          "notebook view: math as text, its lines where they were; money, code and a fenced block as they are");
     std::string code_rows;
     for (const MdRow& r : md_code("python", "total = first_value + second_value\n" + std::string(30, 'z'), 26)) code_rows += md_row_text(r) + "\n";
     check(code_rows.find(" total = first_value +\n") != std::string::npos && code_rows.find(" second_value\n") != std::string::npos &&

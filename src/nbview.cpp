@@ -5,6 +5,8 @@
 #include <cmath>
 #include <cstdint>
 #include <cstdlib>
+#include <cstring>
+#include <map>
 
 #include "base64.hpp"
 #include "json.hpp"
@@ -100,6 +102,176 @@ std::string html_markdown(std::string_view text) {
         } else {
             out += md_escape(std::string_view(&c, 1));
         }
+    }
+    return out;
+}
+
+// ---------------------------------------------------------------- math
+
+// LaTeX math as text: its symbols as Unicode's (\alpha α, \le ≤, \int ∫),
+// a fraction a/b, a power or index of digits raised or lowered (x²),
+// spacing as spaces, its braces and sizing gone; what is not known as it is.
+std::string math_text(std::string_view tex) {
+    static const std::map<std::string_view, std::string_view> kWords = {
+        {"alpha", "α"}, {"beta", "β"}, {"gamma", "γ"}, {"delta", "δ"}, {"epsilon", "ε"}, {"varepsilon", "ε"}, {"zeta", "ζ"}, {"eta", "η"},
+        {"theta", "θ"}, {"vartheta", "ϑ"}, {"iota", "ι"}, {"kappa", "κ"}, {"lambda", "λ"}, {"mu", "μ"}, {"nu", "ν"}, {"xi", "ξ"}, {"pi", "π"},
+        {"rho", "ρ"}, {"sigma", "σ"}, {"tau", "τ"}, {"upsilon", "υ"}, {"phi", "φ"}, {"varphi", "φ"}, {"chi", "χ"}, {"psi", "ψ"}, {"omega", "ω"},
+        {"Gamma", "Γ"}, {"Delta", "Δ"}, {"Theta", "Θ"}, {"Lambda", "Λ"}, {"Xi", "Ξ"}, {"Pi", "Π"}, {"Sigma", "Σ"}, {"Phi", "Φ"}, {"Psi", "Ψ"},
+        {"Omega", "Ω"}, {"infty", "∞"}, {"int", "∫"}, {"iint", "∬"}, {"oint", "∮"}, {"sum", "∑"}, {"prod", "∏"}, {"partial", "∂"}, {"nabla", "∇"},
+        {"pm", "±"}, {"mp", "∓"}, {"times", "×"}, {"cdot", "·"}, {"div", "÷"}, {"le", "≤"}, {"leq", "≤"}, {"ge", "≥"}, {"geq", "≥"},
+        {"ne", "≠"}, {"neq", "≠"}, {"approx", "≈"}, {"equiv", "≡"}, {"sim", "∼"}, {"propto", "∝"}, {"to", "→"}, {"rightarrow", "→"},
+        {"leftarrow", "←"}, {"Rightarrow", "⇒"}, {"Leftarrow", "⇐"}, {"Leftrightarrow", "⇔"}, {"iff", "⇔"}, {"mapsto", "↦"}, {"in", "∈"},
+        {"notin", "∉"}, {"subset", "⊂"}, {"subseteq", "⊆"}, {"cup", "∪"}, {"cap", "∩"}, {"forall", "∀"}, {"exists", "∃"}, {"emptyset", "∅"},
+        {"sqrt", "√"}, {"ldots", "…"}, {"dots", "…"}, {"cdots", "⋯"}, {"circ", "∘"}, {"angle", "∠"}, {"hbar", "ℏ"}, {"ell", "ℓ"},
+        {"langle", "⟨"}, {"rangle", "⟩"}, {"lfloor", "⌊"}, {"rfloor", "⌋"}, {"lceil", "⌈"}, {"rceil", "⌉"}, {"neg", "¬"}, {"land", "∧"},
+        {"lor", "∨"}, {"wedge", "∧"}, {"vee", "∨"}, {"oplus", "⊕"}, {"otimes", "⊗"}, {"perp", "⊥"}, {"parallel", "∥"}, {"mid", "|"},
+        {"quad", "  "}, {"qquad", "    "}, {"sin", "sin"}, {"cos", "cos"}, {"tan", "tan"}, {"log", "log"}, {"ln", "ln"}, {"exp", "exp"},
+        {"lim", "lim"}, {"max", "max"}, {"min", "min"}, {"det", "det"}, {"{", "{"}, {"}", "}"}, {"$", "$"}, {"%", "%"}, {"&", "&"}, {"_", "_"},
+        {",", " "}, {";", " "}, {":", " "}, {" ", " "}, {"!", ""}, {"\\", " "}};
+    // (Sizing, and fonts whose text is kept as it is.)
+    static const std::string_view kDropped[] = {"left", "right", "big", "Big", "bigg", "Bigg", "displaystyle", "limits", "nolimits"};
+    static const std::string_view kFonts[] = {"mathrm", "text", "mathbf", "mathit", "mathsf", "mathtt", "mathcal", "mathbb", "operatorname", "boldsymbol", "textrm", "textbf"};
+    static const char* const kUp[] = {"⁰", "¹", "²", "³", "⁴", "⁵", "⁶", "⁷", "⁸", "⁹"};
+    static const char* const kDown[] = {"₀", "₁", "₂", "₃", "₄", "₅", "₆", "₇", "₈", "₉"};
+    // A group ({...}, or one character, or a command) from `at`, and where it ends.
+    auto group = [&](size_t at, size_t* end) -> std::string_view {
+        while (at < tex.size() && tex[at] == ' ') ++at;
+        if (at >= tex.size()) return *end = at, std::string_view();
+        if (tex[at] == '{') {
+            int depth = 0;
+            for (size_t k = at; k < tex.size(); ++k) {
+                if (tex[k] == '{') ++depth;
+                else if (tex[k] == '}' && --depth == 0) return *end = k + 1, tex.substr(at + 1, k - at - 1);
+            }
+            return *end = tex.size(), tex.substr(at + 1);
+        }
+        size_t k = at + 1;
+        if (tex[at] == '\\')
+            while (k < tex.size() && std::isalpha(static_cast<unsigned char>(tex[k]))) ++k;
+        else
+            while (k < tex.size() && (static_cast<unsigned char>(tex[k]) & 0xC0) == 0x80) ++k;
+        return *end = k, tex.substr(at, k - at);
+    };
+    std::string out;
+    for (size_t i = 0; i < tex.size();) {
+        const char c = tex[i];
+        if (c == '\\') {
+            size_t k = i + 1;
+            while (k < tex.size() && std::isalpha(static_cast<unsigned char>(tex[k]))) ++k;
+            if (k == i + 1 && k < tex.size()) ++k;  // (a symbol's: \, \{)
+            const std::string_view word = tex.substr(i + 1, k - i - 1);
+            i = k;
+            if (word == "frac" || word == "dfrac" || word == "tfrac") {
+                size_t e1 = i, e2 = i;
+                const std::string top = math_text(group(i, &e1)), bottom = math_text(group(e1, &e2));
+                auto atom = [](const std::string& s) { return s.find_first_of(" +-*/=,") == std::string::npos; };
+                out += (atom(top) ? top : "(" + top + ")") + "/" + (atom(bottom) ? bottom : "(" + bottom + ")");
+                i = e2;
+            } else if (std::ranges::find(kFonts, word) != std::end(kFonts)) {
+                size_t e = i;
+                out += math_text(group(i, &e));
+                i = e;
+            } else if (std::ranges::find(kDropped, word) != std::end(kDropped)) {
+                if (i < tex.size() && (tex[i] == '(' || tex[i] == ')' || tex[i] == '[' || tex[i] == ']' || tex[i] == '|' || tex[i] == '.')) {
+                    if (tex[i] != '.') out += tex[i];
+                    ++i;
+                }
+            } else if (const auto it = kWords.find(word); it != kWords.end()) {
+                out += it->second;
+                if (word.size() > 1 && std::isalpha(static_cast<unsigned char>(word[0])) && i < tex.size() && std::isalpha(static_cast<unsigned char>(tex[i]))) out += ' ';
+            } else {
+                out += '\\';
+                out += word;
+            }
+            continue;
+        }
+        if (c == '^' || c == '_') {
+            size_t e = i + 1;
+            const std::string_view g = group(i + 1, &e);
+            const bool digits = !g.empty() && std::ranges::all_of(g, [](char d) { return d >= '0' && d <= '9'; });
+            if (digits) {
+                for (const char d : g) out += (c == '^' ? kUp : kDown)[d - '0'];
+            } else {
+                const std::string inner = math_text(g);
+                out += c;
+                out += inner.size() > 1 && cols_of(inner) > 1 ? "(" + inner + ")" : inner;
+            }
+            i = e;
+            continue;
+        }
+        if (c == '{' || c == '}' || c == '&') {
+            ++i;
+            continue;
+        }
+        out += c;
+        ++i;
+    }
+    return out;
+}
+
+// Markdown with its math ($...$, $$...$$) as text that says just it (in
+// italics, as Jupyter's math is), so that its backslashes and underscores
+// are not read as Markdown; its lines stay where they were. Code is left be.
+std::string md_math(std::string_view md) {
+    std::string out;
+    bool fenced = false;
+    auto said = [&](std::string_view tex) {
+        // (each line of it in italics of its own: a line's place is kept)
+        for (size_t at = 0; at <= tex.size();) {
+            size_t nl = tex.find('\n', at);
+            if (nl == std::string_view::npos) nl = tex.size();
+            const std::string text = math_text(tex.substr(at, nl - at));
+            if (const std::string_view t = trim(text); !t.empty()) out += "*" + md_escape(t) + "*";
+            if (nl < tex.size()) out += '\n';
+            at = nl + 1;
+        }
+    };
+    for (size_t i = 0; i < md.size();) {
+        const size_t line_start = i == 0 || md[i - 1] == '\n' ? i : std::string_view::npos;
+        if (line_start != std::string_view::npos) {
+            const std::string_view rest = trim(md.substr(i, md.find('\n', i) - i));
+            if (rest.starts_with("```") || rest.starts_with("~~~")) fenced = !fenced;
+            if (fenced || rest.starts_with("```") || rest.starts_with("~~~")) {
+                const size_t nl = md.find('\n', i);
+                out += md.substr(i, nl == std::string_view::npos ? std::string_view::npos : nl + 1 - i);
+                i = nl == std::string_view::npos ? md.size() : nl + 1;
+                continue;
+            }
+        }
+        const char c = md[i];
+        if (c == '\\' && i + 1 < md.size()) {  // (an escape: as it is)
+            out += md.substr(i, 2);
+            i += 2;
+            continue;
+        }
+        if (c == '`') {  // (code: as it is)
+            size_t n = i;
+            while (n < md.size() && md[n] == '`') ++n;
+            size_t close = md.find(md.substr(i, n - i), n);
+            if (close != std::string_view::npos && md.substr(n, close - n).find("\n\n") != std::string_view::npos) close = std::string_view::npos;  // (not past its paragraph)
+            const size_t end = close == std::string_view::npos ? n : close + (n - i);
+            out += md.substr(i, end - i);
+            i = end;
+            continue;
+        }
+        if (c == '$') {
+            const bool display = md.substr(i, 2) == "$$";
+            const size_t open = i + (display ? 2 : 1);
+            size_t close = md.find(display ? "$$" : "$", open);
+            // (Inline: not "$5 and $10": the text right inside the marks is not a space, nor is a digit after the last.)
+            if (close != std::string_view::npos && md.substr(open, close - open).find_first_of(display ? "`" : "`\n") != std::string_view::npos) close = std::string_view::npos;  // (not into code)
+            if (!display && close != std::string_view::npos &&
+                (open == close || md[open] == ' ' || md[close - 1] == ' ' ||
+                 (close + 1 < md.size() && std::isdigit(static_cast<unsigned char>(md[close + 1])))))
+                close = std::string_view::npos;
+            if (close != std::string_view::npos) {
+                said(md.substr(open, close - open));
+                i = close + (display ? 2 : 1);
+                continue;
+            }
+        }
+        out += c;
+        ++i;
     }
     return out;
 }
@@ -602,13 +774,22 @@ NbOutput read_output(json::Value o, const NbKeepFn& keep) {
     if (const json::Value md = data["text/markdown"]; md.exists()) {
         NbPart p;
         p.kind = NbPart::kMarkdown;
-        p.text = text_of(md);
+        p.text = md_math(text_of(md));
         out.parts.push_back(std::move(p));
         return out;
     }
     if (data["text/html"].exists() && html(false)) return out;
-    if (const json::Value latex = data["text/latex"]; latex.exists()) {
-        text_part(text_of(latex));
+    if (const json::Value latex = data["text/latex"]; latex.exists()) {  // (its math as text, as a Markdown cell's is)
+        std::string tex(trim(text_of(latex)));
+        for (const auto& [open, close] : {std::pair{"$$", "$$"}, std::pair{"\\[", "\\]"}, std::pair{"$", "$"}, std::pair{"\\(", "\\)"}})
+            if (tex.size() >= 4 && tex.starts_with(open) && tex.ends_with(close)) {
+                tex = tex.substr(std::strlen(open), tex.size() - std::strlen(open) - std::strlen(close));
+                break;
+            }
+        NbPart p;
+        p.kind = NbPart::kMarkdown;
+        p.text = md_math("$$" + tex + "$$");
+        out.parts.push_back(std::move(p));
         return out;
     }
     if (const json::Value js = data["application/json"]; js.exists()) {
@@ -883,7 +1064,7 @@ struct Drawer {
             if (cache && kept(key)) {
                 part = cache->rows[key];
             } else {
-                part = md_render(now.source, room, md_picture(), look.colour);
+                part = md_render(md_math(now.source), room, md_picture(), look.colour);
                 if (cache) cache->rows[key] = part;
             }
             for (MdRow& r : part) r.line = first + r.line;
