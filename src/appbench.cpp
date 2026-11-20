@@ -1313,7 +1313,25 @@ void App::run_script(const char* script) {
         } else if (verb == "mddump") {  // the preview's rows, as text
             std::fputs(md_dump().c_str(), stderr);
         } else if (verb == "mdinks") {  // and each of their runs in its colour
-            std::fputs(md_dump(true).c_str(), stderr);
+            std::fputs(md_dump(1).c_str(), stderr);
+        } else if (verb == "mdlooks") {  // and in its style (b, i, s, u), on its tone (t1...), with where it goes (>link) and a row's id (#id)
+            std::fputs(md_dump(2).c_str(), stderr);
+        } else if (verb == "mdtop") {  // the first row the preview shows: its number and its text
+            std::fputs(md_top_dump().c_str(), stderr);
+        } else if (verb == "mdclick") {  // mdclick:LINK, a click on the first link on show that goes there ("#fn-1")
+            float x = 0, y = 0;
+            if (md_link_point(arg, &x, &y)) {
+                e.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+                e.button.button = SDL_BUTTON_LEFT;
+                e.button.x = x;
+                e.button.y = y;
+                e.button.clicks = 1;
+                handle(e);
+                e.type = SDL_EVENT_MOUSE_BUTTON_UP;
+                handle(e);
+            } else {
+                std::fprintf(stderr, "mdclick: no such link on show\n");
+            }
         } else if (verb == "diagramdump") {  // the preview's diagrams as laid out: boxes of nodes, subgraphs and labels, points along edges
             std::fputs(md_diagram_dump().c_str(), stderr);
         } else if (verb == "mdtoday") {  // mdtoday:DAYS, the date diagrams are drawn for from now on (days from 1970)

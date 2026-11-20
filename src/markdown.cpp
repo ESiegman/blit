@@ -191,7 +191,32 @@ struct Refs {
         longest = std::max(longest, label.size());
         to[std::move(label)] = std::move(dest);
     }
+    // Footnotes: each one defined, by its label (lower case), with its
+    // number (0 until something refers to it: they are numbered in the order
+    // they are first referred to, as the text is drawn), and the labels in
+    // that order.
+    mutable std::map<std::string, int> notes;
+    mutable std::vector<std::string> noted;
+    size_t longest_note = 0;
+    int number(const std::string& label) const {  // (0: no such footnote)
+        const auto it = notes.find(label);
+        if (it == notes.end()) return 0;
+        if (!it->second) {
+            noted.push_back(label);
+            it->second = static_cast<int>(noted.size());
+        }
+        return it->second;
+    }
+    u8 glyphs = kMdAllGlyphs;  // the raised and lowered characters the font has
 };
+
+// A number raised (¹²): a footnote's mark.
+std::string raised(int n) {
+    static const char* const kUp[] = {"\xE2\x81\xB0", "\xC2\xB9", "\xC2\xB2", "\xC2\xB3", "\xE2\x81\xB4", "\xE2\x81\xB5", "\xE2\x81\xB6", "\xE2\x81\xB7", "\xE2\x81\xB8", "\xE2\x81\xB9"};
+    std::string out;
+    for (const char d : std::to_string(n)) out += kUp[d - '0'];
+    return out;
+}
 
 constexpr int kMostDepth = 32;  // quotes, lists, emphasis and links nested deeper than this are taken as text
 
@@ -535,11 +560,14 @@ void parse_inline(std::string_view s, const Span& as, const Refs& refs, std::vec
                     if (const auto it = label.size() <= refs.longest ? refs.to.find(lower(label)) : refs.to.end(); it != refs.to.end()) {
                         url = it->second;
                         next = end;
-                    } else if (text.starts_with('^')) {  // a footnote's mark
+                    } else if (const int n = !image && text.starts_with('^') && text.size() - 1 <= refs.longest_note ? refs.number(lower(text.substr(1))) : 0) {
+                        // A footnote's mark: its number, raised, a link to what it says. (One with nothing defined stays as it is.)
                         flush();
                         Span note = as;
-                        note.text = "[" + std::string(text.substr(1)) + "]";
-                        note.ink = kMdMuted;
+                        note.text = refs.glyphs & kMdSuperDigits ? raised(n) : "[" + std::to_string(n) + "]";
+                        note.ink = kMdLink;
+                        note.style = 0;
+                        note.link = "#fn-" + std::to_string(n);
                         out.push_back(std::move(note));
                         i = close + 1;
                         continue;
@@ -617,7 +645,7 @@ struct Line {
 };
 
 struct Block {
-    enum Kind { kPara, kHeading, kCode, kQuote, kList, kItem, kTable, kRule, kHtml } kind = kPara;
+    enum Kind { kPara, kHeading, kCode, kQuote, kList, kItem, kTable, kRule, kHtml, kNote } kind = kPara;  // (kNote: a footnote's text, its label in `info`)
     u32 line = 0;
     int level = 0;
     std::vector<std::string> text;
@@ -652,6 +680,19 @@ int alert_kind(std::string_view s) {
     for (int k = 0; k < 5; ++k)
         if (name == kKinds[k]) return k + 1;
     return 0;
+}
+
+// A footnote's definition ("[^label]: what it says"): its label (lower
+// case) and where its text starts in s. False for anything else.
+bool note_start(std::string_view s, std::string* label = nullptr, size_t* text = nullptr) {
+    if (!s.starts_with("[^")) return false;
+    const size_t close = s.find(']');
+    if (close == std::string_view::npos || close < 3 || close + 1 >= s.size() || s[close + 1] != ':') return false;
+    const std::string_view name = s.substr(2, close - 2);
+    if (name.find_first_of(" \t[") != std::string_view::npos) return false;
+    if (label) *label = lower(name);
+    if (text) *text = close + 2;
+    return true;
 }
 
 bool is_fence(std::string_view s, char* fc, size_t* len) {
@@ -973,6 +1014,44 @@ void parse_into(const std::vector<Line>& lines, Refs& refs, std::vector<Block>& 
             out.push_back(std::move(b));
             continue;
         }
+        // A footnote's definition: its text, with the lines indented under it
+        // (and a paragraph's lines that run on), kept for the end.
+        std::string label;
+        size_t rest = 0;
+        if (note_start(s, &label, &rest)) {
+            Block b;
+            b.kind = Block::kNote;
+            b.line = no;
+            b.info = label;
+            std::vector<std::string> keep{std::string(trim(std::string_view(s).substr(rest)))};
+            std::vector<u32> nos{no};
+            ++i;
+            bool last_blank = false;
+            while (i < n) {
+                const std::string_view l = lines[i].text;
+                if (blank(l)) {
+                    keep.emplace_back();
+                    last_blank = true;
+                } else if (indent_of(l) >= 2) {
+                    keep.push_back(strip_cols(l, 4));
+                } else if (!last_blank && !starts_block(l) && !note_start(trim(l))) {
+                    keep.emplace_back(l);  // (a paragraph's lazy line)
+                } else {
+                    break;
+                }
+                if (!blank(l)) last_blank = false;
+                nos.push_back(lines[i].no);
+                ++i;
+            }
+            while (!keep.empty() && blank(keep.back())) keep.pop_back(), nos.pop_back();
+            std::vector<Line> sub;
+            for (size_t k = 0; k < keep.size(); ++k) sub.push_back({keep[k], nos[k]});
+            b.kids = parse_blocks(sub, refs);
+            refs.longest_note = std::max(refs.longest_note, label.size());
+            refs.notes.emplace(std::move(label), 0);
+            out.push_back(std::move(b));
+            continue;
+        }
         if (s.starts_with('[')) {  // a link's definition: [label]: where
             const size_t close = s.find("]:");
             if (close != std::string::npos && close > 1) {
@@ -1001,7 +1080,7 @@ void parse_into(const std::vector<Line>& lines, Refs& refs, std::vector<Block>& 
                     ++i;
                     break;
                 }
-                if (starts_block(l)) break;
+                if (starts_block(l) || (indent_of(l) <= 3 && note_start(trim(l)))) break;
                 std::vector<int> align;  // (a table's head: the table starts here)
                 if (l.find('|') != std::string_view::npos && i + 1 < n && table_delims(lines[i + 1].text, &align) && table_cells(l).size() == align.size()) break;
             }
@@ -1073,6 +1152,38 @@ std::vector<std::vector<MdRun>> wrap(const std::vector<Span>& spans, u32 width) 
         lines.emplace_back();
         at = 0;
     };
+    // A new line for a run's first word, `w` columns of it: when the line
+    // does not end in a space, that word goes on from the run before (a
+    // full stop after a link, a footnote's mark after its word), and what
+    // there is of it comes to the new line with it, if all of it fits on one.
+    auto carry = [&](u32 w) {
+        std::vector<MdRun>& l = lines.back();
+        std::vector<MdRun> tail;  // (the last first)
+        u32 tail_cols = 0;
+        bool space = false;
+        while (!l.empty() && !space) {
+            std::string& text = l.back().text;
+            const size_t last = text.rfind(' ');
+            space = last != std::string::npos;
+            if (space && last + 1 == text.size()) break;
+            MdRun part = l.back();
+            if (space) part.text.erase(0, last + 1), text.resize(last + 1);
+            else l.pop_back();
+            tail_cols += cols_of(part.text);
+            tail.push_back(std::move(part));
+        }
+        if (!space || tail_cols + w > width) {  // (a word as long as the line, or longer with this: cut here)
+            for (size_t k = tail.size(); k-- > 0;) {
+                if (!l.empty() && l.back().ink == tail[k].ink && l.back().style == tail[k].style && l.back().tone == tail[k].tone && l.back().link == tail[k].link) l.back().text += tail[k].text;
+                else l.push_back(std::move(tail[k]));
+            }
+            newline();
+            return;
+        }
+        newline();
+        lines.back().assign(std::make_move_iterator(tail.rbegin()), std::make_move_iterator(tail.rend()));
+        at = tail_cols;
+    };
     for (const Span& sp : spans) {
         if (sp.brk) {
             newline();
@@ -1093,7 +1204,10 @@ std::vector<std::vector<MdRun>> wrap(const std::vector<Span>& spans, u32 width) 
             if (k == std::string_view::npos) k = t.size();
             const std::string_view word = t.substr(0, k);
             const u32 w = cols_of(word);
-            if (at + w > width && at > 0) newline();
+            if (at + w > width && at > 0) {
+                if (t.data() == sp.text.data()) carry(w);  // (it may go on from the run before)
+                else newline();
+            }
             if (w > width) {  // longer than a line: cut
                 std::string_view rest = word;
                 while (!rest.empty()) {
@@ -1178,14 +1292,66 @@ struct Layout {
     }
 
     void blocks(const std::vector<Block>& bs, bool tight, u8 ink) {
-        for (size_t i = 0; i < bs.size(); ++i) {
+        const Block* before = nullptr;  // (the one drawn before this one: a footnote's text is drawn at the end)
+        for (const Block& b : bs) {
+            if (b.kind == Block::kNote) continue;
             // (A heading of the top two levels is underlined: what follows
             // starts right under its line, so that it belongs to the heading,
             // with the blank row above the heading setting it off.)
-            const bool under_rule = i > 0 && bs[i - 1].kind == Block::kHeading && bs[i - 1].level <= 2;
-            if (i > 0 && !tight && !under_rule) gap(bs[i].line);
-            block(bs[i], tight, ink);
+            const bool under_rule = before && before->kind == Block::kHeading && before->level <= 2;
+            if (before && !tight && !under_rule) gap(b.line);
+            block(b, tight, ink);
+            before = &b;
         }
+    }
+
+    // The footnotes, under a short rule at the end: those referred to, in
+    // the order of their numbers (one that only another's text refers to is
+    // numbered as that is drawn), then those nothing refers to. Each has its
+    // number in front, its first row's id ("fn-1") is what its marks go to,
+    // and the mark after its text goes back to the first of them.
+    void footnotes(const std::vector<const Block*>& defs) {
+        std::map<std::string, const Block*> by_label;  // (the first of a label is the one)
+        for (const Block* b : defs) by_label.emplace(b->info, b);
+        if (by_label.empty()) return;
+        const size_t from = rows.size();
+        u32 line = rows.empty() ? 0 : rows.back().line;
+        gap(line);
+        std::string rule;
+        for (u32 k = 0; k < std::min<u32>(room(), 24); ++k) rule += "\xE2\x94\x80";
+        row({{rule, kMdMuted}}, line);
+        const size_t numw = std::to_string(by_label.size()).size() + 1;
+        size_t done = 0, unused = 0;
+        for (;;) {
+            bool referred = true;
+            if (done == refs.noted.size()) {  // (the next that nothing refers to)
+                while (unused < defs.size() && (by_label[defs[unused]->info] != defs[unused] || refs.notes[defs[unused]->info] != 0)) ++unused;
+                if (unused == defs.size()) break;
+                refs.number(defs[unused]->info);
+                referred = false;
+            }
+            const int n = static_cast<int>(++done);
+            const Block& def = *by_label[refs.noted[done - 1]];
+            const std::string num = std::to_string(n) + ".";
+            levels.push_back({{{std::string(numw > num.size() ? numw - num.size() : 0, ' ') + num + " ", kMdAccent}}, {{std::string(numw + 1, ' '), kMdText}}, false});
+            const size_t first = rows.size();
+            blocks(def.kids, false, kMdText);
+            if (rows.size() == first) row({}, def.line);  // (one that says nothing)
+            rows[first].id = "fn-" + std::to_string(n);
+            if (referred) {
+                MdRun back("\xE2\x86\xA9", kMdLink, 0, kMdNoTone, "#fnref-" + std::to_string(n));
+                MdRow& last = rows.back();
+                if (!last.fill && last.pics.empty() && !last.runs.empty() && cols_of_runs(last.runs) + 2 <= width) {
+                    if (!last.runs.back().text.ends_with(' ')) last.runs.push_back({" "});
+                    last.runs.push_back(std::move(back));
+                } else {
+                    row({std::move(back)}, last.line);
+                }
+            }
+            levels.pop_back();
+        }
+        // (Their rows' lines never go back: the preview follows the cursor by them.)
+        for (size_t k = from; k < rows.size(); ++k) rows[k].line = line = std::max(line, rows[k].line);
     }
 
     // Pictures, side by side as far as they fit (in the middle, if
@@ -1519,13 +1685,22 @@ struct Layout {
             }
             case Block::kItem: blocks(b.kids, tight, ink); break;
             case Block::kTable: table(b); break;
+            case Block::kNote: break;  // (at the end: footnotes())
         }
     }
 };
 
+// The footnotes' texts among these blocks and those inside them, in the file's order.
+void gather_notes(const std::vector<Block>& bs, std::vector<const Block*>& out) {
+    for (const Block& b : bs) {
+        if (b.kind == Block::kNote) out.push_back(&b);
+        gather_notes(b.kids, out);
+    }
+}
+
 }  // namespace
 
-std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn& picture, const MdCodeFn& colour, const MdDiagramFn& diagram) {
+std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn& picture, const MdCodeFn& colour, const MdDiagramFn& diagram, u8 glyphs) {
     width = std::max<u32>(width, 12);
     std::vector<Line> lines;
     u32 no = 0;
@@ -1551,6 +1726,7 @@ std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn
             if (!yaml) break;
         }
     Refs refs;
+    refs.glyphs = glyphs;
     // (links can be defined after they are used: their definitions are gathered first)
     for (const Line& l : lines) {
         const std::string_view s = trim(l.text);
@@ -1565,6 +1741,9 @@ std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn
     std::vector<MdRow> rows;
     Layout layout{rows, width, refs, {}, &picture, &colour, &diagram};
     layout.blocks(blocks, false, kMdText);
+    std::vector<const Block*> notes;
+    if (!refs.notes.empty()) gather_notes(blocks, notes);
+    layout.footnotes(notes);
     return rows;
 }
 

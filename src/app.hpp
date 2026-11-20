@@ -973,7 +973,9 @@ private:
     bool md_key(const SDL_KeyboardEvent& k);
     bool md_wheel(const SDL_MouseWheelEvent& w);
     bool md_mouse_down(const SDL_MouseButtonEvent& b);
-    std::string md_dump(bool inks = false);
+    std::string md_dump(int how = 0);  // (for the tests: its rows as text; 1: with each run's colour; 2: and its style, tone and link)
+    bool md_link_point(std::string_view link, float* x, float* y);
+    std::string md_top_dump();
     static bool md_notebook(const Doc& d);  // (a notebook's view)
     u32 nb_view_room(const Doc& src);
     std::string md_diagram_dump();  // (for the tests: where the preview's diagrams' parts are)

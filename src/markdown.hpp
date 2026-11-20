@@ -79,7 +79,13 @@ struct MdRow {
     u8 fill = kMdNoTone;   // a background for the rest of the row (a code block's)
     u32 fill_from = 0, fill_to = 0;  // the columns it covers, [from, to)
     std::vector<MdPic> pics;  // the pictures over it, each a row of its own
+    std::string id;           // what a link in the text calls it ("#id" goes to it): a footnote's first row, "fn-1"
 };
+
+// The raised and lowered characters the font can draw (it, or the fonts it
+// falls back to): where it can, a footnote's mark is ¹ and x<sup>2</sup> is
+// x²; where it cannot, they are spelt out ([1], x^2).
+enum : u8 { kMdSuperDigits = 1, kMdSubDigits = 2, kMdSuperLetters = 4, kMdSubLetters = 8, kMdAllGlyphs = 15 };
 
 // The size of a picture that is a paragraph of its own (or one of a row
 // of them), at most `room` columns wide; want_w and want_h are what the
@@ -101,8 +107,12 @@ using MdCodeFn = std::function<bool(std::string_view lang, std::string_view code
 enum MdDiagram : u8 { kMdDiagramLater, kMdDiagramPicture, kMdDiagramError };
 using MdDiagramFn = std::function<u8(std::string_view source, u32 room, MdPic* out, std::string* note)>;
 
-// The text drawn `width` columns wide.
-std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn& picture = {}, const MdCodeFn& code = {}, const MdDiagramFn& diagram = {});
+// The text drawn `width` columns wide. A footnote's mark is a link to
+// "#fn-N" (its number, by the order they are first referred to), the row
+// its text starts on at the end has that id, and the mark after that text
+// is a link back, to "#fnref-N": the first row with a link to "#fn-N".
+std::vector<MdRow> md_render(std::string_view text, u32 width, const MdPictureFn& picture = {}, const MdCodeFn& code = {}, const MdDiagramFn& diagram = {},
+                             u8 glyphs = kMdAllGlyphs);
 // Code drawn as a fenced block of it in `lang` is (without the language's
 // name over it), and a table as one in Markdown is, its first row the
 // header; align, for each column: -1 left, 0 centre, 1 right. The table's

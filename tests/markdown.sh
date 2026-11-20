@@ -40,7 +40,7 @@ pictures() {
          { if (skip) print ""; skip = 0; print }'
 }
 
-for f in sample edge diagrams code alerts; do
+for f in sample edge diagrams code alerts notes; do
     size=1600x1100
     [ $f = sample ] || [ $f = diagrams ] && size=3600x1100
     run $size "$here/markdown/$f.md" ""
@@ -61,6 +61,28 @@ inks() {
 inks "$here/markdown/alerts.md"
 got=$(printf '%s\n' "$got" | grep -E '\](Note|Tip|Important|Warning|Caution|Risks\.|A plain quote.*)$' | sed -e 's/ *$//' | tr '\n' ' ')
 check "alerts: a bar and a title in each kind's colour" "[#61afef]▎ [#7f848e]A plain quote stays a quote. [#61afef]▌ [#61afef]Note [#98c379]▌ [#98c379]Tip [#c678dd]▌ [#c678dd]Important [#e5c07b]▌ [#e5c07b]Warning [#e06c75]▌ [#e06c75]Caution [#e06c75]▌ [#dbdedb]Risks. [#e06c75]▌ [#61afef]▌ [#61afef]Note [#e06c75]▌ [#e06c75]Caution [#61afef]• [#98c379]▌ [#98c379]Tip "
+
+# Footnotes: a mark is a link to its text at the end, the row that text
+# starts on is named for it, and the mark after the text is a link back;
+# one nothing refers to has no way back. A click on a mark puts its text
+# on show (it was not), a click on the mark after the text puts the row
+# that first referred to it at the top.
+looks=$(BLIT_INIT="$dir/dark.lua" "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mdwait;mdlooks" "$here/markdown/notes.md" 2>&1 >/dev/null)
+got=$(printf '%s\n' "$looks" | grep -c 'footnote\[#61afef >#fn-1\]¹\[#dbdedb\]\. A'),$(printf '%s\n' "$looks" | grep -c '^#fn-1 \[#61afef\]1\. \[#dbdedb\]My reference'),$(printf '%s\n' "$looks" | grep -c '\[#61afef >#fnref-1\]↩$')
+got=$got,$(printf '%s\n' "$looks" | grep -c '^#fn-5 \[#61afef\]5\. \[#dbdedb\]Never referred to, shown last\.$'),$(printf '%s\n' "$looks" | grep -c 'fnref-5')
+check "footnotes: marks that go to their text, text that goes back" "1,1,1,1,0"
+{
+    printf 'First[^a] words.\n\n'
+    i=0
+    while [ $i -lt 80 ]; do
+        [ $i = 40 ] && printf 'Second[^b] words.\n\n'
+        printf 'Line %s.\n\n' $i
+        i=$((i + 1))
+    done
+    printf '[^b]: The second.\n\n[^a]: The first.\n'
+} >"$dir/notes.md"
+got=$("$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mdwait;frame;mdtop;mdclick:#fnref-2;mdclick:#fn-1;frame;mdtop;mdclick:#fnref-2;frame;mdtop;mdclick:#fn-2;frame;mdtop;mdclick:#fnref-1;frame;mdtop" "$dir/notes.md" 2>&1 >/dev/null | grep -v '^\[' | sed -e 's/^top 1[0-9][0-9]: Line.*/down at its text/' | tr '\n' '|')
+check "a click on a footnote's mark shows its text; on the mark after the text, the row that referred to it" "top 0: First¹ words.|mdclick: no such link on show|down at its text|top 82: Second² words.|down at its text|top 0: First¹ words.|"
 
 # What is wrong in a diagram's layout (diagramdump): an edge not drawn,
 # two nodes over each other, a label over a node, how many at a relation's
@@ -311,6 +333,15 @@ awk 'BEGIN { for (i = 0; i < 20000; i++) printf "*a **b `c` [d](e) _f_ "; print 
     for (i = 0; i < 50000; i++) printf "[a]("; print "\n"; print "the end" }' >"$dir/marks.md"
 got=$(limit 10 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mddump" "$dir/marks.md" 2>&1 >/dev/null | grep -c '^the end')
 check "lines of half a megabyte full of marks that close nothing: drawn, in time (each mark once looked to the end of the line)" "1"
+# What the preview has learnt to draw since, by the hundred thousand too:
+# footnotes' marks (of one that is there, and that close nothing), and
+# footnotes that each refer to the next.
+awk 'BEGIN { for (i = 0; i < 100000; i++) printf "[^a] "; print "\n"
+    for (i = 0; i < 100000; i++) printf "[^"; print "\n"
+    for (i = 0; i < 20000; i++) print "[^n" i "]: to [^n" i + 1 "] and [^a]"
+    print "\n[^a]: the end" }' >"$dir/marks.md"
+got=$(limit 10 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mddump" "$dir/marks.md" 2>&1 >/dev/null | grep -c '1\. the end ↩$')
+check "footnotes' marks by the hundred thousand, and footnotes that refer to each other: drawn, in time" "1"
 awk 'BEGIN { print "```mermaid"; print "flowchart TD"; for (i = 0; i < 800; i++) print "subgraph s" i; print "x --> y"; for (i = 0; i < 800; i++) print "end"; print "```" }' >"$dir/nested.md"
 got=$(limit 20 "$blit" --offscreen 1600x1100 --shot "$dir/shot.bmp" --script "frame;mdpreview;frame;mdwait;mddump" "$dir/nested.md" 2>&1 >/dev/null | grep -c 'subgraphs nested too deeply')
 check "subgraphs nested 800 deep: said to be too deep (laid out, they ran a Mac's preview thread out of stack)" "1"

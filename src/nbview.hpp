@@ -37,6 +37,7 @@ struct NbLook {
     MdCodeFn colour;
     NbPictureFn picture;
     NbKeepFn keep;
+    u8 glyphs = kMdAllGlyphs;  // the raised and lowered characters the font can draw (markdown.hpp)
     std::string key;  // what else the rows depend on (the pictures known): kept rows are let go of when it changes
 };
 

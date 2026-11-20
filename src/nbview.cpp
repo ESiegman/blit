@@ -984,7 +984,7 @@ struct Drawer {
                         rows_of = md_table(cells, align, room);
                         break;
                     }
-                    case NbPart::kMarkdown: rows_of = md_render(p.text, room, md_picture(), look.colour); break;
+                    case NbPart::kMarkdown: rows_of = md_render(p.text, room, md_picture(), look.colour, {}, look.glyphs); break;
                 }
                 if (p.kind == NbPart::kTable || p.kind == NbPart::kMarkdown) {
                     cut(rows_of, p.more);
@@ -1074,7 +1074,7 @@ struct Drawer {
             if (cache && kept(key)) {
                 part = cache->rows[key];
             } else {
-                part = md_render(md_math(now.source), room, md_picture(), look.colour);
+                part = md_render(md_math(now.source), room, md_picture(), look.colour, {}, look.glyphs);
                 if (cache) cache->rows[key] = part;
             }
             for (MdRow& r : part) r.line = first + r.line;

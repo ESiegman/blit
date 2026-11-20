@@ -78,6 +78,11 @@ struct MdView {
     bool asked_web = false;
     u64 renders = 0;
     bool fresh = false;
+    // The raised and lowered characters its font can draw (markdown.hpp),
+    // and the font that was asked of.
+    static constexpr u8 kNoGlyphs = 0x80;
+    u8 glyphs = kNoGlyphs;
+    std::string glyphs_font;
     std::string base;               // the folder its pictures are found from
     std::vector<std::string> pics;  // the pictures its text names (their files)
     std::map<std::string, std::shared_ptr<const MdDiagramPicture>> diagrams;  // its diagrams' pictures, by name
@@ -297,6 +302,7 @@ struct App::MdWorker {
         int font_index = 0;
         std::vector<FontFile> fallbacks;
         float font_px = 26;
+        u8 glyphs = kMdAllGlyphs;  // the raised and lowered characters the font can draw
     };
     struct Done {
         u64 view = 0, rev = 0, pictures = 0;
@@ -476,13 +482,14 @@ struct App::MdWorker {
             look.colour = j.colour && coloured ? colour : MdCodeFn{};
             look.picture = sized;
             look.keep = keep_picture;
+            look.glyphs = j.glyphs;
             // (the rows kept depend on the pictures known, and the room they have)
-            look.key = std::to_string(j.pictures) + " " + std::to_string(j.tall) + " " + std::to_string(j.cw) + "x" + std::to_string(j.ch) + " " + std::to_string(j.density) + (j.colour ? " c" : "");
+            look.key = std::to_string(j.pictures) + " " + std::to_string(j.tall) + " " + std::to_string(j.cw) + "x" + std::to_string(j.ch) + " " + std::to_string(j.density) + (j.colour ? " c" : "") + " g" + std::to_string(j.glyphs);
             d.rows = nb_render(j.text, *j.notebook, look, nb);
             for (const CellLines& c : notebook_cell_lines(j.text)) d.heads.push_back(static_cast<u32>(c.head));
             return d;
         }
-        d.rows = md_render(j.text, j.width, size, j.colour && coloured ? colour : MdCodeFn{}, diagram);
+        d.rows = md_render(j.text, j.width, size, j.colour && coloured ? colour : MdCodeFn{}, diagram, j.glyphs);
         return d;
     }
     void run(std::stop_token st) {
@@ -728,6 +735,13 @@ void App::md_layout(FrameDesc& fd) {
             std::copy(theme_.bg, theme_.bg + 3, j.palette.bg);
             j.font_path = font.path(), j.font_index = font.index(), j.font_px = font.px();
             j.fallbacks = font_fallbacks();
+            if (v.glyphs_font != j.font_path || v.glyphs == MdView::kNoGlyphs) {  // (looked up when the font changes)
+                auto all = [&](std::initializer_list<u32> cps) { return std::ranges::all_of(cps, [&](u32 cp) { return font.can_draw(cp); }); };
+                v.glyphs = static_cast<u8>((all({0x2070, 0xB9, 0x2074, 0x2079}) ? kMdSuperDigits : 0) | (all({0x2080, 0x2081, 0x2089}) ? kMdSubDigits : 0) |
+                                           (all({0x207A, 0x207F, 0x1D43, 0x1D57, 0x1D40}) ? kMdSuperLetters : 0) | (all({0x208A, 0x2090, 0x1D62, 0x209C}) ? kMdSubLetters : 0));
+                v.glyphs_font = j.font_path;
+            }
+            j.glyphs = v.glyphs;
             v.asked_rev = j.rev, v.asked_width = width, v.asked_tall = rows, v.asked_pictures = j.pictures, v.asked_web = j.web, v.asked_nb = nb_gen, v.asked_look = look;
             // (the first time: at once, so that it opens drawn; its code is
             // coloured on the worker. A notebook's, only there: its pictures
@@ -965,19 +979,28 @@ bool App::md_mouse_down(const SDL_MouseButtonEvent& b) {
         const std::string& link = h.link;
         if (link.starts_with("http://") || link.starts_with("https://") || link.starts_with("mailto:")) {
             SDL_OpenURL(link.c_str());
-        } else if (link.starts_with('#')) {  // a heading in it: its row to the top
-            std::string want = link.substr(1);
-            for (u32 k = 0; k < v.rows.size(); ++k) {
+        } else if (link.starts_with('#')) {
+            // A place in it, its row to the top: the row of that name (a
+            // footnote's text), the first row with a mark of a footnote
+            // (back from its text), or a heading.
+            const std::string want = link.substr(1);
+            u32 to = ~0u;
+            for (u32 k = 0; k < v.rows.size() && to == ~0u; ++k)
+                if (v.rows[k].id == want) to = k;
+            if (to == ~0u && want.starts_with("fnref-")) {
+                const std::string mark = "#fn-" + want.substr(6);
+                for (u32 k = 0; k < v.rows.size() && to == ~0u; ++k)
+                    if (std::ranges::any_of(v.rows[k].runs, [&](const MdRun& r) { return r.link == mark; })) to = k;
+            }
+            for (u32 k = 0; k < v.rows.size() && to == ~0u; ++k) {
                 std::string slug;
                 for (const char ch : md_row_text(v.rows[k])) {
                     if (std::isalnum(static_cast<unsigned char>(ch))) slug += static_cast<char>(std::tolower(static_cast<unsigned char>(ch)));
                     else if (ch == ' ' || ch == '-') slug += '-';
                 }
-                if (slug == want) {
-                    v.top = k;
-                    break;
-                }
+                if (slug == want) to = k;
             }
+            if (to != ~0u) v.top = to;
         } else if (Doc* src = find_doc(v.source); src && !src->ed.path.empty()) {
             std::string path = link.substr(0, link.find('#'));
             if (!path.starts_with('/')) path = std::string(parent_of(full_path(src->ed.path))) + "/" + path;
@@ -989,29 +1012,67 @@ bool App::md_mouse_down(const SDL_MouseButtonEvent& b) {
 }
 
 // The preview in front (the first there is), its rows as text (for the
-// tests); with `inks`, each run of a row in the colour it is drawn in
-// ("[#rrggbb]text").
-std::string App::md_dump(bool inks) {
+// tests); with `how` 1, each run of a row in the colour it is drawn in
+// ("[#rrggbb]text"); with 2, in its style, tone and link too
+// ("[#rrggbb bi t1 >link]text": bold, italic, struck, underlined), a row
+// with an id after that ("#id ").
+std::string App::md_dump(int how) {
     md_wait();
     for (const std::unique_ptr<Pane>& p : panes_) {
         if (!p->doc || !p->doc->md) continue;
         const MdView& v = *p->doc->md;
         std::string out;
         for (const MdRow& r : v.rows) {
-            if (!inks) {
+            if (!how) {
                 out += md_row_text(r) + "\n";
                 continue;
             }
+            if (how == 2 && !r.id.empty()) out += "#" + r.id + " ";
             for (const MdRun& run : r.runs) {
                 char hex[16];
                 const float* c = v.palette[run.ink < 32 ? run.ink : 0];
                 auto byte = [](float f) { return static_cast<int>(std::lround(std::clamp(f, 0.0f, 1.0f) * 255)); };
-                std::snprintf(hex, sizeof hex, "[#%02x%02x%02x]", byte(c[0]), byte(c[1]), byte(c[2]));
-                out += hex + run.text;
+                std::snprintf(hex, sizeof hex, "[#%02x%02x%02x", byte(c[0]), byte(c[1]), byte(c[2]));
+                out += hex;
+                if (how == 2) {
+                    if (run.style) out += ' ';
+                    for (int s = 0; s < 4; ++s)
+                        if (run.style >> s & 1) out += "bisu"[s];
+                    if (run.tone) out += " t" + std::to_string(run.tone);
+                    if (!run.link.empty()) out += " >" + run.link;
+                }
+                out += "]" + run.text;
             }
             out += "\n";
         }
         return out;
+    }
+    return "no preview\n";
+}
+
+// For the tests: where the preview in front shows a link that goes to
+// `link` (the middle of its first cell, in the window's points; false: none
+// on show), and the first row it shows, as text.
+bool App::md_link_point(std::string_view link, float* x, float* y) {
+    for (const std::unique_ptr<Pane>& p : panes_) {
+        if (!p->doc || !p->doc->md) continue;
+        const MdView& v = *p->doc->md;
+        for (const MdView::Hit& h : v.hits) {
+            if (h.link != link) continue;
+            *x = static_cast<float>((v.x + v.pad_x + static_cast<int>(h.c0) * font_->cell_w() + font_->cell_w() / 2) / density_);
+            *y = static_cast<float>((v.y + v.pad_y + static_cast<int>(h.row) * font_->cell_h() + font_->cell_h() / 2) / density_);
+            return true;
+        }
+        return false;
+    }
+    return false;
+}
+
+std::string App::md_top_dump() {
+    for (const std::unique_ptr<Pane>& p : panes_) {
+        if (!p->doc || !p->doc->md) continue;
+        const MdView& v = *p->doc->md;
+        return "top " + std::to_string(v.top) + ": " + (v.top < v.rows.size() ? md_row_text(v.rows[v.top]) : std::string()) + "\n";
     }
     return "no preview\n";
 }

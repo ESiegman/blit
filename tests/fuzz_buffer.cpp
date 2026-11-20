@@ -799,6 +799,47 @@ void markdown_test() {
           "alerts: a list and code inside one");
     check(drawn("> [!NOPE]\n> said\n") == quote + "[!NOPE] said\n" && drawn("> [!NOTE] said\n") == quote + "[!NOTE] said\n" && drawn("> text\n> [!NOTE]\n") == quote + "text [!NOTE]\n",
           "alerts: an unknown tag, one with text after it, one not on the first line: quotes");
+
+    // Footnotes: numbered in the order they are first referred to (not the
+    // order their texts come in), a mark a link to its text, the texts at
+    // the end under a rule, each with a mark that goes back; one only
+    // another's text refers to after those; one nothing refers to last, with
+    // no way back; a mark with no text as it is.
+    const std::string rule = "\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80\xE2\x94\x80", back = " \xE2\x86\xA9";
+    const std::string notes = "A[^b] b[^a] c[^b] d[^none].\n\n[^a]: first *text*\n[^unused]: never\n[^b]: second, see[^c]\n    more of it\n\n    another paragraph\n[^c]: third\n\nafter\n";
+    check(drawn(notes) == "A\xC2\xB9 b\xC2\xB2 c\xC2\xB9 d[^none].\n\nafter\n\n" + rule + rule + rule + "\n1. second, see\xC2\xB3 more of it\n\n   another paragraph" + back + "\n2. first text" + back +
+                              "\n3. third" + back + "\n4. never\n",
+          "footnotes: numbered as they are first referred to, their texts at the end");
+    const std::string note_looks = drawn(notes, 60, true);
+    const std::string link = ink(kMdLink) + "0.0>";
+    check(note_looks.find(ink(kMdText) + "0.0>A" + link + "\xC2\xB9" + ink(kMdText) + "0.0> b" + link + "\xC2\xB2") != std::string::npos && note_looks.find(ink(kMdText) + "2.0>text") != std::string::npos,
+          "footnotes: a mark in the links' colour; a footnote's text drawn as Markdown");
+    std::string ids, links;
+    for (const MdRow& r : md_render(notes, 60)) {
+        if (!r.id.empty()) ids += r.id + ":" + md_row_text(r).substr(0, 4) + " ";
+        for (const MdRun& run : r.runs)
+            if (!run.link.empty()) links += run.link + " ";
+    }
+    check(ids == "fn-1:1. s fn-2:2. f fn-3:3. t fn-4:4. n " && links == "#fn-1 #fn-2 #fn-1 #fn-3 #fnref-1 #fnref-2 #fnref-3 ",
+          "footnotes: each text's first row named for its number, marks that go there and back");
+    std::string plain;
+    for (const MdRow& r : md_render("x[^1] y[^2]\n\n[^2]: two\n[^1]: one\n", 60, {}, {}, {}, 0)) plain += md_row_text(r) + "\n";
+    check(plain.starts_with("x[1] y[2]\n"), "footnotes: a font with no raised digits: the number in brackets");
+    check(drawn("[^1]: only this\n") == rule + rule + rule + "\n1. only this\n" && drawn("a[^1]\n\n[^1]:\n") == "a\xC2\xB9\n\n" + rule + rule + rule + "\n1." + back + "\n" &&
+              drawn("> q[^1]\n>\n> [^1]: in a quote\n").ends_with("1. in a quote" + back + "\n"),
+          "footnotes: only a text, an empty one, one defined in a quote");
+    std::string many = "t";
+    for (int k = 1; k <= 12; ++k) many += "[^" + std::to_string(k) + "]";
+    many += "\n\n";
+    for (int k = 12; k >= 1; --k) many += "[^" + std::to_string(k) + "]: n" + std::to_string(k) + "\n";
+    const std::string twelve = drawn(many);
+    check(twelve.find("\xC2\xB9\xE2\x81\xB0\xC2\xB9\xC2\xB9\xC2\xB9\xC2\xB2\n") != std::string::npos && twelve.find("\n 9. n9" + back + "\n10. n10" + back + "\n") != std::string::npos,
+          "footnotes: past nine, two raised digits, and the numbers at the end in a column");
+    // A footnote's rows never go back in the file: the preview follows the cursor by a row's line.
+    u32 last_line = 0;
+    bool forward = true;
+    for (const MdRow& r : md_render("a[^1]\n\n[^1]: early\n\nb\n\nc\n", 60)) forward = forward && r.line >= last_line, last_line = r.line;
+    check(forward, "footnotes: the lines of the rows at the end not before those above them");
 }
 
 // The script's cells matched to the model's: as the plain search of the
@@ -3464,6 +3505,7 @@ void parsers_test(int seeds) {
     snippets.push_back("for (${1:i} = 0; ${1:i} < ${2:n}; ++${1:i}) {$0} ${3:call(${4:arg})} ${5|left,right|} \\$1 \\${2} \\\\ ${6:a\\}b} $TM_FILENAME ${USER:nobody} ${TM_SELECTED_TEXT/(.*)/$1/}");
     markdowns.push_back("### Title\n\nSome **bold** and `code` and a [link](http://x) \\_ok\\_ &lt;T&gt; &#x41;\n\n```cpp\nint  x;\n\ty();\n```\n---\n- a\n  1. b\n> q\n| a | b |\n|---|---|\n");
     markdowns.push_back("> [!NOTE]\n> said\n>\n> - a\n>   > [!tip]\n>   > ```\n>   > x\n>   > ```\n\n> [!CAUTION]\n\n> [!WARNING] not one\n");
+    markdowns.push_back("A[^b] and [^a] and [^none]\n\n[^a]: one [^b] [^c]\n    more\n\n    ```\n    x\n    ```\n[^b]: two\n- [^c]: in a list[^a]\n[^d]:\n[^d]: again\n");
 #if defined(BLIT_PROFILE_DATA)
     auto slurp = [](const char* name, size_t most) {
         std::string s;
