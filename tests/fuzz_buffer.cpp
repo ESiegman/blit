@@ -2571,6 +2571,18 @@ void diagram_test() {
             }
             check(loops == 3, "diagram: an entity's loops, three");
         }
+        // A class with no members: its name alone (it had two empty parts
+        // under it).
+        {
+            DiagramGeometry g;
+            check(diagram_make("classDiagram\n Empty <|-- One\n One : +int x\n", st, &d, &err, &g) == kDiagramDrawn, "diagram: an empty class, drawn");
+            float empty = 0, one = 0;
+            for (const auto& b : g.boxes) {
+                if (b.name == "Empty") empty = b.h;
+                if (b.name == "One") one = b.h;
+            }
+            check(empty > 0 && one - empty > 1.5f * font.line(st.size), "diagram: an empty class, its name alone");
+        }
         // Parts that nothing joins, too wide in a row for the room: in rows
         // that fit it, side by side in each (they were all turned into one
         // long column); one part alone, as it was.

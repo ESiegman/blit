@@ -1209,6 +1209,7 @@ bool classdiagram(const std::vector<std::string>& st, const DiagramStyle& style,
         auto part = [&](size_t n) { return n ? py * 1.4f + static_cast<float>(n) * line : py * 1.6f; };
         b.mid = part(b.attrs.size());
         b.h = b.head + b.mid + part(b.methods.size());
+        if (b.attrs.empty() && b.methods.empty()) b.mid = 0, b.h = b.head;  // (no members: its name alone, not two empty parts)
     }
     std::vector<std::vector<std::string>> note_lines(m.notes.size());
     for (size_t i = 0; i < m.notes.size(); ++i) note_lines[i] = diagram_wrap(m.notes[i].lines, wrap * 0.8f, size, font);
@@ -1300,9 +1301,10 @@ bool classdiagram(const std::vector<std::string>& st, const DiagramStyle& style,
             say(d, t, n.x, base, size, tc, font, 1, true, abstract);
             base += line;
         }
-        // The rules between its parts.
+        // The rules between its parts (if it has any but its name).
         const DiagramColour rule = stroke;
         for (const float ry : {y + b.head, y + b.head + b.mid}) {
+            if (b.h <= b.head) break;
             RasterPath p;
             p.move_to(x, ry), p.line_to(x + n.w, ry);
             d.shape(std::move(p), {}, rule, sw * 0.85f);
