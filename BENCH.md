@@ -3139,6 +3139,35 @@ lsp.sh, tree.sh, markdown.sh and others. BLIT_SANITIZE=ON builds a Debug
 blit with AddressSanitizer, UBSan and libstdc++'s checks, and the whole
 suite passes on it.
 
+### Round 68: diagrams as pictures, notebooks, and the rest of the sweep
+
+Mermaid diagrams drawn as pictures by blit's own layout and rasterizer
+(on the preview's thread, kept between frames, the same pixels on macOS
+and Linux); a notebook's rendered view and a kernel that runs its cells;
+the Markdown preview's alerts, footnotes, tables, math and HTML; and the
+second sweep's fixes (Vim against Neovim, soft wrap with inlay hints,
+watching the disk, the debugger's writes off the main thread). Speed work
+in it is off these scenarios' paths: a picture's staging memory kept for
+the next (Metal and Vulkan), the minimap's and spelling's highlights no
+longer copied, Markdown's inline marks linear in the line. Turn about,
+five rounds, 2560x1600, against round 67's build (222a112):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 15,386 / 56.83 µs / 2.08 µs | 15,519 / 56.58 µs / 2.17 µs |
+| Typing, everything on: the same | 16,340 / 51.79 µs / 3.42 µs | 16,535 / 51.83 µs / 3.50 µs |
+| Scrolling code-100m.txt, plain: the same | 17,095 / 51.58 µs / 0.83 µs | 17,405 / 51.71 µs / 0.88 µs |
+
+No change beyond the rounds' own spread (layout 2.04 to 2.25 µs on both
+sides). Two Linux faults found on the way, both fixed: half the diagrams'
+pixels differed from a Mac's with link-time optimization on (the diagram
+files are built without it now), and a Vulkan frame's uniform buffer,
+made larger, was left unpointed-at when the driver gave the new one the
+old one's handle (a GPU page fault and a lost device on a Radeon 7900).
+Tests: markdown.sh (every diagram kind's geometry, 140 pictures hashed
+the same on both systems, frames drawing more and more pictures without
+losing the GPU), notebook.sh, and blit_fuzz's new cases.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
