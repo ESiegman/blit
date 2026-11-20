@@ -331,6 +331,64 @@ bool html_table(std::string_view table, std::vector<std::vector<std::string>>* c
     return true;
 }
 
+// The columns a table's cell (Markdown, as html_markdown makes it) takes
+// drawn: its escapes, entities and bold marks not counted.
+u32 shown_cols(std::string_view md) {
+    u32 w = 0;
+    const u8* p = reinterpret_cast<const u8*>(md.data());
+    for (size_t i = 0; i < md.size();) {
+        if (md[i] == '\\' && i + 1 < md.size() && std::ispunct(static_cast<unsigned char>(md[i + 1]))) {
+            ++w, i += 2;
+            continue;
+        }
+        if (md.substr(i, 2) == "**") {
+            i += 2;
+            continue;
+        }
+        if (md[i] == '&') {
+            const size_t semi = md.find(';', i);
+            if (semi != std::string_view::npos && semi - i <= 12) {
+                ++w, i = semi + 1;
+                continue;
+            }
+        }
+        const Decoded d = decode_utf8(p + i, md.size() - i);
+        w += cp_width(d.cp);
+        i += d.len;
+    }
+    return w;
+}
+
+// Each column's width as drawn without being made narrower.
+std::vector<u32> natural_widths(const std::vector<std::vector<std::string>>& cells) {
+    std::vector<u32> w;
+    for (const std::vector<std::string>& r : cells) {
+        if (r.size() > w.size()) w.resize(r.size(), 1);
+        for (size_t c = 0; c < r.size(); ++c) w[c] = std::max(w[c], shown_cols(r[c]));
+    }
+    return w;
+}
+
+// The columns a table takes drawn whole (md_table: a bar and a space each side of each cell).
+u32 table_cols(const std::vector<std::vector<std::string>>& cells) {
+    const std::vector<u32> w = natural_widths(cells);
+    u32 total = static_cast<u32>(3 * w.size() + 1);
+    for (const u32 x : w) total += x;
+    return total;
+}
+
+// The widest of a text's lines, in columns.
+u32 widest_line(std::string_view text) {
+    u32 most = 0;
+    for (size_t at = 0; at <= text.size();) {
+        size_t nl = text.find('\n', at);
+        if (nl == std::string_view::npos) nl = text.size();
+        most = std::max(most, cols_of(text.substr(at, nl - at)));
+        at = nl + 1;
+    }
+    return most;
+}
+
 // ---------------------------------------------------------------- outputs
 
 // The ink of a colour a terminal names (one of 256, or red-green-blue):
@@ -494,6 +552,7 @@ NbOutput read_output(json::Value o, const NbKeepFn& keep) {
         }
         words(std::string_view(h).substr(at));
         if (parts.empty()) return false;
+        if (std::ranges::any_of(parts, [](const NbPart& p) { return p.kind == NbPart::kTable; })) out.plain = plain;
         for (NbPart& p : parts) out.parts.push_back(std::move(p));
         return true;
     };
@@ -606,6 +665,14 @@ struct Drawer {
         }
     }
 
+    // How many of a table's first columns fit in the room whole (one at least).
+    size_t columns_that_fit(const std::vector<std::vector<std::string>>& cells) const {
+        const std::vector<u32> w = natural_widths(cells);
+        size_t keep = 0;
+        for (u32 used = 1; keep < w.size() && used + w[keep] + 3 <= room; ++keep) used += w[keep] + 3;
+        return std::max<size_t>(keep, 1);
+    }
+
     // Rows of something drawn (a table, Markdown), cut as text is (not
     // through a picture); `unread` rows more that were not drawn.
     static void cut(std::vector<MdRow>& part, u32 unread = 0) {
@@ -641,16 +708,46 @@ struct Drawer {
         std::vector<MdRow> out;
         for (const NbOutput& o : read) {
             std::vector<MdRow> part;
+            // A table wider than the room is not squeezed into it (its
+            // numbers broken over lines): its output's own text is drawn
+            // instead if that fits, else the columns that fit.
+            const bool too_wide = std::ranges::any_of(o.parts, [&](const NbPart& p) { return p.kind == NbPart::kTable && table_cols(p.cells) > room; });
+            if (too_wide && !trim(o.plain).empty() && widest_line(o.plain) <= room) {
+                text(part, o.plain, kMdText, kMdNoTone, stale);
+                shift(part);
+                if (o.count >= 0) put_label(part, 0, "Out[" + std::to_string(o.count) + "]:", stale ? kMdMuted : kMdAnsiYellow, out.empty() ? 0 : 1);
+                out.insert(out.end(), std::make_move_iterator(part.begin()), std::make_move_iterator(part.end()));
+                continue;
+            }
             for (const NbPart& p : o.parts) {
                 std::vector<MdRow> rows_of;
+                u32 dropped = 0;  // (a table's columns that do not fit)
                 switch (p.kind) {
                     case NbPart::kText: text(rows_of, p.text, p.ink, p.tone, stale); break;
                     case NbPart::kPicture: picture(rows_of, p, stale); break;
-                    case NbPart::kTable: rows_of = md_table(p.cells, p.align, room); break;
+                    case NbPart::kTable: {
+                        if (table_cols(p.cells) <= room) {
+                            rows_of = md_table(p.cells, p.align, room);
+                            break;
+                        }
+                        std::vector<std::vector<std::string>> cells = p.cells;
+                        std::vector<int> align = p.align;
+                        const size_t keep = columns_that_fit(cells);
+                        dropped = static_cast<u32>(align.size() - std::min(keep, align.size()));
+                        for (std::vector<std::string>& r : cells) r.resize(std::min(r.size(), keep));
+                        align.resize(std::min(align.size(), keep));
+                        rows_of = md_table(cells, align, room);
+                        break;
+                    }
                     case NbPart::kMarkdown: rows_of = md_render(p.text, room, md_picture(), look.colour); break;
                 }
                 if (p.kind == NbPart::kTable || p.kind == NbPart::kMarkdown) {
                     cut(rows_of, p.more);
+                    if (dropped) {
+                        MdRow r;
+                        r.runs.push_back({"\xE2\x80\xA6 " + std::to_string(dropped) + (dropped == 1 ? " more column" : " more columns"), kMdMuted, kMdItalic});
+                        rows_of.push_back(std::move(r));
+                    }
                     if (stale)
                         for (MdRow& r : rows_of)
                             for (MdRun& run : r.runs) run.ink = kMdMuted;

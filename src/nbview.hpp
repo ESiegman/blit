@@ -54,6 +54,7 @@ struct NbPart {
 struct NbOutput {
     i64 count = -1;
     std::vector<NbPart> parts;
+    std::string plain;  // a table's output: its text/plain too (drawn instead when the table is too wide and it is not)
 };
 
 // What one drawing leaves for the next, so that typing in one cell does

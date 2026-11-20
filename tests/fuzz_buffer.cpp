@@ -599,7 +599,7 @@ void notebook_view_test() {
 
 // A notebook's outputs made to cost: the work drawing them does is what
 // can be shown, not what they say (a table's spans, comments by the
-// thousand).
+// thousand); and a table too wide for the view is not squeezed into it.
 void notebook_bounds_test() {
     auto check = [](bool ok, const char* what) {
         if (!ok) fail(what, 0, 0);
@@ -632,6 +632,23 @@ void notebook_bounds_test() {
     for (int k = 0; k < 40000; ++k) comments += "<!-- -->";
     std::tie(table, took) = one("{\"text/html\": " + quoted(comments + "<table><tr><th>a</th></tr><tr><td>1</td></tr></table>") + "}");
     check(took < 0.5 && table.find("\xE2\x94\x82 1 \xE2\x94\x82") != std::string::npos, "notebook bounds: comments by the thousand, read once");
+    // A DataFrame of 13 columns of numbers, at 60 columns: its text/plain
+    // when that fits, else the columns that fit and how many more there are.
+    std::string wide = "<table><thead><tr><th></th>";
+    for (int c = 0; c < 13; ++c) wide += "<th>col" + std::to_string(c) + "</th>";
+    wide += "</tr></thead><tbody>";
+    for (int r = 0; r < 3; ++r) {
+        wide += "<tr><th>" + std::to_string(r) + "</th>";
+        for (int c = 0; c < 13; ++c) wide += "<td>-0.132105</td>";
+        wide += "</tr>";
+    }
+    wide += "</tbody></table>";
+    std::tie(table, took) = one("{\"text/html\": " + quoted(wide) + ", \"text/plain\": \"     col0  ...  col12\\n0  -0.13  ...  -0.13\"}");
+    check(table.find("col0  ...  col12") != std::string::npos && table.find("\xE2\x94\x8C") == std::string::npos, "notebook bounds: a table too wide, its text instead when that fits");
+    std::tie(table, took) = one("{\"text/html\": " + quoted(wide) + ", \"text/plain\": " + quoted(std::string(90, '-')) + "}");
+    bool whole = table.find("\xE2\x80\xA6 10 more columns") != std::string::npos;
+    for (size_t at = 0; (at = table.find("-0.", at)) != std::string::npos; at += 3) whole = whole && table.compare(at, 9, "-0.132105") == 0;
+    check(whole, "notebook bounds: a table too wide, and its text too: the columns that fit, whole, and how many more");
 }
 
 // Local history: versions kept newest first, read back as they were; the
