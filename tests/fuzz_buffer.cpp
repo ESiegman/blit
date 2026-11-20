@@ -2651,6 +2651,35 @@ void sequence_test() {
             if (b.kind == "number") numbers.push_back(b.name);
         check(numbers == std::vector<std::string>{"number:-2", "number:-1", "number:0"}, "sequence: autonumber from less than 0");
     }
+    // A box round participants takes in their notes and their messages to
+    // themselves, at its sides too, and is clear of the next participant
+    // and its box.
+    for (const float room : {2000.0f, 300.0f}) {
+        st.room = room;
+        Drawing d;
+        DiagramGeometry geo;
+        std::string err;
+        diagram_make("sequenceDiagram\n box Front\n participant A\n participant B\n end\n participant C\n box Back\n participant D\n end\n"
+                     " Note left of A: left of the first, in its box\n Note right of B: right of the last in the box\n B->>B: to itself, a long way\n"
+                     " C->>D: hi\n Note left of D: left of D, in its box\n D->>D: and to itself\n Note over A: over the first, wider than it\n",
+                     st, &d, &err, &geo);
+        std::vector<DiagramGeometry::Box> boxes, in, out;
+        for (const auto& b : geo.boxes) {
+            if (b.name.starts_with("box:")) boxes.push_back(b);
+            else if (b.name.starts_with("note:") || (b.name.starts_with("message:") && b.name != "message:3")) in.push_back(b);
+            else if (b.name == "head:C" || b.name == "foot:C" || b.name == "C") out.push_back(b);
+        }
+        auto within = [](const DiagramGeometry::Box& o, const DiagramGeometry::Box& b) {
+            return b.x >= o.x - 0.01f && b.y >= o.y - 0.01f && b.x + b.w <= o.x + o.w + 0.01f && b.y + b.h <= o.y + o.h + 0.01f;
+        };
+        auto apart_x = [](const DiagramGeometry::Box& a, const DiagramGeometry::Box& b) { return a.x + a.w <= b.x + 0.01f || b.x + b.w <= a.x + 0.01f; };
+        check(boxes.size() == 2 && in.size() == 6 && out.size() == 3, "sequence: boxes, notes and C laid out");
+        if (boxes.size() != 2) continue;
+        for (const auto& b : in) check(within(boxes[0], b) || within(boxes[1], b), "sequence: " + b.name + " in its box, room " + std::to_string(room));
+        check(apart_x(boxes[0], boxes[1]), "sequence: the boxes apart");
+        for (const auto& b : out) check(apart_x(boxes[0], b) && apart_x(boxes[1], b), "sequence: " + b.name + " clear of the boxes, room " + std::to_string(room));
+    }
+    st.room = 2000;
     // Mistakes, with their lines.
     const struct {
         const char* src;

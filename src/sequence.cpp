@@ -515,12 +515,26 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
         if (lo > hi) std::swap(lo, hi);
         needs.push_back({lo, hi, want});
     };
+    // Something by a participant at the side of its box (a note, a message
+    // to itself) is in the box with it: the box's side is past it, and the
+    // next participant (and its own box) past that.
+    auto group_of = [&](size_t k) { return parts_[k].group; };
+    auto cross_right = [&](int a) {  // (from a's lifeline to a + 1's, past a's box's side)
+        const size_t k = static_cast<size_t>(a);
+        if (group_of(k) < 0 || group_of(k) == group_of(k + 1)) return 0.0f;
+        return group_pad + 4 * u + std::max(parts_[k + 1].w / 2, reach_l[k + 1]) + (group_of(k + 1) >= 0 ? group_pad : 0);
+    };
+    auto cross_left = [&](int a) {
+        const size_t k = static_cast<size_t>(a);
+        if (group_of(k) < 0 || group_of(k) == group_of(k - 1)) return 0.0f;
+        return group_pad + 4 * u + std::max(parts_[k - 1].w / 2, reach_r[k - 1]) + (group_of(k - 1) >= 0 ? group_pad : 0);
+    };
     auto out_right = [&](int a, float reach) {  // something reaching `reach` right of a's lifeline
-        if (static_cast<size_t>(a) + 1 < n) need(a, a + 1, reach + 12 * u);
+        if (static_cast<size_t>(a) + 1 < n) need(a, a + 1, reach + std::max(12 * u, cross_right(a)));
         else right = std::max(right, reach);
     };
     auto out_left = [&](int a, float reach) {
-        if (a > 0) need(a - 1, a, reach + 12 * u + reach_r[static_cast<size_t>(a) - 1]);
+        if (a > 0) need(a - 1, a, reach + std::max(12 * u + reach_r[static_cast<size_t>(a) - 1], cross_left(a)));
         else left = std::max(left, reach);
     };
     const float activation = bw * 1.5f;  // (room for a bar or two at an end; more for more)
@@ -747,8 +761,16 @@ void Sequence::lay_out(const Tight& t, Drawing* d, DiagramGeometry* geo) {
     }
     for (Group& g : groups_) {
         g.x0 = 1e30f, g.x1 = -1e30f;
+        const int gi = static_cast<int>(&g - groups_.data());
         for (const Part& p : parts_)
-            if (p.group == &g - groups_.data()) g.x0 = std::min(g.x0, p.x - p.w / 2 - group_pad), g.x1 = std::max(g.x1, p.x + p.w / 2 + group_pad);
+            if (p.group == gi) g.x0 = std::min(g.x0, p.x - p.w / 2 - group_pad), g.x1 = std::max(g.x1, p.x + p.w / 2 + group_pad);
+        if (g.x0 > g.x1) continue;
+        // (and its participants' notes, and their messages to themselves)
+        for (const Event& e : events_) {
+            const bool in = (e.kind == kNote && parts_[static_cast<size_t>(e.a)].group == gi && parts_[static_cast<size_t>(e.b)].group == gi) ||
+                            (e.kind == kMessage && e.a == e.b && parts_[static_cast<size_t>(e.a)].group == gi);
+            if (in) g.x0 = std::min(g.x0, std::min(e.x0, e.x1) - group_pad), g.x1 = std::max(g.x1, std::max(e.x0, e.x1) + group_pad);
+        }
         const float lw = widest(g.label, true) + 2 * group_pad;
         if (g.x1 - g.x0 < lw) {
             const float more = (lw - (g.x1 - g.x0)) / 2;
