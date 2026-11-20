@@ -2446,7 +2446,8 @@ are cleared first, and the gcov is the one beside the compiler CMake
 chose); for Python, coverage.py. Lines that ran have green numbers and
 lines that did not red, while the file is as it was then; the Tests tab
 lists each file's share, Enter opening it, and "Show or hide coverage"
-switches it.
+switches it. On another machine the build folder's compiler is read there
+first, and a run asked for while that is on its way is not started again.
 
 ## New projects
 

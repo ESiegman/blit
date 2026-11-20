@@ -114,10 +114,11 @@ struct App::TestUi {
     };
     std::vector<CovReport> cov_reports;
     // On another machine: the build folders' CMakeCache.txt, read there
-    // before a run with coverage starts; and the reports being read back
-    // after one, on an errand there.
+    // before a run with coverage starts; and the errands reading reports
+    // back after a run (one for each run that has ended, until each is back).
     std::optional<std::unordered_map<std::string, std::string>> caches;
-    bool preparing = false, reading = false;
+    bool preparing = false;
+    u32 reading = 0;
     std::unordered_map<std::string, FileCoverage> coverage;
     std::vector<std::string> cov_files;  // (their paths, in order, for the tab)
     bool cov_shown = false;
@@ -252,6 +253,7 @@ void App::test_run(const std::vector<size_t>& which, bool coverage) {
     std::string host, there, tmp;
     const bool remote = split_remote(u.root, &host, &there);
     if (remote) {
+        if (u.preparing) return;  // (a run is on its way: pressed again meanwhile, it would run twice)
         if (coverage && !dirs.empty() && !u.caches) {  // (the folders' compilers first, read there: then it runs)
             u.preparing = true;
             remote_errand([this, dirs, which, coverage](std::stop_token stop) -> std::function<void()> {
@@ -364,7 +366,7 @@ void App::test_ended(u64 doc) {
         }
         return test_take(std::move(texts));
     }
-    u.reading = true;
+    ++u.reading;
     remote_errand([this, paths, root = u.root, run = u.runs](std::stop_token stop) -> std::function<void()> {
         std::vector<std::string> texts(paths.size());
         std::string why, gone = "rm -f", out;
@@ -374,7 +376,7 @@ void App::test_ended(u64 doc) {
         }
         if (!paths.empty()) fs_run(root, gone, &out);
         return [this, texts = std::move(texts), run] mutable {
-            testui_->reading = false;
+            --testui_->reading;
             if (testui_->runs == run) test_take(std::move(texts));  // (not if another run has started since)
         };
     });

@@ -360,6 +360,11 @@ if command -v cmake >/dev/null 2>&1; then
             --script "workdir:$R/cov;remotewait;command:Run the tests with coverage;testdump;coveragedump" "$R/cov/run.cpp" 2>&1 >/dev/null | tail -1)
         got="$got | $(reports)"
         check "GCC's coverage there" 'here: ran 5 6 7 8, missed 1 2 | files: run.cpp=67% | 0'
+        # Asked for again on a slow host while the compiler is still being
+        # read there: the tests run once, and what ran is shown.
+        SLOW=0.3 slow "workdir:$R/cov;remotewait;testdump;command:Run the tests with coverage;wait:100;command:Run the tests with coverage;testdump;coveragedump" "$R/cov/run.cpp"
+        got="$got | $(reports)"
+        check "and asked for twice on a slow host: run once" 'build: .runs ;; blit: Coverage: 67% of the lines in 1 files ;; build: +runs ;; here: ran 5 6 7 8, missed 1 2 | files: run.cpp=67% | 0'
     fi
 fi
 chmod 755 "$dir/ro"
