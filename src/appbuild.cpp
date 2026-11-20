@@ -588,6 +588,7 @@ void App::build_panel_click(int row, int col, const SDL_MouseButtonEvent& b) {
         return;
     }
     u.current = task_key(u.tasks[static_cast<size_t>(u.rows[i].task)]);
+    run_config_take();  // (a run configuration's program is Debug's and Profile's too)
     if (b.clicks >= 2) build_run(u.rows[i].task);
     ++build_gen_;
     dirty_ = true;
@@ -620,7 +621,10 @@ bool App::build_panel_key(const SDL_KeyboardEvent& k) {
             step(k.key == SDLK_HOME ? 1 : -1);
             break;
         case SDLK_SPACE:
-            if (u.sel < n && u.rows[u.sel].task >= 0) u.current = task_key(u.tasks[static_cast<size_t>(u.rows[u.sel].task)]);
+            if (u.sel < n && u.rows[u.sel].task >= 0) {
+                u.current = task_key(u.tasks[static_cast<size_t>(u.rows[u.sel].task)]);
+                run_config_take();
+            }
             break;
         case SDLK_RETURN:
         case SDLK_KP_ENTER:

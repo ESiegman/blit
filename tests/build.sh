@@ -297,6 +297,8 @@ if test -x "$R/build/hello"; then got=built; else got=missing; fi
 check "(the build ran first)" 'built'
 run "$R" "buildrun:plain;buildwait;runconfdump"
 check "another chosen: theirs too" 'plain | debug: hello x y in rc | profile: hello x y in rc'
+run "$R" "builddump;buildpanel;frame;key:Home;key:Down;key:space;frame;runconfdump"
+check "and chosen with Space, not run: theirs too" 'plain | debug: hello x y in rc | profile: hello x y in rc'
 printf '{ "configurations": [ { "name": "x" } ] }\n' >"$R/.blit/run.json"
 got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$R;frame;builddump" 2>&1 >/dev/null | grep '^blit: ' | tail -1)
 check "a configuration without its program: said" 'blit: .blit/run.json: a configuration needs a "name" and a "program"'
