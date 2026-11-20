@@ -1424,6 +1424,9 @@ void App::run_script(const char* script) {
         } else if (verb == "finddump") {
             find_settle();
             std::fprintf(stderr, "%s%s\n", arg.empty() ? "" : (arg + ": ").c_str(), find_dump().c_str());
+        } else if (verb == "findheading") {  // what the box says it lists ("References (4)"), or closed
+            find_settle();
+            std::fprintf(stderr, "%s\n", find_heading().c_str());
         } else if (verb == "motion") {  // from here on things move as they do in a window (see step)
             fx_live_ = true;
             continue;

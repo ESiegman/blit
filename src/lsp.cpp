@@ -99,6 +99,22 @@ inline int spawn_chdir(posix_spawn_file_actions_t* fa, const char* dir) {
 #endif
 
 
+// clangd's background index as its command line has it: 0 not clangd, 1
+// off, 2 on (clangd's own default; the last of the flags counts).
+u8 clangd_index(const LspServer& s) {
+    if (s.command.empty()) return 0;
+    const std::string& program = s.command[0];
+    if (s.name != "clangd" && !program.substr(program.rfind('/') + 1).starts_with("clangd")) return 0;
+    u8 index = 2;
+    for (size_t i = 1; i < s.command.size(); ++i) {
+        std::string_view a = s.command[i];
+        while (a.starts_with('-')) a.remove_prefix(1);
+        if (a == "background-index" || a == "background-index=true" || a == "background-index=1") index = 2;
+        else if (a == "background-index=false" || a == "background-index=0") index = 1;
+    }
+    return index;
+}
+
 // The protocol's name for a language, where it differs from blit's.
 std::string language_id(const std::string& language) {
     if (language == "bash") return "shellscript";
@@ -452,6 +468,7 @@ struct Caps {
     bool execute = false;
     bool implementation = false, type_definition = false, declaration = false, highlight = false, outline = false, symbols = false;
     bool calls = false, types = false;  // call and type hierarchies
+    u8 index = 0;  // clangd's background index (clangd_index())
     std::string completion_triggers, signature_triggers;
     std::vector<std::string> token_types, token_mods;
 };
@@ -575,6 +592,10 @@ struct Lsp::Server {
     std::vector<std::string> candidates;  // (another machine's: the names it may turn out to be)
     Caps caps;
     bool ready = false;
+    // clangd's background index: 0 not clangd, 1 off, 2 not built yet, 3
+    // built (its first indexing has ended; it goes on as files change).
+    // Until it is built clangd knows only the open files.
+    u8 index = 0;
     int docs = 0;           // documents on it
     u64 idle_since = 0;     // ns: when its last document went (0: it has some)
     // Problems in files that are not open, by path.
@@ -917,6 +938,7 @@ struct Lsp::Conn::Worker {
         const Value dp = sc["diagnosticProvider"];
         caps.pull = dp.is_object();
         caps.workspace_pull = dp["workspaceDiagnostics"].boolean(false);
+        caps.index = clangd_index(c.server);
 
         frame(R"({"jsonrpc":"2.0","method":"initialized","params":{}})");
         if (!c.server.settings.empty() && settings.parse(c.server.settings)) {
@@ -2516,6 +2538,11 @@ const std::string& Lsp::path() const {
     return front_ ? front_->path : none;
 }
 bool Lsp::counts_utf16() const { return last_ ? last_->caps.utf16 : true; }
+bool Lsp::partial() const { return last_ && (last_->index == 1 || last_->index == 2); }
+std::string Lsp::partial_why() const {
+    if (!partial()) return {};
+    return last_->index == 1 ? last_->shown + "'s background index is off" : last_->shown + "'s index is not built yet";
+}
 
 const std::vector<Diagnostic>& Lsp::diagnostics() const {
     static const std::vector<Diagnostic> none;
@@ -3035,6 +3062,7 @@ u32 Lsp::poll() {
             case kInReady: {
                 s->caps = std::move(m.caps);
                 s->ready = true;
+                s->index = s->caps.index;
                 if (!m.text.empty()) {  // another machine's: which server it turned out to be, and its project's folder there
                     const size_t a = m.text.find('\n'), b = m.text.find('\n', a + 1);
                     s->shown = m.text.substr(0, a);
@@ -3380,6 +3408,7 @@ u32 Lsp::poll() {
                 auto at = std::ranges::find(s->progress, m.text, &Server::Progress::token);
                 if (m.id == 3) {  // (ended)
                     if (at != s->progress.end()) s->progress.erase(at);
+                    if (s->index == 2 && m.text == "\"backgroundIndexProgress\"") s->index = 3;  // (clangd's token for its index)
                 } else {
                     if (at == s->progress.end()) at = s->progress.insert(at, {m.text, {}, {}});
                     if (m.id == 1) at->title = m.result_id;

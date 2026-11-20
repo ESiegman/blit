@@ -521,6 +521,7 @@ private:
     bool lsp_uses_shown() const;
     std::string lsp_uses_dump();  // (the tests: the uses marked in the split in front, as line:column ranges)
     void lsp_rename();   // F2
+    void lsp_rename_checked(const std::vector<LspPlace>& declared);  // (where the name is declared, while the server knows the open files only)
     // Option+Shift+F: the selection's lines, or the whole file (Vim's gq: lines l0 to l1).
     void lsp_format();
     void lsp_format_lines(u64 l0, u64 l1);
@@ -591,6 +592,7 @@ private:
     bool find_wheel(const SDL_MouseWheelEvent& w);
     void find_layout(int w, int h, FrameDesc& fd);
     std::string find_dump();
+    std::string find_heading() const;  // (the tests: what the box says it lists, "References (4)")
     void find_settle(bool listing = false);
     void find_save_for(u64 doc);  // the document the name being asked for is for
     // The box as a picker for a script (input: a line to type, no list).

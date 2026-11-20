@@ -1636,7 +1636,9 @@ A server whose last file has been closed stops half a minute later.
 - **Find references** with Shift+F12 (Vim's `gr`): a list of every place
   the name is used, each with its file, line and text, as Search in files
   shows them. Enter goes to one; afterwards F4 and Shift+F4 go to the next
-  and the previous, until another list is made.
+  and the previous, until another list is made. While clangd knows only
+  the open files (its index not built yet, or turned off: see below),
+  the list's heading says so: `References (3, open files only)`.
 - **Implementations, type definitions and declarations** with Cmd+F12,
   Cmd+Shift+F12 and "Go to the declaration" in the command search (Vim's
   `gy` and `gD`). One place is gone to; several are listed as references
@@ -1670,6 +1672,10 @@ A server whose last file has been closed stops half a minute later.
   open in a tab is changed there (one undo takes the whole change back);
   any other is changed on disk, on another machine too. If a file open in
   a tab has been typed in since the changes were found, none is made.
+  While clangd knows only the open files, the count of changes ends
+  `(open files only)`, and a name declared in a file that is not open is
+  not renamed (the bottom line says where it is declared): open that file,
+  or wait for the index.
 - **Formatting** with Option+Shift+F: the whole file, or the lines of the
   selection (Vim's `gq` with a motion, `gqq` for a line, or `gq` on a
   Visual selection). One undo takes it back. With `lsp.format_on_save`
@@ -1686,8 +1692,10 @@ A server whose last file has been closed stops half a minute later.
   definition itself not counted). They are asked for once typing has
   paused for a moment, each as its definition comes into view, and again
   when the text changes or a file is saved. A click on one lists those
-  references, as Find references does. (Code lenses as servers send them
-  are not asked for: clangd, pyright and ruff send none.)
+  references, as Find references does. None are shown while clangd knows
+  only the open files (they would count those alone), and all come once
+  its index is built. (Code lenses as servers send them are not asked
+  for: clangd, pyright and ruff send none.)
 - **The server's colours** (semantic tokens) over tree-sitter's, where they
   say more: a type, a parameter, a macro, a namespace, a member of an enum.
   A file that tree-sitter does not colour gets the server's alone.
@@ -1774,6 +1782,11 @@ it indexes, the status bar says how far it has got beside its name
 project's folder (a `.gitignore` entry for `.cache/` keeps it out of git),
 so the next start reads it rather than building it again. A command of
 your own replaces those flags; the example above turns the index off.
+Until its first indexing has ended, and always with the index off (or in
+a project with no compile database, which it cannot index), clangd knows
+only the open files: references and rename say `open files only`, the
+reference counts are not shown, and a name declared in a file that is
+not open is not renamed.
 
 The server's own output goes nowhere; `BLIT_LSP_LOG=/some/file blit ...`
 keeps it for when a server misbehaves.

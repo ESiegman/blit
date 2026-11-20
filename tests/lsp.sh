@@ -40,6 +40,8 @@ printf 'blit.opt.lsp.servers.fakec = { command = { "%s", "--close-input", "200",
 for ms in 5000 0; do
     printf 'blit.opt.lsp.servers.clangd = { command = { "%s", "--index", "%s", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" "$ms" >"$dir/index$ms.lua"
 done
+# and with its index turned off.
+printf 'blit.opt.lsp.servers.clangd = { command = { "%s", "--background-index=false", "--name", "c" }, languages = { "cpp" }, roots = { ".root" } }\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\nblit.opt.editor.restore = false\n' "$fake" >"$dir/indexoff.lua"
 export BLIT_RECENT_FILE="$dir/recent"
 init=
 fresh() {
@@ -62,6 +64,8 @@ fresh() {
     printf 'struct Shape {\n};\nstruct Circle : public Shape {\n};\nstruct Square : Shape {\n};\nint leaf(int n) {\n    return n;\n}\nint middle(int n) {\n    return leaf(n) + leaf(1);\n}\nint top() {\n    return middle(2);\n}\n' >"$P/calls.cpp"
     printf 'struct Ring {\n    void push(int v);\n    int pop();\n};\nvoid Ring::push(int v) {\n}\nint Ring::pop() {\n    return 0;\n}\nint drain(Ring& r) {\n    return r.pop();\n}\n' >"$P/ring.cpp"
     printf 'plain words\n' >"$P/notes.txt"
+    printf 'int format_record(int n);\n' >"$P/fmt.hpp"
+    printf 'int format_record(int n) {\n    return n;\n}\n' >"$P/fmt.cpp"
     printf 'twice:\n\t@echo "a.cpp:1:17: error: the same one, found by the build"\n\t@echo "a.cpp:2:1: error: one only the build found"\n\t@exit 2\n' >"$P/Makefile"
 }
 
@@ -148,6 +152,12 @@ search_keys='Ctrl+Shift+F'  # (as the bottom line writes Search in files' keys: 
 check "another list made since: F4 is Search in files' again" ">[a.cpp*] / blit: No search in files yet: $search_keys"
 with vim "text:w;text:g;text:r;wait:200;finddump"
 check "Vim's gr lists them too" 'pick [] 4 : >a.cpp:1  int shared = 1; // ERROR a.cpp:3  WARN shared   b.py:1  shared = 2  # HINT d.cpp:1  shared in d, not open'
+with clangd "key:Right;key:Right;key:Right;key:Right;key:Right;key:shift+F12;wait:200;findheading"
+check "clangd before its index is built: its answer said to be the open files' only" 'References (4, open files only)'
+with indexoff "key:Right;key:Right;key:Right;key:Right;key:Right;key:shift+F12;wait:200;findheading"
+check "and with its index off" 'References (4, open files only)'
+with index0 "key:Right;key:Right;key:Right;key:Right;key:Right;key:shift+F12;wait:200;findheading"
+check "once it is built, not" 'References (4)'
 run "key:Down;key:End;key:shift+F12;wait:200;finddump"
 got="$got / $said"
 check "nothing there: it says so" 'closed / blit: No references found'
@@ -240,6 +250,10 @@ run "lensdump" "$P/ring.cpp"
 check "a member defined outside its class: its own count, not the class's" '1: 4 references | 5: 2 references | 7: 3 references | 10: 1 reference'
 with nolens "lensdump" "$P/src/app.cpp"
 check "lsp.reference_counts = false: none" 'no counts'
+with index5000 "lensdump" "$P/src/app.cpp"
+check "clangd before its index is built: none (they would count the open files only)" 'no counts'
+with index0 "lensdump" "$P/src/app.cpp"
+check "once it is built: counted" '1: 2 references | 3: 1 reference | 6: 1 reference'
 
 # The other uses of the name under the cursor, a moment after it stops.
 uses="key:Right;key:Right;key:Right;key:Right;key:Right;frame;wait:250;frame;wait:100;frame"
@@ -261,6 +275,19 @@ run "key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;finddump"
 check "F2 asks for the new name, starting from the old" 'input [shared] 0 :'
 run "key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;key:ctrl+U;text:common;key:Return;wait:200;finddump"
 check "then shows what it would change, file by file" 'pick [] 4 : >Rename to common: 4 edits in 3 files a.cpp  2 edits b.py  1 edit d.cpp  1 edit'
+with clangd "key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;key:ctrl+U;text:common;key:Return;wait:200;finddump"
+check "clangd before its index is built: said to be the open files' only" 'pick [] 4 : >Rename to common: 4 edits in 3 files (open files only) a.cpp  2 edits b.py  1 edit d.cpp  1 edit'
+on_fmt="key:Right;key:Right;key:Right;key:Right;key:Right"
+with clangd "$on_fmt;key:F2;wait:200;finddump" "$P/fmt.cpp"
+got="$got / $said"
+check "and a name declared in a file that is not open: not renamed, and why" "closed / blit: Cannot rename: it is declared in fmt.hpp, which is not open, and clangd's index is not built yet"
+with indexoff "$on_fmt;key:F2;wait:200;finddump" "$P/fmt.cpp"
+got="$got / $said"
+check "the same with the index off" "closed / blit: Cannot rename: it is declared in fmt.hpp, which is not open, and clangd's background index is off"
+with clangd "open:$P/fmt.hpp;open:$P/fmt.cpp;lspsettle;$on_fmt;key:F2;wait:200;finddump" "$P/fmt.cpp"
+check "with that file open, renamed" 'input [format_record] 0 :'
+with index0 "$on_fmt;key:F2;wait:200;key:ctrl+U;text:fmt_record;key:Return;wait:200;finddump" "$P/fmt.cpp"
+check "and with the index built, renamed everywhere" 'pick [] 3 : >Rename to fmt_record: 2 edits in 2 files fmt.cpp  1 edit fmt.hpp  1 edit'
 run "key:Right;key:Right;key:Right;key:Right;key:Right;key:F2;wait:200;key:ctrl+U;text:common;key:Return;wait:200;key:Return;lsptext"
 got="$got / $said / $(cat "$P/d.cpp")"
 check "Enter renames: the open file through its tab, the other on disk" 'int common = 1; // ERROR / call(1,   2, 3);    / WARN common   /  / blit: Renamed: 4 edits in 3 files / common in d, not open'

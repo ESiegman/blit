@@ -323,6 +323,7 @@ struct App::Assist {
     // come with), by where the name is; what has been asked; when to ask
     // (typing has paused); the notes drawn of them.
     u64 lens_doc = 0, lens_rev = ~0ull, lens_tag = 0, lens_due_ns = 0;
+    bool lens_partial = false;  // (none while the server knows the open files only: counted afresh once it knows more)
     std::map<u64, u32> lens_counts;
     std::set<u64> lens_asked;
     std::vector<GridNote> lens_notes;
@@ -343,7 +344,9 @@ struct App::Assist {
     std::vector<std::pair<u64, u64>> uses;                                // (in order)
     std::vector<GridDeco> decos_all;  // (the problems' marks and the uses', together)
     // A rename under way: asked where the name is, then for the new name.
-    bool rename_pending = false;
+    // (While the server knows the open files only, first where the name is
+    // declared: one declared in a file that is not open is not renamed.)
+    bool rename_pending = false, rename_checking = false;
     u64 rename_doc = 0, rename_off = 0;
     std::string rename_to;
     // Formatting asked for (and, before a save, waited for).
@@ -539,6 +542,10 @@ void App::sync_lsp() {
         dirty_ = true;
     }
     if (news & (Lsp::kDiagnostics | Lsp::kHints | Lsp::kTokens | Lsp::kProgress)) dirty_ = true;
+    if ((news & (Lsp::kState | Lsp::kProgress)) && a.lens_partial != lsp_.partial()) {
+        a.lens_partial = lsp_.partial();
+        a.lens_rev = ~0ull;  // (the counts it had asked again, or none)
+    }
     if (news & Lsp::kDiagnostics) {  // (the gutter's marks of fixes, looked at again)
         a.action_lines.clear();
         ++lsp_marks_gen_;
@@ -588,6 +595,10 @@ void App::sync_lsp() {
     }
 
     // Implementations and the like: one gone to, several listed.
+    if ((news & Lsp::kPlaces) && a.rename_checking) {
+        a.rename_checking = false;
+        lsp_rename_checked(lsp_.place_list());
+    }
     if ((news & Lsp::kPlaces) && a.places_pending) {
         a.places_pending = false;
         static const char* const kWords[] = {"Implementation", "Type definition", "Declaration"};
@@ -670,7 +681,7 @@ void App::sync_lsp() {
             for (const LspFileEdit& f : e.files) edits += f.edits.size();
             std::vector<std::string> items;
             items.push_back("Rename to " + a.rename_to + ": " + std::to_string(edits) + (edits == 1 ? " edit in " : " edits in ") + std::to_string(e.files.size()) +
-                            (e.files.size() == 1 ? " file" : " files"));
+                            (e.files.size() == 1 ? " file" : " files") + (lsp_.partial() ? " (open files only)" : ""));
             const std::string* root = panel_root();
             for (const LspFileEdit& f : e.files)
                 items.push_back(shown_name(f.path, root) + "  " + std::to_string(f.edits.size()) + (f.edits.size() == 1 ? " edit" : " edits"));
@@ -922,9 +933,10 @@ void App::lsp_show_places(std::vector<LspPlace> list, const std::string& word) {
     a.refs_word = word;
     std::string lower = word;
     lower[0] = static_cast<char>(std::tolower(static_cast<unsigned char>(lower[0])));
+    const bool partial = word == "Reference" && lsp_.partial();  // (the server knows the open files only: said in the heading)
     if (a.refs.empty()) {
         a.refs_live = false;
-        notify(word == "Reference" ? std::string("No references found") : "No " + lower + " found");
+        notify(word == "Reference" ? std::string("No references found") + (partial ? " (open files only)" : "") : "No " + lower + " found");
         return;
     }
     if (a.refs.size() == 1 && word != "Reference") {
@@ -941,7 +953,8 @@ void App::lsp_show_places(std::vector<LspPlace> list, const std::string& word) {
         while (!text.empty() && (text.front() == ' ' || text.front() == '\t')) text.remove_prefix(1);
         items.push_back(shown_name(p.path, root) + ":" + std::to_string(p.line + 1) + "  " + std::string(text));
     }
-    const std::string title = (word == "Type definition" ? std::string("Type definitions") : word + "s") + " (" + std::to_string(a.refs.size()) + ")";
+    const std::string title = (word == "Type definition" ? std::string("Type definitions") : word + "s") + " (" + std::to_string(a.refs.size()) +
+                              (partial ? ", open files only)" : ")");
     find_choose_item(title, std::move(items), [this](int i) {
         Assist& x = *assist_;
         if (i < 0 || static_cast<size_t>(i) >= x.refs.size()) return;
@@ -968,6 +981,7 @@ void App::lsp_places(Lsp::PlaceKind kind) {
     }
     lsp_close(kPopAll);
     a.places_pending = true;
+    a.rename_checking = false;
     lsp_.places(pane_->doc->ed.cursor(), kind);
 }
 
@@ -1255,8 +1269,28 @@ void App::lsp_rename() {
         return;
     }
     lsp_close(kPopAll);
-    a.rename_pending = true;
     a.rename_doc = pane_->doc->id;
+    if (lsp_.partial() && lsp_.can_place(Lsp::kDeclaration)) {  // (where it is declared, first)
+        a.rename_checking = true;
+        a.places_pending = false;
+        lsp_.places(pane_->doc->ed.cursor(), Lsp::kDeclaration);
+        return;
+    }
+    a.rename_pending = true;
+    lsp_.prepare_rename(pane_->doc->ed.cursor());
+}
+
+// While the server knows the open files only, a name declared in a file
+// that is not open would be renamed in the open files and nowhere else
+// (the declaration left as it was): it is not renamed. Otherwise the
+// rename goes on.
+void App::lsp_rename_checked(const std::vector<LspPlace>& declared) {
+    Assist& a = *assist_;
+    if (lsp_.front() != a.rename_doc || pane_->doc->id != a.rename_doc) return notify("The file changed: rename again");
+    for (const LspPlace& p : declared)
+        if (!lsp_edit_doc(p.path))
+            return notify("Cannot rename: it is declared in " + shown_name(p.path, panel_root()) + ", which is not open, and " + lsp_.partial_why());
+    a.rename_pending = true;
     lsp_.prepare_rename(pane_->doc->ed.cursor());
 }
 
@@ -2496,6 +2530,7 @@ std::string App::hier_dump() {
 void App::lens_marks(FrameDesc& fd) {
     Assist& a = *assist_;
     if (!cfg_.lsp_ref_counts || focus_view_ >= fd.view_count || !lsp_.ready() || lsp_doc_ != pane_->doc || !lsp_.can_references()) return;
+    if (lsp_.partial()) return;  // (counts of the open files' references only would be wrong: none until the server knows the project)
     Doc& d = *pane_->doc;
     const u64 now = now_ns();
     if (a.lens_doc != d.id || a.lens_rev != d.ed.revision()) {  // (another file, or this one changed: the counts it had are gone)

@@ -2426,6 +2426,8 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
     fx_float(p, kFxFinder);
 }
 
+std::string App::find_heading() const { return find_open_ ? find_->prompt : "closed"; }
+
 // Where things stand, on one line (for the tests): what the box is for,
 // what is typed, how many rows there are, and the first few of them, the
 // chosen one marked.

@@ -297,6 +297,11 @@ public:
     const std::string& root() const;
     const std::string& path() const;  // the document's full path
     bool counts_utf16() const;
+    // Whether its answers cover the open files only: clangd with its
+    // background index off, or not built yet. Why, in words ("clangd's
+    // index is not built yet").
+    bool partial() const;
+    std::string partial_why() const;
     void did_save();
 
     // Questions. Each answer arrives through poll(); asking again drops the

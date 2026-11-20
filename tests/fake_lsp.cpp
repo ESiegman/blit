@@ -41,7 +41,9 @@
 //                the files of the project's folder that are not open
 //   implementation  every place after the first, as LocationLinks
 //   type definition the last place the word appears, as one Location (not a list)
-//   declaration  the first place, as a list of one
+//   declaration  the first place in a header (a file ending .h or .hpp, open
+//                or in the project's folder) the word appears, else the
+//                first place in the document, as a list of one
 //   highlight    every place the word appears in the document
 //   symbols      a line starting "struct NAME" or "class NAME", with the
 //                functions inside it as its children; a line "TYPE NAME(...) {"
@@ -486,6 +488,15 @@ void places(Value id, Value params, std::string_view method) {
     if (method == "textDocument/typeDefinition") {
         location(at.back(), false);
     } else if (method == "textDocument/declaration") {
+        for (const auto& [u, found] : everywhere(w))  // (in a header, as C++'s are, where there is one)
+            if (u.ends_with(".h") || u.ends_with(".hpp")) {
+                r = "[{\"uri\":";
+                json::quote(r, u);
+                r += ",\"range\":";
+                range_json(r, found[0].first, found[0].first + w.size(), found[0].second);
+                r += "}]";
+                return reply(id, r);
+            }
         r = "[";
         location(at.front(), false);
         r += "]";
