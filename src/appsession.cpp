@@ -1,11 +1,12 @@
 // Sessions: what was open in each project folder, kept so that opening the
 // folder again brings it back. The tabs of each split in their order, how
 // the window was split and where its dividers were, each file's cursor and
-// view, the side panel (shown or not, its tab, its width) and the Build
-// tab's task. One small text file for each folder, in `sessions` beside
-// `recent` in blit's data folder (~/.local/share/blit/sessions), named by a
-// hash of the folder's path; its first lines say whose it is and how many
-// tabs it brings back, which is all the start screen reads of it.
+// view, the side panel (shown or not, its tab, its width), the Build tab's
+// task, and the breakpoints and expressions watched. One small text file
+// for each folder, in `sessions` beside `recent` in blit's data folder
+// (~/.local/share/blit/sessions), named by a hash of the folder's path; its
+// first lines say whose it is and how many tabs it brings back, which is
+// all the start screen reads of it.
 //
 // A window takes a folder's session when the folder is opened to work in:
 // from the start screen's Recent, the box that opens folders (d, Cmd+Shift+O),
@@ -161,6 +162,7 @@ struct App::Session {
     bool panel = false, panel_open = false;
     std::string panel_tab, build;
     int panel_cols = 0;
+    std::vector<std::string> debug;  // the breakpoints and the expressions watched, a line each
     std::unique_ptr<Node> root;
 
     // Reads one; false if it is not a session of this folder.
@@ -180,6 +182,7 @@ struct App::Session {
             if (f[0] == "folder" && f.size() == 2) folder = f[1];
             if (f[0] == "panel" && f.size() == 4) panel = true, panel_open = f[1] == "1", panel_tab = f[2], panel_cols = static_cast<int>(number(f[3]));
             if (f[0] == "build" && l.size() > 6) build = l.substr(6);  // (the task's key, which has a tab in it)
+            if (f[0] == "break" || f[0] == "function" || f[0] == "watch") debug.emplace_back(l);  // (appdebug.cpp reads them)
         }
         if (folder != want) return false;
         root = node(lines, i);
@@ -429,6 +432,7 @@ std::string App::session_text() {
     std::string out = std::string(kFirstLine) + "\nfolder\t" + u.folder + "\ntabs\t" + std::to_string(count) + "\n";
     out += "panel\t" + std::string(open ? "1" : "0") + "\t" + tab + "\t" + std::to_string(cols) + "\n";
     if (const std::string build = build_chosen(); !build.empty() && build.find('\n') == std::string::npos) out += "build\t" + build + "\n";
+    out += debug_session_text();
     return out + splits;
 }
 
@@ -628,6 +632,7 @@ void App::session_apply(Session& st) {
     }
     if (st.panel) panel_session_set(st.panel_open, st.panel_tab, st.panel_cols);
     if (!st.build.empty()) build_choose(st.build);
+    debug_session_take(st.debug);
     u.tabs[st.folder] = static_cast<int>(files);
     ++session_gen_;
     place_panes(px_w_, px_h_);

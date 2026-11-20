@@ -173,5 +173,20 @@ rm "$T/far/a.txt"
 run "remotewait;frame;dump" "$R"
 check "and one gone there goes quietly" '>[untitled*]'
 
+# The breakpoints (with what each waits for: a condition with a backslash
+# in it, a message), the functions' and the expressions watched: kept, and
+# back; and another folder's in their place.
+C='breakif:3;text:s != "\t";key:Return;key:Return;text:x is {x};key:Return'
+run "folder:$W;open:$W/notes.txt;break:2;$C;command:Break at a function…;key:ctrl+U;text:square;key:Return;debugpanel;debugpick:add;text:x * 100;key:Return;quit"
+f=$(grep -lx "folder	$W" "$S"/* 2>/dev/null | head -1)
+got=$(grep -E '^(break|function|watch)	' "$f" | sed -e "s#$dir#~#g" | join)
+check "kept: the breakpoints, the functions' and the watches" \
+    'break	1				~/work/notes.txt ;; break	2	s != "\\t"		x is {x}	~/work/notes.txt ;; function	square ;; watch	x * 100'
+run "debugbreaks;debugdump" "$W"
+check "back: as they were" 'notes.txt:2; notes.txt:3 if s != "\t" log x is {x}; square() ;; idle; watch: x * 100'
+run "folder:$V;open:$V/x.txt;break:1;quit"
+run "folder:$W;debugbreaks;folder:$V;debugbreaks;debugdump"
+check "another folder's in their place" 'notes.txt:2; notes.txt:3 if s != "\t" log x is {x}; square() ;; x.txt:1 ;; idle'
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "session ok"
 exit $failed

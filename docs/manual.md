@@ -160,11 +160,12 @@ project.
 Cmd+Shift+O, by `blit DIR`, made by New project, or another worktree from
 the Git tab) comes back as it was left when it is opened again: the tabs
 of each split in their order, the splits and their sizes, each file's
-cursor and view, the side panel (shown or not, its tab, its width) and
-the Build tab's task. A folder's row in Recent says what will come back
-(`blit  ~/Dev · 7 tabs`). The session is written when blit quits and when
-another folder is opened, one small file per folder in `sessions` beside
-`recent`. A file that is gone is left out
+cursor and view, the side panel (shown or not, its tab, its width), the
+Build tab's task, and the breakpoints (with their conditions, hit counts
+and messages), the functions' and the expressions watched. A folder's row
+in Recent says what will come back (`blit  ~/Dev · 7 tabs`). The session
+is written when blit quits and when another folder is opened, one small
+file per folder in `sessions` beside `recent`. A file that is gone is left out
 (and a split left with nothing goes); a folder on another machine
 (`ssh://`) gets its tabs at once and their text when the connection is up,
 as any file there does. Opening another folder takes the window over:
@@ -2175,7 +2176,8 @@ Neither has a key of its own; map them in init.lua, for example
 ## Debugging
 
 **F9** puts a breakpoint on the cursor's line (a red dot in the gutter),
-or takes it away. **F5** starts debugging: the first time it asks which
+or takes it away. The breakpoints and the expressions watched are kept in
+the folder's session. **F5** starts debugging: the first time it asks which
 program, and the side panel's **Debug** tab (Cmd+Shift+D) keeps it, with
 its arguments and working directory.
 

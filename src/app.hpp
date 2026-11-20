@@ -1190,6 +1190,8 @@ private:
     void debug_edit_break();
     void debug_send_breaks(const std::string& path);
     u32 debug_gutter(const Doc& d, u64 line);
+    std::string debug_session_text() const;  // (the breakpoints and watches, in the folder's session)
+    void debug_session_take(const std::vector<std::string>& lines);
     std::vector<u64> debug_break_lines(const Doc& d);  // (the file's breakpoints' lines, from 0: the scroll bar's marks)
     void debug_start();
     // A session's start (appdebug.cpp): the debugger started, then told to

@@ -612,6 +612,95 @@ std::vector<u64> App::debug_break_lines(const Doc& d) {
     return out;
 }
 
+// ---------------------------------------------------------------- in the folder's session
+
+namespace {
+
+// A condition, a hit count, a message or an expression in a session's line:
+// its tabs, line ends and backslashes written as \t, \n and \\.
+std::string session_field(std::string_view s) {
+    std::string out;
+    for (const char c : s) out += c == '\t' ? "\\t" : c == '\n' ? "\\n" : c == '\\' ? "\\\\" : std::string(1, c);
+    return out;
+}
+
+std::string session_unfield(std::string_view s) {
+    std::string out;
+    for (size_t i = 0; i < s.size(); ++i) {
+        if (s[i] != '\\' || i + 1 == s.size()) {
+            out += s[i];
+            continue;
+        }
+        const char c = s[++i];
+        out += c == 't' ? '\t' : c == 'n' ? '\n' : c;
+    }
+    return out;
+}
+
+}  // namespace
+
+// The breakpoints (where, and what each waits for), the functions' and the
+// expressions watched, as lines of the folder's session (appsession.cpp):
+//   break LINE (from 0) CONDITION HITS MESSAGE PATH (last: it may have tabs)
+//   function NAME
+//   watch EXPRESSION
+std::string App::debug_session_text() const {
+    if (!debugui_) return {};
+    const DebugUi& u = *debugui_;
+    std::string out;
+    for (const auto& [path, lines] : u.breaks) {
+        if (path.find('\n') != std::string::npos) continue;
+        for (const auto& [l, b] : lines)
+            out += "break\t" + std::to_string(l) + "\t" + session_field(b.cond) + "\t" + session_field(b.hits) + "\t" + session_field(b.log) + "\t" + path + "\n";
+    }
+    for (const std::string& f : u.functions) out += "function\t" + session_field(f) + "\n";
+    for (const DebugUi::Watch& w : u.watches) out += "watch\t" + session_field(w.expr) + "\n";
+    return out;
+}
+
+// A folder's session come back: its breakpoints and watches take the place
+// of those there were (a session under way is given them).
+void App::debug_session_take(const std::vector<std::string>& lines) {
+    DebugUi& u = *debugui_;
+    std::set<std::string> paths;
+    for (const auto& [path, l] : u.breaks) paths.insert(path);
+    u.breaks.clear();
+    u.functions.clear();
+    u.watches.clear();
+    for (const std::string& line : lines) {
+        std::vector<std::string_view> f;
+        std::string_view rest = line;
+        while (f.size() < 5) {  // (break's first five fields; the path is the rest)
+            const size_t tab = rest.find('\t');
+            if (tab == std::string_view::npos) break;
+            f.push_back(rest.substr(0, tab));
+            rest.remove_prefix(tab + 1);
+        }
+        if (f.empty()) continue;
+        if (f[0] == "break" && f.size() == 5 && !rest.empty()) {
+            const std::string path(rest);
+            u.breaks[path][static_cast<u32>(std::max(0, std::atoi(std::string(f[1]).c_str())))] = {session_unfield(f[2]), session_unfield(f[3]), session_unfield(f[4])};
+            paths.insert(path);
+        } else if (f[0] == "function" && f.size() == 1 && !rest.empty()) {
+            u.functions.push_back(session_unfield(rest));
+        } else if (f[0] == "watch" && f.size() == 1 && !rest.empty()) {
+            u.watches.push_back({session_unfield(rest), {}, false});
+        }
+    }
+    for (const std::string& path : paths) {
+        if (!u.breaks.contains(path)) u.unfollow(*this, path);
+        debug_send_breaks(path);
+    }
+    // (The files open whose breakpoints these are follow their lines from now.)
+    for (const std::unique_ptr<Pane>& p : panes_)
+        for (const std::shared_ptr<Doc>& d : p->docs)
+            if (!d->ed.path.empty() && !u.breaks.empty() && u.breaks.contains(full_path(d->ed.path))) u.follow(*this, *d);
+    debug_send_functions();
+    debug_watch_eval();
+    ++debug_gen_;
+    dirty_ = true;
+}
+
 // A run configuration chosen: what it runs is what is debugged.
 void App::debug_take(const std::string& program, const std::string& args, const std::string& cwd, const std::vector<std::string>& env) {
     DebugUi& u = *debugui_;
