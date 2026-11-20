@@ -199,7 +199,7 @@ done
 EOF
 chmod +x "$R/.venv/bin/python"
 got=$(BLIT_SSH="$(cd "$(dirname "$0")" && pwd)/fake-ssh.sh" BLIT_FAKE_HOME="$dir/there" "$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "remotewait;workdir:ssh://box$R;frame;testdump;command:Run the tests with coverage;testdump" "ssh://box$R/tests/test_r.py" 2>&1 >/dev/null | grep -v '^blit: ' | tail -1)
-check "on another machine: the .venv's pytest there" 'tests/test_r.py: +test_r'
+check "on another machine: the .venv's pytest there" 'tests/test_r.py: +test_r | here: 1+'
 got=$(BLIT_SSH="$(cd "$(dirname "$0")" && pwd)/fake-ssh.sh" BLIT_FAKE_HOME="$dir/there" "$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "remotewait;workdir:ssh://box$R;frame;testdump;command:Run the tests with coverage;testdump" "ssh://box$R/tests/test_r.py" 2>&1 >/dev/null | grep '^blit: ' | tail -1)
 check "and coverage.py not there: named by its path in the project" 'blit: No coverage was recorded (coverage.py installed for .venv/bin/python?)'
 # Coverage, read with GCC's gcov from a build made with --coverage: the

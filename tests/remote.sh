@@ -24,7 +24,9 @@ printf 'blit.opt.lsp.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/gi
 export BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T" BLIT_RECENT_FILE="$dir/recent"
 R="ssh://box$W"
 # The connection dropped, as a lost link would: blit's agent there killed, and that seen.
-drop="lua:os.execute('pkill -9 -f $T/.cache/blit/blit-agent');remotelost"
+drop="lua:os.execute('pkill -9 -f $T/.cache/blit/[b]lit-agent');remotelost"
+# The end of the file: Cmd+Down on macOS, Ctrl+End elsewhere.
+if [ "$(uname)" = Darwin ]; then docend="key:cmd+Down"; else docend="key:cmd+End"; fi
 
 failed=0
 check() {
@@ -81,27 +83,27 @@ mkdir -p "$T/.moved"
 there="lua:local f = io.open('$T/.moved/m.txt', 'w') f:write('alpha\\nTHERE\\n') f:close()"
 fresh_m() { printf 'alpha\nbeta\n' >"$T/.moved/m.txt"; }
 fresh_m
-run "remotewait;frame;key:cmd+Down;text:MINE;$there;reload;remotewait;frame;save;remotewait;finddump;key:Escape;frame;statusdump" "ssh://box$T/.moved/m.txt"
+run "remotewait;frame;$docend;text:MINE;$there;reload;remotewait;frame;save;remotewait;finddump;key:Escape;frame;statusdump" "ssh://box$T/.moved/m.txt"
 got="$got | $(tr '\n' ' ' <"$T/.moved/m.txt")"
 check "changed there under changes here: said, and saving asks" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; pick [] (m.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; box ~/.moved/m.txt ● | Ln 3, Col 5 Tabs LF Plain text | alpha THERE '
 fresh_m
-run "remotewait;frame;key:cmd+Down;text:MINE;$there;reload;remotewait;frame;save;key:Down;key:Return;remotewait;frame;dump;lsptext" "ssh://box$T/.moved/m.txt"
+run "remotewait;frame;$docend;text:MINE;$there;reload;remotewait;frame;save;key:Down;key:Return;remotewait;frame;dump;lsptext" "ssh://box$T/.moved/m.txt"
 check "and compared with what is there" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; >[m.txt m.txt (against disk, box)*] ;; @@ -1 +1 @@ /  alpha / -THERE / +beta / +MINE'
 fresh_m
-run "remotewait;frame;key:cmd+Down;text:MINE;$there;save;remotewait;finddump;key:Return;remotewait;frame;statusdump" "ssh://box$T/.moved/m.txt"
+run "remotewait;frame;$docend;text:MINE;$there;save;remotewait;finddump;key:Return;remotewait;frame;statusdump" "ssh://box$T/.moved/m.txt"
 got="$got | $(tr '\n' ' ' <"$T/.moved/m.txt")"
 check "changed there unseen: the save asks, and saves over it" 'pick [] (m.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; box ~/.moved/m.txt | Ln 3, Col 5 Tabs LF Plain text | alpha beta MINE'
 fresh_m
-run "remotewait;frame;key:cmd+Down;text:MINE;save;remotewait;text:X;save;remotewait;frame;statusdump" "ssh://box$T/.moved/m.txt"
+run "remotewait;frame;$docend;text:MINE;save;remotewait;text:X;save;remotewait;frame;statusdump" "ssh://box$T/.moved/m.txt"
 got="$got | $(tr '\n' ' ' <"$T/.moved/m.txt")"
 check "saved twice, nothing changed there: no question" 'box ~/.moved/m.txt | Ln 3, Col 6 Tabs LF Plain text | alpha beta MINEX'
 fresh_m
-run "remotewait;frame;key:cmd+Down;text:MINE;$there;save;find:names;text:m.;remotewait;frame;finddump;key:Escape;finddump" "ssh://box$T/.moved/m.txt"
+run "remotewait;frame;$docend;text:MINE;$there;save;find:names;text:m.;remotewait;frame;finddump;key:Escape;finddump" "ssh://box$T/.moved/m.txt"
 check "the save's question with another box open: it waits for that one to close" 'names [m.] 1 of 1 : >m.txt ;; pick [] (m.txt changed on disk since it was read here) 2 : >Save over it Compare with disk'
 fresh_m
 there=$(printf '%s' "$there" | sed -e "s#$T/.moved#$dir#")
 printf 'alpha\nbeta\n' >"$dir/m.txt"
-run "frame;key:cmd+Down;text:MINE;$there;reload;frame;save;finddump;key:Return;frame;statusdump" "$dir/m.txt"
+run "frame;$docend;text:MINE;$there;reload;frame;save;finddump;key:Return;frame;statusdump" "$dir/m.txt"
 got="$got | $(tr '\n' ' ' <"$dir/m.txt")"
 check "and the same on this machine" 'blit: m.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; pick [] (m.txt changed on disk since it was read here) 2 : >Save over it Compare with disk ;; m.txt | Ln 3, Col 5 Tabs LF Plain text | alpha beta MINE'
 # Save all with two of them: each is asked about in turn.
@@ -139,7 +141,7 @@ slow "remotewait;text:Q;save;quit;finddump;alive;remotewait;finddump;alive" "$L/
 got="$got | $(tr '\n' ' ' <"$T/.slow/slow.txt")"
 check "quitting waits for it too" 'pick [] 1 : >Quit without waiting ;; running ;; closed ;; quitting | QNEChello world '
 fresh_m
-slow "remotewait;frame;key:cmd+Down;text:ONE;save;wait:300;text:TWO;save;remotewait;frame;finddump;statusdump" "ssh://box$T/.moved/m.txt"
+slow "remotewait;frame;$docend;text:ONE;save;wait:300;text:TWO;save;remotewait;frame;finddump;statusdump" "ssh://box$T/.moved/m.txt"
 got="$got | $(tr '\n' ' ' <"$T/.moved/m.txt")"
 check "saved again before the first is written: no question (it is blit's own write there)" 'closed ;; box ~/.moved/m.txt | Ln 3, Col 7 Tabs LF Plain text | alpha beta ONETWO'
 run "remotewait;frame;lua:print(blit.workdir())" "$R"
@@ -278,7 +280,7 @@ check "a folder there on its way: listing, then its files" 'tree: (Listing…) ;
 SLOW=0.3 slow "remotewait;key:cmd+shift+E;frame;treedump;treewait;frame;treedump" "ssh://box$T/.listed/none"
 check "and an empty one" 'tree: (Listing…) ;; tree: (This folder is empty)'
 # And one that cannot be listed for want of the connection: why, not that it is empty.
-down="lua:os.execute('echo refused > $dir/down');lua:os.execute('pkill -9 -f $T/.cache/blit/blit-agent');remotelost"
+down="lua:os.execute('echo refused > $dir/down');lua:os.execute('pkill -9 -f $T/.cache/blit/[b]lit-agent');remotelost"
 got=$(BLIT_FAKE_DOWN="$dir/down" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
     --script "remotewait;key:cmd+shift+E;treewait;frame;treedump;$down;workdir:ssh://box$T/.listed/none;treewait;frame;treedump" "ssh://box$T/.listed/some" 2>&1 >/dev/null | join)
 rm -f "$dir/down"
@@ -515,7 +517,7 @@ EOF
 fi
 # The connection lost (blit's agent there killed): a terminal there says so,
 # not that its program failed.
-drop="lua:os.execute('pkill -9 -f $T/.cache/blit/blit-agent');remotelost"
+drop="lua:os.execute('pkill -9 -f $T/.cache/blit/[b]lit-agent');remotelost"
 # The connection lost: a terminal there says so, not that its program failed.
 got=$(BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
     --script "remotewait;key:ctrl+\`;frame;termwait:\$;$drop;termend;termdump" "$R/notes.txt" 2>&1 >/dev/null | sed -e 's/ @.*ended/ ended/' | join)
