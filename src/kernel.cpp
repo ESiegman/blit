@@ -401,11 +401,27 @@ def plain(o):  # (what JSON has no word for: bytes as base64, as a notebook keep
     return str(o)
 
 
-def send(msg):
+def finite(o):  # (NaN and the infinities, which JSON has no word for, as null)
+    if isinstance(o, float):
+        return o if o == o and abs(o) != float("inf") else None
+    if isinstance(o, dict):
+        return {k: finite(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)):
+        return [finite(v) for v in o]
+    return o
+
+
+def send(msg):  # (a line of strict JSON, which blit reads: never NaN, which json.dumps writes by default)
     try:
-        line = json.dumps(msg, default=plain)
-    except ValueError:  # (NaN in a result's JSON, say)
-        line = json.dumps(msg, default=plain, allow_nan=True).replace("NaN", "null").replace("Infinity", "null")
+        line = json.dumps(msg, default=plain, allow_nan=False)
+    except ValueError:
+        try:
+            line = json.dumps(finite(msg), default=plain, allow_nan=False)
+        except Exception as e:  # (a value that refers to itself, say: said, in place of it)
+            if msg.get("type") != "output":
+                return
+            line = json.dumps({"type": "output", "id": msg.get("id", 0), "output": {"output_type": "stream", "name": "stderr",
+                                                                                     "text": "blit could not send an output: %s\n" % e}})
     with out_lock:
         try:
             proto.write(line.encode() + b"\n")
