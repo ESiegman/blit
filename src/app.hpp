@@ -980,6 +980,7 @@ private:
     struct MdWorker;  // draws previews on a thread of its own, so that typing never waits for one
     void md_sync();   // (event 20: a preview has been drawn)
     void md_wait();   // (for the tests: until every preview asked for is drawn)
+    void md_unmade();  // (the diagrams' pictures no preview names, let go of)
 
     // Pictures (appimage.cpp): image files read on a thread of their own and
     // put on the GPU, for an image file's tab and the Markdown preview.
@@ -993,6 +994,9 @@ private:
     // name of its own: put on the GPU the first time it is asked for (and
     // again if it has been let go).
     const PictureInfo* picture_made(const std::string& name, const u8* rgba, int w, int h);
+    // Those made pictures that `named` says no preview names any more, let
+    // go of now (on the GPU too); how many made ones are left.
+    size_t pictures_unmade(const std::function<bool(const std::string&)>& named);
     // What to draw of it now, shown w by h pixels: an animation's frame (its
     // next asked for when it is due), a drawing from shapes made again at
     // that size if it was made at another.

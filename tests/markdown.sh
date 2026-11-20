@@ -133,6 +133,12 @@ check "typing elsewhere: each diagram laid out once" "laid out 9"
 dump 3600x1100 "$dir/typed.md" "mdwait;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:End;text: & a1;frame;mdwait"
 got=$(printf '%s\n' "$got" | head -1)
 check "typing in the first diagram: that one laid out again" "laid out 10"
+# Each version of a diagram typed in is a picture of its own: those no
+# preview shows any more are let go of at once (they held megabytes on the
+# GPU each, for a minute).
+dump 3600x1100 "$dir/typed.md" "mdwait;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:End;text: & a1;frame;mdwait;text: & a2;frame;mdwait;text: & a3;frame;mdwait"
+got=$(printf '%s\n' "$got" | grep '^kept ')
+check "typing in a diagram: the pictures of its old versions let go of" "kept 9"
 
 # A flowchart too wide across for the view is drawn down instead: wide, its
 # nodes in a row; narrow, one under another.

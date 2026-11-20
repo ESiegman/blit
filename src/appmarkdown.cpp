@@ -528,6 +528,20 @@ void App::md_sync() {
         }
         dirty_ = true;
     }
+    // A diagram's pictures that no preview shows any more (each version of
+    // one being typed in is a picture of its own, megabytes on the GPU),
+    // let go of now rather than a minute later.
+    if (!done.empty()) md_unmade();
+}
+
+// The diagrams' pictures no preview names, let go of.
+void App::md_unmade() {
+    pictures_unmade([&](const std::string& name) {
+        for (const std::unique_ptr<Pane>& p : panes_)
+            for (const std::shared_ptr<Doc>& d : p->docs)
+                if (d->md && d->md->diagrams.count(name)) return true;
+        return false;
+    });
 }
 
 // For the tests: frames until every preview's text has been drawn as it is now (10 s at most).
@@ -1069,6 +1083,7 @@ std::string App::md_diagram_dump() {
         }
         std::sort(pics.begin(), pics.end());
         for (const std::string& l : pics) out += l;
+        out += "kept " + std::to_string(pictures_unmade([](const std::string&) { return true; })) + "\n";  // (made pictures held, none let go)
         bool in = false;
         int n = 0;
         for (size_t at = 0; at < text.size();) {

@@ -386,6 +386,19 @@ const PictureInfo* App::picture_made(const std::string& name, const u8* rgba, in
     return &it->second;
 }
 
+size_t App::pictures_unmade(const std::function<bool(const std::string&)>& named) {
+    if (!pictures_) return 0;
+    size_t left = 0;
+    std::erase_if(pictures_->known, [&](auto& kv) {
+        PictureInfo& p = kv.second;
+        if (!p.made) return false;
+        if (named(kv.first)) return ++left, false;
+        if (p.gpu) gpu_.image_drop(p.gpu);
+        return true;
+    });
+    return left;
+}
+
 namespace {
 
 // An animation's frames, let go of on the GPU.
