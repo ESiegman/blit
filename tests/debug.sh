@@ -355,6 +355,15 @@ if [ -x "$fakedap" ]; then
     fake "debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+shift+y;text:df.;key:Tab;debugwait:answers;finddump" "$F/prog"
     check "evaluate: completions straight after a dot go after it" 'pick [] 4 : >df.describe df.dtypes df.shape df.total'
 fi
+# A .py program: debugpy run with the project's Python (its .venv's, not
+# the PATH's), and when that has no debugpy, said so of that Python.
+Y="$dir/py"
+mkdir -p "$Y/.venv/bin" "$Y/scripts"
+printf 'print(1)\n' >"$Y/scripts/one.py"
+printf '#!/bin/sh\necho "$0: Error while finding module specification for '"'"'debugpy.adapter'"'"' (ModuleNotFoundError: No module named '"'"'debugpy'"'"')" >&2\nexit 1\n' >"$Y/.venv/bin/python"
+chmod +x "$Y/.venv/bin/python"
+run "workdir:$Y;debug:program=$Y/scripts/one.py;key:F5;debugwait:idle;debugdump" "$Y/scripts/one.py"
+check "a .py program: the project's Python, and debugpy missing there said so" 'idle error: debugpy is not installed for .venv/bin/python'
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "debug ok"
 exit $failed

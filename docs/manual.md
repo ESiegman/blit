@@ -2286,9 +2286,12 @@ program printed.
 
 The debugger is the one the machine has: Xcode's `lldb-dap` on a Mac
 (full Xcode), gdb 14 or later (which speaks the Debug Adapter Protocol
-itself) or `lldb-dap` on Linux, and debugpy for a `.py` program (`pip
-install debugpy`). A program with HIP's code for the GPU in it is
-debugged with ROCm's `rocgdb`, where there is one (on the PATH or in
+itself) or `lldb-dap` on Linux, and debugpy for a `.py` program, run
+with the folder's Python, chosen as the [Python
+console](#the-python-console)'s is (so debugpy is installed there: in a
+uv project, `uv add --dev debugpy`; on another machine, the `python3`
+there). A program with HIP's code for the GPU in it is debugged with
+ROCm's `rocgdb`, where there is one (on the PATH or in
 `/opt/rocm/bin`): a breakpoint in a kernel stops a GPU wave there, with the
 kernel's frame and variables, and the GPU's waves are among the threads,
 named by their work-group and number ("GPU wave (0,0,0)/0"), after the
