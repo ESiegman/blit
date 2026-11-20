@@ -1954,6 +1954,8 @@ void App::git_do(u32 action, const std::string& arg) {
             while (dir.size() > 1 && dir.back() == '/') dir.pop_back();
             bool tree = false;  // (another working tree: as a folder is opened, its files in place of this one's)
             for (size_t i = 1; i < g.worktrees.size(); ++i) tree = tree || g.worktrees[i].path == dir;
+            // (Git there names its trees without the host: the folder opened is that host's.)
+            if (std::string host, there; tree && split_remote(g.status.root, &host, &there)) dir = remote_path(host, dir);
             if (tree) worktree_open(dir, std::string(g.status.root));
             else if (!dir.empty()) panel_set_workdir(dir);
             break;

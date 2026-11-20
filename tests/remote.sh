@@ -133,6 +133,12 @@ run "remotewait;panel;frame;gitwait;frame;open:ssh://box$dir/repo/notes.txt;remo
 check "git's view of a repository there" 'main | changes M:notes.txt | branches *main | commits 1 "first" | lines 2~ 4+'
 INIT="$dir/git.lua" SLOW=0.5 slow "remotewait;panel;frame;gitwait;frame;open:ssh://box$dir/repo/notes.txt;remotewait;frame;gitwait;frame;gitwait;command:Show or hide who changed each line (git blame);frame;gitbusy;clock;key:cmd+W;within:300;dump" "ssh://box$dir/repo"
 check "a tab closed while a slow blame of it runs: at once (the blame is stopped)" 'within 300 ms ;; >[untitled*]'
+# Another worktree there, opened from the Git tab: git there names it without
+# the host, and the folder opened (and its file in front) is still that host's.
+(cd "$dir/repo" && HOME="$T" git worktree add -q -b feature "$dir/repo-feature" 2>/dev/null) || exit 1
+INIT="$dir/git.lua"
+run "remotewait;panel;frame;gitwait;frame;open:ssh://box$dir/repo/notes.txt;remotewait;frame;gitwait;git:opentree:$dir/repo-feature;gitwait;remotewait;frame;statusdump;lua:print(blit.workdir())" "ssh://box$dir/repo"
+check "another worktree there: opened there" 'box feature notes.txt | Ln 1, Col 1 Tabs LF Plain text ;; blit: ssh://box@/repo-feature'
 
 # A language server, run there (the test one, next to blit).
 if [ -x "$(dirname "$blit")/blit_fakelsp" ]; then
