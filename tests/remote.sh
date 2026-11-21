@@ -622,6 +622,33 @@ check "a build there: its tab names the machine" 'V(>[untitled*] / [make (box)*]
 run "remotewait;frame;buildpanel;frame;$drop;buildrun;buildwait;frame;key:cmd+alt+Down;termend;termdump" "ssh://box$T/.mk"
 check "one started just after the connection is lost: why, and no exit code" 'the connection to box was lost @1,0 4x64 ended 1'
 
+# Local history of a file there: kept here, at each save (and, at the
+# first, the text as it was read from there), from the text here; listed,
+# tried out and put back as a file here's, the put back saved there as any
+# edit is. The same path on another host, or on this machine, has a history
+# of its own (each in a folder named by a hash of its whole path).
+export BLIT_HISTORY_DIR="$dir/data"
+mkdir -p "$T/.hist" && printf 'one\ntwo\n' >"$T/.hist/h.txt"
+H="ssh://box$T/.hist/h.txt"
+run "remotewait;frame;text:X;save;remotewait;text:Y;save;remotewait;frame;historydump" "$H"
+got="$got | $(tr '\n' ' ' <"$T/.hist/h.txt")"
+check "a save there: kept in its local history (the text as read, and each save)" 'sss | XYone two '
+run "remotewait;frame;command:Show the file's local history;frame;key:Down;frame;lsptext;key:Down;frame;key:Return;frame;lsptext;dump:tabs;save;remotewait;frame;statusdump" "$H"
+got="$got | $(tr '\n' ' ' <"$T/.hist/h.txt")"
+check "tried out, put back, and saved there" '@@ -1 +1 @@ / -Xone / +XYone /  two ;; one / two /  ;; tabs: >[h.txt*] ;; box ~/.hist/h.txt | Ln 1, Col 1 Tabs LF Plain text | one two '
+run "remotewait;frame;historydump" "ssh://other$T/.hist/h.txt"
+run2=$got
+run "frame;historydump" "$T/.hist/h.txt"
+got="$run2 | $got | $(cat "$dir"/data/history/*/path | sed -e "s#$T#~#g" | sort | tr '\n' ' ') | $(ls "$dir/data/history" | grep -cv '^[0-9a-f]\{16\}$')"
+check "another host's same path, and this machine's: histories of their own" 'none | none | ssh://box~/.hist/h.txt  | 0'
+run "remotewait;frame;text:O;save;remotewait;frame;historydump" "ssh://other$T/.hist/h.txt"
+got="$got | $(cat "$dir"/data/history/*/path | sed -e "s#$T#~#g" | sort | tr '\n' ' ')"
+check "saved from the other host: kept apart" 'ss | ssh://box~/.hist/h.txt ssh://other~/.hist/h.txt '
+printf 'zed\n' >"$T/.hist/z.txt"
+slow "remotewait;frame;text:Z;clock;save;within:300;remotewait;frame;historydump" "ssh://box$T/.hist/z.txt"
+check "on a slow host, the first save (the text as read kept with it) asks nothing of the host" 'within 300 ms ;; ss'
+unset BLIT_HISTORY_DIR
+
 # The agent was copied there once, into the cache blit keeps in that home.
 got=$(ls "$T/.cache/blit" | sed -e 's/-[0-9a-f]*$//')
 check "the agent, copied once" "blit-agent-$(uname -s)-$(uname -m)"

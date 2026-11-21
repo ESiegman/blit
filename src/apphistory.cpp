@@ -1,5 +1,7 @@
 // Local history (history.hpp): a file's text kept at each save, and every
-// few minutes while it is being typed in, on a thread of its own; "Show
+// few minutes while it is being typed in, on a thread of its own (another
+// machine's too: kept here, by its whole ssh:// or docker:// path, from the
+// text here, so that the machine is never asked for it); "Show
 // the file's local history" lists what was kept, each tried out as a diff
 // against the text as it is now (in a tab beside it), and one chosen is
 // put back, as one edit (one undo takes it back).
@@ -103,7 +105,7 @@ std::string App::history_folder(const Doc& d) const {
 bool App::history_wanted(const Doc& d) const {
     const char* own = own_dir();
     if (!win_ && !(own && *own)) return false;
-    return cfg_.local_history && !d.ed.path.empty() && !is_remote(d.ed.path) && !d.read_only && !d.nb && d.ed.buf.size() <= kLargest;
+    return cfg_.local_history && !d.ed.path.empty() && !d.read_only && !d.nb && d.ed.buf.size() <= kLargest;
 }
 
 // A version of a document's text kept (on the history's thread).
@@ -116,9 +118,16 @@ void App::history_keep_doc(Doc& d, bool saved, std::string text) {
 
 // Before a file is saved: the first time this session, the text it had on
 // disk is kept too (so that what was there before is never lost to it).
+// Another machine's: the text it had there when it was last read, which
+// its buffer still holds (none for a file not there yet, or one being
+// saved there under a new name).
 void App::history_before_save(Doc& d) {
     if (!history_wanted(d) || d.hist_disk) return;
     d.hist_disk = true;  // (not by hist_ns: typing, or a version kept while typing, comes before the first save)
+    if (is_remote(d.ed.path)) {
+        if (d.disk_stamp && !d.renamed_from) history_keep_doc(d, true, std::string(d.ed.buf.loaded()));
+        return;
+    }
     std::string was;
     if (fs_read(d.ed.path, &was, kLargest)) history_keep_doc(d, true, std::move(was));
 }
@@ -201,7 +210,7 @@ std::string when_text(const HistoryEntry& e) {
 // "Show the file's local history".
 void App::history_show() {
     Doc& d = *pane_->doc;
-    if (d.ed.path.empty() || is_remote(d.ed.path) || d.read_only) return notify("Only a file on this machine has a local history");
+    if (d.ed.path.empty() || d.read_only) return notify("Not a file");
     std::vector<HistoryEntry> entries = history_list(history_folder(d));
     if (entries.empty()) return notify("No local history of " + std::string(base_name(d.ed.path)));
     auto v = std::make_shared<HistoryView>();

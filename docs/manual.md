@@ -650,7 +650,12 @@ minutes while it is being typed in: in blit's data folder
 (`~/.local/share/blit/history`, a folder for each file named by a hash of
 its path, each version a gzip file), written on a thread of its own. A
 text is not kept again while it is the newest; the 200 newest versions of
-a file are kept. Only files on this machine have one.
+a file are kept. A file on another machine (`ssh://host/path`,
+`docker://NAME/path`) has one too, kept on this machine by its whole path
+(the same path on two hosts is two histories), from the text blit has:
+at the first save of a session, the text as it was last read from there,
+so the machine is never asked for it. Putting a version back is an edit
+like any other; saving it writes it there as any save does.
 
 "Show the file's local history" lists the versions, newest first: how long
 ago, whether at a save or while typing, and when. Moving through them

@@ -166,6 +166,9 @@ public:
     bool load_file(const char* path, std::string* err);
     // Replaces the contents with these bytes (a file read from another machine), kept by the buffer.
     void load_bytes(std::string_view bytes);
+    // The bytes load_bytes was last given, as they were (whatever has been
+    // typed since). (After load_file, the file's mapping: not to be relied on.)
+    std::string_view loaded() const { return {static_cast<const char*>(map_), map_len_}; }
     // Writes the contents to path through a temp file and an atomic rename.
     bool save_file(const char* path, std::string* err) const;
 

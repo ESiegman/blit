@@ -910,6 +910,8 @@ bool App::save() {
     }
     lsp_format_on_save();  // (lsp.format_on_save: its server formats it first)
     if (is_remote(pane_->doc->ed.path)) {  // to another machine: written on a thread, and saved once it has been (appremote.cpp)
+        history_before_save(*pane_->doc);  // (its local history, kept here from the text here: the text as read from there, then this)
+        history_saved(*pane_->doc);
         remote_save(*pane_->doc, over);
         return true;
     }
