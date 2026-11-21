@@ -521,15 +521,18 @@ void App::build_found(u64 doc, std::vector<BuildProblem> found) {
     dirty_ = true;
 }
 
-// What a task's run came to, as its output says it (another run's, or one
-// that was no task's, has no row to show it on).
-void App::build_outcome(u64 doc, const BuildScan::Outcome& outcome) {
+// What a task's run came to, and its tests' results, as its output gives
+// them (another run's, or one that was no task's, has no row to show it on).
+void App::build_outcome(u64 doc, std::vector<BuildScan::TestResult> results, const BuildScan::Outcome* outcome) {
     BuildUi& u = *buildui_;
     if (doc != u.doc || u.last_key.empty()) return;
-    if (!outcome.sizes.empty()) u.sizes[u.last_key] = outcome.sizes;
-    u.summary = BuildScan::summary_of(outcome, &u.sizes_before);
-    ++build_gen_;
-    dirty_ = true;
+    if (outcome) {
+        if (!outcome->sizes.empty()) u.sizes[u.last_key] = outcome->sizes;
+        u.summary = BuildScan::summary_of(*outcome, &u.sizes_before);
+        ++build_gen_;
+        dirty_ = true;
+    }
+    if (!results.empty()) test_output(u.last_name, u.last_key, results);
 }
 
 const std::vector<BuildProblem>& App::build_problems() const { return buildui_->problems; }

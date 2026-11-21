@@ -1323,6 +1323,7 @@ private:
     void test_debug_here();
     void test_ended(u64 doc);
     void test_take(std::vector<std::string> texts);  // (the run's reports, as read)
+    void test_output(const std::string& task, const std::string& key, const std::vector<BuildScan::TestResult>& results);  // (a task's output's, as it gives them)
     std::vector<size_t> test_at_cursor();
     const std::vector<std::pair<u32, int>>& test_defs(const Doc& d);
     u32 test_gutter(const Doc& d, u64 line);
@@ -1362,8 +1363,9 @@ private:
     // its terminal as it comes (term_sync), shown in the Problems tab's
     // Build section, counted on the Run button and in the status bar.
     void build_found(u64 doc, std::vector<BuildProblem> found);
-    // And what it came to (when that changed), for its task's row and the Run button.
-    void build_outcome(u64 doc, const BuildScan::Outcome& outcome);
+    // And the tests' results it gave, for the Tests tab, and what it came to
+    // (outcome, when that changed), for its task's row and the Run button.
+    void build_outcome(u64 doc, std::vector<BuildScan::TestResult> results, const BuildScan::Outcome* outcome);
     const std::vector<BuildProblem>& build_problems() const;
     std::string build_label() const;  // the Run button's words
     void build_go(size_t i);    // that one's file, at its line

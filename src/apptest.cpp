@@ -210,6 +210,13 @@ void App::test_sync() {
                 t.seconds = old.seconds;
                 break;
             }
+    // A task's output's tests stay, unless a runner here has them now (its own takes how it went, if it has not run).
+    for (TestCase& old : u.tests) {
+        if (old.runner != TestCase::kOutput) continue;
+        const auto same = std::ranges::find_if(f->tests, [&](const TestCase& t) { return t.runner == TestCase::kCTest && t.id == old.id; });
+        if (same == f->tests.end()) f->tests.push_back(std::move(old));
+        else if (same->result == TestCase::kNotRun) same->result = old.result, same->message = old.message;
+    }
     u.tests = std::move(f->tests);
     u.root = f->root;
     u.python = std::move(f->python);
@@ -231,6 +238,14 @@ void App::test_sync() {
 // configuration's environment theirs too.
 void App::test_run(const std::vector<size_t>& which, bool coverage) {
     TestUi& u = *testui_;
+    // A task's output's tests: the task run again (with others, it is left out).
+    auto run_task = [this](const std::string& key) {
+        build_choose(key);
+        if (build_chosen() != key) return notify("The task those tests came from is not there");
+        build_run(-1);
+    };
+    if (!which.empty() && std::ranges::all_of(which, [&](size_t i) { return i < u.tests.size() && u.tests[i].runner == TestCase::kOutput; }))
+        return run_task(u.tests[which[0]].dir);
     if (!u.looked || u.looking) {  // (found first; then it runs)
         std::vector<std::string> ids;
         for (const size_t i : which)
@@ -341,6 +356,11 @@ void App::test_run(const std::vector<size_t>& which, bool coverage) {
     }
     std::string cmd;
     for (const std::string& p : parts) cmd += (cmd.empty() ? "" : "; ") + p;
+    if (cmd.empty()) {  // (all of them, and all a task's output's)
+        for (const size_t i : pick)
+            if (u.tests[i].runner == TestCase::kOutput) return run_task(u.tests[i].dir);
+        return;
+    }
     u.term = build_command(u.root, cmd, pick.size() == 1 ? u.tests[pick[0]].name : "Tests");
     u.running = true;
     ++test_gen_;
@@ -408,7 +428,7 @@ void App::test_take(std::vector<std::string> texts) {
         for (const TestOutcome& o : parse_junit(xml)) {
             bool known = false;
             for (TestCase& t : u.tests)
-                if ((t.runner == TestCase::kCTest ? t.dir == of : of.empty()) && outcome_is(o, t)) {  // (two build folders have tests of the same name)
+                if ((t.runner == TestCase::kCTest ? t.dir == of : t.runner == TestCase::kPytest && of.empty()) && outcome_is(o, t)) {  // (two build folders have tests of the same name)
                     t.result = o.result;
                     t.message = o.message;
                     t.seconds = o.seconds;
@@ -470,6 +490,39 @@ void App::test_take(std::vector<std::string> texts) {
     dirty_ = true;
 }
 
+// A task's output's results (buildtests.cpp: GoogleTest's, Catch2's,
+// doctest's, Unity's, CTest's), as they come: each marks the folder's CTest
+// test of its name, or the one the output gave before; one in neither is
+// added, under the task's name and its framework.
+void App::test_output(const std::string& task, const std::string& key, const std::vector<BuildScan::TestResult>& results) {
+    TestUi& u = *testui_;
+    for (const BuildScan::TestResult& r : results) {
+        const std::string group = task + " (" + r.framework + ")";
+        bool marked = false;
+        size_t after = u.tests.size();  // (a new one: after the others of its group)
+        for (size_t i = 0; i < u.tests.size(); ++i) {
+            TestCase& t = u.tests[i];
+            if (t.runner == TestCase::kOutput && t.group == group) after = i + 1;
+            if (t.id != r.name || !(t.runner == TestCase::kCTest || (t.runner == TestCase::kOutput && t.group == group))) continue;
+            t.result = static_cast<TestCase::Result>(r.result);
+            t.message = r.message;
+            t.seconds = 0;
+            marked = true;
+        }
+        if (marked) continue;
+        TestCase t;
+        t.runner = TestCase::kOutput;
+        t.id = t.name = r.name;
+        t.group = group;
+        t.dir = key;
+        t.result = static_cast<TestCase::Result>(r.result);
+        t.message = r.message;
+        u.tests.insert(u.tests.begin() + static_cast<std::ptrdiff_t>(after), std::move(t));
+    }
+    ++test_gen_;
+    dirty_ = true;
+}
+
 // ---------------------------------------------------------------- in the text
 
 // The tests defined in a document, where (line, test or -1), kept until its
@@ -499,7 +552,7 @@ const std::vector<std::pair<u32, int>>& App::test_defs(const Doc& d) {
         for (size_t i = 0; i < u.tests.size(); ++i) {
             const TestCase& t = u.tests[i];
             if (py ? t.runner == TestCase::kPytest && unparametrised(t.id) == t.group + "::" + name && full.ends_with("/" + t.group)
-                   : t.runner == TestCase::kCTest && (t.id == name || t.id.ends_with("." + name) || t.id.ends_with("/" + name))) {
+                   : t.runner != TestCase::kPytest && (t.id == name || t.id.ends_with("." + name) || t.id.ends_with("/" + name))) {
                 x.at.emplace_back(line, static_cast<int>(i));
                 if (!py) break;
             }
@@ -636,7 +689,7 @@ void App::test_panel_draw(TextBox& box, bool focused) {
     for (size_t i = 0; i < u.tests.size(); ++i) {
         const TestCase& t = u.tests[i];
         if (u.rows.empty() || u.tests[i - 1].group != t.group || u.tests[i - 1].runner != t.runner)
-            u.rows.push_back({-1, t.group + (t.runner == TestCase::kCTest ? " (CTest)" : " (pytest)"), 0});
+            u.rows.push_back({-1, t.group + (t.runner == TestCase::kCTest ? " (CTest)" : t.runner == TestCase::kPytest ? " (pytest)" : ""), 0});
         for (size_t h = u.rows.size(); h-- > 0;)
             if (u.rows[h].test < 0) {
                 ++u.rows[h].count;

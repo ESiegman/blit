@@ -259,5 +259,47 @@ mkdir -p "$dir/empty"
 got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$dir/empty;frame;testdump" "$dir/empty/a.txt" 2>&1 >/dev/null | tail -1)
 check "none: where they would have been looked for" "No tests found: CTest's are found in a build folder that has been configured, pytest's beside a test_*.py"
 
+# A task of the Build tab's that runs a test program: its tests marked
+# here as its output says how each went (tests/output: the real output of
+# GoogleTest 1.17.0's and Catch2 3.8.1's programs and CTest 4.5's run, as
+# tests/build.sh says), added under the task where no runner here has
+# them, with their marks where they are defined; one run from here runs
+# the task again.
+O="$(cd "$(dirname "$0")" && pwd)/output"
+G="$dir/gt"
+mkdir -p "$G/tests"
+cat >"$G/tests/gtest_math.cpp" <<'EOF'
+#include <gtest/gtest.h>
+#include "../math.h"
+
+TEST(Math, Adds) {
+    EXPECT_EQ(add(1, 2), 3);
+}
+
+TEST(Math, Breaks) {
+    EXPECT_EQ(add(1, 2), 4);
+    EXPECT_TRUE(add(2, 2) == 5) << "two and two";
+}
+
+TEST(Math, Later) {
+    GTEST_SKIP() << "not yet";
+}
+EOF
+printf 'gtest:\n\t@echo ran >>runs.log; cat "%s/gtest.txt"; exit 1\ncatch2:\n\t@cat "%s/catch2-durations.txt"; exit 1\n' "$O" "$O" >"$G/Makefile"
+got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$G;frame;buildrun:make gtest;buildwait;testdump" "$G/tests/gtest_math.cpp" 2>&1 >/dev/null | grep -v '^blit: ' | tail -1)
+check "GoogleTest's, from a task's output: under the task, and their marks" 'make gtest (GoogleTest): +Math.Adds xMath.Breaks -Math.Later | here: 4+ 8x 13.'
+got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$G;frame;testdump;buildrun:make catch2;buildwait;testdump" "$G/tests/gtest_math.cpp" 2>&1 >/dev/null | grep -v '^blit: ' | tail -1)
+check "Catch2's (each named, with --durations yes), the tab looked at first" 'make catch2 (Catch2): +adds numbers xbreaks on purpose -skipped for now'
+rm -f "$G/runs.log"
+"$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$G;frame;buildrun:make gtest;buildwait;testdump;command:Run the failed tests again;buildwait;builddump" "$G/tests/gtest_math.cpp" >/dev/null 2>&1
+got=$(wc -l <"$G/runs.log" | tr -d ' ')
+check "one of them run from here: the task again" '2'
+printf 'ctest:\n\t@cat "%s/ctest.txt"; exit 1\n' "$O" >"$P/Makefile"
+run "$P/check.cpp" "buildrun:make ctest;buildwait;testdump"
+check "CTest's own lines: the folder's tests of those names marked (one it has not, added)" "build: +adds xbreaks$(py ' | tests/test_math.py: .test_adds .test_fails') | make ctest (CTest): -later"
+run "$P/check.cpp" "testdump;buildrun:make ctest;buildwait;testdump"
+check "and with the tab looked at first" "build: +adds xbreaks$(py ' | tests/test_math.py: .test_adds .test_fails') | make ctest (CTest): -later"
+rm "$P/Makefile"
+
 [ "$failed" = 0 ] && echo "testing: all passed"
 exit "$failed"

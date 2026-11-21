@@ -2573,7 +2573,8 @@ and `path(line):` as it writes it for MSVC) and Unity's
 (`path:line:test:FAIL: message`). Each failure is a problem at its place,
 the test's name and what its framework said under it in the message
 ("Math.Breaks: Expected equality of these values: add(1, 2); Which is: 3;
-4"). Their count (GoogleTest's `[  PASSED  ] 1 test.`, Catch2's and doctest's
+4"). Each test's result goes to the [Tests tab](#tests) as it comes, and
+their count (GoogleTest's `[  PASSED  ] 1 test.`, Catch2's and doctest's
 `test cases: 3 | 1 passed | 1 failed | 1 skipped`, Unity's `3 Tests 1
 Failures 1 Ignored`; CTest's own count when it ran them, theirs not added
 to it) is what the run came to: "1 passed, 1 failed, 1 skipped".
@@ -2736,6 +2737,16 @@ Tests tab lists each file's share, Enter opening it, and "Show or hide
 coverage" switches it. On another machine the build folder's compiler is
 read there first, and a run asked for while that is on its way is not
 started again.
+
+A task of the [Build tab](#building)'s that runs a GoogleTest, Catch2,
+doctest or Unity program (or CTest) marks its tests here as its output
+says how each went: the folder's CTest test of that name, or one listed
+under the task's name and its framework ("make test (GoogleTest)") if no
+runner here has it. Catch2 and doctest name only the tests that failed or
+were skipped, unless told to say more (Catch2's `--durations yes` names
+each, doctest's `-s` each assertion's). Running one of those (Enter, a
+click on its mark) runs its task again; with tests of the runners here,
+they run and it is left out.
 
 ## New projects
 

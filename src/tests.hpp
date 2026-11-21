@@ -13,7 +13,10 @@
 namespace blit {
 
 struct TestCase {
-    enum Runner : u8 { kCTest, kPytest };
+    // kOutput: one a task's output gave (GoogleTest's, Catch2's, doctest's,
+    // Unity's) that no runner here has: under the task's name and its
+    // framework, run by running the task (its key, task_key's, as dir).
+    enum Runner : u8 { kCTest, kPytest, kOutput };
     enum Result : u8 { kNotRun, kPassed, kFailed, kSkipped };
     Runner runner = kCTest;
     std::string id;     // what its runner calls it: CTest's name, pytest's node id (path::Class::name)
