@@ -42,11 +42,12 @@ public:
     Kernel(const Kernel&) = delete;
     Kernel& operator=(const Kernel&) = delete;
 
-    // The helper, run in `dir` with `python` (words for a shell: what the
-    // Python console runs) and given the notebook's folder to work in. On
-    // another machine (ssh://host/path, docker://...) the Python is chosen
-    // there as the console's would be, and it is started on the reader's
-    // thread: cells asked for meanwhile are sent once it has started.
+    // The helper, run in `dir` with `python` (words for a shell: the
+    // project's Python, apppython.cpp) and given the notebook's folder to
+    // work in. On another machine (ssh://host/path, docker://...) `python`
+    // is as that machine names it (with none, it is chosen there), and the
+    // helper is started on the reader's thread: cells asked for meanwhile
+    // are sent once it has started.
     bool start(const std::string& python, const std::string& dir, const std::string& notebook_dir, std::function<void()> notify, std::string* err);
     // A cell's code run, once those before it have (blit's name for it: `cell`).
     void run(u64 cell, std::string_view code, u32 columns = 0);

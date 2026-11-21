@@ -687,6 +687,26 @@ mkdir -p "$dir/ranhere" && cp "$dir/ran/Makefile" "$dir/ranhere/" && printf 'one
 run "panel;frame;buildrun;buildwait;ranwait" "$dir/ranhere"
 check "one here: left to the watcher" 'ranwait: nothing ended there'
 
+# A Python file there: its project's Python found there (through the agent,
+# on a worker: nothing here waits for it, on a slow host either), named in
+# the status bar, and the Python console started there with it. (The
+# Python, a stand-in answering what blit asks a Python, and saying what it
+# is asked to run.)
+mkdir -p "$W/pyr/.venv/bin"
+printf '#!/bin/sh\nif [ "$1" = -c ]; then printf "3.99.1\\n%%s\\n0\\n" "$0"; exit 0; fi\necho "ran $0" >>"%s"\nexec python3 "$@"\n' "$dir/ran-there" >"$W/pyr/.venv/bin/python"
+chmod +x "$W/pyr/.venv/bin/python"
+printf 'x = 1\n' >"$W/pyr/a.py"
+slow "remotewait;workdir:$R/pyr;clock;frame;key:Down;frame;within:300;pywait;frame;statusdump;pydump;command:Open the Python console;termwait:>>>" "$R/pyr/a.py"
+got="$(printf '%s' "$got" | sed -e 's/ (no colours)//') ;; $(sed -e "s#$T#~#g" "$dir/ran-there")"
+check "a Python file there: its project's Python there, found without waiting here; the console there with it" \
+    'within 300 ms ;; box a.py | Python 3.99 (.venv) Ln 2, Col 1 Spaces: 4 LF Python ;; ssh://box~/work/pyr = ssh://box~/work/pyr (.venv) ~/work/pyr/.venv/bin/python 3.99.1 ;; ran ~/work/pyr/.venv/bin/python'
+# The Pythons there to choose from (of them, the project's venv; the
+# others, the PATH's and uv's there, are this machine's).
+printf 'home = /usr/bin\n' >"$W/pyr/.venv/pyvenv.cfg"
+run "remotewait;workdir:$R/pyr;frame;pywait;frame;statusclick:Python 3.99;pywait;finddump" "$R/pyr/a.py"
+got=$(printf '%s' "$got" | sed -e 's/^blit: [^;]*;; //' -e 's/^pick [^:]* : //' | awk '{ n = split($0, w, " Python "); out = ""; for (i = 1; i <= n; i++) if (w[i] ~ /work\/pyr|Automatic/) out = out (i > 1 ? " Python " : "") w[i]; print out }')
+check "and the Pythons there to choose from" '>Automatic Python 3.99.1 · .venv · ~/work/pyr/.venv/bin/python'
+
 # The agent was copied there once, into the cache blit keeps in that home.
 got=$(ls "$T/.cache/blit" | sed -e 's/-[0-9a-f]*$//')
 check "the agent, copied once" "blit-agent-$(uname -s)-$(uname -m)"

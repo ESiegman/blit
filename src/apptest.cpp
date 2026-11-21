@@ -52,7 +52,7 @@ std::string on_host(const std::string& path) {
     return split_remote(path, &host, &there) ? there : path;
 }
 
-// How a folder's Python (App::python_for: its venv's, uv's in a uv
+// How the project's Python (apppython.cpp: its venv's, uv's in a uv
 // project) runs a module of its, pytest or coverage; with no project's
 // Python, the program on the PATH, else python3's module.
 std::string python_module(const std::string& python, const char* module) {
@@ -70,7 +70,7 @@ bool cpp_path(std::string_view p) {
 struct App::TestUi {
     std::vector<TestCase> tests;
     std::string root;  // the folder they were found in
-    std::string python;  // and its Python, as found then (App::python_for: pytest's are run with it)
+    std::string python;  // and its Python, as found then (apppython.cpp: pytest's are run with it)
     bool looked = false, looking = false;
     std::string note;  // what finding them said, when there are none
     struct Found {
@@ -136,7 +136,7 @@ void App::test_find() {
     if (u.worker.joinable()) u.worker.join();
     u.looking = true;
     ++test_gen_;
-    u.worker = std::jthread([&u, root] {
+    u.worker = std::jthread([&u, root, py = py_ui()] {
         TestUi::Found f;
         f.root = root;
         auto configured = [](const std::string& d) { return fs_kind(d + "/CTestTestfile.cmake") == 1; };
@@ -171,8 +171,7 @@ void App::test_find() {
         }
         std::string said;  // (pytest's last line, or its Python's: why none were found)
         if (python) {
-            f.python = App::python_in(root, false);  // (on this worker thread: for a folder there, looked at over the link)
-            if (const size_t at = f.python.find(root); at != std::string::npos && remote) f.python.replace(at, root.size(), there);  // (another machine's: its path there)
+            f.python = App::py_wait(py, root, root);  // (the project's, waited for on this worker thread: another machine's, as it names it)
             std::string out;
             fs_run(root, python_module(f.python, "pytest") + " --collect-only -q 2>&1", &out, 60000);
             for (TestCase& t : parse_pytest_collect(out)) f.tests.push_back(std::move(t));

@@ -159,6 +159,13 @@
 ---------------------------------------------------------------- debugging
 -- blit.opt.debug.inline_values = true  -- while stopped, the values of the variables a line names after its end
 
+---------------------------------------------------------------- Python
+-- Each project's Python is its .venv's (or venv's), uv's, the active conda
+-- environment's, else python3; one chosen from the status bar is kept for
+-- the project. This pins one for every project instead: a path ("~/" for
+-- the home folder; "env/bin/python", in the project's folder) or a command.
+-- blit.opt.python.interpreter = "~/.pyenv/versions/3.12.4/bin/python"
+
 ---------------------------------------------------------------- the side panel
 -- The side panel (Cmd+B): tabs along its top, the first of them a tree of
 -- the files in the working directory.

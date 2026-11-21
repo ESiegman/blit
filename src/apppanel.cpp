@@ -669,6 +669,7 @@ void App::watch_take() {
         const bool tree = list == &heard.trees;
         for (std::string dir : *list) {
             if (!watch_real_.empty() && watch_real_ != root && dir.starts_with(watch_real_)) dir = root + dir.substr(watch_real_.size());
+            py_heard(dir);  // (a venv made or taken away: the project's Python looked for again)
             if (dir == cache || (dir.starts_with(cache) && dir[cache.size()] == '/')) {
                 FileTree::Node* node = s.tree.find(dir);
                 if (!node || !node->dir || !node->loaded) continue;

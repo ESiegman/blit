@@ -171,6 +171,7 @@ struct Config {
 
     // [git]
     bool debug_inline_values = true;  // while stopped, the values of the variables a line names after its end
+    std::string python_interpreter;   // the Python every project takes, a path or a command ("": each its own, apppython.cpp)
     bool git = true;        // show git's view of the files: changed lines, the Git tab of the side panel
 
     // [panel]

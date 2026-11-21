@@ -161,7 +161,8 @@ Cmd+Shift+O, by `blit DIR`, made by New project, or another worktree from
 the Git tab) comes back as it was left when it is opened again: the tabs
 of each split in their order, the splits and their sizes, each file's
 cursor and view and the language chosen for it from the status bar, the
-side panel (shown or not, its tab, its width), the Build tab's task, and
+side panel (shown or not, its tab, its width), the Build tab's task, the
+Python chosen for the project, and
 the breakpoints (with their conditions, hit counts and messages, and
 those disabled), the
 functions' and the expressions watched. A folder's row
@@ -595,7 +596,9 @@ differ from the last commit (saved ones: what git sees), then the file's
 path in the repository, with a dot while it has unsaved changes. On its
 right: what a script put there (`blit.ui.status`), the errors and warnings
 (the language servers' in the open file and the last build's in all of
-them, one that both found on the same line counted once), the cursor's
+them, one that both found on the same line counted once), for a Python
+file its project's Python (`Python 3.12 (.venv)`; a click chooses another:
+see [The project's Python](#the-projects-python)), the cursor's
 line and column (and what is selected:
 characters, or lines), the indentation, the line endings, and the language
 with its server (and what the server says it is busy with: `C++ · clangd
@@ -2350,13 +2353,51 @@ or drag it into a split of its own.
   closes when the shell exits; if it exits with an error, the tab stays
   and says so.
 
+### The project's Python
+
+Each project has one Python, which everything that runs Python takes: the
+Python console, the debugger's debugpy, a notebook's kernel, pytest and
+coverage.py in the Tests tab. A folder in the project
+with its own `pyproject.toml`, `.venv`, `venv` or `uv.lock` is a
+subproject with a Python of its own: a file takes the nearest one at or
+above its folder. The Python is, first to last:
+
+- the one chosen for the project (below);
+- `blit.opt.python.interpreter`, for every project: a path (`~/` for the
+  home folder; one with a `/` that is not whole, such as
+  `env/bin/python`, in the project's folder) or a command (`python3.12`,
+  `uv run python`);
+- the folder's `.venv`'s (or `venv`'s), IPython for the console where it
+  has it;
+- `uv run python` for a uv project (a `uv.lock`, or a `pyproject.toml`
+  that names `uv_build` or `[tool.uv]`, as the Build tab knows one);
+- the active conda environment's (`$CONDA_PREFIX`);
+- else `python3`.
+
+It is found on a thread, by asking it its version and where it is (for a
+folder on another machine, there, through blit's agent), and kept: it is
+looked for again when a venv is made or taken away in the folder (as the
+side panel hears of it), when blit comes to the front (it is asked again
+only if it is another one), and when asked: "Find the project's Python
+again". Nothing waits for it: what needs it first (the console, a
+debugging session, a kernel) starts once it is known, a moment later.
+
+For a Python file, the status bar names it, "Python 3.12 (.venv)" (with
+what chose it: `.venv`, `venv`, `uv`, `conda NAME`, `pinned`, `chosen`,
+or nothing for the PATH's); a click on it, or "Choose the project's
+Python…", lists the Pythons there are: the project's venvs (any folder
+in it with a `pyvenv.cfg`), uv's for a uv project and those uv has
+installed, conda's (the active environment's base and its `envs`),
+pyenv's and those on the PATH. The one chosen is the project's (or the
+subproject's) from then on, kept in its session; Automatic, the first
+row, gives the choice back.
+
 ### The Python console
 
-"Open the Python console" starts Python in the terminals' split, in the
-folder being worked in, as a tab named Python: the IPython or Python of
-the folder's `.venv` (or `venv`) if it has one, `uv run python` for a uv
-project (a `uv.lock`, or a `pyproject.toml` that names `uv_build` or
-`[tool.uv]`, as the Build tab knows one), else `python3`. Once started it
+"Open the Python console" starts the [project's
+Python](#the-projects-python) in the terminals' split, as a tab named
+Python (IPython, where a venv has it), in the project's folder (the
+subproject's, for a Python file in front that is in one). Once started it
 is used again, until it ends.
 
 "Send the lines to the Python console" sends the lines selected (in Vim,
@@ -2553,11 +2594,9 @@ The debugger is the one the machine has: Xcode's `lldb-dap` on a Mac
 later (`gdb -i dap`: it speaks the Debug Adapter Protocol itself; a
 run configuration's `debug.adapter` asks for one or the other, below),
 and debugpy for a `.py` program, run
-with the folder's Python, chosen as the [Python
-console](#the-python-console)'s is (so debugpy is installed there: in a
-uv project, `uv add --dev debugpy`). On another machine it is chosen the
-same way there, in the folder being worked in (or the program's, if that
-folder is not on the same machine). A program with HIP's code for the GPU in it is debugged with
+with the [project's Python](#the-projects-python) (the program's
+folder's: its project's or subproject's), which runs the program too (so
+debugpy is installed there: in a uv project, `uv add --dev debugpy`). A program with HIP's code for the GPU in it is debugged with
 ROCm's `rocgdb`, where there is one (on the PATH or in
 `/opt/rocm/bin`): a breakpoint in a kernel stops a GPU wave there, with the
 kernel's frame and variables. The GPU's waves, named by their work-group
@@ -3012,9 +3051,9 @@ project's own folders, and one level into `build*`, `cmake-build*` and
 `out`, as a preset's `build/debug`; so the
 GoogleTest, Catch2 and doctest tests registered with it too:
 `ctest --show-only=json-v1`), and pytest's (`--collect-only`; `-m
-pytest` of the folder's Python, chosen as the [Python
-console](#the-python-console)'s is, so its `.venv`'s or `uv run`'s; with
-none, the `pytest` on the PATH, else `python3 -m pytest`). They are
+pytest` of the [project's Python](#the-projects-python), so its
+`.venv`'s or `uv run`'s; with none, the `pytest` on the PATH, else
+`python3 -m pytest`). They are
 grouped by build folder and by file, each with how its last run went: a
 tick, a cross with the failure's message, a dash for one skipped, a dot
 for one not run. Where none are found, the tab says what pytest (or the
@@ -3542,11 +3581,11 @@ them in init.lua.
 
 The kernel is a small Python program blit carries, written to blit's
 cache folder the first time it is needed, started the first time a cell
-of the notebook runs. It runs with the Python the [Python
-console](#the-python-console) would have, in the folder being worked in
-if the notebook is in it, else in the notebook's own: the `.venv`'s (or
-`venv`'s) Python, `uv run python` for a uv project, else `python3`; it
-works in the notebook's folder (the notebook's imports are found there).
+of the notebook runs. It runs with the [project's
+Python](#the-projects-python) (the notebook's folder's: its project's or
+subproject's), in the folder being worked in if the notebook is in it,
+else in the notebook's own; it works in the notebook's folder (the
+notebook's imports are found there).
 blit and it talk in lines of JSON over its input and output: no Jupyter
 server, no ZMQ. If it can import IPython, cells run in IPython's shell:
 its rich results (a DataFrame's table, Markdown, pictures), `display()`,
@@ -4023,6 +4062,7 @@ tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, co
                                    # the split Ctrl+` shows and hides, and the questions about programs still running
 tests/keys.sh build-debug/blit     # the command search, the new keys, Back and Forward through the jumps, and every command run from the search
 tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger)
+tests/python.sh build-debug/blit   # the project's Python: each project and subproject's, found again when a venv comes or goes, pinned, chosen and kept, in the status bar, the console's (stand-in Pythons)
 tests/validation.sh build-debug/blit  # Vulkan's and Metal's validation messages as problems, the spec's statements of VUIDs
 tests/lsp.sh build-debug/blit      # language servers against the test server: several at once, Problems across files, references, rename, formatting, code actions, hints, colours
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running), a fake build's problems (F8, Cmd+click) and new projects (a stand-in vcpkg)

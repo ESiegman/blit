@@ -299,19 +299,25 @@ void App::nb_queue(Doc& d, const std::vector<size_t>& cells) {
     nb_next(d);
 }
 
-// A notebook's kernel started: with the Python the console would have, in
-// the folder being worked in if the notebook is in it, else the notebook's
-// own; working in the notebook's folder. False: it could not be (said).
+// A notebook's folder (one not saved yet: `otherwise`).
+static std::string nb_folder(const Doc& d, const std::string& otherwise) {
+    const std::string path = d.ed.path.empty() ? std::string() : is_remote(d.ed.path) ? d.ed.path : full_path(d.ed.path);
+    return path.empty() ? otherwise : parent_of(path);
+}
+
+// A notebook's kernel started: with the project's Python (its subproject's,
+// if the notebook is in one), in the folder being worked in if the notebook
+// is in it, else the notebook's own; working in the notebook's folder.
+// False: it could not be (said).
 bool App::nb_start(Doc& d) {
     NotebookTab& nb = *d.nb;
-    const std::string path = d.ed.path.empty() ? std::string() : is_remote(d.ed.path) ? d.ed.path : full_path(d.ed.path);
-    const std::string folder = path.empty() ? default_workdir() : parent_of(path);
+    const std::string folder = nb_folder(d, default_workdir());
     const std::string* root = panel_root();
-    const std::string dir = root && path.starts_with(*root + "/") ? *root : folder;
+    const std::string dir = root && folder.starts_with(*root + "/") ? *root : folder;
+    const std::optional<PyFound> py = py_known(folder);
     auto k = std::make_unique<Kernel>();
     std::string err;
-    // (On another machine the Python is chosen there.)
-    if (!k->start(is_remote(dir) ? std::string() : python_for(dir, false), dir, folder, kernel_wake, &err)) {
+    if (!k->start(py ? py->command : std::string("python3"), dir, folder, kernel_wake, &err)) {
         notify("The kernel could not start: " + err, 2);
         return false;
     }
@@ -328,7 +334,16 @@ bool App::nb_start(Doc& d) {
 void App::nb_next(Doc& d) {
     NotebookTab& nb = *d.nb;
     if (nb.running.key || nb.waiting.empty()) return;
-    if (!nb.kernel && !nb_start(d)) return drop_waiting(d);
+    if (!nb.kernel) {
+        // (The project's Python first: the cells wait, said to be busy, until it is known.)
+        if (const std::string folder = nb_folder(d, default_workdir()); !py_known(folder)) {
+            py_when(folder, [this, id = d.id] {
+                if (Doc* x = find_doc(id); x && x->nb) nb_next(*x);
+            });
+            return;
+        }
+        if (!nb_start(d)) return drop_waiting(d);
+    }
     nb.running = std::move(nb.waiting.front());
     nb.waiting.pop_front();
     nb.started = false;

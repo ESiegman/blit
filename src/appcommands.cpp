@@ -341,6 +341,8 @@ void App::commands_create() {
     own("New terminal on this machine", {}, [this] { term_new_here(); });
     own("Open the Python console", {}, [this] { py_console(true); });
     own("Send the lines to the Python console", {}, [this] { py_send_lines(); });
+    own("Choose the project's Python\xE2\x80\xA6", {}, [this] { py_choose(); });
+    own("Find the project's Python again", {}, [this] { py_again(true); });
     own("Open the terminal's lines as text", {}, [this] { term_lines_tab(); });
     own("Run the cell (# %%)", {}, [this] { if (!nb_run_cell()) notify("The file has no # %% cells"); });
     own("Run all the cells", {}, [this] { nb_run_all(); });

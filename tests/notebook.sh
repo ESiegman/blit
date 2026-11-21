@@ -421,6 +421,19 @@ case $got in
 esac
 check "a kernel that cannot start: said, nothing left waiting" "said"
 
+# A notebook in a subproject of the folder being worked in (its own
+# pyproject.toml and .venv): its kernel run with the subproject's Python,
+# not the project's (each Python writes what it is asked to run).
+mkdir -p "$dir/proj/.venv/bin" "$dir/proj/sub/.venv/bin" && cp "$run/r.ipynb" "$dir/proj/sub/r.ipynb"
+printf '[project]\nname = "sub"\n' >"$dir/proj/sub/pyproject.toml"
+for py in "$dir/proj/.venv/bin/python" "$dir/proj/sub/.venv/bin/python"; do
+    printf '#!/bin/sh\n[ "$1" = -c ] || echo "$0 ${1##*/}" >>"%s"\nexec python3 -S "$@"\n' "$dir/kernels" >"$py" && chmod +x "$py"
+done
+rm -f "$dir/kernels"
+"$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "workdir:$dir/proj;open:$dir/proj/sub/r.ipynb;mdwait;vim:7G;key:shift+Return;nbwait" >/dev/null 2>&1
+got=$(sed -e "s#$dir#@#g" -e 's/kernel-[0-9a-f]*\.py/kernel-H.py/' "$dir/kernels" | tr '\n' '|')
+check "a notebook in a subproject: its kernel run with the subproject's Python" "@/proj/sub/.venv/bin/python kernel-H.py|"
+
 # A notebook on another machine (tests/fake-ssh.sh standing in for ssh,
 # its home a folder here): read as one, its kernel run there (the helper
 # written to blit's cache there), Ctrl+C sent there, saved as a notebook,

@@ -81,6 +81,20 @@ std::string full_path(const std::string& path);
 // grammar in `own` (the settings) names it (appstatus.cpp).
 std::string language_name(const std::string& id, std::span<const GrammarSource> own = {});
 
+// A project's Python, as found (apppython.cpp). For a folder on another
+// machine, the root is its whole path (ssh://host/...) and the rest are as
+// that machine names them.
+struct PyFound {
+    std::string root;      // the folder it is the Python of: the project's, or a subproject's in it
+    std::string from;      // what chose it: "chosen", "pinned", ".venv", "venv", "uv", "conda NAME", "PATH" ("": nothing, the folder not reached)
+    std::string command;   // the words that run it, for a shell (a path quoted)
+    std::string console;   // the Python console's: IPython where its environment has it, else the same
+    std::string exe;       // the interpreter itself (sys.executable): what language servers are told
+    std::string version;   // "3.12.4" ("" when it would not say)
+    bool debugpy = false;  // it has debugpy of its own
+    bool operator==(const PyFound&) const = default;
+};
+
 // One open file: its text, its colours, and where its view was left.
 struct Profile;      // (profile.hpp)
 struct ProfileFunc;
@@ -1140,14 +1154,35 @@ private:
                   std::shared_ptr<const BuildMatchers> matchers = {});
     i64 term_pid(u64 doc);          // its program's process here, while it runs (0: there, ended, or none)
     std::string term_tty(u64 doc);  // its terminal's device here ("/dev/ttys003"; "": there, or none)
+    // The project's Python (apppython.cpp): one for each project folder and
+    // subproject, found on a worker and kept; everything that runs Python
+    // takes it. py_known: a folder's, if it is known (else it is looked for,
+    // and py_gen_ counts up when it comes); py_when: `then` run once it is
+    // known (at once, if it is). py_wait: the same from a worker thread,
+    // which waits for it: the words that run it there.
+    struct PyUi;
+    std::optional<PyFound> py_known(const std::string& dir);
+    void py_when(const std::string& dir, std::function<void()> then);
+    static std::string py_wait(const std::shared_ptr<PyUi>& py, const std::string& dir, const std::string& top);
+    std::string py_top(const std::string& dir) const;
+    std::shared_ptr<PyUi>& py_ui();
+    void py_sync();
+    void py_heard(const std::string& dir);  // (something changed on disk in it)
+    void py_again(bool full);                // every folder's looked at again (full: its interpreter asked again too)
+    void py_pin();                           // (blit.opt.python.interpreter changed)
+    void py_choose();
+    std::string py_status(const Doc& d);
+    std::string py_session_text(const std::string& folder);
+    void py_session_take(const std::vector<std::pair<std::string, std::string>>& chosen);
+    // A program's folder's Python, for debugpy: false while it is being found
+    // (then `then` runs). py_adapter: the command that starts debugpy's adapter.
+    bool py_debug_ready(const std::string& dir, std::function<void()> then);
+    std::string py_adapter(const std::string& dir, std::string* python);
+    std::string py_dump();
+    void py_settle();
+    u64 py_gen_ = 1;  // counts up whenever a folder's Python has been found (or found to be another)
+    std::string py_code_;  // code sent to the Python console before it could start (its Python not known yet)
     // The Python console, in the terminals' split (appterm.cpp).
-    // python_for: the Python a folder's code runs with, as words for a
-    // shell (the console's: IPython where the folder's environment has it;
-    // else, and for a notebook's kernel, Python).
-    static std::string python_for(const std::string& root, bool console = true);
-    // python_in: the same, looked at where the folder is (over the link, for
-    // one on another machine: never from the main thread).
-    static std::string python_in(const std::string& root, bool console);
     static std::string python_named(const std::string& python, const std::string& root);  // (as a message names it)
     TermView* py_console(bool keyboard);
     void py_send(std::string code);
@@ -1724,6 +1759,7 @@ private:
     std::shared_ptr<BuildUi> buildui_;
     std::shared_ptr<ValidUsage> validusage_;  // (made the first time a statement is asked for)
     std::shared_ptr<TestUi> testui_;
+    std::shared_ptr<PyUi> pyui_;  // (made the first time a folder's Python is asked for)
     u64 test_gen_ = 1;  // counts up whenever what the Tests tab shows may have changed
     u64 build_gen_ = 1;  // counts up whenever what the Build tab or the Run button shows may have changed
     u64 build_prob_gen_ = 1;  // counts up whenever the build's problems change

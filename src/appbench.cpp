@@ -618,6 +618,10 @@ int App::run_bench() {
 //   crumbsdump             print the breadcrumbs under the split in front's tabs, " > " between them
 //   coveragedump           print the lines the last run with coverage ran and missed in the file in front, and each file's share
 //   testdump               print the project's tests by group (+ passed, x failed, - skipped, . not run), once found and run
+//   pywait                 wait for the projects' Pythons being looked for, and what waits for them to go on
+//                          (termwait, debugwait and nbwait wait for them first too)
+//   pydump                 print each folder asked about: the root it takes, its Python (what chose it, the words that
+//                          run it, its version)
 //   runconfdump            print the run configuration chosen, and what Debug and Profile would run with it
 //   seldump                print what is selected in the file in front, in [ ], its lines joined by " / " (or none)
 //   shapedump              print the brackets on show in the file in front (line:column=depth, "-" not the tree's)
@@ -1212,6 +1216,7 @@ void App::run_script(const char* script) {
         } else if (verb == "term") {  // a terminal (term:folder, or in the folder being worked in)
             term_open(arg);
         } else if (verb == "termwait") {  // the terminal in front shows this text (10 s at most)
+            py_settle();  // (the Python console starts once its Python is known)
             if (!term_wait(arg)) std::fprintf(stderr, "termwait: no \"%s\" on the screen\n", arg.c_str());
             term_sync();
         } else if (verb == "debugattach") {  // debugattach:PID, the debugger attached to that process
@@ -1243,6 +1248,7 @@ void App::run_script(const char* script) {
             if (!debug_pick(arg.substr(0, sep), named ? 0 : static_cast<u32>(std::atoi(which.c_str())), named ? which : std::string()))
                 std::fprintf(stderr, "debugpick: no %s\n", arg.c_str());
         } else if (verb == "debugwait") {  // debugwait:stopped, debugwait:idle, or debugwait:answers (every request answered)
+            py_settle();  // (a Python program's session starts once its Python is known)
             debug_wait(arg);
         } else if (verb == "debugdump") {
             std::fprintf(stderr, "%s\n", debug_dump().c_str());
@@ -1277,6 +1283,7 @@ void App::run_script(const char* script) {
                 if (!nb_set_outputs(*pane_->doc, static_cast<size_t>(cell - 1), text, count)) std::fprintf(stderr, "nbset: no such code cell, or not outputs\n");
             }
         } else if (verb == "nbwait") {  // nbwait: until no notebook's kernel runs a cell or has one waiting (and each is ready); nbwait:started, until a cell is running and has given an output
+            py_settle();  // (a kernel starts once its Python is known)
             if (!nb_kernel_wait(arg == "started")) std::fprintf(stderr, "nbwait: timed out\n");
         } else if (verb == "nbspent") {  // nbspent:MS, whether the main thread took in what kernels said (since clock) within that many ms
             const u64 ms = nb_spent_ns_ / 1'000'000, most = static_cast<u64>(std::atoll(arg.c_str()));
@@ -1284,6 +1291,11 @@ void App::run_script(const char* script) {
             else std::fprintf(stderr, "kernels taken in in %llu ms (over %llu)\n", static_cast<unsigned long long>(ms), static_cast<unsigned long long>(most));
         } else if (verb == "nbkernel") {  // the kernel of the notebook in front: ipython or python, its pid, running or idle, how many cells wait
             std::fprintf(stderr, "%s\n", nb_kernel_dump().c_str());
+        } else if (verb == "pywait") {  // the projects' Pythons being looked for have been, and what waited for them has gone on (a minute at most)
+            py_settle();
+            dirty_ = true;
+        } else if (verb == "pydump") {  // each folder asked about: the root it takes and its Python
+            std::fprintf(stderr, "%s\n", py_dump().c_str());
         } else if (verb == "nbclick") {  // nbclick:ROW, a click on that row of the notebook's view (as nbview counts them, from 0)
             md_wait();
             float x = 0, y = 0;

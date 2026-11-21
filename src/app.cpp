@@ -639,7 +639,9 @@ void App::apply_config(Config next) {
                                   next.grammars != cfg_.grammars;
     const bool lsp_changed =
         next.lsp != cfg_.lsp || next.lsp_max_mb != cfg_.lsp_max_mb || next.lsp_servers != cfg_.lsp_servers || types_changed;
+    const bool python_changed = next.python_interpreter != cfg_.python_interpreter;
     cfg_ = std::move(next);
+    if (python_changed) py_pin();  // (every folder's Python looked for again)
     Remote::set_agent_times(cfg_.agent_idle * 60, cfg_.agent_keep * 3600);  // (the next connection's hello says them)
     for (const std::unique_ptr<Pane>& p : panes_) {
         for (const std::shared_ptr<Doc>& d : p->docs) d->ed.tab_width = cfg_.tab_width;
@@ -1858,6 +1860,7 @@ void App::handle_event(const SDL_Event& e) {
             panel_refresh();  // files that came or went
             find_stale();
             reload_changed(); // and open files that were written
+            py_again(false);  // and the projects' Pythons (a venv made or taken away)
             if (cfg_.git) git_.refresh();
             script_focus(true);  // and init.lua, if it was changed in another program
             break;
@@ -2038,6 +2041,10 @@ void App::handle_event(const SDL_Event& e) {
             }
             if (e.user.code == 26) {  // a notebook's kernel has said something
                 nb_sync();
+                break;
+            }
+            if (e.user.code == 44) {  // a project's Python has been found, or debugpy fetched
+                py_sync();
                 break;
             }
             break;

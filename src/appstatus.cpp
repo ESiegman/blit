@@ -4,14 +4,15 @@
 // follows, the lines of this file changed since the last commit, how many
 // files are changed) and the file (its path in the project folder, unsaved
 // or read only); on the right what a script put there (blit.ui.status), the
-// language server's problems, the cursor's line and column, the
-// indentation, the line endings, the language and its server ("(no
-// colours)" when the language's grammar is not installed). A click on the
-// repository opens the Git tab of the side panel, one on the problems the
-// Problems tab; one on the line and column opens Go to line, and one on the
-// indentation, the line endings or the language a small list that changes
-// it for the file. On the start screen it names the project folder and the
-// settings file instead.
+// language server's problems, a Python file's project's Python, the
+// cursor's line and column, the indentation, the line endings, the language
+// and its server ("(no colours)" when the language's grammar is not
+// installed). A click on the repository opens the Git tab of the side
+// panel, one on the problems the Problems tab; one on the line and column
+// opens Go to line, one on the Python the Pythons to choose from, and one on
+// the indentation, the line endings or the language a small list that
+// changes it for the file. On the start screen it names the project folder
+// and the settings file instead.
 //
 // Its cells are made again only when something it shows has changed; a
 // frame that changes nothing in it costs a comparison of a few numbers.
@@ -33,7 +34,7 @@ namespace blit {
 
 namespace {
 
-enum Action : u8 { kNone, kGitTab, kProblemsTab, kReconnect, kSettings, kGoLine, kIndent, kLineEnds, kLanguage };
+enum Action : u8 { kNone, kGitTab, kProblemsTab, kReconnect, kSettings, kGoLine, kIndent, kLineEnds, kLanguage, kPython };
 
 // The bar's tones (Popup::tones), behind Vim's mode: the muted ink's in
 // Normal and Command mode, the accent's in the modes that change the text.
@@ -197,6 +198,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
     bool kernel_lost = false;
     const std::string kernel = start ? std::string() : nb_kernel_status(d, &kernel_lost);  // (a notebook's)
     mix(std::hash<std::string>{}(kernel));
+    mix(py_gen_);  // (the project's Python, named for a Python file)
     // And apart from those, where the cursor is and what is selected (the
     // text's revision for what that holds): when only these change, as with
     // every key typed, and the words for them are as wide as they were, they
@@ -425,6 +427,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                 u.right.push_back({warn + count_text(warnings), warnings ? ink::kWarning : ink::kMuted, kProblemsTab, 1, 4});
             }
             if (!kernel.empty()) u.right.push_back({kernel, kernel_lost ? ink::kError : ink::kMuted, kNone, 2, 3});
+            if (const std::string py = start ? std::string() : py_status(d); !py.empty()) u.right.push_back({py, ink::kMuted, kPython, 2, 3});  // (a click: another chosen)
             if (text) u.right.push_back({at_text(), ink::kMuted, kGoLine, 2, 5});
             const u32 step = text ? indent_step() : 0;
             if (text) u.right.push_back({d.indent_tabs ? std::string("Tabs") : "Spaces: " + count_text(step), ink::kMuted, kIndent, 2, 2});
@@ -566,6 +569,7 @@ bool App::status_mouse_down(const SDL_MouseButtonEvent& b) {
                 else if (s.action == kIndent) status_pick(0);
                 else if (s.action == kLineEnds) status_pick(1);
                 else if (s.action == kLanguage) status_pick(2);
+                else if (s.action == kPython) py_choose();
                 break;
             }
     }
@@ -574,11 +578,13 @@ bool App::status_mouse_down(const SDL_MouseButtonEvent& b) {
 }
 
 // A click on the middle of the part of the bar whose text starts with
-// `part`, through the real event handler (for the tests).
+// `part` (one that is just that first: "Python", the language, before
+// "Python 3.12 (.venv)"), through the real event handler (for the tests).
 bool App::status_click(const std::string& part) {
     if (!status_ || !status_px()) return false;
+    const bool whole = std::ranges::any_of(status_->spots, [&](const StatusUi::Spot& s) { return s.text == part; });
     for (const StatusUi::Spot& s : status_->spots) {
-        if (!s.text.starts_with(part)) continue;
+        if (whole ? s.text != part : !s.text.starts_with(part)) continue;
         SDL_Event e{};
         e.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
         e.button.button = SDL_BUTTON_LEFT;

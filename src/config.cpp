@@ -409,6 +409,7 @@ struct Parser {
             if (!as_bool(v, &c.git)) warn(std::string(key) + " should be true or false");
             return;
         }
+        if (key == "python.interpreter") return text(key, v, &c.python_interpreter);
         if (key == "debug.inline_values") {
             if (!as_bool(v, &c.debug_inline_values)) warn(std::string(key) + " should be true or false");
             return;
@@ -822,6 +823,7 @@ const Getter kGetters[] = {
     BLIT_GET("lsp.reference_counts", flag(c.lsp_ref_counts)),
     BLIT_GET("git.enabled", flag(c.git)),
     BLIT_GET("debug.inline_values", flag(c.debug_inline_values)),
+    BLIT_GET("python.interpreter", str(c.python_interpreter)),
     BLIT_GET("panel.open", flag(c.panel_open)),
     BLIT_GET("panel.width", num(c.panel_width)),
     BLIT_GET("scroll.lines", num(c.scroll_lines)),

@@ -165,6 +165,14 @@ got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$K;f
 check "one name at a module's level and in a Test class: the cursor's alone" 'tests/test_k.py: +test_x .test_x | here: 1+ 6.'
 got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$K;frame;testdump;vim:6G;command:Run the test at the cursor;testdump" "$K/tests/test_k.py" 2>&1 >/dev/null | tail -1)
 check "and the cursor on the class's" 'tests/test_k.py: .test_x +test_x | here: 1. 6+'
+# The Python blit.opt.python.interpreter pins, over the PATH's: pytest found
+# and run with it (the .venv's stand-in above, out of any project).
+N="$dir/pinned"
+mkdir -p "$N/tests"
+cp "$V/tests/test_v.py" "$N/tests/" && cp "$V/.venv/bin/python" "$dir/pinned-python"
+printf 'blit.opt.python.interpreter = "%s"\n' "$dir/pinned-python" | cat "$dir/init.lua" - >"$dir/pin.lua"
+got=$(BLIT_INIT="$dir/pin.lua" "$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$N;frame;command:Run the tests;testdump" "$N/tests/test_v.py" 2>&1 >/dev/null | tail -1)
+check "pytest with the Python the settings pin" 'tests/test_v.py: +test_one xtest_two +test_p[1] +test_p[2] | here: 1+ 5x 10+ 10+'
 got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$V;frame;builddump;command:Run the tests with coverage;testdump;coveragedump" "$V/tests/test_v.py" 2>&1 >/dev/null | tail -1)
 check "and coverage.py there, its report in the run configuration's environment" 'here: ran 1 2 5, missed 6 | files: tests/test_v.py=75%'
 printf 'import nosuch\n' >"$V/tests/test_bad.py"

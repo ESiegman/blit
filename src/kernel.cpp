@@ -59,8 +59,9 @@ std::string helper_here(std::string* err) {
     return path;
 }
 
-// The Python there, chosen as the Python console's is here (appterm.cpp):
-// the folder's virtual environment's, uv's for a uv project, else python3.
+// The Python there when none is given, chosen as the project's would be
+// (apppython.cpp): the folder's virtual environment's, uv's for a uv
+// project, else python3.
 // A cell sent to run, as the line that sends it starts; and the helper's
 // line that says one is done, as it starts (json.dumps' spacing).
 constexpr std::string_view kRunOp = "{\"op\":\"run\"";
@@ -86,6 +87,7 @@ struct Kernel::Link {
     RemoteProc proc;
     int out = -1, err = -1;  // (the reader's)
     std::string remote_dir, notebook_dir;  // (on another machine: where it runs, and the notebook's folder there)
+    std::string python;                    // (and the Python it runs with there: "", chosen there)
     // Writing. Until it has started (there), what is sent waits in `pending`.
     std::mutex write_mu;
     int in = -1;
@@ -114,6 +116,7 @@ bool Kernel::start(const std::string& python, const std::string& dir, const std:
     std::string host, there;
     if (split_remote(dir, &host, &there)) {
         l->remote_dir = dir;  // (connected to, and started there, on the reader's thread)
+        l->python = python;
         std::string nb_host;
         if (!split_remote(notebook_dir, &nb_host, &l->notebook_dir)) l->notebook_dir = there;
     } else {
@@ -193,7 +196,8 @@ bool Kernel::Link::start_remote(std::stop_token stop) {
     RemoteProc p;
     p.keep = true;
     p.done = kDone;
-    if (!c->spawn({"/bin/sh", "-c", kChoose, "sh", helper, notebook_dir}, there, {}, &p, &why)) return failed("cannot start the kernel there: " + why);
+    if (!c->spawn({"/bin/sh", "-c", python.empty() ? std::string(kChoose) : "exec " + python + " \"$@\"", "sh", helper, notebook_dir}, there, {}, &p, &why))
+        return failed("cannot start the kernel there: " + why);
     {
         std::lock_guard lock(mu);
         conn = std::move(c);

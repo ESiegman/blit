@@ -90,20 +90,8 @@ std::string native(std::string_view want) {
     if (want == "gdb") return rocm + gdb + "if [ -n \"$v\" ]; then echo \"gdb $v is too old to be a debugger blit can use: 14 or newer speaks its protocol\" >&2; else echo 'no gdb here' >&2; fi; exit 127";
     return mac + rocm + lldb + gdb + "echo 'no debugger: install lldb, or gdb 14 or newer' >&2; exit 127";
 }
-// (debugpy's adapter is run with the project's Python, App::python_for(),
-// and starts the program with the same.)
-const char* kPython = " -m debugpy.adapter";
-// On another machine: the Python python_for() would choose, chosen there in
-// the project's folder (`root`, its path there: nothing is looked at over
-// the link from here), and debugpy's adapter run with it.
-std::string python_there(const std::string& root) {
-    return "py=$(cd " + sh_word(root) + " 2>/dev/null && "
-           "if [ -x .venv/bin/python ]; then echo \"$PWD/.venv/bin/python\"; "
-           "elif [ -x venv/bin/python ]; then echo \"$PWD/venv/bin/python\"; "
-           "elif [ -e uv.lock ] || grep -q -e uv_build -e '\\[tool\\.uv' pyproject.toml 2>/dev/null; then echo uv; fi); "
-           "if [ \"$py\" = uv ]; then exec uv run python" + std::string(kPython) + "; fi; "
-           "exec \"${py:-python3}\"" + kPython;
-}
+// (debugpy's adapter is run with the project's Python, here or there, and
+// starts the program with the same: App::py_adapter, apppython.cpp.)
 // What native() says on the error stream when the debugger it starts is gdb
 // (which counts a breakpoint's hits from 0, where the others count from 1).
 constexpr std::string_view kGdbSays = "blit-debugger: gdb";
@@ -1230,13 +1218,7 @@ bool App::debug_open(const std::string& near, const std::string& dir, bool pytho
         launch = (base_name(first).find("gdb") != std::string::npos ? "echo 'blit-debugger: gdb' >&2; " : "") + adapter;  // (arm-none-eabi-gdb, gdb-multiarch: a gdb)
     }
     u.python.clear();
-    if (python && u.remote.empty()) {
-        u.python = python_for(build_root(), false);
-        launch = "exec " + u.python + kPython;
-    } else if (python) {
-        std::string root_host, root_there;
-        u.python = launch = python_there(split_remote(build_root(), &root_host, &root_there) && root_host == host ? root_there : parent_of(there));
-    }
+    if (python) launch = py_adapter(near.empty() ? dir : parent_of(near), &u.python);  // (the project's Python, with debugpy)
     if (!u.dap->start({"/bin/sh", "-c", exports + launch}, dir, wake, &err)) {
         u.error = err;
         u.dap.reset();
@@ -1335,6 +1317,7 @@ void App::debug_launch() {
     const BuildTask::Debug& how = u.conf;
     const std::string dir = !u.cwd.empty() ? u.cwd : parent_of(u.program);
     const bool python = how.adapter == "debugpy" || (how.adapter.empty() && u.program.ends_with(".py"));
+    if (python && !py_debug_ready(parent_of(u.program), [this] { debug_launch(); })) return;  // (the project's Python first: then here, built already)
     const bool attach = how.request == "attach";
     // (Its input and output in a terminal tab: as the run configuration says,
     // else where the program reads what is typed to it.)
@@ -1983,7 +1966,7 @@ void App::debug_sync_session(bool* stopped) {
                 // (There, the Python it was is the one the error names: Python
                 // starts its message with its own path.)
                 const std::string py = python_named(u.remote.empty() ? u.python : why.substr(0, why.find(": ")), build_root());
-                why ="debugpy is not installed for " + py + (py.starts_with("uv run") ? " (uv add --dev debugpy)" : "");
+                why = "debugpy is not installed for " + py + (py.starts_with("uv run") ? " (uv add --dev debugpy)" : "");
             }
             if (u.error.empty() && !why.empty()) u.error = why;
         }

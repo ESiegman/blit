@@ -2,8 +2,8 @@
 // folder again brings it back. The tabs of each split in their order, how
 // the window was split and where its dividers were, each file's cursor and
 // view and the language chosen for it, the side panel (shown or not, its
-// tab, its width), the Build tab's task, and the breakpoints and
-// expressions watched. One small text file
+// tab, its width), the Build tab's task, the Python chosen for the project,
+// and the breakpoints and expressions watched. One small text file
 // for each folder, in `sessions` beside `recent` in blit's data folder
 // (~/.local/share/blit/sessions), named by a hash of the folder's path; its
 // first lines say whose it is and how many tabs it brings back, which is
@@ -165,6 +165,7 @@ struct App::Session {
     int panel_cols = 0;
     std::vector<std::string> debug;  // the breakpoints and the expressions watched, a line each
     std::map<std::string, std::string> langs;  // the language chosen for a file (from the status bar), by its path
+    std::vector<std::pair<std::string, std::string>> python;  // the Python chosen for a project (or a subproject): its folder, the Python
     std::unique_ptr<Node> root;
 
     // Reads one; false if it is not a session of this folder.
@@ -186,6 +187,7 @@ struct App::Session {
             if (f[0] == "build" && l.size() > 6) build = l.substr(6);  // (the task's key, which has a tab in it)
             if (f[0] == "break" || f[0] == "breakoff" || f[0] == "function" || f[0] == "watch" || f[0] == "exception" || f[0] == "console") debug.emplace_back(l);  // (appdebug.cpp reads them)
             if (f[0] == "lang" && f.size() >= 3) langs[std::string(fields(l, 3)[2])] = f[1];  // lang, the language, the path (last: it may have tabs)
+            if (f[0] == "python" && f.size() >= 3) python.emplace_back(f[1], fields(l, 3)[2]);  // python, the folder, the Python (a command may have tabs)
         }
         if (folder != want) return false;
         root = node(lines, i);
@@ -436,6 +438,7 @@ std::string App::session_text() {
     out += "panel\t" + std::string(open ? "1" : "0") + "\t" + tab + "\t" + std::to_string(cols) + "\n";
     if (const std::string build = build_chosen(); !build.empty() && build.find('\n') == std::string::npos) out += "build\t" + build + "\n";
     out += debug_session_text();
+    out += py_session_text(u.folder);
     // The languages chosen for files, each once (a file may be in two splits).
     std::set<std::string> said;
     for (const std::unique_ptr<Pane>& p : panes_)
@@ -651,6 +654,7 @@ void App::session_apply(Session& st) {
     if (st.panel) panel_session_set(st.panel_open, st.panel_tab, st.panel_cols);
     if (!st.build.empty()) build_choose(st.build);
     debug_session_take(st.debug);
+    py_session_take(st.python);
     u.tabs[st.folder] = static_cast<int>(files);
     ++session_gen_;
     place_panes(px_w_, px_h_);

@@ -787,35 +787,6 @@ void App::term_new_here() {
 
 // ---------------------------------------------------------------- the Python console
 
-// The Python for a folder: its virtual environment's, .venv's or venv's
-// (for the console, IPython, if it has it), uv's for a uv project (as the
-// Build tab knows one: a uv.lock, or uv named in pyproject.toml), else the
-// one on the PATH. (Not uv's in any other project: uv run would make a
-// .venv and a uv.lock in it. A notebook's kernel on another machine has the
-// same chosen there: kernel.cpp.)
-std::string App::python_for(const std::string& root, bool console) {
-    // On another machine, chosen there by the command itself, in the folder:
-    // asking it from here would wait on the connection.
-    if (is_remote(root))
-        return std::string("sh -c 'for e in .venv venv; do ") + (console ? "[ -x $e/bin/ipython ] && exec $e/bin/ipython; " : "") +
-               "[ -x $e/bin/python ] && exec $e/bin/python; done; "
-               "{ [ -e uv.lock ] || grep -q -e uv_build -e \"\\[tool\\.uv\" pyproject.toml 2>/dev/null; } && exec uv run python; exec python3'";
-    return python_in(root, console);
-}
-std::string App::python_in(const std::string& root, bool console) {
-    auto quoted = [](const std::string& path) { return "'" + path + "'"; };  // (a folder's path with no quote in it)
-    if (root.find('\'') == std::string::npos)
-        for (const char* env : {"/.venv/bin/", "/venv/bin/"}) {
-            if (console && fs_kind(root + env + "ipython") == 1) return quoted(root + env + "ipython");
-            if (fs_kind(root + env + "python") == 1) return quoted(root + env + "python");
-        }
-    if (fs_kind(root + "/uv.lock") == 1) return "uv run python";
-    std::string pyproject;
-    if (fs_read(root + "/pyproject.toml", &pyproject, 1u << 20) && (pyproject.find("uv_build") != std::string::npos || pyproject.find("[tool.uv") != std::string::npos))
-        return "uv run python";
-    return "python3";
-}
-
 // That Python as a message names it: a venv's by its path in the folder.
 std::string App::python_named(const std::string& python, const std::string& root) {
     std::string py = python;
@@ -851,12 +822,26 @@ TermView* App::py_console(bool keyboard) {
                 dock_show(editing);
                 return py_console(keyboard);
             }
+    // The project's Python (the subproject's of the Python file in front, if
+    // it is in one), started in its folder; once it is known, if it is not yet.
     const std::string* root = panel_root();
-    const std::string dir = root ? *root : default_workdir();
+    std::string dir = root ? *root : default_workdir();
+    if (const std::string& p = editing->doc->ed.path; !editing->doc->term && (p.ends_with(".py") || p.ends_with(".pyi")))
+        if (const std::string near = parent_of(is_remote(p) ? p : full_path(p)); near.starts_with(dir + "/")) dir = near;
+    const std::optional<PyFound> py = py_known(dir);
+    if (!py) {
+        py_when(dir, [this, keyboard] {
+            TermView* v = py_console(keyboard);
+            if (!v || py_code_.empty()) return;
+            v->waiting += (v->waiting.empty() ? "" : "\n") + std::exchange(py_code_, {});
+            py_flush(*v);
+        });
+        return nullptr;
+    }
     Pane* into = dock_show(editing);
     if (!into) into = editing;
     pane_ = into;
-    const u64 doc = term_open(dir, python_for(dir), "Python", {}, true);
+    const u64 doc = term_open(py->root, py->console, "Python", {}, true);
     if (!doc && into->docs.empty() && into != editing) remove_pane(into);
     pane_ = editing;
     Doc* d = doc ? find_doc(doc) : nullptr;
@@ -874,9 +859,12 @@ TermView* App::py_console(bool keyboard) {
 // IPython take one whole, indented as it is), and run. Kept until the
 // console can take a paste, for a while after it starts.
 void App::py_send(std::string code) {
-    TermView* v = py_console(false);
-    if (!v) return;
     while (!code.empty() && (code.back() == '\n' || code.back() == '\r' || code.back() == ' ' || code.back() == '\t')) code.pop_back();
+    TermView* v = py_console(false);
+    if (!v) {  // (the project's Python not known yet: sent once the console has started with it)
+        if (!code.empty()) py_code_ += (py_code_.empty() ? "" : "\n") + code;
+        return;
+    }
     if (code.empty()) return;
     v->waiting += (v->waiting.empty() ? "" : "\n") + code;
     py_flush(*v);
