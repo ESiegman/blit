@@ -2494,9 +2494,12 @@ same way there, in the folder being worked in (or the program's, if that
 folder is not on the same machine). A program with HIP's code for the GPU in it is debugged with
 ROCm's `rocgdb`, where there is one (on the PATH or in
 `/opt/rocm/bin`): a breakpoint in a kernel stops a GPU wave there, with the
-kernel's frame and variables, and the GPU's waves are among the threads,
-named by their work-group and number ("GPU wave (0,0,0)/0"), after the
-program's own. A program on another machine (`ssh://host/...`) is
+kernel's frame and variables. The GPU's waves, named by their work-group
+and number ("GPU wave (0,0,0)/0"), are one row under the program's own
+threads, *GPU waves* and how many (there may be thousands): Right or Enter
+lists them below the variables (Left shuts the list), and the wave that
+stopped, and the one whose stack is shown, are under that row all the
+same. A program on another machine (`ssh://host/...`) is
 debugged there, with that machine's debugger, its source opened from
 there; F5 waits for nothing there: the Debug tab says *Starting on host…*,
 and F5 again (or Shift+F5) calls it off. Stopping never waits for the

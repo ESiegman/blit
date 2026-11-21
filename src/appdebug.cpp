@@ -194,8 +194,11 @@ struct DebugSession {
     struct Thread {
         i64 id = 0;
         std::string name;
+        bool wave = false;  // one of the GPU's waves (rocgdb's): those are after the program's own
     };
     std::vector<Thread> threads;  // (when it is stopped)
+    // The program's own threads, those before the waves.
+    size_t cpu_threads() const { return static_cast<size_t>(std::ranges::partition_point(threads, [](const Thread& t) { return !t.wave; }) - threads.begin()); }
     std::string reason, error;
     struct Frame {
         i64 id = 0;
@@ -345,7 +348,7 @@ struct App::DebugUi : DebugSession {
     };
     std::vector<Watch> watches;
     // The panel: a row for each thing shown, and the one chosen.
-    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData, kInstr, kSession };
+    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData, kInstr, kSession, kWaves };
     // A row: a mark (a triangle, an arrow) before its text, in an ink of its
     // own; the text; something quieter after it; and on the right its key.
     struct Row {
@@ -359,6 +362,7 @@ struct App::DebugUi : DebugSession {
     };
     std::vector<Row> rows;
     u32 sel = 0, top = 0;
+    bool waves_open = false;  // the GPU's waves listed (below the variables), not one row
     // The other sessions, and whether one of them is in this one's place for
     // a moment (to hear from its debugger, or be sent breakpoints).
     std::vector<DebugSession> others;
@@ -1138,8 +1142,8 @@ void App::debug_name_waves() {
         }
         if (waves.empty()) return;
         for (DebugUi::Thread& t : v.threads)
-            if (const auto it = waves.find(t.id); it != waves.end()) t.name = it->second;
-        std::ranges::stable_sort(v.threads, [&](const DebugUi::Thread& a, const DebugUi::Thread& b) { return !waves.contains(a.id) && waves.contains(b.id); });
+            if (const auto it = waves.find(t.id); it != waves.end()) t.name = it->second, t.wave = true;
+        std::ranges::stable_partition(v.threads, [](const DebugUi::Thread& t) { return !t.wave; });
         ++debug_gen_;
         dirty_ = true;
     });
@@ -1271,7 +1275,9 @@ void App::debug_sync_session(bool* stopped) {
                 if (v.asking) --v.asking;
                 if (!r.success || v.state != DebugUi::kStopped) return;
                 v.threads.clear();
-                for (json::Value t : r.body()["threads"]) v.threads.push_back({t["id"].integer(), std::string(t["name"].str())});
+                // (An adapter that names the GPU's waves so has them after the program's threads too.)
+                for (json::Value t : r.body()["threads"]) v.threads.push_back({t["id"].integer(), std::string(t["name"].str()), t["name"].str().find("AMDGPU Wave") != std::string_view::npos});
+                std::ranges::stable_partition(v.threads, [](const DebugUi::Thread& t) { return !t.wave; });
                 if (v.rocm) debug_name_waves();  // (the GPU's waves, which rocgdb names as it lists them)
                 ++debug_gen_;
                 dirty_ = true;
@@ -1909,14 +1915,31 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
             o.after = kWord[u.others[i].state];
         }
     }
-    if (u.threads.size() > 1) {  // (one alone is the stack's own)
-        heading("Threads", u.threads.size());
-        for (u32 i = 0; i < u.threads.size(); ++i) {
-            const DebugUi::Thread& t = u.threads[i];
-            Row& r = add(DebugUi::kThread, i, t.name.empty() ? "Thread " + std::to_string(t.id) : t.name, t.id == u.thread ? ink::kStrong : ink::kText);
-            r.mark = t.id == u.thread ? "\xE2\x96\xB8" : " ";  // (the one whose stack is shown)
-            r.mark_ink = ink::kAccent;
-            if (t.id == u.stopped_thread && !u.reason.empty()) r.after = u.reason;
+    // A thread's row. (A wave's name is put in as it is drawn: of thousands, only those on show.)
+    auto thread_row = [&](u32 i, u32 indent) {
+        const DebugUi::Thread& t = u.threads[i];
+        Row& r = add(DebugUi::kThread, i, t.wave ? std::string() : t.name.empty() ? "Thread " + std::to_string(t.id) : t.name, t.id == u.thread ? ink::kStrong : ink::kText, indent);
+        r.mark = t.id == u.thread ? "\xE2\x96\xB8" : " ";  // (the one whose stack is shown)
+        r.mark_ink = ink::kAccent;
+        if (t.id == u.stopped_thread && !u.reason.empty()) r.after = u.reason;
+    };
+    // The GPU's waves (there may be thousands) are one row, which opens to
+    // list them below the variables; the one that stopped, and the one
+    // whose stack is shown, are under it all the same.
+    const u32 cpu = static_cast<u32>(u.cpu_threads()), all = static_cast<u32>(u.threads.size());
+    if (all > 1) {  // (one alone is the stack's own)
+        heading("Threads", all);
+        for (u32 i = 0; i < cpu; ++i) thread_row(i, 0);
+        if (cpu < all) {
+            Row& r = add(DebugUi::kWaves, 0, "GPU waves");
+            r.mark = u.waves_open ? "\xE2\x96\xBE" : "\xE2\x96\xB8";
+            r.after = std::to_string(all - cpu);
+            for (const i64 id : {u.stopped_thread, u.thread})
+                for (u32 i = cpu; i < all; ++i)
+                    if (u.threads[i].id == id) {
+                        if (out.back().act != DebugUi::kThread || out.back().index != i) thread_row(i, 2);
+                        break;
+                    }
         }
     }
     if (!u.frames.empty()) {
@@ -1936,6 +1959,10 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
             Row& r = add(DebugUi::kVar, i, v.name + (v.value.empty() ? "" : " = " + v.value), v.depth == 0 ? ink::kMuted : ink::kText, 2 * v.depth);
             r.mark = v.ref > 0 ? (v.open ? "\xE2\x96\xBE" : "\xE2\x96\xB8") : " ";  // a small triangle, down or right
         }
+    }
+    if (all > 1 && cpu < all && u.waves_open) {
+        heading("GPU waves", all - cpu);
+        for (u32 i = cpu; i < all; ++i) thread_row(i, 0);
     }
     // The expressions watched (always there: the last row adds one).
     heading("Watch", u.watches.size());
@@ -2020,7 +2047,8 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
         if (!row.mark.empty()) c = put(box, font, 2 + r, c, row.mark, row.mark_ink) + 1;
         const u32 key_w = row.key.empty() ? 0 : width_of(row.key) + 2;
         const u32 room = cols > c + key_w ? cols - c - key_w : 0;
-        c = put(box, font, 2 + r, c, fit_text(row.text, room), row.ink);
+        const std::string& text = row.act == DebugUi::kThread && row.text.empty() && row.index < u.threads.size() ? u.threads[row.index].name : row.text;
+        c = put(box, font, 2 + r, c, fit_text(text, room), row.ink);
         if (!row.after.empty() && c + 3 < cols - key_w) put(box, font, 2 + r, c + 1, fit_text(row.after, cols - key_w - c - 1), ink::kMuted);
         if (key_w && key_w < cols) put(box, font, 2 + r, cols - key_w + 2, row.key, ink::kMuted);
         if (u.top + r == u.sel || (field && row.act == chosen)) light_row(box, 2 + r, focused);
@@ -2060,6 +2088,7 @@ void App::debug_do(u32 i) {
         case DebugUi::kOut: debug_command("stepOut"); break;
         case DebugUi::kStop: debug_command("stop"); break;
         case DebugUi::kThread: debug_thread(row.index); break;
+        case DebugUi::kWaves: u.waves_open = !u.waves_open; break;
         case DebugUi::kFrame: debug_frame(row.index, true); break;
         case DebugUi::kVar: debug_expand(row.index); break;
         case DebugUi::kWatch:
@@ -2167,7 +2196,13 @@ bool App::debug_panel_key(const SDL_KeyboardEvent& k) {
             }
             return true;
         case SDLK_RIGHT:
-        case SDLK_LEFT:  // a variable opened or shut
+        case SDLK_LEFT:  // a variable opened or shut, or the GPU's waves listed or not
+            if (u.sel < n && u.rows[u.sel].act == DebugUi::kWaves) u.waves_open = k.key == SDLK_RIGHT;
+            if (u.sel < n && u.rows[u.sel].act == DebugUi::kThread && k.key == SDLK_LEFT && u.waves_open && u.rows[u.sel].index < u.threads.size() && u.threads[u.rows[u.sel].index].wave) {
+                u.waves_open = false;  // (Left on a wave of the list: shut, back on the waves' row)
+                for (u32 i = 0; i < n; ++i)
+                    if (u.rows[i].act == DebugUi::kWaves) u.sel = i;
+            }
             if (u.sel < n && u.rows[u.sel].act == DebugUi::kVar) {
                 const DebugUi::Var& v = u.vars[u.rows[u.sel].index];
                 if (v.open == (k.key == SDLK_LEFT)) debug_expand(u.rows[u.sel].index);
@@ -2401,7 +2436,7 @@ std::string App::debug_dump() {
         for (u32 i = 0; i < u.threads.size(); ++i)
             if (u.threads[i].id == u.thread) at = i;
         out += "; threads: " + std::to_string(u.threads.size()) + ", #" + std::to_string(at + 1) + " shown";
-        const size_t waves = static_cast<size_t>(std::ranges::count_if(u.threads, [](const DebugUi::Thread& t) { return t.name.starts_with("GPU wave"); }));
+        const size_t waves = u.threads.size() - u.cpu_threads();
         if (waves) out += " (" + std::to_string(waves) + " GPU waves; shown: " + u.threads[at].name + ")";
     }
     if (!u.frames.empty()) {
@@ -2449,13 +2484,29 @@ std::string App::debug_breaks_dump() {
     return out.empty() ? "no breakpoints" : out;
 }
 
+// The Debug tab's rows as last drawn, from the heading `from`, `n` of them
+// (those with something in them): each its mark, text and what is after it.
+std::string App::debug_rows_dump(const std::string& from, u32 n) {
+    const DebugUi& u = *debugui_;
+    std::string out;
+    bool on = false;
+    for (const DebugUi::Row& r : u.rows) {
+        on |= r.ink.ink == ink::kHeading.ink && r.ink.style == ink::kHeading.style && r.text == from;
+        if (!on || (r.text.empty() && r.act != DebugUi::kThread)) continue;
+        if (n-- == 0) break;
+        const std::string& text = r.act == DebugUi::kThread && r.text.empty() && r.index < u.threads.size() ? u.threads[r.index].name : r.text;
+        out += (out.empty() ? "" : " | ") + (r.mark.empty() || r.mark == " " ? std::string() : r.mark + " ") + text + (r.after.empty() ? "" : " " + r.after);
+    }
+    return out.empty() ? "no " + from : out;
+}
+
 // What Enter does on the Nth row (from 1; or, named, the variable's) of a section of the Debug tab as
 // it was last drawn: threads, stack, watch, add (the row that adds an
 // expression), or breaks. The row is chosen first, as the keys would.
 bool App::debug_pick(const std::string& section, u32 n, const std::string& name) {
     DebugUi& u = *debugui_;
     const DebugUi::Act act = section == "threads" ? DebugUi::kThread : section == "stack" ? DebugUi::kFrame : section == "watch" ? DebugUi::kWatch
-                             : section == "add"   ? DebugUi::kWatchAdd : section == "breaks" ? DebugUi::kBreak : section == "vars" ? DebugUi::kVar : section == "sessions" ? DebugUi::kSession : DebugUi::kNone;
+                             : section == "add"   ? DebugUi::kWatchAdd : section == "breaks" ? DebugUi::kBreak : section == "vars" ? DebugUi::kVar : section == "sessions" ? DebugUi::kSession : section == "waves" ? DebugUi::kWaves : DebugUi::kNone;
     u32 seen = 0;
     for (u32 i = 0; i < u.rows.size(); ++i)
         if (act != DebugUi::kNone && u.rows[i].act == act && (name.empty() ? ++seen == std::max(1u, n) : u.rows[i].text.starts_with(name + " "))) {

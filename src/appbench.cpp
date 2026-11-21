@@ -1242,6 +1242,10 @@ void App::run_script(const char* script) {
             debug_wait(arg);
         } else if (verb == "debugdump") {
             std::fprintf(stderr, "%s\n", debug_dump().c_str());
+        } else if (verb == "debugrows") {  // debugrows:HEADING:N, N rows of the Debug tab from that heading (after a frame)
+            frame();
+            const size_t sep = arg.rfind(':');
+            std::fprintf(stderr, "%s\n", debug_rows_dump(arg.substr(0, sep), sep == std::string::npos ? 1000 : static_cast<u32>(std::atoi(arg.c_str() + sep + 1))).c_str());
         } else if (verb == "debuginline") {  // the notes after the lines of the first view while stopped (where, the values), as last drawn
             std::fprintf(stderr, "%s\n", debug_inline_dump().c_str());
         } else if (verb == "snippetdump") {  // the snippet being filled in: each stop's places (line:column, from 1), the one the cursor is at in brackets

@@ -1306,6 +1306,7 @@ private:
     std::string debug_dump();
     std::string debug_breaks_dump();
     std::string debug_inline_dump();  // (the notes after the lines of the first view, as last drawn)
+    std::string debug_rows_dump(const std::string& from, u32 n);  // (the Debug tab's rows from a heading, as last drawn)
     bool debug_pick(const std::string& section, u32 n, const std::string& name = {});
     void panel_show_debug();
 

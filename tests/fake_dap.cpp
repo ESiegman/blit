@@ -24,6 +24,12 @@
 //   continue, next, stepIn, stepOut
 //                 stops again where it was
 //   disconnect    answered, and it ends
+// With $BLIT_FAKE_DAP_WAVES set to a number, it is rocgdb debugging a HIP
+// program: it says so on its error stream as blit's start of rocgdb does;
+// three threads of the program's own and that many of the GPU's waves (with
+// no names: their names are `info threads`'s, which evaluate answers as
+// rocgdb's manual shows it, there being no rocgdb here); and it stops in the
+// wave halfway along, in the kernel's frame.
 #include <strings.h>
 #include <sys/stat.h>
 
@@ -42,6 +48,9 @@ namespace {
 
 long seq = 1;
 std::string program;  // what was launched ("": attached)
+long waves = 0;       // the GPU's waves, as rocgdb has them ($BLIT_FAKE_DAP_WAVES)
+long stop_thread = 1;  // the thread that stops
+constexpr long kOwnThreads = 3;  // (the waves' ids are after these)
 
 bool read_message(std::string* body) {
     size_t length = 0;
@@ -83,7 +92,7 @@ void output(std::string_view text) {
 void stopped(std::string_view reason) {
     std::string b = "{\"reason\":";
     json::quote(b, reason);
-    event("stopped", b + ",\"threadId\":1,\"allThreadsStopped\":true}");
+    event("stopped", b + ",\"threadId\":" + std::to_string(stop_thread) + ",\"allThreadsStopped\":true}");
 }
 
 void log(std::string_view command, const Value& arguments) {
@@ -114,9 +123,40 @@ std::string completions(std::string_view text, i64 column) {
     return out + "]}";
 }
 
+// The threads, and what rocgdb's `info threads` says of them: wave n is
+// the (n % 4)th of work-group (n / 4, 0, 0).
+std::string threads() {
+    if (!waves) return R"({"threads":[{"id":1,"name":"main"}]})";
+    std::string out = "{\"threads\":[";
+    for (long id = 1; id <= kOwnThreads; ++id) out += std::string(id > 1 ? "," : "") + "{\"id\":" + std::to_string(id) + ",\"name\":\"vadd\"}";
+    for (long n = 0; n < waves; ++n) out += ",{\"id\":" + std::to_string(kOwnThreads + 1 + n) + "}";
+    return out + "]}";
+}
+
+std::string info_threads() {
+    std::string out = "  Id   Target Id                                    Frame \n";
+    char line[256];
+    for (long id = 1; id <= kOwnThreads; ++id) {
+        std::snprintf(line, sizeof line, "%c %-4ld Thread 0x7ffff%04lx (LWP %ld) \"vadd\" 0x00007ffff7108d2b in ioctl () from /lib/x86_64-linux-gnu/libc.so.6\n", id == stop_thread ? '*' : ' ', id, id * 4096, 3262 + id);
+        out += line;
+    }
+    for (long n = 0; n < waves; ++n) {
+        const long id = kOwnThreads + 1 + n;
+        std::snprintf(line, sizeof line, "%c %-4ld AMDGPU Wave 1:1:1:%ld (%ld,0,0)/%ld \"vadd\" vadd (a=0x7ffff5000000, n=1024) at vadd.hip:9\n", id == stop_thread ? '*' : ' ', id, n + 1, n / 4, n % 4);
+        out += line;
+    }
+    return out;
+}
+
 }  // namespace
 
 int main() {
+    if (const char* w = std::getenv("BLIT_FAKE_DAP_WAVES"); w && *w) {
+        waves = std::atol(w);
+        stop_thread = kOwnThreads + 1 + waves / 2;
+        std::fprintf(stderr, "blit-debugger: gdb (rocgdb)\n");
+        std::fflush(stderr);
+    }
     std::string body;
     while (read_message(&body)) {
         json::Doc doc;
@@ -156,9 +196,9 @@ int main() {
             }
             stopped("breakpoint");
         } else if (command == "threads") {
-            respond(v, true, R"({"threads":[{"id":1,"name":"main"}]})");
+            respond(v, true, threads());
         } else if (command == "stackTrace") {
-            std::string f = R"({"stackFrames":[{"id":1,"name":"main","line":1,"column":1)";
+            std::string f = a["threadId"].integer() > kOwnThreads ? R"({"stackFrames":[{"id":1,"name":"vadd","line":1,"column":1)" : R"({"stackFrames":[{"id":1,"name":"main","line":1,"column":1)";
             if (!program.empty()) {
                 f += ",\"source\":{\"path\":";
                 json::quote(f, program);
@@ -169,6 +209,10 @@ int main() {
             respond(v, true, R"({"scopes":[{"name":"Locals","presentationHint":"locals","variablesReference":1,"expensive":false}]})");
         } else if (command == "variables") {
             respond(v, true, R"({"variables":[{"name":"df","value":"DataFrame","variablesReference":0},{"name":"total","value":"1","variablesReference":0}]})");
+        } else if (command == "evaluate" && waves && a["expression"].str() == "info threads") {
+            std::string r = "{\"result\":";
+            json::quote(r, info_threads());
+            respond(v, true, r + ",\"variablesReference\":0}");
         } else if (command == "evaluate") {
             std::string r = "{\"result\":";
             json::quote(r, "<" + std::string(a["expression"].str()) + ">");

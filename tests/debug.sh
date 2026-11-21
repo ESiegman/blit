@@ -363,6 +363,20 @@ if [ -x "$fakedap" ]; then
     # Tab straight after a dot: nothing of the word typed yet (debugpy's length 0), still counted from 0.
     fake "debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+shift+y;text:df.;key:Tab;debugwait:answers;finddump" "$F/prog"
     check "evaluate: completions straight after a dot go after it" 'pick [] 4 : >df.describe df.dtypes df.shape df.total'
+
+    # rocgdb's GPU waves (two thousand, and three threads of the program's
+    # own; stopped in a wave): the waves one row with their count, opened to
+    # list them below the variables, the wave that stopped under it all the
+    # same; a wave chosen from the list is under it too.
+    BLIT_FAKE_DAP_WAVES=2000
+    export BLIT_FAKE_DAP_WAVES
+    fake "debug:program=$F/prog;key:F5;debugwait:stopped;debugwait:answers;debugdump;debugpanel;debugrows:Threads:9;debugpick:waves;debugrows:Threads:9;debugrows:Variables:7" "$F/prog"
+    check "GPU waves: one row, the stopped one under it, the stack and variables above the list" \
+        'stopped (breakpoint); threads: 2003, #1004 shown (2000 GPU waves; shown: GPU wave (250,0,0)/0); stack: vadd@1; vars: df=DataFrame total=1; output: red plain ;; Threads 2003 | vadd | vadd | vadd | ▸ GPU waves 2000 | ▸ GPU wave (250,0,0)/0 breakpoint | Call stack 1 | ▸ vadd prog:1 | Variables ;; Threads 2003 | vadd | vadd | vadd | ▾ GPU waves 2000 | ▸ GPU wave (250,0,0)/0 breakpoint | Call stack 1 | ▸ vadd prog:1 | Variables ;; Variables | ▾ Locals | df = DataFrame | total = 1 | GPU waves 2000 | GPU wave (0,0,0)/0 | GPU wave (0,0,0)/1'
+    fake "debug:program=$F/prog;key:F5;debugwait:stopped;debugwait:answers;debugpanel;debugpick:waves;debugpick:threads:5;debugwait:stopped;key:Left;debugrows:Threads:8;debugdump" "$F/prog"
+    check "a wave chosen from the list: its stack, and it is under the waves' row with the one that stopped" \
+        'Threads 2003 | vadd | vadd | vadd | ▸ GPU waves 2000 | GPU wave (250,0,0)/0 breakpoint | ▸ GPU wave (0,0,0)/0 | Call stack 1 ;; stopped (breakpoint); threads: 2003, #4 shown (2000 GPU waves; shown: GPU wave (0,0,0)/0); stack: vadd@1; vars: df=DataFrame total=1; output: red plain'
+    unset BLIT_FAKE_DAP_WAVES
 fi
 # A .py program: debugpy run with the project's Python (its .venv's, not
 # the PATH's), and when that has no debugpy, said so of that Python.
