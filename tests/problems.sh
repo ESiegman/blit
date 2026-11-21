@@ -174,4 +174,23 @@ INIT="$dir/fixed.lua"
 run "$H" "buildrun:make fixed;buildwait;buildproblemsdump"
 check "file and severity given, and no message: the line" 'E ~/hdl/shader.frag:1 '"'"'x'"'"' : undeclared identifier | W ~/hdl/tb.sv:2 lint 2 a long line'
 
+# A run that fails with no error in its output says so (the Run button,
+# the Problems tab, F8), never "No problems" under a red button.
+F="$dir/fail"
+mkdir -p "$F"
+printf 'int a;\n' >"$F/a.c"
+printf 'quiet:\n\t@echo linking; exit 3\nwarned:\n\t@echo "a.c:1:5: warning: unused"; exit 1\nfine:\n\t@echo "a.c:1:5: warning: unused"\nerrs:\n\t@echo "a.c:1:5: error: bad"; exit 1\n' >"$F/Makefile"
+run "$F" "buildrun:make quiet;buildwait;problemsdump"
+check "failed, nothing found: the Run button and the Problems tab say so" 'button: ▶ make quiet · failed (exit 2) | make quiet failed with exit code 2: no problem found in its output | file 0'
+got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$F;frame;buildrun:make quiet;buildwait;key:F8" 2>&1 >/dev/null | tail -1)
+check "and F8" 'blit: make quiet failed with exit code 2: no problem found in its output'
+run "$F" "buildrun:make warned;buildwait;problemsdump"
+check "failed with warnings alone: the button says it failed, and how many" 'button: ▶ make warned · failed (exit 2), 1 warning | Build 1 | file a.c | >W 1:5 unused'
+run "$F" "buildrun:make fine;buildwait;problemsdump"
+check "warnings, and it went well: as before" 'button: ▶ make fine · 1 warning | Build 1 | file a.c | >W 1:5 unused'
+run "$F" "buildrun:make errs;buildwait;problemsdump"
+check "failed with errors: they say it" 'button: ▶ make errs · 1 error | Build 1 | file a.c | >E 1:5 bad'
+run "$F" "buildrun:make quiet;buildwait;buildrun:make fine;buildwait;problemsdump"
+check "the next run starts afresh" 'button: ▶ make fine · 1 warning | Build 1 | file a.c | >W 1:5 unused'
+
 exit $failed

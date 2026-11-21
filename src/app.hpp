@@ -1370,6 +1370,11 @@ private:
     void build_outcome(u64 doc, std::vector<BuildScan::TestResult> results, const BuildScan::Outcome* outcome);
     const std::vector<BuildProblem>& build_problems() const;
     std::string build_label() const;  // the Run button's words
+    // A run that failed and whose output gave no error: its exit code (0:
+    // not so), and what to say ("make failed with exit code 2: no problem
+    // found in its output"; "" when not so).
+    int build_failed() const;
+    std::string build_failure() const;
     void build_go(size_t i);    // that one's file, at its line
     bool build_step(int by);    // the next (1) or previous (-1) of them; false: there are none
     void problem_step(int by);  // F8 / Shift+F8 (apppanel.cpp): the build's problems, else the open file's

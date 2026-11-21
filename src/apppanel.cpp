@@ -65,13 +65,15 @@ size_t count_problems(const std::vector<ProblemFile>& files) {
     return n;
 }
 
-std::vector<ProblemRow> problem_rows(const std::vector<BuildProblem>& b, const std::vector<ProblemFile>& files) {
+// (failed: a run that failed with none, said on the heading's line: the
+// language servers' have a heading of their own under it.)
+std::vector<ProblemRow> problem_rows(const std::vector<BuildProblem>& b, const std::vector<ProblemFile>& files, bool failed) {
     std::vector<ProblemRow> rows;
     for (u32 i = 0; i < b.size(); ++i) {
         if (i == 0 || b[i].group != b[i - 1].group) rows.push_back({ProblemRow::kFile, i});
         rows.push_back({ProblemRow::kBuild, i});
     }
-    if (!b.empty() && count_problems(files)) {
+    if ((!b.empty() || failed) && count_problems(files)) {
         rows.push_back({ProblemRow::kGap, 0});
         rows.push_back({ProblemRow::kHead, 0});
     }
@@ -337,7 +339,8 @@ void App::problem_step(int by) {
     const std::vector<ProblemFile>& files = lsp_.problems();
     const size_t n = count_problems(files);
     if (n == 0) {
-        notify("No problems");
+        if (const std::string failed = build_failure(); !failed.empty()) notify(failed, 1);
+        else notify("No problems");
         return;
     }
     // Where the cursor is, among them: the file in front's place in the
@@ -404,9 +407,10 @@ std::string App::problems_dump() {
     const std::vector<BuildProblem>& bp = build_problems();
     const std::vector<ProblemFile>& files = lsp_.problems();
     const size_t n = count_problems(files);
-    std::string out = "button: " + build_label() + " | " + (bp.empty() ? "file " + std::to_string(n) : "Build " + std::to_string(bp.size()));
+    const std::string failed = build_failure();
+    std::string out = "button: " + build_label() + " | " + (!bp.empty() ? "Build " + std::to_string(bp.size()) : (failed.empty() ? "" : failed + " | ") + "file " + std::to_string(n));
     const Side& s = *side_;
-    for (const ProblemRow& row : problem_rows(bp, files)) {
+    for (const ProblemRow& row : problem_rows(bp, files, build_failed())) {
         out += " | ";
         if (row.kind == ProblemRow::kFile) out += bp[row.index].path.empty() ? std::string("no file") : "file " + shown_path(bp[row.index].path, panel_root());
         else if (row.kind == ProblemRow::kHead) out += "Problems " + std::to_string(n);
@@ -1105,7 +1109,7 @@ bool App::panel_mouse_down(const SDL_MouseButtonEvent& b) {
     if (s.tab == kTabProblems) {
         const std::vector<BuildProblem>& bp = build_problems();
         const std::vector<ProblemFile>& files = lsp_.problems();
-        const std::vector<ProblemRow> pr = problem_rows(bp, files);
+        const std::vector<ProblemRow> pr = problem_rows(bp, files, build_failed());
         const u32 i = s.problem_top + static_cast<u32>(std::max(0, row - static_cast<int>(kHeadRows)));
         if (row >= static_cast<int>(kHeadRows) && i < pr.size()) {
             ProblemRow r = pr[i];
@@ -1274,7 +1278,7 @@ bool App::panel_wheel(const SDL_MouseWheelEvent& w) {
         s.top = static_cast<u32>(std::clamp<i64>(top, 0, last_top(rows, s.body_rows)));
     } else {
         const i64 top = static_cast<i64>(s.problem_top) - static_cast<i64>(std::lround(w.y * 3));
-        s.problem_top = static_cast<u32>(std::clamp<i64>(top, 0, last_top(problem_rows(build_problems(), lsp_.problems()).size(), s.body_rows)));
+        s.problem_top = static_cast<u32>(std::clamp<i64>(top, 0, last_top(problem_rows(build_problems(), lsp_.problems(), build_failed()).size(), s.body_rows)));
     }
     s.touch();
     dirty_ = true;
@@ -1468,16 +1472,24 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
             auto heading = [&](u32 r, const std::string& title, size_t n) {  // a name, and how many
                 const std::string count = std::to_string(n);
                 const u32 c = put(box, font, r, 0, fit_text(title, cols > count.size() + 1 ? cols - static_cast<u32>(count.size()) - 1 : 0), ink::kHeading);
-                put(box, font, r, c + 1, count, ink::kMuted);
+                return put(box, font, r, c + 1, count, ink::kMuted);
             };
             auto lsp_heading = [&](u32 r) {
                 if (nl) heading(r, "Problems", nl);
                 else if (!lsp_.attached() && server_text_doc(*pane_->doc)) put(box, font, r, 0, fit_text("No language server for this file", cols), ink::kMuted);
                 else put(box, font, r, 0, fit_text("No problems", cols), ink::kMuted);
             };
-            if (!bp.empty()) heading(1, "Build", bp.size());
-            else lsp_heading(1);
-            const std::vector<ProblemRow> pr = problem_rows(bp, files);
+            // (A run that failed with no error found says so on the line: never "No problems" under a red button.)
+            const int failed = build_failed();
+            if (!bp.empty()) {
+                const u32 c = heading(1, "Build", bp.size());
+                if (failed && c + 3 < cols) put(box, font, 1, c + 1, fit_text("failed with exit code " + std::to_string(failed), cols - c - 1), ink::kError);
+            } else if (failed) {
+                put(box, font, 1, 0, fit_text(build_failure(), cols), ink::kError);
+            } else {
+                lsp_heading(1);
+            }
+            const std::vector<ProblemRow> pr = problem_rows(bp, files, failed);
             const u32 n = static_cast<u32>(bp.size() + nl);
             s.problem = n ? std::min(s.problem, n - 1) : 0;
             s.problem_top = std::min(s.problem_top, last_top(pr.size(), s.body_rows));

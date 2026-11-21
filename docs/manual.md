@@ -2463,11 +2463,15 @@ entered, or one `make -C` was told to go into: the one the file is in.
 They fill the **Build** section of the side panel's Problems tab (above),
 F8 goes through them, the status bar counts them, and the Run button says
 how many: `▶ Build (debug) · 3 errors` (warnings, when there are no
-errors). The next run starts with none. A compiler's notes (`note:`) are
-not listed, but validation messages (below) with no place are, under **No
-file**; one whose file is nowhere (Metal's run-time `program_source` with
-no `.metal` file to be, below) is listed and counted, and F8 says it
-without going anywhere. **Cmd+click**
+errors). A run that failed with no error in its output says so instead:
+`▶ make · failed (exit 2)` on the Run button (with its warnings' count,
+if it has some), "make failed with exit code 2: no problem found in its
+output" in the Problems tab and from F8, which then has nowhere to go;
+never "No problems" under a red button. The next run starts with none. A
+compiler's notes (`note:`) are not listed, but validation messages (below)
+with no place are, under **No file**; one whose file is nowhere (Metal's
+run-time `program_source` with no `.metal` file to be, below) is listed
+and counted, and F8 says it without going anywhere. **Cmd+click**
 on a `path:line` (or `path:line:col`, or Python's `File "path", line N`)
 in any terminal tab opens the file there, in a split with text: a
 relative path from the shell's folder, the folders the build went into,

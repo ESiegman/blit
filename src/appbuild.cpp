@@ -801,10 +801,25 @@ void App::build_option(int row) {
     }).detach();
 }
 
+// A run that failed, with no error in what it printed: said so, wherever
+// its problems are (the Run button, the Problems tab, F8), so that a red
+// button never stands over "No problems".
+int App::build_failed() const {
+    const BuildUi& u = *buildui_;
+    return !u.running && u.last_status > 0 && !build_errors_ ? u.last_status : 0;
+}
+
+std::string App::build_failure() const {
+    const int code = build_failed();
+    if (!code) return {};
+    return buildui_->last_name + " failed with exit code " + std::to_string(code) + ": no " + (build_warnings_ ? "error" : "problem") + " found in its output";
+}
+
 // ---------------------------------------------------------------- the Run button
 
 // Its words: the task (or Stop, while it runs), and how many errors its
-// output has reported, else warnings ("\xE2\x96\xB6 Build (debug) \xC2\xB7 3 errors").
+// output has reported, else that it failed, else warnings
+// ("\xE2\x96\xB6 Build (debug) \xC2\xB7 3 errors", "\xC2\xB7 failed (exit 2)").
 std::string App::build_label() const {
     const BuildUi& u = *buildui_;
     std::string name = u.current.substr(u.current.find('\t') + 1);
@@ -814,8 +829,10 @@ std::string App::build_label() const {
         name = name.substr(0, at) + "\xE2\x80\xA6";
     }
     std::string label = u.running ? "\xE2\x96\xA0 Stop" : "\xE2\x96\xB6 " + name;
+    const int failed = build_failed();
     if (build_errors_) label += " \xC2\xB7 " + std::to_string(build_errors_) + (build_errors_ == 1 ? " error" : " errors");
-    else if (build_warnings_) label += " \xC2\xB7 " + std::to_string(build_warnings_) + (build_warnings_ == 1 ? " warning" : " warnings");
+    else if (failed) label += " \xC2\xB7 failed (exit " + std::to_string(failed) + ")";
+    if (!build_errors_ && build_warnings_) label += (failed ? ", " : " \xC2\xB7 ") + std::to_string(build_warnings_) + (build_warnings_ == 1 ? " warning" : " warnings");
     // What the last run came to, where it leaves the tabs there room (a third of the window at most).
     if (!u.running && !u.summary.empty() && font_ && font_->cell_w() > 0 && width_of(label) + 3 + width_of(u.summary) <= static_cast<u32>(px_w_ / font_->cell_w() / 3))
         label += " \xC2\xB7 " + u.summary;
