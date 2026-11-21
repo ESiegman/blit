@@ -1376,6 +1376,7 @@ front):
 | `blit.workdir()`, `blit.set_workdir(dir)`, `blit.fs.list(dir)`, `blit.fs.exists(path)` | |
 | `blit.fs.read(path, most)`, `blit.fs.write(path, text)`, `blit.fs.mkdir(path)` | a file's text, written, a folder made (with those above it); here or `ssh://`; nil and why when they cannot |
 | `blit.build.add(name, spec)`, `blit.build.remove(name)`, `blit.build.systems()`, `blit.build.tasks()`, `blit.build.run(name)` | build systems for the Build tab; see [Building](#building) |
+| `blit.build.matcher(name, spec)` | a pattern for a tool's messages, read as problems; see [Patterns of your own](#patterns-of-your-own) |
 | `blit.project.add(name, spec)`, `blit.project.remove(name)` | kinds of project for the New project tab; see [New projects](#new-projects) |
 | `blit.defer(ms, fn)`, `blit.every(ms, fn)`, `blit.schedule(fn)`, `blit.stop(id)` | timers |
 | `blit.system(argv, opts, on_exit)`, `blit.kill(id)` | a program in the background, on this machine; opts: `cwd` (a folder here; one that is not there is said), `stdin`, `env`, `stdout` and `stderr` (functions: output as it comes), `timeout`; on_exit gets `code`, `stdout`, `stderr`. Without on_exit it is waited for and that is returned |
@@ -2657,7 +2658,62 @@ blit.map("n", "<leader>t", function() blit.build.run("Test") end)
 ```
 
 `files` is the folder's entries (`{name =, type = "file" | "dir"}`). A
-task's `cwd` (relative to the folder) is where it runs.
+task's `cwd` (relative to the folder) is where it runs, and its
+`problems` which of init.lua's patterns (below) its output is read with.
+
+### Patterns of your own
+
+A tool whose messages blit does not read is init.lua's to describe, with
+`blit.build.matcher(name, spec)`: a [Lua pattern](https://www.lua.org/manual/5.4/manual.html#6.4.1)
+for its lines, and which of the pattern's captures (by number, from 1)
+are the problem's `file`, `line`, `col`, `severity`, `message` and
+`code` (the tool's own name for it). `file` may instead be the one file
+every problem is in (for a tool that names none), and `severity` how bad
+each is (`"error"`, the default, or `"warning"`); a captured severity is
+an error when it says error, fatal or fail (or is `E` or `F`), a warning
+when it says warn (or is `W`), and anything else (`Note`, `UVM_INFO`) is
+no problem at all, so that the line is left to the next pattern. With no
+`message` the line is the message. `next` is a pattern for the lines
+after the first that go on with it (as many as 16): what they capture
+fills in what the first did not (a simulator's message, with its file
+and line on the line under it), and their `message` goes after the
+first's; a problem no line gave a file to is none. The patterns are
+made ready once, when init.lua runs (a pattern that is not one is said
+so there), and run on the thread that reads the output, before the
+built-in kinds, in the order they were given; a line taken by one is
+read no further. A line without the pattern's plain text (`"** "`
+below, or `UVM_`) costs a search for that text, so a pattern with some is
+cheap. A task's output is read with all of them, unless the task names
+some (`problems = {"questa", "uvm"}`, in `blit.build.add` or
+`.blit/run.json`) or none at all (`problems = "none"`: nothing in its
+output is a problem, the built-in kinds' included).
+
+These are for the commercial simulators, which blit does not read itself:
+
+```lua
+-- Questa and ModelSim: "** Error: tb.sv(12): (vlog-2730) Undefined variable: 'x'."
+-- (also "** Error (suppressible):", and "# ** Error:" in vsim's transcript)
+blit.build.matcher("questa", {
+  pattern = "^#? ?%*%* (%a+)[^:]*: ([^:(]+)%((%d+)%): (.*)$",
+  severity = 1, file = 2, line = 3, message = 4,
+})
+-- Its run-time messages, the place on the line under them:
+-- "# ** Error: Assertion error." then "#    Time: 50 ns ... File: tb.sv Line: 12"
+blit.build.matcher("questa-run", {
+  pattern = "^# %*%* (%a+): (.*)$", severity = 1, message = 2,
+  next = {pattern = "^#%s+Time: .- File: (.-) Line: (%d+)", file = 1, line = 2},
+})
+-- Xcelium: "xmvlog: *E,UNDIDN (./tb.sv,12|5): 'x': undeclared identifier [12.5(IEEE)]."
+blit.build.matcher("xcelium", {
+  pattern = "^%w+: %*(%u),(%w+) %(([^,]+),(%d+)|?(%d*)%): (.*)$",
+  severity = 1, code = 2, file = 3, line = 4, col = 5, message = 6,
+})
+-- UVM (any simulator): "UVM_ERROR ./tb.sv(42) @ 100: uvm_test_top.env [SCBD] got 3, expected 4"
+blit.build.matcher("uvm", {
+  pattern = "UVM_(%u+) ([^%s%(]+)%((%d+)%) @ [^:]*: [^%[]*%[([^%]]+)%] (.*)$",
+  severity = 1, file = 2, line = 3, code = 4, message = 5,
+})
+```
 
 ### Run configurations
 
@@ -2679,7 +2735,8 @@ reads it again):
 another machine, a whole path for `program` is one there, and it runs
 there); `args` may also be one
 line (`"--steps 100"`), split as a shell splits it; `build`, a task of
-the Build tab's to run first, may be left out.
+the Build tab's to run first, may be left out; `problems` names the
+patterns its output is read with, as a task's (above).
 
 They are the Build tab's first tasks, under **Run**, and the first is the
 Run button's: Cmd+Shift+B runs its `build` task, then, if that went well,
@@ -3709,6 +3766,7 @@ tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and thro
 tests/validation.sh build-debug/blit  # Vulkan's and Metal's validation messages as problems, the spec's statements of VUIDs
 tests/lsp.sh build-debug/blit      # language servers against the test server: several at once, Problems across files, references, rename, formatting, code actions, hints, colours
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running), a fake build's problems (F8, Cmd+click) and new projects (a stand-in vcpkg)
+tests/problems.sh build-debug/blit # problems from init.lua's own patterns (the manual's for Questa, Xcelium and UVM), and the tasks that name them
 tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md against what they should draw, Mermaid, typing, Cmd+Shift+V, coloured code
 tests/notebook.sh build-debug/blit # a notebook's view: each kind of output, from the command line, following the cursor, clicks, Cmd+Shift+V, broken notebooks; cells run in its kernel: outputs shown and saved, errors, an interrupt, a restart, run all, on another machine (a slow one too), IPython where python3 has it, a long output taken in as it comes, NaN, the terminal's width, the status bar, the picture cache pruned, no process left
 tests/unicode.sh build-debug/blit  # characters made of several code points: the cursor over them, their widths, accents drawn over their letter

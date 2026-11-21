@@ -16,6 +16,7 @@
 // on the thread that reads the build's output (appterm.cpp); nothing here
 // knows about windows.
 #include <functional>
+#include <memory>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -25,6 +26,9 @@
 #include "common.hpp"
 
 namespace blit {
+
+struct BuildMatcher;  // (buildmatch.hpp)
+struct BuildMatchers;
 
 // A place a problem goes on to name: a compiler's "note:", a header in an
 // include chain, a frame of a sanitizer's stack, the other access of a race.
@@ -59,6 +63,9 @@ public:
 
     void feed(std::string_view bytes);
     void finish();  // the end: the last line, and what waited on lines after it
+    // init.lua's patterns the output is read with (blit.build.matcher), given
+    // before the first bytes; none: none of them.
+    void use_matchers(std::shared_ptr<const BuildMatchers> m);
 
     // What was found since this was last emptied (the caller takes them).
     std::vector<BuildProblem>& found() { return found_; }
@@ -150,6 +157,10 @@ private:
     BuildProblem val_problem_;
     std::unordered_map<std::string, BuildProblem> val_seen_;
     // buildmatch.cpp:
+    std::shared_ptr<const BuildMatchers> matchers_;
+    const BuildMatcher* match_held_ = nullptr;  // the one whose problem the lines after its first are going on with
+    BuildProblem match_problem_;
+    u32 match_more_ = 0;
     // buildtools.cpp:
     bool tool_more(std::string_view text);
     void tool_flush();

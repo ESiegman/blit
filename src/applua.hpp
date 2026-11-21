@@ -18,6 +18,7 @@
 #include "remote.hpp"
 #include "app.hpp"
 #include "build.hpp"
+#include "buildmatch.hpp"
 #include "finder.hpp"
 #include "job.hpp"
 #include "keymap.hpp"
@@ -212,7 +213,7 @@ inline std::vector<std::string> strings_at(lua_State* L, int t) {
     }
     return out;
 }
-// Tasks from a list: {name =, cmd =, cwd =, default =} each, or a command alone.
+// Tasks from a list: {name =, cmd =, cwd =, default =, problems =} each, or a command alone.
 inline std::vector<BuildTask> tasks_at(lua_State* L, int t, const std::string& system) {
     std::vector<BuildTask> out;
     if (!lua_istable(L, t)) return out;
@@ -229,6 +230,9 @@ inline std::vector<BuildTask> tasks_at(lua_State* L, int t, const std::string& s
             task.name = field_str(L, -1, "name", task.cmd);
             task.cwd = field_str(L, -1, "cwd");
             task.def = field_bool(L, -1, "default", false);
+            if (field(L, -1, "problems") == LUA_TSTRING) task.problems.emplace_back(str_at(L, -1));  // ("none")
+            else task.problems = strings_at(L, -1);
+            lua_pop(L, 1);
         }
         lua_pop(L, 1);
         if (!task.cmd.empty()) out.push_back(std::move(task));
@@ -487,6 +491,7 @@ struct App::ScriptUi {
     };
     std::vector<BuildHook> build_hooks;
     std::vector<std::string> build_hidden;
+    std::vector<BuildMatcher> build_matchers;  // its patterns for a build's output (blit.build.matcher), in the order given
     struct ProjectHook {
         std::string name, description;
         std::vector<ProjectField> fields;

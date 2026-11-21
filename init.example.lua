@@ -218,3 +218,6 @@
 -- blit.map("n", "<leader>w", ":w<CR>")
 -- blit.command("Hello", function(a) print("Hello " .. a.args) end)
 -- blit.on("BufWritePost", { pattern = "*.lua" }, function(e) print("saved " .. e.file) end)
+
+-- A tool's messages as problems (the manual has Questa's, Xcelium's and UVM's):
+-- blit.build.matcher("mytool", { pattern = "^(%a+): ([^:]+):(%d+): (.*)$", severity = 1, file = 2, line = 3, message = 4 })

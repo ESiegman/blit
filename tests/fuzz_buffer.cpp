@@ -29,6 +29,7 @@
 #include <vector>
 
 #include "buffer.hpp"
+#include "buildmatch.hpp"
 #include "config.hpp"
 #include "diagram.hpp"
 #include "raster.hpp"
@@ -2206,6 +2207,9 @@ void fit_test() {
 // The two pattern matchers used by highlight queries, on the patterns those
 // queries actually contain.
 void match_test() {
+    auto check = [](bool ok, const char* what) {
+        if (!ok) fail(what, 0, 0);
+    };
     auto lua = [](const char* text, const char* pat, bool want) {
         if (lua_match(text, pat) != want) {
             std::fprintf(stderr, "lua_match(\"%s\", \"%s\") should be %d\n", text, pat, want);
@@ -2237,6 +2241,69 @@ void match_test() {
     lua("aaa", "^a-$", true);
     lua("", "^$", true);
     lua("x", "%f[%w]", false);  // frontier patterns are not supported: never match
+    // Captures (init.lua's patterns for a build's output), as string.match
+    // gives them: what each took, backtracking undoing what a failed try
+    // took, positions, back-references.
+    auto found = [](const char* text, const char* pat, std::string want) {
+        std::string_view caps[kMaxLuaCaptures];
+        const int n = lua_find(text, pat, caps);
+        std::string got = n < 0 ? "none" : "";
+        for (int i = 0; i < n; ++i) got += (i ? "|" : "") + std::string(caps[i]);
+        if (got != want) {
+            std::fprintf(stderr, "lua_find(\"%s\", \"%s\") gave %s, not %s\n", text, pat, got.c_str(), want.c_str());
+            fail("lua captures", 0, 0);
+        }
+    };
+    found("** Error: tb.sv(12): (vlog-2730) Undefined", "^%*%* (%a+)[^:]*: ([^:(]+)%((%d+)%): (.*)$", "Error|tb.sv|12|(vlog-2730) Undefined");
+    found("** Error (suppressible): a b.sv(3): x", "^%*%* (%a+)[^:]*: ([^:(]+)%((%d+)%): (.*)$", "Error|a b.sv|3|x");
+    found("key = value", "(%w+)%s*=%s*(%w+)", "key|value");
+    found("abc", "^(a)(b)", "a|b");
+    found("aab", "(a*)(a)b", "a|a");         // the first gives one back
+    found("a.b.c", "^(.-)%.(.*)$", "a|b.c"); // shortest first
+    found("xy", "x()y", "");                 // a place takes no text
+    found("hello hello", "(%a+) %1", "hello");
+    found("hello world", "(%a+) %1", "none");
+    found("[12:5]", "%((%d+)%)", "none");
+    found("f(x", "^(%a)(%((x))", "f|(x|x");  // nested
+    found("ab", "(a)(c?)(b)", "a||b");       // an optional part that took nothing
+    found("", "^()$", "");
+    std::string why;
+    auto bad = [&](const char* pat) {
+        if (lua_pattern_check(pat, &why) >= 0) {
+            std::fprintf(stderr, "lua_pattern_check(\"%s\") should refuse it\n", pat);
+            fail("lua pattern check", 0, 0);
+        }
+    };
+    check(lua_pattern_check("^(%a+): (.-)%((%d+)%)()", &why) == 4, "lua pattern check: its captures counted");
+    check(lua_pattern_check("[)(]x", &why) == 0, "lua pattern check: brackets in a set are themselves");
+    check(lua_pattern_check("%[([^%]]+)%]", &why) == 1, "lua pattern check: an escaped ] first in a set does not close it");
+    found("x [SCBD] m", "%[([^%]]+)%]", "SCBD");
+    // Made ready for a build's output: the text a line must have, found
+    // first (the run it starts with, when anchored; else the longest run of
+    // characters each taken once); and the words for how bad.
+    auto literal = [&](const char* pat, const char* want, bool at_start) {
+        BuildPattern p;
+        if (!build_pattern(pat, &p, &why) || p.literal != want || p.at_start != at_start) {
+            std::fprintf(stderr, "build_pattern(\"%s\") gave \"%s\" (%d), not \"%s\" (%d)\n", pat, p.literal.c_str(), p.at_start, want, at_start);
+            fail("build pattern literal", 0, 0);
+        }
+    };
+    literal("^%*%* (%a+)[^:]*: ([^:(]+)%((%d+)%): (.*)$", "** ", true);
+    literal("^#? ?%*%* (%a+)", "** ", false);
+    literal("%*(%u),(%w+) %(([^,]+),(%d+)|?(%d*)%): (.*)$", "): ", false);
+    literal("UVM_(%u+) ([^%s%(]+)%((%d+)%) @ [^:]*: [^%[]*%[([^%]]+)%] (.*)$", "UVM_", false);
+    literal("^error+x", "error", true);  // (one taken one or more times ends the run, after it)
+    literal("ab?c", "a", false);
+    literal("^[%w]*", "", false);
+    check(build_severity("Error") == 1 && build_severity("UVM_FATAL") == 1 && build_severity("E") == 1 && build_severity("f") == 1, "build severity: errors");
+    check(build_severity("WARNING") == 2 && build_severity("W") == 2 && build_severity("CRITICAL WARNING") == 2, "build severity: warnings");
+    check(build_severity("Note") == 0 && build_severity("UVM_INFO") == 0 && build_severity("N") == 0, "build severity: neither");
+    bad("(a");
+    bad("a)");
+    bad("[ab");
+    bad("a%");
+    bad("%b()");
+    bad("(a)%2");
     re("continue", "\\c^(continue|break)$", true);
     re("BREAK", "\\c^(continue|break)$", true);
     re("breaks", "\\c^(continue|break)$", false);

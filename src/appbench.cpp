@@ -1444,6 +1444,15 @@ void App::run_script(const char* script) {
                 for (const BuildNote& n : p.notes) out += "\n  note " + (n.path.empty() ? "" : shown(n.path, n.line, n.col) + " ") + n.message;
             }
             std::fprintf(stderr, "%s\n", out.c_str());
+        } else if (verb == "buildproblemsdump") {  // the build's problems whole: each one's full path, place, code and notes (< each)
+            term_sync();
+            std::string out;
+            auto place = [](const std::string& path, u32 line, u32 col) { return path + ":" + std::to_string(line) + (col ? ":" + std::to_string(col) : ""); };
+            for (const BuildProblem& p : build_problems()) {
+                out += (out.empty() ? "" : " | ") + std::string(p.severity == 1 ? "E " : "W ") + place(p.path, p.line, p.col) + (p.code.empty() ? "" : " [" + p.code + "]") + " " + p.message;
+                for (const BuildNote& n : p.notes) out += " < " + (n.path.empty() ? "" : place(n.path, n.line, n.col) + " ") + n.message;
+            }
+            std::fprintf(stderr, "%s\n", out.empty() ? "none" : out.c_str());
         } else if (verb == "termclick") {  // termclick:TEXT, Cmd+click on that text in a terminal on show
             term_sync();
             if (!term_click_text(arg)) std::fprintf(stderr, "termclick: no \"%s\" on show\n", arg.c_str());

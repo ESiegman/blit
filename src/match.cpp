@@ -2,6 +2,8 @@
 
 #include <bitset>
 #include <cctype>
+#include <cstring>
+#include <string>
 #include <vector>
 
 #include "common.hpp"
@@ -9,14 +11,24 @@
 namespace blit {
 
 // ---------------------------------------------------------------- Lua patterns
-// A port of the matcher in Lua's lstrlib.c, without captures.
+// A port of the matcher in Lua's lstrlib.c (captures and back-references
+// included; %b and %f not).
 
 namespace {
 
 struct Lua {
+    Lua(const char* text_end_, const char* pat_end_) : text_end(text_end_), pat_end(pat_end_) {}
     const char* text_end;
     const char* pat_end;
     int depth = 0;
+    // The captures open and closed so far: where each starts, and its length
+    // (kOpen: not closed yet; kPosition: "()", a place alone).
+    static constexpr ptrdiff_t kOpen = -1, kPosition = -2;
+    struct Capture {
+        const char* at;
+        ptrdiff_t len;
+    } caps[kMaxLuaCaptures];  // (only those below level are ever read)
+    int level = 0;
     // A pattern like ".-.-.-x" can take time exponential in the text, so the
     // work is capped; running out ends the search as no match.
     static constexpr long kBudget = 1 << 18;
@@ -108,9 +120,14 @@ struct Lua {
                 result = s;
                 break;
             }
-            if (*p == '(' || *p == ')') {  // captures only mark positions
-                ++p;
-                continue;
+            if (*p == '(') {
+                const bool position = p + 1 < pat_end && *(p + 1) == ')';
+                result = open_capture(s, position ? p + 2 : p + 1, position ? kPosition : kOpen);
+                break;
+            }
+            if (*p == ')') {
+                result = close_capture(s, p + 1);
+                break;
             }
             if (*p == '$' && p + 1 == pat_end) {
                 result = s == text_end ? s : nullptr;
@@ -123,6 +140,18 @@ struct Lua {
             if (*p == '%' && p + 1 >= pat_end) {  // a pattern cannot end in a lone %
                 unsupported = true;
                 break;
+            }
+            if (*p == '%' && *(p + 1) >= '0' && *(p + 1) <= '9') {  // %1: what capture 1 took, again
+                const int l = *(p + 1) - '1';
+                if (l < 0 || l >= level || caps[l].len == kOpen) {
+                    unsupported = true;
+                    break;
+                }
+                const ptrdiff_t len = caps[l].len == kPosition ? 0 : caps[l].len;
+                if (text_end - s < len || std::memcmp(caps[l].at, s, static_cast<size_t>(len)) != 0) break;
+                s += len;
+                p += 2;
+                continue;
             }
             const char* ep = item_end(p);
             if (unsupported) break;
@@ -167,19 +196,91 @@ struct Lua {
         --depth;
         return result;
     }
+
+    const char* open_capture(const char* s, const char* p, ptrdiff_t what) {
+        if (level >= kMaxLuaCaptures) {
+            unsupported = true;
+            return nullptr;
+        }
+        caps[level] = {s, what};
+        ++level;
+        const char* r = match(s, p);
+        if (!r) --level;  // (undone, for the next try)
+        return r;
+    }
+
+    const char* close_capture(const char* s, const char* p) {
+        int l = level - 1;
+        while (l >= 0 && caps[l].len != kOpen) --l;
+        if (l < 0) {  // a ) with no ( before it
+            unsupported = true;
+            return nullptr;
+        }
+        caps[l].len = s - caps[l].at;
+        const char* r = match(s, p);
+        if (!r) caps[l].len = kOpen;
+        return r;
+    }
+
+    // Where the pattern first matches from `from` on (searching, unless it
+    // starts with ^); null if nowhere.
+    const char* find(const char* from, std::string_view pattern) {
+        const char* p = pattern.data();
+        const bool anchored = !pattern.empty() && *p == '^';
+        if (anchored) ++p;
+        for (const char* s = from;; ++s) {
+            level = 0;
+            if (match(s, p)) return s;
+            if (anchored || unsupported || s >= text_end) return nullptr;
+        }
+    }
 };
 
 }  // namespace
 
 bool lua_match(std::string_view text, std::string_view pattern) {
     Lua m{text.data() + text.size(), pattern.data() + pattern.size()};
-    const char* p = pattern.data();
-    const bool anchored = !pattern.empty() && *p == '^';
-    if (anchored) ++p;
-    for (const char* s = text.data();; ++s) {
-        if (m.match(s, p)) return true;
-        if (anchored || m.unsupported || s >= m.text_end) return false;
+    return m.find(text.data(), pattern) != nullptr;
+}
+
+int lua_find(std::string_view text, std::string_view pattern, std::string_view* caps) {
+    Lua m{text.data() + text.size(), pattern.data() + pattern.size()};
+    if (!m.find(text.data(), pattern)) return -1;
+    for (int i = 0; i < m.level; ++i) {
+        const Lua::Capture& c = m.caps[i];
+        caps[i] = c.len < 0 ? std::string_view(c.at, 0) : std::string_view(c.at, static_cast<size_t>(c.len));
     }
+    return m.level;
+}
+
+int lua_pattern_check(std::string_view pattern, std::string* why) {
+    int count = 0, open = 0;
+    for (size_t i = pattern.starts_with('^') ? 1 : 0; i < pattern.size(); ++i) {
+        const char c = pattern[i];
+        if (c == '%') {
+            if (i + 1 >= pattern.size()) return *why = "it ends in a lone %", -1;
+            const char e = pattern[++i];
+            if (e == 'b' || e == 'f') return *why = "%b and %f are not supported", -1;
+            if (e >= '0' && e <= '9' && (e == '0' || e - '0' > count)) return *why = std::string("%") + e + " names no capture before it", -1;
+        } else if (c == '[') {
+            size_t j = i + 1;
+            if (j < pattern.size() && pattern[j] == '^') ++j;
+            do {  // (as item_end: the first character in a set is itself, ] included)
+                if (j >= pattern.size()) break;
+                if (pattern[j++] == '%' && j < pattern.size()) ++j;
+            } while (j < pattern.size() && pattern[j] != ']');
+            if (j >= pattern.size()) return *why = "a [ is not closed", -1;
+            i = j;
+        } else if (c == '(') {
+            if (++count > kMaxLuaCaptures) return *why = "it has more than " + std::to_string(kMaxLuaCaptures) + " captures", -1;
+            if (i + 1 < pattern.size() && pattern[i + 1] == ')') ++i;
+            else ++open;
+        } else if (c == ')') {
+            if (--open < 0) return *why = "a ) closes no (", -1;
+        }
+    }
+    if (open) return *why = "a ( is not closed", -1;
+    return count;
 }
 
 // ---------------------------------------------------------------- regular expressions

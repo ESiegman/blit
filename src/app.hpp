@@ -1123,7 +1123,9 @@ private:
     // A terminal tab in dir (the working folder when none): a login shell, or
     // `command` run by sh, whose tab stays when it ends and says how (and
     // keeps `title`). Its document's id; 0 if it could not start.
-    u64 term_open(const std::string& dir = {}, const std::string& command = {}, const std::string& title = {}, std::string_view hint = {}, bool console = false);
+    // (A command's output is read for problems, with init.lua's `matchers`.)
+    u64 term_open(const std::string& dir = {}, const std::string& command = {}, const std::string& title = {}, std::string_view hint = {}, bool console = false,
+                  std::shared_ptr<const BuildMatchers> matchers = {});
     // The Python console, in the terminals' split (appterm.cpp).
     // python_for: the Python a folder's code runs with, as words for a
     // shell (the console's: IPython where the folder's environment has it;
@@ -1343,7 +1345,7 @@ private:
     void build_changed();  // look again (init.lua's systems changed, or Cmd+R)
     void build_settle();   // looked at now, and waited for
     std::vector<BuildTask> build_tasks();
-    u64 build_command(const std::string& dir, const std::string& cmd, const std::string& title);
+    u64 build_command(const std::string& dir, const std::string& cmd, const std::string& title, const std::vector<std::string>& problems = {});
     void build_run(int index);
     void build_option(int row);  // a task of the Build tab's (-1: the Run button's)
     bool build_run_named(const std::string& name);
@@ -1388,6 +1390,7 @@ private:
     // What init.lua adds (applua.cpp).
     std::vector<std::string> script_hidden_builds() const;
     void script_build(const std::string& root, const std::vector<FsEntry>& files, std::vector<BuildTask>* tasks);
+    std::shared_ptr<const BuildMatchers> script_matchers(const std::vector<std::string>& names);  // its patterns a run's output is read with (BuildTask::problems)
     std::vector<ProjectKind> script_project_kinds();  // the built-in kinds it kept, and its own
     bool script_project_create(const std::string& kind, const std::string& dir, const ProjectValues& values, std::string* open, std::string* then, std::string* err);
     void lsp_forget_failed(const std::string& suffix);  // (applsp.cpp) servers that failed there may be tried again

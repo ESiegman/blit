@@ -402,6 +402,8 @@ std::vector<BuildTask> read_run_configs(const std::string& root, std::string* pr
         const std::string_view cwd = c["cwd"].str();
         t.cwd = cwd == "." ? std::string() : std::string(cwd);
         t.before = std::string(c["build"].str());
+        if (c["problems"].is_string()) t.problems.emplace_back(c["problems"].str());
+        for (const json::Value m : c["problems"]) t.problems.emplace_back(m.str());
         // What the Run button runs: the program, in its folder, with what it is given.
         std::string cmd;
         if (!t.env.empty()) {

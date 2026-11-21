@@ -1432,6 +1432,58 @@ struct ScriptApi {
         }
         return 1;
     }
+    // A pattern and its parts, from a table: {pattern =, file =, line =, col =,
+    // severity =, message =, code =} (each part a capture's number; file and
+    // severity may also be what every problem has: a file's name, "error"
+    // or "warning").
+    static bool pattern_at(lua_State* L, int t, BuildPattern* p, BuildMatcher* m, std::string* why) {
+        if (field(L, t, "pattern") != LUA_TSTRING) {
+            lua_pop(L, 1);
+            return *why = "pattern is a Lua pattern", false;
+        }
+        std::string pattern(str_at(L, -1));
+        lua_pop(L, 1);
+        if (!build_pattern(std::move(pattern), p, why)) return *why = "its pattern is not one: " + *why, false;
+        static const char* const kParts[] = {"file", "line", "col", "severity", "message", "code"};
+        u8* const parts[] = {&p->file, &p->line, &p->col, &p->severity, &p->message, &p->code};
+        for (size_t i = 0; i < std::size(kParts); ++i) {
+            const int type = field(L, t, kParts[i]);
+            i64 n = 0;
+            if (type == LUA_TNUMBER && int_at(L, -1, &n) && n >= 1 && n <= p->captures) {
+                *parts[i] = static_cast<u8>(n);
+            } else if (type == LUA_TSTRING && m && i == 0) {
+                m->file = std::string(str_at(L, -1));
+            } else if (type == LUA_TSTRING && m && i == 3) {
+                m->severity = build_severity(str_at(L, -1));
+                if (!m->severity) *why = "severity is \"error\" or \"warning\", or a capture's number";
+            } else if (type != LUA_TNIL) {
+                *why = std::string(kParts[i]) + " is the number of one of its " + std::to_string(p->captures) + " captures" +
+                       (m && (i == 0 || i == 3) ? std::string(i == 0 ? ", or a file's name" : ", or \"error\" or \"warning\"") : std::string());
+            }
+            lua_pop(L, 1);
+            if (!why->empty()) return false;
+        }
+        return true;
+    }
+    // blit.build.matcher(name, {pattern =, file =, line =, col =, severity =, message =, code =, next = {...}})
+    static int build_matcher(lua_State* L) {
+        if (!is_str(L, 1) || !lua_istable(L, 2)) return fail("blit.build.matcher: a name and a table are wanted");
+        BuildMatcher m;
+        m.name = std::string(str_at(L, 1));
+        std::string why;
+        bool ok = pattern_at(L, 2, &m.first, &m, &why);
+        if (ok) {
+            if (field(L, 2, "next") == LUA_TTABLE && !pattern_at(L, lua_gettop(L), &m.next, nullptr, &why)) ok = false, why = "next: " + why;
+            lua_pop(L, 1);
+        }
+        if (ok && !m.first.file && !m.next.file && m.file.empty()) ok = false, why = "file is a capture's number, or a file's name";
+        if (!ok) return fail("blit.build.matcher(\"%s\"): %s", m.name.c_str(), why.c_str());
+        std::vector<BuildMatcher>& list = ui(L).build_matchers;
+        const auto have = std::ranges::find_if(list, [&](const BuildMatcher& b) { return b.name == m.name; });
+        if (have != list.end()) *have = std::move(m);
+        else list.push_back(std::move(m));
+        return 0;
+    }
     // blit.build.run([name]): the task of that name ("Build", or "CMake: Build"), or the one the Run button runs.
     static int build_run(lua_State* L) {
         const std::string name = is_str(L, 1) ? std::string(str_at(L, 1)) : std::string();
@@ -1736,7 +1788,8 @@ const luaL_Reg kUi[] = {{"float", api<ScriptApi::float_open>}, {"set", api<Scrip
 const luaL_Reg kFs[] = {{"list", api<ScriptApi::fs_list>},   {"exists", api<ScriptApi::fs_exists>}, {"read", api<ScriptApi::fs_read>},
                         {"write", api<ScriptApi::fs_write>}, {"mkdir", api<ScriptApi::fs_mkdir>},   {nullptr, nullptr}};
 const luaL_Reg kBuild[] = {{"add", api<ScriptApi::build_add>},           {"remove", api<ScriptApi::build_remove>}, {"systems", api<ScriptApi::build_list_systems>},
-                           {"tasks", api<ScriptApi::build_list_tasks>},  {"run", api<ScriptApi::build_run>},       {nullptr, nullptr}};
+                           {"tasks", api<ScriptApi::build_list_tasks>},  {"run", api<ScriptApi::build_run>},       {"matcher", api<ScriptApi::build_matcher>},
+                           {nullptr, nullptr}};
 const luaL_Reg kProject[] = {{"add", api<ScriptApi::project_add>}, {"remove", api<ScriptApi::project_remove>}, {nullptr, nullptr}};
 
 void open_api(lua_State* L) { ScriptApi::open_table(L); }

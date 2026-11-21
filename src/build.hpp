@@ -24,13 +24,17 @@ struct BuildTask {
     std::string args;              // as one line, as a shell splits it
     std::vector<std::string> env;  // "NAME=value"
     std::string before;            // a task of the Build tab's to run first (its name)
+    // init.lua's patterns its output is read with (blit.build.matcher): those
+    // named; empty, all of them; {"none"}, nothing in it is a problem.
+    std::vector<std::string> problems;
 };
 
 // Where a folder's run configurations are, from the folder.
 inline constexpr const char* kRunConfigs = ".blit/run.json";
 // The run configurations in root's .blit/run.json: { "configurations": [ {
 // "name", "program", "args" (a list, or one line), "env" (an object),
-// "cwd" (from the folder), "build" (a task to run first) } ] }. `problem`
+// "cwd" (from the folder), "build" (a task to run first), "problems" (as
+// BuildTask's: a list, or "none") } ] }. `problem`
 // says what is wrong with the file, if anything is.
 std::vector<BuildTask> read_run_configs(const std::string& root, std::string* problem);
 // A word as sh reads it back (in single quotes when it needs them).

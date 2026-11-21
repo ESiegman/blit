@@ -481,7 +481,8 @@ struct App::TermDock {
 // A terminal in a new tab, in `dir` (the folder being worked in when none
 // is given): a shell there, or on the machine that folder is on. A hint
 // shows dimmed on its first line, above what the shell writes.
-u64 App::term_open(const std::string& dir_given, const std::string& command, const std::string& title, std::string_view hint, bool console) {
+u64 App::term_open(const std::string& dir_given, const std::string& command, const std::string& title, std::string_view hint, bool console,
+                   std::shared_ptr<const BuildMatchers> matchers) {
     const std::string* root = panel_root();
     const std::string dir = !dir_given.empty() ? dir_given : root ? *root : default_workdir();
     auto v = std::make_shared<TermView>();
@@ -528,6 +529,7 @@ u64 App::term_open(const std::string& dir_given, const std::string& command, con
                 return file_named(*files, name);
             });
     }
+    if (v->scan) v->scan->use_matchers(std::move(matchers));  // (before its reader starts)
     v->started_ns = now_ns();
     const std::vector<std::string> env = {"TERM=xterm-256color", "COLORTERM=truecolor", "TERM_PROGRAM=blit"};
     std::string err;

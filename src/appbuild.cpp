@@ -342,8 +342,9 @@ std::vector<BuildTask> App::build_tasks() {
 // A command run in the build's output terminal: in the terminals' split
 // below the text (appterm.cpp: shown again if it was hidden, made the first
 // time), used again after (a run still going there is ended). The keyboard
-// stays where it was.
-u64 App::build_command(const std::string& dir, const std::string& cmd, const std::string& title) {
+// stays where it was. Its output is read with init.lua's patterns that
+// `problems` names (all of them, when it names none).
+u64 App::build_command(const std::string& dir, const std::string& cmd, const std::string& title, const std::vector<std::string>& problems) {
     BuildUi& u = *buildui_;
     Pane* const editing = pane_;
     Pane* into = nullptr;
@@ -351,7 +352,7 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     if (!into) into = editing;  // (no room for another split)
     const u64 old = u.doc && find_doc(u.doc) ? u.doc : 0;
     pane_ = into;
-    const u64 doc = term_open(dir, cmd, title);
+    const u64 doc = term_open(dir, cmd, title, {}, false, script_matchers(problems));
     if (!doc && into->docs.empty()) remove_pane(into);  // (a split made for it, and it could not start)
     if (old) {
         Pane* p = nullptr;
@@ -409,7 +410,7 @@ void App::build_run(int index) {
         const std::string first = it->cwd.empty() ? root : root + "/" + it->cwd, then = t.cwd.empty() ? root : root + "/" + t.cwd;
         cmd = "cd " + sh_word(first) + " && " + it->cmd + " && cd " + sh_word(then) + " && " + t.cmd;
     }
-    build_command(t.cwd.empty() || !t.before.empty() ? u.root : u.root + "/" + t.cwd, cmd, t.name);
+    build_command(t.cwd.empty() || !t.before.empty() ? u.root : u.root + "/" + t.cwd, cmd, t.name, t.problems);
     u.last_key = u.current;  // (how it goes shows on its row)
     if (const auto it = u.sizes.find(u.last_key); it != u.sizes.end()) u.sizes_before = it->second;
     run_config_take();

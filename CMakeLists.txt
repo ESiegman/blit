@@ -413,6 +413,7 @@ if(BLIT_DEV)
     # Vulkan's and Metal's validation messages as problems, and the spec's statements of VUIDs.
     add_test(NAME validation COMMAND sh ${CMAKE_SOURCE_DIR}/tests/validation.sh $<TARGET_FILE:blit>)
     add_test(NAME buildtools COMMAND sh ${CMAKE_SOURCE_DIR}/tests/buildtools.sh $<TARGET_FILE:blit>)
+    add_test(NAME problems COMMAND sh ${CMAKE_SOURCE_DIR}/tests/problems.sh $<TARGET_FILE:blit>)
     add_test(NAME markdown COMMAND sh ${CMAKE_SOURCE_DIR}/tests/markdown.sh $<TARGET_FILE:blit>)
     # A notebook's view beside its script (skipped with no python3 to write the notebooks).
     add_test(NAME notebook COMMAND sh ${CMAKE_SOURCE_DIR}/tests/notebook.sh $<TARGET_FILE:blit>)

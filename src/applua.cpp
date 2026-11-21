@@ -374,6 +374,25 @@ void App::script_build(const std::string& root, const std::vector<FsEntry>& file
     tasks->insert(tasks->begin(), first.begin(), first.end());
 }
 
+// The patterns init.lua gave (blit.build.matcher) that a run's output is
+// read with: those named, or all of them when none is; "none": nothing in
+// it is a problem. Null when there are none.
+std::shared_ptr<const BuildMatchers> App::script_matchers(const std::vector<std::string>& names) {
+    auto out = std::make_shared<BuildMatchers>();
+    if (std::ranges::find(names, std::string("none")) != names.end()) {
+        out->none = true;
+        return out;
+    }
+    const std::vector<BuildMatcher> none;
+    const std::vector<BuildMatcher>& have = script_ ? script_->build_matchers : none;
+    for (const std::string& n : names)
+        if (std::ranges::none_of(have, [&](const BuildMatcher& m) { return m.name == n; })) notify("No pattern called " + n + " (blit.build.matcher)", 1);
+    for (const BuildMatcher& m : have)
+        if (names.empty() || std::ranges::find(names, m.name) != names.end()) out->list.push_back(m);
+    if (out->list.empty()) return nullptr;
+    return out;
+}
+
 std::vector<ProjectKind> App::script_project_kinds() {
     std::vector<ProjectKind> out;
     const ScriptUi* s = script_ && script_->L ? script_.get() : nullptr;
