@@ -160,9 +160,10 @@ project.
 Cmd+Shift+O, by `blit DIR`, made by New project, or another worktree from
 the Git tab) comes back as it was left when it is opened again: the tabs
 of each split in their order, the splits and their sizes, each file's
-cursor and view, the side panel (shown or not, its tab, its width), the
-Build tab's task, and the breakpoints (with their conditions, hit counts
-and messages), the functions' and the expressions watched. A folder's row
+cursor and view and the language chosen for it from the status bar, the
+side panel (shown or not, its tab, its width), the Build tab's task, and
+the breakpoints (with their conditions, hit counts and messages), the
+functions' and the expressions watched. A folder's row
 in Recent says what will come back (`blit  ~/Dev · 7 tabs`). The session
 is written when blit quits and when another folder is opened, one small
 file per folder in `sessions` beside `recent`. A file that is gone is left out
@@ -604,8 +605,9 @@ a short list that changes it for that file: tabs or 2, 3, 4 or 8 spaces
 (what the indent lines, the Tab key and Vim's `>` go by; the file's text
 stays as it is), LF or CRLF (every line end made so, as one step to undo, and Enter
 puts that in), or another language (its colours and the scripts'
-`FileType` follow; its language server stays the one its name says), with
-getting its grammar first when it has none. When the
+`FileType` follow; its language server stays the one its name says; the
+folder's session keeps the choice), with getting its grammar first when it
+has none. When the
 window is narrow a long path is shortened from its start first, then the
 least needed parts go. With Vim's modes on, the command line is just above
 it.
@@ -3853,7 +3855,7 @@ tests/langs.sh build-debug/blit    # which language a file is, a grammar's parse
 tests/find.sh build-debug/blit     # finding files and text, opening, saving and choosing a folder by a typed path; finding and replacing in the file and in files (one open, others not, and through tests/fake-ssh.sh)
 tests/lua.sh build-debug/blit      # scripts: settings, mappings, commands, events, programs, pickers, plugins
 tests/start.sh build-debug/blit    # the start screen and the list of what was opened lately (a scratch one)
-tests/session.sh build-debug/blit  # sessions: kept on quit and when the folder changes, brought back by each way of opening a folder
+tests/session.sh build-debug/blit  # sessions: kept on quit and when the folder changes, brought back by each way of opening a folder, with each file's chosen language
 tests/remote.sh build-debug/blit   # another machine's files, git and language server, through tests/fake-ssh.sh (BLIT_FAKE_SLOW=SECONDS makes it a slow host; BLIT_AGENT_LEVEL=1 acts as an old agent)
 tests/agent.sh build-debug/blit    # the agent outlives the connection: what it keeps running taken back, connecting again by itself (and its limits), when the agent ends
 tests/profile.sh build-debug/blit  # profiling tests/profile/spin.c here and through tests/fake-ssh.sh (skipped with no profiler)

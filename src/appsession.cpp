@@ -1,8 +1,9 @@
 // Sessions: what was open in each project folder, kept so that opening the
 // folder again brings it back. The tabs of each split in their order, how
 // the window was split and where its dividers were, each file's cursor and
-// view, the side panel (shown or not, its tab, its width), the Build tab's
-// task, and the breakpoints and expressions watched. One small text file
+// view and the language chosen for it, the side panel (shown or not, its
+// tab, its width), the Build tab's task, and the breakpoints and
+// expressions watched. One small text file
 // for each folder, in `sessions` beside `recent` in blit's data folder
 // (~/.local/share/blit/sessions), named by a hash of the folder's path; its
 // first lines say whose it is and how many tabs it brings back, which is
@@ -163,6 +164,7 @@ struct App::Session {
     std::string panel_tab, build;
     int panel_cols = 0;
     std::vector<std::string> debug;  // the breakpoints and the expressions watched, a line each
+    std::map<std::string, std::string> langs;  // the language chosen for a file (from the status bar), by its path
     std::unique_ptr<Node> root;
 
     // Reads one; false if it is not a session of this folder.
@@ -183,6 +185,7 @@ struct App::Session {
             if (f[0] == "panel" && f.size() == 4) panel = true, panel_open = f[1] == "1", panel_tab = f[2], panel_cols = static_cast<int>(number(f[3]));
             if (f[0] == "build" && l.size() > 6) build = l.substr(6);  // (the task's key, which has a tab in it)
             if (f[0] == "break" || f[0] == "function" || f[0] == "watch") debug.emplace_back(l);  // (appdebug.cpp reads them)
+            if (f[0] == "lang" && f.size() >= 3) langs[std::string(fields(l, 3)[2])] = f[1];  // lang, the language, the path (last: it may have tabs)
         }
         if (folder != want) return false;
         root = node(lines, i);
@@ -433,6 +436,12 @@ std::string App::session_text() {
     out += "panel\t" + std::string(open ? "1" : "0") + "\t" + tab + "\t" + std::to_string(cols) + "\n";
     if (const std::string build = build_chosen(); !build.empty() && build.find('\n') == std::string::npos) out += "build\t" + build + "\n";
     out += debug_session_text();
+    // The languages chosen for files, each once (a file may be in two splits).
+    std::set<std::string> said;
+    for (const std::unique_ptr<Pane>& p : panes_)
+        for (const std::shared_ptr<Doc>& d : p->docs)
+            if (kept(*d) && !d->lang.empty() && d->lang.find_first_of("\t\n") == std::string::npos && said.insert(full_path(d->ed.path)).second)
+                out += "lang\t" + d->lang + "\t" + full_path(d->ed.path) + "\n";
     return out + splits;
 }
 
@@ -615,6 +624,15 @@ void App::session_apply(Session& st) {
         for_each_pane([this] {  // (a file that has grown shorter: its view within it)
             pane_->target_y = pane_->scroll_y = std::clamp(pane_->target_y, 0.0, std::max(0.0, max_scroll_y()));
         });
+        // The languages chosen for files: their colours start again in them
+        // (one on its way from another machine starts with it when it is here).
+        for (const std::unique_ptr<Pane>& p : panes_)
+            for (const std::shared_ptr<Doc>& d : p->docs) {
+                const auto it = d->ed.path.empty() ? st.langs.end() : st.langs.find(full_path(d->ed.path));
+                if (it == st.langs.end() || d->lang == it->second) continue;
+                if (d->loading) d->lang = it->second;
+                else set_language(*d, it->second);
+            }
         lsp_pending_ = grammars_pending_ = true;
         vim_attach();
         // (A notebook in front of a split: its view beside it, as opening one shows it.)

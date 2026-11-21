@@ -188,5 +188,20 @@ run "folder:$V;open:$V/x.txt;break:1;quit"
 run "folder:$W;debugbreaks;folder:$V;debugbreaks;debugdump"
 check "another folder's in their place" 'notes.txt:2; notes.txt:3 if s != "\t" log x is {x}; square() ;; x.txt:1 ;; idle'
 
+# The language chosen for a file from the status bar: kept, and back, in
+# each split that shows it; a file whose language is its name's keeps none.
+printf 'SECTIONS { }\n' >"$W/link.txt"
+run "folder:$W;open:$W/link.txt;frame;statusclick:Plain;text:python;key:Return;key:cmd+\\;open:$W/notes.txt;quit"
+f=$(grep -lx "folder	$W" "$S"/* 2>/dev/null | head -1)
+got=$(grep '^lang	' "$f" | sed -e "s#$dir#~#g" | join)
+check "kept: the language chosen, once for the file" 'lang	python	~/work/link.txt'
+run "frame;key:cmd+alt+Left;frame;statusdump;lua:print(blit.info(0).language)" "$W"
+got=$(printf '%s' "$got" | sed -e 's/^.* LF //' -e 's/ (no colours)//' -e 's/blit: //')  # (whether its grammar is installed is this machine's)
+check "back: the file is that language again" 'Python ;; python'
+run "folder:$W;open:$W/link.txt;frame;statusclick:Python;text:plain;key:Return;quit"
+f=$(grep -lx "folder	$W" "$S"/* 2>/dev/null | head -1)
+got=$(grep '^lang	' "$f" | sed -e "s#$dir#~#g" | join)
+check "plain text chosen is kept too" 'lang	-	~/work/link.txt'
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "session ok"
 exit $failed
