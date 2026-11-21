@@ -52,14 +52,14 @@ SDL_Keymod keymod_of(u8 mods) {
 
 bool word_byte(u8 b) { return std::isalnum(b) || b == '_' || b >= 0x80; }
 
-// A key as the list names it. The bracket, comma and full stop keys go by
-// where they are: with Shift or Option held, a system may report what they
-// type ("{", "“", "<") instead.
+// A key as the list names it. The bracket, = and - keys go by where they
+// are: with Shift or Option held, a system may report what they type ("{",
+// "“", "+") instead.
 SDL_Keycode key_of(const SDL_KeyboardEvent& k) {
     if (k.scancode == SDL_SCANCODE_LEFTBRACKET) return SDLK_LEFTBRACKET;
     if (k.scancode == SDL_SCANCODE_RIGHTBRACKET) return SDLK_RIGHTBRACKET;
-    if (k.scancode == SDL_SCANCODE_COMMA) return SDLK_COMMA;
-    if (k.scancode == SDL_SCANCODE_PERIOD) return SDLK_PERIOD;
+    if (k.scancode == SDL_SCANCODE_EQUALS) return SDLK_EQUALS;
+    if (k.scancode == SDL_SCANCODE_MINUS) return SDLK_MINUS;
     return k.key;
 }
 
@@ -280,13 +280,10 @@ void App::commands_create() {
     own("Move the tab to the split on the right", {key(SDLK_RIGHT, kP | kA | kS)}, [this] { tab_to_split(kEdgeRight); });
     own("Move the tab to the split above", {key(SDLK_UP, kP | kA | kS)}, [this] { tab_to_split(kEdgeTop); });
     own("Move the tab to the split below", {key(SDLK_DOWN, kP | kA | kS)}, [this] { tab_to_split(kEdgeBottom); });
-    // (Where Ctrl with an arrow moves by words: Alt+Shift with it, but for
-    // wider and narrower, whose Alt+Shift+Right and Left expand and shrink
-    // the selection there: Alt+Shift with the keys of > and <, as Vim's
-    // Ctrl-W > and < are.)
+    // (Where Ctrl with an arrow moves by words: Alt+Shift with it.)
     const u8 grow = mac ? kP | kC : kA | kS;
-    own("Make the split wider", {mac ? key(SDLK_RIGHT, grow) : key(SDLK_PERIOD, grow)}, [this] { split_grow(true, 1); });
-    own("Make the split narrower", {mac ? key(SDLK_LEFT, grow) : key(SDLK_COMMA, grow)}, [this] { split_grow(true, -1); });
+    own("Make the split wider", {key(SDLK_RIGHT, grow)}, [this] { split_grow(true, 1); });
+    own("Make the split narrower", {key(SDLK_LEFT, grow)}, [this] { split_grow(true, -1); });
     own("Make the split taller", {key(SDLK_DOWN, grow)}, [this] { split_grow(false, 1); });
     own("Make the split shorter", {key(SDLK_UP, grow)}, [this] { split_grow(false, -1); });
     // Code.
@@ -303,7 +300,9 @@ void App::commands_create() {
     own("Show the file's outline", {key(SDLK_O, kP | kA)}, [this] { lsp_outline(); });
     own("Go to a symbol in the project", {key(SDLK_P, kP | kA)}, [this] { lsp_find_symbols(); });
     own("Search everywhere", {key(SDLK_K, kP)}, [this] { find_everywhere(); });
-    own("Expand the selection", {mac ? key(SDLK_RIGHT, kP | kS | kC) : key(SDLK_RIGHT, kA | kS)}, [this] { select_grow(true); });
+    // (Where there is no fourth key to hold with the arrows, Alt+Shift with
+    // + and -: every Alt+Shift, Ctrl and Ctrl+Alt arrow is taken there.)
+    own("Expand the selection", {mac ? key(SDLK_RIGHT, kP | kS | kC) : key(SDLK_EQUALS, kA | kS)}, [this] { select_grow(true); });
     own("Move the lines up", {key(SDLK_UP, kA)}, [this] { lines_move(-1); });
     own("Move the lines down", {key(SDLK_DOWN, kA)}, [this] { lines_move(1); });
     own("Copy the lines down", mac ? std::vector<Chord>{key(SDLK_DOWN, kA | kS)} : std::vector<Chord>{}, [this] { lines_copy(1); });  // (elsewhere Alt+Shift+Down makes the split taller)
@@ -313,7 +312,7 @@ void App::commands_create() {
     own("Fold or unfold the block at the cursor", {}, [this] { fold_toggle(); });
     own("Fold every block", {}, [this] { fold_all(true); });
     own("Unfold every block", {}, [this] { fold_all(false); });
-    own("Shrink the selection", {mac ? key(SDLK_LEFT, kP | kS | kC) : key(SDLK_LEFT, kA | kS)}, [this] { select_grow(false); });
+    own("Shrink the selection", {mac ? key(SDLK_LEFT, kP | kS | kC) : key(SDLK_MINUS, kA | kS)}, [this] { select_grow(false); });
     sent("Rename the symbol\xE2\x80\xA6", {key(SDLK_F2)});
     sent("Format the file, or the selected lines", {key(SDLK_F, kA | kS)});
     sent("Fixes and refactorings here (code actions)", {key(SDLK_RETURN, kA)});  // (Cmd+. stops the build)

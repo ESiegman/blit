@@ -114,6 +114,8 @@ check "the end of 150 else-ifs" 'shaped'
 # Expand the selection to the tree's node around it, then its parent; shrink back.
 grow="keyof:Expand the selection"
 shrink="keyof:Shrink the selection"
+# (And by the keys themselves: a Mac's, or Alt+Shift with + and - elsewhere.)
+if [ "$(uname -s)" = Darwin ]; then grow_keys="key:cmd+ctrl+shift+Right" shrink_keys="key:cmd+ctrl+shift+Left"; else grow_keys="key:alt+shift+=" shrink_keys="key:alt+shift+-"; fi
 on_g="key:Down;key:End;key:Left;key:Left;key:Left;key:Left;key:Left;key:Left;key:Left;key:Left;key:Left;key:Left"
 run "$on_g;$grow;seldump"
 check "Expand: the name at the cursor" '[g]'
@@ -121,6 +123,8 @@ run "$on_g;$grow;$grow;seldump"
 check "then what it is in" '[g("(x")]'
 run "$on_g;$grow;$grow;$grow;seldump"
 check "and what that is in" '[g("(x");]'
+run "$on_g;$grow_keys;$grow_keys;$shrink_keys;seldump"
+check "by their keys: expanded twice, shrunk once" '[g]'
 run "$on_g;$grow;$grow;$grow;$grow;seldump"
 check "in brackets: what is between them first" '[ g("(x"); ]'
 run "$on_g;$grow;$grow;$grow;$grow;$grow;seldump"
