@@ -3213,6 +3213,26 @@ about, five rounds, 2560x1600, against the build before it (d9b24ef):
 A second typing run with everything on had the step at 1.92 µs before and
 1.96 µs after; the first had 1.96 µs both: that is the run's noise.
 
+### Round 71: milestone 3, the new languages and output read as problems
+
+Thirteen languages built in, init.lua's patterns, SARIF, the tools' and
+test frameworks' output, validation messages, notes under problems, and a
+build's problems underlined in the text. On a frame's path: the build's
+marks (with no build problems, one test a frame) and the Problems tab's
+rows. Turn about, five rounds, 2560x1600, against the build before it
+(ffe09d6):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 15,992 / 57.04 µs / 2.25 µs | 15,958 / 57.04 µs / 2.29 µs |
+| Typing, everything on: the same, and the step | 17,486 / 49.75 µs / 3.46 µs / 1.92 µs | 17,542 / 49.88 µs / 3.54 µs / 1.92 µs |
+| Scrolling code-100m.txt, plain: the same | 17,584 / 51.79 µs / 0.88 µs | 17,571 / 51.79 µs / 0.83 µs |
+| Typing, plain: the same, and the step | 18,813 / 47.04 µs / 1.12 µs / 0.75 µs | 18,807 / 47.12 µs / 1.17 µs / 0.75 µs |
+
+The layout's p50 moved by 0.04 to 0.08 µs, in both directions across the
+cases (the second typing run with everything on: 3.46 to 3.50 µs), as
+round 70's noise did; the frame's CPU and the step did not move.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
