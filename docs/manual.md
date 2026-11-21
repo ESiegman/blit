@@ -403,8 +403,10 @@ nothing is done, as in Vim.
 come off, otherwise they go on, lined up at the smallest indentation among
 the lines. After an operator `gc` is the comment the cursor is in (`gcgc`
 takes the markers off all of it, `dgc` deletes it). The markers are the
-language's (`// `, `# `, `-- `, `<!-- -->`, ...); a file of no known
-language has none and says so.
+language's (`// `, `# `, `-- `, `<!-- -->`, ...; `/* */` in linker scripts
+and assembly, which GNU as reads on every machine), or what a grammar's
+`comment` in init.lua says; a file of no known language has none and says
+so.
 
 **Other Normal-mode commands**: `i a I A o O` and `gi` (insert where Insert
 mode was last left), `x X s S D C Y` (`Y` is `y$`, as in Neovim), `r` and
@@ -1450,13 +1452,37 @@ bottom line says when a grammar is in (the file is coloured then), or why
 it could not be. It needs `curl`, `tar` and a C compiler (`cc`), which
 macOS has once the command line tools are installed.
 
-Built in are only C, C++, HIP and Python, and what the files around them
-are written in: CMake, Make, JSON, TOML, YAML, Markdown, shell scripts
-(Bash) and Lua (init.lua). These are the 11 grammars blit knows where to
-get (`c`, `cpp`, `python`, `cmake`, `make`, `json`, `toml`, `yaml`,
-`markdown`, `bash`, `lua`) and the only file types it recognises by itself.
-HIP files (`.hip`) are C++ to blit. A file of any other type, a `.rs` or a
-`.ts` say, opens as plain text.
+Built in are C, C++, HIP and Python, and what the files around them are
+written in: CMake, Make, JSON, TOML, YAML, Markdown, shell scripts (Bash)
+and Lua (init.lua); and hardware, shader, GPU and firmware languages. These
+are the grammars blit knows where to get and the only file types it
+recognises by itself:
+
+| Language | Grammar | Files |
+|---|---|---|
+| C, C++ (HIP, Objective-C and C++ too) | `c`, `cpp` | `.c`, `.m`; `.cpp`, `.cc`, `.cxx`, `.h`, `.hpp`, `.hh`, `.hxx`, `.ipp`, `.inl`, `.hip`, `.mm` |
+| Python | `python` | `.py`, `.pyi`, notebooks |
+| CMake, Make, JSON, TOML, YAML, Markdown, Shell, Lua | `cmake`, `make`, `json`, `toml`, `yaml`, `markdown`, `bash`, `lua` | their usual endings and names |
+| SystemVerilog | `systemverilog` | `.sv`, `.svh` |
+| Verilog | SystemVerilog's | `.v`, `.vh` |
+| Tcl (with XDC and SDC constraints) | `tcl` | `.tcl`, `.tk`, `.tm`, `.xdc`, `.sdc`, a `#!` line for `tclsh` |
+| GLSL | `glsl` | `.glsl`, `.vert`, `.frag`, `.comp`, `.geom`, `.tesc`, `.tese`, `.mesh`, `.task`, `.rgen`, `.rint`, `.rahit`, `.rchit`, `.rmiss`, `.rcall`, `.vsh`, `.fsh` |
+| HLSL | `hlsl` | `.hlsl`, `.hlsli`, `.fx`, `.fxh` |
+| WGSL | `wgsl` | `.wgsl` |
+| Slang | `slang` | `.slang` |
+| Metal | C++'s | `.metal` |
+| CUDA | `cuda` | `.cu`, `.cuh` |
+| Assembly | `asm` | `.s`, `.S`, `.asm` |
+| Linker script | `linkerscript` | `.ld`, `.lds` |
+| Devicetree | `devicetree` | `.dts`, `.dtsi`, `.dtso`, `.overlay` |
+| Kconfig | `kconfig` | `Kconfig`, `Kconfig.*`, and the configurations made with it: `sdkconfig`, `sdkconfig.*`, `defconfig`, `*_defconfig` |
+
+Verilog and Metal use another language's grammar under their own names
+(see `parser` below): installing either installs that grammar, and
+neither gets a server of that language. Each is installed when asked for,
+as any grammar is; until then the status bar says `(no colours)` beside
+the language. A file of any other type, a `.rs` or a `.ts` say, opens as
+plain text.
 
 Any other language is added in init.lua: where its grammar comes from, and
 which file endings are that language.
@@ -1520,7 +1546,9 @@ still say which files it is for. The language is picked from the file name
 (or a `#!` line for Python, shell and Lua scripts). `blit --info FILE` shows
 what was found.
 
-The colours come from each grammar's own `queries/highlights.scm`. Queries
+The colours come from each grammar's own `queries/highlights.scm`; for
+HLSL and Slang, whose grammars keep none, from Neovim's (nvim-treesitter,
+at a fixed commit too). Queries
 may use `; inherits:` lines, the `#eq?`, `#any-of?`, `#match?`,
 `#lua-match?`, `#contains?`, `#has-parent?` and `#has-ancestor?` tests and
 their `not-` forms, and `#set! priority`. A pattern that uses a test blit
@@ -1875,7 +1903,7 @@ installed.
 
 | Language | Servers, the first one found is used |
 |---|---|
-| C, C++, HIP | `clangd` |
+| C, C++, HIP, CUDA (told it as `cuda-cpp`) | `clangd` |
 | Python | `pyright`, `basedpyright`, `pylsp` |
 | CMake | `neocmakelsp`, `cmake-language-server` |
 | JSON | `vscode-json-language-server` |
@@ -1884,6 +1912,14 @@ installed.
 | Markdown | `marksman` |
 | Shell | `bash-language-server` |
 | Lua | `lua-language-server` |
+| SystemVerilog, Verilog | `verible-verilog-ls` (verible) |
+| GLSL | `glsl_analyzer`, `shader-language-server` |
+| WGSL | `wgsl-analyzer`, `shader-language-server` |
+| HLSL | `shader-language-server` |
+| Slang | `slangd` |
+| Devicetree | `dts-lsp` |
+
+Tcl, Metal, assembly, linker scripts and Kconfig have none.
 
 In init.lua a built-in server can be changed or switched off, and a server
 for any other language described. That language is named in
@@ -3851,7 +3887,7 @@ tests/git.sh build-debug/blit      # git end to end, in scratch repositories wit
 tests/modal.sh build-debug/blit    # modal editing through the real key and text events
 tests/look.sh build-debug/blit     # the looks and the motion: frames compared pixel for pixel
 tests/status.sh build-debug/blit   # the status bar's parts and clicks, a language with no colours and getting its grammar (a curl that fails), the window's title
-tests/langs.sh build-debug/blit    # which language a file is, a grammar's parser alias, filenames, comment and name, a server's language_id
+tests/langs.sh build-debug/blit    # which language a file is, a grammar's parser alias, filenames, comment and name, a server's language_id; the built-in languages' names, comments, servers and colours (where installed)
 tests/find.sh build-debug/blit     # finding files and text, opening, saving and choosing a folder by a typed path; finding and replacing in the file and in files (one open, others not, and through tests/fake-ssh.sh)
 tests/lua.sh build-debug/blit      # scripts: settings, mappings, commands, events, programs, pickers, plugins
 tests/start.sh build-debug/blit    # the start screen and the list of what was opened lately (a scratch one)

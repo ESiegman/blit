@@ -76,6 +76,10 @@ struct GrammarSource {
     std::string comment{};                  // what starts a line comment, "//"; or the two ends, "/* %s */" (Vim's commentstring)
     std::vector<std::string> filenames{};   // whole file names that are this language, * and ? as in a shell: "Kconfig", "*_defconfig"
     std::string display{};                  // its name as the status bar shows it ("name" in init.lua): "GLSL"
+    // Where the highlight query comes from when the grammar's repository
+    // has none: "owner/name@commit:folder" on GitHub, the folder holding
+    // highlights.scm (built-in grammars only).
+    std::string queries{};
     bool operator==(const GrammarSource&) const = default;
 };
 

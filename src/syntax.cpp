@@ -1086,8 +1086,9 @@ std::string Syntax::language_for(std::string_view path, std::string_view first_l
             if (std::ranges::find(g.extensions, ext) != g.extensions.end()) return g.name;
 
     // Built in: C, C++ and HIP, Python, and the files around them (build
-    // files, settings, notes, scripts). Any other language comes from the
-    // settings, as above.
+    // files, settings, notes, scripts); hardware (SystemVerilog, Verilog,
+    // Tcl), shaders, CUDA and firmware's other files. Any other language
+    // comes from the settings, as above.
     static const struct {
         const char* ext;
         const char* lang;
@@ -1098,6 +1099,15 @@ std::string Syntax::language_for(std::string_view path, std::string_view first_l
         {"cmake", "cmake"}, {"mk", "make"}, {"json", "json"}, {"jsonc", "json"}, {"toml", "toml"},
         {"yaml", "yaml"}, {"yml", "yaml"}, {"md", "markdown"}, {"markdown", "markdown"},
         {"sh", "bash"}, {"bash", "bash"}, {"zsh", "bash"}, {"lua", "lua"},
+        {"sv", "systemverilog"}, {"svh", "systemverilog"}, {"v", "verilog"}, {"vh", "verilog"},
+        {"tcl", "tcl"}, {"tk", "tcl"}, {"tm", "tcl"}, {"xdc", "tcl"}, {"sdc", "tcl"},
+        {"glsl", "glsl"}, {"vert", "glsl"}, {"frag", "glsl"}, {"comp", "glsl"}, {"geom", "glsl"}, {"tesc", "glsl"}, {"tese", "glsl"},
+        {"mesh", "glsl"}, {"task", "glsl"}, {"rgen", "glsl"}, {"rint", "glsl"}, {"rahit", "glsl"}, {"rchit", "glsl"}, {"rmiss", "glsl"},
+        {"rcall", "glsl"}, {"vsh", "glsl"}, {"fsh", "glsl"},
+        {"hlsl", "hlsl"}, {"hlsli", "hlsl"}, {"fx", "hlsl"}, {"fxh", "hlsl"}, {"wgsl", "wgsl"}, {"slang", "slang"}, {"metal", "metal"},
+        {"cu", "cuda"}, {"cuh", "cuda"},
+        {"s", "asm"}, {"asm", "asm"}, {"ld", "linkerscript"}, {"lds", "linkerscript"},
+        {"dts", "devicetree"}, {"dtsi", "devicetree"}, {"dtso", "devicetree"}, {"overlay", "devicetree"},
     };
     for (const auto& e : by_ext)
         if (ext == e.ext) return e.lang;
@@ -1108,6 +1118,9 @@ std::string Syntax::language_for(std::string_view path, std::string_view first_l
     } by_name[] = {
         {"CMakeLists.txt", "cmake"}, {"Makefile", "make"}, {"makefile", "make"}, {"GNUmakefile", "make"},
         {".bashrc", "bash"}, {".zshrc", "bash"}, {".zprofile", "bash"}, {".bash_profile", "bash"}, {".profile", "bash"},
+        // (Kconfig's own files, and the configurations made with it, which its grammar reads too.)
+        {"Kconfig", "kconfig"}, {"Kconfig.*", "kconfig"}, {"sdkconfig", "kconfig"}, {"sdkconfig.*", "kconfig"},
+        {"defconfig", "kconfig"}, {"*_defconfig", "kconfig"},
     };
     for (const auto& e : by_name)
         if (name_fits(name, e.name)) return e.lang;
@@ -1116,7 +1129,7 @@ std::string Syntax::language_for(std::string_view path, std::string_view first_l
         static const struct {
             const char* word;
             const char* lang;
-        } by_shebang[] = {{"python", "python"}, {"bash", "bash"}, {"zsh", "bash"}, {"/sh", "bash"}, {"env sh", "bash"}, {"lua", "lua"}};
+        } by_shebang[] = {{"python", "python"}, {"bash", "bash"}, {"zsh", "bash"}, {"/sh", "bash"}, {"env sh", "bash"}, {"lua", "lua"}, {"tclsh", "tcl"}};
         for (const auto& e : by_shebang)
             if (first_line.find(e.word) != std::string_view::npos) return e.lang;
     }

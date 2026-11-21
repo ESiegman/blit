@@ -97,12 +97,12 @@ check "and Enter puts in the same" 'one<CR>|new<CR>|two<CR>|three<CR>|'
 run "statusclick:LF;key:Down;key:Return;frame;statusclick:CRLF;finddump" "$W/notes.txt"
 check "the list then has CRLF chosen" 'pick [] 2 : LF >CRLF'
 run "statusclick:C++;finddump" "$W/src/main.cpp"
-check "the language: getting its grammar first, then every one, this one chosen" 'pick [] 15 : Install the C++ grammar Plain text C >C++ CMake JSON'
+check "the language: getting its grammar first, then every one, this one chosen" 'pick [] 28 : Install the C++ grammar Plain text Assembly C >C++ CMake'
 run "statusclick:C++;text:python;key:Return;frame;statusdump" "$W/src/main.cpp"
 check "another chosen: for this file, and it says so" 'src/main.cpp | Ln 1, Col 1 Spaces: 2 LF Python (no colours)'
 run "statusclick:Plain;text:lua;key:Return;frame;lua:print(blit.info(0).language)" "$W/notes.txt"
 check "and the scripts hear of it" 'lua'
-run "statusclick:C++;key:Up;key:Up;key:Up;key:Return;wait:3000" "$W/src/main.cpp"
+run "statusclick:C++;key:Up;key:Up;key:Up;key:Up;key:Return;wait:3000" "$W/src/main.cpp"
 got=$(printf '%s' "$got" | sed -e 's#/archive/.*#/archive/...#')
 check "the first row gets the grammar (and first the one it builds on)" 'The C++ grammar was not installed: needs c first: could not fetch https://github.com/tree-sitter/tree-sitter-c/archive/...'
 

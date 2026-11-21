@@ -45,6 +45,38 @@ const std::vector<GrammarSource>& builtin_grammars() {
          .path = "tree-sitter-markdown"},                                                                                              // v0.5.4
         {.name = "bash", .repo = "tree-sitter/tree-sitter-bash", .rev = "a06c2e4415e9bc0346c6b86d401879ffb44058f7"},                   // v0.25.1
         {.name = "lua", .repo = "tree-sitter-grammars/tree-sitter-lua", .rev = "10fe0054734eec83049514ea2e718b2a56acd0c9"},            // v0.5.0
+        // Hardware: SystemVerilog, with Verilog (a subset) parsed by its
+        // grammar under its own name, and Tcl for the tools' scripts and
+        // constraints (.xdc, .sdc).
+        {.name = "systemverilog", .repo = "gmlarumbe/tree-sitter-systemverilog", .rev = "306458a919c0409e0ee53d5bf8731eb69915d7d1",
+         .display = "SystemVerilog"},                                                                                                  // v0.5.0
+        {.name = "verilog", .parser = "systemverilog", .display = "Verilog"},
+        // (No release yet: the commit is main's latest when this was written, 2026-11-09.)
+        {.name = "tcl", .repo = "tree-sitter-grammars/tree-sitter-tcl", .rev = "90e87ed495a04fd0bf18db4be12b7033cd7402f6", .display = "Tcl"},
+        // Shaders. Metal's language is C++ with more to it: C++'s grammar
+        // under its own name. HLSL and Slang keep no highlight query of
+        // their own; Neovim's are used (nvim-treesitter has made no release
+        // since 2024: its main at 2026-11-21, which pins the same HLSL).
+        {.name = "glsl", .repo = "tree-sitter-grammars/tree-sitter-glsl", .rev = "e47b8b62b59d0e3529f1c31b03e025d6bd475044", .inherits = {"c"},
+         .display = "GLSL"},                                                                                                           // v0.2.0
+        {.name = "hlsl", .repo = "tree-sitter-grammars/tree-sitter-hlsl", .rev = "bab9111922d53d43668fabb61869bec51bbcb915", .inherits = {"cpp"},
+         .display = "HLSL", .queries = "nvim-treesitter/nvim-treesitter@52773f0d13a0c11d0c3ef33c14ab6ecc1c17148b:runtime/queries/hlsl"},  // v0.2.0
+        // (No release: the commit is master's latest, 2023-01-09, which Neovim uses too.)
+        {.name = "wgsl", .repo = "szebniok/tree-sitter-wgsl", .rev = "40259f3c77ea856841a4e0c4c807705f3e4a2b65", .display = "WGSL"},
+        {.name = "slang", .repo = "tree-sitter-grammars/tree-sitter-slang", .rev = "c7ab1ee2bea2ac431fa78d72b80d8957d5a5bcd3", .inherits = {"c"},
+         .display = "Slang", .queries = "nvim-treesitter/nvim-treesitter@52773f0d13a0c11d0c3ef33c14ab6ecc1c17148b:runtime/queries/slang"},  // v0.3.1
+        {.name = "metal", .parser = "cpp", .display = "Metal"},
+        // GPU kernels.
+        {.name = "cuda", .repo = "tree-sitter-grammars/tree-sitter-cuda", .rev = "d58080a327756e4d1d16ec329ba7cb2048f6c6cd", .inherits = {"cpp"},
+         .display = "CUDA"},                                                                                                           // v0.21.2
+        // Firmware: assembly (GNU as and the like), linker scripts, devicetree and Kconfig.
+        {.name = "asm", .repo = "RubixDev/tree-sitter-asm", .rev = "5bb5b03e3c1ce5853b5282b9fba060f7c7bbf11e", .display = "Assembly"},  // v0.24.0
+        {.name = "linkerscript", .repo = "tree-sitter-grammars/tree-sitter-linkerscript", .rev = "f99011a3554213b654985a4b0a65b3b032ec4621",
+         .display = "Linker script"},                                                                                                  // v1.0.0
+        {.name = "devicetree", .repo = "joelspadin/tree-sitter-devicetree", .rev = "e685f1f6ac1702b046415efb476444167d63e41a",
+         .display = "Devicetree"},                                                                                                     // v0.15.0
+        {.name = "kconfig", .repo = "tree-sitter-grammars/tree-sitter-kconfig", .rev = "9934ff456d867d0d0f98ef365a0de410ff4e6705",
+         .display = "Kconfig"},                                                                                                        // v1.3.0
     };
     return list;
 }
@@ -56,11 +88,12 @@ std::vector<GrammarSource> grammar_list(const std::vector<GrammarSource>& from_s
         for (const GrammarSource& b : builtin) {
             if (b.name != g.name) continue;
             // (A repository of its own makes an alias a grammar; another
-            // repository leaves the built-in one's revision.)
+            // repository leaves the built-in one's revision and queries.)
             if (g.parser.empty() && g.repo.empty()) g.parser = b.parser;
             if (g.repo.empty() && g.parser.empty()) g.repo = b.repo;
             if (g.rev.empty() && g.repo == b.repo) g.rev = b.rev;
             if (g.path.empty() && g.repo == b.repo) g.path = b.path;
+            if (g.queries.empty() && g.repo == b.repo) g.queries = b.queries;
             if (g.inherits.empty()) g.inherits = b.inherits;
             if (g.comment.empty()) g.comment = b.comment;
             if (g.display.empty()) g.display = b.display;
@@ -110,7 +143,7 @@ std::string grammar_dir() {
 namespace {
 
 // What the stamp beside an installed grammar says: where it came from.
-std::string stamp_of(const GrammarSource& g) { return g.repo + "@" + g.rev + ":" + g.path; }
+std::string stamp_of(const GrammarSource& g) { return g.repo + "@" + g.rev + ":" + g.path + (g.queries.empty() ? "" : " " + g.queries); }
 
 bool read_file(const std::string& path, std::string* out) {
     FILE* f = std::fopen(path.c_str(), "rb");
@@ -251,9 +284,28 @@ bool install_one(const GrammarSource& g, std::string* err, const std::function<v
     // repository that holds several grammars.
     std::string query;
     bool have_query = false;
+    if (!g.queries.empty()) {
+        // Or from elsewhere, for a grammar that keeps none of its own: the
+        // one file, from that repository at that commit.
+        const size_t at = g.queries.find('@'), colon = g.queries.find(':', at == std::string::npos ? 0 : at);
+        if (at == std::string::npos || colon == std::string::npos || g.queries.find_first_of(" \t'\"\\") != std::string::npos ||
+            g.queries.find("..") != std::string::npos) {
+            *err = "the grammar's queries are not usable: " + g.queries;
+            return false;
+        }
+        const std::string from = "https://raw.githubusercontent.com/" + g.queries.substr(0, at) + "/" + g.queries.substr(at + 1, colon - at - 1) + "/" +
+                                 g.queries.substr(colon + 1) + "/highlights.scm";
+        tell("fetching " + from);
+        out.clear();
+        if (run({"curl", "-fsSL", "--retry", "2", "--connect-timeout", "20", "--max-time", "120", "-o", work + "/highlights.scm", from}, &out) != 0) {
+            *err = "could not fetch " + from + (out.empty() ? "" : ": " + tail(out));
+            return false;
+        }
+        have_query = read_file(work + "/highlights.scm", &query);
+    }
     for (const std::string& q : {base + "/queries/highlights.scm", top + "/queries/highlights.scm",
                                  base + "/queries/" + g.name + "/highlights.scm", top + "/queries/" + g.name + "/highlights.scm"}) {
-        if ((have_query = read_file(q, &query))) break;
+        if (have_query || (have_query = read_file(q, &query))) break;
     }
     if (!have_query) {
         *err = "no queries/highlights.scm in " + g.repo;
@@ -315,7 +367,8 @@ bool install_one(const GrammarSource& g, std::string* err, const std::function<v
     // Into place: the query (after the queries it builds on), the grammar,
     // and a note of where they came from. Each is written beside its final
     // name and renamed, so a half-written file is never there to be read.
-    if (!g.inherits.empty()) {
+    // (A query that names what it inherits already, as Neovim's do, keeps its own line.)
+    if (!g.inherits.empty() && !(query.starts_with(';') && query.substr(0, query.find('\n')).find("inherits:") != std::string::npos)) {
         std::string head = "; inherits: ";
         for (size_t i = 0; i < g.inherits.size(); ++i) head += (i ? "," : "") + g.inherits[i];
         query = head + "\n" + query;
@@ -392,16 +445,16 @@ int install_grammars_command(const std::vector<GrammarSource>& list, std::vector
     for (const std::string& name : names) {
         const GrammarSource* g = find_grammar(list, grammar_parser(list, name));  // (an alias: the grammar it uses)
         if (g && grammar_state(*g) == GrammarState::kInstalled) {
-            std::printf("%-12s already installed\n", name.c_str());
+            std::printf("%-13s already installed\n", name.c_str());
             continue;
         }
         std::string err;
         const bool ok = install_grammar(list, name, &err, [&](const std::string& step) {
-            std::printf("%-12s %s\n", name.c_str(), step.c_str());
+            std::printf("%-13s %s\n", name.c_str(), step.c_str());
             std::fflush(stdout);
         });
         if (!ok) {
-            std::printf("%-12s FAILED: %s\n", name.c_str(), err.c_str());
+            std::printf("%-13s FAILED: %s\n", name.c_str(), err.c_str());
             ++failed;
         }
     }
@@ -412,11 +465,11 @@ void print_grammars(const std::vector<GrammarSource>& list) {
     std::printf("grammars are installed into %s\n", grammar_dir().c_str());
     for (const GrammarSource& g : list) {
         if (!g.parser.empty()) {
-            std::printf("  %-12s %-10s the %s grammar\n", g.name.c_str(), "", grammar_parser(list, g.name).c_str());
+            std::printf("  %-13s %-10s the %s grammar\n", g.name.c_str(), "", grammar_parser(list, g.name).c_str());
             continue;
         }
         const GrammarState st = grammar_state(g);
-        std::printf("  %-12s %-10s %s%s%s @ %.12s\n", g.name.c_str(),
+        std::printf("  %-13s %-10s %s%s%s @ %.12s\n", g.name.c_str(),
                     st == GrammarState::kInstalled ? "installed" : st == GrammarState::kOutdated ? "outdated" : "-", g.repo.c_str(),
                     g.path.empty() ? "" : "/", g.path.c_str(), g.rev.c_str());
     }

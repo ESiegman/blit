@@ -49,8 +49,9 @@ const std::vector<LspServer>& builtin_lsp_servers() {
         // one it does not, so --background-index-priority, which came in
         // 15, is not given. How far it has got comes as $/progress, shown
         // beside its name.)
-        {"clangd", {"clangd", "--background-index", "-j=4"}, {"c", "cpp"},
-         {"compile_commands.json", "compile_flags.txt", ".clangd", ".git"}, "", "", true, {}},
+        // (CUDA too, by the name VS Code gives it.)
+        {"clangd", {"clangd", "--background-index", "-j=4"}, {"c", "cpp", "cuda"},
+         {"compile_commands.json", "compile_flags.txt", ".clangd", ".git"}, "", "", true, {{"cuda", "cuda-cpp"}}},
         {"pyright", {"pyright-langserver", "--stdio"}, {"python"},
          {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "pyrightconfig.json", ".git"}, "", "", true, {}},
         {"basedpyright", {"basedpyright-langserver", "--stdio"}, {"python"},
@@ -65,6 +66,17 @@ const std::vector<LspServer>& builtin_lsp_servers() {
         {"marksman", {"marksman", "server"}, {"markdown"}, {".marksman.toml", ".git"}, "", "", true, {}},
         {"bash-language-server", {"bash-language-server", "start"}, {"bash"}, {".git"}, "", "", true, {}},
         {"lua-language-server", {"lua-language-server"}, {"lua"}, {".luarc.json", ".luarc.jsonc", ".git"}, "", "", true, {}},
+        // Hardware. (slang-server joins verible for SystemVerilog once a
+        // file can have two servers.)
+        {"verible", {"verible-verilog-ls"}, {"systemverilog", "verilog"}, {"verible.filelist", ".git"}, "", "", true, {}},
+        // Shaders: for GLSL and WGSL their own servers first, then the one for three.
+        {"glsl_analyzer", {"glsl_analyzer"}, {"glsl"}, {".git"}, "", "", true, {}},
+        {"wgsl-analyzer", {"wgsl-analyzer"}, {"wgsl"}, {".git"}, "", "", true, {}},
+        {"shader-language-server", {"shader-language-server", "--stdio", "--glsl", "--hlsl", "--wgsl"}, {"glsl", "hlsl", "wgsl"}, {".git"}, "", "",
+         true, {}},
+        {"slangd", {"slangd"}, {"slang"}, {"slangdconfig.json", ".git"}, "", "", true, {}},
+        // Firmware.
+        {"dts-lsp", {"dts-lsp"}, {"devicetree"}, {".git"}, "", "", true, {}},
     };
     return list;
 }

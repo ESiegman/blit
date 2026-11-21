@@ -1534,18 +1534,27 @@ void config_test() {
     check(!install_grammar({odd}, odd.name, &gerr), "a grammar name that is not a plain word is refused");
     check(grammar_state(*mylang) == GrammarState::kMissing, "a grammar that was never installed is missing");
 
-    // Which language a file is: only C, C++ (HIP too), Python and the files
-    // around them are built in; any other comes from the settings, by the
-    // file endings a grammar lists.
+    // Which language a file is: C, C++ (HIP too), Python and the files
+    // around them, hardware, shader, GPU and firmware languages are built
+    // in; any other comes from the settings, by the file endings or names
+    // a grammar lists.
     check(Syntax::language_for("a/main.CPP", "") == "cpp" && Syntax::language_for("k.hip", "") == "cpp" &&
               Syntax::language_for("x.c", "") == "c" && Syntax::language_for("s.py", "") == "python" &&
               Syntax::language_for("p/CMakeLists.txt", "") == "cmake" && Syntax::language_for("init.lua", "") == "lua" &&
-              Syntax::language_for("run", "#!/usr/bin/env python3") == "python",
+              Syntax::language_for("run", "#!/usr/bin/env python3") == "python" && Syntax::language_for("k.cu", "") == "cuda" &&
+              Syntax::language_for("top.sv", "") == "systemverilog" && Syntax::language_for("boot.S", "") == "asm" &&
+              Syntax::language_for("esp/main/Kconfig.projbuild", "") == "kconfig" && Syntax::language_for("nrf_defconfig", "") == "kconfig",
           "built-in languages");
     check(Syntax::language_for("main.rs", "").empty() && Syntax::language_for("app.ts", "").empty() &&
-              Syntax::language_for("k.cu", "").empty() && Syntax::language_for("m.go", "").empty() &&
-              Syntax::language_for("s", "#!/usr/bin/env node").empty(),
+              Syntax::language_for("Main.java", "").empty() && Syntax::language_for("m.go", "").empty() &&
+              Syntax::language_for("s", "#!/usr/bin/env node").empty() && Syntax::language_for("defconfig.txt", "").empty(),
           "other languages are plain text unless the settings add them");
+    // filenames' patterns: * any run, ? any one character.
+    check(Syntax::name_fits("Kconfig", "Kconfig") && Syntax::name_fits("board_defconfig", "*_defconfig") &&
+              Syntax::name_fits("a_b_defconfig", "*_defconfig") && Syntax::name_fits("x1.f", "x?.f") && Syntax::name_fits("abc", "*") &&
+              !Syntax::name_fits("_defconfig.txt", "*_defconfig") && !Syntax::name_fits("Kconfig", "Kconfig.*") &&
+              !Syntax::name_fits("x12.f", "x?.f"),
+          "file names fit patterns as a shell's do");
     Config xc = settings({{"syntax.grammars.rust.repo", "\"tree-sitter/tree-sitter-rust\""},
                           {"syntax.grammars.rust.rev", "\"v0.24.0\""},
                           {"syntax.grammars.rust.extensions", "[\".RS\"]"},
@@ -3687,15 +3696,17 @@ void json_test() {
                           {"lsp.servers.mine.command", "[\"my-server\", \"--stdio\"]"},
                           {"lsp.servers.mine.languages", "[\"toml\"]"},
                           {"lsp.servers.mine.roots", "[\".git\"]"},
+                          {"lsp.servers.mine.language_id.toml", "\"toml-x\""},
                           {"lsp.servers.marksman.enabled", "false"}});
     check(lc.warnings.empty() && lc.lsp && lc.lsp_max_mb == 2 && !lc.lsp_completion && lc.lsp_inline && lc.lsp_hover_ms == 100,
           "lsp settings");
     check(lc.lsp_servers.size() == 3 && lc.lsp_servers[0].name == "clangd" && lc.lsp_servers[0].command.size() == 2 &&
-              lc.lsp_servers[0].init_options == "{\"fallbackFlags\": [\"-std=c++23\"]}",
+              lc.lsp_servers[0].init_options == "{\"fallbackFlags\": [\"-std=c++23\"]}" && lc.lsp_servers[1].language_ids.size() == 1 &&
+              lc.lsp_servers[1].language_ids.at("toml") == "toml-x",
           "lsp server from settings");
     const std::vector<LspServer> servers = lsp_server_list(lc.lsp_servers);
-    check(servers[0].name == "clangd" && servers[0].command[1] == "--background-index" && servers[0].languages.size() == 2 &&
-              !servers[0].roots.empty(),
+    check(servers[0].name == "clangd" && servers[0].command[1] == "--background-index" && servers[0].languages.size() == 3 &&
+              !servers[0].roots.empty() && servers[0].language_ids.at("cuda") == "cuda-cpp",
           "a server named like a built-in one inherits what it does not set");
     check(servers[1].name == "mine" && servers[1].languages[0] == "toml" && servers[2].name == "marksman" && !servers[2].enabled,
           "own servers and switched-off ones");
@@ -3718,9 +3729,7 @@ void json_test() {
     check(Lsp::pick(servers, "markdown", nullptr) == nullptr, "a switched-off server is never picked");
     for (const LspServer& s : builtin_lsp_servers())
         for (const std::string& l : s.languages)
-            check(l == "c" || l == "cpp" || l == "python" || l == "cmake" || l == "json" || l == "toml" || l == "yaml" ||
-                      l == "markdown" || l == "bash" || l == "lua",
-                  "built-in servers are only for C, C++, Python and the files around them");
+            check(find_grammar(builtin_grammars(), l) != nullptr, "built-in servers are only for the languages built in");
     check(!settings({{"lsp.enabled", "false"}}).lsp && !settings({{"lsp.servers.x.command", "\"x\""}}).warnings.empty(),
           "lsp off, and a bad server entry warns");
     const Config themed = settings({{"themes.rose-pine.error", "\"#ff0000\""}});

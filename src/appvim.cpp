@@ -41,11 +41,12 @@ void comment_marks(const std::string& lang, std::string* left, std::string* righ
         const char* right;
         const char* langs;  // names between spaces
     } table[] = {
-        {"// ", "", " c cpp cuda rust go zig java kotlin swift c_sharp javascript typescript tsx json5 scss php glsl hlsl systemverilog "},
-        {"# ", "", " python ruby bash toml yaml cmake make graphql "},
+        {"// ", "", " c cpp cuda rust go zig java kotlin swift c_sharp javascript typescript tsx json5 scss php glsl hlsl wgsl slang metal "
+                    "systemverilog verilog devicetree "},
+        {"# ", "", " python ruby bash toml yaml cmake make graphql tcl kconfig "},
         {"-- ", "", " lua sql "},
         {"<!-- ", " -->", " html xml markdown vue svelte astro dtd "},
-        {"/* ", " */", " css "},
+        {"/* ", " */", " css linkerscript asm "},  // (GNU as reads /* */ on every machine, and so does the C preprocessor before it)
         {"\" ", "", " vim "},
         {"; ", "", " query "},
     };
@@ -94,7 +95,8 @@ const IndentRules* indent_rules(const std::string& lang) {
         const IndentRules* rules;
         const char* langs;  // names between spaces
     } table[] = {
-        {&kBrackets, " c cpp cuda objc rust go zig java kotlin swift c_sharp javascript typescript tsx json json5 jsonc css scss php glsl hlsl wgsl slang metal dart scala "},
+        {&kBrackets, " c cpp cuda objc rust go zig java kotlin swift c_sharp javascript typescript tsx json json5 jsonc css scss php glsl hlsl wgsl slang metal dart scala "
+                     "tcl devicetree linkerscript "},
         {&kPython, " python "},
         {&kLua, " lua "},
         {&kShell, " bash sh zsh "},

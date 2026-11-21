@@ -88,8 +88,10 @@
 -- blit.opt.syntax.bold = true            -- the same for bold
 -- blit.opt.syntax.bracket_colors = true  -- brackets coloured by how deep they are
 
--- Built in are only C, C++ (HIP files too) and Python, and CMake, Make,
--- JSON, TOML, YAML, Markdown, shell scripts and Lua. Any other language is
+-- Built in are C, C++ (HIP files too) and Python, and CMake, Make, JSON,
+-- TOML, YAML, Markdown, shell scripts and Lua; SystemVerilog, Verilog and
+-- Tcl; GLSL, HLSL, WGSL, Slang and Metal; CUDA; assembly, linker scripts,
+-- devicetree and Kconfig. Any other language is
 -- added here, and so is another revision of a built-in grammar (same name:
 -- only what is listed changes). `repo` is "owner/name" on GitHub, `rev` a
 -- commit or tag, `path` the folder in the repository that holds
@@ -115,7 +117,8 @@
 -- problems are underlined, completions appear while typing, and resting the
 -- mouse on a name describes it. blit knows how to start the servers for the
 -- languages it has built in (clangd, pyright, basedpyright, pylsp,
--- neocmakelsp, taplo, lua-language-server, ...) and looks for them on PATH.
+-- neocmakelsp, taplo, lua-language-server, verible, glsl_analyzer,
+-- slangd, ...) and looks for them on PATH.
 -- `blit --info FILE` says which one it would use.
 -- blit.opt.lsp.enabled = true
 -- blit.opt.lsp.max_file_mb = 8              -- larger files get no server
