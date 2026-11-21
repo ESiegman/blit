@@ -1,0 +1,7 @@
+tests/test_unity.c:21:test_add:PASS
+tests/test_unity.c:12:test_breaks:FAIL: Expected 4 Was 3
+tests/test_unity.c:16:test_later:IGNORE: not yet
+
+-----------------------
+3 Tests 1 Failures 1 Ignored 
+FAIL

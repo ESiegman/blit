@@ -1,0 +1,2 @@
+   text	   data	    bss	    dec	    hex	filename
+   4076	      4	   3072	   7152	   1bf0	fw.elf

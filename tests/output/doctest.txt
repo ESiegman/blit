@@ -1,0 +1,16 @@
+[doctest] doctest version is "2.4.12"
+[doctest] run with "--help" for options
+===============================================================================
+tests/doctest_math.cpp:9:
+TEST CASE:  breaks on purpose
+
+tests/doctest_math.cpp:10: ERROR: CHECK( add(1, 2) == 4 ) is NOT correct!
+  values: CHECK( 3 == 4 )
+
+tests/doctest_math.cpp:11: FATAL ERROR: REQUIRE_EQ( add(2, 2), 5 ) is NOT correct!
+  values: REQUIRE_EQ( 4, 5 )
+
+===============================================================================
+[doctest] test cases: 2 | 1 passed | 1 failed | 1 skipped
+[doctest] assertions: 3 | 1 passed | 2 failed |
+[doctest] Status: FAILURE!

@@ -1,0 +1,19 @@
+    Start 1: adds
+1/3 Test #1: adds .............................   Passed    0.05 sec
+    Start 2: breaks
+2/3 Test #2: breaks ...........................***Failed    0.00 sec
+2 + 2 is not 5
+
+    Start 3: later
+3/3 Test #3: later ............................***Skipped   0.00 sec
+
+67% tests passed, 1 tests failed out of 3
+
+Total Test time (real) =   0.05 sec
+
+The following tests did not run:
+	  3 - later (Skipped)
+
+The following tests FAILED:
+	  2 - breaks (Failed)
+Errors while running CTest

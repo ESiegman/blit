@@ -233,7 +233,7 @@ void BuildScan::line(std::string_view text) {
             }
         }
     }
-    if (tool_line(text) || test_line(text)) return;
+    if (test_line(text) || tool_line(text)) return;  // (the tests' first: timing's "ERROR: Max frequency ..." is theirs, a warning)
     compiler_line(text);
 }
 

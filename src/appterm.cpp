@@ -107,6 +107,9 @@ struct TermView {
     std::vector<BuildProblem> scanned;   // (scan_mu)
     std::vector<std::string> scan_dirs;  // (scan_mu) the folders the build said it went into
     u64 scan_dirs_gen = 0;
+    BuildScan::Outcome scan_outcome;  // (scan_mu) what it came to
+    u64 scan_outcome_gen = 0;
+    bool scan_outcome_new = false;  // (scan_mu)
     std::atomic<bool> scan_news{false};
     // (scan_mu) The folder's files, listed on the reader's thread the first
     // time a bare name is in none of the folders tried: the scan's, and
@@ -233,14 +236,16 @@ struct TermView {
 
     // What the scan has found, handed over (on the reader's thread).
     void scan_hand_over() {
-        if (scan->found().empty() && scan->dirs_gen() == scan_dirs_gen) return;
+        if (scan->found().empty() && scan->dirs_gen() == scan_dirs_gen && scan->outcome_gen() == scan_outcome_gen) return;
         {
             std::lock_guard lock(scan_mu);
             for (BuildProblem& p : scan->found()) scanned.push_back(std::move(p));
             if (scan->dirs_gen() != scan_dirs_gen) scan_dirs = scan->dirs();
+            if (scan->outcome_gen() != scan_outcome_gen) scan_outcome = scan->outcome(), scan_outcome_new = true;
         }
         scan->found().clear();
         scan_dirs_gen = scan->dirs_gen();
+        scan_outcome_gen = scan->outcome_gen();
         scan_news = true;
     }
 
@@ -573,11 +578,14 @@ void App::term_sync() {
             if (!v.waiting.empty()) py_flush(v);  // (the console may take what was sent to it now)
             if (v.scan && v.scan_news.exchange(false)) {  // problems the build reported (before it is seen to end: the last ones count)
                 std::vector<BuildProblem> found;
+                std::optional<BuildScan::Outcome> outcome;
                 {
                     std::lock_guard lock(v.scan_mu);
                     found.swap(v.scanned);
+                    if (std::exchange(v.scan_outcome_new, false)) outcome = v.scan_outcome;
                 }
                 if (!found.empty()) build_found(d.id, std::move(found));
+                if (outcome) build_outcome(d.id, *outcome);
             }
             // The tab's name: the program's title for itself, else the folder it is in.
             std::string title;

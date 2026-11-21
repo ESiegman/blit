@@ -181,6 +181,90 @@ private:
     bool tool_hook_ = false;
     std::string tool_hook_name_, tool_hook_id_;
     // buildtests.cpp:
+public:
+    // A test's result as the run's output gave it: GoogleTest's
+    // "Suite.Name", Catch2's and doctest's test case, Unity's function,
+    // CTest's test; by the numbers of TestCase::Result (tests.hpp).
+    struct TestResult {
+        std::string name, framework;  // (framework: "GoogleTest", "Catch2", "doctest", "Unity", "CTest")
+        u8 result = 0;                // 1 passed, 2 failed, 3 skipped
+        std::string message;          // a failure's, or why it was skipped
+    };
+    // A size the output gave: a memory region's, as the linker's
+    // --print-memory-usage has it (total: the region's), or a section's from
+    // size (text, data, bss; total 0).
+    struct SizeUsed {
+        std::string name;
+        u64 used = 0, total = 0;
+    };
+    // What the run came to, as summary() says it: the tests' counts, the
+    // sizes, timing's words.
+    struct Outcome {
+        bool tests = false;  // (a count was given)
+        u32 passed = 0, failed = 0, skipped = 0;
+        std::vector<SizeUsed> sizes;
+        std::string timing;
+    };
+    std::vector<TestResult>& test_results() { return results_; }  // (since last emptied: the caller takes them)
+    const Outcome& outcome() const { return outcome_; }
+    u64 outcome_gen() const { return outcome_gen_; }  // (counts up as it changes)
+    // An outcome in words; with the sizes' change since `before` (the same
+    // task's last run): "FLASH 4.1 KB / 256 KB (1.6%) +120 B".
+    static std::string summary_of(const Outcome& o, const std::vector<SizeUsed>* before = nullptr);
+
+private:
+    bool gtest_line(std::string_view text);
+    void test_result(std::string_view framework, std::string_view name, u8 result, std::string_view message = {});
+    void test_case(std::string_view framework, std::string_view name);
+    void test_case_end();
+    void test_failure(std::string_view path, u32 line, u8 kind, std::string_view first);
+    void test_failure_end();
+    void tests_counted(u32 passed, u32 failed, u32 skipped);
+    void outcome_changed();
+    bool size_line(std::string_view text);
+    bool timing_line(std::string_view text);
+    std::vector<TestResult> results_;
+    Outcome outcome_;
+    u64 outcome_gen_ = 0;
+    // The test the lines are about (as its framework names it), and how it
+    // has gone so far (0: not said; a failure's message).
+    std::string test_name_, case_framework_, case_message_;
+    u8 case_result_ = 0;
+    // A failure being read: its place, and what its framework says under it
+    // (GoogleTest's expectation, Catch2's expression and expansion, doctest's
+    // values), to the blank line that ends it.
+    enum : u8 { kGoogleTest = 1, kCatch, kCatchSkip, kDoctest, kDoctestWarning };
+    bool fail_ = false;
+    u8 fail_kind_ = 0;
+    u32 fail_line_ = 0, fail_lines_ = 0;
+    std::string fail_path_, fail_message_;
+    // What is read to its blank line and dropped: GoogleTest's reason for a
+    // skip, what passed (Catch2 and doctest told to say each assertion).
+    bool skip_ = false;
+    // Catch2's heading over a test case: 1 after the dashes over its name, 2
+    // after the name, 3 after the dashes under it, 4 after its place.
+    u8 heading_ = 0;
+    std::string heading_name_;
+    // The counts: CTest's own when it ran the tests (its programs' counts
+    // are not added to it), else the frameworks' added up.
+    bool ctest_ = false, counted_ = false;
+    u32 ctest_passed_ = 0, ctest_failed_ = 0, ctest_skipped_ = 0;
+    u32 counted_passed_ = 0, counted_failed_ = 0, counted_skipped_ = 0;
+    // Sizes: size's table or the linker's memory regions, under their heading.
+    u8 size_table_ = 0;  // 1 size's, 2 the linker's
+    // Timing: each clock's (nextpnr), its fastest and the frequency asked
+    // for; Vivado's design summary; and the constraints file the output named.
+    struct Clock {
+        std::string name;
+        double mhz = 0, wanted = 0;
+        bool pass = true;
+    };
+    std::vector<Clock> clocks_;
+    u8 vivado_ = 0;  // 1 after its summary's heading, 2 after the dashes under it
+    double wns_ = 0, tns_ = 0, whs_ = 0;
+    u32 failing_ = 0;
+    bool vivado_read_ = false;
+    std::string constraints_;  // (as written)
     std::string summary_;
 
     std::vector<BuildProblem> found_;

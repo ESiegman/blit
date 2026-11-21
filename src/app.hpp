@@ -1362,6 +1362,8 @@ private:
     // its terminal as it comes (term_sync), shown in the Problems tab's
     // Build section, counted on the Run button and in the status bar.
     void build_found(u64 doc, std::vector<BuildProblem> found);
+    // And what it came to (when that changed), for its task's row and the Run button.
+    void build_outcome(u64 doc, const BuildScan::Outcome& outcome);
     const std::vector<BuildProblem>& build_problems() const;
     std::string build_label() const;  // the Run button's words
     void build_go(size_t i);    // that one's file, at its line

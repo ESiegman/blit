@@ -2439,7 +2439,8 @@ it), used again by the next run (a run still going there is ended), and the
 keyboard stays where it was. When it ends the tab says how, and
 the folder is looked at again (a configure makes a build folder, whose
 tasks then show). Each task's row says how its last run went ("running…",
-"done", "failed: exited with code 2"), and Cmd+. stops a run.
+"done", "failed: exited with code 2"), with what its output said it came
+to (below: "done · 12 passed, 1 failed, 2 skipped"), and Cmd+. stops a run.
 
 What the build prints is read for problems as it comes, on the terminal's
 own reading thread (nothing per frame): GCC's and Clang's
@@ -2522,6 +2523,7 @@ blit's data folder (`~/.local/share/blit/vulkan`); `BLIT_VALIDUSAGE` names
 another file. It is indexed once, on a thread of its own, and statements
 read from it there. Metal's messages have no such file: their row is what
 there is.
+
 The other tools a build runs are read too, each problem with the tool's
 own code for it where it gives one (shown in brackets) and the other
 places it names as notes:
@@ -2562,6 +2564,42 @@ What names no file at all is listed under the tool's name (`ld`, `yosys`,
 place (taken only after Yosys's banner or command, as a bare `ERROR:` line
 is anybody's). Yosys's warnings that name no place are not listed. The
 commands named are those make echoes, or Ninja shows under `FAILED:`.
+
+A test framework's output is read too, from a task that runs a test
+program: GoogleTest's (`path:line: Failure` and the expectation under it),
+Catch2's (v3: `path:line: FAILED:` with the expression and its expansion),
+doctest's (`path:line: ERROR: CHECK( x ) is NOT correct!` with its values,
+and `path(line):` as it writes it for MSVC) and Unity's
+(`path:line:test:FAIL: message`). Each failure is a problem at its place,
+the test's name and what its framework said under it in the message
+("Math.Breaks: Expected equality of these values: add(1, 2); Which is: 3;
+4"). Their count (GoogleTest's `[  PASSED  ] 1 test.`, Catch2's and doctest's
+`test cases: 3 | 1 passed | 1 failed | 1 skipped`, Unity's `3 Tests 1
+Failures 1 Ignored`; CTest's own count when it ran them, theirs not added
+to it) is what the run came to: "1 passed, 1 failed, 1 skipped".
+
+So are sizes and timing. size's table (`text data bss dec hex filename`,
+GNU's or arm-none-eabi's: the last file's row, or `-t`'s totals) comes to
+"text 4 KB, data 4 B, bss 3 KB"; the linker's `--print-memory-usage`
+table, where there is one, to "FLASH 4.1 KB / 256 KB (1.6%), RAM 3 KB /
+64 KB (4.7%)". Each size says how much it grew or shrank since the same
+task's last run that printed it ("+120 B"): kept in memory for the
+session, so a run's first after blit starts has nothing to set itself
+against. nextpnr's `Max frequency for clock 'clk': 122.73 MHz (PASS at
+12.00 MHz)` (the last of its two, after routing) comes to "clk 122.7 MHz,
+slack +75.19 ns", and Vivado's timing summary (its `WNS(ns) TNS(ns) ...`
+table) to "WNS -0.842 ns, TNS -12.375 ns, WHS +0.124 ns". Timing that is
+not met is a warning: nextpnr's clock that failed ("Timing not met: clock
+'clk' at 122.73 MHz, 400.00 MHz asked for (slack -5.65 ns)"), Vivado's
+`Timing constraints are not met.` with its worst slack. Neither names a
+place in the design: it is at the constraints file the output named
+(Vivado's `Parsing XDC File [path]`, not an IP's own; nextpnr's `--sdc`,
+`--pre-pack` or `--pcf`, as make echoes its command), else under the
+tool's name, a file that is nowhere (as Metal's `program_source` above).
+What a run came to shows on its task's row, and after the Run button's
+words where that leaves the tabs beside it room (`▶ make test · 2 errors ·
+1 passed, 1 failed`); it goes when the task runs again, and comes back as
+the new run's output says it.
 
 Under **CMake** the tab has two rows of its own. **Build type**: Enter goes
 from the project's own (what the build folder was configured with) to

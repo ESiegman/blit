@@ -86,6 +86,13 @@ struct App::BuildUi {
     std::unordered_map<std::string, u32> groups;  // a file's place in that order
     u32 seq = 0;
     i64 at = -1;
+    // What a task's run came to (its tests' count, sizes, timing: its
+    // output's, buildtests.cpp), in words for its row and the Run button;
+    // each task's sizes as its last run that gave them had them, and those
+    // this run's are set against (kept for the session, not across).
+    std::string summary;
+    std::unordered_map<std::string, std::vector<BuildScan::SizeUsed>> sizes;
+    std::vector<BuildScan::SizeUsed> sizes_before;
     // CMake's build type and target, chosen in the Build tab (empty: the
     // project's own, and all), put into its tasks as they run.
     std::string cmake_type, cmake_target;
@@ -370,6 +377,8 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     u.last_key.clear();
     u.problems.clear();  // (the last run's go: this one's come as it goes)
     u.groups.clear();
+    u.summary.clear();
+    u.sizes_before.clear();
     build_errors_ = build_warnings_ = 0;
     u.at = -1;
     ++build_prob_gen_;
@@ -402,6 +411,7 @@ void App::build_run(int index) {
     }
     build_command(t.cwd.empty() || !t.before.empty() ? u.root : u.root + "/" + t.cwd, cmd, t.name);
     u.last_key = u.current;  // (how it goes shows on its row)
+    if (const auto it = u.sizes.find(u.last_key); it != u.sizes.end()) u.sizes_before = it->second;
     run_config_take();
 }
 
@@ -507,6 +517,17 @@ void App::build_found(u64 doc, std::vector<BuildProblem> found) {
         for (size_t i = 0; i < u.problems.size(); ++i)
             if (u.problems[i].seq == was) u.at = static_cast<i64>(i);
     ++build_prob_gen_;
+    ++build_gen_;
+    dirty_ = true;
+}
+
+// What a task's run came to, as its output says it (another run's, or one
+// that was no task's, has no row to show it on).
+void App::build_outcome(u64 doc, const BuildScan::Outcome& outcome) {
+    BuildUi& u = *buildui_;
+    if (doc != u.doc || u.last_key.empty()) return;
+    if (!outcome.sizes.empty()) u.sizes[u.last_key] = outcome.sizes;
+    u.summary = BuildScan::summary_of(outcome, &u.sizes_before);
     ++build_gen_;
     dirty_ = true;
 }
@@ -649,9 +670,12 @@ void App::build_panel_draw(TextBox& box, bool focused) {
         std::string after = t.system == "CMake" ? with_cmake(t.cmd, u.cmake_type, u.cmake_target) : t.cmd;
         Ink in = ink::kMuted;
         if (!u.last_key.empty() && task_key(t) == u.last_key) {
+            bool said = true;
             if (u.running) after = "running\xE2\x80\xA6";
             else if (u.last_status == 0) after = "done";
             else if (u.last_status > 0) after = "failed: exited with code " + std::to_string(u.last_status), in = ink::kError;
+            else said = false;
+            if (said && !u.summary.empty()) after += " \xC2\xB7 " + u.summary;  // (what it came to: "12 passed, 1 failed")
         }
         if (c + 4 < cols) put(box, font, y, c + 2, fit_text(after, cols - c - 2), in);
         if (u.top + r == u.sel) light_row(box, y, focused);
@@ -788,6 +812,9 @@ std::string App::build_label() const {
     std::string label = u.running ? "\xE2\x96\xA0 Stop" : "\xE2\x96\xB6 " + name;
     if (build_errors_) label += " \xC2\xB7 " + std::to_string(build_errors_) + (build_errors_ == 1 ? " error" : " errors");
     else if (build_warnings_) label += " \xC2\xB7 " + std::to_string(build_warnings_) + (build_warnings_ == 1 ? " warning" : " warnings");
+    // What the last run came to, where it leaves the tabs there room (a third of the window at most).
+    if (!u.running && !u.summary.empty() && font_ && font_->cell_w() > 0 && width_of(label) + 3 + width_of(u.summary) <= static_cast<u32>(px_w_ / font_->cell_w() / 3))
+        label += " \xC2\xB7 " + u.summary;
     return label;
 }
 
@@ -801,7 +828,7 @@ void App::build_measure() {
     Font& font = *font_;
     const int cw = font.cell_w();
     // (Its cells made again only when what they show has changed.)
-    const u64 key = build_gen_ * 1000003ull ^ font.generation() * 31 ^ 1;
+    const u64 key = build_gen_ * 1000003ull ^ font.generation() * 31 ^ 1 ^ (u.summary.empty() ? 0 : static_cast<u64>(px_w_) << 40);  // (the window's width: whether the summary has room)
     if (key != u.drawn) {
         u.drawn = key;
         const std::string label = build_label();
@@ -862,6 +889,7 @@ std::string App::build_dump() {
     if (out.empty()) out = "nothing";
     if (u.running) out += " (running)";
     if (u.last_status >= 0) out += " (last: " + std::to_string(u.last_status) + ")";
+    if (!u.summary.empty()) out += " (" + u.summary + ")";
     return out;
 }
 

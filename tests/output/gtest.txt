@@ -1,0 +1,35 @@
+[==========] Running 3 tests from 1 test suite.
+[----------] Global test environment set-up.
+[----------] 3 tests from Math
+[ RUN      ] Math.Adds
+[       OK ] Math.Adds (0 ms)
+[ RUN      ] Math.Breaks
+tests/gtest_math.cpp:9: Failure
+Expected equality of these values:
+  add(1, 2)
+    Which is: 3
+  4
+
+tests/gtest_math.cpp:10: Failure
+Value of: add(2, 2) == 5
+  Actual: false
+Expected: true
+two and two
+
+[  FAILED  ] Math.Breaks (0 ms)
+[ RUN      ] Math.Later
+tests/gtest_math.cpp:14: Skipped
+not yet
+
+[  SKIPPED ] Math.Later (0 ms)
+[----------] 3 tests from Math (0 ms total)
+
+[----------] Global test environment tear-down
+[==========] 3 tests from 1 test suite ran. (0 ms total)
+[  PASSED  ] 1 test.
+[  SKIPPED ] 1 test, listed below:
+[  SKIPPED ] Math.Later
+[  FAILED  ] 1 test, listed below:
+[  FAILED  ] Math.Breaks
+
+ 1 FAILED TEST

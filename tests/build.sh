@@ -321,6 +321,100 @@ unset BLIT_TERM_SHELL
 got=$(printf '%s' "$got" | sed 's#NORMAL [^ ]*notes.txt#NORMAL notes.txt#')
 check "Cmd+click in any terminal (a shell's)" 'NORMAL notes.txt | Ln 2, Col 3 Tabs LF Plain text'
 
+# Test frameworks' output, sizes and timing, as a task prints them: each
+# failure a problem at its place, and what the run came to on its task's
+# row. tests/output has the real output of each: GoogleTest 1.17.0, Catch2
+# 3.8.1, doctest 2.4.12 and Unity 2.6.1 programs (one test passing, one
+# failing, one skipped) built with GCC 16 on Linux (Apple clang 21 gave
+# the same); CTest 4.5 on macOS; arm-none-eabi-size and ld
+# --print-memory-usage (binutils 2.40, Debian 12's gcc-arm-none-eabi
+# 12.2) of a firmware linked twice, the second with 120 more bytes of
+# table; nextpnr-ice40 0.11.1 (hdlc/nextpnr) placing a small design at
+# 12 MHz and at 400 MHz. Vivado is not on either machine: its timing
+# summary below is the shape its documentation (UG906, UG835's
+# report_timing_summary) gives, with made-up figures.
+O="$(cd "$(dirname "$0")" && pwd)/output"
+TF="$dir/tf"
+mkdir -p "$TF/constrs"
+for k in gtest catch2 doctest unity ctest size-arm nextpnr-pass; do printf '%s:\n\t@cat "%s/%s.txt"; exit 1\n' "$k" "$O" "$k"; done >"$TF/Makefile"
+printf 'fw:\n\t@if [ -e .built ]; then cat "%s/ld-memory-bigger.txt"; else cat "%s/ld-memory.txt"; touch .built; fi\n' "$O" "$O" >>"$TF/Makefile"
+printf 'once:\n\t@if [ -e .ran ]; then echo nothing to say; else cat "%s/unity.txt"; touch .ran; fi\n' "$O" >>"$TF/Makefile"
+printf 'pnr:\n\t./nextpnr-ice40 --hx1k --package tq144 --json blink.json --pcf blink.pcf --freq 400 --asc blink.asc\nnopcf:\n\t@./nextpnr-ice40\nvivado:\n\t@cat vivado.txt\n' >>"$TF/Makefile"
+printf '#!/bin/sh\ncat "%s/nextpnr-fail.txt"\nexit 1\n' "$O" >"$TF/nextpnr-ice40"
+chmod +x "$TF/nextpnr-ice40"
+cat >"$TF/vivado.txt" <<EOF
+Parsing XDC File [$TF/ip/clk_wiz/clk_wiz.xdc] for cell 'clk_wiz/inst'
+Parsing XDC File [$TF/constrs/top.xdc]
+Finished Parsing XDC File [$TF/constrs/top.xdc]
+------------------------------------------------------------------------------------------------
+| Design Timing Summary
+| ---------------------
+------------------------------------------------------------------------------------------------
+
+    WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints      WHS(ns)      THS(ns)  THS Failing Endpoints  THS Total Endpoints     WPWS(ns)     TPWS(ns)  TPWS Failing Endpoints  TPWS Total Endpoints
+    -------      -------  ---------------------  -------------------      -------      -------  ---------------------  -------------------     --------     --------  ----------------------  --------------------
+     -0.842      -12.375                     31                  845        0.124        0.000                      0                  845        4.020        0.000                       0                   412
+
+
+Timing constraints are not met.
+EOF
+last() { got=$(printf '%s' "$got" | sed 's/^.*\((last: \)/\1/'); }  # (builddump's: how the last run went, and what it came to)
+run "$TF" "buildrun:make gtest;buildwait;problemsdump"
+check "GoogleTest: each failure at its place, the test and its expectation" 'button: ▶ make gtest · 2 errors | Build 2 | file tests/gtest_math.cpp | >E 9 Math.Breaks: Expected equality of these values: add(1, 2); Which is: 3; 4 | E 10 Math.Breaks: Value of: add(2, 2) == 5; Actual: false; Expected: true; two and two'
+run "$TF" "buildrun:make gtest;buildwait;builddump"
+last
+check "and its count on the task's row" '(last: 2) (1 passed, 1 failed, 1 skipped)'
+run "$TF" "buildrun:make catch2;buildwait;problemsdump"
+check "Catch2: the expression and its expansion" 'button: ▶ make catch2 · 2 errors | Build 2 | file tests/catch_math.cpp | >E 10 breaks on purpose: CHECK( x == 4 ); with expansion: 3 == 4 | E 11 breaks on purpose: REQUIRE( add(2, 2) == 5 ); with expansion: 4 == 5'
+run "$TF" "buildrun:make catch2;buildwait;builddump"
+last
+check "and Catch2's count" '(last: 2) (1 passed, 1 failed, 1 skipped)'
+run "$TF" "buildrun:make doctest;buildwait;problemsdump"
+check "doctest's failures, with their values" 'button: ▶ make doctest · 2 errors | Build 2 | file tests/doctest_math.cpp | >E 10 breaks on purpose: CHECK( add(1, 2) == 4 ) is NOT correct! values: CHECK( 3 == 4 ) | E 11 breaks on purpose: REQUIRE_EQ( add(2, 2), 5 ) is NOT correct! values: REQUIRE_EQ( 4, 5 )'
+run "$TF" "buildrun:make doctest;buildwait;builddump"
+last
+check "and doctest's count" '(last: 2) (1 passed, 1 failed, 1 skipped)'
+run "$TF" "buildrun:make unity;buildwait;problemsdump"
+check "Unity's failure" 'button: ▶ make unity · 1 error | Build 1 | file tests/test_unity.c | >E 12 test_breaks: Expected 4 Was 3'
+run "$TF" "buildrun:make unity;buildwait;builddump"
+last
+check "and Unity's count" '(last: 2) (1 passed, 1 failed, 1 skipped)'
+run "$TF" "buildrun:make ctest;buildwait;builddump"
+last
+check "CTest's count, from its line for each test (the one skipped its own count calls passed)" '(last: 2) (1 passed, 1 failed, 1 skipped)'
+got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$TF;frame;buildrun:make unity;buildwait;problemsdump" 2>&1 >/dev/null | tail -1)
+check "on the Run button too, where it has room" 'button: ▶ make unity · 1 error · 1 passed, 1 failed, 1 skipped | Build 1 | file tests/test_unity.c | >E 12 test_breaks: Expected 4 Was 3'
+run "$TF" "buildrun:make once;buildwait;builddump"
+last
+check "what a run came to" '(last: 0) (1 passed, 1 failed, 1 skipped)'
+run "$TF" "buildrun:make once;buildwait;builddump"
+last
+check "gone when the task runs again and says nothing of it" '(last: 0)'
+run "$TF" "buildrun:make size-arm;buildwait;builddump"
+last
+check "arm-none-eabi-size's table" '(last: 2) (text 4 KB, data 4 B, bss 3 KB)'
+run "$TF" "buildrun:make fw;buildwait;buildrun:make fw;buildwait;builddump"
+last
+check "the linker's memory regions, and the change since the task's last run" '(last: 0) (FLASH 4.1 KB / 256 KB (1.6%) +120 B, RAM 3 KB / 64 KB (4.7%))'
+run "$TF" "buildrun:make fw;buildwait;builddump"
+last
+check "(kept for the session: nothing to set the first run after a start against)" '(last: 0) (FLASH 4.1 KB / 256 KB (1.6%), RAM 3 KB / 64 KB (4.7%))'
+run "$TF" "buildrun:make nextpnr-pass;buildwait;builddump"
+last
+check "nextpnr's clock, after routing, and its slack" '(last: 2) (clk 122.7 MHz, slack +75.19 ns)'
+run "$TF" "buildrun:make pnr;buildwait;builddump"
+last
+check "a clock that misses" '(last: 2) (clk 122.7 MHz, slack -5.65 ns)'
+run "$TF" "buildrun:make pnr;buildwait;problemsdump"
+check "a warning at the constraints file make echoed nextpnr's command with" 'button: ▶ make pnr · 1 warning | Build 1 | file blink.pcf | >W 1 Timing not met: clock '"'"'clk'"'"' at 122.73 MHz, 400.00 MHz asked for (slack -5.65 ns)'
+run "$TF" "buildrun:make nopcf;buildwait;problemsdump"
+check "with none named: under the tool's name" 'button: ▶ make nopcf · 1 warning | Build 1 | file nextpnr | >W 1 Timing not met: clock '"'"'clk'"'"' at 122.73 MHz, 400.00 MHz asked for (slack -5.65 ns)'
+run "$TF" "buildrun:make vivado;buildwait;problemsdump"
+check "Vivado's: at the project's constraints file (not an IP's)" 'button: ▶ make vivado · 1 warning | Build 1 | file constrs/top.xdc | >W 1 Timing constraints are not met: WNS -0.842 ns, TNS -12.375 ns (31 failing endpoints)'
+run "$TF" "buildrun:make vivado;buildwait;builddump"
+last
+check "and its summary" '(last: 0) (WNS -0.842 ns, TNS -12.375 ns, WHS +0.124 ns)'
+
 # New projects.
 P="$dir/projects"
 mkdir -p "$P/taken"
