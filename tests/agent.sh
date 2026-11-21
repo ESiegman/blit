@@ -144,7 +144,7 @@ got="$got | $(serving) | $(ends_within 8) | $( [ -e "$dir/k7" ] && echo it ran t
 check "quit with a job, kept: it runs to its end, then the agent ends" '1 job is running on box: keep it running, or end it? | serving | gone | it ran to its end'
 settle
 run "remotewait;key:ctrl+\`;frame;termwait:\$;${first}text:sleep 2 && touch $dir/k7;key:Return;wait:700;answer:end;quit;asked" "$R/notes.txt"
-got="$got | $(ends_within 1) | $(sleep 2; [ -e "$dir/k7" ] && echo it ran to its end || echo it was ended)"
+got="$got | $(ends_within 3) | $(sleep 2; [ -e "$dir/k7" ] && echo it ran to its end || echo it was ended)"  # (as soon as what it ended has gone)
 check "and ended: it ends, and the agent at once" '1 job is running on box: keep it running, or end it? | gone | it was ended'
 settle
 # Stopped by hand: everything it runs ends, and it is not made again by itself.

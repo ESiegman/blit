@@ -518,6 +518,7 @@ void signal_child(Child& c, int sig) {
 void end_child(Child& c) {
     if (c.ending) return;
     c.ending = true;
+    c.was_working = false;  // (not working from now: what holds the agent is looked at again at once, not at the next look)
     c.paused = false;  // (what it still writes is read, so that it can end)
     c.end_at = Clock::now();
     signal_child(c, SIGTERM);
