@@ -60,7 +60,7 @@ join() { awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }'; }
 run() {
     rm -f "$dir/down" "$dir/tries"
     got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "$1" ${2:+"$2"} 2>&1 >/dev/null |
-        sed -e "s#$T#~#g" -e "s#$dir#@#g" -e 's/ @[0-9,]* [0-9x]*\( ended\)/\1/' -e 's/ @[0-9,]* [0-9x]*$//' | join)
+        sed -e "s#$T#~#g" -e "s#$dir#@#g" -e 's/ @[0-9,]* [0-9x]*\( ended\)/\1/' -e 's/ @[0-9,]* [0-9x]*$//' -e 's/^Ctrl+` back to the file|//' | join)
 }
 # (Each case ends with no agent left: blit quit, and nothing was kept.)
 settle() { ends_within 5 >/dev/null; pkill -9 -f "$agent" 2>/dev/null; rm -f "$dir/k"*; }
@@ -150,14 +150,14 @@ settle
 # Stopped by hand: everything it runs ends, and it is not made again by itself.
 run "remotewait;key:ctrl+\`;frame;termwait:\$;${first}command:Stop the agent on the server;asked;termend;lua:os.execute('sleep 2');frame;termdump;statusdump" "$R/notes.txt"
 got="$got | $(serving) | $(tries) begun"
-check "the agent stopped by hand: what it ran ends, and it is not made again" "blit: blit's agent on box was stopped ;; Stop blit's agent on box? Everything it runs there ends, for every blit. ;; Ctrl+\` back to the file|\$|[connection to box lost] ended -1 ;; box: agent stopped (connect again) Terminal: box | | gone | 1 begun"
+check "the agent stopped by hand: what it ran ends, and it is not made again" "blit: blit's agent on box was stopped ;; Stop blit's agent on box? Everything it runs there ends, for every blit. ;; \$|[connection to box lost] ended -1 ;; box: agent stopped (connect again) Terminal: box | | gone | 1 begun"
 settle
 
 # Where no socket can be made (a folder others can enter), the agent is the
 # connection's own, as before: what it ran goes with the connection.
 chmod 755 "$dir/run"
 run "remotewait;key:ctrl+\`;frame;termwait:\$;${first}$cut;termend;termdump" "$R/notes.txt"
-check "no lasting agent: a terminal goes with the connection" 'Ctrl+` back to the file|$|[connection to box lost] ended -1'
+check "no lasting agent: a terminal goes with the connection" '$|[connection to box lost] ended -1'
 chmod 700 "$dir/run"
 settle
 

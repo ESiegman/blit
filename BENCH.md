@@ -3193,6 +3193,26 @@ problem in the file it no longer does. Typing's frame is 2.3 µs cheaper
 than before; it came in between the Vim and the looks commits and was
 not chased further.
 
+### Round 70: milestone 2, the agent that outlives the connection
+
+The agent on another machine outlives the connection, connections are
+made again by themselves, quitting asks about jobs there; and the terminal's
+search and its lines as a tab, local history for remote files, a local
+terminal from a remote folder, a refresh after what ran there ends. None of
+it is on a frame's path but the terminal's find box (closed: one more check)
+and the status bar's host segment (only while a connection is down). Turn
+about, five rounds, 2560x1600, against the build before it (d9b24ef):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 15,784 / 57.25 µs / 2.21 µs | 16,291 / 57.17 µs / 2.25 µs |
+| Typing, everything on: the same, and the step | 17,394 / 49.88 µs / 3.50 µs / 1.96 µs | 17,811 / 49.75 µs / 3.50 µs / 1.96 µs |
+| Scrolling code-100m.txt, plain: the same | 17,358 / 51.92 µs / 0.83 µs | 17,330 / 52.04 µs / 0.83 µs |
+| Typing, plain: the same, and the step | 19,180 / 47.21 µs / 1.17 µs / 0.75 µs | 19,146 / 47.29 µs / 1.17 µs / 0.75 µs |
+
+A second typing run with everything on had the step at 1.92 µs before and
+1.96 µs after; the first had 1.96 µs both: that is the run's noise.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

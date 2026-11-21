@@ -376,7 +376,7 @@ struct Child {
     // Working, as quitting asks: a task's while it runs; a shell's while a
     // program is in front of it; one given work until its done.
     bool working() const {
-        if (!keep || exited) return false;
+        if (!keep || exited || ending) return false;
         if (work || busy > 0) return true;
         if (!pty || out < 0) return false;
         const pid_t front = ::tcgetpgrp(out);
@@ -507,6 +507,10 @@ constexpr auto kKillAfter = std::chrono::seconds(2), kLeaveAfter = std::chrono::
 void signal_child(Child& c, int sig) {
     if (c.pid <= 0) return;
     const int s = c.pty && sig == SIGTERM ? SIGHUP : sig;  // (a shell does not end on SIGTERM; a terminal that hangs up ends it)
+    // (And the program in front of a terminal's shell, which a shell with
+    // job control puts in a group of its own: hung up on, as a terminal does.)
+    if (c.pty && c.out >= 0)
+        if (const pid_t front = ::tcgetpgrp(c.out); front > 0 && front != c.pid) ::kill(-front, s);
     ::kill(-c.pid, s);
     if (!c.exited) ::kill(c.pid, s);
 }
