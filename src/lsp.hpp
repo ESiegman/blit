@@ -237,6 +237,13 @@ public:
 
     // Called on a worker thread whenever something is ready for poll().
     void set_notify(std::function<void()> fn);
+    // The project's Python, for the servers of Python files (pyright's and
+    // basedpyright's python.pythonPath, pylsp's jedi environment; settings
+    // of the user's own that name one win): `source` gives a server's
+    // project folder's interpreter as that machine names it ("" while it is
+    // not known), and set_python tells the servers of that folder, once it is.
+    void set_python_source(std::function<std::string(const std::string& root)> source) { python_source_ = std::move(source); }
+    void set_python(const std::string& root, const std::string& path);
 
     // The first server in the list that handles the language and whose
     // program can be found. *program gets the program's full path.
@@ -472,6 +479,7 @@ private:
                            const std::string& language);
     void drop_document(Document* d, bool tell);
     void flush_opens();
+    void send_python(Server* s);
     void stop_server(Server* s, bool kill_now);
     void server_gone(Server* s, const std::string& why, bool none_there = false);
     void materialize(Document* d);
@@ -493,6 +501,7 @@ private:
     bool unopened_ = false;  // some document is still to be told to its server (see flush_opens())
     std::string message_;
     std::vector<std::string> failed_;
+    std::function<std::string(const std::string&)> python_source_;
 
     u64 state_gen_ = 0;  // which documents are on which servers, and how those are
     u64 diags_gen_ = 0, problems_gen_ = 0, problems_built_ = ~0ull;

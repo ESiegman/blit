@@ -677,6 +677,42 @@ static std::string at_host(const std::string& remote) {
     return "@" + (split_remote(remote, &host, &there) ? host : remote);
 }
 
+// Settings with others laid over them: an object's members merged, the
+// others' value taken where they have one.
+static void merged(std::string& out, json::Value base, json::Value over) {
+    if (!base.is_object() || !over.is_object()) return json::dump(out, over.exists() ? over : base);
+    out += '{';
+    bool first = true;
+    auto key = [&](std::string_view k) {
+        if (!first) out += ',';
+        first = false;
+        json::quote(out, k);
+        out += ':';
+    };
+    for (json::Value m : over) key(m.key()), merged(out, base[m.key()], m);
+    for (json::Value m : base)
+        if (!over[m.key()].exists()) key(m.key()), json::dump(out, m);
+    out += '}';
+}
+
+// A server's settings with the project's Python in them: pyright's and
+// basedpyright's python.pythonPath, pylsp's jedi environment (the server's
+// own settings win, where they name one).
+static std::string with_python(const std::string& settings, const std::string& path) {
+    std::string ours = R"({"python":{"pythonPath":)";
+    json::quote(ours, path);
+    ours += R"(},"pylsp":{"plugins":{"jedi":{"environment":)";
+    json::quote(ours, path);
+    ours += "}}}}";
+    json::Doc a, b;
+    if (settings.empty() || !b.parse(settings) || !a.parse(ours)) return ours;
+    std::string out;
+    merged(out, a.root(), b.root());
+    return out;
+}
+
+static bool for_python(const LspServer& s) { return std::ranges::find(s.languages, std::string_view("python")) != s.languages.end(); }
+
 struct Lsp::Conn {
     struct Out {
         std::string head, tail;                            // the message, around the document text if there is one
@@ -689,6 +725,7 @@ struct Lsp::Conn {
         bool whole = false;                                // a whole-document change, superseding an unsent older one
         bool dead = false;                                 // superseded while queued: not to be sent
         bool forget = false;                               // not a message: the worker forgets what it kept about `about`
+        bool configure = false;                            // the server's settings are `head` from now on: told so
     };
 
     std::mutex mu;
@@ -766,6 +803,12 @@ struct Lsp::Server {
         std::string token, title, said;
     };
     std::vector<Progress> progress;
+    // A server for Python files: the project's Python it should have, the
+    // one it was last given, and the settings each server it may be
+    // (another machine's: any of the candidates) has of its own.
+    bool python = false;
+    std::string python_path, python_sent;
+    std::map<std::string, std::string> settings_of;
 };
 
 // One open document.
@@ -1864,6 +1907,11 @@ struct Lsp::Conn::Worker {
                 tokens.erase(o.about);
                 continue;
             }
+            if (o.configure) {  // (what workspace/configuration answers, and pylsp's way: the settings sent whole)
+                frame(R"({"jsonrpc":"2.0","method":"workspace/didChangeConfiguration","params":{"settings":)" + o.head + "}}");
+                settings.parse(std::move(o.head));
+                continue;
+            }
             if (o.id) waiting[o.id] = {o.kind, std::move(o.about)};
             if (!o.pieces && !o.text) {
                 frame(o.head);
@@ -2417,8 +2465,18 @@ Lsp::Server* Lsp::start_server(const LspServer& server, const std::string& progr
     if (!remote.empty()) {
         s->shown += at_host(remote);  // (one that fails there may yet do here, and the other way round)
         for (const LspServer& c : candidates) s->candidates.push_back(c.name), s->language_ids[c.name] = c.language_ids;
+        for (const LspServer& c : candidates) s->python = s->python || for_python(c), s->settings_of[c.name] = c.settings;
         conn->candidates = std::move(candidates);
     }
+    // A server for Python files: the project's Python in its settings from the
+    // start, where it is known (another machine's, once its folder there is).
+    s->python = s->python || for_python(server);
+    s->settings_of[server.name] = server.settings;
+    if (s->python && remote.empty() && python_source_)
+        if (const std::string p = python_source_(root); !p.empty()) {
+            conn->server.settings = with_python(server.settings, p);
+            s->python_path = s->python_sent = p;
+        }
     s->conn = conn;
     Server* raw = s.get();
     servers_.push_back(std::move(s));
@@ -2658,6 +2716,23 @@ Lsp::~Lsp() {
 void Lsp::set_notify(std::function<void()> fn) {
     std::lock_guard lock(inbox_->mu);
     inbox_->notify = std::move(fn);
+}
+
+void Lsp::set_python(const std::string& root, const std::string& path) {
+    for (const std::unique_ptr<Server>& s : servers_) {
+        if (!s->python || s->root != root || s->python_path == path) continue;
+        s->python_path = path;
+        if (s->ready) send_python(s.get());  // (else once it is)
+    }
+}
+
+void Lsp::send_python(Server* s) {
+    if (!s->conn) return;
+    s->python_sent = s->python_path;
+    Conn::Out o;
+    o.configure = true;
+    o.head = with_python(s->settings_of[s->name], s->python_path);
+    queue(*s->conn, std::move(o));
 }
 
 std::string Lsp::find_program(const std::string& name) {
@@ -3274,6 +3349,11 @@ u32 Lsp::poll() {
                     s->shown = m.text.substr(0, a);
                     s->name = m.text.substr(a + 1, b - a - 1);
                     s->root = m.text.substr(b + 1);
+                }
+                if (s->python && python_source_) {
+                    if (!s->remote.empty())
+                        if (const std::string p = python_source_(s->root); !p.empty()) s->python_path = p;
+                    if (s->python_path != s->python_sent) send_python(s);
                 }
                 if (s->caps.workspace_pull) pull_workspace(s);
                 unopened_ = true;  // (its documents go to it below)

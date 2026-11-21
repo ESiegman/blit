@@ -485,6 +485,10 @@ void App::start_lsp() {
             ev.user.code = 4;
             SDL_PushEvent(&ev);
         });
+        lsp_.set_python_source([this](const std::string& root) {  // (the project's Python: apppython.cpp)
+            const std::optional<PyFound> f = py_known(root);
+            return f ? f->exe : std::string();
+        });
     }
     lsp_reconcile();
     Doc* d = pane_->doc;

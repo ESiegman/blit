@@ -3,7 +3,7 @@
 //   blit_fakelsp [--utf8] [--full] [--slow MS] [--late MS] [--die-after N] [--items N] [--quiet]
 //                [--pull] [--workspace] [--no-prepare] [--default-rename] [--changes] [--noise]
 //                [--close-input MS] [--hints-once] [--index MS] [--defs open|all] [--comments] [--name NAME]
-//                [--opened FILE]
+//                [--opened FILE] [--section NAME] [--configured FILE]
 //
 // --utf8        agree to count columns in bytes (the default is UTF-16)
 // --full        ask for the whole document on every change
@@ -36,6 +36,11 @@
 // --name NAME   what diagnostics give as their source (default "fake")
 // --opened FILE add a line to FILE for each document opened: the language
 //               it was said to be in (languageId), and its file's name
+// --section NAME  a setting it asks for (workspace/configuration) once
+//               initialized, and again whenever it is told the settings
+//               changed, as pyright does (more than one: each; none given:
+//               "fake.level")
+// --configured FILE  add a line to FILE for each answer: "NAME = value"
 //
 // It keeps every document it is sent. What it does with one:
 //   diagnostics  one for every ERROR, WARN, INFO and HINT in the text, plus a
@@ -119,6 +124,8 @@ long handled = 0;
 std::string source = "fake";
 std::string defs;  // --defs: "open" or "all"
 std::string opened_log;  // --opened
+std::vector<std::string> sections;  // --section (none given: "fake.level")
+std::string configured_log;        // --configured
 
 struct Document {
     std::string text;
@@ -1288,6 +1295,8 @@ int main(int argc, char** argv) {
         else if (a == "--comments") comment_tokens = true;
         else if (a == "--name" && i + 1 < argc) source = argv[++i];
         else if (a == "--opened" && i + 1 < argc) opened_log = argv[++i];
+        else if (a == "--section" && i + 1 < argc) sections.push_back(argv[++i]);
+        else if (a == "--configured" && i + 1 < argc) configured_log = argv[++i];
     }
     if (close_input_ms > 0 || index_ms >= 0) setvbuf(stdin, nullptr, _IONBF, 0);  // (what has come is all read: poll() says when more has)
     std::string body;
@@ -1322,9 +1331,17 @@ int main(int argc, char** argv) {
             if (pull) caps += std::string(R"(,"diagnosticProvider":{"interFileDependencies":false,"workspaceDiagnostics":)") + (workspace ? "true" : "false") + "}";
             caps += "}}";
             reply(id, caps);
-        } else if (method == "initialized") {
-            send(R"({"jsonrpc":"2.0","id":9000,"method":"workspace/configuration","params":{"items":[{"section":"fake.level"}]}})");
-            if (index_ms >= 0) {  // (as clangd does: a progress to be shown asked for, begun, and how far it is)
+        } else if (method == "initialized" || method == "workspace/didChangeConfiguration") {
+            // (Asked again when told the settings changed, as pyright does.)
+            if (sections.empty()) sections.push_back("fake.level");
+            std::string ask = R"({"jsonrpc":"2.0","id":9000,"method":"workspace/configuration","params":{"items":[)";
+            for (size_t k = 0; k < sections.size(); ++k) {
+                ask += k ? R"(,{"section":)" : R"({"section":)";
+                json::quote(ask, sections[k]);
+                ask += "}";
+            }
+            send(ask + "]}}");
+            if (method == "initialized" && index_ms >= 0) {  // (as clangd does: a progress to be shown asked for, begun, and how far it is)
                 send(R"({"jsonrpc":"2.0","id":9001,"method":"window/workDoneProgress/create","params":{"token":"backgroundIndexProgress"}})");
                 progress(R"({"kind":"begin","title":"indexing","percentage":0})");
                 progress(R"({"kind":"report","message":"1/2","percentage":50})");
@@ -1334,6 +1351,14 @@ int main(int argc, char** argv) {
             std::string value;
             json::dump(value, v["result"].at(0));
             config_value = value;
+            if (FILE* f = configured_log.empty() ? nullptr : std::fopen(configured_log.c_str(), "a")) {
+                for (size_t k = 0; k < sections.size(); ++k) {
+                    std::string each;
+                    json::dump(each, v["result"].at(k));
+                    std::fprintf(f, "%s = %s\n", sections[k].c_str(), each.c_str());
+                }
+                std::fclose(f);
+            }
         } else if (method.empty()) {
             // (The answer to workspace/applyEdit: nothing to do with it.)
         } else if (method == "textDocument/didOpen") {

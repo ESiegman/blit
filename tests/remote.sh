@@ -706,6 +706,17 @@ printf 'home = /usr/bin\n' >"$W/pyr/.venv/pyvenv.cfg"
 run "remotewait;workdir:$R/pyr;frame;pywait;frame;statusclick:Python 3.99;pywait;finddump" "$R/pyr/a.py"
 got=$(printf '%s' "$got" | sed -e 's/^blit: [^;]*;; //' -e 's/^pick [^:]* : //' | awk '{ n = split($0, w, " Python "); out = ""; for (i = 1; i <= n; i++) if (w[i] ~ /work\/pyr|Automatic/) out = out (i > 1 ? " Python " : "") w[i]; print out }')
 check "and the Pythons there to choose from" '>Automatic Python 3.99.1 · .venv · ~/work/pyr/.venv/bin/python'
+# A language server there for Python files told the project's Python there,
+# once it is up (tests/fake_lsp.cpp asking for it as pyright does).
+if [ -x "$(dirname "$blit")/blit_fakelsp" ]; then
+    printf '[project]\nname = "pyr"\n' >"$W/pyr/pyproject.toml"
+    printf 'blit.opt.git.enabled = false\nblit.opt.lsp.servers.fakepy = { command = { "%s", "--section", "python.pythonPath", "--configured", "%s" }, languages = { "python" }, roots = { "pyproject.toml" } }\n' \
+        "$(cd "$(dirname "$blit")" && pwd)/blit_fakelsp" "$dir/configured" >"$dir/pylsp.lua"
+    INIT="$dir/pylsp.lua"
+    run "remotewait;frame;ready;pywait;wait:500" "$R/pyr/a.py"
+    got=$(sed -e "s#$T#~#g" "$dir/configured" | join)
+    check "a server there for Python files: told the project's Python there" 'python.pythonPath = null ;; python.pythonPath = "~/work/pyr/.venv/bin/python"'
+fi
 
 # The agent was copied there once, into the cache blit keeps in that home.
 got=$(ls "$T/.cache/blit" | sed -e 's/-[0-9a-f]*$//')

@@ -11,8 +11,9 @@
 // by folder, and looked at again when something changes on disk in the
 // folder (a venv made or taken away), when blit comes to the front, and
 // when asked ("Find the project's Python again"). The Python console, the
-// debugger's debugpy, a notebook's kernel and pytest all take it, and the
-// status bar names it for a Python file ("Python 3.12 (.venv)"; a click chooses
+// debugger's debugpy, a notebook's kernel, pytest and the language servers
+// (python.pythonPath, pylsp's jedi environment) all take it, and the status
+// bar names it for a Python file ("Python 3.12 (.venv)"; a click chooses
 // another). Nothing on the main thread waits for it: what needs it before
 // it is known starts once it comes.
 #include <SDL3/SDL.h>
@@ -425,8 +426,8 @@ std::string App::py_wait(const std::shared_ptr<PyUi>& py, const std::string& dir
     return f ? f->command : "python3";
 }
 
-// What the workers have found: the status bar shows it, and what waited
-// for it goes on.
+// What the workers have found: the status bar shows it, the language
+// servers are told it, and what waited for it goes on.
 void App::py_sync() {
     if (!pyui_) return;
     PyUi& u = *pyui_;
@@ -441,6 +442,8 @@ void App::py_sync() {
         ++py_gen_;
         dirty_ = true;
     }
+    for (const std::string& dir : news)
+        if (const std::optional<PyFound> f = py_known(dir); f && !f->exe.empty()) lsp_.set_python(dir, f->exe);
     std::vector<std::function<void()>> go;
     for (size_t i = 0; i < u.waiting.size();) {
         if (py_known(u.waiting[i].first)) {

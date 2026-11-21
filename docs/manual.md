@@ -2357,7 +2357,9 @@ or drag it into a split of its own.
 
 Each project has one Python, which everything that runs Python takes: the
 Python console, the debugger's debugpy, a notebook's kernel, pytest and
-coverage.py in the Tests tab. A folder in the project
+coverage.py in the Tests tab, and the language server (pyright's and
+basedpyright's `python.pythonPath`, pylsp's jedi environment; a setting of
+your own for the server that names one wins). A folder in the project
 with its own `pyproject.toml`, `.venv`, `venv` or `uv.lock` is a
 subproject with a Python of its own: a file takes the nearest one at or
 above its folder. The Python is, first to last:
@@ -4062,7 +4064,7 @@ tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, co
                                    # the split Ctrl+` shows and hides, and the questions about programs still running
 tests/keys.sh build-debug/blit     # the command search, the new keys, Back and Forward through the jumps, and every command run from the search
 tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger)
-tests/python.sh build-debug/blit   # the project's Python: each project and subproject's, found again when a venv comes or goes, pinned, chosen and kept, in the status bar, the console's (stand-in Pythons)
+tests/python.sh build-debug/blit   # the project's Python: each project and subproject's, found again when a venv comes or goes, pinned, chosen and kept, in the status bar, the console's and the language server's (stand-in Pythons)
 tests/validation.sh build-debug/blit  # Vulkan's and Metal's validation messages as problems, the spec's statements of VUIDs
 tests/lsp.sh build-debug/blit      # language servers against the test server: several at once, Problems across files, references, rename, formatting, code actions, hints, colours
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running), a fake build's problems (F8, Cmd+click) and new projects (a stand-in vcpkg)

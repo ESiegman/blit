@@ -5,7 +5,8 @@
 # goes (the watcher, or blit coming to the front) and when asked; pinned by
 # blit.opt.python.interpreter, or chosen from the status bar for the project
 # (kept in its session); named in the status bar; taken by the Python
-# console. The Pythons here are stand-ins (a
+# console and the language servers (tests/fake_lsp.cpp, asking for
+# python.pythonPath as pyright does). The Pythons here are stand-ins (a
 # small script answering what blit asks a Python: its version, its path,
 # whether it has debugpy), so that what is shown is the same everywhere;
 # anything else they are asked to run, python3 runs.
@@ -136,6 +137,36 @@ rm -f "$dir/ran"
 run "workdir:$P;open:$P/sub2/c.py;command:Open the Python console;termwait:>>>" "$P/src/a.py"
 got=$(sed -e "s#$dir#@#g" "$dir/ran" | join)
 check "the console: the subproject's Python" 'ran @/p/sub2/.venv/bin/python '
+
+# The language server for Python files is told the project's Python
+# (python.pythonPath, pyright's; pylsp's jedi environment), with its own
+# settings kept: once it is known, when it is known only after the server
+# has started (asked again, as pyright asks). (One on another machine:
+# tests/remote.sh.)
+fake="$(cd "$(dirname "$blit")" && pwd)/blit_fakelsp"
+if [ -x "$fake" ]; then
+    printf '[project]\nname = "p"\n' >"$P/pyproject.toml"
+    cat >"$dir/lsp.lua" <<EOF
+blit.opt.git.enabled = false
+blit.opt.editor.modal = false
+blit.opt.editor.restore = false
+blit.opt.lsp.servers.fakepy = { command = { "$fake", "--section", "python.pythonPath", "--section", "python.analysis.mine", "--section", "pylsp.plugins.jedi.environment", "--configured", "$dir/configured" }, languages = { "python" }, roots = { "pyproject.toml" }, settings = '{"python": {"analysis": {"mine": "kept"}}}' }
+EOF
+    # (Known before: the console asks for the project's. The server is told
+    # its settings once it has started, and asks for them again then.)
+    rm -f "$dir/configured"
+    got=$(BLIT_INIT="$dir/lsp.lua" "$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$P;command:Open the Python console;termwait:>>>;open:$P/src/a.py;frame;lspsettle;wait:300" 2>&1 >/dev/null | grep -v '^blit: ')
+    got=$(sed -e "s#$dir#@#g" "$dir/configured" | join)
+    check "the server told the project's Python from the start, its own settings kept" \
+        'python.pythonPath = "@/p/.venv/bin/python" ;; python.analysis.mine = "kept" ;; pylsp.plugins.jedi.environment = "@/p/.venv/bin/python" ;; python.pythonPath = "@/p/.venv/bin/python" ;; python.analysis.mine = "kept" ;; pylsp.plugins.jedi.environment = "@/p/.venv/bin/python"'
+    venv "$S/.venv" 3.97.0 2
+    printf '[project]\nname = "s"\n' >"$S/pyproject.toml"
+    rm -f "$dir/configured"
+    got=$(BLIT_INIT="$dir/lsp.lua" "$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$S;frame;lspsettle;pywait;wait:300" "$S/a.py" 2>&1 >/dev/null | grep -v '^blit: ')
+    got=$(sed -e "s#$dir#@#g" "$dir/configured" | join)
+    check "known after the server started: told then" \
+        'python.pythonPath = null ;; python.analysis.mine = "kept" ;; pylsp.plugins.jedi.environment = null ;; python.pythonPath = null ;; python.analysis.mine = "kept" ;; pylsp.plugins.jedi.environment = null ;; python.pythonPath = "@/slow/.venv/bin/python" ;; python.analysis.mine = "kept" ;; pylsp.plugins.jedi.environment = "@/slow/.venv/bin/python"'
+fi
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "python ok"
 exit $failed
