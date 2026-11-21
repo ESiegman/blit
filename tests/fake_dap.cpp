@@ -25,6 +25,8 @@
 //                 (runInTerminal: a shell that says where it is and its
 //                 $FAKE_TERM, then echoes a line read), as lldb-dap and
 //                 debugpy ask
+//                 (a module launched, as debugpy launches pytest: the file
+//                 its first argument names, as pytest names a test)
 //   attach        stops at once, in a frame with no source
 //   setBreakpoints
 //                 each with an id of its own (the same for the same line
@@ -314,7 +316,13 @@ int main() {
             respond(v, true);
             event("initialized");
         } else if (command == "launch") {
-            const std::string path(a["program"].str());
+            // (A module run, as debugpy runs pytest: "its file" is that of the
+            // first argument, as pytest names a test, in the folder it runs in.)
+            std::string path(a["program"].str());
+            if (a["module"].is_string() && path.empty()) {
+                const std::string first(a["args"].at(0).str());
+                path = std::string(a["cwd"].str()) + "/" + first.substr(0, first.find("::"));
+            }
             struct stat st;
             if (::stat(path.c_str(), &st) != 0) {
                 std::string why = R"({"error":{"id":1,"format":"'{path}' does not exist","variables":{"path":)";

@@ -1174,10 +1174,12 @@ private:
     std::string py_status(const Doc& d);
     std::string py_session_text(const std::string& folder);
     void py_session_take(const std::vector<std::pair<std::string, std::string>>& chosen);
-    // A program's folder's Python, for debugpy: false while it is being found
-    // (then `then` runs). py_adapter: the command that starts debugpy's adapter.
+    // debugpy for a program's folder: the project's Python's own, or blit's
+    // copy fetched for that machine; false while that is being had (then
+    // `then` runs). py_adapter: the command that starts debugpy's adapter.
     bool py_debug_ready(const std::string& dir, std::function<void()> then);
     std::string py_adapter(const std::string& dir, std::string* python);
+    std::string py_debugpy_why(const std::string& remote);
     std::string py_dump();
     void py_settle();
     u64 py_gen_ = 1;  // counts up whenever a folder's Python has been found (or found to be another)
@@ -1308,6 +1310,7 @@ private:
     // A session's start (appdebug.cpp): the debugger started, then told to
     // launch, to attach to a process, or to open a core file.
     bool debug_open(const std::string& near, const std::string& dir, bool python, const std::string& adapter = {});
+    void debug_pytest(const std::string& root, const std::string& id);  // (a pytest test, under debugpy)
     void debug_begin(const std::string& request, const std::string& arguments);
     void debug_launch();   // (F5's, once what it builds first has been built)
     void debug_restart();  // the session ended and started again as it was (built again first, as F5 builds)

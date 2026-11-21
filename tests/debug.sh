@@ -691,20 +691,136 @@ exec "%s"\n' "$fakedap" >"$Q/.venv/bin/python"
     check "a .py program that calls input(): debugpy asked for a terminal" ' asks: integratedTerminal plain: internalConsole'
 fi
 # A .py program: debugpy run with the project's Python (its .venv's, not
-# the PATH's), and when that has no debugpy, said so of that Python.
-Y="$dir/py"
-mkdir -p "$Y/.venv/bin" "$Y/scripts"
-printf 'print(1)\n' >"$Y/scripts/one.py"
-printf '#!/bin/sh\necho "$0: Error while finding module specification for '"'"'debugpy.adapter'"'"' (ModuleNotFoundError: No module named '"'"'debugpy'"'"')" >&2\nexit 1\n' >"$Y/.venv/bin/python"
-chmod +x "$Y/.venv/bin/python"
-run "workdir:$Y;debug:program=$Y/scripts/one.py;key:F5;debugwait:idle;debugdump" "$Y/scripts/one.py"
-check "a .py program: the project's Python, and debugpy missing there said so" 'idle error: debugpy is not installed for .venv/bin/python'
-# On another machine, the same: its .venv's Python there (not the PATH's
-# python3 there), chosen in the project's folder there.
-mkdir -p "$T/py/.venv/bin" "$T/py/scripts"
-cp "$Y/scripts/one.py" "$T/py/scripts/" && cp "$Y/.venv/bin/python" "$T/py/.venv/bin/python"
-run "remotewait;workdir:ssh://box$T/py;debug:program=ssh://box$T/py/scripts/one.py;key:F5;debugwait:idle;debugdump" "ssh://box$T/py/scripts/one.py"
-check "a .py program on another machine: the project's Python there" 'idle error: debugpy is not installed for .venv/bin/python'
+# the PATH's). Where that has no debugpy of its own, blit fetches its own
+# copy for it: here from a wheel of the tests' own ($BLIT_DEBUGPY_URL,
+# whose debugpy's adapter is tests/fake_dap.cpp, saying first what started
+# it), into a data folder of their own, so nothing is fetched from PyPI.
+if command -v python3 >/dev/null 2>&1; then
+    mkdir -p "$dir/wheel/debugpy/adapter"
+    : >"$dir/wheel/debugpy/__init__.py"
+    : >"$dir/wheel/debugpy/adapter/__init__.py"
+    cat >"$dir/wheel/debugpy/adapter/__main__.py" <<'EOF'
+import os, sys
+import debugpy
+with open(os.environ["BLIT_FAKE_DEBUGPY_LOG"], "a") as f:
+    f.write("adapter " + sys.executable + " " + os.path.dirname(debugpy.__file__) + "\n")
+os.execv(os.environ["BLIT_FAKE_DAP"], [os.environ["BLIT_FAKE_DAP"]])
+EOF
+    (cd "$dir/wheel" && python3 -m zipfile -c "$dir/debugpy.whl" debugpy) || exit 1
+    export XDG_DATA_HOME="$dir/data" BLIT_DEBUGPY_URL="$dir/debugpy.whl" BLIT_FAKE_DAP="$fakedap" BLIT_FAKE_DEBUGPY_LOG="$dir/adapter.log"
+    # A Python that cannot import debugpy, not even blit's copy: said so of it.
+    Y="$dir/py"
+    mkdir -p "$Y/.venv/bin" "$Y/scripts"
+    printf 'print(1)\n' >"$Y/scripts/one.py"
+    printf '#!/bin/sh\necho "$0: Error while finding module specification for '"'"'debugpy.adapter'"'"' (ModuleNotFoundError: No module named '"'"'debugpy'"'"')" >&2\nexit 1\n' >"$Y/.venv/bin/python"
+    chmod +x "$Y/.venv/bin/python"
+    run "workdir:$Y;debug:program=$Y/scripts/one.py;key:F5;debugwait:idle;debugdump" "$Y/scripts/one.py"
+    check "a .py program: the project's Python, and debugpy missing there said so" 'blit: Getting debugpy… ;; idle error: debugpy is not installed for .venv/bin/python'
+    # On another machine, the same: its .venv's Python there (not the PATH's
+    # python3 there), chosen in the project's folder there.
+    mkdir -p "$T/py/.venv/bin" "$T/py/scripts"
+    cp "$Y/scripts/one.py" "$T/py/scripts/" && cp "$Y/.venv/bin/python" "$T/py/.venv/bin/python"
+    run "remotewait;workdir:ssh://box$T/py;debug:program=ssh://box$T/py/scripts/one.py;key:F5;debugwait:idle;debugdump" "ssh://box$T/py/scripts/one.py"
+    check "a .py program on another machine: the project's Python there" 'blit: Getting debugpy… ;; idle error: debugpy is not installed for .venv/bin/python'
+    # The copy could not be fetched: why, said with it.
+    XDG_DATA_HOME="$dir/data-none" BLIT_DEBUGPY_URL="$dir/no-such.whl"
+    run "workdir:$Y;debug:program=$Y/scripts/one.py;key:F5;debugwait:idle;debugdump" "$Y/scripts/one.py"
+    XDG_DATA_HOME="$dir/data" BLIT_DEBUGPY_URL="$dir/debugpy.whl"
+    check "blit's copy could not be had: why" "blit: Getting debugpy… ;; idle error: debugpy is not installed for .venv/bin/python, and blit's copy could not be had: could not fetch file://@/no-such.whl: curl: (37) Couldn't open file @/no-such.whl"
+fi
+if command -v python3 >/dev/null 2>&1 && [ -x "$fakedap" ]; then
+    # A venv's Python with no debugpy: blit's copy fetched (the wheel kept,
+    # for another machine), and the adapter run from it with that Python;
+    # the next time, the copy as it is.
+    Q="$dir/q"
+    python3 -m venv --without-pip "$Q/.venv" || exit 1
+    printf 'print("a program")\n' >"$Q/prog.py"
+    rm -f "$dir/adapter.log"
+    XDG_DATA_HOME="$dir/data-q"
+    run "workdir:$Q;debug:program=$Q/prog.py;key:F5;debugwait:stopped;debugdump;key:shift+F5;debugwait:idle" "$Q/prog.py"
+    first=$got
+    run "workdir:$Q;debug:program=$Q/prog.py;key:F5;debugwait:stopped;key:shift+F5;debugwait:idle;pydump" "$Q/prog.py"
+    got="$first ;; $got ;; $(sed "s#$dir#@#g" "$dir/adapter.log" | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }') ;; $(cd "$dir/data-q/blit/debugpy" && ls | tr '\n' ' ')"
+    got=$(printf '%s' "$got" | sed -e 's/python [0-9][0-9.a-z+]*/python V/')
+    XDG_DATA_HOME="$dir/data"
+    check "debugpy fetched for a Python without it: the adapter run from blit's copy, with that Python" \
+        'blit: Getting debugpy… ;; stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; @/q = @/q (.venv) @/q/.venv/bin/python V | debugpy @/data-q/blit/debugpy/1.8.22 ;; adapter @/q/.venv/bin/python @/data-q/blit/debugpy/1.8.22/debugpy ;; adapter @/q/.venv/bin/python @/data-q/blit/debugpy/1.8.22/debugpy ;; 1.8.22 debugpy-1.8.22-py2.py3-none-any.whl '
+    # A Python with debugpy of its own: that one, and nothing fetched.
+    O="$dir/own"
+    python3 -m venv --without-pip "$O/.venv" || exit 1
+    cp -R "$dir/wheel/debugpy" "$(echo "$O"/.venv/lib/python*/site-packages)/" || exit 1
+    printf 'print("a program")\n' >"$O/prog.py"
+    rm -f "$dir/adapter.log"
+    XDG_DATA_HOME="$dir/data-own"
+    run "workdir:$O;debug:program=$O/prog.py;key:F5;debugwait:stopped;key:shift+F5;debugwait:idle;pydump" "$O/prog.py"
+    XDG_DATA_HOME="$dir/data"
+    got="$got ;; $(sed -e "s#$dir#@#g" -e 's#/lib/python[0-9.]*/#/lib/pythonV/#' "$dir/adapter.log") ;; $(ls "$dir/data-own" 2>/dev/null | wc -l | tr -d ' ')"
+    got=$(printf '%s' "$got" | sed -e 's/python [0-9][0-9.a-z+]*/python V/')
+    check "a Python with debugpy of its own: that one, nothing fetched" \
+        '@/own = @/own (.venv) @/own/.venv/bin/python V debugpy ;; adapter @/own/.venv/bin/python @/own/.venv/lib/pythonV/site-packages/debugpy ;; 0'
+    # On another machine: the copy there (the wheel fetched here copied
+    # there and unpacked in blit's cache there, above), the adapter run from
+    # it with the Python there.
+    python3 -m venv --without-pip "$T/q/.venv" || exit 1
+    cp "$Q/prog.py" "$T/q/"
+    rm -f "$dir/adapter.log"
+    run "remotewait;workdir:ssh://box$T/q;debug:program=ssh://box$T/q/prog.py;key:F5;debugwait:stopped;debugdump;key:shift+F5;debugwait:idle;pydump" "ssh://box$T/q/prog.py"
+    got="$got ;; $(sed "s#$dir#@#g" "$dir/adapter.log")"
+    got=$(printf '%s' "$got" | sed -e 's/python [0-9][0-9.a-z+]*/python V/')
+    check "on another machine: blit's copy there, with the Python there" \
+        'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; ssh://box@/there/q = ssh://box@/there/q (.venv) @/there/q/.venv/bin/python V | debugpy@box @/there/.cache/blit/debugpy/1.8.22 ;; adapter @/there/q/.venv/bin/python @/there/.cache/blit/debugpy/1.8.22/debugpy'
+
+    # Debug the pytest test at the cursor (the command, and the Tests tab's
+    # d on a test): debugpy runs pytest on it, in the project's folder, with
+    # the project's Python, stopping at the first failure; a parametrised
+    # test at the cursor, all its cases. (Its pytest a stand-in that lists
+    # the tests as pytest 9.2.0 does, the debugger's launch what is looked at.)
+    Pt="$dir/pt"
+    python3 -m venv --without-pip "$Pt/.venv" || exit 1
+    site=$(echo "$Pt"/.venv/lib/python*/site-packages)
+    mkdir -p "$site/pytest" "$Pt/tests"
+    : >"$site/pytest/__init__.py"
+    printf 'print("tests/test_t.py::test_one")\nprint("tests/test_t.py::test_p[1]")\nprint("tests/test_t.py::test_p[2]")\nprint()\nprint("3 tests collected in 0.00s")\n' >"$site/pytest/__main__.py"
+    printf 'import pytest\n\n\ndef test_one():\n    pass\n\n\n@pytest.mark.parametrize("n", [1, 2])\ndef test_p(n):\n    assert n\n' >"$Pt/tests/test_t.py"
+    launched() {  # (the launch the debugger was asked for)
+        grep '^launch' "$dir/dap.log" | sed -e "s#$dir#@#g" -e 's/{"enableAutoVariableSummaries":true,/{/'
+    }
+    rm -f "$dir/dap.log"
+    export BLIT_FAKE_DAP_LOG="$dir/dap.log"
+    run "workdir:$Pt;testdump;vim:10G;command:Debug the test at the cursor;debugwait:stopped;debugdump;key:shift+F5;debugwait:idle" "$Pt/tests/test_t.py"
+    got="$got ;; $(launched)"
+    check "debug the pytest test at the cursor: a parametrised one's cases" \
+        'tests/test_t.py: .test_one .test_p[1] .test_p[2] | here: 4. 9. 9. ;; stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; launch {"module":"pytest","args":["tests/test_t.py::test_p","-x","-q"],"cwd":"@/pt","python":"@/pt/.venv/bin/python","type":"python","request":"launch","console":"internalConsole","justMyCode":true}'
+    rm -f "$dir/dap.log"
+    run "workdir:$Pt;testdump;command:Show Tests;frame;key:Down;key:Down;key:d;debugwait:stopped;key:shift+F5;debugwait:idle" "$Pt/tests/test_t.py"
+    got="$(launched)"
+    check "and one case from the Tests tab" \
+        'launch {"module":"pytest","args":["tests/test_t.py::test_p[2]","-x","-q"],"cwd":"@/pt","python":"@/pt/.venv/bin/python","type":"python","request":"launch","console":"internalConsole","justMyCode":true}'
+    unset BLIT_FAKE_DAP_LOG
+fi
+# And live: real debugpy (installed by uv in a venv of the test's own, its
+# files as blit's copy), real pytest, a breakpoint in the code a
+# parametrised test calls, each case stopping there. (Skipped where uv
+# cannot make the venvs from its cache, with no network.)
+L="$dir/live"
+mkdir -p "$L/tests" "$dir/dbg"
+# (uv with its own data folder, where its Pythons are: not the tests'.)
+uvown() { env -u XDG_DATA_HOME uv "$@"; }
+if command -v uv >/dev/null 2>&1 && (cd "$L" && uvown venv -q .venv && uvown pip install --offline -q -p .venv/bin/python pytest) >/dev/null 2>&1 &&
+    (cd "$dir/dbg" && uvown venv -q .venv && uvown pip install --offline -q -p .venv/bin/python debugpy) >/dev/null 2>&1; then
+    (cd "$dir/dbg"/.venv/lib/python*/site-packages && python3 -m zipfile -c "$dir/live.whl" debugpy) || exit 1
+    printf 'def double(x):\n    y = x * 2\n    return y\n' >"$L/mod.py"
+    : >"$L/conftest.py"
+    printf 'import pytest\n\nfrom mod import double\n\n\n@pytest.mark.parametrize("n", [1, 2])\ndef test_double(n):\n    assert double(n) == 2 * n\n' >"$L/tests/test_live.py"
+    XDG_DATA_HOME="$dir/data-live" BLIT_DEBUGPY_URL="$dir/live.whl"
+    run "workdir:$L;open:$L/mod.py;break:2;open:$L/tests/test_live.py;testdump;vim:8G;command:Debug the test at the cursor;debugwait:stopped;debugdump;key:F5;debugwait:stopped;debugdump;key:F5;debugwait:idle;debugdump" "$L/tests/test_live.py"
+    XDG_DATA_HOME="$dir/data" BLIT_DEBUGPY_URL="$dir/debugpy.whl"
+    got=$(printf '%s' "$got" | sed -e 's/ in [0-9.]*s / in Ns /')
+    check "live: debugpy on pytest, each case stopping in the code it calls" \
+        'tests/test_live.py: .test_double[1] .test_double[2] | here: 7. 7. ;; blit: Getting debugpy… ;; stopped (breakpoint); stack: double@2 test_double@8; vars: x=1 ;; stopped (breakpoint); stack: double@2 test_double@8; vars: x=2 ;; idle; output: ..                                                                       [100%] | 2 passed in Ns | [exited with code 0]'
+else
+    echo "debug: the live pytest case skipped (uv could not make its venvs offline)"
+fi
 
 # debugpy itself, where it can be had without the network (from uv's
 # cache), in a venv made here: uncaught on, an exception stopped at (its

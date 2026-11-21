@@ -4,7 +4,8 @@
 // went, read from the JUnit report the run writes. A run is a command in
 // the output terminal, where its output shows; one test, the failed ones
 // again, or all. A mark beside each test where it is defined, in its
-// last result's colour, runs it when clicked; a CTest test can be debugged.
+// last result's colour, runs it when clicked; a CTest test can be debugged,
+// and a pytest test (debugpy running pytest on it, with the project's Python).
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -105,6 +106,7 @@ struct App::TestUi {
     // for (empty: all), run once they are.
     std::optional<std::vector<std::string>> pending;
     bool pending_here = false;  // (or the one at the cursor)
+    bool pending_debug = false;  // (or the one at the cursor, debugged)
     bool pending_coverage = false;  // (and whether with coverage)
     // Coverage: the reports a run with coverage writes (gcov's from a build
     // folder, coverage.py's), and what the last such run ran, by file.
@@ -230,6 +232,7 @@ void App::test_sync() {
         if (ids->empty() || !which.empty()) test_run(which, std::exchange(u.pending_coverage, false));
     }
     if (std::exchange(u.pending_here, false)) test_run_here();
+    if (std::exchange(u.pending_debug, false)) test_debug_here();
 }
 
 // Runs the tests given (all, if none), each runner's in one command, one
@@ -634,7 +637,8 @@ void App::test_debug(size_t i) {
     TestUi& u = *testui_;
     if (i >= u.tests.size()) return;
     const TestCase& t = u.tests[i];
-    if (t.runner != TestCase::kCTest || t.command.empty()) return notify("Only CTest's tests can be debugged as yet");
+    if (t.runner == TestCase::kPytest) return debug_pytest(u.root, t.id);  // (under debugpy, with the project's Python)
+    if (t.runner != TestCase::kCTest || t.command.empty()) return notify("Only CTest's and pytest's tests can be debugged");
     std::string args;
     for (size_t k = 1; k < t.command.size(); ++k) args += (args.empty() ? "" : " ") + sh_word(t.command[k]);
     std::vector<std::string> env;
@@ -644,8 +648,17 @@ void App::test_debug(size_t i) {
 }
 
 void App::test_debug_here() {
+    TestUi& u = *testui_;
+    if (!u.looked || u.looking) {  // (found first; then it is debugged)
+        u.pending_debug = true;
+        test_find();
+        return notify("Looking for the tests\xE2\x80\xA6");
+    }
     const std::vector<size_t> which = test_at_cursor();
     if (which.empty()) return notify("No test here");
+    // (A parametrised pytest test at the cursor: all its cases, as running it there runs them.)
+    if (const std::string& id = u.tests[which[0]].id; which.size() > 1 && u.tests[which[0]].runner == TestCase::kPytest && id.ends_with(']'))
+        return debug_pytest(u.root, id.substr(0, id.find('[', id.find("::"))));
     test_debug(which[0]);
 }
 

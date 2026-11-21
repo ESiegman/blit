@@ -618,10 +618,10 @@ int App::run_bench() {
 //   crumbsdump             print the breadcrumbs under the split in front's tabs, " > " between them
 //   coveragedump           print the lines the last run with coverage ran and missed in the file in front, and each file's share
 //   testdump               print the project's tests by group (+ passed, x failed, - skipped, . not run), once found and run
-//   pywait                 wait for the projects' Pythons being looked for, and what waits for them to go on
-//                          (termwait, debugwait and nbwait wait for them first too)
+//   pywait                 wait for the projects' Pythons being looked for (and debugpy being fetched), and what waits
+//                          for them to go on (termwait, debugwait and nbwait wait for them first too)
 //   pydump                 print each folder asked about: the root it takes, its Python (what chose it, the words that
-//                          run it, its version)
+//                          run it, its version); then blit's copies of debugpy, or why one could not be had
 //   runconfdump            print the run configuration chosen, and what Debug and Profile would run with it
 //   seldump                print what is selected in the file in front, in [ ], its lines joined by " / " (or none)
 //   shapedump              print the brackets on show in the file in front (line:column=depth, "-" not the tree's)
@@ -1248,7 +1248,7 @@ void App::run_script(const char* script) {
             if (!debug_pick(arg.substr(0, sep), named ? 0 : static_cast<u32>(std::atoi(which.c_str())), named ? which : std::string()))
                 std::fprintf(stderr, "debugpick: no %s\n", arg.c_str());
         } else if (verb == "debugwait") {  // debugwait:stopped, debugwait:idle, or debugwait:answers (every request answered)
-            py_settle();  // (a Python program's session starts once its Python is known)
+            py_settle();  // (a Python program's session starts once its Python, and debugpy for it, are there)
             debug_wait(arg);
         } else if (verb == "debugdump") {
             std::fprintf(stderr, "%s\n", debug_dump().c_str());
@@ -1291,10 +1291,10 @@ void App::run_script(const char* script) {
             else std::fprintf(stderr, "kernels taken in in %llu ms (over %llu)\n", static_cast<unsigned long long>(ms), static_cast<unsigned long long>(most));
         } else if (verb == "nbkernel") {  // the kernel of the notebook in front: ipython or python, its pid, running or idle, how many cells wait
             std::fprintf(stderr, "%s\n", nb_kernel_dump().c_str());
-        } else if (verb == "pywait") {  // the projects' Pythons being looked for have been, and what waited for them has gone on (a minute at most)
+        } else if (verb == "pywait") {  // the projects' Pythons being looked for (and debugpy being fetched) have been, and what waited for them has gone on (a minute at most)
             py_settle();
             dirty_ = true;
-        } else if (verb == "pydump") {  // each folder asked about: the root it takes and its Python
+        } else if (verb == "pydump") {  // each folder asked about: the root it takes and its Python; then blit's copies of debugpy
             std::fprintf(stderr, "%s\n", py_dump().c_str());
         } else if (verb == "nbclick") {  // nbclick:ROW, a click on that row of the notebook's view (as nbview counts them, from 0)
             md_wait();

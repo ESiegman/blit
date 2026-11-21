@@ -1233,6 +1233,23 @@ bool App::debug_open(const std::string& near, const std::string& dir, bool pytho
     return true;
 }
 
+// A pytest test debugged (`id` as pytest names it, from the project's folder
+// `root`): debugpy runs pytest on it there, with the project's Python,
+// stopping at the first failure; once debugpy is there for that Python.
+void App::debug_pytest(const std::string& root, const std::string& id) {
+    if (!py_debug_ready(root, [this, root, id] { debug_pytest(root, id); })) return;
+    DebugUi& u = *debugui_;
+    if (u.state != DebugUi::kIdle) debug_park();  // (beside the session under way)
+    if (!debug_open({}, root, true)) return;
+    u.name = id.substr(id.rfind("::") == std::string::npos ? 0 : id.rfind("::") + 2);
+    const std::optional<PyFound> py = py_known(root);
+    // (The program's Python said too, but for uv's, which is whatever `uv run` runs: the adapter's.)
+    const bool exe = py && !py->exe.empty() && py->from != "uv";
+    debug_begin("launch", "{\"module\":\"pytest\",\"args\":[" + quoted(id) + ",\"-x\",\"-q\"],\"cwd\":" + quoted(u.there(root)) +
+                              (exe ? ",\"python\":" + quoted(py->exe) : std::string()) +
+                              ",\"type\":\"python\",\"request\":\"launch\",\"console\":\"internalConsole\",\"justMyCode\":true}");
+}
+
 // Attaching to a process of the user's: the list of them, narrowed by name.
 void App::debug_attach_pick() {
     std::string out;
@@ -1317,7 +1334,7 @@ void App::debug_launch() {
     const BuildTask::Debug& how = u.conf;
     const std::string dir = !u.cwd.empty() ? u.cwd : parent_of(u.program);
     const bool python = how.adapter == "debugpy" || (how.adapter.empty() && u.program.ends_with(".py"));
-    if (python && !py_debug_ready(parent_of(u.program), [this] { debug_launch(); })) return;  // (the project's Python first: then here, built already)
+    if (python && !py_debug_ready(parent_of(u.program), [this] { debug_launch(); })) return;  // (the project's Python, and debugpy for it, first: then here, built already)
     const bool attach = how.request == "attach";
     // (Its input and output in a terminal tab: as the run configuration says,
     // else where the program reads what is typed to it.)
@@ -1966,7 +1983,7 @@ void App::debug_sync_session(bool* stopped) {
                 // (There, the Python it was is the one the error names: Python
                 // starts its message with its own path.)
                 const std::string py = python_named(u.remote.empty() ? u.python : why.substr(0, why.find(": ")), build_root());
-                why = "debugpy is not installed for " + py + (py.starts_with("uv run") ? " (uv add --dev debugpy)" : "");
+                why = "debugpy is not installed for " + py + (py.starts_with("uv run") ? " (uv add --dev debugpy)" : "") + py_debugpy_why(u.remote);
             }
             if (u.error.empty() && !why.empty()) u.error = why;
         }

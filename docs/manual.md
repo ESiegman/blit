@@ -2597,8 +2597,20 @@ later (`gdb -i dap`: it speaks the Debug Adapter Protocol itself; a
 run configuration's `debug.adapter` asks for one or the other, below),
 and debugpy for a `.py` program, run
 with the [project's Python](#the-projects-python) (the program's
-folder's: its project's or subproject's), which runs the program too (so
-debugpy is installed there: in a uv project, `uv add --dev debugpy`). A program with HIP's code for the GPU in it is debugged with
+folder's: its project's or subproject's), which runs the program too.
+Where that Python has no debugpy of its own, blit fetches its own copy
+the first time one is needed (debugpy's wheel from PyPI, at the version
+blit names, checked against its SHA-256, its Python files only) into
+blit's data folder (`~/.local/share/blit/debugpy/VERSION`), and runs
+debugpy from there; for a program on another machine, the wheel is
+copied there and unpacked in blit's cache there
+(`~/.cache/blit/debugpy/VERSION`). Where the copy cannot be had (no
+network), starting says why. "Debug the test at the cursor", the Tests
+tab's **d** and Option-click on a test's mark debug a pytest test this
+way too: debugpy runs pytest on it in the project's folder
+(`python -m pytest path::Class::test -x -q`; a parametrised test at the
+cursor, all its cases, as running it there does), and it stops at
+breakpoints in the test and in the code it calls. A program with HIP's code for the GPU in it is debugged with
 ROCm's `rocgdb`, where there is one (on the PATH or in
 `/opt/rocm/bin`): a breakpoint in a kernel stops a GPU wave there, with the
 kernel's frame and variables. The GPU's waves, named by their work-group
@@ -3063,7 +3075,8 @@ Python) last said.
 
 Enter runs the test chosen (a heading: all under it), **a** all of them,
 **f** the failed ones again, **d** debugs a CTest test (its own command,
-as CTest has it), **c** runs them all with coverage, and Cmd+R looks for
+as CTest has it) or a pytest test (under debugpy: see
+[Debugging](#debugging)), **c** runs them all with coverage, and Cmd+R looks for
 them again. The commands "Run the tests", "Run the failed tests again",
 "Run the test at the cursor" and "Debug the test at the cursor" do the
 same from anywhere. A run goes to the output terminal, where its output
@@ -4063,7 +4076,7 @@ tests/profile.sh build-debug/blit  # profiling tests/profile/spin.c here and thr
 tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, copy and paste, here and through tests/fake-ssh.sh;
                                    # the split Ctrl+` shows and hides, and the questions about programs still running
 tests/keys.sh build-debug/blit     # the command search, the new keys, Back and Forward through the jumps, and every command run from the search
-tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger)
+tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger); a .py program and a pytest test under debugpy (blit's copy fetched from a wheel of the tests' own; live with uv's, where it has them)
 tests/python.sh build-debug/blit   # the project's Python: each project and subproject's, found again when a venv comes or goes, pinned, chosen and kept, in the status bar, the console's and the language server's (stand-in Pythons)
 tests/validation.sh build-debug/blit  # Vulkan's and Metal's validation messages as problems, the spec's statements of VUIDs
 tests/lsp.sh build-debug/blit      # language servers against the test server: several at once, Problems across files, references, rename, formatting, code actions, hints, colours

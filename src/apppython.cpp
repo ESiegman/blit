@@ -16,6 +16,15 @@
 // bar names it for a Python file ("Python 3.12 (.venv)"; a click chooses
 // another). Nothing on the main thread waits for it: what needs it before
 // it is known starts once it comes.
+//
+// debugpy: where the project's Python has none of its own, blit fetches its
+// own copy the first time it is wanted (the pure-Python part of debugpy's
+// wheel from PyPI, at a pinned version, checked against its SHA-256;
+// $BLIT_DEBUGPY_URL names another wheel, for the tests) into blit's data
+// folder (~/.local/share/blit/debugpy/VERSION); for a folder on another
+// machine, the wheel is copied there through the agent and unpacked in
+// blit's cache there (~/.cache/blit/debugpy/VERSION). debugpy's adapter is
+// then run with the project's Python and PYTHONPATH naming the copy.
 #include <SDL3/SDL.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -30,6 +39,7 @@
 #include <cstring>
 #include <deque>
 #include <map>
+#include <random>
 #include <set>
 
 #include "app.hpp"
@@ -41,6 +51,12 @@ extern char** environ;
 namespace blit {
 
 namespace {
+
+// debugpy's pure-Python wheel, as PyPI has it.
+constexpr const char* kDebugpyVersion = "1.8.22";
+constexpr const char* kDebugpyUrl =
+    "https://files.pythonhosted.org/packages/56/3d/c7dc9f35bc9e22cdb53679f844bee40fd5cff871862f60595869a433400d/debugpy-1.8.22-py2.py3-none-any.whl";
+constexpr const char* kDebugpySha256 = "a9e9d3550e15ca479c59333e90845029190531f0cacfedab3b815a57bd913947";
 
 void wake() {
     SDL_Event ev{};
@@ -139,6 +155,19 @@ if command -v uv >/dev/null 2>&1; then
 fi
 )sh";
 
+// debugpy's wheel unpacked (python -I -c this WHEEL FOLDER SHA256): its
+// Python files, not the programs and libraries for attaching to a process
+// on each system; checked first against its SHA-256, where one is given.
+constexpr const char* kUnpack = R"py(import hashlib, sys, zipfile
+w, d, h = sys.argv[1:4]
+if h and hashlib.sha256(open(w, "rb").read()).hexdigest() != h:
+    sys.exit("the wheel fetched is not the one expected (its SHA-256 differs)")
+z = zipfile.ZipFile(w)
+for m in z.namelist():
+    if not m.endswith((".dll", ".exe", ".so", ".dylib", ".pdb")):
+        z.extract(m, d)
+)py";
+
 // A program run here in `dir` (found on the PATH), what it printed
 // collected (its errors too, with `errors`); its exit status, or -1 if it
 // could not be run or took longer than `ms`.
@@ -232,6 +261,12 @@ std::string said(std::string_view out, std::string_view name) {
     return {};
 }
 
+// The last line of what a tool said, for a message.
+std::string last_line(std::string text) {
+    while (!text.empty() && (text.back() == '\n' || text.back() == ' ' || text.back() == '\r')) text.pop_back();
+    return text.substr(text.find_last_of('\n') + 1);  // (npos + 1: all of it)
+}
+
 // A path as a folder there names it (one here, as it is); and the machine's prefix ("" here).
 std::string there_of(const std::string& path) {
     std::string host, there;
@@ -241,6 +276,11 @@ std::string prefix_of(const std::string& path) {
     std::string host, there;
     return split_remote(path, &host, &there) ? remote_prefix(host) : std::string();
 }
+std::string host_of(const std::string& path) {
+    std::string host, there;
+    return split_remote(path, &host, &there) ? host : std::string();
+}
+
 bool under(const std::string& path, const std::string& folder) { return path == folder || (path.size() > folder.size() && path.starts_with(folder) && path[folder.size()] == '/'); }
 
 // One of the Pythons to choose from.
@@ -254,8 +294,8 @@ struct App::PyUi {
     std::mutex mu;
     std::condition_variable_any cv;  // (work for the workers; and a Python found, for threads waiting for one)
     struct Job {
-        enum Kind : u8 { kFind, kList } kind = kFind;
-        std::string dir, top;  // the folder, and the project's
+        enum Kind : u8 { kFind, kList, kFetch } kind = kFind;
+        std::string dir, top;  // the folder, and the project's (kFetch: the Python here or there to unpack the wheel with)
         bool full = true;      // (kFind: the interpreter asked again even if it is the one it was)
     };
     std::deque<Job> local, others;  // (the worker for this machine's folders, and the one for the others')
@@ -270,8 +310,15 @@ struct App::PyUi {
     // The Pythons to choose from, once found: for which root.
     bool listing = false;
     std::optional<std::pair<std::string, std::vector<Candidate>>> listed;
-    // The main thread's: what waits for a folder's Python.
-    std::vector<std::pair<std::string, std::function<void()>>> waiting;
+    // blit's copies of debugpy, by machine ("" this one): the folder each is
+    // in (as that machine names it), or why it could not be had (and when).
+    std::map<std::string, std::string> debugpy_at, debugpy_why;
+    std::map<std::string, u64> debugpy_why_ns;
+    std::set<std::string> fetching;
+    std::vector<std::string> fetched;  // (machines whose copy has come, or failed to, since the main thread last looked)
+    std::vector<std::string> messages; // (what the workers would have said, for the main thread to say)
+    // The main thread's: what waits for a folder's Python, or a machine's debugpy.
+    std::vector<std::pair<std::string, std::function<void()>>> waiting, debug_waiting;
     std::jthread here_worker, there_worker;  // (last: joined first)
 
     void queue(Job j) {  // (mu held)
@@ -279,11 +326,12 @@ struct App::PyUi {
         cv.notify_all();
     }
     bool busy() {  // (mu held)
-        return !asked.empty() || listing || !news.empty() || listed.has_value();
+        return !asked.empty() || listing || !fetching.empty() || !news.empty() || !fetched.empty() || !messages.empty() || listed.has_value();
     }
     void work(std::deque<Job>& q, std::stop_token stop);
     void find(const Job& j);
     void list(const Job& j);
+    void fetch(const Job& j);
 };
 
 void App::PyUi::work(std::deque<Job>& q, std::stop_token stop) {
@@ -296,7 +344,8 @@ void App::PyUi::work(std::deque<Job>& q, std::stop_token stop) {
             q.pop_front();
         }
         if (j.kind == Job::kFind) find(j);
-        else list(j);
+        else if (j.kind == Job::kList) list(j);
+        else fetch(j);
         cv.notify_all();
         wake();
     }
@@ -373,6 +422,87 @@ void App::PyUi::list(const Job& j) {
     listed.emplace(j.dir, std::move(all));
 }
 
+// blit's copy of debugpy for the folder's machine: here, fetched (once) and
+// unpacked in blit's data folder; there, that wheel copied there and
+// unpacked in blit's cache there.
+void App::PyUi::fetch(const Job& j) {
+    std::string host, there;
+    const bool remote = split_remote(j.dir, &host, &there);
+    const std::string python = j.top.empty() ? std::string("python3") : j.top;
+    const char* own = std::getenv("BLIT_DEBUGPY_URL");
+    std::string url = own && *own ? own : kDebugpyUrl;
+    if (url.starts_with('/')) url = "file://" + url;
+    const std::string hash = own && *own ? std::string() : kDebugpySha256;  // (a wheel of one's own: the tests')
+    const std::string base = grammar_dir() + "/debugpy", wheel = base + "/debugpy-" + kDebugpyVersion + "-py2.py3-none-any.whl";
+    char tag[40];
+    std::snprintf(tag, sizeof tag, ".part%d-%08x", static_cast<int>(::getpid()), static_cast<unsigned>(std::random_device{}()));
+    std::string at, why, out;
+    bool told = false;
+    auto tell = [&] {  // (that it is being had: it may take a while)
+        if (std::exchange(told, true)) return;
+        {
+            std::lock_guard lock(mu);
+            messages.push_back("Getting debugpy\xE2\x80\xA6");
+        }
+        wake();
+    };
+    // The wheel here: fetched, if it has not been.
+    auto have_wheel = [&] {
+        if (fs_kind(wheel) == 1) return true;
+        tell();
+        if (!fs_mkdirs(base, &why)) return why = "cannot make " + base + ": " + why, false;
+        const std::string part = wheel + tag;
+        if (run_here({"curl", "-fsSL", "--retry", "2", "--connect-timeout", "20", "--max-time", "300", "-o", part, url}, {}, &out, 330000, true) != 0) {
+            ::unlink(part.c_str());
+            return why = "could not fetch " + url + (out.empty() ? std::string() : ": " + last_line(out)), false;
+        }
+        if (std::rename(part.c_str(), wheel.c_str()) != 0) return why = "cannot write " + wheel, ::unlink(part.c_str()), false;
+        return true;
+    };
+    if (!remote) {
+        at = base + "/" + kDebugpyVersion;
+        if (fs_kind(at + "/debugpy/__init__.py") != 1 && have_wheel()) {
+            const std::string part = at + tag;
+            if (run_here({python, "-I", "-c", kUnpack, wheel, part, hash}, {}, &out, 120000, true) != 0) {
+                why = "could not unpack it: " + last_line(out);
+                ::unlink(wheel.c_str());  // (fetched again next time)
+            } else if (std::rename(part.c_str(), at.c_str()) != 0 && fs_kind(at + "/debugpy/__init__.py") != 1) {
+                why = "cannot write " + at;
+            }
+            run_here({"rm", "-rf", part}, {}, &out, 30000);
+        }
+    } else if (const std::shared_ptr<Remote> r = remote_for(j.dir, &there, kRemoteWaitMs); !r || r->home().empty()) {
+        why = remote_error(j.dir);
+    } else {
+        const std::string cache = r->home() + "/.cache/blit/debugpy";
+        at = cache + "/" + kDebugpyVersion;
+        RemoteStat st;
+        std::string bytes;
+        if ((r->stat(at + "/debugpy/__init__.py", &st) && st.kind == 1) || (tell(), !have_wheel())) {
+        } else if (!fs_read(wheel, &bytes, 64u << 20)) {
+            why = "cannot read " + wheel;
+        } else if (const std::string sent = at + ".whl" + tag; !r->make_dir(cache, true, &why) || !r->write(sent, std::move(bytes), &why)) {
+            why = "cannot copy it there: " + why;
+        } else {
+            const std::string part = at + tag;
+            const std::string command = sh_word(python) + " -I -c " + sh_word(kUnpack) + " " + sh_word(sent) + " " + sh_word(part) + " " + (hash.empty() ? std::string("''") : hash) +
+                                        " 2>&1 && { [ -e " + sh_word(at) + " ] || mv " + sh_word(part) + " " + sh_word(at) + "; }; s=$?; rm -rf " + sh_word(sent) + " " +
+                                        sh_word(part) + "; exit $s";
+            if (!fs_run(j.dir, command, &out, 120000)) why = "could not unpack it there" + (out.empty() ? std::string() : ": " + last_line(out));
+        }
+    }
+    std::lock_guard lock(mu);
+    fetching.erase(host);
+    fetched.push_back(host);
+    if (why.empty()) {
+        debugpy_at[host] = at;
+        debugpy_why.erase(host);
+    } else {
+        debugpy_why[host] = why;
+        debugpy_why_ns[host] = now_ns();
+    }
+}
+
 std::shared_ptr<App::PyUi>& App::py_ui() {
     if (!pyui_) {
         pyui_ = std::make_shared<PyUi>();
@@ -431,17 +561,20 @@ std::string App::py_wait(const std::shared_ptr<PyUi>& py, const std::string& dir
 void App::py_sync() {
     if (!pyui_) return;
     PyUi& u = *pyui_;
-    std::vector<std::string> news;
+    std::vector<std::string> news, fetched, said;
     std::optional<std::pair<std::string, std::vector<Candidate>>> listed;
     {
         std::lock_guard lock(u.mu);
         news.swap(u.news);
+        fetched.swap(u.fetched);
+        said.swap(u.messages);
         listed.swap(u.listed);
     }
     if (!news.empty()) {
         ++py_gen_;
         dirty_ = true;
     }
+    for (const std::string& s : said) notify(s);
     for (const std::string& dir : news)
         if (const std::optional<PyFound> f = py_known(dir); f && !f->exe.empty()) lsp_.set_python(dir, f->exe);
     std::vector<std::function<void()>> go;
@@ -453,6 +586,15 @@ void App::py_sync() {
             ++i;
         }
     }
+    for (const std::string& host : fetched)
+        for (size_t i = 0; i < u.debug_waiting.size();) {
+            if (u.debug_waiting[i].first == host) {
+                go.push_back(std::move(u.debug_waiting[i].second));
+                u.debug_waiting.erase(u.debug_waiting.begin() + static_cast<std::ptrdiff_t>(i));
+            } else {
+                ++i;
+            }
+        }
     for (std::function<void()>& then : go) then();
     if (!listed) return;
     // The list to choose from: as it is now first, then each one found.
@@ -508,6 +650,7 @@ void App::py_again(bool full) {
     std::set<std::string> dirs(u.failed.begin(), u.failed.end());
     for (const auto& [k, root] : u.roots) dirs.insert(k);
     u.failed.clear();
+    if (full) u.debugpy_why.clear();
     for (const std::string& k : dirs)
         if (u.asked.insert(k).second) u.queue({PyUi::Job::kFind, k, py_top(k), full});
 }
@@ -579,11 +722,27 @@ void App::py_session_take(const std::vector<std::pair<std::string, std::string>>
 
 // ---------------------------------------------------------------- debugpy
 
-// The program's folder's Python, for debugpy: false while it is being found
-// (then `then` runs). py_adapter: the command that starts debugpy's adapter.
 bool App::py_debug_ready(const std::string& dir, std::function<void()> then) {
-    if (py_known(dir)) return true;
-    py_when(dir, std::move(then));
+    const std::optional<PyFound> f = py_known(dir);
+    if (!f) {
+        py_when(dir, std::move(then));
+        return false;
+    }
+    if (f->debugpy) return true;
+    PyUi& u = *pyui_;
+    const std::string host = host_of(dir);
+    // (Here, a copy fetched before is looked for at once: a file's stat.)
+    const std::string copy = grammar_dir() + "/debugpy/" + kDebugpyVersion;
+    const bool have = host.empty() && fs_kind(copy + "/debugpy/__init__.py") == 1;
+    {
+        std::lock_guard lock(u.mu);
+        if (have) u.debugpy_at[host] = copy;
+        if (u.debugpy_at.contains(host)) return true;
+        // (One that could not be had is tried again, after a while: the network may be back.)
+        if (u.debugpy_why.contains(host) && now_ns() - u.debugpy_why_ns[host] < 10'000'000'000ull) return true;
+        if (u.fetching.insert(host).second) u.queue({PyUi::Job::kFetch, dir, f->exe.empty() ? std::string("python3") : f->exe, true});
+    }
+    u.debug_waiting.emplace_back(host, std::move(then));
     return false;
 }
 
@@ -600,14 +759,28 @@ std::string App::py_adapter(const std::string& dir, std::string* python) {
         return *python;
     }
     *python = f->command;
-    return "exec " + f->command + " -m debugpy.adapter";
+    std::string copy;
+    if (!f->debugpy) {
+        std::lock_guard lock(pyui_->mu);
+        if (const auto at = pyui_->debugpy_at.find(host_of(dir)); at != pyui_->debugpy_at.end()) copy = at->second;
+    }
+    return (copy.empty() ? std::string() : "PYTHONPATH=" + sh_word(copy) + "${PYTHONPATH:+:$PYTHONPATH}; export PYTHONPATH; ") + "exec " + f->command + " -m debugpy.adapter";
+}
+
+// Why blit's copy of debugpy could not be had for a machine ("ssh://host";
+// "" here), as the end of a message ("" if it was had, or not wanted).
+std::string App::py_debugpy_why(const std::string& remote) {
+    if (!pyui_) return {};
+    std::lock_guard lock(pyui_->mu);
+    const auto why = pyui_->debugpy_why.find(remote.empty() ? std::string() : host_of(remote + "/"));
+    return why == pyui_->debugpy_why.end() ? std::string() : ", and blit's copy could not be had: " + why->second;
 }
 
 // ---------------------------------------------------------------- for the tests
 
 // Each folder asked about: the root it takes and its Python (from, the
 // words that run it, the console's where they differ, its version, and
-// "debugpy" where it has its own).
+// "debugpy" where it has its own); then blit's copies of debugpy.
 std::string App::py_dump() {
     if (!pyui_) return "none";
     PyUi& u = *pyui_;
@@ -622,6 +795,8 @@ std::string App::py_dump() {
     }
     for (const std::string& dir : u.failed) lines.push_back(dir + " = not reached");
     std::ranges::sort(lines);
+    for (const auto& [host, at] : u.debugpy_at) lines.push_back("debugpy" + (host.empty() ? std::string() : "@" + host) + " " + at);
+    for (const auto& [host, why] : u.debugpy_why) lines.push_back("debugpy" + (host.empty() ? std::string() : "@" + host) + ": " + why);
     std::string out;
     for (const std::string& l : lines) out += (out.empty() ? "" : " | ") + l;
     return out.empty() ? "none" : out;
