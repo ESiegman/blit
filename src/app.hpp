@@ -1317,6 +1317,10 @@ private:
     std::string debug_rows_dump(const std::string& from, u32 n);  // (the Debug tab's rows from a heading, as last drawn)
     bool debug_pick(const std::string& section, u32 n, const std::string& name = {});
     void panel_show_debug();
+    // The exceptions the debugger stops at (its filters, chosen in the Debug
+    // tab), and what it says of the one it stopped at.
+    void debug_send_exceptions();
+    void debug_exception_info(i64 thread);
 
     // Building (appbuild.cpp, build.cpp): what the working folder builds
     // with, the Build tab, the Run button at the top right, and the output

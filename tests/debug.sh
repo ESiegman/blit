@@ -260,6 +260,19 @@ case "$got" in
 *) check "evaluate: what is typed completed with Tab, then evaluated" 'input [total] 0 : ;; stopped (breakpoint); stack: main@16; vars: total=1 i=1; output: total = 1' ;;
 esac
 
+# Exceptions, with lldb-dap (gdb's exception filters are its own: left to
+# check where gdb is).
+if [ "$(uname -s)" = Darwin ]; then
+    # lldb-dap's exception filters in the Debug tab: with none on, an
+    # uncaught C++ exception stops where it ends the program (the abort);
+    # with C++ Throw on, where it is thrown, which says so after its line.
+    cp "$here/debug/throws.cpp" "$dir/here/" && (cd "$dir/here" && c++ -g -O0 -o throws throws.cpp) || exit 1
+    run "debug:program=$dir/here/throws;key:F5;debugwait:stopped;debugdump;debugpanel;debugpick:exceptions:2;key:shift+F5;debugwait:idle;debugbreaks;key:F5;debugwait:stopped;debugdump;frame;debuginline" "$dir/here/throws.cpp"
+    got=$(printf '%s' "$got" | sed -e 's/exception = 0x[0-9a-f]*/exception = 0x/' -e 's/; stack: [^;]*pthread_kill[^;]*;/; stack: abort;/' -e 's/; output: [^;]*;;/ ;;/')
+    check "exceptions: uncaught, stopped at the abort; C++ Throw chosen, at the throw" \
+        'stopped (exception); exception: signal SIGABRT | (void *) exception = 0x; stack: abort; vars: n=3 ;; exception cpp_throw ;; stopped (exception); exception: C++ Throw; stack: __cxa_throw check(int)@5; vars: n=3 ;; 4: n = 3 | 5: ◀ exception: C++ Throw   n = 3'
+fi
+
 # The standard library's containers, as the debugger's printers show them:
 # their sizes, and a map's entries (lldb: each pair summed up from its
 # members; gdb: its printer's keys and values put together, [key] = value).
@@ -420,6 +433,45 @@ if [ -x "$fakedap" ]; then
     check "a wave chosen from the list: its stack, and it is under the waves' row with the one that stopped" \
         'Threads 2003 | vadd | vadd | vadd | ▸ GPU waves 2000 | GPU wave (250,0,0)/0 breakpoint | ▸ GPU wave (0,0,0)/0 | Call stack 1 ;; stopped (breakpoint); threads: 2003, #4 shown (2000 GPU waves; shown: GPU wave (0,0,0)/0); stack: vadd@1; vars: df=DataFrame total=1; output: red plain'
     unset BLIT_FAKE_DAP_WAVES
+    # Exceptions (the stand-in has debugpy's filters): uncaught on, as the
+    # debugger has it; stopped at one, what it is, its stack trace and the
+    # one it was raised while handling, in the Debug tab and after its line.
+    printf 'raise ValueError("bad value")\n' >"$F/raises"
+    fake "debug:program=$F/raises;key:F5;debugwait:stopped;debugbreaks;debugdump;frame;debuginline" "$F/raises"
+    check "an exception stopped at: what the debugger says of it" \
+        "exception uncaught ;; stopped (exception: ValueError); exception: ValueError: bad value |   File \"@/fake/raises\", line 1, in <module> |     raise ValueError(\"bad value\") | ValueError: bad value | caused by KeyError: 'k' |   File \"@/fake/raises\", line 1, in <module> |     d[\"k\"]; stack: main@1; vars: df=DataFrame total=1 ;; 1: ◀ exception: ValueError: bad value"
+    # Uncaught off (Enter on it in the Debug tab): it is not stopped at.
+    fake "debug:program=$F/raises;key:F5;debugwait:stopped;debugpanel;debugpick:exceptions:2;key:shift+F5;debugwait:idle;debugbreaks;key:F5;debugwait:idle;debugdump" "$F/raises"
+    check "an exception not stopped at" \
+        'no breakpoints ;; idle; output: Traceback (most recent call last): | ValueError: bad value | [exited with code 1]'
+    # A condition on one (Shift+F9 there), sent with the debugger's filter options.
+    fake "debug:program=$F/prog;key:F5;debugwait:stopped;debugpanel;debugpick:exceptions:1;debugpanel;key:shift+F9;text:isinstance(e, KeyError);key:Return;debugwait:answers;debugbreaks"
+    got="$got ;; $(grep '^setExceptionBreakpoints' "$F/log" | tail -1)"
+    check "an exception's condition" \
+        'exception raised if isinstance(e, KeyError); exception uncaught ;; setExceptionBreakpoints {"filters":["uncaught"],"filterOptions":[{"filterId":"raised","condition":"isinstance(e, KeyError)"}]}'
+    # A debugger that says no defaults: none on; but for a .py program
+    # (debugpy, the stand-in here as the project's Python starts it),
+    # uncaught on and raised off.
+    mkdir -p "$F/py/.venv/bin"
+    printf '#!/bin/sh\nexec "%s"\n' "$fakedap" >"$F/py/.venv/bin/python"
+    chmod +x "$F/py/.venv/bin/python"
+    printf 'print(1)\n' >"$F/py/one.py"
+    BLIT_FAKE_DAP_NODEFAULTS=1
+    export BLIT_FAKE_DAP_NODEFAULTS
+    fake "debug:program=$F/prog;key:F5;debugwait:stopped;debugbreaks"
+    c=$got
+    fake "workdir:$F/py;debug:program=$F/py/one.py;key:F5;debugwait:stopped;debugbreaks" "$F/py/one.py"
+    unset BLIT_FAKE_DAP_NODEFAULTS
+    got="$c ;; $got"
+    check "no defaults: none on, but debugpy's uncaught" 'no breakpoints ;; exception uncaught'
+
+    # Kept in the folder's session: the exceptions chosen.
+    mkdir -p "$F/proj"
+    fake "folder:$F/proj;debug:program=$F/prog;key:F5;debugwait:stopped;debugpanel;debugpick:exceptions:1;quit"
+    kept=$(grep -h -E '^exception	' "$dir"/sessions/* | tr '\t' ' ' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }')
+    fake "folder:$F/proj;debug:program=$F/prog;key:F5;debugwait:stopped;debugbreaks"
+    got="$kept ;; $got"
+    check "kept: the exceptions chosen" 'exception raised 1  ;; exception raised; exception uncaught'
 fi
 # A .py program: debugpy run with the project's Python (its .venv's, not
 # the PATH's), and when that has no debugpy, said so of that Python.
@@ -436,6 +488,22 @@ mkdir -p "$T/py/.venv/bin" "$T/py/scripts"
 cp "$Y/scripts/one.py" "$T/py/scripts/" && cp "$Y/.venv/bin/python" "$T/py/.venv/bin/python"
 run "remotewait;workdir:ssh://box$T/py;debug:program=ssh://box$T/py/scripts/one.py;key:F5;debugwait:idle;debugdump" "ssh://box$T/py/scripts/one.py"
 check "a .py program on another machine: the project's Python there" 'idle error: debugpy is not installed for .venv/bin/python'
+
+# debugpy itself, where it can be had without the network (from uv's
+# cache), in a venv made here: uncaught on, an exception stopped at (its
+# traceback as Python writes it, the carets under the expression or not, by
+# its version).
+D="$dir/dpy"
+mkdir -p "$D"
+if command -v uv >/dev/null 2>&1 && uv venv -q --offline "$D/.venv" >/dev/null 2>&1 && uv pip install -q --offline --python "$D/.venv/bin/python" debugpy >/dev/null 2>&1; then
+    printf 'def f(d):\n    return d["k"]\n\ntotal = 1\nf({})\n' >"$D/raises.py"
+    run "workdir:$D;debug:program=$D/raises.py;key:F5;debugwait:stopped;debugbreaks;debugdump" "$D/raises.py"
+    got=$(printf '%s' "$got" | sed -e 's/ |  *~*^^*//g')
+    check "debugpy: uncaught on, an exception stopped at" \
+        "exception uncaught ;; stopped (exception: KeyError); exception: KeyError: 'k' |   File \"@/dpy/raises.py\", line 2, in f |     return d[\"k\"] |   File \"@/dpy/raises.py\", line 5, in <module> |     f({}) | KeyError: 'k'; stack: f@2 <module>@5; vars: d={} special variables="
+else
+    echo "debug: debugpy's own cases skipped (debugpy cannot be had here without the network)"
+fi
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "debug ok"
 exit $failed

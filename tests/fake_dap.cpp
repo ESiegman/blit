@@ -13,6 +13,10 @@
 //                 program "runs": it prints a line coloured with escape
 //                 sequences (the first one cut in two, between two output
 //                 events), and stops at once, in its own file's first line
+//                 (a program with "raise" in it raises an exception at once:
+//                 where the exceptions uncaught or raised are stopped at, it
+//                 stops there, reason "exception"; else what it raised is
+//                 printed to stderr, and it ends with code 1)
 //   attach        stops at once, in a frame with no source
 //   setBreakpoints
 //                 each with an id of its own (the same for the same line
@@ -33,6 +37,11 @@
 //                 the program and "delete ID" takes one away, each said in a
 //                 breakpoint event (new, removed), as gdb's console commands
 //                 are
+//   initialize    says it can (among the rest) stop at debugpy's exceptions:
+//                 raised, uncaught (by default) and userUnhandled, each with a
+//                 condition; with no default where BLIT_FAKE_DAP_NODEFAULTS is set
+//   exceptionInfo debugpy's account of a ValueError raised, with its stack
+//                 trace and the KeyError it was raised while handling
 //   completions   the words of a fixed list that start with the word before
 //                 the column, each to take that word's place; its start
 //                 counted from 0 whatever the client asked for, as debugpy
@@ -46,6 +55,13 @@
 // no names: their names are `info threads`'s, which evaluate answers as
 // rocgdb's manual shows it, there being no rocgdb here); and it stops in the
 // wave halfway along, in the kernel's frame.
+//
+// (debugpy's filters, its exception stop and its exceptionInfo are as
+// debugpy 1.8.22 answers, but for the exception inside the one raised
+// (innerException: the protocol's, which debugpy did not give for this) and
+// a condition on each filter (lldb-dap's way: supportsCondition, and
+// supportsExceptionFilterOptions, which debugpy does not say). The rest is
+// as lldb-dap and gdb answer.)
 #include <strings.h>
 #include <sys/stat.h>
 
@@ -74,6 +90,8 @@ constexpr long kOwnThreads = 3;  // (the waves' ids are after these)
 std::map<std::pair<std::string, long>, long> break_ids;
 long next_break_id = 1;
 std::map<std::string, std::vector<std::pair<long, long>>> loads_later;  // (by file)
+bool raises = false;    // (and it raises an exception)
+bool catching = false;  // the exceptions uncaught or raised are stopped at
 
 bool read_message(std::string* body) {
     size_t length = 0;
@@ -106,8 +124,10 @@ void event(std::string_view name, const std::string& body = "{}") {
     send(m + ",\"body\":" + body + "}");
 }
 
-void output(std::string_view text) {
-    std::string b = "{\"category\":\"stdout\",\"output\":";
+void output(std::string_view text, std::string_view category = "stdout") {
+    std::string b = "{\"category\":";
+    json::quote(b, category);
+    b += ",\"output\":";
     json::quote(b, text);
     event("output", b + "}");
 }
@@ -215,6 +235,18 @@ std::string set_breakpoints(const Value& a) {
 
 }  // namespace
 
+// What debugpy says of the ValueError the program raised (its stack trace, and the KeyError it was handling).
+std::string exception_info() {
+    std::string where = "  File ";
+    json::quote(where, program);
+    where += ", line 1, in <module>\n";
+    std::string b = R"({"exceptionId":"ValueError","description":"bad value","breakMode":"unhandled","details":{"message":"bad value","typeName":"ValueError","fullTypeName":"builtins.ValueError","stackTrace":)";
+    json::quote(b, where + "    raise ValueError(\"bad value\")\nValueError: bad value\n");
+    b += R"(,"innerException":[{"message":"'k'","typeName":"KeyError","fullTypeName":"builtins.KeyError","stackTrace":)";
+    json::quote(b, where + "    d[\"k\"]\n");
+    return b + "}]}}";
+}
+
 int main() {
     if (const char* w = std::getenv("BLIT_FAKE_DAP_WAVES"); w && *w) {
         waves = std::atol(w);
@@ -222,6 +254,7 @@ int main() {
         std::fprintf(stderr, "blit-debugger: gdb (rocgdb)\n");
         std::fflush(stderr);
     }
+    const bool defaults = !std::getenv("BLIT_FAKE_DAP_NODEFAULTS");
     std::string body;
     while (read_message(&body)) {
         json::Doc doc;
@@ -232,7 +265,16 @@ int main() {
         const Value a = v["arguments"];
         log(command, a);
         if (command == "initialize") {
-            respond(v, true, R"({"supportsConfigurationDoneRequest":true,"supportsCompletionsRequest":true,"supportsFunctionBreakpoints":true})");
+            std::string filters;
+            for (const char* f : {R"("filter":"raised","label":"Raised Exceptions","description":"Break whenever any exception is raised.")",
+                                  R"("filter":"uncaught","label":"Uncaught Exceptions","description":"Break when the process is exiting due to unhandled exception.")",
+                                  R"("filter":"userUnhandled","label":"User Uncaught Exceptions","description":"Break when exception escapes into library code.")"}) {
+                filters += std::string(filters.empty() ? "{" : ",{") + f + ",\"supportsCondition\":true";
+                if (defaults) filters += std::string(",\"default\":") + (std::strstr(f, "\"uncaught\"") ? "true" : "false");
+                filters += "}";
+            }
+            respond(v, true, R"({"supportsConfigurationDoneRequest":true,"supportsCompletionsRequest":true,"supportsFunctionBreakpoints":true,)"
+                             R"("supportsExceptionFilterOptions":true,"supportsExceptionInfoRequest":true,"exceptionBreakpointFilters":[)" + filters + "]}");
         } else if (command == "launch") {
             const std::string path(a["program"].str());
             struct stat st;
@@ -243,6 +285,13 @@ int main() {
                 continue;
             }
             program = path;
+            if (FILE* f = std::fopen(path.c_str(), "r")) {
+                char text[4096];
+                const size_t n = std::fread(text, 1, sizeof text - 1, f);
+                text[n] = 0;
+                raises = std::strstr(text, "raise") != nullptr;
+                std::fclose(f);
+            }
             respond(v, true);
             event("initialized");  // (as lldb-dap has it: once there is something to configure)
         } else if (command == "attach") {
@@ -250,9 +299,25 @@ int main() {
             event("initialized");
         } else if (command == "setBreakpoints") {
             respond(v, true, set_breakpoints(a));
+        } else if (command == "setExceptionBreakpoints") {
+            catching = false;
+            for (const Value f : a["filters"]) catching |= f.str() == "uncaught" || f.str() == "raised";
+            for (const Value f : a["filterOptions"]) catching |= f["filterId"].str() == "uncaught" || f["filterId"].str() == "raised";
+            respond(v, true);
         } else if (command == "configurationDone") {
             respond(v, true);
             event("process", "{\"name\":\"fake\",\"startMethod\":\"launch\"}");
+            if (raises && catching) {
+                event("stopped", R"({"reason":"exception","description":"bad value","text":"ValueError","threadId":1,"allThreadsStopped":true})");
+                continue;
+            }
+            if (raises) {  // (not stopped at: it ends, as Python does)
+                output("Traceback (most recent call last):\n", "stderr");
+                output("ValueError: bad value\n", "stderr");
+                event("exited", R"({"exitCode":1})");
+                event("terminated");
+                continue;
+            }
             if (!program.empty()) {
                 output("\x1b[1;3");
                 output("1mred\x1b[0m plain\n");
@@ -291,6 +356,8 @@ int main() {
             std::string r = "{\"result\":";
             json::quote(r, "<" + std::string(a["expression"].str()) + ">");
             respond(v, true, r + ",\"variablesReference\":0}");
+        } else if (command == "exceptionInfo") {
+            respond(v, true, exception_info());
         } else if (command == "completions") {
             respond(v, true, completions(a["text"].str(), a["column"].integer()));
         } else if (command == "continue" || command == "next" || command == "stepIn" || command == "stepOut") {

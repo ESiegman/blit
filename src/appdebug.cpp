@@ -181,7 +181,20 @@ struct DebugSession {
     struct Can {
         bool data_breaks = false, set_variable = false, goto_targets = false, function_breaks = false, log_points = false;
         bool disassemble = false, read_memory = false, write_memory = false, instruction_breaks = false, granularity = false;
+        bool exception_options = false, exception_info = false;  // (conditions on its exception filters; what it says of an exception)
     } can;
+    // The exceptions it can stop at (initialize's exceptionBreakpointFilters),
+    // each as it has it unless chosen otherwise (DebugUi::exceptions).
+    struct Filter {
+        std::string id, label;
+        bool on = false;         // (its default)
+        bool condition = false;  // (it takes a condition)
+    };
+    std::vector<Filter> filters;
+    // The exception it stopped at, as exceptionInfo says: what it is in a
+    // line, then its details (the stack trace, the exceptions inside it).
+    std::string exception;
+    std::vector<std::string> exception_lines;
     std::string how;  // what the session began with: "launch", "attach" (a process), "core"
     enum State : u8 { kIdle, kStarting, kRunning, kStopped } state = kIdle;
     std::string remote;  // "ssh://host" when the program is on another machine
@@ -383,7 +396,7 @@ struct App::DebugUi : DebugSession {
     };
     std::vector<Watch> watches;
     // The panel: a row for each thing shown, and the one chosen.
-    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData, kInstr, kSession, kWaves };
+    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData, kInstr, kSession, kWaves, kException };
     // A row: a mark (a triangle, an arrow) before its text, in an ink of its
     // own; the text; something quieter after it; and on the right its key.
     struct Row {
@@ -412,7 +425,19 @@ struct App::DebugUi : DebugSession {
         std::vector<std::string> texts;  // (what each says: the tests)
     };
     Inline inline_[kMaxViews];
-
+    // The exception filters chosen in the Debug tab, by the filter's id: on
+    // or off, and the condition it stops on (where the debugger takes one).
+    // Those not chosen are as the debugger has them.
+    struct Choice {
+        std::string cond;
+        bool on = false;
+    };
+    std::map<std::string, Choice> exceptions;
+    Choice choice(const Filter& f) const {
+        if (const auto it = exceptions.find(f.id); it != exceptions.end()) return it->second;
+        if (!python.empty() && (f.id == "uncaught" || f.id == "raised")) return {{}, f.id == "uncaught"};  // (debugpy: uncaught on, raised off, whatever it says)
+        return {{}, f.on};
+    }
 };
 
 void App::DebugUi::Mover::on_edit(const TextEdit& e) {
@@ -523,6 +548,17 @@ void App::debug_edit_break() {
     DebugUi& u = *debugui_;
     std::string path;
     u32 line = 0;
+    // (An exception filter chosen there: the condition it stops on, where the debugger takes one; on, then.)
+    if (panel_has_keyboard() && panel_tab() == 4 && u.sel < u.rows.size() && u.rows[u.sel].act == DebugUi::kException && u.rows[u.sel].index < u.filters.size()) {
+        const DebugUi::Filter f = u.filters[u.rows[u.sel].index];
+        if (!f.condition || !u.can.exception_options) return notify("This debugger takes no condition for " + f.label);
+        return find_choose(kFindInput, "Condition", u.choice(f).cond, [this, f](const std::string& typed) {
+            debugui_->exceptions[f.id] = {trimmed(typed), true};
+            debug_send_exceptions();
+            ++debug_gen_;
+            dirty_ = true;
+        });
+    }
     if (!debug_chosen_break(-1, &path, &line)) return;
     DebugUi::Break was;
     if (auto f = u.breaks.find(path); f != u.breaks.end())
@@ -849,6 +885,7 @@ std::string session_unfield(std::string_view s) {
 //   breakoff ...       (the same, of one disabled)
 //   function NAME
 //   watch EXPRESSION
+//   exception FILTER ON (1 or 0) CONDITION   (an exception filter chosen in the Debug tab)
 std::string App::debug_session_text() const {
     if (!debugui_) return {};
     const DebugUi& u = *debugui_;
@@ -860,6 +897,7 @@ std::string App::debug_session_text() const {
     }
     for (const std::string& f : u.functions) out += "function\t" + session_field(f) + "\n";
     for (const DebugUi::Watch& w : u.watches) out += "watch\t" + session_field(w.expr) + "\n";
+    for (const auto& [id, c] : u.exceptions) out += "exception\t" + session_field(id) + "\t" + (c.on ? "1" : "0") + "\t" + session_field(c.cond) + "\n";
     return out;
 }
 
@@ -872,6 +910,7 @@ void App::debug_session_take(const std::vector<std::string>& lines) {
     u.breaks.clear();
     u.functions.clear();
     u.watches.clear();
+    u.exceptions.clear();
     for (const std::string& line : lines) {
         std::vector<std::string_view> f;
         std::string_view rest = line;
@@ -893,8 +932,11 @@ void App::debug_session_take(const std::vector<std::string>& lines) {
             u.functions.push_back(session_unfield(rest));
         } else if (f[0] == "watch" && f.size() == 1 && !rest.empty()) {
             u.watches.push_back({session_unfield(rest), {}, false});
+        } else if (f[0] == "exception" && f.size() == 3 && !f[1].empty()) {
+            u.exceptions[session_unfield(f[1])] = {session_unfield(rest), f[2] == "1"};
         }
     }
+    debug_send_exceptions();
     for (const std::string& path : paths) {
         if (!u.breaks.contains(path)) u.unfollow(*this, path);
         debug_send_breaks(path);
@@ -949,6 +991,8 @@ bool App::debug_open(const std::string& near, const std::string& dir, bool pytho
     u.esc = DebugSession::kText;
     u.error.clear();
     u.reason.clear();
+    u.exception.clear();
+    u.exception_lines.clear();
     u.exit_code = -1;
     u.asking = 0;
     // (On another machine the connection is waited for and the debugger started
@@ -1110,6 +1154,13 @@ void App::debug_begin(const std::string& request, const std::string& args_in) {
                                 c["supportsFunctionBreakpoints"].boolean(), c["supportsLogPoints"].boolean(), c["supportsDisassembleRequest"].boolean(),
                                 c["supportsReadMemoryRequest"].boolean(), c["supportsWriteMemoryRequest"].boolean(), c["supportsInstructionBreakpoints"].boolean(),
                                 c["supportsSteppingGranularity"].boolean()};
+                       v.can.exception_options = c["supportsExceptionFilterOptions"].boolean();
+                       v.can.exception_info = c["supportsExceptionInfoRequest"].boolean();
+                       v.filters.clear();
+                       for (const json::Value f : c["exceptionBreakpointFilters"])
+                           if (!f["filter"].str().empty())
+                               v.filters.push_back({std::string(f["filter"].str()), std::string(f["label"].str().empty() ? f["filter"].str() : f["label"].str()), f["default"].boolean(),
+                                                    f["supportsCondition"].boolean()});
                        v.dap->request(request, arguments, [this, request](const Dap::Message& r) {
                            if (!r.success) {
                                debugui_->error = (request == "launch" ? "cannot launch it: " : "cannot attach: ") + (r.message.empty() ? std::string("the debugger said no") : r.message);
@@ -1139,6 +1190,7 @@ void App::debug_end() {
     u.data.clear();  // (the debugger's ids for them were this session's, as the program's addresses were)
     u.ibreaks.clear();
     u.run_to_path.clear();
+    u.exception.clear(), u.exception_lines.clear();
     u.frames.clear();
     u.threads.clear();
     u.vars.clear();
@@ -1173,6 +1225,7 @@ void App::debug_command(const std::string& what) {
     u.frames.clear();
     u.threads.clear();
     u.vars.clear();
+    u.exception.clear(), u.exception_lines.clear();
     ++u.vars_gen;
     ++u.watch_gen;
     ++debug_gen_;
@@ -1424,7 +1477,7 @@ void App::debug_sync_session(bool* stopped) {
             for (const auto& [path, lines] : u.breaks) debug_send_breaks(path);
             debug_send_functions();
             debug_send_instructions();
-            u.dap->request("setExceptionBreakpoints", "{\"filters\":[]}");
+            debug_send_exceptions();
             u.dap->request("configurationDone");
             // (As other clients do, the threads are asked for once now: lldb-dap answers the
             // first such question with those it had at the start, whenever it is asked.)
@@ -1439,6 +1492,8 @@ void App::debug_sync_session(bool* stopped) {
             u.thread = u.stopped_thread = b["threadId"].integer(u.thread);
             u.reason = std::string(b["reason"].str());
             if (const std::string_view text = b["text"].str(); !text.empty()) u.reason += ": " + std::string(text);
+            u.exception.clear(), u.exception_lines.clear();
+            if (b["reason"].str() == "exception") debug_exception_info(u.thread);
             // Every thread there is (each one's stack can be chosen), and the stack of the one that stopped.
             u.threads.clear();
             ++u.asking;
@@ -1460,6 +1515,7 @@ void App::debug_sync_session(bool* stopped) {
             u.frames.clear();
             u.threads.clear();
             u.vars.clear();
+            u.exception.clear(), u.exception_lines.clear();
         } else if (m.name == "breakpoint") {
             debug_break_event(b);
         } else if (m.name == "process") {
@@ -2078,6 +2134,11 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
         Row& r = add(DebugUi::kNone, 0, title, ink::kHeading);
         if (count) r.after = std::to_string(count);
     };
+    if (u.state == DebugUi::kStopped && !u.exception.empty()) {  // the exception it stopped at, and what the debugger says of it
+        heading("Exception", 0);
+        add(DebugUi::kNone, 0, u.exception, ink::kError);
+        for (size_t i = 0; i < u.exception_lines.size() && i < 40; ++i) add(DebugUi::kNone, 0, u.exception_lines[i], ink::kMuted, 2);
+    }
     if (!u.others.empty()) {  // (one alone is the tab's own)
         static const char* const kWord[] = {"not running", "starting", "running", "stopped"};
         heading("Sessions", 1 + u.others.size());
@@ -2197,6 +2258,17 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
             r.mark_ink = ink::kError;
         }
     }
+    if (!u.filters.empty()) {  // the exceptions it can stop at, each on or off (Enter), with its condition (Shift+F9)
+        heading("Exceptions", 0);
+        for (u32 i = 0; i < u.filters.size(); ++i) {
+            const DebugUi::Choice c = u.choice(u.filters[i]);
+            Row& r = add(DebugUi::kException, i, u.filters[i].label, c.on ? ink::kText : ink::kMuted);
+            r.mark = c.on ? "\xE2\x97\x89" : "\xE2\x97\x8B";  // (a dot in a ring, or a ring)
+            r.mark_ink = c.on ? ink::kError : ink::kMuted;
+            if (!c.cond.empty()) r.after = "if " + c.cond;
+            if (focused && u.sel == out.size() - 1 && u.filters[i].condition && u.can.exception_options) r.key = key_symbols("Shift+F9", font);
+        }
+    }
     if (!u.output.empty() || !u.partial.empty()) {
         heading("Output", 0);
         const size_t from = u.output.size() > 200 ? u.output.size() - 200 : 0;
@@ -2309,6 +2381,14 @@ void App::debug_do(u32 i) {
             break;
         }
         case DebugUi::kData: break;
+        case DebugUi::kException:  // stopped at, or not
+            if (row.index < u.filters.size()) {
+                DebugUi::Choice c = u.choice(u.filters[row.index]);
+                c.on = !c.on;
+                u.exceptions[u.filters[row.index].id] = c;
+                debug_send_exceptions();
+            }
+            break;
         case DebugUi::kSession:  // that one shown
             if (row.index > 0) debug_switch(row.index - 1);
             break;
@@ -2548,14 +2628,15 @@ void App::debug_marks(FrameDesc& fd) {
                 TextBox box;
                 const std::string gap = stop.empty() || said.empty() ? "" : "   ";
                 box.resize(std::min<u32>(width_of(stop) + width_of(gap) + width_of(said), 120), 1);
-                const u32 col = put(box, font, 0, 0, stop, ink::kAccent);  // (upright: the font's italic may be a script)
+                const u32 col = put(box, font, 0, 0, stop, u.exception.empty() ? ink::kAccent : ink::kError);  // (upright: the font's italic may be a script)
                 put(box, font, 0, col + width_of(gap), said, ink::kMuted);
                 c.cells.push_back(std::move(box.cells));
                 c.texts.push_back(std::to_string(line + 1) + ": " + stop + gap + said);
                 const u64 start = buf.line_start(line);
                 c.notes.push_back({line, d->ed.col_between(start, d->ed.line_end(line)) + 3, nullptr, static_cast<u32>(c.cells.back().size())});
             };
-            const std::string stop = "\xE2\x97\x80 stopped" + (u.reason.empty() ? std::string() : ": " + u.reason);
+            // (At an exception, what it is, as the debugger says: the Debug tab has the rest.)
+            const std::string stop = !u.exception.empty() ? "\xE2\x97\x80 exception: " + u.exception : "\xE2\x97\x80 stopped" + (u.reason.empty() ? std::string() : ": " + u.reason);
             bool stopped_said = false;
             for (const auto& [line, said] : lines) {
                 note(line, line == l ? stop : std::string(), said);
@@ -2572,6 +2653,69 @@ void App::debug_marks(FrameDesc& fd) {
             if (std::ranges::none_of(g.notes, [&](const GridNote& o) { return o.line == n.line; })) notes.push_back(n);
         g.notes = notes;
     }
+}
+
+// ---------------------------------------------------------------- exceptions
+
+// The exceptions it stops at (and on what condition), to a session under
+// way: every session's, each of those its own debugger has.
+void App::debug_send_exceptions() {
+    DebugUi& u = *debugui_;
+    debug_each_other([&] { debug_send_exceptions(); });
+    if (!u.dap || u.state == DebugUi::kStarting) return;  // (sent when the debugger is ready for them)
+    std::string filters, options;
+    for (const DebugUi::Filter& f : u.filters) {
+        const DebugUi::Choice c = u.choice(f);
+        if (!c.on) continue;
+        if (!c.cond.empty() && f.condition && u.can.exception_options) options += std::string(options.empty() ? "" : ",") + "{\"filterId\":" + quoted(f.id) + ",\"condition\":" + quoted(c.cond) + "}";
+        else filters += std::string(filters.empty() ? "" : ",") + quoted(f.id);
+    }
+    u.dap->request("setExceptionBreakpoints", "{\"filters\":[" + filters + "]" + (u.can.exception_options ? ",\"filterOptions\":[" + options + "]" : std::string()) + "}");
+}
+
+// What the debugger says of the exception it stopped at, where it can say:
+// what it is, in a line; then its message, its stack trace and the
+// exceptions inside it (debugpy's), a line each.
+void App::debug_exception_info(i64 thread) {
+    DebugUi& u = *debugui_;
+    if (!u.dap || !u.can.exception_info) return;
+    ++u.asking;
+    u.dap->request("exceptionInfo", "{\"threadId\":" + std::to_string(thread) + "}", [this, thread](const Dap::Message& m) {
+        DebugUi& v = *debugui_;
+        if (v.asking) --v.asking;
+        if (!m.success || v.state != DebugUi::kStopped || v.stopped_thread != thread) return;
+        const json::Value b = m.body();
+        const std::string id(b["exceptionId"].str()), what(b["description"].str());
+        // (lldb-dap's id is its filter's, or "signal", and its description says it all, "C++ Throw",
+        // "signal SIGABRT"; debugpy's is the exception's type, its description the message.)
+        const bool filter = std::ranges::any_of(v.filters, [&](const DebugUi::Filter& f) { return f.id == id; });
+        v.exception = what.empty() ? id : id.empty() || filter || what.find(id) != std::string::npos ? what : id + ": " + what;
+        for (char& c : v.exception)
+            if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+        v.exception_lines.clear();
+        auto lines = [&](std::string_view text, const std::string& lead) {
+            for (size_t at = 0; at < text.size();) {
+                const size_t nl = std::min(text.find('\n', at), text.size());
+                std::string l(text.substr(at, nl - at));
+                at = nl + 1;
+                while (!l.empty() && (l.back() == ' ' || l.back() == '\r')) l.pop_back();
+                for (char& c : l)
+                    if (c == '\t') c = ' ';
+                if (!l.empty()) v.exception_lines.push_back(lead + l);
+            }
+        };
+        auto details = [&](auto&& self, const json::Value d, int depth) -> void {
+            if (!d.is_object() || depth > 4) return;
+            const std::string_view message = d["message"].str(), type = d["typeName"].str();
+            if (depth > 0) lines("caused by " + std::string(type) + (type.empty() || message.empty() ? "" : ": ") + std::string(message), {});
+            else if (!message.empty() && message != what) lines(message, {});
+            lines(d["stackTrace"].str(), {});
+            for (const json::Value inner : d["innerException"]) self(self, inner, depth + 1);
+        };
+        details(details, b["details"], 0);
+        ++debug_gen_;
+        dirty_ = true;
+    });
 }
 
 // ---------------------------------------------------------------- for the tests
@@ -2612,6 +2756,10 @@ std::string App::debug_dump() {
     }
     if (!u.reason.empty() && u.state == DebugUi::kStopped) out += " (" + u.reason + ")";
     if (!u.error.empty()) out += " error: " + u.error;
+    if (!u.exception.empty()) {  // (and its details, a line each)
+        out += "; exception: " + u.exception;
+        for (const std::string& l : u.exception_lines) out += " | " + l;
+    }
     if (u.threads.size() > 1) {
         u32 at = 0;
         for (u32 i = 0; i < u.threads.size(); ++i)
@@ -2665,6 +2813,9 @@ std::string App::debug_breaks_dump() {
     for (const std::string& f : u.functions) out += (out.empty() ? "" : "; ") + f + "()";
     for (const DebugUi::Data& d : u.data) out += (out.empty() ? "" : "; ") + std::string("writes to ") + d.name;
     for (const u64 a : u.ibreaks) out += (out.empty() ? "" : "; ") + std::string("at ") + hex(a);
+    // (The exceptions it stops at, of those the debugger has: by their names.)
+    for (const DebugUi::Filter& f : u.filters)
+        if (const DebugUi::Choice c = u.choice(f); c.on) out += (out.empty() ? "" : "; ") + std::string("exception ") + f.id + (c.cond.empty() ? "" : " if " + c.cond);
     return out.empty() ? "no breakpoints" : out;
 }
 
@@ -2690,7 +2841,8 @@ std::string App::debug_rows_dump(const std::string& from, u32 n) {
 bool App::debug_pick(const std::string& section, u32 n, const std::string& name) {
     DebugUi& u = *debugui_;
     const DebugUi::Act act = section == "threads" ? DebugUi::kThread : section == "stack" ? DebugUi::kFrame : section == "watch" ? DebugUi::kWatch
-                             : section == "add"   ? DebugUi::kWatchAdd : section == "breaks" ? DebugUi::kBreak : section == "vars" ? DebugUi::kVar : section == "sessions" ? DebugUi::kSession : section == "waves" ? DebugUi::kWaves : DebugUi::kNone;
+                             : section == "add"   ? DebugUi::kWatchAdd : section == "breaks" ? DebugUi::kBreak : section == "vars" ? DebugUi::kVar : section == "sessions" ? DebugUi::kSession : section == "waves" ? DebugUi::kWaves
+                             : section == "exceptions" ? DebugUi::kException : DebugUi::kNone;
     u32 seen = 0;
     for (u32 i = 0; i < u.rows.size(); ++i)
         if (act != DebugUi::kNone && u.rows[i].act == act && (name.empty() ? ++seen == std::max(1u, n) : u.rows[i].text.starts_with(name + " "))) {
