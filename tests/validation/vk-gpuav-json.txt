@@ -1,0 +1,55 @@
+{
+	"Severity" : "Warning",
+	"VUID" : "VALIDATION-SETTINGS",
+	"Objects" : [
+	],
+	"MessageID" : "0x7f1922d7",
+	"Function" : "vkCreateInstance",
+	"Location" : "",
+	"MainMessage" : "Information with the layer settings provided:\n- Both GPU Assisted Validation and Normal Core Check Validation are enabled, this is not recommended as it will be very slow. Once all errors in Core Check are solved, please disable it (validate_core), then only use GPU-AV for best performance.\n",
+	"DebugRegion" : "",
+	"SpecText" : "",
+	"SpecUrl" : ""
+}
+{
+	"Severity" : "Warning",
+	"VUID" : "WARNING-Setting-Limit-Adjusted",
+	"Objects" : [
+	],
+	"MessageID" : "0x86fe6721",
+	"Function" : "vkCreateDevice",
+	"Location" : "",
+	"MainMessage" : "Warning that validation is adjusting settings:\n\tForcing fragmentStoresAndAtomics to VK_TRUE\n\tForcing vertexPipelineStoresAndAtomics to VK_TRUE\n\tForcing shaderInt64 to VK_TRUE\n\tForcing shaderInt16 to VK_TRUE\n\tAdding a VkPhysicalDeviceTimelineSemaphoreFeatures to pNext with timelineSemaphore set to VK_TRUE\n\tAdding a VkPhysicalDeviceVulkanMemoryModelFeatures to pNext with vulkanMemoryModel and vulkanMemoryModelDeviceScope set to VK_TRUE\n\tAdding a VkPhysicalDeviceBufferDeviceAddressFeatures to pNext with bufferDeviceAddress set to VK_TRUE\n\tAdding a VkPhysicalDeviceScalarBlockLayoutFeatures to pNext with scalarBlockLayout set to VK_TRUE\n\tAdding a VkPhysicalDevice8BitStorageFeatures to pNext with storageBuffer8BitAccess set to VK_TRUE\n\tAdding a VkPhysicalDeviceShaderFloat16Int8Features to pNext with shaderInt8 set to VK_TRUE\n\tAdding a VkPhysicalDevice16BitStorageFeatures to pNext with storageBuffer16BitAccess set to VK_TRUE\n",
+	"DebugRegion" : "",
+	"SpecText" : "",
+	"SpecUrl" : ""
+}
+{
+	"Severity" : "Warning",
+	"VUID" : "WARNING-Setting-Limit-Adjusted",
+	"Objects" : [
+	],
+	"MessageID" : "0x86fe6721",
+	"Function" : "vkCreateDevice",
+	"Location" : "",
+	"MainMessage" : "Warning that validation is adjusting settings:\n\tRay Tracing validation option was enabled, but neither the rayTracingPipeline nor the rayQuery feature are supported. [Disabling gpuav_validate_trace_ray]\n\tMesh Shading validation option was enabled, but the meshShader feature is not supported. [Disabling gpuav_mesh_shading]\n",
+	"DebugRegion" : "",
+	"SpecText" : "",
+	"SpecUrl" : ""
+}
+{
+	"Severity" : "Error",
+	"VUID" : "VUID-vkCmdDispatch-storageBuffers-06936",
+	"Objects" : [
+		{"type" : "VkQueue", "handle" : "0x556f2e438620", "name" : ""},
+		{"type" : "VkCommandBuffer", "handle" : "0x556f2e4c3600", "name" : ""},
+		{"type" : "VkPipeline", "handle" : "0xf000000000f", "name" : ""}
+	],
+	"MessageID" : "0xace7baff",
+	"Function" : "vkCmdDispatch",
+	"Location" : "",
+	"MainMessage" : "(set = 0, binding = 0, index 0)  access out of bounds. The descriptor buffer (VkBuffer 0x90000000009) size is 16 bytes, 16 bytes were bound, and the highest out of bounds access was at [259] bytes\nStage = Compute.  Global invocation ID (x, y, z) = (0, 0, 0)\nCommand buffer (0x556f2e4c3600)\n\tCompute Dispatch Index 0\nShader Module (0xb000000000b) (internal ID 1)\nShader validation error occurred at oob.comp:7\n\n    data.v[i] = 7;\n",
+	"DebugRegion" : "",
+	"SpecText" : "If any stage of the VkPipeline object bound to the pipeline bind point used by this command accesses a storage buffer, and that stage was created without enabling either VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS or VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2 for storageBuffers, and the robustBufferAccess feature is not enabled, that stage must not access values outside of the range of the buffer as specified in the descriptor set bound to the same pipeline bind point",
+	"SpecUrl" : "https://docs.vulkan.org/spec/latest/chapters/dispatch.html#VUID-vkCmdDispatch-storageBuffers-06936"
+}

@@ -1,0 +1,55 @@
+Validation Warning: [ VALIDATION-SETTINGS ] | MessageID = 0x7f1922d7
+vkCreateInstance(): Information with the layer settings provided:
+- Application is using deprecated "enables" (VK_LAYER_ENABLES) layer settings.
+  Deprecated settings and new settings cannot be mixed, and deprecated ones take precedence. Consider only using the new settings:
+  Deprecated: VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT | New: "validate_best_practices" (VK_LAYER_VALIDATE_BEST_PRACTICES=1)
+
+
+Validation Information: [ CURRENT-VALIDATION-ENABLED ] | MessageID = 0xfd7b2292
+vkCreateInstance(): Current Validation Enabled:
+  - Core Checks
+  - Stateless Parameter
+  - Object lifetime
+  - Thread Safety
+  - Handle Wrapping
+  - Best Practices
+
+Objects: 1
+    [0] VkInstance 0x5580cea39010
+
+Validation Error: [ VUID-VkBufferCreateInfo-size-00912 ] | MessageID = 0x7c54445e
+vkCreateBuffer(): pCreateInfo->size is zero.
+The Vulkan spec states: size must be greater than 0 (https://docs.vulkan.org/spec/latest/chapters/resources.html#VUID-VkBufferCreateInfo-size-00912)
+
+Validation Performance Warning: [ BestPractices-vkBindBufferMemory-small-dedicated-allocation ] | MessageID = 0x10b59d4b
+vkBindBufferMemory(): Trying to bind VkBuffer 0x20000000002 to a memory block which is fully consumed by the buffer. The required size of the allocation is 256, but smaller buffers like this should be sub-allocated from larger memory blocks. (Current threshold is 1048576 bytes)
+
+Validation Error: [ VUID-vkCmdSetLineWidth-lineWidth-00788 ] | MessageID = 0x3d555d77
+vkCmdSetLineWidth(): lineWidth is 2.000000 (not 1.0), but the wideLines feature was not enabled.
+The Vulkan spec states: If the wideLines feature is not enabled, lineWidth must be 1.0 (https://docs.vulkan.org/spec/latest/chapters/primsrast.html#VUID-vkCmdSetLineWidth-lineWidth-00788)
+Objects: 1
+    [0] VkCommandBuffer 0x5580ceb62780[frame commands]
+
+Validation Error: [ VUID-vkCmdSetLineWidth-lineWidth-00788 ] | MessageID = 0x3d555d77
+vkCmdSetLineWidth(): lineWidth is 2.000000 (not 1.0), but the wideLines feature was not enabled.
+The Vulkan spec states: If the wideLines feature is not enabled, lineWidth must be 1.0 (https://docs.vulkan.org/spec/latest/chapters/primsrast.html#VUID-vkCmdSetLineWidth-lineWidth-00788)
+Objects: 1
+    [0] VkCommandBuffer 0x5580ceb62780[frame commands]
+
+Validation Error: [ VUID-vkCmdSetLineWidth-lineWidth-00788 ] | MessageID = 0x3d555d77
+vkCmdSetLineWidth(): lineWidth is 2.000000 (not 1.0), but the wideLines feature was not enabled.
+The Vulkan spec states: If the wideLines feature is not enabled, lineWidth must be 1.0 (https://docs.vulkan.org/spec/latest/chapters/primsrast.html#VUID-vkCmdSetLineWidth-lineWidth-00788)
+Objects: 1
+    [0] VkCommandBuffer 0x5580ceb62780[frame commands]
+
+Validation Error: [ VUID-vkFreeCommandBuffers-pCommandBuffers-00047 ] | MessageID = 0x1ab902fc
+vkFreeCommandBuffers(): pCommandBuffers[0] (VkCommandBuffer 0x5580ceb62780[frame commands]) is in use.
+The Vulkan spec states: All elements of pCommandBuffers must not be in the pending state (https://docs.vulkan.org/spec/latest/chapters/cmdbuffers.html#VUID-vkFreeCommandBuffers-pCommandBuffers-00047)
+Objects: 2
+    [0] VkCommandBuffer 0x5580ceb62780[frame commands]
+    [1] VkCommandPool 0x40000000004
+
+Validation Error: [ VUID-vkDestroyFence-fence-01120 ] | MessageID = 0x5d296248
+vkDestroyFence(): can't be called on VkFence 0x50000000005 that is currently in use by VkQueue 0x5580ceb82850
+The Vulkan spec states: All queue submission commands that refer to fence must have completed execution (https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-vkDestroyFence-fence-01120)
+

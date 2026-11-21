@@ -484,6 +484,15 @@ void App::build_found(u64 doc, std::vector<BuildProblem> found) {
     const u32 was = u.at >= 0 ? u.problems[static_cast<size_t>(u.at)].seq : 0;
     const size_t had = u.problems.size();
     for (BuildProblem& p : found) {
+        if (p.count > 1) {  // (one said again, as a validation message every frame: the count on its row)
+            const auto same = std::find_if(u.problems.rbegin(), u.problems.rend(), [&](const BuildProblem& q) {
+                return q.severity == p.severity && q.line == p.line && q.col == p.col && q.code == p.code && q.message == p.message && q.path == p.path;
+            });
+            if (same != u.problems.rend()) {
+                same->count = std::max(same->count, p.count);
+                continue;
+            }
+        }
         p.group = u.groups.try_emplace(p.path, static_cast<u32>(u.groups.size())).first->second;
         p.seq = u.seq++;
         (p.severity == 1 ? build_errors_ : build_warnings_) += 1;

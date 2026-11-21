@@ -2462,7 +2462,8 @@ They fill the **Build** section of the side panel's Problems tab (above),
 F8 goes through them, the status bar counts them, and the Run button says
 how many: `▶ Build (debug) · 3 errors` (warnings, when there are no
 errors). The next run starts with none. Notes (`note:`) and problems with
-no place (a linker's `undefined reference`) are not listed; one whose
+no place (a linker's `undefined reference`) are not listed, but for
+validation messages (below), which are, under **No file**; one whose
 file is nowhere (Metal's run-time `program_source`) is listed and counted,
 and F8 says it without going anywhere. **Cmd+click**
 on a `path:line` (or `path:line:col`, or Python's `File "path", line N`)
@@ -2487,6 +2488,28 @@ bare file name in none of the folders tried (macOS's ASan symbolises with
 `atos`, into `ring.cpp:16`) is the project's one file of that name, from
 a list of the folder's files made on the reading thread the first time
 one is needed (none when several have it).
+
+A program a task, a run configuration or a terminal's build runs may
+print **validation** messages, and each is a problem too. Vulkan's (on
+Linux) come from the Khronos validation layer
+(`VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation`), as it prints them
+(`Validation Error: [ VUID-vkCmdDraw-None-08606 ] ...` with the message on
+the lines under it; before layer 1.3.290 all on one line; after a
+messenger's own words, as `validation layer: `) or as JSON
+(`VK_LAYER_MESSAGE_FORMAT_JSON=1`). An error is an error, a warning or a
+performance warning a warning; information is left out. The layer knows
+the call, not where in the program it was made, so a Vulkan message has
+no place in a file: it is listed under **No file**, without a line. GPU-assisted
+validation (`VK_LAYER_GPUAV_ENABLE=1`) names the shader's own line when
+the shader was built with debug info (`glslangValidator -g`): the problem
+is at that line. Metal's (on the Mac) are its API validation's
+(`MTL_DEBUG_LAYER=1`: the failed assertion, or with
+`MTL_DEBUG_LAYER_ERROR_MODE=nslog` each logged one) and its shader
+validation's (`MTL_SHADER_VALIDATION=1` with
+`MTL_SHADER_VALIDATION_REPORT_TO_STDERR=1`, at the first frame of the GPU
+stack). The same message again, as one said every frame (its objects'
+handles aside), is the one row, its count at the row's end (`×120`), and
+counted once on the Run button.
 
 Under **CMake** the tab has two rows of its own. **Build type**: Enter goes
 from the project's own (what the build folder was configured with) to
@@ -3582,6 +3605,7 @@ tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, co
                                    # the split Ctrl+` shows and hides, and the questions about programs still running
 tests/keys.sh build-debug/blit     # the command search, the new keys, Back and Forward through the jumps, and every command run from the search
 tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger)
+tests/validation.sh build-debug/blit  # Vulkan's and Metal's validation messages as problems
 tests/lsp.sh build-debug/blit      # language servers against the test server: several at once, Problems across files, references, rename, formatting, code actions, hints, colours
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running), a fake build's problems (F8, Cmd+click) and new projects (a stand-in vcpkg)
 tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md against what they should draw, Mermaid, typing, Cmd+Shift+V, coloured code

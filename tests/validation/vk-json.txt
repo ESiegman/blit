@@ -1,0 +1,123 @@
+{
+	"Severity" : "Warning",
+	"VUID" : "VALIDATION-SETTINGS",
+	"Objects" : [
+	],
+	"MessageID" : "0x7f1922d7",
+	"Function" : "vkCreateInstance",
+	"Location" : "",
+	"MainMessage" : "Information with the layer settings provided:\n- Application is using deprecated \"enables\" (VK_LAYER_ENABLES) layer settings.\n  Deprecated settings and new settings cannot be mixed, and deprecated ones take precedence. Consider only using the new settings:\n  Deprecated: VK_VALIDATION_FEATURE_ENABLE_BEST_PRACTICES_EXT | New: \"validate_best_practices\" (VK_LAYER_VALIDATE_BEST_PRACTICES=1)\n",
+	"DebugRegion" : "",
+	"SpecText" : "",
+	"SpecUrl" : ""
+}
+{
+	"Severity" : "Information",
+	"VUID" : "CURRENT-VALIDATION-ENABLED",
+	"Objects" : [
+		{"type" : "VkInstance", "handle" : "0x55c221a40010", "name" : ""}
+	],
+	"MessageID" : "0xfd7b2292",
+	"Function" : "vkCreateInstance",
+	"Location" : "",
+	"MainMessage" : "Current Validation Enabled:\n  - Core Checks\n  - Stateless Parameter\n  - Object lifetime\n  - Thread Safety\n  - Handle Wrapping\n  - Best Practices\n",
+	"DebugRegion" : "",
+	"SpecText" : "",
+	"SpecUrl" : ""
+}
+{
+	"Severity" : "Error",
+	"VUID" : "VUID-VkBufferCreateInfo-size-00912",
+	"Objects" : [
+	],
+	"MessageID" : "0x7c54445e",
+	"Function" : "vkCreateBuffer",
+	"Location" : "pCreateInfo->size",
+	"MainMessage" : "is zero.",
+	"DebugRegion" : "",
+	"SpecText" : "size must be greater than 0",
+	"SpecUrl" : "https://docs.vulkan.org/spec/latest/chapters/resources.html#VUID-VkBufferCreateInfo-size-00912"
+}
+{
+	"Severity" : "Performance Warning",
+	"VUID" : "BestPractices-vkBindBufferMemory-small-dedicated-allocation",
+	"Objects" : [
+	],
+	"MessageID" : "0x10b59d4b",
+	"Function" : "vkBindBufferMemory",
+	"Location" : "",
+	"MainMessage" : "Trying to bind VkBuffer 0x20000000002 to a memory block which is fully consumed by the buffer. The required size of the allocation is 256, but smaller buffers like this should be sub-allocated from larger memory blocks. (Current threshold is 1048576 bytes)",
+	"DebugRegion" : "",
+	"SpecText" : "",
+	"SpecUrl" : ""
+}
+{
+	"Severity" : "Error",
+	"VUID" : "VUID-vkCmdSetLineWidth-lineWidth-00788",
+	"Objects" : [
+		{"type" : "VkCommandBuffer", "handle" : "0x55c221b69fe0", "name" : "frame commands"}
+	],
+	"MessageID" : "0x3d555d77",
+	"Function" : "vkCmdSetLineWidth",
+	"Location" : "lineWidth",
+	"MainMessage" : "is 2.000000 (not 1.0), but the wideLines feature was not enabled.",
+	"DebugRegion" : "",
+	"SpecText" : "If the wideLines feature is not enabled, lineWidth must be 1.0",
+	"SpecUrl" : "https://docs.vulkan.org/spec/latest/chapters/primsrast.html#VUID-vkCmdSetLineWidth-lineWidth-00788"
+}
+{
+	"Severity" : "Error",
+	"VUID" : "VUID-vkCmdSetLineWidth-lineWidth-00788",
+	"Objects" : [
+		{"type" : "VkCommandBuffer", "handle" : "0x55c221b69fe0", "name" : "frame commands"}
+	],
+	"MessageID" : "0x3d555d77",
+	"Function" : "vkCmdSetLineWidth",
+	"Location" : "lineWidth",
+	"MainMessage" : "is 2.000000 (not 1.0), but the wideLines feature was not enabled.",
+	"DebugRegion" : "",
+	"SpecText" : "If the wideLines feature is not enabled, lineWidth must be 1.0",
+	"SpecUrl" : "https://docs.vulkan.org/spec/latest/chapters/primsrast.html#VUID-vkCmdSetLineWidth-lineWidth-00788"
+}
+{
+	"Severity" : "Error",
+	"VUID" : "VUID-vkCmdSetLineWidth-lineWidth-00788",
+	"Objects" : [
+		{"type" : "VkCommandBuffer", "handle" : "0x55c221b69fe0", "name" : "frame commands"}
+	],
+	"MessageID" : "0x3d555d77",
+	"Function" : "vkCmdSetLineWidth",
+	"Location" : "lineWidth",
+	"MainMessage" : "is 2.000000 (not 1.0), but the wideLines feature was not enabled.",
+	"DebugRegion" : "",
+	"SpecText" : "If the wideLines feature is not enabled, lineWidth must be 1.0",
+	"SpecUrl" : "https://docs.vulkan.org/spec/latest/chapters/primsrast.html#VUID-vkCmdSetLineWidth-lineWidth-00788"
+}
+{
+	"Severity" : "Error",
+	"VUID" : "VUID-vkFreeCommandBuffers-pCommandBuffers-00047",
+	"Objects" : [
+		{"type" : "VkCommandBuffer", "handle" : "0x55c221b69fe0", "name" : "frame commands"},
+		{"type" : "VkCommandPool", "handle" : "0x40000000004", "name" : ""}
+	],
+	"MessageID" : "0x1ab902fc",
+	"Function" : "vkFreeCommandBuffers",
+	"Location" : "pCommandBuffers[0]",
+	"MainMessage" : "(VkCommandBuffer 0x55c221b69fe0[frame commands]) is in use.",
+	"DebugRegion" : "",
+	"SpecText" : "All elements of pCommandBuffers must not be in the pending state",
+	"SpecUrl" : "https://docs.vulkan.org/spec/latest/chapters/cmdbuffers.html#VUID-vkFreeCommandBuffers-pCommandBuffers-00047"
+}
+{
+	"Severity" : "Error",
+	"VUID" : "VUID-vkDestroyFence-fence-01120",
+	"Objects" : [
+	],
+	"MessageID" : "0x5d296248",
+	"Function" : "vkDestroyFence",
+	"Location" : "",
+	"MainMessage" : "can't be called on VkFence 0x50000000005 that is currently in use by VkQueue 0x55c221b48eb0",
+	"DebugRegion" : "",
+	"SpecText" : "All queue submission commands that refer to fence must have completed execution",
+	"SpecUrl" : "https://docs.vulkan.org/spec/latest/chapters/synchronization.html#VUID-vkDestroyFence-fence-01120"
+}

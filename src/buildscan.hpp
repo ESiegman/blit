@@ -42,6 +42,7 @@ struct BuildProblem {
     std::string message;
     std::string code;   // the tool's own name for it, where it gives one (a lint rule, a VUID); "" if none
     std::vector<BuildNote> notes;  // what it goes on to name, in order
+    u32 count = 1;      // the times the output said it (a validation message, every frame: one row); more than 1 from the scan: that many so far, for the row already found
     u32 group = 0, seq = 0;  // (the editor's: its file, by the order the files came in, and its own place in that order)
 };
 
@@ -139,6 +140,14 @@ private:
 
     // (Each kind's own state, below its name.)
     // buildvalidation.cpp:
+    // A validation message being read (its lines go on to its end), what it
+    // is so far (its path as written; none: no place), whether it is one to
+    // show (not the layer's Information), where in it the lines are; and
+    // each message's first problem, with the times it has been said.
+    u8 val_ = 0;
+    bool val_show_ = false, val_said_ = false, val_spec_ = false, val_more_ = false;
+    BuildProblem val_problem_;
+    std::unordered_map<std::string, BuildProblem> val_seen_;
     // buildmatch.cpp:
     // buildtools.cpp:
     // buildtests.cpp:

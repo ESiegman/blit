@@ -1,0 +1,14 @@
+2026-11-21 12:30:33.146 bad[80870:13486131] Metal API Validation Enabled
+2026-11-21 12:30:33.178 bad[80870:13486131] Draw Errors Validation
+missing vertexDescriptor Buffer binding at index 0.
+2026-11-21 12:30:33.178 bad[80870:13486131] Draw Errors Validation
+Vertex Function(vmain): missing Buffer binding at index 0 for vertexBuffer.0[0].
+2026-11-21 12:30:33.182 bad[80870:13486131] Draw Errors Validation
+missing vertexDescriptor Buffer binding at index 0.
+2026-11-21 12:30:33.182 bad[80870:13486131] Draw Errors Validation
+Vertex Function(vmain): missing Buffer binding at index 0 for vertexBuffer.0[0].
+2026-11-21 12:30:33.182 bad[80870:13486131] Draw Errors Validation
+missing vertexDescriptor Buffer binding at index 0.
+2026-11-21 12:30:33.182 bad[80870:13486131] Draw Errors Validation
+Vertex Function(vmain): missing Buffer binding at index 0 for vertexBuffer.0[0].
+done

@@ -1,0 +1,41 @@
+Validation Warning: [ VALIDATION-SETTINGS ] | MessageID = 0x7f1922d7
+vkCreateInstance(): Information with the layer settings provided:
+- Both GPU Assisted Validation and Normal Core Check Validation are enabled, this is not recommended as it will be very slow. Once all errors in Core Check are solved, please disable it (validate_core), then only use GPU-AV for best performance.
+
+
+Validation Warning: [ WARNING-Setting-Limit-Adjusted ] | MessageID = 0x86fe6721
+vkCreateDevice(): Warning that validation is adjusting settings:
+	Forcing fragmentStoresAndAtomics to VK_TRUE
+	Forcing vertexPipelineStoresAndAtomics to VK_TRUE
+	Forcing shaderInt64 to VK_TRUE
+	Forcing shaderInt16 to VK_TRUE
+	Adding a VkPhysicalDeviceTimelineSemaphoreFeatures to pNext with timelineSemaphore set to VK_TRUE
+	Adding a VkPhysicalDeviceVulkanMemoryModelFeatures to pNext with vulkanMemoryModel and vulkanMemoryModelDeviceScope set to VK_TRUE
+	Adding a VkPhysicalDeviceBufferDeviceAddressFeatures to pNext with bufferDeviceAddress set to VK_TRUE
+	Adding a VkPhysicalDeviceScalarBlockLayoutFeatures to pNext with scalarBlockLayout set to VK_TRUE
+	Adding a VkPhysicalDevice8BitStorageFeatures to pNext with storageBuffer8BitAccess set to VK_TRUE
+	Adding a VkPhysicalDeviceShaderFloat16Int8Features to pNext with shaderInt8 set to VK_TRUE
+	Adding a VkPhysicalDevice16BitStorageFeatures to pNext with storageBuffer16BitAccess set to VK_TRUE
+
+
+Validation Warning: [ WARNING-Setting-Limit-Adjusted ] | MessageID = 0x86fe6721
+vkCreateDevice(): Warning that validation is adjusting settings:
+	Ray Tracing validation option was enabled, but neither the rayTracingPipeline nor the rayQuery feature are supported. [Disabling gpuav_validate_trace_ray]
+	Mesh Shading validation option was enabled, but the meshShader feature is not supported. [Disabling gpuav_mesh_shading]
+
+
+Validation Error: [ VUID-vkCmdDispatch-storageBuffers-06936 ] | MessageID = 0xace7baff
+vkCmdDispatch(): (set = 0, binding = 0, index 0)  access out of bounds. The descriptor buffer (VkBuffer 0x90000000009) size is 16 bytes, 16 bytes were bound, and the highest out of bounds access was at [259] bytes
+Stage = Compute.  Global invocation ID (x, y, z) = (0, 0, 0)
+Command buffer (0x55773cf0ccb0)
+	Compute Dispatch Index 0
+Shader Module (0xb000000000b) (internal ID 1)
+Shader validation error occurred at oob.comp:7
+
+    data.v[i] = 7;
+The Vulkan spec states: If any stage of the VkPipeline object bound to the pipeline bind point used by this command accesses a storage buffer, and that stage was created without enabling either VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS or VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2 for storageBuffers, and the robustBufferAccess feature is not enabled, that stage must not access values outside of the range of the buffer as specified in the descriptor set bound to the same pipeline bind point (https://docs.vulkan.org/spec/latest/chapters/dispatch.html#VUID-vkCmdDispatch-storageBuffers-06936)
+Objects: 3
+    [0] VkQueue 0x55773ce81d20
+    [1] VkCommandBuffer 0x55773cf0ccb0
+    [2] VkPipeline 0xf000000000f
+

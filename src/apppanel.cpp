@@ -406,12 +406,13 @@ std::string App::problems_dump() {
     const Side& s = *side_;
     for (const ProblemRow& row : problem_rows(bp, files)) {
         out += " | ";
-        if (row.kind == ProblemRow::kFile) out += "file " + shown_path(bp[row.index].path, panel_root());
+        if (row.kind == ProblemRow::kFile) out += bp[row.index].path.empty() ? std::string("no file") : "file " + shown_path(bp[row.index].path, panel_root());
         else if (row.kind == ProblemRow::kHead) out += "Problems " + std::to_string(n);
         else if (row.kind == ProblemRow::kLspFile) out += "file " + shown_path(files[row.index].path, panel_root()) + (files[row.index].key ? "" : " (not open)");
         else if (row.kind == ProblemRow::kBuild) {
             const BuildProblem& p = bp[row.index];
-            out += std::string(row.index == s.problem ? ">" : "") + (p.severity == 1 ? "E " : "W ") + std::to_string(p.line) + (p.col ? ":" + std::to_string(p.col) : "") + " " + p.message;
+            out += std::string(row.index == s.problem ? ">" : "") + (p.severity == 1 ? "E " : "W ") + (p.path.empty() ? "" : std::to_string(p.line) + (p.col ? ":" + std::to_string(p.col) : "") + " ") + p.message +
+                   (p.count > 1 ? " \xC3\x97" + std::to_string(p.count) : "");
         } else if (row.kind == ProblemRow::kDiag) {
             const ProblemFile* file = nullptr;
             const ProblemFile::Item* it = lsp_problem(files, row.index, &file);
@@ -1488,6 +1489,10 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
             s.problem_show = false;
             const std::string* root = panel_root();
             auto file_row = [&](u32 r, const std::string& path, bool open) {  // its icon, its name, and its folder
+                if (path.empty()) {  // (the build's problems with no place: a Vulkan message's)
+                    put(box, font, r, 3, fit_text("No file", cols > 3 ? cols - 3 : 0), ink::kMuted);
+                    return;
+                }
                 const std::string shown = shown_path(path, root);
                 const size_t sl = shown.rfind('/');
                 const std::string file = sl == std::string::npos ? shown : shown.substr(sl + 1);
@@ -1503,9 +1508,13 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
                 } else if (row.kind == ProblemRow::kBuild) {  // under it: how bad, the line, what
                     const BuildProblem& p = bp[row.index];
                     box.put(font, r, 2, p.severity == 1 ? "E" : "W", kInkDiagnostic + p.severity - 1, Font::kBold);
-                    const u32 c = put(box, font, r, 4, std::to_string(p.line), ink::kMuted);
+                    const u32 c = p.path.empty() ? 3 : put(box, font, r, 4, std::to_string(p.line), ink::kMuted);
                     const std::string_view message = std::string_view(p.message).substr(0, p.message.find('\n'));
-                    put(box, font, r, c + 1, fit_text(message, cols > c + 1 ? cols - c - 1 : 0), ink::kText);
+                    // (Said again and again, every frame: how many times, at the row's end.)
+                    const std::string times = p.count > 1 ? "\xC3\x97" + std::to_string(p.count) : std::string();
+                    const u32 tw = times.empty() ? 0 : static_cast<u32>(times.size());  // (× and a space before it: as many cells as its bytes)
+                    put(box, font, r, c + 1, fit_text(message, cols > c + 1 + tw ? cols - c - 1 - tw : 0), ink::kText);
+                    if (tw && cols > tw) put(box, font, r, cols - tw + 1, times, ink::kMuted);
                     if (row.index == s.problem) light_row(box, r, s.focus);
                 } else if (row.kind == ProblemRow::kHead) {
                     lsp_heading(r);

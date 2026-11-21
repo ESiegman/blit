@@ -1,0 +1,17 @@
+2026-11-21 12:30:33.239 bad[80873:13486153] Metal GPU Validation Enabled
+
+=================================================================
+Invalid Metal usage: Invalid store in 'device' or 'constant' address space at offset 16384, executing compute function: "fill" 
+MTLBuffer: <no label>, length:16,  gpuAddress: 0x11000008eb00, resident:Read Write
+
+pipeline: "(null)", pipeline UID: "7096F0FA1F237DDB24D26DB8682B4F04413BA53FCB0725DDD9DB95E491D16093"
+
+Error detected in dispatchThreads:threadsPerThreadgroup: in encoder with label "<no label>"
+GPU stack trace:
+	* frame #0: fill() - /program_source:7:19
+
+MTLBuffer allocated here: 
+0   bad                                 0x00000001002449f0 main + 512
+1   dyld                                0x000000018cae4d7c start + 6652
+=================================================================
+done
