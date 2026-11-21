@@ -7,7 +7,9 @@
 // pytest's "path.py:line: AssertionError"; and the sanitizers' reports
 // (AddressSanitizer, LeakSanitizer, ThreadSanitizer, MemorySanitizer: at
 // the first frame of a stack in the program's own files, what was wrong;
-// UndefinedBehaviorSanitizer's "path:line:col: runtime error: ..."). The bytes are a terminal's: the
+// UndefinedBehaviorSanitizer's "path:line:col: runtime error: ..."). A
+// compiler's notes, the include chain and instantiation context before its
+// problem, and a sanitizer's stacks are the problem's notes. The bytes are a terminal's: the
 // escape sequences are dropped, and a line a carriage return goes back
 // over (Ninja's progress) is the line written over it.
 //
@@ -81,6 +83,7 @@ public:
 
     static constexpr size_t kMaxProblems = 5000;  // a run's, at most
     static constexpr size_t kMaxLine = 4096;      // bytes of a line looked at
+    static constexpr size_t kMaxNotes = 100;      // a problem's, at most (a deep stack's frames)
 
 private:
     void line(std::string_view text);
@@ -98,9 +101,12 @@ private:
     bool cmake_line(std::string_view text);
     bool python_line(std::string_view text);
     bool compiler_line(std::string_view text);
+    bool report_line(std::string_view text);
     bool sanitizer_line(std::string_view text);
+    void sanitizer_end();
     void entered(std::string_view text);
     void wrapped_join();
+    void wrapped_stop();
     void wrapped_end();
     void cmake_end();
     // A problem found (none if it was found before, or there are too many):
@@ -124,10 +130,17 @@ private:
     std::string line_;
     u64 lines_ = 0;
 
-    // A compiler's problem, kept for a line: Clang writing to a terminal
-    // wraps its message to the terminal's width, onto lines under it.
-    bool wrap_ = false;
-    BuildProblem wrap_problem_;  // (its path as written)
+    // A compiler's problem, held for its notes (and the source lines and
+    // carets under it and them); and for a line after it or a note: Clang
+    // writing to a terminal wraps its message to the terminal's width, onto
+    // lines under it (wrap_note_: the last note's).
+    bool held_ = false, wrap_ = false, wrap_note_ = false;
+    BuildProblem wrap_problem_;  // (its path as written; its notes' made full)
+    // What comes before a compiler's problem or note: an include chain,
+    // GCC's instantiation context; and the line it last went on at (it is
+    // the next problem's or note's only from the line after).
+    std::vector<BuildNote> chain_;
+    u64 chain_at_ = 0;
     // The last line six spaces in under it: its message, unless carets come
     // next (then it was the source line, printed with no line number).
     bool wrap_held_ = false;
@@ -138,9 +151,11 @@ private:
     bool cmake_outside_ = false, cmake_held_ = false, cmake_stack_ = false;
     BuildProblem cmake_problem_;
     // A sanitizer's report: what it says is wrong (and what was read or
-    // written, or leaked), and whether a frame of its stack has been taken.
+    // written, or leaked); its stacks' frames and their headings, as notes;
+    // and the first frame in the program's own files, once one has come.
     bool san_ = false, san_taken_ = false;
     std::string san_kind_, san_what_;
+    BuildProblem san_problem_;  // (its path as written)
     // Python's traceback: its innermost frame of a file's own, so far.
     bool py_ = false;
     std::string py_path_;

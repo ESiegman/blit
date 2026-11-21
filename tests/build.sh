@@ -221,6 +221,96 @@ got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.b
 check "a problem whose file is nowhere (Metal's run-time program_source): counted and listed, F8 says it and goes nowhere" 'button: ▶ make phantom · 1 error | Build 1 | file program_source | >E 26:30 use of undeclared identifier '"'"'pulze'"'"'/blit: Problem 1 of 1: use of undeclared identifier '"'"'pulze'"'"'/'
 run "$F" "buildrun:make stack;buildwait;problemsdump"
 check "CMake's error in its own module: at the project's frame of its call stack" 'button: ▶ make stack · 3 errors | Build 4 | file CMakeLists.txt | >E 9 Failed to find ROCm. (from /opt/cmake/Modules/CMakeDetermineHIPCompiler.cmake:210) | file cmake/x.cmake | W 2 First. (from /opt/cmake/Modules/Find.cmake:7) | E 2 In the project. | file /opt/cmake/Modules/Lone.cmake | E 1 No stack.'
+# A compiler's notes, the include chain before its problem and GCC's
+# instantiation context: the problem's notes, shown under it in the
+# Problems tab once it is opened (Right; Left closes it). Real output, as
+# g++-16 (Homebrew GCC 16.2.0) and Apple clang 21.0.0 print it for b.cpp
+# below (on macOS, not to a terminal).
+N="$dir/notes"
+mkdir -p "$N/inc"
+printf '#pragma once\ninline int f() { return y; }\n' >"$N/inc/a.h"
+printf '#pragma once\n#include "a.h"\n' >"$N/inc/c.h"
+printf '#include "inc/c.h"\nvoid g();\ntemplate <class T> void h(T t) { t.nope(); }\nint main() {\n    g(1);\n    h(3);\n}\n' >"$N/b.cpp"
+cat >"$N/gcc.txt" <<'EOF'
+In file included from inc/c.h:2,
+                 from b.cpp:1:
+inc/a.h: In function 'int f()':
+inc/a.h:2:25: error: 'y' was not declared in this scope
+    2 | inline int f() { return y; }
+      |                         ^
+b.cpp: In function 'int main()':
+b.cpp:5:6: error: too many arguments to function 'void g()'
+    5 |     g(1);
+      |     ~^~~
+b.cpp:2:6: note: declared here
+    2 | void g();
+      |      ^
+b.cpp: In instantiation of 'void h(T) [with T = int]':
+b.cpp:6:6:   required from here
+    6 |     h(3);
+      |     ~^~~
+b.cpp:3:36: error: request for member 'nope' in 't', which is of non-class type 'int'
+    3 | template <class T> void h(T t) { t.nope(); }
+      |                                  ~~^~~~
+EOF
+cat >"$N/clang.txt" <<'EOF'
+In file included from b.cpp:1:
+In file included from ./inc/c.h:2:
+./inc/a.h:2:25: error: use of undeclared identifier 'y'
+    2 | inline int f() { return y; }
+      |                         ^
+b.cpp:5:5: error: no matching function for call to 'g'
+    5 |     g(1);
+      |     ^
+b.cpp:2:6: note: candidate function not viable: requires 0 arguments, but 1 was provided
+    2 | void g();
+      |      ^
+b.cpp:3:35: error: member reference base type 'int' is not a structure or union
+    3 | template <class T> void h(T t) { t.nope(); }
+      |                                  ~^~~~~
+b.cpp:6:5: note: in instantiation of function template specialization 'h<int>' requested here
+    6 |     h(3);
+      |     ^
+3 errors generated.
+EOF
+printf 'gcc:\n\t@cat gcc.txt; exit 1\nclang:\n\t@cat clang.txt; exit 1\n' >"$N/Makefile"
+run "$N" "buildrun:make gcc;buildwait;problemsdump"
+check "GCC's notes, include chain and instantiation: under their problems, shut (a triangle says so)" 'button: ▶ make gcc · 3 errors | Build 3 | file inc/a.h | >▸E 2:25 '"'"'y'"'"' was not declared in this scope | file b.cpp | ▸E 5:6 too many arguments to function '"'"'void g()'"'"' | ▸E 3:36 request for member '"'"'nope'"'"' in '"'"'t'"'"', which is of non-class type '"'"'int'"'"''
+open_all="key:cmd+shift+m;key:Right;key:Down;key:Down;key:Down;key:Right;key:Down;key:Down;key:Right;key:Down;key:Down"
+run "$N" "buildrun:make gcc;buildwait;$open_all;problemsdump"
+got=${got#*| Build 3 | }
+check "opened (Right on each, Down through them): the header's chain, the note, the instantiation" 'file inc/a.h | ▾E 2:25 '"'"'y'"'"' was not declared in this scope |   c.h:2 included here |   b.cpp:1 included here | file b.cpp | ▾E 5:6 too many arguments to function '"'"'void g()'"'"' |   2:6 declared here | ▾E 3:36 request for member '"'"'nope'"'"' in '"'"'t'"'"', which is of non-class type '"'"'int'"'"' |   In instantiation of '"'"'void h(T) [with T = int]'"'"' | >  6:6 required from here'
+run "$N" "buildrun:make clang;buildwait;$open_all;problemsdump"
+got=${got#*| Build 3 | }
+check "Clang's: its chain a line each, its instantiation a note" 'file inc/a.h | ▾E 2:25 use of undeclared identifier '"'"'y'"'"' |   b.cpp:1 included here |   c.h:2 included here | file b.cpp | ▾E 5:5 no matching function for call to '"'"'g'"'"' |   2:6 candidate function not viable: requires 0 arguments, but 1 was provided | ▾E 3:35 member reference base type '"'"'int'"'"' is not a structure or union | >  6:5 in instantiation of function template specialization '"'"'h<int>'"'"' requested here'
+run "$N" "buildrun:make gcc;buildwait;key:cmd+shift+m;key:Right;key:Down;key:Return;frame;statusdump"
+check "Enter on a note: its place" 'NORMAL inc/c.h | × 3 ▲ 0 Ln 2, Col 1 Tabs LF C++'
+run "$N" "buildrun:make gcc;buildwait;key:cmd+shift+m;key:Right;key:Right;key:Down;key:Left;problemsdump"
+got=${got#*| Build 3 | }
+check "Right on an open problem: its first note; Left: back to the problem" 'file inc/a.h | >▾E 2:25 '"'"'y'"'"' was not declared in this scope |   c.h:2 included here |   b.cpp:1 included here | file b.cpp | ▸E 5:6 too many arguments to function '"'"'void g()'"'"' | ▸E 3:36 request for member '"'"'nope'"'"' in '"'"'t'"'"', which is of non-class type '"'"'int'"'"''
+run "$N" "buildrun:make gcc;buildwait;key:cmd+shift+m;key:Right;key:Down;key:Left;key:Left;key:Down;problemsdump"
+got=${got#*| Build 3 | }
+check "and Left again shuts it: Down goes on to the next problem" 'file inc/a.h | ▸E 2:25 '"'"'y'"'"' was not declared in this scope | file b.cpp | >▸E 5:6 too many arguments to function '"'"'void g()'"'"' | ▸E 3:36 request for member '"'"'nope'"'"' in '"'"'t'"'"', which is of non-class type '"'"'int'"'"''
+run "$N" "buildrun:make gcc;buildwait;$open_all;key:Escape;key:F8;key:F8;frame;statusdump"
+check "F8 goes through the problems, not their notes" 'NORMAL b.cpp | × 3 ▲ 0 Ln 5, Col 6 Spaces: 4 LF C++'
+# A click on a problem's triangle opens it (and again shuts it), where a
+# click on the rest of its row goes to it; a click on a note goes to its place.
+cell=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --info 2>/dev/null | sed -n 's/.*at scale \([0-9.]*\), cell \([0-9]*\) x \([0-9]*\) px.*/\1 \2 \3/p')
+at_row() { echo "$cell" | awk -v r="$1" '{ printf "%d", (r * $3 + $3 * 3 / 4) / $1 }'; }  # (the mouse goes by points, the cells by pixels)
+cw=$(echo "$cell" | awk '{ printf "%d", $2 / $1 }')
+y3=$(at_row 3) y4=$(at_row 4)
+run "$N" "buildrun:make gcc;buildwait;key:cmd+shift+m;frame;click:2,$y3;release;frame;problemsdump"
+got=${got#*| Build 3 | }
+got=${got%% | file b.cpp*}
+check "a click on the triangle: its notes shown" 'file inc/a.h | >▾E 2:25 '"'"'y'"'"' was not declared in this scope |   c.h:2 included here |   b.cpp:1 included here'
+run "$N" "buildrun:make gcc;buildwait;key:cmd+shift+m;frame;click:2,$y3;release;frame;click:2,$y3;release;frame;problemsdump"
+got=${got#*| Build 3 | }
+got=${got%% | file b.cpp*}
+check "and again: hidden" 'file inc/a.h | >▸E 2:25 '"'"'y'"'"' was not declared in this scope'
+run "$N" "buildrun:make gcc;buildwait;key:cmd+shift+m;frame;click:2,$y3;release;frame;click:$((cw * 12)),$y4;release;frame;statusdump"
+check "a click on a note: its place" 'NORMAL inc/c.h | × 3 ▲ 0 Ln 2, Col 1 Tabs LF C++'
+run "$N" "buildrun:make gcc;buildwait;key:cmd+shift+m;frame;click:$((cw * 12)),$y3;release;frame;statusdump"
+check "a click on the rest of the row: the problem" 'NORMAL inc/a.h | × 3 ▲ 0 Ln 2, Col 25 Tabs LF C++'
 # CMake's build type and target, chosen in the Build tab (Enter on each):
 # Release, then the target app of the folder's own (CMake's help lists
 # them); Build configures with the type and builds that target alone.
@@ -288,11 +378,14 @@ EOF
 printf 'reports:\n\tsh reports.sh\nasan:\n\tcc -g -O0 -fsanitize=address -o a a.c && ./a\n' >"$S/Makefile"
 run "$S" "buildrun:make reports;buildwait;problemsdump"
 got=$(printf '%s' "$got" | sed -e 's/^button: [^|]*| //' -e 's/Build [0-9]* | //')
-check "the sanitizers' reports: where in the program's own code, and what" 'file a.c | >E 5:12 AddressSanitizer: heap-buffer-overflow: READ of size 4 | E 3:5 LeakSanitizer: detected memory leaks: Indirect leak of 8 byte(s) in 1 object(s) | file t.c | E 2:5 runtime error: signed integer overflow: 2147483647 + 1 cannot be represented in type int | E 1:5 ThreadSanitizer: data race: Write of size 4 | E 3:5 LeakSanitizer: detected memory leaks: Direct leak of 64 byte(s) in 1 object(s)'
+check "the sanitizers' reports: where in the program's own code, and what (each with its stack's frames, shut)" 'file a.c | >▸E 5:12 AddressSanitizer: heap-buffer-overflow: READ of size 4 | ▸E 3:5 LeakSanitizer: detected memory leaks: Indirect leak of 8 byte(s) in 1 object(s) | file t.c | E 2:5 runtime error: signed integer overflow: 2147483647 + 1 cannot be represented in type int | ▸E 1:5 ThreadSanitizer: data race: Write of size 4 | ▸E 3:5 LeakSanitizer: detected memory leaks: Direct leak of 64 byte(s) in 1 object(s)'
+run "$S" "buildrun:make reports;buildwait;key:cmd+shift+m;key:Right;key:Down;key:Down;key:Down;key:Down;key:Down;key:Right;key:Down;key:Down;key:Down;key:Down;key:Right;key:Down;key:Down;key:Down;key:Down;key:Down;key:Right;problemsdump"
+got=$(printf '%s' "$got" | sed -e 's/^button: [^|]*| //' -e 's/Build [0-9]* | //')
+check "opened: every frame, a heading over each stack, a leak's own stack" 'file a.c | ▾E 5:12 AddressSanitizer: heap-buffer-overflow: READ of size 4 |   READ of size 4 thread T0 |   #0 memcpy (/usr/lib/libc.so.6+0x10) |   5:12 #1 main |   #2 start (/usr/lib/dyld+0x20) | ▾E 3:5 LeakSanitizer: detected memory leaks: Indirect leak of 8 byte(s) in 1 object(s) |   #0 malloc (/usr/lib/libasan.so+0x9) |   3:5 #1 main | file t.c | E 2:5 runtime error: signed integer overflow: 2147483647 + 1 cannot be represented in type int | ▾E 1:5 ThreadSanitizer: data race: Write of size 4 |   Write of size 4 by thread T1 |   1:5 #0 f |   Previous read of size 4 by main thread |   2:5 #0 g | >▾E 3:5 LeakSanitizer: detected memory leaks: Direct leak of 64 byte(s) in 1 object(s) |   #0 malloc (/usr/lib/libasan.so+0x9) |   3:5 #1 h'
 if (cd "$S" && printf 'int main(void){return 0;}\n' | cc -fsanitize=address -x c -o /dev/null - 2>/dev/null); then
     run "$S" "buildrun:make asan;buildwait;problemsdump"
     got=$(printf '%s' "$got" | sed -e 's/^button: [^|]*| //' -e 's/Build [0-9]* | //' -e 's/E 5:[0-9]* /E 5 /')  # (a column, or none, as the symbolizer has it)
-    check "a program built with AddressSanitizer, run: its report read" 'file a.c | >E 5 AddressSanitizer: heap-buffer-overflow: READ of size 4'
+    check "a program built with AddressSanitizer, run: its report read" 'file a.c | >▸E 5 AddressSanitizer: heap-buffer-overflow: READ of size 4'
 fi
 # On macOS ASan symbolises with atos, into bare names: each the project's
 # one file of that name, wherever it is.
@@ -309,11 +402,158 @@ exit 1
 EOF
 printf 'asan:\n\tsh report.sh\n' >"$AS/Makefile"
 run "$AS" "buildrun:make asan;buildwait;problemsdump"
-check "a bare name: the project's file of it" 'button: ▶ make asan · 1 error | Build 1 | file src/ring.cpp | >E 5 AddressSanitizer: heap-buffer-overflow: WRITE of size 8'
+check "a bare name: the project's file of it" 'button: ▶ make asan · 1 error | Build 1 | file src/ring.cpp | >▸E 5 AddressSanitizer: heap-buffer-overflow: WRITE of size 8'
 run "$AS" "buildrun:make asan;buildwait;key:F8;frame;statusdump"
 check "F8 goes there" 'NORMAL ring.cpp | × 1 ▲ 0 Ln 5, Col 1 Tabs LF C++'
 run "$AS" "buildrun:make asan;frame;buildwait;frame;termclick:test_ring.cpp:3;frame;statusdump"
 check "and Cmd+click on another frame's" 'NORMAL test_ring.cpp | × 1 ▲ 0 Ln 3, Col 1 LF C++'
+# Real reports, as the programs below print them when built with clang's
+# -fsanitize=thread and -fsanitize=address (Apple clang 21.0.0, macOS: bare
+# names, by atos) and with GCC's (gcc 16.2.1, Arch Linux: full paths, here
+# the folder's in place of the one they were built in). A race is one
+# problem, its two accesses' stacks (and the threads' making) its notes.
+RS="$dir/realsan"
+mkdir -p "$RS"
+cat >"$RS/race.c" <<'EOF'
+#include <pthread.h>
+#include <stdio.h>
+
+int counter;
+
+static void bump(void) { counter++; }
+
+static void* worker(void* arg) {
+    (void)arg;
+    bump();
+    return NULL;
+}
+
+int main(void) {
+    pthread_t a, b;
+    pthread_create(&a, NULL, worker, NULL);
+    pthread_create(&b, NULL, worker, NULL);
+    pthread_join(a, NULL);
+    pthread_join(b, NULL);
+    printf("%d\n", counter);
+    return 0;
+}
+EOF
+cat >"$RS/heap.c" <<'EOF'
+#include <stdlib.h>
+
+static int last(int* v, int n) { return v[n]; }
+
+int main(void) {
+    int* v = malloc(4 * sizeof(int));
+    for (int i = 0; i < 4; ++i) v[i] = i;
+    int x = last(v, 4);
+    free(v);
+    return x;
+}
+EOF
+cat >"$RS/race.mac.txt" <<'EOF'
+==================
+WARNING: ThreadSanitizer: data race (pid=77554)
+  Write of size 4 at 0x0001007ec000 by thread T2:
+    #0 bump race.c:6 (race:arm64+0x100000780)
+    #1 worker race.c:10 (race:arm64+0x10000073c)
+
+  Previous write of size 4 at 0x0001007ec000 by thread T1:
+    #0 bump race.c:6 (race:arm64+0x100000780)
+    #1 worker race.c:10 (race:arm64+0x10000073c)
+
+  Location is global 'counter' at 0x0001007ec000 (race+0x100008000)
+
+  Thread T2 (tid=13477301, running) created by main thread at:
+    #0 pthread_create <null> (libclang_rt.tsan_osx_dynamic.dylib:arm64e+0x33bac)
+    #1 main race.c:17 (race:arm64+0x1000006a8)
+
+  Thread T1 (tid=13477300, finished) created by main thread at:
+    #0 pthread_create <null> (libclang_rt.tsan_osx_dynamic.dylib:arm64e+0x33bac)
+    #1 main race.c:16 (race:arm64+0x100000690)
+
+SUMMARY: ThreadSanitizer: data race race.c:6 in bump
+==================
+2
+ThreadSanitizer: reported 1 warnings
+EOF
+cat >"$RS/race.lin.txt" <<'EOF'
+==================
+WARNING: ThreadSanitizer: data race (pid=153459)
+  Read of size 4 at 0x562e1a301064 by thread T2:
+    #0 bump @DIR@/race.c:6 (race+0x11ec) (BuildId: 4c88c9be284ec0ac009da024f791b809167a904b)
+    #1 worker @DIR@/race.c:10 (race+0x1234) (BuildId: 4c88c9be284ec0ac009da024f791b809167a904b)
+    #2 <null> <null> (libtsan.so.2+0x557e9) (BuildId: fad1b3f53c846e11570baa72e153cca909e3f7d2)
+
+  Previous write of size 4 at 0x562e1a301064 by thread T1:
+    #0 bump @DIR@/race.c:6 (race+0x1204) (BuildId: 4c88c9be284ec0ac009da024f791b809167a904b)
+    #1 worker @DIR@/race.c:10 (race+0x1234) (BuildId: 4c88c9be284ec0ac009da024f791b809167a904b)
+    #2 <null> <null> (libtsan.so.2+0x557e9) (BuildId: fad1b3f53c846e11570baa72e153cca909e3f7d2)
+
+  Location is global 'counter' of size 4 at 0x562e1a301064 (race+0x4064)
+
+  Thread T2 (tid=153462, running) created by main thread at:
+    #0 pthread_create <null> (libtsan.so.2+0x616c9) (BuildId: fad1b3f53c846e11570baa72e153cca909e3f7d2)
+    #1 main @DIR@/race.c:17 (race+0x12a5) (BuildId: 4c88c9be284ec0ac009da024f791b809167a904b)
+
+  Thread T1 (tid=153461, finished) created by main thread at:
+    #0 pthread_create <null> (libtsan.so.2+0x616c9) (BuildId: fad1b3f53c846e11570baa72e153cca909e3f7d2)
+    #1 main @DIR@/race.c:16 (race+0x1288) (BuildId: 4c88c9be284ec0ac009da024f791b809167a904b)
+
+SUMMARY: ThreadSanitizer: data race @DIR@/race.c:6 in bump
+==================
+2
+ThreadSanitizer: reported 1 warnings
+EOF
+cat >"$RS/heap.mac.txt" <<'EOF'
+=================================================================
+==77556==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x602000000940 at pc 0x0001045746dc bp 0x00016b88a300 sp 0x00016b88a2f8
+READ of size 4 at 0x602000000940 thread T0
+    #0 0x0001045746d8 in last heap.c:3
+    #1 0x000104574644 in main heap.c:8
+    #2 0x00018cae4d78 in start+0x19f8 (dyld:arm64e+0x31d78)
+
+0x602000000940 is located 0 bytes after 16-byte region [0x602000000930,0x602000000940)
+allocated by thread T0 here:
+    #0 0x000104ebd274 in malloc+0x78 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x41274)
+    #1 0x00010457458c in main heap.c:6
+    #2 0x00018cae4d78 in start+0x19f8 (dyld:arm64e+0x31d78)
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow heap.c:3 in last
+EOF
+cat >"$RS/heap.lin.txt" <<'EOF'
+=================================================================
+==153463==ERROR: AddressSanitizer: heap-buffer-overflow on address 0x7b7f749e0020 at pc 0x55cd3a9e91e4 bp 0x7fff4b26af90 sp 0x7fff4b26af80
+READ of size 4 at 0x7b7f749e0020 thread T0
+    #0 0x55cd3a9e91e3 in last @DIR@/heap.c:3
+    #1 0x55cd3a9e9272 in main @DIR@/heap.c:8
+    #2 0x7f5f75c27780  (/usr/lib/libc.so.6+0x27780) (BuildId: 6961407ef2e7877eabf5ed8c5a39aea9de7194c1)
+    #3 0x7f5f75c278b8 in __libc_start_main (/usr/lib/libc.so.6+0x278b8) (BuildId: 6961407ef2e7877eabf5ed8c5a39aea9de7194c1)
+    #4 0x55cd3a9e90b4 in _start (@DIR@/heap+0x10b4) (BuildId: f7b92652f5329f7ee6aa7c6893319b1f54644afe)
+
+0x7b7f749e0020 is located 0 bytes after 16-byte region [0x7b7f749e0010,0x7b7f749e0020)
+allocated by thread T0 here:
+    #0 0x7f5f7612c0c1 in malloc (/usr/lib/libasan.so.8+0x12c0c1) (BuildId: b8a4241051a1621937fdc46e867ba7ecb56d96ea)
+    #1 0x55cd3a9e91f9 in main @DIR@/heap.c:6
+    #2 0x7f5f75c27780  (/usr/lib/libc.so.6+0x27780) (BuildId: 6961407ef2e7877eabf5ed8c5a39aea9de7194c1)
+    #3 0x7f5f75c278b8 in __libc_start_main (/usr/lib/libc.so.6+0x278b8) (BuildId: 6961407ef2e7877eabf5ed8c5a39aea9de7194c1)
+    #4 0x55cd3a9e90b4 in _start (@DIR@/heap+0x10b4) (BuildId: f7b92652f5329f7ee6aa7c6893319b1f54644afe)
+
+SUMMARY: AddressSanitizer: heap-buffer-overflow @DIR@/heap.c:3 in last
+EOF
+for f in race.lin heap.lin; do sed "s#@DIR@#$RS#g" "$RS/$f.txt" >"$RS/$f.out"; done
+printf 'tsan:\n\t@cat race.mac.txt; exit 1\ntsan-gcc:\n\t@cat race.lin.out; exit 1\nasan:\n\t@cat heap.mac.txt; exit 1\nasan-gcc:\n\t@cat heap.lin.out; exit 1\n' >"$RS/Makefile"
+opened="buildwait;key:cmd+shift+m;key:Right;problemsdump"
+run "$RS" "buildrun:make tsan;$opened"
+check "ThreadSanitizer's race (clang, macOS): one problem, both accesses' stacks and the threads' under it" 'button: ▶ make tsan · 1 error | Build 1 | file race.c | >▾E 6 ThreadSanitizer: data race: Write of size 4 |   Write of size 4 by thread T2 |   6 #0 bump |   10 #1 worker |   Previous write of size 4 by thread T1 |   6 #0 bump |   10 #1 worker |   Thread T2 (tid=13477301, running) created by main thread at |   #0 pthread_create <null> (libclang_rt.tsan_osx_dynamic.dylib:arm64e+0x33bac) |   17 #1 main |   Thread T1 (tid=13477300, finished) created by main thread at |   #0 pthread_create <null> (libclang_rt.tsan_osx_dynamic.dylib:arm64e+0x33bac) |   16 #1 main'
+run "$RS" "buildrun:make tsan-gcc;$opened"
+check "and GCC's (Linux): its build ids left out" 'button: ▶ make tsan-gcc · 1 error | Build 1 | file race.c | >▾E 6 ThreadSanitizer: data race: Read of size 4 |   Read of size 4 by thread T2 |   6 #0 bump |   10 #1 worker |   #2 <null> <null> (libtsan.so.2+0x557e9) |   Previous write of size 4 by thread T1 |   6 #0 bump |   10 #1 worker |   #2 <null> <null> (libtsan.so.2+0x557e9) |   Thread T2 (tid=153462, running) created by main thread at |   #0 pthread_create <null> (libtsan.so.2+0x616c9) |   17 #1 main |   Thread T1 (tid=153461, finished) created by main thread at |   #0 pthread_create <null> (libtsan.so.2+0x616c9) |   16 #1 main'
+run "$RS" "buildrun:make asan;$opened"
+check "AddressSanitizer's (clang, macOS): the access's stack, and the allocation's" 'button: ▶ make asan · 1 error | Build 1 | file heap.c | >▾E 3 AddressSanitizer: heap-buffer-overflow: READ of size 4 |   READ of size 4 thread T0 |   3 #0 last |   8 #1 main |   #2 start+0x19f8 (dyld:arm64e+0x31d78) |   allocated by thread T0 here |   #0 malloc+0x78 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x41274) |   6 #1 main |   #2 start+0x19f8 (dyld:arm64e+0x31d78)'
+run "$RS" "buildrun:make asan-gcc;$opened"
+check "and GCC's (Linux): a frame with no name, its module" 'button: ▶ make asan-gcc · 1 error | Build 1 | file heap.c | >▾E 3 AddressSanitizer: heap-buffer-overflow: READ of size 4 |   READ of size 4 thread T0 |   3 #0 last |   8 #1 main |   #2 (/usr/lib/libc.so.6+0x27780) |   #3 __libc_start_main (/usr/lib/libc.so.6+0x278b8) |   #4 _start (~/realsan/heap+0x10b4) |   allocated by thread T0 here |   #0 malloc (/usr/lib/libasan.so.8+0x12c0c1) |   6 #1 main |   #2 (/usr/lib/libc.so.6+0x27780) |   #3 __libc_start_main (/usr/lib/libc.so.6+0x278b8) |   #4 _start (~/realsan/heap+0x10b4)'
+run "$RS" "buildrun:make tsan;buildwait;key:cmd+shift+m;key:Right;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Return;frame;statusdump"
+check "Enter on the other access's frame: there" 'NORMAL race.c | × 1 ▲ 0 Ln 10, Col 1 Spaces: 4 LF C'
 printf 'one\ntwo\n' >"$dir/notes.txt"
 export BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i"
 run "$dir/none" "open:$dir/notes.txt;frame;term;frame;text:echo ../notes.txt:2:3: here;key:Return;termwait:here;frame;termclick:notes.txt:2;frame;statusdump"

@@ -1672,7 +1672,13 @@ While a build runs (see [Building](#building)) the problems its output
 reports come in at the top, in a **Build** section: each file with its
 icon and folder, and under it its errors (`E`) and warnings (`W`) by line,
 the files in the order the build came to them. Enter or a click goes to
-one, in its file; the language servers' follow under them. **F8** and **Shift+F8** go to the next and the previous
+one, in its file; the language servers' follow under them. A problem with
+notes (a compiler's notes, the include chain and template instantiation
+that led to it, a sanitizer's stacks) has a small triangle before it:
+Right or a click on the triangle shows them under it, further in (each
+with its file, where that is another, and line), and Left hides them
+again, as folders open and shut in the Files tab. Up and Down go through
+the notes on show too; Enter or a click on one goes to its place. **F8** and **Shift+F8** go to the next and the previous
 problem from anywhere: the build's, across files, while there are any,
 else the language servers', from the cursor on and across files (opening
 the next one if it is not open); the tab picks the one gone to and the
@@ -2468,10 +2474,15 @@ errors). A run that failed with no error in its output says so instead:
 if it has some), "make failed with exit code 2: no problem found in its
 output" in the Problems tab and from F8, which then has nowhere to go;
 never "No problems" under a red button. The next run starts with none. A
-compiler's notes (`note:`) are not listed, but validation messages (below)
-with no place are, under **No file**; one whose file is nowhere (Metal's
-run-time `program_source` with no `.metal` file to be, below) is listed
-and counted, and F8 says it without going anywhere. **Cmd+click**
+compiler's notes (`note:`), the include chain before its problem (`In file
+included from c.h:2`, GCC's lines of `from` under it, Clang's a line each)
+and GCC's instantiation context (`In instantiation of ...`, `required from
+here`) are that problem's notes, in the Problems tab under it (where a
+chain comes just before a note, it is the note's, and so the problem's).
+Validation messages (below) with no place are listed under **No file**;
+one whose file is nowhere (Metal's run-time `program_source` with no
+`.metal` file to be, below) is listed and counted, and F8 says it without
+going anywhere. **Cmd+click**
 on a `path:line` (or `path:line:col`, or Python's `File "path", line N`)
 in any terminal tab opens the file there, in a split with text: a
 relative path from the shell's folder, the folders the build went into,
@@ -2488,7 +2499,10 @@ MemorySanitizer's (`==4242==ERROR: AddressSanitizer: heap-buffer-overflow`)
 at the first frame of its stack in the program's own files (not the
 system's or the compiler's), saying what was wrong and what was read or
 written ("READ of size 4"); each leak of a leak report is one of its own.
-UndefinedBehaviorSanitizer's `path:line:col: runtime error:` lines are
+Every frame of its stacks is a note of it, under the line over each stack
+("READ of size 4 thread T0", "allocated by thread T0 here"): a
+ThreadSanitizer data race is one problem, with both accesses' stacks (and
+where each thread was made). UndefinedBehaviorSanitizer's `path:line:col: runtime error:` lines are
 read as they come. Each frame of a stack is a `path:line` to Cmd+click. A
 bare file name in none of the folders tried (macOS's ASan symbolises with
 `atos`, into `ring.cpp:16`) is the project's one file of that name, from

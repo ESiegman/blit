@@ -153,6 +153,9 @@ void BuildScan::finish() {
     cr_ = false;
     esc_ = kText;
     wrapped_end();
+    chain_.clear();
+    sanitizer_end();
+    san_ = false;
     cmake_end();
     validation_end();
     matcher_end();
@@ -181,9 +184,10 @@ void BuildScan::line(std::string_view text) {
             return;
         }
         if (carets) wrap_held_ = false;
-        wrapped_end();
+        wrapped_stop();
     }
     if (validation_line(text) || matcher_line(text)) return;
+    if (report_line(text)) return;
     if (cmake_ && cmake_line(text)) return;
     if (sanitizer_line(text)) return;
     if (python_line(text)) return;
@@ -333,7 +337,11 @@ bool BuildScan::python_line(std::string_view text) {
 // 0x1234 in main /src/a.c:6:13" from ASan, "#0 worker /src/t.c:8 (t+0x12)"
 // from TSan), more stacks, and "SUMMARY: ...". The first frame of a stack
 // in a file of the program's own (not the system's) is where the problem
-// is; a leak report has a stack for each leak, each a problem.
+// is; a leak report has a stack for each leak, each a problem. Every frame
+// is a note of the problem, and so is the line over each stack ("READ of
+// size 4 thread T0", "allocated by thread T0 here", ThreadSanitizer's
+// "Previous write of size 4 by thread T1": a race's two accesses, one
+// problem).
 bool BuildScan::sanitizer_line(std::string_view text) {
     const std::string_view t = trim_left(text);
     for (const std::string_view kind : {"AddressSanitizer: ", "LeakSanitizer: ", "ThreadSanitizer: ", "MemorySanitizer: ", "HWAddressSanitizer: "}) {
@@ -342,54 +350,102 @@ bool BuildScan::sanitizer_line(std::string_view text) {
         std::string_view what = t.substr(at);
         for (const std::string_view cut : {" on address", " on unknown address", " (pid="})
             if (const size_t c = what.find(cut); c != std::string_view::npos) what = what.substr(0, c);
+        sanitizer_end();
         san_ = true;
-        san_taken_ = false;
         san_kind_ = std::string(trim(what));
         san_what_.clear();
         return true;
     }
     if (!san_) return false;
     if (t.starts_with("SUMMARY: ")) {
+        sanitizer_end();
         san_ = false;
         return true;
     }
+    // A stack's heading: its address left out ("Write of size 4 at 0x7b04 by thread T1:").
+    auto heading = [&](std::string_view h) {
+        if (h.ends_with(':')) h.remove_suffix(1);
+        std::string out(h);
+        if (const size_t a = out.find(" at 0x"); a != std::string::npos) {
+            size_t e = a + 6;
+            while (e < out.size() && (digit(out[e]) || (out[e] >= 'a' && out[e] <= 'f') || (out[e] >= 'A' && out[e] <= 'F'))) ++e;
+            out.erase(a, e - a);
+        }
+        if (san_problem_.notes.size() < kMaxNotes) san_problem_.notes.push_back({{}, 0, 0, std::move(out)});
+    };
     // What was read or written (the first such line), or a leak (each with a stack of its own).
     for (const std::string_view head : {"READ of size", "WRITE of size", "Read of size", "Write of size", "Atomic read of size", "Atomic write of size"})
         if (t.starts_with(head) && san_what_.empty()) {
             std::string_view w = t;
             if (const size_t c = w.find(" at 0x"); c != std::string_view::npos) w = w.substr(0, c);
             san_what_ = std::string(w);
+            heading(t);
             return true;
         }
     if (t.starts_with("Direct leak") || t.starts_with("Indirect leak")) {
+        sanitizer_end();
         std::string_view w = t;
         if (w.ends_with(" allocated from:")) w.remove_suffix(16);
         san_what_ = std::string(w);
-        san_taken_ = false;
         return true;
     }
-    if (!t.starts_with("#") || t.size() < 2 || !digit(t[1])) return true;  // (the report's other lines: nothing to show)
-    if (san_taken_) return true;
+    if (!t.starts_with("#") || t.size() < 2 || !digit(t[1])) {
+        // (Of the report's other lines, the heading over a stack after the
+        // first: "allocated by thread T0 here:", "Previous write of size 4 at
+        // 0x7b04 by thread T1:", "Thread T1 (tid=7, running) created by main thread at:".)
+        if (t.ends_with(':') && !san_problem_.notes.empty()) heading(t);
+        return true;
+    }
     // The frame's place: its last word that is a path with a line ("(module+0x12)" is not).
+    std::string_view path, place;
+    u32 line = 0, col = 0;
     size_t end = t.size();
     while (end > 0) {
         size_t begin = t.rfind(' ', end - 1);
         begin = begin == std::string_view::npos ? 0 : begin + 1;
         const std::string_view word = t.substr(begin, end - begin);
-        std::string_view path;
-        u32 line = 0, col = 0;
         if (!word.starts_with('(') && split_location(word, &path, &line, &col) && line > 0) {
-            static constexpr std::string_view kSystem[] = {"/usr/", "/lib", "/System/", "/Library/", "/opt/", "/Applications/", "<"};
-            if (std::ranges::none_of(kSystem, [&](std::string_view s) { return path.starts_with(s); })) {
-                add(path, line, col, 1, san_kind_ + (san_what_.empty() ? std::string() : ": " + san_what_));
-                san_taken_ = true;
-            }
+            place = word;
             break;
         }
+        path = {};
         if (begin == 0) break;
         end = begin - 1;
     }
+    // The note: the frame's number and function ("#1 main"), its address
+    // and module left out where it has a place, kept where it has none.
+    std::string_view number = t.substr(0, std::min(t.find(' '), t.size())), rest = trim_left(t.substr(number.size()));
+    if (rest.starts_with("0x")) {
+        const size_t in = rest.find(" in ");
+        rest = in == std::string_view::npos ? trim_left(rest.substr(std::min(rest.find(' '), rest.size()))) : rest.substr(in + 4);  // ("#2 0x7f5f  (/usr/lib/libc.so.6+0x27780)": no name)
+    }
+    if (const size_t id = rest.find(" (BuildId: "); id != std::string_view::npos) rest = rest.substr(0, id);  // (Linux's)
+    if (!place.empty() && !rest.empty() && place.data() >= rest.data()) {
+        const size_t p = static_cast<size_t>(place.data() - rest.data());
+        rest = trim(rest.substr(0, p));
+    }
+    if (san_problem_.notes.size() < kMaxNotes)
+        san_problem_.notes.push_back({path.empty() ? std::string() : resolve(path), path.empty() ? 0 : line, col, std::string(number) + (rest.empty() ? "" : " ") + std::string(rest)});
+    if (!san_taken_ && !path.empty()) {
+        static constexpr std::string_view kSystem[] = {"/usr/", "/lib", "/System/", "/Library/", "/opt/", "/Applications/", "<"};
+        if (std::ranges::none_of(kSystem, [&](std::string_view s) { return path.starts_with(s); })) {
+            san_problem_.path = std::string(path);
+            san_problem_.line = line;
+            san_problem_.col = col;
+            san_taken_ = true;
+        }
+    }
     return true;
+}
+
+// The end of a sanitizer's problem (its report's, or a leak's): added, if a
+// frame of the program's own was found to put it at.
+void BuildScan::sanitizer_end() {
+    if (san_taken_)
+        if (BuildProblem* p = add(san_problem_.path, san_problem_.line, san_problem_.col, 1, san_kind_ + (san_what_.empty() ? std::string() : ": " + san_what_)))
+            p->notes = std::move(san_problem_.notes);
+    san_taken_ = false;
+    san_problem_.notes.clear();
 }
 
 // "path:line:col: error: message" and the like.
@@ -423,30 +479,106 @@ bool BuildScan::compiler_line(std::string_view text) {
             add(path, std::max(line, 1u), col, sev, message);
             return true;
         }
-        wrap_ = true;  // (added once the next line is not more of its message)
-        wrap_held_ = false;
+        wrapped_end();  // (one held: added before this one)
+        held_ = wrap_ = true;  // (added once the lines after it are not more of its message, nor its notes)
+        wrap_held_ = wrap_note_ = false;
         wrap_problem_.path = std::string(path);
         wrap_problem_.line = std::max(line, 1u);
         wrap_problem_.col = col;
         wrap_problem_.severity = sev;
         wrap_problem_.message = std::string(message.substr(0, kMaxMessage));
+        wrap_problem_.notes.clear();
+        if (chain_at_ + 1 == lines_) wrap_problem_.notes = std::move(chain_);  // (an include chain just before it, its instantiation)
+        chain_.clear();
         return true;
     }
 }
 
-// The line held under a compiler's problem: more of its message.
+// The lines around a compiler's problem that are not problems themselves:
+// before it, the include chain ("In file included from c.h:2," and "
+// from b.cpp:1:" from GCC, a line of "In file included from" each from
+// Clang) and GCC's context ("b.cpp: In instantiation of 'void h(T)
+// [with T = int]':", "b.cpp:6:6:   required from here"; "b.cpp: In
+// function 'int main()':" says nothing more); after it, its notes
+// ("b.cpp:2:6: note: declared here"); and under each, the source line and
+// carets. What comes before a note (an include chain) goes with it. A
+// line that is none of these ends the problem held (false: it is read as
+// itself).
+bool BuildScan::report_line(std::string_view text) {
+    const bool live = chain_at_ && chain_at_ + 1 == lines_;  // (the line before was some of what comes before a problem)
+    auto before = [&](std::string_view path, u32 line, u32 col, std::string_view message) {
+        if (chain_.size() < kMaxNotes) chain_.push_back({path.empty() ? std::string() : resolve(path), line, col, std::string(trim(message).substr(0, kMaxMessage))});
+        chain_at_ = lines_;
+        return true;
+    };
+    std::string_view from;
+    if (text.starts_with("In file included from ")) from = text.substr(22);
+    else if (live && text.starts_with("                 from ")) from = text.substr(22);
+    if (!from.empty()) {
+        if (from.back() == ',' || from.back() == ':') from.remove_suffix(1);
+        std::string_view path;
+        u32 line = 0, col = 0;
+        if (split_location(from, &path, &line, &col)) return before(path, line, col, "included here");
+        chain_at_ = lines_;
+        return true;
+    }
+    if (text.ends_with(':')) {
+        const size_t c = text.find(": ");
+        if (c != std::string_view::npos && c > 0 && (text.substr(c + 2).starts_with("In ") || text.substr(c + 2).starts_with("At "))) {
+            const std::string_view what = text.substr(c + 2, text.size() - c - 3);
+            if (what.starts_with("In instantiation of ") || what.starts_with("In substitution of ")) return before({}, 0, 0, what);
+            chain_at_ = lines_;
+            return true;
+        }
+    }
+    if (!held_ && !live) return false;
+    if (!text.empty() && text[0] == ' ') {  // a source line, carets, a fix's line
+        if (live) chain_at_ = lines_;
+        return true;
+    }
+    std::string_view path;
+    u32 line = 0, col = 0;
+    if (const size_t r = text.find(":   "); r != std::string_view::npos && split_location(text.substr(0, r), &path, &line, &col))
+        return before(path, line, col, text.substr(r + 4));  // ("required from here", "recursively required from ...")
+    if (held_)
+        if (const size_t n = text.find(": note: "); n != std::string_view::npos && split_location(text.substr(0, n), &path, &line, &col)) {
+            std::vector<BuildNote>& notes = wrap_problem_.notes;
+            if (live)
+                for (BuildNote& b : chain_)
+                    if (notes.size() < kMaxNotes) notes.push_back(std::move(b));
+            chain_.clear();
+            if (notes.size() < kMaxNotes) {
+                notes.push_back({resolve(path), line, col, std::string(trim(text.substr(n + 8)).substr(0, kMaxMessage))});
+                wrap_ = wrap_note_ = true;  // (Clang wraps a note's message as it does a problem's)
+                wrap_held_ = false;
+            }
+            return true;
+        }
+    wrapped_end();
+    return false;
+}
+
+// The line held under a compiler's problem or note: more of its message.
 void BuildScan::wrapped_join() {
     if (!wrap_held_) return;
     wrap_held_ = false;
-    std::string& m = wrap_problem_.message;
+    std::string& m = wrap_note_ && !wrap_problem_.notes.empty() ? wrap_problem_.notes.back().message : wrap_problem_.message;
     if (m.size() < kMaxMessage) m += (m.empty() ? "" : " ") + wrap_line_.substr(0, kMaxMessage - m.size());
 }
 
-void BuildScan::wrapped_end() {
-    if (!wrap_) return;
+// No more of the message (the line was not more of it).
+void BuildScan::wrapped_stop() {
     wrapped_join();
     wrap_ = false;
-    add(wrap_problem_.path, wrap_problem_.line, wrap_problem_.col, wrap_problem_.severity, wrap_problem_.message);
+}
+
+// The compiler's problem held: added, with its notes.
+void BuildScan::wrapped_end() {
+    wrapped_stop();
+    if (!held_) return;
+    held_ = false;
+    if (BuildProblem* p = add(wrap_problem_.path, wrap_problem_.line, wrap_problem_.col, wrap_problem_.severity, wrap_problem_.message)) p->notes = std::move(wrap_problem_.notes);
+    wrap_problem_.notes.clear();
 }
 
 // make's and Ninja's "Entering directory 'x'" (and make's "Leaving").
