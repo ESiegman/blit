@@ -26,7 +26,7 @@ note: This is an unsafe fix and may change runtime behavior
 1 file would be reformatted, 1 file already formatted
 2 errors, 1 warning, 1 information
 INFO: [Synth 8-6157] synthesizing module 'top' [/work/fpga/src/top.v:1]
-Info: Max frequency for clock 'clk$SB_IO_IN_$glb_clk': 85.79 MHz (FAIL at 400.00 MHz)
+Info: Max frequency for clock 'clk$SB_IO_IN_$glb_clk': 85.79 MHz (PASS at 12.00 MHz)
 0 warnings, 1 error
 - hook id: ruff-check
 fix end of files.........................................................Passed

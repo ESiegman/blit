@@ -197,6 +197,11 @@ check "the cursor's line: its error in words" '3:9-9E 7:9-9E | 3: '"'"'x'"'"' un
 INIT="$dir/plain.lua"
 run "$F" "buildrun:make errors;buildwait;open:$F/src/b.h;buildmarks"
 check "a warning over its word" '2:5-10W'
+# Problems read from a file in place of the run's: the run's marks go from the text too.
+printf 'elsewhere.c:1:1: error: not this file\n' >"$F/other.log"
+INIT="$dir/plain.lua"
+run "$F" "buildrun:make errors;buildwait;open:$F/src/a.c;frame;problemsread:$F/other.log;buildwait;frame;buildmarks"
+check "problems read from a file: the run's marks gone" 'none'
 INIT="$dir/plain.lua"
 run "$F" "buildrun:make errors;buildwait;open:$F/cmake/x.cmake;buildmarks"
 check "no column: the line's text" '2:1-28W'
@@ -678,9 +683,9 @@ run "$TF" "buildrun:make pnr;buildwait;builddump"
 last
 check "a clock that misses" '(last: 2) (clk 122.7 MHz, slack -5.65 ns)'
 run "$TF" "buildrun:make pnr;buildwait;problemsdump"
-check "a warning at the constraints file make echoed nextpnr's command with" 'button: ▶ make pnr · 1 warning | Build 1 | file blink.pcf | >W 1 Timing not met: clock '"'"'clk'"'"' at 122.73 MHz, 400.00 MHz asked for (slack -5.65 ns)'
+check "an error (nextpnr stopped for it) at the constraints file make echoed nextpnr's command with" 'button: ▶ make pnr · 1 error | Build 1 | file blink.pcf | >E 1 Timing not met: clock '"'"'clk'"'"' at 122.73 MHz, 400.00 MHz asked for (slack -5.65 ns)'
 run "$TF" "buildrun:make nopcf;buildwait;problemsdump"
-check "with none named: under the tool's name" 'button: ▶ make nopcf · 1 warning | Build 1 | file nextpnr | >W 1 Timing not met: clock '"'"'clk'"'"' at 122.73 MHz, 400.00 MHz asked for (slack -5.65 ns)'
+check "with none named: under the tool's name" 'button: ▶ make nopcf · 1 error | Build 1 | file nextpnr | >E 1 Timing not met: clock '"'"'clk'"'"' at 122.73 MHz, 400.00 MHz asked for (slack -5.65 ns)'
 run "$TF" "buildrun:make vivado;buildwait;problemsdump"
 check "Vivado's: at the project's constraints file (not an IP's)" 'button: ▶ make vivado · 1 warning | Build 1 | file constrs/top.xdc | >W 1 Timing constraints are not met: WNS -0.842 ns, TNS -12.375 ns (31 failing endpoints)'
 run "$TF" "buildrun:make vivado;buildwait;builddump"

@@ -284,6 +284,7 @@ private:
         std::string name;
         double mhz = 0, wanted = 0;
         bool pass = true;
+        bool error = false;  // nextpnr stopped for it ("ERROR: Max frequency ..."), rather than let it fail
     };
     std::vector<Clock> clocks_;
     u8 vivado_ = 0;  // 1 after its summary's heading, 2 after the dashes under it

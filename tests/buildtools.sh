@@ -28,7 +28,8 @@
 # other lines under it) and pre-commit's (pre-commit.txt: its hooks' lines;
 # under them Ruff's own concise line, and pre-commit-hooks'
 # trailing-whitespace and check-merge-conflict lines). chatter.txt is lines
-# from these outputs (and Ninja's, GCC's) that are not problems.
+# from these outputs (and Ninja's, GCC's) that are not problems (nextpnr's
+# timing as it says it when it passes: one that fails is a problem).
 #
 #   tests/buildtools.sh path/to/blit            run the cases
 #   tests/buildtools.sh path/to/blit --print    show what each case gives
@@ -314,7 +315,7 @@ check "nextpnr with no command seen: no place" "$expected"
 scan nextpnr-timing
 want <<'EOF'
 problems: 1
-E nextpnr:1 Max frequency for clock 'clk$SB_IO_IN_$glb_clk': 79.74 MHz (FAIL at 400.00 MHz)
+E nextpnr:1 Timing not met: clock 'clk' at 79.74 MHz, 400.00 MHz asked for (slack -10.04 ns)
 EOF
 check "nextpnr: timing that fails" "$expected"
 

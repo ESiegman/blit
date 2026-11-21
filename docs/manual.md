@@ -2698,9 +2698,11 @@ against. nextpnr's `Max frequency for clock 'clk': 122.73 MHz (PASS at
 12.00 MHz)` (the last of its two, after routing) comes to "clk 122.7 MHz,
 slack +75.19 ns", and Vivado's timing summary (its `WNS(ns) TNS(ns) ...`
 table) to "WNS -0.842 ns, TNS -12.375 ns, WHS +0.124 ns". Timing that is
-not met is a warning: nextpnr's clock that failed ("Timing not met: clock
-'clk' at 122.73 MHz, 400.00 MHz asked for (slack -5.65 ns)"), Vivado's
-`Timing constraints are not met.` with its worst slack. Neither names a
+not met is a problem: nextpnr's clock that failed ("Timing not met: clock
+'clk' at 122.73 MHz, 400.00 MHz asked for (slack -5.65 ns)"), an error
+where nextpnr stopped for it (its `ERROR: Max frequency ...`), a warning
+where it was let fail (`--timing-allow-fail`); Vivado's `Timing
+constraints are not met.`, a warning, with its worst slack. Neither names a
 place in the design: it is at the constraints file the output named
 (Vivado's `Parsing XDC File [path]`, not an IP's own; nextpnr's `--sdc`,
 `--pre-pack` or `--pcf`, as make echoes its command), else under the

@@ -89,6 +89,16 @@ bool path_line(std::string_view s, std::string_view* path, u32* line) {
     return !path->empty() && *line > 0 && path->front() != ' ' && path->find(": ") == std::string_view::npos;
 }
 
+// A C or C++ file, by its ending: what a test framework's places are in.
+bool c_family(std::string_view path) {
+    const size_t dot = path.rfind('.');
+    if (dot == std::string_view::npos) return false;
+    const std::string_view e = path.substr(dot + 1);
+    for (const std::string_view k : {"c", "cc", "cpp", "cxx", "c++", "h", "hh", "hpp", "hxx", "h++", "ipp", "inl", "cu", "m", "mm"})
+        if (e == k) return true;
+    return false;
+}
+
 // More of a failure's message: a line of what its framework says under it.
 void join(std::string& m, std::string_view line) {
     line = trim(line);
@@ -455,7 +465,7 @@ bool BuildScan::test_line(std::string_view text) {
             fail_lines_ = 0;
             return true;
         }
-        if (rest.starts_with(" ERROR: ") || rest.starts_with(" FATAL ERROR: ") || rest.starts_with(" WARNING: ")) {  // doctest's
+        if ((rest.starts_with(" ERROR: ") || rest.starts_with(" FATAL ERROR: ") || rest.starts_with(" WARNING: ")) && c_family(path)) {  // doctest's (Yosys's look the same, in a .v)
             const bool warn = rest.starts_with(" W");
             test_failure(path, line, warn ? kDoctestWarning : kDoctest, rest.substr(rest.find(": ") + 2));
             return true;
@@ -499,7 +509,7 @@ void BuildScan::test_end() {
         char buf[200];
         std::snprintf(buf, sizeof buf, "Timing not met: clock '%s' at %.2f MHz, %.2f MHz asked for (slack %+.2f ns)", c.name.c_str(), c.mhz, c.wanted,
                       c.mhz > 0 && c.wanted > 0 ? 1000.0 / c.wanted - 1000.0 / c.mhz : 0.0);
-        add(constraints_.empty() ? std::string_view("nextpnr") : std::string_view(constraints_), 1, 0, 2, buf);
+        add(constraints_.empty() ? std::string_view("nextpnr") : std::string_view(constraints_), 1, 0, c.error ? 1 : 2, buf);
     }
 }
 
@@ -570,6 +580,7 @@ bool BuildScan::timing_line(std::string_view text) {
         c.mhz = mhz;
         c.wanted = wanted;
         c.pass = verdict != "(FAIL";
+        c.error = head == "ERROR: ";  // (nextpnr stopped for it: not let fail)
         const auto it = std::ranges::find(clocks_, c.name, &Clock::name);
         if (it != clocks_.end()) *it = std::move(c);
         else if (clocks_.size() < 32) clocks_.push_back(std::move(c));
