@@ -1,0 +1,3 @@
+error: line 11: Operand '5[%int]' cannot be a type
+  %7 = OpIAdd %float %int %int
+

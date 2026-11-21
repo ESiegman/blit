@@ -1,0 +1,12 @@
+shaders/fill.wgsl:7:12 error: unresolved value 'undefined_color'
+    return undefined_color;
+           ^^^^^^^^^^^^^^^
+
+shaders/fill.wgsl:3:5 note: 'color' declared here
+    var color: vec4<f32>;
+    ^^^
+
+shaders/fill.wgsl:9:3 warning: code is unreachable
+  return vec4<f32>();
+  ^^^^^^
+

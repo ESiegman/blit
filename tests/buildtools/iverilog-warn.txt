@@ -1,0 +1,2 @@
+impl.v:2: warning: implicit definition of wire 'n'.
+impl.v:4: warning: Numeric constant truncated to 5 bits.

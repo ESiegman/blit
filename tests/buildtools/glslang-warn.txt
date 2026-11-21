@@ -1,0 +1,3 @@
+shaders/warn.frag
+WARNING: shaders/warn.frag:2: '#extension' : extension not supported: GL_FOO_bar
+

@@ -1,0 +1,26 @@
+%Warning-WIDTHTRUNC: child.v:3:14: Value too large for 3 bit number: 9
+    3 |     q <= d + 3'd9;
+      |              ^~~~
+                     ... For warning description see https://verilator.org/warn/WIDTHTRUNC?v=5.054
+                     ... Use "/* verilator lint_off WIDTHTRUNC */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: child.v:3:12: Operator ADD expects 8 bits on the LHS, but LHS's VARREF 'd' generates 4 bits.
+                                  : ... note: In instance 'top.u0'
+    3 |     q <= d + 3'd9;
+      |            ^
+                      ... For warning description see https://verilator.org/warn/WIDTHEXPAND?v=5.054
+                      ... Use "/* verilator lint_off WIDTHEXPAND */" and lint_on around source to disable this message.
+%Warning-WIDTHEXPAND: child.v:3:12: Operator ADD expects 8 bits on the RHS, but RHS's CONST '3'h1' generates 3 bits.
+                                  : ... note: In instance 'top.u0'
+    3 |     q <= d + 3'd9;
+      |            ^
+%Warning-WIDTHTRUNC: top.v:5:12: Operator ASSIGNW expects 4 bits on the Assign RHS, but Assign RHS's VARREF 'wide' generates 8 bits.
+                               : ... note: In instance 'top'
+    5 |   assign q = wide;
+      |            ^
+%Warning-UNUSEDSIGNAL: top.v:2:14: Bits of signal are not used: 'wide'[7:4]
+                                 : ... note: In instance 'top'
+    2 |   wire [7:0] wide;
+      |              ^~~~
+                       ... For warning description see https://verilator.org/warn/UNUSEDSIGNAL?v=5.054
+                       ... Use "/* verilator lint_off UNUSEDSIGNAL */" and lint_on around source to disable this message.
+%Error: Exiting due to 5 warning(s)

@@ -1,0 +1,7 @@
+/work/py/pkg/mod.py
+  /work/py/pkg/mod.py:7:16 - error: "undefined_name" is not defined (reportUndefinedVariable)
+  /work/py/pkg/mod.py:9:12 - error: Argument of type "Literal['x']" cannot be assigned to parameter "n" of type "int" in function "f"
+    "Literal['x']" is not assignable to "int" (reportArgumentType)
+  /work/py/pkg/mod.py:1:8 - warning: Import "os" is not accessed (reportUnusedImport)
+  /work/py/pkg/mod.py:2:1 - information: Unused expression
+2 errors, 1 warning, 1 information

@@ -1431,6 +1431,19 @@ void App::run_script(const char* script) {
             valid_usage_wait();
         } else if (verb == "problemsdump") {  // the Run button's words and the Problems tab's rows (> the one picked)
             std::fprintf(stderr, "%s\n", problems_dump().c_str());
+        } else if (verb == "scandump") {  // the build's problems in full after "problems: N", a line each (E or W, path:line:col, [code], message), its notes under it
+            term_sync();
+            const std::string* root = panel_root();
+            auto shown = [&](const std::string& p, u32 line, u32 col) {
+                const bool in = root && p.size() > root->size() + 1 && p.starts_with(*root) && p[root->size()] == '/';
+                return (in ? p.substr(root->size() + 1) : p) + ":" + std::to_string(line) + (col ? ":" + std::to_string(col) : "");
+            };
+            std::string out = "problems: " + std::to_string(build_problems().size());
+            for (const BuildProblem& p : build_problems()) {
+                out += std::string("\n") + (p.severity == 1 ? "E " : "W ") + shown(p.path, p.line, p.col) + (p.code.empty() ? "" : " [" + p.code + "]") + " " + p.message;
+                for (const BuildNote& n : p.notes) out += "\n  note " + (n.path.empty() ? "" : shown(n.path, n.line, n.col) + " ") + n.message;
+            }
+            std::fprintf(stderr, "%s\n", out.c_str());
         } else if (verb == "termclick") {  // termclick:TEXT, Cmd+click on that text in a terminal on show
             term_sync();
             if (!term_click_text(arg)) std::fprintf(stderr, "termclick: no \"%s\" on show\n", arg.c_str());

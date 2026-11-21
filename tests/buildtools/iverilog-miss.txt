@@ -1,0 +1,5 @@
+miss.v:2: error: Unknown module type: child
+2 error(s) during elaboration.
+*** These modules were missing:
+        child referenced 1 times.
+***

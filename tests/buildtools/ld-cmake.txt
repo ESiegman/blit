@@ -1,0 +1,4 @@
+/usr/bin/ld: CMakeFiles/app.dir/src/a.c.o: in function `main':
+a.c:(.text+0xf): undefined reference to `helper'
+/usr/bin/ld: a.c:(.text+0x1b): undefined reference to `twice'
+collect2: error: ld returned 1 exit status

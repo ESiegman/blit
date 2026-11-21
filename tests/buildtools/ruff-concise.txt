@@ -1,0 +1,9 @@
+bad.py:1:7: invalid-syntax: Expected a parameter or the end of the parameter list
+bad.py:1:8: invalid-syntax: Expected `)`, found newline
+pkg/mod.py:1:8: F401 [*] `os` imported but unused
+pkg/mod.py:6:13: E711 Comparison to `None` should be `cond is None`
+pkg/mod.py:7:16: F821 Undefined name `undefined_name`
+pkg/mod.py:8:5: E741 Ambiguous variable name: `l`
+pkg/mod.py:8:5: F841 Local variable `l` is assigned to but never used
+Found 7 errors.
+[*] 1 fixable with `--fix` (2 unsafe fixes available with `--fix --unsafe-fixes`).

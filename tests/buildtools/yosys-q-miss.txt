@@ -1,0 +1,1 @@
+ERROR: Module `\child' referenced in module `\top' in cell `\u0' is not part of the design.

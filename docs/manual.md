@@ -2461,11 +2461,11 @@ entered, or one `make -C` was told to go into: the one the file is in.
 They fill the **Build** section of the side panel's Problems tab (above),
 F8 goes through them, the status bar counts them, and the Run button says
 how many: `▶ Build (debug) · 3 errors` (warnings, when there are no
-errors). The next run starts with none. Notes (`note:`) and problems with
-no place (a linker's `undefined reference`) are not listed, but for
-validation messages (below), which are, under **No file**; one whose
-file is nowhere (Metal's run-time `program_source`) is listed and counted,
-and F8 says it without going anywhere. **Cmd+click**
+errors). The next run starts with none. A compiler's notes (`note:`) are
+not listed, but validation messages (below) with no place are, under **No
+file**; one whose file is nowhere (Metal's run-time `program_source` with
+no `.metal` file to be, below) is listed and counted, and F8 says it
+without going anywhere. **Cmd+click**
 on a `path:line` (or `path:line:col`, or Python's `File "path", line N`)
 in any terminal tab opens the file there, in a split with text: a
 relative path from the shell's folder, the folders the build went into,
@@ -2522,6 +2522,46 @@ blit's data folder (`~/.local/share/blit/vulkan`); `BLIT_VALIDUSAGE` names
 another file. It is indexed once, on a thread of its own, and statements
 read from it there. Metal's messages have no such file: their row is what
 there is.
+The other tools a build runs are read too, each problem with the tool's
+own code for it where it gives one (shown in brackets) and the other
+places it names as notes:
+
+- **Linkers and assemblers.** GNU ld's `undefined reference`, `multiple
+  definition` (the first definition a note) and its other errors and
+  warnings, at the source line the debug information names, else the
+  object's source (CMake's `CMakeFiles/app.dir/src/a.c.o` is `src/a.c`; a
+  bare `a.c` the project's one file of that name) with the function; macOS's
+  ld's `Undefined symbols` and `duplicate symbol` listings, a problem for
+  each symbol. collect2's `ld returned 1 exit status` and Clang's `linker
+  command failed` are a problem only when no line of the linker's was. GNU
+  as's `a.s:5: Error:` and `Warning:`.
+- **HDL tools.** Verilator's `%Warning-WIDTH: a.v:3:5:` (code `WIDTH`; its
+  `In instance` and other locations notes), Yosys's `a.v:3: ERROR:` and
+  `Warning:`, Icarus's `syntax error`, `sorry:` and `error:`, vvp's
+  `ERROR:`, `WARNING:` and `FATAL: a.v:12:` (from `$error`, `$warning`,
+  `$fatal`), verible-verilog-lint's lines (its rule the code), Vivado's
+  `ERROR: [Synth 8-439] message [path:line]` and `CRITICAL WARNING` (as
+  warnings), nextpnr's `ERROR:` and `Warning:` (an `(on line 3)` at that line
+  of the `.pcf` its command named).
+- **Shader compilers.** glslang's `ERROR: a.frag:12: 'x' : message`, qsb's
+  (glslang's, with no file: the one its command named), spirv-val's `error:
+  line 12:` (its VUID the code, the instruction a note, the module its
+  command named), Metal's run-time `program_source:12:5:` (the `.metal`
+  file a command named, or the project's one `.metal` file), slangc's
+  `a.slang(12): error 30015:`, DXC's and FXC's MSVC form `a.hlsl(12,5):
+  error X3000:`, naga's diagrams (`┌─ a.wgsl:12:5` under the message, its `=`
+  lines notes) and tint's `a.wgsl:12:5 error:` with its notes.
+- **Python's tools.** Ruff's concise, full and pylint forms (its rules as
+  warnings, `invalid-syntax` as errors), `ruff format --check`, pyright's
+  `path:line:col - error:` (its rule the code, a message's lines joined) and
+  pre-commit's failed hooks: the files a fixing hook fixed, and the
+  `path:line:` lines a hook printed.
+
+What names no file at all is listed under the tool's name (`ld`, `yosys`,
+`nextpnr`, `vivado`): ld's `cannot find -lfoo`, Yosys's `ERROR:` with no
+place (taken only after Yosys's banner or command, as a bare `ERROR:` line
+is anybody's). Yosys's warnings that name no place are not listed. The
+commands named are those make echoes, or Ninja shows under `FAILED:`.
 
 Under **CMake** the tab has two rows of its own. **Build type**: Enter goes
 from the project's own (what the build folder was configured with) to

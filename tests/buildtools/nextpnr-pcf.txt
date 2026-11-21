@@ -1,0 +1,4 @@
+Info: constrained 'clk' to bel 'X12/Y31/io1'
+ERROR: package does not have a pin named '999' (on line 2)
+ERROR: Loading PCF failed.
+0 warnings, 2 errors

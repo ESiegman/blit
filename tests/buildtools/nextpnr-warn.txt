@@ -1,0 +1,313 @@
+Info: constrained 'clk' to bel 'X12/Y31/io1'
+Info: constrained 'led' to bel 'X4/Y31/io0'
+Warning: unmatched constraint 'nosuch' (on line 3)
+
+Info: Packing constants..
+Info: Packing IOs..
+Info: Packing LUT-FFs..
+Info:        0 LCs used as LUT4 only
+Info:       24 LCs used as LUT4 and DFF
+Info: Packing non-LUT FFs..
+Info:        0 LCs used as DFF only
+Info: Packing carries..
+Info:        0 LCs used as CARRY only
+Info: Packing indirect carry+LUT pairs...
+Info:        0 LUTs merged into carry LCs
+Info: Packing RAMs..
+Info: Placing PLLs..
+Info: Packing special functions..
+Info: Packing PLLs..
+Info: Promoting globals..
+Info: promoting clk$SB_IO_IN (fanout 24)
+Info: Constraining chains...
+Info:        1 LCs used to legalise carry chains.
+Info: Checksum: 0x84162c60
+
+Info: Device utilisation:
+Info: 	         ICESTORM_LC:      27/   5280     0%
+Info: 	        ICESTORM_RAM:       0/     30     0%
+Info: 	               SB_IO:       2/     39     5%
+Info: 	               SB_GB:       1/      8    12%
+Info: 	        ICESTORM_PLL:       0/      1     0%
+Info: 	         SB_WARMBOOT:       0/      1     0%
+Info: 	        ICESTORM_DSP:       0/      8     0%
+Info: 	      ICESTORM_HFOSC:       0/      1     0%
+Info: 	      ICESTORM_LFOSC:       0/      1     0%
+Info: 	              SB_I2C:       0/      2     0%
+Info: 	              SB_SPI:       0/      2     0%
+Info: 	              IO_I3C:       0/      2     0%
+Info: 	         SB_LEDDA_IP:       0/      1     0%
+Info: 	         SB_RGBA_DRV:       0/      1     0%
+Info: 	      ICESTORM_SPRAM:       0/      4     0%
+Info: 	      SB_FILTER_50NS:       0/      2     0%
+
+Info: Placed 2 cells based on constraints.
+Info: Creating initial analytic placement for 3 cells, random placement wirelen = 70.
+Info:     at initial placer iter 0, wirelen = 2
+Info:     at initial placer iter 1, wirelen = 2
+Info:     at initial placer iter 2, wirelen = 2
+Info:     at initial placer iter 3, wirelen = 2
+Info: Running main analytical placer, max placement attempts per cell = 10000.
+Info:     at iteration #1, type ICESTORM_LC: wirelen solved = 2, spread = 5, legal = 5; time = 0.00s
+Info:     at iteration #1, type SB_GB: wirelen solved = 5, spread = 5, legal = 5; time = 0.00s
+Info:     at iteration #1, type ALL: wirelen solved = 2, spread = 5, legal = 7; time = 0.00s
+Info:     at iteration #2, type ICESTORM_LC: wirelen solved = 5, spread = 5, legal = 5; time = 0.00s
+Info:     at iteration #2, type SB_GB: wirelen solved = 5, spread = 5, legal = 5; time = 0.00s
+Info:     at iteration #2, type ALL: wirelen solved = 5, spread = 5, legal = 5; time = 0.00s
+Info: HeAP Placer Time: 0.00s
+Info:   of which solving equations: 0.00s
+Info:   of which spreading cells: 0.00s
+Info:   of which strict legalisation: 0.00s
+
+Info: Running simulated annealing placer for refinement.
+Info:   at iteration #1: temp = 0.000000, timing cost = 9, wirelen = 5
+Info:   at iteration #2: temp = 0.000000, timing cost = 9, wirelen = 5 
+Info: SA placement time 0.00s
+
+Info: Max frequency for clock 'clk$SB_IO_IN_$glb_clk': 85.79 MHz (PASS at 12.00 MHz)
+
+Info: Max delay posedge clk$SB_IO_IN_$glb_clk -> <async>: 3.15 ns
+
+Info: Slack histogram:
+Info:  legend: times are in ps
+Info:          * represents 1 endpoint(s)
+Info:          + represents [1,1) endpoint(s)
+Info: [ 71676,  72061) |** 
+Info: [ 72061,  72446) |*** 
+Info: [ 72446,  72831) |*** 
+Info: [ 72831,  73216) |** 
+Info: [ 73216,  73601) |*** 
+Info: [ 73601,  73986) |** 
+Info: [ 73986,  74371) |* 
+Info: [ 74371,  74756) |*** 
+Info: [ 74756,  75141) |*** 
+Info: [ 75141,  75526) |** 
+Info: [ 75526,  75911) |*** 
+Info: [ 75911,  76296) |*** 
+Info: [ 76296,  76681) |* 
+Info: [ 76681,  77066) |* 
+Info: [ 77066,  77451) |**** 
+Info: [ 77451,  77836) |** 
+Info: [ 77836,  78221) |*** 
+Info: [ 78221,  78606) |** 
+Info: [ 78606,  78991) |* 
+Info: [ 78991,  79376) |*** 
+Info: Checksum: 0xa98261df
+
+Info: Routing..
+Info: Setting up routing queue.
+Info: Routing 76 arcs.
+Info:            |   (re-)routed arcs  |   delta    | remaining|       time spent     |
+Info:    IterCnt |  w/ripup   wo/ripup |  w/r  wo/r |      arcs| batch(sec) total(sec)|
+Info:         76 |        0         56 |    0    56 |         0|       0.00       0.00|
+Info: Routing complete.
+Info: Router1 time 0.00s
+Info: Checksum: 0xdfb57805
+
+Info: Critical path report for clock 'clk$SB_IO_IN_$glb_clk' (posedge -> posedge):
+Info:       type curr  total name
+Info:   clk-to-q  1.39  1.39 Source n_SB_DFF_Q_22_D_SB_LUT4_O_LC.O
+Info:    routing  1.76  3.15 Net n[0] (3,27) -> (3,28)
+Info:                          Sink $nextpnr_ICESTORM_LC_0.I1
+Info:                          Defined in:
+Info:                               blink.v:2.14-2.15
+Info:      logic  0.68  3.83 Source $nextpnr_ICESTORM_LC_0.COUT
+Info:    routing  0.00  3.83 Net $nextpnr_ICESTORM_LC_0$O (3,28) -> (3,28)
+Info:                          Sink n_SB_DFF_Q_21_D_SB_LUT4_O_LC.CIN
+Info:      logic  0.28  4.10 Source n_SB_DFF_Q_21_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  4.10 Net n_SB_DFF_Q_20_D_SB_LUT4_O_I3[3] (3,28) -> (3,28)
+Info:                          Sink n_SB_DFF_Q_20_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  4.38 Source n_SB_DFF_Q_20_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  4.38 Net n_SB_DFF_Q_19_D_SB_LUT4_O_I3[3] (3,28) -> (3,28)
+Info:                          Sink n_SB_DFF_Q_19_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  4.66 Source n_SB_DFF_Q_19_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  4.66 Net n_SB_DFF_Q_18_D_SB_LUT4_O_I3[3] (3,28) -> (3,28)
+Info:                          Sink n_SB_DFF_Q_18_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  4.94 Source n_SB_DFF_Q_18_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  4.94 Net n_SB_DFF_Q_17_D_SB_LUT4_O_I3[3] (3,28) -> (3,28)
+Info:                          Sink n_SB_DFF_Q_17_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  5.22 Source n_SB_DFF_Q_17_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  5.22 Net n_SB_DFF_Q_16_D_SB_LUT4_O_I3[3] (3,28) -> (3,28)
+Info:                          Sink n_SB_DFF_Q_16_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  5.49 Source n_SB_DFF_Q_16_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  5.49 Net n_SB_DFF_Q_15_D_SB_LUT4_O_I3[3] (3,28) -> (3,28)
+Info:                          Sink n_SB_DFF_Q_15_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  5.77 Source n_SB_DFF_Q_15_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.56  6.33 Net n_SB_DFF_Q_14_D_SB_LUT4_O_I3[3] (3,28) -> (3,29)
+Info:                          Sink n_SB_DFF_Q_14_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  6.61 Source n_SB_DFF_Q_14_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  6.61 Net n_SB_DFF_Q_13_D_SB_LUT4_O_I3[3] (3,29) -> (3,29)
+Info:                          Sink n_SB_DFF_Q_13_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  6.88 Source n_SB_DFF_Q_13_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  6.88 Net n_SB_DFF_Q_12_D_SB_LUT4_O_I3[3] (3,29) -> (3,29)
+Info:                          Sink n_SB_DFF_Q_12_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  7.16 Source n_SB_DFF_Q_12_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  7.16 Net n_SB_DFF_Q_11_D_SB_LUT4_O_I3[3] (3,29) -> (3,29)
+Info:                          Sink n_SB_DFF_Q_11_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  7.44 Source n_SB_DFF_Q_11_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  7.44 Net n_SB_DFF_Q_10_D_SB_LUT4_O_I3[3] (3,29) -> (3,29)
+Info:                          Sink n_SB_DFF_Q_10_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  7.72 Source n_SB_DFF_Q_10_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  7.72 Net n_SB_DFF_Q_9_D_SB_LUT4_O_I3[3] (3,29) -> (3,29)
+Info:                          Sink n_SB_DFF_Q_9_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  8.00 Source n_SB_DFF_Q_9_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  8.00 Net n_SB_DFF_Q_8_D_SB_LUT4_O_I3[3] (3,29) -> (3,29)
+Info:                          Sink n_SB_DFF_Q_8_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  8.27 Source n_SB_DFF_Q_8_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  8.27 Net n_SB_DFF_Q_7_D_SB_LUT4_O_I3[3] (3,29) -> (3,29)
+Info:                          Sink n_SB_DFF_Q_7_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  8.55 Source n_SB_DFF_Q_7_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.56  9.11 Net n_SB_DFF_Q_6_D_SB_LUT4_O_I3[3] (3,29) -> (3,30)
+Info:                          Sink n_SB_DFF_Q_6_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  9.39 Source n_SB_DFF_Q_6_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  9.39 Net n_SB_DFF_Q_5_D_SB_LUT4_O_I3[3] (3,30) -> (3,30)
+Info:                          Sink n_SB_DFF_Q_5_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  9.66 Source n_SB_DFF_Q_5_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  9.66 Net n_SB_DFF_Q_4_D_SB_LUT4_O_I3[3] (3,30) -> (3,30)
+Info:                          Sink n_SB_DFF_Q_4_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  9.94 Source n_SB_DFF_Q_4_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  9.94 Net n_SB_DFF_Q_3_D_SB_LUT4_O_I3[3] (3,30) -> (3,30)
+Info:                          Sink n_SB_DFF_Q_3_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  10.22 Source n_SB_DFF_Q_3_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  10.22 Net n_SB_DFF_Q_2_D_SB_LUT4_O_I3[3] (3,30) -> (3,30)
+Info:                          Sink n_SB_DFF_Q_2_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  10.50 Source n_SB_DFF_Q_2_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  10.50 Net n_SB_DFF_Q_1_D_SB_LUT4_O_I3[3] (3,30) -> (3,30)
+Info:                          Sink n_SB_DFF_Q_1_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  10.78 Source n_SB_DFF_Q_1_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.00  10.78 Net n_SB_DFF_Q_D_SB_LUT4_O_I3[3] (3,30) -> (3,30)
+Info:                          Sink n_SB_DFF_Q_D_SB_LUT4_O_LC.CIN
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      logic  0.28  11.05 Source n_SB_DFF_Q_D_SB_LUT4_O_LC.COUT
+Info:    routing  0.66  11.72 Net led_SB_LUT4_I2_I3[3] (3,30) -> (3,30)
+Info:                          Sink led_SB_LUT4_I2_LC.I3
+Info:                          Defined in:
+Info:                               blink.v:3.30-3.35
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      setup  0.82  12.54 Source led_SB_LUT4_I2_LC.I3
+Info: 9.01 ns logic, 3.54 ns routing
+
+Info: Critical path report for cross-domain path 'posedge clk$SB_IO_IN_$glb_clk' -> '<async>':
+Info:       type curr  total name
+Info:   clk-to-q  1.39  1.39 Source led_SB_LUT4_I2_LC.O
+Info:    routing  1.76  3.15 Net led$SB_IO_OUT (3,30) -> (4,31)
+Info:                          Sink led$sb_io.D_OUT_0
+Info:                          Defined in:
+Info:                               blink.v:2.14-2.15
+Info: 1.39 ns logic, 1.76 ns routing
+
+Info: Max frequency for clock 'clk$SB_IO_IN_$glb_clk': 79.74 MHz (PASS at 12.00 MHz)
+
+Info: Max delay posedge clk$SB_IO_IN_$glb_clk -> <async>: 3.15 ns
+
+Info: Slack histogram:
+Info:  legend: times are in ps
+Info:          * represents 1 endpoint(s)
+Info:          + represents [1,1) endpoint(s)
+Info: [ 70793,  71222) |*** 
+Info: [ 71222,  71651) |*** 
+Info: [ 71651,  72080) |*** 
+Info: [ 72080,  72509) |*** 
+Info: [ 72509,  72938) |*** 
+Info: [ 72938,  73367) | 
+Info: [ 73367,  73796) |** 
+Info: [ 73796,  74225) |**** 
+Info: [ 74225,  74654) |** 
+Info: [ 74654,  75083) |**** 
+Info: [ 75083,  75512) |** 
+Info: [ 75512,  75941) |** 
+Info: [ 75941,  76370) |* 
+Info: [ 76370,  76799) |*** 
+Info: [ 76799,  77228) |*** 
+Info: [ 77228,  77657) |*** 
+Info: [ 77657,  78086) |** 
+Info: [ 78086,  78515) |* 
+Info: [ 78515,  78944) | 
+Info: [ 78944,  79373) |*** 
+1 warning, 0 errors
+
+Info: Program finished normally.

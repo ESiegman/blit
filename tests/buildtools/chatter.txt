@@ -1,0 +1,33 @@
+[1/4] Building C object CMakeFiles/app.dir/src/a.c.o
+FAILED: CMakeFiles/app.dir/src/a.c.o
+src/a.c: In function 'main':
+In file included from src/a.h:3,
+ERROR: 2 compilation errors.  No code generated.
+SPIR-V is not generated for failed compile or link
+QSpirvCompiler: Failed to parse shader
+%Error: Exiting due to 5 warning(s)
+%Error: Cannot continue
+- V e r i l a t i o n   R e p o r t: Verilator 5.054 2026-11-01 rev v5.054
+Warnings: 2 unique messages, 2 total
+Found and reported 1 problems.
+ABC: Warning: The network is combinational (run "fraig" or "fraig_sweep").
+Warning: Wire top.\nope is used but has no driver.
+ERROR: plain display at time 0
+       Time: 0  Scope: tb
+I give up.
+2 error(s) during elaboration.
+*** These modules were missing:
+        child referenced 1 times.
+bad.s: Assembler messages:
+Found 7 errors.
+[*] 1 fixable with `--fix` (2 unsafe fixes available with `--fix --unsafe-fixes`).
+help: Remove unused import: `os`
+note: This is an unsafe fix and may change runtime behavior
+1 file would be reformatted, 1 file already formatted
+2 errors, 1 warning, 1 information
+INFO: [Synth 8-6157] synthesizing module 'top' [/work/fpga/src/top.v:1]
+Info: Max frequency for clock 'clk$SB_IO_IN_$glb_clk': 85.79 MHz (FAIL at 400.00 MHz)
+0 warnings, 1 error
+- hook id: ruff-check
+fix end of files.........................................................Passed
+12:30:01 Building target app

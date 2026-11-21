@@ -1,0 +1,7 @@
+shaders/blur.slang(12): error 30015: undefined identifier 'weigths'.
+    float w = weigths[i];
+              ^~~~~~~
+shaders/blur.slang(4): note: see declaration of 'weights'
+shaders/blur.slang(20): warning 30081: implicit conversion from 'float' to 'int' is not recommended
+    int n = 2.5;
+            ^

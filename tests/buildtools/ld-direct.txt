@@ -1,0 +1,4 @@
+/usr/bin/ld: b.o:(.data+0x0): multiple definition of `dup'; a.o:(.data+0x0): first defined here
+/usr/bin/ld: warning: cannot find entry symbol _start; defaulting to 0000000000401000
+/usr/bin/ld: a.o: in function `main':
+a.c:(.text+0xf): undefined reference to `helper'

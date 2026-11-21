@@ -1,0 +1,4 @@
+/usr/bin/ld: /tmp/ccBFER1F.o:/tmp/m3-tools-gen/src/b.c:1: multiple definition of `dup'; /tmp/ccFNzACj.o:/tmp/m3-tools-gen/src/a.c:3: first defined here
+/usr/bin/ld: /tmp/ccFNzACj.o: in function `main':
+/tmp/m3-tools-gen/src/a.c:6:(.text+0xf): undefined reference to `helper'
+collect2: error: ld returned 1 exit status

@@ -1,0 +1,6 @@
+shaders/syntax.vert
+ERROR: shaders/syntax.vert:5: '' :  syntax error, unexpected RIGHT_BRACE, expecting COMMA or SEMICOLON
+ERROR: 1 compilation errors.  No code generated.
+
+
+SPIR-V is not generated for failed compile or link

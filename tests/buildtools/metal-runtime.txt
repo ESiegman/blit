@@ -1,0 +1,7 @@
+program_source:11:16: error: use of undeclared identifier 'undefined_fn'
+    return c * undefined_fn(c);
+               ^
+program_source:13:91: error: use of undeclared identifier 'b'
+kernel void k(device float* a [[buffer(0)]], uint i [[thread_position_in_grid]]) { a[i] = b; }
+                                                                                          ^
+

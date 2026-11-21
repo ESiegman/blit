@@ -1,0 +1,45 @@
+Info:                               /usr/local/bin/../share/yosys/ice40/arith_map.v:62.5-70.4
+Info:                               /usr/local/bin/../share/yosys/ice40/cells_map.v:6.21-6.22
+Info:      setup  0.82  12.54 Source led_SB_LUT4_I2_LC.I3
+Info: 9.01 ns logic, 3.54 ns routing
+
+Info: Critical path report for cross-domain path 'posedge clk$SB_IO_IN_$glb_clk' -> '<async>':
+Info:       type curr  total name
+Info:   clk-to-q  1.39  1.39 Source led_SB_LUT4_I2_LC.O
+Info:    routing  1.76  3.15 Net led$SB_IO_OUT (3,30) -> (4,31)
+Info:                          Sink led$sb_io.D_OUT_0
+Info:                          Defined in:
+Info:                               blink.v:2.14-2.15
+Info: 1.39 ns logic, 1.76 ns routing
+
+ERROR: Max frequency for clock 'clk$SB_IO_IN_$glb_clk': 79.74 MHz (FAIL at 400.00 MHz)
+
+Info: Max delay posedge clk$SB_IO_IN_$glb_clk -> <async>: 3.15 ns
+
+Info: Slack histogram:
+Info:  legend: times are in ps
+Info:          * represents 1 endpoint(s)
+Info:          + represents [1,1) endpoint(s)
+Info: [-10040,  -9611) |*** 
+Info: [ -9611,  -9182) |*** 
+Info: [ -9182,  -8753) |*** 
+Info: [ -8753,  -8324) |*** 
+Info: [ -8324,  -7895) |*** 
+Info: [ -7895,  -7466) | 
+Info: [ -7466,  -7037) |** 
+Info: [ -7037,  -6608) |**** 
+Info: [ -6608,  -6179) |** 
+Info: [ -6179,  -5750) |**** 
+Info: [ -5750,  -5321) |** 
+Info: [ -5321,  -4892) |** 
+Info: [ -4892,  -4463) |* 
+Info: [ -4463,  -4034) |*** 
+Info: [ -4034,  -3605) |*** 
+Info: [ -3605,  -3176) |*** 
+Info: [ -3176,  -2747) |** 
+Info: [ -2747,  -2318) |* 
+Info: [ -2318,  -1889) | 
+Info: [ -1889,  -1460) |*** 
+0 warnings, 1 error
+
+Info: Program finished normally.

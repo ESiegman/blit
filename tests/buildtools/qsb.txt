@@ -1,0 +1,4 @@
+QSpirvCompiler: Failed to parse shader
+Shader baking failed: ERROR: :6: 'missing_fn' : no matching overloaded function found 
+ERROR: :6: '' : compilation terminated 
+ERROR: 2 compilation errors.  No code generated.

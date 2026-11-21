@@ -1,0 +1,3 @@
+QSpirvCompiler: Failed to parse shader
+Shader baking failed: ERROR: :7: '' :  syntax error, unexpected IDENTIFIER, expecting COMMA or SEMICOLON
+ERROR: 1 compilation errors.  No code generated.

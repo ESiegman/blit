@@ -1,0 +1,6 @@
+shaders/light.hlsl(14,12): error: use of undeclared identifier 'normalz'
+    return normalz * 0.5;
+           ^
+shaders/light.hlsl(3,8): note: 'normal' declared here
+shaders/light.hlsl(20,5-17): warning X3206: implicit truncation of vector type
+shaders/light.hlsl(31,1): error X3000: syntax error: unexpected token '}'

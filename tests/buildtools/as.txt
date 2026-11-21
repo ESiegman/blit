@@ -1,0 +1,4 @@
+bad.s: Assembler messages:
+bad.s:5: Error: no such instruction: `movz %rax'
+bad.s:6: Error: no such instruction: `bogus %eax'
+bad.s:7: Warning: value 0x12c truncated to 0x2c

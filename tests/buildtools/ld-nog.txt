@@ -1,0 +1,4 @@
+/usr/bin/ld: b.o:(.data+0x0): multiple definition of `dup'; a.o:(.data+0x0): first defined here
+/usr/bin/ld: a.o: in function `main':
+a.c:(.text+0xf): undefined reference to `helper'
+collect2: error: ld returned 1 exit status

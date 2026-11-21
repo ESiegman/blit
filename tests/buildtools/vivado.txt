@@ -1,0 +1,7 @@
+INFO: [Synth 8-6157] synthesizing module 'top' [/work/fpga/src/top.v:1]
+ERROR: [Synth 8-439] module 'child' not found [/work/fpga/src/top.v:12]
+ERROR: [Synth 8-6156] failed synthesizing module 'top' [/work/fpga/src/top.v:1]
+WARNING: [Synth 8-7071] port 'q' of module 'child' is unconnected for instance 'u0' [/work/fpga/src/top.v:12]
+CRITICAL WARNING: [Constraints 18-619] A clock with name 'clk' already exists, overwriting the previous clock with the same name. [/work/fpga/constrs/top.xdc:3]
+ERROR: [Common 17-69] Command failed: Synthesis failed - please see the console or run log file for details
+INFO: [Common 17-83] Releasing license: Synthesis

@@ -1,0 +1,7 @@
+Undefined symbols for architecture arm64:
+  "twice(int)", referenced from:
+      _main in ccKEfOmv.o
+  "helper(int)", referenced from:
+      _main in ccKEfOmv.o
+ld: symbol(s) not found for architecture arm64
+collect2: error: ld returned 1 exit status

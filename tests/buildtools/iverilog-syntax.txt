@@ -1,0 +1,2 @@
+syn.v:4: syntax error
+I give up.

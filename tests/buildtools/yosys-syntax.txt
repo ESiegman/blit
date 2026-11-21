@@ -1,0 +1,13 @@
+
+ /----------------------------------------------------------------------------\
+ |  yosys -- Yosys Open SYnthesis Suite                                       |
+ |  Copyright (C) 2012 - 2026  Claire Xenia Wolf <claire@yosyshq.com>         |
+ |  Distributed under an ISC-like license, type "license" to see terms        |
+ \----------------------------------------------------------------------------/
+ Yosys 0.66 (git sha1 86f2ddebc, clang++ 11.0.1-2 -fPIC -O3)
+
+-- Running command `read_verilog syn.v' --
+
+1. Executing Verilog-2005 frontend: syn.v
+Parsing Verilog input from `syn.v' to AST representation.
+syn.v:4: ERROR: syntax error, unexpected TOK_ENDMODULE

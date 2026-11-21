@@ -1,0 +1,4 @@
+syn.v:4:1-9: syntax error at token "endmodule"
+lint.sv:1:8-15: Declared module does not match the first dot-delimited component of file name: "lint" [Style: file-names] [module-filename]
+lint.sv:2:1: Use spaces, not tabs. [Style: tabs] [no-tabs]
+lint.sv:5:10-12: Remove trailing spaces. [Style: trailing-spaces] [no-trailing-spaces]

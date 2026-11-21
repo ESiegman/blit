@@ -1,0 +1,5 @@
+duplicate symbol '_dup' in:
+    /work/ld/CMakeFiles/app.dir/src/a2.c.o
+    /work/ld/CMakeFiles/app.dir/src/b.c.o
+ld: 1 duplicate symbols
+clang: error: linker command failed with exit code 1 (use -v to see invocation)

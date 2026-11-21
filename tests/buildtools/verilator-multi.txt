@@ -1,0 +1,18 @@
+%Warning-MULTIDRIVEN: multi.sv:3:28: Variable written to in always_ff also written by other process (IEEE 1800-2023 9.2.2.4): 'q'
+                                   : ... note: In instance 'multi'
+                      multi.sv:3:28: 
+    3 |   always_ff @(posedge rst) q <= 1'b0;
+      |                            ^
+                      multi.sv:2:28: ... Location of other write
+    2 |   always_ff @(posedge clk) q <= d;
+      |                            ^
+                      ... For warning description see https://verilator.org/warn/MULTIDRIVEN?v=5.054
+                      ... Use "/* verilator lint_off MULTIDRIVEN */" and lint_on around source to disable this message.
+%Warning-MULTIDRIVEN: multi.sv:1:76: Signal has multiple driving blocks with different clocking: 'q'
+                      multi.sv:2:28: ... Location of first driving block
+    2 |   always_ff @(posedge clk) q <= d;
+      |                            ^
+                      multi.sv:3:28: ... Location of other driving block
+    3 |   always_ff @(posedge rst) q <= 1'b0;
+      |                            ^
+%Error: Exiting due to 2 warning(s)

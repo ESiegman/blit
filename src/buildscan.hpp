@@ -53,7 +53,8 @@ public:
     // could be from more than one folder (none: the latest folder entered).
     // by_name: the full path of the one file of the project with a name, for
     // a bare name that is in none of those folders (ASan's on macOS,
-    // symbolised by atos: "ring.cpp:16"); empty when it is not one file's.
+    // symbolised by atos: "ring.cpp:16"), or "*.ext" for the one file with
+    // that extension; empty when it is not one file's.
     explicit BuildScan(std::string dir, std::function<bool(const std::string&)> exists = {}, std::function<std::string(const std::string&)> by_name = {});
 
     void feed(std::string_view bytes);
@@ -150,6 +151,35 @@ private:
     std::unordered_map<std::string, BuildProblem> val_seen_;
     // buildmatch.cpp:
     // buildtools.cpp:
+    bool tool_more(std::string_view text);
+    void tool_flush();
+    bool tool_ld(std::string_view body, bool prefixed);
+    bool tool_upper(std::string_view rest, u8 severity);
+    bool tool_place(std::string_view text);
+    void tool_command(std::string_view text);
+    std::string tool_ld_source(std::string_view where, u32* line);
+    // A problem held for the lines under it (its path as written): what
+    // they add to it depends on the tool's.
+    enum : u8 { kHeldNone, kHeldVerilator, kHeldDiagram, kHeldPyright, kHeldNotes, kHeldSpirv, kHeldMacUndefined, kHeldMacDuplicate } tool_held_ = kHeldNone;
+    BuildProblem tool_problem_;
+    bool tool_problem_ld_ = false;  // (a linker's: counted in tool_ld_found_)
+    // The last line that could head Ruff's or naga's diagram (its place is
+    // on the line under it: " --> a.py:3:5", "┌─ s.wgsl:2:9"), and which.
+    std::string tool_header_;
+    u64 tool_header_at_ = 0;
+    // ld's "in function `f':" for the line under it, and the problems ld's
+    // lines gave since its exit status was last said.
+    std::string tool_ld_fn_;
+    u64 tool_ld_fn_at_ = 0;
+    u32 tool_ld_found_ = 0;
+    // Whose bare "ERROR:" and "Warning:" lines these are (Yosys's or
+    // nextpnr's), and the files their commands named, as make echoed them.
+    enum : u8 { kRunNone, kRunYosys, kRunNextpnr } tool_run_ = kRunNone;
+    std::string tool_qsb_, tool_spv_, tool_pcf_, tool_metal_;
+    bool tool_metal_looked_ = false;  // (the project's one .metal file, looked for once)
+    // pre-commit's hook that failed: its name and id.
+    bool tool_hook_ = false;
+    std::string tool_hook_name_, tool_hook_id_;
     // buildtests.cpp:
     std::string summary_;
 

@@ -1,0 +1,14 @@
+%Error-MODMISSING: miss.v:2:3: Cannot find file containing module: 'nochild'
+    2 |   nochild u0(.clk(clk), .y(y));
+      |   ^~~~~~~
+                   ... For error description see https://verilator.org/warn/MODMISSING?v=5.054
+                   ... This may be because there's no search path specified with -I<dir>.
+                   ... Looked in:
+                        nochild
+                        nochild.v
+                        nochild.sv
+                        obj_dir/nochild
+                        obj_dir/nochild.v
+                        obj_dir/nochild.sv
+                   ... With current working directory '/work'
+%Error: Exiting due to 1 error(s)

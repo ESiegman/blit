@@ -1,0 +1,25 @@
+[INFO] Initializing environment for https://github.com/astral-sh/ruff-pre-commit.
+trim trailing whitespace.................................................Failed
+- hook id: trailing-whitespace
+- exit code: 1
+- files were modified by this hook
+
+Fixing pkg/mod.py
+
+fix end of files.........................................................Passed
+check yaml...........................................(no files to check)Skipped
+ruff check...............................................................Failed
+- hook id: ruff-check
+- exit code: 1
+
+pkg/mod.py:1:8: F401 [*] `os` imported but unused
+Found 1 error.
+[*] 1 fixable with the `--fix` option.
+
+check for merge conflicts................................................Failed
+- hook id: check-merge-conflict
+- exit code: 1
+
+pkg/conflict.py:3: Merge conflict string '<<<<<<< ' found
+
+debug statements (python)................................................Passed

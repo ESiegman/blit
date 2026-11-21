@@ -60,13 +60,14 @@ bool read_picture(std::string_view bytes, std::vector<u8>* rgba, u32* w, u32* h)
     return true;
 }
 
-// The full path of the one file of the list called `name`; nothing when
-// none is, or several are.
+// The full path of the one file of the list called `name` ("*.metal": the
+// one with that extension); nothing when none is, or several are.
 std::string file_named(const FileIndex& files, std::string_view name) {
     std::string found;
+    const bool any = name.starts_with("*.");
     for (size_t i = 0; i < files.size(); ++i) {
         const std::string_view p = files.path(i);
-        if (p != name && !(p.ends_with(name) && p[p.size() - name.size() - 1] == '/')) continue;
+        if (any ? !p.ends_with(name.substr(1)) : p != name && !(p.ends_with(name) && p[p.size() - name.size() - 1] == '/')) continue;
         if (!found.empty()) return {};
         found = files.root + "/" + std::string(p);
     }

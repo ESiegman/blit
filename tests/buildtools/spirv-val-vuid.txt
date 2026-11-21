@@ -1,0 +1,3 @@
+error: line 10: [VUID-StandaloneSpirv-Location-04916] Variable must be decorated with a location
+  %2 = OpVariable %_ptr_Output_v4float Output
+

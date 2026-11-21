@@ -1,0 +1,17 @@
+error: no definition in scope for identifier: `undefined_color`
+   ┌─ shaders/fill.wgsl:7:12
+   │
+ 7 │     return undefined_color;
+   │            ^^^^^^^^^^^^^^^ unknown identifier
+
+Could not parse WGSL
+error: Function [0] 'main' is invalid
+  ┌─ shaders/fill.wgsl:5:1
+  │
+5 │ ╭ fn main() -> @location(0) vec4<f32> {
+6 │ │     let x: i32 = 1.0;
+  │ │                  ^^^ naga::ir::Expression [0]
+  │ ╰─────────────────────^ naga::ir::Function [0]
+  │
+  = The type of [1] doesn't match the type stored in [0]
+

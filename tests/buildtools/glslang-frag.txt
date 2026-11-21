@@ -1,0 +1,7 @@
+shaders/shader.frag
+ERROR: shaders/shader.frag:7: 'undeclared' : undeclared identifier 
+ERROR: shaders/shader.frag:7: '' : compilation terminated 
+ERROR: 2 compilation errors.  No code generated.
+
+
+SPIR-V is not generated for failed compile or link

@@ -1,0 +1,7 @@
+ERROR: tb.v:5: x is 3
+       Time: 0  Scope: tb
+WARNING: tb.v:6: careful
+         Time: 0  Scope: tb
+ERROR: plain display at time 0
+FATAL: tb.v:8: stopping
+       Time: 1  Scope: tb

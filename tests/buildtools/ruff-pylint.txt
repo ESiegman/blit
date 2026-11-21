@@ -1,0 +1,5 @@
+pkg/mod.py:1: [F401] `os` imported but unused
+pkg/mod.py:6: [E711] Comparison to `None` should be `cond is None`
+pkg/mod.py:7: [F821] Undefined name `undefined_name`
+pkg/mod.py:8: [E741] Ambiguous variable name: `l`
+pkg/mod.py:8: [F841] Local variable `l` is assigned to but never used
