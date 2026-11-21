@@ -283,7 +283,7 @@ printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n-- blit.opt.
 BLIT_INIT="$dir/tmpl.lua"
 run "key:cmd+K;text:tab width;key:Return;text:8;vimdump"
 check "the template's line of it, a comment, made a setting" 'NORMAL |  | 3:30 | blit.opt.editor.tab_width = 8   -- columns'
-run "key:cmd+K;text:modal;key:Return;text:true;vimdump"
+run "key:cmd+K;text:editor.modal;key:Return;text:true;vimdump"  # (not "modal": elsewhere than macOS, Move the lines down's Alt+Down has its letters)
 check "the line that sets it" 'NORMAL |  | 4:29 | blit.opt.editor.modal = true -- "x"'
 BLIT_INIT="$dir/init.lua"
 
