@@ -46,25 +46,26 @@ run() {
 # where Ctrl is the editor's key (README.md, "Keys without Cmd").
 if [ "$(uname -s)" = Darwin ]; then
     split_keys='Split to the right (Cmd+\) Go to the split on the right (Cmd+Option+Right) Move the tab to the split on the right (Cmd+Option+Shift+Right) Make the split wider (Cmd+Ctrl+Right)'
-    wider=cmd+ctrl+Right
+    wider=cmd+ctrl+Right split_count=4
     panel_typed=cmd+b panel_keys='Show or hide the side panel (Cmd+B)'
     panel_map='<D-b>' panel_chord='Cmd+B'
     next_keys='Go to the next tab (Ctrl+Tab  Cmd+Shift+])'
 else
-    split_keys='Split to the right (Ctrl+\) Go to the split on the right (Ctrl+Alt+Right) Move the tab to the split on the right (Ctrl+Alt+Shift+Right) Make the split wider (Alt+Shift+.)'
+    split_keys='Split to the right (Ctrl+\) Go to the split on the right (Ctrl+Alt+Right) Move the tab to the split on the right (Ctrl+Alt+Shift+Right)'  # (the split wider: no Right in its keys there)
+    split_count=3
     wider=alt+shift+.  # (Alt+Shift+Right expands the selection there)
     panel_typed=ctrl+b panel_keys='Show or hide the side panel (Ctrl+B  Alt+B)'
     panel_map='<C-b>' panel_chord='Ctrl+B'
     next_keys='Go to the next tab (Ctrl+Tab  Ctrl+Shift+]  Ctrl+PageDown)'
 fi
 run "key:cmd+shift+p;text:split right;finddump"
-check "the search: commands by name, with their keys, the best first" "commands [split right] 4 : >$split_keys"
+check "the search: commands by name, with their keys, the best first" "commands [split right] $split_count : >$split_keys"
 run "key:cmd+shift+p;text:$panel_typed;finddump"
 check "keys typed: the command they are" "commands [$panel_typed] 1 : >$panel_keys"
 run "key:cmd+shift+p;key:alt+K;key:ctrl+Tab;finddump"
 check "Option+K, then keys pressed: looked up" "commands [Ctrl+Tab] 1 : >$next_keys"
 run "key:cmd+shift+p;key:alt+K;key:alt+K;text:split right;finddump"
-check "and Option+K again: back to typing" "commands [split right] 4 : >$split_keys"
+check "and Option+K again: back to typing" "commands [split right] $split_count : >$split_keys"
 run "key:cmd+shift+p;key:Tab;key:ctrl+Tab;finddump"
 case $got in "commands [] "*) got="nothing looked up" ;; esac
 check "Tab does not look keys up" "nothing looked up"
