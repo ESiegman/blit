@@ -61,6 +61,11 @@ std::string helper_here(std::string* err) {
 
 // The Python there, chosen as the Python console's is here (appterm.cpp):
 // the folder's virtual environment's, uv's for a uv project, else python3.
+// A cell sent to run, as the line that sends it starts; and the helper's
+// line that says one is done, as it starts (json.dumps' spacing).
+constexpr std::string_view kRunOp = "{\"op\":\"run\"";
+constexpr const char* kDone = "{\"type\": \"done\"";
+
 constexpr const char* kChoose =
     "if [ -x .venv/bin/python ]; then exec .venv/bin/python \"$@\"; fi; "
     "if [ -x venv/bin/python ]; then exec venv/bin/python \"$@\"; fi; "
@@ -183,7 +188,11 @@ bool Kernel::Link::start_remote(std::stop_token stop) {
         if (!c->make_dir(cache, true, &why) || !c->write(part, kHelper, &why) || !c->rename(part, helper, &why))
             return failed("cannot write the kernel's helper there: " + why);
     }
+    // (It outlives a dropped connection, and counts as working while a cell
+    // runs: from each run it is sent until the line that says the cell is done.)
     RemoteProc p;
+    p.keep = true;
+    p.done = kDone;
     if (!c->spawn({"/bin/sh", "-c", kChoose, "sh", helper, notebook_dir}, there, {}, &p, &why)) return failed("cannot start the kernel there: " + why);
     {
         std::lock_guard lock(mu);
@@ -194,6 +203,8 @@ bool Kernel::Link::start_remote(std::stop_token stop) {
     std::lock_guard lock(write_mu);
     in = p.in;
     up = true;
+    for (size_t at = 0; (at = pending.find(kRunOp, at)) != std::string::npos; at += kRunOp.size())
+        if (at == 0 || pending[at - 1] == '\n') conn->busy(proc.id);
     for (size_t at = 0; at < pending.size();) {
         const ssize_t k = ::write(in, pending.data() + at, pending.size() - at);
         if (k > 0) at += static_cast<size_t>(k);
@@ -296,6 +307,10 @@ void Kernel::Link::send(const std::string& line) {
         if (!ended) pending += line;
         return;
     }
+    if (line.starts_with(kRunOp)) {  // (there: it is working until that cell is done)
+        std::lock_guard lock_c(mu);
+        if (conn && proc.id) conn->busy(proc.id);
+    }
     size_t at = 0;
     while (at < line.size() && in >= 0) {
         const ssize_t k = ::write(in, line.data() + at, line.size() - at);
@@ -330,7 +345,7 @@ void Kernel::Link::end() {
 
 void Kernel::run(u64 cell, std::string_view code, u32 columns) {
     if (!link_) return;
-    std::string line = "{\"op\":\"run\",\"id\":" + std::to_string(cell) + ",\"columns\":" + std::to_string(columns) + ",\"code\":";
+    std::string line = std::string(kRunOp) + ",\"id\":" + std::to_string(cell) + ",\"columns\":" + std::to_string(columns) + ",\"code\":";
     json::quote(line, code);
     line += "}\n";
     link_->send(line);

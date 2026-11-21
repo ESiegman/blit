@@ -28,6 +28,7 @@
 
 #include "finder.hpp"
 #include "look.hpp"
+#include "remote.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
 
@@ -444,6 +445,7 @@ void App::script_start() {
     script_plugins();
     s.starting = false;
     if (!script_settings_.empty()) cfg_ = make_config(script_settings_);  // (all of them as one: see make_config())
+    Remote::set_agent_times(cfg_.agent_idle * 60, cfg_.agent_keep * 3600);  // (before the first connection: it says them in its hello)
 }
 
 // Once the window is up: the first file was read, and blit has started.

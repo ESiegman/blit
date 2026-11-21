@@ -209,6 +209,8 @@ struct TermView {
         }
         std::string err;
         RemoteProc p;
+        p.keep = true;  // (it outlives a dropped connection, and is taken back with what it wrote meanwhile)
+        p.work = keep;  // (a task's counts as working while it runs: a shell's only while a program is in front of it)
         if (!c->spawn(remote_argv, there, remote_env, &p, &err, h, w)) {
             say("\x1b[K\x1b[31mCannot start a shell on " + host + ": " + err + "\x1b[0m\r\n");
             return false;
@@ -589,7 +591,7 @@ void App::term_sync() {
             if (v.ended && !d.term_closed) {
                 d.term_closed = true;
                 // (One on another machine whose connection went did not fail or exit: it is not known how it went.)
-                const bool lost = v.status == -1 && v.conn && v.conn->state() == Remote::kFailed;
+                const bool lost = v.status == -1 && v.conn;  // (-1: the connection went, or the agent there did, with what it ran)
                 if (v.keep) {  // (a build's: how it went, and the time it took; one that never started has said why)
                     char took[48];
                     std::snprintf(took, sizeof took, "%.1f s", static_cast<double>(now_ns() - v.started_ns) * 1e-9);
@@ -1008,8 +1010,8 @@ size_t App::term_busy_count() {
     size_t n = 0;
     std::string what;
     auto count = [&](const Pane& p) {
-        for (const std::shared_ptr<Doc>& d : p.docs)
-            if (d->term && busy_with(*d->term, &what)) ++n;
+        for (const std::shared_ptr<Doc>& d : p.docs)  // (one an agent keeps running there is asked about apart: remote_quit_jobs)
+            if (d->term && !(d->term->conn && d->term->conn->lasting()) && busy_with(*d->term, &what)) ++n;
     };
     for (const std::unique_ptr<Pane>& p : panes_) count(*p);
     if (dock_ && dock_->away) count(*dock_->away);

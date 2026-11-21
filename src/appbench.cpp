@@ -1011,6 +1011,23 @@ void App::run_script(const char* script) {
                 if ((!loading && !connecting && !remote_busy()) || now_ns() > until) break;
                 SDL_Delay(2);
             }
+        } else if (verb == "focus") {  // the window brought to the front (what that does, as the event does it)
+            SDL_Event ev{};
+            ev.type = SDL_EVENT_WINDOW_FOCUS_GAINED;
+            handle_event(ev);
+        } else if (verb == "remoteback") {  // every connection up again, made again by itself (30 s at most)
+            const u64 until = now_ns() + 30'000'000'000ull;
+            for (;;) {
+                remote_sync();
+                bool all = true;
+                for (const std::shared_ptr<Remote>& r : Remote::all()) all &= r->state() == Remote::kReady;
+                if (all || now_ns() > until) {
+                    if (!all) std::fprintf(stderr, "remoteback: not back\n");
+                    break;
+                }
+                SDL_Delay(5);
+            }
+            remote_sync();
         } else if (verb == "remotelost") {  // a connection has been seen to go (10 s at most): what it went with is told
             const u64 until = now_ns() + 10'000'000'000ull;
             for (bool lost = false; !lost && now_ns() < until; SDL_Delay(2))
@@ -1423,8 +1440,9 @@ void App::run_script(const char* script) {
             if (!ran) std::fprintf(stderr, "command: no \"%s\"\n", arg.c_str());
         } else if (verb == "termend") {  // the terminal's program has ended (10 s at most)
             term_end();
-        } else if (verb == "answer") {
-            answer_save_ = arg == "save";
+        } else if (verb == "answer") {  // (save or dontsave; keep or end, for jobs on other machines)
+            if (arg == "keep" || arg == "end") answer_keep_ = arg == "keep";
+            else answer_save_ = arg == "save";
         } else if (verb == "asked") {  // the last question there was nobody to ask (a box would have asked it)
             std::fprintf(stderr, "%s\n", asked_.empty() ? "nothing asked" : asked_.c_str());
             asked_.clear();

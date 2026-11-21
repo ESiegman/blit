@@ -294,8 +294,12 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                     if (st == Remote::kReady) {
                         s.text = icon + host;
                         s.in = ink::kText;
+                    } else if (st == Remote::kFailed && r->retrying()) {  // (made again by itself: a click tries now)
+                        s.text = std::string(icon) + "reconnecting to " + host + "\xE2\x80\xA6";
+                        s.in = ink::kMuted;
+                        s.action = kReconnect;
                     } else if (st == Remote::kFailed) {
-                        s.text = icon + host + ": not connected (connect again)";
+                        s.text = icon + host + (r->stopped() ? ": agent stopped (connect again)" : ": not connected (connect again)");
                         s.in = ink::kError;
                         s.action = kReconnect;
                     } else {

@@ -636,6 +636,7 @@ void App::apply_config(Config next) {
     const bool lsp_changed =
         next.lsp != cfg_.lsp || next.lsp_max_mb != cfg_.lsp_max_mb || next.lsp_servers != cfg_.lsp_servers || types_changed;
     cfg_ = std::move(next);
+    Remote::set_agent_times(cfg_.agent_idle * 60, cfg_.agent_keep * 3600);  // (the next connection's hello says them)
     for (const std::unique_ptr<Pane>& p : panes_) {
         for (const std::shared_ptr<Doc>& d : p->docs) d->ed.tab_width = cfg_.tab_width;
         p->cache_rev = ~0ull;  // columns depend on the tab width
@@ -1011,6 +1012,7 @@ void App::save_docs(const std::vector<u64>& wanted) {
 // (Files being saved to another machine, and changed by nothing else, are
 // not asked about: quitting waits for them, in a box that says so.)
 void App::request_quit() {
+    if (!remote_quit_jobs()) return;
     size_t unsaved = 0, unnamed = 0;
     std::vector<std::string> names;  // of the files with changes, in the order of their tabs
     Pane* first_pane = nullptr;
@@ -1845,6 +1847,7 @@ void App::handle_event(const SDL_Event& e) {
             pick_theme();
             break;
         case SDL_EVENT_WINDOW_FOCUS_GAINED:
+            Remote::nudge();  // (a connection being made again by itself: tried now, the network may be back)
             panel_refresh();  // files that came or went
             find_stale();
             reload_changed(); // and open files that were written

@@ -531,6 +531,7 @@ std::string App::nb_kernel_status(Doc& d, bool* lost) {
     }
     if (!nb.kernel) return "no kernel";
     if (nb.kernel->pid() < 0) return "kernel starting\xE2\x80\xA6";
+    if (const std::string down = nb_host_down(*src); !down.empty()) return "kernel waiting for " + down;  // (kept running there meanwhile)
     std::string where = nb.python;
     if (const size_t venv = where.find("/.venv/"); venv != std::string::npos) where = ".venv";
     else where = where.substr(where.find_last_of('/') + 1);
@@ -549,10 +550,12 @@ std::string App::nb_host_down(const Doc& d) {
 }
 
 // A connection has come up or gone down: a kernel there that went with it
-// says so (in red, in the status bar).
+// says so (in red, in the status bar). (One the agent there keeps running
+// has not gone: it waits for the connection to come back, and its end, if
+// it does end, says so as any kernel's.)
 void App::nb_connections() {
     for (Doc* d : open_docs())
-        if (d->nb && d->nb->lost.empty()) d->nb->lost = nb_host_down(*d);
+        if (d->nb && d->nb->lost.empty() && d->nb->kernel && d->nb->kernel->ended()) d->nb->lost = nb_host_down(*d);
 }
 
 // For the tests: the kernel of the notebook in front: what it is, its

@@ -108,6 +108,10 @@ struct Config {
     bool indent_guides = true;  // a coloured line down each level of indentation
     u32 indent_width = 0;       // columns per level for those lines; 0 = worked out from each file
     u32 scrolloff = 0;          // lines kept in view above and below the cursor (Vim's 'scrolloff')
+    // blit's agent on another machine: minutes it waits with nothing working
+    // and no blit attached before it ends, and hours it keeps what is working
+    // with no blit attached.
+    u32 agent_idle = 10, agent_keep = 24;
     bool tab_bar = true;        // the row of open files along the top
     bool status_bar = true;     // the row across the bottom: the repository, the file, the cursor, problems
     bool breadcrumbs = true;

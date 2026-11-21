@@ -11,6 +11,9 @@ while [ $# -gt 1 ]; do
     esac
 done
 [ -n "${BLIT_FAKE_HOME:-}" ] && HOME=$BLIT_FAKE_HOME && export HOME
+# BLIT_FAKE_LOG=FILE: each connection begun is a line there (when, in
+# seconds), so that a test can count them.
+[ -n "${BLIT_FAKE_LOG:-}" ] && date +%s >>"$BLIT_FAKE_LOG"
 [ -n "${BLIT_FAKE_FAIL:-}" ] && { echo "ssh: connect to host: $BLIT_FAKE_FAIL" >&2; exit 255; }
 # BLIT_FAKE_DOWN=FILE: the host cannot be reached while that file is there
 # (it says why), so that a test can bring it back. One that says "hang" is a

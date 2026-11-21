@@ -1023,6 +1023,7 @@ bool start(const std::shared_ptr<Remote>& remote, const std::vector<std::string>
     run->remote = remote;
     if (remote) {
         RemoteProc p;
+        p.keep = p.work = true;  // (a long run outlives a dropped connection, and counts as working)
         if (!remote->spawn(argv, cwd, {}, &p, err)) return false;
         ::close(p.in);  // (it reads nothing)
         run->rid = p.id;

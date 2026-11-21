@@ -112,12 +112,15 @@ struct App::RemoteUi {
 
     std::jthread worker, saver, lister, errander;  // (last: stopped first)
 
+    // Quitting: what the agents there keep working is kept running (asked: remote_quit_jobs).
+    bool keep_working = false;
+
     ~RemoteUi() {
         worker.request_stop();
         saver.request_stop();
         lister.request_stop();
         errander.request_stop();
-        Remote::close_all();  // (a call they are waiting on fails at once)
+        Remote::close_all(keep_working);  // (a call they are waiting on fails at once)
     }
 
     Saving* saving_of(u64 doc) {
@@ -601,6 +604,72 @@ void App::remote_opened(Pane& p, Doc& d, bool fresh) {
     if (script_) script_opened(d.id, fresh);
 }
 
+// Quitting: programs the agents there keep working (a build, a profiling
+// run, a cell, a program in front of a terminal's shell) are kept running
+// or ended, as asked. (Those not working end anyway, and an agent with
+// nothing working ends with blit.)
+bool App::remote_quit_jobs() {
+    std::vector<std::pair<std::string, int>> jobs;
+    int total = 0;
+    for (const std::shared_ptr<Remote>& r : Remote::all())
+        if (const int n = r->working(); n > 0) jobs.emplace_back(r->host(), n), total += n;
+    if (remote_) remote_->keep_working = false;
+    if (!total) return true;
+    std::string what;
+    for (size_t i = 0; i < jobs.size(); ++i) {
+        const auto& [host, n] = jobs[i];
+        what += i == 0 ? "" : i + 1 == jobs.size() ? " and " : ", ";
+        what += i == 0 ? std::to_string(n) + (n == 1 ? " job is" : " jobs are") + " running on " + host : std::to_string(n) + " on " + host;
+    }
+    what += total == 1 ? ": keep it running, or end it?" : ": keep them running, or end them?";
+    const SDL_MessageBoxButtonData buttons[] = {
+        {SDL_MESSAGEBOX_BUTTON_RETURNKEY_DEFAULT, 1, "Keep Running"},
+        {0, 2, total == 1 ? "End It" : "End Them"},
+        {SDL_MESSAGEBOX_BUTTON_ESCAPEKEY_DEFAULT, 0, "Cancel"},
+    };
+    SDL_MessageBoxData box{};
+    box.flags = SDL_MESSAGEBOX_WARNING;
+    box.window = win_;
+    box.title = "blit";
+    box.message = what.c_str();
+    box.numbuttons = 3;
+    box.buttons = buttons;
+    int hit = 0;
+#if BLIT_DEV
+    if (!win_) hit = answer_keep_ ? 1 : 2, asked_ = what;  // scripted runs have nobody to ask (the tests read what was asked)
+    else
+#endif
+    SDL_ShowMessageBox(&box, &hit);
+    if (hit == 0) return false;
+    if (remote_) remote_->keep_working = hit == 1;
+    return true;
+}
+
+// The agent on the machine of the tab in front (or the folder's, or the
+// only one connected), told to end with everything it runs, for every blit.
+void App::remote_stop_agent() {
+    std::string host, there;
+    const Doc& d = *pane_->doc;
+    const std::string* root = panel_root();
+    if (!split_remote(d.term ? term_folder(*d.term) : d.ed.path, &host, &there) && !(root && split_remote(*root, &host, &there))) {
+        for (const std::shared_ptr<Remote>& r : Remote::all())
+            if (r->state() == Remote::kReady) {
+                if (!host.empty()) return notify("Which server: open a file or folder on it first");
+                host = r->host();
+            }
+    }
+    std::shared_ptr<Remote> conn;
+    for (const std::shared_ptr<Remote>& r : Remote::all())
+        if (r->host() == host) conn = r;
+    if (host.empty() || !conn) return notify("Not connected to a server");
+    if (conn->state() != Remote::kReady) return notify("Not connected to " + host);
+    const int n = conn->working();
+    const std::string jobs = n == 0 ? "" : n == 1 ? " 1 job is working there." : " " + std::to_string(n) + " jobs are working there.";
+    if (!confirm("Stop blit's agent on " + host + "? Everything it runs there ends, for every blit." + jobs, "Stop")) return;
+    if (!conn->stop_agent()) return notify("blit's agent on " + host + " ends with the connection already");
+    notify("blit's agent on " + host + " was stopped");
+}
+
 // The connections that failed are made again, and what was asked of them is asked again.
 void App::remote_reconnect() {
     std::vector<std::string> hosts;
@@ -632,6 +701,19 @@ void App::remote_sync() {
     dirty_ = true;
     remote_asks();
     if (!remote_) return find_remote_ready();
+    // The hosts something is open on (a file, a terminal, the folder): a
+    // connection to one that goes is made again by itself.
+    {
+        std::vector<std::string> hosts;
+        auto add = [&](const std::string& path) {
+            std::string host, there;
+            if (split_remote(path, &host, &there) && std::ranges::find(hosts, host) == hosts.end()) hosts.push_back(std::move(host));
+        };
+        if (const std::string* root = panel_root()) add(*root);
+        for (const std::unique_ptr<Pane>& p : panes_)
+            for (const std::shared_ptr<Doc>& d : p->docs) add(d->term ? term_folder(*d->term) : d->ed.path);
+        Remote::set_wanted(hosts);
+    }
     // A connection that has come up (again): the files, git and the language
     // server there are asked again for what they could not give without it.
     bool up = false;

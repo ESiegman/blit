@@ -1949,9 +1949,12 @@ over the one ssh connection:
 - **Programs** run there (a terminal, a build, a language server) send
   their output as they write it. Their tabs name the machine (`Terminal:
   box`, `make (box)`, `notes.txt (changes, box)`, `notes.txt (against
-  disk, box)`). A terminal there whose connection is lost ends with
-  *[connection to box lost]*, not an exit code, and one opened just after
-  says *the connection to box was lost*. One that writes faster than blit reads it
+  disk, box)`). A terminal, a task, a profiling run and the notebook's
+  kernel keep running there while the connection is down (see below); one
+  whose program the machine lost meanwhile (it restarted, or its agent
+  was stopped) ends with *[connection to box lost]*, not an exit code,
+  and one opened while the connection is down says *the connection to box
+  was lost*. One that writes faster than blit reads it
   (`yes` in a terminal) is paused there after a few MB rather than filling
   memory, and a language server's error output stays there. The other way
   round too: a program there that does not take what it is sent (a paste
@@ -1965,16 +1968,69 @@ over the one ssh connection:
 The status bar starts with the host of the tab in front (a file's own, a
 terminal's; for a tab with neither, the working folder's), and says while
 it is connecting (and copying the agent, the first time). A connection
-that is lost says so in red; click it to connect again (it is also made
-again by itself the next time something is opened or saved there, after
-a few seconds). So does one that could not be made when a file or folder
-there was opened (from the command line, say): connected again, it opens
-then (unless another file or folder has been opened since, which the status
+that is lost is made again by itself while something is open there (a
+tab, the folder) or running there: at once, then after 2, 5, 10, 20, 30
+and then every 60 seconds, and at once when blit's window comes back to
+the front or the Mac wakes. No more than four connections are begun in 30
+seconds, the first one counted, since a firewall's limit on new
+connections (ufw's `LIMIT` blocks after six) counts them too. Meanwhile
+the status bar says *reconnecting to box…*; click it to try now. A
+connection that was refused (the key, a password, a second factor) is not
+tried again by itself, so that a login that asks is not asked over and
+over: it says so in red, and a click connects again. A save made just
+after the connection went waits for it to come back (ten seconds at most),
+and goes then. One that could not be made when a file or folder there was
+opened (from the command line, say): connected again, it opens then
+(unless another file or folder has been opened since, which the status
 bar then shows instead).
 
-When the connection ends (blit quits, or the link drops), the agent ends
-what it started there, each program with all that program started in turn,
-kills what has not ended two seconds later, and then ends itself.
+**The agent outlives the connection.** What ssh runs is only a go-between
+(`blit-agent --attach`): the agent itself runs apart from it, in a session
+of its own (and on Linux, where systemd would end it with the login, in a
+`systemd-run --user` scope of its own), and the go-between finds it by a
+socket in `/tmp/blit-UID`, a folder only that user can enter. Where that
+folder cannot be made so, the agent is the connection's own, as it was
+before, and ends with it. Terminals, tasks (the Build tab, run
+configurations, the tests), profiling runs and the notebook's kernel keep
+running while the connection is down: what they write is kept there, the
+latest 4 MB of each, and when blit connects again they are its own again,
+with what they wrote meanwhile shown as if it had come at once (a task's
+problems read from it, its paths clicked as usual) and what they write
+from then on following. What is typed into such a terminal while the
+connection is down goes when it is back. What else blit started there (a
+language server, git, the debugger) ends with the connection, as before,
+and is started again when needed. Each program's environment is the
+connection's, so a `PATH` changed in a login file there is seen by what is
+started once connected again.
+
+The agent ends:
+
+- when nothing has been working and no blit has been attached for
+  `blit.opt.remote.agent_idle` minutes (10). Working: a task while it
+  runs, a profiling run, the kernel while it runs a cell, a terminal while
+  a program is in front of its shell (a shell at its prompt is not
+  working, and is closed then);
+- when blit quits, at once if nothing is working there. If something is,
+  quitting asks *2 jobs are running on box: keep them running, or end
+  them?*: Keep Running leaves them to their end (the agent then ends as in
+  the first case), End Them ends them, Cancel stays;
+- on *Stop the agent on the server* (Command search), which asks first
+  and ends everything the agent runs there, for every blit (the server of
+  the tab in front, or of the folder). It is not made again by itself
+  then: the status bar says *agent stopped*, and a click connects again,
+  with a new agent;
+- with a new build of blit: the new agent is another program, so the old
+  one finishes its own jobs and ends as in the first case, while the new
+  one takes what is started from then on;
+- with the machine;
+- and in any case once no blit has been attached for
+  `blit.opt.remote.agent_keep` hours (24), what it kept running ended
+  first, so that a forgotten run does not keep an hourly machine's bill
+  going.
+
+When it ends, or the connection does with the agent of one connection,
+it ends what it started there, each program with all that program
+started in turn, and kills what has not ended two seconds later.
 
 What it needs:
 
@@ -3487,6 +3543,7 @@ tests/lua.sh build-debug/blit      # scripts: settings, mappings, commands, even
 tests/start.sh build-debug/blit    # the start screen and the list of what was opened lately (a scratch one)
 tests/session.sh build-debug/blit  # sessions: kept on quit and when the folder changes, brought back by each way of opening a folder
 tests/remote.sh build-debug/blit   # another machine's files, git and language server, through tests/fake-ssh.sh (BLIT_FAKE_SLOW=SECONDS makes it a slow host; BLIT_AGENT_LEVEL=1 acts as an old agent)
+tests/agent.sh build-debug/blit    # the agent outlives the connection: what it keeps running taken back, connecting again by itself (and its limits), when the agent ends
 tests/profile.sh build-debug/blit  # profiling tests/profile/spin.c here and through tests/fake-ssh.sh (skipped with no profiler)
 tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, copy and paste, here and through tests/fake-ssh.sh;
                                    # the split Ctrl+` shows and hides, and the questions about programs still running

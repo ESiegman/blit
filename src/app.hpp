@@ -930,6 +930,10 @@ private:
     void find_remote_ready();
     void remote_opened(Pane& p, Doc& d, bool fresh);
     void remote_reconnect();
+    // Quitting, with programs kept working on other machines: whether they
+    // are kept running or ended, asked (false: quitting is called off).
+    bool remote_quit_jobs();
+    void remote_stop_agent();  // the agent on the front tab's machine stopped, with all it runs (asked first)
     // Saving one: the text as it is, written there on a thread of its own
     // while typing goes on; closing its tab, or quitting, waits for that in a
     // box that says so (true: it waits; Esc calls the close or quit off).
@@ -1624,6 +1628,7 @@ private:
     bool term_drop_text_ = false;     // the text a key sent to a terminal as itself also brings is not typed again
     std::string asked_;               // (scripted runs: the last question there was nobody to ask, for the tests)
     bool answer_save_ = false;        // (and closing or quitting with changes answered Save there, not Don't Save)
+    bool answer_keep_ = false;        // (and quitting with jobs on other machines answered Keep Running there, not End Them)
     std::shared_ptr<RemoteUi> remote_;
     u64 remote_gen_ = 0;      // counts up whenever a connection or a file on its way has news
     u64 git_gen_ = 1;         // counts up whenever what the Git tab shows may have changed

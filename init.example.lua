@@ -201,6 +201,10 @@
 -- blit.opt.window.width = 1100    -- size of a new window, in points
 -- blit.opt.window.height = 760
 
+---------------------------------------------------------------- other machines
+-- blit.opt.remote.agent_idle = 10   -- minutes blit's agent there waits, with nothing working and no blit attached, before it ends
+-- blit.opt.remote.agent_keep = 24   -- hours it keeps what is working with no blit attached
+
 ---------------------------------------------------------------- updates
 -- blit.opt.updates.check = true   -- at the start, once a day: a newer release offered (blit.app and the AppImage install it)
 

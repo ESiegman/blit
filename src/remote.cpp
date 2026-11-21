@@ -21,6 +21,7 @@
 #include <format>
 #include <map>
 #include <mutex>
+#include <random>
 #include <thread>
 
 #if defined(__APPLE__)
@@ -103,7 +104,7 @@ constexpr std::string_view kBootstrap =
     "d=\"$HOME/.cache/blit\"; echo \"BLIT $(uname -s) $(uname -m)\"; read f; f=\"$d/$f\"; "
     "if [ -x \"$f\" ]; then echo BLIT-HAVE; else echo BLIT-NEED; read n; "
     "mkdir -p \"$d\" && head -c \"$n\" > \"$f.tmp.$$\" && chmod +x \"$f.tmp.$$\" && mv \"$f.tmp.$$\" \"$f\" || { rm -f \"$f.tmp.$$\"; echo BLIT-FAILED; exit 1; }; fi; "
-    "echo BLIT-START; exec \"$f\"";
+    "echo BLIT-START; exec \"$f\" --attach";
 
 std::mutex registry_mu;
 std::map<std::string, std::shared_ptr<Remote>> registry;
@@ -375,19 +376,71 @@ std::string remote_error(std::string_view path) {
 
 // ---------------------------------------------------------------- the connection
 
+namespace {
+// How long the agent there waits with nothing to do and nobody attached,
+// and with something kept running and nobody attached (Remote::set_agent_times).
+u32 agent_idle_s = 600, agent_keep_s = 86400;
+// A connection that goes is made again: first at once, then waiting longer
+// each time; but no more than kTriesMost connections are begun in kTriesNs
+// (a firewall's limit on new connections counts the agent's too: ufw's
+// LIMIT blocks after six in 30 s).
+constexpr int kTriesMost = 4;
+constexpr u64 kTriesNs = 30'000'000'000ull;
+constexpr u64 kBackoffMs[] = {500, 2000, 5000, 10'000, 20'000, 30'000, 60'000};
+// A worker that wants the connection waits for it while it is being made
+// again, for this long after it went (a save just after a drop goes once
+// the connection is back).
+constexpr u64 kQueueNs = 10'000'000'000ull;
+
+u64 wall_ns() { return static_cast<u64>(std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count()); }
+
+// What ssh says when it was refused, rather than not reaching the host:
+// such a one is not tried again by itself (a login node that asks for a
+// second factor is not to be asked over and over).
+bool refused(std::string_view said) {
+    for (const std::string_view s : {"Permission denied", "Authentication failed", "Too many authentication failures", "Host key verification failed"})
+        if (said.find(s) != std::string_view::npos) return true;
+    return false;
+}
+
+std::string new_session_name() {
+    std::random_device rd;
+    return std::format("{:08x}{:08x}{:08x}{:08x}", rd(), rd(), static_cast<u32>(::getpid()), static_cast<u32>(now_ns()));
+}
+}  // namespace
+
 struct Remote::Impl {
     Remote* self = nullptr;
     mutable std::mutex mu;
     std::condition_variable cv;
-    State state = kConnecting;  // (kReady from the agent's start: calls may go; up once it has said hello)
+    // kConnecting, kReady (from the agent's start: calls may go; up once
+    // it has said hello, and taken back what it kept), kFailed (the
+    // connection went, or could not be made).
+    State state = kConnecting;
     bool up = false;
-    u64 failed_ns = 0;  // when it failed: a connection that has is made again when next asked for, but not at once
+    bool gone = false;  // this connection has gone (or could not be made): the connection's thread lets go of it
+    bool dropped = false;  // it went after it was up (and has not been up since)
+    u64 failed_ns = 0;  // when it went
     std::string error, progress, home, system;
     std::string ssh_errors;  // the last of what ssh said on its error stream
     pid_t ssh = -1;
     int to = -1, from = -1, errs = -1;  // ssh's input (written here), output and errors (read here)
     u32 agent_level = 0;  // what the agent can do (protocol.hpp's kAgentLevel, as it says it)
+    bool lasting = false; // the agent outlives the connection (it says so in hello)
     u32 next_id = 1;
+    // Making it again. The connection's own thread (live) makes it, waits for
+    // it to go, and makes it again when it is asked to (get, reconnect,
+    // nudge) or by itself, while it is wanted.
+    const std::string session = new_session_name();  // blit's name for itself there, the same each time
+    bool closing = false;      // closed: made no more
+    bool ever_up = false;      // it has been up: once it goes, it is made again by itself
+    bool refused_once = false; // ssh was refused: not made again until asked to by hand
+    bool stopped = false;      // its agent was told to stop: likewise
+    bool asked = false;        // a new connection is wanted now
+    u64 retry_ns = 0;          // when it is to be made again by itself (0: it is not)
+    int backoff = 0;
+    std::deque<u64> tries;     // when the last connections were begun
+    std::atomic<bool> wanted{false};  // something is open there (Remote::set_wanted)
     // What is to go to ssh's input, in order, written by a thread of its own:
     // nobody waits for a long write (a big file being saved) but whoever
     // waits for its answer. Its own lock, never taken with mu's held the
@@ -400,7 +453,8 @@ struct Remote::Impl {
     std::deque<Out> outq, bulkq;     // (bulkq: what is big, written when nothing waits in outq)
     size_t out_bytes = 0, bulk_bytes = 0;
     u32 next_write = 1;  // (a file written in parts: its number, out_mu)
-    bool out_done = false;  // nothing more goes: the writer lets go of ssh's input (and closes it)
+    bool out_done = false;    // nothing more goes: the writer lets go of ssh's input (and closes it)
+    bool out_finish = false;  // what waits still goes, and then the writer closes it (quitting: the goodbye)
     std::jthread writer;
     struct Slot {
         bool done = false, failed = false;
@@ -415,6 +469,9 @@ struct Remote::Impl {
         bool paused = false;  // the agent has been told to stop reading its output (kFlow)
         bool in_paused = false;  // and it has told blit to hold what goes to its input (kInFlow)
         bool quiet = false;   // its errors are not wanted (an older agent sends them anyway: they are dropped)
+        bool keep = false;    // it outlives the connection (kKeep)
+        bool working = false; // as the agent counts it (kWorking)
+        u64 had[3] = {0, 0, 0};  // how much of each stream has come (what the agent is told in kResume)
         bool exited = false, ended = false;
         int status = -1;
         std::jthread pump_in, pump_out;
@@ -423,18 +480,43 @@ struct Remote::Impl {
     u32 next_proc = 1;
     std::condition_variable room;  // a program's held output has been taken (for the reader, when it waits for that)
     size_t held_most = 0;
-    std::jthread connector, reader, err_reader;
+    std::jthread live_thread, reader, err_reader;
 
+    // Made again now (mu is held): connecting from here on, as far as anyone
+    // asking can tell (the connection's thread is woken to do it).
+    void again_now() {
+        asked = true;
+        state = kConnecting;
+        progress = std::format("{} to {}", ever_up ? "reconnecting" : "connecting", self->host_);
+    }
+
+    // Whether it is to be made again by itself when it goes (mu is held).
+    bool again_by_itself() const {
+        if (!ever_up || refused_once || stopped || closing) return false;
+        for (const auto& [id, p] : procs)
+            if (p->keep && !p->exited) return true;
+        return wanted.load();
+    }
+
+    // The connection has gone, or could not be made. What waits for an
+    // answer fails; what it was running fails with it, but what the agent
+    // keeps running, which waits for the connection to come back.
     void fail(const std::string& why) {
         {
             std::lock_guard lock(mu);
-            if (state == kFailed) return;
+            if (gone) return;
             state = kFailed;
+            // (While it is being made again after it went, why it went is
+            // what is said, until it is refused.)
+            if (up) dropped = true;
+            if (up || !dropped || refused_once) error = why;
+            up = false;
+            gone = true;
             failed_ns = now_ns();
-            error = why;
+            retry_ns = again_by_itself() ? ~0ull : 0;  // (when: decided once the connection has been let go of)
             for (auto& [id, slot] : pending) slot->done = slot->failed = true;
             for (auto& [id, p] : procs)
-                if (!p->exited) {
+                if (!p->exited && !(p->keep && lasting && !closing && !stopped)) {
                     p->exited = true;
                     p->status = -1;
                     p->queue.push_back({0, {}});
@@ -446,17 +528,20 @@ struct Remote::Impl {
         if (notify_fn) notify_fn();
     }
 
-    // Nothing more is written: what waits to go is dropped, and the writer
-    // closes ssh's input once what it is writing now has gone (or failed).
-    // True if there is a writer to do that.
+    // Nothing more is written: what waits to go is dropped (but when it is
+    // to finish: quitting's goodbye), and the writer closes ssh's input once
+    // what it is writing now has gone (or failed). True if there is a
+    // writer to do that.
     bool stop_writing() {
         bool writing;
         {
             std::lock_guard lock(out_mu);
             out_done = true;
-            outq.clear();
-            bulkq.clear();
-            out_bytes = bulk_bytes = 0;
+            if (!out_finish) {
+                outq.clear();
+                bulkq.clear();
+                out_bytes = bulk_bytes = 0;
+            }
             writing = writer.joinable();
         }
         out_cv.notify_all();
@@ -471,7 +556,8 @@ struct Remote::Impl {
             {
                 std::unique_lock lock(out_mu);
                 out_cv.wait(lock, [&] { return out_done || !outq.empty() || !bulkq.empty(); });
-                if (out_done) break;
+                if (outq.empty() && bulkq.empty()) break;
+                if (out_done && !out_finish) break;
                 bulk = outq.empty();  // (what is small first)
                 std::deque<Out>& q = bulk ? bulkq : outq;
                 o = std::move(q.front());
@@ -526,6 +612,94 @@ struct Remote::Impl {
             if (c == '\n') return true;
             *out += c;
         }
+    }
+
+    // The connection's own thread: it makes the connection, waits for it to
+    // go, and makes it again (when asked, or by itself while it is wanted).
+    void live() {
+        for (;;) {
+            // No more than kTriesMost begun in kTriesNs.
+            {
+                std::unique_lock lock(mu);
+                for (;;) {
+                    while (!tries.empty() && now_ns() - tries.front() >= kTriesNs) tries.pop_front();
+                    if (closing || static_cast<int>(tries.size()) < kTriesMost) break;
+                    cv.wait_for(lock, std::chrono::nanoseconds(tries.front() + kTriesNs - now_ns()));
+                }
+                if (closing) return;
+                tries.push_back(now_ns());
+                state = kConnecting;
+                up = false;
+                gone = false;
+                retry_ns = 0;
+                asked = false;
+                ssh_errors.clear();
+            }
+            {
+                std::lock_guard lock(out_mu);
+                out_done = false;
+                outq.clear();
+                bulkq.clear();
+                out_bytes = bulk_bytes = 0;
+            }
+            if (notify_fn) notify_fn();
+            connect();
+            {
+                std::unique_lock lock(mu);
+                cv.wait(lock, [&] { return gone; });
+            }
+            let_go();
+            // Again: when asked, or by itself after a wait that grows.
+            std::unique_lock lock(mu);
+            if (closing) return;
+            const bool by_itself = again_by_itself();
+            retry_ns = 0;
+            if (by_itself) {
+                const u64 wait = kBackoffMs[std::min<size_t>(static_cast<size_t>(backoff), std::size(kBackoffMs) - 1)];
+                ++backoff;
+                retry_ns = now_ns() + wait * 1'000'000;
+            }
+            progress = by_itself ? std::format("reconnecting to {}", self->host_) : std::string();
+            lock.unlock();
+            if (notify_fn) notify_fn();
+            lock.lock();
+            // (A machine that slept: the wall clock has gone on where this one
+            // did not. Woken, it tries again at once.)
+            u64 wall = wall_ns(), mono = now_ns();
+            while (!closing && !asked && !(retry_ns && now_ns() >= retry_ns)) {
+                cv.wait_for(lock, std::chrono::seconds(1));
+                const u64 w2 = wall_ns(), m2 = now_ns();
+                if (retry_ns && static_cast<i64>(w2 - wall) - static_cast<i64>(m2 - mono) > 5'000'000'000ll) break;
+                wall = w2, mono = m2;
+            }
+            if (closing) return;
+        }
+    }
+
+    // What one connection had: ssh, and the threads that served it.
+    void let_go() {
+        pid_t pid;
+        {
+            std::lock_guard lock(mu);
+            pid = ssh;
+            ssh = -1;
+        }
+        if (pid > 0) {
+            for (int i = 0; i < 20 && ::waitpid(pid, nullptr, WNOHANG) == 0; ++i) ::usleep(10'000);
+            if (::waitpid(pid, nullptr, WNOHANG) == 0) {
+                ::kill(pid, SIGTERM);
+                ::waitpid(pid, nullptr, 0);
+            }
+        }
+        if (writer.joinable()) writer.join();
+        else if (to >= 0) ::close(to);
+        if (reader.joinable()) reader.join();
+        if (err_reader.joinable()) err_reader.join();
+        if (from >= 0) ::close(from);
+        if (errs >= 0) ::close(errs);
+        to = from = errs = -1;
+        std::lock_guard lock(out_mu);
+        out_finish = false;
     }
 
     void connect() {
@@ -584,10 +758,15 @@ struct Remote::Impl {
 #elif defined(__GLIBC__)
         posix_spawn_file_actions_addclosefrom_np(&fa, 3);  // (glibc: the same, as the last of the file actions)
 #endif
-        const int rc = ::posix_spawnp(&ssh, argv[0], &fa, &attr, argv.data(), envp.data());
+        pid_t pid = -1;
+        const int rc = ::posix_spawnp(&pid, argv[0], &fa, &attr, argv.data(), envp.data());
         posix_spawnattr_destroy(&attr);
         posix_spawn_file_actions_destroy(&fa);
         ::close(in[0]), ::close(out[1]), ::close(er[1]);
+        {
+            std::lock_guard lock(mu);
+            ssh = rc == 0 ? pid : -1;
+        }
         to = in[1], from = out[0], errs = er[0];
         if (rc != 0) return fail(std::format("cannot run ssh: {}", std::strerror(rc)));
         // What ssh says goes nowhere until it is needed to say why something failed.
@@ -603,11 +782,12 @@ struct Remote::Impl {
             ::usleep(100'000);  // (ssh's own reason may come just after)
             std::lock_guard lock(mu);
             std::string said = ssh_errors;
+            if (refused(said)) refused_once = true;
             while (!said.empty() && (said.back() == '\n' || said.back() == '\r')) said.pop_back();
             if (const size_t nl = said.rfind('\n'); nl != std::string::npos) said = said.substr(nl + 1);
             return said.empty() ? std::string(what) : std::format("{}: {}", what, said);
         };
-        set_progress(std::format("connecting to {}", host));
+        set_progress(std::format("{} to {}", ever_up ? "reconnecting" : "connecting", host));
         std::string l;
         do {  // (a person typing a password may take a while)
             if (!line(&l, asking ? 600'000 : 30'000)) return fail(why(std::format("cannot connect to {}", host)));
@@ -635,13 +815,16 @@ struct Remote::Impl {
             std::lock_guard lock(out_mu);
             if (!out_done) writer = std::jthread([this] { write_frames(); });  // (from here on, only it writes to ssh)
         }
-        // Hello: the agent's version, and where home is there.
+        // Hello: the agent's version, and where home is there; and blit's
+        // name for itself there, which the agent keeps what it ran under.
         std::string body;
         Writer w;
-        w.u32(kVersion).u32(kBlitLevel);
+        u32 idle = agent_idle_s;
+        if (const char* e = std::getenv("BLIT_AGENT_IDLE"); e && *e) idle = static_cast<u32>(std::max(1, std::atoi(e)));  // (the tests')
+        w.u32(kVersion).u32(kBlitLevel).str(session).u32(idle).u32(agent_keep_s);
         {
             std::lock_guard lock(mu);
-            if (state == kFailed) return;  // (closed meanwhile)
+            if (gone) return;  // (closed meanwhile)
             state = kReady;  // (for the call: set back below if it fails)
         }
         if (!call(kHello, w.b, &body, 30'000)) return fail(why(std::format("blit's agent on {} did not answer", host)));
@@ -650,13 +833,54 @@ struct Remote::Impl {
         u32 level = static_cast<u32>(std::atoi(version.c_str() + std::min(version.size(), version.find_last_of(' ') + 1)));
         // (BLIT_AGENT_LEVEL: the tests' way to meet an agent from before what a level brings.)
         if (const char* as = std::getenv("BLIT_AGENT_LEVEL"); as && *as) level = std::min(level, static_cast<u32>(std::atoi(as)));
+        const std::string home_there = r.str(), system_there = r.str();
+        r.u32();
+        const bool lasts = level >= 4 && r.n > 0 && r.u8() != 0;
+        // What it kept running, taken back: what each wrote meanwhile comes
+        // after the answer. (One it does not have is gone: the machine
+        // restarted, or it was the agent of one connection.)
+        std::vector<u32> kept;
         {
             std::lock_guard lock(mu);
+            for (const auto& [id, p] : procs)
+                if (p->keep && !p->exited) kept.push_back(id);
+        }
+        std::vector<u32> lost;
+        if (lasts) {
+            Writer k;
+            k.u32(static_cast<u32>(kept.size()));
+            {
+                std::lock_guard lock(mu);
+                for (const u32 id : kept) k.u32(id).u64(procs[id]->had[1]).u64(procs[id]->had[2]);
+            }
+            std::string answer;
+            if (!call(kResume, k.b, &answer, 30'000)) return fail(why(std::format("blit's agent on {} did not answer", host)));
+            Reader a(answer.data(), answer.size());
+            for (u32 n = a.u32(); n > 0 && a.ok; --n) {
+                const u32 id = a.u32();
+                if (!a.u8()) lost.push_back(id);
+            }
+        } else {
+            lost = kept;
+        }
+        {
+            std::lock_guard lock(mu);
+            for (const u32 id : lost)
+                if (auto it = procs.find(id); it != procs.end() && !it->second->exited) {
+                    it->second->exited = true;
+                    it->second->status = -1;
+                    it->second->queue.push_back({0, {}});
+                }
             agent_level = level;
-            home = r.str();
-            system = r.str();
+            lasting = lasts;
+            home = home_there;
+            system = system_there;
             progress.clear();
             up = true;
+            ever_up = true;
+            dropped = false;
+            error.clear();
+            backoff = 0;
         }
         cv.notify_all();
         if (notify_fn) notify_fn();
@@ -682,12 +906,12 @@ struct Remote::Impl {
                     it->second->done = true;
                 }
                 cv.notify_all();
-            } else if (op == kInFlow) {  // a program has more of what it was sent than it has taken: what it is sent waits
+            } else if (op == kInFlow || op == kWorking) {  // (kInFlow: a program has more of what it was sent than it has taken: what it is sent waits)
                 Reader r(rest.data(), rest.size());
                 const u32 proc = r.u32();
-                const bool paused = r.u8() != 0;
+                const bool on = r.u8() != 0;
                 std::lock_guard lock(mu);
-                if (auto it = procs.find(proc); it != procs.end()) it->second->in_paused = paused;
+                if (auto it = procs.find(proc); it != procs.end()) (op == kInFlow ? it->second->in_paused : it->second->working) = on;
                 cv.notify_all();
             } else if (op == kOutput || op == kExit) {
                 Reader r(rest.data(), rest.size());
@@ -698,8 +922,9 @@ struct Remote::Impl {
                 Proc& p = *it->second;
                 if (op == kOutput) {
                     const int stream = r.u8();
-                    if (stream == 2 && p.quiet) continue;  // (an older agent's: nobody here reads them)
                     std::string bytes = r.str();
+                    if (stream == 1 || stream == 2) p.had[stream] += bytes.size();
+                    if (stream == 2 && p.quiet) continue;  // (an older agent's: nobody here reads them)
                     p.held += bytes.size();
                     held_most = std::max(held_most, p.held);
                     p.queue.push_back({stream, std::move(bytes)});
@@ -709,6 +934,7 @@ struct Remote::Impl {
                     }
                 } else {
                     p.exited = true;
+                    p.working = false;
                     p.status = static_cast<int>(r.u32());
                     p.queue.push_back({0, {}});
                 }
@@ -727,13 +953,14 @@ struct Remote::Impl {
 
     // A request, and its answer (false if there is none: no connection, or it
     // went). tail: bytes that end the request, as they are (a file's text);
-    // bulk: it goes behind what is small (enqueue).
+    // bulk: it goes behind what is small (enqueue). (Until the agent has said
+    // hello and given back what it kept, only those go.)
     bool call(u8 op, const std::string& payload, std::string* answer, int ms = 60'000, std::string tail = {}, bool bulk = false) {
         Slot slot;
         u32 id;
         {
             std::lock_guard lock(mu);
-            if (state != kReady) return false;
+            if (state != kReady || (!up && op != kHello && op != kResume)) return false;
             id = next_id++;
             pending[id] = &slot;
         }
@@ -751,7 +978,7 @@ struct Remote::Impl {
     void send(u8 op, const std::string& payload, bool may_wait = false, bool bulk = false) {
         {
             std::lock_guard lock(mu);
-            if (state != kReady) return;
+            if (state != kReady || !up) return;
         }
         enqueue(frame_head(op, 0, payload, 0), {}, may_wait, bulk);
     }
@@ -763,35 +990,51 @@ struct Remote::Impl {
         w.u32(proc).u8(paused);
         enqueue(frame_head(kFlow, 0, w.b, 0));
     }
+
+    // Closed: blit is quitting, or the connection is let go of. With an
+    // agent that lasts, it is told first (what is working is kept, or not).
+    void close(bool keep) {
+        bool goodbye;
+        {
+            std::lock_guard lock(mu);
+            if (closing) return;
+            closing = true;
+            goodbye = up && lasting;
+            if (!up && ssh > 0) ::kill(ssh, SIGTERM);  // (still connecting: a password may be waited for)
+        }
+        if (goodbye) {
+            Writer w;
+            w.u8(keep);
+            {
+                std::lock_guard lock(out_mu);
+                out_finish = true;  // (it goes before the connection is let go of)
+            }
+            enqueue(frame_head(kGoodbye, 0, w.b, 0));
+        }
+        cv.notify_all();
+        fail("closed");
+    }
 };
 
 Remote::Remote(std::string host) : host_(std::move(host)), impl_(std::make_unique<Impl>()) { impl_->self = this; }
 
 Remote::~Remote() {
     Impl& m = *impl_;
-    // The agent sees its input end, and ends (and its programs with it). (The
-    // writer, if there is one, closes it, once what it is writing has gone.)
-    if (!m.stop_writing() && m.to >= 0) ::close(m.to);
-    if (m.ssh > 0) {
-        for (int i = 0; i < 50 && ::waitpid(m.ssh, nullptr, WNOHANG) == 0; ++i) ::usleep(10'000);
-        if (::waitpid(m.ssh, nullptr, WNOHANG) == 0) {
-            ::kill(m.ssh, SIGTERM);
-            ::waitpid(m.ssh, nullptr, 0);
-        }
+    m.close(false);
+    // The agent sees its input end (the writer closes it, once what it is
+    // writing has gone); ssh then ends, and the connection's thread with it.
+    {
+        std::lock_guard lock(m.out_mu);
+        m.out_done = true;
     }
-    if (m.connector.joinable()) m.connector.join();
-    if (m.reader.joinable()) m.reader.join();
-    if (m.err_reader.joinable()) m.err_reader.join();
-    if (m.writer.joinable()) m.writer.join();
-    m.fail("closed");
+    m.out_cv.notify_all();
+    if (m.live_thread.joinable()) m.live_thread.join();
     for (auto& [id, p] : m.procs) {
         if (p->pump_out.joinable()) p->pump_out.join();
         p->pump_in.request_stop();
         if (p->pump_in.joinable()) p->pump_in.join();
         if (p->in_r >= 0) ::close(p->in_r);
     }
-    if (m.from >= 0) ::close(m.from);
-    if (m.errs >= 0) ::close(m.errs);
 }
 
 std::shared_ptr<Remote> Remote::get(const std::string& host) {
@@ -801,16 +1044,21 @@ std::shared_ptr<Remote> Remote::get(const std::string& host) {
     std::lock_guard lock(registry_mu);
     if (auto it = registry.find(host); it != registry.end()) {
         // One that failed is made again, when asked for a while after (not
-        // over and over while the host cannot be reached).
+        // over and over while the host cannot be reached; and not one that
+        // was refused, or whose agent was stopped, until asked to by hand).
         constexpr u64 kAgainNs = 3'000'000'000ull;
         Impl& m = *it->second->impl_;
-        std::unique_lock lock_m(m.mu);
-        if (m.state != kFailed || now_ns() - m.failed_ns < kAgainNs) return it->second;
+        {
+            std::lock_guard lock_m(m.mu);
+            if (m.state == kFailed && !m.asked && !m.refused_once && !m.stopped && now_ns() - m.failed_ns >= kAgainNs) m.again_now();
+        }
+        m.cv.notify_all();
+        return it->second;
     }
     std::shared_ptr<Remote> r(new Remote(host));
     registry[host] = r;
     Remote* raw = r.get();
-    raw->impl_->connector = std::jthread([raw] { raw->impl_->connect(); });
+    raw->impl_->live_thread = std::jthread([raw] { raw->impl_->live(); });
     return r;
 }
 
@@ -819,6 +1067,17 @@ void Remote::set_notify(std::function<void()> fn) { notify_fn = std::move(fn); }
 void Remote::set_askpass(std::string program) {
     std::lock_guard lock(registry_mu);
     askpass_program = std::move(program);
+}
+
+void Remote::set_agent_times(u32 idle_s, u32 keep_s) {
+    std::lock_guard lock(registry_mu);
+    agent_idle_s = std::max<u32>(idle_s, 1);
+    agent_keep_s = std::max<u32>(keep_s, 1);
+}
+
+void Remote::set_wanted(const std::vector<std::string>& hosts) {
+    std::lock_guard lock(registry_mu);
+    for (auto& [host, r] : registry) r->impl_->wanted = std::ranges::find(hosts, host) != hosts.end();
 }
 
 std::vector<RemoteAsk> Remote::asks() {
@@ -842,15 +1101,33 @@ void Remote::answer(u64 id, const std::string* text) {
 }
 
 void Remote::reconnect(const std::string& host) {
+    std::shared_ptr<Remote> r;
     {
         std::lock_guard lock(registry_mu);
         auto it = registry.find(host);
         if (it == registry.end()) return;
-        std::lock_guard lock_m(it->second->impl_->mu);
-        if (it->second->impl_->state != kFailed) return;
-        it->second->impl_->failed_ns = 0;  // (long ago: get() makes it again)
+        r = it->second;
     }
-    get(host);
+    Impl& m = *r->impl_;
+    {
+        std::lock_guard lock(m.mu);
+        if (m.state != kFailed) return;
+        m.refused_once = m.stopped = false;  // (by hand: whatever stopped it)
+        m.again_now();
+    }
+    m.cv.notify_all();
+}
+
+void Remote::nudge() {
+    for (const std::shared_ptr<Remote>& r : all()) {
+        Impl& m = *r->impl_;
+        {
+            std::lock_guard lock(m.mu);
+            if (m.state != kFailed || !m.retry_ns) continue;  // (only one that is being made again by itself)
+            m.again_now();
+        }
+        m.cv.notify_all();
+    }
 }
 
 std::vector<std::shared_ptr<Remote>> Remote::all() {
@@ -860,13 +1137,13 @@ std::vector<std::shared_ptr<Remote>> Remote::all() {
     return out;
 }
 
-void Remote::close_all() {
+void Remote::close_all(bool keep_working) {
     std::map<std::string, std::shared_ptr<Remote>> gone;
     {
         std::lock_guard lock(registry_mu);
         gone.swap(registry);
     }
-    for (auto& [host, r] : gone) r->impl_->fail("closed");  // (what waits for one is woken, and fails)
+    for (auto& [host, r] : gone) r->impl_->close(keep_working);  // (what waits for one is woken, and fails)
 }
 
 Remote::State Remote::state() const {
@@ -881,6 +1158,18 @@ std::string Remote::progress() const {
     std::lock_guard lock(impl_->mu);
     return impl_->progress;
 }
+bool Remote::retrying() const {
+    std::lock_guard lock(impl_->mu);
+    return impl_->state == kFailed && impl_->retry_ns != 0;
+}
+bool Remote::lasting() const {
+    std::lock_guard lock(impl_->mu);
+    return impl_->lasting;
+}
+bool Remote::stopped() const {
+    std::lock_guard lock(impl_->mu);
+    return impl_->stopped;
+}
 std::string Remote::home() const {
     std::lock_guard lock(impl_->mu);
     return impl_->home;
@@ -890,10 +1179,36 @@ std::string Remote::system() const {
     return impl_->system;
 }
 
+int Remote::working() const {
+    std::lock_guard lock(impl_->mu);
+    int n = 0;
+    for (const auto& [id, p] : impl_->procs) n += p->keep && p->working && !p->exited;
+    return n;
+}
+
+bool Remote::stop_agent() {
+    Impl& m = *impl_;
+    {
+        std::lock_guard lock(m.mu);
+        if (!m.up || !m.lasting) return false;
+        m.stopped = true;
+    }
+    m.send(kStop, {});
+    return true;
+}
+
+// Ready, or (for a while after it went, while it is being made again by
+// itself) once it is back: a save just after a drop waits for that.
 bool Remote::wait_ready(int ms) {
-    std::unique_lock lock(impl_->mu);
-    impl_->cv.wait_for(lock, std::chrono::milliseconds(ms), [&] { return impl_->state == kFailed || impl_->up; });
-    return impl_->up && impl_->state == kReady;
+    Impl& m = *impl_;
+    const u64 until = now_ns() + static_cast<u64>(std::max(ms, 0)) * 1'000'000;
+    std::unique_lock lock(m.mu);
+    for (;;) {
+        if (m.up && m.state == kReady) return true;
+        const bool coming = m.state == kConnecting || (m.state == kReady && !m.up) || (m.retry_ns && now_ns() - m.failed_ns < kQueueNs) || m.asked;
+        if (m.closing || !coming || now_ns() >= until) return false;
+        m.cv.wait_for(lock, std::chrono::nanoseconds(std::min<u64>(until - now_ns(), 100'000'000)));
+    }
 }
 
 // ---------------------------------------------------------------- calls
@@ -1104,6 +1419,7 @@ bool Remote::spawn(const std::vector<std::string>& argv, const std::string& cwd,
     auto p = std::make_unique<Impl::Proc>();
     p->in_r = in[0], p->out_w = o[1], p->err_w = e[1];
     p->quiet = quiet;
+    p->keep = out->keep;
     u32 id;
     {
         std::lock_guard lock(m.mu);
@@ -1117,7 +1433,9 @@ bool Remote::spawn(const std::vector<std::string>& argv, const std::string& cwd,
     for (const std::string& a : argv) w.str(a);
     w.u32(static_cast<u32>(env.size()));
     for (const std::string& v : env) w.str(v);
-    if (!rows) w.u8(quiet ? kQuiet : 0);  // (an agent from before the flags reads no further)
+    const u8 flags = (quiet ? kQuiet : 0) | (out->keep ? kKeep : 0) | (out->work ? kWork : 0);
+    if (!rows) w.u8(flags).str(out->done);  // (an agent from before the flags reads no further, and one from before 4 no further than them)
+    else w.u8(flags);
     std::string a;
     bool ok = m.call(rows ? kSpawnPty : kSpawn, w.b, &a);
     std::string why = std::format("no connection to {}", host_);
@@ -1149,7 +1467,12 @@ bool Remote::spawn(const std::vector<std::string>& argv, const std::string& cwd,
             {
                 // The program there has not taken what it was sent: nothing more is read until it has
                 // (so that whatever writes here waits, as a program writing into a full pipe does).
+                // Nor while one kept running there is without its connection: what is typed goes when it is back.
                 std::unique_lock lock(m.mu);
+                if (proc->keep && !m.up && !proc->exited && !m.closing) {
+                    m.cv.wait_for(lock, std::chrono::milliseconds(100));
+                    continue;
+                }
                 if (proc->in_paused) {
                     m.cv.wait_for(lock, std::chrono::milliseconds(100), [&] { return !proc->in_paused || m.state == kFailed; });
                     continue;
@@ -1229,6 +1552,12 @@ void Remote::resize(u32 proc, unsigned rows, unsigned cols, unsigned width_px, u
     w.u32(proc).u32(rows).u32(cols);
     if (width_px && height_px) w.u32(width_px).u32(height_px);
     impl_->send(kResize, w.b);
+}
+
+void Remote::busy(u32 proc) {
+    Writer w;
+    w.u32(proc);
+    impl_->send(kBusy, w.b);
 }
 
 void Remote::kill(u32 proc, int sig) {

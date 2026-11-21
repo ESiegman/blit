@@ -91,6 +91,14 @@ struct RemoteProc {
     // (Asked before spawn: false, its errors are not wanted. They go to
     // /dev/null there rather than over the connection, and `err` is -1.)
     bool errors = true;
+    // (Asked before spawn.) keep: it outlives the connection, and is given
+    // back with what it wrote meanwhile when the connection is made again
+    // (a terminal, a task, a profiling run, the kernel); until then it waits,
+    // its pipes open. work: while it runs it counts as working (a task's: a
+    // shell counts only while a program is in front of it). done: what it
+    // writes when a piece of work given it (busy) has ended.
+    bool keep = false, work = false;
+    std::string done;
 };
 
 class Remote {
@@ -103,7 +111,17 @@ public:
     static void set_notify(std::function<void()> fn);
     // Every connection there is, for the status bar and the tests.
     static std::vector<std::shared_ptr<Remote>> all();
-    static void reconnect(const std::string& host);  // one that failed, made again now
+    static void reconnect(const std::string& host);  // one that failed, made again now (even one refused, or whose agent was stopped)
+    // One that went and is being made again by itself, tried now (the
+    // window has come to the front: the network may be back).
+    static void nudge();
+    // The hosts something is open on (a tab, the folder): a connection to
+    // one is made again by itself when it goes, as one with programs kept
+    // running there is.
+    static void set_wanted(const std::vector<std::string>& hosts);
+    // How long an agent waits with nothing working and no blit attached
+    // before it ends, and with something kept working and no blit attached.
+    static void set_agent_times(u32 idle_s, u32 keep_s);
     // The program ssh is to run to ask its questions (blit itself, see
     // remote_askpass). Without one ssh never asks: it fails instead (BatchMode).
     static void set_askpass(std::string program);
@@ -111,12 +129,17 @@ public:
     // (null: the person would not answer, and connecting fails).
     static std::vector<RemoteAsk> asks();
     static void answer(u64 id, const std::string* text);
-    static void close_all();
+    // Each connection closed (quitting). An agent that lasts is told: what
+    // it runs for this blit ends, but with keep_working what is working.
+    static void close_all(bool keep_working = false);
 
     ~Remote();
     State state() const;
     std::string error() const;
-    std::string progress() const;  // what connecting is doing now ("copying blit's agent")
+    std::string progress() const;  // what connecting is doing now ("copying blit's agent", "reconnecting to host")
+    bool retrying() const;   // it went, and is being made again by itself
+    bool stopped() const;    // its agent was told to stop (stop_agent): not made again until asked to by hand
+    bool lasting() const;    // its agent outlives the connection (what was started kept is kept running)
     const std::string& host() const { return host_; }
     std::string home() const;
     std::string system() const;   // "Linux x86_64"
@@ -147,6 +170,12 @@ public:
     void resize(u32 proc, unsigned rows, unsigned cols, unsigned width_px = 0, unsigned height_px = 0);  // its pseudo-terminal's size
     int wait(u32 proc, int ms = -1);  // its exit status, once it has ended (-1 if the connection went; -2 still running after ms)
     void kill(u32 proc, int sig);
+    void busy(u32 proc);  // a piece of work given to one started with `done`: it counts as working until it writes that
+    // The programs kept running there that are working (what quitting asks about).
+    int working() const;
+    // The agent there told to end, with all it runs (for every blit): false
+    // if there is no connection to it, or it does not last.
+    bool stop_agent();
     // The most output held at once for one program, waiting for its reader,
     // since the connection was made (for the tests: it stays a few MB).
     u64 held_most() const;

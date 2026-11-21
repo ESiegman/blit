@@ -21,10 +21,13 @@ printf 'int main() {}\n' >"$W/src/main.cpp"
 printf 'Host box\n    HostName example.invalid\nHost *.wild\n    User x\nHost other second\n' >"$dir/home/.ssh/config"
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/init.lua"
 printf 'blit.opt.lsp.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/git.lua"
-export BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T" BLIT_RECENT_FILE="$dir/recent"
+export BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T" BLIT_RECENT_FILE="$dir/recent" BLIT_FAKE_DOWN="$dir/down"
 R="ssh://box$W"
-# The connection dropped, as a lost link would: blit's agent there killed, and that seen.
-drop="lua:os.execute('pkill -9 -f $T/.cache/blit/[b]lit-agent');remotelost"
+# The connection dropped, as a lost link would: blit's agent there killed,
+# the host then out of reach (blit would connect again by itself at once),
+# and that seen. (Each run starts with it in reach again.)
+drop="lua:os.execute('echo refused > $dir/down');lua:os.execute('pkill -9 -f $T/.cache/blit/[b]lit-agent');remotelost"
+back="lua:os.remove('$dir/down')"
 # The end of the file: Cmd+Down on macOS, Ctrl+End elsewhere.
 if [ "$(uname)" = Darwin ]; then docend="key:cmd+Down"; else docend="key:cmd+End"; fi
 
@@ -46,6 +49,7 @@ join() { awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }'; }
 # such an assignment after a function.)
 INIT=
 run() {
+    rm -f "$dir/down"
     got=$(BLIT_INIT="${INIT:-$dir/init.lua}" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "$1" ${2:+"$2"} 2>&1 >/dev/null |
         sed -e "s#$T#~#g" -e "s#$dir#@#g" | join)
     INIT=
@@ -171,6 +175,7 @@ mkdir -p "$T/.slow" && printf 'hello\nworld\n' >"$T/.slow/slow.txt"
 L="ssh://box$T/.slow"
 # slow SCRIPT [FILE]: as run, on a host that holds each answer SLOW seconds (half a second).
 slow() {
+    rm -f "$dir/down"
     got=$(BLIT_FAKE_SLOW=${SLOW:-0.5} BLIT_INIT="${INIT:-$dir/init.lua}" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "$1" ${2:+"$2"} 2>&1 >/dev/null |
         sed -e "s#$T#~#g" -e "s#$dir#@#g" | join)
     INIT= SLOW=
@@ -238,9 +243,9 @@ run "remotewait;find:text;text:main;findwait;key:Escape;$drop;find:text;text:mai
 check "the connection lost: a search there says so, not that no line has it" 'text [main] 0 of 0 : (The connection to box was lost)'
 run "remotewait;$drop;find:names;text:ma;findwait;finddump;key:cmd+shift+F;findwait;finddump" "$R"
 check "and a folder there that could not be listed: why, in both" 'names [ma] 0 of 0 : (The connection to box was lost) ;; text [ma] 0 of 0 : (The connection to box was lost)'
-run "remotewait;$drop;key:cmd+K;text:reconn;findwait;finddump;key:Return;remotewait;key:cmd+K;text:main;findwait;finddump" "$R"
+run "remotewait;$drop;key:cmd+K;text:reconn;findwait;finddump;$back;key:Return;remotewait;key:cmd+K;text:main;findwait;finddump" "$R"
 check "and Search everywhere: why, the commands still there; connected again, the files" 'everywhere [reconn] 1 : (The connection to box was lost) Commands: >Reconnect to the servers that dropped ;; everywhere [main] 1 : Files: >src/main.cpp'
-run "remotewait;$drop;key:cmd+K;text:main;findwait;finddump;command:Reconnect to the servers that dropped;remotewait;findwait;finddump" "$R"
+run "remotewait;$drop;key:cmd+K;text:main;findwait;finddump;$back;command:Reconnect to the servers that dropped;remotewait;findwait;finddump" "$R"
 check "connected again while it is open: the files come" 'everywhere [main] 0 : (The connection to box was lost) ;; everywhere [main] 1 : Files: >src/main.cpp'
 # A host that does not answer when it is connected to again (the link down:
 # ssh waits): Enter just after typing does not wait for the files there.
@@ -594,16 +599,17 @@ EOF
     kill -0 "$leader" 2>/dev/null && got="$got, still there" || got="$got, then gone"
     check "a server that exited before its worker: its pid kept until the worker has gone" 'blit: held Z, then gone'
 fi
-# The connection lost (blit's agent there killed): a terminal there says so,
-# not that its program failed.
-drop="lua:os.execute('pkill -9 -f $T/.cache/blit/[b]lit-agent');remotelost"
-# The connection lost: a terminal there says so, not that its program failed.
+# The machine there lost what blit ran (its agent killed: as a restart does):
+# a terminal there says so once connected again, not that its program failed.
+rm -f "$dir/down"
+lost="lua:os.execute('pkill -9 -f $T/.cache/blit/[b]lit-agent')"
 got=$(BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
-    --script "remotewait;key:ctrl+\`;frame;termwait:\$;$drop;termend;termdump" "$R/notes.txt" 2>&1 >/dev/null | sed -e 's/ @.*ended/ ended/' | join)
-check "a terminal there whose connection is lost" 'Ctrl+` back to the file|$|[connection to box lost] ended -1'
+    --script "remotewait;key:ctrl+\`;frame;termwait:\$;$lost;termend;termdump" "$R/notes.txt" 2>&1 >/dev/null | sed -e 's/ @.*ended/ ended/' | join)
+check "a terminal there whose machine lost it" 'Ctrl+` back to the file|$|[connection to box lost] ended -1'
 got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
     --script "remotewait;$drop;key:ctrl+\`;frame;termend;termdump" "$R/notes.txt" 2>&1 >/dev/null | sed -e 's/ @.*ended/ ended/' | join)
 check "and one opened just after: why, and no exit code" 'Ctrl+` back to the file|the connection to box was lost ended 1'
+rm -f "$dir/down"
 # A terminal on another machine than the folder's: the status bar names the terminal's.
 got=$(BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
     --script "remotewait;frame;statusdump;term:ssh://other$W;remotewait;termwait:\$;frame;statusdump" "$R" 2>&1 >/dev/null | join)
