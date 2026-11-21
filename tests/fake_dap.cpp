@@ -40,6 +40,11 @@
 //   initialize    says it can (among the rest) stop at debugpy's exceptions:
 //                 raised, uncaught (by default) and userUnhandled, each with a
 //                 condition; with no default where BLIT_FAKE_DAP_NODEFAULTS is set
+//   threads, stackTrace, scopes, variables
+//                 one thread, one frame, the Locals of two variables (df, total);
+//                 df evaluated has members (shape, and columns, which has its own)
+//   evaluate      "<the expression>"; in the "repl" context, df is a value with
+//                 members and nope is refused (Python's traceback for a name it has not)
 //   exceptionInfo debugpy's account of a ValueError raised, with its stack
 //                 trace and the KeyError it was raised while handling
 //   completions   the words of a fixed list that start with the word before
@@ -55,9 +60,12 @@
 // no names: their names are `info threads`'s, which evaluate answers as
 // rocgdb's manual shows it, there being no rocgdb here); and it stops in the
 // wave halfway along, in the kernel's frame.
+// Where BLIT_FAKE_DAP_GDB is set it says first, on its error stream, what
+// blit's script for the machine's debugger says when it starts gdb (blit
+// then takes it for gdb: its "monitor" lines, its hit counts).
 //
-// (debugpy's filters, its exception stop and its exceptionInfo are as
-// debugpy 1.8.22 answers, but for the exception inside the one raised
+// (debugpy's filters, its exception stop, its exceptionInfo and its refusal
+// are as debugpy 1.8.22 answers, but for the exception inside the one raised
 // (innerException: the protocol's, which debugpy did not give for this) and
 // a condition on each filter (lldb-dap's way: supportsCondition, and
 // supportsExceptionFilterOptions, which debugpy does not say). The rest is
@@ -254,6 +262,7 @@ int main() {
         std::fprintf(stderr, "blit-debugger: gdb (rocgdb)\n");
         std::fflush(stderr);
     }
+    if (const char* g = std::getenv("BLIT_FAKE_DAP_GDB"); g && *g) std::fprintf(stderr, "blit-debugger: gdb\n");
     const bool defaults = !std::getenv("BLIT_FAKE_DAP_NODEFAULTS");
     std::string body;
     while (read_message(&body)) {
@@ -336,7 +345,13 @@ int main() {
         } else if (command == "scopes") {
             respond(v, true, R"({"scopes":[{"name":"Locals","presentationHint":"locals","variablesReference":1,"expensive":false}]})");
         } else if (command == "variables") {
-            respond(v, true, R"({"variables":[{"name":"df","value":"DataFrame","variablesReference":0},{"name":"total","value":"1","variablesReference":0}]})");
+            const i64 ref = a["variablesReference"].integer();
+            if (ref == 2)  // (df's members)
+                respond(v, true, R"j({"variables":[{"name":"shape","value":"(3, 2)","type":"tuple","variablesReference":0},{"name":"columns","value":"Index(['a', 'b'])","type":"Index","variablesReference":3}]})j");
+            else if (ref == 3)
+                respond(v, true, R"({"variables":[{"name":"0","value":"'a'","type":"str","variablesReference":0},{"name":"1","value":"'b'","type":"str","variablesReference":0}]})");
+            else
+                respond(v, true, R"({"variables":[{"name":"df","value":"DataFrame","variablesReference":0},{"name":"total","value":"1","variablesReference":0}]})");
         } else if (command == "evaluate" && waves && a["expression"].str() == "info threads") {
             std::string r = "{\"result\":";
             json::quote(r, info_threads());
@@ -353,9 +368,16 @@ int main() {
             event("breakpoint", "{\"reason\":\"removed\",\"breakpoint\":{\"id\":" + std::string(a["expression"].str().substr(7)) + "}}");
             respond(v, true, R"({"result":"","variablesReference":0})");
         } else if (command == "evaluate") {
+            const std::string_view e = a["expression"].str();
+            const bool repl = a["context"].str() == "repl";
+            if (repl && e == "nope") {
+                send("{\"seq\":" + std::to_string(seq++) + ",\"type\":\"response\",\"request_seq\":" + std::to_string(v["seq"].integer()) +
+                     R"(,"command":"evaluate","success":false,"message":"Traceback (most recent call last):\n  File \"<string>\", line 1, in <module>\nNameError: name 'nope' is not defined\n"})");
+                continue;
+            }
             std::string r = "{\"result\":";
-            json::quote(r, "<" + std::string(a["expression"].str()) + ">");
-            respond(v, true, r + ",\"variablesReference\":0}");
+            json::quote(r, repl && e == "df" ? std::string("DataFrame") : "<" + std::string(e) + ">");
+            respond(v, true, r + ",\"variablesReference\":" + (repl && e == "df" ? "2" : "0") + "}");
         } else if (command == "exceptionInfo") {
             respond(v, true, exception_info());
         } else if (command == "completions") {

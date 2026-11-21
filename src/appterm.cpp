@@ -708,7 +708,7 @@ void App::dock_hide() {
     }
     if (!above) above = back ? back : other;
     for (size_t i = p->docs.size(); i-- > 0 && above;) {
-        if (p->docs[i]->term) continue;
+        if (p->docs[i]->term || debug_console_doc(*p->docs[i])) continue;  // (the debug console is the split's own too)
         const bool last = p->docs.size() == 1;
         move_doc(p, i, above, above->docs.size());
         if (last) {  // (and the split went with it)

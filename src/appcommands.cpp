@@ -358,6 +358,7 @@ void App::commands_create() {
     own("Step into", {key(SDLK_F7), key(SDLK_F11)}, [this] { debug_command("stepIn"); });
     own("Step out", {key(SDLK_F11, kS)}, [this] { debug_command("stepOut"); });
     own("Evaluate an expression while stopped\xE2\x80\xA6", {key(SDLK_Y, kP | kS)}, [this] { debug_evaluate(); });
+    own("Show the debug console", {key(SDLK_Y, kP | kA)}, [this] { debug_console(true); });
     tab("Show Debug", {key(SDLK_D, kP | kS)}, Commands::kDebug);
     // Building.
     own("Run the build task", {key(SDLK_B, kP | kS)}, [this] { build_run(-1); });

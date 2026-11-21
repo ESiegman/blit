@@ -184,7 +184,7 @@ struct App::Session {
             if (f[0] == "folder" && f.size() == 2) folder = f[1];
             if (f[0] == "panel" && f.size() == 4) panel = true, panel_open = f[1] == "1", panel_tab = f[2], panel_cols = static_cast<int>(number(f[3]));
             if (f[0] == "build" && l.size() > 6) build = l.substr(6);  // (the task's key, which has a tab in it)
-            if (f[0] == "break" || f[0] == "breakoff" || f[0] == "function" || f[0] == "watch" || f[0] == "exception") debug.emplace_back(l);  // (appdebug.cpp reads them)
+            if (f[0] == "break" || f[0] == "breakoff" || f[0] == "function" || f[0] == "watch" || f[0] == "exception" || f[0] == "console") debug.emplace_back(l);  // (appdebug.cpp reads them)
             if (f[0] == "lang" && f.size() >= 3) langs[std::string(fields(l, 3)[2])] = f[1];  // lang, the language, the path (last: it may have tabs)
         }
         if (folder != want) return false;

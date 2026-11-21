@@ -260,9 +260,17 @@ case "$got" in
 *) check "evaluate: what is typed completed with Tab, then evaluated" 'input [total] 0 : ;; stopped (breakpoint); stack: main@16; vars: total=1 i=1; output: total = 1' ;;
 esac
 
-# Exceptions, with lldb-dap (gdb's exception filters are its own: left to
-# check where gdb is).
+# The debug console (Cmd+Option+Y) and exceptions, with lldb-dap (gdb's
+# answers differ: its command line takes its own commands, and its
+# exception filters are its own; left to check where gdb is).
 if [ "$(uname -s)" = Darwin ]; then
+    # An expression, one of lldb's commands, a monitor line (to the gdb
+    # server, as lldb's `process plugin packet monitor`: macOS's debugserver
+    # has no monitor commands, and says E69), what the program printed, and
+    # a command completed with Tab.
+    run "$P;break:8;key:F5;debugwait:stopped;key:cmd+alt+y;text:x*10+y;key:Return;debugwait:answers;text:frame variable;key:Return;debugwait:answers;text:monitor help;key:Return;debugwait:answers;key:F5;debugwait:stopped;text:fr;key:Tab;debugwait:answers;docdump:12"
+    check "the debug console: an expression, a command, a monitor line, the program's output, Tab" \
+        'Debug console ;;   › x*10+y ;;   (int) $0 = 11 ;;   › frame variable ;;   (int) x = 1 ;;   (int) y = 1 ;;   › monitor help ;;     packet: qRcmd,68656c70 ;;   response: E69 ;;   i=1 total=1 ;; > › frame|'
     # lldb-dap's exception filters in the Debug tab: with none on, an
     # uncaught C++ exception stops where it ends the program (the abort);
     # with C++ Throw on, where it is thrown, which says so after its line.
@@ -433,6 +441,33 @@ if [ -x "$fakedap" ]; then
     check "a wave chosen from the list: its stack, and it is under the waves' row with the one that stopped" \
         'Threads 2003 | vadd | vadd | vadd | ▸ GPU waves 2000 | GPU wave (250,0,0)/0 breakpoint | ▸ GPU wave (0,0,0)/0 | Call stack 1 ;; stopped (breakpoint); threads: 2003, #4 shown (2000 GPU waves; shown: GPU wave (0,0,0)/0); stack: vadd@1; vars: df=DataFrame total=1; output: red plain'
     unset BLIT_FAKE_DAP_WAVES
+    # The debug console: a line to the debugger's command line, its answer
+    # under it (a value with members opened a level, as the Variables view
+    # opens it), one refused as an error; the lines typed before with Up and
+    # Down (and what was being typed kept); Cmd+F over its lines. Its view
+    # follows the line typed on, from the first (its split just made). F5 from
+    # there shows where it stopped in the split above, the keyboard staying.
+    fake "debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+alt+y;text:df;key:Return;debugwait:answers;text:nope;key:Return;debugwait:answers;frame;rowsdump:1;docdump:8;text:to;key:Up;docdump:0;key:Up;docdump:0;key:Up;key:Down;key:Down;docdump:0;key:Down;docdump:0;key:F5;debugwait:stopped;tabsdump;key:cmd+f;text:shape;finddump" "$F/prog"
+    check "the debug console: scrolled to the line typed on; a value opened a level, an error, the history, F5, Cmd+F" \
+        "rows | # df ;; Debug console ;;   red plain ;;   › df ;;   ▾ DataFrame ;;     shape = (3, 2)  (tuple) ;;     ▸ columns = Index(['a', 'b'])  (Index) ;;   › nope ;;   NameError: name 'nope' is not defined ;; > › | ;; Debug console ;; > › nope| ;; Debug console ;; > › df| ;; Debug console ;; > › to| ;; Debug console ;; > › to| ;; Debug console ;; file [shape] 1 of 1 at 33-38"
+    # With Vim's keys: Esc leaves the line, k goes up over the lines, Enter
+    # opens the value there a level more (and again shuts it), i comes back.
+    fake "lua:blit.opt.editor.modal = true;debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+alt+y;text:df;key:Return;debugwait:answers;key:Escape;vim:k;key:Return;debugwait:answers;docdump:3;key:Return;text:i;text:ok;docdump:2" "$F/prog"
+    check "the debug console with Vim's keys: a member opened from the lines above, and back to the line" \
+        "Debug console ;;   › df ;;   ▾ DataFrame ;;     shape = (3, 2)  (tuple) ;; > |  ▾ columns = Index(['a', 'b'])  (Index) ;;       0 = 'a'  (str) ;;       1 = 'b'  (str) ;;   ›  ;; Debug console ;;     shape = (3, 2)  (tuple) ;;     ▸ columns = Index(['a', 'b'])  (Index) ;; > › ok|"
+    # Ctrl+` hides it with the terminals' split (it is the split's own, as
+    # they are), and Cmd+Option+Y brings it back.
+    fake "debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+alt+y;dump;key:ctrl+\`;dump;key:cmd+alt+y;dump" "$F/prog"
+    check "the debug console hides with the terminals' split, and comes back" 'V([prog*] / >[Debug console*])0.70 ;; >[prog*] ;; V([prog*] / >[Debug console*])0.70'
+    # A monitor line (a gdb server's command: OpenOCD's, a probe's) goes to
+    # gdb as it is; to lldb-dap as its command for it (above, on a Mac).
+    BLIT_FAKE_DAP_GDB=1
+    export BLIT_FAKE_DAP_GDB
+    fake "debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+alt+y;text:monitor reset halt;key:Return;debugwait:answers"
+    unset BLIT_FAKE_DAP_GDB
+    got=$(grep '^evaluate' "$F/log")
+    check "a monitor line to gdb: as it is" 'evaluate {"expression":"monitor reset halt","frameId":1,"context":"repl"}'
+
     # Exceptions (the stand-in has debugpy's filters): uncaught on, as the
     # debugger has it; stopped at one, what it is, its stack trace and the
     # one it was raised while handling, in the Debug tab and after its line.
@@ -440,10 +475,11 @@ if [ -x "$fakedap" ]; then
     fake "debug:program=$F/raises;key:F5;debugwait:stopped;debugbreaks;debugdump;frame;debuginline" "$F/raises"
     check "an exception stopped at: what the debugger says of it" \
         "exception uncaught ;; stopped (exception: ValueError); exception: ValueError: bad value |   File \"@/fake/raises\", line 1, in <module> |     raise ValueError(\"bad value\") | ValueError: bad value | caused by KeyError: 'k' |   File \"@/fake/raises\", line 1, in <module> |     d[\"k\"]; stack: main@1; vars: df=DataFrame total=1 ;; 1: ◀ exception: ValueError: bad value"
-    # Uncaught off (Enter on it in the Debug tab): it is not stopped at.
-    fake "debug:program=$F/raises;key:F5;debugwait:stopped;debugpanel;debugpick:exceptions:2;key:shift+F5;debugwait:idle;debugbreaks;key:F5;debugwait:idle;debugdump" "$F/raises"
+    # Uncaught off (Enter on it in the Debug tab): it is not stopped at, and
+    # what the program wrote as errors is in the console.
+    fake "debug:program=$F/raises;key:F5;debugwait:stopped;debugpanel;debugpick:exceptions:2;key:shift+F5;debugwait:idle;debugbreaks;key:F5;debugwait:idle;debugdump;key:cmd+alt+y;docdump:3" "$F/raises"
     check "an exception not stopped at" \
-        'no breakpoints ;; idle; output: Traceback (most recent call last): | ValueError: bad value | [exited with code 1]'
+        'no breakpoints ;; idle; output: Traceback (most recent call last): | ValueError: bad value | [exited with code 1] ;; Debug console ;;   Traceback (most recent call last): ;;   ValueError: bad value ;;   [exited with code 1] ;; > › |'
     # A condition on one (Shift+F9 there), sent with the debugger's filter options.
     fake "debug:program=$F/prog;key:F5;debugwait:stopped;debugpanel;debugpick:exceptions:1;debugpanel;key:shift+F9;text:isinstance(e, KeyError);key:Return;debugwait:answers;debugbreaks"
     got="$got ;; $(grep '^setExceptionBreakpoints' "$F/log" | tail -1)"
@@ -465,13 +501,15 @@ if [ -x "$fakedap" ]; then
     got="$c ;; $got"
     check "no defaults: none on, but debugpy's uncaught" 'no breakpoints ;; exception uncaught'
 
-    # Kept in the folder's session: the exceptions chosen.
+    # Kept in the folder's session: the exceptions chosen, and the lines
+    # typed in the console (Up brings them back after a restart).
     mkdir -p "$F/proj"
-    fake "folder:$F/proj;debug:program=$F/prog;key:F5;debugwait:stopped;debugpanel;debugpick:exceptions:1;quit"
-    kept=$(grep -h -E '^exception	' "$dir"/sessions/* | tr '\t' ' ' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }')
-    fake "folder:$F/proj;debug:program=$F/prog;key:F5;debugwait:stopped;debugbreaks"
+    fake "folder:$F/proj;debug:program=$F/prog;key:F5;debugwait:stopped;debugpanel;debugpick:exceptions:1;key:cmd+alt+y;text:df;key:Return;debugwait:answers;text:total;key:Return;debugwait:answers;quit"
+    kept=$(grep -h -E '^(exception|console)	' "$dir"/sessions/* | tr '\t' ' ' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }')
+    fake "folder:$F/proj;debug:program=$F/prog;key:F5;debugwait:stopped;debugbreaks;key:cmd+alt+y;key:Up;docdump:0;key:Up;docdump:0"
     got="$kept ;; $got"
-    check "kept: the exceptions chosen" 'exception raised 1  ;; exception raised; exception uncaught'
+    check "kept: the exceptions chosen, the console's lines" \
+        'exception raised 1  ;; console df ;; console total ;; exception raised; exception uncaught ;; Debug console ;; > › total| ;; Debug console ;; > › df|'
 fi
 # A .py program: debugpy run with the project's Python (its .venv's, not
 # the PATH's), and when that has no debugpy, said so of that Python.
@@ -492,15 +530,15 @@ check "a .py program on another machine: the project's Python there" 'idle error
 # debugpy itself, where it can be had without the network (from uv's
 # cache), in a venv made here: uncaught on, an exception stopped at (its
 # traceback as Python writes it, the carets under the expression or not, by
-# its version).
+# its version), and the console (Python's error, in a line).
 D="$dir/dpy"
 mkdir -p "$D"
 if command -v uv >/dev/null 2>&1 && uv venv -q --offline "$D/.venv" >/dev/null 2>&1 && uv pip install -q --offline --python "$D/.venv/bin/python" debugpy >/dev/null 2>&1; then
     printf 'def f(d):\n    return d["k"]\n\ntotal = 1\nf({})\n' >"$D/raises.py"
-    run "workdir:$D;debug:program=$D/raises.py;key:F5;debugwait:stopped;debugbreaks;debugdump" "$D/raises.py"
-    got=$(printf '%s' "$got" | sed -e 's/ |  *~*^^*//g')
-    check "debugpy: uncaught on, an exception stopped at" \
-        "exception uncaught ;; stopped (exception: KeyError); exception: KeyError: 'k' |   File \"@/dpy/raises.py\", line 2, in f |     return d[\"k\"] |   File \"@/dpy/raises.py\", line 5, in <module> |     f({}) | KeyError: 'k'; stack: f@2 <module>@5; vars: d={} special variables="
+    run "workdir:$D;debug:program=$D/raises.py;key:F5;debugwait:stopped;debugbreaks;debugdump;key:cmd+alt+y;text:total + 1;key:Return;debugwait:answers;text:nope;key:Return;debugwait:answers;docdump:4" "$D/raises.py"
+    got=$(printf '%s' "$got" | sed -e 's/ |  *~*^^*//g' -e "s/\(is not defined\)\. Did you mean: 'None'?/\1/")
+    check "debugpy: uncaught on, an exception stopped at, the console" \
+        "exception uncaught ;; stopped (exception: KeyError); exception: KeyError: 'k' |   File \"@/dpy/raises.py\", line 2, in f |     return d[\"k\"] |   File \"@/dpy/raises.py\", line 5, in <module> |     f({}) | KeyError: 'k'; stack: f@2 <module>@5; vars: d={} special variables= ;; Debug console ;;   › total + 1 ;;   2 ;;   › nope ;;   NameError: name 'nope' is not defined ;; > › |"
 else
     echo "debug: debugpy's own cases skipped (debugpy cannot be had here without the network)"
 fi

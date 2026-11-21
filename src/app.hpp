@@ -1318,9 +1318,19 @@ private:
     bool debug_pick(const std::string& section, u32 n, const std::string& name = {});
     void panel_show_debug();
     // The exceptions the debugger stops at (its filters, chosen in the Debug
-    // tab), and what it says of the one it stopped at.
+    // tab), what it says of the one it stopped at; and the debug console, a
+    // tab in the terminals' split: what the debugger says, and its command line.
     void debug_send_exceptions();
     void debug_exception_info(i64 thread);
+    void debug_console(bool toggle);
+    bool debug_console_doc(const Doc& d) const;
+    bool debug_console_key(const SDL_KeyboardEvent& k);
+    bool debug_console_text(const char* text);
+    void debug_console_fill(bool to_input);
+    void debug_console_line();
+    void debug_console_send();
+    void debug_console_complete();
+    void debug_console_value(u64 id);
 
     // Building (appbuild.cpp, build.cpp): what the working folder builds
     // with, the Build tab, the Run button at the top right, and the output

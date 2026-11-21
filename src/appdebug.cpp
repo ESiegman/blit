@@ -102,6 +102,11 @@ constexpr std::string_view kGdbSays = "blit-debugger: gdb";
 // expression 1>:1:1: use of undeclared identifier 'x'" is the last part).
 std::string why_not(std::string_view m) {
     std::string_view line;
+    // (debugpy's is Python's traceback: its last line says what it was, "NameError: name 'x' is not defined".)
+    if (m.starts_with("Traceback (most recent call last):")) {
+        while (!m.empty() && (m.back() == '\n' || m.back() == '\r' || m.back() == ' ')) m.remove_suffix(1);
+        if (const size_t nl = m.rfind('\n'); nl != std::string_view::npos) m.remove_prefix(nl + 1);
+    }
     for (size_t at = 0; at <= m.size();) {
         const size_t nl = std::min(m.find('\n', at), m.size());
         const std::string_view l = m.substr(at, nl - at);
@@ -244,6 +249,11 @@ struct DebugSession {
     u32 asking = 0;    // questions about the stack and the variables not answered yet (debug_wait)
     std::vector<std::string> output;
     std::string partial;
+    // The lines printed since the debug console was given them, each with
+    // its style there (print_style's as it was printed: 2 an error's, 4 the
+    // debugger's own).
+    std::vector<std::pair<std::string, u8>> said;
+    u8 print_style = 0;
     int exit_code = -1;
     bool end_soon = false;  // (the session ends once the debugger's answers have been run: not inside one)
     // A terminal's escape sequences (colours, mostly) are left out, as the
@@ -276,6 +286,7 @@ struct DebugSession {
         size_t nl;
         while ((nl = partial.find('\n')) != std::string::npos) {
             output.push_back(partial.substr(0, nl));
+            said.emplace_back(output.back(), print_style);
             partial.erase(0, nl + 1);
         }
         if (output.size() > 500) output.erase(output.begin(), output.begin() + static_cast<std::ptrdiff_t>(output.size() - 500));
@@ -437,6 +448,34 @@ struct App::DebugUi : DebugSession {
         if (const auto it = exceptions.find(f.id); it != exceptions.end()) return it->second;
         if (!python.empty() && (f.id == "uncaught" || f.id == "raised")) return {{}, f.id == "uncaught"};  // (debugpy: uncaught on, raised off, whatever it says)
         return {{}, f.on};
+    }
+    // The debug console: its tab (0: none), its lines (what the debuggers
+    // printed, what was typed and the answers), what is typed on its last
+    // line and where in it the cursor is, and the lines typed before.
+    struct Said {
+        std::string text;
+        u8 style = 0;   // (as the tab's runs: 2 an error's, 3 the accent, 4 quieter)
+        u32 depth = 0;  // (a member's, under its value)
+        i64 ref = 0;    // a value with members (its variablesReference): opened a level at a time
+        bool open = false;
+        u64 id = 0;
+    };
+    std::vector<Said> con;
+    std::weak_ptr<Doc> con_tab;  // (wherever it is: in the terminals' split while that is hidden too)
+    u64 con_doc = 0, con_ids = 0;
+    std::string con_input;
+    size_t con_at = 0;
+    bool con_typing = true;  // (with Vim's keys: Esc leaves the line for the lines above, i or a comes back to it)
+    bool con_changed = false;
+    std::vector<std::string> con_history;
+    size_t con_hist = 0;
+    std::string con_draft;  // (what was being typed when the history was gone into)
+    u64 con_back = 0;       // the split the keyboard came from
+    static constexpr size_t kConLines = 3000, kConHistory = 100;
+    Said& say(std::string text, u8 style, i64 ref = 0, u32 depth = 0) {
+        con.push_back({std::move(text), style, depth, ref, false, ++con_ids});
+        con_changed = true;
+        return con.back();
     }
 };
 
@@ -886,6 +925,7 @@ std::string session_unfield(std::string_view s) {
 //   function NAME
 //   watch EXPRESSION
 //   exception FILTER ON (1 or 0) CONDITION   (an exception filter chosen in the Debug tab)
+//   console LINE   (typed in the debug console, the oldest first)
 std::string App::debug_session_text() const {
     if (!debugui_) return {};
     const DebugUi& u = *debugui_;
@@ -898,6 +938,7 @@ std::string App::debug_session_text() const {
     for (const std::string& f : u.functions) out += "function\t" + session_field(f) + "\n";
     for (const DebugUi::Watch& w : u.watches) out += "watch\t" + session_field(w.expr) + "\n";
     for (const auto& [id, c] : u.exceptions) out += "exception\t" + session_field(id) + "\t" + (c.on ? "1" : "0") + "\t" + session_field(c.cond) + "\n";
+    for (const std::string& line : u.con_history) out += "console\t" + session_field(line) + "\n";
     return out;
 }
 
@@ -911,6 +952,7 @@ void App::debug_session_take(const std::vector<std::string>& lines) {
     u.functions.clear();
     u.watches.clear();
     u.exceptions.clear();
+    u.con_history.clear();
     for (const std::string& line : lines) {
         std::vector<std::string_view> f;
         std::string_view rest = line;
@@ -934,8 +976,12 @@ void App::debug_session_take(const std::vector<std::string>& lines) {
             u.watches.push_back({session_unfield(rest), {}, false});
         } else if (f[0] == "exception" && f.size() == 3 && !f[1].empty()) {
             u.exceptions[session_unfield(f[1])] = {session_unfield(rest), f[2] == "1"};
+        } else if (f[0] == "console" && f.size() == 1 && !rest.empty()) {
+            u.con_history.push_back(session_unfield(rest));
         }
     }
+    if (u.con_history.size() > DebugUi::kConHistory) u.con_history.erase(u.con_history.begin(), u.con_history.end() - DebugUi::kConHistory);
+    u.con_hist = u.con_history.size();
     debug_send_exceptions();
     for (const std::string& path : paths) {
         if (!u.breaks.contains(path)) u.unfollow(*this, path);
@@ -1239,6 +1285,14 @@ void App::debug_frame(u32 i, bool show) {
     u.frame = i;
     const DebugUi::Frame& f = u.frames[i];
     if (show && !f.path.empty()) {
+        // (From the debug console, or another tab of the terminals' split, the
+        // source is shown in the split the keyboard came from, and the
+        // keyboard stays where it is.)
+        Pane* const keep = pane_;
+        if (pane_ == dock_pane() || (pane_->doc && debug_console_doc(*pane_->doc)))
+            for (const std::unique_ptr<Pane>& p : panes_)
+                if (p.get() != keep && p.get() != dock_pane() && !p->floating && (pane_ == keep || p->id == u.con_back)) pane_ = p.get();
+        const bool moved = pane_ != keep;
         if (open_path(f.path.c_str())) {
             Doc& d = *pane_->doc;
             if (d.loading) {
@@ -1249,6 +1303,10 @@ void App::debug_frame(u32 i, bool show) {
                 d.ed.move_to(d.ed.buf.line_start(std::min<u64>(f.line ? f.line - 1 : 0, d.ed.buf.line_count() - 1)), false);
                 scroll_to_cursor();
             }
+        }
+        if (moved) {
+            for (const std::unique_ptr<Pane>& p : panes_)
+                if (p.get() == keep) pane_ = keep;
         }
     }
     u.vars.clear();
@@ -1459,6 +1517,7 @@ void App::debug_sync() {
         if (!stopped) std::swap(u.session(), u.others[i]);
         ++i;
     }
+    if (u.con_changed) debug_console_fill(false);
     ++debug_gen_;
     dirty_ = true;
 }
@@ -1526,7 +1585,20 @@ void App::debug_sync_session(bool* stopped) {
             // "No source file named ...", as if the program had said it.)
             // (And after, its word that it has put a breakpoint somewhere: "Breakpoint 2 at 0x...: file f.c, line 7.")
             const bool gdb_own = u.gdb && cat == "stdout" && (!u.going || gdb_breakpoint_said(b["output"].str()));
-            if (cat != "telemetry" && cat != "important" && !gdb_own) u.print(b["output"].str());
+            // (In the debug console, the program's errors and what the debugger
+            // says as an error stand out, and the debugger's own word is quieter.)
+            u.print_style = cat == "stderr" || cat == "important" ? 2 : cat == "console" || gdb_own ? 4 : 0;
+            if (cat == "important" || gdb_own) {  // (the debugger's own: the console's alone)
+                const std::string_view text = b["output"].str();
+                for (size_t at = 0; at < text.size();) {
+                    const size_t nl = std::min(text.find('\n', at), text.size());
+                    u.said.emplace_back(std::string(text.substr(at, nl - at)), u.print_style);
+                    at = nl + 1;
+                }
+            } else if (cat != "telemetry") {
+                u.print(b["output"].str());
+            }
+            u.print_style = 0;
         } else if (m.name == "exited") {
             u.exit_code = static_cast<int>(b["exitCode"].integer(-1));
             u.print("[exited with code " + std::to_string(u.exit_code) + "]\n");
@@ -1534,6 +1606,11 @@ void App::debug_sync_session(bool* stopped) {
             u.end_soon = true;
         }
     }
+    for (auto& [text, style] : u.said) {  // (to the debug console: every session's)
+        if (!text.empty() && text.back() == '\r') text.pop_back();
+        u.say(std::move(text), style);
+    }
+    u.said.clear();
     if (u.end_soon) {
         u.end_soon = false;
         debug_end();
@@ -1578,6 +1655,59 @@ void App::debug_evaluate(const std::string& start) {
     find_on_tab([this](const std::string& typed) { debug_complete(typed); });  // (Tab: what the debugger would complete it with)
 }
 
+namespace {
+
+// What a completions answer makes of what is typed: each completion, the
+// whole of what would be typed with it in. lldb's own commands (with their
+// help, "frame -- Commands for ...") only where a command can be typed.
+std::vector<std::string> completions_of(const std::string& typed, const json::Value& targets, bool commands) {
+    // The word being typed, which a completion takes the place of (where the debugger says no other place).
+    size_t word = typed.size();
+    while (word > 0 && (std::isalnum(static_cast<unsigned char>(typed[word - 1])) || typed[word - 1] == '_')) --word;
+    std::vector<std::string> all;
+    for (const json::Value t : targets) {
+        const std::string label(t["label"].str());
+        if (!commands && label.find(" -- ") != std::string::npos && label.ends_with(".")) continue;  // (not an expression)
+        std::string text(t["text"].exists() ? t["text"].str() : t["label"].str());
+        if (const size_t d = text.find(" -- "); d != std::string::npos) text.resize(d);
+        std::string whole;
+        if (t["start"].exists()) {
+            // (Its start is counted from 1, as blit asked; debugpy counts
+            // from 0 all the same. blit asks at the end of what is typed,
+            // so a range counted from 0 ends just there and one counted
+            // from 1 never does: that settles it, even for a length of 0
+            // (Tab straight after a dot). Else what a completion takes the
+            // place of is the start of it ("desc" of "describe"): where
+            // that is so only counted from 0, it is counted from 0.)
+            const i64 start = std::max<i64>(0, t["start"].integer()), length = std::max<i64>(0, t["length"].integer());
+            auto begins = [&](size_t at) {
+                if (at > typed.size()) return false;
+                const std::string_view was = std::string_view(typed).substr(at, static_cast<size_t>(length));
+                return text.starts_with(was);
+            };
+            size_t at = static_cast<size_t>(std::max<i64>(0, start - 1));
+            if (start > 0 && (static_cast<size_t>(start + length) == typed.size() || (!begins(at) && begins(static_cast<size_t>(start))))) at = static_cast<size_t>(start);
+            at = std::min(at, typed.size());
+            const size_t len = std::min<size_t>(static_cast<size_t>(length), typed.size() - at);
+            whole = typed.substr(0, at) + text + typed.substr(at + len);
+        } else {
+            whole = text.starts_with(typed.substr(word)) ? typed.substr(0, word) + text : typed + text;
+        }
+        if (std::ranges::find(all, whole) == all.end()) all.push_back(std::move(whole));
+    }
+    return all;
+}
+
+// What several completions share (more than is typed, or nothing).
+std::string completions_share(const std::vector<std::string>& all) {
+    std::string common = all.empty() ? std::string() : all[0];
+    for (const std::string& c : all)
+        while (!c.starts_with(common)) common.pop_back();
+    return common;
+}
+
+}  // namespace
+
 // What is typed to be evaluated, completed as the debugger would (its
 // completions request): one answer goes in; several that share more than
 // is typed, that much; else a list of them, the one chosen going in.
@@ -1587,46 +1717,10 @@ void App::debug_complete(const std::string& typed) {
     const std::string frame = u.frame < u.frames.size() ? ",\"frameId\":" + std::to_string(u.frames[u.frame].id) : std::string();
     u.dap->request("completions", "{\"text\":" + quoted(typed) + ",\"column\":" + std::to_string(typed.size() + 1) + frame + "}", [this, typed](const Dap::Message& m) {
         if (!m.success || find_typed() != typed) return;  // (typed on meanwhile, or the box shut)
-        // The word being typed, which a completion takes the place of (where the debugger says no other place).
-        size_t word = typed.size();
-        while (word > 0 && (std::isalnum(static_cast<unsigned char>(typed[word - 1])) || typed[word - 1] == '_')) --word;
-        std::vector<std::string> all;
-        for (const json::Value t : m.body()["targets"]) {
-            const std::string label(t["label"].str());
-            if (label.find(" -- ") != std::string::npos && label.ends_with(".")) continue;  // (lldb's own commands, with their help: not an expression)
-            std::string text(t["text"].exists() ? t["text"].str() : t["label"].str());
-            if (const size_t d = text.find(" -- "); d != std::string::npos) text.resize(d);
-            std::string whole;
-            if (t["start"].exists()) {
-                // (Its start is counted from 1, as blit asked; debugpy counts
-                // from 0 all the same. blit asks at the end of what is typed,
-                // so a range counted from 0 ends just there and one counted
-                // from 1 never does: that settles it, even for a length of 0
-                // (Tab straight after a dot). Else what a completion takes the
-                // place of is the start of it ("desc" of "describe"): where
-                // that is so only counted from 0, it is counted from 0.)
-                const i64 start = std::max<i64>(0, t["start"].integer()), length = std::max<i64>(0, t["length"].integer());
-                auto begins = [&](size_t at) {
-                    if (at > typed.size()) return false;
-                    const std::string_view was = std::string_view(typed).substr(at, static_cast<size_t>(length));
-                    return text.starts_with(was);
-                };
-                size_t at = static_cast<size_t>(std::max<i64>(0, start - 1));
-                if (start > 0 && (static_cast<size_t>(start + length) == typed.size() || (!begins(at) && begins(static_cast<size_t>(start))))) at = static_cast<size_t>(start);
-                at = std::min(at, typed.size());
-                const size_t len = std::min<size_t>(static_cast<size_t>(length), typed.size() - at);
-                whole = typed.substr(0, at) + text + typed.substr(at + len);
-            } else {
-                whole = text.starts_with(typed.substr(word)) ? typed.substr(0, word) + text : typed + text;
-            }
-            if (std::ranges::find(all, whole) == all.end()) all.push_back(std::move(whole));
-        }
+        const std::vector<std::string> all = completions_of(typed, m.body()["targets"], false);
         if (all.empty()) return;
         if (all.size() == 1) return find_set_typed(all[0]);
-        std::string common = all[0];
-        for (const std::string& c : all)
-            while (!c.starts_with(common)) common.pop_back();
-        if (common.size() > typed.size()) return find_set_typed(common);
+        if (const std::string common = completions_share(all); common.size() > typed.size()) return find_set_typed(common);
         find_choose_item("Complete", all, [this, all](int i) {
             if (i >= 0 && static_cast<size_t>(i) < all.size()) debug_evaluate(all[static_cast<size_t>(i)]);
         });
@@ -2716,6 +2810,343 @@ void App::debug_exception_info(i64 thread) {
         ++debug_gen_;
         dirty_ = true;
     });
+}
+
+// ---------------------------------------------------------------- the debug console
+
+namespace {
+
+constexpr std::string_view kPrompt = "\xE2\x80\xBA ";  // (before what is typed: a ›)
+
+}  // namespace
+
+bool App::debug_console_doc(const Doc& d) const { return debugui_ && debugui_->con_doc && d.id == debugui_->con_doc; }
+
+// The debug console's tab, the keyboard on it: in the terminals' split
+// (made, or brought back as it was, as for a terminal) unless it was moved
+// elsewhere. From there (toggle), the keyboard goes back to the split it
+// came from.
+void App::debug_console(bool toggle) {
+    DebugUi& u = *debugui_;
+    Pane* const from = pane_;
+    if (toggle && from->doc && debug_console_doc(*from->doc) && !panel_has_keyboard() && !find_open_) {
+        for (const std::unique_ptr<Pane>& p : panes_)
+            if (p->id == u.con_back && p.get() != from) focus_pane(p.get());
+        dirty_ = true;
+        return;
+    }
+    Pane* where = nullptr;
+    size_t at = 0;
+    Doc* d = u.con_doc ? find_doc(u.con_doc, &where, &at) : nullptr;
+    if (!d) {
+        Pane* const dock = dock_show(from);  // (and the console with it, if it is there)
+        d = u.con_doc ? find_doc(u.con_doc, &where, &at) : nullptr;
+        if (!d) {
+            where = dock ? dock : from;
+            pane_ = where;
+            at = where->docs.size();
+            d = add_doc(at);
+            d->title = "Debug console";
+            d->read_only = true;
+            u.con_doc = d->id;
+            u.con_tab = where->docs[at];
+            pane_ = from;
+        }
+    }
+    if (where != from) u.con_back = from->id;
+    pane_ = where;
+    tab_show(at);
+    pane_ = from;
+    place_panes(px_w_, px_h_);  // (a split just made had no tab to place its text by)
+    focus_pane(where);
+    panel_focus(false);
+    u.con_typing = true;
+    debug_console_fill(true);
+    dirty_ = true;
+}
+
+// The console's text made again from its lines (the oldest let go of past
+// kConLines): each a line, a value with members marked as the Variables
+// view marks one, then the line typed on. The cursor stays where it was,
+// unless it was on that line or `to_input`: there, where what is typed is.
+void App::debug_console_fill(bool to_input) {
+    DebugUi& u = *debugui_;
+    u.con_changed = false;
+    if (u.con.size() > DebugUi::kConLines) u.con.erase(u.con.begin(), u.con.end() - DebugUi::kConLines);
+    const std::shared_ptr<Doc> d = u.con_tab.lock();
+    if (!d) return;
+    const bool on_line = d->ed.buf.line_of(d->ed.cursor()) + 1 >= d->ed.buf.line_count();
+    Runs out;
+    for (const DebugUi::Said& s : u.con) {
+        if (s.depth) out.add(std::string(2 * s.depth, ' '), 0);
+        if (s.ref > 0) out.add(s.open ? "\xE2\x96\xBE " : "\xE2\x96\xB8 ", 4);  // (a small triangle, down or right)
+        out.add(s.text, s.style);
+        out.add("\n", 0);
+    }
+    out.add(kPrompt, 3);
+    out.add(u.con_input, 0);
+    d->style_bits[2] = kInkDiagnostic << kCellInkShift;
+    debug_tab_fill(*d, std::move(out.text), std::move(out.off), std::move(out.style), to_input || on_line ? static_cast<i64>(u.con.size()) : -1, kPrompt.size() + u.con_at);
+}
+
+// The line typed on, again (what is typed, and the cursor in it), alone.
+void App::debug_console_line() {
+    DebugUi& u = *debugui_;
+    const std::shared_ptr<Doc> d = u.con_tab.lock();
+    if (!d) return;
+    Editor& ed = d->ed;
+    const u64 start = ed.buf.line_start(ed.buf.line_count() - 1) + kPrompt.size();
+    if (start > ed.buf.size() || ed.buf.line_count() != u.con.size() + 1) return debug_console_fill(true);
+    ed.replace(start, ed.buf.size(), u.con_input);
+    ed.mark_saved();
+    if (d->marks) d->marks->end = ed.buf.size();  // (what is typed is plain: no run of its own to move)
+    ed.move_to(start + u.con_at, false);
+    Pane* where = nullptr;
+    find_doc(d->id, &where);
+    if (where && where->doc == d.get()) {
+        Pane* const keep = pane_;
+        pane_ = where;
+        scroll_to_cursor();
+        pane_ = keep;
+    }
+    dirty_ = true;
+}
+
+// Enter: the line to the debugger as its own command line takes it (an
+// evaluate in the "repl" context: lldb-dap takes an expression or one of
+// its commands, gdb its commands, debugpy Python), in the frame shown; its
+// answer under it, a value with members opened a level.
+void App::debug_console_send() {
+    DebugUi& u = *debugui_;
+    const std::string line = u.con_input;
+    u.con_input.clear();
+    u.con_at = 0;
+    u.con_draft.clear();
+    if (trimmed(line).empty()) return debug_console_fill(true);
+    if (u.con_history.empty() || u.con_history.back() != line) u.con_history.push_back(line);
+    if (u.con_history.size() > DebugUi::kConHistory) u.con_history.erase(u.con_history.begin());
+    u.con_hist = u.con_history.size();
+    u.say(std::string(kPrompt) + line, 3);
+    if (!u.dap || u.state == DebugUi::kIdle || u.state == DebugUi::kStarting) {
+        u.say("No program is being debugged", 4);
+        return debug_console_fill(true);
+    }
+    // A gdb server's own command (OpenOCD's, a probe's: "monitor reset
+    // halt") goes to it as it is: gdb takes "monitor" as typed; lldb-dap as
+    // its command for it, after the prefix that makes a line a command.
+    std::string expr = line;
+    if (const std::string t = trimmed(line); !u.gdb && u.python.empty() && (t == "monitor" || t.starts_with("monitor "))) expr = "`process plugin packet monitor" + t.substr(7);
+    const std::string frame = u.state == DebugUi::kStopped && u.frame < u.frames.size() ? ",\"frameId\":" + std::to_string(u.frames[u.frame].id) : std::string();
+    ++u.asking;
+    u.dap->request("evaluate", "{\"expression\":" + quoted(expr) + frame + ",\"context\":\"repl\"}", [this](const Dap::Message& m) {
+        DebugUi& v = *debugui_;
+        if (v.asking) --v.asking;
+        if (!m.success) {
+            v.say(why_not(m.message), 2);
+            return;
+        }
+        const std::string_view result = m.body()["result"].str();
+        const i64 ref = m.body()["variablesReference"].integer();
+        u64 last = 0;
+        for (size_t at = 0; at < result.size();) {
+            const size_t nl = std::min(result.find('\n', at), result.size());
+            std::string l(result.substr(at, nl - at));
+            at = nl + 1;
+            if (!l.empty() && l.back() == '\r') l.pop_back();
+            last = v.say(std::move(l), 0).id;
+        }
+        if (ref > 0) {  // (on its last line)
+            if (!last) last = v.say({}, 0).id;
+            v.con.back().ref = ref;
+            debug_console_value(last);
+        }
+    });
+    debug_console_fill(true);
+}
+
+// A value's members, a level under it (as the Variables view opens it), or
+// shut again.
+void App::debug_console_value(u64 id) {
+    DebugUi& u = *debugui_;
+    const auto it = std::ranges::find_if(u.con, [&](const DebugUi::Said& s) { return s.id == id; });
+    if (it == u.con.end() || it->ref <= 0) return;
+    if (it->open) {
+        it->open = false;
+        auto end = it + 1;
+        while (end != u.con.end() && end->depth > it->depth) ++end;
+        u.con.erase(it + 1, end);
+        return debug_console_fill(false);
+    }
+    if (!u.dap) return;
+    it->open = true;
+    const u32 depth = it->depth + 1;
+    ++u.asking;
+    u.dap->request("variables", "{\"variablesReference\":" + std::to_string(it->ref) + "}", [this, id, depth](const Dap::Message& m) {
+        DebugUi& v = *debugui_;
+        if (v.asking) --v.asking;
+        const auto at = std::ranges::find_if(v.con, [&](const DebugUi::Said& s) { return s.id == id; });
+        if (at == v.con.end() || !at->open) return;
+        std::vector<DebugUi::Said> kids;
+        if (!m.success) kids.push_back({why_not(m.message), 4, depth, 0, false, ++v.con_ids});  // (gone: the program has gone on since)
+        for (const json::Value x : m.success ? m.body()["variables"] : json::Value()) {
+            std::string value(x["value"].str());
+            if (const std::string_view type = x["type"].str(); !type.empty() && value.size() < 40) value += "  (" + std::string(type) + ")";
+            std::string text = std::string(x["name"].str()) + " = " + value;
+            for (char& c : text)
+                if (c == '\n' || c == '\r' || c == '\t') c = ' ';  // (a line each)
+            kids.push_back({std::move(text), 0, depth, x["variablesReference"].integer(), false, ++v.con_ids});
+        }
+        v.con.insert(at + 1, kids.begin(), kids.end());
+        v.con_changed = true;
+    });
+    debug_console_fill(false);
+}
+
+// Tab: what is typed (up to the cursor) completed as the debugger would,
+// its commands too: one answer goes in, several that share more than is
+// typed that much, else a list of them, the one chosen going in.
+void App::debug_console_complete() {
+    DebugUi& u = *debugui_;
+    if (!u.dap || u.state == DebugUi::kIdle || u.state == DebugUi::kStarting) return;
+    const std::string typed = u.con_input.substr(0, u.con_at), rest = u.con_input.substr(u.con_at);
+    const std::string frame = u.state == DebugUi::kStopped && u.frame < u.frames.size() ? ",\"frameId\":" + std::to_string(u.frames[u.frame].id) : std::string();
+    u.dap->request("completions", "{\"text\":" + quoted(typed) + ",\"column\":" + std::to_string(typed.size() + 1) + frame + "}", [this, typed, rest](const Dap::Message& m) {
+        DebugUi& v = *debugui_;
+        if (!m.success || v.con_input != typed + rest || v.con_at != typed.size()) return;  // (typed on meanwhile)
+        const std::vector<std::string> all = completions_of(typed, m.body()["targets"], true);
+        auto take = [this, rest](const std::string& s) {
+            DebugUi& w = *debugui_;
+            w.con_input = s + rest;
+            w.con_at = s.size();
+            debug_console_line();
+        };
+        if (all.empty()) return;
+        if (all.size() == 1) return take(all[0]);
+        if (const std::string common = completions_share(all); common.size() > typed.size()) return take(common);
+        find_choose_item("Complete", all, [all, take](int i) {
+            if (i >= 0 && static_cast<size_t>(i) < all.size()) take(all[static_cast<size_t>(i)]);
+        });
+    });
+}
+
+// Keys in the console: on the line typed on, they edit it (Up and Down go
+// through the lines typed before, Tab completes, Enter sends it); Enter on
+// a value with members opens it or shuts it. The editor's shortcuts (Cmd+F
+// finds in the lines), the function keys (the debugger's) and Esc stay the
+// editor's; with Vim's keys, Esc leaves the line, and Vim's keys move over
+// the lines until i or a (or Enter) comes back to it.
+bool App::debug_console_key(const SDL_KeyboardEvent& k) {
+    if (!debugui_ || !pane_->doc || !debug_console_doc(*pane_->doc)) return false;
+    DebugUi& u = *debugui_;
+    const Editor& ed = pane_->doc->ed;
+    const bool primary = k.mod & kPrimaryMod, ctrl = k.mod & SDL_KMOD_CTRL, alt = k.mod & SDL_KMOD_ALT, shift = k.mod & SDL_KMOD_SHIFT;
+    if ((k.key >= SDLK_F1 && k.key <= SDLK_F12) || (k.key >= SDLK_F13 && k.key <= SDLK_F24)) return false;
+    if (k.key == SDLK_ESCAPE) {
+        if (cfg_.modal) u.con_typing = false;
+        return false;
+    }
+    const u64 line = ed.buf.line_of(ed.cursor());
+    const bool on_line = line + 1 >= ed.buf.line_count() && !ed.has_selection();
+    if (primary && !alt && !shift && k.key == SDLK_V) {  // pasted where the cursor is on the line (a line of it: its line ends as spaces)
+        std::string text;
+        if (char* c = SDL_GetClipboardText()) {
+            text = c;
+            SDL_free(c);
+        }
+        for (char& c : text)
+            if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+        u.con_typing = true;
+        u.con_input.insert(u.con_at, text);
+        u.con_at += text.size();
+        debug_console_line();
+        return true;
+    }
+    if (primary || ctrl) return false;
+    const bool enter = k.key == SDLK_RETURN || k.key == SDLK_KP_ENTER;
+    if (enter && !on_line && line < u.con.size() && u.con[line].ref > 0) {
+        debug_console_value(u.con[line].id);
+        return true;
+    }
+    if (cfg_.modal && !u.con_typing) {
+        if (!enter) return false;
+        u.con_typing = true;
+        debug_console_line();
+        return true;
+    }
+    auto back = [&](size_t at) {  // (the start of the character before)
+        while (at > 0 && (static_cast<u8>(u.con_input[--at]) & 0xC0) == 0x80) {
+        }
+        return at;
+    };
+    auto on = [&](size_t at) {  // (the start of the character after)
+        if (at < u.con_input.size()) ++at;
+        while (at < u.con_input.size() && (static_cast<u8>(u.con_input[at]) & 0xC0) == 0x80) ++at;
+        return at;
+    };
+    auto word = [&](size_t at) {  // (the start of the word before)
+        while (at > 0 && u.con_input[at - 1] == ' ') --at;
+        while (at > 0 && u.con_input[at - 1] != ' ') --at;
+        return at;
+    };
+    switch (k.key) {
+        case SDLK_RETURN:
+        case SDLK_KP_ENTER: debug_console_send(); return true;
+        case SDLK_UP:
+        case SDLK_DOWN:
+            if (shift || !on_line) return false;  // (over the lines above)
+            if (k.key == SDLK_UP && u.con_hist > 0) {
+                if (u.con_hist >= u.con_history.size()) u.con_draft = u.con_input;
+                u.con_input = u.con_history[--u.con_hist];
+            } else if (k.key == SDLK_DOWN && u.con_hist < u.con_history.size()) {
+                u.con_input = ++u.con_hist < u.con_history.size() ? u.con_history[u.con_hist] : u.con_draft;
+            }
+            u.con_at = u.con_input.size();
+            break;
+        case SDLK_LEFT:
+        case SDLK_RIGHT:
+        case SDLK_HOME:
+        case SDLK_END:
+            if (shift || !on_line) return false;
+            u.con_at = k.key == SDLK_HOME ? 0 : k.key == SDLK_END ? u.con_input.size() : k.key == SDLK_LEFT ? (alt ? word(u.con_at) : back(u.con_at)) : on(u.con_at);
+            break;
+        case SDLK_BACKSPACE: {
+            const size_t from = alt ? word(u.con_at) : back(u.con_at);
+            u.con_input.erase(from, u.con_at - from);
+            u.con_at = from;
+            break;
+        }
+        case SDLK_DELETE: u.con_input.erase(u.con_at, on(u.con_at) - u.con_at); break;
+        case SDLK_TAB: debug_console_complete(); return true;
+        case SDLK_PAGEUP:
+        case SDLK_PAGEDOWN: return false;
+        default: return !alt || kPrimaryMod == SDL_KMOD_GUI;  // (keys that type: their text comes as text; Alt+key elsewhere is the editor's)
+    }
+    debug_console_line();
+    return true;
+}
+
+// Text typed in the console goes on the line typed on, where its cursor is
+// (wherever the editor's cursor was in the lines above). With Vim's keys,
+// off the line, i, a, A or I in Normal mode come back to it; the rest is Vim's.
+bool App::debug_console_text(const char* text) {
+    if (!debugui_ || !pane_->doc || !debug_console_doc(*pane_->doc)) return false;
+    DebugUi& u = *debugui_;
+    const std::string_view t = text;
+    if (cfg_.modal && !u.con_typing) {
+        if (!(t == "i" || t == "a" || t == "A" || t == "I") || vim_.mode() != Vim::kNormal || vim_.pending() || !vim_.showcmd().empty()) return false;
+        u.con_typing = true;
+        if (t == "I") u.con_at = 0;
+        if (t == "A") u.con_at = u.con_input.size();
+        debug_console_line();
+        return true;
+    }
+    std::string s(t);
+    for (char& c : s)
+        if (c == '\n' || c == '\r' || c == '\t') c = ' ';
+    u.con_input.insert(u.con_at, s);
+    u.con_at += s.size();
+    debug_console_line();
+    return true;
 }
 
 // ---------------------------------------------------------------- for the tests

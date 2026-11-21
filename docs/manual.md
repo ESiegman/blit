@@ -2399,6 +2399,7 @@ its arguments and working directory.
 | Run to the cursor | Ctrl+F10 |
 | Evaluate an expression where it stopped (Tab completes what is typed) | Cmd+Shift+Y |
 | The Debug tab | Cmd+Shift+D |
+| The debug console (and from there, back to the file) | Cmd+Option+Y |
 | In the Debug tab, on a variable: set its value / watch its writes / its memory | F2 / W / M |
 
 Where it stops, the line has an arrow in the gutter and says why, and its
@@ -2485,6 +2486,23 @@ it, Delete takes it away), and what the program printed.
   what is typed as the debugger would: one answer goes in, several that
   share more than is typed that much, else a list of them to choose from.
   (lldb-dap and debugpy complete; gdb does not.)
+- **The debug console.** *Show the debug console* (Cmd+Option+Y) opens a
+  tab in the terminals' split (Ctrl+` hides it and brings it back with
+  them): what the program and the debugger print (the program's errors in
+  red, the debugger's own word quieter), and at the bottom a line for the
+  debugger's own command line. Enter sends it, in the frame shown
+  (lldb-dap takes an expression or one of lldb's commands, gdb its
+  commands, debugpy Python), and the answer comes under it; a value with
+  members is opened a level, and Enter on a member, from the lines above,
+  opens it further or shuts it. Up and Down go through the lines typed
+  before (kept in the folder's session), Tab completes as the debugger
+  would (lldb's commands too), Cmd+F finds in the lines. A line that starts
+  `monitor` goes to the gdb server as it is (OpenOCD's or a probe's own
+  commands: `monitor reset halt`): gdb passes it on, and to lldb-dap it
+  goes as lldb's `process plugin packet monitor`. The function keys stay
+  the debugger's: F10 there steps, the source showing in the split above.
+  With Vim's keys, Esc leaves the line for the lines above (Vim's keys move
+  over them), and i or a comes back to it.
 - **Exceptions.** The Debug tab lists the exceptions the debugger can stop
   at under *Exceptions* (lldb-dap: C++'s, Objective-C's and Swift's throws
   and catches; debugpy: those raised, those uncaught, and those that reach

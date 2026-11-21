@@ -2051,6 +2051,7 @@ void App::handle_event(const SDL_Event& e) {
 void App::on_text(const char* text) {
     if (term_text(text)) return;  // (to a terminal in front)
     if (pdf_text(text)) return;   // (a PDF's password, or what to find in it: apppdf.cpp)
+    if (debug_console_text(text)) return;  // (the debug console's line: appdebug.cpp)
     const Editor& ed = pane_->doc->ed;
     const u64 cursor = ed.cursor(), size = ed.buf.size(), rev = ed.revision();
     if (cfg_.modal) {  // text, or commands: Vim knows which
@@ -2109,6 +2110,7 @@ void App::on_key(const SDL_KeyboardEvent& k) {
             command_key(k))
             return;
         if (term_key(k)) return;   // a terminal's tab is in front (appterm.cpp)
+        if (debug_console_key(k)) return;  // the debug console's (appdebug.cpp)
     }
     if (script_keys_ && script_key(k)) return;  // a mapping of a script's has it (applua.cpp)
     if (!find_open_ && !panel_has_keyboard() && pair_key(k)) return;  // Backspace or Enter between a pair
