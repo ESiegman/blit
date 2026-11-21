@@ -1866,4 +1866,27 @@ void App::term_view_line(const Doc& d, u64 line) {
     dirty_ = true;
 }
 
+// The terminal in front (else one on show) as a tab of text: what it
+// keeps as it is now, for reading, Vim's keys and all. (Taken once: it does
+// not follow the terminal.)
+void App::term_lines_tab() {
+    Doc* from = pane_->doc && pane_->doc->term ? pane_->doc : nullptr;
+    for (const std::unique_ptr<Pane>& p : panes_)
+        if (!from && p->doc && p->doc->term) from = p->doc;
+    if (!from) return notify("No terminal to take the lines of");
+    TermLines lines;
+    term_lines(*from, &lines);
+    const std::string title = from->title + " (lines)";
+    Doc* d = add_doc(pane_->tab + 1);
+    d->title = title;
+    d->read_only = true;
+    d->ed.open_bytes({}, lines.text);
+    d->ed.mark_saved();
+    d->ed.move_to(d->ed.buf.line_start(d->ed.buf.line_count() - 1), false);  // (at the last line, as the terminal is at its bottom)
+    tab_show(pane_->tab + 1);
+    panel_focus(false);
+    scroll_to_cursor();
+    dirty_ = true;
+}
+
 }  // namespace blit

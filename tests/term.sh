@@ -95,6 +95,18 @@ check "with modes or without, and from Replace too: the box (nothing replaced in
 alllines "term;frame;termwait:\$;text:printf '%070d' 0 && echo wrapme;key:Return;termwait:wrapme;$find;text:rapme;finddump;termdump"
 check "a line the view wraps is found whole, lit on both its rows" \
     'file [rapme] 2 of 2 at 105-110 ;; @3,2 15x74 lit 0:28-33 lit 1:71-74* lit 2:0-2*'
+# "Open the terminal's lines as text": a tab of them as they are now, named
+# after the terminal, for reading: Vim's keys move, search and yank in it,
+# and it refuses changes as any tab for reading does (without modes, what is
+# typed goes nowhere).
+three="term;frame;termwait:\$;text:printf 'one\\ntwo\\nthree\\n';key:Return;termwait:three;command:Open the terminal's lines as text"
+got=$("$blit" --offscreen 1200x600 --shot "$dir/shot.bmp" --script "workdir:$dir/work;lua:blit.opt.editor.modal = true;$three;dump;lsptext" 2>&1 >/dev/null | tail -2 | tr '\n' '#')
+check "the terminal's lines as a tab of text, beside it" ">[untitled Terminal Terminal (lines)*]#\$ printf 'one\\ntwo\\nthree\\n' / one / two / three / \$#"
+got=$("$blit" --offscreen 1200x600 --shot "$dir/shot.bmp" --script "workdir:$dir/work;lua:blit.opt.editor.modal = true;$three;text:/^tw;key:Return;text:yy;vimdump;text:dd;text:x;text:p;vimdump;lsptext" 2>&1 >/dev/null | tail -3 | tr '\n' '#')
+check "Vim's keys in it; its text refuses changes" \
+    "NORMAL |  | 3:1 | two#NORMAL | E21: Cannot make changes, 'modifiable' is off | 3:1 | two#\$ printf 'one\\ntwo\\nthree\\n' / one / two / three / \$#"
+got=$("$blit" --offscreen 1200x600 --shot "$dir/shot.bmp" --script "workdir:$dir/work;lua:blit.opt.editor.modal = false;$three;text:xyz;key:Return;key:BackSpace;lsptext" 2>&1 >/dev/null | tail -1)
+check "and without modes" "\$ printf 'one\\ntwo\\nthree\\n' / one / two / three / \$"
 run "term;frame;termwait:\$;text:exit 3;key:Return;termend;frame;termdump"
 case "$got" in *"[exited with code 3]"*" ended 3") got="ended 3, tab kept" ;; esac
 check "a shell that ends badly: the tab stays and says so" "ended 3, tab kept"

@@ -1205,9 +1205,10 @@ private:
     bool term_wait(const std::string& text);
     // A terminal's stored lines, taken again if they have changed since
     // `out` was (false: they have not); its view scrolled to show one of
-    // them (~0: back to the screen).
+    // them (~0: back to the screen); and they, as a tab of text to read.
     bool term_lines(const Doc& d, TermLines* out);
     void term_view_line(const Doc& d, u64 line);
+    void term_lines_tab();
     bool term_go_place(TermView& v, u64 line, u32 col);  // Cmd+click: the path:line there opened
     bool term_click_text(const std::string& text);       // (tests) Cmd+click on this text in a terminal on show
     void term_end();

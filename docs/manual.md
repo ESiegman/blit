@@ -2227,6 +2227,12 @@ or drag it into a split of its own.
   program's; Esc shuts it, and the view is the screen again. The lines are
   looked at as they are when a key is typed in the box: what the program
   writes meanwhile is found at the next key.
+- **Open the terminal's lines as text** (in the command search) opens what
+  the terminal in front (else one on show) keeps, as it is then, in a tab
+  of its own named after it ("Terminal (lines)"): a tab for reading, where
+  Vim's keys move, search (`/`) and yank (`y`) as in a file, and changes
+  are refused as in any tab for reading. It does not follow what the
+  terminal writes after.
 - Drag to select; double-click a word, triple-click a line; middle or
   right click pastes.
 - A program that asks for the mouse (htop, less with `--mouse`, vim with
@@ -3702,7 +3708,8 @@ does not finish and takes all the memory the machine has.
   background colours at once draws the rest in the nearest of those (5
   while a search's matches are lit). Its search (Cmd+F) looks at the lines
   as they were at the last key typed in the box, and gives no key to go on
-  with once the box is shut.
+  with once the box is shut; its lines as text are a copy taken once, and
+  have no key of their own (keys pressed in a terminal are the program's).
 - Profiling: one run at a time. Memory first touched is pages, not
   allocations (blocks reused from the heap do not show); Every allocation
   samples them, on this machine only and not for a program the system
