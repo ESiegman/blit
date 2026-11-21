@@ -654,6 +654,7 @@ private:
     std::shared_ptr<struct SpellUi> spell_;
     // Pull requests, through gh (apppr.cpp).
     std::string git_root() const;
+    std::string git_folder() const;
     void pr_run(std::vector<std::string> args, std::function<void(int, const std::string&, const std::string&)> done);
     void pr_list();
     void pr_menu(i64 n);
@@ -694,6 +695,11 @@ private:
     std::unique_ptr<DirWatch> watch_;
     std::string watch_real_;
     u64 watch_due_ns_ = 0, watch_events_ = 0;
+    // (Another machine has no watcher: a task, a debug session or a kernel's
+    // cell that ran there and has ended stands in for one.)
+    bool ran_there(const std::string& path);
+    std::vector<std::string> ran_hosts_;
+    u64 ran_due_ns_ = 0;
     // Distraction-free and presentation modes (appfocus.cpp).
     enum : u8 { kFocusNone, kFocusPlain, kFocusShow };
     void focus_toggle(u8 mode);

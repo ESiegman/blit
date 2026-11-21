@@ -668,6 +668,24 @@ printf 'zed\n' >"$T/.hist/z.txt"
 slow "remotewait;frame;text:Z;clock;save;within:300;remotewait;frame;historydump" "ssh://box$T/.hist/z.txt"
 check "on a slow host, the first save (the text as read kept with it) asks nothing of the host" 'within 300 ms ;; ss'
 unset BLIT_HISTORY_DIR
+# A task that ends there: nothing watches the disk there, so what it wrote is
+# looked for then (a moment later, once for all that end meanwhile): the tree
+# lists the file it made, the open file it wrote is read again (or, changed
+# here, kept with a word about it), and the Git tab counts the changes.
+mkdir -p "$dir/ran" && printf 'one\n' >"$dir/ran/notes.txt" && printf 'all:\n\t@echo made >made.txt\n\t@echo two >>notes.txt\n' >"$dir/ran/Makefile"
+(cd "$dir/ran" && HOME="$T" git init -q -b main && HOME="$T" git add -A && HOME="$T" git -c user.name=t -c user.email=t@example.invalid commit -qm first) || exit 1
+INIT="$dir/git.lua"
+run "remotewait;panel;frame;gitwait;open:ssh://box$dir/ran/notes.txt;remotewait;frame;treewait;treedump;gitdump;buildrun;buildwait;ranwait;remotewait;treewait;gitwait;frame;treedump;lsptext;gitdump" "ssh://box$dir/ran"
+check "a task there that ends: the tree, the open file and git there looked at again" 'tree: Makefile@42 notes.txt@57 ;; main | branches *main | commits 1 "first" | lines ;; tree: made.txt@42 Makefile@57 notes.txt@73 ;; one / two /  ;; main | changes M:notes.txt ?:made.txt | branches *main | commits 1 "first" | lines 2+'
+(cd "$dir/ran" && rm made.txt && git checkout -q notes.txt) || exit 1
+INIT="$dir/git.lua"
+run "remotewait;panel;frame;gitwait;open:ssh://box$dir/ran/notes.txt;remotewait;frame;text:X;buildrun;buildwait;ranwait;remotewait;frame;lsptext;statusdump" "ssh://box$dir/ran"
+check "and the open file changed here: kept, and said" 'blit: notes.txt changed on disk: its changes here are kept, and saving asks first (Compare with disk shows the two) ;; Xone /  ;; box main notes.txt ● | Ln 1, Col 2 Tabs LF Plain text'
+run "remotewait;panel;frame;buildrun;buildwait;buildrun;buildwait;ranwait;ranwait" "ssh://box$dir/ran"
+check "two that end together: looked at once" 'ranwait: nothing ended there'
+mkdir -p "$dir/ranhere" && cp "$dir/ran/Makefile" "$dir/ranhere/" && printf 'one\n' >"$dir/ranhere/notes.txt"
+run "panel;frame;buildrun;buildwait;ranwait" "$dir/ranhere"
+check "one here: left to the watcher" 'ranwait: nothing ended there'
 
 # The agent was copied there once, into the cache blit keeps in that home.
 got=$(ls "$T/.cache/blit" | sed -e 's/-[0-9a-f]*$//')

@@ -956,6 +956,7 @@ void App::debug_begin(const std::string& request, const std::string& args_in) {
 // waits for it to end.
 void App::debug_end() {
     DebugUi& u = *debugui_;
+    if (u.dap && !u.remote.empty()) ran_there(u.remote);  // (on another machine: what the program wrote there, looked for)
     if (u.dap && !u.dap->ended()) {
         u.dap->request("disconnect", u.how == "attach" ? "{\"terminateDebuggee\":false}" : "{\"terminateDebuggee\":true}");
         u.dap->stop(300);  // (the adapter lets go of the program as it ends)

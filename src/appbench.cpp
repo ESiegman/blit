@@ -1080,6 +1080,10 @@ void App::run_script(const char* script) {
                 SDL_Delay(2);
             }
             sync_panel();
+        } else if (verb == "ranwait") {  // what ran on another machine has ended: the tree, the open files and git there asked again (not waited for)
+            if (!ran_due_ns_) std::fprintf(stderr, "ranwait: nothing ended there\n");
+            while (ran_due_ns_ && now_ns() < ran_due_ns_) SDL_Delay(2);
+            watch_tick();
         } else if (verb == "treewait") {
             const u64 until = now_ns() + 20'000'000'000ull;
             while (panel_busy() && now_ns() < until) {

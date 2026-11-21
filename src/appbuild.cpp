@@ -75,6 +75,7 @@ struct App::BuildUi {
     std::string looking_at;
     // The output terminal of the last run.
     u64 doc = 0;
+    std::string dir;  // the folder it ran in (on another machine: ssh://host/...)
     bool running = false;
     int last_status = -1;
     std::string last_name;
@@ -362,6 +363,7 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     for (const std::unique_ptr<Pane>& p : panes_) editing_still |= p.get() == editing;
     focus_pane(editing_still ? editing : panes_.front().get());
     u.doc = doc;
+    u.dir = dir;
     u.running = doc != 0;
     u.last_status = -1;
     u.last_name = title;
@@ -449,6 +451,7 @@ void App::build_stop() {
     focus_pane(pane_);
     u.running = false;
     u.doc = 0;
+    ran_there(u.dir);  // (what it wrote before it was stopped, on another machine)
     ++build_gen_;
     dirty_ = true;
 }
@@ -456,7 +459,8 @@ void App::build_stop() {
 // The build's program has ended (term_sync tells): what it made may change
 // what the folder builds with (a build folder configured), so it is looked
 // at again; and what git sees there (files written, or a repository made by
-// a new project's git init).
+// a new project's git init). On another machine, the files it wrote are
+// looked for there too, and git with them (ran_there).
 void App::build_ended(u64 doc, int status) {
     test_ended(doc);  // (a run of the tests: its reports read)
     BuildUi& u = *buildui_;
@@ -464,7 +468,7 @@ void App::build_ended(u64 doc, int status) {
     u.running = false;
     u.last_status = status;
     u.looked = false;
-    git_command("look", {});
+    if (!ran_there(u.dir)) git_command("look", {});
     ++build_gen_;
     dirty_ = true;
 }

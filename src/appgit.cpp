@@ -429,6 +429,8 @@ void App::git_create() { gitui_ = std::make_shared<GitUi>(); }
 
 // The top of the repository being worked in (empty: none).
 std::string App::git_root() const { return gitui_ && gitui_->status.repo ? gitui_->status.root : std::string(); }
+// The folder git looks at, a repository or not ("": none yet).
+std::string App::git_folder() const { return gitui_ ? gitui_->dir : std::string(); }
 
 bool App::confirm(const std::string& what, const char* yes) {
     const SDL_MessageBoxButtonData buttons[] = {

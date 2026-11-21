@@ -1655,8 +1655,10 @@ The tree keeps up with the disk by itself: what another program, a build or
 git makes, removes or renames in the working folder shows at once (FSEvents
 on a Mac, inotify on Linux), and an open file written elsewhere is read
 again, with git's view, a moment later. Not for a folder on another
-machine, where Cmd+R reads it again. What tools write to their caches in
-the project's `.cache` folder (clangd's index, for minutes while it is
+machine, where Cmd+R reads it again (and so does the end of a task, a
+debug session or a notebook cell run there: see [Working on another
+machine](#working-on-another-machine)). What tools write to their caches
+in the project's `.cache` folder (clangd's index, for minutes while it is
 built) is left alone, unless that folder is open in the tree.
 `blit.opt.panel.watch = false` turns it off.
 
@@ -1931,8 +1933,14 @@ over the one ssh connection:
   file's permissions. A file changed there (a `git pull` in a terminal on
   that machine) is read again when blit's window comes back to the front,
   as a local one is; under unsaved changes it is left alone, as a local
-  one is, and saving asks first. A save also looks first whether the file
-  there changed since it was read, and asks if it has.
+  one is, and saving asks first. Nothing watches the disk there, so the
+  end of something blit ran there (a task or run configuration, the tests,
+  a debug session, a notebook cell) stands in for it: a moment later (once
+  for all that end meanwhile) the tree's open folders there are read
+  again, the open files there are looked at (on a thread) and read again
+  if the program wrote them, and git there is asked again. A save also
+  looks first whether the file there changed since it was read, and asks
+  if it has.
 - **The tree** lists folders there; new, rename and delete work as they do
   here (delete moves to the freedesktop Trash of the user the agent runs
   as), on the tree's own thread: the tree shows them when they are done,
@@ -3728,7 +3736,8 @@ does not finish and takes all the memory the machine has.
   glide of its own.
 - The side panel: names too long for it are cut short (ending in "…");
   a folder on another machine is not watched (it is read again when the
-  window gets focus, on Cmd+R, and after the tree's own changes); hidden
+  window gets focus, on Cmd+R, after the tree's own changes, and when a
+  task, debug session or notebook cell run there ends); hidden
   files other than `.git` and `.DS_Store` are always shown.
 - A line longer than 4 billion columns will not display correctly.
 - If another program truncates the open file, the missing part reads as

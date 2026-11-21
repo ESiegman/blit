@@ -132,6 +132,15 @@ run "remotewait;debug:program=ssh://box$T/count;break:8;key:F5;debugwait:stopped
 check "on another machine" 'stopped (breakpoint); stack: square@8 main@15; vars: x=1 y=1 ;; box count.c | Ln 8, Col 1 Spaces: 4 LF C'
 run "remotewait;debug:program=ssh://box$T/count;breakif:8;key:Return;text:2;key:Return;key:Return;debugpanel;debugpick:add;text:y - x;key:Return;key:F5;debugwait:stopped;debugdump" "ssh://box$T/count.c"
 check "a hit count and a watch, there" 'stopped (breakpoint); stack: square@8 main@15; vars: x=2 y=4; watch: y - x = 2; output: i=1 total=1'
+# A program there that writes files: once the session is over, the tree
+# lists the one it made and the open one it wrote is read again (nothing
+# watches the disk there).
+mkdir -p "$T/w" "$T/wbin" && printf 'one\n' >"$T/w/notes.txt"
+printf '#include <stdio.h>\nint main(void) {\n    FILE* f = fopen(OUT "/made.txt", "w");\n    fclose(f);\n    f = fopen(OUT "/notes.txt", "a");\n    fputs("two\\n", f);\n    fclose(f);\n    return 0;\n}\n' >"$T/wbin/writes.c"
+(cd "$T/wbin" && cc -g -O0 -DOUT="\"$T/w\"" -o writes writes.c) || exit 1
+run "remotewait;key:cmd+shift+E;treewait;frame;treedump;debug:program=ssh://box$T/wbin/writes;key:F5;debugwait:idle;ranwait;remotewait;treewait;frame;treedump;lsptext;statusdump" "ssh://box$T/w/notes.txt"
+check "a session there that ends: the tree and the open file there looked at again" \
+    'tree: notes.txt@42 ;; tree: made.txt@42 notes.txt@57 ;; one / two /  ;; box notes.txt | Ln 1, Col 1 Tabs LF Plain text'
 
 # On a slow one (each answer held a while): F5 goes back to the keys at once
 # and the tab says it is starting (the debugger is started there on a thread

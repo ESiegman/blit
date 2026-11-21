@@ -387,6 +387,7 @@ void App::nb_sync() {
                     put_running(d, false);
                     touched = false;
                     nb.running = {};
+                    if (nb.kernel->remote()) ran_there(d.ed.path);  // (what the cell wrote there, looked for)
                     if (!e.flag) drop_waiting(d);  // (as Jupyter: after an error, nothing more)
                     break;
                 case Kernel::Event::kEnded: {
@@ -404,6 +405,7 @@ void App::nb_sync() {
                     const size_t nl = why.rfind('\n');
                     const std::string said = "The kernel has stopped" + (why.empty() ? std::string() : ": " + why.substr(nl == std::string::npos ? 0 : nl + 1));
                     notify(said, 2, nl == std::string::npos ? std::string() : said + "\n" + why);
+                    if (nb.running.key && nb.kernel->remote()) ran_there(d.ed.path);
                     if (nb.running.key) put_running(d, false), touched = false;
                     nb.running = {};
                     drop_waiting(d);

@@ -436,6 +436,18 @@ got=$(printf '%s\n' "$got" | grep -E '^H\(|^[0-9] code|KeyboardInterrupt$|^5: +h
 check "on another machine: run there, interrupted there" "H(>[r.ipynb*] | [Notebook: r.ipynb*])0.50|2 code [1] same stream execute_result|3 code [2] same stream error|4 code [ ] same|half of 42|KeyboardInterrupt|"
 got="$(ls "$there/.cache/blit" | grep -c '^kernel-[0-9a-f]*\.py$') $(outputs "$there/work/r.ipynb" | tr '\n' '|') $(alive $kernel)"
 check "on another machine: the helper written there once, saved as a notebook, nothing left running" "1 1: stream(half of 42) execute_result|2: stream(careful) error|None:| gone"
+# A cell there that writes files: once it has run, the tree lists the one
+# it made and the open one it wrote is read again (nothing watches the disk there).
+mkdir -p "$there/w/.venv/bin" && cp "$run/.venv/bin/python" "$there/w/.venv/bin/python" && printf 'one\n' >"$there/w/notes.txt"
+python3 - "$there/w/w.ipynb" <<'EOF'
+import json, sys
+cells = [{"cell_type": "markdown", "metadata": {}, "source": ["# Writing"]},
+         {"cell_type": "code", "execution_count": None, "metadata": {}, "outputs": [], "source": ["open('made.txt', 'w').close()\n", "open('notes.txt', 'a').write('two\\n')"]}]
+json.dump({"cells": cells, "metadata": {"language_info": {"name": "python"}}, "nbformat": 4, "nbformat_minor": 5}, open(sys.argv[1], "w"), indent=1, sort_keys=True)
+EOF
+got=$(BLIT_SSH="$(cd "$(dirname "$0")" && pwd)/fake-ssh.sh" BLIT_FAKE_HOME="$there" "$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" \
+    --script "remotewait;key:cmd+shift+E;treewait;frame;treedump;key:Escape;open:ssh://box$there/w/w.ipynb;remotewait;mdwait;vim:7G;key:shift+Return;nbwait;ranwait;remotewait;treewait;frame;treedump;open:ssh://box$there/w/notes.txt;lsptext" "ssh://box$there/w/notes.txt" 2>&1 >/dev/null | grep -E '^tree:|^one|^ranwait' | sed -e 's/@[0-9]*//g' | tr '\n' '|')
+check "a cell there that has run: the tree and the open file there looked at again" "tree: .venv/ notes.txt w.ipynb|tree: .venv/ made.txt notes.txt w.ipynb|one / two / |"
 # A slow host: the notebook comes after the keyboard has gone to another
 # split, and its view opens beside it without taking the keyboard back.
 python3 "$dir/make-run.py" "$there/work/r.ipynb"

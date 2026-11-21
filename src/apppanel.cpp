@@ -600,10 +600,40 @@ void App::watch_take() {
 }
 
 void App::watch_tick() {
+    if (ran_due_ns_ && now_ns() >= ran_due_ns_) {  // (what ran on other machines, see ran_there)
+        ran_due_ns_ = 0;
+        const std::vector<std::string> hosts = std::exchange(ran_hosts_, {});
+        const auto on = [&](const std::string& path) {
+            std::string host, there;
+            return split_remote(path, &host, &there) && std::ranges::find(hosts, host) != hosts.end();
+        };
+        if (on(side_->tree.root())) panel_refresh();
+        for (const std::unique_ptr<Pane>& p : panes_)
+            for (const std::shared_ptr<Doc>& d : p->docs)
+                if (!d->read_only && on(d->ed.path)) remote_load(*d, true);  // (looked at on a thread, read again if it changed)
+        picture_recheck();
+        pdf_recheck();
+        if (cfg_.git && on(git_folder())) git_command("look", {});  // (a repository made there too)
+        dirty_ = true;
+    }
     if (!watch_due_ns_ || now_ns() < watch_due_ns_) return;
     watch_due_ns_ = 0;
     reload_changed();  // (an open file another program wrote)
     if (cfg_.git) git_.refresh();
+}
+
+// A task (a run configuration, the tests), a debug session or a kernel's
+// cell that ran on another machine has ended. Nothing watches the disk
+// there, so what it wrote is looked for a moment later: the tree's open
+// folders there read again, the open files there looked at (on a thread)
+// and git there asked again; once for all that end meanwhile. False: the
+// path is this machine's, whose watcher tells of what changed.
+bool App::ran_there(const std::string& path) {
+    std::string host, there;
+    if (!split_remote(path, &host, &there)) return false;
+    if (std::ranges::find(ran_hosts_, host) == ran_hosts_.end()) ran_hosts_.push_back(host);
+    if (!ran_due_ns_) ran_due_ns_ = now_ns() + 300'000'000ull;
+    return true;
 }
 
 // For the tests: the tree's rows, each a path under the top folder (a
@@ -630,9 +660,10 @@ std::string App::tree_dump() {
 }
 
 int App::watch_wait_ms() const {
-    if (!watch_due_ns_) return -1;
+    const u64 due = watch_due_ns_ && ran_due_ns_ ? std::min(watch_due_ns_, ran_due_ns_) : watch_due_ns_ | ran_due_ns_;
+    if (!due) return -1;
     const u64 now = now_ns();
-    return watch_due_ns_ <= now ? 0 : static_cast<int>((watch_due_ns_ - now) / 1'000'000 + 1);
+    return due <= now ? 0 : static_cast<int>((due - now) / 1'000'000 + 1);
 }
 
 // ---------------------------------------------------------------- the file tree
