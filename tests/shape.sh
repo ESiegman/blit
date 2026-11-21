@@ -24,6 +24,7 @@ printf '%s\nblit.opt.editor.modal = false\nblit.opt.themes["blit-dark"].brackets
 printf '%s\nblit.opt.editor.modal = false\nblit.opt.editor.breadcrumbs = false\n' "$base" >"$dir/nocrumbs.lua"
 printf '%s\nblit.opt.editor.modal = false\nblit.opt.editor.sticky_scroll = false\n' "$base" >"$dir/nosticky.lua"
 export BLIT_RECENT_FILE="$dir/recent"
+if [ "$(uname)" = Darwin ]; then docend="key:cmd+Down"; else docend="key:cmd+End"; fi
 init=
 fresh() {
     printf 'int f(int a[3]) {\n    if (a[0]) { g("(x"); }\n    return (a[1]);\n}\n' >"$dir/b.cpp"
@@ -103,7 +104,7 @@ case "$got" in
 esac
 check "parentheses 2,000 deep" 'shaped'
 awk 'BEGIN { print "void f(int v) {"; print "    if (v == 0) {"; for (i = 1; i < 150; i++) { print "    } else if (v == " i ") {"; print "        g(" i ");" }; print "    }"; print "}" }' >"$dir/chain.cpp"
-run "key:cmd+Down;frame;shapedump" "$dir/chain.cpp"
+run "$docend;frame;shapedump" "$dir/chain.cpp"
 case "$got" in
 *=-*) ;;
 *" 300:10=2 300:14=2 301:5=1 302:1=0 | inks 3 "*) got=shaped ;;
