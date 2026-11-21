@@ -40,6 +40,7 @@ namespace blit {
 namespace {
 
 constexpr u32 kSelectionTone = 7;  // (Popup::tones: 1-6 the programs' backgrounds, 7 what is selected)
+constexpr u32 kMatchTone = 6;      // (and while a search's matches are lit, 6 theirs: the programs have 1-5)
 
 void wake() {
     SDL_Event ev{};
@@ -1071,6 +1072,7 @@ u32 distance(u32 a, u32 b) {
 // beyond those the nearest taken.
 struct Colours {
     std::vector<u32> inks, backs;  // red-green-blue
+    u32 most = kSelectionTone - 1;  // (backgrounds)
     u32 ink(u32 rgb) {
         for (u32 i = 0; i < inks.size(); ++i)
             if (inks[i] == rgb) return i;
@@ -1087,7 +1089,7 @@ struct Colours {
         if (rgb == deflt) return 0;
         for (u32 i = 0; i < backs.size(); ++i)
             if (backs[i] == rgb) return i + 1;
-        if (backs.size() < kSelectionTone - 1) {
+        if (backs.size() < most) {
             backs.push_back(rgb);
             return static_cast<u32>(backs.size());
         }
@@ -1125,7 +1127,8 @@ void App::term_layout(FrameDesc& fd) {
             else if (v.pty.fd >= 0) pty_resize(v.pty.fd, rows, cols, cols * static_cast<u32>(cw), rows * static_cast<u32>(ch));
         }
         v.scroll = std::min<u64>(v.scroll, t.history());
-        u64 key = t.generation() * 1000003ull ^ v.scroll * 7919 ^ font.generation() * 31 ^ (focused ? 1 : 0) ^ static_cast<u64>(cols) << 40 ^
+        const u64 lit = find_open_ ? find_term_key(pane->doc->id) : 0;  // (a search's matches)
+        u64 key = lit * 0x9E3779B97F4A7C15ull ^ t.generation() * 1000003ull ^ v.scroll * 7919 ^ font.generation() * 31 ^ (focused ? 1 : 0) ^ static_cast<u64>(cols) << 40 ^
                   (v.selected ? v.sel_line0 * 131 + v.sel_line1 * 137 + v.sel_col0 * 139 + v.sel_col1 * 149 + 1 : 0) ^ static_cast<u64>(pack(theme_.fg)) << 8 ^
                   static_cast<u64>(pack(theme_.bg)) << 20;
         if (key != v.drawn || v.cols != cols || v.rows != rows) {
@@ -1136,6 +1139,7 @@ void App::term_layout(FrameDesc& fd) {
             const u32 fg0 = pack(theme_.fg), bg0 = pack(theme_.bg);
             Colours pal;
             pal.inks.push_back(fg0);  // ([0] the default text colour)
+            if (lit) pal.most = kMatchTone - 1;
             const u64 hist = t.history(), first = hist - v.scroll;  // the line at the top of the view, counted from the oldest
             for (u32 r = 0; r < rows; ++r) {
                 const u64 line = first + r;
@@ -1174,6 +1178,16 @@ void App::term_layout(FrameDesc& fd) {
                 // The rest of a line from the history that is shorter than the view.
                 for (u32 c = n; c < cols; ++c) out[c] = font.glyph(' ') & (Font::kWide - 1);
             }
+            // A search's matches, the one chosen as what is selected.
+            if (lit) {
+                std::vector<TermLit> found;
+                find_term_lit(pane->doc->id, (t.alt_screen() ? 0 : t.lines_gone()) + first, rows, cols, t.alt_screen(), &found);
+                for (const TermLit& m : found)
+                    for (u32 c = m.col0; c < m.col1 && c < cols; ++c) {
+                        u32& cell = v.box.cells[static_cast<size_t>(m.row) * cols + c];
+                        cell = (cell & ~kCellDecoMask) | kCellSelected | (m.chosen ? kSelectionTone : kMatchTone) << kCellDecoShift;
+                    }
+            }
             // The cursor: a block where it is, the character on it in the background's colour.
             if (v.scroll == 0 && t.cursor_visible() && !v.ended) {
                 u32& cell = v.box.cells[static_cast<size_t>(t.cursor_row()) * cols + t.cursor_col()];
@@ -1183,6 +1197,8 @@ void App::term_layout(FrameDesc& fd) {
             for (u32 i = 0; i < 32; ++i) rgb_of(i < pal.inks.size() ? pal.inks[i] : fg0, v.palette[i]);
             for (u32 i = 1; i < kSelectionTone; ++i) rgb_of(i - 1 < pal.backs.size() ? pal.backs[i - 1] : bg0, v.tones[i]);
             std::memcpy(v.tones[kSelectionTone], theme_.sel, sizeof v.tones[kSelectionTone]);
+            if (lit)  // (as a match in the text is lit: the background a way toward the theme's tint)
+                for (int k = 0; k < 3; ++k) v.tones[kMatchTone][k] = theme_.bg[k] + (theme_.tint[k] - theme_.bg[k]) * 0.4f;
         }
         Popup& q = fd.popups[fd.popup_count++];
         q = Popup{};
@@ -1718,6 +1734,13 @@ std::string App::term_dump() {
         const i64 row = p.alt ? static_cast<i64>(p.line) : static_cast<i64>(p.line - v.term.lines_gone()) - static_cast<i64>(v.term.history());
         out += " picture " + std::to_string(p.w) + "x" + std::to_string(p.h) + "@" + std::to_string(row) + "," + std::to_string(p.col);
     }
+    // A search's matches lit in the view: row:columns, the one chosen marked *.
+    if (find_open_ && find_term_key(pane_->doc->id)) {
+        std::vector<TermLit> found;
+        const Term& t = v.term;
+        find_term_lit(pane_->doc->id, (t.alt_screen() ? 0 : t.lines_gone()) + t.history() - v.scroll, t.rows(), t.cols(), t.alt_screen(), &found);
+        for (const TermLit& m : found) out += " lit " + std::to_string(m.row) + ":" + std::to_string(m.col0) + "-" + std::to_string(m.col1) + (m.chosen ? "*" : "");
+    }
     return out;
 }
 
@@ -1783,6 +1806,64 @@ bool App::term_wait(const std::string& text) {
         SDL_Delay(5);
     }
     return false;
+}
+
+// ---------------------------------------------------------------- its lines as text
+
+// The history and the screen as text: a row a wrap made goes on into the
+// next (its blanks kept, but not a pad a wide character left), others end
+// with a line break after their last character; blank lines at the end are
+// left off. Nothing is taken while they are as they were.
+bool App::term_lines(const Doc& d, TermLines* out) {
+    if (!d.term) return false;
+    TermView& v = *d.term;
+    std::lock_guard lock(v.mu);
+    const Term& t = v.term;
+    const u64 hist = t.history(), n = hist + t.rows();
+    out->below = n - v.scroll;
+    if (t.generation() == out->gen && t.cols() == out->cols && t.alt_screen() == out->alt) return false;
+    out->gen = t.generation();
+    out->cols = t.cols();
+    out->alt = t.alt_screen();
+    out->first = t.alt_screen() ? 0 : t.lines_gone();
+    out->text.clear();
+    out->rows.resize(n);
+    size_t kept = 0;  // (the text up to the last line with something on it)
+    for (u64 i = 0; i < n; ++i) {
+        out->rows[i] = out->text.size();
+        const TermCell* cells = i < hist ? t.history_line(i).data() : &t.at(static_cast<u32>(i - hist), 0);
+        const u32 w = i < hist ? static_cast<u32>(t.history_line(i).size()) : t.cols();
+        const bool wrapped = w && (cells[w - 1].attr & TermCell::kWrapped);
+        size_t end = out->text.size();
+        for (u32 c = 0; c < w; ++c) {
+            if ((cells[c].attr & TermCell::kWideTail) || (c == w - 1 && (cells[c].attr & TermCell::kPad))) continue;
+            append_utf8(&out->text, (cells[c].attr & TermCell::kHidden) || cells[c].cp < 0x20 ? ' ' : cells[c].cp);
+            if (cells[c].cp != ' ') end = out->text.size();
+        }
+        if (!wrapped) out->text.resize(end);
+        if (out->text.size() > out->rows[i]) kept = out->text.size();
+        if (!wrapped) out->text += '\n';
+    }
+    out->text.resize(kept);
+    for (u64& r : out->rows) r = std::min<u64>(r, kept);
+    return true;
+}
+
+// Scrolled so that the row is on show (in the middle of the view, if it
+// was not); ~0, or a row gone from the history: back to the screen.
+void App::term_view_line(const Doc& d, u64 line) {
+    if (!d.term) return;
+    TermView& v = *d.term;
+    std::lock_guard lock(v.mu);
+    const Term& t = v.term;
+    const u64 hist = t.history(), first = t.alt_screen() ? 0 : t.lines_gone(), rows = t.rows();
+    if (line == ~0ull || line < first) {
+        v.scroll = 0;
+    } else if (const u64 at = line - first, top = hist - v.scroll; at < top || at >= top + rows) {
+        const u64 want = at > rows / 2 ? at - rows / 2 : 0;
+        v.scroll = want >= hist ? 0 : hist - want;
+    }
+    dirty_ = true;
 }
 
 }  // namespace blit

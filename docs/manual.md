@@ -2214,9 +2214,19 @@ or drag it into a split of its own.
 - Keys go to the program, Vim's keys included. The editor keeps its Cmd
   shortcuts (switching tabs, closing one), except: **Cmd+C** copies what is
   selected, **Cmd+V** pastes, **Cmd+K** clears the history. (On Linux:
-  Ctrl+Shift+C and Ctrl+Shift+V.) There is no search in a terminal yet:
-  Cmd+F (or Find in this file from the command search) says so on the
-  bottom line, and what is typed after it goes to the program as ever.
+  Ctrl+Shift+C and Ctrl+Shift+V.)
+- **Cmd+F** (or Find in this file from the command search; on Linux Ctrl+F
+  is the program's) finds in the lines the terminal keeps, its history and
+  its screen, with the box that [finds in a file](#finding-files-and-text),
+  its keys and its rules for case (with Vim's modes on too): the match
+  nearest the bottom of the view is chosen first, the field says which of
+  how many it is, Enter or Down chooses the next and Shift+Enter or Up the
+  one before. Each match is lit, the one chosen as what is selected, and the
+  view goes back through the history to show it. A line the tab's width
+  wrapped is found whole. What is typed in the box is the box's, never the
+  program's; Esc shuts it, and the view is the screen again. The lines are
+  looked at as they are when a key is typed in the box: what the program
+  writes meanwhile is found at the next key.
 - Drag to select; double-click a word, triple-click a line; middle or
   right click pastes.
 - A program that asks for the mouse (htop, less with `--mouse`, vim with
@@ -3689,7 +3699,10 @@ does not finish and takes all the memory the machine has.
   choosing text does not scroll the view past its edge; the outline box
   is for the mouse and the wheel.
 - Terminal: no ligatures. A screen with more than 32 text colours or 6
-  background colours at once draws the rest in the nearest of those.
+  background colours at once draws the rest in the nearest of those (5
+  while a search's matches are lit). Its search (Cmd+F) looks at the lines
+  as they were at the last key typed in the box, and gives no key to go on
+  with once the box is shut.
 - Profiling: one run at a time. Memory first touched is pages, not
   allocations (blocks reused from the heap do not show); Every allocation
   samples them, on this machine only and not for a program the system

@@ -85,6 +85,23 @@ struct Profile;      // (profile.hpp)
 struct ProfileFunc;
 struct ProfView;     // a profile's tab (appprofile.cpp)
 struct TermView;     // a terminal's tab (appterm.cpp)
+// A terminal's stored lines (its history and its screen) as text, a line
+// as the program wrote it (the rows a wrap made joined again): where each
+// row starts in it, the first row's number (as the terminal counts its
+// lines: it stays as lines go off the top), the row below the view, and
+// what they were taken from (appterm.cpp).
+struct TermLines {
+    std::string text;
+    std::vector<u64> rows;
+    u64 first = 0, below = 0, gen = ~0ull;
+    u32 cols = 0;
+    bool alt = false;
+};
+// A match lit in a terminal's view: on a row of it, columns [col0, col1).
+struct TermLit {
+    u32 row = 0, col0 = 0, col1 = 0;
+    bool chosen = false;
+};
 struct MdView;       // a Markdown preview's tab (appmarkdown.cpp)
 struct AsmTab;       // a file's assembly's tab (appasm.cpp)
 struct NotebookTab;  // a Jupyter notebook's tab (appnotebook.cpp)
@@ -477,6 +494,11 @@ private:
     std::string ruler_dump();  // (the tests: the marks of the split in front, row:kind)
     // Find in this file's matches, while its box is open on that document (appfind.cpp).
     const std::vector<u64>* find_file_matches(u64 doc);
+    // And in a terminal's stored lines: a count that changes with what is
+    // lit (0: nothing), and the matches on the rows on show from `top` (a
+    // row's number, as TermLines counts them), for a view `cols` wide.
+    u64 find_term_key(u64 doc);
+    void find_term_lit(u64 doc, u64 top, u32 rows, u32 cols, bool alt, std::vector<TermLit>* out);
     bool fold_mouse_down(const SDL_MouseButtonEvent& b);  // a click on a folded line's mark or note opens it
     std::string fold_dump();  // (the tests: what is folded in the file in front, and the rows on show)
     void measure_widest();  // finds out how wide the widest line is, if that is not known
@@ -1181,6 +1203,11 @@ private:
     bool term_wheel(const SDL_MouseWheelEvent& w);
     std::string term_dump();
     bool term_wait(const std::string& text);
+    // A terminal's stored lines, taken again if they have changed since
+    // `out` was (false: they have not); its view scrolled to show one of
+    // them (~0: back to the screen).
+    bool term_lines(const Doc& d, TermLines* out);
+    void term_view_line(const Doc& d, u64 line);
     bool term_go_place(TermView& v, u64 line, u32 col);  // Cmd+click: the path:line there opened
     bool term_click_text(const std::string& text);       // (tests) Cmd+click on this text in a terminal on show
     void term_end();

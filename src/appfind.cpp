@@ -18,6 +18,7 @@
 #include "fsio.hpp"
 #include "look.hpp"
 #include "regex.hpp"
+#include "term.hpp"
 #include "textbox.hpp"
 #include "tree.hpp"
 #include "utf8.hpp"
@@ -354,6 +355,15 @@ struct App::Find {
     bool starts_capped = false, counted = false;
     u64 starts_key = 0;
     Vim::Pattern last_file;  // what kFindFile looked for last (Cmd+G with the box shut)
+    // Finding in a terminal (kFindFile with its tab in front): its stored
+    // lines as they were at the last key typed in the box, searched in
+    // place of a file's text (taken again, as keys are typed, only if they
+    // have changed); a count that goes up each time they are; and where
+    // each match counted ends, to light them.
+    TermLines term;
+    Buffer term_text;
+    u64 term_rev = 0;
+    std::vector<u64> ends;
     // Replacing in files: the question asked first.
     bool asking = false;
     u64 ask_hits = 0, ask_files = 0;
@@ -407,6 +417,10 @@ struct App::Find {
     static void file_select(App& a, const RegexMatch& m);
     static void file_count(App& a);
     static void file_replace(App& a, bool all);
+    static const Buffer& text_of(App& a);  // what is searched: the file's text, or the terminal's lines
+    static u64 from_of(App& a);  // where a step goes on from with no match chosen: the cursor
+    static void term_take(App& a, u64* from);
+    static void term_let_go(App& a);
     // Replacing in files: the question, then the work.
     static void files_ask(App& a);
     static void files_replace(App& a);
@@ -558,7 +572,8 @@ void App::Find::file_query(App& a) {
     Find& f = *a.find_;
     f.pattern = Vim::make_pattern(f.typed, f.regex, f.exact);
     f.cur_ok = false;
-    if (a.pane_->doc->id == f.file_doc && !f.pattern.empty() && !f.pattern.bad()) file_go(a, f.file_from, true, true);
+    // (In a terminal, the nearest above the bottom of the view: its newest lines are there.)
+    if (a.pane_->doc->id == f.file_doc && !f.pattern.empty() && !f.pattern.bad()) file_go(a, f.file_from, !a.pane_->doc->term, true);
     file_count(a);
     f.touch();
     a.dirty_ = true;
@@ -570,9 +585,10 @@ bool App::Find::file_go(App& a, u64 from, bool forward, bool at_from) {
     Find& f = *a.find_;
     Doc& d = *a.pane_->doc;
     if (d.id != f.file_doc || f.pattern.empty() || f.pattern.bad()) return false;
+    if (d.term) term_take(a, &from);
     RegexMatch m;
     const u64 after = at_from ? (from == 0 ? ~0ull : from - 1) : from;
-    if (Vim::find(d.ed.buf, f.pattern, forward ? after : from, forward, true, nullptr, ~0ull, &m) == ~0ull) {
+    if (Vim::find(text_of(a), f.pattern, forward ? after : from, forward, true, nullptr, ~0ull, &m) == ~0ull) {
         f.cur_ok = false;
         f.touch();
         return false;
@@ -585,6 +601,16 @@ bool App::Find::file_go(App& a, u64 from, bool forward, bool at_from) {
 // select it), and shown.
 void App::Find::file_select(App& a, const RegexMatch& m) {
     Find& f = *a.find_;
+    if (a.pane_->doc->term) {  // (a terminal's: its view goes to the match's row, lit as what is selected)
+        f.cur = m;
+        f.cur_rev = f.term_rev;
+        f.cur_ok = true;
+        const auto row = std::upper_bound(f.term.rows.begin(), f.term.rows.end(), m.start) - f.term.rows.begin();
+        a.term_view_line(*a.pane_->doc, f.term.first + static_cast<u64>(std::max<i64>(row - 1, 0)));
+        f.touch();
+        a.dirty_ = true;
+        return;
+    }
     Editor& ed = a.pane_->doc->ed;
     f.cur = m;
     f.cur_rev = ed.revision();
@@ -607,20 +633,76 @@ void App::Find::file_count(App& a) {
     auto mix = [&](u64 v) { key = (key ^ v) * 1099511628211ull; };
     mix(d.id);
     mix(d.ed.revision());
+    mix(d.term ? f.term_rev : 0);
     mix(std::hash<std::string>{}(f.pattern.text));
     mix(reinterpret_cast<u64>(f.pattern.re.get()));
     mix((f.pattern.ignore_case ? 1u : 0u) | (f.pattern.word ? 2u : 0u));
     if (key == f.starts_key) return;
     f.starts_key = key;
     f.starts.clear();
+    f.ends.clear();
     f.starts_capped = false;
-    f.counted = d.id == f.file_doc && !f.pattern.empty() && !f.pattern.bad() && d.ed.buf.size() <= (f.pattern.re ? kCountBytesRegex : kCountBytes);
+    const Buffer& text = text_of(a);
+    f.counted = d.id == f.file_doc && !f.pattern.empty() && !f.pattern.bad() && text.size() <= (f.pattern.re ? kCountBytesRegex : kCountBytes);
     if (!f.counted) return;
-    Vim::each_whole(d.ed.buf, f.pattern, 0, d.ed.buf.size() + 1, false, [&](const RegexMatch& m) {
+    Vim::each_whole(text, f.pattern, 0, text.size() + 1, false, [&](const RegexMatch& m) {
         f.starts.push_back(m.start);
+        if (d.term) f.ends.push_back(m.end);
         f.starts_capped = f.starts.size() >= kMostCounted;
         return !f.starts_capped;
     });
+}
+
+const Buffer& App::Find::text_of(App& a) { return a.pane_->doc->term ? a.find_->term_text : a.pane_->doc->ed.buf; }
+
+u64 App::Find::from_of(App& a) { return a.pane_->doc->term ? a.find_->file_from : a.pane_->doc->ed.cursor(); }
+
+// The terminal's lines taken again, if they have changed: the match chosen,
+// where the box opened and `from` are moved to where their rows are now
+// (a row gone: the top; the view's width changed: the bottom).
+void App::Find::term_take(App& a, u64* from) {
+    Find& f = *a.find_;
+    std::vector<u64> rows = std::move(f.term.rows);
+    const u64 first = f.term.first;
+    const u32 cols = f.term.cols;
+    const bool alt = f.term.alt;
+    if (!a.term_lines(*a.pane_->doc, &f.term)) {
+        f.term.rows = std::move(rows);
+        return;
+    }
+    f.term_text.load_view(f.term.text.data(), f.term.text.size());
+    ++f.term_rev;
+    const bool same = cols == f.term.cols && alt == f.term.alt;
+    auto moved = [&](u64 at) -> u64 {
+        if (!same || rows.empty()) return f.term.text.size();
+        const size_t i = static_cast<size_t>(std::upper_bound(rows.begin(), rows.end(), at) - rows.begin()) - 1;  // (rows[0] is 0)
+        const u64 line = first + i;
+        if (line < f.term.first) return 0;
+        const u64 j = line - f.term.first;
+        if (j >= f.term.rows.size()) return f.term.text.size();
+        const u64 end = j + 1 < f.term.rows.size() ? f.term.rows[j + 1] : f.term.text.size();
+        return std::min(f.term.rows[j] + (at - rows[i]), end);
+    };
+    if (f.cur_ok) {
+        const u64 len = f.cur.end - f.cur.start;
+        f.cur.start = moved(f.cur.start);
+        f.cur.end = std::min<u64>(f.cur.start + len, f.term.text.size());
+        f.cur_ok = same;
+    }
+    f.file_from = moved(f.file_from);
+    if (from) *from = moved(*from);
+}
+
+// The box no longer finds in a terminal: its view is back on the screen,
+// live, and its lines are let go of.
+void App::Find::term_let_go(App& a) {
+    Find& f = *a.find_;
+    if (f.term.gen == ~0ull) return;
+    if (const Doc* d = a.find_doc(f.file_doc)) a.term_view_line(*d, ~0ull);
+    f.term = {};
+    f.term_text.load_view(nullptr, 0);
+    f.ends.clear();
+    f.starts_key = 0;
 }
 
 // Enter with "Replace with" there: the match chosen becomes what is typed
@@ -751,6 +833,15 @@ void App::Find::files_replace(App& a) {
 void App::find_file_open(bool replace, const std::string& typed) {
     Find& f = *find_;
     Doc& d = *pane_->doc;
+    if (d.term) {  // a terminal's stored lines, as they are now (nothing replaced there: it is the program's)
+        if (find_open_ && f.mode == kFindFile && f.file_doc == d.id) return;
+        find_open(kFindFile, typed);
+        Find::term_take(*this, nullptr);
+        f.file_from = f.term.below < f.term.rows.size() ? f.term.rows[f.term.below] : f.term.text.size();
+        f.cur_ok = false;
+        if (!f.typed.empty()) find_query();
+        return;
+    }
     if (cfg_.modal) {  // (out of Insert mode and the command line: the match is shown as Visual mode would select it)
         vim_attach();
         if (vim_.mode() == Vim::kInsert || vim_.mode() == Vim::kReplace || vim_.mode() == Vim::kCommand) {
@@ -865,6 +956,7 @@ void App::find_open(int mode, const std::string& typed) {
     }
     lsp_close(kPopAll);
     if (find_open_) f.keep_hits();  // (for F4 to go through)
+    Find::term_let_go(*this);  // (a terminal's search turned to something else)
     const std::string* root = panel_root();
     const std::string workdir = root ? *root : default_workdir();
     find_open_ = true;
@@ -1234,6 +1326,46 @@ const std::vector<u64>* App::find_file_matches(u64 doc) {
     return f.counted ? &f.starts : nullptr;
 }
 
+u64 App::find_term_key(u64 doc) {
+    Find& f = *find_;
+    if (!find_open_ || f.mode != kFindFile || f.file_doc != doc || pane_->doc->id != doc || f.pattern.empty() || f.pattern.bad()) return 0;
+    Find::file_count(*this);
+    if (!f.counted || f.starts.empty()) return 0;
+    return (f.starts_key ^ (f.cur_ok ? f.cur.start * 2 + 1 : 0)) | 1;
+}
+
+// For each row on show, the matches that start or end on it, or go across
+// it, in columns: the text's characters counted from the row's start (a
+// wide one two columns), and a match that goes on past the row to its end.
+void App::find_term_lit(u64 doc, u64 top, u32 rows, u32 cols, bool alt, std::vector<TermLit>* out) {
+    out->clear();
+    Find& f = *find_;
+    if (!find_term_key(doc) || f.term.cols != cols || f.term.alt != alt || f.ends.size() != f.starts.size()) return;
+    const std::string& text = f.term.text;
+    auto col_of = [&](u64 from, u64 at) {  // (from a row's start)
+        u32 col = 0;
+        for (u64 i = from; i < at && i < text.size();) {
+            const Decoded c = decode_utf8(reinterpret_cast<const u8*>(text.data()) + i, text.size() - i);
+            col += term_width(c.cp) == 2 ? 2 : 1;
+            i += std::max<u32>(c.len, 1);
+        }
+        return col;
+    };
+    for (u32 r = 0; r < rows; ++r) {
+        if (top + r < f.term.first) continue;
+        const u64 i = top + r - f.term.first;
+        if (i >= f.term.rows.size()) break;
+        const u64 a = f.term.rows[i], b = i + 1 < f.term.rows.size() ? f.term.rows[i + 1] : text.size();
+        // (The first match that ends after the row's start; on while they start before its end.)
+        for (size_t k = static_cast<size_t>(std::upper_bound(f.ends.begin(), f.ends.end(), a) - f.ends.begin()); k < f.starts.size() && f.starts[k] < b; ++k) {
+            if (f.ends[k] == f.starts[k]) continue;  // (one of nothing is not lit, as in the text)
+            const u32 c0 = f.starts[k] > a ? col_of(a, f.starts[k]) : 0;
+            const u32 c1 = f.ends[k] >= b ? cols : col_of(a, f.ends[k]);
+            out->push_back({r, c0, std::min(std::max(c1, c0 + 1), cols), f.cur_ok && f.cur.start == f.starts[k]});
+        }
+    }
+}
+
 u64 App::find_ask_id() const { return find_open_ && find_->mode == kFindAsk ? find_->ask_id : 0; }
 
 // The question went unanswered (the connection ended): the box goes.
@@ -1267,6 +1399,7 @@ void App::find_close(bool chosen) {
         f.last_file = f.pattern;
         if (cfg_.modal) vim_.set_search(f.pattern);
     }
+    Find::term_let_go(*this);
     f.beside = f.all = f.asking = false;
     if (f.engine) f.engine->cancel();
     if (!chosen && f.mode == kFindSave) quit_after_save_ = close_after_save_ = false;  // no name: what was to follow the save does not
@@ -1626,7 +1759,7 @@ void App::find_accept() {
     }
     if (f.mode == kFindFile) {  // (Enter: the next match, or with "Replace with" there, this one replaced)
         if (f.replacing) Find::file_replace(*this, false);
-        else Find::file_go(*this, f.cur_ok ? f.cur.start : pane_->doc->ed.cursor(), true, !f.cur_ok);
+        else Find::file_go(*this, f.cur_ok ? f.cur.start : Find::from_of(*this), true, !f.cur_ok);
         Find::file_count(*this);
         return;
     }
@@ -1850,7 +1983,7 @@ bool App::find_key(const SDL_KeyboardEvent& k) {
     }
     if (f.mode == kFindFile && ((cmd && k.key == SDLK_G) || k.key == SDLK_F3 || k.key == SDLK_UP || k.key == SDLK_DOWN)) {  // the next match, or the one before
         const bool back = k.key == SDLK_UP || ((k.key == SDLK_G || k.key == SDLK_F3) && shift);
-        Find::file_go(*this, f.cur_ok ? f.cur.start : pane_->doc->ed.cursor(), !back, false);
+        Find::file_go(*this, f.cur_ok ? f.cur.start : Find::from_of(*this), !back, false);
         Find::file_count(*this);
         return true;
     }
@@ -1896,7 +2029,7 @@ bool App::find_key(const SDL_KeyboardEvent& k) {
         case SDLK_KP_ENTER:
             if (f.mode == kFindFile) {
                 if (cmd && f.replacing) Find::file_replace(*this, true);
-                else if (shift) Find::file_go(*this, f.cur_ok ? f.cur.start : pane_->doc->ed.cursor(), false, false), Find::file_count(*this);
+                else if (shift) Find::file_go(*this, f.cur_ok ? f.cur.start : Find::from_of(*this), false, false), Find::file_count(*this);
                 else find_accept();
                 break;
             }

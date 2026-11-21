@@ -59,16 +59,42 @@ run "term;frame;termwait:\$;text:echo copy-m''e;key:Return;termwait:copy-me;clic
 check "a word chosen with a double click, copied, and pasted after the prompt" "\$ echo copy-m''e|copy-me|\$ copy-me @2,9 15x74"
 run "term;frame;termwait:\$;text:exit;key:Return;termend;frame;dump"
 check "the shell ends: its tab goes" '>[untitled*]'
-# Cmd+F (and the command) in a terminal: no search there yet, and it says so
-# on the bottom line, rather than nothing showing while what is typed next
-# goes to the program.
+# Cmd+F (and the command) in a terminal: the box that finds in a file, over
+# the lines the terminal keeps (its history and its screen). The match
+# nearest the bottom of the view is chosen first, of all of them counted;
+# Up and Down go through them, the view going back to show the one chosen,
+# each match lit in it (termdump: "lit" row:columns, the chosen *). What is
+# typed in the box never reaches the program, and Esc shuts it, the view
+# back on the screen.
 # (Elsewhere Ctrl+F and Ctrl+Alt+F are the program's: the commands, then.)
 case $(uname -s) in
     Darwin) find=key:cmd+F replace=key:cmd+alt+F ;;
     *) find="command:Find in this file" replace="command:Replace in this file" ;;
 esac
-got=$("$blit" --offscreen 1200x600 --shot "$dir/shot.bmp" --script "workdir:$dir/work;term;frame;termwait:\$;$find;finddump;lua:blit.opt.editor.modal = true;$replace;finddump" 2>&1 >/dev/null | tr '\n' ' ')
-check "Cmd+F in a terminal: refused, said" 'blit: No search in a terminal yet closed blit: No search in a terminal yet closed '
+# alllines SCRIPT: as run, every line it printed joined by " ;; ", the screen's rows of a termdump left out.
+alllines() {
+    got=$("$blit" --offscreen 1200x600 --shot "$dir/shot.bmp" --script "workdir:$dir/work;$1" 2>&1 >/dev/null | sed -e 's/^.* @\([0-9]*,[0-9]* [0-9]*x[0-9]*\)/@\1/' |
+        awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }')
+}
+forty="term;frame;termwait:\$;text:seq 1 40 | sed s/^/n/;key:Return;termwait:n40"
+alllines "$forty;$find;text:n1;finddump;termdump"
+check "Cmd+F in a terminal: the newest match chosen, all those kept counted, the view gone back to it" \
+    'file [n1] 11 of 11 at 87-89 ;; @14,2 15x74 back 15 lit 0:0-2 lit 1:0-2 lit 2:0-2 lit 3:0-2 lit 4:0-2 lit 5:0-2 lit 6:0-2 lit 7:0-2*'
+alllines "$forty;$find;text:n1;key:Up;finddump;termdump;key:Down;key:Down;finddump;termdump"
+check "Up and Down: the one before and the next (round from the last to the first), the view following" \
+    'file [n1] 10 of 11 at 83-85 ;; @14,2 15x74 back 15 lit 0:0-2 lit 1:0-2 lit 2:0-2 lit 3:0-2 lit 4:0-2 lit 5:0-2 lit 6:0-2* lit 7:0-2 ;; file [n1] 1 of 11 at 24-26 ;; @14,2 15x74 back 27 lit 1:0-2* lit 10:0-2 lit 11:0-2 lit 12:0-2 lit 13:0-2 lit 14:0-2'
+alllines "term;frame;termwait:\$;text:echo Ab''c ab''c;key:Return;termwait:Abc;$find;text:abc;finddump;key:alt+C;finddump;key:alt+C;key:Escape;$find;text:Abc;finddump"
+check "the case as the editor's Find has it: either, as typed with a capital, exactly with Option+C" \
+    'file [abc] 2 of 2 at 23-26 ;; file [abc] Aa 1 of 1 at 23-26 ;; file [Abc] 1 of 1 at 19-22'
+run "term;frame;termwait:\$;$find;text:zz;key:BackSpace;key:Return;text:q;key:Up;key:Escape;text:echo do''ne;key:Return;termwait:done;termdump"
+check "what is typed in the box never reaches the shell" "\$ echo do''ne|done|\$ @2,2 15x74"
+alllines "$forty;$find;text:n1;key:Escape;finddump;termdump"
+check "Esc: the box shut, the view back on the screen, nothing lit" 'closed ;; @14,2 15x74'
+alllines "$forty;$find;finddump;key:Escape;$replace;finddump;key:Escape;lua:blit.opt.editor.modal = false;$find;finddump"
+check "with modes or without, and from Replace too: the box (nothing replaced in a terminal)" 'file [] ;; file [] ;; file []'
+alllines "term;frame;termwait:\$;text:printf '%070d' 0 && echo wrapme;key:Return;termwait:wrapme;$find;text:rapme;finddump;termdump"
+check "a line the view wraps is found whole, lit on both its rows" \
+    'file [rapme] 2 of 2 at 105-110 ;; @3,2 15x74 lit 0:28-33 lit 1:71-74* lit 2:0-2*'
 run "term;frame;termwait:\$;text:exit 3;key:Return;termend;frame;termdump"
 case "$got" in *"[exited with code 3]"*" ended 3") got="ended 3, tab kept" ;; esac
 check "a shell that ends badly: the tab stays and says so" "ended 3, tab kept"
