@@ -349,6 +349,7 @@ void App::commands_create() {
     // Debugging.
     own("Start or continue debugging", {key(SDLK_F5)}, [this] { debug_start(); });
     own("Stop debugging", {key(SDLK_F5, kS)}, [this] { debug_command("stop"); });
+    own("Restart debugging", {key(SDLK_F5, kP | kS)}, [this] { debug_restart(); });
     own("Pause the program being debugged", {key(SDLK_F6)}, [this] { debug_command("pause"); });
     own("Add or remove a breakpoint", {key(SDLK_F9)}, [this] { debug_toggle_break(); });
     own("Set a breakpoint's condition and hit count\xE2\x80\xA6", {key(SDLK_F9, kS)}, [this] { debug_edit_break(); });

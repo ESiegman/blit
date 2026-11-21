@@ -1760,6 +1760,18 @@ std::string App::term_dump() {
     return out;
 }
 
+i64 App::term_pid(u64 doc) {
+    const Doc* d = find_doc(doc);
+    return d && d->term && !d->term->ended ? std::max<i64>(0, d->term->pty.pid) : 0;
+}
+
+std::string App::term_tty(u64 doc) {
+    const Doc* d = find_doc(doc);
+    if (!d || !d->term || d->term->pty.fd < 0) return {};
+    const char* name = ::ptsname(d->term->pty.fd);
+    return name ? name : "";
+}
+
 // Waits (10 s at most) until the program of the terminal in front has ended.
 void App::term_end() {
     const u64 until = now_ns() + 10'000'000'000ull;

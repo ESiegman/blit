@@ -404,6 +404,22 @@ std::vector<BuildTask> read_run_configs(const std::string& root, std::string* pr
         t.before = std::string(c["build"].str());
         if (c["problems"].is_string()) t.problems.emplace_back(c["problems"].str());
         for (const json::Value m : c["problems"]) t.problems.emplace_back(m.str());
+        if (const json::Value d = c["debug"]; d.is_object()) {
+            if (d["adapter"].is_array()) {  // (a command's words)
+                for (const json::Value w : d["adapter"]) t.debug.adapter += (t.debug.adapter.empty() ? "" : " ") + sh_quote(w.str());
+            } else {
+                t.debug.adapter = std::string(d["adapter"].str());
+            }
+            t.debug.request = std::string(d["request"].str());
+            if (d["arguments"].is_object()) json::dump(t.debug.arguments, d["arguments"]);
+            if (d["after"].is_string()) t.debug.after.emplace_back(d["after"].str());
+            for (const json::Value a : d["after"]) t.debug.after.emplace_back(a.str());
+            t.debug.console = std::string(d["console"].str());
+            if (!t.debug.request.empty() && t.debug.request != "launch" && t.debug.request != "attach")
+                *problem = std::string(kRunConfigs) + ": " + t.name + "'s debug.request is \"launch\" or \"attach\"";
+            if (!t.debug.console.empty() && t.debug.console != "terminal" && t.debug.console != "debug")
+                *problem = std::string(kRunConfigs) + ": " + t.name + "'s debug.console is \"terminal\" or \"debug\"";
+        }
         // What the Run button runs: the program, in its folder, with what it is given.
         std::string cmd;
         if (!t.env.empty()) {

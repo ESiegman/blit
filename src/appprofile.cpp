@@ -290,9 +290,10 @@ std::string App::prof_target() const {
 
 // ---------------------------------------------------------------- recording
 
-void App::prof_record() {
+void App::prof_record(bool built) {
     ProfUi& u = *profui_;
     if (u.job || u.program.empty()) return;
+    if (!built) return build_first("Record", [this] { prof_record(true); });  // (the folder's build first, where it has one)
     ProfileRequest r;
     r.program = u.program;
     r.cwd = u.cwd;

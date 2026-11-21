@@ -344,7 +344,7 @@ if [ "$scope" = 0 ] || [ "$(id -u)" = 0 ]; then
 fi
 # (A core file as the debugger writes it: lldb's save-core, gdb's generate-core-file.)
 core="$dir/here/crash.core"
-# (Elsewhere than a Mac gdb is the one blit uses first, and lldb's are minidumps gdb cannot read.)
+# (Elsewhere than a Mac, gdb's core where there is a gdb: lldb-dap, which blit uses first where it is, reads it too, and lldb's own are minidumps gdb cannot read.)
 if [ "$(uname -s)" = Darwin ]; then
     (cd "$dir/here" && lldb -b -o run -k "process save-core $core" -k quit ./crash >/dev/null 2>&1)
 elif command -v gdb >/dev/null 2>&1; then
@@ -357,6 +357,51 @@ if [ -s "$core" ]; then
     got=$(printf '%s' "$got" | sed -e 's/; stack: [^;]*;/;/' -e 's/^stopped ([^)]*)/stopped/')  # (the library frames above the program's: the system's own; gdb's word for why)
     check "a core file: where it stopped, the program's own frame shown with its variables" 'stopped; vars: depth=3 here=21'
 fi
+
+# Restart (Cmd+Shift+F5): the program again from its start, the session's
+# breakpoints kept (lldb-dap restarts it in the same session, as it says
+# it can once it has launched; gdb's session is ended and begun again).
+run "frame;$P;break:8;key:F5;debugwait:stopped;key:F5;debugwait:stopped;debugdump;key:cmd+shift+F5;debugwait:stopped;debugdump;key:F5;debugwait:stopped;debugdump"
+got=$(printf '%s' "$got" | sed -E -e 's/; output: [^;]*( ;;|$)/\1/g')
+check "restart: from the start again, its breakpoints kept" \
+    'stopped (breakpoint); stack: square@8 main@15; vars: x=2 y=4 ;; stopped (breakpoint); stack: square@8 main@15; vars: x=1 y=1 ;; stopped (breakpoint); stack: square@8 main@15; vars: x=2 y=4'
+
+# A program that reads what is typed to it (C's stdin, here) is given a
+# terminal tab in the terminals' split, its input and output that tab's
+# (the keyboard stays where it was): what is typed there is the program's.
+# (With lldb, on the tab's device by target.input-path and the like; gdb's
+# inferior-tty.) Once the session is over the tab says it is done.
+cp "$here/debug/asks.c" "$dir/here/" && (cd "$dir/here" && cc -g -O0 -o asks asks.c) || exit 1
+run "frame;debug:program=$dir/here/asks;break:8;key:F5;debugwait:answers;command:Go to the split below;termwait:name?;text:blit;key:Return;command:Go to the split above;debugwait:stopped;debugdump;key:F5;debugwait:idle;debugdump;command:Go to the split below;termend;termdump" "$dir/here/asks.c"
+got=$(printf '%s' "$got" | sed -E -e 's/ start(@[0-9]*)?;/;/' -e 's/name="blit\\n"[^;]*;/name=blit ;/' -e 's/output: Process [0-9]* exited with status = 0 \(0x00000000\) *\| /output: /' \
+    -e 's/\[done in [0-9.]* s\]/[done]/' -e 's/ @[0-9]*,[0-9]* [0-9]*x[0-9]*//')
+check "a program that reads its input: a terminal tab of its own, what is typed there its" \
+    'stopped (breakpoint); stack: main@8; vars: name=blit ;; idle; output: [exited with code 0] ;; name? blit|hello, blit|[done] ended 0'
+
+# Debug, the tests and Record build first where the folder has a build (the
+# run configuration's, else the Build tab's Build: make's make, here), and
+# go only if it went well; one that fails says so.
+B="$dir/built"
+mkdir -p "$B"
+cp "$here/debug/count.c" "$B/"
+printf 'count: FORCE\n\techo built >>log\n\tcc -g -O0 -o count count.c\nFORCE:\n' >"$B/Makefile"
+run "workdir:$B;builddump;debug:program=$B/count;break:8;key:F5;debugwait:stopped;debugdump;builddump" "$B/count.c"
+got="$got ;; $(cat "$B/log" 2>/dev/null)"
+check "F5 builds first (make, here), then debugs what it built" \
+    'Make: >make make count make FORCE ;; stopped (breakpoint); stack: square@8 main@15; vars: x=1 y=1 ;; Make: >make make count make FORCE (last: 0) ;; built'
+printf 'count: FORCE\n\techo broken >>log\n\texit 2\nFORCE:\n' >"$B/Makefile"
+run "workdir:$B;builddump;debug:program=$B/count;break:8;key:F5;debugwait:stopped;debugdump" "$B/count.c"
+got="$got ;; $(tail -1 "$B/log")"
+check "a build that fails: it says so, and nothing is debugged" 'Make: >make make count make FORCE ;; blit: make failed: Debug did not start ;; idle ;; broken'
+# (A run configuration's build is the one, and Restart builds again first: twice, then.)
+mkdir -p "$B/.blit" && rm -f "$B/log"
+printf 'count: FORCE\n\techo built >>log\n\tcc -g -O0 -o count count.c\nother:\n\techo other >>log\nFORCE:\n' >"$B/Makefile"
+printf '{ "configurations": [ { "name": "count", "program": "count", "build": "make count" } ] }\n' >"$B/.blit/run.json"
+run "workdir:$B;runconfdump;break:8;key:F5;debugwait:stopped;key:cmd+shift+F5;debugwait:stopped;debugdump" "$B/count.c"
+got=$(printf '%s' "$got" | sed -E -e 's/; output: [^;]*$//')
+got="$got ;; $(cat "$B/log" | tr '\n' ' ')"
+check "a run configuration's build first, and again before a restart" 'count | debug: count in built | profile: count in built ;; stopped (breakpoint); stack: square@8 main@15; vars: x=1 y=1 ;; built built '
+rm -rf "$B/.blit"
 
 # A stand-in debugger (tests/fake_dap.cpp) as the machine's, started by an
 # xcrun and a gdb of its own first on the PATH: what the debuggers blit
@@ -510,6 +555,140 @@ if [ -x "$fakedap" ]; then
     got="$kept ;; $got"
     check "kept: the exceptions chosen, the console's lines" \
         'exception raised 1  ;; console df ;; console total ;; exception raised; exception uncaught ;; Debug console ;; > › total| ;; Debug console ;; > › df|'
+    # A run configuration's "debug": its arguments laid over those blit sends
+    # (an object's members merged, all the way down: the rest take the place
+    # of blit's), and its commands for the debugger once the session has
+    # started, each one's answer said (or why there is none).
+    D="$F/proj"
+    mkdir -p "$D/.blit"
+    cp "$F/prog" "$D/prog"
+    conf() { printf '{ "configurations": [ { "name": "p", "program": "prog", "args": ["one"], "env": { "FAKE_ENV": "yes" }, "debug": %s } ] }\n' "$1" >"$D/.blit/run.json"; }
+    launched() { sed -En "s#$dir#@#g; s/^(launch|attach) //p" "$F/log" | sed 's/"enableAutoVariableSummaries":true,//'; }
+    conf '{ "arguments": { "stopOnEntry": true, "args": ["two"], "more": { "a": 1 } }, "after": ["settings set target.x 1", "fail here"] }'
+    fake "workdir:$D;runconfdump;key:F5;debugwait:stopped;debugdump" "$D/prog"
+    got="${got#* ;; } ;; $(launched)"
+    check "a run configuration's debug: its arguments over blit's, its commands once it has started" \
+        "stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: <settings set target.x 1> | fail here: can't evaluate expressions when the process is running. | red plain ;; "'{"program":"@/fake/proj/prog","args":["two"],"cwd":"@/fake/proj","env":["FAKE_ENV=yes"],"stopOnEntry":true,"more":{"a":1}}'
+    # (Attaching, as to a gdb server: what it attaches to is its arguments'; Shift+F5 lets it go.)
+    conf '{ "request": "attach", "arguments": { "target": "localhost:3333" } }'
+    fake "workdir:$D;runconfdump;key:F5;debugwait:stopped;key:shift+F5;debugwait:idle;debugdump" "$D/prog"
+    got="${got#* ;; } ;; $(launched) ;; $(grep '^disconnect' "$F/log")"
+    check "a run configuration that attaches" 'idle ;; {"program":"@/fake/proj/prog","cwd":"@/fake/proj","target":"localhost:3333"} ;; disconnect {"terminateDebuggee":false}'
+    # (A debugger of its own, a command line: run as written.)
+    printf '#!/bin/sh\necho "mydap $*" >"%s/ran"\nexec "%s"\n' "$F" "$fakedap" >"$F/mydap"
+    chmod +x "$F/mydap"
+    conf "{ \"adapter\": \"$F/mydap --verbose\" }"
+    fake "workdir:$D;runconfdump;key:F5;debugwait:stopped;debugdump" "$D/prog"
+    got="${got#* ;; } ;; $(cat "$F/ran")"
+    check "a run configuration's own debugger" 'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; mydap --verbose'
+
+    # The machine's debugger on Linux (the shell here told it is Linux by an
+    # uname of its own; the stand-in as its gdb and its lldb-dap): lldb-dap
+    # where there is one, else gdb 14 or later (gdb -i dap: its launch's
+    # environment an object, its own arguments' names passed on); and
+    # debug.adapter "gdb" asks for gdb, wherever lldb-dap is. (There is no gdb
+    # on this Mac: "GNU gdb (GDB) 15.1" is the first line of gdb's --version
+    # as GNU's builds print it, from its documentation; the real gdb's own
+    # checks are on the Linux box's list.)
+    # linux GDB-VERSION LLDB-DAP SCRIPT [FILE]: as fake, gdb that version (none: no gdb), lldb-dap there if yes; what ran last.
+    linux() {
+        L="$dir/linux"
+        rm -rf "$L" && mkdir -p "$L/bin"
+        printf '#!/bin/sh\nif [ "$1" = -s ]; then echo Linux; else echo "Linux box 6.12.1"; fi\n' >"$L/bin/uname"
+        [ -n "$1" ] && printf '#!/bin/sh\ncase "$1" in --version) echo "GNU gdb (GDB) %s" ;; *) echo "gdb $*" >"%s/ran"; exec "%s" ;; esac\n' "$1" "$L" "$fakedap" >"$L/bin/gdb"
+        [ "$2" = yes ] && printf '#!/bin/sh\necho "lldb-dap $*" >"%s/ran"\nexec "%s"\n' "$L" "$fakedap" >"$L/bin/lldb-dap"
+        chmod +x "$L/bin/"*
+        rm -f "$F/log"
+        was=$PATH
+        PATH="$L/bin:$PATH" BLIT_FAKE_DAP_LOG="$F/log"
+        export BLIT_FAKE_DAP_LOG
+        run "$3" "${4:-$D/prog}"
+        PATH=$was
+        unset BLIT_FAKE_DAP_LOG
+        got="${got#* ;; } ;; $(cat "$L/ran" 2>/dev/null)"
+    }
+    conf '{ "arguments": { "env": { "MORE": "1" }, "stopAtBeginningOfMainSubprogram": true } }'
+    linux 15.1 yes "workdir:$D;runconfdump;key:F5;debugwait:stopped;debugdump"
+    got="$got ;; $(launched)"
+    check "Linux: lldb-dap where there is one (the environment a list, the configuration's object in its place)" \
+        'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; lldb-dap  ;; {"program":"@/fake/proj/prog","args":["one"],"cwd":"@/fake/proj","env":{"MORE":"1"},"stopAtBeginningOfMainSubprogram":true}'
+    linux 15.1 no "workdir:$D;runconfdump;key:F5;debugwait:stopped;debugdump"
+    got="$got ;; $(launched)"
+    check "Linux: else gdb -i dap (the environment an object, merged with the configuration's)" \
+        'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; gdb -q -i dap ;; {"program":"@/fake/proj/prog","args":["one"],"cwd":"@/fake/proj","env":{"FAKE_ENV":"yes","MORE":"1"},"stopAtBeginningOfMainSubprogram":true}'
+    linux 13.2 no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
+    check "Linux: a gdb older than 14 is no debugger blit can use" 'idle error: no debugger: install lldb, or gdb 14 or newer ;; '
+    conf '{ "adapter": "gdb" }'
+    linux 15.1 yes "workdir:$D;runconfdump;key:F5;debugwait:stopped;debugdump"
+    check "debug.adapter gdb: gdb, though lldb-dap is there" 'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; gdb -q -i dap'
+    linux 12.1 yes "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
+    check "debug.adapter gdb, and it is too old" 'idle error: gdb 12 is too old to be a debugger blit can use: 14 or newer speaks its protocol ;; '
+
+    # Restart where the debugger cannot (lldb-dap says it can only once it has
+    # launched; the stand-in does not): the session ended and begun again,
+    # launched twice; where it can, DAP's restart, given the launch's
+    # arguments, in the same session.
+    fake "debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+shift+F5;debugwait:stopped;debugdump"
+    got="$got ;; $(grep -c '^launch' "$F/log") launches, $(grep -c '^disconnect' "$F/log") disconnect, $(grep -c '^restart' "$F/log") restarts"
+    check "restart, ended and begun again" 'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; 2 launches, 1 disconnect, 0 restarts'
+    BLIT_FAKE_DAP_RESTART=1
+    export BLIT_FAKE_DAP_RESTART
+    fake "debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+shift+F5;debugwait:stopped;debugdump"
+    unset BLIT_FAKE_DAP_RESTART
+    got="$got ;; $(grep -c '^launch' "$F/log") launch ;; $(sed -n "s#$dir#@#g; s/\"enableAutoVariableSummaries\":true,//; s/^restart //p" "$F/log")"
+    check "restart, as the debugger restarts it" \
+        'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: restarted ;; 1 launch ;; {"arguments":{"program":"@/fake/prog","args":[],"cwd":"@/fake"}}'
+
+    # The program's input and output in a terminal tab: where the debugger
+    # asks blit to run it in one (runInTerminal: debugpy, lldb-dap on another
+    # machine, a debugger of a configuration's own), the tab runs what it
+    # asks, where it asks, with its environment and the configuration's;
+    # blit answers with its process. ("console": "terminal" asks for it; the
+    # stand-in's request is lldb-dap's as LLVM 21 makes it, its command a
+    # shell's here.)
+    conf "{ \"adapter\": \"$F/mydap\", \"console\": \"terminal\" }"
+    fake "frame;workdir:$D;runconfdump;key:F5;debugwait:stopped;command:Go to the split below;termwait:in the terminal;text:typed;key:Return;termwait:read: typed;termdump" "$D/prog"
+    got="${got#* ;; } ;; $(launched | sed 's/.*"env":\[[^]]*\]//') ;; $(grep '^answer:' "$F/log" | sed 's/[0-9][0-9]*/N/g')"
+    got=$(printf '%s' "$got" | sed -E 's/ @[0-9]+,[0-9]+ [0-9]+x[0-9]+//')
+    check "runInTerminal: the program in a terminal tab, what is typed there its" \
+        'in the terminal: yes in proj|typed|read: typed ;; ,"runInTerminal":true,"console":"integratedTerminal"} ;; answer:runInTerminal true {"processId":N,"shellProcessId":N}'
+    # (On another machine: the tab is there, as the program is.)
+    mkdir -p "$T/fk" && cp "$F/prog" "$T/fk/prog"
+    printf '#!/bin/sh\nBLIT_FAKE_DAP_LOG="%s/log" exec "%s"\n' "$F" "$fakedap" >"$F/logdap"
+    chmod +x "$F/logdap"
+    fake "frame;remotewait;debug:program=ssh://box$T/fk/prog;debug:adapter=$F/logdap;debug:console=terminal;key:F5;debugwait:stopped;command:Go to the split below;termwait:in the terminal;termdump;tabsdump" "ssh://box$T/fk/prog"
+    got=$(printf '%s' "$got" | sed -E 's/ @[0-9]+,[0-9]+ [0-9]+x[0-9]+//')
+    got="$got ;; $(grep '^answer:' "$F/log")"
+    check "runInTerminal on another machine: the tab there" 'in the terminal: yes in fk ;; fake (box) ;; answer:runInTerminal true {}'
+
+    # Which programs read what is typed to them, and so get a terminal tab by
+    # default (debug.console "debug" keeps them in the Debug tab): C's stdin
+    # and scanf, C++'s std::cin, Python's input(); not count's printf.
+    printf '#include <iostream>\n#include <string>\nint main() { std::string s; std::cin >> s; return 0; }\n' >"$F/cin.cpp"
+    printf '#include <stdio.h>\nint main(void) { int n = 0; return scanf("%%d", &n); }\n' >"$F/scan.c"
+    (cd "$F" && c++ -g -o cin cin.cpp && cc -g -o scan scan.c) || exit 1
+    terminal_for() {
+        fake "frame;debug:program=$1;${2:-}key:F5;debugwait:stopped" "$F/prog"
+        if grep -q '"preRunCommands":\["settings set target.input-path /dev/' "$F/log"; then printf '%s: terminal' "${1##*/}"; else printf '%s: debug tab' "${1##*/}"; fi
+    }
+    got="$(terminal_for "$dir/here/asks") ;; $(terminal_for "$F/cin") ;; $(terminal_for "$F/scan") ;; $(terminal_for "$dir/here/count") ;; $(terminal_for "$dir/here/asks" "debug:console=debug;")"
+    check "the programs that read their input get a terminal" 'asks: terminal ;; cin: terminal ;; scan: terminal ;; count: debug tab ;; asks: debug tab'
+    # (A .py program: debugpy is asked for its terminal, console "integratedTerminal",
+    # where it calls input(); the stand-in as the project's Python's debugpy.)
+    Q="$F/pyq"
+    mkdir -p "$Q/.venv/bin"
+    printf '#!/bin/sh
+exec "%s"\n' "$fakedap" >"$Q/.venv/bin/python"
+    chmod +x "$Q/.venv/bin/python"
+    printf 'name = input("name? ")\nprint("hello,", name)\n' >"$Q/asks.py"
+    printf 'print("hello")\n' >"$Q/plain.py"
+    consoles=
+    for py in asks plain; do
+        fake "frame;workdir:$Q;debug:program=$Q/$py.py;key:F5;debugwait:stopped" "$Q/$py.py"
+        consoles="$consoles $py: $(sed -n 's/^launch .*"console":"\([a-zA-Z]*\)".*/\1/p' "$F/log")"
+    done
+    got=$consoles
+    check "a .py program that calls input(): debugpy asked for a terminal" ' asks: integratedTerminal plain: internalConsole'
 fi
 # A .py program: debugpy run with the project's Python (its .venv's, not
 # the PATH's), and when that has no debugpy, said so of that Python.

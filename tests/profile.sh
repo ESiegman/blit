@@ -71,6 +71,17 @@ check "a profile's tab is a tab like a file's: dragged into a split of its own" 
 run "prof:program=$dir/here/no-such-program;profrecord;profwait;frame;profdump"
 case "$got" in *"failed: "*"0 profiles") got="failed, 0 profiles" ;; esac
 check "a program that is not there: why, and no profile" "failed, 0 profiles"
+# Record builds first where the folder has a build (make's make, here), and
+# records only if it went well; one that fails says so.
+mkdir -p "$dir/made"
+printf 'all:\n\techo built >>log\n\tcc -O1 -g -fno-omit-frame-pointer -o spin ../here/spin.c\n' >"$dir/made/Makefile"
+run "workdir:$dir/made;prof:program=$dir/made/spin;prof:args=20;profrecord;profwait;frame;profdump"
+got="$(printf '%s' "$got" | sed -e 's/ by .*//') ;; $(cat "$dir/made/log")"
+check "Record builds first, then records what it built" "1 profiles; spin ;; built"
+printf 'all:\n\techo broken >>log\n\texit 2\n' >"$dir/made/Makefile"
+run "workdir:$dir/made;prof:program=$dir/made/spin;prof:args=20;profrecord;profwait;frame;profdump"
+got="$got ;; $(tail -1 "$dir/made/log")"
+check "a build that fails: it says so, and nothing is recorded" "blit: make failed: Record did not start ;; 0 profiles ;; broken"
 run "prof:program=ssh://box$T/spin;prof:args=40;profrecord;profwait;frame;profdump;key:Return;remotewait;frame;frame;profdump"
 check "recorded on another machine: its source opened from there, with the times" \
     "1 profiles; spin by $tool on box, 1 thread, over 10%: inner@spin.c outer@spin.c; tab: zoom all ;; 1 profiles; spin by $tool on box, 1 thread, over 10%: inner@spin.c outer@spin.c; times on lines 9F 17F 25F"

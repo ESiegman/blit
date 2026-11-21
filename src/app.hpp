@@ -422,7 +422,15 @@ private:
     const BuildTask* run_config() const;
     void run_config_take();
     void run_config_edit();
-    void debug_take(const std::string& program, const std::string& args, const std::string& cwd, const std::vector<std::string>& env);
+    void debug_take(const std::string& program, const std::string& args, const std::string& cwd, const std::vector<std::string>& env, const BuildTask::Debug& how = {});
+    // A build first, where the folder has one (the run configuration's
+    // `build`, else the Build tab's Build): `go` runs once it has gone well,
+    // at once where there is none; one that fails says so, and `go` never
+    // runs. `what` names what waits for it (Debug, the tests, Record).
+    void build_first(const std::string& what, std::function<void()> go);
+    bool build_first_busy() const;  // (the tests: one is under way, or waits to run)
+    void build_first_settle();      // (the tests: the build waited for, and what waited for it run)
+    void build_first_take();
     void prof_take(const std::string& program, const std::string& args, const std::string& cwd, const std::vector<std::string>& env);
     std::string debug_target() const;  // (the tests: what Debug and Profile would run: program, arguments, folder, environment)
     std::string prof_target() const;
@@ -996,7 +1004,7 @@ private:
     // each profile (a flame graph and the functions), inline performance labels.
     struct ProfUi;
     void prof_start();
-    void prof_record();
+    void prof_record(bool built = false);  // (built: the folder's build first has been done)
     void prof_stop();
     void prof_sync();
     void prof_open(std::shared_ptr<Profile> p);
@@ -1130,6 +1138,8 @@ private:
     // (A command's output is read for problems, with init.lua's `matchers`.)
     u64 term_open(const std::string& dir = {}, const std::string& command = {}, const std::string& title = {}, std::string_view hint = {}, bool console = false,
                   std::shared_ptr<const BuildMatchers> matchers = {});
+    i64 term_pid(u64 doc);          // its program's process here, while it runs (0: there, ended, or none)
+    std::string term_tty(u64 doc);  // its terminal's device here ("/dev/ttys003"; "": there, or none)
     // The Python console, in the terminals' split (appterm.cpp).
     // python_for: the Python a folder's code runs with, as words for a
     // shell (the console's: IPython where the folder's environment has it;
@@ -1262,8 +1272,12 @@ private:
     void debug_start();
     // A session's start (appdebug.cpp): the debugger started, then told to
     // launch, to attach to a process, or to open a core file.
-    bool debug_open(const std::string& near, const std::string& dir, bool python);
+    bool debug_open(const std::string& near, const std::string& dir, bool python, const std::string& adapter = {});
     void debug_begin(const std::string& request, const std::string& arguments);
+    void debug_launch();   // (F5's, once what it builds first has been built)
+    void debug_restart();  // the session ended and started again as it was (built again first, as F5 builds)
+    std::string debug_in_terminal(const std::string& arguments);  // (the debugger's runInTerminal: a terminal tab running it; what blit answers)
+    u64 debug_terminal(const std::string& dir, const std::string& command, const std::string& title);  // (a terminal tab for the program's input and output)
     void debug_attach_pick();
     void debug_attach(i64 pid);
     void debug_core_pick();

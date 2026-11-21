@@ -361,10 +361,14 @@ void App::test_run(const std::vector<size_t>& which, bool coverage) {
             if (u.tests[i].runner == TestCase::kOutput) return run_task(u.tests[i].dir);
         return;
     }
-    u.term = build_command(u.root, cmd, pick.size() == 1 ? u.tests[pick[0]].name : "Tests");
-    u.running = true;
-    ++test_gen_;
-    dirty_ = true;
+    // (Once the folder's build, where it has one, has gone well.)
+    build_first("the tests", [this, root = u.root, cmd, title = pick.size() == 1 ? u.tests[pick[0]].name : std::string("Tests")] {
+        TestUi& v = *testui_;
+        v.term = build_command(root, cmd, title);
+        v.running = true;
+        ++test_gen_;
+        dirty_ = true;
+    });
 }
 
 void App::test_run_failed() {
@@ -820,7 +824,8 @@ bool App::test_panel_key(const SDL_KeyboardEvent& k) {
 std::string App::test_dump() {
     TestUi& u = *testui_;
     if (!u.looked && !u.looking) test_find();
-    for (int i = 0; i < 600 && (u.looking || u.running || u.preparing || u.reading); ++i) {  // (finding them and running them, waited for: 60 s at most)
+    for (int i = 0; i < 600 && (u.looking || u.running || u.preparing || u.reading || build_first_busy()); ++i) {  // (finding them and running them, waited for: 60 s at most)
+        build_first_settle();  // (the build before them)
         if (u.looking) {
             if (u.worker.joinable()) u.worker.join();
             test_sync();

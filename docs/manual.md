@@ -2185,7 +2185,9 @@ where its threads waited:
   [Working on another machine](#working-on-another-machine)).
 - **Arguments** and **Working directory** (the program's folder unless
   set), then **Record**. **Stop** ends the recording early and keeps what
-  was recorded.
+  was recorded. Where the folder has a build (its run configuration's
+  `build`, else the Build tab's Build), Record runs it first, and records
+  only if it went well.
 - **Call stack**: frame pointers (the default) or DWARF, for perf and
   programs built without frame pointers.
 - **Inline performance labels**: on or off.
@@ -2383,7 +2385,10 @@ where the dot goes (on a test's mark or a fold's, the mark's own click).
 The breakpoints and the expressions watched are kept in the folder's
 session. **F5** starts debugging: the first time it asks which
 program, and the side panel's **Debug** tab (Cmd+Shift+D) keeps it, with
-its arguments and working directory.
+its arguments and working directory. Where the folder has a build (the
+[run configuration](#run-configurations)'s `build`, else the Build tab's
+Build, or make's `make`), F5 runs it first, in the output terminal, and
+debugs only if it went well (one that fails says so, and nothing starts).
 
 ![stopped at a breakpoint: the call stack, the variables and the line in front](media/debug.png)
 
@@ -2391,6 +2396,7 @@ its arguments and working directory.
 |---|---|
 | Start, or continue | F5 |
 | Stop | Shift+F5 |
+| Restart | Cmd+Shift+F5 |
 | Pause | F6 |
 | Step over / into / out | F10 / F7 or F11 / Shift+F11 (F11 is macOS's Show Desktop unless that is turned off) |
 | Breakpoint on this line, or not | F9 |
@@ -2410,6 +2416,22 @@ variables (Right or Enter opens one a level, Left shuts it), the
 expressions watched, the breakpoints (Enter goes to one, Space disables
 it, Delete takes it away), and what the program printed.
 
+- **Restart** (Cmd+Shift+F5, or the Debug tab's Restart) starts the
+  program again as the session began, built again first as F5 builds (a
+  build that fails leaves the session as it was): in the same session,
+  its breakpoints and watches kept, where the debugger can restart one
+  (lldb-dap), else the session is ended and begun again.
+- **A program that reads what is typed to it** (C's `stdin`, `scanf`,
+  `getchar`, C++'s `std::cin`, Python's `input()`) is given a terminal tab
+  in the terminals' split: its input and output are the tab's, and what
+  is typed there is the program's (the keyboard stays where it was: click
+  the tab to type). Other programs' output is in the Debug tab, as it was.
+  A run configuration's `debug.console` says which (`"terminal"`,
+  `"debug"`). With lldb-dap or gdb on this machine the program is started
+  on the tab's terminal itself (lldb's `target.input-path` and the like,
+  gdb's `inferior-tty`); debugpy, and a debugger on another machine, are
+  asked to run it in one and ask blit for the tab (`runInTerminal`). Once
+  the session is over the tab says it is done.
 - **A condition and a hit count.** Shift+F9 asks for a breakpoint's
   condition (`x == 2`: it stops only where that holds), then its hit count
   (`3`: it stops the third time it gets there), each as it is now; nothing
@@ -2527,8 +2549,10 @@ it, Delete takes it away), and what the program printed.
   gives it the new ones.
 
 The debugger is the one the machine has: Xcode's `lldb-dap` on a Mac
-(full Xcode), gdb 14 or later (which speaks the Debug Adapter Protocol
-itself) or `lldb-dap` on Linux, and debugpy for a `.py` program, run
+(full Xcode), `lldb-dap` on Linux where there is one, else gdb 14 or
+later (`gdb -i dap`: it speaks the Debug Adapter Protocol itself; a
+run configuration's `debug.adapter` asks for one or the other, below),
+and debugpy for a `.py` program, run
 with the folder's Python, chosen as the [Python
 console](#the-python-console)'s is (so debugpy is installed there: in a
 uv project, `uv add --dev debugpy`). On another machine it is chosen the
@@ -2928,6 +2952,58 @@ environment (given to the debugger, which the program inherits; to perf
 through `env`, to Instruments with `--env`), and the environment the
 tests run with.
 
+How F5 debugs it is its `debug`, where it has one (all of it may be left
+out):
+
+```json
+{ "name": "orbits", "program": "build/orbits", "build": "Build",
+  "debug": {
+    "adapter": "gdb",
+    "arguments": { "stopAtBeginningOfMainSubprogram": true },
+    "after": ["set print pretty on"],
+    "console": "terminal" } }
+```
+
+- `adapter`: the debugger. `"lldb-dap"` or `"gdb"` (`gdb -i dap`, 14 or
+  later) for that one, wherever the machine has it; `"debugpy"`; or a
+  command line of your own, run by the shell as written
+  (`"arm-none-eabi-gdb -i dap"`, or a list of its words). Left out: the
+  machine's own, as above.
+- `request`: `"launch"` (the default: blit starts the program) or
+  `"attach"` (to what `arguments` name: a process, a gdb server; Shift+F5
+  then lets it go rather than ending it).
+- `arguments`: laid over what blit sends the debugger for the
+  configuration (`program`, `args`, `cwd`, and `env`: an object for gdb and
+  debugpy, a list of `NAME=value` for lldb-dap), in the debugger's own
+  names: yours take the place of blit's, and an object yours and blit's
+  both have is merged member by member. So `"stopOnEntry": true` for
+  lldb-dap, `"stopAtBeginningOfMainSubprogram": true` for gdb,
+  `"justMyCode": false` for debugpy, lldb-dap's `"initCommands"`.
+- `after`: commands for the debugger once the session has started (before
+  the breakpoints are set and the program runs), each run as if typed at
+  its console (DAP's `evaluate`, in its `repl` context): lldb's
+  `settings set ...`, gdb's `set ...`, `monitor ...`. What each says, or
+  why it could not, is among what the program printed.
+- `console`: where the program's input and output go: `"terminal"`, a
+  terminal tab; `"debug"`, the Debug tab. Left out: a terminal for a
+  program that reads what is typed to it, the Debug tab for others.
+
+A board on a gdb server (OpenOCD's, on port 3333), flashed and halted as
+the session starts:
+
+```json
+{ "name": "blinky", "program": "build/blinky.elf", "build": "Build",
+  "debug": {
+    "adapter": "arm-none-eabi-gdb -i dap",
+    "request": "attach",
+    "arguments": { "target": "localhost:3333" },
+    "after": ["monitor reset halt", "load"] } }
+```
+
+(gdb's `attach` connects to its `target` as `target remote` would. With
+lldb-dap, the same board is `"arguments": { "gdb-remote-port": 3333 }`,
+or `"attachCommands": ["gdb-remote 3333"]`.)
+
 ## Tests
 
 The side panel's **Tests** tab lists the project's tests, found on a
@@ -2950,7 +3026,8 @@ as CTest has it), **c** runs them all with coverage, and Cmd+R looks for
 them again. The commands "Run the tests", "Run the failed tests again",
 "Run the test at the cursor" and "Debug the test at the cursor" do the
 same from anywhere. A run goes to the output terminal, where its output
-shows; each runner writes a JUnit report, read when it ends (a module
+shows, after the folder's build where it has one (as F5's: below), and
+only if that went well; each runner writes a JUnit report, read when it ends (a module
 pytest could not collect, which stops its run, is said, with why). Where
 a test is defined (`TEST(A, B)`, `TEST_F`, `TEST_CASE("x")`, `SCENARIO`;
 `def test_x`, in a `Test` class or not: each its own, though a module and

@@ -158,6 +158,17 @@ struct App::BuildUi {
     u64 drawn = 0;
     int reserve = 0;  // its width and margin: the top right tab bar ends before it
     int bx0 = 0, by0 = 0, bx1 = 0, by1 = 0;
+    // A build run first (build_first): what waits for it, and how it went
+    // once it has ended (taken on the main loop's next turn, not inside
+    // term_sync, whose terminals what waits may open and close).
+    struct First {
+        std::string what, task;
+        std::function<void()> go;
+        u64 doc = 0;  // its run's terminal
+        bool ended = false;
+        int status = 0;
+    };
+    std::optional<First> first;
     // Last, so that it is joined first, while all it uses is still there.
     std::jthread worker;
 };
@@ -277,6 +288,7 @@ void App::build_follow() {
 // the build folder's targets, once listed: to choose from.)
 void App::build_sync() {
     BuildUi& u = *buildui_;
+    build_first_take();  // (a build that something waited for has ended)
     std::optional<BuildUi::Found> f;
     std::optional<BuildUi::Listed> l;
     std::optional<BuildUi::Read> r;
@@ -362,8 +374,64 @@ void App::run_config_take() {
     if (!t || buildui_->taken == buildui_->current + "\n" + t->cmd) return;
     buildui_->taken = buildui_->current + "\n" + t->cmd;
     const std::string cwd = t->cwd.empty() ? buildui_->root : buildui_->root + "/" + t->cwd;
-    debug_take(t->program, t->args, cwd, t->env);
+    debug_take(t->program, t->args, cwd, t->env, t->debug);
     prof_take(t->program, t->args, cwd, t->env);
+}
+
+// ---------------------------------------------------------------- a build first
+
+void App::build_first(const std::string& what, std::function<void()> go) {
+    BuildUi& u = *buildui_;
+    const std::string root = build_root();
+    // (The folder's tasks, looked at now if it is here and has not been yet:
+    // one there that has not been looked at yet builds nothing first.)
+    if ((!u.looked || u.root != root) && !is_remote(root) && !(u.looking && is_remote(u.looking_at))) build_settle();
+    if (!u.looked || u.root != root) return go();
+    if (u.first && !u.first->ended && u.running && u.doc == u.first->doc) {  // (one under way: it is this that waits for it now)
+        u.first->what = what;
+        u.first->go = std::move(go);
+        return;
+    }
+    const BuildTask* t = nullptr;
+    if (const BuildTask* c = run_config(); c && !c->before.empty()) {
+        const auto it = std::ranges::find_if(u.tasks, [&](const BuildTask& b) { return !b.config && (b.name == c->before || b.system + ": " + b.name == c->before); });
+        if (it == u.tasks.end()) return notify("No task called " + c->before + " to build before " + what);
+        t = &*it;
+    } else {  // (the Build tab's Build, or make's make: not a Run, nor autotools' Configure)
+        for (const BuildTask& b : u.tasks)
+            if (!b.config && b.def && (b.name == "Build" || (b.system == "Make" && b.name == "make"))) {
+                t = &b;
+                break;
+            }
+    }
+    if (!t) return go();
+    const BuildTask b = *t;
+    const u64 doc = build_command(b.cwd.empty() ? u.root : u.root + "/" + b.cwd, b.system == "CMake" ? with_cmake(b.cmd, u.cmake_type, u.cmake_target) : b.cmd, b.name, b.problems);
+    if (!doc) return notify("Cannot run " + b.name + " before " + what);
+    u.last_key = task_key(b);  // (how it goes shows on its row)
+    if (const auto it = u.sizes.find(u.last_key); it != u.sizes.end()) u.sizes_before = it->second;
+    u.first = BuildUi::First{what, b.name, std::move(go), doc, false, 0};
+}
+
+bool App::build_first_busy() const {
+    const BuildUi* u = buildui_.get();
+    return u && u->first && (u->first->ended || (u->running && u->doc == u->first->doc));
+}
+
+// What waited for a build that has ended: run if it went well.
+void App::build_first_take() {
+    BuildUi& u = *buildui_;
+    if (!u.first || !u.first->ended) return;
+    BuildUi::First f = std::move(*u.first);
+    u.first.reset();
+    if (f.status != 0) return notify(f.task + " failed: " + f.what + " did not start");
+    f.go();
+}
+
+void App::build_first_settle() {
+    if (!build_first_busy()) return;
+    build_wait();
+    build_first_take();
 }
 
 // The folder's run configurations in a tab: .blit/run.json, made the first
@@ -417,6 +485,7 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     if (!u.doc || !find_doc(u.doc, &into)) into = dock_show(editing);  // (the last run's split, wherever it was moved to)
     if (!into) into = editing;  // (no room for another split)
     const u64 old = u.doc && find_doc(u.doc) ? u.doc : 0;
+    if (u.first && !u.first->ended && u.first->doc == old) u.first.reset();  // (a build that something waited for, ended by this one: it is called off)
     pane_ = into;
     const u64 doc = term_open(dir, cmd, title, {}, false, script_matchers(problems));
     if (!doc && into->docs.empty()) remove_pane(into);  // (a split made for it, and it could not start)
@@ -524,6 +593,7 @@ void App::build_stop() {
     Pane* const keep = pane_;
     pane_ = p;
     tab_close(at, true);  // (its program hung up on)
+    u.first.reset();      // (and what waited for it, called off)
     bool still = false;
     for (const std::unique_ptr<Pane>& q : panes_) still |= q.get() == keep;
     pane_ = still ? keep : panes_.front().get();
@@ -543,6 +613,11 @@ void App::build_stop() {
 void App::build_ended(u64 doc, int status) {
     test_ended(doc);  // (a run of the tests: its reports read)
     BuildUi& u = *buildui_;
+    if (u.first && u.first->doc == doc && !u.first->ended) {  // (what waits for it runs on the loop's next turn)
+        u.first->ended = true;
+        u.first->status = status;
+        wake();
+    }
     if (doc != u.doc) return;
     u.running = false;
     u.last_status = status;
@@ -1175,6 +1250,7 @@ void App::build_wait() {  // the build's program has ended, and the targets bein
         SDL_Delay(5);
     }
     term_sync();
+    build_first_take();
     while ((u.listing || u.reading) && now_ns() < until) {
         SDL_Delay(5);
         build_sync();

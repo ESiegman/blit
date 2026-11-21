@@ -18,6 +18,8 @@
 #include <map>
 #include <set>
 
+#include <fcntl.h>
+#include <signal.h>
 #include <unistd.h>
 
 #include <cctype>
@@ -62,23 +64,32 @@ void light_row(TextBox& box, u32 row, bool focused) {
     for (u32 c = 0; c < box.cols; ++c) box.cells[static_cast<size_t>(row) * box.cols + c] |= kCellHover;
 }
 
-// The debugger for a machine, chosen there: Xcode's lldb-dap on a Mac; gdb
-// (14 and later speak the protocol) or lldb-dap elsewhere; debugpy for Python.
-// A program with HIP's code for the GPU in it ($BLIT_DEBUG_PROGRAM has a
-// .hip_fatbin) gets ROCm's rocgdb where there is one: a gdb that sees the
-// GPU's waves as threads, its kernels' frames and variables.
+// The debugger for a machine, chosen there: Xcode's lldb-dap on a Mac;
+// lldb-dap where there is one elsewhere, else gdb (14 and later speak the
+// protocol: gdb -i dap); debugpy for Python. A program with HIP's code for
+// the GPU in it ($BLIT_DEBUG_PROGRAM has a .hip_fatbin) gets ROCm's rocgdb
+// where there is one: a gdb that sees the GPU's waves as threads, its
+// kernels' frames and variables. `want` (a run configuration's
+// debug.adapter) is "lldb-dap" or "gdb" for that one alone, wherever it is.
 // gdb's program writes where gdb's messages go, a pipe, and C's stdio holds
 // back what is written to a pipe until it ends: stdbuf (coreutils) has it
 // write a line at a time, as to a terminal, gdb and the program both.
-const char* kNative =
-    "if [ \"$(uname -s)\" = Darwin ]; then "
-    "xcrun --find lldb-dap >/dev/null 2>&1 || { [ -d /Applications/Xcode.app/Contents/Developer ] && DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer && export DEVELOPER_DIR; }; "
-    "exec xcrun lldb-dap; fi; "
-    "if [ -n \"$BLIT_DEBUG_PROGRAM\" ] && grep -q -a -m1 hip_fatbin \"$BLIT_DEBUG_PROGRAM\" 2>/dev/null; then "
-    "for d in rocgdb /opt/rocm/bin/rocgdb; do if command -v $d >/dev/null 2>&1; then echo 'blit-debugger: gdb (rocgdb)' >&2; command -v stdbuf >/dev/null 2>&1 && exec stdbuf -oL $d -q -i dap; exec $d -q -i dap; fi; done; fi; "
-    "if command -v gdb >/dev/null 2>&1 && [ \"$(gdb --version | sed -n '1s/.* \\([0-9][0-9]*\\)\\..*/\\1/p')\" -ge 14 ] 2>/dev/null; then echo 'blit-debugger: gdb' >&2; command -v stdbuf >/dev/null 2>&1 && exec stdbuf -oL gdb -q -i dap; exec gdb -q -i dap; fi; "
-    "for d in lldb-dap lldb-vscode; do command -v $d >/dev/null 2>&1 && exec $d; done; "
-    "echo 'no debugger: install gdb 14 or newer, or lldb' >&2; exit 127";
+std::string native(std::string_view want) {
+    const std::string mac =
+        "if [ \"$(uname -s)\" = Darwin ] && { [ -n \"$(xcrun --find lldb-dap 2>/dev/null)\" ] || [ -d /Applications/Xcode.app/Contents/Developer ]; }; then "
+        "xcrun --find lldb-dap >/dev/null 2>&1 || { DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer && export DEVELOPER_DIR; }; "
+        "exec xcrun lldb-dap; fi; ";
+    const std::string rocm =
+        "if [ -n \"$BLIT_DEBUG_PROGRAM\" ] && grep -q -a -m1 hip_fatbin \"$BLIT_DEBUG_PROGRAM\" 2>/dev/null; then "
+        "for d in rocgdb /opt/rocm/bin/rocgdb; do if command -v $d >/dev/null 2>&1; then echo 'blit-debugger: gdb (rocgdb)' >&2; command -v stdbuf >/dev/null 2>&1 && exec stdbuf -oL $d -q -i dap; exec $d -q -i dap; fi; done; fi; ";
+    const std::string lldb = "for d in lldb-dap lldb-vscode; do command -v $d >/dev/null 2>&1 && exec $d; done; ";
+    const std::string gdb =
+        "v=$(gdb --version 2>/dev/null | sed -n '1s/.* \\([0-9][0-9]*\\)\\..*/\\1/p'); "
+        "if [ \"${v:-0}\" -ge 14 ] 2>/dev/null; then echo 'blit-debugger: gdb' >&2; command -v stdbuf >/dev/null 2>&1 && exec stdbuf -oL gdb -q -i dap; exec gdb -q -i dap; fi; ";
+    if (want == "lldb-dap") return mac + lldb + "echo 'no lldb-dap here' >&2; exit 127";
+    if (want == "gdb") return rocm + gdb + "if [ -n \"$v\" ]; then echo \"gdb $v is too old to be a debugger blit can use: 14 or newer speaks its protocol\" >&2; else echo 'no gdb here' >&2; fi; exit 127";
+    return mac + rocm + lldb + gdb + "echo 'no debugger: install lldb, or gdb 14 or newer' >&2; exit 127";
+}
 // (debugpy's adapter is run with the project's Python, App::python_for(),
 // and starts the program with the same.)
 const char* kPython = " -m debugpy.adapter";
@@ -93,7 +104,7 @@ std::string python_there(const std::string& root) {
            "if [ \"$py\" = uv ]; then exec uv run python" + std::string(kPython) + "; fi; "
            "exec \"${py:-python3}\"" + kPython;
 }
-// What kNative says on the error stream when the debugger it starts is gdb
+// What native() says on the error stream when the debugger it starts is gdb
 // (which counts a breakpoint's hits from 0, where the others count from 1).
 constexpr std::string_view kGdbSays = "blit-debugger: gdb";
 
@@ -170,6 +181,140 @@ std::string hex(u64 v, int width = 1) {
     char b[24];
     std::snprintf(b, sizeof b, "0x%0*llx", width, static_cast<unsigned long long>(v));
     return b;
+}
+
+// `over` laid over `base` (a run configuration's arguments over those blit
+// sends): its members take the place of base's of the same name, an
+// object's member by member, all the way down.
+void laid_over(std::string& out, json::Value base, json::Value over) {
+    if (!base.is_object() || !over.is_object()) return json::dump(out, over.exists() ? over : base);
+    out += '{';
+    bool first = true;
+    auto member = [&](std::string_view key) {
+        out += first ? "" : ",";
+        first = false;
+        json::quote(out, key);
+        out += ':';
+    };
+    for (const json::Value m : base) {
+        member(m.key());
+        laid_over(out, m, over[m.key()]);
+    }
+    for (const json::Value m : over)
+        if (!base[m.key()].exists()) {
+            member(m.key());
+            json::dump(out, m);
+        }
+    out += '}';
+}
+
+std::string laid_over(const std::string& base, const std::string& over) {
+    json::Doc b, o;
+    if (over.empty() || !b.parse(base) || !o.parse(over)) return base;
+    std::string out;
+    laid_over(out, b.root(), o.root());
+    return out;
+}
+
+// Whether a program reads what is typed to it (its input given a terminal
+// tab, where F5 starts it, unless its run configuration says otherwise):
+// a Python file that calls input() or reads sys.stdin; a program (ELF or
+// Mach-O, 64-bit) whose symbols from its libraries include C's stdin, C++'s
+// std::cin, scanf, getchar or gets. Here alone (another machine's would be
+// a round trip), and only the headers and the symbol table are read.
+bool reads_input(const std::string& path) {
+    if (path.empty() || is_remote(path)) return false;
+    if (path.ends_with(".py")) {
+        std::string text;
+        if (!fs_read(path, &text, 1u << 20)) return false;
+        for (size_t at = text.find("input("); at != std::string::npos; at = text.find("input(", at + 1))
+            if (at == 0 || !(std::isalnum(static_cast<unsigned char>(text[at - 1])) || text[at - 1] == '_' || text[at - 1] == '.')) return true;
+        return text.find("sys.stdin") != std::string::npos;
+    }
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return false;
+    auto at = [&](u64 off, void* into, u64 n) { return ::pread(fd, into, n, static_cast<off_t>(off)) == static_cast<ssize_t>(n); };
+    auto u16_at = [](const u8* p) { return static_cast<u32>(p[0] | p[1] << 8); };
+    auto u32_at = [](const u8* p) { return static_cast<u32>(p[0]) | static_cast<u32>(p[1]) << 8 | static_cast<u32>(p[2]) << 16 | static_cast<u32>(p[3]) << 24; };
+    auto u64_at = [&](const u8* p) { return static_cast<u64>(u32_at(p)) | static_cast<u64>(u32_at(p + 4)) << 32; };
+    auto reader = [](std::string_view name) {
+        while (name.starts_with('_') && !name.starts_with("_Z") && !name.starts_with("__stdinp")) name.remove_prefix(1);  // (Mach-O's names start with _)
+        if (name.starts_with("_Z")) return name == "_ZSt3cin" || name == "_ZSt4wcin" || name == "_ZNSt3__13cinE" || name == "_ZNSt3__14wcinE";
+        if (const size_t v = name.find('@'); v != std::string_view::npos) name = name.substr(0, v);
+        return name == "stdin" || name == "__stdinp" || name == "scanf" || name == "isoc99_scanf" || name == "isoc23_scanf" || name == "getchar" || name == "gets";
+    };
+    constexpr u64 kMost = 64u << 20;  // (a symbol table larger than this is not read)
+    bool found = false;
+    std::vector<u8> head(64);
+    if (at(0, head.data(), 64) && std::memcmp(head.data(), "\x7f" "ELF\x02\x01", 6) == 0) {
+        // ELF, 64-bit, little-endian: the dynamic symbols (else all of them), those not defined here.
+        const u64 shoff = u64_at(&head[40]);
+        const u32 shentsize = u16_at(&head[58]), shnum = u16_at(&head[60]);
+        std::vector<u8> sh(static_cast<size_t>(shentsize) * shnum);
+        if (shentsize >= 64 && shnum && at(shoff, sh.data(), sh.size())) {
+            auto section = [&](u32 i) { return &sh[static_cast<size_t>(i) * shentsize]; };
+            i64 sym = -1;
+            for (u32 i = 0; i < shnum; ++i) {
+                const u32 type = u32_at(section(i) + 4);
+                if (type == 11) sym = i;  // SHT_DYNSYM
+                else if (type == 2 && sym < 0) sym = i;  // SHT_SYMTAB
+            }
+            if (sym >= 0) {
+                const u8* s = section(static_cast<u32>(sym));
+                const u32 link = u32_at(s + 40);
+                const u64 off = u64_at(s + 24), size = u64_at(s + 32);
+                if (link < shnum && size <= kMost && u64_at(section(link) + 32) <= kMost) {
+                    std::vector<u8> syms(size), strs(u64_at(section(link) + 32));
+                    if (at(off, syms.data(), size) && at(u64_at(section(link) + 24), strs.data(), strs.size()))
+                        for (u64 i = 0; i + 24 <= size && !found; i += 24) {
+                            const u32 name = u32_at(&syms[i]);
+                            if (u16_at(&syms[i + 6]) != 0 || name >= strs.size()) continue;  // (defined here: not one of its libraries')
+                            const char* n = reinterpret_cast<const char*>(&strs[name]);
+                            found = reader(std::string_view(n, ::strnlen(n, strs.size() - name)));
+                        }
+                }
+            }
+        }
+    } else {
+        // Mach-O, 64-bit (or a universal file's slices): LC_SYMTAB's symbols that are undefined and external.
+        std::vector<u64> slices;
+        if (u32_at(head.data()) == 0xBEBAFECA) {  // FAT_MAGIC, big-endian
+            const u32 n = std::min<u32>(__builtin_bswap32(u32_at(&head[4])), 8);
+            std::vector<u8> arch(static_cast<size_t>(n) * 20);
+            if (at(8, arch.data(), arch.size()))
+                for (u32 i = 0; i < n; ++i) slices.push_back(__builtin_bswap32(u32_at(&arch[i * 20 + 8])));
+        } else {
+            slices.push_back(0);
+        }
+        for (const u64 base : slices) {
+            u8 mh[32];
+            if (found || !at(base, mh, 32) || u32_at(mh) != 0xFEEDFACF) continue;
+            const u32 ncmds = u32_at(mh + 16), sizeofcmds = u32_at(mh + 20);
+            if (sizeofcmds > kMost) continue;
+            std::vector<u8> cmds(sizeofcmds);
+            if (!at(base + 32, cmds.data(), sizeofcmds)) continue;
+            for (u32 i = 0, off = 0; i < ncmds && off + 8 <= sizeofcmds && !found; ++i) {
+                const u32 cmd = u32_at(&cmds[off]), size = u32_at(&cmds[off + 4]);
+                if (cmd == 2 && off + 24 <= sizeofcmds) {  // LC_SYMTAB
+                    const u32 symoff = u32_at(&cmds[off + 8]), nsyms = u32_at(&cmds[off + 12]), stroff = u32_at(&cmds[off + 16]), strsize = u32_at(&cmds[off + 20]);
+                    if (static_cast<u64>(nsyms) * 16 > kMost || strsize > kMost) break;
+                    std::vector<u8> syms(static_cast<size_t>(nsyms) * 16), strs(strsize);
+                    if (!at(base + symoff, syms.data(), syms.size()) || !at(base + stroff, strs.data(), strsize)) break;
+                    for (u32 k = 0; k < nsyms && !found; ++k) {
+                        const u8* s = &syms[static_cast<size_t>(k) * 16];
+                        const u32 name = u32_at(s);
+                        if ((s[4] & 0xE0) || (s[4] & 0x0E) != 0 || !(s[4] & 0x01) || name >= strsize) continue;  // (a debugger's entry, defined here, or not external)
+                        const char* n = reinterpret_cast<const char*>(&strs[name]);
+                        found = reader(std::string_view(n, ::strnlen(n, strsize - name)));
+                    }
+                }
+                if (size < 8) break;
+                off += size;
+            }
+        }
+    }
+    ::close(fd);
+    return found;
 }
 
 }  // namespace
@@ -256,6 +401,26 @@ struct DebugSession {
     u8 print_style = 0;
     int exit_code = -1;
     bool end_soon = false;  // (the session ends once the debugger's answers have been run: not inside one)
+    // What it began with, to restart it as it was: the request and its
+    // arguments as sent (DAP's restart, where the debugger has it:
+    // can_restart), else how to start it again; and whether F5 started it
+    // (it is built again first).
+    std::string began, began_args;
+    std::function<void()> again;
+    bool can_restart = false, by_f5 = false;
+    // F5's: the program's environment given in the launch's arguments too,
+    // the run configuration's own laid over them (`over`), its input and
+    // output in a terminal tab (`terminal`), and the debugger's commands
+    // once the session has started (`after`, run as initialized comes).
+    bool configured = false, terminal = false;
+    std::string over;
+    std::vector<std::string> after;
+    // That terminal, where blit gives the program one itself (a debugger
+    // here, lldb-dap or gdb: the program started on its device, `tty`), not
+    // asked for by the debugger (runInTerminal): its tab, whose program
+    // holds the device open and reads nothing, ended with the session.
+    u64 term_doc = 0;
+    std::string tty;
     // A terminal's escape sequences (colours, mostly) are left out, as the
     // build's scanner leaves them out; one may be cut between two events.
     enum Esc : u8 { kText, kEsc, kEscMore, kCsi, kString, kStringEsc } esc = kText;
@@ -300,6 +465,7 @@ struct App::DebugUi : DebugSession {
     // What to debug.
     std::string program, args, cwd;
     std::vector<std::string> env;  // ("NAME=value": a run configuration's, given the debugger and so the program)
+    BuildTask::Debug conf;         // (and its "debug": the debugger, the request, the arguments laid over blit's...)
     // Breakpoints: by file (its full path, ssh:// for another machine's), by
     // line (from 0), each with what it waits for, if anything.
     struct Break {
@@ -407,7 +573,7 @@ struct App::DebugUi : DebugSession {
     };
     std::vector<Watch> watches;
     // The panel: a row for each thing shown, and the one chosen.
-    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData, kInstr, kSession, kWaves, kException };
+    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData, kInstr, kSession, kWaves, kException, kRestart };
     // A row: a mark (a triangle, an arrow) before its text, in an ink of its
     // own; the text; something quieter after it; and on the right its key.
     struct Row {
@@ -998,12 +1164,13 @@ void App::debug_session_take(const std::vector<std::string>& lines) {
 }
 
 // A run configuration chosen: what it runs is what is debugged.
-void App::debug_take(const std::string& program, const std::string& args, const std::string& cwd, const std::vector<std::string>& env) {
+void App::debug_take(const std::string& program, const std::string& args, const std::string& cwd, const std::vector<std::string>& env, const BuildTask::Debug& how) {
     DebugUi& u = *debugui_;
     u.program = program;
     u.args = args;
     u.cwd = cwd;
     u.env = env;
+    u.conf = how;
     ++debug_gen_;
     dirty_ = true;
 }
@@ -1020,7 +1187,7 @@ std::string App::debug_target() const {
 
 // The debugger started (for a program at `near`: on its machine), the
 // last session's state let go of, the Debug tab shown.
-bool App::debug_open(const std::string& near, const std::string& dir, bool python) {
+bool App::debug_open(const std::string& near, const std::string& dir, bool python, const std::string& adapter) {
     DebugUi& u = *debugui_;
     std::string host, there;
     // (Attaching names no program: the machine is the folder's.)
@@ -1041,6 +1208,12 @@ bool App::debug_open(const std::string& near, const std::string& dir, bool pytho
     u.exception_lines.clear();
     u.exit_code = -1;
     u.asking = 0;
+    u.again = {};  // (what started it says how to start it again, and the rest of what F5 gives)
+    u.can_restart = u.by_f5 = u.configured = u.terminal = false;
+    u.over.clear();
+    u.after.clear();
+    u.term_doc = 0;
+    u.tty.clear();
     // (On another machine the connection is waited for and the debugger started
     // there on the Dap's own thread: the tab says Starting… meanwhile, and what
     // is asked of it below is sent once it has started.)
@@ -1051,7 +1224,11 @@ bool App::debug_open(const std::string& near, const std::string& dir, bool pytho
         exports += "BLIT_DEBUG_PROGRAM=" + sh_word(prog) + "; export BLIT_DEBUG_PROGRAM; ";  // (what it debugs: HIP's gets rocgdb)
     // (On another machine, chosen there: in the project's folder if that is
     // on the same machine, else in the program's.)
-    std::string launch = kNative;
+    std::string launch = native(adapter);
+    if (!python && !adapter.empty() && adapter != "lldb-dap" && adapter != "gdb") {  // a command line of the run configuration's
+        const std::string first = adapter.substr(0, adapter.find(' '));
+        launch = (base_name(first).find("gdb") != std::string::npos ? "echo 'blit-debugger: gdb' >&2; " : "") + adapter;  // (arm-none-eabi-gdb, gdb-multiarch: a gdb)
+    }
     u.python.clear();
     if (python && u.remote.empty()) {
         u.python = python_for(build_root(), false);
@@ -1106,6 +1283,7 @@ void App::debug_attach(i64 pid) {
     DebugUi& u = *debugui_;
     if (u.state != DebugUi::kIdle) debug_park();  // (beside the session under way)
     if (!debug_open({}, default_workdir(), false)) return;
+    u.again = [this, pid] { debug_attach(pid); };
     u.name = "process " + std::to_string(pid);
     debug_begin("attach", "{\"pid\":" + std::to_string(pid) + "}");
 }
@@ -1125,6 +1303,7 @@ void App::debug_core(const std::string& program, const std::string& core) {
     if (u.state != DebugUi::kIdle) debug_park();
     u.program = full_path(program);
     if (!debug_open(u.program, parent_of(u.program), false)) return;
+    u.again = [this, program, core] { debug_core(program, core); };
     u.name = "core of " + base_name(u.program);
     // (lldb-dap reads coreFile; gdb, core.)
     debug_begin("attach", "{\"program\":" + quoted(u.there(u.program)) + ",\"coreFile\":" + quoted(u.there(full_path(core))) + ",\"core\":" + quoted(u.there(full_path(core))) + "}");
@@ -1147,10 +1326,43 @@ void App::debug_start() {
         });
         return;
     }
+    build_first("Debug", [this] { debug_launch(); });  // (the folder's build first, where it has one)
+}
+
+void App::debug_launch() {
+    DebugUi& u = *debugui_;
+    if (u.state != DebugUi::kIdle || u.program.empty()) return;  // (started meanwhile, another way)
+    const BuildTask::Debug& how = u.conf;
     const std::string dir = !u.cwd.empty() ? u.cwd : parent_of(u.program);
-    const bool python = u.program.ends_with(".py");
-    if (!debug_open(u.program, dir, python)) return;
+    const bool python = how.adapter == "debugpy" || (how.adapter.empty() && u.program.ends_with(".py"));
+    const bool attach = how.request == "attach";
+    // (Its input and output in a terminal tab: as the run configuration says,
+    // else where the program reads what is typed to it.)
+    const bool terminal = !attach && (how.console == "terminal" || (how.console.empty() && reads_input(u.program)));
+    if (!debug_open(u.program, dir, python, python ? std::string() : how.adapter)) return;
     u.name = base_name(u.program);
+    u.again = [this] { debug_launch(); };  // (built again first by debug_restart)
+    u.by_f5 = true;
+    u.configured = !attach;
+    u.terminal = terminal;
+    u.over = how.arguments;
+    u.after = how.after;
+    // A terminal for it: with a debugger of the machine's here, a tab whose
+    // device the program is started on (lldb's target.input-path and the
+    // like, gdb's inferior-tty: lldb-dap's runInTerminal has the program
+    // started by a launcher it attaches to, which macOS does not let it
+    // attach to), its program a shell that holds the device open and reads
+    // nothing (what is typed is the program's; Ctrl+C is not the shell's);
+    // else (debugpy, another machine, a debugger of the configuration's
+    // own) the debugger asked to run it in one, which it asks of blit.
+    if (terminal && !python && u.remote.empty() && (how.adapter.empty() || how.adapter == "lldb-dap" || how.adapter == "gdb")) {
+        u.term_doc = debug_terminal(dir, "exec /bin/sh -c 'trap \"\" INT QUIT TSTP; trap \"exit 0\" TERM HUP; while :; do sleep 86400 & wait $!; done'", "Debug: " + u.name);
+        u.tty = term_tty(u.term_doc);
+    }
+    if (attach) {  // (to what the run configuration's arguments name: a process, a gdb server)
+        debug_begin("attach", "{\"program\":" + quoted(u.there(u.program)) + ",\"cwd\":" + quoted(u.there(dir)) + "}");
+        return;
+    }
     // The program's arguments, as a shell would split them.
     std::string args = "[";
     {
@@ -1172,7 +1384,8 @@ void App::debug_start() {
     }
     args += "]";
     const std::string launch = "{\"program\":" + quoted(u.there(u.program)) + ",\"args\":" + args + ",\"cwd\":" + quoted(u.there(dir)) +
-                               (python ? ",\"type\":\"python\",\"request\":\"launch\",\"console\":\"internalConsole\",\"justMyCode\":true" : "") + "}";
+                               (python ? std::string(",\"type\":\"python\",\"request\":\"launch\",\"console\":") + (terminal ? "\"integratedTerminal\"" : "\"internalConsole\"") + ",\"justMyCode\":true" : "") +
+                               "}";
     debug_begin("launch", launch);
 }
 
@@ -1186,10 +1399,19 @@ void App::debug_begin(const std::string& request, const std::string& args_in) {
     std::string arguments = args_in;
     if (arguments.starts_with("{")) arguments.insert(1, std::string("\"enableAutoVariableSummaries\":true") + (arguments.size() > 2 ? "," : ""));
     u.how = request == "launch" ? "launch" : arguments.find("coreFile") != std::string::npos ? "core" : "attach";
+    // (F5's launch: the program's environment as each debugger takes it, gdb
+    // and debugpy an object, lldb-dap a list of NAME=value.)
+    std::string env_object = "{", env_list = "[";
+    for (const std::string& e : u.env) {
+        const size_t eq = e.find('=');
+        env_object += (env_object.size() > 1 ? "," : "") + quoted(e.substr(0, eq)) + ":" + quoted(eq == std::string::npos ? std::string() : e.substr(eq + 1));
+        env_list += (env_list.size() > 1 ? "," : "") + quoted(e);
+    }
+    env_object += "}", env_list += "]";
     u.dap->request("initialize",
                    "{\"clientID\":\"blit\",\"clientName\":\"blit\",\"adapterID\":\"blit\",\"linesStartAt1\":true,\"columnsStartAt1\":true,"
-                   "\"pathFormat\":\"path\",\"supportsVariableType\":true,\"supportsRunInTerminalRequest\":false}",
-                   [this, request, arguments](const Dap::Message& m) {
+                   "\"pathFormat\":\"path\",\"supportsVariableType\":true,\"supportsRunInTerminalRequest\":true}",
+                   [this, request, arguments, env_object, env_list](const Dap::Message& m) {
                        DebugUi& v = *debugui_;
                        if (!m.success) {
                            v.error = "the debugger would not start: " + m.message;
@@ -1207,7 +1429,29 @@ void App::debug_begin(const std::string& request, const std::string& args_in) {
                            if (!f["filter"].str().empty())
                                v.filters.push_back({std::string(f["filter"].str()), std::string(f["label"].str().empty() ? f["filter"].str() : f["label"].str()), f["default"].boolean(),
                                                     f["supportsCondition"].boolean()});
-                       v.dap->request(request, arguments, [this, request](const Dap::Message& r) {
+                       v.can_restart = c["supportsRestartRequest"].boolean();
+                       // What it is told to do, as this debugger takes it (which it is
+                       // has been said by now: native() says so before it starts it),
+                       // and a run configuration's own arguments laid over that.
+                       v.gdb = v.dap->errors().find(kGdbSays) != std::string::npos;
+                       std::string args = arguments;
+                       if (v.configured && args.ends_with('}')) {
+                           std::string more;
+                           if (env_list.size() > 2) more += ",\"env\":" + (v.gdb || !v.python.empty() ? env_object : env_list);
+                           if (v.terminal && !v.tty.empty() && v.gdb) {  // (the device blit's terminal tab is: gdb's own word for it, before it runs the program)
+                               v.after.insert(v.after.begin(), "set inferior-tty " + v.tty);
+                           } else if (v.terminal && !v.tty.empty()) {  // (lldb's, before it launches it)
+                               more += ",\"preRunCommands\":[";
+                               for (const char* s : {"input", "output", "error"}) more += quoted("settings set target." + std::string(s) + "-path " + v.tty) + (*s == 'e' ? "]" : ",");
+                           } else if (v.terminal && !v.gdb && v.python.empty()) {  // (the debugger asked to run it in one: lldb-dap's old name for that and its new)
+                               more += ",\"runInTerminal\":true,\"console\":\"integratedTerminal\"";
+                           }
+                           args.insert(args.size() - 1, more);
+                       }
+                       args = laid_over(args, v.over);
+                       v.began = request;
+                       v.began_args = args;
+                       v.dap->request(request, args, [this, request](const Dap::Message& r) {
                            if (!r.success) {
                                debugui_->error = (request == "launch" ? "cannot launch it: " : "cannot attach: ") + (r.message.empty() ? std::string("the debugger said no") : r.message);
                                debugui_->end_soon = true;
@@ -1233,6 +1477,7 @@ void App::debug_end() {
     }
     u.dap.reset();
     u.state = DebugUi::kIdle;
+    if (const i64 pid = u.term_doc ? term_pid(std::exchange(u.term_doc, 0)) : 0; pid > 0) ::kill(static_cast<pid_t>(pid), SIGTERM);  // (the terminal's shell ends: its tab says it is done)
     u.data.clear();  // (the debugger's ids for them were this session's, as the program's addresses were)
     u.ibreaks.clear();
     u.run_to_path.clear();
@@ -1253,6 +1498,94 @@ void App::debug_end() {
             for (auto& [l, b] : lines) b.unsaid();
     ++debug_gen_;
     dirty_ = true;
+}
+
+// The session ended and started again as it began: F5's built again first
+// (and nothing happens to it if that build fails); then DAP's restart where
+// the debugger has it, the program started again in the same session (its
+// breakpoints kept), else the session ended and another begun in its place.
+void App::debug_restart() {
+    DebugUi& u = *debugui_;
+    if (u.state == DebugUi::kIdle || !u.dap) return notify("Not debugging");
+    auto restart = [this] {
+        DebugUi& v = *debugui_;
+        if (v.state == DebugUi::kIdle || !v.dap) return;  // (ended meanwhile)
+        if (v.can_restart && !v.began.empty()) {
+            v.dap->request("restart", "{\"arguments\":" + v.began_args + "}", [this](const Dap::Message& r) {
+                if (!r.success) debugui_->print("cannot restart: " + (r.message.empty() ? std::string("the debugger said no") : r.message) + "\n");
+            });
+            v.state = DebugUi::kRunning;
+            v.going = false;
+            v.frames.clear();
+            v.threads.clear();
+            v.vars.clear();
+            v.output.clear();
+            v.partial.clear();
+            v.reason.clear();
+            v.error.clear();
+            v.exit_code = -1;
+            ++v.vars_gen;
+            ++v.watch_gen;
+            v.data.clear();  // (the program's addresses, and the debugger's ids for its variables, were the last run's)
+            debug_send_data();
+            ++debug_gen_;
+            dirty_ = true;
+            return;
+        }
+        std::function<void()> again = std::move(v.again);  // (kept here: what starts it again makes the session's anew)
+        v.background = true;  // (its place is not given to another session meanwhile)
+        debug_end();
+        v.background = false;
+        if (again) again();
+    };
+    if (u.by_f5) build_first("Restart", restart);
+    else restart();
+}
+
+// The debugger's runInTerminal: its program (`args`, in `cwd`, with `env`
+// after the run configuration's environment) in a terminal tab of the
+// terminals' split, as the build's output is (the keyboard stays where it
+// was), here or on the session's machine; the answer, its process (the
+// shell's, which gives way to it). "" where it could not be started.
+std::string App::debug_in_terminal(const std::string& text) {
+    DebugUi& u = *debugui_;
+    json::Doc doc;
+    if (!doc.parse(text)) return {};
+    const json::Value a = doc.root();
+    std::string cmd;
+    for (const std::string& e : u.env) cmd += "export " + sh_word(e) + "; ";
+    for (const json::Value e : a["env"]) {
+        const std::string_view name = e.key();
+        if (name.empty() || name.find_first_not_of("ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_") != std::string_view::npos) continue;
+        cmd += e.type() == json::Type::Null ? "unset " + std::string(name) + "; " : "export " + std::string(name) + "=" + sh_word(e.str()) + "; ";
+    }
+    // (Each word as it is, unless the debugger says they are a shell's to read.)
+    const bool shell = a["argsCanBeInterpretedByShell"].boolean();
+    std::string words;
+    for (const json::Value w : a["args"]) words += " " + (shell ? std::string(w.str()) : sh_word(w.str()));
+    if (words.empty()) return {};
+    cmd += "exec" + words;
+    const std::string_view cwd = a["cwd"].str();
+    const std::string dir = !cwd.empty() ? u.here(cwd) : !u.cwd.empty() ? u.cwd : parent_of(u.program);
+    const std::string_view title = a["title"].str();
+    const u64 id = debug_terminal(dir, cmd, title.empty() ? "Debug: " + u.name : std::string(title));
+    if (!id) return {};
+    const i64 pid = term_pid(id);
+    return pid > 0 ? "{\"processId\":" + std::to_string(pid) + ",\"shellProcessId\":" + std::to_string(pid) + "}" : std::string("{}");
+}
+
+// A terminal tab for the program's input and output: in the terminals'
+// split, as the build's output is; the keyboard stays where it was.
+u64 App::debug_terminal(const std::string& dir, const std::string& command, const std::string& title) {
+    Pane* const editing = pane_;
+    Pane* into = dock_show(editing);
+    if (!into) into = editing;  // (no room for another split)
+    pane_ = into;
+    const u64 id = term_open(dir, command, title);
+    bool editing_still = false;
+    for (const std::unique_ptr<Pane>& p : panes_) editing_still |= p.get() == editing;
+    focus_pane(editing_still ? editing : panes_.front().get());
+    return id;
 }
 
 void App::debug_command(const std::string& what) {
@@ -1527,12 +1860,29 @@ void App::debug_sync_session(bool* stopped) {
     if (!u.dap) return;
     for (const Dap::Message& m : u.dap->poll()) {
         const json::Value b = m.body();
-        if (m.type == "request") {  // (it asks for something blit does not do: running in a terminal, another session)
+        if (m.type == "request" && m.name == "runInTerminal") {  // the program, in a terminal tab
+            std::string arguments;
+            if (m.doc) json::dump(arguments, m.doc->root()["arguments"]);
+            const std::string answer = debug_in_terminal(arguments);
+            u.dap->respond(m, !answer.empty(), answer.empty() ? std::string_view("{}") : std::string_view(answer));
+        } else if (m.type == "request") {  // (it asks for something blit does not do: another session)
             u.dap->respond(m, false);
         } else if (m.name == "initialized") {
             u.state = DebugUi::kRunning;
             u.gdb = u.dap->errors().find(kGdbSays) != std::string::npos;  // (said before it started: here by now)
             u.rocm = u.dap->errors().find("blit-debugger: gdb (rocgdb)") != std::string::npos;
+            // A run configuration's commands for the debugger, in its console's
+            // context, before the breakpoints and the program's start (what
+            // each says, or why it could not, among what the program printed).
+            for (const std::string& a : u.after)
+                u.dap->request("evaluate", "{\"expression\":" + quoted(a) + ",\"context\":\"repl\"}", [this, a](const Dap::Message& r) {
+                    DebugUi& v = *debugui_;
+                    std::string said = r.success ? std::string(r.body()["result"].str()) : a + ": " + why_not(r.message);
+                    if (!said.empty() && !said.ends_with('\n')) said += '\n';
+                    v.print(said);
+                    ++debug_gen_;
+                    dirty_ = true;
+                });
             for (const auto& [path, lines] : u.breaks) debug_send_breaks(path);
             debug_send_functions();
             debug_send_instructions();
@@ -1579,12 +1929,19 @@ void App::debug_sync_session(bool* stopped) {
             debug_break_event(b);
         } else if (m.name == "process") {
             u.going = true;
+        } else if (m.name == "capabilities") {  // (what it can do, said again: lldb-dap says it can restart once it has launched)
+            if (const json::Value r = b["capabilities"]["supportsRestartRequest"]; r.exists()) u.can_restart = r.boolean();
         } else if (m.name == "output") {
             const std::string_view cat = b["category"].str();
             // (gdb tells of breakpoints in a program it has not loaded yet,
             // "No source file named ...", as if the program had said it.)
             // (And after, its word that it has put a breakpoint somewhere: "Breakpoint 2 at 0x...: file f.c, line 7.")
             const bool gdb_own = u.gdb && cat == "stdout" && (!u.going || gdb_breakpoint_said(b["output"].str()));
+            // (Nor lldb's word of the commands blit gave it for the program's terminal, as it runs them.)
+            const std::string_view out = b["output"].str();
+            const bool for_tty = !u.tty.empty() && cat == "console" &&
+                                 ((out == "Running preRunCommands:\n" && u.over.find("preRunCommands") == std::string::npos) ||
+                                  (out.starts_with("(lldb) settings set target.") && out.find(u.tty) != std::string_view::npos));
             // (In the debug console, the program's errors and what the debugger
             // says as an error stand out, and the debugger's own word is quieter.)
             u.print_style = cat == "stderr" || cat == "important" ? 2 : cat == "console" || gdb_own ? 4 : 0;
@@ -1595,8 +1952,8 @@ void App::debug_sync_session(bool* stopped) {
                     u.said.emplace_back(std::string(text.substr(at, nl - at)), u.print_style);
                     at = nl + 1;
                 }
-            } else if (cat != "telemetry") {
-                u.print(b["output"].str());
+            } else if (cat != "telemetry" && !for_tty) {
+                u.print(out);
             }
             u.print_style = 0;
         } else if (m.name == "exited") {
@@ -2217,9 +2574,11 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
         control(DebugUi::kOver, "\xE2\x86\xB7", "Step over", "F10");
         control(DebugUi::kInto, "\xE2\x86\x93", "Step into", "F7");
         control(DebugUi::kOut, "\xE2\x86\x91", "Step out", "Shift+F11");
+        control(DebugUi::kRestart, "\xE2\x86\xBB", "Restart", chord_text(SDLK_F5, static_cast<SDL_Keymod>(kPrimaryMod | SDL_KMOD_SHIFT)).c_str());
         control(DebugUi::kStop, "\xE2\x96\xA0", "Stop", "Shift+F5");
     } else {
         control(DebugUi::kPause, "\xE2\x80\x96", "Pause", "F6");
+        control(DebugUi::kRestart, "\xE2\x86\xBB", "Restart", chord_text(SDLK_F5, static_cast<SDL_Keymod>(kPrimaryMod | SDL_KMOD_SHIFT)).c_str());
         control(DebugUi::kStop, "\xE2\x96\xA0", "Stop", "Shift+F5");
     }
     // A section: its heading, with a count where it is a list.
@@ -2431,6 +2790,7 @@ void App::debug_do(u32 i) {
         case DebugUi::kInto: debug_command("stepIn"); break;
         case DebugUi::kOut: debug_command("stepOut"); break;
         case DebugUi::kStop: debug_command("stop"); break;
+        case DebugUi::kRestart: debug_restart(); break;
         case DebugUi::kThread: debug_thread(row.index); break;
         case DebugUi::kWaves: u.waves_open = !u.waves_open; break;
         case DebugUi::kFrame: debug_frame(row.index, true); break;
@@ -3156,11 +3516,17 @@ void App::debug_set(const std::string& what, const std::string& value) {
     if (what == "program") u.program = full_path(value);
     else if (what == "args") u.args = value;
     else if (what == "cwd") u.cwd = full_path(value);
+    else if (what == "adapter") u.conf.adapter = value;  // (and a run configuration's debug: adapter, request, console, arguments, after, a command each time)
+    else if (what == "request") u.conf.request = value;
+    else if (what == "console") u.conf.console = value;
+    else if (what == "arguments") u.conf.arguments = value;
+    else if (what == "after") u.conf.after.push_back(value);
     ++debug_gen_;
 }
 
 // Waits (20 s at most) until the session is stopped, or over.
 void App::debug_wait(const std::string& state) {
+    build_first_settle();  // (what F5 builds first, and the session after it)
     const u64 until = now_ns() + 20'000'000'000ull;
     DebugUi& u = *debugui_;
     while (now_ns() < until) {

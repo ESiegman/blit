@@ -301,5 +301,19 @@ run "$P/check.cpp" "testdump;buildrun:make ctest;buildwait;testdump"
 check "and with the tab looked at first" "build: +adds xbreaks$(py ' | tests/test_math.py: .test_adds .test_fails') | make ctest (CTest): -later"
 rm "$P/Makefile"
 
+# The folder's build first (CMake's Build, here), and the tests only if it
+# went well: a check.cpp whose breaks passes now is built before they run;
+# one that does not compile says so, and nothing runs.
+cp "$P/check.cpp" "$dir/check.cpp.was"
+sed 's/return std::puts("2 + 2 is not 5"), 1;/return std::puts("fixed"), 0;/' "$dir/check.cpp.was" >"$P/check.cpp"
+run "$P/check.cpp" "command:Run the tests;testdump"
+check "the build before the tests: what they run is what was built" "build: +adds +breaks$(py ' | tests/test_math.py: +test_adds xtest_fails')"
+sleep 1  # (make tells a file newer by the second)
+printf 'int main( {\n' >"$P/check.cpp"
+got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$P;frame;command:Run the tests;testdump" "$P/tests/test_math.py" 2>&1 >/dev/null | grep -v '^\(Warning\|  \)' | tail -2 | tr '\n' ' ')
+check "a build that fails: it says so, and no test runs" "blit: Build failed: the tests did not start build: .adds .breaks$(py ' | tests/test_math.py: .test_adds .test_fails') "
+cp "$dir/check.cpp.was" "$P/check.cpp"
+cmake --build "$P/build" >/dev/null 2>&1
+
 [ "$failed" = 0 ] && echo "testing: all passed"
 exit "$failed"

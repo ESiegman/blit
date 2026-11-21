@@ -6,7 +6,10 @@
 //   blit_fakedap
 //
 // Every request it is sent is written, a line each ("command arguments"), to
-// the file $BLIT_FAKE_DAP_LOG names, where it names one. What it does:
+// the file $BLIT_FAKE_DAP_LOG names, where it names one; and every answer to
+// a request of its own ("answer:command success body"). What it does:
+//   initialize    says it can restart a session where $BLIT_FAKE_DAP_RESTART
+//                 is set (as lldb-dap does not)
 //   launch        a program that is not there is refused as lldb-dap refuses
 //                 it: no message, the reason in body.error.format (with a
 //                 {path} in it, filled in from its variables); else the
@@ -17,6 +20,11 @@
 //                 where the exceptions uncaught or raised are stopped at, it
 //                 stops there, reason "exception"; else what it raised is
 //                 printed to stderr, and it ends with code 1)
+//                 Asked to run it in a terminal (lldb-dap's runInTerminal,
+//                 or console "integratedTerminal"), it asks blit to
+//                 (runInTerminal: a shell that says where it is and its
+//                 $FAKE_TERM, then echoes a line read), as lldb-dap and
+//                 debugpy ask
 //   attach        stops at once, in a frame with no source
 //   setBreakpoints
 //                 each with an id of its own (the same for the same line
@@ -47,6 +55,9 @@
 //                 members and nope is refused (Python's traceback for a name it has not)
 //   exceptionInfo debugpy's account of a ValueError raised, with its stack
 //                 trace and the KeyError it was raised while handling
+//   restart       says "restarted", and stops again
+//   evaluate      "<the expression>" (one that starts with "fail" fails, as
+//                 lldb-dap 21 answers an expression before the program has stopped)
 //   completions   the words of a fixed list that start with the word before
 //                 the column, each to take that word's place; its start
 //                 counted from 0 whatever the client asked for, as debugpy
@@ -269,6 +280,10 @@ int main() {
         json::Doc doc;
         if (!doc.parse(body)) continue;
         const Value v = doc.root();
+        if (v["type"].str() == "response") {  // (to a request of its own)
+            log("answer:" + std::string(v["command"].str()) + (v["success"].boolean() ? " true" : " false"), v["body"]);
+            continue;
+        }
         if (v["type"].str() != "request") continue;
         const std::string_view command = v["command"].str();
         const Value a = v["arguments"];
@@ -282,8 +297,22 @@ int main() {
                 if (defaults) filters += std::string(",\"default\":") + (std::strstr(f, "\"uncaught\"") ? "true" : "false");
                 filters += "}";
             }
+            const char* restart = std::getenv("BLIT_FAKE_DAP_RESTART");
             respond(v, true, R"({"supportsConfigurationDoneRequest":true,"supportsCompletionsRequest":true,"supportsFunctionBreakpoints":true,)"
-                             R"("supportsExceptionFilterOptions":true,"supportsExceptionInfoRequest":true,"exceptionBreakpointFilters":[)" + filters + "]}");
+                             R"("supportsExceptionFilterOptions":true,"supportsExceptionInfoRequest":true,"exceptionBreakpointFilters":[)" + filters + "]" +
+                                 (restart && *restart ? std::string(",\"supportsRestartRequest\":true}") : std::string("}")));
+        } else if (command == "restart") {
+            respond(v, true);
+            output("restarted\n");
+            stopped("breakpoint");
+        } else if (command == "launch" && (a["runInTerminal"].boolean() || a["console"].str() == "integratedTerminal")) {  // (asked of blit, then launched)
+            std::string r = R"({"kind":"integrated","title":"fake","cwd":)";
+            json::quote(r, a["cwd"].str());
+            r += R"(,"args":["/bin/sh","-c","echo \"in the terminal: $FAKE_TERM in ${PWD##*/}\"; read line; echo \"read: $line\""],"env":{"FAKE_TERM":"yes"}})";
+            send("{\"seq\":" + std::to_string(seq++) + ",\"type\":\"request\",\"command\":\"runInTerminal\",\"arguments\":" + r + "}");
+            program = std::string(a["program"].str());
+            respond(v, true);
+            event("initialized");
         } else if (command == "launch") {
             const std::string path(a["program"].str());
             struct stat st;
@@ -352,6 +381,8 @@ int main() {
                 respond(v, true, R"({"variables":[{"name":"0","value":"'a'","type":"str","variablesReference":0},{"name":"1","value":"'b'","type":"str","variablesReference":0}]})");
             else
                 respond(v, true, R"({"variables":[{"name":"df","value":"DataFrame","variablesReference":0},{"name":"total","value":"1","variablesReference":0}]})");
+        } else if (command == "evaluate" && a["expression"].str().starts_with("fail")) {
+            respond(v, false, R"({"error":{"id":2,"format":"can't evaluate expressions when the process is running."}})");
         } else if (command == "evaluate" && waves && a["expression"].str() == "info threads") {
             std::string r = "{\"result\":";
             json::quote(r, info_threads());

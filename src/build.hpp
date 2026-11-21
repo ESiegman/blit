@@ -27,6 +27,15 @@ struct BuildTask {
     // init.lua's patterns its output is read with (blit.build.matcher): those
     // named; empty, all of them; {"none"}, nothing in it is a problem.
     std::vector<std::string> problems;
+    // Its "debug" (F5's): the debugger ("lldb-dap", "gdb", "debugpy", or a
+    // command line; empty: the machine's own), "launch" or "attach", the
+    // arguments laid over those blit sends (an object's JSON text), commands
+    // the debugger runs once the session has started, and where the
+    // program's input and output go ("terminal", "debug"; empty: decided).
+    struct Debug {
+        std::string adapter, request, arguments, console;
+        std::vector<std::string> after;
+    } debug;
 };
 
 // Where a folder's run configurations are, from the folder.
@@ -34,7 +43,9 @@ inline constexpr const char* kRunConfigs = ".blit/run.json";
 // The run configurations in root's .blit/run.json: { "configurations": [ {
 // "name", "program", "args" (a list, or one line), "env" (an object),
 // "cwd" (from the folder), "build" (a task to run first), "problems" (as
-// BuildTask's: a list, or "none") } ] }. `problem`
+// BuildTask's: a list, or "none"), "debug" (as BuildTask::Debug: "adapter"
+// a name or a command line, or a list of its words; "request"; "arguments",
+// an object; "after", a list; "console") } ] }. `problem`
 // says what is wrong with the file, if anything is.
 std::vector<BuildTask> read_run_configs(const std::string& root, std::string* problem);
 // A word as sh reads it back (in single quotes when it needs them).
