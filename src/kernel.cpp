@@ -291,11 +291,24 @@ void Kernel::Link::read_loop(std::stop_token stop) {
         text.erase(0, at);
         if (at && notify) notify();
     }
+    // (There: how it ended. -1 is no exit of its own: the connection went
+    // with it, or the agent there did, which a machine's restart ends.)
+    bool lost = false;
+    if (!remote_dir.empty() && !stopping) {
+        std::shared_ptr<Remote> c;
+        u32 id;
+        {
+            std::lock_guard lock(mu);
+            c = conn, id = proc.id;
+        }
+        lost = c && id && c->wait(id, 2000) == -1;
+    }
     ended = true;
     {
         std::lock_guard lock(mu);
         Event e;
         e.text = errors;
+        e.flag = lost;
         if (!stopping) queue.push_back(std::move(e));
     }
     if (notify) notify();

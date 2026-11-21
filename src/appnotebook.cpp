@@ -392,6 +392,7 @@ void App::nb_sync() {
                     break;
                 case Kernel::Event::kEnded: {
                     if (nb.lost.empty()) nb.lost = nb_host_down(d);
+                    if (std::string host, there; nb.lost.empty() && e.flag && split_remote(d.ed.path, &host, &there)) nb.lost = host;  // (the machine lost it: connected again already)
                     if (!nb.lost.empty()) {  // (its connection went: that is why)
                         notify("The kernel has stopped: the connection to " + nb.lost + " was lost", 2);
                         if (nb.running.key) put_running(d, false), touched = false;

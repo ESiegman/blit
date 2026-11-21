@@ -32,7 +32,8 @@ public:
         enum Kind : u8 { kReady, kStart, kOutput, kClear, kDone, kEnded } kind = kEnded;
         u64 cell = 0;   // what blit called the cell it is of
         i64 count = -1;  // kStart, kDone: its execution count
-        bool flag = false;  // kReady: in IPython; kClear: only when the next output comes; kDone: it ran without an error
+        bool flag = false;  // kReady: in IPython; kClear: only when the next output comes; kDone: it ran without an error;
+                            // kEnded: it went with its connection, or with the agent there (on another machine)
         std::string text;   // kOutput: the output (its JSON); kReady: Python's version; kEnded: why, if it was not asked to
     };
 

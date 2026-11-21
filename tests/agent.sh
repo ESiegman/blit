@@ -82,6 +82,16 @@ run "remotewait;frame;buildrun;wait:300;$cut;remoteback;buildwait;problemsdump" 
 check "a task that ran on while away: its problems once back" 'button: ▶ make · 1 error | Build 1 | file x.c | >E 2:5 boom'
 settle
 
+# A cell running when the connection went: the kernel goes on there, and
+# what the cell wrote meanwhile comes once back. (Python there: plain python3.)
+printf '{"cells": [{"cell_type": "code", "execution_count": null, "metadata": {}, "outputs": [], "source": ["import time\\n", "time.sleep(2)\\n", "print(\\"LATE\\")"]}], "metadata": {}, "nbformat": 4, "nbformat_minor": 5}\n' >"$W/k.ipynb"
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/modal.lua"
+rm -f "$dir/down" "$dir/tries"
+got=$(BLIT_INIT="$dir/modal.lua" "$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" \
+    --script "open:$R/k.ipynb;remotewait;mdwait;vim:2G;key:shift+Return;nbwait:started;$cut;frame;statusdump;remoteback;nbwait;nbdump" 2>&1 >/dev/null | grep -E 'kernel|LATE' | sed -e 's/^.*\(kernel waiting for box\).*$/\1/' -e 's/^[0-9]*: *//' | join)
+check "a cell running when the connection went: its output once back" 'kernel waiting for box ;; LATE'
+settle
+
 # Connecting again: at once, then waiting longer each time, and no more than
 # four connections begun in 30 s (the first one counts: a firewall counts it).
 run "remotewait;$(down refused);$cut;lua:os.execute('sleep 12');frame;statusdump;$back;remoteback;frame;statusdump" "$R/notes.txt"

@@ -462,10 +462,11 @@ got=$(BLIT_SSH="$(cd "$(dirname "$0")" && pwd)/fake-ssh.sh" BLIT_FAKE_HOME="$the
     --script "open:ssh://box$there/work/r.ipynb;remotewait;mdwait;vim:7G;key:shift+Return;nbwait;nbcells" 2>&1 >/dev/null | grep -E '^2 code|kernel')
 check "the helper written there beside another's half-written one" "2 code [1] same stream execute_result"
 rmdir "$there/.cache/blit/$helper.part"
-# The connection lost under a kernel there (blit's agent there killed): said,
-# and the status bar's kernel says so (in red) until a cell starts another.
+# The kernel there lost with the machine's agent (killed, as a restart does):
+# said once connected again (by itself), and the status bar's kernel says so
+# (in red) until a cell starts another.
 got=$(BLIT_SSH="$(cd "$(dirname "$0")" && pwd)/fake-ssh.sh" BLIT_FAKE_HOME="$there" "$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" \
-    --script "open:ssh://box$there/work/r.ipynb;remotewait;mdwait;vim:7G;key:shift+Return;nbwait;nbkernel;lua:os.execute('pkill -9 -f $there/.cache/blit/[b]lit-agent');remotelost;nbwait;frame;nbkernel;statusdump;command:Reconnect to the servers that dropped;remotewait;key:shift+Return;nbwait;nbkernel" 2>&1 >/dev/null |
+    --script "open:ssh://box$there/work/r.ipynb;remotewait;mdwait;vim:7G;key:shift+Return;nbwait;nbkernel;lua:os.execute('pkill -9 -f $there/.cache/blit/[b]lit-agent');remotelost;remoteback;lua:os.execute('sleep 2');nbwait;frame;nbkernel;statusdump;key:shift+Return;nbwait;nbkernel" 2>&1 >/dev/null |
     grep -E '^blit: The kernel|^lost|^python|kernel lost' | sed -e 's/pid [0-9]*/pid P/' -e 's/.*| \(kernel lost with box\).*/\1/' | tr '\n' '|')
 check "the connection lost under a kernel there: said, and in the status bar" "python pid P idle|blit: The kernel has stopped: the connection to box was lost|lost with box|kernel lost with box|python pid P idle|"
 
