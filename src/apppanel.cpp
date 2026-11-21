@@ -488,7 +488,7 @@ std::string App::problems_dump() {
     const std::vector<ProblemFile>& files = lsp_.problems();
     const size_t n = count_problems(files);
     const std::string failed = build_failure();
-    std::string out = "button: " + build_label() + " | " + (!bp.empty() ? "Build " + std::to_string(bp.size()) : (failed.empty() ? "" : failed + " | ") + "file " + std::to_string(n));
+    std::string out = "button: " + build_label() + " | " + (!bp.empty() ? build_source() + " " + std::to_string(bp.size()) : (failed.empty() ? "" : failed + " | ") + "file " + std::to_string(n));
     const Side& s = *side_;
     auto mark = [&](size_t i) -> std::string {
         if (!note_count(bp, files, i)) return "";
@@ -1621,7 +1621,7 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
             // (A run that failed with no error found says so on the line: never "No problems" under a red button.)
             const int failed = build_failed();
             if (!bp.empty()) {
-                const u32 c = heading(1, "Build", bp.size());
+                const u32 c = heading(1, build_source(), bp.size());
                 if (failed && c + 3 < cols) put(box, font, 1, c + 1, fit_text("failed with exit code " + std::to_string(failed), cols - c - 1), ink::kError);
             } else if (failed) {
                 put(box, font, 1, 0, fit_text(build_failure(), cols), ink::kError);

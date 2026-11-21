@@ -295,6 +295,7 @@ void App::build_sync() {
             const size_t n = r->found.size();
             u.problems.clear();
             u.groups.clear();
+            build_unmark();  // (the last run's marks go from the text too)
             build_errors_ = build_warnings_ = 0;
             u.at = -1;
             u.read_from = r->path;
@@ -446,9 +447,7 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     u.summary.clear();
     u.sizes_before.clear();
     u.read_from.clear();
-    for (auto& [id, m] : u.marks)  // (and from the text)
-        if (Doc* d = m->listening ? find_doc(id) : nullptr) d->ed.unlisten(m.get());
-    u.marks.clear();
+    build_unmark();  // (and from the text)
     build_errors_ = build_warnings_ = 0;
     u.at = -1;
     ++build_prob_gen_;
@@ -630,6 +629,22 @@ void App::BuildUi::Marks::on_edit(const TextEdit& e) {
 // time it is drawn after problems come, and the underlines again only when
 // the view, the text or the cursor's line changes: with no problems from
 // the build this is one test of a frame.
+// The marks the last problems made in the text, taken away (the problems
+// are going: a run starts, or a file's are read in their place).
+void App::build_unmark() {
+    BuildUi& u = *buildui_;
+    for (auto& [id, m] : u.marks)
+        if (Doc* d = m->listening ? find_doc(id) : nullptr) d->ed.unlisten(m.get());
+    u.marks.clear();
+}
+
+// The heading the build's problems are under in the Problems tab: "Build",
+// or the file they were read from.
+std::string App::build_source() const {
+    const BuildUi& u = *buildui_;
+    return u.read_from.empty() ? std::string("Build") : u.read_from.substr(u.read_from.find_last_of('/') + 1);
+}
+
 void App::build_marks(FrameDesc& fd) {
     BuildUi& u = *buildui_;
     if (u.problems.empty() || focus_view_ >= fd.view_count) return;

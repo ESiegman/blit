@@ -1376,6 +1376,8 @@ private:
     // found in its output"; "" when not so).
     int build_failed() const;
     std::string build_failure() const;
+    void build_unmark();               // the last problems' marks taken from the text
+    std::string build_source() const;  // what they are under in the Problems tab: "Build", or the file they were read from
     // "Read the problems from this file": a file chosen (the one in front to
     // begin with), read on a thread of its own (buildread.hpp) into the
     // build's problems, in place of the last run's.

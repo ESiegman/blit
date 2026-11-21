@@ -214,7 +214,7 @@ run "$R" "problemsread:$R/gcc16.sarif;buildwait;buildproblemsdump"
 check "SARIF from GCC: relative to the file's folder when its base is not here; the include chain and notes" 'E ~/read/src/d.hpp:3:27 '"'"'nothing'"'"' was not declared in this scope < ~/read/src/c.cpp:1 included here | E ~/read/src/c.cpp:5:5 too few arguments to function '"'"'void take(int, int)'"'"' < ~/read/src/c.cpp:2:6 declared here | E ~/read/src/c.cpp:6:18 [-fpermissive] invalid conversion from '"'"'const char*'"'"' to '"'"'int'"'"' < ~/read/src/d.hpp:2:18 initializing argument 1 of '"'"'int twice(int)'"'"' | W ~/read/src/c.cpp:4:9 [-Wunused-variable] unused variable '"'"'unused'"'"''
 got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$R;frame;problemsread:$R/gcc16.sarif;buildwait;problemsdump;key:F8;frame;statusdump" 2>&1 >/dev/null | sed -e "s#$dir#~#g" | tail -4 | tr '\n' '/')
 got=$(printf '%s' "$got" | sed 's#\(Col 27\)[^/]*/#\1/#')
-check "said, listed, counted, and F8 goes to them" 'blit: gcc16.sarif (SARIF): 4 problems/button: ▶  · 3 errors | Build 4 | file src/d.hpp | >E 3:27 '"'"'nothing'"'"' was not declared in this scope | file src/c.cpp | E 5:5 too few arguments to function '"'"'void take(int, int)'"'"' | E 6:18 invalid conversion from '"'"'const char*'"'"' to '"'"'int'"'"' | W 4:9 unused variable '"'"'unused'"'"'/blit: Problem 1 of 4: '"'"'nothing'"'"' was not declared in this scope/NORMAL src/d.hpp | × 3 ▲ 1 Ln 3, Col 27/'
+check "said, listed, counted, and F8 goes to them" 'blit: gcc16.sarif (SARIF): 4 problems/button: ▶  · 3 errors | gcc16.sarif 4 | file src/d.hpp | >▸E 3:27 '"'"'nothing'"'"' was not declared in this scope | file src/c.cpp | ▸E 5:5 too few arguments to function '"'"'void take(int, int)'"'"' | ▸E 6:18 invalid conversion from '"'"'const char*'"'"' to '"'"'int'"'"' | W 4:9 unused variable '"'"'unused'"'"'/blit: Problem 1 of 4: '"'"'nothing'"'"' was not declared in this scope/NORMAL src/d.hpp | × 3 ▲ 1 Ln 3, Col 27/'
 # A build's log of GCC's JSON: an array for each file, make's lines between.
 { printf 'g++ -c src/a.cpp\n'; cat "$R/gcc15-a.json"; printf '\ng++ -c src/c.cpp\n'; cat "$R/gcc15.json"; } >"$R/build.log"
 run "$R" "problemsread:$R/build.log;buildwait;buildproblemsdump"
@@ -233,7 +233,7 @@ check "a file that is not there" 'blit: Cannot read ~/read/nothing-here.sarif: t
 # They take the place of the last run's, and a run's failure is not said over them.
 printf 'quiet:\n\t@exit 1\n' >"$R/Makefile"
 run "$R" "buildrun:make quiet;buildwait;problemsread:$R/out/build.txt;buildwait;problemsdump"
-check "in place of the last run's (its failure no longer said)" 'button: ▶ make quiet · 1 error | Build 1 | file out/src/c.cpp | >E 5:5 from a log'
+check "in place of the last run's (its failure no longer said), under the file's name" 'button: ▶ make quiet · 1 error | build.txt 1 | file out/src/c.cpp | >E 5:5 from a log'
 run "$R" "problemsread:$R/out/build.txt;buildwait;buildrun:make quiet;buildwait;problemsdump"
 check "and the next run's take theirs" 'button: ▶ make quiet · failed (exit 2) | make quiet failed with exit code 2: no problem found in its output | file 0'
 # The command: the file in front to begin with.
