@@ -463,6 +463,7 @@ void App::start_syntax(u64 first_line, bool at_launch) {
     SyntaxOptions so;
     so.parser_dirs = cfg_.parser_dirs;
     so.query_dirs = cfg_.query_dirs;
+    so.parsers = grammar_parsers(grammar_list(cfg_.grammars));
     so.max_bytes = static_cast<u64>(cfg_.syntax_max_mb * 1048576.0f);
     so.hold_full_parse = at_launch;  // released by the first frame
 #if BLIT_DEV
@@ -504,7 +505,8 @@ void App::want_grammars() {
         if (!lang.empty() && find_grammar(list, lang)) wanted.push_back(lang);
     }
     bool asked = false;
-    for (const std::string& name : wanted) {
+    for (std::string& name : wanted) {
+        name = grammar_parser(list, name);  // (an alias: the grammar it uses)
         const GrammarSource* g = find_grammar(list, name);
         if (g && grammar_state(*g) == GrammarState::kInstalled) continue;
         if (!asked) {
@@ -523,14 +525,15 @@ void App::want_grammars() {
 void App::sync_grammars() {
     for (const GrammarInstaller::Done& d : grammars_.poll()) {
         if (!d.ok) {
-            notify("The " + language_name(d.name) + " grammar was not installed: " + d.message, 2);
+            notify("The " + language_name(d.name, cfg_.grammars) + " grammar was not installed: " + d.message, 2);
             continue;
         }
-        notify("Installed the " + language_name(d.name) + " grammar");
+        notify("Installed the " + language_name(d.name, cfg_.grammars) + " grammar");
         ++grammars_gen_;
-        // An open file may have been waiting for it.
+        // An open file may have been waiting for it (an alias's file too).
+        const std::vector<GrammarSource> list = grammar_list(cfg_.grammars);
         for_each_doc([&] {
-            if (d.name != file_language() || (pane_->doc->syntax.active() && pane_->doc->syntax.language() == d.name)) return;
+            if (d.name != grammar_parser(list, file_language()) || (pane_->doc->syntax.active() && pane_->doc->syntax.language() == d.name)) return;
             stop_syntax();
             start_syntax(static_cast<u64>(std::max(0.0, pane_->doc->scroll_y)) / static_cast<u64>(font_->cell_h()));
         });
@@ -549,6 +552,7 @@ bool App::grammar_missing() {
     SyntaxOptions so;
     so.parser_dirs = cfg_.parser_dirs;
     so.query_dirs = cfg_.query_dirs;
+    so.parsers = grammar_parsers(grammar_list(cfg_.grammars));
     return !Syntax::installed(lang, so);
 }
 
@@ -559,9 +563,9 @@ bool App::grammar_missing() {
 void App::grammar_install() {
     const std::string lang = file_language();
     if (lang.empty()) return notify("This file has no language");
-    const std::string name = language_name(lang);
+    const std::string name = language_name(lang, cfg_.grammars);
     const std::vector<GrammarSource> list = grammar_list(cfg_.grammars);
-    const GrammarSource* g = find_grammar(list, lang);
+    const GrammarSource* g = find_grammar(list, grammar_parser(list, lang));  // (an alias: the grammar it uses)
     if (!g || g->repo.empty()) return notify("No grammar is known for " + name, 1);
     if (!grammar_missing() && grammar_state(*g) == GrammarState::kInstalled) return notify("The " + name + " grammar is installed");
     grammars_.set_notify([] {  // on the installer's thread: wake the event loop
@@ -571,7 +575,7 @@ void App::grammar_install() {
         SDL_PushEvent(&ev);
     });
     grammars_.forgive();  // (one that failed before may be tried again)
-    grammars_.request(list, lang);
+    grammars_.request(list, g->name);
     notify("Installing the " + name + " grammar\xE2\x80\xA6");
 }
 

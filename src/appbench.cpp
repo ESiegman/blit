@@ -600,6 +600,8 @@ int App::run_bench() {
 //   folder:PATH            open a folder to work in (its session comes back; see appsession.cpp)
 //   quit                   what Cmd+Q does; the session is written as the run ends
 //   sessiondump            print the session the project folder would be written with now
+//   tokensdump             print the grammar's language the file in front is coloured with, and the kinds of token
+//                          coloured in it (the query's capture names), once the colours are in
 //   vim:KEYS               keys in Vim's notation (dw, <Esc>, <C-r>); vimdump prints the mode, the bottom line,
 //                          the cursor's line:column and the text of its line
 //   dump[:LABEL]           print how the window is split, and the tabs of each split
@@ -820,6 +822,16 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s\n", start_dump().c_str());
         } else if (verb == "statusdump") {
             std::fprintf(stderr, "%s\n", status_dump().c_str());
+        } else if (verb == "tokensdump") {  // once the colours are in: the grammar's language, and the kinds of token coloured
+            settle_syntax();
+            const Syntax& sx = pane_->doc->syntax;
+            std::vector<std::string> kinds;
+            for (const u8 s : sx.highlights().style)
+                if (s && s < sx.style_names().size() && std::ranges::find(kinds, sx.style_names()[s]) == kinds.end()) kinds.push_back(sx.style_names()[s]);
+            std::ranges::sort(kinds);
+            std::string out = sx.active() ? sx.language() + " |" : "no colours";
+            for (const std::string& k : kinds) out += " " + k;
+            std::fprintf(stderr, "%s\n", out.c_str());
         } else if (verb == "workdir") {  // what choosing a folder in the side panel does
             panel_set_workdir(arg);
         } else if (verb == "folder") {  // a folder opened to work in, as the start screen's Recent opens one

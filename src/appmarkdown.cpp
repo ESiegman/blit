@@ -757,6 +757,7 @@ void App::md_layout(FrameDesc& fd) {
             j.colour = cfg_.syntax;
             j.syntax.parser_dirs = cfg_.parser_dirs;
             j.syntax.query_dirs = cfg_.query_dirs;
+            j.syntax.parsers = grammar_parsers(grammar_list(cfg_.grammars));
             j.grammars = cfg_.grammars;
             if (v.notebook && !nb_model(*src, &nb_gen, &j.notebook, &j.lang)) j.notebook = std::make_shared<const std::vector<NotebookCell>>();
             for (u32 i = 0; i < kMdInkCount; ++i) std::copy(v.palette[i], v.palette[i] + 3, j.palette.ink[i]);

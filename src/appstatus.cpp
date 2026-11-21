@@ -56,9 +56,13 @@ struct Seg {
 
 }  // namespace
 
-// A language's name as people write it ("C++" for "cpp"); one not listed
-// with a capital.
-std::string language_name(const std::string& id) {
+// A language's name as people write it ("C++" for "cpp"): the name its
+// grammar gives it (in the settings, or built in), or one from this list;
+// one not listed with a capital.
+std::string language_name(const std::string& id, std::span<const GrammarSource> own) {
+    for (const std::span<const GrammarSource> list : {own, std::span<const GrammarSource>(builtin_grammars())})
+        for (const GrammarSource& g : list)
+            if (g.name == id && !g.display.empty()) return g.display;
     static const struct {
         const char* id;
         const char* name;
@@ -436,7 +440,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                 u.no_colours = grammar_missing();
             }
             if (text) {
-                u.right.push_back({u.lang.empty() ? std::string("Plain text") : language_name(u.lang), ink::kMuted, kLanguage, 2, 3});
+                u.right.push_back({u.lang.empty() ? std::string("Plain text") : language_name(u.lang, cfg_.grammars), ink::kMuted, kLanguage, 2, 3});
                 // (What a narrow window drops first: the rest stays where it was without it.)
                 if (u.no_colours) u.right.push_back({"(no colours)", ink::kMuted, kLanguage, 1, 1});
                 if (server && !server->empty()) {  // (the tab's own: none for a tab on no server; what it is busy with, as it says)
@@ -622,17 +626,19 @@ void App::status_pick(int what) {
     } else {  // the language: every one blit knows of, by its name, and plain text first
         std::vector<std::string> ids;
         for (const GrammarSource& g : grammar_list(cfg_.grammars)) ids.push_back(g.name);
-        std::sort(ids.begin(), ids.end(), [](const std::string& a, const std::string& b) { return SDL_strcasecmp(language_name(a).c_str(), language_name(b).c_str()) < 0; });
+        std::sort(ids.begin(), ids.end(), [this](const std::string& a, const std::string& b) {
+            return SDL_strcasecmp(language_name(a, cfg_.grammars).c_str(), language_name(b, cfg_.grammars).c_str()) < 0;
+        });
         ids.insert(ids.begin(), "-");
         const std::string now = file_language();
         // (Its grammar missing: getting it is the first row.)
         const bool get = grammar_missing() && std::ranges::find(ids, now) != ids.end();
         std::vector<std::string> items;
         size_t at = 0;
-        if (get) items.push_back("Install the " + language_name(now) + " grammar");
+        if (get) items.push_back("Install the " + language_name(now, cfg_.grammars) + " grammar");
         for (const std::string& lang : ids) {
             if (lang == (now.empty() ? "-" : now)) at = items.size();
-            items.push_back(lang == "-" ? std::string("Plain text") : language_name(lang));
+            items.push_back(lang == "-" ? std::string("Plain text") : language_name(lang, cfg_.grammars));
         }
         find_preview_item("Language", std::move(items), at, nullptr, [this, id, ids, get](int i) {
             Doc* doc = find_doc(id);

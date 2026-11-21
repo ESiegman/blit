@@ -60,14 +60,22 @@ struct ThemeColors {
 
 // Where the tree-sitter grammar for a language comes from: a repository on
 // GitHub at a fixed revision. In the settings file, a grammar with the name
-// of a built-in one starts from that and changes what it lists.
+// of a built-in one starts from that and changes what it lists. (Each field
+// may be left out where one is made: {.name = ..., .repo = ...}.)
 struct GrammarSource {
-    std::string name;                   // blit's name for the language: "cpp"
-    std::string repo;                   // "owner/name" on GitHub
-    std::string rev;                    // the commit (or tag) to fetch
-    std::string path;                   // folder in the repository that holds src/parser.c; "" = the top
-    std::vector<std::string> inherits;  // languages whose highlight queries come before its own
-    std::vector<std::string> extensions;  // file endings that are this language: "rs" (settings only)
+    std::string name{};                     // blit's name for the language: "cpp"
+    std::string repo{};                     // "owner/name" on GitHub
+    std::string rev{};                      // the commit (or tag) to fetch
+    std::string path{};                     // folder in the repository that holds src/parser.c; "" = the top
+    std::vector<std::string> inherits{};    // languages whose highlight queries come before its own
+    std::vector<std::string> extensions{};  // file endings that are this language: "rs" (settings only)
+    // Another language whose parser and highlight queries this one uses,
+    // under its own name (so with its own servers, none unless one names
+    // it): "cpp" for Metal. Such a grammar has no repo of its own.
+    std::string parser{};
+    std::string comment{};                  // what starts a line comment, "//"; or the two ends, "/* %s */" (Vim's commentstring)
+    std::vector<std::string> filenames{};   // whole file names that are this language, * and ? as in a shell: "Kconfig", "*_defconfig"
+    std::string display{};                  // its name as the status bar shows it ("name" in init.lua): "GLSL"
     bool operator==(const GrammarSource&) const = default;
 };
 
@@ -81,6 +89,9 @@ struct LspServer {
     std::string init_options;            // JSON for the server's initializationOptions, or empty
     std::string settings;                // JSON the server may ask for, or empty
     bool enabled = true;                 // false: never start this one
+    // The protocol's name for a language, where the server wants another
+    // than blit's: by blit's name ("cuda": "cuda-cpp"), "" for every one.
+    std::map<std::string, std::string, std::less<>> language_ids;
     bool operator==(const LspServer&) const = default;
 };
 

@@ -98,6 +98,12 @@
 -- are this language (these win over the built-in ones).
 -- blit.opt.syntax.grammars.rust = { repo = "tree-sitter/tree-sitter-rust", rev = "v0.24.2", path = "", inherits = {}, extensions = { "rs" } }
 -- blit.opt.syntax.grammars.c = { extensions = { "h" } }   -- .h files as C rather than C++
+-- `parser` makes a language another's grammar under its own name (and so
+-- with none of that language's servers), `filenames` are whole file names
+-- with * and ?, `name` is what the status bar calls the language, and
+-- `comment` is what gc comments a line with ("#", or "/* %s */" for both ends).
+-- blit.opt.syntax.grammars.ldc = { parser = "c", extensions = { "ld" }, name = "Linker script (C)", comment = "/* %s */" }
+-- blit.opt.syntax.grammars.kc = { filenames = { "Kconfig", "*_defconfig" }, comment = "#" }
 
 -- Token styles for every theme at once, written like a theme's syntax table
 -- above. A theme's own wins over these. For example, the colours of whatever
@@ -128,7 +134,9 @@
 -- built in is named under blit.opt.syntax.grammars above, with its
 -- `extensions`. `roots` are files that mark the top folder of a project.
 -- `init_options` and `settings` are JSON, as the server's documentation
--- gives them.
+-- gives them. `language_id` is the name the server is told a file's
+-- language by, where it wants another than blit's: one for every
+-- language, or a table by language ({ tsx = "typescriptreact" }).
 -- blit.opt.lsp.servers.clangd = { command = { "clangd", "--background-index", "--clang-tidy" }, init_options = '{"fallbackFlags": ["-std=c++23"]}' }
 -- blit.opt.lsp.servers["rust-analyzer"] = { command = { "rust-analyzer" }, languages = { "rust" }, roots = { "Cargo.toml", ".git" }, settings = '{"rust-analyzer": {"check": {"command": "clippy"}}}' }
 -- blit.opt.lsp.servers.pylsp = { enabled = false }   -- never start this one

@@ -21,6 +21,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "buffer.hpp"
@@ -34,6 +35,9 @@ namespace blit {
 struct SyntaxOptions {
     std::vector<std::string> parser_dirs;  // searched before the default folders
     std::vector<std::string> query_dirs;
+    // Languages parsed and coloured with another's grammar ({"metal",
+    // "cpp"}: grammar_parsers() of the grammar list).
+    std::vector<std::pair<std::string, std::string>> parsers;
     u64 max_bytes = 32ull << 20;  // larger files are left plain
     u32 margin_lines = 400;       // lines highlighted beyond each end of the window
     // How the highlight query is compiled. kAuto compiles it whole, and for
@@ -102,11 +106,14 @@ public:
     // Language name for a file ("cpp", "python", ...), or "" if unknown.
     // first_line is used for "#!" lines when the name says nothing. `own`
     // are the grammars from the settings: a file ending one of them lists
-    // (blit.opt.syntax.grammars.NAME.extensions) is that language, before
-    // anything built in. Built in are only C, C++ (HIP too), Python and
-    // what their projects' other files are written in.
+    // (blit.opt.syntax.grammars.NAME.extensions), or with a name one of
+    // them matches (filenames), is that language, before anything built in.
     static std::string language_for(std::string_view path, std::string_view first_line, std::span<const GrammarSource> own = {});
-    // True if a grammar for the language is installed.
+    // Whether a file's name fits a pattern of filenames: * any run of
+    // characters, ? any one.
+    static bool name_fits(std::string_view name, std::string_view pattern);
+    // True if a grammar for the language is installed (for an alias, the
+    // grammar it uses).
     static bool installed(const std::string& lang, const SyntaxOptions& opt);
     // The installed language a name stands for, as a Markdown code block
     // names one ("c++", "py", "sh", "yml", a language's name or one of its

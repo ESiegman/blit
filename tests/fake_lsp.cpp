@@ -3,6 +3,7 @@
 //   blit_fakelsp [--utf8] [--full] [--slow MS] [--late MS] [--die-after N] [--items N] [--quiet]
 //                [--pull] [--workspace] [--no-prepare] [--default-rename] [--changes] [--noise]
 //                [--close-input MS] [--hints-once] [--index MS] [--defs open|all] [--comments] [--name NAME]
+//                [--opened FILE]
 //
 // --utf8        agree to count columns in bytes (the default is UTF-16)
 // --full        ask for the whole document on every change
@@ -33,6 +34,8 @@
 //               where it is declared (as a declaration answers)
 // --comments    send each // comment as a comment token too (as some servers do)
 // --name NAME   what diagnostics give as their source (default "fake")
+// --opened FILE add a line to FILE for each document opened: the language
+//               it was said to be in (languageId), and its file's name
 //
 // It keeps every document it is sent. What it does with one:
 //   diagnostics  one for every ERROR, WARN, INFO and HINT in the text, plus a
@@ -115,6 +118,7 @@ long hints_answered = 0;
 long handled = 0;
 std::string source = "fake";
 std::string defs;  // --defs: "open" or "all"
+std::string opened_log;  // --opened
 
 struct Document {
     std::string text;
@@ -1283,6 +1287,7 @@ int main(int argc, char** argv) {
         else if (a == "--defs" && i + 1 < argc) defs = argv[++i];
         else if (a == "--comments") comment_tokens = true;
         else if (a == "--name" && i + 1 < argc) source = argv[++i];
+        else if (a == "--opened" && i + 1 < argc) opened_log = argv[++i];
     }
     if (close_input_ms > 0 || index_ms >= 0) setvbuf(stdin, nullptr, _IONBF, 0);  // (what has come is all read: poll() says when more has)
     std::string body;
@@ -1336,6 +1341,10 @@ int main(int argc, char** argv) {
             Document& d = docs[u];
             d.text = params["textDocument"]["text"].str();
             d.version = static_cast<long>(params["textDocument"]["version"].integer());
+            if (FILE* f = opened_log.empty() ? nullptr : std::fopen(opened_log.c_str(), "a")) {
+                std::fprintf(f, "%s %s\n", std::string(params["textDocument"]["languageId"].str()).c_str(), u.substr(u.rfind('/') + 1).c_str());
+                std::fclose(f);
+            }
             publish(u);
         } else if (method == "textDocument/didChange") {
             Document& d = docs[uri];

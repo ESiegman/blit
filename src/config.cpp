@@ -370,7 +370,10 @@ struct Parser {
         if (key.starts_with("lsp.servers.")) {
             // lsp.servers.NAME.FIELD: how to run one language server. A
             // built-in server of that name is the starting point.
-            const size_t dot = key.rfind('.');
+            // (language_id is a string, or a table by language:
+            // lsp.servers.NAME.language_id.LANGUAGE.)
+            const size_t ids = key.find(".language_id.", 12);
+            const size_t dot = ids != std::string_view::npos ? ids : key.rfind('.');
             const std::string_view name = dot > 12 ? key.substr(12, dot - 12) : std::string_view{}, field = key.substr(dot + 1);
             if (name.empty()) return warn("language servers go under [lsp.servers.NAME]");
             LspServer* s = nullptr;
@@ -392,6 +395,15 @@ struct Parser {
             }
             if (field == "init_options") return text(key, v, &s->init_options);
             if (field == "settings") return text(key, v, &s->settings);
+            if (field == "language_id" || ids != std::string_view::npos) {
+                const std::string language(ids != std::string_view::npos ? key.substr(ids + 13) : std::string_view{});
+                std::string id;
+                if (!as_string(v, &id) || id.empty())
+                    return warn(std::string(key) + " should be a name like \"cuda-cpp\", or a table of them by language");
+                if (language.empty()) s->language_ids.clear();  // (one for every language)
+                s->language_ids[language] = id;
+                return;
+            }
         }
         if (key == "git.enabled") {
             if (!as_bool(v, &c.git)) warn(std::string(key) + " should be true or false");
@@ -458,6 +470,18 @@ struct Parser {
             if (field == "repo") return text(key, v, &g->repo);
             if (field == "rev") return text(key, v, &g->rev);
             if (field == "path") return text(key, v, &g->path);
+            if (field == "parser") return text(key, v, &g->parser);
+            if (field == "comment") return text(key, v, &g->comment);
+            if (field == "name") return text(key, v, &g->display);
+            if (field == "filenames") {
+                std::vector<std::string> list;
+                if (!as_string_array(v, &list)) return warn(std::string(key) + " should be a list like [\"Kconfig\", \"*_defconfig\"]");
+                for (const std::string& f : list)
+                    if (f.empty() || f.find_first_of("/\\") != std::string::npos)
+                        return warn(std::string(key) + ": \"" + f + "\" is not a file's name like \"Kconfig\" or \"*_defconfig\"");
+                g->filenames = std::move(list);
+                return;
+            }
             if (field == "inherits") {
                 if (!as_string_array(v, &g->inherits)) warn(std::string(key) + " should be a list like [\"c\"]");
                 return;

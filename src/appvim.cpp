@@ -61,6 +61,15 @@ void comment_marks(const std::string& lang, std::string* left, std::string* righ
         }
 }
 
+// The comment markers a grammar's `comment` gives: "/* %s */" both ends,
+// as Vim's 'commentstring' writes them; "//" only what starts one.
+void comment_from(std::string_view given, std::string* left, std::string* right) {
+    const size_t at = given.find("%s");
+    *left = given.substr(0, at);
+    *right = at == std::string_view::npos ? std::string() : std::string(given.substr(at + 2));
+    if (at == std::string_view::npos && !left->ends_with(' ')) *left += ' ';
+}
+
 // How a language's lines indent, beside its comment markers: the first
 // column of its structure (what opens a level and what closes one), for
 // Enter, o and a closer typed. None for a language not known, or prose:
@@ -173,9 +182,17 @@ void App::vim_language() {
         u.comment_doc = d.id;
         u.comment_path = d.ed.path;
         u.comment_lang = d.lang;
+        // (The settings' comment for the language first; for an alias, what
+        // the language whose grammar it uses has, where it has none.)
         const std::string lang = file_language();
-        comment_marks(lang, &vim_.comment_left, &vim_.comment_right);
+        const std::vector<GrammarSource> list = grammar_list(cfg_.grammars);
+        const GrammarSource* g = find_grammar(list, lang);
+        const std::string parser = grammar_parser(list, lang);
+        if (g && !g->comment.empty()) comment_from(g->comment, &vim_.comment_left, &vim_.comment_right);
+        else comment_marks(lang, &vim_.comment_left, &vim_.comment_right);
+        if (vim_.comment_left.empty() && parser != lang) comment_marks(parser, &vim_.comment_left, &vim_.comment_right);
         vim_.indent_rules = indent_rules(lang);
+        if (!vim_.indent_rules) vim_.indent_rules = indent_rules(parser);
     }
 }
 

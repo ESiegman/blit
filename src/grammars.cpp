@@ -32,19 +32,19 @@ const std::vector<GrammarSource>& builtin_grammars() {
     // names exact contents, so what gets compiled is what was looked at.
     static const std::vector<GrammarSource> list = {
         // The languages blit has built in: C, C++ (HIP files too) and Python.
-        {"c", "tree-sitter/tree-sitter-c", "b780e47fc780ddc8da13afa35a3f4ed5c157823d", "", {}, {}},                    // v0.24.2
-        {"cpp", "tree-sitter/tree-sitter-cpp", "f41e1a044c8a84ea9fa8577fdd2eab92ec96de02", "", {"c"}, {}},             // v0.23.4
-        {"python", "tree-sitter/tree-sitter-python", "293fdc02038ee2bf0e2e206711b69c90ac0d413f", "", {}, {}},          // v0.25.0
+        {.name = "c", .repo = "tree-sitter/tree-sitter-c", .rev = "b780e47fc780ddc8da13afa35a3f4ed5c157823d"},                         // v0.24.2
+        {.name = "cpp", .repo = "tree-sitter/tree-sitter-cpp", .rev = "f41e1a044c8a84ea9fa8577fdd2eab92ec96de02", .inherits = {"c"}},  // v0.23.4
+        {.name = "python", .repo = "tree-sitter/tree-sitter-python", .rev = "293fdc02038ee2bf0e2e206711b69c90ac0d413f"},               // v0.25.0
         // What those projects' other files are written in (init.lua too).
-        {"cmake", "uyha/tree-sitter-cmake", "a3ec2b2144daf7132e7ee824d8cab9610523d10f", "", {}, {}},                   // v0.7.6
-        {"make", "tree-sitter-grammars/tree-sitter-make", "5e9e8f8ff3387b0edcaa90f46ddf3629f4cfeb1d", "", {}, {}},     // v1.1.1
-        {"json", "tree-sitter/tree-sitter-json", "ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24", "", {}, {}},              // v0.24.8
-        {"toml", "tree-sitter-grammars/tree-sitter-toml", "64b56832c2cffe41758f28e05c756a3a98d16f41", "", {}, {}},     // v0.7.0
-        {"yaml", "tree-sitter-grammars/tree-sitter-yaml", "7708026449bed86239b1cd5bce6e3c34dbca6415", "", {}, {}},     // v0.7.2
-        {"markdown", "tree-sitter-grammars/tree-sitter-markdown", "41ff24a6c775492c543b09228aeb98d1cd2b3a0f",
-         "tree-sitter-markdown", {}, {}},                                                                               // v0.5.4
-        {"bash", "tree-sitter/tree-sitter-bash", "a06c2e4415e9bc0346c6b86d401879ffb44058f7", "", {}, {}},              // v0.25.1
-        {"lua", "tree-sitter-grammars/tree-sitter-lua", "10fe0054734eec83049514ea2e718b2a56acd0c9", "", {}, {}},       // v0.5.0
+        {.name = "cmake", .repo = "uyha/tree-sitter-cmake", .rev = "a3ec2b2144daf7132e7ee824d8cab9610523d10f"},                        // v0.7.6
+        {.name = "make", .repo = "tree-sitter-grammars/tree-sitter-make", .rev = "5e9e8f8ff3387b0edcaa90f46ddf3629f4cfeb1d"},          // v1.1.1
+        {.name = "json", .repo = "tree-sitter/tree-sitter-json", .rev = "ee35a6ebefcef0c5c416c0d1ccec7370cfca5a24"},                   // v0.24.8
+        {.name = "toml", .repo = "tree-sitter-grammars/tree-sitter-toml", .rev = "64b56832c2cffe41758f28e05c756a3a98d16f41"},          // v0.7.0
+        {.name = "yaml", .repo = "tree-sitter-grammars/tree-sitter-yaml", .rev = "7708026449bed86239b1cd5bce6e3c34dbca6415"},          // v0.7.2
+        {.name = "markdown", .repo = "tree-sitter-grammars/tree-sitter-markdown", .rev = "41ff24a6c775492c543b09228aeb98d1cd2b3a0f",
+         .path = "tree-sitter-markdown"},                                                                                              // v0.5.4
+        {.name = "bash", .repo = "tree-sitter/tree-sitter-bash", .rev = "a06c2e4415e9bc0346c6b86d401879ffb44058f7"},                   // v0.25.1
+        {.name = "lua", .repo = "tree-sitter-grammars/tree-sitter-lua", .rev = "10fe0054734eec83049514ea2e718b2a56acd0c9"},            // v0.5.0
     };
     return list;
 }
@@ -55,10 +55,15 @@ std::vector<GrammarSource> grammar_list(const std::vector<GrammarSource>& from_s
     for (GrammarSource g : from_settings) {
         for (const GrammarSource& b : builtin) {
             if (b.name != g.name) continue;
-            if (g.repo.empty()) g.repo = b.repo;
-            if (g.rev.empty()) g.rev = b.rev;
+            // (A repository of its own makes an alias a grammar; another
+            // repository leaves the built-in one's revision.)
+            if (g.parser.empty() && g.repo.empty()) g.parser = b.parser;
+            if (g.repo.empty() && g.parser.empty()) g.repo = b.repo;
+            if (g.rev.empty() && g.repo == b.repo) g.rev = b.rev;
             if (g.path.empty() && g.repo == b.repo) g.path = b.path;
             if (g.inherits.empty()) g.inherits = b.inherits;
+            if (g.comment.empty()) g.comment = b.comment;
+            if (g.display.empty()) g.display = b.display;
         }
         list.push_back(std::move(g));
     }
@@ -71,6 +76,23 @@ const GrammarSource* find_grammar(const std::vector<GrammarSource>& list, std::s
     for (const GrammarSource& g : list)
         if (g.name == name) return &g;
     return nullptr;
+}
+
+std::string grammar_parser(const std::vector<GrammarSource>& list, std::string_view name) {
+    std::string at(name);
+    for (int depth = 0; depth < 4; ++depth) {  // (an alias of an alias, but not round in a circle)
+        const GrammarSource* g = find_grammar(list, at);
+        if (!g || g->parser.empty() || g->parser == at) break;
+        at = g->parser;
+    }
+    return at;
+}
+
+std::vector<std::pair<std::string, std::string>> grammar_parsers(const std::vector<GrammarSource>& list) {
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const GrammarSource& g : list)
+        if (!g.parser.empty()) out.emplace_back(g.name, grammar_parser(list, g.name));
+    return out;
 }
 
 std::string grammar_dir() {
@@ -358,7 +380,7 @@ GrammarState grammar_state(const GrammarSource& g) {
 bool install_grammar(const std::vector<GrammarSource>& list, const std::string& name, std::string* err,
                      const std::function<void(const std::string&)>& say) {
     std::string local;
-    return install_with_parents(list, name, err ? err : &local, say, 0);
+    return install_with_parents(list, grammar_parser(list, name), err ? err : &local, say, 0);
 }
 
 int install_grammars_command(const std::vector<GrammarSource>& list, std::vector<std::string> names) {
@@ -368,7 +390,7 @@ int install_grammars_command(const std::vector<GrammarSource>& list, std::vector
     }
     int failed = 0;
     for (const std::string& name : names) {
-        const GrammarSource* g = find_grammar(list, name);
+        const GrammarSource* g = find_grammar(list, grammar_parser(list, name));  // (an alias: the grammar it uses)
         if (g && grammar_state(*g) == GrammarState::kInstalled) {
             std::printf("%-12s already installed\n", name.c_str());
             continue;
@@ -389,6 +411,10 @@ int install_grammars_command(const std::vector<GrammarSource>& list, std::vector
 void print_grammars(const std::vector<GrammarSource>& list) {
     std::printf("grammars are installed into %s\n", grammar_dir().c_str());
     for (const GrammarSource& g : list) {
+        if (!g.parser.empty()) {
+            std::printf("  %-12s %-10s the %s grammar\n", g.name.c_str(), "", grammar_parser(list, g.name).c_str());
+            continue;
+        }
         const GrammarState st = grammar_state(g);
         std::printf("  %-12s %-10s %s%s%s @ %.12s\n", g.name.c_str(),
                     st == GrammarState::kInstalled ? "installed" : st == GrammarState::kOutdated ? "outdated" : "-", g.repo.c_str(),

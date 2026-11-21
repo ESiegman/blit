@@ -15,6 +15,7 @@
 #include <memory>
 #include <string>
 #include <string_view>
+#include <utility>
 #include <vector>
 
 #include "config.hpp"
@@ -27,6 +28,12 @@ const std::vector<GrammarSource>& builtin_grammars();
 // the same name, if there is one), then the remaining built-in ones.
 std::vector<GrammarSource> grammar_list(const std::vector<GrammarSource>& from_settings);
 const GrammarSource* find_grammar(const std::vector<GrammarSource>& list, std::string_view name);
+// The grammar a language's files are parsed with: its own, or the one its
+// `parser` names (through an alias of an alias). Installing a language
+// installs that one.
+std::string grammar_parser(const std::vector<GrammarSource>& list, std::string_view name);
+// Every alias in the list with the grammar it uses: {"metal", "cpp"}.
+std::vector<std::pair<std::string, std::string>> grammar_parsers(const std::vector<GrammarSource>& list);
 
 // The folder grammars are installed into ($XDG_DATA_HOME/blit, usually
 // ~/.local/share/blit); parsers/ and queries/ are below it.

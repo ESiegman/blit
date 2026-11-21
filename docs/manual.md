@@ -1478,6 +1478,38 @@ lists. Endings from init.lua win over the built-in ones. Once init.lua
 names a language, `extensions` alone is enough to have its files picked
 out, even with no grammar: that is all a language server needs.
 
+Four more fields say how a language is treated, whether its grammar is
+its own or not:
+
+```lua
+blit.opt.syntax.grammars.ldc = {
+  parser = "c",               -- C's grammar and colours, under this name
+  extensions = { "ld" },
+  name = "Linker script (C)", -- as the status bar and its list of languages show it
+  comment = "/* %s */",       -- what gc wraps a line in ("#": a line comment)
+}
+blit.opt.syntax.grammars.kc = { filenames = { "Kconfig", "Kconfig.*", "*_defconfig" }, comment = "#" }
+```
+
+- `parser` makes the language an alias: its files are parsed and coloured
+  with the named language's grammar (installing the alias installs that
+  grammar), but they are this language to everything else. Language
+  servers go by the language's name, so an alias gets no server of the
+  language whose grammar it borrows: a linker script coloured as C does
+  not start clangd. An alias with no `comment` of its own comments as
+  that language does, and indents as it does.
+- `filenames` are whole file names, with `*` for any run of characters
+  and `?` for any one, for files that a name says more of than an ending.
+  They are tried before endings.
+- `name` is what the status bar and its list of languages call the
+  language; without one it is the key with a capital (`Kc`).
+- `comment` is what gc and `gcc` make a comment with: what starts a line
+  comment (`"//"`, `"#"`), or both ends around `%s` as Vim's
+  `commentstring` writes them (`"/* %s */"`).
+
+`.m` and `.mm` files (Objective-C and Objective-C++) are C and C++ to
+blit, so clangd takes them from the same compilation database.
+
 Grammars put by hand into `~/.config/blit/parsers` (`LANGUAGE.so`) and
 `~/.config/blit/queries` (`LANGUAGE/highlights.scm`), beside `init.lua`, or
 into folders listed in `blit.opt.syntax.parser_dirs` and `query_dirs`, are
@@ -1874,10 +1906,18 @@ blit.opt.lsp.servers["rust-analyzer"] = {
 }
 ```
 
-The server is told the language by that name, so name a language the way
-the protocol does when the server cares (`typescript`, `typescriptreact`,
-`javascript`, `csharp`, ...); blit's one translation is `bash` to
-`shellscript`.
+The server is told the language by that name, unless its `language_id`
+says another (`typescriptreact`, `csharp`, ...): one name for every
+language it takes, or a table of them by language, the rest keeping
+theirs. Without one, blit's one translation is `bash` to `shellscript`.
+
+```lua
+blit.opt.lsp.servers.tsserver = {
+  command = { "typescript-language-server", "--stdio" },
+  languages = { "typescript", "tsx" },
+  language_id = { tsx = "typescriptreact" },   -- or language_id = "typescript" for both
+}
+```
 
 The project folder handed to the server is the nearest one above the file
 that holds one of the server's `roots`; files in two projects get a server
@@ -3809,6 +3849,7 @@ tests/git.sh build-debug/blit      # git end to end, in scratch repositories wit
 tests/modal.sh build-debug/blit    # modal editing through the real key and text events
 tests/look.sh build-debug/blit     # the looks and the motion: frames compared pixel for pixel
 tests/status.sh build-debug/blit   # the status bar's parts and clicks, a language with no colours and getting its grammar (a curl that fails), the window's title
+tests/langs.sh build-debug/blit    # which language a file is, a grammar's parser alias, filenames, comment and name, a server's language_id
 tests/find.sh build-debug/blit     # finding files and text, opening, saving and choosing a folder by a typed path; finding and replacing in the file and in files (one open, others not, and through tests/fake-ssh.sh)
 tests/lua.sh build-debug/blit      # scripts: settings, mappings, commands, events, programs, pickers, plugins
 tests/start.sh build-debug/blit    # the start screen and the list of what was opened lately (a scratch one)

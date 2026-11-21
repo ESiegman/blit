@@ -50,21 +50,21 @@ const std::vector<LspServer>& builtin_lsp_servers() {
         // 15, is not given. How far it has got comes as $/progress, shown
         // beside its name.)
         {"clangd", {"clangd", "--background-index", "-j=4"}, {"c", "cpp"},
-         {"compile_commands.json", "compile_flags.txt", ".clangd", ".git"}, "", "", true},
+         {"compile_commands.json", "compile_flags.txt", ".clangd", ".git"}, "", "", true, {}},
         {"pyright", {"pyright-langserver", "--stdio"}, {"python"},
-         {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "pyrightconfig.json", ".git"}, "", "", true},
+         {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "pyrightconfig.json", ".git"}, "", "", true, {}},
         {"basedpyright", {"basedpyright-langserver", "--stdio"}, {"python"},
-         {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "pyrightconfig.json", ".git"}, "", "", true},
-        {"pylsp", {"pylsp"}, {"python"}, {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", ".git"}, "", "", true},
+         {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", "pyrightconfig.json", ".git"}, "", "", true, {}},
+        {"pylsp", {"pylsp"}, {"python"}, {"pyproject.toml", "setup.py", "setup.cfg", "requirements.txt", ".git"}, "", "", true, {}},
         // For those projects' other files (init.lua too).
-        {"neocmakelsp", {"neocmakelsp", "stdio"}, {"cmake"}, {".git"}, "", "", true},
-        {"cmake-language-server", {"cmake-language-server"}, {"cmake"}, {".git"}, "", "", true},
-        {"vscode-json-language-server", {"vscode-json-language-server", "--stdio"}, {"json"}, {".git"}, "", "", true},
-        {"taplo", {"taplo", "lsp", "stdio"}, {"toml"}, {".git"}, "", "", true},
-        {"yaml-language-server", {"yaml-language-server", "--stdio"}, {"yaml"}, {".git"}, "", "", true},
-        {"marksman", {"marksman", "server"}, {"markdown"}, {".marksman.toml", ".git"}, "", "", true},
-        {"bash-language-server", {"bash-language-server", "start"}, {"bash"}, {".git"}, "", "", true},
-        {"lua-language-server", {"lua-language-server"}, {"lua"}, {".luarc.json", ".luarc.jsonc", ".git"}, "", "", true},
+        {"neocmakelsp", {"neocmakelsp", "stdio"}, {"cmake"}, {".git"}, "", "", true, {}},
+        {"cmake-language-server", {"cmake-language-server"}, {"cmake"}, {".git"}, "", "", true, {}},
+        {"vscode-json-language-server", {"vscode-json-language-server", "--stdio"}, {"json"}, {".git"}, "", "", true, {}},
+        {"taplo", {"taplo", "lsp", "stdio"}, {"toml"}, {".git"}, "", "", true, {}},
+        {"yaml-language-server", {"yaml-language-server", "--stdio"}, {"yaml"}, {".git"}, "", "", true, {}},
+        {"marksman", {"marksman", "server"}, {"markdown"}, {".marksman.toml", ".git"}, "", "", true, {}},
+        {"bash-language-server", {"bash-language-server", "start"}, {"bash"}, {".git"}, "", "", true, {}},
+        {"lua-language-server", {"lua-language-server"}, {"lua"}, {".luarc.json", ".luarc.jsonc", ".git"}, "", "", true, {}},
     };
     return list;
 }
@@ -78,6 +78,7 @@ std::vector<LspServer> lsp_server_list(const std::vector<LspServer>& from_settin
             if (s.command.empty()) s.command = b.command;
             if (s.languages.empty()) s.languages = b.languages;
             if (s.roots.empty()) s.roots = b.roots;
+            if (s.language_ids.empty()) s.language_ids = b.language_ids;
         }
         list.push_back(std::move(s));
     }
@@ -119,8 +120,11 @@ u8 clangd_index(const LspServer& s) {
     return index;
 }
 
-// The protocol's name for a language, where it differs from blit's.
-std::string language_id(const std::string& language) {
+// The protocol's name for a language, where it differs from blit's: as the
+// server's language_id says, for the language or for every one.
+std::string language_id(const std::string& language, const std::map<std::string, std::string, std::less<>>& ids) {
+    if (const auto it = ids.find(language); it != ids.end()) return it->second;
+    if (const auto it = ids.find(""); it != ids.end()) return it->second;
     if (language == "bash") return "shellscript";
     return language;
 }
@@ -730,6 +734,9 @@ struct Lsp::Server {
     std::string shown;  // as the user is told it (another machine's: name@host)
     std::string program, root, remote;
     std::vector<std::string> candidates;  // (another machine's: the names it may turn out to be)
+    // The protocol's names for languages, by each of the servers it may be
+    // (see language_id()).
+    std::map<std::string, std::map<std::string, std::string, std::less<>>> language_ids;
     Caps caps;
     bool ready = false;
     // clangd's background index: 0 not clangd, 1 off, 2 not built yet, 3
@@ -756,7 +763,7 @@ struct Lsp::Document final : EditListener {
     u64 key = 0;
     Editor* ed = nullptr;  // null for attach()'s
     const Buffer* buf = nullptr;
-    std::string as_given, path, uri, language_id, change_head;
+    std::string as_given, path, uri, language, change_head;  // (language: blit's name)
     i64 version = 0;
     bool opened = false;
     u64 rev = 0;  // the editor's revision as last seen, to tell a text read afresh
@@ -2211,7 +2218,9 @@ static void open_on_server(Lsp::Document& d, bool pinned, u64* sent) {
     std::string head = R"({"jsonrpc":"2.0","method":"textDocument/didOpen","params":{"textDocument":{"uri":)";
     json::quote(head, d.uri);
     head += R"(,"languageId":)";
-    json::quote(head, d.language_id);
+    static const std::map<std::string, std::string, std::less<>> none;
+    const auto ids = d.server->language_ids.find(d.server->name);  // (another machine's: by the server it turned out to be)
+    json::quote(head, language_id(d.language, ids != d.server->language_ids.end() ? ids->second : none));
     head += R"(,"version":)" + std::to_string(d.version) + R"(,"text":)";
     send_document(d, pinned, std::move(head), "}}}", false);
     d.opened = true;
@@ -2231,7 +2240,7 @@ Lsp::Document* Lsp::add_document(Server* s, u64 key, Editor* ed, const Buffer* b
     d->path = full;
     std::string host, there;
     d->uri = path_to_uri(split_remote(full, &host, &there) ? there : full);  // (another machine's: the path there)
-    d->language_id = language_id(language);
+    d->language = language;
     d->change_head = R"({"jsonrpc":"2.0","method":"textDocument/didChange","params":{"textDocument":{"uri":)";
     json::quote(d->change_head, d->uri);
     d->change_head += R"(,"version":)";
@@ -2392,9 +2401,10 @@ Lsp::Server* Lsp::start_server(const LspServer& server, const std::string& progr
     s->program = program;
     s->root = root;
     s->remote = remote;
+    s->language_ids[server.name] = server.language_ids;
     if (!remote.empty()) {
         s->shown += at_host(remote);  // (one that fails there may yet do here, and the other way round)
-        for (const LspServer& c : candidates) s->candidates.push_back(c.name);
+        for (const LspServer& c : candidates) s->candidates.push_back(c.name), s->language_ids[c.name] = c.language_ids;
         conn->candidates = std::move(candidates);
     }
     s->conn = conn;

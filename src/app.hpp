@@ -77,8 +77,9 @@ inline constexpr bool kCtrlShared = kPrimaryMod == SDL_KMOD_CTRL;
 // A path's folder, and a path made whole (from the current directory).
 std::string parent_of(const std::string& path);
 std::string full_path(const std::string& path);
-// A language's name as people write it: "C++" for "cpp" (appstatus.cpp).
-std::string language_name(const std::string& id);
+// A language's name as people write it: "C++" for "cpp", or what its
+// grammar in `own` (the settings) names it (appstatus.cpp).
+std::string language_name(const std::string& id, std::span<const GrammarSource> own = {});
 
 // One open file: its text, its colours, and where its view was left.
 struct Profile;      // (profile.hpp)

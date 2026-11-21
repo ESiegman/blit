@@ -402,6 +402,8 @@ if(BLIT_DEV)
     add_test(NAME container COMMAND sh ${CMAKE_SOURCE_DIR}/tests/container.sh $<TARGET_FILE:blit>)
     # The status bar's parts and clicks, a language with no colours, the window's title.
     add_test(NAME status COMMAND sh ${CMAKE_SOURCE_DIR}/tests/status.sh $<TARGET_FILE:blit>)
+    # Which language a file is, what init.lua says of languages, and the ones built in.
+    add_test(NAME langs COMMAND sh ${CMAKE_SOURCE_DIR}/tests/langs.sh $<TARGET_FILE:blit>)
     add_test(NAME find COMMAND sh ${CMAKE_SOURCE_DIR}/tests/find.sh $<TARGET_FILE:blit>)
     add_test(NAME shape COMMAND sh ${CMAKE_SOURCE_DIR}/tests/shape.sh $<TARGET_FILE:blit>)
     add_test(NAME edit COMMAND sh ${CMAKE_SOURCE_DIR}/tests/edit.sh $<TARGET_FILE:blit>)

@@ -124,6 +124,13 @@ std::vector<std::string> parser_dirs(const SyntaxOptions& o) { return search_dir
 
 std::vector<std::string> query_dirs(const SyntaxOptions& o) { return search_dirs(o.query_dirs, "queries"); }
 
+// The language whose grammar a language uses: its own, or an alias's.
+const std::string& parser_of(const std::string& lang, const SyntaxOptions& o) {
+    for (const auto& [name, parser] : o.parsers)
+        if (name == lang) return parser;
+    return lang;
+}
+
 std::string find_parser(const std::string& lang, const SyntaxOptions& o) {
     for (const std::string& dir : parser_dirs(o))
         for (const char* ext : {".so", ".dylib", ".dll"}) {
@@ -1071,7 +1078,9 @@ std::string Syntax::language_for(std::string_view path, std::string_view first_l
         for (char c : name.substr(dot + 1)) ext += static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
 
     // The settings first, so that they can add a language or take an
-    // ending from a built-in one.
+    // ending or a name from a built-in one.
+    for (const GrammarSource& g : own)
+        if (std::ranges::any_of(g.filenames, [&](const std::string& p) { return name_fits(name, p); })) return g.name;
     if (!ext.empty())
         for (const GrammarSource& g : own)
             if (std::ranges::find(g.extensions, ext) != g.extensions.end()) return g.name;
@@ -1084,7 +1093,7 @@ std::string Syntax::language_for(std::string_view path, std::string_view first_l
         const char* lang;
     } by_ext[] = {
         {"c", "c"}, {"h", "cpp"}, {"cc", "cpp"}, {"cpp", "cpp"}, {"cxx", "cpp"}, {"hpp", "cpp"}, {"hh", "cpp"},
-        {"hxx", "cpp"}, {"ipp", "cpp"}, {"inl", "cpp"}, {"hip", "cpp"},
+        {"hxx", "cpp"}, {"ipp", "cpp"}, {"inl", "cpp"}, {"hip", "cpp"}, {"m", "c"}, {"mm", "cpp"},  // (Objective-C and C++ to clangd)
         {"py", "python"}, {"pyi", "python"}, {"ipynb", "python"},
         {"cmake", "cmake"}, {"mk", "make"}, {"json", "json"}, {"jsonc", "json"}, {"toml", "toml"},
         {"yaml", "yaml"}, {"yml", "yaml"}, {"md", "markdown"}, {"markdown", "markdown"},
@@ -1101,7 +1110,7 @@ std::string Syntax::language_for(std::string_view path, std::string_view first_l
         {".bashrc", "bash"}, {".zshrc", "bash"}, {".zprofile", "bash"}, {".bash_profile", "bash"}, {".profile", "bash"},
     };
     for (const auto& e : by_name)
-        if (name == e.name) return e.lang;
+        if (name_fits(name, e.name)) return e.lang;
 
     if (first_line.starts_with("#!")) {
         static const struct {
@@ -1114,8 +1123,28 @@ std::string Syntax::language_for(std::string_view path, std::string_view first_l
     return {};
 }
 
+bool Syntax::name_fits(std::string_view name, std::string_view pattern) {
+    // (The last * met is where to go on from when the rest does not fit.)
+    size_t n = 0, p = 0, star = std::string_view::npos, from = 0;
+    while (n < name.size()) {
+        if (p < pattern.size() && (pattern[p] == '?' || pattern[p] == name[n])) {
+            ++n, ++p;
+        } else if (p < pattern.size() && pattern[p] == '*') {
+            star = p++;
+            from = n;
+        } else if (star != std::string_view::npos) {
+            p = star + 1;
+            n = ++from;
+        } else {
+            return false;
+        }
+    }
+    while (p < pattern.size() && pattern[p] == '*') ++p;
+    return p == pattern.size();
+}
+
 bool Syntax::installed(const std::string& lang, const SyntaxOptions& opt) {
-    return !lang.empty() && !find_parser(lang, opt).empty();
+    return !lang.empty() && !find_parser(parser_of(lang, opt), opt).empty();
 }
 
 // A code block's language, by its name, an alias, or a file ending.
@@ -1144,7 +1173,7 @@ bool Syntax::highlight_text(const std::string& lang, std::string_view text, cons
     if (text.empty() || text.size() > (4u << 20) || !installed(lang, opt)) return false;
     Engine e;
     std::string err;
-    e.bundle = get_bundle(lang, opt, &err);
+    e.bundle = get_bundle(parser_of(lang, opt), opt, &err);
     if (!e.bundle) return false;
     e.parser = ts_parser_new();
     if (!ts_parser_set_language(e.parser, e.bundle->language)) return false;
@@ -1181,7 +1210,7 @@ bool Syntax::highlight_text(const std::string& lang, std::string_view text, cons
 
 bool Syntax::attach(const Buffer& buf, const std::string& lang, const SyntaxOptions& opt) {
     detach();
-    std::string use = lang;
+    std::string use = parser_of(lang, opt);  // (an alias's files: its grammar's language)
     if (use == "cpp" && !installed(use, opt)) use = "c";  // headers still read well as C
     if (buf.size() > std::min<u64>(opt.max_bytes, 0x7FFFFFFFull) || !installed(use, opt)) return false;
     lang_ = use;
