@@ -52,11 +52,14 @@ SDL_Keymod keymod_of(u8 mods) {
 
 bool word_byte(u8 b) { return std::isalnum(b) || b == '_' || b >= 0x80; }
 
-// A key as the list names it. The bracket keys go by where they are: with
-// Shift or Option held, a Mac reports what they type ("{", "“") instead.
+// A key as the list names it. The bracket, comma and full stop keys go by
+// where they are: with Shift or Option held, a system may report what they
+// type ("{", "“", "<") instead.
 SDL_Keycode key_of(const SDL_KeyboardEvent& k) {
     if (k.scancode == SDL_SCANCODE_LEFTBRACKET) return SDLK_LEFTBRACKET;
     if (k.scancode == SDL_SCANCODE_RIGHTBRACKET) return SDLK_RIGHTBRACKET;
+    if (k.scancode == SDL_SCANCODE_COMMA) return SDLK_COMMA;
+    if (k.scancode == SDL_SCANCODE_PERIOD) return SDLK_PERIOD;
     return k.key;
 }
 
@@ -277,10 +280,13 @@ void App::commands_create() {
     own("Move the tab to the split on the right", {key(SDLK_RIGHT, kP | kA | kS)}, [this] { tab_to_split(kEdgeRight); });
     own("Move the tab to the split above", {key(SDLK_UP, kP | kA | kS)}, [this] { tab_to_split(kEdgeTop); });
     own("Move the tab to the split below", {key(SDLK_DOWN, kP | kA | kS)}, [this] { tab_to_split(kEdgeBottom); });
-    // (Where Ctrl with an arrow moves by words: Alt+Shift with it.)
+    // (Where Ctrl with an arrow moves by words: Alt+Shift with it, but for
+    // wider and narrower, whose Alt+Shift+Right and Left expand and shrink
+    // the selection there: Alt+Shift with the keys of > and <, as Vim's
+    // Ctrl-W > and < are.)
     const u8 grow = mac ? kP | kC : kA | kS;
-    own("Make the split wider", {key(SDLK_RIGHT, grow)}, [this] { split_grow(true, 1); });
-    own("Make the split narrower", {key(SDLK_LEFT, grow)}, [this] { split_grow(true, -1); });
+    own("Make the split wider", {mac ? key(SDLK_RIGHT, grow) : key(SDLK_PERIOD, grow)}, [this] { split_grow(true, 1); });
+    own("Make the split narrower", {mac ? key(SDLK_LEFT, grow) : key(SDLK_COMMA, grow)}, [this] { split_grow(true, -1); });
     own("Make the split taller", {key(SDLK_DOWN, grow)}, [this] { split_grow(false, 1); });
     own("Make the split shorter", {key(SDLK_UP, grow)}, [this] { split_grow(false, -1); });
     // Code.
@@ -526,6 +532,21 @@ bool App::command_key(const SDL_KeyboardEvent& k) {
             }
     }
     return false;
+}
+
+// For the tests: each chord that two commands have (on this system's list),
+// with the commands' names; "" when there is none.
+std::string App::command_clashes() {
+    std::string out;
+    if (!commands_) return out;
+    const std::vector<Commands::Command>& all = commands_->all;
+    for (size_t i = 0; i < all.size(); ++i)
+        for (const Chord& ch : all[i].keys)
+            for (size_t j = i + 1; j < all.size(); ++j)
+                for (const Chord& other : all[j].keys)
+                    if (ch.key == other.key && ch.mods == other.mods)
+                        out += chord_text(ch.key, keymod_of(ch.mods)) + ": " + all[i].title + " / " + all[j].title + "\n";
+    return out;
 }
 
 bool App::command_key_now(std::string_view title, SDL_KeyboardEvent* out) {

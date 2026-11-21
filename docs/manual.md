@@ -232,7 +232,7 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | Close the split (its tabs join the one beside it) | Cmd+Shift+W | Ctrl+Shift+W |
 | Keyboard to the split on that side | Cmd+Option+arrow | Ctrl+Alt+arrow |
 | The tab to the split on that side (a new one if there is none) | Cmd+Option+Shift+arrow | Ctrl+Alt+Shift+arrow |
-| The split wider / narrower, taller / shorter | Cmd+Ctrl+Right / Left, Down / Up | Alt+Shift+Right / Left, Down / Up |
+| The split wider / narrower, taller / shorter | Cmd+Ctrl+Right / Left, Down / Up | Alt+Shift+. / , (the keys of > and <), Down / Up |
 | The terminal along the bottom, with the keyboard; from there, back to the text (it hides, still running) | Ctrl+\` | Ctrl+\` |
 | Another terminal there | Ctrl+Shift+\` | Ctrl+Shift+\` |
 | The Problems / Git / Profile tab of the side panel (again: the keyboard back to the text) | Cmd+Shift+M / Ctrl+Shift+G / Cmd+Shift+R | Ctrl+Shift+M / G / R |
@@ -320,8 +320,10 @@ command run from the command search is always the editor's.
 | New file / Go to file | Ctrl+N or Ctrl+T / Ctrl+P | Ctrl+N / Ctrl+P (not in Insert mode, where they complete) |
 
 Ctrl+Shift+V pastes in any tab, the terminals' too, so the Markdown preview
-is Ctrl+Alt+V; a split is made wider or taller with Alt+Shift and the
-arrows (Ctrl with an arrow moves by words); Ctrl+Home and Ctrl+End go to
+is Ctrl+Alt+V; a split is made taller or shorter with Alt+Shift and Down
+or Up (Ctrl with an arrow moves by words), and wider or narrower with
+Alt+Shift and the keys of > and < (Alt+Shift+Right and Left expand and
+shrink the selection); Ctrl+Home and Ctrl+End go to
 the ends of the file (Vim's gg and G outside Insert mode). In a terminal
 tab Ctrl alone is the program's: copying, pasting, choosing all and
 clearing are Ctrl+Shift+C, V, A and K there, Ctrl+Shift and Ctrl+Alt+Shift

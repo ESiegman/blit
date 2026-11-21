@@ -46,11 +46,13 @@ run() {
 # where Ctrl is the editor's key (README.md, "Keys without Cmd").
 if [ "$(uname -s)" = Darwin ]; then
     split_keys='Split to the right (Cmd+\) Go to the split on the right (Cmd+Option+Right) Move the tab to the split on the right (Cmd+Option+Shift+Right) Make the split wider (Cmd+Ctrl+Right)'
+    wider=cmd+ctrl+Right
     panel_typed=cmd+b panel_keys='Show or hide the side panel (Cmd+B)'
     panel_map='<D-b>' panel_chord='Cmd+B'
     next_keys='Go to the next tab (Ctrl+Tab  Cmd+Shift+])'
 else
-    split_keys='Split to the right (Ctrl+\) Go to the split on the right (Ctrl+Alt+Right) Move the tab to the split on the right (Ctrl+Alt+Shift+Right) Make the split wider (Alt+Shift+Right)'
+    split_keys='Split to the right (Ctrl+\) Go to the split on the right (Ctrl+Alt+Right) Move the tab to the split on the right (Ctrl+Alt+Shift+Right) Make the split wider (Alt+Shift+.)'
+    wider=alt+shift+.  # (Alt+Shift+Right expands the selection there)
     panel_typed=ctrl+b panel_keys='Show or hide the side panel (Ctrl+B  Alt+B)'
     panel_map='<C-b>' panel_chord='Ctrl+B'
     next_keys='Go to the next tab (Ctrl+Tab  Ctrl+Shift+]  Ctrl+PageDown)'
@@ -82,6 +84,10 @@ run "key:cmd+shift+p;text:split below;key:Return;frame;dump"
 check "a command run from the search: as its keys would" 'V([notes.txt*] / >[untitled*])0.50'
 run 'key:cmd+\;key:Escape;keyof:Make the split wider;keyof:Make the split wider;frame;dump'
 check "the split wider (two twentieths)" 'H([notes.txt*] | >[untitled*])0.40'
+run "key:cmd+\\;key:Escape;key:$wider;key:$wider;frame;dump"
+check "and by its keys" 'H([notes.txt*] | >[untitled*])0.40'
+run "frame;keyclashes"
+check "no keys are two commands'" 'no clashes'
 run 'key:cmd+t;key:cmd+t;key:ctrl+shift+pageup;frame;dump'
 check "the tab one place left" '>[notes.txt untitled* untitled]'
 run "open:$dir/work/long.txt;open:$dir/work/short.txt;key:cmd+alt+shift+[;key:cmd+alt+shift+[;frame;dump"

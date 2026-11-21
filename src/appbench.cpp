@@ -684,6 +684,9 @@ void App::run_script(const char* script) {
             e.key.down = true;
             if (e.key.key == SDLK_UNKNOWN) std::fprintf(stderr, "script: unknown key %s\n", name.c_str());
             handle(e);
+        } else if (verb == "keyclashes") {  // each chord two commands have, or "no clashes"
+            const std::string c = command_clashes();
+            std::fprintf(stderr, "%s", c.empty() ? "no clashes\n" : c.c_str());
         } else if (verb == "keyof") {
             if (command_key_now(arg, &e.key)) handle(e);
             else std::fprintf(stderr, "keyof: no \"%s\"\n", arg.c_str());

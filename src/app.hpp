@@ -1228,6 +1228,7 @@ private:
     // starts so): the first of its keys that Vim would not take (the tests'
     // keyof:). False if there is no such command or it has no keys.
     bool command_key_now(std::string_view title, SDL_KeyboardEvent* out);
+    std::string command_clashes();  // (for the tests: chords two commands have)
     void palette_open();
     void palette_keys();  // appfind.cpp: the command search, looking up the next keys pressed
     void palette_run(u32 id);
