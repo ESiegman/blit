@@ -332,6 +332,7 @@ void App::commands_create() {
     // Terminals: in the split along the bottom.
     own("Show or hide the terminal", {key(SDLK_GRAVE, ctl)}, [this] { term_toggle(); });
     own("New terminal", {key(SDLK_GRAVE, ctl | kS)}, [this] { term_new(); });
+    own("New terminal on this machine", {}, [this] { term_new_here(); });
     own("Open the Python console", {}, [this] { py_console(true); });
     own("Send the lines to the Python console", {}, [this] { py_send_lines(); });
     own("Run the cell (# %%)", {}, [this] { if (!nb_run_cell()) notify("The file has no # %% cells"); });

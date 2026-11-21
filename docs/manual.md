@@ -1971,7 +1971,8 @@ over the one ssh connection:
   host (`clangd@devbox`).
 
 The status bar starts with the host of the tab in front (a file's own, a
-terminal's; for a tab with neither, the working folder's), and says while
+terminal's, none for one on this machine; for a tab with neither, the
+working folder's), and says while
 it is connecting (and copying the agent, the first time). A connection
 that is lost is made again by itself while something is open there (a
 tab, the folder) or running there: at once, then after 2, 5, 10, 20, 30
@@ -2197,6 +2198,8 @@ or drag it into a split of its own.
 - The shell is your login shell. When the folder is on another machine
   (`ssh://host/...`), the terminal runs there, through blit's agent, on
   the same connection as the files; it connects by itself if it has to.
+  "New terminal on this machine" opens one here instead, in the folder on
+  this machine opened last (or the home folder).
 - Programs see an xterm (`TERM=xterm-256color`, 24-bit colour): full-screen
   programs (vim, htop, less) work, and the tab's size follows the split.
   `LANG` is set to UTF-8 when nothing sets it.

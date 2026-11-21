@@ -463,7 +463,7 @@ struct App::TermDock {
     u64 term = 0;    // the terminal it last had the keyboard on
     std::unique_ptr<Pane> away;  // while hidden
     float room = 0.3f;           // its share of the height
-    static void enter(App& a, bool fresh);
+    static void enter(App& a, bool fresh, const std::string& dir_given = {});
 };
 
 // ---------------------------------------------------------------- opening one
@@ -706,16 +706,16 @@ void App::dock_hide() {
 
 // The split on show with the keyboard on a terminal there: a new one
 // (fresh), else the one it last had the keyboard on, else a shell there,
-// else a new one.
-void App::TermDock::enter(App& a, bool fresh) {
+// else a new one. A new one starts in `dir_given`, when there is one.
+void App::TermDock::enter(App& a, bool fresh, const std::string& dir_given) {
     TermDock& k = a.term_dock();
     Pane* const from = a.pane_;
     const bool from_dock = from == a.dock_pane();
     const std::string* root = a.panel_root();
-    const std::string dir = root ? *root : a.default_workdir();  // (the folder being worked in: found from the split with the keyboard)
+    const std::string dir = !dir_given.empty() ? dir_given : root ? *root : a.default_workdir();  // (the folder being worked in: found from the split with the keyboard)
     Pane* const p = a.dock_show(from);
     if (!p) {  // (no room for another split: a terminal tab here)
-        a.term_open();
+        a.term_open(dir_given);
         return;
     }
     if (!from_dock) k.back = from->id;
@@ -756,6 +756,17 @@ void App::term_toggle() {
 
 // Ctrl+Shift+`: another terminal there.
 void App::term_new() { TermDock::enter(*this, true); }
+
+// "New terminal on this machine": another there, here whatever machine the
+// folder is on, in the folder here opened last (else the home folder).
+void App::term_new_here() {
+    std::string dir = recent_local_folder();
+    if (dir.empty()) {
+        const char* home = SDL_getenv("HOME");
+        dir = home && *home ? home : "/";
+    }
+    TermDock::enter(*this, true, dir);
+}
 
 // ---------------------------------------------------------------- the Python console
 

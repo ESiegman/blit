@@ -614,6 +614,26 @@ rm -f "$dir/down"
 got=$(BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
     --script "remotewait;frame;statusdump;term:ssh://other$W;remotewait;termwait:\$;frame;statusdump" "$R" 2>&1 >/dev/null | join)
 check "a terminal on another machine: the bar names its machine" 'box untitled | Ln 1, Col 1 Tabs LF Plain text ;; other Terminal: other |'
+# A terminal on this machine from a folder there: a shell here, in the
+# home folder (or the folder here opened last), and the bar names no
+# machine for it (nor the folder's, when that could not be reached).
+mkdir -p "$dir/lastlocal"
+here_term() {  # here_term RECENT [ENV]: the command run from the folder there, with that list of folders opened lately
+    printf "$1" >"$dir/recent-term"
+    rm -f "$dir/pwd.txt"
+    got=$(env ${2:-} HOME="$dir/home" BLIT_RECENT_FILE="$dir/recent-term" BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+        --script "remotewait;frame;command:New terminal on this machine;termwait:\$;text:pwd >$dir/pwd.txt && echo w''rote;key:Return;termwait:wrote;frame;statusdump;dump" "$R" 2>&1 >/dev/null | join)
+    got="$got | $(sed -e "s#$dir#@#g" "$dir/pwd.txt" 2>/dev/null)"
+}
+here_term ''
+check "a terminal on this machine from a folder there: in the home folder" 'Terminal | ;; V([untitled*] / >[Terminal*])0.70 | @/home'
+here_term "d\tssh://box$W/src\nd\t$dir/gone\nd\t$dir/lastlocal\nd\t$dir/home\n"
+check "or in the folder here opened last" 'Terminal | ;; V([untitled*] / >[Terminal*])0.70 | @/lastlocal'
+echo refused >"$dir/down"
+here_term '' "BLIT_FAKE_DOWN=$dir/down"
+got=$(printf '%s' "$got" | sed -e 's/^blit: cannot connect to box: ssh: connect to host: refused ;; //')
+check "and with the folder's machine not reached: no machine named" 'Terminal | ;; V([untitled*] / >[Terminal*])0.70 | @/home'
+rm -f "$dir/down"
 
 # A build there: its output's tab names the machine, as a terminal's does.
 mkdir -p "$T/.mk" && printf 'all:\n\t@echo built\n' >"$T/.mk/Makefile"

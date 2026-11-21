@@ -426,6 +426,15 @@ std::vector<std::string> App::recent_files(size_t most) const {
     return out;
 }
 
+// The folder on this machine opened last that is still there: where a
+// terminal on this machine starts from a folder on another.
+std::string App::recent_local_folder() const {
+    if (!start_) return {};
+    for (Recent& r : start_->recent)
+        if (r.dir && !is_remote(r.path) && still_there(r)) return r.path;
+    return {};
+}
+
 bool App::start_shown() {
     if (!start_ || !start_->on) return false;
     StartUi& s = *start_;

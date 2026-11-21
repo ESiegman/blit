@@ -796,6 +796,7 @@ private:
     // (The overhaul's entry points; each is implemented by the part named.)
     void find_step(int by);                      // appfind.cpp: the next (1) or previous (-1) hit of the last search in files
     std::vector<std::string> recent_files(size_t most) const;  // appstart.cpp: files opened lately, the latest first, that are still there
+    std::string recent_local_folder() const;                    // appstart.cpp: the latest folder on this machine opened that is still there (none: empty)
     void save_as();                              // app.cpp: the file in front, under a name asked for
     void save_all();                             // app.cpp: every file with changes that has a name
     void save_docs(const std::vector<u64>& ids);  // app.cpp: those documents (each with a name), the tabs in front staying in front
@@ -1152,6 +1153,7 @@ private:
     TermDock& term_dock();
     void term_toggle();
     void term_new();
+    void term_new_here();
     Pane* dock_show(Pane* above);  // on show, brought back, or made below `above` (nullptr: no room)
     Pane* dock_pane() const;       // on show: the split; else nullptr
     void dock_hide();
