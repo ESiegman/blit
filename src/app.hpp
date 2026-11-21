@@ -574,7 +574,7 @@ private:
     void lsp_extras(FrameDesc& fd);  // inlay hints and the server's colours, for each view
     static std::string hint_text(const InlayHint& h);  // (an inlay hint as it is drawn)
     std::string lsp_dump();  // (tests) the servers, and each tab's place on one
-    std::string hover_dump();  // (tests) the hover's rows, and where it is down the window
+    std::string hover_dump(bool text = false);  // (tests) the hover's rows, and where it is down the window (text: what they say)
     std::string lsp_extras_dump(bool colours = false);  // (tests) the inlay hints and the servers' colours on show (with what each colour is)
     std::string completion_dump();  // (tests) the completion list's rows, as label and detail
     void lsp_go_problem(size_t i);  // (apppanel.cpp) the language servers' problem i, counted across files

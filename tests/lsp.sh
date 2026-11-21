@@ -72,6 +72,7 @@ fresh() {
     printf 'struct Shape {\n};\nstruct Circle : public Shape {\n};\nstruct Square : Shape {\n};\nint leaf(int n) {\n    return n;\n}\nint middle(int n) {\n    return leaf(n) + leaf(1);\n}\nint top() {\n    return middle(2);\n}\n' >"$P/calls.cpp"
     printf 'struct Ring {\n    void push(int v);\n    int pop();\n};\nvoid Ring::push(int v) {\n}\nint Ring::pop() {\n    return 0;\n}\nint drain(Ring& r) {\n    return r.pop();\n}\n' >"$P/ring.cpp"
     printf 'plain words\n' >"$P/notes.txt"
+    printf 'void DECL();\nint main() { NOVIABLE(1); }\n' >"$P/r.cpp"
     printf 'int format_record(int n);\n' >"$P/fmt.hpp"
     printf 'int format_record(int n) {\n    return n;\n}\n' >"$P/fmt.cpp"
     mkdir -p "$P/lib"
@@ -141,6 +142,17 @@ with pull "problemsdump"
 check "a server that reports the whole project's problems: files that are not open too" 'button: ▶  | file 5 | file a.cpp | >H 1 text:46aa6896d35a2ff7 | E 1 found ERROR | W 3 found WARN | file c.cpp (not open) | H 1 text:23d998acb00f2736 | W 1 found WARN'
 with pull "key:F8;key:F8;key:F8;key:F8;dump"
 check "F8 opens a file that is not open, at its problem" '>[a.cpp c.cpp*]'
+# What a server relates to a problem (clangd's relatedInformation: the
+# candidate a call did not match): under it, as a build problem's notes.
+run "key:cmd+shift+m;key:Down;problemsdump" "$P/r.cpp"
+check "a problem with related places: a triangle, shut" 'button: ▶  | file 2 | file r.cpp | H 1 text:4406ec36b4e58055 | >▸E 2 No matching function for call to '"'"'g'"'"''
+run "key:cmd+shift+m;key:Down;key:Right;key:Down;problemsdump" "$P/r.cpp"
+check "opened: its related place, further in" 'button: ▶  | file 2 | file r.cpp | H 1 text:4406ec36b4e58055 | ▾E 2 No matching function for call to '"'"'g'"'"' | >  1:6 Candidate function not viable: requires 0 arguments, but 1 was provided'
+run "key:cmd+shift+m;key:Down;key:Right;key:Down;key:Return;frame;statusdump" "$P/r.cpp"
+check "Enter on it: there" 'r.cpp | × 1 ▲ 0 Ln 1, Col 6 Tabs LF C++ · fakec'
+run "key:Down;key:Home;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:Right;key:cmd+I;wait:300;frame;hoverdump:text" "$P/r.cpp"
+got=${got%% /  / int NOVIABLE*}
+check "and in the hover, under its message (as clangd puts it in the message to a client that does not take them)" 'error: No matching function for call to '"'"'g'"'"' / r.cpp:1:6: Candidate function not viable: requires 0 arguments, but 1 was provided / clang ovl_no_viable_function_in_call'
 
 # Find references: a list like Search in files; Enter goes there; F4 steps on.
 run "key:Right;key:Right;key:Right;key:Right;key:Right;key:shift+F12;wait:200;finddump"

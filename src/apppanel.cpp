@@ -88,16 +88,26 @@ struct ProblemNote {
     const std::string* message = nullptr;
 };
 
-// Problem i's notes (the build's first, then the language servers'): how
-// many, and one of them; and the problem's own file.
-size_t note_count(const std::vector<BuildProblem>& b, const std::vector<ProblemFile>&, size_t i) { return i < b.size() ? b[i].notes.size() : 0; }
+// Problem i's notes (the build's first, then the language servers': their
+// related places): how many, and one of them; and the problem's own file.
+size_t note_count(const std::vector<BuildProblem>& b, const std::vector<ProblemFile>& files, size_t i) {
+    if (i < b.size()) return b[i].notes.size();
+    const ProblemFile* file = nullptr;
+    const ProblemFile::Item* it = lsp_problem(files, i - b.size(), &file);
+    return it ? it->related.size() : 0;
+}
 
-ProblemNote note_of(const std::vector<BuildProblem>& b, const std::vector<ProblemFile>&, size_t i, size_t k) {
-    if (i < b.size() && k < b[i].notes.size()) {
+ProblemNote note_of(const std::vector<BuildProblem>& b, const std::vector<ProblemFile>& files, size_t i, size_t k) {
+    if (i < b.size()) {
+        if (k >= b[i].notes.size()) return {};
         const BuildNote& n = b[i].notes[k];
         return {&n.path, n.path.empty() ? 0 : n.line, n.col, &n.message};
     }
-    return {};
+    const ProblemFile* file = nullptr;
+    const ProblemFile::Item* it = lsp_problem(files, i - b.size(), &file);
+    if (!it || k >= it->related.size()) return {};
+    const DiagRelated& r = it->related[k];
+    return {&r.path, r.path.empty() ? 0 : r.line + 1, r.col + 1, &r.message};
 }
 
 const std::string* problem_path(const std::vector<BuildProblem>& b, const std::vector<ProblemFile>& files, size_t i) {

@@ -1559,9 +1559,14 @@ std::string App::lsp_dump() {
 
 // The hover box as last laid out: its rows, its top and bottom, and the
 // window's height; or none.
-std::string App::hover_dump() {
+std::string App::hover_dump(bool text) {
     const Assist& a = *assist_;
     if (!a.hover_open || a.hover_rect.h <= 0) return "no hover";
+    if (text) {
+        std::string out;
+        for (const Line& l : a.hover_lines) out += (out.empty() ? "" : " / ") + l.text;
+        return out;
+    }
     return "hover " + std::to_string(a.hover_box.rows) + " rows, " + std::to_string(a.hover_rect.y) + " to " + std::to_string(a.hover_rect.y + a.hover_rect.h) + " of " +
            std::to_string(px_h_);
 }
@@ -1691,6 +1696,12 @@ void App::show_hover(u64 off, bool at_cursor) {
             a.hover_lines.push_back(std::move(l));
             rest = nl == std::string_view::npos ? std::string_view{} : rest.substr(nl + 1);
             first = false;
+        }
+        for (const DiagRelated& r : d.related) {  // (what clangd says in its notes: in the message, where the client does not take them apart)
+            Line l;
+            l.text = r.path.substr(r.path.rfind('/') + 1) + ":" + std::to_string(r.line + 1) + ":" + std::to_string(r.col + 1) + ": " + r.message;
+            l.ink = kInkMuted;
+            a.hover_lines.push_back(std::move(l));
         }
         if (!d.source.empty() || !d.code.empty()) {
             Line l;

@@ -48,6 +48,16 @@ std::vector<LspServer> lsp_server_list(const std::vector<LspServer>& from_settin
 // position in `text` of each matched letter.
 int lsp_match(std::string_view pattern, std::string_view text, std::vector<u32>* at = nullptr);
 
+// A place a diagnostic goes on to name (the protocol's relatedInformation:
+// clangd's notes, the candidate a call did not match, the template's
+// instantiation): its file, line and column (from 0; the column as the
+// server counts it), and what it says.
+struct DiagRelated {
+    std::string path;
+    u32 line = 0, col = 0;
+    std::string message;
+};
+
 struct Diagnostic {
     u64 start = 0, end = 0;  // byte offsets, kept in step with edits
     u8 severity = 1;         // 1 error, 2 warning, 3 information, 4 hint
@@ -55,6 +65,7 @@ struct Diagnostic {
     std::string message;
     std::string source, code;
     std::string raw;  // as the server sent it (JSON): handed back when its fixes are asked for
+    std::vector<DiagRelated> related;
 };
 
 struct CompletionItem {
@@ -181,6 +192,7 @@ struct ProblemFile {
         u8 severity = 1;
         u64 off = ~0ull;        // in the open document (~0: not open)
         std::string message;
+        std::vector<DiagRelated> related;
     };
     std::vector<Item> items;
 };

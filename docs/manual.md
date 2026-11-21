@@ -1707,8 +1707,11 @@ A server whose last file has been closed stops half a minute later.
   serious problem in words at its end; resting the mouse on an underline, or
   Cmd+I with the cursor there, shows all of it. The Problems tab of the
   [side panel](#side-panel) lists every file's, and F8 / Shift+F8 go
-  through them. A light bulb in the line numbers marks a problem the server
-  has a fix for.
+  through them. What the server relates to a problem (its
+  `relatedInformation`: clangd's notes, such as the candidate a call did
+  not match or where a template was instantiated) shows under it there,
+  as a build problem's notes do, and under its message in the hover. A
+  light bulb in the line numbers marks a problem the server has a fix for.
 - **Completions** appear while typing and narrow as more is typed; the
   letters that matched are picked out, and the selected item's type and
   documentation show beside the list. An item that needs something added

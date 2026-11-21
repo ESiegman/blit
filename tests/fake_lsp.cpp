@@ -38,7 +38,10 @@
 //   diagnostics  one for every ERROR, WARN, INFO and HINT in the text, plus a
 //                hint at the very start whose message is "text:" and a hash
 //                of the server's copy of the document, so a test can tell
-//                whether the copy is right; a WARN says it has a fix
+//                whether the copy is right; a WARN says it has a fix; a
+//                NOVIABLE is clangd's call that matches no function, its
+//                candidate (the first DECL) a related place, where the
+//                client takes those
 //   completion   a fixed vocabulary, replacing the word before the cursor
 //   hover        a description of the word under the cursor (thirty rows of
 //                it for "tall")
@@ -100,6 +103,7 @@ using json::Value;
 namespace {
 
 bool utf16 = true;
+bool related = false;  // the client takes relatedInformation (else, as clangd, none is sent)
 int sync_kind = 2;
 int slow_ms = 0, late_ms = 0, close_input_ms = 0, index_ms = -1;
 long long index_end = -1;  // when the indexing under way ends (ms of the steady clock; -1: none under way)
@@ -280,6 +284,22 @@ std::string diagnostics_of(const std::string& t, const std::string& u) {
             }
             m += "}";
         }
+    }
+    // A call no function matches, in clangd's words (as clangd 21 says it),
+    // its candidate (the first DECL in the text) a related place.
+    for (size_t at = t.find("NOVIABLE"); at != std::string::npos; at = t.find("NOVIABLE", at + 8)) {
+        m += ",{\"range\":";
+        range_json(m, at, at + 8, t);
+        m += R"(,"severity":1,"source":"clang","code":"ovl_no_viable_function_in_call","message":"No matching function for call to 'g'")";
+        if (related) {
+            const size_t decl = t.find("DECL");
+            m += R"(,"relatedInformation":[{"location":{"uri":)";
+            json::quote(m, u);
+            m += ",\"range\":";
+            range_json(m, decl == std::string::npos ? 0 : decl, decl == std::string::npos ? 0 : decl + 4, t);
+            m += R"(},"message":"Candidate function not viable: requires 0 arguments, but 1 was provided"}])";
+        }
+        m += "}";
     }
     // (And a value left unused, as basedpyright says of a bare name.)
     for (size_t at = t.find("UNUSED"); at != std::string::npos; at = t.find("UNUSED", at + 6)) {
@@ -1279,6 +1299,7 @@ int main(int argc, char** argv) {
             bool offered_utf8 = false;
             for (Value e : params["capabilities"]["general"]["positionEncodings"]) offered_utf8 |= e.str() == "utf-8";
             if (!offered_utf8) utf16 = true;
+            related = params["capabilities"]["textDocument"]["publishDiagnostics"]["relatedInformation"].boolean(false);
             root_path = path_of(std::string(params["rootUri"].str()));
             std::string caps = std::string(R"({"capabilities":{"positionEncoding":")") + (utf16 ? "utf-16" : "utf-8") +
                                R"(","textDocumentSync":{"openClose":true,"change":)" + std::to_string(sync_kind) +

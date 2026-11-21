@@ -399,6 +399,7 @@ struct RawDiag {
     u8 severity = 1;
     bool fixes = false;
     std::string message, source, code, raw;
+    std::vector<DiagRelated> related;
 };
 
 struct RawItem {
@@ -990,7 +991,7 @@ struct Lsp::Conn::Worker {
                  R"("offsetEncoding":["utf-8","utf-16"],)"
                  R"("textDocument":{)"
                  R"("synchronization":{"didSave":true},)"
-                 R"("publishDiagnostics":{"versionSupport":true,"relatedInformation":false,"codeActionsInline":true},)"
+                 R"("publishDiagnostics":{"versionSupport":true,"relatedInformation":true,"codeActionsInline":true},)"
                  R"("completion":{"contextSupport":true,"completionItem":{"snippetSupport":true,"insertReplaceSupport":true,)"
                  R"("labelDetailsSupport":true,"documentationFormat":["plaintext","markdown"]}},)"
                  R"("hover":{"contentFormat":["markdown","plaintext"]},)"
@@ -1155,6 +1156,12 @@ struct Lsp::Conn::Worker {
         if (code.is_string()) r->code = code.str();
         else if (code.is_number()) r->code = std::to_string(code.integer());
         r->fixes = d["codeActions"].size() > 0;
+        for (Value x : d["relatedInformation"]) {
+            if (r->related.size() >= 100) break;
+            const Value at = x["location"];
+            const RawRange range = range_of(at["range"]);
+            r->related.push_back({from_uri(at["uri"].str()), range.l0, range.c0, std::string(x["message"].str())});
+        }
         json::dump(r->raw, d);
     }
 
@@ -3206,6 +3213,7 @@ static void convert_diags(Lsp::Document& d, std::vector<RawDiag>& raw, bool utf1
         x.source = std::move(r.source);
         x.code = std::move(r.code);
         x.raw = std::move(r.raw);
+        x.related = std::move(r.related);
         d.diags.push_back(std::move(x));
     }
     std::stable_sort(d.diags.begin(), d.diags.end(), [](const Diagnostic& a, const Diagnostic& b) { return a.start < b.start; });
@@ -3266,7 +3274,7 @@ u32 Lsp::poll() {
                 } else {
                     std::vector<ProblemFile::Item>& items = s->closed[m.text];
                     items.clear();
-                    for (RawDiag& r : m.diags) items.push_back({r.r.l0, r.r.c0, r.severity, ~0ull, std::move(r.message)});
+                    for (RawDiag& r : m.diags) items.push_back({r.r.l0, r.r.c0, r.severity, ~0ull, std::move(r.message), std::move(r.related)});
                 }
                 ++diags_gen_;
                 ++problems_gen_;
@@ -3635,7 +3643,7 @@ const std::vector<ProblemFile>& Lsp::problems() {
         const Buffer& b = *d->buf;
         for (const Diagnostic& x : d->diags) {
             const u64 off = std::min(x.start, b.size()), line = b.line_of(off);
-            f.items.push_back({static_cast<u32>(line), static_cast<u32>(off - b.line_start(line)), x.severity, off, x.message});
+            f.items.push_back({static_cast<u32>(line), static_cast<u32>(off - b.line_start(line)), x.severity, off, x.message, x.related});
         }
     }
     for (const std::unique_ptr<Server>& s : servers_)
