@@ -879,7 +879,7 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s%s\n", arg.empty() ? "" : (arg + ": ").c_str(), git_view_dump().c_str());
         } else if (verb == "gitfield") {
             std::fprintf(stderr, "%s\n", git_field_dump().c_str());
-        } else if (verb == "gutterclick" || verb == "breakclick") {  // (where the gutter last drew that line's mark: its last cell; or its first)
+        } else if (verb == "gutterclick" || verb == "breakclick") {  // (where the gutter last drew that line's mark: its last cell; or its first; N,alt: with Alt held)
             const double ch = font_->cell_h(), cw = font_->cell_w();
             const double py = pane_->text_y + (std::atof(arg.c_str()) - 1) * ch - pane_->scroll_y + ch / 2,
                          px = verb == "breakclick" ? pane_->x0 + cw / 2 : pane_->text_x - cw / 2;
@@ -888,7 +888,10 @@ void App::run_script(const char* script) {
             e.button.x = static_cast<float>(px / density_);
             e.button.y = static_cast<float>(py / density_);
             e.button.clicks = 1;
+            const SDL_Keymod held = SDL_GetModState();
+            if (arg.ends_with(",alt")) SDL_SetModState(static_cast<SDL_Keymod>(held | SDL_KMOD_ALT));
             handle(e);
+            SDL_SetModState(held);
             SDL_Event up{};
             up.type = SDL_EVENT_MOUSE_BUTTON_UP;
             up.button.button = SDL_BUTTON_LEFT;

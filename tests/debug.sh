@@ -127,6 +127,24 @@ check "breakpoints follow their lines" 'count.c:9; count.c:16 ;; count.c:7; coun
 run "lua:blit.opt.editor.modal = true;break:8;break:15;vim:ggO<Esc>;debugbreaks;vim:9Gdd;debugbreaks;vim:dk;debugbreaks"
 check "with Vim's keys too" 'count.c:9; count.c:16 ;; count.c:9; count.c:15 ;; count.c:8; count.c:13'
 
+# What the debugger says of them: one on a line with no code it puts on the
+# next line that has some (it is on that line from now, the move said);
+# one in a library not loaded yet it has not verified until the library is
+# loaded (said in a breakpoint event).
+run "$P;break:10;key:F5;debugwait:stopped;debugbreaks;debugdump"
+got=$(printf '%s' "$got" | sed -e 's/; vars: .*//' -e 's/ start\(@[0-9]*\)\{0,1\}$//')
+case "$got" in  # (lldb puts it on line 13; gdb, the next line it has code for, whichever that is)
+"count.c:"*" moved from 10 ;; stopped (breakpoint); stack: main@"*)
+    to=${got#count.c:}; to=${to%% *}
+    [ "$got" = "count.c:$to moved from 10 ;; stopped (breakpoint); stack: main@$to" ] && [ "$to" -gt 10 ] && got="moved on, and stopped there" ;;
+esac
+check "a breakpoint on a line with no code: moved to one with some, and stopped there" "moved on, and stopped there"
+cp "$here/debug/loads.c" "$here/debug/twice.c" "$dir/here/" && (cd "$dir/here" && cc -g -O0 -shared -fPIC -o loads.so twice.c && cc -g -O0 -o loads loads.c $([ "$(uname -s)" = Darwin ] || echo -ldl)) || exit 1
+run "debug:program=$dir/here/loads;break:4;open:$dir/here/loads.c;break:14;key:F5;debugwait:stopped;debugbreaks;key:F5;debugwait:stopped;debugbreaks;debugdump" "$dir/here/twice.c"
+got=$(printf '%s' "$got" | sed -e 's/unverified ([^)]*)/unverified/' -e 's/; vars: .*//' -e 's/ start\(@[0-9]*\)\{0,1\}$//')  # (gdb says why: it is "pending")
+check "a breakpoint in a library not loaded yet: not verified until it is" \
+    'loads.c:14; twice.c:4 unverified ;; loads.c:14; twice.c:4 ;; stopped (breakpoint); stack: twice@4 main@16'
+
 # On another machine: the debugger runs there, its source opens from there.
 run "remotewait;debug:program=ssh://box$T/count;break:8;key:F5;debugwait:stopped;debugdump;frame;statusdump" "ssh://box$T/count.c"
 check "on another machine" 'stopped (breakpoint); stack: square@8 main@15; vars: x=1 y=1 ;; box count.c | Ln 8, Col 1 Spaces: 4 LF C'
@@ -363,6 +381,31 @@ if [ -x "$fakedap" ]; then
     # Tab straight after a dot: nothing of the word typed yet (debugpy's length 0), still counted from 0.
     fake "debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+shift+y;text:df.;key:Tab;debugwait:answers;finddump" "$F/prog"
     check "evaluate: completions straight after a dot go after it" 'pick [] 4 : >df.describe df.dtypes df.shape df.total'
+
+    # What the debugger says of the breakpoints: one on a blank line put
+    # on the next (and kept there), one whose condition it refuses with
+    # its message, one in a file that is not there "pending", one in a
+    # library not loaded yet not verified until a breakpoint event says it
+    # is (once the program goes on).
+    printf 'one\n\nthree\n' >"$F/two"
+    printf 'def twice(x):\n    return x + x\n' >"$F/lib.py"
+    fake "debug:program=$F/two;break:2;breakif:1;text:nope > 1;key:Return;key:Return;key:Return;open:$F/lib.py;break:2;open:$F/gone.py;break:1;open:$F/two;key:F5;debugwait:stopped;debugwait:answers;debugbreaks;debugpanel;debugrows:Breakpoints:5;key:F5;debugwait:stopped;debugwait:answers;debugbreaks" "$F/two"
+    check "breakpoints not verified (and why), and one moved" \
+        'gone.py:1 unverified (pending); lib.py:2 unverified; two:1 unverified (No symbol "nope" in current context) if nope > 1; two:3 moved from 2 ;; Breakpoints 4 | ○ gone.py:1 not verified: pending | ○ lib.py:2 not verified | ◇ two:1 not verified: No symbol "nope" in current context, if nope > 1 | ● two:3 moved from line 2 ;; gone.py:1 unverified (pending); lib.py:2; two:1 unverified (No symbol "nope" in current context) if nope > 1; two:3 moved from 2'
+    # One moved onto a line that has one: one breakpoint, given again.
+    fake "debug:program=$F/two;break:2;break:3;key:F5;debugwait:stopped;debugwait:answers;debugbreaks" "$F/two"
+    got="$got ;; $(grep '^setBreakpoints' "$F/log" | sed -e 's/.*"breakpoints"://' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }')"
+    check "one moved onto another: they are one" 'two:3 ;; [{"line":2},{"line":3}]} ;; [{"line":3}]}'
+    # Breakpoint events: one made by the debugger (gdb's `break`), and taken away.
+    fake "debug:program=$F/two;break:3;key:F5;debugwait:stopped;debugbreaks;key:cmd+shift+y;text:break 1;key:Return;debugwait:answers;debugbreaks;key:cmd+shift+y;text:delete 2;key:Return;debugwait:answers;debugbreaks" "$F/two"
+    check "breakpoints the debugger makes and takes away" 'two:3 ;; two:1; two:3 ;; two:3'
+    # Disabled: Space on one in the Debug tab, Alt and a click on its dot,
+    # and the command for the cursor's line, each again enabled; one
+    # disabled is drawn so and not given to the debugger.
+    fake "debug:program=$F/two;break:1;break:3;debugpanel;debugpick:breaks:1;debugpanel;key:space;debugbreaks;debugrows:Breakpoints:3;key:F5;debugwait:stopped;debugwait:answers;breakclick:3,alt;debugwait:answers;debugbreaks;command:Enable or disable the breakpoint;debugwait:answers;debugbreaks" "$F/two"
+    got="$got ;; $(grep '^setBreakpoints' "$F/log" | sed -e 's/.*"breakpoints"://' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }')"
+    check "a breakpoint disabled and enabled: Space, Alt-click, the command" \
+        'two:1 off; two:3 ;; Breakpoints 2 | ● two:1 disabled | ● two:3 ;; two:1 off; two:3 off ;; two:1; two:3 off ;; [{"line":3}]} ;; []} ;; [{"line":1}]}'
 
     # rocgdb's GPU waves (two thousand, and three threads of the program's
     # own; stopped in a wave): the waves one row with their count, opened to

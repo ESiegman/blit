@@ -14,9 +14,25 @@
 //                 sequences (the first one cut in two, between two output
 //                 events), and stops at once, in its own file's first line
 //   attach        stops at once, in a frame with no source
+//   setBreakpoints
+//                 each with an id of its own (the same for the same line
+//                 asked for again); one on a blank line is put on the next
+//                 line that is not, as lldb-dap puts it (on the next with
+//                 code); one in a file other than the program's is not
+//                 verified, no message (lldb-dap's answer for a library not
+//                 loaded yet), until the program goes on (continue): then a
+//                 breakpoint event says it is, as lldb-dap's does once the
+//                 library loads. As gdb would (from gdb's source, its DAP
+//                 breakpoint.py: there is no gdb here): one in a file that
+//                 is not there is "pending", and one whose condition names
+//                 `nope` "failed", with gdb's message for a name it does not
+//                 know
 //   threads, stackTrace, scopes, variables
 //                 one thread, one frame, the Locals of two variables (df, total)
-//   evaluate      "<the expression>"
+//   evaluate      "<the expression>"; "break N" makes a breakpoint on line N of
+//                 the program and "delete ID" takes one away, each said in a
+//                 breakpoint event (new, removed), as gdb's console commands
+//                 are
 //   completions   the words of a fixed list that start with the word before
 //                 the column, each to take that word's place; its start
 //                 counted from 0 whatever the client asked for, as debugpy
@@ -37,7 +53,9 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <map>
 #include <string>
+#include <vector>
 
 #include "json.hpp"
 
@@ -51,6 +69,11 @@ std::string program;  // what was launched ("": attached)
 long waves = 0;       // the GPU's waves, as rocgdb has them ($BLIT_FAKE_DAP_WAVES)
 long stop_thread = 1;  // the thread that stops
 constexpr long kOwnThreads = 3;  // (the waves' ids are after these)
+// Breakpoints: the id of each (file, line asked for), and those not verified
+// until the program goes on (a library's, loaded then): id and line.
+std::map<std::pair<std::string, long>, long> break_ids;
+long next_break_id = 1;
+std::map<std::string, std::vector<std::pair<long, long>>> loads_later;  // (by file)
 
 bool read_message(std::string* body) {
     size_t length = 0;
@@ -148,6 +171,48 @@ std::string info_threads() {
     return out;
 }
 
+// A file's lines (none if it cannot be read).
+std::vector<std::string> lines_of(const std::string& path) {
+    std::vector<std::string> out;
+    FILE* f = std::fopen(path.c_str(), "r");
+    if (!f) return out;
+    std::string line;
+    for (int c; (c = std::fgetc(f)) != EOF;) {
+        if (c != '\n') line += static_cast<char>(c);
+        else out.push_back(line), line.clear();
+    }
+    if (!line.empty()) out.push_back(line);
+    std::fclose(f);
+    return out;
+}
+
+// The answer to a file's breakpoints.
+std::string set_breakpoints(const Value& a) {
+    const std::string path(a["source"]["path"].str());
+    const std::vector<std::string> lines = lines_of(path);
+    loads_later.erase(path);
+    std::string b = "{\"breakpoints\":[";
+    for (size_t i = 0; i < a["breakpoints"].size(); ++i) {
+        long line = a["breakpoints"].at(i)["line"].integer();
+        auto [it, fresh] = break_ids.try_emplace({path, line}, next_break_id);
+        if (fresh) ++next_break_id;
+        const std::string id = "{\"id\":" + std::to_string(it->second);
+        b += i ? "," : "";
+        if (a["breakpoints"].at(i)["condition"].str().find("nope") != std::string_view::npos) {
+            b += id + R"(,"verified":false,"reason":"failed","message":"No symbol \"nope\" in current context."})";
+        } else if (lines.empty()) {
+            b += id + R"(,"verified":false,"reason":"pending"})";
+        } else if (!program.empty() && path != program) {
+            b += id + ",\"verified\":false,\"line\":" + std::to_string(line) + "}";
+            loads_later[path].emplace_back(it->second, line);
+        } else {
+            while (line < static_cast<long>(lines.size()) && lines[static_cast<size_t>(line - 1)].find_first_not_of(" \t") == std::string::npos) ++line;
+            b += id + ",\"verified\":true,\"line\":" + std::to_string(line) + "}";
+        }
+    }
+    return b + "]}";
+}
+
 }  // namespace
 
 int main() {
@@ -184,9 +249,7 @@ int main() {
             respond(v, true);
             event("initialized");
         } else if (command == "setBreakpoints") {
-            std::string b = "{\"breakpoints\":[";
-            for (size_t i = 0; i < a["breakpoints"].size(); ++i) b += std::string(i ? "," : "") + "{\"verified\":true,\"line\":" + std::to_string(a["breakpoints"].at(i)["line"].integer()) + "}";
-            respond(v, true, b + "]}");
+            respond(v, true, set_breakpoints(a));
         } else if (command == "configurationDone") {
             respond(v, true);
             event("process", "{\"name\":\"fake\",\"startMethod\":\"launch\"}");
@@ -213,6 +276,17 @@ int main() {
             std::string r = "{\"result\":";
             json::quote(r, info_threads());
             respond(v, true, r + ",\"variablesReference\":0}");
+        } else if (command == "evaluate" && a["expression"].str().starts_with("break ")) {
+            const long id = next_break_id++, line = std::atol(std::string(a["expression"].str().substr(6)).c_str());
+            std::string e = "{\"reason\":\"new\",\"breakpoint\":{\"id\":" + std::to_string(id) + ",\"verified\":true,\"line\":" + std::to_string(line) + ",\"source\":{\"path\":";
+            json::quote(e, program);
+            event("breakpoint", e + "}}}");
+            std::string r = "{\"result\":";
+            json::quote(r, "Breakpoint " + std::to_string(id) + " at 0x401136: file " + program.substr(program.find_last_of('/') + 1) + ", line " + std::to_string(line) + ".");
+            respond(v, true, r + ",\"variablesReference\":0}");
+        } else if (command == "evaluate" && a["expression"].str().starts_with("delete ")) {
+            event("breakpoint", "{\"reason\":\"removed\",\"breakpoint\":{\"id\":" + std::string(a["expression"].str().substr(7)) + "}}");
+            respond(v, true, R"({"result":"","variablesReference":0})");
         } else if (command == "evaluate") {
             std::string r = "{\"result\":";
             json::quote(r, "<" + std::string(a["expression"].str()) + ">");
@@ -221,6 +295,9 @@ int main() {
             respond(v, true, completions(a["text"].str(), a["column"].integer()));
         } else if (command == "continue" || command == "next" || command == "stepIn" || command == "stepOut") {
             respond(v, true, command == "continue" ? R"({"allThreadsContinued":true})" : "{}");
+            for (const auto& [path, those] : loads_later)  // (its library loaded as it goes on)
+                for (const auto& [id, line] : those) event("breakpoint", "{\"reason\":\"changed\",\"breakpoint\":{\"id\":" + std::to_string(id) + ",\"verified\":true,\"line\":" + std::to_string(line) + "}}");
+            loads_later.clear();
             stopped(command == "continue" ? "breakpoint" : "step");
         } else if (command == "disconnect") {
             respond(v, true);

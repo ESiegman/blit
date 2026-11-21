@@ -149,6 +149,9 @@ struct PictureInfo {
 };
 
 class App;
+namespace json {
+class Value;
+}
 
 // A dev container, as its devcontainer.json says it is made (appcontainer.cpp).
 struct ContainerPlan {
@@ -1246,6 +1249,11 @@ private:
     void debug_toggle_break(i64 line = -1);  // (-1: the cursor's)
     void debug_edit_break();
     void debug_send_breaks(const std::string& path);
+    bool debug_chosen_break(i64 at, std::string* path, u32* line);
+    void debug_enable_break(i64 line = -1);  // (-1: the cursor's, or the Debug tab's chosen)
+    void debug_breaks_said(const std::string& path, const std::vector<u32>& asked, bool ok, const json::Value& answers, const std::string& message);
+    void debug_breaks_moved(const std::string& path, const std::vector<std::pair<u32, u32>>& moves);
+    void debug_break_event(const json::Value& body);
     u32 debug_gutter(const Doc& d, u64 line);
     bool debug_gutter_click(const SDL_MouseButtonEvent& b);
     std::string debug_session_text() const;  // (the breakpoints and watches, in the folder's session)

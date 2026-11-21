@@ -162,7 +162,8 @@ the Git tab) comes back as it was left when it is opened again: the tabs
 of each split in their order, the splits and their sizes, each file's
 cursor and view and the language chosen for it from the status bar, the
 side panel (shown or not, its tab, its width), the Build tab's task, and
-the breakpoints (with their conditions, hit counts and messages), the
+the breakpoints (with their conditions, hit counts and messages, and
+those disabled), the
 functions' and the expressions watched. A folder's row
 in Recent says what will come back (`blit  ~/Dev · 7 tabs`). The session
 is written when blit quits and when another folder is opened, one small
@@ -2394,6 +2395,7 @@ its arguments and working directory.
 | Step over / into / out | F10 / F7 or F11 / Shift+F11 (F11 is macOS's Show Desktop unless that is turned off) |
 | Breakpoint on this line, or not | F9 |
 | A breakpoint's condition, hit count and log message | Shift+F9 |
+| A breakpoint disabled, or enabled again | Space on it in the Debug tab, Alt+click on its dot |
 | Run to the cursor | Ctrl+F10 |
 | Evaluate an expression where it stopped (Tab completes what is typed) | Cmd+Shift+Y |
 | The Debug tab | Cmd+Shift+D |
@@ -2404,8 +2406,8 @@ file comes to the front. The Debug tab shows the threads (when there is
 more than one: Enter on one shows its call stack, and the steps step it),
 the call stack (Enter on a frame shows its source and its variables), the
 variables (Right or Enter opens one a level, Left shuts it), the
-expressions watched, the breakpoints (Delete takes one away), and what the
-program printed.
+expressions watched, the breakpoints (Enter goes to one, Space disables
+it, Delete takes it away), and what the program printed.
 
 - **A condition and a hit count.** Shift+F9 asks for a breakpoint's
   condition (`x == 2`: it stops only where that holds), then its hit count
@@ -2414,6 +2416,18 @@ program printed.
   a breakpoint if it has none), or, with the Debug tab's keyboard on one,
   on that breakpoint. One that waits for something is a diamond in the
   gutter, and the tab says what it waits for (`count.c:8 if x == 2, hit 3`).
+- **What the debugger says of them.** A breakpoint it has not verified
+  (in a library not loaded yet, or on a line it has no code for) is
+  hollow in the gutter and in the Debug tab, which says *not verified*
+  and why, where the debugger says; it fills in when the debugger says it
+  is (a library loaded as the program runs). One the debugger puts on
+  another line (a blank line's goes on the next that has code) is on
+  that line from then on, kept there, and the tab says *moved from line
+  N*; one moved onto a line that has one is one with it.
+- **Disabled.** Space on a breakpoint in the Debug tab, Alt and a click on
+  its dot, or *Enable or disable the breakpoint* (the cursor's line's)
+  disables it: it stays, quiet in the gutter and *disabled* in the tab,
+  and is not given to the debugger, until it is enabled the same way.
 - **Watch.** *Add expression…* in the Debug tab keeps an expression there,
   evaluated each time the program stops, in the frame shown (and again
   when another frame is chosen); one that cannot be says why. Enter on one

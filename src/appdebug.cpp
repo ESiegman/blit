@@ -282,6 +282,41 @@ struct App::DebugUi : DebugSession {
         std::string cond;  // it stops only where this is true
         std::string hits;  // and only at this hit (a number: the Nth time it is reached)
         std::string log;   // a logpoint: this said (its {expressions} filled in) where it would stop, and no stop
+        bool off = false;  // disabled: kept (and drawn so), not given to the debugger
+        // What the debugger has said of it, while a session has it: whether
+        // it is verified (there is code there it can stop at; not yet, in a
+        // library not loaded, or never, on a line with none), and if not why;
+        // the line it was asked for (from 1) where it put it on another; its
+        // id for it (and which debugger's), which its breakpoint events name.
+        enum Said : u8 { kUnsaid, kVerified, kUnverified } said = kUnsaid;
+        std::string why;
+        u32 moved_from = 0;
+        i64 id = 0;
+        const Dap* by = nullptr;
+        void unsaid() { said = kUnsaid, why.clear(), moved_from = 0, id = 0, by = nullptr; }
+        // As the debugger describes it (an answer's, an event's).
+        void take(const json::Value& x, const Dap* dap) {
+            said = x["verified"].boolean() ? kVerified : kUnverified;
+            // (Why not: its message where it gives one (gdb's, where it could
+            // not make it: a condition that names what is not there); else the
+            // reason the protocol has for it, gdb's "pending"; lldb-dap says
+            // neither.)
+            why = said == kVerified ? std::string() : std::string(x["message"].exists() ? x["message"].str() : x["reason"].str());
+            while (!why.empty() && (why.back() == '.' || why.back() == '\n' || why.back() == ' ')) why.pop_back();  // (one of several said in a row)
+            if (x["id"].exists()) id = x["id"].integer(), by = dap;
+        }
+        // Its mark, in the gutter and in the Debug tab: a dot; one that waits
+        // for something, a diamond; a logpoint, a diamond in a diamond. One
+        // not verified is hollow; one disabled, in the quieter ink.
+        struct Mark {
+            u32 cp;
+            const char* utf8;
+        };
+        Mark mark() const {
+            if (said == kUnverified && !off) return cond.empty() && hits.empty() && log.empty() ? Mark{0x25CB, "\xE2\x97\x8B"} : Mark{0x25C7, "\xE2\x97\x87"};
+            if (!log.empty()) return {0x25C8, "\xE2\x97\x88"};
+            return cond.empty() && hits.empty() ? Mark{0x25CF, "\xE2\x97\x8F"} : Mark{0x25C6, "\xE2\x97\x86"};
+        }
         bool operator==(const Break&) const = default;
     };
     using Lines = std::map<u32, Break>;
@@ -488,19 +523,7 @@ void App::debug_edit_break() {
     DebugUi& u = *debugui_;
     std::string path;
     u32 line = 0;
-    if (panel_has_keyboard() && panel_tab() == 4 && u.sel < u.rows.size() && u.rows[u.sel].act == DebugUi::kBreak) {  // (4: the Debug tab)
-        u32 n = 0;
-        for (const auto& [p, lines] : u.breaks)
-            for (const auto& [l, b] : lines)
-                if (n++ == u.rows[u.sel].index) path = p, line = l;
-    } else {
-        Doc& d = *pane_->doc;
-        if (d.ed.path.empty() || d.term || d.prof || d.loading) return;
-        path = full_path(d.ed.path);
-        line = static_cast<u32>(d.ed.buf.line_of(d.ed.cursor()));
-        u.follow(*this, d);
-    }
-    if (path.empty()) return;
+    if (!debug_chosen_break(-1, &path, &line)) return;
     DebugUi::Break was;
     if (auto f = u.breaks.find(path); f != u.breaks.end())
         if (auto b = f->second.find(line); b != f->second.end()) was = b->second;
@@ -509,7 +532,8 @@ void App::debug_edit_break() {
             // Last, a message to log in place of stopping ({x} for x's value).
             find_choose(kFindInput, "Log message", log, [this, path, line, cond, hits = trimmed(typed)](const std::string& message) {
                 DebugUi& v = *debugui_;
-                v.breaks[path][line] = {cond, hits, trimmed(message)};
+                DebugUi::Break& b = v.breaks[path][line];
+                b.cond = cond, b.hits = hits, b.log = trimmed(message);
                 if (Doc* d = pane_->doc; d && !d->ed.path.empty() && full_path(d->ed.path) == path) v.follow(*this, *d);
                 debug_send_breaks(path);
                 ++debug_gen_;
@@ -519,15 +543,56 @@ void App::debug_edit_break() {
     });
 }
 
-// A file's breakpoints, to a session under way.
+// The breakpoint chosen in the Debug tab while it has the keyboard; else
+// the cursor's line (or the line given, from 0), whose file's breakpoints
+// follow its lines from now.
+bool App::debug_chosen_break(i64 at, std::string* path, u32* line) {
+    DebugUi& u = *debugui_;
+    if (at < 0 && panel_has_keyboard() && panel_tab() == 4 && u.sel < u.rows.size() && u.rows[u.sel].act == DebugUi::kBreak) {  // (4: the Debug tab)
+        u32 n = 0;
+        for (const auto& [p, lines] : u.breaks)
+            for (const auto& [l, b] : lines)
+                if (n++ == u.rows[u.sel].index) *path = p, *line = l;
+        return !path->empty();
+    }
+    Doc& d = *pane_->doc;
+    if (d.ed.path.empty() || d.term || d.prof || d.loading) return false;
+    *path = full_path(d.ed.path);
+    *line = static_cast<u32>(at >= 0 ? static_cast<u64>(at) : d.ed.buf.line_of(d.ed.cursor()));
+    u.follow(*this, d);
+    return true;
+}
+
+// A breakpoint disabled (kept, drawn so, and not given to the debugger),
+// or enabled again: the one chosen in the Debug tab, or the cursor's line's.
+void App::debug_enable_break(i64 at) {
+    DebugUi& u = *debugui_;
+    std::string path;
+    u32 line = 0;
+    if (!debug_chosen_break(at, &path, &line)) return;
+    const auto f = u.breaks.find(path);
+    const auto b = f == u.breaks.end() ? DebugUi::Lines::iterator() : f->second.find(line);
+    if (f == u.breaks.end() || b == f->second.end()) return notify("No breakpoint on this line");
+    b->second.off = !b->second.off;
+    b->second.unsaid();
+    debug_send_breaks(path);
+    ++debug_gen_;
+    dirty_ = true;
+}
+
+// A file's breakpoints, to a session under way (those disabled left out).
 void App::debug_send_breaks(const std::string& path) {
     DebugUi& u = *debugui_;
     debug_each_other([&] { debug_send_breaks(path); });  // (every session has them)
     if (!u.dap || u.state == DebugUi::kStarting) return;  // (all are sent when the debugger is ready for them)
     std::string a = "{\"source\":{\"path\":" + quoted(u.there(path)) + "},\"breakpoints\":[";
+    std::vector<u32> asked;  // (the lines, as the answer has them in turn)
     if (auto it = u.breaks.find(path); it != u.breaks.end()) {
         bool first = true;
-        for (const auto& [l, b] : it->second) {
+        for (auto& [l, b] : it->second) {
+            b.id = 0, b.by = nullptr;  // (the answer gives them their ids again: events meanwhile are of those there were)
+            if (b.off) continue;
+            asked.push_back(l);
             a += std::string(first ? "" : ",") + "{\"line\":" + std::to_string(l + 1);
             if (!b.cond.empty()) a += ",\"condition\":" + quoted(b.cond);
             if (!b.hits.empty()) {
@@ -543,11 +608,108 @@ void App::debug_send_breaks(const std::string& path) {
         }
     }
     if (u.run_to_path == path) {  // (run to the cursor: there too, until it stops)
-        const bool listed = u.breaks.contains(path) && u.breaks.at(path).contains(u.run_to_line);
+        const bool listed = std::ranges::find(asked, u.run_to_line) != asked.end();
         if (!listed) a += std::string(a.back() == '[' ? "" : ",") + "{\"line\":" + std::to_string(u.run_to_line + 1) + "}";
     }
     a += "]}";
-    u.dap->request("setBreakpoints", a);
+    u.dap->request("setBreakpoints", a, [this, path, asked](const Dap::Message& m) { debug_breaks_said(path, asked, m.success, m.body()["breakpoints"], m.message); });
+}
+
+// What the debugger says of a file's breakpoints (each, in the order they
+// were sent): verified or not, and why; and where it put one on another line
+// than it was asked for (a line with no code: the next that has some), it
+// is on that line from now. An answer about breakpoints that have changed
+// since (an edit moved them, one was added) is passed over: the next counts.
+// (What the session in front says: those aside have them too, and say much
+// the same, with ids of their own.)
+void App::debug_breaks_said(const std::string& path, const std::vector<u32>& asked, bool ok, const json::Value& answers, const std::string& message) {
+    DebugUi& u = *debugui_;
+    const auto f = u.background ? u.breaks.end() : u.breaks.find(path);
+    if (f == u.breaks.end()) return;
+    DebugUi::Lines& lines = f->second;
+    if (static_cast<size_t>(std::ranges::count_if(lines, [](const auto& l) { return !l.second.off; })) != asked.size()) return;
+    for (const u32 l : asked)
+        if (!lines.contains(l) || lines.at(l).off) return;
+    std::vector<std::pair<u32, u32>> moves;
+    size_t i = 0;
+    for (const json::Value x : answers) {
+        if (i == asked.size()) break;  // (run to the cursor's, after them)
+        DebugUi::Break& b = lines.at(asked[i]);
+        const i64 line = x["line"].integer();
+        b.take(x, u.dap.get());
+        if (b.said == DebugUi::Break::kVerified && line > 0 && static_cast<u32>(line - 1) != asked[i]) moves.emplace_back(asked[i], static_cast<u32>(line - 1));
+        ++i;
+    }
+    for (; !ok && i < asked.size(); ++i) {  // (refused, all of them: why)
+        DebugUi::Break& b = lines.at(asked[i]);
+        b.said = DebugUi::Break::kUnverified;
+        b.why = why_not(message);
+    }
+    debug_breaks_moved(path, moves);
+    ++debug_gen_;
+    dirty_ = true;
+}
+
+// Breakpoints the debugger has on other lines than they were asked for
+// (from, to): each on its line now (in the session kept so), the line it
+// was asked for said. One that comes to a line with one already is one with
+// it (that one stays), and the debugger is given the file's again.
+void App::debug_breaks_moved(const std::string& path, const std::vector<std::pair<u32, u32>>& moves) {
+    DebugUi& u = *debugui_;
+    if (moves.empty()) return;
+    DebugUi::Lines& lines = u.breaks[path];
+    std::vector<std::pair<u32, DebugUi::Break>> taken;
+    for (const auto& [from, to] : moves) {
+        auto node = lines.extract(from);
+        if (node.empty()) continue;
+        if (!node.mapped().moved_from) node.mapped().moved_from = from + 1;
+        taken.emplace_back(to, std::move(node.mapped()));
+    }
+    bool merged = false;
+    for (auto& [to, b] : taken) {
+        if (b.moved_from == to + 1) b.moved_from = 0;  // (back where it was asked for)
+        merged |= !lines.try_emplace(to, std::move(b)).second;
+    }
+    if (merged) debug_send_breaks(path);
+}
+
+// A breakpoint event: one the debugger has changed (verified once its
+// library is loaded, put on another line), made (gdb's `break` typed to it)
+// or taken away.
+void App::debug_break_event(const json::Value& body) {
+    DebugUi& u = *debugui_;
+    if (u.background) return;  // (the session in front's, as its answers)
+    const json::Value x = body["breakpoint"];
+    const std::string_view reason = body["reason"].str();
+    const i64 id = x["id"].integer();
+    std::string path;
+    u32 at = 0;
+    DebugUi::Break* b = nullptr;
+    for (auto& [p, lines] : u.breaks)
+        for (auto& [l, one] : lines)
+            if (id && one.id == id && one.by == u.dap.get()) path = p, at = l, b = &one;
+    const i64 line = x["line"].integer();
+    if (reason == "removed" && b) {
+        u.breaks[path].erase(at);
+        if (u.breaks[path].empty()) {
+            u.breaks.erase(path);
+            u.unfollow(*this, path);
+        }
+    } else if (reason == "changed" && b) {
+        b->take(x, u.dap.get());
+        if (b->said == DebugUi::Break::kVerified && line > 0 && static_cast<u32>(line - 1) != at) debug_breaks_moved(path, {{at, static_cast<u32>(line - 1)}});
+    } else if (reason == "new" && !b && line > 0 && !x["source"]["path"].str().empty()) {
+        const std::string where = u.here(x["source"]["path"].str());
+        DebugUi::Break& made = u.breaks[where][static_cast<u32>(line - 1)];
+        made.take(x, u.dap.get());
+        for (const std::unique_ptr<Pane>& p : panes_)  // (its file's lines followed, where it is open)
+            for (const std::shared_ptr<Doc>& d : p->docs)
+                if (!d->ed.path.empty() && full_path(d->ed.path) == where) u.follow(*this, *d);
+    } else {
+        return;
+    }
+    ++debug_gen_;
+    dirty_ = true;
 }
 
 // The breakpoints by function name, to a session under way.
@@ -609,10 +771,8 @@ u32 App::debug_gutter(const Doc& d, u64 line) {
     if (u.state == DebugUi::kStopped && u.frame < u.frames.size() && u.frames[u.frame].line == line + 1 && u.frames[u.frame].path == u.gutter_full)
         return (font_->glyph(0x25B6) & (Font::kWide - 1)) | (kInkAccent << kCellInkShift);
     if (u.gutter_breaks)
-        if (const auto b = u.gutter_breaks->find(static_cast<u32>(line)); b != u.gutter_breaks->end()) {
-            const bool plain = b->second.cond.empty() && b->second.hits.empty();  // (a dot; one that waits for something, a diamond; a logpoint, a diamond in one)
-            return (font_->glyph(!b->second.log.empty() ? 0x25C8 : plain ? 0x25CF : 0x25C6) & (Font::kWide - 1)) | (kInkDiagnostic << kCellInkShift);
-        }
+        if (const auto b = u.gutter_breaks->find(static_cast<u32>(line)); b != u.gutter_breaks->end())
+            return (font_->glyph(b->second.mark().cp) & (Font::kWide - 1)) | ((b->second.off ? kInkMuted : kInkDiagnostic) << kCellInkShift);
     return 0;
 }
 
@@ -634,6 +794,8 @@ bool App::debug_gutter_click(const SDL_MouseButtonEvent& b) {
         if (test_gutter(d, line)) return false;
         if (const Folds* f = folds_on(); f && f->header(line)) return false;
     }
+    // (With Alt, a breakpoint there disabled or enabled again.)
+    if (!disasm && (SDL_GetModState() & SDL_KMOD_ALT) && std::ranges::contains(debug_break_lines(d), line)) return debug_enable_break(static_cast<i64>(line)), true;
     debug_toggle_break(static_cast<i64>(line));
     return true;
 }
@@ -684,6 +846,7 @@ std::string session_unfield(std::string_view s) {
 // The breakpoints (where, and what each waits for), the functions' and the
 // expressions watched, as lines of the folder's session (appsession.cpp):
 //   break LINE (from 0) CONDITION HITS MESSAGE PATH (last: it may have tabs)
+//   breakoff ...       (the same, of one disabled)
 //   function NAME
 //   watch EXPRESSION
 std::string App::debug_session_text() const {
@@ -693,7 +856,7 @@ std::string App::debug_session_text() const {
     for (const auto& [path, lines] : u.breaks) {
         if (path.find('\n') != std::string::npos) continue;
         for (const auto& [l, b] : lines)
-            out += "break\t" + std::to_string(l) + "\t" + session_field(b.cond) + "\t" + session_field(b.hits) + "\t" + session_field(b.log) + "\t" + path + "\n";
+            out += (b.off ? "breakoff\t" : "break\t") + std::to_string(l) + "\t" + session_field(b.cond) + "\t" + session_field(b.hits) + "\t" + session_field(b.log) + "\t" + path + "\n";
     }
     for (const std::string& f : u.functions) out += "function\t" + session_field(f) + "\n";
     for (const DebugUi::Watch& w : u.watches) out += "watch\t" + session_field(w.expr) + "\n";
@@ -719,9 +882,12 @@ void App::debug_session_take(const std::vector<std::string>& lines) {
             rest.remove_prefix(tab + 1);
         }
         if (f.empty()) continue;
-        if (f[0] == "break" && f.size() == 5 && !rest.empty()) {
+        if ((f[0] == "break" || f[0] == "breakoff") && f.size() == 5 && !rest.empty()) {
             const std::string path(rest);
-            u.breaks[path][static_cast<u32>(std::max(0, std::atoi(std::string(f[1]).c_str())))] = {session_unfield(f[2]), session_unfield(f[3]), session_unfield(f[4])};
+            DebugUi::Break& b = u.breaks[path][static_cast<u32>(std::max(0, std::atoi(std::string(f[1]).c_str())))];
+            b = {};
+            b.cond = session_unfield(f[2]), b.hits = session_unfield(f[3]), b.log = session_unfield(f[4]);
+            b.off = f[0] == "breakoff";
             paths.insert(path);
         } else if (f[0] == "function" && f.size() == 1 && !rest.empty()) {
             u.functions.push_back(session_unfield(rest));
@@ -961,6 +1127,9 @@ void App::debug_begin(const std::string& request, const std::string& args_in) {
 void App::debug_end() {
     DebugUi& u = *debugui_;
     if (u.dap && !u.remote.empty()) ran_there(u.remote);  // (on another machine: what the program wrote there, looked for)
+    for (auto& [path, lines] : u.breaks)  // (its ids for the breakpoints were its own)
+        for (auto& [l, b] : lines)
+            if (b.by && b.by == u.dap.get()) b.id = 0, b.by = nullptr;
     if (u.dap && !u.dap->ended()) {
         u.dap->request("disconnect", u.how == "attach" ? "{\"terminateDebuggee\":false}" : "{\"terminateDebuggee\":true}");
         u.dap->stop(300);  // (the adapter lets go of the program as it ends)
@@ -981,6 +1150,9 @@ void App::debug_end() {
         u.others.pop_back();
         if (u.state == DebugUi::kStopped && u.frame < u.frames.size()) debug_frame(u.frame, true);
     }
+    if (!u.background && u.state == DebugUi::kIdle && u.others.empty())  // (no session has them now: as they were asked for)
+        for (auto& [path, lines] : u.breaks)
+            for (auto& [l, b] : lines) b.unsaid();
     ++debug_gen_;
     dirty_ = true;
 }
@@ -1288,6 +1460,8 @@ void App::debug_sync_session(bool* stopped) {
             u.frames.clear();
             u.threads.clear();
             u.vars.clear();
+        } else if (m.name == "breakpoint") {
+            debug_break_event(b);
         } else if (m.name == "process") {
             u.going = true;
         } else if (m.name == "output") {
@@ -1984,13 +2158,17 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
         u32 n = 0;
         for (const auto& [path, lines] : u.breaks)
             for (const auto& [l, b] : lines) {
-                Row& r = add(DebugUi::kBreak, n++, base_name(path) + ":" + std::to_string(l + 1));
-                const bool plain = b.cond.empty() && b.hits.empty() && b.log.empty();
-                r.mark = plain ? "\xE2\x97\x8F" : "\xE2\x97\x86";  // (the gutter's dot, or diamond)
-                r.mark_ink = ink::kError;
-                if (!b.cond.empty()) r.after = "if " + b.cond;
-                if (!b.hits.empty()) r.after += (r.after.empty() ? "" : ", ") + std::string("hit ") + b.hits;
-                if (!b.log.empty()) r.after += (r.after.empty() ? "" : ", ") + std::string("log \"") + b.log + "\"", r.mark = "\xE2\x97\x88";  // (a logpoint: a diamond in a diamond)
+                // (Its mark as the gutter's; one disabled quiet, and what the debugger said of it first.)
+                Row& r = add(DebugUi::kBreak, n++, base_name(path) + ":" + std::to_string(l + 1), b.off ? ink::kMuted : ink::kText);
+                r.mark = b.mark().utf8;
+                r.mark_ink = b.off ? ink::kMuted : ink::kError;
+                auto then = [&](const std::string& s) { r.after += (r.after.empty() ? "" : ", ") + s; };
+                if (b.off) then("disabled");
+                else if (b.said == DebugUi::Break::kUnverified) then(b.why.empty() ? std::string("not verified") : "not verified: " + b.why);
+                if (b.moved_from) then("moved from line " + std::to_string(b.moved_from));
+                if (!b.cond.empty()) then("if " + b.cond);
+                if (!b.hits.empty()) then("hit " + b.hits);
+                if (!b.log.empty()) then("log \"" + b.log + "\"");
                 if (focused && u.sel == out.size() - 1) r.key = key_symbols("Shift+F9", font);  // (the one chosen: what changes its condition)
             }
     }
@@ -2178,9 +2356,12 @@ bool App::debug_panel_key(const SDL_KeyboardEvent& k) {
             u.sel = k.key == SDLK_HOME ? n - 1 : 0;
             step(k.key == SDLK_HOME ? 1 : -1);
             break;
+        case SDLK_SPACE:  // (on a breakpoint: disabled, or enabled again)
+            if (u.sel < n && u.rows[u.sel].act == DebugUi::kBreak) return debug_enable_break(), true;
+            debug_do(u.sel);
+            return true;
         case SDLK_RETURN:
-        case SDLK_KP_ENTER:
-        case SDLK_SPACE: debug_do(u.sel); return true;
+        case SDLK_KP_ENTER: debug_do(u.sel); return true;
         case SDLK_F2:  // a variable's value set
             if (u.sel < n && u.rows[u.sel].act == DebugUi::kVar) debug_set_value(u.rows[u.sel].index);
             return true;
@@ -2474,6 +2655,9 @@ std::string App::debug_breaks_dump() {
     for (const auto& [path, lines] : u.breaks)
         for (const auto& [l, b] : lines) {
             out += (out.empty() ? "" : "; ") + base_name(path) + ":" + std::to_string(l + 1);
+            if (b.off) out += " off";
+            if (b.said == DebugUi::Break::kUnverified) out += " unverified" + (b.why.empty() ? std::string() : " (" + b.why + ")");
+            if (b.moved_from) out += " moved from " + std::to_string(b.moved_from);
             if (!b.cond.empty()) out += " if " + b.cond;
             if (!b.hits.empty()) out += " hit " + b.hits;
             if (!b.log.empty()) out += " log " + b.log;

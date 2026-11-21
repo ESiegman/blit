@@ -352,6 +352,7 @@ void App::commands_create() {
     own("Pause the program being debugged", {key(SDLK_F6)}, [this] { debug_command("pause"); });
     own("Add or remove a breakpoint", {key(SDLK_F9)}, [this] { debug_toggle_break(); });
     own("Set a breakpoint's condition and hit count\xE2\x80\xA6", {key(SDLK_F9, kS)}, [this] { debug_edit_break(); });
+    own("Enable or disable the breakpoint", {}, [this] { debug_enable_break(); });
     own("Step over", {key(SDLK_F10)}, [this] { debug_command("next"); });
     // (F11 shows the desktop on a Mac as it comes: F7 too.)
     own("Step into", {key(SDLK_F7), key(SDLK_F11)}, [this] { debug_command("stepIn"); });

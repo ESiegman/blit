@@ -187,6 +187,14 @@ check "back: as they were" 'notes.txt:2; notes.txt:3 if s != "\t" log x is {x}; 
 run "folder:$V;open:$V/x.txt;break:1;quit"
 run "folder:$W;debugbreaks;folder:$V;debugbreaks;debugdump"
 check "another folder's in their place" 'notes.txt:2; notes.txt:3 if s != "\t" log x is {x}; square() ;; x.txt:1 ;; idle'
+# One disabled (Space on it in the Debug tab): kept so, and back so.
+run "folder:$W;open:$W/notes.txt;break:1;debugpanel;debugpick:breaks:1;debugpanel;key:space;quit"
+f=$(grep -lx "folder	$W" "$S"/* 2>/dev/null | head -1)
+kept_breaks=$(grep -E '^break(off)?	' "$f" | sed -e "s#$dir#~#g" | join)
+run "debugbreaks" "$W"
+got="$kept_breaks ;; $got"
+check "a breakpoint disabled: kept so, and back so" \
+    'breakoff	0				~/work/notes.txt ;; break	1				~/work/notes.txt ;; break	2	s != "\\t"		x is {x}	~/work/notes.txt ;; notes.txt:1 off; notes.txt:2; notes.txt:3 if s != "\t" log x is {x}; square()'
 
 # The language chosen for a file from the status bar: kept, and back, in
 # each split that shows it; a file whose language is its name's keeps none.
