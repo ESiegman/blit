@@ -1371,6 +1371,16 @@ private:
     bool go_to_place(const std::string& path, u32 line, u32 col);  // a file at a line (from 1) and column (from 1; 0: none), in a split with text
     void show_place(u64 line, u64 col);  // (appfind.cpp) the file in front at a line and a byte in it (from 0), the line in the middle of the view
     std::string problems_dump();         // (apppanel.cpp) the Run button's words and the Problems tab's rows
+    size_t panel_problem() const;        // (apppanel.cpp) the Problems tab's picked row: the build's problems, then the language servers'
+    // The Vulkan spec's statement of a VUID a validation message named
+    // (appvalidusage.cpp): read from validusage.json on a thread of its
+    // own, shown in a read-only tab.
+    struct ValidUsage;
+    bool valid_usage_row(size_t i);  // Enter on the build's problem i: its statement, if a VUID names it and it has no place (else false)
+    void valid_usage_picked();       // the statement of the problem the Problems tab picked
+    void valid_usage_show(const std::string& vuid);
+    void valid_usage_sync();         // what the thread read, shown
+    void valid_usage_wait();         // (tests) the thread done, and that
     // What init.lua adds (applua.cpp).
     std::vector<std::string> script_hidden_builds() const;
     void script_build(const std::string& root, const std::vector<FsEntry>& files, std::vector<BuildTask>* tasks);
@@ -1653,6 +1663,7 @@ private:
     bool command_sending_ = false;  // a command's keys sent by the command search: the editor's, never Vim's
     std::shared_ptr<DebugUi> debugui_;
     std::shared_ptr<BuildUi> buildui_;
+    std::shared_ptr<ValidUsage> validusage_;  // (made the first time a statement is asked for)
     std::shared_ptr<TestUi> testui_;
     u64 test_gen_ = 1;  // counts up whenever what the Tests tab shows may have changed
     u64 build_gen_ = 1;  // counts up whenever what the Build tab or the Run button shows may have changed

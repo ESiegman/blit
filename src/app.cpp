@@ -1991,6 +1991,10 @@ void App::handle_event(const SDL_Event& e) {
                 build_sync();
                 break;
             }
+            if (e.user.code == 40) {  // a VUID's statement has been read from validusage.json
+                valid_usage_sync();
+                break;
+            }
             if (e.user.code == 25) {  // something changed on disk in the folder worked in
                 watch_take();
                 break;

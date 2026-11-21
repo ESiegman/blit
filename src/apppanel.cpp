@@ -327,6 +327,8 @@ void App::panel_problem_seen(size_t i) {
     dirty_ = true;
 }
 
+size_t App::panel_problem() const { return side_->problem; }
+
 // F8 (Shift+F8, back): the next of the build's problems, across files;
 // with none, the next of the language servers', from the cursor on, across
 // files (in the order the Problems tab has them), round the ends.
@@ -930,7 +932,7 @@ bool App::panel_key(const SDL_KeyboardEvent& k) {
             case SDLK_RETURN:
             case SDLK_KP_ENTER:
                 if (s.problem < nb) {
-                    build_go(s.problem);
+                    if (!valid_usage_row(s.problem)) build_go(s.problem);  // (a Vulkan message with no place: the spec's statement of its VUID)
                     panel_focus(false);
                 } else if (s.problem < n) {
                     lsp_go_problem(s.problem - nb);
@@ -1109,7 +1111,7 @@ bool App::panel_mouse_down(const SDL_MouseButtonEvent& b) {
             ProblemRow r = pr[i];
             if (r.kind == ProblemRow::kLspFile && i + 1 < pr.size()) r = pr[i + 1];  // (a file's row: its first)
             if (r.kind == ProblemRow::kFile || r.kind == ProblemRow::kBuild) {  // (a file's row: its first)
-                build_go(r.index);
+                if (!valid_usage_row(r.index)) build_go(r.index);
             } else if (r.kind == ProblemRow::kDiag) {
                 s.problem = static_cast<u32>(bp.size()) + r.index;
                 lsp_go_problem(r.index);

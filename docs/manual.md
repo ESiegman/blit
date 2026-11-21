@@ -2509,7 +2509,19 @@ validation's (`MTL_SHADER_VALIDATION=1` with
 `MTL_SHADER_VALIDATION_REPORT_TO_STDERR=1`, at the first frame of the GPU
 stack). The same message again, as one said every frame (its objects'
 handles aside), is the one row, its count at the row's end (`×120`), and
-counted once on the Run button.
+counted once on the Run button. Enter (or a click) on a Vulkan message's row
+shows the spec's own statement of its VUID in a read-only tab: the VUID,
+its command, the statement, and where it was read from. **Show the Vulkan
+spec's statement of the picked problem's VUID** does the same for the row
+picked, one with a place (a shader's line, where Enter goes) included.
+Statements are read from Vulkan-Headers' `registry/validusage.json`: the
+system's (`/usr/share/vulkan/registry`, `/usr/local` or `/opt/homebrew`'s,
+`$VULKAN_SDK`'s, the newest `~/VulkanSDK`'s), else a copy of Vulkan-Headers'
+own (tag v1.4.363) fetched once, the first time one is asked for, into
+blit's data folder (`~/.local/share/blit/vulkan`); `BLIT_VALIDUSAGE` names
+another file. It is indexed once, on a thread of its own, and statements
+read from it there. Metal's messages have no such file: their row is what
+there is.
 
 Under **CMake** the tab has two rows of its own. **Build type**: Enter goes
 from the project's own (what the build folder was configured with) to
@@ -3605,7 +3617,7 @@ tests/term.sh build-debug/blit     # terminals: a shell's output, size, keys, co
                                    # the split Ctrl+` shows and hides, and the questions about programs still running
 tests/keys.sh build-debug/blit     # the command search, the new keys, Back and Forward through the jumps, and every command run from the search
 tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and through tests/fake-ssh.sh (skipped with no debugger)
-tests/validation.sh build-debug/blit  # Vulkan's and Metal's validation messages as problems
+tests/validation.sh build-debug/blit  # Vulkan's and Metal's validation messages as problems, the spec's statements of VUIDs
 tests/lsp.sh build-debug/blit      # language servers against the test server: several at once, Problems across files, references, rename, formatting, code actions, hints, colours
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running), a fake build's problems (F8, Cmd+click) and new projects (a stand-in vcpkg)
 tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md against what they should draw, Mermaid, typing, Cmd+Shift+V, coloured code

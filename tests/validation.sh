@@ -2,13 +2,16 @@
 # Vulkan's and Metal's validation messages in a run's output, as problems:
 # the Khronos layer's text and JSON forms, GPU-assisted validation's place
 # in a shader, Metal's API validation (an assertion, or logged) and shader
-# validation; the same message every frame as one row, counted.
+# validation; the same message every frame as one row, counted; and Enter
+# on a VUID's row showing the spec's statement, from a validusage.json.
 #
 # The samples in tests/validation are real output. Vulkan's: the Khronos
 # validation layers 1.4.363 (Arch's vulkan-validation-layers 1.4.363.1,
 # RADV on an RX 7900 XT), from bad.c and gpuav.c there (oob.comp built by
 # glslangValidator -g), run as each case below says. Metal's: macOS 27.2 on
-# Apple silicon, from bad.m there. The one-line form of layers before 1.3.290 is not
+# Apple silicon, from bad.m there. validusage.json is a few entries of
+# Vulkan-Headers' 1.4.363 file (/usr/share/vulkan/registry on Arch), as
+# they are there. The one-line form of layers before 1.3.290 is not
 # installed anywhere here: its case is written from that form's documented
 # shape (the task's own example of it), not run.
 #
@@ -25,6 +28,7 @@ export BLIT_RECENT_FILE="$dir/recent"
 export HOME="$dir/home"
 mkdir -p "$HOME"
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/init.lua"
+export BLIT_VALIDUSAGE="$here/validation/validusage.json"
 
 failed=0
 check() {
@@ -89,8 +93,27 @@ check "and in JSON" "button: ▶ make gpuavjson · 1 error | Build 4 | $gpuav"
 run "buildrun:make gpuav;buildwait;key:cmd+shift+m;key:Down;key:Down;key:Down;key:Return;docdump:0"
 check "Enter on it: its line in the shader" '> |    data.v[i] = 7;'
 
+# Enter on a VUID's row (and the command for the one picked): the spec's
+# statement, in a tab.
+run "buildrun:make text;buildwait;key:cmd+shift+m;key:Down;key:Return;vuwait;docdump:8" 7
+check "Enter: the spec's statement of its VUID" 'VUID-VkBufferCreateInfo-size-00912/> |VUID-VkBufferCreateInfo-size-00912/  VkBufferCreateInfo/  /  size must be greater than 0/  /  Vulkan 1.4.363, @/validation/validusage.json'
+run "buildrun:make text;buildwait;key:cmd+shift+m;key:Down;key:Down;key:Down;key:Escape;command:Show the Vulkan spec's statement of the picked problem's VUID;vuwait;docdump:8" 7
+check "the command: the picked one's" 'VUID-vkCmdSetLineWidth-lineWidth-00788/> |VUID-vkCmdSetLineWidth-lineWidth-00788/  vkCmdSetLineWidth/  /  If the wideLines feature is not enabled, lineWidth must be 1.0/  /  Vulkan 1.4.363, @/validation/validusage.json'
+run "buildrun:make text;buildwait;key:cmd+shift+m;key:Return;command:Show the Vulkan spec's statement of the picked problem's VUID"
+check "one with no VUID: none" 'blit: The problem picked names no VUID'
+
 run "buildrun:make oneline;buildwait;problemsdump"
 check "the one-line form: the message after its MessageID, up to the statement; the second (another handle) counted" 'button: ▶ make oneline · 1 error | Build 1 | no file | >E vkCmdWaitEvents2(): pDependencyInfos[0].dependencyFlags includes VK_DEPENDENCY_BY_REGION_BIT. ×2'
+run "buildrun:make oneline;buildwait;key:cmd+shift+m;key:Return;vuwait;docdump:12" 12
+check "a statement with a list: an item a line" 'VUID-vkCmdWaitEvents2-dependencyFlags-10394/> |VUID-vkCmdWaitEvents2-dependencyFlags-10394/  vkCmdWaitEvents2/  /  The dependencyFlags member of any element of pDependencyInfo must not include/  any of the following bits:/    • VK_DEPENDENCY_BY_REGION_BIT/    • VK_DEPENDENCY_DEVICE_GROUP_BIT/    • VK_DEPENDENCY_VIEW_LOCAL_BIT/    • VK_DEPENDENCY_FEEDBACK_LOOP_BIT_EXT/  /  Vulkan 1.4.363, @/validation/validusage.json'
+
+BLIT_VALIDUSAGE="$dir/none.json" run "buildrun:make text;buildwait;key:cmd+shift+m;key:Down;key:Return;vuwait"
+check "no validusage.json: said so" 'blit: Cannot read ~/none.json'
+head -c 300 "$S/validusage.json" >"$dir/cut.json"
+BLIT_VALIDUSAGE="$dir/cut.json" run "buildrun:make text;buildwait;key:cmd+shift+m;key:Down;key:Return;vuwait"
+check "one with no entries: said so" 'blit: ~/cut.json has no valid usage in it'
+BLIT_VALIDUSAGE="$S/validusage.json" run "buildrun:make json;buildwait;key:cmd+shift+m;key:Down;key:Down;key:Down;key:Down;key:Down;key:Return;vuwait"
+check "a VUID it does not have (the few here have not vkDestroyFence's): said so" 'blit: VUID-vkDestroyFence-fence-01120 is not in @/validation/validusage.json (Vulkan 1.4.363)'
 
 # Metal.
 run "buildrun:make assert;buildwait;problemsdump"
@@ -99,5 +122,7 @@ run "buildrun:make nslog;buildwait;problemsdump"
 check "logged, frame after frame: each thing wrong a row, counted" 'button: ▶ make nslog · 2 errors | Build 2 | no file | >E Draw Errors Validation: missing vertexDescriptor Buffer binding at index 0. ×3 | E Draw Errors Validation: Vertex Function(vmain): missing Buffer binding at index 0 for vertexBuffer.0[0]. ×3'
 run "buildrun:make shader;buildwait;problemsdump"
 check "shader validation: at its GPU stack's first frame (a library made at run time: program_source)" 'button: ▶ make shader · 1 error | Build 1 | file /program_source | >E 7:19 Invalid store in '"'"'device'"'"' or '"'"'constant'"'"' address space at offset 16384, executing compute function: "fill"'
+run "buildrun:make assert;buildwait;key:cmd+shift+m;key:Return;command:Show the Vulkan spec's statement of the picked problem's VUID"
+check "its row has no statement to show" 'blit: The problem picked names no VUID'
 
 exit $failed

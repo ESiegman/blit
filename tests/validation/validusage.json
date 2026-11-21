@@ -1,0 +1,60 @@
+{
+  "version info": {
+    "schema version": 2,
+    "api version": "1.4.363",
+    "comment": "from git branch: github-main commit: 560d4305e8a6466fa7d07c83ca09429e4d010ff9",
+    "date": "2026-09-18 00:15:57Z"
+  },
+  "validation": {
+    "VkBufferCreateInfo": {
+      "core": [
+        {
+          "vuid": "VUID-VkBufferCreateInfo-size-00912",
+          "text": "<code>size</code> <strong class=\"purple\">must</strong> be greater than <code>0</code>",
+          "page": "chapters/resources.html"
+        }
+      ]
+    },
+    "vkCmdSetLineWidth": {
+      "core": [
+        {
+          "vuid": "VUID-vkCmdSetLineWidth-lineWidth-00788",
+          "text": "If the <a href=\"#features-wideLines\"><code>wideLines</code></a> feature is not enabled, <code>lineWidth</code> <strong class=\"purple\">must</strong> be <code>1.0</code>",
+          "page": "chapters/primsrast.html"
+        },
+        {
+          "vuid": "VUID-vkCmdSetLineWidth-commandBuffer-recording",
+          "text": "<code>commandBuffer</code> <strong class=\"purple\">must</strong> be in the <a href=\"#commandbuffers-lifecycle\">recording state</a>",
+          "page": "chapters/primsrast.html"
+        }
+      ]
+    },
+    "vkFreeCommandBuffers": {
+      "core": [
+        {
+          "vuid": "VUID-vkFreeCommandBuffers-pCommandBuffers-00047",
+          "text": "All elements of <code>pCommandBuffers</code> <strong class=\"purple\">must</strong> not be in the <a href=\"#commandbuffers-lifecycle\">pending state</a>",
+          "page": "chapters/cmdbuffers.html"
+        }
+      ]
+    },
+    "vkCmdDispatch": {
+      "core": [
+        {
+          "vuid": "VUID-vkCmdDispatch-storageBuffers-06936",
+          "text": "If any stage of the <a href=\"#VkPipeline\">VkPipeline</a> object bound to the pipeline bind point used by this command accesses a storage buffer, and that stage was created without enabling either <a href=\"#VkPipelineRobustnessBufferBehaviorEXT\">VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS</a> or <a href=\"#VkPipelineRobustnessBufferBehaviorEXT\">VK_PIPELINE_ROBUSTNESS_BUFFER_BEHAVIOR_ROBUST_BUFFER_ACCESS_2</a> for <code>storageBuffers</code>, and the <a href=\"#features-robustBufferAccess\"><code>robustBufferAccess</code></a> feature is not enabled, that stage <strong class=\"purple\">must</strong> not access values outside of the range of the buffer as specified in the descriptor set bound to the same pipeline bind point",
+          "page": "chapters/dispatch.html"
+        }
+      ]
+    },
+    "vkCmdWaitEvents2": {
+      "core": [
+        {
+          "vuid": "VUID-vkCmdWaitEvents2-dependencyFlags-10394",
+          "text": "The <code>dependencyFlags</code> member of any element of <code>pDependencyInfo</code> <strong class=\"purple\">must</strong> not include any of the following bits:<div class=\"ulist\">\n<ul>\n<li>\n<p><a href=\"#VkDependencyFlagBits\">VK_DEPENDENCY_BY_REGION_BIT</a></p>\n</li>\n<li>\n<p><a href=\"#VkDependencyFlagBits\">VK_DEPENDENCY_DEVICE_GROUP_BIT</a></p>\n</li>\n<li>\n<p><a href=\"#VkDependencyFlagBits\">VK_DEPENDENCY_VIEW_LOCAL_BIT</a></p>\n</li>\n<li>\n<p><a href=\"#VkDependencyFlagBits\">VK_DEPENDENCY_FEEDBACK_LOOP_BIT_EXT</a></p>\n</li>\n</ul>\n</div>",
+          "page": "chapters/synchronization.html"
+        }
+      ]
+    }
+  }
+}
