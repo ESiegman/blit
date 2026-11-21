@@ -183,6 +183,38 @@ run "$F" "buildrun:make errors;frame;buildwait;frame;termclick:Linking;frame;sta
 check "Cmd+click on what is not a place: nothing opens (the click is the terminal's)" 'make errors | × 4 ▲ 3'
 run "$F" "buildrun:make errors;buildwait;buildrun:make ok;buildwait;problemsdump"
 check "the next run starts with none" 'button: ▶ make ok | file 0'
+# In the text: each problem underlined in its file, from its column over
+# the word there (the line's text where it gives none), the cursor's line's
+# error in words after it; moved as lines go in or out above, gone when
+# its own line is changed, and all gone at the next run.
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/plain.lua"
+INIT="$dir/plain.lua"
+run "$F" "buildrun:make errors;buildwait;open:$F/src/a.c;buildmarks"
+check "a build's problems underlined in their file" '3:9-9E 7:9-9E'
+INIT="$dir/plain.lua"
+run "$F" "buildrun:make errors;buildwait;open:$F/src/a.c;frame;key:Down;key:Down;buildmarks"
+check "the cursor's line: its error in words" '3:9-9E 7:9-9E | 3: '"'"'x'"'"' undeclared'
+INIT="$dir/plain.lua"
+run "$F" "buildrun:make errors;buildwait;open:$F/src/b.h;buildmarks"
+check "a warning over its word" '2:5-10W'
+INIT="$dir/plain.lua"
+run "$F" "buildrun:make errors;buildwait;open:$F/cmake/x.cmake;buildmarks"
+check "no column: the line's text" '2:1-28W'
+INIT="$dir/plain.lua"
+run "$F" "buildrun:make errors;buildwait;open:$F/src/a.c;frame;key:Return;buildmarks"
+check "a line put in above: they move down with their lines" '4:9-9E 8:9-9E'
+INIT="$dir/plain.lua"
+run "$F" "buildrun:make errors;buildwait;open:$F/src/a.c;frame;key:Down;key:Down;key:End;key:Return;buildmarks"
+check "a line opened after one's text: it stays, the next moves" '3:9-9E 8:9-9E'
+INIT="$dir/plain.lua"
+run "$F" "buildrun:make errors;buildwait;open:$F/src/a.c;frame;key:Down;key:Down;key:End;key:Left;text:1;buildmarks"
+check "its own line changed: that one gone" '7:9-9E'
+INIT="$dir/plain.lua"
+run "$F" "buildrun:make errors;buildwait;open:$F/src/a.c;frame;key:Down;key:shift+Down;key:Delete;buildmarks"
+check "a line taken out above: up with their lines" '2:9-9E 6:9-9E | 2: '"'"'x'"'"' undeclared'
+INIT="$dir/plain.lua"
+run "$F" "buildrun:make errors;buildwait;open:$F/src/a.c;buildrun:make ok;buildwait;buildmarks"
+check "the next run: none" 'none'
 # Clang writing to a terminal (under make) wraps its message to the
 # terminal's width: a long path leaves none on the first line.
 cat >"$F/wrapped.sh" <<'EOF'

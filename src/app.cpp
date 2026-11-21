@@ -1562,6 +1562,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     panel_layout(w, std::max(1, h - status_px()), fd);  // (above the status bar)
     status_layout(w, h, fd);
     lsp_layout(w, h, fd);
+    build_marks(fd);  // (the build's problems, after the server's)
     shape_marks(fd);  // (the bracket that pairs with the cursor's)
     fold_notes(fd);   // (how many lines each folded one has under it)
     ruler_notes(fd);  // (the marks along the scroll bar)

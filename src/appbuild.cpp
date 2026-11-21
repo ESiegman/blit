@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <mutex>
 #include <optional>
@@ -105,6 +106,33 @@ struct App::BuildUi {
     std::optional<Read> read;  // (mu)
     bool reading = false;
     std::string read_from;
+    // Those problems in an open file's text, by its document: each a line
+    // (from 0) and the bytes of it underlined, made once when they come
+    // (not each frame), moved as lines are put in or taken out above them,
+    // and dropped when their own line is changed (what the build said of
+    // it no longer stands).
+    struct Mark {
+        u64 line = 0;
+        u32 c0 = 0, c1 = 0;  // bytes into the line
+        u32 len = 0;         // the line's bytes when the mark was made
+        u8 severity = 1;
+        std::string message;  // (its first line)
+    };
+    struct Marks final : EditListener {
+        std::vector<Mark> marks;  // by line
+        u64 gen = 0;              // build_prob_gen_ when made
+        u32 next_seq = 0;         // the problems after those taken
+        bool listening = false;
+        void on_edit(const TextEdit& e) override;
+    };
+    std::unordered_map<u64, std::unique_ptr<Marks>> marks;
+    // The underlines and the cursor line's words, as last worked out, and what for.
+    std::vector<GridDeco> decos, decos_all;
+    std::vector<u32> note_cells;
+    GridNote note;
+    std::string note_text;
+    bool noted = false;
+    u64 deco_key[9] = {};
     // CMake's build type and target, chosen in the Build tab (empty: the
     // project's own, and all), put into its tasks as they run.
     std::string cmake_type, cmake_target;
@@ -418,6 +446,9 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     u.summary.clear();
     u.sizes_before.clear();
     u.read_from.clear();
+    for (auto& [id, m] : u.marks)  // (and from the text)
+        if (Doc* d = m->listening ? find_doc(id) : nullptr) d->ed.unlisten(m.get());
+    u.marks.clear();
     build_errors_ = build_warnings_ = 0;
     u.at = -1;
     ++build_prob_gen_;
@@ -575,6 +606,134 @@ void App::build_outcome(u64 doc, std::vector<BuildScan::TestResult> results, con
 }
 
 const std::vector<BuildProblem>& App::build_problems() const { return buildui_->problems; }
+
+// An edit to a file with the build's problems in it: a mark below what
+// changed moves with its line (lines put in or taken out above it, a line
+// opened after it), and one whose line's text was changed goes.
+void App::BuildUi::Marks::on_edit(const TextEdit& e) {
+    if (marks.empty() || marks.back().line < e.start_row) return;
+    std::erase_if(marks, [&](Mark& m) {
+        if (m.line < e.start_row || (m.line == e.start_row && e.start_col >= m.len)) return false;  // (before it, or after its text: a line opened under it)
+        if (m.line > e.old_end_row || (m.line == e.old_end_row && e.old_end_col == 0 && e.new_end_col == 0)) {  // (after it, its text as it was)
+            m.line = m.line - e.old_end_row + e.new_end_row;
+            return false;
+        }
+        return true;
+    });
+}
+
+// The build's problems in the text of the split with the keyboard, as the
+// language server's are: a wavy underline in the colour of each kind, from
+// its column over the word there (the line's text where it says no column),
+// and the cursor's line's first error in words after the line's end (the
+// server's, where it has one there). The marks of a file are made the first
+// time it is drawn after problems come, and the underlines again only when
+// the view, the text or the cursor's line changes: with no problems from
+// the build this is one test of a frame.
+void App::build_marks(FrameDesc& fd) {
+    BuildUi& u = *buildui_;
+    if (u.problems.empty() || focus_view_ >= fd.view_count) return;
+    Doc& d = *pane_->doc;
+    if (d.term || d.ed.path.empty()) return;
+    std::unique_ptr<BuildUi::Marks>& slot = u.marks[d.id];
+    if (!slot) slot = std::make_unique<BuildUi::Marks>();
+    BuildUi::Marks& m = *slot;
+    const Buffer& b = d.ed.buf;
+    if (m.gen != build_prob_gen_) {  // (problems came: those of this file not yet taken)
+        m.gen = build_prob_gen_;
+        const std::string full = is_remote(d.ed.path) ? d.ed.path : full_path(d.ed.path);
+        if (const auto g = u.groups.find(full); g != u.groups.end()) {
+            const auto by_group = [](const BuildProblem& p, u32 group) { return p.group < group; };
+            const size_t had = m.marks.size();
+            for (auto it = std::lower_bound(u.problems.begin(), u.problems.end(), g->second, by_group); it != u.problems.end() && it->group == g->second; ++it) {
+                if (it->seq < m.next_seq) continue;
+                if (it->line == 0 || it->line > b.line_count()) continue;
+                BuildUi::Mark k;
+                k.line = it->line - 1;
+                const u64 ls = b.line_start(k.line), le = d.ed.line_end(k.line);
+                std::string text = b.text(ls, std::min<u64>(le - ls, 4096));
+                k.len = static_cast<u32>(text.size());
+                auto word = [](char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_'; };
+                if (it->col) {
+                    k.c0 = std::min<u32>(it->col - 1, k.len);
+                    k.c1 = k.c0;
+                    while (k.c1 < k.len && word(text[k.c1])) ++k.c1;
+                    if (k.c1 == k.c0 && k.c1 < k.len) ++k.c1;
+                } else {
+                    while (k.c0 < k.len && (text[k.c0] == ' ' || text[k.c0] == '\t')) ++k.c0;
+                    k.c1 = k.len;
+                    while (k.c1 > k.c0 && (text[k.c1 - 1] == ' ' || text[k.c1 - 1] == '\t' || text[k.c1 - 1] == '\r')) --k.c1;
+                }
+                k.severity = it->severity;
+                k.message = it->message.substr(0, std::min<size_t>(it->message.find('\n'), 600));
+                m.marks.push_back(std::move(k));
+            }
+            if (m.marks.size() != had) std::stable_sort(m.marks.begin(), m.marks.end(), [](const BuildUi::Mark& x, const BuildUi::Mark& y) { return x.line < y.line; });
+        }
+        m.next_seq = u.seq;
+        if (!m.marks.empty() && !m.listening) {
+            d.ed.listen(&m);
+            m.listening = true;
+        }
+    }
+    if (m.marks.empty()) return;
+    GridSpec& grid = fd.views[focus_view_].grid;
+    const i64 right = std::llround(pane_->scroll_x) - pad_x_ + (pane_->x1 - pane_->text_x);
+    const u32 edge = right > 0 ? static_cast<u32>(right / font_->cell_w()) : 0;
+    const u64 key[9] = {d.id, build_prob_gen_, d.ed.revision(), grid.top_line, grid.rows, grid.rows_key, pane_->cur_line, font_->generation(), edge};
+    if (!std::equal(key, key + 9, u.deco_key)) {
+        std::copy(key, key + 9, u.deco_key);
+        u.decos.clear();
+        u.noted = false;
+        const u64 first = grid.top_line, last = std::min<u64>(b.line_count(), grid.bottom());
+        const BuildUi::Mark* words = nullptr;
+        for (auto it = std::ranges::lower_bound(m.marks, first, {}, &BuildUi::Mark::line); it != m.marks.end() && it->line < last; ++it) {
+            const u64 ls = b.line_start(it->line);
+            GridDeco deco;
+            deco.line = it->line;
+            deco.kind = it->severity;
+            deco.col0 = d.ed.col_between(ls, ls + it->c0);
+            deco.col1 = std::max(d.ed.col_between(ls, ls + it->c1), deco.col0 + 1);  // (a problem at a point still shows)
+            u.decos.push_back(deco);
+            if (!words && it->line == pane_->cur_line && it->severity == 1) words = &*it;
+        }
+        if (words && cfg_.lsp_inline) {  // (three columns after the code, cut short of the view's edge, as the server's)
+            const u32 col = d.ed.col_between(b.line_start(words->line), d.ed.line_end(words->line)) + 3;
+            const u32 room = edge > col + 1 ? edge - col - 1 : 0;
+            if (room >= 8) {
+                const std::string text = fit_text(words->message, room);
+                TextBox box;
+                box.resize(std::max<u32>(width_of(text), 1), 1);
+                put(box, *font_, 0, 0, text, ink::kError);
+                u.note_cells = std::move(box.cells);
+                u.note = {words->line, col, u.note_cells.data(), static_cast<u32>(u.note_cells.size())};
+                u.note_text = text;
+                u.noted = true;
+            }
+        }
+    }
+    if (!u.decos.empty()) {
+        u.decos_all.assign(grid.decos.begin(), grid.decos.end());
+        u.decos_all.insert(u.decos_all.end(), u.decos.begin(), u.decos.end());
+        grid.decos = u.decos_all;
+    }
+    if (u.noted && grid.notes.empty()) grid.notes = {&u.note, 1};
+}
+
+// (Tests.) The underlines the build's problems drew in the split in front
+// at the next frame ("3:9-10E": line, columns from 1, kind), and the cursor
+// line's words ("| 3: message"); "none".
+std::string App::build_marks_dump() {
+    frame();
+    const BuildUi& u = *buildui_;
+    const auto it = u.marks.find(pane_->doc->id);
+    if (u.problems.empty() || it == u.marks.end() || it->second->marks.empty() || (u.decos.empty() && !u.noted)) return "none";
+    std::string out;
+    for (const GridDeco& d : u.decos)
+        out += (out.empty() ? "" : " ") + std::to_string(d.line + 1) + ":" + std::to_string(d.col0 + 1) + "-" + std::to_string(d.col1) + (d.kind == 1 ? "E" : "W");
+    if (u.noted) out += " | " + std::to_string(u.note.line + 1) + ": " + u.note_text;
+    return out;
+}
 
 void App::build_go(size_t i) {
     BuildUi& u = *buildui_;

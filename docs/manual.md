@@ -2476,16 +2476,24 @@ errors). A run that failed with no error in its output says so instead:
 `▶ make · failed (exit 2)` on the Run button (with its warnings' count,
 if it has some), "make failed with exit code 2: no problem found in its
 output" in the Problems tab and from F8, which then has nowhere to go;
-never "No problems" under a red button. The next run starts with none. A
-compiler's notes (`note:`), the include chain before its problem (`In file
-included from c.h:2`, GCC's lines of `from` under it, Clang's a line each)
-and GCC's instantiation context (`In instantiation of ...`, `required from
-here`) are that problem's notes, in the Problems tab under it (where a
-chain comes just before a note, it is the note's, and so the problem's).
-Validation messages (below) with no place are listed under **No file**;
-one whose file is nowhere (Metal's run-time `program_source` with no
-`.metal` file to be, below) is listed and counted, and F8 says it without
-going anywhere. **Cmd+click**
+never "No problems" under a red button. In the text they are marked as
+the language server's problems are, in the split with the keyboard: a
+wavy underline in the colour of the kind, from the column the tool gave
+over the word there (the line's text, where it gave no column), and the
+cursor's line's first error in words after it (the server's, where the
+server has one on that line; `blit.opt.lsp.inline_diagnostics = false`
+leaves the words out). A mark moves with its line as lines are put in or
+taken out above it, and goes once its own line is changed: what the build
+said of it no longer stands. The next run starts with none, in the tab
+and in the text. A compiler's notes (`note:`), the include chain before
+its problem (`In file included from c.h:2`, GCC's lines of `from` under
+it, Clang's a line each) and GCC's instantiation context (`In
+instantiation of ...`, `required from here`) are that problem's notes, in
+the Problems tab under it (where a chain comes just before a note, it is
+the note's, and so the problem's). Validation messages (below) with no
+place are listed under **No file**; one whose file is nowhere (Metal's
+run-time `program_source` with no `.metal` file to be, below) is listed
+and counted, and F8 says it without going anywhere. **Cmd+click**
 on a `path:line` (or `path:line:col`, or Python's `File "path", line N`)
 in any terminal tab opens the file there, in a split with text: a
 relative path from the shell's folder, the folders the build went into,

@@ -1380,6 +1380,8 @@ private:
     // build's problems, in place of the last run's.
     void build_read_choose();
     void build_read(const std::string& path);
+    void build_marks(FrameDesc& fd);  // and those in the file in front, underlined in its text (the cursor's line: its first error in words)
+    std::string build_marks_dump();   // (tests) what that drew
     void build_go(size_t i);    // that one's file, at its line
     bool build_step(int by);    // the next (1) or previous (-1) of them; false: there are none
     void problem_step(int by);  // F8 / Shift+F8 (apppanel.cpp): the build's problems, else the open file's
