@@ -21,9 +21,14 @@ constexpr uint32_t kVersion = 2;
 
 enum Op : uint8_t {
     // Asked by blit, answered with kReply and the same number.
-    kHello = 1,  // u32 version, [u32 blit's level] -> str agent version, str home, str system, u32 process id
+    kHello = 1,  // u32 version, [u32 blit's level, [str session, u32 idle s, u32 keep s]] -> str agent version, str home,
+                 //   str system, u32 process id, [u8 lasting]
                  //   (blit's level, from blit 3: what it understands of what the agent sends, kInFlow; an older
-                 //   agent reads no further than the version)
+                 //   agent reads no further than the version. From blit 4: the session, blit's own name for itself
+                 //   (the same each time it connects again, so that what it left running is its own again), and
+                 //   how long the agent waits with nothing to do and nobody attached, and with what was kept
+                 //   running and nobody attached, before it ends. From agent 4: lasting, 1 when it outlives this
+                 //   connection.)
     kStat,       // str path -> u8 kind (0 none, 1 file, 2 folder, 3 other), u64 size, i64 modified (ns), u32 mode
     kRead,       // str path, u64 most -> u8 status (0 read, 1 none, 2 not a file, 3 too big, 4 failed), bytes, i64 modified
     kWrite,      // str path, bytes -> u8 ok, str error, i64 modified (through a temporary file, keeping the mode; through a link to what it names)
@@ -36,14 +41,16 @@ enum Op : uint8_t {
     kWalk,       // str root, u8 gitignore, u8 hidden, u32 most, u32 rules, * str -> u32 walk, u8 truncated, u32 n, n * str path (from the root)
     kGrep,       // u32 walk, u32 n (0: every file), n * u32 file, str typed, u64 most bytes, u32 most lines
                  //   -> u8 capped, u32 n, n * (u32 file, u32 line, u32 column, str text), u32 files, * u32 file (those with a line)
-    kSpawn,      // u32 process, str folder, u32 argc, * str, u32 envc, * str "NAME=value", [u8 flags] -> u8 ok, str error
+    kSpawn,      // u32 process, str folder, u32 argc, * str, u32 envc, * str "NAME=value", [u8 flags, [str done]] -> u8 ok, str error
                  //   (flags, from agent 2: kQuiet, what it writes as errors goes to /dev/null there; an older agent
-                 //   reads no further than the environment, and sends them)
+                 //   reads no further than the environment, and sends them. From agent 4: kKeep, kWork; and done,
+                 //   what it writes when a piece of work kBusy began has ended)
     kStdin,      // u32 process, bytes (none: its input is closed) -> nothing
     kKill,       // u32 process, i32 signal -> nothing
     kWhich,      // str program -> str path (empty: not found on the agent's PATH)
-    kSpawnPty,   // u32 process, str folder, u32 rows, u32 columns, u32 argc, * str, u32 envc, * str -> u8 ok, str error
-                 //   (on a pseudo-terminal: its output comes as stream 1, its input goes in with kStdin)
+    kSpawnPty,   // u32 process, str folder, u32 rows, u32 columns, u32 argc, * str, u32 envc, * str, [u8 flags] -> u8 ok, str error
+                 //   (on a pseudo-terminal: its output comes as stream 1, its input goes in with kStdin; flags as
+                 //   kSpawn's, from agent 4)
     kResize,     // u32 process, u32 rows, u32 columns, [u32 width, u32 height] -> nothing (its pseudo-terminal's size;
                  //   in pixels too, from blit 3: an older agent reads no further than the columns)
     kFlow,       // u32 process, u8 paused -> nothing (from agent 2: while paused, its output is not read, so
@@ -51,27 +58,45 @@ enum Op : uint8_t {
     kWritePart,  // u32 write, u8 part (kFirst, kLast), str path, bytes -> (the last part only) as kWrite
                  //   (from agent 3: a file written a part at a time, so that what else is sent goes between the
                  //   parts; the parts of one write come in order, and only the last is answered)
+    kResume,     // u32 n, n * (u32 process, u64 output had, u64 errors had) -> u32 n, n * (u32 process, u8 there)
+                 //   (from agent 4, once kHello has named the session again: the programs kept running while
+                 //   blit was away; what each wrote that blit has not had follows, then its end if it has ended.
+                 //   One not there is gone: the machine restarted, say)
+    kBusy,       // u32 process -> nothing (from agent 4: it has been given a piece of work, which ends when it
+                 //   writes its done; until then it counts as working)
+    kGoodbye,    // u8 keep -> u8 ok (from agent 4: blit is quitting. What it started ends, but with keep what is
+                 //   working; the agent ends at once if nothing else holds it)
+    kStop,       // -> nothing (from agent 4: everything it runs, for every blit, ends, and so does it)
+    kProxyEnv = 90,  // u32 n, n * str "NAME=value" (from blit-agent --attach, before blit's first: the environment of
+                     //   this connection there, the PATH a login has now and SSH_AUTH_SOCK, for the programs started on it)
     // Sent by the agent.
     kReply = 100,  // the answer to a request
     kOutput,       // u32 process, u8 stream (1 output, 2 errors), bytes
     kExit,         // u32 process, i32 status (exit code, or 128 + signal)
     kInFlow,       // u32 process, u8 paused (to a blit of level 3: what it sends to the program's input waits
                    //   while paused, the program not having taken what it has been sent)
+    kWorking,      // u32 process, u8 working (to a blit of level 4, for a program kept running: whether it is
+                   //   working, as the agent counts it, which is what quitting asks about)
 };
 
-// kSpawn's flags.
-enum : uint8_t { kQuiet = 1 };
+// kSpawn's flags. kKeep: it outlives the connection (a terminal, a task, a
+// profiling run, the kernel), its output kept meanwhile, up to a few MB.
+// kWork: while it runs it counts as working (a task's terminal; a shell's
+// counts only while a program is in front of it, and one given kBusy only
+// until its done).
+enum : uint8_t { kQuiet = 1, kKeep = 2, kWork = 4 };
 // kWritePart's parts.
 enum : uint8_t { kFirst = 1, kLast = 2 };
 
 // The agent's own version, the number at the end of what it says to kHello
 // ("blit-agent 3"). It counts what an agent can do that one before it
-// could not (2: kFlow, kQuiet; 3: kWritePart, kInFlow), so that blit asks
+// could not (2: kFlow, kQuiet; 3: kWritePart, kInFlow; 4: it outlives the
+// connection, kResume, kKeep, kBusy, kGoodbye, kStop, kWorking), so that blit asks
 // an older one only for what it knows. (A blit always brings its own agent;
 // an older one is met only when the agents kept in agent/bin were built
 // from older sources.) blit says its own level the same way, in kHello.
-constexpr uint32_t kAgentLevel = 3;
-constexpr uint32_t kBlitLevel = 3;
+constexpr uint32_t kAgentLevel = 4;
+constexpr uint32_t kBlitLevel = 4;
 
 // A message being put together.
 struct Writer {

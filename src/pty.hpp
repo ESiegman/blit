@@ -17,9 +17,10 @@ struct Pty {
 // Starts argv[0] (looked for on PATH) in `cwd` (none: this one), with
 // `env` ("NAME=value") added to this process's environment, on a new
 // pseudo-terminal of rows by cols that is its controlling terminal. The
-// descriptor is non-blocking and closed on exec.
+// descriptor is non-blocking and closed on exec. (base: the environment to
+// add to, and whose PATH is searched, in place of this process's.)
 bool pty_spawn(const std::vector<std::string>& argv, const std::string& cwd, const std::vector<std::string>& env, unsigned rows, unsigned cols, Pty* out,
-               std::string* err);
+               std::string* err, const std::vector<std::string>* base = nullptr);
 
 // The terminal's new size (the program is told with SIGWINCH), and in
 // pixels (what a program that draws pictures sizes them by; 0: not known).

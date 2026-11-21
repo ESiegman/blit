@@ -21,9 +21,8 @@ namespace {
 
 // The program's full path (PATH searched now: between fork and exec
 // nothing may allocate).
-std::string find_program(const std::string& name) {
+std::string find_program(const std::string& name, const char* path) {
     if (name.find('/') != std::string::npos) return name;
-    const char* path = std::getenv("PATH");
     const std::string_view dirs = path && *path ? path : "/usr/bin:/bin";
     for (size_t at = 0; at <= dirs.size();) {
         const size_t colon = dirs.find(':', at);
@@ -40,9 +39,16 @@ std::string find_program(const std::string& name) {
 }  // namespace
 
 bool pty_spawn(const std::vector<std::string>& argv, const std::string& cwd, const std::vector<std::string>& env, unsigned rows, unsigned cols, Pty* out,
-               std::string* err) {
+               std::string* err, const std::vector<std::string>* base) {
     if (argv.empty()) return *err = "nothing to run", false;
-    const std::string program = find_program(argv[0]);
+    const char* path = nullptr;
+    if (base) {
+        for (const std::string& e : *base)
+            if (e.starts_with("PATH=")) path = e.c_str() + 5;
+    } else {
+        path = std::getenv("PATH");
+    }
+    const std::string program = find_program(argv[0], path);
     if (program.empty()) return *err = "cannot find " + argv[0], false;
     const int master = ::posix_openpt(O_RDWR | O_NOCTTY);
     if (master < 0) return *err = std::string("cannot open a pseudo-terminal: ") + std::strerror(errno), false;
@@ -67,12 +73,16 @@ bool pty_spawn(const std::vector<std::string>& argv, const std::string& cwd, con
     for (std::string& a : args_store) args.push_back(a.data());
     args.push_back(nullptr);
     std::vector<std::string> envs;
-    for (char** e = environ; e && *e; ++e) {
-        const std::string_view var(*e);
+    auto add = [&](std::string_view var) {
         const std::string_view key = var.substr(0, var.find('=') + 1);
         bool replaced = false;
         for (const std::string& mine : env) replaced |= mine.starts_with(key);
         if (!replaced) envs.emplace_back(var);
+    };
+    if (base) {
+        for (const std::string& e : *base) add(e);
+    } else {
+        for (char** e = environ; e && *e; ++e) add(*e);
     }
     envs.insert(envs.end(), env.begin(), env.end());
     std::vector<char*> envp;
