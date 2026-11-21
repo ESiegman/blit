@@ -26,12 +26,22 @@
 
 namespace blit {
 
+// A place a problem goes on to name: a compiler's "note:", a header in an
+// include chain, a frame of a sanitizer's stack, the other access of a race.
+struct BuildNote {
+    std::string path;  // as BuildProblem's (empty: a line of text with no place)
+    u32 line = 0, col = 0;
+    std::string message;
+};
+
 struct BuildProblem {
     std::string path;   // the file: a full path, where one could be made
     u32 line = 1;       // from 1
     u32 col = 0;        // from 1; 0: not said
     u8 severity = 1;    // 1 an error, 2 a warning (the language server's numbers)
     std::string message;
+    std::string code;   // the tool's own name for it, where it gives one (a lint rule, a VUID); "" if none
+    std::vector<BuildNote> notes;  // what it goes on to name, in order
     u32 group = 0, seq = 0;  // (the editor's: its file, by the order the files came in, and its own place in that order)
 };
 
@@ -55,12 +65,27 @@ public:
     const std::vector<std::string>& dirs() const { return seen_; }
     u64 dirs_gen() const { return dirs_gen_; }
     u64 lines() const { return lines_; }
+    // What the run came to, in a few words, for its task's row: the tests'
+    // count ("12 passed, 1 failed"), a firmware's size ("text 14.2 KB"),
+    // timing's worst slack; "" when its output said none of that.
+    const std::string& summary() const { return summary_; }
 
     static constexpr size_t kMaxProblems = 5000;  // a run's, at most
     static constexpr size_t kMaxLine = 4096;      // bytes of a line looked at
 
 private:
     void line(std::string_view text);
+    // Each kind of output in a file of its own, taking a line if it is one
+    // of its kind (true), and told when the output has ended (what a kind
+    // was holding for the lines after it, it adds then):
+    bool validation_line(std::string_view text);  // buildvalidation.cpp: Vulkan's and Metal's validation messages
+    void validation_end();
+    bool matcher_line(std::string_view text);     // buildmatch.cpp: init.lua's patterns (blit.build.matcher)
+    void matcher_end();
+    bool tool_line(std::string_view text);        // buildtools.cpp: linkers, assemblers, HDL tools, shader compilers, Python's tools
+    void tool_end();
+    bool test_line(std::string_view text);        // buildtests.cpp: test frameworks' results, sizes, timing
+    void test_end();
     bool cmake_line(std::string_view text);
     bool python_line(std::string_view text);
     bool compiler_line(std::string_view text);
@@ -69,7 +94,9 @@ private:
     void wrapped_join();
     void wrapped_end();
     void cmake_end();
-    void add(std::string_view path, u32 line, u32 col, u8 severity, std::string_view message);
+    // A problem found (none if it was found before, or there are too many):
+    // the one added, to put its code and notes on, until the next is added.
+    BuildProblem* add(std::string_view path, u32 line, u32 col, u8 severity, std::string_view message);
     std::string resolve(std::string_view path);
 
     std::string prefix_;  // "ssh://host" for a folder there; empty here
@@ -109,6 +136,13 @@ private:
     bool py_ = false;
     std::string py_path_;
     u32 py_line_ = 0;
+
+    // (Each kind's own state, below its name.)
+    // buildvalidation.cpp:
+    // buildmatch.cpp:
+    // buildtools.cpp:
+    // buildtests.cpp:
+    std::string summary_;
 
     std::vector<BuildProblem> found_;
     size_t count_ = 0;

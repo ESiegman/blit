@@ -196,7 +196,7 @@ find_path(HARFBUZZ_INCLUDE_DIR hb.h PATH_SUFFIXES harfbuzz)
 find_library(HARFBUZZ_LIBRARY harfbuzz)
 
 # Text storage, editing and settings: no SDL, no GPU.
-add_library(blit_core STATIC src/buffer.cpp src/editor.cpp src/config.cpp src/vim.cpp src/regex.cpp src/fuzzy.cpp src/finder.cpp src/keymap.cpp src/job.cpp src/threads.cpp src/buildscan.cpp)
+add_library(blit_core STATIC src/buffer.cpp src/editor.cpp src/config.cpp src/vim.cpp src/regex.cpp src/fuzzy.cpp src/finder.cpp src/keymap.cpp src/job.cpp src/threads.cpp src/buildscan.cpp src/buildvalidation.cpp src/buildmatch.cpp src/buildtools.cpp src/buildtests.cpp)
 target_include_directories(blit_core PUBLIC src)
 target_link_libraries(blit_core PUBLIC Threads::Threads)
 

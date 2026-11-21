@@ -154,6 +154,10 @@ void BuildScan::finish() {
     esc_ = kText;
     wrapped_end();
     cmake_end();
+    validation_end();
+    matcher_end();
+    tool_end();
+    test_end();
     py_ = false;
 }
 
@@ -179,6 +183,7 @@ void BuildScan::line(std::string_view text) {
         if (carets) wrap_held_ = false;
         wrapped_end();
     }
+    if (validation_line(text) || matcher_line(text)) return;
     if (cmake_ && cmake_line(text)) return;
     if (sanitizer_line(text)) return;
     if (python_line(text)) return;
@@ -228,6 +233,7 @@ void BuildScan::line(std::string_view text) {
             }
         }
     }
+    if (tool_line(text) || test_line(text)) return;
     compiler_line(text);
 }
 
@@ -487,8 +493,8 @@ std::string BuildScan::resolve(std::string_view path) {
     return pick;
 }
 
-void BuildScan::add(std::string_view path, u32 line, u32 col, u8 severity, std::string_view message) {
-    if (count_ >= kMaxProblems) return;
+BuildProblem* BuildScan::add(std::string_view path, u32 line, u32 col, u8 severity, std::string_view message) {
+    if (count_ >= kMaxProblems) return nullptr;
     BuildProblem p;
     p.path = resolve(path);
     p.line = line;
@@ -499,9 +505,10 @@ void BuildScan::add(std::string_view path, u32 line, u32 col, u8 severity, std::
     key += '\0';
     key += std::to_string(line) + ":" + std::to_string(col) + ":" + static_cast<char>('0' + severity);
     key += p.message;
-    if (!seen_problems_.insert(std::move(key)).second) return;
+    if (!seen_problems_.insert(std::move(key)).second) return nullptr;
     ++count_;
     found_.push_back(std::move(p));
+    return &found_.back();
 }
 
 // ---------------------------------------------------------------- a place in a line
