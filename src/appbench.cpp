@@ -1425,6 +1425,8 @@ void App::run_script(const char* script) {
         } else if (verb == "buildrun") {  // buildrun:name runs that task (buildrun alone: the Run button's)
             build_settle();
             if (!build_run_named(arg)) std::fprintf(stderr, "buildrun: no \"%s\"\n", arg.c_str());
+        } else if (verb == "problemsread") {  // problemsread:PATH, "Read the problems from this file" with that file chosen (buildwait waits for it)
+            build_read(arg);
         } else if (verb == "buildwait") {  // the task run has ended, and the targets being listed are (60 s at most)
             build_wait();
         } else if (verb == "vuwait") {  // the statement of a VUID asked for has been read from validusage.json, and is shown

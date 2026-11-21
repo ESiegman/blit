@@ -2719,6 +2719,34 @@ blit.build.matcher("uvm", {
 })
 ```
 
+### Problems from a file
+
+**Read the problems from this file…** (in the command search) reads a
+file a tool wrote into the Build section of the Problems tab, in place
+of the last run's (the box that opens files starts at the file in front,
+so a SARIF file open in a tab is Enter away; the file is read on a
+thread of its own, here or on another machine). It may be:
+
+- **SARIF 2.1** (`g++ -fdiagnostics-format=sarif-file`,
+  `clang --analyze --analyzer-output sarif`, Verilator's
+  `--diagnostics-sarif`, cppcheck, clang-tidy): each result at its first
+  location, its rule as its code, its level as how bad (a `note` result
+  is a note of the one before it, as GCC writes them), and its related
+  locations (GCC's include chain among them) and code flows (the
+  analyzer's path) as its notes. A relative path is from its
+  `originalUriBaseIds` folder when the file is there, else from the
+  folder of the file read (one made on another machine, or in CI).
+- **GCC's JSON diagnostics** (`-fdiagnostics-format=json` and
+  `json-file`, GCC 15 and before): each diagnostic, its option as its
+  code, its children (and a `note` after it) as its notes; paths from
+  the file's folder. A build's log of them (an array for each file
+  compiled, make's lines between) is read too.
+- **anything else**, a log (a run in tmux, a CI step's, a Vivado log),
+  read as a build's output is, from the log's folder.
+
+The bottom line says what it was read as and how many it had. The next
+run's problems take their place.
+
 ### Run configurations
 
 What to run, with what, lives beside the project in `.blit/run.json`
@@ -3770,7 +3798,7 @@ tests/debug.sh build-debug/blit    # debugging tests/debug/count.c here and thro
 tests/validation.sh build-debug/blit  # Vulkan's and Metal's validation messages as problems, the spec's statements of VUIDs
 tests/lsp.sh build-debug/blit      # language servers against the test server: several at once, Problems across files, references, rename, formatting, code actions, hints, colours
 tests/build.sh build-debug/blit    # the Build tab (each kind of folder, init.lua's systems, running), a fake build's problems (F8, Cmd+click) and new projects (a stand-in vcpkg)
-tests/problems.sh build-debug/blit # problems from init.lua's own patterns (the manual's for Questa, Xcelium and UVM), and the tasks that name them
+tests/problems.sh build-debug/blit # problems from init.lua's own patterns (the manual's for Questa, Xcelium and UVM) and the tasks that name them, a failed run's, and from SARIF, GCC's JSON and logs
 tests/markdown.sh build-debug/blit # the Markdown preview: tests/markdown/*.md against what they should draw, Mermaid, typing, Cmd+Shift+V, coloured code
 tests/notebook.sh build-debug/blit # a notebook's view: each kind of output, from the command line, following the cursor, clicks, Cmd+Shift+V, broken notebooks; cells run in its kernel: outputs shown and saved, errors, an interrupt, a restart, run all, on another machine (a slow one too), IPython where python3 has it, a long output taken in as it comes, NaN, the terminal's width, the status bar, the picture cache pruned, no process left
 tests/unicode.sh build-debug/blit  # characters made of several code points: the cursor over them, their widths, accents drawn over their letter

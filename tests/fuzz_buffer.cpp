@@ -30,6 +30,7 @@
 
 #include "buffer.hpp"
 #include "buildmatch.hpp"
+#include "buildread.hpp"
 #include "config.hpp"
 #include "diagram.hpp"
 #include "raster.hpp"
@@ -2318,6 +2319,36 @@ void match_test() {
     re("axb", "a\\.b", false);
     re("x", "(", false);  // malformed patterns match nothing
     re("x", "[abc", false);
+}
+
+// Problems read from a file a tool wrote (buildread.cpp): the real samples
+// of tests/problems whole, then cut short and with bytes changed, which
+// must never crash it or give a problem with no file.
+void read_problems_test() {
+#if defined(BLIT_PROFILE_DATA)
+    for (const char* name : {"gcc16.sarif", "gcc15.json"}) {
+        std::string text;
+        if (FILE* f = std::fopen((std::string(BLIT_PROFILE_DATA) + "/../problems/" + name).c_str(), "rb")) {
+            char buf[4096];
+            for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+            std::fclose(f);
+        }
+        std::vector<BuildProblem> out;
+        std::string kind;
+        const std::function<bool(const std::string&)> nowhere = [](const std::string&) { return false; };  // (SARIF's base is not here)
+        if (!read_problems(text, "/w/out/x.sarif", nowhere, &out, &kind) || out.size() != 4 || out[1].notes.size() != 1 || out[1].notes[0].path != "/w/out/src/c.cpp")
+            fail("read problems: a real sample", 0, 0);
+        rng.seed(77);
+        for (int round = 0; round < 300; ++round) {
+            std::string t = text.substr(0, rnd(text.size() + 1));
+            for (int k = 0, n = static_cast<int>(rnd(4)); k < n && !t.empty(); ++k) t[rnd(t.size())] = "{}[]\":,0x\n"[rnd(11)];
+            out.clear();
+            read_problems(t, "ssh://host/w/x.sarif", {}, &out, &kind);
+            for (const BuildProblem& p : out)
+                if (p.path.empty() || p.line == 0) fail("read problems: a mangled sample gave a problem with no place", 0, static_cast<u64>(round));
+        }
+    }
+#endif
 }
 
 // Highlights::edit against a plain per-byte model: a style for every byte,
@@ -7861,6 +7892,7 @@ int main(int argc, char** argv) {
     box_test();
     fit_test();
     match_test();
+    read_problems_test();
     highlights_test();
     syntax_test();
     raster_test();

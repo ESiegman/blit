@@ -1,7 +1,9 @@
 #!/bin/sh
 # A build's problems from more than the built-in kinds: init.lua's own
 # patterns (blit.build.matcher, the manual's for Questa, Xcelium and UVM
-# taken from the manual itself) and which a task names (problems = ...).
+# taken from the manual itself) and which a task names (problems = ...);
+# a run that failed with none; and problems read from a file (SARIF, GCC's
+# JSON diagnostics, a log).
 #
 #   tests/problems.sh path/to/blit            run the cases
 #   tests/problems.sh path/to/blit --print    show what each case gives
@@ -192,5 +194,64 @@ run "$F" "buildrun:make errs;buildwait;problemsdump"
 check "failed with errors: they say it" 'button: ▶ make errs · 1 error | Build 1 | file a.c | >E 1:5 bad'
 run "$F" "buildrun:make quiet;buildwait;buildrun:make fine;buildwait;problemsdump"
 check "the next run starts afresh" 'button: ▶ make fine · 1 warning | Build 1 | file a.c | >W 1:5 unused'
+
+# Problems from a file a tool wrote ("Read the problems from this file"):
+# SARIF and GCC's JSON diagnostics, each problem's notes after it (<), and
+# a log read as a build's output is. tests/problems holds real output, made
+# from its src: gcc15.json and gcc15-a.json by GCC 15.3 (-fdiagnostics-format=json,
+# Arch Linux), gcc16.sarif by GCC 16.2.1 (-fdiagnostics-format=sarif-file,
+# Arch Linux); g++-16 and clang's analyzer make theirs here, when they are here.
+samples="$(cd "$(dirname "$0")" && pwd -P)/problems"
+R="$dir/read"
+mkdir -p "$R/out"
+cp -R "$samples/src" "$R/"
+cp "$samples/gcc15.json" "$samples/gcc15-a.json" "$R/"
+# (Made in a folder on that machine: its base, originalUriBaseIds, is here a folder that is not there.)
+sed "s#file:///tmp/m3-match-s/#file://$dir/elsewhere/#" "$samples/gcc16.sarif" >"$R/gcc16.sarif"
+run "$R" "problemsread:$R/gcc15.json;buildwait;buildproblemsdump"
+check "GCC's JSON: its option as the code, its children and the notes after a problem as notes" 'E ~/read/src/d.hpp:3:27 '"'"'nothing'"'"' was not declared in this scope | E ~/read/src/c.cpp:5:9 too few arguments to function '"'"'void take(int, int)'"'"' < ~/read/src/c.cpp:2:6 declared here | E ~/read/src/c.cpp:6:18 [-fpermissive] invalid conversion from '"'"'const char*'"'"' to '"'"'int'"'"' < ~/read/src/d.hpp:2:22 initializing argument 1 of '"'"'int twice(int)'"'"' | W ~/read/src/c.cpp:4:9 [-Wunused-variable] unused variable '"'"'unused'"'"''
+run "$R" "problemsread:$R/gcc16.sarif;buildwait;buildproblemsdump"
+check "SARIF from GCC: relative to the file's folder when its base is not here; the include chain and notes" 'E ~/read/src/d.hpp:3:27 '"'"'nothing'"'"' was not declared in this scope < ~/read/src/c.cpp:1 included here | E ~/read/src/c.cpp:5:5 too few arguments to function '"'"'void take(int, int)'"'"' < ~/read/src/c.cpp:2:6 declared here | E ~/read/src/c.cpp:6:18 [-fpermissive] invalid conversion from '"'"'const char*'"'"' to '"'"'int'"'"' < ~/read/src/d.hpp:2:18 initializing argument 1 of '"'"'int twice(int)'"'"' | W ~/read/src/c.cpp:4:9 [-Wunused-variable] unused variable '"'"'unused'"'"''
+got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$R;frame;problemsread:$R/gcc16.sarif;buildwait;problemsdump;key:F8;frame;statusdump" 2>&1 >/dev/null | sed -e "s#$dir#~#g" | tail -4 | tr '\n' '/')
+got=$(printf '%s' "$got" | sed 's#\(Col 27\)[^/]*/#\1/#')
+check "said, listed, counted, and F8 goes to them" 'blit: gcc16.sarif (SARIF): 4 problems/button: ▶  · 3 errors | Build 4 | file src/d.hpp | >E 3:27 '"'"'nothing'"'"' was not declared in this scope | file src/c.cpp | E 5:5 too few arguments to function '"'"'void take(int, int)'"'"' | E 6:18 invalid conversion from '"'"'const char*'"'"' to '"'"'int'"'"' | W 4:9 unused variable '"'"'unused'"'"'/blit: Problem 1 of 4: '"'"'nothing'"'"' was not declared in this scope/NORMAL src/d.hpp | × 3 ▲ 1 Ln 3, Col 27/'
+# A build's log of GCC's JSON: an array for each file, make's lines between.
+{ printf 'g++ -c src/a.cpp\n'; cat "$R/gcc15-a.json"; printf '\ng++ -c src/c.cpp\n'; cat "$R/gcc15.json"; } >"$R/build.log"
+run "$R" "problemsread:$R/build.log;buildwait;buildproblemsdump"
+got=$(printf '%s' "$got" | tr '|' '\n' | grep -c '^ *[EW] ')
+check "a log of GCC's JSON, one array after another" '7'
+# A plain log: as a build's output, from the log's folder.
+printf 'make: Entering directory\nsrc/c.cpp:5:5: error: from a log\n' >"$R/out/build.txt"
+cp -R "$R/src" "$R/out/"
+run "$R" "problemsread:$R/out/build.txt;buildwait;buildproblemsdump"
+check "a plain log: read as a build's output, from its folder" 'E ~/read/out/src/c.cpp:5:5 from a log'
+printf '{"name": "x"}\n' >"$R/other.json"
+run "$R" "problemsread:$R/other.json;buildwait"
+check "JSON that is neither: said" 'blit: other.json is neither SARIF nor GCC'"'"'s JSON diagnostics'
+run "$R" "problemsread:$R/nothing-here.sarif;buildwait"
+check "a file that is not there" 'blit: Cannot read ~/read/nothing-here.sarif: there is no such file'
+# They take the place of the last run's, and a run's failure is not said over them.
+printf 'quiet:\n\t@exit 1\n' >"$R/Makefile"
+run "$R" "buildrun:make quiet;buildwait;problemsread:$R/out/build.txt;buildwait;problemsdump"
+check "in place of the last run's (its failure no longer said)" 'button: ▶ make quiet · 1 error | Build 1 | file out/src/c.cpp | >E 5:5 from a log'
+run "$R" "problemsread:$R/out/build.txt;buildwait;buildrun:make quiet;buildwait;problemsdump"
+check "and the next run's take theirs" 'button: ▶ make quiet · failed (exit 2) | make quiet failed with exit code 2: no problem found in its output | file 0'
+# The command: the file in front to begin with.
+run "$R" "open:$R/gcc16.sarif;command:Read the problems from this file…;key:Return;buildwait;buildproblemsdump"
+got=${got%% |*}
+check "the command, Enter: the file in front read" 'E ~/read/src/d.hpp:3:27 '"'"'nothing'"'"' was not declared in this scope < ~/read/src/c.cpp:1 included here'
+# Made here: GCC 16's SARIF (its base the folder it ran in, which is here;
+# the file moved away from it), and clang's analyzer's (its paths whole,
+# its path's steps as notes).
+if command -v g++-16 >/dev/null 2>&1; then gxx=g++-16; else gxx=g++; fi
+if (cd "$R" && $gxx -Wall -c src/c.cpp -o /dev/null -fdiagnostics-format=sarif-file 2>/dev/null; test -f c.cpp.sarif); then
+    mv "$R/c.cpp.sarif" "$R/out/c.sarif"
+    run "$R" "problemsread:$R/out/c.sarif;buildwait;buildproblemsdump"
+    check "SARIF from $gxx here: from its base, which is here" 'E ~/read/src/d.hpp:3:27 '"'"'nothing'"'"' was not declared in this scope < ~/read/src/c.cpp:1 included here | E ~/read/src/c.cpp:5:5 too few arguments to function '"'"'void take(int, int)'"'"' < ~/read/src/c.cpp:2:6 declared here | E ~/read/src/c.cpp:6:18 [-fpermissive] invalid conversion from '"'"'const char*'"'"' to '"'"'int'"'"' < ~/read/src/d.hpp:2:18 initializing argument 1 of '"'"'int twice(int)'"'"' | W ~/read/src/c.cpp:4:9 [-Wunused-variable] unused variable '"'"'unused'"'"''
+fi
+if (cd "$R" && clang --analyze --analyzer-output sarif -o out/leak.sarif src/leak.c 2>/dev/null; test -s out/leak.sarif); then
+    run "$R" "problemsread:$R/out/leak.sarif;buildwait;buildproblemsdump"
+    check "SARIF from clang's analyzer: its checker as the code, its path as notes" 'W ~/read/src/leak.c:6:16 [unix.Malloc] Potential leak of memory pointed to by '"'"'p'"'"' < ~/read/src/leak.c:4:14 Memory is allocated < ~/read/src/leak.c:5:9 Assuming '"'"'k'"'"' is > 2 < ~/read/src/leak.c:5:5 Taking true branch | W ~/read/src/leak.c:17:14 [core.DivideZero] Division by zero < ~/read/src/leak.c:14:5 '"'"'z'"'"' initialized to 0 < ~/read/src/leak.c:15:9 Assuming '"'"'k'"'"' is 0 < ~/read/src/leak.c:15:5 Taking false branch'
+fi
 
 exit $failed

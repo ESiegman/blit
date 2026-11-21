@@ -364,6 +364,7 @@ void App::commands_create() {
     tab("Show Build", {key(SDLK_U, kP | kS)}, Commands::kBuild);
     own("Look for build systems again", {}, [this] { build_changed(); });
     own("Edit the run configurations", {}, [this] { run_config_edit(); });
+    own("Read the problems from this file\xE2\x80\xA6", {}, [this] { build_read_choose(); });
     own("Attach the debugger to a process\xE2\x80\xA6", {}, [this] { debug_attach_pick(); });
     own("Debug a core file\xE2\x80\xA6", {}, [this] { debug_core_pick(); });
     own("Break at a function\xE2\x80\xA6", {}, [this] { debug_break_function(); });

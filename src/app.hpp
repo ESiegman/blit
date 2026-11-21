@@ -1375,6 +1375,11 @@ private:
     // found in its output"; "" when not so).
     int build_failed() const;
     std::string build_failure() const;
+    // "Read the problems from this file": a file chosen (the one in front to
+    // begin with), read on a thread of its own (buildread.hpp) into the
+    // build's problems, in place of the last run's.
+    void build_read_choose();
+    void build_read(const std::string& path);
     void build_go(size_t i);    // that one's file, at its line
     bool build_step(int by);    // the next (1) or previous (-1) of them; false: there are none
     void problem_step(int by);  // F8 / Shift+F8 (apppanel.cpp): the build's problems, else the open file's

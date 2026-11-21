@@ -5,6 +5,7 @@
 // (Cmd+Shift+B). The folder is looked at on a thread of its own: on
 // another machine each file read is a round trip.
 #include <SDL3/SDL.h>
+#include <sys/stat.h>
 
 #include <algorithm>
 #include <cstring>
@@ -14,6 +15,7 @@
 #include <unordered_map>
 
 #include "app.hpp"
+#include "buildread.hpp"
 #include "look.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
@@ -93,6 +95,16 @@ struct App::BuildUi {
     std::string summary;
     std::unordered_map<std::string, std::vector<BuildScan::SizeUsed>> sizes;
     std::vector<BuildScan::SizeUsed> sizes_before;
+    // A file read for problems (build_read), on a thread of its own, and
+    // what it gave; the file the problems are from, once taken.
+    struct Read {
+        std::string path, kind, why;  // (why: it could not be read)
+        bool ok = false;
+        std::vector<BuildProblem> found;
+    };
+    std::optional<Read> read;  // (mu)
+    bool reading = false;
+    std::string read_from;
     // CMake's build type and target, chosen in the Build tab (empty: the
     // project's own, and all), put into its tasks as they run.
     std::string cmake_type, cmake_target;
@@ -239,10 +251,35 @@ void App::build_sync() {
     BuildUi& u = *buildui_;
     std::optional<BuildUi::Found> f;
     std::optional<BuildUi::Listed> l;
+    std::optional<BuildUi::Read> r;
     {
         std::lock_guard lock(u.mu);
         f.swap(u.found);
         l.swap(u.listed);
+        r.swap(u.read);
+    }
+    if (r) {
+        u.reading = false;
+        const std::string name = r->path.substr(r->path.rfind('/') + 1);
+        if (!r->ok) {
+            notify(!r->why.empty() ? "Cannot read " + r->path + ": " + r->why : name + " is " + r->kind, 1);
+        } else {  // (in place of the last run's)
+            const size_t n = r->found.size();
+            u.problems.clear();
+            u.groups.clear();
+            build_errors_ = build_warnings_ = 0;
+            u.at = -1;
+            u.read_from = r->path;
+            build_found(u.doc, std::move(r->found));
+            ++build_prob_gen_;
+            ++build_gen_;
+            dirty_ = true;
+            notify(name + " (" + r->kind + "): " + (n ? std::to_string(n) + (n == 1 ? " problem" : " problems") : "no problems"));
+            if (n) {
+                if (!panel_px()) panel_toggle();
+                panel_show_problems();
+            }
+        }
     }
     if (l) {
         u.listing = false;
@@ -380,6 +417,7 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     u.groups.clear();
     u.summary.clear();
     u.sizes_before.clear();
+    u.read_from.clear();
     build_errors_ = build_warnings_ = 0;
     u.at = -1;
     ++build_prob_gen_;
@@ -806,13 +844,54 @@ void App::build_option(int row) {
 // button never stands over "No problems".
 int App::build_failed() const {
     const BuildUi& u = *buildui_;
-    return !u.running && u.last_status > 0 && !build_errors_ ? u.last_status : 0;
+    return !u.running && u.last_status > 0 && !build_errors_ && u.read_from.empty() ? u.last_status : 0;
 }
 
 std::string App::build_failure() const {
     const int code = build_failed();
     if (!code) return {};
     return buildui_->last_name + " failed with exit code " + std::to_string(code) + ": no " + (build_warnings_ ? "error" : "problem") + " found in its output";
+}
+
+// ---------------------------------------------------------------- problems from a file
+
+// The file in front to begin with (a SARIF file open in a tab is one
+// Enter away), else the project's folder.
+void App::build_read_choose() {
+    const Doc& d = *pane_->doc;
+    std::string start = !d.term && !d.ed.path.empty() ? (is_remote(d.ed.path) ? d.ed.path : full_path(d.ed.path)) : build_root() + "/";
+    find_choose(kFindOpen, "Read the problems from", start, [this](const std::string& path) {
+        if (!path.empty()) build_read(path);
+    });
+}
+
+void App::build_read(const std::string& given) {
+    BuildUi& u = *buildui_;
+    const std::string path = is_remote(given) ? given : full_path(given);
+    u.reading = true;
+    std::thread([wp = std::weak_ptr<BuildUi>(buildui_), path] {
+        BuildUi::Read r;
+        r.path = path;
+        std::string text;
+        if (!fs_read_whole(path, &text, &r.why, 256ull << 20, std::stop_token())) {
+            if (r.why.empty()) r.why = "it is not there";
+        } else {
+            std::function<bool(const std::string&)> exists;
+            if (!is_remote(path))  // (not looked for on another machine: a round trip each)
+                exists = [](const std::string& p) {
+                    struct stat st;
+                    return ::stat(p.c_str(), &st) == 0 && S_ISREG(st.st_mode);
+                };
+            r.ok = read_problems(text, path, exists, &r.found, &r.kind);
+        }
+        const std::shared_ptr<BuildUi> sp = wp.lock();
+        if (!sp) return;
+        {
+            std::lock_guard lock(sp->mu);
+            sp->read = std::move(r);
+        }
+        wake();
+    }).detach();
 }
 
 // ---------------------------------------------------------------- the Run button
@@ -914,7 +993,7 @@ std::string App::build_dump() {
     return out;
 }
 
-void App::build_wait() {  // the build's program has ended, and the targets being listed are (60 s at most)
+void App::build_wait() {  // the build's program has ended, and the targets being listed, or a file being read for problems, are (60 s at most)
     BuildUi& u = *buildui_;
     const u64 until = now_ns() + 60'000'000'000ull;
     while (u.running && now_ns() < until) {
@@ -922,7 +1001,7 @@ void App::build_wait() {  // the build's program has ended, and the targets bein
         SDL_Delay(5);
     }
     term_sync();
-    while (u.listing && now_ns() < until) {
+    while ((u.listing || u.reading) && now_ns() < until) {
         SDL_Delay(5);
         build_sync();
     }
