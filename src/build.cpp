@@ -6,6 +6,7 @@
 #include <string_view>
 
 #include "json.hpp"
+#include "probes.hpp"
 #include "remote.hpp"
 
 namespace blit {
@@ -420,6 +421,7 @@ std::vector<BuildTask> read_run_configs(const std::string& root, std::string* pr
             if (!t.debug.console.empty() && t.debug.console != "terminal" && t.debug.console != "debug")
                 *problem = std::string(kRunConfigs) + ": " + t.name + "'s debug.console is \"terminal\" or \"debug\"";
         }
+        board_read(c["board"], t.name, &t.board, problem);
         // What the Run button runs: the program, in its folder, with what it is given.
         std::string cmd;
         if (!t.env.empty()) {

@@ -127,6 +127,7 @@ struct SettingsView;  // the settings screen's tab (appsettings.cpp)
 struct ImageView;    // an image file's tab (appimage.cpp)
 struct PdfView;      // a PDF's tab (apppdf.cpp)
 struct RemoteEntry;  // a folder's entry on another machine (remote.hpp)
+struct ProbeRow;     // a row of the probe picker (probes.hpp)
 
 // A picture read from its file and put on the GPU (appimage.cpp).
 struct PictureInfo {
@@ -1765,6 +1766,16 @@ private:
     std::shared_ptr<ValidUsage> validusage_;  // (made the first time a statement is asked for)
     std::shared_ptr<TestUi> testui_;
     std::shared_ptr<PyUi> pyui_;  // (made the first time a folder's Python is asked for)
+    // The probe and port picker (appprobe.cpp, probes.hpp): the USB devices
+    // here (or on the project's machine) listed on a worker, and the one
+    // chosen written into the run configuration's board.
+    struct ProbeUi;
+    std::shared_ptr<ProbeUi> probeui_;  // (made the first time)
+    void probe_choose();
+    void probe_sync();
+    void probe_take(const std::string& root, const ProbeRow& row);
+    void probe_settle();       // (the tests: the listing waited for)
+    std::string probe_dump();  // (the tests: the last listing's rows)
     u64 test_gen_ = 1;  // counts up whenever what the Tests tab shows may have changed
     u64 build_gen_ = 1;  // counts up whenever what the Build tab or the Run button shows may have changed
     u64 build_prob_gen_ = 1;  // counts up whenever the build's problems change

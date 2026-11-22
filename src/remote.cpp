@@ -422,6 +422,7 @@ struct Remote::Impl {
     bool dropped = false;  // it went after it was up (and has not been up since)
     u64 failed_ns = 0;  // when it went
     std::string error, progress, home, system;
+    std::string agent_file;  // the agent's name there, in ~/.cache/blit
     std::string ssh_errors;  // the last of what ssh said on its error stream
     pid_t ssh = -1;
     int to = -1, from = -1, errs = -1;  // ssh's input (written here), output and errors (read here)
@@ -800,6 +801,10 @@ struct Remote::Impl {
             if (a.system == sys) agent = &a;
         if (!agent) return fail(std::format("blit has no agent for {} ({})", host, sys));
         const std::string name = agent_name(agent->bytes, agent->system) + "\n";
+        {
+            std::lock_guard lock(mu);
+            agent_file = name.substr(0, name.size() - 1);
+        }
         if (!write_all(to, name.data(), name.size()) || !line(&l, 30'000)) return fail(why(std::format("{} stopped answering", host)));
         if (l == "BLIT-NEED") {
             set_progress(std::format("copying blit's agent to {}", host));
@@ -1177,6 +1182,10 @@ std::string Remote::home() const {
 std::string Remote::system() const {
     std::lock_guard lock(impl_->mu);
     return impl_->system;
+}
+std::string Remote::agent_path() const {
+    std::lock_guard lock(impl_->mu);
+    return impl_->home.empty() || impl_->agent_file.empty() ? std::string() : impl_->home + "/.cache/blit/" + impl_->agent_file;
 }
 
 int Remote::working() const {
