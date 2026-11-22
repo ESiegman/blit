@@ -100,7 +100,7 @@ bool Jobs::stop(u64 id) {
 #if !defined(_WIN32)
             {
                 std::lock_guard lock(j->pid_mu);
-                if (const int pid = j->pid.load(); pid > 0) kill(pid, SIGTERM);
+                if (const int pid = j->pid.load(); pid > 0) kill(-pid, SIGTERM);  // (its group: what it started too)
             }
             if (j->wake[1] >= 0) (void)!write(j->wake[1], "x", 1);
 #endif
@@ -203,12 +203,18 @@ void Jobs::run(Job* job, JobSpec spec) {
     // Nothing else this process has open goes into the program: not the
     // pipes of another program being started at the same time on another
     // thread (whose reader would then wait for this one to end).
+    // (In a process group of its own, which it leads: asked to end, the
+    // program and what it started end together, nothing left running.)
     posix_spawnattr_t attr;
     posix_spawnattr_init(&attr);
+    posix_spawnattr_setpgroup(&attr, 0);
 #if defined(POSIX_SPAWN_CLOEXEC_DEFAULT)
-    posix_spawnattr_setflags(&attr, POSIX_SPAWN_CLOEXEC_DEFAULT);
-#elif defined(__GLIBC__)
-    posix_spawn_file_actions_addclosefrom_np(&fa, 3);  // (glibc: the same, as the last of the file actions)
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP | POSIX_SPAWN_CLOEXEC_DEFAULT);
+#else
+    posix_spawnattr_setflags(&attr, POSIX_SPAWN_SETPGROUP);
+#if defined(__GLIBC__)
+    posix_spawn_file_actions_addclosefrom_np(&fa, 3);  // (glibc: CLOEXEC_DEFAULT's work, as the last of the file actions)
+#endif
 #endif
     pid_t pid = 0;
     const int rc = posix_spawnp(&pid, argv[0], &fa, &attr, argv.data(), envp.data());
@@ -227,7 +233,7 @@ void Jobs::run(Job* job, JobSpec spec) {
         return finish();
     }
     job->pid = pid;
-    if (job->thread.get_stop_token().stop_requested()) kill(pid, SIGTERM);  // (asked to end before it had begun)
+    if (job->thread.get_stop_token().stop_requested()) kill(-pid, SIGTERM);  // (asked to end before it had begun)
 
     size_t sent = 0;
     bool in_open = true, out_open = true, err_open = true;
@@ -252,7 +258,7 @@ void Jobs::run(Job* job, JobSpec spec) {
             waited_ms += 50;
             if (waited_ms >= 300) {
                 if (killed) break;
-                kill(pid, SIGKILL);
+                kill(-pid, SIGKILL);
                 killed = true;
                 waited_ms = 200;
             }

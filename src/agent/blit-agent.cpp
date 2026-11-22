@@ -504,18 +504,22 @@ bool spawn(Session& s, uint32_t id, const std::string& cwd, std::vector<std::str
 constexpr auto kKillAfter = std::chrono::seconds(2), kLeaveAfter = std::chrono::seconds(3);
 
 // A program's process group (its own: spawn), and the program, if it is
-// still there: a terminal's hung up on, another's sent `sig`. (The group
+// still there, sent `sig` (signal_group); as the agent ends it
+// (signal_child), a terminal's hung up on instead. (The group
 // even when the program has exited: what it started may still be running.
 // Its pid is not another program's meanwhile: finish_children.)
-void signal_child(Child& c, int sig) {
+void signal_group(Child& c, int sig) {
     if (c.pid <= 0) return;
-    const int s = c.pty && sig == SIGTERM ? SIGHUP : sig;  // (a shell does not end on SIGTERM; a terminal that hangs up ends it)
     // (And the program in front of a terminal's shell, which a shell with
-    // job control puts in a group of its own: hung up on, as a terminal does.)
+    // job control puts in a group of its own.)
     if (c.pty && c.out >= 0)
-        if (const pid_t front = ::tcgetpgrp(c.out); front > 0 && front != c.pid) ::kill(-front, s);
-    ::kill(-c.pid, s);
-    if (!c.exited) ::kill(c.pid, s);
+        if (const pid_t front = ::tcgetpgrp(c.out); front > 0 && front != c.pid) ::kill(-front, sig);
+    ::kill(-c.pid, sig);
+    if (!c.exited) ::kill(c.pid, sig);
+}
+
+void signal_child(Child& c, int sig) {
+    signal_group(c, c.pty && sig == SIGTERM ? SIGHUP : sig);  // (a shell does not end on SIGTERM; a terminal that hangs up ends it)
 }
 
 void end_child(Child& c) {
@@ -968,7 +972,9 @@ void handle(const std::shared_ptr<Client>& cl, uint8_t op, uint32_t id, std::str
         case kKill: {
             const uint32_t proc = r.u32();
             const int sig = static_cast<int>(r.u32());
-            if (auto it = s.children.find(proc); it != s.children.end() && it->second.pid > 0 && !it->second.exited) ::kill(it->second.pid, sig);
+            // (The program's group, as a terminal's hang-up or Ctrl+C reaches the whole job:
+            // what it started goes with it, and does not hold its pipes open after it.)
+            if (auto it = s.children.find(proc); it != s.children.end() && it->second.pid > 0 && !it->second.exited) signal_group(it->second, sig);
             return;
         }
         case kFlow: {

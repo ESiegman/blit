@@ -225,8 +225,7 @@ void Engine::here_pty(const EngineSpec& spec, EngineExit* exit) {
 
 // There: the agent runs it (kSpawn on pipes, kSpawnPty on a terminal),
 // its output read here from the connection's pipes. (The agent's kKill
-// signals the program alone: on pipes, what it started and left holding
-// them keeps its end from being told until that ends too.)
+// signals the program's group: what it started ends with it.)
 void Engine::there(const EngineSpec& spec, EngineExit* exit) {
     const std::shared_ptr<Remote> c = Remote::get(spec.host);
     const u64 connect_until = now_ns() + static_cast<u64>(kRemoteWaitMs) * 1'000'000;

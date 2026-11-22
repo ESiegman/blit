@@ -74,8 +74,6 @@ EOF
     check "$where, what it reads" "out: got hello
 exit: 0"
 
-    # (One program, as a tool is: the agent's kill reaches the program
-    # alone, and a sleep a shell started would hold its pipes there.)
     run "enginerun:${h}timeout=1500 -- echo started && exec sleep 20"
     check "$where, past its time limit: ended" "out: started
 exit: 143 (timed out) (ended within 5 s)"
@@ -87,6 +85,14 @@ exit: 143 (timed out) (ended within 5 s)"
     run "enginerun:${h}cancel=400 -- echo started && exec sleep 20"
     check "$where, called off" "out: started
 exit: 143 (cancelled) (ended within 5 s)"
+
+    # A program that started another, which holds its pipes (a tool's own
+    # helper, a shell's sleep): called off, both end, at once.
+    run "enginerun:${h}cancel=400 -- echo started && sleep 23.75 & sleep 23.75 & wait"
+    sleep 1
+    got="$got | left running: $(pgrep -f 'sleep 23.75' | wc -l | tr -d ' ')"
+    check "$where, called off, with what it started" "out: started
+exit: 143 (cancelled) (ended within 5 s) | left running: 0"
 
     run "enginerun:$h-- exec nothere-at-all"
     got=$(printf '%s' "$got" | sed -e 's/^err: .*nothere-at-all.*/err: (not found)/')
