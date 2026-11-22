@@ -16,6 +16,9 @@ if [ "$(uname -s)" = Darwin ]; then
 else
     command -v gdb >/dev/null 2>&1 || command -v lldb-dap >/dev/null 2>&1 || { echo "debug skipped: no debugger"; exit 0; }
 fi
+# The debugger blit takes here: lldb-dap wherever there is one, else gdb.
+native=gdb
+{ [ "$(uname -s)" = Darwin ] || command -v lldb-dap >/dev/null 2>&1 || command -v lldb-vscode >/dev/null 2>&1; } && native=lldb
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 dir=$(cd "$dir" && pwd -P)
@@ -43,10 +46,16 @@ sort_vars() {
            out = parts[1]; for (p = 2; p <= n; p++) out = out "; " parts[p]
            printf "%s%s", (NR > 1 ? " ;; " : ""), out }'
 }
+# What called main is the system's, where the debugger shows it: macOS's
+# loader's start; on Linux, glibc's start code, which lldb names
+# ___lldb_unnamed_symbol_N, glibc having no symbol for it.
+system_frames() {
+    sed -E 's/(main@[0-9]+) (start|___lldb_unnamed_symbol_[0-9]+)(@[0-9]+)?/\1/g'
+}
 check() {
     # (The status bar's icon beside another machine is the font's, where it has
     # one; and it says "no colours" where the C grammar is not installed.)
-    got=$(printf '%s' "$got" | sed -e 's/⇄ //g' -e 's/ (no colours)//g' | sort_vars)
+    got=$(printf '%s' "$got" | sed -e 's/⇄ //g' -e 's/ (no colours)//g' | system_frames | sort_vars)
     set -- "$1" "$(printf '%s' "$2" | sort_vars)"
     if [ -n "$print" ]; then
         printf '%s\n    %s\n' "$1" "$got"
@@ -68,11 +77,12 @@ check "a breakpoint: stopped there, the stack and the variables, and its line in
 run "$P;break:8;key:F5;debugwait:stopped;key:F10;debugwait:stopped;debugdump"
 # (gdb stops at the function's closing brace on its way out, and from there
 # in the caller once the line that called it is done; lldb in the caller, in
-# the middle of that line.)
+# the middle of that line: the Mac's at once, Linux's lldb 23 from the
+# closing brace, as gdb.)
 back='stopped (step); stack: main@15; vars: total=0 i=1'
 case "$got" in *"stack: square@9 "*)
     run "$P;break:8;key:F5;debugwait:stopped;key:F10;debugwait:stopped;key:F10;debugwait:stopped;debugdump"
-    back='stopped (step); stack: main@16; vars: total=1 i=1' ;;
+    [ "$native" = gdb ] && back='stopped (step); stack: main@16; vars: total=1 i=1' ;;
 esac
 got=$(printf '%s' "$got" | sed -e 's/ start\(@[0-9]*\)\{0,1\}$//' -e 's/ start\(@[0-9]*\)\{0,1\};/;/')  # (macOS's loader's frame, whose line is its own)
 check "F10 steps over (back out to the caller)" "$back"
@@ -131,14 +141,20 @@ check "with Vim's keys too" 'count.c:9; count.c:16 ;; count.c:9; count.c:15 ;; c
 # next line that has some (it is on that line from now, the move said);
 # one in a library not loaded yet it has not verified until the library is
 # loaded (said in a breakpoint event).
-run "$P;break:10;key:F5;debugwait:stopped;debugbreaks;debugdump"
-got=$(printf '%s' "$got" | sed -e 's/; vars: .*//' -e 's/ start\(@[0-9]*\)\{0,1\}$//')
-case "$got" in  # (lldb puts it on line 13; gdb, the next line it has code for, whichever that is)
-"count.c:"*" moved from 10 ;; stopped (breakpoint); stack: main@"*)
+# (Line 10 is between two functions. lldb puts it on line 13, gdb 14 on the
+# next line it has code for, whichever that is; gdb 18 puts it nowhere, "No
+# compiled code for line 10", and has it pending: never hit, the program
+# stopping at the next.)
+run "$P;break:10;break:16;key:F5;debugwait:stopped;debugbreaks;debugdump"
+got=$(printf '%s' "$got" | sed -e 's/; vars: .*//' | system_frames)
+case "$got" in
+"count.c:"*" moved from 10; count.c:16 ;; stopped (breakpoint); stack: main@"*)
     to=${got#count.c:}; to=${to%% *}
-    [ "$got" = "count.c:$to moved from 10 ;; stopped (breakpoint); stack: main@$to" ] && [ "$to" -gt 10 ] && got="moved on, and stopped there" ;;
+    [ "$got" = "count.c:$to moved from 10; count.c:16 ;; stopped (breakpoint); stack: main@$to" ] && [ "$to" -gt 10 ] && got="moved on, and stopped there" ;;
+"count.c:10 unverified (pending); count.c:16 ;; stopped (breakpoint); stack: main@16")
+    [ "$native" = gdb ] && got="moved on, and stopped there" ;;
 esac
-check "a breakpoint on a line with no code: moved to one with some, and stopped there" "moved on, and stopped there"
+check "a breakpoint on a line with no code: moved to one with some and stopped there, or (gdb 18) said to be pending" "moved on, and stopped there"
 cp "$here/debug/loads.c" "$here/debug/twice.c" "$dir/here/" && (cd "$dir/here" && cc -g -O0 -shared -fPIC -o loads.so twice.c && cc -g -O0 -o loads loads.c $([ "$(uname -s)" = Darwin ] || echo -ldl)) || exit 1
 run "debug:program=$dir/here/loads;break:4;open:$dir/here/loads.c;break:14;key:F5;debugwait:stopped;debugbreaks;key:F5;debugwait:stopped;debugbreaks;debugdump" "$dir/here/twice.c"
 got=$(printf '%s' "$got" | sed -e 's/unverified ([^)]*)/unverified/' -e 's/; vars: .*//' -e 's/ start\(@[0-9]*\)\{0,1\}$//')  # (gdb says why: it is "pending")
@@ -355,7 +371,10 @@ fi
 if [ -s "$core" ]; then
     run "debugcore:$dir/here/crash:$core;debugwait:stopped;debugdump" "$dir/here/crash.c"
     got=$(printf '%s' "$got" | sed -e 's/; stack: [^;]*;/;/' -e 's/^stopped ([^)]*)/stopped/')  # (the library frames above the program's: the system's own; gdb's word for why)
-    check "a core file: where it stopped, the program's own frame shown with its variables" 'stopped; vars: depth=3 here=21'
+    # (lldb on Linux says which signal it was, with who sent it.)
+    got=$(printf '%s' "$got" | sed -e 's/; exception: signal: SIGABRT: [^;]*/; exception: SIGABRT/')
+    signal=; [ "$(uname -s)" != Darwin ] && [ "$native" = lldb ] && signal='; exception: SIGABRT'
+    check "a core file: where it stopped, the program's own frame shown with its variables" "stopped$signal; vars: depth=3 here=21"
 fi
 
 # Restart (Cmd+Shift+F5): the program again from its start, the session's
@@ -404,15 +423,18 @@ check "a run configuration's build first, and again before a restart" 'count | d
 rm -rf "$B/.blit"
 
 # A stand-in debugger (tests/fake_dap.cpp) as the machine's, started by an
-# xcrun and a gdb of its own first on the PATH: what the debuggers blit
-# meets say, where this machine's would not say it.
+# xcrun, an lldb-dap and a gdb of its own first on the PATH: what the
+# debuggers blit meets say, where this machine's would not say it. (It is
+# lldb-dap everywhere, as blit takes lldb-dap first, the Mac's or Linux's,
+# wherever one is; gdb only where a case asks for gdb.)
 fakedap="$(cd "$(dirname "$blit")" && pwd)/blit_fakedap"
 if [ -x "$fakedap" ]; then
     F="$dir/fake"
     mkdir -p "$F/bin"
     printf '#!/bin/sh\ncase "$1" in --find) echo "%s" ;; lldb-dap) exec "%s" ;; *) exit 1 ;; esac\n' "$fakedap" "$fakedap" >"$F/bin/xcrun"
+    printf '#!/bin/sh\nexec "%s"\n' "$fakedap" >"$F/bin/lldb-dap"
     printf '#!/bin/sh\ncase "$1" in --version) echo "GNU gdb (GDB) 15.1" ;; *) exec "%s" ;; esac\n' "$fakedap" >"$F/bin/gdb"
-    chmod +x "$F/bin/xcrun" "$F/bin/gdb"
+    chmod +x "$F/bin/xcrun" "$F/bin/lldb-dap" "$F/bin/gdb"
     printf 'print("a program")\n' >"$F/prog"
     # fake SCRIPT [FILE]: as run, with the stand-in; what it was asked is in $F/log.
     fake() {
@@ -607,6 +629,28 @@ if [ -x "$fakedap" ]; then
     # on this Mac: "GNU gdb (GDB) 15.1" is the first line of gdb's --version
     # as GNU's builds print it, from its documentation; the real gdb's own
     # checks are on the Linux box's list.)
+    # The PATH without the machine's lldb-dap, where it has one (a Linux box
+    # with lldb): each folder it is in stood in for by one of links to the
+    # rest of that folder's programs.
+    hide_lldb() {
+        out= n=0
+        IFS=:
+        for p in $PATH; do
+            unset IFS
+            if [ -e "$p/lldb-dap" ] || [ -e "$p/lldb-vscode" ]; then
+                n=$((n + 1))
+                h="$dir/nolldb/$n"
+                if [ ! -d "$h" ]; then
+                    mkdir -p "$h"
+                    for f in "$p"/*; do case ${f##*/} in lldb-dap|lldb-vscode) ;; *) ln -s "$f" "$h/" ;; esac; done
+                fi
+                p=$h
+            fi
+            out=${out:+$out:}$p
+        done
+        unset IFS
+        printf '%s' "$out"
+    }
     # linux GDB-VERSION LLDB-DAP SCRIPT [FILE]: as fake, gdb that version (none: no gdb), lldb-dap there if yes; what ran last.
     linux() {
         L="$dir/linux"
@@ -617,7 +661,8 @@ if [ -x "$fakedap" ]; then
         chmod +x "$L/bin/"*
         rm -f "$F/log"
         was=$PATH
-        PATH="$L/bin:$PATH" BLIT_FAKE_DAP_LOG="$F/log"
+        if [ "$2" = yes ]; then PATH="$L/bin:$PATH"; else PATH="$L/bin:$(hide_lldb)"; fi
+        BLIT_FAKE_DAP_LOG="$F/log"
         export BLIT_FAKE_DAP_LOG
         run "$3" "${4:-$D/prog}"
         PATH=$was
@@ -666,7 +711,7 @@ if [ -x "$fakedap" ]; then
     conf "{ \"adapter\": \"$F/mydap\", \"console\": \"terminal\" }"
     fake "frame;workdir:$D;runconfdump;key:F5;debugwait:stopped;command:Go to the split below;termwait:in the terminal;text:typed;key:Return;termwait:read: typed;termdump" "$D/prog"
     got="${got#* ;; } ;; $(launched | sed 's/.*"env":\[[^]]*\]//') ;; $(grep '^answer:' "$F/log" | sed 's/[0-9][0-9]*/N/g')"
-    got=$(printf '%s' "$got" | sed -E 's/ @[0-9]+,[0-9]+ [0-9]+x[0-9]+//')
+    got=$(printf '%s' "$got" | sed -E -e 's/ @[0-9]+,[0-9]+ [0-9]+x[0-9]+//' -e 's/\|\[done in [0-9.]+ s\] ended 0//')  # (its end, where it came before the tab was looked at)
     check "runInTerminal: the program in a terminal tab, what is typed there its" \
         'in the terminal: yes in proj|typed|read: typed ;; ,"runInTerminal":true,"console":"integratedTerminal"} ;; answer:runInTerminal true {"processId":N,"shellProcessId":N}'
     # (On another machine: the tab is there, as the program is.)
@@ -743,6 +788,7 @@ EOF
     XDG_DATA_HOME="$dir/data-none" BLIT_DEBUGPY_URL="$dir/no-such.whl"
     run "workdir:$Y;debug:program=$Y/scripts/one.py;key:F5;debugwait:idle;debugdump" "$Y/scripts/one.py"
     XDG_DATA_HOME="$dir/data" BLIT_DEBUGPY_URL="$dir/debugpy.whl"
+    got=$(printf '%s' "$got" | sed -e "s/Could not open file/Couldn't open file/")  # (curl's own words: the Mac's 8.7 says "Couldn't", Arch's 8.23 "Could not")
     check "blit's copy could not be had: why" "blit: Getting debugpy… ;; idle error: debugpy is not installed for .venv/bin/python, and blit's copy could not be had: could not fetch file://@/no-such.whl: curl: (37) Couldn't open file @/no-such.whl"
 fi
 if command -v python3 >/dev/null 2>&1 && [ -x "$fakedap" ]; then
