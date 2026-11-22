@@ -19,7 +19,9 @@
 // nobody attached for the longer time it keeps what is working, or when
 // blit quits with nothing working, or is told to stop. Where no socket can
 // be made, it is the agent of one connection, on ssh's input and output, as
-// it always was (and is, run with no argument).
+// it always was (and is, run with no argument). `blit-agent --usb` prints
+// the machine's USB devices and ends (usb.hpp: blit's probe picker on an
+// ssh project).
 //
 // Built here, with the compiler blit is built with: for this machine by
 // CMake (the tests' stand-in for a server, and Macs), and for Linux by
@@ -63,6 +65,7 @@
 #include "finder.hpp"
 #include "protocol.hpp"
 #include "pty.hpp"
+#include "usb.hpp"
 
 extern char** environ;
 
@@ -1408,6 +1411,10 @@ int main(int argc, char** argv) {
     std::signal(SIGPIPE, SIG_IGN);
     const std::string_view mode = argc > 1 ? argv[1] : "";
     if (mode == "--attach") return attach(argv[0]);
+    if (mode == "--usb") {  // (this machine's USB devices, for blit's probe picker: usb.hpp)
+        const std::string list = blit::usb_text(blit::usb_list());
+        return std::fwrite(list.data(), 1, list.size(), stdout) == list.size() ? 0 : 1;
+    }
     if (mode == "--serve" && argc > 2) return serve(argv[2]);
     return serve_here();
 }
