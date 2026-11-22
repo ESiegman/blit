@@ -1313,6 +1313,7 @@ private:
     bool debug_open(const std::string& near, const std::string& dir, bool python, const std::string& adapter = {});
     void debug_pytest(const std::string& root, const std::string& id);  // (a pytest test, under debugpy)
     void debug_begin(const std::string& request, const std::string& arguments);
+    void debug_send_after();
     void debug_launch();   // (F5's, once what it builds first has been built)
     void debug_restart();  // the session ended and started again as it was (built again first, as F5 builds)
     std::string debug_in_terminal(const std::string& arguments);  // (the debugger's runInTerminal: a terminal tab running it; what blit answers)

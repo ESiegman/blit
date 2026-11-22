@@ -652,6 +652,17 @@ if [ -x "$fakedap" ]; then
     fake "workdir:$D;runconfdump;key:F5;debugwait:stopped;key:shift+F5;debugwait:idle;debugdump" "$D/prog"
     got="${got#* ;; } ;; $(launched) ;; $(grep '^disconnect' "$F/log")"
     check "a run configuration that attaches" 'idle ;; {"program":"@/fake/proj/prog","cwd":"@/fake/proj","target":"localhost:3333"} ;; disconnect {"terminateDebuggee":false}'
+    # Its commands once it is attached, connected to the target it names,
+    # where `monitor reset halt` reaches the gdb server: gdb (gdb 18, as the
+    # stand-in has it) attaches only once it is configured, and answers the
+    # attach then.
+    conf '{ "request": "attach", "arguments": { "target": "localhost:3333" }, "after": ["monitor reset halt"] }'
+    BLIT_FAKE_DAP_GDB=1
+    export BLIT_FAKE_DAP_GDB
+    fake "workdir:$D;runconfdump;key:F5;debugwait:stopped;debugdump;key:shift+F5;debugwait:idle" "$D/prog"
+    unset BLIT_FAKE_DAP_GDB
+    got="${got#* ;; } ;; $(sed -En 's/^(attach|configurationDone|evaluate)( .*)?$/\1/p' "$F/log" | tr '\n' ' ' | sed 's/ $//')"
+    check "an attach's commands once it is attached (gdb: after it is configured)" 'stopped (breakpoint); stack: main; vars: df=DataFrame total=1; output: <monitor reset halt> ;; attach configurationDone evaluate'
     # (A debugger of its own, a command line: run as written.)
     printf '#!/bin/sh\necho "mydap $*" >"%s/ran"\nexec "%s"\n' "$F" "$fakedap" >"$F/mydap"
     chmod +x "$F/mydap"

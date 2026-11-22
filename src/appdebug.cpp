@@ -1403,6 +1403,22 @@ void App::debug_launch() {
 
 // The debugger told what to do once it has said what it can: launch the
 // program, attach to a process, or open a core file.
+// A run configuration's commands for the debugger (`after`), in its
+// console's context: what each says, or why it could not, among what the
+// program printed.
+void App::debug_send_after() {
+    DebugUi& u = *debugui_;
+    for (const std::string& a : u.after)
+        u.dap->request("evaluate", "{\"expression\":" + quoted(a) + ",\"context\":\"repl\"}", [this, a](const Dap::Message& r) {
+            DebugUi& v = *debugui_;
+            std::string said = r.success ? std::string(r.body()["result"].str()) : a + ": " + why_not(r.message);
+            if (!said.empty() && !said.ends_with('\n')) said += '\n';
+            v.print(said);
+            ++debug_gen_;
+            dirty_ = true;
+        });
+}
+
 void App::debug_begin(const std::string& request, const std::string& args_in) {
     DebugUi& u = *debugui_;
     // (lldb-dap: a value whose type has no summary of its own gets one made
@@ -1467,6 +1483,11 @@ void App::debug_begin(const std::string& request, const std::string& args_in) {
                            if (!r.success) {
                                debugui_->error = (request == "launch" ? "cannot launch it: " : "cannot attach: ") + (r.message.empty() ? std::string("the debugger said no") : r.message);
                                debugui_->end_soon = true;
+                           } else if (debugui_->how == "attach") {
+                               // (Attached, and connected to the target an attach names, a gdb
+                               // server: only now do `monitor reset halt` and `load` reach it.
+                               // gdb attaches once it is configured; lldb-dap at once.)
+                               debug_send_after();
                            }
                        });
                    });
@@ -1883,18 +1904,10 @@ void App::debug_sync_session(bool* stopped) {
             u.state = DebugUi::kRunning;
             u.gdb = u.dap->errors().find(kGdbSays) != std::string::npos;  // (said before it started: here by now)
             u.rocm = u.dap->errors().find("blit-debugger: gdb (rocgdb)") != std::string::npos;
-            // A run configuration's commands for the debugger, in its console's
-            // context, before the breakpoints and the program's start (what
-            // each says, or why it could not, among what the program printed).
-            for (const std::string& a : u.after)
-                u.dap->request("evaluate", "{\"expression\":" + quoted(a) + ",\"context\":\"repl\"}", [this, a](const Dap::Message& r) {
-                    DebugUi& v = *debugui_;
-                    std::string said = r.success ? std::string(r.body()["result"].str()) : a + ": " + why_not(r.message);
-                    if (!said.empty() && !said.ends_with('\n')) said += '\n';
-                    v.print(said);
-                    ++debug_gen_;
-                    dirty_ = true;
-                });
+            // A run configuration's commands for the debugger, before the
+            // breakpoints and the program's start (an attach's, once it is
+            // attached: debug_begin).
+            if (u.how != "attach") debug_send_after();
             for (const auto& [path, lines] : u.breaks) debug_send_breaks(path);
             debug_send_functions();
             debug_send_instructions();

@@ -94,6 +94,7 @@
 #include <cstring>
 #include <map>
 #include <string>
+#include <utility>
 #include <vector>
 
 #include "json.hpp"
@@ -116,6 +117,7 @@ std::map<std::string, std::vector<std::pair<long, long>>> loads_later;  // (by f
 bool raises = false;    // (and it raises an exception)
 bool catching = false;  // the exceptions uncaught or raised are stopped at
 bool gdb = false;       // as gdb (BLIT_FAKE_DAP_GDB)
+long attach_seq = -1;   // (as gdb, its attach not answered yet)
 
 bool read_message(std::string* body) {
     size_t length = 0;
@@ -353,6 +355,9 @@ int main() {
             }
             respond(v, true);
             event("initialized");  // (as lldb-dap has it: once there is something to configure)
+        } else if (command == "attach" && gdb) {  // (gdb attaches once it is configured, and answers then)
+            attach_seq = v["seq"].integer();
+            event("initialized");
         } else if (command == "attach") {
             respond(v, true);
             event("initialized");
@@ -368,6 +373,8 @@ int main() {
             respond(v, true, "{\"breakpoints\":[" + bps + "]}");
         } else if (command == "configurationDone") {
             respond(v, true);
+            if (attach_seq >= 0)
+                send("{\"seq\":" + std::to_string(seq++) + ",\"type\":\"response\",\"request_seq\":" + std::to_string(std::exchange(attach_seq, -1)) + ",\"command\":\"attach\",\"success\":true,\"body\":{}}");
             event("process", "{\"name\":\"fake\",\"startMethod\":\"launch\"}");
             if (raises && catching && gdb) {  // (gdb stops at its catchpoint, which it calls a breakpoint)
                 event("stopped", R"({"reason":"breakpoint","hitBreakpointIds":[7],"threadId":1,"allThreadsStopped":true})");

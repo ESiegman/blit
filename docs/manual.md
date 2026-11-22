@@ -3037,8 +3037,10 @@ out):
   both have is merged member by member. So `"stopOnEntry": true` for
   lldb-dap, `"stopAtBeginningOfMainSubprogram": true` for gdb,
   `"justMyCode": false` for debugpy, lldb-dap's `"initCommands"`.
-- `after`: commands for the debugger once the session has started (before
-  the breakpoints are set and the program runs), each run as if typed at
+- `after`: commands for the debugger once the session has started (for a
+  launch, before the breakpoints are set and the program runs; for an
+  attach, once it is attached, to the target it names too, so that
+  `monitor ...` and `load` reach the gdb server), each run as if typed at
   its console (DAP's `evaluate`, in its `repl` context): lldb's
   `settings set ...`, gdb's `set ...`, `monitor ...`. What each says, or
   why it could not, is among what the program printed.
