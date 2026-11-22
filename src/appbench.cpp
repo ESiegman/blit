@@ -15,6 +15,7 @@
 
 #include "app.hpp"
 #include "fsio.hpp"
+#include "notify.hpp"
 #include "profile.hpp"
 #include "remote.hpp"
 
@@ -1460,6 +1461,8 @@ void App::run_script(const char* script) {
             SDL_Event ev{};
             ev.type = SDL_EVENT_WINDOW_FOCUS_LOST;
             handle_event(ev);
+        } else if (verb == "notifywait") {  // the system's notifications on their way, handed over (5 s at most)
+            system_notify_wait();
         } else if (verb == "tickdump") {  // how long blit would sleep before it draws again for a long task's time (-1: it would not)
             std::fprintf(stderr, "%d\n", build_wait_ms());
         } else if (verb == "buildmarks") {  // the build's problems underlined in the split in front (line:columns and kind), and the cursor line's words

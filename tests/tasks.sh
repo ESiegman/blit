@@ -4,7 +4,9 @@
 # place needs; long tasks in tabs of their own, which other runs leave
 # alone, asked about before anything ends them, with their time on the Run
 # button and their rows; Stop, which keeps the text and the problems;
-# and BuildStart and BuildDone for init.lua.
+# BuildStart and BuildDone for init.lua; and the system's notification of
+# a task that ends behind another window, seen through a stand-in for the
+# program that hands it over.
 #
 #   tests/tasks.sh path/to/blit            run the cases
 #   tests/tasks.sh path/to/blit --print    show what each case gives
@@ -209,5 +211,53 @@ printf 'a\nb\n' >"$dir/t2/x.c"
 INIT="$dir/events.lua"
 run "$dir/t2" "buildrun:Tfail;buildwait"
 check "a task that fails" 'blit: done Tfail [program] 3 0 1 false number'
+
+# The notification: handed to the system only when blit is behind another
+# window (and not for a run stopped from blit), with the program found on
+# PATH: a stand-in that writes down its words.
+N="$dir/notify"
+mkdir -p "$N/.blit" "$dir/stub" "$dir/stub2"
+cat >"$N/.blit/tasks.json" <<'EOF'
+{ "tasks": [
+  { "label": "It's flashed", "command": "printf 'x.c:1:1: error: e\\n'; exit 2", "kind": "flash" },
+  { "label": "Fine", "command": "true" } ] }
+EOF
+printf 'a\n' >"$N/x.c"
+stub() {
+    printf '#!/bin/sh\nfor a in "$@"; do printf "%%s|" "$a"; done >>"%s"\nprintf "\\n" >>"%s"\n' "$dir/said" "$dir/said" >"$1"
+    chmod +x "$1"
+}
+case $(uname -s) in
+    Darwin) stub "$dir/stub/osascript" ;;
+    *) stub "$dir/stub/gdbus"; stub "$dir/stub2/notify-send" ;;
+esac
+heard() {
+    rm -f "$dir/said"
+    PATH="$1" BLIT_INIT="${INIT:-$dir/init.lua}" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$N;frame;$2;notifywait" >/dev/null 2>&1
+    INIT=
+    if [ -f "$dir/said" ]; then got=$(sed -e 's/[0-9][0-9.]* s/T s/' "$dir/said" | tr '\n' '/'); else got=nothing; fi
+}
+case $(uname -s) in
+    Darwin) said_failed='-e|on run argv|-e|display notification (item 2 of argv) with title (item 1 of argv)|-e|end run|It'"'"'s flashed|Failed with exit code 2 after T s · 1 error|/'
+            said_done='-e|on run argv|-e|display notification (item 2 of argv) with title (item 1 of argv)|-e|end run|Fine|Done in T s|/' ;;
+    *) said_failed="call|--session|--dest|org.freedesktop.Notifications|--object-path|/org/freedesktop/Notifications|--method|org.freedesktop.Notifications.Notify|'blit'|0|'blit'|'It\\'s flashed'|'Failed with exit code 2 after T s · 1 error'|[]|{}|-1|/"
+       said_done="call|--session|--dest|org.freedesktop.Notifications|--object-path|/org/freedesktop/Notifications|--method|org.freedesktop.Notifications.Notify|'blit'|0|'blit'|'Fine'|'Done in T s'|[]|{}|-1|/" ;;
+esac
+heard "$dir/stub" "blur;buildrun:It's flashed;buildwait"
+check "a task that ends behind another window: the system told" "$said_failed"
+heard "$dir/stub" "blur;buildrun:Fine;buildwait"
+check "one that went well" "$said_done"
+heard "$dir/stub" "buildrun:Fine;buildwait"
+check "in front: nothing" 'nothing'
+heard "$dir/stub" "blur;focus;buildrun:Fine;buildwait"
+check "in front again: nothing" 'nothing'
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.build.notify = false\n' >"$dir/quiet.lua"
+INIT="$dir/quiet.lua"
+heard "$dir/stub" "blur;buildrun:Fine;buildwait"
+check "build.notify off: nothing" 'nothing'
+if [ "$(uname -s)" != Darwin ]; then
+    heard "$dir/stub2" "blur;buildrun:Fine;buildwait"
+    check "no gdbus: notify-send" '--app-name=blit|--icon=blit|--|Fine|Done in T s|/'
+fi
 
 exit $failed

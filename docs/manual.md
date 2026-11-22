@@ -2665,6 +2665,15 @@ a second Stop kills one that will not end. Its tab stays, with what it
 wrote and the problems found in it, and says `[stopped after 4.2 s]`;
 its row says "stopped", and a run that was stopped is not a failure.
 
+When a run ends while blit is behind another window, the system says so
+in a notification: the task's name, and "Done in 3.2 s" or "Failed with
+exit code 2 after 3.2 s · 3 errors". On macOS blit.app's own (the first
+one asks for leave to show them, as the system does); a blit that is no
+app bundle (one run from its build folder) hands it to `osascript`. On
+Linux freedesktop's Notify over D-Bus, through `gdbus` (or else
+`notify-send`), found on PATH. `blit.opt.build.notify = false` stops
+them.
+
 What the build prints is read for problems as it comes, on the terminal's
 own reading thread (nothing per frame): GCC's and Clang's
 `path:line:col: error: message` (and `warning`, `fatal error`; Clang's

@@ -338,6 +338,10 @@ struct Parser {
             if (!as_bool(v, out)) warn(std::string(key) + " should be true or false");
             return;
         }
+        if (key == "build.notify") {
+            if (!as_bool(v, &c.build_notify)) warn("build.notify should be true or false");
+            return;
+        }
         if (key == "syntax.enabled") {
             if (!as_bool(v, &c.syntax)) warn("syntax.enabled should be true or false");
             return;
@@ -822,6 +826,7 @@ const Getter kGetters[] = {
     BLIT_GET("lsp.highlight_uses", flag(c.lsp_uses)),
     BLIT_GET("lsp.reference_counts", flag(c.lsp_ref_counts)),
     BLIT_GET("git.enabled", flag(c.git)),
+    BLIT_GET("build.notify", flag(c.build_notify)),
     BLIT_GET("debug.inline_values", flag(c.debug_inline_values)),
     BLIT_GET("python.interpreter", str(c.python_interpreter)),
     BLIT_GET("panel.open", flag(c.panel_open)),

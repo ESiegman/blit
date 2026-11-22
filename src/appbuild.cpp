@@ -19,6 +19,7 @@
 #include "app.hpp"
 #include "buildread.hpp"
 #include "look.hpp"
+#include "notify.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
@@ -702,12 +703,21 @@ void App::build_stop() {
 void App::build_ended(u64 doc, int status) {
     test_ended(doc);  // (a run of the tests: its reports read)
     BuildUi& u = *buildui_;
-    // How it went: for init.lua's BuildDone.
+    // How it went: for init.lua's BuildDone, and, behind another window, in
+    // a notification of the system's.
     if (BuildUi::Run* r = u.run_of(doc); r && r->running) {
         r->running = false;
         r->status = status;
         const double took = static_cast<double>(now_ns() - r->started_ns) * 1e-9;
         if (!r->key.empty()) script_build_event(true, r->name, r->kind, r->cmd, status, r->errors, r->warnings, r->stopped, took);
+        if (!front_ && cfg_.build_notify && !r->stopped) {
+            char secs[32];
+            std::snprintf(secs, sizeof secs, "%.1f s", took);
+            std::string body = status == 0 ? std::string("Done in ") + secs : "Failed with exit code " + std::to_string(status) + " after " + secs;
+            if (r->errors) body += " \xC2\xB7 " + std::to_string(r->errors) + (r->errors == 1 ? " error" : " errors");
+            if (r->warnings) body += std::string(r->errors ? ", " : " \xC2\xB7 ") + std::to_string(r->warnings) + (r->warnings == 1 ? " warning" : " warnings");
+            system_notify(r->name, body);
+        }
     }
     if (u.first && u.first->doc == doc && !u.first->ended) {  // (what waits for it runs on the loop's next turn)
         u.first->ended = true;
