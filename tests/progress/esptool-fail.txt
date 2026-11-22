@@ -1,0 +1,12 @@
+# esptool v5.6.0 (Homebrew, macOS) --chip esp32s3 -p /dev/cu.nothere
+# write-flash 0x10000 app.bin, on a terminal, with no board: its output as
+# it printed it (the "ERROR:" yellow and bold).
+esptool v5.6.0
+Serial port /dev/cu.nothere:
+
+\e[1;33mERROR:\e[0m A fatal error occurred: Could not open /dev/cu.nothere, the port is busy or doesn't exist.
+([Errno 2] could not open port /dev/cu.nothere: [Errno 2] No such file or directory: '/dev/cu.nothere')
+
+Hint: Check if the port is correct and ESP connected
+
+@exit 2

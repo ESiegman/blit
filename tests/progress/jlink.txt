@@ -1,0 +1,13 @@
+# SEGGER J-Link Commander V6.14c loadfile program.hex (not installed here,
+# and closed): its lines as a user posted them on SEGGER's forum, thread 4031
+# ("JLinkExe flashing PSoC CY8C4247 gives error", April 2017), with the
+# programming done well (the last line there, its failure, is in
+# jlink-fail.txt). How it draws a percent between 0 and 100 is not in that
+# copy, which has only the last.
+Downloading file [program.hex]...
+Comparing flash   [100%] Done.
+Erasing flash     [100%] Done.
+Programming flash [100%] Done.
+Verifying flash   [100%] Done.
+J-Link: Flash download: Flash programming performed for 1 range (131072 bytes)
+J-Link: Flash download: Total time needed: 3.940s (Prepare: 0.289s, Compare: 0.103s, Erase: 0.058s, Program: 3.171s, Verify: 0.103s, Restore: 0.215s)

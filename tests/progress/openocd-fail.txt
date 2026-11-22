@@ -1,0 +1,16 @@
+# OpenOCD 0.12.0 (Homebrew 0.12.0_1, macOS) -f interface/stlink.cfg -f
+# target/stm32f4x.cfg -c "program app.bin 0x08000000 verify reset exit",
+# with no probe plugged in: its output as it printed it.
+Open On-Chip Debugger 0.12.0
+Licensed under GNU GPL v2
+For bug reports, read
+\thttp://openocd.org/doc/doxygen/bugs.html
+Info : auto-selecting first available session transport "hla_swd". To override use 'transport select <transport>'.
+Info : The selected transport took over low-level target control. The results might differ compared to plain JTAG/SWD
+Info : clock speed 2000 kHz
+Error: open failed
+in procedure 'program'
+** OpenOCD init failed **
+shutdown command invoked
+
+@exit 1

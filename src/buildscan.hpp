@@ -11,7 +11,8 @@
 // compiler's notes, the include chain and instantiation context before its
 // problem, and a sanitizer's stacks are the problem's notes. The bytes are a terminal's: the
 // escape sequences are dropped, and a line a carriage return goes back
-// over (Ninja's progress) is the line written over it.
+// over (Ninja's progress) is the line written over it (an engine's
+// progress is read from it before, and from the line still being written).
 //
 // Relative paths are the folder the build runs in, or one make or Ninja
 // says it entered ("Entering directory"): the one the file is in. It runs
@@ -87,6 +88,7 @@ public:
 
 private:
     void line(std::string_view text);
+    void cr_redraw();
     // Each kind of output in a file of its own, taking a line if it is one
     // of its kind (true), and told when the output has ended (what a kind
     // was holding for the lines after it, it adds then):
@@ -206,6 +208,42 @@ private:
     // pre-commit's hook that failed: its name and id.
     bool tool_hook_ = false;
     std::string tool_hook_name_, tool_hook_id_;
+    // buildprogress.cpp:
+public:
+    // How far an engine flashing a board or programming an FPGA has got
+    // (OpenOCD, probe-rs, J-Link Commander, esptool, openFPGALoader,
+    // picotool), read from the line it is redrawing as well as finished
+    // ones; at the end, what it came to.
+    struct Progress {
+        std::string engine;              // whose ("esptool"); empty: no engine's output yet
+        std::vector<std::string> done;   // the stages done, in order ("Erase")
+        std::string stage;               // the one under way ("Program"); empty: none
+        i32 percent = -1;                // of it; -1: not said
+        u64 bytes = 0, total = 0;        // done, and in all, where the tool says (0: not said)
+        bool failed = false;             // (its problem is among found())
+        std::string summary;             // once the output has ended: "Flashed 41.2 KB in 1.8 s, verified"
+    };
+    const Progress& progress() const { return progress_; }
+    u64 progress_gen() const { return progress_gen_; }  // (counts up only as what is shown changes: the stage, its percent, a stage done)
+    // The task's command, before the first bytes: whose output it is, where
+    // it names an engine (probe-rs prints nothing but its error).
+    void use_command(std::string_view command);
+    // In words: "Program 62% 25.4/41.2 KB"; with stages, those done first: "Erase ✓ · Program 62% 25.4/41.2 KB".
+    static std::string progress_words(const Progress& p, bool stages);
+
+private:
+    bool progress_line(std::string_view text, bool unfinished);  // (unfinished: the line being redrawn, read for its bar)
+    void progress_engine(u8 engine);
+    void progress_end();
+    void progress_changed();
+    Progress progress_;
+    u64 progress_gen_ = 0, prog_key_ = 0;
+    u8 engine_ = 0;
+    bool line_new_ = false;  // (the line has changed since it was last looked at)
+    bool prog_verified_ = false, prog_unchanged_ = false, prog_flash_ = false, prog_wrote_ = false;
+    u64 prog_bytes_ = 0;  // written, as the tool says
+    double prog_seconds_ = -1, prog_took_ = -1, prog_start_ = 0;  // the writing's time and the run's, as the tool says; when its first line came
+    std::string prog_error_;  // an error said before the failure it explains
     // buildtests.cpp:
 public:
     // A test's result as the run's output gave it: GoogleTest's

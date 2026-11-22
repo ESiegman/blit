@@ -2839,6 +2839,24 @@ words where that leaves the tabs beside it room (`▶ make test · 2 errors ·
 1 passed, 1 failed`); it goes when the task runs again, and comes back as
 the new run's output says it.
 
+A task that flashes a board or programs an FPGA shows how far it has got
+while it runs, read from the tool's output as it comes, the bar it is
+redrawing in place included: OpenOCD's `program` (and Espressif's
+`program_esp`), probe-rs's download, J-Link Commander's `loadfile`,
+esptool's write-flash, openFPGALoader's loads into SRAM and flash, and
+picotool's `load`. The Run button reads the stage under way, its percent
+and the bytes where the tool prints them (`■ Program 62% 12.0/22.0 KB`;
+a click still stops it), and the task's row the stages done before it
+(`Erase ✓ · Program 62% 25.0 KB`); both are drawn again only when the
+stage or its percent changes. After, what it came to is kept on the row
+and the button: `Flashed 40.2 KB in 1.8 s, verified` (the tool's own time
+where it says one), `Loaded into SRAM in 2.1 s`, or, for a failed one,
+where it stopped. A failure is a problem with the tool's own words
+(`OpenOCD init failed: open failed`, `JTAG init failed with: unable to
+open ftdi device`), placed at the program's name. Whose output it is
+comes from the task's command (or the command make echoes), and from the
+tool's own first lines.
+
 Under **CMake** the tab has two rows of its own. **Build type**: Enter goes
 from the project's own (what the build folder was configured with) to
 Debug, Release, RelWithDebInfo, MinSizeRel and round. **Target**: Enter
@@ -3975,6 +3993,8 @@ src/apppdf.cpp     a PDF's tab: pages drawn on a thread of their own as they com
 src/agent/         the agent: what it and blit say to one another, the program, its build for Linux (Docker), the builds
 src/keymap.*    key mappings: Vim's key notation, the table of mappings, what keys typed so far add up to
 src/job.*       programs run in the background for scripts, on threads of their own
+src/engine.*    engines run with no terminal tab, here or on another machine: pipes or a pseudo-terminal, lines and JSON lines on the run's thread, a time limit, a cancel, `which` kept per machine
+src/buildprogress.cpp  a flash's or an FPGA load's progress read from its engine's output (each engine's shapes as a table), for the Run button and the task's row
 src/applua.cpp  scripts: the Lua state, mappings, commands, events, timers, plugins, boxes and messages
 src/luaapi.cpp  the functions scripts call (the table `blit`, all of it C++: blit ships no Lua of its own)
 src/applua.hpp  what those two share: helpers, the events, the state kept for scripts

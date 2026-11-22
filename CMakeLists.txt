@@ -196,7 +196,7 @@ find_path(HARFBUZZ_INCLUDE_DIR hb.h PATH_SUFFIXES harfbuzz)
 find_library(HARFBUZZ_LIBRARY harfbuzz)
 
 # Text storage, editing and settings: no SDL, no GPU.
-add_library(blit_core STATIC src/buffer.cpp src/editor.cpp src/config.cpp src/vim.cpp src/regex.cpp src/fuzzy.cpp src/finder.cpp src/keymap.cpp src/job.cpp src/threads.cpp src/buildscan.cpp src/buildvalidation.cpp src/buildmatch.cpp src/buildtools.cpp src/buildtests.cpp src/buildread.cpp)
+add_library(blit_core STATIC src/buffer.cpp src/editor.cpp src/config.cpp src/vim.cpp src/regex.cpp src/fuzzy.cpp src/finder.cpp src/keymap.cpp src/job.cpp src/threads.cpp src/buildscan.cpp src/buildvalidation.cpp src/buildmatch.cpp src/buildtools.cpp src/buildtests.cpp src/buildprogress.cpp src/buildread.cpp)
 target_include_directories(blit_core PUBLIC src)
 target_link_libraries(blit_core PUBLIC Threads::Threads)
 
@@ -297,7 +297,7 @@ target_link_libraries(blit_lsp PUBLIC blit_core)
 
 # The editor. Shaders are compiled offline by shaders/build.sh and the results
 # are checked in under shaders/gen, so this needs no shader tools.
-add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src/apptabs.cpp src/appsplit.cpp src/appgit.cpp src/appvim.cpp src/appshape.cpp src/appedit.cpp src/apptest.cpp src/folds.cpp src/snippet.cpp src/appsnippet.cpp src/appfx.cpp src/appfind.cpp src/appstatus.cpp src/appstart.cpp src/appsession.cpp src/appremote.cpp src/appprofile.cpp src/appterm.cpp src/apppython.cpp src/appcommands.cpp src/appdebug.cpp src/appbuild.cpp src/appmarkdown.cpp src/appasm.cpp src/asm.cpp src/appnotebook.cpp src/notebook.cpp src/nbview.cpp src/kernel.cpp src/apppeek.cpp src/apphistory.cpp src/wrap.cpp src/appwrap.cpp src/apppr.cpp src/appfocus.cpp src/appsettings.cpp src/appupdate.cpp src/appcontainer.cpp src/watch.cpp src/appminimap.cpp src/appspell.cpp src/spell.cpp src/appimage.cpp src/apppdf.cpp src/appinstance.cpp src/instance.cpp src/loginpath.cpp src/look.cpp src/build.cpp src/tests.cpp src/fsio.cpp src/project.cpp src/libraries.cpp src/markdown.cpp src/dap.cpp src/applua.cpp src/luaapi.cpp src/git.cpp src/tree.cpp src/render.cpp src/raster.cpp src/diagram.cpp src/flowchart.cpp src/classdiagram.cpp src/sequence.cpp src/pie.cpp src/gantt.cpp src/mindmap.cpp)
+add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src/apptabs.cpp src/appsplit.cpp src/appgit.cpp src/appvim.cpp src/appshape.cpp src/appedit.cpp src/apptest.cpp src/folds.cpp src/snippet.cpp src/appsnippet.cpp src/appfx.cpp src/appfind.cpp src/appstatus.cpp src/appstart.cpp src/appsession.cpp src/appremote.cpp src/appprofile.cpp src/appterm.cpp src/apppython.cpp src/appcommands.cpp src/appdebug.cpp src/appbuild.cpp src/appmarkdown.cpp src/appasm.cpp src/asm.cpp src/appnotebook.cpp src/notebook.cpp src/nbview.cpp src/kernel.cpp src/apppeek.cpp src/apphistory.cpp src/wrap.cpp src/appwrap.cpp src/apppr.cpp src/appfocus.cpp src/appsettings.cpp src/appupdate.cpp src/appcontainer.cpp src/watch.cpp src/appminimap.cpp src/appspell.cpp src/spell.cpp src/appimage.cpp src/apppdf.cpp src/appinstance.cpp src/instance.cpp src/loginpath.cpp src/look.cpp src/build.cpp src/engine.cpp src/tests.cpp src/fsio.cpp src/project.cpp src/libraries.cpp src/markdown.cpp src/dap.cpp src/applua.cpp src/luaapi.cpp src/git.cpp src/tree.cpp src/render.cpp src/raster.cpp src/diagram.cpp src/flowchart.cpp src/classdiagram.cpp src/sequence.cpp src/pie.cpp src/gantt.cpp src/mindmap.cpp)
 # The Vulkan spec's statements of the validation layers' VUIDs.
 target_sources(blit PRIVATE src/appvalidusage.cpp)
 # The diagrams' pictures (raster.cpp, diagram.cpp and the kinds' files) are the
@@ -415,6 +415,10 @@ if(BLIT_DEV)
     # Vulkan's and Metal's validation messages as problems, and the spec's statements of VUIDs.
     add_test(NAME validation COMMAND sh ${CMAKE_SOURCE_DIR}/tests/validation.sh $<TARGET_FILE:blit>)
     add_test(NAME buildtools COMMAND sh ${CMAKE_SOURCE_DIR}/tests/buildtools.sh $<TARGET_FILE:blit>)
+    # How far a flash or an FPGA's load has got, from the engines' output replayed (tests/replay.sh).
+    add_test(NAME progress COMMAND sh ${CMAKE_SOURCE_DIR}/tests/progress.sh $<TARGET_FILE:blit>)
+    # Engines run with no terminal tab, here and there (tests/fake-ssh.sh): lines, JSON lines, a time limit, a cancel, which.
+    add_test(NAME engine COMMAND sh ${CMAKE_SOURCE_DIR}/tests/engine.sh $<TARGET_FILE:blit>)
     add_test(NAME problems COMMAND sh ${CMAKE_SOURCE_DIR}/tests/problems.sh $<TARGET_FILE:blit>)
     add_test(NAME markdown COMMAND sh ${CMAKE_SOURCE_DIR}/tests/markdown.sh $<TARGET_FILE:blit>)
     # A notebook's view beside its script (skipped with no python3 to write the notebooks).

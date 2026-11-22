@@ -1,0 +1,12 @@
+# SEGGER J-Link Commander V6.14c loadfile program.hex failing: its lines as a
+# user posted them on SEGGER's forum, thread 4031 ("JLinkExe flashing PSoC
+# CY8C4247 gives error", post 3, April 2017).
+Downloading file [program.hex]...
+Comparing flash   [100%] Done.
+Erasing flash     [100%] Done.
+Programming flash [100%] Done.
+Verifying flash   [100%] Done.
+J-Link: Flash download: Restarting flash programming due to program error (possibly skipped erasure of half-way erased sector).
+J-Link: Flash download: Skip optimizations disabled for second try.
+Writing target memory failed.
+@exit 1

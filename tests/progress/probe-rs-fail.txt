@@ -1,0 +1,5 @@
+# probe-rs 0.32.0 (Homebrew, macOS) download --chip STM32F411RETx
+# --binary-format bin --base-address 0x08000000 app.bin, on a terminal, with
+# no probe: all it printed.
+Error: No connected probes were found.
+@exit 1

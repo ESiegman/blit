@@ -111,6 +111,9 @@ struct TermView {
     BuildScan::Outcome scan_outcome;                   // (scan_mu)
     u64 scan_outcome_gen = 0;
     bool scan_outcome_new = false;  // (scan_mu)
+    BuildScan::Progress scan_progress;  // (scan_mu) how far an engine it runs has got (buildprogress.cpp)
+    u64 scan_progress_gen = 0;
+    bool scan_progress_new = false;     // (scan_mu)
     std::atomic<bool> scan_news{false};
     // (scan_mu) The folder's files, listed on the reader's thread the first
     // time a bare name is in none of the folders tried: the scan's, and
@@ -237,18 +240,22 @@ struct TermView {
 
     // What the scan has found, handed over (on the reader's thread).
     void scan_hand_over() {
-        if (scan->found().empty() && scan->dirs_gen() == scan_dirs_gen && scan->test_results().empty() && scan->outcome_gen() == scan_outcome_gen) return;
+        if (scan->found().empty() && scan->dirs_gen() == scan_dirs_gen && scan->test_results().empty() && scan->outcome_gen() == scan_outcome_gen &&
+            scan->progress_gen() == scan_progress_gen)
+            return;
         {
             std::lock_guard lock(scan_mu);
             for (BuildProblem& p : scan->found()) scanned.push_back(std::move(p));
             if (scan->dirs_gen() != scan_dirs_gen) scan_dirs = scan->dirs();
             for (BuildScan::TestResult& r : scan->test_results()) scan_results.push_back(std::move(r));
             if (scan->outcome_gen() != scan_outcome_gen) scan_outcome = scan->outcome(), scan_outcome_new = true;
+            if (scan->progress_gen() != scan_progress_gen) scan_progress = scan->progress(), scan_progress_new = true;
         }
         scan->found().clear();
         scan->test_results().clear();
         scan_dirs_gen = scan->dirs_gen();
         scan_outcome_gen = scan->outcome_gen();
+        scan_progress_gen = scan->progress_gen();
         scan_news = true;
     }
 
@@ -530,6 +537,7 @@ u64 App::term_open(const std::string& dir_given, const std::string& command, con
             });
     }
     if (v->scan) v->scan->use_matchers(std::move(matchers));  // (before its reader starts)
+    if (v->scan) v->scan->use_command(command);
     v->started_ns = now_ns();
     const std::vector<std::string> env = {"TERM=xterm-256color", "COLORTERM=truecolor", "TERM_PROGRAM=blit"};
     std::string err;
@@ -585,14 +593,17 @@ void App::term_sync() {
                 std::vector<BuildProblem> found;
                 std::vector<BuildScan::TestResult> results;
                 std::optional<BuildScan::Outcome> outcome;
+                std::optional<BuildScan::Progress> progress;
                 {
                     std::lock_guard lock(v.scan_mu);
                     found.swap(v.scanned);
                     results.swap(v.scan_results);
                     if (std::exchange(v.scan_outcome_new, false)) outcome = v.scan_outcome;
+                    if (std::exchange(v.scan_progress_new, false)) progress = v.scan_progress;
                 }
                 if (!found.empty()) build_found(d.id, std::move(found));
                 if (!results.empty() || outcome) build_outcome(d.id, std::move(results), outcome ? &*outcome : nullptr);
+                if (progress) build_progress(d.id, *progress);
             }
             // The tab's name: the program's title for itself, else the folder it is in.
             std::string title;

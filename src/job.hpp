@@ -16,6 +16,8 @@
 
 namespace blit {
 
+struct JobEvent;
+
 struct JobSpec {
     std::vector<std::string> argv;  // the program (a path, or a name looked for in PATH) and its arguments
     std::string cwd;                // the folder to run it in; empty: this process's
@@ -23,6 +25,10 @@ struct JobSpec {
     std::vector<std::string> env;   // "NAME=value", on top of this process's environment
     bool stream_out = false;        // report what it prints as it comes (kOut), and not all at once with kExit
     bool stream_err = false;
+    // Given what happens, on the job's own thread, in place of the queue
+    // take() reads (its exit last): for a reader that has a thread of its
+    // own to be on (engine.cpp).
+    std::function<void(JobEvent&&)> sink;
 };
 
 struct JobEvent {

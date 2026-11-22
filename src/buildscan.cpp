@@ -104,14 +104,16 @@ void BuildScan::feed(std::string_view bytes) {
             const char* q = p;
             while (q < e && static_cast<u8>(*q) >= 0x20 && *q != 0x7F) ++q;
             if (q > p) {
-                if (cr_) line_.clear(), cr_ = false;
+                if (cr_) cr_redraw();
                 if (line_.size() < kMaxLine) line_.append(p, std::min<size_t>(static_cast<size_t>(q - p), kMaxLine - line_.size()));
+                line_new_ = true;
                 p = q;
                 continue;
             }
             const char c = *p++;
             if (c == '\n') {
                 cr_ = false;
+                line_new_ = false;
                 line(line_);
                 line_.clear();
             } else if (c == '\r') {
@@ -119,10 +121,12 @@ void BuildScan::feed(std::string_view bytes) {
             } else if (c == '\x1b') {
                 esc_ = kEsc;
             } else if (c == '\t') {
-                if (cr_) line_.clear(), cr_ = false;
+                if (cr_) cr_redraw();
                 if (line_.size() < kMaxLine) line_ += ' ';
+                line_new_ = true;
             } else if (c == '\b') {
                 if (!line_.empty()) line_.pop_back();
+                line_new_ = true;
             }
             continue;  // (the other controls are nothing on the line)
         }
@@ -145,11 +149,27 @@ void BuildScan::feed(std::string_view bytes) {
             default: esc_ = kText; break;
         }
     }
+    // The line still being written (a bar redrawn with \r and no newline):
+    // read for an engine's progress as it is now.
+    if (line_new_ && !line_.empty()) {
+        line_new_ = false;
+        progress_line(line_, true);
+    }
+}
+
+// A carriage return, and text after it: the line is written over. What it
+// was is read for an engine's progress first (a bar redrawn in place).
+void BuildScan::cr_redraw() {
+    if (line_new_ && !line_.empty()) progress_line(line_, true);
+    line_new_ = false;
+    line_.clear();
+    cr_ = false;
 }
 
 void BuildScan::finish() {
     if (!line_.empty()) line(line_);
     line_.clear();
+    line_new_ = false;
     cr_ = false;
     esc_ = kText;
     wrapped_end();
@@ -161,6 +181,7 @@ void BuildScan::finish() {
     matcher_end();
     tool_end();
     test_end();
+    progress_end();
     py_ = false;
 }
 
@@ -237,6 +258,7 @@ void BuildScan::line(std::string_view text) {
             }
         }
     }
+    if (progress_line(text, false)) return;          // (before the tools': esptool's "ERROR: A fatal error occurred: ...")
     if (test_line(text) || tool_line(text)) return;  // (the tests' first: timing's "ERROR: Max frequency ..." is theirs, a warning)
     compiler_line(text);
 }
