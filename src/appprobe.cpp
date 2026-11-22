@@ -3,8 +3,11 @@
 // them from what usb.cpp reads), a probe and its serial port as one row;
 // Enter writes the one chosen into the `board` object of the run
 // configuration the Run button runs (else the folder's first), in
-// .blit/run.json, which is made if the folder has none. On a project on
-// another machine the devices are that machine's (blit-agent --usb). The
+// .blit/run.json, which is made if the folder has none. The Boards view's
+// rows are among them: the FPGA boards and cables openFPGALoader sees
+// (boards.cpp), each after its USB device's. On a project on another
+// machine the devices are that machine's (blit-agent --usb, and
+// openFPGALoader run there). The
 // devices are read, and the file written, on a thread of the picker's own:
 // IOKit, sysfs, the agent and a file on another machine all take a while.
 #include <SDL3/SDL.h>
@@ -14,6 +17,7 @@
 #include <thread>
 
 #include "app.hpp"
+#include "boards.hpp"
 #include "probes.hpp"
 #include "remote.hpp"
 
@@ -61,6 +65,7 @@ Found list_for(const std::string& root) {
     std::string host, there;
     if (!split_remote(root, &host, &there)) {
         f.rows = probe_rows(usb_list());
+        f.rows = ofl_merge(f.rows, fpga_boards({}, f.rows));  // (the Boards view: what openFPGALoader sees, where it is installed)
         return f;
     }
     const std::shared_ptr<Remote> r = remote_for(root, &there, kRemoteWaitMs);
@@ -76,6 +81,7 @@ Found list_for(const std::string& root) {
         return f;
     }
     f.rows = probe_rows(devices, host);
+    f.rows = ofl_merge(f.rows, fpga_boards(host, f.rows));
     return f;
 }
 

@@ -1,0 +1,11 @@
+# openFPGALoader v1.2.0 --scan-usb with a Digilent Basys 3 plugged in (no
+# board here): its lines from its source, src/libusb_ll.cpp lines 137-275
+# (tag v1.2.0): an FTDI chip's kind for 0403:6010 ("FTDI2232"), each column
+# padded to its longest field and one more (setw), the bus and device in
+# three digits, the ids as 0x%04x; its header as it printed it with nothing
+# plugged in (ofl-scan-none.txt) but for the serial column's width. The
+# board's strings are the FT2232's on Digilent's boards: "Digilent", "Digilent
+# USB Device" (OpenOCD 0.12.0 tcl/interface/ftdi/digilent_jtag_hs3.cfg line
+# 9); the serial number is a stand-in.
+Bus device vid:pid       probe_type manufacturer serial       product
+001 005    0x0403:0x6010 FTDI2232   Digilent     210183A8F2C1 Digilent USB Device

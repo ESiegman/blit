@@ -3235,6 +3235,27 @@ it:
 The Debug tab shows the board's probe and port under **Board** for a
 configuration that has one.
 
+**The Boards view**: where openFPGALoader is installed (on the project's
+machine), the same list has the FPGA boards and cables it sees, each
+after the row of the USB device it is on. Its `--scan-usb` lists the
+cables; for each FTDI chip (and each JTAG cable of another maker's it
+knows) its `--detect` (through Digilent's cable for a Digilent board, by
+the chip's serial number) says which FPGA is on it, and each board in
+openFPGALoader's own list with that FPGA on a Digilent cable is a row of
+its own, as no USB string tells a Basys 3 from a Cmod A7-35T:
+
+```
+Digilent FT2232 (FPGA)  210183A8F2C1  /dev/cu.usbserial-210183A8F2C11
+Basys 3 (xc7a35t)  210183A8F2C1  /dev/cu.usbserial-210183A8F2C11
+Arty A7-35T (xc7a35t)  210183A8F2C1  /dev/cu.usbserial-210183A8F2C11
+Cmod A7-35T (xc7a35t)  210183A8F2C1  /dev/cu.usbserial-210183A8F2C11
+```
+
+Enter on one writes it as the probe picker writes a probe, and its
+`flash` too: `{ "tool": "openfpgaloader", "board": "basys3" }` (an FPGA
+on a board openFPGALoader does not name: its `cable`), keeping the flash
+object's other members. A cable with no FPGA answering adds nothing.
+
 ### Flashing the board
 
 "Flash the board" (Command search) flashes the board of the run

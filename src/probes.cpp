@@ -404,6 +404,10 @@ bool board_set_probe(std::string& text, std::string_view config, const ProbeRow&
         if (!row.gdb.empty()) probe += ", \"gdb\": " + quoted(row.gdb);
         probe += "}";
     }
+    // (A board of the Boards view's: flashed by openFPGALoader, as its board or on its cable.)
+    std::string fpga;
+    if (!row.fpga_board.empty()) fpga = "{\"tool\": \"openfpgaloader\", \"board\": " + quoted(row.fpga_board) + "}";
+    else if (!row.fpga_cable.empty()) fpga = "{\"tool\": \"openfpgaloader\", \"cable\": " + quoted(row.fpga_cable) + "}";
     size_t board = member_at(t, at, "board");
     if (board == std::string::npos || t[board] != '{') {  // (made whole: a line a member where the configuration has its members so, else on one line)
         std::vector<Item> members;
@@ -413,6 +417,7 @@ bool board_set_probe(std::string& text, std::string_view config, const ProbeRow&
         std::vector<std::string> parts;
         if (!probe.empty()) parts.push_back("\"probe\": " + probe);
         if (!row.port.empty()) parts.push_back("\"serial\": {\"port\": " + quoted(row.port) + "}");
+        if (!fpga.empty()) parts.push_back("\"flash\": " + fpga);
         std::string value = "{";
         for (size_t n = 0; n < parts.size(); ++n) value += (n ? (alone ? ",\n  " : ", ") : (alone ? "\n  " : "")) + parts[n];
         value += alone && !parts.empty() ? "\n}" : "}";
@@ -434,6 +439,16 @@ bool board_set_probe(std::string& text, std::string_view config, const ProbeRow&
         ok = ok && remove_member(t, board, "serial");
     } else {
         ok = ok && set_member(t, board, "serial", "{\"port\": " + quoted(row.port) + "}");
+    }
+    if (ok && !fpga.empty()) {
+        const size_t flash = member_at(t, board, "flash");
+        if (flash != std::string::npos && t[flash] == '{') {  // (its address, or whatever else it has, kept)
+            ok = set_member(t, flash, "tool", "\"openfpgaloader\"");
+            ok = ok && (row.fpga_board.empty() ? remove_member(t, flash, "board") : set_member(t, flash, "board", quoted(row.fpga_board)));
+            ok = ok && (!row.fpga_board.empty() ? remove_member(t, flash, "cable") : set_member(t, flash, "cable", quoted(row.fpga_cable)));
+        } else {
+            ok = set_member(t, board, "flash", fpga);
+        }
     }
     json::Doc check;
     if (!ok || !check.parse(t)) return *why = "it is not JSON", false;

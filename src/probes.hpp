@@ -55,6 +55,10 @@ struct ProbeRow {
     std::string gdb;     // Black Magic's GDB server port
     std::string host;    // the machine it is on ("" here)
     std::string text;    // the row as the picker shows it
+    // A row of the Boards view (flash.cpp, from openFPGALoader): the board
+    // it names (-b) or the cable it is on (-c), written into the board's
+    // flash object with the tool.
+    std::string fpga_board, fpga_cable;
 };
 
 // The rows for these devices: each device the table names, and each other
@@ -72,8 +76,10 @@ inline constexpr std::string_view kFlashTools[] = {"esptool", "openocd", "probe-
 // probe.usb, probe.gdb; serial.port), each member of the board the row has
 // nothing for removed and the rest of the file kept as it was written:
 // its other configurations, members, order, spacing and comments-free
-// layout. A board object is made if it has none. False (and why) when the
-// text is not such a file or has no such configuration.
+// layout. A board object is made if it has none. A row of the Boards view
+// sets the flash tool too ("openfpgaloader", with its board or cable; the
+// flash object's other members kept). False (and why) when the text is not
+// such a file or has no such configuration.
 bool board_set_probe(std::string& text, std::string_view config, const ProbeRow& row, std::string* why);
 
 // What a board's probe is called (the table's name for its ids, else its

@@ -3,12 +3,14 @@
 # each tool's command line for each kind of board, its progress and what it
 # came to on the Run button and the configuration's row, "only if changed"
 # (and Flash anyway; a failed or stopped flash never remembered as done),
-# the build run first, a failure's problem, and a board on another machine
-# (tests/fake-ssh.sh stands in for ssh).
+# the build run first, a failure's problem, the Boards view
+# (openFPGALoader's --scan-usb and --detect beside the probe picker's rows),
+# and a board on another machine (tests/fake-ssh.sh stands in for ssh).
 #
 # Each tool is a stand-in on the PATH that writes its name and arguments to
 # a log, then replays a sample of the tool's output (tests/replay.sh; the
-# samples of tests/progress/, each saying where it is from).
+# samples of tests/progress/, and tests/flash/ for the Boards view, each
+# saying where it is from).
 #
 #   tests/flash.sh path/to/blit            run the cases
 #   tests/flash.sh path/to/blit --print    show what each case gives
@@ -39,13 +41,18 @@ want() { expected=$(cat); }
 
 # The stand-ins: each writes its name and its arguments (one with a space
 # in it quoted) to the log, J-Link's command file under it, then replays
-# the sample named in $SAMPLE.
+# the sample named in $SAMPLE. openFPGALoader asked for --scan-usb or
+# --detect replays $OFL_SCAN or $OFL_DETECT instead.
 B="$dir/bin"
 mkdir -p "$B"
 standin() {
     tool=$1
     cat >"$B/$tool" <<EOF
 #!/bin/sh
+case "\${1:-}" in
+    --scan-usb) exec sh "$here/replay.sh" "\$OFL_SCAN" ;;
+    --detect) printf '%s %s\n' "$tool" "\$*" >>"\$OFL_LOG"; exec sh "$here/replay.sh" "\$OFL_DETECT" ;;
+esac
 {
     printf '%s' "$tool"
     for a in "\$@"; do case \$a in *' '*) printf " '%s'" "\$a" ;; *) printf ' %s' "\$a" ;; esac; done
@@ -58,6 +65,7 @@ EOF
 }
 for tool in esptool openocd openocd-esp32 probe-rs JLinkExe openFPGALoader; do standin $tool; done
 export PATH="$B:$PATH"
+export OFL_LOG="$dir/ofl-log"
 
 cat >"$dir/init.lua" <<'EOF'
 blit.opt.lsp.enabled = false
@@ -96,9 +104,10 @@ flash() {
     printf '%s\n' "$here/progress/$1.txt" >"$SAMPLE"
     script=$(printf '%s' "$2" | sed -e "s#go:\([a-z]*\)#lua:io.open('$REPLAY_HOLD/\1','w'):close()#g")
     case ${3:-} in ssh:*) at="frame;$script" folder=$3 ;; *) at="workdir:${3:-$P};frame;$script" folder= ;; esac
-    got=$(BLIT_INIT="${init:-$dir/init.lua}" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "$at" ${folder:+"$folder"} 2>&1 >/dev/null |
+    got=$(BLIT_INIT="${init:-$dir/init.lua}" OFL_SCAN="$here/flash/ofl-scan-${scan:-none}.txt" OFL_DETECT="$here/flash/ofl-detect-${detect:-none}.txt" \
+        "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "$at" ${folder:+"$folder"} 2>&1 >/dev/null |
         sed -e "s#$dir#~#g" -e "s/ in [0-9]*\\.[0-9] s/${timed:- in N s}/g")
-    timed= init=
+    timed= init= scan= detect=
     [ -f "$LOG" ] && got="$got
 $(sed -e "s#$dir#~#g" -e 's#-CommandFile [^ ]*#-CommandFile FILE#' "$LOG")"
 }
@@ -350,10 +359,79 @@ built
 EOF
 check "a build that fails: no flash" "$expected"
 
+# ---------------------------------------------------------------- the Boards view
+
+# The devices: a Basys 3's FT2232 (its console on interface B) and an
+# ST-LINK, as Linux's /sys/bus/usb/devices has them (tests/probes.sh's).
+# dev FOLDER VID PID MANUFACTURER PRODUCT SERIAL; iface FOLDER NUMBER TTY
+# (cdc-acm's tty/ttyACM0, a usb-serial driver's ttyUSB0/tty/ttyUSB0).
+U="$dir/usb"
+dev() {
+    mkdir -p "$U/$1"
+    printf '%s\n' "$2" >"$U/$1/idVendor"
+    printf '%s\n' "$3" >"$U/$1/idProduct"
+    printf '00\n' >"$U/$1/bDeviceClass"
+    printf '%s\n' "$4" >"$U/$1/manufacturer"
+    printf '%s\n' "$5" >"$U/$1/product"
+    printf '%s\n' "$6" >"$U/$1/serial"
+}
+iface() {
+    mkdir -p "$U/$1/$3"
+    printf '%s\n' "$2" >"$U/$1/bInterfaceNumber"
+}
+dev 1-1 0483 374e STMicroelectronics STLINK-V3 004D00283133510F37363734
+iface 1-1:1.1 01 tty/ttyACM0
+dev 1-7 0403 6010 Digilent "Digilent USB Device" 210183A8F2C1
+iface 1-7:1.0 00 ttyUSB0/tty/ttyUSB0
+iface 1-7:1.1 01 ttyUSB1/tty/ttyUSB1
+export BLIT_USB_ROOT="$U"
+rm -rf "$P/.blit"
+mkdir -p "$P/.blit"
+scan=basys3 detect=basys3
+flash probe-rs "command:Choose the probe;probedump"
+want <<'EOF'
+fpga ftdi 0403:6010: Digilent FT2232 (FPGA)  210183A8F2C1  /dev/ttyUSB1 | fpga ftdi 0403:6010: Basys 3 (xc7a35t)  210183A8F2C1  /dev/ttyUSB1 | fpga ftdi 0403:6010: Arty A7-35T (xc7a35t)  210183A8F2C1  /dev/ttyUSB1 | fpga ftdi 0403:6010: Cmod A7-35T (xc7a35t)  210183A8F2C1  /dev/ttyUSB1 | probe stlink 0483:374e: ST-LINK V3E  004D00283133510F37363734  /dev/ttyACM0
+EOF
+check "a Basys 3 seen by openFPGALoader: the boards with its FPGA, after its cable's row" "$expected"
+got=$(cat "$OFL_LOG")
+check "(--detect asked through Digilent's cable, by its serial number)" 'openFPGALoader --detect -c digilent --usb-serial-num 210183A8F2C1'
+scan=basys3 detect=basys3
+flash probe-rs "command:Choose the probe;probewait;text:Basys 3;key:Return;probewait;flashdump"
+want <<'EOF'
+blit: proj's board: Basys 3 (xc7a35t) 210183A8F2C1, /dev/ttyUSB1
+proj: tool openfpgaloader | board basys3 | cable  | interface  | target  | device  | address  | bitstream 
+EOF
+check "Enter on the Basys 3: the board's flash openFPGALoader with -b basys3, its probe the cable" "$expected"
+got=$(tr '\n' '|' <"$P/.blit/run.json")
+check "(the file)" '{|  "configurations": [|    {|      "name": "proj",|      "program": "build/proj",|      "board": {|        "probe": {"kind": "ftdi", "serial": "210183A8F2C1", "usb": "0403:6010"},|        "serial": {"port": "/dev/ttyUSB1"},|        "flash": {"tool": "openfpgaloader", "board": "basys3"}|      }|    }|  ]|}|'
+printf '{"configurations": [{"name": "proj", "program": "build/proj", "board": {"flash": {"tool": "probe-rs", "address": "0x0", "cable": "ft2232"}}}]}\n' >"$P/.blit/run.json"
+scan=basys3 detect=basys3
+flash probe-rs "command:Choose the probe;probewait;text:Cmod;key:Return;probewait;flashdump"
+got=$(printf '%s' "$got" | tail -1)
+check "a flash object there already: its tool and board set, its cable gone, the rest kept" 'proj: tool openfpgaloader | board cmoda7_35t | cable  | interface  | target  | device  | address 0x0 | bitstream '
+
+# openFPGALoader's own output with no board (captured on the Mac and on the
+# Linux box): nothing is added; the same with openFPGALoader itself, where
+# it is installed.
+flash probe-rs "command:Choose the probe;probedump"
+check "openFPGALoader seeing nothing (its real output): the picker's rows alone" 'fpga ftdi 0403:6010: Digilent FT2232 (FPGA)  210183A8F2C1  /dev/ttyUSB1 | probe stlink 0483:374e: ST-LINK V3E  004D00283133510F37363734  /dev/ttyACM0'
+scan=basys3
+flash probe-rs "command:Choose the probe;probedump"
+check "a cable seen but no FPGA on it (--detect's real failure): the picker's rows alone" 'fpga ftdi 0403:6010: Digilent FT2232 (FPGA)  210183A8F2C1  /dev/ttyUSB1 | probe stlink 0483:374e: ST-LINK V3E  004D00283133510F37363734  /dev/ttyACM0'
+if ofl=$(PATH=$(printf '%s' "$PATH" | sed "s#^$B:##") command -v openFPGALoader) && ! "$ofl" --detect -c digilent >/dev/null 2>&1; then
+    rm "$B/openFPGALoader"
+    ln -s "$ofl" "$B/openFPGALoader"
+    flash probe-rs "command:Choose the probe;probedump"
+    check "openFPGALoader itself, with no board: the picker's rows alone" 'fpga ftdi 0403:6010: Digilent FT2232 (FPGA)  210183A8F2C1  /dev/ttyUSB1 | probe stlink 0483:374e: ST-LINK V3E  004D00283133510F37363734  /dev/ttyACM0'
+    rm "$B/openFPGALoader"
+    standin openFPGALoader
+fi
+
 # ---------------------------------------------------------------- another machine
 
 # A board on another machine: the tool found and run there (its stand-in
-# on the PATH there), the image read there.
+# on the PATH there), the image read there; the Boards view from
+# openFPGALoader there, each row saying where.
 T="$dir/there/fw"
 mkdir -p "$T/.blit" "$T/build"
 mkelf "$T/build/fw.elf" A x
@@ -371,6 +449,9 @@ check "a board on another machine: flashed there" "$expected"
 flash probe-rs "remotewait;frame;boarddump;$F;go:a;buildwait;$F;buildwait;progressdump" "ssh://box$T"
 got=$(printf '%s' "$got" | tail -2 | head -1)
 check "(and not again, unchanged)" 'button: ▶ fw · Not flashed: unchanged since the last flash | row: Not flashed: unchanged since the last flash'
+scan=basys3 detect=basys3
+flash probe-rs "remotewait;command:Choose the probe;probedump" "ssh://box$T"
+check "the Boards view there" 'fpga ftdi 0403:6010: Digilent FT2232 (FPGA)  210183A8F2C1  /dev/ttyUSB1  on box | fpga ftdi 0403:6010: Basys 3 (xc7a35t)  210183A8F2C1  /dev/ttyUSB1  on box | fpga ftdi 0403:6010: Arty A7-35T (xc7a35t)  210183A8F2C1  /dev/ttyUSB1  on box | fpga ftdi 0403:6010: Cmod A7-35T (xc7a35t)  210183A8F2C1  /dev/ttyUSB1  on box | probe stlink 0483:374e: ST-LINK V3E  004D00283133510F37363734  /dev/ttyACM0  on box'
 
 [ "$failed" = 0 ] && echo "flash: all passed"
 exit "$failed"

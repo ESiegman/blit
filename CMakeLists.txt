@@ -313,7 +313,7 @@ target_sources(blit PRIVATE src/notify.cpp)
 # The probe and port picker, and the board object on a run configuration.
 target_sources(blit PRIVATE src/probes.cpp src/appprobe.cpp)
 # Flashing the board and programming an FPGA, and the Boards view.
-target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp)
+target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp)
 # The diagrams' pictures (raster.cpp, diagram.cpp and the kinds' files) are the
 # same pixels on every system: no multiply and add fused into one, which
 # rounds once where two steps round twice, and which one processor does
