@@ -483,6 +483,15 @@ void board_read(json::Value b, const std::string& config, Board* out, std::strin
     out->elf = text_of(b["elf"]);
     out->svd = text_of(b["svd"]);
     out->flash = b["flash"].is_string() ? text_of(b["flash"]) : text_of(b["flash"]["tool"]);
+    if (const json::Value f = b["flash"]; f.is_object()) {
+        out->flash_address = text_of(f["address"]);
+        out->flash_board = text_of(f["board"]);
+        out->flash_cable = text_of(f["cable"]);
+        out->flash_interface = text_of(f["interface"]);
+        out->flash_target = text_of(f["target"]);
+        out->flash_device = text_of(f["device"]);
+    }
+    out->bitstream = text_of(b["bitstream"]);
     out->debug = b["debug"].is_string() ? text_of(b["debug"]) : text_of(b["debug"]["preset"]);
     if (!out->flash.empty() && std::ranges::find(kFlashTools, out->flash) == std::end(kFlashTools)) {
         std::string tools;

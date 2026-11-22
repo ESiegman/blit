@@ -150,6 +150,7 @@ struct App::BuildUi {
     // summary.
     BuildScan::Progress progress;
     std::string said;
+    bool unrun = false;  // the last "run" ran nothing: its summary says why (a flash whose image is unchanged: build_note)
     // A file read for problems (build_read), on a thread of its own, and
     // what it gave; the file the problems are from, once taken.
     struct Read {
@@ -592,6 +593,7 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     u.summary.clear();
     u.progress = {};
     u.said.clear();
+    u.unrun = false;
     u.sizes_before.clear();
     u.read_from.clear();
     build_unmark();  // (and from the text)
@@ -601,6 +603,34 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     ++build_gen_;
     dirty_ = true;
     return doc;
+}
+
+u64 App::build_run_on(const std::string& row, const std::string& dir, const BuildTask& task) {
+    const u64 doc = build_command(dir, task.cmd, task.name, task.problems, &task);
+    if (doc) buildui_->last_key = row;  // (how it goes shows on that row)
+    return doc;
+}
+
+void App::build_note(const std::string& row, const std::string& words) {
+    BuildUi& u = *buildui_;
+    if (u.running) return notify(words);  // (the row and the button say how that run goes)
+    u.last_key = row;
+    u.summary = words;
+    u.unrun = true;
+    u.progress = {};
+    u.said.clear();
+    ++build_gen_;
+    dirty_ = true;
+}
+
+const BuildTask* App::board_config() {
+    BuildUi& u = *buildui_;
+    const std::string root = build_root();
+    if ((!u.looked || u.root != root) && !is_remote(root)) build_settle();
+    if (const BuildTask* c = run_config(); c && c->board.set) return c;
+    for (const BuildTask& t : u.tasks)
+        if (t.config && t.board.set && u.root == root) return &t;
+    return nullptr;
 }
 
 // A task of the Build tab's (-1: the one the Run button runs).
@@ -714,6 +744,8 @@ void App::build_stop() {
 void App::build_ended(u64 doc, int status) {
     test_ended(doc);  // (a run of the tests: its reports read)
     BuildUi& u = *buildui_;
+    // (A flash: remembered as done only if it went well.)
+    if (const BuildUi::Run* r = u.run_of(doc); r && r->running) flash_ended(doc, status == 0 && !r->stopped && !(doc == u.doc && u.progress.failed));
     // How it went: for init.lua's BuildDone, and, behind another window, in
     // a notification of the system's.
     if (BuildUi::Run* r = u.run_of(doc); r && r->running) {
@@ -756,6 +788,7 @@ void App::build_forget(u64 doc) {
     if (!buildui_) return;
     BuildUi& u = *buildui_;
     if (BuildUi::Run* r = u.run_of(doc); r && r->running) {
+        flash_ended(doc, false);
         r->running = false;
         r->stopped = true;
         if (!r->key.empty()) script_build_event(true, r->name, r->kind, r->cmd, -1, r->errors, r->warnings, true, static_cast<double>(now_ns() - r->started_ns) * 1e-9);
@@ -1184,7 +1217,9 @@ void App::build_panel_draw(TextBox& box, bool focused) {
         for (size_t k = 0; !run && t.lasting && k < u.runs.size(); ++k)
             if (u.runs[k].lasting && u.runs[k].key == key) run = &u.runs[k];
         const bool last = !u.last_key.empty() && key == u.last_key && (!run || run->doc == u.doc);
-        if (last || run) {
+        if (last && u.unrun) {
+            after = u.summary;  // (nothing ran, and why: "Not flashed: unchanged since the last flash")
+        } else if (last || run) {
             const bool running = run ? run->running : u.running;
             const int status = run ? run->status : u.last_status;
             bool said = true;
@@ -1532,6 +1567,7 @@ std::string App::build_progress_dump() {
     std::string row = u.running ? "running\xE2\x80\xA6" : u.last_status == 0 ? "done" : u.last_status > 0 ? "failed: exited with code " + std::to_string(u.last_status) : "";
     if (u.running && (!u.progress.stage.empty() || !u.progress.done.empty())) row = BuildScan::progress_words(u.progress, true);
     if (!row.empty() && !u.summary.empty()) row += " \xC2\xB7 " + u.summary;
+    if (u.unrun) row = u.summary;
     return "button: " + build_label() + " | row: " + row;
 }
 

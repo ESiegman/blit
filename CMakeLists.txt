@@ -312,6 +312,8 @@ target_sources(blit PRIVATE src/appvalidusage.cpp)
 target_sources(blit PRIVATE src/notify.cpp)
 # The probe and port picker, and the board object on a run configuration.
 target_sources(blit PRIVATE src/probes.cpp src/appprobe.cpp)
+# Flashing the board and programming an FPGA, and the Boards view.
+target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp)
 # The diagrams' pictures (raster.cpp, diagram.cpp and the kinds' files) are the
 # same pixels on every system: no multiply and add fused into one, which
 # rounds once where two steps round twice, and which one processor does
@@ -451,6 +453,8 @@ if(BLIT_DEV)
     add_test(NAME debug COMMAND sh ${CMAKE_SOURCE_DIR}/tests/debug.sh $<TARGET_FILE:blit>)
     # The probe and port picker: USB devices named, the board object written, here and on another machine.
     add_test(NAME probes COMMAND sh ${CMAKE_SOURCE_DIR}/tests/probes.sh $<TARGET_FILE:blit>)
+    # Flashing: each tool's command line, its progress, only if changed, the chord, the Boards view, here and on another machine.
+    add_test(NAME flash COMMAND sh ${CMAKE_SOURCE_DIR}/tests/flash.sh $<TARGET_FILE:blit>)
     # The project's Python: found for each project and subproject, and what takes it.
     add_test(NAME python COMMAND sh ${CMAKE_SOURCE_DIR}/tests/python.sh $<TARGET_FILE:blit>)
     # Characters of more than one code point (marks, emoji sequences, flags) and of other widths.

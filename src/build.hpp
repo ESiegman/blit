@@ -27,6 +27,12 @@ struct Board {
     std::string chip, elf, svd;
     std::string flash;  // flash.tool (or "flash": "TOOL"): "esptool", "openocd", "probe-rs", "jlink", "openfpgaloader"
     std::string debug;  // debug.preset (or "debug": "PRESET")
+    // The rest of the flash object (flash.cpp): where a raw .bin goes
+    // (address), openFPGALoader's board (-b) or cable (-c), OpenOCD's
+    // interface and target scripts, J-Link's device (else the chip); and an
+    // FPGA's bitstream (else the newest the build made).
+    std::string flash_address, flash_board, flash_cable, flash_interface, flash_target, flash_device;
+    std::string bitstream;
 };
 
 struct BuildTask {

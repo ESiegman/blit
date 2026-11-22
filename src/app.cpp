@@ -2053,6 +2053,10 @@ void App::handle_event(const SDL_Event& e) {
                 probe_sync();
                 break;
             }
+            if (e.user.code == 53) {  // a flash's image has been found ("Flash the board")
+                flash_sync();
+                break;
+            }
             break;
         }
         default:
