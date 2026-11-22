@@ -194,6 +194,7 @@ void App::forget_doc(const Doc* d) {
     minimap_forget(*d);  // (its minimap's pictures let go of)
     wrap_forget(*d);     // (and the soft wrap maps made for it)
     if (d->nb) nb_forget(*d);  // (a notebook's kernel ends)
+    build_forget(d->id);  // (a run of a task's: no longer the Build tab's)
 }
 
 Pane* App::split_pane(Pane* target, Edge edge) {

@@ -412,7 +412,7 @@ if(BLIT_DEV)
     add_test(NAME start COMMAND sh ${CMAKE_SOURCE_DIR}/tests/start.sh $<TARGET_FILE:blit>)
     add_test(NAME session COMMAND sh ${CMAKE_SOURCE_DIR}/tests/session.sh $<TARGET_FILE:blit>)
     add_test(NAME build COMMAND sh ${CMAKE_SOURCE_DIR}/tests/build.sh $<TARGET_FILE:blit>)
-    # A folder's own tasks (.blit/tasks.json), and the variables their commands name.
+    # A folder's own tasks (.blit/tasks.json): variables, long tasks, Stop.
     add_test(NAME tasks COMMAND sh ${CMAKE_SOURCE_DIR}/tests/tasks.sh $<TARGET_FILE:blit>)
     # Vulkan's and Metal's validation messages as problems, and the spec's statements of VUIDs.
     add_test(NAME validation COMMAND sh ${CMAKE_SOURCE_DIR}/tests/validation.sh $<TARGET_FILE:blit>)

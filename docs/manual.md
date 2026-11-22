@@ -2655,7 +2655,13 @@ keyboard stays where it was. When it ends the tab says how, and
 the folder is looked at again (a configure makes a build folder, whose
 tasks then show). Each task's row says how its last run went ("running…",
 "done", "failed: exited with code 2"), with what its output said it came
-to (below: "done · 12 passed, 1 failed, 2 skipped"), and Cmd+. stops a run.
+to (below: "done · 12 passed, 1 failed, 2 skipped").
+
+**Stop** (`■ Stop`, or Cmd+.) ends the run's program as Ctrl+C in a
+terminal would (a tool's own way to stop, which lets go of a probe), and
+a second Stop kills one that will not end. Its tab stays, with what it
+wrote and the problems found in it, and says `[stopped after 4.2 s]`;
+its row says "stopped", and a run that was stopped is not a failure.
 
 What the build prints is read for problems as it comes, on the terminal's
 own reading thread (nothing per frame): GCC's and Clang's
@@ -3006,6 +3012,7 @@ are the Build tab's first tasks, under **Tasks**:
 - `cwd`: the folder it runs in, from the project's; `env`: its
   environment, on top of blit's; `problems`: the patterns its output is
   read with, as a task's (above).
+- `long`: see below.
 - `kind`: the kind of work it is: `flash`, `program` (an FPGA),
   `synthesis`, `simulation` or `gpu-profile`, shown on its row before its
   command.
@@ -3024,6 +3031,16 @@ shell as the place it is in needs: bare, it is one word (a name with
 spaces or quotes in it stays whole); inside `'...'` or `"..."` it is
 part of that string. `\${file}` and names that are not these
 (`${HOME}`) are left for the shell.
+
+**A long task** (`"long": true`: a simulation, a synthesis, a GPU
+profile) has an output tab of its own beside the other runs' terminal:
+the next run does not end it or take its place, and its row keeps
+saying how it goes. While it runs the Run button and its row show its
+time (`■ Stop Simulate 1:23`, "running… 1:23"), drawn again when a line
+comes or once a second while blit is in front (nothing ticks behind
+another window). Once it has run more than 10 s, anything that would end
+it asks first: Stop, running it again (its last run's tab goes with
+it), closing its tab or quitting.
 
 ### Run configurations
 
