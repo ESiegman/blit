@@ -2979,6 +2979,52 @@ thread of its own, here or on another machine). It may be:
 The bottom line says what it was read as and how many it had. The next
 run's problems take their place.
 
+### The folder's own tasks
+
+Commands of the project's own (flash the board, program the FPGA, run
+the simulation) live beside it in `.blit/tasks.json`, read with the rest
+when the folder is looked at (Cmd+R in the Build tab looks again). They
+are the Build tab's first tasks, under **Tasks**:
+
+```json
+{ "tasks": [
+  { "label": "Flash", "command": "esptool.py --chip esp32s3 write_flash 0x0",
+    "args": ["build/app.bin"], "kind": "flash" },
+  { "label": "Program", "command": "openFPGALoader -b basys3",
+    "args": ["build/${fileBasenameNoExtension}.bit"], "kind": "program" },
+  { "label": "Simulate", "command": "make sim TOP=${word}", "cwd": "sim",
+    "env": { "SEED": "7" }, "long": true, "kind": "simulation" }
+] }
+```
+
+(A list of tasks alone, as Zed writes it, is read too.)
+
+- `label` and `command` are needed: the command is a line for the shell,
+  as written.
+- `args`: words put after it, each one word whatever is in it (quoted as
+  it needs).
+- `cwd`: the folder it runs in, from the project's; `env`: its
+  environment, on top of blit's; `problems`: the patterns its output is
+  read with, as a task's (above).
+- `kind`: the kind of work it is: `flash`, `program` (an FPGA),
+  `synthesis`, `simulation` or `gpu-profile`, shown on its row before its
+  command.
+
+A file that is not JSON, a task without its `label` or `command`, or a
+`kind` that is none of those is said, as for `run.json`.
+
+**Variables** in a command or its arguments are put in as it runs:
+`${file}` (the file in front, or, with a terminal in front, the first
+split's file), `${fileDirname}`, `${fileBasename}`,
+`${fileBasenameNoExtension}`, `${line}` (the cursor's, from 1), `${word}`
+(the word at the cursor), `${selection}` (what is selected; empty when
+nothing is) and `${workdir}` (the project's folder). In a project on
+another machine the paths are the ones there. Each is quoted for the
+shell as the place it is in needs: bare, it is one word (a name with
+spaces or quotes in it stays whole); inside `'...'` or `"..."` it is
+part of that string. `\${file}` and names that are not these
+(`${HOME}`) are left for the shell.
+
 ### Run configurations
 
 What to run, with what, lives beside the project in `.blit/run.json`

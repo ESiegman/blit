@@ -1436,9 +1436,10 @@ private:
     int build_reserve(const Pane& p) const;  // the room the Run button takes from p's tab bar
     void build_layout(int w, FrameDesc& fd);
     bool build_mouse_down(const SDL_MouseButtonEvent& b);
-    std::string build_dump();
+    std::string build_dump(const std::string& what = {});  // (what: "text", the last run's output; "rows", the Build tab's rows)
     void build_wait();
     void panel_show_build();
+    TaskVars build_vars() const;  // what a task of .blit/tasks.json's command may name, as it is now
     // What the last run's output said was wrong (buildscan.hpp): taken from
     // its terminal as it comes (term_sync), shown in the Problems tab's
     // Build section, counted on the Run button and in the status bar.

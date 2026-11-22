@@ -1453,7 +1453,7 @@ void App::run_script(const char* script) {
             const BuildTask* t = run_config();
             std::fprintf(stderr, "%s | debug: %s | profile: %s\n", t ? t->name.c_str() : "none", debug_target().c_str(), prof_target().c_str());
         } else if (verb == "builddump") {  // the tasks found (by system; > the Run button's), and how the last run went
-            std::fprintf(stderr, "%s\n", build_dump().c_str());
+            std::fprintf(stderr, "%s\n", build_dump(arg).c_str());  // (builddump:text, the last run's output; builddump:rows, the Build tab's rows)
         } else if (verb == "buildmarks") {  // the build's problems underlined in the split in front (line:columns and kind), and the cursor line's words
             std::fprintf(stderr, "%s\n", build_marks_dump().c_str());
         } else if (verb == "buildrun") {  // buildrun:name runs that task (buildrun alone: the Run button's)

@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <mutex>
@@ -83,6 +84,9 @@ struct App::BuildUi {
     int last_status = -1;
     std::string last_name;
     std::string last_key;  // the task it ran (task_key), when it was one of the tab's
+#if BLIT_DEV
+    std::vector<std::string> drawn_rows;  // (tests) each task's row as the Build tab last drew it: its name, then its words
+#endif
     // What its output said was wrong: a file's problems together, the files
     // in the order they came; how many of each kind; the one F8 last went to.
     std::vector<BuildProblem> problems;
@@ -273,7 +277,13 @@ void App::build_follow() {
         BuildUi::Found f;
         f.root = root;
         f.files = fs_list(root);
-        f.tasks = read_run_configs(root, &f.problem);  // (the folder's own run configurations first: the first is the Run button's)
+        // (The folder's own tasks first, then its run configurations, the first
+        // of which is the Run button's.)
+        f.tasks = read_tasks(root, &f.problem);
+        std::string run_problem;
+        std::vector<BuildTask> configs = read_run_configs(root, &run_problem);
+        if (f.problem.empty()) f.problem = std::move(run_problem);
+        f.tasks.insert(f.tasks.end(), std::make_move_iterator(configs.begin()), std::make_move_iterator(configs.end()));
         std::vector<BuildTask> found = detect_builds(root, f.files, hidden);
         f.tasks.insert(f.tasks.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
         {
@@ -406,7 +416,7 @@ void App::build_first(const std::string& what, std::function<void()> go) {
     }
     if (!t) return go();
     const BuildTask b = *t;
-    const u64 doc = build_command(b.cwd.empty() ? u.root : u.root + "/" + b.cwd, b.system == "CMake" ? with_cmake(b.cmd, u.cmake_type, u.cmake_target) : b.cmd, b.name, b.problems);
+    const u64 doc = build_command(b.cwd.empty() ? u.root : u.root + "/" + b.cwd, with_vars(b.system == "CMake" ? with_cmake(b.cmd, u.cmake_type, u.cmake_target) : b.cmd, build_vars()), b.name, b.problems);
     if (!doc) return notify("Cannot run " + b.name + " before " + what);
     u.last_key = task_key(b);  // (how it goes shows on its row)
     if (const auto it = u.sizes.find(u.last_key); it != u.sizes.end()) u.sizes_before = it->second;
@@ -547,7 +557,7 @@ void App::build_run(int index) {
         const std::string first = it->cwd.empty() ? root : root + "/" + it->cwd, then = t.cwd.empty() ? root : root + "/" + t.cwd;
         cmd = "cd " + sh_word(first) + " && " + it->cmd + " && cd " + sh_word(then) + " && " + t.cmd;
     }
-    build_command(t.cwd.empty() || !t.before.empty() ? u.root : u.root + "/" + t.cwd, cmd, t.name, t.problems);
+    build_command(t.cwd.empty() || !t.before.empty() ? u.root : u.root + "/" + t.cwd, with_vars(cmd, build_vars()), t.name, t.problems);
     u.last_key = u.current;  // (how it goes shows on its row)
     if (const auto it = u.sizes.find(u.last_key); it != u.sizes.end()) u.sizes_before = it->second;
     run_config_take();
@@ -625,6 +635,36 @@ void App::build_ended(u64 doc, int status) {
     if (!ran_there(u.dir)) git_command("look", {});
     ++build_gen_;
     dirty_ = true;
+}
+
+// What a task's command may name (with_vars), from the file in front (or,
+// with a terminal in front, the first split's that shows a file).
+TaskVars App::build_vars() const {
+    TaskVars v;
+    std::string host, there;
+    const std::string root = buildui_ && buildui_->looked ? buildui_->root : build_root();
+    v.workdir = split_remote(root, &host, &there) ? there : root;
+    const Doc* d = pane_ && pane_->doc && !pane_->doc->term ? pane_->doc : nullptr;
+    for (size_t i = 0; !d && i < panes_.size(); ++i)
+        if (panes_[i]->doc && !panes_[i]->doc->term) d = panes_[i]->doc;
+    if (!d || d->ed.path.empty()) return v;
+    const std::string full = is_remote(d->ed.path) ? d->ed.path : full_path(d->ed.path);
+    v.file = split_remote(full, &host, &there) ? there : full;
+    const Editor& ed = d->ed;
+    const u64 at = ed.cursor();
+    v.line = std::to_string(ed.buf.line_of(at) + 1);
+    auto word = [&](u64 off) {
+        char c = 0;
+        return off < ed.buf.size() && ed.buf.read(off, &c, 1) == 1 && (std::isalnum(static_cast<unsigned char>(c)) || c == '_');
+    };
+    u64 lo = at, hi = at;
+    while (lo > 0 && at - lo < 256 && word(lo - 1)) --lo;
+    while (hi - at < 256 && word(hi)) ++hi;
+    v.word = ed.buf.text(lo, hi - lo);
+    lo = ed.sel_min(), hi = ed.sel_max();
+    if (d == pane_->doc) vim_selection(&lo, &hi);  // (Vim's Visual mode's)
+    if (hi > lo) v.selection = ed.buf.text(lo, std::min<u64>(hi - lo, 1u << 20));
+    return v;
 }
 
 // ---------------------------------------------------------------- problems
@@ -881,6 +921,9 @@ void App::build_panel_draw(TextBox& box, bool focused) {
     std::string where = u.looked ? u.root : u.looking ? u.looking_at : build_root();
     if (const char* home = SDL_getenv("HOME"); home && *home && where.starts_with(home)) where = "~" + where.substr(std::strlen(home));
     const bool looking = !u.looked || u.looking;
+#if BLIT_DEV
+    u.drawn_rows.clear();
+#endif
     u.rows.clear();
     u.body = 0;
     size_t heading = 0;
@@ -968,7 +1011,11 @@ void App::build_panel_draw(TextBox& box, bool focused) {
             else said = false;
             if (said && !u.summary.empty()) after += " \xC2\xB7 " + u.summary;  // (what it came to: "12 passed, 1 failed")
         }
+        if (!t.kind.empty()) after = t.kind + " \xC2\xB7 " + after;  // (the kind of work it is)
         if (c + 4 < cols) put(box, font, y, c + 2, fit_text(after, cols - c - 2), in);
+#if BLIT_DEV
+        u.drawn_rows.push_back(t.name + ": " + after);
+#endif
         if (u.top + r == u.sel) light_row(box, y, focused);
     }
     if (foot == 1) {
@@ -1227,8 +1274,30 @@ bool App::build_mouse_down(const SDL_MouseButtonEvent& b) {
 
 // ---------------------------------------------------------------- for the tests
 
-std::string App::build_dump() {
+std::string App::build_dump(const std::string& what) {
     BuildUi& u = *buildui_;
+#if BLIT_DEV
+    if (what == "rows") {  // the Build tab's task rows as drawn at the next frame, " | " between them
+        build_settle();
+        ++build_gen_;
+        frame();
+        std::string out;
+        for (const std::string& r : u.drawn_rows) out += (out.empty() ? "" : " | ") + r;
+        return out.empty() ? "no rows" : out;
+    }
+#endif
+    if (!what.empty()) {  // a run's output: the last run's ("text"); its lines after "|"
+        term_sync();
+        const Doc* d = find_doc(what == "text" ? u.doc : 0);
+        TermLines lines;
+        if (!d || !d->term || !term_lines(*d, &lines)) return "no output";
+        std::string out;
+        each_line(lines.text, [&](std::string_view line) {
+            while (!line.empty() && line.back() == ' ') line.remove_suffix(1);
+            if (!line.empty()) out += "|" + std::string(line);
+        });
+        return out;
+    }
     build_settle();
     std::string out, system;
     for (const BuildTask& t : u.tasks) {

@@ -36,7 +36,37 @@ struct BuildTask {
         std::string adapter, request, arguments, console;
         std::vector<std::string> after;
     } debug;
+    // A task of .blit/tasks.json's: one that runs long (a simulation, a
+    // synthesis: its own output tab, which other runs leave alone, asked
+    // about before anything ends it, its time on the Run button), and the
+    // kind of work it is (one of kTaskKinds; empty: none said).
+    bool lasting = false;
+    std::string kind;
 };
+
+// The folder's own tasks, from the folder.
+inline constexpr const char* kTasks = ".blit/tasks.json";
+// What a task may say it is: flashing a board, programming an FPGA, a
+// synthesis, a simulation, a GPU profile.
+inline constexpr const char* kTaskKinds[] = {"flash", "program", "synthesis", "simulation", "gpu-profile"};
+// The tasks in root's .blit/tasks.json: { "tasks": [ { "label", "command"
+// (a line for sh), "args" (a list of words, each quoted as it needs), "cwd"
+// (from the folder), "env" (an object), "problems" (as BuildTask's: a list,
+// or "none"), "long" (true or false), "kind" (one of kTaskKinds) } ] } (or
+// that list alone). `problem` says what is wrong with the file, if anything is.
+std::vector<BuildTask> read_tasks(const std::string& root, std::string* problem);
+// What a task's command may name, as ${file}, ${line}, ${word},
+// ${selection} and ${workdir} (and ${fileDirname}, ${fileBasename} and
+// ${fileBasenameNoExtension}, from the file): the file in front and its
+// cursor's line (from 1), the word there, what is selected, the folder
+// (on another machine, the paths there).
+struct TaskVars {
+    std::string file, line, word, selection, workdir;
+};
+// A command line with those put in, each quoted for sh as the place it is
+// in needs (bare, in '...' or in "..."); \${file} and names not among
+// them (${HOME}) are left for sh.
+std::string with_vars(std::string_view cmd, const TaskVars& vars);
 
 // Where a folder's run configurations are, from the folder.
 inline constexpr const char* kRunConfigs = ".blit/run.json";
