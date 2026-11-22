@@ -2573,14 +2573,16 @@ it, Delete takes it away), and what the program printed.
   i or a comes back to it.
 - **Exceptions.** The Debug tab lists the exceptions the debugger can stop
   at under *Exceptions* (lldb-dap: C++'s, Objective-C's and Swift's throws
-  and catches; debugpy: those raised, those uncaught, and those that reach
-  a library's code): Enter turns one on or off, and Shift+F9 gives it a
-  condition where the debugger takes one (lldb-dap). Each is as the
-  debugger has it (debugpy: uncaught on, raised off) until it is changed;
-  those changed are kept in the folder's session. Stopped at an exception,
-  the Debug tab says what it is and what the debugger says of it (its
-  message, its stack trace, the exceptions it was raised while handling),
-  and the line it stopped on says so after it.
+  and catches; gdb: Ada's assertions and exceptions, C++'s thrown,
+  re-thrown and caught; debugpy: those raised, those uncaught, and those
+  that reach a library's code): Enter turns one on or off, and Shift+F9
+  gives it a condition where the debugger takes one (lldb-dap, gdb). Each
+  is as the debugger has it (debugpy: uncaught on, raised off) until it is
+  changed; those changed are kept in the folder's session. Stopped at an
+  exception, the Debug tab says what it is (at one of these, its name, at
+  gdb's too, which calls its stop a breakpoint) and what the debugger says
+  of it (its message, its stack trace, the exceptions it was raised while
+  handling), and the line it stopped on says so after it.
 - **The standard library's containers** read as they should: a vector's
   or a map's size, its elements under it, a string as text (lldb's
   formatters for libc++ and libstdc++, gdb's printers as the system

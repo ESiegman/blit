@@ -115,6 +115,7 @@ long next_break_id = 1;
 std::map<std::string, std::vector<std::pair<long, long>>> loads_later;  // (by file)
 bool raises = false;    // (and it raises an exception)
 bool catching = false;  // the exceptions uncaught or raised are stopped at
+bool gdb = false;       // as gdb (BLIT_FAKE_DAP_GDB)
 
 bool read_message(std::string* body) {
     size_t length = 0;
@@ -280,7 +281,7 @@ int main() {
         std::fprintf(stderr, "blit-debugger: gdb (rocgdb)\n");
         std::fflush(stderr);
     }
-    if (const char* g = std::getenv("BLIT_FAKE_DAP_GDB"); g && *g) std::fprintf(stderr, "blit-debugger: gdb\n");
+    if (const char* g = std::getenv("BLIT_FAKE_DAP_GDB"); g && *g) gdb = true, std::fprintf(stderr, "blit-debugger: gdb\n");
     const bool defaults = !std::getenv("BLIT_FAKE_DAP_NODEFAULTS");
     std::string body;
     while (read_message(&body)) {
@@ -361,10 +362,17 @@ int main() {
             catching = false;
             for (const Value f : a["filters"]) catching |= f.str() == "uncaught" || f.str() == "raised";
             for (const Value f : a["filterOptions"]) catching |= f["filterId"].str() == "uncaught" || f["filterId"].str() == "raised";
-            respond(v, true);
+            // (A breakpoint each, in order, as gdb answers: its catchpoints, numbered from 7 here.)
+            std::string bps;
+            for (size_t n = 0; n < a["filters"].size() + a["filterOptions"].size(); ++n) bps += (n ? "," : "") + std::string(R"({"id":)") + std::to_string(7 + n) + R"(,"verified":true})";
+            respond(v, true, "{\"breakpoints\":[" + bps + "]}");
         } else if (command == "configurationDone") {
             respond(v, true);
             event("process", "{\"name\":\"fake\",\"startMethod\":\"launch\"}");
+            if (raises && catching && gdb) {  // (gdb stops at its catchpoint, which it calls a breakpoint)
+                event("stopped", R"({"reason":"breakpoint","hitBreakpointIds":[7],"threadId":1,"allThreadsStopped":true})");
+                continue;
+            }
             if (raises && catching) {
                 event("stopped", R"({"reason":"exception","description":"bad value","text":"ValueError","threadId":1,"allThreadsStopped":true})");
                 continue;

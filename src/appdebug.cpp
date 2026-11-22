@@ -336,6 +336,9 @@ struct DebugSession {
         bool condition = false;  // (it takes a condition)
     };
     std::vector<Filter> filters;
+    // The debugger's breakpoints for the filters on, by their ids, each its
+    // filter's label: gdb's catchpoints, at whose stop it says "breakpoint".
+    std::map<i64, std::string> catches;
     // The exception it stopped at, as exceptionInfo says: what it is in a
     // line, then its details (the stack trace, the exceptions inside it).
     std::string exception;
@@ -1191,6 +1194,7 @@ bool App::debug_open(const std::string& near, const std::string& dir, bool pytho
     u.remote = remote ? remote_prefix(host) : std::string();
     u.dap = std::make_unique<Dap>();
     u.gdb = u.rocm = false;
+    u.catches.clear();
     u.going = false;
     u.frames.clear();
     u.threads.clear();
@@ -1913,6 +1917,20 @@ void App::debug_sync_session(bool* stopped) {
             const bool a_breakpoint = u.reason == "breakpoint" || u.reason.ends_with(" breakpoint");
             if (const std::string_view text = b["text"].str(); !text.empty() && !a_breakpoint) u.reason += ": " + std::string(text);
             u.exception.clear(), u.exception_lines.clear();
+            // (A breakpoint of the debugger's for an exception filter, gdb's at a
+            // C++ throw: an exception, the filter's label what it is.)
+            if (u.reason == "breakpoint" && !u.catches.empty()) {
+                std::string label;
+                for (const json::Value id : b["hitBreakpointIds"]) {  // (each of them one: not where one of the user's is too)
+                    const auto c = u.catches.find(id.integer());
+                    if (c == u.catches.end()) {
+                        label.clear();
+                        break;
+                    }
+                    label = c->second;
+                }
+                if (!label.empty()) u.reason = "exception", u.exception = label;
+            }
             if (b["reason"].str() == "exception") debug_exception_info(u.thread);
             // Every thread there is (each one's stack can be chosen), and the stack of the one that stopped.
             u.threads.clear();
@@ -3138,13 +3156,29 @@ void App::debug_send_exceptions() {
     debug_each_other([&] { debug_send_exceptions(); });
     if (!u.dap || u.state == DebugUi::kStarting) return;  // (sent when the debugger is ready for them)
     std::string filters, options;
+    std::vector<std::string> labels, option_labels;  // (the breakpoints it answers with are in this order: the filters', then the options')
     for (const DebugUi::Filter& f : u.filters) {
         const DebugUi::Choice c = u.choice(f);
         if (!c.on) continue;
-        if (!c.cond.empty() && f.condition && u.can.exception_options) options += std::string(options.empty() ? "" : ",") + "{\"filterId\":" + quoted(f.id) + ",\"condition\":" + quoted(c.cond) + "}";
-        else filters += std::string(filters.empty() ? "" : ",") + quoted(f.id);
+        if (!c.cond.empty() && f.condition && u.can.exception_options) {
+            options += std::string(options.empty() ? "" : ",") + "{\"filterId\":" + quoted(f.id) + ",\"condition\":" + quoted(c.cond) + "}";
+            option_labels.push_back(f.label);
+        } else {
+            filters += std::string(filters.empty() ? "" : ",") + quoted(f.id);
+            labels.push_back(f.label);
+        }
     }
-    u.dap->request("setExceptionBreakpoints", "{\"filters\":[" + filters + "]" + (u.can.exception_options ? ",\"filterOptions\":[" + options + "]" : std::string()) + "}");
+    labels.insert(labels.end(), option_labels.begin(), option_labels.end());
+    u.dap->request("setExceptionBreakpoints", "{\"filters\":[" + filters + "]" + (u.can.exception_options ? ",\"filterOptions\":[" + options + "]" : std::string()) + "}",
+                   [this, labels = std::move(labels)](const Dap::Message& r) {
+                       DebugUi& v = *debugui_;
+                       v.catches.clear();
+                       size_t i = 0;
+                       for (const json::Value b : r.body()["breakpoints"]) {
+                           if (i < labels.size() && b["id"].exists()) v.catches[b["id"].integer()] = labels[i];
+                           ++i;
+                       }
+                   });
 }
 
 // What the debugger says of the exception it stopped at, where it can say:
@@ -3160,10 +3194,13 @@ void App::debug_exception_info(i64 thread) {
         if (!m.success || v.state != DebugUi::kStopped || v.stopped_thread != thread) return;
         const json::Value b = m.body();
         const std::string id(b["exceptionId"].str()), what(b["description"].str());
-        // (lldb-dap's id is its filter's, or "signal", and its description says it all, "C++ Throw",
-        // "signal SIGABRT"; debugpy's is the exception's type, its description the message.)
-        const bool filter = std::ranges::any_of(v.filters, [&](const DebugUi::Filter& f) { return f.id == id; });
-        v.exception = what.empty() ? id : id.empty() || filter || what.find(id) != std::string::npos ? what : id + ": " + what;
+        // (lldb-dap's id is its filter's, or "signal", its description "signal SIGABRT"; at a
+        // filter's stop, that filter's label says what it is, "C++ Throw", where lldb 23's
+        // description is only the number of its breakpoint for it, "breakpoint 1.1". debugpy's
+        // id is the exception's type, its description the message.)
+        const auto filter = std::ranges::find_if(v.filters, [&](const DebugUi::Filter& f) { return f.id == id; });
+        if (filter != v.filters.end() && !filter->label.empty()) v.exception = filter->label;
+        else v.exception = what.empty() ? id : id.empty() || filter != v.filters.end() || what.find(id) != std::string::npos ? what : id + ": " + what;
         for (char& c : v.exception)
             if (c == '\n' || c == '\r' || c == '\t') c = ' ';
         v.exception_lines.clear();

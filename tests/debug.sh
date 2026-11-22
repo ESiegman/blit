@@ -276,25 +276,53 @@ case "$got" in
 *) check "evaluate: what is typed completed with Tab, then evaluated" 'input [total] 0 : ;; stopped (breakpoint); stack: main@16; vars: total=1 i=1; output: total = 1' ;;
 esac
 
-# The debug console (Cmd+Option+Y) and exceptions, with lldb-dap (gdb's
-# answers differ: its command line takes its own commands, and its
-# exception filters are its own; left to check where gdb is).
-if [ "$(uname -s)" = Darwin ]; then
+# The debug console (Cmd+Option+Y) and exceptions, with lldb-dap, then gdb.
+cp "$here/debug/throws.cpp" "$dir/here/" && (cd "$dir/here" && c++ -g -O0 -o throws throws.cpp) || exit 1
+# (What the system's abort is made of, under it: macOS's pthread_kill;
+# glibc's raise, and under it a frame lldb names ___lldb_unnamed_symbol_N
+# and gdb ???.)
+system_abort() {
+    sed -e 's/; stack: [^;]*pthread_kill[^;]*;/; stack: abort;/' -e 's/; stack: [^;]* raise;/; stack: abort;/'
+}
+if [ "$native" = lldb ]; then
     # An expression, one of lldb's commands, a monitor line (to the gdb
     # server, as lldb's `process plugin packet monitor`: macOS's debugserver
-    # has no monitor commands, and says E69), what the program printed, and
-    # a command completed with Tab.
-    run "$P;break:8;key:F5;debugwait:stopped;key:cmd+alt+y;text:x*10+y;key:Return;debugwait:answers;text:frame variable;key:Return;debugwait:answers;text:monitor help;key:Return;debugwait:answers;key:F5;debugwait:stopped;text:fr;key:Tab;debugwait:answers;docdump:12"
+    # has no monitor commands, and says E69; Linux's lldb-server answers
+    # nothing, which lldb says is UNIMPLEMENTED), what the program printed,
+    # and a command completed with Tab. (lldb 23 says first who it is, then
+    # what it has started; its results are numbered from where it is.)
+    run "$P;break:8;key:F5;debugwait:stopped;key:cmd+alt+y;text:x*10+y;key:Return;debugwait:answers;text:frame variable;key:Return;debugwait:answers;text:monitor help;key:Return;debugwait:answers;key:F5;debugwait:stopped;text:fr;key:Tab;debugwait:answers;docdump:16"
+    got=$(printf '%s' "$got" | sed -E -e 's/ ;;   To get started with the debug console [^;]* ;;   For more information visit [^;]* ;;   Executable binary set to [^;]* ;;   Attached to process [0-9]+\.//' -e 's/\(int\) \$[0-9]+ = 11/(int) $N = 11/')
+    monitor='response: E69'
+    [ "$(uname -s)" = Darwin ] || monitor='response:  ;;   error: UNIMPLEMENTED'
     check "the debug console: an expression, a command, a monitor line, the program's output, Tab" \
-        'Debug console ;;   › x*10+y ;;   (int) $0 = 11 ;;   › frame variable ;;   (int) x = 1 ;;   (int) y = 1 ;;   › monitor help ;;     packet: qRcmd,68656c70 ;;   response: E69 ;;   i=1 total=1 ;; > › frame|'
+        "Debug console ;;   › x*10+y ;;   (int) \$N = 11 ;;   › frame variable ;;   (int) x = 1 ;;   (int) y = 1 ;;   › monitor help ;;     packet: qRcmd,68656c70 ;;   $monitor ;;   i=1 total=1 ;; > › frame|"
     # lldb-dap's exception filters in the Debug tab: with none on, an
     # uncaught C++ exception stops where it ends the program (the abort);
     # with C++ Throw on, where it is thrown, which says so after its line.
-    cp "$here/debug/throws.cpp" "$dir/here/" && (cd "$dir/here" && c++ -g -O0 -o throws throws.cpp) || exit 1
+    # (lldb 23 says what it is in the stop as well, and names a static
+    # function with its namespace's ::.)
     run "debug:program=$dir/here/throws;key:F5;debugwait:stopped;debugdump;debugpanel;debugpick:exceptions:2;key:shift+F5;debugwait:idle;debugbreaks;key:F5;debugwait:stopped;debugdump;frame;debuginline" "$dir/here/throws.cpp"
-    got=$(printf '%s' "$got" | sed -e 's/exception = 0x[0-9a-f]*/exception = 0x/' -e 's/; stack: [^;]*pthread_kill[^;]*;/; stack: abort;/' -e 's/; output: [^;]*;;/ ;;/')
+    got=$(printf '%s' "$got" | system_abort | sed -e 's/exception = 0x[0-9a-f]*/exception = 0x/' -e 's/; output: [^;]*;;/ ;;/' -e 's/stopped (exception: C++ Throw)/stopped (exception)/' -e 's/ ::check(int)/ check(int)/')
     check "exceptions: uncaught, stopped at the abort; C++ Throw chosen, at the throw" \
         'stopped (exception); exception: signal SIGABRT | (void *) exception = 0x; stack: abort; vars: n=3 ;; exception cpp_throw ;; stopped (exception); exception: C++ Throw; stack: __cxa_throw check(int)@5; vars: n=3 ;; 4: n = 3 | 5: ◀ exception: C++ Throw   n = 3'
+else
+    # gdb's command line takes its own commands, a line as it is: print's
+    # expression; a plain expression is no command of its (x*10+y is its x,
+    # examine, at the address 10); a monitor line straight to the target
+    # (with no gdb server, none to take it). What gdb says of itself before
+    # the program runs (a breakpoint in it not loaded yet) is the console's.
+    run "$P;break:8;key:F5;debugwait:stopped;key:cmd+alt+y;text:print x*10+y;key:Return;debugwait:answers;text:x*10+y;key:Return;debugwait:answers;text:info locals;key:Return;debugwait:answers;text:monitor help;key:Return;debugwait:answers;key:F5;debugwait:stopped;docdump:16"
+    check "the debug console with gdb: its commands, a plain expression none of them, a monitor line, the program's output" \
+        'Debug console ;;   No source file named @/here/count.c. ;;   Breakpoint 1 (-source @/here/count.c -line 8) pending. ;;   › print x*10+y ;;   $1 = 11 ;;   › x*10+y ;;   Cannot access memory at address 0xa ;;   › info locals ;;   y = 1 ;;   › monitor help ;;   "monitor" command not supported by this target. ;;   i=1 total=1 ;; > › |'
+    # gdb's exception filters (Ada's first, then C++'s thrown, re-thrown
+    # and caught): with none on, the abort, a signal; with C++'s thrown on,
+    # its catchpoint at the throw, which it calls a breakpoint: an
+    # exception, the filter's label what it is.
+    run "debug:program=$dir/here/throws;key:F5;debugwait:stopped;debugdump;debugpanel;debugrows:Exceptions:7;debugpick:exceptions:4;key:shift+F5;debugwait:idle;debugbreaks;key:F5;debugwait:stopped;debugdump;frame;debuginline" "$dir/here/throws.cpp"
+    got=$(printf '%s' "$got" | system_abort | sed -e 's/; output: [^;]*;;/ ;;/')
+    check "exceptions with gdb: uncaught, the abort; C++'s thrown chosen, at the throw" \
+        'stopped (signal); stack: abort; vars: n=3 ;; Exceptions | ○ Ada assertions | ○ Ada exceptions | ○ Ada exceptions without a handler | ○ C++ exceptions, when thrown | ○ C++ exceptions, when re-thrown | ○ C++ exceptions, when caught ;; exception throw ;; stopped (exception); exception: C++ exceptions, when thrown; stack: __cxa_throw check@5; vars: n=3 ;; 4: n = 3 | 5: ◀ exception: C++ exceptions, when thrown   n = 3'
 fi
 
 # The standard library's containers, as the debugger's printers show them:
@@ -559,6 +587,17 @@ if [ -x "$fakedap" ]; then
     fake "debug:program=$F/raises;key:F5;debugwait:stopped;debugbreaks;debugdump;frame;debuginline" "$F/raises"
     check "an exception stopped at: what the debugger says of it" \
         "exception uncaught ;; stopped (exception: ValueError); exception: ValueError: bad value |   File \"@/fake/raises\", line 1, in <module> |     raise ValueError(\"bad value\") | ValueError: bad value | caused by KeyError: 'k' |   File \"@/fake/raises\", line 1, in <module> |     d[\"k\"]; stack: main@1; vars: df=DataFrame total=1 ;; 1: ◀ exception: ValueError: bad value"
+    # gdb's way: a breakpoint of its own for each filter on (its
+    # catchpoints, in its answer), and at one's stop "breakpoint", with that
+    # one's id: an exception all the same, the filter's label what it is
+    # (gdb has no exceptionInfo to ask), in the Debug tab and after its line.
+    BLIT_FAKE_DAP_GDB=1
+    export BLIT_FAKE_DAP_GDB
+    fake "debug:program=$F/raises;key:F5;debugwait:stopped;debugdump;frame;debuginline" "$F/raises"
+    unset BLIT_FAKE_DAP_GDB
+    got="$got ;; $(grep -c '^exceptionInfo' "$F/log")"
+    check "an exception filter's breakpoint (gdb's): an exception, the filter's label what it is" \
+        'stopped (exception); exception: Uncaught Exceptions; stack: main@1; vars: df=DataFrame total=1 ;; 1: ◀ exception: Uncaught Exceptions ;; 0'
     # Uncaught off (Enter on it in the Debug tab): it is not stopped at, and
     # what the program wrote as errors is in the console.
     fake "debug:program=$F/raises;key:F5;debugwait:stopped;debugpanel;debugpick:exceptions:2;key:shift+F5;debugwait:idle;debugbreaks;key:F5;debugwait:idle;debugdump;key:cmd+alt+y;docdump:3" "$F/raises"
