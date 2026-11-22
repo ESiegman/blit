@@ -1400,9 +1400,11 @@ front):
 `ModeChanged` (`match` is `"n:i"`), `InsertEnter`, `InsertLeave`,
 `TextChanged`, `TextChangedI`, `CursorMoved`, `CursorMovedI`, `VimEnter`,
 `VimLeavePre`, `FocusGained`, `FocusLost`, `DirChanged`, `User` (from
-`blit.emit`). A pattern is a glob on the file's name (`*.lua`), on its path
-if it has a slash, on the language for `FileType` and on the name for
-`User`. `BufWritePre` runs before the file is written, so what it changes
+`blit.emit`), and blit's own `BuildStart` and `BuildDone` (a task of the
+Build tab's; see [The folder's own tasks](#the-folders-own-tasks)). A
+pattern is a glob on the file's name (`*.lua`), on its path if it has a
+slash, on the language for `FileType`, on the name for `User` and on the
+task's name for `BuildStart` and `BuildDone`. `BufWritePre` runs before the file is written, so what it changes
 is saved; the others run just after the input that caused them.
 
 **Commands on the `:` line**: `:lua CODE`, `:lua =EXPR` and `:=EXPR`
@@ -2655,7 +2657,22 @@ keyboard stays where it was. When it ends the tab says how, and
 the folder is looked at again (a configure makes a build folder, whose
 tasks then show). Each task's row says how its last run went ("running…",
 "done", "failed: exited with code 2"), with what its output said it came
-to (below: "done · 12 passed, 1 failed, 2 skipped"), and Cmd+. stops a run.
+to (below: "done · 12 passed, 1 failed, 2 skipped").
+
+**Stop** (`■ Stop`, or Cmd+.) ends the run's program as Ctrl+C in a
+terminal would (a tool's own way to stop, which lets go of a probe), and
+a second Stop kills one that will not end. Its tab stays, with what it
+wrote and the problems found in it, and says `[stopped after 4.2 s]`;
+its row says "stopped", and a run that was stopped is not a failure.
+
+When a run ends while blit is behind another window, the system says so
+in a notification: the task's name, and "Done in 3.2 s" or "Failed with
+exit code 2 after 3.2 s · 3 errors". On macOS blit.app's own (the first
+one asks for leave to show them, as the system does); a blit that is no
+app bundle (one run from its build folder) hands it to `osascript`. On
+Linux freedesktop's Notify over D-Bus, through `gdbus` (or else
+`notify-send`), found on PATH. `blit.opt.build.notify = false` stops
+them.
 
 What the build prints is read for problems as it comes, on the terminal's
 own reading thread (nothing per frame): GCC's and Clang's
@@ -2996,6 +3013,74 @@ thread of its own, here or on another machine). It may be:
 
 The bottom line says what it was read as and how many it had. The next
 run's problems take their place.
+
+### The folder's own tasks
+
+Commands of the project's own (flash the board, program the FPGA, run
+the simulation) live beside it in `.blit/tasks.json`, read with the rest
+when the folder is looked at (Cmd+R in the Build tab looks again). They
+are the Build tab's first tasks, under **Tasks**:
+
+```json
+{ "tasks": [
+  { "label": "Flash", "command": "esptool.py --chip esp32s3 write_flash 0x0",
+    "args": ["build/app.bin"], "kind": "flash" },
+  { "label": "Program", "command": "openFPGALoader -b basys3",
+    "args": ["build/${fileBasenameNoExtension}.bit"], "kind": "program" },
+  { "label": "Simulate", "command": "make sim TOP=${word}", "cwd": "sim",
+    "env": { "SEED": "7" }, "long": true, "kind": "simulation" }
+] }
+```
+
+(A list of tasks alone, as Zed writes it, is read too.)
+
+- `label` and `command` are needed: the command is a line for the shell,
+  as written.
+- `args`: words put after it, each one word whatever is in it (quoted as
+  it needs).
+- `cwd`: the folder it runs in, from the project's; `env`: its
+  environment, on top of blit's; `problems`: the patterns its output is
+  read with, as a task's (above).
+- `long`: see below.
+- `kind`: the kind of work it is: `flash`, `program` (an FPGA),
+  `synthesis`, `simulation` or `gpu-profile`, shown on its row before its
+  command (and given to `BuildStart` and `BuildDone`).
+
+A file that is not JSON, a task without its `label` or `command`, or a
+`kind` that is none of those is said, as for `run.json`.
+
+**Variables** in a command or its arguments are put in as it runs:
+`${file}` (the file in front, or, with a terminal in front, the first
+split's file), `${fileDirname}`, `${fileBasename}`,
+`${fileBasenameNoExtension}`, `${line}` (the cursor's, from 1), `${word}`
+(the word at the cursor), `${selection}` (what is selected; empty when
+nothing is) and `${workdir}` (the project's folder). In a project on
+another machine the paths are the ones there. Each is quoted for the
+shell as the place it is in needs: bare, it is one word (a name with
+spaces or quotes in it stays whole); inside `'...'` or `"..."` it is
+part of that string. `\${file}` and names that are not these
+(`${HOME}`) are left for the shell.
+
+**A long task** (`"long": true`: a simulation, a synthesis, a GPU
+profile) has an output tab of its own beside the other runs' terminal:
+the next run does not end it or take its place, and its row keeps
+saying how it goes. While it runs the Run button and its row show its
+time (`■ Stop Simulate 1:23`, "running… 1:23"), drawn again when a line
+comes or once a second while blit is in front (nothing ticks behind
+another window). Once it has run more than 10 s, anything that would end
+it asks first: Stop, running it again (its last run's tab goes with
+it), closing its tab or quitting.
+
+**Events** for init.lua: `BuildStart` as a task of the Build tab starts,
+`BuildDone` as it ends. The pattern is matched against the task's name,
+and `e.data` has `name`, `kind` and `command`, and for `BuildDone` also
+`status` (the exit code), `errors`, `warnings`, `stopped` and `seconds`:
+
+```lua
+blit.on("BuildDone", { pattern = "Flash" }, function(e)
+  if e.data.status == 0 then blit.notify("Flashed in " .. string.format("%.1f s", e.data.seconds)) end
+end)
+```
 
 ### Run configurations
 

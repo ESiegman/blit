@@ -137,6 +137,8 @@ if(APPLE)
   add_library(blit_gpu STATIC src/gpu_metal.m src/picture_mac.m src/macapp.m src/spell_mac.m src/watch_mac.m)
   target_compile_options(blit_gpu PRIVATE -fobjc-arc -Wall -Wextra)
   target_link_libraries(blit_gpu PUBLIC "-framework Metal" "-framework QuartzCore" "-framework Foundation" "-framework CoreGraphics" "-framework ImageIO" "-framework AppKit" "-framework PDFKit" "-framework CoreServices")
+  # (blit.app's notifications, src/macapp.m: a task that ended behind another window.)
+  target_link_libraries(blit_gpu PUBLIC "-framework UserNotifications")
   set_target_properties(blit_gpu PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF)
 else()
   find_package(Vulkan REQUIRED)
@@ -300,6 +302,8 @@ target_link_libraries(blit_lsp PUBLIC blit_core)
 add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src/apptabs.cpp src/appsplit.cpp src/appgit.cpp src/appvim.cpp src/appshape.cpp src/appedit.cpp src/apptest.cpp src/folds.cpp src/snippet.cpp src/appsnippet.cpp src/appfx.cpp src/appfind.cpp src/appstatus.cpp src/appstart.cpp src/appsession.cpp src/appremote.cpp src/appprofile.cpp src/appterm.cpp src/apppython.cpp src/appcommands.cpp src/appdebug.cpp src/appbuild.cpp src/appmarkdown.cpp src/appasm.cpp src/asm.cpp src/appnotebook.cpp src/notebook.cpp src/nbview.cpp src/kernel.cpp src/apppeek.cpp src/apphistory.cpp src/wrap.cpp src/appwrap.cpp src/apppr.cpp src/appfocus.cpp src/appsettings.cpp src/appupdate.cpp src/appcontainer.cpp src/watch.cpp src/appminimap.cpp src/appspell.cpp src/spell.cpp src/appimage.cpp src/apppdf.cpp src/appinstance.cpp src/instance.cpp src/loginpath.cpp src/look.cpp src/build.cpp src/engine.cpp src/tests.cpp src/fsio.cpp src/project.cpp src/libraries.cpp src/markdown.cpp src/dap.cpp src/applua.cpp src/luaapi.cpp src/git.cpp src/tree.cpp src/render.cpp src/raster.cpp src/diagram.cpp src/flowchart.cpp src/classdiagram.cpp src/sequence.cpp src/pie.cpp src/gantt.cpp src/mindmap.cpp)
 # The Vulkan spec's statements of the validation layers' VUIDs.
 target_sources(blit PRIVATE src/appvalidusage.cpp)
+# The system's notifications (a task that ended behind another window).
+target_sources(blit PRIVATE src/notify.cpp)
 # The diagrams' pictures (raster.cpp, diagram.cpp and the kinds' files) are the
 # same pixels on every system: no multiply and add fused into one, which
 # rounds once where two steps round twice, and which one processor does
@@ -412,6 +416,8 @@ if(BLIT_DEV)
     add_test(NAME start COMMAND sh ${CMAKE_SOURCE_DIR}/tests/start.sh $<TARGET_FILE:blit>)
     add_test(NAME session COMMAND sh ${CMAKE_SOURCE_DIR}/tests/session.sh $<TARGET_FILE:blit>)
     add_test(NAME build COMMAND sh ${CMAKE_SOURCE_DIR}/tests/build.sh $<TARGET_FILE:blit>)
+    # A folder's own tasks (.blit/tasks.json): variables, long tasks, Stop, the Lua events, notifications.
+    add_test(NAME tasks COMMAND sh ${CMAKE_SOURCE_DIR}/tests/tasks.sh $<TARGET_FILE:blit>)
     # Vulkan's and Metal's validation messages as problems, and the spec's statements of VUIDs.
     add_test(NAME validation COMMAND sh ${CMAKE_SOURCE_DIR}/tests/validation.sh $<TARGET_FILE:blit>)
     add_test(NAME buildtools COMMAND sh ${CMAKE_SOURCE_DIR}/tests/buildtools.sh $<TARGET_FILE:blit>)

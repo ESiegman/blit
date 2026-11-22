@@ -948,14 +948,14 @@ void App::script_event(u32 event, u64 doc, std::string file, std::string match) 
     if (!script_ || !(script_->mask & bit(event))) return;
     if (file.empty() && doc)
         if (Doc* d = find_doc(doc)) file = d->ed.path;
-    script_->queue.push_back({event, doc, std::move(file), std::move(match)});
+    script_->queue.push_back({event, doc, std::move(file), std::move(match), {}});
 }
 
 // The handlers of an event, now. `data`: a stack slot with something for them, or 0.
 void App::script_fire(u32 event, u64 doc, const std::string& file, const std::string& match, int data) {
     if (!script_ || !script_->L || !(script_->mask & bit(event))) return;
     ScriptUi& s = *script_;
-    const std::string& against = event == kEvFileType || event == kEvUser || event == kEvModeChanged || event == kEvDirChanged ? match : file;
+    const std::string& against = event == kEvFileType || event == kEvUser || event == kEvModeChanged || event == kEvDirChanged || event == kEvBuildStart || event == kEvBuildDone ? match : file;
     std::vector<u64> ids;
     for (const ScriptUi::Handler& h : s.handlers)
         if ((h.events & bit(event)) && pattern_matches(h.pattern, against)) ids.push_back(h.id);
@@ -1023,6 +1023,26 @@ void App::script_closed(const Doc& d) {
     if (!script_) return;
     script_->marks.erase(d.id);
     script_event(kEvBufDelete, d.id, d.ed.path, d.ed.path);
+}
+
+// A task of the Build tab's started, or ended (appbuild.cpp): BuildStart and
+// BuildDone at the next tick, matched by the task's name, with what it is
+// (and how it went) as their data.
+void App::script_build_event(bool done, const std::string& name, const std::string& kind, const std::string& command, int status, u32 errors, u32 warnings,
+                             bool stopped, double seconds) {
+    const u32 ev = done ? kEvBuildDone : kEvBuildStart;
+    if (!script_ || !(script_->mask & bit(ev))) return;
+    using Field = ScriptUi::Queued::Field;
+    ScriptUi::Queued q{ev, pane_->doc->id, pane_->doc->ed.path, name, {}};
+    q.data = {Field{"name", name, 0, 's'}, Field{"kind", kind, 0, 's'}, Field{"command", command, 0, 's'}};
+    if (done) {
+        q.data.push_back(Field{"status", {}, static_cast<double>(status), 'n'});
+        q.data.push_back(Field{"errors", {}, static_cast<double>(errors), 'n'});
+        q.data.push_back(Field{"warnings", {}, static_cast<double>(warnings), 'n'});
+        q.data.push_back(Field{"stopped", {}, stopped ? 1.0 : 0.0, 'b'});
+        q.data.push_back(Field{"seconds", {}, seconds, 'f'});
+    }
+    script_->queue.push_back(std::move(q));
 }
 
 void App::script_focus(bool gained) {
@@ -1649,7 +1669,21 @@ void App::script_tick_queue() {
         q.swap(script_->queue);
         for (const ScriptUi::Queued& e : q) {
             if (!script_ || !script_->L) return;
-            script_fire(e.event, e.doc, e.file, e.match);
+            if (e.data.empty()) {
+                script_fire(e.event, e.doc, e.file, e.match);
+                continue;
+            }
+            lua_State* L = script_->L;
+            lua_createtable(L, 0, static_cast<int>(e.data.size()));
+            for (const ScriptUi::Queued::Field& f : e.data) {
+                if (f.kind == 'n') lua_pushinteger(L, static_cast<lua_Integer>(f.num));
+                else if (f.kind == 'f') lua_pushnumber(L, f.num);
+                else if (f.kind == 'b') lua_pushboolean(L, f.num != 0);
+                else lua_pushlstring(L, f.text.data(), f.text.size());
+                lua_setfield(L, -2, f.key.c_str());
+            }
+            script_fire(e.event, e.doc, e.file, e.match, -1);
+            if (script_ && script_->L == L) lua_pop(L, 1);
         }
     }
 }

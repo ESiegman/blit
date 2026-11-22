@@ -36,12 +36,12 @@ namespace script {
 enum Event : u32 {
     kEvBufReadPost, kEvBufNewFile, kEvBufEnter, kEvBufLeave, kEvBufWritePre, kEvBufWritePost, kEvBufDelete, kEvFileType,
     kEvModeChanged, kEvInsertEnter, kEvInsertLeave, kEvTextChanged, kEvTextChangedI, kEvCursorMoved, kEvCursorMovedI,
-    kEvVimEnter, kEvVimLeavePre, kEvFocusGained, kEvFocusLost, kEvDirChanged, kEvUser, kEvCount
+    kEvVimEnter, kEvVimLeavePre, kEvFocusGained, kEvFocusLost, kEvDirChanged, kEvUser, kEvBuildStart, kEvBuildDone, kEvCount
 };
 constexpr const char* kEventNames[kEvCount] = {
     "BufReadPost", "BufNewFile", "BufEnter", "BufLeave", "BufWritePre", "BufWritePost", "BufDelete", "FileType",
     "ModeChanged", "InsertEnter", "InsertLeave", "TextChanged", "TextChangedI", "CursorMoved", "CursorMovedI",
-    "VimEnter", "VimLeavePre", "FocusGained", "FocusLost", "DirChanged", "User"};
+    "VimEnter", "VimLeavePre", "FocusGained", "FocusLost", "DirChanged", "User", "BuildStart", "BuildDone"};
 constexpr u32 bit(u32 e) { return 1u << e; }
 // The ones that are noticed by looking (after each batch of input) rather than told.
 constexpr u32 kWatched = bit(kEvBufEnter) | bit(kEvBufLeave) | bit(kEvModeChanged) | bit(kEvInsertEnter) | bit(kEvInsertLeave) |
@@ -393,6 +393,15 @@ struct App::ScriptUi {
         u32 event = 0;
         u64 doc = 0;
         std::string file, match;
+        // What its handlers are given as `data` (BuildStart's and
+        // BuildDone's): each a string, a whole number, a number or true or
+        // false (kind 's', 'n', 'f', 'b'). None: no data.
+        struct Field {
+            std::string key, text;
+            double num = 0;
+            char kind = 's';
+        };
+        std::vector<Field> data;
     };
     std::vector<Queued> queue;
     bool seen = false;  // what follows was looked at (it is noticed when it changes)

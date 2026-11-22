@@ -97,6 +97,7 @@ struct TermView {
     std::atomic<bool> told{false}, ended{false};
     bool unstarted = false;  // (there: it never started, and the screen says why; set before ended)
     bool keep = false;    // a command's (a build's): the tab stays when it ends, and says how it went
+    bool stopped = false;  // (and it was ended from here: term_stop)
     std::string command;  // (that command)
     std::string title;    // the tab's name, whatever the program calls itself
     std::string dir;      // the folder it was started in
@@ -624,7 +625,9 @@ void App::term_sync() {
                     char took[48];
                     std::snprintf(took, sizeof took, "%.1f s", static_cast<double>(now_ns() - v.started_ns) * 1e-9);
                     std::lock_guard lock(v.mu);
-                    if (!v.unstarted)
+                    if (v.stopped && !v.unstarted)
+                        v.term.feed(std::string("\r\n\x1b[33m[stopped after ") + took + "]\x1b[0m");
+                    else if (!v.unstarted)
                         v.term.feed(v.status == 0 ? std::string("\r\n\x1b[32m[done in ") + took + "]\x1b[0m"
                                     : lost        ? "\r\n\x1b[31m[connection to " + v.host + " lost after " + took + "]\x1b[0m"
                                                   : "\r\n\x1b[31m[failed with " + std::to_string(v.status.load()) + " after " + took + "]\x1b[0m");
@@ -1769,6 +1772,26 @@ std::string App::term_tty(u64 doc) {
     if (!d || !d->term || d->term->pty.fd < 0) return {};
     const char* name = ::ptsname(d->term->pty.fd);
     return name ? name : "";
+}
+
+// A command's program ended from here (the Run button's Stop): as Ctrl+C
+// in a terminal would (the tool's own way to stop: a probe let go of), or
+// killed when that was not enough. Its tab stays, with what it wrote, and
+// says it was stopped when it has ended (term_sync).
+void App::term_stop(u64 doc, bool hard) {
+    Doc* d = find_doc(doc);
+    if (!d && dock_ && dock_->away)  // (the terminals' split hidden)
+        for (const std::shared_ptr<Doc>& h : dock_->away->docs)
+            if (h->id == doc) d = h.get();
+    if (!d || !d->term || d->term->ended) return;
+    TermView& v = *d->term;
+    v.stopped = true;
+    const int sig = hard ? SIGKILL : SIGINT;
+    if (v.in >= 0 && v.conn && v.proc.id) v.conn->kill(v.proc.id, sig);  // (there: once it has started, which `in` says)
+    if (v.pty.pid > 0) {
+        ::kill(-v.pty.pid, sig);
+        ::kill(v.pty.pid, sig);
+    }
 }
 
 // Waits (10 s at most) until the program of the terminal in front has ended.

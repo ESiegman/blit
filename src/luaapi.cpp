@@ -1337,7 +1337,7 @@ struct ScriptApi {
     // ------------------------------------------------ blit.build
 
     static void push_task(lua_State* L, const BuildTask& t) {
-        lua_createtable(L, 0, 5);
+        lua_createtable(L, 0, 7);
         lua_pushlstring(L, t.system.data(), t.system.size());
         lua_setfield(L, -2, "system");
         lua_pushlstring(L, t.name.data(), t.name.size());
@@ -1348,6 +1348,10 @@ struct ScriptApi {
         lua_setfield(L, -2, "cwd");
         lua_pushboolean(L, t.def);
         lua_setfield(L, -2, "default");
+        lua_pushlstring(L, t.kind.data(), t.kind.size());
+        lua_setfield(L, -2, "kind");
+        lua_pushboolean(L, t.lasting);
+        lua_setfield(L, -2, "long");
     }
     // blit.build.add(name, {detect = file(s) | function(root, files), tasks = list | function(root, files), first = bool})
     static int build_add(lua_State* L) {

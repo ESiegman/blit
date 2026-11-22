@@ -16,6 +16,7 @@
 #include "app.hpp"
 #include "engine.hpp"
 #include "fsio.hpp"
+#include "notify.hpp"
 #include "profile.hpp"
 #include "remote.hpp"
 
@@ -1453,8 +1454,18 @@ void App::run_script(const char* script) {
             build_settle();
             const BuildTask* t = run_config();
             std::fprintf(stderr, "%s | debug: %s | profile: %s\n", t ? t->name.c_str() : "none", debug_target().c_str(), prof_target().c_str());
-        } else if (verb == "builddump") {  // the tasks found (by system; > the Run button's), and how the last run went
-            std::fprintf(stderr, "%s\n", build_dump().c_str());
+        } else if (verb == "builddump") {  // the tasks found (by system; > the Run button's), how the last run went, and the long tasks' runs
+            std::fprintf(stderr, "%s\n", build_dump(arg).c_str());  // (builddump:text, the last run's output; builddump:NAME, a long task's)
+        } else if (verb == "buildolder") {  // buildolder:S, the long tasks running made S seconds older (as if they had run that long)
+            build_older(std::atoi(arg.c_str()));
+        } else if (verb == "blur") {  // the window behind another (what that does, as the event does it)
+            SDL_Event ev{};
+            ev.type = SDL_EVENT_WINDOW_FOCUS_LOST;
+            handle_event(ev);
+        } else if (verb == "notifywait") {  // the system's notifications on their way, handed over (5 s at most)
+            system_notify_wait();
+        } else if (verb == "tickdump") {  // how long blit would sleep before it draws again for a long task's time (-1: it would not)
+            std::fprintf(stderr, "%d\n", build_wait_ms());
         } else if (verb == "buildmarks") {  // the build's problems underlined in the split in front (line:columns and kind), and the cursor line's words
             std::fprintf(stderr, "%s\n", build_marks_dump().c_str());
         } else if (verb == "buildrun") {  // buildrun:name runs that task (buildrun alone: the Run button's)

@@ -1155,6 +1155,7 @@ private:
                   std::shared_ptr<const BuildMatchers> matchers = {});
     i64 term_pid(u64 doc);          // its program's process here, while it runs (0: there, ended, or none)
     std::string term_tty(u64 doc);  // its terminal's device here ("/dev/ttys003"; "": there, or none)
+    void term_stop(u64 doc, bool hard);  // its program ended (hard: killed), its tab and text kept, saying it was stopped
     // The project's Python (apppython.cpp): one for each project folder and
     // subproject, found on a worker and kept; everything that runs Python
     // takes it. py_known: a folder's, if it is known (else it is looked for,
@@ -1423,7 +1424,8 @@ private:
     void build_changed();  // look again (init.lua's systems changed, or Cmd+R)
     void build_settle();   // looked at now, and waited for
     std::vector<BuildTask> build_tasks();
-    u64 build_command(const std::string& dir, const std::string& cmd, const std::string& title, const std::vector<std::string>& problems = {});
+    // (task: the Build tab's task it runs, if it is one: a long one's in a tab of its own, which the next run leaves alone.)
+    u64 build_command(const std::string& dir, const std::string& cmd, const std::string& title, const std::vector<std::string>& problems = {}, const BuildTask* task = nullptr);
     void build_run(int index);
     void build_option(int row);  // a task of the Build tab's (-1: the Run button's)
     bool build_run_named(const std::string& name);
@@ -1436,9 +1438,20 @@ private:
     int build_reserve(const Pane& p) const;  // the room the Run button takes from p's tab bar
     void build_layout(int w, FrameDesc& fd);
     bool build_mouse_down(const SDL_MouseButtonEvent& b);
-    std::string build_dump();
+    std::string build_dump(const std::string& what = {});  // (what: "text", the last run's output, or a long task's by its name)
     void build_wait();
     void panel_show_build();
+    // Tasks of .blit/tasks.json (appbuild.cpp): the variables their commands
+    // may name, as they are now; a run's tab closed; the wait until a long
+    // task's time on show next changes (-1: none runs, or blit is behind);
+    // BuildStart and BuildDone for init.lua (applua.cpp); and (tests) the
+    // long runs made older by that many seconds.
+    TaskVars build_vars() const;
+    void build_forget(u64 doc);
+    int build_wait_ms() const;
+    void script_build_event(bool done, const std::string& name, const std::string& kind, const std::string& command, int status, u32 errors, u32 warnings, bool stopped, double seconds);
+    void build_older(int seconds);
+    bool front_ = true;  // the window is in front (its focus events say)
     // What the last run's output said was wrong (buildscan.hpp): taken from
     // its terminal as it comes (term_sync), shown in the Problems tab's
     // Build section, counted on the Run button and in the status bar.

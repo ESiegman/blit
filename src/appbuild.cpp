@@ -8,6 +8,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <cctype>
 #include <cmath>
 #include <cstring>
 #include <mutex>
@@ -18,6 +19,7 @@
 #include "app.hpp"
 #include "buildread.hpp"
 #include "look.hpp"
+#include "notify.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
@@ -57,6 +59,17 @@ std::vector<std::string> wrapped(std::string_view text, u32 cols) {
     return out;
 }
 
+// A time as a clock says it: "0:07", "12:34", "1:02:03".
+std::string clock_text(u64 ns) {
+    const u64 s = ns / 1'000'000'000ull;
+    char out[32];
+    if (s >= 3600) std::snprintf(out, sizeof out, "%llu:%02llu:%02llu", static_cast<unsigned long long>(s / 3600), static_cast<unsigned long long>(s / 60 % 60), static_cast<unsigned long long>(s % 60));
+    else std::snprintf(out, sizeof out, "%llu:%02llu", static_cast<unsigned long long>(s / 60), static_cast<unsigned long long>(s % 60));
+    return out;
+}
+
+constexpr u64 kAskAfterNs = 10'000'000'000ull;  // (a long task that has run this long is asked about before it is ended)
+
 }  // namespace
 
 struct App::BuildUi {
@@ -83,6 +96,40 @@ struct App::BuildUi {
     int last_status = -1;
     std::string last_name;
     std::string last_key;  // the task it ran (task_key), when it was one of the tab's
+    // The terminal the runs that are no long task's share: each one there
+    // ends the one before (a long task's has a tab of its own).
+    u64 term = 0;
+    // The runs whose tabs are open: each one's task (task_key; empty: no
+    // task's, as the tests' run), what it is, and how it went (its problems
+    // counted: the last run's, as the Problems tab has them).
+    struct Run {
+        u64 doc = 0;
+        std::string key, name, kind, cmd;
+        bool lasting = false, running = true, stopped = false;
+        int status = -1;
+        u64 started_ns = 0;
+        u32 errors = 0, warnings = 0;
+    };
+    std::vector<Run> runs;
+    Run* run_of(u64 id) {
+        for (Run& r : runs)
+            if (r.doc == id && id) return &r;
+        return nullptr;
+    }
+    const Run* run_of(u64 id) const { return const_cast<BuildUi*>(this)->run_of(id); }
+    // The long run whose time is on show (the last run, if it is one; else
+    // the one that has run longest), and its seconds as last drawn.
+    const Run* ticking() const {
+        if (const Run* r = run_of(doc); r && r->lasting && r->running) return r;
+        const Run* oldest = nullptr;
+        for (const Run& r : runs)
+            if (r.lasting && r.running && (!oldest || r.started_ns < oldest->started_ns)) oldest = &r;
+        return oldest;
+    }
+    i64 clock_shown = -1;
+#if BLIT_DEV
+    std::vector<std::string> drawn_rows;  // (tests) each task's row as the Build tab last drew it: its name, then its words
+#endif
     // What its output said was wrong: a file's problems together, the files
     // in the order they came; how many of each kind; the one F8 last went to.
     std::vector<BuildProblem> problems;
@@ -279,7 +326,13 @@ void App::build_follow() {
         BuildUi::Found f;
         f.root = root;
         f.files = fs_list(root);
-        f.tasks = read_run_configs(root, &f.problem);  // (the folder's own run configurations first: the first is the Run button's)
+        // (The folder's own tasks first, then its run configurations, the first
+        // of which is the Run button's.)
+        f.tasks = read_tasks(root, &f.problem);
+        std::string run_problem;
+        std::vector<BuildTask> configs = read_run_configs(root, &run_problem);
+        if (f.problem.empty()) f.problem = std::move(run_problem);
+        f.tasks.insert(f.tasks.end(), std::make_move_iterator(configs.begin()), std::make_move_iterator(configs.end()));
         std::vector<BuildTask> found = detect_builds(root, f.files, hidden);
         f.tasks.insert(f.tasks.end(), std::make_move_iterator(found.begin()), std::make_move_iterator(found.end()));
         {
@@ -412,7 +465,7 @@ void App::build_first(const std::string& what, std::function<void()> go) {
     }
     if (!t) return go();
     const BuildTask b = *t;
-    const u64 doc = build_command(b.cwd.empty() ? u.root : u.root + "/" + b.cwd, b.system == "CMake" ? with_cmake(b.cmd, u.cmake_type, u.cmake_target) : b.cmd, b.name, b.problems);
+    const u64 doc = build_command(b.cwd.empty() ? u.root : u.root + "/" + b.cwd, with_vars(b.system == "CMake" ? with_cmake(b.cmd, u.cmake_type, u.cmake_target) : b.cmd, build_vars()), b.name, b.problems, &b);
     if (!doc) return notify("Cannot run " + b.name + " before " + what);
     u.last_key = task_key(b);  // (how it goes shows on its row)
     if (const auto it = u.sizes.find(u.last_key); it != u.sizes.end()) u.sizes_before = it->second;
@@ -481,16 +534,19 @@ std::vector<BuildTask> App::build_tasks() {
 
 // A command run in the build's output terminal: in the terminals' split
 // below the text (appterm.cpp: shown again if it was hidden, made the first
-// time), used again after (a run still going there is ended). The keyboard
-// stays where it was. Its output is read with init.lua's patterns that
-// `problems` names (all of them, when it names none).
-u64 App::build_command(const std::string& dir, const std::string& cmd, const std::string& title, const std::vector<std::string>& problems) {
+// time), used again after (a run still going there is ended). A long
+// task's has a tab of its own there, which the next run leaves alone. The
+// keyboard stays where it was. Its output is read with init.lua's patterns
+// that `problems` names (all of them, when it names none).
+u64 App::build_command(const std::string& dir, const std::string& cmd, const std::string& title, const std::vector<std::string>& problems, const BuildTask* task) {
     BuildUi& u = *buildui_;
+    const bool lasting = task && task->lasting;
     Pane* const editing = pane_;
     Pane* into = nullptr;
-    if (!u.doc || !find_doc(u.doc, &into)) into = dock_show(editing);  // (the last run's split, wherever it was moved to)
+    const u64 near = u.term && find_doc(u.term) ? u.term : u.doc;  // (the last run's split, wherever it was moved to)
+    if (!near || !find_doc(near, &into)) into = dock_show(editing);
     if (!into) into = editing;  // (no room for another split)
-    const u64 old = u.doc && find_doc(u.doc) ? u.doc : 0;
+    const u64 old = !lasting && u.term && find_doc(u.term) ? u.term : 0;
     if (u.first && !u.first->ended && u.first->doc == old) u.first.reset();  // (a build that something waited for, ended by this one: it is called off)
     pane_ = into;
     const u64 doc = term_open(dir, cmd, title, {}, false, script_matchers(problems));
@@ -511,6 +567,17 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     bool editing_still = false;
     for (const std::unique_ptr<Pane>& p : panes_) editing_still |= p.get() == editing;
     focus_pane(editing_still ? editing : panes_.front().get());
+    if (doc) {
+        BuildUi::Run r;
+        r.doc = doc;
+        r.name = title;
+        r.lasting = lasting;
+        r.started_ns = now_ns();
+        if (task) r.key = task_key(*task), r.kind = task->kind, r.cmd = cmd;
+        u.runs.push_back(std::move(r));
+        if (!lasting) u.term = doc;
+        if (task) script_build_event(false, task->name, task->kind, cmd, 0, 0, 0, false, 0);
+    }
     u.doc = doc;
     u.dir = dir;
     u.running = doc != 0;
@@ -555,7 +622,30 @@ void App::build_run(int index) {
         const std::string first = it->cwd.empty() ? root : root + "/" + it->cwd, then = t.cwd.empty() ? root : root + "/" + t.cwd;
         cmd = "cd " + sh_word(first) + " && " + it->cmd + " && cd " + sh_word(then) + " && " + t.cmd;
     }
-    build_command(t.cwd.empty() || !t.before.empty() ? u.root : u.root + "/" + t.cwd, cmd, t.name, t.problems);
+    if (t.lasting) {  // a long task run again: its last run's tab goes (one still going is ended, asked first once it has run a while)
+        u64 was = 0;
+        for (const BuildUi::Run& r : u.runs)
+            if (r.lasting && r.key == u.current) {
+                const u64 ran = now_ns() - r.started_ns;
+                if (r.running && ran > kAskAfterNs && !confirm(r.name + " has been running for " + clock_text(ran) + ". End it and run it again?", "Run Again"))
+                    return;
+                was = r.doc;
+            }
+        Pane* p = nullptr;
+        size_t at = 0;
+        if (was && find_doc(was, &p, &at)) {
+            Pane* const keep = pane_;
+            pane_ = p;
+            tab_close(at, true);  // (and its program)
+            bool still = false;
+            for (const std::unique_ptr<Pane>& q : panes_) still |= q.get() == keep;
+            pane_ = still ? keep : panes_.front().get();
+        } else if (was) {
+            term_stop(was, true);  // (its tab in the hidden split: ended there)
+            build_forget(was);
+        }
+    }
+    build_command(t.cwd.empty() || !t.before.empty() ? u.root : u.root + "/" + t.cwd, with_vars(cmd, build_vars()), t.name, t.problems, &t);
     u.last_key = u.current;  // (how it goes shows on its row)
     if (const auto it = u.sizes.find(u.last_key); it != u.sizes.end()) u.sizes_before = it->second;
     run_config_take();
@@ -593,22 +683,22 @@ bool App::build_run_named(const std::string& name) {
     return false;
 }
 
+// Stop: the last run's program ended, its tab kept with what it wrote and
+// the problems found in it (term_stop; build_ended once it has). A long
+// task that has run a while is asked about first; a second Stop, for a
+// program that would not end, kills it.
 void App::build_stop() {
     BuildUi& u = *buildui_;
-    Pane* p = nullptr;
-    size_t at = 0;
-    if (!u.running || !u.doc || !find_doc(u.doc, &p, &at)) return;
-    Pane* const keep = pane_;
-    pane_ = p;
-    tab_close(at, true);  // (its program hung up on)
-    u.first.reset();      // (and what waited for it, called off)
-    bool still = false;
-    for (const std::unique_ptr<Pane>& q : panes_) still |= q.get() == keep;
-    pane_ = still ? keep : panes_.front().get();
-    focus_pane(pane_);
-    u.running = false;
-    u.doc = 0;
-    ran_there(u.dir);  // (what it wrote before it was stopped, on another machine)
+    BuildUi::Run* r = u.run_of(u.doc);
+    if (!u.running || !r || !r->running) return;
+    const u64 ran = now_ns() - r->started_ns;
+    if (r->lasting && !r->stopped && ran > kAskAfterNs && !confirm(r->name + " has been running for " + clock_text(ran) + ". Stop it?", "Stop")) return;
+    r = u.run_of(u.doc);  // (the box may have let anything happen meanwhile)
+    if (!r || !r->running) return;
+    const bool again = r->stopped;
+    r->stopped = true;
+    term_stop(u.doc, again);
+    u.first.reset();  // (and what waited for it, called off)
     ++build_gen_;
     dirty_ = true;
 }
@@ -621,16 +711,94 @@ void App::build_stop() {
 void App::build_ended(u64 doc, int status) {
     test_ended(doc);  // (a run of the tests: its reports read)
     BuildUi& u = *buildui_;
+    // How it went: for init.lua's BuildDone, and, behind another window, in
+    // a notification of the system's.
+    if (BuildUi::Run* r = u.run_of(doc); r && r->running) {
+        r->running = false;
+        r->status = status;
+        const double took = static_cast<double>(now_ns() - r->started_ns) * 1e-9;
+        if (!r->key.empty()) script_build_event(true, r->name, r->kind, r->cmd, status, r->errors, r->warnings, r->stopped, took);
+        if (!front_ && cfg_.build_notify && !r->stopped) {
+            char secs[32];
+            std::snprintf(secs, sizeof secs, "%.1f s", took);
+            std::string body = status == 0 ? std::string("Done in ") + secs : "Failed with exit code " + std::to_string(status) + " after " + secs;
+            if (r->errors) body += " \xC2\xB7 " + std::to_string(r->errors) + (r->errors == 1 ? " error" : " errors");
+            if (r->warnings) body += std::string(r->errors ? ", " : " \xC2\xB7 ") + std::to_string(r->warnings) + (r->warnings == 1 ? " warning" : " warnings");
+            system_notify(r->name, body);
+        }
+    }
     if (u.first && u.first->doc == doc && !u.first->ended) {  // (what waits for it runs on the loop's next turn)
         u.first->ended = true;
         u.first->status = status;
         wake();
     }
-    if (doc != u.doc) return;
+    if (doc != u.doc) {
+        ++build_gen_;  // (a long task's row)
+        dirty_ = true;
+        return;
+    }
     u.running = false;
     u.last_status = status;
     u.looked = false;
     if (!ran_there(u.dir)) git_command("look", {});
+    ++build_gen_;
+    dirty_ = true;
+}
+
+// A run's tab has closed (forget_doc): it is no run of the tab's now.
+void App::build_forget(u64 doc) {
+    if (!buildui_) return;
+    BuildUi& u = *buildui_;
+    if (std::erase_if(u.runs, [&](const BuildUi::Run& r) { return r.doc == doc; })) ++build_gen_;
+    if (u.term == doc) u.term = 0;
+}
+
+// What a task's command may name (with_vars), from the file in front (or,
+// with a terminal in front, the first split's that shows a file).
+TaskVars App::build_vars() const {
+    TaskVars v;
+    std::string host, there;
+    const std::string root = buildui_ && buildui_->looked ? buildui_->root : build_root();
+    v.workdir = split_remote(root, &host, &there) ? there : root;
+    const Doc* d = pane_ && pane_->doc && !pane_->doc->term ? pane_->doc : nullptr;
+    for (size_t i = 0; !d && i < panes_.size(); ++i)
+        if (panes_[i]->doc && !panes_[i]->doc->term) d = panes_[i]->doc;
+    if (!d || d->ed.path.empty()) return v;
+    const std::string full = is_remote(d->ed.path) ? d->ed.path : full_path(d->ed.path);
+    v.file = split_remote(full, &host, &there) ? there : full;
+    const Editor& ed = d->ed;
+    const u64 at = ed.cursor();
+    v.line = std::to_string(ed.buf.line_of(at) + 1);
+    auto word = [&](u64 off) {
+        char c = 0;
+        return off < ed.buf.size() && ed.buf.read(off, &c, 1) == 1 && (std::isalnum(static_cast<unsigned char>(c)) || c == '_');
+    };
+    u64 lo = at, hi = at;
+    while (lo > 0 && at - lo < 256 && word(lo - 1)) --lo;
+    while (hi - at < 256 && word(hi)) ++hi;
+    v.word = ed.buf.text(lo, hi - lo);
+    lo = ed.sel_min(), hi = ed.sel_max();
+    if (d == pane_->doc) vim_selection(&lo, &hi);  // (Vim's Visual mode's)
+    if (hi > lo) v.selection = ed.buf.text(lo, std::min<u64>(hi - lo, 1u << 20));
+    return v;
+}
+
+// Until a long task's time on show next changes, while blit is in front
+// and it is on show (on the Run button, or in the Build tab): drawn again
+// once a second then, and when a line comes; nothing ticks otherwise.
+int App::build_wait_ms() const {
+    if (!front_ || !buildui_) return -1;
+    const BuildUi& u = *buildui_;
+    const BuildUi::Run* r = u.ticking();
+    if (!r || !((r->doc == u.doc && u.reserve) || (panel_px() > 0 && panel_tab() == 5))) return -1;  // (5: the Build tab)
+    const u64 ran = now_ns() - r->started_ns;
+    if (static_cast<i64>(ran / 1'000'000'000ull) != u.clock_shown) return 0;
+    return static_cast<int>((1'000'000'000ull - ran % 1'000'000'000ull) / 1'000'000ull) + 1;
+}
+
+void App::build_older(int seconds) {
+    for (BuildUi::Run& r : buildui_->runs)
+        if (r.lasting && r.running) r.started_ns -= static_cast<u64>(seconds) * 1'000'000'000ull;
     ++build_gen_;
     dirty_ = true;
 }
@@ -642,7 +810,13 @@ void App::build_ended(u64 doc, int status) {
 // came, as the Problems tab lists them and F8 goes through them.
 void App::build_found(u64 doc, std::vector<BuildProblem> found) {
     BuildUi& u = *buildui_;
-    if (doc != u.doc || found.empty()) return;
+    BuildUi::Run* const run = u.run_of(doc);
+    if (doc != u.doc) {  // (a long task's, while another run is the last: only counted, for its BuildDone and its notification)
+        if (run)
+            for (const BuildProblem& p : found) (p.severity == 1 ? run->errors : run->warnings) += 1;
+        return;
+    }
+    if (found.empty()) return;
     const u32 was = u.at >= 0 ? u.problems[static_cast<size_t>(u.at)].seq : 0;
     const size_t had = u.problems.size();
     for (BuildProblem& p : found) {
@@ -658,6 +832,7 @@ void App::build_found(u64 doc, std::vector<BuildProblem> found) {
         p.group = u.groups.try_emplace(p.path, static_cast<u32>(u.groups.size())).first->second;
         p.seq = u.seq++;
         (p.severity == 1 ? build_errors_ : build_warnings_) += 1;
+        if (run) (p.severity == 1 ? run->errors : run->warnings) += 1;
         u.problems.push_back(std::move(p));
     }
     // (The new ones in order, then merged in: a step through them, not a sort of them all for each piece of output.)
@@ -902,6 +1077,9 @@ void App::build_panel_draw(TextBox& box, bool focused) {
     std::string where = u.looked ? u.root : u.looking ? u.looking_at : build_root();
     if (const char* home = SDL_getenv("HOME"); home && *home && where.starts_with(home)) where = "~" + where.substr(std::strlen(home));
     const bool looking = !u.looked || u.looking;
+#if BLIT_DEV
+    u.drawn_rows.clear();
+#endif
     u.rows.clear();
     u.body = 0;
     size_t heading = 0;
@@ -981,16 +1159,38 @@ void App::build_panel_draw(TextBox& box, bool focused) {
         const u32 c = put(box, font, y, 2, fit_text(t.name, cols > 2 ? cols - 2 : 1), cur ? ink::kStrong : ink::kText);
         std::string after = t.system == "CMake" ? with_cmake(t.cmd, u.cmake_type, u.cmake_target) : t.cmd;
         Ink in = ink::kMuted;
-        if (!u.last_key.empty() && task_key(t) == u.last_key) {
+        // (A long task's run whose tab is open says how it goes here too
+        // while another run is the last: still running, with its time.)
+        const std::string key = task_key(t);
+        const BuildUi::Run* run = !u.last_key.empty() && key == u.last_key ? u.run_of(u.doc) : nullptr;
+        for (size_t k = 0; !run && t.lasting && k < u.runs.size(); ++k)
+            if (u.runs[k].lasting && u.runs[k].key == key) run = &u.runs[k];
+        const bool last = !u.last_key.empty() && key == u.last_key && (!run || run->doc == u.doc);
+        if (last || run) {
+            const bool running = run ? run->running : u.running;
+            const int status = run ? run->status : u.last_status;
             bool said = true;
-            if (u.running) after = "running\xE2\x80\xA6";
-            if (u.running && (!u.progress.stage.empty() || !u.progress.done.empty())) after = BuildScan::progress_words(u.progress, true);  // ("Erase \xE2\x9C\x93 \xC2\xB7 Program 62% 25.4/41.2 KB")
-            else if (u.last_status == 0) after = "done";
-            else if (u.last_status > 0) after = "failed: exited with code " + std::to_string(u.last_status), in = ink::kError;
-            else said = false;
-            if (said && !u.summary.empty()) after += " \xC2\xB7 " + u.summary;  // (what it came to: "12 passed, 1 failed")
+            if (running) {
+                after = run && run->stopped ? "stopping\xE2\x80\xA6" : "running\xE2\x80\xA6";
+                if (last && !(run && run->stopped) && (!u.progress.stage.empty() || !u.progress.done.empty()))
+                    after = BuildScan::progress_words(u.progress, true);  // ("Erase \xE2\x9C\x93 \xC2\xB7 Program 62% 25.4/41.2 KB")
+            } else if (run && run->stopped) {
+                after = "stopped";
+            } else if (status == 0) {
+                after = "done";
+            } else if (status > 0) {
+                after = "failed: exited with code " + std::to_string(status), in = ink::kError;
+            } else {
+                said = false;
+            }
+            if (said && running && run && run->lasting) after += " " + clock_text(now_ns() - run->started_ns);
+            if (said && last && !u.summary.empty()) after += " \xC2\xB7 " + u.summary;  // (what it came to: "12 passed, 1 failed")
         }
+        if (!t.kind.empty()) after = t.kind + " \xC2\xB7 " + after;  // (the kind of work it is)
         if (c + 4 < cols) put(box, font, y, c + 2, fit_text(after, cols - c - 2), in);
+#if BLIT_DEV
+        u.drawn_rows.push_back(t.name + ": " + after);
+#endif
         if (u.top + r == u.sel) light_row(box, y, focused);
     }
     if (foot == 1) {
@@ -1115,6 +1315,8 @@ void App::build_option(int row) {
 // button never stands over "No problems".
 int App::build_failed() const {
     const BuildUi& u = *buildui_;
+    const BuildUi::Run* r = u.run_of(u.doc);
+    if (r && r->stopped) return 0;  // (Stop ended it: it did not fail)
     return !u.running && u.last_status > 0 && !build_errors_ && u.read_from.empty() ? u.last_status : 0;
 }
 
@@ -1179,7 +1381,10 @@ std::string App::build_label() const {
         name = name.substr(0, at) + "\xE2\x80\xA6";
     }
     std::string label = u.running ? "\xE2\x96\xA0 Stop" : "\xE2\x96\xB6 " + name;
-    if (u.running && !u.progress.stage.empty()) label = "\xE2\x96\xA0 " + BuildScan::progress_words(u.progress, false);  // (an engine's stage: "Program 62% 25.4/41.2 KB")
+    const bool staged = u.running && !u.progress.stage.empty();
+    if (staged) label = "\xE2\x96\xA0 " + BuildScan::progress_words(u.progress, false);  // (an engine's stage: "Program 62% 25.4/41.2 KB")
+    if (const BuildUi::Run* r = u.running ? u.run_of(u.doc) : nullptr; r && r->lasting)  // (a long task: which, unless its stage says, and its time)
+        label += (staged ? std::string() : " " + fit_text(r->name, 24)) + " " + clock_text(now_ns() - r->started_ns);
     const int failed = build_failed();
     if (build_errors_) label += " \xC2\xB7 " + std::to_string(build_errors_) + (build_errors_ == 1 ? " error" : " errors");
     else if (failed) label += " \xC2\xB7 failed (exit " + std::to_string(failed) + ")";
@@ -1195,6 +1400,13 @@ std::string App::build_label() const {
 // splits are laid out, so the tab bar there knows to end before it.
 void App::build_measure() {
     BuildUi& u = *buildui_;
+    // A long task's time: what shows it is made again when its seconds have
+    // changed (a frame comes when a line does, or from build_wait_ms).
+    if (const BuildUi::Run* r = u.ticking()) {
+        if (const i64 s = static_cast<i64>((now_ns() - r->started_ns) / 1'000'000'000ull); s != u.clock_shown) u.clock_shown = s, ++build_gen_;
+    } else {
+        u.clock_shown = -1;
+    }
     u.reserve = 0;
     if (u.current.empty() || !font_ || !tabs_px() || start_shown()) return;
     Font& font = *font_;
@@ -1206,7 +1418,8 @@ void App::build_measure() {
         const std::string label = build_label();
         const u32 cols = width_of(label) + 2;
         u.box.resize(cols, 1);
-        u.box.put(font, 0, 1, label, u.running || u.last_status > 0 || build_errors_ ? kInkDiagnostic : kInkAccent, Font::kBold);
+        const BuildUi::Run* last = u.run_of(u.doc);  // (one Stop ended did not fail)
+        u.box.put(font, 0, 1, label, u.running || (u.last_status > 0 && !(last && last->stopped)) || build_errors_ ? kInkDiagnostic : kInkAccent, Font::kBold);
         for (u32 c = 0; c < cols; ++c) u.box.cells[c] |= kCellHover;
     }
     u.reserve = static_cast<int>(u.box.cols) * cw + cw;
@@ -1250,8 +1463,33 @@ bool App::build_mouse_down(const SDL_MouseButtonEvent& b) {
 
 // ---------------------------------------------------------------- for the tests
 
-std::string App::build_dump() {
+std::string App::build_dump(const std::string& what) {
     BuildUi& u = *buildui_;
+#if BLIT_DEV
+    if (what == "rows") {  // the Build tab's task rows as drawn at the next frame, " | " between them
+        build_settle();
+        ++build_gen_;
+        frame();
+        std::string out;
+        for (const std::string& r : u.drawn_rows) out += (out.empty() ? "" : " | ") + r;
+        return out.empty() ? "no rows" : out;
+    }
+#endif
+    if (!what.empty()) {  // a run's output: the last run's ("text"), or a long task's by its name; its lines after "|"
+        term_sync();
+        u64 id = what == "text" ? u.doc : 0;
+        for (const BuildUi::Run& r : u.runs)
+            if (r.lasting && r.name == what) id = r.doc;
+        const Doc* d = find_doc(id);
+        TermLines lines;
+        if (!d || !d->term || !term_lines(*d, &lines)) return "no output";
+        std::string out;
+        each_line(lines.text, [&](std::string_view line) {
+            while (!line.empty() && line.back() == ' ') line.remove_suffix(1);
+            if (!line.empty()) out += "|" + std::string(line);
+        });
+        return out;
+    }
     build_settle();
     std::string out, system;
     for (const BuildTask& t : u.tasks) {
@@ -1261,7 +1499,11 @@ std::string App::build_dump() {
     if (out.empty()) out = "nothing";
     if (u.running) out += " (running)";
     if (u.last_status >= 0) out += " (last: " + std::to_string(u.last_status) + ")";
+    if (const BuildUi::Run* r = u.run_of(u.doc); r && r->stopped) out += " (stopped)";
     if (!u.summary.empty()) out += " (" + u.summary + ")";
+    for (const BuildUi::Run& r : u.runs)  // (the long tasks' runs whose tabs are open)
+        if (r.lasting)
+            out += " [" + r.name + ": " + (r.running ? "running " + clock_text(now_ns() - r.started_ns) : r.stopped ? std::string("stopped") : "ended " + std::to_string(r.status)) + "]";
     return out;
 }
 

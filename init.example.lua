@@ -223,6 +223,9 @@
 -- blit.opt.remote.agent_idle = 10   -- minutes blit's agent there waits, with nothing working and no blit attached, before it ends
 -- blit.opt.remote.agent_keep = 24   -- hours it keeps what is working with no blit attached
 
+---------------------------------------------------------------- building
+-- blit.opt.build.notify = true   -- a task that ends while blit is behind another window says so in a notification of the system's
+
 ---------------------------------------------------------------- updates
 -- blit.opt.updates.check = true   -- at the start, once a day: a newer release offered (blit.app and the AppImage install it)
 

@@ -360,6 +360,110 @@ const std::vector<std::string>& build_systems() {
 
 std::string sh_word(std::string_view word) { return sh_quote(word); }
 
+std::vector<BuildTask> read_tasks(const std::string& root, std::string* problem) {
+    std::vector<BuildTask> out;
+    std::string text;
+    if (!fs_read(root + "/" + kTasks, &text)) return out;
+    json::Doc doc;
+    if (!doc.parse(text)) {
+        *problem = std::string(kTasks) + " is not JSON";
+        return out;
+    }
+    const json::Value list = doc.root().is_array() ? doc.root() : doc.root()["tasks"];
+    if (!list.is_array()) {
+        *problem = std::string(kTasks) + " has no \"tasks\" list";
+        return out;
+    }
+    for (const json::Value j : list) {
+        BuildTask t;
+        t.system = "Tasks";
+        t.name = std::string(j["label"].str());
+        const std::string command(j["command"].str());
+        if (t.name.empty() || command.empty()) {
+            *problem = std::string(kTasks) + ": a task needs a \"label\" and a \"command\"";
+            continue;
+        }
+        const std::string_view cwd = j["cwd"].str();
+        t.cwd = cwd == "." ? std::string() : std::string(cwd);
+        for (const json::Value e : j["env"]) t.env.push_back(std::string(e.key()) + "=" + std::string(e.str()));
+        if (j["problems"].is_string()) t.problems.emplace_back(j["problems"].str());
+        for (const json::Value m : j["problems"]) t.problems.emplace_back(m.str());
+        t.lasting = j["long"].boolean();
+        t.kind = std::string(j["kind"].str());
+        if (!t.kind.empty() && std::ranges::find_if(kTaskKinds, [&](const char* k) { return t.kind == k; }) == std::end(kTaskKinds)) {
+            std::string kinds;
+            for (const char* k : kTaskKinds) kinds += (kinds.empty() ? "\"" : ", \"") + std::string(k) + "\"";
+            *problem = std::string(kTasks) + ": " + t.name + "'s kind is one of " + kinds;
+            t.kind.clear();
+        }
+        // What it runs: the command as written (a line for sh), then its
+        // arguments, each one word whatever is in it.
+        std::string cmd;
+        if (!t.env.empty()) {
+            cmd = "env";
+            for (const std::string& e : t.env) cmd += " " + sh_quote(e);
+            cmd += " ";
+        }
+        cmd += command;
+        if (j["args"].is_string()) cmd += " " + std::string(j["args"].str());
+        for (const json::Value a : j["args"]) cmd += " " + sh_quote(a.str());
+        t.cmd = std::move(cmd);
+        out.push_back(std::move(t));
+    }
+    return out;
+}
+
+std::string with_vars(std::string_view cmd, const TaskVars& vars) {
+    if (cmd.find("${") == std::string_view::npos) return std::string(cmd);
+    std::string out;
+    out.reserve(cmd.size());
+    char quote = 0;  // (the quotes it is in: ' or ", or none)
+    for (size_t i = 0; i < cmd.size(); ++i) {
+        const char c = cmd[i];
+        if (c == '\\' && quote != '\'' && i + 1 < cmd.size()) {  // (what follows is as it is)
+            out += cmd.substr(i, 2);
+            ++i;
+            continue;
+        }
+        if (c == '\'' && quote != '"') quote = quote ? 0 : '\'';
+        else if (c == '"' && quote != '\'') quote = quote ? 0 : '"';
+        const size_t end = c == '$' && i + 1 < cmd.size() && cmd[i + 1] == '{' ? cmd.find('}', i + 2) : std::string_view::npos;
+        if (end == std::string_view::npos) {
+            out += c;
+            continue;
+        }
+        const std::string_view name = cmd.substr(i + 2, end - i - 2), file = vars.file;
+        const size_t slash = file.rfind('/');
+        const std::string_view base = slash == std::string_view::npos ? file : file.substr(slash + 1);
+        const size_t dot = base.rfind('.');
+        std::string value;
+        if (name == "file") value = vars.file;
+        else if (name == "line") value = vars.line;
+        else if (name == "word") value = vars.word;
+        else if (name == "selection") value = vars.selection;
+        else if (name == "workdir") value = vars.workdir;
+        else if (name == "fileDirname") value = slash == std::string_view::npos ? std::string() : std::string(file.substr(0, std::max<size_t>(slash, 1)));
+        else if (name == "fileBasename") value = std::string(base);
+        else if (name == "fileBasenameNoExtension") value = std::string(dot == std::string_view::npos || dot == 0 ? base : base.substr(0, dot));
+        else {  // (sh's own, as ${HOME})
+            out += c;
+            continue;
+        }
+        if (quote == '\'') {  // (inside '...': a quote ends them, is said, and starts them again)
+            for (const char v : value) out += v == '\'' ? std::string("'\\''") : std::string(1, v);
+        } else if (quote == '"') {  // (inside "...": what sh would take there, escaped)
+            for (const char v : value) {
+                if (v == '\\' || v == '"' || v == '$' || v == '`') out += '\\';
+                out += v;
+            }
+        } else {
+            out += sh_quote(value);
+        }
+        i = end;
+    }
+    return out;
+}
+
 std::vector<BuildTask> read_run_configs(const std::string& root, std::string* problem) {
     std::vector<BuildTask> out;
     std::string text;
