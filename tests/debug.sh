@@ -706,24 +706,28 @@ if [ -x "$fakedap" ]; then
         L="$dir/linux"
         rm -rf "$L" && mkdir -p "$L/bin"
         printf '#!/bin/sh\nif [ "$1" = -s ]; then echo Linux; else echo "Linux box 6.12.1"; fi\n' >"$L/bin/uname"
-        [ -n "$1" ] && printf '#!/bin/sh\ncase "$1" in --version) echo "GNU gdb (GDB) %s" ;; *) echo "gdb $*" >"%s/ran"; exec "%s" ;; esac\n' "$1" "$L" "$fakedap" >"$L/bin/gdb"
-        [ "$2" = yes ] && printf '#!/bin/sh\necho "lldb-dap $*" >"%s/ran"\nexec "%s"\n' "$L" "$fakedap" >"$L/bin/lldb-dap"
+        [ -n "$1" ] && printf '#!/bin/sh\ncase "$1" in --version) echo "GNU gdb (GDB) %s" ;; *) unset BLIT_FAKE_DAP_RAN; echo "gdb $*" >"%s/ran"; exec "%s" ;; esac\n' "$1" "$L" "$fakedap" >"$L/bin/gdb"
         chmod +x "$L/bin/"*
+        # (lldb-dap the stand-in itself, which says what it was started as.)
+        [ "$2" = yes ] && ln -s "$fakedap" "$L/bin/lldb-dap"
         rm -f "$F/log"
         was=$PATH
         if [ "$2" = yes ]; then PATH="$L/bin:$PATH"; else PATH="$L/bin:$(hide_lldb)"; fi
-        BLIT_FAKE_DAP_LOG="$F/log"
-        export BLIT_FAKE_DAP_LOG
+        BLIT_FAKE_DAP_LOG="$F/log" BLIT_FAKE_DAP_RAN="$L/ran"
+        export BLIT_FAKE_DAP_LOG BLIT_FAKE_DAP_RAN
         run "$3" "${4:-$D/prog}"
         PATH=$was
-        unset BLIT_FAKE_DAP_LOG
-        got="${got#* ;; } ;; $(cat "$L/ran" 2>/dev/null)"
+        unset BLIT_FAKE_DAP_LOG BLIT_FAKE_DAP_RAN
+        got="${got#* ;; } ;; $(sed "s#$dir#@#g" "$L/ran" 2>/dev/null)"
     }
     conf '{ "arguments": { "env": { "MORE": "1" }, "stopAtBeginningOfMainSubprogram": true } }'
     linux 15.1 yes "workdir:$D;runconfdump;key:F5;debugwait:stopped;debugdump"
     got="$got ;; $(launched)"
-    check "Linux: lldb-dap where there is one (the environment a list, the configuration's object in its place)" \
-        'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; lldb-dap  ;; {"program":"@/fake/proj/prog","args":["one"],"cwd":"@/fake/proj","env":{"MORE":"1"},"stopAtBeginningOfMainSubprogram":true}'
+    # (Started by its path, not its name: lldb-dap asks blit to run it again in
+    # a terminal, runInTerminal, by its own name made a path, from the
+    # folder it was started in where that name was all it had.)
+    check "Linux: lldb-dap where there is one, started by its path (the environment a list, the configuration's object in its place)" \
+        'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; @/linux/bin/lldb-dap ;; {"program":"@/fake/proj/prog","args":["one"],"cwd":"@/fake/proj","env":{"MORE":"1"},"stopAtBeginningOfMainSubprogram":true}'
     linux 15.1 no "workdir:$D;runconfdump;key:F5;debugwait:stopped;debugdump"
     got="$got ;; $(launched)"
     check "Linux: else gdb -i dap (the environment an object, merged with the configuration's)" \

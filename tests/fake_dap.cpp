@@ -276,7 +276,14 @@ std::string exception_info() {
     return b + "}]}}";
 }
 
-int main() {
+int main(int argc, char** argv) {
+    // (What it was started as, its name and its arguments, where BLIT_FAKE_DAP_RAN says.)
+    if (const char* ran = std::getenv("BLIT_FAKE_DAP_RAN"); ran && *ran)
+        if (FILE* f = std::fopen(ran, "w")) {
+            for (int i = 0; i < argc; ++i) std::fprintf(f, "%s%s", i ? " " : "", argv[i]);
+            std::fprintf(f, "\n");
+            std::fclose(f);
+        }
     if (const char* w = std::getenv("BLIT_FAKE_DAP_WAVES"); w && *w) {
         waves = std::atol(w);
         stop_thread = kOwnThreads + 1 + waves / 2;

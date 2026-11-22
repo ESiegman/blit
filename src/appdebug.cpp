@@ -82,7 +82,9 @@ std::string native(std::string_view want) {
     const std::string rocm =
         "if [ -n \"$BLIT_DEBUG_PROGRAM\" ] && grep -q -a -m1 hip_fatbin \"$BLIT_DEBUG_PROGRAM\" 2>/dev/null; then "
         "for d in rocgdb /opt/rocm/bin/rocgdb; do if command -v $d >/dev/null 2>&1; then echo 'blit-debugger: gdb (rocgdb)' >&2; command -v stdbuf >/dev/null 2>&1 && exec stdbuf -oL $d -q -i dap; exec $d -q -i dap; fi; done; fi; ";
-    const std::string lldb = "for d in lldb-dap lldb-vscode; do command -v $d >/dev/null 2>&1 && exec $d; done; ";
+    // (By its path: lldb-dap asks for itself to be run in a terminal, runInTerminal, by
+    // the name it was started with, made a path from the folder it was started in.)
+    const std::string lldb = "for d in lldb-dap lldb-vscode; do p=$(command -v $d 2>/dev/null) && [ -n \"$p\" ] && exec \"$p\"; done; ";
     const std::string gdb =
         "v=$(gdb --version 2>/dev/null | sed -n '1s/.* \\([0-9][0-9]*\\)\\..*/\\1/p'); "
         "if [ \"${v:-0}\" -ge 14 ] 2>/dev/null; then echo 'blit-debugger: gdb' >&2; command -v stdbuf >/dev/null 2>&1 && exec stdbuf -oL gdb -q -i dap; exec gdb -q -i dap; fi; ";
