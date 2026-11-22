@@ -187,14 +187,17 @@ for p in verible-verilog-ls glsl_analyzer wgsl-analyzer shader-language-server s
     chmod +x "$dir/bin/$p"
 done
 all=
+# (A home of its own: blit looks for servers in ~/.local/bin, ~/.cargo/bin
+# and the like too, where this machine's own may be.)
+mkdir -p "$dir/home"
 for f in top.sv add.v fill.frag fill.wgsl fill.hlsl fill.slang board.dts add.cu fill.metal build.tcl Kconfig; do
-    got=$(PATH="$dir/bin:/usr/bin:/bin" XDG_DATA_HOME="$dir/data" BLIT_INIT="$dir/on.lua" "$blit" --info "$B/$f" 2>/dev/null | sed -n 's/^lsp  *//p' | sed 's/  (.*//')
+    got=$(HOME="$dir/home" PATH="$dir/bin:/usr/bin:/bin" XDG_DATA_HOME="$dir/data" BLIT_INIT="$dir/on.lua" "$blit" --info "$B/$f" 2>/dev/null | sed -n 's/^lsp  *//p' | sed 's/  (.*//')
     all="$all;$f $got"
 done
 got=$all
 check "the server presets" ";top.sv verible;add.v verible;fill.frag glsl_analyzer;fill.wgsl wgsl-analyzer;fill.hlsl shader-language-server;fill.slang slangd;board.dts dts-lsp;add.cu clangd;fill.metal no language server installed for metal;build.tcl no language server installed for tcl;Kconfig no language server installed for kconfig"
 rm "$dir/bin/glsl_analyzer"
-got=$(PATH="$dir/bin:/usr/bin:/bin" XDG_DATA_HOME="$dir/data" BLIT_INIT="$dir/on.lua" "$blit" --info "$B/fill.frag" 2>/dev/null | sed -n 's/^lsp  *//p' | sed 's/  (.*//')
+got=$(HOME="$dir/home" PATH="$dir/bin:/usr/bin:/bin" XDG_DATA_HOME="$dir/data" BLIT_INIT="$dir/on.lua" "$blit" --info "$B/fill.frag" 2>/dev/null | sed -n 's/^lsp  *//p' | sed 's/  (.*//')
 check "GLSL without glsl_analyzer: the server for three" 'shader-language-server'
 # clangd tells CUDA's files by the name VS Code gives the language.
 rm -f "$log"
