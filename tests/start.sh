@@ -56,6 +56,16 @@ run "key:Escape;frame;startdump"
 check "Esc: gone" 'no start screen'
 run "text:j;text:j;text:j;key:Down;key:Up;frame;startdump"
 check "j and k, Down and Up choose" "start n:New file p:New project… o:Open a file… >f:Go to file s:Search in files d:Open a folder… r:Connect to a server… c:Settings q:Quit"
+# The application's own chords reach it past the page: Command search
+# (Ctrl+Shift+P where Ctrl is the shortcut key, though the page's Ctrl+P
+# moves up its list) and Flash the board (Alt+Shift+B there).
+rm -f "$dir/recent"
+run "keyof:Command search;finddump"
+case "$got" in 'commands [] '*) got='Command search' ;; esac
+check "Command search's chord: its box, not a move on the list" 'Command search'
+rm -f "$dir/recent"
+run "keyof:Flash the board;wait:300"
+check "Flash the board's chord: the command's" 'blit: No run configuration has a board'
 run "text:j;text:j;text:j;key:Return;findwait;finddump"
 check "Enter does what is chosen: the box that finds files" 'names [] 2 of 2 : >notes.txt src/main.cpp'
 run "text:o;finddump"

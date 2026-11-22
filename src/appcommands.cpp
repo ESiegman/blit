@@ -547,6 +547,18 @@ bool App::command_key(const SDL_KeyboardEvent& k) {
     return false;
 }
 
+// Whether a key is one of the commands' chords (any command's, whoever
+// handles it), without running it.
+bool App::command_has_key(const SDL_KeyboardEvent& k) const {
+    if (!commands_) return false;
+    const u8 m = mods_of(k.mod);
+    const SDL_Keycode key = key_of(k);
+    for (const Commands::Command& c : commands_->all)
+        for (const Chord& ch : c.keys)
+            if (ch.key == key && ch.mods == m) return true;
+    return false;
+}
+
 // For the tests: each chord that two commands have (on this system's list),
 // with the commands' names; "" when there is none.
 std::string App::command_clashes() {

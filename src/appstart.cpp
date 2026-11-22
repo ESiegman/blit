@@ -477,6 +477,18 @@ void App::start_do(size_t i) {
     }
 }
 
+// Whether a key is the application's, not the start screen's: its
+// shortcuts by the primary modifier (but for Ctrl+N and Ctrl+P alone,
+// which move through the list: Ctrl+Shift+P is still Command search where
+// Ctrl is the shortcut key), and a command's chord with Alt (Alt+Shift+B,
+// Flash the board, there; any other Alt chord, Option's letters on a Mac,
+// stays the page's).
+static bool start_passes(const SDL_KeyboardEvent& k, bool a_command) {
+    const bool ctrl = k.mod & SDL_KMOD_CTRL, shift = k.mod & SDL_KMOD_SHIFT, alt = k.mod & SDL_KMOD_ALT;
+    const bool moves = ctrl && !shift && !alt && (k.key == SDLK_N || k.key == SDLK_P);
+    return ((k.mod & kPrimaryMod) && !moves) || (alt && a_command);
+}
+
 bool App::start_key(const SDL_KeyboardEvent& k) {
     if (find_open_ || panel_has_keyboard() || !start_shown()) return false;
     StartUi& s = *start_;
@@ -491,7 +503,7 @@ bool App::start_key(const SDL_KeyboardEvent& k) {
             project_create();
             return true;
         }
-        if (cmd && !(ctrl && (k.key == SDLK_N || k.key == SDLK_P))) return false;
+        if (start_passes(k, command_has_key(k))) return false;
         const size_t n = s.form.size();  // (in the order shown, section by section: rows_again)
         auto move = [&](i64 by) {
             if (n) s.form_sel = static_cast<size_t>(((static_cast<i64>(s.form_sel) + by) % static_cast<i64>(n) + static_cast<i64>(n)) % static_cast<i64>(n));
@@ -543,7 +555,7 @@ bool App::start_key(const SDL_KeyboardEvent& k) {
         dirty_ = true;
         return true;
     }
-    if ((k.mod & kPrimaryMod) && !(ctrl && (k.key == SDLK_N || k.key == SDLK_P))) return false;  // the application's shortcuts
+    if (start_passes(k, command_has_key(k))) return false;
     if (k.key == SDLK_GRAVE && ctrl && !(k.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI))) return false;  // and Ctrl+`, the terminals (appterm.cpp)
     const size_t n = s.items.size();
     auto move = [&](i64 by) {

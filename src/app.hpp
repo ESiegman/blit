@@ -1280,6 +1280,7 @@ private:
     static constexpr u32 kMappingItem = 0x40000000u;  // (a PaletteItem's id: a script's mapping of one chord, by its place)
     void commands_create();
     bool command_key(const SDL_KeyboardEvent& k);
+    bool command_has_key(const SDL_KeyboardEvent& k) const;
     std::vector<PaletteItem> palette_items();
     // The key that does a command now (its title whole, else the first that
     // starts so): the first of its keys that Vim would not take (the tests'
