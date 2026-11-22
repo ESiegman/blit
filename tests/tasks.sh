@@ -202,6 +202,16 @@ INIT="$dir/events.lua"
 run "$L" "buildrun:Talk;wait:500;keyof:Stop the build;buildwait"
 case "$got" in 'blit: done Talk [] '*' 1 0 true number') got='stopped, 1 error' ;; esac
 check "BuildDone: the status, errors, warnings, stopped" 'stopped, 1 error'
+# Its tab closed while it runs: it is hung up on with the tab, so it ends
+# then, stopped, with no exit status (-1); and the Run button runs again,
+# not left on a Stop with nothing to stop. (The error it printed is still
+# held for lines that may join it when the tab goes: not counted.)
+INIT="$dir/events.lua"
+run "$L" "buildrun:Talk;wait:500;command:Go to the split below;key:cmd+w;wait:300"
+case "$got" in 'blit: done Talk [] -1 0 0 true number') got='stopped, no status' ;; esac
+check "BuildDone: its tab closed while it runs" 'stopped, no status'
+run "$L" "buildrun:Talk;wait:500;command:Go to the split below;key:cmd+w;wait:300;progressdump"
+check "its tab closed while it runs: the Run button runs again" 'button: ▶ Talk | row: '
 INIT="$dir/events.lua"
 run "$L" "buildrun:Quick;buildwait"
 check "BuildDone for another name: not this pattern's" "blit: start Quick Quick [] printf 'quick\\n'"

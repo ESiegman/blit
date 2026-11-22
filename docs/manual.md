@@ -3074,7 +3074,9 @@ it), closing its tab or quitting.
 **Events** for init.lua: `BuildStart` as a task of the Build tab starts,
 `BuildDone` as it ends. The pattern is matched against the task's name,
 and `e.data` has `name`, `kind` and `command`, and for `BuildDone` also
-`status` (the exit code), `errors`, `warnings`, `stopped` and `seconds`:
+`status` (the exit code; -1 for a run whose tab was closed while it ran,
+which ends it with no code to give), `errors`, `warnings`, `stopped` and
+`seconds`:
 
 ```lua
 blit.on("BuildDone", { pattern = "Flash" }, function(e)

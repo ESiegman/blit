@@ -748,10 +748,25 @@ void App::build_ended(u64 doc, int status) {
     dirty_ = true;
 }
 
-// A run's tab has closed (forget_doc): it is no run of the tab's now.
+// A run's tab has closed (forget_doc): it is no run of the tab's now. One
+// still running was hung up on with its tab: it ends here, as Stop ends
+// it, with no exit status to say (BuildDone's -1), and what waited for it
+// is called off; the Run button can run again.
 void App::build_forget(u64 doc) {
     if (!buildui_) return;
     BuildUi& u = *buildui_;
+    if (BuildUi::Run* r = u.run_of(doc); r && r->running) {
+        r->running = false;
+        r->stopped = true;
+        if (!r->key.empty()) script_build_event(true, r->name, r->kind, r->cmd, -1, r->errors, r->warnings, true, static_cast<double>(now_ns() - r->started_ns) * 1e-9);
+    }
+    if (u.first && u.first->doc == doc && !u.first->ended) u.first.reset();
+    if (doc == u.doc && u.running) {
+        u.running = false;
+        u.doc = 0;
+        ++build_gen_;
+        dirty_ = true;
+    }
     if (std::erase_if(u.runs, [&](const BuildUi::Run& r) { return r.doc == doc; })) ++build_gen_;
     if (u.term == doc) u.term = 0;
 }
