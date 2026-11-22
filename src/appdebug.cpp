@@ -208,8 +208,9 @@ std::string laid_over(const std::string& base, const std::string& over) {
 // tab, where F5 starts it, unless its run configuration says otherwise):
 // a Python file that calls input() or reads sys.stdin; a program (ELF or
 // Mach-O, 64-bit) whose symbols from its libraries include C's stdin, C++'s
-// std::cin, scanf, getchar or gets. Here alone (another machine's would be
-// a round trip), and only the headers and the symbol table are read.
+// std::cin, scanf, getchar or gets (on Linux, stdin and std::cin copied into
+// it as its own). Here alone (another machine's would be a round trip), and
+// only the headers and the symbol table are read.
 bool reads_input(const std::string& path) {
     if (path.empty() || is_remote(path)) return false;
     if (path.ends_with(".py")) {
@@ -242,9 +243,10 @@ bool reads_input(const std::string& path) {
         if (shentsize >= 64 && shnum && at(shoff, sh.data(), sh.size())) {
             auto section = [&](u32 i) { return &sh[static_cast<size_t>(i) * shentsize]; };
             i64 sym = -1;
+            bool dynamic = false;
             for (u32 i = 0; i < shnum; ++i) {
                 const u32 type = u32_at(section(i) + 4);
-                if (type == 11) sym = i;  // SHT_DYNSYM
+                if (type == 11) sym = i, dynamic = true;  // SHT_DYNSYM
                 else if (type == 2 && sym < 0) sym = i;  // SHT_SYMTAB
             }
             if (sym >= 0) {
@@ -256,7 +258,12 @@ bool reads_input(const std::string& path) {
                     if (at(off, syms.data(), size) && at(u64_at(section(link) + 24), strs.data(), strs.size()))
                         for (u64 i = 0; i + 24 <= size && !found; i += 24) {
                             const u32 name = u32_at(&syms[i]);
-                            if (u16_at(&syms[i + 6]) != 0 || name >= strs.size()) continue;  // (defined here: not one of its libraries')
+                            // (Defined here: not one of its libraries', unless it is a library's
+                            // object copied into the program, as the linker copies C's stdin and
+                            // C++'s std::cin into one that uses them: an object among the dynamic
+                            // symbols, with a place in the program's own .bss.)
+                            const bool copied = dynamic && (syms[i + 4] & 0xF) == 1;  // STT_OBJECT
+                            if ((u16_at(&syms[i + 6]) != 0 && !copied) || name >= strs.size()) continue;
                             const char* n = reinterpret_cast<const char*>(&strs[name]);
                             found = reader(std::string_view(n, ::strnlen(n, strs.size() - name)));
                         }
