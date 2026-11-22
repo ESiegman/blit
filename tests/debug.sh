@@ -502,6 +502,16 @@ if [ -x "$fakedap" ]; then
     fake "debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+alt+y;frame;docdump:3;gutterdump" "$F/prog"
     unset BLIT_FAKE_DAP_PROMPT
     check "the debug console: a line not ended shown, and no line numbers" 'Debug console ;;   red plain ;;   Name?  ;; > › | ;; gutter'
+    # What the debugger says of itself ("console" output: lldb-dap 23's
+    # lines as it starts, on Linux) is the debug console's alone, not the
+    # program's output; and a breakpoint's stop is "breakpoint", without the
+    # number lldb-dap 23 gives it as its text (the stand-in gives it always).
+    BLIT_FAKE_DAP_SAYS="To get started with the debug console try \"<variable>\", \"<lldb-cmd>\" or \"help [<lldb-cmd>]\"|Attached to process 4242."
+    export BLIT_FAKE_DAP_SAYS
+    fake "debug:program=$F/prog;key:F5;debugwait:stopped;debugdump;key:cmd+alt+y;frame;docdump:4" "$F/prog"
+    unset BLIT_FAKE_DAP_SAYS
+    check "the debugger's own word: the debug console's, not the program's output" \
+        'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; Debug console ;;   To get started with the debug console try "<variable>", "<lldb-cmd>" or "help [<lldb-cmd>]" ;;   Attached to process 4242. ;;   red plain ;; > › |'
     # With Vim's keys: Esc leaves the line, k goes up over the lines, Enter
     # opens the value there a level more (and again shuts it), i comes back.
     fake "lua:blit.opt.editor.modal = true;debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+alt+y;text:df;key:Return;debugwait:answers;key:Escape;vim:k;key:Return;debugwait:answers;docdump:3;key:Return;text:i;text:ok;docdump:2" "$F/prog"

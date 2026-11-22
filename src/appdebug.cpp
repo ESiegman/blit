@@ -1901,7 +1901,10 @@ void App::debug_sync_session(bool* stopped) {
             }
             u.thread = u.stopped_thread = b["threadId"].integer(u.thread);
             u.reason = std::string(b["reason"].str());
-            if (const std::string_view text = b["text"].str(); !text.empty()) u.reason += ": " + std::string(text);
+            // (What more there is to say: an exception's name, say. A breakpoint's
+            // is only its number, lldb's "breakpoint 1.1": its line is in front.)
+            const bool a_breakpoint = u.reason == "breakpoint" || u.reason.ends_with(" breakpoint");
+            if (const std::string_view text = b["text"].str(); !text.empty() && !a_breakpoint) u.reason += ": " + std::string(text);
             u.exception.clear(), u.exception_lines.clear();
             if (b["reason"].str() == "exception") debug_exception_info(u.thread);
             // Every thread there is (each one's stack can be chosen), and the stack of the one that stopped.
@@ -1946,14 +1949,19 @@ void App::debug_sync_session(bool* stopped) {
             // (In the debug console, the program's errors and what the debugger
             // says as an error stand out, and the debugger's own word is quieter.)
             u.print_style = cat == "stderr" || cat == "important" ? 2 : cat == "console" || gdb_own ? 4 : 0;
-            if (cat == "important" || gdb_own) {  // (the debugger's own: the console's alone)
+            // (What the debugger says before the program runs is of itself, the
+            // debug console's alone: lldb-dap 23's greeting, "Attached to
+            // process 4242." Once it runs, its "console" lines are the
+            // program's run too, a logpoint's message, how it ended.)
+            const bool own_start = cat == "console" && !u.going;
+            if (!for_tty && (cat == "important" || own_start || gdb_own)) {
                 const std::string_view text = b["output"].str();
                 for (size_t at = 0; at < text.size();) {
                     const size_t nl = std::min(text.find('\n', at), text.size());
                     u.said.emplace_back(std::string(text.substr(at, nl - at)), u.print_style);
                     at = nl + 1;
                 }
-            } else if (cat != "telemetry" && !for_tty) {
+            } else if (!for_tty && cat != "telemetry") {
                 u.print(out);
             }
             u.print_style = 0;

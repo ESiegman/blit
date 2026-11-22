@@ -2554,20 +2554,23 @@ it, Delete takes it away), and what the program printed.
 - **The debug console.** *Show the debug console* (Cmd+Option+Y) opens a
   tab in the terminals' split (Ctrl+` hides it and brings it back with
   them): what the program and the debugger print (the program's errors in
-  red, the debugger's own word quieter), and at the bottom a line for the
-  debugger's own command line. Enter sends it, in the frame shown
-  (lldb-dap takes an expression or one of lldb's commands, gdb its
-  commands, debugpy Python), and the answer comes under it; a value with
-  members is opened a level, and Enter on a member, from the lines above,
-  opens it further or shuts it. Up and Down go through the lines typed
-  before (kept in the folder's session), Tab completes as the debugger
-  would (lldb's commands too), Cmd+F finds in the lines. A line that starts
-  `monitor` goes to the gdb server as it is (OpenOCD's or a probe's own
-  commands: `monitor reset halt`): gdb passes it on, and to lldb-dap it
-  goes as lldb's `process plugin packet monitor`. The function keys stay
-  the debugger's: F10 there steps, the source showing in the split above.
-  With Vim's keys, Esc leaves the line for the lines above (Vim's keys move
-  over them), and i or a comes back to it.
+  red, the debugger's own word quieter: what it says of itself before the
+  program runs, as lldb-dap's greeting, is the console's alone, not in the
+  Debug tab's output), and at the bottom a line for the debugger's own
+  command line. Enter sends it, in the frame shown (lldb-dap takes an
+  expression or one of lldb's commands, gdb its commands alone, so an
+  expression goes with `print`, debugpy Python), and the answer comes
+  under it; a value with members is opened a level, and Enter on a member,
+  from the lines above, opens it further or shuts it. Up and Down go
+  through the lines typed before (kept in the folder's session), Tab
+  completes as the debugger would (lldb's commands too), Cmd+F finds in
+  the lines. A line that starts `monitor` goes to the gdb server as it is
+  (OpenOCD's or a probe's own commands: `monitor reset halt`): gdb passes
+  it on, and to lldb-dap it goes as lldb's
+  `process plugin packet monitor`. The function keys stay the debugger's:
+  F10 there steps, the source showing in the split above. With Vim's keys,
+  Esc leaves the line for the lines above (Vim's keys move over them), and
+  i or a comes back to it.
 - **Exceptions.** The Debug tab lists the exceptions the debugger can stop
   at under *Exceptions* (lldb-dap: C++'s, Objective-C's and Swift's throws
   and catches; debugpy: those raised, those uncaught, and those that reach

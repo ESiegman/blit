@@ -155,9 +155,12 @@ void output(std::string_view text, std::string_view category = "stdout") {
     event("output", b + "}");
 }
 
+// (A breakpoint's stop says which, as lldb-dap 23 says it: "text" and
+// "description" both its number.)
 void stopped(std::string_view reason) {
     std::string b = "{\"reason\":";
     json::quote(b, reason);
+    if (reason == "breakpoint") b += R"(,"description":"breakpoint 1.1","text":"breakpoint 1.1","hitBreakpointIds":[1])";
     event("stopped", b + ",\"threadId\":" + std::to_string(stop_thread) + ",\"allThreadsStopped\":true}");
 }
 
@@ -333,6 +336,13 @@ int main() {
                 continue;
             }
             program = path;
+            // (The debugger's own word as it starts, lldb-dap 23's: "console" output, a line each.)
+            if (const char* says = std::getenv("BLIT_FAKE_DAP_SAYS"); says && *says)
+                for (std::string_view s = says; !s.empty();) {
+                    const size_t bar = std::min(s.find('|'), s.size());
+                    output(std::string(s.substr(0, bar)) + "\r\n", "console");
+                    s.remove_prefix(std::min(bar + 1, s.size()));
+                }
             if (FILE* f = std::fopen(path.c_str(), "r")) {
                 char text[4096];
                 const size_t n = std::fread(text, 1, sizeof text - 1, f);
