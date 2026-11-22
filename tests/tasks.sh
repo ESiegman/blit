@@ -3,7 +3,8 @@
 # with their kinds; the variables their commands name, quoted as each
 # place needs; long tasks in tabs of their own, which other runs leave
 # alone, asked about before anything ends them, with their time on the Run
-# button and their rows; and Stop, which keeps the text and the problems.
+# button and their rows; Stop, which keeps the text and the problems;
+# and BuildStart and BuildDone for init.lua.
 #
 #   tests/tasks.sh path/to/blit            run the cases
 #   tests/tasks.sh path/to/blit --print    show what each case gives
@@ -179,5 +180,34 @@ run "$L" "buildpanel;buildrun:Talk;wait:500;keyof:Stop the build;buildwait;build
 check "its row says so" "Sim: simulation · printf 'simulating\\n'; sleep 30 | Talk: stopped | Quick: printf 'quick\\n' | make: make | make all: make all"
 run "$L" "buildrun:Sim;wait:300;keyof:Stop the build;buildwait;builddump"
 check "a long task stopped within 10 s: not asked, its tab kept" 'Tasks: >Sim Talk Quick | Make: make make all (last: 130) (stopped) [Sim: stopped]'
+
+# BuildStart and BuildDone: the task's name (as the pattern is matched
+# against), kind and command; how it went, its problems and whether it was
+# stopped.
+cat >"$dir/events.lua" <<'EOF'
+blit.opt.lsp.enabled = false
+blit.opt.git.enabled = false
+blit.on("BuildStart", function(e) print("start " .. e.match .. " " .. e.data.name .. " [" .. e.data.kind .. "] " .. e.data.command) end)
+blit.on("BuildDone", { pattern = "T*" }, function(e)
+  local d = e.data
+  print("done " .. d.name .. " [" .. d.kind .. "] " .. d.status .. " " .. d.errors .. " " .. d.warnings .. " " .. tostring(d.stopped) .. " " .. type(d.seconds))
+end)
+EOF
+INIT="$dir/events.lua"
+run "$L" "buildrun:Sim"
+check "BuildStart" "blit: start Sim Sim [simulation] printf 'simulating\\n'; sleep 30"
+INIT="$dir/events.lua"
+run "$L" "buildrun:Talk;wait:500;keyof:Stop the build;buildwait"
+case "$got" in 'blit: done Talk [] '*' 1 0 true number') got='stopped, 1 error' ;; esac
+check "BuildDone: the status, errors, warnings, stopped" 'stopped, 1 error'
+INIT="$dir/events.lua"
+run "$L" "buildrun:Quick;buildwait"
+check "BuildDone for another name: not this pattern's" "blit: start Quick Quick [] printf 'quick\\n'"
+mkdir -p "$dir/t2/.blit"
+printf '{ "tasks": [ { "label": "Tfail", "command": "printf \\"x.c:2:1: warning: w\\\\n\\"; exit 3", "kind": "program" } ] }\n' >"$dir/t2/.blit/tasks.json"
+printf 'a\nb\n' >"$dir/t2/x.c"
+INIT="$dir/events.lua"
+run "$dir/t2" "buildrun:Tfail;buildwait"
+check "a task that fails" 'blit: done Tfail [program] 3 0 1 false number'
 
 exit $failed

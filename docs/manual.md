@@ -1400,9 +1400,11 @@ front):
 `ModeChanged` (`match` is `"n:i"`), `InsertEnter`, `InsertLeave`,
 `TextChanged`, `TextChangedI`, `CursorMoved`, `CursorMovedI`, `VimEnter`,
 `VimLeavePre`, `FocusGained`, `FocusLost`, `DirChanged`, `User` (from
-`blit.emit`). A pattern is a glob on the file's name (`*.lua`), on its path
-if it has a slash, on the language for `FileType` and on the name for
-`User`. `BufWritePre` runs before the file is written, so what it changes
+`blit.emit`), and blit's own `BuildStart` and `BuildDone` (a task of the
+Build tab's; see [The folder's own tasks](#the-folders-own-tasks)). A
+pattern is a glob on the file's name (`*.lua`), on its path if it has a
+slash, on the language for `FileType`, on the name for `User` and on the
+task's name for `BuildStart` and `BuildDone`. `BufWritePre` runs before the file is written, so what it changes
 is saved; the others run just after the input that caused them.
 
 **Commands on the `:` line**: `:lua CODE`, `:lua =EXPR` and `:=EXPR`
@@ -3015,7 +3017,7 @@ are the Build tab's first tasks, under **Tasks**:
 - `long`: see below.
 - `kind`: the kind of work it is: `flash`, `program` (an FPGA),
   `synthesis`, `simulation` or `gpu-profile`, shown on its row before its
-  command.
+  command (and given to `BuildStart` and `BuildDone`).
 
 A file that is not JSON, a task without its `label` or `command`, or a
 `kind` that is none of those is said, as for `run.json`.
@@ -3041,6 +3043,17 @@ comes or once a second while blit is in front (nothing ticks behind
 another window). Once it has run more than 10 s, anything that would end
 it asks first: Stop, running it again (its last run's tab goes with
 it), closing its tab or quitting.
+
+**Events** for init.lua: `BuildStart` as a task of the Build tab starts,
+`BuildDone` as it ends. The pattern is matched against the task's name,
+and `e.data` has `name`, `kind` and `command`, and for `BuildDone` also
+`status` (the exit code), `errors`, `warnings`, `stopped` and `seconds`:
+
+```lua
+blit.on("BuildDone", { pattern = "Flash" }, function(e)
+  if e.data.status == 0 then blit.notify("Flashed in " .. string.format("%.1f s", e.data.seconds)) end
+end)
+```
 
 ### Run configurations
 

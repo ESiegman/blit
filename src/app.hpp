@@ -1444,10 +1444,12 @@ private:
     // Tasks of .blit/tasks.json (appbuild.cpp): the variables their commands
     // may name, as they are now; a run's tab closed; the wait until a long
     // task's time on show next changes (-1: none runs, or blit is behind);
-    // and (tests) the long runs made older by that many seconds.
+    // BuildStart and BuildDone for init.lua (applua.cpp); and (tests) the
+    // long runs made older by that many seconds.
     TaskVars build_vars() const;
     void build_forget(u64 doc);
     int build_wait_ms() const;
+    void script_build_event(bool done, const std::string& name, const std::string& kind, const std::string& command, int status, u32 errors, u32 warnings, bool stopped, double seconds);
     void build_older(int seconds);
     bool front_ = true;  // the window is in front (its focus events say)
     // What the last run's output said was wrong (buildscan.hpp): taken from

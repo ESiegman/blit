@@ -569,6 +569,7 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
         if (task) r.key = task_key(*task), r.kind = task->kind, r.cmd = cmd;
         u.runs.push_back(std::move(r));
         if (!lasting) u.term = doc;
+        if (task) script_build_event(false, task->name, task->kind, cmd, 0, 0, 0, false, 0);
     }
     u.doc = doc;
     u.dir = dir;
@@ -701,10 +702,12 @@ void App::build_stop() {
 void App::build_ended(u64 doc, int status) {
     test_ended(doc);  // (a run of the tests: its reports read)
     BuildUi& u = *buildui_;
-    // How it went, for its row.
+    // How it went: for init.lua's BuildDone.
     if (BuildUi::Run* r = u.run_of(doc); r && r->running) {
         r->running = false;
         r->status = status;
+        const double took = static_cast<double>(now_ns() - r->started_ns) * 1e-9;
+        if (!r->key.empty()) script_build_event(true, r->name, r->kind, r->cmd, status, r->errors, r->warnings, r->stopped, took);
     }
     if (u.first && u.first->doc == doc && !u.first->ended) {  // (what waits for it runs on the loop's next turn)
         u.first->ended = true;
