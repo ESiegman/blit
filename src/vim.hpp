@@ -107,6 +107,7 @@ inline constexpr VimCommandKey kVimCommands[] = {
     {'L', "Git: The file's history"},
     {'X', "Run the tests"},
     {'C', "Reconnect to the servers that dropped"},
+    {'B', "Flash the board"},
 };
 
 class Vim final : public EditWatch {

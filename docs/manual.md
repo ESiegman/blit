@@ -240,6 +240,7 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | Another terminal there | Ctrl+Shift+\` | Ctrl+Shift+\` |
 | The Problems / Git / Profile tab of the side panel (again: the keyboard back to the text) | Cmd+Shift+M / Ctrl+Shift+G / Cmd+Shift+R | Ctrl+Shift+M / G / R |
 | The Build tab; run its chosen task (the Run button); stop it | Cmd+Shift+U; Cmd+Shift+B; Cmd+. | Ctrl+Shift+U; Ctrl+Shift+B; Ctrl+. |
+| Flash the board (the run configuration's) | Cmd+Ctrl+B | Alt+Shift+B |
 | A new project (the start screen's New project tab, in a tab of its own) | Cmd+Option+N | Ctrl+Alt+N |
 | Markdown preview, a notebook's view, or an SVG's picture, beside the file | Cmd+Shift+V | Ctrl+Alt+V (Ctrl+Shift+V pastes) |
 | Blame column on or off | Cmd+Option+B | Ctrl+Alt+B |
@@ -430,8 +431,9 @@ first), going round at the ends of the file.
 
 **The editor's daily commands** have keys of their own in Normal mode, `g`
 and a capital that Vim and Neovim leave free: `gS` stages the change at the
-cursor (Git), `gL` shows the file's history (Git), `gX` runs the tests, and
-`gC` reconnects to the servers that dropped. The command search shows these
+cursor (Git), `gL` shows the file's history (Git), `gX` runs the tests,
+`gC` reconnects to the servers that dropped, and `gB` flashes the board
+(see [Flashing the board](#flashing-the-board)). The command search shows these
 keys beside the commands; the other commands are there, and `blit.map`
 gives any of them a key (or takes one of these over).
 
@@ -3258,8 +3260,9 @@ object's other members. A cable with no FPGA answering adds nothing.
 
 ### Flashing the board
 
-"Flash the board" (Command search) flashes the board of the run
-configuration the Run button runs (else the first configuration that
+"Flash the board" (Command search; **Cmd+Ctrl+B**, Alt+Shift+B where
+Ctrl is the editor's key; `gB` in Normal mode) flashes the board of the
+run configuration the Run button runs (else the first configuration that
 has a board). Its build runs first (the configuration's `build`, else
 the Build tab's Build or `make`; when there is none, nothing), and if
 that went well, the board's tool, in the output terminal, as a task of

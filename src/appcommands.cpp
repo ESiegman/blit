@@ -371,7 +371,8 @@ void App::commands_create() {
     own("Look for build systems again", {}, [this] { build_changed(); });
     own("Edit the run configurations", {}, [this] { run_config_edit(); });
     own("Choose the probe\xE2\x80\xA6", {}, [this] { probe_choose(); });
-    own("Flash the board", {}, [this] { flash_board(FlashMode::kFlash, false); });
+    // (Flashing: the plain key is Cmd+Ctrl+B where Ctrl is free, else Alt+Shift+B, as the split's wider key is; gB in Normal mode, kVimCommands.)
+    own("Flash the board", {key(SDLK_B, mac ? kP | kC : kA | kS)}, [this] { flash_board(FlashMode::kFlash, false); });
     own("Flash anyway", {}, [this] { flash_board(FlashMode::kFlash, true); });
     own("Program the FPGA (SRAM)", {}, [this] { flash_board(FlashMode::kSram, false); });
     own("Program the FPGA's flash", {}, [this] { flash_board(FlashMode::kFpgaFlash, false); });

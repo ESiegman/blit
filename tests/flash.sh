@@ -3,7 +3,7 @@
 # each tool's command line for each kind of board, its progress and what it
 # came to on the Run button and the configuration's row, "only if changed"
 # (and Flash anyway; a failed or stopped flash never remembered as done),
-# the build run first, a failure's problem, the Boards view
+# the build run first, a failure's problem, the keys, the Boards view
 # (openFPGALoader's --scan-usb and --detect beside the probe picker's rows),
 # and a board on another machine (tests/fake-ssh.sh stands in for ssh).
 #
@@ -358,6 +358,28 @@ blit: Build failed: flashing fw did not start
 built
 EOF
 check "a build that fails: no flash" "$expected"
+
+# ---------------------------------------------------------------- the keys
+
+# gB in Normal mode, Cmd+Ctrl+B (Alt+Shift+B where Ctrl is the editor's
+# key) anywhere; named in the command search.
+if [ "$(uname -s)" = Darwin ]; then chord=cmd+ctrl+B keys='Cmd+Ctrl+B  gB'; else chord=alt+shift+B keys='Alt+Shift+B  gB'; fi
+board "{$STLINK}"
+printf 'notes\n' >"$P/notes.txt"  # (a file in front, its text with the keyboard)
+flash probe-rs "open:$P/notes.txt;key:cmd+shift+p;text:flash the board;finddump;key:Escape"
+got=$(printf '%s' "$got" | sed -e 's/^commands [[][^]]*[]] [0-9]* : >//' -e 's/) .*/)/')
+check "the command search: Flash the board first, with its keys" "Flash the board ($keys)"
+for k in "vim:gB" "key:$chord"; do
+    flash probe-rs "open:$P/notes.txt;$k;flashwait;go:a;buildwait;progressdump"
+    want <<'EOF'
+button: ▶ fw · Flashed 40.2 KB in N s, verified | row: done · Flashed 40.2 KB in N s, verified
+probe-rs download --chip STM32F411CEUx --probe 0483:374e:004D00283133510F37363734 --non-interactive --verify --reset build/fw.elf
+EOF
+    check "$k flashes the board" "$expected"
+done
+flash probe-rs "open:$P/notes.txt;key:cmd+shift+p;text:program the fpga;finddump;key:Escape"
+got=$(printf '%s' "$got" | sed -e 's/^commands [[][^]]*[]] [0-9]* : >//' -e "s/ Record .*//")
+check "the command search: programming the FPGA, both ways, first" "Program the FPGA (SRAM) Program the FPGA's flash"
 
 # ---------------------------------------------------------------- the Boards view
 
