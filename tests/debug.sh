@@ -457,21 +457,21 @@ if [ -x "$fakedap" ]; then
     printf 'def twice(x):\n    return x + x\n' >"$F/lib.py"
     fake "debug:program=$F/two;break:2;breakif:1;text:nope > 1;key:Return;key:Return;key:Return;open:$F/lib.py;break:2;open:$F/gone.py;break:1;open:$F/two;key:F5;debugwait:stopped;debugwait:answers;debugbreaks;debugpanel;debugrows:Breakpoints:5;key:F5;debugwait:stopped;debugwait:answers;debugbreaks" "$F/two"
     check "breakpoints not verified (and why), and one moved" \
-        'gone.py:1 unverified (pending); lib.py:2 unverified; two:1 unverified (No symbol "nope" in current context) if nope > 1; two:3 moved from 2 ;; Breakpoints 4 | ○ gone.py:1 not verified: pending | ○ lib.py:2 not verified | ◇ two:1 not verified: No symbol "nope" in current context, if nope > 1 | ● two:3 moved from line 2 ;; gone.py:1 unverified (pending); lib.py:2; two:1 unverified (No symbol "nope" in current context) if nope > 1; two:3 moved from 2'
+        'gone.py:1 unverified (pending); lib.py:2 unverified; two:1 unverified (No symbol "nope" in current context) if nope > 1; two:3 moved from 2; exception uncaught ;; Breakpoints 4 | ○ gone.py:1 not verified: pending | ○ lib.py:2 not verified | ◇ two:1 not verified: No symbol "nope" in current context, if nope > 1 | ● two:3 moved from line 2 ;; gone.py:1 unverified (pending); lib.py:2; two:1 unverified (No symbol "nope" in current context) if nope > 1; two:3 moved from 2; exception uncaught'
     # One moved onto a line that has one: one breakpoint, given again.
     fake "debug:program=$F/two;break:2;break:3;key:F5;debugwait:stopped;debugwait:answers;debugbreaks" "$F/two"
     got="$got ;; $(grep '^setBreakpoints' "$F/log" | sed -e 's/.*"breakpoints"://' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }')"
-    check "one moved onto another: they are one" 'two:3 ;; [{"line":2},{"line":3}]} ;; [{"line":3}]}'
+    check "one moved onto another: they are one" 'two:3; exception uncaught ;; [{"line":2},{"line":3}]} ;; [{"line":3}]}'
     # Breakpoint events: one made by the debugger (gdb's `break`), and taken away.
     fake "debug:program=$F/two;break:3;key:F5;debugwait:stopped;debugbreaks;key:cmd+shift+y;text:break 1;key:Return;debugwait:answers;debugbreaks;key:cmd+shift+y;text:delete 2;key:Return;debugwait:answers;debugbreaks" "$F/two"
-    check "breakpoints the debugger makes and takes away" 'two:3 ;; two:1; two:3 ;; two:3'
+    check "breakpoints the debugger makes and takes away" 'two:3; exception uncaught ;; two:1; two:3; exception uncaught ;; two:3; exception uncaught'
     # Disabled: Space on one in the Debug tab, Alt and a click on its dot,
     # and the command for the cursor's line, each again enabled; one
     # disabled is drawn so and not given to the debugger.
     fake "debug:program=$F/two;break:1;break:3;debugpanel;debugpick:breaks:1;debugpanel;key:space;debugbreaks;debugrows:Breakpoints:3;key:F5;debugwait:stopped;debugwait:answers;breakclick:3,alt;debugwait:answers;debugbreaks;command:Enable or disable the breakpoint;debugwait:answers;debugbreaks" "$F/two"
     got="$got ;; $(grep '^setBreakpoints' "$F/log" | sed -e 's/.*"breakpoints"://' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }')"
     check "a breakpoint disabled and enabled: Space, Alt-click, the command" \
-        'two:1 off; two:3 ;; Breakpoints 2 | ● two:1 disabled | ● two:3 ;; two:1 off; two:3 off ;; two:1; two:3 off ;; [{"line":3}]} ;; []} ;; [{"line":1}]}'
+        'two:1 off; two:3 ;; Breakpoints 2 | ● two:1 disabled | ● two:3 ;; two:1 off; two:3 off; exception uncaught ;; two:1; two:3 off; exception uncaught ;; [{"line":3}]} ;; []} ;; [{"line":1}]}'
 
     # rocgdb's GPU waves (two thousand, and three threads of the program's
     # own; stopped in a wave): the waves one row with their count, opened to
@@ -495,6 +495,13 @@ if [ -x "$fakedap" ]; then
     fake "debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+alt+y;text:df;key:Return;debugwait:answers;text:nope;key:Return;debugwait:answers;frame;rowsdump:1;docdump:8;text:to;key:Up;docdump:0;key:Up;docdump:0;key:Up;key:Down;key:Down;docdump:0;key:Down;docdump:0;key:F5;debugwait:stopped;tabsdump;key:cmd+f;text:shape;finddump" "$F/prog"
     check "the debug console: scrolled to the line typed on; a value opened a level, an error, the history, F5, Cmd+F" \
         "rows | # df ;; Debug console ;;   red plain ;;   › df ;;   ▾ DataFrame ;;     shape = (3, 2)  (tuple) ;;     ▸ columns = Index(['a', 'b'])  (Index) ;;   › nope ;;   NameError: name 'nope' is not defined ;; > › | ;; Debug console ;; > › nope| ;; Debug console ;; > › df| ;; Debug console ;; > › to| ;; Debug console ;; > › to| ;; Debug console ;; file [shape] 1 of 1 at 33-38"
+    # A line the program has not ended yet (its prompt) is shown above the
+    # line typed on, as it is; and the console has no line numbers.
+    BLIT_FAKE_DAP_PROMPT='Name? '
+    export BLIT_FAKE_DAP_PROMPT
+    fake "debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+alt+y;frame;docdump:3;gutterdump" "$F/prog"
+    unset BLIT_FAKE_DAP_PROMPT
+    check "the debug console: a line not ended shown, and no line numbers" 'Debug console ;;   red plain ;;   Name?  ;; > › | ;; gutter'
     # With Vim's keys: Esc leaves the line, k goes up over the lines, Enter
     # opens the value there a level more (and again shuts it), i comes back.
     fake "lua:blit.opt.editor.modal = true;debug:program=$F/prog;key:F5;debugwait:stopped;key:cmd+alt+y;text:df;key:Return;debugwait:answers;key:Escape;vim:k;key:Return;debugwait:answers;docdump:3;key:Return;text:i;text:ok;docdump:2" "$F/prog"
@@ -828,7 +835,7 @@ fi
 # its version), and the console (Python's error, in a line).
 D="$dir/dpy"
 mkdir -p "$D"
-if command -v uv >/dev/null 2>&1 && uv venv -q --offline "$D/.venv" >/dev/null 2>&1 && uv pip install -q --offline --python "$D/.venv/bin/python" debugpy >/dev/null 2>&1; then
+if command -v uv >/dev/null 2>&1 && uvown venv -q --offline "$D/.venv" >/dev/null 2>&1 && uvown pip install -q --offline --python "$D/.venv/bin/python" debugpy >/dev/null 2>&1; then
     printf 'def f(d):\n    return d["k"]\n\ntotal = 1\nf({})\n' >"$D/raises.py"
     run "workdir:$D;debug:program=$D/raises.py;key:F5;debugwait:stopped;debugbreaks;debugdump;key:cmd+alt+y;text:total + 1;key:Return;debugwait:answers;text:nope;key:Return;debugwait:answers;docdump:4" "$D/raises.py"
     got=$(printf '%s' "$got" | sed -e 's/ |  *~*^^*//g' -e "s/\(is not defined\)\. Did you mean: 'None'?/\1/")

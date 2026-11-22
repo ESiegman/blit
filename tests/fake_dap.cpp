@@ -58,6 +58,8 @@
 //   exceptionInfo debugpy's account of a ValueError raised, with its stack
 //                 trace and the KeyError it was raised while handling
 //   restart       says "restarted", and stops again
+// (With $BLIT_FAKE_DAP_PROMPT set, it writes that once configured, with no
+// newline after it: a program's prompt, waiting for what is typed.)
 //   evaluate      "<the expression>" (one that starts with "fail" fails, as
 //                 lldb-dap 21 answers an expression before the program has stopped)
 //   completions   the words of a fixed list that start with the word before
@@ -368,6 +370,7 @@ int main() {
                 output("\x1b[1;3");
                 output("1mred\x1b[0m plain\n");
             }
+            if (const char* ask = std::getenv("BLIT_FAKE_DAP_PROMPT"); ask && *ask) output(ask);  // (a line not ended: a program's prompt, waiting)
             stopped("breakpoint");
         } else if (command == "threads") {
             respond(v, true, threads());

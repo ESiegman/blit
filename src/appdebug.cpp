@@ -621,6 +621,7 @@ struct App::DebugUi : DebugSession {
     size_t con_at = 0;
     bool con_typing = true;  // (with Vim's keys: Esc leaves the line for the lines above, i or a comes back to it)
     bool con_changed = false;
+    std::string con_partial;  // the front session's output of a line not ended yet, shown above the line typed on
     std::vector<std::string> con_history;
     size_t con_hist = 0;
     std::string con_draft;  // (what was being typed when the history was gone into)
@@ -1968,6 +1969,10 @@ void App::debug_sync_session(bool* stopped) {
         u.say(std::move(text), style);
     }
     u.said.clear();
+    if (u.partial != u.con_partial) {  // (a line the program has not ended yet: a prompt waiting for what is typed, say)
+        u.con_partial = u.partial;
+        u.con_changed = true;
+    }
     if (u.end_soon) {
         u.end_soon = false;
         debug_end();
@@ -3208,6 +3213,7 @@ void App::debug_console(bool toggle) {
             d = add_doc(at);
             d->title = "Debug console";
             d->read_only = true;
+            d->no_numbers = true;
             u.con_doc = d->id;
             u.con_tab = where->docs[at];
             pane_ = from;
@@ -3243,10 +3249,12 @@ void App::debug_console_fill(bool to_input) {
         out.add(s.text, s.style);
         out.add("\n", 0);
     }
+    const size_t partial = u.con_partial.empty() ? 0 : 1;
+    if (partial) out.add(u.con_partial + "\n", 0);
     out.add(kPrompt, 3);
     out.add(u.con_input, 0);
     d->style_bits[2] = kInkDiagnostic << kCellInkShift;
-    debug_tab_fill(*d, std::move(out.text), std::move(out.off), std::move(out.style), to_input || on_line ? static_cast<i64>(u.con.size()) : -1, kPrompt.size() + u.con_at);
+    debug_tab_fill(*d, std::move(out.text), std::move(out.off), std::move(out.style), to_input || on_line ? static_cast<i64>(u.con.size() + partial) : -1, kPrompt.size() + u.con_at);
 }
 
 // The line typed on, again (what is typed, and the cursor in it), alone.
@@ -3256,7 +3264,7 @@ void App::debug_console_line() {
     if (!d) return;
     Editor& ed = d->ed;
     const u64 start = ed.buf.line_start(ed.buf.line_count() - 1) + kPrompt.size();
-    if (start > ed.buf.size() || ed.buf.line_count() != u.con.size() + 1) return debug_console_fill(true);
+    if (start > ed.buf.size() || ed.buf.line_count() != u.con.size() + 1 + (u.con_partial.empty() ? 0 : 1)) return debug_console_fill(true);
     ed.replace(start, ed.buf.size(), u.con_input);
     ed.mark_saved();
     if (d->marks) d->marks->end = ed.buf.size();  // (what is typed is plain: no run of its own to move)

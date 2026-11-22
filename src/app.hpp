@@ -244,6 +244,7 @@ struct Doc {
     // what it is called, that it is not to be typed in, and its colours.
     std::string title;
     bool read_only = false;
+    bool no_numbers = false;  // drawn with no line numbers (the debug console: its lines are not a file's)
     bool loading = false;  // a file on another machine, on its way (read only until it is here: see appremote.cpp)
     bool must_exist = false;  // (and asked for as one that is there, by gf or a click: if it is not, its tab goes)
     u64 goto_line = ~0ull;  // and where the cursor goes when it is (a line from 0, and a byte in it)
