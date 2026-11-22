@@ -50,6 +50,14 @@ check "it runs in the working folder, and knows the tab's size" '$ basename $PWD
 run "term;frame;termwait:\$;text:sleep 30;key:Return;termwait:sleep;key:ctrl+c;text:echo after-\$((1+1));key:Return;termwait:after-2;termdump"
 case "$got" in *'after-2|$ @'*) got="interrupted" ;; esac
 check "Ctrl+C stops what runs" "interrupted"
+# A command chosen in Command search is the editor's, not a key for the
+# program (where Ctrl is the editor's key, its Ctrl+C and Ctrl+W are the
+# program's own): "Copy" stops nothing, "Close the tab" closes the tab.
+run "term;frame;termwait:\$;text:sleep 2 && echo done-\$((1+1));key:Return;termwait:sleep;command:Copy;termwait:done-2;termdump"
+case "$got" in *'|done-2|$ @'*) got="not interrupted" ;; esac
+check "Copy from Command search: not the program's Ctrl+C" "not interrupted"
+run "term;frame;termwait:\$;command:Close the tab;wait:300;tabsdump"
+check "Close the tab from Command search: closed" "untitled"
 run "term;frame;termwait:\$;text:printf '\\033[?1049h\\033[2J%s%s' FULL SCREEN;key:Return;termwait:FULLSCREEN;termdump"
 check "the alternate screen (the cursor on the row it was on)" 'FULLSCREEN$ @1,12 15x74'
 run "term;frame;termwait:\$;text:printf '\\033[?1049h\\033[2J%s%s' FULL SCREEN;key:Return;termwait:FULLSCREEN;text:printf '\\033[?1049l%s%s' BA CK;key:Return;termwait:BACK;termdump"

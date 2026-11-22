@@ -1337,7 +1337,11 @@ bool App::term_key(const SDL_KeyboardEvent& k) {
     // the program's (Ctrl+F4 still closes the tab).
     if (kCtrlShared && ctrl && !shift && !alt && k.key == SDLK_F4) return false;
     if (kCtrlShared && ctrl && alt && (k.key == SDLK_LEFT || k.key == SDLK_RIGHT || k.key == SDLK_UP || k.key == SDLK_DOWN)) return false;  // (the splits)
-    if (kCtrlShared ? ctrl && shift : cmd) {
+    // (A command chosen in Command search comes as its key, by the editor's
+    // own modifier: copying and the rest are the terminal's to do, and no
+    // key of a command is the program's: "Close the tab" is not Ctrl+W to
+    // the shell, nor "Copy" Ctrl+C to the program.)
+    if (command_sending_ ? cmd : kCtrlShared ? ctrl && shift : cmd) {
         if (k.key == SDLK_C) return term_copy(v), true;
         if (k.key == SDLK_V) return term_paste(v), true;
         if (k.key == SDLK_A) {  // everything, the history too (then Cmd+C)
@@ -1358,8 +1362,9 @@ bool App::term_key(const SDL_KeyboardEvent& k) {
             dirty_ = true;
             return true;
         }
-        if (!kCtrlShared || (k.key != SDLK_PAGEUP && k.key != SDLK_PAGEDOWN)) return false;  // (Shift+Page Up there is still the history)
+        if (!kCtrlShared || command_sending_ || (k.key != SDLK_PAGEUP && k.key != SDLK_PAGEDOWN)) return false;  // (Shift+Page Up there is still the history)
     }
+    if (command_sending_) return false;
     if (shift && (k.key == SDLK_PAGEUP || k.key == SDLK_PAGEDOWN)) {  // the history
         std::lock_guard lock(v.mu);
         const u64 page = std::max<u32>(1, v.term.rows() - 1);
