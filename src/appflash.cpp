@@ -180,6 +180,9 @@ void App::flash_board(FlashMode mode, bool force) {
     if (root.empty()) return notify("Open a folder first");
     if (!flashui_) flashui_ = std::make_shared<FlashUi>();
     if (flashui_->busy) return;
+    // (A folder whose run configurations are still being read, on another
+    // machine: the board is looked for once they have been.)
+    if (!build_ready_for(root)) return build_when_ready([this, mode, force] { flash_board(mode, force); });
     const BuildTask* found = board_config();
     if (!found) return notify("No run configuration has a board");
     const BuildTask c = *found;
@@ -238,6 +241,7 @@ void App::flash_ended(u64 doc, bool well) {
 void App::flash_settle() {
     const u64 until = now_ns() + 60'000'000'000ull;
     while (now_ns() < until) {
+        if (build_waiting()) build_settle();  // (a flash waiting for the folder's run configurations: read now)
         build_first_settle();
         if (!flashui_ || !flashui_->busy) {
             if (!build_first_busy()) return;

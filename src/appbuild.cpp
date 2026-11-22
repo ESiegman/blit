@@ -89,6 +89,7 @@ struct App::BuildUi {
     std::mutex mu;
     std::optional<Found> found;  // (mu)
     bool looking = false;
+    std::vector<std::function<void()>> when_ready;  // (build_when_ready)
     std::string looking_at;
     // The output terminal of the last run.
     u64 doc = 0;
@@ -419,6 +420,27 @@ void App::build_sync() {
     if (!f->problem.empty()) notify(f->problem);
     run_config_take();
     ++build_gen_;
+    dirty_ = true;
+    if (u.looked)  // (what waited for the folder's tasks: each as it was asked for)
+        for (std::function<void()>& go : std::exchange(u.when_ready, {})) go();
+}
+
+// Whether root's tasks and run configurations are read: a folder here is
+// read now if it has not been (it is quick); one on another machine is not
+// waited for (build_when_ready).
+bool App::build_ready_for(const std::string& root) {
+    BuildUi& u = *buildui_;
+    if ((!u.looked || u.root != root) && !is_remote(root) && !(u.looking && is_remote(u.looking_at))) build_settle();
+    return u.looked && u.root == root;
+}
+
+bool App::build_waiting() const { return buildui_ && !buildui_->when_ready.empty(); }
+
+// Something to do once the folder's tasks have been read (a command given
+// before they were: "Flash the board" as a folder on another machine is
+// still being read).
+void App::build_when_ready(std::function<void()> go) {
+    buildui_->when_ready.push_back(std::move(go));
     dirty_ = true;
 }
 

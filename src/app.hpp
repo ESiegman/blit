@@ -1457,6 +1457,9 @@ private:
     // long runs made older by that many seconds.
     TaskVars build_vars() const;
     void build_forget(u64 doc);
+    bool build_ready_for(const std::string& root);
+    void build_when_ready(std::function<void()> go);
+    bool build_waiting() const;  // (something waits for the folder's tasks to be read)
     int build_wait_ms() const;
     void script_build_event(bool done, const std::string& name, const std::string& kind, const std::string& command, int status, u32 errors, u32 warnings, bool stopped, double seconds);
     void build_older(int seconds);

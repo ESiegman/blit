@@ -471,6 +471,14 @@ check "a board on another machine: flashed there" "$expected"
 flash probe-rs "remotewait;frame;boarddump;$F;go:a;buildwait;$F;buildwait;progressdump" "ssh://box$T"
 got=$(printf '%s' "$got" | tail -2 | head -1)
 check "(and not again, unchanged)" 'button: ▶ fw · Not flashed: unchanged since the last flash | row: Not flashed: unchanged since the last flash'
+# Asked for as soon as the connection is up, its run configurations still
+# being read there: the board is looked for once they have been, not said
+# to be missing. (A new image, so that it flashes again.)
+mkelf "$T/build/fw.elf" B y
+timed='&'
+flash probe-rs "remotewait;$F;go:a;buildwait;progressdump" "ssh://box$T"
+got=$(printf '%s' "$got" | tail -2)
+check "a board on another machine, asked for before its folder is read" "$expected"
 scan=basys3 detect=basys3
 flash probe-rs "remotewait;command:Choose the probe;probedump" "ssh://box$T"
 check "the Boards view there" 'fpga ftdi 0403:6010: Digilent FT2232 (FPGA)  210183A8F2C1  /dev/ttyUSB1  on box | fpga ftdi 0403:6010: Basys 3 (xc7a35t)  210183A8F2C1  /dev/ttyUSB1  on box | fpga ftdi 0403:6010: Arty A7-35T (xc7a35t)  210183A8F2C1  /dev/ttyUSB1  on box | fpga ftdi 0403:6010: Cmod A7-35T (xc7a35t)  210183A8F2C1  /dev/ttyUSB1  on box | probe stlink 0483:374e: ST-LINK V3E  004D00283133510F37363734  /dev/ttyACM0  on box'
