@@ -133,10 +133,15 @@ void Jobs::run(Job* job, JobSpec spec) {
     last.id = job->id;
     last.kind = JobEvent::kExit;
     last.code = -1;
+    // (A job with a sink of its own gives it what happens, here on its thread; the rest are queued for take().)
+    auto give = [&](JobEvent e) {
+        if (spec.sink) spec.sink(std::move(e));
+        else push(std::move(e));
+    };
     auto finish = [&] {
         --running_;
         job->done = true;
-        push(std::move(last));
+        give(std::move(last));
     };
     if (spec.argv.empty() || spec.argv[0].empty()) {
         last.err = "no program to run";
@@ -266,7 +271,7 @@ void Jobs::run(Job* job, JobSpec spec) {
                         e.id = job->id;
                         e.kind = kind;
                         e.out.assign(buf, static_cast<size_t>(r));
-                        push(std::move(e));
+                        give(std::move(e));
                     } else {
                         if (into.size() < kMaxOutput) {
                             into.append(buf, std::min<size_t>(static_cast<size_t>(r), kMaxOutput - into.size()));

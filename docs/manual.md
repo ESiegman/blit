@@ -3993,6 +3993,8 @@ src/apppdf.cpp     a PDF's tab: pages drawn on a thread of their own as they com
 src/agent/         the agent: what it and blit say to one another, the program, its build for Linux (Docker), the builds
 src/keymap.*    key mappings: Vim's key notation, the table of mappings, what keys typed so far add up to
 src/job.*       programs run in the background for scripts, on threads of their own
+src/engine.*    engines run with no terminal tab, here or on another machine: pipes or a pseudo-terminal, lines and JSON lines on the run's thread, a time limit, a cancel, `which` kept per machine
+src/buildprogress.cpp  a flash's or an FPGA load's progress read from its engine's output (each engine's shapes as a table), for the Run button and the task's row
 src/applua.cpp  scripts: the Lua state, mappings, commands, events, timers, plugins, boxes and messages
 src/luaapi.cpp  the functions scripts call (the table `blit`, all of it C++: blit ships no Lua of its own)
 src/applua.hpp  what those two share: helpers, the events, the state kept for scripts

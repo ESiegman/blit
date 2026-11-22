@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "app.hpp"
+#include "engine.hpp"
 #include "fsio.hpp"
 #include "profile.hpp"
 #include "remote.hpp"
@@ -1469,6 +1470,61 @@ void App::run_script(const char* script) {
             const u64 until = now_ns() + 10'000'000'000ull;
             while (build_progress_dump().find(arg) == std::string::npos && now_ns() < until) SDL_Delay(5);
             if (build_progress_dump().find(arg) == std::string::npos) std::fprintf(stderr, "progresswait: no \"%s\" in %s\n", arg.c_str(), build_progress_dump().c_str());
+        } else if (verb == "enginerun") {  // enginerun:[host=H] [pty] [timeout=MS] [cancel=MS after its first line] [json] [input=TEXT] -- COMMAND, run by /bin/sh as an engine: its lines, then how it ended
+            EngineSpec spec;
+            u32 cancel_ms = 0;
+            const size_t dashes = arg.starts_with("-- ") ? 0 : arg.find(" -- ");
+            std::string opts = dashes == std::string::npos ? std::string() : arg.substr(0, dashes);
+            for (size_t at = 0; at < opts.size();) {
+                const size_t sp = std::min(opts.find(' ', at), opts.size());
+                const std::string w = opts.substr(at, sp - at);
+                if (w.starts_with("host=")) spec.host = w.substr(5);
+                else if (w == "pty") spec.pty = true;
+                else if (w == "json") spec.json = true;
+                else if (w.starts_with("timeout=")) spec.timeout_ms = static_cast<u32>(std::atoi(w.c_str() + 8));
+                else if (w.starts_with("cancel=")) cancel_ms = static_cast<u32>(std::atoi(w.c_str() + 7));
+                else if (w.starts_with("input=")) spec.input = w.substr(6) + "\n";
+                at = sp + 1;
+            }
+            spec.argv = {"/bin/sh", "-c", dashes == std::string::npos ? arg : arg.substr(dashes + (dashes ? 4 : 3))};
+            std::mutex mu;
+            std::string out;
+            std::atomic<u64> first_ns{0}, end_ns{0};
+            static constexpr const char* kStream[] = {"", "out", "err", "redrawn"};
+            const std::shared_ptr<Engine> engine = Engine::run(
+                spec,
+                [&](std::string_view line, Engine::Stream s) {
+                    std::lock_guard lock(mu);
+                    if (!first_ns) first_ns = now_ns();
+                    out += std::string(kStream[s]) + ": " + std::string(line) + "\n";
+                },
+                [&](const EngineExit& x) {
+                    std::lock_guard lock(mu);
+                    end_ns = now_ns();
+                    out += "exit: " + std::to_string(x.code) + (x.started ? "" : " (not started: " + x.error + ")") + (x.timed_out ? " (timed out)" : "") +
+                           (x.cancelled ? " (cancelled)" : "") + (x.started && !x.error.empty() ? " (" + x.error + ")" : "");
+                },
+                [&](const json::Value& v, Engine::Stream s) {
+                    std::lock_guard lock(mu);
+                    out += std::string(kStream[s]) + " json:";
+                    for (const json::Value m : v) out += " " + std::string(m.key()) + "=" + (m.is_string() ? std::string(m.str()) : std::to_string(m.integer()));
+                    out += "\n";
+                });
+            if (cancel_ms) {
+                for (int k = 0; k < 3000 && !first_ns && engine->running(); ++k) std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                std::this_thread::sleep_for(std::chrono::milliseconds(cancel_ms));
+                engine->cancel();
+            }
+            if (!engine->wait(40'000)) std::fprintf(stderr, "enginerun: still running\n");
+            std::lock_guard lock(mu);
+            const bool soon = first_ns && end_ns - first_ns < 5'000'000'000ull;  // (its first line to its end)
+            std::fprintf(stderr, "%s%s\n", out.c_str(), (spec.timeout_ms || cancel_ms) && soon ? " (ended within 5 s)" : "");
+        } else if (verb == "enginewhich") {  // enginewhich:HOST PROGRAM (HOST "-": here), twice: the path, and how many times a machine was asked
+            const size_t sp = arg.find(' ');
+            const std::string host = arg.substr(0, sp) == "-" ? std::string() : arg.substr(0, sp), program = sp == std::string::npos ? std::string() : arg.substr(sp + 1);
+            const u64 before = Engine::which_asked();
+            const std::string a = Engine::which(host, program), b = Engine::which(host, program);
+            std::fprintf(stderr, "which %s: %s%s (asked %llu)\n", program.c_str(), a.empty() ? "not there" : a.c_str(), a == b ? "" : (" then " + b).c_str(), static_cast<unsigned long long>(Engine::which_asked() - before));
         } else if (verb == "vuwait") {  // the statement of a VUID asked for has been read from validusage.json, and is shown
             valid_usage_wait();
         } else if (verb == "problemsdump") {  // the Run button's words and the Problems tab's rows (> the one picked)
