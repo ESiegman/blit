@@ -1,0 +1,12 @@
+# openFPGALoader v1.2.0 --detect -c digilent --usb-serial-num 210183A8F2C1
+# with a Basys 3 on it (no board here): its lines from its source,
+# src/main.cpp lines 448-458 ("index %zu:", then "\tidcode 0x%x\n\tmanufacturer
+# %s\n\tfamily %s\n\tmodel  %s\n" and "\tirlength %d\n") with the Basys 3's
+# Artix-7 xc7a35t as src/part.hpp line 85 has it (0x0362D093, "xilinx",
+# "artix a7 35t", "xc7a35", 6), tag v1.2.0.
+index 0:
+\tidcode 0x362d093
+\tmanufacturer xilinx
+\tfamily artix a7 35t
+\tmodel  xc7a35
+\tirlength 6

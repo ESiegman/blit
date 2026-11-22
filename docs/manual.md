@@ -240,6 +240,7 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | Another terminal there | Ctrl+Shift+\` | Ctrl+Shift+\` |
 | The Problems / Git / Profile tab of the side panel (again: the keyboard back to the text) | Cmd+Shift+M / Ctrl+Shift+G / Cmd+Shift+R | Ctrl+Shift+M / G / R |
 | The Build tab; run its chosen task (the Run button); stop it | Cmd+Shift+U; Cmd+Shift+B; Cmd+. | Ctrl+Shift+U; Ctrl+Shift+B; Ctrl+. |
+| Flash the board (the run configuration's) | Cmd+Ctrl+B | Alt+Shift+B |
 | A new project (the start screen's New project tab, in a tab of its own) | Cmd+Option+N | Ctrl+Alt+N |
 | Markdown preview, a notebook's view, or an SVG's picture, beside the file | Cmd+Shift+V | Ctrl+Alt+V (Ctrl+Shift+V pastes) |
 | Blame column on or off | Cmd+Option+B | Ctrl+Alt+B |
@@ -430,8 +431,9 @@ first), going round at the ends of the file.
 
 **The editor's daily commands** have keys of their own in Normal mode, `g`
 and a capital that Vim and Neovim leave free: `gS` stages the change at the
-cursor (Git), `gL` shows the file's history (Git), `gX` runs the tests, and
-`gC` reconnects to the servers that dropped. The command search shows these
+cursor (Git), `gL` shows the file's history (Git), `gX` runs the tests,
+`gC` reconnects to the servers that dropped, and `gB` flashes the board
+(see [Flashing the board](#flashing-the-board)). The command search shows these
 keys beside the commands; the other commands are there, and `blit.map`
 gives any of them a key (or takes one of these over).
 
@@ -3226,9 +3228,91 @@ it:
   `"openfpgaloader"`; `{ "tool": ... }` too) and `debug` (a preset's
   name; `{ "preset": ... }` too) are yours to write; choosing a probe
   leaves them as they are.
+- The `flash` object may also say where a raw `.bin` goes (`"address":
+  "0x08000000"`), openFPGALoader's `board` (`"basys3"`) or `cable`
+  (`"digilent"`), OpenOCD's `interface` and `target` scripts
+  (`"interface/stlink.cfg"`, `"target/stm32f4x.cfg"`), and J-Link's
+  `device` (else the `chip` is); `bitstream` beside it is an FPGA's.
 
 The Debug tab shows the board's probe and port under **Board** for a
 configuration that has one.
+
+**The Boards view**: where openFPGALoader is installed (on the project's
+machine), the same list has the FPGA boards and cables it sees, each
+after the row of the USB device it is on. Its `--scan-usb` lists the
+cables; for each FTDI chip (and each JTAG cable of another maker's it
+knows) its `--detect` (through Digilent's cable for a Digilent board, by
+the chip's serial number) says which FPGA is on it, and each board in
+openFPGALoader's own list with that FPGA on a Digilent cable is a row of
+its own, as no USB string tells a Basys 3 from a Cmod A7-35T:
+
+```
+Digilent FT2232 (FPGA)  210183A8F2C1  /dev/cu.usbserial-210183A8F2C11
+Basys 3 (xc7a35t)  210183A8F2C1  /dev/cu.usbserial-210183A8F2C11
+Arty A7-35T (xc7a35t)  210183A8F2C1  /dev/cu.usbserial-210183A8F2C11
+Cmod A7-35T (xc7a35t)  210183A8F2C1  /dev/cu.usbserial-210183A8F2C11
+```
+
+Enter on one writes it as the probe picker writes a probe, and its
+`flash` too: `{ "tool": "openfpgaloader", "board": "basys3" }` (an FPGA
+on a board openFPGALoader does not name: its `cable`), keeping the flash
+object's other members. A cable with no FPGA answering adds nothing.
+
+### Flashing the board
+
+"Flash the board" (Command search; **Cmd+Ctrl+B**, Alt+Shift+B where
+Ctrl is the editor's key; `gB` in Normal mode) flashes the board of the
+run configuration the Run button runs (else the first configuration that
+has a board). Its build runs first (the configuration's `build`, else
+the Build tab's Build or `make`; when there is none, nothing), and if
+that went well, the board's tool, in the output terminal, as a task of
+kind `flash`: the Run button and the configuration's row show its stage
+and percent as it goes, then what it came to (`Flashed 40.2 KB in 1.8 s,
+verified`), and a failure is a problem in the tool's own words.
+
+The tool is the board's `flash`, else the one its probe's kind says:
+esptool for Espressif's USB-Serial/JTAG (and for a board with no probe
+whose `chip` is an ESP32: a serial bridge), openFPGALoader for an FTDI
+chip (a Digilent board), probe-rs for an ST-LINK or a CMSIS-DAP, J-Link
+Commander for a J-Link. Each is run by its path on the machine the
+project is on, and blit says so when it is not there:
+
+| Tool | What runs |
+|---|---|
+| esptool | `esptool --chip esp32s3 -p PORT --before default-reset --after hard-reset write-flash --flash-mode dio … 0x0 build/bootloader/bootloader.bin 0x8000 … 0x10000 build/app.bin` (write-flash reads back what it wrote) |
+| OpenOCD | `openocd -f interface/stlink.cfg -c 'adapter serial SERIAL' -f target/stm32f4x.cfg -c 'program build/fw.elf verify reset exit'`; for an ESP32, Espressif's `openocd-esp32` with `program_esp FILE ADDRESS verify` for each file |
+| probe-rs | `probe-rs download --chip CHIP --probe VID:PID:SERIAL --non-interactive --verify --reset build/fw.elf` (a `.bin` with `--binary-format bin --base-address ADDRESS`) |
+| J-Link | `JLinkExe -NoGui 1 -ExitOnError 1 -USB SERIAL -CommandFile FILE`, the file made for the run: `device CHIP`, `si SWD`, `speed 4000`, `connect`, `loadfile build/fw.elf`, `r`, `g`, `exit` (loadfile reads back what it wrote) |
+| openFPGALoader | `openFPGALoader -b basys3 --usb-serial-num SERIAL build/top.bit` (or `-c digilent`), into SRAM; `-f --verify` for the FPGA's flash |
+
+What is written is the board's `elf` (else the configuration's
+`program`); for an ESP-IDF project (esptool, or OpenOCD for an ESP32),
+the files and addresses its build wrote in `flasher_args.json` beside the
+ELF (else in `build/`), with its flash options and chip; a `.bin` goes to
+the flash object's `address`. An FPGA's is the board's `bitstream`, else
+the newest `.bit` under the folder (else the newest `.bin`).
+
+OpenOCD's, esptool's and openFPGALoader's output reaches the terminal
+through a pipe, where each prints a line for each step; probe-rs (whose
+bars are not drawn at all when its output is not a terminal) and J-Link
+Commander are given the terminal itself.
+
+**Only if changed.** A flash that went well is remembered for the board,
+for as long as blit runs: a hash of what the image puts into the target
+(an ELF's loadable segments, so a build that changed only its debug
+information is the same image; any other file whole), with the tool,
+the probe and the target. "Flash the board" with the same again does
+not run the tool, and the row and the button say `Not flashed: unchanged
+since the last flash`. "Flash anyway" flashes it whatever was flashed
+before. A flash that failed, was stopped or whose tab was closed is never
+remembered as done, and the board's flash before it is forgotten too.
+
+**Programming an FPGA.** For a board flashed with openFPGALoader,
+"Flash the board" and "Program the FPGA (SRAM)" load the bitstream into
+its SRAM (a task of kind `program`), every time: what is in SRAM is gone
+when the board's power is, which blit cannot see. "Program the FPGA's
+flash" writes it into the board's flash (`-f --verify`), and is not run
+again with the same bitstream, as a flash is not.
 
 ## Tests
 

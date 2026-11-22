@@ -128,6 +128,7 @@ struct ImageView;    // an image file's tab (appimage.cpp)
 struct PdfView;      // a PDF's tab (apppdf.cpp)
 struct RemoteEntry;  // a folder's entry on another machine (remote.hpp)
 struct ProbeRow;     // a row of the probe picker (probes.hpp)
+enum class FlashMode : u8;  // what a flash writes (flash.hpp)
 
 // A picture read from its file and put on the GPU (appimage.cpp).
 struct PictureInfo {
@@ -1427,6 +1428,12 @@ private:
     std::vector<BuildTask> build_tasks();
     // (task: the Build tab's task it runs, if it is one: a long one's in a tab of its own, which the next run leaves alone.)
     u64 build_command(const std::string& dir, const std::string& cmd, const std::string& title, const std::vector<std::string>& problems = {}, const BuildTask* task = nullptr);
+    // A run shown on another task's row (row: its task_key; a flash, on its
+    // run configuration's); and what a row says when nothing was run (a
+    // flash whose image is unchanged), as a run's summary.
+    u64 build_run_on(const std::string& row, const std::string& dir, const BuildTask& task);
+    void build_note(const std::string& row, const std::string& words);
+    const BuildTask* board_config();  // the Run button's run configuration if it has a board, else the first that has one
     void build_run(int index);
     void build_option(int row);  // a task of the Build tab's (-1: the Run button's)
     bool build_run_named(const std::string& name);
@@ -1791,6 +1798,16 @@ private:
     void probe_take(const std::string& root, const ProbeRow& row);
     void probe_settle();       // (the tests: the listing waited for)
     std::string probe_dump();  // (the tests: the last listing's rows)
+    // Flashing the board, and programming an FPGA (appflash.cpp, flash.hpp):
+    // its image found and hashed on a worker, then the tool run as a task;
+    // the image each board was last flashed with, for "only if changed".
+    struct FlashUi;
+    std::shared_ptr<FlashUi> flashui_;  // (made the first time)
+    void flash_board(FlashMode mode, bool force);
+    void flash_sync();
+    void flash_ended(u64 doc, bool well);  // a run has ended (well: it exited 0, was not stopped, and said no failure)
+    void flash_settle();                   // (the tests: the build first, and the image found, waited for)
+    std::string flash_dump();              // (the tests: the board's flash object as read)
     u64 test_gen_ = 1;  // counts up whenever what the Tests tab shows may have changed
     u64 build_gen_ = 1;  // counts up whenever what the Build tab or the Run button shows may have changed
     u64 build_prob_gen_ = 1;  // counts up whenever the build's problems change

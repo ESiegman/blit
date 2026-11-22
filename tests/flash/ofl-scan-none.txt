@@ -1,0 +1,4 @@
+# openFPGALoader v1.2.0 --scan-usb with no cable it knows plugged in: all
+# it printed, on a pipe, on macOS (Homebrew) and on the Linux box (Arch's
+# 1.2.0-1), the same bytes on both.
+Bus device vid:pid       probe_type manufacturer serial product

@@ -1470,6 +1470,10 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s\n", probe_dump().c_str());
         } else if (verb == "probewait") {  // the probe picker has listed the devices (and opened the box with them), or written the board chosen
             probe_settle();
+        } else if (verb == "flashwait") {  // "Flash the board": its build first, and its image found (then buildwait waits for the tool)
+            flash_settle();
+        } else if (verb == "flashdump") {  // the flash object of the board flashed, as read back from run.json
+            std::fprintf(stderr, "%s\n", flash_dump().c_str());
         } else if (verb == "boarddump") {  // the board of the run configuration chosen, as read back from run.json
             build_settle();
             const BuildTask* t = run_config();
