@@ -198,6 +198,25 @@ E picotool:1 No accessible RP-series devices in BOOTSEL mode were found.
 EOF
 check "picotool with no board" "$expected"
 
+# The real openFPGALoader, where it is installed, with no board plugged in
+# (skipped where it is not, or where one answers).
+if ofl=$(command -v openFPGALoader) && ! "$ofl" --detect -b basys3 >/dev/null 2>&1; then
+    : >"$T/top.bit"
+    cat >"$dir/real.lua" <<EOF
+blit.opt.lsp.enabled = false
+blit.opt.git.enabled = false
+blit.build.add("Flash", {detect = function() return true end, tasks = {{name = "Basys 3", cmd = "$ofl -b basys3 -f top.bit"}}})
+EOF
+    got=$(BLIT_INIT="$dir/real.lua" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$T;frame;buildrun:Basys 3;buildwait;progressdump;scandump" 2>&1 >/dev/null)
+    want <<'EOF'
+button: ▶ Basys 3 · 1 error | row: failed: exited with code 1
+problems: 1
+E openFPGALoader:1 JTAG init failed with: unable to open ftdi device
+EOF
+    check "openFPGALoader itself, with no board" "$expected"
+    rm -f "$T/top.bit"
+fi
+
 # A tool run by make, which echoes its command: whose output it is.
 printf 'flash:\n\t%s/probe-rs download --chip STM32F411RETx app.elf\n' "$B" >"$T/Makefile"
 flash make probe-rs probe-rs-fail "$end"
