@@ -63,6 +63,7 @@ struct App::BuildUi {
     std::vector<BuildTask> tasks;
     std::string root;          // the folder they were found in
     bool looked = false;       // tasks are root's (else: look, when the window is free to)
+    bool again = false;        // what it builds with may have changed while it was being looked at: looked at again
     std::string current;       // the task the Run button runs (task_key)
     std::string taken;         // the run configuration Debug and Profile last took (and its command)
     // The worker looking at a folder, and what it found.
@@ -340,7 +341,8 @@ void App::build_sync() {
     script_build(f->root, f->files, &f->tasks);
     u.tasks = std::move(f->tasks);
     u.root = f->root;
-    u.looked = true;
+    u.looked = !u.again;  // (what the worker found may be from before the change)
+    u.again = false;
     // The task chosen stays chosen if it is still there; else a default one.
     bool kept = false;
     for (const BuildTask& t : u.tasks) kept |= task_key(t) == u.current;
@@ -455,6 +457,7 @@ void App::run_config_edit() {
 void App::build_changed() {
     if (!buildui_) return;
     buildui_->looked = false;
+    buildui_->again = buildui_->looking;
     dirty_ = true;
 }
 
