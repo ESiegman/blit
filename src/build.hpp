@@ -11,6 +11,24 @@
 
 namespace blit {
 
+// A run configuration's board (its "board" object in .blit/run.json, data
+// as written there; "Choose the probe..." writes probe and serial,
+// appprobe.cpp): the probe it is flashed and debugged through, its serial
+// port, and what the flashing and debugging parts take from it. Paths are
+// as written (from the folder).
+struct Board {
+    bool set = false;        // the configuration has one
+    std::string probe;       // probe.serial: its serial number (or "probe": "SERIAL")
+    std::string probe_kind;  // probe.kind: "stlink", "jlink", "cmsis-dap", "esp-usb-jtag", "blackmagic", "ftdi", ... (probes.cpp's table)
+    std::string probe_usb;   // probe.usb: "0483:374e", its vendor and product ids
+    std::string probe_gdb;   // probe.gdb: a probe's own GDB server port (Black Magic's)
+    std::string port;        // serial.port (or "serial": "PORT"): its console
+    int baud = 0;            // serial.baud
+    std::string chip, elf, svd;
+    std::string flash;  // flash.tool (or "flash": "TOOL"): "esptool", "openocd", "probe-rs", "jlink", "openfpgaloader"
+    std::string debug;  // debug.preset (or "debug": "PRESET")
+};
+
 struct BuildTask {
     std::string system;  // "CMake", "Make", ...
     std::string name;    // "Build", "Test (build)", "make install"
@@ -42,6 +60,7 @@ struct BuildTask {
     // kind of work it is (one of kTaskKinds; empty: none said).
     bool lasting = false;
     std::string kind;
+    Board board;  // (its "board", if it has one)
 };
 
 // The folder's own tasks, from the folder.
@@ -75,7 +94,7 @@ inline constexpr const char* kRunConfigs = ".blit/run.json";
 // "cwd" (from the folder), "build" (a task to run first), "problems" (as
 // BuildTask's: a list, or "none"), "debug" (as BuildTask::Debug: "adapter"
 // a name or a command line, or a list of its words; "request"; "arguments",
-// an object; "after", a list; "console") } ] }. `problem`
+// an object; "after", a list; "console"), "board" (as Board) } ] }. `problem`
 // says what is wrong with the file, if anything is.
 std::vector<BuildTask> read_run_configs(const std::string& root, std::string* problem);
 // A word as sh reads it back (in single quotes when it needs them).

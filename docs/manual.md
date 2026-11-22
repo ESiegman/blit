@@ -3167,6 +3167,67 @@ the session starts:
 lldb-dap, the same board is `"arguments": { "gdb-remote-port": 3333 }`,
 or `"attachCommands": ["gdb-remote 3333"]`.)
 
+### The board: probe and port
+
+"Choose the probe…" (Command search, or Enter on **Board** in the Debug
+tab) lists what is plugged in over USB, read by blit itself (IOKit on a
+Mac, `/sys/bus/usb` on Linux; no tool is run), one row each:
+
+```
+ST-LINK V3E  004D00283133510F37363734  /dev/cu.usbmodem14203
+Black Magic Probe  7BB180B4  /dev/cu.usbmodem7BB180B43  gdb /dev/cu.usbmodem7BB180B41
+Digilent FT2232 (FPGA)  210183A8F2C1  /dev/cu.usbserial-210183A8F2C11
+CP210x serial bridge (CP2102N USB to UART Bridge Controller)  0001  /dev/cu.usbserial-0001
+```
+
+Debug probes and FPGA programmers come first (ST-LINK V1 to V3 and the
+ST-LINKs on Nucleo and Discovery boards, SEGGER J-Link, the Raspberry Pi
+Debug Probe and any other CMSIS-DAP, Espressif's USB-Serial/JTAG on the
+ESP32-S3, C3 and C6, Black Magic, FTDI chips and Digilent's boards), then
+the RP2040's and RP2350's boot ROMs, then serial ports alone (CP210x,
+CH340, FTDI's serial chips, a Pico's USB serial, any other). A probe and
+its serial port are one row: its name, its serial number (with two of
+the same probe, that is what tells them apart), and its port; a Black
+Magic Probe's GDB server port follows. Hubs never show, and other
+devices (a keyboard, a camera) only when nothing else is plugged in. In
+a project on another machine the devices are that machine's, listed by
+blit's agent there (`blit-agent --usb`), each row ending `on HOST`.
+
+Enter writes the one chosen into the `board` of the run configuration
+the Run button runs (else the file's first; a folder with no
+`.blit/run.json` gets one), keeping the rest of the file as you wrote
+it:
+
+```json
+{ "name": "fw", "program": "build/fw.elf",
+  "board": {
+    "probe": { "kind": "stlink", "serial": "004D00283133510F37363734", "usb": "0483:374e" },
+    "serial": { "port": "/dev/cu.usbmodem14203", "baud": 115200 },
+    "chip": "STM32F411CEUx",
+    "elf": "build/fw.elf",
+    "svd": "svd/STM32F411.svd",
+    "flash": "probe-rs",
+    "debug": "probe-rs" } }
+```
+
+- `probe`: the probe's `kind` (`stlink`, `jlink`, `cmsis-dap`,
+  `esp-usb-jtag`, `blackmagic`, `ftdi`, `rp-boot`, ...), its `serial`
+  number as the tools take it (an ST-LINK V2's binary one in hex, as
+  probe-rs writes it), its `usb` vendor and product ids, and for Black
+  Magic its `gdb` port. `"probe": "SERIAL"` is read too.
+- `serial`: its console's `port`, and the `baud` you give it
+  (`"serial": "PORT"` is read too). Choosing a serial port alone (a
+  CP210x on an ESP32 board) sets the port and takes the probe out;
+  choosing a probe with no port takes the port out, and keeps the baud.
+- `chip`, `elf`, `svd` (paths from the folder), `flash` (the tool:
+  `"esptool"`, `"openocd"`, `"probe-rs"`, `"jlink"` or
+  `"openfpgaloader"`; `{ "tool": ... }` too) and `debug` (a preset's
+  name; `{ "preset": ... }` too) are yours to write; choosing a probe
+  leaves them as they are.
+
+The Debug tab shows the board's probe and port under **Board** for a
+configuration that has one.
+
 ## Tests
 
 The side panel's **Tests** tab lists the project's tests, found on a

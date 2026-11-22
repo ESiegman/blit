@@ -30,6 +30,7 @@
 #include "fsio.hpp"
 #include "highlight.hpp"
 #include "look.hpp"
+#include "probes.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
@@ -573,7 +574,7 @@ struct App::DebugUi : DebugSession {
     };
     std::vector<Watch> watches;
     // The panel: a row for each thing shown, and the one chosen.
-    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData, kInstr, kSession, kWaves, kException, kRestart };
+    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData, kInstr, kSession, kWaves, kException, kRestart, kBoard };
     // A row: a mark (a triangle, an arrow) before its text, in an ink of its
     // own; the text; something quieter after it; and on the right its key.
     struct Row {
@@ -2609,6 +2610,14 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
     add(DebugUi::kArgs, 0, u.args.empty() ? "None" : u.args, u.args.empty() ? ink::kMuted : ink::kText, 2);
     add(DebugUi::kCwd, 0, "Working directory", ink::kHeading);
     add(DebugUi::kCwd, 0, u.cwd.empty() ? "The program's folder" : fit_text(shown(u.cwd), cols > 2 ? cols - 2 : 1, true), u.cwd.empty() ? ink::kMuted : ink::kText, 2);
+    // The run configuration's board, where it has one: its probe and port (Enter chooses them).
+    if (const BuildTask* rc = run_config(); rc && rc->board.set) {
+        const Board& b = rc->board;
+        const std::string probe = board_probe_text(b);
+        add(DebugUi::kBoard, 0, "Board", ink::kHeading);
+        Row& r = add(DebugUi::kBoard, 0, !probe.empty() ? probe : !b.port.empty() ? b.port : "Choose the probe\xE2\x80\xA6", probe.empty() && b.port.empty() ? ink::kMuted : ink::kText, 2);
+        if (!probe.empty()) r.after = b.port;
+    }
     add(DebugUi::kNone, 0, "");
     if (!u.error.empty()) add(DebugUi::kNone, 0, u.error, ink::kError);
     // The controls, each with its key; starting (or going on) is the button.
@@ -2796,7 +2805,7 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
     if (out.size() <= body) u.top = 0;
     // (A field's heading and value are lit together.)
     const DebugUi::Act chosen = u.sel < out.size() ? out[u.sel].act : DebugUi::kNone;
-    const bool field = chosen == DebugUi::kProgram || chosen == DebugUi::kArgs || chosen == DebugUi::kCwd;
+    const bool field = chosen == DebugUi::kProgram || chosen == DebugUi::kArgs || chosen == DebugUi::kCwd || chosen == DebugUi::kBoard;
     for (u32 r = 0; r < body && u.top + r < out.size(); ++r) {
         const Row& row = out[u.top + r];
         u32 c = row.indent;
@@ -2836,6 +2845,7 @@ void App::debug_do(u32 i) {
         case DebugUi::kProgram: field("Program to debug", &u.program, kFindOpen); break;
         case DebugUi::kArgs: field("Arguments", &u.args, kFindInput); break;
         case DebugUi::kCwd: field("Working directory", &u.cwd, kFindFolder); break;
+        case DebugUi::kBoard: probe_choose(); break;
         case DebugUi::kStart:
         case DebugUi::kContinue: debug_start(); break;
         case DebugUi::kPause: debug_command("pause"); break;
@@ -3714,7 +3724,7 @@ bool App::debug_pick(const std::string& section, u32 n, const std::string& name)
     DebugUi& u = *debugui_;
     const DebugUi::Act act = section == "threads" ? DebugUi::kThread : section == "stack" ? DebugUi::kFrame : section == "watch" ? DebugUi::kWatch
                              : section == "add"   ? DebugUi::kWatchAdd : section == "breaks" ? DebugUi::kBreak : section == "vars" ? DebugUi::kVar : section == "sessions" ? DebugUi::kSession : section == "waves" ? DebugUi::kWaves
-                             : section == "exceptions" ? DebugUi::kException : DebugUi::kNone;
+                             : section == "exceptions" ? DebugUi::kException : section == "board" ? DebugUi::kBoard : DebugUi::kNone;
     u32 seen = 0;
     for (u32 i = 0; i < u.rows.size(); ++i)
         if (act != DebugUi::kNone && u.rows[i].act == act && (name.empty() ? ++seen == std::max(1u, n) : u.rows[i].text.starts_with(name + " "))) {

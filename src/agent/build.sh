@@ -17,6 +17,6 @@ for pair in amd64:x86_64 arm64:aarch64; do
     echo "blit-agent for Linux $name"
     docker run --rm --platform "linux/$platform" -v "$src:/src:ro" -v "$here/bin:/out" gcc:16 \
         g++ -std=c++26 -O2 -static -s -pthread -DBLIT_AGENT=1 -I/src -o "/out/blit-agent-linux-$name" \
-            /src/agent/blit-agent.cpp /src/finder.cpp /src/fuzzy.cpp /src/pty.cpp
+            /src/agent/blit-agent.cpp /src/finder.cpp /src/fuzzy.cpp /src/pty.cpp /src/usb.cpp
 done
 ls -l "$here/bin"

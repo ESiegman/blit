@@ -1466,6 +1466,20 @@ void App::run_script(const char* script) {
             system_notify_wait();
         } else if (verb == "tickdump") {  // how long blit would sleep before it draws again for a long task's time (-1: it would not)
             std::fprintf(stderr, "%d\n", build_wait_ms());
+        } else if (verb == "probedump") {  // the probe picker's last listing (waited for): each row's role, kind, ids and text
+            std::fprintf(stderr, "%s\n", probe_dump().c_str());
+        } else if (verb == "probewait") {  // the probe picker has listed the devices (and opened the box with them), or written the board chosen
+            probe_settle();
+        } else if (verb == "boarddump") {  // the board of the run configuration chosen, as read back from run.json
+            build_settle();
+            const BuildTask* t = run_config();
+            if (!t || !t->board.set) {
+                std::fprintf(stderr, "no board\n");
+            } else {
+                const Board& b = t->board;
+                std::fprintf(stderr, "%s: probe %s %s %s gdb=%s | port %s baud %d | chip %s elf %s svd %s flash %s debug %s\n", t->name.c_str(), b.probe_kind.c_str(), b.probe.c_str(), b.probe_usb.c_str(),
+                             b.probe_gdb.c_str(), b.port.c_str(), b.baud, b.chip.c_str(), b.elf.c_str(), b.svd.c_str(), b.flash.c_str(), b.debug.c_str());
+            }
         } else if (verb == "buildmarks") {  // the build's problems underlined in the split in front (line:columns and kind), and the cursor line's words
             std::fprintf(stderr, "%s\n", build_marks_dump().c_str());
         } else if (verb == "buildrun") {  // buildrun:name runs that task (buildrun alone: the Run button's)

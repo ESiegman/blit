@@ -2049,6 +2049,10 @@ void App::handle_event(const SDL_Event& e) {
                 py_sync();
                 break;
             }
+            if (e.user.code == 52) {  // the USB devices have been listed ("Choose the probe")
+                probe_sync();
+                break;
+            }
             break;
         }
         default:

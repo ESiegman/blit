@@ -208,9 +208,15 @@ target_link_libraries(blit_core PUBLIC Threads::Threads)
 # src/agent/build.sh builds (GCC 16 in a container) and which are kept with
 # the sources.
 if(NOT WIN32)
-  add_executable(blit-agent src/agent/blit-agent.cpp src/finder.cpp src/fuzzy.cpp src/pty.cpp)
+  add_executable(blit-agent src/agent/blit-agent.cpp src/finder.cpp src/fuzzy.cpp src/pty.cpp src/usb.cpp)
   target_include_directories(blit-agent PRIVATE src)
   target_link_libraries(blit-agent PRIVATE Threads::Threads)
+  # (USB devices, for the probe picker: src/usb.cpp reads them through IOKit.)
+  target_sources(blit_core PRIVATE src/usb.cpp)
+  if(APPLE)
+    target_link_libraries(blit-agent PRIVATE "-framework IOKit" "-framework CoreFoundation")
+    target_link_libraries(blit_core PUBLIC "-framework IOKit" "-framework CoreFoundation")
+  endif()
   target_compile_definitions(blit-agent PRIVATE BLIT_AGENT=1)
   if(APPLE AND CMAKE_SYSTEM_PROCESSOR MATCHES "arm64|aarch64")
     target_compile_options(blit-agent PRIVATE -mcpu=apple-m1)
@@ -304,6 +310,8 @@ add_executable(blit src/main.cpp src/app.cpp src/applsp.cpp src/apppanel.cpp src
 target_sources(blit PRIVATE src/appvalidusage.cpp)
 # The system's notifications (a task that ended behind another window).
 target_sources(blit PRIVATE src/notify.cpp)
+# The probe and port picker, and the board object on a run configuration.
+target_sources(blit PRIVATE src/probes.cpp src/appprobe.cpp)
 # The diagrams' pictures (raster.cpp, diagram.cpp and the kinds' files) are the
 # same pixels on every system: no multiply and add fused into one, which
 # rounds once where two steps round twice, and which one processor does
@@ -441,6 +449,8 @@ if(BLIT_DEV)
     set_tests_properties(profile term PROPERTIES RUN_SERIAL TRUE)
     add_test(NAME keys COMMAND sh ${CMAKE_SOURCE_DIR}/tests/keys.sh $<TARGET_FILE:blit>)
     add_test(NAME debug COMMAND sh ${CMAKE_SOURCE_DIR}/tests/debug.sh $<TARGET_FILE:blit>)
+    # The probe and port picker: USB devices named, the board object written, here and on another machine.
+    add_test(NAME probes COMMAND sh ${CMAKE_SOURCE_DIR}/tests/probes.sh $<TARGET_FILE:blit>)
     # The project's Python: found for each project and subproject, and what takes it.
     add_test(NAME python COMMAND sh ${CMAKE_SOURCE_DIR}/tests/python.sh $<TARGET_FILE:blit>)
     # Characters of more than one code point (marks, emoji sequences, flags) and of other widths.
