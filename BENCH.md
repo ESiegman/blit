@@ -3233,6 +3233,24 @@ The layout's p50 moved by 0.04 to 0.08 µs, in both directions across the
 cases (the second typing run with everything on: 3.46 to 3.50 µs), as
 round 70's noise did; the frame's CPU and the step did not move.
 
+### Round 72: milestone 4, the debug door and the project's Python
+
+Debugging from a run configuration, building first, Restart, a terminal
+for the program, the debug console, exception breakpoints, the GPU's waves
+as one row, breakpoints' states, one Python for each project. On a frame's
+path: the gutter's width (one more test: a tab with no numbers), the status
+bar's key (the project's Python) and the Debug tab's rows. Turn about, five
+rounds, 2560x1600, against the build before it (56b78f3):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 15,997 / 57.08 µs / 2.29 µs | 15,964 / 57.04 µs / 2.25 µs |
+| Typing, everything on: the same, and the step | 17,491 / 49.83 µs / 3.50 µs / 1.96 µs | 17,494 / 49.88 µs / 3.54 µs / 1.88 µs |
+| Scrolling code-100m.txt, plain: the same | 17,586 / 51.83 µs / 0.88 µs | 17,581 / 51.83 µs / 0.83 µs |
+| Typing, plain: the same, and the step | 18,899 / 47.04 µs / 1.17 µs / 0.75 µs | 18,869 / 47.04 µs / 1.17 µs / 0.75 µs |
+
+The layout's p50 moved by 0.04 µs either way, as before; nothing else did.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
