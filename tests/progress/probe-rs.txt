@@ -1,0 +1,50 @@
+# probe-rs 0.32.0 download (no board here): its bars from its source,
+# probe-rs-tools/src/bin/probe-rs/util/flash.rs lines 99, 128-138, 155-190
+# (v0.32.0), drawn as indicatif 0.18.0 draws them (src/draw_target.rs lines
+# 502-580): moved up to, cleared, written again. A 41200-byte image.
+@pace 5
+\e[32m\e[1m      Erasing\e[0m ⠁   0% [--------------------]
+\e[32m\e[1m  Programming\e[0m ⠁   0% [--------------------]
+\e[32m\e[1m    Verifying\e[0m ⠁   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ⠉  25% [######--------------]  16.00 KiB @  25.60 KiB/s (ETA 1s)
+\e[32m\e[1m  Programming\e[0m ⠉   0% [--------------------]
+\e[32m\e[1m    Verifying\e[0m ⠉   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ⠙  50% [###########---------]  32.00 KiB @  51.20 KiB/s (ETA 1s)
+\e[32m\e[1m  Programming\e[0m ⠙   0% [--------------------]
+\e[32m\e[1m    Verifying\e[0m ⠙   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ⠚  75% [################----]  48.00 KiB @  76.80 KiB/s (ETA 1s)
+\e[32m\e[1m  Programming\e[0m ⠚   0% [--------------------]
+\e[32m\e[1m    Verifying\e[0m ⠚   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
+\e[32m\e[1m  Programming\e[0m ⠒   0% [--------------------]
+\e[32m\e[1m    Verifying\e[0m ⠒   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
+\e[32m\e[1m  Programming\e[0m ⠂  19% [####----------------]   8.00 KiB @  12.80 KiB/s (ETA 1s)
+\e[32m\e[1m    Verifying\e[0m ⠂   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
+\e[32m\e[1m  Programming\e[0m ⠂  39% [########------------]  16.00 KiB @  25.60 KiB/s (ETA 1s)
+\e[32m\e[1m    Verifying\e[0m ⠂   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
+\e[32m\e[1m  Programming\e[0m ⠒  62% [#############-------]  24.95 KiB @  39.91 KiB/s (ETA 1s)
+\e[32m\e[1m    Verifying\e[0m ⠒   0% [--------------------]                                     \c
+@hold a
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
+\e[32m\e[1m  Programming\e[0m ⠲  82% [#################---]  33.00 KiB @  52.80 KiB/s (ETA 1s)
+\e[32m\e[1m    Verifying\e[0m ⠲   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
+\e[32m\e[1m  Programming\e[0m ⠴ 100% [####################]  40.23 KiB @  64.38 KiB/s (ETA 1s)
+\e[32m\e[1m    Verifying\e[0m ⠴   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
+\e[32m\e[1m  Programming\e[0m ✔ 100% [####################]  40.23 KiB @  56.33 KiB/s (took 1s)
+\e[32m\e[1m    Verifying\e[0m ⠤   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
+\e[32m\e[1m  Programming\e[0m ✔ 100% [####################]  40.23 KiB @  56.33 KiB/s (took 1s)
+\e[32m\e[1m    Verifying\e[0m ⠄  49% [##########----------]  20.00 KiB @  32.00 KiB/s (ETA 1s)  \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
+\e[32m\e[1m  Programming\e[0m ✔ 100% [####################]  40.23 KiB @  56.33 KiB/s (took 1s)
+\e[32m\e[1m    Verifying\e[0m ⠄ 100% [####################]  40.23 KiB @  64.38 KiB/s (ETA 1s)  \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
+\e[32m\e[1m  Programming\e[0m ✔ 100% [####################]  40.23 KiB @  56.33 KiB/s (took 1s)
+\e[32m\e[1m    Verifying\e[0m ✔ 100% [####################]  40.23 KiB @  56.33 KiB/s (took 1s) \c
+
+     \e[32m\e[1mFinished\e[0m in 1.80s

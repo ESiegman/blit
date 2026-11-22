@@ -1,0 +1,5 @@
+# picotool v2.3.1 (Homebrew, macOS) load app.bin -t bin -o 0x10000000 on a
+# terminal, with no board in BOOTSEL mode: all it printed (and it ended with
+# 249).
+No accessible RP-series devices in BOOTSEL mode were found.
+@exit 249

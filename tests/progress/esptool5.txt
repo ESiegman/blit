@@ -1,0 +1,20 @@
+# esptool v5.6.0 write-flash on a terminal. The first line is its own (run
+# on macOS with no board: "esptool v5.6.0"); the rest is its own logger
+# (esptool/logger.py over esp-pylib 1.2.0, the Homebrew install's) driven
+# through write-flash's calls, esptool/cmds.py lines 1771, 1803, 1824, 1865,
+# 1921, 1935 and 1958, by a script with no device (the bytes are the
+# logger's, on a pseudo-terminal: "\r\e[2K" before each redraw, the stage
+# folded away after with "\e[1A\e[2K"). A 41200-byte image, 22528 compressed.
+@pace 5
+esptool v5.6.0
+Flash will be erased from 0x00010000 to 0x00019fff...
+\r\e[2KWriting at 0x00011d42 \e[91m━━━━━\e[0m\e[90m╺\e[0m\e[90m━━━━━━━━━━━━━━━━━━━━━━━━\e[0m  18.2% 4.00kB/22.00kB [0s] \c
+\r\e[2KWriting at 0x00013a85 \e[91m━━━━━━━━━━\e[0m\e[91m╸\e[0m\e[90m━━━━━━━━━━━━━━━━━━━\e[0m  36.4% 8.00kB/22.00kB [0s] \c
+\r\e[2KWriting at 0x000157c8 \e[91m━━━━━━━━━━━━━━━━\e[0m\e[90m╺\e[0m\e[90m━━━━━━━━━━━━━\e[0m  54.5% 12.00kB/22.00kB [0s] \c
+@hold a
+\r\e[2KWriting at 0x0001750b \e[91m━━━━━━━━━━━━━━━━━━━━━\e[0m\e[91m╸\e[0m\e[90m━━━━━━━━\e[0m  72.7% 16.00kB/22.00kB [0s] \c
+\r\e[2KWriting at 0x0001924e \e[91m━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m\e[90m╺\e[0m\e[90m━━\e[0m  90.9% 20.00kB/22.00kB [0s] \c
+\r\e[2KWriting at 0x0001a0f0 \e[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m 100.0% 22.00kB/22.00kB [0s] 
+\e[1A\e[2KWrote 41200 bytes (22528 compressed) at 0x00010000 in 0.3 seconds (979.7 kbit/s).
+Verifying written data...
+\e[1A\e[2KHash of data verified.

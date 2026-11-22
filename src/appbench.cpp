@@ -1463,6 +1463,12 @@ void App::run_script(const char* script) {
             build_read(arg);
         } else if (verb == "buildwait") {  // the task run has ended, and the targets being listed are (60 s at most)
             build_wait();
+        } else if (verb == "progressdump") {  // the Run button's words and the last run's task row's (an engine's stage, then what it came to)
+            std::fprintf(stderr, "%s\n", build_progress_dump().c_str());
+        } else if (verb == "progresswait") {  // progresswait:TEXT, the Run button's words or the task row's have TEXT in them (10 s at most)
+            const u64 until = now_ns() + 10'000'000'000ull;
+            while (build_progress_dump().find(arg) == std::string::npos && now_ns() < until) SDL_Delay(5);
+            if (build_progress_dump().find(arg) == std::string::npos) std::fprintf(stderr, "progresswait: no \"%s\" in %s\n", arg.c_str(), build_progress_dump().c_str());
         } else if (verb == "vuwait") {  // the statement of a VUID asked for has been read from validusage.json, and is shown
             valid_usage_wait();
         } else if (verb == "problemsdump") {  // the Run button's words and the Problems tab's rows (> the one picked)

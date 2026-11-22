@@ -1,0 +1,19 @@
+# picotool 2.3.1 load -v (no board here): its bars from its source,
+# main.cpp lines 4877-4910, 5298, 5344, 5371 (tag 2.3.1).
+@pace 5
+Loading into Flash:   [                              ]  0%\r\c
+Loading into Flash:   [=======                       ]  25%\r\c
+Loading into Flash:   [===============               ]  50%\r\c
+Loading into Flash:   [==================            ]  62%\r\c
+@hold a
+Loading into Flash:   [======================        ]  75%\r\c
+Loading into Flash:   [==============================]  100%\r\c
+
+Verifying Flash:      [                              ]  0%\r\c
+Verifying Flash:      [=======                       ]  25%\r\c
+Verifying Flash:      [===============               ]  50%\r\c
+Verifying Flash:      [==================            ]  62%\r\c
+Verifying Flash:      [======================        ]  75%\r\c
+Verifying Flash:      [==============================]  100%\r\c
+
+  OK

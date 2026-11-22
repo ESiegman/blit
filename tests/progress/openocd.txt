@@ -1,0 +1,24 @@
+# OpenOCD 0.12.0 -c "program app.bin 0x08000000 verify reset exit" (no
+# probe here). Its first lines as it printed them on macOS (Homebrew
+# 0.12.0_1); the program command's from its source as that build carries it
+# (src/flash/startup.tcl, proc program: the ** lines), "wrote %u bytes from
+# file %s in %fs (%0.3f KiB/s)" (src/flash/nor/tcl.c, flash write_image) and
+# "verified %u bytes in %fs (%0.3f KiB/s)" (src/target/target.c,
+# verify_image), tag v0.12.0. A 41200-byte image.
+@pace 5
+Open On-Chip Debugger 0.12.0
+Licensed under GNU GPL v2
+For bug reports, read
+\thttp://openocd.org/doc/doxygen/bugs.html
+Info : auto-selecting first available session transport "hla_swd". To override use 'transport select <transport>'.
+Info : clock speed 2000 kHz
+** Programming Started **
+@hold a
+wrote 41200 bytes from file app.bin in 1.234567s (32.590 KiB/s)
+** Programming Finished **
+** Verify Started **
+@hold b
+verified 41200 bytes in 0.456789s (88.080 KiB/s)
+** Verified OK **
+** Resetting Target **
+shutdown command invoked

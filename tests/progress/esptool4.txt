@@ -1,0 +1,16 @@
+# esptool v4.8.1 write_flash on a terminal (not installed here: v5 is):
+# its lines from its source, esptool/cmds.py lines 528, 627-629 ("Writing at
+# 0x%08x... (%d %%)"), 700-703 ("Wrote %d bytes (%d compressed) at 0x%08x in
+# %.1f seconds%s..."), 726 and 730 (tag v4.8.1); esptool/util.py
+# print_overwrite (lines 60-74): "\r" before each line it redraws, no newline
+# until the last. A 41200-byte image, 22528 compressed, in two blocks.
+@pace 5
+esptool.py v4.8.1
+Flash will be erased from 0x00010000 to 0x00019fff...
+\rWriting at 0x00010000... (50 %)\c
+@hold a
+\rWriting at 0x00014000... (100 %)\c
+\rWrote 41200 bytes (22528 compressed) at 0x00010000 in 1.8 seconds (effective 183.1 kbit/s)...
+Hash of data verified.
+
+Leaving...

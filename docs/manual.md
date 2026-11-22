@@ -2839,6 +2839,24 @@ words where that leaves the tabs beside it room (`▶ make test · 2 errors ·
 1 passed, 1 failed`); it goes when the task runs again, and comes back as
 the new run's output says it.
 
+A task that flashes a board or programs an FPGA shows how far it has got
+while it runs, read from the tool's output as it comes, the bar it is
+redrawing in place included: OpenOCD's `program` (and Espressif's
+`program_esp`), probe-rs's download, J-Link Commander's `loadfile`,
+esptool's write-flash, openFPGALoader's loads into SRAM and flash, and
+picotool's `load`. The Run button reads the stage under way, its percent
+and the bytes where the tool prints them (`■ Program 62% 12.0/22.0 KB`;
+a click still stops it), and the task's row the stages done before it
+(`Erase ✓ · Program 62% 25.0 KB`); both are drawn again only when the
+stage or its percent changes. After, what it came to is kept on the row
+and the button: `Flashed 40.2 KB in 1.8 s, verified` (the tool's own time
+where it says one), `Loaded into SRAM in 2.1 s`, or, for a failed one,
+where it stopped. A failure is a problem with the tool's own words
+(`OpenOCD init failed: open failed`, `JTAG init failed with: unable to
+open ftdi device`), placed at the program's name. Whose output it is
+comes from the task's command (or the command make echoes), and from the
+tool's own first lines.
+
 Under **CMake** the tab has two rows of its own. **Build type**: Enter goes
 from the project's own (what the build folder was configured with) to
 Debug, Release, RelWithDebInfo, MinSizeRel and round. **Target**: Enter

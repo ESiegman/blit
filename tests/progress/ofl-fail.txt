@@ -1,0 +1,7 @@
+# openFPGALoader v1.2.0 -b basys3 -f top.bit on a terminal with no board, as
+# it printed it on the Linux box (Arch's 1.2.0-1) and on macOS (Homebrew):
+# the same bytes on both.
+write to flash
+unable to open ftdi device: -3 (device not found)
+\e[31mJTAG init failed with: unable to open ftdi device\e[0m
+@exit 1

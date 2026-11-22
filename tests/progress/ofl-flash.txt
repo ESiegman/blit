@@ -1,0 +1,39 @@
+# openFPGALoader v1.2.0 -b basys3 -f --verify (no board here): its lines from its source,
+# src/progressBar.cpp, src/display.cpp, src/xilinx.cpp lines 234-254 and 1015,
+# src/spiFlash.cpp lines 224, 493, 498, 568-573 (tag v1.2.0); "write to flash"
+# as it printed it (Linux and macOS, no board).
+@pace 5
+write to flash
+\e[34mOpen file top.bit \e[0m\e[32mDONE\e[0m
+\e[34mParse file \e[0m\e[32mDONE\e[0m
+\e[34m\rLoad SRAM: [\e[0m                                                  \e[34m] 0.00%\e[0m\c
+\e[34m\rLoad SRAM: [\e[0m============                                      \e[34m] 24.00%\e[0m\c
+\e[34m\rLoad SRAM: [\e[0m=======================                           \e[34m] 45.00%\e[0m\c
+\e[34m\rLoad SRAM: [\e[0m===================================               \e[34m] 70.00%\e[0m\c
+\e[34m\rLoad SRAM: [\e[0m==================================================\e[34m] 100.00%\e[0m\c
+\e[32m
+Done\e[0m
+\e[34mErase Flash: \e[0mstart addr: 00000000, end_addr: 00220000
+\e[34m\rErasing: [\e[0m                                                  \e[34m] 0.00%\e[0m\c
+\e[34m\rErasing: [\e[0m============                                      \e[34m] 24.00%\e[0m\c
+\e[34m\rErasing: [\e[0m=======================                           \e[34m] 45.00%\e[0m\c
+\e[34m\rErasing: [\e[0m===================================               \e[34m] 70.00%\e[0m\c
+\e[34m\rErasing: [\e[0m==================================================\e[34m] 100.00%\e[0m\c
+\e[32m
+Done\e[0m
+\e[34m\rWriting: [\e[0m                                                  \e[34m] 0.00%\e[0m\c
+\e[34m\rWriting: [\e[0m============                                      \e[34m] 24.00%\e[0m\c
+\e[34m\rWriting: [\e[0m=======================                           \e[34m] 45.00%\e[0m\c
+@hold a
+\e[34m\rWriting: [\e[0m===================================               \e[34m] 70.00%\e[0m\c
+\e[34m\rWriting: [\e[0m==================================================\e[34m] 100.00%\e[0m\c
+\e[32m
+Done\e[0m
+\e[34mVerifying write (May take time)\e[0m
+\e[34m\rReading: [\e[0m                                                  \e[34m] 0.00%\e[0m\c
+\e[34m\rReading: [\e[0m============                                      \e[34m] 24.00%\e[0m\c
+\e[34m\rReading: [\e[0m=======================                           \e[34m] 45.00%\e[0m\c
+\e[34m\rReading: [\e[0m===================================               \e[34m] 70.00%\e[0m\c
+\e[34m\rReading: [\e[0m==================================================\e[34m] 100.00%\e[0m\c
+\e[32m
+Done\e[0m

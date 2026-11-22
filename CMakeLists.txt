@@ -196,7 +196,7 @@ find_path(HARFBUZZ_INCLUDE_DIR hb.h PATH_SUFFIXES harfbuzz)
 find_library(HARFBUZZ_LIBRARY harfbuzz)
 
 # Text storage, editing and settings: no SDL, no GPU.
-add_library(blit_core STATIC src/buffer.cpp src/editor.cpp src/config.cpp src/vim.cpp src/regex.cpp src/fuzzy.cpp src/finder.cpp src/keymap.cpp src/job.cpp src/threads.cpp src/buildscan.cpp src/buildvalidation.cpp src/buildmatch.cpp src/buildtools.cpp src/buildtests.cpp src/buildread.cpp)
+add_library(blit_core STATIC src/buffer.cpp src/editor.cpp src/config.cpp src/vim.cpp src/regex.cpp src/fuzzy.cpp src/finder.cpp src/keymap.cpp src/job.cpp src/threads.cpp src/buildscan.cpp src/buildvalidation.cpp src/buildmatch.cpp src/buildtools.cpp src/buildtests.cpp src/buildprogress.cpp src/buildread.cpp)
 target_include_directories(blit_core PUBLIC src)
 target_link_libraries(blit_core PUBLIC Threads::Threads)
 
@@ -415,6 +415,8 @@ if(BLIT_DEV)
     # Vulkan's and Metal's validation messages as problems, and the spec's statements of VUIDs.
     add_test(NAME validation COMMAND sh ${CMAKE_SOURCE_DIR}/tests/validation.sh $<TARGET_FILE:blit>)
     add_test(NAME buildtools COMMAND sh ${CMAKE_SOURCE_DIR}/tests/buildtools.sh $<TARGET_FILE:blit>)
+    # How far a flash or an FPGA's load has got, from the engines' output replayed (tests/replay.sh).
+    add_test(NAME progress COMMAND sh ${CMAKE_SOURCE_DIR}/tests/progress.sh $<TARGET_FILE:blit>)
     add_test(NAME problems COMMAND sh ${CMAKE_SOURCE_DIR}/tests/problems.sh $<TARGET_FILE:blit>)
     add_test(NAME markdown COMMAND sh ${CMAKE_SOURCE_DIR}/tests/markdown.sh $<TARGET_FILE:blit>)
     # A notebook's view beside its script (skipped with no python3 to write the notebooks).

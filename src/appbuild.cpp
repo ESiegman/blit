@@ -96,6 +96,12 @@ struct App::BuildUi {
     std::string summary;
     std::unordered_map<std::string, std::vector<BuildScan::SizeUsed>> sizes;
     std::vector<BuildScan::SizeUsed> sizes_before;
+    // How far an engine the run drives has got (flashing, an FPGA's load:
+    // buildprogress.cpp), for the Run button and the task's row while it
+    // runs; what it came to goes before the outcome's words (said) in the
+    // summary.
+    BuildScan::Progress progress;
+    std::string said;
     // A file read for problems (build_read), on a thread of its own, and
     // what it gave; the file the problems are from, once taken.
     struct Read {
@@ -514,6 +520,8 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     u.problems.clear();  // (the last run's go: this one's come as it goes)
     u.groups.clear();
     u.summary.clear();
+    u.progress = {};
+    u.said.clear();
     u.sizes_before.clear();
     u.read_from.clear();
     build_unmark();  // (and from the text)
@@ -672,11 +680,24 @@ void App::build_outcome(u64 doc, std::vector<BuildScan::TestResult> results, con
     if (doc != u.doc || u.last_key.empty()) return;
     if (outcome) {
         if (!outcome->sizes.empty()) u.sizes[u.last_key] = outcome->sizes;
-        u.summary = BuildScan::summary_of(*outcome, &u.sizes_before);
+        u.said = BuildScan::summary_of(*outcome, &u.sizes_before);
+        u.summary = u.progress.summary + (u.progress.summary.empty() || u.said.empty() ? "" : " \xC2\xB7 ") + u.said;
         ++build_gen_;
         dirty_ = true;
     }
     if (!results.empty()) test_output(u.last_name, u.last_key, results);
+}
+
+// How far an engine the run drives has got, as its output says (told only
+// when the stage, its percent or the stages done change): the Run button
+// and the task's row are drawn again; at the end, what it came to.
+void App::build_progress(u64 doc, const BuildScan::Progress& p) {
+    BuildUi& u = *buildui_;
+    if (doc != u.doc) return;
+    u.progress = p;
+    u.summary = p.summary + (p.summary.empty() || u.said.empty() ? "" : " \xC2\xB7 ") + u.said;
+    ++build_gen_;
+    dirty_ = true;
 }
 
 const std::vector<BuildProblem>& App::build_problems() const { return buildui_->problems; }
@@ -963,6 +984,7 @@ void App::build_panel_draw(TextBox& box, bool focused) {
         if (!u.last_key.empty() && task_key(t) == u.last_key) {
             bool said = true;
             if (u.running) after = "running\xE2\x80\xA6";
+            if (u.running && (!u.progress.stage.empty() || !u.progress.done.empty())) after = BuildScan::progress_words(u.progress, true);  // ("Erase \xE2\x9C\x93 \xC2\xB7 Program 62% 25.4/41.2 KB")
             else if (u.last_status == 0) after = "done";
             else if (u.last_status > 0) after = "failed: exited with code " + std::to_string(u.last_status), in = ink::kError;
             else said = false;
@@ -1157,6 +1179,7 @@ std::string App::build_label() const {
         name = name.substr(0, at) + "\xE2\x80\xA6";
     }
     std::string label = u.running ? "\xE2\x96\xA0 Stop" : "\xE2\x96\xB6 " + name;
+    if (u.running && !u.progress.stage.empty()) label = "\xE2\x96\xA0 " + BuildScan::progress_words(u.progress, false);  // (an engine's stage: "Program 62% 25.4/41.2 KB")
     const int failed = build_failed();
     if (build_errors_) label += " \xC2\xB7 " + std::to_string(build_errors_) + (build_errors_ == 1 ? " error" : " errors");
     else if (failed) label += " \xC2\xB7 failed (exit " + std::to_string(failed) + ")";
@@ -1240,6 +1263,16 @@ std::string App::build_dump() {
     if (u.last_status >= 0) out += " (last: " + std::to_string(u.last_status) + ")";
     if (!u.summary.empty()) out += " (" + u.summary + ")";
     return out;
+}
+
+// The Run button's words, and the last run's task row's (as drawn), for the tests.
+std::string App::build_progress_dump() {
+    term_sync();
+    const BuildUi& u = *buildui_;
+    std::string row = u.running ? "running\xE2\x80\xA6" : u.last_status == 0 ? "done" : u.last_status > 0 ? "failed: exited with code " + std::to_string(u.last_status) : "";
+    if (u.running && (!u.progress.stage.empty() || !u.progress.done.empty())) row = BuildScan::progress_words(u.progress, true);
+    if (!row.empty() && !u.summary.empty()) row += " \xC2\xB7 " + u.summary;
+    return "button: " + build_label() + " | row: " + row;
 }
 
 void App::build_wait() {  // the build's program has ended, and the targets being listed, or a file being read for problems, are (60 s at most)

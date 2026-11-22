@@ -1446,6 +1446,8 @@ private:
     // And the tests' results it gave, for the Tests tab, and what it came to
     // (outcome, when that changed), for its task's row and the Run button.
     void build_outcome(u64 doc, std::vector<BuildScan::TestResult> results, const BuildScan::Outcome* outcome);
+    void build_progress(u64 doc, const BuildScan::Progress& p);  // (how far an engine the task runs has got: the Run button and its row)
+    std::string build_progress_dump();
     const std::vector<BuildProblem>& build_problems() const;
     std::string build_label() const;  // the Run button's words
     // A run that failed and whose output gave no error: its exit code (0:
