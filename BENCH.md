@@ -3251,6 +3251,28 @@ rounds, 2560x1600, against the build before it (56b78f3):
 
 The layout's p50 moved by 0.04 µs either way, as before; nothing else did.
 
+### Round 73: milestone 5a's first half, progress, tasks and the probe picker
+
+A flash's or FPGA load's progress on the Run button and its row (read on
+the terminal's thread, the line being redrawn too), .blit/tasks.json and
+long tasks with their time, the engine runner, the probe and port picker
+and the board object; and, found while putting them together, a stopped
+program's group ended with it and a command's key kept from a terminal's
+program. On a frame's path: the Run button's words and the Build tab's
+rows (a long task's time, a stage and percent), and one more test in a
+terminal's keys. Turn about, five rounds, 2560x1600, against the build
+before it (31f4873):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 15,958 / 57.08 µs / 2.25 µs | 16,016 / 57.04 µs / 2.25 µs |
+| Typing, everything on: the same, and the step | 17,527 / 49.79 µs / 3.54 µs / 1.96 µs | 17,473 / 49.83 µs / 3.62 µs / 1.92 µs |
+| Scrolling code-100m.txt, plain: the same | 17,566 / 52.21 µs / 0.88 µs | 17,551 / 52.12 µs / 0.83 µs |
+| Keys, plain: the same, and the step | 17,123 / 48.50 µs / 1.21 µs / 0.29 µs | 17,205 / 48.50 µs / 1.25 µs / 0.29 µs |
+
+Each moved by as much as the runs move among themselves, either way; none
+by more.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
