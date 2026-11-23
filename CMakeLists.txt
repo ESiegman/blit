@@ -317,6 +317,11 @@ target_sources(blit PRIVATE src/notify.cpp)
 target_sources(blit PRIVATE src/probes.cpp src/appprobe.cpp)
 # Flashing the board and programming an FPGA, and the Boards view.
 target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp)
+# The wave tab: a dump's rows and their values (waveview.cpp), and its lanes
+# in tiles and the workers that paint them (wavetile.cpp: the same pixels on
+# every system, as the diagrams' below).
+target_sources(blit PRIVATE src/waveview.cpp src/wavetile.cpp)
+set_source_files_properties(src/wavetile.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off;-fno-lto")
 # The diagrams' pictures (raster.cpp, diagram.cpp and the kinds' files) are the
 # same pixels on every system: no multiply and add fused into one, which
 # rounds once where two steps round twice, and which one processor does
