@@ -169,13 +169,20 @@ button: ▶ openFPGALoader · Loaded into SRAM in N s | row: done · Loaded into
 problems: 0
 EOF
 check "openFPGALoader on a pipe: into SRAM" "$expected"
-flash openFPGALoader openFPGALoader ofl-flash "progresswait:Program 45%;progressdump;$end"
+flash openFPGALoader openFPGALoader ofl-flash "progresswait:Program 38%;progressdump;$end"
 want <<'EOF'
-button: ■ Program 45% | row: Load ✓ · Erase ✓ · Program 45%
+button: ■ Program 38% | row: Load ✓ · Erase ✓ · Program 38%
 button: ▶ openFPGALoader · Flashed in N s, verified | row: done · Flashed in N s, verified
 problems: 0
 EOF
 check "openFPGALoader: into flash, verified" "$expected"
+flash openFPGALoader openFPGALoader ofl-flash-pipe "progresswait:Program 38%;progressdump;$end"
+want <<'EOF'
+button: ■ Program 38% | row: Load ✓ · Erase ✓ · Program 38%
+button: ▶ openFPGALoader · Flashed in N s, verified | row: done · Flashed in N s, verified
+problems: 0
+EOF
+check "openFPGALoader on a pipe: into flash, verified" "$expected"
 
 # picotool: "Loading into Flash: [====   ]  62%\r", the next drawn over it.
 flash picotool picotool picotool "progresswait:Program 62%;progressdump;$end"

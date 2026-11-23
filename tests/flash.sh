@@ -264,9 +264,9 @@ button: ▶ fw · Loaded into SRAM in N s | row: done · Loaded into SRAM in N s
 openFPGALoader -b basys3 --usb-serial-num 210183A8F2C1 build/top.bit
 EOF
 check "Basys 3: openFPGALoader into SRAM, the newest bitstream" "$expected"
-flash ofl-flash "command:Program the FPGA's flash;flashwait;progresswait:Program 45%;progressdump;$end"
+flash ofl-flash "command:Program the FPGA's flash;flashwait;progresswait:Program 38%;progressdump;$end"
 want <<'EOF'
-button: ■ Program 45% | row: Load ✓ · Erase ✓ · Program 45%
+button: ■ Program 38% | row: Load ✓ · Erase ✓ · Program 38%
 button: ▶ fw · Flashed in N s, verified | row: done · Flashed in N s, verified
 openFPGALoader -b basys3 --usb-serial-num 210183A8F2C1 -f --verify build/top.bit
 EOF

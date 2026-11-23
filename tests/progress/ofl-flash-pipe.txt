@@ -1,0 +1,62 @@
+# openFPGALoader v1.2.0 -b basys3 -f --verify with its output on a pipe (as
+# blit runs it), as it really printed it: the same board, bitstream and day
+# as ofl-flash.txt (no colour; the bars still redrawn with "\r").
+@pace 5
+write to flash
+Jtag frequency : requested 6.00MHz    -> real 6.00MHz   
+Open file build/top.bit DONE
+Parse file DONE
+Use: /usr/share/openFPGALoader/spiOverJtag_xc7a35tcpg236.bit.gz
+load program
+\rLoad SRAM: [==================================================] 100.00%
+
+Done
+Shift IR 35
+ir: 1 isc_done 1 isc_ena 0 init 1 done 1
+jtag_chain_len: 1
+SOJ version: 2.000000
+JEDEC ID: 0xc22016
+Detected: Macronix MX25L3233F 256 sectors size: 128Mb
+00000000 00000000 00000000 40
+start addr: 00000000, end_addr: 00220000
+\rErasing: [=====                                             ] 8.96%
+\rErasing: [===========                                       ] 20.90%
+\rErasing: [=================                                 ] 32.84%
+\rErasing: [=======================                           ] 44.78%
+\rErasing: [=============================                     ] 56.72%
+\rErasing: [===================================               ] 68.66%
+\rErasing: [=========================================         ] 80.60%
+\rErasing: [===============================================   ] 92.54%
+\rErasing: [==================================================] 99.07%
+\rErasing: [==================================================] 99.63%
+\rErasing: [==================================================] 100.00%
+
+Done
+\rWriting: [                                                  ] 0.00%
+\rWriting: [====                                              ] 6.34%
+\rWriting: [=======                                           ] 12.68%
+\rWriting: [==========                                        ] 19.02%
+\rWriting: [=============                                     ] 25.38%
+\rWriting: [================                                  ] 31.72%
+\rWriting: [====================                              ] 38.06%
+@hold a
+\rWriting: [=======================                           ] 44.40%
+\rWriting: [==========================                        ] 50.74%
+\rWriting: [=============================                     ] 57.09%
+\rWriting: [================================                  ] 63.43%
+\rWriting: [===================================               ] 69.77%
+\rWriting: [=======================================           ] 76.11%
+\rWriting: [==========================================        ] 82.45%
+\rWriting: [=============================================     ] 88.79%
+\rWriting: [================================================  ] 95.14%
+\rWriting: [==================================================] 100.00%
+
+Done
+Verifying write (May take time)
+\rReading: [===========                                       ] 21.19%
+\rReading: [======================                            ] 42.39%
+\rReading: [================================                  ] 63.60%
+\rReading: [===========================================       ] 84.81%
+\rReading: [==================================================] 100.00%
+
+Done
