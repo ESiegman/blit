@@ -98,10 +98,11 @@ check "a folder: it is the first of those opened lately now, and the start scree
 run "text:1;frame;lua:print(blit.workdir())"
 check "and it is the working directory" 'blit: ~/work/src'
 
-# A box opened over it (Go to file) ends on the edge of one of its rows,
-# so that no row shows half of itself under the box, at any size.
+# A box opened over it (Go to file, by its key there: Ctrl+P, its chord
+# on Linux, moves up the list) ends on the edge of one of its rows, so
+# that no row shows half of itself under the box, at any size.
 for size in 1000x700 1400x900 1600x1000; do
-    got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen $size --shot "$dir/shot.bmp" --script "workdir:$W;frame;command:Go to file;findedge" 2>&1 >/dev/null | tail -1)
+    got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen $size --shot "$dir/shot.bmp" --script "workdir:$W;frame;text:f;findedge" 2>&1 >/dev/null | tail -1)
     check "a box over it ends on a row's edge ($size)" 'edge 0'
 done
 
