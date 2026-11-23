@@ -733,12 +733,25 @@ if [ -x "$fakedap" ]; then
     check "Linux: else gdb -i dap (the environment an object, merged with the configuration's)" \
         'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; gdb -q -i dap ;; {"program":"@/fake/proj/prog","args":["one"],"cwd":"@/fake/proj","env":{"FAKE_ENV":"yes","MORE":"1"},"stopAtBeginningOfMainSubprogram":true}'
     linux 13.2 no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
-    check "Linux: a gdb older than 14 is no debugger blit can use" 'idle error: no debugger: install lldb, or gdb 14 or newer ;; '
+    check "Linux: a gdb older than 14 is no debugger blit can use" 'idle error: gdb 13 is too old to be a debugger blit can use: 14 or newer speaks its protocol, and there is no lldb-dap ;; '
+    # (No debugger installed: which, and the machine, named.)
+    case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+    linux "" no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
+    check "Linux: neither lldb-dap nor gdb installed: said" "idle error: No debugger: neither lldb-dap nor gdb is installed on $this ;; "
     conf '{ "adapter": "gdb" }'
     linux 15.1 yes "workdir:$D;runconfdump;key:F5;debugwait:stopped;debugdump"
     check "debug.adapter gdb: gdb, though lldb-dap is there" 'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; gdb -q -i dap'
     linux 12.1 yes "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
     check "debug.adapter gdb, and it is too old" 'idle error: gdb 12 is too old to be a debugger blit can use: 14 or newer speaks its protocol ;; '
+    linux "" yes "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
+    check "debug.adapter gdb, and it is not installed" "idle error: gdb is not installed on $this ;; "
+    conf '{ "adapter": "lldb-dap" }'
+    linux 15.1 no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
+    check "debug.adapter lldb-dap, and it is not installed" "idle error: lldb-dap is not installed on $this ;; "
+    conf '{ "adapter": "arm-none-eabi-gdb -i dap" }'
+    linux 15.1 no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
+    check "debug.adapter a command line whose program is not installed" "idle error: arm-none-eabi-gdb is not installed on $this ;; "
+    conf '{ "adapter": "gdb" }'
 
     # Restart where the debugger cannot (lldb-dap says it can only once it has
     # launched; the stand-in does not): the session ended and begun again,

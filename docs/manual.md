@@ -2621,6 +2621,10 @@ run configuration's `debug.adapter` asks for one or the other, below),
 and debugpy for a `.py` program, run
 with the [project's Python](#the-projects-python) (the program's
 folder's: its project's or subproject's), which runs the program too.
+Where none is installed on the program's machine, starting says which
+(`No debugger: neither lldb-dap nor gdb is installed on this Mac`, or
+`arm-none-eabi-gdb is not installed on lab` for a `debug.adapter` of
+another, or the Python or uv a `.py` program's adapter needs).
 Where that Python has no debugpy of its own, blit fetches its own copy
 the first time one is needed (debugpy's wheel from PyPI, at the version
 blit names, checked against its SHA-256, its Python files only) into

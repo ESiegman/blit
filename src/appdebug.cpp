@@ -30,6 +30,7 @@
 #include "fsio.hpp"
 #include "highlight.hpp"
 #include "look.hpp"
+#include "missing.hpp"
 #include "probes.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
@@ -65,6 +66,9 @@ void light_row(TextBox& box, u32 row, bool focused) {
     for (u32 c = 0; c < box.cols; ++c) box.cells[static_cast<size_t>(row) * box.cols + c] |= kCellHover;
 }
 
+// What native() says, then the debuggers it found none of, when it found none.
+constexpr std::string_view kNoDebugger = "blit-no-debugger: ";
+
 // The debugger for a machine, chosen there: Xcode's lldb-dap on a Mac;
 // lldb-dap where there is one elsewhere, else gdb (14 and later speak the
 // protocol: gdb -i dap); debugpy for Python. A program with HIP's code for
@@ -89,9 +93,26 @@ std::string native(std::string_view want) {
     const std::string gdb =
         "v=$(gdb --version 2>/dev/null | sed -n '1s/.* \\([0-9][0-9]*\\)\\..*/\\1/p'); "
         "if [ \"${v:-0}\" -ge 14 ] 2>/dev/null; then echo 'blit-debugger: gdb' >&2; command -v stdbuf >/dev/null 2>&1 && exec stdbuf -oL gdb -q -i dap; exec gdb -q -i dap; fi; ";
-    if (want == "lldb-dap") return mac + lldb + "echo 'no lldb-dap here' >&2; exit 127";
-    if (want == "gdb") return rocm + gdb + "if [ -n \"$v\" ]; then echo \"gdb $v is too old to be a debugger blit can use: 14 or newer speaks its protocol\" >&2; else echo 'no gdb here' >&2; fi; exit 127";
-    return mac + rocm + lldb + gdb + "echo 'no debugger: install lldb, or gdb 14 or newer' >&2; exit 127";
+    const std::string old = "echo \"gdb $v is too old to be a debugger blit can use: 14 or newer speaks its protocol";
+    if (want == "lldb-dap") return mac + lldb + "echo '" + std::string(kNoDebugger) + "lldb-dap' >&2; exit 127";
+    if (want == "gdb") return rocm + gdb + "if [ -n \"$v\" ]; then " + old + "\" >&2; else echo '" + std::string(kNoDebugger) + "gdb' >&2; fi; exit 127";
+    return mac + rocm + lldb + gdb + "if [ -n \"$v\" ]; then " + old + ", and there is no lldb-dap\" >&2; else echo '" + std::string(kNoDebugger) + "lldb-dap gdb' >&2; fi; exit 127";
+}
+
+// Why the debugger did not start, from the last of what it (or the shell
+// that was to start it) said: the debugger native() found none of, or the
+// program a shell could not find (a debug.adapter's, debugpy's Python or
+// uv), named with the machine (`remote`: "ssh://host", or "" here).
+std::string debugger_missing(std::string_view errors, const std::string& remote) {
+    const std::string host = remote.substr(std::min(remote.size(), remote.find("://") + 3));
+    if (const size_t at = errors.rfind(kNoDebugger); at != std::string_view::npos) {
+        std::string_view names = errors.substr(at + kNoDebugger.size());
+        names = names.substr(0, names.find('\n'));
+        if (names == "lldb-dap gdb") return "No debugger: neither lldb-dap nor gdb is installed on " + machine_name(host);
+        return not_installed(names, host);
+    }
+    if (const std::string program = shell_not_found(errors); !program.empty()) return not_installed(program, host);
+    return {};
 }
 // (debugpy's adapter is run with the project's Python, here or there, and
 // starts the program with the same: App::py_adapter, apppython.cpp.)
@@ -2030,6 +2051,7 @@ void App::debug_sync_session(bool* stopped) {
     if (u.dap && u.dap->ended()) {  // the debugger itself went
         if (u.state == DebugUi::kStarting || u.exit_code < 0) {
             std::string why = u.dap->errors();
+            const std::string missing = debugger_missing(why, u.remote);
             if (const size_t said = why.find(kGdbSays); said != std::string::npos) why.erase(said, kGdbSays.size() + 1);  // (with its new line)
             while (!why.empty() && (why.back() == '\n' || why.back() == '\r')) why.pop_back();
             if (const size_t nl = why.rfind('\n'); nl != std::string::npos) why = why.substr(nl + 1);
@@ -2039,6 +2061,7 @@ void App::debug_sync_session(bool* stopped) {
                 const std::string py = python_named(u.remote.empty() ? u.python : why.substr(0, why.find(": ")), build_root());
                 why = "debugpy is not installed for " + py + (py.starts_with("uv run") ? " (uv add --dev debugpy)" : "") + py_debugpy_why(u.remote);
             }
+            if (!missing.empty()) why = missing;
             if (u.error.empty() && !why.empty()) u.error = why;
         }
         debug_end();
