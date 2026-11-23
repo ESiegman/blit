@@ -934,17 +934,25 @@ std::string App::picture_frames(int ms) {
     const u64 until = now_ns() + static_cast<u64>(std::max(0, ms)) * 1'000'000ull;
     const u64 before = frames_;
     u64 woken = 0;
+    std::string what;  // (what woke it, when anything did: each event's type, and a user event's code, which says whose)
+    auto note = [&](const SDL_Event& e) {
+        char buf[32];
+        if (e.type == SDL_EVENT_USER) std::snprintf(buf, sizeof buf, "user %d", e.user.code);
+        else std::snprintf(buf, sizeof buf, "0x%x", static_cast<unsigned>(e.type));
+        what += (what.empty() ? "" : ", ") + std::string(buf);
+    };
     while (now_ns() < until) {
         SDL_Event e;
         if (SDL_PollEvent(&e)) {
             ++woken;
+            note(e);
             handle(e);
-            while (SDL_PollEvent(&e)) handle(e);
+            while (SDL_PollEvent(&e)) note(e), handle(e);
         }
         if (dirty_) frame();
         SDL_Delay(1);
     }
-    return std::to_string(frames_ - before) + " frames drawn, woken " + std::to_string(woken) + " times";
+    return std::to_string(frames_ - before) + " frames drawn, woken " + std::to_string(woken) + " times" + (what.empty() ? "" : " (" + what + ")");
 }
 
 // Waits until every picture asked for has been read (40 s at most: one on
