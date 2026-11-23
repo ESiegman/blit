@@ -79,7 +79,8 @@ looks "$here/markdown/headings.md"
 all=$got
 got=$(levels)
 check "headings: each level its own colour or style" "[#e06c75 b]One [#61afef b]Two [#e5c07b b]Three [#c678dd b]Four [#c678dd bi]Five [#c678dd i]Six "
-got=$(printf '%s\n' "$all" | grep -E '^\[#[0-9a-f]*\](━|─)' | cut -c1-12 | sort | uniq -c | tr -s ' ' | tr '\n' ',')
+# (The colour and the line's first character: a pattern, not cut -c, which counts bytes or characters by the locale.)
+got=$(printf '%s\n' "$all" | sed -n -E 's/^(\[#[0-9a-f]*\](━|─)).*/\1/p' | sort | uniq -c | tr -s ' ' | tr '\n' ',')
 check "headings: a heavy line under the first level in its colour, a light quiet one under the second" " 4 [#7f848e]─, 3 [#e06c75]━,"
 got=$(printf '%s\n' "$all" | grep -c '^\[#c678dd b\]Four with \[#c678dd bi\]emphasis\[#c678dd b\] and \[#98c379 b t1\]code$')
 check "headings: emphasis and code in one" "1"
