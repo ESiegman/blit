@@ -27,6 +27,7 @@ decision with its numbers.
 - [Markdown preview](#markdown-preview)
 - [Pictures](#pictures)
 - [PDFs](#pdfs)
+- [Waves](#waves)
 - [How it is fast](#how-it-is-fast)
 - [Layout](#layout)
 - [Shaders and GPU backends](#shaders-and-gpu-backends)
@@ -4034,6 +4035,88 @@ Enter tries it on the reading thread, and the tab says so if it does not
 open it. The password is not written anywhere, said in any message, kept
 in the session, or kept in memory once tried (its bytes are wiped).
 
+## Waves
+
+A simulation's dump (`.vcd`) opens in a tab of its own, as its waves, not
+its text: from Go to file, the file tree, a link or the command line. Its
+signals are listed down the left with their values at the cursor beside
+them; their waves run to the right under a ruler of times. The row at the
+bottom says the file, the stretch of time it covers, how many signals it
+has and how large it is, how much of it is read while it is being read,
+and how much time the view spans.
+
+The dump is read on a thread of its own (as fast as the disk gives it,
+about 600 MB a second), and what has arrived shows while the rest comes.
+Opened for the first time, the list is each scope's signals (up to 64)
+under the scope's name, a signal seen under another name (an alias, as
+`tb.clk` and `tb.u_cnt.clk`) once; a dump of one scope has no headings.
+
+| | |
+|---|---|
+| Pan a tenth / a screen | `h` `l` (or Left / Right) / `H` `L` (or Shift+Left / Shift+Right); the wheel sideways, or Shift+wheel |
+| Zoom in / out about the cursor | `=` (or `+`) / `-`; Cmd+wheel and a pinch about the mouse |
+| The whole run | `0` |
+| The next / previous row | `j` `k` (or Down / Up); the wheel scrolls the rows |
+| Move the row down / up | `J` / `K` |
+| The next / previous change of the row | `n` / `N` (a bus's next value; a bit of one opened, where that bit changes) |
+| Add a signal | `/`: every signal of the dump by its path, found as Go to file finds; Enter adds it after the row chosen (one listed already is chosen) |
+| A marker at the cursor / the cursor to a marker | `m` and a letter / `'` and the letter |
+| Choose a stretch of time | `v` from the cursor, then move it (`n`, `N`, `'`, a click); Esc lets go |
+| Zoom to it | `z` (with no stretch chosen: from the cursor to the last marker set) |
+| The row's next radix | `r` |
+| Open a bus into its bits, shut it; shut or open a group | Enter |
+| Choose rows / group them | `V`, then `j` `k`; `g` `G` makes a group of their signals (or of the row) |
+| Remove the row / undo a change to the rows | `d` `d` / `u` |
+| Copy the signal's path / its value at the cursor | `y` `y` / `y` `v` |
+| The cursor | a click on the waves (which chooses its row too); drag to move it |
+| Zoom to a stretch | drag along the ruler |
+
+Each of these is a command whose name begins "Waves:", so Command search
+(Cmd+Shift+P) finds them, with their keys; three are commands only:
+**Waves: name the row's values…** (`IDLE START DATA STOP` from 0 on, or
+`0=IDLE 4=DATA`, values in decimal, `0x` hex or `0b` binary), **Waves: the
+row in fixed point…** (`Q8.8` signed, `UQ4.12` unsigned, the two numbers
+adding up to the signal's width) and **Waves: rename the group…**.
+
+**Values.** One bit is `0`, `1`, `x` or `z`. A bus starts in hex (an
+integer signed, one bit binary), and `r` goes round hex, unsigned, signed,
+binary, octal, ASCII, the names given to its values, fixed point (once its
+Qm.n is given) and IEEE float (for 16, 32 and 64 bits), leaving out those
+it has not got. A digit wholly x or z is `x` or `z`, one partly so `X` or
+`Z`; in a radix with no digits of its own, a value with any x is `x`
+(all z: `z`). A value with no name given is written in hex. Reals and
+strings are written as the dump has them.
+
+**The waves.** A bit is a line high or low; z a dashed line through the
+middle (in the theme's information colour); x a band filled in the
+warning colour. A bus is a run of hexagons, each value written in its own
+when it has room. An event is a tick. Where two or more changes fall in
+one pixel, the row is a hatched band across its height (a fast clock seen
+from far off): the view is asked about once per pixel column, so drawing
+costs the same however many changes are under it. The **cursor** is a line
+in the accent colour, with its time at the top left; **markers** are
+lines in the hints' colour, named on the ruler's second row with how far
+each is from the cursor; a stretch being chosen is washed in the
+selection colour, and its length shown under the cursor's time.
+
+The waves are drawn in tiles of 1024 pixels across and 16 rows down, on
+two to four threads of their own: a tile drawn at another zoom stands in,
+stretched, until its sharp one comes, and panning moves tiles (the ones
+either side are drawn ahead). Tiles not drawn lately are let go past 128
+MB. The cursor and markers are drawn as lines over the tiles, so moving
+them draws no tile again. Nothing is drawn while nothing changes.
+
+**The view is kept** beside the project, in `.blit/waves/` of the folder
+worked in (or, for a dump outside it, of the dump's own folder), as
+`DUMP.json` (data, not Lua): the rows by their paths, groups, radixes,
+fixed points, the names given to values, markers, the cursor and the
+stretch on show. It is written once the view has been changed by hand,
+and it comes back when the dump is opened again; a row whose signal the
+dump no longer has is left out, and the bottom row says how many were.
+
+A dump on **another machine** is fetched whole while it is no larger than
+4 MB; larger ones are not shown yet (the tab says so).
+
 ## How it is fast
 
 **Text is never copied.** The file is memory mapped and the document is a
@@ -4515,6 +4598,11 @@ does not finish and takes all the memory the machine has.
   bytes a change of a one-bit signal, five or six of a 32-bit bus), up to
   `blit.opt.timeline.max_mb` (2048 MB): past that, reading stops, keeps
   what it read, and says how far into the run it got.
+- The wave tab: VCD only (not FST yet); a dump is not read again when its
+  file changes; one on another machine larger than 4 MB is not shown; a
+  bus wider than 64 bits has no fixed point, float or names of values
+  (hex); analog rows, colours a row and `*` `#` (the next time a row has
+  the value under the cursor) are not there yet.
 - Terminal: no ligatures. A screen with more than 32 text colours or 6
   background colours at once draws the rest in the nearest of those (5
   while a search's matches are lit). Its search (Cmd+F) looks at the lines
