@@ -3391,7 +3391,9 @@ pytest` of the [project's Python](#the-projects-python), so its
 grouped by build folder and by file, each with how its last run went: a
 tick, a cross with the failure's message, a dash for one skipped, a dot
 for one not run. Where none are found, the tab says what pytest (or the
-Python) last said.
+Python) last said. Where a build folder has been configured and ctest is
+not installed, the tab says so (`ctest is not installed on this Mac`),
+above pytest's tests when it found some.
 
 Enter runs the test chosen (a heading: all under it), **a** all of them,
 **f** the failed ones again, **d** debugs a CTest test (its own command,
