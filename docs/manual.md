@@ -2871,7 +2871,9 @@ a click still stops it), and the task's row the stages done before it
 stage or its percent changes. After, what it came to is kept on the row
 and the button: `Flashed 40.2 KB in 1.8 s, verified` (the tool's own time
 where it says one), `Loaded into SRAM in 2.1 s`, or, for a failed one,
-where it stopped. A failure is a problem with the tool's own words
+where it stopped. (The button has a third of the window at most: when
+the whole does not fit, it has the words before the time, `Flashed 40.2
+KB`.) A failure is a problem with the tool's own words
 (`OpenOCD init failed: open failed`, `JTAG init failed with: unable to
 open ftdi device`), placed at the program's name. Whose output it is
 comes from the task's command (or the command make echoes), and from the

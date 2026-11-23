@@ -63,9 +63,9 @@ flash() {
     printf '#!/bin/sh\nexec sh "%s" "%s"\n' "$here/replay.sh" "$here/progress/$3.txt" >"$B/$2"
     chmod +x "$B/$2"
     script=$(printf '%s' "$4" | sed -e "s#go:\([a-z]*\)#lua:io.open('$REPLAY_HOLD/\1','w'):close()#g")
-    got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$T;frame;buildrun:$1;$script" 2>&1 >/dev/null |
+    got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen ${width:-3000}x700 --shot "$dir/shot.bmp" --script "workdir:$T;frame;buildrun:$1;$script" 2>&1 >/dev/null |
         sed -e "s#$dir#~#g" -e "s/ in [0-9]*\\.[0-9] s/${timed:- in N s}/g")
-    timed=
+    timed= width=
 }
 end="go:a;go:b;buildwait;progressdump;scandump"
 
@@ -93,6 +93,15 @@ problems: 0
 EOF
 check "esptool v5 on a pipe: the same" "$expected"
 
+# A window too narrow for the whole summary on the Run button (a third of
+# it at most): its words before its time; the row keeps it whole.
+width=1600
+flash esptool esptool esptool5-pipe "$end"
+want <<'EOF'
+button: ▶ esptool · Flashed 170.5 KB | row: done · Flashed 170.5 KB in N s, verified
+problems: 0
+EOF
+check "a narrow window: the summary on the button without its time" "$expected"
 
 # esptool v4: "Writing at 0x00010000... (50 %)" after a \r, no newline.
 timed='&'
