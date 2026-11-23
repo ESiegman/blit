@@ -31,7 +31,7 @@ struct App::RemoteUi {
     struct Done {
         u64 doc = 0;
         std::string path;
-        int status = 0;  // as Remote::read; 6: a folder
+        int status = 0;  // as Remote::fetch; 6: a folder
         std::string bytes, error;
         i64 modified = 0;
         bool reload = false;
@@ -44,6 +44,9 @@ struct App::RemoteUi {
     std::deque<Job> jobs;
     std::vector<Done> done;
     size_t busy = 0;  // jobs taken and not done
+    // The document being read now, and what stops that (its tab closed).
+    u64 reading = 0;
+    std::stop_source reading_stop;
 
     // Saving. A save holds the pieces of the text as it was (their bytes are
     // the document's, and stay as they are while it is open); the saver copies
@@ -183,6 +186,8 @@ void App::remote_start() {
                 j = std::move(u->jobs.front());
                 u->jobs.pop_front();
                 ++u->busy;
+                u->reading = j.doc;
+                u->reading_stop = {};
             }
             RemoteUi::Done d{j.doc, j.path, 0, {}, {}, 0, j.reload, 0, j.compare};
             std::string there;
@@ -194,14 +199,22 @@ void App::remote_start() {
             } else if (RemoteStat st; j.reload && (!r->stat(there, &st) || st.kind != 1 || st.modified_ns == j.known)) {
                 keep = false;  // the same as when it was read
             } else {
-                constexpr u64 kMost = (1ull << 30) - 4096;  // (the connection drops a frame over 1 GiB: the reply, with its header, must fit)
-                d.status = r->read(there, kMost, &d.bytes, &d.modified);
+                // (A large one in parts, shown on the bottom row as it comes: it stops there, or when its tab closes, or blit quits.)
+                constexpr u64 kMost = (1ull << 30) - 4096;  // (an older agent's: a frame over 1 GiB drops the connection, and the reply, with its header, must fit)
+                std::stop_source halt;
+                {
+                    std::lock_guard lock(u->mu);
+                    halt = u->reading_stop;
+                }
+                const std::stop_callback quitting(stop, [halt]() mutable { halt.request_stop(); });
+                d.status = r->fetch(there, 0, ~0ull, kMost, &d.bytes, halt.get_token(), {}, &d.modified);
                 if (d.status == 2 && r->stat(there, &st) && st.kind == 2) d.status = 6;
             }
             d.known = j.known;
             {
                 std::lock_guard lock(u->mu);
                 --u->busy;
+                u->reading = 0;
                 if (keep) u->done.push_back(std::move(d));
             }
             wake();
@@ -387,6 +400,7 @@ void App::remote_forget(u64 doc) {
     if (!remote_) return;
     RemoteUi& u = *remote_;
     std::unique_lock lock(u.mu);
+    if (u.reading == doc) u.reading_stop.request_stop();  // (its text on its way: not wanted now)
     u.copied.wait(lock, [&] { return u.copying != doc; });
     for (RemoteUi::Save& s : u.saves)
         if (s.doc == doc && !s.pieces.empty()) {
@@ -773,6 +787,14 @@ void App::remote_sync() {
             continue;
         }
         if (!d->loading) continue;
+        if (x.status == kFetchStopped) {  // stopped from the bottom row: its tab goes, quietly
+            Pane* const focused = pane_;
+            pane_ = where;
+            tab_close(at, true);
+            pane_ = focused;
+            notify("Stopped reading " + x.path);
+            continue;
+        }
         if (x.status != 0 && session_dropped(x.doc, x.status == 5 ? x.error : x.status == 1 || x.status == 6 ? std::string() : "cannot read " + x.path)) {
             Pane* const focused = pane_;  // (a session's: it goes quietly if it is no longer there)
             pane_ = where;

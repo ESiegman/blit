@@ -237,6 +237,22 @@ check "a PDF on another machine" "pages.pdf: ready, 3 pages, page 1, zoom 74%"
 cp "$pics/quad.png" "$T/work/live.png"
 run 800x600 "remotewait;frame;imagewait;frame;imagedump;lua:blit.fs.write('$T/work/live.png', blit.fs.read('$pics/wide.png'));reload;imagewait;frame;imagedump" "ssh://box$T/work/live.png"
 check "a picture there written again: read again" "live.png: ready PNG 64x48 read 64x48 clear zoom 200% middle 0.50,0.50 ;; live.png: ready PNG 5000x20 read 4096x16 zoom 8% middle 0.50,0.50"
+# A large one there comes in parts, the status bar saying how much has come
+# (over a connection that brings 4 MB a second back from the host). It is
+# quad.png with 6 MB more in a chunk of its own, which readers pass over
+# (PNG, Third Edition, 5.3: a chunk is its length, type, data and the CRC of
+# type and data; 5.4: "blIt" is ancillary, private and safe to copy).
+perl -MCompress::Zlib -e 'local $/; open(my $i, "<:raw", $ARGV[0]) or die; my $png = <$i>; my $c = "blIt" . ("\0" x (6 << 20));
+    binmode STDOUT; print substr($png, 0, -12), pack("N", length($c) - 4), $c, pack("N", crc32($c)), substr($png, -12)' "$pics/quad.png" >"$T/work/large.png"
+cat >"$dir/slow-ssh.sh" <<EOF
+#!/bin/sh
+# tests/fake-ssh.sh, with what comes back from the host coming at \$BLIT_NARROW bytes a second.
+"$here/fake-ssh.sh" "\$@" | exec perl -e '\$| = 1; my \$rate = \$ENV{BLIT_NARROW}; while ((my \$n = sysread(STDIN, my \$b, 16384)) > 0) { syswrite(STDOUT, \$b) or exit 0; select(undef, undef, undef, \$n / \$rate) }'
+EOF
+chmod +x "$dir/slow-ssh.sh"
+got=$(BLIT_SSH="$dir/slow-ssh.sh" BLIT_NARROW=4000000 "$blit" --offscreen 800x600 --shot "$dir/shot.bmp" --script "remotewait;frame;fetchwait:1000000;frame;statusdump;imagewait;frame;imagedump;remoteframes" "ssh://box$T/work/large.png" 2>&1 >/dev/null |
+    sed -e "s#$T#~#g" -e 's/⇄ //' -e 's/loading [0-9]* of/loading N of/' -e 's/ at [-0-9,]*$//' | join)
+check "a large picture there: in parts, said as it comes" "box ~/work/large.png loading N of 7 MB… | ;; large.png: ready PNG 64x48 read 64x48 clear zoom 200% middle 0.50,0.50 ;; box: no frame over 1 MB"
 cp "$pics/pages.pdf" "$T/work/live.pdf"
 run 1200x900 "remotewait;frame;pdfwait;frame;pdfdump;lua:blit.fs.write('$T/work/live.pdf', blit.fs.read('$pics/text.pdf'));reload;pdfwait;frame;pdfwait;pdfdump" "ssh://box$T/work/live.pdf"
 got=$(printf '%s' "$got" | sed -e 's/, zoom.*;;/ ;;/' -e 's/, zoom.*//')
