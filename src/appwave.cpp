@@ -741,7 +741,7 @@ void App::wave_layout(FrameDesc& fd) {
                 } else {
                     c = put(v.box, font, bottom, c + 3, (wv.samples ? "samples " : "") + wv.time_text(v.now.start) + " to " + wv.time_text(v.now.end), ink::kMuted);
                     if (wv.samples && v.now.done && !wv.windows.empty()) c = put(v.box, font, bottom, c + 3, std::to_string(wv.windows.size() + 1) + " windows", ink::kMuted);
-                    c = put(v.box, font, bottom, c + 3, std::to_string(wv.vars.size()) + " signals", ink::kMuted);
+                    c = put(v.box, font, bottom, c + 3, std::to_string(wv.vars.size()) + (wv.vars.size() == 1 ? " signal" : " signals"), ink::kMuted);
                     if (v.load && v.load->size()) c = put(v.box, font, bottom, c + 3, size_text(v.load->size()), ink::kMuted);
                     if (!v.now.done) c = put(v.box, font, bottom, c + 3, reading(v), ink::kMuted);
                     if (!err.empty() && err != "stopped") c = put(v.box, font, bottom, c + 3, fit_text("Stopped: " + err, cols > c + 3 + edge ? cols - c - 3 - edge : 1), ink::kError);
