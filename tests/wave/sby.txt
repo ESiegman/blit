@@ -1,0 +1,10 @@
+sby-bmc.vcd and sby-cover.vcd: SymbiYosys's traces, written by
+yosys-smtbmc (Yosys 0.71+77) for SymbiYosys at git b21f778 (16 Nov 2026)
+with z3 (pip's z3-solver, z3 5.4.1), on Arch Linux (x86-64), 23 Nov 2026,
+running `sby -f counter.sby` on make/formal (a 4-bit counter asserted
+never to reach 5, and covered reaching 3; tests/sim/sby.txt has the
+run's output). sby-bmc.vcd is the bmc task's counterexample
+(counter_bmc/engine_0/trace.vcd: the assertion fails at step 7);
+sby-cover.vcd the cover task's trace (counter_cover/engine_0/trace0.vcd).
+What they show: Yosys-SMTBMC's header, an integer step counter and an
+event for the clock outside any scope, a step every 10 ns.

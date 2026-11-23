@@ -8,6 +8,7 @@
 #include "json.hpp"
 #include "probes.hpp"
 #include "remote.hpp"
+#include "simrun.hpp"
 
 namespace blit {
 
@@ -397,6 +398,7 @@ std::vector<BuildTask> read_tasks(const std::string& root, std::string* problem)
             *problem = std::string(kTasks) + ": " + t.name + "'s kind is one of " + kinds;
             t.kind.clear();
         }
+        if (t.kind.empty() && !sim_tool(command).empty()) t.kind = "simulation";  // (it runs Verilator, Icarus or SymbiYosys: simrun.hpp)
         // What it runs: the command as written (a line for sh), then its
         // arguments, each one word whatever is in it.
         std::string cmd;

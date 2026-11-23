@@ -2,7 +2,9 @@
 # Waveforms: the timeline model and the VCD, FST and ILA CSV readers
 # (src/timeline.hpp, src/wave.hpp), through blit_timeline_test beside blit.
 # Real dumps from Icarus, Verilator, Yosys and pyvcd (tests/wave) are read
-# whole, in two pieces at every byte, a byte at a time and cut short, and
+# whole, in two pieces at every byte, a byte at a time and cut short,
+# settled where a piece ends and read on, followed on a thread as the file
+# grows and written again (and FSTs still being written said), and
 # checked against what their text says and against answers found by brute
 # force; Icarus's and Verilator's FST files against the VCD of the same run,
 # cut short and damaged at every byte; FST files written by libfst's own

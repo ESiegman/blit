@@ -16,3 +16,9 @@ shows, beside what verilator.vcd does: the same changes, under
 SystemVerilog's kinds (logic, and the parameter as a parameter, where the
 VCD says wire); ranges after a space ("count [7:0]"); directions on the
 counter's ports; a hierarchy packed with LZ4; no $dumpoff (as in its VCD).
+
+verilator-writing.fst: the first 4096 bytes of an FST Verilator 5.054
+(--binary --timing --trace-fst) was still writing, caught 1 s into a run
+of a 16-bit counter stepped every 10 ns, forever, on Arch Linux (x86-64),
+23 Nov 2026 (the file was 23.7 MB then): libfstwriter's header, 330
+bytes of zeros until the file is closed, then its first block of changes.

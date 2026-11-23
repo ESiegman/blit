@@ -1,0 +1,18 @@
+[tasks]
+bmc
+cover
+
+[options]
+bmc: mode bmc
+cover: mode cover
+depth 12
+
+[engines]
+smtbmc z3
+
+[script]
+read -formal counter.v
+prep -top counter
+
+[files]
+counter.v

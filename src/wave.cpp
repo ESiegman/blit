@@ -274,12 +274,27 @@ bool VcdReader::feed(std::string_view bytes) {
         std::unique_lock lock(w_->mu);
         run(bytes.substr(0, n), false);
         w_->reached = now_;
+        w_->settled = false;
         bytes.remove_prefix(n);
     }
     return !stopped_;
 }
 
 static void ila_marks(Wave& w);
+
+void VcdReader::settle() {
+    std::unique_lock lock(w_->mu);
+    if (stopped_) return;
+    u64 changes = 0;
+    for (Lane& l : w_->lanes) {
+        if (!shrunk_) l.shrink();
+        changes += l.size();
+    }
+    shrunk_ = true;
+    w_->changes = changes;
+    w_->reached = now_;
+    w_->settled = true;
+}
 
 void VcdReader::finish() {
     std::unique_lock lock(w_->mu);
@@ -301,6 +316,7 @@ void VcdReader::finish() {
     if (w_->samples) ila_marks(*w_);
     w_->reached = w_->end;
     w_->done = true;
+    w_->settled = false;
     stopped_ = true;
 }
 
@@ -732,9 +748,9 @@ void VcdReader::dumpoff(bool on) {
     else if (on && !off.empty() && off.back().second == ~0ull) off.back().second = now_;
 }
 
-WaveLoad::WaveLoad(std::shared_ptr<Wave> into, ReadAt read_at, u64 size, u64 max_bytes, std::function<void()> notify)
+WaveLoad::WaveLoad(std::shared_ptr<Wave> into, ReadAt read_at, u64 size, u64 max_bytes, std::function<void()> notify, Follow follow)
     : wave_(std::move(into)), size_(size), notify_(std::move(notify)) {
-    thread_ = std::jthread([this, read_at = std::move(read_at), max_bytes](std::stop_token stop) { run(stop, read_at, max_bytes); });
+    thread_ = std::jthread([this, read_at = std::move(read_at), max_bytes, follow](std::stop_token stop) { run(stop, read_at, max_bytes, follow); });
 }
 
 WaveLoad::~WaveLoad() {
@@ -742,8 +758,34 @@ WaveLoad::~WaveLoad() {
     if (thread_.joinable()) thread_.join();
 }
 
+void WaveLoad::stop() { thread_.request_stop(); }
+
 void WaveLoad::wait() {
     if (thread_.joinable()) thread_.join();
+}
+
+void WaveLoad::more() {
+    {
+        std::lock_guard l(more_mu_);
+        ++asked_;
+    }
+    more_cv_.notify_all();
+}
+
+bool WaveLoad::waiting() const {
+    std::lock_guard l(more_mu_);
+    return waiting_.load(std::memory_order_relaxed) && asked_ == 0;
+}
+
+// Until more() has been called since it was last looked at (true), or the
+// load is stopped (false). No timer: the thread sleeps until one of them.
+bool WaveLoad::wait_more(std::stop_token stop) {
+    std::unique_lock l(more_mu_);
+    waiting_.store(true, std::memory_order_release);
+    const bool more = more_cv_.wait(l, stop, [&] { return asked_ != 0; });
+    asked_ = 0;
+    waiting_.store(false, std::memory_order_release);
+    return more;
 }
 
 bool WaveLoad::local_file(const std::string& path, ReadAt* out, u64* size, std::string* error) {
@@ -768,7 +810,25 @@ bool WaveLoad::local_file(const std::string& path, ReadAt* out, u64* size, std::
     return true;
 }
 
-void WaveLoad::run(std::stop_token stop, ReadAt read_at, u64 max_bytes) {
+namespace {
+
+// A followed file's bytes kept to know it again by: its first, and the last read.
+constexpr size_t kHeadKept = 4096, kTailKept = 64;
+
+// Whether the file has these bytes at this offset still.
+bool still(const WaveLoad::ReadAt& read_at, u64 at, const std::string& want) {
+    std::string got(want.size(), '\0');
+    for (size_t have = 0; have < got.size();) {
+        const i64 n = read_at(at + have, got.data() + have, got.size() - have);
+        if (n <= 0) return false;
+        have += static_cast<size_t>(n);
+    }
+    return got == want;
+}
+
+}  // namespace
+
+void WaveLoad::run(std::stop_token stop, ReadAt read_at, u64 max_bytes, Follow follow) {
     thread_soon(Soon::kWaitedFor);
     // (Which reader: VCD's, or an ILA capture's CSV, as the first bytes say.)
     std::unique_ptr<VcdReader> vcd;
@@ -778,10 +838,14 @@ void WaveLoad::run(std::stop_token stop, ReadAt read_at, u64 max_bytes) {
         decltype(csv)& c;
         bool feed(std::string_view s) { return c ? c->feed(s) : v->feed(s); }
         void finish() { c ? c->finish() : v->finish(); }
+        void settle() {
+            if (v) v->settle();
+        }
     } reader{vcd, csv};
     std::vector<char> buf(4 << 20);
     u64 off = 0, told = 0;
-    bool header_told = false;
+    bool header_told = false, waited = false;
+    std::string head, tail;
     while (!stop.stop_requested()) {
         const i64 n = read_at(off, buf.data(), buf.size());
         if (n < 0) {
@@ -790,14 +854,41 @@ void WaveLoad::run(std::stop_token stop, ReadAt read_at, u64 max_bytes) {
             if (wave_->error.empty()) wave_->error = std::string("could not read it: ") + std::strerror(e);
             break;
         }
-        if (n == 0) break;
+        if (n == 0) {
+            // (The header is set on this thread: it is read here without the lock.
+            // An ILA capture, VCD or CSV, is written whole, and not followed: it
+            // finishes, which finds its triggers; a file still empty is a VCD to
+            // be, waited for.)
+            if (follow == Follow::kNo || (follow == Follow::kAfterHeader && !wave_->header) || csv || wave_->samples) break;
+            if (!vcd) vcd = std::make_unique<VcdReader>(wave_.get(), max_bytes);
+            reader.settle();
+            if (notify_) notify_();
+            if (!wait_more(stop)) break;
+            if (!still(read_at, 0, head) || !still(read_at, off - tail.size(), tail)) {
+                rewritten_.store(true, std::memory_order_release);
+                break;
+            }
+            waited = true;
+            continue;
+        }
+        const std::string_view got(buf.data(), static_cast<size_t>(n));
         if (!vcd && !csv) {
-            if (dump_kind(std::string_view(buf.data(), static_cast<size_t>(n))) == DumpKind::kIlaCsv) csv = std::make_unique<IlaCsvReader>(wave_.get(), max_bytes);
+            if (dump_kind(got) == DumpKind::kIlaCsv) csv = std::make_unique<IlaCsvReader>(wave_.get(), max_bytes);
             else vcd = std::make_unique<VcdReader>(wave_.get(), max_bytes);
+        }
+        if (waited) {
+            waited = false;
+            grown_.fetch_add(1, std::memory_order_relaxed);
+        }
+        if (follow != Follow::kNo) {
+            if (head.size() < kHeadKept) head.append(got.substr(0, kHeadKept - head.size()));
+            tail.append(got.substr(got.size() > kTailKept ? got.size() - kTailKept : 0));
+            if (tail.size() > kTailKept) tail.erase(0, tail.size() - kTailKept);
         }
         off += static_cast<u64>(n);
         read_.store(off, std::memory_order_relaxed);
-        const bool more = reader.feed(std::string_view(buf.data(), static_cast<size_t>(n)));
+        if (off > size_.load(std::memory_order_relaxed)) size_.store(off, std::memory_order_relaxed);
+        const bool more = reader.feed(got);
         if (notify_) {
             const u64 now = now_ns();
             if ((!header_told && wave_->header) || now - told >= 100'000'000) {

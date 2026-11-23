@@ -442,8 +442,9 @@ first), going round at the ends of the file.
 **The editor's daily commands** have keys of their own in Normal mode, `g`
 and a capital that Vim and Neovim leave free: `gS` stages the change at the
 cursor (Git), `gL` shows the file's history (Git), `gX` runs the tests,
-`gC` reconnects to the servers that dropped, and `gB` flashes the board
-(see [Flashing the board](#flashing-the-board)). The command search shows these
+`gC` reconnects to the servers that dropped, `gB` flashes the board
+(see [Flashing the board](#flashing-the-board)), and `gW` opens the last
+simulation run's waves (see [Waves](#waves)). The command search shows these
 keys beside the commands; the other commands are there, and `blit.map`
 gives any of them a key (or takes one of these over).
 
@@ -3092,7 +3093,11 @@ are the Build tab's first tasks, under **Tasks**:
 - `long`: see below.
 - `kind`: the kind of work it is: `flash`, `program` (an FPGA),
   `synthesis`, `simulation` or `gpu-profile`, shown on its row before its
-  command (and given to `BuildStart` and `BuildDone`).
+  command (and given to `BuildStart` and `BuildDone`). A task whose
+  command runs Verilator (`verilator --binary`, or the program it built,
+  `obj_dir/Vtop`), Icarus (`iverilog`, `vvp`) or SymbiYosys (`sby`) is a
+  `simulation` without saying so; as a run of one ends, the waves it
+  wrote open (see [Waves](#waves)).
 
 A file that is not JSON, a task without its `label` or `command`, or a
 `kind` that is none of those is said, as for `run.json`.
@@ -4165,6 +4170,47 @@ a time is not a target.
 
 A dump on **another machine** is fetched whole while it is no larger than
 4 MB; larger ones are not shown yet (the tab says so).
+
+**Run again.** A dump written again while its tab is open (the
+simulation run again) is read again, and the view stays as it was: the
+rows, groups and radixes, the names given to values, the markers, the
+cursor, and the stretch on show (or the whole run, if that was on show,
+to the new run's end). The run on show stays until the new one's
+signals are known; a row whose signal the new run has not got is left
+out, and the bottom row says how many were. blit hears of it as it
+hears of any file changed in the folder worked in (one on another
+machine once a task or a debug session there ends, or blit comes back to
+the front, its time stamp asked there).
+
+**A simulation still writing its dump.** A VCD is shown as far as it has
+been written, and what is added to it is read as it comes (the bottom
+row says "Following it as it grows"); with the whole run on show, the
+view follows its end. It is read only while its tab is on show and the
+window is not hidden or covered, and only when the file has changed
+(about three times a second at most, as the folder's changes are
+gathered): behind another tab, it is read once it is in front again;
+when nothing is written, nothing is read and nothing drawn. An FST
+cannot be read until its writer has closed it (libfst finds it only
+then): the tab says it is still being written, and shows it once it is
+closed; a run of it again leaves the last run on show until then.
+
+**Simulation runs.** As a task's run of Verilator, Icarus or SymbiYosys
+ends (or one of kind `simulation`, see [The folder's own
+tasks](#the-folders-own-tasks)), the dump it wrote opens in a wave tab
+beside the run's terminal, the keyboard staying where it was, or, open
+already, is read again. Which dump, best first: the one its output names
+(Icarus's `VCD info: dumpfile X opened for output.`, SymbiYosys's
+`counterexample trace: X` for a failed assertion, before its `cover
+trace: X`); one its command names (a word ending `.vcd` or `.fst`, as
+`+dumpfile=x.vcd` or `'-DDUMP="x.vcd"'`, or `$dumpfile("x.vcd")` in a
+Verilog or SystemVerilog source it names); else the newest `.vcd` or
+`.fst` under the folder it ran in (six folders deep, not hidden ones).
+Each only if it was written during the run: a run that wrote none opens
+nothing. On another machine the folder is looked through there.
+
+**Open the last run's waves** (`gW` in Normal mode, and in a wave tab;
+Command search) opens the dump the last simulation run wrote again, or,
+with no run yet, the newest dump in the project; with none, it says so.
 
 ## How it is fast
 

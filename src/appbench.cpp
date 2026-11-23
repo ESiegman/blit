@@ -1467,8 +1467,16 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s\n", pdf_dump_more(verb.substr(3)).c_str());
         } else if (verb == "wavewait") {  // the dumps read, their views read and their tiles on show painted (20 s at most); wavewait:rows, the tab's rows made
             wave_wait(arg == "rows");
-        } else if (verb == "wavedump") {  // wavedump[:tiles|:at:ROW,TIME|:clip], the wave tab in front (appwave.cpp says what each prints)
+        } else if (verb == "wavedump") {  // wavedump[:tiles|:at:ROW,TIME|:clip|:load], the wave tab in front (appwave.cpp says what each prints)
             std::fprintf(stderr, "%s\n", wave_dump(arg).c_str());
+        } else if (verb == "waveframes") {  // waveframes:MS, MS milliseconds of the main loop: frames drawn, and bytes of the wave tab's dump read
+            std::fprintf(stderr, "%s\n", wave_frames(std::atoi(arg.c_str())).c_str());
+        } else if (verb == "simwait") {  // the dumps of the simulation runs that ended looked for (20 s at most), and opened
+            const u64 until = now_ns() + 20'000'000'000ull;
+            while (sim_busy() && now_ns() < until) {
+                wave_sync();
+                SDL_Delay(2);
+            }
         } else if (verb == "pdftextat") {  // pdftextat:N:TEXT, where TEXT is on page N (its text read): x0,y0,x1,y1 in pixels
             std::fprintf(stderr, "%s at %s\n", arg.c_str(), pdf_dump_more(arg).c_str());
         } else if (verb == "pixel") {  // pixel:X,Y, the colour of the last frame there (pixels, not points)
