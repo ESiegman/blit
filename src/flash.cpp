@@ -52,8 +52,7 @@ constexpr FlashTool kTools[] = {
     // AMD Vivado in batch mode with a Tcl file of its hardware manager's
     // commands (kVivadoScript; -mode batch, -nojournal, -nolog, -notrace,
     // -source): into the FPGA's SRAM. A pipe: it draws nothing in place
-    // (2026.2 on the lab box, loading the owner's Basys 3, 2026-11-23). It
-    // starts hw_server, which lets the cable go 20 s after (its -I20).
+    // (2026.2 on the lab box, loading the owner's Basys 3, 2026-11-23).
     {"vivado", {"vivado", ""}, kPipe, "program", {"-mode batch", "-nojournal", "-nolog", "-notrace", "-source ${script}"}},
 };
 
@@ -70,7 +69,12 @@ constexpr std::string_view kJLinkScript[] = {"device ${device}", "si ${si}", "sp
 // -filter, program_hw_devices). A failing command ends the run with an
 // "ERROR: [...]" line and exit status 1; the script's own failure (no such
 // device: Tcl's error would print its message bare) says ERROR so too.
+// The hw_server connect_hw_server starts when none answers on its port
+// keeps the cable for a minute after Vivado ends (openFPGALoader cannot
+// claim it then): one the run started is ended with it, by its name (not
+// its command line, which the shell running this one has in its own).
 constexpr std::string_view kVivadoScript[] = {
+    "set ours [catch {close [socket localhost 3121]}]",
     "open_hw_manager",
     "connect_hw_server -allow_non_jtag",
     "open_hw_target [lindex [get_hw_targets ${target}] 0]",
@@ -83,6 +87,7 @@ constexpr std::string_view kVivadoScript[] = {
     "close_hw_target",
     "disconnect_hw_server",
     "close_hw_manager",
+    "if {$ours} {catch {exec pkill -u $::env(USER) -x hw_server}; catch {exec pkill -u $::env(USER) -x cs_server}}",
 };
 
 // Where AMD installs Vivado when it is not on the PATH: FOLDER/VERSION/

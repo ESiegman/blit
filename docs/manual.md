@@ -3304,8 +3304,10 @@ Vivado, when it is not on the PATH (its `settings64.sh` not sourced),
 is looked for where AMD installs it, the newest version there:
 `/tools/Xilinx/VERSION/Vivado/bin/vivado` (2025.1 on) or
 `/tools/Xilinx/Vivado/VERSION/bin/vivado` (before), and the same under
-`/opt/Xilinx`. It starts AMD's `hw_server`, which keeps the cable for 20
-seconds after it ends: openFPGALoader cannot use it until then. Choosing
+`/opt/Xilinx`. A `hw_server` it starts (none was running) is ended with
+it, so that openFPGALoader can use the cable at once; one that was
+running already is left as it was, and one left by a load that was
+stopped keeps the cable for about a minute. Choosing
 the board again in the probe picker keeps a board set to Vivado so.
 
 OpenOCD's, esptool's, openFPGALoader's and Vivado's output reaches the terminal

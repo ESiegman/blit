@@ -288,6 +288,7 @@ want <<'EOF'
 button: ■ Load | row: Connect ✓ · Load
 button: ▶ fw · Loaded into SRAM in N s | row: done · Loaded into SRAM in N s
 vivado -mode batch -nojournal -nolog -notrace -source FILE
+  | set ours [catch {close [socket localhost 3121]}]
   | open_hw_manager
   | connect_hw_server -allow_non_jtag
   | open_hw_target [lindex [get_hw_targets */210183A8F2C1*] 0]
@@ -300,6 +301,7 @@ vivado -mode batch -nojournal -nolog -notrace -source FILE
   | close_hw_target
   | disconnect_hw_server
   | close_hw_manager
+  | if {$ours} {catch {exec pkill -u $::env(USER) -x hw_server}; catch {exec pkill -u $::env(USER) -x cs_server}}
 EOF
 check "Basys 3 through Vivado: its Tcl, into SRAM" "$expected"
 board "{$BASYS, \"flash\": \"vivado\"}"
