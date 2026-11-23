@@ -1280,7 +1280,8 @@ void App::build_panel_draw(TextBox& box, bool focused) {
                 said = false;
             }
             if (said && running && run && run->lasting) after += " " + clock_text(now_ns() - run->started_ns);
-            if (said && last && !u.summary.empty()) after += " \xC2\xB7 " + u.summary;  // (what it came to: "12 passed, 1 failed")
+            if (said && last && !u.summary.empty())  // (what it came to: "12 passed, 1 failed"; a flash stopped, where: "stopped in Program at 38%", said once)
+                after = after == "stopped" && u.summary.starts_with("stopped") ? u.summary : after + " \xC2\xB7 " + u.summary;
         }
         if (!t.kind.empty()) after = t.kind + " \xC2\xB7 " + after;  // (the kind of work it is)
         if (c + 4 < cols) put(box, font, y, c + 2, fit_text(after, cols - c - 2), in);
@@ -1623,13 +1624,15 @@ std::string App::build_dump(const std::string& what) {
 std::string App::build_progress_dump() {
     term_sync();
     const BuildUi& u = *buildui_;
+    const BuildUi::Run* run = u.run_of(u.doc);
     std::string row = u.running                 ? "running\xE2\x80\xA6"
+                      : run && run->stopped     ? "stopped"
                       : u.last_status == 0      ? "done"
                       : !u.last_missing.empty() ? u.last_missing.substr(0, u.last_missing.find(" on "))
                       : u.last_status > 0       ? "failed: exited with code " + std::to_string(u.last_status)
                                                 : "";
     if (u.running && (!u.progress.stage.empty() || !u.progress.done.empty())) row = BuildScan::progress_words(u.progress, true);
-    if (!row.empty() && !u.summary.empty()) row += " \xC2\xB7 " + u.summary;
+    if (!row.empty() && !u.summary.empty()) row = row == "stopped" && u.summary.starts_with("stopped") ? u.summary : row + " \xC2\xB7 " + u.summary;  // (as the Build tab's row has it)
     if (u.unrun) row = u.summary;
     return "button: " + build_label() + " | row: " + row;
 }
