@@ -490,11 +490,11 @@ struct Fst {
 
 }  // namespace
 
-WaveFormat wave_format(std::string_view head) {
-    if (head.size() < 9) return WaveFormat::kVcd;
+DumpKind dump_kind(std::string_view head) {
+    if (head.size() < 9) return DumpKind::kVcd;
     const u8 type = static_cast<u8>(head[0]);
     const u64 len = be64(reinterpret_cast<const u8*>(head.data()) + 1);
-    return (type == kHdr && len == kHdrLength) || (type == kZWrapper && len > 0) ? WaveFormat::kFst : WaveFormat::kVcd;
+    return (type == kHdr && len == kHdrLength) || (type == kZWrapper && len > 0) ? DumpKind::kFst : DumpKind::kVcd;
 }
 
 u64 read_fst(Wave* into, const std::string& path, u64 max_bytes, std::stop_token stop, const std::function<void(u64)>& progress) {

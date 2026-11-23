@@ -937,7 +937,7 @@ void writer_fst_test(const std::string& scratch) {
         fstWriterEmitTimeChange(f, 100 + 3000 * 7);
         fstWriterClose(f);
         const auto w = read_fst_file(path);
-        check(wave_format(slurp(path)) == WaveFormat::kFst, at + ": its first bytes say FST");
+        check(dump_kind(slurp(path)) == DumpKind::kFst, at + ": its first bytes say FST");
         expect(at + ": the variables", listing(*w),
                "top.clk wire 1\ntop.bus logic 130 [129:0]\ntop.flags reg 1 [3:3]\ntop.up reg 8 [0:7]\ntop.word longint 64\ntop.t.state string 0\ntop.t.volts real 64\n"
                "top.par.ev event 1\ntop.par.mem[3] logic 4\ntop.par.clk_in wire 1 = top.clk\n");
@@ -972,7 +972,7 @@ void fst_test(const std::string& dir, const std::string& scratch) {
         const auto w = read_fst_file(fst);
         r.test(*w);
         same_run(*read_vcd(slurp(vcd)), *w, std::string(r.name) + ".fst");
-        check(wave_format(slurp(fst)) == WaveFormat::kFst && wave_format(slurp(vcd)) == WaveFormat::kVcd, std::string(r.name) + ": the format, from the first bytes");
+        check(dump_kind(slurp(fst)) == DumpKind::kFst && dump_kind(slurp(vcd)) == DumpKind::kVcd, std::string(r.name) + ": the format, from the first bytes");
         // On a thread, as blit reads it: the same, with progress told.
         std::atomic<int> told{0};
         WaveLoad load(std::make_shared<Wave>(), fst, 0, [&] { ++told; });
@@ -1194,7 +1194,7 @@ int run_gen(const std::string& path, u64 mb) {
 std::unique_ptr<WaveLoad> open_load(const std::string& path, const WaveLoad::ReadAt& read_at, u64 size, u64 max_bytes) {
     char head[16] = {};
     const i64 n = read_at(0, head, sizeof head);
-    if (n > 0 && wave_format(std::string_view(head, static_cast<size_t>(n))) == WaveFormat::kFst)
+    if (n > 0 && dump_kind(std::string_view(head, static_cast<size_t>(n))) == DumpKind::kFst)
         return std::make_unique<WaveLoad>(std::make_shared<Wave>(), path, max_bytes);
     return std::make_unique<WaveLoad>(std::make_shared<Wave>(), read_at, size, max_bytes);
 }

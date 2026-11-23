@@ -167,8 +167,8 @@ private:
 // What a dump is, from its first bytes (9 are enough): FST if they are an
 // FST header block (or the gzip wrapper some writers put around a whole
 // file), else VCD's text.
-enum class WaveFormat : u8 { kVcd, kFst };
-WaveFormat wave_format(std::string_view head);
+enum class DumpKind : u8 { kVcd, kFst };
+DumpKind dump_kind(std::string_view head);
 
 // An FST file read into a Wave (empty at the start) through libfst
 // (third_party/libfst), on the caller's thread, which it keeps until the
