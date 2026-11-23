@@ -560,5 +560,14 @@ fresh
 run "lua:print(blit.run('Unfold every block'), blit.run('Fold every'), blit.run('No such command'))"
 check "blit.run: a command by its name, whole or its start; false for none" 'true	true	false'
 
+# On a Mac, run by the harness: what the system writes to the error output
+# itself (AppKit's log lines; here a program started from Lua, as another
+# would) is not among blit's lines, which still are.
+if [ "$(uname -s)" = Darwin ]; then
+    fresh
+    run "lua:os.execute('echo the-system-says >&2');lua:print('blit says')"
+    check "the harness: the system's own lines left out, blit's kept" 'blit says'
+fi
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "lua ok"
 exit $failed

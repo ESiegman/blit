@@ -194,6 +194,26 @@ int main(int argc, char** argv) {
     }
     if (opt.goto_line > 0 && !named.empty() && named[0].line == 0) named[0].line = opt.goto_line;
 
+#if BLIT_DEV && defined(__APPLE__)
+    // Run by the tests' harness (--offscreen), blit's own lines (its dumps
+    // and notices) are what a test reads from its error output, and the
+    // system's frameworks write log lines of their own there too (AppKit's
+    // "NSSpellServer findMisspelledWordInString timed out" on a slow
+    // machine): those go to /dev/null, and blit's to the output it was given.
+    if (opt.off_w > 0) {
+        const int own = ::dup(STDERR_FILENO), none = ::open("/dev/null", O_WRONLY);
+        FILE* mine = own >= 0 && none >= 0 ? ::fdopen(own, "w") : nullptr;
+        if (mine) {
+            ::fcntl(own, F_SETFD, FD_CLOEXEC);  // (a program blit starts is given its own, or the null one)
+            std::setvbuf(mine, nullptr, _IONBF, 0);
+            ::dup2(none, STDERR_FILENO);
+            stderr = mine;
+        }
+        if (none >= 0) ::close(none);
+        if (!mine && own >= 0) ::close(own);
+    }
+#endif
+
 #if !defined(_WIN32)
     // A blit of this program already running takes the files, unless this
     // run is one of the tools (or a test, or asked to be a blit of its own).
