@@ -1,0 +1,118 @@
+$version Yosys $end
+$scope module counter $end
+$var wire 1 n5 wrap $end
+$var wire 1 n4 rst $end
+$var wire 1 n3 en $end
+$var reg 8 n2 count [7:0] $end
+$var wire 1 n1 clk $end
+$upscope $end
+$enddefinitions $end
+#0
+bx n1
+bxxxxxxxx n2
+bx n3
+b1 n4
+bx n5
+#5
+b0 n1
+#10
+b1 n1
+b00000000 n2
+b0 n4
+b0 n5
+#15
+b0 n1
+#20
+b1 n1
+b0000000x n2
+#25
+b0 n1
+#30
+b1 n1
+bxxxxxxxx n2
+bx n5
+#35
+b0 n1
+#40
+b1 n1
+#45
+b0 n1
+#50
+b1 n1
+#55
+b0 n1
+#60
+b1 n1
+#65
+b0 n1
+#70
+b1 n1
+#75
+b0 n1
+#80
+b1 n1
+#85
+b0 n1
+#90
+b1 n1
+#95
+b0 n1
+#100
+b1 n1
+#105
+b0 n1
+#110
+b1 n1
+#115
+b0 n1
+#120
+b1 n1
+#125
+b0 n1
+#130
+b1 n1
+#135
+b0 n1
+#140
+b1 n1
+#145
+b0 n1
+#150
+b1 n1
+#155
+b0 n1
+#160
+b1 n1
+#165
+b0 n1
+#170
+b1 n1
+#175
+b0 n1
+#180
+b1 n1
+#185
+b0 n1
+#190
+b1 n1
+#195
+b0 n1
+#200
+b1 n1
+#205
+b0 n1
+#210
+b1 n1
+#215
+b0 n1
+#220
+b1 n1
+#225
+b0 n1
+#230
+b1 n1
+#235
+b0 n1
+#240
+b1 n1
+#242

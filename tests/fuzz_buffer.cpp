@@ -66,6 +66,7 @@
 #include "tree.hpp"
 #include "utf8.hpp"
 #include "vim.hpp"
+#include "wave.hpp"
 
 using namespace blit;
 
@@ -2357,6 +2358,66 @@ void read_problems_test() {
                 if (p.path.empty() || p.line == 0) fail("read problems: a mangled sample gave a problem with no place", 0, static_cast<u64>(round));
         }
     }
+#endif
+}
+
+// The VCD reader (wave.hpp) on real dumps (tests/wave) mangled at random
+// and fed in pieces cut anywhere: it never fails, its lanes' times never go
+// back, and a lane's columns add up to its changes. (tests/wave.sh checks
+// what it reads.)
+void wave_test(int seeds) {
+#if defined(BLIT_PROFILE_DATA)
+    static const char kVcd[] = "$#bBrRsS01xXzZ \n\t[]:!\"%";
+    static const char* const kWords[] = {"$end", "$var", "$scope", "$upscope", "$enddefinitions", "$dumpoff", "$dumpon", "$comment", "#", " wire 64 ", " real ", " event "};
+    for (const char* name : {"icarus.vcd", "verilator.vcd", "yosys.vcd", "pyvcd.vcd"}) {
+        std::string text;
+        if (FILE* f = std::fopen((std::string(BLIT_PROFILE_DATA) + "/../wave/" + name).c_str(), "rb")) {
+            char buf[4096];
+            for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+            std::fclose(f);
+        }
+        if (text.empty()) fail("wave: a real sample", 0, 0);
+        rng.seed(31);
+        for (int round = 0; round < seeds * 2; ++round) {
+            std::string t = text;
+            for (int k = 0, n = 1 + static_cast<int>(rnd(6)); k < n && !t.empty(); ++k) {
+                const size_t at = rnd(t.size());
+                switch (rnd(5)) {
+                    case 0: t[at] = kVcd[rnd(sizeof kVcd - 1)]; break;
+                    case 1: t[at] = static_cast<char>(rnd(256)); break;
+                    case 2: t.insert(at, kWords[rnd(std::size(kWords))]); break;
+                    case 3: t.erase(at, rnd(40)); break;
+                    default: t.resize(at); break;
+                }
+            }
+            Wave w;
+            VcdReader r(&w, rnd(4) ? 0 : 1 + rnd(1 << 16));
+            for (size_t at = 0; at < t.size();) {
+                const size_t n = 1 + rnd(rnd(2) ? 8 : 4096);
+                r.feed(std::string_view(t).substr(at, n));
+                at += n;
+            }
+            r.finish();
+            if (!w.done || w.notes.size() > 51) fail("wave: done, with at most fifty notes", 0, static_cast<u64>(round));
+            for (const WaveVar& v : w.vars)
+                if (v.lane >= w.lanes.size() || v.scope >= w.scopes.size()) fail("wave: a variable's lane and scope", 0, static_cast<u64>(round));
+            std::string s;
+            for (const Lane& l : w.lanes) {
+                for (u64 i = 1; i < l.size(); ++i)
+                    if (l.time(i) <= l.time(i - 1)) fail("wave: times go forward", 0, static_cast<u64>(round));
+                if (l.size()) l.format(l.size() - 1, &s);
+                std::vector<LaneColumn> cols(1 + rnd(40));
+                const u64 t0 = rnd(w.end + 2), t1 = t0 + rnd(w.end + 2);
+                l.columns(t0, t1, cols);
+                u64 sum = 0;
+                for (const LaneColumn& c : cols) sum += c.count;
+                if (cols[0].first != l.count_before(t0) || cols[0].first + sum != l.count_before(t1)) fail("wave: columns add up", 0, static_cast<u64>(round));
+            }
+            for (u32 v = 0; v < w.vars.size(); ++v) s = w.path(v);
+        }
+    }
+#else
+    (void)seeds;
 #endif
 }
 
@@ -7902,6 +7963,7 @@ int main(int argc, char** argv) {
     fit_test();
     match_test();
     read_problems_test();
+    wave_test(seeds);
     highlights_test();
     syntax_test();
     raster_test();

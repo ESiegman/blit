@@ -1,0 +1,7 @@
+yosys.vcd: written by Yosys 0.71+77 (git sha1 11d972c20) with `sim -clock
+clk -reset rst -n 24 -vcd`, on Arch Linux (x86-64), 23 Nov 2026.
+
+The design is the counter module of make/counter.v alone (make/make.sh has
+the commands), with its enable never driven. What it shows: no $timescale
+and no $date; identifier codes of two letters (n1 to n5); one-bit values
+written as vectors (b1 n1); a vector partly x (b0000000x) and wholly x.
