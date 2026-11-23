@@ -1515,4 +1515,28 @@ std::string App::wave_dump(std::string_view what) {
     return "no wave tab";
 }
 
+// (The benchmarks: step i of zooming about the middle, in by an eighth
+// twenty times, then out by a tenth twenty times, never back to a zoom
+// it was at; or of panning, a twentieth of the view (a page: all of it),
+// forty times one way, then back.)
+void App::wave_bench_step(bool zoom, int i, bool page) {
+    if (!pane_->doc->wave) return;
+    WaveView& v = *pane_->doc->wave;
+    if (!v.started) return;
+    if (zoom) v.zoom((i / 20) % 2 ? 0.9 : 1.125, v.left + v.trace_w() * v.tpp / 2);
+    else {
+        v.left += ((i / 40) % 2 ? -1 : 1) * (page ? 1 : 0.05) * v.trace_w() * v.tpp;
+        v.fit = false;
+        v.clamp();
+        ++v.gen;
+    }
+    dirty_ = true;
+}
+
+bool App::wave_sharp() const {
+    for (const std::unique_ptr<Pane>& pane : panes_)
+        if (pane->doc && pane->doc->wave && pane->doc->wave->started && pane->doc->wave->missing) return false;
+    return true;
+}
+
 }  // namespace blit

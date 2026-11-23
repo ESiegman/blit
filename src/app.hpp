@@ -1178,6 +1178,8 @@ private:
     bool waves_busy() const;
     void wave_wait(bool rows = false);
     std::string wave_dump(std::string_view what);
+    void wave_bench_step(bool zoom, int i, bool page = false);
+    bool wave_sharp() const;
 
     // Terminals (appterm.cpp): a tab running a shell, here or on another machine.
     // A terminal tab in dir (the working folder when none): a login shell, or
