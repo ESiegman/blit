@@ -2,8 +2,9 @@
 // Waveforms: a simulation's dump read into lanes (timeline.hpp), with the
 // scopes and variables it declares. VCD is read here, as IEEE 1364-2005
 // section 18 has it, and as the tools write it (Verilator, Icarus, Yosys,
-// pyvcd), with GTKWave's string values. Like timeline.cpp, this knows no
-// window and nothing of the app, so that the agent can carry it.
+// pyvcd), with GTKWave's string values; FST through libfst, in wavefst.cpp.
+// Like timeline.cpp, this knows no window and nothing of the app, so that
+// the agent can carry it.
 //
 // A dump is read in one pass, eagerly, every variable's changes into its
 // lane as the file goes by; fed in pieces split anywhere, so that a file
@@ -53,7 +54,7 @@ struct WaveScope {
 
 struct WaveVar {
     std::string name;      // as declared, without its range: "count"
-    std::string code;      // the dump's identifier code; variables with the same one share a lane
+    std::string code;      // the dump's identifier code (an FST's handle, in decimal); variables with the same one share a lane
     u32 scope = 0;
     u32 lane = 0;
     VarKind kind = VarKind::kWire;
@@ -163,6 +164,33 @@ private:
     std::vector<u64> val_, xz_;  // a vector value being put together
 };
 
+// What a dump is, from its first bytes (9 are enough): FST if they are an
+// FST header block (or the gzip wrapper some writers put around a whole
+// file), else VCD's text.
+enum class WaveFormat : u8 { kVcd, kFst };
+WaveFormat wave_format(std::string_view head);
+
+// An FST file read into a Wave (empty at the start) through libfst
+// (third_party/libfst), on the caller's thread, which it keeps until the
+// file is read: the header and the hierarchy (variables with their kinds,
+// widths and ranges, aliases sharing a lane, $dumpoff stretches), then
+// every change, eagerly, into the lanes. libfst reads a file by its path,
+// so a remote one is fetched whole first (kReadAt parts into a local file)
+// until the agent reads it where it is.
+//
+// As VcdReader does, it holds the Wave's lock while it sets the hierarchy
+// up, then for each piece of changes (about 1 MB of them, buffered while
+// libfst uncompresses the next, so the lock is never held through that);
+// `reached` says how far the lanes go. It stops at max_bytes (0: no limit),
+// or when `stop` is asked, keeping what it read; a file that is not FST,
+// is cut short or is damaged is said in `error`, never a crash (libfst's
+// own checks come back to it instead of ending the process). When it
+// stops early, `end` is the last time read (as for VCD), not the header's.
+// `progress` is told after each piece about how many bytes into the file
+// it has got. Returns the memory the Wave took, as the budget counts it.
+u64 read_fst(Wave* into, const std::string& path, u64 max_bytes = 0, std::stop_token stop = {},
+             const std::function<void(u64 bytes)>& progress = {});
+
 // A dump read on a thread of its own. The bytes come through read_at,
 // called on that thread: a local file's (local_file) or, for a remote
 // one, kReadAt parts.
@@ -175,6 +203,9 @@ public:
     // the load's thread once the definitions are read, then at most every
     // tenth of a second while it reads, and at the end.
     WaveLoad(std::shared_ptr<Wave> into, ReadAt read_at, u64 size, u64 max_bytes, std::function<void()> notify = {});
+    // An FST file, by its path (read_fst), told about in the same way;
+    // read() is an estimate, from where libfst has got to.
+    WaveLoad(std::shared_ptr<Wave> into, std::string fst_path, u64 max_bytes, std::function<void()> notify = {});
     ~WaveLoad();  // stops it, and waits for it
     WaveLoad(const WaveLoad&) = delete;
     WaveLoad& operator=(const WaveLoad&) = delete;
@@ -191,6 +222,7 @@ public:
 
 private:
     void run(std::stop_token stop, ReadAt read_at, u64 max_bytes);
+    void run_fst(std::stop_token stop, const std::string& path, u64 max_bytes);
 
     std::shared_ptr<Wave> wave_;
     u64 size_ = 0;

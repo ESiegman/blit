@@ -4377,6 +4377,7 @@ src/appinstance.cpp the files handed over, and folders dropped on the window, op
 src/loginpath.*    started from the Dock: the PATH a login shell has, kept from the last time
 src/macapp.*       the application around blit on macOS: coming to the front (Objective-C)
 res/               blit.app: Info.plist, the icon and the script that draws it (icon.py)
+third_party/libfst/ libfst, which reads FST files (compiled in as C, for blit and the Linux agents), at the commit its config.h names
 Formula/           the Homebrew formula (this repository is its own tap)
 .github/workflows/ tests on every push (macOS), the formula built and installed when it changes, blit.app on the Releases page for a tag
 shaders/        GLSL sources (grid: the text; popup: boxes over it; image: pictures), build script, compiled blobs (gen/)
@@ -4604,10 +4605,15 @@ does not finish and takes all the memory the machine has.
   choosing text does not scroll the view past its edge; the outline box
   is for the mouse and the wheel.
 - Waves: a VCD dump is read whole, in one pass (about 600 MB a second on
-  an M5 Pro), every variable's changes kept in memory (one or two
+  an M5 Pro), and an FST file whole through libfst (about 40 million
+  changes a second: Verilator's 180 MB of a million cycles in 3.3
+  seconds), every variable's changes kept in memory (one or two
   bytes a change of a one-bit signal, five or six of a 32-bit bus), up to
   `blit.opt.timeline.max_mb` (2048 MB): past that, reading stops, keeps
-  what it read, and says how far into the run it got.
+  what it read, and says how far into the run it got. An FST file is
+  read only once its simulation has closed it (until then it has no list
+  of its signals); one cut short is said to be, and one damaged is said
+  to be with what libfst could read of it kept.
 - The wave tab: VCD only (not FST yet); a dump is not read again when its
   file changes; one on another machine is fetched here whole, in parts
   with its progress on the bottom row (where a click stops it), up to

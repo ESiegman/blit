@@ -8,3 +8,11 @@ shows: Verilator's indented header with no $dumpvars block; two states
 only (4'b1x0z is written 1000, and z as 0); aliases across the hierarchy;
 a 96-bit bus; a real declared 64 bits wide; a parameter as a 32-bit wire;
 an event that fires once; $dumpoff and $dumpon ignored (nothing written).
+
+verilator.fst: the same run written as FST, by Verilator 5.054 with
+--binary --trace-fst (its own C++ writer, libfstwriter, since 5.050), on
+Arch Linux (x86-64), 23 Nov 2026 (make/make.sh has the commands). What it
+shows, beside what verilator.vcd does: the same changes, under
+SystemVerilog's kinds (logic, and the parameter as a parameter, where the
+VCD says wire); ranges after a space ("count [7:0]"); directions on the
+counter's ports; a hierarchy packed with LZ4; no $dumpoff (as in its VCD).

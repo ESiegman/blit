@@ -2,15 +2,19 @@
 # Makes the dumps in tests/wave again, in the folder it is run in, on a
 # machine with the tools (they were made on Arch Linux, Nov 2026, with
 # Icarus Verilog 13.0, Verilator 5.054, Yosys 0.71+77 and pyvcd 0.5.1 under
-# Python 3.14).
+# Python 3.14). Each simulator's FST is the same run as its VCD.
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 
 iverilog -g2012 '-DDUMPVARS="icarus.vcd"' -DDUMPOFF -o tb.vvp "$here/counter.sv"
 vvp -n tb.vvp
+iverilog -g2012 '-DDUMPVARS="icarus.fst"' -DDUMPOFF -o tb-fst.vvp "$here/counter.sv"
+vvp -n tb-fst.vvp -fst
 
 verilator --binary --trace -Wno-fatal '-DDUMPVARS="verilator.vcd"' -DDUMPOFF --top-module tb "$here/counter.sv"
 ./obj_dir/Vtb
+verilator --binary --trace-fst -Wno-fatal '-DDUMPVARS="verilator.fst"' -DDUMPOFF --top-module tb --Mdir obj_fst "$here/counter.sv"
+./obj_fst/Vtb
 
 sed -n '/^module counter/,/^endmodule/p' "$here/counter.v" >counter_rtl.v
 yosys -q -p "read_verilog counter_rtl.v; prep -top counter; sim -clock clk -reset rst -n 24 -vcd yosys.vcd"
