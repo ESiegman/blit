@@ -515,5 +515,24 @@ printf '{"cells": [{"cell_type": "code", "source": ["x = 1\\n", "UNUSED"], "meta
 got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$P;frame;lspsettle;problemsdump" "$P/n.ipynb" 2>&1 >/dev/null | tail -1 | sed -e 's/ | >H 1 text:[0-9a-f]*//')
 check "a notebook: no unused value at a cell's end, but before it" 'button: ▶  | file 2 | file n.ipynb | W 6 Expression value is unused'
 
+# A file whose language's servers are none of them installed: said, once,
+# when it is opened (not only when a key asks the server for something),
+# naming them and this machine; one server named alone.
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+none="blit.opt.git.enabled = false
+blit.opt.editor.modal = false
+blit.opt.lsp.servers.clangd = { enabled = false }"
+for n in 1 2 3; do none="$none
+blit.opt.lsp.servers.none$n = { command = { \"blit-no-such-server-$n\" }, languages = { \"cpp\" } }"; done
+printf '%s\n' "$none" >"$dir/none.lua"
+printf '%s\n' "$none" | grep -v 'none[23]' >"$dir/none1.lua"
+out=$(BLIT_INIT="$dir/none.lua" "$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$P;frame;lspsettle;open:$P/c.cpp;frame;lspsettle" "$P/a.cpp" 2>&1 >/dev/null)
+got=$(printf '%s\n' "$out" | grep -c 'No language server')
+check "none installed: said once for the language" "1"
+got=$(printf '%s\n' "$out" | grep 'No language server')
+check "and what" "blit: No language server for C++: none of none1, none2 or none3 is installed on $this (lsp.servers in Settings)"
+got=$(BLIT_INIT="$dir/none1.lua" "$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$P;frame;lspsettle" "$P/a.cpp" 2>&1 >/dev/null | grep 'No language server')
+check "one: named" "blit: No language server for C++: none1 is not installed on $this (lsp.servers in Settings)"
+
 [ "$failed" = 0 ] && echo "lsp: all passed"
 exit "$failed"

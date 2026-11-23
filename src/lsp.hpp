@@ -448,6 +448,14 @@ public:
     // The servers that failed or stopped since the last call, by name (as
     // server_name() gives it), so that another one may be tried.
     std::vector<std::string> take_failed();
+    // Files on another machine none of whose language's servers is
+    // installed there, as found there since the last call: the language,
+    // the servers' names and the host.
+    struct Missing {
+        std::string language, host;
+        std::vector<std::string> names;
+    };
+    std::vector<Missing> take_missing();
 
     // Byte offset of a position the server gave, in any document.
     u64 offset_at(const Buffer& b, u32 line, u32 character) const { return offset_at(b, line, character, counts_utf16()); }
@@ -501,6 +509,7 @@ private:
     bool unopened_ = false;  // some document is still to be told to its server (see flush_opens())
     std::string message_;
     std::vector<std::string> failed_;
+    std::vector<Missing> missing_;
     std::function<std::string(const std::string&)> python_source_;
 
     u64 state_gen_ = 0;  // which documents are on which servers, and how those are

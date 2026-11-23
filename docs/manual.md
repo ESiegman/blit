@@ -1775,7 +1775,11 @@ When a language server for a file's type is installed, blit starts it and
 shows what it says. Every tab's file is open on its server, not just the
 one in front, and several servers run at once: one for each language and
 project, so a project of C++ and Python has clangd and pyright side by side.
-A server whose last file has been closed stops half a minute later.
+A server whose last file has been closed stops half a minute later. When
+none of the servers set up for a file's language is installed on its
+machine, opening the file says so, once for the language: "No language
+server for C++: clangd is not installed on this Mac (lsp.servers in
+Settings)"; turning those servers off there says nothing more.
 
 ![clangd: a completion list, a problem underlined, inlay hints and colours from the server](media/lsp.png)
 
