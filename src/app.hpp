@@ -665,6 +665,7 @@ private:
     bool find_wheel(const SDL_MouseWheelEvent& w);
     void find_layout(int w, int h, FrameDesc& fd);
     std::string find_dump();
+    std::string find_edge_dump();  // (tests: the box's lower edge against the start screen's rows)
     std::string find_heading() const;  // (the tests: what the box says it lists, "References (4)")
     std::string find_inks_dump();  // (tests) the inks of the rows' secondary text
     void find_settle(bool listing = false);
@@ -928,6 +929,7 @@ private:
     struct StartUi;
     void start_init();
     bool start_shown();  // (and once it is not, never again)
+    int start_grid_y();  // where the start screen's first row is drawn, in pixels from the window's top (-1: none shown)
     void start_do(size_t item);
     bool start_key(const SDL_KeyboardEvent& k);
     bool start_text(const char* text);

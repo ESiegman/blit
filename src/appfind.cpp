@@ -2655,6 +2655,12 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
     p.x = std::max(0, (w - p.w) / 2);
     // Near the top, and at the same height whatever is in it, so that it does not jump about as results come and go.
     p.y = std::min(std::max(tabs_px() + ch, h / 9), std::max(0, h - p.h));
+    // Over the start screen, its lower edge on the edge of a row there, so that no row shows half of itself
+    // under it (the tagline's tops did): moved down less than a row, the same whatever is in it.
+    if (const int g = f.mode == kFindFile ? -1 : start_grid_y(); g >= 0) {
+        const int off = ((p.y + p.h - g) % ch + ch) % ch;
+        if (off > 0 && p.y + p.h + ch - off <= h) p.y += ch - off;
+    }
     if (f.mode == kFindFile) {  // finding in the file: at the top right of its split, over as little of the text as may be
         p.x = std::clamp(pane_->x1 - p.w - l.gap - l.edge, 0, std::max(0, w - p.w));
         p.y = std::clamp(pane_->text_y + l.gap, 0, std::max(0, h - p.h));
@@ -2802,6 +2808,17 @@ void App::find_settle(bool listing) {
     }
     if (listing) remote_sync();
     find_sync();
+}
+
+}  // namespace blit
+
+namespace blit {
+
+std::string App::find_edge_dump() {
+    const int g = start_grid_y();
+    if (g < 0 || !find_open_) return "no start screen";
+    const int ch = font_->cell_h();
+    return "edge " + std::to_string(((find_->rect.y + find_->rect.h - g) % ch + ch) % ch);
 }
 
 }  // namespace blit

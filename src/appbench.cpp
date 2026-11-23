@@ -1619,6 +1619,10 @@ void App::run_script(const char* script) {
         } else if (verb == "finddump") {
             find_settle();
             std::fprintf(stderr, "%s%s\n", arg.empty() ? "" : (arg + ": ").c_str(), find_dump().c_str());
+        } else if (verb == "findedge") {  // over the start screen: how far the box's lower edge is from the edge of a row there (0: on one), or "no start screen"
+            find_settle();
+            frame();
+            std::fprintf(stderr, "%s\n", find_edge_dump().c_str());
         } else if (verb == "findheading") {  // what the box says it lists ("References (4)"), or closed
             find_settle();
             std::fprintf(stderr, "%s\n", find_heading().c_str());

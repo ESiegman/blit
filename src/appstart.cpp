@@ -443,6 +443,12 @@ bool App::start_shown() {
     return s.on;
 }
 
+int App::start_grid_y() {
+    if (!start_shown()) return -1;
+    const StartUi& s = *start_;
+    return s.box.cells.empty() ? -1 : s.y + s.pad_y;
+}
+
 // Something chosen on it.
 void App::start_do(size_t i) {
     StartUi& s = *start_;
