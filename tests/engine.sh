@@ -118,6 +118,20 @@ which nothere-at-all: not there (asked 1)
 EOF
 check "which there, kept" "$expected"
 
+# One not there, installed since (on the PATH a moment later): kept as not
+# there for a few seconds, then asked about again, and found.
+mkdir -p "$dir/later"
+rm -f "$dir/later/blit-later-tool"
+make="lua:os.execute([[printf '#!/bin/sh\\\\n' >$dir/later/blit-later-tool && chmod +x $dir/later/blit-later-tool]])"
+PATH="$dir/later:$PATH" run "enginewhich:- blit-later-tool;$make;enginewhich:- blit-later-tool;wait:3200;enginewhich:- blit-later-tool"
+got=$(printf '%s' "$got" | sed -e 's#: ~/later/blit-later-tool #: FOUND #')
+want <<'EOF'
+which blit-later-tool: not there (asked 1)
+which blit-later-tool: not there (asked 0)
+which blit-later-tool: FOUND (asked 1)
+EOF
+check "which here, one installed since: asked again a few seconds on" "$expected"
+
 # A machine that cannot be reached: the run never starts, and says why.
 run "enginerun:host=nowhere -- echo hi"
 BLIT_FAKE_FAIL="Connection refused" run "enginerun:host=box -- echo hi"
