@@ -22,3 +22,12 @@ yosys -q -p "read_verilog counter_rtl.v; prep -top counter; sim -clock clk -rese
 python3 -m venv venv
 ./venv/bin/pip -q install pyvcd==0.5.1
 ./venv/bin/python "$here/pyvcd_uart.py" pyvcd.vcd
+
+# Icarus's run again (icarus.txt): built without DUMPOFF, and with the
+# testbench dumping its own scope only. (The FSTs still being written were
+# caught by hand: icarus.txt and verilator.txt say how.)
+iverilog -g2012 '-DDUMPVARS="icarus-rerun.vcd"' -o tb-rerun.vvp "$here/counter.sv"
+vvp -n tb-rerun.vvp
+sed 's/$dumpvars(0, tb)/$dumpvars(1, tb)/' "$here/counter.sv" >counter-top.sv
+iverilog -g2012 '-DDUMPVARS="icarus-top.vcd"' -DDUMPOFF -o tb-top.vvp counter-top.sv
+vvp -n tb-top.vvp

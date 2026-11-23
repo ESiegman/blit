@@ -20,3 +20,21 @@ changes, the real declared 8 bytes long; $dumpoff as FST's dump activity,
 with the x values Icarus writes there; a hierarchy packed with zlib;
 source files and lines as attributes, and the counter's scope with its
 module's name.
+
+icarus-rerun.vcd: the same design run again, as a rerun after a change
+to how it was built: the same Icarus Verilog 13.0, without DUMPOFF
+(`iverilog -g2012 '-DDUMPVARS="icarus.vcd"' -o tb.vvp counter.sv; vvp -n
+tb.vvp`), on Arch Linux (x86-64), 23 Nov 2026. The same signals, other
+values (none x while dumping would have been off) and an earlier end
+(2.737 us).
+
+icarus-top.vcd: a run of the testbench edited to dump its own scope only
+($dumpvars(1, tb), made by make/make.sh with sed), by the same Icarus
+with DUMPVARS and DUMPOFF defined, the same day: the counter's
+tb.u_cnt.W and tb.u_cnt.count are not in it.
+
+icarus-writing.fst: an FST Icarus 13.0 was still writing, caught 0.25 s
+into a run that goes on until it is ended (`vvp -n slow-fst.vvp -fst` of
+a 16-bit counter stepped every 10 ns, forever), the same day: libfst's
+writer has written its header alone (330 bytes: no value changes yet,
+and no hierarchy, which comes when the file is closed).

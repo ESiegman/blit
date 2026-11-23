@@ -648,6 +648,120 @@ void load_test(const std::string& path, const Wave& whole) {
     check(!WaveLoad::local_file(path + ".none", &read_at, &size, &err) && !err.empty(), "load: a file that is not there");
 }
 
+// Whether what a wave read so far is what the whole dump has, up to the
+// time it reached (and nothing after it).
+bool prefix_of(const Wave& part, const Wave& whole) {
+    if (part.lanes.size() != whole.lanes.size()) return false;
+    for (size_t i = 0; i < part.lanes.size(); ++i) {
+        const Lane &a = part.lanes[i], &b = whole.lanes[i];
+        for (u64 j = 0; j < a.size(); ++j) {
+            if (a.time(j) > part.reached) return false;
+            if (a.time(j) < part.reached && (j >= b.size() || a.time(j) != b.time(j) || fmt(a, j) != fmt(b, j))) return false;
+        }
+        if (b.count_before(part.reached) > a.size()) return false;
+    }
+    return true;
+}
+
+// A dump still being written, settled where it ends for now (cut anywhere,
+// a token or a line cut in two among them): what was read is the whole
+// dump's up to where it reached, the Wave is settled and not done; read on
+// once the rest comes, it is the whole dump.
+void settle_test(const std::string& text, const Wave& whole, const std::string& name, size_t step) {
+    for (size_t cut = 0; cut <= text.size(); cut += step) {
+        auto w = std::make_unique<Wave>();
+        VcdReader r(w.get());
+        r.feed(std::string_view(text).substr(0, cut));
+        r.settle();
+        bool ok = w->settled && !w->done;
+        if (ok && w->header) ok = prefix_of(*w, whole);
+        r.feed(std::string_view(text).substr(cut));
+        ok = ok && (cut == text.size() || !w->settled);
+        r.finish();
+        if (!ok || w->settled || !same_wave(*w, whole)) {
+            check(false, name + ": settled at byte " + std::to_string(cut) + ", then read on");
+            return;
+        }
+    }
+}
+
+void write_file(const std::string& path, std::string_view bytes);
+
+// Waits (5 s at most) for what a load is doing to come to that.
+bool until(const std::function<bool()>& f) {
+    for (int i = 0; i < 5000; ++i) {
+        if (f()) return true;
+        ::usleep(1000);
+    }
+    return f();
+}
+
+// A dump followed as it is written (a copy of a real one, written in two
+// pieces cut in the middle of a line): the load reads the first and waits
+// at its end, the Wave settled; told of more, it reads the rest, and the
+// Wave is the whole dump's. Written again from its start (another dump in
+// its place, longer than where the load got to), it is not read on: the
+// load says so and ends. Not followed, or followed only after a header
+// and cut in its header, it ends at the end of the file.
+void follow_test(const std::string& dir, const std::string& scratch) {
+    const std::string text = slurp(dir + "/icarus.vcd");
+    const auto whole = read_vcd(text);
+    const std::string file = scratch + "/followed.vcd";
+    const size_t cut = text.find('\n', text.size() / 2) + 3;
+    write_file(file, std::string_view(text).substr(0, cut));
+    WaveLoad::ReadAt read_at;
+    u64 size = 0;
+    std::string err;
+    check(WaveLoad::local_file(file, &read_at, &size, &err), "follow: open: " + err);
+    std::atomic<int> told{0};
+    WaveLoad load(std::make_shared<Wave>(), read_at, size, 0, [&] { ++told; }, WaveLoad::Follow::kAfterHeader);
+    const Wave& w = *load.wave();
+    check(until([&] { return load.waiting(); }), "follow: waits at the end of the file");
+    {
+        std::shared_lock lock(w.mu);
+        check(w.settled && !w.done && w.header && prefix_of(w, *whole) && w.end < whole->end && load.read() == cut && told >= 1, "follow: what is there read, settled");
+    }
+    load.more();  // (nothing added yet: read again, and waits again)
+    check(until([&] { return load.waiting() && load.grown() == 0; }), "follow: told of more with none: waits again");
+    if (FILE* f = std::fopen(file.c_str(), "ab")) {
+        std::fwrite(text.data() + cut, 1, text.size() - cut, f);
+        std::fclose(f);
+    }
+    load.more();
+    check(until([&] { return load.grown() == 1 && load.waiting(); }), "follow: the rest read once told");
+    {
+        std::shared_lock lock(w.mu);
+        check(w.settled && !w.done && w.end == whole->end && same_wave(w, *whole) && load.read() == text.size() && load.size() == text.size(), "follow: grown, the whole dump");
+    }
+    // Written again: another dump, longer than the first.
+    std::string other = slurp(dir + "/verilator.vcd");
+    while (other.size() <= text.size()) other += "#999999999\n";
+    write_file(file, other);
+    load.more();
+    check(until([&] { return load.finished(); }) && load.rewritten() && !load.waiting(), "follow: written again from its start: said, and ended");
+    // Not followed: it ends at the end; followed after the header, cut in its header: ends too.
+    write_file(file, std::string_view(text).substr(0, cut));
+    check(WaveLoad::local_file(file, &read_at, &size, &err), "follow: open again: " + err);
+    WaveLoad plain(std::make_shared<Wave>(), read_at, size, 0);
+    check(until([&] { return plain.finished(); }) && !plain.waiting() && plain.wave()->done && !plain.wave()->settled, "follow: not followed, ends at the end");
+    write_file(file, std::string_view(text).substr(0, text.find("$enddefinitions") / 2));
+    check(WaveLoad::local_file(file, &read_at, &size, &err), "follow: open a header cut short: " + err);
+    WaveLoad cut_head(std::make_shared<Wave>(), read_at, size, 0, {}, WaveLoad::Follow::kAfterHeader);
+    check(until([&] { return cut_head.finished(); }) && cut_head.wave()->done, "follow: a header cut short, followed after its header: ends");
+    // Always followed: waits even with no header yet, and reads it once it comes.
+    write_file(file, "");
+    check(WaveLoad::local_file(file, &read_at, &size, &err), "follow: open an empty one: " + err);
+    WaveLoad empty(std::make_shared<Wave>(), read_at, size, 0, {}, WaveLoad::Follow::kAlways);
+    check(until([&] { return empty.waiting(); }) && !empty.wave()->header, "follow: always: an empty file waited at");
+    write_file(file, text);
+    empty.more();
+    check(until([&] { return empty.grown() == 1 && empty.waiting(); }), "follow: always: then read");
+    {
+        std::shared_lock lock(empty.wave()->mu);
+        check(same_wave(*empty.wave(), *whole), "follow: always: the whole dump, once written");
+    }
+}
+
 // --- FST, through libfst.
 
 std::unique_ptr<Wave> read_fst_file(const std::string& path, u64 max_bytes = 0) {
@@ -801,9 +915,10 @@ void damaged_fst_test(const std::string& path, const std::string& scratch, const
     for (size_t len = 0; len < bytes.size(); len += step) {
         write_file(file, std::string_view(bytes).substr(0, len));
         const auto w = read_fst_file(file);
-        const bool said = w->error.starts_with("the FST file is cut short") || w->error.starts_with("the FST file has no hierarchy") ||
-                          w->error.starts_with("not an FST file");
-        if (!w->done || !w->header || !said) wrong.push_back("cut at " + std::to_string(len) + ": " + w->error);
+        // (Cut where a block ends, before the hierarchy: as if its writer had not closed it yet.)
+        const bool writing = w->error == "the FST file is still being written (or its writer stopped before closing it)";
+        const bool said = w->error.starts_with("the FST file is cut short") || writing || w->error.starts_with("not an FST file");
+        if (!w->done || !w->header || !said || w->writing != writing) wrong.push_back("cut at " + std::to_string(len) + ": " + w->error);
     }
     for (size_t i = 0; i < bytes.size(); i += step)
         for (const u8 x : {0xff, 0x01, 0x80}) {
@@ -982,6 +1097,17 @@ void fst_test(const std::string& dir, const std::string& scratch) {
         damaged_fst_test(fst, scratch, std::string(r.name) + ".fst", 1);
     }
     writer_fst_test(scratch);
+    // Still being written (caught while their simulations ran: tests/wave
+    // says how): Icarus's, its header alone; Verilator's, a header of zeros
+    // and then changes; and one still empty. Said, and not read.
+    const std::string empty = scratch + "/empty.fst";
+    write_file(empty, "");
+    for (const std::string& f : {dir + "/icarus-writing.fst", dir + "/verilator-writing.fst", empty}) {
+        const auto w = read_fst_file(f);
+        check(w->done && w->writing && w->error == "the FST file is still being written (or its writer stopped before closing it)" && w->vars.empty(),
+              f + ": still being written: " + w->error);
+    }
+    for (const char* f : {"icarus.fst", "verilator.fst"}) check(!read_fst_file(dir + "/" + f)->writing, std::string(f) + ": not being written");
     // A larger one: progress told as it reads, from 0 to no more than the
     // file; past the budget it stops, says so, and keeps what it read (the
     // whole file's changes, up to where it stopped, which is where its span
@@ -1034,6 +1160,7 @@ int run_check(const std::string& dir, int seeds, std::string scratch) {
         compare(*w, ref, d.name);
         queries(*w, ref, d.name, seeds);
         pieces_test(text, *w, d.name, d.step);
+        settle_test(text, *w, d.name, d.step);
         cut_short_test(text, *w, d.name);
         if (d.test == icarus_test) load_test(path, *w);
         // CRLF line ends, as a dump written on Windows has.
@@ -1047,6 +1174,7 @@ int run_check(const std::string& dir, int seeds, std::string scratch) {
         if (!::mkdtemp(t.data())) return std::fprintf(stderr, "FAIL: no scratch folder\n"), 1;
         scratch = t;
     }
+    follow_test(dir, scratch);
     fst_test(dir, scratch);
     if (failures) return 1;
     std::printf("timeline ok: %d seeds\n", seeds);
