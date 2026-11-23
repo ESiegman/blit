@@ -2404,7 +2404,9 @@ debugging session, a kernel) starts once it is known, a moment later.
 
 For a Python file, the status bar names it, "Python 3.12 (.venv)" (with
 what chose it: `.venv`, `venv`, `uv`, `conda NAME`, `pinned`, `chosen`,
-or nothing for the PATH's); a click on it, or "Choose the project's
+or nothing for the PATH's), or, where what would run it is not installed,
+that (`python3 is not installed on this Mac`, `uv is not installed on
+lab` for a uv project); a click on it, or "Choose the project's
 Python…", lists the Pythons there are: the project's venvs (any folder
 in it with a `pyvenv.cfg`), uv's for a uv project and those uv has
 installed, conda's (the active environment's base and its `envs`),

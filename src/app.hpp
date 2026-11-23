@@ -92,6 +92,7 @@ struct PyFound {
     std::string exe;       // the interpreter itself (sys.executable): what language servers are told
     std::string version;   // "3.12.4" ("" when it would not say)
     bool debugpy = false;  // it has debugpy of its own
+    std::string missing;   // what would run it is not installed: "python3 is not installed on this Mac" ("": it is)
     bool operator==(const PyFound&) const = default;
 };
 
@@ -1175,7 +1176,7 @@ private:
     void py_again(bool full);                // every folder's looked at again (full: its interpreter asked again too)
     void py_pin();                           // (blit.opt.python.interpreter changed)
     void py_choose();
-    std::string py_status(const Doc& d);
+    std::string py_status(const Doc& d, bool* missing = nullptr);  // (missing: what would run it is not installed, and that is what it says)
     std::string py_session_text(const std::string& folder);
     void py_session_take(const std::vector<std::pair<std::string, std::string>>& chosen);
     // debugpy for a program's folder: the project's Python's own, or blit's
