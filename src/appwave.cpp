@@ -18,8 +18,10 @@
 // reply may be (4 MB); larger ones wait for the agent's reads in parts
 // (kReadAt), which plug in at remote_read_at below.
 #include <SDL3/SDL.h>
+#include <unistd.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
@@ -368,7 +370,7 @@ bool App::is_wave_path(std::string_view path) {
     if (path.size() < 4) return false;
     std::string ext(path.substr(path.size() - 4));
     for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return ext == ".vcd";
+    return ext == ".vcd" || ext == ".fst";
 }
 
 namespace {
@@ -401,6 +403,34 @@ WaveLoad::ReadAt remote_read_at(const std::string& path, std::stop_token stop, s
 
 }  // namespace
 
+namespace {
+
+// Another machine's FST, which libfst reads only by its path: fetched in
+// parts (as remote_read_at's VCD is, its progress on the bottom row) into
+// a file in blit's cache folder here, which the load removes once read.
+WaveLoad::Fetch remote_fst(const std::string& path, u64 most) {
+    return [path, most](std::stop_token stop, std::string* out, std::string* why) {
+        std::string bytes, err;
+        if (!fs_read_range(path, 0, ~0ull, most, &bytes, &err, stop)) {
+            *why = err.starts_with("the file is too big") ? "waves larger than " + std::to_string(most >> 20) + " MB on another machine are not shown (wave.remote_fetch_mb)" : err;
+            return false;
+        }
+        static std::atomic<u32> seq{0};
+        const std::string base = cache_dir();
+        const std::string dir = (base.empty() ? std::string("/tmp") : base) + "/waves";
+        std::string made;
+        if (!fs_mkdirs(dir, &made)) return *why = "cannot make " + dir + ": " + made, false;
+        *out = dir + "/" + std::to_string(::getpid()) + "-" + std::to_string(seq++) + ".fst";
+        FILE* f = std::fopen(out->c_str(), "wb");
+        const bool wrote = f && std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
+        if (f) std::fclose(f);
+        if (!wrote) return std::remove(out->c_str()), *why = "cannot write " + *out, false;
+        return true;
+    };
+}
+
+}  // namespace
+
 // A dump in a tab of its own (open_path() sends it here).
 bool App::wave_open(const std::string& full) {
     if (!waves_) waves_ = std::make_shared<Waves>();
@@ -419,8 +449,17 @@ bool App::wave_open(const std::string& full) {
     v->view_path = wave_view_path(inside ? *root : parent_of(full), full);
     waves_->post({fresh->id, v->view_path, {}, false});
     const u64 most = static_cast<u64>(cfg_.timeline_max_mb) << 20;
-    if (is_remote(full)) {
-        v->load = std::make_unique<WaveLoad>(v->wave, remote_read_at(full, v->fetch_stop.get_token(), v->fetch_error, static_cast<u64>(cfg_.wave_remote_fetch_mb) << 20), 0, most, wake);
+    // (An FST by its name: libfst reads it by its path; a VCD as text.)
+    const bool fst = full.size() >= 4 && (full.ends_with(".fst") || full.ends_with(".FST"));
+    const u64 fetch_most = static_cast<u64>(cfg_.wave_remote_fetch_mb) << 20;
+    if (is_remote(full) && fst) {
+        v->load = std::make_unique<WaveLoad>(v->wave, remote_fst(full, fetch_most), most, wake);
+    } else if (is_remote(full)) {
+        v->load = std::make_unique<WaveLoad>(v->wave, remote_read_at(full, v->fetch_stop.get_token(), v->fetch_error, fetch_most), 0, most, wake);
+    } else if (fst) {
+        if (fs_kind(full) == 1) v->load = std::make_unique<WaveLoad>(v->wave, full, most, wake);
+        else v->open_error = fs_kind(full) == 0 ? "No such file or directory" : "not a file";
+        recent_add(full, false);
     } else {
         WaveLoad::ReadAt read_at;
         u64 size = 0;

@@ -206,6 +206,11 @@ public:
     // An FST file, by its path (read_fst), told about in the same way;
     // read() is an estimate, from where libfst has got to.
     WaveLoad(std::shared_ptr<Wave> into, std::string fst_path, u64 max_bytes, std::function<void()> notify = {});
+    // An FST file had first by `fetch`, on the load's thread (another
+    // machine's, fetched into a file here: its path, or false and why, which
+    // becomes the wave's error), then read as above, and that file removed.
+    using Fetch = std::function<bool(std::stop_token stop, std::string* path, std::string* why)>;
+    WaveLoad(std::shared_ptr<Wave> into, Fetch fetch, u64 max_bytes, std::function<void()> notify = {});
     ~WaveLoad();  // stops it, and waits for it
     WaveLoad(const WaveLoad&) = delete;
     WaveLoad& operator=(const WaveLoad&) = delete;
@@ -215,7 +220,7 @@ public:
 
     const std::shared_ptr<Wave>& wave() const { return wave_; }
     u64 read() const { return read_.load(std::memory_order_relaxed); }  // bytes so far
-    u64 size() const { return size_; }
+    u64 size() const { return size_.load(std::memory_order_relaxed); }
     bool finished() const { return finished_.load(std::memory_order_acquire); }
     void stop() { thread_.request_stop(); }
     void wait();  // (for tests and tools)
@@ -225,7 +230,7 @@ private:
     void run_fst(std::stop_token stop, const std::string& path, u64 max_bytes);
 
     std::shared_ptr<Wave> wave_;
-    u64 size_ = 0;
+    std::atomic<u64> size_{0};  // (a fetched FST's is known only once it is here)
     std::function<void()> notify_;
     std::atomic<u64> read_{0};
     std::atomic<bool> finished_{false};

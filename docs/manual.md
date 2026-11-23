@@ -4614,10 +4614,12 @@ does not finish and takes all the memory the machine has.
   read only once its simulation has closed it (until then it has no list
   of its signals); one cut short is said to be, and one damaged is said
   to be with what libfst could read of it kept.
-- The wave tab: VCD only (not FST yet); a dump is not read again when its
-  file changes; one on another machine is fetched here whole, in parts
-  with its progress on the bottom row (where a click stops it), up to
-  `blit.opt.wave.remote_fetch_mb` (512 MB), and a larger one is not shown; a
+- The wave tab: VCD and FST (an FST told by its name, `.fst`); a dump is
+  not read again when its file changes; one on another machine is
+  fetched here whole, in parts with its progress on the bottom row (where
+  a click stops it), up to `blit.opt.wave.remote_fetch_mb` (512 MB), and a
+  larger one is not shown (an FST is fetched into blit's cache folder,
+  which libfst reads it from, and that copy removed once read); a
   bus wider than 64 bits has no fixed point, float or names of values
   (hex); analog rows, colours a row and `*` `#` (the next time a row has
   the value under the cursor) are not there yet.

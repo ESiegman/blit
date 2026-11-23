@@ -525,6 +525,27 @@ WaveLoad::WaveLoad(std::shared_ptr<Wave> into, std::string fst_path, u64 max_byt
     thread_ = std::jthread([this, path = std::move(fst_path), max_bytes](std::stop_token stop) { run_fst(stop, path, max_bytes); });
 }
 
+WaveLoad::WaveLoad(std::shared_ptr<Wave> into, Fetch fetch, u64 max_bytes, std::function<void()> notify)
+    : wave_(std::move(into)), notify_(std::move(notify)) {
+    thread_ = std::jthread([this, fetch = std::move(fetch), max_bytes](std::stop_token stop) {
+        std::string path, why;
+        if (!fetch(stop, &path, &why)) {
+            {
+                std::unique_lock lock(wave_->mu);
+                wave_->error = why;
+                wave_->done = true;
+            }
+            finished_.store(true, std::memory_order_release);
+            if (notify_) notify_();
+            return;
+        }
+        struct stat st{};
+        if (::stat(path.c_str(), &st) == 0) size_ = static_cast<u64>(st.st_size);
+        run_fst(stop, path, max_bytes);
+        ::unlink(path.c_str());  // (a copy, read: the lanes are what is kept)
+    });
+}
+
 void WaveLoad::run_fst(std::stop_token stop, const std::string& path, u64 max_bytes) {
     thread_soon(Soon::kWaitedFor);
     u64 told = 0;
@@ -539,7 +560,7 @@ void WaveLoad::run_fst(std::stop_token stop, const std::string& path, u64 max_by
             notify_();
         }
     });
-    read_.store(size_, std::memory_order_relaxed);
+    read_.store(size_.load(std::memory_order_relaxed), std::memory_order_relaxed);
     finished_.store(true, std::memory_order_release);
     if (notify_) notify_();
 }

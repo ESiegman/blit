@@ -23,7 +23,7 @@ dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 dir=$(cd "$dir" && pwd -P)
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/init.lua"
-export BLIT_INIT="$dir/init.lua" BLIT_RECENT_FILE="$dir/recent"
+export BLIT_INIT="$dir/init.lua" BLIT_RECENT_FILE="$dir/recent" BLIT_CACHE_DIR="$dir/cache"
 mkdir -p "$dir/work"
 cp "$here"/wave/*.vcd "$dir/work/"
 W="$dir/work"
@@ -291,6 +291,18 @@ if [ -x "$bin" ]; then
     got=$(BLIT_INIT="$dir/small.lua" "$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "frame;wavewait;wavedump" "$dir/big.vcd" 2>&1 >/dev/null | grep '^big.vcd' | sed -e 's/cursor.*stopped/stopped/' -e 's/read up to .*/read up to …/')
     check "a dump past timeline.max_mb" "big.vcd: read, stopped: the dump needs more memory than timeline.max_mb allows: read up to …"
 fi
+# An FST (Icarus's and Verilator's of the same runs as their VCDs): the
+# same run, the same view, and its values at a time the same; except that
+# Verilator's FST says steps is a signed integer, which its VCD cannot, so
+# that it is shown signed.
+for t in icarus verilator; do
+    run 1600x900 "frame;wavewait;wavedump" "$here/wave/$t.vcd"
+    v=$(printf '%s' "$got" | sed -e "s/$t.vcd/X/g")
+    [ $t = verilator ] && v=$(printf '%s' "$v" | sed -e 's/tb.steps\[31:0\] = 00000000 hex/tb.steps[31:0] = 0 signed/')
+    run 1600x900 "frame;wavewait;wavedump" "$here/wave/$t.fst"
+    got=$(printf '%s' "$got" | sed -e "s/$t.fst/X/g")
+    check "$t's FST: as its VCD" "$v"
+done
 # One that cannot be read.
 run 1600x900 "frame;wavewait;wavedump" "$W/none.vcd"
 check "a dump that is not there" "none.vcd: cannot show it: No such file or directory"
@@ -313,6 +325,14 @@ check "another machine's dump over 4 MB, fetched in parts" "large.vcd: read, cur
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.wave.remote_fetch_mb = 1\n' >"$dir/fetch1.lua"
 got=$(BLIT_INIT="$dir/fetch1.lua" "$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "remotewait;frame;wavewait;wavedump" "ssh://box$T/work/large.vcd" 2>&1 >/dev/null | grep '^large.vcd')
 check "one over wave.remote_fetch_mb: not shown, and why" "large.vcd: cannot show it: waves larger than 1 MB on another machine are not shown (wave.remote_fetch_mb)"
+# Another machine's FST, which libfst reads by its path: fetched in parts
+# into a file in the cache folder here, read, and that file removed.
+cp "$here/wave/verilator.fst" "$T/work/"
+run 1600x900 "remotewait;frame;wavewait;wavedump" "ssh://box$T/work/verilator.fst"
+got=$(printf '%s' "$got" | sed -e 's/ ;; .*//')
+check "another machine's FST, fetched and read" "verilator.fst: read, cursor 0 ps, view 0 ps to 2.772 us"
+got=$(ls "$dir/cache/waves" 2>/dev/null | wc -l | tr -d ' ')
+check "(its copy here removed once read)" "0"
 
 [ $failed = 0 ] && echo "wavetab ok"
 exit $failed
