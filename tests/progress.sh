@@ -94,14 +94,22 @@ EOF
 check "esptool v5 on a pipe: the same" "$expected"
 
 # A window too narrow for the whole summary on the Run button (a third of
-# it at most): its words before its time; the row keeps it whole.
+# it at most): without its time, else its words before it; the row keeps
+# it whole.
 width=1600
 flash esptool esptool esptool5-pipe "$end"
 want <<'EOF'
 button: ▶ esptool · Flashed 170.5 KB | row: done · Flashed 170.5 KB in N s, verified
 problems: 0
 EOF
-check "a narrow window: the summary on the button without its time" "$expected"
+check "a narrow window: the summary's words before its time" "$expected"
+width=1800
+flash openFPGALoader openFPGALoader ofl-flash "$end"
+want <<'EOF'
+button: ▶ openFPGALoader · Flashed, verified | row: done · Flashed in N s, verified
+problems: 0
+EOF
+check "a narrow window: the summary without its time" "$expected"
 
 # esptool v4: "Writing at 0x00010000... (50 %)" after a \r, no newline.
 timed='&'

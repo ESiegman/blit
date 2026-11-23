@@ -1465,13 +1465,17 @@ std::string App::build_label() const {
     else if (failed) label += " \xC2\xB7 failed (exit " + std::to_string(failed) + ")";
     if (!build_errors_ && build_warnings_) label += (failed ? ", " : " \xC2\xB7 ") + std::to_string(build_warnings_) + (build_warnings_ == 1 ? " warning" : " warnings");
     // What the last run came to, where it leaves the tabs there room (a third of the window at most);
-    // where it does not, its words before its time ("Flashed 170.5 KB" of "Flashed 170.5 KB in 8.8 s, verified").
+    // where it does not, without its time ("Flashed 170.5 KB, verified"), else its words before it.
     if (!u.running && !u.summary.empty() && font_ && font_->cell_w() > 0) {
         const u32 room = static_cast<u32>(px_w_ / font_->cell_w() / 3);
         const size_t time = u.summary.find(" in ");
-        const std::string_view brief = std::string_view(u.summary).substr(0, time);
-        if (width_of(label) + 3 + width_of(u.summary) <= room) label += " \xC2\xB7 " + u.summary;
-        else if (time != std::string::npos && width_of(label) + 3 + width_of(brief) <= room) label += " \xC2\xB7 " + std::string(brief);
+        const size_t after = time == std::string::npos ? time : u.summary.find(',', time);
+        for (const std::string& s : {u.summary, time == std::string::npos ? std::string() : u.summary.substr(0, time) + (after == std::string::npos ? "" : u.summary.substr(after)),
+                                     time == std::string::npos ? std::string() : u.summary.substr(0, time)})
+            if (!s.empty() && width_of(label) + 3 + width_of(s) <= room) {
+                label += " \xC2\xB7 " + s;
+                break;
+            }
     }
     return label;
 }
