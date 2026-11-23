@@ -4284,6 +4284,7 @@ src/appinstance.cpp the files handed over, and folders dropped on the window, op
 src/loginpath.*    started from the Dock: the PATH a login shell has, kept from the last time
 src/macapp.*       the application around blit on macOS: coming to the front (Objective-C)
 res/               blit.app: Info.plist, the icon and the script that draws it (icon.py)
+third_party/libfst/ libfst, which reads FST files (compiled in as C, for blit and the Linux agents), at the commit its config.h names
 Formula/           the Homebrew formula (this repository is its own tap)
 .github/workflows/ tests on every push (macOS), the formula built and installed when it changes, blit.app on the Releases page for a tag
 shaders/        GLSL sources (grid: the text; popup: boxes over it; image: pictures), build script, compiled blobs (gen/)

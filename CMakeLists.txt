@@ -204,6 +204,25 @@ target_link_libraries(blit_core PUBLIC Threads::Threads)
 # Timelines and waveforms: lanes of changes, and dumps read into them
 # (knowing no window, so that the agent can carry them later).
 target_sources(blit_core PRIVATE src/timeline.cpp src/wave.cpp)
+# FST dumps are read through libfst (third_party/libfst, at the commit its
+# config.h names), compiled as C, as src/agent/build.sh compiles it for the
+# Linux agents, with zlib. Optimized in every build, and kept out of
+# link-time optimization (another compiler's objects on a Mac).
+enable_language(C)
+if(BLIT_DEV AND BLIT_OPTIMIZE_DEBUG)
+  set(CMAKE_C_FLAGS_DEBUG "${CMAKE_C_FLAGS_RELEASE}")
+endif()
+find_package(ZLIB REQUIRED)
+add_library(blit_fst STATIC third_party/libfst/fstapi.c third_party/libfst/lz4.c third_party/libfst/fastlz.c)
+target_compile_definitions(blit_fst PRIVATE FST_INCLUDE_CONFIG)
+target_include_directories(blit_fst PRIVATE third_party/libfst)
+target_include_directories(blit_fst SYSTEM INTERFACE third_party/libfst)
+# (Clang says of its fixed-size arrays sized by a const int that they are
+# an extension of GCC's; they are, and fine.)
+target_compile_options(blit_fst PRIVATE -O2 $<$<C_COMPILER_ID:AppleClang,Clang>:-Wno-gnu-folding-constant>)
+set_target_properties(blit_fst PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
+target_link_libraries(blit_fst PUBLIC ZLIB::ZLIB)
+target_link_libraries(blit_core PUBLIC blit_fst)
 
 # Working on another machine's files (src/remote.*): blit's agent runs there.
 # This machine's kind of agent is built here (for any Mac of its kind, not
