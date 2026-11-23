@@ -3272,7 +3272,9 @@ verified`), and a failure is a problem in the tool's own words.
 
 The tool is the board's `flash`, else the one its probe's kind says:
 esptool for Espressif's USB-Serial/JTAG (and for a board with no probe
-whose `chip` is an ESP32: a serial bridge), openFPGALoader for an FTDI
+whose `chip` is an ESP32, or that is only a serial port, such as the
+DevKit's USB serial bridge chosen in the probe picker, when an ESP-IDF
+build wrote `flasher_args.json`, whose chip it takes), openFPGALoader for an FTDI
 chip (a Digilent board), probe-rs for an ST-LINK or a CMSIS-DAP, J-Link
 Commander for a J-Link. Each is run by its path on the machine the
 project is on, and blit says so when it is not there:

@@ -79,6 +79,19 @@ std::string newest_bitstream(const std::string& root) {
     return p.empty() ? std::string() : p.lexically_relative(root).string();
 }
 
+// The folder of the configuration's ELF (else "build"), where ESP-IDF's
+// build writes flasher_args.json beside it.
+std::string elf_of(const std::string& root, const BuildTask& c) {
+    const Board& b = c.board;
+    if (!b.elf.empty()) return b.elf;
+    if (c.program.starts_with(root + "/")) return c.program.substr(root.size() + 1);
+    return c.program;
+}
+std::string esp_args_dir(const std::string& elf) {
+    const size_t slash = elf.rfind('/');
+    return slash != std::string::npos ? elf.substr(0, slash) : "build";
+}
+
 // What a board flashes (a worker's call: files read, here or there).
 bool find_image(const std::string& root, const BuildTask& c, const std::string& tool, FlashImage* img, std::string* why) {
     const Board& b = c.board;
@@ -88,14 +101,11 @@ bool find_image(const std::string& root, const BuildTask& c, const std::string& 
         img->parts.push_back({{}, bit});
         return true;
     }
-    std::string elf = b.elf;
-    if (elf.empty() && c.program.starts_with(root + "/")) elf = c.program.substr(root.size() + 1);
-    else if (elf.empty()) elf = c.program;
+    const std::string elf = elf_of(root, c);
     // ESP-IDF's: the files and addresses its build wrote beside the ELF.
     const bool esp = tool == "esptool" || (tool == "openocd" && (b.probe_kind.starts_with("esp-") || b.chip.starts_with("esp") || b.chip.starts_with("ESP")));
     if (esp) {
-        const size_t slash = elf.rfind('/');
-        const std::string dir = slash != std::string::npos ? elf.substr(0, slash) : "build";
+        const std::string dir = esp_args_dir(elf);
         std::string text;
         if (fs_read(root + "/" + dir + "/flasher_args.json", &text)) return esp_flasher_args(text, dir, img, why);
     }
@@ -112,8 +122,17 @@ std::string hex(u64 v) {
     return b;
 }
 
-Prepared prepare(const std::string& root, const BuildTask& c, const std::string& tool, FlashMode mode, bool force, std::stop_token stop) {
+Prepared prepare(const std::string& root, const BuildTask& c, const std::string& tool, bool guessed, FlashMode mode, bool force, std::stop_token stop) {
     Prepared p;
+    // A board that is only a serial port (a USB serial bridge, no probe and
+    // no chip): esptool, when an ESP-IDF build has said what it writes.
+    if (guessed) {
+        std::string text;
+        if (!fs_read(root + "/" + esp_args_dir(elf_of(root, c)) + "/flasher_args.json", &text)) {
+            p.why = c.name + "'s board is a serial port with no flash tool or chip, and no ESP-IDF build says one (board.flash, or board.chip)";
+            return p;
+        }
+    }
     p.board = root + "\n" + c.name;
     p.row = c.system + "\t" + c.name;
     p.force = force;
@@ -186,18 +205,21 @@ void App::flash_board(FlashMode mode, bool force) {
     const BuildTask* found = board_config();
     if (!found) return notify("No run configuration has a board");
     const BuildTask c = *found;
-    const std::string tool = flash_tool_for(c.board);
+    std::string tool = flash_tool_for(c.board);
+    const Board& b = c.board;
+    const bool guessed = tool.empty() && b.probe.empty() && b.probe_kind.empty() && !b.port.empty();  // (prepare checks for ESP-IDF's build)
+    if (guessed) tool = "esptool";
     if (tool.empty()) return notify(c.name + "'s board has no flash tool, and its probe says none", 1);
     if (!flash_tool(tool)) return notify("No flash tool called " + tool, 1);
     const bool fpga = tool == "openfpgaloader";
     if (mode != FlashMode::kFlash && !fpga) return notify(c.name + "'s board is not an FPGA's (it is flashed with " + tool + ")", 1);
-    build_first(std::string(fpga ? "programming " : "flashing ") + c.name, [this, root, c, tool, mode, force] {
+    build_first(std::string(fpga ? "programming " : "flashing ") + c.name, [this, root, c, tool, guessed, mode, force] {
         FlashUi& u = *flashui_;
         if (u.busy) return;
         if (u.worker.joinable()) u.worker.join();
         u.busy = true;
-        u.worker = std::jthread([&u, root, c, tool, mode, force](std::stop_token stop) {
-            Prepared p = prepare(root, c, tool, mode, force, stop);
+        u.worker = std::jthread([&u, root, c, tool, guessed, mode, force](std::stop_token stop) {
+            Prepared p = prepare(root, c, tool, guessed, mode, force, stop);
             {
                 std::lock_guard lock(u.mu);
                 u.ready = std::move(p);

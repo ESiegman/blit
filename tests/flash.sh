@@ -173,6 +173,22 @@ openocd-esp32 -f interface/esp_usb_jtag.cfg -c 'adapter serial F4:12:FA:00:00:01
 EOF
 check "ESP32-S3 through Espressif's OpenOCD: program_esp, and a failure's problem" "$expected"
 
+# The same board on its USB serial bridge (a CH343 on the ESP32-S3 DevKit's
+# UART port), chosen in the picker: a serial port with no probe and no
+# chip. esptool, since the ESP-IDF build beside the configuration's
+# program wrote flasher_args.json, whose chip it takes; without one, said.
+board '{"serial": {"port": "/dev/ttyACM0"}}'
+timed='&'
+flash esptool5 "$F;$end"
+want <<'EOF'
+button: ▶ fw · Flashed 170.5 KB in 8.8 s, verified | row: done · Flashed 170.5 KB in 8.8 s, verified
+esptool --chip esp32s3 -p /dev/ttyACM0 --before default-reset --after hard-reset write-flash --flash-mode dio --flash-size 2MB --flash-freq 80m 0x0 build/bootloader/bootloader.bin 0x8000 build/partition_table/partition-table.bin 0x10000 build/app.bin
+EOF
+check "a serial bridge with an ESP-IDF build: esptool, the chip from flasher_args.json" "$expected"
+mv "$P/build/flasher_args.json" "$P/build/flasher_args.away"
+got=$("$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;$F" 2>&1 >/dev/null | tail -1)
+mv "$P/build/flasher_args.away" "$P/build/flasher_args.json"
+check "a serial bridge with no ESP-IDF build: said" "blit: fw's board is a serial port with no flash tool or chip, and no ESP-IDF build says one (board.flash, or board.chip)"
 
 # An ST-LINK: probe-rs (its kind says it), the probe by its ids and serial
 # number, verified and reset; its bars.
