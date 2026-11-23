@@ -178,8 +178,9 @@ rm -f "$bare/python3" "$bare/uv"
 printf 'x = 1\n' >"$dir/nopy/a.py"
 printf 'x = 1\n' >"$dir/nouv/a.py"
 : >"$dir/nouv/uv.lock"
-got=$(PATH=$bare "$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$dir/nopy;frame;pywait;frame;statusdump;open:$dir/nouv/a.py;frame;pywait;frame;statusdump" "$dir/nopy/a.py" 2>&1 >/dev/null | sed -e "s#$dir#@#g" | join)
-check "python3, uv not installed: said in the status bar" "a.py | python3 is not installed on $this Ln 1, Col 1 Spaces: 4 LF Python ;; …/nouv/a.py | uv is not installed on $this Ln 1, Col 1 Spaces: 4 LF Python"
+# (Wide enough that "this machine", longer than "this Mac", leaves the status bar all its parts.)
+got=$(PATH=$bare "$blit" --offscreen 1800x800 --shot "$dir/shot.bmp" --script "workdir:$dir/nopy;frame;pywait;frame;statusdump;open:$dir/nouv/a.py;frame;pywait;frame;statusdump" "$dir/nopy/a.py" 2>&1 >/dev/null | sed -e "s#$dir#@#g" -E -e 's#[^ ]*/nouv/a\.py \|#nouv/a.py |#' | join)
+check "python3, uv not installed: said in the status bar" "a.py | python3 is not installed on $this Ln 1, Col 1 Spaces: 4 LF Python ;; nouv/a.py | uv is not installed on $this Ln 1, Col 1 Spaces: 4 LF Python"
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "python ok"
 exit $failed

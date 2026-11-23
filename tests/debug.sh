@@ -742,17 +742,27 @@ if [ -x "$fakedap" ]; then
         'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; gdb -q -i dap ;; {"program":"@/fake/proj/prog","args":["one"],"cwd":"@/fake/proj","env":{"FAKE_ENV":"yes","MORE":"1"},"stopAtBeginningOfMainSubprogram":true}'
     linux 13.2 no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
     check "Linux: a gdb older than 14 is no debugger blit can use" 'idle error: gdb 13 is too old to be a debugger blit can use: 14 or newer speaks its protocol, and there is no lldb-dap ;; '
-    # (No debugger installed: which, and the machine, named.)
+    # (No debugger installed: which, and the machine, named. Only where none
+    # is in /usr/bin or /opt/homebrew/bin, which blit looks in whatever the
+    # PATH: not on a Linux box with gdb and lldb-dap installed.)
     case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
-    linux "" no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
-    check "Linux: neither lldb-dap nor gdb installed: said" "idle error: No debugger: neither lldb-dap nor gdb is installed on $this ;; "
+    real_debugger=
+    for d in /usr/bin /opt/homebrew/bin; do [ -x "$d/gdb" ] || [ -x "$d/lldb-dap" ] && real_debugger="$d"; done
+    if [ -z "$real_debugger" ]; then
+        linux "" no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
+        check "Linux: neither lldb-dap nor gdb installed: said" "idle error: No debugger: neither lldb-dap nor gdb is installed on $this ;; "
+    else
+        echo "debug: the no-debugger cases skipped (a debugger in $real_debugger, which cannot be hidden)"
+    fi
     conf '{ "adapter": "gdb" }'
     linux 15.1 yes "workdir:$D;runconfdump;key:F5;debugwait:stopped;debugdump"
     check "debug.adapter gdb: gdb, though lldb-dap is there" 'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; gdb -q -i dap'
     linux 12.1 yes "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
     check "debug.adapter gdb, and it is too old" 'idle error: gdb 12 is too old to be a debugger blit can use: 14 or newer speaks its protocol ;; '
-    linux "" yes "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
-    check "debug.adapter gdb, and it is not installed" "idle error: gdb is not installed on $this ;; "
+    if [ -z "$real_debugger" ]; then
+        linux "" yes "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
+        check "debug.adapter gdb, and it is not installed" "idle error: gdb is not installed on $this ;; "
+    fi
     conf '{ "adapter": "lldb-dap" }'
     linux 15.1 no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
     check "debug.adapter lldb-dap, and it is not installed" "idle error: lldb-dap is not installed on $this ;; "
