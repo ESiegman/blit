@@ -24,7 +24,8 @@ HarfBuzz are used only if the system has them, and are not carried either.
 | [libjpeg-turbo](https://libjpeg-turbo.org) | 2.0 | Linux | `libturbojpeg` | IJG License, Modified (3-clause) BSD License and zlib License |
 | [libwebp](https://chromium.googlesource.com/webm/libwebp) | 1.2 | Linux | `libwebp`, `libwebpdemux` | BSD 3-Clause License |
 | [Vulkan-Headers](https://github.com/KhronosGroup/Vulkan-Headers) | 1.4 | Linux (compiled in) |  | Apache License 2.0 or MIT License (used here under MIT) |
-| [libfst](https://github.com/gtkwave/libfst), with LZ4 and FastLZ | commit b2681f9 (12 Nov 2026) | macOS and Linux (compiled in) |  | MIT License (LZ4: BSD 2-Clause License; FastLZ: MIT License) |
+| [libfst](https://github.com/gtkwave/libfst), with LZ4 and FastLZ | commit b2681f9 (12 Nov 2026) | macOS and Linux, and the Linux agents (compiled in) |  | MIT License (LZ4: BSD 2-Clause License; FastLZ: MIT License) |
+| [zlib](https://zlib.net) | 1.3.1 | the Linux agents (linked in, from Debian's in Docker's gcc:16) |  | zlib License |
 
 ## SDL3
 
@@ -717,4 +718,31 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
 THE SOFTWARE.
+```
+
+## zlib
+
+https://zlib.net, zlib License (as zlib.h has it).
+
+```text
+Copyright (C) 1995-2024 Jean-loup Gailly and Mark Adler
+
+This software is provided 'as-is', without any express or implied
+warranty.  In no event will the authors be held liable for any damages
+arising from the use of this software.
+
+Permission is granted to anyone to use this software for any purpose,
+including commercial applications, and to alter it and redistribute it
+freely, subject to the following restrictions:
+
+1. The origin of this software must not be misrepresented; you must not
+   claim that you wrote the original software. If you use this software
+   in a product, an acknowledgment in the product documentation would be
+   appreciated but is not required.
+2. Altered source versions must be plainly marked as such, and must not be
+   misrepresented as being the original software.
+3. This notice may not be removed or altered from any source distribution.
+
+Jean-loup Gailly        Mark Adler
+jloup@gzip.org          madler@alumni.caltech.edu
 ```
