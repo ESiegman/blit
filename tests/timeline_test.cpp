@@ -984,7 +984,8 @@ void fst_test(const std::string& dir, const std::string& scratch) {
     writer_fst_test(scratch);
     // A larger one: progress told as it reads, from 0 to no more than the
     // file; past the budget it stops, says so, and keeps what it read (the
-    // whole file's changes, up to where it stopped); asked to stop, it stops.
+    // whole file's changes, up to where it stopped, which is where its span
+    // ends); asked to stop, it stops.
     const std::string big = scratch + "/big.fst";
     made_up_fst(big, 3'000'000);
     const auto whole = read_fst_file(big);
@@ -995,7 +996,7 @@ void fst_test(const std::string& dir, const std::string& scratch) {
     const u64 size = slurp(big).size();
     check(told.size() > 2 && told[0] == 0 && std::ranges::is_sorted(told) && told.back() <= size, "fst: progress, from 0 to its size");
     check(part->done && part->error.starts_with("the dump needs more memory than timeline.max_mb allows: read up to ") && part->changes > 0 &&
-              part->changes < whole->changes && part->bytes() < (6 << 20),
+              part->changes < whole->changes && part->bytes() < (6 << 20) && part->end > whole->start && part->end < whole->end,
           "fst: past the budget: " + part->error + ", " + std::to_string(part->bytes()) + " bytes");
     bool prefix = part->lanes.size() == whole->lanes.size();
     for (size_t i = 0; prefix && i < part->lanes.size(); ++i)
@@ -1005,7 +1006,7 @@ void fst_test(const std::string& dir, const std::string& scratch) {
     std::stop_source stop;
     auto stopped = std::make_unique<Wave>();
     read_fst(stopped.get(), big, 0, stop.get_token(), [&](u64) { stop.request_stop(); });
-    check(stopped->done && stopped->error == "stopped" && stopped->changes < whole->changes, "fst: stopped: " + stopped->error);
+    check(stopped->done && stopped->error == "stopped" && stopped->changes < whole->changes && stopped->end < whole->end, "fst: stopped: " + stopped->error);
     // Not FST, or not there.
     const auto vcd = read_fst_file(dir + "/icarus.vcd");
     check(vcd->done && vcd->error == "not an FST file: it does not start with an FST header", "fst: a VCD file said: " + vcd->error);

@@ -184,9 +184,10 @@ WaveFormat wave_format(std::string_view head);
 // `reached` says how far the lanes go. It stops at max_bytes (0: no limit),
 // or when `stop` is asked, keeping what it read; a file that is not FST,
 // is cut short or is damaged is said in `error`, never a crash (libfst's
-// own checks come back to it instead of ending the process). `progress` is
-// told after each piece about how many bytes into the file it has got.
-// Returns the memory the Wave took, as the budget counts it.
+// own checks come back to it instead of ending the process). When it
+// stops early, `end` is the last time read (as for VCD), not the header's.
+// `progress` is told after each piece about how many bytes into the file
+// it has got. Returns the memory the Wave took, as the budget counts it.
 u64 read_fst(Wave* into, const std::string& path, u64 max_bytes = 0, std::stop_token stop = {},
              const std::function<void(u64 bytes)>& progress = {});
 

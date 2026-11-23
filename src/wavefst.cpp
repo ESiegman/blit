@@ -504,6 +504,9 @@ u64 read_fst(Wave* into, const std::string& path, u64 max_bytes, std::stop_token
     if (f.ctx) fstReaderClose(f.ctx);
     std::unique_lock lock(into->mu);
     if (stop.stop_requested() && into->error.empty()) into->error = "stopped";
+    // (Stopped, or damaged: the span ends where the changes read do, as a
+    // VCD dump's ends at the last time read, not where the header says.)
+    if (!into->error.empty() && into->header) into->end = std::max(into->start, f.last_t);
     u64 changes = 0;
     for (Lane& l : into->lanes) {
         l.shrink();
