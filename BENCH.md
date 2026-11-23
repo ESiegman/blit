@@ -3292,9 +3292,9 @@ rounds, 2560x1600, against the first half (de28542):
 | Scrolling code-100m.txt, plain: the same | 17,610 / 51.71 µs / 0.88 µs | 18,251 / 51.67 µs / 0.96 µs |
 | Keys, plain: the same, and the step | 17,838 / 48.58 µs / 1.25 µs / 0.29 µs | 17,719 / 48.50 µs / 1.25 µs / 0.29 µs |
 
-The first run of this had one slow round on each side (a background job
-on the machine); run again, each moved by as much as the runs move among
-themselves, either way; none by more.
+The first run of this had outliers in its fifth round; run again, each
+moved by as much as the runs move among themselves, either way; none by
+more.
 
 ### Tried and dropped
 
