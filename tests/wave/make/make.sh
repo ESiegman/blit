@@ -2,9 +2,10 @@
 # Makes the dumps in tests/wave again, in the folder it is run in, on a
 # machine with the tools (they were made on Arch Linux, Nov 2026, with
 # Icarus Verilog 13.0, Verilator 5.054, Yosys 0.71+77 and pyvcd 0.5.1 under
-# Python 3.14). Each simulator's FST is the same run as its VCD. The ILA
-# captures (ila_*) come from a board, not a simulator: ila_build.tcl and
-# ila_capture.tcl, in Vivado, make them (../ila.txt says how).
+# Python 3.14). Each simulator's FST is the same run as its VCD; times-*.log
+# are what times.v prints under each. The ILA captures (ila_*) come from a
+# board, not a simulator: ila_build.tcl and ila_capture.tcl, in Vivado,
+# make them (../ila.txt says how).
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 
@@ -24,3 +25,10 @@ yosys -q -p "read_verilog counter_rtl.v; prep -top counter; sim -clock clk -rese
 python3 -m venv venv
 ./venv/bin/pip -q install pyvcd==0.5.1
 ./venv/bin/python "$here/pyvcd_uart.py" pyvcd.vcd
+
+# What testbenches print as times, and the dump of Icarus's run (Verilator,
+# with $error not stopping it, prints its own lines to the end).
+iverilog '-DDUMPVARS="times.vcd"' -o times.vvp "$here/times.v"
+vvp -n times.vvp >times-icarus.log 2>&1
+verilator --binary -Wno-fatal --top-module times --Mdir obj_times "$here/times.v"
+./obj_times/Vtimes +verilator+error+limit+10 >times-verilator.log 2>&1

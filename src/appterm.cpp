@@ -1575,7 +1575,9 @@ bool App::term_mouse_down(const SDL_MouseButtonEvent& b) {
 // Cmd+click: a "path:line[:col]" (or Python's File "path", line N) where
 // the click was opens there, in a split with text. A relative path is from
 // the shell's folder (as it tells it), a folder the build said it went
-// into, or the folder the tab started in: the first it is in.
+// into, or the folder the tab started in: the first it is in. While a wave
+// tab is open, a time as a simulator prints it ("@ 306500000") sets its
+// cursor (wave_go_time).
 bool App::term_go_place(TermView& v, u64 line, u32 col) {
     std::string text, cwd;
     size_t at = std::string::npos;
@@ -1613,7 +1615,8 @@ bool App::term_go_place(TermView& v, u64 line, u32 col) {
         cwd = t.cwd();
     }
     TextPlace place;
-    if (at == std::string::npos || !place_in_text(text, at, &place)) return false;
+    if (at == std::string::npos || !place_in_text(text, at, &place, wave_any())) return false;
+    if (place.time) return wave_go_time(place);
 
     // The machine it is on: here, or "ssh://host" for one there.
     std::string prefix, there;

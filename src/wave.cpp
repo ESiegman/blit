@@ -150,6 +150,25 @@ std::string Wave::time_text(u64 t) const {
     return s + " " + std::string(kUnits[u]);
 }
 
+bool Wave::time_of(u64 digits, u32 frac, bool unit, u32 mult, i32 exp, u64* out) const {
+    if (unit && samples) return false;
+    // digits * mult * 10^(exp - frac) seconds over unit_mult * 10^unit_exp:
+    // digits * mult / unit_mult * 10^e, rounded to the nearest.
+    using u128 = unsigned __int128;
+    const i32 e = unit ? exp - static_cast<i32>(frac) - unit_exp : -static_cast<i32>(frac);
+    u128 num = static_cast<u128>(digits) * (unit ? mult : 1), den = unit ? unit_mult : 1;
+    if (e < -30 || e > 30) return false;
+    for (i32 k = 0; k < e; ++k) {
+        num *= 10;
+        if (num >> 100) return false;
+    }
+    for (i32 k = 0; k > e; --k) den *= 10;
+    const u128 t = (num + den / 2) / den;
+    if (t >> 64) return false;
+    *out = static_cast<u64>(t);
+    return true;
+}
+
 size_t Wave::bytes() const {
     size_t n = sizeof(Wave);
     for (const Lane& l : lanes) n += l.bytes();

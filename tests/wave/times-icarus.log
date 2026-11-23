@@ -1,0 +1,11 @@
+VCD info: dumpfile times.vcd opened for output.
+@ 50000: count = 9
+[62500] count = 12
+               73000 count = 14
+  93.00 ns ERROR: count = 18
+at   94.00 ns the count is 18
+0.124us ERROR
+Time: 0.129us
+ERROR: times.v:26: count is 25
+       Time: 128500  Scope: times
+times.v:27: $finish called at 131500 (1ps)

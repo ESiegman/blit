@@ -9,7 +9,8 @@
 # writer against what was written; large dumps made up here (VCD, and FST
 # through libfst's writer) are read on a thread under a memory budget they
 # go over; Vivado's ILA captures of a Basys 3, as VCD and as CSV, read the
-# same, with their triggers and windows, and CSV that is not one said.
+# same, with their triggers and windows, and CSV that is not one said;
+# times read from text put in a dump's unit.
 #
 #   tests/wave.sh path/to/blit
 set -u

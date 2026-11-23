@@ -791,6 +791,34 @@ void ila_test(const std::string& dir) {
           "ila_one.csv over the budget: " + small->error);
 }
 
+// Times read from text, in a dump's units (Wave::time_of): "@ 50000" bare,
+// "93.00 ns", "0.124us", Icarus's "131500 (1ps)", in dumps of 1ps, 10 ns
+// and samples.
+void time_of_test(const std::string& dir) {
+    const auto ps = read_vcd(slurp(dir + "/times.vcd"));
+    const auto ten = read_vcd(slurp(dir + "/pyvcd.vcd"));
+    const auto ila = read_vcd(slurp(dir + "/ila_one.vcd"));
+    auto of = [](const Wave& w, u64 digits, u32 frac, bool unit, u32 mult, i32 exp) {
+        u64 t = 0;
+        return w.time_of(digits, frac, unit, mult, exp, &t) ? std::to_string(t) : std::string("none");
+    };
+    expect("time_of: @ 50000 in 1ps", of(*ps, 50000, 0, false, 1, 0), "50000");
+    expect("time_of: 93.00 ns in 1ps", of(*ps, 9300, 2, true, 1, -9), "93000");
+    expect("time_of: 0.124us in 1ps", of(*ps, 124, 3, true, 1, -6), "124000");
+    expect("time_of: 131500 (1ps)", of(*ps, 131500, 0, true, 1, -12), "131500");
+    expect("time_of: 3 (10ps) in 1ps", of(*ps, 3, 0, true, 10, -12), "30");
+    expect("time_of: 0.5 fs in 1ps, the nearest", of(*ps, 5, 1, true, 1, -15), "0");
+    expect("time_of: 1.5 ps in 1ps, the nearest", of(*ps, 15, 1, true, 1, -12), "2");
+    expect("time_of: 2 s in 1ps", of(*ps, 2, 0, true, 1, 0), "2000000000000");
+    expect("time_of: 30 ns in 10 ns", of(*ten, 30, 0, true, 1, -9), "3");
+    expect("time_of: 34 ns in 10 ns, the nearest", of(*ten, 34, 0, true, 1, -9), "3");
+    expect("time_of: 1.5 us in 10 ns", of(*ten, 15, 1, true, 1, -6), "150");
+    expect("time_of: bare 12.5 in 10 ns, the nearest", of(*ten, 125, 1, false, 1, 0), "13");
+    expect("time_of: past a u64 of ps", of(*ps, 99999999999, 0, true, 1, 0), "none");
+    expect("time_of: a capture's sample", of(*ila, 300, 0, false, 1, 0), "300");
+    expect("time_of: a capture has no unit of time", of(*ila, 5, 0, true, 1, -9), "none");
+}
+
 // Past the memory budget it stops, says so, and keeps what it read.
 void budget_test() {
     std::string text;
@@ -1216,6 +1244,7 @@ int run_check(const std::string& dir, int seeds, std::string scratch) {
     }
     fst_test(dir, scratch);
     ila_test(dir);
+    time_of_test(dir);
     if (failures) return 1;
     std::printf("timeline ok: %d seeds\n", seeds);
     return 0;

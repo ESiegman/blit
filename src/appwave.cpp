@@ -1659,6 +1659,52 @@ void App::wave_bench_step(bool zoom, int i, bool page) {
     dirty_ = true;
 }
 
+bool App::wave_any() const {
+    for (const std::unique_ptr<Pane>& pane : panes_)
+        for (const std::shared_ptr<Doc>& d : pane->docs)
+            if (d->wave) return true;
+    return false;
+}
+
+// A time Cmd+clicked in a terminal: the wave tab's cursor there (one in
+// front of a split first, else the first open, which is brought to the
+// front of its split), in the dump's unit (a bare number is in it already).
+bool App::wave_go_time(const TextPlace& time) {
+    Pane* where = nullptr;
+    size_t tab = 0;
+    for (const std::unique_ptr<Pane>& pane : panes_)
+        if (pane->doc && pane->doc->wave) {
+            where = pane.get(), tab = pane->tab;
+            break;
+        }
+    for (const std::unique_ptr<Pane>& pane : panes_)
+        for (size_t i = 0; !where && i < pane->docs.size(); ++i)
+            if (pane->docs[i]->wave) where = pane.get(), tab = i;
+    if (!where) return false;
+    WaveView& v = *where->docs[tab]->wave;
+    if (!v.started) return false;
+    u64 t = 0;
+    {
+        std::shared_lock lock(v.wave->mu);
+        const Wave& w = *v.wave;
+        if (!w.time_of(time.digits, time.frac, time.unit, time.mult, time.exp, &t)) return false;  // (a time with a unit, in a capture's samples: the click is a click)
+        if (w.done && (t < w.start || t > w.end)) {
+            notify(exact_text(w, t) + " is not in " + leaf_of(v.path) + " (" + exact_text(w, w.start) + " to " + exact_text(w, w.end) + ")");
+            return true;
+        }
+    }
+    v.cursor = t;
+    v.show_time(t);
+    v.touched = true;
+    ++v.gen;
+    if (where->tab != tab) {
+        focus_pane(where);
+        tab_show(tab);
+    }
+    dirty_ = true;
+    return true;
+}
+
 bool App::wave_sharp() const {
     for (const std::unique_ptr<Pane>& pane : panes_)
         if (pane->doc && pane->doc->wave && pane->doc->wave->started && pane->doc->wave->missing) return false;

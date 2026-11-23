@@ -1,0 +1,13 @@
+@ 50000: count = 9
+[62500] count = 12
+               73000 count = 14
+  93.00 ns ERROR: count = 18
+at   94.00 ns the count is 18
+0.1240us ERROR
+Time: 0.1290us
+[0.1290us] %Error: times.v:26: Assertion failed in times: count is 25
+-Info: times.v:26: Verilog $stop, ignored due to +verilator+error+limit
+- times.v:27: Verilog $finish
+- S i m u l a t i o n   R e p o r t: Verilator 5.054 2026-11-01
+- Verilator: $finish at 132ns; walltime 0.000 s; speed 4.249 ms/s
+- Verilator: cpu 0.000 s on 1 threads; allocated 4 MB

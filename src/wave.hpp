@@ -111,6 +111,11 @@ struct Wave {
     // A time as a person reads it, in the unit that suits it: "12.5 ns" (a
     // capture's sample number as it is: "100").
     std::string time_text(u64 t) const;
+    // A time read from text, `digits` with `frac` of them after the point,
+    // in units of mult * 10^exp seconds (unit) or in the dump's own (not
+    // unit), as the dump's nearest time; false if it is too large for one,
+    // or has a unit and the dump counts samples.
+    bool time_of(u64 digits, u32 frac, bool unit, u32 mult, i32 exp, u64* out) const;
     // The memory the lanes and the names hold, in bytes.
     size_t bytes() const;
 };

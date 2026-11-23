@@ -2761,7 +2761,8 @@ in any terminal tab opens the file there, in a split with text: a
 relative path from the shell's folder, the folders the build went into,
 or the one the terminal started in. A file that is not there is said so
 ("No file NAME"; on another machine, when its answer comes) and opens no
-tab. Cmd+R in the
+tab. While a wave tab is open, a simulation time there (`@ 306500000`,
+`93.00 ns`) sets its cursor instead (Waves, below). Cmd+R in the
 tab looks again by hand; with nothing found the tab says so, and how to
 add a system (below). On another
 machine (`ssh://`) the folder is looked at, and the tasks run, there.
@@ -4144,6 +4145,21 @@ that is wrong stops the reading there, keeping the samples before it, and
 the tab says which line and why. Lattice Reveal's captures are VCD and
 open as any VCD does (not checked with one: their times are in the unit
 their VCD gives).
+
+**Times in a terminal.** While a wave tab is open, **Cmd+click** on a
+time in a terminal tab (a simulation's output, say) sets that tab's
+cursor there, and brings the tab to the front of its split if it is
+behind another. A time is one as testbenches and simulators print it: a
+number with its unit (`93.00 ns`, `0.124us`, `$finish at 132ns`), with
+its unit in brackets as Icarus's `$finish` has it (`131500 (1ps)`), or a
+bare number after an `@` (`@ 50000`, `$display("@ %0t", $time)`), in
+brackets (`[62500]`), after `Time:` or `time=`, or first on its line
+(`%t` padded); a bare number is in the dump's own unit (as `%t` prints
+it, in the simulation's precision), one with a unit is converted. An ILA
+capture counts samples, so there a bare number is a sample and a time
+with a unit is not a target. A time outside the dump is said, and the
+cursor stays. A `path:line` is a path first, and with no wave tab open
+a time is not a target.
 
 A dump on **another machine** is fetched whole while it is no larger than
 4 MB; larger ones are not shown yet (the tab says so).
