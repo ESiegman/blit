@@ -521,6 +521,7 @@ void start(WaveView& v) {
     std::shared_lock lock(v.wave->mu, std::try_to_lock);
     if (!lock.owns_lock()) return;
     const Wave& w = *v.wave;
+    if (w.done && w.vars.empty() && !w.error.empty()) return;  // (nothing in it to show: the bottom row says why)
     WaveSaved saved;
     if (!v.view_text.empty() && wave_view_parse(w, v.view_text, &saved, &v.dropped) && (!saved.items.empty() || v.dropped == 0)) {
         v.items = std::move(saved.items);
@@ -1538,7 +1539,8 @@ bool App::waves_busy() const {
 void App::wave_wait(bool rows) {
     const u64 until = now_ns() + 20'000'000'000ull;
     auto shown = [&] {  // (rows: only until the tab in front has its rows, the dump maybe still being read)
-        return pane_->doc->wave && (pane_->doc->wave->started || !pane_->doc->wave->open_error.empty() || !pane_->doc->wave->fetch_error->empty());
+        const WaveView* v = pane_->doc->wave.get();
+        return v && (v->started || !v->open_error.empty() || !v->fetch_error->empty() || (v->now.done && !v->now.error.empty() && v->wave->vars.empty()));
     };
     while (now_ns() < until) {
         wave_sync();
@@ -1602,8 +1604,8 @@ std::string App::wave_dump(std::string_view what) {
         // (And whether rows were made all the same: a ruler and a cursor over nothing.)
         if (!v.open_error.empty()) return leaf_of(v.path) + ": cannot show it: " + v.open_error + (v.started ? ", rows made" : "");
         if (!v.fetch_error->empty()) return leaf_of(v.path) + ": cannot show it: " + *v.fetch_error + (v.started ? ", rows made" : "");
+        if (w.done && w.vars.empty() && !w.error.empty()) return leaf_of(v.path) + ": cannot show it: " + w.error + (v.started ? ", rows made" : "");
         if (!v.started) return leaf_of(v.path) + ": reading";
-        if (w.done && w.vars.empty() && !w.error.empty()) return leaf_of(v.path) + ": cannot show it: " + w.error;
         std::string out = leaf_of(v.path) + ": " + (w.done ? "read" : "reading") + ", cursor " + exact_text(w, v.cursor) + ", view " +
                           exact_text(w, static_cast<u64>(std::llround(std::max(0.0, v.left)))) + " to " + exact_text(w, static_cast<u64>(std::llround(v.left + v.trace_w() * v.tpp)));
         if (!w.error.empty()) out += ", stopped: " + w.error;

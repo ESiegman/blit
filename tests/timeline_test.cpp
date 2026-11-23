@@ -758,7 +758,7 @@ void ila_test(const std::string& dir) {
         return b;
     };
     const auto legacy = said("ila_one-legacy.csv", slurp(dir + "/ila_one-legacy.csv"),
-                             "an ILA capture's CSV with no radix row (written with -legacy_csv_file): its values cannot be read for sure. Write it with -csv_file, or as VCD");
+                             "no radix row (-legacy_csv_file): write it with -csv_file");
     check(legacy->vars.empty() && legacy->lanes.empty() && legacy->scopes.size() == 1, "ila_one-legacy.csv: no probes kept");
     said("a line short of a value", with_line(one, 57, "54,54,0,52,0,0"), "line 57: 6 values, where the first line names 8 columns", 53);
     check(read_csv(with_line(one, 57, "54,54,0,52,0,0"))->lanes[0].size() == 54, "a line short of a value: the samples before it kept");

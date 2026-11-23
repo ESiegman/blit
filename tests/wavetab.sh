@@ -349,7 +349,7 @@ check "its CSV: the same, in the radixes it gives" "ila_one.csv: read, cursor 10
 run 1600x900 "frame;wavewait;key:n;key:n;key:m;key:a;wavedump" "$W/ila_windows.csv"
 check "four windows: a trigger each, n from the first, a marker" "ila_windows.csv: read, cursor 34, view 0 to 1023, markers a=34(+0), triggers at 32 288 544 800, windows from 256 512 768 ;; >dut.count[7:0] = 1 signed ;;  dut.wrap = 0 ;;  dut.phase[1:0] = 2 octal ;;  dut.sum[11:0] = 0 unsigned ;;  dut.sw_q[3:0] = 0000 binary"
 run 1600x900 "frame;wavewait;wavedump" "$W/ila_one-legacy.csv"
-check "the CSV form with no radix row: not shown, and why" "ila_one-legacy.csv: cannot show it: an ILA capture's CSV with no radix row (written with -legacy_csv_file): its values cannot be read for sure. Write it with -csv_file, or as VCD"
+check "the CSV form with no radix row: not shown, and why" "ila_one-legacy.csv: cannot show it: no radix row (-legacy_csv_file): write it with -csv_file"
 printf 'a,b\n1,2\n' >"$W/table.csv"
 run 1600x900 "frame;wavedump" "$W/table.csv"
 check "a CSV that is not a capture: text" "no wave tab"

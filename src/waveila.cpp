@@ -242,7 +242,7 @@ void IlaCsvReader::radixes(std::string_view l) {
         stop(std::move(why));
     };
     if (!l.starts_with("Radix - "))
-        return none("an ILA capture's CSV with no radix row (written with -legacy_csv_file): its values cannot be read for sure. Write it with -csv_file, or as VCD");
+        return none("no radix row (-legacy_csv_file): write it with -csv_file");
     fields_[0].remove_prefix(8);
     if (fields_.size() != cols_.size())
         return none("line 2: " + std::to_string(fields_.size()) + " radixes, where the first line names " + std::to_string(cols_.size()) + " columns");
