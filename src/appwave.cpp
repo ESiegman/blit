@@ -1431,7 +1431,8 @@ bool App::waves_busy() const {
     if (!waves_) return false;
     for (const std::unique_ptr<Pane>& pane : panes_)
         for (const std::shared_ptr<Doc>& d : pane->docs)
-            if (d->wave && ((d->wave->load && !d->wave->load->finished()) || !d->wave->view_come)) return true;
+            // (Read, and its end seen by the tab too: a load that ends between a frame and this would leave the rows unmade.)
+            if (d->wave && ((d->wave->load && (!d->wave->load->finished() || !d->wave->now.done)) || !d->wave->view_come)) return true;
     for (const std::unique_ptr<Pane>& pane : panes_)
         if (pane->doc && pane->doc->wave && pane->doc->wave->started && pane->doc->wave->missing) return true;
     {
