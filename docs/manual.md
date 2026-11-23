@@ -2816,7 +2816,9 @@ system's (`/usr/share/vulkan/registry`, `/usr/local` or `/opt/homebrew`'s,
 `$VULKAN_SDK`'s, the newest `~/VulkanSDK`'s), else a copy of Vulkan-Headers'
 own (tag v1.4.363) fetched once, the first time one is asked for, into
 blit's data folder (`~/.local/share/blit/vulkan`); `BLIT_VALIDUSAGE` names
-another file. It is indexed once, on a thread of its own, and statements
+another file. Where the copy cannot be had blit says why: curl's own
+words (a host it could not find, the server's status), or `curl is not
+installed on this Mac`. It is indexed once, on a thread of its own, and statements
 read from it there. Metal's messages have no such file: their row is what
 there is.
 

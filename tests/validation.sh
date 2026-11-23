@@ -115,6 +115,31 @@ check "one with no entries: said so" 'blit: ~/cut.json has no valid usage in it'
 BLIT_VALIDUSAGE="$S/validusage.json" run "buildrun:make json;buildwait;key:cmd+shift+m;key:Down;key:Down;key:Down;key:Down;key:Down;key:Return;vuwait"
 check "a VUID it does not have (the few here have not vkDestroyFence's): said so" 'blit: VUID-vkDestroyFence-fence-01120 is not in @/validation/validusage.json (Vulkan 1.4.363)'
 
+# None on the system: Vulkan-Headers' fetched (BLIT_VALIDUSAGE_URL names
+# the file here) into blit's data folder (the test's own); where it cannot
+# be had, why: curl's own words, or that there is no curl (the shell keeps
+# the PATH it is given, which has none). (Where the system has a
+# validusage.json, nothing is fetched: skipped.)
+system=
+for f in /usr/share /usr/local/share /opt/homebrew/share; do [ -e "$f/vulkan/registry/validusage.json" ] && system=$f; done
+if [ -z "$system" ]; then
+    case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+    mkdir -p "$dir/bare"
+    ln -s /usr/bin/* /bin/* "$dir/bare/" 2>/dev/null
+    rm -f "$dir/bare/curl"
+    printf '#!/bin/sh\nshift\nexec /bin/sh -c "$@"\n' >"$dir/plainsh"
+    chmod +x "$dir/plainsh"
+    vu="buildrun:make text;buildwait;key:cmd+shift+m;key:Down;key:Return;vuwait"
+    # (zsh's, where there is one: it takes a bare =word for a program's path.)
+    login=$(command -v zsh || echo "${SHELL:-/bin/sh}")
+    got=$(env -u BLIT_VALIDUSAGE -u VULKAN_SDK SHELL="$login" XDG_DATA_HOME="$dir/data1" BLIT_VALIDUSAGE_URL="$dir/no-such.json" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$F;frame;$vu" 2>&1 >/dev/null | sed -e "s#$dir#~#g" -e "s/Could not open file/Couldn't open file/" | tail -1)  # (curl's own words: the Mac's 8.7 says "Couldn't", Arch's 8.23 "Could not")
+    check "none here, and the fetch failed: curl's words" "blit: No validusage.json here, and fetching Vulkan-Headers' failed: curl: (37) Couldn't open file ~/no-such.json"
+    got=$(env -u BLIT_VALIDUSAGE -u VULKAN_SDK XDG_DATA_HOME="$dir/data2" SHELL="$dir/plainsh" PATH="$dir/bare" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$F;frame;$vu" 2>&1 >/dev/null | tail -1)
+    check "none here, and no curl to fetch it with: said" "blit: No validusage.json here, and fetching Vulkan-Headers' failed: curl is not installed on $this"
+    got=$(env -u BLIT_VALIDUSAGE -u VULKAN_SDK XDG_DATA_HOME="$dir/data3" BLIT_VALIDUSAGE_URL="$S/validusage.json" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$F;frame;$vu;docdump:8" 2>&1 >/dev/null | sed -e "s#$dir#~#g" | tail -1)
+    check "fetched: read from blit's copy" '  Vulkan 1.4.363, ~/data3/blit/vulkan/validusage-v1.4.363.json'
+fi
+
 # Metal.
 run "buildrun:make assert;buildwait;problemsdump"
 check "Metal's assertion" 'button: ▶ make assert · 1 error | Build 1 | no file | >E Draw Errors Validation: missing vertexDescriptor Buffer binding at index 0.'
