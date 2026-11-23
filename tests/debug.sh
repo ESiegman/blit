@@ -619,7 +619,15 @@ if [ -x "$fakedap" ]; then
     export BLIT_FAKE_DAP_NODEFAULTS
     fake "debug:program=$F/prog;key:F5;debugwait:stopped;debugbreaks"
     c=$got
+    # (blit's copy of debugpy already unpacked, in a data folder of the
+    # test's own: nothing is fetched, whatever this machine has.)
+    mkdir -p "$F/data/blit/debugpy/1.8.22/debugpy/adapter"
+    : >"$F/data/blit/debugpy/1.8.22/debugpy/__init__.py"
+    was_data=${XDG_DATA_HOME-}
+    XDG_DATA_HOME="$F/data"
+    export XDG_DATA_HOME
     fake "workdir:$F/py;debug:program=$F/py/one.py;key:F5;debugwait:stopped;debugbreaks" "$F/py/one.py"
+    if [ -n "$was_data" ]; then XDG_DATA_HOME=$was_data; else unset XDG_DATA_HOME; fi
     unset BLIT_FAKE_DAP_NODEFAULTS
     got="$c ;; $got"
     check "no defaults: none on, but debugpy's uncaught" 'no breakpoints ;; exception uncaught'
