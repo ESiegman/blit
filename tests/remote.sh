@@ -340,9 +340,9 @@ blit.opt.lsp.servers.none$n = { command = { \"blit-no-such-server-$n\" }, langua
 printf '%s\n' "$none" >"$dir/none.lua"
 INIT="$dir/none.lua"
 run "remotewait;frame;lspsettle;wait:300;frame;lspsettle" "$R/src/a.cpp"
-check "no server there: said once" 'blit: language server: no language server for this file is installed on box'
+check "no server there: said once, and in a toast which, and where" 'blit: language server: no language server for this file is installed on box ;; blit: No language server for C++: none of none1, none2 or none3 is installed on box (lsp.servers in Settings)'
 INIT="$dir/none.lua" run "remotewait;frame;lspsettle;wait:300;frame;lspsettle;wait:300;frame;lspsettle" "ssh://tester@box$W/src/a.cpp"
-check "and the same with a user named" 'blit: language server: no language server for this file is installed on tester@box'
+check "and the same with a user named" 'blit: language server: no language server for this file is installed on tester@box ;; blit: No language server for C++: none of none1, none2 or none3 is installed on tester@box (lsp.servers in Settings)'
 INIT="$dir/none.lua" slow "remotewait;frame;wait:300;$drop;lspsettle;wait:300;lspsettle" "$R/src/a.cpp"
 check "the connection lost while one is looked for there: said, once" 'blit: language server: the connection to box was lost'
 rm "$W/src/a.cpp"
@@ -721,6 +721,18 @@ fi
 # The agent was copied there once, into the cache blit keeps in that home.
 got=$(ls "$T/.cache/blit" | sed -e 's/-[0-9a-f]*$//')
 check "the agent, copied once" "blit-agent-$(uname -s)-$(uname -m)"
+
+# No ssh on this machine (nor docker, for a container): which, said, and
+# on the status bar in place of "not connected".
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+bare="$dir/bare"
+mkdir -p "$bare"
+ln -s /usr/bin/* /bin/* "$bare/" 2>/dev/null
+rm -f "$bare/ssh" "$bare/docker"
+got=$(env -u BLIT_SSH -u BLIT_DOCKER PATH="$bare" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "remotewait;frame;statusdump" "$R/notes.txt" 2>&1 >/dev/null | tail -2 | join)
+check "no ssh here: said, and on the status bar" "blit: ssh is not installed on $this ;; box: ssh is not installed on $this untitled | Ln 1, Col 1 Tabs LF Plain text"
+got=$(env -u BLIT_SSH -u BLIT_DOCKER PATH="$bare" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "remotewait;frame;statusdump" "docker://box$W/notes.txt" 2>&1 >/dev/null | tail -2 | join)
+check "no docker here, for a container: docker named (not ssh)" "blit: docker is not installed on $this ;; docker:box: docker is not installed on $this untitled | Ln 1, Col 1 Tabs LF Plain text"
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "remote ok"
 exit $failed

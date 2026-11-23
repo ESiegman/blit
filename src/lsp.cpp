@@ -631,6 +631,7 @@ struct In {
     std::vector<RawDiag> diags;
     std::vector<RawItem> items;
     bool incomplete = false;
+    bool missing = false;  // (kInFailed: none of the servers is installed there)
     std::vector<InfoLine> lines;
     SignatureInfo sig;
     LspLocation loc;
@@ -754,6 +755,7 @@ struct Lsp::Conn {
     std::shared_ptr<Remote> rconn;
     u32 rproc = 0;
     bool none_there = false;  // (the worker's: none of the candidates can be had there, now: none is installed, or no connection)
+    bool missing = false;     // (and it is that none is installed)
 
     void push(In&& m) {
         m.server = server_id;
@@ -783,6 +785,7 @@ struct Lsp::Server {
     std::string shown;  // as the user is told it (another machine's: name@host)
     std::string program, root, remote;
     std::vector<std::string> candidates;  // (another machine's: the names it may turn out to be)
+    std::string language;                 // (and the language they were looked for for)
     // The protocol's names for languages, by each of the servers it may be
     // (see language_id()).
     std::map<std::string, std::map<std::string, std::string, std::less<>>> language_ids;
@@ -924,6 +927,7 @@ struct Lsp::Conn::Worker {
         }
         if (c.program.empty()) {  // (none is there; or the connection went while it was asked, and that is all that is known)
             c.none_there = true;
+            c.missing = c.rconn->state() == Remote::kReady;
             *why = c.rconn->state() == Remote::kReady ? "no language server for this file is installed on " + host : remote_error(c.root);
             return false;
         }
@@ -1941,6 +1945,7 @@ struct Lsp::Conn::Worker {
             m.kind = kInFailed;
             m.text = why;
             m.flag = c.none_there;  // (then none of them is to be tried again there)
+            m.missing = c.missing;
             c.push(std::move(m));
             return;
         }
@@ -2408,6 +2413,7 @@ bool Lsp::open(u64 key, Editor& ed, const std::string& path, const std::string& 
         }
         Server* s = start_server(candidates[0], candidates[0].command[0], path.substr(0, path.rfind('/')), remote, candidates);
         if (!s) return false;
+        s->language = language;
         add_document(s, key, &ed, &ed.buf, path, path, language);
         return true;
     }
@@ -3363,6 +3369,7 @@ u32 Lsp::poll() {
             }
             case kInFailed:
             case kInStopped:
+                if (m.missing && m.kind == kInFailed && !s->remote.empty()) missing_.push_back({s->language, at_host(s->remote).substr(1), s->candidates});
                 server_gone(s, m.text, m.flag && m.kind == kInFailed);
                 news |= kState | kDiagnostics;
                 break;
@@ -3764,6 +3771,12 @@ std::string Lsp::take_message() {
     std::string m;
     m.swap(message_);
     return m;
+}
+
+std::vector<Lsp::Missing> Lsp::take_missing() {
+    std::vector<Missing> out;
+    out.swap(missing_);
+    return out;
 }
 
 std::vector<std::string> Lsp::take_failed() {

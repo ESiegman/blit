@@ -19,6 +19,7 @@
 
 #include "app.hpp"
 #include "look.hpp"
+#include "missing.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
 #include "tests.hpp"
@@ -160,16 +161,20 @@ void App::test_find() {
         }
         std::string host, there;
         const bool remote = split_remote(root, &host, &there);
+        bool no_ctest = false;  // (the shell that would run it found none: said, where no test is found)
         for (const std::string& d : dirs) {
             std::string out;
-            if (fs_run(root, "ctest --show-only=json-v1 --test-dir " + sh_word(on_host(d)), &out, 30000))
-                for (TestCase& t : parse_ctest_json(out, d)) {
-                    if (remote) {  // (what it runs, and where, are paths there: debugged there)
-                        if (!t.command.empty() && t.command[0].starts_with('/')) t.command[0] = remote_path(host, t.command[0]);
-                        if (t.cwd.starts_with('/')) t.cwd = remote_path(host, t.cwd);
-                    }
-                    f.tests.push_back(std::move(t));
+            if (!fs_run(root, "command -v ctest >/dev/null 2>&1 || { echo blit-no-ctest; exit 1; }; ctest --show-only=json-v1 --test-dir " + sh_word(on_host(d)), &out, 30000)) {
+                no_ctest = no_ctest || out.starts_with("blit-no-ctest");
+                continue;
+            }
+            for (TestCase& t : parse_ctest_json(out, d)) {
+                if (remote) {  // (what it runs, and where, are paths there: debugged there)
+                    if (!t.command.empty() && t.command[0].starts_with('/')) t.command[0] = remote_path(host, t.command[0]);
+                    if (t.cwd.starts_with('/')) t.cwd = remote_path(host, t.cwd);
                 }
+                f.tests.push_back(std::move(t));
+            }
         }
         std::string said;  // (pytest's last line, or its Python's: why none were found)
         if (python) {
@@ -180,6 +185,7 @@ void App::test_find() {
             while (!out.empty() && std::isspace(static_cast<unsigned char>(out.back()))) out.pop_back();
             said = out.substr(out.find_last_of('\n') + 1);  // (npos + 1: all of it)
         }
+        if (no_ctest) said = not_installed("ctest", host) + (said.empty() ? "" : "; " + said);
         if (f.tests.empty())
             f.note = dirs.empty() && !python ? "No tests found: CTest's are found in a build folder that has been configured, pytest's beside a test_*.py"
                      : said.empty()          ? "No tests found"

@@ -175,4 +175,17 @@ std::string fit_text(std::string_view s, u32 cols, bool path) {
     return std::string(dots) + std::string(s.substr(k < starts.size() ? starts[k] : s.size()));
 }
 
+std::vector<std::string> wrap_words(std::string_view text, u32 cols) {
+    std::vector<std::string> out(1);
+    while (!text.empty()) {
+        const size_t space = text.find(' ');
+        const std::string_view word = text.substr(0, space);
+        text = space == std::string_view::npos ? std::string_view{} : text.substr(space + 1);
+        if (!out.back().empty() && width_of(out.back()) + 1 + width_of(word) > cols) out.emplace_back();
+        if (!out.back().empty()) out.back() += ' ';
+        out.back() += fit_text(word, cols);
+    }
+    return out;
+}
+
 }  // namespace blit

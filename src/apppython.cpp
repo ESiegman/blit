@@ -44,6 +44,7 @@
 
 #include "app.hpp"
 #include "fsio.hpp"
+#include "missing.hpp"
 #include "remote.hpp"
 
 extern char** environ;
@@ -84,7 +85,8 @@ print(int(d)))py";
 // was is only said to be "same", and its interpreter is not asked again),
 // kProbe, then the folders an interpreter was chosen for, each with it.
 // Says root=, from=, python=, console=, sig=, then the interpreter's
-// version=, exe= and debugpy=.
+// version=, exe= and debugpy=, and missing=: the program that would run it
+// where it is not on the PATH (python3; uv, for a uv project).
 constexpr const char* kFind = R"sh(d=$1 top=$2 pin=$3 known=$4 probe=$5
 shift 5
 case $d/ in "$top"/*) ;; *) top=$d ;; esac
@@ -112,7 +114,10 @@ if [ -x "$py" ]; then set -- "$py"
 elif [ "$from" = uv ]; then set -- "$(uv python find 2>/dev/null)"; [ -n "$1" ] || set -- python3
 else set -- $py; fi
 info=$("$@" -c "$probe" 2>/dev/null </dev/null)
-printf 'root=%s\nfrom=%s\npython=%s\nconsole=%s\nsig=%s\n' "$d" "$from" "$py" "$con" "$sig"
+miss=
+if [ "$from" = uv ]; then command -v uv >/dev/null 2>&1 || miss=uv
+elif [ -z "$info" ]; then case $1 in */*) ;; *) command -v "$1" >/dev/null 2>&1 || miss=$1 ;; esac; fi
+printf 'root=%s\nfrom=%s\npython=%s\nconsole=%s\nsig=%s\nmissing=%s\n' "$d" "$from" "$py" "$con" "$sig" "$miss"
 printf '%s\n' "$info" | sed -n -e '1s/^/version=/p' -e '2s/^/exe=/p' -e '3s/^/debugpy=/p'
 )sh";
 
@@ -169,8 +174,9 @@ for m in z.namelist():
 )py";
 
 // A program run here in `dir` (found on the PATH), what it printed
-// collected (its errors too, with `errors`); its exit status, or -1 if it
-// could not be run or took longer than `ms`.
+// collected (its errors too, with `errors`: one not on the PATH, that it is
+// not installed); its exit status, or -1 if it could not be run or took
+// longer than `ms`.
 int run_here(const std::vector<std::string>& argv, const std::string& dir, std::string* out, int ms, bool errors = false) {
     out->clear();
     int pipe_out[2];
@@ -208,6 +214,7 @@ int run_here(const std::vector<std::string>& argv, const std::string& dir, std::
     ::close(pipe_out[1]);
     if (rc != 0) {
         ::close(pipe_out[0]);
+        if (errors && rc == ENOENT && argv[0].find('/') == std::string::npos) *out = not_installed(argv[0], {});  // (why, said as its errors would be)
         return -1;
     }
     const u64 until = now_ns() + static_cast<u64>(ms) * 1'000'000;
@@ -390,6 +397,7 @@ void App::PyUi::find(const Job& j) {
     f.version = said(out, "version");
     if (f.version.empty() || f.version.find_first_not_of("0123456789.+abrc") != std::string::npos) f.version.clear(), f.exe.clear();
     f.debugpy = said(out, "debugpy") == "1";
+    if (const std::string miss = said(out, "missing"); !miss.empty()) f.missing = not_installed(miss, host_of(j.dir));
     sigs[f.root] = said(out, "sig");
     const auto was = roots.find(j.dir);
     if (was != roots.end() && was->second == f.root && found.contains(f.root) && found[f.root] == f) return;  // (as it was)
@@ -671,10 +679,14 @@ static std::string python_file_dir(const Doc& d, bool py) {
     return parent_of(is_remote(p) ? p : full_path(p));
 }
 
-std::string App::py_status(const Doc& d) {
+std::string App::py_status(const Doc& d, bool* missing) {
     const std::string dir = python_file_dir(d, d.lang == "python" || (d.lang.empty() && (d.ed.path.ends_with(".py") || d.ed.path.ends_with(".pyi"))));
     if (dir.empty()) return {};
     const std::optional<PyFound> f = py_known(dir);
+    if (f && !f->missing.empty()) {  // (what would run it is not installed: said, in its place)
+        if (missing) *missing = true;
+        return f->missing;
+    }
     if (!f || f->from.empty() || (f->from == "PATH" && f->version.empty())) return {};  // (not known, or nothing to say of it)
     std::string v = f->version;
     if (const size_t dot = v.find('.'); dot != std::string::npos) v = v.substr(0, v.find('.', dot + 1));  // (3.12, of 3.12.4)

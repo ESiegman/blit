@@ -30,6 +30,7 @@ struct GitEntry {
 
 struct GitStatus {
     bool repo = false;
+    std::string missing;   // (not one, as git is not installed where it is: said, "git is not installed on this Mac")
     std::string root;      // the top of the working tree
     std::string branch;    // empty when no branch is checked out
     std::string upstream;  // the branch it follows, if any

@@ -306,7 +306,10 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                         s.in = ink::kMuted;
                         s.action = kReconnect;
                     } else if (st == Remote::kFailed) {
-                        s.text = icon + host + (r->stopped() ? ": agent stopped (connect again)" : ": not connected (connect again)");
+                        const std::string why = r->error();  // (ssh, or docker, not installed here: said, and not "not connected")
+                        s.text = icon + host + (r->stopped()                                      ? ": agent stopped (connect again)"
+                                                : why.find(" is not installed on ") != std::string::npos ? ": " + why
+                                                                                                          : ": not connected (connect again)");
                         s.in = ink::kError;
                         s.action = kReconnect;
                     } else {
@@ -427,7 +430,9 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                 u.right.push_back({warn + count_text(warnings), warnings ? ink::kWarning : ink::kMuted, kProblemsTab, 1, 4});
             }
             if (!kernel.empty()) u.right.push_back({kernel, kernel_lost ? ink::kError : ink::kMuted, kNone, 2, 3});
-            if (const std::string py = start ? std::string() : py_status(d); !py.empty()) u.right.push_back({py, ink::kMuted, kPython, 2, 3});  // (a click: another chosen)
+            bool py_missing = false;
+            if (const std::string py = start ? std::string() : py_status(d, &py_missing); !py.empty())
+                u.right.push_back({py, py_missing ? ink::kWarning : ink::kMuted, kPython, 2, 3});  // (a click: another chosen)
             if (text) u.right.push_back({at_text(), ink::kMuted, kGoLine, 2, 5});
             const u32 step = text ? indent_step() : 0;
             if (text) u.right.push_back({d.indent_tabs ? std::string("Tabs") : "Spaces: " + count_text(step), ink::kMuted, kIndent, 2, 2});

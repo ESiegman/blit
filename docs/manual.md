@@ -178,6 +178,13 @@ the keyboard; the rest close (they are in the last folder's session). A
 file opened on its own (`blit FILE`) leaves the sessions alone.
 `blit.opt.editor.restore = false` turns all of it off.
 
+**Programs it runs.** Much of what blit does is done by another program
+(git, gh, a language server, a debugger, a build's tools, a flash tool,
+curl, docker, ssh), on the machine the work is on. When that program is
+not there, blit says so where the feature shows how it went, naming the
+program and the machine: `gh is not installed on this Mac`, `cmake is not
+installed on lab`.
+
 Everything blit does can be done from the keyboard. **Cmd+Shift+P**
 (Ctrl+Shift+P elsewhere) searches every command by its name or its keys,
 shows the keys of each, and runs the one chosen; typing `cmd+b` finds what
@@ -754,6 +761,9 @@ everyday things from the side panel. It runs the `git` program for all of
 it, so whatever your git does in a terminal (credential helpers, ssh keys,
 hooks, your settings) it does here. Nothing git does ever holds up the
 editor: a push that takes ten seconds takes them on a thread of its own.
+Where git is not installed on the folder's machine, the Git tab says so
+("git is not installed on lab") in place of "Not a git repository", and
+so does what needs a repository.
 
 **In the text.** Lines changed since the last commit have a mark beside
 their number: one colour for added lines, one for changed ones, and a dash
@@ -1768,7 +1778,11 @@ When a language server for a file's type is installed, blit starts it and
 shows what it says. Every tab's file is open on its server, not just the
 one in front, and several servers run at once: one for each language and
 project, so a project of C++ and Python has clangd and pyright side by side.
-A server whose last file has been closed stops half a minute later.
+A server whose last file has been closed stops half a minute later. When
+none of the servers set up for a file's language is installed on its
+machine, opening the file says so, once for the language: "No language
+server for C++: clangd is not installed on this Mac (lsp.servers in
+Settings)"; turning those servers off there says nothing more.
 
 ![clangd: a completion list, a problem underlined, inlay hints and colours from the server](media/lsp.png)
 
@@ -2003,10 +2017,12 @@ it first:
 ```
 
 The host is anything `ssh` itself takes (a name from `~/.ssh/config`, or
-`user@host`). From the start screen, `r` (Connect to a server…) opens the
-box that chooses a folder at `ssh://`, which lists the hosts
-`~/.ssh/config` names; one it does not name is typed (`ssh://me@devbox`)
-and offered as it is. Going into a host (Enter or Tab) connects and lists
+`user@host`). With no `ssh` on this machine (no `docker`, for a
+container), the status bar says so where it would name the host. From
+the start screen, `r` (Connect to a server…) opens the box that chooses
+a folder at `ssh://`, which lists the hosts `~/.ssh/config` names; one
+it does not name is typed (`ssh://me@devbox`) and offered as it is.
+Going into a host (Enter or Tab) connects and lists
 its home folder, and Enter on its first row ("this folder") works there. In that box, and
 in the one that opens files, `ssh://` typed anywhere starts the path again
 there, and `~` is the home folder on the other machine.
@@ -2390,7 +2406,9 @@ debugging session, a kernel) starts once it is known, a moment later.
 
 For a Python file, the status bar names it, "Python 3.12 (.venv)" (with
 what chose it: `.venv`, `venv`, `uv`, `conda NAME`, `pinned`, `chosen`,
-or nothing for the PATH's); a click on it, or "Choose the project's
+or nothing for the PATH's), or, where what would run it is not installed,
+that (`python3 is not installed on this Mac`, `uv is not installed on
+lab` for a uv project); a click on it, or "Choose the project's
 Python…", lists the Pythons there are: the project's venvs (any folder
 in it with a `pyvenv.cfg`), uv's for a uv project and those uv has
 installed, conda's (the active environment's base and its `envs`),
@@ -2607,6 +2625,10 @@ run configuration's `debug.adapter` asks for one or the other, below),
 and debugpy for a `.py` program, run
 with the [project's Python](#the-projects-python) (the program's
 folder's: its project's or subproject's), which runs the program too.
+Where none is installed on the program's machine, starting says which
+(`No debugger: neither lldb-dap nor gdb is installed on this Mac`, or
+`arm-none-eabi-gdb is not installed on lab` for a `debug.adapter` of
+another, or the Python or uv a `.py` program's adapter needs).
 Where that Python has no debugpy of its own, blit fetches its own copy
 the first time one is needed (debugpy's wheel from PyPI, at the version
 blit names, checked against its SHA-256, its Python files only) into
@@ -2673,7 +2695,8 @@ exit code 2 after 3.2 s · 3 errors". On macOS blit.app's own (the first
 one asks for leave to show them, as the system does); a blit that is no
 app bundle (one run from its build folder) hands it to `osascript`. On
 Linux freedesktop's Notify over D-Bus, through `gdbus` (or else
-`notify-send`), found on PATH. `blit.opt.build.notify = false` stops
+`notify-send`), found on PATH. Where there is none of those, blit says
+so once, in its own window. `blit.opt.build.notify = false` stops
 them.
 
 What the build prints is read for problems as it comes, on the terminal's
@@ -2700,7 +2723,11 @@ errors). A run that failed with no error in its output says so instead:
 `▶ make · failed (exit 2)` on the Run button (with its warnings' count,
 if it has some), "make failed with exit code 2: no problem found in its
 output" in the Problems tab and from F8, which then has nowhere to go;
-never "No problems" under a red button. In the text they are marked as
+never "No problems" under a red button. One whose program the shell could
+not find (its exit code 127) names it instead: `▶ Build · failed (cmake is
+not installed)`, "Build failed: cmake is not installed on this Mac" (or on
+the host the folder is on) in the Problems tab, from F8 and at the end of
+its tab, and "cmake is not installed" on its row. In the text they are marked as
 the language server's problems are, in the split with the keyboard: a
 wavy underline in the colour of the kind, from the column the tool gave
 over the word there (the line's text, where it gave no column), and the
@@ -3249,7 +3276,10 @@ cables; for each FTDI chip (and each JTAG cable of another maker's it
 knows) its `--detect` (through Digilent's cable for a Digilent board, by
 the chip's serial number) says which FPGA is on it, and each board in
 openFPGALoader's own list with that FPGA on a Digilent cable is a row of
-its own, as no USB string tells a Basys 3 from a Cmod A7-35T:
+its own, as no USB string tells a Basys 3 from a Cmod A7-35T. Where an
+FPGA's cable is plugged in and openFPGALoader is not installed, the list
+has the cable alone and blit says so (`openFPGALoader is not installed on
+this Mac: the boards on its cables are not named`):
 
 ```
 Digilent FT2232 (FPGA)  210183A8F2C1  /dev/cu.usbserial-210183A8F2C11

@@ -323,5 +323,21 @@ check "a build that fails: it says so, and no test runs" "blit: Build failed: th
 cp "$dir/check.cpp.was" "$P/check.cpp"
 cmake --build "$P/build" >/dev/null 2>&1
 
+# A configured build folder, and no ctest to ask (the user's shell keeps
+# the PATH it is given, which has none): said, not just "No tests found".
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+C="$dir/conly"
+mkdir -p "$C"
+printf 'cmake_minimum_required(VERSION 3.21)\nproject(c NONE)\nenable_testing()\nadd_test(NAME t COMMAND true)\n' >"$C/CMakeLists.txt"
+cmake -S "$C" -B "$C/build" >/dev/null 2>&1
+bare="$dir/bare"
+mkdir -p "$bare"
+ln -s /usr/bin/* /bin/* "$bare/" 2>/dev/null
+rm -f "$bare/ctest" "$bare/cmake"
+printf '#!/bin/sh\nshift\nexec /bin/sh -c "$@"\n' >"$dir/plainsh"
+chmod +x "$dir/plainsh"
+got=$(SHELL="$dir/plainsh" PATH=$bare "$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$C;frame;testdump" "$C/CMakeLists.txt" 2>&1 >/dev/null | grep -v '^blit: ' | tail -1)
+check "ctest not installed: said where the tests would be" "No tests found: ctest is not installed on $this"
+
 [ "$failed" = 0 ] && echo "testing: all passed"
 exit "$failed"

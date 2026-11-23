@@ -296,16 +296,23 @@ void Engine::there(const EngineSpec& spec, EngineExit* exit) {
 // ---------------------------------------------------------------- which
 
 namespace {
+// A program found not to be there is asked about again after this long: one
+// installed since its warning is found the next time it is wanted.
+constexpr u64 kNotThereNs = 3'000'000'000ull;
+struct Kept {
+    std::string path;  // "" not there
+    u64 at_ns = 0;     // when it was asked
+};
 std::mutex which_mu;
-std::unordered_map<std::string, std::string> which_kept;  // (host "\n" program: its path, "" not there)
+std::unordered_map<std::string, Kept> which_kept;  // (by host "\n" program)
 std::atomic<u64> which_count{0};
 }  // namespace
 
 bool Engine::which_known(const std::string& host, const std::string& program, std::string* path) {
     std::lock_guard lock(which_mu);
     const auto it = which_kept.find(host + "\n" + program);
-    if (it == which_kept.end()) return false;
-    if (path) *path = it->second;
+    if (it == which_kept.end() || (it->second.path.empty() && now_ns() - it->second.at_ns > kNotThereNs)) return false;
+    if (path) *path = it->second.path;
     return true;
 }
 
@@ -322,7 +329,7 @@ std::string Engine::which(const std::string& host, const std::string& program) {
         if (c->state() != Remote::kReady) return {};
     }
     std::lock_guard lock(which_mu);
-    which_kept[host + "\n" + program] = found;
+    which_kept[host + "\n" + program] = {found, now_ns()};
     return found;
 }
 

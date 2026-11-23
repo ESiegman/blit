@@ -38,6 +38,19 @@ fresh() {
     git -C "$dir/bo" pull -q 2>/dev/null
 }
 
+# path_without PROGRAM...: a PATH of /usr/bin's and /bin's programs but not
+# those named (a machine they are not installed on), and what blit calls
+# this machine.
+path_without() {
+    p="$dir/without-$(printf '%s' "$*" | tr ' ' -)"
+    mkdir -p "$p"
+    ln -s /usr/bin/* "$p/" 2>/dev/null
+    ln -s /bin/* "$p/" 2>/dev/null
+    for n in "$@"; do rm -f "$p/$n"; done
+    printf '%s' "$p"
+}
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+
 failed=0
 # check NAME EXPECTED: compares $got with it.
 check() {
@@ -543,6 +556,21 @@ run "$dir/ada/poem.txt" "$prs;key:Return;frame;key:Down;key:Down;key:Return;luaw
 got=$(grep '^api -X POST' "$GH_LOG")
 check "an answer, to its thread" "api -X POST repos/{owner}/{repo}/pulls/12/comments/101/replies -f body=Fair enough"
 unset BLIT_GH GH_LOG
+# gh not installed: said, naming it and this machine (and not as gh's own words).
+got=$(PATH=$(path_without gh) "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "$prs" "$dir/ada/poem.txt" 2>&1 >/dev/null | grep '^blit: ' | tail -1)
+check "gh not installed: said" "blit: gh is not installed on $this"
+
+# git not installed on the machine the folder is on (tests/fake-ssh.sh
+# stands in for ssh, and the login shell there keeps the PATH it is
+# given): the Git tab says so, not that it is no repository (nor offers to
+# make it one), and so does what needs a repository.
+printf '#!/bin/sh\nshift\nexec /bin/sh -c "$@"\n' >"$dir/plainsh"
+chmod +x "$dir/plainsh"
+mkdir -p "$dir/there"
+nogit=$(path_without git)
+got=$(SHELL="$dir/plainsh" PATH=$nogit BLIT_SSH="$(cd "$(dirname "$0")" && pwd)/fake-ssh.sh" BLIT_FAKE_HOME="$dir/there" "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" \
+    --script "remotewait;frame;gitwait;gitdump;command:Git: The file's history;frame" "ssh://box$dir/ada/poem.txt" 2>&1 >/dev/null | grep -v '^blit: git:' | tail -2 | tr '\n' '/')
+check "git not installed there: said, naming that machine" "no repository: git is not installed on box/blit: git is not installed on box/"
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "git ok"
 exit $failed

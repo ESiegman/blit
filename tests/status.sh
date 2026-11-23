@@ -32,6 +32,19 @@ EOF
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.syntax.enabled = false\n' >"$dir/plain.lua"
 export XDG_DATA_HOME="$dir/data" PATH="$dir/bin:$PATH" BLIT_RECENT_FILE="$dir/recent"
 
+# path_without PROGRAM...: a PATH of /usr/bin's and /bin's programs but not
+# those named (a machine they are not installed on), and what blit calls
+# this machine.
+path_without() {
+    p="$dir/without-$(printf '%s' "$*" | tr ' ' -)"
+    mkdir -p "$p"
+    ln -s /usr/bin/* "$p/" 2>/dev/null
+    ln -s /bin/* "$p/" 2>/dev/null
+    for n in "$@"; do rm -f "$p/$n"; done
+    printf '%s' "$p"
+}
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+
 failed=0
 check() {
     if [ -n "$print" ]; then
@@ -80,6 +93,11 @@ run "command:Install the grammar" "$W/thing.wib"
 check "a language nobody knows where to get a grammar for" 'No grammar is known for Wibble'
 run "command:Install the grammar;wait:3000" "$W/thing.wob"
 check "one fetched (here, a curl that fails): the bottom line says how it went" 'The Wobble grammar was not installed: could not fetch https://github.com/nobody/tree-sitter-wobble/archive/v1.tar.gz: curl: (6) Could not resolve host'
+kept=$PATH
+PATH=$(path_without curl)
+run "command:Install the grammar;wait:3000" "$W/thing.wob"
+PATH=$kept
+check "no curl here at all: said so" "The Wobble grammar was not installed: curl is not installed on $this"
 
 # A click on each part.
 run "statusclick:Ln;finddump" "$W/src/main.cpp"

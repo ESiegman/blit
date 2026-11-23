@@ -13,6 +13,8 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "missing.hpp"
+
 extern char** environ;
 
 namespace {
@@ -228,6 +230,8 @@ void Jobs::run(Job* job, JobSpec spec) {
         if (!spec.cwd.empty() && (::stat(spec.cwd.c_str(), &st) != 0 || !S_ISDIR(st.st_mode)))
             last.err = "cannot run " + spec.argv[0] + " in " + spec.cwd + ": no such folder" +
                        (spec.cwd.find("://") != std::string::npos ? " here (programs are run on this machine)" : "");
+        else if (rc == ENOENT && spec.argv[0].find('/') == std::string::npos)
+            last.err = not_installed(spec.argv[0], {});  // (not on the PATH)
         else
             last.err = "cannot run " + spec.argv[0] + ": " + std::strerror(rc);
         return finish();

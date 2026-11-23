@@ -22,6 +22,7 @@
 #include "engine.hpp"
 #include "flash.hpp"
 #include "fsio.hpp"
+#include "missing.hpp"
 #include "remote.hpp"
 
 namespace blit {
@@ -153,7 +154,7 @@ Prepared prepare(const std::string& root, const BuildTask& c, const std::string&
     // (Vivado, seldom on the PATH unless its settings64.sh was sourced: where AMD installs it.)
     if (program.empty() && tool == "vivado") program = vivado_installed(host.empty() ? std::string() : root.substr(0, root.size() - there.size()));
     if (program.empty()) {
-        p.why = (programs.empty() ? tool : programs.back()) + " is not on the PATH" + (host.empty() ? std::string() : " on " + host) + (tool == "vivado" ? " (nor in /tools/Xilinx or /opt/Xilinx)" : "");
+        p.why = not_installed(programs.empty() ? tool : programs.back(), host) + (tool == "vivado" ? " (nor in /tools/Xilinx or /opt/Xilinx)" : "");
         return p;
     }
     FlashImage img;

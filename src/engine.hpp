@@ -73,7 +73,8 @@ public:
 
     // The program's full path on a machine ("" this one), as its PATH has it
     // (there, the agent's): "" if it is not there. Asked once per machine and
-    // program, then kept (forget() to ask again: a tool installed since).
+    // program, then kept (forget() to ask again; one not there is asked
+    // about again a few seconds on: a tool installed since its warning).
     // It may wait for the machine (a connection, a round trip): never on the
     // main thread; which_known() is for that.
     static std::string which(const std::string& host, const std::string& program);

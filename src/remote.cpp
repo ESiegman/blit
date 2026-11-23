@@ -30,6 +30,7 @@
 
 #include "agent/protocol.hpp"
 #include "finder.hpp"
+#include "missing.hpp"
 
 extern char** environ;
 
@@ -769,7 +770,8 @@ struct Remote::Impl {
             ssh = rc == 0 ? pid : -1;
         }
         to = in[1], from = out[0], errs = er[0];
-        if (rc != 0) return fail(std::format("cannot run ssh: {}", std::strerror(rc)));
+        if (rc != 0)  // (ssh, or docker for a container: which, where it is not installed)
+            return fail(rc == ENOENT && words[0].find('/') == std::string::npos ? not_installed(words[0], {}) : std::format("cannot run {}: {}", words[0], std::strerror(rc)));
         // What ssh says goes nowhere until it is needed to say why something failed.
         err_reader = std::jthread([this] {
             char buf[4096];

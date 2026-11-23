@@ -92,6 +92,7 @@ struct PyFound {
     std::string exe;       // the interpreter itself (sys.executable): what language servers are told
     std::string version;   // "3.12.4" ("" when it would not say)
     bool debugpy = false;  // it has debugpy of its own
+    std::string missing;   // what would run it is not installed: "python3 is not installed on this Mac" ("": it is)
     bool operator==(const PyFound&) const = default;
 };
 
@@ -1175,7 +1176,7 @@ private:
     void py_again(bool full);                // every folder's looked at again (full: its interpreter asked again too)
     void py_pin();                           // (blit.opt.python.interpreter changed)
     void py_choose();
-    std::string py_status(const Doc& d);
+    std::string py_status(const Doc& d, bool* missing = nullptr);  // (missing: what would run it is not installed, and that is what it says)
     std::string py_session_text(const std::string& folder);
     void py_session_take(const std::vector<std::pair<std::string, std::string>>& chosen);
     // debugpy for a program's folder: the project's Python's own, or blit's
@@ -1439,7 +1440,7 @@ private:
     void build_option(int row);  // a task of the Build tab's (-1: the Run button's)
     bool build_run_named(const std::string& name);
     void build_stop();
-    void build_ended(u64 doc, int status);
+    void build_ended(u64 doc, int status, const std::string& missing = {});  // (missing: the program the shell could not find, said)
     void build_panel_draw(struct TextBox& box, bool focused);
     void build_panel_click(int row, int col, const SDL_MouseButtonEvent& b);
     bool build_panel_key(const SDL_KeyboardEvent& k);
@@ -1530,6 +1531,7 @@ private:
     struct GitSummary {
         bool repo = false, merging = false;
         std::string root, branch, head;
+        std::string missing;  // (no repository, as git is not installed where the folder is: said)
         int ahead = 0, behind = 0;
         size_t changed = 0;  // files that differ from the last commit, or are new
     };

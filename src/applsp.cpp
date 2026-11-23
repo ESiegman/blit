@@ -21,6 +21,7 @@
 #include "app.hpp"
 #include "fsio.hpp"
 #include "look.hpp"
+#include "missing.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
@@ -182,8 +183,17 @@ std::string why_no_server(const Config& cfg, const Lsp& lsp, bool following, con
         if (missing && broke) break;
     }
     if (broke) return why + broke->name + " would not start (lsp.servers in Settings)";
-    if (missing) return why + missing->name + " is not installed (lsp.servers in Settings)";
+    if (missing) return why + not_installed(missing->name, {}) + " (lsp.servers in Settings)";
     return why + "none is set up for " + lang + " (lsp.servers in Settings)";
+}
+
+// None of the servers set up for a language is installed on a machine, in
+// words: said once, when a file of it is opened.
+std::string no_server_installed(const std::string& language, const std::vector<std::string>& names, const std::string& host) {
+    std::string list;
+    for (size_t i = 0; i < names.size(); ++i) list += (i == 0 ? "" : i + 1 == names.size() ? " or " : ", ") + names[i];
+    return "No language server for " + language + ": " +
+           (names.size() == 1 ? not_installed(names[0], host) : "none of " + list + " is installed on " + machine_name(host)) + " (lsp.servers in Settings)";
 }
 
 // A file's name as a list shows it: from the project folder, or from ~.
@@ -312,6 +322,8 @@ struct App::Assist {
     // Tabs that no server took, by document and the name it had then: not
     // looked at again until something changes (a server comes or goes).
     std::vector<std::pair<u64, std::string>> tried;
+    // Languages (and "@host" there) whose servers were said not to be installed.
+    std::set<std::string> said_missing;
     bool notify_set = false;
 
     // Found references, and which of them F4 went to last; while `refs_live`
@@ -469,7 +481,18 @@ void App::lsp_reconcile() {
                 for (const LspServer& s : all)
                     if (std::find(a.failed.begin(), a.failed.end(), s.name + "@" + host) == a.failed.end()) theirs.push_back(s);
             bool wait = false;
-            if (!lsp_.open(d.id, d.ed, d.ed.path, lang, remote ? theirs : here, &wait) && !wait) a.tried.push_back({d.id, d.ed.path});
+            if (lsp_.open(d.id, d.ed, d.ed.path, lang, remote ? theirs : here, &wait) || wait) continue;
+            a.tried.push_back({d.id, d.ed.path});
+            // None taken here: none of the language's servers installed, said (another machine's says so itself).
+            if (remote || lang.empty() || a.said_missing.contains(lang)) continue;
+            std::vector<std::string> names;
+            bool installed = false;
+            for (const LspServer& s : here)
+                if (s.enabled && !s.command.empty() && std::ranges::find(s.languages, lang) != s.languages.end())
+                    names.push_back(s.name), installed = installed || !Lsp::find_program(s.command[0]).empty();
+            if (names.empty() || installed) continue;
+            a.said_missing.insert(lang);
+            notify(no_server_installed(language_name(lang, cfg_.grammars), names, {}), 1);
         }
 }
 
@@ -552,6 +575,8 @@ void App::sync_lsp() {
         if (!msg.empty()) std::fprintf(stderr, "blit: %s\n", msg.c_str());
         // Those servers are out; another one for the language may do.
         for (std::string& name : lsp_.take_failed()) a.failed.push_back(std::move(name));
+        for (const Lsp::Missing& m : lsp_.take_missing())
+            if (a.said_missing.insert(m.language + "@" + m.host).second) notify(no_server_installed(language_name(m.language, cfg_.grammars), m.names, m.host), 1);
         a.tried.clear();
         if (lsp_doc_ && !lsp_.is_open(lsp_doc_->id)) {
             lsp_doc_ = nullptr;
@@ -2305,6 +2330,7 @@ u32 App::lsp_popups_open() const { return popups_drawn_; }
 void App::lsp_forgive() {
     assist_->failed.clear();
     assist_->tried.clear();
+    assist_->said_missing.clear();
     lsp_doc_ = nullptr;
     lsp_.shutdown();
 }

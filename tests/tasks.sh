@@ -269,5 +269,14 @@ if [ "$(uname -s)" != Darwin ]; then
     heard "$dir/stub2" "blur;buildrun:Fine;buildwait"
     check "no gdbus: notify-send" '--app-name=blit|--icon=blit|--|Fine|Done in T s|/'
 fi
+# None of them installed: said in the window, once, naming the one it would
+# use and this machine.
+case $(uname -s) in Darwin) this="this Mac" tool=osascript ;; *) this="this machine" tool=notify-send ;; esac
+bare="$dir/bare"
+mkdir -p "$bare"
+ln -s /usr/bin/* /bin/* "$bare/" 2>/dev/null
+rm -f "$bare/osascript" "$bare/gdbus" "$bare/notify-send"
+got=$(PATH="$bare" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$N;frame;blur;buildrun:Fine;buildwait;buildrun:Fine;buildwait;notifywait" 2>&1 >/dev/null | grep 'no system notification' | tr '\n' '/' | sed 's|/$||')
+check "none to tell the system with: said, once" "blit: $tool is not installed on $this: no system notification when a run ends (build.notify in Settings)"
 
 exit $failed

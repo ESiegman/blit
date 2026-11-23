@@ -1624,12 +1624,22 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
             if (!bp.empty()) {
                 const u32 c = heading(1, build_source(), bp.size());
                 if (failed && c + 3 < cols) put(box, font, 1, c + 1, fit_text("failed with exit code " + std::to_string(failed), cols - c - 1), ink::kError);
-            } else if (failed) {
-                put(box, font, 1, 0, fit_text(build_failure(), cols), ink::kError);
-            } else {
-                lsp_heading(1);
             }
             const std::vector<ProblemRow> pr = problem_rows(bp, files, s.problem_open, failed);
+            if (bp.empty() && failed) {
+                // (On the rows under it too, where nothing else is: the end of it is often what matters,
+                // "cmake is not installed on this Mac".)
+                const std::string said = build_failure();
+                if (!pr.empty() || width_of(said) <= cols) {
+                    put(box, font, 1, 0, fit_text(said, cols), ink::kError);
+                } else {
+                    u32 r = 1;
+                    for (const std::string& line : wrap_words(said, cols))
+                        if (r < rows) put(box, font, r++, 0, line, ink::kError);
+                }
+            } else if (bp.empty()) {
+                lsp_heading(1);
+            }
             const u32 n = static_cast<u32>(bp.size() + nl);
             s.problem = n ? std::min(s.problem, n - 1) : 0;
             const bool picked_open = n && note_count(bp, files, s.problem) && s.problem_open.contains(problem_key(bp, files, s.problem));

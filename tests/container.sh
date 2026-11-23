@@ -16,6 +16,18 @@ W="$dir/work"
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/init.lua"
 export BLIT_INIT="$dir/init.lua" BLIT_DOCKER="$here/fake-docker.sh" BLIT_FAKE_DOCKER_STATE="$dir/state" BLIT_FAKE_DOCKER_LOG="$dir/log"
 export BLIT_FAKE_HOME="$dir/home" BLIT_RECENT_FILE="$dir/recent" XDG_DATA_HOME="$dir/data"
+# path_without PROGRAM...: a PATH of /usr/bin's and /bin's programs but not
+# those named (a machine they are not installed on), and what blit calls
+# this machine.
+path_without() {
+    p="$dir/without-$(printf '%s' "$*" | tr ' ' -)"
+    mkdir -p "$p"
+    ln -s /usr/bin/* "$p/" 2>/dev/null
+    ln -s /bin/* "$p/" 2>/dev/null
+    for n in "$@"; do rm -f "$p/$n"; done
+    printf '%s' "$p"
+}
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
 failed=0
 fail() {
     printf 'FAIL: %s\n%s\n' "$1" "$(printf '%s\n' "$2" | sed 's/^/    /')"
@@ -100,6 +112,13 @@ for what in "Open in the dev container" "Rebuild the dev container"; do
     printf '%s' "$got" | grep -q 'did not build\|did not start' && fail "docker not running ($what): nothing else said" "$got"
 done
 unset BLIT_FAKE_DOCKER_DOWN
+# No docker on this machine at all: said so, both opening and rebuilding
+# (and not that the image did not build).
+for what in "Open in the dev container" "Rebuild the dev container"; do
+    got=$(BLIT_DOCKER= PATH=$(path_without docker) run "$what")
+    printf '%s' "$got" | grep -qF "blit: docker is not installed on $this" || fail "docker not installed ($what): said" "$got"
+    printf '%s' "$got" | grep -q 'did not build\|did not start\|cannot run' && fail "docker not installed ($what): nothing else said" "$got"
+done
 
 # A folder with a comma (and a quote) in its path: mounted as docker reads
 # --mount (CSV), the fields with them in quotes; and the same for a
@@ -141,6 +160,7 @@ blit.opt.lsp.servers.none$n = { command = { \"blit-no-such-server-$n\" }, langua
 printf 'blit.opt.git.enabled = false\nblit.opt.editor.modal = false\n%s\n' "$none" >"$dir/none.lua"
 printf 'int a;\n' >"$W/a.cpp"
 got=$(BLIT_INIT="$dir/none.lua" "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "remotewait;frame;lspsettle;wait:300;frame;lspsettle;wait:300;frame;lspsettle" "docker://box$W/a.cpp" 2>&1 >/dev/null)
-[ "$got" = "blit: language server: no language server for this file is installed on docker:box" ] || fail "no server in it: said once" "$got"
+[ "$got" = "blit: language server: no language server for this file is installed on docker:box
+blit: No language server for C++: none of none1, none2 or none3 is installed on docker:box (lsp.servers in Settings)" ] || fail "no server in it: said once (and which, in a toast)" "$got"
 [ $failed = 0 ] && echo "container ok"
 exit $failed

@@ -134,7 +134,7 @@ void App::Commands::show_tab(App& a, int tab, bool toggle) {
 // bottom line says why.
 bool App::Commands::git_ready(App& a) {
     if (!a.cfg_.git) a.notify("Git is off (git.enabled in Settings)");
-    else if (!a.git_summary().repo) a.notify("The project folder is not a git repository");
+    else if (const GitSummary s = a.git_summary(); !s.repo) s.missing.empty() ? a.notify("The project folder is not a git repository") : a.notify(s.missing, 1);
     else return true;
     return false;
 }

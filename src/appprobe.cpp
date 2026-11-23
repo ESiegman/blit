@@ -29,6 +29,7 @@ struct Found {
     std::string root;  // the folder it was asked for
     std::vector<ProbeRow> rows;
     std::string why;  // (the devices could not be listed)
+    std::string missing;  // (openFPGALoader is not there to name an FPGA's board: said, with the rows)
 };
 
 struct Wrote {
@@ -65,7 +66,7 @@ Found list_for(const std::string& root) {
     std::string host, there;
     if (!split_remote(root, &host, &there)) {
         f.rows = probe_rows(usb_list());
-        f.rows = ofl_merge(f.rows, fpga_boards({}, f.rows));  // (the Boards view: what openFPGALoader sees, where it is installed)
+        f.rows = ofl_merge(f.rows, fpga_boards({}, f.rows, 15'000, &f.missing));  // (the Boards view: what openFPGALoader sees, where it is installed)
         return f;
     }
     const std::shared_ptr<Remote> r = remote_for(root, &there, kRemoteWaitMs);
@@ -81,7 +82,7 @@ Found list_for(const std::string& root) {
         return f;
     }
     f.rows = probe_rows(devices, host);
-    f.rows = ofl_merge(f.rows, fpga_boards(host, f.rows));
+    f.rows = ofl_merge(f.rows, fpga_boards(host, f.rows, 15'000, &f.missing));
     return f;
 }
 
@@ -152,6 +153,7 @@ void App::probe_sync() {
     u.rows = f->rows;
     if (!f->why.empty()) return notify(f->why, 1);
     if (f->rows.empty()) return notify("No USB devices are plugged in");
+    if (!f->missing.empty()) notify(f->missing, 1);
     std::vector<std::string> items;
     for (const ProbeRow& r : f->rows) items.push_back(r.text);
     find_choose_item("Probe", std::move(items), [this, rows = std::move(f->rows), root = f->root](int i) {

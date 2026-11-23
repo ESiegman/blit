@@ -246,7 +246,8 @@ JLinkExe -NoGui 1 -ExitOnError 1 -USB 000801234567 -CommandFile FILE
 EOF
 check "J-Link: J-Link Commander and its command file" "$expected"
 got=$(PATH="$dir/none:/usr/bin:/bin" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;$F;buildwait" 2>&1 >/dev/null | tail -1)
-check "a tool not on the PATH: said" 'blit: JLinkExe is not on the PATH'
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+check "a tool not on the PATH: said, naming this machine" "blit: JLinkExe is not installed on $this"
 
 # A Basys 3: openFPGALoader with the board's name and its cable's serial
 # number, the newest bitstream the build made, into SRAM; the FPGA's flash
@@ -335,7 +336,7 @@ EOF
 check "Vivado where AMD installs it: the newest" "$expected"
 rm -f "$LOG"
 got=$(PATH="$dir/none:/usr/bin:/bin" BLIT_VIVADO_HOMES="$dir/none" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;command:Program the FPGA (SRAM);flashwait" 2>&1 >/dev/null | tail -1)
-check "Vivado nowhere: said" "blit: vivado is not on the PATH (nor in /tools/Xilinx or /opt/Xilinx)"
+check "Vivado nowhere: said" "blit: vivado is not installed on $this (nor in /tools/Xilinx or /opt/Xilinx)"
 
 # ---------------------------------------------------------------- only if changed
 
@@ -567,6 +568,30 @@ check "a board on another machine, asked for before its folder is read" "$expect
 scan=basys3 detect=basys3
 flash probe-rs "remotewait;command:Choose the probe;probedump" "ssh://box$T"
 check "the Boards view there" 'fpga ftdi 0403:6010: Digilent FT2232 (FPGA)  210183A8F2C1  /dev/ttyUSB1  on box | fpga ftdi 0403:6010: Basys 3 (xc7a35t)  210183A8F2C1  /dev/ttyUSB1  on box | fpga ftdi 0403:6010: Arty A7-35T (xc7a35t)  210183A8F2C1  /dev/ttyUSB1  on box | fpga ftdi 0403:6010: Cmod A7-35T (xc7a35t)  210183A8F2C1  /dev/ttyUSB1  on box | probe stlink 0483:374e: ST-LINK V3E  004D00283133510F37363734  /dev/ttyACM0  on box'
+
+# The tools not installed there (the login shell there keeps the PATH it
+# is given, which has none of the stand-ins): the flash says which, and
+# where; the Boards view lists the devices, and says the boards on the
+# FPGA's cable go unnamed, and why.
+printf '#!/bin/sh\nshift\nexec /bin/sh -c "$@"\n' >"$dir/plainsh"
+chmod +x "$dir/plainsh"
+bare="$dir/bare"
+mkdir -p "$bare"
+ln -s /usr/bin/* /bin/* "$bare/" 2>/dev/null
+rm -f "$bare/probe-rs" "$bare/openFPGALoader"
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+kept=$PATH
+PATH=$bare SHELL="$dir/plainsh"
+export SHELL
+mkelf "$T/build/fw.elf" C z
+flash probe-rs "remotewait;$F;buildwait" "ssh://box$T"
+got=$(printf '%s\n' "$got" | grep '^blit: ' | tail -1)
+check "a tool not installed there: said, naming that machine" 'blit: probe-rs is not installed on box'
+scan=basys3 detect=basys3
+flash probe-rs "remotewait;command:Choose the probe;probedump" "ssh://box$T"
+got=$(printf '%s\n' "$got" | grep -v '^blit: [^o]' | tail -2 | tr '\n' '/')
+check "the Boards view there without openFPGALoader: said" 'blit: openFPGALoader is not installed on box: the boards on its cables are not named/fpga ftdi 0403:6010: Digilent FT2232 (FPGA)  210183A8F2C1  /dev/ttyUSB1  on box | probe stlink 0483:374e: ST-LINK V3E  004D00283133510F37363734  /dev/ttyACM0  on box/'
+PATH=$kept
 
 [ "$failed" = 0 ] && echo "flash: all passed"
 exit "$failed"

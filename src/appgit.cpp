@@ -629,6 +629,7 @@ App::GitSummary App::git_summary() const {
     if (!cfg_.git || !gitui_) return s;
     const GitStatus& st = gitui_->status;
     s.repo = st.repo;
+    s.missing = st.missing;
     s.merging = st.merging;
     s.root = st.root;
     s.branch = st.branch;
@@ -1229,7 +1230,7 @@ std::string_view trimmed_view(std::string_view s) {
 
 void App::git_rebase_open(const std::string& base) {
     GitUi& g = *gitui_;
-    if (!cfg_.git || !g.status.repo) return notify("Not in a git repository");
+    if (!cfg_.git || !g.status.repo) return notify(g.status.missing.empty() ? "Not in a git repository" : g.status.missing, g.status.missing.empty() ? 0 : 1);
     if (g.status.rebasing || g.status.merging || g.status.picking) return notify("A rebase, merge or cherry-pick is under way");
     for (const std::unique_ptr<Pane>& p : panes_)
         for (size_t i = 0; i < p->docs.size(); ++i)
@@ -1446,7 +1447,7 @@ std::string App::git_rebase_dump() {
 // result to the file, and stages it once no conflict is open.
 void App::git_merge_open(const std::string& full) {
     GitUi& g = *gitui_;
-    if (!cfg_.git || !g.status.repo) return notify("Not in a git repository");
+    if (!cfg_.git || !g.status.repo) return notify(g.status.missing.empty() ? "Not in a git repository" : g.status.missing, g.status.missing.empty() ? 0 : 1);
     for (const std::unique_ptr<Pane>& p : panes_)
         for (size_t i = 0; i < p->docs.size(); ++i)
             if (p->docs[i]->merge && p->docs[i]->merge->full == full) {
@@ -1649,7 +1650,7 @@ std::string App::git_merge_dump() {
 // knows, is compared with as it is.)
 void App::git_compare_pick() {
     GitUi& g = *gitui_;
-    if (!cfg_.git || !g.status.repo) return notify("Not in a git repository");
+    if (!cfg_.git || !g.status.repo) return notify(g.status.missing.empty() ? "Not in a git repository" : g.status.missing, g.status.missing.empty() ? 0 : 1);
     Doc& d = *pane_->doc;
     if (d.ed.path.empty() || d.gitview || d.term || d.prof || d.loading) return notify("Not a file in the repository");
     const std::string rel = in_repo(g.status.root, full_path(d.ed.path));
@@ -1694,7 +1695,7 @@ void App::git_compare(const std::string& rev, const std::string& rel) {
 // on a commit there shows all of it.
 void App::git_history(bool lines) {
     GitUi& g = *gitui_;
-    if (!cfg_.git || !g.status.repo) return notify("Not in a git repository");
+    if (!cfg_.git || !g.status.repo) return notify(g.status.missing.empty() ? "Not in a git repository" : g.status.missing, g.status.missing.empty() ? 0 : 1);
     Doc& d = *pane_->doc;
     if (d.ed.path.empty() || d.gitview || d.term || d.prof || d.loading) return notify("Not a file in the repository");
     const std::string rel = in_repo(g.status.root, full_path(d.ed.path));
@@ -2062,7 +2063,7 @@ void App::git_rows() {
     g.rows_gen = git_gen_;
     g.rows.clear();
     if (!g.status.repo) {
-        if (g.known && cfg_.git) g.rows.push_back({kRowAction, kActInit});  // (the one thing to do: make it one)
+        if (g.known && cfg_.git && g.status.missing.empty()) g.rows.push_back({kRowAction, kActInit});  // (the one thing to do: make it one)
     } else {
         // The message (a row for each of its rows on show), then a row for
         // each thing to do (reached with Up and Down like the files), then
@@ -2147,7 +2148,9 @@ void App::git_panel_draw(TextBox& box, bool focused) {
         return;
     }
     const bool list = focused && (g.input == 0 || !g.status.repo);  // the list has the keyboard
-    if (!g.status.repo) {
+    if (!g.status.repo && !g.status.missing.empty()) {
+        put(box, font, 1, 0, fit_text(g.status.missing, cols), ink::kWarning);  // (not "Not a git repository": it may well be one)
+    } else if (!g.status.repo) {
         // Say which folder was looked at: that is the first thing to check.
         const u32 c = put(box, font, 1, 0, "Not a git repository: ", ink::kMuted);
         put(box, font, 1, c, fit_text(name_of(g.dir), cols > c ? cols - c : 0), ink::kText);
@@ -2389,7 +2392,7 @@ void App::git_panel_draw(TextBox& box, bool focused) {
         }
         if (lit) light_row(box, r, list);
     }
-    if (!g.status.repo) {
+    if (!g.status.repo && g.status.missing.empty()) {
         // What git follows, under the row that makes the folder a repository.
         std::string dir = g.dir;
         if (const char* home = SDL_getenv("HOME"); home && *home && dir.starts_with(home)) dir = "~" + dir.substr(std::strlen(home));
@@ -2411,7 +2414,7 @@ void App::git_panel_draw(TextBox& box, bool focused) {
     auto add = [&](const char* k, const char* what, u32 a = kActNone) { keys[n++] = {k, what, a}; };
     const GitUi::Row* picked = g.sel >= 0 && static_cast<size_t>(g.sel) < g.rows.size() ? &g.rows[static_cast<size_t>(g.sel)] : nullptr;
     if (!g.status.repo) {
-        add("Enter", "make it one", kActInit);
+        if (g.status.missing.empty()) add("Enter", "make it one", kActInit);
         add("Cmd+R", "look again", kActLook);
     } else if (g.input == 2 || g.input == 3) {
         add("Enter", "make it");
@@ -2893,7 +2896,7 @@ std::string App::git_graph_dump() {
 // What git has told the editor, on one line (for the tests).
 std::string App::git_dump() {
     const GitUi& g = *gitui_;
-    if (!g.status.repo) return "no repository";
+    if (!g.status.repo) return g.status.missing.empty() ? "no repository" : "no repository: " + g.status.missing;
     std::string out = g.status.branch.empty() ? "(no branch)" : g.status.branch;
     if (g.status.ahead) out += " +" + std::to_string(g.status.ahead);
     if (g.status.behind) out += " -" + std::to_string(g.status.behind);

@@ -733,12 +733,28 @@ if [ -x "$fakedap" ]; then
     check "Linux: else gdb -i dap (the environment an object, merged with the configuration's)" \
         'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; gdb -q -i dap ;; {"program":"@/fake/proj/prog","args":["one"],"cwd":"@/fake/proj","env":{"FAKE_ENV":"yes","MORE":"1"},"stopAtBeginningOfMainSubprogram":true}'
     linux 13.2 no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
-    check "Linux: a gdb older than 14 is no debugger blit can use" 'idle error: no debugger: install lldb, or gdb 14 or newer ;; '
+    check "Linux: a gdb older than 14 is no debugger blit can use" 'idle error: gdb 13 is too old to be a debugger blit can use: 14 or newer speaks its protocol, and there is no lldb-dap ;; '
+    # (No debugger installed: which, and the machine, named.)
+    case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+    linux "" no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
+    check "Linux: neither lldb-dap nor gdb installed: said" "idle error: No debugger: neither lldb-dap nor gdb is installed on $this ;; "
     conf '{ "adapter": "gdb" }'
     linux 15.1 yes "workdir:$D;runconfdump;key:F5;debugwait:stopped;debugdump"
     check "debug.adapter gdb: gdb, though lldb-dap is there" 'stopped (breakpoint); stack: main@1; vars: df=DataFrame total=1; output: red plain ;; gdb -q -i dap'
     linux 12.1 yes "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
     check "debug.adapter gdb, and it is too old" 'idle error: gdb 12 is too old to be a debugger blit can use: 14 or newer speaks its protocol ;; '
+    linux "" yes "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
+    check "debug.adapter gdb, and it is not installed" "idle error: gdb is not installed on $this ;; "
+    conf '{ "adapter": "lldb-dap" }'
+    linux 15.1 no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
+    check "debug.adapter lldb-dap, and it is not installed" "idle error: lldb-dap is not installed on $this ;; "
+    conf '{ "adapter": "arm-none-eabi-gdb -i dap" }'
+    linux 15.1 no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
+    check "debug.adapter a command line whose program is not installed" "idle error: arm-none-eabi-gdb is not installed on $this ;; "
+    linux 15.1 no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugpanel;debugrows:Working directory:6"
+    got=$(printf '%s' "$got" | sed 's/^Working directory | [^|]* | /Working directory | DIR | /')
+    check "and the Debug tab shows all of it, on the rows it takes" "Working directory | DIR | arm-none-eabi-gdb is not | installed on $this | ▶ Start | Watch ;; "
+    conf '{ "adapter": "gdb" }'
 
     # Restart where the debugger cannot (lldb-dap says it can only once it has
     # launched; the stand-in does not): the session ended and begun again,
@@ -844,6 +860,17 @@ EOF
     XDG_DATA_HOME="$dir/data" BLIT_DEBUGPY_URL="$dir/debugpy.whl"
     got=$(printf '%s' "$got" | sed -e "s/Could not open file/Couldn't open file/")  # (curl's own words: the Mac's 8.7 says "Couldn't", Arch's 8.23 "Could not")
     check "blit's copy could not be had: why" "blit: Getting debugpy… ;; idle error: debugpy is not installed for .venv/bin/python, and blit's copy could not be had: could not fetch file://@/no-such.whl: curl: (37) Couldn't open file @/no-such.whl"
+    # No curl to fetch it with: that said.
+    nocurl="$dir/nocurl"
+    mkdir -p "$nocurl"
+    ln -s /usr/bin/* /bin/* "$nocurl/" 2>/dev/null
+    rm -f "$nocurl/curl"
+    was=$PATH
+    PATH=$nocurl XDG_DATA_HOME="$dir/data-none2"
+    run "workdir:$Y;debug:program=$Y/scripts/one.py;key:F5;debugwait:idle;debugdump" "$Y/scripts/one.py"
+    PATH=$was XDG_DATA_HOME="$dir/data"
+    case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+    check "no curl to fetch blit's copy with: said" "blit: Getting debugpy… ;; idle error: debugpy is not installed for .venv/bin/python, and blit's copy could not be had: could not fetch file://@/debugpy.whl: curl is not installed on $this"
 fi
 if command -v python3 >/dev/null 2>&1 && [ -x "$fakedap" ]; then
     # A venv's Python with no debugpy: blit's copy fetched (the wheel kept,

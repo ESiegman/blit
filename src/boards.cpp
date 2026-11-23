@@ -6,6 +6,7 @@
 
 #include "engine.hpp"
 #include "flash.hpp"
+#include "missing.hpp"
 
 namespace blit {
 
@@ -242,9 +243,13 @@ bool capture(const std::string& host, std::vector<std::string> argv, u32 ms, std
 
 }  // namespace
 
-std::vector<ProbeRow> fpga_boards(const std::string& host, const std::vector<ProbeRow>& native, u32 ms) {
+std::vector<ProbeRow> fpga_boards(const std::string& host, const std::vector<ProbeRow>& native, u32 ms, std::string* missing) {
     const std::string ofl = Engine::which(host, "openFPGALoader");
-    if (ofl.empty()) return {};
+    if (ofl.empty()) {
+        if (missing && std::ranges::any_of(native, [](const ProbeRow& r) { return r.role == ProbeRole::kFpga; }))
+            *missing = not_installed("openFPGALoader", host) + ": the boards on its cables are not named";
+        return {};
+    }
     std::string out;
     capture(host, {ofl, "--scan-usb"}, ms, &out);
     const std::vector<OflCable> cables = ofl_scan(out);

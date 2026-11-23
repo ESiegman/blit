@@ -20,6 +20,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include "missing.hpp"
 #include "qos.hpp"
 extern char** environ;
 #endif
@@ -186,7 +187,8 @@ bool make_dirs(const std::string& path) {
 }
 
 // Runs a program and waits for it. What it printed (both streams) goes to
-// *output. Returns its exit status, or -1 if it could not be started.
+// *output. Returns its exit status, -2 if it could not be started (why in
+// *output), or -1 if it went wrong otherwise.
 int run(const std::vector<std::string>& argv, std::string* output) {
     int out[2];
     if (pipe(out) != 0) return -1;
@@ -215,8 +217,8 @@ int run(const std::vector<std::string>& argv, std::string* output) {
     close(out[1]);
     if (rc != 0) {
         close(out[0]);
-        if (output) *output = std::string(argv[0]) + ": " + std::strerror(rc);
-        return -1;
+        if (output) *output = rc == ENOENT && argv[0].find('/') == std::string::npos ? not_installed(argv[0], {}) : std::string(argv[0]) + ": " + std::strerror(rc);
+        return -2;
     }
     char buf[4096];
     for (ssize_t n; (n = read(out[0], buf, sizeof buf)) > 0 || (n < 0 && errno == EINTR);)
@@ -265,13 +267,13 @@ bool install_one(const GrammarSource& g, std::string* err, const std::function<v
     const std::string url = "https://github.com/" + g.repo + "/archive/" + g.rev + ".tar.gz";
     tell("fetching " + url);
     out.clear();
-    if (run({"curl", "-fsSL", "--retry", "2", "--connect-timeout", "20", "--max-time", "300", "-o", work + "/src.tar.gz", url}, &out) != 0) {
-        *err = "could not fetch " + url + (out.empty() ? "" : ": " + tail(out));
+    if (const int rc = run({"curl", "-fsSL", "--retry", "2", "--connect-timeout", "20", "--max-time", "300", "-o", work + "/src.tar.gz", url}, &out); rc != 0) {
+        *err = rc == -2 ? out : "could not fetch " + url + (out.empty() ? "" : ": " + tail(out));
         return false;
     }
     out.clear();
-    if (run({"tar", "-xzf", work + "/src.tar.gz", "-C", work + "/src", "--strip-components=1"}, &out) != 0) {
-        *err = "could not unpack the source: " + tail(out);
+    if (const int rc = run({"tar", "-xzf", work + "/src.tar.gz", "-C", work + "/src", "--strip-components=1"}, &out); rc != 0) {
+        *err = rc == -2 ? out : "could not unpack the source: " + tail(out);
         return false;
     }
 
@@ -297,8 +299,8 @@ bool install_one(const GrammarSource& g, std::string* err, const std::function<v
                                  g.queries.substr(colon + 1) + "/highlights.scm";
         tell("fetching " + from);
         out.clear();
-        if (run({"curl", "-fsSL", "--retry", "2", "--connect-timeout", "20", "--max-time", "120", "-o", work + "/highlights.scm", from}, &out) != 0) {
-            *err = "could not fetch " + from + (out.empty() ? "" : ": " + tail(out));
+        if (const int rc = run({"curl", "-fsSL", "--retry", "2", "--connect-timeout", "20", "--max-time", "120", "-o", work + "/highlights.scm", from}, &out); rc != 0) {
+            *err = rc == -2 ? out : "could not fetch " + from + (out.empty() ? "" : ": " + tail(out));
             return false;
         }
         have_query = read_file(work + "/highlights.scm", &query);
@@ -320,8 +322,8 @@ bool install_one(const GrammarSource& g, std::string* err, const std::function<v
         std::vector<std::string> cmd = {driver, "-O2", "-fPIC", "-w", "-I", src, "-c", file, "-o", file + ".o"};
         cmd.insert(cmd.begin() + 1, flags.begin(), flags.end());
         out.clear();
-        if (run(cmd, &out) != 0) {
-            *err = std::string("the compiler failed on ") + file.substr(top.size() + 1) + ": " + tail(out);
+        if (const int rc = run(cmd, &out); rc != 0) {
+            *err = rc == -2 ? out : std::string("the compiler failed on ") + file.substr(top.size() + 1) + ": " + tail(out);
             return false;
         }
         objects.push_back(file + ".o");

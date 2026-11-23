@@ -28,6 +28,7 @@
 #include "buildscan.hpp"
 #include "finder.hpp"
 #include "look.hpp"
+#include "missing.hpp"
 #include "picture.h"
 #include "pty.hpp"
 #include "remote.hpp"
@@ -621,6 +622,16 @@ void App::term_sync() {
                 d.term_closed = true;
                 // (One on another machine whose connection went did not fail or exit: it is not known how it went.)
                 const bool lost = v.status == -1 && v.conn;  // (-1: the connection went, or the agent there did, with what it ran)
+                // A command whose program the shell could not find (127): which, as the shell said, on which machine.
+                std::string missing;
+                if (v.status == 127 && !v.command.empty() && !v.unstarted) {
+                    std::string text;
+                    {
+                        std::lock_guard lock(v.mu);
+                        for (u32 r = 0; r <= v.term.cursor_row() && r < v.term.rows(); ++r) text += v.term.row_text(r) + "\n";
+                    }
+                    if (const std::string program = shell_not_found(text); !program.empty()) missing = not_installed(program, v.host);
+                }
                 if (v.keep) {  // (a build's: how it went, and the time it took; one that never started has said why)
                     char took[48];
                     std::snprintf(took, sizeof took, "%.1f s", static_cast<double>(now_ns() - v.started_ns) * 1e-9);
@@ -628,10 +639,11 @@ void App::term_sync() {
                     if (v.stopped && !v.unstarted)
                         v.term.feed(std::string("\r\n\x1b[33m[stopped after ") + took + "]\x1b[0m");
                     else if (!v.unstarted)
-                        v.term.feed(v.status == 0 ? std::string("\r\n\x1b[32m[done in ") + took + "]\x1b[0m"
-                                    : lost        ? "\r\n\x1b[31m[connection to " + v.host + " lost after " + took + "]\x1b[0m"
-                                                  : "\r\n\x1b[31m[failed with " + std::to_string(v.status.load()) + " after " + took + "]\x1b[0m");
-                    build_ended(d.id, v.status);
+                        v.term.feed(v.status == 0      ? std::string("\r\n\x1b[32m[done in ") + took + "]\x1b[0m"
+                                    : lost             ? "\r\n\x1b[31m[connection to " + v.host + " lost after " + took + "]\x1b[0m"
+                                    : !missing.empty() ? "\r\n\x1b[31m[failed: " + missing + "]\x1b[0m"
+                                                       : "\r\n\x1b[31m[failed with " + std::to_string(v.status.load()) + " after " + took + "]\x1b[0m");
+                    build_ended(d.id, v.status, missing);
                     continue;
                 }
                 if (v.status == 0) {  // (exit: the tab goes, as a terminal window would)
@@ -659,7 +671,9 @@ void App::term_sync() {
                 }
                 if (v.unstarted) continue;  // (why is on the screen already: it did not exit)
                 std::lock_guard lock(v.mu);
-                v.term.feed(lost ? "\r\n\x1b[31m[connection to " + v.host + " lost]\x1b[0m" : "\r\n\x1b[2m[exited with code " + std::to_string(v.status.load()) + "]\x1b[0m");
+                v.term.feed(lost               ? "\r\n\x1b[31m[connection to " + v.host + " lost]\x1b[0m"
+                            : !missing.empty() ? "\r\n\x1b[31m[" + missing + "]\x1b[0m"
+                                               : "\r\n\x1b[2m[exited with code " + std::to_string(v.status.load()) + "]\x1b[0m");
             }
         }
     }

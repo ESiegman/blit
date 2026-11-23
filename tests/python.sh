@@ -168,5 +168,18 @@ EOF
         'python.pythonPath = null ;; python.analysis.mine = "kept" ;; pylsp.plugins.jedi.environment = null ;; python.pythonPath = null ;; python.analysis.mine = "kept" ;; pylsp.plugins.jedi.environment = null ;; python.pythonPath = "@/slow/.venv/bin/python" ;; python.analysis.mine = "kept" ;; pylsp.plugins.jedi.environment = "@/slow/.venv/bin/python"'
 fi
 
+# What would run it not installed (python3, for a folder with no venv; uv,
+# for a uv project): the status bar says so in its place, naming the machine.
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+bare="$dir/bare"
+mkdir -p "$bare" "$dir/nopy" "$dir/nouv"
+ln -s /usr/bin/* /bin/* "$bare/" 2>/dev/null
+rm -f "$bare/python3" "$bare/uv"
+printf 'x = 1\n' >"$dir/nopy/a.py"
+printf 'x = 1\n' >"$dir/nouv/a.py"
+: >"$dir/nouv/uv.lock"
+got=$(PATH=$bare "$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$dir/nopy;frame;pywait;frame;statusdump;open:$dir/nouv/a.py;frame;pywait;frame;statusdump" "$dir/nopy/a.py" 2>&1 >/dev/null | sed -e "s#$dir#@#g" | join)
+check "python3, uv not installed: said in the status bar" "a.py | python3 is not installed on $this Ln 1, Col 1 Spaces: 4 LF Python ;; …/nouv/a.py | uv is not installed on $this Ln 1, Col 1 Spaces: 4 LF Python"
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "python ok"
 exit $failed
