@@ -273,6 +273,8 @@ EOF
 chmod +x "$I/.venv/bin/ipython"
 printf 'total = 10\nfor a in range(3):\n    print("got", a + total)\nprint("done")\n' >"$I/whole.py"
 printf 'total = 10\nfor a in range(3):\n    print("got", a + total)\n' >"$I/open.py"
+# (The prompt after the result waited for, since it comes 0.3 s after it,
+# then a second more, in which a second run would show a second prompt.)
 for f in whole open; do
     got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$I;open:$I/$f.py;vim:ggVG;command:Send the lines to the Python console;command:Open the Python console;termwait:got 12;wait:500;termdump" 2>&1 >/dev/null | tail -1 | tr '|' '\n' | grep -c '^In \[2\]:')
     check "a block sent to a console like IPython ($f.py): run once, one prompt after it" '1'
@@ -330,8 +332,10 @@ while True:
 EOF
 chmod +x "$D/.venv/bin/ipython"
 cp "$I/whole.py" "$I/open.py" "$D/"
+# (The prompt after the result waited for, since it comes 0.3 s after it,
+# then a second more, in which a second run would show a second prompt.)
 for f in whole open; do
-    got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$D;open:$D/$f.py;vim:ggVG;command:Send the lines to the Python console;command:Open the Python console;termwait:got 12;wait:1000;termdump" 2>&1 >/dev/null | tail -1 | tr '|' '\n' | grep -c '^In \[2\]:')
+    got=$("$blit" --offscreen 900x700 --shot "$dir/shot.bmp" --script "workdir:$D;open:$D/$f.py;vim:ggVG;command:Send the lines to the Python console;command:Open the Python console;termwait:got 12;termwait:In [2]:;wait:1000;termdump" 2>&1 >/dev/null | tail -1 | tr '|' '\n' | grep -c '^In \[2\]:')
     check "and one slow to answer ($f.py): run once, one prompt after it" '1'
 done
 
