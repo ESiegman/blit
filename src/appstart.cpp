@@ -337,8 +337,10 @@ struct App::StartUi {
     // Its list comes from a thread of its own (a download); one that failed is not tried again this session.
     std::mutex pypi_mu;
     std::vector<VcpkgPort> pypi_got;  // (pypi_mu) what the thread found
+    std::string pypi_got_why;         // (pypi_mu) none: why
     bool pypi_ready = false;          // (pypi_mu) it has finished
     bool pypi_loading = false, pypi_failed = false, pypi_wanted = false;  // wanted: the list is to open when it comes
+    std::string pypi_why;  // (failed: why, said where the list would be)
     std::vector<std::string> touched;  // "kind\tkey": set by hand, so what is found leaves it alone
 
     const ProjectKind* chosen() const { return kind < kinds.size() ? &kinds[kind] : nullptr; }
@@ -1092,6 +1094,7 @@ void App::start_sync() {
         std::lock_guard lock(s.pypi_mu);
         if (s.pypi_ready) {
             got = std::move(s.pypi_got);
+            s.pypi_why = std::move(s.pypi_got_why);
             s.pypi_ready = false;
             arrived = true;
         }
@@ -1099,7 +1102,7 @@ void App::start_sync() {
     if (arrived) {
         s.pypi_loading = false;
         if (got.empty()) s.pypi_failed = true;
-        else s.pypi = std::move(got);
+        else s.pypi = std::move(got), s.pypi_why.clear();
         if (s.pypi_wanted) {
             s.pypi_wanted = false;
             s.error.clear();
@@ -1168,10 +1171,12 @@ void App::project_libraries(const std::string& typed) {
             if (!s.pypi_loading) {
                 s.pypi_loading = true;
                 std::thread([sp = start_, cache = grammar_dir() + "/cache"] {
-                    std::vector<VcpkgPort> got = pypi_top(cache);
+                    std::string why;
+                    std::vector<VcpkgPort> got = pypi_top(cache, &why);
                     {
                         std::lock_guard lock(sp->pypi_mu);
                         sp->pypi_got = std::move(got);
+                        sp->pypi_got_why = std::move(why);
                         sp->pypi_ready = true;
                     }
                     SDL_Event ev{};
@@ -1235,6 +1240,8 @@ void App::project_libraries(const std::string& typed) {
         if (i < 0 || at >= list->size()) return;
         toggle((*list)[at].name);
     }, typed);
+    // (PyPI's list not had: why, under where it would be.)
+    if (by_name && s.pypi.empty() && !s.pypi_why.empty()) find_ask_footer(s.pypi_why, true);
 }
 
 // A value set by its key: kind, name, where, git, or one of the kind's fields.
@@ -1419,7 +1426,7 @@ void App::project_created() {
 // made, or the facts a search of libraries waits for.
 void App::project_wait() {
     StartUi& s = *start_;
-    for (const u64 until = now_ns() + 60'000'000'000ull; (s.creating || s.libraries_wanted) && now_ns() < until; SDL_Delay(2)) start_sync();
+    for (const u64 until = now_ns() + 60'000'000'000ull; (s.creating || s.libraries_wanted || s.pypi_loading) && now_ns() < until; SDL_Delay(2)) start_sync();
 }
 
 // The New project tab's cells (start_layout): the form, section by

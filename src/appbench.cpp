@@ -1417,7 +1417,7 @@ void App::run_script(const char* script) {
             project_set(arg.substr(0, eq), eq == std::string::npos ? std::string() : arg.substr(eq + 1));
         } else if (verb == "projectcreate") {  // what Create does (the project is made on a thread: projectwait)
             project_create();
-        } else if (verb == "projectwait") {  // what the New project tab waits for has come: the project made, or the facts a search wants
+        } else if (verb == "projectwait") {  // what the New project tab waits for has come: the project made, the facts a search wants, or PyPI's list
             project_wait();
         } else if (verb == "projectfacts") {
             std::fprintf(stderr, "%s\n", project_facts_dump().c_str());

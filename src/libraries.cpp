@@ -13,6 +13,7 @@
 
 #include "fsio.hpp"
 #include "json.hpp"
+#include "missing.hpp"
 #include "remote.hpp"
 
 namespace blit {
@@ -247,20 +248,34 @@ std::vector<VcpkgPort> pkgconfig_modules(const std::string& where) {
 
 // ---------------------------------------------------------------- PyPI
 
-std::vector<VcpkgPort> pypi_top(const std::string& cache) {
+std::vector<VcpkgPort> pypi_top(const std::string& cache, std::string* why) {
     std::vector<VcpkgPort> out;
     const std::string file = cache + "/pypi-top.json";
     struct stat st;
     const bool fresh = ::stat(file.c_str(), &st) == 0 && st.st_mtime + 7 * 24 * 3600 > ::time(nullptr);
+    std::string said;  // (why the fetch failed: curl's own words, or that there is no curl)
     if (!fresh) {
-        std::string err, said;
+        std::string err;
         fs_mkdirs(cache, &err);
-        fs_run(cache, "curl -fsSL --compressed -o pypi-top.json.part https://hugovk.dev/top-pypi-packages/top-pypi-packages.min.json && mv pypi-top.json.part pypi-top.json",
-               &said, 30000);
+        const char* own = std::getenv("BLIT_PYPI_URL");  // (another, for the tests)
+        std::string url = own && *own ? own : "https://hugovk.dev/top-pypi-packages/top-pypi-packages.min.json";
+        if (url.starts_with('/')) url = "file://" + url;
+        if (!fs_run(cache, "command -v curl >/dev/null 2>&1 || { echo blit-no-curl; exit 1; }; curl -fsSL --compressed -o pypi-top.json.part " + sh_quote(url) +
+                               " 2>&1 && mv pypi-top.json.part pypi-top.json",
+                    &said, 30000)) {
+            said = said.starts_with("blit-no-curl") ? not_installed("curl", {}) : trim(said);
+            said = said.substr(said.find_last_of('\n') + 1);  // (npos + 1: all of it)
+            if (said.empty()) said = "curl did not finish";
+        } else {
+            said.clear();
+        }
     }
     std::string text;
     json::Doc d;
-    if (!fs_read(file, &text, 32u << 20) || !d.parse(std::move(text))) return out;
+    if (!fs_read(file, &text, 32u << 20) || !d.parse(std::move(text))) {
+        if (why) *why = said.empty() ? "its list could not be read" : said;
+        return out;
+    }
     for (json::Value row : d.root()["rows"]) {
         const double n = row["download_count"].number();
         char note[32];

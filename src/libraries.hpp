@@ -40,7 +40,10 @@ std::string gpu_targets(const std::string& where, const std::string& rocm);
 std::vector<VcpkgPort> pkgconfig_modules(const std::string& where);
 
 // PyPI's most downloaded packages (15,000 of them, with downloads a month as
-// the note), kept in `cache` and fetched again when it is a week old.
-std::vector<VcpkgPort> pypi_top(const std::string& cache);
+// the note), kept in `cache` and fetched again when it is a week old. None
+// (none fetched, nor kept from before): `why`, curl's own words or that
+// curl is not installed here. (It waits for the fetch: not on the main
+// thread.)
+std::vector<VcpkgPort> pypi_top(const std::string& cache, std::string* why = nullptr);
 
 }  // namespace blit
