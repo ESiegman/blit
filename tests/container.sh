@@ -161,6 +161,6 @@ printf 'blit.opt.git.enabled = false\nblit.opt.editor.modal = false\n%s\n' "$non
 printf 'int a;\n' >"$W/a.cpp"
 got=$(BLIT_INIT="$dir/none.lua" "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "remotewait;frame;lspsettle;wait:300;frame;lspsettle;wait:300;frame;lspsettle" "docker://box$W/a.cpp" 2>&1 >/dev/null)
 [ "$got" = "blit: language server: no language server for this file is installed on docker:box
-blit: No language server for C++: none of none1, none2 or none3 is installed on docker:box (lsp.servers in Settings)" ] || fail "no server in it: said once (and which, in a toast)" "$got"
+blit: No language server for C++: none of blit-no-such-server-1, blit-no-such-server-2 or blit-no-such-server-3 is installed on docker:box (lsp.servers in Settings)" ] || fail "no server in it: said once (and which, in a toast)" "$got"
 [ $failed = 0 ] && echo "container ok"
 exit $failed

@@ -530,9 +530,10 @@ out=$(BLIT_INIT="$dir/none.lua" "$blit" --offscreen 1400x800 --shot "$dir/shot.b
 got=$(printf '%s\n' "$out" | grep -c 'No language server')
 check "none installed: said once for the language" "1"
 got=$(printf '%s\n' "$out" | grep 'No language server')
-check "and what" "blit: No language server for C++: none of none1, none2 or none3 is installed on $this (lsp.servers in Settings)"
+# (Each by the program it is run as, which is what is missing: not the entry's name.)
+check "and what" "blit: No language server for C++: none of blit-no-such-server-1, blit-no-such-server-2 or blit-no-such-server-3 is installed on $this (lsp.servers in Settings)"
 got=$(BLIT_INIT="$dir/none1.lua" "$blit" --offscreen 1400x800 --shot "$dir/shot.bmp" --script "workdir:$P;frame;lspsettle" "$P/a.cpp" 2>&1 >/dev/null | grep 'No language server')
-check "one: named" "blit: No language server for C++: none1 is not installed on $this (lsp.servers in Settings)"
+check "one: named" "blit: No language server for C++: blit-no-such-server-1 is not installed on $this (lsp.servers in Settings)"
 
 [ "$failed" = 0 ] && echo "lsp: all passed"
 exit "$failed"

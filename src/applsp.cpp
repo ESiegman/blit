@@ -154,6 +154,12 @@ const char* severity_word(u8 s) {
 // terminal, a profile, a preview, a picture or a PDF).
 bool server_text(const Doc& d) { return !d.read_only && !d.term && !d.prof && !d.md && !d.image && !d.pdf; }
 
+// The program a server is run as, as a warning names it ("basedpyright-langserver", not the entry's "pyright").
+std::string program_of(const LspServer& s) {
+    const std::string& c = s.command[0];
+    return c.substr(c.rfind('/') == std::string::npos ? 0 : c.rfind('/') + 1);
+}
+
 // Why a key that asks the language server for something (completion,
 // hover, definition) got nothing, in words for the bottom line: the server
 // that would serve the file and what keeps it, where that is known.
@@ -183,7 +189,7 @@ std::string why_no_server(const Config& cfg, const Lsp& lsp, bool following, con
         if (missing && broke) break;
     }
     if (broke) return why + broke->name + " would not start (lsp.servers in Settings)";
-    if (missing) return why + not_installed(missing->name, {}) + " (lsp.servers in Settings)";
+    if (missing) return why + not_installed(program_of(*missing), {}) + " (lsp.servers in Settings)";
     return why + "none is set up for " + lang + " (lsp.servers in Settings)";
 }
 
@@ -489,7 +495,7 @@ void App::lsp_reconcile() {
             bool installed = false;
             for (const LspServer& s : here)
                 if (s.enabled && !s.command.empty() && std::ranges::find(s.languages, lang) != s.languages.end())
-                    names.push_back(s.name), installed = installed || !Lsp::find_program(s.command[0]).empty();
+                    names.push_back(program_of(s)), installed = installed || !Lsp::find_program(s.command[0]).empty();
             if (names.empty() || installed) continue;
             a.said_missing.insert(lang);
             notify(no_server_installed(language_name(lang, cfg_.grammars), names, {}), 1);
@@ -576,7 +582,16 @@ void App::sync_lsp() {
         // Those servers are out; another one for the language may do.
         for (std::string& name : lsp_.take_failed()) a.failed.push_back(std::move(name));
         for (const Lsp::Missing& m : lsp_.take_missing())
-            if (a.said_missing.insert(m.language + "@" + m.host).second) notify(no_server_installed(language_name(m.language, cfg_.grammars), m.names, m.host), 1);
+            if (a.said_missing.insert(m.language + "@" + m.host).second) {
+                // (Each server there by its program, as here: the entries' names are what the worker knows them by.)
+                std::vector<std::string> programs;
+                const std::vector<LspServer> all = lsp_server_list(cfg_.lsp_servers);
+                for (const std::string& n : m.names) {
+                    const auto it = std::ranges::find(all, n, &LspServer::name);
+                    programs.push_back(it != all.end() && !it->command.empty() ? program_of(*it) : n);
+                }
+                notify(no_server_installed(language_name(m.language, cfg_.grammars), programs, m.host), 1);
+            }
         a.tried.clear();
         if (lsp_doc_ && !lsp_.is_open(lsp_doc_->id)) {
             lsp_doc_ = nullptr;
