@@ -1,0 +1,12 @@
+times.vcd, times-icarus.log, times-verilator.log: make/times.v run by
+Icarus Verilog 13.0 (stable) (v13_0-dirty) with `vvp -n` (its dump, with
+DUMPVARS) and by Verilator 5.054 2026-11-01 (`verilator --binary`, run
+with +verilator+error+limit+10 so that $error does not stop it), on Arch
+Linux (x86-64), 23 Nov 2026, in times.v's own folder (so that their
+lines name it times.v; make/make.sh has the commands). What each printed,
+times as testbenches print them: $display's %0t after an @ and in
+brackets, %t padded to 20, $timeformat's in ns (a space before the unit)
+and in us (none), a time after "Time:", Icarus's $error ("Time: 128500")
+and $finish ("$finish called at 131500 (1ps)"), Verilator's $error
+("[0.1290us] %Error:") and its report ("$finish at 132ns", with a rate,
+"4.249 ms/s"). The dump's timescale is 1ps, the precision %t prints in.

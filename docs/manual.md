@@ -2763,7 +2763,8 @@ in any terminal tab opens the file there, in a split with text: a
 relative path from the shell's folder, the folders the build went into,
 or the one the terminal started in. A file that is not there is said so
 ("No file NAME"; on another machine, when its answer comes) and opens no
-tab. Cmd+R in the
+tab. While a wave tab is open, a simulation time there (`@ 306500000`,
+`93.00 ns`) sets its cursor instead (Waves, below). Cmd+R in the
 tab looks again by hand; with nothing found the tab says so, and how to
 add a system (below). On another
 machine (`ssh://`) the folder is looked at, and the tasks run, there.
@@ -4126,6 +4127,42 @@ stretch on show. It is written once the view has been changed by hand,
 and it comes back when the dump is opened again; a row whose signal the
 dump no longer has is left out, and the bottom row says how many were.
 
+**ILA captures.** A capture from Vivado's hardware manager, written by
+`write_hw_ila_data` as VCD (`-vcd_file`) or as CSV (`-csv_file`), opens
+here too: a `.csv` whose first line is the ILA's (`Sample in
+Buffer,...`) is a capture, any other opens as text. Its times are the
+numbers of its samples in the ILA's buffer, from 0, written with no unit
+on the ruler, at the cursor and on the bottom row. The cursor starts at
+the trigger. Each trigger is a line in the errors' colour, named `T` on
+the ruler's second row with how far it is from the cursor; in a capture
+of several windows each window after the first starts at a dim line
+(`w2`, `w3`, where there is room for the name), and the bottom row says
+how many windows there are. The VCD form's own `_TRIGGER`, `_WINDOW` and
+`_GAP` are not listed (`/` adds them). The CSV form's probes start in the
+radix its second line gives each (the probe's `DISPLAY_RADIX` in
+Vivado: hex, binary, octal, unsigned or signed). The CSV written with
+`-legacy_csv_file` has no such line, and its values cannot be read for
+sure without it: it is not shown, and the tab says so. A line of a CSV
+that is wrong stops the reading there, keeping the samples before it, and
+the tab says which line and why. Lattice Reveal's captures are VCD and
+open as any VCD does (not checked with one: their times are in the unit
+their VCD gives).
+
+**Times in a terminal.** While a wave tab is open, **Cmd+click** on a
+time in a terminal tab (a simulation's output, say) sets that tab's
+cursor there, and brings the tab to the front of its split if it is
+behind another. A time is one as testbenches and simulators print it: a
+number with its unit (`93.00 ns`, `0.124us`, `$finish at 132ns`), with
+its unit in brackets as Icarus's `$finish` has it (`131500 (1ps)`), or a
+bare number after an `@` (`@ 50000`, `$display("@ %0t", $time)`), in
+brackets (`[62500]`), after `Time:` or `time=`, or first on its line
+(`%t` padded); a bare number is in the dump's own unit (as `%t` prints
+it, in the simulation's precision), one with a unit is converted. An ILA
+capture counts samples, so there a bare number is a sample and a time
+with a unit is not a target. A time outside the dump is said, and the
+cursor stays. A `path:line` is a path first, and with no wave tab open
+a time is not a target.
+
 A dump on **another machine** is fetched whole while it is no larger than
 4 MB; larger ones are not shown yet (the tab says so).
 
@@ -4616,7 +4653,9 @@ does not finish and takes all the memory the machine has.
   read only once its simulation has closed it (until then it has no list
   of its signals); one cut short is said to be, and one damaged is said
   to be with what libfst could read of it kept.
-- The wave tab: VCD and FST (an FST told by its name, `.fst`); a dump is
+- The wave tab: VCD, FST and ILA captures' CSV (an FST told by its name,
+  `.fst`; a capture's CSV by its first line, here only: on another
+  machine a `.csv` opens as text); a dump is
   not read again when its file changes; one on another machine is
   fetched here whole, in parts with its progress on the bottom row (where
   a click stops it), up to `blit.opt.wave.remote_fetch_mb` (512 MB), and a

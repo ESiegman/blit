@@ -1,5 +1,5 @@
 #!/bin/sh
-# Waveforms: the timeline model and the VCD and FST readers
+# Waveforms: the timeline model and the VCD, FST and ILA CSV readers
 # (src/timeline.hpp, src/wave.hpp), through blit_timeline_test beside blit.
 # Real dumps from Icarus, Verilator, Yosys and pyvcd (tests/wave) are read
 # whole, in two pieces at every byte, a byte at a time and cut short, and
@@ -8,7 +8,9 @@
 # cut short and damaged at every byte; FST files written by libfst's own
 # writer against what was written; large dumps made up here (VCD, and FST
 # through libfst's writer) are read on a thread under a memory budget they
-# go over.
+# go over; Vivado's ILA captures of a Basys 3, as VCD and as CSV, read the
+# same, with their triggers and windows, and CSV that is not one said;
+# times read from text put in a dump's unit.
 #
 #   tests/wave.sh path/to/blit
 set -u

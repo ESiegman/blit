@@ -341,13 +341,24 @@ private:
 
 // A place named in a line of text around byte `at`: "path:line[:col]" as
 // compilers, CMake and make write them, or Python's File "path", line N.
-// begin and end: the bytes it takes.
+// With `times`, also a time as simulators and testbenches print one (path
+// empty, `time` set): a number and its unit ("93.00 ns", "0.124us",
+// Icarus's "131500 (1ps)"), or a bare one after an @, in brackets, after
+// "Time:" or "time=", or first on its line ("@ 50000", "[62500]", %t's
+// "    73000 count"), which is in a dump's own unit. begin and end: the
+// bytes it takes.
 struct TextPlace {
     std::string path;
     u32 line = 0, col = 0;
     size_t begin = 0, end = 0;
+    // A time: `digits` with `frac` of them after the point ("93.00": 9300
+    // and 2), in units of mult * 10^exp seconds (unit), else bare.
+    bool time = false, unit = false;
+    u64 digits = 0;
+    u32 frac = 0, mult = 1;
+    i32 exp = 0;
 };
-bool place_in_text(std::string_view text, size_t at, TextPlace* out);
+bool place_in_text(std::string_view text, size_t at, TextPlace* out, bool times = false);
 
 // "a/./b/../c" as "a/c"; a leading "/" kept.
 std::string tidy_path(std::string_view path);

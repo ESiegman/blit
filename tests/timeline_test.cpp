@@ -1,7 +1,7 @@
-// The timeline model and the VCD and FST readers (src/timeline.hpp,
-// src/wave.hpp), checked against real dumps (tests/wave: what each was made
-// with is beside it) and against slow answers worked out from the same text
-// by brute force. tests/wave.sh runs it.
+// The timeline model and the VCD, FST and ILA CSV readers (src/timeline.hpp,
+// src/wave.hpp), checked against real dumps and captures (tests/wave: what
+// each was made with is beside it) and against slow answers worked out from
+// the same text by brute force. tests/wave.sh runs it.
 //
 //   blit_timeline_test check DIR [SEEDS [SCRATCH]]  every check, on the dumps in DIR (files it writes go in SCRATCH)
 //   blit_timeline_test load FILE [MAX_MB]  reads a dump (VCD or FST) as blit does, on a thread, and says what came of it
@@ -386,6 +386,28 @@ void yosys_test(const Wave& w) {
     expect("yosys: en never driven", value_at(w, "counter.en", 200), "x");
 }
 
+// Vivado 2026.2's ILA capture of tests/wave/make/ila_top.v on a Basys 3, in
+// its VCD form (tests/wave/ila.txt): sample numbers as times, its own
+// _TRIGGER, _WINDOW and _GAP, the trigger at sample 100 (count 0x40).
+void ila_vcd_test(const Wave& w) {
+    expect("ila_one.vcd: the variables", listing(w),
+           "dut.count reg 8 [7:0]\n"
+           "dut.wrap reg 1\n"
+           "dut.phase reg 2 [1:0]\n"
+           "dut.sum reg 12 [11:0]\n"
+           "dut.sw_q reg 4 [3:0]\n"
+           "dut._TRIGGER reg 1\n"
+           "dut._WINDOW reg 1\n"
+           "dut._GAP reg 1\n");
+    check(w.version == "Vivado v2026.2 (64-bit)" && w.unit_given && w.unit_exp == -12 && w.samples, "ila_one.vcd: Vivado's, its times samples");
+    check(w.start == 0 && w.end == 1023 && w.notes.empty() && w.error.empty(), "ila_one.vcd: 1024 samples, read with nothing to say");
+    check(w.triggers == std::vector<u64>{100} && w.windows.empty(), "ila_one.vcd: the trigger at sample 100, one window");
+    expect("ila_one.vcd: count at the trigger", value_at(w, "dut.count", 100), "01000000");
+    expect("ila_one.vcd: sum a cycle behind", value_at(w, "dut.sum", 100), "000000111111");
+    expect("ila_one.vcd: count at the start", value_at(w, "dut.count", 0), "11011100");
+    check(w.time_text(100) == "100" && w.time_text(0) == "0", "ila_one.vcd: a sample's time as text is its number");
+}
+
 void pyvcd_test(const Wave& w) {
     expect("pyvcd: the variables", listing(w),
            "top.clk wire 1\n"
@@ -623,6 +645,179 @@ void malformed_test() {
 
 void made_up(u64 bytes, const std::function<void(std::string_view)>& put);
 void made_up_fst(const std::string& path, u64 changes);
+
+// --- ILA captures' CSV form (tests/wave/ila.txt says how they were made).
+
+std::unique_ptr<Wave> read_csv(std::string_view text, std::vector<size_t> cuts = {}, u64 max_bytes = 0) {
+    auto w = std::make_unique<Wave>();
+    IlaCsvReader r(w.get(), max_bytes);
+    size_t at = 0;
+    cuts.push_back(text.size());
+    for (const size_t c : cuts) {
+        if (c < at) continue;
+        r.feed(text.substr(at, c - at));
+        at = c;
+    }
+    r.finish();
+    return w;
+}
+
+// A capture's probes as two readings have them (its VCD and its CSV): the
+// same names, widths and changes, and the same triggers and windows.
+bool same_capture(const Wave& vcd, const Wave& csv, std::string* why) {
+    if (vcd.triggers != csv.triggers || vcd.windows != csv.windows || vcd.start != csv.start || vcd.end != csv.end) return *why = "triggers, windows or span", false;
+    for (u32 v = 0; v < csv.vars.size(); ++v) {
+        const i64 o = vcd.find(csv.path(v));
+        if (o < 0) return *why = "no " + csv.path(v) + " in the VCD", false;
+        const WaveVar &a = vcd.vars[static_cast<size_t>(o)], &b = csv.vars[v];
+        if (a.width != b.width || a.ranged != b.ranged || a.msb != b.msb || a.lsb != b.lsb) return *why = b.name + ": its width", false;
+        const Lane &x = vcd.lanes[a.lane], &y = csv.lanes[b.lane];
+        if (x.size() != y.size()) return *why = b.name + ": " + std::to_string(x.size()) + " changes, " + std::to_string(y.size()), false;
+        for (u64 i = 0; i < x.size(); ++i)
+            if (x.time(i) != y.time(i) || fmt(x, i) != fmt(y, i)) return *why = b.name + ": change " + std::to_string(i), false;
+    }
+    return true;
+}
+
+// The CSV text with line n (from 1) replaced.
+std::string with_line(const std::string& text, size_t n, const std::string& to) {
+    size_t a = 0;
+    for (size_t k = 1; k < n; ++k) a = text.find('\n', a) + 1;
+    const size_t b = text.find('\n', a);
+    return text.substr(0, a) + to + "\n" + text.substr(b + 1);
+}
+
+std::string line_of(const std::string& text, size_t n) {
+    size_t a = 0;
+    for (size_t k = 1; k < n; ++k) a = text.find('\n', a) + 1;
+    return text.substr(a, text.find('\n', a) - a);
+}
+
+void ila_test(const std::string& dir) {
+    // ila_one: one window, the trigger at sample 100; sum unsigned, sw_q binary, the rest hex.
+    const std::string one = slurp(dir + "/ila_one.csv");
+    const auto w = read_csv(one);
+    expect("ila_one.csv: the probes", listing(*w), "dut.count reg 8 [7:0]\ndut.wrap reg 1\ndut.phase reg 2 [1:0]\ndut.sum reg 12 [11:0]\ndut.sw_q reg 4 [3:0]\n");
+    check(w->done && w->error.empty() && w->samples && w->start == 0 && w->end == 1023 && w->triggers == std::vector<u64>{100} && w->windows.empty(),
+          "ila_one.csv: 1024 samples, the trigger at 100: " + w->error);
+    check(w->vars[0].radix == DumpRadix::kHex && w->vars[1].radix == DumpRadix::kHex && w->vars[3].radix == DumpRadix::kUnsigned && w->vars[4].radix == DumpRadix::kBinary,
+          "ila_one.csv: the radix row");
+    expect("ila_one.csv: count at the trigger (hex 40)", value_at(*w, "dut.count", 100), "01000000");
+    expect("ila_one.csv: sum there (unsigned 63)", value_at(*w, "dut.sum", 100), "000000111111");
+    expect("ila_one.csv: sw_q (binary 0000)", value_at(*w, "dut.sw_q", 100), "0000");
+    std::string why;
+    const auto vcd = read_vcd(slurp(dir + "/ila_one.vcd"));
+    check(same_capture(*vcd, *w, &why), "ila_one: its CSV as its VCD: " + why);
+    check(dump_kind(one) == DumpKind::kIlaCsv && dump_kind(slurp(dir + "/ila_one.vcd")) == DumpKind::kVcd, "ila_one: the CSV form, from its first bytes");
+    // In pieces split anywhere, with CRLF line ends.
+    for (size_t cut = 0; cut <= one.size(); cut += 11)
+        if (const auto p = read_csv(one, {cut}); !same_wave(*p, *w) || p->triggers != w->triggers) {
+            check(false, "ila_one.csv: cut in two at byte " + std::to_string(cut));
+            break;
+        }
+    std::vector<size_t> bytes(one.size());
+    for (size_t i = 0; i < bytes.size(); ++i) bytes[i] = i;
+    check(same_wave(*read_csv(one, bytes), *w), "ila_one.csv: fed a byte at a time");
+    std::string crlf;
+    for (const char c : one) crlf += c == '\n' ? std::string("\r\n") : std::string(1, c);
+    check(same_wave(*read_csv(crlf), *w), "ila_one.csv: with CRLF");
+    // On a thread, as blit reads it, the first bytes choosing the reader.
+    {
+        WaveLoad::ReadAt read_at;
+        u64 size = 0;
+        std::string err;
+        check(WaveLoad::local_file(dir + "/ila_one.csv", &read_at, &size, &err), "ila_one.csv: open: " + err);
+        WaveLoad load(std::make_shared<Wave>(), read_at, size, 0);
+        load.wait();
+        check(same_wave(*load.wave(), *w) && load.wave()->triggers == w->triggers && load.wave()->samples, "ila_one.csv: on a thread, the same");
+        WaveLoad::local_file(dir + "/ila_one.vcd", &read_at, &size, &err);
+        WaveLoad again(std::make_shared<Wave>(), read_at, size, 0);
+        again.wait();
+        check(same_wave(*again.wave(), *vcd) && again.wave()->triggers == vcd->triggers, "ila_one.vcd: on a thread, the same");
+    }
+
+    // ila_windows: four windows of 256, each triggered at its sample 32; count signed, phase octal.
+    const std::string four = slurp(dir + "/ila_windows.csv");
+    const auto f = read_csv(four);
+    check(f->error.empty() && f->triggers == std::vector<u64>{32, 288, 544, 800} && f->windows == std::vector<u64>{256, 512, 768},
+          "ila_windows.csv: a trigger a window, and where the windows start: " + f->error);
+    check(f->vars[0].radix == DumpRadix::kSigned && f->vars[2].radix == DumpRadix::kOctal, "ila_windows.csv: signed and octal");
+    expect("ila_windows.csv: count -1 (signed) at a trigger", value_at(*f, "dut.count", 288), "11111111");
+    expect("ila_windows.csv: count -33 at the start", value_at(*f, "dut.count", 0), "11011111");
+    expect("ila_windows.csv: phase 2 (octal) in the second window", value_at(*f, "dut.phase", 288), "10");
+    const auto fv = read_vcd(slurp(dir + "/ila_windows.vcd"));
+    check(fv->triggers == f->triggers && fv->windows == f->windows, "ila_windows.vcd: the same triggers and windows, from _TRIGGER and _WINDOW flipping");
+    check(same_capture(*fv, *f, &why), "ila_windows: its CSV as its VCD: " + why);
+
+    // Not to be read, and said: the form with no radix row (its values are
+    // in each probe's radix, which it does not say), and broken ones (the
+    // real file with a line changed).
+    auto said = [&](const std::string& what, const std::string& text, const std::string& error, u64 end = ~0ull) {
+        auto b = read_csv(text);
+        check(b->done && b->error == error && (end == ~0ull || b->end == end), what + ": \"" + b->error + "\", to " + std::to_string(b->end));
+        return b;
+    };
+    const auto legacy = said("ila_one-legacy.csv", slurp(dir + "/ila_one-legacy.csv"),
+                             "no radix row (-legacy_csv_file): write it with -csv_file");
+    check(legacy->vars.empty() && legacy->lanes.empty() && legacy->scopes.size() == 1, "ila_one-legacy.csv: no probes kept");
+    said("a line short of a value", with_line(one, 57, "54,54,0,52,0,0"), "line 57: 6 values, where the first line names 8 columns", 53);
+    check(read_csv(with_line(one, 57, "54,54,0,52,0,0"))->lanes[0].size() == 54, "a line short of a value: the samples before it kept");
+    said("a value not in its radix", with_line(one, 103, "100,100,1,4g,0,0,63,0000"), "line 103: count[7:0]: not a HEX value of 8 bits: 4g", 99);
+    said("a value too wide", with_line(one, 103, "100,100,1,140,0,0,63,0000"), "line 103: count[7:0]: not a HEX value of 8 bits: 140", 99);
+    said("a bit's value too wide", with_line(one, 103, "100,100,1,40,2,0,63,0000"), "line 103: wrap: not a HEX value of 1 bit: 2", 99);
+    said("an unsigned value too wide", with_line(one, 103, "100,100,1,40,0,0,4096,0000"), "line 103: sum[11:0]: not a UNSIGNED value of 12 bits: 4096", 99);
+    said("a binary value too long", with_line(one, 103, "100,100,1,40,0,0,63,10000"), "line 103: sw_q[3:0]: not a BINARY value of 4 bits: 10000", 99);
+    said("samples going back", with_line(one, 103, "99,99,1,40,0,0,63,0000"), "line 103: sample 99 after sample 99", 99);
+    said("not a sample's number", with_line(one, 103, "x,100,1,40,0,0,63,0000"), "line 103: not a sample's number: x", 99);
+    said("not ILA's", "Time,a,b\n0,1,2\n", "not an ILA capture's CSV: it starts with Time,a,b");
+    said("a column with no name", with_line(one, 1, "Sample in Buffer,Sample in Window,TRIGGER,,wrap,phase[1:0],sum[11:0],sw_q[3:0]"),
+         "line 1: a column with no name");
+    said("a radix it does not read", with_line(one, 2, "Radix - UNSIGNED,UNSIGNED,UNSIGNED,HEX,HEX,HEX,UNSIGNED,ENUM"),
+         "line 2: sw_q[3:0] is in a radix this does not read: ENUM");
+    said("a radix short", with_line(one, 2, "Radix - UNSIGNED,UNSIGNED,UNSIGNED,HEX,HEX,HEX,UNSIGNED"), "line 2: 7 radixes, where the first line names 8 columns");
+    said("empty", "", "the capture is empty");
+    said("no samples", line_of(one, 1) + "\n" + line_of(one, 2) + "\n", "the capture has no samples");
+    // SIGNED, as two's complement of the probe's width: -128 is 8 bits' least, -129 and 128 do not fit.
+    const std::string first = line_of(four, 3);  // "0,0,0,-33,0,1,222,0000"
+    auto signed_line = [&](const char* v) { return with_line(four, 3, "0,0,0," + std::string(v) + first.substr(first.find(",0,1,"))); };
+    expect("signed: -128", value_at(*read_csv(signed_line("-128")), "dut.count", 0), "10000000");
+    expect("signed: 127", value_at(*read_csv(signed_line("127")), "dut.count", 0), "01111111");
+    expect("signed: -0", value_at(*read_csv(signed_line("-0")), "dut.count", 0), "00000000");
+    said("signed: -129", signed_line("-129"), "line 3: count[7:0]: not a SIGNED value of 8 bits: -129");
+    said("signed: 128", signed_line("128"), "line 3: count[7:0]: not a SIGNED value of 8 bits: 128");
+    // Past the memory budget: stopped, said, and what came before kept.
+    const auto small = read_csv(one, {}, 4096);
+    check(small->error.starts_with("the capture needs more memory than timeline.max_mb allows: read up to sample ") && small->end > 0 && small->end < 1023,
+          "ila_one.csv over the budget: " + small->error);
+}
+
+// Times read from text, in a dump's units (Wave::time_of): "@ 50000" bare,
+// "93.00 ns", "0.124us", Icarus's "131500 (1ps)", in dumps of 1ps, 10 ns
+// and samples.
+void time_of_test(const std::string& dir) {
+    const auto ps = read_vcd(slurp(dir + "/times.vcd"));
+    const auto ten = read_vcd(slurp(dir + "/pyvcd.vcd"));
+    const auto ila = read_vcd(slurp(dir + "/ila_one.vcd"));
+    auto of = [](const Wave& w, u64 digits, u32 frac, bool unit, u32 mult, i32 exp) {
+        u64 t = 0;
+        return w.time_of(digits, frac, unit, mult, exp, &t) ? std::to_string(t) : std::string("none");
+    };
+    expect("time_of: @ 50000 in 1ps", of(*ps, 50000, 0, false, 1, 0), "50000");
+    expect("time_of: 93.00 ns in 1ps", of(*ps, 9300, 2, true, 1, -9), "93000");
+    expect("time_of: 0.124us in 1ps", of(*ps, 124, 3, true, 1, -6), "124000");
+    expect("time_of: 131500 (1ps)", of(*ps, 131500, 0, true, 1, -12), "131500");
+    expect("time_of: 3 (10ps) in 1ps", of(*ps, 3, 0, true, 10, -12), "30");
+    expect("time_of: 0.5 fs in 1ps, the nearest", of(*ps, 5, 1, true, 1, -15), "0");
+    expect("time_of: 1.5 ps in 1ps, the nearest", of(*ps, 15, 1, true, 1, -12), "2");
+    expect("time_of: 2 s in 1ps", of(*ps, 2, 0, true, 1, 0), "2000000000000");
+    expect("time_of: 30 ns in 10 ns", of(*ten, 30, 0, true, 1, -9), "3");
+    expect("time_of: 34 ns in 10 ns, the nearest", of(*ten, 34, 0, true, 1, -9), "3");
+    expect("time_of: 1.5 us in 10 ns", of(*ten, 15, 1, true, 1, -6), "150");
+    expect("time_of: bare 12.5 in 10 ns, the nearest", of(*ten, 125, 1, false, 1, 0), "13");
+    expect("time_of: past a u64 of ps", of(*ps, 99999999999, 0, true, 1, 0), "none");
+    expect("time_of: a capture's sample", of(*ila, 300, 0, false, 1, 0), "300");
+    expect("time_of: a capture has no unit of time", of(*ila, 5, 0, true, 1, -9), "none");
+}
 
 // Past the memory budget it stops, says so, and keeps what it read.
 void budget_test() {
@@ -1025,7 +1220,7 @@ int run_check(const std::string& dir, int seeds, std::string scratch) {
         size_t step;  // (cut in two at every byte for the small ones)
     };
     for (const Dump d : {Dump{"icarus.vcd", icarus_test, 7}, Dump{"verilator.vcd", verilator_test, 5}, Dump{"yosys.vcd", yosys_test, 1},
-                         Dump{"pyvcd.vcd", pyvcd_test, 1}}) {
+                         Dump{"pyvcd.vcd", pyvcd_test, 1}, Dump{"ila_one.vcd", ila_vcd_test, 13}}) {
         const std::string path = dir + "/" + d.name;
         const std::string text = slurp(path);
         const auto w = read_vcd(text);
@@ -1048,6 +1243,8 @@ int run_check(const std::string& dir, int seeds, std::string scratch) {
         scratch = t;
     }
     fst_test(dir, scratch);
+    ila_test(dir);
+    time_of_test(dir);
     if (failures) return 1;
     std::printf("timeline ok: %d seeds\n", seeds);
     return 0;

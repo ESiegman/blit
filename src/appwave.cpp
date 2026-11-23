@@ -1,5 +1,6 @@
-// Waveforms in a tab of their own: a dump (.vcd) opened from Go to file, the
-// tree or a link is read on a thread of its own (WaveLoad, wave.hpp), and
+// Waveforms in a tab of their own: a dump (.vcd, .fst, or an ILA capture's
+// .vcd or .csv, whose triggers are drawn as markers) opened from Go to file,
+// the tree or a link is read on a thread of its own (WaveLoad, wave.hpp), and
 // what has arrived shows while the rest comes. Names, values at the cursor,
 // the ruler and the bottom row are cells; the lanes are tiles painted on
 // workers (wavetile.hpp) and placed as pictures. A tile painted at another
@@ -51,6 +52,7 @@ constexpr size_t kUndo = 100;                  // changes to the rows that u can
 constexpr u32 kRulerRows = 2, kBottomRows = 1;
 
 constexpr Ink kMarkInk{kInkDiagnostic + 3, 0};  // markers and their deltas (the hints' ink: apart from the cursor's accent)
+constexpr Ink kTriggerInk{kInkDiagnostic, 0};    // an ILA capture's triggers (the errors' ink, as Vivado draws them red)
 
 std::string g_wave_clipboard;  // (scripted runs: what y copied, here and not in the system's clipboard)
 
@@ -203,6 +205,7 @@ struct WaveView {
     double left = 0, tpp = 1;
     double want_from = 0, want_to = 0;  // (the kept view's stretch, set once the traces' width is known)
     char pending = 0;  // m ' d g y: a key waiting for its second
+    bool to_trigger = false;  // (an ILA capture's cursor: to its first trigger, once it is read)
     bool touched = false;  // changed by hand: kept from then on
     std::string written;   // the view as last kept
     u64 gen = 1;           // counts up with every change to what is shown
@@ -370,7 +373,15 @@ bool App::is_wave_path(std::string_view path) {
     if (path.size() < 4) return false;
     std::string ext(path.substr(path.size() - 4));
     for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-    return ext == ".vcd" || ext == ".fst";
+    if (ext == ".vcd" || ext == ".fst") return true;
+    // An ILA capture's CSV, by its first line (here only: another machine's is not asked for it on the way).
+    if (ext != ".csv" || is_remote(path)) return false;
+    char head[16];
+    FILE* f = std::fopen(std::string(path).c_str(), "rb");
+    if (!f) return false;
+    const size_t n = std::fread(head, 1, sizeof head, f);
+    std::fclose(f);
+    return dump_kind(std::string_view(head, n)) == DumpKind::kIlaCsv;
 }
 
 namespace {
@@ -510,6 +521,7 @@ void start(WaveView& v) {
     std::shared_lock lock(v.wave->mu, std::try_to_lock);
     if (!lock.owns_lock()) return;
     const Wave& w = *v.wave;
+    if (w.done && w.vars.empty() && !w.error.empty()) return;  // (nothing in it to show: the bottom row says why)
     WaveSaved saved;
     if (!v.view_text.empty() && wave_view_parse(w, v.view_text, &saved, &v.dropped) && (!saved.items.empty() || v.dropped == 0)) {
         v.items = std::move(saved.items);
@@ -522,9 +534,21 @@ void start(WaveView& v) {
     } else {
         v.items = wave_default_items(w);
         v.cursor = w.start;
+        v.to_trigger = true;
     }
     v.rows = wave_rows(v.items, w);
     v.started = true;
+    ++v.gen;
+}
+
+// An ILA capture's cursor at its first trigger, once it is read (unless it was moved by then).
+void to_trigger(WaveView& v) {
+    if (!v.to_trigger || !v.started || !v.now.done) return;
+    std::shared_lock lock(v.wave->mu, std::try_to_lock);
+    if (!lock.owns_lock()) return;
+    v.to_trigger = false;
+    if (v.touched || v.wave->triggers.empty()) return;
+    v.cursor = v.wave->triggers.front();
     ++v.gen;
 }
 
@@ -538,6 +562,7 @@ void rows_again(WaveView& v) {
 
 // The time in a unit of 10^unit seconds (-15 fs to 0 s), as the ruler writes it.
 std::string ruler_text(const Wave& w, u64 t, int unit) {
+    if (w.samples) return std::to_string(t);
     static constexpr std::string_view kUnits[] = {"fs", "ps", "ns", "us", "ms", "s"};
     long double v = static_cast<long double>(t) * w.unit_mult;
     for (int e = w.unit_exp - unit; e > 0; --e) v *= 10;
@@ -552,6 +577,7 @@ std::string ruler_text(const Wave& w, u64 t, int unit) {
 // (for the tests: time_text's three decimals round a half one way on one
 // system and the other on another).
 std::string exact_text(const Wave& w, u64 t) {
+    if (w.samples) return std::to_string(t);
     static constexpr std::string_view kUnits[] = {"fs", "ps", "ns", "us", "ms", "s"};
     // t * mult in units of 10^e seconds (e a multiple of 3, from fs to s), then a unit up while it has a whole one.
     unsigned __int128 v = static_cast<unsigned __int128>(t) * w.unit_mult;
@@ -600,6 +626,7 @@ void App::wave_sync() {
             if (d->wave) {
                 peek(*d->wave);
                 start(*d->wave);
+                to_trigger(*d->wave);
             }
     if (waves_->painter)
         for (WavePainter::Done& t : waves_->painter->take()) {
@@ -678,6 +705,7 @@ void App::wave_layout(FrameDesc& fd) {
         if (v.tx1 <= v.tx0 + cw) continue;
         peek(v);
         start(v);
+        to_trigger(v);
         if (v.started) {
             if (v.want_to > v.want_from) {  // (the kept view's stretch, now that the width is known)
                 v.left = v.want_from, v.tpp = (v.want_to - v.want_from) / v.trace_w();
@@ -707,17 +735,18 @@ void App::wave_layout(FrameDesc& fd) {
                 u32 c = put(v.box, font, bottom, edge, leaf_of(v.path), ink::kStrong);
                 std::string err = !v.open_error.empty() ? v.open_error : !v.fetch_error->empty() ? *v.fetch_error : v.now.error;
                 const u32 room = cols > c + 3 + edge ? cols - c - 3 - edge : 1;
-                if (!v.now.header || !v.open_error.empty() || !v.fetch_error->empty()) {
+                if (!v.now.header || !v.open_error.empty() || !v.fetch_error->empty() || (v.now.done && wv.vars.empty() && !err.empty())) {
                     if (!err.empty()) c = put(v.box, font, bottom, c + 3, fit_text("Cannot show it: " + err, room), ink::kError);
                     else c = put(v.box, font, bottom, c + 3, reading(v), ink::kMuted);
                 } else {
-                    c = put(v.box, font, bottom, c + 3, wv.time_text(v.now.start) + " to " + wv.time_text(v.now.end), ink::kMuted);
+                    c = put(v.box, font, bottom, c + 3, (wv.samples ? "samples " : "") + wv.time_text(v.now.start) + " to " + wv.time_text(v.now.end), ink::kMuted);
+                    if (wv.samples && v.now.done && !wv.windows.empty()) c = put(v.box, font, bottom, c + 3, std::to_string(wv.windows.size() + 1) + " windows", ink::kMuted);
                     c = put(v.box, font, bottom, c + 3, std::to_string(wv.vars.size()) + " signals", ink::kMuted);
                     if (v.load && v.load->size()) c = put(v.box, font, bottom, c + 3, size_text(v.load->size()), ink::kMuted);
                     if (!v.now.done) c = put(v.box, font, bottom, c + 3, reading(v), ink::kMuted);
                     if (!err.empty() && err != "stopped") c = put(v.box, font, bottom, c + 3, fit_text("Stopped: " + err, cols > c + 3 + edge ? cols - c - 3 - edge : 1), ink::kError);
                     if (v.dropped) c = put(v.box, font, bottom, c + 3, std::to_string(v.dropped) + " kept rows not in the dump", ink::kWarning);
-                    const std::string across = wv.time_text(static_cast<u64>(std::llround(v.trace_w() * v.tpp))) + " across";
+                    const std::string across = wv.time_text(static_cast<u64>(std::llround(v.trace_w() * v.tpp))) + (wv.samples ? " samples across" : " across");
                     if (c + 3 + width_of(across) + edge <= cols) put(v.box, font, bottom, cols - edge - width_of(across), across, ink::kMuted);
                 }
                 if (v.started) {
@@ -746,18 +775,29 @@ void App::wave_layout(FrameDesc& fd) {
                         if (col < free_col || col + width_of(label) > cols - edge) continue;
                         free_col = put(v.box, font, 0, col, label, ink::kMuted) + 2;
                     }
-                    // Markers along the second row, each with how far it is from the cursor.
-                    free_col = v.trace_col;
-                    for (u32 k = 0; k < 26; ++k) {
-                        if (!(v.marked & (1u << k))) continue;
-                        const double px = v.x_of(static_cast<double>(v.marks[k]));
-                        if (px < v.tx0 || px >= v.tx1) continue;
+                    // Along the second row: an ILA capture's triggers (T), markers and the
+                    // windows after a capture's first (w2, w3...), each where it falls if
+                    // there is room for it, a trigger and a marker with how far it is from
+                    // the cursor.
+                    std::vector<u8> used(cols, 0);
+                    auto along = [&](u64 t, std::string label, Ink in) {
+                        const double px = v.x_of(static_cast<double>(t));
+                        if (px < v.tx0 || px >= v.tx1) return;
                         const u32 col = static_cast<u32>(std::max(0.0, std::ceil((px - x - pad_x) / cw)));
-                        if (col < free_col) continue;
-                        std::string label(1, static_cast<char>('a' + k));
-                        if (v.marks[k] != v.cursor) label += " " + delta_text(wv, v.cursor, v.marks[k]);
-                        free_col = put(v.box, font, 1, col, fit_text(label, cols - edge > col ? cols - edge - col : 1), kMarkInk) + 2;
-                    }
+                        if (col >= cols - edge) return;
+                        label = fit_text(label, cols - edge - col);
+                        const u32 end = std::min<u32>(cols, col + width_of(label) + 2);
+                        for (u32 u = col > 0 ? col - 1 : 0; u < end; ++u)
+                            if (used[u]) return;
+                        put(v.box, font, 1, col, label, in);
+                        std::fill(used.begin() + col, used.begin() + end, 1);
+                    };
+                    if (v.now.done)
+                        for (const u64 t : wv.triggers) along(t, t == v.cursor ? std::string("T") : "T " + delta_text(wv, v.cursor, t), kTriggerInk);
+                    for (u32 k = 0; k < 26; ++k)
+                        if (v.marked & (1u << k)) along(v.marks[k], std::string(1, static_cast<char>('a' + k)) + (v.marks[k] != v.cursor ? " " + delta_text(wv, v.cursor, v.marks[k]) : ""), kMarkInk);
+                    if (v.now.done)
+                        for (size_t i = 0; i < wv.windows.size(); ++i) along(wv.windows[i], "w" + std::to_string(i + 2), ink::kMuted);
                     // A row each: its name (indented), and its value at the cursor.
                     std::string value;
                     const char* open_mark = font.can_draw(0x25BE) ? "\xE2\x96\xBE " : "v ";
@@ -900,6 +940,17 @@ void App::wave_layout(FrameDesc& fd) {
         if (v.ranging) {
             const double a = std::round(v.x_of(static_cast<double>(std::min(v.cursor, v.range_from)))), b = std::round(v.x_of(static_cast<double>(std::max(v.cursor, v.range_from))));
             picture(dot_of(gpu_, waves_->dots, theme_.sel), a, v.ry0, std::max(a + lw, b), v.ty1, all, 0.35f);
+        }
+        if (v.now.done) {  // (an ILA capture's windows, then its triggers)
+            const u32 win = dot_of(gpu_, waves_->dots, theme_.palette[kInkMuted]), trig = dot_of(gpu_, waves_->dots, theme_.palette[kTriggerInk.ink]);
+            for (const u64 t : wv.windows) {
+                const double px = std::round(v.x_of(static_cast<double>(t)));
+                picture(win, px, v.ry0 + ch, px + lw, v.ty1, all, 0.6f);
+            }
+            for (const u64 t : wv.triggers) {
+                const double px = std::round(v.x_of(static_cast<double>(t)));
+                picture(trig, px, v.ry0 + ch, px + lw, v.ty1, all);
+            }
         }
         const u32 mark = dot_of(gpu_, waves_->dots, theme_.palette[kMarkInk.ink]);
         for (u32 k = 0; k < 26; ++k)
@@ -1488,7 +1539,8 @@ bool App::waves_busy() const {
 void App::wave_wait(bool rows) {
     const u64 until = now_ns() + 20'000'000'000ull;
     auto shown = [&] {  // (rows: only until the tab in front has its rows, the dump maybe still being read)
-        return pane_->doc->wave && (pane_->doc->wave->started || !pane_->doc->wave->open_error.empty() || !pane_->doc->wave->fetch_error->empty());
+        const WaveView* v = pane_->doc->wave.get();
+        return v && (v->started || !v->open_error.empty() || !v->fetch_error->empty() || (v->now.done && !v->now.error.empty() && v->wave->vars.empty()));
     };
     while (now_ns() < until) {
         wave_sync();
@@ -1552,6 +1604,7 @@ std::string App::wave_dump(std::string_view what) {
         // (And whether rows were made all the same: a ruler and a cursor over nothing.)
         if (!v.open_error.empty()) return leaf_of(v.path) + ": cannot show it: " + v.open_error + (v.started ? ", rows made" : "");
         if (!v.fetch_error->empty()) return leaf_of(v.path) + ": cannot show it: " + *v.fetch_error + (v.started ? ", rows made" : "");
+        if (w.done && w.vars.empty() && !w.error.empty()) return leaf_of(v.path) + ": cannot show it: " + w.error + (v.started ? ", rows made" : "");
         if (!v.started) return leaf_of(v.path) + ": reading";
         std::string out = leaf_of(v.path) + ": " + (w.done ? "read" : "reading") + ", cursor " + exact_text(w, v.cursor) + ", view " +
                           exact_text(w, static_cast<u64>(std::llround(std::max(0.0, v.left)))) + " to " + exact_text(w, static_cast<u64>(std::llround(v.left + v.trace_w() * v.tpp)));
@@ -1562,6 +1615,13 @@ std::string App::wave_dump(std::string_view what) {
         for (u32 k = 0; k < 26; ++k)
             if (v.marked & (1u << k)) marks += std::string(marks.empty() ? "" : " ") + static_cast<char>('a' + k) + "=" + exact_text(w, v.marks[k]) + "(" + exact_delta(w, v.cursor, v.marks[k]) + ")";
         if (!marks.empty()) out += ", markers " + marks;
+        auto list = [&](const std::vector<u64>& ts) {
+            std::string l;
+            for (const u64 t : ts) l += (l.empty() ? "" : " ") + exact_text(w, t);
+            return l;
+        };
+        if (!w.triggers.empty()) out += ", triggers at " + list(w.triggers);
+        if (!w.windows.empty()) out += ", windows from " + list(w.windows);
         std::string value;
         for (u32 r = 0; r < v.rows.size(); ++r) {
             const WaveRow& row = v.rows[r];
@@ -1599,6 +1659,52 @@ void App::wave_bench_step(bool zoom, int i, bool page) {
         ++v.gen;
     }
     dirty_ = true;
+}
+
+bool App::wave_any() const {
+    for (const std::unique_ptr<Pane>& pane : panes_)
+        for (const std::shared_ptr<Doc>& d : pane->docs)
+            if (d->wave) return true;
+    return false;
+}
+
+// A time Cmd+clicked in a terminal: the wave tab's cursor there (one in
+// front of a split first, else the first open, which is brought to the
+// front of its split), in the dump's unit (a bare number is in it already).
+bool App::wave_go_time(const TextPlace& time) {
+    Pane* where = nullptr;
+    size_t tab = 0;
+    for (const std::unique_ptr<Pane>& pane : panes_)
+        if (pane->doc && pane->doc->wave) {
+            where = pane.get(), tab = pane->tab;
+            break;
+        }
+    for (const std::unique_ptr<Pane>& pane : panes_)
+        for (size_t i = 0; !where && i < pane->docs.size(); ++i)
+            if (pane->docs[i]->wave) where = pane.get(), tab = i;
+    if (!where) return false;
+    WaveView& v = *where->docs[tab]->wave;
+    if (!v.started) return false;
+    u64 t = 0;
+    {
+        std::shared_lock lock(v.wave->mu);
+        const Wave& w = *v.wave;
+        if (!w.time_of(time.digits, time.frac, time.unit, time.mult, time.exp, &t)) return false;  // (a time with a unit, in a capture's samples: the click is a click)
+        if (w.done && (t < w.start || t > w.end)) {
+            notify(exact_text(w, t) + " is not in " + leaf_of(v.path) + " (" + exact_text(w, w.start) + " to " + exact_text(w, w.end) + ")");
+            return true;
+        }
+    }
+    v.cursor = t;
+    v.show_time(t);
+    v.touched = true;
+    ++v.gen;
+    if (where->tab != tab) {
+        focus_pane(where);
+        tab_show(tab);
+    }
+    dirty_ = true;
+    return true;
 }
 
 bool App::wave_sharp() const {

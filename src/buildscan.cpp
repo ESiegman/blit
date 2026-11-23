@@ -667,7 +667,94 @@ BuildProblem* BuildScan::add(std::string_view path, u32 line, u32 col, u8 severi
 
 // ---------------------------------------------------------------- a place in a line
 
-bool place_in_text(std::string_view text, size_t at, TextPlace* out) {
+namespace {
+
+// The units a time is printed in, as powers of ten of a second.
+constexpr std::pair<std::string_view, i32> kTimeUnits[] = {{"fs", -15}, {"ps", -12}, {"ns", -9}, {"us", -6}, {"ms", -3}, {"s", 0}};
+
+bool letter(char c) { return (c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z'); }
+
+// A unit of time at s[i]: its power of ten and its length. Not one that
+// runs on into a word ("seconds") or is a rate's ("4.2 ms/s").
+bool time_unit(std::string_view s, size_t i, i32* exp, size_t* len) {
+    for (const auto& [name, e] : kTimeUnits) {
+        if (!s.substr(i).starts_with(name)) continue;
+        const size_t j = i + name.size();
+        if (j < s.size() && (ident(s[j]) || s[j] == '/')) continue;
+        *exp = e, *len = name.size();
+        return true;
+    }
+    return false;
+}
+
+// A time as simulators print one, around byte `at` (TextPlace says the shapes).
+bool time_in_text(std::string_view text, size_t at, TextPlace* out) {
+    auto blank = [](char c) { return c == ' ' || c == '\t'; };
+    for (size_t b = 0; b < text.size();) {
+        if (!digit(text[b]) || (b > 0 && ident(text[b - 1]))) {
+            ++b;
+            continue;
+        }
+        // The number: digits, and maybe a point and more.
+        size_t n = b;
+        while (n < text.size() && digit(text[n])) ++n;
+        const size_t point = n;
+        if (n + 1 < text.size() && text[n] == '.' && digit(text[n + 1]))
+            for (++n; n < text.size() && digit(text[n]);) ++n;
+        const size_t from = b;
+        b = n;
+        if (n - from > 20) continue;
+        TextPlace t;
+        t.time = true;
+        t.begin = from;
+        t.frac = point < n ? static_cast<u32>(n - point - 1) : 0;
+        if (point - from + t.frac > 19) continue;
+        for (size_t i = from; i < n; ++i)
+            if (digit(text[i])) t.digits = t.digits * 10 + static_cast<u64>(text[i] - '0');
+        // "93.00 ns", "0.124us": its unit after it (a space between, or none).
+        size_t u = n < text.size() && blank(text[n]) ? n + 1 : n;
+        size_t len = 0;
+        if (u < text.size() && time_unit(text, u, &t.exp, &len)) {
+            t.unit = true;
+            t.end = u + len;
+        } else if (u < text.size() && text[u] == '(') {
+            // Icarus's "131500 (1ps)": the unit, 1, 10 or 100 of it, in brackets.
+            size_t m = u + 1;
+            while (m < text.size() && digit(text[m])) ++m;
+            const std::string_view many = text.substr(u + 1, m - u - 1);
+            if ((many != "1" && many != "10" && many != "100") || !time_unit(text, m, &t.exp, &len) || m + len >= text.size() || text[m + len] != ')') continue;
+            t.unit = true;
+            t.mult = many == "1" ? 1 : many == "10" ? 10 : 100;
+            t.end = m + len + 1;
+        } else {
+            // Bare: in the dump's unit, where the line says it is a time.
+            if (n < text.size() && (ident(text[n]) || text[n] == '/')) continue;
+            t.end = n;
+            size_t p = from;
+            while (p > 0 && blank(text[p - 1])) --p;
+            const auto time_word = [&] {  // "Time:", "time =" before it
+                if (p == 0 || (text[p - 1] != ':' && text[p - 1] != '=')) return false;
+                size_t q = p - 1;
+                while (q > 0 && blank(text[q - 1])) --q;
+                if (q < 4 || (q > 4 && letter(text[q - 5]))) return false;
+                std::string word(text.substr(q - 4, 4));
+                for (char& c : word) c = static_cast<char>(c | 0x20);
+                return word == "time";
+            };
+            // "@ 50000", "[62500]", "Time: 128500", or first on its line.
+            if (p > 0 && text[p - 1] == '@') t.begin = p - 1;
+            else if (from > 0 && text[from - 1] == '[' && n < text.size() && text[n] == ']') t.begin = from - 1, t.end = n + 1;
+            else if (!time_word() && p != 0) continue;
+        }
+        if (at < t.begin || at >= t.end) continue;
+        *out = std::move(t);
+        return true;
+    }
+    return false;
+}
+
+// A path and a line in a line of text (place_in_text's first shapes).
+bool place_in_line(std::string_view text, size_t at, TextPlace* out) {
     // Python's: File "path", line N
     for (size_t f = text.find("File \""); f != std::string_view::npos; f = text.find("File \"", f + 1)) {
         const size_t q = text.find('"', f + 6);
@@ -702,6 +789,15 @@ bool place_in_text(std::string_view text, size_t at, TextPlace* out) {
     out->col = col;
     out->begin = b, out->end = b + word.size();
     return true;
+}
+
+}  // namespace
+
+bool place_in_text(std::string_view text, size_t at, TextPlace* out, bool times) {
+    *out = TextPlace{};
+    if (place_in_line(text, at, out)) return true;
+    *out = TextPlace{};
+    return times && time_in_text(text, at, out);
 }
 
 }  // namespace blit

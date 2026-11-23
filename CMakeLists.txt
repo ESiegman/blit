@@ -203,7 +203,7 @@ target_include_directories(blit_core PUBLIC src)
 target_link_libraries(blit_core PUBLIC Threads::Threads)
 # Timelines and waveforms: lanes of changes, and dumps read into them
 # (knowing no window, so that the agent can carry them later).
-target_sources(blit_core PRIVATE src/timeline.cpp src/wave.cpp)
+target_sources(blit_core PRIVATE src/timeline.cpp src/wave.cpp src/waveila.cpp)
 # FST dumps are read through libfst (third_party/libfst, at the commit its
 # config.h names), compiled as C, as src/agent/build.sh compiles it for the
 # Linux agents, with zlib. Optimized in every build, and kept out of

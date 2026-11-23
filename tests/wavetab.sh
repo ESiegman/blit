@@ -9,9 +9,11 @@
 # commands in Command search, the view kept in .blit/waves and brought back
 # (rows whose signals the dump has not got left out), the tiles painted and
 # their pixels where colour matters (x, z, a busy band, a high line), a dump
-# over timeline.max_mb, one that cannot be read, and dumps on another
+# over timeline.max_mb, one that cannot be read, dumps on another
 # machine (tests/fake-ssh.sh stands in for ssh): one fetched whole, one too
-# large to be yet.
+# large to be yet; and ILA captures (Vivado's, of a Basys 3), as VCD and
+# as CSV: their samples, radixes, triggers and windows; and times in a
+# terminal (as Icarus and Verilator print them) Cmd+clicked into the cursor.
 #
 #   tests/wavetab.sh path/to/blit            run the cases
 #   tests/wavetab.sh path/to/blit --print    show what each case gives
@@ -25,7 +27,7 @@ dir=$(cd "$dir" && pwd -P)
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/init.lua"
 export BLIT_INIT="$dir/init.lua" BLIT_RECENT_FILE="$dir/recent" BLIT_CACHE_DIR="$dir/cache"
 mkdir -p "$dir/work"
-cp "$here"/wave/*.vcd "$dir/work/"
+cp "$here"/wave/*.vcd "$here"/wave/*.csv "$here"/wave/*.log "$dir/work/"
 W="$dir/work"
 
 failed=0
@@ -333,6 +335,77 @@ got=$(printf '%s' "$got" | sed -e 's/ ;; .*//')
 check "another machine's FST, fetched and read" "verilator.fst: read, cursor 0 ps, view 0 ps to 2.772 us"
 got=$(ls "$dir/cache/waves" 2>/dev/null | wc -l | tr -d ' ')
 check "(its copy here removed once read)" "0"
+
+# ILA captures (tests/wave/ila.txt): their times are samples; the cursor
+# starts at the trigger; Vivado's own _TRIGGER, _WINDOW and _GAP are not
+# rows (the triggers and windows are drawn instead); the CSV form's radix
+# row is each probe's radix; the form with no radix row is not shown, and
+# why. A CSV that is not a capture opens as text.
+fresh
+run 1600x900 "frame;wavewait;wavedump" "$W/ila_one.vcd"
+check "an ILA capture's VCD: samples, the cursor at the trigger" "ila_one.vcd: read, cursor 100, view 0 to 1023, triggers at 100 ;; >dut.count[7:0] = 40 hex ;;  dut.wrap = 0 ;;  dut.phase[1:0] = 0 hex ;;  dut.sum[11:0] = 03f hex ;;  dut.sw_q[3:0] = 0 hex"
+run 1600x900 "frame;wavewait;wavedump" "$W/ila_one.csv"
+check "its CSV: the same, in the radixes it gives" "ila_one.csv: read, cursor 100, view 0 to 1023, triggers at 100 ;; >dut.count[7:0] = 40 hex ;;  dut.wrap = 0 ;;  dut.phase[1:0] = 0 hex ;;  dut.sum[11:0] = 63 unsigned ;;  dut.sw_q[3:0] = 0000 binary"
+run 1600x900 "frame;wavewait;key:n;key:n;key:m;key:a;wavedump" "$W/ila_windows.csv"
+check "four windows: a trigger each, n from the first, a marker" "ila_windows.csv: read, cursor 34, view 0 to 1023, markers a=34(+0), triggers at 32 288 544 800, windows from 256 512 768 ;; >dut.count[7:0] = 1 signed ;;  dut.wrap = 0 ;;  dut.phase[1:0] = 2 octal ;;  dut.sum[11:0] = 0 unsigned ;;  dut.sw_q[3:0] = 0000 binary"
+run 1600x900 "frame;wavewait;wavedump" "$W/ila_one-legacy.csv"
+check "the CSV form with no radix row: not shown, and why" "ila_one-legacy.csv: cannot show it: no radix row (-legacy_csv_file): write it with -csv_file"
+printf 'a,b\n1,2\n' >"$W/table.csv"
+run 1600x900 "frame;wavedump" "$W/table.csv"
+check "a CSV that is not a capture: text" "no wave tab"
+# The trigger's line, in the errors' ink (red), and the cursor's, moved
+# ten samples on (n), in its own: four pixels about each.
+fresh
+tens="key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n"
+got=$("$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "frame;wavewait;key:0;$tens;wavewait;wavedump:at:8,100,-1,0,4;wavedump:at:8,110,-1,0,4" "$W/ila_one.vcd" 2>&1 >/dev/null | grep '^at ' | sed -e 's/^at [-0-9,]* | //' | join)
+reds() { printf '%s\n' "$1" | awk 'BEGIN { RS = " [|] " } NF == 3 && $1 > $2 + 60 && $1 > $3 + 30 { n++ } END { print n + 0 }'; }
+[ "$(reds "${got%% ;; *}")" -gt 0 ] && c=red || c="not red: ${got%% ;; *}"
+[ "$(reds "${got#* ;; }")" = 0 ] && c="$c, the cursor not" || c="$c, the cursor red too: ${got#* ;; }"
+got=$c
+check "the trigger's line at sample 100: red" "red, the cursor not"
+
+# Times in a terminal, as testbenches print them (tests/wave/times.txt:
+# make/times.v under Icarus and Verilator, times.vcd Icarus's dump of the
+# same run, in 1ps): Cmd+click on one sets the wave tab's cursor there, a
+# bare number in the dump's unit, one with a unit converted. The terminal
+# is a split below the wave tab (Ctrl+`), and stays there to be clicked
+# again; a shell of the test's own prints the logs.
+export BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i"
+below="frame;wavewait;key:ctrl+\`;frame;termwait:\$;key:space"
+clicks() {  # clicks LOG TEXT...: the cursor after each Cmd+click, " ;; " between
+    log=$1
+    shift
+    s="$below;text:cat $W/$log;key:Return;termwait:finish"
+    for c in "$@"; do s="$s;termclick:$c;frame;wavedump"; done
+    rm -rf "$W/.blit"
+    got=$("$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "$s" "$W/times.vcd" 2>&1 >/dev/null | grep -v '^\[' |
+        sed -n -e 's/^times.vcd: read, cursor \(.*\), view .*/\1/p' -e 's/^\(blit: .*\)/\1/p' -e 's/^\(termclick: .*\)/\1/p' | join)
+}
+clicks times-icarus.log "@ 50000" "62500]" "73000 count" "93.00 ns" "94.00 ns" "0.124us" "0.129us" "128500" "131500 (1ps)"
+check "Icarus's: @ %0t, [%0t], %t, \$timeformat's, Time:, \$error's Time and \$finish's" "50 ns ;; 62.5 ns ;; 73 ns ;; 93 ns ;; 94 ns ;; 124 ns ;; 129 ns ;; 128.5 ns ;; 131.5 ns"
+clicks times-verilator.log "@ 50000" "62500]" "73000 count" "93.00 ns" "0.1240us" "0.1290us]" "132ns"
+check "Verilator's: the same, and its \$finish past the dump's end, said" "50 ns ;; 62.5 ns ;; 73 ns ;; 93 ns ;; 124 ns ;; 129 ns ;; blit: 132 ns is not in times.vcd (0 ps to 131.5 ns) ;; 129 ns"
+# Not times: a count after "count =", a version, a rate, the word Time itself.
+clicks times-verilator.log "9" "5.054" "4.249 ms/s" "Time:" "Verilog \$stop"
+check "not times: nothing moves" "0 ps ;; 0 ps ;; 0 ps ;; 0 ps ;; 0 ps"
+# A path:line in the same lines is still a path (it opens the file).
+rm -rf "$W/.blit"
+got=$("$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "$below;text:cat $W/times-icarus.log;key:Return;termwait:finish;termclick:times.v:26;frame;dump" "$W/times.vcd" 2>&1 >/dev/null | grep -v '^\[' | tail -1)
+case $got in *"No file"*times.v*|*"[times.v"*) got="a path" ;; esac
+check "times.v:26 beside them: a path, not a time" "a path"
+# The wave tab behind the terminal in the same split: brought to the front.
+rm -rf "$W/.blit"
+got=$("$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "frame;wavewait;term;frame;termwait:\$;text:cat $W/times-icarus.log;key:Return;termwait:finish;dump;termclick:94.00 ns;frame;dump;wavedump" "$W/times.vcd" 2>&1 >/dev/null |
+    grep -v '^\[' | grep -e '^>\[' -e '^times.vcd' | sed -e 's/, view .*//' | join)
+check "a wave tab behind: shown" ">[times.vcd Terminal*] ;; >[times.vcd* Terminal] ;; times.vcd: read, cursor 94 ns"
+# With no wave tab open, a time is no target: the click is a click.
+got=$("$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "term;frame;termwait:\$;text:cat $W/times-icarus.log;key:Return;termwait:finish;termclick:@ 50000;frame;dump" 2>&1 >/dev/null | grep -v '^\[' | tail -1)
+check "no wave tab: the click is a click" ">[untitled Terminal*]"
+# An ILA capture counts samples: a bare number is one, a time with a unit is none.
+rm -rf "$W/.blit"
+got=$("$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "$below;text:echo @ 300 and 5 ns;key:Return;termwait:and 5;termclick:@ 300;frame;wavedump;termclick:5 ns;frame;wavedump" "$W/ila_one.vcd" 2>&1 >/dev/null |
+    grep '^ila_one.vcd' | sed -e 's/, view .*//' | join)
+check "an ILA capture: @ 300 is sample 300, 5 ns nothing" "ila_one.vcd: read, cursor 300 ;; ila_one.vcd: read, cursor 300"
 
 [ $failed = 0 ] && echo "wavetab ok"
 exit $failed
