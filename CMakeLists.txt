@@ -446,9 +446,10 @@ if(BLIT_DEV)
     add_test(NAME profile COMMAND sh ${CMAKE_SOURCE_DIR}/tests/profile.sh $<TARGET_FILE:blit>)
     add_test(NAME profviews COMMAND sh ${CMAKE_SOURCE_DIR}/tests/profviews.sh $<TARGET_FILE:blit>)
     add_test(NAME term COMMAND sh ${CMAKE_SOURCE_DIR}/tests/term.sh $<TARGET_FILE:blit>)
-    # (Recording a profile and watching programs in a terminal go by time:
-    # run alone, they are not slowed by another suite on a busy machine.)
-    set_tests_properties(profile term PROPERTIES RUN_SERIAL TRUE)
+    # (Recording a profile, watching programs in a terminal and taking in a
+    # notebook's 20 MB of output go by time: run alone, they are not slowed
+    # by another suite on a busy machine.)
+    set_tests_properties(profile term notebook PROPERTIES RUN_SERIAL TRUE)
     add_test(NAME keys COMMAND sh ${CMAKE_SOURCE_DIR}/tests/keys.sh $<TARGET_FILE:blit>)
     add_test(NAME debug COMMAND sh ${CMAKE_SOURCE_DIR}/tests/debug.sh $<TARGET_FILE:blit>)
     # The probe and port picker: USB devices named, the board object written, here and on another machine.
