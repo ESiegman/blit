@@ -2250,8 +2250,10 @@ where its threads waited:
     wanted). It samples allocations by bytes, one about every 64 KB, a
     larger block always, each with its stack, and forgets a sampled block
     that is freed again; when the program ends (or Stop ends it) blit
-    names the stacks with `atos` or `addr2line`, source lines and all, and
-    opens two profiles: **Allocations**, every allocation by where it was
+    names the stacks with `atos` or `addr2line`, source lines and all
+    (where that is not installed, each profile's heading says so, and its
+    stacks have the names the sampler found alone), and opens two
+    profiles: **Allocations**, every allocation by where it was
     made, in bytes, and **Held at the end**, those never freed: the leaks.
     `BLIT_ALLOC_RATE` in the program's environment sets another rate. On
     this machine only, and not for a program the system protects (one in
@@ -2816,7 +2818,9 @@ system's (`/usr/share/vulkan/registry`, `/usr/local` or `/opt/homebrew`'s,
 `$VULKAN_SDK`'s, the newest `~/VulkanSDK`'s), else a copy of Vulkan-Headers'
 own (tag v1.4.363) fetched once, the first time one is asked for, into
 blit's data folder (`~/.local/share/blit/vulkan`); `BLIT_VALIDUSAGE` names
-another file. It is indexed once, on a thread of its own, and statements
+another file. Where the copy cannot be had blit says why: curl's own
+words (a host it could not find, the server's status), or `curl is not
+installed on this Mac`. It is indexed once, on a thread of its own, and statements
 read from it there. Metal's messages have no such file: their row is what
 there is.
 
@@ -3395,7 +3399,9 @@ pytest` of the [project's Python](#the-projects-python), so its
 grouped by build folder and by file, each with how its last run went: a
 tick, a cross with the failure's message, a dash for one skipped, a dot
 for one not run. Where none are found, the tab says what pytest (or the
-Python) last said.
+Python) last said. Where a build folder has been configured and ctest is
+not installed, the tab says so (`ctest is not installed on this Mac`),
+above pytest's tests when it found some.
 
 Enter runs the test chosen (a heading: all under it), **a** all of them,
 **f** the failed ones again, **d** debugs a CTest test (its own command,
@@ -3493,12 +3499,18 @@ away) and the search comes back for the next. Where they come from:
   newest `/opt/rocm-*`), each linked by the targets its targets file
   makes, to the GPU code alone.
 - **pkg-config**: its modules (`pkg-config --list-all`), as
-  `pkg_check_modules`, Meson's `dependency()`, or make's flags.
+  `pkg_check_modules`, Meson's `dependency()`, or make's flags. The row
+  says `pkg-config is not installed on this Mac` where neither it nor
+  pkgconf is, and "pkg-config has no modules" where it lists none.
 - **PyPI**: its 15,000 most downloaded packages (fetched once a week into
-  blit's data folder), and any other by its exact name.
+  blit's data folder), and any other by its exact name. Where the list
+  cannot be fetched, the search says why under it (curl's own words, or
+  `curl is not installed on this Mac`).
 
-On another machine all of this is that machine's: its vcpkg, ROCm, GPUs,
-uv and pkg-config.
+A Python project's manager is uv where uv is installed, else pip, and the
+Manager row then says so (`uv is not installed on this Mac, so pip is
+used`). On another machine all of this is that machine's: its vcpkg,
+ROCm, GPUs, uv and pkg-config.
 
 ```lua
 -- In init.lua: a kind of your own, and a built-in one taken away.

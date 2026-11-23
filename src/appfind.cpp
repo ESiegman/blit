@@ -274,6 +274,7 @@ struct App::Find {
     std::vector<std::string> items;
     std::string prompt;
     std::string question;  // (a list of blit's own: what it asks, in the footer: find_ask_footer)
+    bool question_warns = false;  // (or what went wrong getting its rows)
     bool script() const { return mode == kFindPick || mode == kFindInput; }
     // ssh's question (kFindAsk): which, from where, whether it is hidden as
     // typed, and the box that was open before it (to open again after).
@@ -1233,9 +1234,11 @@ void App::find_live_items(const std::string& prompt, std::function<void(const st
 
 // A list of blit's own that is a question about something (the rows its
 // answers): the question, in the footer, where the box says what it looks in.
-void App::find_ask_footer(const std::string& question) {
+// (Or, a warning, why its rows are fewer than they would be.)
+void App::find_ask_footer(const std::string& question, bool warning) {
     if (!find_open_ || find_->mode != kFindPick) return;
     find_->question = question;
+    find_->question_warns = warning;
     find_->touch();
     dirty_ = true;
 }
@@ -2329,7 +2332,7 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
             where_ink = ink::kError;
         } else if (f.mode == kFindPick && !f.question.empty()) {
             where = f.question;
-            where_ink = ink::kAccentStrong;
+            where_ink = f.question_warns ? ink::kWarning : ink::kAccentStrong;
         } else if (f.asking) {
             where = "Replace " + std::to_string(f.ask_hits) + (f.ask_hits == 1 ? " hit in " : " hits in ") + std::to_string(f.ask_files) + (f.ask_files == 1 ? " file?" : " files?");
             where_ink = ink::kAccentStrong;

@@ -1087,7 +1087,12 @@ void App::prof_layout(FrameDesc& fd) {
                 c = box.put(font, 1, c, stretch, 0);
             }
             if (v.base) c = box.put(font, 1, c, " \xC2\xB7 compared with " + v.base->when + (v.base->program != p.program ? " (" + short_path(v.base->program) + ")" : std::string()), 0);
-            if (!p.note.empty()) put(box, font, 1, c + 3, clip(p.note, cols > c + 4 ? cols - c - 4 : 1), ink::kWarning);
+            // The note after it, or on a row of its own when it would be cut
+            // short there (a program not installed, said in full).
+            const bool note_row = !p.note.empty() && c + 3 + width_of(p.note) + 1 > cols;
+            if (note_row) put(box, font, 2, 1, clip(p.note, cols > 2 ? cols - 2 : 1), ink::kWarning);
+            else if (!p.note.empty()) put(box, font, 1, c + 3, clip(p.note, cols > c + 4 ? cols - c - 4 : 1), ink::kWarning);
+            const u32 above = note_row ? 4 : 3;  // (the rows above the timeline: the crumbs the last of them)
 
             // The timeline: a lane for each thread (the heaviest few), how much
             // it ran in each stretch of time, the stretch chosen lit.
@@ -1100,7 +1105,7 @@ void App::prof_layout(FrameDesc& fd) {
                     v.tl_span = span;
                     v.lane_ids.clear();
                     for (size_t k = 0; k < whole.by_thread.size() && k < 6; ++k) v.lane_ids.push_back(whole.by_thread[k].id);
-                    v.tl_row = 3;
+                    v.tl_row = above;
                     v.tl_rows = static_cast<u32>(v.lane_ids.size());
                     const u32 label = std::min<u32>(16, cols / 5);
                     v.tl_col = label + 2;
@@ -1130,14 +1135,14 @@ void App::prof_layout(FrameDesc& fd) {
             }
 
             // Where in the graph the view is: the frames above the one zoomed into.
-            const u32 top_rows = 3 + (v.tl_rows ? v.tl_rows + 1 : 0);
+            const u32 top_rows = above + (v.tl_rows ? v.tl_rows + 1 : 0);
             {
                 std::vector<u32> path;
                 for (u32 n = v.zoom; n != v.root; n = p.nodes[n].parent) path.push_back(n);
                 std::string crumbs = v.root_name();
                 for (size_t k = path.size(); k-- > 0;) crumbs += " \xE2\x80\xBA " + std::string(short_name(p.funcs[p.nodes[path[k]].func].name));
-                c = box.put(font, 2, 1, clip(crumbs, cols / 2), v.zoom != v.root ? 0 : kInkMuted);
-                if (v.zoom != v.root) box.put(font, 2, c + 2, "Esc: zoom out", kInkMuted);
+                c = box.put(font, above - 1, 1, clip(crumbs, cols / 2), v.zoom != v.root ? 0 : kInkMuted);
+                if (v.zoom != v.root) box.put(font, above - 1, c + 2, "Esc: zoom out", kInkMuted);
             }
 
             // The flame graph: the root at the bottom, each function above
@@ -1777,6 +1782,11 @@ std::string App::prof_dump() {
         for (size_t k = 0; k < it->second.lines.size(); ++k) out += " " + std::to_string(it->second.lines[k].first + 1) + it->second.kinds[k];
     }
     return out;
+}
+
+std::string App::prof_note() {
+    if (pane_->doc->prof) return pane_->doc->prof->p->note;
+    return profui_->shown ? profui_->shown->note : std::string();
 }
 
 }  // namespace blit

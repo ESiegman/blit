@@ -33,6 +33,7 @@
 #include "grammars.hpp"
 #include "libraries.hpp"
 #include "look.hpp"
+#include "missing.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
 #include "tree.hpp"
@@ -300,7 +301,9 @@ struct App::StartUi {
         std::vector<VcpkgPort> rocm_packages;
         std::string gpus, uv_version;
         bool uv = false;
+        std::string uv_missing;  // ("uv is not installed on lab": pip is the manager then)
         std::vector<VcpkgPort> pkgconfig;
+        std::string pkgconfig_missing;  // (none, as it is not installed there: that, not "no modules")
         bool done = false, applied = false;
     };
     std::mutex facts_mu;
@@ -337,8 +340,10 @@ struct App::StartUi {
     // Its list comes from a thread of its own (a download); one that failed is not tried again this session.
     std::mutex pypi_mu;
     std::vector<VcpkgPort> pypi_got;  // (pypi_mu) what the thread found
+    std::string pypi_got_why;         // (pypi_mu) none: why
     bool pypi_ready = false;          // (pypi_mu) it has finished
     bool pypi_loading = false, pypi_failed = false, pypi_wanted = false;  // wanted: the list is to open when it comes
+    std::string pypi_why;  // (failed: why, said where the list would be)
     std::vector<std::string> touched;  // "kind\tkey": set by hand, so what is found leaves it alone
 
     const ProjectKind* chosen() const { return kind < kinds.size() ? &kinds[kind] : nullptr; }
@@ -1032,11 +1037,15 @@ void App::project_facts() {
             const std::string dir = remote ? where : std::string();
             if (go() && !f.rocm_root.empty()) f.gpus = gpu_targets(dir, f.rocm_root);
             std::string out;
-            if (go() && fs_run(dir, "uv --version", &out, 5000) && out.starts_with("uv ")) {
+            if (go() && fs_run(dir, "command -v uv >/dev/null 2>&1 || { echo blit-no-uv; exit 1; }; uv --version", &out, 5000) && out.starts_with("uv ")) {
                 f.uv = true;
                 f.uv_version = out.substr(3, out.find_first_of(" \n", 3) - 3);
+            } else if (out.starts_with("blit-no-uv")) {
+                f.uv_missing = not_installed("uv", host);
             }
-            if (go()) f.pkgconfig = pkgconfig_modules(dir);
+            bool pkgconfig = true;
+            if (go()) f.pkgconfig = pkgconfig_modules(dir, &pkgconfig);
+            if (!pkgconfig) f.pkgconfig_missing = not_installed("pkg-config", host);
         }
         const std::shared_ptr<StartUi> sp = wp.lock();
         if (!go() || !sp) return;
@@ -1092,6 +1101,7 @@ void App::start_sync() {
         std::lock_guard lock(s.pypi_mu);
         if (s.pypi_ready) {
             got = std::move(s.pypi_got);
+            s.pypi_why = std::move(s.pypi_got_why);
             s.pypi_ready = false;
             arrived = true;
         }
@@ -1099,7 +1109,7 @@ void App::start_sync() {
     if (arrived) {
         s.pypi_loading = false;
         if (got.empty()) s.pypi_failed = true;
-        else s.pypi = std::move(got);
+        else s.pypi = std::move(got), s.pypi_why.clear();
         if (s.pypi_wanted) {
             s.pypi_wanted = false;
             s.error.clear();
@@ -1123,7 +1133,7 @@ void App::project_facts_apply() {
     };
     set("HIP", "gpu", s.facts.gpus);
     set("Python", "manager", s.facts.uv ? "uv" : "pip");
-    ++s.gen;
+    s.rows_again();  // (the fields a value shows: pip's build backends, not uv's)
 }
 
 // A row of libraries: those of its source to choose from, those chosen
@@ -1162,16 +1172,21 @@ void App::project_libraries(const std::string& typed) {
         if (s.facts.rocm_root.empty()) missing = "ROCm is not to be found: ROCM_PATH says where it is (else /opt/rocm).";
     } else if (source == "pkg-config") {
         list = &s.facts.pkgconfig, prompt = "pkg-config module";
-        if (list->empty()) missing = "pkg-config has no modules there (or is not installed).";
+        std::string host, there;
+        split_remote(s.where, &host, &there);
+        if (!s.facts.pkgconfig_missing.empty()) missing = s.facts.pkgconfig_missing + ".";
+        else if (list->empty()) missing = "pkg-config has no modules on " + machine_name(host) + ".";
     } else if (source == "pypi") {
         if (s.pypi.empty() && !s.pypi_failed) {  // (fetched on a thread: the list opens when it comes)
             if (!s.pypi_loading) {
                 s.pypi_loading = true;
                 std::thread([sp = start_, cache = grammar_dir() + "/cache"] {
-                    std::vector<VcpkgPort> got = pypi_top(cache);
+                    std::string why;
+                    std::vector<VcpkgPort> got = pypi_top(cache, &why);
                     {
                         std::lock_guard lock(sp->pypi_mu);
                         sp->pypi_got = std::move(got);
+                        sp->pypi_got_why = std::move(why);
                         sp->pypi_ready = true;
                     }
                     SDL_Event ev{};
@@ -1235,6 +1250,8 @@ void App::project_libraries(const std::string& typed) {
         if (i < 0 || at >= list->size()) return;
         toggle((*list)[at].name);
     }, typed);
+    // (PyPI's list not had: why, under where it would be.)
+    if (by_name && s.pypi.empty() && !s.pypi_why.empty()) find_ask_footer(s.pypi_why, true);
 }
 
 // A value set by its key: kind, name, where, git, or one of the kind's fields.
@@ -1419,7 +1436,7 @@ void App::project_created() {
 // made, or the facts a search of libraries waits for.
 void App::project_wait() {
     StartUi& s = *start_;
-    for (const u64 until = now_ns() + 60'000'000'000ull; (s.creating || s.libraries_wanted) && now_ns() < until; SDL_Delay(2)) start_sync();
+    for (const u64 until = now_ns() + 60'000'000'000ull; (s.creating || s.libraries_wanted || s.pypi_loading) && now_ns() < until; SDL_Delay(2)) start_sync();
 }
 
 // The New project tab's cells (start_layout): the form, section by
@@ -1477,6 +1494,7 @@ void App::project_cells(u32 cols, u32 rows) {
     auto put_choice = [&](u32 row, const std::string& value, bool chosen) {
         const u32 end = put(box, font, row, value_col, fit_text(value, value_room > 2 ? value_room - 2 : 0), ink::kText);
         if (chosen) marks(row, end);
+        return end;
     };
 
     // What will be made, for the lines under the form: the files listed
@@ -1572,20 +1590,29 @@ void App::project_cells(u32 cols, u32 rows) {
                 if (f.kind == ProjectField::kSwitch) {
                     put_switch(y, val == "true", chosen);
                 } else if (f.kind == ProjectField::kChoice) {
-                    put_choice(y, val, chosen);
+                    const u32 after = put_choice(y, val, chosen);
+                    std::string uv_missing;
+                    if (f.key == "manager") {
+                        std::lock_guard lock(s.facts_mu);
+                        uv_missing = s.facts.uv_missing;
+                    }
+                    if (!uv_missing.empty() && right > after + 4) {  // (pip in its place, said where there is room; uv chosen anyway, the same in red)
+                        const std::string full = uv_missing + ", so pip is used";
+                        const std::string& said = val != "uv" && width_of(full) <= right - after - 4 ? full : uv_missing;
+                        put(box, font, y, after + 3, fit_text(said, right - after - 4), val == "uv" ? ink::kError : ink::kWarning);
+                    }
                 } else if (f.kind == ProjectField::kLibraries) {
                     std::string names;
                     for (const char c : val) names += c == ' ' ? std::string(", ") : std::string(1, c);
                     std::lock_guard lock(s.facts_mu);
                     const StartUi::Facts& fa = s.facts;
-                    const char* none = f.source == "vcpkg" && fa.vcpkg_root.empty()       ? "vcpkg not found (VCPKG_ROOT)"
-                                       : f.source == "rocm" && fa.rocm_root.empty()       ? "ROCm not found (ROCM_PATH)"
-                                       : f.source == "pkg-config" && fa.pkgconfig.empty() ? "pkg-config not found"
-                                                                                           : nullptr;
-                    if (f.source == "pypi") none = nullptr;
+                    const std::string none = f.source == "vcpkg" && fa.vcpkg_root.empty()       ? "vcpkg not found (VCPKG_ROOT)"
+                                             : f.source == "rocm" && fa.rocm_root.empty()       ? "ROCm not found (ROCM_PATH)"
+                                             : f.source == "pkg-config" && fa.pkgconfig.empty() ? (fa.pkgconfig_missing.empty() ? "pkg-config has no modules" : fa.pkgconfig_missing)
+                                                                                                 : std::string();
                     if (!names.empty()) put(box, font, y, value_col, fit_text(names, value_room), ink::kText);
                     else if (!fa.done && f.source != "pypi") put(box, font, y, value_col, "Looking\xE2\x80\xA6", ink::kMuted);
-                    else if (none) put(box, font, y, value_col, fit_text(none, value_room), ink::kError);
+                    else if (!none.empty()) put(box, font, y, value_col, fit_text(none, value_room), ink::kError);
                     else put(box, font, y, value_col, fit_text("None (" + enter + " looks them up)", value_room), ink::kMuted);
                 } else if (val.empty()) {
                     put(box, font, y, value_col, "None", ink::kMuted);
@@ -1632,15 +1659,22 @@ void App::project_cells(u32 cols, u32 rows) {
     } else if (s.form_sel < s.form.size()) {
         const StartUi::Row& r = s.form[s.form_sel];
         std::string note;
+        Ink note_ink = ink::kMuted;
         switch (r.what) {
             case kFormKind: note = k->description; break;
             case kFormName: note = "The name of its folder and targets: letters, digits, '-', '_' and '.'"; break;
             case kFormWhere: note = "The folder it goes in; ssh://host/\xE2\x80\xA6 makes it on another machine"; break;
             case kFormGit: note = "Runs git init once the files are written, with a .gitignore"; break;
-            case kFormField: note = field_note(k->fields[r.field], font); break;
+            case kFormField: {
+                note = field_note(k->fields[r.field], font);
+                std::lock_guard lock(s.facts_mu);
+                if (k->fields[r.field].key == "manager" && !s.facts.uv_missing.empty())  // (what is beside it, in full)
+                    note = s.facts.uv_missing + (v.contains("manager") && v.at("manager") == "uv" ? "" : ", so pip is used"), note_ink = ink::kWarning;
+                break;
+            }
             case kFormCreate: note = "Makes " + home_short(s.where + "/" + (s.name.empty() ? std::string("\xE2\x80\xA6") : s.name)) + " and opens its main file"; break;
         }
-        put(box, font, msg_row, s.left, fit_text(note, s.width), ink::kMuted);
+        put(box, font, msg_row, s.left, fit_text(note, s.width), note_ink);
     }
     const Hint hints[] = {{"Up Down", "move"}, {"Left Right", "change"}, {"Enter", "edit"}, {create_keys, "create"}, {"Esc", "back"}};
     size_t shown = std::size(hints);
@@ -1655,7 +1689,9 @@ std::string App::project_facts_dump() {
     project_facts_wait();
     const StartUi::Facts& f = s.facts;
     return "vcpkg=" + home_short(f.vcpkg_root) + " ports=" + std::to_string(f.vcpkg_ports.size()) + " baseline=" + f.vcpkg_baseline.substr(0, 10) +
-           " rocm=" + f.rocm_root + " gpus=" + f.gpus + " uv=" + f.uv_version + " pkg-config=" + std::to_string(f.pkgconfig.size());
+           " rocm=" + f.rocm_root + " gpus=" + f.gpus + " uv=" + f.uv_version + " pkg-config=" + std::to_string(f.pkgconfig.size()) +
+           (f.uv_missing.empty() && f.pkgconfig_missing.empty() ? "" : " | missing:") + (f.uv_missing.empty() ? "" : " " + f.uv_missing + ";") +
+           (f.pkgconfig_missing.empty() ? "" : " " + f.pkgconfig_missing + ";");
 }
 
 // What the New project tab holds, on one line (for the tests): the fields

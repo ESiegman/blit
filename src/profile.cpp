@@ -20,6 +20,7 @@
 #include <format>
 
 #include "json.hpp"
+#include "missing.hpp"
 #include "remote.hpp"
 
 extern char** environ;
@@ -1001,6 +1002,7 @@ struct Run {
     pid_t pid = -1;
     u32 rid = 0;
     int out = -1, err = -1;
+    bool missing = false;  // (here: it could not be started, as no program of its name is on the PATH)
     void signal(int sig) const {
         if (remote) remote->kill(rid, sig);
         else if (pid > 0) ::kill(-pid, sig);  // (its whole group: the profiler and what it runs)
@@ -1074,6 +1076,7 @@ bool start(const std::shared_ptr<Remote>& remote, const std::vector<std::string>
     if (rc != 0) {
         ::close(out[0]), ::close(er[0]);
         *err = std::string("cannot run ") + argv[0] + ": " + std::strerror(rc);
+        run->missing = rc == ENOENT && argv[0].find('/') == std::string::npos;
         return false;
     }
     run->out = out[0];
@@ -1166,8 +1169,9 @@ std::string alloc_library(std::string* err) {
 
 // The sampler's addresses named, with their source lines: by atos on a Mac
 // (an image's addresses at a time, with its base), by addr2line elsewhere.
-// The system's own images are left to the names dladdr gave.
-std::unordered_map<u64, AllocName> alloc_names(std::string_view text) {
+// The system's own images are left to the names dladdr gave. (`missing`:
+// that the one to name them with is not installed, when it is not.)
+std::unordered_map<u64, AllocName> alloc_names(std::string_view text, std::string* missing) {
     std::unordered_map<u64, AllocName> out;
     std::map<std::pair<std::string, u64>, std::vector<u64>> by_image;
     for (const auto& [addr, pl] : alloc_places(text)) {
@@ -1196,7 +1200,11 @@ std::unordered_map<u64, AllocName> alloc_names(std::string_view text) {
 #endif
             Run r;
             std::string said, ignore;
-            if (!start(nullptr, argv, "", &r, &ignore)) break;
+            if (!start(nullptr, argv, "", &r, &ignore)) {
+                if (!r.missing) break;
+                *missing = not_installed(argv[0], {});  // (nor will it be for the next image)
+                return out;
+            }
             finish(r, &said, &ignore);
             std::vector<std::string_view> lines;
             for (size_t at = 0; at < said.size();) {
@@ -1332,8 +1340,17 @@ struct ProfileJob::Impl {
         if (quit) return fail("Stopped");
         if (!wrote) return fail("the program wrote no allocations (one the system protects, or signed to refuse it, cannot be given the sampler)");
         auto held_p = std::make_shared<Profile>(*p);
-        std::string perr;
-        if (!parse_alloc(text, alloc_names(text), p.get(), held_p.get(), &perr)) return fail(perr);
+        std::string perr, missing;
+        if (!parse_alloc(text, alloc_names(text, &missing), p.get(), held_p.get(), &perr)) return fail(perr);
+        // (In each one's heading: its stacks named only as far as dladdr could, which on a Mac
+        // finds the program's own functions, and elsewhere only those it exports.)
+#if defined(__APPLE__)
+        constexpr const char* kLost = ", so no source lines; ";
+#else
+        constexpr const char* kLost = ", so no function names or source lines; ";
+#endif
+        if (!missing.empty())
+            for (Profile* q : {p.get(), held_p.get()}) q->note = missing + kLost + q->note;
         p->kind = "allocations";
         held_p->kind = "held";
         p->backend = held_p->backend = "blit";  // (its own sampler, not the system's profiler)

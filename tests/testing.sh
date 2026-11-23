@@ -338,6 +338,14 @@ printf '#!/bin/sh\nshift\nexec /bin/sh -c "$@"\n' >"$dir/plainsh"
 chmod +x "$dir/plainsh"
 got=$(SHELL="$dir/plainsh" PATH=$bare "$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$C;frame;testdump" "$C/CMakeLists.txt" 2>&1 >/dev/null | grep -v '^blit: ' | tail -1)
 check "ctest not installed: said where the tests would be" "No tests found: ctest is not installed on $this"
+# And where pytest's tests are found beside them (a .venv's Python that
+# answers as pytest would): said above those, not only when there are none.
+mkdir -p "$C/.venv/bin" "$C/tests"
+cp "$V/tests/test_v.py" "$C/tests/"
+printf '#!/bin/sh\nprintf "tests/test_v.py::test_one\\ntests/test_v.py::test_two\\n\\n2 tests collected in 0.01s\\n"\n' >"$C/.venv/bin/python"
+chmod +x "$C/.venv/bin/python"
+got=$(SHELL="$dir/plainsh" PATH=$bare "$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "workdir:$C;frame;command:Show Tests;frame;testdump" "$C/CMakeLists.txt" 2>&1 >/dev/null | grep -v '^blit: ' | tail -1)
+check "ctest not installed, pytest's tests found: said above them" "ctest is not installed on $this, so CTest's tests are not listed | tests/test_v.py: .test_one .test_two"
 
 [ "$failed" = 0 ] && echo "testing: all passed"
 exit "$failed"

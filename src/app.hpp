@@ -682,7 +682,7 @@ private:
     void find_drop_ask();
     void find_choose(int mode, const std::string& prompt, const std::string& typed, std::function<void(const std::string&)> chose);
     void find_choose_item(const std::string& prompt, std::vector<std::string> items, std::function<void(int)> chose, const std::string& typed = {});
-    void find_ask_footer(const std::string& question);
+    void find_ask_footer(const std::string& question, bool warning = false);  // (warning: what went wrong, not a question)
     void remote_asks();
     void save_named(const std::string& path, u64 doc);
     void remember_place();  // where the cursor is now is somewhere to come back to
@@ -1062,6 +1062,7 @@ private:
     void prof_set(const std::string& what, const std::string& value);
     bool prof_busy() const;
     std::string prof_dump();
+    std::string prof_note();  // (the profile in front's note: what its heading warns of)
     void panel_show_profile();
 
     // The Markdown preview (appmarkdown.cpp, markdown.cpp, diagram.cpp): a tab
