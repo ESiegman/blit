@@ -443,8 +443,11 @@ slowly() {
     got=$(BLIT_SSH="$dir/slow-ssh.sh" BLIT_NARROW=8000000 BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
         --script "$1" "$R/notes.txt" 2>&1 >/dev/null | sed -e "s#$T#~#g" -e 's/loading [0-9]* of/loading N of/' | join)
 }
-slowly "remotewait;key:ctrl+\`;frame;termwait:\$;key:space;key:ctrl+\`;frame;open:$R/big/dump.txt;fetchwait:2000000;frame;statusdump;key:ctrl+\`;key:space;frame;clock;text:echo h''i;key:Return;termwait:hi;within:1000;fetchdump;remotewait;key:ctrl+\`;$docend;frame;statusdump;remoteframes"
-check "a big file read from there: in parts, said as it comes, a terminal there answering meanwhile" 'box ~/work/big/dump.txt loading N of 20 MB… | Ln 1, Col 1 Tabs LF Plain text ;; within 1000 ms ;; fetching dump.txt (20 MB) ;; box ~/work/big/dump.txt | Ln 327681, Col 1 Tabs LF Plain text ;; box: no frame over 1 MB'
+slowly "remotewait;key:ctrl+\`;frame;termwait:\$;key:space;key:ctrl+\`;frame;open:$R/big/dump.txt;fetchwait:2000000;frame;statusdump;key:ctrl+\`;key:space;frame;clock;text:echo h''i;key:Return;termwait:hi;within:2000;fetchdump;remotewait;key:ctrl+\`;$docend;frame;statusdump;remoteframes"
+# (Within 2 s, with the fetch still going after (fetchdump): the whole 20 MB
+# takes 2.5 s at this rate, and before parts the terminal waited for all of
+# it, 2.9 s; GitHub's runner answered in 1.1 s, this Mac in 0.2.)
+check "a big file read from there: in parts, said as it comes, a terminal there answering meanwhile" 'box ~/work/big/dump.txt loading N of 20 MB… | Ln 1, Col 1 Tabs LF Plain text ;; within 2000 ms ;; fetching dump.txt (20 MB) ;; box ~/work/big/dump.txt | Ln 327681, Col 1 Tabs LF Plain text ;; box: no frame over 1 MB'
 slowly "remotewait;open:$R/big/dump.txt;fetchwait:2000000;frame;statusclick:loading;remotewait;fetchdump;open:$R/big/after.txt;remotewait;frame;dump;statusdump;remoteframes"
 check "stopped from the status bar: its tab goes, and the connection goes on" 'blit: Stopped reading ssh://box~/work/big/dump.txt ;; nothing fetched ;; >[notes.txt after.txt*] ;; box ~/work/big/after.txt | Ln 1, Col 1 Tabs LF Plain text ;; box: no frame over 1 MB'
 slowly "remotewait;open:$R/big/dump.txt;fetchwait:2000000;key:cmd+W;clock;remotewait;within:500;fetchdump;frame;dump"
