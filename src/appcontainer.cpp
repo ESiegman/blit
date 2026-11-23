@@ -228,7 +228,7 @@ void App::container_open(bool anew) {
     auto unless_down = [this, plan, docker](std::function<void()> then) {
         script_run({docker, "info", "--format", "{{.ServerVersion}}"}, plan->root, [this, then](int code, const std::string&, const std::string& err) {
             if (code == 0) return then();
-            if (err.starts_with("cannot run ")) return notify(err, 2);  // (no docker here at all)
+            if (code < 0) return notify(err, 2);  // (no docker here at all)
             notify("docker is not running", 2, "docker is not running: " + err);
         });
     };
@@ -242,6 +242,7 @@ void App::container_open(bool anew) {
     // Already made: started, if it is not running.
     script_run({docker, "inspect", "-f", "{{.State.Running}}", plan->name}, plan->root,
                [this, plan, docker, make, opened, unless_down](int code, const std::string& out, const std::string& err) {
+                   if (code < 0) return notify(err, 2);  // (no docker here at all)
                    if (code != 0 && err.find("No such") == std::string::npos) return unless_down(make);  // (docker may not be running)
                    if (code != 0) return make();
                    if (out.starts_with("true")) return opened();

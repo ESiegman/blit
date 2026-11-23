@@ -178,6 +178,13 @@ the keyboard; the rest close (they are in the last folder's session). A
 file opened on its own (`blit FILE`) leaves the sessions alone.
 `blit.opt.editor.restore = false` turns all of it off.
 
+**Programs it runs.** Much of what blit does is done by another program
+(git, gh, a language server, a debugger, a build's tools, a flash tool,
+curl, docker, ssh), on the machine the work is on. When that program is
+not there, blit says so where the feature shows how it went, naming the
+program and the machine: `gh is not installed on this Mac`, `cmake is not
+installed on lab`.
+
 Everything blit does can be done from the keyboard. **Cmd+Shift+P**
 (Ctrl+Shift+P elsewhere) searches every command by its name or its keys,
 shows the keys of each, and runs the one chosen; typing `cmd+b` finds what

@@ -15,6 +15,18 @@ export BLIT_INIT="$dir/init.lua"
 export XDG_DATA_HOME="$dir/data"
 echo hello >"$dir/a.txt"
 if command -v sha256sum >/dev/null 2>&1; then sum() { sha256sum "$1"; }; else sum() { shasum -a 256 "$1"; }; fi
+# path_without PROGRAM...: a PATH of /usr/bin's and /bin's programs but not
+# those named (a machine they are not installed on), and what blit calls
+# this machine.
+path_without() {
+    p="$dir/without-$(printf '%s' "$*" | tr ' ' -)"
+    mkdir -p "$p"
+    ln -s /usr/bin/* "$p/" 2>/dev/null
+    ln -s /bin/* "$p/" 2>/dev/null
+    for n in "$@"; do rm -f "$p/$n"; done
+    printf '%s' "$p"
+}
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
 failed=0
 fail() {
     printf 'FAIL: %s\n%s\n' "$1" "$(printf '%s\n' "$2" | grep 'blit:\|asked\|script' | sed 's/^/    /')"
@@ -111,6 +123,9 @@ if command -v ditto >/dev/null 2>&1; then
     [ "$(cat "$dir/apps/blit.app/Contents/MacOS/blit" 2>/dev/null)" = "new 99.0.0" ] || fail "a newer blit.app: put in place" "$got"
     [ -z "$(ls -A "$dir/apps" | grep -v -e '^blit.AppImage$' -e '^blit.app$')" ] || fail "blit.app: nothing left beside it" "blit: left: $(ls -A "$dir/apps" | tr "\n" " ")"
 fi
+# curl not installed: said, naming it and this machine.
+got=$(PATH=$(path_without curl) run "command:Check for updates")
+printf '%s' "$got" | grep -qF "blit: Could not ask for the latest release: curl is not installed on $this" || fail "curl not installed: said" "$got"
 # Pre-releases, in semver's order: a release after its pre-releases, and
 # these by their words in turn (numbers as numbers, and before any other
 # word; fewer words first); a "+build" counts for nothing.

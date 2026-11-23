@@ -329,6 +329,14 @@ print(r.code .. " " .. r.stderr)
 EOF
 run "luawait"
 check "a folder that is not there: the folder blamed, not the program" '-1 cannot run sh in /nonexistent/dir: no such folder ; -1 cannot run sh in ssh://box/home: no such folder here (programs are run on this machine)'
+fresh
+init <<'EOF2'
+local r = blit.system({ "nothere-at-all", "x" })
+print(r.code .. " " .. r.stderr)
+EOF2
+run "luawait"
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+check "a program that is not installed: said so, naming the machine" "-1 nothere-at-all is not installed on $this"
 
 # ---------------------------------------------------------------- the documents
 fresh

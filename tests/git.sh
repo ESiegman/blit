@@ -38,6 +38,19 @@ fresh() {
     git -C "$dir/bo" pull -q 2>/dev/null
 }
 
+# path_without PROGRAM...: a PATH of /usr/bin's and /bin's programs but not
+# those named (a machine they are not installed on), and what blit calls
+# this machine.
+path_without() {
+    p="$dir/without-$(printf '%s' "$*" | tr ' ' -)"
+    mkdir -p "$p"
+    ln -s /usr/bin/* "$p/" 2>/dev/null
+    ln -s /bin/* "$p/" 2>/dev/null
+    for n in "$@"; do rm -f "$p/$n"; done
+    printf '%s' "$p"
+}
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+
 failed=0
 # check NAME EXPECTED: compares $got with it.
 check() {
@@ -543,6 +556,9 @@ run "$dir/ada/poem.txt" "$prs;key:Return;frame;key:Down;key:Down;key:Return;luaw
 got=$(grep '^api -X POST' "$GH_LOG")
 check "an answer, to its thread" "api -X POST repos/{owner}/{repo}/pulls/12/comments/101/replies -f body=Fair enough"
 unset BLIT_GH GH_LOG
+# gh not installed: said, naming it and this machine (and not as gh's own words).
+got=$(PATH=$(path_without gh) "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "$prs" "$dir/ada/poem.txt" 2>&1 >/dev/null | grep '^blit: ' | tail -1)
+check "gh not installed: said" "blit: gh is not installed on $this"
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "git ok"
 exit $failed

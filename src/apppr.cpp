@@ -54,6 +54,11 @@ std::string first_line(std::string_view s) {
     return out;
 }
 
+// What gh said when it failed (or, never run, why: gh not installed).
+std::string gh_failed(int code, const std::string& out, const std::string& err) {
+    return code < 0 ? first_line(err) : "gh: " + first_line(err.empty() ? out : err);
+}
+
 }  // namespace
 
 // The command gh is run with, in the repository (its answer to done).
@@ -69,7 +74,7 @@ void App::pr_list() {
     if (!pr_) pr_ = std::make_shared<PrUi>();
     pr_run({"pr", "list", "--limit", "50", "--json", "number,title,author,headRefName,baseRefName,isDraft,reviewDecision"},
            [this](int code, const std::string& out, const std::string& err) {
-               if (code != 0) return notify("gh: " + first_line(err.empty() ? out : err));
+               if (code != 0) return notify(gh_failed(code, out, err), code < 0 ? 1 : 0);
                PrUi& u = *pr_;
                u.open.clear();
                json::Doc doc;
@@ -118,7 +123,7 @@ void App::pr_menu(i64 n) {
 // they show after their lines in the files from then on.
 void App::pr_checkout(i64 n) {
     pr_run({"pr", "checkout", std::to_string(n)}, [this, n](int code, const std::string& out, const std::string& err) {
-        if (code != 0) return notify("gh: " + first_line(err.empty() ? out : err));
+        if (code != 0) return notify(gh_failed(code, out, err), code < 0 ? 1 : 0);
         if (cfg_.git) git_.refresh();
         reload_changed();  // (the files are the pull request's now)
         notify("Checked out #" + std::to_string(n));
@@ -129,7 +134,7 @@ void App::pr_checkout(i64 n) {
 // Its changes, as gh gives them, in a tab of their own, coloured as a diff.
 void App::pr_changes(i64 n) {
     pr_run({"pr", "diff", std::to_string(n), "--color", "never"}, [this, n](int code, const std::string& out, const std::string& err) {
-        if (code != 0) return notify("gh: " + first_line(err.empty() ? out : err));
+        if (code != 0) return notify(gh_failed(code, out, err), code < 0 ? 1 : 0);
         std::string text;
         std::vector<u32> off;
         std::vector<u8> style;
@@ -163,7 +168,7 @@ void App::pr_changes(i64 n) {
 void App::pr_comments(i64 n, bool show) {
     if (!pr_) pr_ = std::make_shared<PrUi>();
     pr_run({"api", "repos/{owner}/{repo}/pulls/" + std::to_string(n) + "/comments", "--paginate"}, [this, n, show](int code, const std::string& out, const std::string& err) {
-        if (code != 0) return notify("gh: " + first_line(err.empty() ? out : err));
+        if (code != 0) return notify(gh_failed(code, out, err), code < 0 ? 1 : 0);
         PrUi& u = *pr_;
         u.number = n;
         u.comments.clear();
@@ -227,7 +232,7 @@ void App::pr_comment_menu(size_t i) {
                 const i64 n = pr_->number;
                 pr_run({"api", "-X", "POST", "repos/{owner}/{repo}/pulls/" + std::to_string(n) + "/comments/" + std::to_string(to) + "/replies", "-f", "body=" + text},
                        [this, n](int code, const std::string& out, const std::string& err) {
-                           if (code != 0) return notify("gh: " + first_line(err.empty() ? out : err));
+                           if (code != 0) return notify(gh_failed(code, out, err), code < 0 ? 1 : 0);
                            notify("Answered");
                            pr_comments(n, false);
                        });
@@ -245,7 +250,7 @@ void App::pr_review(i64 n, const std::string& kind) {
         std::vector<std::string> args = {"pr", "review", std::to_string(n), "--" + kind};
         if (!text.empty()) args.insert(args.end(), {"--body", text});
         pr_run(std::move(args), [this, kind, n](int code, const std::string& out, const std::string& err) {
-            if (code != 0) return notify("gh: " + first_line(err.empty() ? out : err));
+            if (code != 0) return notify(gh_failed(code, out, err), code < 0 ? 1 : 0);
             notify(kind == "approve" ? "Approved #" + std::to_string(n) : kind == "request-changes" ? "Asked for changes to #" + std::to_string(n) : "Commented on #" + std::to_string(n));
         });
     };
