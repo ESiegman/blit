@@ -42,7 +42,8 @@ std::vector<ProbeRow> ofl_rows(const std::vector<OflCable>& cables, const std::v
 std::vector<ProbeRow> ofl_merge(std::vector<ProbeRow> native, const std::vector<ProbeRow>& boards);
 // The rows openFPGALoader gives on a machine ("" here): it is run there
 // (headless: a worker's call, each run limited to `ms`). None when it is
-// not on that machine's PATH.
-std::vector<ProbeRow> fpga_boards(const std::string& host, const std::vector<ProbeRow>& native, u32 ms = 15'000);
+// not on that machine's PATH, and then, where an FPGA's cable is among
+// `native`, *missing says so.
+std::vector<ProbeRow> fpga_boards(const std::string& host, const std::vector<ProbeRow>& native, u32 ms = 15'000, std::string* missing = nullptr);
 
 }  // namespace blit

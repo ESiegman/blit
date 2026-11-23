@@ -3266,7 +3266,10 @@ cables; for each FTDI chip (and each JTAG cable of another maker's it
 knows) its `--detect` (through Digilent's cable for a Digilent board, by
 the chip's serial number) says which FPGA is on it, and each board in
 openFPGALoader's own list with that FPGA on a Digilent cable is a row of
-its own, as no USB string tells a Basys 3 from a Cmod A7-35T:
+its own, as no USB string tells a Basys 3 from a Cmod A7-35T. Where an
+FPGA's cable is plugged in and openFPGALoader is not installed, the list
+has the cable alone and blit says so (`openFPGALoader is not installed on
+this Mac: the boards on its cables are not named`):
 
 ```
 Digilent FT2232 (FPGA)  210183A8F2C1  /dev/cu.usbserial-210183A8F2C11

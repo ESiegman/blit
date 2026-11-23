@@ -22,6 +22,7 @@
 #include "engine.hpp"
 #include "flash.hpp"
 #include "fsio.hpp"
+#include "missing.hpp"
 #include "remote.hpp"
 
 namespace blit {
@@ -126,7 +127,7 @@ Prepared prepare(const std::string& root, const BuildTask& c, const std::string&
     for (const std::string& name : programs)
         if (program.empty()) program = Engine::which(host, name);
     if (program.empty()) {
-        p.why = (programs.empty() ? tool : programs.back()) + " is not on the PATH" + (host.empty() ? std::string() : " on " + host);
+        p.why = not_installed(programs.empty() ? tool : programs.back(), host);
         return p;
     }
     FlashImage img;
