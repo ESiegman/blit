@@ -56,13 +56,17 @@ run "key:Escape;frame;startdump"
 check "Esc: gone" 'no start screen'
 run "text:j;text:j;text:j;key:Down;key:Up;frame;startdump"
 check "j and k, Down and Up choose" "start n:New file p:New project… o:Open a file… >f:Go to file s:Search in files d:Open a folder… r:Connect to a server… c:Settings q:Quit"
-# The application's own chords reach it past the page: Command search
-# (Ctrl+Shift+P where Ctrl is the shortcut key, though the page's Ctrl+P
-# moves up its list) and Flash the board (Alt+Shift+B there).
+# The application's own chords reach it past the page: Command search, Go
+# to file (Ctrl+P where Ctrl is the shortcut key: not a move up the list,
+# which is Ctrl+P only on a Mac) and Flash the board (Alt+Shift+B there).
 rm -f "$dir/recent"
 run "keyof:Command search;finddump"
 case "$got" in 'commands [] '*) got='Command search' ;; esac
 check "Command search's chord: its box, not a move on the list" 'Command search'
+rm -f "$dir/recent"
+run "keyof:Go to file;finddump"
+case "$got" in 'names [] '*) got='Go to file' ;; esac
+check "Go to file's chord: its box, not a move on the list" 'Go to file'
 rm -f "$dir/recent"
 run "keyof:Flash the board;wait:300"
 check "Flash the board's chord: the command's" 'blit: No run configuration has a board'

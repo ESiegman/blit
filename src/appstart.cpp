@@ -491,7 +491,9 @@ void App::start_do(size_t i) {
 // stays the page's).
 static bool start_passes(const SDL_KeyboardEvent& k, bool a_command) {
     const bool ctrl = k.mod & SDL_KMOD_CTRL, shift = k.mod & SDL_KMOD_SHIFT, alt = k.mod & SDL_KMOD_ALT;
-    const bool moves = ctrl && !shift && !alt && (k.key == SDLK_N || k.key == SDLK_P);
+    // (Ctrl+N and Ctrl+P move on the list where Ctrl is no command's key: on
+    // a Mac. Where it is, they are New file and Go to file, as everywhere.)
+    const bool moves = !kCtrlShared && ctrl && !shift && !alt && (k.key == SDLK_N || k.key == SDLK_P);
     return ((k.mod & kPrimaryMod) && !moves) || (alt && a_command);
 }
 

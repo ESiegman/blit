@@ -148,7 +148,9 @@ see [New projects](#new-projects)), `o` a file opened by its path, `f` Go
 to file, `s` Search in files, `d` a folder to work in, `r` a server to
 connect to, `c` the settings, `q` quit, and `1` to `9` what was
 opened lately (a folder becomes the project folder and the side panel shows
-it). The arrows (or `j` and `k`) and Enter, or the mouse, do the same; Esc
+it). The arrows (or `j` and `k`, and on a Mac Ctrl+N and Ctrl+P; elsewhere
+those are New file and Go to file, as everywhere) and Enter, or the mouse,
+do the same; Esc
 leaves an empty file to type into. The status bar shows the project folder
 and the settings file (a click opens it). It goes once something is
 opened. The files and folders opened lately (up to 30) are kept in
