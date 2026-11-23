@@ -22,6 +22,7 @@
 #include "missing.hpp"
 #include "notify.hpp"
 #include "remote.hpp"
+#include "simrun.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
 
@@ -109,10 +110,12 @@ struct App::BuildUi {
     struct Run {
         u64 doc = 0;
         std::string key, name, kind, cmd;
+        std::string dir;  // (where it ran)
         bool lasting = false, running = true, stopped = false;
         int status = -1;
         std::string missing;  // (as last_missing)
         u64 started_ns = 0;
+        i64 started_at = 0;  // (the clock's time, in seconds: for the files it wrote)
         u32 errors = 0, warnings = 0;
     };
     std::vector<Run> runs;
@@ -606,10 +609,14 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
         r.name = title;
         r.lasting = lasting;
         r.started_ns = now_ns();
-        if (task) r.key = task_key(*task), r.kind = task->kind, r.cmd = cmd;
+        r.started_at = static_cast<i64>(std::time(nullptr));
+        r.dir = dir;
+        // (A task that runs a simulator is a simulation, said or not: simrun.hpp.)
+        if (task) r.key = task_key(*task), r.kind = task->kind.empty() && !sim_tool(cmd).empty() ? "simulation" : task->kind, r.cmd = cmd;
+        const std::string kind = r.kind;
         u.runs.push_back(std::move(r));
         if (!lasting) u.term = doc;
-        if (task) script_build_event(false, task->name, task->kind, cmd, 0, 0, 0, false, 0);
+        if (task) script_build_event(false, task->name, kind, cmd, 0, 0, 0, false, 0);
     }
     u.doc = doc;
     u.dir = dir;
@@ -784,6 +791,8 @@ void App::build_ended(u64 doc, int status, const std::string& missing) {
         r->missing = missing;
         const double took = static_cast<double>(now_ns() - r->started_ns) * 1e-9;
         if (!r->key.empty()) script_build_event(true, r->name, r->kind, r->cmd, status, r->errors, r->warnings, r->stopped, took);
+        // (A simulation: the dump it wrote opened in the wave tab, or read again, as its output and command say which: appsim.cpp.)
+        if (r->kind == "simulation") sim_ended(doc, r->dir, r->cmd, r->started_at);
         if (!front_ && cfg_.build_notify && !r->stopped) {
             char secs[32];
             std::snprintf(secs, sizeof secs, "%.1f s", took);

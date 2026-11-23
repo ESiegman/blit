@@ -1184,9 +1184,11 @@ private:
     void wave_bench_step(bool zoom, int i, bool page = false);
     bool wave_sharp() const;
     // A dump that changes (a rerun, or a simulation still writing it): read
-    // again or read on, once its tab is on show.
+    // again or read on, once its tab is on show; one shown or read again
+    // for a run that ended (appsim.cpp).
     void wave_recheck();
     void wave_again(WaveView& v, bool whole);
+    void wave_show(const std::string& full, bool front, bool again);
     std::string wave_frames(int ms);  // (the tests: frames drawn while the main loop runs)
 
     // Terminals (appterm.cpp): a tab running a shell, here or on another machine.
@@ -1855,6 +1857,15 @@ private:
     void flash_ended(u64 doc, bool well);  // a run has ended (well: it exited 0, was not stopped, and said no failure)
     void flash_settle();                   // (the tests: the build first, and the image found, waited for)
     std::string flash_dump();              // (the tests: the board's flash object as read)
+    // Simulation runs (appsim.cpp, simrun.hpp): as one ends, the dump it
+    // wrote found on a worker and opened in the wave tab (or read again);
+    // "Open the last run's waves".
+    struct SimUi;
+    std::shared_ptr<SimUi> simui_;  // (made the first time)
+    void sim_ended(u64 term, const std::string& dir, const std::string& cmd, i64 started);
+    void sim_sync();
+    void sim_last_waves();
+    bool sim_busy() const;
     u64 test_gen_ = 1;  // counts up whenever what the Tests tab shows may have changed
     u64 build_gen_ = 1;  // counts up whenever what the Build tab or the Run button shows may have changed
     u64 build_prob_gen_ = 1;  // counts up whenever the build's problems change

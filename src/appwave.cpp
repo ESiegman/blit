@@ -547,6 +547,36 @@ bool App::wave_open(const std::string& full) {
     return true;
 }
 
+// A dump in a wave tab. One open already is read again (`again`: a run
+// that wrote it has ended; once it is on show), and brought to the front
+// of its split with the keyboard (`front`). Else it is opened in a split
+// that is not showing a terminal (a run's terminal stays on show beside
+// it), and the keyboard stays where it was unless `front`.
+void App::wave_show(const std::string& full, bool front, bool again) {
+    for (const std::unique_ptr<Pane>& p : panes_)
+        for (size_t i = 0; i < p->docs.size(); ++i) {
+            WaveView* v = p->docs[i]->wave.get();
+            if (!v || v->path != full) continue;
+            if (again) v->changed = true, ++v->gen;
+            if (front) {
+                focus_pane(p.get());
+                tab_show(i);
+            }
+            dirty_ = true;
+            return;
+        }
+    Pane* const keys = pane_;
+    Pane* into = pane_->doc && pane_->doc->term ? nullptr : pane_;
+    for (size_t i = 0; !into && i < panes_.size(); ++i)
+        if (panes_[i]->doc && !panes_[i]->doc->term) into = panes_[i].get();
+    focus_pane(into ? into : pane_);
+    wave_open(full);
+    if (front) return;
+    bool still = false;
+    for (const std::unique_ptr<Pane>& p : panes_) still |= p.get() == keys;
+    if (still) focus_pane(keys);
+}
+
 namespace {
 
 // How far the dump is read, as the load has it now; false if the load has
@@ -754,6 +784,7 @@ void App::wave_again(WaveView& v, bool whole) {
 
 // What the load, the painters and the view's reader have done.
 void App::wave_sync() {
+    sim_sync();  // (a simulation's dump found: opened, or read again)
     if (!waves_) return;
     std::vector<Waves::Read> reads;
     {
@@ -1553,6 +1584,7 @@ bool App::wave_key(const SDL_KeyboardEvent& k) {
         if ((first == 'm' || first == '\'') && letter && !shift) wave_mark(v, c, first == '\'');
         else if (first == 'd' && c == 'd' && !shift) wave_act(kWaveRemove);
         else if (first == 'g' && c == 'g' && shift) wave_act(kWaveGroup);
+        else if (first == 'g' && c == 'w' && shift && cfg_.modal) sim_last_waves();  // (gW, as in a file)
         else if (first == 'y' && c == 'y' && !shift) wave_act(kWaveCopyPath);
         else if (first == 'y' && c == 'v' && !shift) wave_act(kWaveCopyValue);
         return took();

@@ -341,6 +341,9 @@ target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp)
 # in tiles and the workers that paint them (wavetile.cpp: the same pixels on
 # every system, as the diagrams' below).
 target_sources(blit PRIVATE src/appwave.cpp src/waveview.cpp src/wavetile.cpp)
+# Simulation runs: which simulator a task runs, and the dump a run wrote,
+# opened in the wave tab as it ends.
+target_sources(blit PRIVATE src/simrun.cpp src/appsim.cpp)
 set_source_files_properties(src/wavetile.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off;-fno-lto")
 # The diagrams' pictures (raster.cpp, diagram.cpp and the kinds' files) are the
 # same pixels on every system: no multiply and add fused into one, which
@@ -496,6 +499,8 @@ if(BLIT_DEV)
     add_test(NAME wave COMMAND sh ${CMAKE_SOURCE_DIR}/tests/wave.sh $<TARGET_FILE:blit>)
     # The wave tab: a dump's waves, its keys, radixes, markers, groups, the view kept, its tiles' pixels.
     add_test(NAME wavetab COMMAND sh ${CMAKE_SOURCE_DIR}/tests/wavetab.sh $<TARGET_FILE:blit>)
+    # Simulation runs: Verilator, Icarus and SymbiYosys tasks opening the dump they wrote; the last run's waves on gW.
+    add_test(NAME simrun COMMAND sh ${CMAKE_SOURCE_DIR}/tests/simrun.sh $<TARGET_FILE:blit>)
     # Every suite sees the dark appearance, whatever the machine is set to
     # (GitHub's machines are light), and the cell macOS's own font has at
     # 13 pt (16 x 31 pixels at twice the density), whatever fonts the

@@ -31,3 +31,10 @@ vvp -n tb-rerun.vvp
 sed 's/$dumpvars(0, tb)/$dumpvars(1, tb)/' "$here/counter.sv" >counter-top.sv
 iverilog -g2012 '-DDUMPVARS="icarus-top.vcd"' -DDUMPOFF -o tb-top.vvp counter-top.sv
 vvp -n tb-top.vvp
+
+# SymbiYosys's traces (sby.txt), with sby and z3 on the PATH (it fails, as
+# its bmc task finds the assertion's counterexample).
+cp "$here/formal/counter.v" "$here/formal/counter.sby" .
+sby -f counter.sby || true
+cp counter_bmc/engine_0/trace.vcd sby-bmc.vcd
+cp counter_cover/engine_0/trace0.vcd sby-cover.vcd
