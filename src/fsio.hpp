@@ -2,6 +2,7 @@
 // Files and folders, here or on another machine (ssh://host/path, through
 // blit's agent): what the build systems are found from and new projects
 // are written with.
+#include <functional>
 #include <stop_token>
 #include <string>
 #include <string_view>
@@ -24,10 +25,21 @@ int fs_kind(const std::string& path);
 bool fs_read(const std::string& path, std::string* text, u64 most = 4u << 20);
 // A whole file, as large as `most` bytes (a picture, a PDF), here or on
 // another machine, whose connection is waited for a while (it may be coming
-// up; not past `stop`, so that quitting does not wait). False, and why, if
-// it cannot be read or is larger.
+// up; not past `stop`, so that quitting does not wait), and a large one
+// comes in parts (Remote::fetch), shown on the bottom row, where a click
+// stops it. False, and why, if it cannot be read, is larger, or was stopped.
 // (modified: another machine's file's change time, as that machine has it.)
 bool fs_read_whole(const std::string& path, std::string* bytes, std::string* why, u64 most, std::stop_token stop, i64* modified = nullptr);
+// A part of a file, from `offset`, `length` bytes long (~0: to its end; no
+// more than `most`, or it fails as too big), here or on another machine
+// (whose connection is waited for as fs_read_whole's is). A worker's call:
+// there, it comes in parts of about 1 MB (Remote::fetch), what else the
+// connection carries going between them, one larger than a few MB shown on
+// the bottom row, where a click stops it; progress(done, total) is told on
+// this thread as the parts come. It stops between parts once `stop` is
+// asked for. False, and why, if it cannot be read, is too big, or was stopped.
+bool fs_read_range(const std::string& path, u64 offset, u64 length, u64 most, std::string* bytes, std::string* why, std::stop_token stop,
+                   const std::function<void(u64 done, u64 total)>& progress = {}, i64* modified = nullptr);
 // A file's change time on another machine (a worker's call: it waits for
 // the answer, though not for a connection); 0 if it is not there, or there
 // is no connection now.

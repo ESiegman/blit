@@ -656,6 +656,9 @@ int App::run_bench() {
 //   alive                  print whether blit is still running, or has been told to quit
 //   gitbusy                wait until git is running for the file in front (20 s at most)
 //   remotelost             wait for a connection to another machine to have gone (10 s at most)
+//   fetchwait:BYTES        wait for a large file on its way from another machine to have that many bytes come (10 s at most)
+//   fetchdump              print the large files on their way from other machines (none: "nothing fetched")
+//   remoteframes           print, for each connection, whether any frame its agent sent was larger than 1 MB (a kPart frame)
 //   remotestream:BYTES     a program on the machine of the file in front writes that many bytes, read here only after a
 //                          second; print how many came and whether no more than a few MB were held here meanwhile
 // Scrolling is settled instantly, so the next event sees the final view.
@@ -1607,6 +1610,27 @@ void App::run_script(const char* script) {
         } else if (verb == "termdump") {
             term_sync();
             std::fprintf(stderr, "%s\n", term_dump().c_str());
+        } else if (verb == "fetchwait") {
+            const u64 want = std::strtoull(arg.c_str(), nullptr, 10), until = now_ns() + 10'000'000'000ull;
+            for (bool there = false; !there; SDL_Delay(2)) {
+                for (const RemoteFetch& f : Remote::fetches()) there |= f.done >= want;
+                if (!there && now_ns() > until) {
+                    std::fprintf(stderr, "fetchwait: not %s bytes\n", arg.c_str());
+                    break;
+                }
+            }
+            remote_sync();
+        } else if (verb == "fetchdump") {
+            std::string out;
+            for (const RemoteFetch& f : Remote::fetches())
+                out += (out.empty() ? "fetching " : "; fetching ") + f.path.substr(f.path.find_last_of('/') + 1) + " (" + std::to_string(f.total >> 20) + " MB)";
+            std::fprintf(stderr, "%s\n", out.empty() ? "nothing fetched" : out.c_str());
+        } else if (verb == "remoteframes") {
+            for (const std::shared_ptr<Remote>& r : Remote::all()) {
+                const u64 most = r->frame_most();
+                const bool part = most <= (1u << 20) + 64;  // (a kPart frame: 1 MB, and its head)
+                std::fprintf(stderr, "%s: %s\n", r->host().c_str(), part ? "no frame over 1 MB" : ("a frame of " + std::to_string(most >> 10) + " KB").c_str());
+            }
         } else if (verb == "remotedump") {  // each connection, and how it is
             std::string out;
             for (const std::shared_ptr<Remote>& r : Remote::all()) {

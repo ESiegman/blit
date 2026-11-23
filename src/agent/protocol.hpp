@@ -67,6 +67,9 @@ enum Op : uint8_t {
     kGoodbye,    // u8 keep -> u8 ok (from agent 4: blit is quitting. What it started ends, but with keep what is
                  //   working; the agent ends at once if nothing else holds it)
     kStop,       // -> nothing (from agent 4: everything it runs, for every blit, ends, and so does it)
+    kReadAt,     // str path, u64 offset, u64 length -> u8 status (as kRead's), u64 size (the whole file's), i64 modified, bytes
+                 //   (from agent 5: a part of a file, no more than kReadAtMost of it; what is past its end is not
+                 //   there. blit fetches a large file as a run of these, about 1 MB each)
     kProxyEnv = 90,  // u32 n, n * str "NAME=value" (from blit-agent --attach, before blit's first: the environment of
                      //   this connection there, the PATH a login has now and SSH_AUTH_SOCK, for the programs started on it)
     // Sent by the agent.
@@ -77,6 +80,9 @@ enum Op : uint8_t {
                    //   while paused, the program not having taken what it has been sent)
     kWorking,      // u32 process, u8 working (to a blit of level 4, for a program kept running: whether it is
                    //   working, as the agent counts it, which is what quitting asks about)
+    kPart,         // u8 last, bytes (to a blit of level 5: a reply larger than kPartMost, a piece at a time, with the
+                   //   number of its request; put together, the pieces are what kReply would have carried. The
+                   //   reverse of kWritePart: what else the agent sends goes between the pieces)
 };
 
 // kSpawn's flags. kKeep: it outlives the connection (a terminal, a task, a
@@ -87,16 +93,24 @@ enum Op : uint8_t {
 enum : uint8_t { kQuiet = 1, kKeep = 2, kWork = 4 };
 // kWritePart's parts.
 enum : uint8_t { kFirst = 1, kLast = 2 };
+// The most of a reply one frame carries (to a blit of level 5): a larger
+// one goes in kPart frames of this much, so that no frame the agent sends
+// is larger than a few MB (and what else it sends waits behind a piece of a
+// large answer, not all of it). And the most one kReadAt reads.
+constexpr size_t kPartMost = 1u << 20;
+constexpr uint64_t kReadAtMost = 16u << 20;
 
 // The agent's own version, the number at the end of what it says to kHello
 // ("blit-agent 3"). It counts what an agent can do that one before it
 // could not (2: kFlow, kQuiet; 3: kWritePart, kInFlow; 4: it outlives the
-// connection, kResume, kKeep, kBusy, kGoodbye, kStop, kWorking), so that blit asks
-// an older one only for what it knows. (A blit always brings its own agent;
-// an older one is met only when the agents kept in agent/bin were built
-// from older sources.) blit says its own level the same way, in kHello.
-constexpr uint32_t kAgentLevel = 4;
-constexpr uint32_t kBlitLevel = 4;
+// connection, kResume, kKeep, kBusy, kGoodbye, kStop, kWorking; 5: kReadAt,
+// and large replies in kPart frames), so that blit asks an older one only
+// for what it knows. (A blit always brings its own agent; an older one is
+// met only when the agents kept in agent/bin were built from older
+// sources.) blit says its own level the same way, in kHello (5: it puts
+// kPart frames together).
+constexpr uint32_t kAgentLevel = 5;
+constexpr uint32_t kBlitLevel = 5;
 
 // A message being put together.
 struct Writer {

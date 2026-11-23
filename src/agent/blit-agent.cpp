@@ -46,6 +46,7 @@
 #include <chrono>
 #include <cerrno>
 #include <climits>
+#include <condition_variable>
 #include <csignal>
 #include <cstdio>
 #include <cstdlib>
@@ -97,9 +98,11 @@ struct Client {
     std::string got;  // (main loop) what has come and is not yet a whole frame
     std::shared_ptr<Session> session;  // (main loop) once it has said hello (or asked for anything)
     std::vector<std::string> env;      // (main loop) from blit-agent --attach: the environment of the connection there
+    std::atomic<uint32_t> level{0};  // what it says of itself in kHello (5: it puts kPart frames together)
     // What is to go to it, from any thread: a frame goes out whole. What
     // cannot go now waits here, for the main loop to send as it can.
     std::mutex mu;
+    std::condition_variable room;  // little is waiting to go (kPartRoom), or it has gone
     std::string pending;
     size_t at = 0;
     bool gone = false;
@@ -109,30 +112,68 @@ struct Client {
         return pending.size() - at;
     }
     // What can go without waiting (mu is held). False once it has gone.
-    bool flush() {
-        while (!gone && at < pending.size()) {
-            const ssize_t n = ::write(out, pending.data() + at, pending.size() - at);
-            if (n > 0) at += static_cast<size_t>(n);
-            else if (n < 0 && errno == EINTR) continue;
-            else if (n < 0 && errno == EAGAIN) break;
-            else gone = true;
-        }
-        if (at == pending.size() || gone) pending.clear(), at = 0;
-        else if (at > (1u << 20) && at * 2 > pending.size()) pending.erase(0, at), at = 0;
-        return !gone;
-    }
+    bool flush();
 };
 
-void send_frame(Client& c, uint8_t op, uint32_t id, const std::string& payload) {
-    std::lock_guard lock(c.mu);
-    if (c.gone) return;
+// A reply from a request's own thread (a large one's next piece) waits
+// until no more than this is waiting to go to its blit ahead of it: what
+// else is sent meanwhile (a program's output, another reply) goes between
+// them, behind a piece at most.
+constexpr size_t kPartRoom = 256u << 10;
+
+bool Client::flush() {
+    while (!gone && at < pending.size()) {
+        const ssize_t n = ::write(out, pending.data() + at, pending.size() - at);
+        if (n > 0) at += static_cast<size_t>(n);
+        else if (n < 0 && errno == EINTR) continue;
+        else if (n < 0 && errno == EAGAIN) break;
+        else gone = true;
+    }
+    if (at == pending.size() || gone) pending.clear(), at = 0;
+    else if (at > (1u << 20) && at * 2 > pending.size()) pending.erase(0, at), at = 0;
+    if (gone || pending.size() - at <= kPartRoom) room.notify_all();
+    return !gone;
+}
+
+// A frame to go (mu is held): its head, then the rest as it is (tail).
+void put_frame(Client& c, uint8_t op, uint32_t id, std::string_view payload, std::string_view tail = {}) {
     const bool idle = c.at == c.pending.size();
-    c.pending += frame(op, id, payload);
+    Writer h;
+    h.u32(static_cast<uint32_t>(5 + payload.size() + tail.size())).u8(op).u32(id);
+    c.pending += h.b;
+    c.pending += payload;
+    c.pending += tail;
     c.flush();
     if (idle && c.at < c.pending.size()) wake_loop();  // (the rest goes when it can)
 }
 
-void reply(Client& c, uint32_t id, const Writer& w) { send_frame(c, kReply, id, w.b); }
+void send_frame(Client& c, uint8_t op, uint32_t id, const std::string& payload) {
+    std::lock_guard lock(c.mu);
+    if (!c.gone) put_frame(c, op, id, payload);
+}
+
+// A reply. To a blit of level 5, one larger than kPartMost goes in kPart
+// frames, so that no frame is larger than that. One sent from a request's
+// own thread (paced) waits, and each of its pieces, until little is waiting
+// to go ahead of it, so that what else is sent (a program's output, other
+// replies) goes between them rather than behind all of a large answer, or
+// many. (Not the main loop's: it is what sends what waits.)
+void reply(Client& c, uint32_t id, const Writer& w, bool paced = false) {
+    const std::string_view all(w.b);
+    const bool parts = all.size() > kPartMost && c.level.load() >= 5;
+    size_t at = 0;
+    do {
+        const size_t n = parts ? std::min(kPartMost, all.size() - at) : all.size();
+        std::unique_lock lock(c.mu);
+        if (paced) c.room.wait(lock, [&] { return c.gone || c.pending.size() - c.at <= kPartRoom; });
+        if (c.gone) return;
+        if (!parts) return put_frame(c, kReply, id, all);
+        Writer head;
+        head.u8(at + n == all.size()).u32(static_cast<uint32_t>(n));
+        put_frame(c, kPart, id, head.b, all.substr(at, n));
+        at += n;
+    } while (at < all.size());
+}
 
 // Requests answered on threads of their own (reading a big file, walking a
 // folder, searching it), so that a program's output is never held up.
@@ -193,6 +234,38 @@ uint8_t read_file(const std::string& path, uint64_t most, std::string* out, int6
     });
     ::close(fd);
     return binary ? 2 : 0;
+}
+
+// A part of a file into `out`: from offset, no more than length bytes (none
+// past its end), and its whole size. The status as kRead has it.
+uint8_t read_part(const std::string& path, uint64_t offset, uint64_t length, std::string* out, uint64_t* size, int64_t* modified) {
+    const int fd = ::open(path.c_str(), O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return errno == ENOENT ? 1 : 4;
+    struct stat st{};
+    const bool stated = ::fstat(fd, &st) == 0;
+    if (!stated || !S_ISREG(st.st_mode)) {
+        ::close(fd);
+        return stated ? 2 : 4;
+    }
+    *size = static_cast<uint64_t>(st.st_size);
+    *modified = mtime_ns(st);
+    const uint64_t n = offset < *size ? std::min(length, *size - offset) : 0;
+    size_t got = 0;
+    bool failed = false;
+    out->resize_and_overwrite(static_cast<size_t>(n), [&](char* p, size_t want) {
+        while (got < want) {
+            const ssize_t k = ::pread(fd, p + got, want - got, static_cast<off_t>(offset + got));
+            if (k > 0) got += static_cast<size_t>(k);
+            else if (k < 0 && errno == EINTR) continue;
+            else {
+                failed = k < 0;
+                break;
+            }
+        }
+        return got;
+    });
+    ::close(fd);
+    return failed ? 4 : 0;
 }
 
 // A file being written: through a temporary file beside it, so that it is
@@ -666,6 +739,7 @@ void close_client(Client& c) {
     if (c.gone && c.in < 0) return;
     c.gone = true;
     c.pending.clear(), c.at = 0;
+    c.room.notify_all();  // (a large reply's pieces waiting to go: they go nowhere)
 }
 
 bool listening = false;  // (a daemon: blits come and go; else the agent of one connection)
@@ -712,6 +786,7 @@ void handle(const std::shared_ptr<Client>& cl, uint8_t op, uint32_t id, std::str
         }
         s->client = cl;
         s->level = level;
+        cl->level = level;
         s->env = cl->env;
         cl->session = s;
         quick = false;
@@ -742,7 +817,20 @@ void handle(const std::shared_ptr<Client>& cl, uint8_t op, uint32_t id, std::str
                 const uint8_t status = read_file(path, most, &data, &m);
                 Writer out;
                 out.u8(status).str(data).i64(m);
-                reply(*cl, id, out);
+                reply(*cl, id, out, true);
+            });
+        }
+        case kReadAt: {
+            std::string path = r.str();
+            const uint64_t offset = r.u64(), length = std::min(r.u64(), kReadAtMost);
+            return on_its_own([cl, id, path = std::move(path), offset, length] {
+                std::string data;
+                uint64_t size = 0;
+                int64_t m = 0;
+                const uint8_t status = read_part(path, offset, length, &data, &size, &m);
+                Writer out;
+                out.u8(status).u64(size).i64(m).str(data);
+                reply(*cl, id, out, true);
             });
         }
         case kWrite: {
@@ -854,7 +942,7 @@ void handle(const std::shared_ptr<Client>& cl, uint8_t op, uint32_t id, std::str
                     const std::string_view p = ix->path(i);
                     out.str(p.data(), p.size());
                 }
-                reply(*cl, id, out);
+                reply(*cl, id, out, true);
             });
         }
         case kGrep: {
@@ -910,7 +998,7 @@ void handle(const std::shared_ptr<Client>& cl, uint8_t op, uint32_t id, std::str
                 for (const blit::FindHit& h : hits) out.u32(h.file).u32(h.line).u32(h.col).str(h.text);
                 out.u32(static_cast<uint32_t>(hit_files.size()));
                 for (const uint32_t f : hit_files) out.u32(f);
-                reply(*cl, id, out);
+                reply(*cl, id, out, true);
             });
         }
         case kSpawn: {
@@ -1109,8 +1197,13 @@ void run(std::shared_ptr<Client> first) {
         fds.push_back({wake_r, POLLIN, 0});
         const size_t first_client = fds.size();
         if (listen_fd >= 0) fds.push_back({listen_fd, POLLIN, 0});
+        // (Each blit's input, and its output where that is another descriptor
+        // (the agent of one connection's: this process's own): what waits to
+        // go goes when there is room in the one it goes to.)
         const size_t clients_at = fds.size();
-        for (const std::shared_ptr<Client>& c : clients) fds.push_back({c->in, static_cast<short>(POLLIN | (c->waiting() ? POLLOUT : 0)), 0});
+        for (const std::shared_ptr<Client>& c : clients) fds.push_back({c->in, static_cast<short>(POLLIN | (c->out == c->in && c->waiting() ? POLLOUT : 0)), 0});
+        const size_t outs_at = fds.size();
+        for (const std::shared_ptr<Client>& c : clients) fds.push_back({c->out != c->in && c->waiting() ? c->out : -1, POLLOUT, 0});
         const size_t children_at = fds.size();
         for (const std::shared_ptr<Session>& s : sessions) {
             const bool backed = s->client && s->client->waiting() > kOutMost;
@@ -1151,10 +1244,10 @@ void run(std::shared_ptr<Client> first) {
             }
         }
         // What blits sent; and what waits to go to them, sent as it can.
-        for (size_t i = 0; clients_at + i < children_at && i < clients.size(); ++i) {
+        for (size_t i = 0; outs_at + i < children_at && i < clients.size(); ++i) {
             const std::shared_ptr<Client>& cl = clients[i];
             const short ev = fds[clients_at + i].revents;
-            if (ev & POLLOUT) {
+            if ((ev | fds[outs_at + i].revents) & POLLOUT) {
                 std::lock_guard lock(cl->mu);
                 cl->flush();
             }

@@ -295,10 +295,28 @@ constexpr size_t kHoldMost = 4u << 20, kHoldLess = 1u << 20, kHoldHard = 16u << 
 // (more waits for room); a request is never kept waiting for room.
 constexpr size_t kSendMost = 4u << 20;
 // What is big goes to the agent behind what is small (keys, requests): a
-// file saved, in parts of kPart, and what programs that are not terminals
+// file saved, in parts of kSavePart, and what programs that are not terminals
 // are sent (a language server's text); no more than kBulkMost of it waits at
 // once, so that a key waits behind no more than a part of it.
-constexpr size_t kPart = 256u << 10, kBulkMost = 1u << 20;
+constexpr size_t kSavePart = 256u << 10, kBulkMost = 1u << 20;
+// A file fetched from an agent of level 5 (Remote::fetch) comes in parts of
+// kFetchPart, each a kReadAt whose answer, with its head, is one frame; no
+// more than kFetchFlying of them are asked for at once (enough to keep the
+// connection busy while each is answered, few enough that what else it
+// carries is not held up long behind them).
+constexpr u64 kFetchPart = kPartMost - 4096;
+constexpr size_t kFetchFlying = 4;
+// One larger than this is shown on the bottom row as it comes (Remote::fetches).
+constexpr u64 kFetchShown = 4u << 20;
+
+// The fetches shown, for the bottom row: each a stop of its own.
+struct FetchShown {
+    RemoteFetch f;
+    bool stop = false;
+};
+std::mutex fetches_mu;
+std::vector<FetchShown> fetches_shown;
+u64 next_fetch = 1;
 
 }  // namespace
 
@@ -482,6 +500,7 @@ struct Remote::Impl {
     u32 next_proc = 1;
     std::condition_variable room;  // a program's held output has been taken (for the reader, when it waits for that)
     size_t held_most = 0;
+    std::atomic<u64> frame_most{0};  // the largest frame the agent has sent (with its length), since the connection was made
     std::jthread live_thread, reader, err_reader;
 
     // Made again now (mu is held): connecting from here on, as far as anyone
@@ -817,6 +836,7 @@ struct Remote::Impl {
             return fail(why(std::format("{} stopped answering", host)));
         }
         if (l != "BLIT-START") return fail(why(std::format("cannot start blit's agent on {}", host)));
+        frame_most = 0;
         reader = std::jthread([this] { read_frames(); });
         {
             std::lock_guard lock(out_mu);
@@ -900,6 +920,7 @@ struct Remote::Impl {
             if (!read_all(from, head, 4)) break;
             const u32 size = Reader(head, 4).u32();
             if (size < 5 || size > (1u << 30)) break;
+            if (size + 4ull > frame_most.load(std::memory_order_relaxed)) frame_most.store(size + 4ull, std::memory_order_relaxed);
             body.resize(size);
             if (!read_all(from, body.data(), size)) break;
             Reader f(body.data(), size);
@@ -913,6 +934,16 @@ struct Remote::Impl {
                     it->second->done = true;
                 }
                 cv.notify_all();
+            } else if (op == kPart) {  // (a large reply, a piece at a time: put together here, and done with the last)
+                Reader r(rest.data(), rest.size());
+                const bool last = r.u8() != 0;
+                const u32 k = r.u32();
+                std::lock_guard lock(mu);
+                if (auto it = pending.find(id); it != pending.end() && !it->second->done) {
+                    it->second->body.append(r.p, std::min<size_t>(k, r.n));
+                    it->second->done = last;
+                }
+                if (last) cv.notify_all();
             } else if (op == kInFlow || op == kWorking) {  // (kInFlow: a program has more of what it was sent than it has taken: what it is sent waits)
                 Reader r(rest.data(), rest.size());
                 const u32 proc = r.u32();
@@ -979,6 +1010,26 @@ struct Remote::Impl {
         if (!slot.done || slot.failed) return false;
         *answer = std::move(slot.body);
         return true;
+    }
+
+    // A request sent, whose answer is waited for apart (several may be on
+    // their way at once): its number, 0 if it could not go. The slot is in
+    // `pending` until let go of (drop), whether it was answered or not.
+    u32 ask(u8 op, const std::string& payload, Slot* slot) {
+        u32 id;
+        {
+            std::lock_guard lock(mu);
+            if (state != kReady || !up) return 0;
+            id = next_id++;
+            pending[id] = slot;
+        }
+        if (enqueue(frame_head(op, id, payload, 0))) return id;
+        drop(id);
+        return 0;
+    }
+    void drop(u32 id) {
+        std::lock_guard lock(mu);
+        pending.erase(id);
     }
 
     // A message that has no answer. may_wait, bulk: as enqueue's.
@@ -1237,6 +1288,12 @@ bool Remote::stat(const std::string& path, RemoteStat* out) {
 }
 
 int Remote::read(const std::string& path, u64 most, std::string* out, i64* modified_ns) {
+    bool parts;
+    {
+        std::lock_guard lock(impl_->mu);
+        parts = impl_->agent_level >= 5;
+    }
+    if (parts) return fetch(path, 0, ~0ull, most, out, {}, {}, modified_ns);  // (in parts, between what else the connection carries)
     Writer w;
     w.str(path).u64(most);
     std::string a;
@@ -1249,6 +1306,149 @@ int Remote::read(const std::string& path, u64 most, std::string* out, i64* modif
     return r.ok ? status : 4;
 }
 
+int Remote::fetch(const std::string& path, u64 offset, u64 length, u64 most, std::string* out, std::stop_token stop,
+                  const std::function<void(u64 done, u64 total)>& progress, i64* modified_ns) {
+    Impl& m = *impl_;
+    out->clear();
+    u32 level;
+    {
+        std::lock_guard lock(m.mu);
+        level = m.agent_level;
+    }
+    if (level < 5) {  // (an older agent: the whole file at once, as before, and the part cut from it)
+        std::string all;
+        Writer w;
+        w.str(path).u64((1ull << 30) - 4096);  // (the connection drops a frame over 1 GiB: the reply, with its head, must fit)
+        std::string a;
+        if (!m.call(kRead, w.b, &a, 300'000)) return 5;
+        Reader r(a.data(), a.size());
+        const int status = r.u8();
+        all = r.str();
+        const i64 when = r.i64();
+        if (!r.ok) return 4;
+        if (status != 0) return status;
+        const u64 from = std::min<u64>(offset, all.size()), n = std::min<u64>(length, all.size() - from);
+        if (n > most) return 3;
+        if (modified_ns) *modified_ns = when;
+        if (from == 0 && n == all.size()) *out = std::move(all);
+        else out->assign(all, from, n);
+        if (progress) progress(n, n);
+        return 0;
+    }
+    // The parts on their way, oldest first; let go of however this ends.
+    struct Part {
+        u64 at = 0, n = 0;
+        u32 id = 0;
+        Impl::Slot slot;
+    };
+    std::deque<std::unique_ptr<Part>> flying;
+    u64 shown = 0;  // (its number among the fetches shown, once it is one)
+    struct Done {
+        Impl& m;
+        std::deque<std::unique_ptr<Part>>& flying;
+        u64& shown;
+        ~Done() {
+            for (const std::unique_ptr<Part>& p : flying) m.drop(p->id);  // (what comes for them is dropped)
+            if (!shown) return;
+            {
+                std::lock_guard lock(fetches_mu);
+                std::erase_if(fetches_shown, [&](const FetchShown& f) { return f.f.id == shown; });
+            }
+            if (notify_fn) notify_fn();
+        }
+    } done_with{m, flying, shown};
+    auto ask = [&](u64 at, u64 n) {
+        auto p = std::make_unique<Part>();
+        p->at = at, p->n = n;
+        Writer w;
+        w.str(path).u64(at).u64(n);
+        p->id = m.ask(kReadAt, w.b, &p->slot);
+        if (!p->id) return false;
+        flying.push_back(std::move(p));
+        return true;
+    };
+    const std::string whole = remote_path(host_, path);
+    u64 end = 0, next = 0, got = 0, total = 0, told_ns = 0;
+    bool known = false;
+    if (!ask(offset, std::min(length, kFetchPart))) return 5;
+    while (!flying.empty()) {
+        Part& p = *flying.front();
+        // Its answer, waited for (and whether to stop, looked at now and then).
+        {
+            std::unique_lock lock(m.mu);
+            const u64 until = now_ns() + 300'000'000'000ull;
+            for (;;) {
+                if (p.slot.done) break;
+                bool stopped = stop.stop_requested();
+                if (shown) {
+                    std::lock_guard l2(fetches_mu);
+                    for (const FetchShown& f : fetches_shown) stopped |= f.f.id == shown && f.stop;
+                }
+                if (stopped) return 7;
+                if (now_ns() >= until) return 5;
+                m.cv.wait_for(lock, std::chrono::milliseconds(50));
+            }
+            if (p.slot.failed) return 5;
+        }
+        m.drop(p.id);
+        Reader r(p.slot.body.data(), p.slot.body.size());
+        const int status = r.u8();
+        const u64 size = r.u64();
+        const i64 when = r.i64();
+        const u32 k = r.u32();
+        if (!r.take(k)) return 4;
+        if (status != 0) return status;
+        if (!known) {  // the first: how large it is, and so what is wanted of it
+            known = true;
+            total = offset < size ? std::min(length, size - offset) : 0;
+            if (total > most) return 3;
+            if (modified_ns) *modified_ns = when;
+            end = offset + total;
+            next = offset + p.n;
+            out->resize(static_cast<size_t>(total));
+            if (total > kFetchShown) {
+                std::lock_guard lock(fetches_mu);
+                shown = next_fetch++;
+                fetches_shown.push_back({{shown, whole, 0, total}});
+            }
+        }
+        if (k != std::min(p.n, end > p.at ? end - p.at : 0)) return 4;  // (shorter than it was: it changed meanwhile)
+        std::memcpy(out->data() + (p.at - offset), r.p, k);
+        got += k;
+        flying.pop_front();
+        if (progress) progress(got, total);
+        if (shown) {
+            {
+                std::lock_guard lock(fetches_mu);
+                for (FetchShown& f : fetches_shown)
+                    if (f.f.id == shown) f.f.done = got;
+            }
+            if (const u64 t = now_ns(); notify_fn && t - told_ns >= 100'000'000) told_ns = t, notify_fn();  // (the bottom row, a few times a second)
+        }
+        while (flying.size() < kFetchFlying && next < end) {
+            const u64 n = std::min(kFetchPart, end - next);
+            if (!ask(next, n)) return 5;
+            next += n;
+        }
+    }
+    return 0;
+}
+
+std::vector<RemoteFetch> Remote::fetches() {
+    std::lock_guard lock(fetches_mu);
+    std::vector<RemoteFetch> out;
+    for (const FetchShown& f : fetches_shown) out.push_back(f.f);
+    return out;
+}
+
+void Remote::stop_fetch(u64 id) {
+    std::lock_guard lock(fetches_mu);
+    for (FetchShown& f : fetches_shown)
+        if (f.f.id == id) f.stop = true;
+}
+
+u64 Remote::frame_most() const { return impl_->frame_most.load(); }
+
 bool Remote::write(const std::string& path, std::string data, std::string* err, i64* modified_ns) {
     Impl& m = *impl_;
     std::string a;
@@ -1258,7 +1458,7 @@ bool Remote::write(const std::string& path, std::string data, std::string* err, 
         std::lock_guard lock(m.mu);
         level = m.agent_level;
     }
-    if (level >= 3 && data.size() > kPart) {
+    if (level >= 3 && data.size() > kSavePart) {
         // In parts, each behind what else is waiting to go (a key to a
         // terminal there waits for a part at most, not the whole file); the
         // last is answered.
@@ -1269,7 +1469,7 @@ bool Remote::write(const std::string& path, std::string data, std::string* err, 
         }
         answered = false;
         for (size_t at = 0; at < data.size();) {
-            const size_t n = std::min(kPart, data.size() - at);
+            const size_t n = std::min(kSavePart, data.size() - at);
             const u8 part = (at == 0 ? kFirst : 0) | (at + n == data.size() ? kLast : 0);
             Writer w;
             w.u32(number).u8(part).str(path).u32(static_cast<u32>(n));

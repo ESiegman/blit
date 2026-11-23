@@ -11,8 +11,10 @@
 // panel, one on the problems the Problems tab; one on the line and column
 // opens Go to line, one on the Python the Pythons to choose from, and one on
 // the indentation, the line endings or the language a small list that
-// changes it for the file. On the start screen it names the project folder
-// and the settings file instead.
+// changes it for the file. A large file on its way from another machine
+// says how much of it has come ("loading 12 of 40 MB…": the file in front;
+// another, by its name), and a click there stops it. On the start screen it
+// names the project folder and the settings file instead.
 //
 // Its cells are made again only when something it shows has changed; a
 // frame that changes nothing in it costs a comparison of a few numbers.
@@ -34,7 +36,7 @@ namespace blit {
 
 namespace {
 
-enum Action : u8 { kNone, kGitTab, kProblemsTab, kReconnect, kSettings, kGoLine, kIndent, kLineEnds, kLanguage, kPython };
+enum Action : u8 { kNone, kGitTab, kProblemsTab, kReconnect, kSettings, kGoLine, kIndent, kLineEnds, kLanguage, kPython, kStopFetch };
 
 // The bar's tones (Popup::tones), behind Vim's mode: the muted ink's in
 // Normal and Command mode, the accent's in the modes that change the text.
@@ -141,6 +143,7 @@ struct App::StatusUi {
     // of them (and of the build's, which may have found some of them too).
     u64 diag_gen = ~0ull, diag_doc = ~0ull, diag_build = ~0ull;
     size_t errors = 0, warnings = 0;
+    u64 fetch = 0;  // the file on its way from another machine that a click on it stops (Remote::fetches)
     float tones[8][4] = {};  // (Popup::tones)
 };
 
@@ -378,10 +381,21 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                     home_short(path);
                 }
                 add_path(path, g.repo ? 3 : 2);  // (a little more between the repository and the file)
-                if (d.loading) u.left.push_back({"loading\xE2\x80\xA6", ink::kMuted, kNone, 2});
+                // A large file on its way from another machine (remote_gen_
+                // says when this changes): this one, or the latest of others.
+                const std::vector<RemoteFetch> fetching = Remote::fetches();
+                const RemoteFetch* coming = nullptr;
+                for (const RemoteFetch& f : fetching)
+                    if (!coming || coming->path != ed.path) coming = &f;
+                u.fetch = coming ? coming->id : 0;
+                const bool mine = coming && coming->path == ed.path;
+                const std::string how = coming ? count_text(coming->done >> 20) + " of " + count_text((coming->total + (1u << 20) - 1) >> 20) + " MB\xE2\x80\xA6" : std::string();
+                if (mine) u.left.push_back({"loading " + how, ink::kMuted, kStopFetch, 2});
+                else if (d.loading) u.left.push_back({"loading\xE2\x80\xA6", ink::kMuted, kNone, 2});
                 else if (remote_saving(d.id)) u.left.push_back({"saving\xE2\x80\xA6", ink::kMuted, kNone, 2});  // (remote_gen_ says when this changes)
                 else if (d.read_only && !d.term && !d.prof && !d.image && !d.pdf) u.left.push_back({"read only", ink::kMuted, kNone, 2});
                 else if (ed.modified()) u.left.push_back({font.has(0x25CF) ? "\xE2\x97\x8F" : "*", ink::kAccent, kNone, 1});
+                if (coming && !mine) u.left.push_back({"fetching " + coming->path.substr(coming->path.find_last_of('/') + 1) + " " + how, ink::kMuted, kStopFetch, 2});
             }
 
             // On the right, what is least needed first to go.
@@ -575,6 +589,7 @@ bool App::status_mouse_down(const SDL_MouseButtonEvent& b) {
                 else if (s.action == kLineEnds) status_pick(1);
                 else if (s.action == kLanguage) status_pick(2);
                 else if (s.action == kPython) py_choose();
+                else if (s.action == kStopFetch) Remote::stop_fetch(status_->fetch);
                 break;
             }
     }

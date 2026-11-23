@@ -426,6 +426,40 @@ got=$(BLIT_AGENT_LEVEL=2 BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 
 got="$got | $(head -c 3 "$W/big/big.txt") $(wc -c <"$W/big/big.txt" | tr -d ' ')"
 check "and to an agent from before parts: whole" 'box ~/work/big/big.txt | Ln 1, Col 2 Tabs LF Plain text | YX0 16777218'
 
+# A big file read from there comes the same way: in parts of about 1 MB
+# (kReadAt), with what else the connection carries going between them, the
+# status bar saying how much has come, and a click there stopping it. (Over
+# a connection that brings 8 MB a second back from the host: the 20 MB file
+# takes over two seconds.) No frame from the agent is larger than a part.
+cat >"$dir/slow-ssh.sh" <<EOF
+#!/bin/sh
+# tests/fake-ssh.sh, with what comes back from the host coming at \$BLIT_NARROW bytes a second.
+"$here/fake-ssh.sh" "\$@" | exec perl -e '\$| = 1; my \$rate = \$ENV{BLIT_NARROW}; while ((my \$n = sysread(STDIN, my \$b, 16384)) > 0) { syswrite(STDOUT, \$b) or exit 0; select(undef, undef, undef, \$n / \$rate) }'
+EOF
+chmod +x "$dir/slow-ssh.sh"
+perl -e 'for (1..327680) { printf "%063d\n", $_ }' >"$W/big/dump.txt"
+printf 'after\n' >"$W/big/after.txt"
+slowly() {
+    got=$(BLIT_SSH="$dir/slow-ssh.sh" BLIT_NARROW=8000000 BLIT_TERM_SHELL="exec env PS1='\$ ' /bin/sh -i" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" \
+        --script "$1" "$R/notes.txt" 2>&1 >/dev/null | sed -e "s#$T#~#g" -e 's/loading [0-9]* of/loading N of/' | join)
+}
+slowly "remotewait;key:ctrl+\`;frame;termwait:\$;key:space;key:ctrl+\`;frame;open:$R/big/dump.txt;fetchwait:2000000;frame;statusdump;key:ctrl+\`;key:space;frame;clock;text:echo h''i;key:Return;termwait:hi;within:1000;fetchdump;remotewait;key:ctrl+\`;$docend;frame;statusdump;remoteframes"
+check "a big file read from there: in parts, said as it comes, a terminal there answering meanwhile" 'box ~/work/big/dump.txt loading N of 20 MB… | Ln 1, Col 1 Tabs LF Plain text ;; within 1000 ms ;; fetching dump.txt (20 MB) ;; box ~/work/big/dump.txt | Ln 327681, Col 1 Tabs LF Plain text ;; box: no frame over 1 MB'
+slowly "remotewait;open:$R/big/dump.txt;fetchwait:2000000;frame;statusclick:loading;remotewait;fetchdump;open:$R/big/after.txt;remotewait;frame;dump;statusdump;remoteframes"
+check "stopped from the status bar: its tab goes, and the connection goes on" 'blit: Stopped reading ssh://box~/work/big/dump.txt ;; nothing fetched ;; >[notes.txt after.txt*] ;; box ~/work/big/after.txt | Ln 1, Col 1 Tabs LF Plain text ;; box: no frame over 1 MB'
+slowly "remotewait;open:$R/big/dump.txt;fetchwait:2000000;key:cmd+W;clock;remotewait;within:500;fetchdump;frame;dump"
+check "and by closing its tab" 'within 500 ms ;; nothing fetched ;; >[notes.txt*]'
+# From an agent before parts (level 4): whole, as before.
+got=$(BLIT_AGENT_LEVEL=4 BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "remotewait;fetchdump;$docend;frame;statusdump" "$R/big/dump.txt" 2>&1 >/dev/null |
+    sed -e "s#$T#~#g" | join)
+check "and from an agent before parts: whole" 'nothing fetched ;; box ~/work/big/dump.txt | Ln 327681, Col 1 Tabs LF Plain text'
+# Any large answer comes in parts: a folder of 20,000 names (1.3 MB of them).
+mkdir -p "$W/many" && perl -e 'for (1..20000) { open(my $f, ">", sprintf("%s/%060d", $ARGV[0], $_)) or die }' "$W/many"
+run "remotewait;lua:local f = io.open('$dir/count', 'w') f:write(#blit.fs.list('$R/many')) f:close();remoteframes" "$R/notes.txt"
+got="$got | $(cat "$dir/count") names"
+check "a large answer (a folder's names): in parts" 'box: no frame over 1 MB | 20000 names'
+rm -rf "$W/many"
+
 # gf and a click on a path there (Cmd+click in a terminal takes the same
 # way): the file there, or, if it is not there, no new tab but a word.
 printf 'src/main.cpp\nmissing.cpp\nmissing.cpp:3\n' >"$W/links.txt"

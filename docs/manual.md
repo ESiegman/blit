@@ -2042,7 +2042,14 @@ over the one ssh connection:
   box: Enter goes on without waiting (the save still lands), Esc stays.
   Nothing on the main thread waits for the network. A big file goes in
   parts, with what else is sent going between them, so that keys typed into
-  a terminal there are not held up behind a save. Writing goes through a temporary file and keeps the
+  a terminal there are not held up behind a save. A big file read from
+  there comes the same way, in parts of about 1 MB, with a terminal's
+  output and the language server's answers going between them: the status
+  bar says how much has come (*loading 12 of 40 MB…*, or *fetching
+  name 12 of 40 MB…* for a picture, a PDF or another file that is not
+  the one in front), and a click there stops it, as closing a file's tab
+  does. No message from the agent is larger than a few MB.
+  Writing goes through a temporary file and keeps the
   file's permissions. A file changed there (a `git pull` in a terminal on
   that machine) is read again when blit's window comes back to the front,
   as a local one is; under unsaved changes it is left alone, as a local

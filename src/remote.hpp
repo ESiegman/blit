@@ -17,6 +17,7 @@
 // from the main thread.
 #include <functional>
 #include <memory>
+#include <stop_token>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -74,6 +75,16 @@ struct RemoteStat {
     u64 size = 0;
     i64 modified_ns = 0;
 };
+
+// A file on its way from another machine (Remote::fetch), one large
+// enough to be shown on the bottom row as it comes.
+struct RemoteFetch {
+    u64 id = 0;
+    std::string path;          // its whole name, "ssh://host/path"
+    u64 done = 0, total = 0;   // bytes come, of how many
+};
+// What Remote::fetch says when it was stopped.
+inline constexpr int kFetchStopped = 7;
 
 struct RemoteEntry {
     std::string name;
@@ -148,7 +159,30 @@ public:
 
     // Calls: false (with *err where there is one) when they fail or the connection does.
     bool stat(const std::string& path, RemoteStat* out);
-    int read(const std::string& path, u64 most, std::string* out, i64* modified_ns = nullptr);  // 0 read, 1 none, 2 not a file, 3 too big, 4 failed, 5 no connection
+    // A whole file (fetch's way, from an agent of level 5): 0 read, 1 none, 2 not a file, 3 too big, 4 failed, 5 no connection
+    // (kFetchStopped: a large one stopped from the bottom row).
+    int read(const std::string& path, u64 most, std::string* out, i64* modified_ns = nullptr);
+    // A file there, or the part of it from `offset`, `length` bytes long
+    // (~0: to its end), into *out; no larger than `most` (3 if it would be).
+    // A worker's call: it waits, and calls progress(done, total) on this
+    // thread as each part comes. From an agent of level 5 it comes as parts
+    // of about 1 MB (kReadAt), a few on their way at once, with what else
+    // the connection carries (a terminal's output, a language server's
+    // answers, other requests) going between them; one larger than a few MB
+    // is listed meanwhile (fetches), for the bottom row. It stops between
+    // parts once `stop` is asked for, or stop_fetch: kFetchStopped. (From an
+    // older agent the whole file comes at once, up to 1 GiB, and the part is
+    // cut from it.) The status as read's, or kFetchStopped; modified_ns is
+    // the file's time when its first part was read (a file that changes
+    // meanwhile is read as each part finds it; one that becomes shorter fails).
+    int fetch(const std::string& path, u64 offset, u64 length, u64 most, std::string* out, std::stop_token stop = {},
+              const std::function<void(u64 done, u64 total)>& progress = {}, i64* modified_ns = nullptr);
+    // The fetches under way that are larger than a few MB, oldest first (any
+    // thread's to ask, the main thread's too: it waits for nothing); and one
+    // of them stopped.
+    // (Told with set_notify when one begins or ends, and a few times a second as it comes.)
+    static std::vector<RemoteFetch> fetches();
+    static void stop_fetch(u64 id);
     // (The text is moved into the request as it is: a big file is not copied again.)
     bool write(const std::string& path, std::string data, std::string* err, i64* modified_ns = nullptr);
     bool list(const std::string& path, std::vector<RemoteEntry>* out);
@@ -180,6 +214,10 @@ public:
     // The most output held at once for one program, waiting for its reader,
     // since the connection was made (for the tests: it stays a few MB).
     u64 held_most() const;
+    // The largest frame the agent has sent since the connection was made,
+    // with its length (for the tests: from an agent of level 5, no more
+    // than a kPart frame's 1 MB and its head, whatever it answered).
+    u64 frame_most() const;
 
     struct Impl;
 

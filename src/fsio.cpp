@@ -74,24 +74,47 @@ bool fs_read(const std::string& path, std::string* text, u64 most) {
 }
 
 bool fs_read_whole(const std::string& path, std::string* bytes, std::string* why, u64 most, std::stop_token stop, i64* modified) {
+    if (is_remote(path)) return fs_read_range(path, 0, ~0ull, most, bytes, why, stop, {}, modified);
+    // (A byte more than may be, to tell a file of just that size from a larger one.)
+    if (!fs_read(path, bytes, most + 1)) return *why = fs_kind(path) == 0 ? "there is no such file" : "the file could not be read", false;
+    if (bytes->size() > most) return *why = "the file is too big (over " + std::to_string(most >> 20) + " MB)", false;
+    return true;
+}
+
+bool fs_read_range(const std::string& path, u64 offset, u64 length, u64 most, std::string* bytes, std::string* why, std::stop_token stop,
+                   const std::function<void(u64 done, u64 total)>& progress, i64* modified) {
     const std::string too_big = "the file is too big (over " + std::to_string(most >> 20) + " MB)";
+    bytes->clear();
     if (is_remote(path)) {
         std::string there;
         std::shared_ptr<Remote> r;
         for (int waited = 0; !r && waited < 30000 && !stop.stop_requested(); waited += 200) r = remote_for(path, &there, 200);
         if (!r) return *why = remote_error(path), false;
-        switch (r->read(there, most, bytes, modified)) {
+        switch (r->fetch(there, offset, length, most, bytes, stop, progress, modified)) {
             case 0: return true;
             case 1: *why = "there is no such file"; break;
             case 2: *why = "it is not a file"; break;
             case 3: *why = too_big; break;
+            case kFetchStopped: *why = "stopped"; break;
             default: *why = remote_error(path); break;
         }
         return false;
     }
-    // (A byte more than may be, to tell a file of just that size from a larger one.)
-    if (!fs_read(path, bytes, most + 1)) return *why = fs_kind(path) == 0 ? "there is no such file" : "the file could not be read", false;
-    if (bytes->size() > most) return *why = too_big, false;
+    FILE* f = std::fopen(path.c_str(), "rb");
+    if (!f) return *why = fs_kind(path) == 0 ? "there is no such file" : "the file could not be read", false;
+    std::fseek(f, 0, SEEK_END);
+    const long end = std::ftell(f);
+    const u64 size = end > 0 ? static_cast<u64>(end) : 0, n = offset < size ? std::min(length, size - offset) : 0;
+    if (n > most) {
+        std::fclose(f);
+        return *why = too_big, false;
+    }
+    std::fseek(f, static_cast<long>(std::min(offset, size)), SEEK_SET);
+    bytes->resize(static_cast<size_t>(n));
+    const size_t got = n ? std::fread(bytes->data(), 1, static_cast<size_t>(n), f) : 0;
+    std::fclose(f);
+    bytes->resize(got);
+    if (progress) progress(got, n);
     return true;
 }
 
