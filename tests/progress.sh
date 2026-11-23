@@ -136,13 +136,20 @@ check "J-Link: the summary" "$expected"
 
 # openFPGALoader into SRAM, and into flash (the bridge loaded first) with
 # --verify.
-flash openFPGALoader openFPGALoader ofl-sram "progresswait:Load 45%;progressdump;$end"
+flash openFPGALoader openFPGALoader ofl-sram "progresswait:Load 32%;progressdump;$end"
 want <<'EOF'
-button: ■ Load 45% | row: Load 45%
+button: ■ Load 32% | row: Load 32%
 button: ▶ openFPGALoader · Loaded into SRAM in N s | row: done · Loaded into SRAM in N s
 problems: 0
 EOF
 check "openFPGALoader: into SRAM" "$expected"
+flash openFPGALoader openFPGALoader ofl-sram-pipe "progresswait:Load 32%;progressdump;$end"
+want <<'EOF'
+button: ■ Load 32% | row: Load 32%
+button: ▶ openFPGALoader · Loaded into SRAM in N s | row: done · Loaded into SRAM in N s
+problems: 0
+EOF
+check "openFPGALoader on a pipe: into SRAM" "$expected"
 flash openFPGALoader openFPGALoader ofl-flash "progresswait:Program 45%;progressdump;$end"
 want <<'EOF'
 button: ■ Program 45% | row: Load ✓ · Erase ✓ · Program 45%

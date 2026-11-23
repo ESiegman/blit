@@ -1,0 +1,16 @@
+# openFPGALoader v1.2.0 -b basys3 with its output on a pipe (as blit runs
+# it), as it really printed it: the same board, bitstream and day as
+# ofl-sram.txt (no colour; the bar still redrawn with "\r").
+@pace 5
+Jtag frequency : requested 6.00MHz    -> real 6.00MHz   
+Open file blink.bit DONE
+Parse file DONE
+load program
+\rLoad SRAM: [================                                  ] 32.00%
+@hold a
+\rLoad SRAM: [=================================                 ] 66.00%
+\rLoad SRAM: [==================================================] 100.00%
+
+Done
+Shift IR 35
+ir: 1 isc_done 1 isc_ena 0 init 1 done 1

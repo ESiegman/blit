@@ -241,9 +241,9 @@ touch -t 202601010000 "$P/build/old/top.bit"
 printf 'bits' >"$P/build/top.bit"
 BASYS='"probe": {"kind": "ftdi", "serial": "210183A8F2C1", "usb": "0403:6010"}'
 board "{$BASYS, \"flash\": {\"tool\": \"openfpgaloader\", \"board\": \"basys3\"}}"
-flash ofl-sram "$F;progresswait:Load 45%;progressdump;$end"
+flash ofl-sram "$F;progresswait:Load 32%;progressdump;$end"
 want <<'EOF'
-button: ■ Load 45% | row: Load 45%
+button: ■ Load 32% | row: Load 32%
 button: ▶ fw · Loaded into SRAM in N s | row: done · Loaded into SRAM in N s
 openFPGALoader -b basys3 --usb-serial-num 210183A8F2C1 build/top.bit
 EOF

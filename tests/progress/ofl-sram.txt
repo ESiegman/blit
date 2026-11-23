@@ -1,15 +1,16 @@
-# openFPGALoader v1.2.0 -b basys3 (no board here): its lines from its source,
-# src/progressBar.cpp, src/display.cpp, src/xilinx.cpp lines 234-254 and 1015,
-# src/spiFlash.cpp lines 224, 493, 498, 568-573 (tag v1.2.0); "write to flash"
-# as it printed it (Linux and macOS, no board).
+# openFPGALoader v1.2.0 -b basys3 on a terminal (script(1)), as it really
+# printed it: the owner's Basys 3 on the Arch Linux lab box, 2026-11-23,
+# loading a 2.1 MB bitstream (an LED blinker) into SRAM.
 @pace 5
-\e[34mOpen file top.bit \e[0m\e[32mDONE\e[0m
-\e[34mParse file \e[0m\e[32mDONE\e[0m
-\e[34m\rLoad SRAM: [\e[0m                                                  \e[34m] 0.00%\e[0m\c
-\e[34m\rLoad SRAM: [\e[0m============                                      \e[34m] 24.00%\e[0m\c
-\e[34m\rLoad SRAM: [\e[0m=======================                           \e[34m] 45.00%\e[0m\c
+\e[94mJtag frequency : requested 6.00MHz    -> real 6.00MHz   \e[0m
+\e[94mOpen file blink.bit \e[0m\e[32mDONE\e[0m
+\e[94mParse file \e[0m\e[32mDONE\e[0m
+load program
+\e[94m\c
+\rLoad SRAM: [\e[0m================                                  \e[94m] 32.00%\e[0m\e[94m\c
 @hold a
-\e[34m\rLoad SRAM: [\e[0m===================================               \e[34m] 70.00%\e[0m\c
-\e[34m\rLoad SRAM: [\e[0m==================================================\e[34m] 100.00%\e[0m\c
-\e[32m
+\rLoad SRAM: [\e[0m=================================                 \e[94m] 66.00%\e[0m\e[94m\c
+\rLoad SRAM: [\e[0m==================================================\e[94m] 100.00%\e[0m\e[32m
 Done\e[0m
+Shift IR 35
+ir: 1 isc_done 1 isc_ena 0 init 1 done 1
