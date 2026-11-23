@@ -583,10 +583,14 @@ void App::settings_lay(Doc& d) {
         const std::string now = config_lua(config_get(cfg_, it.key));
         mark(now == config_lua(config_get(defaults(), it.key)) ? 0 : 1);
         text += now;
-        if (!it.about.empty()) {
+        std::string about = it.about;
+        u8 about_style = 4;
+        if (it.key == "editor.spell_check")  // (on, but nothing to check with here: why, as a warning)
+            if (const std::string why = spell_not_checked(); !why.empty()) about = "not checked here: " + why, about_style = 5;
+        if (!about.empty()) {
             text.append(now.size() < 22 ? 22 - now.size() : 2, ' ');
-            mark(4);
-            text += it.about;
+            mark(about_style);
+            text += about;
         }
         text += '\n';
         sv.line_item.push_back(i);
@@ -605,6 +609,7 @@ void App::settings_lay(Doc& d) {
     d.style_bits[1] = kInkAdded << kCellInkShift;
     d.style_bits[3] = kInkAccent << kCellInkShift;
     d.style_bits[4] = kInkMuted << kCellInkShift;
+    d.style_bits[5] = (kInkDiagnostic + 1) << kCellInkShift;  // (a warning's colour)
     d.widest_rev = d.indent_rev = ~0ull;
     d.ed.move_to(d.ed.buf.line_start(std::min<u64>(row, d.ed.buf.line_count() - 1)), false);
     dirty_ = true;

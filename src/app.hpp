@@ -702,6 +702,7 @@ private:
     void spell_take();
     int spell_wait_ms() const;
     bool spell_fix();
+    std::string spell_not_checked();  // why nothing checks spelling here ("": it is checked, or not known yet)
     std::string spell_dump();
     std::shared_ptr<struct SpellWork> spell_work_;
     std::shared_ptr<struct SpellUi> spell_;

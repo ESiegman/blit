@@ -13,6 +13,9 @@ namespace blit {
 
 // A checker and its words are there (false: spelling is not checked).
 bool spell_ready();
+// Why nothing is checked, in words, once spell_ready() has said no
+// ("hunspell has no English dictionary on this machine"); "" if it can be.
+std::string spell_missing();
 bool spell_ok(std::string_view word);
 std::vector<std::string> spell_suggest(std::string_view word);
 // Not wrong from now on: the system's own list on a Mac; elsewhere blit's

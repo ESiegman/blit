@@ -5,6 +5,8 @@
 #include <cstdlib>
 #include <mutex>
 
+#include "missing.hpp"
+
 #if !defined(__APPLE__) && !defined(_WIN32)
 #include <dlfcn.h>
 #endif
@@ -67,6 +69,7 @@ struct Hun {
     void (*free_list)(void*, char***, int) = nullptr;
     int (*add)(void*, const char*) = nullptr;
     std::string words;  // blit's own list
+    std::string why;    // what is missing, when nothing can be checked
 };
 
 Hun& hun() {
@@ -86,14 +89,24 @@ bool open_it(Hun& x) {
     x.tried = true;
     for (const char* name : {"libhunspell-1.7.so.0", "libhunspell-1.7.so", "libhunspell.so", "libhunspell-1.6.so.0"})
         if ((x.lib = dlopen(name, RTLD_NOW | RTLD_LOCAL))) break;
-    if (!x.lib) return false;
+    if (!x.lib) return x.why = not_installed("hunspell", {}), false;
     x.create = reinterpret_cast<void* (*)(const char*, const char*)>(dlsym(x.lib, "Hunspell_create"));
     x.spell = reinterpret_cast<int (*)(void*, const char*)>(dlsym(x.lib, "Hunspell_spell"));
     x.suggest = reinterpret_cast<int (*)(void*, char***, const char*)>(dlsym(x.lib, "Hunspell_suggest"));
     x.free_list = reinterpret_cast<void (*)(void*, char***, int)>(dlsym(x.lib, "Hunspell_free_list"));
     x.add = reinterpret_cast<int (*)(void*, const char*)>(dlsym(x.lib, "Hunspell_add"));
-    if (!x.create || !x.spell || !x.suggest || !x.free_list || !x.add) return false;
-    for (const std::string dir : {"/usr/share/hunspell", "/usr/share/myspell", "/usr/share/myspell/dicts", "/usr/local/share/hunspell"})
+    if (!x.create || !x.spell || !x.suggest || !x.free_list || !x.add) return x.why = "the hunspell installed on " + machine_name({}) + " lacks what blit uses", false;
+    // (BLIT_HUNSPELL_DIRS, a list split by ':', for the tests.)
+    std::vector<std::string> dirs = {"/usr/share/hunspell", "/usr/share/myspell", "/usr/share/myspell/dicts", "/usr/local/share/hunspell"};
+    if (const char* e = std::getenv("BLIT_HUNSPELL_DIRS"); e && *e) {
+        dirs.clear();
+        for (std::string_view l = e; !l.empty();) {
+            const size_t colon = l.find(':');
+            dirs.emplace_back(l.substr(0, colon));
+            l = colon == std::string_view::npos ? std::string_view{} : l.substr(colon + 1);
+        }
+    }
+    for (const std::string& dir : dirs)
         for (const char* name : {"en_US", "en_GB", "en"}) {
             const std::string aff = dir + "/" + name + ".aff", dic = dir + "/" + name + ".dic";
             if (FILE* f = std::fopen(dic.c_str(), "rb")) {
@@ -102,7 +115,7 @@ bool open_it(Hun& x) {
                 if (x.h) break;
             }
         }
-    if (!x.h) return false;
+    if (!x.h) return x.why = "hunspell has no English dictionary (en_US, en_GB or en) on " + machine_name({}), false;
     if (FILE* f = std::fopen(words_file().c_str(), "rb")) {  // (the words added before)
         char line[256];
         while (std::fgets(line, sizeof line, f)) {
@@ -121,6 +134,12 @@ bool spell_ready() {
     Hun& x = hun();
     std::lock_guard lock(x.mu);
     return open_it(x);
+}
+
+std::string spell_missing() {
+    Hun& x = hun();
+    std::lock_guard lock(x.mu);
+    return x.why;
 }
 
 bool spell_ok(std::string_view word) {
@@ -166,6 +185,7 @@ bool spell_ready() {
     static const bool ready = blit_spell_ready() != 0;
     return ready;
 }
+std::string spell_missing() { return spell_ready() ? std::string() : "the system's spell checker has no English on this Mac"; }
 bool spell_ok(std::string_view word) { return blit_spell_ok(word.data(), word.size()) != 0; }
 std::vector<std::string> spell_suggest(std::string_view word) {
     char buf[2048];
@@ -182,6 +202,7 @@ void spell_learn(std::string_view word) { blit_spell_learn(word.data(), word.siz
 #else
 
 bool spell_ready() { return false; }
+std::string spell_missing() { return "there is no spell checker blit can use here"; }
 bool spell_ok(std::string_view) { return true; }
 std::vector<std::string> spell_suggest(std::string_view) { return {}; }
 void spell_learn(std::string_view) {}

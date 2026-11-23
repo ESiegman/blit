@@ -690,7 +690,10 @@ them), in a Markdown file's text (not its code, between backticks or in
 blocks), and in all of a plain text file are checked, in English, by the
 system's checker: NSSpellChecker on a Mac, and elsewhere Hunspell's
 `en_US` dictionary (`/usr/share/hunspell`), opened when first wanted, so
-that blit does not need it; without one nothing is checked. A word that
+that blit does not need it; without one nothing is checked, and nothing
+is said as files open: Option+Enter on a word says what is missing
+("hunspell has no English dictionary"), and so does the
+`editor.spell_check` row in Settings. A word that
 looks like a name in code (a digit, an underscore, a capital after its
 first letter), one in capitals, and part of an address or a path are left
 out. The check runs on a thread of its own once the text and the view

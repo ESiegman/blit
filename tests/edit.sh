@@ -233,6 +233,21 @@ else
     got=$(BLIT_INIT="$dir/nospell.lua" "$blit" --offscreen 1400x600 --shot "$dir/shot.bmp" --script "frame;spelldump" "$dir/sp.c" 2>&1 >/dev/null | tail -1)
     check "editor.spell_check = false: none" "off"
 fi
+# On Linux, Hunspell or an English dictionary missing: nothing said as a
+# file opens, but asked for (Option+Enter on a word) which is missing,
+# and the setting's row in Settings says so too. (The dictionaries
+# hidden; the library as this machine has it.)
+if [ "$(uname -s)" = Linux ]; then
+    mkdir -p "$dir/no-dicts"
+    lib=; for f in /usr/lib/libhunspell* /usr/lib/*/libhunspell* /usr/lib64/libhunspell*; do [ -e "$f" ] && lib=1; done
+    if [ -n "$lib" ]; then why="hunspell has no English dictionary (en_US, en_GB or en) on this machine"; else why="hunspell is not installed on this machine"; fi
+    got=$(BLIT_HUNSPELL_DIRS="$dir/no-dicts" BLIT_INIT="$dir/vim.lua" "$blit" --offscreen 1400x600 --shot "$dir/shot.bmp" --script "frame;spelldump;vim:j;frame;spelldump" "$dir/sp.c" 2>&1 >/dev/null | grep -c 'not checked')
+    check "no English checker on Linux: nothing said as a file opens" "0"
+    got=$(BLIT_HUNSPELL_DIRS="$dir/no-dicts" BLIT_INIT="$dir/vim.lua" "$blit" --offscreen 1400x600 --shot "$dir/shot.bmp" --script "frame;spelldump;vim:ff;key:alt+Return;frame" "$dir/sp.c" 2>&1 >/dev/null | grep 'Spelling is not checked')
+    check "asked for on a word: which is missing" "blit: Spelling is not checked: $why (editor.spell_check in Settings)"
+    got=$(BLIT_HUNSPELL_DIRS="$dir/no-dicts" BLIT_INIT="$dir/vim.lua" "$blit" --offscreen 1400x600 --shot "$dir/shot.bmp" --script "frame;spelldump;settingsopen:editor.spell_check;frame;settingsdump" "$dir/sp.c" 2>&1 >/dev/null | grep -o "not checked here: [^|]*" | sed 's/ *$//')
+    check "and the setting's row says so" "not checked here: $why"
+fi
 
 # Soft wrap: a Markdown file wraps (each break after a space), a C file
 # not until Option+Z; gj and gk go by rows along the row, j by lines; a

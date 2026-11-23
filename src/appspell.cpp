@@ -5,6 +5,7 @@
 // underlined as a problem is. Option+Enter on one: its suggestions, or it
 // added to the dictionary.
 #include <algorithm>
+#include <cctype>
 #include <atomic>
 #include <condition_variable>
 #include <deque>
@@ -216,7 +217,26 @@ int App::spell_wait_ms() const {
 
 // Option+Enter on a word underlined as wrong: what it might be, or it
 // added to the dictionary. False: the cursor is not on one.
+// Why spelling is not checked here, once the checker has been looked for
+// ("" while it is not known, or it is there); the worker started if not yet.
+std::string App::spell_not_checked() {
+    if (!cfg_.spell) return {};
+    if (!spell_work_) spell_work_ = std::make_shared<SpellWork>();
+    return spell_work_->ready == 0 ? spell_missing() : std::string();
+}
+
 bool App::spell_fix() {
+    // Asked for on a word where nothing checks spelling: why, said (and
+    // the language server's actions, if any, still offered).
+    if (const std::string why = spell_not_checked(); !why.empty()) {
+        const Editor& ed = pane_->doc->ed;
+        const u64 cur = ed.cursor();
+        char c[2] = {};
+        ed.buf.read(cur > 0 ? cur - 1 : 0, c, cur > 0 ? 2 : 1);
+        const bool word = std::isalpha(static_cast<u8>(c[0])) || std::isalpha(static_cast<u8>(c[1]));
+        if (word) notify("Spelling is not checked: " + why + " (editor.spell_check in Settings)", 1);
+        return false;
+    }
     if (!spell_ || spell_->doc != pane_->doc->id || spell_->rev != pane_->doc->ed.revision()) return false;
     Editor& ed = pane_->doc->ed;
     const u64 cur = ed.cursor();
