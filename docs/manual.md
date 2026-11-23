@@ -2695,7 +2695,8 @@ exit code 2 after 3.2 s · 3 errors". On macOS blit.app's own (the first
 one asks for leave to show them, as the system does); a blit that is no
 app bundle (one run from its build folder) hands it to `osascript`. On
 Linux freedesktop's Notify over D-Bus, through `gdbus` (or else
-`notify-send`), found on PATH. `blit.opt.build.notify = false` stops
+`notify-send`), found on PATH. Where there is none of those, blit says
+so once, in its own window. `blit.opt.build.notify = false` stops
 them.
 
 What the build prints is read for problems as it comes, on the terminal's

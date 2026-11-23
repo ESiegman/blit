@@ -11,6 +11,8 @@
 #include <string_view>
 #include <thread>
 
+#include "remote.hpp"
+
 #if defined(__APPLE__)
 #include "macapp.h"
 #endif
@@ -81,6 +83,16 @@ std::vector<std::string> notify_command(const std::string& title, const std::str
     if (std::string send = on_path("notify-send"); !send.empty()) return {send, "--app-name=blit", "--icon=blit", "--", title, body};
 #endif
     return {};
+}
+
+std::string notify_missing() {
+    if (!notify_command({}, {}).empty()) return {};
+#if defined(__APPLE__)
+    if (program_path().find(".app/Contents/MacOS/") != std::string::npos) return {};  // (blit.app: the notification centre, no program)
+    return "osascript";
+#else
+    return "notify-send";
+#endif
 }
 
 void system_notify(const std::string& title, const std::string& body) {

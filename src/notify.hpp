@@ -15,6 +15,10 @@ void system_notify(const std::string& title, const std::string& body);
 // The program that hands one over, with its words, as found on PATH now
 // (empty: there is none; on macOS, what is used outside an app bundle).
 std::vector<std::string> notify_command(const std::string& title, const std::string& body);
+// The program one would be handed over with, where none is on PATH and one
+// is needed (blit.app has its own way): its name ("notify-send",
+// "osascript"), else "".
+std::string notify_missing();
 // (Tests.) Those still being handed over, waited for (5 s at most).
 void system_notify_wait();
 

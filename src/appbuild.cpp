@@ -204,6 +204,7 @@ struct App::BuildUi {
     };
     std::optional<Listed> listed;  // (mu)
     bool listing = false;
+    bool said_no_notifier = false;  // (that the system could not be told how a run went: said once)
     // The Build tab: a row for each system and for each task, and the one chosen.
     struct Row {
         int task = -1;  // -1: a system's heading; kTypeRow, kTargetRow: CMake's build type and target
@@ -791,7 +792,8 @@ void App::build_ended(u64 doc, int status, const std::string& missing) {
                                                   : "Failed with exit code " + std::to_string(status) + " after " + secs;
             if (r->errors) body += " \xC2\xB7 " + std::to_string(r->errors) + (r->errors == 1 ? " error" : " errors");
             if (r->warnings) body += std::string(r->errors ? ", " : " \xC2\xB7 ") + std::to_string(r->warnings) + (r->warnings == 1 ? " warning" : " warnings");
-            system_notify(r->name, body);
+            if (const std::string none = notify_missing(); none.empty()) system_notify(r->name, body);
+            else if (!std::exchange(u.said_no_notifier, true)) notify(not_installed(none, {}) + ": no system notification when a run ends (build.notify in Settings)", 1);
         }
     }
     if (u.first && u.first->doc == doc && !u.first->ended) {  // (what waits for it runs on the loop's next turn)
