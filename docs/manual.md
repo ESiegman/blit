@@ -4713,8 +4713,10 @@ does not finish and takes all the memory the machine has.
   to be with what libfst could read of it kept.
 - The wave tab: VCD, FST and ILA captures' CSV (an FST told by its name,
   `.fst`; a capture's CSV by its first line, here only: on another
-  machine a `.csv` opens as text); a dump is
-  not read again when its file changes; one on another machine is
+  machine a `.csv` opens as text); a dump written again is read again
+  (and one still being written followed) only while it is in the project
+  folder, on a Mac, or a task's run ends; one on another machine is read
+  again whole when its time stamp changes, not followed as it grows; one on another machine is
   fetched here whole, in parts with its progress on the bottom row (where
   a click stops it), up to `blit.opt.wave.remote_fetch_mb` (512 MB), and a
   larger one is not shown (an FST is fetched into blit's cache folder,
