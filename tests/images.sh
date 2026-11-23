@@ -152,7 +152,9 @@ got=$(printf '%s' "$got" | sed -e 's/, woken [0-9]* times//g' | awk 'BEGIN { RS 
                bad += !((f == 1 && c == "255 0 0") || (f == 2 && c == "0 255 0") || (f == 3 && c == "0 0 255")) }
     END { print ((n == 2 && !bad) ? "as it says" : "the frame and its pixels apart") }')
 check "the frame drawn is the one it says it shows" "as it says"
-run 800x600 "frame;imagewait;frame;open:$pics/pics.md;frame;imageframes:300;imageframes:800" "$pics/anim.gif"
+# (The other tab a new, empty file: one with text to read, parse and
+# check would wake blit for that, as it finishes, on a slow machine late.)
+run 800x600 "frame;imagewait;frame;command:New file;frame;imageframes:300;imageframes:800" "$pics/anim.gif"
 got=$(printf '%s' "$got" | sed -e 's/^[^;]* ;; //')
 check "behind another tab: no frame drawn, nothing wakes blit" "0 frames drawn, woken 0 times"
 
