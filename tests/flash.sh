@@ -315,6 +315,17 @@ want <<'EOF'
   | program_hw_devices [current_hw_device]
 EOF
 check "Vivado with no chip said: the first of AMD's devices" "$expected"
+
+# A load that fails: the task failed with Vivado's exit status (not done),
+# the problem in its words.
+flash vivado-fail "command:Program the FPGA (SRAM);flashwait;$end;scandump"
+got=$(printf '%s' "$got" | grep -v -e '^vivado' -e '^  |')
+want <<'EOF'
+button: ▶ fw · 1 error · stopped in Load | row: failed: exited with code 1 · stopped in Load
+problems: 1
+E vivado:1 File missing.bit not found. Check file name and file permissions.
+EOF
+check "Vivado failing: its exit status kept" "$expected"
 got=$("$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;command:Program the FPGA's flash;flashwait" 2>&1 >/dev/null | tail -1)
 check "the FPGA's flash through Vivado: said" "blit: Vivado here loads the FPGA's SRAM only: its flash through openFPGALoader (flash.tool)"
 

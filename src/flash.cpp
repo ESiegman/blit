@@ -403,7 +403,8 @@ FlashPlan flash_plan(const Board& b, const std::string& tool_name, const std::st
     if (!script.empty()) {  // (J-Link's command file, Vivado's Tcl, made for the run and gone after)
         std::string lines;
         for (const std::string& l : script) lines += " " + sh_word(l);
-        cmd = "f=$(mktemp) && printf '%s\\n'" + lines + " >\"$f\" && " + cmd + "; s=$?; rm -f \"$f\"; exit $s";
+        // (A subshell: its exit ends it alone, and the pipe's redirections below are all of its.)
+        cmd = "(f=$(mktemp) && printf '%s\\n'" + lines + " >\"$f\" && " + cmd + "; s=$?; rm -f \"$f\"; exit $s)";
     }
     if (plan.transport == kPipe)  // (its output and errors through a pipe, and its exit status kept)
         cmd = "exec 3>&1; s=$( { { " + cmd + " 2>&1 3>&- 4>&-; echo $? >&4; } | cat >&3; } 4>&1 ); exit $s";
