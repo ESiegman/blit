@@ -27,6 +27,7 @@
 #include "fsio.hpp"
 #include "kernel.hpp"
 #include "look.hpp"
+#include "missing.hpp"
 #include "notebook.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
@@ -419,7 +420,13 @@ void App::nb_sync() {
                     std::string why = e.text;
                     while (!why.empty() && (why.back() == '\n' || why.back() == ' ')) why.pop_back();
                     const size_t nl = why.rfind('\n');
-                    const std::string said = "The kernel has stopped" + (why.empty() ? std::string() : ": " + why.substr(nl == std::string::npos ? 0 : nl + 1));
+                    std::string last = why.substr(nl == std::string::npos ? 0 : nl + 1);
+                    if (const std::string program = shell_not_found(why); !program.empty()) {  // (its Python, or uv, not there: which, and where)
+                        std::string host, there;
+                        split_remote(d.ed.path, &host, &there);
+                        last = not_installed(program, host);
+                    }
+                    const std::string said = "The kernel has stopped" + (why.empty() ? std::string() : ": " + last);
                     notify(said, 2, nl == std::string::npos ? std::string() : said + "\n" + why);
                     if (nb.running.key && nb.kernel->remote()) ran_there(d.ed.path);
                     if (nb.running.key) put_running(d, false), touched = false;

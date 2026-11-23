@@ -420,6 +420,17 @@ case $got in
     "blit: The kernel has stopped: not a Python"*"2 code [ ] same"*"no kernel") got=said ;;
 esac
 check "a kernel that cannot start: said, nothing left waiting" "said"
+# Its Python not installed at all (python3, and uv for a uv project): which, and where.
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+nopy="$dir/nopy"
+mkdir -p "$nopy" "$dir/nopy-plain" "$dir/nopy-uv"
+ln -s /usr/bin/* /bin/* "$nopy/" 2>/dev/null
+rm -f "$nopy/python3" "$nopy/uv"
+cp "$run/r.ipynb" "$dir/nopy-plain/r.ipynb" && cp "$run/r.ipynb" "$dir/nopy-uv/r.ipynb" && : >"$dir/nopy-uv/uv.lock"
+for p in nopy-plain:python3 nopy-uv:uv; do
+    got=$(PATH=$nopy "$blit" --offscreen 2400x1500 --shot "$dir/shot.bmp" --script "open:$dir/${p%%:*}/r.ipynb;mdwait;vim:7G;key:shift+Return;nbwait;frame" 2>&1 >/dev/null | grep '^blit: The kernel')
+    check "a kernel whose ${p#*:} is not installed: said so" "blit: The kernel has stopped: ${p#*:} is not installed on $this"
+done
 
 # A notebook in a subproject of the folder being worked in (its own
 # pyproject.toml and .venv): its kernel run with the subproject's Python,
