@@ -375,6 +375,14 @@ check "written no more: nothing drawn, nothing read" "0 frames drawn, 0 bytes re
 got=$(lines | sed -n 5p)
 check "(and all of it read)" "grow.vcd: read, following, cursor 0 ps, view 0 ps to 2.772 us"
 
+# Opened while still empty (as Verilator 5.054 leaves a VCD it writes
+# until its buffer fills): waited at, not said to be no dump, and read
+# once something is written.
+fresh; : >"$W/grow.vcd"
+run 1600x900 "$watched;wavedump;lua:os.execute('cat $dir/half.vcd >>$W/grow.vcd');watchwait;wavewait;wavedump" "$W/grow.vcd"
+got=$(lines | grep '^grow.vcd' | join)
+check "empty when opened: waited at, then read" "grow.vcd: nothing in it yet ;; grow.vcd: read, following, cursor 0 ps, view 0 ps to 1.33 us"
+
 # Behind another tab it is not read; brought to the front, it is.
 echo text >"$W/notes.txt"
 fresh; cp "$dir/half.vcd" "$W/grow.vcd"

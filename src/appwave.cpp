@@ -478,6 +478,8 @@ std::unique_ptr<WaveLoad> load_of(const std::string& full, const std::shared_ptr
     WaveLoad::ReadAt read_at;
     u64 size = 0;
     if (!WaveLoad::local_file(full, &read_at, &size, why)) return nullptr;
+    // (An empty one is a simulation's that has not written its header yet: waited for too.)
+    if (size == 0 && follow == WaveLoad::Follow::kAfterHeader) follow = WaveLoad::Follow::kAlways;
     return std::make_unique<WaveLoad>(into, std::move(read_at), size, most, wake, follow);
 }
 
@@ -1842,6 +1844,7 @@ std::string App::wave_dump(std::string_view what) {
         if (!v.open_error.empty()) return leaf_of(v.path) + ": cannot show it: " + v.open_error + (v.started ? ", rows made" : "");
         if (!v.fetch_error->empty()) return leaf_of(v.path) + ": cannot show it: " + *v.fetch_error + (v.started ? ", rows made" : "");
         if (w.writing) return leaf_of(v.path) + ": still being written" + (v.started ? ", rows made" : "");
+        if (!w.header && w.settled) return leaf_of(v.path) + ": nothing in it yet";
         if (!v.started) return leaf_of(v.path) + ": reading";
         std::string out = leaf_of(v.path) + ": " + (w.done || w.settled ? "read" : "reading") + (w.settled && v.load && v.load->grown() ? ", following" : "") + ", cursor " +
                           exact_text(w, v.cursor) + ", view " + exact_text(w, static_cast<u64>(std::llround(std::max(0.0, v.left)))) + " to " +
