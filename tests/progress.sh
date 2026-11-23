@@ -111,6 +111,15 @@ problems: 0
 EOF
 check "a narrow window: the summary without its time" "$expected"
 
+# Stopped mid-write (the app, its third file): not "Flashed" with what the
+# first two wrote, but where it stopped.
+flash esptool esptool esptool5-pipe "progresswait:Program 38%;command:Stop the build;buildwait;progressdump"
+got=$(printf '%s' "$got" | sed -e 's/exited with code [0-9]*/exited with code N/')
+want <<'EOF'
+button: ▶ esptool · stopped in Program at 38% | row: failed: exited with code N · stopped in Program at 38%
+EOF
+check "esptool stopped mid-write: where it stopped" "$expected"
+
 # esptool v4: "Writing at 0x00010000... (50 %)" after a \r, no newline.
 timed='&'
 flash esptool esptool esptool4 "progresswait:Program 50%;progressdump;$end"

@@ -796,6 +796,13 @@ void App::build_ended(u64 doc, int status) {
     }
     u.running = false;
     u.last_status = status;
+    // A flash stopped (or ended badly with no word of the tool's): what its
+    // output came to is not what it did ("Flashed 23.2 KB" of three files,
+    // the third cut short), but where it stopped.
+    if (status != 0 && !u.progress.engine.empty() && !u.progress.failed && !u.progress.summary.empty()) {
+        u.progress.summary = u.progress.cut.empty() ? "stopped" : "stopped in " + u.progress.cut + (u.progress.cut_percent >= 0 ? " at " + std::to_string(u.progress.cut_percent) + "%" : "");
+        u.summary = u.progress.summary + (u.said.empty() ? "" : " \xC2\xB7 " + u.said);
+    }
     u.looked = false;
     if (!ran_there(u.dir)) git_command("look", {});
     ++build_gen_;

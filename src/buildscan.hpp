@@ -222,6 +222,8 @@ public:
         u64 bytes = 0, total = 0;        // done, and in all, where the tool says (0: not said)
         bool failed = false;             // (its problem is among found())
         std::string summary;             // once the output has ended: "Flashed 41.2 KB in 1.8 s, verified"
+        std::string cut;                 // the stage under way when the output ended, and its percent: where
+        i32 cut_percent = -1;            // a run then stopped, or ended with no word of the tool's, stopped
     };
     const Progress& progress() const { return progress_; }
     u64 progress_gen() const { return progress_gen_; }  // (counts up only as what is shown changes: the stage, its percent, a stage done)

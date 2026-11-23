@@ -501,6 +501,8 @@ void BuildScan::progress_end() {
     if (progress_.failed) {
         if (!progress_.stage.empty()) s = "stopped in " + progress_.stage + (progress_.percent >= 0 ? " at " + std::to_string(progress_.percent) + "%" : "");
     } else {
+        progress_.cut = progress_.stage;
+        progress_.cut_percent = progress_.percent;
         if (!progress_.stage.empty() && std::ranges::find(progress_.done, progress_.stage) == progress_.done.end()) progress_.done.push_back(progress_.stage);
         progress_.stage.clear();
         progress_.percent = -1;
