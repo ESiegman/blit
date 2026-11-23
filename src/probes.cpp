@@ -442,8 +442,13 @@ bool board_set_probe(std::string& text, std::string_view config, const ProbeRow&
     }
     if (ok && !fpga.empty()) {
         const size_t flash = member_at(t, board, "flash");
-        if (flash != std::string::npos && t[flash] == '{') {  // (its address, or whatever else it has, kept)
-            ok = set_member(t, flash, "tool", "\"openfpgaloader\"");
+        // (A board loaded through Vivado stays so: the picker's board and cable are openFPGALoader's words, which it leaves alone.)
+        const size_t tool = flash != std::string::npos && t[flash] == '{' ? member_at(t, flash, "tool") : flash;
+        const bool vivado = tool != std::string::npos && t.compare(tool, 8, "\"vivado\"") == 0;
+        if (vivado && t[flash] != '{') {
+            ok = set_member(t, board, "flash", "{\"tool\": \"vivado\"" + fpga.substr(fpga.find(',')));
+        } else if (flash != std::string::npos && t[flash] == '{') {  // (its address, or whatever else it has, kept)
+            if (!vivado) ok = set_member(t, flash, "tool", "\"openfpgaloader\"");
             ok = ok && (row.fpga_board.empty() ? remove_member(t, flash, "board") : set_member(t, flash, "board", quoted(row.fpga_board)));
             ok = ok && (!row.fpga_board.empty() ? remove_member(t, flash, "cable") : set_member(t, flash, "cable", quoted(row.fpga_cable)));
         } else {

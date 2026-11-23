@@ -57,13 +57,13 @@ esac
     printf '%s' "$tool"
     for a in "\$@"; do case \$a in *' '*) printf " '%s'" "\$a" ;; *) printf ' %s' "\$a" ;; esac; done
     echo
-    case " \$* " in *" -CommandFile "*) for a in "\$@"; do f=\$a; done; sed 's/^/  | /' "\$f" ;; esac
+    case " \$* " in *" -CommandFile "*|*" -source "*) for a in "\$@"; do f=\$a; done; sed 's/^/  | /' "\$f" ;; esac
 } >>"\$LOG"
 exec sh "$here/replay.sh" "\$(cat "\$SAMPLE")"
 EOF
     chmod +x "$B/$tool"
 }
-for tool in esptool openocd openocd-esp32 probe-rs JLinkExe openFPGALoader; do standin $tool; done
+for tool in esptool openocd openocd-esp32 probe-rs JLinkExe openFPGALoader vivado; do standin $tool; done
 export PATH="$B:$PATH"
 export OFL_LOG="$dir/ofl-log"
 
@@ -109,7 +109,7 @@ flash() {
         sed -e "s#$dir#~#g" -e "s/ in [0-9]*\\.[0-9] s/${timed:- in N s}/g")
     timed= init= scan= detect=
     [ -f "$LOG" ] && got="$got
-$(sed -e "s#$dir#~#g" -e 's#-CommandFile [^ ]*#-CommandFile FILE#' "$LOG")"
+$(sed -e "s#$dir#~#g" -e 's#-CommandFile [^ ]*#-CommandFile FILE#' -e 's#-source [^ ]*#-source FILE#' "$LOG")"
 }
 F="command:Flash the board;flashwait"
 end="go:a;go:b;buildwait;progressdump"
@@ -278,6 +278,62 @@ check "an FTDI board with no tool said: openFPGALoader on Digilent's cable; the 
 board "{$STLINK}"
 got=$("$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;command:Program the FPGA (SRAM);flashwait" 2>&1 >/dev/null | tail -1)
 check "programming an FPGA with an MCU's board: said" "blit: fw's board is not an FPGA's (it is flashed with probe-rs)"
+
+# The Basys 3 through Vivado (its board.flash): batch mode with a Tcl file
+# made for the run, the cable by its serial number, the device whose part
+# begins the board's chip; into SRAM, its progress and summary.
+board "{$BASYS, \"chip\": \"xc7a35tcpg236-1\", \"flash\": \"vivado\"}"
+flash vivado "command:Program the FPGA (SRAM);flashwait;progresswait:Load;progressdump;$end"
+want <<'EOF'
+button: ■ Load | row: Connect ✓ · Load
+button: ▶ fw · Loaded into SRAM in N s | row: done · Loaded into SRAM in N s
+vivado -mode batch -nojournal -nolog -notrace -source FILE
+  | open_hw_manager
+  | connect_hw_server -allow_non_jtag
+  | open_hw_target [lindex [get_hw_targets */210183A8F2C1*] 0]
+  | set d [lindex [get_hw_devices -filter {PART =~ x*}] 0]
+  | foreach h [get_hw_devices] {if {[string match [get_property PART $h]* xc7a35tcpg236-1]} {set d $h}}
+  | if {[string match [get_property PART $d]* xc7a35tcpg236-1] == 0} {puts {ERROR: No device on the cable is a xc7a35tcpg236-1}; exit 1}
+  | current_hw_device $d
+  | set_property PROGRAM.FILE build/top.bit [current_hw_device]
+  | program_hw_devices [current_hw_device]
+  | close_hw_target
+  | disconnect_hw_server
+  | close_hw_manager
+EOF
+check "Basys 3 through Vivado: its Tcl, into SRAM" "$expected"
+board "{$BASYS, \"flash\": \"vivado\"}"
+flash vivado "command:Program the FPGA (SRAM);flashwait;$end"
+got=$(printf '%s' "$got" | grep -e 'hw_device' -e 'string match')
+want <<'EOF'
+  | set d [lindex [get_hw_devices -filter {PART =~ x*}] 0]
+  | current_hw_device $d
+  | set_property PROGRAM.FILE build/top.bit [current_hw_device]
+  | program_hw_devices [current_hw_device]
+EOF
+check "Vivado with no chip said: the first of AMD's devices" "$expected"
+got=$("$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;command:Program the FPGA's flash;flashwait" 2>&1 >/dev/null | tail -1)
+check "the FPGA's flash through Vivado: said" "blit: Vivado here loads the FPGA's SRAM only: its flash through openFPGALoader (flash.tool)"
+
+# Vivado not on the PATH: where AMD installs it, the newest version (the
+# folders as 2025.1 on lay them out, and as before), else said.
+X="$dir/xilinx"
+for v in 2025.1/Vivado/bin 2026.2/Vivado/bin Vivado/2024.2/bin; do
+    mkdir -p "$X/$v"
+    printf '#!/bin/sh\nprintf "%%s\\n" "$0" >>"$LOG"\nexec sh "%s" "%s"\n' "$here/replay.sh" "$here/progress/vivado.txt" >"$X/$v/vivado"
+    chmod +x "$X/$v/vivado"
+done
+mkdir -p "$X/2026.3/Vivado"  # (a version with no vivado in it)
+rm -f "$LOG"
+got=$(PATH="$dir/none:/usr/bin:/bin" BLIT_VIVADO_HOMES="$dir/none:$X" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;command:Program the FPGA (SRAM);flashwait;buildwait;progressdump" 2>&1 >/dev/null | sed -e "s#$dir#~#g" -e "s/ in [0-9]*\\.[0-9] s/ in N s/g"; sed -e "s#$dir#~#g" "$LOG")
+want <<'EOF'
+button: ▶ fw · Loaded into SRAM in N s | row: done · Loaded into SRAM in N s
+~/xilinx/2026.2/Vivado/bin/vivado
+EOF
+check "Vivado where AMD installs it: the newest" "$expected"
+rm -f "$LOG"
+got=$(PATH="$dir/none:/usr/bin:/bin" BLIT_VIVADO_HOMES="$dir/none" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;command:Program the FPGA (SRAM);flashwait" 2>&1 >/dev/null | tail -1)
+check "Vivado nowhere: said" "blit: vivado is not on the PATH (nor in /tools/Xilinx or /opt/Xilinx)"
 
 # ---------------------------------------------------------------- only if changed
 
@@ -448,6 +504,16 @@ scan=basys3 detect=basys3
 flash probe-rs "command:Choose the probe;probewait;text:Cmod;key:Return;probewait;flashdump"
 got=$(printf '%s' "$got" | tail -1)
 check "a flash object there already: its tool and board set, its cable gone, the rest kept" 'proj: tool openfpgaloader | board cmoda7_35t | cable  | interface  | target  | device  | address 0x0 | bitstream '
+printf '{"configurations": [{"name": "proj", "program": "build/proj", "board": {"flash": {"tool": "vivado", "address": "0x0"}}}]}\n' >"$P/.blit/run.json"
+scan=basys3 detect=basys3
+flash probe-rs "command:Choose the probe;probewait;text:Basys 3;key:Return;probewait;flashdump"
+got=$(printf '%s' "$got" | tail -1)
+check "a board loaded through Vivado, chosen again: Vivado kept" 'proj: tool vivado | board basys3 | cable  | interface  | target  | device  | address 0x0 | bitstream '
+printf '{"configurations": [{"name": "proj", "program": "build/proj", "board": {"flash": "vivado"}}]}\n' >"$P/.blit/run.json"
+scan=basys3 detect=basys3
+flash probe-rs "command:Choose the probe;probewait;text:Basys 3;key:Return;probewait;flashdump"
+got=$(printf '%s' "$got" | tail -1)
+check "(Vivado named alone: kept, as an object)" 'proj: tool vivado | board basys3 | cable  | interface  | target  | device  | address  | bitstream '
 
 # openFPGALoader's own output with no board (captured on the Mac and on the
 # Linux box): nothing is added; the same with openFPGALoader itself, where

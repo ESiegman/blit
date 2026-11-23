@@ -192,7 +192,7 @@ check "a board in the short forms: probe and serial as strings, flash and debug 
     'esp: probe  F4:12:FA:00:00:01  gdb= | port /dev/cu.usbmodem1101 baud 0 | chip esp32s3 elf build/app.elf svd esp32s3.svd flash esptool debug esp'
 printf '{"configurations": [{"name": "esp", "program": "build/app.elf", "board": {"flash": "avrdude"}}]}\n' >"$B/.blit/run.json"
 got=$(BLIT_USB_ROOT="$U" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$B;frame;builddump" 2>&1 >/dev/null | grep '^blit: ' | tail -1)
-check "a flash tool it does not know: said" 'blit: .blit/run.json: esp'"'"'s board.flash is one of "esptool", "openocd", "probe-rs", "jlink", "openfpgaloader"'
+check "a flash tool it does not know: said" 'blit: .blit/run.json: esp'"'"'s board.flash is one of "esptool", "openocd", "probe-rs", "jlink", "openfpgaloader", "vivado"'
 printf '{"configurations": [{"name": "esp", "program": "build/app.elf", "board": "ttyACM0"}]}\n' >"$B/.blit/run.json"
 got=$(BLIT_USB_ROOT="$U" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$B;frame;builddump" 2>&1 >/dev/null | grep '^blit: ' | tail -1)
 check "a board that is not an object: said" 'blit: .blit/run.json: esp'"'"'s board is an object'

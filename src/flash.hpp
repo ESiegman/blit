@@ -83,6 +83,12 @@ struct FlashPlan {
 FlashPlan flash_plan(const Board& b, const std::string& tool, const std::string& program, const FlashImage& image, FlashMode mode);
 
 
+// Vivado where AMD installs it, on the machine whose paths start with
+// `there` ("" here, "ssh://host" there): the newest version's bin/vivado
+// in /tools/Xilinx or /opt/Xilinx, as that machine's path; "" if none.
+// (A worker's call: folders are listed, there through the agent.)
+std::string vivado_installed(const std::string& there);
+
 // openFPGALoader's cable (-c) for an FTDI chip, by its ids ("0403:6010"):
 // Digilent's (their boards' and cables' product strings say so) or the
 // plain chip's; "" for another.

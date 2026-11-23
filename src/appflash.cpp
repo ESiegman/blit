@@ -92,10 +92,16 @@ std::string esp_args_dir(const std::string& elf) {
     return slash != std::string::npos ? elf.substr(0, slash) : "build";
 }
 
+// An FPGA's programmer (openFPGALoader, Vivado): a bitstream, into SRAM unless its flash is asked for.
+bool fpga_tool(const std::string& tool) {
+    const FlashTool* t = flash_tool(tool);
+    return t && t->kind == "program";
+}
+
 // What a board flashes (a worker's call: files read, here or there).
 bool find_image(const std::string& root, const BuildTask& c, const std::string& tool, FlashImage* img, std::string* why) {
     const Board& b = c.board;
-    if (tool == "openfpgaloader") {
+    if (fpga_tool(tool)) {
         const std::string bit = !b.bitstream.empty() ? b.bitstream : newest_bitstream(root);
         if (bit.empty()) return *why = "No bitstream to load: the board's bitstream, or a .bit the build made", false;
         img->parts.push_back({{}, bit});
@@ -136,7 +142,7 @@ Prepared prepare(const std::string& root, const BuildTask& c, const std::string&
     p.board = root + "\n" + c.name;
     p.row = c.system + "\t" + c.name;
     p.force = force;
-    p.keep = !(tool == "openfpgaloader" && mode != FlashMode::kFpgaFlash);
+    p.keep = !(fpga_tool(tool) && mode != FlashMode::kFpgaFlash);
     std::string host, there;
     split_remote(root, &host, &there);
     // The tool's program, by its path on the machine it runs on.
@@ -144,8 +150,10 @@ Prepared prepare(const std::string& root, const BuildTask& c, const std::string&
     const std::vector<std::string> programs = flash_programs(c.board, tool);
     for (const std::string& name : programs)
         if (program.empty()) program = Engine::which(host, name);
+    // (Vivado, seldom on the PATH unless its settings64.sh was sourced: where AMD installs it.)
+    if (program.empty() && tool == "vivado") program = vivado_installed(host.empty() ? std::string() : root.substr(0, root.size() - there.size()));
     if (program.empty()) {
-        p.why = (programs.empty() ? tool : programs.back()) + " is not on the PATH" + (host.empty() ? std::string() : " on " + host);
+        p.why = (programs.empty() ? tool : programs.back()) + " is not on the PATH" + (host.empty() ? std::string() : " on " + host) + (tool == "vivado" ? " (nor in /tools/Xilinx or /opt/Xilinx)" : "");
         return p;
     }
     FlashImage img;
@@ -211,7 +219,7 @@ void App::flash_board(FlashMode mode, bool force) {
     if (guessed) tool = "esptool";
     if (tool.empty()) return notify(c.name + "'s board has no flash tool, and its probe says none", 1);
     if (!flash_tool(tool)) return notify("No flash tool called " + tool, 1);
-    const bool fpga = tool == "openfpgaloader";
+    const bool fpga = fpga_tool(tool);
     if (mode != FlashMode::kFlash && !fpga) return notify(c.name + "'s board is not an FPGA's (it is flashed with " + tool + ")", 1);
     build_first(std::string(fpga ? "programming " : "flashing ") + c.name, [this, root, c, tool, guessed, mode, force] {
         FlashUi& u = *flashui_;

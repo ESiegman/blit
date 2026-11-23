@@ -22,10 +22,10 @@ namespace blit {
 
 namespace {
 
-enum Engine : u8 { kAnyEngine, kOpenOcd, kEsptool, kProbeRs, kJLink, kOpenFpgaLoader, kPicotool, kEngines };
+enum Engine : u8 { kAnyEngine, kOpenOcd, kEsptool, kProbeRs, kJLink, kOpenFpgaLoader, kPicotool, kVivado, kEngines };
 // Their names, and the program a problem with no file of its own is placed at.
-constexpr std::string_view kEngineName[kEngines] = {"", "OpenOCD", "esptool", "probe-rs", "J-Link", "openFPGALoader", "picotool"};
-constexpr std::string_view kProgram[kEngines] = {"", "openocd", "esptool", "probe-rs", "JLinkExe", "openFPGALoader", "picotool"};
+constexpr std::string_view kEngineName[kEngines] = {"", "OpenOCD", "esptool", "probe-rs", "J-Link", "openFPGALoader", "picotool", "Vivado"};
+constexpr std::string_view kProgram[kEngines] = {"", "openocd", "esptool", "probe-rs", "JLinkExe", "openFPGALoader", "picotool", "vivado"};
 
 enum Kind : u8 {
     kHello,       // the engine names itself: its run begins
@@ -154,6 +154,17 @@ constexpr Shape kShapes[] = {
     {kPicotool, kOk, "OK", "$", "", true},
     {kPicotool, kFailedHere, "ERROR: ", "", "", true},
     {kPicotool, kFailedLine, "No accessible RP-series devices in BOOTSEL mode were found.", "$", ""},
+    // Vivado 2026.2's hardware manager in batch mode, as it printed it on
+    // the lab box loading the owner's Basys 3 (2026-11-23): no percent, a
+    // line as each step begins, the DONE pin's state after the load; a
+    // failure "ERROR: [Labtools 27-2149] File top.bit not found. ...", whose
+    // "[...]" is left out of the problem.
+    {kVivado, kHello, "****** Vivado v", "", ""},
+    {kVivado, kStage, "INFO: [Labtools 27-2285] Connecting to hw_server", "", "Connect"},
+    {kVivado, kStage, "INFO: [Labtoolstcl 44-466] Opening hw_target ", "", "Load"},
+    {kVivado, kDone, "INFO: [Labtools 27-3164] End of startup status: HIGH", "$", "Load"},
+    {kVivado, kFailedLine, "INFO: [Labtools 27-3164] End of startup status: LOW", "$", ""},
+    {kVivado, kFailedHere, "ERROR: ", "", "", true},
 };
 
 // The first characters the shapes start with: any other line is none of them.
@@ -171,7 +182,7 @@ struct Named {
 };
 constexpr Named kNamed[] = {
     {kOpenOcd, "openocd"}, {kOpenOcd, "openocd-esp32"}, {kEsptool, "esptool"}, {kEsptool, "esptool.py"}, {kProbeRs, "probe-rs"}, {kProbeRs, "cargo-flash"},
-    {kJLink, "JLinkExe"}, {kJLink, "JLink.exe"}, {kOpenFpgaLoader, "openFPGALoader"}, {kPicotool, "picotool"},
+    {kJLink, "JLinkExe"}, {kJLink, "JLink.exe"}, {kOpenFpgaLoader, "openFPGALoader"}, {kPicotool, "picotool"}, {kVivado, "vivado"},
 };
 
 // The first characters of a command make echoes that could be one of them:
@@ -455,7 +466,13 @@ bool BuildScan::progress_line(std::string_view text, bool unfinished) {
         case kFlash: prog_flash_ = true; break;
         case kError: prog_error_ = std::string(trim(line.substr(after))); return false;  // (others may read it too)
         case kFailed: fail(line); break;
-        case kFailedHere: fail(line.substr(after)); break;
+        case kFailedHere: {
+            std::string_view m = line.substr(after);
+            if (engine_ == kVivado && m.starts_with('['))  // ("[Labtools 27-2149] File top.bit not found.": the message alone)
+                if (const size_t close = m.find("] "); close != std::string_view::npos) m.remove_prefix(close + 2);
+            fail(m);
+            break;
+        }
         case kFailedLine: fail(line); break;
     }
     progress_changed();

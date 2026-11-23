@@ -1,9 +1,11 @@
 #include "flash.hpp"
 
 #include <algorithm>
+#include <cctype>
 #include <cstdio>
 #include <cstdlib>
 
+#include "fsio.hpp"
 #include "json.hpp"
 
 namespace blit {
@@ -47,12 +49,46 @@ constexpr FlashTool kTools[] = {
     // terminal its bar is a whole line for each step (src/progressBar.cpp
     // lines 20 and 58), each flushed (src/display.cpp).
     {"openfpgaloader", {"openFPGALoader", ""}, kPipe, "program", {"-b ${board}", "-c ${cable}", "--usb-serial-num ${serial}", "${write}", "${image}"}},
+    // AMD Vivado in batch mode with a Tcl file of its hardware manager's
+    // commands (kVivadoScript; -mode batch, -nojournal, -nolog, -notrace,
+    // -source): into the FPGA's SRAM. A pipe: it draws nothing in place
+    // (2026.2 on the lab box, loading the owner's Basys 3, 2026-11-23). It
+    // starts hw_server, which lets the cable go 20 s after (its -I20).
+    {"vivado", {"vivado", ""}, kPipe, "program", {"-mode batch", "-nojournal", "-nolog", "-notrace", "-source ${script}"}},
 };
 
 // J-Link Commander's command file, a line each (SEGGER's wiki, "J-Link
 // Commander": Device, SelectInterface, Speed, Connect, LoadFile, Reset, Go,
 // Exit).
 constexpr std::string_view kJLinkScript[] = {"device ${device}", "si ${si}", "speed ${speed}", "connect", "loadfile ${image}", "r", "g", "exit"};
+
+// Vivado's: the hardware manager, the cable whose name has the probe's
+// serial number (Digilent's are "localhost:3121/xilinx_tcf/Digilent/SERIAL"
+// and a letter), the device whose part begins the board's chip (its PART is
+// "xc7a35t" for an "xc7a35tcpg236-1"; else the first of AMD's), the
+// bitstream into it (UG835: open_hw_target, get_hw_targets, get_hw_devices
+// -filter, program_hw_devices). A failing command ends the run with an
+// "ERROR: [...]" line and exit status 1; the script's own failure (no such
+// device: Tcl's error would print its message bare) says ERROR so too.
+constexpr std::string_view kVivadoScript[] = {
+    "open_hw_manager",
+    "connect_hw_server -allow_non_jtag",
+    "open_hw_target [lindex [get_hw_targets ${target}] 0]",
+    "set d [lindex [get_hw_devices -filter {PART =~ x*}] 0]",
+    "foreach h [get_hw_devices] {if {[string match [get_property PART $h]* ${chip}]} {set d $h}}",
+    "if {[string match [get_property PART $d]* ${chip}] == 0} {puts {ERROR: No device on the cable is a ${chip}}; exit 1}",
+    "current_hw_device $d",
+    "set_property PROGRAM.FILE ${image} [current_hw_device]",
+    "program_hw_devices [current_hw_device]",
+    "close_hw_target",
+    "disconnect_hw_server",
+    "close_hw_manager",
+};
+
+// Where AMD installs Vivado when it is not on the PATH: FOLDER/VERSION/
+// Vivado/bin/vivado (2025.1 on, as on the lab box), FOLDER/Vivado/VERSION/
+// bin/vivado (before). BLIT_VIVADO_HOMES, a list split by ':', for the tests.
+constexpr std::string_view kVivadoHomes[] = {"/tools/Xilinx", "/opt/Xilinx"};
 
 // The tool a probe's kind is flashed with, when the board says none.
 constexpr std::pair<std::string_view, std::string_view> kKindTool[] = {
@@ -279,9 +315,10 @@ FlashPlan flash_plan(const Board& b, const std::string& tool_name, const std::st
     if (!tool) return plan.why = "No flash tool called " + tool_name, plan;
     plan.kind = std::string(tool->kind);
     plan.transport = tool->transport;
-    const bool fpga = tool_name == "openfpgaloader";
+    const bool fpga = tool->kind == "program";
     if (fpga && mode == FlashMode::kFlash) mode = FlashMode::kSram;
-    if (!fpga && mode != FlashMode::kFlash) return plan.why = "The board is not an FPGA's (its flash tool is " + tool_name + ", not openFPGALoader)", plan;
+    if (!fpga && mode != FlashMode::kFlash) return plan.why = "The board is not an FPGA's (its flash tool is " + tool_name + ")", plan;
+    if (tool_name == "vivado" && mode == FlashMode::kFpgaFlash) return plan.why = "Vivado here loads the FPGA's SRAM only: its flash through openFPGALoader (flash.tool)", plan;
     if (image.parts.empty()) return plan.why = "Nothing to flash", plan;
     const FlashImage::Part& first = image.parts.front();
     const std::string chip = !b.chip.empty() ? b.chip : image.chip;
@@ -335,6 +372,15 @@ FlashPlan flash_plan(const Board& b, const std::string& tool_name, const std::st
             if (expand(l, lines, &line)) script.push_back(line);
         vars = {{"serial", word(b.probe)}, {"script", "\"$f\""}};
         same += "|" + device;
+    } else if (tool_name == "vivado") {
+        if (image.parts.size() > 1) return plan.why = "Vivado loads one bitstream", plan;
+        const std::string part = !b.flash_device.empty() ? b.flash_device : chip;
+        const Vars lines = {{"target", b.probe.empty() ? "*" : tcl_word("*/" + b.probe + "*")}, {"chip", tcl_word(lower(part))}, {"image", tcl_word(first.path)}};
+        std::string line;
+        for (const std::string_view l : kVivadoScript)
+            if (expand(l, lines, &line)) script.push_back(line);
+        vars = {{"script", "\"$f\""}};
+        same += "|" + lower(part);
     } else if (fpga) {
         if (image.parts.size() > 1) return plan.why = "openFPGALoader loads one bitstream", plan;
         const std::string cable = b.flash_board.empty() ? ofl_cable_for(b) : std::string();
@@ -349,7 +395,7 @@ FlashPlan flash_plan(const Board& b, const std::string& tool_name, const std::st
     std::string cmd = sh_word(program), part;
     for (const std::string_view p : tool->parts)
         if (!p.empty() && expand(p, vars, &part) && !part.empty()) cmd += " " + part;
-    if (!script.empty()) {  // (J-Link's command file, made for the run and gone after)
+    if (!script.empty()) {  // (J-Link's command file, Vivado's Tcl, made for the run and gone after)
         std::string lines;
         for (const std::string& l : script) lines += " " + sh_word(l);
         cmd = "f=$(mktemp) && printf '%s\\n'" + lines + " >\"$f\" && " + cmd + "; s=$?; rm -f \"$f\"; exit $s";
@@ -358,6 +404,40 @@ FlashPlan flash_plan(const Board& b, const std::string& tool_name, const std::st
         cmd = "exec 3>&1; s=$( { { " + cmd + " 2>&1 3>&- 4>&-; echo $? >&4; } | cat >&3; } 4>&1 ); exit $s";
     plan.command = std::move(cmd);
     return plan;
+}
+
+std::string vivado_installed(const std::string& there) {
+    std::vector<std::string> homes;
+    if (const char* e = std::getenv("BLIT_VIVADO_HOMES"); e && *e) {
+        for (std::string_view l = e; !l.empty();) {
+            const size_t colon = l.find(':');
+            if (!l.substr(0, colon).empty()) homes.emplace_back(l.substr(0, colon));
+            l = colon == std::string_view::npos ? std::string_view{} : l.substr(colon + 1);
+        }
+    } else {
+        for (const std::string_view h : kVivadoHomes) homes.emplace_back(h);
+    }
+    // (A version's name: "2026.2", compared as numbers.)
+    auto version = [](const std::string& n) {
+        char* end = nullptr;
+        const double v = std::strtod(n.c_str(), &end);
+        return !n.empty() && std::isdigit(static_cast<unsigned char>(n[0])) && end && *end == '\0' ? v : -1.0;
+    };
+    std::string best;
+    double best_v = -1;
+    auto consider = [&](const std::string& path, double v) {
+        if (v > best_v && fs_kind(there + path) == 1) best = path, best_v = v;
+    };
+    for (const std::string& h : homes) {
+        for (const FsEntry& e : fs_list(there + h)) {
+            if (!e.dir) continue;
+            if (const double v = version(e.name); v >= 0) consider(h + "/" + e.name + "/Vivado/bin/vivado", v);
+            if (e.name == "Vivado")
+                for (const FsEntry& w : fs_list(there + h + "/Vivado"))
+                    if (const double v = version(w.name); w.dir && v >= 0) consider(h + "/Vivado/" + w.name + "/bin/vivado", v);
+        }
+    }
+    return best;
 }
 
 std::string ofl_ftdi_cable(std::string_view usb, bool digilent) {

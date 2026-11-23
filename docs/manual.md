@@ -2862,8 +2862,9 @@ A task that flashes a board or programs an FPGA shows how far it has got
 while it runs, read from the tool's output as it comes, the bar it is
 redrawing in place included: OpenOCD's `program` (and Espressif's
 `program_esp`), probe-rs's download, J-Link Commander's `loadfile`,
-esptool's write-flash, openFPGALoader's loads into SRAM and flash, and
-picotool's `load`. The Run button reads the stage under way, its percent
+esptool's write-flash (each file of ESP-IDF's under way again from 0%),
+openFPGALoader's loads into SRAM and flash, picotool's `load`, and
+Vivado's hardware manager (its steps: `Connect ✓ · Load`). The Run button reads the stage under way, its percent
 and the bytes where the tool prints them (`■ Program 62% 12.0/22.0 KB`;
 a click still stops it), and the task's row the stages done before it
 (`Erase ✓ · Program 62% 25.0 KB`); both are drawn again only when the
@@ -3286,6 +3287,7 @@ project is on, and blit says so when it is not there:
 | probe-rs | `probe-rs download --chip CHIP --probe VID:PID:SERIAL --non-interactive --verify --reset build/fw.elf` (a `.bin` with `--binary-format bin --base-address ADDRESS`) |
 | J-Link | `JLinkExe -NoGui 1 -ExitOnError 1 -USB SERIAL -CommandFile FILE`, the file made for the run: `device CHIP`, `si SWD`, `speed 4000`, `connect`, `loadfile build/fw.elf`, `r`, `g`, `exit` (loadfile reads back what it wrote) |
 | openFPGALoader | `openFPGALoader -b basys3 --usb-serial-num SERIAL build/top.bit` (or `-c digilent`), into SRAM; `-f --verify` for the FPGA's flash |
+| Vivado (`"flash": "vivado"`) | `vivado -mode batch -nojournal -nolog -notrace -source FILE`, the file made for the run: the hardware manager, the cable whose name has the probe's serial number, the device whose part begins the board's `chip` (`xc7a35t` for `xc7a35tcpg236-1`; else the first of AMD's), `program_hw_devices` with the bitstream; into SRAM only |
 
 What is written is the board's `elf` (else the configuration's
 `program`); for an ESP-IDF project (esptool, or OpenOCD for an ESP32),
@@ -3294,7 +3296,15 @@ ELF (else in `build/`), with its flash options and chip; a `.bin` goes to
 the flash object's `address`. An FPGA's is the board's `bitstream`, else
 the newest `.bit` under the folder (else the newest `.bin`).
 
-OpenOCD's, esptool's and openFPGALoader's output reaches the terminal
+Vivado, when it is not on the PATH (its `settings64.sh` not sourced),
+is looked for where AMD installs it, the newest version there:
+`/tools/Xilinx/VERSION/Vivado/bin/vivado` (2025.1 on) or
+`/tools/Xilinx/Vivado/VERSION/bin/vivado` (before), and the same under
+`/opt/Xilinx`. It starts AMD's `hw_server`, which keeps the cable for 20
+seconds after it ends: openFPGALoader cannot use it until then. Choosing
+the board again in the probe picker keeps a board set to Vivado so.
+
+OpenOCD's, esptool's, openFPGALoader's and Vivado's output reaches the terminal
 through a pipe, where each prints a line for each step; probe-rs (whose
 bars are not drawn at all when its output is not a terminal) and J-Link
 Commander are given the terminal itself.

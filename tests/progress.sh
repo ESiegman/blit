@@ -47,6 +47,7 @@ blit.build.add("Flash", {detect = function() return true end, tasks = {
   {name = "J-Link", cmd = "$B/JLinkExe -device STM32F411RE -if SWD -speed 4000 -autoconnect 1 -CommandFile flash.jlink"},
   {name = "openFPGALoader", cmd = "$B/openFPGALoader -b basys3 top.bit"},
   {name = "picotool", cmd = "$B/picotool load -v -x app.uf2"},
+  {name = "Vivado", cmd = "$B/vivado -mode batch -nojournal -nolog -notrace -source load.tcl"},
   {name = "make", cmd = "make flash"},
   {name = "plain", cmd = "$B/plain"},
 }})
@@ -91,6 +92,7 @@ button: ▶ esptool · Flashed 170.5 KB in 8.8 s, verified | row: done · Flashe
 problems: 0
 EOF
 check "esptool v5 on a pipe: the same" "$expected"
+
 
 # esptool v4: "Writing at 0x00010000... (50 %)" after a \r, no newline.
 timed='&'
@@ -217,6 +219,30 @@ problems: 1
 E picotool:1 No accessible RP-series devices in BOOTSEL mode were found.
 EOF
 check "picotool with no board" "$expected"
+
+# Vivado's hardware manager: its steps (no percent), the load done when the
+# DONE pin is high; a failure the ERROR line's message, without its id.
+flash Vivado vivado vivado "progresswait:Load;progressdump;$end"
+want <<'EOF'
+button: ■ Load | row: Connect ✓ · Load
+button: ▶ Vivado · Loaded into SRAM in N s | row: done · Loaded into SRAM in N s
+problems: 0
+EOF
+check "Vivado: connecting, loading, the summary" "$expected"
+flash Vivado vivado vivado-fail "$end"
+want <<'EOF'
+button: ▶ Vivado · 1 error · stopped in Load | row: failed: exited with code 1 · stopped in Load
+problems: 1
+E vivado:1 File missing.bit not found. Check file name and file permissions.
+EOF
+check "Vivado with no bitstream" "$expected"
+flash Vivado vivado vivado-notarget "$end"
+want <<'EOF'
+button: ▶ Vivado · 1 error · stopped in Connect | row: failed: exited with code 1 · stopped in Connect
+problems: 1
+E vivado:1 No matching targets found on connected servers: localhost
+EOF
+check "Vivado with no board on the cable asked for" "$expected"
 
 # The real openFPGALoader, where it is installed, with no board plugged in
 # (skipped where it is not, or where one answers).

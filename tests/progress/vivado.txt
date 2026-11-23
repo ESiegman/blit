@@ -1,0 +1,42 @@
+# Vivado 2026.2 in batch mode loading a bitstream into the FPGA's SRAM
+# (blit's Tcl file: open_hw_target, program_hw_devices), with its output on
+# a pipe, as it really printed it: the owner's Basys 3 on the Arch Linux lab
+# box, 2026-11-23.
+@pace 5
+Warning: OS 'arch' is not a recognized/supported host OS.
+INFO: [Common 17-3922] A valid Vivado Design Suite BASIC license has been detected. Your current license is active and will expire on 23-nov-2027.
+
+****** Vivado v2026.2 (64-bit)
+  **** SW Build 6713330 on Sat Nov 07 07:29:37 UTC 2026
+  **** IP Build 6713107 on Fri Nov 06 12:30:50 MST 2026
+  **** SharedData Build 6713030 on Mon Nov 09 13:08:47 MST 2026
+  **** Start of session at: Mon Nov 23 12:40:20 2026
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source ok.tcl -notrace
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-2222] Launching hw_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+****** Xilinx hw_server v2026.2
+  **** Build date : Oct 21 2026 at 22:26:11
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+
+
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:0
+INFO: [Labtools 27-3417] Launching cs_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+****** Xilinx cs_server v2026.2
+  **** Build Info : #35 | 2026-11-05 16:16 UTC | b72e8c0
+    ** Copyright 2017-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Digilent/210183BF7C78A
+@hold a
+INFO: [Labtools 27-3164] End of startup status: HIGH
+INFO: [Labtoolstcl 44-464] Closing hw_target localhost:3121/xilinx_tcf/Digilent/210183BF7C78A
+INFO: [Common 17-206] Exiting Vivado at Mon Nov 23 12:40:24 2026...
