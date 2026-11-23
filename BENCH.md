@@ -3273,6 +3273,29 @@ before it (31f4873):
 Each moved by as much as the runs move among themselves, either way; none
 by more.
 
+### Round 74: milestone 5a's second half, flashing and FPGA programming
+
+Flashing the board from a table of tools with "only if changed", the
+Boards view (openFPGALoader's boards and cables in the probe picker),
+"Flash the board" on `gB` and Cmd+Ctrl+B, and, found while putting them
+together, the start screen passing the application's chords on and a
+flash waiting for the folder's run configurations. On a key's path: one
+more lookup of the key in the commands' chords on the start screen and in
+a terminal sending keys to its program; on a frame's path: the probe
+picker's Boards rows, drawn only while it is open. Turn about, five
+rounds, 2560x1600, against the first half (de28542):
+
+| | Before | After |
+|---|---:|---:|
+| Scrolling real-200k, everything on: frames a second / CPU p50 / layout p50 | 15,573 / 56.71 µs / 2.21 µs | 16,452 / 56.83 µs / 2.21 µs |
+| Typing, everything on: the same, and the step | 16,371 / 49.46 µs / 3.71 µs / 2.50 µs | 18,152 / 49.50 µs / 3.71 µs / 2.38 µs |
+| Scrolling code-100m.txt, plain: the same | 17,610 / 51.71 µs / 0.88 µs | 18,251 / 51.67 µs / 0.96 µs |
+| Keys, plain: the same, and the step | 17,838 / 48.58 µs / 1.25 µs / 0.29 µs | 17,719 / 48.50 µs / 1.25 µs / 0.29 µs |
+
+The first run of this had one slow round on each side (a background job
+on the machine); run again, each moved by as much as the runs move among
+themselves, either way; none by more.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
