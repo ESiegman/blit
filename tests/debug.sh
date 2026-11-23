@@ -860,6 +860,17 @@ EOF
     XDG_DATA_HOME="$dir/data" BLIT_DEBUGPY_URL="$dir/debugpy.whl"
     got=$(printf '%s' "$got" | sed -e "s/Could not open file/Couldn't open file/")  # (curl's own words: the Mac's 8.7 says "Couldn't", Arch's 8.23 "Could not")
     check "blit's copy could not be had: why" "blit: Getting debugpy… ;; idle error: debugpy is not installed for .venv/bin/python, and blit's copy could not be had: could not fetch file://@/no-such.whl: curl: (37) Couldn't open file @/no-such.whl"
+    # No curl to fetch it with: that said.
+    nocurl="$dir/nocurl"
+    mkdir -p "$nocurl"
+    ln -s /usr/bin/* /bin/* "$nocurl/" 2>/dev/null
+    rm -f "$nocurl/curl"
+    was=$PATH
+    PATH=$nocurl XDG_DATA_HOME="$dir/data-none2"
+    run "workdir:$Y;debug:program=$Y/scripts/one.py;key:F5;debugwait:idle;debugdump" "$Y/scripts/one.py"
+    PATH=$was XDG_DATA_HOME="$dir/data"
+    case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+    check "no curl to fetch blit's copy with: said" "blit: Getting debugpy… ;; idle error: debugpy is not installed for .venv/bin/python, and blit's copy could not be had: could not fetch file://@/debugpy.whl: curl is not installed on $this"
 fi
 if command -v python3 >/dev/null 2>&1 && [ -x "$fakedap" ]; then
     # A venv's Python with no debugpy: blit's copy fetched (the wheel kept,

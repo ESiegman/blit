@@ -174,8 +174,9 @@ for m in z.namelist():
 )py";
 
 // A program run here in `dir` (found on the PATH), what it printed
-// collected (its errors too, with `errors`); its exit status, or -1 if it
-// could not be run or took longer than `ms`.
+// collected (its errors too, with `errors`: one not on the PATH, that it is
+// not installed); its exit status, or -1 if it could not be run or took
+// longer than `ms`.
 int run_here(const std::vector<std::string>& argv, const std::string& dir, std::string* out, int ms, bool errors = false) {
     out->clear();
     int pipe_out[2];
@@ -213,6 +214,7 @@ int run_here(const std::vector<std::string>& argv, const std::string& dir, std::
     ::close(pipe_out[1]);
     if (rc != 0) {
         ::close(pipe_out[0]);
+        if (errors && rc == ENOENT && argv[0].find('/') == std::string::npos) *out = not_installed(argv[0], {});  // (why, said as its errors would be)
         return -1;
     }
     const u64 until = now_ns() + static_cast<u64>(ms) * 1'000'000;
