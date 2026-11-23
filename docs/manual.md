@@ -4609,7 +4609,9 @@ does not finish and takes all the memory the machine has.
   `blit.opt.timeline.max_mb` (2048 MB): past that, reading stops, keeps
   what it read, and says how far into the run it got.
 - The wave tab: VCD only (not FST yet); a dump is not read again when its
-  file changes; one on another machine larger than 4 MB is not shown; a
+  file changes; one on another machine is fetched here whole, in parts
+  with its progress on the bottom row (where a click stops it), up to
+  `blit.opt.wave.remote_fetch_mb` (512 MB), and a larger one is not shown; a
   bus wider than 64 bits has no fixed point, float or names of values
   (hex); analog rows, colours a row and `*` `#` (the next time a row has
   the value under the cursor) are not there yet.

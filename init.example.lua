@@ -228,6 +228,7 @@
 
 ---------------------------------------------------------------- waves and timelines
 -- blit.opt.timeline.max_mb = 2048  -- the memory a dump's waves may take: reading one stops there, and says how far it got
+-- blit.opt.wave.remote_fetch_mb = 512  -- a dump on another machine up to this is fetched in parts and read here; a larger one is not shown
 
 ---------------------------------------------------------------- updates
 -- blit.opt.updates.check = true   -- at the start, once a day: a newer release offered (blit.app and the AppImage install it)

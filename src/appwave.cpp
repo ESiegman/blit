@@ -46,7 +46,6 @@ constexpr u32 kWaveEvent = 60;                 // (the SDL user event's code: a 
 constexpr size_t kTileBudget = 128ull << 20;   // the tiles kept on the GPU, at most (the least lately drawn let go first)
 constexpr double kMostZoom = 1.0 / 64;         // time a device pixel, at the closest: 64 pixels a unit
 constexpr size_t kUndo = 100;                  // changes to the rows that u can undo
-constexpr u64 kRemoteWhole = 4ull << 20;       // another machine's dump fetched whole up to this (the largest reply)
 constexpr u32 kRulerRows = 2, kBottomRows = 1;
 
 constexpr Ink kMarkInk{kInkDiagnostic + 3, 0};  // markers and their deltas (the hints' ink: apart from the cursor's accent)
@@ -377,15 +376,18 @@ namespace {
 // Another machine's dump, as the load reads it. Fetched whole while it is
 // no larger than one reply may be; the agent's reads in parts (kReadAt,
 // with progress) plug in here for larger ones.
-WaveLoad::ReadAt remote_read_at(const std::string& path, std::stop_token stop, std::shared_ptr<std::string> why) {
+// Another machine's dump: fetched whole on the load's first read, in
+// parts of about 1 MB (fs_read_range: other traffic between them, its
+// progress on the bottom row, where a click stops it), up to most bytes.
+WaveLoad::ReadAt remote_read_at(const std::string& path, std::stop_token stop, std::shared_ptr<std::string> why, u64 most) {
     auto bytes = std::make_shared<std::string>();
     auto fetched = std::make_shared<bool>(false);
-    return [path, stop, why, bytes, fetched](u64 offset, char* buf, size_t len) -> i64 {
+    return [path, stop, why, bytes, fetched, most](u64 offset, char* buf, size_t len) -> i64 {
         if (!*fetched) {
             *fetched = true;
             std::string err;
-            if (!fs_read_whole(path, bytes.get(), &err, kRemoteWhole, stop)) {
-                *why = err.find("too big") != std::string::npos ? "waves larger than 4 MB on another machine are not shown yet" : err;
+            if (!fs_read_range(path, 0, ~0ull, most, bytes.get(), &err, stop)) {
+                *why = err.starts_with("the file is too big") ? "waves larger than " + std::to_string(most >> 20) + " MB on another machine are not shown (wave.remote_fetch_mb)" : err;
                 errno = EIO;
                 return -1;
             }
@@ -418,7 +420,7 @@ bool App::wave_open(const std::string& full) {
     waves_->post({fresh->id, v->view_path, {}, false});
     const u64 most = static_cast<u64>(cfg_.timeline_max_mb) << 20;
     if (is_remote(full)) {
-        v->load = std::make_unique<WaveLoad>(v->wave, remote_read_at(full, v->fetch_stop.get_token(), v->fetch_error), 0, most, wake);
+        v->load = std::make_unique<WaveLoad>(v->wave, remote_read_at(full, v->fetch_stop.get_token(), v->fetch_error, static_cast<u64>(cfg_.wave_remote_fetch_mb) << 20), 0, most, wake);
     } else {
         WaveLoad::ReadAt read_at;
         u64 size = 0;

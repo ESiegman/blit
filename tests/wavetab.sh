@@ -295,8 +295,9 @@ fi
 run 1600x900 "frame;wavewait;wavedump" "$W/none.vcd"
 check "a dump that is not there" "none.vcd: cannot show it: No such file or directory"
 
-# On another machine: fetched whole (no larger than a reply may be), and
-# one larger, which is not shown yet.
+# On another machine: fetched whole, in parts (a 5 MB one too, as the
+# reply may be no larger than 1 MB), and one larger than
+# wave.remote_fetch_mb, which is not shown.
 T="$dir/fake"
 mkdir -p "$T/work"
 cp "$here/wave/verilator.vcd" "$T/work/"
@@ -307,7 +308,11 @@ run 1600x900 "remotewait;frame;wavewait;wavedump" "ssh://box$T/work/verilator.vc
 got=$(printf '%s' "$got" | sed -e 's/ ;; .*//')
 check "another machine's dump, fetched whole" "verilator.vcd: read, cursor 0 ps, view 0 ps to 2.772 us"
 run 1600x900 "remotewait;frame;wavewait;wavedump" "ssh://box$T/work/large.vcd"
-check "another machine's dump over 4 MB" "large.vcd: cannot show it: waves larger than 4 MB on another machine are not shown yet"
+got=$(printf '%s' "$got" | sed -e 's/ ;; .*//')
+check "another machine's dump over 4 MB, fetched in parts" "large.vcd: read, cursor 0 ns, view 0 ns to 4.99999 ms"
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.wave.remote_fetch_mb = 1\n' >"$dir/fetch1.lua"
+got=$(BLIT_INIT="$dir/fetch1.lua" "$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "remotewait;frame;wavewait;wavedump" "ssh://box$T/work/large.vcd" 2>&1 >/dev/null | grep '^large.vcd')
+check "one over wave.remote_fetch_mb: not shown, and why" "large.vcd: cannot show it: waves larger than 1 MB on another machine are not shown (wave.remote_fetch_mb)"
 
 [ $failed = 0 ] && echo "wavetab ok"
 exit $failed
