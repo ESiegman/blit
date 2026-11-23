@@ -2642,7 +2642,8 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
         if (!probe.empty()) r.after = b.port;
     }
     add(DebugUi::kNone, 0, "");
-    if (!u.error.empty()) add(DebugUi::kNone, 0, u.error, ink::kError);
+    if (!u.error.empty())  // (all of it, on as many rows as it takes: its end is often the machine it is about)
+        for (std::string& line : wrap_words(u.error, cols)) add(DebugUi::kNone, 0, std::move(line), ink::kError);
     // The controls, each with its key; starting (or going on) is the button.
     auto control = [&](DebugUi::Act act, const char* mark, const char* label, const char* key, Ink in = ink::kText) {
         Row& r = add(act, 0, label, in);

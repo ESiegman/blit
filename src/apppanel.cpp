@@ -1633,16 +1633,9 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
                 if (!pr.empty() || width_of(said) <= cols) {
                     put(box, font, 1, 0, fit_text(said, cols), ink::kError);
                 } else {
-                    std::string line;
                     u32 r = 1;
-                    for (std::string_view text = said; !text.empty() && r < rows;) {
-                        const size_t space = text.find(' ');
-                        const std::string_view word = text.substr(0, space);
-                        text = space == std::string_view::npos ? std::string_view{} : text.substr(space + 1);
-                        if (!line.empty() && width_of(line) + 1 + width_of(word) > cols) put(box, font, r++, 0, line, ink::kError), line.clear();
-                        line += (line.empty() ? "" : " ") + fit_text(word, cols);
-                    }
-                    if (r < rows) put(box, font, r, 0, line, ink::kError);
+                    for (const std::string& line : wrap_words(said, cols))
+                        if (r < rows) put(box, font, r++, 0, line, ink::kError);
                 }
             } else if (bp.empty()) {
                 lsp_heading(1);

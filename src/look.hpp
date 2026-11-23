@@ -18,6 +18,7 @@
 #include <string>
 #include <string_view>
 #include <utility>
+#include <vector>
 
 #include "font.hpp"
 #include "grid.hpp"
@@ -73,5 +74,8 @@ u32 put_hints(TextBox& box, Font& font, u32 row, u32 col, std::span<const Hint> 
 // Text cut to at most `cols` columns, an ellipsis at the end where it was
 // cut ("render.c…"), or at the start for a path ("…/blit/src").
 std::string fit_text(std::string_view s, u32 cols, bool path = false);
+// Text in lines of at most `cols` columns, broken between words (a word
+// longer than a line cut as fit_text cuts it).
+std::vector<std::string> wrap_words(std::string_view text, u32 cols);
 
 }  // namespace blit
