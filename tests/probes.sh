@@ -29,6 +29,15 @@ T="$dir/there"
 mkdir -p "$T"
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/init.lua"
 export BLIT_INIT="$dir/init.lua" BLIT_RECENT_FILE="$dir/recent" BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T"
+# openFPGALoader, which the picker asks for the boards on an FTDI chip: a
+# stand-in that finds none, so that a real one (and a real board plugged
+# into this machine) is not asked.
+mkdir -p "$dir/bin"
+printf '#!/bin/sh
+exit 0
+' >"$dir/bin/openFPGALoader"
+chmod +x "$dir/bin/openFPGALoader"
+export PATH="$dir/bin:$PATH"
 
 # dev ROOT NAME VID PID CLASS MANUFACTURER PRODUCT SERIAL: a device's folder.
 dev() {
