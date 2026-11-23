@@ -2017,10 +2017,12 @@ it first:
 ```
 
 The host is anything `ssh` itself takes (a name from `~/.ssh/config`, or
-`user@host`). From the start screen, `r` (Connect to a server…) opens the
-box that chooses a folder at `ssh://`, which lists the hosts
-`~/.ssh/config` names; one it does not name is typed (`ssh://me@devbox`)
-and offered as it is. Going into a host (Enter or Tab) connects and lists
+`user@host`). With no `ssh` on this machine (no `docker`, for a
+container), the status bar says so where it would name the host. From
+the start screen, `r` (Connect to a server…) opens the box that chooses
+a folder at `ssh://`, which lists the hosts `~/.ssh/config` names; one
+it does not name is typed (`ssh://me@devbox`) and offered as it is.
+Going into a host (Enter or Tab) connects and lists
 its home folder, and Enter on its first row ("this folder") works there. In that box, and
 in the one that opens files, `ssh://` typed anywhere starts the path again
 there, and `~` is the home folder on the other machine.

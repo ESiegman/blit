@@ -306,7 +306,10 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                         s.in = ink::kMuted;
                         s.action = kReconnect;
                     } else if (st == Remote::kFailed) {
-                        s.text = icon + host + (r->stopped() ? ": agent stopped (connect again)" : ": not connected (connect again)");
+                        const std::string why = r->error();  // (ssh, or docker, not installed here: said, and not "not connected")
+                        s.text = icon + host + (r->stopped()                                      ? ": agent stopped (connect again)"
+                                                : why.find(" is not installed on ") != std::string::npos ? ": " + why
+                                                                                                          : ": not connected (connect again)");
                         s.in = ink::kError;
                         s.action = kReconnect;
                     } else {
