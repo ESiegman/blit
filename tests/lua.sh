@@ -44,10 +44,12 @@ check() {
     fi
 }
 # run SCRIPT: what the run said (messages, without "blit: " and without
-# tracebacks, and dumps), one after another with " ; " between.
+# tracebacks, and dumps), one after another with " ; " between. (Not that
+# a language server for a file is not installed: whether it is depends on
+# the machine; tests/lsp.sh tests that warning.)
 run() {
     got=$("$blit" --offscreen 1000x600 --shot "$dir/shot.bmp" --script "frame;$1" "$W/a.txt" 2>&1 >/dev/null |
-        grep -v -e '^stack traceback:' -e '^	' -e '^guard' | sed -e 's/^blit: //' -e "s#$dir#~#g" | awk 'BEGIN { ORS = "" } NR > 1 { print " ; " } { print }')
+        grep -v -e '^stack traceback:' -e '^	' -e '^guard' -e '^blit: No language server for ' | sed -e 's/^blit: //' -e "s#$dir#~#g" | awk 'BEGIN { ORS = "" } NR > 1 { print " ; " } { print }')
 }
 
 # ---------------------------------------------------------------- settings
