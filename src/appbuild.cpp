@@ -19,6 +19,7 @@
 #include "app.hpp"
 #include "buildread.hpp"
 #include "look.hpp"
+#include "missing.hpp"
 #include "notify.hpp"
 #include "remote.hpp"
 #include "textbox.hpp"
@@ -198,6 +199,7 @@ struct App::BuildUi {
     // machine the listing is a round trip), and what it found.
     struct Listed {
         bool ran = false;  // (else: CMake listed none)
+        std::string missing;  // (none, as cmake is not installed there: said)
         std::vector<std::string> targets;
     };
     std::optional<Listed> listed;  // (mu)
@@ -388,7 +390,9 @@ void App::build_sync() {
     }
     if (l) {
         u.listing = false;
-        if (!l->ran) {
+        if (!l->missing.empty()) {
+            notify(l->missing, 1);
+        } else if (!l->ran) {
             notify("CMake did not list the targets");
         } else {
             find_choose_item("Target", l->targets, [this, targets = l->targets](int i) {
@@ -1373,8 +1377,8 @@ void App::build_option(int row) {
     // One command for both (one round trip on another machine): CMake's
     // help, then, after a form feed, Ninja's own list of what it makes when
     // the help is Ninja's (make would take -t for touch).
-    const std::string sh = "o=$(" + build + " --target help); s=$?; printf '%s\\n\\f\\n' \"$o\"; case \"$o\" in *': phony'*) " + build +
-                           " -- -t targets all;; esac; exit $s";
+    const std::string sh = "command -v cmake >/dev/null 2>&1 || { echo blit-no-cmake; exit 1; }; o=$(" + build +
+                           " --target help); s=$?; printf '%s\\n\\f\\n' \"$o\"; case \"$o\" in *': phony'*) " + build + " -- -t targets all;; esac; exit $s";
     u.listing = true;
     std::thread([wp = std::weak_ptr<BuildUi>(buildui_), root = u.root, sh] {
         std::string out;
@@ -1383,6 +1387,11 @@ void App::build_option(int row) {
         bool said = false;
         l.targets = cmake_targets(out, &said);
         l.ran = ok || said;
+        if (!ok && out.starts_with("blit-no-cmake")) {  // (the shell that would run it found none)
+            std::string host, there;
+            split_remote(root, &host, &there);
+            l.missing = not_installed("cmake", host);
+        }
         const std::shared_ptr<BuildUi> sp = wp.lock();
         if (!sp) return;
         {

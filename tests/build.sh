@@ -383,6 +383,16 @@ if command -v cmake >/dev/null 2>&1; then
     got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$T;frame;key:cmd+shift+u;builddump;frame;key:Up;key:Return;finddump;buildwait;finddump" 2>&1 >/dev/null | tail -2 | tr '\n' '/')
     PATH=$path
     check "a slow listing of the targets: the window not held, the picker opened after" 'closed/pick [] 3 : >all app tool/'
+    # No cmake to list them with (the user's shell keeps the PATH it is
+    # given, which has none): said, not "CMake did not list the targets".
+    case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+    mkdir -p "$dir/bare"
+    ln -s /usr/bin/* /bin/* "$dir/bare/" 2>/dev/null
+    rm -f "$dir/bare/cmake"
+    printf '#!/bin/sh\nshift\nexec /bin/sh -c "$@"\n' >"$dir/plainsh"
+    chmod +x "$dir/plainsh"
+    got=$(SHELL="$dir/plainsh" PATH="$dir/bare" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$T;frame;key:cmd+shift+u;builddump;frame;key:Up;key:Return;buildwait" 2>&1 >/dev/null | tail -1)
+    check "no cmake to list the targets: said" "blit: cmake is not installed on $this"
     # A preset project: the target chosen is built (after the preset's name).
     TP="$dir/types-preset"
     mkdir -p "$TP"
