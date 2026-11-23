@@ -778,9 +778,16 @@ void verilator_fst_test(const Wave& w) {
 // step'th: each is read to its end or stopped, and done, never a crash or
 // a hang. A cut file is said to be cut, or not finished (cut where a block
 // ends), or not an FST file at all; a damaged one may be read as far as
-// libfst could, or said. (libfst writes to stderr about some of them:
-// quietened here. Those it would have ended the process for, or crashed
-// on, or never finished, are counted.)
+// libfst could, or said; and every file libfst opened for it is closed
+// again. (libfst writes to stderr about some of them: quietened here.
+// Those it would have ended the process for, or crashed on, or never
+// finished, are counted.)
+int open_files() {
+    int n = 0;
+    for (int fd = 0; fd < 4096; ++fd) n += ::fcntl(fd, F_GETFD) != -1;
+    return n;
+}
+
 void damaged_fst_test(const std::string& path, const std::string& scratch, const std::string& name, size_t step) {
     const u64 t0 = now_ns();
     const std::string bytes = slurp(path);
@@ -790,6 +797,7 @@ void damaged_fst_test(const std::string& path, const std::string& scratch, const
     std::fflush(stderr);
     const int saved = ::dup(2), null = ::open("/dev/null", O_WRONLY);
     ::dup2(null, 2);
+    const int files = open_files();
     for (size_t len = 0; len < bytes.size(); len += step) {
         write_file(file, std::string_view(bytes).substr(0, len));
         const auto w = read_fst_file(file);
@@ -806,6 +814,7 @@ void damaged_fst_test(const std::string& path, const std::string& scratch, const
             if (!w->done || !w->header) wrong.push_back("byte " + std::to_string(i) + " ^ " + std::to_string(x) + ": not done");
             stopped += w->error.find("libfst stopped reading it") != std::string::npos || w->error.find("libfst could not") != std::string::npos;
         }
+    if (open_files() != files) wrong.push_back(std::to_string(open_files() - files) + " files left open");
     std::fflush(stderr);
     ::dup2(saved, 2);
     ::close(saved);

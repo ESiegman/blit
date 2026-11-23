@@ -22,8 +22,9 @@ extern "C" {
 #include "fstapi.h"
 // Where libfst's own checks go back to on this thread, instead of ending
 // the process (third_party/libfst/config.h); null: nowhere. And the most it
-// may allocate at once.
+// may allocate at once. After it came back: the files it left open closed.
 void blit_fst_catch(std::jmp_buf* to, size_t most);
+void blit_fst_release();
 }
 
 namespace blit {
@@ -97,6 +98,7 @@ bool guarded(size_t most, F&& f) {
     blit_fst_catch(&jump, most);
     if (setjmp(jump) != 0) {
         blit_fst_catch(nullptr, 0);
+        blit_fst_release();
         return false;
     }
     f();
@@ -315,6 +317,9 @@ struct Fst {
         for (;;) {
             fstHier* h = nullptr;
             if (!guarded(most(), [&] { h = fstReaderIterateHier(ctx); })) {
+                // (Its state is not to be trusted, nor closed: its files
+                // are, by guarded; the memory it holds is kept.)
+                ctx = nullptr;
                 wv.error = "the FST file is damaged: libfst could not read its hierarchy";
                 return;
             }
@@ -472,8 +477,7 @@ struct Fst {
         fstReaderIterBlocksSetNativeDoublesOnCallback(ctx, 1);
         piece.reserve(kPiece / sizeof(Change));
         if (!guarded(most(), [&] { fstReaderIterBlocks2(ctx, on_change, on_change_len, this, nullptr); })) {
-            // (Its state is not to be trusted, nor closed: kept, with the
-            // memory it holds.)
+            // (As for the hierarchy.)
             ctx = nullptr;
             piece.clear();
             std::unique_lock lock(wv.mu);

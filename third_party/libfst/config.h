@@ -27,8 +27,10 @@
  * some bytes that fails or that is more than the file could hold (as
  * blit_fst_catch is told: no block of an FST, however it is compressed,
  * comes to more than a few thousand times its size), and a million reads
- * in a row at the end of a file. What libfst had allocated for that file is
- * not freed: a damaged file costs a little memory, not the editor. With no
+ * in a row at the end of a file. The files libfst opened for it are kept
+ * track of, and blit_fst_release closes those still open; what it had
+ * allocated is not freed (its state cannot be trusted to free it): a
+ * damaged file costs a little memory, not the editor. With no
  * blit_fst_catch in force (another program built from these sources) each
  * is as libfst has it.
  */
@@ -45,6 +47,7 @@
 #include <setjmp.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <zlib.h>
 
 static _Thread_local jmp_buf *blit_fst_jump;
 static _Thread_local size_t blit_fst_most;
@@ -58,6 +61,84 @@ void blit_fst_catch(jmp_buf *to, size_t most)
     blit_fst_jump = to;
     blit_fst_most = most;
     blit_fst_eofs = 0;
+}
+
+/* The files (and gzip readers) libfst opens while blit_fst_catch is in
+   force, until it closes them. */
+#define BLIT_FST_FILES 16
+static _Thread_local FILE *blit_fst_files[BLIT_FST_FILES];
+static _Thread_local gzFile blit_fst_gz[BLIT_FST_FILES];
+
+static void blit_fst_keep(void **list, void *p)
+{
+    if (!p || !blit_fst_jump) {
+        return;
+    }
+    for (int i = 0; i < BLIT_FST_FILES; i++) {
+        if (!list[i]) {
+            list[i] = p;
+            return;
+        }
+    }
+}
+
+static void blit_fst_drop(void **list, void *p)
+{
+    for (int i = 0; i < BLIT_FST_FILES; i++) {
+        if (list[i] == p) {
+            list[i] = NULL;
+        }
+    }
+}
+
+static FILE *blit_fst_fopen(const char *name, const char *mode)
+{
+    FILE *f = fopen(name, mode);
+    blit_fst_keep((void **)blit_fst_files, f);
+    return f;
+}
+
+static FILE *blit_fst_tmpfile(void)
+{
+    FILE *f = tmpfile();
+    blit_fst_keep((void **)blit_fst_files, f);
+    return f;
+}
+
+static int blit_fst_fclose(FILE *f)
+{
+    blit_fst_drop((void **)blit_fst_files, f);
+    return fclose(f);
+}
+
+static gzFile blit_fst_gzdopen(int fd, const char *mode)
+{
+    gzFile g = gzdopen(fd, mode);
+    blit_fst_keep((void **)blit_fst_gz, g);
+    return g;
+}
+
+static int blit_fst_gzclose(gzFile g)
+{
+    blit_fst_drop((void **)blit_fst_gz, g);
+    return gzclose(g);
+}
+
+/* After libfst came back to blit_fst_catch's place: the files it left
+   open, closed. */
+void blit_fst_release(void);
+void blit_fst_release(void)
+{
+    for (int i = 0; i < BLIT_FST_FILES; i++) {
+        if (blit_fst_files[i]) {
+            fclose(blit_fst_files[i]);
+            blit_fst_files[i] = NULL;
+        }
+        if (blit_fst_gz[i]) {
+            gzclose(blit_fst_gz[i]);
+            blit_fst_gz[i] = NULL;
+        }
+    }
 }
 
 static _Noreturn void blit_fst_fail(int code)
@@ -121,5 +202,10 @@ static int blit_fst_fgetc(FILE *f)
 #define calloc(n, size) blit_fst_calloc((n), (size))
 #define realloc(p, n) blit_fst_realloc((p), (n))
 #define fgetc(f) blit_fst_fgetc(f)
+#define fopen(name, mode) blit_fst_fopen((name), (mode))
+#define tmpfile() blit_fst_tmpfile()
+#define fclose(f) blit_fst_fclose(f)
+#define gzdopen(fd, mode) blit_fst_gzdopen((fd), (mode))
+#define gzclose(g) blit_fst_gzclose(g)
 
 #endif
