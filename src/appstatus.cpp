@@ -163,9 +163,9 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
     const u32 cols = static_cast<u32>(std::max(1, (w - 2 * pad_x) / cw));
     Doc& d = *pane_->doc;
     const Editor& ed = d.ed;
-    // (A terminal's tab, a profile's, a picture's and a PDF's have no lines
-    // and columns of their own, and nothing for Vim's modes to do.)
-    const bool text = !d.term && !d.prof && !d.image && !d.pdf;
+    // (A terminal's tab, a profile's, a picture's, a PDF's and waves' have no
+    // lines and columns of their own, and nothing for Vim's modes to do.)
+    const bool text = !d.term && !d.prof && !d.image && !d.pdf && !d.wave;
     const bool start = start_shown();  // the start screen, or its New project tab: the project folder and the settings file
     const bool modal = cfg_.modal && text && !start;
     const bool round = l.pill > 0;
@@ -393,7 +393,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
                 if (mine) u.left.push_back({"loading " + how, ink::kMuted, kStopFetch, 2});
                 else if (d.loading) u.left.push_back({"loading\xE2\x80\xA6", ink::kMuted, kNone, 2});
                 else if (remote_saving(d.id)) u.left.push_back({"saving\xE2\x80\xA6", ink::kMuted, kNone, 2});  // (remote_gen_ says when this changes)
-                else if (d.read_only && !d.term && !d.prof && !d.image && !d.pdf) u.left.push_back({"read only", ink::kMuted, kNone, 2});
+                else if (d.read_only && !d.term && !d.prof && !d.image && !d.pdf && !d.wave) u.left.push_back({"read only", ink::kMuted, kNone, 2});
                 else if (ed.modified()) u.left.push_back({font.has(0x25CF) ? "\xE2\x97\x8F" : "*", ink::kAccent, kNone, 1});
                 if (coming && !mine) u.left.push_back({"fetching " + coming->path.substr(coming->path.find_last_of('/') + 1) + " " + how, ink::kMuted, kStopFetch, 2});
             }

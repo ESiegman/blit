@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <cmath>
 #include <cstdio>
 #include <cstdlib>
@@ -501,6 +502,36 @@ struct Bench {
         return 0;
     }
 
+    // The wave tab in front (the file a dump): frames while it zooms (in,
+    // then out, about the middle) or pans, a step a frame, tiles standing in
+    // stretched while workers paint; then how long after one step until
+    // every tile on show is sharp ("wavezoom", "wavepan").
+    int wave(const char* name) {
+        const bool zoom = !std::strcmp(name, "wavezoom");
+        a.wave_wait();
+        if (!zoom)  // (panning in close: about 1/1000 of the run on show)
+            for (int i = 0; i < 60; ++i) a.wave_bench_step(true, 0);
+        frames(name, a.opt_.frames > 0 ? a.opt_.frames : 400, [&](int i) {
+            a.wave_bench_step(zoom, i);
+            a.wave_sync();
+        });
+        Series sharp;
+        for (int i = 0; i < 40; ++i) {
+            a.wave_wait();
+            a.wave_bench_step(zoom, i, true);
+            const u64 t0 = now_ns();
+            a.frame();
+            while (!a.wave_sharp() && now_ns() - t0 < 5'000'000'000ull) {
+                std::this_thread::sleep_for(std::chrono::microseconds(100));
+                a.wave_sync();
+                a.frame();
+            }
+            sharp.add(static_cast<double>(now_ns() - t0) * 1e-6);
+        }
+        std::fprintf(stderr, "%s: a step to every tile sharp, ms: p50 %.2f p99 %.2f max %.2f; %s\n", name, sharp.pct(0.5), sharp.pct(0.99), sharp.pct(1.0), a.wave_dump("tiles:time").c_str());
+        return 0;
+    }
+
     // Real window, no input: an idle editor should draw nothing and burn nothing.
     int idle() {
         if (!a.win_) {
@@ -580,6 +611,7 @@ int App::run_bench() {
     if (!std::strcmp(name, "keypress")) return b.keypress();
     if (!std::strcmp(name, "motionkeys")) return b.motionkeys();
     if (!std::strcmp(name, "idle")) return b.idle();
+    if (!std::strcmp(name, "wavezoom") || !std::strcmp(name, "wavepan")) return b.wave(name);
     std::fprintf(stderr, "unknown benchmark: %s\n", name);
     return 1;
 }
@@ -1433,6 +1465,10 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "page %s at %s\n", arg.c_str(), pdf_page_rect(std::atoi(arg.c_str())).c_str());
         } else if (verb == "pdfclip" || verb == "pdfopened" || verb == "pdfoutline") {  // what Cmd+C copied, the web address a link opened, the outline
             std::fprintf(stderr, "%s\n", pdf_dump_more(verb.substr(3)).c_str());
+        } else if (verb == "wavewait") {  // the dumps read, their views read and their tiles on show painted (20 s at most); wavewait:rows, the tab's rows made
+            wave_wait(arg == "rows");
+        } else if (verb == "wavedump") {  // wavedump[:tiles|:at:ROW,TIME|:clip], the wave tab in front (appwave.cpp says what each prints)
+            std::fprintf(stderr, "%s\n", wave_dump(arg).c_str());
         } else if (verb == "pdftextat") {  // pdftextat:N:TEXT, where TEXT is on page N (its text read): x0,y0,x1,y1 in pixels
             std::fprintf(stderr, "%s at %s\n", arg.c_str(), pdf_dump_more(arg).c_str());
         } else if (verb == "pixel") {  // pixel:X,Y, the colour of the last frame there (pixels, not points)

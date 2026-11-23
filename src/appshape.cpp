@@ -200,7 +200,7 @@ struct Crumbs {
 int App::crumbs_px(const Pane& p) const {
     if (!cfg_.breadcrumbs || !font_ || !p.doc || focus_mode_) return 0;
     const Doc& d = *p.doc;
-    if (d.term || d.image || d.pdf || d.md || d.prof || d.marks || d.ed.path.empty()) return 0;
+    if (d.term || d.image || d.pdf || d.wave || d.md || d.prof || d.marks || d.ed.path.empty()) return 0;
     const int ch = font_->cell_h();
     return ch + ch / 4;
 }
@@ -409,7 +409,7 @@ void App::sticky_layout(FrameDesc& fd, const TextView& v) {
     // (Gone first, whatever happens: a click where they were would go to a
     // line they no longer show.)
     if (p.sticky) p.sticky->lines.clear();
-    if (!cfg_.sticky_scroll || p.doc->term || p.doc->image || p.doc->pdf || p.doc->md || p.doc->prof || p.doc->marks) return;
+    if (!cfg_.sticky_scroll || p.doc->term || p.doc->image || p.doc->pdf || p.doc->wave || p.doc->md || p.doc->prof || p.doc->marks) return;
     const int ch = font_->cell_h(), cw = font_->cell_w();
     std::vector<u64> lines = sticky_lines(*p.doc, p.scroll_y, ch);
     if (lines.empty() || fd.popup_count >= std::size(fd.popups)) return;
@@ -759,7 +759,7 @@ struct Ruler {
 void App::ruler_layout(const TextView& v) {
     Pane& p = *pane_;
     const Doc& d = *p.doc;
-    if (d.term || d.image || d.pdf || d.md || d.prof) return;
+    if (d.term || d.image || d.pdf || d.wave || d.md || d.prof) return;
     const int ch = font_->cell_h(), cw = font_->cell_w();
     const u32 rows = static_cast<u32>(std::max(0, v.h / ch));
     const u64 total = view_line_count();

@@ -127,6 +127,7 @@ struct RebaseView;   // an interactive rebase's tab (appgit.cpp)
 struct SettingsView;  // the settings screen's tab (appsettings.cpp)
 struct ImageView;    // an image file's tab (appimage.cpp)
 struct PdfView;      // a PDF's tab (apppdf.cpp)
+struct WaveView;     // a dump's waves' tab (appwave.cpp)
 struct RemoteEntry;  // a folder's entry on another machine (remote.hpp)
 struct ProbeRow;     // a row of the probe picker (probes.hpp)
 enum class FlashMode : u8;  // what a flash writes (flash.hpp)
@@ -264,6 +265,7 @@ struct Doc {
     signed char wrap_choice = -1;  // its own soft wrap (Toggle soft wrap): 1 on, 0 off, -1 as the settings say
     std::shared_ptr<ImageView> image;  // an image file's tab: drawn over it too (appimage.cpp)
     std::shared_ptr<PdfView> pdf;      // a PDF's tab: drawn over it too (apppdf.cpp)
+    std::shared_ptr<WaveView> wave;    // a dump's waves' tab: drawn over it too (appwave.cpp)
     bool term_closed = false;        // (its program has ended, and that has been seen to)
     std::unique_ptr<Highlights> marks;
 
@@ -1151,6 +1153,36 @@ private:
     bool pdf_text(const char* text);  // a password typed, or what to find
     void pdf_find(Doc& doc);
     void pdf_copy(Doc& doc);
+    // Waves (appwave.cpp): a dump in a tab of its own, read on a thread of
+    // its own, its lanes painted in tiles on workers; its keys are commands.
+    struct Waves;
+    struct WaveCommand {
+        const char* title;
+        SDL_Keycode key;  // (0: none of one key)
+        bool shift;
+    };
+    static std::span<const WaveCommand> wave_commands();
+    static bool is_wave_path(std::string_view path);
+    bool wave_open(const std::string& full);
+    void wave_sync();
+    void wave_layout(FrameDesc& fd);
+    bool wave_hit(int px, int py, Pane** pane);
+    bool wave_key(const SDL_KeyboardEvent& k);
+    bool wave_wheel(const SDL_MouseWheelEvent& w);
+    bool wave_pinch(float by);
+    bool wave_mouse_down(const SDL_MouseButtonEvent& b);
+    bool wave_mouse_motion(const SDL_MouseMotionEvent& m);
+    void wave_mouse_up();
+    void wave_run(int index);  // wave_commands()[index]
+    void wave_act(int act);
+    void wave_add(WaveView& v, u32 var);
+    void wave_mark(WaveView& v, char letter, bool go);
+    void wave_format(WaveView& v, bool names, const std::string& text);
+    bool waves_busy() const;
+    void wave_wait(bool rows = false);
+    std::string wave_dump(std::string_view what);
+    void wave_bench_step(bool zoom, int i, bool page = false);
+    bool wave_sharp() const;
 
     // Terminals (appterm.cpp): a tab running a shell, here or on another machine.
     // A terminal tab in dir (the working folder when none): a login shell, or
@@ -1768,6 +1800,7 @@ private:
     std::shared_ptr<Pictures> pictures_;  // (after gpu_: its reader stops first)
     u64 pictures_gen_ = 0;  // counts up whenever a picture has been read (or could not be)
     std::shared_ptr<Pdfs> pdfs_;  // (after gpu_ too)
+    std::shared_ptr<Waves> waves_;  // (and this)
     std::shared_ptr<MdWorker> md_worker_;
     std::unique_ptr<Font> font_;
     // The splits of the window, how they are arranged, and the one with

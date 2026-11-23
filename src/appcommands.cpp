@@ -74,8 +74,8 @@ std::string word_at(const Buffer& buf, u64 off) {
 }
 
 // A tab with text of its own to search (not a terminal, a profile, a
-// preview, a picture or a PDF).
-bool has_text(const Doc& d) { return !d.term && !d.prof && !d.md && !d.image && !d.pdf; }
+// preview, a picture, a PDF or waves).
+bool has_text(const Doc& d) { return !d.term && !d.prof && !d.md && !d.image && !d.pdf && !d.wave; }
 
 }  // namespace
 
@@ -103,6 +103,7 @@ struct App::Commands {
         std::vector<Chord> keys;
         bool here = false;              // its keys are handled by command_key
         std::function<void()> run;      // none: its first chord is sent through on_key
+        bool waves = false;             // the wave tab's: listed only while one is in front
     };
     std::vector<Command> all;
     // The side panel's tabs a command shows (the panel's own numbers are one
@@ -429,6 +430,9 @@ void App::commands_create() {
     own("Show or hide inline performance labels", {}, [this] { prof_toggle_labels(); });
     sent("Zoom the flame graph into the chosen function", {key(SDLK_SPACE)});
     sent("Zoom the flame graph out", {key(SDLK_ESCAPE)});
+    // The wave tab's (its keys are its own there: appwave.cpp).
+    for (int i = 0; const WaveCommand& w : wave_commands())
+        c.push_back({w.title, w.key ? std::vector<Chord>{key(w.key, w.shift ? kS : 0)} : std::vector<Chord>{}, false, [this, at = i++] { wave_run(at); }, true});
     // Git.
     git("Git: Commit", "commit");
     git("Git: Pull", "pull");
@@ -606,6 +610,7 @@ std::vector<App::PaletteItem> App::palette_items() {
     if (!commands_) return out;
     for (u32 i = 0; i < commands_->all.size(); ++i) {
         const Commands::Command& c = commands_->all[i];
+        if (c.waves && !pane_->doc->wave) continue;
         PaletteItem it{c.title, {}, i};
         for (const Chord& ch : c.keys) it.keys += (it.keys.empty() ? "" : "  ") + chord_text(ch.key, keymod_of(ch.mods));
         if (cfg_.modal)  // (and its keys in Normal mode, for a daily one)
