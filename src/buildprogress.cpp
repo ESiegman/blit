@@ -261,6 +261,7 @@ double seconds_in(std::string_view s) {
     double v = 0;
     if (!decimal_at(s, &at, &v)) return -1;
     if (at < s.size() && s[at] == ' ') ++at;
+    if (s.substr(at).starts_with("ms")) return v / 1000;  // (Espressif's OpenOCD: "Programming Finished in 2305 ms")
     return at < s.size() && s[at] == 's' ? v : -1;
 }
 
@@ -430,7 +431,10 @@ bool BuildScan::progress_line(std::string_view text, bool unfinished) {
             }
             break;
         }
-        case kDone: done(shape->stage); break;
+        case kDone:
+            if (const double t = seconds_in(line); t >= 0) prog_seconds_ = std::max(prog_seconds_, 0.0) + t;  // (the tool's own time for it)
+            done(shape->stage);
+            break;
         case kOk:
             prog_verified_ = true;
             done({});
@@ -462,7 +466,10 @@ bool BuildScan::progress_line(std::string_view text, bool unfinished) {
             prog_verified_ = true;
             done(shape->stage);
             break;
-        case kUnchanged: prog_unchanged_ = prog_verified_ = true; break;
+        case kUnchanged:  // (what was to be written is there already: its Program wrote nothing)
+            prog_unchanged_ = prog_verified_ = true;
+            if (progress_.stage == "Program") progress_.stage.clear(), progress_.percent = -1;
+            break;
         case kFlash: prog_flash_ = true; break;
         case kError: prog_error_ = std::string(trim(line.substr(after))); return false;  // (others may read it too)
         case kFailed: fail(line); break;
@@ -522,7 +529,7 @@ void BuildScan::progress_end() {
             }
             // The tool's own count of the run, else of the writing, else the time its lines came over.
             const double t = prog_took_ >= 0 ? prog_took_ : prog_seconds_ >= 0 ? prog_seconds_ : prog_start_ > 0 ? now_s() - prog_start_ : -1;
-            if (t >= 0 && !prog_unchanged_) {
+            if (t >= 0 && (wrote || !prog_unchanged_)) {  // (some parts already there, another written: that one's time)
                 char buf[32];
                 std::snprintf(buf, sizeof buf, " in %.1f s", t);
                 s += buf;

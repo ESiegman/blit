@@ -2870,8 +2870,10 @@ a click still stops it), and the task's row the stages done before it
 (`Erase ✓ · Program 62% 25.0 KB`); both are drawn again only when the
 stage or its percent changes. After, what it came to is kept on the row
 and the button: `Flashed 40.2 KB in 1.8 s, verified` (the tool's own time
-where it says one), `Loaded into SRAM in 2.1 s`, or, for a failed one,
-where it stopped. (The button has a third of the window at most: when
+where it says one), `Loaded into SRAM in 2.1 s`, `Unchanged, verified`
+(the tool found all of it there already, as Espressif's OpenOCD says), or,
+for a failed or stopped one, where it stopped (`stopped in Program at
+38%`). (The button has a third of the window at most: when
 the whole does not fit, it has it without the time, `Flashed 40.2 KB,
 verified`, else the words before the time, `Flashed 40.2 KB`.) A failure is a problem with the tool's own words
 (`OpenOCD init failed: open failed`, `JTAG init failed with: unable to

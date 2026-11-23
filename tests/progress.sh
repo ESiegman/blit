@@ -142,6 +142,24 @@ problems: 0
 EOF
 check "OpenOCD: program, verify, the summary" "$expected"
 
+# Espressif's OpenOCD, program_esp for each of ESP-IDF's files: the app
+# written (the other two already there), then verified, the tool's own
+# time; all three already there: unchanged, nothing written.
+timed='&'
+flash openocd openocd openocd-esp32 "progresswait:Program;progressdump;$end"
+want <<'EOF'
+button: ■ Program | row: Program
+button: ▶ openocd · Flashed in 2.3 s, verified | row: done · Flashed in 2.3 s, verified
+problems: 0
+EOF
+check "Espressif's OpenOCD: one file of three written, verified" "$expected"
+flash openocd openocd openocd-esp32-same "$end"
+want <<'EOF'
+button: ▶ openocd · Unchanged, verified | row: done · Unchanged, verified
+problems: 0
+EOF
+check "Espressif's OpenOCD: all already there" "$expected"
+
 # probe-rs: three bars drawn again and again (moved up to, cleared,
 # written), an idle one not under way, a done one staying done.
 timed='&'
