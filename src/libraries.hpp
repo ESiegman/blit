@@ -36,8 +36,9 @@ std::string rocm_usage(const std::string& root, const std::string& package);
 // out), "a;b", or "" if none are found.
 std::string gpu_targets(const std::string& where, const std::string& rocm);
 
-// pkg-config's modules on the machine `where` is on.
-std::vector<VcpkgPort> pkgconfig_modules(const std::string& where);
+// pkg-config's modules on the machine `where` is on (or pkgconf's); none,
+// and `installed` false, where neither is installed.
+std::vector<VcpkgPort> pkgconfig_modules(const std::string& where, bool* installed = nullptr);
 
 // PyPI's most downloaded packages (15,000 of them, with downloads a month as
 // the note), kept in `cache` and fetched again when it is a week old. None

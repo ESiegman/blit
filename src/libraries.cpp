@@ -229,10 +229,15 @@ std::string gpu_targets(const std::string& where, const std::string& rocm) {
 
 // ---------------------------------------------------------------- pkg-config
 
-std::vector<VcpkgPort> pkgconfig_modules(const std::string& where) {
+std::vector<VcpkgPort> pkgconfig_modules(const std::string& where, bool* installed) {
     std::vector<VcpkgPort> out;
     std::string text;
-    if (!fs_run(where, "pkg-config --list-all 2>/dev/null || pkgconf --list-all", &text, 15000) && text.empty()) return out;
+    const bool ran = fs_run(where,
+                            "command -v pkg-config >/dev/null 2>&1 || command -v pkgconf >/dev/null 2>&1 || { echo blit-no-pkg-config; exit 1; }; "
+                            "pkg-config --list-all 2>/dev/null || pkgconf --list-all",
+                            &text, 15000);
+    if (installed) *installed = ran || !text.starts_with("blit-no-pkg-config");
+    if (!ran && (text.empty() || text.starts_with("blit-no-pkg-config"))) return out;
     for (size_t at = 0; at < text.size();) {
         const size_t nl = text.find('\n', at);
         const std::string_view line = std::string_view(text).substr(at, nl == std::string::npos ? std::string::npos : nl - at);

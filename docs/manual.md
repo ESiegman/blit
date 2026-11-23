@@ -3493,14 +3493,18 @@ away) and the search comes back for the next. Where they come from:
   newest `/opt/rocm-*`), each linked by the targets its targets file
   makes, to the GPU code alone.
 - **pkg-config**: its modules (`pkg-config --list-all`), as
-  `pkg_check_modules`, Meson's `dependency()`, or make's flags.
+  `pkg_check_modules`, Meson's `dependency()`, or make's flags. The row
+  says `pkg-config is not installed on this Mac` where neither it nor
+  pkgconf is, and "pkg-config has no modules" where it lists none.
 - **PyPI**: its 15,000 most downloaded packages (fetched once a week into
   blit's data folder), and any other by its exact name. Where the list
   cannot be fetched, the search says why under it (curl's own words, or
   `curl is not installed on this Mac`).
 
-On another machine all of this is that machine's: its vcpkg, ROCm, GPUs,
-uv and pkg-config.
+A Python project's manager is uv where uv is installed, else pip, and the
+Manager row then says so (`uv is not installed on this Mac, so pip is
+used`). On another machine all of this is that machine's: its vcpkg,
+ROCm, GPUs, uv and pkg-config.
 
 ```lua
 -- In init.lua: a kind of your own, and a built-in one taken away.
