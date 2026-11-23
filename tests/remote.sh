@@ -714,8 +714,11 @@ if [ -x "$(dirname "$blit")/blit_fakelsp" ]; then
         "$(cd "$(dirname "$blit")" && pwd)/blit_fakelsp" "$dir/configured" >"$dir/pylsp.lua"
     INIT="$dir/pylsp.lua"
     run "remotewait;frame;ready;pywait;wait:500" "$R/pyr/a.py"
-    got=$(sed -e "s#$T#~#g" "$dir/configured" | join)
-    check "a server there for Python files: told the project's Python there" 'python.pythonPath = null ;; python.pythonPath = "~/work/pyr/.venv/bin/python"'
+    # (What it was told last: asked before the venv was found it is told
+    # none first, else the venv's Python at once; which comes first is the
+    # machine's speed.)
+    got=$(sed -e "s#$T#~#g" "$dir/configured" | tail -1)
+    check "a server there for Python files: told the project's Python there" 'python.pythonPath = "~/work/pyr/.venv/bin/python"'
 fi
 
 # The agent was copied there once, into the cache blit keeps in that home.
