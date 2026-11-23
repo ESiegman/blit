@@ -1,0 +1,13 @@
+icarus.vcd: written by Icarus Verilog 13.0 (stable) (v13_0-dirty), vvp
+with $dumpvars(0, tb), on Arch Linux (x86-64), 23 Nov 2026.
+
+The design is make/counter.sv (an 8-bit counter under a testbench), built
+with DUMPVARS and DUMPOFF defined (make/make.sh has the commands). What it
+shows: $timescale over three lines; a $dumpall of a parameter's value
+before #0; aliases (the clock, enable, reset and wrap flag seen from the
+counter share the testbench's codes); x and z (a nibble 1x0z, a bus that
+floats as bz); a 96-bit bus with x and z; a real (r0, r1.5, r-0.00225,
+r6.02e+23, rNaN while dumping is off); an integer; an event, written in
+$dumpvars, in $dumpon and when it fires; $dumpoff listing every variable
+but the parameter as x, and $dumpon listing them again; a last #time with
+no change after it.

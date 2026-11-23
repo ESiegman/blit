@@ -226,6 +226,9 @@
 ---------------------------------------------------------------- building
 -- blit.opt.build.notify = true   -- a task that ends while blit is behind another window says so in a notification of the system's
 
+---------------------------------------------------------------- waves and timelines
+-- blit.opt.timeline.max_mb = 2048  -- the memory a dump's waves may take: reading one stops there, and says how far it got
+
 ---------------------------------------------------------------- updates
 -- blit.opt.updates.check = true   -- at the start, once a day: a newer release offered (blit.app and the AppImage install it)
 

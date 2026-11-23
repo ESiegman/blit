@@ -342,6 +342,7 @@ struct Parser {
             if (!as_bool(v, &c.build_notify)) warn("build.notify should be true or false");
             return;
         }
+        if (key == "timeline.max_mb") return number(key, v, 16, 1 << 20, &c.timeline_max_mb);
         if (key == "syntax.enabled") {
             if (!as_bool(v, &c.syntax)) warn("syntax.enabled should be true or false");
             return;
@@ -827,6 +828,7 @@ const Getter kGetters[] = {
     BLIT_GET("lsp.reference_counts", flag(c.lsp_ref_counts)),
     BLIT_GET("git.enabled", flag(c.git)),
     BLIT_GET("build.notify", flag(c.build_notify)),
+    BLIT_GET("timeline.max_mb", num(c.timeline_max_mb)),
     BLIT_GET("debug.inline_values", flag(c.debug_inline_values)),
     BLIT_GET("python.interpreter", str(c.python_interpreter)),
     BLIT_GET("panel.open", flag(c.panel_open)),

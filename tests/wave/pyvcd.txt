@@ -1,0 +1,10 @@
+pyvcd.vcd: written by pyvcd 0.5.1 under Python 3.14.10, on Arch Linux
+(x86-64), 23 Nov 2026.
+
+The design is make/pyvcd_uart.py, a UART transmitter's signals (make/make.sh
+runs it). What it shows: a timescale of 10 ns in two words; task and fork
+scopes; string values (sIDLE, sDATA0, GTKWave's extension, which pyvcd
+writes for variables of kind string); a real declared 64 bits wide; an
+event that fires a byte; a 16-bit bus written bz, then values, then bx;
+an integer of 8 bits; an alias declared in the same scope; $dumpoff listing
+only the variables of bits as x, and $dumpon listing everything again.

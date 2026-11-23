@@ -201,9 +201,9 @@ find_library(HARFBUZZ_LIBRARY harfbuzz)
 add_library(blit_core STATIC src/buffer.cpp src/editor.cpp src/config.cpp src/vim.cpp src/regex.cpp src/fuzzy.cpp src/finder.cpp src/keymap.cpp src/job.cpp src/threads.cpp src/buildscan.cpp src/buildvalidation.cpp src/buildmatch.cpp src/buildtools.cpp src/buildtests.cpp src/buildprogress.cpp src/buildread.cpp)
 target_include_directories(blit_core PUBLIC src)
 target_link_libraries(blit_core PUBLIC Threads::Threads)
-# Timelines: lanes of changes, asked about a pixel column at a time
+# Timelines and waveforms: lanes of changes, and dumps read into them
 # (knowing no window, so that the agent can carry them later).
-target_sources(blit_core PRIVATE src/timeline.cpp)
+target_sources(blit_core PRIVATE src/timeline.cpp src/wave.cpp)
 
 # Working on another machine's files (src/remote.*): blit's agent runs there.
 # This machine's kind of agent is built here (for any Mac of its kind, not
@@ -391,7 +391,7 @@ if(BLIT_DEV)
     add_executable(blit_fakedap tests/fake_dap.cpp)
     target_link_libraries(blit_fakedap PRIVATE blit_lsp)
   endif()
-  # The timeline model (tests/wave.sh).
+  # The timeline model and the VCD reader, against real dumps (tests/wave.sh).
   add_executable(blit_timeline_test tests/timeline_test.cpp)
   target_link_libraries(blit_timeline_test PRIVATE blit_core)
 
@@ -467,7 +467,7 @@ if(BLIT_DEV)
     add_test(NAME python COMMAND sh ${CMAKE_SOURCE_DIR}/tests/python.sh $<TARGET_FILE:blit>)
     # Characters of more than one code point (marks, emoji sequences, flags) and of other widths.
     add_test(NAME unicode COMMAND sh ${CMAKE_SOURCE_DIR}/tests/unicode.sh $<TARGET_FILE:blit>)
-    # Waveforms: the timeline model.
+    # Waveforms: the timeline model and the VCD reader, on dumps from Icarus, Verilator, Yosys and pyvcd.
     add_test(NAME wave COMMAND sh ${CMAKE_SOURCE_DIR}/tests/wave.sh $<TARGET_FILE:blit>)
     # Every suite sees the dark appearance, whatever the machine is set to
     # (GitHub's machines are light), and the cell macOS's own font has at

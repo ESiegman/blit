@@ -162,6 +162,7 @@ struct Config {
     bool update_check = true;        // the latest release looked for at the start, once a day (appupdate.cpp)
     bool watch = true;               // the working folder watched for what changes on disk (apppanel.cpp)
     bool build_notify = true;        // a task that ends while blit is behind another window says so in a system notification (appbuild.cpp)
+    float timeline_max_mb = 2048;    // the memory a timeline's lanes (a dump's waves) may take: reading one stops there, and says so (wave.hpp)
     float presentation_size = 0;     // the text's size in presentation mode (0: 1.6 times what it is)
     bool soft_wrap = false;          // long lines go on in the rows under them, in every file (appwrap.cpp)
     std::vector<std::string> soft_wrap_languages = {"markdown"};  // and in these languages' files

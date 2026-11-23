@@ -4510,6 +4510,11 @@ does not finish and takes all the memory the machine has.
   not turned (a turned page's links may be off). Find ignores case for A to Z only;
   choosing text does not scroll the view past its edge; the outline box
   is for the mouse and the wheel.
+- Waves: a VCD dump is read whole, in one pass (about 600 MB a second on
+  an M5 Pro), every variable's changes kept in memory (one or two
+  bytes a change of a one-bit signal, five or six of a 32-bit bus), up to
+  `blit.opt.timeline.max_mb` (2048 MB): past that, reading stops, keeps
+  what it read, and says how far into the run it got.
 - Terminal: no ligatures. A screen with more than 32 text colours or 6
   background colours at once draws the rest in the nearest of those (5
   while a search's matches are lit). Its search (Cmd+F) looks at the lines
