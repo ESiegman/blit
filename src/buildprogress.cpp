@@ -30,6 +30,7 @@ constexpr std::string_view kProgram[kEngines] = {"", "openocd", "esptool", "prob
 enum Kind : u8 {
     kHello,       // the engine names itself: its run begins
     kStage,       // a stage begins (the one before it is done)
+    kPart,        // the next part of what is written begins: its stages are under way again (esptool's next file)
     kBar,         // a stage's bar: its percent, and the bytes where given, after the prefix
     kDone,        // the stage named is done
     kBarDone,     // a bar whose line ends "Done." is done (J-Link's)
@@ -99,6 +100,10 @@ constexpr Shape kShapes[] = {
     {kEsptool, kHello, "esptool v", "", ""},
     {kEsptool, kHello, "esptool.py v", "", ""},
     {kEsptool, kStage, "Erasing flash...", "$", "Erase"},
+    // (Each file write-flash writes begins so, v4's and v5's: ESP-IDF's
+    // bootloader, partition table and app are three. v4.8.1 cmds.py line
+    // 528; v5.6.0 as it printed it, writing hello_world on 2026-11-23.)
+    {kEsptool, kPart, "Flash will be erased from ", "", "Program"},
     {kEsptool, kBar, "Writing at 0x", "%", "Program"},
     {kEsptool, kWrote, "Wrote ", " bytes ", "Program"},
     {kEsptool, kStage, "Verifying written data...", "$", "Verify"},
@@ -379,6 +384,11 @@ bool BuildScan::progress_line(std::string_view text, bool unfinished) {
     switch (shape->kind) {
         case kHello: break;
         case kStage: begin(shape->stage); break;
+        case kPart:
+            std::erase(progress_.done, std::string(shape->stage));
+            std::erase(progress_.done, std::string("Verify"));
+            begin(shape->stage);
+            break;
         case kBar:
         case kBarDone: {
             double pct = percent_in(line, after, &after);

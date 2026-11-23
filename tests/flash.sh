@@ -152,10 +152,10 @@ EOF
 ESP='"probe": {"kind": "esp-usb-jtag", "serial": "F4:12:FA:00:00:01", "usb": "303a:1001"}, "serial": {"port": "/dev/ttyACM3"}, "elf": "build/app.elf"'
 board "{$ESP}"
 timed='&'
-flash esptool5 "$F;progresswait:Program 54%;progressdump;$end"
+flash esptool5 "$F;progresswait:Program 38%;progressdump;$end"
 want <<'EOF'
-button: ■ Program 54% 12.0/22.0 KB | row: Program 54% 12.0/22.0 KB
-button: ▶ fw · Flashed 40.2 KB in 0.3 s, verified | row: done · Flashed 40.2 KB in 0.3 s, verified
+button: ■ Program 38% 32.0/82.8 KB | row: Program 38% 32.0/82.8 KB
+button: ▶ fw · Flashed 170.5 KB in 8.8 s, verified | row: done · Flashed 170.5 KB in 8.8 s, verified
 esptool --chip esp32s3 -p /dev/ttyACM3 --before default-reset --after hard-reset write-flash --flash-mode dio --flash-size 2MB --flash-freq 80m 0x0 build/bootloader/bootloader.bin 0x8000 build/partition_table/partition-table.bin 0x10000 build/app.bin
 EOF
 check "ESP32-S3, ESP-IDF: esptool with flasher_args.json's files, its progress, then the summary" "$expected"
@@ -172,6 +172,7 @@ E openocd:1 OpenOCD init failed: esp_usb_jtag: could not find or open device!
 openocd-esp32 -f interface/esp_usb_jtag.cfg -c 'adapter serial F4:12:FA:00:00:01' -f target/esp32s3.cfg -c 'program_esp build/bootloader/bootloader.bin 0x0 verify' -c 'program_esp build/partition_table/partition-table.bin 0x8000 verify' -c 'program_esp build/app.bin 0x10000 verify reset exit'
 EOF
 check "ESP32-S3 through Espressif's OpenOCD: program_esp, and a failure's problem" "$expected"
+
 
 # An ST-LINK: probe-rs (its kind says it), the probe by its ids and serial
 # number, verified and reset; its bars.

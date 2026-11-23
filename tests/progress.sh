@@ -69,15 +69,28 @@ flash() {
 end="go:a;go:b;buildwait;progressdump;scandump"
 
 # esptool v5: its bar redrawn in place, no newline after it while it is
-# being written; then what it came to (its own time for the writing).
+# being written; then what it came to (its own time for the writing). Its
+# third file (ESP-IDF's app, after the bootloader and the partition table,
+# each written and verified): Program under way again, with that file's
+# bytes; the summary the three files'.
 timed='&'
-flash esptool esptool esptool5 "progresswait:Program 54%;progressdump;$end"
+flash esptool esptool esptool5 "progresswait:Program 38%;progressdump;$end"
 want <<'EOF'
-button: ■ Program 54% 12.0/22.0 KB | row: Program 54% 12.0/22.0 KB
-button: ▶ esptool · Flashed 40.2 KB in 0.3 s, verified | row: done · Flashed 40.2 KB in 0.3 s, verified
+button: ■ Program 38% 32.0/82.8 KB | row: Program 38% 32.0/82.8 KB
+button: ▶ esptool · Flashed 170.5 KB in 8.8 s, verified | row: done · Flashed 170.5 KB in 8.8 s, verified
 problems: 0
 EOF
-check "esptool v5: the bar being redrawn, then the summary" "$expected"
+check "esptool v5: the bar being redrawn, a later file's, then the summary" "$expected"
+
+# esptool v5 on a pipe (as blit runs it): a line for each step of the bar.
+timed='&'
+flash esptool esptool esptool5-pipe "progresswait:Program 38%;progressdump;$end"
+want <<'EOF'
+button: ■ Program 38% 32.0/82.8 KB | row: Program 38% 32.0/82.8 KB
+button: ▶ esptool · Flashed 170.5 KB in 8.8 s, verified | row: done · Flashed 170.5 KB in 8.8 s, verified
+problems: 0
+EOF
+check "esptool v5 on a pipe: the same" "$expected"
 
 # esptool v4: "Writing at 0x00010000... (50 %)" after a \r, no newline.
 timed='&'

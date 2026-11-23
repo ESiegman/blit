@@ -1,20 +1,52 @@
-# esptool v5.6.0 write-flash on a terminal. The first line is its own (run
-# on macOS with no board: "esptool v5.6.0"); the rest is its own logger
-# (esptool/logger.py over esp-pylib 1.2.0, the Homebrew install's) driven
-# through write-flash's calls, esptool/cmds.py lines 1771, 1803, 1824, 1865,
-# 1921, 1935 and 1958, by a script with no device (the bytes are the
-# logger's, on a pseudo-terminal: "\r\e[2K" before each redraw, the stage
-# folded away after with "\e[1A\e[2K"). A 41200-byte image, 22528 compressed.
+# esptool v5.6.0 write-flash on a terminal (a pseudo-terminal, through
+# script(1)), as it really printed it: the owner's ESP32-S3 DevKit on its
+# USB serial bridge (a CH343) on the Arch Linux lab box, 2026-11-23, writing
+# ESP-IDF v6.1.1's hello_world (bootloader, partition table, app).
 @pace 5
 esptool v5.6.0
-Flash will be erased from 0x00010000 to 0x00019fff...
-\r\e[2KWriting at 0x00011d42 \e[91m━━━━━\e[0m\e[90m╺\e[0m\e[90m━━━━━━━━━━━━━━━━━━━━━━━━\e[0m  18.2% 4.00kB/22.00kB [0s] \c
-\r\e[2KWriting at 0x00013a85 \e[91m━━━━━━━━━━\e[0m\e[91m╸\e[0m\e[90m━━━━━━━━━━━━━━━━━━━\e[0m  36.4% 8.00kB/22.00kB [0s] \c
-\r\e[2KWriting at 0x000157c8 \e[91m━━━━━━━━━━━━━━━━\e[0m\e[90m╺\e[0m\e[90m━━━━━━━━━━━━━\e[0m  54.5% 12.00kB/22.00kB [0s] \c
-@hold a
-\r\e[2KWriting at 0x0001750b \e[91m━━━━━━━━━━━━━━━━━━━━━\e[0m\e[91m╸\e[0m\e[90m━━━━━━━━\e[0m  72.7% 16.00kB/22.00kB [0s] \c
-\r\e[2KWriting at 0x0001924e \e[91m━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m\e[90m╺\e[0m\e[90m━━\e[0m  90.9% 20.00kB/22.00kB [0s] \c
-\r\e[2KWriting at 0x0001a0f0 \e[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m 100.0% 22.00kB/22.00kB [0s] 
-\e[1A\e[2KWrote 41200 bytes (22528 compressed) at 0x00010000 in 0.3 seconds (979.7 kbit/s).
+Serial port /dev/ttyACM0:
+Connecting....
+\e[1A\e[2K\e[1A\e[2KConnected to ESP32-S3 on /dev/ttyACM0:
+Chip type:          ESP32-S3 (QFN56) (revision v0.2)
+Features:           Wi-Fi, BT 5 (LE), Dual Core + LP Core, 240MHz, Embedded PSRAM 8MB (AP_3v3)
+Crystal frequency:  40MHz
+MAC:                ac:a7:04:2c:81:b4
+
+Uploading stub flasher...
+Running stub flasher...
+\e[1A\e[2K\e[1A\e[2KStub flasher running.
+
+Configuring flash size...
+
+Writing 'build/bootloader/bootloader.bin' at 0x00000000...
+SHA digest in image updated.
+Flash will be erased from 0x00000000 to 0x00005fff...
+Compressed 20656 bytes to 13384...
+\r\e[2KWriting at 0x000050b0 \e[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m 100.0% 13.07kB/13.07kB [1s] 
+\e[1A\e[2K\e[1A\e[2KWrote 20656 bytes (13384 compressed) at 0x00000000 in 1.3 seconds (123.4 kbit/s).
 Verifying written data...
 \e[1A\e[2KHash of data verified.
+
+Writing 'build/partition_table/partition-table.bin' at 0x00008000...
+Flash will be erased from 0x00008000 to 0x00008fff...
+Compressed 3072 bytes to 103...
+\r\e[2KWriting at 0x00008c00 \e[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m 100.0% 103B/103B [0s] 
+\e[1A\e[2K\e[1A\e[2KWrote 3072 bytes (103 compressed) at 0x00008000 in 0.0 seconds (827.8 kbit/s).
+Verifying written data...
+\e[1A\e[2KHash of data verified.
+
+Writing 'build/hello_world.bin' at 0x00010000...
+Flash will be erased from 0x00010000 to 0x00034fff...
+Compressed 150896 bytes to 84762...
+\r\e[2KWriting at 0x0001b52d \e[91m━━━━━\e[0m\e[91m╸\e[0m\e[90m━━━━━━━━━━━━━━━━━━━━━━━━\e[0m  19.3% 16.00kB/82.78kB [1s] \c
+\r\e[2KWriting at 0x000217a1 \e[91m━━━━━━━━━━━\e[0m\e[91m╸\e[0m\e[90m━━━━━━━━━━━━━━━━━━\e[0m  38.7% 32.00kB/82.78kB [2s] \c
+@hold a
+\r\e[2KWriting at 0x000277f9 \e[91m━━━━━━━━━━━━━━━━━\e[0m\e[90m╺\e[0m\e[90m━━━━━━━━━━━━\e[0m  58.0% 48.00kB/82.78kB [4s] \c
+\r\e[2KWriting at 0x0002d53c \e[91m━━━━━━━━━━━━━━━━━━━━━━━\e[0m\e[90m╺\e[0m\e[90m━━━━━━\e[0m  77.3% 64.00kB/82.78kB [5s] \c
+\r\e[2KWriting at 0x00033720 \e[91m━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m\e[91m╸\e[0m\e[90m━\e[0m  96.6% 80.00kB/82.78kB [7s] \c
+\r\e[2KWriting at 0x00034d70 \e[90m━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━\e[0m 100.0% 82.78kB/82.78kB [7s] 
+\e[1A\e[2K\e[1A\e[2KWrote 150896 bytes (84762 compressed) at 0x00010000 in 7.5 seconds (161.4 kbit/s).
+Verifying written data...
+\e[1A\e[2KHash of data verified.
+
+Hard resetting via RTS pin...
