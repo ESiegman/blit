@@ -202,6 +202,11 @@ check "Command search finds the keys" ">Waves: pan right a screen (Shift+L)"
 run 1600x900 "frame;wavewait;command:Waves: zoom in about the cursor;command:Waves: zoom in about the cursor;wavedump" "$W/icarus.vcd"
 head1
 check "a command run from the search" "icarus.vcd: read, cursor 0 ps, view 0 ps to 693 ns"
+# (Listed only while a wave tab is in front: elsewhere they are nobody's.)
+echo text >"$dir/a.txt"
+run 1600x900 "frame;key:cmd+shift+p;text:waves pan right a screen;findwait;finddump" "$dir/a.txt"
+case $got in *Waves:*) got=listed ;; *) got="not listed" ;; esac
+check "with no wave tab in front, not listed" "not listed"
 
 # The view kept (.blit/waves/icarus.json, beside the dump: no project
 # folder here) and brought back as it was.
