@@ -4519,7 +4519,8 @@ does not finish and takes all the memory the machine has.
   `blit.opt.timeline.max_mb` (2048 MB): past that, reading stops, keeps
   what it read, and says how far into the run it got. An FST file is
   read only once its simulation has closed it (until then it has no list
-  of its signals); one cut short is said to be.
+  of its signals); one cut short is said to be, and one damaged is said
+  to be with what libfst could read of it kept.
 - Terminal: no ligatures. A screen with more than 32 text colours or 6
   background colours at once draws the rest in the nearest of those (5
   while a search's matches are lit). Its search (Cmd+F) looks at the lines

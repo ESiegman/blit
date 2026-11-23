@@ -12,6 +12,7 @@
 #include <bit>
 #include <cerrno>
 #include <charconv>
+#include <csetjmp>
 #include <cstring>
 #include <mutex>
 
@@ -19,6 +20,10 @@
 
 extern "C" {
 #include "fstapi.h"
+// Where libfst's own checks go back to on this thread, instead of ending
+// the process (third_party/libfst/config.h); null: nowhere. And the most it
+// may allocate at once.
+void blit_fst_catch(std::jmp_buf* to, size_t most);
 }
 
 namespace blit {
@@ -79,6 +84,24 @@ bool parse_range(std::string_view s, i32* msb, i32* lsb) {
         return true;
     }
     return parse_i32(s.substr(0, colon), msb) && parse_i32(s.substr(colon + 1), lsb);
+}
+
+// Calls f, which calls into libfst, so that one of libfst's checks that
+// would end the process, or what a damaged file does to it (config.h there
+// says what), comes back here instead: false then. `most` is the most it
+// may allocate at once. (f's own frame holds nothing that needs
+// destroying, so that jumping out of it is sound.)
+template <class F>
+bool guarded(size_t most, F&& f) {
+    std::jmp_buf jump;
+    blit_fst_catch(&jump, most);
+    if (setjmp(jump) != 0) {
+        blit_fst_catch(nullptr, 0);
+        return false;
+    }
+    f();
+    blit_fst_catch(nullptr, 0);
+    return true;
 }
 
 // What a walk over the file's blocks finds, before libfst reads it: where
@@ -157,6 +180,11 @@ struct Fst {
     bool halted = false;
     u64 last_t = 0;
     std::vector<u64> val, xz;
+
+    // The most libfst may allocate at once: no part of a file uncompresses
+    // to more than about a thousand times its size (zlib's most; LZ4's is
+    // 255), and its time table is 8 bytes a time, each at least a byte.
+    size_t most() const { return static_cast<size_t>(std::min<u64>(size, u64{1} << 40) * 16384 + (u64{64} << 20)); }
 
     void note(std::string s) {
         if (w->notes.size() < kMaxNotes) w->notes.push_back(std::move(s));
@@ -285,7 +313,11 @@ struct Fst {
         Wave& wv = *w;
         u32 scope = 0;
         for (;;) {
-            const fstHier* h = fstReaderIterateHier(ctx);
+            fstHier* h = nullptr;
+            if (!guarded(most(), [&] { h = fstReaderIterateHier(ctx); })) {
+                wv.error = "the FST file is damaged: libfst could not read its hierarchy";
+                return;
+            }
             if (!h) break;
             if (h->htyp == FST_HT_SCOPE) {
                 WaveScope s;
@@ -422,8 +454,8 @@ struct Fst {
             wv.error = blocks.wrong;
             return;
         }
-        ctx = fstReaderOpen(path.c_str());
-        if (!ctx) {
+        if (!guarded(most(), [&] { ctx = fstReaderOpen(path.c_str()); }) || !ctx) {
+            ctx = nullptr;
             std::unique_lock lock(wv.mu);
             wv.error = "the FST file is damaged: libfst could not read its header";
             return;
@@ -439,7 +471,15 @@ struct Fst {
         fstReaderSetFacProcessMaskAll(ctx);
         fstReaderIterBlocksSetNativeDoublesOnCallback(ctx, 1);
         piece.reserve(kPiece / sizeof(Change));
-        fstReaderIterBlocks2(ctx, on_change, on_change_len, this, nullptr);
+        if (!guarded(most(), [&] { fstReaderIterBlocks2(ctx, on_change, on_change_len, this, nullptr); })) {
+            // (Its state is not to be trusted, nor closed: kept, with the
+            // memory it holds.)
+            ctx = nullptr;
+            piece.clear();
+            std::unique_lock lock(wv.mu);
+            if (wv.error.empty()) wv.error = "the FST file is damaged: libfst stopped reading it after " + wv.time_text(last_t);
+            return;
+        }
         flush();
     }
 };

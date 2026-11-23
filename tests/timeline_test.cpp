@@ -22,6 +22,7 @@
 #include <string_view>
 #include <vector>
 
+#include <fcntl.h>
 #include <sys/resource.h>
 #include <unistd.h>
 
@@ -772,14 +773,23 @@ void verilator_fst_test(const Wave& w) {
     check(changes_of(w, "tb.done") == 1, "verilator fst: the event fires once");
 }
 
-// Cut short at every length, or every step'th: each is said to be cut, or
-// not finished (cut where a block ends), or not an FST file at all, and
-// done.
+// Cut short at every length, and every byte changed in turn (to its
+// complement, and with its lowest and its highest bit flipped), or every
+// step'th: each is read to its end or stopped, and done, never a crash or
+// a hang. A cut file is said to be cut, or not finished (cut where a block
+// ends), or not an FST file at all; a damaged one may be read as far as
+// libfst could, or said. (libfst writes to stderr about some of them:
+// quietened here. Those it would have ended the process for, or crashed
+// on, or never finished, are counted.)
 void damaged_fst_test(const std::string& path, const std::string& scratch, const std::string& name, size_t step) {
     const u64 t0 = now_ns();
     const std::string bytes = slurp(path);
     const std::string file = scratch + "/damaged.fst";
     std::vector<std::string> wrong;
+    int stopped = 0;
+    std::fflush(stderr);
+    const int saved = ::dup(2), null = ::open("/dev/null", O_WRONLY);
+    ::dup2(null, 2);
     for (size_t len = 0; len < bytes.size(); len += step) {
         write_file(file, std::string_view(bytes).substr(0, len));
         const auto w = read_fst_file(file);
@@ -787,8 +797,22 @@ void damaged_fst_test(const std::string& path, const std::string& scratch, const
                           w->error.starts_with("not an FST file");
         if (!w->done || !w->header || !said) wrong.push_back("cut at " + std::to_string(len) + ": " + w->error);
     }
+    for (size_t i = 0; i < bytes.size(); i += step)
+        for (const u8 x : {0xff, 0x01, 0x80}) {
+            std::string b = bytes;
+            b[i] = static_cast<char>(b[i] ^ x);
+            write_file(file, b);
+            const auto w = read_fst_file(file);
+            if (!w->done || !w->header) wrong.push_back("byte " + std::to_string(i) + " ^ " + std::to_string(x) + ": not done");
+            stopped += w->error.find("libfst stopped reading it") != std::string::npos || w->error.find("libfst could not") != std::string::npos;
+        }
+    std::fflush(stderr);
+    ::dup2(saved, 2);
+    ::close(saved);
+    ::close(null);
     for (const std::string& s : wrong) check(false, name + ": " + s);
-    std::printf("%s: %zu bytes, cut short at every %zu (%.1f s)\n", name.c_str(), bytes.size(), step, static_cast<double>(now_ns() - t0) / 1e9);
+    std::printf("%s: %zu bytes, cut short at every %zu and changed: %d stopped instead of ending the process, crashing or not finishing (%.1f s)\n",
+                name.c_str(), bytes.size(), step, stopped, static_cast<double>(now_ns() - t0) / 1e9);
 }
 
 // The changes a variable is given, by the Lane's rules (a value it has is
