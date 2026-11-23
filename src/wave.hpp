@@ -2,7 +2,8 @@
 // Waveforms: a simulation's dump read into lanes (timeline.hpp), with the
 // scopes and variables it declares. VCD is read here, as IEEE 1364-2005
 // section 18 has it, and as the tools write it (Verilator, Icarus, Yosys,
-// pyvcd), with GTKWave's string values; FST through libfst, in wavefst.cpp.
+// pyvcd, Vivado's ILA captures), with GTKWave's string values; FST through
+// libfst, in wavefst.cpp; an ILA capture's CSV form in waveila.cpp.
 // Like timeline.cpp, this knows no window and nothing of the app, so that
 // the agent can carry it.
 //
@@ -33,6 +34,10 @@ enum class ScopeKind : u8 {
     kOther,
 };
 
+// The radix a dump asks a variable be shown in (an ILA capture's CSV says
+// it for each probe), else kNone.
+enum class DumpRadix : u8 { kNone, kBinary, kOctal, kHex, kUnsigned, kSigned };
+
 enum class VarKind : u8 {
     kWire, kReg, kLogic, kBit, kInteger, kInt, kShortInt, kLongInt, kByte, kTime, kParameter,
     kReal, kRealTime, kShortReal, kString, kEvent, kEnum, kPort,
@@ -58,6 +63,7 @@ struct WaveVar {
     u32 scope = 0;
     u32 lane = 0;
     VarKind kind = VarKind::kWire;
+    DumpRadix radix = DumpRadix::kNone;
     u32 width = 1;         // as declared
     bool ranged = false;   // declared with a range or a bit: [7:0] (msb 7, lsb 0), [3] (both 3)
     i32 msb = 0, lsb = 0;
@@ -73,6 +79,12 @@ struct Wave {
     i32 unit_exp = -9;
     bool unit_given = false;
     u64 start = 0, end = 0;  // the first and last time the dump reaches
+    // An ILA capture (Vivado's write_hw_ila_data, as VCD or CSV): its times
+    // are the numbers of its samples in the ILA's buffer, from 0, not a unit
+    // of time. Once it is read: the samples it triggered at (one a window)
+    // and the first sample of each window after the first.
+    bool samples = false;
+    std::vector<u64> triggers, windows;
     // The stretches between a $dumpoff and its $dumpon (~0: none came).
     std::vector<std::pair<u64, u64>> off;
     std::string date, version;
@@ -96,7 +108,8 @@ struct Wave {
     std::string path(u32 var) const;
     // The variable at such a path, or -1.
     i64 find(std::string_view path) const;
-    // A time as a person reads it, in the unit that suits it: "12.5 ns".
+    // A time as a person reads it, in the unit that suits it: "12.5 ns" (a
+    // capture's sample number as it is: "100").
     std::string time_text(u64 t) const;
     // The memory the lanes and the names hold, in bytes.
     size_t bytes() const;
@@ -164,10 +177,57 @@ private:
     std::vector<u64> val_, xz_;  // a vector value being put together
 };
 
-// What a dump is, from its first bytes (9 are enough): FST if they are an
+// An ILA capture's CSV form, as Vivado's write_hw_ila_data -csv_file
+// writes it, read into a Wave (empty at the start) as VcdReader reads a VCD:
+// fed in pieces split anywhere, under the same lock and memory budget. Its
+// first line names the columns (Sample in Buffer, Sample in Window,
+// TRIGGER, then a probe each: "count[7:0]"), its second gives each one's
+// radix ("Radix - UNSIGNED,UNSIGNED,UNSIGNED,HEX,..."), then a sample a
+// line. The probes go in a scope "dut", as its VCD form has them; each
+// sample's Sample in Buffer is its time; a sample with TRIGGER 1 is a
+// trigger, one whose Sample in Window is 0 starts a window. The radixes are
+// the probes' (WaveVar::radix). A file that is not one, or has no radix row
+// (-legacy_csv_file: its values cannot be read for sure), is said in
+// `error`; so is a line that is wrong, where it stops (keeping what came
+// before it).
+class IlaCsvReader {
+public:
+    explicit IlaCsvReader(Wave* into, u64 max_bytes = 0);
+    ~IlaCsvReader();
+    IlaCsvReader(const IlaCsvReader&) = delete;
+    IlaCsvReader& operator=(const IlaCsvReader&) = delete;
+
+    bool feed(std::string_view bytes);  // false once it has stopped
+    void finish();
+    u64 memory() const { return mem_; }
+
+private:
+    struct Column;
+
+    void line(std::string_view l);
+    void header(std::string_view l);
+    void radixes(std::string_view l);
+    void sample(std::string_view l);
+    void stop(std::string why);
+
+    Wave* w_;
+    u64 max_ = 0, mem_ = 0;
+    std::string carry_;  // a line cut by the end of the last piece
+    u64 line_ = 0;
+    bool stopped_ = false;
+    std::vector<Column> cols_;
+    i32 in_buffer_ = -1, in_window_ = -1, trigger_ = -1;  // (which columns they are)
+    bool have_ = false;  // a sample read
+    u64 last_ = 0;
+    std::vector<std::string_view> fields_;
+    std::vector<u64> val_;
+};
+
+// What a dump is, from its first bytes (16 are enough): FST if they are an
 // FST header block (or the gzip wrapper some writers put around a whole
-// file), else VCD's text.
-enum class DumpKind : u8 { kVcd, kFst };
+// file), an ILA capture's CSV if they are its first column's name ("Sample
+// in Buffer"), else VCD's text.
+enum class DumpKind : u8 { kVcd, kFst, kIlaCsv };
 DumpKind dump_kind(std::string_view head);
 
 // An FST file read into a Wave (empty at the start) through libfst
@@ -193,7 +253,8 @@ u64 read_fst(Wave* into, const std::string& path, u64 max_bytes = 0, std::stop_t
 
 // A dump read on a thread of its own. The bytes come through read_at,
 // called on that thread: a local file's (local_file) or, for a remote
-// one, kReadAt parts.
+// one, kReadAt parts. Their first bytes say which reader reads them: VCD's,
+// or an ILA capture's CSV.
 class WaveLoad {
 public:
     // Reads at most len bytes at offset; returns how many (0: the end), or -1 on an error.

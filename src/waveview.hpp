@@ -48,7 +48,8 @@ struct WaveFormat {
 // x or z alone in a radix with no digits of its own); a real or a string
 // as the lane has it; an event as "".
 void wave_value(const Lane& lane, u64 i, const WaveFormat& f, std::string* out);
-// The radix a signal starts in: binary for one bit, signed for an integer, hex for another bus.
+// The radix a signal starts in: binary for one bit, the one the dump asks for (an ILA
+// capture's CSV), signed for an integer, hex for another bus.
 WaveRadix wave_radix_default(const WaveVar& v);
 
 // One signal in the list.

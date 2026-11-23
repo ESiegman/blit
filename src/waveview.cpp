@@ -234,6 +234,15 @@ std::string WaveFormat::q_text(u32 width) const {
 
 WaveRadix wave_radix_default(const WaveVar& v) {
     if (v.width <= 1) return WaveRadix::kBinary;
+    // (The radix the dump asks for: an ILA capture's CSV gives each probe's.)
+    switch (v.radix) {
+        case DumpRadix::kBinary: return WaveRadix::kBinary;
+        case DumpRadix::kOctal: return WaveRadix::kOctal;
+        case DumpRadix::kHex: return WaveRadix::kHex;
+        case DumpRadix::kUnsigned: return WaveRadix::kUnsigned;
+        case DumpRadix::kSigned: return WaveRadix::kSigned;
+        case DumpRadix::kNone: break;
+    }
     // (A Verilog integer, an int and their kin are signed.)
     if (v.kind == VarKind::kInteger || v.kind == VarKind::kInt || v.kind == VarKind::kShortInt || v.kind == VarKind::kLongInt || v.kind == VarKind::kByte) return WaveRadix::kSigned;
     return WaveRadix::kHex;
@@ -385,6 +394,8 @@ std::vector<WaveItem> wave_default_items(const Wave& w, u32 most) {
         for (const u32 v : w.scopes[scope].vars) {
             if (count >= most) return;
             const WaveVar& var = w.vars[v];
+            // (An ILA capture's own _TRIGGER, _WINDOW and _GAP: its triggers and windows are drawn as markers.)
+            if (w.samples && (var.name == "_TRIGGER" || var.name == "_WINDOW" || var.name == "_GAP")) continue;
             if (var.lane < seen.size()) {
                 if (seen[var.lane]) continue;
                 seen[var.lane] = 1;

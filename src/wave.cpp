@@ -129,6 +129,7 @@ i64 Wave::find(std::string_view p) const {
 }
 
 std::string Wave::time_text(u64 t) const {
+    if (samples) return std::to_string(t);
     // t * mult * 10^exp seconds, in the largest of fs ps ns us ms s that
     // leaves at least 1 of it.
     static constexpr std::string_view kUnits[] = {"fs", "ps", "ns", "us", "ms", "s"};
@@ -259,6 +260,8 @@ bool VcdReader::feed(std::string_view bytes) {
     return !stopped_;
 }
 
+static void ila_marks(Wave& w);
+
 void VcdReader::finish() {
     std::unique_lock lock(w_->mu);
     if (!stopped_) run({}, true);
@@ -276,9 +279,29 @@ void VcdReader::finish() {
         changes += l.size();
     }
     w_->changes = changes;
+    if (w_->samples) ila_marks(*w_);
     w_->reached = w_->end;
     w_->done = true;
     stopped_ = true;
+}
+
+// An ILA capture's triggers and windows, from its VCD form's _TRIGGER and
+// _WINDOW: each flips at a trigger, or at a window's first sample (Vivado
+// 2026.2 writes them so: a capture of four windows has _TRIGGER 0 to 1 at
+// the first trigger, back to 0 at the second, and so on); one that starts
+// at 1 triggered at its first sample.
+static void ila_marks(Wave& w) {
+    w.triggers.clear();
+    w.windows.clear();
+    for (const WaveVar& v : w.vars) {
+        if ((v.name != "_TRIGGER" && v.name != "_WINDOW") || v.lane >= w.lanes.size()) continue;
+        const Lane& l = w.lanes[v.lane];
+        if (l.kind() != LaneKind::kBits || l.width() != 1) continue;
+        std::vector<u64>& to = v.name == "_TRIGGER" ? w.triggers : w.windows;
+        if (!to.empty()) continue;  // (the first of that name)
+        for (u64 i = 0; i < l.size(); ++i)
+            if (i > 0 || (v.name == "_TRIGGER" && l.bit(0, 0) == Bit::k1)) to.push_back(l.time(i));
+    }
 }
 
 // Splits a piece into tokens; one cut by its end waits in carry_ for the
@@ -370,6 +393,11 @@ void VcdReader::declaration() {
     };
     if (kw == "$enddefinitions") {
         body_ = true;
+        // (Vivado's ILA capture: its times are samples, and its own _TRIGGER,
+        // _WINDOW and _GAP beside the probes say where it triggered.)
+        if (w.version.starts_with("Vivado"))
+            for (const WaveVar& v : w.vars)
+                if (v.name == "_TRIGGER" && v.width == 1) w.samples = true;
         w.header = true;
     } else if (kw == "$date") {
         w.date = joined();
@@ -723,7 +751,15 @@ bool WaveLoad::local_file(const std::string& path, ReadAt* out, u64* size, std::
 
 void WaveLoad::run(std::stop_token stop, ReadAt read_at, u64 max_bytes) {
     thread_soon(Soon::kWaitedFor);
-    VcdReader reader(wave_.get(), max_bytes);
+    // (Which reader: VCD's, or an ILA capture's CSV, as the first bytes say.)
+    std::unique_ptr<VcdReader> vcd;
+    std::unique_ptr<IlaCsvReader> csv;
+    struct {
+        decltype(vcd)& v;
+        decltype(csv)& c;
+        bool feed(std::string_view s) { return c ? c->feed(s) : v->feed(s); }
+        void finish() { c ? c->finish() : v->finish(); }
+    } reader{vcd, csv};
     std::vector<char> buf(4 << 20);
     u64 off = 0, told = 0;
     bool header_told = false;
@@ -736,6 +772,10 @@ void WaveLoad::run(std::stop_token stop, ReadAt read_at, u64 max_bytes) {
             break;
         }
         if (n == 0) break;
+        if (!vcd && !csv) {
+            if (dump_kind(std::string_view(buf.data(), static_cast<size_t>(n))) == DumpKind::kIlaCsv) csv = std::make_unique<IlaCsvReader>(wave_.get(), max_bytes);
+            else vcd = std::make_unique<VcdReader>(wave_.get(), max_bytes);
+        }
         off += static_cast<u64>(n);
         read_.store(off, std::memory_order_relaxed);
         const bool more = reader.feed(std::string_view(buf.data(), static_cast<size_t>(n)));
@@ -753,6 +793,7 @@ void WaveLoad::run(std::stop_token stop, ReadAt read_at, u64 max_bytes) {
         std::unique_lock lock(wave_->mu);
         if (wave_->error.empty()) wave_->error = "stopped";
     }
+    if (!vcd && !csv) vcd = std::make_unique<VcdReader>(wave_.get(), max_bytes);  // (nothing read: VCD's reader says what that is)
     reader.finish();
     finished_.store(true, std::memory_order_release);
     if (notify_) notify_();

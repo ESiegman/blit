@@ -1,0 +1,26 @@
+ila_one.vcd, ila_one.csv, ila_one-legacy.csv, ila_windows.vcd,
+ila_windows.csv: ILA captures written by Vivado v2026.2 (64-bit, SW
+Build 6713330, Basic licence) with write_hw_ila_data, from a Digilent
+Basys 3 (xc7a35tcpg236-1) on Arch Linux (x86-64), 23 Nov 2026.
+
+The design is make/ila_top.v (a counter on the board's 100 MHz clock, a
+flag the cycle after it is 0xfe, a two-bit phase that steps each time it
+wraps, a 12-bit sum lagging the counter by one, four switches, all off),
+with the ILA IP on five probes of 1024 samples, built in batch mode by
+make/ila_build.tcl; make/ila_capture.tcl programmed the FPGA (its
+configuration memory, not the board's flash), armed the ILA twice and
+wrote each capture (the Tcl has the trigger settings).
+
+ila_one: one window of 1024 samples, triggered where count is 0x40, at
+sample 100; sum shown unsigned and sw_q in binary, the rest in hex.
+ila_windows: four windows of 256 samples, each triggered where wrap
+rises, at sample 32 of each; count shown signed, phase in octal.
+
+What they show: the VCD form's $timescale of 1ps over times that are
+sample numbers (0 to 1023), its probes in a scope "dut" with Vivado's own
+_TRIGGER, _WINDOW and _GAP beside them (_TRIGGER flips at each trigger,
+_WINDOW at each window's first sample); the CSV form's two first lines,
+the columns (Sample in Buffer, Sample in Window, TRIGGER, then a probe
+each, "count[7:0]") and their radixes ("Radix - UNSIGNED,...,HEX,..."),
+then a sample a line with TRIGGER 1 at each trigger; ila_one-legacy.csv,
+written with -legacy_csv_file, the same with no radix row.

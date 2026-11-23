@@ -491,6 +491,7 @@ struct Fst {
 }  // namespace
 
 DumpKind dump_kind(std::string_view head) {
+    if (head.starts_with("Sample in Buffer")) return DumpKind::kIlaCsv;
     if (head.size() < 9) return DumpKind::kVcd;
     const u8 type = static_cast<u8>(head[0]);
     const u64 len = be64(reinterpret_cast<const u8*>(head.data()) + 1);

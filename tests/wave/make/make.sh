@@ -2,7 +2,9 @@
 # Makes the dumps in tests/wave again, in the folder it is run in, on a
 # machine with the tools (they were made on Arch Linux, Nov 2026, with
 # Icarus Verilog 13.0, Verilator 5.054, Yosys 0.71+77 and pyvcd 0.5.1 under
-# Python 3.14). Each simulator's FST is the same run as its VCD.
+# Python 3.14). Each simulator's FST is the same run as its VCD. The ILA
+# captures (ila_*) come from a board, not a simulator: ila_build.tcl and
+# ila_capture.tcl, in Vivado, make them (../ila.txt says how).
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 

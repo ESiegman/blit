@@ -9,9 +9,10 @@
 # commands in Command search, the view kept in .blit/waves and brought back
 # (rows whose signals the dump has not got left out), the tiles painted and
 # their pixels where colour matters (x, z, a busy band, a high line), a dump
-# over timeline.max_mb, one that cannot be read, and dumps on another
+# over timeline.max_mb, one that cannot be read, dumps on another
 # machine (tests/fake-ssh.sh stands in for ssh): one fetched whole, one too
-# large to be yet.
+# large to be yet; and ILA captures (Vivado's, of a Basys 3), as VCD and
+# as CSV: their samples, radixes, triggers and windows.
 #
 #   tests/wavetab.sh path/to/blit            run the cases
 #   tests/wavetab.sh path/to/blit --print    show what each case gives
@@ -25,7 +26,7 @@ dir=$(cd "$dir" && pwd -P)
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/init.lua"
 export BLIT_INIT="$dir/init.lua" BLIT_RECENT_FILE="$dir/recent" BLIT_CACHE_DIR="$dir/cache"
 mkdir -p "$dir/work"
-cp "$here"/wave/*.vcd "$dir/work/"
+cp "$here"/wave/*.vcd "$here"/wave/*.csv "$dir/work/"
 W="$dir/work"
 
 failed=0
@@ -333,6 +334,34 @@ got=$(printf '%s' "$got" | sed -e 's/ ;; .*//')
 check "another machine's FST, fetched and read" "verilator.fst: read, cursor 0 ps, view 0 ps to 2.772 us"
 got=$(ls "$dir/cache/waves" 2>/dev/null | wc -l | tr -d ' ')
 check "(its copy here removed once read)" "0"
+
+# ILA captures (tests/wave/ila.txt): their times are samples; the cursor
+# starts at the trigger; Vivado's own _TRIGGER, _WINDOW and _GAP are not
+# rows (the triggers and windows are drawn instead); the CSV form's radix
+# row is each probe's radix; the form with no radix row is not shown, and
+# why. A CSV that is not a capture opens as text.
+fresh
+run 1600x900 "frame;wavewait;wavedump" "$W/ila_one.vcd"
+check "an ILA capture's VCD: samples, the cursor at the trigger" "ila_one.vcd: read, cursor 100, view 0 to 1023, triggers at 100 ;; >dut.count[7:0] = 40 hex ;;  dut.wrap = 0 ;;  dut.phase[1:0] = 0 hex ;;  dut.sum[11:0] = 03f hex ;;  dut.sw_q[3:0] = 0 hex"
+run 1600x900 "frame;wavewait;wavedump" "$W/ila_one.csv"
+check "its CSV: the same, in the radixes it gives" "ila_one.csv: read, cursor 100, view 0 to 1023, triggers at 100 ;; >dut.count[7:0] = 40 hex ;;  dut.wrap = 0 ;;  dut.phase[1:0] = 0 hex ;;  dut.sum[11:0] = 63 unsigned ;;  dut.sw_q[3:0] = 0000 binary"
+run 1600x900 "frame;wavewait;key:n;key:n;key:m;key:a;wavedump" "$W/ila_windows.csv"
+check "four windows: a trigger each, n from the first, a marker" "ila_windows.csv: read, cursor 34, view 0 to 1023, markers a=34(+0), triggers at 32 288 544 800, windows from 256 512 768 ;; >dut.count[7:0] = 1 signed ;;  dut.wrap = 0 ;;  dut.phase[1:0] = 2 octal ;;  dut.sum[11:0] = 0 unsigned ;;  dut.sw_q[3:0] = 0000 binary"
+run 1600x900 "frame;wavewait;wavedump" "$W/ila_one-legacy.csv"
+check "the CSV form with no radix row: not shown, and why" "ila_one-legacy.csv: cannot show it: an ILA capture's CSV with no radix row (written with -legacy_csv_file): its values cannot be read for sure. Write it with -csv_file, or as VCD"
+printf 'a,b\n1,2\n' >"$W/table.csv"
+run 1600x900 "frame;wavedump" "$W/table.csv"
+check "a CSV that is not a capture: text" "no wave tab"
+# The trigger's line, in the errors' ink (red), and the cursor's, moved
+# ten samples on (n), in its own: four pixels about each.
+fresh
+tens="key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n"
+got=$("$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "frame;wavewait;key:0;$tens;wavewait;wavedump:at:8,100,-1,0,4;wavedump:at:8,110,-1,0,4" "$W/ila_one.vcd" 2>&1 >/dev/null | grep '^at ' | sed -e 's/^at [-0-9,]* | //' | join)
+reds() { printf '%s\n' "$1" | awk 'BEGIN { RS = " [|] " } NF == 3 && $1 > $2 + 60 && $1 > $3 + 30 { n++ } END { print n + 0 }'; }
+[ "$(reds "${got%% ;; *}")" -gt 0 ] && c=red || c="not red: ${got%% ;; *}"
+[ "$(reds "${got#* ;; }")" = 0 ] && c="$c, the cursor not" || c="$c, the cursor red too: ${got#* ;; }"
+got=$c
+check "the trigger's line at sample 100: red" "red, the cursor not"
 
 [ $failed = 0 ] && echo "wavetab ok"
 exit $failed
