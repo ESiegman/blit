@@ -1877,6 +1877,27 @@ bool App::term_wait(const std::string& text) {
     return false;
 }
 
+bool App::term_wait_last(const std::string& text) {
+    if (!pane_->doc->term) return false;
+    const u64 until = now_ns() + 10'000'000'000ull;
+    TermView& v = *pane_->doc->term;
+    while (now_ns() < until) {
+        {
+            std::lock_guard lock(v.mu);
+            for (u32 r = v.term.rows(); r-- > 0;) {
+                std::string row = v.term.row_text(r);
+                while (!row.empty() && row.back() == ' ') row.pop_back();
+                while (!row.empty() && row.front() == ' ') row.erase(0, 1);
+                if (row.empty()) continue;
+                if (row == text) return true;
+                break;
+            }
+        }
+        SDL_Delay(5);
+    }
+    return false;
+}
+
 // ---------------------------------------------------------------- its lines as text
 
 // The history and the screen as text: a row a wrap made goes on into the

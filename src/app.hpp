@@ -1296,6 +1296,7 @@ private:
     bool term_wheel(const SDL_MouseWheelEvent& w);
     std::string term_dump();
     bool term_wait(const std::string& text);
+    bool term_wait_last(const std::string& text);  // (tests: the last row with anything on it is that, trimmed: a fresh prompt)
     // A terminal's stored lines, taken again if they have changed since
     // `out` was (false: they have not); its view scrolled to show one of
     // them (~0: back to the screen); and they, as a tab of text to read.

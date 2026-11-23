@@ -1640,6 +1640,9 @@ void App::run_script(const char* script) {
                         break;
                     }
             if (!ran) std::fprintf(stderr, "command: no \"%s\"\n", arg.c_str());
+        } else if (verb == "termlast") {  // termlast:TEXT, the terminal in front's last row with anything on it is TEXT (a fresh prompt: 10 s at most)
+            if (!term_wait_last(arg)) std::fprintf(stderr, "termlast: the last row is not \"%s\"\n", arg.c_str());
+            term_sync();
         } else if (verb == "termend") {  // the terminal's program has ended (10 s at most)
             term_end();
         } else if (verb == "answer") {  // (save or dontsave; keep or end, for jobs on other machines)
