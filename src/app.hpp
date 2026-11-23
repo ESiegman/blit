@@ -1530,6 +1530,7 @@ private:
     struct GitSummary {
         bool repo = false, merging = false;
         std::string root, branch, head;
+        std::string missing;  // (no repository, as git is not installed where the folder is: said)
         int ahead = 0, behind = 0;
         size_t changed = 0;  // files that differ from the last commit, or are new
     };

@@ -17,6 +17,7 @@
 #include <utility>
 
 #include "lsp.hpp"
+#include "missing.hpp"
 #include "qos.hpp"
 #include "utf8.hpp"
 
@@ -1481,6 +1482,7 @@ struct Git::Worker {
 
     // The worker's own.
     std::string program, root, gitdir, head;
+    std::string missing;  // (git is not installed where the folder is: said)
     // The committed text of files compared so far, as line hashes; a null
     // entry is a file with no committed version. And the same of what is
     // staged of them (read again whenever the status is).
@@ -1542,11 +1544,14 @@ struct Git::Worker {
         staged.clear();
         std::string host, there;
         const bool remote = split_remote(where, &host, &there);  // (another machine's: its own git, found there)
+        missing.clear();
         if (!remote && program.empty()) program = Lsp::find_program("git");
+        if (!remote && program.empty() && !where.empty()) missing = not_installed("git", {});
         if ((!remote && program.empty()) || where.empty()) return;
         root = where;  // (run from there)
         const Ran r = git({"rev-parse", "--show-toplevel", "--absolute-git-dir"});
         root.clear();
+        if (remote && r.code == 127) missing = not_installed("git", host);  // (the shell the agent runs it through could not find it)
         if (r.code != 0) return;
         const size_t nl = r.out.find('\n');
         if (nl == std::string::npos) return;
@@ -1558,6 +1563,7 @@ struct Git::Worker {
     void read_status(Result& res) {
         res.kind = kStatus;
         res.ok = true;
+        res.status.missing = missing;
         if (root.empty()) return;
         // The branches and tags, the latest commits and the stashes are
         // asked for at the same time as the status, by programs of their

@@ -761,6 +761,9 @@ everyday things from the side panel. It runs the `git` program for all of
 it, so whatever your git does in a terminal (credential helpers, ssh keys,
 hooks, your settings) it does here. Nothing git does ever holds up the
 editor: a push that takes ten seconds takes them on a thread of its own.
+Where git is not installed on the folder's machine, the Git tab says so
+("git is not installed on lab") in place of "Not a git repository", and
+so does what needs a repository.
 
 **In the text.** Lines changed since the last commit have a mark beside
 their number: one colour for added lines, one for changed ones, and a dash

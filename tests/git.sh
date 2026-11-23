@@ -560,5 +560,17 @@ unset BLIT_GH GH_LOG
 got=$(PATH=$(path_without gh) "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" --script "$prs" "$dir/ada/poem.txt" 2>&1 >/dev/null | grep '^blit: ' | tail -1)
 check "gh not installed: said" "blit: gh is not installed on $this"
 
+# git not installed on the machine the folder is on (tests/fake-ssh.sh
+# stands in for ssh, and the login shell there keeps the PATH it is
+# given): the Git tab says so, not that it is no repository (nor offers to
+# make it one), and so does what needs a repository.
+printf '#!/bin/sh\nshift\nexec /bin/sh -c "$@"\n' >"$dir/plainsh"
+chmod +x "$dir/plainsh"
+mkdir -p "$dir/there"
+nogit=$(path_without git)
+got=$(SHELL="$dir/plainsh" PATH=$nogit BLIT_SSH="$(cd "$(dirname "$0")" && pwd)/fake-ssh.sh" BLIT_FAKE_HOME="$dir/there" "$blit" --offscreen 1200x700 --shot "$dir/shot.bmp" \
+    --script "remotewait;frame;gitwait;gitdump;command:Git: The file's history;frame" "ssh://box$dir/ada/poem.txt" 2>&1 >/dev/null | grep -v '^blit: git:' | tail -2 | tr '\n' '/')
+check "git not installed there: said, naming that machine" "no repository: git is not installed on box/blit: git is not installed on box/"
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "git ok"
 exit $failed
