@@ -223,6 +223,7 @@ target_compile_options(blit_fst PRIVATE -O2 $<$<C_COMPILER_ID:AppleClang,Clang>:
 set_target_properties(blit_fst PROPERTIES INTERPROCEDURAL_OPTIMIZATION OFF INTERPROCEDURAL_OPTIMIZATION_DEBUG OFF INTERPROCEDURAL_OPTIMIZATION_RELEASE OFF)
 target_link_libraries(blit_fst PUBLIC ZLIB::ZLIB)
 target_link_libraries(blit_core PUBLIC blit_fst)
+target_sources(blit_core PRIVATE src/wavefst.cpp)
 
 # Working on another machine's files (src/remote.*): blit's agent runs there.
 # This machine's kind of agent is built here (for any Mac of its kind, not

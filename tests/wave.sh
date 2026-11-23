@@ -1,10 +1,14 @@
 #!/bin/sh
-# Waveforms: the timeline model and the VCD reader (src/timeline.hpp,
-# src/wave.hpp), through blit_timeline_test beside blit. Real dumps from
-# Icarus, Verilator, Yosys and pyvcd (tests/wave) are read whole, in two
-# pieces at every byte, a byte at a time and cut short, and checked against
-# what their text says and against answers found by brute force; a large
-# dump made up here is read on a thread under a memory budget it goes over.
+# Waveforms: the timeline model and the VCD and FST readers
+# (src/timeline.hpp, src/wave.hpp), through blit_timeline_test beside blit.
+# Real dumps from Icarus, Verilator, Yosys and pyvcd (tests/wave) are read
+# whole, in two pieces at every byte, a byte at a time and cut short, and
+# checked against what their text says and against answers found by brute
+# force; Icarus's and Verilator's FST files against the VCD of the same run,
+# and cut short at every byte; FST files written by libfst's own
+# writer against what was written; large dumps made up here (VCD, and FST
+# through libfst's writer) are read on a thread under a memory budget they
+# go over.
 #
 #   tests/wave.sh path/to/blit
 set -u
@@ -16,7 +20,8 @@ dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 failed=0
 
-"$bin" check "$src/tests/wave" 200 || failed=1
+mkdir "$dir/scratch"
+"$bin" check "$src/tests/wave" 200 "$dir/scratch" || failed=1
 
 # Read as blit reads a file, on a thread: past timeline.max_mb it stops,
 # says so, and keeps what it read.
@@ -31,6 +36,18 @@ case "$got" in
     *error*|*note*) printf 'FAIL: under the budget\n    %s\n' "$got"; failed=1 ;;
     "vars 813 lanes 813 changes "*) ;;
     *) printf 'FAIL: under the budget\n    %s\n' "$got"; failed=1 ;;
+esac
+"$bin" genfst "$dir/big.fst" 3 || { echo "FAIL: genfst"; failed=1; }
+got=$("$bin" load "$dir/big.fst" 8)
+case "$got" in
+    *"error: the dump needs more memory than timeline.max_mb allows: read up to "[0-9]*" us"*) ;;
+    *) printf 'FAIL: an FST over the budget\n    %s\n' "$got"; failed=1 ;;
+esac
+got=$("$bin" load "$dir/big.fst" 512)
+case "$got" in
+    *error*|*note*) printf 'FAIL: an FST under the budget\n    %s\n' "$got"; failed=1 ;;
+    "vars 813 lanes 813 changes "*) ;;
+    *) printf 'FAIL: an FST under the budget\n    %s\n' "$got"; failed=1 ;;
 esac
 got=$("$bin" load "$dir/none.vcd")
 [ "$got" = "error: No such file or directory" ] || { printf 'FAIL: a file not there\n    %s\n' "$got"; failed=1; }

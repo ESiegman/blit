@@ -4512,10 +4512,14 @@ does not finish and takes all the memory the machine has.
   choosing text does not scroll the view past its edge; the outline box
   is for the mouse and the wheel.
 - Waves: a VCD dump is read whole, in one pass (about 600 MB a second on
-  an M5 Pro), every variable's changes kept in memory (one or two
+  an M5 Pro), and an FST file whole through libfst (about 40 million
+  changes a second: Verilator's 180 MB of a million cycles in 3.3
+  seconds), every variable's changes kept in memory (one or two
   bytes a change of a one-bit signal, five or six of a 32-bit bus), up to
   `blit.opt.timeline.max_mb` (2048 MB): past that, reading stops, keeps
-  what it read, and says how far into the run it got.
+  what it read, and says how far into the run it got. An FST file is
+  read only once its simulation has closed it (until then it has no list
+  of its signals); one cut short is said to be.
 - Terminal: no ligatures. A screen with more than 32 text colours or 6
   background colours at once draws the rest in the nearest of those (5
   while a search's matches are lit). Its search (Cmd+F) looks at the lines

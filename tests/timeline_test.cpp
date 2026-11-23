@@ -1,11 +1,12 @@
-// The timeline model and the VCD reader (src/timeline.hpp, src/wave.hpp),
-// checked against real dumps (tests/wave: what each was made with is
-// beside it) and against slow answers worked out from the same text by
-// brute force. tests/wave.sh runs it.
+// The timeline model and the VCD and FST readers (src/timeline.hpp,
+// src/wave.hpp), checked against real dumps (tests/wave: what each was made
+// with is beside it) and against slow answers worked out from the same text
+// by brute force. tests/wave.sh runs it.
 //
-//   blit_timeline_test check DIR [SEEDS]   every check, on the dumps in DIR
-//   blit_timeline_test load FILE [MAX_MB]  reads a dump as blit does, on a thread, and says what came of it
+//   blit_timeline_test check DIR [SEEDS [SCRATCH]]  every check, on the dumps in DIR (files it writes go in SCRATCH)
+//   blit_timeline_test load FILE [MAX_MB]  reads a dump (VCD or FST) as blit does, on a thread, and says what came of it
 //   blit_timeline_test gen FILE MB         writes a made-up dump of about MB megabytes (for speed and memory)
+//   blit_timeline_test genfst FILE M       writes an FST of about M million changes with libfst's writer
 //   blit_timeline_test bench FILE          how fast a dump is read, its memory a change, and the column query's cost
 #include <algorithm>
 #include <charconv>
@@ -21,8 +22,15 @@
 #include <string_view>
 #include <vector>
 
+#include <sys/resource.h>
+#include <unistd.h>
+
 #include "timeline.hpp"
 #include "wave.hpp"
+
+extern "C" {
+#include "fstapi.h"
+}
 
 using namespace blit;
 
@@ -613,6 +621,7 @@ void malformed_test() {
 }
 
 void made_up(u64 bytes, const std::function<void(std::string_view)>& put);
+void made_up_fst(const std::string& path, u64 changes);
 
 // Past the memory budget it stops, says so, and keeps what it read.
 void budget_test() {
@@ -638,7 +647,340 @@ void load_test(const std::string& path, const Wave& whole) {
     check(!WaveLoad::local_file(path + ".none", &read_at, &size, &err) && !err.empty(), "load: a file that is not there");
 }
 
-int run_check(const std::string& dir, int seeds) {
+// --- FST, through libfst.
+
+std::unique_ptr<Wave> read_fst_file(const std::string& path, u64 max_bytes = 0) {
+    auto w = std::make_unique<Wave>();
+    read_fst(w.get(), path, max_bytes);
+    return w;
+}
+
+void write_file(const std::string& path, std::string_view bytes) {
+    FILE* f = std::fopen(path.c_str(), "wb");
+    if (!f || std::fwrite(bytes.data(), 1, bytes.size(), f) != bytes.size()) {
+        std::fprintf(stderr, "FAIL: cannot write %s\n", path.c_str());
+        std::exit(1);
+    }
+    std::fclose(f);
+}
+
+// The first variable before v that shares its lane, by path ("" if none).
+std::string alias_of(const Wave& w, u32 v) {
+    for (u32 o = 0; o < v; ++o)
+        if (w.vars[o].lane == w.vars[v].lane) return w.path(o);
+    return "";
+}
+
+// The FST and the VCD of one design run the same way (make/make.sh: the
+// same simulator and commands, the run deterministic): the same variables,
+// ranges and aliases, span, unit and $dumpoff stretches, and the same
+// lanes, change by change. (Not always the same kinds: Verilator's FST says
+// logic where its VCD says wire, and parameter where it says wire; nor a
+// real's declared width, which Icarus's VCD gives as 1.)
+void same_run(const Wave& vcd, const Wave& fst, const std::string& name) {
+    check(vcd.vars.size() == fst.vars.size() && vcd.lanes.size() == fst.lanes.size(), name + ": as many variables and lanes as the VCD");
+    check(vcd.start == fst.start && vcd.end == fst.end && vcd.unit_mult == fst.unit_mult && vcd.unit_exp == fst.unit_exp && vcd.off == fst.off,
+          name + ": the VCD's span, unit and $dumpoff stretches");
+    for (u32 v = 0; v < vcd.vars.size(); ++v) {
+        const std::string p = vcd.path(v);
+        const i64 f = fst.find(p);
+        if (f < 0) {
+            check(false, name + ": no " + p);
+            continue;
+        }
+        const WaveVar &a = vcd.vars[v], &b = fst.vars[static_cast<size_t>(f)];
+        const Lane &x = vcd.lanes[a.lane], &y = fst.lanes[b.lane];
+        check(x.kind() == y.kind() && (x.kind() != LaneKind::kBits || (a.width == b.width && x.width() == y.width())) && a.ranged == b.ranged &&
+                  a.msb == b.msb && a.lsb == b.lsb,
+              name + ": " + p + ": the VCD's lane kind, width and range");
+        check(alias_of(vcd, v) == alias_of(fst, static_cast<u32>(f)), name + ": " + p + ": the VCD's alias");
+        check(x.size() == y.size(), name + ": " + p + ": " + std::to_string(y.size()) + " changes, the VCD has " + std::to_string(x.size()));
+        for (u64 i = 0; i < std::min(x.size(), y.size()); ++i)
+            if (x.time(i) != y.time(i) || fmt(x, i) != fmt(y, i)) {
+                check(false, name + ": " + p + " change " + std::to_string(i) + ": " + std::to_string(y.time(i)) + " " + fmt(y, i) + ", the VCD " +
+                                 std::to_string(x.time(i)) + " " + fmt(x, i));
+                break;
+            }
+    }
+}
+
+void icarus_fst_test(const Wave& w) {
+    // (As icarus.vcd's, but for the real's width: 8 bytes in FST, 1 in Icarus's VCD.)
+    expect("icarus fst: the variables", listing(w),
+           "tb.done event 1\n"
+           "tb.wrap wire 1\n"
+           "tb.drv wire 4 [3:0]\n"
+           "tb.count wire 8 [7:0]\n"
+           "tb.clk reg 1\n"
+           "tb.en reg 1\n"
+           "tb.nib reg 4 [3:0]\n"
+           "tb.rst reg 1\n"
+           "tb.wide reg 96 [95:0]\n"
+           "tb.steps integer 32 [31:0]\n"
+           "tb.temp real 64\n"
+           "tb.u_cnt.clk wire 1 = tb.clk\n"
+           "tb.u_cnt.en wire 1 = tb.en\n"
+           "tb.u_cnt.rst wire 1 = tb.rst\n"
+           "tb.u_cnt.wrap wire 1 = tb.wrap\n"
+           "tb.u_cnt.W parameter 32\n"
+           "tb.u_cnt.count reg 8 [7:0]\n");
+    check(w.lanes.size() == 13 && w.scopes.size() == 3 && w.scopes[2].name == "u_cnt" && w.scopes[2].kind == ScopeKind::kModule && w.scopes[2].parent == 1,
+          "icarus fst: lanes and scopes");
+    check(w.unit_given && w.unit_mult == 1 && w.unit_exp == -12 && w.start == 0 && w.end == 2772000, "icarus fst: 1 ps, from 0 to 2772000");
+    check(w.off == std::vector<std::pair<u64, u64>>{{72000, 97000}}, "icarus fst: the $dumpoff stretch");
+    check(w.date.find("2026") != std::string::npos && w.version == "Icarus Verilog", "icarus fst: date and version: " + w.date + ", " + w.version);
+    check(w.header && w.done && w.notes.empty() && w.error.empty(), "icarus fst: read with nothing to say: " + w.error);
+    expect("icarus fst: nib before it is set", value_at(w, "tb.nib", 31999), "xxxx");
+    expect("icarus fst: nib with x and z", value_at(w, "tb.nib", 32000), "1x0z");
+    expect("icarus fst: nib while dumping is off", value_at(w, "tb.nib", 80000), "xxxx");
+    expect("icarus fst: drv floats at first", value_at(w, "tb.drv", 0), "zzzz");
+    expect("icarus fst: a real", value_at(w, "tb.temp", 32000), "1.5");
+    expect("icarus fst: a small real", value_at(w, "tb.temp", 70000), "-0.00225");
+    expect("icarus fst: a large real", value_at(w, "tb.temp", 2000000), "6.02e+23");
+    expect("icarus fst: 96 bits with x and z", value_at(w, "tb.wide", 40000), "10xz" + std::string(92, '0'));
+    expect("icarus fst: an alias reads its lane", value_at(w, "tb.u_cnt.clk", 5000), "1");
+    expect("icarus fst: the counter", value_at(w, "tb.count", 2757000), "00010001");
+    check(changes_of(w, "tb.done") == 3, "icarus fst: an event's changes, each kept");
+}
+
+void verilator_fst_test(const Wave& w) {
+    // (Its kinds are its own: SystemVerilog's logic, the parameter as one.)
+    expect("verilator fst: the variables", listing(w),
+           "tb.clk logic 1\n"
+           "tb.rst logic 1\n"
+           "tb.en logic 1\n"
+           "tb.count logic 8 [7:0]\n"
+           "tb.wrap logic 1\n"
+           "tb.nib logic 4 [3:0]\n"
+           "tb.drv wire 4 [3:0]\n"
+           "tb.wide logic 96 [95:0]\n"
+           "tb.temp real 64\n"
+           "tb.steps integer 32 [31:0]\n"
+           "tb.done event 1\n"
+           "tb.u_cnt.W parameter 32 [31:0]\n"
+           "tb.u_cnt.clk wire 1 = tb.clk\n"
+           "tb.u_cnt.rst wire 1 = tb.rst\n"
+           "tb.u_cnt.en wire 1 = tb.en\n"
+           "tb.u_cnt.count wire 8 [7:0] = tb.count\n"
+           "tb.u_cnt.wrap wire 1 = tb.wrap\n");
+    check(w.lanes.size() == 12 && w.unit_exp == -12 && w.start == 0 && w.end == 2772000 && w.off.empty(), "verilator fst: lanes, unit, span");
+    check(w.version == "Generated by VerilatedFst" && w.notes.empty() && w.error.empty(), "verilator fst: read with nothing to say: " + w.error);
+    expect("verilator fst: nib (two states)", value_at(w, "tb.nib", 32000), "1000");
+    expect("verilator fst: 96 bits", value_at(w, "tb.wide", 70000),
+           "110111101010110110111110111011110000000100100011010001010110011110001001101010111100110111101111");
+    expect("verilator fst: a 32-bit parameter", value_at(w, "tb.u_cnt.W", 100), "00000000000000000000000000001000");
+    check(changes_of(w, "tb.done") == 1, "verilator fst: the event fires once");
+}
+
+// Cut short at every length, or every step'th: each is said to be cut, or
+// not finished (cut where a block ends), or not an FST file at all, and
+// done.
+void damaged_fst_test(const std::string& path, const std::string& scratch, const std::string& name, size_t step) {
+    const u64 t0 = now_ns();
+    const std::string bytes = slurp(path);
+    const std::string file = scratch + "/damaged.fst";
+    std::vector<std::string> wrong;
+    for (size_t len = 0; len < bytes.size(); len += step) {
+        write_file(file, std::string_view(bytes).substr(0, len));
+        const auto w = read_fst_file(file);
+        const bool said = w->error.starts_with("the FST file is cut short") || w->error.starts_with("the FST file has no hierarchy") ||
+                          w->error.starts_with("not an FST file");
+        if (!w->done || !w->header || !said) wrong.push_back("cut at " + std::to_string(len) + ": " + w->error);
+    }
+    for (const std::string& s : wrong) check(false, name + ": " + s);
+    std::printf("%s: %zu bytes, cut short at every %zu (%.1f s)\n", name.c_str(), bytes.size(), step, static_cast<double>(now_ns() - t0) / 1e9);
+}
+
+// The changes a variable is given, by the Lane's rules (a value it has is
+// no change, but for an event's; at one time the last counts).
+void ref_set(std::vector<RefChange>& c, u64 t, const std::string& v, bool event = false) {
+    if (event) {
+        if (c.empty() || c.back().t != t) c.push_back({t, ""});
+        return;
+    }
+    if (!c.empty() && c.back().v == v) return;
+    if (!c.empty() && c.back().t == t) {
+        if (c.size() >= 2 && c[c.size() - 2].v == v) c.pop_back();
+        else c.back().v = v;
+        return;
+    }
+    c.push_back({t, v});
+}
+
+// An FST written here by libfst's own writer (the same commit as its
+// reader, third_party/libfst), for what the simulators' files do not show:
+// each of its compressions (zlib, FastLZ, LZ4) and the gzip wrapper around
+// a whole file, many sections, a timescale of 10 ps and a time zero, task
+// and fork scopes, a 130-bit bus, a bit select, an ascending range, an
+// array's element, a string, a real, an event and an alias, values of 0 1 x
+// z (an x or a z anywhere in a 64-bit word) and std_logic's h l u w -, and
+// $dumpoff. Read back, every lane is the
+// list of values it was written.
+void writer_fst_test(const std::string& scratch) {
+    struct Kind {
+        enum fstWriterPackType pack;
+        bool wrap;
+        const char* name;
+    };
+    for (const Kind k : {Kind{FST_WR_PT_ZLIB, false, "zlib"}, Kind{FST_WR_PT_FASTLZ, false, "fastlz"}, Kind{FST_WR_PT_LZ4, false, "lz4"},
+                         Kind{FST_WR_PT_LZ4, true, "wrapped"}}) {
+        const std::string path = scratch + "/writer-" + k.name + ".fst", at = std::string("libfst ") + k.name;
+        fstWriterContext* f = fstWriterCreate(path.c_str(), 1);
+        fstWriterSetPackType(f, k.pack);
+        fstWriterSetRepackOnClose(f, k.wrap);
+        fstWriterSetTimescale(f, -11);
+        fstWriterSetTimezero(f, -3);
+        fstWriterSetDate(f, "today");
+        fstWriterSetVersion(f, "libfst's writer");
+        fstWriterSetScope(f, FST_ST_VCD_MODULE, "top", nullptr);
+        const fstHandle clk = fstWriterCreateVar(f, FST_VT_VCD_WIRE, FST_VD_INPUT, 1, "clk", 0);
+        const fstHandle bus = fstWriterCreateVar(f, FST_VT_SV_LOGIC, FST_VD_IMPLICIT, 130, "bus [129:0]", 0);
+        const fstHandle bit = fstWriterCreateVar(f, FST_VT_VCD_REG, FST_VD_IMPLICIT, 1, "flags [3]", 0);
+        const fstHandle up = fstWriterCreateVar(f, FST_VT_VCD_REG, FST_VD_IMPLICIT, 8, "up [0:7]", 0);
+        const fstHandle word = fstWriterCreateVar(f, FST_VT_SV_LONGINT, FST_VD_IMPLICIT, 64, "word", 0);
+        fstWriterSetScope(f, FST_ST_VCD_TASK, "t", nullptr);
+        const fstHandle state = fstWriterCreateVar(f, FST_VT_GEN_STRING, FST_VD_IMPLICIT, 0, "state", 0);
+        const fstHandle volts = fstWriterCreateVar(f, FST_VT_VCD_REAL, FST_VD_IMPLICIT, 8, "volts", 0);
+        fstWriterSetUpscope(f);
+        fstWriterSetScope(f, FST_ST_VCD_FORK, "par", nullptr);
+        const fstHandle ev = fstWriterCreateVar(f, FST_VT_VCD_EVENT, FST_VD_IMPLICIT, 1, "ev", 0);
+        const fstHandle mem = fstWriterCreateVar(f, FST_VT_SV_LOGIC, FST_VD_IMPLICIT, 4, "mem[3]", 0);
+        fstWriterCreateVar(f, FST_VT_VCD_WIRE, FST_VD_IMPLICIT, 1, "clk_in", clk);
+        fstWriterSetUpscope(f);
+        fstWriterSetUpscope(f);
+        std::map<fstHandle, std::vector<RefChange>> ref;
+        std::mt19937_64 rng(5);
+        auto bits = [&](u32 n, const char* of) {
+            std::string s(n, '0');
+            for (char& c : s) c = of[rng() % std::strlen(of)];
+            return s;
+        };
+        for (u64 step = 0; step < 3000; ++step) {
+            const u64 t = 100 + step * 7;
+            fstWriterEmitTimeChange(f, t);
+            if (step == 1000) fstWriterEmitDumpActive(f, 0);
+            if (step == 1100) fstWriterEmitDumpActive(f, 1);
+            const std::string c = step % 2 ? "1" : "0";
+            fstWriterEmitValueChange(f, clk, c.data());
+            ref_set(ref[clk], t, c);
+            if (step % 3 == 0) {
+                const std::string v = bits(130, step % 30 == 0 ? "01xz" : "01");
+                fstWriterEmitValueChange(f, bus, v.data());
+                ref_set(ref[bus], t, v);
+            }
+            if (step % 2 == 0) {
+                // (Now and then an x or a z, anywhere in it.)
+                std::string v = bits(64, "01");
+                if (step % 14 == 0) v[rng() % 64] = "xz"[rng() % 2];
+                fstWriterEmitValueChange(f, word, v.data());
+                ref_set(ref[word], t, v);
+            }
+            if (step % 5 == 0) {
+                const std::string b = bits(1, "01xzhluw-"), u = bits(8, "01");
+                fstWriterEmitValueChange(f, bit, b.data());
+                fstWriterEmitValueChange(f, up, u.data());
+                fstWriterEmitValueChange(f, mem, u.data() + 4);
+                // (h and l are read as 1 and 0; u, w and - as x.)
+                const char d = b[0] == 'h' ? '1' : b[0] == 'l' ? '0' : std::strchr("uw-", b[0]) ? 'x' : b[0];
+                ref_set(ref[bit], t, std::string(1, d));
+                ref_set(ref[up], t, u);
+                ref_set(ref[mem], t, u.substr(4));
+            }
+            if (step % 50 == 0) {
+                const std::string s = step % 100 ? "RUN" : step % 200 ? "IDLE" : "a state " + std::to_string(step);
+                fstWriterEmitVariableLengthValueChange(f, state, s.data(), static_cast<uint32_t>(s.size()));
+                ref_set(ref[state], t, s);
+                const double d = static_cast<double>(step) / 8.0 - 3.3;
+                fstWriterEmitValueChange(f, volts, &d);
+                char buf[32];
+                ref_set(ref[volts], t, std::string(buf, std::to_chars(buf, buf + sizeof buf, d).ptr));
+            }
+            if (step % 97 == 0) {
+                fstWriterEmitValueChange(f, ev, "1");
+                ref_set(ref[ev], t, "", true);
+            }
+            if (step % 400 == 399) fstWriterFlushContext(f);
+        }
+        fstWriterEmitTimeChange(f, 100 + 3000 * 7);
+        fstWriterClose(f);
+        const auto w = read_fst_file(path);
+        check(wave_format(slurp(path)) == WaveFormat::kFst, at + ": its first bytes say FST");
+        expect(at + ": the variables", listing(*w),
+               "top.clk wire 1\ntop.bus logic 130 [129:0]\ntop.flags reg 1 [3:3]\ntop.up reg 8 [0:7]\ntop.word longint 64\ntop.t.state string 0\ntop.t.volts real 64\n"
+               "top.par.ev event 1\ntop.par.mem[3] logic 4\ntop.par.clk_in wire 1 = top.clk\n");
+        check(w->scopes.size() == 4 && w->scopes[2].kind == ScopeKind::kTask && w->scopes[3].kind == ScopeKind::kFork, at + ": task and fork scopes");
+        check(w->unit_mult == 10 && w->unit_exp == -12 && w->start == 100 && w->end == 100 + 3000 * 7 && w->date == "today" && w->version == "libfst's writer",
+              at + ": 10 ps, the span, date and version");
+        check(w->off == std::vector<std::pair<u64, u64>>{{7100, 7800}}, at + ": the $dumpoff stretch");
+        check(w->notes == std::vector<std::string>{"a time zero of -3, not added to the times"} && w->error.empty(), at + ": its notes: " + w->error);
+        for (u32 v = 0; v < w->vars.size(); ++v) {
+            const WaveVar& x = w->vars[v];
+            const Lane& l = w->lanes[x.lane];
+            const auto& c = ref[static_cast<fstHandle>(std::stoul(x.code))];
+            check(l.size() == c.size(), at + ": " + x.name + ": " + std::to_string(l.size()) + " changes, " + std::to_string(c.size()) + " written");
+            for (u64 i = 0; i < std::min<u64>(l.size(), c.size()); ++i)
+                if (l.time(i) != c[i].t || fmt(l, i) != c[i].v) {
+                    check(false, at + ": " + x.name + " change " + std::to_string(i) + ": " + std::to_string(l.time(i)) + " " + fmt(l, i) + ", written " +
+                                     std::to_string(c[i].t) + " " + c[i].v);
+                    break;
+                }
+        }
+        if (k.pack == FST_WR_PT_ZLIB) damaged_fst_test(path, scratch, at, 97);
+    }
+}
+
+void fst_test(const std::string& dir, const std::string& scratch) {
+    struct Run {
+        const char* name;
+        void (*test)(const Wave&);
+    };
+    for (const Run r : {Run{"icarus", icarus_fst_test}, Run{"verilator", verilator_fst_test}}) {
+        const std::string fst = dir + "/" + r.name + ".fst", vcd = dir + "/" + r.name + ".vcd";
+        const auto w = read_fst_file(fst);
+        r.test(*w);
+        same_run(*read_vcd(slurp(vcd)), *w, std::string(r.name) + ".fst");
+        check(wave_format(slurp(fst)) == WaveFormat::kFst && wave_format(slurp(vcd)) == WaveFormat::kVcd, std::string(r.name) + ": the format, from the first bytes");
+        // On a thread, as blit reads it: the same, with progress told.
+        std::atomic<int> told{0};
+        WaveLoad load(std::make_shared<Wave>(), fst, 0, [&] { ++told; });
+        load.wait();
+        check(load.finished() && load.read() == load.size() && load.size() > 0 && told >= 2 && same_wave(*load.wave(), *w),
+              std::string(r.name) + ".fst: on a thread, the same");
+        damaged_fst_test(fst, scratch, std::string(r.name) + ".fst", 1);
+    }
+    writer_fst_test(scratch);
+    // A larger one: progress told as it reads, from 0 to no more than the
+    // file; past the budget it stops, says so, and keeps what it read (the
+    // whole file's changes, up to where it stopped); asked to stop, it stops.
+    const std::string big = scratch + "/big.fst";
+    made_up_fst(big, 3'000'000);
+    const auto whole = read_fst_file(big);
+    check(whole->error.empty() && whole->changes > 2'000'000 && whole->vars.size() == 813, "fst: a larger one, read whole: " + whole->error);
+    std::vector<u64> told;
+    auto part = std::make_unique<Wave>();
+    read_fst(part.get(), big, 4 << 20, {}, [&](u64 at) { told.push_back(at); });
+    const u64 size = slurp(big).size();
+    check(told.size() > 2 && told[0] == 0 && std::ranges::is_sorted(told) && told.back() <= size, "fst: progress, from 0 to its size");
+    check(part->done && part->error.starts_with("the dump needs more memory than timeline.max_mb allows: read up to ") && part->changes > 0 &&
+              part->changes < whole->changes && part->bytes() < (6 << 20),
+          "fst: past the budget: " + part->error + ", " + std::to_string(part->bytes()) + " bytes");
+    bool prefix = part->lanes.size() == whole->lanes.size();
+    for (size_t i = 0; prefix && i < part->lanes.size(); ++i)
+        for (u64 j = 0; prefix && j < part->lanes[i].size(); ++j)
+            prefix = j < whole->lanes[i].size() && part->lanes[i].time(j) == whole->lanes[i].time(j) && fmt(part->lanes[i], j) == fmt(whole->lanes[i], j);
+    check(prefix, "fst: past the budget, what it kept is the whole file's");
+    std::stop_source stop;
+    auto stopped = std::make_unique<Wave>();
+    read_fst(stopped.get(), big, 0, stop.get_token(), [&](u64) { stop.request_stop(); });
+    check(stopped->done && stopped->error == "stopped" && stopped->changes < whole->changes, "fst: stopped: " + stopped->error);
+    // Not FST, or not there.
+    const auto vcd = read_fst_file(dir + "/icarus.vcd");
+    check(vcd->done && vcd->error == "not an FST file: it does not start with an FST header", "fst: a VCD file said: " + vcd->error);
+    const auto none = read_fst_file(dir + "/none.fst");
+    check(none->done && none->error == "No such file or directory", "fst: a file not there: " + none->error);
+}
+
+int run_check(const std::string& dir, int seeds, std::string scratch) {
     lane_test(seeds);
     spec_test();
     malformed_test();
@@ -665,6 +1007,13 @@ int run_check(const std::string& dir, int seeds) {
         for (const char c : text) crlf += c == '\n' ? std::string("\r\n") : std::string(1, c);
         check(same_wave(*read_vcd(crlf), *w), std::string(d.name) + ": with CRLF");
     }
+    if (scratch.empty()) {
+        const char* tmp = std::getenv("TMPDIR");
+        std::string t = std::string(tmp && *tmp ? tmp : "/tmp") + "/blit-timeline-XXXXXX";
+        if (!::mkdtemp(t.data())) return std::fprintf(stderr, "FAIL: no scratch folder\n"), 1;
+        scratch = t;
+    }
+    fst_test(dir, scratch);
     if (failures) return 1;
     std::printf("timeline ok: %d seeds\n", seeds);
     return 0;
@@ -737,11 +1086,83 @@ void made_up(u64 bytes, const std::function<void(std::string_view)>& put) {
     put(out);
 }
 
+// --- A made-up FST of about `changes` changes, written by libfst's writer,
+// of the same signals as made_up's: a clock, bits that toggle at random,
+// counters of every width from 2 to 64 bits, 128-bit buses, reals; a section
+// every 200,000 cycles or so, as a simulator flushes them.
+void made_up_fst(const std::string& path, u64 changes) {
+    const int kBits = 600, kBuses = 200, kWide = 8, kReals = 4;
+    fstWriterContext* f = fstWriterCreate(path.c_str(), 1);
+    fstWriterSetTimescale(f, -12);
+    fstWriterSetVersion(f, "made by blit_timeline_test genfst");
+    fstWriterSetScope(f, FST_ST_VCD_MODULE, "top", nullptr);
+    std::vector<fstHandle> h;
+    h.push_back(fstWriterCreateVar(f, FST_VT_VCD_WIRE, FST_VD_IMPLICIT, 1, "clk", 0));
+    for (int i = 0; i < kBits; ++i) h.push_back(fstWriterCreateVar(f, FST_VT_VCD_WIRE, FST_VD_IMPLICIT, 1, ("b" + std::to_string(i)).c_str(), 0));
+    for (int i = 0; i < kBuses; ++i)
+        h.push_back(fstWriterCreateVar(f, FST_VT_VCD_WIRE, FST_VD_IMPLICIT, static_cast<uint32_t>(2 + i % 63),
+                                       ("bus" + std::to_string(i) + " [" + std::to_string(1 + i % 63) + ":0]").c_str(), 0));
+    for (int i = 0; i < kWide; ++i) h.push_back(fstWriterCreateVar(f, FST_VT_VCD_WIRE, FST_VD_IMPLICIT, 128, ("wide" + std::to_string(i) + " [127:0]").c_str(), 0));
+    for (int i = 0; i < kReals; ++i) h.push_back(fstWriterCreateVar(f, FST_VT_VCD_REAL, FST_VD_IMPLICIT, 8, ("r" + std::to_string(i)).c_str(), 0));
+    fstWriterSetUpscope(f);
+    u64 x = 88172645463325252ull;
+    auto rnd = [&] {
+        x ^= x << 13, x ^= x >> 7, x ^= x << 17;
+        return x;
+    };
+    std::vector<u64> bus(kBuses);
+    std::string v;
+    u64 written = 0;
+    for (u64 cycle = 0; written < changes; ++cycle) {
+        fstWriterEmitTimeChange(f, cycle * 5000);
+        fstWriterEmitValueChange(f, h[0], cycle & 1 ? "0" : "1");
+        ++written;
+        if (!(cycle & 1)) continue;
+        for (int i = 0; i < kBits; ++i)
+            if (rnd() % 8 == 0) fstWriterEmitValueChange(f, h[1 + static_cast<size_t>(i)], (rnd() & 1) ? "1" : "0"), ++written;
+        for (int i = 0; i < kBuses; ++i) {
+            if (i % 4 != static_cast<int>((cycle / 2) % 4)) continue;
+            const int width = 2 + i % 63;
+            u64& b = bus[static_cast<size_t>(i)];
+            b = (b + 1) & ((2ull << (width - 1)) - 1);
+            v.assign(static_cast<size_t>(width), '0');
+            for (int k = 0; k < width; ++k) v[static_cast<size_t>(width - 1 - k)] = (b >> k) & 1 ? '1' : '0';
+            fstWriterEmitValueChange(f, h[1 + kBits + static_cast<size_t>(i)], v.data());
+            ++written;
+        }
+        if (cycle % 16 == 1)
+            for (int i = 0; i < kWide; ++i) {
+                v.assign(128, '0');
+                for (char& c : v) c = (rnd() & 1) ? '1' : '0';
+                fstWriterEmitValueChange(f, h[1 + kBits + kBuses + static_cast<size_t>(i)], v.data());
+                ++written;
+            }
+        if (cycle % 4 == 1)
+            for (int i = 0; i < kReals; ++i) {
+                const double d = static_cast<double>(rnd() % 100000) / 7.0;
+                fstWriterEmitValueChange(f, h[1 + kBits + kBuses + kWide + static_cast<size_t>(i)], &d);
+                ++written;
+            }
+        if (cycle % 200000 == 199999) fstWriterFlushContext(f);
+    }
+    fstWriterClose(f);
+}
+
 int run_gen(const std::string& path, u64 mb) {
     FILE* f = std::fopen(path.c_str(), "wb");
     if (!f) return 1;
     made_up(mb << 20, [&](std::string_view s) { std::fwrite(s.data(), 1, s.size(), f); });
     return std::fclose(f) == 0 ? 0 : 1;
+}
+
+// A dump read as blit reads it, on a thread: an FST by its path (as its
+// first bytes say), anything else through read_at.
+std::unique_ptr<WaveLoad> open_load(const std::string& path, const WaveLoad::ReadAt& read_at, u64 size, u64 max_bytes) {
+    char head[16] = {};
+    const i64 n = read_at(0, head, sizeof head);
+    if (n > 0 && wave_format(std::string_view(head, static_cast<size_t>(n))) == WaveFormat::kFst)
+        return std::make_unique<WaveLoad>(std::make_shared<Wave>(), path, max_bytes);
+    return std::make_unique<WaveLoad>(std::make_shared<Wave>(), read_at, size, max_bytes);
 }
 
 int run_load(const std::string& path, u64 max_mb) {
@@ -752,9 +1173,9 @@ int run_load(const std::string& path, u64 max_mb) {
         std::printf("error: %s\n", err.c_str());
         return 1;
     }
-    WaveLoad load(std::make_shared<Wave>(), read_at, size, max_mb << 20);
-    load.wait();
-    const Wave& w = *load.wave();
+    const auto load = open_load(path, read_at, size, max_mb << 20);
+    load->wait();
+    const Wave& w = *load->wave();
     std::printf("vars %zu lanes %zu changes %" PRIu64 " end %s memory %zu\n", w.vars.size(), w.lanes.size(), w.changes, w.time_text(w.end).c_str(), w.bytes());
     if (!w.error.empty()) std::printf("error: %s\n", w.error.c_str());
     for (const std::string& n : w.notes) std::printf("note: %s\n", n.c_str());
@@ -769,16 +1190,25 @@ int run_bench(const std::string& path) {
     // (Once to have it in the page cache, then timed.)
     for (int pass = 0; pass < 2; ++pass) {
         const u64 t0 = now_ns();
-        WaveLoad load(std::make_shared<Wave>(), read_at, size, 0);
-        load.wait();
+        const auto load = open_load(path, read_at, size, 0);
+        load->wait();
         const double s = static_cast<double>(now_ns() - t0) / 1e9;
-        const Wave& w = *load.wave();
+        const Wave& w = *load->wave();
         if (pass == 0) continue;
         size_t lane_bytes = 0;
         for (const Lane& l : w.lanes) lane_bytes += l.bytes();
         std::printf("read %.1f MB in %.3f s: %.0f MB/s; %zu variables, %" PRIu64 " changes, lanes %.1f MB: %.2f bytes a change%s%s\n",
                     static_cast<double>(size) / 1e6, s, static_cast<double>(size) / 1e6 / s, w.vars.size(), w.changes, static_cast<double>(lane_bytes) / 1e6,
                     static_cast<double>(lane_bytes) / static_cast<double>(std::max<u64>(w.changes, 1)), w.error.empty() ? "" : "; ", w.error.c_str());
+        // (Peak memory: the lanes, and what the reader held while it read.)
+        struct rusage ru{};
+        ::getrusage(RUSAGE_SELF, &ru);
+#if defined(__APPLE__)
+        const double peak = static_cast<double>(ru.ru_maxrss) / 1e6;
+#else
+        const double peak = static_cast<double>(ru.ru_maxrss) * 1024 / 1e6;
+#endif
+        std::printf("  %.1f million changes a second; the process's peak memory %.0f MB\n", static_cast<double>(w.changes) / 1e6 / s, peak);
         // The densest lane of one bit, and the densest bus.
         const Lane* bit = nullptr;
         const Lane* bus = nullptr;
@@ -817,10 +1247,11 @@ int run_bench(const std::string& path) {
 
 int main(int argc, char** argv) {
     const std::string cmd = argc > 1 ? argv[1] : "";
-    if (cmd == "check" && argc > 2) return run_check(argv[2], argc > 3 ? std::atoi(argv[3]) : 200);
+    if (cmd == "check" && argc > 2) return run_check(argv[2], argc > 3 ? std::atoi(argv[3]) : 200, argc > 4 ? argv[4] : "");
     if (cmd == "gen" && argc > 3) return run_gen(argv[2], std::strtoull(argv[3], nullptr, 10));
+    if (cmd == "genfst" && argc > 3) return made_up_fst(argv[2], std::strtoull(argv[3], nullptr, 10) * 1'000'000), 0;
     if (cmd == "load" && argc > 2) return run_load(argv[2], argc > 3 ? std::strtoull(argv[3], nullptr, 10) : 0);
     if (cmd == "bench" && argc > 2) return run_bench(argv[2]);
-    std::fprintf(stderr, "usage: blit_timeline_test check DIR [SEEDS] | load FILE [MAX_MB] | gen FILE MB | bench FILE\n");
+    std::fprintf(stderr, "usage: blit_timeline_test check DIR [SEEDS [SCRATCH]] | load FILE [MAX_MB] | gen FILE MB | genfst FILE M | bench FILE\n");
     return 2;
 }

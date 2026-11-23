@@ -11,3 +11,12 @@ r6.02e+23, rNaN while dumping is off); an integer; an event, written in
 $dumpvars, in $dumpon and when it fires; $dumpoff listing every variable
 but the parameter as x, and $dumpon listing them again; a last #time with
 no change after it.
+
+icarus.fst: the same run written as FST, by the same Icarus Verilog 13.0
+with `vvp -n tb-fst.vvp -fst` (its own copy of libfst's writer), on Arch
+Linux (x86-64), 23 Nov 2026 (make/make.sh has the commands). What it
+shows, beside what icarus.vcd does: the same variables, aliases and
+changes, the real declared 8 bytes long; $dumpoff as FST's dump activity,
+with the x values Icarus writes there; a hierarchy packed with zlib;
+source files and lines as attributes, and the counter's scope with its
+module's name.
