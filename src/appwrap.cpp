@@ -21,7 +21,7 @@ bool App::wrap_wanted(const Pane& p, const Doc* doc) const {
     if (!doc) doc = p.doc;
     if (!doc || p.floating) return doc && p.floating && doc->wrap_choice == 1;
     const Doc& d = *doc;
-    if (d.term || d.prof || d.md || d.image || d.pdf || d.marks || d.loading || d.ed.buf.size() > kLargest) return false;
+    if (d.term || d.prof || d.md || d.image || d.pdf || d.wave || d.marks || d.loading || d.ed.buf.size() > kLargest) return false;
     if (d.wrap_choice >= 0) return d.wrap_choice == 1;
     if (cfg_.soft_wrap) return true;
     if (cfg_.soft_wrap_languages.empty()) return false;

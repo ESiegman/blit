@@ -1425,6 +1425,10 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "page %s at %s\n", arg.c_str(), pdf_page_rect(std::atoi(arg.c_str())).c_str());
         } else if (verb == "pdfclip" || verb == "pdfopened" || verb == "pdfoutline") {  // what Cmd+C copied, the web address a link opened, the outline
             std::fprintf(stderr, "%s\n", pdf_dump_more(verb.substr(3)).c_str());
+        } else if (verb == "wavewait") {  // the dumps read, their views read and their tiles on show painted (20 s at most); wavewait:rows, the tab's rows made
+            wave_wait(arg == "rows");
+        } else if (verb == "wavedump") {  // wavedump[:tiles|:at:ROW,TIME|:clip], the wave tab in front (appwave.cpp says what each prints)
+            std::fprintf(stderr, "%s\n", wave_dump(arg).c_str());
         } else if (verb == "pdftextat") {  // pdftextat:N:TEXT, where TEXT is on page N (its text read): x0,y0,x1,y1 in pixels
             std::fprintf(stderr, "%s at %s\n", arg.c_str(), pdf_dump_more(arg).c_str());
         } else if (verb == "pixel") {  // pixel:X,Y, the colour of the last frame there (pixels, not points)

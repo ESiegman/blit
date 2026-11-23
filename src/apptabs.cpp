@@ -209,7 +209,7 @@ void App::views_edited(Doc& d, u64 start, u64 old_end, u64 new_end) {
 // What can show in two splits at once: a file's text. (A terminal, a
 // profile, a preview, a picture or a PDF has one view, with state of its own.)
 bool App::shareable(const Doc& d) const {
-    return !d.term && !d.prof && !d.md && !d.image && !d.pdf && !d.gitview && d.title.empty() && !d.ed.path.empty();
+    return !d.term && !d.prof && !d.md && !d.image && !d.pdf && !d.wave && !d.gitview && d.title.empty() && !d.ed.path.empty();
 }
 
 // Shows, in the focused split, a file another split shows: the same

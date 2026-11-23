@@ -217,8 +217,8 @@ bool App::init(std::string* err) {
     test_create();
     commands_create();
     jumps_create();
-    // (A file on another machine, a picture or a PDF is opened once the window is up.)
-    const bool later_file = opt_.file && (is_remote(opt_.file) || is_picture_path(opt_.file) || is_pdf_path(opt_.file));
+    // (A file on another machine, a picture, a PDF or a dump's waves is opened once the window is up.)
+    const bool later_file = opt_.file && (is_remote(opt_.file) || is_picture_path(opt_.file) || is_pdf_path(opt_.file) || is_wave_path(opt_.file));
     bool folder = false;  // blit DIR: a folder to work in, and its session (see appsession.cpp)
     if (opt_.file && !later_file)
         loader = std::jthread([&] {
@@ -546,7 +546,7 @@ void App::sync_grammars() {
 // is made again, not at every frame.
 bool App::grammar_missing() {
     const Doc& d = *pane_->doc;
-    if (!cfg_.syntax || d.syntax.active() || d.term || d.prof || d.md || d.image || d.pdf) return false;
+    if (!cfg_.syntax || d.syntax.active() || d.term || d.prof || d.md || d.image || d.pdf || d.wave) return false;
     const std::string lang = file_language();
     if (lang.empty()) return false;
     SyntaxOptions so;
@@ -737,6 +737,7 @@ bool App::open_path(const char* p, bool must_exist) {
     }
     if (is_picture_path(full)) return image_open(full);  // a picture: in a tab of its own (appimage.cpp)
     if (is_pdf_path(full)) return pdf_open(full);        // a PDF too (apppdf.cpp)
+    if (is_wave_path(full)) return wave_open(full);      // and a dump's waves (appwave.cpp)
     auto fresh = std::make_shared<Doc>();
     fresh->ed.tab_width = cfg_.tab_width;
     std::string err;
@@ -1179,7 +1180,7 @@ void App::jump_record() { jump_note(*pane_->doc, pane_->doc->ed.cursor()); }
 
 bool App::jump_note(const Doc& d, u64 off) {
     if (!jumps_ || jumps_->going) return false;
-    if (d.term || d.prof || d.md || d.image || d.pdf || (d.ed.path.empty() && d.ed.buf.size() == 0)) return false;  // (no text to come back to)
+    if (d.term || d.prof || d.md || d.image || d.pdf || d.wave || (d.ed.path.empty() && d.ed.buf.size() == 0)) return false;  // (no text to come back to)
     Jumps& j = *jumps_;
     const Buffer& b = d.ed.buf;
     Jumps::Place p;
@@ -1562,6 +1563,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     md_layout(fd);    // (and a Markdown preview's)
     image_layout(fd);  // (and an image file's)
     pdf_layout(fd);    // (and a PDF's)
+    wave_layout(fd);   // (and a dump's waves')
     minimap_layout(fd);  // (and each split's minimap, down its right)
     build_layout(w, fd);  // the Run button, over the top right tab bar's end
     vim_layout(w, h, fd);
@@ -1881,7 +1883,7 @@ void App::handle_event(const SDL_Event& e) {
             on_wheel(e.wheel);
             break;
         case SDL_EVENT_PINCH_UPDATE:
-            if (!image_pinch(e.pinch.scale)) pdf_pinch(e.pinch.scale);  // (a picture or a PDF is zoomed)
+            if (!image_pinch(e.pinch.scale) && !pdf_pinch(e.pinch.scale)) wave_pinch(e.pinch.scale);  // (a picture, a PDF or waves are zoomed)
             break;
         case SDL_EVENT_MOUSE_BUTTON_DOWN:
             if (e.button.button == SDL_BUTTON_LEFT) text_press_ = false;
@@ -1899,6 +1901,7 @@ void App::handle_event(const SDL_Event& e) {
             if (md_mouse_down(e.button)) break;    // a Markdown preview
             if (image_mouse_down(e.button)) break;  // an image file's tab
             if (pdf_mouse_down(e.button)) break;    // a PDF's
+            if (wave_mouse_down(e.button)) break;   // a dump's waves'
             if (term_mouse_down(e.button)) break;  // a terminal's
             if (splits_mouse_down(e.button)) break;  // a divider
             // The split under the mouse gets the click, and with it the keyboard.
@@ -1918,6 +1921,7 @@ void App::handle_event(const SDL_Event& e) {
             term_mouse_up();
             image_mouse_up();
             pdf_mouse_up();
+            wave_mouse_up();
             if (e.button.button == SDL_BUTTON_LEFT) {
                 if (text_press_) vim_mouse();  // a click or a drag in the text, as Vim sees it
                 text_press_ = false;
@@ -1932,6 +1936,7 @@ void App::handle_event(const SDL_Event& e) {
             if (find_open_ && find_mouse_motion(e.motion)) break;
             if (term_mouse_motion(e.motion)) break;  // choosing text in a terminal
             if (image_mouse_motion(e.motion) || pdf_mouse_motion(e.motion)) break;  // a picture or a PDF's pages being dragged
+            if (wave_mouse_motion(e.motion)) break;  // the waves' cursor, or a stretch of their ruler
             hover_update(static_cast<int>(e.motion.x * density_), static_cast<int>(e.motion.y * density_));
             if (!dragging_ && !dragging_thumb_ &&
                 (splits_mouse_motion(e.motion) || tabs_mouse_motion(e.motion) || panel_mouse_motion(e.motion) || start_mouse_motion(e.motion) ||
@@ -2029,6 +2034,10 @@ void App::handle_event(const SDL_Event& e) {
                 pdf_sync();
                 break;
             }
+            if (e.user.code == 60) {  // a dump has been read further, a tile of its waves painted, or its view read
+                wave_sync();
+                break;
+            }
             if (e.user.code == 19) {  // the start screen's facts, or PyPI's list, have been found
                 start_sync();
                 break;
@@ -2117,6 +2126,7 @@ void App::on_key(const SDL_KeyboardEvent& k) {
         if (md_key(k)) return;     // a Markdown preview's (appmarkdown.cpp)
         if (image_key(k)) return;  // an image file's (appimage.cpp)
         if (pdf_key(k)) return;    // a PDF's (apppdf.cpp)
+        if (wave_key(k)) return;   // a dump's waves' (appwave.cpp)
         // Ctrl+` and Ctrl+Shift+`, the terminals' split (appcommands.cpp), are never a terminal's own keys.
         if (k.key == SDLK_GRAVE && (k.mod & SDL_KMOD_CTRL) && !(k.mod & (SDL_KMOD_ALT | SDL_KMOD_GUI)) && command_key(k)) {
             term_drop_text_ = true;
@@ -2341,6 +2351,7 @@ void App::on_wheel(const SDL_MouseWheelEvent& w) {
     if (md_wheel(w)) return;     // or a Markdown preview
     if (image_wheel(w)) return;  // or an image file's tab
     if (pdf_wheel(w)) return;    // or a PDF's
+    if (wave_wheel(w)) return;   // or a dump's waves'
     if (term_wheel(w)) return;   // or a terminal's
     Pane* const focused = pane_;
     if (mouse_x_ >= 0)

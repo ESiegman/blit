@@ -320,7 +320,7 @@ target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp)
 # The wave tab: a dump's rows and their values (waveview.cpp), and its lanes
 # in tiles and the workers that paint them (wavetile.cpp: the same pixels on
 # every system, as the diagrams' below).
-target_sources(blit PRIVATE src/waveview.cpp src/wavetile.cpp)
+target_sources(blit PRIVATE src/appwave.cpp src/waveview.cpp src/wavetile.cpp)
 set_source_files_properties(src/wavetile.cpp PROPERTIES COMPILE_OPTIONS "-ffp-contract=off;-fno-lto")
 # The diagrams' pictures (raster.cpp, diagram.cpp and the kinds' files) are the
 # same pixels on every system: no multiply and add fused into one, which
@@ -474,6 +474,8 @@ if(BLIT_DEV)
     add_test(NAME unicode COMMAND sh ${CMAKE_SOURCE_DIR}/tests/unicode.sh $<TARGET_FILE:blit>)
     # Waveforms: the timeline model and the VCD reader, on dumps from Icarus, Verilator, Yosys and pyvcd.
     add_test(NAME wave COMMAND sh ${CMAKE_SOURCE_DIR}/tests/wave.sh $<TARGET_FILE:blit>)
+    # The wave tab: a dump's waves, its keys, radixes, markers, groups, the view kept, its tiles' pixels.
+    add_test(NAME wavetab COMMAND sh ${CMAKE_SOURCE_DIR}/tests/wavetab.sh $<TARGET_FILE:blit>)
     # Every suite sees the dark appearance, whatever the machine is set to
     # (GitHub's machines are light), and the cell macOS's own font has at
     # 13 pt (16 x 31 pixels at twice the density), whatever fonts the

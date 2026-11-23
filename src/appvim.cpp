@@ -223,7 +223,7 @@ bool App::vim_owns_key(const SDL_KeyboardEvent& k) {
     if (!(k.mod & SDL_KMOD_CTRL) || (k.mod & (SDL_KMOD_SHIFT | SDL_KMOD_ALT | SDL_KMOD_GUI))) return false;
     if (find_open_ || panel_has_keyboard()) return false;
     const Doc& d = *pane_->doc;
-    if (d.term || d.prof || d.md || d.image || d.pdf) return false;
+    if (d.term || d.prof || d.md || d.image || d.pdf || d.wave) return false;
     if ((k.key == SDLK_N || k.key == SDLK_P) && lsp_completing()) return false;
     vim_attach();
     return vim_takes_ctrl(k.key, vim_.mode() == Vim::kInsert || vim_.mode() == Vim::kReplace);

@@ -74,8 +74,8 @@ std::string word_at(const Buffer& buf, u64 off) {
 }
 
 // A tab with text of its own to search (not a terminal, a profile, a
-// preview, a picture or a PDF).
-bool has_text(const Doc& d) { return !d.term && !d.prof && !d.md && !d.image && !d.pdf; }
+// preview, a picture, a PDF or waves).
+bool has_text(const Doc& d) { return !d.term && !d.prof && !d.md && !d.image && !d.pdf && !d.wave; }
 
 }  // namespace
 
@@ -429,6 +429,9 @@ void App::commands_create() {
     own("Show or hide inline performance labels", {}, [this] { prof_toggle_labels(); });
     sent("Zoom the flame graph into the chosen function", {key(SDLK_SPACE)});
     sent("Zoom the flame graph out", {key(SDLK_ESCAPE)});
+    // The wave tab's (its keys are its own there: appwave.cpp).
+    for (int i = 0; const WaveCommand& w : wave_commands())
+        c.push_back({w.title, w.key ? std::vector<Chord>{key(w.key, w.shift ? kS : 0)} : std::vector<Chord>{}, false, [this, at = i++] { wave_run(at); }});
     // Git.
     git("Git: Commit", "commit");
     git("Git: Pull", "pull");
