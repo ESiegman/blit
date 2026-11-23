@@ -237,9 +237,24 @@ stub() {
     printf '#!/bin/sh\nfor a in "$@"; do printf "%%s|" "$a"; done >>"%s"\nprintf "\\n" >>"%s"\n' "$dir/said" "$dir/said" >"$1"
     chmod +x "$1"
 }
+# (gdbus's stand-in refuses, as gdbus does, an argument after the method
+# that starts with "-": it takes it for an option and sends nothing.)
+stub_gdbus() {
+    cat >"$1" <<EOF
+#!/bin/sh
+m=
+for a in "\$@"; do
+    [ -n "\$m" ] && case "\$a" in -*) echo "gdbus: unknown option \$a" >>"$dir/said"; exit 1 ;; esac
+    [ "\$a" = --method ] && m=1
+done
+for a in "\$@"; do printf "%s|" "\$a"; done >>"$dir/said"
+printf "\\n" >>"$dir/said"
+EOF
+    chmod +x "$1"
+}
 case $(uname -s) in
     Darwin) stub "$dir/stub/osascript" ;;
-    *) stub "$dir/stub/gdbus"; stub "$dir/stub2/notify-send" ;;
+    *) stub_gdbus "$dir/stub/gdbus"; stub "$dir/stub2/notify-send" ;;
 esac
 heard() {
     rm -f "$dir/said"
@@ -250,8 +265,8 @@ heard() {
 case $(uname -s) in
     Darwin) said_failed='-e|on run argv|-e|display notification (item 2 of argv) with title (item 1 of argv)|-e|end run|It'"'"'s flashed|Failed with exit code 2 after T s · 1 error|/'
             said_done='-e|on run argv|-e|display notification (item 2 of argv) with title (item 1 of argv)|-e|end run|Fine|Done in T s|/' ;;
-    *) said_failed="call|--session|--dest|org.freedesktop.Notifications|--object-path|/org/freedesktop/Notifications|--method|org.freedesktop.Notifications.Notify|'blit'|0|'blit'|'It\\'s flashed'|'Failed with exit code 2 after T s · 1 error'|[]|{}|-1|/"
-       said_done="call|--session|--dest|org.freedesktop.Notifications|--object-path|/org/freedesktop/Notifications|--method|org.freedesktop.Notifications.Notify|'blit'|0|'blit'|'Fine'|'Done in T s'|[]|{}|-1|/" ;;
+    *) said_failed="call|--session|--dest|org.freedesktop.Notifications|--object-path|/org/freedesktop/Notifications|--method|org.freedesktop.Notifications.Notify|'blit'|0|'blit'|'It\\'s flashed'|'Failed with exit code 2 after T s · 1 error'|[]|{}|int32 -1|/"
+       said_done="call|--session|--dest|org.freedesktop.Notifications|--object-path|/org/freedesktop/Notifications|--method|org.freedesktop.Notifications.Notify|'blit'|0|'blit'|'Fine'|'Done in T s'|[]|{}|int32 -1|/" ;;
 esac
 heard "$dir/stub" "blur;buildrun:It's flashed;buildwait"
 check "a task that ends behind another window: the system told" "$said_failed"

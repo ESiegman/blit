@@ -79,7 +79,7 @@ std::vector<std::string> notify_command(const std::string& title, const std::str
 #else
     if (std::string gdbus = on_path("gdbus"); !gdbus.empty())
         return {gdbus, "call", "--session", "--dest", "org.freedesktop.Notifications", "--object-path", "/org/freedesktop/Notifications", "--method",
-                "org.freedesktop.Notifications.Notify", "'blit'", "0", "'blit'", gvariant(title), gvariant(body), "[]", "{}", "-1"};
+                "org.freedesktop.Notifications.Notify", "'blit'", "0", "'blit'", gvariant(title), gvariant(body), "[]", "{}", "int32 -1"};  // (typed: a bare -1 is read as an option, and nothing is sent)
     if (std::string send = on_path("notify-send"); !send.empty()) return {send, "--app-name=blit", "--icon=blit", "--", title, body};
 #endif
     return {};
