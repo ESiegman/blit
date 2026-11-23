@@ -464,7 +464,8 @@ bool peek(WaveView& v) {
 
 // The rows made, once the dump's header and the kept view (if there is one) are here.
 void start(WaveView& v) {
-    if (v.started || !v.now.header || !v.view_come) return;
+    // (Not a dump that could not be had: the reader, given nothing, says it has read a header of nothing.)
+    if (v.started || !v.now.header || !v.view_come || !v.open_error.empty() || !v.fetch_error->empty()) return;
     std::shared_lock lock(v.wave->mu, std::try_to_lock);
     if (!lock.owns_lock()) return;
     const Wave& w = *v.wave;
@@ -664,15 +665,16 @@ void App::wave_layout(FrameDesc& fd) {
                 const u32 vc = edge + v.name_cols + 1;
                 u32 c = put(v.box, font, bottom, edge, leaf_of(v.path), ink::kStrong);
                 std::string err = !v.open_error.empty() ? v.open_error : !v.fetch_error->empty() ? *v.fetch_error : v.now.error;
-                if (!v.now.header) {
-                    if (!err.empty()) c = put(v.box, font, bottom, c + 3, "Cannot show it: " + err, ink::kError);
+                const u32 room = cols > c + 3 + edge ? cols - c - 3 - edge : 1;
+                if (!v.now.header || !v.open_error.empty() || !v.fetch_error->empty()) {
+                    if (!err.empty()) c = put(v.box, font, bottom, c + 3, fit_text("Cannot show it: " + err, room), ink::kError);
                     else c = put(v.box, font, bottom, c + 3, reading(v), ink::kMuted);
                 } else {
                     c = put(v.box, font, bottom, c + 3, wv.time_text(v.now.start) + " to " + wv.time_text(v.now.end), ink::kMuted);
                     c = put(v.box, font, bottom, c + 3, std::to_string(wv.vars.size()) + " signals", ink::kMuted);
                     if (v.load && v.load->size()) c = put(v.box, font, bottom, c + 3, size_text(v.load->size()), ink::kMuted);
                     if (!v.now.done) c = put(v.box, font, bottom, c + 3, reading(v), ink::kMuted);
-                    if (!err.empty() && err != "stopped") c = put(v.box, font, bottom, c + 3, "Stopped: " + err, ink::kError);
+                    if (!err.empty() && err != "stopped") c = put(v.box, font, bottom, c + 3, fit_text("Stopped: " + err, cols > c + 3 + edge ? cols - c - 3 - edge : 1), ink::kError);
                     if (v.dropped) c = put(v.box, font, bottom, c + 3, std::to_string(v.dropped) + " kept rows not in the dump", ink::kWarning);
                     const std::string across = wv.time_text(static_cast<u64>(std::llround(v.trace_w() * v.tpp))) + " across";
                     if (c + 3 + width_of(across) + edge <= cols) put(v.box, font, bottom, cols - edge - width_of(across), across, ink::kMuted);
@@ -1506,8 +1508,9 @@ std::string App::wave_dump(std::string_view what) {
                 }
             return out;
         }
-        if (!v.open_error.empty()) return leaf_of(v.path) + ": cannot show it: " + v.open_error;
-        if (!v.fetch_error->empty()) return leaf_of(v.path) + ": cannot show it: " + *v.fetch_error;
+        // (And whether rows were made all the same: a ruler and a cursor over nothing.)
+        if (!v.open_error.empty()) return leaf_of(v.path) + ": cannot show it: " + v.open_error + (v.started ? ", rows made" : "");
+        if (!v.fetch_error->empty()) return leaf_of(v.path) + ": cannot show it: " + *v.fetch_error + (v.started ? ", rows made" : "");
         if (!v.started) return leaf_of(v.path) + ": reading";
         std::string out = leaf_of(v.path) + ": " + (w.done ? "read" : "reading") + ", cursor " + exact_text(w, v.cursor) + ", view " +
                           exact_text(w, static_cast<u64>(std::llround(std::max(0.0, v.left)))) + " to " + exact_text(w, static_cast<u64>(std::llround(v.left + v.trace_w() * v.tpp)));
