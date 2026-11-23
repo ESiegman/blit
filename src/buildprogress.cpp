@@ -8,7 +8,8 @@
 // engine starts so costs a look at its first character. The engines:
 // OpenOCD's `program` (and Espressif's `program_esp`), probe-rs's download
 // bars, SEGGER J-Link Commander's loadfile, esptool's write-flash (v4's and
-// v5's), openFPGALoader's loads into SRAM and flash, and picotool's load.
+// v5's), openFPGALoader's loads into SRAM and flash, picotool's load, and
+// Vivado's hardware manager's into SRAM and flash.
 // Where each shape is from (a tool's source at a tag, or its output) is
 // said beside it; tests/progress.sh replays the outputs.
 #include <algorithm>
@@ -165,6 +166,19 @@ constexpr Shape kShapes[] = {
     {kVivado, kDone, "INFO: [Labtools 27-3164] End of startup status: HIGH", "$", "Load"},
     {kVivado, kFailedLine, "INFO: [Labtools 27-3164] End of startup status: LOW", "$", ""},
     {kVivado, kFailedHere, "ERROR: ", "", "", true},
+    // Its program_hw_cfgmem writing the FPGA's flash (the board's SRAM
+    // loaded with Vivado's design for it first: the Load above), and
+    // boot_hw_device after, as it printed them (same box and board): the
+    // stages, the time it gives itself ("elapsed = 00:00:54"); what it
+    // prints when only verifying, as when what is there differs.
+    {kVivado, kStage, "Performing Erase Operation...", "$", "Erase", true},
+    {kVivado, kDone, "Erase Operation successful.", "$", "Erase", true},
+    {kVivado, kStage, "Performing Program and Verify Operations...", "$", "Program", true},
+    {kVivado, kVerified, "Program/Verify Operation successful.", "$", "Program", true},
+    {kVivado, kStage, "Performing Verify Operation...", "$", "Verify", true},
+    {kVivado, kTook, "program_hw_cfgmem: Time (s): ", "elapsed = ", "", true},
+    {kVivado, kStage, "INFO: [Labtoolstcl 44-664] Will wait up to ", "", "Boot", true},
+    {kVivado, kDone, "INFO: [Labtools 27-32] Done pin status: HIGH", "$", "Boot", true},
 };
 
 // The first characters the shapes start with: any other line is none of them.
@@ -459,7 +473,15 @@ bool BuildScan::progress_line(std::string_view text, bool unfinished) {
         case kTook: {
             size_t k = after;
             double s = 0;
-            if (decimal_at(line, &k, &s)) prog_took_ = s;
+            if (const size_t e = line.find("elapsed = ", after); e != std::string_view::npos) {  // (Vivado's "elapsed = 00:00:54": hours, minutes, seconds)
+                k = e + 10;
+                double h = 0, m = 0;
+                if (decimal_at(line, &k, &h) && k < line.size() && line[k] == ':' && decimal_at(line, &++k, &m) && k < line.size() && line[k] == ':' &&
+                    decimal_at(line, &++k, &s))
+                    prog_took_ = h * 3600 + m * 60 + s;
+            } else if (decimal_at(line, &k, &s)) {
+                prog_took_ = s;
+            }
             break;
         }
         case kVerified:

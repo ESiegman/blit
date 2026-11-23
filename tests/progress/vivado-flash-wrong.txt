@@ -1,0 +1,68 @@
+# Vivado 2026.2 as vivado-flash.txt, told the flash is a Spansion
+# s25fl032p-spi-x1_x2_x4 (as older Basys 3 boards have) when it is a
+# Macronix: as it really printed it (same board, box and day), nothing
+# erased, then exit status 1.
+@pace 5
+Warning: OS 'arch' is not a recognized/supported host OS.
+INFO: [Common 17-3922] A valid Vivado Design Suite BASIC license has been detected. Your current license is active and will expire on 23-nov-2027.
+
+****** Vivado v2026.2 (64-bit)
+  **** SW Build 6713330 on Sat Nov 07 07:29:37 UTC 2026
+  **** IP Build 6713107 on Fri Nov 06 12:30:50 MST 2026
+  **** SharedData Build 6713030 on Mon Nov 09 13:08:47 MST 2026
+  **** Start of session at: Mon Nov 23 18:01:21 2026
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source wrong.tcl -notrace
+Command: write_cfgmem -force -format mcs -size 4 -interface SPIx1 -loadbit {up 0x0 /tmp/m6-vflash-hw/blink-x1.bit} -file wrong.tcl.mcs
+Creating config memory files...
+Creating bitstream load up from address 0x00000000
+Loading bitfile /tmp/m6-vflash-hw/blink-x1.bit
+Writing file ./wrong.tcl.mcs
+Writing log file ./wrong.tcl.prm
+===================================
+Configuration Memory information
+===================================
+File Format        MCS
+Interface          SPIX1
+Size               4M
+Start Address      0x00000000
+End Address        0x003FFFFF
+
+Addr1         Addr2         Date                    File(s)
+0x00000000    0x0021728B    Nov 23 17:58:32 2026    /tmp/m6-vflash-hw/blink-x1.bit
+0 Infos, 0 Warnings, 0 Critical Warnings and 0 Errors encountered.
+write_cfgmem completed successfully
+INFO: [Labtools 27-2285] Connecting to hw_server url TCP:localhost:3121
+INFO: [Labtools 27-2222] Launching hw_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+****** Xilinx hw_server v2026.2
+  **** Build date : Oct 21 2026 at 22:26:11
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+
+
+INFO: [Labtools 27-3415] Connecting to cs_server url TCP:localhost:0
+INFO: [Labtools 27-3417] Launching cs_server...
+INFO: [Labtools 27-2221] Launch Output:
+
+****** Xilinx cs_server v2026.2
+  **** Build Info : #35 | 2026-11-05 16:16 UTC | b72e8c0
+    ** Copyright 2017-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+
+
+INFO: [Labtoolstcl 44-466] Opening hw_target localhost:3121/xilinx_tcf/Digilent/210183BF7C78A
+INFO: [Labtools 27-3164] End of startup status: HIGH
+Mfg ID : c2   Memory Type : 20   Memory Capacity : 16   Device ID 1 : 0   Device ID 2 : 0
+Part identified : mx25l3273f Part selected : s25fl032p
+ERROR: [Labtools 27-3291] Flash Programming Unsuccessful. Part selected s25fl032p, but part mx25l3273f detected.
+ERROR: [Common 17-39] 'program_hw_cfgmem' failed due to earlier errors.
+
+    while executing
+"program_hw_cfgmem -hw_cfgmem $c"
+    (file "wrong.tcl" line 24)
+INFO: [Common 17-206] Exiting Vivado at Mon Nov 23 18:01:26 2026...
+@exit 1

@@ -1,0 +1,20 @@
+# Vivado 2026.2 as vivado-flash.txt, given a flash part it has none of that
+# name for (mx25l3233f-spi-x1_x2_x4: it names that chip mx25l3273f): as it
+# really printed it (same box and day), before the cable is touched, then
+# exit status 1.
+@pace 5
+Warning: OS 'arch' is not a recognized/supported host OS.
+INFO: [Common 17-3922] A valid Vivado Design Suite BASIC license has been detected. Your current license is active and will expire on 23-nov-2027.
+
+****** Vivado v2026.2 (64-bit)
+  **** SW Build 6713330 on Sat Nov 07 07:29:37 UTC 2026
+  **** IP Build 6713107 on Fri Nov 06 12:30:50 MST 2026
+  **** SharedData Build 6713030 on Mon Nov 09 13:08:47 MST 2026
+  **** Start of session at: Mon Nov 23 18:01:26 2026
+    ** Copyright 1986-2022 Xilinx, Inc. All Rights Reserved.
+    ** Copyright 2022-2026 Advanced Micro Devices, Inc. All Rights Reserved.
+
+source nopart.tcl -notrace
+ERROR: [Labtoolstcl 44-349] Unrecognized config mem part - mx25l3233f-spi-x1_x2_x4. Please run get_cfgmem_parts and select a valid part or use the cfgmem GUI to assist in selecting a valid device.
+INFO: [Common 17-206] Exiting Vivado at Mon Nov 23 18:01:27 2026...
+@exit 1

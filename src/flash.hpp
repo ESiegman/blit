@@ -58,6 +58,7 @@ struct FlashImage {
     std::vector<std::string> options;  // ("--flash-mode", "dio", ...)
     std::string chip, before, after;
     bool no_stub = false;
+    int spi_width = 1;  // an FPGA's bitstream: the SPI bus width it boots with (bitstream_spi_width)
 };
 // ESP-IDF's flasher_args.json (`dir`: the folder it is in, from the
 // project's): its flash_files at their addresses, write_flash_args, and
@@ -71,6 +72,18 @@ bool elf_loads(std::string_view bytes, std::vector<std::pair<u64, std::string_vi
 // segments (so that a build that changes only its debug information is
 // the same image), else the bytes whole.
 u64 flash_hash(std::string_view bytes);
+
+// The SPI bus width (1, 2 or 4) a 7-series bitstream (a .bit, or a .bin
+// without its header) boots from its flash with: its write of the BSPI
+// register after the sync word (bits 9-8; Vivado writes one only for
+// SPI_BUSWIDTH 2 or 4), else 1. Vivado's write_cfgmem takes no other
+// -interface for it. Cheap: only the first few KB are looked at.
+int bitstream_spi_width(std::string_view bytes);
+
+// The flash part Vivado writes an FPGA's flash as (its name in
+// get_cfgmem_parts): the board's flash.cfgmem, else the one blit knows for
+// its board (flash.board, openFPGALoader's name for it); "" if neither.
+std::string vivado_cfgmem(const Board& b);
 
 // What a flash runs: the command line for the shell (the tool's program by
 // its path, the transport applied), the kind of task, and what else a

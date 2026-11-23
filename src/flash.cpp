@@ -51,8 +51,9 @@ constexpr FlashTool kTools[] = {
     {"openfpgaloader", {"openFPGALoader", ""}, kPipe, "program", {"-b ${board}", "-c ${cable}", "--usb-serial-num ${serial}", "${write}", "${image}"}},
     // AMD Vivado in batch mode with a Tcl file of its hardware manager's
     // commands (kVivadoScript; -mode batch, -nojournal, -nolog, -notrace,
-    // -source): into the FPGA's SRAM. A pipe: it draws nothing in place
-    // (2026.2 on the lab box, loading the owner's Basys 3, 2026-11-23).
+    // -source): into the FPGA's SRAM, or its flash. A pipe: it draws
+    // nothing in place (2026.2 on the lab box, loading the owner's Basys 3
+    // and writing its flash, 2026-11-23).
     {"vivado", {"vivado", ""}, kPipe, "program", {"-mode batch", "-nojournal", "-nolog", "-notrace", "-source ${script}"}},
 };
 
@@ -73,21 +74,68 @@ constexpr std::string_view kJLinkScript[] = {"device ${device}", "si ${si}", "sp
 // keeps the cable for a minute after Vivado ends (openFPGALoader cannot
 // claim it then): one the run started is ended with it, by its name (not
 // its command line, which the shell running this one has in its own).
-constexpr std::string_view kVivadoScript[] = {
-    "set ours [catch {close [socket localhost 3121]}]",
-    "open_hw_manager",
-    "connect_hw_server -allow_non_jtag",
-    "open_hw_target [lindex [get_hw_targets ${target}] 0]",
-    "set d [lindex [get_hw_devices -filter {PART =~ x*}] 0]",
-    "foreach h [get_hw_devices] {if {[string match [get_property PART $h]* ${chip}]} {set d $h}}",
-    "if {[string match [get_property PART $d]* ${chip}] == 0} {puts {ERROR: No device on the cable is a ${chip}}; exit 1}",
-    "current_hw_device $d",
-    "set_property PROGRAM.FILE ${image} [current_hw_device]",
-    "program_hw_devices [current_hw_device]",
-    "close_hw_target",
-    "disconnect_hw_server",
-    "close_hw_manager",
-    "if {$ours} {catch {exec pkill -u $::env(USER) -x hw_server}; catch {exec pkill -u $::env(USER) -x cs_server}}",
+//
+// Into its flash (UG908, "Programming Configuration Memory Devices"; the
+// commands as Vivado's hardware manager journals them): the flash part
+// first (a name get_cfgmem_parts does not have fails before the cable is
+// touched), the bitstream made a configuration memory file beside this
+// file (write_cfgmem: the part's size, its MEM_DENSITY in Mb, in MB; the
+// bitstream's own SPI bus width, the only -interface it takes), the part
+// set on the device with what is done to it (the file's sectors erased
+// and written, then read back; no blank check, as they are erased), the
+// FPGA loaded with Vivado's design that writes the flash for it
+// (PROGRAM.HW_CFGMEM_BITFILE), program_hw_cfgmem, then the FPGA booted
+// from its flash. A part that is not the board's fails before anything is
+// erased ("Part selected s25fl032p, but part mx25l3273f detected", 2026.2
+// on the owner's Basys 3).
+enum VivadoWhen : u8 { kBoth, kIntoSram, kIntoFlash };
+struct VivadoLine {
+    VivadoWhen when;
+    std::string_view text;
+};
+constexpr VivadoLine kVivadoScript[] = {
+    {kBoth, "set ours [catch {close [socket localhost 3121]}]"},
+    {kIntoFlash, "set p [lindex [get_cfgmem_parts ${cfgmem}] 0]"},
+    {kIntoFlash, "set m [info script].mcs"},
+    {kIntoFlash, "write_cfgmem -force -format mcs -size [expr {max(1, [get_property MEM_DENSITY $p] / 8)}] -interface SPIx${width} -loadbit [list up 0x0 ${image}] -file $m"},
+    {kBoth, "open_hw_manager"},
+    {kBoth, "connect_hw_server -allow_non_jtag"},
+    {kBoth, "open_hw_target [lindex [get_hw_targets ${target}] 0]"},
+    {kBoth, "set d [lindex [get_hw_devices -filter {PART =~ x*}] 0]"},
+    {kBoth, "foreach h [get_hw_devices] {if {[string match [get_property PART $h]* ${chip}]} {set d $h}}"},
+    {kBoth, "if {[string match [get_property PART $d]* ${chip}] == 0} {puts {ERROR: No device on the cable is a ${chip}}; exit 1}"},
+    {kBoth, "current_hw_device $d"},
+    {kIntoSram, "set_property PROGRAM.FILE ${image} [current_hw_device]"},
+    {kIntoSram, "program_hw_devices [current_hw_device]"},
+    {kIntoFlash, "create_hw_cfgmem -hw_device $d $p"},
+    {kIntoFlash, "set c [get_property PROGRAM.HW_CFGMEM $d]"},
+    {kIntoFlash, "set_property PROGRAM.FILES [list $m] $c"},
+    {kIntoFlash, "set_property PROGRAM.ADDRESS_RANGE use_file $c"},
+    {kIntoFlash, "set_property PROGRAM.UNUSED_PIN_TERMINATION pull-none $c"},
+    {kIntoFlash, "set_property PROGRAM.BLANK_CHECK 0 $c"},
+    {kIntoFlash, "set_property PROGRAM.ERASE 1 $c"},
+    {kIntoFlash, "set_property PROGRAM.CFG_PROGRAM 1 $c"},
+    {kIntoFlash, "set_property PROGRAM.VERIFY 1 $c"},
+    {kIntoFlash, "set_property PROGRAM.CHECKSUM 0 $c"},
+    {kIntoFlash, "create_hw_bitstream -hw_device $d [get_property PROGRAM.HW_CFGMEM_BITFILE $d]"},
+    {kIntoFlash, "program_hw_devices $d"},
+    {kIntoFlash, "program_hw_cfgmem -hw_cfgmem $c"},
+    {kIntoFlash, "boot_hw_device $d"},
+    {kBoth, "close_hw_target"},
+    {kBoth, "disconnect_hw_server"},
+    {kBoth, "close_hw_manager"},
+    {kBoth, "if {$ours} {catch {exec pkill -u $::env(USER) -x hw_server}; catch {exec pkill -u $::env(USER) -x cs_server}}"},
+};
+
+// The flash part of each board blit knows (openFPGALoader's name for it,
+// as boards.cpp has them), as Vivado's get_cfgmem_parts names it: the
+// Basys 3's Macronix MX25L3233F (JEDEC 0xc22016, as openFPGALoader read it
+// on the owner's board) is Vivado 2026.2's mx25l3273f, whose
+// MEM_DEVICE_ALIAS is mx25l3233f (it has no part of that name). Boards
+// whose flash changed from one revision to the next are left to their
+// flash.cfgmem.
+constexpr std::pair<std::string_view, std::string_view> kCfgmem[] = {
+    {"basys3", "mx25l3273f-spi-x1_x2_x4"},
 };
 
 // Where AMD installs Vivado when it is not on the PATH: FOLDER/VERSION/
@@ -323,7 +371,6 @@ FlashPlan flash_plan(const Board& b, const std::string& tool_name, const std::st
     const bool fpga = tool->kind == "program";
     if (fpga && mode == FlashMode::kFlash) mode = FlashMode::kSram;
     if (!fpga && mode != FlashMode::kFlash) return plan.why = "The board is not an FPGA's (its flash tool is " + tool_name + ")", plan;
-    if (tool_name == "vivado" && mode == FlashMode::kFpgaFlash) return plan.why = "Vivado here loads the FPGA's SRAM only: its flash through openFPGALoader (flash.tool)", plan;
     if (image.parts.empty()) return plan.why = "Nothing to flash", plan;
     const FlashImage::Part& first = image.parts.front();
     const std::string chip = !b.chip.empty() ? b.chip : image.chip;
@@ -380,12 +427,20 @@ FlashPlan flash_plan(const Board& b, const std::string& tool_name, const std::st
     } else if (tool_name == "vivado") {
         if (image.parts.size() > 1) return plan.why = "Vivado loads one bitstream", plan;
         const std::string part = !b.flash_device.empty() ? b.flash_device : chip;
-        const Vars lines = {{"target", b.probe.empty() ? "*" : tcl_word("*/" + b.probe + "*")}, {"chip", tcl_word(lower(part))}, {"image", tcl_word(first.path)}};
+        const bool into_flash = mode == FlashMode::kFpgaFlash;
+        const std::string cfgmem = into_flash ? vivado_cfgmem(b) : std::string();
+        if (into_flash && cfgmem.empty()) return plan.why = "Vivado needs the board's flash part to write its flash: flash.cfgmem, as get_cfgmem_parts names it", plan;
+        const Vars lines = {{"target", b.probe.empty() ? "*" : tcl_word("*/" + b.probe + "*")},
+                            {"chip", tcl_word(lower(part))},
+                            {"image", tcl_word(first.path)},
+                            {"cfgmem", tcl_word(cfgmem)},
+                            {"width", std::to_string(image.spi_width)}};
         std::string line;
-        for (const std::string_view l : kVivadoScript)
-            if (expand(l, lines, &line)) script.push_back(line);
+        for (const VivadoLine& l : kVivadoScript)
+            if (l.when == kBoth || (l.when == kIntoFlash) == into_flash)
+                if (expand(l.text, lines, &line)) script.push_back(line);
         vars = {{"script", "\"$f\""}};
-        same += "|" + lower(part);
+        same += "|" + lower(part) + (into_flash ? "|" + cfgmem : std::string());
     } else if (fpga) {
         if (image.parts.size() > 1) return plan.why = "openFPGALoader loads one bitstream", plan;
         const std::string cable = b.flash_board.empty() ? ofl_cable_for(b) : std::string();
@@ -400,16 +455,41 @@ FlashPlan flash_plan(const Board& b, const std::string& tool_name, const std::st
     std::string cmd = sh_word(program), part;
     for (const std::string_view p : tool->parts)
         if (!p.empty() && expand(p, vars, &part) && !part.empty()) cmd += " " + part;
-    if (!script.empty()) {  // (J-Link's command file, Vivado's Tcl, made for the run and gone after)
+    if (!script.empty()) {  // (J-Link's command file, Vivado's Tcl, made for the run and gone after, with what was written beside it: Vivado's .mcs and .prm)
         std::string lines;
         for (const std::string& l : script) lines += " " + sh_word(l);
         // (A subshell: its exit ends it alone, and the pipe's redirections below are all of its.)
-        cmd = "(f=$(mktemp) && printf '%s\\n'" + lines + " >\"$f\" && " + cmd + "; s=$?; rm -f \"$f\"; exit $s)";
+        cmd = "(f=$(mktemp) && printf '%s\\n'" + lines + " >\"$f\" && " + cmd + "; s=$?; rm -f \"$f\" \"$f.mcs\" \"$f.prm\"; exit $s)";
     }
     if (plan.transport == kPipe)  // (its output and errors through a pipe, and its exit status kept)
         cmd = "exec 3>&1; s=$( { { " + cmd + " 2>&1 3>&- 4>&-; echo $? >&4; } | cat >&3; } 4>&1 ); exit $s";
     plan.command = std::move(cmd);
     return plan;
+}
+
+int bitstream_spi_width(std::string_view b) {
+    // (Big-endian words after the sync word 0xAA995566: a type 1 write of
+    // one word to register 0x1F is 0x3003E001, the word itself next.
+    // Vivado 2026.2 wrote 0x13B for SPI_BUSWIDTH 2 and 0x26B for 4, the
+    // read command after it, and none for 1; looked for before the frames.)
+    const size_t sync = b.substr(0, 4096).find(std::string_view("\xAA\x99\x55\x66", 4));
+    if (sync == std::string_view::npos) return 1;
+    auto word = [&](size_t at) {
+        u32 v = 0;
+        for (size_t i = 0; i < 4; ++i) v = v << 8 | static_cast<u8>(b[at + i]);
+        return v;
+    };
+    for (size_t at = sync + 4, n = 0; at + 8 <= b.size() && n < 64; at += 4, ++n) {
+        if (word(at) != 0x3003E001u) continue;
+        const u32 width = word(at + 4) >> 8 & 3;
+        return width == 1 ? 2 : width == 2 ? 4 : 1;
+    }
+    return 1;
+}
+
+std::string vivado_cfgmem(const Board& b) {
+    if (!b.flash_cfgmem.empty()) return b.flash_cfgmem;
+    return std::string(look_up(kCfgmem, b.flash_board));
 }
 
 std::string vivado_installed(const std::string& there) {

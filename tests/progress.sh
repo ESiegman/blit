@@ -294,6 +294,40 @@ E vivado:1 No matching targets found on connected servers: localhost
 EOF
 check "Vivado with no board on the cable asked for" "$expected"
 
+# Vivado writing the FPGA's flash: its SRAM loaded with Vivado's design for
+# it, the flash erased, written and read back (one step, as it prints
+# it), the FPGA booted from it; the time program_hw_cfgmem gives itself.
+timed='&'
+flash Vivado vivado vivado-flash "progresswait:Program;progressdump;$end"
+want <<'EOF'
+button: ■ Program | row: Connect ✓ · Load ✓ · Erase ✓ · Program
+button: ▶ Vivado · Flashed in 54.0 s, verified | row: done · Flashed in 54.0 s, verified
+problems: 0
+EOF
+check "Vivado: the FPGA's flash erased, written and verified" "$expected"
+flash Vivado vivado vivado-flash-verify "progresswait:Verify;progressdump;$end"
+want <<'EOF'
+button: ■ Verify | row: Connect ✓ · Load ✓ · Verify
+button: ▶ Vivado · 1 error · stopped in Verify | row: failed: exited with code 1 · stopped in Verify
+problems: 1
+E vivado:1 Flash Programming Unsuccessful: Byte 10 does not match (CF != FF) Verify that the selected flash part matches the actual flash device connected to the board.
+EOF
+check "Vivado: the flash not what was written" "$expected"
+flash Vivado vivado vivado-flash-wrong "$end"
+want <<'EOF'
+button: ▶ Vivado · 1 error | row: failed: exited with code 1
+problems: 1
+E vivado:1 Flash Programming Unsuccessful. Part selected s25fl032p, but part mx25l3273f detected.
+EOF
+check "Vivado: told the wrong flash part" "$expected"
+flash Vivado vivado vivado-flash-nopart "$end"
+want <<'EOF'
+button: ▶ Vivado · 1 error | row: failed: exited with code 1
+problems: 1
+E vivado:1 Unrecognized config mem part - mx25l3233f-spi-x1_x2_x4. Please run get_cfgmem_parts and select a valid part or use the cfgmem GUI to assist in selecting a valid device.
+EOF
+check "Vivado: a flash part it has none of" "$expected"
+
 # The real openFPGALoader, where it is installed, with no board plugged in
 # (skipped where it is not, or where one answers).
 if ofl=$(command -v openFPGALoader) && ! "$ofl" --detect -b basys3 >/dev/null 2>&1; then
