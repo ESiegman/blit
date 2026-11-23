@@ -712,6 +712,7 @@ void App::reload_changed() {
     }
     picture_recheck();  // (and pictures, for their tabs and the Markdown preview)
     pdf_recheck();      // (and PDFs)
+    wave_recheck();     // (and dumps: a rerun, or a simulation still writing one)
     pick_theme();
     dirty_ = true;
 }

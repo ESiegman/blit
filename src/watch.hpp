@@ -26,6 +26,12 @@ public:
     // A folder under it, as it is read (Linux: each is watched by itself; a
     // Mac's watch covers it already).
     void add(const std::string& dir);
+    // A file under it heard as it is written, not only once it is closed
+    // (a dump a simulation is still writing): told as its folder. (Linux:
+    // inotify's IN_MODIFY on the file itself, which the folders' watches
+    // leave out; a Mac's watch hears it already.) Until it goes or is put
+    // in the place of, when it is to be asked for again.
+    void file(const std::string& path);
     // What changed since last time (each folder once): the folders
     // something changed in, and those that it and every folder under it are
     // to be looked at again (the system lost track of what changed there:

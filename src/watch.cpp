@@ -22,12 +22,10 @@ namespace blit {
 
 namespace {
 
-#if defined(__APPLE__)
-std::string parent(const std::string& p) {
+[[maybe_unused]] std::string parent(const std::string& p) {
     const size_t s = p.find_last_of('/');
     return s == std::string::npos ? std::string() : s == 0 ? std::string("/") : p.substr(0, s);
 }
-#endif
 
 }  // namespace
 
@@ -68,6 +66,7 @@ struct DirWatch::Impl {
         mac = nullptr;
     }
     void add(const std::string&) {}
+    void file(const std::string&) {}
     ~Impl() { stop(); }
 #elif defined(__linux__)
     // A folder watched: by the names it was added as (more than one when a
@@ -76,6 +75,7 @@ struct DirWatch::Impl {
         std::vector<std::string> paths;
         dev_t dev = 0;
         ino_t ino = 0;
+        bool file = false;  // (a file watched for its writes: heard as its folder)
     };
     int fd = -1;
     int wake[2] = {-1, -1};
@@ -109,6 +109,8 @@ struct DirWatch::Impl {
                         const auto it = dirs.find(e->wd);
                         if (it == dirs.end()) continue;
                         in = it->second.paths;
+                        if (it->second.file)
+                            for (std::string& path : in) path = parent(path);
                         // Gone (its watch with it), or moved: its names, and
                         // those of the folders watched under it, are let go
                         // of, to be watched again if they are read again.
@@ -174,6 +176,24 @@ struct DirWatch::Impl {
         d.dev = st.st_dev, d.ino = st.st_ino;
         watched[dir] = wd;
     }
+    void file(const std::string& path) {
+        if (fd < 0) return;
+        std::lock_guard lock(mu);
+        struct stat st;
+        if (::stat(path.c_str(), &st) != 0 || !S_ISREG(st.st_mode)) return;
+        if (const auto w = watched.find(path); w != watched.end()) {
+            const auto d = dirs.find(w->second);
+            if (d != dirs.end() && d->second.dev == st.st_dev && d->second.ino == st.st_ino) return;
+            forget(w->second, true);  // (another file in its place)
+        }
+        const int wd = inotify_add_watch(fd, path.c_str(), IN_MODIFY | IN_CLOSE_WRITE | IN_ATTRIB | IN_DELETE_SELF | IN_MOVE_SELF);
+        if (wd < 0) return;
+        Dir& d = dirs[wd];
+        d.paths.push_back(path);
+        d.dev = st.st_dev, d.ino = st.st_ino;
+        d.file = true;
+        watched[path] = wd;
+    }
     void stop() {
         if (thread.joinable()) {
             thread.request_stop();
@@ -191,6 +211,7 @@ struct DirWatch::Impl {
     void start(const std::string&) {}
     void stop() {}
     void add(const std::string&) {}
+    void file(const std::string&) {}
 #endif
 };
 
@@ -208,6 +229,8 @@ void DirWatch::watch(const std::string& root) {
 const std::string& DirWatch::root() const { return impl_->root; }
 
 void DirWatch::add(const std::string& dir) { impl_->add(dir); }
+
+void DirWatch::file(const std::string& path) { impl_->file(path); }
 
 DirWatch::Changed DirWatch::take() {
     std::lock_guard lock(impl_->mu);

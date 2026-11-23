@@ -1183,6 +1183,11 @@ private:
     std::string wave_dump(std::string_view what);
     void wave_bench_step(bool zoom, int i, bool page = false);
     bool wave_sharp() const;
+    // A dump that changes (a rerun, or a simulation still writing it): read
+    // again or read on, once its tab is on show.
+    void wave_recheck();
+    void wave_again(WaveView& v, bool whole);
+    std::string wave_frames(int ms);  // (the tests: frames drawn while the main loop runs)
 
     // Terminals (appterm.cpp): a tab running a shell, here or on another machine.
     // A terminal tab in dir (the working folder when none): a login shell, or

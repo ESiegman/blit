@@ -710,6 +710,7 @@ void App::watch_tick() {
                 if (!d->read_only && on(d->ed.path)) remote_load(*d, true);  // (looked at on a thread, read again if it changed)
         picture_recheck();
         pdf_recheck();
+        wave_recheck();
         if (cfg_.git && on(git_folder())) git_command("look", {});  // (a repository made there too)
         dirty_ = true;
     }

@@ -4127,6 +4127,29 @@ dump no longer has is left out, and the bottom row says how many were.
 A dump on **another machine** is fetched whole while it is no larger than
 4 MB; larger ones are not shown yet (the tab says so).
 
+**Run again.** A dump written again while its tab is open (the
+simulation run again) is read again, and the view stays as it was: the
+rows, groups and radixes, the names given to values, the markers, the
+cursor, and the stretch on show (or the whole run, if that was on show,
+to the new run's end). The run on show stays until the new one's
+signals are known; a row whose signal the new run has not got is left
+out, and the bottom row says how many were. blit hears of it as it
+hears of any file changed in the folder worked in (one on another
+machine once a task or a debug session there ends, or blit comes back to
+the front, its time stamp asked there).
+
+**A simulation still writing its dump.** A VCD is shown as far as it has
+been written, and what is added to it is read as it comes (the bottom
+row says "Following it as it grows"); with the whole run on show, the
+view follows its end. It is read only while its tab is on show and the
+window is not hidden or covered, and only when the file has changed
+(about three times a second at most, as the folder's changes are
+gathered): behind another tab, it is read once it is in front again;
+when nothing is written, nothing is read and nothing drawn. An FST
+cannot be read until its writer has closed it (libfst finds it only
+then): the tab says it is still being written, and shows it once it is
+closed; a run of it again leaves the last run on show until then.
+
 ## How it is fast
 
 **Text is never copied.** The file is memory mapped and the document is a

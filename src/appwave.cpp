@@ -18,6 +18,7 @@
 // reply may be (4 MB); larger ones wait for the agent's reads in parts
 // (kReadAt), which plug in at remote_read_at below.
 #include <SDL3/SDL.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -174,11 +175,34 @@ struct WaveView {
     std::string open_error;  // (it could not be opened at all)
     // How far it is read (as last seen: the load has the wave's lock now and then).
     struct Progress {
-        bool header = false, done = false;
+        bool header = false, done = false, settled = false, writing = false;
         u64 reached = 0, start = 0, end = 0, changes = 0, bytes = 0;
         std::string error;
         size_t notes = 0;
     } now;
+    // The file changing: which it is (here: its time stamp and its inode;
+    // there: its time stamp, asked there), and that it has changed and is
+    // to be looked at once the tab is on show.
+    i64 stamp = 0;
+    u64 dev = 0, ino = 0;
+    bool changed = false;
+    std::string heard_in;  // (the folder whose watch hears it as it is written)
+    // Read again (a rerun): the new reading, put in place of this one once
+    // it has its header (until then this one stays on show), or why it
+    // could not be read (this one staying).
+    struct Again {
+        std::shared_ptr<Wave> wave;
+        std::unique_ptr<WaveLoad> load;
+        std::shared_ptr<std::string> fetch_error = std::make_shared<std::string>();
+        std::stop_source fetch_stop;
+        ~Again() {
+            fetch_stop.request_stop();
+            load.reset();
+        }
+    };
+    std::unique_ptr<Again> again;
+    std::string again_note;  // (what came of the last reading again, if it could not be put in place)
+    u32 agains = 0;          // (times read again, for the tests)
     // The kept view: asked for, and come (found or not).
     bool view_come = false;
     std::string view_text;
@@ -241,6 +265,7 @@ struct WaveView {
     ~WaveView() {
         for (auto& [k, t] : tiles) drop(t);
         fetch_stop.request_stop();
+        again.reset();
         load.reset();  // (stops the reading and waits for it)
     }
     int trace_w() const { return std::max(1, tx1 - tx0); }
@@ -302,15 +327,18 @@ struct App::Waves {
     std::shared_ptr<const WaveLooks> looks;
     std::map<u32, u32> dots;
     // The views kept beside the projects: read and written on a thread of
-    // their own (another machine's over its connection).
+    // their own (another machine's over its connection); and the time
+    // stamps of dumps on another machine, asked there.
     struct Op {
         u64 doc = 0;
         std::string path, text;
-        bool write = false;
+        bool write = false, stamp = false;
     };
     struct Read {
         u64 doc = 0;
         std::string text;
+        bool stamp = false;
+        i64 when = 0;
     };
     std::mutex mu;
     std::condition_variable_any cv;
@@ -349,10 +377,13 @@ struct App::Waves {
             }
             Read r;
             r.doc = op.doc;
+            r.stamp = op.stamp;
             if (op.write) {
                 std::string err;
                 fs_mkdirs(parent_of(op.path), &err);
                 fs_write(op.path, op.text, &err);
+            } else if (op.stamp) {
+                r.when = fs_remote_stamp(op.path);
             } else {
                 fs_read(op.path, &r.text, 1 << 20);
             }
@@ -429,6 +460,40 @@ WaveLoad::Fetch remote_fst(const std::string& path, u64 most) {
     };
 }
 
+bool is_fst(const std::string& path) { return path.size() >= 4 && (path.ends_with(".fst") || path.ends_with(".FST")); }
+
+// The reading of a dump into `into`: another machine's fetched (an FST
+// whole, into a file here; a VCD in parts), an FST here by its path (libfst
+// reads it so), a VCD here from the file, followed as it is written while
+// the tab is open (`follow`). Null, and why, if it cannot be opened.
+std::unique_ptr<WaveLoad> load_of(const std::string& full, const std::shared_ptr<Wave>& into, u64 most, u64 fetch_most, std::stop_token fetch_stop,
+                                  std::shared_ptr<std::string> fetch_error, WaveLoad::Follow follow, std::string* why) {
+    if (is_remote(full) && is_fst(full)) return std::make_unique<WaveLoad>(into, remote_fst(full, fetch_most), most, wake);
+    if (is_remote(full)) return std::make_unique<WaveLoad>(into, remote_read_at(full, fetch_stop, std::move(fetch_error), fetch_most), 0, most, wake);
+    if (is_fst(full)) {
+        if (fs_kind(full) == 1) return std::make_unique<WaveLoad>(into, full, most, wake);
+        *why = fs_kind(full) == 0 ? "No such file or directory" : "not a file";
+        return nullptr;
+    }
+    WaveLoad::ReadAt read_at;
+    u64 size = 0;
+    if (!WaveLoad::local_file(full, &read_at, &size, why)) return nullptr;
+    return std::make_unique<WaveLoad>(into, std::move(read_at), size, most, wake, follow);
+}
+
+// Which file a path is here now (its time stamp, device and inode); false if there is none.
+bool file_id(const std::string& path, i64* stamp, u64* dev, u64* ino) {
+    struct stat st{};
+    if (::stat(path.c_str(), &st) != 0) return false;
+#if defined(__APPLE__)
+    *stamp = static_cast<i64>(st.st_mtimespec.tv_sec) * 1'000'000'000 + st.st_mtimespec.tv_nsec;
+#else
+    *stamp = static_cast<i64>(st.st_mtim.tv_sec) * 1'000'000'000 + st.st_mtim.tv_nsec;
+#endif
+    *dev = static_cast<u64>(st.st_dev), *ino = static_cast<u64>(st.st_ino);
+    return true;
+}
+
 }  // namespace
 
 // A dump in a tab of its own (open_path() sends it here).
@@ -448,23 +513,19 @@ bool App::wave_open(const std::string& full) {
     const bool inside = root && full.size() > root->size() && full.starts_with(*root) && full[root->size()] == '/';
     v->view_path = wave_view_path(inside ? *root : parent_of(full), full);
     waves_->post({fresh->id, v->view_path, {}, false});
-    const u64 most = static_cast<u64>(cfg_.timeline_max_mb) << 20;
-    // (An FST by its name: libfst reads it by its path; a VCD as text.)
-    const bool fst = full.size() >= 4 && (full.ends_with(".fst") || full.ends_with(".FST"));
-    const u64 fetch_most = static_cast<u64>(cfg_.wave_remote_fetch_mb) << 20;
-    if (is_remote(full) && fst) {
-        v->load = std::make_unique<WaveLoad>(v->wave, remote_fst(full, fetch_most), most, wake);
-    } else if (is_remote(full)) {
-        v->load = std::make_unique<WaveLoad>(v->wave, remote_read_at(full, v->fetch_stop.get_token(), v->fetch_error, fetch_most), 0, most, wake);
-    } else if (fst) {
-        if (fs_kind(full) == 1) v->load = std::make_unique<WaveLoad>(v->wave, full, most, wake);
-        else v->open_error = fs_kind(full) == 0 ? "No such file or directory" : "not a file";
+    // (Which file it is, to know when it changes: here, from the file; there, asked there.)
+    if (is_remote(full)) waves_->post({fresh->id, full, {}, false, true});
+    else file_id(full, &v->stamp, &v->dev, &v->ino);
+    v->load = load_of(full, v->wave, static_cast<u64>(cfg_.timeline_max_mb) << 20, static_cast<u64>(cfg_.wave_remote_fetch_mb) << 20, v->fetch_stop.get_token(), v->fetch_error,
+                      WaveLoad::Follow::kAfterHeader, &v->open_error);
+    if (!is_remote(full)) {
         recent_add(full, false);
-    } else {
-        WaveLoad::ReadAt read_at;
-        u64 size = 0;
-        if (WaveLoad::local_file(full, &read_at, &size, &v->open_error)) v->load = std::make_unique<WaveLoad>(v->wave, std::move(read_at), size, most, wake);
-        recent_add(full, false);
+        // (The folder worked in watched, whether the tree has been read or
+        // not: a rerun's dump is read again, or one still being written
+        // read on, as it changes; and the dump heard as it is written, not
+        // only once it is closed.)
+        watch_follow();
+        if (watch_) watch_->file(full);
     }
     const bool reuse = pane_->doc->ed.path.empty() && !pane_->doc->ed.modified() && pane_->doc->ed.buf.size() == 0 && !pane_->doc->read_only;
     size_t at = pane_->tab + 1;
@@ -496,17 +557,21 @@ bool peek(WaveView& v) {
     const Wave& w = *v.wave;
     WaveView::Progress& p = v.now;
     const WaveView::Progress was = p;
-    p.header = w.header, p.done = w.done, p.reached = w.reached, p.start = w.start, p.end = w.end, p.changes = w.changes;
+    p.header = w.header, p.done = w.done, p.settled = w.settled, p.writing = w.writing, p.reached = w.reached, p.start = w.start, p.end = w.end, p.changes = w.changes;
     p.error = w.error, p.notes = w.notes.size();
     p.bytes = v.load ? v.load->read() : 0;
-    if (p.header != was.header || p.done != was.done || p.reached != was.reached || p.end != was.end || p.error != was.error || p.bytes != was.bytes) ++v.gen;
+    if (p.header != was.header || p.done != was.done || p.settled != was.settled || p.reached != was.reached || p.end != was.end || p.error != was.error ||
+        p.bytes != was.bytes)
+        ++v.gen;
     return true;
 }
 
 // The rows made, once the dump's header and the kept view (if there is one) are here.
 void start(WaveView& v) {
-    // (Not a dump that could not be had: the reader, given nothing, says it has read a header of nothing.)
-    if (v.started || !v.now.header || !v.view_come || !v.open_error.empty() || !v.fetch_error->empty()) return;
+    // (Not a dump that could not be had: the reader, given nothing, says it
+    // has read a header of nothing; nor an FST not yet closed, whose rows
+    // come once it has been.)
+    if (v.started || !v.now.header || !v.view_come || !v.open_error.empty() || !v.fetch_error->empty() || v.now.writing) return;
     std::shared_lock lock(v.wave->mu, std::try_to_lock);
     if (!lock.owns_lock()) return;
     const Wave& w = *v.wave;
@@ -526,6 +591,20 @@ void start(WaveView& v) {
     v.rows = wave_rows(v.items, w);
     v.started = true;
     ++v.gen;
+}
+
+// The view as it is kept: rows, names of values, markers, the cursor and
+// the stretch on show (none while it shows the whole run).
+WaveSaved saved_of(const WaveView& v) {
+    WaveSaved s;
+    s.items = v.items;
+    s.enums = v.enums;
+    std::copy(std::begin(v.marks), std::end(v.marks), s.marks);
+    s.marked = v.marked;
+    s.cursor = v.cursor, s.has_cursor = true;
+    s.from = v.left, s.to = v.left + v.trace_w() * v.tpp;
+    if (v.fit) s.from = s.to = 0;
+    return s;
 }
 
 // The rows again, after the list changed.
@@ -579,7 +658,99 @@ std::string reading(const WaveView& v) {
     return "Reading " + std::to_string(v.load->read() * 100 / v.load->size()) + "%";
 }
 
+// Whether two readings of a dump have the same signals (a rerun of the same design).
+bool same_signals(const Wave& a, const Wave& b) {
+    if (a.vars.size() != b.vars.size() || a.scopes.size() != b.scopes.size()) return false;
+    for (size_t i = 0; i < a.scopes.size(); ++i)
+        if (a.scopes[i].name != b.scopes[i].name || a.scopes[i].parent != b.scopes[i].parent) return false;
+    for (size_t i = 0; i < a.vars.size(); ++i)
+        if (a.vars[i].name != b.vars[i].name || a.vars[i].scope != b.vars[i].scope || a.vars[i].lane != b.vars[i].lane || a.vars[i].width != b.vars[i].width) return false;
+    return true;
+}
+
+// A reading again put in place of the one on show. The view is kept as
+// the kept view brings it back (rows by their paths, with their radixes
+// and groups, names of values, markers, the cursor, the stretch on show
+// or the whole run): rows whose signals the dump has not got now are left
+// out, and said. Undoing goes on as before for a dump with the same
+// signals. Its tiles stay on show until they are painted again.
+void put_in_place(WaveView& v) {
+    std::unique_ptr<WaveView::Again> a = std::move(v.again);
+    bool same = false;
+    {
+        std::shared_lock lock(v.wave->mu), next(a->wave->mu);
+        if (v.started) v.view_text = wave_view_json(*v.wave, saved_of(v));  // (else the kept view, as it was read)
+        same = v.started && same_signals(*v.wave, *a->wave);
+    }
+    if (!same) v.undo.clear();
+    std::swap(v.fetch_stop, a->fetch_stop);  // (the last reading's fetch, if it is still going, stopped with `a`)
+    v.wave = std::move(a->wave);
+    v.load = std::move(a->load);
+    v.fetch_error = std::move(a->fetch_error);
+    v.open_error.clear();
+    v.now = {};
+    v.view_come = true;
+    v.started = false;
+    v.items.clear();
+    v.rows.clear();
+    v.dropped = 0;
+    for (auto& [k, t] : v.tiles) t.upto = 0;  // (painted again, from the new reading)
+    v.again_note.clear();
+    ++v.agains;
+    ++v.gen;
+}
+
 }  // namespace
+
+// The dumps open looked at again (a file changed on disk, or a run on
+// another machine ended): one that has changed is read again, or read on
+// (wave_again), once its tab is on show.
+void App::wave_recheck() {
+    if (!waves_) return;
+    for (const std::unique_ptr<Pane>& pane : panes_)
+        for (const std::shared_ptr<Doc>& d : pane->docs) {
+            if (!d->wave) continue;
+            WaveView& v = *d->wave;
+            if (is_remote(v.path)) {  // (asked there, on the views' thread: wave_sync hears)
+                waves_->post({v.doc, v.path, {}, false, true});
+                continue;
+            }
+            i64 stamp = 0;
+            u64 dev = 0, ino = 0;
+            if (!file_id(v.path, &stamp, &dev, &ino) || (stamp == v.stamp && dev == v.dev && ino == v.ino)) continue;
+            v.changed = true;
+            ++v.gen;
+            dirty_ = true;
+        }
+}
+
+// A dump on show that has changed: a VCD being followed, still the same
+// file, is read on from where its reading got to (which sees for itself
+// whether the file was written again from its start); else, or `whole`,
+// it is read again, beside what is on show, which the new reading takes
+// the place of once it has its header (wave_sync).
+void App::wave_again(WaveView& v, bool whole) {
+    v.changed = false;
+    const bool here = !is_remote(v.path);
+    i64 stamp = 0;
+    u64 dev = 0, ino = 0;
+    if (here && !file_id(v.path, &stamp, &dev, &ino)) return;  // (gone: what was read stays on show)
+    const bool same_file = here && dev == v.dev && ino == v.ino;
+    if (here) v.stamp = stamp, v.dev = dev, v.ino = ino;
+    WaveLoad* on = v.again ? v.again->load.get() : v.load.get();
+    if (!whole && same_file && !is_fst(v.path) && on && !on->finished()) return on->more();
+    auto a = std::make_unique<WaveView::Again>();
+    a->wave = std::make_shared<Wave>();
+    std::string why;
+    a->load = load_of(v.path, a->wave, static_cast<u64>(cfg_.timeline_max_mb) << 20, static_cast<u64>(cfg_.wave_remote_fetch_mb) << 20, a->fetch_stop.get_token(), a->fetch_error,
+                      WaveLoad::Follow::kAlways, &why);
+    v.again.reset();
+    if (a->load) v.again = std::move(a);
+    else v.again_note = "Not read again: " + why;
+    if (here && watch_) watch_->file(v.path);  // (a file put in its place is another to hear)
+    ++v.gen;
+    dirty_ = true;
+}
 
 // What the load, the painters and the view's reader have done.
 void App::wave_sync() {
@@ -589,22 +760,61 @@ void App::wave_sync() {
         std::lock_guard l(waves_->mu);
         reads.swap(waves_->reads);
     }
-    for (Waves::Read& r : reads)
-        if (Doc* d = find_doc(r.doc); d && d->wave) {
-            d->wave->view_text = std::move(r.text);
-            d->wave->view_come = true;
-            ++d->wave->gen;
-        }
+    bool changed = !reads.empty();
+    u64 gens = 0;
     for (const std::unique_ptr<Pane>& pane : panes_)
         for (const std::shared_ptr<Doc>& d : pane->docs)
-            if (d->wave) {
-                peek(*d->wave);
-                start(*d->wave);
+            if (d->wave) gens += d->wave->gen;
+    for (Waves::Read& r : reads)
+        if (Doc* d = find_doc(r.doc); d && d->wave) {
+            WaveView& v = *d->wave;
+            if (r.stamp) {  // (another machine's dump's time stamp: the first, or one that has changed)
+                if (r.when && v.stamp && r.when != v.stamp) v.changed = true;
+                if (r.when) v.stamp = r.when;
+            } else {
+                v.view_text = std::move(r.text);
+                v.view_come = true;
             }
+            ++v.gen;
+        }
+    for (const std::unique_ptr<Pane>& pane : panes_)
+        for (const std::shared_ptr<Doc>& d : pane->docs) {
+            if (!d->wave) continue;
+            WaveView& v = *d->wave;
+            // Read again: put in place once it has its header; if it could
+            // not be read, what is on show stays (and the bottom row says
+            // why), unless nothing is.
+            if (v.again) {
+                const Wave& n = *v.again->wave;
+                const WaveLoad& l = *v.again->load;
+                bool ready = false, failed = false, writing = false;
+                std::string why;
+                {
+                    std::shared_lock lock(n.mu, std::try_to_lock);
+                    if (lock.owns_lock()) {
+                        ready = n.header && n.error.empty() && !n.writing;
+                        failed = l.finished() && !ready;
+                        writing = n.writing;
+                        why = !v.again->fetch_error->empty() ? *v.again->fetch_error : n.error;
+                    }
+                }
+                if (ready || (failed && !v.started)) {
+                    put_in_place(v);
+                } else if (failed) {
+                    v.again_note = writing ? "Its new run is still being written" : "Not read again: " + why;
+                    v.again.reset();
+                    ++v.gen;
+                }
+            }
+            // (A followed VCD written again from its start: read again whole.)
+            if (!v.again && v.load && v.load->rewritten()) wave_again(v, true);
+            peek(v);
+            start(v);
+        }
     if (waves_->painter)
         for (WavePainter::Done& t : waves_->painter->take()) {
             Doc* d = find_doc(t.job.owner);
-            if (!d || !d->wave) continue;
+            if (!d || !d->wave || t.job.wave != d->wave->wave) continue;  // (not a tile of a reading put in another's place)
             WaveView& v = *d->wave;
             const u32 id = gpu_.image_add(t.rgba.data(), t.w, t.h);
             if (!id) continue;
@@ -622,8 +832,14 @@ void App::wave_sync() {
             ++v.painted;
             v.paint_ns += t.ns;
             v.last_stats = t.stats;
+            changed |= tile.ta < v.left + v.trace_w() * v.tpp && tile.tb > v.left;  // (one painted ahead, off the view, draws nothing yet)
         }
-    dirty_ = true;
+    // (Drawn again only if something on show has changed: a dump followed
+    // as it grows wakes this often, and draws no more than it must.)
+    for (const std::unique_ptr<Pane>& pane : panes_)
+        for (const std::shared_ptr<Doc>& d : pane->docs)
+            if (d->wave) gens -= d->wave->gen;
+    if (changed || gens != 0) dirty_ = true;
 }
 
 void App::wave_layout(FrameDesc& fd) {
@@ -654,11 +870,18 @@ void App::wave_layout(FrameDesc& fd) {
         }
     }
     std::vector<WaveTileJob> want, later;
+    // (What changed on disk is read only for a tab on show, in a window that is: live views' rule.)
+    const bool window_shown = !win_ || !(SDL_GetWindowFlags(win_) & (SDL_WINDOW_MINIMIZED | SDL_WINDOW_HIDDEN | SDL_WINDOW_OCCLUDED));
     for (const std::unique_ptr<Pane>& pane : panes_) {
         if (!pane->doc || !pane->doc->wave || fd.popup_count + 2 >= std::size(fd.popups)) continue;
         WaveView& v = *pane->doc->wave;
         const int x = pane->x0, y = pane->text_y, w = pane->x1 - pane->x0, h = pane->y1 - pane->text_y;
         if (w < cw * 24 || h < ch * 6) continue;
+        if (v.changed && window_shown) wave_again(v, false);
+        if (watch_ && !watch_->root().empty() && v.heard_in != watch_->root() && !is_remote(v.path)) {  // (watched since: heard as it is written too)
+            watch_->file(v.path);
+            v.heard_in = watch_->root();
+        }
         ++v.frames;
         v.x = x, v.y = y, v.w = w, v.h = h;
         const u32 cols = static_cast<u32>(w / cw), rows = static_cast<u32>(h / ch);
@@ -707,16 +930,20 @@ void App::wave_layout(FrameDesc& fd) {
                 u32 c = put(v.box, font, bottom, edge, leaf_of(v.path), ink::kStrong);
                 std::string err = !v.open_error.empty() ? v.open_error : !v.fetch_error->empty() ? *v.fetch_error : v.now.error;
                 const u32 room = cols > c + 3 + edge ? cols - c - 3 - edge : 1;
-                if (!v.now.header || !v.open_error.empty() || !v.fetch_error->empty()) {
+                if (v.now.writing && v.open_error.empty() && v.fetch_error->empty()) {
+                    c = put(v.box, font, bottom, c + 3, fit_text("Still being written: shown once its writer closes it", room), ink::kMuted);
+                } else if (!v.now.header || !v.open_error.empty() || !v.fetch_error->empty()) {
                     if (!err.empty()) c = put(v.box, font, bottom, c + 3, fit_text("Cannot show it: " + err, room), ink::kError);
-                    else c = put(v.box, font, bottom, c + 3, reading(v), ink::kMuted);
+                    else c = put(v.box, font, bottom, c + 3, v.now.settled ? std::string("Nothing in it yet") : reading(v), ink::kMuted);
                 } else {
                     c = put(v.box, font, bottom, c + 3, wv.time_text(v.now.start) + " to " + wv.time_text(v.now.end), ink::kMuted);
                     c = put(v.box, font, bottom, c + 3, std::to_string(wv.vars.size()) + " signals", ink::kMuted);
                     if (v.load && v.load->size()) c = put(v.box, font, bottom, c + 3, size_text(v.load->size()), ink::kMuted);
-                    if (!v.now.done) c = put(v.box, font, bottom, c + 3, reading(v), ink::kMuted);
+                    if (!v.now.done && !v.now.settled) c = put(v.box, font, bottom, c + 3, reading(v), ink::kMuted);
+                    else if (v.now.settled && v.load && v.load->grown()) c = put(v.box, font, bottom, c + 3, "Following it as it grows", ink::kMuted);
                     if (!err.empty() && err != "stopped") c = put(v.box, font, bottom, c + 3, fit_text("Stopped: " + err, cols > c + 3 + edge ? cols - c - 3 - edge : 1), ink::kError);
                     if (v.dropped) c = put(v.box, font, bottom, c + 3, std::to_string(v.dropped) + " kept rows not in the dump", ink::kWarning);
+                    if (!v.again_note.empty()) c = put(v.box, font, bottom, c + 3, fit_text(v.again_note, cols > c + 3 + edge ? cols - c - 3 - edge : 1), ink::kWarning);
                     const std::string across = wv.time_text(static_cast<u64>(std::llround(v.trace_w() * v.tpp))) + " across";
                     if (c + 3 + width_of(across) + edge <= cols) put(v.box, font, bottom, cols - edge - width_of(across), across, ink::kMuted);
                 }
@@ -922,15 +1149,7 @@ void App::wave_layout(FrameDesc& fd) {
         }
         // The view kept, once it has been changed by hand.
         if (v.touched && v.started) {
-            WaveSaved s;
-            s.items = v.items;
-            s.enums = v.enums;
-            std::copy(std::begin(v.marks), std::end(v.marks), s.marks);
-            s.marked = v.marked;
-            s.cursor = v.cursor, s.has_cursor = true;
-            s.from = v.left, s.to = v.left + v.trace_w() * v.tpp;
-            if (v.fit) s.from = s.to = 0;
-            std::string text = wave_view_json(wv, s);
+            std::string text = wave_view_json(wv, saved_of(v));
             if (text != v.written) {
                 v.written = text;
                 waves_->post({v.doc, v.view_path, std::move(text), true});
@@ -1473,11 +1692,16 @@ void App::wave_mouse_up() {
 bool App::waves_busy() const {
     if (!waves_) return false;
     for (const std::unique_ptr<Pane>& pane : panes_)
-        for (const std::shared_ptr<Doc>& d : pane->docs)
-            // (Read, and its end seen by the tab too: a load that ends between a frame and this would leave the rows unmade.)
-            if (d->wave && ((d->wave->load && (!d->wave->load->finished() || !d->wave->now.done)) || !d->wave->view_come)) return true;
+        for (const std::shared_ptr<Doc>& d : pane->docs) {
+            if (!d->wave) continue;
+            const WaveView& v = *d->wave;
+            // (Read, and its end seen by the tab too: a load that ends between a frame and this would leave the rows unmade. A followed
+            // one at the end of what is there, waiting for more, is read, once the tab has seen all it read.)
+            const bool read = !v.load || (v.load->finished() && v.now.done) || (v.load->waiting() && v.now.settled && v.now.bytes == v.load->read());
+            if (!read || !v.view_come || (v.again && !v.again->load->waiting())) return true;
+        }
     for (const std::unique_ptr<Pane>& pane : panes_)
-        if (pane->doc && pane->doc->wave && pane->doc->wave->started && pane->doc->wave->missing) return true;
+        if (pane->doc && pane->doc->wave && (pane->doc->wave->changed || (pane->doc->wave->started && pane->doc->wave->missing))) return true;
     {
         std::lock_guard l(waves_->mu);
         if (!waves_->ops.empty() || waves_->io_busy || !waves_->reads.empty()) return true;
@@ -1500,6 +1724,29 @@ void App::wave_wait(bool rows) {
     frame();
 }
 
+// (The tests: ms milliseconds of the main loop as it runs when idle, what
+// changes on disk heard and settled as it hears them: how many frames it
+// drew, and how far the first wave tab was read meanwhile.)
+std::string App::wave_frames(int ms) {
+    const u64 until = now_ns() + static_cast<u64>(std::max(0, ms)) * 1'000'000ull;
+    const u64 before = frames_;
+    auto bytes = [&] {
+        for (const std::unique_ptr<Pane>& pane : panes_)
+            for (const std::shared_ptr<Doc>& d : pane->docs)
+                if (d->wave && d->wave->load) return d->wave->load->read();
+        return u64{0};
+    };
+    const u64 read = bytes();
+    while (now_ns() < until) {
+        SDL_Event e;
+        while (SDL_PollEvent(&e)) handle(e);
+        watch_tick();
+        if (dirty_) frame();
+        SDL_Delay(1);
+    }
+    return std::to_string(frames_ - before) + " frames drawn, " + std::to_string(bytes() - read) + " bytes read";
+}
+
 // The wave tab in front (the first there is), as the tests see it:
 //   (none)   what it shows: rows (name = value at the cursor, radix; > the
 //            one chosen), the cursor, the stretch on show, markers
@@ -1509,6 +1756,16 @@ void App::wave_wait(bool rows) {
 //            running rightwards from DX, DY away from there
 //   clip     what y copied last
 std::string App::wave_dump(std::string_view what) {
+    if (what == "load")  // (the first wave tab, on show or not: how far it is read, and how often again)
+        for (const std::unique_ptr<Pane>& pane : panes_)
+            for (const std::shared_ptr<Doc>& d : pane->docs) {
+                if (!d->wave) continue;
+                const WaveView& v = *d->wave;
+                const WaveLoad* l = v.load.get();
+                return "load: " + leaf_of(v.path) + (pane->doc == d.get() ? " on show" : " behind another tab") + ", " + std::to_string(l ? l->read() : 0) + " bytes read, grown " +
+                       std::to_string(l ? l->grown() : 0) + " times, read again " + std::to_string(v.agains) + " times" + (v.changed ? ", changed" : "") +
+                       (!l ? "" : l->waiting() ? ", waiting for more" : l->finished() ? ", finished" : ", reading");
+            }
     for (const std::unique_ptr<Pane>& pane : panes_) {
         if (!pane->doc || !pane->doc->wave) continue;
         WaveView& v = *pane->doc->wave;
@@ -1552,11 +1809,14 @@ std::string App::wave_dump(std::string_view what) {
         // (And whether rows were made all the same: a ruler and a cursor over nothing.)
         if (!v.open_error.empty()) return leaf_of(v.path) + ": cannot show it: " + v.open_error + (v.started ? ", rows made" : "");
         if (!v.fetch_error->empty()) return leaf_of(v.path) + ": cannot show it: " + *v.fetch_error + (v.started ? ", rows made" : "");
+        if (w.writing) return leaf_of(v.path) + ": still being written" + (v.started ? ", rows made" : "");
         if (!v.started) return leaf_of(v.path) + ": reading";
-        std::string out = leaf_of(v.path) + ": " + (w.done ? "read" : "reading") + ", cursor " + exact_text(w, v.cursor) + ", view " +
-                          exact_text(w, static_cast<u64>(std::llround(std::max(0.0, v.left)))) + " to " + exact_text(w, static_cast<u64>(std::llround(v.left + v.trace_w() * v.tpp)));
+        std::string out = leaf_of(v.path) + ": " + (w.done || w.settled ? "read" : "reading") + (w.settled && v.load && v.load->grown() ? ", following" : "") + ", cursor " +
+                          exact_text(w, v.cursor) + ", view " + exact_text(w, static_cast<u64>(std::llround(std::max(0.0, v.left)))) + " to " +
+                          exact_text(w, static_cast<u64>(std::llround(v.left + v.trace_w() * v.tpp)));
         if (!w.error.empty()) out += ", stopped: " + w.error;
         if (v.dropped) out += ", " + std::to_string(v.dropped) + " kept rows dropped";
+        if (!v.again_note.empty()) out += ", " + v.again_note;
         if (v.ranging) out += ", chosen from " + exact_text(w, v.range_from);
         std::string marks;
         for (u32 k = 0; k < 26; ++k)
