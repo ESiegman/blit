@@ -92,6 +92,15 @@ cp "$here/profile/allocs.c" "$dir/" && (cd "$dir" && cc -g -O1 -fno-omit-frame-p
 got=$("$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "prof:program=$dir/allocs;prof:kind=allocations;profrecord;profwait;frame;profdump;profpanel;profpick:profiles:2;frame;profdump" 2>&1 >/dev/null |
     grep -v '^\[' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }')
 check "every allocation: what was allocated, and what was still held at the end" '2 profiles; allocs (allocations) by blit, 1 thread, over 10%: make_big@allocs.c; tab: zoom all ;; 2 profiles; allocs (held) by blit, 1 thread, over 10%: make_big@allocs.c; tab: zoom all'
+# No atos (addr2line elsewhere) to name the stacks with: said in each
+# profile's heading, not left to the missing source lines.
+case $(uname -s) in Darwin) namer=atos this="this Mac" lost="no source lines" ;; *) namer=addr2line this="this machine" lost="no function names or source lines" ;; esac
+mkdir -p "$dir/bare"
+ln -s /usr/bin/* /bin/* "$dir/bare/" 2>/dev/null
+rm -f "$dir/bare/atos" "$dir/bare/addr2line"
+got=$(PATH="$dir/bare" "$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "prof:program=$dir/allocs;prof:kind=allocations;profrecord;profwait;frame;profnote;profpanel;profpick:profiles:2;frame;profnote" 2>&1 >/dev/null |
+    grep -v '^\[' | sed -e 's/; [0-9][0-9]* allocations, .*/; (allocations)/' -e 's/; [0-9.]* MB still held .*/; (held)/' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }')
+check "no $namer: said in both profiles" "$namer is not installed on $this, so $lost; (allocations) ;; $namer is not installed on $this, so $lost; (held)"
 
 [ -n "$print" ] || [ $failed = 1 ] || echo "profviews ok"
 exit $failed

@@ -2249,8 +2249,10 @@ where its threads waited:
     wanted). It samples allocations by bytes, one about every 64 KB, a
     larger block always, each with its stack, and forgets a sampled block
     that is freed again; when the program ends (or Stop ends it) blit
-    names the stacks with `atos` or `addr2line`, source lines and all, and
-    opens two profiles: **Allocations**, every allocation by where it was
+    names the stacks with `atos` or `addr2line`, source lines and all
+    (where that is not installed, each profile's heading says so, and its
+    stacks have the names the sampler found alone), and opens two
+    profiles: **Allocations**, every allocation by where it was
     made, in bytes, and **Held at the end**, those never freed: the leaks.
     `BLIT_ALLOC_RATE` in the program's environment sets another rate. On
     this machine only, and not for a program the system protects (one in

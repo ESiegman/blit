@@ -1062,6 +1062,7 @@ private:
     void prof_set(const std::string& what, const std::string& value);
     bool prof_busy() const;
     std::string prof_dump();
+    std::string prof_note();  // (the profile in front's note: what its heading warns of)
     void panel_show_profile();
 
     // The Markdown preview (appmarkdown.cpp, markdown.cpp, diagram.cpp): a tab

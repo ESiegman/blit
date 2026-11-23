@@ -1251,6 +1251,8 @@ void App::run_script(const char* script) {
             prof_set_stretch(t0, t1);
         } else if (verb == "profdump") {
             std::fprintf(stderr, "%s\n", prof_dump().c_str());
+        } else if (verb == "profnote") {  // the note in the heading of the profile in front
+            std::fprintf(stderr, "%s\n", prof_note().c_str());
         } else if (verb == "term") {  // a terminal (term:folder, or in the folder being worked in)
             term_open(arg);
         } else if (verb == "termwait") {  // the terminal in front shows this text (10 s at most)
