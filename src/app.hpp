@@ -1439,7 +1439,7 @@ private:
     void build_option(int row);  // a task of the Build tab's (-1: the Run button's)
     bool build_run_named(const std::string& name);
     void build_stop();
-    void build_ended(u64 doc, int status);
+    void build_ended(u64 doc, int status, const std::string& missing = {});  // (missing: the program the shell could not find, said)
     void build_panel_draw(struct TextBox& box, bool focused);
     void build_panel_click(int row, int col, const SDL_MouseButtonEvent& b);
     bool build_panel_key(const SDL_KeyboardEvent& k);

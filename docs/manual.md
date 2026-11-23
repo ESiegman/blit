@@ -2707,7 +2707,11 @@ errors). A run that failed with no error in its output says so instead:
 `▶ make · failed (exit 2)` on the Run button (with its warnings' count,
 if it has some), "make failed with exit code 2: no problem found in its
 output" in the Problems tab and from F8, which then has nowhere to go;
-never "No problems" under a red button. In the text they are marked as
+never "No problems" under a red button. One whose program the shell could
+not find (its exit code 127) names it instead: `▶ Build · failed (cmake is
+not installed)`, "Build failed: cmake is not installed on this Mac" (or on
+the host the folder is on) in the Problems tab, from F8 and at the end of
+its tab, and "cmake is not installed" on its row. In the text they are marked as
 the language server's problems are, in the split with the keyboard: a
 wavy underline in the colour of the kind, from the column the tool gave
 over the word there (the line's text, where it gave no column), and the

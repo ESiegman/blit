@@ -19,6 +19,19 @@ export HOME="$dir/home"
 mkdir -p "$HOME"
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/init.lua"
 
+# path_without PROGRAM...: a PATH of /usr/bin's and /bin's programs but not
+# those named (a machine they are not installed on), and what blit calls
+# this machine.
+path_without() {
+    p="$dir/without-$(printf '%s' "$*" | tr ' ' -)"
+    mkdir -p "$p"
+    ln -s /usr/bin/* "$p/" 2>/dev/null
+    ln -s /bin/* "$p/" 2>/dev/null
+    for n in "$@"; do rm -f "$p/$n"; done
+    printf '%s' "$p"
+}
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+
 failed=0
 check() {
     if [ -n "$print" ]; then
@@ -194,6 +207,34 @@ run "$F" "buildrun:make errs;buildwait;problemsdump"
 check "failed with errors: they say it" 'button: ▶ make errs · 1 error | Build 1 | file a.c | >E 1:5 bad'
 run "$F" "buildrun:make quiet;buildwait;buildrun:make fine;buildwait;problemsdump"
 check "the next run starts afresh" 'button: ▶ make fine · 1 warning | Build 1 | file a.c | >W 1:5 unused'
+
+# A run whose program is not installed: which, and on which machine, said
+# where it would be (the Run button, the Problems tab, F8, its row), not
+# the exit code the shell gave (127). (The user's shell here is one that
+# keeps the PATH it is given, where a login shell may set it again.)
+printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.build.add("Here", {detect = "a.c", tasks = {"cmake --build build"}})\n' >"$dir/cmake.lua"
+printf '#!/bin/sh\nshift\nexec /bin/sh -c "$@"\n' >"$dir/plainsh"
+chmod +x "$dir/plainsh"
+kept=$PATH keptsh=${SHELL:-}
+PATH=$(path_without cmake) SHELL="$dir/plainsh"
+export SHELL
+INIT="$dir/cmake.lua"
+run "$F" "buildrun:cmake --build build;buildwait;problemsdump"
+check "not installed: the Run button and the Problems tab say which" "button: ▶ cmake --build build · failed (cmake is not installed) | cmake --build build failed: cmake is not installed on $this | file 0"
+INIT="$dir/cmake.lua"
+run "$F" "buildrun:cmake --build build;buildwait;key:F8"
+check "and F8" "blit: cmake --build build failed: cmake is not installed on $this"
+INIT="$dir/cmake.lua"
+run "$F" "buildrun:cmake --build build;buildwait;progressdump"
+check "and its row" "button: ▶ cmake --build build · failed (cmake is not installed) | row: cmake is not installed"
+# The same on another machine (tests/fake-ssh.sh stands in for ssh): that one named.
+BLIT_SSH="$(cd "$(dirname "$0")" && pwd -P)/fake-ssh.sh" BLIT_FAKE_HOME="$dir/there"
+export BLIT_SSH BLIT_FAKE_HOME
+mkdir -p "$dir/there"
+got=$(BLIT_INIT="$dir/cmake.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "remotewait;frame;buildrun:cmake --build build;buildwait;problemsdump" "ssh://box$F" 2>&1 >/dev/null | tail -1)
+check "not installed there: that machine named" "button: ▶ cmake --build build · failed (cmake is not installed) | cmake --build build failed: cmake is not installed on box | file 0"
+unset BLIT_SSH BLIT_FAKE_HOME
+PATH=$kept SHELL=$keptsh
 
 # Problems from a file a tool wrote ("Read the problems from this file"):
 # SARIF and GCC's JSON diagnostics, each problem's notes after it (<), and

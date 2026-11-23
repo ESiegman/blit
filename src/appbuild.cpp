@@ -96,6 +96,7 @@ struct App::BuildUi {
     std::string dir;  // the folder it ran in (on another machine: ssh://host/...)
     bool running = false;
     int last_status = -1;
+    std::string last_missing;  // (its program was not there: said, "cmake is not installed on this Mac")
     std::string last_name;
     std::string last_key;  // the task it ran (task_key), when it was one of the tab's
     // The terminal the runs that are no long task's share: each one there
@@ -109,6 +110,7 @@ struct App::BuildUi {
         std::string key, name, kind, cmd;
         bool lasting = false, running = true, stopped = false;
         int status = -1;
+        std::string missing;  // (as last_missing)
         u64 started_ns = 0;
         u32 errors = 0, warnings = 0;
     };
@@ -608,6 +610,7 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     u.dir = dir;
     u.running = doc != 0;
     u.last_status = -1;
+    u.last_missing.clear();
     u.last_name = title;
     u.last_key.clear();
     u.problems.clear();  // (the last run's go: this one's come as it goes)
@@ -763,7 +766,7 @@ void App::build_stop() {
 // at again; and what git sees there (files written, or a repository made by
 // a new project's git init). On another machine, the files it wrote are
 // looked for there too, and git with them (ran_there).
-void App::build_ended(u64 doc, int status) {
+void App::build_ended(u64 doc, int status, const std::string& missing) {
     test_ended(doc);  // (a run of the tests: its reports read)
     BuildUi& u = *buildui_;
     // (A flash: remembered as done only if it went well.)
@@ -773,12 +776,15 @@ void App::build_ended(u64 doc, int status) {
     if (BuildUi::Run* r = u.run_of(doc); r && r->running) {
         r->running = false;
         r->status = status;
+        r->missing = missing;
         const double took = static_cast<double>(now_ns() - r->started_ns) * 1e-9;
         if (!r->key.empty()) script_build_event(true, r->name, r->kind, r->cmd, status, r->errors, r->warnings, r->stopped, took);
         if (!front_ && cfg_.build_notify && !r->stopped) {
             char secs[32];
             std::snprintf(secs, sizeof secs, "%.1f s", took);
-            std::string body = status == 0 ? std::string("Done in ") + secs : "Failed with exit code " + std::to_string(status) + " after " + secs;
+            std::string body = status == 0       ? std::string("Done in ") + secs
+                               : !missing.empty() ? "Failed: " + missing
+                                                  : "Failed with exit code " + std::to_string(status) + " after " + secs;
             if (r->errors) body += " \xC2\xB7 " + std::to_string(r->errors) + (r->errors == 1 ? " error" : " errors");
             if (r->warnings) body += std::string(r->errors ? ", " : " \xC2\xB7 ") + std::to_string(r->warnings) + (r->warnings == 1 ? " warning" : " warnings");
             system_notify(r->name, body);
@@ -796,6 +802,7 @@ void App::build_ended(u64 doc, int status) {
     }
     u.running = false;
     u.last_status = status;
+    u.last_missing = missing;
     u.looked = false;
     if (!ran_there(u.dir)) git_command("look", {});
     ++build_gen_;
@@ -1244,6 +1251,7 @@ void App::build_panel_draw(TextBox& box, bool focused) {
         } else if (last || run) {
             const bool running = run ? run->running : u.running;
             const int status = run ? run->status : u.last_status;
+            const std::string& missing = run ? run->missing : u.last_missing;
             bool said = true;
             if (running) {
                 after = run && run->stopped ? "stopping\xE2\x80\xA6" : "running\xE2\x80\xA6";
@@ -1254,7 +1262,7 @@ void App::build_panel_draw(TextBox& box, bool focused) {
             } else if (status == 0) {
                 after = "done";
             } else if (status > 0) {
-                after = "failed: exited with code " + std::to_string(status), in = ink::kError;
+                after = missing.empty() ? "failed: exited with code " + std::to_string(status) : missing.substr(0, missing.find(" on ")), in = ink::kError;  // (its machine is the folder's, named above: room for the program)
             } else {
                 said = false;
             }
@@ -1398,6 +1406,7 @@ int App::build_failed() const {
 std::string App::build_failure() const {
     const int code = build_failed();
     if (!code) return {};
+    if (!buildui_->last_missing.empty()) return buildui_->last_name + " failed: " + buildui_->last_missing;
     return buildui_->last_name + " failed with exit code " + std::to_string(code) + ": no " + (build_warnings_ ? "error" : "problem") + " found in its output";
 }
 
@@ -1462,7 +1471,7 @@ std::string App::build_label() const {
         label += (staged ? std::string() : " " + fit_text(r->name, 24)) + " " + clock_text(now_ns() - r->started_ns);
     const int failed = build_failed();
     if (build_errors_) label += " \xC2\xB7 " + std::to_string(build_errors_) + (build_errors_ == 1 ? " error" : " errors");
-    else if (failed) label += " \xC2\xB7 failed (exit " + std::to_string(failed) + ")";
+    else if (failed) label += " \xC2\xB7 failed (" + (u.last_missing.empty() ? "exit " + std::to_string(failed) : u.last_missing.substr(0, u.last_missing.find(" on "))) + ")";
     if (!build_errors_ && build_warnings_) label += (failed ? ", " : " \xC2\xB7 ") + std::to_string(build_warnings_) + (build_warnings_ == 1 ? " warning" : " warnings");
     // What the last run came to, where it leaves the tabs there room (a third of the window at most).
     if (!u.running && !u.summary.empty() && font_ && font_->cell_w() > 0 && width_of(label) + 3 + width_of(u.summary) <= static_cast<u32>(px_w_ / font_->cell_w() / 3))
@@ -1586,7 +1595,11 @@ std::string App::build_dump(const std::string& what) {
 std::string App::build_progress_dump() {
     term_sync();
     const BuildUi& u = *buildui_;
-    std::string row = u.running ? "running\xE2\x80\xA6" : u.last_status == 0 ? "done" : u.last_status > 0 ? "failed: exited with code " + std::to_string(u.last_status) : "";
+    std::string row = u.running                 ? "running\xE2\x80\xA6"
+                      : u.last_status == 0      ? "done"
+                      : !u.last_missing.empty() ? u.last_missing.substr(0, u.last_missing.find(" on "))
+                      : u.last_status > 0       ? "failed: exited with code " + std::to_string(u.last_status)
+                                                : "";
     if (u.running && (!u.progress.stage.empty() || !u.progress.done.empty())) row = BuildScan::progress_words(u.progress, true);
     if (!row.empty() && !u.summary.empty()) row += " \xC2\xB7 " + u.summary;
     if (u.unrun) row = u.summary;
