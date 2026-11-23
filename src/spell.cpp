@@ -42,7 +42,9 @@ std::vector<std::pair<u32, u32>> spell_words(std::string_view t) {
             }
         }
         const bool joined = (i > 0 && (t[i - 1] == '.' || t[i - 1] == '/' || t[i - 1] == '\\' || t[i - 1] == '@' || t[i - 1] == ':' || t[i - 1] == '-' || t[i - 1] == '#' || t[i - 1] == '$')) ||
-                            (e < t.size() && (t[e] == '/' || t[e] == '\\' || t[e] == '@' || t[e] == '(' || (t[e] == '.' && e + 1 < t.size() && std::isalnum(static_cast<unsigned char>(t[e + 1])))));
+                            (e < t.size() && (t[e] == '/' || t[e] == '\\' || t[e] == '@' || t[e] == '(' ||
+                                              // (a "." or ":" joining it to what follows: "example.com", "http://", "mailto:a"; not "Note: this")
+                                              ((t[e] == '.' || t[e] == ':') && e + 1 < t.size() && (std::isalnum(static_cast<unsigned char>(t[e + 1])) || (t[e] == ':' && t[e + 1] == '/')))));
         bool caps = true;
         for (size_t k = i; k < e; ++k) caps = caps && !std::islower(static_cast<unsigned char>(t[k]));
         if (!code && !high && !joined && !caps && e - i >= 3) out.emplace_back(static_cast<u32>(i), static_cast<u32>(e - i));

@@ -14,6 +14,7 @@
 #include <unistd.h>
 
 #include "app.hpp"
+#include "spell.hpp"
 #include "engine.hpp"
 #include "fsio.hpp"
 #include "notify.hpp"
@@ -1343,6 +1344,10 @@ void App::run_script(const char* script) {
         } else if (verb == "minimapdump") {  // each split's minimap: where the file's lines on it start, and its tiles; or none
             frame();
             std::fprintf(stderr, "%s\n", minimap_dump().c_str());
+        } else if (verb == "spellwords") {  // spellwords:TEXT, the words of TEXT that would be checked (whatever the checker)
+            std::string words;
+            for (const auto& [at, n] : spell_words(arg)) words += (words.empty() ? "" : " ") + arg.substr(at, n);
+            std::fprintf(stderr, "%s\n", words.empty() ? "none" : words.c_str());
         } else if (verb == "spelldump") {  // the words underlined as wrong in the split in front, once checked
             std::fprintf(stderr, "%s\n", spell_dump().c_str());
         } else if (verb == "wrapdump") {  // the split in front's soft wrap: its width and rows, and each row on show (line@column), or off

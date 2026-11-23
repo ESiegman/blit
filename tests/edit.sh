@@ -221,6 +221,11 @@ unset BLIT_HISTORY_DIR
 printf '// This functon adds the numbrs, see http://example.com/teh_page\nint totl_count = 0;  // HTTP and getValue are fine\nconst char* s = "a mispelled string";\n' >"$dir/sp.c"
 printf '# Notes\n\nSome recieved text with `codde` in it.\n' >"$dir/sp.md"
 printf '%s\nblit.opt.editor.modal = true\nblit.opt.editor.spell_check = false\n' "$base" >"$dir/nospell.lua"
+# The words checked, whatever the checker: not an address's, a scheme's
+# before "://" or a "mailto:" among them; a colon before a space keeps
+# the word.
+got=$(BLIT_INIT="$dir/vim.lua" "$blit" --offscreen 1400x600 --shot "$dir/shot.bmp" --script "frame;spellwords:see http://example.com/teh_page and mailto:someone, Note: this works" "$dir/sp.c" 2>&1 >/dev/null | tail -1)
+check "the words checked: none of an address" "see and Note this works"
 got=$(BLIT_INIT="$dir/vim.lua" "$blit" --offscreen 1400x600 --shot "$dir/shot.bmp" --script "frame;spelldump" "$dir/sp.c" 2>&1 >/dev/null | tail -1)
 if [ "$got" = "no checker" ]; then
     echo "spelling skipped: no English checker here"
