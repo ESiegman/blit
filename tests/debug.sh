@@ -751,6 +751,9 @@ if [ -x "$fakedap" ]; then
     conf '{ "adapter": "arm-none-eabi-gdb -i dap" }'
     linux 15.1 no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugdump"
     check "debug.adapter a command line whose program is not installed" "idle error: arm-none-eabi-gdb is not installed on $this ;; "
+    linux 15.1 no "workdir:$D;runconfdump;key:F5;debugwait:idle;debugpanel;debugrows:Working directory:6"
+    got=$(printf '%s' "$got" | sed 's/^Working directory | [^|]* | /Working directory | DIR | /')
+    check "and the Debug tab shows all of it, on the rows it takes" "Working directory | DIR | arm-none-eabi-gdb is not | installed on $this | ▶ Start | Watch ;; "
     conf '{ "adapter": "gdb" }'
 
     # Restart where the debugger cannot (lldb-dap says it can only once it has
