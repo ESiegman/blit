@@ -1109,8 +1109,13 @@ void run(std::shared_ptr<Client> first) {
         fds.push_back({wake_r, POLLIN, 0});
         const size_t first_client = fds.size();
         if (listen_fd >= 0) fds.push_back({listen_fd, POLLIN, 0});
+        // (Each blit's input, and its output where that is another descriptor
+        // (the agent of one connection's: this process's own): what waits to
+        // go goes when there is room in the one it goes to.)
         const size_t clients_at = fds.size();
-        for (const std::shared_ptr<Client>& c : clients) fds.push_back({c->in, static_cast<short>(POLLIN | (c->waiting() ? POLLOUT : 0)), 0});
+        for (const std::shared_ptr<Client>& c : clients) fds.push_back({c->in, static_cast<short>(POLLIN | (c->out == c->in && c->waiting() ? POLLOUT : 0)), 0});
+        const size_t outs_at = fds.size();
+        for (const std::shared_ptr<Client>& c : clients) fds.push_back({c->out != c->in && c->waiting() ? c->out : -1, POLLOUT, 0});
         const size_t children_at = fds.size();
         for (const std::shared_ptr<Session>& s : sessions) {
             const bool backed = s->client && s->client->waiting() > kOutMost;
@@ -1151,10 +1156,10 @@ void run(std::shared_ptr<Client> first) {
             }
         }
         // What blits sent; and what waits to go to them, sent as it can.
-        for (size_t i = 0; clients_at + i < children_at && i < clients.size(); ++i) {
+        for (size_t i = 0; outs_at + i < children_at && i < clients.size(); ++i) {
             const std::shared_ptr<Client>& cl = clients[i];
             const short ev = fds[clients_at + i].revents;
-            if (ev & POLLOUT) {
+            if ((ev | fds[outs_at + i].revents) & POLLOUT) {
                 std::lock_guard lock(cl->mu);
                 cl->flush();
             }

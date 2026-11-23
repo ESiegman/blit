@@ -158,6 +158,12 @@ settle
 chmod 755 "$dir/run"
 run "remotewait;key:ctrl+\`;frame;termwait:\$;${first}$cut;termend;termdump" "$R/notes.txt"
 check "no lasting agent: a terminal goes with the connection" '$|[connection to box lost] ended -1'
+# And an answer larger than the pipe to ssh takes at once still comes (what
+# waits to go goes as there is room in its output, not its input's).
+perl -e 'for (1..65536) { printf "%063d\n", $_ }' >"$W/large.txt"
+run "remotewait;$docend;frame;statusdump" "$R/large.txt"
+check "no lasting agent: a large file comes whole" 'box ~/work/large.txt | Ln 65537, Col 1 Tabs LF Plain text'
+rm "$W/large.txt"
 chmod 700 "$dir/run"
 settle
 
