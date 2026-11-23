@@ -132,7 +132,7 @@ check "steps as a float (0xfffffff9: a NaN)" ">  tb.steps[31:0] = -nan float"
 fresh
 run 1600x900 "frame;wavewait;key:=;wavedump;key:l;wavedump;key:shift+L;wavedump;key:h;wavedump;key:-;wavedump;key:0;wavedump" "$W/icarus.vcd"
 got=$(lines | grep '^icarus.vcd' | sed -e 's/^icarus.vcd: read, cursor 0 ps, //' | join)
-check "zoomed about the cursor, panned and fitted" "view 0 ps to 1.386 us ;; view 138.6 ns to 1.525 us ;; view 1.525 us to 2.911 us ;; view 1.386 us to 2.772 us ;; view 693 ns to 3.465 us ;; view 0 ps to 2.772 us"
+check "zoomed about the cursor, panned and fitted" "view 0 ps to 1.386 us ;; view 138.6 ns to 1.5246 us ;; view 1.5246 us to 2.9106 us ;; view 1.386 us to 2.772 us ;; view 693 ns to 3.465 us ;; view 0 ps to 2.772 us"
 
 # Markers: m{a-z} at the cursor, '{a-z} back to one, each with its delta
 # from the cursor; v chooses a stretch, z zooms to it; z with none zooms
@@ -187,13 +187,13 @@ got=$(lines | grep '^icarus\|^>' | join)
 check "a click on tb.count at 500 ns" "icarus.vcd: read, cursor 495 ns, view 0 ps to 2.772 us ;; >  tb.count[7:0] = 2f hex"
 run 1600x900 "frame;wavewait;click:400,31;drag:450,31;drag:500,31;release;wavedump" "$W/icarus.vcd"
 head1
-check "a drag along the ruler" "icarus.vcd: read, cursor 1.21 us, view 632.5 ns to 1.238 us"
+check "a drag along the ruler" "icarus.vcd: read, cursor 1.21 us, view 632.5 ns to 1.2375 us"
 
 # Without Vim's modes, the same keys.
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.editor.modal = false\n' >"$dir/plain.lua"
 rm -rf "$W/.blit"
 got=$(BLIT_INIT="$dir/plain.lua" "$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "frame;wavewait;key:j;key:j;key:j;key:j;key:n;key:n;key:=;wavedump" "$W/icarus.vcd" 2>&1 >/dev/null | grep '^icarus')
-check "without modes: j n =" "icarus.vcd: read, cursor 15 ns, view 7.5 ns to 1.393 us"
+check "without modes: j n =" "icarus.vcd: read, cursor 15 ns, view 7.5 ns to 1.3935 us"
 
 # Its keys are commands: Command search finds them, and runs them.
 run 1600x900 "frame;wavewait;key:cmd+shift+p;text:waves pan right a screen;findwait;finddump" "$W/icarus.vcd"
@@ -222,7 +222,7 @@ check "and brought back as it was (but for the row chosen)" "$before"
 sed -e 's/"tb.wrap"/"tb.gone"/' "$W/.blit/waves/icarus.json" >"$dir/k" && mv "$dir/k" "$W/.blit/waves/icarus.json"
 KEEP=1 run 1600x900 "frame;wavewait;wavedump" "$W/icarus.vcd"
 head1
-check "a kept row the dump has not got" "icarus.vcd: read, cursor 55 ns, view 27.5 ns to 1.413 us, 1 kept rows dropped, markers a=15 ns(-40 ns) b=45 ns(-10 ns)"
+check "a kept row the dump has not got" "icarus.vcd: read, cursor 55 ns, view 27.5 ns to 1.4135 us, 1 kept rows dropped, markers a=15 ns(-40 ns) b=45 ns(-10 ns)"
 # Not changed by hand: nothing kept.
 fresh
 run 1600x900 "frame;wavewait;key:j;key:k;wavedump" "$W/verilator.vcd"

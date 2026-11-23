@@ -506,6 +506,29 @@ std::string ruler_text(const Wave& w, u64 t, int unit) {
     return std::string(b) + " " + std::string(kUnits[std::clamp((unit + 15) / 3, 0, 5)]);
 }
 
+// A time exactly, in the largest unit it has a whole one of: "1.4135 us"
+// (for the tests: time_text's three decimals round a half one way on one
+// system and the other on another).
+std::string exact_text(const Wave& w, u64 t) {
+    static constexpr std::string_view kUnits[] = {"fs", "ps", "ns", "us", "ms", "s"};
+    // t * mult in units of 10^e seconds (e a multiple of 3, from fs to s), then a unit up while it has a whole one.
+    unsigned __int128 v = static_cast<unsigned __int128>(t) * w.unit_mult;
+    int e = w.unit_exp;
+    while (e > -15 && e % 3 != 0) v *= 10, --e;
+    while (e > 0) v *= 10, --e;
+    int u = (e + 15) / 3, frac = 0;  // (frac: how many of v's digits are after the point)
+    for (unsigned __int128 next = 1000; u < 5 && frac < 30 && v >= next; next *= 1000) frac += 3, ++u;
+    std::string digits;
+    for (unsigned __int128 x = v; x || digits.size() <= static_cast<size_t>(frac); x /= 10) digits.insert(digits.begin(), static_cast<char>('0' + static_cast<int>(x % 10)));
+    std::string out = digits.substr(0, digits.size() - static_cast<size_t>(frac));
+    std::string after = digits.substr(digits.size() - static_cast<size_t>(frac));
+    while (!after.empty() && after.back() == '0') after.pop_back();
+    if (!after.empty()) out += "." + after;
+    return out + " " + std::string(kUnits[std::clamp(u, 0, 5)]);
+}
+
+std::string exact_delta(const Wave& w, u64 from, u64 to) { return (to >= from ? "+" : "-") + exact_text(w, to >= from ? to - from : from - to); }
+
 std::string delta_text(const Wave& w, u64 from, u64 to) { return (to >= from ? "+" : "-") + w.time_text(to >= from ? to - from : from - to); }
 
 // How far it is read, for the bottom row.
@@ -1485,14 +1508,14 @@ std::string App::wave_dump(std::string_view what) {
         if (!v.open_error.empty()) return leaf_of(v.path) + ": cannot show it: " + v.open_error;
         if (!v.fetch_error->empty()) return leaf_of(v.path) + ": cannot show it: " + *v.fetch_error;
         if (!v.started) return leaf_of(v.path) + ": reading";
-        std::string out = leaf_of(v.path) + ": " + (w.done ? "read" : "reading") + ", cursor " + w.time_text(v.cursor) + ", view " +
-                          w.time_text(static_cast<u64>(std::llround(std::max(0.0, v.left)))) + " to " + w.time_text(static_cast<u64>(std::llround(v.left + v.trace_w() * v.tpp)));
+        std::string out = leaf_of(v.path) + ": " + (w.done ? "read" : "reading") + ", cursor " + exact_text(w, v.cursor) + ", view " +
+                          exact_text(w, static_cast<u64>(std::llround(std::max(0.0, v.left)))) + " to " + exact_text(w, static_cast<u64>(std::llround(v.left + v.trace_w() * v.tpp)));
         if (!w.error.empty()) out += ", stopped: " + w.error;
         if (v.dropped) out += ", " + std::to_string(v.dropped) + " kept rows dropped";
-        if (v.ranging) out += ", chosen from " + w.time_text(v.range_from);
+        if (v.ranging) out += ", chosen from " + exact_text(w, v.range_from);
         std::string marks;
         for (u32 k = 0; k < 26; ++k)
-            if (v.marked & (1u << k)) marks += std::string(marks.empty() ? "" : " ") + static_cast<char>('a' + k) + "=" + w.time_text(v.marks[k]) + "(" + delta_text(w, v.cursor, v.marks[k]) + ")";
+            if (v.marked & (1u << k)) marks += std::string(marks.empty() ? "" : " ") + static_cast<char>('a' + k) + "=" + exact_text(w, v.marks[k]) + "(" + exact_delta(w, v.cursor, v.marks[k]) + ")";
         if (!marks.empty()) out += ", markers " + marks;
         std::string value;
         for (u32 r = 0; r < v.rows.size(); ++r) {
