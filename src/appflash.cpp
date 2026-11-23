@@ -168,6 +168,7 @@ Prepared prepare(const std::string& root, const BuildTask& c, const std::string&
             return p;
         }
         h = h * 31 + flash_hash(bytes);
+        if (fpga_tool(tool)) img.spi_width = bitstream_spi_width(bytes);  // (Vivado's write_cfgmem takes no other)
     }
     const FlashPlan plan = flash_plan(c.board, tool, program, img, mode);
     if (!plan.why.empty()) {

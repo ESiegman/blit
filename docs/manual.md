@@ -2910,7 +2910,8 @@ redrawing in place included: OpenOCD's `program` (and Espressif's
 `program_esp`), probe-rs's download, J-Link Commander's `loadfile`,
 esptool's write-flash (each file of ESP-IDF's under way again from 0%),
 openFPGALoader's loads into SRAM and flash, picotool's `load`, and
-Vivado's hardware manager (its steps: `Connect ✓ · Load`). The Run button reads the stage under way, its percent
+Vivado's hardware manager (its steps: `Connect ✓ · Load`, and into the
+FPGA's flash `Load ✓ · Erase ✓ · Program`, then `Boot`). The Run button reads the stage under way, its percent
 and the bytes where the tool prints them (`■ Program 62% 12.0/22.0 KB`;
 a click still stops it), and the task's row the stages done before it
 (`Erase ✓ · Program 62% 25.0 KB`); both are drawn again only when the
@@ -3344,7 +3345,7 @@ project is on, and blit says so when it is not there:
 | probe-rs | `probe-rs download --chip CHIP --probe VID:PID:SERIAL --non-interactive --verify --reset build/fw.elf` (a `.bin` with `--binary-format bin --base-address ADDRESS`) |
 | J-Link | `JLinkExe -NoGui 1 -ExitOnError 1 -USB SERIAL -CommandFile FILE`, the file made for the run: `device CHIP`, `si SWD`, `speed 4000`, `connect`, `loadfile build/fw.elf`, `r`, `g`, `exit` (loadfile reads back what it wrote) |
 | openFPGALoader | `openFPGALoader -b basys3 --usb-serial-num SERIAL build/top.bit` (or `-c digilent`), into SRAM; `-f --verify` for the FPGA's flash |
-| Vivado (`"flash": "vivado"`) | `vivado -mode batch -nojournal -nolog -notrace -source FILE`, the file made for the run: the hardware manager, the cable whose name has the probe's serial number, the device whose part begins the board's `chip` (`xc7a35t` for `xc7a35tcpg236-1`; else the first of AMD's), `program_hw_devices` with the bitstream; into SRAM only |
+| Vivado (`"flash": "vivado"`) | `vivado -mode batch -nojournal -nolog -notrace -source FILE`, the file made for the run: the hardware manager, the cable whose name has the probe's serial number, the device whose part begins the board's `chip` (`xc7a35t` for `xc7a35tcpg236-1`; else the first of AMD's), `program_hw_devices` with the bitstream into SRAM; for the FPGA's flash, `write_cfgmem` (an `.mcs` beside the file, the bitstream's own SPI bus width as `-interface`), `create_hw_cfgmem` with the board's flash part, `program_hw_cfgmem` (erase, program, verify), then `boot_hw_device` |
 
 What is written is the board's `elf` (else the configuration's
 `program`); for an ESP-IDF project (esptool, or OpenOCD for an ESP32),
@@ -3359,7 +3360,7 @@ is looked for where AMD installs it, the newest version there:
 `/tools/Xilinx/Vivado/VERSION/bin/vivado` (before), and the same under
 `/opt/Xilinx`. A `hw_server` it starts (none was running) is ended with
 it, so that openFPGALoader can use the cable at once; one that was
-running already is left as it was, and one left by a load that was
+running already is left as it was, and one left by a run that failed or was
 stopped keeps the cable for about a minute. Choosing
 the board again in the probe picker keeps a board set to Vivado so.
 
@@ -3384,6 +3385,29 @@ its SRAM (a task of kind `program`), every time: what is in SRAM is gone
 when the board's power is, which blit cannot see. "Program the FPGA's
 flash" writes it into the board's flash (`-f --verify`), and is not run
 again with the same bitstream, as a flash is not.
+
+Through Vivado, the board's flash is written as the part it is, which
+Vivado cannot find out by itself: the flash object's `cfgmem`, named as
+Vivado's `get_cfgmem_parts` lists it, else the one blit knows for the
+board (`"board": "basys3"`: `mx25l3273f-spi-x1_x2_x4`, the Macronix
+MX25L3233F of today's Basys 3, which Vivado names so; an older Basys 3
+has a Spansion `s25fl032p-spi-x1_x2_x4`). With neither, blit says the
+flash part is needed. A part that is not the one on the board fails
+before anything is erased, in Vivado's words (`Flash Programming
+Unsuccessful. Part selected s25fl032p, but part mx25l3273f detected.`).
+The bitstream is written for the SPI bus width it was made with
+(`BITSTREAM.CONFIG.SPI_BUSWIDTH`, 1 unless set), which blit reads from it,
+as `write_cfgmem` takes no other. After, the FPGA boots from its flash,
+and the summary is `Flashed in 54.0 s, verified` (the time
+`program_hw_cfgmem` gives itself).
+
+```json
+"board": {
+  "probe": {"kind": "ftdi", "serial": "210183BF7C78", "usb": "0403:6010"},
+  "chip": "xc7a35tcpg236-1",
+  "flash": {"tool": "vivado", "board": "basys3", "cfgmem": "mx25l3273f-spi-x1_x2_x4"}
+}
+```
 
 ## Tests
 

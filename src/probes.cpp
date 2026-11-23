@@ -510,6 +510,7 @@ void board_read(json::Value b, const std::string& config, Board* out, std::strin
         out->flash_interface = text_of(f["interface"]);
         out->flash_target = text_of(f["target"]);
         out->flash_device = text_of(f["device"]);
+        out->flash_cfgmem = text_of(f["cfgmem"]);
     }
     out->bitstream = text_of(b["bitstream"]);
     out->debug = b["debug"].is_string() ? text_of(b["debug"]) : text_of(b["debug"]["preset"]);
