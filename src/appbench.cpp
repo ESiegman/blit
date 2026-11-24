@@ -1528,6 +1528,9 @@ void App::run_script(const char* script) {
             flash_settle();
         } else if (verb == "flashdump") {  // the flash object of the board flashed, as read back from run.json
             std::fprintf(stderr, "%s\n", flash_dump().c_str());
+        } else if (verb == "boardplan") {  // boardplan (F5's) or boardplan:attach, what the run configuration's board preset starts
+            build_settle();
+            std::fprintf(stderr, "%s\n", debug_board_dump(arg == "attach").c_str());
         } else if (verb == "boarddump") {  // the board of the run configuration chosen, as read back from run.json
             build_settle();
             const BuildTask* t = run_config();

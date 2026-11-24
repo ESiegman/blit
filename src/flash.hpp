@@ -73,6 +73,14 @@ bool elf_loads(std::string_view bytes, std::vector<std::pair<u64, std::string_vi
 // the same image), else the bytes whole.
 u64 flash_hash(std::string_view bytes);
 
+// OpenOCD's interface and target scripts for a board (its flash object's
+// interface and target, else the ones its probe's kind and its chip say;
+// "" when neither does): its debugging takes the same as its flashing.
+std::string openocd_interface(const Board& b);
+std::string openocd_target(const Board& b);
+// Whether a board's chip is an ESP32 (any: "ESP32-S3" is "esp32s3").
+bool esp_chip(std::string_view chip);
+
 // The SPI bus width (1, 2 or 4) a 7-series bitstream (a .bit, or a .bin
 // without its header) boots from its flash with: its write of the BSPI
 // register after the sync word (bits 9-8; Vivado writes one only for

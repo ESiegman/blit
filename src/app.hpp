@@ -130,6 +130,7 @@ struct PdfView;      // a PDF's tab (apppdf.cpp)
 struct WaveView;     // a dump's waves' tab (appwave.cpp)
 struct RemoteEntry;  // a folder's entry on another machine (remote.hpp)
 struct ProbeRow;     // a row of the probe picker (probes.hpp)
+struct BoardDebug;   // what a board's debug preset starts (boarddebug.hpp)
 enum class FlashMode : u8;  // what a flash writes (flash.hpp)
 
 // A picture read from its file and put on the GPU (appimage.cpp).
@@ -1366,6 +1367,12 @@ private:
     void debug_begin(const std::string& request, const std::string& arguments);
     void debug_send_after();
     void debug_launch();   // (F5's, once what it builds first has been built)
+    const BuildTask* debug_board_config();  // the run configuration F5 debugs as a board, through its preset
+    void debug_board(bool attach);          // F5 on a board (built, flashed, reset, run to main), or the running board attached to
+    bool debug_board_plan(bool attach, BuildTask* c, std::string* elf, BoardDebug* plan);
+    std::string debug_board_dump(bool attach);  // (the tests: what its preset starts)
+    void debug_board_begin(const BuildTask& c, const BoardDebug& plan, const std::string& elf, bool attach);
+    bool debug_board_stopped(const json::Value& body);  // a board's stop: passed over on the way to main (true)
     void debug_restart();  // the session ended and started again as it was (built again first, as F5 builds)
     std::string debug_in_terminal(const std::string& arguments);  // (the debugger's runInTerminal: a terminal tab running it; what blit answers)
     u64 debug_terminal(const std::string& dir, const std::string& command, const std::string& title);  // (a terminal tab for the program's input and output)
@@ -1856,7 +1863,8 @@ private:
     // the image each board was last flashed with, for "only if changed".
     struct FlashUi;
     std::shared_ptr<FlashUi> flashui_;  // (made the first time)
-    void flash_board(FlashMode mode, bool force);
+    void flash_board(FlashMode mode, bool force, std::function<void(bool)> then = {});  // (then: what waits for it, told whether it went well or was not needed)
+    bool flash_busy() const;  // an image being found, or a flash running
     void flash_sync();
     void flash_ended(u64 doc, bool well);  // a run has ended (well: it exited 0, was not stopped, and said no failure)
     void flash_settle();                   // (the tests: the build first, and the image found, waited for)

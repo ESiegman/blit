@@ -514,6 +514,18 @@ void board_read(json::Value b, const std::string& config, Board* out, std::strin
     }
     out->bitstream = text_of(b["bitstream"]);
     out->debug = b["debug"].is_string() ? text_of(b["debug"]) : text_of(b["debug"]["preset"]);
+    if (const json::Value d = b["debug"]; d.is_object()) {  // (boarddebug.hpp's)
+        out->debug_gdb = text_of(d["gdb"]);
+        out->debug_port = d["port"].is_string() ? text_of(d["port"]) : d["port"].exists() ? std::to_string(d["port"].integer()) : std::string();
+        out->debug_machine = text_of(d["machine"]);
+        out->debug_script = text_of(d["script"]);
+        out->debug_main = text_of(d["main"]);
+    }
+    if (!out->debug.empty() && std::ranges::find(kDebugPresets, out->debug) == std::end(kDebugPresets)) {
+        std::string presets;
+        for (const std::string_view p : kDebugPresets) presets += (presets.empty() ? "\"" : ", \"") + std::string(p) + "\"";
+        *problem = std::string(kRunConfigs) + ": " + config + "'s board.debug is one of " + presets;
+    }
     if (!out->flash.empty() && std::ranges::find(kFlashTools, out->flash) == std::end(kFlashTools)) {
         std::string tools;
         for (const std::string_view f : kFlashTools) tools += (tools.empty() ? "\"" : ", \"") + std::string(f) + "\"";

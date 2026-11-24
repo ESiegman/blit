@@ -27,6 +27,11 @@ struct Board {
     std::string chip, elf, svd;
     std::string flash;  // flash.tool (or "flash": "TOOL"): "esptool", "openocd", "probe-rs", "jlink", "openfpgaloader"
     std::string debug;  // debug.preset (or "debug": "PRESET")
+    // The rest of the debug object (boarddebug.hpp): the gdb (else the one
+    // the ELF's machine says), the gdb server's port, QEMU's machine or
+    // Renode's platform (else the chip), Renode's script, and the function
+    // F5 runs to (else main; app_main on an ESP32).
+    std::string debug_gdb, debug_port, debug_machine, debug_script, debug_main;
     // The rest of the flash object (flash.cpp): where a raw .bin goes
     // (address), openFPGALoader's board (-b) or cable (-c), OpenOCD's
     // interface and target scripts, J-Link's device (else the chip), the
