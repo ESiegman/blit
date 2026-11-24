@@ -2921,7 +2921,10 @@ Vivado's hardware manager (its steps: `Connect ✓ · Load`). The Run button rea
 and the bytes where the tool prints them (`■ Program 62% 12.0/22.0 KB`;
 a click still stops it), and the task's row the stages done before it
 (`Erase ✓ · Program 62% 25.0 KB`); both are drawn again only when the
-stage or its percent changes. After, what it came to is kept on the row
+stage or its percent changes. Where the side panel is too narrow for
+the whole row, the stage under way and its percent stay: the stages done
+are counted first (`flash · ✓ 2 · Program 62%`), then left out, then the
+kind of work, then the stage's bytes. After, what it came to is kept on the row
 and the button: `Flashed 40.2 KB in 1.8 s, verified` (the tool's own time
 where it says one), `Loaded into SRAM in 2.1 s`, `Unchanged, verified`
 (the tool found all of it there already, as Espressif's OpenOCD says), or,

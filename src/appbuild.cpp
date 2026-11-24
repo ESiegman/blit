@@ -141,6 +141,7 @@ struct App::BuildUi {
     i64 clock_shown = -1;
 #if BLIT_DEV
     std::vector<std::string> drawn_rows;  // (tests) each task's row as the Build tab last drew it: its name, then its words
+    std::vector<std::string> drawn_shown;  // (and its words as they fitted)
 #endif
     // What the open runs' output said was wrong, and a file read's: each
     // run's together, in their order; in a run, a file's together, the files
@@ -1283,6 +1284,7 @@ void App::build_panel_draw(TextBox& box, bool focused) {
     const bool looking = !u.looked || u.looking;
 #if BLIT_DEV
     u.drawn_rows.clear();
+    u.drawn_shown.clear();
 #endif
     u.rows.clear();
     u.body = 0;
@@ -1370,6 +1372,8 @@ void App::build_panel_draw(TextBox& box, bool focused) {
         for (size_t k = 0; !run && t.lasting && k < u.runs.size(); ++k)
             if (u.runs[k].lasting && u.runs[k].key == key) run = &u.runs[k];
         const bool last = !u.last_key.empty() && key == u.last_key && (!run || run->doc == u.doc);
+        bool staged = false;  // (an engine's stage under way, which its words then end with)
+        std::string ticking;  // (and a long task's time after them)
         if (last && u.unrun) {
             after = u.summary;  // (nothing ran, and why: "Not flashed: unchanged since the last flash")
         } else if (last || run) {
@@ -1379,8 +1383,10 @@ void App::build_panel_draw(TextBox& box, bool focused) {
             bool said = true;
             if (running) {
                 after = run && run->stopped ? "stopping\xE2\x80\xA6" : "running\xE2\x80\xA6";
-                if (last && !(run && run->stopped) && (!u.progress.stage.empty() || !u.progress.done.empty()))
+                if (last && !(run && run->stopped) && (!u.progress.stage.empty() || !u.progress.done.empty())) {
                     after = BuildScan::progress_words(u.progress, true);  // ("Erase \xE2\x9C\x93 \xC2\xB7 Program 62% 25.4/41.2 KB")
+                    staged = !u.progress.stage.empty();
+                }
             } else if (run && run->stopped) {
                 after = "stopped";
             } else if (status == 0) {
@@ -1390,14 +1396,42 @@ void App::build_panel_draw(TextBox& box, bool focused) {
             } else {
                 said = false;
             }
-            if (said && running && run && run->lasting) after += " " + clock_text(now_ns() - run->started_ns);
+            if (said && running && run && run->lasting) {
+                ticking = " " + clock_text(now_ns() - run->started_ns);
+                after += ticking;
+            }
             if (said && last && !u.summary.empty())  // (what it came to: "12 passed, 1 failed"; a flash stopped, where: "stopped in Program at 38%", said once)
                 after = after == "stopped" && u.summary.starts_with("stopped") ? u.summary : after + " \xC2\xB7 " + u.summary;
         }
-        if (!t.kind.empty()) after = t.kind + " \xC2\xB7 " + after;  // (the kind of work it is)
-        if (c + 4 < cols) put(box, font, y, c + 2, fit_text(after, cols - c - 2), in);
+        const std::string kind = t.kind.empty() ? std::string() : t.kind + " \xC2\xB7 ";  // (the kind of work it is)
+        after = kind + after;
+        // As much as there is room for. While an engine's stage is under way
+        // it stays, with its percent, whatever the room: the stages done are
+        // said more briefly first ("\xE2\x9C\x93 2"), then left out, then the kind
+        // of work, then the stage's sizes; only what the run has come to so
+        // far, after them, is cut.
+        const u32 room = c + 4 < cols ? cols - c - 2 : 0;
+        std::string shown = after;
+        if (staged && width_of(after) > room) {
+            BuildScan::Progress p = u.progress;
+            p.done.clear();
+            const std::string now = BuildScan::progress_words(p, false) + ticking;
+            p.bytes = p.total = 0;
+            const std::string bare = BuildScan::progress_words(p, false) + ticking;
+            const std::string done = u.progress.done.empty() ? std::string() : "\xE2\x9C\x93 " + std::to_string(u.progress.done.size()) + " \xC2\xB7 ";
+            const std::string tail = u.summary.empty() ? std::string() : " \xC2\xB7 " + u.summary;
+            shown = bare;
+            for (const std::string& s : {kind + BuildScan::progress_words(u.progress, true) + ticking, kind + done + now, kind + now, now, bare})
+                if (width_of(s) <= room) {
+                    shown = s + tail;
+                    break;
+                }
+        }
+        shown = fit_text(shown, room);
+        if (room) put(box, font, y, c + 2, shown, in);
 #if BLIT_DEV
         u.drawn_rows.push_back(t.name + ": " + after);
+        u.drawn_shown.push_back(t.name + ": " + (room ? shown : std::string()));
 #endif
         if (u.top + r == u.sel) light_row(box, y, focused);
     }
@@ -1691,12 +1725,12 @@ bool App::build_mouse_down(const SDL_MouseButtonEvent& b) {
 std::string App::build_dump(const std::string& what) {
     BuildUi& u = *buildui_;
 #if BLIT_DEV
-    if (what == "rows") {  // the Build tab's task rows as drawn at the next frame, " | " between them
+    if (what == "rows" || what == "shown") {  // the Build tab's task rows as drawn at the next frame (shown: as much as fitted), " | " between them
         build_settle();
         ++build_gen_;
         frame();
         std::string out;
-        for (const std::string& r : u.drawn_rows) out += (out.empty() ? "" : " | ") + r;
+        for (const std::string& r : what == "rows" ? u.drawn_rows : u.drawn_shown) out += (out.empty() ? "" : " | ") + r;
         return out.empty() ? "no rows" : out;
     }
 #endif
