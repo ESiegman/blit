@@ -68,6 +68,8 @@ std::string newest_elf(const std::string& root) {
     return best.string();
 }
 
+}  // namespace
+
 // An ELF's tables, read now or kept from before (while its change time
 // and size are the same).
 std::shared_ptr<const AddrSource> elf_source(const std::string& path, std::string* why) {
@@ -109,8 +111,6 @@ std::shared_ptr<const AddrSource> elf_source(const std::string& path, std::strin
     g_cache.push_back({path, stamp, size, ++g_uses, src});
     return src;
 }
-
-}  // namespace
 
 CrashOptions App::crash_options(const BuildTask* task, const std::string& cmd) {
     // The run configuration whose board and patterns these are.

@@ -133,4 +133,10 @@ private:
     std::unordered_map<std::string, u32> seen_;  // (each problem's times so far, by what it says)
 };
 
+// An ELF's tables (here, or on another machine as "ssh://host/path"),
+// read now or kept from before while the file is unchanged: null, and
+// why, when it cannot be read (appcrash.cpp; the fault report's names
+// too, appdebug.cpp). It may take a while: called off the main thread.
+std::shared_ptr<const AddrSource> elf_source(const std::string& path, std::string* why);
+
 }  // namespace blit
