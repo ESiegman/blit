@@ -336,7 +336,7 @@ target_sources(blit PRIVATE src/notify.cpp)
 # The probe and port picker, and the board object on a run configuration.
 target_sources(blit PRIVATE src/probes.cpp src/appprobe.cpp)
 # Flashing the board and programming an FPGA, and the Boards view.
-target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp src/boarddebug.cpp)
+target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp src/boarddebug.cpp src/appcapture.cpp)
 # The wave tab: a dump's rows and their values (waveview.cpp), and its lanes
 # in tiles and the workers that paint them (wavetile.cpp: the same pixels on
 # every system, as the diagrams' below).

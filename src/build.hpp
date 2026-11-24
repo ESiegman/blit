@@ -52,8 +52,9 @@ struct BuildTask {
     bool config = false;
     std::string program;           // its full path (from the folder's, when written relative)
     std::string args;              // as one line, as a shell splits it
-    std::vector<std::string> env;  // "NAME=value"
-    std::string before;            // a task of the Build tab's to run first (its name)
+    std::vector<std::string> env;  // "NAME=value" (a run configuration's: its own, then the environment chosen's)
+    std::vector<std::string> own_env;  // (a run configuration's own, before the environment chosen)
+    std::string before;           // a task of the Build tab's to run first (its name)
     // init.lua's patterns its output is read with (blit.build.matcher): those
     // named; empty, all of them; {"none"}, nothing in it is a problem.
     std::vector<std::string> problems;
@@ -108,7 +109,30 @@ inline constexpr const char* kRunConfigs = ".blit/run.json";
 // a name or a command line, or a list of its words; "request"; "arguments",
 // an object; "after", a list; "console"), "board" (as Board) } ] }. `problem`
 // says what is wrong with the file, if anything is.
-std::vector<BuildTask> read_run_configs(const std::string& root, std::string* problem);
+struct RunEnvironments;
+std::vector<BuildTask> read_run_configs(const std::string& root, std::string* problem, RunEnvironments* environments = nullptr);
+
+// run.json's "environments": { NAME: { VARIABLE: value, ... } }, each a
+// set of variables laid over every configuration's own (for Run, Debug,
+// Profile and the tests), one chosen at a time in the Build tab, so that
+// validation, a HUD or a trace is a choice rather than a copy of each
+// configuration. A capture preset among them: "capture": "metal" (the
+// program run with MTL_CAPTURE_ENABLED=1, and "Capture a frame" takes one
+// with gpucapture) or "renderdoc" (the program run by `renderdoccmd
+// capture`, whose captures, as the program takes them, go to
+// .blit/captures).
+struct RunEnvironment {
+    std::string name, capture;
+    std::vector<std::string> env;  // "NAME=value"
+};
+struct RunEnvironments {
+    std::vector<RunEnvironment> list;  // (in the file's order)
+};
+inline constexpr const char* kCaptures = ".blit/captures";  // where captures go, from the folder
+// A run configuration in an environment (null: none): its env, its own and
+// then the environment's, and what the Run button runs, as
+// read_run_configs makes it (`root`: the folder, for the captures' place).
+void run_in_environment(BuildTask& t, const RunEnvironment* e, const std::string& root);
 // A word as sh reads it back (in single quotes when it needs them).
 std::string sh_word(std::string_view word);
 

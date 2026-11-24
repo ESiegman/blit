@@ -1491,6 +1491,14 @@ private:
     const BuildTask* board_config();  // the Run button's run configuration if it has a board, else the first that has one
     void build_run(int index);
     void build_option(int row);  // a task of the Build tab's (-1: the Run button's)
+    void build_environment_apply();              // the environment chosen, laid over each run configuration's variables
+    const RunEnvironment* run_environment() const;  // (the one chosen, if any)
+    void capture_frame();                        // a capture preset's "Capture a frame"
+    i64 run_config_pid();                        // (the shell the Run button's configuration runs in, while it runs here)
+    struct CaptureUi;
+    std::shared_ptr<CaptureUi> captureui_;  // (made the first time)
+    void capture_sync();
+    void capture_settle();  // (the tests: the capture waited for)
     bool build_run_named(const std::string& name);
     void build_stop();
     void build_ended(u64 doc, int status, const std::string& missing = {});  // (missing: the program the shell could not find, said)

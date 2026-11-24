@@ -2066,6 +2066,10 @@ void App::handle_event(const SDL_Event& e) {
                 flash_sync();
                 break;
             }
+            if (e.user.code == 71) {  // a frame has been captured ("Capture a frame")
+                capture_sync();
+                break;
+            }
             break;
         }
         default:
