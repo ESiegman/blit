@@ -3459,6 +3459,15 @@ walk to the end, two million changes), 0.94 ms on the Mac and 2.16 ms on
 the box; its 16-bit LFSR's value, found again 65,535 changes on, 0.032
 ms and 0.071 ms; `#` with nothing before, 0.001 ms.
 
+A bus's value is then written once in its run rather than once in each
+tile it crosses: placed by the run, from its times where it crosses a
+tile's edge (two `Lane::time` calls for each such run, at most two a row
+in a tile). The same turn about on the Mac, three rounds, `main` against
+it: a tile 0.49 and 0.53 ms panning, 0.65 and 0.64 ms zooming; to every
+tile sharp 0.69 and 0.62 ms (pan), 0.98 and 1.00 ms (zoom); a frame with
+the tab on show 72.2 µs both; j or k and its frame 0.073 and 0.074 ms
+(400 each, two rounds). No change past the noise.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
