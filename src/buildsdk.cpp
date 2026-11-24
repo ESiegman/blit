@@ -1,6 +1,6 @@
 // Firmware's build systems, found natively (answer 27): ESP-IDF and
 // PlatformIO. Each finder reads the project's own files (an ESP-IDF
-// project's CMakeLists.txt, sdkconfig and build/project_description.json;
+// project's CMakeLists.txt and sdkconfig;
 // PlatformIO's platformio.ini and the board manifests of its installed
 // platforms) and looks for its SDK on the folder's machine: ESP-IDF where
 // install.sh or Espressif's installation manager put it, its Python
