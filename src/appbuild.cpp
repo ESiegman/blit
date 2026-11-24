@@ -294,6 +294,7 @@ namespace {
 
 constexpr int kTypeRow = -2, kTargetRow = -3;  // (the Build tab's rows for CMake's build type and target)
 constexpr int kEnvRow = -4;                     // (and for the run configurations' environment)
+constexpr int kNoteRow = -5;                    // (a line of what a system needs that is not there, said once under its heading)
 bool choosable(int task) { return task >= 0 || task == kTypeRow || task == kTargetRow || task == kEnvRow; }
 
 // A CMake task's command with the build type and target chosen: a
@@ -1437,6 +1438,17 @@ void App::build_panel_draw(TextBox& box, bool focused) {
                 u.rows.push_back({kTargetRow, "Target", 0});
             }
             if (t.config && !u.environments.list.empty()) u.rows.push_back({kEnvRow, "Environment", 0});  // (the run configurations', chosen here)
+            // (What its tasks need that is not there, its SDK: said once,
+            // under its heading, in as many lines as it takes; each task
+            // says it again only when it is run.)
+            std::string missing;
+            for (size_t j = i; j < u.tasks.size() && u.tasks[j].system == t.system && missing.empty(); ++j) missing = u.tasks[j].missing;
+            if (!missing.empty()) {
+                for (std::string& line : wrapped(missing, cols > 4 ? cols - 2 : 2)) u.rows.push_back({kNoteRow, std::move(line), 0});
+#if BLIT_DEV
+                u.drawn_rows.push_back("! " + missing);
+#endif
+            }
         }
         ++u.rows[heading].count;
         u.rows.push_back({static_cast<int>(i), t.name, 0});
@@ -1491,6 +1503,10 @@ void App::build_panel_draw(TextBox& box, bool focused) {
             if (u.top + r == u.sel) light_row(box, y, focused);
             continue;
         }
+        if (row.task == kNoteRow) {
+            put(box, font, y, 2, row.text, ink::kError);
+            continue;
+        }
         if (row.task < 0) {
             const std::string count = std::to_string(row.count);
             const u32 c = put(box, font, y, 0, fit_text(row.text, cols > count.size() + 1 ? cols - static_cast<u32>(count.size()) - 1 : 1), ink::kHeading);
@@ -1505,7 +1521,7 @@ void App::build_panel_draw(TextBox& box, bool focused) {
         const u32 c = put(box, font, y, 2, fit_text(t.name, cols > 2 ? cols - 2 : 1), cur ? ink::kStrong : ink::kText);
         std::string after = t.system == "CMake" ? with_cmake(t.cmd, u.cmake_type, u.cmake_target) : t.cmd;
         Ink in = ink::kMuted;
-        if (!t.missing.empty()) after = t.missing, in = ink::kError;  // (what it needs is not there: in place of its command)
+
         // (A long task's run whose tab is open says how it goes here too
         // while another run is the last: still running, with its time.)
         const std::string key = task_key(t);
@@ -1517,6 +1533,7 @@ void App::build_panel_draw(TextBox& box, bool focused) {
         std::string ticking;  // (and a long task's time after them)
         if (last && u.unrun) {
             after = u.summary;  // (nothing ran, and why: "Not flashed: unchanged since the last flash")
+            if (!t.missing.empty()) in = ink::kError;  // (it could not be: what it needs is not there)
         } else if (last || run) {
             const bool running = run ? run->running : u.running;
             const int status = run ? run->status : u.last_status;

@@ -3328,8 +3328,8 @@ tenth of a second, where sourcing `export.sh` takes most of one; what it
 says besides is shown when it fails, as a toolchain not installed, and
 not on every run). What
 was found is kept for the machine while blit runs (looked for again
-a few seconds on if it was not). Where it is not installed, each of its
-rows says so, and so does running one: `ESP-IDF is not installed on this
+a few seconds on if it was not). Where it is not installed, that is said once, under
+the ESP-IDF heading, and again on a task's row when it is run: `ESP-IDF is not installed on this
 Mac (not in IDF_PATH, ~/esp or ~/.espressif)`, or `ESP-IDF's Python
 environment is not installed on lab: ~/esp/esp-idf/install.sh sets it
 up`. Errors in the build's output (GCC's, the linker's, CMake's) are
@@ -3366,7 +3366,7 @@ waits for the boot ROM (5 s at most) before picotool loads it.
 pio is the one on the PATH, else PlatformIO's own
 (`~/.platformio/penv/bin/pio`, as its installer and VS Code's extension
 put it) or `~/.local/bin/pio` (uv tool's, pipx's), put on the PATH for
-each task. Where there is none, its rows and runs say `PlatformIO is not
+each task. Where there is none, its heading says (and a task run says again) `PlatformIO is not
 installed on this Mac (no pio on the PATH, nor in
 ~/.platformio/penv/bin)`.
 
