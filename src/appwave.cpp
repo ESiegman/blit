@@ -559,18 +559,21 @@ bool App::wave_open(const std::string& full, Pane* in, size_t in_at) {
         Pane* const focused = pane_;
         for (bool again = true; again;) {
             again = false;
-            for (const std::unique_ptr<Pane>& p : panes_)
-                for (size_t i = 0; p.get() != in && i < p->docs.size() && !again; ++i)
+            // (Closing the view may remove its split: looked for again from the start.)
+            for (size_t k = 0; k < panes_.size() && !again; ++k) {
+                Pane* const p = panes_[k].get();
+                for (size_t i = 0; p != in && i < p->docs.size(); ++i)
                     if (p->docs[i]->id == was) {
-                        pane_ = p.get();
+                        pane_ = p;
                         tab_close(i, true);
                         again = true;
+                        break;
                     }
+            }
         }
-        pane_ = focused;
+        pane_ = std::ranges::any_of(panes_, [&](const std::unique_ptr<Pane>& p) { return p.get() == focused; }) ? focused : in;
         Doc* const old = in->docs[in_at].get();
         const bool front = in->doc == old;
-        if (lsp_doc_ == old) stop_lsp();
         forget_doc(old);
         in->docs[in_at] = std::move(fresh);
         if (front) {
