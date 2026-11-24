@@ -512,6 +512,8 @@ if(BLIT_DEV)
     add_test(NAME boards COMMAND sh ${CMAKE_SOURCE_DIR}/tests/boards.sh $<TARGET_FILE:blit>)
     # Serial monitor tabs, on a pseudo-terminal standing in for a board: what comes and goes, times, hex, a reset's gap, flashing, the picker.
     add_test(NAME serial COMMAND sh ${CMAKE_SOURCE_DIR}/tests/serial.sh $<TARGET_FILE:blit>)
+    # A board's RTT channels, semihosting and defmt as tabs, through stand-ins for OpenOCD, pyOCD, J-Link and probe-rs; on QEMU's Cortex-M3 where it is here.
+    add_test(NAME rtt COMMAND sh ${CMAKE_SOURCE_DIR}/tests/rtt.sh $<TARGET_FILE:blit>)
     # The project's Python: found for each project and subproject, and what takes it.
     add_test(NAME python COMMAND sh ${CMAKE_SOURCE_DIR}/tests/python.sh $<TARGET_FILE:blit>)
     # Characters of more than one code point (marks, emoji sequences, flags) and of other widths.
