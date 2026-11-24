@@ -661,8 +661,13 @@ struct App::DebugUi : DebugSession {
     std::vector<u64> disasm_addrs;
     u64 disasm_gen = 0;
     u64 disasm_at = 0;  // the address it is about, where not the frame's (the fault report's Enter): 0 the frame's
-    // The fault report's tab, and the address each of its lines goes to (0 none).
+    // The fault report's tab: the report it shows (the last made), laid
+    // out for the width of its split (`fault_width` columns), each row's
+    // line of the report and the address Enter goes to there (0 none).
     u64 fault_doc = 0;
+    std::shared_ptr<const FaultReport> fault_shown;
+    u32 fault_width = 0;
+    std::vector<u32> fault_rows;
     std::vector<u64> fault_addrs;
     // The memory tab: a page of memory from mem_addr, 16 bytes a line, read
     // again at each stop; what it was asked for as.
@@ -1965,28 +1970,87 @@ void App::debug_fault_open() {
     debug_fault_fill(true);
 }
 
-// The report's tab given the report (where it is open): its cursor on
-// the line of the PC that faulted (`fresh`), else where it was.
+// A line of the report as rows of at most `width` columns, broken between
+// words: the rows after the first in line under where its words start (a
+// register's line: after its name and value; else two in from its own
+// indent). The read-only tabs blit fills (the disassembly, the debug
+// console) do not wrap, as text with colours of its own does not: the
+// report lays itself out instead, again when its split's width changes.
+namespace {
+std::vector<std::string> fault_rows_of(const std::string& text, u32 width) {
+    const size_t lead = text.find_first_not_of(' ');
+    if (lead == std::string::npos || width < 24 || width_of(text) <= width) return {text};
+    size_t hang = lead + 2;
+    if (const size_t gap = text.find("  ", lead); gap != std::string::npos)
+        if (const size_t value = text.find_first_not_of(' ', gap); value != std::string::npos)
+            if (const size_t gap2 = text.find("  ", value); gap2 != std::string::npos && gap2 < 40)
+                if (const size_t words = text.find_first_not_of(' ', gap2); words != std::string::npos) hang = words;
+    if (hang * 2 > width) hang = lead + 2;
+    std::vector<std::string> rows;
+    std::string rest = text;
+    while (width_of(rest) > width) {
+        // (The last space that leaves the row within the width, past its indent.)
+        const size_t from = rows.empty() ? lead : hang;
+        size_t cut = std::string::npos;
+        for (size_t i = from + 1; i < rest.size() && width_of(std::string_view(rest).substr(0, i)) <= width; ++i)
+            if (rest[i] == ' ') cut = i;
+        if (cut == std::string::npos) cut = std::min<size_t>(rest.size(), width);
+        std::string row = rest.substr(0, cut);
+        while (!row.empty() && row.back() == ' ') row.pop_back();
+        rows.push_back(std::move(row));
+        const size_t next = rest.find_first_not_of(' ', cut);
+        if (next == std::string::npos) return rows;
+        rest = std::string(hang, ' ') + rest.substr(next);
+    }
+    rows.push_back(std::move(rest));
+    return rows;
+}
+}  // namespace
+
+// The report's tab given the last report (where it is open), laid out for
+// its split's width: its cursor on the line of the PC that faulted
+// (`fresh`, a new report), else on the line it was on.
 void App::debug_fault_fill(bool fresh) {
     DebugUi& u = *debugui_;
-    if (u.fault_doc && !find_doc(u.fault_doc)) u.fault_doc = 0, u.fault_addrs.clear();  // (closed)
-    Doc* d = u.fault_doc ? find_doc(u.fault_doc) : nullptr;
-    if (!d) return;
+    Pane* where = nullptr;
+    Doc* d = u.fault_doc ? find_doc(u.fault_doc, &where) : nullptr;
+    if (!d) {
+        u.fault_doc = 0, u.fault_rows.clear(), u.fault_addrs.clear();  // (closed)
+        return;
+    }
+    if (fresh) u.fault_shown = u.fault;
+    const u32 width = where ? wrap_width(*where) : 0;
+    const u64 was = d->ed.buf.line_of(d->ed.cursor());
+    const u32 was_line = was < u.fault_rows.size() ? u.fault_rows[was] : 0;
     Runs out;
-    u.fault_addrs.clear();
+    u.fault_rows.clear(), u.fault_addrs.clear();
     i64 at = -1;
-    if (!u.fault) {
+    if (!u.fault_shown) {
         out.add("Not stopped at a fault\n", 4);
-        u.fault_addrs.push_back(0);
+        u.fault_rows.push_back(0), u.fault_addrs.push_back(0);
+        at = 0;
     } else {
-        for (const FaultReport::Line& l : u.fault->lines) {
-            if (at < 0 && l.addr && l.addr == u.fault->pc) at = static_cast<i64>(u.fault_addrs.size());
-            out.add(l.text + "\n", l.style);
-            u.fault_addrs.push_back(l.addr);
+        const FaultReport& r = *u.fault_shown;
+        for (u32 i = 0; i < r.lines.size(); ++i) {
+            const FaultReport::Line& l = r.lines[i];
+            if (at < 0 && (fresh ? l.addr && l.addr == r.pc : i == was_line)) at = static_cast<i64>(u.fault_rows.size());
+            for (const std::string& row : fault_rows_of(l.text, width)) {
+                out.add(row + "\n", l.style);
+                u.fault_rows.push_back(i), u.fault_addrs.push_back(l.addr);
+            }
         }
     }
+    u.fault_width = width;
     d->style_bits[2] = kInkDiagnostic << kCellInkShift;
-    debug_tab_fill(*d, std::move(out.text), std::move(out.off), std::move(out.style), fresh ? std::max<i64>(at, 0) : -1, 2);
+    debug_tab_fill(*d, std::move(out.text), std::move(out.off), std::move(out.style), std::max<i64>(at, 0), 2);
+}
+
+// The report's tab laid out again when its split's width has changed.
+void App::debug_fault_relayout() {
+    if (!debugui_ || !debugui_->fault_doc) return;
+    Pane* where = nullptr;
+    const Doc* d = find_doc(debugui_->fault_doc, &where);
+    if (d && where && where->doc == d && wrap_width(*where) != debugui_->fault_width) debug_fault_fill(false);
 }
 
 // Enter on a line of the report with an address (the stacked PC, LR,
@@ -2063,10 +2127,10 @@ std::string App::debug_disasm_dump() {
 bool App::debug_fault_line(const std::string& name) {
     DebugUi& u = *debugui_;
     Doc* d = u.fault_doc ? find_doc(u.fault_doc) : nullptr;
-    if (!d || !u.fault) return false;
-    for (size_t i = 0; i < u.fault->lines.size() && i < d->ed.buf.line_count(); ++i)
-        if (trimmed(u.fault->lines[i].text).starts_with(name + " ")) {
-            d->ed.move_to(d->ed.buf.line_start(i), false);
+    if (!d || !u.fault_shown) return false;
+    for (size_t row = 0; row < u.fault_rows.size() && row < d->ed.buf.line_count(); ++row)
+        if (const u32 i = u.fault_rows[row]; i < u.fault_shown->lines.size() && trimmed(u.fault_shown->lines[i].text).starts_with(name + " ")) {
+            d->ed.move_to(d->ed.buf.line_start(row), false);
             return true;
         }
     return false;

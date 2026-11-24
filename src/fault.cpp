@@ -422,8 +422,7 @@ FaultReport cm_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
         }
     } else if (cpuid >= 0) {
         o.heading("Fault status");
-        o.add("  ARMv6-M and v8-M Baseline have no CFSR, HFSR or fault address registers:", 4);
-        o.add("  every fault is a HardFault, and the stacked frame is all there is.", 4);
+        o.add("  ARMv6-M and v8-M Baseline have no CFSR, HFSR or fault address registers: every fault is a HardFault, and the stacked frame is all there is.", 4);
     }
 
     // EXC_RETURN and the stacked frame.
@@ -432,8 +431,7 @@ FaultReport cm_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
     std::string stack_words, fpu_words;
     o.heading("Exception return");
     if (!have_exc) {
-        o.add("  EXC_RETURN was not found: LR is no longer it, and the debugger did not", 4);
-        o.add("  unwind through the exception", 4);
+        o.add("  EXC_RETURN was not found: LR is no longer it, and the debugger did not unwind through the exception", 4);
     } else {
         const bool psp = exc & 4, thread = exc & 8, fpu = !(exc & 16);
         stack_words = !thread ? "handler stack (MSP)" : psp ? "thread stack (PSP)" : "main stack (MSP)";
@@ -450,10 +448,7 @@ FaultReport cm_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
         if (fault_cm_frame_at(f, &r0, &exact)) {
             std::string at = "  stacked at " + hex8(r0) + " (" + (psp ? "PSP" : exact ? "MSP at the exception's entry" : "MSP as it is now") + ")";
             o.add(at, 0);
-            if (!exact) {
-                o.add("  (the debugger did not unwind through the exception: the frame is there", 4);
-                o.add("  only if the handler has pushed nothing since)", 4);
-            }
+            if (!exact) o.add("  (the debugger did not unwind through the exception: the frame is there only if the handler has pushed nothing since)", 4);
         }
     }
 
@@ -490,10 +485,7 @@ FaultReport cm_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
                 o.value("SP before", sp, "the stack pointer before the exception");
             }
         }
-        if (cfsr >= 0 && (cfsr & ((1 << 4) | (1 << 12)))) {
-            o.add("  The core could not stack the frame (MSTKERR or STKERR):", 4);
-            o.add("  what is read there is not the program's.", 4);
-        }
+        if (cfsr >= 0 && (cfsr & ((1 << 4) | (1 << 12)))) o.add("  The core could not stack the frame (MSTKERR or STKERR): what is read there is not the program's.", 4);
     }
 
     // The imprecise bus fault's remark (research expectation 13).
@@ -501,13 +493,9 @@ FaultReport cm_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
     const bool m3m4 = cpuid >= 0 && fault_cm_has_disdefwbuf(static_cast<u32>(cpuid));
     if (imprecise && m3m4) {
         o.heading("Imprecise bus fault");
-        o.add("  The write buffer let the program run on before the error came back:", 0);
-        o.add("  the store that faulted is before the stacked PC.", 0);
+        o.add("  The write buffer let the program run on before the error came back: the store that faulted is before the stacked PC.", 0);
         if (f.actlr >= 0 && (f.actlr & 2)) o.add("  ACTLR.DISDEFWBUF is set already (ACTLR " + hex8(static_cast<u64>(f.actlr)) + ").", 0);
-        else {
-            o.add("  Setting ACTLR.DISDEFWBUF (bit 1 of 0xE000E008) turns the write buffer off on", 0);
-            o.add("  Cortex-M3 and M4, which makes such faults precise, at a cost in speed.", 0);
-        }
+        else o.add("  Setting ACTLR.DISDEFWBUF (bit 1 of 0xE000E008) turns the write buffer off on Cortex-M3 and M4, which makes such faults precise, at a cost in speed.", 0);
     }
 
     // The Debug tab's line.
@@ -586,10 +574,7 @@ FaultReport rv_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
     }
     if (panic) o.add("  from ESP-IDF's panic frame at " + hex8(f.panic_frame), 4);
     else if (f.in_panic) o.add("  from the core's registers, in ESP-IDF's panic handler (its frame could not be read here)", 4);
-    else if (rerun) {
-        o.add("  ESP-IDF's panic handler had a breakpoint set at the instruction that faulted", 4);
-        o.add("  and returned to it: the core stopped there.", 4);
-    }
+    else if (rerun) o.add("  ESP-IDF's panic handler had a breakpoint set at the instruction that faulted and returned to it: the core stopped there.", 4);
     std::string line = what;
     if (address && mtval) line += " at " + hex8(mtval) + " (mtval)";
     else if (!interrupt && code == 2 && mtval) line += "; instruction " + hex8(mtval);
@@ -652,8 +637,7 @@ FaultReport xt_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
     }
     if (rerun) {
         if (pc != epc1) o.value("PC", pc, named(where, pc), pc);
-        o.add("  ESP-IDF's panic handler set a breakpoint at the instruction that faulted", 4);
-        o.add("  and returned to it: the core stopped there.", 4);
+        o.add("  ESP-IDF's panic handler set a breakpoint at the instruction that faulted and returned to it: the core stopped there.", 4);
     }
     std::string line = what;
     if (address) line += " at " + hex8(vaddr) + " (EXCVADDR)";

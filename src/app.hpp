@@ -1453,6 +1453,7 @@ private:
     void debug_fault_take();
     void debug_fault_open();  // "Show the fault report"
     void debug_fault_fill(bool fresh);
+    void debug_fault_relayout();  // (the report's tab, for its split's width now)
     bool debug_fault_key(const SDL_KeyboardEvent& k);  // Enter on the report's stacked PC: its source and instructions
     void debug_fault_goto(u64 addr);
     std::string debug_fault_dump(bool report);  // (the tests: the Debug tab's line, or the report's lines)

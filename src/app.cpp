@@ -1535,6 +1535,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     place_panes(w, h);
     peek_layout();  // (a peek's box: placed over its split, laid out last)
     for (const std::unique_ptr<Pane>& p : panes_) wrap_sync(*p);  // (each split's soft wrap, for its width now)
+    debug_fault_relayout();  // (the fault report's rows, for its split's width now: appdebug.cpp)
     build_measure();  // (the Run button: the tab bar under it ends before it)
     Pane* const focused = pane_;
     for (const std::unique_ptr<Pane>& p : panes_) {
