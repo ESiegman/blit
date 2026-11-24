@@ -38,24 +38,6 @@ namespace blit {
 
 class Term;
 
-// What a port is: its path, and (a port on a USB device) the device's ids,
-// its serial number and the interface the port is on, to find it again by.
-struct SerialPortId {
-    std::string path;     // as it was asked for: /dev/cu.usbmodem1101, /dev/serial/by-id/usb-..., /dev/ttyACM0
-    std::string serial;   // the USB device's serial number ("": none known; found again at its path)
-    u16 vid = 0, pid = 0;
-    int iface = -1;       // (a device with two ports, an FT2232: the one that was opened)
-    std::string name;     // what the device is called ("Pico SDK USB serial (RP2040)")
-};
-
-// The port at a path, named from the USB devices plugged in (just the path
-// when it is on none). Slow enough to be a worker's call.
-SerialPortId serial_identify(const std::string& path);
-// Where that port is now: on the USB device with its serial number (and
-// ids, and interface), else at its path, if it is there; "" when it is not
-// (why empty: it is not plugged in). A worker's call.
-std::string serial_locate(const SerialPortId& id, std::string* why);
-
 // What Return sends: CR (a terminal's own), LF, or both.
 enum class SerialReturn : u8 { kCR, kLF, kCRLF };
 const char* serial_return_name(SerialReturn r);  // "CR", "LF", "CR LF"

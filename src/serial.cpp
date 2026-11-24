@@ -19,6 +19,8 @@
 #include <cstdlib>
 #include <cstring>
 
+#include "usb.hpp"
+
 namespace blit {
 
 #if defined(__linux__)
@@ -226,6 +228,43 @@ bool serial_break(int fd, std::string* err) {
         return false;
     }
     return true;
+}
+
+SerialPortId serial_identify(const std::string& path) {
+    SerialPortId id;
+    id.path = path;
+    const std::string real = serial_device(path);
+    for (const UsbDevice& d : usb_list())
+        for (const UsbPort& p : d.ports)
+            if (serial_device(p.path) == real) {
+                id.serial = d.serial;
+                id.vid = d.vid, id.pid = d.pid;
+                id.iface = p.iface;
+                id.name = !d.product.empty() ? d.product : d.manufacturer;
+                return id;
+            }
+    return id;
+}
+
+std::string serial_locate(const SerialPortId& id, std::string* why) {
+    if (id.serial.empty()) {
+        struct stat st;
+        if (::stat(id.path.c_str(), &st) == 0) return id.path;
+        why->clear();
+        return {};
+    }
+    for (const UsbDevice& d : usb_list()) {
+        if (d.serial != id.serial || (id.vid && (d.vid != id.vid || d.pid != id.pid))) continue;
+        const UsbPort* port = nullptr;
+        for (const UsbPort& p : d.ports)
+            if (!port || (p.iface == id.iface && port->iface != id.iface)) port = &p;
+        if (!port) continue;
+        // (The path it was asked for, while that is the port still: a by-id
+        // link, a /dev/cu name; else the device's own.)
+        return serial_device(id.path) == serial_device(port->path) ? id.path : port->path;
+    }
+    why->clear();
+    return {};
 }
 
 std::string serial_device(const std::string& path) {
