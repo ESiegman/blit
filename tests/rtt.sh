@@ -194,6 +194,27 @@ else
         echo "SKIP: rtt.sh's defmt over RTT needs defmt-print (cargo install defmt-print)"
     fi
 
+    # Two boards' RTT at once (two blits, each its own board and its own
+    # OpenOCD), neither naming a port: each channel's server on a free
+    # port, so each tab has its own board's lines. (On 19021 + n for both,
+    # the second's servers could not be had, and its tabs met the first's.)
+    P2="$dir/fw2"
+    mkdir -p "$P2/.blit"
+    cp "$P/fw.elf" "$P2/"
+    board "$STLINK, \"debug\": \"openocd\", \"rtt\": true"
+    cp "$P/.blit/run.json" "$P2/.blit/"
+    both="command:Open the board's RTT;rttwait:RTT 1: defmt: open;rttwait:kept 57;rttwait:kept 66;key:ctrl+\`;text:\`;frame;termdump"
+    export FAKE_RTT_TAG=B
+    (cd "$P2" && PATH="$B:$PATH" "$blit" --offscreen 1400x1400 --shot "$dir/shot2.bmp" --script "workdir:$P2;frame;$both" 2>"$dir/second" >/dev/null) &
+    second=$!
+    export FAKE_RTT_TAG=A
+    path="$B:$PATH" run "$both"
+    unset FAKE_RTT_TAG
+    wait $second
+    got="$got ~ $(tail -n 1 "$dir/second")"
+    check "two boards' RTT at once, no port named: each tab its own board's lines" \
+        "A 1 defmt: line 1|A 1 defmt: line 2|A 1 defmt: line 3 @3,0 11x86 ~ B 1 defmt: line 1|B 1 defmt: line 2|B 1 defmt: line 3 @3,0 11x86"
+
     board "$STLINK, \"debug\": \"pyocd\", \"rtt\": { \"port\": $p, \"channels\": [0, 1] }"
     path="$B:$PATH" run "command:Open the board's RTT;rttwait:RTT 1: open;rttwait:kept 51;rttwait:kept 60;rttdump"
     check "pyOCD: a server for each channel the board lists, from its config" \
@@ -237,17 +258,18 @@ else
     plan() {
         board "$1"
         run "boardplan"
-        got=$(printf '%s' "$got" | sed -E -e "s/tcl_port [0-9]+/tcl_port T/g" -e 's#@/home/[^ "]*/rtt/[0-9]+-fw#@/CACHE/fw#g' -e 's/ \| \{"program".*//')
+        got=$(printf '%s' "$got" | sed -E -e "s/tcl_port [0-9]+/tcl_port T/g" -e 's#@/home/[^ "]*/rtt/[0-9]+-fw#@/CACHE/fw#g' -e 's/ \| \{"program".*//' \
+            -e 's/semihosting_redirect tcp [0-9]+/semihosting_redirect tcp FREE/' -e 's/-RTTTelnetPort [0-9]+/-RTTTelnetPort FREE/')
     }
     plan "$STLINK, \"debug\": \"openocd\", \"rtt\": true, \"semihosting\": true"
     check "openocd: its Tcl port open for RTT; semihosting on and to a port of its own, once attached" \
-        "openocd | gdb: arm-none-eabi-gdb gdb-multiarch | target: | exec {openocd} -c 'gdb_port pipe' -c 'tcl_port T' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }' | after: monitor reset halt; maintenance flush register-cache; monitor arm semihosting enable; monitor arm semihosting_redirect tcp 19020 stdio | to main | flashed first"
+        "openocd | gdb: arm-none-eabi-gdb gdb-multiarch | target: | exec {openocd} -c 'gdb_port pipe' -c 'tcl_port T' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }' | after: monitor reset halt; maintenance flush register-cache; monitor arm semihosting enable; monitor arm semihosting_redirect tcp FREE stdio | to main | flashed first"
     plan "$STLINK, \"debug\": \"pyocd\", \"rtt\": true, \"semihosting\": true"
     check "pyocd: its RTT config, semihosting on its telnet port" \
         "pyocd | gdb: arm-none-eabi-gdb gdb-multiarch | server: {pyocd} gdbserver -t stm32f411ceux -u 004D00283133510F37363734 -p 3333 -T 3334 --config @/CACHE/fw.yaml -S | target: 127.0.0.1:3333 | after: monitor reset halt; maintenance flush register-cache | to main | flashed first"
     plan '"probe": {"kind": "jlink", "serial": "000801234567", "usb": "1366:0105"}, "chip": "STM32H743ZI", "elf": "fw.elf", "rtt": true, "semihosting": true'
     check "jlink: its RTT telnet port, the block's address, semihosting to its telnet client" \
-        "jlink | gdb: arm-none-eabi-gdb gdb-multiarch | server: {JLinkGDBServerCLExe|JLinkGDBServer} -device STM32H743ZI -if SWD -speed 4000 -port 2331 -swoport 2332 -telnetport 2333 -select 'USB=000801234567' -singlerun -nogui -RTTTelnetPort 19021 | target: 127.0.0.1:2331 | after: monitor reset; maintenance flush register-cache; monitor exec SetRTTAddr $rttaddr; monitor semihosting enable; monitor semihosting IOClient 1 | to main | flashed first"
+        "jlink | gdb: arm-none-eabi-gdb gdb-multiarch | server: {JLinkGDBServerCLExe|JLinkGDBServer} -device STM32H743ZI -if SWD -speed 4000 -port 2331 -swoport 2332 -telnetport 2333 -select 'USB=000801234567' -singlerun -nogui -RTTTelnetPort FREE | target: 127.0.0.1:2331 | after: monitor reset; maintenance flush register-cache; monitor exec SetRTTAddr $rttaddr; monitor semihosting enable; monitor semihosting IOClient 1 | to main | flashed first"
     board "$STLINK, \"rtt\": true"
     path="$B:$PATH" lines=20 run "command:Attach to the running board;wait:300"
     got=$(printf '%s' "$got" | grep -o "blit: probe-rs's gdb server has no RTT[^~]*" | head -1 | sed 's/ *$//')

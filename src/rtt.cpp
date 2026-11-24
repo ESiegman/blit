@@ -55,11 +55,15 @@ RttElf rtt_elf(const Elf& elf) {
     return r;
 }
 
-BoardStreams board_streams(const Board& b, const std::string& p, const RttElf& elf, u16 tcl_port, const std::string& files, bool standalone) {
+BoardStreams board_streams(const Board& b, const std::string& p, const RttElf& elf, const std::function<u16()>& free_port, const std::string& files,
+                           bool standalone) {
     BoardStreams s;
     if (!b.rtt && !b.semihosting) return s;
-    const u16 base = b.rtt_port > 0 ? static_cast<u16>(b.rtt_port) : kRttPort;
-    const u16 semi = b.semihosting_port > 0 ? static_cast<u16>(b.semihosting_port) : kSemihostingPort;
+    // (The board's own ports where it names them: channel n at port + n;
+    // else a free port for each.)
+    const u16 base = b.rtt_port > 0 ? static_cast<u16>(b.rtt_port) : 0;
+    auto channel_port = [&](int ch) { return base ? static_cast<u16>(base + ch) : free_port(); };
+    auto semi_port = [&] { return b.semihosting_port > 0 ? static_cast<u16>(b.semihosting_port) : free_port(); };
     u64 addr = elf.addr, size = elf.size;
     if (!b.rtt_address.empty()) {
         addr = std::strtoull(b.rtt_address.c_str(), nullptr, 0);
@@ -98,6 +102,7 @@ BoardStreams board_streams(const Board& b, const std::string& p, const RttElf& e
 
     if (p == "openocd" || p == "esp") {
         if (b.rtt) {
+            const u16 tcl_port = have_addr ? free_port() : 0;
             if (!have_addr) {
                 s.notes.push_back("RTT through OpenOCD needs the control block's address: the ELF has no _SEGGER_RTT symbol (board.rtt.address gives it)");
             } else if (!tcl_port) {
@@ -117,6 +122,7 @@ BoardStreams board_streams(const Board& b, const std::string& p, const RttElf& e
                 // (OpenOCD 0.12 src/target/semihosting_common.c lines 2041-2055:
                 // `arm semihosting enable`, `arm semihosting_redirect tcp PORT
                 // stdio`, both for a target that runs: after `init`.)
+                const u16 semi = semi_port();
                 const std::string on = "arm semihosting enable", to = "arm semihosting_redirect tcp " + std::to_string(semi) + " stdio";
                 if (standalone) s.openocd_words += " -c init -c " + sh_word(on) + " -c " + sh_word(to);
                 else s.after.push_back("monitor " + on), s.after.push_back("monitor " + to);
@@ -135,7 +141,7 @@ BoardStreams board_streams(const Board& b, const std::string& p, const RttElf& e
             else y += "      auto-detect: true\n";
             y += "    channel:\n";
             for (const int ch : chans) {
-                const u16 port = static_cast<u16>(base + ch);
+                const u16 port = channel_port(ch);
                 y += "      - number: " + std::to_string(ch) + "\n        mode: server\n        port: " + std::to_string(port) + "\n";
                 channel_tab(ch, port, {});
             }
@@ -158,9 +164,10 @@ BoardStreams board_streams(const Board& b, const std::string& p, const RttElf& e
             // RTTCh;N$$" sent within 100 ms of connecting (kb.segger.com,
             // "J-Link RTT TELNET Channel"); the block where `SetRTTAddr` says,
             // else looked for in RAM.)
-            s.server_words += " -RTTTelnetPort " + std::to_string(base);
+            const u16 telnet = base ? base : free_port();
+            s.server_words += " -RTTTelnetPort " + std::to_string(telnet);
             if (have_addr && !standalone) s.after.push_back("monitor exec SetRTTAddr " + hex_of(addr));
-            for (const int ch : chans) channel_tab(ch, base, jlink_channel(ch));
+            for (const int ch : chans) channel_tab(ch, telnet, jlink_channel(ch));
         }
         if (b.semihosting) {
             if (standalone) {

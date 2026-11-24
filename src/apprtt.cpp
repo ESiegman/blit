@@ -19,6 +19,7 @@
 // where they were when the next session serves the same ports.
 #include <SDL3/SDL.h>
 
+#include <algorithm>
 #include <map>
 #include <optional>
 #include <poll.h>
@@ -65,13 +66,31 @@ std::string hex_of(u64 v) {
     return buf;
 }
 
+// A port no one listens on here, and none handed out before by this blit
+// (two asked for one after the other are never the same).
+u16 fresh_port() {
+    static std::mutex mu;
+    static std::vector<u16> given;
+    std::lock_guard lock(mu);
+    for (int tries = 0; tries < 16; ++tries) {
+        const u16 p = loopback_free_port();
+        if (!p) return 0;
+        if (std::ranges::find(given, p) != given.end()) continue;
+        given.push_back(p);
+        if (given.size() > 256) given.erase(given.begin());
+        return p;
+    }
+    return 0;
+}
+
 // OpenOCD's RTT, through its Tcl port (rtt.hpp): on each connection (each
 // OpenOCD started), `rtt setup`, then `rtt start` and `rtt channels` every
 // 300 ms until the control block is found, then a server for each
-// up-channel. What it found is handed to the main thread.
+// up-channel, on the board's port + its number, else a free port. What it
+// found is handed to the main thread.
 struct RttDriver {
     std::string board;
-    u16 base = 0;
+    u16 base = 0;  // (0: each channel's server on a free port)
     u64 addr = 0, size = 0;
     std::unique_ptr<Loopback> link;
     std::mutex mu;
@@ -80,6 +99,7 @@ struct RttDriver {
     u64 due = 0;              // (mu) when kWaiting asks again
     int servers_left = 0;     // (mu)
     std::vector<RttChannel> found;  // (mu) for the main thread, once
+    std::vector<u16> ports;         // (mu) and each one's server
     bool news = false;              // (mu)
     std::vector<std::string> said;  // (mu) for the main thread: what went wrong
     u32 tries = 0;                  // (mu) the times `rtt start` found nothing (the tests')
@@ -132,7 +152,12 @@ struct RttDriver {
                 }
                 step = kServers;
                 servers_left = static_cast<int>(up.size());
-                for (const RttChannel& c : up) send("rtt server start " + std::to_string(base + c.number) + " " + std::to_string(c.number));
+                ports.clear();
+                for (const RttChannel& c : up) {
+                    const u16 port = base ? static_cast<u16>(base + c.number) : fresh_port();
+                    ports.push_back(port);
+                    send("rtt server start " + std::to_string(port) + " " + std::to_string(c.number));
+                }
                 found = up;
                 news = true;
                 break;
@@ -196,14 +221,13 @@ BoardStreams App::rtt_streams(const BuildTask& c, const std::string& elf, const 
         std::string why;
         if (const auto e = Elf::read_file(elf, &why)) re = rtt_elf(*e);
     }
-    const u16 tcl = c.board.rtt && (preset == "openocd" || preset == "esp") ? loopback_free_port() : 0;
     // (Its files: pyOCD's config, QEMU's output; one set for each board and
     // each blit, in the cache.)
     std::string files = cache_dir() + "/rtt", why, name;
     fs_mkdirs(files, &why);
     for (const char ch : c.name) name += (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ? ch : '-';
     files += "/" + std::to_string(::getpid()) + "-" + name;
-    return board_streams(c.board, preset, re, tcl, files, standalone);
+    return board_streams(c.board, preset, re, fresh_port, files, standalone);
 }
 
 // The tabs a board's streams have, opened (or found open, and pointed at
@@ -449,12 +473,14 @@ void App::rtt_sync() {
     RttUi& u = *rttui_;
     for (const std::shared_ptr<RttDriver>& d : u.drivers) {
         std::vector<RttChannel> found;
+        std::vector<u16> ports;
         std::vector<std::string> said;
         {
             std::lock_guard lock(d->mu);
             if (!d->news) continue;
             d->news = false;
             found.swap(d->found);
+            ports.swap(d->ports);
             said.swap(d->said);
         }
         for (const std::string& s : said) notify(s, 1);
@@ -466,11 +492,12 @@ void App::rtt_sync() {
         RttElf re;
         std::string why;
         if (const auto e = Elf::read_file(elf, &why)) re = rtt_elf(*e);
-        for (const RttChannel& ch : found) {
+        for (size_t i = 0; i < found.size() && i < ports.size(); ++i) {
+            const RttChannel& ch = found[i];
             StreamPlan p;
             p.kind = "rtt";
             p.channel = ch.number;
-            p.port = static_cast<u16>(d->base + ch.number);
+            p.port = ports[i];
             const std::string_view mode = c->board.rtt_defmt;
             p.defmt = mode == "off" ? false : mode == "on" ? ch.name == "defmt" || (ch.name.empty() && ch.number == 0) : re.defmt && ch.name == "defmt";
             p.input = !p.defmt;

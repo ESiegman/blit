@@ -40,6 +40,7 @@
 // `defmt-print -e ELF --json stdin`, one JSON record a line after a schema
 // line (defmt-print 1.2.0, decoder/defmt-json-schema), and blit draws each
 // record: level in its colour, timestamp, message, file:line.
+#include <functional>
 #include <string>
 #include <string_view>
 #include <vector>
@@ -78,7 +79,7 @@ struct StreamPlan {
 struct BoardStreams {
     std::vector<StreamPlan> tabs;     // the tabs known before it starts
     u16 tcl_port = 0;                 // OpenOCD's Tcl port: the RTT driver finds the channels through it
-    u16 rtt_base = 0;                 // channel n's server at rtt_base + n (OpenOCD, pyOCD)
+    u16 rtt_base = 0;                 // channel n's server at rtt_base + n, when the board names its port; 0: each a free port
     std::string server_words;         // put on the gdb server's command line (sh words, each with a space before it)
     std::string openocd_words;        // put on OpenOCD's (the Tcl port, in place of "disabled")
     std::string qemu_words;           // put on QEMU's
@@ -91,20 +92,21 @@ struct BoardStreams {
 };
 
 // The streams for a board's preset: `elf` what its ELF says (RTT needs the
-// block's address but for J-Link, which can look for it); `tcl_port` a free
-// port for OpenOCD's Tcl server; `files` where files of its own go (a path
-// and the start of a name: pyOCD's config is files + ".yaml", QEMU's output
-// files + "-out.txt"). `standalone`: a server started for a running board,
-// with no gdb (no `after`).
-BoardStreams board_streams(const Board& b, const std::string& preset, const RttElf& elf, u16 tcl_port, const std::string& files, bool standalone);
+// block's address but for J-Link, which can look for it); `free_port` a
+// port of this machine's no one listens on (0: none could be had), for
+// OpenOCD's Tcl server and for each server a tool is told to start where
+// the board names no port of its own (so that two boards, or another
+// program on 19021, are not in each other's way); `files` where files of
+// its own go (a path and the start of a name: pyOCD's config is files +
+// ".yaml", QEMU's output files + "-out.txt"). `standalone`: a server
+// started for a running board, with no gdb (no `after`).
+BoardStreams board_streams(const Board& b, const std::string& preset, const RttElf& elf, const std::function<u16()>& free_port, const std::string& files,
+                           bool standalone);
 
 // What J-Link's RTT telnet port is sent first for channel n ("" for 0).
 std::string jlink_channel(int n);
 
-// The default ports: RTT channel 0's server (19021, J-Link's own; channel
-// n at 19021 + n for OpenOCD and pyOCD), and the semihosting port blit
-// listens on for QEMU or connects to for OpenOCD (19020).
-constexpr u16 kRttPort = 19021, kSemihostingPort = 19020;
+
 
 // ---------------------------------------------------------------- OpenOCD's Tcl port
 

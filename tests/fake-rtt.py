@@ -21,6 +21,7 @@
 # Each channel sends "CH NAME: line K" every 100 ms ($FAKE_RTT_LINES lines,
 # 3 by default), then on channel 0 $FAKE_RTT_THEN if set (a crash dump's
 # text, with \n), once to each client; what a client sends comes back as "down CH: ...".
+# $FAKE_RTT_TAG, if set, goes before each line (which board's it is).
 # A channel named "defmt" sends the bytes of $FAKE_RTT_FRAMES instead, if set
 # (defmt's frames, as tests/rtt/defmt-qemu.elf wrote them on QEMU).
 # $FAKE_RTT_LOG, if set, gets a line for each command, connection and
@@ -40,6 +41,7 @@ THEN = os.environ.get("FAKE_RTT_THEN", "").replace("\\n", "\n")
 FOUND_AT = int(os.environ.get("FAKE_RTT_FOUND_AT", "3"))
 UP = int(os.environ.get("FAKE_RTT_UP", "2"))
 FRAMES = os.environ.get("FAKE_RTT_FRAMES")
+TAG = os.environ.get("FAKE_RTT_TAG", "").encode()  # (before each line: which board's it is)
 
 
 def log(text):
@@ -102,7 +104,7 @@ def channel_client(c, ch, choose=False):
             while True:
                 time.sleep(1)
         for k in range(1, LINES + 1):
-            c.sendall(b"%d %s: line %d\r\n" % (ch, name.encode(), k))
+            c.sendall(b"%s%d %s: line %d\r\n" % (TAG + b" " if TAG else b"", ch, name.encode(), k))
             time.sleep(0.1)
         if THEN and ch == 0:
             c.sendall(THEN.encode())
@@ -161,7 +163,11 @@ def openocd(argv):
                 out += "%d: %s 1024 2\n" % (k, NAMES.get(k, "ch%d" % k))
             return out + "Down-channels:\n0: Terminal 16 0\n"
         if w[:3] == ["rtt", "server", "start"]:
-            channel_server(int(w[3]), int(w[4]))
+            try:
+                channel_server(int(w[3]), int(w[4]))
+            except OSError:  # (another program has the port: OpenOCD's add_service fails, src/server/server.c)
+                log("rtt server %s busy" % w[3])
+                return "couldn't bind rtt to socket on port %s: Address already in use" % w[3]
             return ""
         return "invalid command name \"%s\"" % w[0]
 
