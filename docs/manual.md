@@ -2151,6 +2151,29 @@ and is started again when needed. Each program's environment is the
 connection's, so a `PATH` changed in a login file there is seen by what is
 started once connected again.
 
+**Ports on that machine.** A board plugged into it is reached as one
+here. Its serial ports are listed by "Open a serial port…", and a serial
+tab on one is as one here is (see "The serial monitor"): the agent runs
+there as the port's pump (`blit-agent --serial PORT SPEED`), which opens
+it, finds it again by its serial number after a hang-up, lets go of it
+for a flash there, and sets its lines and speed, each at its time there.
+A TCP port there (a gdb server's, OpenOCD's telnet and RTT ports, a
+server on the board's network) is reached from here with "Reach a port on
+the project's machine…": `8000` listens at `localhost:8000` here (at a
+port the system gives, said, when 8000 is taken here), `host:8000` is a
+host as that machine names it, and `9000:localhost:8000` names the port
+here first, as `ssh -L` takes it. Each connection made to it here starts
+the agent there as a pump (`blit-agent --connect HOST:PORT`), joined to it
+over blit's own connection, each way on its own; it lasts until "Stop
+reaching a port on another machine…" (which lists them) or quitting, and
+a connection that cannot be made there is said (`box: Cannot connect to
+localhost:8000: Connection refused`). A pump is not kept while the
+connection is down, so the port there is let go of meanwhile, and is not
+work: quitting does not ask about it. The machine's USB devices are listed
+by `blit-agent --usb` (the probe picker's rows, and the port picker's); a
+USB device there is not passed through to tools here, as usbip would:
+the tools (flashing, a gdb server) run on the machine the board is on.
+
 The agent ends:
 
 - when nothing has been working and no blit has been attached for
@@ -3675,14 +3698,19 @@ run.
   A58565170D696C53`). On Linux each row ends with its
   `/dev/serial/by-id` name, which the tab opens it by. A port already
   open in a tab says `(open)`, and Enter on it shows that tab. A path
-  typed (`/dev/ttyAMA0`) opens that port.
+  typed (`/dev/ttyAMA0`) opens that port. On a project on another machine
+  that machine's ports come first, each ending `on box` (listed by blit's
+  agent there), then this machine's; a path typed is on the project's
+  machine, and `ssh://box/dev/ttyUSB1` names a port there from anywhere.
 - **"Open the board's serial monitor"** opens the port of the board of
   the run configuration the Run button runs (`serial.port`, else the
   port of the device with the probe's serial number), at `serial.baud`,
-  in one step; a second time, it shows the tab it opened.
+  in one step; a second time, it shows the tab it opened. On a project on
+  another machine the board's port is that machine's.
 
 The tab is named for its port and speed (`cu.usbmodem1101 115200`;
-`ttyACM0 230400 8E1` when the framing is not 8N1), and says `(opening)`,
+`ttyACM0 230400 8E1` when the framing is not 8N1; `ttyACM0 on box
+115200` for a port on another machine), and says `(opening)`,
 `(gone)` or `(released)` while the port is not open. A line from the
 board ending in LF alone starts a new line, as CR LF does; CR alone goes
 back along the line (a count written over itself). The port is opened
@@ -3701,6 +3729,20 @@ comes back at, then opens it again; that line becomes `[gone from
 go of the board's port (by its probe's serial number, or its port) before
 the flash tool starts, so the tool can open it, and opens it again when
 the tool has ended (`[released for flashing from ... to ..., 6.3 s]`).
+
+**On another machine.** A port on the machine of an ssh project (the lab
+box the board is plugged into) is as one here: blit's agent there runs as
+the port's pump (`blit-agent --serial PORT SPEED`, see "Working on
+another machine"), which opens the port there, waits there for the same
+serial number after a hang-up, lets go of it for a flash run there (the
+board's flash runs its tool on that machine) and takes it again, and
+sets DTR, RTS, the speed and breaks as they are asked for, each step of a
+reset at its own time there, whatever the connection's delay. What the
+board sends comes back as the pump's output, under the connection's flow
+control, and what is typed goes as it is (a 0xFF byte too). When the
+connection goes, the pump goes with it, so the port is free there
+meanwhile; once connected again the tab opens it again, and one line
+marks the gap (`[gone from ... to ..., 4.1 s (connection to box lost)]`).
 
 **Commands** (Command search; they act on the serial tab in front, else
 the one on show, else the only one open):
@@ -3747,11 +3789,11 @@ box to the board. There is no default key for any of these.
 configuration gives none) and `blit.opt.serial.line_end` (`"cr"`, `"lf"`
 or `"crlf"`: what Return sends in a new tab).
 
-**Limits:** serial ports here only: on a project on another machine the
-board's port there is not reachable yet (blit says so); USB serial ports
-are listed, other ports (a Pi's `/dev/ttyAMA0`) are opened by typing
-their path, and such a port, having no serial number, is waited for at
-its path after a hang-up.
+**Limits:** USB serial ports are listed, other ports (a Pi's
+`/dev/ttyAMA0`) are opened by typing their path, and such a port, having
+no serial number, is waited for at its path after a hang-up. A port on
+another machine is that of the machine the agent runs on: a port on a
+third machine beyond it is not reached.
 
 ## Tests
 
