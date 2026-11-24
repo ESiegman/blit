@@ -204,8 +204,9 @@ target_link_libraries(blit_core PUBLIC Threads::Threads)
 # Timelines and waveforms: lanes of changes, and dumps read into them
 # (knowing no window, so that the agent can carry them later).
 target_sources(blit_core PRIVATE src/timeline.cpp src/wave.cpp src/waveila.cpp)
-# ELF files and address to source from their DWARF (also knowing no window).
-target_sources(blit_core PRIVATE src/elf.cpp src/addrsrc.cpp src/crashscan.cpp)
+# ELF files and address to source from their DWARF, and the fault report's
+# tables (also knowing no window).
+target_sources(blit_core PRIVATE src/elf.cpp src/addrsrc.cpp src/crashscan.cpp src/fault.cpp)
 # FST dumps are read through libfst (third_party/libfst, at the commit its
 # config.h names), compiled as C, as src/agent/build.sh compiles it for the
 # Linux agents, with zlib. Optimized in every build, and kept out of
@@ -435,6 +436,9 @@ if(BLIT_DEV)
   # The ELF reader and address to source, against addr2line (tests/elf.sh).
   add_executable(blit_elf_test tests/elf_test.cpp)
   target_link_libraries(blit_elf_test PRIVATE blit_core)
+  # The fault report's tables, for what QEMU cannot make (tests/faults.sh).
+  add_executable(blit_fault_test tests/fault_test.cpp)
+  target_link_libraries(blit_fault_test PRIVATE blit_core)
 
   enable_testing()
   add_test(NAME fuzz COMMAND blit_fuzz 100 600)
