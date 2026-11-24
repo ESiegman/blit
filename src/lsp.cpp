@@ -185,9 +185,21 @@ std::string home_dir() {
 std::string search_path() {
     std::string path = std::getenv("PATH") ? std::getenv("PATH") : "";
     const std::string home = home_dir();
-    std::vector<std::string> more = {"/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"};
-    if (!home.empty())
-        for (const char* sub : {"/.local/bin", "/.cargo/bin", "/go/bin", "/.bun/bin", "/.deno/bin"}) more.push_back(home + sub);
+    std::vector<std::string> more;
+    // (BLIT_PROGRAM_DIRS, the tests': the folders looked in after the PATH
+    // instead of these, ":" between them; empty, none, so that a program
+    // left off the PATH is not installed, wherever the system keeps it.)
+    if (const char* dirs = std::getenv("BLIT_PROGRAM_DIRS")) {
+        for (std::string_view rest = dirs; !rest.empty();) {
+            const size_t colon = rest.find(':');
+            if (colon != 0) more.emplace_back(rest.substr(0, colon));
+            rest = colon == std::string_view::npos ? std::string_view() : rest.substr(colon + 1);
+        }
+    } else {
+        more = {"/opt/homebrew/bin", "/usr/local/bin", "/usr/bin", "/bin"};
+        if (!home.empty())
+            for (const char* sub : {"/.local/bin", "/.cargo/bin", "/go/bin", "/.bun/bin", "/.deno/bin"}) more.push_back(home + sub);
+    }
     for (const std::string& dir : more) {
         const std::string wrapped = ":" + path + ":";
         if (wrapped.find(":" + dir + ":") != std::string::npos) continue;

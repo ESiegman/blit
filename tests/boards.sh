@@ -16,6 +16,7 @@ set -u
 blit=${1:?usage: tests/boards.sh path/to/blit [--print]}
 print=${2:-}
 here=$(cd "$(dirname "$0")" && pwd -P)
+. "$here/without.sh"
 cc=$(command -v arm-none-eabi-gcc || ls -d "$HOME"/.local/opt/arm-gnu-toolchain-*/bin/arm-none-eabi-gcc 2>/dev/null | tail -1)
 [ -n "$cc" ] || { echo "boards skipped: no arm-none-eabi-gcc (Arm's GNU toolchain)"; exit 0; }
 command -v qemu-system-arm >/dev/null 2>&1 || { echo "boards skipped: no qemu-system-arm (QEMU)"; exit 0; }
@@ -175,22 +176,23 @@ check "a preset blit does not have: said" 'board.debug is one of "probe-rs", "op
 # and the others), QEMU, a gdb too old, a gdb built without Python.
 # A plain gdb is taken only where it is built for the ELF's architecture
 # (Arch Linux's, Fedora's), not where it is for the machine's own alone.
+without "$dir/bare" arm-none-eabi-gdb gdb-multiarch gdb qemu-system-arm
 mkdir -p "$dir/nogdb"
 ln -s "$(command -v qemu-system-arm)" "$dir/nogdb/"
 printf '#!/bin/sh\ncase "$1" in --version) echo "GNU gdb (GDB) 16.3" ;; *) echo "Undefined item: \\"arm\\"." >&2; exit 1 ;; esac\n' >"$dir/nogdb/gdb"
 chmod +x "$dir/nogdb/gdb"
 board '{ "chip": "mps2-an385", "debug": "qemu" }'
-was=$PATH; PATH="$dir/nogdb:/usr/bin:/bin"; run "key:F5;debugwait:idle;debugdump"; PATH=$was
+was=$PATH; PATH="$dir/nogdb:$dir/bare"; run "key:F5;debugwait:idle;debugdump"; PATH=$was
 check "no gdb for the ELF's machine (a gdb for another passed over): said" "idle error: arm-none-eabi-gdb is not installed on $this (nor gdb-multiarch, a gdb built for Arm)"
 mkdir -p "$dir/plaingdb"
 ln -s "$(command -v qemu-system-arm)" "$dir/plaingdb/"
 ln -s "$gdb" "$dir/plaingdb/gdb"
-was=$PATH; PATH="$dir/plaingdb:/usr/bin:/bin"; run "key:F5;debugwait:stopped;debugdump;key:shift+F5;debugwait:idle"; PATH=$was
+was=$PATH; PATH="$dir/plaingdb:$dir/bare"; run "key:F5;debugwait:stopped;debugdump;key:shift+F5;debugwait:idle"; PATH=$was
 got=$(printf '%s' "$got" | sed 's/ ;; .*//')
 check "a plain gdb built for Arm: taken" 'stopped (breakpoint); stack: main@17; vars:'
 mkdir -p "$dir/noqemu"
 ln -s "$gdb" "$dir/noqemu/arm-none-eabi-gdb"
-was=$PATH; PATH="$dir/noqemu:/usr/bin:/bin"; run "key:F5;debugwait:idle;debugdump"; PATH=$was
+was=$PATH; PATH="$dir/noqemu:$dir/bare"; run "key:F5;debugwait:idle;debugdump"; PATH=$was
 check "no QEMU: said" "idle error: qemu-system-arm is not installed on $this"
 printf '#!/bin/sh\ncase "$1" in --version) echo "GNU gdb (Arm GNU Toolchain 12.3.Rel1 (Build arm-12.35)) 12.3.90.20230627-git" ;; *) exit 1 ;; esac\n' >"$dir/bin/oldgdb"
 printf '#!/bin/sh\ncase "$1" in --version) echo "GNU gdb (Arm GNU Toolchain 15.2.Rel1 (Build arm-15.86)) 16.3.90.20250906-git" ;; *) echo "Interpreter \\`dap'"'"' unrecognized" >&2; exit 1 ;; esac\n' >"$dir/bin/nopython"

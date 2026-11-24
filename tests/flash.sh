@@ -21,6 +21,7 @@ set -u
 blit=${1:?usage: tests/flash.sh path/to/blit [--print]}
 print=${2:-}
 here=$(cd "$(dirname "$0")" && pwd -P)
+. "$here/without.sh"
 dir=$(mktemp -d)
 trap 'rm -rf "$dir"' EXIT
 dir=$(cd "$dir" && pwd -P)
@@ -268,7 +269,8 @@ JLinkExe -NoGui 1 -ExitOnError 1 -USB 000801234567 -CommandFile FILE
   | exit
 EOF
 check "J-Link: J-Link Commander and its command file" "$expected"
-got=$(PATH="$dir/none:/usr/bin:/bin" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;$F;buildwait" 2>&1 >/dev/null | tail -1)
+without "$dir/nojlink" JLinkExe
+got=$(BLIT_PROGRAM_DIRS= PATH="$dir/nojlink" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;$F;buildwait" 2>&1 >/dev/null | tail -1)
 case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
 check "a tool not on the PATH: said, naming this machine" "blit: JLinkExe is not installed on $this"
 
@@ -461,14 +463,15 @@ for v in 2025.1/Vivado/bin 2026.2/Vivado/bin Vivado/2024.2/bin; do
 done
 mkdir -p "$X/2026.3/Vivado"  # (a version with no vivado in it)
 rm -f "$LOG"
-got=$(PATH="$dir/none:/usr/bin:/bin" BLIT_VIVADO_HOMES="$dir/none:$X" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;command:Program the FPGA (SRAM);flashwait;buildwait;progressdump" 2>&1 >/dev/null | sed -e "s#$dir#~#g" -e "s/ in [0-9]*\\.[0-9] s/ in N s/g"; sed -e "s#$dir#~#g" "$LOG")
+without "$dir/novivado" vivado
+got=$(BLIT_PROGRAM_DIRS= PATH="$dir/novivado" BLIT_VIVADO_HOMES="$dir/none:$X" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;command:Program the FPGA (SRAM);flashwait;buildwait;progressdump" 2>&1 >/dev/null | sed -e "s#$dir#~#g" -e "s/ in [0-9]*\\.[0-9] s/ in N s/g"; sed -e "s#$dir#~#g" "$LOG")
 want <<'EOF'
 button: ▶ fw · Loaded into SRAM in N s | row: done · Loaded into SRAM in N s
 ~/xilinx/2026.2/Vivado/bin/vivado
 EOF
 check "Vivado where AMD installs it: the newest" "$expected"
 rm -f "$LOG"
-got=$(PATH="$dir/none:/usr/bin:/bin" BLIT_VIVADO_HOMES="$dir/none" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;command:Program the FPGA (SRAM);flashwait" 2>&1 >/dev/null | tail -1)
+got=$(BLIT_PROGRAM_DIRS= PATH="$dir/novivado" BLIT_VIVADO_HOMES="$dir/none" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;command:Program the FPGA (SRAM);flashwait" 2>&1 >/dev/null | tail -1)
 check "Vivado nowhere: said" "blit: vivado is not installed on $this (nor in /tools/Xilinx or /opt/Xilinx)"
 
 # ---------------------------------------------------------------- RP2040 and RP2350
@@ -704,14 +707,15 @@ flash pgrcmd "$F"
 check "pgrcmd with no .xcf: said" "blit: No chain file for pgrcmd: the board's flash.xcf, or an .xcf under the folder"
 
 # Each tool not installed: said, naming the program and this machine.
-# (One that is installed here is left out: blit would run it, on whatever
-# board is plugged in; the lab box has iceprog, and its FTDI chip is the
-# Basys 3's.)
+# (Each left off the PATH, and blit's own folders after it none
+# (BLIT_PROGRAM_DIRS), so that one installed here is not found, and run on
+# whatever board is plugged in: the lab box has iceprog in /usr/bin, and
+# its FTDI chip is the Basys 3's.)
 for t in "pyocd pyocd" "stm32cubeprogrammer STM32_Programmer_CLI" "iceprog iceprog" "ecpprog ecpprog" "pgrcmd pgrcmd"; do
     set -- $t
-    for d in /usr/bin /bin /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do [ -x "$d/$2" ] && continue 2; done
+    without "$dir/no-$2" "$2"
     board "{\"chip\": \"STM32F411CEUx\", \"elf\": \"build/fw.elf\", \"bitstream\": \"build/top.bit\", \"flash\": {\"tool\": \"$1\", \"xcf\": \"build/top.bit\"}}"
-    got=$(PATH="$dir/none:/usr/bin:/bin" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;$F" 2>&1 >/dev/null | tail -1)
+    got=$(BLIT_PROGRAM_DIRS= PATH="$dir/no-$2" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;$F" 2>&1 >/dev/null | tail -1)
     check "$2 not installed: said" "blit: $2 is not installed on $this"
 done
 
@@ -953,9 +957,7 @@ check "the Boards view there" 'fpga ftdi 0403:6010: Digilent FT2232 (FPGA)  2101
 printf '#!/bin/sh\nshift\nexec /bin/sh -c "$@"\n' >"$dir/plainsh"
 chmod +x "$dir/plainsh"
 bare="$dir/bare"
-mkdir -p "$bare"
-ln -s /usr/bin/* /bin/* "$bare/" 2>/dev/null
-rm -f "$bare/probe-rs" "$bare/openFPGALoader" "$bare/picotool" "$bare/dfu-util"
+without "$bare" probe-rs openFPGALoader picotool dfu-util
 case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
 kept=$PATH
 PATH=$bare SHELL="$dir/plainsh"

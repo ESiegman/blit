@@ -16,6 +16,7 @@ set -u
 blit=${1:?usage: tests/rtt.sh path/to/blit [--print]}
 print=${2:-}
 here=$(cd "$(dirname "$0")" && pwd -P)
+. "$here/without.sh"
 command -v python3 >/dev/null || { echo "rtt.sh: python3 is not installed (the stand-in tools are a Python script)"; exit 1; }
 dir=$(mktemp -d)
 dir=$(cd "$dir" && pwd -P)
@@ -263,13 +264,13 @@ else
     check "attached with RTT on and no flashing, each window said open" \
         "probe-rs dap-server ~ dap attach {\"chip\": \"STM32F411CEUx\", \"coreConfigs\": [{\"coreIndex\": 0, \"programBinary\": \"@/fw/fw.elf\", \"rttEnabled\": true}], \"flashingConfig\": {\"flashingEnabled\": false}, \"probe\": \"0483:374e:004D00283133510F37363734\"} ~ dap rttWindowOpened {\"channelNumber\": 0, \"windowIsOpen\": true} ~ dap rttWindowOpened {\"channelNumber\": 1024, \"windowIsOpen\": true}"
 
-    mkdir -p "$dir/none"
+    without "$dir/none" openocd openocd-esp32 probe-rs pyocd JLinkGDBServerCLExe JLinkGDBServer
     board "$STLINK, \"debug\": \"openocd\", \"rtt\": true"
-    path="$dir/none:/usr/bin:/bin" lines=20 run "command:Open the board's RTT;wait:1000;rttdump"
+    path="$dir/none" lines=20 run "command:Open the board's RTT;wait:1000;rttdump"
     got=$(printf '%s' "$got" | grep -o "blit: openocd is not installed on [^~]*" | head -1 | sed 's/ *$//')
     check "no OpenOCD: said, naming it and the machine" "blit: openocd is not installed on $this"
     board "$STLINK, \"debug\": \"probe-rs\", \"rtt\": true"
-    path="$dir/none:/usr/bin:/bin" lines=20 run "command:Open the board's RTT;wait:1000;rttdump"
+    path="$dir/none" lines=20 run "command:Open the board's RTT;wait:1000;rttdump"
     got=$(printf '%s' "$got" | grep -o "blit: probe-rs is not installed on [^~]*" | head -1 | sed 's/ *$//')
     check "no probe-rs: said" "blit: probe-rs is not installed on $this"
 
@@ -310,7 +311,7 @@ else
     check "its config written there, in the agent's cache" \
         "pyocd gdbserver -t stm32f411ceux -u 004D00283133510F37363734 -M attach --persist --config ~/.cache/blit/rtt/PID-fw.yaml"
     # (A machine without the tools: a login there whose PATH has none of them.)
-    for f in .profile .zprofile .bash_profile; do printf 'PATH="%s"\n' "$dir/none:/usr/bin:/bin" >"$T/$f"; done
+    for f in .profile .zprofile .bash_profile; do printf 'PATH="%s"\n' "$dir/none" >"$T/$f"; done
     board "$STLINK, \"debug\": \"openocd\", \"rtt\": true"
     lines=20 farrun "command:Open the board's RTT;rttwait:driver fw;wait:1000;rttdump;wait:1000;rttdump;wait:1000;rttdump"  # (rttdump: what has come from there taken, as the window's loop would)
     got=$(printf '%s' "$got" | grep -o "blit: openocd is not installed on [^~]*" | head -1 | sed 's/ *$//')
@@ -399,10 +400,10 @@ else
         size=2000x1400 open=src/main.rs qrun "$go;termclick:./src/main.rs:26;frame;statusdump"
         got=${got% LF *}
         check "Cmd+click on a place opens it" "src/main.rs | Ln 26, Col 1 Spaces: 4"
-        mkdir -p "$dir/nodefmt"
+        without "$dir/nodefmt" defmt-print
         for t in qemu-system-arm "$gdb"; do ln -sf "$(command -v "$t" || echo "$t")" "$dir/nodefmt/"; done
         rm "$HOME/.cargo/bin/defmt-print"
-        size=2400x1400 open=src/main.rs path="$dir/nodefmt:/usr/bin:/bin" qrun "key:F5;debugwait:stopped;key:ctrl+\`;text:\`;frame;termdump"
+        size=2400x1400 open=src/main.rs path="$dir/nodefmt" qrun "key:F5;debugwait:stopped;key:ctrl+\`;text:\`;frame;termdump"
         got=${got% @*}
         check "no defmt-print, on the PATH or in ~/.cargo/bin: said in the tab, and how to have it" "[defmt-print is not installed on $this (nor in ~/.cargo/bin: cargo install defmt-print)]"
     fi
