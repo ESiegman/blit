@@ -1303,6 +1303,12 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s\n", debug_rows_dump(arg.substr(0, sep), sep == std::string::npos ? 1000 : static_cast<u32>(std::atoi(arg.c_str() + sep + 1))).c_str());
         } else if (verb == "debuginline") {  // the notes after the lines of the first view while stopped (where, the values), as last drawn
             std::fprintf(stderr, "%s\n", debug_inline_dump().c_str());
+        } else if (verb == "debugfault") {  // a board's fault: the Debug tab's line (debugfault:report, the report's lines, " | " between them), or "no fault"
+            std::fprintf(stderr, "%s\n", debug_fault_dump(arg == "report").c_str());
+        } else if (verb == "debugfaultline") {  // debugfaultline:NAME, the fault report's cursor on the line of that register (PC, LR, mepc, EPC1)
+            if (!debug_fault_line(arg)) std::fprintf(stderr, "debugfaultline: no %s\n", arg.c_str());
+        } else if (verb == "debugdisasm") {  // the disassembly tab's line at its cursor, or "no disassembly"
+            std::fprintf(stderr, "%s\n", debug_disasm_dump().c_str());
         } else if (verb == "snippetdump") {  // the snippet being filled in: each stop's places (line:column, from 1), the one the cursor is at in brackets
             std::fprintf(stderr, "%s\n", snippet_dump().c_str());
         } else if (verb == "asmdump") {  // once a file's assembly is made: its lines (from 1) of the file's cursor line, as "line: lines"

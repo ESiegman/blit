@@ -413,6 +413,7 @@ void App::commands_create() {
     own("Run to the cursor", {key(SDLK_F10, kC)}, [this] { debug_run_to_cursor(); });
     own("Jump to the cursor's line", {}, [this] { debug_jump_to_cursor(); });
     own("Show the disassembly", {}, [this] { debug_disasm_open(); });
+    own("Show the fault report", {}, [this] { debug_fault_open(); });
     own("Show memory at\xE2\x80\xA6", {}, [this] { debug_memory_pick(); });
     own("Next page of memory", {}, [this] { debug_memory_page(1); });
     own("Previous page of memory", {}, [this] { debug_memory_page(-1); });

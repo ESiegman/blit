@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -1435,6 +1436,20 @@ private:
     std::string debug_board_dump(bool attach);  // (the tests: what its preset starts)
     void debug_board_begin(const BuildTask& c, const BoardDebug& plan, const std::string& elf, bool attach);
     bool debug_board_stopped(const json::Value& body);  // a board's stop: passed over on the way to main (true)
+    // A board's stop at a fault (fault.hpp): read, named, reported.
+    void debug_registers(i64 frame, std::function<void(std::map<std::string, u64, std::less<>>)> then);
+    void debug_read_words(u64 addr, u32 count, std::function<void(std::vector<i64>)> then);
+    void debug_fault_look();
+    void debug_fault_cm(u64 gen);
+    void debug_fault_done(u64 gen);
+    void debug_fault_take();
+    void debug_fault_open();  // "Show the fault report"
+    void debug_fault_fill(bool fresh);
+    bool debug_fault_key(const SDL_KeyboardEvent& k);  // Enter on the report's stacked PC: its source and instructions
+    void debug_fault_goto(u64 addr);
+    std::string debug_fault_dump(bool report);  // (the tests: the Debug tab's line, or the report's lines)
+    bool debug_fault_line(const std::string& name);  // (the tests: the report's cursor on a register's line)
+    std::string debug_disasm_dump();  // (the tests: the disassembly tab's line at its cursor)
     void debug_restart();  // the session ended and started again as it was (built again first, as F5 builds)
     std::string debug_in_terminal(const std::string& arguments);  // (the debugger's runInTerminal: a terminal tab running it; what blit answers)
     u64 debug_terminal(const std::string& dir, const std::string& command, const std::string& title);  // (a terminal tab for the program's input and output)

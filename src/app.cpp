@@ -2146,6 +2146,7 @@ void App::on_key(const SDL_KeyboardEvent& k) {
             return;
         if (term_key(k)) return;   // a terminal's tab is in front (appterm.cpp)
         if (debug_console_key(k)) return;  // the debug console's (appdebug.cpp)
+        if (debug_fault_key(k)) return;    // the fault report's (appdebug.cpp)
     }
     if (script_keys_ && script_key(k)) return;  // a mapping of a script's has it (applua.cpp)
     if (!find_open_ && !panel_has_keyboard() && pair_key(k)) return;  // Backspace or Enter between a pair

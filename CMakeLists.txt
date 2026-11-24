@@ -526,6 +526,8 @@ if(BLIT_DEV)
     # and crash dumps in a run's output decoded in place (tests/crash.sh).
     add_test(NAME elf COMMAND sh ${CMAKE_SOURCE_DIR}/tests/elf.sh $<TARGET_FILE:blit>)
     add_test(NAME crash COMMAND sh ${CMAKE_SOURCE_DIR}/tests/crash.sh $<TARGET_FILE:blit>)
+    # The fault report: Cortex-M and RISC-V faults on QEMU, and the tables for what it cannot make.
+    add_test(NAME faults COMMAND sh ${CMAKE_SOURCE_DIR}/tests/faults.sh $<TARGET_FILE:blit>)
     # Every suite sees the dark appearance, whatever the machine is set to
     # (GitHub's machines are light), and the cell macOS's own font has at
     # 13 pt (16 x 31 pixels at twice the density), whatever fonts the
