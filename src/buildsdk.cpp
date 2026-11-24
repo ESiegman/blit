@@ -278,7 +278,6 @@ struct Adder {
 
 bool find_esp_idf(const std::string& root, const std::vector<FsEntry>& files, std::vector<BuildTask>& out) {
     auto file = [&](std::string_view name) { return std::ranges::any_of(files, [&](const FsEntry& e) { return !e.dir && e.name == name; }); };
-    auto dir = [&](std::string_view name) { return std::ranges::any_of(files, [&](const FsEntry& e) { return e.dir && e.name == name; }); };
     if (!file("CMakeLists.txt")) return false;
     std::string cml;
     if (!fs_read(root + "/CMakeLists.txt", &cml, 1u << 20)) return false;
@@ -286,13 +285,17 @@ bool find_esp_idf(const std::string& root, const std::vector<FsEntry>& files, st
     // out, begins with the include of its project.cmake (or of v2's
     // idf.cmake): idf.py v6.1.1's own test (idf_py_actions/mcp_ext.py,
     // _is_valid_project_dir, with idf_component_tools' CMAKE_PROJECT_LINE).
+    // (Any other CMake project, the most common, is told by one search.)
+    if (cml.find("IDF_PATH") == std::string::npos) return false;
     bool idf = false;
     std::string project;
     each_line(cml, [&](std::string_view line) {
-        std::string packed;
-        for (const char c : line)
-            if (!std::isspace(static_cast<unsigned char>(c))) packed += c;
-        if (packed.starts_with("include($ENV{IDF_PATH}/tools/cmake/project.cmake)") || packed.starts_with("include($ENV{IDF_PATH}/tools/cmakev2/idf.cmake)")) idf = true;
+        if (!idf && line.find("IDF_PATH") != std::string_view::npos) {
+            std::string packed;
+            for (const char c : line)
+                if (!std::isspace(static_cast<unsigned char>(c))) packed += c;
+            if (packed.starts_with("include($ENV{IDF_PATH}/tools/cmake/project.cmake)") || packed.starts_with("include($ENV{IDF_PATH}/tools/cmakev2/idf.cmake)")) idf = true;
+        }
         // (project(hello_world): its name, which its ELF is named for.)
         line = trim(line);
         if (project.empty() && line.starts_with("project")) {
@@ -305,24 +308,17 @@ bool find_esp_idf(const std::string& root, const std::vector<FsEntry>& files, st
         }
     });
     if (!idf) return false;
-    // What the last build says of itself (build/project_description.json),
-    // else the project's sdkconfig, else ESP-IDF's defaults.
-    std::string elf = project.empty() ? std::string() : project + ".elf", target, baud;
-    if (dir("build"))
-        if (std::string text; fs_read(root + "/build/project_description.json", &text, 1u << 20)) {
-            json::Doc doc;
-            if (doc.parse(text)) {
-                if (!doc.root()["app_elf"].str().empty()) elf = std::string(doc.root()["app_elf"].str());
-                target = std::string(doc.root()["target"].str());
-                if (doc.root()["monitor_baud"].exists()) baud = doc.root()["monitor_baud"].is_string() ? std::string(doc.root()["monitor_baud"].str()) : std::to_string(doc.root()["monitor_baud"].integer());
-            }
-        }
+    // Its ELF is build/NAME.elf, NAME its project(); its target and the
+    // monitor's speed its sdkconfig's (else sdkconfig.defaults', else
+    // ESP-IDF's defaults), which the build's project_description.json
+    // only repeats (one file read fewer: a round trip, on another machine).
+    const std::string elf = project.empty() ? std::string() : project + ".elf";
     std::string sdkconfig;
     if (file("sdkconfig")) fs_read(root + "/sdkconfig", &sdkconfig, 1u << 20);
     else if (file("sdkconfig.defaults")) fs_read(root + "/sdkconfig.defaults", &sdkconfig, 1u << 20);
-    if (target.empty()) target = sdk_value(sdkconfig, "CONFIG_IDF_TARGET");
+    std::string target = sdk_value(sdkconfig, "CONFIG_IDF_TARGET");
     if (target.empty()) target = "esp32";
-    if (baud.empty() || baud == "0") baud = sdk_value(sdkconfig, "CONFIG_ESPTOOLPY_MONITOR_BAUD");
+    std::string baud = sdk_value(sdkconfig, "CONFIG_ESPTOOLPY_MONITOR_BAUD");
     if (baud.empty()) baud = sdk_value(sdkconfig, "CONFIG_ESP_CONSOLE_UART_BAUDRATE");
 
     const Machine m = machine_of(root);
@@ -347,7 +343,7 @@ bool find_esp_idf(const std::string& root, const std::vector<FsEntry>& files, st
     if (board.baud <= 0) board.baud = 115200;
     if (!elf.empty()) board.elf = "build/" + elf;
     if (!place.python.empty()) board.tool_dirs.push_back(place.python.substr(0, place.python.rfind('/')));  // (its esptool)
-    const std::string firmware = !project.empty() ? project : elf.substr(0, elf.rfind('.'));
+    const std::string& firmware = project;
     a.own("Flash", "esptool, build/flasher_args.json", "flash", board, board.elf.empty() ? std::string() : root + "/" + board.elf, firmware, "ESP-IDF: Build");
     a.own("Monitor", serial_words(board), "monitor", board, board.elf.empty() ? std::string() : root + "/" + board.elf, firmware, {});
     BuildTask& config = a.add("Menuconfig", "idf.py menuconfig");
@@ -528,6 +524,40 @@ std::string platform_name(std::string p) {
     return p;
 }
 
+// What an installed platform's board manifest says (boards/NAME.json):
+// its MCU, and whether its firmware is reset into its boot ROM by a 1200
+// baud touch. Read once per machine and file while blit runs (one not
+// there, read again as a platform may be installed by a build since).
+struct BoardManifest {
+    std::string mcu;
+    bool touch = false;
+    bool read = false;
+};
+
+BoardManifest board_manifest(const std::string& host, const std::string& path) {
+    static std::mutex mu;
+    static std::map<std::string, BoardManifest> kept;
+    const std::string key = host + "\n" + path;
+    {
+        std::lock_guard lock(mu);
+        if (const auto it = kept.find(key); it != kept.end()) return it->second;
+    }
+    BoardManifest b;
+    if (std::string text; fs_read(path, &text, 1u << 20)) {
+        json::Doc doc;
+        if (doc.parse(text)) {
+            b.read = true;
+            b.mcu = std::string(doc.root()["build"]["mcu"].str());
+            b.touch = doc.root()["upload"]["use_1200bps_touch"].boolean();
+        }
+    }
+    if (b.read) {
+        std::lock_guard lock(mu);
+        kept[key] = b;
+    }
+    return b;
+}
+
 // A path a port option names, if it is one (PlatformIO takes wildcards,
 // which are not).
 std::string plain_port(const std::optional<std::string>& v) {
@@ -577,7 +607,7 @@ bool find_platformio(const std::string& root, const std::vector<FsEntry>& files,
     const std::string build_dir = ini.get("platformio", "build_dir").value_or(".pio/build");
     const std::string core = ini.get("platformio", "core_dir").value_or(place.core);
     const std::string test_dir = ini.get("platformio", "test_dir").value_or("test");
-    const bool tests = fs_kind(root + "/" + test_dir) == 2;
+    const bool tests = test_dir.find('/') == std::string::npos ? std::ranges::any_of(files, [&](const FsEntry& e) { return e.dir && e.name == test_dir; }) : fs_kind(root + "/" + test_dir) == 2;
     if (order.empty()) {  // (a project with no env yet: pio's own default)
         a.add("Build", "pio run", true);
         a.add("Clean", "pio run -t clean");
@@ -592,16 +622,11 @@ bool find_platformio(const std::string& root, const std::vector<FsEntry>& files,
         // ROM by a 1200 baud touch).
         const std::string platform = platform_name(ini.get(section, "platform").value_or(""));
         const std::string board_id = ini.get(section, "board").value_or("");
-        std::string mcu;
-        bool touch = false;
+        BoardManifest manifest;
         if (!platform.empty() && !board_id.empty() && board_id.find('/') == std::string::npos && platform.find('/') == std::string::npos)
-            if (std::string manifest; fs_read(m.at + core + "/platforms/" + platform + "/boards/" + board_id + ".json", &manifest, 1u << 20)) {
-                json::Doc doc;
-                if (doc.parse(manifest)) {
-                    mcu = std::string(doc.root()["build"]["mcu"].str());
-                    touch = doc.root()["upload"]["use_1200bps_touch"].boolean();
-                }
-            }
+            manifest = board_manifest(m.host, m.at + core + "/platforms/" + platform + "/boards/" + board_id + ".json");
+        std::string mcu = manifest.mcu;
+        const bool touch = manifest.touch;
         if (const std::optional<std::string> own = ini.get(section, "board_build.mcu")) mcu = *own;
         Board board;
         board.set = true;
