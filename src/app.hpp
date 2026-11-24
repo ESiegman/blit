@@ -1851,6 +1851,7 @@ private:
     void flash_board(FlashMode mode, bool force);
     void flash_sync();
     void flash_ended(u64 doc, bool well);  // a run has ended (well: it exited 0, was not stopped, and said no failure)
+    void flash_port(const std::string& root, const std::string& port, bool flashing);  // the board's serial port, as its flash starts and ends
     void flash_settle();                   // (the tests: the build first, and the image found, waited for)
     std::string flash_dump();              // (the tests: the board's flash object as read)
     u64 test_gen_ = 1;  // counts up whenever what the Tests tab shows may have changed
