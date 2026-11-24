@@ -13,6 +13,8 @@
 //   xtensa-user-break      the same registers, at one of the user's own breakpoints: no fault
 //   xtensa-panic           stopped in xt_unhandled_exception: its XtExcFrame
 //   xtensa-pseudo          stopped in panicHandler: ESP-IDF's own cause (an interrupt watchdog)
+//   xtensa-entry           stopped at xt_unhandled_exception's first instruction: its `frame`
+//                          not yet the argument (gdb read 0x3a there), the registers instead
 //   riscv-panic            an ESP32-C3 stopped in xt_unhandled_exception: its RvExcFrame
 //   riscv-interrupt        a RISC-V stop in the trap handler for a timer interrupt: no fault
 #include <cstdio>
@@ -102,11 +104,23 @@ int main(int argc, char** argv) {
         f.frames = {"panic_handler", c == "xtensa-panic" ? "xt_unhandled_exception" : "panicHandler", "_xt_user_exc"};
         f.ips = {0x40378a10, 0x40378b00, 0x40378c00};
         f.pseudo = c == "xtensa-pseudo";
+        f.in_panic = true;
         f.panic_frame = 0x3fc9a0b0;
         f.panic_words.assign(22, 0);
         f.panic_words[1] = 0x42009210, f.panic_words[2] = 0x60030, f.panic_words[3] = 0x82009300, f.panic_words[4] = 0x3fc9a1c0;
         f.panic_words[20] = c == "xtensa-panic" ? 28 : 5, f.panic_words[21] = c == "xtensa-panic" ? 4 : 0;
         print(f, names({{0x42009210, {"read_sensor", "/p/main/sensor.c", 77, 0, false}}}));
+    } else if (c == "xtensa-entry") {
+        // As the lab box's ESP32-S3 gave it with a breakpoint on
+        // xt_unhandled_exception: `frame` 0x3a, the words there zeros.
+        f.arch = FaultFacts::kXtensa;
+        f.regs = {{"pc", 0x40378e3a}, {"exccause", 29}, {"epc1", 0x42009126}, {"excvaddr", 0}, {"debugcause", 2}, {"ibreakenable", 1}, {"ibreaka0", 0x40378e3a}};
+        f.frames = {"xt_unhandled_exception", "_xt_handle_exc"};
+        f.ips = {0x40378e3a, 0x40375c20};
+        f.user_break = true, f.in_panic = true;
+        f.panic_frame = 0x3a;
+        f.panic_words.assign(22, 0);
+        print(f, names({{0x42009126, {"motor_step", "/tmp/m5-fault-esp/main/main.c", 10, 0, false}}}));
     } else if (c == "riscv-panic") {
         // An ESP32-C3 stopped in xt_unhandled_exception (vectors.S:18's
         // panic_from_exception): its RvExcFrame (rvruntime-frames.h:48-84): a
@@ -115,9 +129,9 @@ int main(int argc, char** argv) {
         f.regs = {{"pc", 0x40380a00}, {"mcause", 7}, {"mepc", 0x40380a00}, {"mtval", 0}, {"mtvec", 0x40380001}};
         f.frames = {"panic_handler", "xt_unhandled_exception", "_panic_handler"};
         f.ips = {0x40380a00, 0x40380b00, 0x40380c00};
-        f.panic_frame = 0x3fc8e0a0;
+        f.panic_frame = 0x3fc8e0a0, f.in_panic = true;
         f.panic_words.assign(36, 0);
-        f.panic_words[0] = 0x42005d6a, f.panic_words[1] = 0x42005d80, f.panic_words[32] = 0x1880, f.panic_words[33] = 0x40380001, f.panic_words[34] = 7, f.panic_words[35] = 0;
+        f.panic_words[0] = 0x42005d6a, f.panic_words[1] = 0x42005d80, f.panic_words[2] = 0x3fc8e200, f.panic_words[32] = 0x1880, f.panic_words[33] = 0x40380001, f.panic_words[34] = 7, f.panic_words[35] = 0;
         print(f, names({{0x42005d6a, {"motor_step", "/p/main/motor.c", 12, 0, false}}, {0x40380000, {"_vector_table", "", 0, 0, false}}}));
     } else if (c == "riscv-interrupt") {
         // In the trap handler (mtvec's base) for the machine timer interrupt: no fault.

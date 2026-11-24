@@ -57,7 +57,7 @@ struct FaultFacts {
     // stack; `pseudo` when it came by panicHandler, whose cause is one of
     // ESP-IDF's own (PANIC_RSN_*).
     u64 panic_frame = 0;
-    bool pseudo = false;
+    bool pseudo = false, in_panic = false;  // (in_panic: the panic handler is on the stack, its frame read or not)
     std::vector<i64> panic_words;
 };
 

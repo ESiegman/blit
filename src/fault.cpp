@@ -298,6 +298,11 @@ const char* xt_pseudo(u64 code) {
     return code < std::size(kPseudo) ? kPseudo[code] : nullptr;
 }
 
+// Where a windowed call returns to: a0's low 30 bits, the top two (the
+// call's window increment, in a0) those of the code it is in (the Xtensa
+// ISA's windowed register ABI; ESP-IDF's esp_cpu_process_stack_pc does as much).
+u64 xt_return(u64 a0, u64 pc) { return (a0 & 0x3FFFFFFFu) | (pc & 0xC0000000u); }
+
 // A fault, not a trap the program means: these causes are its own doing.
 bool xt_fault(u64 code) { return code != 1 && code != 4 && code != 5; }
 
@@ -519,7 +524,8 @@ FaultReport cm_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
 FaultReport rv_report(const FaultFacts& f, const std::map<u64, SourceFrame>& where) {
     Out o;
     u64 mcause = 0, mepc = 0, mtval = 0, mtvec = 0, mstatus = 0, pc = 0;
-    const bool panic = f.panic_frame && word(f.panic_words, 35) >= 0;
+    // (A panic frame whose sp is 0 is none: read before the panic handler had it.)
+    const bool panic = f.panic_frame && word(f.panic_words, 35) >= 0 && word(f.panic_words, 2) > 0;
     bool have = false;
     if (panic) {  // (RvExcFrame: mepc 0, ..., mstatus 32, mtvec 33, mcause 34, mtval 35)
         mepc = static_cast<u64>(word(f.panic_words, 0));
@@ -538,7 +544,7 @@ FaultReport rv_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
     if (!have) return {};
     const bool interrupt = mcause >> 31;
     const u64 code = mcause & 0x7FFFFFFF;
-    if (!panic) {
+    if (!panic && !f.in_panic) {
         // In the trap handler: its PC in the function at mtvec's base (the
         // ELF's names; else the debugger's for the frame), and a fault, not
         // an interrupt or an environment call.
@@ -568,6 +574,7 @@ FaultReport rv_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
         o.value("mstatus", mstatus, "MPP " + std::to_string(mpp) + (*kMode[mpp] ? std::string(": it was in ") + kMode[mpp] + " mode" : std::string()));
     }
     if (panic) o.add("  from ESP-IDF's panic frame at " + hex8(f.panic_frame), 4);
+    else if (f.in_panic) o.add("  from the core's registers, in ESP-IDF's panic handler (its frame could not be read here)", 4);
     std::string line = what;
     if (address && mtval) line += " at " + hex8(mtval) + " (mtval)";
     else if (!interrupt && code == 2 && mtval) line += "; instruction " + hex8(mtval);
@@ -584,7 +591,10 @@ FaultReport xt_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
     Out o;
     u64 cause = 0, epc1 = 0, vaddr = 0, pc = 0;
     reg(f, "pc", &pc);
-    const bool panic = f.panic_frame && word(f.panic_words, 21) >= 0;
+    // (A panic frame whose a1, the stack pointer, is 0 is none: read before
+    // the panic handler had it, at its first instruction, where gdb's a2 is
+    // not yet its argument.)
+    const bool panic = f.panic_frame && word(f.panic_words, 21) >= 0 && word(f.panic_words, 4) > 0;
     bool rerun = false;
     if (panic) {  // (XtExcFrame: exit 0, pc 1, ps 2, a0 3 ... a15 18, sar 19, exccause 20, excvaddr 21)
         epc1 = static_cast<u64>(word(f.panic_words, 1));
@@ -599,7 +609,7 @@ FaultReport xt_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
         // not at one of the user's.
         u64 dc = 0, en = 0, a0 = 0;
         rerun = reg(f, "debugcause", &dc) && (dc & 2) && reg(f, "ibreakenable", &en) && (en & 1) && reg(f, "ibreaka0", &a0) && a0 == pc && !f.user_break;
-        if (!rerun || !xt_fault(cause)) return {};
+        if ((!rerun && !f.in_panic) || !xt_fault(cause)) return {};
     }
     o.r.fault = true;
     const Cause* c = f.pseudo ? nullptr : xt_cause(cause);
@@ -617,9 +627,13 @@ FaultReport xt_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
     const bool address = c && c->address;
     o.value("EXCVADDR", vaddr, address ? "the address that faulted" : "not about an address for this cause");
     if (panic) {
-        o.value("A0", static_cast<u64>(std::max<i64>(0, word(f.panic_words, 3))), "the return address of the function that faulted");
-        o.value("A1", static_cast<u64>(std::max<i64>(0, word(f.panic_words, 4))), "its stack pointer");
+        const u64 a0 = static_cast<u64>(std::max<i64>(0, word(f.panic_words, 3))), ret = xt_return(a0, epc1);
+        const std::string to = named(where, ret);
+        o.value("A0", a0, "returns to " + hex8(ret) + (to.empty() ? std::string() : " in " + to), ret);
+        o.value("A1", static_cast<u64>(std::max<i64>(0, word(f.panic_words, 4))), "the stack pointer");
         o.add("  from ESP-IDF's panic frame at " + hex8(f.panic_frame), 4);
+    } else if (f.in_panic) {
+        o.add("  from the core's registers, in ESP-IDF's panic handler (its frame could not be read here)", 4);
     }
     if (rerun) {
         if (pc != epc1) o.value("PC", pc, named(where, pc), pc);
@@ -725,8 +739,12 @@ std::vector<u64> fault_addresses(const FaultFacts& f) {
             if (reg(f, "pc", &v)) add(v);
             break;
         case FaultFacts::kXtensa:
-            if (f.panic_frame) add(static_cast<u64>(std::max<i64>(0, word(f.panic_words, 1))));
-            else if (reg(f, "epc1", &v)) add(v);
+            if (f.panic_frame) {
+                const u64 pc = static_cast<u64>(std::max<i64>(0, word(f.panic_words, 1)));
+                add(pc);
+                add(xt_return(static_cast<u64>(std::max<i64>(0, word(f.panic_words, 3))), pc));
+            }
+            if (reg(f, "epc1", &v)) add(v);
             if (reg(f, "pc", &v)) add(v);
             break;
         case FaultFacts::kUnknown: break;

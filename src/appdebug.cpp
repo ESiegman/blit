@@ -1798,6 +1798,7 @@ void App::debug_fault_look() {
                 bool pseudo = false;
                 if (!fault_panic_function(g.frames[i], &pseudo)) continue;
                 g.pseudo = pseudo;
+                g.in_panic = true;
                 ++v.asking;
                 v.dap->request("evaluate", "{\"expression\":\"frame\",\"frameId\":" + std::to_string(ids[i]) + ",\"context\":\"watch\"}", [this, gen](const Dap::Message& m) {
                     DebugUi& w = *debugui_;
