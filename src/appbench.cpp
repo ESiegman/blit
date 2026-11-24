@@ -1481,6 +1481,13 @@ void App::run_script(const char* script) {
             } else {
                 std::fprintf(stderr, "pixel %d,%d: none\n", x, y);
             }
+        } else if (verb == "shotnow") {  // shotnow:FILE.bmp, a frame drawn now and written as --shot writes the last (a flash under way, say)
+            term_sync();
+            std::vector<u8> rgba;
+            int w = 0, h = 0;
+            SDL_Surface* s = frame() == Renderer::kDrawn && gpu_.read_pixels(rgba, &w, &h) ? SDL_CreateSurfaceFrom(w, h, SDL_PIXELFORMAT_RGBA32, rgba.data(), w * 4) : nullptr;
+            if (!s || !SDL_SaveBMP(s, arg.c_str())) std::fprintf(stderr, "shotnow: cannot write %s\n", arg.c_str());
+            SDL_DestroySurface(s);
         } else if (verb == "reload") {  // what coming back to the window does: files changed on disk read again
             reload_changed();
         } else if (verb == "pinch") {  // pinch:SCALE, a touchpad's pinch (over where the mouse was put)
