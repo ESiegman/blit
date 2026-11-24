@@ -11,9 +11,11 @@
 # their pixels where colour matters (x, z, a busy band, a high line), a dump
 # over timeline.max_mb, one that cannot be read, dumps on another
 # machine (tests/fake-ssh.sh stands in for ssh): one fetched whole, one too
-# large to be yet; and ILA captures (Vivado's, of a Basys 3), as VCD and
-# as CSV: their samples, radixes, triggers and windows; and times in a
-# terminal (as Icarus and Verilator print them) Cmd+clicked into the cursor.
+# large to be yet, an ILA capture's CSV told from another .csv there; and
+# ILA captures (Vivado's, of a Basys 3), as VCD and as CSV: their samples,
+# radixes (ASCII and values given names too), triggers and windows; and
+# times in a terminal (as Icarus and Verilator print them) Cmd+clicked into
+# the cursor.
 #
 # As they change: a dump written again (a rerun) read
 # again with the view kept, here and there; one still being written
@@ -438,6 +440,24 @@ got=$(printf '%s' "$got" | sed -e 's/ ;; .*//')
 check "another machine's FST, fetched and read" "verilator.fst: read, cursor 0 ps, view 0 ps to 2.772 us"
 got=$(ls "$dir/cache/waves" 2>/dev/null | wc -l | tr -d ' ')
 check "(its copy here removed once read)" "0"
+# Another machine's .csv: an ILA capture's (told by its first bytes,
+# asked for alone as its tab opens) is fetched as any dump there is, and
+# opens as its waves, in its radixes, with its triggers and windows; any
+# other opens as text; a capture over wave.remote_fetch_mb is not shown.
+cp "$here/wave/ila_windows.csv" "$here/wave/ila_radix.csv" "$T/work/"
+printf 'a,b\n1,2\n' >"$T/work/table.csv"
+awk 'NR <= 2 { print } END { for (i = 0; i < 60000; i++) printf "%d,%d,0,%02x,0,0,%d,0000\n", i, i, i % 256, i % 4096 }' "$here/wave/ila_one.csv" >"$T/work/big.csv"
+run 1600x900 "remotewait;frame;wavewait;key:n;wavedump" "ssh://box$T/work/ila_windows.csv"
+check "another machine's ILA capture: its waves, triggers, windows and radixes" "ila_windows.csv: read, cursor 33, view 0 to 1023, triggers at 32 288 544 800, windows from 256 512 768 ;; >dut.count[7:0] = 0 signed ;;  dut.wrap = 0 ;;  dut.phase[1:0] = 2 octal ;;  dut.sum[11:0] = 255 unsigned ;;  dut.sw_q[3:0] = 0000 binary"
+run 1600x900 "remotewait;frame;wavewait;wavedump" "ssh://box$T/work/ila_radix.csv"
+check "another machine's capture in ASCII and with names" "ila_radix.csv: read, cursor 100, view 0 to 1023, triggers at 100 ;; >dut.count[7:0] = 40 hex ;;  dut.ch[7:0] = z ascii ;;  dut.pair[7:0] = H ascii ;;  dut.odd[7:0] = z ascii ;;  dut.state[2:0] = 7"
+run 1600x900 "remotewait;frame;wavedump;rowsdump:2" "ssh://box$T/work/table.csv"
+check "another machine's CSV that is not a capture: text" "no wave tab ;; rows | a,b | 1,2"
+run 1600x900 "remotewait;frame;wavewait;wavedump" "ssh://box$T/work/big.csv"
+got=$(printf '%s' "$got" | sed -e 's/ ;; .*//')
+check "another machine's capture over 1 MB, fetched in parts" "big.csv: read, cursor 0, view 0 to 59999"
+got=$(BLIT_INIT="$dir/fetch1.lua" "$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "remotewait;frame;wavewait;wavedump" "ssh://box$T/work/big.csv" 2>&1 >/dev/null | grep '^big.csv')
+check "a capture over wave.remote_fetch_mb: not shown, and why" "big.csv: cannot show it: waves larger than 1 MB on another machine are not shown (wave.remote_fetch_mb)"
 
 # ILA captures (tests/wave/ila.txt): their times are samples; the cursor
 # starts at the trigger; Vivado's own _TRIGGER, _WINDOW and _GAP are not

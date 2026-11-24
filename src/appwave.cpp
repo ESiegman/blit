@@ -15,9 +15,10 @@
 // the stretch on show) is kept beside the project in .blit/waves/, data and
 // not Lua, and comes back when the dump is opened again.
 //
-// A dump on another machine is fetched whole while it is no larger than a
-// reply may be (4 MB); larger ones wait for the agent's reads in parts
-// (kReadAt), which plug in at remote_read_at below.
+// A dump on another machine is fetched whole, in the agent's reads in parts
+// (kReadAt) with its progress on the bottom row, up to wave.remote_fetch_mb
+// (remote_read_at, remote_fst below). Its .csv is told to be a capture by
+// its first bytes, fetched alone as it opens (appremote.cpp).
 #include <SDL3/SDL.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -400,14 +401,27 @@ struct App::Waves {
     }
 };
 
-bool App::is_wave_path(std::string_view path) {
-    if (path.size() < 4) return false;
-    std::string ext(path.substr(path.size() - 4));
+namespace {
+
+// The path's last four characters, in lower case: ".vcd".
+std::string ext4(std::string_view path) {
+    std::string ext(path.substr(path.size() < 4 ? 0 : path.size() - 4));
     for (char& c : ext) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+    return ext;
+}
+
+}  // namespace
+
+bool App::is_csv_path(std::string_view path) { return ext4(path) == ".csv"; }
+
+bool App::is_wave_path(std::string_view path) {
+    const std::string ext = ext4(path);
     if (ext == ".vcd" || ext == ".fst") return true;
-    // An ILA capture's CSV, by its first line (here only: another machine's is not asked for it on the way).
+    // An ILA capture's CSV, by its first line. (Another machine's opens as
+    // text, and the worker reading it asks for its first bytes first: a
+    // capture's wave tab then takes the text's place, appremote.cpp.)
     if (ext != ".csv" || is_remote(path)) return false;
-    char head[16];
+    char head[kDumpHead];
     FILE* f = std::fopen(std::string(path).c_str(), "rb");
     if (!f) return false;
     const size_t n = std::fread(head, 1, sizeof head, f);
@@ -417,10 +431,7 @@ bool App::is_wave_path(std::string_view path) {
 
 namespace {
 
-// Another machine's dump, as the load reads it. Fetched whole while it is
-// no larger than one reply may be; the agent's reads in parts (kReadAt,
-// with progress) plug in here for larger ones.
-// Another machine's dump: fetched whole on the load's first read, in
+// Another machine's dump (a VCD, or an ILA capture's CSV): fetched whole on the load's first read, in
 // parts of about 1 MB (fs_read_range: other traffic between them, its
 // progress on the bottom row, where a click stops it), up to most bytes.
 WaveLoad::ReadAt remote_read_at(const std::string& path, std::stop_token stop, std::shared_ptr<std::string> why, u64 most) {
@@ -509,8 +520,9 @@ bool file_id(const std::string& path, i64* stamp, u64* dev, u64* ino) {
 
 }  // namespace
 
-// A dump in a tab of its own (open_path() sends it here).
-bool App::wave_open(const std::string& full) {
+// A dump in a tab of its own (open_path() sends it here; the reading of
+// another machine's file, its tab still empty, when it is a capture).
+bool App::wave_open(const std::string& full, Pane* in, size_t in_at) {
     if (!waves_) waves_ = std::make_shared<Waves>();
     auto fresh = std::make_shared<Doc>();
     fresh->ed.path = full;
@@ -539,6 +551,36 @@ bool App::wave_open(const std::string& full) {
         // only once it is closed.)
         watch_follow();
         if (watch_) watch_->file(full);
+    }
+    if (in && in_at < in->docs.size()) {
+        // In place of the tab that was to show its text: another split
+        // showing that too lets it go (a wave tab is shown in one split).
+        const u64 was = in->docs[in_at]->id;
+        Pane* const focused = pane_;
+        for (bool again = true; again;) {
+            again = false;
+            for (const std::unique_ptr<Pane>& p : panes_)
+                for (size_t i = 0; p.get() != in && i < p->docs.size() && !again; ++i)
+                    if (p->docs[i]->id == was) {
+                        pane_ = p.get();
+                        tab_close(i, true);
+                        again = true;
+                    }
+        }
+        pane_ = focused;
+        Doc* const old = in->docs[in_at].get();
+        const bool front = in->doc == old;
+        if (lsp_doc_ == old) stop_lsp();
+        forget_doc(old);
+        in->docs[in_at] = std::move(fresh);
+        if (front) {
+            in->doc = in->docs[in_at].get();
+            in->scroll_x = in->scroll_y = in->target_x = in->target_y = 0;
+            in->cache_rev = ~0ull;
+        }
+        pick_theme();
+        dirty_ = true;
+        return true;
     }
     const bool reuse = pane_->doc->ed.path.empty() && !pane_->doc->ed.modified() && pane_->doc->ed.buf.size() == 0 && !pane_->doc->read_only;
     size_t at = pane_->tab + 1;

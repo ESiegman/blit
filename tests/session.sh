@@ -172,6 +172,14 @@ check "another machine's: back when it is here, the cursor where it was" '>[a.tx
 rm "$T/far/a.txt"
 run "remotewait;frame;dump" "$R"
 check "and one gone there goes quietly" '>[untitled*]'
+# An ILA capture's CSV there: its wave tab again (told by its first bytes
+# again), not its text, nor gone.
+cp "$here/wave/ila_windows.csv" "$T/far/cap.csv"
+run "folder:$R;open:$R/cap.csv;remotewait;wavewait;quit"
+run "remotewait;frame;wavewait;dump;wavedump" "$R"
+got=$(printf '%s' "$got" | sed -e 's/ ;; >dut.*//')
+check "another machine's ILA capture: its waves again" '>[cap.csv*] ;; cap.csv: read, cursor 32, view 0 to 1023, triggers at 32 288 544 800, windows from 256 512 768'
+rm "$T/far/cap.csv"
 
 # The breakpoints (with what each waits for: a condition with a backslash
 # in it, a message), the functions' and the expressions watched: kept, and

@@ -1189,7 +1189,10 @@ private:
     };
     static std::span<const WaveCommand> wave_commands();
     static bool is_wave_path(std::string_view path);
-    bool wave_open(const std::string& full);
+    static bool is_csv_path(std::string_view path);
+    // A dump in a tab of its own: after the one in front, or (`in`) in place
+    // of tab `at` there (another machine's .csv found to be an ILA capture).
+    bool wave_open(const std::string& full, Pane* in = nullptr, size_t at = 0);
     void wave_sync();
     void wave_layout(FrameDesc& fd);
     bool wave_hit(int px, int py, Pane** pane);

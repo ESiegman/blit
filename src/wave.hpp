@@ -263,6 +263,7 @@ private:
 // in Buffer"), else VCD's text.
 enum class DumpKind : u8 { kVcd, kFst, kIlaCsv };
 DumpKind dump_kind(std::string_view head);
+inline constexpr u64 kDumpHead = 16;  // (the bytes dump_kind needs)
 
 // An FST file read into a Wave (empty at the start) through libfst
 // (third_party/libfst), on the caller's thread, which it keeps until the

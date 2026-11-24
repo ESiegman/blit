@@ -18,8 +18,13 @@
 #include "qos.hpp"
 #include "remote.hpp"
 #include "serialtab.hpp"
+#include "wave.hpp"
 
 namespace blit {
+
+namespace {
+constexpr int kCapture = 8;  // (a Done's status: past Remote::fetch's own)
+}  // namespace
 
 struct App::RemoteUi {
     struct Job {
@@ -32,7 +37,7 @@ struct App::RemoteUi {
     struct Done {
         u64 doc = 0;
         std::string path;
-        int status = 0;  // as Remote::fetch; 6: a folder
+        int status = 0;  // as Remote::fetch; 6: a folder; kCapture: an ILA capture's CSV, not read
         std::string bytes, error;
         i64 modified = 0;
         bool reload = false;
@@ -208,7 +213,13 @@ void App::remote_start() {
                     halt = u->reading_stop;
                 }
                 const std::stop_callback quitting(stop, [halt]() mutable { halt.request_stop(); });
-                d.status = r->fetch(there, 0, ~0ull, kMost, &d.bytes, halt.get_token(), {}, &d.modified);
+                // (A .csv whose first line is an ILA capture's opens as its waves: its first
+                // bytes asked for alone, and the wave tab fetches the rest.)
+                if (std::string head; !j.reload && !j.compare && App::is_csv_path(j.path) &&
+                                      r->fetch(there, 0, kDumpHead, kDumpHead, &head, halt.get_token()) == 0 && dump_kind(head) == DumpKind::kIlaCsv)
+                    d.status = kCapture;
+                else
+                    d.status = r->fetch(there, 0, ~0ull, kMost, &d.bytes, halt.get_token(), {}, &d.modified);
                 if (d.status == 2 && r->stat(there, &st) && st.kind == 2) d.status = 6;
             }
             d.known = j.known;
@@ -796,6 +807,11 @@ void App::remote_sync() {
             tab_close(at, true);
             pane_ = focused;
             notify("Stopped reading " + x.path);
+            continue;
+        }
+        if (x.status == kCapture) {  // an ILA capture: its wave tab in this one's place (appwave.cpp)
+            session_dropped(x.doc, {});  // (a session's place in its text, if it was one's, does not apply)
+            wave_open(x.path, where, at);
             continue;
         }
         if (x.status != 0 && session_dropped(x.doc, x.status == 5 ? x.error : x.status == 1 || x.status == 6 ? std::string() : "cannot read " + x.path)) {
