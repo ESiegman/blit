@@ -199,7 +199,7 @@ run "key:Escape;text:i;text:x;$open;text:$busy;key:Return;termwait:running;key:c
 check "and after the files to save" 'Save the changes to a new file before quitting? 1 program is still running in a terminal.'
 # (With no working folder chosen, the terminal's folder is found from the file in front, not from the new split.)
 printf 'x\n' >"$dir/work/a.txt"
-got=$("$blit" --offscreen 1200x600 --shot "$dir/shot.bmp" --script "open:$dir/work/a.txt;$open;text:basename \$PWD;key:Return;termwait:work;dump;termdump" 2>&1 >/dev/null | sed -e "s#$dir#@#g" | tail -2 | tr '\n' ' ')
+got=$("$blit" --offscreen 1200x600 --shot "$dir/shot.bmp" --script "open:$dir/work/a.txt;$open;text:basename \$PWD;key:Return;termwait:work;termlast:\$;dump;termdump" 2>&1 >/dev/null | sed -e "s#$dir#@#g" | tail -2 | tr '\n' ' ')
 check "no working folder: Ctrl+\` in the file's folder" 'V([a.txt*] / >[Terminal*])0.70 $ basename $PWD|work|$ @2,2 3x74 '
 mkdir -p "$dir/mk"
 printf 'all:\n\t@echo built\n' >"$dir/mk/Makefile"
