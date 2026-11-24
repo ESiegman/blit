@@ -53,15 +53,37 @@ got=$("$bin" info "$dir/cut" 2>&1)
 check "one cut short in its header" "$dir/cut: not an ELF this reads (its class or byte order)"
 
 # same ELF ADDR2LINE NAME: every function and N addresses in its code, as
-# addr2line answers them (its discriminators aside).
+# addr2line answers them (its discriminators aside). An address answered
+# otherwise is asked of addr2line again on its own, twice, and its second
+# answer taken: for a C++ function the debug information gives no linkage
+# name, binutils' first answer names the code with the symbol table's
+# function around it (an inlined helper's frame named after the function it
+# was inlined into), then keeps the debug information's name unless that
+# symbol starts where the function's code does, so that what it says
+# depends on what was asked before. The reader gives that second answer,
+# whatever was asked before.
+blocks() { awk '/^0x/ && NR > 1 { print "" } { printf "%s~", $0 } END { print "" }'; }
 same() {
     "$bin" addrs "$1" 400 7 >"$dir/addrs"
-    "$bin" lookup "$1" <"$dir/addrs" >"$dir/ours"
-    "$2" -pfiaC -e "$1" <"$dir/addrs" | sed -E 's/ \(discriminator [0-9]+\)//' >"$dir/theirs"
-    if ! cmp -s "$dir/ours" "$dir/theirs"; then
-        echo "FAIL: $3: not as $(basename "$2") answers ($(wc -l <"$dir/addrs" | tr -d ' ') addresses)"
-        diff "$dir/ours" "$dir/theirs" | head -10
+    "$bin" lookup "$1" <"$dir/addrs" | blocks >"$dir/ours"
+    "$2" -pfiaC -e "$1" <"$dir/addrs" | sed -E 's/ \(discriminator [0-9]+\)//' | blocks >"$dir/theirs"
+    paste -d '\n' "$dir/ours" "$dir/theirs" | awk 'NR % 2 { a = $0; next } a != $0 { split(a, w, ":"); print w[1] }' >"$dir/differ"
+    alone=0 wrong=0
+    while read -r a; do
+        alone=$((alone + 1))
+        o=$("$bin" lookup "$1" "$a")
+        t=$(printf '%s\n%s\n' "$a" "$a" | "$2" -pfiaC -e "$1" | sed -E 's/ \(discriminator [0-9]+\)//' | awk '/^0x/ { n++ } n == 2')
+        if [ "$o" != "$t" ]; then
+            wrong=$((wrong + 1))
+            [ "$wrong" -le 3 ] && printf '    ours:   %s\n    theirs: %s\n' "$o" "$t"
+        fi
+    done <"$dir/differ"
+    n=$(wc -l <"$dir/addrs" | tr -d ' ')
+    if [ "$wrong" != 0 ]; then
+        echo "FAIL: $3: $wrong of $n addresses not as $(basename "$2") answers them"
         failed=1
+    elif [ -n "${ELF_SAY:-}" ]; then
+        echo "$3: $n addresses as $(basename "$2") answers them ($alone asked again on their own)"
     fi
 }
 damaged() {

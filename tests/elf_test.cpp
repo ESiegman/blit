@@ -35,6 +35,17 @@ namespace {
 
 double secs(u64 a, u64 b) { return static_cast<double>(b - a) / 1e9; }
 
+// The most memory the process has had resident.
+u64 peak_mb() {
+    struct rusage ru{};
+    getrusage(RUSAGE_SELF, &ru);
+#if defined(__APPLE__)
+    return static_cast<u64>(ru.ru_maxrss) >> 20;
+#else
+    return static_cast<u64>(ru.ru_maxrss) >> 10;
+#endif
+}
+
 std::shared_ptr<const Elf> open_elf(const char* path) {
     std::string why;
     auto e = Elf::read_file(path, &why);
@@ -108,14 +119,7 @@ int damage(const char* path, int rounds, u64 seed) {
         }
         ask(std::move(b));
     }
-    struct rusage ru{};
-    getrusage(RUSAGE_SELF, &ru);
-#if defined(__APPLE__)
-    const u64 peak_mb = static_cast<u64>(ru.ru_maxrss) >> 20;
-#else
-    const u64 peak_mb = static_cast<u64>(ru.ru_maxrss) >> 10;
-#endif
-    std::printf("damage ok: %s, %d rounds, peak %" PRIu64 " MB\n", path, rounds, peak_mb);
+    std::printf("damage ok: %s, %d rounds, peak %" PRIu64 " MB\n", path, rounds, peak_mb());
     return 0;
 }
 
@@ -157,11 +161,11 @@ int main(int argc, char** argv) {
         }
         for (const ElfSymbol* y : fns) {
             std::printf("0x%" PRIx64 "\n", y->value);
-            if (y->size > 2) std::printf("0x%" PRIx64 "\n", (y->value + y->size / 2) & ~1ull);
+            if (y->size > 2) std::printf("0x%" PRIx64 "\n", static_cast<u64>((y->value + y->size / 2) & ~1ull));
         }
         for (int i = 0; i < n && !code.empty(); ++i) {
             const auto& [lo, hi] = code[rng() % code.size()];
-            std::printf("0x%" PRIx64 "\n", (lo + rng() % (hi - lo)) & ~1ull);
+            std::printf("0x%" PRIx64 "\n", static_cast<u64>((lo + rng() % (hi - lo)) & ~1ull));
         }
         return 0;
     }
@@ -213,9 +217,9 @@ int main(int argc, char** argv) {
         const u64 t4 = now_ns();
         fresh.read_all();
         const u64 t5 = now_ns();
-        std::printf("%s: %.1f MB, %zu units; read %.1f ms, units indexed %.1f ms, %d lookups %.1f ms (%zu frames), every unit's tables %.1f ms\n", argv[2],
-                    static_cast<double>(e->bytes().size()) / 1e6, src.units(), secs(t0, t1) * 1e3, secs(t1, t2) * 1e3, n, secs(t3, t4) * 1e3, frames,
-                    secs(t4, t5) * 1e3);
+        std::printf("%s: %.1f MB, %zu units; read %.1f ms, units indexed %.1f ms, %d lookups %.1f ms (%zu frames), every unit's tables %.1f ms, peak %" PRIu64 " MB\n",
+                    argv[2], static_cast<double>(e->bytes().size()) / 1e6, src.units(), secs(t0, t1) * 1e3, secs(t1, t2) * 1e3, n, secs(t3, t4) * 1e3, frames,
+                    secs(t4, t5) * 1e3, peak_mb());
         return 0;
     }
     std::fprintf(stderr, "no mode %s\n", mode.c_str());

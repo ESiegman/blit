@@ -206,11 +206,22 @@ struct Head {
     u64 stmt_list = kNone;
     u64 str_offsets_base = 8, addr_base = 0, rnglists_base = 0;
     bool rnglists_base_set = false;
-    bool mangled = false;  // its language's names are mangled (C++)
+    bool mangled = true;  // its language's names may be mangled (as binutils has it: all but C's and the like; a unit that says none too)
 };
 struct Unit : Head {
     std::unique_ptr<Tables> tables;
 };
+
+// Whether a language's names may be mangled, as binutils decides it
+// (bfd's mangle_style): all but C, COBOL, Fortran 77 and 2018, Pascal,
+// PL/I, UPC and the assemblers.
+bool mangled_language(u64 lang) {
+    switch (lang) {
+    case 0x01: case 0x02: case 0x05: case 0x06: case 0x07: case 0x09: case 0x0c: case 0x0f: case 0x12: case 0x1d: case 0x2c: case 0x2d:
+    case 0x31: case 0x3e: case 0x3f: case 0x8001: case 0x8004: case 0x8006: case 0x8007: case 0x8765: return false;
+    default: return true;
+    }
+}
 
 std::string join_path(std::string_view dir, std::string_view name) {
     const bool whole = name.starts_with('/') || (name.size() > 2 && name[1] == ':' && (name[2] == '/' || name[2] == '\\'));
@@ -447,7 +458,7 @@ struct AddrSource::Impl {
             case kAtHighPc: high = v; break;
             case kAtRanges: ranges = v; break;
             case kAtStmtList: u.stmt_list = v.u; break;
-            case kAtLanguage: u.mangled = v.u == 0x04 || v.u == 0x11 || v.u == 0x19 || v.u == 0x1a || v.u == 0x21; break;  // (C++, its versions, Objective-C++)
+            case kAtLanguage: u.mangled = mangled_language(v.u); break;
             case kAtStrOffsetsBase: u.str_offsets_base = v.u; break;
             case kAtAddrBase:
             case kAtGnuAddrBase: u.addr_base = v.u; break;
@@ -816,9 +827,11 @@ std::vector<SourceFrame> AddrSource::lookup(u64 addr) const {
         SourceFrame first;
         if (row) first.path = file(row->file), first.line = row->line, first.col = row->col;
         if (f) {
-            // (A C++ function the debug information gives no linkage name,
-            // a static one: the symbol table's name, as binutils takes it,
-            // when a symbol starts where its code does.)
+            // (A function of a language whose names are mangled (C++) that
+            // the debug information gives no linkage name: the symbol
+            // table's name, as binutils takes it, when a symbol starts where
+            // its code does. Of an inlined one, that is the function it was
+            // inlined into, binutils' way.)
             bool linkage = false;
             first.function = m.name_of(*f, &linkage);
             if (!linkage && u.mangled && f->ranges_count)
