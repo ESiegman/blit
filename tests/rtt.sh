@@ -270,10 +270,20 @@ else
     plan '"probe": {"kind": "jlink", "serial": "000801234567", "usb": "1366:0105"}, "chip": "STM32H743ZI", "elf": "fw.elf", "rtt": true, "semihosting": true'
     check "jlink: its RTT telnet port, the block's address, semihosting to its telnet client" \
         "jlink | gdb: arm-none-eabi-gdb gdb-multiarch | server: {JLinkGDBServerCLExe|JLinkGDBServer} -device STM32H743ZI -if SWD -speed 4000 -port 2331 -swoport 2332 -telnetport 2333 -select 'USB=000801234567' -singlerun -nogui -RTTTelnetPort FREE | target: 127.0.0.1:2331 | after: monitor reset; maintenance flush register-cache; monitor exec SetRTTAddr $rttaddr; monitor semihosting enable; monitor semihosting IOClient 1 | to main | flashed first"
-    board "$STLINK, \"rtt\": true"
+    plan "$STLINK"
+    got=${got%% |*}
+    check "an ST-LINK board names no preset: probe-rs" "probe-rs"
+    plan "$STLINK, \"rtt\": true"
+    got=$(printf '%s' "$got" | sed -E 's/ \| after:.*//')
+    check "an ST-LINK board with RTT on, no preset named: openocd, which serves RTT beside gdb" \
+        "openocd | gdb: arm-none-eabi-gdb gdb-multiarch | target: | exec {openocd} -c 'gdb_port pipe' -c 'tcl_port T' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }'"
+    plan "$STLINK, \"semihosting\": true"
+    got=${got%% |*}
+    check "and with semihosting on" "openocd"
+    board "$STLINK, \"debug\": \"probe-rs\", \"rtt\": true"
     path="$B:$PATH" lines=20 run "command:Attach to the running board;wait:300"
     got=$(printf '%s' "$got" | grep -o "blit: probe-rs's gdb server has no RTT[^~]*" | head -1 | sed 's/ *$//')
-    check "probe-rs's gdb server: no RTT, and why, said as the session starts" \
+    check "probe-rs named, RTT on: its gdb server has no RTT, and why, said as the session starts" \
         "blit: probe-rs's gdb server has no RTT, and one probe-rs at a time has the probe: RTT opens once the session ends (\"Open the board's RTT\"), or debug through the openocd preset"
 fi
 

@@ -61,6 +61,9 @@ std::string json_of(std::string_view s) {
 
 std::string board_preset(const Board& b) {
     if (!b.debug.empty()) return b.debug;
+    // (An ST-LINK board whose RTT or semihosting is on: OpenOCD, which serves
+    // them while gdb debugs; probe-rs's gdb server has neither: rtt.hpp.)
+    if (b.probe_kind == "stlink" && (b.rtt || b.semihosting)) return "openocd";
     if (b.probe_kind == "stlink" || b.probe_kind == "cmsis-dap") return "probe-rs";
     if (b.probe_kind == "jlink") return "jlink";
     if (b.probe_kind == "esp-usb-jtag") return "esp";

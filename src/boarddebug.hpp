@@ -35,8 +35,10 @@ struct BoardDebug {
 };
 
 // The preset a board is debugged with: its debug, else the one its probe's
-// kind says (ST-LINK and CMSIS-DAP: probe-rs; J-Link: jlink; Espressif's
-// USB-Serial/JTAG: esp; Black Magic: blackmagic); "" when nothing says.
+// kind says (ST-LINK and CMSIS-DAP: probe-rs, but an ST-LINK board with
+// RTT or semihosting on: openocd, which serves them beside gdb; J-Link:
+// jlink; Espressif's USB-Serial/JTAG: esp; Black Magic: blackmagic); ""
+// when nothing says.
 std::string board_preset(const Board& b);
 
 // What a board's preset starts: `elf` the ELF's path as the debugger's
