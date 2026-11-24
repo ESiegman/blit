@@ -28,7 +28,10 @@
 #include <thread>
 #include <vector>
 
+#include "addrsrc.hpp"
 #include "buffer.hpp"
+#include "crashscan.hpp"
+#include "elf.hpp"
 #include "buildmatch.hpp"
 #include "buildread.hpp"
 #include "config.hpp"
@@ -7910,6 +7913,111 @@ void instance_test() {
     check(instance_hand_over(ask) == -1, "instance: gone, nobody takes the files");
 }
 
+// The ELF reader and address to source (elf.hpp, addrsrc.hpp) on the two
+// fixtures in tests/elf (a Cortex-M0+ firmware built by Arm GNU 15.2:
+// little-endian with DWARF 5, big-endian with DWARF 4 and zlib-compressed
+// debug sections): their answers, then every length they can be cut to
+// and random damage, which must give no answer or a wrong one, never a
+// read out of bounds (the sanitizers' build says), a hang, or an
+// allocation the file's sizes ask for. Then a crash dump fed to CrashScan
+// whole and in two pieces at every byte, which must decode the same lines
+// at the same places.
+void elf_test(int seeds) {
+#if defined(BLIT_PROFILE_DATA)
+    const std::string base = std::string(BLIT_PROFILE_DATA) + "/../elf/";
+    std::mt19937_64 rng(77);
+    for (const char* name : {"motor-m0.elf", "motor-m0-be-dwarf4-zlib.elf"}) {
+        std::string why;
+        auto e = Elf::read_file(base + name, &why);
+        if (!e) fail(("elf: " + why).c_str(), 0, 0);
+        AddrSource src(e);
+        // (pid_step's write through a null pointer is store's, inlined.)
+        const ElfSymbol* pid = nullptr;
+        for (const ElfSymbol& y : e->symbols())
+            if (y.name == "pid_step") pid = &y;
+        if (!pid || src.units() != 2) fail("elf: pid_step, two units", 0, 0);
+        bool stored = false;
+        for (u64 a = pid->value; a < pid->value + pid->size; a += 2) {
+            const auto f = src.lookup(a);
+            if (f.size() == 2 && f[0].function == "store" && f[0].line == 9 && f[0].inlined && f[1].function == "pid_step" && f[1].line == 15 &&
+                f[1].path == "/blit-fixture/motor.c")
+                stored = true;
+        }
+        if (!stored) fail("elf: store inlined into pid_step", 0, 0);
+        if (!src.lookup(0).empty() || !src.lookup(0xFFFFFFF0u).empty()) fail("elf: an address in no section", 0, 0);
+        const std::string bytes(e->bytes());
+        std::vector<u64> addrs;
+        for (u64 a = pid->value - 64; a < pid->value + 64; a += 6) addrs.push_back(a);
+        auto ask = [&](std::string b) {
+            std::string w;
+            auto d = Elf::read(std::move(b), &w);
+            if (!d) return;
+            (void)d->build_id();
+            for (const ElfSection& sec : d->sections()) (void)d->data(sec);
+            AddrSource s2(d);
+            for (u64 a : addrs) (void)s2.lookup(a);
+        };
+        for (size_t n = 0; n < bytes.size(); ++n) ask(bytes.substr(0, n));
+        for (int r = 0; r < seeds * 20; ++r) {
+            std::string b = bytes;
+            for (int k = 1 + static_cast<int>(rng() % 8); k > 0; --k) b[rng() % b.size()] = static_cast<char>(rng() % 3 == 0 ? 0xff : rng());
+            ask(std::move(b));
+        }
+        // A compressed section that says it unpacks to 1 GB: not unpacked.
+        for (size_t i = 0; i < e->sections().size(); ++i) {
+            const ElfSection& sec = e->sections()[i];
+            if (!(sec.flags & 0x800)) continue;
+            std::string b = bytes;
+            const size_t at = static_cast<size_t>(sec.offset) + 4;  // (Elf32_Chdr's size)
+            const char big[4] = {0, 0, 0, 0x40};
+            for (int k = 0; k < 4; ++k) b[at + static_cast<size_t>(k)] = big[e->little() ? k : 3 - k];
+            auto d = Elf::read(std::move(b), &why);
+            if (!d || !d->data(d->sections()[i]).empty()) fail("elf: a compressed section's size taken on trust", 0, 0);
+            break;
+        }
+        // A dump decoded in place, fed whole and in two pieces at every byte.
+        char dump[512];
+        std::snprintf(dump, sizeof dump,
+                      "boot\r\nGuru Meditation Error: Core  0 panic'ed (StoreProhibited). Exception was unhandled.\r\n\r\n\x1b[0;31mBacktrace: 0x%08llx:0x3fc9a0a0 "
+                      "0x40000400:0x3fc9a0c0\x1b[0m\r\n\r\nRebooting...\r\n",
+                      static_cast<unsigned long long>(pid->value + 2));
+        const std::string text = dump;
+        auto shared = std::make_shared<const AddrSource>(e);
+        auto scan = [&](size_t cut, std::string* screen) {
+            CrashOptions o;
+            o.root = "/blit-fixture";
+            o.elf = [&](std::string*) { return shared; };
+            CrashScan c(o);
+            std::vector<CrashScan::Insert> ins;
+            screen->clear();
+            for (const std::string_view piece : {std::string_view(text).substr(0, cut), std::string_view(text).substr(cut)}) {
+                ins.clear();
+                c.feed(piece, &ins);
+                size_t at = 0;
+                for (const CrashScan::Insert& i : ins) {
+                    if (i.at < at || i.at > piece.size()) fail("crash: an insert out of order", cut, 0);
+                    screen->append(piece.substr(at, i.at - at)).append(i.text);
+                    at = i.at;
+                }
+                screen->append(piece.substr(at));
+            }
+            c.finish();
+            if (c.found().size() != 1 || c.found()[0].line != 9 || c.found()[0].path != "/blit-fixture/motor.c") fail("crash: its problem", cut, 0);
+        };
+        std::string whole, cut;
+        scan(text.size(), &whole);
+        if (whole.find("store at /blit-fixture/motor.c:9\x1b[0m\r\n\x1b[2m (inlined by) pid_step at /blit-fixture/motor.c:15") == std::string::npos)
+            fail("crash: the decoded lines", 0, 0);
+        for (size_t n = 0; n <= text.size(); ++n) {
+            scan(n, &cut);
+            if (cut != whole) fail("crash: fed in two pieces", n, 0);
+        }
+    }
+#else
+    (void)seeds;
+#endif
+}
+
 int main(int argc, char** argv) {
     int seeds = argc > 1 ? std::atoi(argv[1]) : 200;
     int steps = argc > 2 ? std::atoi(argv[2]) : 600;
@@ -7970,6 +8078,7 @@ int main(int argc, char** argv) {
     diagram_test();
     sequence_test();
     plans_test();
+    elf_test(seeds);
 #if !defined(_WIN32)
     std::system(("rm -rf '" + scratch + "'").c_str());
 #endif

@@ -3163,7 +3163,8 @@ another machine, a whole path for `program` is one there, and it runs
 there); `args` may also be one
 line (`"--steps 100"`), split as a shell splits it; `build`, a task of
 the Build tab's to run first, may be left out; `problems` names the
-patterns its output is read with, as a task's (above).
+patterns its output is read with, as a task's (above); `crash`, a
+firmware's own panic format (see "Crash dumps decoded").
 
 They are the Build tab's first tasks, under **Run**, and the first is the
 Run button's: Cmd+Shift+B runs its `build` task, then, if that went well,
@@ -3408,6 +3409,64 @@ and the summary is `Flashed in 54.0 s, verified` (the time
   "flash": {"tool": "vivado", "board": "basys3", "cfgmem": "mx25l3273f-spi-x1_x2_x4"}
 }
 ```
+
+### Crash dumps decoded
+
+When a firmware crashes and its dump comes out in a task's or a run's
+output, each address in it is told as its function and line of source,
+in dim lines under the line that gave it, and the innermost frame of the
+project's own code is a problem (`Crash at motor.c:9 in store
+(StoreProhibited)`), its frames the problem's notes:
+
+```
+Backtrace: 0x4200d676:0x3fc9a0a0 0x42009135:0x3fc9a0c0 0x42009121:0x3fc9a0e0
+0x4200d676: store at /home/me/crash/main/motor.c:8
+ (inlined by) pid_step at /home/me/crash/main/motor.c:14
+0x42009135: motor_run at /home/me/crash/main/motor.c:21
+0x42009121: app_main at /home/me/crash/main/crash_main.c:10
+```
+
+The lines are written into the terminal after the dump's, as `idf.py
+monitor` writes its own, so the transcript and a saved log keep them;
+Cmd+click on one opens its place. The dumps read:
+
+- **ESP-IDF** (and Arduino-ESP32, which is ESP-IDF underneath): `Guru
+  Meditation Error: Core  0 panic'ed (...)`, every PC of its `Backtrace:`
+  on Xtensa (ESP32, -S2, -S3), the register dump's `MEPC` and `RA` on
+  RISC-V (-C3, -C6, -H2, -P4), and `abort() was called at PC 0x...`. A
+  backtrace with no crash (the task watchdog's, `esp_backtrace_print`'s)
+  is decoded too, and is no problem.
+- **Your own format**: `crash` in a run configuration, a Lua pattern
+  (as `blit.build.matcher` takes them) or a list of them. A line one of
+  them takes is a dump's, and the hexadecimal numbers in its first
+  capture (the whole match, with no capture) are its addresses,
+  innermost first; lines one after another that they take are one dump:
+
+```json
+{ "name": "fw", "program": "build/fw.elf",
+  "board": { "elf": "build/fw.elf" },
+  "crash": "^bt:(.*)$" }
+```
+
+The ELF is the board's `elf` of the task's run configuration (for a
+task of the Build tab's, of the one the Run button runs, else the first
+with a board), else the newest `*.elf` or `*.axf` the build made in the
+project (`.pio` included). blit reads it itself (ELF32 and ELF64,
+DWARF 2 to 5, sections compressed with zlib; no `addr2line` is run), when
+a dump first needs it, and keeps it until it changes; a unit's line
+table and functions are read the first time an address in it is asked
+about (a 4 MB ESP32 ELF: under a millisecond to open, a few microseconds
+an address). In a project on another machine the ELF is read through
+the connection. An address the ELF has no code at (the ROM's) is left
+out; with no ELF at all, one line under the first dump says why. A
+frame's file is the project's own when it is under the project and not
+in `build`, `managed_components`, `.pio` or `_deps`; with none of its
+own, the problem is at the innermost frame with a place. The same crash
+again (a board that crashes at each start) is the one problem, its count
+on its row. A task whose command is `idf.py ... monitor` (or
+esp-idf-monitor), which decodes its own, has no lines added, and a
+program whose own decoded lines are seen after a dump has none added to
+the dumps after; the problems are still added.
 
 ## Tests
 

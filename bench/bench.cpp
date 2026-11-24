@@ -12,6 +12,7 @@
 #include <vector>
 
 #include "buildscan.hpp"
+#include "crashscan.hpp"
 #include "editor.hpp"
 #include "finder.hpp"
 #include "font.hpp"
@@ -354,16 +355,31 @@ int run(const char* file, const char* only) {
             if (i % 997 == 0) log += "CMake Warning at cmake/deps.cmake:12 (message):\r\n  Dependency " + n + " not found\r\n\r\n";
             if (i % 499 == 0) log += "Traceback (most recent call last):\r\n  File \"/home/me/project/tools/gen.py\", line 40, in <module>\r\n    main()\r\nKeyError: '" + n + "'\r\n";
         }
-        auto rate = [&](const std::string& in, bool screen, bool problems, size_t* found) {
+        // (crash: the crash scan as well, as the terminal's reader runs it
+        // on a task's output: before the screen, its lines put in between.)
+        auto rate = [&](const std::string& in, bool screen, bool problems, size_t* found, bool crash = false) {
             double best = 1e30;
             for (int run = 0; run < 3; ++run) {
                 Term t(200, 50);
                 BuildScan scan("/home/me/project/build");  // (no file looked for: as on another machine)
+                CrashScan crashes(CrashOptions{"/home/me/project", {}, {}, false});
+                std::vector<CrashScan::Insert> decoded;
                 size_t count = 0;
                 const u64 t0 = now_ns();
                 for (size_t at = 0; at < in.size(); at += 65536) {
                     const std::string_view piece = std::string_view(in).substr(at, 65536);
-                    if (screen) t.feed(piece);
+                    if (crash) {
+                        decoded.clear();
+                        crashes.feed(piece, &decoded);
+                        size_t from = 0;
+                        for (const CrashScan::Insert& l : decoded) {
+                            if (screen) t.feed(piece.substr(from, l.at - from)), t.feed(l.text);
+                            from = l.at;
+                        }
+                        if (screen) t.feed(piece.substr(from));
+                    } else if (screen) {
+                        t.feed(piece);
+                    }
                     if (problems) {
                         scan.feed(piece);
                         count += scan.found().size();
@@ -383,6 +399,10 @@ int run(const char* file, const char* only) {
         emit("build-log-32m", "term_feed_scan_mb_per_s", "MB/s", rate(log, true, true, nullptr));
         emit("build-log-32m", "build_scan_mb_per_s", "MB/s", rate(log, false, true, &found));
         emit("build-log-32m", "build_scan_problems", "count", static_cast<double>(found));
+        emit(file, "term_feed_scan_crash_mb_per_s", "MB/s", rate(text, true, true, nullptr, true));
+        emit(file, "crash_scan_mb_per_s", "MB/s", rate(text, false, false, nullptr, true));
+        emit("build-log-32m", "term_feed_scan_crash_mb_per_s", "MB/s", rate(log, true, true, nullptr, true));
+        emit("build-log-32m", "crash_scan_mb_per_s", "MB/s", rate(log, false, false, nullptr, true));
     }
 #endif
 

@@ -26,6 +26,7 @@
 
 #include "app.hpp"
 #include "buildscan.hpp"
+#include "crashscan.hpp"
 #include "finder.hpp"
 #include "look.hpp"
 #include "missing.hpp"
@@ -105,6 +106,10 @@ struct TermView {
     // A build's: its output read for problems, on the reader's thread, and
     // what that found, for the main thread to take (term_sync).
     std::unique_ptr<BuildScan> scan;
+    // And its crash dumps, decoded (their lines put on the screen under the
+    // dump, the crashes handed over with the problems).
+    std::unique_ptr<CrashScan> crash;
+    std::vector<CrashScan::Insert> crash_lines;  // (the reader's own)
     std::mutex scan_mu;
     std::vector<BuildProblem> scanned;   // (scan_mu)
     std::vector<std::string> scan_dirs;  // (scan_mu) the folders the build said it went into
@@ -242,12 +247,17 @@ struct TermView {
 
     // What the scan has found, handed over (on the reader's thread).
     void scan_hand_over() {
+        const bool crashed = crash && !crash->found().empty();
         if (scan->found().empty() && scan->dirs_gen() == scan_dirs_gen && scan->test_results().empty() && scan->outcome_gen() == scan_outcome_gen &&
-            scan->progress_gen() == scan_progress_gen)
+            scan->progress_gen() == scan_progress_gen && !crashed)
             return;
         {
             std::lock_guard lock(scan_mu);
             for (BuildProblem& p : scan->found()) scanned.push_back(std::move(p));
+            if (crashed) {
+                for (BuildProblem& p : crash->found()) scanned.push_back(std::move(p));
+                crash->found().clear();
+            }
             if (scan->dirs_gen() != scan_dirs_gen) scan_dirs = scan->dirs();
             for (BuildScan::TestResult& r : scan->test_results()) scan_results.push_back(std::move(r));
             if (scan->outcome_gen() != scan_outcome_gen) scan_outcome = scan->outcome(), scan_outcome_new = true;
@@ -299,10 +309,21 @@ struct TermView {
             }
             if (k > 0) {
                 heard += static_cast<u64>(k);
+                const std::string_view got(buf, static_cast<size_t>(k));
+                // (A crash dump's decoded lines go on the screen under the
+                // line each decodes, between the bytes before and after it.)
+                crash_lines.clear();
+                if (crash) crash->feed(got, &crash_lines);
                 std::string reply;
                 {
                     std::lock_guard lock(mu);
-                    term.feed(std::string_view(buf, static_cast<size_t>(k)));
+                    size_t at = 0;
+                    for (const CrashScan::Insert& c : crash_lines) {
+                        term.feed(got.substr(at, c.at - at));
+                        term.feed(c.text);
+                        at = c.at;
+                    }
+                    term.feed(got.substr(at));
                     reply = term.take_reply();
                 }
                 if (!reply.empty()) send(reply);
@@ -318,6 +339,7 @@ struct TermView {
         if (stop.stop_requested()) return;
         if (scan) {
             scan->finish();
+            if (crash) crash->finish();
             scan_hand_over();
         }
         int st = 0;
@@ -491,7 +513,7 @@ struct App::TermDock {
 // is given): a shell there, or on the machine that folder is on. A hint
 // shows dimmed on its first line, above what the shell writes.
 u64 App::term_open(const std::string& dir_given, const std::string& command, const std::string& title, std::string_view hint, bool console,
-                   std::shared_ptr<const BuildMatchers> matchers) {
+                   std::shared_ptr<const BuildMatchers> matchers, const CrashOptions* crash) {
     const std::string* root = panel_root();
     const std::string dir = !dir_given.empty() ? dir_given : root ? *root : default_workdir();
     auto v = std::make_shared<TermView>();
@@ -540,6 +562,7 @@ u64 App::term_open(const std::string& dir_given, const std::string& command, con
     }
     if (v->scan) v->scan->use_matchers(std::move(matchers));  // (before its reader starts)
     if (v->scan) v->scan->use_command(command);
+    if (v->scan && crash) v->crash = std::make_unique<CrashScan>(*crash);
     v->started_ns = now_ns();
     const std::vector<std::string> env = {"TERM=xterm-256color", "COLORTERM=truecolor", "TERM_PROGRAM=blit"};
     std::string err;

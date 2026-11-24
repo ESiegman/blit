@@ -6,6 +6,7 @@
 #include <string_view>
 
 #include "json.hpp"
+#include "match.hpp"
 #include "probes.hpp"
 #include "remote.hpp"
 #include "simrun.hpp"
@@ -528,6 +529,14 @@ std::vector<BuildTask> read_run_configs(const std::string& root, std::string* pr
                 *problem = std::string(kRunConfigs) + ": " + t.name + "'s debug.console is \"terminal\" or \"debug\"";
         }
         board_read(c["board"], t.name, &t.board, problem);
+        if (c["crash"].is_string()) t.crash.emplace_back(c["crash"].str());
+        for (const json::Value m : c["crash"]) t.crash.emplace_back(m.str());
+        std::erase_if(t.crash, [&](const std::string& pat) {
+            std::string why;
+            if (!pat.empty() && lua_pattern_check(pat, &why) >= 0) return false;
+            *problem = std::string(kRunConfigs) + ": " + t.name + "'s crash pattern " + (pat.empty() ? std::string("is empty") : "\"" + pat + "\": " + why);
+            return true;
+        });
         // What the Run button runs: the program, in its folder, with what it is given.
         std::string cmd;
         if (!t.env.empty()) {
