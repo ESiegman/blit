@@ -184,6 +184,19 @@ path="$dir/bin:$PATH"
 run "command:Open the board's serial monitor;serialstate:open;command:Flash the board;flashwait;buildwait;command:Open the board's serial monitor;serialstate:open;frame;termdump"
 got="$(cat "$dir/try-flash" 2>/dev/null | tr '\n' ' ')$got"
 check "Flash the board: the tool can open the port, the tab has it back after" "opened [released for flashing from HH:MM:SS.mmm to HH:MM:SS.mmm, N s] @1,0 11x74"
+# F5 on the board flashes it the same way, and the tab has its port back
+# before the debugger starts (here one that is not installed, so that no
+# gdb server is needed: the session ends at once, saying so).
+printf '{"configurations": [{"name": "fw", "program": "build/fw.elf", "board": {"probe": {"kind": "stlink", "serial": "FAKE0001", "usb": "0483:374e"}, "chip": "STM32F411CEUx", "elf": "build/fw.elf", "serial": {"port": "%s", "baud": 230400}, "debug": {"gdb": "no-such-gdb"}}}]}\n' "$port" >"$P/.blit/run.json"
+# (The Debug tab takes the side panel: the window wide enough for the line.)
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+path="$dir/bin:$PATH" size=2400x1400
+run "command:Open the board's serial monitor;serialstate:open;command:Start or continue debugging;debugwait:idle;serialstate:open;command:Open the board's serial monitor;serialstate:open;frame;termdump"
+got="$(cat "$dir/try-flash" 2>/dev/null | tr '\n' ' ')${got% @*}"
+check "F5 on the board: flashed with the port let go of, the tab has it back as the debugger starts" "opened [released for flashing from HH:MM:SS.mmm to HH:MM:SS.mmm, N s]"
+path="$dir/bin:$PATH"
+run "command:Open the board's serial monitor;serialstate:open;command:Start or continue debugging;debugwait:idle;debugdump"
+check "(and the debugger's own word)" "idle error: no-such-gdb is not installed on $this"
 
 # ---------------------------------------------------------------- opening one
 
