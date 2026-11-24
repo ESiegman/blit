@@ -7,6 +7,7 @@
 #
 #   say TEXT        TEXT written to the port (\r \n \e \xHH and \\ as those bytes)
 #   ticks N         "tick 1\r\n" ... "tick N\r\n"
+#   file PATH       the bytes of the file at PATH written to the port (a crash dump)
 #   flood N         N coloured log lines as fast as the port takes them
 #                   ("\e[0;32mI (N) main: line N of the flood, as a board logs it\e[0m\r\n",
 #                   about 70 bytes, as ESP-IDF logs)
@@ -93,6 +94,9 @@ while True:
         verb, _, arg = line.decode().partition(" ")
         if verb == "say" and port:
             port.write(bytes_of(arg))
+        elif verb == "file" and port:
+            with open(arg, "rb") as f:
+                port.write(f.read())
         elif verb == "ticks" and port:
             port.write(b"".join(b"tick %d\r\n" % i for i in range(1, int(arg) + 1)))
         elif verb == "flood" and port:
