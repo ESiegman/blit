@@ -628,6 +628,17 @@ board '{"probe": {"kind": "dfu", "serial": "200364500000", "usb": "0483:df11"}}'
 flash dfu-util "$F;$end"
 got=$(printf '%s' "$got" | tail -1)
 check "dfu-util, ST's boot ROM with no address: the ELF's" 'dfu-util -d 0483:df11 -S 200364500000 -a 0 -s 0x08000000:leave -D build/fw.bin'
+# Plugged in, the boot ROM given by where it is: its serial number is the
+# chip's IDCODE and more that changes (the H743's "200364500000" read by
+# the system, "200364500070" by dfu-util a minute on).
+mkdir -p "$dir/usb-rom/6-4"
+printf '0483\n' >"$dir/usb-rom/6-4/idVendor"; printf 'df11\n' >"$dir/usb-rom/6-4/idProduct"; printf '00\n' >"$dir/usb-rom/6-4/bDeviceClass"
+printf '200364500070\n' >"$dir/usb-rom/6-4/serial"
+BLIT_USB_ROOT="$dir/usb-rom"; export BLIT_USB_ROOT
+flash dfu-util "$F;$end"
+unset BLIT_USB_ROOT
+got=$(printf '%s' "$got" | tail -1)
+check "(plugged in: by where it is, not its serial number)" 'dfu-util -d 0483:df11 -p 6-4 -a 0 -s 0x08000000:leave -D build/fw.bin'
 printf '{"configurations": [{"name": "fw", "program": "build/fw.bin", "board": {"probe": {"kind": "dfu", "usb": "0483:df11"}}}]}\n' >"$P/.blit/run.json"
 flash dfu-util "$F"
 check "and a .bin alone, with no address: said" "blit: build/fw.bin is a .bin: the board's flash.address says where it goes"

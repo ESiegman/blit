@@ -1,10 +1,9 @@
-# dfu-util 0.11 -d 0483:df11 -S 200364500000 -a 0 -s 0x08000000:leave -D
-# build/fw.bin to the STM32H743's DfuSe boot ROM, from blit on the lab box,
-# 2026-11-24: its last lines as the board gave them ("File downloaded
-# successfully", the leave, then the get_status error, the board already
-# gone to run what was written; ended with 74); the lines before them as
-# dfu-util.txt has them from its source, for 792 bytes.
-@pace 5
+# dfu-util 0.11 -d 0483:df11 -p 6-4 -a 0 -s 0x08000000:leave -D
+# build/fw.bin to the STM32H743's DfuSe boot ROM, run by blit on the lab
+# box (Arch's dfu-util 0.11), 2026-11-24: all it printed, captured. The
+# boot ROM, told to leave, runs what was written at once and is gone
+# before dfu-util's last get_status, which dfu-util calls an error; it
+# ended with 74.
 dfu-util 0.11
 
 Copyright 2005-2009 Weston Schmidt, Harald Welte and OpenMoko Inc.
@@ -16,26 +15,21 @@ dfu-util: Warning: Invalid DFU suffix signature
 dfu-util: A valid DFU suffix will be required in a future dfu-util release
 Opening DFU capable USB device...
 Device ID 0483:df11
+Device DFU version 011a
 Claiming USB DFU Interface...
 Setting Alternate Interface #0 ...
 Determining device status...
+DFU state(2) = dfuIDLE, status(0) = No error condition is present
 DFU mode device DFU version 011a
-Device returned transfer size 2048
+Device returned transfer size 1024
+DfuSe interface name: "Internal Flash   "
 Downloading element to address = 0x08000000, size = 792
 \rErase   \t[                         ]   0%            0 bytes\c
-\rErase   \t[======                   ]  25%          198 bytes\c
-\rErase   \t[============             ]  50%          396 bytes\c
-\rErase   \t[==================       ]  75%          594 bytes\c
-\rErase   \t[=========================] 100%          792 bytes\c
-
+\rErase   \t[                         ]   0%            0 bytes\c
+\rErase   \t[=========================] 100%          792 bytes
 Erase    done.
 \rDownload\t[                         ]   0%            0 bytes\c
-\rDownload\t[======                   ]  25%          198 bytes\c
-\rDownload\t[============             ]  50%          396 bytes\c
-@hold a
-\rDownload\t[==================       ]  75%          594 bytes\c
-\rDownload\t[=========================] 100%          792 bytes\c
-
+\rDownload\t[=========================] 100%          792 bytes
 Download done.
 File downloaded successfully
 Submitting leave request...

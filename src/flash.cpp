@@ -72,10 +72,11 @@ constexpr FlashTool kTools[] = {
     // dfu-util 0.11 (src/main.c lines 168-201, its help): -d VID:PID, -S
     // SERIAL, -a the alternate setting (an STM32's internal flash is 0),
     // -s ADDRESS:leave (DfuSe's: write there, then run it; else -R, reset
-    // after), -D the file. A pipe: its bar is the same \r line on one, and
-    // its output is not buffered (src/dfu_file.c lines 121-161; main.c line
-    // 262).
-    {"dfu-util", {"dfu-util", ""}, kPipe, "flash", {"-d ${usb}", "-S ${serial}", "-a ${alt}", "-s ${address}", "-D ${image}", "${reset}"}},
+    // after), -D the file; -p the device by where it is plugged in, "6-4"
+    // (an STM32's boot ROM: probe_location). A pipe: its bar is the same \r
+    // line on one, and its output is not buffered (src/dfu_file.c lines
+    // 121-161; main.c line 262).
+    {"dfu-util", {"dfu-util", ""}, kPipe, "flash", {"-d ${usb}", "-S ${serial}", "-p ${path}", "-a ${alt}", "-s ${address}", "-D ${image}", "${reset}"}},
     // pyOCD v0.46.1 (pyocd/subcommands/load_cmd.py lines 57-69, base.py
     // lines 82-96): load, -W (no waiting for a probe: it would wait for
     // ever), -t the target, -u the probe's unique ID, -a and --format for a
@@ -557,7 +558,8 @@ FlashPlan flash_plan(const Board& b, const std::string& tool_name, const std::st
         if (image.parts.size() > 1) return plan.why = "dfu-util writes one file", plan;
         if (first.path.ends_with(".elf")) return plan.why = "dfu-util writes a .bin or a .dfu, not " + first.path, plan;
         const bool dfuse = !first.address.empty();
-        vars = {{"usb", word(b.probe_usb)}, {"serial", word(b.probe)},  {"alt", word(!b.flash_alt.empty() ? b.flash_alt : std::string("0"))},
+        const bool placed = !b.probe_location.empty();  // (by where it is, its serial number not to be trusted: probe_location)
+        vars = {{"usb", word(b.probe_usb)}, {"serial", placed ? std::string() : word(b.probe)}, {"path", word(b.probe_location)}, {"alt", word(!b.flash_alt.empty() ? b.flash_alt : std::string("0"))},
                 {"address", dfuse ? word(first.address + ":leave") : std::string()}, {"image", word(first.path)}, {"reset", dfuse ? "" : "-R"}};
         same += "|" + b.flash_alt;
     } else if (tool_name == "pyocd") {

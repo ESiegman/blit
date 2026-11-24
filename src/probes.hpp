@@ -82,6 +82,8 @@ bool usb_list_at(const std::string& root, std::vector<UsbDevice>* out, std::stri
 // system's, 2026-11-24: "37FF6706..." to OpenOCD, "6068C3BF..." as
 // written). Of these devices, the one whose ids and serial number (as the
 // picker writes it) are the board's; "" for another probe, or none found.
+// And ST's DFU boot ROM, whose serial number is not its own (dfu-util's -p):
+// the one plugged in, else the one with the board's serial number.
 std::string probe_location(const Board& b, const std::vector<UsbDevice>& devices);
 // The same, the devices listed where the folder is (usb_list_at): into
 // b->probe_location, for OpenOCD (openocd_adapter).

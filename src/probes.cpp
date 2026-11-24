@@ -568,9 +568,20 @@ void board_read(json::Value b, const std::string& config, Board* out, std::strin
 }
 
 std::string probe_location(const Board& b, const std::vector<UsbDevice>& devices) {
-    if (b.probe_usb != "0483:3748" || b.probe.empty()) return {};
+    const bool v2 = b.probe_usb == "0483:3748" && !b.probe.empty(), rom = b.probe_usb == "0483:df11";
+    if (!v2 && !rom) return {};
+    // (ST's DFU boot ROM: its serial number is the chip's IDCODE and more
+    // that changes, "200364500000" as the system read it and "...0070" to
+    // dfu-util a minute on, on the lab box's STM32H743: the one there is,
+    // else the one whose serial number is the board's.)
+    const UsbDevice* only = nullptr;
+    int roms = 0;
+    for (const UsbDevice& d : devices)
+        if (rom && d.vid == 0x0483 && d.pid == 0xdf11) ++roms, only = &d;
     for (const UsbDevice& d : devices) {
-        if (d.vid != 0x0483 || d.pid != 0x3748 || stlink_serial(d.serial) != b.probe) continue;
+        if (rom ? !(d.vid == 0x0483 && d.pid == 0xdf11 && (roms == 1 ? &d == only : d.serial == b.probe))
+                : d.vid != 0x0483 || d.pid != 0x3748 || stlink_serial(d.serial) != b.probe)
+            continue;
         // (Linux's sysfs name is libusb's; macOS's locationID has the bus in
         // its top byte and a port in each nibble after, to the first 0, as
         // libusb's darwin_usb.c reads it.)
@@ -588,7 +599,7 @@ std::string probe_location(const Board& b, const std::vector<UsbDevice>& devices
 }
 
 void probe_locate(Board* b, const std::string& root) {
-    if (b->probe_usb != "0483:3748" || b->probe.empty()) return;
+    if (!(b->probe_usb == "0483:3748" && !b->probe.empty()) && b->probe_usb != "0483:df11") return;
     std::vector<UsbDevice> devices;
     std::string why;
     if (usb_list_at(root, &devices, &why)) b->probe_location = probe_location(*b, devices);
