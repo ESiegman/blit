@@ -3324,7 +3324,9 @@ and the newest Python, or where `IDF_TOOLS_PATH` says), or the manager's.
 Each command then runs after ESP-IDF's environment is set up as
 `export.sh` would (`idf_tools.py export`, run by that Python, puts its
 toolchains, its Python environment and its own tools on the PATH; about a
-tenth of a second, where sourcing `export.sh` takes most of one). What
+tenth of a second, where sourcing `export.sh` takes most of one; what it
+says besides is shown when it fails, as a toolchain not installed, and
+not on every run). What
 was found is kept for the machine while blit runs (looked for again
 a few seconds on if it was not). Where it is not installed, each of its
 rows says so, and so does running one: `ESP-IDF is not installed on this

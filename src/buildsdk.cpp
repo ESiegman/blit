@@ -327,10 +327,14 @@ bool find_esp_idf(const std::string& root, const std::vector<FsEntry>& files, st
     // Each command runs with ESP-IDF's environment, as export.sh gives it:
     // idf_tools.py's export (its tools and Python environment on the PATH,
     // its variables), with IDF_PATH (and a tools folder not the usual one).
+    // What it says beside them is shown only when it fails (it is run
+    // again for its words): a warning on each run, as the lab box's about
+    // the system's clangd, is no part of the task's output.
     if (place.missing.empty()) {
         a.setup = "export IDF_PATH=" + sh_word(place.path);
         if (place.tools != m.home + "/.espressif") a.setup += " IDF_TOOLS_PATH=" + sh_word(place.tools);
-        a.setup += " && idf_env=$(" + sh_word(place.python) + " \"$IDF_PATH/tools/idf_tools.py\" export) && eval \"$idf_env\"";
+        const std::string tools = sh_word(place.python) + " \"$IDF_PATH/tools/idf_tools.py\" export";
+        a.setup += " && { idf_env=$(" + tools + " 2>/dev/null) || { " + tools + " >/dev/null; false; }; } && eval \"$idf_env\"";
     }
     a.add("Build", "idf.py build", true);
     // The board: no probe, its chip the target, so esptool, with the files

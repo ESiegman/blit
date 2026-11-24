@@ -83,8 +83,15 @@ IDF="$HOME/esp/esp-idf"
 mkdir -p "$IDF/tools/cmake" "$IDF/tools/idf_py_actions"
 printf 'set(IDF_VERSION_MAJOR 6)\nset(IDF_VERSION_MINOR 1)\nset(IDF_VERSION_PATCH 1)\n' >"$IDF/tools/cmake/version.cmake"
 printf "SUPPORTED_TARGETS = [\n    'esp32',\n    'esp32s3',\n]\nPREVIEW_TARGETS = ['linux', 'esp32h4']\n" >"$IDF/tools/idf_py_actions/constants.py"
+# (Its export warns, as the lab box's does of the system's clangd; with
+# TOOLS_MISSING it fails, as with a toolchain not installed.)
 cat >"$IDF/tools/idf_tools.py" <<'EOF'
 [ "$1" = export ] || exit 2
+if [ -n "${TOOLS_MISSING:-}" ]; then
+    echo "ERROR: tool xtensa-esp-elf has no installed versions. Please run 'install.sh' to install it." >&2
+    exit 1
+fi
+echo "WARNING: Not using an unsupported version of tool esp-clangd found in PATH: unknown." >&2
 printf 'export IDF_PYTHON_ENV_PATH="%s";export PATH="%s/tools:$PATH"\n' "$FAKE_ENV" "$IDF_PATH"
 EOF
 # (idf.py says what it was given, and with what; a build of a project
@@ -135,6 +142,8 @@ run "$P" "buildrun:Build;buildwait;builddump:text"
 check "idf.py run with ESP-IDF's environment (export.sh never sourced): IDF_PATH, its newest Python's" "|idf.py build (IDF_PATH=~/home/esp/esp-idf, env idf6.1_py3.14_env)|[done in T]"
 run "$P" "buildrun:Size;buildwait;builddump:text"
 check "the other tasks with it too" "|idf.py size (IDF_PATH=~/home/esp/esp-idf, env idf6.1_py3.14_env)|[done in T]"
+got=$(TOOLS_MISSING=1 "$blit" --offscreen 1400x900 --shot "$dir/shot.bmp" --script "workdir:$P;frame;buildrun:Build;buildwait;builddump:text" 2>&1 >/dev/null | sed -e "s#$dir#~#g" -e 's/after [0-9.]* s\]/after T]/' | tail -1)
+check "ESP-IDF's environment that cannot be set up: its own words, and nothing run" "|ERROR: tool xtensa-esp-elf has no installed versions. Please run 'install.sh' to install it.|[failed with 1 after T]"
 touch "$P/main/broken"
 lines=2 run "$P" "buildrun:Build;buildwait;progressdump;scandump"
 rm "$P/main/broken"
