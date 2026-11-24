@@ -1,0 +1,25 @@
+# pyOCD 0.46.1 load -W -t stm32f411ce -u SERIAL build/fw.elf on a terminal:
+# WRITTEN FROM ITS SOURCE, not captured (no probe here). Its log lines,
+# "%07d L message [module]" (pyocd/utility/color_log.py line 28; the colours
+# as its no-probe capture shows them for the time), "Loading %s"
+# (pyocd/subcommands/load_cmd.py line 169), "Erasing...", "Programming..."
+# and the summary (pyocd/flash/loader.py lines 293, 310, 362; "1 sector",
+# "16 pages": pyocd/flash/builder.py lines 37-49); its bar, "\r[%-50s] %3d%%"
+# then a newline (pyocd/utility/progress.py lines 89-95), once for each stage.
+@pace 5
+\e[34m0000412\e[0m I Loading /home/eren/fw/build/fw.elf [load_cmd]
+\e[34m0000540\e[0m I Erasing... [loader]
+\r[                                                  ]   0%\c
+\r[=============                                     ]  25%\c
+\r[=========================                         ]  50%\c
+\r[==================================================] 100%\c
+
+\e[34m0000901\e[0m I Programming... [loader]
+\r[                                                  ]   0%\c
+\r[=============                                     ]  25%\c
+\r[==========================                        ]  52%\c
+@hold a
+\r[======================================            ]  76%\c
+\r[==================================================] 100%\c
+
+\e[34m0002204\e[0m I Erased 16384 bytes (1 sector), programmed 16384 bytes (16 pages), identical 0 bytes (0 pages) at 12.27 kB/s [loader]

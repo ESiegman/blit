@@ -1,0 +1,8 @@
+# picotool 2.3.1 (Homebrew, macOS) load -f of a file that is not there, on a
+# pipe, 2026-11-23: it had rebooted the owner's Pico into BOOTSEL before it
+# found the file missing, and it ended with 252 (captures/picotool-nofile.raw).
+Tracking device serial number A58565170D696C53 for reboot
+The device was asked to reboot into BOOTSEL mode so the command can be executed.
+
+ERROR: Could not open '/nonexistent.uf2'
+@exit 252

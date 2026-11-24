@@ -1,0 +1,10 @@
+# pyOCD 0.46.1 (uv tool, macOS) load -W -t stm32f411ce -u SERIAL -a
+# 0x08000000 --format bin fw.bin on a terminal, with no probe plugged in,
+# 2026-11-23: all it printed (the terminal's own ^D echo before it left out),
+# its log line in colour, and it ended with 1.
+\e[31mNo connected debug probe matches unique ID '0670FF485550755187121723'\e[0m\r\c
+
+\e[34m0000639\e[0m \e[91mE\e[0m \e[31mNo target device available \e[2m[load_cmd]\e[0m\r\c
+
+\e[0m\c
+@exit 1

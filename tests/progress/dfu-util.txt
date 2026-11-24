@@ -1,0 +1,42 @@
+# dfu-util 0.11 -d 0483:df11 -a 0 -s 0x08000000:leave -D fw.bin, an STM32's
+# DfuSe boot ROM: WRITTEN FROM ITS SOURCE, not captured (no DFU device
+# here). The banner (src/main.c lines 204-210), the device found (452-692),
+# the element (src/dfuse.c line 572), the bars, "\r%s\t[%s] %3llu%% %12llu
+# bytes" redrawn, then "\n%s done.\n" (src/dfu_file.c lines 156, 160), the
+# end (dfuse.c lines 580, 331, 315).
+@pace 5
+dfu-util 0.11
+
+Copyright 2005-2009 Weston Schmidt, Harald Welte and OpenMoko Inc.
+Copyright 2010-2021 Tormod Volden and Stefan Schmidt
+This program is Free Software and has ABSOLUTELY NO WARRANTY
+Please report bugs to http://sourceforge.net/p/dfu-util/tickets/
+
+dfu-util: Warning: Invalid DFU suffix signature
+dfu-util: A valid DFU suffix will be required in a future dfu-util release
+Opening DFU capable USB device...
+Device ID 0483:df11
+Claiming USB DFU Interface...
+Setting Alternate Interface #0 ...
+Determining device status...
+DFU mode device DFU version 011a
+Device returned transfer size 2048
+Downloading element to address = 0x08000000, size = 41200
+\rErase   \t[                         ]   0%            0 bytes\c
+\rErase   \t[======                   ]  25%        10300 bytes\c
+\rErase   \t[============             ]  50%        20600 bytes\c
+\rErase   \t[==================       ]  75%        30900 bytes\c
+\rErase   \t[=========================] 100%        41200 bytes\c
+
+Erase    done.
+\rDownload\t[                         ]   0%            0 bytes\c
+\rDownload\t[======                   ]  25%        10300 bytes\c
+\rDownload\t[============             ]  50%        20600 bytes\c
+@hold a
+\rDownload\t[==================       ]  75%        30900 bytes\c
+\rDownload\t[=========================] 100%        41200 bytes\c
+
+Download done.
+File downloaded successfully
+Submitting leave request...
+Transitioning to dfuMANIFEST state

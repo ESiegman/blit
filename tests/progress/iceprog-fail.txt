@@ -1,0 +1,7 @@
+# iceprog (icestorm v1.1, f31c39c) with no FTDI chip plugged in: WRITTEN
+# FROM ITS SOURCE, not captured. "init.." (iceprog/iceprog.c line 860), then
+# mpsse.c line 305 and its "ABORT.", exit 2 (mpsse.c lines 146-156).
+init..
+Can't find iCE FTDI USB device (vendor_id 0x0403, device_id 0x6010 or 0x6014).
+ABORT.
+@exit 2

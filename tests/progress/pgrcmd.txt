@@ -1,0 +1,5 @@
+# Lattice's pgrcmd with no cable: WRITTEN, not captured (not installed
+# here). What it prints is not documented, so nothing here; its return
+# code -5, "Cable not detected" (Radiant 2026.1 Help, pp. 1858-1861), is
+# exit status 251, which blit's command says in words after it.
+@exit 251

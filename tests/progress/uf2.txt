@@ -1,0 +1,26 @@
+# blit's own copy of a .uf2 to an RP2040's boot ROM volume (flash.cpp's
+# kUf2Script), as it printed it copying ~/pico/blinky's blinky.uf2 (62976
+# bytes: 123 blocks, 256 bytes of each for the flash) to the owner's Pico,
+# 2026-11-23: the bytes for the flash after each 4096-byte piece, then the
+# volume gone.
+@pace 5
+UF2 copy of build/blinky.uf2 to /Volumes/RPI-RP2: 31488 bytes into flash
+UF2 copied 6% 2048 B/31488 B
+UF2 copied 13% 4096 B/31488 B
+UF2 copied 19% 6144 B/31488 B
+UF2 copied 26% 8192 B/31488 B
+UF2 copied 32% 10240 B/31488 B
+UF2 copied 39% 12288 B/31488 B
+UF2 copied 45% 14336 B/31488 B
+UF2 copied 52% 16384 B/31488 B
+@hold a
+UF2 copied 58% 18432 B/31488 B
+UF2 copied 65% 20480 B/31488 B
+UF2 copied 71% 22528 B/31488 B
+UF2 copied 78% 24576 B/31488 B
+UF2 copied 84% 26624 B/31488 B
+UF2 copied 91% 28672 B/31488 B
+UF2 copied 97% 30720 B/31488 B
+UF2 copied 100% 31488 B/31488 B
+UF2 waiting for the board to restart
+UF2 wrote 31488 bytes into flash: the board restarted

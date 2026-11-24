@@ -8,11 +8,15 @@
 // engine starts so costs a look at its first character. The engines:
 // OpenOCD's `program` (and Espressif's `program_esp`), probe-rs's download
 // bars, SEGGER J-Link Commander's loadfile, esptool's write-flash (v4's and
-// v5's), openFPGALoader's loads into SRAM and flash, and picotool's load.
+// v5's), openFPGALoader's loads into SRAM and flash, picotool's load (and
+// blit's own copy of a .uf2 to a boot ROM's volume), dfu-util's download,
+// pyOCD's load, STM32CubeProgrammer's, Vivado's hardware manager, iceprog,
+// ecpprog and Lattice's pgrcmd.
 // Where each shape is from (a tool's source at a tag, or its output) is
 // said beside it; tests/progress.sh replays the outputs.
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 
@@ -22,10 +26,12 @@ namespace blit {
 
 namespace {
 
-enum Engine : u8 { kAnyEngine, kOpenOcd, kEsptool, kProbeRs, kJLink, kOpenFpgaLoader, kPicotool, kVivado, kEngines };
+enum Engine : u8 { kAnyEngine, kOpenOcd, kEsptool, kProbeRs, kJLink, kOpenFpgaLoader, kPicotool, kVivado, kUf2, kDfuUtil, kPyOcd, kCubeProg, kIceprog, kEcpprog, kPgrcmd, kEngines };
 // Their names, and the program a problem with no file of its own is placed at.
-constexpr std::string_view kEngineName[kEngines] = {"", "OpenOCD", "esptool", "probe-rs", "J-Link", "openFPGALoader", "picotool", "Vivado"};
-constexpr std::string_view kProgram[kEngines] = {"", "openocd", "esptool", "probe-rs", "JLinkExe", "openFPGALoader", "picotool", "vivado"};
+constexpr std::string_view kEngineName[kEngines] = {"",         "OpenOCD",  "esptool", "probe-rs",            "J-Link",  "openFPGALoader", "picotool", "Vivado",
+                                                    "UF2 copy", "dfu-util", "pyOCD",   "STM32CubeProgrammer", "iceprog", "ecpprog",        "pgrcmd"};
+constexpr std::string_view kProgram[kEngines] = {"",    "openocd",  "esptool", "probe-rs",             "JLinkExe", "openFPGALoader", "picotool", "vivado",
+                                                 "uf2", "dfu-util", "pyocd",   "STM32_Programmer_CLI", "iceprog",  "ecpprog",        "pgrcmd"};
 
 enum Kind : u8 {
     kHello,       // the engine names itself: its run begins
@@ -45,6 +51,13 @@ enum Kind : u8 {
     kFailed,      // the run failed (the error kept before it, else this line, is the problem)
     kFailedHere,  // the run failed: what follows the prefix is the problem
     kFailedLine,  // the run failed: the line is the problem
+    kFailedThen,  // the run failed: the words matched after the prefix (`then`) are the problem
+    kHeld,        // the run failed: the line begins the problem, whose words may go on over the next lines; the lines after it are notes on it
+    kWrite,       // the writing begins: Program where the flash is written (kFlash said so before), else Load (SRAM)
+    kCount,       // a stage's count, "N/M" after the prefix: its bytes done, and in all
+    kSize,        // "N" after the prefix: the bytes to be written
+    kProgrammed,  // "..., programmed N bytes" (the number after `then`): the bytes written; none, and nothing needed writing
+    kDoneBit,     // a status word in hex after the prefix, read while Load is under way: its DONE bit (8) set, Load is done, else it failed
 };
 
 struct Shape {
@@ -153,7 +166,103 @@ constexpr Shape kShapes[] = {
     {kPicotool, kBar, "Erasing:", "%", "Erase"},  // (openFPGALoader's "Erasing: [" comes first)
     {kPicotool, kOk, "OK", "$", "", true},
     {kPicotool, kFailedHere, "ERROR: ", "", "", true},
-    {kPicotool, kFailedLine, "No accessible RP-series devices in BOOTSEL mode were found.", "$", ""},
+    // (With -f, a board running the Pico SDK's USB serial rebooted into
+    // BOOTSEL first: main.cpp lines 10378, 10383, 10385, as it printed them
+    // flashing the owner's Pico. No board in BOOTSEL: its words, wrapped at
+    // 80 columns on a pipe (lines 10168-10200), then "but:" and each device
+    // it saw, its advice indented under it (lines 10270-10320), held as the
+    // problem and its notes.)
+    {kPicotool, kStage, "Tracking device serial number ", "", "Reboot"},
+    {kPicotool, kStage, "The device was asked to reboot into BOOTSEL mode", "", "Reboot"},
+    {kPicotool, kStage, "Waiting for device to reboot", "", "Reboot", true},
+    {kPicotool, kHeld, "No accessible ", " in BOOTSEL mode w", ""},
+    {kPicotool, kHeld, "Despite the reboot attempt, no accessible ", "", ""},
+    // blit's copy of a .uf2 to a boot ROM's volume (flash.cpp's kUf2Script):
+    // its bytes after each piece, then the board restarting (the volume gone).
+    {kUf2, kHello, "UF2 copy of ", " to ", ""},
+    {kUf2, kBar, "UF2 copied ", "%", "Program", true},
+    {kUf2, kStage, "UF2 waiting for the board to restart", "$", "Restart", true},
+    {kUf2, kWrote, "UF2 wrote ", " bytes", "Restart", true},
+    {kUf2, kFailedHere, "UF2 copy failed: ", "", "", true},
+    // dfu-util 0.11: its banner (src/main.c lines 204-210); its bars,
+    // "\r%s\t[%s] %3llu%% %12llu bytes", then "%s done." (src/dfu_file.c
+    // lines 156 and 160; "Erase   " and "Download": src/dfuse.c lines 457
+    // and 511, src/dfu_load.c line 116); its warnings and errors, warnx's
+    // and errx's, "dfu-util: " before them (src/portable.h lines 38-45;
+    // main.c lines 434-455, 583, 645; dfu_file.c lines 337-338). It reads
+    // nothing back.
+    {kDfuUtil, kHello, "dfu-util 0.", "", ""},
+    {kDfuUtil, kBar, "Erase ", "%", "Erase", true},
+    {kDfuUtil, kBar, "Download ", "%", "Program", true},
+    {kDfuUtil, kDone, "Erase    done.", "$", "Erase", true},
+    {kDfuUtil, kDone, "Download done.", "$", "Program", true},
+    {kDfuUtil, kHello, "dfu-util: Warning: ", "", "", true},
+    {kDfuUtil, kHello, "dfu-util: A valid DFU suffix will be required", "", "", true},
+    {kDfuUtil, kFailedHere, "dfu-util: ", "", "", true},
+    // pyOCD v0.46.1's load: its log lines, once the time and the module
+    // around them are taken off (pyocd/utility/color_log.py line 28:
+    // "0001234 I message [module]"): "Erasing...", "Programming..." and
+    // the summary (pyocd/flash/loader.py lines 293, 310, 354, 362); its bar
+    // on a terminal, "\r[%-50s] %3d%%", the same one for each stage
+    // (pyocd/utility/progress.py lines 46-47, 89-92); no probe, with -W
+    // (pyocd/core/helpers.py lines 178-180); an error, logged E or C
+    // (pyocd/subcommands/load_cmd.py line 107, pyocd/__main__.py lines
+    // 171-176). It reads nothing back.
+    {kPyOcd, kStage, "I Erasing...", "", "Erase", true},
+    {kPyOcd, kStage, "I Programming...", "", "Program", true},
+    {kPyOcd, kProgrammed, "I Erased ", ", programmed ", "", true},
+    {kPyOcd, kBar, "[", "%", "", true},
+    {kPyOcd, kFailedLine, "No connected debug probe", "", "", true},
+    {kPyOcd, kFailedHere, "E ", "", "", true},
+    {kPyOcd, kFailedHere, "C ", "", "", true},
+    // STM32CubeProgrammer's CLI: only the lines others' code reads it by
+    // (rusefi 7a0681f9b6 java_console/ecu_shared/src/main/java/com/rusefi/
+    // maintenance/DfuFlasher.java line 438, "Download verified
+    // successfully" after -v; adafruit/tinyuf2 b3d228897e
+    // .claude/skills/hil-contract/SKILL.md, "File download complete" and
+    // "Error: Serial number not found"; qMonstatek 3066b985c2
+    // src/backend/updater/swd_recovery.cpp, "No debug probe detected"). ST's
+    // UM2237 could not be reached: its bar is not read.
+    {kCubeProg, kDone, "File download complete", "$", "Program", true},
+    {kCubeProg, kVerified, "Download verified successfully", "", "Verify", true},
+    {kCubeProg, kFailedHere, "Error: ", "", "", true},
+    // iceprog (icestorm v1.1, f31c39c, iceprog/iceprog.c): "flash ID:" (the
+    // flash is being written, lines 195-198), "file size: %ld" (971), the
+    // erases (311, 321, 343), "programming.." (914 into SRAM, 1002 the
+    // flash), "addr 0x%06X %3ld%%\r" (1011), "done." (1017), "reading.."
+    // (1040), "VERIFY OK" (1060), "cdone: high" (864: the FPGA configured);
+    // a difference read back (1050), no FTDI chip (mpsse.c lines 300-305).
+    {kIceprog, kFlash, "flash ID:", "", "", true},
+    {kIceprog, kSize, "file size: ", "", "", true},
+    {kIceprog, kStage, "erase ", " sector at 0x", "Erase", true},
+    {kIceprog, kStage, "bulk erase..", "$", "Erase", true},
+    {kIceprog, kWrite, "programming..", "$", "", true},
+    {kIceprog, kBar, "addr 0x", "%", "", true},
+    {kIceprog, kDone, "done.", "$", "", true},
+    {kIceprog, kStage, "reading..", "$", "Verify", true},
+    {kIceprog, kVerified, "VERIFY OK", "$", "Verify", true},
+    {kIceprog, kDone, "cdone: high", "$", "", true},
+    {kIceprog, kFailedLine, "Found difference between flash and file!", "$", "", true},
+    {kIceprog, kFailedLine, "Can't find iCE FTDI USB device", "", "", true},
+    // ecpprog (1931c3e, ecpprog/ecpprog.c): as iceprog, but with counts,
+    // "\r\e[0Kprogramming..  %04u/%04lu" and "verify..       %04u/%04lu"
+    // (lines 1245, 1293), "  VERIFY OK" or the difference after the last
+    // (1300, 1295); into SRAM, "programming.." (1146), then the ECP5's
+    // status register, its DONE bit 8 (lines 501, 509).
+    {kEcpprog, kFlash, "flash ID:", "", "", true},
+    {kEcpprog, kSize, "file size: ", "", "", true},
+    {kEcpprog, kStage, "erase ", " sector at 0x", "Erase", true},
+    {kEcpprog, kStage, "bulk erase..", "$", "Erase", true},
+    {kEcpprog, kWrite, "programming..", "$", "", true},
+    {kEcpprog, kCount, "programming..", "/", "Program", true},
+    {kEcpprog, kFailedThen, "verify..", "Found difference between flash and file!", "", true},
+    {kEcpprog, kVerified, "verify..", "VERIFY OK", "Verify", true},
+    {kEcpprog, kCount, "verify..", "/", "Verify", true},
+    {kEcpprog, kDoneBit, "ECP5 Status Register: 0x", "", "", true},
+    {kEcpprog, kFailedLine, "Can't find iCE FTDI USB device", "", "", true},
+    // pgrcmd: its return code in words, as blit prints it after it
+    // (flash.cpp's kPgrcmdCodes).
+    {kPgrcmd, kFailedHere, "pgrcmd: ", "", "", true},
     // Vivado 2026.2's hardware manager in batch mode, as it printed it on
     // the lab box loading the owner's Basys 3 (2026-11-23): no percent, a
     // line as each step begins, the DONE pin's state after the load; a
@@ -183,6 +292,7 @@ struct Named {
 constexpr Named kNamed[] = {
     {kOpenOcd, "openocd"}, {kOpenOcd, "openocd-esp32"}, {kEsptool, "esptool"}, {kEsptool, "esptool.py"}, {kProbeRs, "probe-rs"}, {kProbeRs, "cargo-flash"},
     {kJLink, "JLinkExe"}, {kJLink, "JLink.exe"}, {kOpenFpgaLoader, "openFPGALoader"}, {kPicotool, "picotool"}, {kVivado, "vivado"},
+    {kDfuUtil, "dfu-util"}, {kPyOcd, "pyocd"}, {kCubeProg, "STM32_Programmer_CLI"}, {kIceprog, "iceprog"}, {kEcpprog, "ecpprog"}, {kPgrcmd, "pgrcmd"},
 };
 
 // The first characters of a command make echoes that could be one of them:
@@ -226,7 +336,7 @@ bool size_at(std::string_view s, size_t* i, u64* out) {
     if (!decimal_at(s, &k, &v)) return false;
     if (k < s.size() && s[k] == ' ') ++k;
     static constexpr std::pair<std::string_view, double> kUnits[] = {{"KiB", 1024.0}, {"MiB", 1048576.0}, {"GiB", 1073741824.0}, {"kB", 1024.0}, {"KB", 1024.0},
-                                                                     {"MB", 1048576.0}, {"GB", 1073741824.0}, {"B", 1.0}};
+                                                                     {"MB", 1048576.0}, {"GB", 1073741824.0}, {"bytes", 1.0}, {"B", 1.0}};
     for (const auto& [unit, scale] : kUnits)
         if (s.substr(k).starts_with(unit)) {
             const size_t e = k + unit.size();
@@ -286,6 +396,17 @@ std::string_view trim(std::string_view s) {
     return s;
 }
 
+// A pyOCD log line's message: "0001234 I Erasing... [loader]" is
+// "I Erasing..." (pyocd/utility/color_log.py line 28).
+std::string_view pyocd_message(std::string_view s) {
+    if (s.size() > 10 && s[7] == ' ' && std::all_of(s.begin(), s.begin() + 7, [](char c) { return c >= '0' && c <= '9'; })) {
+        s.remove_prefix(8);
+        if (s.ends_with(']'))
+            if (const size_t open = s.rfind(" ["); open != std::string_view::npos) s = s.substr(0, open);
+    }
+    return s;
+}
+
 double now_s() { return std::chrono::duration<double>(std::chrono::steady_clock::now().time_since_epoch()).count(); }
 
 }  // namespace
@@ -326,6 +447,12 @@ void BuildScan::use_command(std::string_view command) {
 }
 
 bool BuildScan::progress_line(std::string_view text, bool unfinished) {
+    // (After a failure whose words go on, the rest is its: held.)
+    if (prog_holding_) {
+        if (!unfinished) progress_hold(text);
+        return true;
+    }
+    if (engine_ == kPyOcd) text = pyocd_message(text);
     // (Spaces first: probe-rs right-aligns its names.)
     size_t lead = 0;
     while (lead < text.size() && text[lead] == ' ') ++lead;
@@ -364,7 +491,7 @@ bool BuildScan::progress_line(std::string_view text, bool unfinished) {
     if (!shape) return false;
     size_t after = shape->prefix.size();
     // (A line still being written is read only for its bar: the rest wait for its end.)
-    if (unfinished && shape->kind != kBar && shape->kind != kBarDone) return false;
+    if (unfinished && shape->kind != kBar && shape->kind != kBarDone && shape->kind != kCount) return false;
     progress_engine(shape->engine);
     if (progress_.engine.empty()) progress_.engine = std::string(kEngineName[engine_]);
     if (prog_start_ == 0) prog_start_ = now_s();
@@ -408,8 +535,10 @@ bool BuildScan::progress_line(std::string_view text, bool unfinished) {
             // probe-rs's idle bar (no bytes yet) is not under way; one that
             // took its time is done.
             if (engine_ == kProbeRs && !took && line.find(" @ ", after) == std::string_view::npos) break;
-            if (std::ranges::find(progress_.done, shape->stage) != progress_.done.end()) break;
-            begin(shape->stage);
+            // (A bar of no stage of its own is the one under way's: pyOCD's, iceprog's.)
+            const std::string stage(shape->stage.empty() ? std::string_view(progress_.stage) : shape->stage);
+            if (stage.empty() || std::ranges::find(progress_.done, stage) != progress_.done.end()) break;
+            begin(stage);
             if (pct >= 0) progress_.percent = static_cast<i32>(pct);
             // Bytes after it: "4.00kB/22.00kB" (esptool v5), or past the bar, "25.40 KiB @" (probe-rs).
             size_t k = after;
@@ -426,13 +555,15 @@ bool BuildScan::progress_line(std::string_view text, bool unfinished) {
                 if (took) progress_.total = a;
             }
             if (took || (shape->kind == kBarDone && line.ends_with("Done."))) {
-                if (took && progress_.total && shape->stage == "Program") prog_bytes_ = progress_.total;  // (the bytes programmed: not the sectors erased)
-                done(shape->stage);
+                if (took && progress_.total && stage == "Program") prog_bytes_ = progress_.total;  // (the bytes programmed: not the sectors erased)
+                done(stage);
             }
             break;
         }
         case kDone:
             if (const double t = seconds_in(line); t >= 0) prog_seconds_ = std::max(prog_seconds_, 0.0) + t;  // (the tool's own time for it)
+            // (What its bar came to, where it counted bytes: dfu-util's Download.)
+            if (progress_.bytes && !prog_bytes_ && (shape->stage.empty() ? progress_.stage : std::string(shape->stage)) == "Program") prog_bytes_ = progress_.bytes;
             done(shape->stage);
             break;
         case kOk:
@@ -446,7 +577,7 @@ bool BuildScan::progress_line(std::string_view text, bool unfinished) {
             if (decimal_at(line, &k, &n)) prog_bytes_ = (prog_wrote_ ? prog_bytes_ : 0) + static_cast<u64>(n);
             prog_wrote_ = true;
             if (const double s = seconds_in(line.substr(k)); s >= 0) prog_seconds_ = std::max(prog_seconds_, 0.0) + s;
-            if (engine_ == kEsptool) done(shape->stage);
+            if (engine_ == kEsptool || engine_ == kUf2) done(shape->stage);
             break;
         }
         case kBytes: {
@@ -481,14 +612,91 @@ bool BuildScan::progress_line(std::string_view text, bool unfinished) {
             break;
         }
         case kFailedLine: fail(line); break;
+        case kFailedThen: fail(shape->then); break;
+        case kHeld:
+            progress_.failed = prog_holding_ = true;
+            prog_held_ = std::string(line);
+            prog_notes_.clear();
+            break;
+        case kWrite: begin(prog_flash_ ? "Program" : "Load"); break;
+        case kCount: {
+            // "programming..  0256/1234": the bytes done of all of them.
+            size_t k = after;
+            while (k < line.size() && line[k] == ' ') ++k;
+            double a = 0, b = 0;
+            if (!decimal_at(line, &k, &a) || k >= line.size() || line[k] != '/' || (++k, !decimal_at(line, &k, &b)) || b <= 0) break;
+            if (std::ranges::find(progress_.done, shape->stage) != progress_.done.end()) break;
+            begin(shape->stage);
+            progress_.bytes = static_cast<u64>(a);
+            progress_.total = static_cast<u64>(b);
+            progress_.percent = static_cast<i32>(std::min(100.0, a * 100 / b));
+            break;
+        }
+        case kSize: {
+            size_t k = after;
+            double n = 0;
+            if (decimal_at(line, &k, &n)) prog_bytes_ = static_cast<u64>(n);
+            break;
+        }
+        case kProgrammed: {
+            // "Erased 16384 bytes (4 sectors), programmed 16384 bytes (16 pages), identical 0 bytes (0 pages) at 9.80 kB/s"
+            size_t k = line.find(shape->then, after) + shape->then.size();
+            double n = 0;
+            if (!decimal_at(line, &k, &n)) break;
+            prog_bytes_ = static_cast<u64>(n);
+            prog_wrote_ = true;
+            if (prog_bytes_ == 0) {  // (all of it there already)
+                prog_unchanged_ = true;
+                std::erase(progress_.done, std::string("Program"));
+                if (progress_.stage == "Program") progress_.stage.clear(), progress_.percent = -1;
+            }
+            break;
+        }
+        case kDoneBit: {
+            if (progress_.stage != "Load") break;
+            size_t k = after;
+            u64 v = 0;
+            for (; k < line.size() && std::isxdigit(static_cast<unsigned char>(line[k])); ++k) v = v * 16 + static_cast<u64>(std::isdigit(static_cast<unsigned char>(line[k])) ? line[k] - '0' : (line[k] | 0x20) - 'a' + 10);
+            if (v & 0x100) done("Load");
+            else fail(std::string(line) + " (DONE is not set)");
+            break;
+        }
     }
     progress_changed();
     return true;
 }
 
+// The words of a failure that go on over the lines after it, wrapped
+// (they end with a full stop), then its notes, each a line not indented
+// and the indented lines under it.
+void BuildScan::progress_hold(std::string_view text) {
+    const std::string_view t = trim(text);
+    if (t.empty() || t == "but:") return;
+    if (!prog_held_.ends_with('.')) {
+        prog_held_ += ' ';
+        prog_held_ += t;
+    } else if (text.starts_with(' ') && !prog_notes_.empty()) {
+        prog_notes_.back() += ' ';
+        prog_notes_.back() += t;
+    } else {
+        prog_notes_.emplace_back(t);
+    }
+}
+
+// The failure held, as a problem with its notes.
+void BuildScan::progress_release() {
+    if (!prog_holding_) return;
+    prog_holding_ = false;
+    if (BuildProblem* p = add(kProgram[engine_], 1, 0, 1, prog_held_))
+        for (std::string& n : prog_notes_) p->notes.push_back(BuildNote{{}, 0, 0, std::move(n)});
+    prog_held_.clear();
+    prog_notes_.clear();
+}
+
 // Whose output is being read: another engine's run, what one before it said is over.
 void BuildScan::progress_engine(u8 engine) {
     if (engine == engine_) return;
+    progress_release();
     engine_ = engine;
     const bool had = !progress_.engine.empty();
     progress_ = Progress{};
@@ -502,6 +710,7 @@ void BuildScan::progress_engine(u8 engine) {
 
 // The output has ended: what the run came to.
 void BuildScan::progress_end() {
+    progress_release();
     if (progress_.engine.empty()) return;
     std::string& s = progress_.summary;
     s.clear();
