@@ -17,6 +17,9 @@
 //                          not yet the argument (gdb read 0x3a there), the registers instead
 //   riscv-panic            an ESP32-C3 stopped in xt_unhandled_exception: its RvExcFrame
 //   riscv-interrupt        a RISC-V stop in the trap handler for a timer interrupt: no fault
+//   riscv-rerun            an ESP32-C3 stopped at the breakpoint ESP-IDF had the debugger set (from
+//                          ESP-IDF's source: no RISC-V ESP32 here to check it on)
+//   riscv-step             the same registers, stopped by a step (dcsr.cause 4): no fault
 #include <cstdio>
 #include <string>
 
@@ -133,6 +136,14 @@ int main(int argc, char** argv) {
         f.panic_words.assign(36, 0);
         f.panic_words[0] = 0x42005d6a, f.panic_words[1] = 0x42005d80, f.panic_words[2] = 0x3fc8e200, f.panic_words[32] = 0x1880, f.panic_words[33] = 0x40380001, f.panic_words[34] = 7, f.panic_words[35] = 0;
         print(f, names({{0x42005d6a, {"motor_step", "/p/main/motor.c", 12, 0, false}}, {0x40380000, {"_vector_table", "", 0, 0, false}}}));
+    } else if (c == "riscv-rerun" || c == "riscv-step") {
+        // A load access fault (5) at 0x00000000 re-run: the PC is mepc,
+        // dcsr.cause 2 (a trigger), or 4 (a step).
+        f.arch = FaultFacts::kRiscV;
+        f.regs = {{"pc", 0x42005d6a}, {"mcause", 5}, {"mepc", 0x42005d6a}, {"mtval", 0}, {"mtvec", 0x40380001}, {"dcsr", c == "riscv-rerun" ? 0x40000083u : 0x40000103u}};
+        f.frames = {"motor_step", "app_main"};
+        f.ips = {0x42005d6a, 0x42005d90};
+        print(f, names({{0x42005d6a, {"motor_step", "/p/main/motor.c", 12, 0, false}}}));
     } else if (c == "riscv-interrupt") {
         // In the trap handler (mtvec's base) for the machine timer interrupt: no fault.
         f.arch = FaultFacts::kRiscV;

@@ -48,7 +48,10 @@
 //     (CONFIG_ESP_DEBUG_OCDAWARE), the panic handler sets hardware
 //     breakpoint 0 at the faulting instruction (IBREAKA0) and returns: the
 //     core runs it again and stops there, EXCCAUSE and EXCVADDR as the
-//     exception left them
+//     exception left them; on a RISC-V chip, components/esp_hw_support/
+//     cpu.c:73-100, it asks the debugger to set that breakpoint
+//     (ESP_SEMIHOSTING_SYS_BREAKPOINT_SET): a trigger, dcsr.cause 2 when it
+//     stops there (RISC-V External Debug Support 0.13.2, dcsr), mepc the PC
 #include "fault.hpp"
 
 #include <algorithm>
@@ -544,15 +547,20 @@ FaultReport rv_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
     if (!have) return {};
     const bool interrupt = mcause >> 31;
     const u64 code = mcause & 0x7FFFFFFF;
+    // Stopped at the breakpoint ESP-IDF's panic handler had the debugger set
+    // at the faulting instruction: mepc's, by a trigger (dcsr.cause 2,
+    // where the debugger gives dcsr), not at one of the user's.
+    u64 dcsr = 0;
+    const bool rerun = !panic && !f.in_panic && pc && pc == mepc && !f.user_break && (!reg(f, "dcsr", &dcsr) || ((dcsr >> 6) & 7) == 2);
     if (!panic && !f.in_panic) {
-        // In the trap handler: its PC in the function at mtvec's base (the
-        // ELF's names; else the debugger's for the frame), and a fault, not
-        // an interrupt or an environment call.
+        // Else in the trap handler: its PC in the function at mtvec's base
+        // (the ELF's names; else the debugger's for the frame). Either way a
+        // fault, not an interrupt or an environment call.
         const u64 base = mtvec & ~u64{3};
         const auto b = where.find(base), p = where.find(pc);
         const bool in_handler = base && (pc == base || (b != where.end() && !b->second.function.empty() &&
                                                         ((p != where.end() && p->second.function == b->second.function) || (!f.frames.empty() && f.frames[0] == b->second.function))));
-        if (!in_handler || interrupt || code == 8 || code == 9 || code == 11) return {};
+        if ((!in_handler && !rerun) || interrupt || code == 8 || code == 9 || code == 11) return {};
     }
     o.r.fault = true;
     std::string what;
@@ -566,8 +574,11 @@ FaultReport rv_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
                                   (!interrupt && rv_exception(code) ? ": " + std::string(rv_exception(code)) : interrupt && rv_interrupt(code) ? ": " + std::string(rv_interrupt(code)) : ""));
     o.value("mepc", mepc, named(where, mepc), mepc);
     const bool address = !interrupt && rv_address_cause(code);
-    o.value("mtval", mtval, address ? (mtval ? "the address that faulted" : "0: the core does not give the address") : code == 2 && !interrupt ? (mtval ? "the instruction's bits" : "0: the core does not give the instruction (or it was all zeros)") : "");
-    if (mtvec) o.value("mtvec", mtvec, named(where, mtvec & ~u64{3}) + std::string((mtvec & 3) == 1 ? " (vectored)" : " (direct)"));
+    o.value("mtval", mtval, address ? (mtval ? "the address that faulted" : "the address 0, or the core gives none") : code == 2 && !interrupt ? (mtval ? "the instruction's bits" : "an instruction of all zeros, or the core gives none") : "");
+    if (mtvec) {
+        const std::string handler = named(where, mtvec & ~u64{3});
+        o.value("mtvec", mtvec, handler + (handler.empty() ? "" : " ") + ((mtvec & 3) == 1 ? "(vectored)" : "(direct)"));
+    }
     if (mstatus) {
         static constexpr const char* kMode[] = {"user", "supervisor", "", "machine"};
         const u32 mpp = static_cast<u32>((mstatus >> 11) & 3);
@@ -575,6 +586,10 @@ FaultReport rv_report(const FaultFacts& f, const std::map<u64, SourceFrame>& whe
     }
     if (panic) o.add("  from ESP-IDF's panic frame at " + hex8(f.panic_frame), 4);
     else if (f.in_panic) o.add("  from the core's registers, in ESP-IDF's panic handler (its frame could not be read here)", 4);
+    else if (rerun) {
+        o.add("  ESP-IDF's panic handler had a breakpoint set at the instruction that faulted", 4);
+        o.add("  and returned to it: the core stopped there.", 4);
+    }
     std::string line = what;
     if (address && mtval) line += " at " + hex8(mtval) + " (mtval)";
     else if (!interrupt && code == 2 && mtval) line += "; instruction " + hex8(mtval);

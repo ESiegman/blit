@@ -190,8 +190,12 @@ else
     table xtensa-entry \
         'StoreProhibited (EXCCAUSE 29), cache attribute does not allow store at 0x00000000 (EXCVADDR); EPC1 0x42009126 in main.c:10 ;; StoreProhibited (EXCCAUSE 29), cache attribute does not allow store | Exception | EXCCAUSE    29  StoreProhibited: cache attribute does not allow store | EPC1        0x42009126  motor_step, main.c:10 [->] | EXCVADDR    0x00000000  the address that faulted | from the core'"'"'s registers, in ESP-IDF'"'"'s panic handler (its frame could not be read here)'
     table riscv-panic \
-        'Store/AMO access fault (mcause 7); mepc 0x42005d6a in motor.c:12 ;; Store/AMO access fault (mcause 7) | Trap | mcause      0x00000007  exception 7: Store/AMO access fault | mepc        0x42005d6a  motor_step, motor.c:12 [->] | mtval       0x00000000  0: the core does not give the address | mtvec       0x40380001  _vector_table (vectored) | mstatus     0x00001880  MPP 3: it was in machine mode | from ESP-IDF'"'"'s panic frame at 0x3fc8e0a0'
+        'Store/AMO access fault (mcause 7); mepc 0x42005d6a in motor.c:12 ;; Store/AMO access fault (mcause 7) | Trap | mcause      0x00000007  exception 7: Store/AMO access fault | mepc        0x42005d6a  motor_step, motor.c:12 [->] | mtval       0x00000000  the address 0, or the core gives none | mtvec       0x40380001  _vector_table (vectored) | mstatus     0x00001880  MPP 3: it was in machine mode | from ESP-IDF'"'"'s panic frame at 0x3fc8e0a0'
     table riscv-interrupt \
+        'no fault'
+    table riscv-rerun \
+        'Load access fault (mcause 5); mepc 0x42005d6a in motor.c:12 ;; Load access fault (mcause 5) | Trap | mcause      0x00000005  exception 5: Load access fault | mepc        0x42005d6a  motor_step, motor.c:12 [->] | mtval       0x00000000  the address 0, or the core gives none | mtvec       0x40380001  (vectored) | ESP-IDF'"'"'s panic handler had a breakpoint set at the instruction that faulted | and returned to it: the core stopped there.'
+    table riscv-step \
         'no fault'
 fi
 

@@ -3644,8 +3644,10 @@ The section goes when the board runs on.
   Stopped in the panic handler itself, they come from the frame it was
   given (`xt_unhandled_exception`'s or `panicHandler`'s `frame`), with
   A0's return address; ESP-IDF's own causes (an interrupt watchdog, a
-  double exception) are named. An ESP32-C3's RISC-V panic frame is read
-  the same way.
+  double exception) are named. On a RISC-V ESP32 (C3, C6) the same:
+  stopped at the breakpoint ESP-IDF's panic handler has the debugger set
+  (the PC at mepc, by a trigger), mcause, mepc and mtval from the core's
+  registers; in the panic handler, from its frame.
 
 The registers come from the debugger's Registers scope and the memory
 from its readMemory, so any of the presets' gdbs gives them; the names
