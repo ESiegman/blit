@@ -83,10 +83,13 @@ bool usb_list_at(const std::string& root, std::vector<UsbDevice>* out, std::stri
 // written). Of these devices, the one whose ids and serial number (as the
 // picker writes it) are the board's; "" for another probe, or none found.
 // And ST's DFU boot ROM, whose serial number is not its own (dfu-util's -p):
-// the one plugged in, else the one with the board's serial number.
+// the one plugged in, else the one with the board's serial number. An
+// ST-LINK V2 whose serial number matches none, the one plugged in: a
+// clone gives another at another plugging in.
 std::string probe_location(const Board& b, const std::vector<UsbDevice>& devices);
 // The same, the devices listed where the folder is (usb_list_at): into
-// b->probe_location, for OpenOCD (openocd_adapter).
+// b->probe_location, for OpenOCD (openocd_adapter) and dfu-util; an
+// ST-LINK V2's serial number as it is now into b->probe, for probe-rs.
 void probe_locate(Board* b, const std::string& root);
 
 // The flash tools' names the board object takes (flash.cpp's table).

@@ -291,7 +291,7 @@ Prepared prepare(const std::string& root, BuildTask c, std::string tool, bool gu
         h = h * 31 + flash_hash(bytes);
         if (fpga_tool(tool)) img.spi_width = bitstream_spi_width(bytes);  // (Vivado's write_cfgmem takes no other)
     }
-    if (tool == "openocd" || tool == "dfu-util") probe_locate(&c.board, root);  // (an ST-LINK V2, ST's DFU boot ROM: by where it is, not its serial number)
+    probe_locate(&c.board, root);  // (an ST-LINK V2, ST's DFU boot ROM: where it is, and its serial number now)
     const FlashPlan plan = flash_plan(c.board, tool, program, img, mode);
     if (!plan.why.empty()) {
         p.why = plan.why;

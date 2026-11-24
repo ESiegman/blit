@@ -511,7 +511,7 @@ void App::rtt_open() {
 // streams' words; and its tabs.
 void App::rtt_start(const BuildTask& rc, const std::string& elf, const std::string& preset, const BoardStreams& s) {
     BuildTask c = rc;
-    if (preset == "openocd") probe_locate(&c.board, build_root());  // (an ST-LINK V2: by where it is, not its serial number)
+    probe_locate(&c.board, build_root());  // (an ST-LINK V2: where it is, and its serial number now)
     const Board& b = c.board;
     RttUi& u = *rttui_;
     const std::string root = build_root();

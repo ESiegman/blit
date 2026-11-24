@@ -567,42 +567,62 @@ void board_read(json::Value b, const std::string& config, Board* out, std::strin
     }
 }
 
-std::string probe_location(const Board& b, const std::vector<UsbDevice>& devices) {
-    const bool v2 = b.probe_usb == "0483:3748" && !b.probe.empty(), rom = b.probe_usb == "0483:df11";
-    if (!v2 && !rom) return {};
-    // (ST's DFU boot ROM: its serial number is the chip's IDCODE and more
-    // that changes, "200364500000" as the system read it and "...0070" to
-    // dfu-util a minute on, on the lab box's STM32H743: the one there is,
-    // else the one whose serial number is the board's.)
-    const UsbDevice* only = nullptr;
-    int roms = 0;
-    for (const UsbDevice& d : devices)
-        if (rom && d.vid == 0x0483 && d.pid == 0xdf11) ++roms, only = &d;
+namespace {
+
+// The board's probe among these devices, for a probe whose serial number
+// is not to be trusted (probe_location): an ST-LINK V2 by its serial
+// number as the picker wrote it, else, when that matches none, the one
+// plugged in (a clone gives another serial number at another plugging
+// in: the lab box's, "6068C3BF..." one time and "37C3BF67..." the next,
+// 2026-11-24); ST's DFU boot ROM, whose serial number is the chip's IDCODE
+// and more that changes ("200364500000" as the system read it, "...0070"
+// to dfu-util a minute on), the one plugged in, else the one with the
+// board's serial number. Null for another probe, or none.
+const UsbDevice* probe_device(const Board& b, const std::vector<UsbDevice>& devices) {
+    const bool v2 = b.probe_usb == "0483:3748", rom = b.probe_usb == "0483:df11";
+    if (!v2 && !rom) return nullptr;
+    const u16 pid = v2 ? 0x3748 : 0xdf11;
+    const UsbDevice *match = nullptr, *only = nullptr;
+    int count = 0;
     for (const UsbDevice& d : devices) {
-        if (rom ? !(d.vid == 0x0483 && d.pid == 0xdf11 && (roms == 1 ? &d == only : d.serial == b.probe))
-                : d.vid != 0x0483 || d.pid != 0x3748 || stlink_serial(d.serial) != b.probe)
-            continue;
-        // (Linux's sysfs name is libusb's; macOS's locationID has the bus in
-        // its top byte and a port in each nibble after, to the first 0, as
-        // libusb's darwin_usb.c reads it.)
-        if (!d.location.starts_with("0x")) return d.location;
-        const unsigned long id = std::strtoul(d.location.c_str() + 2, nullptr, 16);
-        std::string out = std::to_string((id >> 24) & 0xff);
-        for (int shift = 20; shift >= 0; shift -= 4) {
-            const unsigned long port = (id >> shift) & 0xf;
-            if (!port) break;
-            out += (shift == 20 ? "-" : ".") + std::to_string(port);
-        }
-        return out;
+        if (d.vid != 0x0483 || d.pid != pid) continue;
+        ++count, only = &d;
+        if (!match && !b.probe.empty() && (v2 ? stlink_serial(d.serial) : d.serial) == b.probe) match = &d;
     }
-    return {};
+    if (v2) return match ? match : count == 1 ? only : nullptr;
+    return count == 1 ? only : match;
+}
+
+}  // namespace
+
+std::string probe_location(const Board& b, const std::vector<UsbDevice>& devices) {
+    const UsbDevice* d = probe_device(b, devices);
+    if (!d) return {};
+    // (Linux's sysfs name is libusb's; macOS's locationID has the bus in
+    // its top byte and a port in each nibble after, to the first 0, as
+    // libusb's darwin_usb.c reads it.)
+    if (!d->location.starts_with("0x")) return d->location;
+    const unsigned long id = std::strtoul(d->location.c_str() + 2, nullptr, 16);
+    std::string out = std::to_string((id >> 24) & 0xff);
+    for (int shift = 20; shift >= 0; shift -= 4) {
+        const unsigned long port = (id >> shift) & 0xf;
+        if (!port) break;
+        out += (shift == 20 ? "-" : ".") + std::to_string(port);
+    }
+    return out;
 }
 
 void probe_locate(Board* b, const std::string& root) {
-    if (!(b->probe_usb == "0483:3748" && !b->probe.empty()) && b->probe_usb != "0483:df11") return;
+    if (b->probe_usb != "0483:3748" && b->probe_usb != "0483:df11") return;
     std::vector<UsbDevice> devices;
     std::string why;
-    if (usb_list_at(root, &devices, &why)) b->probe_location = probe_location(*b, devices);
+    if (!usb_list_at(root, &devices, &why)) return;
+    const UsbDevice* d = probe_device(*b, devices);
+    if (!d) return;
+    b->probe_location = probe_location(*b, devices);
+    // (An ST-LINK V2 found other than by its serial number: probe-rs is
+    // given the one it has now, as probe-rs reads it.)
+    if (b->probe_usb == "0483:3748") b->probe = stlink_serial(d->serial);
 }
 
 bool usb_list_at(const std::string& root, std::vector<UsbDevice>* out, std::string* why) {
