@@ -68,6 +68,9 @@ check() {
         printf '%s\n    %s\n' "$1" "$got"
     elif [ "$got" != "$2" ]; then
         printf 'FAIL: %s\n    expected %s\n    got      %s\n' "$1" "$2" "$got"
+        # (All the run printed, of which got is a part: what a machine
+        # where it fails, as GitHub's runner, said.)
+        [ -s "$dir/run.out" ] && { echo "    the run printed:"; sed -e 's/^/      | /' "$dir/run.out" | tail -60; }
         failed=1
     fi
 }
@@ -82,7 +85,7 @@ run() {
     start_fake
     script=$(printf '%s' "$1" | sed -e "s#fake:\([^;]*\)#lua:local f=io.open('$CTL','w') f:write('\1\\\\n') f:close()#g")
     got=$(BLIT_INIT="${init:-$dir/init.lua}" PATH="${path:-$PATH}" BLIT_AGENT_LEVEL="${level:-}" "$blit" --offscreen "${size:-1200x1400}" --shot "$dir/shot.bmp" --script "workdir:${work:-$P};frame;$script" 2>&1 >/dev/null |
-        sed -E -e "s#$dir#@#g" -e 's/[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}/HH:MM:SS.mmm/g' -e 's/[0-9]+\.[0-9] s/N s/g' | tail -n "${lines:-1}" | awk 'NR > 1 { printf " ~ " } { printf "%s", $0 }')
+        sed -E -e "s#$dir#@#g" -e 's/[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}/HH:MM:SS.mmm/g' -e 's/[0-9]+\.[0-9] s/N s/g' | tee "$dir/run.out" | tail -n "${lines:-1}" | awk 'NR > 1 { printf " ~ " } { printf "%s", $0 }')
     size= init= path= lines= work= level=
 }
 # What the device has been sent, a byte a word (od -c's way: \r, 001).

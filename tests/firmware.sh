@@ -60,6 +60,9 @@ check() {
         printf '%s\n    %s\n' "$1" "$got"
     elif [ "$got" != "$2" ]; then
         printf 'FAIL: %s\n    expected %s\n    got      %s\n' "$1" "$2" "$got"
+        # (All the run printed, of which got is a part: what a machine
+        # where it fails, as GitHub's runner, said.)
+        [ -s "$dir/run.out" ] && { echo "    the run printed:"; sed -e 's/^/      | /' "$dir/run.out" | tail -60; }
         failed=1
     fi
 }
@@ -69,7 +72,7 @@ check() {
 run() {
     rm -f "$LOG"
     got=$(PATH="${path:-$PATH}" "$blit" --offscreen 1400x900 --shot "$dir/shot.bmp" --script "workdir:$1;frame;$2" 2>&1 >/dev/null |
-        sed -e "s#$dir#~#g" -e 's/in [0-9.]* s\]/in T]/' | tail -n "${lines:-1}" | awk 'NR > 1 { printf " ~ " } { printf "%s", $0 }')
+        sed -e "s#$dir#~#g" -e 's/in [0-9.]* s\]/in T]/' | tee "$dir/run.out" | tail -n "${lines:-1}" | awk 'NR > 1 { printf " ~ " } { printf "%s", $0 }')
     [ -f "$LOG" ] && got="$got ~ $(sed -e "s#$dir#~#g" "$LOG" | awk 'NR > 1 { printf " ~ " } { printf "%s", $0 }')"
     path= lines=
 }
