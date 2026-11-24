@@ -340,6 +340,9 @@ target_sources(blit PRIVATE src/probes.cpp src/appprobe.cpp)
 # Serial monitors: a terminal tab whose program is the device on a port,
 # through termios (serial.cpp: plain POSIX, for the agent too).
 target_sources(blit PRIVATE src/serial.cpp src/streamtab.cpp src/serialtab.cpp src/appserial.cpp)
+# The loopback socket module: a tool's TCP port here, connected to again as
+# it comes and goes, or listened on.
+target_sources(blit PRIVATE src/loopback.cpp)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_sources(blit PRIVATE src/serial_linux.cpp)
 endif()
