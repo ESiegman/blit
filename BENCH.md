@@ -3468,6 +3468,24 @@ tile sharp 0.69 and 0.62 ms (pan), 0.98 and 1.00 ms (zoom); a frame with
 the tab on show 72.2 µs both; j or k and its frame 0.073 and 0.074 ms
 (400 each, two rounds). No change past the noise.
 
+### Round 80: a hidden animation's timer let go
+
+After each frame drawn, `picture_drawn` lets go of an animation's timer
+when none was on show (a pointer and a frame count compared, else an
+`SDL_RemoveTimer` once). On AC power (`pmset`: powermode 2), the Mac's
+load average about 6 from other sessions, so within this sitting only.
+Debug builds with Release's flags, 205bcee against 28af624, turn about,
+the scroll benchmark on the 100 MB C file at 2560x1600 offscreen (Metal,
+M5 Pro), medians of four rounds of the frame's CPU p50:
+
+| | before | after |
+|---|---:|---:|
+| Scrolling (µs) | 55.75 | 55.84 |
+| Scrolling, a GIF playing in a split beside it (µs) | 60.62 | 60.71 |
+| Scrolling, a GIF in a tab behind it (µs) | 55.84 | 55.88 |
+
+No change past the noise.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
