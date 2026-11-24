@@ -20,8 +20,10 @@
 // blit quits with nothing working, or is told to stop. Where no socket can
 // be made, it is the agent of one connection, on ssh's input and output, as
 // it always was (and is, run with no argument). `blit-agent --usb` prints
-// the machine's USB devices and ends (usb.hpp: blit's probe picker on an
-// ssh project).
+// the machine's USB devices and ends (usb.hpp: blit's probe and port
+// pickers on an ssh project); `--serial PATH CONFIG` and `--connect
+// HOST:PORT` are pumps (pump.hpp), started by blit as programs here, for a
+// serial port or a TCP port on this machine to behave as one on blit's.
 //
 // Built here, with the compiler blit is built with: for this machine by
 // CMake (the tests' stand-in for a server, and Macs), and for Linux by
@@ -66,6 +68,7 @@
 #include "finder.hpp"
 #include "protocol.hpp"
 #include "pty.hpp"
+#include "pump.hpp"
 #include "usb.hpp"
 
 extern char** environ;
@@ -1514,6 +1517,8 @@ int main(int argc, char** argv) {
         const std::string list = blit::usb_text(blit::usb_list());
         return std::fwrite(list.data(), 1, list.size(), stdout) == list.size() ? 0 : 1;
     }
+    if (mode == "--serial") return blit::pump_serial(argc - 2, argv + 2);  // (a serial port here, for blit there: pump.hpp)
+    if (mode == "--connect" && argc > 2) return blit::pump_connect(argv[2]);  // (a TCP port reached from here)
     if (mode == "--serve" && argc > 2) return serve(argv[2]);
     return serve_here();
 }

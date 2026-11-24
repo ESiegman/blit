@@ -104,12 +104,13 @@ constexpr uint64_t kReadAtMost = 16u << 20;
 // ("blit-agent 3"). It counts what an agent can do that one before it
 // could not (2: kFlow, kQuiet; 3: kWritePart, kInFlow; 4: it outlives the
 // connection, kResume, kKeep, kBusy, kGoodbye, kStop, kWorking; 5: kReadAt,
-// and large replies in kPart frames), so that blit asks an older one only
-// for what it knows. (A blit always brings its own agent; an older one is
+// and large replies in kPart frames; 6: the pumps, `blit-agent --serial` and
+// `--connect`, which blit starts as programs with kSpawn: pump.hpp), so that
+// blit asks an older one only for what it knows. (A blit always brings its own agent; an older one is
 // met only when the agents kept in agent/bin were built from older
 // sources.) blit says its own level the same way, in kHello (5: it puts
 // kPart frames together).
-constexpr uint32_t kAgentLevel = 5;
+constexpr uint32_t kAgentLevel = 6;
 constexpr uint32_t kBlitLevel = 5;
 
 // A message being put together.

@@ -1240,6 +1240,10 @@ std::string Remote::agent_path() const {
     std::lock_guard lock(impl_->mu);
     return impl_->home.empty() || impl_->agent_file.empty() ? std::string() : impl_->home + "/.cache/blit/" + impl_->agent_file;
 }
+u32 Remote::agent_level() const {
+    std::lock_guard lock(impl_->mu);
+    return impl_->agent_level;
+}
 
 int Remote::working() const {
     std::lock_guard lock(impl_->mu);

@@ -233,7 +233,7 @@ target_sources(blit_core PRIVATE src/wavefst.cpp)
 # src/agent/build.sh builds (GCC 16 in a container) and which are kept with
 # the sources.
 if(NOT WIN32)
-  add_executable(blit-agent src/agent/blit-agent.cpp src/finder.cpp src/fuzzy.cpp src/pty.cpp src/usb.cpp)
+  add_executable(blit-agent src/agent/blit-agent.cpp src/finder.cpp src/fuzzy.cpp src/pty.cpp src/usb.cpp src/serial.cpp src/pump.cpp)
   target_include_directories(blit-agent PRIVATE src)
   target_link_libraries(blit-agent PRIVATE Threads::Threads)
   # (USB devices, for the probe picker: src/usb.cpp reads them through IOKit.)
@@ -339,9 +339,14 @@ target_sources(blit PRIVATE src/notify.cpp)
 target_sources(blit PRIVATE src/probes.cpp src/appprobe.cpp)
 # Serial monitors: a terminal tab whose program is the device on a port,
 # through termios (serial.cpp: plain POSIX, for the agent too).
-target_sources(blit PRIVATE src/serial.cpp src/serialtab.cpp src/appserial.cpp)
+# A port on another machine is opened there by blit's agent, run as a pump
+# (src/pump.cpp: built into both).
+target_sources(blit PRIVATE src/serial.cpp src/serialtab.cpp src/appserial.cpp src/pump.cpp)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_sources(blit PRIVATE src/serial_linux.cpp)
+  if(TARGET blit-agent)
+    target_sources(blit-agent PRIVATE src/serial_linux.cpp)
+  endif()
 endif()
 # Flashing the board and programming an FPGA, and the Boards view.
 target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp src/boarddebug.cpp src/appcapture.cpp)

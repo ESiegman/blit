@@ -154,7 +154,8 @@ public:
     const std::string& host() const { return host_; }
     std::string home() const;
     std::string system() const;   // "Linux x86_64"
-    std::string agent_path() const;  // blit's agent there (blit-agent --usb lists its USB devices); "" until connected
+    std::string agent_path() const;  // blit's agent there (blit-agent --usb lists its USB devices; its pumps: pump.hpp); "" until connected
+    u32 agent_level() const;         // what it can do (protocol.hpp's kAgentLevel, as it said it: 6 has the pumps); 0 until connected
     bool wait_ready(int ms);       // for threads that may wait
 
     // Calls: false (with *err where there is one) when they fail or the connection does.

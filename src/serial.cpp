@@ -16,6 +16,7 @@
 
 #include <algorithm>
 #include <cctype>
+#include <cstdio>
 #include <cstdlib>
 #include <cstring>
 
@@ -55,6 +56,24 @@ std::string lower(std::string_view s) {
     return out;
 }
 
+// The name of a user or group by its number, from /etc/passwd or
+// /etc/group (whose third field is the number): blit's agent is linked
+// statically, and its getpwuid and getgrgid may find no name where the
+// system's C library is not the one it was linked with.
+std::string name_in(const char* file, unsigned id) {
+    FILE* f = std::fopen(file, "r");
+    if (!f) return {};
+    char line[1024];
+    std::string found;
+    while (found.empty() && std::fgets(line, sizeof line, f)) {
+        const char* c1 = std::strchr(line, ':');
+        const char* c2 = c1 ? std::strchr(c1 + 1, ':') : nullptr;
+        if (c2 && std::strtoul(c2 + 1, nullptr, 10) == id && c2[1] >= '0' && c2[1] <= '9') found.assign(line, static_cast<size_t>(c1 - line));
+    }
+    std::fclose(f);
+    return found;
+}
+
 // Why a port could not be opened, in words (the group the device belongs
 // to, when this user is not in it).
 std::string why_not(const std::string& path, int e) {
@@ -64,10 +83,13 @@ std::string why_not(const std::string& path, int e) {
     if (e == EACCES || e == EPERM) {
         struct stat st;
         std::string group;
-        if (::stat(path.c_str(), &st) == 0)
+        if (::stat(path.c_str(), &st) == 0) {
             if (const struct group* g = ::getgrgid(st.st_gid)) group = g->gr_name;
+            else group = name_in("/etc/group", st.st_gid);
+        }
         const passwd* me = ::getpwuid(::getuid());
-        const std::string who = me ? me->pw_name : "this user";
+        std::string who = me ? me->pw_name : name_in("/etc/passwd", ::getuid());
+        if (who.empty()) who = "this user";
         if (!group.empty() && group != "root") return "Not allowed to open " + name + ": it belongs to the " + group + " group, and " + who + " is not in it";
         return "Not allowed to open " + name;
     }
