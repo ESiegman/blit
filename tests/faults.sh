@@ -19,16 +19,17 @@ set -u
 blit=${1:?usage: tests/faults.sh path/to/blit [--print]}
 print=${2:-}
 here=$(cd "$(dirname "$0")" && pwd -P)
-dap_gdb() {  # the first of these that is built with Python
+dap_gdb() {  # dap_gdb ARCH GDB...: the first of these built for ARCH and with Python
+    a=$1; shift
     for g in "$@"; do
-        command -v "$g" >/dev/null 2>&1 && [ "$("$g" -q -batch -ex 'python print(41 + 1)' 2>/dev/null)" = 42 ] && { command -v "$g"; return 0; }
+        command -v "$g" >/dev/null 2>&1 && [ "$("$g" -q -batch -ex "set architecture $a" -ex 'python print(41 + 1)' 2>/dev/null | tail -1)" = 42 ] && { command -v "$g"; return 0; }
     done
     return 1
 }
 cc=$(command -v arm-none-eabi-gcc || ls -d "$HOME"/.local/opt/arm-gnu-toolchain-*/bin/arm-none-eabi-gcc 2>/dev/null | tail -1)
-gdb=$(dap_gdb arm-none-eabi-gdb gdb-multiarch)
+gdb=$(dap_gdb arm arm-none-eabi-gdb gdb-multiarch gdb)
 rvcc=$(command -v riscv64-elf-gcc || command -v riscv64-unknown-elf-gcc || command -v riscv-none-elf-gcc)
-rvgdb=$(dap_gdb riscv64-elf-gdb riscv64-unknown-elf-gdb riscv-none-elf-gdb gdb-multiarch)
+rvgdb=$(dap_gdb riscv:rv32 riscv64-elf-gdb riscv64-unknown-elf-gdb riscv-none-elf-gdb gdb-multiarch gdb)
 dir=$(mktemp -d)
 trap 'pkill -f "$dir/" 2>/dev/null; rm -rf "$dir"' EXIT
 dir=$(cd "$dir" && pwd -P)
@@ -77,7 +78,7 @@ if [ -z "$cc" ]; then
 elif ! command -v qemu-system-arm >/dev/null 2>&1; then
     echo "faults: Cortex-M skipped: no qemu-system-arm (QEMU)"
 elif [ -z "$gdb" ]; then
-    echo "faults: Cortex-M skipped: no arm-none-eabi-gdb or gdb-multiarch built with Python (gdb -i dap needs it)"
+    echo "faults: Cortex-M skipped: no arm-none-eabi-gdb, gdb-multiarch or gdb built for Arm with Python (gdb -i dap needs it)"
 else
     cp "$here/faults/cm.c" "$P/"
     # fw MODE CPU LINKER [FLAGS]: fw.elf built.
@@ -148,7 +149,7 @@ if [ -z "$rvcc" ]; then
 elif ! command -v qemu-system-riscv32 >/dev/null 2>&1; then
     echo "faults: RISC-V skipped: no qemu-system-riscv32 (QEMU)"
 elif [ -z "$rvgdb" ]; then
-    echo "faults: RISC-V skipped: no riscv64-elf-gdb (nor riscv64-unknown-elf-gdb, riscv-none-elf-gdb, gdb-multiarch) built with Python"
+    echo "faults: RISC-V skipped: no riscv64-elf-gdb (nor riscv64-unknown-elf-gdb, riscv-none-elf-gdb, gdb-multiarch, a gdb built for RISC-V) built with Python"
 else
     cp "$here/faults/rv.c" "$P/"
     rvfw() { (cd "$P" && "$rvcc" -march=rv32imac_zicsr -mabi=ilp32 -g -O0 -nostdlib -Wl,--no-warn-rwx-segments -T "$here/faults/sifive_e.ld" -DMODE="$1" -o fw.elf rv.c) || exit 1; }

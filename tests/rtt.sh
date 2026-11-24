@@ -27,8 +27,8 @@ real_home=$HOME
 # (Each on the PATH tried: Arm's own toolchain's gdb has no Python.)
 gdb=
 for d in $(printf '%s' "$PATH" | tr ':' ' '); do
-    for g in arm-none-eabi-gdb gdb-multiarch; do
-        [ -z "$gdb" ] && [ -x "$d/$g" ] && [ "$("$d/$g" -q -batch -ex 'python print(41 + 1)' 2>/dev/null)" = 42 ] && gdb="$d/$g"
+    for g in arm-none-eabi-gdb gdb-multiarch gdb; do
+        [ -z "$gdb" ] && [ -x "$d/$g" ] && [ "$("$d/$g" -q -batch -ex 'set architecture arm' -ex 'python print(41 + 1)' 2>/dev/null | tail -1)" = 42 ] && gdb="$d/$g"
     done
 done
 # (defmt-print: on the PATH, else where cargo installs it, ~/.cargo/bin.)
@@ -332,20 +332,20 @@ else
     }
     plan "$STLINK, \"debug\": \"openocd\", \"rtt\": true, \"semihosting\": true"
     check "openocd: its Tcl port open for RTT; semihosting on and to a port of its own, once attached" \
-        "openocd | gdb: arm-none-eabi-gdb gdb-multiarch | target: | exec {openocd} -c 'gdb_port pipe' -c 'tcl_port T' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }' | after: monitor reset halt; maintenance flush register-cache; monitor arm semihosting enable; monitor arm semihosting_redirect tcp FREE stdio | to main | flashed first"
+        "openocd | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | target: | exec {openocd} -c 'gdb_port pipe' -c 'tcl_port T' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }' | after: monitor reset halt; maintenance flush register-cache; monitor arm semihosting enable; monitor arm semihosting_redirect tcp FREE stdio | to main | flashed first"
     plan "$STLINK, \"debug\": \"pyocd\", \"rtt\": true, \"semihosting\": true"
     check "pyocd: its RTT config, semihosting on its telnet port" \
-        "pyocd | gdb: arm-none-eabi-gdb gdb-multiarch | server: {pyocd} gdbserver -t stm32f411ceux -u 004D00283133510F37363734 -p 3333 -T 3334 --config @/CACHE/fw.yaml -S | target: 127.0.0.1:3333 | after: monitor reset halt; maintenance flush register-cache | to main | flashed first"
+        "pyocd | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | server: {pyocd} gdbserver -t stm32f411ceux -u 004D00283133510F37363734 -p 3333 -T 3334 --config @/CACHE/fw.yaml -S | target: 127.0.0.1:3333 | after: monitor reset halt; maintenance flush register-cache | to main | flashed first"
     plan '"probe": {"kind": "jlink", "serial": "000801234567", "usb": "1366:0105"}, "chip": "STM32H743ZI", "elf": "fw.elf", "rtt": true, "semihosting": true'
     check "jlink: its RTT telnet port, the block's address, semihosting to its telnet client" \
-        "jlink | gdb: arm-none-eabi-gdb gdb-multiarch | server: {JLinkGDBServerCLExe|JLinkGDBServer} -device STM32H743ZI -if SWD -speed 4000 -port 2331 -swoport 2332 -telnetport 2333 -select 'USB=000801234567' -singlerun -nogui -RTTTelnetPort FREE | target: 127.0.0.1:2331 | after: monitor reset; maintenance flush register-cache; monitor exec SetRTTAddr $rttaddr; monitor semihosting enable; monitor semihosting IOClient 1 | to main | flashed first"
+        "jlink | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | server: {JLinkGDBServerCLExe|JLinkGDBServer} -device STM32H743ZI -if SWD -speed 4000 -port 2331 -swoport 2332 -telnetport 2333 -select 'USB=000801234567' -singlerun -nogui -RTTTelnetPort FREE | target: 127.0.0.1:2331 | after: monitor reset; maintenance flush register-cache; monitor exec SetRTTAddr $rttaddr; monitor semihosting enable; monitor semihosting IOClient 1 | to main | flashed first"
     plan "$STLINK"
     got=${got%% |*}
     check "an ST-LINK board names no preset: probe-rs" "probe-rs"
     plan "$STLINK, \"rtt\": true"
     got=$(printf '%s' "$got" | sed -E 's/ \| after:.*//')
     check "an ST-LINK board with RTT on, no preset named: openocd, which serves RTT beside gdb" \
-        "openocd | gdb: arm-none-eabi-gdb gdb-multiarch | target: | exec {openocd} -c 'gdb_port pipe' -c 'tcl_port T' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }'"
+        "openocd | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | target: | exec {openocd} -c 'gdb_port pipe' -c 'tcl_port T' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }'"
     plan "$STLINK, \"semihosting\": true"
     got=${got%% |*}
     check "and with semihosting on" "openocd"
@@ -359,7 +359,7 @@ fi
 # ---------------------------------------------------------------- the real thing: QEMU, semihosting, defmt
 
 if [ -z "$cc" ] || [ -z "${nm#nm}" ] || ! command -v qemu-system-arm >/dev/null 2>&1 || [ -z "$gdb" ]; then
-    echo "SKIP: rtt.sh's QEMU cases need qemu-system-arm, arm-none-eabi-gcc and a gdb with Python for Arm (arm-none-eabi-gdb or gdb-multiarch)"
+    echo "SKIP: rtt.sh's QEMU cases need qemu-system-arm, arm-none-eabi-gcc and a gdb with Python for Arm (arm-none-eabi-gdb, gdb-multiarch or a gdb built for Arm)"
 else
     Q="$dir/q"
     mkdir -p "$Q/.blit" "$Q/src"

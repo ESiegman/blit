@@ -20,10 +20,10 @@ cc=$(command -v arm-none-eabi-gcc || ls -d "$HOME"/.local/opt/arm-gnu-toolchain-
 [ -n "$cc" ] || { echo "boards skipped: no arm-none-eabi-gcc (Arm's GNU toolchain)"; exit 0; }
 command -v qemu-system-arm >/dev/null 2>&1 || { echo "boards skipped: no qemu-system-arm (QEMU)"; exit 0; }
 gdb=
-for g in arm-none-eabi-gdb gdb-multiarch; do
-    command -v $g >/dev/null 2>&1 && [ "$($g -q -batch -ex 'python print(41 + 1)' 2>/dev/null)" = 42 ] && { gdb=$(command -v $g); break; }
+for g in arm-none-eabi-gdb gdb-multiarch gdb; do
+    command -v $g >/dev/null 2>&1 && [ "$($g -q -batch -ex 'set architecture arm' -ex 'python print(41 + 1)' 2>/dev/null | tail -1)" = 42 ] && { gdb=$(command -v $g); break; }
 done
-[ -n "$gdb" ] || { echo "boards skipped: no arm-none-eabi-gdb or gdb-multiarch built with Python (gdb -i dap needs it)"; exit 0; }
+[ -n "$gdb" ] || { echo "boards skipped: no arm-none-eabi-gdb, gdb-multiarch or gdb built for Arm with Python (gdb -i dap needs it)"; exit 0; }
 dir=$(mktemp -d)
 trap 'pkill -f "$dir/" 2>/dev/null; rm -rf "$dir"' EXIT
 dir=$(cd "$dir" && pwd -P)
@@ -127,32 +127,32 @@ plan() {
 }
 plan "{ $STLINK }"
 check "probe-rs (an ST-LINK's): its gdb server" \
-    'probe-rs | gdb: arm-none-eabi-gdb gdb-multiarch | server: {probe-rs} gdb --chip STM32F411CEUx --probe 0483:374e:004D00283133510F37363734 --non-interactive --gdb-connection-string 127.0.0.1:1337 | target: 127.0.0.1:1337 | after: monitor reset halt; maintenance flush register-cache | to main | flashed first | {"program":"@/fw/cm.elf","target":"127.0.0.1:1337"} ;; probe-rs | gdb: arm-none-eabi-gdb gdb-multiarch | server: {probe-rs} gdb --chip STM32F411CEUx --probe 0483:374e:004D00283133510F37363734 --non-interactive --gdb-connection-string 127.0.0.1:1337 | target: 127.0.0.1:1337 | after:  | {"program":"@/fw/cm.elf","target":"127.0.0.1:1337"}'
+    'probe-rs | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | server: {probe-rs} gdb --chip STM32F411CEUx --probe 0483:374e:004D00283133510F37363734 --non-interactive --gdb-connection-string 127.0.0.1:1337 | target: 127.0.0.1:1337 | after: monitor reset halt; maintenance flush register-cache | to main | flashed first | {"program":"@/fw/cm.elf","target":"127.0.0.1:1337"} ;; probe-rs | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | server: {probe-rs} gdb --chip STM32F411CEUx --probe 0483:374e:004D00283133510F37363734 --non-interactive --gdb-connection-string 127.0.0.1:1337 | target: 127.0.0.1:1337 | after:  | {"program":"@/fw/cm.elf","target":"127.0.0.1:1337"}'
 plan "{ $STLINK, \"debug\": \"openocd\" }"
 check "openocd: started by gdb through a pipe" \
-    "openocd | gdb: arm-none-eabi-gdb gdb-multiarch | target: | exec {openocd} -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }' | after: monitor reset halt; maintenance flush register-cache | to main | flashed first | {\"program\":\"@/fw/cm.elf\",\"target\":\"| exec \\\"\$BLIT_SERVER\\\" -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }'\"} ;; openocd | gdb: arm-none-eabi-gdb gdb-multiarch | target: | exec {openocd} -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }' | after:  | {\"program\":\"@/fw/cm.elf\",\"target\":\"| exec \\\"\$BLIT_SERVER\\\" -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }'\"}"
+    "openocd | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | target: | exec {openocd} -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }' | after: monitor reset halt; maintenance flush register-cache | to main | flashed first | {\"program\":\"@/fw/cm.elf\",\"target\":\"| exec \\\"\$BLIT_SERVER\\\" -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }'\"} ;; openocd | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | target: | exec {openocd} -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }' | after:  | {\"program\":\"@/fw/cm.elf\",\"target\":\"| exec \\\"\$BLIT_SERVER\\\" -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }'\"}"
 plan '{ "probe": {"kind": "jlink", "serial": "000801234567", "usb": "1366:0105"}, "chip": "STM32H743ZI" }'
 got=${got%% ;; *}
 check "jlink: SEGGER's GDB server" \
-    'jlink | gdb: arm-none-eabi-gdb gdb-multiarch | server: {JLinkGDBServerCLExe|JLinkGDBServer} -device STM32H743ZI -if SWD -speed 4000 -port 2331 -swoport 2332 -telnetport 2333 -select '"'"'USB=000801234567'"'"' -singlerun -nogui | target: 127.0.0.1:2331 | after: monitor reset; maintenance flush register-cache | to main | flashed first | {"program":"@/fw/cm.elf","target":"127.0.0.1:2331"}'
+    'jlink | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | server: {JLinkGDBServerCLExe|JLinkGDBServer} -device STM32H743ZI -if SWD -speed 4000 -port 2331 -swoport 2332 -telnetport 2333 -select '"'"'USB=000801234567'"'"' -singlerun -nogui | target: 127.0.0.1:2331 | after: monitor reset; maintenance flush register-cache | to main | flashed first | {"program":"@/fw/cm.elf","target":"127.0.0.1:2331"}'
 plan '{ "probe": {"kind": "esp-usb-jtag", "serial": "AC:A7:04:2C:81:B4", "usb": "303a:1001"}, "chip": "ESP32-S3" }'
 check "esp: Espressif's OpenOCD through a pipe, its gdb, to app_main; attaching, no reset (no flash size: its gdb-attach resets otherwise)" \
     "esp | gdb: xtensa-esp32s3-elf-gdb | target: | exec {openocd-esp32|openocd} -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -f interface/esp_usb_jtag.cfg -c 'adapter serial AC:A7:04:2C:81:B4' -f target/esp32s3.cfg -c '[target current] configure -event gdb-detach { resume }' | after: set remote hardware-watchpoint-limit 2; monitor reset halt; maintenance flush register-cache | to app_main | flashed first | {\"program\":\"@/fw/cm.elf\",\"target\":\"| exec \\\"\$BLIT_SERVER\\\" -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -f interface/esp_usb_jtag.cfg -c 'adapter serial AC:A7:04:2C:81:B4' -f target/esp32s3.cfg -c '[target current] configure -event gdb-detach { resume }'\"} ;; esp | gdb: xtensa-esp32s3-elf-gdb | target: | exec {openocd-esp32|openocd} -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -c 'set ESP_FLASH_SIZE 0' -f interface/esp_usb_jtag.cfg -c 'adapter serial AC:A7:04:2C:81:B4' -f target/esp32s3.cfg -c '[target current] configure -event gdb-detach { resume }' | after: set remote hardware-watchpoint-limit 2 | {\"program\":\"@/fw/cm.elf\",\"target\":\"| exec \\\"\$BLIT_SERVER\\\" -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -c 'set ESP_FLASH_SIZE 0' -f interface/esp_usb_jtag.cfg -c 'adapter serial AC:A7:04:2C:81:B4' -f target/esp32s3.cfg -c '[target current] configure -event gdb-detach { resume }'\"}"
 plan '{ "probe": {"kind": "blackmagic", "serial": "7BB180B4", "usb": "1d50:6018", "gdb": "/dev/cu.usbmodem7BB180B41"}, "chip": "STM32F411CEUx" }'
 got=${got%% ;; *}
 check "blackmagic: its GDB port as extended-remote on gdb's command line, attach 1, gdb's load" \
-    "blackmagic | gdb: arm-none-eabi-gdb gdb-multiarch | gdb: -iex 'target extended-remote /dev/cu.usbmodem7BB180B41' -iex 'monitor swd_scan' | after: load | to main | flashed first | {\"program\":\"@/fw/cm.elf\",\"pid\":1}"
+    "blackmagic | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | gdb: -iex 'target extended-remote /dev/cu.usbmodem7BB180B41' -iex 'monitor swd_scan' | after: load | to main | flashed first | {\"program\":\"@/fw/cm.elf\",\"pid\":1}"
 plan "{ $STLINK, \"debug\": \"pyocd\" }"
 got=${got%% ;; *}
 check "pyocd: its gdb server" \
-    'pyocd | gdb: arm-none-eabi-gdb gdb-multiarch | server: {pyocd} gdbserver -t stm32f411ceux -u 004D00283133510F37363734 -p 3333 -T 3334 | target: 127.0.0.1:3333 | after: monitor reset halt; maintenance flush register-cache | to main | flashed first | {"program":"@/fw/cm.elf","target":"127.0.0.1:3333"}'
+    'pyocd | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | server: {pyocd} gdbserver -t stm32f411ceux -u 004D00283133510F37363734 -p 3333 -T 3334 | target: 127.0.0.1:3333 | after: monitor reset halt; maintenance flush register-cache | to main | flashed first | {"program":"@/fw/cm.elf","target":"127.0.0.1:3333"}'
 plan '{ "chip": "stm32f4", "debug": { "preset": "renode", "machine": "platforms/cpus/stm32f4.repl", "port": 3340 } }'
 check "renode: its GDB server, the platform and the ELF loaded; attaching, to its port" \
-    "renode | gdb: arm-none-eabi-gdb gdb-multiarch | server: {renode} --disable-gui -e 'mach create' -e 'machine LoadPlatformDescription @platforms/cpus/stm32f4.repl' -e 'sysbus LoadELF @@/fw/cm.elf' -e 'machine StartGdbServer 3340' | target: 127.0.0.1:3340 | after: monitor start | to main | ended with it | {\"program\":\"@/fw/cm.elf\",\"target\":\"127.0.0.1:3340\"} ;; renode | gdb: arm-none-eabi-gdb gdb-multiarch | target: 127.0.0.1:3340 | after:  | {\"program\":\"@/fw/cm.elf\",\"target\":\"127.0.0.1:3340\"}"
+    "renode | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | server: {renode} --disable-gui -e 'mach create' -e 'machine LoadPlatformDescription @platforms/cpus/stm32f4.repl' -e 'sysbus LoadELF @@/fw/cm.elf' -e 'machine StartGdbServer 3340' | target: 127.0.0.1:3340 | after: monitor start | to main | ended with it | {\"program\":\"@/fw/cm.elf\",\"target\":\"127.0.0.1:3340\"} ;; renode | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | target: 127.0.0.1:3340 | after:  | {\"program\":\"@/fw/cm.elf\",\"target\":\"127.0.0.1:3340\"}"
 plan '{ "chip": "STM32F411CEUx", "debug": "probe-rs" }'
 got=${got%% ;; *}
 check "a board with no flash tool: gdb loads it" \
-    'probe-rs | gdb: arm-none-eabi-gdb gdb-multiarch | server: {probe-rs} gdb --chip STM32F411CEUx --non-interactive --gdb-connection-string 127.0.0.1:1337 | target: 127.0.0.1:1337 | after: monitor reset halt; maintenance flush register-cache; load | to main | flashed first | {"program":"@/fw/cm.elf","target":"127.0.0.1:1337"}'
+    'probe-rs | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | server: {probe-rs} gdb --chip STM32F411CEUx --non-interactive --gdb-connection-string 127.0.0.1:1337 | target: 127.0.0.1:1337 | after: monitor reset halt; maintenance flush register-cache; load | to main | flashed first | {"program":"@/fw/cm.elf","target":"127.0.0.1:1337"}'
 plan '{ "debug": "probe-rs" }'
 check "what a preset needs and the board lacks: said" 'probe-rs: probe-rs needs the board'"'"'s chip ;; probe-rs: probe-rs needs the board'"'"'s chip'
 board '{ "chip": "x", "debug": "gdbserver" }'
@@ -163,11 +163,21 @@ check "a preset blit does not have: said" 'board.debug is one of "probe-rs", "op
 
 # What is missing, said, with the machine: the gdb (the first looked for,
 # and the others), QEMU, a gdb too old, a gdb built without Python.
+# A plain gdb is taken only where it is built for the ELF's architecture
+# (Arch Linux's, Fedora's), not where it is for the machine's own alone.
 mkdir -p "$dir/nogdb"
 ln -s "$(command -v qemu-system-arm)" "$dir/nogdb/"
+printf '#!/bin/sh\ncase "$1" in --version) echo "GNU gdb (GDB) 16.3" ;; *) echo "Undefined item: \\"arm\\"." >&2; exit 1 ;; esac\n' >"$dir/nogdb/gdb"
+chmod +x "$dir/nogdb/gdb"
 board '{ "chip": "mps2-an385", "debug": "qemu" }'
 was=$PATH; PATH="$dir/nogdb:/usr/bin:/bin"; run "key:F5;debugwait:idle;debugdump"; PATH=$was
-check "no gdb for the ELF's machine: said" "idle error: arm-none-eabi-gdb is not installed on $this (nor gdb-multiarch)"
+check "no gdb for the ELF's machine (a gdb for another passed over): said" "idle error: arm-none-eabi-gdb is not installed on $this (nor gdb-multiarch, a gdb built for Arm)"
+mkdir -p "$dir/plaingdb"
+ln -s "$(command -v qemu-system-arm)" "$dir/plaingdb/"
+ln -s "$gdb" "$dir/plaingdb/gdb"
+was=$PATH; PATH="$dir/plaingdb:/usr/bin:/bin"; run "key:F5;debugwait:stopped;debugdump;key:shift+F5;debugwait:idle"; PATH=$was
+got=$(printf '%s' "$got" | sed 's/ ;; .*//')
+check "a plain gdb built for Arm: taken" 'stopped (breakpoint); stack: main@17; vars:'
 mkdir -p "$dir/noqemu"
 ln -s "$gdb" "$dir/noqemu/arm-none-eabi-gdb"
 was=$PATH; PATH="$dir/noqemu:/usr/bin:/bin"; run "key:F5;debugwait:idle;debugdump"; PATH=$was

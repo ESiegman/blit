@@ -22,10 +22,12 @@ std::string key_of(std::string_view chip) {
 bool xtensa_esp(std::string_view key) { return key == "esp32" || key.starts_with("esp32s"); }
 
 // What the command line starts with: a program found among some (the first
-// on the PATH of the machine it runs on), else said missing, by a marker
-// the session's failure reads (board_missing).
+// on the PATH of the machine it runs on; NAME:ARCH only if that gdb can
+// set that architecture), else said missing, by a marker the session's
+// failure reads (board_missing).
 constexpr std::string_view kHelpers =
-    "pick() { for p; do command -v \"$p\" >/dev/null 2>&1 && { printf '%s' \"$p\"; return 0; }; done; return 1; }; "
+    "pick() { for p; do n=${p%%:*}; a=${p#\"$n\"}; a=${a#:}; command -v \"$n\" >/dev/null 2>&1 || continue; "
+    "[ -z \"$a\" ] || \"$n\" -nx -batch -ex \"set architecture $a\" >/dev/null 2>&1 || continue; printf '%s' \"$n\"; return 0; done; return 1; }; "
     "missing() { echo \"blit-no-debugger: $1\" >&2; exit 127; }; ";
 
 // A gdb command (Python) that has gdb's DAP say a new thread without
@@ -38,11 +40,14 @@ constexpr std::string_view kThreadsSaid =
 // 94 Xtensa, 243 RISC-V. Espressif's Xtensa gdbs are one for each chip
 // (ESP-IDF 6.1's xtensa-esp-elf-gdb 17.1 has xtensa-esp32-elf-gdb,
 // -esp32s2- and -esp32s3-, each choosing the build for the Python it
-// finds); its RISC-V one is for all of its RISC-V chips.
+// finds); its RISC-V one is for all of its RISC-V chips. Last, the plain
+// gdb, NAME:ARCH: taken only if it is built for that architecture (Arch
+// Linux's and Fedora's are built for them all; a Debian's or Homebrew's
+// for the machine's own alone).
 std::string gdbs_for(int machine, std::string_view key) {
     if (machine == 94) return xtensa_esp(key) ? "xtensa-" + std::string(key) + "-elf-gdb" : std::string("xtensa-esp32s3-elf-gdb xtensa-esp32-elf-gdb xtensa-esp32s2-elf-gdb");
-    if (machine == 243) return "riscv32-esp-elf-gdb riscv64-unknown-elf-gdb riscv-none-elf-gdb riscv64-elf-gdb gdb-multiarch";
-    return "arm-none-eabi-gdb gdb-multiarch";
+    if (machine == 243) return "riscv32-esp-elf-gdb riscv64-unknown-elf-gdb riscv-none-elf-gdb riscv64-elf-gdb gdb-multiarch gdb:riscv:rv32";
+    return "arm-none-eabi-gdb gdb-multiarch gdb:arm";
 }
 
 std::string with_bars(std::string list) {
@@ -72,11 +77,26 @@ std::string board_preset(const Board& b) {
 }
 
 std::string board_missing(std::string_view names, std::string_view host) {
-    const size_t bar = names.find('|');
-    if (bar == std::string_view::npos) return not_installed(names, host);
-    std::string others(names.substr(bar + 1));
+    // (NAME:ARCH, a program taken only if built for that architecture: "a
+    // gdb built for Arm".)
+    auto said = [](std::string_view name) {
+        const size_t colon = name.find(':');
+        if (colon == std::string_view::npos) return std::string(name);
+        const std::string_view arch = name.substr(colon + 1);
+        return "a " + std::string(name.substr(0, colon)) + " built for " + (arch == "arm" ? std::string("Arm") : arch.starts_with("riscv") ? std::string("RISC-V") : std::string(arch));
+    };
+    std::string list;
+    for (size_t at = 0; at <= names.size();) {
+        size_t bar = names.find('|', at);
+        if (bar == std::string_view::npos) bar = names.size();
+        list += (list.empty() ? "" : "|") + said(names.substr(at, bar - at));
+        at = bar + 1;
+    }
+    const size_t bar = list.find('|');
+    if (bar == std::string::npos) return not_installed(list, host);
+    std::string others = list.substr(bar + 1);
     for (size_t at; (at = others.find('|')) != std::string::npos;) others.replace(at, 1, ", ");
-    return not_installed(names.substr(0, bar), host) + " (nor " + others + ")";
+    return not_installed(list.substr(0, bar), host) + " (nor " + others + ")";
 }
 
 BoardDebug board_debug(const Board& b, const std::string& elf, bool attach, bool load, const BoardStreams* streams) {

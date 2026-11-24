@@ -3717,7 +3717,9 @@ The `debug` object's other members: `gdb`, the gdb to use (else the one
 for the ELF's machine: `arm-none-eabi-gdb` or `gdb-multiarch` for Arm,
 Espressif's for the chip for Xtensa, `riscv32-esp-elf-gdb`,
 `riscv64-unknown-elf-gdb`, `riscv-none-elf-gdb`, `riscv64-elf-gdb` or
-`gdb-multiarch` for RISC-V; read from the ELF's header, else guessed from
+`gdb-multiarch` for RISC-V, and last the plain `gdb` where it is built
+for that architecture too, as Arch Linux's and Fedora's are; read from
+the ELF's header, else guessed from
 the chip); `port`, the gdb server's (the defaults above); `machine`,
 QEMU's machine (`mps2-an385`, `netduinoplus2`, `olimex-stm32-h405`, ...)
 or Renode's platform (a `.repl`), else the chip; `script`, Renode's
@@ -3728,7 +3730,7 @@ them, are laid over the preset's and run after its commands.
 The gdb must be 14 or later, built with Python (gdb's DAP is written in
 it): where it is not installed, too old, or built without Python, F5 says
 so with the machine (`arm-none-eabi-gdb is not installed on this Mac (nor
-gdb-multiarch)`, `arm-none-eabi-gdb on this Mac was built without
+gdb-multiarch, a gdb built for Arm)`, `arm-none-eabi-gdb on this Mac was built without
 Python, which gdb -i dap needs`: the Arm GNU Toolchain's own
 `arm-none-eabi-gdb` is one; its `arm-none-eabi-gdb-py`, or a package
 manager's `arm-none-eabi-gdb`, has Python), and the same for the gdb
