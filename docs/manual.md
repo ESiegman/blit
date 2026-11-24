@@ -2904,7 +2904,12 @@ while it runs, read from the tool's output as it comes, the bar it is
 redrawing in place included: OpenOCD's `program` (and Espressif's
 `program_esp`), probe-rs's download, J-Link Commander's `loadfile`,
 esptool's write-flash (each file of ESP-IDF's under way again from 0%),
-openFPGALoader's loads into SRAM and flash, picotool's `load`, and
+openFPGALoader's loads into SRAM and flash, picotool's `load` (`Reboot ✓
+· Program 52%` when `-f` rebooted the board into BOOTSEL first) and blit's
+own copy of a `.uf2` to a boot ROM's volume, dfu-util's download, pyOCD's
+`load`, STM32CubeProgrammer's (its lines saying the download is complete
+and verified: its bar is not read), iceprog and ecpprog (into SRAM, or
+the flash written and read back), and
 Vivado's hardware manager (its steps: `Connect ✓ · Load`). The Run button reads the stage under way, its percent
 and the bytes where the tool prints them (`■ Program 62% 12.0/22.0 KB`;
 a click still stops it), and the task's row the stages done before it
@@ -2918,7 +2923,11 @@ for a failed or stopped one, where it stopped (`stopped in Program at
 the whole does not fit, it has it without the time, `Flashed 40.2 KB,
 verified`, else the words before the time, `Flashed 40.2 KB`.) A failure is a problem with the tool's own words
 (`OpenOCD init failed: open failed`, `JTAG init failed with: unable to
-open ftdi device`), placed at the program's name. Whose output it is
+open ftdi device`), placed at the program's name; where the tool goes on
+after it (picotool's devices it saw, and its advice), that is a note on
+the problem. Lattice's pgrcmd prints nothing documented: its return code
+is said in Lattice's words after it (`pgrcmd: cable not detected (return
+code -5)`). Whose output it is
 comes from the task's command (or the command make echoes), and from the
 tool's own first lines.
 
@@ -3234,7 +3243,9 @@ Debug probes and FPGA programmers come first (ST-LINK V1 to V3 and the
 ST-LINKs on Nucleo and Discovery boards, SEGGER J-Link, the Raspberry Pi
 Debug Probe and any other CMSIS-DAP, Espressif's USB-Serial/JTAG on the
 ESP32-S3, C3 and C6, Black Magic, FTDI chips and Digilent's boards), then
-the RP2040's and RP2350's boot ROMs, then serial ports alone (CP210x,
+the RP2040's and RP2350's boot ROMs (an RP2040's with no serial number:
+its boot ROM's is its version, the same on every RP2040) and an STM32's
+DFU boot ROM, then serial ports alone (CP210x,
 CH340, FTDI's serial chips, a Pico's USB serial, any other). A probe and
 its serial port are one row: its name, its serial number (with two of
 the same probe, that is what tells them apart), and its port; a Black
@@ -3269,16 +3280,23 @@ it:
   (`"serial": "PORT"` is read too). Choosing a serial port alone (a
   CP210x on an ESP32 board) sets the port and takes the probe out;
   choosing a probe with no port takes the port out, and keeps the baud.
+  A Pico's USB serial (the Pico SDK's) is the board itself: choosing it
+  sets the port and a probe of kind `pico-serial` with its serial number,
+  which picotool finds the board by.
 - `chip`, `elf`, `svd` (paths from the folder), `flash` (the tool:
-  `"esptool"`, `"openocd"`, `"probe-rs"`, `"jlink"` or
-  `"openfpgaloader"`; `{ "tool": ... }` too) and `debug` (a preset's
+  `"esptool"`, `"openocd"`, `"probe-rs"`, `"jlink"`, `"picotool"`,
+  `"uf2"`, `"dfu-util"`, `"pyocd"`, `"stm32cubeprogrammer"`,
+  `"openfpgaloader"`, `"vivado"`, `"iceprog"`, `"ecpprog"` or `"pgrcmd"`;
+  `{ "tool": ... }` too) and `debug` (a preset's
   name; `{ "preset": ... }` too) are yours to write; choosing a probe
   leaves them as they are.
 - The `flash` object may also say where a raw `.bin` goes (`"address":
   "0x08000000"`), openFPGALoader's `board` (`"basys3"`) or `cable`
   (`"digilent"`), OpenOCD's `interface` and `target` scripts
-  (`"interface/stlink.cfg"`, `"target/stm32f4x.cfg"`), and J-Link's
-  `device` (else the `chip` is); `bitstream` beside it is an FPGA's.
+  (`"interface/stlink.cfg"`, `"target/stm32f4x.cfg"`), J-Link's and
+  pyOCD's `device` (else the `chip` is), dfu-util's `alt` (the alternate
+  setting, else 0) and pgrcmd's `xcf` (its chain file, else the newest
+  `.xcf` under the folder); `bitstream` beside it is an FPGA's.
 
 The Debug tab shows the board's probe and port under **Board** for a
 configuration that has one.
@@ -3325,7 +3343,12 @@ whose `chip` is an ESP32, or that is only a serial port, such as the
 DevKit's USB serial bridge chosen in the probe picker, when an ESP-IDF
 build wrote `flasher_args.json`, whose chip it takes), openFPGALoader for an FTDI
 chip (a Digilent board), probe-rs for an ST-LINK or a CMSIS-DAP, J-Link
-Commander for a J-Link. Each is run by its path on the machine the
+Commander for a J-Link, picotool for an RP2040 or RP2350 (its boot ROM,
+or a Pico SDK program's USB serial; and for a board with no probe, or
+only a serial port, whose ELF a Pico SDK build made: its `CMakeCache.txt`
+says so), dfu-util for an STM32's DFU boot ROM. pyOCD,
+STM32CubeProgrammer, iceprog, ecpprog and pgrcmd are run where the
+board's `flash` names them. Each is run by its path on the machine the
 project is on, and blit says so when it is not there:
 
 | Tool | What runs |
@@ -3336,13 +3359,45 @@ project is on, and blit says so when it is not there:
 | J-Link | `JLinkExe -NoGui 1 -ExitOnError 1 -USB SERIAL -CommandFile FILE`, the file made for the run: `device CHIP`, `si SWD`, `speed 4000`, `connect`, `loadfile build/fw.elf`, `r`, `g`, `exit` (loadfile reads back what it wrote) |
 | openFPGALoader | `openFPGALoader -b basys3 --usb-serial-num SERIAL build/top.bit` (or `-c digilent`), into SRAM; `-f --verify` for the FPGA's flash |
 | Vivado (`"flash": "vivado"`) | `vivado -mode batch -nojournal -nolog -notrace -source FILE`, the file made for the run: the hardware manager, the cable whose name has the probe's serial number, the device whose part begins the board's `chip` (`xc7a35t` for `xc7a35tcpg236-1`; else the first of AMD's), `program_hw_devices` with the bitstream; into SRAM only |
+| picotool | `picotool load -v -x build/blinky.elf --ser SERIAL -f`: read back, then run; `--ser` the board's serial number (left out for an RP2040's boot ROM, which has none of its own); `-f` always, which reboots a board running the Pico SDK's USB serial into BOOTSEL first and leaves one in BOOTSEL as it is; a `.uf2`, or a `.bin` with `-o ADDRESS` (the flash object's `address`, else the start of flash) |
+| UF2 copy (`"flash": "uf2"`) | the `.uf2` beside the ELF copied to the boot ROM's volume, then done once the board restarts (below) |
+| dfu-util | `dfu-util -d VID:PID -S SERIAL -a 0 -s ADDRESS:leave -D build/fw.bin` (DfuSe, the flash object's `address`; without one, `-R` after), the `.bin` (or `.dfu`) beside the ELF; it reads nothing back |
+| pyOCD (`"flash": "pyocd"`) | `pyocd load -W -t TARGET -u SERIAL build/fw.elf` (a `.bin` with `-a ADDRESS --format bin`), the target the flash object's `device`, else the `chip`, in lower case; it reads nothing back |
+| STM32CubeProgrammer (`"flash": "stm32cubeprogrammer"`) | `STM32_Programmer_CLI -c port=SWD sn=SERIAL -w build/fw.elf [ADDRESS] -v -rst` |
+| iceprog, ecpprog | `iceprog -d s:0x0403:0x6010:SERIAL -S build/top.bin` into SRAM; without `-S` the flash, read back after (ecpprog the same, for an ECP5 or a CrossLink-NX) |
+| pgrcmd (`"flash": "pgrcmd"`) | `pgrcmd -infile impl/top.xcf`: what it does (the device, the bitstream, the cable, SRAM or flash) is the chain file's to say, so it is run every time |
 
 What is written is the board's `elf` (else the configuration's
 `program`); for an ESP-IDF project (esptool, or OpenOCD for an ESP32),
 the files and addresses its build wrote in `flasher_args.json` beside the
 ELF (else in `build/`), with its flash options and chip; a `.bin` goes to
 the flash object's `address`. An FPGA's is the board's `bitstream`, else
-the newest `.bit` under the folder (else the newest `.bin`).
+the newest `.bit` under the folder (else the newest `.bin`). A tool that
+writes another kind of file than the ELF takes the one beside it of the
+same name, as the Pico SDK writes them (`build/blinky.uf2` and
+`build/blinky.bin` beside `build/blinky.elf`); a configuration's program
+named without its `.elf` (`build/blinky`, as one made for a folder is)
+is the `.elf` beside it. What is written is read before the tool runs:
+one that is not there is said, and the board is not touched (picotool
+with `-f` would have rebooted it into BOOTSEL first).
+
+**The UF2 copy.** Where picotool is not installed (or the board's
+`flash` is `"uf2"`), an RP2040 or RP2350 in BOOTSEL is flashed by copying
+the `.uf2` to its boot ROM's volume, found by the `INFO_UF2.TXT` its boot
+ROM writes (`Board-ID: RPI-RP2`, `RP2350`), not by its name: in
+`/Volumes` on a Mac, `/media`, `/media/USER` and `/run/media/USER` on
+Linux. It is copied a piece at a time, each flushed, the Run button
+showing the bytes that go into the flash (`Program 52% 16.0/30.8 KB`,
+half the file's: a UF2 block carries 256 bytes of flash), and is done
+when the volume goes, the boot ROM restarting the board once it has every
+block (`Flashed 30.8 KB in 3.0 s`); still there 10 s after, it failed. A
+`.uf2` that is not a UF2, or that has no block of the RP2040's family
+for an RP2040, is said before anything is copied. With no picotool and no
+volume, blit says so (`picotool is not installed on this Mac, and no
+RPI-RP2 volume is mounted: hold BOOTSEL while plugging the board in`);
+with two such volumes, which one is the board's is not known, and it
+says that. macOS may say the volume was not ejected properly as the
+board restarts.
 
 Vivado, when it is not on the PATH (its `settings64.sh` not sourced),
 is looked for where AMD installs it, the newest version there:
@@ -3354,10 +3409,16 @@ running already is left as it was, and one left by a load that was
 stopped keeps the cable for about a minute. Choosing
 the board again in the probe picker keeps a board set to Vivado so.
 
-OpenOCD's, esptool's, openFPGALoader's and Vivado's output reaches the terminal
-through a pipe, where each prints a line for each step; probe-rs (whose
-bars are not drawn at all when its output is not a terminal) and J-Link
-Commander are given the terminal itself.
+OpenOCD's, esptool's, openFPGALoader's, Vivado's, picotool's,
+dfu-util's and iceprog's output reaches the terminal through a pipe, where
+each prints the same progress as on a terminal; probe-rs (whose bars are
+not drawn at all when its output is not a terminal), pyOCD (whose bar has
+no percent there), ecpprog (whose IDCODE and status lines a pipe holds
+back until it ends), J-Link Commander, STM32CubeProgrammer and pgrcmd are
+given the terminal itself.
+
+A flash's start and end are where the board's serial port is let go of
+and taken again (`App::flash_port`), for a tab reading it.
 
 **Only if changed.** A flash that went well is remembered for the board,
 for as long as blit runs: a hash of what the image puts into the target
