@@ -21,6 +21,8 @@
 #include "notify.hpp"
 #include "profile.hpp"
 #include "remote.hpp"
+#include "crashscan.hpp"
+#include "linktab.hpp"
 #include "serialtab.hpp"
 
 namespace blit {
@@ -1547,6 +1549,35 @@ void App::run_script(const char* script) {
             SerialReturn ret = SerialReturn::kCR;
             serial_return_parse(cfg_.serial_line_end, &ret);
             serial_open(id, cfg, ret, nullptr);
+        } else if (verb == "link") {  // link:KIND,PORT[,listen][,defmt=ELF][,channel=N][,jlink=N][,file=PATH], a board stream's tab on a port here (or a file), opened by hand
+            LinkSpec spec;
+            size_t at = 0;
+            for (int k = 0; at <= arg.size(); ++k) {
+                const size_t comma = arg.find(',', at);
+                const std::string w = arg.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+                if (k == 0) spec.plan.kind = w;
+                else if (k == 1) spec.plan.port = static_cast<u16>(std::atoi(w.c_str()));
+                else if (w == "listen") spec.plan.listen = true;
+                else if (w.starts_with("defmt=")) spec.plan.defmt = true, spec.plan.input = false, spec.elf = w.substr(6);
+                else if (w.starts_with("jlink=")) spec.plan.greeting = jlink_channel(std::atoi(w.c_str() + 6));  // (J-Link's string for that channel)
+                else if (w.starts_with("file=")) spec.plan.file = w.substr(5);
+                else if (w.starts_with("channel=")) spec.plan.channel = std::atoi(w.c_str() + 8);
+                if (comma == std::string::npos) break;
+                at = comma + 1;
+            }
+            spec.plan.name = spec.plan.kind == "rtt" ? "RTT " + std::to_string(std::max(0, spec.plan.channel)) : "Board output";
+            spec.dir = build_root().empty() ? default_workdir() : build_root();
+            term_open_link(std::move(spec), crash_options_of(nullptr), true);
+        } else if (verb == "rttdump") {  // the board streams' tabs (each "TITLE: state kind port kept gaps ..."), and OpenOCD's drivers' steps
+            rtt_sync();
+            std::fprintf(stderr, "%s\n", rtt_dump().c_str());
+        } else if (verb == "rttwait") {  // rttwait:TEXT, what rttdump prints has TEXT in it (10 s at most)
+            bool there = false;
+            for (const u64 until = now_ns() + 10'000'000'000ull; !there && now_ns() < until; SDL_Delay(5)) {
+                rtt_sync();
+                there = rtt_dump().find(arg) != std::string::npos;
+            }
+            if (!there) std::fprintf(stderr, "rttwait: no \"%s\" in %s\n", arg.c_str(), rtt_dump().c_str());
         } else if (verb == "serialwait") {  // "Open a serial port…" has listed the ports (and opened the box with them)
             serial_settle();
         } else if (verb == "serialdump") {  // the serial tab in front (else on show, else the only one): its title, state, settings, line changes done; then the picker's last rows

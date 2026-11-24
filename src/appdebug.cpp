@@ -1547,7 +1547,10 @@ bool App::debug_board_plan(bool attach, BuildTask* c, std::string* elf, BoardDeb
     *elf = b.elf.empty() ? c->program : b.elf[0] == '/' ? b.elf : root + "/" + b.elf;
     std::string host, there;
     const bool load = flash_tool_for(b).empty();  // (no tool flashes it: gdb's load)
-    *plan = board_debug(b, split_remote(*elf, &host, &there) ? there : *elf, attach, load);  // (as its machine has it)
+    const bool remote = split_remote(*elf, &host, &there);
+    BoardStreams streams;  // (its RTT and semihosting, here: apprtt.cpp)
+    if ((b.rtt || b.semihosting) && !remote) streams = rtt_streams(*c, *elf, board_preset(b), false);
+    *plan = board_debug(b, remote ? there : *elf, attach, load, &streams);  // (as its machine has it)
     return true;
 }
 
@@ -1604,8 +1607,11 @@ void App::debug_board(bool attach) {
 // The board's session: its preset's debugger started and attached, with
 // the configuration's own arguments laid over the preset's and its own
 // commands after the preset's.
-void App::debug_board_begin(const BuildTask& c, const BoardDebug& plan, const std::string& elf, bool attach) {
+void App::debug_board_begin(const BuildTask& c, const BoardDebug& planned, const std::string& elf, bool attach) {
     DebugUi& u = *debugui_;
+    // (Its RTT and semihosting tabs, before the debugger starts: apprtt.cpp.)
+    BoardDebug plan = planned;
+    rtt_session(c, elf, attach, &plan);
     if (u.state != DebugUi::kIdle) debug_park();  // (beside the session under way)
     // The last board session's gdb server gone first (it may hold the probe,
     // or the port): its debugger is let go of within a second (debug_end's
@@ -1624,6 +1630,11 @@ void App::debug_board_begin(const BuildTask& c, const BoardDebug& plan, const st
     u.after = plan.after;
     u.after.insert(u.after.end(), c.debug.after.begin(), c.debug.after.end());
     debug_begin("attach", plan.arguments);
+}
+
+std::string App::debug_board_name() const {
+    const DebugUi& u = *debugui_;
+    return u.board && u.state != DebugUi::kIdle ? u.name : std::string();
 }
 
 // A board's session stopped: where it stops once attached, for F5, goes on

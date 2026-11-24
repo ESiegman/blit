@@ -61,6 +61,9 @@ std::string json_of(std::string_view s) {
 
 std::string board_preset(const Board& b) {
     if (!b.debug.empty()) return b.debug;
+    // (An ST-LINK board whose RTT or semihosting is on: OpenOCD, which serves
+    // them while gdb debugs; probe-rs's gdb server has neither: rtt.hpp.)
+    if (b.probe_kind == "stlink" && (b.rtt || b.semihosting)) return "openocd";
     if (b.probe_kind == "stlink" || b.probe_kind == "cmsis-dap") return "probe-rs";
     if (b.probe_kind == "jlink") return "jlink";
     if (b.probe_kind == "esp-usb-jtag") return "esp";
@@ -76,8 +79,10 @@ std::string board_missing(std::string_view names, std::string_view host) {
     return not_installed(names.substr(0, bar), host) + " (nor " + others + ")";
 }
 
-BoardDebug board_debug(const Board& b, const std::string& elf, bool attach, bool load) {
+BoardDebug board_debug(const Board& b, const std::string& elf, bool attach, bool load, const BoardStreams* streams) {
     BoardDebug d;
+    if (streams) d.streams = *streams;
+    const BoardStreams& st = d.streams;
     d.preset = board_preset(b);
     const std::string& p = d.preset;
     if (p.empty()) return d.why = "The board names no debug preset (board.debug), and its probe says none", d;
@@ -155,7 +160,9 @@ BoardDebug board_debug(const Board& b, const std::string& elf, bool attach, bool
         // when the program has turned memory protection on, as ESP-IDF's
         // do: v0.12.0-esp32-20260831 target/esp_common.cfg lines 313-330.
         // Breakpoints are then the core's own, two on an ESP32-S3.)
-        target = "| exec \"$BLIT_SERVER\"" + words({"-c", "gdb_port pipe", "-c", "tcl_port disabled", "-c", "telnet_port disabled"}) +
+        // (Its Tcl port open when RTT is driven through it: rtt.hpp.)
+        target = "| exec \"$BLIT_SERVER\"" + words({"-c", "gdb_port pipe"}) + (st.openocd_words.empty() ? words({"-c", "tcl_port disabled"}) : st.openocd_words) +
+                 words({"-c", "telnet_port disabled"}) +
                  (esp && attach ? words({"-c", "set ESP_FLASH_SIZE 0"}) : std::string()) + words({"-f", iface}) +
                  (b.probe.empty() ? std::string() : words({"-c", "adapter serial " + b.probe})) + words({"-f", tgt}) +
                  // (Let go of, the board runs on: Espressif's left the ESP32-S3
@@ -175,7 +182,7 @@ BoardDebug board_debug(const Board& b, const std::string& elf, bool attach, bool
         const int n = std::atoi(port.c_str());
         server_named("JLinkGDBServerCLExe JLinkGDBServer");
         server = "\"$BLIT_SERVER\"" + words({"-device", device, "-if", "SWD", "-speed", "4000", "-port", port, "-swoport", std::to_string(n + 1), "-telnetport", std::to_string(n + 2)}) +
-                 (b.probe.empty() ? std::string() : words({"-select", "USB=" + b.probe})) + words({"-singlerun", "-nogui"});
+                 (b.probe.empty() ? std::string() : words({"-select", "USB=" + b.probe})) + words({"-singlerun", "-nogui"}) + st.server_words;
         target = here;
         reset = "monitor reset";
     } else if (p == "pyocd") {
@@ -188,7 +195,7 @@ BoardDebug board_debug(const Board& b, const std::string& elf, bool attach, bool
         for (const char c : b.chip) type += c >= 'A' && c <= 'Z' ? static_cast<char>(c - 'A' + 'a') : c;
         server_named("pyocd");
         server = "\"$BLIT_SERVER\" gdbserver" + words({"-t", type}) + (b.probe.empty() ? std::string() : words({"-u", b.probe})) +
-                 words({"-p", port, "-T", std::to_string(std::atoi(port.c_str()) + 1)});
+                 words({"-p", port, "-T", std::to_string(std::atoi(port.c_str()) + 1)}) + st.server_words;
         target = here;
     } else if (p == "blackmagic") {
         // The probe is the gdb server: its GDB port, as extended-remote,
@@ -215,7 +222,15 @@ BoardDebug board_debug(const Board& b, const std::string& elf, bool attach, bool
             sh += "case $(od -An -tu2 -j18 -N2 " + sh_word(elf) + " 2>/dev/null | tr -d ' \\n') in 243) Q='qemu-system-riscv32' ;; 94) Q='qemu-system-xtensa' ;; *) Q='qemu-system-arm' ;; esac; ";
             sh += "BLIT_SERVER=$(pick $Q) || missing \"$Q\"; export BLIT_SERVER; ";
             servers = "qemu-system-*";
-            target = "| exec \"$BLIT_SERVER\"" + words({"-M", machine, "-nographic", "-monitor", "none", "-serial", "none", "-kernel", elf, "-S", "-gdb", "stdio"});
+            if (!st.server_out.empty()) {
+                // (Its output a file of its own, the semihosting tab's (rtt.hpp):
+                // a server beside gdb on its gdb port, which gdb connects to,
+                // trying again while it starts: gdb's `tcp auto-retry`.)
+                server = "\"$BLIT_SERVER\"" + words({"-M", machine, "-nographic", "-monitor", "none", "-serial", "none", "-kernel", elf, "-S", "-gdb", "tcp:" + here}) + st.qemu_words;
+                target = here;
+            } else {
+                target = "| exec \"$BLIT_SERVER\"" + words({"-M", machine, "-nographic", "-monitor", "none", "-serial", "none", "-kernel", elf, "-S", "-gdb", "stdio"}) + st.qemu_words;
+            }
         }
         reset.clear();
     } else if (p == "renode") {
@@ -248,6 +263,7 @@ BoardDebug board_debug(const Board& b, const std::string& elf, bool attach, bool
         if (!reset.empty()) d.after.push_back(reset), d.after.emplace_back("maintenance flush register-cache");
         if (load) d.after.emplace_back("load");
     }
+    d.after.insert(d.after.end(), st.after.begin(), st.after.end());  // (RTT's and semihosting's, once the board is reset and loaded)
     if (!attach) d.run_to = !b.debug_main.empty() ? b.debug_main : esp_chip(b.chip) || p == "esp" ? "app_main" : "main";
 
     // The command line: the server started (its input none, its output with
@@ -272,7 +288,7 @@ BoardDebug board_debug(const Board& b, const std::string& elf, bool attach, bool
               "done; return 1; else " + mac + "; fi; }; n=0; until here; do n=$((n + 1)); [ $n -gt 100 ] && break; sleep 0.1; done; ";
     }
     sh += "exec 3<&0; ";
-    if (!server.empty()) sh += server + " </dev/null 1>&2 & sp=$!; ";
+    if (!server.empty()) sh += server + " </dev/null " + (st.server_out.empty() ? std::string("1>&2") : "1>>" + sh_word(st.server_out)) + " & sp=$!; ";
     sh += "trap 'pkill -TERM -P \"$gp\" 2>/dev/null; kill $gp $sp 2>/dev/null' EXIT; trap 'exit 143' TERM HUP INT; ";
     // (gdb's DAP takes a thread it is told of as the program running again
     // (GNU gdb 18.1 and esp-gdb 17.1, gdb/dap/events.py lines 93-96), which

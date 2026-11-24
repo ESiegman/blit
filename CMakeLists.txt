@@ -340,7 +340,11 @@ target_sources(blit PRIVATE src/notify.cpp)
 target_sources(blit PRIVATE src/probes.cpp src/appprobe.cpp)
 # Serial monitors: a terminal tab whose program is the device on a port,
 # through termios (serial.cpp: plain POSIX, for the agent too).
-target_sources(blit PRIVATE src/serial.cpp src/serialtab.cpp src/appserial.cpp)
+target_sources(blit PRIVATE src/serial.cpp src/streamtab.cpp src/serialtab.cpp src/appserial.cpp)
+# The loopback socket module (a tool's TCP port here, connected to again as
+# it comes and goes, or listened on), and a board's RTT channels,
+# semihosting output and defmt logs as tabs of the serial tab's kind.
+target_sources(blit PRIVATE src/loopback.cpp src/linktab.cpp src/rtt.cpp src/apprtt.cpp)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_sources(blit PRIVATE src/serial_linux.cpp)
 endif()
@@ -512,6 +516,8 @@ if(BLIT_DEV)
     add_test(NAME boards COMMAND sh ${CMAKE_SOURCE_DIR}/tests/boards.sh $<TARGET_FILE:blit>)
     # Serial monitor tabs, on a pseudo-terminal standing in for a board: what comes and goes, times, hex, a reset's gap, flashing, the picker.
     add_test(NAME serial COMMAND sh ${CMAKE_SOURCE_DIR}/tests/serial.sh $<TARGET_FILE:blit>)
+    # A board's RTT channels, semihosting and defmt as tabs, through stand-ins for OpenOCD, pyOCD, J-Link and probe-rs; on QEMU's Cortex-M3 where it is here.
+    add_test(NAME rtt COMMAND sh ${CMAKE_SOURCE_DIR}/tests/rtt.sh $<TARGET_FILE:blit>)
     # ESP-IDF's and PlatformIO's projects: found, their SDK found without its export script, what is missing said, Flash and Monitor through blit's own.
     add_test(NAME firmware COMMAND sh ${CMAKE_SOURCE_DIR}/tests/firmware.sh $<TARGET_FILE:blit>)
     # The project's Python: found for each project and subproject, and what takes it.

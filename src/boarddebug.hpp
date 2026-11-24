@@ -17,6 +17,7 @@
 #include <vector>
 
 #include "build.hpp"
+#include "rtt.hpp"
 
 namespace blit {
 
@@ -30,18 +31,23 @@ struct BoardDebug {
     bool simulator = false;  // the target is a simulator started for the session, ended with it
     std::string why;       // it cannot be debugged so: why
     std::string shown;     // what it starts, in a line: the gdbs looked for, the server, the target (the tests')
+    BoardStreams streams;  // its RTT and semihosting, as `streams` asked (rtt.hpp), put into the above
 };
 
 // The preset a board is debugged with: its debug, else the one its probe's
-// kind says (ST-LINK and CMSIS-DAP: probe-rs; J-Link: jlink; Espressif's
-// USB-Serial/JTAG: esp; Black Magic: blackmagic); "" when nothing says.
+// kind says (ST-LINK and CMSIS-DAP: probe-rs, but an ST-LINK board with
+// RTT or semihosting on: openocd, which serves them beside gdb; J-Link:
+// jlink; Espressif's USB-Serial/JTAG: esp; Black Magic: blackmagic); ""
+// when nothing says.
 std::string board_preset(const Board& b);
 
 // What a board's preset starts: `elf` the ELF's path as the debugger's
 // machine has it; `attach`, the running board as it is (no reset, no
 // flash, no run to main); `load`, gdb loads the image itself, for a board
 // with no flash tool.
-BoardDebug board_debug(const Board& b, const std::string& elf, bool attach, bool load);
+// `streams`: the board's RTT and semihosting (board_streams), put into the
+// server's and gdb's command lines and commands.
+BoardDebug board_debug(const Board& b, const std::string& elf, bool attach, bool load, const BoardStreams* streams = nullptr);
 
 // The programs a preset's command line may say are missing ("a|b|c": the
 // first of those looked for, then the others), as words: "a is not
