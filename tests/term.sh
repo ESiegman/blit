@@ -43,17 +43,17 @@ run() {
 
 # (The tab is 15 rows of 74 columns at this size: its first frame tells the shell.)
 # (What is waited for is what the shell prints, not what is typed: hel''lo, then hello.)
-run "term;frame;termwait:\$;text:echo hel''lo;key:Return;termwait:hello;termdump"
+run "term;frame;termwait:\$;text:echo hel''lo;key:Return;termwait:hello;termlast:\$;termdump"
 check "a shell in the folder being worked in: what it is told, it does" "\$ echo hel''lo|hello|\$ @2,2 15x74"
 run "term;frame;termwait:\$;text:basename \$PWD;key:Return;termwait:work;text:stty size;key:Return;termwait:15 74;wait:300;termdump"
 check "it runs in the working folder, and knows the tab's size" '$ basename $PWD|work|$ stty size|15 74|$ @4,2 15x74'
-run "term;frame;termwait:\$;text:sleep 30;key:Return;termwait:sleep;key:ctrl+c;text:echo after-\$((1+1));key:Return;termwait:after-2;termdump"
+run "term;frame;termwait:\$;text:sleep 30;key:Return;termwait:sleep;key:ctrl+c;text:echo after-\$((1+1));key:Return;termwait:after-2;termlast:\$;termdump"
 case "$got" in *'after-2|$ @'*) got="interrupted" ;; esac
 check "Ctrl+C stops what runs" "interrupted"
 # A command chosen in Command search is the editor's, not a key for the
 # program (where Ctrl is the editor's key, its Ctrl+C and Ctrl+W are the
 # program's own): "Copy" stops nothing, "Close the tab" closes the tab.
-run "term;frame;termwait:\$;text:sleep 2 && echo done-\$((1+1));key:Return;termwait:sleep;command:Copy;termwait:done-2;termdump"
+run "term;frame;termwait:\$;text:sleep 2 && echo done-\$((1+1));key:Return;termwait:sleep;command:Copy;termwait:done-2;termlast:\$;termdump"
 case "$got" in *'|done-2|$ @'*) got="not interrupted" ;; esac
 check "Copy from Command search: not the program's Ctrl+C" "not interrupted"
 run "term;frame;termwait:\$;command:Close the tab;wait:300;tabsdump"
@@ -84,7 +84,7 @@ alllines() {
     got=$("$blit" --offscreen 1200x600 --shot "$dir/shot.bmp" --script "workdir:$dir/work;$1" 2>&1 >/dev/null | sed -e 's/^.* @\([0-9]*,[0-9]* [0-9]*x[0-9]*\)/@\1/' |
         awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }')
 }
-forty="term;frame;termwait:\$;text:seq 1 40 | sed s/^/n/;key:Return;termwait:n40"
+forty="term;frame;termwait:\$;text:seq 1 40 | sed s/^/n/;key:Return;termwait:n40;termlast:\$"
 alllines "$forty;$find;text:n1;finddump;termdump"
 check "Cmd+F in a terminal: the newest match chosen, all those kept counted, the view gone back to it" \
     'file [n1] 11 of 11 at 87-89 ;; @14,2 15x74 back 15 lit 0:0-2 lit 1:0-2 lit 2:0-2 lit 3:0-2 lit 4:0-2 lit 5:0-2 lit 6:0-2 lit 7:0-2*'
@@ -94,13 +94,13 @@ check "Up and Down: the one before and the next (round from the last to the firs
 alllines "term;frame;termwait:\$;text:echo Ab''c ab''c;key:Return;termwait:Abc;$find;text:abc;finddump;key:alt+C;finddump;key:alt+C;key:Escape;$find;text:Abc;finddump"
 check "the case as the editor's Find has it: either, as typed with a capital, exactly with Option+C" \
     'file [abc] 2 of 2 at 23-26 ;; file [abc] Aa 1 of 1 at 23-26 ;; file [Abc] 1 of 1 at 19-22'
-run "term;frame;termwait:\$;$find;text:zz;key:BackSpace;key:Return;text:q;key:Up;key:Escape;text:echo do''ne;key:Return;termwait:done;termdump"
+run "term;frame;termwait:\$;$find;text:zz;key:BackSpace;key:Return;text:q;key:Up;key:Escape;text:echo do''ne;key:Return;termwait:done;termlast:\$;termdump"
 check "what is typed in the box never reaches the shell" "\$ echo do''ne|done|\$ @2,2 15x74"
 alllines "$forty;$find;text:n1;key:Escape;finddump;termdump"
 check "Esc: the box shut, the view back on the screen, nothing lit" 'closed ;; @14,2 15x74'
 alllines "$forty;$find;finddump;key:Escape;$replace;finddump;key:Escape;lua:blit.opt.editor.modal = false;$find;finddump"
 check "with modes or without, and from Replace too: the box (nothing replaced in a terminal)" 'file [] ;; file [] ;; file []'
-alllines "term;frame;termwait:\$;text:printf '%070d' 0 && echo wrapme;key:Return;termwait:wrapme;$find;text:rapme;finddump;termdump"
+alllines "term;frame;termwait:\$;text:printf '%070d' 0 && echo wrapme;key:Return;termwait:wrapme;termlast:\$;$find;text:rapme;finddump;termdump"
 check "a line the view wraps is found whole, lit on both its rows" \
     'file [rapme] 2 of 2 at 105-110 ;; @3,2 15x74 lit 0:28-33 lit 1:71-74* lit 2:0-2*'
 # "Open the terminal's lines as text": a tab of them as they are now, named
@@ -209,7 +209,7 @@ run "workdir:$dir/mk;$open;key:ctrl+\`;frame;buildrun;buildwait;dump"
 check "a build brings the hidden split back, the keyboard staying in the text" 'V(>[untitled*] / [Terminal make*])0.70'
 
 # On another machine: the connection is made by the terminal itself.
-run "workdir:ssh://box$T/proj;term;frame;termwait:\$;text:echo \$(basename \$PWD)-\$(basename \$HOME);key:Return;termwait:proj-;termdump"
+run "workdir:ssh://box$T/proj;term;frame;termwait:\$;text:echo \$(basename \$PWD)-\$(basename \$HOME);key:Return;termwait:proj-;termlast:\$;termdump"
 check "a terminal on another machine, in the folder there, at home there" '$ echo $(basename $PWD)-$(basename $HOME)|proj-there|$ @2,2 15x74'
 run "workdir:ssh://box$T/proj;term;frame;termwait:\$;text:stty size;key:Return;termwait:15 74;wait:300;termdump"  # (the next prompt comes just after)
 check "and it knows the tab's size too" '$ stty size|15 74|$ @2,2 15x74'
