@@ -106,6 +106,17 @@ public:
     // columns: 120 us over a clock's 260,000 changes, 4 us over 2,000, on an
     // M5 Pro.)
     void columns(u64 t0, u64 t1, std::span<LaneColumn> out) const;
+    // The start of the next run of change i's value after the run change i
+    // is in, or (back) of the last run of it before that one: the change
+    // that has the value when the change before it has not; ~0 if there is
+    // none (for * and #). The value is bits [from, from + n) of a change in
+    // the planes (a bit of a bus: n 1; all of it: 0 and stride(), a real's
+    // 64 bits, a string's number in the lane's list), the same where both
+    // planes are: x matches x alone, z z alone, a value partly x the same
+    // bits x. An event has no value: ~0. A walk through the changes from i,
+    // a word or two of each plane read a change.
+    u64 same_next(u64 i, u32 from, u32 n) const;
+    u64 same_prev(u64 i, u32 from, u32 n) const;
 
     // --- Values of change i (i < size()): O(width / 64).
     Bit bit(u64 i, u32 b) const;
@@ -131,6 +142,7 @@ private:
     struct Texts;
 
     u64 search(u64 t, bool through) const;
+    u64 same_run(u64 i, u32 from, u32 n, bool next) const;
     size_t add_time(u64 t, bool* same);
     size_t add_value(u64 t, const u64* val, const u64* xz);
     size_t room_bits(u64 words);

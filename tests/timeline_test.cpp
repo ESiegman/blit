@@ -79,6 +79,23 @@ std::string fmt(const Lane& l, u64 i) {
     return s;
 }
 
+// The slow answer to same_next and same_prev (* and #): over values as
+// text, the start of the next run of value i's after its own, or of the
+// last run of it before its own; ~0 for none.
+u64 slow_same(const std::vector<std::string>& v, u64 i, bool next) {
+    auto starts = [&](u64 j) { return v[j] == v[i] && (j == 0 || v[j - 1] != v[i]); };
+    if (next) {
+        for (u64 j = i + 1; j < v.size(); ++j)
+            if (starts(j)) return j;
+        return ~0ull;
+    }
+    u64 s = i;
+    while (s > 0 && v[s - 1] == v[i]) --s;
+    for (u64 j = s; j-- > 0;)
+        if (starts(j)) return j;
+    return ~0ull;
+}
+
 // --- The slow answer: the dump's text split at spaces, each variable's
 // changes as (time, value as text), by the same rules (a value the
 // variable has is no change, except an event's; at one time the last
@@ -243,6 +260,13 @@ void queries(const Wave& w, const std::map<std::string, RefVar>& ref, const std:
             const bool hn = l.next_change(t, &nx), hp = l.prev_change(t, &pv);
             check(hn == (through < c.size()) && (!hn || nx == c[through].t), at + ": next change after " + std::to_string(t));
             check(hp == (before > 0) && (!hp || pv == c[before - 1].t), at + ": previous change before " + std::to_string(t));
+            // (* and #: the next and last runs of the value in force, as the text of the values has them.)
+            if (through && l.kind() != LaneKind::kEvent) {
+                std::vector<std::string> vs;
+                for (const RefChange& x : c) vs.push_back(x.v);
+                check(l.same_next(i, 0, l.stride()) == slow_same(vs, i, true) && l.same_prev(i, 0, l.stride()) == slow_same(vs, i, false),
+                      at + ": the runs of its value about " + std::to_string(t));
+            }
         }
         for (int q = 0; q < 6; ++q) {
             u64 t0 = lo + rnd(hi - lo + 1), t1 = lo + rnd(hi - lo + 1);
@@ -478,6 +502,24 @@ void lane_test(int seeds) {
                 check(false, at + ": change " + std::to_string(i));
                 break;
             }
+        // The runs of a value (* and #): of the whole value, and of one bit
+        // (a bus opened), x and z among them, against the text.
+        if (l.size() == ref.size()) {
+            std::vector<std::string> whole, one;
+            const u32 b = static_cast<u32>(rnd(width));
+            for (const RefChange& c : ref) whole.push_back(c.v), one.push_back(c.v.substr(width - 1 - b, 1));
+            for (int q = 0; q < 200 && !ref.empty(); ++q) {
+                const u64 i = q == 0 ? 0 : q == 1 ? ref.size() - 1 : rnd(ref.size());
+                if (l.same_next(i, 0, width) != slow_same(whole, i, true) || l.same_prev(i, 0, width) != slow_same(whole, i, false)) {
+                    check(false, at + ": the runs of change " + std::to_string(i) + "'s value");
+                    break;
+                }
+                if (l.same_next(i, b, 1) != slow_same(one, i, true) || l.same_prev(i, b, 1) != slow_same(one, i, false)) {
+                    check(false, at + ": the runs of change " + std::to_string(i) + "'s bit " + std::to_string(b));
+                    break;
+                }
+            }
+        }
         for (int q = 0; q < 200 && !ref.empty(); ++q) {
             const u64 x = rnd(2) ? ref[rnd(ref.size())].t + rnd(3) - 1 : rnd(t + 10);
             const u64 before = static_cast<u64>(std::lower_bound(ref.begin(), ref.end(), x, [](const RefChange& c, u64 v) { return c.t < v; }) - ref.begin());
@@ -512,6 +554,7 @@ void lane_test(int seeds) {
     Lane e(LaneKind::kEvent, 1);
     for (const u64 t : {5, 5, 9, 9, 12}) e.add_event(t);
     check(e.size() == 3 && e.time(2) == 12, "lane: events, one a time");
+    check(e.same_next(0, 0, 0) == ~0ull && e.same_prev(2, 0, 0) == ~0ull, "lane: an event has no value to find again");
     Lane r(LaneKind::kReal, 64);
     for (const double d : {1.5, 1.5, 2.0}) r.add_real(3, d);
     r.add_real(7, 2.0);
