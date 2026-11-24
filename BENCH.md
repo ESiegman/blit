@@ -3332,7 +3332,42 @@ A dump's first address in a unit reads that unit's tables (a few
 milliseconds at worst on firmware); the ELF is kept between dumps until
 it changes.
 
-### Round 76: milestone 5b, the loopback socket module and RTT tabs
+### Round 76: milestone 5b, ESP-IDF and PlatformIO found natively
+
+The Build tab's two new finders (`src/buildsdk.cpp`) run on the worker
+that looks at the folder, nothing on a frame's path. What a look costs
+(`--script "workdir:F;buildlook:201"`: the folder's tasks looked for and
+waited for, the first look cold, then the median of 200 more), the build
+before (c37c564, with the same `buildlook` verb added) and after, turn
+about, five rounds, both `build-bench`-style (Release's flags), on AC
+power (`pmset`: powermode 2), the machine loaded by other builds (load
+average 6 to 10), so the numbers are within this sitting only:
+
+| Folder | First look, before | after | Median, before | after |
+|---|---:|---:|---:|---:|
+| blit's source (CMake, a build folder) | 0.09 to 0.15 ms | 0.14 to 0.25 ms | 0.038 to 0.050 ms | 0.056 to 0.075 ms |
+| ESP-IDF's hello_world (CMake before; ESP-IDF, not installed on the Mac, after) | 0.08 to 0.10 ms | 0.13 to 0.17 ms | 0.035 to 0.040 ms | 0.050 to 0.053 ms |
+| A PlatformIO project (nothing found before) | 0.08 to 0.09 ms | 0.26 to 0.55 ms | 0.034 to 0.039 ms | 0.052 to 0.053 ms |
+| hello_world on the lab box over ssh (CMake before; ESP-IDF, installed, after) | 23 to 31 ms | 94 to 182 ms | 24.7 to 25.3 ms | 32.2 to 33.8 ms |
+
+Every CMake project pays one read of its `CMakeLists.txt` and one search
+for `IDF_PATH` in it (about 15 µs here). The first look at an SDK's
+project pays for finding the SDK, once per machine while blit runs:
+PlatformIO's pio on the PATH and in `~/.platformio/penv/bin` and its
+board manifest; ESP-IDF's places, its version, its Python environments
+and its targets' list (on another machine its login shell asked for
+`IDF_PATH`, then seven reads and listings there, each a round trip: the
+60 to 150 ms more of the first look). A first version also read
+`build/project_description.json` on each look, which only repeats what
+the project's `project()` and `sdkconfig` say, and packed every line of
+every `CMakeLists.txt` to compare it: 0.12 ms a look on blit's own, and
+45 to 52 ms over ssh; both were cut.
+
+Running a task: sourcing ESP-IDF v6.1.1's `export.sh` before each
+command took 0.73 s on the lab box (its Python checks); its own
+`idf_tools.py export`, which each ESP-IDF task now runs instead, 0.10 s.
+
+### Round 77: milestone 5b, the loopback socket module and RTT tabs
 
 The serial tab's keeping and drawing of what comes moved into a base
 class (`StreamTab`, `src/streamtab.*`) that RTT and semihosting tabs

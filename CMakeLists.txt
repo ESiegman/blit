@@ -348,7 +348,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_sources(blit PRIVATE src/serial_linux.cpp)
 endif()
 # Flashing the board and programming an FPGA, and the Boards view.
-target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp src/boarddebug.cpp src/appcapture.cpp)
+target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp src/boarddebug.cpp src/appcapture.cpp src/buildsdk.cpp src/appfirmware.cpp)
 # Crash dumps in a run's output, decoded against its ELF.
 target_sources(blit PRIVATE src/appcrash.cpp)
 # The wave tab: a dump's rows and their values (waveview.cpp), and its lanes
@@ -514,6 +514,8 @@ if(BLIT_DEV)
     add_test(NAME serial COMMAND sh ${CMAKE_SOURCE_DIR}/tests/serial.sh $<TARGET_FILE:blit>)
     # A board's RTT channels, semihosting and defmt as tabs, through stand-ins for OpenOCD, pyOCD, J-Link and probe-rs; on QEMU's Cortex-M3 where it is here.
     add_test(NAME rtt COMMAND sh ${CMAKE_SOURCE_DIR}/tests/rtt.sh $<TARGET_FILE:blit>)
+    # ESP-IDF's and PlatformIO's projects: found, their SDK found without its export script, what is missing said, Flash and Monitor through blit's own.
+    add_test(NAME firmware COMMAND sh ${CMAKE_SOURCE_DIR}/tests/firmware.sh $<TARGET_FILE:blit>)
     # The project's Python: found for each project and subproject, and what takes it.
     add_test(NAME python COMMAND sh ${CMAKE_SOURCE_DIR}/tests/python.sh $<TARGET_FILE:blit>)
     # Characters of more than one code point (marks, emoji sequences, flags) and of other widths.

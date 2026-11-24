@@ -151,6 +151,7 @@ std::string build_configure(const PresetLists& lists, std::string_view name, int
 
 void cmake(Look& c) {
     if (!c.file("CMakeLists.txt")) return;
+    if (std::ranges::any_of(c.out, [](const BuildTask& t) { return t.system == "ESP-IDF"; })) return;  // (idf.py's to configure and build)
     bool presets = false, built = false;
     std::vector<std::string> preset_dirs;
     // (A binaryDir may be outside the folder: an absolute one is on the
@@ -343,12 +344,17 @@ void python(Look& c) {
 }
 
 
+// Firmware's (buildsdk.cpp). An ESP-IDF project's CMakeLists.txt is
+// ESP-IDF's to build: not CMake's too.
+void esp_idf(Look& c) { find_esp_idf(c.root, c.files, c.out); }
+void platformio(Look& c) { find_platformio(c.root, c.files, c.out); }
+
 struct System {
     const char* name;
     void (*find)(Look&);
 };
-// (C, C++ and HIP's, and Python's: others are init.lua's to add, with blit.build.add.)
-const System kSystems[] = {{"CMake", cmake}, {"Meson", meson}, {"Make", make}, {"Autotools", autotools}, {"Ninja", ninja}, {"Python", python}};
+// (C, C++ and HIP's, firmware's and Python's: others are init.lua's to add, with blit.build.add.)
+const System kSystems[] = {{"ESP-IDF", esp_idf}, {"PlatformIO", platformio}, {"CMake", cmake}, {"Meson", meson}, {"Make", make}, {"Autotools", autotools}, {"Ninja", ninja}, {"Python", python}};
 
 }  // namespace
 

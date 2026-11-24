@@ -1,8 +1,9 @@
 #pragma once
 // What a folder builds with: the build systems of C, C++ and HIP (CMake,
-// Meson, make, autotools, Ninja) and Python's (uv, pip), found from the
-// files in it, and the tasks each offers (configure, build, test, run, its
-// own targets). The Build tab shows them (appbuild.cpp); any other is
+// Meson, make, autotools, Ninja), firmware's (ESP-IDF, PlatformIO:
+// buildsdk.cpp) and Python's (uv, pip), found from the files in it, and
+// the tasks each offers (configure, build, test, run, flash, its own
+// targets). The Build tab shows them (appbuild.cpp); any other is
 // init.lua's to add, with blit.build.add.
 #include <string>
 #include <vector>
@@ -50,6 +51,14 @@ struct Board {
     std::vector<int> rtt_channels;
     std::string rtt_address, rtt_defmt;  // (defmt: "", "on", "off")
     std::string semihosting_defmt;       // semihosting's output is defmt's frames (defmt-semihosting): "on"
+    // What a project's own SDK says of it (buildsdk.cpp; never written in
+    // run.json): the folders its tools are in, looked in after the PATH
+    // (ESP-IDF's Python environment, where its esptool is), and that the
+    // firmware on it is reset into its boot ROM by a 1200 baud touch of its
+    // serial port (Arduino's cores for the RP2040, which picotool cannot
+    // reset), done before picotool runs.
+    std::vector<std::string> tool_dirs;
+    bool touch = false;
 };
 
 struct BuildTask {
@@ -84,10 +93,32 @@ struct BuildTask {
     // kind of work it is (one of kTaskKinds; empty: none said).
     bool lasting = false;
     std::string kind;
-    Board board;  // (its "board", if it has one)
+    // (its "board", if it has one; on a task of a finder's that is no
+    // configuration and runs no action of blit's, the board its command
+    // writes or reads through a tool of its own, PlatformIO's upload or
+    // on-target tests: a serial tab on its port lets go of it while it runs)
+    Board board;
     // A run configuration's "crash": its firmware's own panic formats, Lua
     // patterns whose lines are a crash dump's addresses (crashscan.hpp).
     std::vector<std::string> crash;
+    // What runs first, in the same shell, and is not shown on its row: an
+    // SDK's environment (ESP-IDF's tools put on the PATH, PlatformIO's pio).
+    std::string setup;
+    // A task that is blit's own rather than a command (ESP-IDF's and
+    // PlatformIO's): "flash", the board flashed as "Flash the board" does,
+    // or "monitor", its serial port opened in a serial tab; `board` and
+    // `program` are its firmware's, `firmware` its name ("hello_world"),
+    // and `before` the task that builds it.
+    std::string action, firmware;
+    // A task that asks first which (idf.py set-target): each choice's name
+    // and the command it runs.
+    std::vector<std::pair<std::string, std::string>> choices;
+    // Its program is typed into (menuconfig): its tab has the keyboard.
+    bool keys = false;
+    // What it needs that the folder's machine does not have ("ESP-IDF is
+    // not installed on lab ..."): said on its row and when it is run, in
+    // place of running it.
+    std::string missing;
 };
 
 // The folder's own tasks, from the folder.
@@ -157,5 +188,11 @@ const std::vector<std::string>& build_systems();
 // (files may be read; on another machine that is a round trip each).
 // Systems named in `hidden` are not looked for.
 std::vector<BuildTask> detect_builds(const std::string& root, const std::vector<FsEntry>& files, const std::vector<std::string>& hidden = {});
+
+// ESP-IDF's and PlatformIO's finders (buildsdk.cpp): root's tasks added to
+// `out` if it is such a project (true). A worker's calls: the SDK is
+// looked for on the folder's machine (once there, then kept).
+bool find_esp_idf(const std::string& root, const std::vector<FsEntry>& files, std::vector<BuildTask>& out);
+bool find_platformio(const std::string& root, const std::vector<FsEntry>& files, std::vector<BuildTask>& out);
 
 }  // namespace blit

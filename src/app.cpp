@@ -2078,6 +2078,10 @@ void App::handle_event(const SDL_Event& e) {
                 rtt_sync();
                 break;
             }
+            if (e.user.code == 84) {  // a firmware's board's ports have been listed (an ESP-IDF or PlatformIO Monitor)
+                firmware_sync();
+                break;
+            }
             break;
         }
         default:

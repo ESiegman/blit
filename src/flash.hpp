@@ -17,6 +17,9 @@
 
 namespace blit {
 
+struct ProbeRow;
+struct UsbDevice;
+
 // How a tool's output reaches the task's terminal: the terminal itself,
 // for a tool that draws its progress only to one (probe-rs's bars, which
 // indicatif hides on a pipe), or a pipe, for one checked to print the same
@@ -139,5 +142,12 @@ std::string pico_platform(std::string_view cmake_cache);
 // Digilent's (their boards' and cables' product strings say so) or the
 // plain chip's; "" for another.
 std::string ofl_ftdi_cable(std::string_view usb, bool digilent);
+
+// The serial ports, among those of the devices listed, that a board with no
+// port of its own could be on, by its chip's family (appfirmware.cpp): an
+// ESP32's are Espressif's USB-Serial/JTAG and the serial bridges its boards
+// carry (CP210x, CH34x); an RP2040's or RP2350's, Raspberry Pi's devices'.
+// As the probe picker names them; none for another chip.
+std::vector<ProbeRow> board_ports(const Board& b, const std::vector<UsbDevice>& devices);
 
 }  // namespace blit
