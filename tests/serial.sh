@@ -305,7 +305,7 @@ else
     got=${got% LF *}
     check "F8 from the serial tab goes to the crash" "NORMAL main/motor.c | × 1 ▲ 0 Ln 9, Col 13 Spaces: 4"
     lines=2
-    run "$board;fake:file $dir/dump1;termwait:boot;problemsdump;key:cmd+w;frame;problemsdump"
+    run "$board;fake:file $dir/dump1;termwait:boot;problemsdump;command:Close the tab;frame;problemsdump"
     check "the tab closed: its crashes go" \
         "button: ▶ fw | ttyACM9 230400 1 | file main/motor.c | >▸E 9:13 Crash at motor.c:9 in store (StoreProhibited) ~ button: ▶ fw | file 0"
     run "$board;fake:file $dir/dump1;termwait:boot;fake:hangup;serialstate:gone;problemsdump"
