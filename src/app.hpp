@@ -130,6 +130,10 @@ struct PdfView;      // a PDF's tab (apppdf.cpp)
 struct WaveView;     // a dump's waves' tab (appwave.cpp)
 struct RemoteEntry;  // a folder's entry on another machine (remote.hpp)
 struct ProbeRow;     // a row of the probe picker (probes.hpp)
+struct SerialPortId;  // a serial port, and the USB device it is on (serialtab.hpp)
+struct SerialConfig;  // its speed and framing (serial.hpp)
+enum class SerialReturn : u8;  // what Return sends to it (serialtab.hpp)
+class SerialTab;     // a serial monitor's tab (serialtab.hpp)
 enum class FlashMode : u8;  // what a flash writes (flash.hpp)
 
 // A picture read from its file and put on the GPU (appimage.cpp).
@@ -1204,6 +1208,39 @@ private:
     i64 term_pid(u64 doc);          // its program's process here, while it runs (0: there, ended, or none)
     std::string term_tty(u64 doc);  // its terminal's device here ("/dev/ttys003"; "": there, or none)
     void term_stop(u64 doc, bool hard);  // its program ended (hard: killed), its tab and text kept, saying it was stopped
+    // A serial monitor's tab (appterm.cpp): a terminal whose program is the
+    // device on a port, in the terminals' split; a tab's, if it is one; every
+    // one, hidden ones too; and bytes to a terminal's program, as typed.
+    u64 term_open_serial(const SerialPortId& id, const SerialConfig& cfg, SerialReturn ret);
+    std::shared_ptr<SerialTab> term_serial(const Doc& d);
+    std::vector<std::pair<Doc*, std::shared_ptr<SerialTab>>> term_serials();
+    void term_send(const Doc& d, std::string_view bytes);
+    // Serial monitors (appserial.cpp): "Open a serial port…" over the USB
+    // devices' ports (listed on a worker), the board's monitor in one step,
+    // and the commands on the tab in front (else one on show): speed and
+    // framing, what Return sends, times, hex, a log, a file sent, DTR and
+    // RTS, resets, a break. Flashing lets go of the board's port and gives
+    // it back (serial_release, serial_reclaim: appflash.cpp).
+    struct SerialUi;
+    std::shared_ptr<SerialUi> serialui_;  // (made the first time)
+    void serial_pick();
+    void serial_sync();
+    void serial_settle();  // (the tests: the listing waited for)
+    void serial_board();
+    std::shared_ptr<SerialTab> serial_here(Doc** doc = nullptr, bool say = true);  // (say: none is said)
+    void serial_speed_pick();
+    void serial_return_pick();
+    void serial_stamps();
+    void serial_hex();
+    void serial_log_pick();
+    void serial_log_stop();
+    void serial_send_pick();
+    void serial_line(bool dtr);
+    void serial_reset(bool esp);
+    void serial_break();
+    void serial_release(const Board& b);
+    void serial_reclaim();
+    std::string serial_dump();  // (the tests: the tab in front, and the picker's last rows)
     // The project's Python (apppython.cpp): one for each project folder and
     // subproject, found on a worker and kept; everything that runs Python
     // takes it. py_known: a folder's, if it is known (else it is looked for,

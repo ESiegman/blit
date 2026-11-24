@@ -335,6 +335,12 @@ target_sources(blit PRIVATE src/appvalidusage.cpp)
 target_sources(blit PRIVATE src/notify.cpp)
 # The probe and port picker, and the board object on a run configuration.
 target_sources(blit PRIVATE src/probes.cpp src/appprobe.cpp)
+# Serial monitors: a terminal tab whose program is the device on a port,
+# through termios (serial.cpp: plain POSIX, for the agent too).
+target_sources(blit PRIVATE src/serial.cpp src/serialtab.cpp src/appserial.cpp)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(blit PRIVATE src/serial_linux.cpp)
+endif()
 # Flashing the board and programming an FPGA, and the Boards view.
 target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp)
 # The wave tab: a dump's rows and their values (waveview.cpp), and its lanes
