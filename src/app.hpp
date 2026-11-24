@@ -1438,6 +1438,13 @@ private:
     void debug_board_begin(const BuildTask& c, const BoardDebug& plan, const std::string& elf, bool attach);
     bool debug_board_stopped(const json::Value& body);  // a board's stop: passed over on the way to main (true)
     // A board's stop at a fault (fault.hpp): read, named, reported.
+    struct DebugVar {  // a member of a reference, as the debugger gives it (debug_variables)
+        std::string name, value, type;
+        i64 ref = 0, named = 0;
+        u64 addr = 0;
+        bool unreadable = false;  // the debugger could not read it: `value` says why
+    };
+    void debug_variables(i64 ref, i64 named, std::function<void(std::vector<DebugVar>)> then);
     void debug_registers(i64 frame, std::function<void(std::map<std::string, u64, std::less<>>)> then);
     void debug_read_words(u64 addr, u32 count, std::function<void(std::vector<i64>)> then);
     void debug_fault_look();

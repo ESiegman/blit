@@ -447,6 +447,8 @@ struct DebugSession {
         bool open = false;
         i64 parent = 0;  // (the reference it was listed under: what setVariable and dataBreakpointInfo name it by)
         u64 addr = 0;    // where it is in memory, where the debugger says
+        i64 named = 0;   // how many members it has, where the debugger says (DAP's namedVariables: read a page at a time)
+        bool unreadable = false;  // the debugger could not read it
     };
     // Data breakpoints: a variable's writes watched, by the debugger's id for it.
     struct Data {
@@ -1668,22 +1670,21 @@ bool register_value(std::string_view s, u64* v) {
 
 }  // namespace
 
-// The registers of a frame, as its Registers scope has them (gdb's, a list;
-// lldb-dap's, in groups, each opened), by their names in lower case. gdb
-// answers for all of them or none, and a register its target cannot read
-// (QEMU's RISC-V time and timeh CSRs) fails the lot: then they are asked
-// for a page at a time, and a page that fails in halves, down to the
-// registers that cannot be read, which are left out.
-void App::debug_registers(i64 frame, std::function<void(std::map<std::string, u64, std::less<>>)> then) {
+// A reference's members (a scope's, a variable's), as the debugger gives
+// them, in order. gdb answers for all of them or none, and one it cannot
+// read (QEMU's RISC-V time and timeh registers) fails the lot: then, where
+// the reference's count is known (`named`, DAP's namedVariables), they are
+// asked for a page at a time, a page that fails in halves, down to each
+// member that cannot be read, which is given as such (its name as the
+// debugger's error names it, its value why).
+void App::debug_variables(i64 ref, i64 named, std::function<void(std::vector<DebugVar>)> then) {
     DebugUi& u = *debugui_;
     if (!u.dap) return;
     struct Read {
-        std::map<std::string, u64, std::less<>> regs;
-        u32 left = 1;  // (answers to come: the scope's, then each group's or page's)
-        std::function<void(std::map<std::string, u64, std::less<>>)> then;
+        std::map<i64, std::vector<DebugVar>> pages;  // (by where each starts: -1 the whole)
+        u32 left = 1;
+        std::function<void(std::vector<DebugVar>)> then;
     };
-    // (The members of a reference, or `count` of them from `start`: numbers
-    // taken, groups opened in turn; `named` the scope's count of them.)
     struct Take {
         App* app;
         std::shared_ptr<Read> r;
@@ -1697,30 +1698,70 @@ void App::debug_registers(i64 frame, std::function<void(std::map<std::string, u6
         void operator()(const Dap::Message& m) const {
             DebugUi& v = *app->debugui_;
             if (v.asking) --v.asking;
-            if (!m.success && v.dap) {
+            std::vector<DebugVar>& page = r->pages[start];
+            if (m.success) {
+                for (const json::Value x : m.body()["variables"])
+                    page.push_back({std::string(x["name"].str()), std::string(x["value"].str()), std::string(x["type"].str()), x["variablesReference"].integer(),
+                                    x["namedVariables"].integer(), address_of(x["memoryReference"].str()), false});
+            } else if (v.dap) {
                 constexpr i64 kPage = 32;
                 if (start < 0 && named > 0) {  // (all at once failed: a page at a time)
                     for (i64 from = 0; from < named; from += kPage) ask(from, std::min(kPage, named - from));
                 } else if (count > 1) {
                     ask(start, count / 2);
                     ask(start + count / 2, count - count / 2);
+                } else if (count == 1) {  // (this one: gdb's 'Could not fetch register "time"; remote failure reply '14'')
+                    const std::string& said = m.message;
+                    std::string name = "[" + std::to_string(start) + "]";
+                    if (const size_t q = said.find('"'); q != std::string::npos)
+                        if (const size_t e = said.find('"', q + 1); e != std::string::npos && e > q + 1) name = said.substr(q + 1, e - q - 1);
+                    const size_t semi = said.find("; ");
+                    const std::string why = semi == std::string::npos ? std::string() : trimmed(std::string_view(said).substr(semi + 2));
+                    page.push_back({name, "cannot be read" + (why.empty() ? std::string() : " (" + why + ")"), {}, 0, 0, 0, true});
                 }
             }
-            for (const json::Value x : m.success ? m.body()["variables"] : json::Value()) {
-                std::string name(x["name"].str());
-                for (char& c : name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
-                u64 n = 0;
-                if (register_value(x["value"].str(), &n)) r->regs.try_emplace(std::move(name), n);
-                else if (x["value"].str().empty() && x["variablesReference"].integer() > 0 && v.dap) {  // (a group of them: lldb-dap's; not a vector register's members)
-                    ++r->left, ++v.asking;
-                    v.dap->request("variables", "{\"variablesReference\":" + std::to_string(x["variablesReference"].integer()) + "}", Take{app, r, x["variablesReference"].integer()});
-                }
+            if (--r->left == 0) {
+                std::vector<DebugVar> all;
+                for (auto& [at, vars] : r->pages) all.insert(all.end(), std::make_move_iterator(vars.begin()), std::make_move_iterator(vars.end()));
+                r->then(std::move(all));
             }
-            if (--r->left == 0) r->then(std::move(r->regs));
         }
     };
     auto r = std::make_shared<Read>();
     r->then = std::move(then);
+    ++u.asking;
+    u.dap->request("variables", "{\"variablesReference\":" + std::to_string(ref) + "}", Take{this, r, ref, -1, 0, named});
+}
+
+// The registers of a frame, as its Registers scope has them (gdb's, a list;
+// lldb-dap's, in groups, each opened), by their names in lower case; those
+// that cannot be read left out.
+void App::debug_registers(i64 frame, std::function<void(std::map<std::string, u64, std::less<>>)> then) {
+    DebugUi& u = *debugui_;
+    if (!u.dap) return;
+    struct Read {
+        std::map<std::string, u64, std::less<>> regs;
+        u32 left = 1;  // (lists to come: the scope's, then each group's)
+        std::function<void(std::map<std::string, u64, std::less<>>)> then;
+        std::function<void(std::vector<DebugVar>)> take;
+    };
+    auto r = std::make_shared<Read>();
+    r->then = std::move(then);
+    // (Each list taken: its numbers, its groups asked for in turn. The
+    // function is the Read's, let go of with the last list.)
+    r->take = [this, r](std::vector<DebugVar> vars) {
+        for (DebugVar& x : vars) {
+            for (char& c : x.name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            u64 n = 0;
+            if (x.unreadable) continue;
+            if (register_value(x.value, &n)) r->regs.try_emplace(std::move(x.name), n);
+            else if (x.value.empty() && x.ref > 0 && debugui_->dap) ++r->left, debug_variables(x.ref, x.named, r->take);  // (a group of them: lldb-dap's; not a vector register's members)
+        }
+        if (--r->left == 0) {
+            r->then(std::move(r->regs));
+            r->take = nullptr;
+        }
+    };
     ++u.asking;
     u.dap->request("scopes", "{\"frameId\":" + std::to_string(frame) + "}", [this, r](const Dap::Message& m) {
         DebugUi& v = *debugui_;
@@ -1729,9 +1770,11 @@ void App::debug_registers(i64 frame, std::function<void(std::map<std::string, u6
         for (const json::Value s : m.success ? m.body()["scopes"] : json::Value())
             if (s["presentationHint"].str() == "registers" || s["name"].str().find("Register") != std::string_view::npos)
                 ref = s["variablesReference"].integer(), named = s["namedVariables"].integer();
-        if (!ref || !v.dap) return r->then({});
-        ++v.asking;
-        v.dap->request("variables", "{\"variablesReference\":" + std::to_string(ref) + "}", Take{this, r, ref, -1, 0, named});
+        if (!ref || !v.dap) {
+            r->take = nullptr;
+            return r->then({});
+        }
+        debug_variables(ref, named, r->take);
     });
 }
 
@@ -2321,7 +2364,7 @@ void App::debug_frame(u32 i, bool show) {
         bool first = true;
         for (json::Value s : m.body()["scopes"]) {
             if (s["expensive"].boolean()) continue;
-            v.vars.push_back({std::string(s["name"].str()), {}, s["variablesReference"].integer(), 0, false});
+            v.vars.push_back({std::string(s["name"].str()), {}, s["variablesReference"].integer(), 0, false, 0, 0, s["namedVariables"].integer()});
             // (The first open, the locals or the arguments; gdb has those two apart, and both are.)
             const std::string_view hint = s["presentationHint"].str();
             if ((first && hint != "registers") || hint == "arguments" || hint == "locals") debug_expand(static_cast<u32>(v.vars.size() - 1));
@@ -2461,20 +2504,18 @@ void App::debug_expand(u32 i) {
     const u64 gen = u.vars_gen;
     const i64 ref = var.ref;
     const u32 depth = var.depth + 1;
-    ++u.asking;
-    u.dap->request("variables", "{\"variablesReference\":" + std::to_string(ref) + "}", [this, gen, ref, depth](const Dap::Message& m) {
+    debug_variables(ref, var.named, [this, gen, ref, depth](std::vector<DebugVar> got) {
         DebugUi& v = *debugui_;
-        if (v.asking) --v.asking;
-        if (gen != v.vars_gen || !m.success) return;
+        if (gen != v.vars_gen) return;
         // (Where its parent is now: the list may have changed meanwhile.)
         size_t at = 0;
         while (at < v.vars.size() && !(v.vars[at].ref == ref && v.vars[at].depth + 1 == depth && v.vars[at].open)) ++at;
         if (at == v.vars.size()) return;
         std::vector<DebugUi::Var> kids;
-        for (json::Value x : m.body()["variables"]) {
-            std::string value(x["value"].str());
-            if (const std::string_view type = x["type"].str(); !type.empty() && value.size() < 40) value += "  (" + std::string(type) + ")";
-            kids.push_back({std::string(x["name"].str()), std::move(value), x["variablesReference"].integer(), depth, false, ref, address_of(x["memoryReference"].str())});
+        for (DebugVar& x : got) {
+            std::string value = std::move(x.value);
+            if (!x.type.empty() && value.size() < 40) value += "  (" + x.type + ")";
+            kids.push_back({std::move(x.name), std::move(value), x.ref, depth, false, ref, x.addr, x.named, x.unreadable});
         }
         // gdb gives a map's (libstdc++'s printer's) entries as keys and values
         // one after another, [0] a key, [1] its value: as pairs, [key] = value.
@@ -3344,7 +3385,8 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
         heading("Variables", 0);
         for (u32 i = 0; i < u.vars.size(); ++i) {
             const DebugUi::Var& v = u.vars[i];
-            Row& r = add(DebugUi::kVar, i, v.name + (v.value.empty() ? "" : " = " + v.value), v.depth == 0 ? ink::kMuted : ink::kText, 2 * v.depth);
+            Row& r = add(DebugUi::kVar, i, v.name + (v.value.empty() || v.unreadable ? "" : " = " + v.value), v.depth == 0 || v.unreadable ? ink::kMuted : ink::kText, 2 * v.depth);
+            if (v.unreadable) r.after = v.value;  // (why the debugger could not read it, quieter)
             r.mark = v.ref > 0 ? (v.open ? "\xE2\x96\xBE" : "\xE2\x96\xB8") : " ";  // a small triangle, down or right
         }
     }
@@ -3735,7 +3777,7 @@ void App::debug_marks(FrameDesc& fd) {
                 // The frame's variables, by name (the first of a name: the innermost block's).
                 std::map<std::string, std::string, std::less<>> values;
                 for (const DebugUi::Var& v : u.vars) {
-                    if (v.depth != 1 || v.name.empty()) continue;
+                    if (v.depth != 1 || v.name.empty() || v.unreadable) continue;
                     std::string value = v.value.substr(0, v.value.find("  ("));
                     for (char& ch : value)
                         if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';

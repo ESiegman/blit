@@ -158,6 +158,13 @@ else
     check "RISC-V, an illegal instruction" 'Illegal instruction (mcause 2); mepc # in rv.c:13'
     run rv.c "key:F5;debugwait:stopped;debugfault;key:shift+F5;debugwait:idle"
     check "RISC-V stopped at main: no fault" 'no fault'
+    # (The Variables view's Registers: QEMU cannot read the time and timeh
+    # CSRs, which fails gdb's answer for all of them; the rest are read a
+    # page at a time, and those two said to be unreadable.)
+    run rv.c "key:F5;debugwait:stopped;debugpanel;debugpick:vars:1;debugwait:answers;debugrows:Variables:200;key:shift+F5;debugwait:idle"
+    got=$(printf '%s' "$got" | tr '|' '\n' | sed -n -E 's/^ ?((zero|mcause|mtvec|time|timeh) .*[^ ]) *$/\1/p' | awk 'NR > 1 { printf " | " } { printf "%s", $0 }')
+    check "the Variables view's Registers, two unreadable" \
+        'zero = 0  (long) | mtvec = 0  (long) | mcause = 0  (long) | time cannot be read (remote failure reply '"'"'14'"'"') | timeh cannot be read (remote failure reply '"'"'14'"'"')'
 fi
 
 # ---- the reports' tables, for what QEMU cannot make (an imprecise bus
