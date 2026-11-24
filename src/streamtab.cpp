@@ -260,6 +260,19 @@ bool StreamTab::gap_end(u64 ns) {
     return false;
 }
 
+void StreamTab::note(const std::string& text, u64 ns) {
+    status_end({});
+    Event e;
+    e.at = base_ + bytes_.size();
+    e.ns = ns;
+    e.kind = kNote;
+    e.text = text;
+    end_line();
+    dim_line(text, false);
+    log_line(text, ns);
+    events_.push_back(std::move(e));
+}
+
 size_t StreamTab::gap_count() const { return static_cast<size_t>(std::ranges::count(events_, kGap, &Event::kind)); }
 
 std::string StreamTab::last_gap_text(const std::string& waiting) const {

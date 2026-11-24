@@ -361,6 +361,9 @@ void App::commands_create() {
     own("Reset the board through DTR/RTS (ESP32)", {}, [this] { serial_reset(true); });
     own("Reset the board through DTR (Arduino)", {}, [this] { serial_reset(false); });
     own("Send a break to the serial port", {}, [this] { serial_break(); });
+    // A board's RTT channels and semihosting output, as tabs of the same kind (apprtt.cpp).
+    own("Open the board's RTT", {}, [this] { rtt_open(); });
+    own("Stop the board's RTT server", {}, [this] { rtt_stop(); });
     own("Run the cell (# %%)", {}, [this] { if (!nb_run_cell()) notify("The file has no # %% cells"); });
     own("Run all the cells", {}, [this] { nb_run_all(); });
     own("Interrupt the kernel", {}, [this] { nb_interrupt(); });

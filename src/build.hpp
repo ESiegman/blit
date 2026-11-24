@@ -40,6 +40,16 @@ struct Board {
     // get_cfgmem_parts); and an FPGA's bitstream (else the newest the build made).
     std::string flash_address, flash_board, flash_cable, flash_interface, flash_target, flash_device, flash_alt, flash_xcf, flash_cfgmem;
     std::string bitstream;
+    // Its RTT channels and semihosting output as tabs (rtt.hpp): "rtt": true,
+    // or { "port" (channel 0's server, 19021), "channels" (the up-channels a
+    // tool that does not list them serves: [0]), "address" (the control
+    // block's, else the ELF's _SEGGER_RTT), "defmt" (true or false: else
+    // when the ELF has .defmt) }; "semihosting": true, or { "port" }.
+    bool rtt = false, semihosting = false;
+    int rtt_port = 0, semihosting_port = 0;
+    std::vector<int> rtt_channels;
+    std::string rtt_address, rtt_defmt;  // (defmt: "", "on", "off")
+    std::string semihosting_defmt;       // semihosting's output is defmt's frames (defmt-semihosting): "on"
 };
 
 struct BuildTask {

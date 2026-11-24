@@ -2074,6 +2074,10 @@ void App::handle_event(const SDL_Event& e) {
                 serial_sync();
                 break;
             }
+            if (e.user.code == 83) {  // a board's RTT: channels found, a server ended, probe-rs's events (apprtt.cpp)
+                rtt_sync();
+                break;
+            }
             break;
         }
         default:

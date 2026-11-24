@@ -132,10 +132,15 @@ struct WaveView;     // a dump's waves' tab (appwave.cpp)
 struct RemoteEntry;  // a folder's entry on another machine (remote.hpp)
 struct ProbeRow;     // a row of the probe picker (probes.hpp)
 struct BoardDebug;   // what a board's debug preset starts (boarddebug.hpp)
+struct BoardStreams;  // its RTT and semihosting (rtt.hpp)
+struct StreamPlan;    // a tab of those (rtt.hpp)
 struct SerialPortId;  // a serial port, and the USB device it is on (serialtab.hpp)
 struct SerialConfig;  // its speed and framing (serial.hpp)
 enum class SerialReturn : u8;  // what Return sends to it (serialtab.hpp)
 class SerialTab;     // a serial monitor's tab (serialtab.hpp)
+class StreamTab;     // what a monitor tab keeps of a stream (streamtab.hpp)
+class LinkTab;       // a board's RTT channel or semihosting output as a tab (linktab.hpp)
+struct LinkSpec;     // (linktab.hpp)
 enum class FlashMode : u8;  // what a flash writes (flash.hpp)
 
 // A picture read from its file and put on the GPU (appimage.cpp).
@@ -1236,6 +1241,13 @@ private:
     std::shared_ptr<SerialTab> term_serial(const Doc& d);
     std::vector<std::pair<Doc*, std::shared_ptr<SerialTab>>> term_serials();
     void term_send(const Doc& d, std::string_view bytes);
+    // A board's stream's tab (appterm.cpp, linktab.hpp): an RTT channel, its
+    // semihosting output; a tab's, if it is one; every one; and any monitor
+    // tab's stream (a serial port's or a link's).
+    u64 term_open_link(LinkSpec spec, const CrashOptions& crash, bool focus);
+    std::shared_ptr<LinkTab> term_link(const Doc& d);
+    std::vector<std::pair<Doc*, std::shared_ptr<LinkTab>>> term_links();
+    std::shared_ptr<StreamTab> term_stream(const Doc& d);
     // Serial monitors (appserial.cpp): "Open a serial port…" over the USB
     // devices' ports (listed on a worker), the board's monitor in one step,
     // and the commands on the tab in front (else one on show): speed and
@@ -1266,6 +1278,25 @@ private:
     void serial_release(const Board& b);
     void serial_reclaim();
     std::string serial_dump();  // (the tests: the tab in front, and the picker's last rows)
+    // A board's RTT channels and semihosting output as tabs (apprtt.cpp,
+    // rtt.hpp): planned for its preset, served with its debug session (the
+    // plan made again as it starts) or by its tool alone ("Open the board's
+    // RTT"); OpenOCD's channels found through its Tcl port, probe-rs's as
+    // DAP events (rtt_sync, on the main thread); the monitor tab in front.
+    struct RttUi;
+    std::shared_ptr<RttUi> rttui_;
+    BoardStreams rtt_streams(const BuildTask& c, const std::string& elf, const std::string& preset, bool standalone);
+    void rtt_serve(const BuildTask& c, const std::string& elf, const BoardStreams& s);
+    u64 rtt_tab(const BuildTask& c, const std::string& elf, const StreamPlan& p);
+    void rtt_session(const BuildTask& c, const std::string& elf, bool attach, BoardDebug* plan);
+    void rtt_open();
+    void rtt_stop();
+    void rtt_probe_rs(const BuildTask& c, const std::string& elf);
+    void rtt_sync();
+    void rtt_show(u64 doc);
+    std::optional<BuildTask> rtt_config(const std::string& name);
+    std::shared_ptr<StreamTab> stream_here(Doc** doc = nullptr, bool say = true);
+    std::string rtt_dump();
     // The project's Python (apppython.cpp): one for each project folder and
     // subproject, found on a worker and kept; everything that runs Python
     // takes it. py_known: a folder's, if it is known (else it is looked for,
@@ -1434,6 +1465,7 @@ private:
     bool debug_board_plan(bool attach, BuildTask* c, std::string* elf, BoardDebug* plan);
     std::string debug_board_dump(bool attach);  // (the tests: what its preset starts)
     void debug_board_begin(const BuildTask& c, const BoardDebug& plan, const std::string& elf, bool attach);
+    std::string debug_board_name() const;  // the run configuration a board session under way debugs ("" none)
     bool debug_board_stopped(const json::Value& body);  // a board's stop: passed over on the way to main (true)
     void debug_restart();  // the session ended and started again as it was (built again first, as F5 builds)
     std::string debug_in_terminal(const std::string& arguments);  // (the debugger's runInTerminal: a terminal tab running it; what blit answers)

@@ -123,6 +123,9 @@ protected:
     void status(const std::string& text);  // (the last line, rewritten as what is waited for changes)
     void status_end(const std::string& last);  // (and that line made `last`, or taken away: "")
     std::string gap_text(const Event& e, const std::string& waiting = {}) const;
+    // A dim line of blit's own among what came (a waiting line taken away
+    // first), kept with it and logged: drawn again with it.
+    void note(const std::string& text, u64 ns);
     // What the reader has to say, for notify.
     void say(std::string text, int level) { news_.emplace_back(std::move(text), level); }
     // Bytes kept and drawn as take()'s are, but neither looked at by the

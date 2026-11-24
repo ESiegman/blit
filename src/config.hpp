@@ -164,6 +164,7 @@ struct Config {
     bool build_notify = true;        // a task that ends while blit is behind another window says so in a system notification (appbuild.cpp)
     u32 serial_baud = 115200;        // a serial port's speed when its board says none (appserial.cpp)
     std::string serial_line_end = "cr";  // what Return sends to a serial port: "cr", "lf" or "crlf"
+    std::string rtt_line_end = "lf";     // and to an RTT channel's down-channel (apprtt.cpp)
     float wave_remote_fetch_mb = 512;  // a dump on another machine up to this is fetched here and read (in parts, its progress on the bottom row); past it, not shown
     float timeline_max_mb = 2048;    // the memory a timeline's lanes (a dump's waves) may take: reading one stops there, and says so (wave.hpp)
     float presentation_size = 0;     // the text's size in presentation mode (0: 1.6 times what it is)

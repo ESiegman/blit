@@ -33,6 +33,7 @@
 #include "picture.h"
 #include "pty.hpp"
 #include "remote.hpp"
+#include "linktab.hpp"
 #include "serialtab.hpp"
 #include "term.hpp"
 #include "textbox.hpp"
@@ -107,6 +108,10 @@ struct TermView {
     // A serial monitor's (serialtab.hpp): the program is the device on a
     // port, whose descriptor `in` and `out` are while it is open.
     std::shared_ptr<SerialTab> serial;
+    // A board's stream's (linktab.hpp): an RTT channel, its semihosting
+    // output; read by its link's thread, which typing goes down.
+    std::shared_ptr<LinkTab> link;
+    StreamTab* stream() const { return serial ? static_cast<StreamTab*>(serial.get()) : link.get(); }
     // A build's: its output read for problems, on the reader's thread, and
     // what that found, for the main thread to take (term_sync).
     std::unique_ptr<BuildScan> scan;
@@ -161,6 +166,7 @@ struct TermView {
     u64 pics_gen = ~0ull;
 
     ~TermView() {
+        link.reset();  // (its link's thread stopped: it draws on the screen here)
         // The program is hung up on (a shell ends), and the reader stops.
         if (conn && proc.id) conn->kill(proc.id, SIGHUP);
         if (pty.pid > 0 && !ended) {
@@ -449,6 +455,10 @@ struct TermView {
     std::atomic<bool> backed{false};
 
     void send(std::string_view s) {
+        if (link) {  // (down its link: what it does not take now, its thread writes as it can)
+            link->send(s);
+            return;
+        }
         std::lock_guard lock(out_mu);  // (first: a serial port may be closed meanwhile, under it)
         const int fd = in;
         if (fd < 0 || ended) return;
@@ -752,6 +762,70 @@ u64 App::term_open_serial(const SerialPortId& id, const SerialConfig& cfg, Seria
 
 std::shared_ptr<SerialTab> App::term_serial(const Doc& d) { return d.term ? d.term->serial : nullptr; }
 
+// A board's stream's tab (linktab.hpp): an RTT channel, its semihosting
+// output, in the terminals' split; its crash dumps decoded as a serial
+// tab's are. The keyboard stays where it is unless `focus`.
+u64 App::term_open_link(LinkSpec spec, const CrashOptions& crash, bool focus) {
+    auto v = std::make_shared<TermView>();
+    const std::string* root = panel_root();
+    v->dir = root ? *root : default_workdir();  // (Cmd+click on a place the board prints: from the project)
+    v->started_ns = now_ns();
+    SerialReturn ret = SerialReturn::kLF;  // (RTT shells, as SEGGER's and probe-rs's prompts, take LF)
+    serial_return_parse(cfg_.rtt_line_end, &ret);
+    v->link = std::make_shared<LinkTab>(std::move(spec), ret, v->mu, v->term);
+    v->link->set_scan(std::make_unique<SerialCrash>(crash, *v));
+    TermView* raw = v.get();
+    v->link->told = [raw] {
+        if (!raw->told.exchange(true)) wake();
+    };
+    static const bool reader = (Term::set_picture_reader(read_picture), true);
+    (void)reader;
+    v->gpu = &gpu_;
+    {
+        std::lock_guard lock(v->mu);
+        v->term.resize(80, 24);
+        v->term.set_cell_px(static_cast<u32>(font_->cell_w()), static_cast<u32>(font_->cell_h()));
+    }
+    v->link->start();
+    Pane* const from = pane_;
+    Pane* into = dock_show(from);
+    if (!into) into = from;
+    if (into != from && from != dock_pane()) term_dock().back = from->id;
+    pane_ = into;
+    const size_t at = std::min(into->tab + 1, into->docs.size());
+    Doc* d = add_doc(at);
+    d->title = v->link->title();
+    d->read_only = true;
+    d->term = v;
+    tab_show(at);
+    pane_ = from;
+    if (focus) focus_pane(into);
+    panel_focus(false);
+    if (into == dock_pane()) term_dock().term = d->id;
+    dirty_ = true;
+    return d->id;
+}
+
+std::shared_ptr<LinkTab> App::term_link(const Doc& d) { return d.term ? d.term->link : nullptr; }
+
+std::shared_ptr<StreamTab> App::term_stream(const Doc& d) {
+    if (!d.term) return nullptr;
+    if (d.term->serial) return d.term->serial;
+    return d.term->link;
+}
+
+// Every board stream's tab, hidden ones too.
+std::vector<std::pair<Doc*, std::shared_ptr<LinkTab>>> App::term_links() {
+    std::vector<std::pair<Doc*, std::shared_ptr<LinkTab>>> out;
+    auto look = [&](const Pane& p) {
+        for (const std::shared_ptr<Doc>& d : p.docs)
+            if (d->term && d->term->link) out.emplace_back(d.get(), d->term->link);
+    };
+    for (const std::unique_ptr<Pane>& p : panes_) look(*p);
+    if (dock_ && dock_->away) look(*dock_->away);
+    return out;
+}
+
 // Every serial monitor's tab, hidden ones too.
 std::vector<std::pair<Doc*, std::shared_ptr<SerialTab>>> App::term_serials() {
     std::vector<std::pair<Doc*, std::shared_ptr<SerialTab>>> out;
@@ -784,9 +858,9 @@ void App::term_sync() {
             if (!d.term) continue;
             TermView& v = *d.term;
             v.told = false;
-            if (v.serial) {  // (a serial monitor's: named for its port and speed, what its port's reader has to say, and the crashes it found)
-                for (auto& [text, level] : v.serial->take_news()) notify(text, level);
-                if (std::string t = v.serial->title(); d.title != t) {
+            if (StreamTab* s = v.stream()) {  // (a serial monitor's, a board's stream's: named for its port and speed, what its reader has to say, and the crashes it found)
+                for (auto& [text, level] : s->take_news()) notify(text, level);
+                if (std::string t = s->title(); d.title != t) {
                     d.title = std::move(t);
                     build_crashes(d.id, d.title, {});
                 }
@@ -1539,8 +1613,8 @@ void App::term_paste(TermView& v) {
     }
     if (text.empty()) return;
     std::string out;
-    if (v.serial) {  // (a line's end as Return sends it to the port: CR, LF or both)
-        const std::string ret = v.serial->return_bytes();
+    if (v.stream()) {  // (a line's end as Return sends it to the port: CR, LF or both)
+        const std::string ret = v.stream()->return_bytes();
         for (size_t i = 0; i < text.size(); ++i) {
             if (text[i] == '\r' && i + 1 < text.size() && text[i + 1] == '\n') continue;
             if (text[i] == '\n' || text[i] == '\r') out += ret;
@@ -1563,7 +1637,7 @@ bool App::term_key(const SDL_KeyboardEvent& k) {
     if (!pane_->doc->term) return false;
     TermView& v = *pane_->doc->term;
     const bool cmd = k.mod & kPrimaryMod, ctrl = k.mod & SDL_KMOD_CTRL, alt = k.mod & SDL_KMOD_ALT, shift = k.mod & SDL_KMOD_SHIFT;
-    if ((v.keep || v.serial) && k.key == SDLK_F8 && !ctrl && !alt && !(k.mod & SDL_KMOD_GUI)) return false;  // (a build's output, a board's: F8 is the editor's, their problems)
+    if ((v.keep || v.stream()) && k.key == SDLK_F8 && !ctrl && !alt && !(k.mod & SDL_KMOD_GUI)) return false;  // (a build's output, a board's: F8 is the editor's, their problems)
     // The editor's own shortcuts stay its (Cmd+W, Cmd+T, Cmd+1 ...), but for
     // copying, pasting, choosing all and clearing. Where Ctrl is the editor's
     // key those are Ctrl+Shift's, as in other terminals, and Ctrl alone is
@@ -1585,8 +1659,8 @@ bool App::term_key(const SDL_KeyboardEvent& k) {
             dirty_ = true;
             return true;
         }
-        if (k.key == SDLK_K && v.serial) {  // a serial tab's: what came goes (the device is not sent Ctrl+L)
-            v.serial->clear();
+        if (k.key == SDLK_K && v.stream()) {  // a serial tab's (an RTT channel's): what came goes (the device is not sent Ctrl+L)
+            v.stream()->clear();
             v.scroll = 0;
             v.selected = false;
             dirty_ = true;
@@ -1627,7 +1701,7 @@ bool App::term_key(const SDL_KeyboardEvent& k) {
     std::string s;
     switch (k.key) {
         case SDLK_RETURN:
-        case SDLK_KP_ENTER: s = alt ? "\x1b\r" : v.serial ? v.serial->return_bytes() : "\r"; break;  // (a serial tab's: CR, LF or both, as chosen)
+        case SDLK_KP_ENTER: s = alt ? "\x1b\r" : v.stream() ? v.stream()->return_bytes() : "\r"; break;  // (a serial tab's: CR, LF or both, as chosen)
         case SDLK_BACKSPACE: s = ctrl ? "\x08" : alt ? "\x1b\x7f" : "\x7f"; break;
         case SDLK_TAB:
             if (ctrl) return false;  // (the editor's: the next tab)
@@ -1690,6 +1764,14 @@ bool App::term_text(const char* text) {
     }
     if (!pane_->doc->term) return false;
     TermView& v = *pane_->doc->term;
+    if (v.link && v.link->defmt()) {  // (a defmt channel's: 1 to 5 the lowest level shown; nothing goes to the board)
+        if (text[0] >= '1' && text[0] <= '5' && !text[1]) {
+            v.link->set_level(text[0] - '0');
+            v.scroll = 0;
+            dirty_ = true;
+        }
+        return true;
+    }
     v.scroll = 0;
     v.selected = false;
     v.send(text);
