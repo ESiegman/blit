@@ -23,7 +23,9 @@
 #include "flash.hpp"
 #include "fsio.hpp"
 #include "missing.hpp"
+#include "probes.hpp"
 #include "remote.hpp"
+#include "usb.hpp"
 
 namespace blit {
 
@@ -145,7 +147,7 @@ bool find_image(const std::string& root, const BuildTask& c, const std::string& 
         std::string text;
         if (fs_read(root + "/" + dir + "/flasher_args.json", &text)) return esp_flasher_args(text, dir, img, why);
     }
-    if (elf.empty()) return *why = c.name + "'s board has no image to flash (its elf)", false;
+    if (elf.empty()) return *why = (c.firmware.empty() ? c.name : c.firmware) + "'s board has no image to flash (its elf)", false;
     // The file the tool writes, of its kind, beside the ELF the build made
     // (the Pico SDK writes NAME.uf2, NAME.bin and NAME.hex beside NAME.elf:
     // pico-sdk 2.3.1 src/cmake/on_device.cmake, pico_add_extra_outputs, line
@@ -181,8 +183,9 @@ std::string hex(u64 v) {
     return b;
 }
 
-Prepared prepare(const std::string& root, const BuildTask& c, std::string tool, bool guessed, FlashMode mode, bool force, std::stop_token stop) {
+Prepared prepare(const std::string& root, BuildTask c, std::string tool, bool guessed, FlashMode mode, bool force, std::stop_token stop) {
     Prepared p;
+    const std::string who = c.firmware.empty() ? c.name : c.firmware;  // (a finder's Flash task: its firmware's name)
     // A board with no probe and no flash tool (a USB serial bridge, or no
     // device at all): the tool of the build beside its ELF, esptool for an
     // ESP-IDF build (which has said what it writes), picotool for a Pico
@@ -194,25 +197,37 @@ Prepared prepare(const std::string& root, const BuildTask& c, std::string tool, 
         } else if (!pico_build(root, elf_of(root, c)).empty()) {
             tool = "picotool";
         } else {
-            p.why = c.board.port.empty() ? c.name + "'s board has no flash tool, and its probe says none"
-                                         : c.name + "'s board is a serial port with no flash tool or chip, and no ESP-IDF build says one (board.flash, or board.chip)";
+            p.why = c.board.port.empty() ? who + "'s board has no flash tool, and its probe says none"
+                                         : who + "'s board is a serial port with no flash tool or chip, and no ESP-IDF build says one (board.flash, or board.chip)";
             return p;
         }
     }
-    p.board = root + "\n" + c.name;
+    p.board = root + "\n" + who;
     p.row = c.system + "\t" + c.name;
     p.force = force;
     p.keep = !(fpga_tool(tool) && mode != FlashMode::kFpgaFlash) && tool != "pgrcmd";  // (pgrcmd writes what its .xcf says: run every time)
     std::string host, there;
     split_remote(root, &host, &there);
     const std::string at = host.empty() ? std::string() : root.substr(0, root.size() - there.size());  // ("ssh://host", the machine's paths' start)
-    // The tool's program, by its path on the machine it runs on.
+    // The tool's program, by its path on the machine it runs on: the
+    // project SDK's own first (ESP-IDF's esptool, in its Python
+    // environment, the version its build wrote flasher_args.json for, as
+    // idf.py flash takes it), then the PATH's.
     std::string program;
     const std::vector<std::string> programs = flash_programs(c.board, tool);
+    for (const std::string& dir : c.board.tool_dirs)
+        for (const std::string& name : programs)
+            if (program.empty() && fs_kind(at + dir + "/" + name) == 1) program = dir + "/" + name;
     for (const std::string& name : programs)
         if (program.empty()) program = Engine::which(host, name);
     // (Vivado, seldom on the PATH unless its settings64.sh was sourced: where AMD installs it.)
     if (program.empty() && tool == "vivado") program = vivado_installed(at);
+    // A finder's board with no port (an ESP-IDF or PlatformIO project
+    // without a run configuration's board): the one port here that a board
+    // of its chip could be on, if there is one; with none or several,
+    // esptool looks for itself, and picotool is not reset by a touch.
+    if (!c.action.empty() && c.board.port.empty() && host.empty() && (tool == "esptool" || (tool == "picotool" && c.board.touch)))
+        if (const std::vector<ProbeRow> ports = board_ports(c.board, usb_list()); ports.size() == 1) c.board.port = ports.front().port;
     // An RP2040 or RP2350: with no picotool, the .uf2 copied to its boot
     // ROM's volume, when it is in BOOTSEL; the board's "flash": "uf2", so
     // always. Its volume as its chip calls it, where its ids say.
@@ -270,7 +285,9 @@ Prepared prepare(const std::string& root, const BuildTask& c, std::string tool, 
     p.key = hex(h) + "|" + plan.same;
     p.task = c;
     p.task.config = false;
-    p.task.name = std::string(plan.kind == "program" ? "Program " : "Flash ") + c.name;
+    p.task.action.clear();  // (what runs is the tool: its command)
+    p.task.choices.clear();
+    p.task.name = std::string(plan.kind == "program" ? "Program " : "Flash ") + who;
     p.task.kind = plan.kind;
     p.task.cmd = plan.command;
     p.task.cwd.clear();
@@ -299,7 +316,7 @@ struct App::FlashUi {
     std::jthread worker;
 };
 
-void App::flash_board(FlashMode mode, bool force, std::function<void(bool)> then) {
+void App::flash_board(FlashMode mode, bool force, std::function<void(bool)> then, const BuildTask* config) {
     const std::string root = build_root();
     if (root.empty()) return notify("Open a folder first");
     if (!flashui_) flashui_ = std::make_shared<FlashUi>();
@@ -309,19 +326,26 @@ void App::flash_board(FlashMode mode, bool force, std::function<void(bool)> then
     }
     // (A folder whose run configurations are still being read, on another
     // machine: the board is looked for once they have been.)
-    if (!build_ready_for(root)) return build_when_ready([this, mode, force, then] { flash_board(mode, force, then); });
+    if (!build_ready_for(root)) {
+        std::optional<BuildTask> given;
+        if (config) given = *config;
+        return build_when_ready([this, mode, force, then, given] { flash_board(mode, force, then, given ? &*given : nullptr); });
+    }
     flashui_->then = std::move(then);
-    const BuildTask* found = board_config();
+    // (A task of the Build tab's own, a finder's Flash: its firmware, on
+    // the run configuration's board if one has one: firmware_board.)
+    const BuildTask* found = config ? config : board_config();
     if (!found) return notify("No run configuration has a board");
-    const BuildTask c = *found;
+    const BuildTask c = config ? firmware_board(*config) : *found;
+    const std::string who = c.firmware.empty() ? c.name : c.firmware;
     std::string tool = flash_tool_for(c.board);
     const Board& b = c.board;
     const bool guessed = tool.empty() && b.probe.empty() && b.probe_kind.empty();  // (prepare looks for ESP-IDF's build, or the Pico SDK's)
-    if (tool.empty() && !guessed) return notify(c.name + "'s board has no flash tool, and its probe says none", 1);
+    if (tool.empty() && !guessed) return notify(who + "'s board has no flash tool, and its probe says none", 1);
     if (!guessed && !flash_tool(tool)) return notify("No flash tool called " + tool, 1);
     const bool fpga = !guessed && fpga_tool(tool);
-    if (mode != FlashMode::kFlash && !fpga) return notify(c.name + "'s board is not an FPGA's" + (tool.empty() ? std::string() : " (it is flashed with " + tool + ")"), 1);
-    build_first(std::string(fpga ? "programming " : "flashing ") + c.name, [this, root, c, tool, guessed, mode, force] {
+    if (mode != FlashMode::kFlash && !fpga) return notify(who + "'s board is not an FPGA's" + (tool.empty() ? std::string() : " (it is flashed with " + tool + ")"), 1);
+    build_first(std::string(fpga ? "programming " : "flashing ") + who, [this, root, c, tool, guessed, mode, force] {
         FlashUi& u = *flashui_;
         if (u.busy) return;
         if (u.worker.joinable()) u.worker.join();
@@ -334,7 +358,7 @@ void App::flash_board(FlashMode mode, bool force, std::function<void(bool)> then
             }
             wake();
         });
-    });
+    }, &c);
 }
 
 void App::flash_sync() {

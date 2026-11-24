@@ -537,6 +537,20 @@ void board_read(json::Value b, const std::string& config, Board* out, std::strin
         out->debug_script = text_of(d["script"]);
         out->debug_main = text_of(d["main"]);
     }
+    if (const json::Value r = b["rtt"]; r.exists()) {  // (rtt.hpp's)
+        out->rtt = r.is_object() || r.boolean();
+        out->rtt_port = static_cast<int>(r["port"].integer());
+        for (const json::Value c : r["channels"]) out->rtt_channels.push_back(static_cast<int>(c.integer()));
+        out->rtt_address = r["address"].is_string() ? text_of(r["address"]) : r["address"].exists() ? std::to_string(r["address"].integer()) : std::string();
+        if (r["defmt"].exists()) out->rtt_defmt = r["defmt"].boolean() ? "on" : "off";
+        if (r.is_object() && r["enabled"].exists()) out->rtt = r["enabled"].boolean();
+    }
+    if (const json::Value s = b["semihosting"]; s.exists()) {
+        out->semihosting = s.is_object() || s.boolean();
+        out->semihosting_port = static_cast<int>(s["port"].integer());
+        if (s["defmt"].exists()) out->semihosting_defmt = s["defmt"].boolean() ? "on" : "off";
+        if (s.is_object() && s["enabled"].exists()) out->semihosting = s["enabled"].boolean();
+    }
     if (!out->debug.empty() && std::ranges::find(kDebugPresets, out->debug) == std::end(kDebugPresets)) {
         std::string presets;
         for (const std::string_view p : kDebugPresets) presets += (presets.empty() ? "\"" : ", \"") + std::string(p) + "\"";

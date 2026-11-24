@@ -2523,7 +2523,10 @@ Where it stops, the line has an arrow in the gutter and says why, and its
 file comes to the front. The Debug tab shows the threads (when there is
 more than one: Enter on one shows its call stack, and the steps step it),
 the call stack (Enter on a frame shows its source and its variables), the
-variables (Right or Enter opens one a level, Left shuts it), the
+variables (Right or Enter opens one a level, Left shuts it; gdb gives a
+scope's members all or none, so where one cannot be read, a register
+QEMU's RISC-V does not give, the rest are read in pages and that one is
+shown as *cannot be read*, with the debugger's reason), the
 expressions watched, the breakpoints (Enter goes to one, Space disables
 it, Delete takes it away), and what the program printed.
 
@@ -2712,7 +2715,8 @@ it as it is ([Debugging the board](#debugging-the-board)).
 The side panel's **Build** tab (Cmd+Shift+U) lists what the working
 folder builds with, found from its files: CMake (its presets, and each
 folder it was configured in: `build*`, `cmake-build-*`, `out`), Meson,
-make (with its targets), autotools and Ninja for C, C++ and HIP, and uv
+make (with its targets), autotools and Ninja for C, C++ and HIP,
+[ESP-IDF and PlatformIO](#esp-idf-and-platformio) for firmware, and uv
 or pip for Python (its `.venv`, `pytest` when there are tests, `python -m`
 for a package with a `__main__`). Other languages' build systems are
 init.lua's to add, with `blit.build.add` (below). A build preset whose
@@ -3313,6 +3317,113 @@ button runs, Debug, Profile and the tests. Two kinds are capture presets:
   Screen in the program) are written there as `NAME_frameN.rdc`. Where
   `renderdoccmd` is not installed, the run says so.
 
+### ESP-IDF and PlatformIO
+
+A folder that is an ESP-IDF project or a PlatformIO one has its tasks
+in the Build tab with nothing to set up: blit reads the project's own
+files, and finds the SDK on the folder's machine (here, or the host of
+an ssh project) without its export script being sourced first.
+
+**ESP-IDF.** A project is ESP-IDF's when a line of its `CMakeLists.txt`,
+spaces left out, begins with `include($ENV{IDF_PATH}/tools/cmake/project.cmake)`
+(or v2's `tools/cmakev2/idf.cmake`), as idf.py itself tests (v6.1). Such a
+`CMakeLists.txt` is not offered to CMake as well. Its tasks, under
+**ESP-IDF**:
+
+| Task | What runs |
+|---|---|
+| Build (the Run button's) | `idf.py build` |
+| Flash | "Flash the board" (below): esptool with the files and addresses the build wrote in `build/flasher_args.json`, built first |
+| Monitor | the board's serial port in a [serial tab](#the-serial-monitor), at the project's speed (its sdkconfig's `CONFIG_ESPTOOLPY_MONITOR_BAUD`, else `CONFIG_ESP_CONSOLE_UART_BAUDRATE`, else 115200) |
+| Menuconfig | `idf.py menuconfig`, in a tab of its own that has the keyboard (a long task) |
+| Size | `idf.py size` |
+| Set target | `idf.py set-target TARGET`, the target chosen from ESP-IDF's own list (its preview ones with `--preview`) |
+| Reconfigure, Clean, Full clean | `idf.py reconfigure`, `clean`, `fullclean` |
+
+ESP-IDF is looked for in `IDF_PATH` (blit's environment here; the login
+shell's on a host), then where Espressif's installation manager says it
+put it (`~/.espressif/eim_idf.json`, the one chosen there first), then
+`~/esp/esp-idf`, then `~/esp/esp-idf-v6.1` or `~/esp/v6.1/esp-idf` (the
+newest); its Python environment where `install.sh` makes it
+(`~/.espressif/python_env/idf6.1_py3.14_env`, for that ESP-IDF's version
+and the newest Python, or where `IDF_TOOLS_PATH` says), or the manager's.
+Each command then runs after ESP-IDF's environment is set up as
+`export.sh` would (`idf_tools.py export`, run by that Python, puts its
+toolchains, its Python environment and its own tools on the PATH; about a
+tenth of a second, where sourcing `export.sh` takes most of one; what it
+says besides is shown when it fails, as a toolchain not installed, and
+not on every run). What
+was found is kept for the machine while blit runs (looked for again
+a few seconds on if it was not). Where it is not installed, that is said once, under
+the ESP-IDF heading, and again on a task's row when it is run: `ESP-IDF is not installed on this
+Mac (not in IDF_PATH, ~/esp or ~/.espressif)`, or `ESP-IDF's Python
+environment is not installed on lab: ~/esp/esp-idf/install.sh sets it
+up`. Errors in the build's output (GCC's, the linker's, CMake's) are
+problems, as any build's.
+
+**PlatformIO.** A folder with a `platformio.ini`. It is read as
+PlatformIO reads it: sections, `key = value` (or `key: value`), values
+going on over indented lines, `;` and `#` comments (inline ones after a
+space), each env's options through its `extends` and `[env]`,
+`${section.option}`, `${this.option}`, `${this.__env__}` and
+`${sysenv.NAME}` put in, and `[platformio]`'s `extra_configs` (paths from
+the folder, a wildcard in the last part). Each `[env:NAME]` has its
+tasks, those of `default_envs` first, the first env's Build the Run
+button's; with more than one env, each is named after its task, `Build
+(pico)`:
+
+| Task | What runs |
+|---|---|
+| Build | `pio run -e NAME` |
+| Upload | for an RP2040 or RP2350 (the `raspberrypi` platform, or a board whose MCU is one) uploaded with picotool (PlatformIO's default for it) or `mbed`: "Flash the board", picotool with `.pio/build/NAME/firmware.elf` (or the `.uf2` copied to the boot ROM's volume, for `mbed`), built first; any other: `pio run -e NAME -t upload` |
+| Monitor | the board's serial port in a serial tab, at the env's `monitor_speed` (PlatformIO's default, 9600, when none), its port its `monitor_port`, else `upload_port` (when either is a path and no wildcard) |
+| Test | `pio test -e NAME` (when the project has a `test` folder, or its `test_dir`) |
+| Clean | `pio run -e NAME -t clean` |
+| Compile database | `pio run -e NAME -t compiledb`, the `compile_commands.json` clangd reads |
+
+A board whose manifest (in the installed platform:
+`~/.platformio/platforms/raspberrypi/boards/pico.json`) says
+`use_1200bps_touch`, as Arduino's cores for the RP2040 do, runs firmware
+picotool cannot reset into BOOTSEL. Its upload first opens and closes its
+serial port at 1200 baud (`Resetting into BOOTSEL: /dev/cu.usbmodem1101
+at 1200 baud`), which such firmware takes as "into the boot ROM", and
+waits for the boot ROM (5 s at most) before picotool loads it.
+
+pio is the one on the PATH, else PlatformIO's own
+(`~/.platformio/penv/bin/pio`, as its installer and VS Code's extension
+put it) or `~/.local/bin/pio` (uv tool's, pipx's), put on the PATH for
+each task. Where there is none, its heading says (and a task run says again) `PlatformIO is not
+installed on this Mac (no pio on the PATH, nor in
+~/.platformio/penv/bin)`.
+
+**Flash and Monitor** are blit's own: the board flashed as [Flashing the
+board](#flashing-the-board) says, progress and all, and its port opened as
+"Open the board's serial monitor" does. With no run configuration that
+has a board, the project's own is the board: its chip (ESP-IDF's target,
+or the PlatformIO board's MCU), its ELF and speed, and no probe; "Flash
+the board" and "Open the board's serial monitor" take it too. A board
+chosen with "Choose the probe…" (a run configuration's) is the one
+flashed and monitored, its probe and port first, what it does not say
+(its ELF, chip, speed) the project's. With no port known, Monitor opens
+the one port plugged in that a board of that chip could be on (for an
+ESP32, Espressif's USB-Serial/JTAG or a CP210x or CH34x bridge; for an
+RP2040 or RP2350, Raspberry Pi's devices); with several, they are offered
+to choose from (the choice kept for the folder while blit runs); with
+none, it says `No serial port of an ESP32's is plugged in to this Mac`.
+esptool with no port given is left to find the board itself, unless just
+one such port is plugged in. ESP-IDF's own esptool, in its Python
+environment (the version its build wrote `flasher_args.json` for, as
+`idf.py flash` takes it), is run before the PATH's. A serial tab on the
+board's port lets go of it while a flash runs, and has it back after; so
+it does while PlatformIO's own upload (`pio run -t upload`) or its tests
+on the board (`pio test`, any env but a `native` one) run, the port being
+the board's as Monitor finds it.
+
+These replace the `blit.build.add` systems the embedded trial wrote for
+PlatformIO in init.lua; `blit.build.remove("ESP-IDF")` or
+`blit.build.remove("PlatformIO")` turns either off (an ESP-IDF project's
+`CMakeLists.txt` is then CMake's).
+
 ### The board: probe and port
 
 "Choose the probe…" (Command search, or Enter on **Board** in the Debug
@@ -3377,6 +3488,9 @@ it:
   `{ "tool": ... }` too) and `debug` (a preset's
   name; `{ "preset": ... }` too) are yours to write; choosing a probe
   leaves them as they are.
+- `rtt` and `semihosting` (`true`, or an object) open the board's RTT
+  channels and its semihosting output as tabs with its debug session:
+  see "RTT, semihosting and defmt".
 - The `flash` object may also say where a raw `.bin` goes (`"address":
   "0x08000000"`), openFPGALoader's `board` (`"basys3"`) or `cable`
   (`"digilent"`), OpenOCD's `interface` and `target` scripts
@@ -3622,6 +3736,62 @@ server. When the attach fails, what the server last said as an error
 follows gdb's words. In a project on another machine the gdb, the server
 and the probe are that machine's.
 
+#### The fault report
+
+When the board stops in a fault, wherever it stopped (paused in a hung
+board's fault handler, at a breakpoint there, or on its own), a **Fault**
+section at the top of the Debug tab says what it is in a line, and the
+line that faulted says it too:
+
+```
+UsageFault: UNDEFINSTR, undefined instruction; thread stack (PSP); no FPU frame; stacked PC 0x08001a3c in motor.c:212
+```
+
+**Show the fault report** (that section's row, or Command search) opens
+it wide in a tab: every bit set in words, the stacked frame and the
+faulting address where it is valid. Enter on the stacked PC (or LR,
+mepc, EPC1, A0) shows its source and its instructions: the faulting
+frame chosen in the call stack where gdb unwound through the exception,
+else the line the ELF names, with the disassembly in the tab beside it.
+The section goes when the board runs on.
+
+- **Cortex-M.** A stop with IPSR 3 to 7 (HardFault, MemManage, BusFault,
+  UsageFault, SecureFault), or in a fault handler by its name (CMSIS's
+  `HardFault_Handler` and the rest, the Pico SDK's `isr_hardfault`,
+  libopencm3's `hard_fault_handler`). The report reads CPUID, CFSR, HFSR,
+  MMFAR, BFAR and AFSR (`0xE000ED28` to `0xE000ED3C`), and on ARMv8-M
+  with the Security Extension SFSR and SFAR; EXC_RETURN from LR, else
+  from gdb's frame for the exception: which stack the core stacked the
+  frame on (PSP, or MSP at the exception's entry) and whether it stacked
+  the FPU's state (26 words, not 8); then the stacked R0 to R3, R12, LR,
+  PC and xPSR, and the stack pointer before the exception. A HardFault
+  forced from a configurable fault says which. An imprecise bus fault
+  on a Cortex-M3 or M4 says that `ACTLR.DISDEFWBUF` makes such faults
+  precise (or that it is set already). A Cortex-M0, M0+ or M23 has no
+  fault status registers: the report says so and gives the stacked
+  frame.
+- **RISC-V.** A stop in the trap handler (its PC in the function at
+  mtvec's base) for an exception: mcause named from the privileged
+  specification, mepc, and mtval (the faulting address, or the
+  instruction's bits, as the cause has it).
+- **Xtensa (ESP32, ESP32-S3).** With a debugger attached, ESP-IDF's panic
+  handler sets a breakpoint at the instruction that faulted and returns
+  to it, so the board stops there: EXCCAUSE (named as ESP-IDF names it,
+  `StoreProhibited`), EPC1 and EXCVADDR, from the core's registers.
+  Stopped in the panic handler itself, they come from the frame it was
+  given (`xt_unhandled_exception`'s or `panicHandler`'s `frame`), with
+  A0's return address; ESP-IDF's own causes (an interrupt watchdog, a
+  double exception) are named. On a RISC-V ESP32 (C3, C6) the same:
+  stopped at the breakpoint ESP-IDF's panic handler has the debugger set
+  (the PC at mepc, by a trigger), mcause, mepc and mtval from the core's
+  registers; in the panic handler, from its frame.
+
+The registers come from the debugger's Registers scope and the memory
+from its readMemory, so any of the presets' gdbs gives them; the names
+come from the board's ELF, read off the main thread. On QEMU every bus
+fault is precise, a store's too (a real Cortex-M3's write buffer makes a
+store's imprecise).
+
 ### Crash dumps decoded
 
 When a firmware crashes and its dump comes out in a task's or a run's
@@ -3794,6 +3964,97 @@ or `"crlf"`: what Return sends in a new tab).
 no serial number, is waited for at its path after a hang-up. A port on
 another machine is that of the machine the agent runs on: a port on a
 third machine beyond it is not reached.
+
+### RTT, semihosting and defmt
+
+A board's RTT channels and its semihosting output are tabs of the same
+kind as the serial monitor's: a terminal tab whose program is the
+stream, in the terminals' split, its ANSI colours drawn, Cmd+click on a
+`file:line`, the host's times, hex, a log to a file and Cmd+K as the
+serial tab's commands give them (those commands act on whichever of
+these tabs is in front), and crash dumps decoded in place with the
+board's ELF, their crashes in Problems under the tab's heading.
+
+- **An RTT channel** is a tab of its own, named from the control block
+  (`RTT 0: Terminal`, `RTT 1: defmt`) where the tool reads the names, else
+  by number (`RTT 0`). What you type goes down the matching down-channel
+  (a shell over RTT), Return as LF ("Change what Return sends to the
+  port…" changes it for the tab).
+- **The board's semihosting output** (the program's `SYS_WRITE0`,
+  `SYS_WRITEC`, and `SYS_WRITE` to `:tt`: newlib's rdimon `printf`) is a
+  tab called `Board output`.
+- **defmt.** When the ELF has a `.defmt` section, the channel named
+  `defmt` goes through `defmt-print -e ELF --json` (the engine: `cargo
+  install defmt-print`; its JSON is schema 1), and each log is drawn as
+  a line: the target's timestamp, the level in its colour (as defmt
+  colours it: trace grey, debug white, info green, warn yellow, error
+  red), the message, and its place, dim, a Cmd+click place. defmt-print
+  is looked for on the PATH, then where `cargo install` puts it
+  (`$CARGO_HOME/bin`, else `~/.cargo/bin`). In that tab
+  the keys `1` to `5` show trace and up, debug and up, info and up, warn
+  and up, or errors alone; the logs hidden are kept, and come back. A
+  `defmt-print` missing or ending (a defmt version it does not read) is
+  said on the tab's last line.
+
+**With a debug session.** In the board object of `.blit/run.json`:
+
+```json
+"board": { ..., "rtt": true, "semihosting": true }
+"board": { ..., "rtt": { "port": 19021, "channels": [0, 1], "address": "0x20000400", "defmt": true },
+               "semihosting": { "port": 19020, "defmt": true } }
+```
+
+F5 (or "Attach to the running board") then tells the preset's server to
+serve them, and opens the tabs before the debugger starts. Each server
+a tool is told to start is on a port no one listens on, chosen as the
+session starts, so that two boards at once (or another program on
+J-Link's 19021) are not in each other's way; a board's `port` puts
+channel *n* on `port` + *n* instead, and `semihosting.port` its
+semihosting.
+
+**An ST-LINK board** names no preset of its own and is debugged through
+probe-rs; with `rtt` or `semihosting` on, it is debugged through
+`openocd` instead (`interface/stlink.cfg` and the chip's target script),
+which serves them while gdb debugs. A `"debug": "probe-rs"` written in
+the board is kept, and the session says RTT cannot run beside it.
+
+| Preset | RTT | Semihosting |
+|---|---|---|
+| `openocd` | its Tcl port opened on a free port; blit sets RTT up there at the ELF's `_SEGGER_RTT` (`rtt setup`), starts it again every 0.3 s until the program has made its control block (`rtt start` looks once), lists the channels and starts a server for each (`rtt server start`), and a tab connects to each | `arm semihosting enable` and `arm semihosting_redirect tcp PORT stdio` once attached, and the tab connects there |
+| `pyocd` | a config file for its gdb server (`--config`) with the control block and a server per channel in `channels` (pyOCD looks for the block itself while the board runs) | `-S`, its console on the telnet port (the gdb port + 1) |
+| `jlink` | `-RTTTelnetPort` on a free port (its own 19021 is left alone); `monitor exec SetRTTAddr` at the ELF's block; a tab per channel in `channels`, a channel other than 0 chosen by J-Link's config string as the tab connects | `monitor semihosting enable` and `monitor semihosting IOClient 1`, its output on the telnet port (the gdb port + 2) |
+| `qemu` | none (QEMU has no RTT) | QEMU runs beside gdb with semihosting its own, its output in a file the tab reads as it grows (QEMU sends a `SYS_WRITE` to `:tt` to its own stdout alone) |
+| `probe-rs` (named in the board) | none: its gdb server has neither, and one probe-rs at a time has the probe; said as the session starts | none |
+
+`address` gives the control block's address where the ELF has no
+`_SEGGER_RTT`; `channels` the up-channels a tool that does not list them
+serves (pyOCD, J-Link: `[0]` unless said); `defmt` makes channel 0 (or the
+one named `defmt`) a defmt tab, or not, whatever the ELF has;
+`semihosting.defmt` makes the board's output defmt's frames
+(defmt-semihosting). The tabs stay when the session ends: each says it
+is waiting (`RTT 0: Terminal (waiting)`, and a dim last line, `[gone at
+14:02:03.120 (closed by the other end); trying 127.0.0.1:52817]`), and
+takes up again, one line marking the gap, when the next session serves
+it (at the ports that session chose).
+
+**On their own.** "Open the board's RTT" starts the preset's tool for RTT
+alone, for a board that runs, not halted and not reset: OpenOCD with its
+Tcl port and no gdb port, J-Link's GDB server with `-nohalt`, pyOCD's
+gdb server with `-M attach`, or probe-rs's DAP server (its RTT and
+semihosting come as events; its defmt channels are decoded by probe-rs
+itself, and its down-channels take nothing). With the board's debug
+session under way, it shows that session's tabs. "Stop the board's RTT
+server" ends it. A tool that is not installed is said, naming it and the
+machine (`openocd is not installed on this Mac`).
+
+**Settings:** `blit.opt.rtt.line_end` (`"lf"`: what Return sends down an
+RTT channel in a new tab).
+
+**Limits:** checked against stand-ins shaped as each tool serves its
+ports, and on QEMU's mps2-an385 (semihosting, and defmt over it through
+`defmt-print`); not yet against a probe. A board on another machine:
+its ports there are not reached yet (blit says so; the link's way of
+connecting is the one place the agent's TCP pump will go in).
 
 ## Tests
 

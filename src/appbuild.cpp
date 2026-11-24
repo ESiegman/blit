@@ -19,6 +19,7 @@
 #include "app.hpp"
 #include "buildread.hpp"
 #include "crashscan.hpp"
+#include "flash.hpp"
 #include "look.hpp"
 #include "missing.hpp"
 #include "notify.hpp"
@@ -293,6 +294,7 @@ namespace {
 
 constexpr int kTypeRow = -2, kTargetRow = -3;  // (the Build tab's rows for CMake's build type and target)
 constexpr int kEnvRow = -4;                     // (and for the run configurations' environment)
+constexpr int kNoteRow = -5;                    // (a line of what a system needs that is not there, said once under its heading)
 bool choosable(int task) { return task >= 0 || task == kTypeRow || task == kTargetRow || task == kEnvRow; }
 
 // A CMake task's command with the build type and target chosen: a
@@ -336,6 +338,10 @@ void each_line(std::string_view text, Fn fn) {
         text.remove_prefix(nl + 1);
     }
 }
+
+// A task's command as it runs: after its setup (an SDK's environment), in
+// the same shell.
+std::string with_setup(const BuildTask& t, const std::string& cmd) { return t.setup.empty() ? cmd : t.setup + " && " + cmd; }
 
 // A build folder's targets, "all" first, from what build_option's command
 // printed: CMake's help, then a form feed and (with Ninja) Ninja's own list
@@ -524,7 +530,7 @@ void App::run_config_take() {
 
 // ---------------------------------------------------------------- a build first
 
-void App::build_first(const std::string& what, std::function<void()> go) {
+void App::build_first(const std::string& what, std::function<void()> go, const BuildTask* config) {
     BuildUi& u = *buildui_;
     const std::string root = build_root();
     // (The folder's tasks, looked at now if it is here and has not been yet:
@@ -537,7 +543,7 @@ void App::build_first(const std::string& what, std::function<void()> go) {
         return;
     }
     const BuildTask* t = nullptr;
-    if (const BuildTask* c = run_config(); c && !c->before.empty()) {
+    if (const BuildTask* c = config ? config : run_config(); c && !c->before.empty()) {
         const auto it = std::ranges::find_if(u.tasks, [&](const BuildTask& b) { return !b.config && (b.name == c->before || b.system + ": " + b.name == c->before); });
         if (it == u.tasks.end()) return notify("No task called " + c->before + " to build before " + what);
         t = &*it;
@@ -550,7 +556,8 @@ void App::build_first(const std::string& what, std::function<void()> go) {
     }
     if (!t) return go();
     const BuildTask b = *t;
-    const u64 doc = build_command(b.cwd.empty() ? u.root : u.root + "/" + b.cwd, with_vars(b.system == "CMake" ? with_cmake(b.cmd, u.cmake_type, u.cmake_target) : b.cmd, build_vars()), b.name, b.problems, &b);
+    if (!b.missing.empty()) return notify(b.missing + ": " + what + " did not start", 1);  // (its SDK is not there)
+    const u64 doc = build_command(b.cwd.empty() ? u.root : u.root + "/" + b.cwd, with_setup(b, with_vars(b.system == "CMake" ? with_cmake(b.cmd, u.cmake_type, u.cmake_target) : b.cmd, build_vars())), b.name, b.problems, &b);
     if (!doc) return notify("Cannot run " + b.name + " before " + what);
     u.last_key = task_key(b);  // (how it goes shows on its row)
     if (const auto it = u.sizes.find(u.last_key); it != u.sizes.end()) u.sizes_before = it->second;
@@ -656,6 +663,7 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     bool editing_still = false;
     for (const std::unique_ptr<Pane>& p : panes_) editing_still |= p.get() == editing;
     focus_pane(editing_still ? editing : panes_.front().get());
+    if (Pane* p = nullptr; doc && task && task->keys && find_doc(doc, &p)) focus_pane(p);  // (a program typed into: menuconfig)
     if (doc) {
         BuildUi::Run r;
         r.doc = doc;
@@ -723,7 +731,12 @@ const BuildTask* App::board_config() {
     if (const BuildTask* c = run_config(); c && c->board.set) return c;
     for (const BuildTask& t : u.tasks)
         if (t.config && t.board.set && u.root == root) return &t;
-    return nullptr;
+    // (None has one: an ESP-IDF or PlatformIO project's own, its Flash
+    // task's, the Run button's if it is one.)
+    const BuildTask* own = nullptr;
+    for (const BuildTask& t : u.tasks)
+        if (t.action == "flash" && t.board.set && u.root == root && (!own || task_key(t) == u.current)) own = &t;
+    return own;
 }
 
 // (The Run button's first, if its board is on that port; the port as
@@ -753,7 +766,7 @@ const BuildTask* App::board_config_on(const SerialPortId& port) {
 }
 
 // A task of the Build tab's (-1: the one the Run button runs).
-void App::build_run(int index) {
+void App::build_run(int index, const std::string& chosen) {
     BuildUi& u = *buildui_;
     if (index < 0)
         for (size_t i = 0; i < u.tasks.size(); ++i)
@@ -765,14 +778,37 @@ void App::build_run(int index) {
     }
     const BuildTask t = u.tasks[static_cast<size_t>(index)];
     u.current = task_key(t);
-    std::string cmd = t.system == "CMake" ? with_cmake(t.cmd, u.cmake_type, u.cmake_target) : t.cmd;
+    // (What it needs is not there: said, on its row too, and nothing run.)
+    if (!t.missing.empty()) {
+        build_note(u.current, t.missing);
+        return notify(t.missing, 1);
+    }
+    // (Blit's own: the board flashed, its serial monitor.)
+    if (t.action == "flash") {
+        ++build_gen_;
+        dirty_ = true;
+        return flash_board(FlashMode::kFlash, false, {}, &t);
+    }
+    if (t.action == "monitor") return firmware_monitor(t);
+    // (One that asks which first: the command of the one chosen.)
+    if (!t.choices.empty() && chosen.empty()) {
+        std::vector<std::string> names;
+        for (const auto& [name, cmd] : t.choices) names.push_back(name);
+        return find_choose_item(t.name, std::move(names), [this, key = u.current, choices = t.choices](int i) {
+            if (i < 0 || static_cast<size_t>(i) >= choices.size()) return;
+            const std::vector<BuildTask>& tasks = buildui_->tasks;
+            for (size_t k = 0; k < tasks.size(); ++k)
+                if (task_key(tasks[k]) == key) return build_run(static_cast<int>(k), choices[static_cast<size_t>(i)].second);
+        });
+    }
+    std::string cmd = !chosen.empty() ? chosen : t.system == "CMake" ? with_cmake(t.cmd, u.cmake_type, u.cmake_target) : t.cmd;
     if (!t.before.empty()) {  // a run configuration's build first: then, if it went well, the program
         const auto it = std::ranges::find_if(u.tasks, [&](const BuildTask& b) { return !b.config && (b.name == t.before || b.system + ": " + b.name == t.before); });
         if (it == u.tasks.end()) return notify("No task called " + t.before + " to run before " + t.name);
         std::string host, there;  // (on another machine the command runs there: its folders without ssh://host)
         const std::string root = split_remote(u.root, &host, &there) ? there : u.root;
         const std::string first = it->cwd.empty() ? root : root + "/" + it->cwd, then = t.cwd.empty() ? root : root + "/" + t.cwd;
-        cmd = "cd " + sh_word(first) + " && " + it->cmd + " && cd " + sh_word(then) + " && " + t.cmd;
+        cmd = "cd " + sh_word(first) + " && " + with_setup(*it, it->cmd) + " && cd " + sh_word(then) + " && " + t.cmd;
     }
     if (t.lasting) {  // a long task run again: its last run's tab goes (one still going is ended, asked first once it has run a while)
         u64 was = 0;
@@ -800,7 +836,18 @@ void App::build_run(int index) {
         }
         if (!u.run_of(was)) u.take_order = order;
     }
-    build_command(t.cwd.empty() || !t.before.empty() ? u.root : u.root + "/" + t.cwd, with_vars(cmd, build_vars()), t.name, t.problems, &t);
+    // (A finder's task that writes or reads the board through a tool of its
+    // own, PlatformIO's upload: serial tabs on its port let go of it while
+    // it runs, and have it back once it has ended, as blit's flash does.
+    // Let go of once the run has started, in the same turn, long before
+    // its tool has started: the run it replaces, ended as it starts, gives
+    // back what was let go of for that one first.)
+    const bool on_board = t.board.set && !t.config && t.action.empty();
+    const u64 doc = build_command(t.cwd.empty() || !t.before.empty() ? u.root : u.root + "/" + t.cwd, with_setup(t, with_vars(cmd, build_vars())), t.name, t.problems, &t);
+    if (on_board && doc) {
+        serial_release(firmware_board(t).board);
+        firmware_holding(doc);
+    }
     u.last_key = u.current;  // (how it goes shows on its row)
     if (const auto it = u.sizes.find(u.last_key); it != u.sizes.end()) u.sizes_before = it->second;
     run_config_take();
@@ -869,6 +916,7 @@ void App::build_ended(u64 doc, int status, const std::string& missing) {
     BuildUi& u = *buildui_;
     // (A flash: remembered as done only if it went well.)
     if (const BuildUi::Run* r = u.run_of(doc); r && r->running) flash_ended(doc, status == 0 && !r->stopped && !(doc == u.doc && u.progress.failed));
+    firmware_ended(doc);  // (a finder's upload: the serial tabs let go of for it, given back)
     // How it went: for init.lua's BuildDone, and, behind another window, in
     // a notification of the system's.
     if (BuildUi::Run* r = u.run_of(doc); r && r->running) {
@@ -927,6 +975,7 @@ void App::build_forget(u64 doc) {
     BuildUi& u = *buildui_;
     if (BuildUi::Run* r = u.run_of(doc); r && r->running) {
         flash_ended(doc, false);
+        firmware_ended(doc);
         r->running = false;
         r->stopped = true;
         if (!r->key.empty()) script_build_event(true, r->name, r->kind, r->cmd, -1, r->errors, r->warnings, true, static_cast<double>(now_ns() - r->started_ns) * 1e-9);
@@ -1394,6 +1443,17 @@ void App::build_panel_draw(TextBox& box, bool focused) {
                 u.rows.push_back({kTargetRow, "Target", 0});
             }
             if (t.config && !u.environments.list.empty()) u.rows.push_back({kEnvRow, "Environment", 0});  // (the run configurations', chosen here)
+            // (What its tasks need that is not there, its SDK: said once,
+            // under its heading, in as many lines as it takes; each task
+            // says it again only when it is run.)
+            std::string missing;
+            for (size_t j = i; j < u.tasks.size() && u.tasks[j].system == t.system && missing.empty(); ++j) missing = u.tasks[j].missing;
+            if (!missing.empty()) {
+                for (std::string& line : wrapped(missing, cols > 4 ? cols - 2 : 2)) u.rows.push_back({kNoteRow, std::move(line), 0});
+#if BLIT_DEV
+                u.drawn_rows.push_back("! " + missing);
+#endif
+            }
         }
         ++u.rows[heading].count;
         u.rows.push_back({static_cast<int>(i), t.name, 0});
@@ -1448,6 +1508,10 @@ void App::build_panel_draw(TextBox& box, bool focused) {
             if (u.top + r == u.sel) light_row(box, y, focused);
             continue;
         }
+        if (row.task == kNoteRow) {
+            put(box, font, y, 2, row.text, ink::kError);
+            continue;
+        }
         if (row.task < 0) {
             const std::string count = std::to_string(row.count);
             const u32 c = put(box, font, y, 0, fit_text(row.text, cols > count.size() + 1 ? cols - static_cast<u32>(count.size()) - 1 : 1), ink::kHeading);
@@ -1462,6 +1526,7 @@ void App::build_panel_draw(TextBox& box, bool focused) {
         const u32 c = put(box, font, y, 2, fit_text(t.name, cols > 2 ? cols - 2 : 1), cur ? ink::kStrong : ink::kText);
         std::string after = t.system == "CMake" ? with_cmake(t.cmd, u.cmake_type, u.cmake_target) : t.cmd;
         Ink in = ink::kMuted;
+
         // (A long task's run whose tab is open says how it goes here too
         // while another run is the last: still running, with its time.)
         const std::string key = task_key(t);
@@ -1473,6 +1538,7 @@ void App::build_panel_draw(TextBox& box, bool focused) {
         std::string ticking;  // (and a long task's time after them)
         if (last && u.unrun) {
             after = u.summary;  // (nothing ran, and why: "Not flashed: unchanged since the last flash")
+            if (!t.missing.empty()) in = ink::kError;  // (it could not be: what it needs is not there)
         } else if (last || run) {
             const bool running = run ? run->running : u.running;
             const int status = run ? run->status : u.last_status;

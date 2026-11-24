@@ -4,6 +4,7 @@
 
 #include <atomic>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
@@ -132,10 +133,15 @@ struct WaveView;     // a dump's waves' tab (appwave.cpp)
 struct RemoteEntry;  // a folder's entry on another machine (remote.hpp)
 struct ProbeRow;     // a row of the probe picker (probes.hpp)
 struct BoardDebug;   // what a board's debug preset starts (boarddebug.hpp)
+struct BoardStreams;  // its RTT and semihosting (rtt.hpp)
+struct StreamPlan;    // a tab of those (rtt.hpp)
 struct SerialPortId;  // a serial port, and the USB device it is on (serialtab.hpp)
 struct SerialConfig;  // its speed and framing (serial.hpp)
 enum class SerialReturn : u8;  // what Return sends to it (serialtab.hpp)
 class SerialTab;     // a serial monitor's tab (serialtab.hpp)
+class StreamTab;     // what a monitor tab keeps of a stream (streamtab.hpp)
+class LinkTab;       // a board's RTT channel or semihosting output as a tab (linktab.hpp)
+struct LinkSpec;     // (linktab.hpp)
 enum class FlashMode : u8;  // what a flash writes (flash.hpp)
 
 // A picture read from its file and put on the GPU (appimage.cpp).
@@ -465,7 +471,8 @@ private:
     // `build`, else the Build tab's Build): `go` runs once it has gone well,
     // at once where there is none; one that fails says so, and `go` never
     // runs. `what` names what waits for it (Debug, the tests, Record).
-    void build_first(const std::string& what, std::function<void()> go);
+    // (config: the one whose build that is, else the Run button's.)
+    void build_first(const std::string& what, std::function<void()> go, const BuildTask* config = nullptr);
     bool build_first_busy() const;  // (the tests: one is under way, or waits to run)
     void build_first_settle();      // (the tests: the build waited for, and what waited for it run)
     void build_first_take();
@@ -1236,6 +1243,13 @@ private:
     std::shared_ptr<SerialTab> term_serial(const Doc& d);
     std::vector<std::pair<Doc*, std::shared_ptr<SerialTab>>> term_serials();
     void term_send(const Doc& d, std::string_view bytes);
+    // A board's stream's tab (appterm.cpp, linktab.hpp): an RTT channel, its
+    // semihosting output; a tab's, if it is one; every one; and any monitor
+    // tab's stream (a serial port's or a link's).
+    u64 term_open_link(LinkSpec spec, const CrashOptions& crash, bool focus);
+    std::shared_ptr<LinkTab> term_link(const Doc& d);
+    std::vector<std::pair<Doc*, std::shared_ptr<LinkTab>>> term_links();
+    std::shared_ptr<StreamTab> term_stream(const Doc& d);
     // Serial monitors (appserial.cpp): "Open a serial port…" over the USB
     // devices' ports (listed on a worker), the board's monitor in one step,
     // and the commands on the tab in front (else one on show): speed and
@@ -1277,6 +1291,25 @@ private:
     void forward_stop_pick();
     void forward_sync();
     std::string forward_dump();  // (the tests: each port reached, and its connections now)
+    // A board's RTT channels and semihosting output as tabs (apprtt.cpp,
+    // rtt.hpp): planned for its preset, served with its debug session (the
+    // plan made again as it starts) or by its tool alone ("Open the board's
+    // RTT"); OpenOCD's channels found through its Tcl port, probe-rs's as
+    // DAP events (rtt_sync, on the main thread); the monitor tab in front.
+    struct RttUi;
+    std::shared_ptr<RttUi> rttui_;
+    BoardStreams rtt_streams(const BuildTask& c, const std::string& elf, const std::string& preset, bool standalone);
+    void rtt_serve(const BuildTask& c, const std::string& elf, const BoardStreams& s);
+    u64 rtt_tab(const BuildTask& c, const std::string& elf, const StreamPlan& p);
+    void rtt_session(const BuildTask& c, const std::string& elf, bool attach, BoardDebug* plan);
+    void rtt_open();
+    void rtt_stop();
+    void rtt_probe_rs(const BuildTask& c, const std::string& elf);
+    void rtt_sync();
+    void rtt_show(u64 doc);
+    std::optional<BuildTask> rtt_config(const std::string& name);
+    std::shared_ptr<StreamTab> stream_here(Doc** doc = nullptr, bool say = true);
+    std::string rtt_dump();
     // The project's Python (apppython.cpp): one for each project folder and
     // subproject, found on a worker and kept; everything that runs Python
     // takes it. py_known: a folder's, if it is known (else it is looked for,
@@ -1445,7 +1478,30 @@ private:
     bool debug_board_plan(bool attach, BuildTask* c, std::string* elf, BoardDebug* plan);
     std::string debug_board_dump(bool attach);  // (the tests: what its preset starts)
     void debug_board_begin(const BuildTask& c, const BoardDebug& plan, const std::string& elf, bool attach);
+    std::string debug_board_name() const;  // the run configuration a board session under way debugs ("" none)
     bool debug_board_stopped(const json::Value& body);  // a board's stop: passed over on the way to main (true)
+    // A board's stop at a fault (fault.hpp): read, named, reported.
+    struct DebugVar {  // a member of a reference, as the debugger gives it (debug_variables)
+        std::string name, value, type;
+        i64 ref = 0, named = 0;
+        u64 addr = 0;
+        bool unreadable = false;  // the debugger could not read it: `value` says why
+    };
+    void debug_variables(i64 ref, i64 named, std::function<void(std::vector<DebugVar>)> then);
+    void debug_registers(i64 frame, std::function<void(std::map<std::string, u64, std::less<>>)> then);
+    void debug_read_words(u64 addr, u32 count, std::function<void(std::vector<i64>)> then);
+    void debug_fault_look();
+    void debug_fault_cm(u64 gen);
+    void debug_fault_done(u64 gen);
+    void debug_fault_take();
+    void debug_fault_open();  // "Show the fault report"
+    void debug_fault_fill(bool fresh);
+    void debug_fault_relayout();  // (the report's tab, for its split's width now)
+    bool debug_fault_key(const SDL_KeyboardEvent& k);  // Enter on the report's stacked PC: its source and instructions
+    void debug_fault_goto(u64 addr);
+    std::string debug_fault_dump(bool report);  // (the tests: the Debug tab's line, or the report's lines)
+    bool debug_fault_line(const std::string& name);  // (the tests: the report's cursor on a register's line)
+    std::string debug_disasm_dump();  // (the tests: the disassembly tab's line at its cursor)
     void debug_restart();  // the session ended and started again as it was (built again first, as F5 builds)
     std::string debug_in_terminal(const std::string& arguments);  // (the debugger's runInTerminal: a terminal tab running it; what blit answers)
     u64 debug_terminal(const std::string& dir, const std::string& command, const std::string& title);  // (a terminal tab for the program's input and output)
@@ -1563,7 +1619,7 @@ private:
     void build_note(const std::string& row, const std::string& words);
     const BuildTask* board_config();  // the Run button's run configuration if it has a board, else the first that has one
     const BuildTask* board_config_on(const SerialPortId& port);  // the one whose board's serial port that is (its serial.port, or its probe's serial number), if one is
-    void build_run(int index);
+    void build_run(int index, const std::string& chosen = {});  // (chosen: the command of a task that asks which, the one chosen)
     void build_option(int row);  // a task of the Build tab's (-1: the Run button's)
     void build_environment_apply();              // the environment chosen, laid over each run configuration's variables
     const RunEnvironment* run_environment() const;  // (the one chosen, if any)
@@ -1949,12 +2005,31 @@ private:
     // the image each board was last flashed with, for "only if changed".
     struct FlashUi;
     std::shared_ptr<FlashUi> flashui_;  // (made the first time)
-    void flash_board(FlashMode mode, bool force, std::function<void(bool)> then = {});  // (then: what waits for it, told whether it went well or was not needed)
+    // (then: what waits for it, told whether it went well or was not needed;
+    // config: a finder's Flash task, whose firmware it flashes: firmware_board)
+    void flash_board(FlashMode mode, bool force, std::function<void(bool)> then = {}, const BuildTask* config = nullptr);
     bool flash_busy() const;  // an image being found, or a flash running
     void flash_sync();
     void flash_ended(u64 doc, bool well);  // a run has ended (well: it exited 0, was not stopped, and said no failure)
     void flash_settle();                   // (the tests: the build first, and the image found, waited for)
     std::string flash_dump();              // (the tests: the board's flash object as read)
+    // ESP-IDF's and PlatformIO's tasks that are blit's own (appfirmware.cpp:
+    // build.hpp's BuildTask::action): Flash, through flash_board, and
+    // Monitor, the board's serial port in a serial tab (with no port known,
+    // the one plugged in that its chip could be on, or a choice of them).
+    // Their firmware is on the board of the run configuration that has one,
+    // if one does, with what that board does not say from the finder's.
+    struct FirmwareUi;
+    std::shared_ptr<FirmwareUi> firmwareui_;  // (made the first time)
+    BuildTask firmware_board(const BuildTask& task);
+    void firmware_monitor(const BuildTask& task);
+    void firmware_sync();
+    void firmware_settle();  // (the tests: the ports listed, waited for)
+    // A finder's task run on the board by its own tool (PlatformIO's upload):
+    // the serial tabs let go of for it given back once its run has ended
+    // (doc: its run's terminal).
+    void firmware_holding(u64 doc);
+    void firmware_ended(u64 doc);
     // Simulation runs (appsim.cpp, simrun.hpp): as one ends, the dump it
     // wrote found on a worker and opened in the wave tab (or read again);
     // "Open the last run's waves".

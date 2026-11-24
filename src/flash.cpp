@@ -594,6 +594,15 @@ FlashPlan flash_plan(const Board& b, const std::string& tool_name, const std::st
         cmd.clear();
         for (const std::string& l : script) cmd += (cmd.empty() ? "" : "\n") + l;
         script.clear();
+    } else if (tool_name == "picotool" && b.touch && !b.port.empty()) {
+        // (Firmware picotool cannot reset, Arduino's cores' (their boards'
+        // manifests say use_1200bps_touch): its USB serial port opened and
+        // closed at 1200 baud, which they take as "into the boot ROM", as
+        // Arduino's and PlatformIO's uploads do; stty sets the speed, -f on
+        // macOS, -F on Linux. Then the boot ROM waited for, 5 s at most.)
+        const std::string port = sh_word(b.port), picotool = sh_word(program);
+        cmd = "echo " + sh_word("Resetting into BOOTSEL: " + b.port + " at 1200 baud") + "; { stty -f " + port + " 1200 || stty -F " + port +
+              " 1200; } 2>/dev/null; i=0; until " + picotool + " info >/dev/null 2>&1 || [ $i -ge 50 ]; do sleep 0.1; i=$((i+1)); done; " + cmd;
     } else if (tool_name == "pgrcmd") {  // (its return code, which says what went wrong, in words)
         cmd += "; s=$?; case $s in";
         for (const auto& [status, words] : kPgrcmdCodes) cmd += " " + std::to_string(status) + ") echo " + sh_word("pgrcmd: " + std::string(words) + " (return code " + std::to_string(status - 256) + ")") + ";;";

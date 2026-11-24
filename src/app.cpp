@@ -1535,6 +1535,7 @@ void App::layout(int w, int h, FrameDesc& fd) {
     place_panes(w, h);
     peek_layout();  // (a peek's box: placed over its split, laid out last)
     for (const std::unique_ptr<Pane>& p : panes_) wrap_sync(*p);  // (each split's soft wrap, for its width now)
+    debug_fault_relayout();  // (the fault report's rows, for its split's width now: appdebug.cpp)
     build_measure();  // (the Run button: the tab bar under it ends before it)
     Pane* const focused = pane_;
     for (const std::unique_ptr<Pane>& p : panes_) {
@@ -2078,6 +2079,14 @@ void App::handle_event(const SDL_Event& e) {
                 forward_sync();
                 break;
             }
+            if (e.user.code == 83) {  // a board's RTT: channels found, a server ended, probe-rs's events (apprtt.cpp)
+                rtt_sync();
+                break;
+            }
+            if (e.user.code == 84) {  // a firmware's board's ports have been listed (an ESP-IDF or PlatformIO Monitor)
+                firmware_sync();
+                break;
+            }
             break;
         }
         default:
@@ -2150,6 +2159,7 @@ void App::on_key(const SDL_KeyboardEvent& k) {
             return;
         if (term_key(k)) return;   // a terminal's tab is in front (appterm.cpp)
         if (debug_console_key(k)) return;  // the debug console's (appdebug.cpp)
+        if (debug_fault_key(k)) return;    // the fault report's (appdebug.cpp)
     }
     if (script_keys_ && script_key(k)) return;  // a mapping of a script's has it (applua.cpp)
     if (!find_open_ && !panel_has_keyboard() && pair_key(k)) return;  // Backspace or Enter between a pair

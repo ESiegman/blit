@@ -21,6 +21,8 @@
 #include "notify.hpp"
 #include "profile.hpp"
 #include "remote.hpp"
+#include "crashscan.hpp"
+#include "linktab.hpp"
 #include "serialtab.hpp"
 
 namespace blit {
@@ -1303,6 +1305,12 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s\n", debug_rows_dump(arg.substr(0, sep), sep == std::string::npos ? 1000 : static_cast<u32>(std::atoi(arg.c_str() + sep + 1))).c_str());
         } else if (verb == "debuginline") {  // the notes after the lines of the first view while stopped (where, the values), as last drawn
             std::fprintf(stderr, "%s\n", debug_inline_dump().c_str());
+        } else if (verb == "debugfault") {  // a board's fault: the Debug tab's line (debugfault:report, the report's lines, " | " between them), or "no fault"
+            std::fprintf(stderr, "%s\n", debug_fault_dump(arg == "report").c_str());
+        } else if (verb == "debugfaultline") {  // debugfaultline:NAME, the fault report's cursor on the line of that register (PC, LR, mepc, EPC1)
+            if (!debug_fault_line(arg)) std::fprintf(stderr, "debugfaultline: no %s\n", arg.c_str());
+        } else if (verb == "debugdisasm") {  // the disassembly tab's line at its cursor, or "no disassembly"
+            std::fprintf(stderr, "%s\n", debug_disasm_dump().c_str());
         } else if (verb == "snippetdump") {  // the snippet being filled in: each stop's places (line:column, from 1), the one the cursor is at in brackets
             std::fprintf(stderr, "%s\n", snippet_dump().c_str());
         } else if (verb == "asmdump") {  // once a file's assembly is made: its lines (from 1) of the file's cursor line, as "line: lines"
@@ -1540,6 +1548,35 @@ void App::run_script(const char* script) {
             SerialReturn ret = SerialReturn::kCR;
             serial_return_parse(cfg_.serial_line_end, &ret);
             serial_open(id, cfg, ret, nullptr);
+        } else if (verb == "link") {  // link:KIND,PORT[,listen][,defmt=ELF][,channel=N][,jlink=N][,file=PATH], a board stream's tab on a port here (or a file), opened by hand
+            LinkSpec spec;
+            size_t at = 0;
+            for (int k = 0; at <= arg.size(); ++k) {
+                const size_t comma = arg.find(',', at);
+                const std::string w = arg.substr(at, comma == std::string::npos ? std::string::npos : comma - at);
+                if (k == 0) spec.plan.kind = w;
+                else if (k == 1) spec.plan.port = static_cast<u16>(std::atoi(w.c_str()));
+                else if (w == "listen") spec.plan.listen = true;
+                else if (w.starts_with("defmt=")) spec.plan.defmt = true, spec.plan.input = false, spec.elf = w.substr(6);
+                else if (w.starts_with("jlink=")) spec.plan.greeting = jlink_channel(std::atoi(w.c_str() + 6));  // (J-Link's string for that channel)
+                else if (w.starts_with("file=")) spec.plan.file = w.substr(5);
+                else if (w.starts_with("channel=")) spec.plan.channel = std::atoi(w.c_str() + 8);
+                if (comma == std::string::npos) break;
+                at = comma + 1;
+            }
+            spec.plan.name = spec.plan.kind == "rtt" ? "RTT " + std::to_string(std::max(0, spec.plan.channel)) : "Board output";
+            spec.dir = build_root().empty() ? default_workdir() : build_root();
+            term_open_link(std::move(spec), crash_options_of(nullptr), true);
+        } else if (verb == "rttdump") {  // the board streams' tabs (each "TITLE: state kind port kept gaps ..."), and OpenOCD's drivers' steps
+            rtt_sync();
+            std::fprintf(stderr, "%s\n", rtt_dump().c_str());
+        } else if (verb == "rttwait") {  // rttwait:TEXT, what rttdump prints has TEXT in it (10 s at most)
+            bool there = false;
+            for (const u64 until = now_ns() + 10'000'000'000ull; !there && now_ns() < until; SDL_Delay(5)) {
+                rtt_sync();
+                there = rtt_dump().find(arg) != std::string::npos;
+            }
+            if (!there) std::fprintf(stderr, "rttwait: no \"%s\" in %s\n", arg.c_str(), rtt_dump().c_str());
         } else if (verb == "serialwait") {  // "Open a serial port…" has listed the ports (and opened the box with them)
             serial_settle();
         } else if (verb == "serialdump") {  // the serial tab in front (else on show, else the only one): its title, state, settings, line changes done; then the picker's last rows
@@ -1585,6 +1622,21 @@ void App::run_script(const char* script) {
             probe_settle();
         } else if (verb == "flashwait") {  // "Flash the board": its build first, and its image found (then buildwait waits for the tool)
             flash_settle();
+        } else if (verb == "firmwarewait") {  // an ESP-IDF or PlatformIO Monitor: the ports its board could be on, listed and taken
+            firmware_settle();
+        } else if (verb == "buildlook") {  // buildlook:N, the folder looked at for its tasks N times, waited for: the first look's time, and the rest's median
+            const int n = std::max(1, std::atoi(arg.c_str()));
+            std::vector<double> ms;
+            for (int i = 0; i < n; ++i) {
+                build_changed();
+                const u64 t0 = now_ns();
+                build_settle();
+                ms.push_back(static_cast<double>(now_ns() - t0) / 1e6);
+            }
+            const double first = ms.front();
+            std::vector<double> later(ms.begin() + 1, ms.end());
+            std::ranges::sort(later);
+            std::fprintf(stderr, "buildlook: first %.3f ms, median %.3f ms of %d\n", first, later.empty() ? first : later[later.size() / 2], n);
         } else if (verb == "flashdump") {  // the flash object of the board flashed, as read back from run.json
             std::fprintf(stderr, "%s\n", flash_dump().c_str());
         } else if (verb == "capturewait") {  // "Capture a frame": the capture waited for (60 s at most)

@@ -204,8 +204,9 @@ target_link_libraries(blit_core PUBLIC Threads::Threads)
 # Timelines and waveforms: lanes of changes, and dumps read into them
 # (knowing no window, so that the agent can carry them later).
 target_sources(blit_core PRIVATE src/timeline.cpp src/wave.cpp src/waveila.cpp)
-# ELF files and address to source from their DWARF (also knowing no window).
-target_sources(blit_core PRIVATE src/elf.cpp src/addrsrc.cpp src/crashscan.cpp)
+# ELF files and address to source from their DWARF, and the fault report's
+# tables (also knowing no window).
+target_sources(blit_core PRIVATE src/elf.cpp src/addrsrc.cpp src/crashscan.cpp src/fault.cpp)
 # FST dumps are read through libfst (third_party/libfst, at the commit its
 # config.h names), compiled as C, as src/agent/build.sh compiles it for the
 # Linux agents, with zlib. Optimized in every build, and kept out of
@@ -341,7 +342,11 @@ target_sources(blit PRIVATE src/probes.cpp src/appprobe.cpp)
 # through termios (serial.cpp: plain POSIX, for the agent too).
 # A port on another machine is opened there by blit's agent, run as a pump
 # (src/pump.cpp: built into both).
-target_sources(blit PRIVATE src/serial.cpp src/serialtab.cpp src/appserial.cpp src/pump.cpp)
+target_sources(blit PRIVATE src/serial.cpp src/streamtab.cpp src/serialtab.cpp src/appserial.cpp src/pump.cpp)
+# The loopback socket module (a tool's TCP port here, connected to again as
+# it comes and goes, or listened on), and a board's RTT channels,
+# semihosting output and defmt logs as tabs of the serial tab's kind.
+target_sources(blit PRIVATE src/loopback.cpp src/linktab.cpp src/rtt.cpp src/apprtt.cpp)
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_sources(blit PRIVATE src/serial_linux.cpp)
   if(TARGET blit-agent)
@@ -352,7 +357,7 @@ endif()
 # as a pump there (src/forward.cpp, appforward.cpp).
 target_sources(blit PRIVATE src/forward.cpp src/appforward.cpp)
 # Flashing the board and programming an FPGA, and the Boards view.
-target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp src/boarddebug.cpp src/appcapture.cpp)
+target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp src/boarddebug.cpp src/appcapture.cpp src/buildsdk.cpp src/appfirmware.cpp)
 # Crash dumps in a run's output, decoded against its ELF.
 target_sources(blit PRIVATE src/appcrash.cpp)
 # The wave tab: a dump's rows and their values (waveview.cpp), and its lanes
@@ -443,6 +448,9 @@ if(BLIT_DEV)
   # The ELF reader and address to source, against addr2line (tests/elf.sh).
   add_executable(blit_elf_test tests/elf_test.cpp)
   target_link_libraries(blit_elf_test PRIVATE blit_core)
+  # The fault report's tables, for what QEMU cannot make (tests/faults.sh).
+  add_executable(blit_fault_test tests/fault_test.cpp)
+  target_link_libraries(blit_fault_test PRIVATE blit_core)
 
   enable_testing()
   add_test(NAME fuzz COMMAND blit_fuzz 100 600)
@@ -516,6 +524,10 @@ if(BLIT_DEV)
     add_test(NAME boards COMMAND sh ${CMAKE_SOURCE_DIR}/tests/boards.sh $<TARGET_FILE:blit>)
     # Serial monitor tabs, on a pseudo-terminal standing in for a board: what comes and goes, times, hex, a reset's gap, flashing, the picker.
     add_test(NAME serial COMMAND sh ${CMAKE_SOURCE_DIR}/tests/serial.sh $<TARGET_FILE:blit>)
+    # A board's RTT channels, semihosting and defmt as tabs, through stand-ins for OpenOCD, pyOCD, J-Link and probe-rs; on QEMU's Cortex-M3 where it is here.
+    add_test(NAME rtt COMMAND sh ${CMAKE_SOURCE_DIR}/tests/rtt.sh $<TARGET_FILE:blit>)
+    # ESP-IDF's and PlatformIO's projects: found, their SDK found without its export script, what is missing said, Flash and Monitor through blit's own.
+    add_test(NAME firmware COMMAND sh ${CMAKE_SOURCE_DIR}/tests/firmware.sh $<TARGET_FILE:blit>)
     # The project's Python: found for each project and subproject, and what takes it.
     add_test(NAME python COMMAND sh ${CMAKE_SOURCE_DIR}/tests/python.sh $<TARGET_FILE:blit>)
     # Characters of more than one code point (marks, emoji sequences, flags) and of other widths.
@@ -530,6 +542,8 @@ if(BLIT_DEV)
     # and crash dumps in a run's output decoded in place (tests/crash.sh).
     add_test(NAME elf COMMAND sh ${CMAKE_SOURCE_DIR}/tests/elf.sh $<TARGET_FILE:blit>)
     add_test(NAME crash COMMAND sh ${CMAKE_SOURCE_DIR}/tests/crash.sh $<TARGET_FILE:blit>)
+    # The fault report: Cortex-M and RISC-V faults on QEMU, and the tables for what it cannot make.
+    add_test(NAME faults COMMAND sh ${CMAKE_SOURCE_DIR}/tests/faults.sh $<TARGET_FILE:blit>)
     # Every suite sees the dark appearance, whatever the machine is set to
     # (GitHub's machines are light), and the cell macOS's own font has at
     # 13 pt (16 x 31 pixels at twice the density), whatever fonts the

@@ -225,6 +225,7 @@ void App::serial_board() {
     if (!build_root().empty() && !build_ready_for(build_root())) return build_when_ready([this] { serial_board(); });
     const BuildTask* c = board_config();
     if (!c) return notify("No run configuration has a board");
+    if (!c->action.empty()) return firmware_monitor(*c);  // (an ESP-IDF or PlatformIO project's own board: appfirmware.cpp)
     const Board& b = c->board;
     std::string host, there;
     split_remote(build_root(), &host, &there);  // (a board on another machine: its port opened there, by blit's agent)
@@ -305,15 +306,15 @@ void App::serial_speed_pick() {
 }
 
 void App::serial_return_pick() {
-    const std::shared_ptr<SerialTab> s = serial_here();
+    const std::shared_ptr<StreamTab> s = stream_here();  // (an RTT channel's too: apprtt.cpp)
     if (!s) return;
     const SerialReturn now = s->return_mode();
     static constexpr SerialReturn kAll[] = {SerialReturn::kCR, SerialReturn::kLF, SerialReturn::kCRLF};
     std::vector<std::string> items;
     for (const SerialReturn r : kAll) items.push_back(std::string(serial_return_name(r)) + (r == now ? "  (now)" : ""));
-    std::weak_ptr<SerialTab> w = s;
+    std::weak_ptr<StreamTab> w = s;
     find_choose_item("Return sends", std::move(items), [this, w](int i) {
-        const std::shared_ptr<SerialTab> t = w.lock();
+        const std::shared_ptr<StreamTab> t = w.lock();
         if (!t || i < 0 || i > 2) return;
         t->set_return(kAll[i]);
         notify(std::string("Return sends ") + serial_return_name(kAll[i]));
@@ -321,17 +322,18 @@ void App::serial_return_pick() {
 }
 
 void App::serial_stamps() {
-    if (const std::shared_ptr<SerialTab> s = serial_here()) s->set_stamps(!s->stamps());
+    if (const std::shared_ptr<StreamTab> s = stream_here()) s->set_stamps(!s->stamps());
     dirty_ = true;
 }
 
 void App::serial_hex() {
-    if (const std::shared_ptr<SerialTab> s = serial_here()) s->set_hex(!s->hex());
+    if (const std::shared_ptr<StreamTab> s = stream_here()) s->set_hex(!s->hex());
     dirty_ = true;
 }
 
 void App::serial_log_pick() {
-    const std::shared_ptr<SerialTab> s = serial_here();
+    Doc* sd = nullptr;
+    const std::shared_ptr<StreamTab> s = stream_here(&sd);
     if (!s) return;
     // A name of its own beside the project: the port's, and when.
     const time_t now = std::time(nullptr);
@@ -341,10 +343,13 @@ void App::serial_log_pick() {
     std::strftime(when, sizeof when, "%Y%m%d-%H%M%S", &t);
     std::string dir = build_root();
     if (dir.empty() || is_remote(dir)) dir = default_workdir();
-    const std::string start = dir + "/serial-" + s->name() + "-" + when + ".log";
-    std::weak_ptr<SerialTab> w = s;
+    std::string name = s->name();
+    for (char& c : name)
+        if (c == ' ' || c == ':' || c == '/') c = '-';
+    const std::string start = dir + (sd && term_link(*sd) ? "/rtt-" : "/serial-") + name + "-" + when + ".log";
+    std::weak_ptr<StreamTab> w = s;
     find_choose(kFindInput, "Log to", start, [this, w](const std::string& typed) {
-        const std::shared_ptr<SerialTab> tab = w.lock();
+        const std::shared_ptr<StreamTab> tab = w.lock();
         if (!tab || typed.empty()) return;
         std::string why;
         const std::string path = full_path(typed);
@@ -354,10 +359,10 @@ void App::serial_log_pick() {
 }
 
 void App::serial_log_stop() {
-    const std::shared_ptr<SerialTab> s = serial_here();
+    const std::shared_ptr<StreamTab> s = stream_here();
     if (!s) return;
     const std::string was = s->log_path();
-    if (was.empty()) return notify("The serial tab is not being logged");
+    if (was.empty()) return notify("The tab is not being logged");
     s->log_stop();
     notify("Logged to " + was);
 }

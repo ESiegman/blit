@@ -364,6 +364,9 @@ void App::commands_create() {
     // A TCP port on the project's machine reached as one here (appforward.cpp).
     own("Reach a port on the project's machine\xE2\x80\xA6", {}, [this] { forward_pick(); });
     own("Stop reaching a port on another machine\xE2\x80\xA6", {}, [this] { forward_stop_pick(); });
+    // A board's RTT channels and semihosting output, as tabs of the same kind (apprtt.cpp).
+    own("Open the board's RTT", {}, [this] { rtt_open(); });
+    own("Stop the board's RTT server", {}, [this] { rtt_stop(); });
     own("Run the cell (# %%)", {}, [this] { if (!nb_run_cell()) notify("The file has no # %% cells"); });
     own("Run all the cells", {}, [this] { nb_run_all(); });
     own("Interrupt the kernel", {}, [this] { nb_interrupt(); });
@@ -416,6 +419,7 @@ void App::commands_create() {
     own("Run to the cursor", {key(SDLK_F10, kC)}, [this] { debug_run_to_cursor(); });
     own("Jump to the cursor's line", {}, [this] { debug_jump_to_cursor(); });
     own("Show the disassembly", {}, [this] { debug_disasm_open(); });
+    own("Show the fault report", {}, [this] { debug_fault_open(); });
     own("Show memory at\xE2\x80\xA6", {}, [this] { debug_memory_pick(); });
     own("Next page of memory", {}, [this] { debug_memory_page(1); });
     own("Previous page of memory", {}, [this] { debug_memory_page(-1); });

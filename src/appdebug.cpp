@@ -12,11 +12,13 @@
 #include <SDL3/SDL.h>
 
 #include <algorithm>
+#include <atomic>
 #include <cmath>
 #include <cstdio>
 #include <cstring>
 #include <map>
 #include <set>
+#include <thread>
 
 #include <fcntl.h>
 #include <signal.h>
@@ -27,7 +29,9 @@
 #include "app.hpp"
 #include "base64.hpp"
 #include "boarddebug.hpp"
+#include "crashscan.hpp"
 #include "dap.hpp"
+#include "fault.hpp"
 #include "flash.hpp"
 #include "fsio.hpp"
 #include "highlight.hpp"
@@ -203,6 +207,22 @@ bool gdb_breakpoint_said(std::string_view s) {
     while (n < s.size() && std::isdigit(static_cast<unsigned char>(s[n]))) ++n;
     return n > 0 && (s.substr(n).starts_with(" at 0x") || s.substr(n).starts_with(" ("));
 }
+
+// Runs of style as a tab's text is put together.
+struct Runs {
+    std::string text;
+    std::vector<u32> off;
+    std::vector<u8> style;
+    void add(std::string_view s, u8 st) {
+        if (s.empty()) return;
+        const u32 at = static_cast<u32>(text.size());
+        if (style.empty() ? st != 0 : style.back() != st) {
+            if (!off.empty() && off.back() == at) style.back() = st;
+            else off.push_back(at), style.push_back(st);
+        }
+        text += s;
+    }
+};
 
 // Memory is read in pieces this big where a page cannot be read whole.
 constexpr u64 kMemPiece = 256;
@@ -427,6 +447,8 @@ struct DebugSession {
         bool open = false;
         i64 parent = 0;  // (the reference it was listed under: what setVariable and dataBreakpointInfo name it by)
         u64 addr = 0;    // where it is in memory, where the debugger says
+        i64 named = 0;   // how many members it has, where the debugger says (DAP's namedVariables: read a page at a time)
+        bool unreadable = false;  // the debugger could not read it
     };
     // Data breakpoints: a variable's writes watched, by the debugger's id for it.
     struct Data {
@@ -462,6 +484,30 @@ struct DebugSession {
     // simulator started for the session (ended with it, not let go).
     bool board = false, simulator = false;
     std::string run_to;
+    // A board's stop in a fault (fault.hpp, debug_fault_look): the ELF its
+    // addresses are named from (as blit knows it), what has been read of
+    // the stop so far (answers from before the last stop are dropped), the
+    // names looked up on a thread of their own, and the report once all
+    // is read (none while the stop is not at a fault).
+    std::string elf;
+    u64 fault_gen = 0;
+    bool fault_looked = false, fault_busy = false, at_break = false;
+    FaultFacts fault_facts;
+    struct FaultNames {
+        std::atomic<bool> done{false};
+        std::map<u64, SourceFrame> where;
+    };
+    std::shared_ptr<FaultNames> fault_names;
+    std::map<u64, SourceFrame> fault_where;
+    std::shared_ptr<const FaultReport> fault;
+    void fault_clear() {
+        ++fault_gen;
+        fault_facts = {};
+        fault_names.reset();
+        fault_where.clear();
+        fault.reset();
+        fault_looked = fault_busy = false;
+    }
     // F5's: the program's environment given in the launch's arguments too,
     // the run configuration's own laid over them (`over`), its input and
     // output in a terminal tab (`terminal`), and the debugger's commands
@@ -614,6 +660,15 @@ struct App::DebugUi : DebugSession {
     u64 disasm_doc = 0;
     std::vector<u64> disasm_addrs;
     u64 disasm_gen = 0;
+    u64 disasm_at = 0;  // the address it is about, where not the frame's (the fault report's Enter): 0 the frame's
+    // The fault report's tab: the report it shows (the last made), laid
+    // out for the width of its split (`fault_width` columns), each row's
+    // line of the report and the address Enter goes to there (0 none).
+    u64 fault_doc = 0;
+    std::shared_ptr<const FaultReport> fault_shown;
+    u32 fault_width = 0;
+    std::vector<u32> fault_rows;
+    std::vector<u64> fault_addrs;
     // The memory tab: a page of memory from mem_addr, 16 bytes a line, read
     // again at each stop; what it was asked for as.
     u64 mem_doc = 0, mem_addr = 0, mem_gen = 0;
@@ -629,7 +684,7 @@ struct App::DebugUi : DebugSession {
     };
     std::vector<Watch> watches;
     // The panel: a row for each thing shown, and the one chosen.
-    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData, kInstr, kSession, kWaves, kException, kRestart, kBoard, kAttachBoard };
+    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData, kInstr, kSession, kWaves, kException, kRestart, kBoard, kAttachBoard, kFault };
     // A row: a mark (a triangle, an arrow) before its text, in an ink of its
     // own; the text; something quieter after it; and on the right its key.
     struct Row {
@@ -1270,6 +1325,8 @@ bool App::debug_open(const std::string& near, const std::string& dir, bool pytho
     u.can_restart = u.by_f5 = u.configured = u.terminal = false;
     u.board = u.simulator = false;
     u.run_to.clear();
+    u.elf.clear();
+    u.fault_clear();
     u.over.clear();
     u.after.clear();
     u.term_doc = 0;
@@ -1490,7 +1547,10 @@ bool App::debug_board_plan(bool attach, BuildTask* c, std::string* elf, BoardDeb
     *elf = b.elf.empty() ? c->program : b.elf[0] == '/' ? b.elf : root + "/" + b.elf;
     std::string host, there;
     const bool load = flash_tool_for(b).empty();  // (no tool flashes it: gdb's load)
-    *plan = board_debug(b, split_remote(*elf, &host, &there) ? there : *elf, attach, load);  // (as its machine has it)
+    const bool remote = split_remote(*elf, &host, &there);
+    BoardStreams streams;  // (its RTT and semihosting, here: apprtt.cpp)
+    if ((b.rtt || b.semihosting) && !remote) streams = rtt_streams(*c, *elf, board_preset(b), false);
+    *plan = board_debug(b, remote ? there : *elf, attach, load, &streams);  // (as its machine has it)
     return true;
 }
 
@@ -1547,8 +1607,11 @@ void App::debug_board(bool attach) {
 // The board's session: its preset's debugger started and attached, with
 // the configuration's own arguments laid over the preset's and its own
 // commands after the preset's.
-void App::debug_board_begin(const BuildTask& c, const BoardDebug& plan, const std::string& elf, bool attach) {
+void App::debug_board_begin(const BuildTask& c, const BoardDebug& planned, const std::string& elf, bool attach) {
     DebugUi& u = *debugui_;
+    // (Its RTT and semihosting tabs, before the debugger starts: apprtt.cpp.)
+    BoardDebug plan = planned;
+    rtt_session(c, elf, attach, &plan);
     if (u.state != DebugUi::kIdle) debug_park();  // (beside the session under way)
     // The last board session's gdb server gone first (it may hold the probe,
     // or the port): its debugger is let go of within a second (debug_end's
@@ -1561,11 +1624,17 @@ void App::debug_board_begin(const BuildTask& c, const BoardDebug& plan, const st
     u.board = true;
     u.simulator = plan.simulator;
     u.run_to = plan.run_to;
+    u.elf = elf;  // (the fault report's names)
     u.again = [this, attach] { debug_board(attach); };  // (built and flashed again first, as F5 does, unless attaching)
     u.over = c.debug.arguments;
     u.after = plan.after;
     u.after.insert(u.after.end(), c.debug.after.begin(), c.debug.after.end());
     debug_begin("attach", plan.arguments);
+}
+
+std::string App::debug_board_name() const {
+    const DebugUi& u = *debugui_;
+    return u.board && u.state != DebugUi::kIdle ? u.name : std::string();
 }
 
 // A board's session stopped: where it stops once attached, for F5, goes on
@@ -1596,6 +1665,486 @@ bool App::debug_board_stopped(const json::Value& body) {
         dirty_ = true;
     });
     return true;
+}
+
+// ---------------------------------------------------------------- a board's fault
+
+namespace {
+
+// A register's value as a debugger writes it: gdb's "1627389958", "-7" (a
+// signed type's), "0x5c <UsageFault_Handler+4>"; lldb's "0x0000005c".
+// False for what is no number ("{...}", "<unavailable>").
+bool register_value(std::string_view s, u64* v) {
+    while (!s.empty() && s.front() == ' ') s.remove_prefix(1);
+    const bool minus = s.starts_with('-');
+    if (minus) s.remove_prefix(1);
+    if (s.empty() || !std::isdigit(static_cast<unsigned char>(s.front()))) return false;
+    const u64 n = address_of(s);
+    *v = minus ? ~n + 1 : n;
+    return true;
+}
+
+}  // namespace
+
+// A reference's members (a scope's, a variable's), as the debugger gives
+// them, in order. gdb answers for all of them or none, and one it cannot
+// read (QEMU's RISC-V time and timeh registers) fails the lot: then, where
+// the reference's count is known (`named`, DAP's namedVariables), they are
+// asked for a page at a time, a page that fails in halves, down to each
+// member that cannot be read, which is given as such (its name as the
+// debugger's error names it, its value why).
+void App::debug_variables(i64 ref, i64 named, std::function<void(std::vector<DebugVar>)> then) {
+    DebugUi& u = *debugui_;
+    if (!u.dap) return;
+    struct Read {
+        std::map<i64, std::vector<DebugVar>> pages;  // (by where each starts: -1 the whole)
+        u32 left = 1;
+        std::function<void(std::vector<DebugVar>)> then;
+    };
+    struct Take {
+        App* app;
+        std::shared_ptr<Read> r;
+        i64 ref = 0, start = -1, count = 0, named = 0;
+        void ask(i64 from, i64 n) const {
+            DebugUi& v = *app->debugui_;
+            ++r->left, ++v.asking;
+            v.dap->request("variables", "{\"variablesReference\":" + std::to_string(ref) + ",\"start\":" + std::to_string(from) + ",\"count\":" + std::to_string(n) + "}",
+                           Take{app, r, ref, from, n, named});
+        }
+        void operator()(const Dap::Message& m) const {
+            DebugUi& v = *app->debugui_;
+            if (v.asking) --v.asking;
+            std::vector<DebugVar>& page = r->pages[start];
+            if (m.success) {
+                for (const json::Value x : m.body()["variables"])
+                    page.push_back({std::string(x["name"].str()), std::string(x["value"].str()), std::string(x["type"].str()), x["variablesReference"].integer(),
+                                    x["namedVariables"].integer(), address_of(x["memoryReference"].str()), false});
+            } else if (v.dap) {
+                constexpr i64 kPage = 32;
+                if (start < 0 && named > 0) {  // (all at once failed: a page at a time)
+                    for (i64 from = 0; from < named; from += kPage) ask(from, std::min(kPage, named - from));
+                } else if (count > 1) {
+                    ask(start, count / 2);
+                    ask(start + count / 2, count - count / 2);
+                } else if (count == 1) {  // (this one: gdb's 'Could not fetch register "time"; remote failure reply '14'')
+                    const std::string& said = m.message;
+                    std::string name = "[" + std::to_string(start) + "]";
+                    if (const size_t q = said.find('"'); q != std::string::npos)
+                        if (const size_t e = said.find('"', q + 1); e != std::string::npos && e > q + 1) name = said.substr(q + 1, e - q - 1);
+                    const size_t semi = said.find("; ");
+                    const std::string why = semi == std::string::npos ? std::string() : trimmed(std::string_view(said).substr(semi + 2));
+                    page.push_back({name, "cannot be read" + (why.empty() ? std::string() : " (" + why + ")"), {}, 0, 0, 0, true});
+                }
+            }
+            if (--r->left == 0) {
+                std::vector<DebugVar> all;
+                for (auto& [at, vars] : r->pages) all.insert(all.end(), std::make_move_iterator(vars.begin()), std::make_move_iterator(vars.end()));
+                r->then(std::move(all));
+            }
+        }
+    };
+    auto r = std::make_shared<Read>();
+    r->then = std::move(then);
+    ++u.asking;
+    u.dap->request("variables", "{\"variablesReference\":" + std::to_string(ref) + "}", Take{this, r, ref, -1, 0, named});
+}
+
+// The registers of a frame, as its Registers scope has them (gdb's, a list;
+// lldb-dap's, in groups, each opened), by their names in lower case; those
+// that cannot be read left out.
+void App::debug_registers(i64 frame, std::function<void(std::map<std::string, u64, std::less<>>)> then) {
+    DebugUi& u = *debugui_;
+    if (!u.dap) return;
+    struct Read {
+        std::map<std::string, u64, std::less<>> regs;
+        u32 left = 1;  // (lists to come: the scope's, then each group's)
+        std::function<void(std::map<std::string, u64, std::less<>>)> then;
+        std::function<void(std::vector<DebugVar>)> take;
+    };
+    auto r = std::make_shared<Read>();
+    r->then = std::move(then);
+    // (Each list taken: its numbers, its groups asked for in turn. The
+    // function is the Read's, let go of with the last list.)
+    r->take = [this, r](std::vector<DebugVar> vars) {
+        for (DebugVar& x : vars) {
+            for (char& c : x.name) c = static_cast<char>(std::tolower(static_cast<unsigned char>(c)));
+            u64 n = 0;
+            if (x.unreadable) continue;
+            if (register_value(x.value, &n)) r->regs.try_emplace(std::move(x.name), n);
+            else if (x.value.empty() && x.ref > 0 && debugui_->dap) ++r->left, debug_variables(x.ref, x.named, r->take);  // (a group of them: lldb-dap's; not a vector register's members)
+        }
+        if (--r->left == 0) {
+            r->then(std::move(r->regs));
+            r->take = nullptr;
+        }
+    };
+    ++u.asking;
+    u.dap->request("scopes", "{\"frameId\":" + std::to_string(frame) + "}", [this, r](const Dap::Message& m) {
+        DebugUi& v = *debugui_;
+        if (v.asking) --v.asking;
+        i64 ref = 0, named = 0;
+        for (const json::Value s : m.success ? m.body()["scopes"] : json::Value())
+            if (s["presentationHint"].str() == "registers" || s["name"].str().find("Register") != std::string_view::npos)
+                ref = s["variablesReference"].integer(), named = s["namedVariables"].integer();
+        if (!ref || !v.dap) {
+            r->take = nullptr;
+            return r->then({});
+        }
+        debug_variables(ref, named, r->take);
+    });
+}
+
+// Words of memory (little-endian, as each of the three cores is), -1 for
+// each that could not be read.
+void App::debug_read_words(u64 addr, u32 count, std::function<void(std::vector<i64>)> then) {
+    DebugUi& u = *debugui_;
+    if (!u.dap) return;
+    ++u.asking;
+    u.dap->request("readMemory", "{\"memoryReference\":" + quoted(hex(addr)) + ",\"count\":" + std::to_string(count * 4) + "}", [this, addr, count, then](const Dap::Message& m) {
+        DebugUi& v = *debugui_;
+        if (v.asking) --v.asking;
+        std::vector<i32> bytes(static_cast<size_t>(count) * 4, -1);
+        if (m.success) memory_take(bytes, addr, m, 0, bytes.size());
+        std::vector<i64> words(count, -1);
+        for (u32 i = 0; i < count; ++i) {
+            const i32* b = &bytes[static_cast<size_t>(i) * 4];
+            if (b[0] >= 0 && b[1] >= 0 && b[2] >= 0 && b[3] >= 0) words[i] = static_cast<i64>(static_cast<u32>(b[0]) | static_cast<u32>(b[1]) << 8 | static_cast<u32>(b[2]) << 16 | static_cast<u32>(b[3]) << 24);
+        }
+        then(std::move(words));
+    });
+}
+
+// A board's stop: whether it is at a fault, and what the fault says
+// (fault.hpp), read step by step: the innermost frame's registers say
+// which core it is and whether to read on; for Cortex-M the exception's
+// frame (its SP, where the debugger unwound through it), CPUID and the
+// fault status registers, then the stacked frame; for RISC-V and Xtensa,
+// ESP-IDF's panic frame where its panic handler is on the stack. Then the
+// addresses are named from the ELF, off the main thread, and the report
+// made (debug_fault_take). Each step drops what is from before the last stop.
+void App::debug_fault_look() {
+    DebugUi& u = *debugui_;
+    u.fault_clear();
+    const u64 gen = u.fault_gen;
+    u.fault_looked = true;
+    if (!u.dap || u.frames.empty()) return;
+    FaultFacts& f = u.fault_facts;
+    std::vector<i64> ids;
+    for (const DebugUi::Frame& fr : u.frames) f.frames.push_back(fr.name), f.ips.push_back(fr.ip), ids.push_back(fr.id);
+    f.user_break = u.at_break;
+    u.fault_busy = true;
+    debug_registers(ids[0], [this, gen, ids](std::map<std::string, u64, std::less<>> regs) {
+        DebugUi& v = *debugui_;
+        if (gen != v.fault_gen) return;
+        FaultFacts& g = v.fault_facts;
+        g.regs = std::move(regs);
+        g.arch = fault_arch(g);
+        if (g.arch == FaultFacts::kCortexM) {
+            if (!fault_cm_maybe(g)) return debug_fault_done(gen);
+            const int k = fault_cm_exc_frame(g);
+            if (k <= 0) return debug_fault_cm(gen);
+            debug_registers(ids[static_cast<size_t>(k)], [this, gen](std::map<std::string, u64, std::less<>> r) {
+                DebugUi& w = *debugui_;
+                if (gen != w.fault_gen) return;
+                if (const auto sp = r.find("sp"); sp != r.end()) w.fault_facts.exc_sp = sp->second & 0xFFFFFFFFu, w.fault_facts.exc_sp_known = true;
+                debug_fault_cm(gen);
+            });
+            return;
+        }
+        if (g.arch == FaultFacts::kRiscV || g.arch == FaultFacts::kXtensa) {
+            // ESP-IDF's panic handler on the stack: its argument `frame` is the exception's frame.
+            for (size_t i = 0; i < g.frames.size(); ++i) {
+                bool pseudo = false;
+                if (!fault_panic_function(g.frames[i], &pseudo)) continue;
+                g.pseudo = pseudo;
+                g.in_panic = true;
+                ++v.asking;
+                v.dap->request("evaluate", "{\"expression\":\"frame\",\"frameId\":" + std::to_string(ids[i]) + ",\"context\":\"watch\"}", [this, gen](const Dap::Message& m) {
+                    DebugUi& w = *debugui_;
+                    if (w.asking) --w.asking;
+                    if (gen != w.fault_gen) return;
+                    const std::string_view result = m.body()["result"].str();
+                    const size_t x = result.find("0x");
+                    const u64 at = m.success && x != std::string_view::npos ? address_of(result.substr(x)) : 0;
+                    if (!at) return debug_fault_done(gen);
+                    w.fault_facts.panic_frame = at;
+                    debug_read_words(at, fault_panic_words(w.fault_facts.arch), [this, gen](std::vector<i64> words) {
+                        DebugUi& y = *debugui_;
+                        if (gen != y.fault_gen) return;
+                        y.fault_facts.panic_words = std::move(words);
+                        debug_fault_done(gen);
+                    });
+                });
+                return;
+            }
+        }
+        debug_fault_done(gen);
+    });
+}
+
+// Cortex-M's reads: CPUID; where it has them, the status registers from
+// SHCSR to ID_PFR1, SFSR and SFAR with the Security Extension, ACTLR on a
+// Cortex-M3 or M4; then the stacked frame, where EXC_RETURN says it is.
+void App::debug_fault_cm(u64 gen) {
+    debug_read_words(0xE000ED00, 1, [this, gen](std::vector<i64> cpuid) {
+        DebugUi& v = *debugui_;
+        if (gen != v.fault_gen) return;
+        FaultFacts& f = v.fault_facts;
+        f.scb.assign(18, -1);  // (0xE000ED00 to ID_PFR1, 0xE000ED44)
+        f.scb[0] = cpuid[0];
+        auto stacked = [this, gen] {
+            DebugUi& w = *debugui_;
+            if (gen != w.fault_gen) return;
+            u64 r0 = 0;
+            bool exact = true;
+            if (!fault_cm_frame_at(w.fault_facts, &r0, &exact)) return debug_fault_done(gen);
+            debug_read_words(r0, 8, [this, gen](std::vector<i64> words) {
+                DebugUi& y = *debugui_;
+                if (gen != y.fault_gen) return;
+                y.fault_facts.stacked = std::move(words);
+                debug_fault_done(gen);
+            });
+        };
+        if (cpuid[0] < 0 || !fault_cm_has_status(static_cast<u32>(cpuid[0]))) return stacked();
+        debug_read_words(0xE000ED24, 9, [this, gen, stacked](std::vector<i64> words) {
+            DebugUi& w = *debugui_;
+            if (gen != w.fault_gen) return;
+            FaultFacts& g = w.fault_facts;
+            for (size_t i = 0; i < words.size(); ++i) g.scb[9 + i] = words[i];
+            const u32 id = static_cast<u32>(g.scb[0]);
+            auto actlr = [this, gen, id, stacked] {
+                if (!fault_cm_has_disdefwbuf(id)) return stacked();
+                debug_read_words(0xE000E008, 1, [this, gen, stacked](std::vector<i64> a) {
+                    if (gen != debugui_->fault_gen) return;
+                    debugui_->fault_facts.actlr = a[0];
+                    stacked();
+                });
+            };
+            if (g.scb[17] < 0 || !fault_cm_has_security(id, static_cast<u32>(g.scb[17]))) return actlr();
+            debug_read_words(0xE000EDE4, 2, [this, gen, actlr](std::vector<i64> s) {
+                if (gen != debugui_->fault_gen) return;
+                debugui_->fault_facts.sfsr = s[0], debugui_->fault_facts.sfar = s[1];
+                actlr();
+            });
+        });
+    });
+}
+
+// All is read: the addresses the report names, looked up in the ELF on a
+// thread of its own (a large ELF, or one on another machine, takes a
+// while); a stop that is plainly no fault needs none.
+void App::debug_fault_done(u64 gen) {
+    DebugUi& u = *debugui_;
+    if (gen != u.fault_gen) return;
+    const FaultFacts& f = u.fault_facts;
+    auto job = std::make_shared<DebugSession::FaultNames>();
+    u.fault_names = job;
+    const std::vector<u64> addrs = fault_addresses(f);
+    // (RISC-V's needs the names to say whether it is in the trap handler at all; the others' do not.)
+    const bool maybe = f.arch == FaultFacts::kRiscV || fault_report(f, {}).fault;
+    if (!maybe || addrs.empty() || u.elf.empty()) {
+        job->done = true;
+        return debug_fault_take();
+    }
+    std::thread([job, elf = u.elf, addrs] {
+        std::string why;
+        std::map<u64, SourceFrame> where;
+        if (const std::shared_ptr<const AddrSource> src = elf_source(elf, &why))
+            for (const u64 a : addrs)
+                if (std::vector<SourceFrame> frames = src->lookup(a); !frames.empty()) where[a] = std::move(frames.front());
+        job->where = std::move(where);
+        job->done = true;
+        wake();
+    }).detach();
+}
+
+// The names come: the report made, shown in the Debug tab (and in its own
+// tab, where that is open).
+void App::debug_fault_take() {
+    DebugUi& u = *debugui_;
+    if (!u.fault_names || !u.fault_names->done) return;
+    u.fault_where = std::move(u.fault_names->where);
+    u.fault_names.reset();
+    FaultReport r = fault_report(u.fault_facts, u.fault_where);
+    u.fault = r.fault ? std::make_shared<const FaultReport>(std::move(r)) : nullptr;
+    u.fault_busy = false;
+    if (!u.background) debug_fault_fill(true);
+    ++debug_gen_;
+    dirty_ = true;
+}
+
+// "Show the fault report": the report, wide, in a tab of its own.
+void App::debug_fault_open() {
+    DebugUi& u = *debugui_;
+    if (!u.fault) return notify("Not stopped at a fault");
+    debug_tab(u.fault_doc, "Fault report")->no_numbers = true;
+    debug_fault_fill(true);
+}
+
+// A line of the report as rows of at most `width` columns, broken between
+// words: the rows after the first in line under where its words start (a
+// register's line: after its name and value; else two in from its own
+// indent). The read-only tabs blit fills (the disassembly, the debug
+// console) do not wrap, as text with colours of its own does not: the
+// report lays itself out instead, again when its split's width changes.
+namespace {
+std::vector<std::string> fault_rows_of(const std::string& text, u32 width) {
+    const size_t lead = text.find_first_not_of(' ');
+    if (lead == std::string::npos || width < 24 || width_of(text) <= width) return {text};
+    size_t hang = lead + 2;
+    if (const size_t gap = text.find("  ", lead); gap != std::string::npos)
+        if (const size_t value = text.find_first_not_of(' ', gap); value != std::string::npos)
+            if (const size_t gap2 = text.find("  ", value); gap2 != std::string::npos && gap2 < 40)
+                if (const size_t words = text.find_first_not_of(' ', gap2); words != std::string::npos) hang = words;
+    if (hang * 2 > width) hang = lead + 2;
+    std::vector<std::string> rows;
+    std::string rest = text;
+    while (width_of(rest) > width) {
+        // (The last space that leaves the row within the width, past its indent.)
+        const size_t from = rows.empty() ? lead : hang;
+        size_t cut = std::string::npos;
+        for (size_t i = from + 1; i < rest.size() && width_of(std::string_view(rest).substr(0, i)) <= width; ++i)
+            if (rest[i] == ' ') cut = i;
+        if (cut == std::string::npos) cut = std::min<size_t>(rest.size(), width);
+        std::string row = rest.substr(0, cut);
+        while (!row.empty() && row.back() == ' ') row.pop_back();
+        rows.push_back(std::move(row));
+        const size_t next = rest.find_first_not_of(' ', cut);
+        if (next == std::string::npos) return rows;
+        rest = std::string(hang, ' ') + rest.substr(next);
+    }
+    rows.push_back(std::move(rest));
+    return rows;
+}
+}  // namespace
+
+// The report's tab given the last report (where it is open), laid out for
+// its split's width: its cursor on the line of the PC that faulted
+// (`fresh`, a new report), else on the line it was on.
+void App::debug_fault_fill(bool fresh) {
+    DebugUi& u = *debugui_;
+    Pane* where = nullptr;
+    Doc* d = u.fault_doc ? find_doc(u.fault_doc, &where) : nullptr;
+    if (!d) {
+        u.fault_doc = 0, u.fault_rows.clear(), u.fault_addrs.clear();  // (closed)
+        return;
+    }
+    if (fresh) u.fault_shown = u.fault;
+    const u32 width = where ? wrap_width(*where) : 0;
+    const u64 was = d->ed.buf.line_of(d->ed.cursor());
+    const u32 was_line = was < u.fault_rows.size() ? u.fault_rows[was] : 0;
+    Runs out;
+    u.fault_rows.clear(), u.fault_addrs.clear();
+    i64 at = -1;
+    if (!u.fault_shown) {
+        out.add("Not stopped at a fault\n", 4);
+        u.fault_rows.push_back(0), u.fault_addrs.push_back(0);
+        at = 0;
+    } else {
+        const FaultReport& r = *u.fault_shown;
+        for (u32 i = 0; i < r.lines.size(); ++i) {
+            const FaultReport::Line& l = r.lines[i];
+            if (at < 0 && (fresh ? l.addr && l.addr == r.pc : i == was_line)) at = static_cast<i64>(u.fault_rows.size());
+            for (const std::string& row : fault_rows_of(l.text, width)) {
+                out.add(row + "\n", l.style);
+                u.fault_rows.push_back(i), u.fault_addrs.push_back(l.addr);
+            }
+        }
+    }
+    u.fault_width = width;
+    d->style_bits[2] = kInkDiagnostic << kCellInkShift;
+    debug_tab_fill(*d, std::move(out.text), std::move(out.off), std::move(out.style), std::max<i64>(at, 0), 2);
+}
+
+// The report's tab laid out again when its split's width has changed.
+void App::debug_fault_relayout() {
+    if (!debugui_ || !debugui_->fault_doc) return;
+    Pane* where = nullptr;
+    const Doc* d = find_doc(debugui_->fault_doc, &where);
+    if (d && where && where->doc == d && wrap_width(*where) != debugui_->fault_width) debug_fault_fill(false);
+}
+
+// Enter on a line of the report with an address (the stacked PC, LR,
+// mepc, EPC1): its source and its instructions.
+bool App::debug_fault_key(const SDL_KeyboardEvent& k) {
+    if (!debugui_ || !debugui_->fault_doc || !pane_->doc || pane_->doc->id != debugui_->fault_doc) return false;
+    if ((k.key != SDLK_RETURN && k.key != SDLK_KP_ENTER) || (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI | SDL_KMOD_SHIFT))) return false;
+    DebugUi& u = *debugui_;
+    const Editor& ed = pane_->doc->ed;
+    const u64 line = ed.buf.line_of(ed.cursor());
+    const u64 a = line < u.fault_addrs.size() ? u.fault_addrs[line] : 0;
+    if (!a) return false;
+    debug_fault_goto(a);
+    return true;
+}
+
+// An address's source and instructions: a frame of the call stack at it
+// (where the debugger unwound through the exception, the faulting frame
+// is one) chosen, its source shown and its instructions; else the line
+// the ELF names, and the instructions at the address. The source in
+// front, the disassembly in the tab beside it.
+void App::debug_fault_goto(u64 addr) {
+    DebugUi& u = *debugui_;
+    if (!u.dap || u.state != DebugUi::kStopped) return notify("The program is not stopped");
+    for (u32 i = 0; i < u.frames.size(); ++i)
+        if (u.frames[i].ip == addr) {
+            if (u.can.disassemble) debug_tab(u.disasm_doc, "Disassembly");
+            debug_frame(i, true);
+            return;
+        }
+    if (u.can.disassemble) {
+        u.disasm_at = addr;
+        debug_tab(u.disasm_doc, "Disassembly");
+        debug_disasm_ask();
+    }
+    const auto it = u.fault_where.find(addr);
+    if (it == u.fault_where.end() || it->second.path.empty()) {
+        if (!u.can.disassemble) notify("No source for " + hex(addr, 8) + ", and this debugger cannot disassemble");
+        return;
+    }
+    const std::string path = u.remote.empty() ? it->second.path : u.here(it->second.path);
+    if (!open_path(path.c_str())) return;
+    Doc& d = *pane_->doc;
+    const u32 line = it->second.line ? it->second.line - 1 : 0;
+    if (d.loading) {
+        d.goto_line = line, d.goto_col = 0, d.goto_utf16 = false;
+    } else {
+        d.ed.move_to(d.ed.buf.line_start(std::min<u64>(line, d.ed.buf.line_count() - 1)), false);
+        scroll_to_cursor();
+    }
+}
+
+// (The tests: the Debug tab's line, or the report's lines, " | " between them.)
+std::string App::debug_fault_dump(bool report) {
+    const DebugUi& u = *debugui_;
+    if (!u.fault) return "no fault";
+    if (!report) return u.fault->line;
+    std::string out;
+    for (const FaultReport::Line& l : u.fault->lines)
+        if (const std::string t = trimmed(l.text); !t.empty()) out += (out.empty() ? "" : " | ") + t;
+    return out;
+}
+
+// (The tests: the disassembly tab's line at its cursor.)
+std::string App::debug_disasm_dump() {
+    const DebugUi& u = *debugui_;
+    Doc* d = u.disasm_doc ? find_doc(u.disasm_doc) : nullptr;
+    if (!d) return "no disassembly";
+    const u64 line = d->ed.buf.line_of(d->ed.cursor()), start = d->ed.buf.line_start(line);
+    return trimmed(d->ed.buf.text(start, d->ed.line_end(line) - start));
+}
+
+// (The tests: the report's cursor on the line of a register, by its name.)
+bool App::debug_fault_line(const std::string& name) {
+    DebugUi& u = *debugui_;
+    Doc* d = u.fault_doc ? find_doc(u.fault_doc) : nullptr;
+    if (!d || !u.fault_shown) return false;
+    for (size_t row = 0; row < u.fault_rows.size() && row < d->ed.buf.line_count(); ++row)
+        if (const u32 i = u.fault_rows[row]; i < u.fault_shown->lines.size() && trimmed(u.fault_shown->lines[i].text).starts_with(name + " ")) {
+            d->ed.move_to(d->ed.buf.line_start(row), false);
+            return true;
+        }
+    return false;
 }
 
 // The debugger told what to do once it has said what it can: launch the
@@ -1633,9 +2182,12 @@ void App::debug_begin(const std::string& request, const std::string& args_in) {
         env_list += (env_list.size() > 1 ? "," : "") + quoted(e);
     }
     env_object += "}", env_list += "]";
+    // (Paging: gdb heeds a variables request's start and count only from a
+    // client that says it pages, as debug_registers does where gdb cannot
+    // read every register at once.)
     u.dap->request("initialize",
                    "{\"clientID\":\"blit\",\"clientName\":\"blit\",\"adapterID\":\"blit\",\"linesStartAt1\":true,\"columnsStartAt1\":true,"
-                   "\"pathFormat\":\"path\",\"supportsVariableType\":true,\"supportsRunInTerminalRequest\":true}",
+                   "\"pathFormat\":\"path\",\"supportsVariableType\":true,\"supportsRunInTerminalRequest\":true,\"supportsVariablePaging\":true}",
                    [this, request, arguments, env_object, env_list](const Dap::Message& m) {
                        DebugUi& v = *debugui_;
                        if (!m.success) {
@@ -1714,6 +2266,7 @@ void App::debug_end() {
     u.ibreaks.clear();
     u.run_to_path.clear();
     u.exception.clear(), u.exception_lines.clear();
+    u.fault_clear();
     u.frames.clear();
     u.threads.clear();
     u.vars.clear();
@@ -1837,6 +2390,7 @@ void App::debug_command(const std::string& what) {
     u.threads.clear();
     u.vars.clear();
     u.exception.clear(), u.exception_lines.clear();
+    u.fault_clear();
     ++u.vars_gen;
     ++u.watch_gen;
     ++debug_gen_;
@@ -1848,6 +2402,7 @@ void App::debug_frame(u32 i, bool show) {
     DebugUi& u = *debugui_;
     if (i >= u.frames.size() || !u.dap) return;
     u.frame = i;
+    u.disasm_at = 0;  // (the disassembly follows the frame again)
     const DebugUi::Frame& f = u.frames[i];
     if (show && !f.path.empty()) {
         // (From the debug console, or another tab of the terminals' split, the
@@ -1884,7 +2439,7 @@ void App::debug_frame(u32 i, bool show) {
         bool first = true;
         for (json::Value s : m.body()["scopes"]) {
             if (s["expensive"].boolean()) continue;
-            v.vars.push_back({std::string(s["name"].str()), {}, s["variablesReference"].integer(), 0, false});
+            v.vars.push_back({std::string(s["name"].str()), {}, s["variablesReference"].integer(), 0, false, 0, 0, s["namedVariables"].integer()});
             // (The first open, the locals or the arguments; gdb has those two apart, and both are.)
             const std::string_view hint = s["presentationHint"].str();
             if ((first && hint != "registers") || hint == "arguments" || hint == "locals") debug_expand(static_cast<u32>(v.vars.size() - 1));
@@ -1951,6 +2506,7 @@ void App::debug_stack() {
         u32 first = 0;
         while (!instructions && first < v.frames.size() && v.frames[first].path.empty()) ++first;
         debug_frame(first < v.frames.size() ? first : 0, !instructions);
+        if (v.board && !v.fault_looked && thread == v.stopped_thread) debug_fault_look();  // (a board's stop: at a fault?)
         ++debug_gen_;
         dirty_ = true;
     });
@@ -2023,20 +2579,18 @@ void App::debug_expand(u32 i) {
     const u64 gen = u.vars_gen;
     const i64 ref = var.ref;
     const u32 depth = var.depth + 1;
-    ++u.asking;
-    u.dap->request("variables", "{\"variablesReference\":" + std::to_string(ref) + "}", [this, gen, ref, depth](const Dap::Message& m) {
+    debug_variables(ref, var.named, [this, gen, ref, depth](std::vector<DebugVar> got) {
         DebugUi& v = *debugui_;
-        if (v.asking) --v.asking;
-        if (gen != v.vars_gen || !m.success) return;
+        if (gen != v.vars_gen) return;
         // (Where its parent is now: the list may have changed meanwhile.)
         size_t at = 0;
         while (at < v.vars.size() && !(v.vars[at].ref == ref && v.vars[at].depth + 1 == depth && v.vars[at].open)) ++at;
         if (at == v.vars.size()) return;
         std::vector<DebugUi::Var> kids;
-        for (json::Value x : m.body()["variables"]) {
-            std::string value(x["value"].str());
-            if (const std::string_view type = x["type"].str(); !type.empty() && value.size() < 40) value += "  (" + std::string(type) + ")";
-            kids.push_back({std::string(x["name"].str()), std::move(value), x["variablesReference"].integer(), depth, false, ref, address_of(x["memoryReference"].str())});
+        for (DebugVar& x : got) {
+            std::string value = std::move(x.value);
+            if (!x.type.empty() && value.size() < 40) value += "  (" + x.type + ")";
+            kids.push_back({std::move(x.name), std::move(value), x.ref, depth, false, ref, x.addr, x.named, x.unreadable});
         }
         // gdb gives a map's (libstdc++'s printer's) entries as keys and values
         // one after another, [0] a key, [1] its value: as pairs, [key] = value.
@@ -2130,6 +2684,8 @@ void App::debug_sync_session(bool* stopped) {
             const bool a_breakpoint = u.reason == "breakpoint" || u.reason.ends_with(" breakpoint");
             if (const std::string_view text = b["text"].str(); !text.empty() && !a_breakpoint) u.reason += ": " + std::string(text);
             u.exception.clear(), u.exception_lines.clear();
+            u.fault_clear();  // (a board's: looked for once its stack is in, debug_fault_look)
+            u.at_break = b["hitBreakpointIds"].is_array() && b["hitBreakpointIds"].size() > 0;
             // (A breakpoint of the debugger's for an exception filter, gdb's at a
             // C++ throw: an exception, the filter's label what it is.)
             if (u.reason == "breakpoint" && !u.catches.empty()) {
@@ -2167,6 +2723,7 @@ void App::debug_sync_session(bool* stopped) {
             u.threads.clear();
             u.vars.clear();
             u.exception.clear(), u.exception_lines.clear();
+            u.fault_clear();
         } else if (m.name == "breakpoint") {
             debug_break_event(b);
         } else if (m.name == "process") {
@@ -2210,6 +2767,7 @@ void App::debug_sync_session(bool* stopped) {
             u.end_soon = true;
         }
     }
+    if (u.fault_names && u.fault_names->done) debug_fault_take();  // (a fault's addresses named)
     for (auto& [text, style] : u.said) {  // (to the debug console: every session's)
         if (!text.empty() && text.back() == '\r') text.pop_back();
         u.say(std::move(text), style);
@@ -2485,25 +3043,6 @@ void App::debug_tab_fill(Doc& d, std::string text, std::vector<u32> off, std::ve
     dirty_ = true;
 }
 
-namespace {
-
-// Runs of style as a tab's text is put together.
-struct Runs {
-    std::string text;
-    std::vector<u32> off;
-    std::vector<u8> style;
-    void add(std::string_view s, u8 st) {
-        if (s.empty()) return;
-        const u32 at = static_cast<u32>(text.size());
-        if (style.empty() ? st != 0 : style.back() != st) {
-            if (!off.empty() && off.back() == at) style.back() = st;
-            else off.push_back(at), style.push_back(st);
-        }
-        text += s;
-    }
-};
-
-}  // namespace
 
 void App::debug_disasm_open() {
     DebugUi& u = *debugui_;
@@ -2521,8 +3060,8 @@ void App::debug_disasm_open() {
 void App::debug_disasm_ask(bool from_ip) {
     DebugUi& u = *debugui_;
     if (u.disasm_doc && !find_doc(u.disasm_doc)) u.disasm_doc = 0, u.disasm_addrs.clear();  // (closed)
-    if (!u.disasm_doc || !u.dap || u.state != DebugUi::kStopped || u.frame >= u.frames.size() || !u.frames[u.frame].ip) return;
-    const u64 ip = u.frames[u.frame].ip, gen = ++u.disasm_gen;
+    if (!u.disasm_doc || !u.dap || u.state != DebugUi::kStopped || u.frame >= u.frames.size() || !(u.disasm_at ? u.disasm_at : u.frames[u.frame].ip)) return;
+    const u64 ip = u.disasm_at ? u.disasm_at : u.frames[u.frame].ip, gen = ++u.disasm_gen;
     const std::string frame_path = u.frames[u.frame].path;
     const char* const around = from_ip ? ",\"instructionOffset\":0,\"instructionCount\":64"
                                : u.gdb ? ",\"offset\":-128,\"instructionOffset\":0,\"instructionCount\":96"
@@ -2803,6 +3342,15 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
         if (const char* home = SDL_getenv("HOME"); home && *home && s.starts_with(home)) s = "~" + s.substr(std::strlen(home));
         return s;
     };
+    // A board stopped at a fault: what it is, in a line (fault.hpp), first;
+    // the report, wide, in a tab of its own.
+    if (u.state == DebugUi::kStopped && u.fault) {
+        add(DebugUi::kNone, 0, "Fault", ink::kHeading);
+        for (std::string& line : wrap_words(u.fault->line, cols)) add(DebugUi::kNone, 0, std::move(line), ink::kError);
+        Row& r = add(DebugUi::kFault, 0, "Show the fault report");
+        r.mark = "\xE2\x86\x92";  // (an arrow)
+        add(DebugUi::kNone, 0, "");
+    }
     // The program, its arguments and its working directory: each a heading
     // and its value, or (quietly) what it is when not set.
     add(DebugUi::kProgram, 0, "Program", ink::kHeading);
@@ -2912,7 +3460,8 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
         heading("Variables", 0);
         for (u32 i = 0; i < u.vars.size(); ++i) {
             const DebugUi::Var& v = u.vars[i];
-            Row& r = add(DebugUi::kVar, i, v.name + (v.value.empty() ? "" : " = " + v.value), v.depth == 0 ? ink::kMuted : ink::kText, 2 * v.depth);
+            Row& r = add(DebugUi::kVar, i, v.name + (v.value.empty() || v.unreadable ? "" : " = " + v.value), v.depth == 0 || v.unreadable ? ink::kMuted : ink::kText, 2 * v.depth);
+            if (v.unreadable) r.after = v.value;  // (why the debugger could not read it, quieter)
             r.mark = v.ref > 0 ? (v.open ? "\xE2\x96\xBE" : "\xE2\x96\xB8") : " ";  // a small triangle, down or right
         }
     }
@@ -3061,6 +3610,7 @@ void App::debug_do(u32 i) {
         case DebugUi::kStop: debug_command("stop"); break;
         case DebugUi::kRestart: debug_restart(); break;
         case DebugUi::kAttachBoard: debug_board(true); break;
+        case DebugUi::kFault: debug_fault_open(); break;
         case DebugUi::kThread: debug_thread(row.index); break;
         case DebugUi::kWaves: u.waves_open = !u.waves_open; break;
         case DebugUi::kFrame: debug_frame(row.index, true); break;
@@ -3302,7 +3852,7 @@ void App::debug_marks(FrameDesc& fd) {
                 // The frame's variables, by name (the first of a name: the innermost block's).
                 std::map<std::string, std::string, std::less<>> values;
                 for (const DebugUi::Var& v : u.vars) {
-                    if (v.depth != 1 || v.name.empty()) continue;
+                    if (v.depth != 1 || v.name.empty() || v.unreadable) continue;
                     std::string value = v.value.substr(0, v.value.find("  ("));
                     for (char& ch : value)
                         if (ch == '\n' || ch == '\r' || ch == '\t') ch = ' ';
@@ -3348,19 +3898,22 @@ void App::debug_marks(FrameDesc& fd) {
                 }
             }
             Font& font = *font_;
+            const bool faulted = u.fault && f.ip && f.ip == u.fault->pc;  // (the frame that faulted, a board's)
             auto note = [&](u64 line, const std::string& stop, const std::string& said) {
                 TextBox box;
                 const std::string gap = stop.empty() || said.empty() ? "" : "   ";
                 box.resize(std::min<u32>(width_of(stop) + width_of(gap) + width_of(said), 120), 1);
-                const u32 col = put(box, font, 0, 0, stop, u.exception.empty() ? ink::kAccent : ink::kError);  // (upright: the font's italic may be a script)
+                const u32 col = put(box, font, 0, 0, stop, u.exception.empty() && !faulted ? ink::kAccent : ink::kError);  // (upright: the font's italic may be a script)
                 put(box, font, 0, col + width_of(gap), said, ink::kMuted);
                 c.cells.push_back(std::move(box.cells));
                 c.texts.push_back(std::to_string(line + 1) + ": " + stop + gap + said);
                 const u64 start = buf.line_start(line);
                 c.notes.push_back({line, d->ed.col_between(start, d->ed.line_end(line)) + 3, nullptr, static_cast<u32>(c.cells.back().size())});
             };
-            // (At an exception, what it is, as the debugger says: the Debug tab has the rest.)
-            const std::string stop = !u.exception.empty() ? "\xE2\x97\x80 exception: " + u.exception : "\xE2\x97\x80 stopped" + (u.reason.empty() ? std::string() : ": " + u.reason);
+            // (At an exception, what it is, as the debugger says; at a board's
+            // fault, on the line that faulted, the fault: the Debug tab has the rest.)
+            const std::string stop = faulted ? "\xE2\x97\x80 " + u.fault->title
+                                     : !u.exception.empty() ? "\xE2\x97\x80 exception: " + u.exception : "\xE2\x97\x80 stopped" + (u.reason.empty() ? std::string() : ": " + u.reason);
             bool stopped_said = false;
             for (const auto& [line, said] : lines) {
                 note(line, line == l ? stop : std::string(), said);
@@ -3827,7 +4380,7 @@ void App::debug_wait(const std::string& state) {
     DebugUi& u = *debugui_;
     while (now_ns() < until) {
         debug_sync();
-        const bool frames = !u.frames.empty() && !u.vars.empty() && u.asking == 0;  // (the stack, and the first scope's variables)
+        const bool frames = !u.frames.empty() && !u.vars.empty() && u.asking == 0 && !u.fault_busy;  // (the stack, the first scope's variables, a board's fault looked for)
         if (state == "answers" ? !u.dap || u.dap->answered() : state == "stopped" ? u.state == DebugUi::kStopped && frames : u.state == DebugUi::kIdle) break;
         SDL_Delay(5);
     }
@@ -3935,7 +4488,7 @@ bool App::debug_pick(const std::string& section, u32 n, const std::string& name)
     DebugUi& u = *debugui_;
     const DebugUi::Act act = section == "threads" ? DebugUi::kThread : section == "stack" ? DebugUi::kFrame : section == "watch" ? DebugUi::kWatch
                              : section == "add"   ? DebugUi::kWatchAdd : section == "breaks" ? DebugUi::kBreak : section == "vars" ? DebugUi::kVar : section == "sessions" ? DebugUi::kSession : section == "waves" ? DebugUi::kWaves
-                             : section == "exceptions" ? DebugUi::kException : section == "board" ? DebugUi::kBoard : DebugUi::kNone;
+                             : section == "exceptions" ? DebugUi::kException : section == "board" ? DebugUi::kBoard : section == "fault" ? DebugUi::kFault : DebugUi::kNone;
     u32 seen = 0;
     for (u32 i = 0; i < u.rows.size(); ++i)
         if (act != DebugUi::kNone && u.rows[i].act == act && (name.empty() ? ++seen == std::max(1u, n) : u.rows[i].text.starts_with(name + " "))) {

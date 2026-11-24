@@ -229,6 +229,7 @@
 ---------------------------------------------------------------- serial ports
 -- blit.opt.serial.baud = 115200  -- a serial tab's speed when the board's run configuration gives none
 -- blit.opt.serial.line_end = "cr"  -- what Return sends to the port: "cr", "lf" or "crlf" (each tab can change it)
+-- blit.opt.rtt.line_end = "lf"  -- what Return sends down an RTT channel: "cr", "lf" or "crlf" (each tab can change it)
 
 ---------------------------------------------------------------- waves and timelines
 -- blit.opt.timeline.max_mb = 2048  -- the memory a dump's waves may take: reading one stops there, and says how far it got
