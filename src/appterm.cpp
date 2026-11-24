@@ -1091,15 +1091,21 @@ void App::term_sync() {
                 if (v.keep) {  // (a build's: how it went, and the time it took; one that never started has said why)
                     char took[48];
                     std::snprintf(took, sizeof took, "%.1f s", static_cast<double>(now_ns() - v.started_ns) * 1e-9);
+                    // (A flash whose board went to run what was written before
+                    // the tool's last question, which the tool calls a failure:
+                    // done, its exit code said.)
+                    const int exited = v.status.load();
+                    const int status = exited > 0 && missing.empty() && !lost && build_left(d.id) ? 0 : exited;
                     std::lock_guard lock(v.mu);
                     if (v.stopped && !v.unstarted)
                         v.term.feed(std::string("\r\n\x1b[33m[stopped after ") + took + "]\x1b[0m");
                     else if (!v.unstarted)
-                        v.term.feed(v.status == 0      ? std::string("\r\n\x1b[32m[done in ") + took + "]\x1b[0m"
+                        v.term.feed(status == 0 && exited != 0 ? "\r\n\x1b[32m[done in " + std::string(took) + ", the board gone to run it: exit code " + std::to_string(exited) + "]\x1b[0m"
+                                    : status == 0      ? std::string("\r\n\x1b[32m[done in ") + took + "]\x1b[0m"
                                     : lost             ? "\r\n\x1b[31m[connection to " + v.host + " lost after " + took + "]\x1b[0m"
                                     : !missing.empty() ? "\r\n\x1b[31m[failed: " + missing + "]\x1b[0m"
-                                                       : "\r\n\x1b[31m[failed with " + std::to_string(v.status.load()) + " after " + took + "]\x1b[0m");
-                    build_ended(d.id, v.status, missing);
+                                                       : "\r\n\x1b[31m[failed with " + std::to_string(exited) + " after " + took + "]\x1b[0m");
+                    build_ended(d.id, status, missing);
                     continue;
                 }
                 if (v.status == 0) {  // (exit: the tab goes, as a terminal window would)

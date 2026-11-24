@@ -1649,6 +1649,7 @@ private:
     bool build_run_named(const std::string& name);
     void build_stop();
     void build_ended(u64 doc, int status, const std::string& missing = {});  // (missing: the program the shell could not find, said)
+    bool build_left(u64 doc) const;  // the flash in that tab told the board to run what it wrote, and it went (BuildScan's kLeft): its exit code no failure
     void build_panel_draw(struct TextBox& box, bool focused);
     void build_panel_click(int row, int col, const SDL_MouseButtonEvent& b);
     bool build_panel_key(const SDL_KeyboardEvent& k);

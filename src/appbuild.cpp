@@ -911,6 +911,8 @@ void App::build_stop() {
 // at again; and what git sees there (files written, or a repository made by
 // a new project's git init). On another machine, the files it wrote are
 // looked for there too, and git with them (ran_there).
+bool App::build_left(u64 doc) const { return buildui_ && doc == buildui_->doc && buildui_->progress.left && !buildui_->progress.failed; }
+
 void App::build_ended(u64 doc, int status, const std::string& missing) {
     test_ended(doc);  // (a run of the tests: its reports read)
     BuildUi& u = *buildui_;

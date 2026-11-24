@@ -379,6 +379,10 @@ std::vector<std::string> flash_programs(const Board& b, const std::string& tool)
 std::string openocd_interface(const Board& b) { return !b.flash_interface.empty() ? b.flash_interface : std::string(look_up(kInterface, b.probe_kind)); }
 std::string openocd_target(const Board& b) { return !b.flash_target.empty() ? b.flash_target : std::string(look_up(kTarget, chip_key(b.chip), true)); }
 bool esp_chip(std::string_view chip) { return is_esp(chip); }
+std::string openocd_adapter(const Board& b) {
+    if (!b.probe_location.empty()) return "adapter usb location " + b.probe_location;
+    return b.probe.empty() ? std::string() : "adapter serial " + b.probe;
+}
 
 bool esp_flasher_args(std::string_view text, const std::string& dir, FlashImage* out, std::string* why) {
     json::Doc doc;
@@ -497,7 +501,7 @@ FlashPlan flash_plan(const Board& b, const std::string& tool_name, const std::st
             }
             commands += (commands.empty() ? "-c " : " -c ") + sh_word(c);
         }
-        vars = {{"interface", word(iface)}, {"adapter", b.probe.empty() ? std::string() : word("adapter serial " + b.probe)}, {"target", word(target)}, {"program", commands}};
+        vars = {{"interface", word(iface)}, {"adapter", b.probe.empty() && b.probe_location.empty() ? std::string() : word(openocd_adapter(b))}, {"target", word(target)}, {"program", commands}};
         same += "|" + iface + "|" + target;
     } else if (tool_name == "probe-rs") {
         if (image.parts.size() > 1) return plan.why = "probe-rs downloads one file", plan;

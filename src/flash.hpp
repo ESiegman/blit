@@ -86,6 +86,9 @@ u64 flash_hash(std::string_view bytes);
 // "" when neither does): its debugging takes the same as its flashing.
 std::string openocd_interface(const Board& b);
 std::string openocd_target(const Board& b);
+// OpenOCD's words choosing the board's probe: `adapter usb location` where
+// that is known (probe_locate), else `adapter serial`; "" with neither.
+std::string openocd_adapter(const Board& b);
 // Whether a board's chip is an ESP32 (any: "ESP32-S3" is "esp32s3").
 bool esp_chip(std::string_view chip);
 

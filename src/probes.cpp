@@ -567,6 +567,33 @@ void board_read(json::Value b, const std::string& config, Board* out, std::strin
     }
 }
 
+std::string probe_location(const Board& b, const std::vector<UsbDevice>& devices) {
+    if (b.probe_usb != "0483:3748" || b.probe.empty()) return {};
+    for (const UsbDevice& d : devices) {
+        if (d.vid != 0x0483 || d.pid != 0x3748 || stlink_serial(d.serial) != b.probe) continue;
+        // (Linux's sysfs name is libusb's; macOS's locationID has the bus in
+        // its top byte and a port in each nibble after, to the first 0, as
+        // libusb's darwin_usb.c reads it.)
+        if (!d.location.starts_with("0x")) return d.location;
+        const unsigned long id = std::strtoul(d.location.c_str() + 2, nullptr, 16);
+        std::string out = std::to_string((id >> 24) & 0xff);
+        for (int shift = 20; shift >= 0; shift -= 4) {
+            const unsigned long port = (id >> shift) & 0xf;
+            if (!port) break;
+            out += (shift == 20 ? "-" : ".") + std::to_string(port);
+        }
+        return out;
+    }
+    return {};
+}
+
+void probe_locate(Board* b, const std::string& root) {
+    if (b->probe_usb != "0483:3748" || b->probe.empty()) return;
+    std::vector<UsbDevice> devices;
+    std::string why;
+    if (usb_list_at(root, &devices, &why)) b->probe_location = probe_location(*b, devices);
+}
+
 bool usb_list_at(const std::string& root, std::vector<UsbDevice>* out, std::string* why) {
     std::string host, there;
     if (!split_remote(root, &host, &there)) {

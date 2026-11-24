@@ -74,6 +74,19 @@ std::vector<ProbeRow> probe_rows(const std::vector<UsbDevice>& devices, const st
 // they cannot be had. A worker's call.
 bool usb_list_at(const std::string& root, std::vector<UsbDevice>* out, std::string* why);
 
+// Where a board's probe is plugged in, as OpenOCD's `adapter usb location`
+// takes it ("6-3"; libusb's bus-port.port), for a probe OpenOCD cannot be
+// trusted to find by its serial number: an ST-LINK V2, whose serial number
+// is 12 bytes of binary that OpenOCD reads in a language of its own (the
+// lab box's clone answers it with another serial number than the
+// system's, 2026-11-24: "37FF6706..." to OpenOCD, "6068C3BF..." as
+// written). Of these devices, the one whose ids and serial number (as the
+// picker writes it) are the board's; "" for another probe, or none found.
+std::string probe_location(const Board& b, const std::vector<UsbDevice>& devices);
+// The same, the devices listed where the folder is (usb_list_at): into
+// b->probe_location, for OpenOCD (openocd_adapter).
+void probe_locate(Board* b, const std::string& root);
+
 // The flash tools' names the board object takes (flash.cpp's table).
 inline constexpr std::string_view kFlashTools[] = {"esptool", "openocd", "probe-rs", "jlink", "picotool", "uf2", "dfu-util", "pyocd", "stm32cubeprogrammer", "openfpgaloader", "vivado", "iceprog", "ecpprog", "pgrcmd"};
 // And for its debug preset (boarddebug.hpp).

@@ -23,6 +23,7 @@ struct Board {
     std::string probe_kind;  // probe.kind: "stlink", "jlink", "cmsis-dap", "esp-usb-jtag", "blackmagic", "ftdi", ... (probes.cpp's table)
     std::string probe_usb;   // probe.usb: "0483:374e", its vendor and product ids
     std::string probe_gdb;   // probe.gdb: a probe's own GDB server port (Black Magic's)
+    std::string probe_location;  // (not written) where the probe is plugged in now, as OpenOCD takes it: probe_locate
     std::string port;        // serial.port (or "serial": "PORT"): its console
     int baud = 0;            // serial.baud
     std::string chip, elf, svd;

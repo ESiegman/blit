@@ -58,6 +58,7 @@ enum Kind : u8 {
     kSize,        // "N" after the prefix: the bytes to be written
     kProgrammed,  // "..., programmed N bytes" (the number after `then`): the bytes written; none, and nothing needed writing
     kDoneBit,     // a status word in hex after the prefix, read while Load is under way: its DONE bit (8) set, Load is done, else it failed
+    kLeft,        // the board has been told to run what was written, and goes: what the tool says after is not the flash's (dfu-util's leave)
 };
 
 struct Shape {
@@ -196,6 +197,11 @@ constexpr Shape kShapes[] = {
     {kDfuUtil, kBar, "Download ", "%", "Program", true},
     {kDfuUtil, kDone, "Erase    done.", "$", "Erase", true},
     {kDfuUtil, kDone, "Download done.", "$", "Program", true},
+    // Its leave (DfuSe's :leave, after the download: dfuse.c lines 627-645):
+    // the boot ROM runs what was written at once and is gone from the USB
+    // before it answers dfu-util's last get_status, which dfu-util then
+    // says is an error, exiting 74 (the STM32H743's, 2026-11-24).
+    {kDfuUtil, kLeft, "Submitting leave request...", "$", "", true},
     {kDfuUtil, kHello, "dfu-util: Warning: ", "", "", true},
     {kDfuUtil, kHello, "dfu-util: A valid DFU suffix will be required", "", "", true},
     {kDfuUtil, kFailedHere, "dfu-util: ", "", "", true},
@@ -526,6 +532,7 @@ bool BuildScan::progress_line(std::string_view text, bool unfinished) {
         if (stage == "Verify") prog_verified_ = true;  // (a verifying stage that ended well)
     };
     auto fail = [&](std::string_view message) {
+        if (progress_.left) return;  // (the board gone as asked: kLeft)
         // ("** OpenOCD init failed **" after "Error: open failed": "OpenOCD init failed: open failed".)
         progress_.failed = true;
         message = trim(message);
@@ -535,6 +542,9 @@ bool BuildScan::progress_line(std::string_view text, bool unfinished) {
     };
     switch (shape->kind) {
         case kHello: break;
+        case kLeft:  // (after what was written was all written, and only then)
+            if (!progress_.failed && std::ranges::find(progress_.done, std::string_view("Program")) != progress_.done.end()) progress_.left = true;
+            break;
         case kStage: begin(shape->stage); break;
         case kPart:
             std::erase(progress_.done, std::string(shape->stage));

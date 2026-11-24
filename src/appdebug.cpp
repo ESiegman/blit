@@ -1543,6 +1543,7 @@ bool App::debug_board_plan(bool attach, BuildTask* c, std::string* elf, BoardDeb
     const BuildTask* found = attach ? board_config() : debug_board_config();
     if (!found) return false;
     *c = *found;
+    if (board_preset(c->board) == "openocd") probe_locate(&c->board, root);  // (an ST-LINK V2: by where it is, not its serial number)
     const Board& b = c->board;
     *elf = b.elf.empty() ? c->program : b.elf[0] == '/' ? b.elf : root + "/" + b.elf;
     std::string host, there;

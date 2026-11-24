@@ -131,6 +131,16 @@ check "probe-rs (an ST-LINK's): its gdb server" \
 plan "{ $STLINK, \"debug\": \"openocd\" }"
 check "openocd: started by gdb through a pipe" \
     "openocd | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | target: | exec {openocd} -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }' | after: monitor reset halt; maintenance flush register-cache | to main | flashed first | {\"program\":\"@/fw/cm.elf\",\"target\":\"| exec \\\"\$BLIT_SERVER\\\" -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }'\"} ;; openocd | gdb: arm-none-eabi-gdb gdb-multiarch gdb:arm | target: | exec {openocd} -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }' | after:  | {\"program\":\"@/fw/cm.elf\",\"target\":\"| exec \\\"\$BLIT_SERVER\\\" -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c '[target current] configure -event gdb-detach { resume }'\"}"
+# An ST-LINK V2 (its serial number binary, which OpenOCD reads otherwise):
+# OpenOCD given where it is plugged in, as flashing gives it (flash.sh).
+mkdir -p "$dir/usb-v2/6-3"
+printf '0483\n' >"$dir/usb-v2/6-3/idVendor"; printf '3748\n' >"$dir/usb-v2/6-3/idProduct"; printf '00\n' >"$dir/usb-v2/6-3/bDeviceClass"
+printf '\140\150\303\277\050\140\150\303\277\050\140\150\303\277\050\n' >"$dir/usb-v2/6-3/serial"
+BLIT_USB_ROOT="$dir/usb-v2"; export BLIT_USB_ROOT
+plan '{ "probe": {"kind": "stlink", "serial": "6068C3BF286068C3BF286068C3BF28", "usb": "0483:3748"}, "chip": "STM32H743XIHx", "debug": "openocd" }'
+unset BLIT_USB_ROOT
+got=$(printf '%s' "$got" | grep -o "adapter [a-z ]*[^']*" | sort -u | tr '\n' '|')
+check "openocd, an ST-LINK V2: by where it is plugged in" 'adapter usb location 6-3|'
 plan '{ "probe": {"kind": "jlink", "serial": "000801234567", "usb": "1366:0105"}, "chip": "STM32H743ZI" }'
 got=${got%% ;; *}
 check "jlink: SEGGER's GDB server" \

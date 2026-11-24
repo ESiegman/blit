@@ -163,17 +163,31 @@ bool find_image(const std::string& root, const BuildTask& c, const std::string& 
         if (!there(uf2)) return *why = "No " + uf2 + " to copy to the board", false;
         elf = uf2;
     }
+    // ST's DFU boot ROM is DfuSe, which writes a .bin at an address: with
+    // none said, where the ELF beside it loads first, as objcopy -O binary
+    // starts the .bin there (an STM32's flash, 0x08000000 on most).
+    const bool st_rom = tool == "dfu-util" && b.probe_usb == "0483:df11";
+    std::string address = b.flash_address;
     if (tool == "dfu-util" && !elf.ends_with(".bin") && !elf.ends_with(".dfu")) {
         const std::string bin = stem_of(elf) + ".bin";
         if (!there(bin)) return *why = "dfu-util writes a .bin or a .dfu: no " + bin + " beside " + elf, false;
+        std::string bytes;
+        std::vector<std::pair<u64, std::string_view>> loads;
+        if (st_rom && address.empty() && fs_read(root + "/" + elf, &bytes) && elf_loads(bytes, &loads) && !loads.empty()) {
+            u64 lowest = ~0ull;
+            for (const auto& l : loads) lowest = std::min(lowest, l.first);
+            char a[24];
+            std::snprintf(a, sizeof a, "0x%08llx", static_cast<unsigned long long>(lowest));
+            address = a;
+        }
         elf = bin;
     }
     // (A .bin's address: esptool's are flasher_args.json's; picotool's is
     // the start of flash unless said; dfu-util's a DfuSe device's alone.)
     const bool bin = elf.ends_with(".bin");
-    if (bin && b.flash_address.empty() && tool != "esptool" && tool != "picotool" && tool != "dfu-util")
+    if (bin && address.empty() && ((tool != "esptool" && tool != "picotool" && tool != "dfu-util") || st_rom))
         return *why = elf + " is a .bin: the board's flash.address says where it goes", false;
-    img->parts.push_back({bin ? b.flash_address : std::string(), elf});
+    img->parts.push_back({bin ? address : std::string(), elf});
     return true;
 }
 
@@ -277,6 +291,7 @@ Prepared prepare(const std::string& root, BuildTask c, std::string tool, bool gu
         h = h * 31 + flash_hash(bytes);
         if (fpga_tool(tool)) img.spi_width = bitstream_spi_width(bytes);  // (Vivado's write_cfgmem takes no other)
     }
+    if (tool == "openocd") probe_locate(&c.board, root);  // (an ST-LINK V2: by where it is, not its serial number)
     const FlashPlan plan = flash_plan(c.board, tool, program, img, mode);
     if (!plan.why.empty()) {
         p.why = plan.why;

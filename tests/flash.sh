@@ -218,6 +218,25 @@ button: ▶ fw · Flashed 40.2 KB in 1.2 s, verified | row: done · Flashed 40.2
 openocd -f interface/stlink.cfg -c 'adapter serial 004D00283133510F37363734' -f target/stm32f4x.cfg -c 'program build/fw.elf verify reset exit'
 EOF
 check "ST-LINK through OpenOCD" "$expected"
+# An ST-LINK V2, the lab box's clone: its serial number 12 bytes of binary,
+# which Linux reads as these (sysfs, in UTF-8) and OpenOCD in a language of
+# its own as others, so OpenOCD is given where it is plugged in; the
+# H743's target. Not plugged in: its serial number, as ever.
+mkdir -p "$dir/usb-v2/6-3"
+printf '0483\n' >"$dir/usb-v2/6-3/idVendor"; printf '3748\n' >"$dir/usb-v2/6-3/idProduct"; printf '00\n' >"$dir/usb-v2/6-3/bDeviceClass"
+printf 'STM32 STLink\n' >"$dir/usb-v2/6-3/product"
+printf '\140\150\303\277\050\140\150\303\277\050\140\150\303\277\050\n' >"$dir/usb-v2/6-3/serial"
+V2='"probe": {"kind": "stlink", "serial": "6068C3BF286068C3BF286068C3BF28", "usb": "0483:3748"}, "chip": "STM32H743XIHx", "elf": "build/fw.elf", "flash": "openocd"'
+board "{$V2}"
+BLIT_USB_ROOT="$dir/usb-v2"; export BLIT_USB_ROOT
+flash openocd "$F;$end"
+got=$(printf '%s' "$got" | tail -1)
+check "an ST-LINK V2 through OpenOCD: by where it is plugged in" "openocd -f interface/stlink.cfg -c 'adapter usb location 6-3' -f target/stm32h7x.cfg -c 'program build/fw.elf verify reset exit'"
+rm -rf "$dir/usb-v2/6-3"
+flash openocd "$F;$end"
+got=$(printf '%s' "$got" | tail -1)
+check "(not plugged in: its serial number)" "openocd -f interface/stlink.cfg -c 'adapter serial 6068C3BF286068C3BF286068C3BF28' -f target/stm32h7x.cfg -c 'program build/fw.elf verify reset exit'"
+unset BLIT_USB_ROOT
 
 # The Raspberry Pi Debug Probe (CMSIS-DAP) with a raw .bin: probe-rs given
 # its format and address.
@@ -598,6 +617,17 @@ board "{$DFU}"
 flash dfu-util "$F"
 mv "$P/build/fw.away" "$P/build/fw.bin"
 check "dfu-util with no .bin: said" "blit: dfu-util writes a .bin or a .dfu: no build/fw.bin beside build/fw.elf"
+# ST's DFU boot ROM as the picker writes it, with no flash.address: the .bin
+# where the ELF loads first (objcopy -O binary starts it there); a .bin
+# with no ELF, and no address: said (dfu-util itself says only "Only DfuSe
+# file version 1.1a is supported").
+board '{"probe": {"kind": "dfu", "serial": "200364500000", "usb": "0483:df11"}}'
+flash dfu-util "$F;$end"
+got=$(printf '%s' "$got" | tail -1)
+check "dfu-util, ST's boot ROM with no address: the ELF's" 'dfu-util -d 0483:df11 -S 200364500000 -a 0 -s 0x08000000:leave -D build/fw.bin'
+printf '{"configurations": [{"name": "fw", "program": "build/fw.bin", "board": {"probe": {"kind": "dfu", "usb": "0483:df11"}}}]}\n' >"$P/.blit/run.json"
+flash dfu-util "$F"
+check "and a .bin alone, with no address: said" "blit: build/fw.bin is a .bin: the board's flash.address says where it goes"
 
 # pyOCD: its target (flash.device, else the chip), the probe's unique ID.
 board '{"probe": {"kind": "cmsis-dap", "serial": "E6633861A3978538", "usb": "2e8a:000c"}, "chip": "STM32F411CEUx", "elf": "build/fw.elf", "flash": {"tool": "pyocd", "device": "STM32F411CE"}}'

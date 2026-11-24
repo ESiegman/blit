@@ -221,6 +221,7 @@ public:
         i32 percent = -1;                // of it; -1: not said
         u64 bytes = 0, total = 0;        // done, and in all, where the tool says (0: not said)
         bool failed = false;             // (its problem is among found())
+        bool left = false;               // the board was told to run what was written, and went: the tool's exit code after is no failure
         std::string summary;             // once the output has ended: "Flashed 41.2 KB in 1.8 s, verified"
         std::string cut;                 // the stage under way when the output ended, and its percent: where
         i32 cut_percent = -1;            // a run then stopped, or ended with no word of the tool's, stopped

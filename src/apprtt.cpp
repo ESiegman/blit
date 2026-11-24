@@ -47,6 +47,7 @@
 #include "linktab.hpp"
 #include "loopback.hpp"
 #include "missing.hpp"
+#include "probes.hpp"
 #include "remote.hpp"
 #include "serialtab.hpp"
 #include "rtt.hpp"
@@ -509,7 +510,8 @@ void App::rtt_open() {
 // A board's tool started for RTT alone, on the machine it is on, with its
 // streams' words; and its tabs.
 void App::rtt_start(const BuildTask& rc, const std::string& elf, const std::string& preset, const BoardStreams& s) {
-    const BuildTask& c = rc;
+    BuildTask c = rc;
+    if (preset == "openocd") probe_locate(&c.board, build_root());  // (an ST-LINK V2: by where it is, not its serial number)
     const Board& b = c.board;
     RttUi& u = *rttui_;
     const std::string root = build_root();
@@ -527,7 +529,7 @@ void App::rtt_start(const BuildTask& rc, const std::string& elf, const std::stri
         if (iface.empty() || tgt.empty()) return notify("OpenOCD needs the probe's interface and the chip's target script (flash.interface, flash.target)", 1);
         tool = preset == "esp" || esp_chip(b.chip) ? "openocd-esp32 openocd" : "openocd";
         sh += "S=$(pick " + tool + ") || { echo \"blit-missing: " + tool + "\" >&2; exit 127; }; exec \"$S\" -c 'gdb_port disabled' -c 'telnet_port disabled'" + s.openocd_words.substr(0, s.openocd_words.find(" -c init")) +
-              " -f " + sh_word(iface) + (b.probe.empty() ? std::string() : " -c " + sh_word("adapter serial " + b.probe)) + " -f " + sh_word(tgt) +
+              " -f " + sh_word(iface) + (openocd_adapter(b).empty() ? std::string() : " -c " + sh_word(openocd_adapter(b))) + " -f " + sh_word(tgt) +
               (s.openocd_words.find(" -c init") != std::string::npos ? s.openocd_words.substr(s.openocd_words.find(" -c init")) : std::string(" -c init"));
     } else if (preset == "jlink") {
         const std::string device = !b.flash_device.empty() ? b.flash_device : b.chip;

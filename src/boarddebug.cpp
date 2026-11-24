@@ -184,7 +184,7 @@ BoardDebug board_debug(const Board& b, const std::string& elf, bool attach, bool
         target = "| exec \"$BLIT_SERVER\"" + words({"-c", "gdb_port pipe"}) + (st.openocd_words.empty() ? words({"-c", "tcl_port disabled"}) : st.openocd_words) +
                  words({"-c", "telnet_port disabled"}) +
                  (esp && attach ? words({"-c", "set ESP_FLASH_SIZE 0"}) : std::string()) + words({"-f", iface}) +
-                 (b.probe.empty() ? std::string() : words({"-c", "adapter serial " + b.probe})) + words({"-f", tgt}) +
+                 (openocd_adapter(b).empty() ? std::string() : words({"-c", openocd_adapter(b)})) + words({"-f", tgt}) +
                  // (Let go of, the board runs on: Espressif's left the ESP32-S3
                  // halted where it stopped when gdb detached, on the lab box.)
                  words({"-c", "[target current] configure -event gdb-detach { resume }"});

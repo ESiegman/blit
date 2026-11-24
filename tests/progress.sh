@@ -399,6 +399,15 @@ problems: 1
 E dfu-util:1 No DFU capable USB device available
 EOF
 check "dfu-util with no DFU device (its warnings no problem)" "$expected"
+# An STM32's boot ROM, told to leave, gone to run what was written before
+# dfu-util's last get_status, which dfu-util says is an error, exiting 74:
+# flashed, no problem.
+flash dfu-util dfu-util dfu-util-leave "$end"
+want <<'EOF'
+button: ▶ dfu-util · Flashed 792 B in N s | row: done · Flashed 792 B in N s
+problems: 0
+EOF
+check "dfu-util's leave, the board gone before its last question: flashed" "$expected"
 flash pyOCD pyocd pyocd-fail "$end"
 want <<'EOF'
 button: ▶ pyOCD · 1 error | row: failed: exited with code 1
