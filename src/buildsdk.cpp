@@ -652,10 +652,20 @@ bool find_platformio(const std::string& root, const std::vector<FsEntry>& files,
             const std::string what = board.flash == "uf2" ? "UF2 copy " + build_dir + "/" + env + "/firmware.uf2" : "picotool " + board.elf;
             a.own("Upload" + tag, what, "flash", board, program, env, "PlatformIO: Build" + tag);
         } else {
-            a.add("Upload" + tag, "pio run -e " + q + " -t upload").kind = "flash";
+            // (PlatformIO's upload writes the board, through the port the
+            // serial tab may hold: let go of while it runs, as blit's own
+            // flash does. So do its tests on the board, which upload and
+            // then read the port; a native env's run on this machine.)
+            BuildTask& up = a.add("Upload" + tag, "pio run -e " + q + " -t upload");
+            up.kind = "flash";
+            up.board = board;
+            up.firmware = env;
         }
         a.own("Monitor" + tag, serial_words(board), "monitor", board, program, env, {});
-        if (tests) a.add("Test" + tag, "pio test -e " + q);
+        if (tests) {
+            BuildTask& test = a.add("Test" + tag, "pio test -e " + q);
+            if (platform != "native") test.board = board, test.firmware = env;
+        }
         a.add("Clean" + tag, "pio run -e " + q + " -t clean");
         a.add("Compile database" + tag, "pio run -e " + q + " -t compiledb");
     }

@@ -221,7 +221,7 @@ if [ -n "$real_pio" ]; then
     penv="$B"
 fi
 mkdir -p "$penv" "$PIO/platforms/raspberrypi/boards"
-printf '#!/bin/sh\necho "pio $*"\n' >"$penv/pio"
+printf '#!/bin/sh\necho "pio $*"\ncase " $* " in *" -t upload "*) sleep 2 ;; esac\n' >"$penv/pio"
 chmod +x "$penv/pio"
 printf '{ "build": { "mcu": "rp2040" }, "upload": { "use_1200bps_touch": true, "wait_for_upload_port": true } }\n' >"$PIO/platforms/raspberrypi/boards/pico.json"
 F="$dir/fw"
@@ -301,6 +301,17 @@ rm -rf "$USB" && mkdir -p "$USB"
 run "$F" "buildpanel;buildrun:Monitor (pico);firmwarewait"
 check "no port of its chip's: said" "blit: No serial port of an RP2040's is plugged in to $machine"
 export BLIT_USB_ROOT="$dir/nousb" BLIT_USB_DEV="$dir/nousb"
+
+# An ESP32's upload is PlatformIO's own (pio's stand-in takes 2 s over
+# it): the serial tab on the env's monitor_port lets go of the port while
+# it runs, and has it back after, as blit's own flash does.
+E="$dir/esp"
+mkdir -p "$E/src"
+printf '[env:s3]\nplatform = espressif32\nboard = esp32-s3-devkitc-1\nmonitor_speed = 115200\nmonitor_port = %s/ttyACM9\n' "$DEV" >"$E/platformio.ini"
+start_fake
+run "$E" "buildpanel;buildrun:Monitor;serialstate:open;buildrun:Upload;serialstate:released;buildwait;serialstate:open;serialdump"
+check "PlatformIO's own upload: the serial tab lets go of the port while it runs, and has it back" "ttyACM9 115200: open ttyACM9 115200 8N1 return CR dtr on rts on kept 0 gaps 1"
+stop_fake
 
 # No pio anywhere: said, on its rows and when run.
 if [ -z "$real_pio" ]; then

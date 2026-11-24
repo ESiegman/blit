@@ -62,6 +62,7 @@ struct App::FirmwareUi {
     std::optional<Listed> listed;
     bool busy = false;
     std::unordered_map<std::string, std::string> chosen;  // by folder: the port chosen from several
+    u64 holding = 0;  // the run of a task on the board by its own tool, while serial tabs are let go of for it
     // Last, so that it is joined first, while all it uses is still there.
     std::jthread worker;
 };
@@ -164,6 +165,18 @@ void App::firmware_sync() {
     find_choose_item("Serial port", std::move(items), [ports = l->ports, open](int i) {
         if (i >= 0 && static_cast<size_t>(i) < ports.size()) open(ports[static_cast<size_t>(i)].port);
     });
+}
+
+void App::firmware_holding(u64 doc) {
+    if (!doc) return;
+    if (!firmwareui_) firmwareui_ = std::make_shared<FirmwareUi>();
+    firmwareui_->holding = doc;
+}
+
+void App::firmware_ended(u64 doc) {
+    if (!firmwareui_ || !doc || firmwareui_->holding != doc) return;
+    firmwareui_->holding = 0;
+    serial_reclaim();
 }
 
 void App::firmware_settle() {

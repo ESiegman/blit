@@ -83,7 +83,11 @@ struct BuildTask {
     // kind of work it is (one of kTaskKinds; empty: none said).
     bool lasting = false;
     std::string kind;
-    Board board;  // (its "board", if it has one)
+    // (its "board", if it has one; on a task of a finder's that is no
+    // configuration and runs no action of blit's, the board its command
+    // writes or reads through a tool of its own, PlatformIO's upload or
+    // on-target tests: a serial tab on its port lets go of it while it runs)
+    Board board;
     // A run configuration's "crash": its firmware's own panic formats, Lua
     // patterns whose lines are a crash dump's addresses (crashscan.hpp).
     std::vector<std::string> crash;

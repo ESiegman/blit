@@ -3388,7 +3388,10 @@ esptool with no port given is left to find the board itself, unless just
 one such port is plugged in. ESP-IDF's own esptool, in its Python
 environment (the version its build wrote `flasher_args.json` for, as
 `idf.py flash` takes it), is run before the PATH's. A serial tab on the
-board's port lets go of it while a flash runs, and has it back after.
+board's port lets go of it while a flash runs, and has it back after; so
+it does while PlatformIO's own upload (`pio run -t upload`) or its tests
+on the board (`pio test`, any env but a `native` one) run, the port being
+the board's as Monitor finds it.
 
 These replace the `blit.build.add` systems the embedded trial wrote for
 PlatformIO in init.lua; `blit.build.remove("ESP-IDF")` or

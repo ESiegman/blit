@@ -1959,6 +1959,11 @@ private:
     void firmware_monitor(const BuildTask& task);
     void firmware_sync();
     void firmware_settle();  // (the tests: the ports listed, waited for)
+    // A finder's task run on the board by its own tool (PlatformIO's upload):
+    // the serial tabs let go of for it given back once its run has ended
+    // (doc: its run's terminal).
+    void firmware_holding(u64 doc);
+    void firmware_ended(u64 doc);
     // Simulation runs (appsim.cpp, simrun.hpp): as one ends, the dump it
     // wrote found on a worker and opened in the wave tab (or read again);
     // "Open the last run's waves".

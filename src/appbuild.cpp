@@ -830,7 +830,18 @@ void App::build_run(int index, const std::string& chosen) {
         }
         if (!u.run_of(was)) u.take_order = order;
     }
-    build_command(t.cwd.empty() || !t.before.empty() ? u.root : u.root + "/" + t.cwd, with_setup(t, with_vars(cmd, build_vars())), t.name, t.problems, &t);
+    // (A finder's task that writes or reads the board through a tool of its
+    // own, PlatformIO's upload: serial tabs on its port let go of it while
+    // it runs, and have it back once it has ended, as blit's flash does.
+    // Let go of once the run has started, in the same turn, long before
+    // its tool has started: the run it replaces, ended as it starts, gives
+    // back what was let go of for that one first.)
+    const bool on_board = t.board.set && !t.config && t.action.empty();
+    const u64 doc = build_command(t.cwd.empty() || !t.before.empty() ? u.root : u.root + "/" + t.cwd, with_setup(t, with_vars(cmd, build_vars())), t.name, t.problems, &t);
+    if (on_board && doc) {
+        serial_release(firmware_board(t).board);
+        firmware_holding(doc);
+    }
     u.last_key = u.current;  // (how it goes shows on its row)
     if (const auto it = u.sizes.find(u.last_key); it != u.sizes.end()) u.sizes_before = it->second;
     run_config_take();
@@ -899,6 +910,7 @@ void App::build_ended(u64 doc, int status, const std::string& missing) {
     BuildUi& u = *buildui_;
     // (A flash: remembered as done only if it went well.)
     if (const BuildUi::Run* r = u.run_of(doc); r && r->running) flash_ended(doc, status == 0 && !r->stopped && !(doc == u.doc && u.progress.failed));
+    firmware_ended(doc);  // (a finder's upload: the serial tabs let go of for it, given back)
     // How it went: for init.lua's BuildDone, and, behind another window, in
     // a notification of the system's.
     if (BuildUi::Run* r = u.run_of(doc); r && r->running) {
@@ -957,6 +969,7 @@ void App::build_forget(u64 doc) {
     BuildUi& u = *buildui_;
     if (BuildUi::Run* r = u.run_of(doc); r && r->running) {
         flash_ended(doc, false);
+        firmware_ended(doc);
         r->running = false;
         r->stopped = true;
         if (!r->key.empty()) script_build_event(true, r->name, r->kind, r->cmd, -1, r->errors, r->warnings, true, static_cast<double>(now_ns() - r->started_ns) * 1e-9);
