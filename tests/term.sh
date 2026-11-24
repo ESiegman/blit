@@ -45,9 +45,9 @@ run() {
 # (What is waited for is what the shell prints, not what is typed: hel''lo, then hello.)
 run "term;frame;termwait:\$;text:echo hel''lo;key:Return;termwait:hello;termlast:\$;termdump"
 check "a shell in the folder being worked in: what it is told, it does" "\$ echo hel''lo|hello|\$ @2,2 15x74"
-run "term;frame;termwait:\$;text:basename \$PWD;key:Return;termwait:work;text:stty size;key:Return;termwait:15 74;wait:300;termdump"
+run "term;frame;termwait:\$;text:basename \$PWD;key:Return;termwait:work;termlast:\$;text:stty size;key:Return;termwait:15 74;termlast:\$;termdump"
 check "it runs in the working folder, and knows the tab's size" '$ basename $PWD|work|$ stty size|15 74|$ @4,2 15x74'
-run "term;frame;termwait:\$;text:sleep 30;key:Return;termwait:sleep;key:ctrl+c;text:echo after-\$((1+1));key:Return;termwait:after-2;termlast:\$;termdump"
+run "term;frame;termwait:\$;text:sleep 30;key:Return;termwait:sleep;key:ctrl+c;termlast:\$;text:echo after-\$((1+1));key:Return;termwait:after-2;termlast:\$;termdump"
 case "$got" in *'after-2|$ @'*) got="interrupted" ;; esac
 check "Ctrl+C stops what runs" "interrupted"
 # A command chosen in Command search is the editor's, not a key for the
@@ -126,12 +126,13 @@ check "with Vim's keys on, keys typed go to the shell" '$ ddi:wq @0,8 15x74'
 # The mouse, for a program that asks for it (cat -v shows what it is told):
 # presses, drags and releases, and the wheel, as SGR says them (1002, 1006),
 # and as X10 does (1000: no moves).
-mouse="stty -icanon -echo && cat -v;key:Return;wait:300"
+# (cat started once stty has changed the terminal, as its "ready" says.)
+mouse="stty -icanon -echo && echo rea''dy && cat -v;key:Return;termwait:ready"
 run "term;frame;termwait:\$;text:printf '\\033[?1002h\\033[?1006h' && $mouse;click:100,100;drag:150,100;drag:200,130;release;mouse:300,150;wheel:1;wheel:-1;termwait:65;termdump"
 check "the mouse told as SGR: a press, two drags, the release, the wheel up and down" \
-    "\$ printf '\\033[?1002h\\033[?1006h' && stty -icanon -echo && cat -v|^[[<0;13;5M^[[<32;19;5M^[[<32;25;7M^[[<0;25;7m^[[<64;38;9M^[[<65;38;9M @1,70 15x74"
+    "\$ printf '\\033[?1002h\\033[?1006h' && stty -icanon -echo && echo rea''dy &&| cat -v|ready|^[[<0;13;5M^[[<32;19;5M^[[<32;25;7M^[[<0;25;7m^[[<64;38;9M^[[<65;38;9M @3,70 15x74"
 run "term;frame;termwait:\$;text:printf '\\033[?1000h' && $mouse;click:100,100;drag:150,100;release;termwait:^[[M#;termdump"
-check "and as X10: a press and a release" "\$ printf '\\033[?1000h' && stty -icanon -echo && cat -v|^[[M -%^[[M#3% @1,14 15x74"
+check "and as X10: a press and a release" "\$ printf '\\033[?1000h' && stty -icanon -echo && echo rea''dy && cat -v|ready|^[[M -%^[[M#3% @2,14 15x74"
 
 # A new width wraps the lines again: a line of 60 is two rows in a split
 # half as wide, and one again when the tab is back where it was.
@@ -151,10 +152,10 @@ runall() {
     got=$("$blit" --offscreen 1200x600 --shot "$dir/shot.bmp" --script "workdir:$dir/work;$1" 2>&1 >/dev/null | sed -e "s#$dir#@#g" \
         -e 's/: 255 0 0$/: red/' -e 's/^\(pixel [0-9,]*\): [0-9]* [0-9]* [0-9]*$/\1: not red/' | awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }')
 }
-pics="term;frame;termwait:\$;text:cat red.six && cat kit.txt && echo do''ne;key:Return;termwait:done;frame"
+pics="term;frame;termwait:\$;text:cat red.six && cat kit.txt && echo do''ne;key:Return;termwait:done;termlast:\$;frame"
 runall "$pics;termdump;pixel:20,90;pixel:60,90"
 check "pictures in the terminal, sixel's and kitty's" "\$ cat red.six && cat kit.txt && echo do''ne|    done|\$ @3,2 15x74 picture 40x12@1,0 picture 2x1@2,0 ;; pixel 20,90: red ;; pixel 60,90: not red"
-runall "$pics;text:seq 1 20 && echo fin''ished;key:Return;termwait:finished;frame;termdump;pixel:20,90;key:shift+PageUp;frame;pixel:20,90"
+runall "$pics;text:seq 1 20 && echo fin''ished;key:Return;termwait:finished;termlast:\$;frame;termdump;pixel:20,90;key:shift+PageUp;frame;pixel:20,90"
 check "they scroll with the text" '8|9|10|11|12|13|14|15|16|17|18|19|20|finished|$ @14,2 15x74 picture 40x12@-10,0 picture 2x1@-9,0 ;; pixel 20,90: not red ;; pixel 20,90: red'
 # (A PNG, in parts of 4096 bytes, as kitty's protocol has them sent: blit's own icon, 1024 pixels square, in eight columns.)
 perl -MMIME::Base64 -e 'local $/; open my $f, "<", $ARGV[0] or die; my @c = unpack("(A4096)*", encode_base64(<$f>, ""));
@@ -162,7 +163,7 @@ perl -MMIME::Base64 -e 'local $/; open my $f, "<", $ARGV[0] or die; my @c = unpa
 if "$blit" --offscreen 800x600 --info 2>/dev/null | grep -q '^pictures    none'; then
     echo "a PNG sent in parts: skipped, blit reads no pictures on this system yet"
 else
-    runall "term;frame;termwait:\$;text:cat png.txt && echo do''ne;key:Return;termwait:done;frame;termdump"
+    runall "term;frame;termwait:\$;text:cat png.txt && echo do''ne;key:Return;termwait:done;termlast:\$;frame;termdump"
     check "a PNG sent in parts" "\$ cat png.txt && echo do''ne|        done|\$ @5,2 15x74 picture 1024x1024@1,0"
 fi
 
@@ -181,13 +182,13 @@ run "$open;key:ctrl+\`;frame;dump"
 check "again: the keyboard back to the text, and the split out of the way" '>[untitled*]'
 run "$open;key:ctrl+\`;frame;key:ctrl+\`;frame;dump"
 check "and again: the split back as it was" 'V([untitled*] / >[Terminal*])0.70'
-run "$open;text:echo hel''lo;key:Return;termwait:hello;key:ctrl+\`;frame;key:ctrl+\`;frame;termdump"
+run "$open;text:echo hel''lo;key:Return;termwait:hello;termlast:\$;key:ctrl+\`;frame;key:ctrl+\`;frame;termdump"
 check "with the same terminal, its shell still there" "\$ echo hel''lo|hello|\$ @2,2 3x74"
 run "$open;click:300,100;release;frame;key:ctrl+\`;frame;dump"
 check "on show with the keyboard in the text: Ctrl+\` gives the terminal the keyboard" 'V([untitled*] / >[Terminal*])0.70'
 run "$open;key:ctrl+shift+\`;frame;termwait:\$;dump"
 check "Ctrl+Shift+\`: another terminal there" 'V([untitled*] / >[Terminal Terminal*])0.70'
-run "$open;text:sleep 1 && exit;key:Return;key:ctrl+\`;wait:2500;termdump;key:ctrl+\`;frame;termwait:\$;dump"
+run "$open;text:sleep 1 && exit;key:Return;key:ctrl+\`;termend;termdump;key:ctrl+\`;frame;termwait:\$;dump"
 check "a shell that exits while hidden goes; Ctrl+\` then opens a new one" 'V([untitled*] / >[Terminal*])0.70'
 run "$open;key:$close;asked"
 check "closing a terminal with only its shell: nothing asked" 'nothing asked'
@@ -211,7 +212,7 @@ check "a build brings the hidden split back, the keyboard staying in the text" '
 # On another machine: the connection is made by the terminal itself.
 run "workdir:ssh://box$T/proj;term;frame;termwait:\$;text:echo \$(basename \$PWD)-\$(basename \$HOME);key:Return;termwait:proj-;termlast:\$;termdump"
 check "a terminal on another machine, in the folder there, at home there" '$ echo $(basename $PWD)-$(basename $HOME)|proj-there|$ @2,2 15x74'
-run "workdir:ssh://box$T/proj;term;frame;termwait:\$;text:stty size;key:Return;termwait:15 74;wait:300;termdump"  # (the next prompt comes just after)
+run "workdir:ssh://box$T/proj;term;frame;termwait:\$;text:stty size;key:Return;termwait:15 74;termlast:\$;termdump"
 check "and it knows the tab's size too" '$ stty size|15 74|$ @2,2 15x74'
 
 # The Python console: lines sent from a file before it has started (kept

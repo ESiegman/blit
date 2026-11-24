@@ -127,7 +127,12 @@ got=$(printf '%s' "$got" | cut -d'|' -f1)
 check "hex of the same bytes" "00000000  30 20 54 65 72 6d 69 6e  61 6c 3a 20 6c 69 6e 65  0 Terminal: line"
 run "link:rtt,$p;rttwait:kept 60;key:$clear;frame;termdump"
 check "Cmd+K: what came goes" " @0,0 11x86"
-run "link:rtt,$p;command:Log the serial port to a file…;key:ctrl+u;text:$dir/rtt.log;key:Return;rttwait:kept 60;command:Stop logging the serial port"
+# (The log from now on: its server held until it is started, else its
+# first line may come before it, on a slow machine.)
+stop_fakes
+rm -f "$dir/go"
+FAKE_RTT_HOLD="$dir/go" fake tcp $p 0
+run "link:rtt,$p;command:Log the serial port to a file…;key:ctrl+u;text:$dir/rtt.log;key:Return;lua:io.open('$dir/go','w'):close();rttwait:kept 60;command:Stop logging the serial port"
 got=$(sed -E 's/^[0-9-]+ [0-9:.]+ //' "$dir/rtt.log" 2>/dev/null | tr -d '\r' | tr '\n' '|')
 check "logged, each line after its date and time" "0 Terminal: line 1|0 Terminal: line 2|0 Terminal: line 3|"
 stop_fakes

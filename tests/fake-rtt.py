@@ -27,6 +27,8 @@
 # $FAKE_RTT_NO_SETUP, if set: an OpenOCD whose rtt has only its server
 # (Espressif's, v0.12.0-esp32-20260831), answering setup, start and
 # channels with that usage, as it did on the owner's ESP32-S3.
+# $FAKE_RTT_HOLD, if set: the lines sent only once that file is there (a
+# test that must be ready for the first, as a log started before it).
 # $FAKE_RTT_LOG, if set, gets a line for each command, connection and
 # config string, for the tests to read.
 import os
@@ -40,6 +42,7 @@ import time
 LOG = os.environ.get("FAKE_RTT_LOG")
 NAMES = {0: "Terminal", 1: "defmt", 2: "Trace"}
 LINES = int(os.environ.get("FAKE_RTT_LINES", "3"))
+HOLD = os.environ.get("FAKE_RTT_HOLD")  # (a file: the lines sent once it is there, 10 s at most)
 THEN = os.environ.get("FAKE_RTT_THEN", "").replace("\\n", "\n")
 FOUND_AT = int(os.environ.get("FAKE_RTT_FOUND_AT", "3"))
 UP = int(os.environ.get("FAKE_RTT_UP", "2"))
@@ -107,6 +110,9 @@ def channel_client(c, ch, choose=False):
             c.sendall(open(FRAMES, "rb").read())
             while True:
                 time.sleep(1)
+        end = time.time() + 10
+        while HOLD and not os.path.exists(HOLD) and time.time() < end:
+            time.sleep(0.02)
         for k in range(1, LINES + 1):
             c.sendall(b"%s%d %s: line %d\r\n" % (TAG + b" " if TAG else b"", ch, name.encode(), k))
             time.sleep(0.1)
