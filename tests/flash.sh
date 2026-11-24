@@ -563,8 +563,12 @@ flash pgrcmd "$F"
 check "pgrcmd with no .xcf: said" "blit: No chain file for pgrcmd: the board's flash.xcf, or an .xcf under the folder"
 
 # Each tool not installed: said, naming the program and this machine.
+# (One that is installed here is left out: blit would run it, on whatever
+# board is plugged in; the lab box has iceprog, and its FTDI chip is the
+# Basys 3's.)
 for t in "pyocd pyocd" "stm32cubeprogrammer STM32_Programmer_CLI" "iceprog iceprog" "ecpprog ecpprog" "pgrcmd pgrcmd"; do
     set -- $t
+    for d in /usr/bin /bin /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do [ -x "$d/$2" ] && continue 2; done
     board "{\"chip\": \"STM32F411CEUx\", \"elf\": \"build/fw.elf\", \"bitstream\": \"build/top.bit\", \"flash\": {\"tool\": \"$1\", \"xcf\": \"build/top.bit\"}}"
     got=$(PATH="$dir/none:/usr/bin:/bin" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;$F" 2>&1 >/dev/null | tail -1)
     check "$2 not installed: said" "blit: $2 is not installed on $this"
@@ -810,7 +814,7 @@ chmod +x "$dir/plainsh"
 bare="$dir/bare"
 mkdir -p "$bare"
 ln -s /usr/bin/* /bin/* "$bare/" 2>/dev/null
-rm -f "$bare/probe-rs" "$bare/openFPGALoader"
+rm -f "$bare/probe-rs" "$bare/openFPGALoader" "$bare/picotool" "$bare/dfu-util"
 case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
 kept=$PATH
 PATH=$bare SHELL="$dir/plainsh"
