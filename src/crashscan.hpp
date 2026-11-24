@@ -21,8 +21,8 @@
 //   take are one dump.
 //
 // It runs on the thread that reads the program's output, before the bytes
-// go onto the screen (appterm.cpp: a task's and a run's output; a serial
-// port's and RTT's tabs call it the same way); nothing here knows about
+// go onto the screen (appterm.cpp: a task's and a run's output, fed its
+// bytes; a serial port's tab, a line at a time, take_line); nothing here knows about
 // windows. The ELF is asked for when a dump first needs it, and an address
 // is decoded as the dump is read (a unit's tables the first time: a few
 // milliseconds).
