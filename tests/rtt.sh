@@ -262,6 +262,56 @@ else
     got=$(printf '%s' "$got" | grep -o "blit: probe-rs is not installed on [^~]*" | head -1 | sed 's/ *$//')
     check "no probe-rs: said" "blit: probe-rs is not installed on $this"
 
+    # ---------------------------------------------------------------- a board on another machine
+    # The project on another machine (tests/fake-ssh.sh standing in for ssh:
+    # the "other machine" is this one, in a home of its own): the tool runs
+    # there, and the Tcl port and each channel's server are reached through
+    # blit's agent there (blit-agent --connect); the ELF is read here from a
+    # copy fetched from there; pyOCD's config is written there.
+    T="$dir/there"
+    mkdir -p "$T" "$dir/run" && chmod 700 "$dir/run"
+    # (A login there finds the stand-ins first: blit takes the PATH a login there has.)
+    for f in .profile .zprofile .bash_profile; do printf 'PATH="%s:$PATH"\n' "$B" >"$T/$f"; done
+    agent="$T/.cache/blit/[b]lit-agent"
+    farrun() {
+        export BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T" BLIT_AGENT_RUN="$dir/run" BLIT_AGENT_IDLE=4
+        run "folder:ssh://box$P;remotewait;frame;boarddump;$1"
+        unset BLIT_SSH BLIT_FAKE_HOME BLIT_AGENT_RUN BLIT_AGENT_IDLE
+    }
+    board "$STLINK, \"debug\": \"openocd\", \"rtt\": { \"port\": $p }"
+    path="$B:$PATH" farrun "command:Open the board's RTT;rttwait:driver fw done;rttwait:RTT 1: defmt: open;rttwait:kept 51;rttwait:kept 60;frame;rttdump"
+    got=$(printf '%s' "$got" | sed -E 's/tries [0-9]+/tries N/')
+    check "a board on another machine: OpenOCD there, its Tcl port and each channel reached through the agent" \
+        "RTT 0: Terminal: open rtt 0 port $p of fw kept 60 gaps 0 opens 1 | RTT 1: defmt: open rtt 1 port $((p + 1)) of fw kept 51 gaps 0 opens 1 | driver fw done tries N opens 1"
+    path="$B:$PATH" farrun "command:Open the board's RTT;rttwait:driver fw done;rttwait:RTT 1: defmt: open;wait:100"
+    logged "^tcl rtt setup"
+    check "the block's address from the ELF there, read here" "tcl rtt setup $rttaddr $rttsize {SEGGER RTT}"
+    path="$B:$PATH" farrun "command:Open the board's RTT;rttwait:RTT 1: defmt: open;rttwait:kept 51;rttwait:kept 60;key:ctrl+\`;text:\`;frame;lua:os.execute('pgrep -f \"$agent.*--connect\" | wc -l | tr -d \" \" > $dir/pumps');termdump"
+    got="$got | $(cat "$dir/pumps") pumps"
+    check "its lines on the tab; the Tcl port and each channel a pump there" "1 defmt: line 1|1 defmt: line 2|1 defmt: line 3 @3,0 11x86 | 3 pumps"
+    board "$STLINK, \"debug\": \"pyocd\", \"rtt\": { \"port\": $p, \"channels\": [0, 1] }"
+    path="$B:$PATH" farrun "command:Open the board's RTT;rttwait:RTT 1: open;rttwait:kept 51;rttwait:kept 60;rttdump"
+    check "pyOCD there: a server for each channel the board lists" \
+        "RTT 0: open rtt 0 port $p of fw kept 60 gaps 0 opens 1 | RTT 1: open rtt 1 port $((p + 1)) of fw kept 51 gaps 0 opens 1"
+    path="$B:$PATH" farrun "command:Open the board's RTT;rttwait:RTT 1: open;wait:100"
+    logged "^pyocd"
+    got=$(printf '%s' "$got" | sed -E "s#@/there/.cache/blit/rtt/[0-9]+-fw.yaml#~/.cache/blit/rtt/PID-fw.yaml#")
+    check "its config written there, in the agent's cache" \
+        "pyocd gdbserver -t stm32f411ceux -u 004D00283133510F37363734 -M attach --persist --config ~/.cache/blit/rtt/PID-fw.yaml"
+    # (A machine without the tools: a login there whose PATH has none of them.)
+    for f in .profile .zprofile .bash_profile; do printf 'PATH="%s"\n' "$dir/none:/usr/bin:/bin" >"$T/$f"; done
+    board "$STLINK, \"debug\": \"openocd\", \"rtt\": true"
+    lines=20 farrun "command:Open the board's RTT;rttwait:driver fw;wait:1000;rttdump;wait:1000;rttdump;wait:1000;rttdump"  # (rttdump: what has come from there taken, as the window's loop would)
+    got=$(printf '%s' "$got" | grep -o "blit: openocd is not installed on [^~]*" | head -1 | sed 's/ *$//')
+    check "no OpenOCD there: said, naming that machine" "blit: openocd is not installed on box"
+    board '"probe": {"kind": "jlink", "serial": "000801234567", "usb": "1366:0105"}, "chip": "STM32H743ZI", "elf": "fw.elf", "rtt": { "port": '$((base + 40))' }'
+    farrun "command:Open the board's RTT;rttwait:RTT 0 (waiting);wait:500;key:ctrl+\`;text:\`;frame;termdump"
+    got=${got% @*}
+    check "a channel there that nothing serves: waited for, and why, through the agent" \
+        "[waiting for 127.0.0.1:$((base + 40)): connection refused on box, trying again]"
+    for f in .profile .zprofile .bash_profile; do printf 'PATH="%s:$PATH"\n' "$B" >"$T/$f"; done
+    pkill -9 -f "$agent" 2>/dev/null
+
     # ---------------------------------------------------------------- with a debug session: what each preset is told
     plan() {
         board "$1"

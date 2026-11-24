@@ -4050,11 +4050,24 @@ machine (`openocd is not installed on this Mac`).
 **Settings:** `blit.opt.rtt.line_end` (`"lf"`: what Return sends down an
 RTT channel in a new tab).
 
+**On another machine.** A board plugged into the machine of an ssh
+project is reached as one here: its tool runs there (the session's
+server, or the one "Open the board's RTT" starts, its missing program
+said with that machine's name), and each tab, and OpenOCD's driver,
+connects to its port there through blit's agent run as a TCP pump
+(`blit-agent --connect`; a channel nothing serves yet says `[waiting
+for 127.0.0.1:19021: connection refused on box, trying again]`). Its ELF
+is fetched here first, on a thread of its own, for the block's address,
+`defmt-print` and crash dumps; pyOCD's config is written there, in the
+agent's cache. The ports are chosen free here and taken to be free there
+too: a tool that finds one taken says so (`couldn't bind`), which is
+said. QEMU's output, written to a file there, and probe-rs's RTT, which
+comes as its DAP server's events, are not reached there: blit says so.
+
 **Limits:** checked against stand-ins shaped as each tool serves its
 ports, and on QEMU's mps2-an385 (semihosting, and defmt over it through
-`defmt-print`); not yet against a probe. A board on another machine:
-its ports there are not reached yet (blit says so; the link's way of
-connecting is the one place the agent's TCP pump will go in).
+`defmt-print`); a board on another machine against the stand-ins through
+the stand-in ssh.
 
 ## Tests
 

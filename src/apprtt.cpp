@@ -11,6 +11,13 @@
 //     Tcl port, J-Link's GDB server, pyOCD's gdb server, or probe-rs's DAP
 //     server, whose RTT comes as events.
 //
+// A board on another machine (an ssh project's): its tool runs there (the
+// session's server, or the one started for RTT alone), and each tab, and
+// OpenOCD's driver, connects to its port there through blit's agent run
+// as a TCP pump (forward_dial: blit-agent --connect). Its ELF is fetched
+// here first, on a worker, with its files there (pyOCD's config) written
+// (rtt_far), so that nothing waits on the main thread.
+//
 // OpenOCD's channels are not known until the control block is read, so a
 // driver (RttDriver) talks to its Tcl port: it sets RTT up, starts it again
 // until the program has made its block, lists the channels and starts a
@@ -34,6 +41,7 @@
 #include "dap.hpp"
 #include "elf.hpp"
 #include "flash.hpp"
+#include "forward.hpp"
 #include "fsio.hpp"
 #include "json.hpp"
 #include "linktab.hpp"
@@ -184,22 +192,54 @@ struct RttDriver {
 // errors kept, for why it ended.
 struct RttServer {
     std::string board, preset;
+    std::string host;  // ("" here) the machine it runs on: through the agent there
     Spawned proc;
+    std::shared_ptr<Remote> conn;
+    RemoteProc rproc;
     std::mutex mu;
     std::string err;  // (mu)
     std::atomic<bool> ended{false};
     int code = 0;
     std::jthread reader;
     ~RttServer() {
+        if (conn && rproc.id && !ended) conn->kill(rproc.id, SIGTERM);
         reader.request_stop();
         if (reader.joinable()) reader.join();
         spawn_end(proc);
+        if (conn && rproc.id) {
+            for (const int fd : {rproc.in, rproc.out, rproc.err})
+                if (fd >= 0) ::close(fd);
+            if (!ended) {  // (reaped on a thread of its own: it may be slow to end)
+                std::thread([c = conn, id = rproc.id] {
+                    if (c->wait(id, 1000) == -2) {
+                        c->kill(id, SIGKILL);
+                        c->wait(id, 3000);
+                    }
+                }).detach();
+            }
+        }
     }
+};
+
+// A board on another machine, made ready on a worker (rtt_far): its ELF
+// fetched here, its streams planned (their files there), and what to do
+// next on the main thread.
+struct RttFar {
+    std::string board, elf, local, why;
+    BoardStreams streams;
+    std::function<void()> then;
 };
 
 }  // namespace
 
 struct App::RttUi {
+    // Boards on another machine: ready on a worker, for the main thread
+    // (mu); and their ELFs' copies here, by their paths there.
+    std::mutex mu;
+    std::vector<RttFar> far_ready;
+    std::map<std::string, RttFar> far;  // by board: made ready, until its session or server takes it
+    std::map<std::string, std::string> elves;
+    std::vector<std::jthread> workers;
     std::vector<std::shared_ptr<RttDriver>> drivers;
     std::vector<std::shared_ptr<RttServer>> servers;
     // probe-rs's DAP server, for RTT on a running board: its events.
@@ -220,6 +260,10 @@ BoardStreams App::rtt_streams(const BuildTask& c, const std::string& elf, const 
     if (!split_remote(elf, &host, &there)) {
         std::string why;
         if (const auto e = Elf::read_file(elf, &why)) re = rtt_elf(*e);
+    } else if (rttui_) {  // (its copy here, fetched by rtt_far)
+        std::string why;
+        if (const auto it = rttui_->elves.find(elf); it != rttui_->elves.end())
+            if (const auto e = Elf::read_file(it->second, &why)) re = rtt_elf(*e);
     }
     // (Its files: pyOCD's config, QEMU's output; one set for each board and
     // each blit, in the cache.)
@@ -237,9 +281,10 @@ void App::rtt_serve(const BuildTask& c, const std::string& elf, const BoardStrea
     if (!rttui_) rttui_ = std::make_shared<RttUi>();
     RttUi& u = *rttui_;
     for (const std::string& n : s.notes) notify(n, 1);
-    std::string why;
-    if (!s.pyocd_config.empty() && !fs_write(s.pyocd_path, s.pyocd_config, &why)) notify("Cannot write " + s.pyocd_path + " for pyOCD's RTT: " + why, 1);
-    if (!s.server_out.empty() && !fs_write(s.server_out, "", &why)) notify("Cannot write " + s.server_out + " for the board's output: " + why, 1);  // (emptied: this session's alone)
+    std::string why, host, there;
+    const bool far = split_remote(elf, &host, &there);  // (its files there written on the worker that made it ready: rtt_far)
+    if (!far && !s.pyocd_config.empty() && !fs_write(s.pyocd_path, s.pyocd_config, &why)) notify("Cannot write " + s.pyocd_path + " for pyOCD's RTT: " + why, 1);
+    if (!far && !s.server_out.empty() && !fs_write(s.server_out, "", &why)) notify("Cannot write " + s.server_out + " for the board's output: " + why, 1);  // (emptied: this session's alone)
     for (const StreamPlan& p : s.tabs) rtt_tab(c, elf, p);
     // OpenOCD's driver: one for each board, pointed at this OpenOCD's Tcl port.
     std::erase_if(u.drivers, [&](const std::shared_ptr<RttDriver>& d) { return d->board == c.name; });
@@ -249,12 +294,13 @@ void App::rtt_serve(const BuildTask& c, const std::string& elf, const BoardStrea
         d->base = s.rtt_base;
         RttElf re;
         std::string unread;
-        if (const auto e = Elf::read_file(elf, &unread)) re = rtt_elf(*e);
+        if (const auto e = Elf::read_file(rtt_readable(elf), &unread)) re = rtt_elf(*e);
         d->addr = !c.board.rtt_address.empty() ? std::strtoull(c.board.rtt_address.c_str(), nullptr, 0) : re.addr;
         d->size = re.size;
         RttDriver* raw = d.get();
         Loopback::Options o;
         o.end.port = s.tcl_port;
+        if (far) o.dial = forward_dial(host);  // (its Tcl port there)
         Loopback::Events e;
         e.opened = [raw] { raw->opened(); };
         e.closed = [raw](const std::string&) { raw->closed(); };
@@ -292,9 +338,84 @@ u64 App::rtt_tab(const BuildTask& c, const std::string& elf, const StreamPlan& p
     spec.board = c.name;
     spec.plan = p;
     spec.pushed = p.pushed;
-    spec.elf = elf;
+    spec.elf = rtt_readable(elf);  // (defmt-print's, here: an ELF there by its copy here)
     spec.dir = build_root();
+    std::string host, there;
+    if (split_remote(elf, &host, &there) && !p.pushed) spec.dial = forward_dial(host);  // (its port there, through the agent)
     return term_open_link(std::move(spec), crash_options_of(&c), false);
+}
+
+// An ELF's path to read here: its copy here when it is on another machine
+// and has been fetched (rtt_far), else itself.
+std::string App::rtt_readable(const std::string& elf) {
+    if (!is_remote(elf) || !rttui_) return elf;
+    const auto it = rttui_->elves.find(elf);
+    return it == rttui_->elves.end() ? elf : it->second;
+}
+
+// A board on another machine made ready on a worker, then `then` on the
+// main thread (rtt_sync): its ELF fetched to a file here (for the block's
+// address, defmt-print and crash dumps), its streams planned with their
+// files there (pyOCD's config written there, a folder of the agent's
+// cache), and what cannot be reached there said: a tool that writes its
+// output to a file there (QEMU's), or connects out to blit.
+void App::rtt_far(const BuildTask& c, const std::string& elf, const std::string& preset, bool standalone, std::function<void()> then) {
+    if (!rttui_) rttui_ = std::make_shared<RttUi>();
+    RttUi& u = *rttui_;
+    std::erase_if(u.workers, [](const std::jthread& w) { return !w.joinable(); });
+    const std::string name = c.name, local_dir = cache_dir() + "/rtt";
+    RttUi* raw = &u;
+    u.workers.emplace_back([raw, c, elf, preset, standalone, name, local_dir, then = std::move(then)](std::stop_token stop) {
+        RttFar f;
+        f.board = name;
+        f.elf = elf;
+        f.then = then;
+        std::string host, there, why;
+        split_remote(elf, &host, &there);
+        // The ELF, here.
+        std::string bytes;
+        fs_mkdirs(local_dir, &why);
+        u64 h = 1469598103934665603ull;
+        for (const char ch : elf) h = (h ^ static_cast<u8>(ch)) * 1099511628211ull;
+        char hex[24];
+        std::snprintf(hex, sizeof hex, "%016llx", static_cast<unsigned long long>(h));
+        const std::string copy = local_dir + "/far-" + hex + ".elf";
+        if (fs_read_whole(elf, &bytes, &why, Elf::kMaxFile, stop) && fs_write(copy, bytes, &why)) f.local = copy;
+        else f.why = "Cannot read " + there + " on " + host + " for the board's RTT: " + why;
+        // Its streams: its files in the agent's cache there.
+        const std::shared_ptr<Remote> r = remote_for(elf, &there, kRemoteWaitMs);
+        const std::string home = r ? r->home() : std::string();
+        RttElf re;
+        if (!f.local.empty())
+            if (const auto e = Elf::read_file(f.local, &why)) re = rtt_elf(*e);
+        std::string files, file_name;
+        for (const char ch : name) file_name += (ch >= 'a' && ch <= 'z') || (ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') ? ch : '-';
+        if (!home.empty()) {
+            files = home + "/.cache/blit/rtt";
+            if (!fs_mkdirs(remote_path(host, files), &why)) f.streams.notes.push_back("Cannot make " + files + " on " + host + ": " + why);
+            files += "/" + std::to_string(::getpid()) + "-" + file_name;
+        }
+        // (Its ports: free here, and taken to be free there too; a tool
+        // that finds one taken says so, "couldn't bind", which is said.)
+        f.streams = board_streams(c.board, preset, re, fresh_port, files, standalone);
+        std::vector<StreamPlan> kept;
+        for (StreamPlan& p : f.streams.tabs) {
+            if (!p.file.empty() || p.listen) {
+                f.streams.notes.push_back(p.name + " on " + host + " is not reached from here: " + (p.listen ? "its tool connects out to this machine" : "its tool writes it to a file there"));
+                continue;
+            }
+            kept.push_back(std::move(p));
+        }
+        f.streams.tabs = std::move(kept);
+        if (!f.streams.pyocd_config.empty() && !fs_write(remote_path(host, f.streams.pyocd_path), f.streams.pyocd_config, &why))
+            f.streams.notes.push_back("Cannot write " + f.streams.pyocd_path + " on " + host + " for pyOCD's RTT: " + why);
+        if (!f.why.empty()) f.streams.notes.insert(f.streams.notes.begin(), f.why);
+        {
+            std::lock_guard lock(raw->mu);
+            raw->far_ready.push_back(std::move(f));
+        }
+        wake();
+    });
 }
 
 
@@ -307,10 +428,28 @@ void App::rtt_session(const BuildTask& c, const std::string& elf, bool attach, B
     const Board& b = c.board;
     if (!b.rtt && !b.semihosting) return;
     std::string host, there;
-    if (split_remote(elf, &host, &there)) return notify(c.name + "'s board is on " + host + ": its RTT and semihosting ports there are not reached from here yet", 1);
+    if (split_remote(elf, &host, &there)) {  // (made ready before the session began: rtt_session_ready)
+        if (!rttui_ || !rttui_->far.contains(c.name)) return;
+        const BoardStreams s = rttui_->far[c.name].streams;
+        rttui_->far.erase(c.name);  // (the next session fetches the ELF again: it may have been built anew)
+        *plan = board_debug(b, there, attach, flash_tool_for(b).empty(), &s);  // (as its machine has it)
+        rtt_serve(c, elf, s);
+        return;
+    }
     const BoardStreams s = rtt_streams(c, elf, plan->preset, false);
     *plan = board_debug(b, elf, attach, flash_tool_for(b).empty(), &s);
     rtt_serve(c, elf, s);
+}
+
+// Whether a board's session can begin now: true, unless its RTT or
+// semihosting is on and it is on another machine, whose ELF and streams
+// are made ready first (rtt_far), `go` then called again.
+bool App::rtt_session_ready(const BuildTask& c, const std::string& elf, const std::string& preset, std::function<void()> go) {
+    const Board& b = c.board;
+    if ((!b.rtt && !b.semihosting) || !is_remote(elf)) return true;
+    if (rttui_ && rttui_->far.contains(c.name)) return true;
+    rtt_far(c, elf, preset, false, std::move(go));
+    return false;
 }
 
 // ---------------------------------------------------------------- on its own
@@ -325,8 +464,9 @@ void App::rtt_open() {
     const BuildTask c = *found;
     const Board& b = c.board;
     const std::string root = build_root();
-    if (is_remote(root)) return notify(c.name + "'s board is on another machine: its RTT is not reached from here yet", 1);
     const std::string elf = b.elf.empty() ? c.program : b.elf[0] == '/' ? b.elf : root + "/" + b.elf;
+    std::string host, there;
+    const bool far = split_remote(root, &host, &there);
     const std::string preset = board_preset(b);
     if (preset.empty()) return notify(c.name + "'s board names no debug preset (board.debug), and its probe says none", 1);
     if (!rttui_) rttui_ = std::make_shared<RttUi>();
@@ -342,9 +482,27 @@ void App::rtt_open() {
     rb.rtt = true;
     BuildTask rc = c;
     rc.board = rb;
+    if (preset == "probe-rs" && far) return notify("probe-rs's RTT comes as its DAP server's events, which blit reads here: on " + host + " use the openocd, jlink or pyocd preset", 1);
     if (preset == "probe-rs") return rtt_probe_rs(rc, elf);
     if (preset == "qemu" || preset == "renode" || preset == "blackmagic") return notify("The " + preset + " preset has no RTT blit reaches", 1);
-    const BoardStreams s = rtt_streams(rc, elf, preset, true);
+    if (far) {  // (its ELF and files made ready on a worker first)
+        if (!u.far.contains(c.name)) return rtt_far(rc, elf, preset, true, [this] { rtt_open(); });
+        const BoardStreams s = u.far[c.name].streams;
+        u.far.erase(c.name);
+        return rtt_start(rc, elf, preset, s);
+    }
+    rtt_start(rc, elf, preset, rtt_streams(rc, elf, preset, true));
+}
+
+// A board's tool started for RTT alone, on the machine it is on, with its
+// streams' words; and its tabs.
+void App::rtt_start(const BuildTask& rc, const std::string& elf, const std::string& preset, const BoardStreams& s) {
+    const BuildTask& c = rc;
+    const Board& b = c.board;
+    RttUi& u = *rttui_;
+    const std::string root = build_root();
+    std::string host, there;
+    const bool far = split_remote(root, &host, &there);
     if (!s.any()) {
         for (const std::string& n : s.notes) notify(n, 1);
         return;
@@ -379,7 +537,44 @@ void App::rtt_open() {
     auto srv = std::make_shared<RttServer>();
     srv->board = c.name;
     srv->preset = preset;
+    srv->host = host;
     std::string why;
+    if (far) {  // (there, through the agent: its errors read, its output too, so that it never waits to write)
+        srv->conn = remote_for(root, &there, 0);
+        if (!srv->conn) return notify("Cannot start " + tool + " on " + host + ": " + remote_error(root), 1);
+        if (!srv->conn->spawn({"/bin/sh", "-c", sh}, there, {}, &srv->rproc, &why)) return notify("Cannot start " + tool + " on " + host + ": " + why, 1);
+        RttServer* raw = srv.get();
+        srv->reader = std::jthread([raw](std::stop_token stop) {
+            char buf[4096];
+            bool out = true, err = true;
+            while (!stop.stop_requested() && (out || err)) {
+                pollfd p[2] = {{out ? raw->rproc.out : -1, POLLIN, 0}, {err ? raw->rproc.err : -1, POLLIN, 0}};
+                if (::poll(p, 2, 200) <= 0) continue;
+                for (int i = 0; i < 2; ++i) {
+                    if (!(p[i].revents & (POLLIN | POLLHUP | POLLERR))) continue;
+                    const ssize_t k = ::read(p[i].fd, buf, sizeof buf);
+                    if (k > 0 && i == 1) {
+                        std::lock_guard lock(raw->mu);
+                        raw->err.append(buf, static_cast<size_t>(k));
+                        if (raw->err.size() > 16384) raw->err.erase(0, raw->err.size() - 16384);
+                    } else if (k <= 0 && !(k < 0 && errno == EAGAIN)) {
+                        (i == 0 ? out : err) = false;
+                    }
+                }
+            }
+            if (stop.stop_requested()) return;
+            int st;
+            while ((st = raw->conn->wait(raw->rproc.id, 200)) == -2)
+                if (stop.stop_requested()) return;
+            raw->code = st;
+            raw->ended = true;
+            wake();
+        });
+        u.servers.push_back(std::move(srv));
+        rtt_serve(rc, elf, s);
+        notify("RTT on " + c.name + "'s board through " + preset + " on " + host);
+        return;
+    }
     srv->proc = spawn_piped({"/bin/sh", "-c", sh}, root, false, false, true, &why);
     if (srv->proc.pid < 0) return notify("Cannot start " + tool + ": " + why, 1);
     RttServer* raw = srv.get();
@@ -471,6 +666,17 @@ void App::rtt_probe_rs(const BuildTask& c, const std::string& elf) {
 void App::rtt_sync() {
     if (!rttui_) return;
     RttUi& u = *rttui_;
+    std::vector<RttFar> ready;
+    {
+        std::lock_guard lock(u.mu);
+        ready.swap(u.far_ready);
+    }
+    for (RttFar& f : ready) {  // (boards on another machine made ready: what was waiting for them, done)
+        if (!f.local.empty()) u.elves[f.elf] = f.local;
+        const std::function<void()> then = std::move(f.then);
+        u.far[f.board] = std::move(f);
+        if (then) then();
+    }
     for (const std::shared_ptr<RttDriver>& d : u.drivers) {
         std::vector<RttChannel> found;
         std::vector<u16> ports;
@@ -491,7 +697,7 @@ void App::rtt_sync() {
         const std::string elf = c->board.elf.empty() ? c->program : c->board.elf[0] == '/' ? c->board.elf : root + "/" + c->board.elf;
         RttElf re;
         std::string why;
-        if (const auto e = Elf::read_file(elf, &why)) re = rtt_elf(*e);
+        if (const auto e = Elf::read_file(rtt_readable(elf), &why)) re = rtt_elf(*e);
         for (size_t i = 0; i < found.size() && i < ports.size(); ++i) {
             const RttChannel& ch = found[i];
             StreamPlan p;
@@ -521,7 +727,7 @@ void App::rtt_sync() {
             std::string names = err.substr(m + 14, err.find('\n', m) - m - 14);
             for (char& ch : names)
                 if (ch == ' ') ch = '|';
-            why = board_missing(names, {});
+            why = board_missing(names, s.host);
         } else {
             while (!err.empty() && (err.back() == '\n' || err.back() == '\r')) err.pop_back();
             why = s.preset + " ended (exit " + std::to_string(s.code) + ")" + (err.empty() ? std::string() : ": " + err.substr(err.rfind('\n') == std::string::npos ? 0 : err.rfind('\n') + 1));

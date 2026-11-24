@@ -1608,6 +1608,9 @@ void App::debug_board(bool attach) {
 // the configuration's own arguments laid over the preset's and its own
 // commands after the preset's.
 void App::debug_board_begin(const BuildTask& c, const BoardDebug& planned, const std::string& elf, bool attach) {
+    // (A board on another machine with RTT or semihosting: its ELF and
+    // streams made ready first, on a worker: apprtt.cpp.)
+    if (!rtt_session_ready(c, elf, planned.preset, [this, c, planned, elf, attach] { debug_board_begin(c, planned, elf, attach); })) return;
     DebugUi& u = *debugui_;
     // (Its RTT and semihosting tabs, before the debugger starts: apprtt.cpp.)
     BoardDebug plan = planned;

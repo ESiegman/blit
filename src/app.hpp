@@ -1303,6 +1303,12 @@ private:
     u64 rtt_tab(const BuildTask& c, const std::string& elf, const StreamPlan& p);
     void rtt_session(const BuildTask& c, const std::string& elf, bool attach, BoardDebug* plan);
     void rtt_open();
+    void rtt_start(const BuildTask& c, const std::string& elf, const std::string& preset, const BoardStreams& s);
+    // A board on another machine (its ELF there): made ready on a worker
+    // (its ELF fetched here, its streams' files there), then `then`.
+    void rtt_far(const BuildTask& c, const std::string& elf, const std::string& preset, bool standalone, std::function<void()> then);
+    bool rtt_session_ready(const BuildTask& c, const std::string& elf, const std::string& preset, std::function<void()> go);
+    std::string rtt_readable(const std::string& elf);
     void rtt_stop();
     void rtt_probe_rs(const BuildTask& c, const std::string& elf);
     void rtt_sync();
