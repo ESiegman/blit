@@ -3488,7 +3488,8 @@ and the summary is `Flashed in 54.0 s, verified` (the time
 ### Crash dumps decoded
 
 When a firmware crashes and its dump comes out in a task's or a run's
-output, each address in it is told as its function and line of source,
+output, or in a serial tab (see "The serial monitor"), each address in
+it is told as its function and line of source,
 in dim lines under the line that gave it, and the innermost frame of the
 project's own code is a problem (`Crash at motor.c:9 in store
 (StoreProhibited)`), its frames the problem's notes:
@@ -3525,7 +3526,8 @@ Cmd+click on one opens its place. The dumps read:
 
 The ELF is the board's `elf` of the task's run configuration (for a
 task of the Build tab's, of the one the Run button runs, else the first
-with a board), else the newest `*.elf` or `*.axf` the build made in the
+with a board; for a serial tab, of the configuration whose board's port
+it is), else the newest `*.elf` or `*.axf` the build made in the
 project (`.pio` included). blit reads it itself (ELF32 and ELF64,
 DWARF 2 to 5, sections compressed with zlib; no `addr2line` is run), when
 a dump first needs it, and keeps it until it changes; a unit's line
@@ -3601,6 +3603,26 @@ the one on show, else the only one open):
 | Reset the board through DTR/RTS (ESP32) | both off, then RTS on with DTR off (EN low, IO0 high) for 0.2 s, then RTS off: esptool's hard reset, through a bridge's transistors (a CH343, a CP2102) or the ESP32-S3's USB-Serial/JTAG |
 | Reset the board through DTR (Arduino) | DTR and RTS off for 0.25 s, then on: the auto-reset capacitor's edge, as avrdude makes it |
 | Send a break to the serial port | a break condition |
+
+**Crash dumps** the board prints are decoded in place, as in a run's
+output (see "Crash dumps decoded"): each address of an ESP-IDF panic's
+backtrace (or of the board's own format, `crash` in its run
+configuration) told as its function and line, in dim lines under the
+dump's line, each a Cmd+click place; they are kept with what the tab
+keeps, drawn again with times or hex turned off and on, and written
+into its log right under the dump's line. The ELF is the board's `elf`
+of the run configuration whose board's monitor the tab is ("Open the
+board's serial monitor"), or, for a port chosen from the picker or
+typed, of the configuration whose board's `serial.port` (or probe's
+serial number) it is; else the newest ELF the build made. The crash is
+a problem in the Problems tab under the tab's own heading
+(`cu.usbmodem1101 115200`), apart from the runs', counted again each
+time it comes again (a board that crashes at each start), counted in
+the status bar and gone to with F8 (F8 is blit's in a serial tab, not
+the board's); its problems stay while the tab is open, the port gone or
+not, and go when it closes. The dump is read on the port's own thread,
+before the tab is drawn, so reading a large ELF the first time never
+holds up drawing.
 
 Cmd+K clears the tab and what it keeps (the board is sent nothing). The
 tab keeps the last 8 MB the board sent, with when each part came, which

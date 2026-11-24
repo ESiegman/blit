@@ -1,7 +1,8 @@
 // Crash dumps in a task's or a run's output decoded (crashscan.hpp): the
 // ELF they are decoded against, and the program's own panic formats. The
 // ELF is the board's image of the run configuration (the task's own, if it
-// is one; else the one the Run button runs, else the first with a board),
+// is one; else the one the Run button runs, else the first with a board;
+// a serial tab's, the configuration whose board's port it is: appserial.cpp),
 // else the newest ELF the build made (*.elf, *.axf) under the folder. It is
 // read when a dump first needs it, on the thread reading the output: here,
 // or from the project's machine through the connection (the agent reading
@@ -112,12 +113,17 @@ std::shared_ptr<const AddrSource> elf_source(const std::string& path, std::strin
 }  // namespace
 
 CrashOptions App::crash_options(const BuildTask* task, const std::string& cmd) {
-    CrashOptions o;
-    o.root = build_root();
-    o.quiet = CrashScan::decodes_itself(cmd);
     // The run configuration whose board and patterns these are.
     const BuildTask* c = task && task->config ? task : board_config();
     if (!c) c = run_config();
+    CrashOptions o = crash_options_of(c);
+    o.quiet = CrashScan::decodes_itself(cmd);
+    return o;
+}
+
+CrashOptions App::crash_options_of(const BuildTask* c) {
+    CrashOptions o;
+    o.root = build_root();
     std::string elf;
     if (c) {
         o.patterns = c->crash;

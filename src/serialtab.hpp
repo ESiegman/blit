@@ -18,7 +18,8 @@
 // Threads: the tab's reader (TermView::serial_loop) opens the port, reads
 // it and does what is asked of the port's lines; the main thread asks. All
 // that is shared is under the tab's mutex, which the Term's drawing holds
-// too.
+// too, but the recogniser of lines (SerialScan), which has a mutex of its
+// own and is told the lines before the tab's is taken.
 #include <atomic>
 #include <cstdio>
 #include <deque>
@@ -60,14 +61,18 @@ enum class SerialReturn : u8 { kCR, kLF, kCRLF };
 const char* serial_return_name(SerialReturn r);  // "CR", "LF", "CR LF"
 bool serial_return_parse(std::string_view s, SerialReturn* r);  // "cr", "lf", "crlf", "cr lf" (any case)
 
-// A recogniser of lines (the crash decoder's place, E7): told each whole
-// line the device sends (without its line end), on the reader's thread as
-// it comes; the lines it adds go after that line, dim, in the tab, what is
-// kept of it, and its log. Attached with SerialTab::set_scan; with none,
-// lines are not put together at all.
+// A recogniser of lines (the crash decoder's place, E7: appterm.cpp's
+// SerialCrash): told each whole line the device sends (without its line
+// end, escapes and all), on the reader's thread as it comes, before the
+// tab's mutex is taken (so that it may take its time: read an ELF); the
+// lines it adds, plain text, go after that line, dim, in the tab, what is
+// kept of it, and its log. Told when the port goes, too (a reset): what it
+// was in the middle of is over. Attached with SerialTab::set_scan; with
+// none, lines are not put together at all.
 struct SerialScan {
     virtual ~SerialScan() = default;
     virtual void line(std::string_view text, u64 wall_ns, std::vector<std::string>* add) = 0;
+    virtual void gone() {}
 };
 
 class SerialTab {
@@ -183,7 +188,7 @@ private:
     void rebuild();
     void log_bytes(const char* p, size_t n, u64 ns);
     void log_line(const std::string& text, u64 ns);
-    void scan_lines(const char* p, size_t n, u64 ns);
+    void scan_lines(const char* p, size_t n, u64 ns);  // (scan_mu_: into notes_)
 
     std::mutex& mu_;
     Term& term_;
@@ -229,8 +234,15 @@ private:
     std::string log_path_;
     bool log_line_start_ = true;
 
+    // The recogniser, and the line it is to be told once it ends: the
+    // reader's, under their own mutex (set from the main thread), never
+    // under the tab's. The lines it added to a piece of what came, each
+    // after which byte of it (the reader's).
+    std::mutex scan_mu_;
     std::unique_ptr<SerialScan> scan_;
     std::string scan_line_;
+    std::vector<std::string> scan_add_;
+    std::vector<std::pair<size_t, std::string>> notes_;
 };
 
 }  // namespace blit

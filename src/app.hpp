@@ -1223,13 +1223,15 @@ private:
     // run configuration's board (else the newest the build made), and its
     // panic formats (appcrash.cpp).
     CrashOptions crash_options(const BuildTask* task, const std::string& cmd);
+    CrashOptions crash_options_of(const BuildTask* config);  // (that run configuration's alone; none: the newest ELF, no patterns)
     i64 term_pid(u64 doc);          // its program's process here, while it runs (0: there, ended, or none)
     std::string term_tty(u64 doc);  // its terminal's device here ("/dev/ttys003"; "": there, or none)
     void term_stop(u64 doc, bool hard);  // its program ended (hard: killed), its tab and text kept, saying it was stopped
     // A serial monitor's tab (appterm.cpp): a terminal whose program is the
-    // device on a port, in the terminals' split; a tab's, if it is one; every
-    // one, hidden ones too; and bytes to a terminal's program, as typed.
-    u64 term_open_serial(const SerialPortId& id, const SerialConfig& cfg, SerialReturn ret);
+    // device on a port, in the terminals' split (its crash dumps decoded as
+    // `crash` says); a tab's, if it is one; every one, hidden ones too; and
+    // bytes to a terminal's program, as typed.
+    u64 term_open_serial(const SerialPortId& id, const SerialConfig& cfg, SerialReturn ret, const CrashOptions& crash);
     std::shared_ptr<SerialTab> term_serial(const Doc& d);
     std::vector<std::pair<Doc*, std::shared_ptr<SerialTab>>> term_serials();
     void term_send(const Doc& d, std::string_view bytes);
@@ -1245,6 +1247,10 @@ private:
     void serial_sync();
     void serial_settle();  // (the tests: the listing waited for)
     void serial_board();
+    // A serial tab opened, its crash dumps decoded with the ELF and patterns
+    // of `board` (the run configuration whose board's monitor it is), else
+    // of the one whose board's port it is, else with the newest ELF.
+    void serial_open(const SerialPortId& id, const SerialConfig& cfg, SerialReturn ret, const BuildTask* board);
     std::shared_ptr<SerialTab> serial_here(Doc** doc = nullptr, bool say = true);  // (say: none is said)
     void serial_speed_pick();
     void serial_return_pick();
@@ -1360,6 +1366,7 @@ private:
     void term_mouse_up();
     bool term_wheel(const SDL_MouseWheelEvent& w);
     std::string term_dump();
+    std::string term_dim_dump();  // (tests: the rows written dim, every cell with something in it)
     bool term_wait(const std::string& text);
     bool term_wait_last(const std::string& text);  // (tests: the last row with anything on it is that, trimmed: a fresh prompt)
     // A terminal's stored lines, taken again if they have changed since
@@ -1537,6 +1544,7 @@ private:
     u64 build_run_on(const std::string& row, const std::string& dir, const BuildTask& task);
     void build_note(const std::string& row, const std::string& words);
     const BuildTask* board_config();  // the Run button's run configuration if it has a board, else the first that has one
+    const BuildTask* board_config_on(const SerialPortId& port);  // the one whose board's serial port that is (its serial.port, or its probe's serial number), if one is
     void build_run(int index);
     void build_option(int row);  // a task of the Build tab's (-1: the Run button's)
     bool build_run_named(const std::string& name);
@@ -1571,6 +1579,9 @@ private:
     // the run's heading, counted in the status bar (and the last run's on
     // the Run button); gone with the run's tab, or when it runs again.
     void build_found(u64 doc, std::vector<BuildProblem> found);
+    // And a serial tab's crashes (its dumps, decoded: appterm.cpp), under
+    // the tab's title, kept while it is open; the title as it changes ("(gone)").
+    void build_crashes(u64 doc, const std::string& title, std::vector<BuildProblem> found);
     // And the tests' results it gave, for the Tests tab, and what it came to
     // (outcome, when that changed), for its task's row and the Run button.
     void build_outcome(u64 doc, std::vector<BuildScan::TestResult> results, const BuildScan::Outcome* outcome);

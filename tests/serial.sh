@@ -9,7 +9,9 @@
 # the same bytes, the port gone and found again by its serial number at
 # another path with a line marking the gap, let go of around a flash, the
 # picker, the board's monitor in one step, speed and framing, a log, a file
-# sent, DTR and RTS (a pseudo-terminal has neither: said), a port in use.
+# sent, DTR and RTS (a pseudo-terminal has neither: said), a port in use;
+# crash dumps the board prints decoded in place (with the ELF of the run
+# configuration whose board's port it is) and its crashes in Problems.
 #
 #   tests/serial.sh path/to/blit            run the cases
 #   tests/serial.sh path/to/blit --print    show what each case gives
@@ -27,6 +29,7 @@ stop_fake() {
 trap 'stop_fake; rm -rf "$dir"' EXIT
 command -v python3 >/dev/null || { echo "serial.sh: python3 is not installed (the fake device is a Python script)"; exit 1; }
 printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\n' >"$dir/init.lua"
+real_home=$HOME  # (where Arm's toolchain may be: the crash dumps' firmware)
 export BLIT_INIT="$dir/init.lua" BLIT_RECENT_FILE="$dir/recent" HOME="$dir/home"
 mkdir -p "$HOME"
 DEV="$dir/dev" USB="$dir/usb" CTL="$dir/ctl" HEARD="$dir/heard" P="$dir/proj"
@@ -71,14 +74,15 @@ check() {
 # run SCRIPT: blit with the device started afresh; the last line it printed,
 # the folder written @, times as HH:MM:SS.mmm and spans as N s. In the
 # script, "fake:WORDS" tells the device WORDS (a line to its fifo). (size,
-# init and path, set before it: the window, init.lua and PATH of one run.)
+# init, path and lines, set before it: the window, init.lua and PATH of one
+# run, and how many of its last lines to take, joined by " ~ ".)
 port="$DEV/ttyACM9"
 run() {
     start_fake
     script=$(printf '%s' "$1" | sed -e "s#fake:\([^;]*\)#lua:local f=io.open('$CTL','w') f:write('\1\\\\n') f:close()#g")
     got=$(BLIT_INIT="${init:-$dir/init.lua}" PATH="${path:-$PATH}" "$blit" --offscreen "${size:-1200x1400}" --shot "$dir/shot.bmp" --script "workdir:$P;frame;$script" 2>&1 >/dev/null |
-        sed -E -e "s#$dir#@#g" -e 's/[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}/HH:MM:SS.mmm/g' -e 's/[0-9]+\.[0-9] s/N s/g' | tail -1)
-    size= init= path=
+        sed -E -e "s#$dir#@#g" -e 's/[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}/HH:MM:SS.mmm/g' -e 's/[0-9]+\.[0-9] s/N s/g' | tail -n "${lines:-1}" | awk 'NR > 1 { printf " ~ " } { printf "%s", $0 }')
+    size= init= path= lines=
 }
 # What the device has been sent, a byte a word (od -c's way: \r, 001).
 heard() { got=$(od -An -c "$HEARD" 2>/dev/null | tr -s ' \n' ' ' | sed -e 's/^ //' -e 's/ $//'); }
@@ -225,6 +229,124 @@ check "a line that cannot be set: said" "blit: Cannot set DTR and RTS on ttyACM9
 run "$open;command:Log the serial port to a file…;key:ctrl+u;text:$dir/board.log;key:Return;fake:ticks 2;termwait:tick 2;fake:hangup;serialstate:gone;command:Stop logging the serial port"
 got="$(sed -E -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}/DATE TIME/' -e 's/[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}/HH:MM:SS.mmm/g' "$dir/board.log" | tr '\r\n' '<|')$got"
 check "a log: each line after its date and time, the gap's line too" "DATE TIME tick 1<|DATE TIME tick 2<|DATE TIME [gone at HH:MM:SS.mmm (hung up)]|blit: Logged to @/board.log"
+
+# ---------------------------------------------------------------- crash dumps, decoded in place
+
+# The firmware, as tests/crash.sh builds it from tests/elf's sources (for a
+# Cortex-M0+ with Arm's toolchain, else on Linux for this machine), the
+# project's own code in main/; its addresses: the null store (inlined into
+# pid_step), the call in motor_run, the call in main. A second build of the
+# same in other/, made after it (the newest ELF): the same addresses, its
+# frames in other/'s files.
+P="$dir/fw"
+gcc=$(command -v arm-none-eabi-gcc 2>/dev/null || ls -d "$real_home"/.local/opt/arm-gnu-toolchain-*/bin/arm-none-eabi-gcc 2>/dev/null | head -1)
+elftest="$(cd "$(dirname "$blit")" && pwd)/blit_elf_test"
+firmware() {  # firmware FOLDER NAME
+    mkdir -p "$1/main" "$1/build"
+    cp "$here/elf/main.c" "$here/elf/motor.c" "$here/elf/motor.h" "$1/main/"
+    if [ -n "$gcc" ]; then
+        (cd "$1" && "$gcc" -mcpu=cortex-m0plus -mthumb -O2 -g -nostdlib -e _start main/main.c main/motor.c -o "build/$2")
+    elif [ "$(uname -s)" = Linux ] && command -v cc >/dev/null; then
+        (cd "$1" && cc -O2 -g -nostdlib -static -no-pie -fno-stack-protector -e _start main/main.c main/motor.c -o "build/$2")
+    fi
+}
+mkdir -p "$P/.blit"
+firmware "$P" fw.elf
+if [ ! -f "$P/build/fw.elf" ] || [ ! -x "$elftest" ]; then
+    echo "SKIP: serial.sh's crash dumps need arm-none-eabi-gcc (or, on Linux, cc) to build a firmware, and $elftest"
+else
+    at() { "$elftest" at "$P/build/fw.elf" "$@" | sed 's/^0x//'; }
+    STORE=$(at motor.c 9) CALL=$(at motor.c 22) MAIN=$(at main.c 14)
+    # (Addresses compared without their leading zeros: an ELF64's are 16 digits.)
+    x() { printf '0x%x' "0x$1"; }
+    short() { got=$(printf '%s' "$got" | sed -E 's/0x0+([0-9a-f])/0x\1/g'); }
+    # ESP-IDF's panic as a board prints it (crashscan.cpp cites its source).
+    dump() {
+        printf "Guru Meditation Error: Core  0 panic'ed (StoreProhibited). Exception was unhandled.\r\n\r\n"
+        printf 'Backtrace: %s:0x3fc9a0a0 %s:0x3fc9a0c0 %s:0x3fc9a0e0 0x40379a2d:0x3fc9a100\r\n\r\n' "$(x "$STORE")" "$(x "$CALL")" "$(x "$MAIN")"
+        printf 'ELF file SHA256: 2bd7d9c6b\r\nRebooting...\r\n'
+    }
+    { printf 'tick 1\r\n'; dump; printf 'boot\r\n'; } >"$dir/dump1"
+    { dump; printf 'boot\r\n'; dump; printf 'boot again\r\n'; } >"$dir/dump2"
+    backtrace="Backtrace: $(x "$STORE"):0x3fc9a0a0 $(x "$CALL"):0x3fc9a0c0 $(x "$MAIN"):0x3fc9a0e0 0x40379a2d:0x3fc9a100"
+    frames() {  # the decoded lines, their files in folder $1
+        printf '%s' "$(x "$STORE"): store at $1/motor.c:9| (inlined by) pid_step at $1/motor.c:15|$(x "$CALL"): motor_run at $1/motor.c:22|$(x "$MAIN"): main at $1/main.c:14"
+    }
+    decoded=$(frames @/fw/main)
+    printf '{"configurations": [{"name": "fw", "program": "build/fw.elf", "board": {"elf": "build/fw.elf", "serial": {"port": "%s", "baud": 230400}}}]}\n' "$port" >"$P/.blit/run.json"
+    board="command:Open the board's serial monitor;frame;serialstate:open"
+    wide=4800x2400  # (each decoded line on a row of its own)
+
+    size=$wide
+    run "$board;fake:file $dir/dump1;termwait:boot;termdump"
+    got=${got% @*}
+    short
+    check "the board's monitor: each PC of a backtrace decoded under its line, with the board's ELF" \
+        "tick 1|Guru Meditation Error: Core  0 panic'ed (StoreProhibited). Exception was unhandled.|$backtrace|$decoded|ELF file SHA256: 2bd7d9c6b|Rebooting...|boot"
+    size=$wide
+    run "$board;fake:file $dir/dump1;termwait:boot;termdimdump"
+    short
+    check "the decoded lines dim, whole, and only they" "$decoded"
+    size=$wide
+    run "$board;fake:file $dir/dump1;termwait:boot;command:Show the serial port's bytes as hex, or as text;command:Show the serial port's bytes as hex, or as text;frame;termdimdump"
+    short
+    check "drawn again from what is kept: still under it, still dim" "$decoded"
+    run "$board;fake:file $dir/dump1;termwait:boot;problemsdump"
+    check "the crash a problem under the serial tab's heading, at the project's own innermost frame" \
+        "button: ▶ fw | ttyACM9 230400 1 | file main/motor.c | >▸E 9:13 Crash at motor.c:9 in store (StoreProhibited)"
+    run "$board;fake:file $dir/dump2;termwait:boot again;problemsdump"
+    check "the same crash again: counted" \
+        "button: ▶ fw | ttyACM9 230400 1 | file main/motor.c | >▸E 9:13 Crash at motor.c:9 in store (StoreProhibited) ×2"
+    size=$wide
+    run "$board;fake:file $dir/dump1;termwait:boot;termclick:main/motor.c:22;frame;statusdump"
+    got=${got% LF *}
+    check "Cmd+click on a decoded line opens its place; the status bar counts the crash" "NORMAL main/motor.c | × 1 ▲ 0 Ln 22, Col 1 Spaces: 4"
+    run "$board;fake:file $dir/dump1;termwait:boot;key:F8;frame;statusdump"
+    got=${got% LF *}
+    check "F8 from the serial tab goes to the crash" "NORMAL main/motor.c | × 1 ▲ 0 Ln 9, Col 13 Spaces: 4"
+    lines=2
+    run "$board;fake:file $dir/dump1;termwait:boot;problemsdump;command:Close the tab;frame;problemsdump"
+    check "the tab closed: its crashes go" \
+        "button: ▶ fw | ttyACM9 230400 1 | file main/motor.c | >▸E 9:13 Crash at motor.c:9 in store (StoreProhibited) ~ button: ▶ fw | file 0"
+    run "$board;fake:file $dir/dump1;termwait:boot;fake:hangup;serialstate:gone;problemsdump"
+    check "the port gone: they stay, under the tab's heading as it is now" \
+        "button: ▶ fw | ttyACM9 230400 (gone) 1 | file main/motor.c | >▸E 9:13 Crash at motor.c:9 in store (StoreProhibited)"
+    run "$board;command:Log the serial port to a file…;key:ctrl+u;text:$dir/crash.log;key:Return;fake:file $dir/dump1;termwait:boot;command:Stop logging the serial port"
+    got=$(sed -E -e 's/^[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3} //' -e "s#$dir#@#g" "$dir/crash.log" | tr -d '\r' | sed -n '/^Backtrace/,/^ELF/p' | tr '\n' '|')
+    short
+    check "the log: the decoded lines right under the dump's line" "$backtrace|$decoded||ELF file SHA256: 2bd7d9c6b|"
+
+    # Opened from the picker: the ELF of the configuration whose board's port
+    # it is, not the newest the build made.
+    firmware "$P/other" newer.elf
+    size=$wide
+    run "command:Open a serial port…;serialwait;key:Return;frame;serialstate:open;fake:file $dir/dump1;termwait:boot;termdimdump"
+    short
+    check "a port from the picker that is a board's: decoded with that board's ELF" "$decoded"
+    run "command:Open a serial port…;serialwait;key:Return;frame;serialstate:open;fake:file $dir/dump1;termwait:boot;problemsdump"
+    check "and its crash under the tab's heading" "button: ▶ fw | ttyACM9 115200 1 | file main/motor.c | >▸E 9:13 Crash at motor.c:9 in store (StoreProhibited)"
+    # The board's own panic format (run.json's crash), in its tab.
+    printf 'PANIC: hard fault\r\nbt: %s %s\r\nbt: %s\r\nhalted\r\n' "$(x "$STORE")" "$(x "$CALL")" "$(x "$MAIN")" >"$dir/own"
+    printf '{"configurations": [{"name": "fw", "program": "build/fw.elf", "board": {"elf": "build/fw.elf", "serial": {"port": "%s"}}, "crash": "^bt:(.*)$"}]}\n' "$port" >"$P/.blit/run.json"
+    size=$wide
+    run "serial:$port;frame;serialstate:open;fake:file $dir/own;termwait:halted;termdimdump"
+    short
+    check "the board's own panic format (a pattern in run.json): decoded in its tab" "$decoded"
+    # A port no configuration's board is on: the newest ELF the build made.
+    rm "$P/.blit/run.json"
+    size=$wide
+    run "serial:$port;frame;serialstate:open;fake:file $dir/dump1;termwait:boot;termdimdump"
+    short
+    check "a port no configuration's board is on: the newest ELF" "$(frames @/fw/other/main)"
+    # No ELF at all: said once, under the first dump, and no problem.
+    rm "$P/build/fw.elf" "$P/other/build/newer.elf"
+    size=$wide
+    run "serial:$port;frame;serialstate:open;fake:file $dir/dump2;termwait:boot again;termdimdump"
+    check "no ELF: said once" "Not decoded: no ELF (*.elf, *.axf) under @/fw, and no board elf in .blit/run.json"
+    run "serial:$port;frame;serialstate:open;fake:file $dir/dump2;termwait:boot again;problemsdump"
+    got=${got#*| }
+    check "and no problem" "file 0"
+fi
 
 if [ "$failed" = 0 ] && [ -z "$print" ]; then echo "serial: all passed"; fi
 exit "$failed"

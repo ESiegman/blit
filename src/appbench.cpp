@@ -1540,7 +1540,7 @@ void App::run_script(const char* script) {
             cfg.baud = comma == std::string::npos ? cfg_.serial_baud : static_cast<u32>(std::atol(arg.c_str() + comma + 1));
             SerialReturn ret = SerialReturn::kCR;
             serial_return_parse(cfg_.serial_line_end, &ret);
-            term_open_serial(id, cfg, ret);
+            serial_open(id, cfg, ret, nullptr);
         } else if (verb == "serialwait") {  // "Open a serial port…" has listed the ports (and opened the box with them)
             serial_settle();
         } else if (verb == "serialdump") {  // the serial tab in front (else on show, else the only one): its title, state, settings, line changes done; then the picker's last rows
@@ -1703,6 +1703,9 @@ void App::run_script(const char* script) {
         } else if (verb == "termdump") {
             term_sync();
             std::fprintf(stderr, "%s\n", term_dump().c_str());
+        } else if (verb == "termdimdump") {  // the terminal in front's rows written dim (all of them: one part dim says so)
+            term_sync();
+            std::fprintf(stderr, "%s\n", term_dim_dump().c_str());
         } else if (verb == "fetchwait") {
             const u64 want = std::strtoull(arg.c_str(), nullptr, 10), until = now_ns() + 10'000'000'000ull;
             for (bool there = false; !there; SDL_Delay(2)) {

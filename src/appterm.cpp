@@ -675,15 +675,49 @@ u64 App::term_open(const std::string& dir_given, const std::string& command, con
     return d->id;
 }
 
+namespace {
+
+// A serial tab's crash dumps decoded in place (crashscan.hpp, the embedded
+// design's E7), on its port's reader, a line at a time: the decoded lines
+// go under the dump's line, which the tab dims (CrashScan::take_line gives
+// them plain), and the crashes are handed to the main thread with the
+// problems (TermView::scanned, as a run's are), for the Problems tab
+// under the tab's heading (term_sync).
+struct SerialCrash final : SerialScan {
+    CrashScan crash;
+    TermView& v;
+    SerialCrash(const CrashOptions& o, TermView& view) : crash(o), v(view) {}
+    void line(std::string_view text, u64, std::vector<std::string>* add) override {
+        crash.take_line(text, add);
+        hand_over();
+    }
+    void gone() override {  // (a board that resets as it crashes: its dump is done)
+        crash.finish();
+        hand_over();
+    }
+    void hand_over() {
+        if (crash.found().empty()) return;
+        {
+            std::lock_guard lock(v.scan_mu);
+            for (BuildProblem& p : crash.found()) v.scanned.push_back(std::move(p));
+        }
+        crash.found().clear();
+        v.scan_news = true;  // (the reader wakes the main thread once the line is drawn)
+    }
+};
+
+}  // namespace
+
 // A serial monitor's tab (serialtab.hpp), in the terminals' split with the
 // keyboard on it: the device on the port, at that speed and framing, Return
-// sending `ret`.
-u64 App::term_open_serial(const SerialPortId& id, const SerialConfig& cfg, SerialReturn ret) {
+// sending `ret`; its crash dumps decoded as `crash` says.
+u64 App::term_open_serial(const SerialPortId& id, const SerialConfig& cfg, SerialReturn ret, const CrashOptions& crash) {
     auto v = std::make_shared<TermView>();
     const std::string* root = panel_root();
     v->dir = root ? *root : default_workdir();  // (Cmd+click on a place the device prints: from the project)
     v->started_ns = now_ns();
     v->serial = std::make_shared<SerialTab>(id, cfg, ret, v->mu, v->term);
+    v->serial->set_scan(std::make_unique<SerialCrash>(crash, *v));
     TermView* raw = v.get();
     v->serial->told = [raw] {
         if (!raw->told.exchange(true)) wake();
@@ -750,9 +784,20 @@ void App::term_sync() {
             if (!d.term) continue;
             TermView& v = *d.term;
             v.told = false;
-            if (v.serial) {  // (a serial monitor's: named for its port and speed, and what its port's reader has to say)
+            if (v.serial) {  // (a serial monitor's: named for its port and speed, what its port's reader has to say, and the crashes it found)
                 for (auto& [text, level] : v.serial->take_news()) notify(text, level);
-                if (std::string t = v.serial->title(); d.title != t) d.title = std::move(t);
+                if (std::string t = v.serial->title(); d.title != t) {
+                    d.title = std::move(t);
+                    build_crashes(d.id, d.title, {});
+                }
+                if (v.scan_news.exchange(false)) {
+                    std::vector<BuildProblem> found;
+                    {
+                        std::lock_guard lock(v.scan_mu);
+                        found.swap(v.scanned);
+                    }
+                    build_crashes(d.id, d.title, std::move(found));
+                }
                 continue;
             }
             if (!v.waiting.empty()) py_flush(v);  // (the console may take what was sent to it now)
@@ -1518,7 +1563,7 @@ bool App::term_key(const SDL_KeyboardEvent& k) {
     if (!pane_->doc->term) return false;
     TermView& v = *pane_->doc->term;
     const bool cmd = k.mod & kPrimaryMod, ctrl = k.mod & SDL_KMOD_CTRL, alt = k.mod & SDL_KMOD_ALT, shift = k.mod & SDL_KMOD_SHIFT;
-    if (v.keep && k.key == SDLK_F8 && !ctrl && !alt && !(k.mod & SDL_KMOD_GUI)) return false;  // (a build's output: F8 is the editor's, its problems)
+    if ((v.keep || v.serial) && k.key == SDLK_F8 && !ctrl && !alt && !(k.mod & SDL_KMOD_GUI)) return false;  // (a build's output, a board's: F8 is the editor's, their problems)
     // The editor's own shortcuts stay its (Cmd+W, Cmd+T, Cmd+1 ...), but for
     // copying, pasting, choosing all and clearing. Where Ctrl is the editor's
     // key those are Ctrl+Shift's, as in other terminals, and Ctrl alone is
@@ -1963,6 +2008,27 @@ std::string App::term_dump() {
         for (const TermLit& m : found) out += " lit " + std::to_string(m.row) + ":" + std::to_string(m.col0) + "-" + std::to_string(m.col1) + (m.chosen ? "*" : "");
     }
     return out;
+}
+
+// The rows of the screen of the terminal in front whose every cell with
+// something in it is dim (blit's own lines among a program's: a serial
+// tab's decoded crash), joined by "|"; a row dim and not dim at once,
+// with "(part dim)" after it.
+std::string App::term_dim_dump() {
+    if (!pane_->doc->term) return "no terminal";
+    TermView& v = *pane_->doc->term;
+    std::lock_guard lock(v.mu);
+    std::string out;
+    for (u32 r = 0; r < v.term.rows(); ++r) {
+        u32 dim = 0, plain = 0;
+        for (u32 c = 0; c < v.term.cols(); ++c) {
+            const TermCell& cell = v.term.at(r, c);
+            if (cell.cp == ' ' || cell.cp == 0) continue;
+            ++((cell.attr & TermCell::kDim) ? dim : plain);
+        }
+        if (dim) out += (out.empty() ? "" : "|") + v.term.row_text(r) + (plain ? " (part dim)" : "");
+    }
+    return out.empty() ? "none dim" : out;
 }
 
 i64 App::term_pid(u64 doc) {

@@ -23,6 +23,8 @@
 #include "missing.hpp"
 #include "notify.hpp"
 #include "remote.hpp"
+#include "serial.hpp"
+#include "serialtab.hpp"
 #include "simrun.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
@@ -133,6 +135,18 @@ struct App::BuildUi {
         return nullptr;
     }
     const Run* run_of(u64 id) const { return const_cast<BuildUi*>(this)->run_of(id); }
+    // The serial tabs that have crashed (their dumps decoded: appterm.cpp),
+    // each under its tab's title, while the tab is open.
+    struct Port : Held {
+        u64 doc = 0;
+        std::string title;
+    };
+    std::vector<Port> ports;
+    Port* port_of(u64 id) {
+        for (Port& p : ports)
+            if (p.doc == id && id) return &p;
+        return nullptr;
+    }
     // The long run whose time is on show (the last run, if it is one; else
     // the one that has run longest), and its seconds as last drawn.
     const Run* ticking() const {
@@ -704,6 +718,27 @@ const BuildTask* App::board_config() {
     return nullptr;
 }
 
+// (The Run button's first, if its board is on that port; the port as
+// SerialTab::is takes it: the USB serial number, or the device a path is.)
+const BuildTask* App::board_config_on(const SerialPortId& port) {
+    BuildUi& u = *buildui_;
+    const std::string root = build_root();
+    if ((!u.looked || u.root != root) && !is_remote(root)) build_settle();
+    if (u.root != root) return nullptr;
+    std::string dev;
+    auto on = [&](const Board& b) {
+        if (!port.serial.empty() && b.probe == port.serial) return true;
+        if (b.port.empty() || port.path.empty()) return false;
+        if (b.port == port.path) return true;
+        if (dev.empty()) dev = serial_device(port.path);
+        return serial_device(b.port) == dev;
+    };
+    if (const BuildTask* c = run_config(); c && c->board.set && on(c->board)) return c;
+    for (const BuildTask& t : u.tasks)
+        if (t.config && t.board.set && on(t.board)) return &t;
+    return nullptr;
+}
+
 // A task of the Build tab's (-1: the one the Run button runs).
 void App::build_run(int index) {
     BuildUi& u = *buildui_;
@@ -897,6 +932,13 @@ void App::build_forget(u64 doc) {
         ++build_gen_;
         dirty_ = true;
     }
+    if (BuildUi::Port* p = u.port_of(doc)) {  // (a serial tab's crashes, so too)
+        u.drop(*p, &build_errors_, &build_warnings_);
+        std::erase_if(u.ports, [&](const BuildUi::Port& x) { return x.doc == doc; });
+        ++build_prob_gen_;
+        ++build_gen_;
+        dirty_ = true;
+    }
     if (u.term == doc) u.term = 0;
 }
 
@@ -961,6 +1003,27 @@ void App::build_found(u64 doc, std::vector<BuildProblem> found) {
     BuildUi::Run* const run = u.run_of(doc);
     if (!run || found.empty()) return;
     u.take(*run, found, &build_errors_, &build_warnings_);
+    ++build_prob_gen_;
+    ++build_gen_;
+    dirty_ = true;
+}
+
+// A serial tab's: its group made with its first, after those there are
+// (it is no run, and takes no run's place); its heading follows its title.
+void App::build_crashes(u64 doc, const std::string& title, std::vector<BuildProblem> found) {
+    BuildUi& u = *buildui_;
+    BuildUi::Port* port = u.port_of(doc);
+    if (!port) {
+        if (found.empty()) return;
+        BuildUi::Port p;
+        p.doc = doc;
+        p.order = ++u.orders;
+        u.ports.push_back(std::move(p));
+        port = &u.ports.back();
+    }
+    if (port->title == title && found.empty()) return;
+    port->title = title;
+    if (!found.empty()) u.take(*port, found, &build_errors_, &build_warnings_);
     ++build_prob_gen_;
     ++build_gen_;
     dirty_ = true;
@@ -1047,6 +1110,11 @@ const std::vector<BuildGroup>& App::build_groups() {
     std::vector<std::pair<u64, const BuildUi::Held*>> held;
     for (const BuildUi::Run& r : u.runs) held.emplace_back(r.order, &r);
     if (!u.read_from.empty()) held.emplace_back(u.held_read.order, &u.held_read);
+    std::unordered_map<const BuildUi::Held*, const std::string*> port_titles;  // (a serial tab's group: its title, and no run's state)
+    for (const BuildUi::Port& p : u.ports) {
+        held.emplace_back(p.order, &p);
+        port_titles.emplace(&p, &p.title);
+    }
     std::ranges::sort(held, {}, &std::pair<u64, const BuildUi::Held*>::first);
     size_t i = 0;
     for (const auto& [order, h] : held) {
@@ -1056,6 +1124,8 @@ const std::vector<BuildGroup>& App::build_groups() {
         g.count = static_cast<u32>(i) - g.first;
         if (h == &u.held_read) {
             g.title = u.read_from.substr(u.read_from.find_last_of('/') + 1);
+        } else if (const auto port = port_titles.find(h); port != port_titles.end()) {
+            g.title = *port->second;
         } else {
             const BuildUi::Run& r = static_cast<const BuildUi::Run&>(*h);
             g.title = r.name;
@@ -1170,6 +1240,7 @@ void App::build_marks(FrameDesc& fd) {
             }
         };
         for (const BuildUi::Run& r : u.runs) file_of(r);
+        for (const BuildUi::Port& p : u.ports) file_of(p);
         if (!u.read_from.empty()) file_of(u.held_read);
         if (m.marks.size() != had) std::stable_sort(m.marks.begin(), m.marks.end(), [](const BuildUi::Mark& x, const BuildUi::Mark& y) { return x.line < y.line; });
         m.next_seq = u.seq;
