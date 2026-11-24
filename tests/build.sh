@@ -127,7 +127,7 @@ blit.build.remove("Make")
 EOF
 INIT="$dir/fn.lua"
 run "$dir/mk" "lua:local t = blit.build.tasks() print(t[1].system .. ' ' .. t[1].cmd .. ' ' .. #t .. ' ' .. table.concat(blit.build.systems(), ','))"
-check "functions, first, and a built-in taken away" 'blit: Mine echo hi from 1 1 Mine,CMake,Meson,Autotools,Ninja,Python'
+check "functions, first, and a built-in taken away" 'blit: Mine echo hi from 1 1 Mine,ESP-IDF,PlatformIO,CMake,Meson,Autotools,Ninja,Python'
 
 # Running: in the output terminal, how it ended.
 run "$dir/mk" "buildrun;buildwait;builddump"

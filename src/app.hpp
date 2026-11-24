@@ -465,7 +465,8 @@ private:
     // `build`, else the Build tab's Build): `go` runs once it has gone well,
     // at once where there is none; one that fails says so, and `go` never
     // runs. `what` names what waits for it (Debug, the tests, Record).
-    void build_first(const std::string& what, std::function<void()> go);
+    // (config: the one whose build that is, else the Run button's.)
+    void build_first(const std::string& what, std::function<void()> go, const BuildTask* config = nullptr);
     bool build_first_busy() const;  // (the tests: one is under way, or waits to run)
     void build_first_settle();      // (the tests: the build waited for, and what waited for it run)
     void build_first_take();
@@ -1552,7 +1553,7 @@ private:
     void build_note(const std::string& row, const std::string& words);
     const BuildTask* board_config();  // the Run button's run configuration if it has a board, else the first that has one
     const BuildTask* board_config_on(const SerialPortId& port);  // the one whose board's serial port that is (its serial.port, or its probe's serial number), if one is
-    void build_run(int index);
+    void build_run(int index, const std::string& chosen = {});  // (chosen: the command of a task that asks which, the one chosen)
     void build_option(int row);  // a task of the Build tab's (-1: the Run button's)
     void build_environment_apply();              // the environment chosen, laid over each run configuration's variables
     const RunEnvironment* run_environment() const;  // (the one chosen, if any)
@@ -1938,12 +1939,26 @@ private:
     // the image each board was last flashed with, for "only if changed".
     struct FlashUi;
     std::shared_ptr<FlashUi> flashui_;  // (made the first time)
-    void flash_board(FlashMode mode, bool force, std::function<void(bool)> then = {});  // (then: what waits for it, told whether it went well or was not needed)
+    // (then: what waits for it, told whether it went well or was not needed;
+    // config: a finder's Flash task, whose firmware it flashes: firmware_board)
+    void flash_board(FlashMode mode, bool force, std::function<void(bool)> then = {}, const BuildTask* config = nullptr);
     bool flash_busy() const;  // an image being found, or a flash running
     void flash_sync();
     void flash_ended(u64 doc, bool well);  // a run has ended (well: it exited 0, was not stopped, and said no failure)
     void flash_settle();                   // (the tests: the build first, and the image found, waited for)
     std::string flash_dump();              // (the tests: the board's flash object as read)
+    // ESP-IDF's and PlatformIO's tasks that are blit's own (appfirmware.cpp:
+    // build.hpp's BuildTask::action): Flash, through flash_board, and
+    // Monitor, the board's serial port in a serial tab (with no port known,
+    // the one plugged in that its chip could be on, or a choice of them).
+    // Their firmware is on the board of the run configuration that has one,
+    // if one does, with what that board does not say from the finder's.
+    struct FirmwareUi;
+    std::shared_ptr<FirmwareUi> firmwareui_;  // (made the first time)
+    BuildTask firmware_board(const BuildTask& task);
+    void firmware_monitor(const BuildTask& task);
+    void firmware_sync();
+    void firmware_settle();  // (the tests: the ports listed, waited for)
     // Simulation runs (appsim.cpp, simrun.hpp): as one ends, the dump it
     // wrote found on a worker and opened in the wave tab (or read again);
     // "Open the last run's waves".

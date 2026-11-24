@@ -192,6 +192,7 @@ void App::serial_board() {
     if (!build_root().empty() && !build_ready_for(build_root())) return build_when_ready([this] { serial_board(); });
     const BuildTask* c = board_config();
     if (!c) return notify("No run configuration has a board");
+    if (!c->action.empty()) return firmware_monitor(*c);  // (an ESP-IDF or PlatformIO project's own board: appfirmware.cpp)
     const Board& b = c->board;
     std::string host, there;
     if (split_remote(build_root(), &host, &there)) return notify(c->name + "'s board is on " + host + ": a serial port there cannot be opened from here yet", 1);
