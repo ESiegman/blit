@@ -164,6 +164,10 @@ void clean(std::string& out, const std::string& s) {
 
 std::vector<UsbDevice> usb_list_sysfs(const std::string& root) {
     std::vector<UsbDevice> out;
+    // (The tests' stand-in for plugged-in hardware may have its ttys in a
+    // folder of its own, BLIT_USB_DEV: links to pseudo-terminals there.)
+    std::string dev = "/dev/";
+    if (const char* d = std::getenv("BLIT_USB_DEV"); d && *d && std::getenv("BLIT_USB_ROOT")) dev = std::string(d) + "/";
     const std::vector<std::string> names = names_in(root);
     for (const std::string& name : names) {
         if (name.find(':') != std::string::npos) continue;
@@ -188,9 +192,9 @@ std::vector<UsbDevice> usb_list_sysfs(const std::string& root) {
             if (!label.empty()) d.interfaces.push_back(label);
             for (const std::string& t : names_in(i)) {
                 if (t == "tty") {  // (cdc-acm: tty/ttyACM0)
-                    for (const std::string& tty : names_in(i + "tty")) d.ports.push_back({"/dev/" + tty, iface, label});
+                    for (const std::string& tty : names_in(i + "tty")) d.ports.push_back({dev + tty, iface, label});
                 } else if (t.starts_with("tty")) {  // (a usb-serial driver: ttyUSB0/)
-                    d.ports.push_back({"/dev/" + t, iface, label});
+                    d.ports.push_back({dev + t, iface, label});
                 }
             }
         }

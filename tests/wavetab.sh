@@ -15,6 +15,12 @@
 # as CSV: their samples, radixes, triggers and windows; and times in a
 # terminal (as Icarus and Verilator print them) Cmd+clicked into the cursor.
 #
+# As they change: a dump written again (a rerun) read
+# again with the view kept, here and there; one still being written
+# followed as it grows, live only while its tab is on show and the file
+# changes, drawn at most 30 times a second, nothing drawn while idle; an
+# FST still being written said, and read once closed.
+#
 #   tests/wavetab.sh path/to/blit            run the cases
 #   tests/wavetab.sh path/to/blit --print    show what each case gives
 set -u
@@ -309,6 +315,95 @@ done
 run 1600x900 "frame;wavewait;wavedump" "$W/none.vcd"
 check "a dump that is not there" "none.vcd: cannot show it: No such file or directory"
 
+# Run again (the folder worked in, watched): a dump written again while
+# it is open is read again, keeping the rows, the radix, the marker, the
+# cursor and the whole run on show (the run's new end); the values are the
+# new run's (Icarus's of the same design, built without DUMPOFF:
+# tests/wave/icarus.txt). A row whose signal the new run has not got is
+# left out, and said, as a kept view's is.
+watched="workdir:$W;panel;frame;wavewait"
+marked="key:j;key:j;key:j;key:j;key:r;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:m;key:a;key:n;key:n"
+fresh; cp "$W/icarus.vcd" "$W/run.vcd"
+run 1600x900 "$watched;$marked;wavedump;lua:os.execute('cp $W/icarus-rerun.vcd $W/run.vcd');watchwait;wavewait;wavedump;wavedump:load" "$W/run.vcd"
+got=$(lines | grep -E '^(run.vcd|>  tb.count|   tb.en =|load)' | sed -e 's/[0-9]* bytes/N bytes/' | join)
+check "written again while open: read again, the view kept" "run.vcd: read, cursor 105 ns, view 0 ps to 2.772 us, markers a=72 ns(-33 ns) ;; >  tb.count[7:0] = 10 unsigned ;;    tb.en = 1 ;; run.vcd: read, cursor 105 ns, view 0 ps to 2.737 us, markers a=72 ns(-33 ns) ;; >  tb.count[7:0] = 9 unsigned ;;    tb.en = 0 ;; load: run.vcd on show, N bytes read, grown 0 times, read again 1 times, waiting for more"
+fresh; cp "$W/icarus.vcd" "$W/run.vcd"
+run 1600x900 "$watched;key:=;lua:os.execute('cp $W/icarus-top.vcd $W/run.vcd');watchwait;wavewait;wavedump" "$W/run.vcd"
+got=$(lines | grep -E '^(run.vcd| *tb.u_cnt)' | join)
+check "written again without two of its signals: they are left out, and said" "run.vcd: read, cursor 0 ps, view 0 ps to 1.386 us, 2 kept rows dropped ;;  tb.u_cnt (open)"
+
+# A dump still being written (the first half of Icarus's, cut in a line):
+# what is there is shown, and what is added is read as it comes, the
+# whole run on show following its end. A view not at the end stays where
+# it is.
+size=$(wc -c <"$W/icarus.vcd" | tr -d ' ')
+head -c $((size / 2)) "$W/icarus.vcd" >"$dir/half.vcd"
+tail -c +$((size / 2 + 1)) "$W/icarus.vcd" >"$dir/rest.vcd"
+fresh; cp "$dir/half.vcd" "$W/grow.vcd"
+run 1600x900 "$watched;wavedump;lua:os.execute('cat $dir/rest.vcd >>$W/grow.vcd');watchwait;wavewait;wavedump;wavedump:load;wavedump:tiles;wavedump:at:5,2600000,0,0,6" "$W/grow.vcd"
+got=$(lines | grep -E '^(grow.vcd|load)' | join)
+check "followed as it grows: the end followed" "grow.vcd: read, cursor 0 ps, view 0 ps to 1.33 us ;; grow.vcd: read, following, cursor 0 ps, view 0 ps to 2.772 us ;; load: grow.vcd on show, $size bytes read, grown 1 times, read again 0 times, waiting for more"
+got=$(lines | grep '^tiles' | sed -e 's/^tiles: [0-9]* painted, [0-9]* sharp/tiles: sharp/' -e 's/, last .*//')
+check "(its tiles painted again, sharp)" "tiles: sharp, 0 stretched, 0 to come"
+c=$(lines | grep '^at ' | sed -e 's/^at [-0-9,]* | //')
+any_is "$c" bg && got="the end not drawn: $c" || got="drawn to the end"
+check "(tb.clk drawn to the new end)" "drawn to the end"
+fresh; cp "$dir/half.vcd" "$W/grow.vcd"
+run 1600x900 "$watched;key:=;key:l;wavedump;lua:os.execute('cat $dir/rest.vcd >>$W/grow.vcd');watchwait;wavewait;wavedump" "$W/grow.vcd"
+got=$(lines | grep -E '^grow.vcd' | join)
+check "followed, a view not at the end: it stays" "grow.vcd: read, cursor 0 ps, view 66.5 ns to 731.5 ns ;; grow.vcd: read, following, cursor 0 ps, view 66.5 ns to 731.5 ns"
+
+# Live, under the rule: while it is written (twenty pieces, 50 ms apart)
+# the tab reads it and draws it again (with what the watched folder draws
+# anyway) no more than 30 times a second; once it is not, nothing is drawn
+# and nothing read. Nor is anything drawn before it is.
+cat >"$dir/writer.sh" <<'EOF'
+size=$(wc -c <"$1" | tr -d ' ')
+piece=$(( (size + 19) / 20 ))
+i=0
+while [ $i -lt 20 ]; do
+    dd if="$1" bs="$piece" skip=$i count=1 2>/dev/null >>"$2"
+    i=$((i + 1))
+    perl -e 'select(undef, undef, undef, 0.05)'
+done
+EOF
+fresh; cp "$dir/half.vcd" "$W/grow.vcd"
+run 1600x900 "$watched;frame;waveframes:300;waveframes:500;lua:os.execute('sh $dir/writer.sh $dir/rest.vcd $W/grow.vcd &');waveframes:2500;waveframes:1000;wavedump" "$W/grow.vcd"
+got=$(lines | sed -n 2p)  # (the first: what starting up still had to draw)
+check "nothing drawn before it is written to" "0 frames drawn, 0 bytes read"
+set -- $(lines | sed -n 3p)
+[ "$1" -le 75 ] && [ "$4" -gt 0 ] && got="read, at most 30 frames a second" || got="$1 frames, $4 bytes"
+check "while it is written: read, at most 30 frames a second" "read, at most 30 frames a second"
+got=$(lines | sed -n 4p)
+check "written no more: nothing drawn, nothing read" "0 frames drawn, 0 bytes read"
+got=$(lines | sed -n 5p)
+check "(and all of it read)" "grow.vcd: read, following, cursor 0 ps, view 0 ps to 2.772 us"
+
+# Opened while still empty (as Verilator 5.054 leaves a VCD it writes
+# until its buffer fills): waited at, not said to be no dump, and read
+# once something is written.
+fresh; : >"$W/grow.vcd"
+run 1600x900 "$watched;wavedump;lua:os.execute('cat $dir/half.vcd >>$W/grow.vcd');watchwait;wavewait;wavedump" "$W/grow.vcd"
+got=$(lines | grep '^grow.vcd' | join)
+check "empty when opened: waited at, then read" "grow.vcd: nothing in it yet ;; grow.vcd: read, following, cursor 0 ps, view 0 ps to 1.33 us"
+
+# Behind another tab it is not read; brought to the front, it is.
+echo text >"$W/notes.txt"
+fresh; cp "$dir/half.vcd" "$W/grow.vcd"
+run 1600x900 "$watched;open:$W/notes.txt;frame;lua:os.execute('cat $dir/rest.vcd >>$W/grow.vcd');watchwait;frame;wavewait;wavedump:load;open:$W/grow.vcd;frame;wavewait;wavedump:load" "$W/grow.vcd"
+got=$(lines | sed -e 's/[0-9]* bytes/N bytes/' | join)
+check "behind another tab: read once it is on show" "load: grow.vcd behind another tab, N bytes read, grown 0 times, read again 0 times, changed, waiting for more ;; load: grow.vcd on show, N bytes read, grown 1 times, read again 0 times, waiting for more"
+
+# An FST its writer has not closed (Icarus's, caught while it ran: its
+# header alone; Verilator's, a header of zeros): said, and read once it
+# has been (as libfst can only then).
+for t in icarus verilator; do
+    fresh; cp "$here/wave/$t-writing.fst" "$W/sim.fst"
+    run 1600x900 "$watched;wavedump;lua:os.execute('cp $here/wave/$t.fst $W/sim.fst');watchwait;wavewait;wavedump" "$W/sim.fst"
+    got=$(lines | grep '^sim.fst' | join)
+    check "$t: an FST still being written, then closed" "sim.fst: still being written ;; sim.fst: read, cursor 0 ps, view 0 ps to 2.772 us"
+done
+
 # On another machine: fetched whole, in parts (a 5 MB one too, as the
 # reply may be no larger than 1 MB), and one larger than
 # wave.remote_fetch_mb, which is not shown.
@@ -321,6 +416,14 @@ export BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T"
 run 1600x900 "remotewait;frame;wavewait;wavedump" "ssh://box$T/work/verilator.vcd"
 got=$(printf '%s' "$got" | sed -e 's/ ;; .*//')
 check "another machine's dump, fetched whole" "verilator.vcd: read, cursor 0 ps, view 0 ps to 2.772 us"
+# Written again there: once blit looks again (as when a run there ends,
+# or the window comes back to the front), its time stamp asked there, it
+# is read again, the view kept.
+cp "$here/wave/icarus.vcd" "$T/work/run.vcd"
+touch -t 202601010000 "$T/work/run.vcd"
+run 1600x900 "remotewait;frame;wavewait;key:m;key:a;reload;wavewait;wavedump;lua:os.execute('cp $here/wave/icarus-rerun.vcd $T/work/run.vcd');reload;wavewait;wavedump" "ssh://box$T/work/run.vcd"
+got=$(lines | grep '^run.vcd' | join)
+check "another machine's dump written again: read again" "run.vcd: read, cursor 0 ps, view 0 ps to 2.772 us, markers a=0 ps(+0 ps) ;; run.vcd: read, cursor 0 ps, view 0 ps to 2.737 us, markers a=0 ps(+0 ps)"
 run 1600x900 "remotewait;frame;wavewait;wavedump" "ssh://box$T/work/large.vcd"
 got=$(printf '%s' "$got" | sed -e 's/ ;; .*//')
 check "another machine's dump over 4 MB, fetched in parts" "large.vcd: read, cursor 0 ns, view 0 ns to 4.99999 ms"

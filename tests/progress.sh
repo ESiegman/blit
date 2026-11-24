@@ -452,6 +452,40 @@ E vivado:1 No matching targets found on connected servers: localhost
 EOF
 check "Vivado with no board on the cable asked for" "$expected"
 
+# Vivado writing the FPGA's flash: its SRAM loaded with Vivado's design for
+# it, the flash erased, written and read back (one step, as it prints
+# it), the FPGA booted from it; the time program_hw_cfgmem gives itself.
+timed='&'
+flash Vivado vivado vivado-flash "progresswait:Program;progressdump;$end"
+want <<'EOF'
+button: ■ Program | row: Connect ✓ · Load ✓ · Erase ✓ · Program
+button: ▶ Vivado · Flashed in 54.0 s, verified | row: done · Flashed in 54.0 s, verified
+problems: 0
+EOF
+check "Vivado: the FPGA's flash erased, written and verified" "$expected"
+flash Vivado vivado vivado-flash-verify "progresswait:Verify;progressdump;$end"
+want <<'EOF'
+button: ■ Verify | row: Connect ✓ · Load ✓ · Verify
+button: ▶ Vivado · 1 error · stopped in Verify | row: failed: exited with code 1 · stopped in Verify
+problems: 1
+E vivado:1 Flash Programming Unsuccessful: Byte 10 does not match (CF != FF) Verify that the selected flash part matches the actual flash device connected to the board.
+EOF
+check "Vivado: the flash not what was written" "$expected"
+flash Vivado vivado vivado-flash-wrong "$end"
+want <<'EOF'
+button: ▶ Vivado · 1 error | row: failed: exited with code 1
+problems: 1
+E vivado:1 Flash Programming Unsuccessful. Part selected s25fl032p, but part mx25l3273f detected.
+EOF
+check "Vivado: told the wrong flash part" "$expected"
+flash Vivado vivado vivado-flash-nopart "$end"
+want <<'EOF'
+button: ▶ Vivado · 1 error | row: failed: exited with code 1
+problems: 1
+E vivado:1 Unrecognized config mem part - mx25l3233f-spi-x1_x2_x4. Please run get_cfgmem_parts and select a valid part or use the cfgmem GUI to assist in selecting a valid device.
+EOF
+check "Vivado: a flash part it has none of" "$expected"
+
 # The real openFPGALoader, where it is installed, with no board plugged in
 # (skipped where it is not, or where one answers).
 if ofl=$(command -v openFPGALoader) && ! "$ofl" --detect -b basys3 >/dev/null 2>&1; then
@@ -482,6 +516,42 @@ E probe-rs:1 No connected probes were found.
 EOF
 check "make echoing probe-rs's command" "$expected"
 rm -f "$T/Makefile"
+
+# The task's row as the Build tab fits it (panel.width), at the stage under
+# way: that stage and its percent stay, whatever the room. The stages done
+# are said more briefly first ("✓ 2"), then left out, then the kind of
+# work, then the stage's sizes. (A task of the folder's own, for its kind.)
+K="$dir/kinds"
+mkdir -p "$K/.blit"
+cat >"$K/.blit/tasks.json" <<EOF
+{ "tasks": [
+  { "label": "FPGA", "command": "$B/openFPGALoader -b basys3 -f top.bit", "kind": "flash" },
+  { "label": "ESP", "command": "$B/esptool --chip esp32s3 write-flash 0x10000 app.bin", "kind": "flash" } ] }
+EOF
+# fitted TASK PROGRAM SAMPLE STAGE WIDTH: the task's row as shown, held at STAGE.
+fitted() {
+    rm -f "$REPLAY_HOLD"/*
+    printf '#!/bin/sh\nexec sh "%s" "%s"\n' "$here/replay.sh" "$here/progress/$3.txt" >"$B/$2"
+    chmod +x "$B/$2"
+    printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.panel.width = %s\n' "$5" >"$dir/wide.lua"
+    go="lua:io.open('$REPLAY_HOLD/a','w'):close();lua:io.open('$REPLAY_HOLD/b','w'):close()"
+    got=$(BLIT_INIT="$dir/wide.lua" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$K;frame;buildpanel;buildrun:$1;progresswait:$4;builddump:shown;$go;buildwait" 2>&1 >/dev/null |
+        grep '^FPGA: ' | awk -v t="$1: " 'BEGIN { RS = "\n" } { n = split($0, r, / \| /); for (i = 1; i <= n; ++i) if (index(r[i], t) == 1) print r[i] }')
+}
+fitted FPGA openFPGALoader ofl-flash 'Program 38%' 50
+check "room for it all: the stages done, then the one under way" 'FPGA: flash · Load ✓ · Erase ✓ · Program 38%'
+fitted FPGA openFPGALoader ofl-flash 'Program 38%' 40
+check "less: the stages done counted" 'FPGA: flash · ✓ 2 · Program 38%'
+fitted FPGA openFPGALoader ofl-flash 'Program 38%' 32
+check "the panel's own width: the stages done left out" 'FPGA: flash · Program 38%'
+fitted FPGA openFPGALoader ofl-flash 'Program 38%' 20
+check "narrower: the kind of work left out too" 'FPGA: Program 38%'
+fitted ESP esptool esptool5 'Program 38%' 40
+check "the stage's sizes, where they fit" 'ESP: flash · Program 38% 32.0/82.8 KB'
+fitted ESP esptool esptool5 'Program 38%' 32
+check "the kind of work left out before them" 'ESP: Program 38% 32.0/82.8 KB'
+fitted ESP esptool esptool5 'Program 38%' 24
+check "and where they do not fit, its percent alone" 'ESP: Program 38%'
 
 # Output that is no engine's leaves the button and the row as they were.
 cat >"$dir/plain.txt" <<'EOF'

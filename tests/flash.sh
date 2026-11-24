@@ -62,6 +62,7 @@ esac
     echo
     case " \$* " in *" -CommandFile "*|*" -source "*) for a in "\$@"; do f=\$a; done; sed 's/^/  | /' "\$f" ;; esac
 } >>"\$LOG"
+[ -n "\${MCS:-}" ] && : >"\$f.mcs" && : >"\$f.prm"  # (what Vivado's write_cfgmem writes beside the Tcl file)
 exec sh "$here/replay.sh" "\$(cat "\$SAMPLE")"
 EOF
     chmod +x "$B/$tool"
@@ -318,8 +319,118 @@ want <<'EOF'
   | program_hw_devices [current_hw_device]
 EOF
 check "Vivado with no chip said: the first of AMD's devices" "$expected"
+
+# A load that fails: the task failed with Vivado's exit status (not done),
+# the problem in its words.
+flash vivado-fail "command:Program the FPGA (SRAM);flashwait;$end;scandump"
+got=$(printf '%s' "$got" | grep -v -e '^vivado' -e '^  |')
+want <<'EOF'
+button: ▶ fw · 1 error · stopped in Load | row: failed: exited with code 1 · stopped in Load
+problems: 1
+E vivado:1 File missing.bit not found. Check file name and file permissions.
+EOF
+check "Vivado failing: its exit status kept" "$expected"
+
+# The FPGA's flash through Vivado: the flash part blit knows for the board
+# (the Basys 3's, by its flash.board), the bitstream made a configuration
+# memory file with its own SPI bus width (none said: 1), written, verified
+# and booted from; its progress and summary.
+board "{$BASYS, \"chip\": \"xc7a35tcpg236-1\", \"flash\": {\"tool\": \"vivado\", \"board\": \"basys3\"}}"
+timed='&'
+flash vivado-flash "command:Program the FPGA's flash;flashwait;progresswait:Program;progressdump;$end"
+want <<'EOF'
+button: ■ Program | row: Connect ✓ · Load ✓ · Erase ✓ · Program
+button: ▶ fw · Flashed in 54.0 s, verified | row: done · Flashed in 54.0 s, verified
+vivado -mode batch -nojournal -nolog -notrace -source FILE
+  | set ours [catch {close [socket localhost 3121]}]
+  | set p [lindex [get_cfgmem_parts mx25l3273f-spi-x1_x2_x4] 0]
+  | set m [info script].mcs
+  | write_cfgmem -force -format mcs -size [expr {max(1, [get_property MEM_DENSITY $p] / 8)}] -interface SPIx1 -loadbit [list up 0x0 build/top.bit] -file $m
+  | open_hw_manager
+  | connect_hw_server -allow_non_jtag
+  | open_hw_target [lindex [get_hw_targets */210183A8F2C1*] 0]
+  | set d [lindex [get_hw_devices -filter {PART =~ x*}] 0]
+  | foreach h [get_hw_devices] {if {[string match [get_property PART $h]* xc7a35tcpg236-1]} {set d $h}}
+  | if {[string match [get_property PART $d]* xc7a35tcpg236-1] == 0} {puts {ERROR: No device on the cable is a xc7a35tcpg236-1}; exit 1}
+  | current_hw_device $d
+  | create_hw_cfgmem -hw_device $d $p
+  | set c [get_property PROGRAM.HW_CFGMEM $d]
+  | set_property PROGRAM.FILES [list $m] $c
+  | set_property PROGRAM.ADDRESS_RANGE use_file $c
+  | set_property PROGRAM.UNUSED_PIN_TERMINATION pull-none $c
+  | set_property PROGRAM.BLANK_CHECK 0 $c
+  | set_property PROGRAM.ERASE 1 $c
+  | set_property PROGRAM.CFG_PROGRAM 1 $c
+  | set_property PROGRAM.VERIFY 1 $c
+  | set_property PROGRAM.CHECKSUM 0 $c
+  | create_hw_bitstream -hw_device $d [get_property PROGRAM.HW_CFGMEM_BITFILE $d]
+  | program_hw_devices $d
+  | program_hw_cfgmem -hw_cfgmem $c
+  | boot_hw_device $d
+  | close_hw_target
+  | disconnect_hw_server
+  | close_hw_manager
+  | if {$ours} {catch {exec pkill -u $::env(USER) -x hw_server}; catch {exec pkill -u $::env(USER) -x cs_server}}
+EOF
+check "Basys 3 through Vivado: its Tcl, into its flash" "$expected"
+flash vivado-flash "command:Program the FPGA's flash;flashwait;$end;command:Program the FPGA's flash;flashwait;buildwait;progressdump"
+got=$(printf '%s' "$got" | grep -e '^button' -e '^vivado')
+want <<'EOF'
+button: ▶ fw · Flashed in N s, verified | row: done · Flashed in N s, verified
+button: ▶ fw · Not programmed: unchanged since the last flash | row: Not programmed: unchanged since the last flash
+vivado -mode batch -nojournal -nolog -notrace -source FILE
+EOF
+check "(the same bitstream again: not written again)" "$expected"
+
+# The Tcl file, and the .mcs and .prm Vivado writes beside it, gone after
+# the run (into flash, and into SRAM, where there are none), in zsh too.
+left() { for f in $(sed -n 's/.* -source //p' "$LOG"); do ls "$f" "$f.mcs" "$f.prm" 2>/dev/null; done; }
+was=${SHELL:-/bin/sh}
+export MCS=1 SHELL="$(command -v zsh || printf '%s' "$was")"
+flash vivado-flash "command:Program the FPGA's flash;flashwait;$end"
+was_left=$(left)
+unset MCS
+flash vivado "command:Program the FPGA (SRAM);flashwait;$end"
+got=$was_left$(left)
+export SHELL="$was"
+check "(the Tcl file, and the .mcs and .prm beside it, gone after)" ""
+
+# The board's own flash part (flash.cfgmem) before the table's; a
+# bitstream made for quad SPI (its header as Vivado wrote it) written as
+# SPIx4, one with no width said as SPIx1.
+hexfile() { grep -v '^#' "$1" | perl -ne 'print pack("H*", join("", split))' >"$2"; }
+hexfile "$here/flash/vivado-head-x4.txt" "$P/build/quad.bit"
+hexfile "$here/flash/vivado-head-x1.txt" "$P/build/single.bit"
+board "{$BASYS, \"bitstream\": \"build/quad.bit\", \"flash\": {\"tool\": \"vivado\", \"board\": \"basys3\", \"cfgmem\": \"s25fl032p-spi-x1_x2_x4\"}}"
+flash vivado-flash "command:Program the FPGA's flash;flashwait;$end"
+got=$(printf '%s' "$got" | grep -e 'cfgmem_parts' -e 'write_cfgmem')
+want <<'EOF'
+  | set p [lindex [get_cfgmem_parts s25fl032p-spi-x1_x2_x4] 0]
+  | write_cfgmem -force -format mcs -size [expr {max(1, [get_property MEM_DENSITY $p] / 8)}] -interface SPIx4 -loadbit [list up 0x0 build/quad.bit] -file $m
+EOF
+check "the board's flash.cfgmem, and a quad SPI bitstream" "$expected"
+board "{$BASYS, \"bitstream\": \"build/single.bit\", \"flash\": {\"tool\": \"vivado\", \"board\": \"basys3\"}}"
+flash vivado-flash "command:Program the FPGA's flash;flashwait;$end"
+got=$(printf '%s' "$got" | grep -e 'write_cfgmem')
+check "(a bitstream for one-bit SPI as Vivado writes it)" '  | write_cfgmem -force -format mcs -size [expr {max(1, [get_property MEM_DENSITY $p] / 8)}] -interface SPIx1 -loadbit [list up 0x0 build/single.bit] -file $m'
+
+# Vivado's failure, in its words; a board blit knows no flash part for.
+board "{$BASYS, \"flash\": {\"tool\": \"vivado\", \"board\": \"basys3\", \"cfgmem\": \"s25fl032p-spi-x1_x2_x4\"}}"
+flash vivado-flash-wrong "command:Program the FPGA's flash;flashwait;$end;scandump"
+got=$(printf '%s' "$got" | grep -v -e '^vivado' -e '^  |')
+want <<'EOF'
+button: ▶ fw · 1 error | row: failed: exited with code 1
+problems: 1
+E vivado:1 Flash Programming Unsuccessful. Part selected s25fl032p, but part mx25l3273f detected.
+EOF
+check "Vivado told the wrong flash part: its words" "$expected"
+board "{$BASYS, \"flash\": \"vivado\"}"
 got=$("$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;command:Program the FPGA's flash;flashwait" 2>&1 >/dev/null | tail -1)
-check "the FPGA's flash through Vivado: said" "blit: Vivado here loads the FPGA's SRAM only: its flash through openFPGALoader (flash.tool)"
+check "the FPGA's flash through Vivado with no flash part: said" "blit: Vivado needs the board's flash part to write its flash: flash.cfgmem, as get_cfgmem_parts names it"
+board "{$BASYS, \"flash\": {\"tool\": \"vivado\", \"board\": \"cmoda7_35t\"}}"
+got=$("$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;command:Program the FPGA's flash;flashwait" 2>&1 >/dev/null | tail -1)
+check "(nor for a board blit knows none for)" "blit: Vivado needs the board's flash part to write its flash: flash.cfgmem, as get_cfgmem_parts names it"
+rm -f "$P/build/quad.bit" "$P/build/single.bit"
 
 # Vivado not on the PATH: where AMD installs it, the newest version (the
 # folders as 2025.1 on lay them out, and as before), else said.

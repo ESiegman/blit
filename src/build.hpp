@@ -30,9 +30,10 @@ struct Board {
     // The rest of the flash object (flash.cpp): where a raw .bin goes
     // (address), openFPGALoader's board (-b) or cable (-c), OpenOCD's
     // interface and target scripts, J-Link's and pyOCD's device (else the
-    // chip), dfu-util's alternate setting, pgrcmd's chain file (.xcf); and
-    // an FPGA's bitstream (else the newest the build made).
-    std::string flash_address, flash_board, flash_cable, flash_interface, flash_target, flash_device, flash_alt, flash_xcf;
+    // chip), dfu-util's alternate setting, pgrcmd's chain file (.xcf), the
+    // flash part Vivado writes an FPGA's flash as (cfgmem: its name in
+    // get_cfgmem_parts); and an FPGA's bitstream (else the newest the build made).
+    std::string flash_address, flash_board, flash_cable, flash_interface, flash_target, flash_device, flash_alt, flash_xcf, flash_cfgmem;
     std::string bitstream;
 };
 
@@ -68,6 +69,9 @@ struct BuildTask {
     bool lasting = false;
     std::string kind;
     Board board;  // (its "board", if it has one)
+    // A run configuration's "crash": its firmware's own panic formats, Lua
+    // patterns whose lines are a crash dump's addresses (crashscan.hpp).
+    std::vector<std::string> crash;
 };
 
 // The folder's own tasks, from the folder.
@@ -101,8 +105,9 @@ inline constexpr const char* kRunConfigs = ".blit/run.json";
 // "cwd" (from the folder), "build" (a task to run first), "problems" (as
 // BuildTask's: a list, or "none"), "debug" (as BuildTask::Debug: "adapter"
 // a name or a command line, or a list of its words; "request"; "arguments",
-// an object; "after", a list; "console"), "board" (as Board) } ] }. `problem`
-// says what is wrong with the file, if anything is.
+// an object; "after", a list; "console"), "board" (as Board), "crash" (a
+// Lua pattern, or a list of them: as BuildTask's) } ] }. `problem` says
+// what is wrong with the file, if anything is.
 std::vector<BuildTask> read_run_configs(const std::string& root, std::string* problem);
 // A word as sh reads it back (in single quotes when it needs them).
 std::string sh_word(std::string_view word);

@@ -110,7 +110,7 @@ printf 'questa:\n\tsh questa.sh\nvsim:\n\tsh vsim.sh\nxcelium:\n\tsh xcelium.sh\
 
 INIT="$dir/sims.lua"
 run "$H" "buildrun:make questa;buildwait;problemsdump"
-check "Questa's compiler: errors and warnings at their lines, its notes not" 'button: ▶ make questa · 2 errors | Build 3 | file tb.sv | >E 3 (vlog-2730) Undefined variable: '"'"'nope'"'"'. | E 5 (vlog-2388) '"'"'x'"'"' already declared in this scope (tb). | W 4 (vlog-2623) Undefined variable: '"'"'w'"'"'.'
+check "Questa's compiler: errors and warnings at their lines, its notes not" 'button: ▶ make questa · 2 errors | make questa 3 · failed (exit 2) | file tb.sv | >E 3 (vlog-2730) Undefined variable: '"'"'nope'"'"'. | E 5 (vlog-2388) '"'"'x'"'"' already declared in this scope (tb). | W 4 (vlog-2623) Undefined variable: '"'"'w'"'"'.'
 INIT="$dir/sims.lua"
 run "$H" "buildrun:make vsim;buildwait;buildproblemsdump"
 check "vsim's transcript: a message and its place on the line under it; one with none is no problem" 'W ~/hdl/tb.sv:2 (vsim-3015) [PCDPC] - Port size (1) does not match connection size (4) for port '"'"'a'"'"'. | E ~/hdl/tb.sv:6 Assertion error. | E ~/hdl/tb.sv:3 (vlog-2730) Undefined variable: '"'"'nope'"'"'. | E ~/hdl/tb.sv:4 (vsim-3421) Value 9 for idx is out of range [0:3].'
@@ -196,17 +196,17 @@ mkdir -p "$F"
 printf 'int a;\n' >"$F/a.c"
 printf 'quiet:\n\t@echo linking; exit 3\nwarned:\n\t@echo "a.c:1:5: warning: unused"; exit 1\nfine:\n\t@echo "a.c:1:5: warning: unused"\nerrs:\n\t@echo "a.c:1:5: error: bad"; exit 1\n' >"$F/Makefile"
 run "$F" "buildrun:make quiet;buildwait;problemsdump"
-check "failed, nothing found: the Run button and the Problems tab say so" 'button: ▶ make quiet · failed (exit 2) | make quiet failed with exit code 2: no problem found in its output | file 0'
+check "failed, nothing found: the Run button and the Problems tab say so" 'button: ▶ make quiet · failed (exit 2) | make quiet · failed (exit 2) | no problem found in its output'
 got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$F;frame;buildrun:make quiet;buildwait;key:F8" 2>&1 >/dev/null | tail -1)
 check "and F8" 'blit: make quiet failed with exit code 2: no problem found in its output'
 run "$F" "buildrun:make warned;buildwait;problemsdump"
-check "failed with warnings alone: the button says it failed, and how many" 'button: ▶ make warned · failed (exit 2), 1 warning | Build 1 | file a.c | >W 1:5 unused'
+check "failed with warnings alone: the button says it failed, and how many" 'button: ▶ make warned · failed (exit 2), 1 warning | make warned 1 · failed (exit 2) | no error found in its output | file a.c | >W 1:5 unused'
 run "$F" "buildrun:make fine;buildwait;problemsdump"
-check "warnings, and it went well: as before" 'button: ▶ make fine · 1 warning | Build 1 | file a.c | >W 1:5 unused'
+check "warnings, and it went well: as before" 'button: ▶ make fine · 1 warning | make fine 1 · done | file a.c | >W 1:5 unused'
 run "$F" "buildrun:make errs;buildwait;problemsdump"
-check "failed with errors: they say it" 'button: ▶ make errs · 1 error | Build 1 | file a.c | >E 1:5 bad'
+check "failed with errors: they say it" 'button: ▶ make errs · 1 error | make errs 1 · failed (exit 2) | file a.c | >E 1:5 bad'
 run "$F" "buildrun:make quiet;buildwait;buildrun:make fine;buildwait;problemsdump"
-check "the next run starts afresh" 'button: ▶ make fine · 1 warning | Build 1 | file a.c | >W 1:5 unused'
+check "the next run starts afresh" 'button: ▶ make fine · 1 warning | make fine 1 · done | file a.c | >W 1:5 unused'
 
 # A run whose program is not installed: which, and on which machine, said
 # where it would be (the Run button, the Problems tab, F8, its row), not
@@ -220,7 +220,7 @@ PATH=$(path_without cmake) SHELL="$dir/plainsh"
 export SHELL
 INIT="$dir/cmake.lua"
 run "$F" "buildrun:cmake --build build;buildwait;problemsdump"
-check "not installed: the Run button and the Problems tab say which" "button: ▶ cmake --build build · failed (cmake is not installed) | cmake --build build failed: cmake is not installed on $this | file 0"
+check "not installed: the Run button and the Problems tab say which" "button: ▶ cmake --build build · failed (cmake is not installed) | cmake --build build · failed (cmake is not installed) | cmake is not installed on $this"
 INIT="$dir/cmake.lua"
 run "$F" "buildrun:cmake --build build;buildwait;key:F8"
 check "and F8" "blit: cmake --build build failed: cmake is not installed on $this"
@@ -232,7 +232,7 @@ BLIT_SSH="$(cd "$(dirname "$0")" && pwd -P)/fake-ssh.sh" BLIT_FAKE_HOME="$dir/th
 export BLIT_SSH BLIT_FAKE_HOME
 mkdir -p "$dir/there"
 got=$(BLIT_INIT="$dir/cmake.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "remotewait;frame;buildrun:cmake --build build;buildwait;problemsdump" "ssh://box$F" 2>&1 >/dev/null | tail -1)
-check "not installed there: that machine named" "button: ▶ cmake --build build · failed (cmake is not installed) | cmake --build build failed: cmake is not installed on box | file 0"
+check "not installed there: that machine named" "button: ▶ cmake --build build · failed (cmake is not installed) | cmake --build build · failed (cmake is not installed) | cmake is not installed on box"
 unset BLIT_SSH BLIT_FAKE_HOME
 PATH=$kept SHELL=$keptsh
 
@@ -255,7 +255,7 @@ run "$R" "problemsread:$R/gcc16.sarif;buildwait;buildproblemsdump"
 check "SARIF from GCC: relative to the file's folder when its base is not here; the include chain and notes" 'E ~/read/src/d.hpp:3:27 '"'"'nothing'"'"' was not declared in this scope < ~/read/src/c.cpp:1 included here | E ~/read/src/c.cpp:5:5 too few arguments to function '"'"'void take(int, int)'"'"' < ~/read/src/c.cpp:2:6 declared here | E ~/read/src/c.cpp:6:18 [-fpermissive] invalid conversion from '"'"'const char*'"'"' to '"'"'int'"'"' < ~/read/src/d.hpp:2:18 initializing argument 1 of '"'"'int twice(int)'"'"' | W ~/read/src/c.cpp:4:9 [-Wunused-variable] unused variable '"'"'unused'"'"''
 got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$R;frame;problemsread:$R/gcc16.sarif;buildwait;problemsdump;key:F8;frame;statusdump" 2>&1 >/dev/null | sed -e "s#$dir#~#g" | tail -4 | tr '\n' '/')
 got=$(printf '%s' "$got" | sed 's#\(Col 27\)[^/]*/#\1/#')
-check "said, listed, counted, and F8 goes to them" 'blit: gcc16.sarif (SARIF): 4 problems/button: ▶  · 3 errors | gcc16.sarif 4 | file src/d.hpp | >▸E 3:27 '"'"'nothing'"'"' was not declared in this scope | file src/c.cpp | ▸E 5:5 too few arguments to function '"'"'void take(int, int)'"'"' | ▸E 6:18 invalid conversion from '"'"'const char*'"'"' to '"'"'int'"'"' | W 4:9 unused variable '"'"'unused'"'"'/blit: Problem 1 of 4: '"'"'nothing'"'"' was not declared in this scope/NORMAL src/d.hpp | × 3 ▲ 1 Ln 3, Col 27/'
+check "said, listed, counted, and F8 goes to them" 'blit: gcc16.sarif (SARIF): 4 problems/button: ▶  | gcc16.sarif 4 | file src/d.hpp | >▸E 3:27 '"'"'nothing'"'"' was not declared in this scope | file src/c.cpp | ▸E 5:5 too few arguments to function '"'"'void take(int, int)'"'"' | ▸E 6:18 invalid conversion from '"'"'const char*'"'"' to '"'"'int'"'"' | W 4:9 unused variable '"'"'unused'"'"'/blit: Problem 1 of 4: '"'"'nothing'"'"' was not declared in this scope/NORMAL src/d.hpp | × 3 ▲ 1 Ln 3, Col 27/'
 # A build's log of GCC's JSON: an array for each file, make's lines between.
 { printf 'g++ -c src/a.cpp\n'; cat "$R/gcc15-a.json"; printf '\ng++ -c src/c.cpp\n'; cat "$R/gcc15.json"; } >"$R/build.log"
 run "$R" "problemsread:$R/build.log;buildwait;buildproblemsdump"
@@ -271,12 +271,14 @@ run "$R" "problemsread:$R/other.json;buildwait"
 check "JSON that is neither: said" 'blit: other.json is neither SARIF nor GCC'"'"'s JSON diagnostics'
 run "$R" "problemsread:$R/nothing-here.sarif;buildwait"
 check "a file that is not there" 'blit: Cannot read ~/read/nothing-here.sarif: there is no such file'
-# They take the place of the last run's, and a run's failure is not said over them.
+# A group of their own, under the file's name, after the open runs'
+# (whose failures are still said, and whose problems the Run button still
+# counts); the next run's take their place.
 printf 'quiet:\n\t@exit 1\n' >"$R/Makefile"
 run "$R" "buildrun:make quiet;buildwait;problemsread:$R/out/build.txt;buildwait;problemsdump"
-check "in place of the last run's (its failure no longer said), under the file's name" 'button: ▶ make quiet · 1 error | build.txt 1 | file out/src/c.cpp | >E 5:5 from a log'
+check "after the open run's (its failure still said), under the file's name" 'button: ▶ make quiet · failed (exit 2) | make quiet · failed (exit 2) | no problem found in its output |  | build.txt 1 | file out/src/c.cpp | >E 5:5 from a log'
 run "$R" "problemsread:$R/out/build.txt;buildwait;buildrun:make quiet;buildwait;problemsdump"
-check "and the next run's take theirs" 'button: ▶ make quiet · failed (exit 2) | make quiet failed with exit code 2: no problem found in its output | file 0'
+check "and the next run's take theirs" 'button: ▶ make quiet · failed (exit 2) | make quiet · failed (exit 2) | no problem found in its output'
 # The command: the file in front to begin with.
 run "$R" "open:$R/gcc16.sarif;command:Read the problems from this file…;key:Return;buildwait;buildproblemsdump"
 got=${got%% |*}

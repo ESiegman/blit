@@ -113,12 +113,25 @@ struct Blocks {
     std::vector<std::pair<u64, u64>> sections;  // (end time, offset)
     bool hier = false;
     std::string wrong;  // why the file cannot be read, if it cannot
+    bool writing = false;  // (and that is because its writer has not closed it)
 };
+
+// An FST its writer has not closed (or that stopped before it did): the
+// writer fills the header in and adds the hierarchy at the end only then.
+// Until then the file is empty, or its header is zeros (libfstwriter's,
+// Verilator's since 5.050, Nov 2026: 330 of them, then the changes), or
+// it has a block marked to be skipped (libfst's writer, while it writes
+// one), or no hierarchy after its blocks (libfst's: the header alone, as
+// Icarus 13.0 has it for a while).
+constexpr const char* kStillWriting = "the FST file is still being written (or its writer stopped before closing it)";
 
 Blocks walk(int fd, u64 size) {
     Blocks b;
     if (size < 9) {
-        b.wrong = "not an FST file: it is too short";
+        u8 h[9] = {};
+        const bool zeros = ::pread(fd, h, sizeof h, 0) == static_cast<ssize_t>(size) && std::ranges::all_of(h, [](u8 c) { return c == 0; });
+        b.writing = zeros;
+        b.wrong = zeros ? kStillWriting : "not an FST file: it is too short";
         return b;
     }
     u8 h[25];
@@ -136,12 +149,18 @@ Blocks walk(int fd, u64 size) {
             b.hier = true;
             return b;
         }
+        if (off == 0 && type == kHdr && len == 0 && std::all_of(h, h + 9, [](u8 c) { return c == 0; })) {
+            b.writing = true;  // (libfstwriter's header, before it is filled in)
+            b.wrong = kStillWriting;
+            return b;
+        }
         if (off == 0 && (type != kHdr || len != kHdrLength)) {
             b.wrong = "not an FST file: it does not start with an FST header";
             return b;
         }
         if (type == kSkip) {
-            b.wrong = "the FST file is not finished: its writer is still writing it (or stopped before closing it)";
+            b.writing = true;
+            b.wrong = kStillWriting;
             return b;
         }
         if (len < 8 || len > size - off - 1) {
@@ -453,10 +472,11 @@ struct Fst {
         size = static_cast<u64>(st.st_size);
         blocks = walk(fd, size);
         ::close(fd);
-        if (blocks.wrong.empty() && !blocks.hier) blocks.wrong = "the FST file has no hierarchy: its writer has not finished it";
+        if (blocks.wrong.empty() && !blocks.hier) blocks.writing = true, blocks.wrong = kStillWriting;
         if (!blocks.wrong.empty()) {
             std::unique_lock lock(wv.mu);
             wv.error = blocks.wrong;
+            wv.writing = blocks.writing;
             return;
         }
         if (!guarded(most(), [&] { ctx = fstReaderOpen(path.c_str()); }) || !ctx) {

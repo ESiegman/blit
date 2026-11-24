@@ -21,6 +21,7 @@
 #include "app.hpp"
 #include "fsio.hpp"
 #include "grammars.hpp"
+#include "missing.hpp"
 
 namespace blit {
 
@@ -332,13 +333,19 @@ Statement read_statement(std::mutex& mu, std::shared_ptr<Index>& index, const st
         const std::string to = fetched_path(), dir = to.substr(0, to.rfind('/'));
         std::string err, said;
         fs_mkdirs(dir, &err);
-        const std::string url = std::string("https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/") + kTag + "/registry/validusage.json";
-        fs_run(dir, "curl -fsSL --proto =https --max-time 300 -o " + sh_quote(to + ".part") + " " + sh_quote(url) + " && mv " + sh_quote(to + ".part") + " " + sh_quote(to), &said,
-               310000);
+        std::string url = env("BLIT_VALIDUSAGE_URL");  // (another, for the tests)
+        if (url.empty()) url = std::string("https://raw.githubusercontent.com/KhronosGroup/Vulkan-Headers/") + kTag + "/registry/validusage.json";
+        if (url.starts_with('/')) url = "file://" + url;
+        // (The shell's errors go nowhere: curl's are put with what it prints, and one not there is said.
+        // The protocols quoted: zsh takes a bare =word for the path of a program called word.)
+        fs_run(dir, "command -v curl >/dev/null 2>&1 || { echo blit-no-curl; exit 1; }; curl -fsSL --proto '=https,file' --max-time 300 -o " + sh_quote(to + ".part") + " " +
+                        sh_quote(url) + " 2>&1 && mv " + sh_quote(to + ".part") + " " + sh_quote(to),
+               &said, 310000);
         i64 size = 0, mtime = 0;
         if (stamp(to, &size, &mtime)) path = to;
         else {
-            while (!said.empty() && (said.back() == '\n' || said.back() == ' ')) said.pop_back();
+            while (!said.empty() && (said.back() == '\n' || said.back() == '\r' || said.back() == ' ')) said.pop_back();
+            if (said.starts_with("blit-no-curl")) said = not_installed("curl", {});
             st.why = "No validusage.json here, and fetching Vulkan-Headers' failed" + (said.empty() ? std::string() : ": " + said.substr(said.rfind('\n') + 1));
             return st;
         }

@@ -32,3 +32,19 @@ iverilog '-DDUMPVARS="times.vcd"' -o times.vvp "$here/times.v"
 vvp -n times.vvp >times-icarus.log 2>&1
 verilator --binary -Wno-fatal --top-module times --Mdir obj_times "$here/times.v"
 ./obj_times/Vtimes +verilator+error+limit+10 >times-verilator.log 2>&1
+
+# Icarus's run again (icarus.txt): built without DUMPOFF, and with the
+# testbench dumping its own scope only. (The FSTs still being written were
+# caught by hand: icarus.txt and verilator.txt say how.)
+iverilog -g2012 '-DDUMPVARS="icarus-rerun.vcd"' -o tb-rerun.vvp "$here/counter.sv"
+vvp -n tb-rerun.vvp
+sed 's/$dumpvars(0, tb)/$dumpvars(1, tb)/' "$here/counter.sv" >counter-top.sv
+iverilog -g2012 '-DDUMPVARS="icarus-top.vcd"' -DDUMPOFF -o tb-top.vvp counter-top.sv
+vvp -n tb-top.vvp
+
+# SymbiYosys's traces (sby.txt), with sby and z3 on the PATH (it fails, as
+# its bmc task finds the assertion's counterexample).
+cp "$here/formal/counter.v" "$here/formal/counter.sby" .
+sby -f counter.sby || true
+cp counter_bmc/engine_0/trace.vcd sby-bmc.vcd
+cp counter_cover/engine_0/trace0.vcd sby-cover.vcd

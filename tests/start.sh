@@ -110,5 +110,39 @@ for size in 1000x700 1400x900 1600x1000; do
     check "a box over it ends on a row's edge ($size)" 'edge 0'
 done
 
+# The New project tab, where what it runs is not installed (the user's
+# shell keeps the PATH it is given, which has none of them; blit's data
+# folder the test's own): uv (pip in its place), pkg-config (told apart
+# from one with no modules) and curl (for PyPI's list), each said.
+case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+mkdir -p "$dir/bare" "$dir/empty-pc"
+ln -s /usr/bin/* /bin/* "$dir/bare/" 2>/dev/null
+rm -f "$dir/bare/uv" "$dir/bare/pkg-config" "$dir/bare/pkgconf" "$dir/bare/curl"
+printf '#!/bin/sh\nexit 0\n' >"$dir/empty-pc/pkg-config"  # (one with no modules: it lists none)
+chmod +x "$dir/empty-pc/pkg-config"
+printf '#!/bin/sh\nshift\nexec /bin/sh -c "$@"\n' >"$dir/plainsh"
+chmod +x "$dir/plainsh"
+# np PATH SCRIPT: the New project tab with that PATH, in the start screen's folder; the last line.
+np() {
+    got=$(SHELL="$dir/plainsh" PATH="$1" XDG_DATA_HOME="$dir/data" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$W;frame;newproject;project:where=$W;$2" 2>&1 >/dev/null | sed -e "s#$dir#~#g" | tail -1)
+}
+down() { n=$1 && while [ "$n" -gt 0 ]; do printf 'key:Down;' && n=$((n - 1)); done; }
+np "$dir/bare" "project:kind=Python;projectfacts"
+got=${got#* | missing: }
+check "the facts: uv and pkg-config not installed" "uv is not installed on $this; pkg-config is not installed on $this;"
+np "$dir/bare" "project:kind=Python;projectfacts;$(down 8)key:Right;projectdump"
+got=$(printf '%s' "$got" | sed -e 's/ type=.* backend_pip=/ ... backend_pip=/' -e 's/ deps=.* | / | /')
+check "and pip in uv's place, its rows pip's (Right on Build backend: pip's that changes)" 'kind=Python name= where=~/work git=on | manager=pip ... backend_pip=setuptools | at 8'
+np "$dir/bare" "project:kind=C;project:build=Make;projectfacts;$(down 7)key:Return;projectwait;projectdump"
+got=${got##* | }
+check "C's libraries from pkg-config, and none: said" "error: pkg-config is not installed on $this."
+np "$dir/empty-pc:$dir/bare" "project:kind=C;project:build=Make;projectfacts;$(down 7)key:Return;projectwait;projectdump"
+got=${got##* | }
+check "and one with no modules: told apart" "error: pkg-config has no modules on $this."
+np "$dir/bare" "project:kind=Python;projectfacts;$(down 9)key:Return;projectwait;finddump"
+check "PyPI's list, with no curl to fetch it: said under it" "pick [] (curl is not installed on $this) 1 : >  Another package, by its exact name…"
+got=$(SHELL="$dir/plainsh" XDG_DATA_HOME="$dir/data2" BLIT_PYPI_URL="$dir/no-such.json" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$W;frame;newproject;project:where=$W;project:kind=Python;projectfacts;$(down 9)key:Return;projectwait;finddump" 2>&1 >/dev/null | sed -e "s#$dir#~#g" -e "s/Could not open file/Couldn't open file/" | tail -1)  # (curl's own words: the Mac's 8.7 says "Couldn't", Arch's 8.23 "Could not")
+check "and one curl could not fetch: curl's words" "pick [] (curl: (37) Couldn't open file ~/no-such.json) 1 : >  Another package, by its exact name…"
+
 [ -n "$print" ] || [ $failed = 1 ] || echo "start ok"
 exit $failed

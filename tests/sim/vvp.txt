@@ -1,0 +1,5 @@
+# Icarus Verilog 13.0 (stable) (v13_0-dirty), Arch Linux (x86-64), 23 Nov 2026:
+# vvp -n tb.vvp, after iverilog -g2012 '-DDUMPVARS="icarus.vcd"' -DDUMPOFF -o tb.vvp counter.sv
+# (tests/wave/make/counter.sv; it wrote tests/wave/icarus.vcd), its stdout and stderr.
+VCD info: dumpfile icarus.vcd opened for output.
+counter.sv:51: $finish called at 2772000 (1ps)

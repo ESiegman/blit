@@ -260,6 +260,7 @@ Prepared prepare(const std::string& root, const BuildTask& c, std::string tool, 
                 return p;
             }
         h = h * 31 + flash_hash(bytes);
+        if (fpga_tool(tool)) img.spi_width = bitstream_spi_width(bytes);  // (Vivado's write_cfgmem takes no other)
     }
     const FlashPlan plan = flash_plan(c.board, tool, program, img, mode);
     if (!plan.why.empty()) {
@@ -289,7 +290,6 @@ struct App::FlashUi {
         u64 doc = 0;
         std::string board, key;
         bool keep = false;
-        std::string root, port;  // (the board's serial port, on the folder's machine: let go of while it runs)
     } run;
     std::unordered_map<std::string, std::string> flashed;  // by board: what it was last flashed with, well
     // Last, so that it is joined first, while all it uses is still there.
@@ -346,34 +346,25 @@ void App::flash_sync() {
         if (it != u.flashed.end() && it->second == p->key)
             return build_note(p->row, p->task.kind == "program" ? "Not programmed: unchanged since the last flash" : "Not flashed: unchanged since the last flash");
     }
-    const std::string root = build_root(), port = p->task.board.port;
-    flash_port(root, port, true);
-    const u64 doc = build_run_on(p->row, root, p->task);
-    if (!doc) {
-        flash_port(root, port, false);
-        return notify("Cannot run " + p->task.name, 1);
-    }
-    u.run = {doc, p->board, p->key, p->keep, root, port};
-}
-
-// The one place a flash's start and end meet the board's serial port (a
-// serial monitor's tab reading it lets go of it as the flash starts, and
-// takes it again once it has ended: the tool may want it, and the board
-// goes away and comes back as it is reset). Nothing reads it yet.
-void App::flash_port(const std::string& root, const std::string& port, bool flashing) {
-    (void)root, (void)port, (void)flashing;
+    // (Serial tabs on the board's port let go of it while the tool runs, and
+    // have it back once it has ended: appserial.cpp. The board flashed is
+    // the one prepared, which the Run button may no longer name.)
+    serial_release(p->task.board);
+    const u64 doc = build_run_on(p->row, build_root(), p->task);
+    if (!doc) serial_reclaim();
+    if (!doc) return notify("Cannot run " + p->task.name, 1);
+    u.run = {doc, p->board, p->key, p->keep};
 }
 
 void App::flash_ended(u64 doc, bool well) {
     if (!flashui_ || flashui_->run.doc != doc || !doc) return;
+    serial_reclaim();  // (the serial tabs let go of for it: appserial.cpp)
     FlashUi& u = *flashui_;
     if (u.run.keep) {
         if (well) u.flashed[u.run.board] = u.run.key;
         else u.flashed.erase(u.run.board);  // (half written, or not at all: what is on it is not known)
     }
-    const FlashUi::Running ended = std::move(u.run);
     u.run = {};
-    flash_port(ended.root, ended.port, false);
 }
 
 void App::flash_settle() {

@@ -1,0 +1,6 @@
+# Verilator 5.054, Arch Linux (x86-64), 23 Nov 2026: ./obj_dir/Vtb, the program the verilator
+# of verilator.txt built (it wrote tests/wave/verilator.vcd), its stdout and stderr.
+- counter.sv:51: Verilog $finish
+- S i m u l a t i o n   R e p o r t: Verilator 5.054 2026-11-01
+- Verilator: $finish at 3us; walltime 0.000 s; speed 27.057 ms/s
+- Verilator: cpu 0.000 s on 1 threads; allocated 4 MB

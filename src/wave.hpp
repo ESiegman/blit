@@ -12,10 +12,13 @@
 // can come from another machine a part at a time, or be followed as it
 // grows; under a memory budget (the setting timeline.max_mb), at which it
 // stops and says so; on a thread of its own (WaveLoad), with progress and
-// a way to stop it.
+// a way to stop it. A dump still being written is read as far as it goes
+// and then followed: what is added to it is read as it comes.
 #include <atomic>
+#include <condition_variable>
 #include <functional>
 #include <memory>
+#include <mutex>
 #include <shared_mutex>
 #include <stop_token>
 #include <string>
@@ -96,6 +99,13 @@ struct Wave {
     bool done = false;
     u64 reached = 0;
     std::string error;
+    // Read to the end of what the file has so far, and not done: it is
+    // followed, and more may come (VcdReader::settle). `reached` is its end
+    // until more comes.
+    bool settled = false;
+    // An FST its writer has not closed yet (libfst cannot read it until it
+    // has): not read, and `error` says so.
+    bool writing = false;
     // What was wrong but did not stop it, said once each ("line 12: ...").
     std::vector<std::string> notes;
     u64 changes = 0;  // in all the lanes (once done)
@@ -135,6 +145,11 @@ public:
     // The next bytes of the dump. False once it has stopped (the budget, or
     // finish()); what was read until then stays.
     bool feed(std::string_view bytes);
+    // The end of what there is for now, in a dump still being written: what
+    // was fed is read, but for a token the end of it cuts (which waits for
+    // the next feed), and the Wave is `settled` until the next feed. The
+    // lanes give back what they took on beyond their size the first time.
+    void settle();
     // The end of the dump: a last token with no newline after it is read,
     // the lanes give back what they took on beyond their size, and the
     // Wave is done.
@@ -173,6 +188,7 @@ private:
     char want_ = 0;         // a 'b', 'r' or 's' value read: its code is the next token
     std::string_view pend_; // (the value: in the piece being read, or in pending_ if owned_)
     bool owned_ = false;
+    bool shrunk_ = false;   // (settled once: the lanes made no larger than they are)
     std::string pending_;
     u32 cur_scope_ = 0;
     u64 now_ = 0;
@@ -260,15 +276,29 @@ u64 read_fst(Wave* into, const std::string& path, u64 max_bytes = 0, std::stop_t
 // called on that thread: a local file's (local_file) or, for a remote
 // one, kReadAt parts. Their first bytes say which reader reads them: VCD's,
 // or an ILA capture's CSV.
+//
+// A VCD may be followed (a simulation still writing it): at the end of
+// the file the load settles (VcdReader::settle) and waits, on no timer,
+// until more() says the file has changed; then it reads on from where it
+// got to, if the file is the one it was reading, grown. One written again
+// from its start (its first bytes, or those just before where the load got
+// to, are not as they were; or it is shorter) is not read on: rewritten()
+// says so and the load ends, for its tab to read it again whole.
 class WaveLoad {
 public:
     // Reads at most len bytes at offset; returns how many (0: the end), or -1 on an error.
     using ReadAt = std::function<i64(u64 offset, char* buf, size_t len)>;
+    // Whether a VCD is followed at its end: not (it is finished there); once
+    // its header has been read (one cut short in its header is finished, as
+    // one that is not followed is, and says why); or always (a dump being
+    // written again from its start, which may have no header yet).
+    enum class Follow : u8 { kNo, kAfterHeader, kAlways };
 
     // size: the file's (for progress; 0 if not known). notify is called on
     // the load's thread once the definitions are read, then at most every
-    // tenth of a second while it reads, and at the end.
-    WaveLoad(std::shared_ptr<Wave> into, ReadAt read_at, u64 size, u64 max_bytes, std::function<void()> notify = {});
+    // tenth of a second while it reads, and at the end (or each time it
+    // settles, followed).
+    WaveLoad(std::shared_ptr<Wave> into, ReadAt read_at, u64 size, u64 max_bytes, std::function<void()> notify = {}, Follow follow = Follow::kNo);
     // An FST file, by its path (read_fst), told about in the same way;
     // read() is an estimate, from where libfst has got to.
     WaveLoad(std::shared_ptr<Wave> into, std::string fst_path, u64 max_bytes, std::function<void()> notify = {});
@@ -286,20 +316,35 @@ public:
 
     const std::shared_ptr<Wave>& wave() const { return wave_; }
     u64 read() const { return read_.load(std::memory_order_relaxed); }  // bytes so far
-    u64 size() const { return size_.load(std::memory_order_relaxed); }
+    u64 size() const { return size_.load(std::memory_order_relaxed); }  // (a followed file's: as large as it has been read)
     bool finished() const { return finished_.load(std::memory_order_acquire); }
-    void stop() { thread_.request_stop(); }
+    void stop();
     void wait();  // (for tests and tools)
 
+    // Followed: the file has changed (any thread; cheap: the load's thread
+    // looks). Whether it waits at the end now, how many times it has read
+    // on past an end it waited at (the file grew while it was followed),
+    // and whether the file turned out to be written again.
+    void more();
+    bool waiting() const;  // (not once more() has been called: until the load has looked)
+    u64 grown() const { return grown_.load(std::memory_order_relaxed); }
+    bool rewritten() const { return rewritten_.load(std::memory_order_acquire); }
+
 private:
-    void run(std::stop_token stop, ReadAt read_at, u64 max_bytes);
+    void run(std::stop_token stop, ReadAt read_at, u64 max_bytes, Follow follow);
     void run_fst(std::stop_token stop, const std::string& path, u64 max_bytes);
+    bool wait_more(std::stop_token stop);
 
     std::shared_ptr<Wave> wave_;
     std::atomic<u64> size_{0};  // (a fetched FST's is known only once it is here)
     std::function<void()> notify_;
     std::atomic<u64> read_{0};
     std::atomic<bool> finished_{false};
+    std::atomic<bool> waiting_{false}, rewritten_{false};
+    std::atomic<u64> grown_{0};
+    mutable std::mutex more_mu_;
+    std::condition_variable_any more_cv_;
+    u64 asked_ = 0;  // (more_mu_) more() calls
     std::jthread thread_;  // (last: it stops before what it uses goes)
 };
 

@@ -9,7 +9,8 @@
 // has it), so that an ssh project sees the far machine's devices.
 // BLIT_USB_ROOT names a folder laid out as /sys/bus/usb/devices is, read in
 // place of the machine's own on either system (the tests' stand-in for
-// plugged-in hardware).
+// plugged-in hardware), and BLIT_USB_DEV, with it, the folder its ttys are
+// in (in place of /dev: links to pseudo-terminals standing in for ports).
 #include <cstdint>
 #include <string>
 #include <string_view>

@@ -226,6 +226,10 @@
 ---------------------------------------------------------------- building
 -- blit.opt.build.notify = true   -- a task that ends while blit is behind another window says so in a notification of the system's
 
+---------------------------------------------------------------- serial ports
+-- blit.opt.serial.baud = 115200  -- a serial tab's speed when the board's run configuration gives none
+-- blit.opt.serial.line_end = "cr"  -- what Return sends to the port: "cr", "lf" or "crlf" (each tab can change it)
+
 ---------------------------------------------------------------- waves and timelines
 -- blit.opt.timeline.max_mb = 2048  -- the memory a dump's waves may take: reading one stops there, and says how far it got
 -- blit.opt.wave.remote_fetch_mb = 512  -- a dump on another machine up to this is fetched in parts and read here; a larger one is not shown

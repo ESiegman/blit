@@ -3296,6 +3296,42 @@ The first run of this had outliers in its fifth round; run again, each
 moved by as much as the runs move among themselves, either way; none by
 more.
 
+### Round 75: milestone 5b, the ELF reader and crash dumps decoded
+
+A native ELF reader and address to source from DWARF 2 to 5
+(`src/elf.*`, `src/addrsrc.*`), and crash dumps in a task's or a run's
+output decoded in place (`src/crashscan.*`), the scan running on the
+terminal's reading thread before the screen. On AC power (`pmset`:
+powermode 2), the machine loaded by other builds (load average 12), so
+the numbers are within this sitting only.
+
+What the reading thread does with each 64 KB (`blit_bench run
+code-100m.txt term`, two runs; "+ crash" is the same pipeline with the
+crash scan in front of the screen, as the reader now runs it):
+
+| | Screen and build scan | + crash | Crash scan alone |
+|---|---:|---:|---:|
+| `code-100m.txt` | 78.5, 79.0 MB/s | 76.2, 76.5 MB/s | 1,971, 1,860 MB/s |
+| The 32 MB build log | 190, 196 MB/s | 181, 179 MB/s | 2,364, 2,278 MB/s |
+
+The crash scan costs 0.5 ms a megabyte (3% of the reader on code, 6% on
+the build log, whose lines are short), all of it outside a dump: walking
+the bytes into lines, and two `find`s a line (`0x`, then the few words a
+dump starts with).
+
+The reader (`blit_elf_test bench`, Release flags; 1,000 addresses at
+random in the code; "every unit" read on a fresh reader):
+
+| ELF | Size | Read | Units indexed | 1,000 lookups | Every unit's tables |
+|---|---:|---:|---:|---:|---:|
+| Pico blinky (RP2040, DWARF 5) | 0.6 MB | 0.2 ms | 0.2 ms | 1.5 to 2.1 ms | 1.0 to 1.4 ms |
+| ESP32-S3 crash sample (Xtensa, DWARF 4) | 3.7 MB | 0.7 ms | 0.6 ms | 5.4 to 7.1 ms | 5.8 to 6.8 ms |
+| blit itself on the Arch box (x86-64, DWARF 5, Debug) | 153 MB | 24 to 26 ms | 5.3 to 6.6 ms | 121 to 142 ms | 178 to 187 ms (peak 279 MB) |
+
+A dump's first address in a unit reads that unit's tables (a few
+milliseconds at worst on firmware); the ELF is kept between dumps until
+it changes.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

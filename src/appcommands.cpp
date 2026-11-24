@@ -346,6 +346,21 @@ void App::commands_create() {
     own("Choose the project's Python\xE2\x80\xA6", {}, [this] { py_choose(); });
     own("Find the project's Python again", {}, [this] { py_again(true); });
     own("Open the terminal's lines as text", {}, [this] { term_lines_tab(); });
+    // Serial monitors: a terminal tab whose program is the device on a port (appserial.cpp).
+    own("Open a serial port\xE2\x80\xA6", {}, [this] { serial_pick(); });
+    own("Open the board's serial monitor", {}, [this] { serial_board(); });
+    own("Change the port's speed and framing\xE2\x80\xA6", {}, [this] { serial_speed_pick(); });
+    own("Change what Return sends to the port\xE2\x80\xA6", {}, [this] { serial_return_pick(); });
+    own("Show or hide the serial port's times", {}, [this] { serial_stamps(); });
+    own("Show the serial port's bytes as hex, or as text", {}, [this] { serial_hex(); });
+    own("Log the serial port to a file\xE2\x80\xA6", {}, [this] { serial_log_pick(); });
+    own("Stop logging the serial port", {}, [this] { serial_log_stop(); });
+    own("Send a file to the serial port\xE2\x80\xA6", {}, [this] { serial_send_pick(); });
+    own("Turn the port's DTR on or off", {}, [this] { serial_line(true); });
+    own("Turn the port's RTS on or off", {}, [this] { serial_line(false); });
+    own("Reset the board through DTR/RTS (ESP32)", {}, [this] { serial_reset(true); });
+    own("Reset the board through DTR (Arduino)", {}, [this] { serial_reset(false); });
+    own("Send a break to the serial port", {}, [this] { serial_break(); });
     own("Run the cell (# %%)", {}, [this] { if (!nb_run_cell()) notify("The file has no # %% cells"); });
     own("Run all the cells", {}, [this] { nb_run_all(); });
     own("Interrupt the kernel", {}, [this] { nb_interrupt(); });
@@ -377,6 +392,7 @@ void App::commands_create() {
     own("Flash anyway", {}, [this] { flash_board(FlashMode::kFlash, true); });
     own("Program the FPGA (SRAM)", {}, [this] { flash_board(FlashMode::kSram, false); });
     own("Program the FPGA's flash", {}, [this] { flash_board(FlashMode::kFpgaFlash, false); });
+    own("Open the last run's waves", {}, [this] { sim_last_waves(); });  // (gW in Normal mode, kVimCommands)
     own("Read the problems from this file\xE2\x80\xA6", {}, [this] { build_read_choose(); });
     own("Attach the debugger to a process\xE2\x80\xA6", {}, [this] { debug_attach_pick(); });
     own("Debug a core file\xE2\x80\xA6", {}, [this] { debug_core_pick(); });

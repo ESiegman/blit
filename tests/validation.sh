@@ -78,18 +78,18 @@ EOF
 
 vk='no file | >▸W vkCreateInstance(): Information with the layer settings provided: | E vkCreateBuffer(): pCreateInfo->size is zero. | W vkBindBufferMemory(): Trying to bind VkBuffer 0x20000000002 to a memory block which is fully consumed by the buffer. The required size of the allocation is 256, but smaller buffers like this should be sub-allocated from larger memory blocks. (Current threshold is 1048576 bytes) | ▸E vkCmdSetLineWidth(): lineWidth is 2.000000 (not 1.0), but the wideLines feature was not enabled. ×3 | ▸E vkFreeCommandBuffers(): pCommandBuffers[0] (VkCommandBuffer 0x5580ceb62780[frame commands]) is in use. | E vkDestroyFence(): can'"'"'t be called on VkFence 0x50000000005 that is currently in use by VkQueue 0x5580ceb82850'
 run "buildrun:make text;buildwait;problemsdump"
-check "the layer's text: a row each, no place, the Information left out, the line width every frame one row (x3)" "button: ▶ make text · 4 errors | Build 6 | $vk"
+check "the layer's text: a row each, no place, the Information left out, the line width every frame one row (x3)" "button: ▶ make text · 4 errors | make text 6 · done | $vk"
 run "buildrun:make json;buildwait;problemsdump"
 vkjson=$(printf '%s' "$vk" | sed -e 's/0x5580ceb62780/0x55c221b69fe0/' -e 's/0x5580ceb82850/0x55c221b48eb0/')
-check "its JSON: the same rows" "button: ▶ make json · 4 errors | Build 6 | $vkjson"
+check "its JSON: the same rows" "button: ▶ make json · 4 errors | make json 6 · done | $vkjson"
 run "buildrun:make slow;wait:600;problemsdump;buildwait;problemsdump" 2
-check "said again after its row was taken: the row counts it" "button: ■ Stop · 2 errors | Build 4 | no file | >▸W vkCreateInstance(): Information with the layer settings provided: | E vkCreateBuffer(): pCreateInfo->size is zero. | W vkBindBufferMemory(): Trying to bind VkBuffer 0x20000000002 to a memory block which is fully consumed by the buffer. The required size of the allocation is 256, but smaller buffers like this should be sub-allocated from larger memory blocks. (Current threshold is 1048576 bytes) | ▸E vkCmdSetLineWidth(): lineWidth is 2.000000 (not 1.0), but the wideLines feature was not enabled./button: ▶ make slow · 4 errors | Build 6 | $vk"
+check "said again after its row was taken: the row counts it" "button: ■ Stop · 2 errors | make slow 4 · running… | no file | >▸W vkCreateInstance(): Information with the layer settings provided: | E vkCreateBuffer(): pCreateInfo->size is zero. | W vkBindBufferMemory(): Trying to bind VkBuffer 0x20000000002 to a memory block which is fully consumed by the buffer. The required size of the allocation is 256, but smaller buffers like this should be sub-allocated from larger memory blocks. (Current threshold is 1048576 bytes) | ▸E vkCmdSetLineWidth(): lineWidth is 2.000000 (not 1.0), but the wideLines feature was not enabled./button: ▶ make slow · 4 errors | make slow 6 · done | $vk"
 
 gpuav='no file | >▸W vkCreateInstance(): Information with the layer settings provided: | ▸W vkCreateDevice(): Warning that validation is adjusting settings: | ▸W vkCreateDevice(): Warning that validation is adjusting settings: | file oob.comp | ▸E 7 vkCmdDispatch(): (set = 0, binding = 0, index 0)  access out of bounds. The descriptor buffer (VkBuffer 0x90000000009) size is 16 bytes, 16 bytes were bound, and the highest out of bounds access was at [259] bytes'
 run "buildrun:make gpuav;buildwait;problemsdump"
-check "GPU-assisted validation: at the shader's own line (the warnings, which say what they are about on the lines under them, a row each)" "button: ▶ make gpuav · 1 error | Build 4 | $gpuav"
+check "GPU-assisted validation: at the shader's own line (the warnings, which say what they are about on the lines under them, a row each)" "button: ▶ make gpuav · 1 error | make gpuav 4 · done | $gpuav"
 run "buildrun:make gpuavjson;buildwait;problemsdump"
-check "and in JSON" "button: ▶ make gpuavjson · 1 error | Build 4 | $gpuav"
+check "and in JSON" "button: ▶ make gpuavjson · 1 error | make gpuavjson 4 · done | $gpuav"
 run "buildrun:make gpuav;buildwait;key:cmd+shift+m;key:Down;key:Down;key:Down;key:Return;docdump:0"
 check "Enter on it: its line in the shader" '> |    data.v[i] = 7;'
 
@@ -103,7 +103,7 @@ run "buildrun:make text;buildwait;key:cmd+shift+m;key:Return;command:Show the Vu
 check "one with no VUID: none" 'blit: The problem picked names no VUID'
 
 run "buildrun:make oneline;buildwait;problemsdump"
-check "the one-line form: the message after its MessageID, up to the statement; the second (another handle) counted" 'button: ▶ make oneline · 1 error | Build 1 | no file | >▸E vkCmdWaitEvents2(): pDependencyInfos[0].dependencyFlags includes VK_DEPENDENCY_BY_REGION_BIT. ×2'
+check "the one-line form: the message after its MessageID, up to the statement; the second (another handle) counted" 'button: ▶ make oneline · 1 error | make oneline 1 · failed (exit 2) | no file | >▸E vkCmdWaitEvents2(): pDependencyInfos[0].dependencyFlags includes VK_DEPENDENCY_BY_REGION_BIT. ×2'
 run "buildrun:make oneline;buildwait;key:cmd+shift+m;key:Return;vuwait;docdump:12" 12
 check "a statement with a list: an item a line" 'VUID-vkCmdWaitEvents2-dependencyFlags-10394/> |VUID-vkCmdWaitEvents2-dependencyFlags-10394/  vkCmdWaitEvents2/  /  The dependencyFlags member of any element of pDependencyInfo must not include/  any of the following bits:/    • VK_DEPENDENCY_BY_REGION_BIT/    • VK_DEPENDENCY_DEVICE_GROUP_BIT/    • VK_DEPENDENCY_VIEW_LOCAL_BIT/    • VK_DEPENDENCY_FEEDBACK_LOOP_BIT_EXT/  /  Vulkan 1.4.363, @/validation/validusage.json'
 
@@ -115,13 +115,38 @@ check "one with no entries: said so" 'blit: ~/cut.json has no valid usage in it'
 BLIT_VALIDUSAGE="$S/validusage.json" run "buildrun:make json;buildwait;key:cmd+shift+m;key:Down;key:Down;key:Down;key:Down;key:Down;key:Return;vuwait"
 check "a VUID it does not have (the few here have not vkDestroyFence's): said so" 'blit: VUID-vkDestroyFence-fence-01120 is not in @/validation/validusage.json (Vulkan 1.4.363)'
 
+# None on the system: Vulkan-Headers' fetched (BLIT_VALIDUSAGE_URL names
+# the file here) into blit's data folder (the test's own); where it cannot
+# be had, why: curl's own words, or that there is no curl (the shell keeps
+# the PATH it is given, which has none). (Where the system has a
+# validusage.json, nothing is fetched: skipped.)
+system=
+for f in /usr/share /usr/local/share /opt/homebrew/share; do [ -e "$f/vulkan/registry/validusage.json" ] && system=$f; done
+if [ -z "$system" ]; then
+    case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
+    mkdir -p "$dir/bare"
+    ln -s /usr/bin/* /bin/* "$dir/bare/" 2>/dev/null
+    rm -f "$dir/bare/curl"
+    printf '#!/bin/sh\nshift\nexec /bin/sh -c "$@"\n' >"$dir/plainsh"
+    chmod +x "$dir/plainsh"
+    vu="buildrun:make text;buildwait;key:cmd+shift+m;key:Down;key:Return;vuwait"
+    # (zsh's, where there is one: it takes a bare =word for a program's path.)
+    login=$(command -v zsh || echo "${SHELL:-/bin/sh}")
+    got=$(env -u BLIT_VALIDUSAGE -u VULKAN_SDK SHELL="$login" XDG_DATA_HOME="$dir/data1" BLIT_VALIDUSAGE_URL="$dir/no-such.json" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$F;frame;$vu" 2>&1 >/dev/null | sed -e "s#$dir#~#g" -e "s/Could not open file/Couldn't open file/" | tail -1)  # (curl's own words: the Mac's 8.7 says "Couldn't", Arch's 8.23 "Could not")
+    check "none here, and the fetch failed: curl's words" "blit: No validusage.json here, and fetching Vulkan-Headers' failed: curl: (37) Couldn't open file ~/no-such.json"
+    got=$(env -u BLIT_VALIDUSAGE -u VULKAN_SDK XDG_DATA_HOME="$dir/data2" SHELL="$dir/plainsh" PATH="$dir/bare" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$F;frame;$vu" 2>&1 >/dev/null | tail -1)
+    check "none here, and no curl to fetch it with: said" "blit: No validusage.json here, and fetching Vulkan-Headers' failed: curl is not installed on $this"
+    got=$(env -u BLIT_VALIDUSAGE -u VULKAN_SDK XDG_DATA_HOME="$dir/data3" BLIT_VALIDUSAGE_URL="$S/validusage.json" BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$F;frame;$vu;docdump:8" 2>&1 >/dev/null | sed -e "s#$dir#~#g" | tail -1)
+    check "fetched: read from blit's copy" '  Vulkan 1.4.363, ~/data3/blit/vulkan/validusage-v1.4.363.json'
+fi
+
 # Metal.
 run "buildrun:make assert;buildwait;problemsdump"
-check "Metal's assertion" 'button: ▶ make assert · 1 error | Build 1 | no file | >E Draw Errors Validation: missing vertexDescriptor Buffer binding at index 0.'
+check "Metal's assertion" 'button: ▶ make assert · 1 error | make assert 1 · done | no file | >E Draw Errors Validation: missing vertexDescriptor Buffer binding at index 0.'
 run "buildrun:make nslog;buildwait;problemsdump"
-check "logged, frame after frame: each thing wrong a row, counted" 'button: ▶ make nslog · 2 errors | Build 2 | no file | >E Draw Errors Validation: missing vertexDescriptor Buffer binding at index 0. ×3 | E Draw Errors Validation: Vertex Function(vmain): missing Buffer binding at index 0 for vertexBuffer.0[0]. ×3'
+check "logged, frame after frame: each thing wrong a row, counted" 'button: ▶ make nslog · 2 errors | make nslog 2 · done | no file | >E Draw Errors Validation: missing vertexDescriptor Buffer binding at index 0. ×3 | E Draw Errors Validation: Vertex Function(vmain): missing Buffer binding at index 0 for vertexBuffer.0[0]. ×3'
 run "buildrun:make shader;buildwait;problemsdump"
-check "shader validation: at its GPU stack's first frame (a library made at run time: program_source)" 'button: ▶ make shader · 1 error | Build 1 | file /program_source | >▸E 7:19 Invalid store in '"'"'device'"'"' or '"'"'constant'"'"' address space at offset 16384, executing compute function: "fill"'
+check "shader validation: at its GPU stack's first frame (a library made at run time: program_source)" 'button: ▶ make shader · 1 error | make shader 1 · done | file /program_source | >▸E 7:19 Invalid store in '"'"'device'"'"' or '"'"'constant'"'"' address space at offset 16384, executing compute function: "fill"'
 run "buildrun:make assert;buildwait;key:cmd+shift+m;key:Return;command:Show the Vulkan spec's statement of the picked problem's VUID"
 check "its row has no statement to show" 'blit: The problem picked names no VUID'
 

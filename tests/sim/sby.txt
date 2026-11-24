@@ -1,0 +1,76 @@
+# SymbiYosys (git b21f778, 16 Nov 2026) with Yosys 0.71+77 and yosys-smtbmc on z3 5.4.1 (pip's
+# z3-solver), Arch Linux (x86-64), 23 Nov 2026: sby -f counter.sby in /tmp/m6-rerun-tools/formal
+# (tests/wave/make/formal), its stdout and stderr. It wrote
+# counter_bmc/engine_0/trace.vcd (tests/wave/sby-bmc.vcd) and counter_cover/engine_0/trace0.vcd
+# (tests/wave/sby-cover.vcd), and ended with 2 (the bmc task failed).
+SBY 17:11:46 [counter_bmc] Removing directory '/tmp/m6-rerun-tools/formal/counter_bmc'.
+SBY 17:11:46 [counter_bmc] Copy '/tmp/m6-rerun-tools/formal/counter.v' to '/tmp/m6-rerun-tools/formal/counter_bmc/src/counter.v'.
+SBY 17:11:46 [counter_bmc] engine_0: smtbmc z3
+SBY 17:11:46 [counter_cover] Removing directory '/tmp/m6-rerun-tools/formal/counter_cover'.
+SBY 17:11:46 [counter_cover] Copy '/tmp/m6-rerun-tools/formal/counter.v' to '/tmp/m6-rerun-tools/formal/counter_cover/src/counter.v'.
+SBY 17:11:46 [counter_cover] engine_0: smtbmc z3
+SBY 17:11:46 [counter_bmc] base: starting process "cd counter_bmc/src; yosys -ql ../model/design.log ../model/design.ys"
+SBY 17:11:46 [counter_cover] base: starting process "cd counter_cover/src; yosys -ql ../model/design.log ../model/design.ys"
+SBY 17:11:46 [counter_bmc] base: finished (returncode=0)
+SBY 17:11:46 [counter_bmc] prep: starting process "cd counter_bmc/model; yosys -ql design_prep.log design_prep.ys"
+SBY 17:11:46 [counter_cover] base: finished (returncode=0)
+SBY 17:11:46 [counter_cover] prep: starting process "cd counter_cover/model; yosys -ql design_prep.log design_prep.ys"
+SBY 17:11:46 [counter_bmc] prep: finished (returncode=0)
+SBY 17:11:46 [counter_bmc] smt2: starting process "cd counter_bmc/model; yosys -ql design_smt2.log design_smt2.ys"
+SBY 17:11:46 [counter_cover] prep: finished (returncode=0)
+SBY 17:11:46 [counter_cover] smt2: starting process "cd counter_cover/model; yosys -ql design_smt2.log design_smt2.ys"
+SBY 17:11:46 [counter_bmc] smt2: finished (returncode=0)
+SBY 17:11:46 [counter_bmc] engine_0: starting process "cd counter_bmc; yosys-smtbmc -s z3 --presat --noprogress -t 12  --append 0 --dump-vcd engine_0/trace.vcd --dump-yw engine_0/trace.yw --dump-vlogtb engine_0/trace_tb.v --dump-smtc engine_0/trace.smtc model/design_smt2.smt2"
+SBY 17:11:46 [counter_cover] smt2: finished (returncode=0)
+SBY 17:11:46 [counter_cover] engine_0: starting process "cd counter_cover; yosys-smtbmc -s z3 --presat -c --noprogress -t 12  --append 0 --dump-vcd engine_0/trace%.vcd --dump-yw engine_0/trace%.yw --dump-vlogtb engine_0/trace%_tb.v --dump-smtc engine_0/trace%.smtc model/design_smt2.smt2"
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Solver: z3
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assumptions in step 0..
+SBY 17:11:46 [counter_cover] engine_0: ##   0:00:00  Solver: z3
+SBY 17:11:46 [counter_cover] engine_0: ##   0:00:00  Checking cover reachability in step 0..
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assertions in step 0..
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assumptions in step 1..
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assertions in step 1..
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assumptions in step 2..
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assertions in step 2..
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assumptions in step 3..
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assertions in step 3..
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assumptions in step 4..
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assertions in step 4..
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assumptions in step 5..
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assertions in step 5..
+SBY 17:11:46 [counter_cover] engine_0: ##   0:00:00  Checking cover reachability in step 1..
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assumptions in step 6..
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assertions in step 6..
+SBY 17:11:46 [counter_cover] engine_0: ##   0:00:00  Reached cover statement in step 1 at counter: counter.v:15.27-15.47 (_witness_.check_counter_v_15_cover_11)
+SBY 17:11:46 [counter_cover] engine_0: ##   0:00:00  Writing trace to VCD file: engine_0/trace0.vcd
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assumptions in step 7..
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Checking assertions in step 7..
+SBY 17:11:46 [counter_cover] engine_0: ##   0:00:00  Writing trace to Verilog testbench: engine_0/trace0_tb.v
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  BMC failed!
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Assert failed in counter: counter.v:14.37-14.58 (_witness_.check_counter_v_14_assert_8)
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Writing trace to VCD file: engine_0/trace.vcd
+SBY 17:11:46 [counter_cover] engine_0: ##   0:00:00  Writing trace to constraints file: engine_0/trace0.smtc
+SBY 17:11:46 [counter_cover] engine_0: ##   0:00:00  Writing trace to Yosys witness file: engine_0/trace0.yw
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Writing trace to Verilog testbench: engine_0/trace_tb.v
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Writing trace to constraints file: engine_0/trace.smtc
+SBY 17:11:46 [counter_cover] engine_0: ##   0:00:00  Status: passed
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Writing trace to Yosys witness file: engine_0/trace.yw
+SBY 17:11:46 [counter_bmc] engine_0: ##   0:00:00  Status: failed
+SBY 17:11:46 [counter_cover] engine_0: finished (returncode=0)
+SBY 17:11:46 [counter_cover] engine_0: Status returned by engine: pass
+SBY 17:11:46 [counter_cover] summary: Elapsed clock time [H:MM:SS (secs)]: 0:00:00 (0)
+SBY 17:11:46 [counter_cover] summary: Elapsed process time [H:MM:SS (secs)]: 0:00:00 (0)
+SBY 17:11:46 [counter_cover] summary: engine_0 (smtbmc z3) returned pass
+SBY 17:11:46 [counter_cover] summary: cover trace: counter_cover/engine_0/trace0.vcd
+SBY 17:11:46 [counter_cover] summary:   reached cover statement counter._witness_.check_counter_v_15_cover_11 at counter.v:15.27-15.47 step 1
+SBY 17:11:46 [counter_cover] DONE (PASS, rc=0)
+SBY 17:11:46 [counter_bmc] engine_0: finished (returncode=1)
+SBY 17:11:46 [counter_bmc] engine_0: Status returned by engine: FAIL
+SBY 17:11:46 [counter_bmc] summary: Elapsed clock time [H:MM:SS (secs)]: 0:00:00 (0)
+SBY 17:11:46 [counter_bmc] summary: Elapsed process time [H:MM:SS (secs)]: 0:00:00 (0)
+SBY 17:11:46 [counter_bmc] summary: engine_0 (smtbmc z3) returned FAIL
+SBY 17:11:46 [counter_bmc] summary: counterexample trace: counter_bmc/engine_0/trace.vcd
+SBY 17:11:46 [counter_bmc] summary:   failed assertion counter._witness_.check_counter_v_14_assert_8 at counter.v:14.37-14.58 step 7
+SBY 17:11:46 [counter_bmc] DONE (FAIL, rc=2)
+SBY 17:11:46 The following tasks failed: ['bmc']
+@exit 2

@@ -181,6 +181,7 @@ void App::status_layout(int w, int h, FrameDesc& fd) {
     mix(d.loading ? 1 : 0);
     mix(remote_gen_);
     mix(path_hash);
+    mix(ed.path.empty() ? std::hash<std::string>{}(d.title) : 0);  // (a tab with no file is named by its title, which may change: a terminal's, a serial port's "(gone)")
     // (Whether the colours are missing: what that depends on, as one number. The disk is looked at only when it changes.)
     const u64 colours = ((((d.id * 1000003 + path_hash) * 1000003 + grammars_gen_) * 4 + (d.syntax.active() ? 2 : 0) + (cfg_.syntax ? 1 : 0)) * 1000003) ^
                         std::hash<std::string>{}(d.lang);

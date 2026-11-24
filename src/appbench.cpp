@@ -21,6 +21,7 @@
 #include "notify.hpp"
 #include "profile.hpp"
 #include "remote.hpp"
+#include "serialtab.hpp"
 
 namespace blit {
 
@@ -611,6 +612,10 @@ int App::run_bench() {
     if (!std::strcmp(name, "keypress")) return b.keypress();
     if (!std::strcmp(name, "motionkeys")) return b.motionkeys();
     if (!std::strcmp(name, "idle")) return b.idle();
+    // The terminal in front (its scene set by the script: a shell's cat, a
+    // serial port's flood) drawn while what it is sent comes, taken in
+    // before each frame as the main loop takes it.
+    if (!std::strcmp(name, "term")) return b.frames("term", opt_.frames > 0 ? opt_.frames : 300, [&](int) { term_sync(); }), 0;
     if (!std::strcmp(name, "wavezoom") || !std::strcmp(name, "wavepan")) return b.wave(name);
     std::fprintf(stderr, "unknown benchmark: %s\n", name);
     return 1;
@@ -1251,6 +1256,8 @@ void App::run_script(const char* script) {
             prof_set_stretch(t0, t1);
         } else if (verb == "profdump") {
             std::fprintf(stderr, "%s\n", prof_dump().c_str());
+        } else if (verb == "profnote") {  // the note in the heading of the profile in front
+            std::fprintf(stderr, "%s\n", prof_note().c_str());
         } else if (verb == "term") {  // a terminal (term:folder, or in the folder being worked in)
             term_open(arg);
         } else if (verb == "termwait") {  // the terminal in front shows this text (10 s at most)
@@ -1415,7 +1422,7 @@ void App::run_script(const char* script) {
             project_set(arg.substr(0, eq), eq == std::string::npos ? std::string() : arg.substr(eq + 1));
         } else if (verb == "projectcreate") {  // what Create does (the project is made on a thread: projectwait)
             project_create();
-        } else if (verb == "projectwait") {  // what the New project tab waits for has come: the project made, or the facts a search wants
+        } else if (verb == "projectwait") {  // what the New project tab waits for has come: the project made, the facts a search wants, or PyPI's list
             project_wait();
         } else if (verb == "projectfacts") {
             std::fprintf(stderr, "%s\n", project_facts_dump().c_str());
@@ -1467,8 +1474,16 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s\n", pdf_dump_more(verb.substr(3)).c_str());
         } else if (verb == "wavewait") {  // the dumps read, their views read and their tiles on show painted (20 s at most); wavewait:rows, the tab's rows made
             wave_wait(arg == "rows");
-        } else if (verb == "wavedump") {  // wavedump[:tiles|:at:ROW,TIME|:clip], the wave tab in front (appwave.cpp says what each prints)
+        } else if (verb == "wavedump") {  // wavedump[:tiles|:at:ROW,TIME|:clip|:load], the wave tab in front (appwave.cpp says what each prints)
             std::fprintf(stderr, "%s\n", wave_dump(arg).c_str());
+        } else if (verb == "waveframes") {  // waveframes:MS, MS milliseconds of the main loop: frames drawn, and bytes of the wave tab's dump read
+            std::fprintf(stderr, "%s\n", wave_frames(std::atoi(arg.c_str())).c_str());
+        } else if (verb == "simwait") {  // the dumps of the simulation runs that ended looked for (20 s at most), and opened
+            const u64 until = now_ns() + 20'000'000'000ull;
+            while (sim_busy() && now_ns() < until) {
+                wave_sync();
+                SDL_Delay(2);
+            }
         } else if (verb == "pdftextat") {  // pdftextat:N:TEXT, where TEXT is on page N (its text read): x0,y0,x1,y1 in pixels
             std::fprintf(stderr, "%s at %s\n", arg.c_str(), pdf_dump_more(arg).c_str());
         } else if (verb == "pixel") {  // pixel:X,Y, the colour of the last frame there (pixels, not points)
@@ -1517,6 +1532,33 @@ void App::run_script(const char* script) {
             system_notify_wait();
         } else if (verb == "tickdump") {  // how long blit would sleep before it draws again for a long task's time (-1: it would not)
             std::fprintf(stderr, "%d\n", build_wait_ms());
+        } else if (verb == "serial") {  // serial:PATH[,BAUD], a serial tab on that port (as "Open a serial port…" with a path typed)
+            const size_t comma = arg.find(',');
+            SerialPortId id;
+            id.path = arg.substr(0, comma);
+            SerialConfig cfg;
+            cfg.baud = comma == std::string::npos ? cfg_.serial_baud : static_cast<u32>(std::atol(arg.c_str() + comma + 1));
+            SerialReturn ret = SerialReturn::kCR;
+            serial_return_parse(cfg_.serial_line_end, &ret);
+            term_open_serial(id, cfg, ret);
+        } else if (verb == "serialwait") {  // "Open a serial port…" has listed the ports (and opened the box with them)
+            serial_settle();
+        } else if (verb == "serialdump") {  // the serial tab in front (else on show, else the only one): its title, state, settings, line changes done; then the picker's last rows
+            std::fprintf(stderr, "%s\n", serial_dump().c_str());
+        } else if (verb == "serialstate") {  // serialstate:STATE, the serial tab (as serialdump's) is open, gone, released or opening (10 s at most)
+            bool there = false;
+            for (const u64 until = now_ns() + 10'000'000'000ull; !there && now_ns() < until; SDL_Delay(5)) {
+                term_sync();
+                const std::shared_ptr<SerialTab> s = serial_here(nullptr, false);
+                there = s && s->dump().starts_with(arg + " ");
+            }
+            if (!there) std::fprintf(stderr, "serialstate: not %s: %s\n", arg.c_str(), serial_dump().c_str());
+        } else if (verb == "serialrelease") {  // serialrelease:SERIAL-OR-PORT, as a flash of a board with that probe or port lets go of it
+            Board b;
+            (arg.starts_with("/") ? b.port : b.probe) = arg;
+            serial_release(b);
+        } else if (verb == "serialreclaim") {  // and given back, as the flash's end does
+            serial_reclaim();
         } else if (verb == "probedump") {  // the probe picker's last listing (waited for): each row's role, kind, ids and text
             std::fprintf(stderr, "%s\n", probe_dump().c_str());
         } else if (verb == "probewait") {  // the probe picker has listed the devices (and opened the box with them), or written the board chosen

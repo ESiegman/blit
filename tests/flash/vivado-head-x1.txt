@@ -1,0 +1,21 @@
+# The first 256 bytes of a bitstream Vivado 2026.2 wrote for the Basys 3
+# (xc7a35tcpg236-1, an LED blinking; write_bitstream with SPI_BUSWIDTH
+# left as it is, 1) on the Arch Linux lab box, 2026-11-23, as od -t x1
+# printed them: its header, then the sync word (aa 99 55 66) with no write
+# of the BSPI register after it.
+00 09 0f f0 0f f0 0f f0 0f f0 00 00 01 61 00 37
+62 6c 69 6e 6b 3b 55 73 65 72 49 44 3d 30 58 46
+46 46 46 46 46 46 46 3b 56 65 72 73 69 6f 6e 3d
+32 30 32 36 2e 32 3b 53 57 5f 43 52 43 3d 30 37
+64 32 35 38 62 34 00 62 00 0c 37 61 33 35 74 63
+70 67 32 33 36 00 63 00 0b 32 30 32 36 2f 31 31
+2f 32 33 00 64 00 09 31 37 3a 35 38 3a 33 32 00
+65 00 21 72 8c ff ff ff ff ff ff ff ff ff ff ff
+ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff ff
+ff ff ff ff ff 00 00 00 bb 11 22 00 44 ff ff ff
+ff ff ff ff ff aa 99 55 66 20 00 00 00 30 02 20
+01 00 00 00 00 30 02 00 01 00 00 00 00 30 00 80
+01 00 00 00 00 20 00 00 00 30 00 80 01 00 00 00
+07 20 00 00 00 20 00 00 00 30 02 60 01 00 00 00
+00 30 01 20 01 02 00 3f e5 30 01 c0 01 00 00 00
+00 30 01 80 01 03 62 d0 93 30 00 80 01 00 00 00

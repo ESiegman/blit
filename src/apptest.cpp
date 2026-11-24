@@ -75,10 +75,11 @@ struct App::TestUi {
     std::string python;  // and its Python, as found then (apppython.cpp: pytest's are run with it)
     bool looked = false, looking = false;
     std::string note;  // what finding them said, when there are none
+    std::string missing;  // and when there are some: a runner not installed ("ctest is not installed on lab"), whose tests are not among them
     struct Found {
         std::string root, python;
         std::vector<TestCase> tests;
-        std::string note;
+        std::string note, missing;
     };
     std::mutex mu;
     std::optional<Found> found;  // (mu)
@@ -95,6 +96,7 @@ struct App::TestUi {
     };
     std::vector<Row> rows;
     u32 sel = 0, top = 0, body = 0;
+    u32 list_y = 2;  // (the tab's row the list starts on: below the warning, when there is one)
     // Each document's tests where they are defined (line, test or -1), as
     // its text and the tests last were.
     struct Defs {
@@ -161,7 +163,7 @@ void App::test_find() {
         }
         std::string host, there;
         const bool remote = split_remote(root, &host, &there);
-        bool no_ctest = false;  // (the shell that would run it found none: said, where no test is found)
+        bool no_ctest = false;  // (the shell that would run it found none: said, where no test is found or above those that are)
         for (const std::string& d : dirs) {
             std::string out;
             if (!fs_run(root, "command -v ctest >/dev/null 2>&1 || { echo blit-no-ctest; exit 1; }; ctest --show-only=json-v1 --test-dir " + sh_word(on_host(d)), &out, 30000)) {
@@ -186,6 +188,7 @@ void App::test_find() {
             said = out.substr(out.find_last_of('\n') + 1);  // (npos + 1: all of it)
         }
         if (no_ctest) said = not_installed("ctest", host) + (said.empty() ? "" : "; " + said);
+        if (no_ctest) f.missing = not_installed("ctest", host) + ", so CTest's tests are not listed";
         if (f.tests.empty())
             f.note = dirs.empty() && !python ? "No tests found: CTest's are found in a build folder that has been configured, pytest's beside a test_*.py"
                      : said.empty()          ? "No tests found"
@@ -228,6 +231,7 @@ void App::test_sync() {
     u.root = f->root;
     u.python = std::move(f->python);
     u.note = std::move(f->note);
+    u.missing = std::move(f->missing);
     u.sel = 0;
     ++test_gen_;
     dirty_ = true;
@@ -725,19 +729,22 @@ void App::test_panel_draw(TextBox& box, bool focused) {
         u.rows.push_back({-1, "Coverage " + std::to_string(static_cast<int>(100.0 * static_cast<double>(hit) / static_cast<double>(std::max<size_t>(all, 1)) + 0.5)) + "%", static_cast<u32>(u.cov_files.size())});
         for (size_t i = 0; i < u.cov_files.size(); ++i) u.rows.push_back({-1, {}, 0, static_cast<int>(i)});
     }
-    if (u.tests.empty()) {
-        const std::string what = u.looking ? "Looking for tests\xE2\x80\xA6" : u.note;
-        u32 r = 1;
-        for (size_t at = 0; at < what.size() && r < rows;) {  // (in lines that fit)
+    // Words from row r on, in lines that fit (as many as `most`); the row after them.
+    auto lines = [&](const std::string& what, u32 r, u32 most, Ink ink) {
+        for (size_t at = 0; at < what.size() && r < rows && most > 0; --most) {
             size_t len = std::min<size_t>(what.size() - at, cols);
             if (at + len < what.size()) {
                 const size_t sp = what.rfind(' ', at + len);
                 if (sp != std::string::npos && sp > at) len = sp - at;
             }
-            put(box, font, r++, 0, std::string_view(what).substr(at, len), ink::kMuted);
+            put(box, font, r++, 0, std::string_view(what).substr(at, len), ink);
             at += len;
             while (at < what.size() && what[at] == ' ') ++at;
         }
+        return r;
+    };
+    if (u.tests.empty()) {
+        lines(u.looking ? "Looking for tests\xE2\x80\xA6" : u.note, 1, rows, ink::kMuted);
         return;
     }
     u32 passed = 0, failed = 0;
@@ -746,14 +753,16 @@ void App::test_panel_draw(TextBox& box, bool focused) {
     if (passed + failed) head += " \xC2\xB7 " + std::to_string(passed) + " passed, " + std::to_string(failed) + " failed";
     if (u.running) head += " \xC2\xB7 running\xE2\x80\xA6";
     put(box, font, 1, 0, fit_text(head, cols), failed ? ink::kError : ink::kMuted);
+    // A runner not installed, whose tests these are not: under it (three lines at most), the list after.
+    u.list_y = u.missing.empty() || rows < 10 ? 2 : lines(u.missing, 2, 3, ink::kWarning);
     static constexpr Hint kKeys[] = {{"Enter", "run"}, {"a", "all"}, {"f", "failed"}, {"c", "coverage"}, {"d", "debug"}};
     if (u.sel >= u.rows.size() || (u.rows[u.sel].test < 0 && u.rows[u.sel].file < 0)) u.sel = u.rows.size() > 1 ? 1 : 0;
-    u.body = rows > 4 ? rows - 4 : 0;
+    u.body = rows > u.list_y + 2 ? rows - u.list_y - 2 : 0;
     if (u.sel < u.top) u.top = u.sel;
     if (u.body && u.sel >= u.top + u.body) u.top = u.sel - u.body + 1;
     for (u32 r = 0; r < u.body && u.top + r < u.rows.size(); ++r) {
         const TestUi::Row& row = u.rows[u.top + r];
-        const u32 y = 2 + r;
+        const u32 y = u.list_y + r;
         if (row.file >= 0) {
             const std::string& path = u.cov_files[static_cast<size_t>(row.file)];
             const FileCoverage& c = u.coverage[path];
@@ -795,8 +804,8 @@ std::vector<size_t> App::test_row_tests(u32 row) {
 void App::test_panel_click(int row, int col, const SDL_MouseButtonEvent& b) {
     (void)col;
     TestUi& u = *testui_;
-    if (b.button != SDL_BUTTON_LEFT || row < 2 || static_cast<u32>(row - 2) >= u.body) return;
-    const u32 i = u.top + static_cast<u32>(row - 2);
+    if (b.button != SDL_BUTTON_LEFT || row < static_cast<int>(u.list_y) || static_cast<u32>(row) - u.list_y >= u.body) return;
+    const u32 i = u.top + (static_cast<u32>(row) - u.list_y);
     if (i >= u.rows.size()) return;
     u.sel = i;
     if (b.clicks >= 2) test_run(test_row_tests(i));  // (twice: it runs)
@@ -870,6 +879,7 @@ std::string App::test_dump() {
         const char* mark = t.result == TestCase::kPassed ? "+" : t.result == TestCase::kFailed ? "x" : t.result == TestCase::kSkipped ? "-" : ".";
         out += std::string(" ") + mark + t.name;
     }
+    if (!u.missing.empty()) out = u.missing + " | " + out;
     return here.empty() ? out : out + " | here:" + here;
 }
 
