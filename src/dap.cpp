@@ -428,13 +428,21 @@ std::string Dap::errors() const {
     return link_->errors;
 }
 
-void Dap::stop(int grace_ms) {
-    if (!link_) return;
+std::shared_ptr<const std::atomic<bool>> Dap::stop(int grace_ms) {
+    auto gone = std::make_shared<std::atomic<bool>>(false);
+    if (!link_) {
+        *gone = true;
+        return gone;
+    }
     std::shared_ptr<Link> l = std::move(link_);
     // With no time to end of itself, it is told to at once, from here (a
     // thread just started may not run before blit itself has gone).
     if (grace_ms <= 0 && !l->ended) l->kill_now(SIGTERM);
-    std::thread([l = std::move(l), grace_ms] { l->end(grace_ms); }).detach();
+    std::thread([l = std::move(l), grace_ms, gone] {
+        l->end(grace_ms);
+        *gone = true;
+    }).detach();
+    return gone;
 }
 
 }  // namespace blit

@@ -521,6 +521,7 @@ struct App::DebugUi : DebugSession {
     std::vector<std::string> env;  // ("NAME=value": a run configuration's, given the debugger and so the program)
     BuildTask::Debug conf;         // (and its "debug": the debugger, the request, the arguments laid over blit's...)
     bool board_waiting = false;    // F5 on a board: its build and flash under way, the session after them
+    std::shared_ptr<const std::atomic<bool>> board_gone;  // the last board session's debugger (and its gdb server) let go of
     // Breakpoints: by file (its full path, ssh:// for another machine's), by
     // line (from 0), each with what it waits for, if anything.
     struct Break {
@@ -1549,6 +1550,11 @@ void App::debug_board(bool attach) {
 void App::debug_board_begin(const BuildTask& c, const BoardDebug& plan, const std::string& elf, bool attach) {
     DebugUi& u = *debugui_;
     if (u.state != DebugUi::kIdle) debug_park();  // (beside the session under way)
+    // The last board session's gdb server gone first (it may hold the probe,
+    // or the port): its debugger is let go of within a second (debug_end's
+    // grace, then a signal), so Restart waits that long at most.
+    for (const u64 until = now_ns() + 2'000'000'000ull; u.board_gone && !*u.board_gone && now_ns() < until;) SDL_Delay(5);
+    u.board_gone.reset();
     const std::string root = build_root();
     if (!debug_open(elf, c.cwd.empty() ? root : root + "/" + c.cwd, false, plan.adapter)) return;
     u.name = c.name;
@@ -1698,7 +1704,8 @@ void App::debug_end() {
             if (b.by && b.by == u.dap.get()) b.id = 0, b.by = nullptr;
     if (u.dap && !u.dap->ended()) {
         u.dap->request("disconnect", u.how == "attach" && !u.simulator ? "{\"terminateDebuggee\":false}" : "{\"terminateDebuggee\":true}");
-        u.dap->stop(300);  // (the adapter lets go of the program as it ends)
+        const auto gone = u.dap->stop(300);
+        if (u.board) u.board_gone = gone;  // (its gdb server goes with it: the next board session waits for that)  // (the adapter lets go of the program as it ends)
     }
     u.dap.reset();
     u.state = DebugUi::kIdle;

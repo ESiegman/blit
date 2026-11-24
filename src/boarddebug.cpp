@@ -28,6 +28,12 @@ constexpr std::string_view kHelpers =
     "pick() { for p; do command -v \"$p\" >/dev/null 2>&1 && { printf '%s' \"$p\"; return 0; }; done; return 1; }; "
     "missing() { echo \"blit-no-debugger: $1\" >&2; exit 127; }; ";
 
+// A gdb command (Python) that has gdb's DAP say a new thread without
+// taking the program to be running again (where gdb is started, below).
+constexpr std::string_view kThreadsSaid =
+    "python import gdb; from gdb.dap import events as e; gdb.events.new_thread.disconnect(e._new_thread); "
+    "gdb.events.new_thread.connect(lambda ev: e.thread_event(ev, 'started'))";
+
 // The gdbs for a machine, in the order looked for. ELF's e_machine: 40 Arm,
 // 94 Xtensa, 243 RISC-V. Espressif's Xtensa gdbs are one for each chip
 // (ESP-IDF 6.1's xtensa-esp-elf-gdb 17.1 has xtensa-esp32-elf-gdb,
@@ -144,8 +150,17 @@ BoardDebug board_debug(const Board& b, const std::string& elf, bool attach, bool
         if (tgt.empty()) return d.why = b.chip.empty() ? "OpenOCD needs the board's chip, or flash.target" : "OpenOCD has no target script blit knows for " + b.chip + ": flash.target", d;
         const bool esp = p == "esp" || esp_chip(b.chip);
         server_named(esp ? "openocd-esp32 openocd" : "openocd");
-        target = "| exec \"$BLIT_SERVER\"" + words({"-c", "gdb_port pipe", "-c", "tcl_port disabled", "-c", "telnet_port disabled", "-f", iface}) +
-                 (b.probe.empty() ? std::string() : words({"-c", "adapter serial " + b.probe})) + words({"-f", tgt});
+        // (Attaching to an ESP32 as it runs: its flash's size said to be
+        // 0, as Espressif's gdb-attach handler otherwise resets the chip
+        // when the program has turned memory protection on, as ESP-IDF's
+        // do: v0.12.0-esp32-20260831 target/esp_common.cfg lines 313-330.
+        // Breakpoints are then the core's own, two on an ESP32-S3.)
+        target = "| exec \"$BLIT_SERVER\"" + words({"-c", "gdb_port pipe", "-c", "tcl_port disabled", "-c", "telnet_port disabled"}) +
+                 (esp && attach ? words({"-c", "set ESP_FLASH_SIZE 0"}) : std::string()) + words({"-f", iface}) +
+                 (b.probe.empty() ? std::string() : words({"-c", "adapter serial " + b.probe})) + words({"-f", tgt}) +
+                 // (Let go of, the board runs on: Espressif's left the ESP32-S3
+                 // halted where it stopped when gdb detached, on the lab box.)
+                 words({"-c", "[target current] configure -event gdb-detach { resume }"});
         // (ESP-IDF's own gdbinit for its chips: two hardware watchpoints,
         // the register cache flushed after a reset; esp-idf v6.1
         // docs/en/api-guides/jtag-debugging/using-debugger.rst.)
@@ -241,10 +256,32 @@ BoardDebug board_debug(const Board& b, const std::string& elf, bool attach, bool
     // shell), the server and what gdb started through a pipe end with it.
     // (An asynchronous command's input is /dev/null unless it says another:
     // the session's is kept as 3.)
+    // After a flash, the probe waited for (10 s at most): a chip whose own USB
+    // is its probe (an ESP32's USB-Serial/JTAG) comes back only once the
+    // program flashed has started, and a server started before then finds
+    // none (Espressif's OpenOCD, after esptool on the lab's ESP32-S3).
+    // Found by its ids and serial number: /sys/bus/usb on Linux, IOKit's
+    // USB plane (ioreg) on a Mac.
+    if (!attach && !sim && b.probe_usb.size() == 9) {
+        const std::string vid = b.probe_usb.substr(0, 4), pid = b.probe_usb.substr(5);
+        const std::string mac = !b.probe.empty() ? "ioreg -p IOUSB -l -w0 | grep -q " + sh_word("\"USB Serial Number\" = \"" + b.probe + "\"")
+                                                 : "ioreg -p IOUSB -l -w0 | grep -q " + sh_word("\"idProduct\" = " + std::to_string(std::strtoul(pid.c_str(), nullptr, 16)));
+        sh += "here() { if [ -d /sys/bus/usb/devices ]; then for d in /sys/bus/usb/devices/*; do "
+              "[ \"$(cat \"$d/idVendor\" 2>/dev/null):$(cat \"$d/idProduct\" 2>/dev/null)\" = " + sh_word(vid + ":" + pid) + " ] || continue; " +
+              (b.probe.empty() ? std::string("return 0; ") : "[ \"$(cat \"$d/serial\" 2>/dev/null)\" = " + sh_word(b.probe) + " ] && return 0; ") +
+              "done; return 1; else " + mac + "; fi; }; n=0; until here; do n=$((n + 1)); [ $n -gt 100 ] && break; sleep 0.1; done; ";
+    }
     sh += "exec 3<&0; ";
     if (!server.empty()) sh += server + " </dev/null 1>&2 & sp=$!; ";
     sh += "trap 'pkill -TERM -P \"$gp\" 2>/dev/null; kill $gp $sp 2>/dev/null' EXIT; trap 'exit 143' TERM HUP INT; ";
-    sh += "\"$g\" -q -i dap" + extra + " <&3 3<&- & gp=$!; wait $gp";
+    // (gdb's DAP takes a thread it is told of as the program running again
+    // (GNU gdb 18.1 and esp-gdb 17.1, gdb/dap/events.py lines 93-96), which
+    // holds for a process but not for a gdb server that lists an RTOS's
+    // tasks as threads while the board is stopped (OpenOCD's FreeRTOS, as
+    // Espressif's has it on by default; pyOCD's, J-Link's plug-ins): every
+    // request after says "notStopped". So here a thread it is told of is
+    // said and nothing more; its going on is told of as ever (_cont).)
+    sh += "\"$g\" -q -i dap -iex " + sh_word(kThreadsSaid) + extra + " <&3 3<&- & gp=$!; wait $gp";
     d.adapter = std::move(sh);
     auto named = [&](std::string line) {  // ($BLIT_SERVER as the programs it is the first of)
         if (const size_t at = line.find("\"$BLIT_SERVER\""); at != std::string::npos) line.replace(at, 14, "{" + servers + "}");

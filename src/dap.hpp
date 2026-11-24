@@ -11,6 +11,7 @@
 // does not take at once is written by that thread as it takes it; on
 // another machine it is started on that thread (the connection waited for,
 // the adapter started there), and it is let go of on a thread of its own.
+#include <atomic>
 #include <functional>
 #include <memory>
 #include <string>
@@ -60,7 +61,9 @@ public:
     // needs (the main thread waits for none of it): given up to grace_ms first
     // to end of itself (after a disconnect, so that it can let go of the
     // program it ran), then made to end, and reaped. Nothing more is sent.
-    void stop(int grace_ms = 0);
+    // What it gives back is true once it has been reaped (a board's gdb
+    // server, which it ends, is gone with it: the next may have the probe).
+    std::shared_ptr<const std::atomic<bool>> stop(int grace_ms = 0);
 
     struct Link;  // (dap.cpp: the adapter's pipes and process, and the thread reading it)
 
