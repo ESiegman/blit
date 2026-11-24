@@ -4831,7 +4831,8 @@ dump no longer has is left out, and the bottom row says how many were.
 **ILA captures.** A capture from Vivado's hardware manager, written by
 `write_hw_ila_data` as VCD (`-vcd_file`) or as CSV (`-csv_file`), opens
 here too: a `.csv` whose first line is the ILA's (`Sample in
-Buffer,...`) is a capture, any other opens as text. Its times are the
+Buffer,...`) is a capture, here or on another machine, and any other
+opens as text. Its times are the
 numbers of its samples in the ILA's buffer, from 0, written with no unit
 on the ruler, at the cursor and on the bottom row. The cursor starts at
 the trigger. Each trigger is a line in the errors' colour, named `T` on
@@ -4841,11 +4842,24 @@ of several windows each window after the first starts at a dim line
 how many windows there are. The VCD form's own `_TRIGGER`, `_WINDOW` and
 `_GAP` are not listed (`/` adds them). The CSV form's probes start in the
 radix its second line gives each (the probe's `DISPLAY_RADIX` in
-Vivado: hex, binary, octal, unsigned or signed). The CSV written with
-`-legacy_csv_file` has no such line, and its values cannot be read for
-sure without it: it is not shown, and the tab says so. A line of a CSV
-that is wrong stops the reading there, keeping the samples before it, and
-the tab says which line and why. Lattice Reveal's captures are VCD and
+Vivado: hex, binary, octal, unsigned, signed or ASCII). The CSV written
+with `-legacy_csv_file` has no such line, and its values cannot be read
+for sure without it: it is not shown, and the tab says so. A line of a
+CSV that is wrong stops the reading there, keeping the samples before
+it, and the tab says which line and why. Two of Vivado's ways of
+writing a probe keep only part of it, and the CSV is read for what they
+keep (the VCD form has every value, and no radixes or names). **ASCII**
+writes the probe's lowest byte as a character, and nothing for one
+that is not printable: the probe is read as that byte (one wider as its
+lowest eight bits, `pair[7:0]`), starts in ASCII, and where its byte
+was not printable it is `x`. A probe given **names for its values**
+(`add_hw_probe_enum`, shown while its `DISPLAY_AS_ENUM` is on) has
+those values written as their names and the others in its radix, and
+the file does not say which value a name stands for: its row shows
+them as written (`IDLE`, `SHIFT`, `7`), as a string's are, with no
+other radix (they are not names given to values, which go with a
+value). A CSV capture shows once it is read to its end, as a probe is
+known to have names only once one comes. Lattice Reveal's captures are VCD and
 open as any VCD does (not checked with one: their times are in the unit
 their VCD gives).
 
@@ -4864,8 +4878,12 @@ with a unit is not a target. A time outside the dump is said, and the
 cursor stays. A `path:line` is a path first, and with no wave tab open
 a time is not a target.
 
-A dump on **another machine** is fetched whole while it is no larger than
-4 MB; larger ones are not shown yet (the tab says so).
+A dump on **another machine** is fetched here whole, in parts with its
+progress on the bottom row (where a click stops it), up to
+`blit.opt.wave.remote_fetch_mb` (512 MB); a larger one is not shown,
+and the tab says so. A `.csv` there is asked for its first bytes alone
+as its tab opens: an ILA capture's then opens as its waves, fetched as
+any dump there is, and any other as text.
 
 **Run again.** A dump written again while its tab is open (the
 simulation run again) is read again, and the view stays as it was: the
@@ -5396,8 +5414,11 @@ does not finish and takes all the memory the machine has.
   of its signals); one cut short is said to be, and one damaged is said
   to be with what libfst could read of it kept.
 - The wave tab: VCD, FST and ILA captures' CSV (an FST told by its name,
-  `.fst`; a capture's CSV by its first line, here only: on another
-  machine a `.csv` opens as text); a dump written again is read again
+  `.fst`; a capture's CSV by its first line, another machine's by its
+  first bytes, asked for alone; of its probes, one in ASCII is its lowest
+  byte, `x` where Vivado wrote no character, and one with names for its
+  values is them as written, with no radix: the CSV keeps no more); a
+  dump written again is read again
   (and one still being written followed) only while it is in the project
   folder, on a Mac, or a task's run ends; one on another machine is
   fetched here whole, in parts with its progress on the bottom row (where
