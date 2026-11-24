@@ -200,10 +200,10 @@ check "a serial bridge with no ESP-IDF build: said" "blit: fw's board is a seria
 STLINK='"probe": {"kind": "stlink", "serial": "004D00283133510F37363734", "usb": "0483:374e"}, "chip": "STM32F411CEUx", "elf": "build/fw.elf"'
 board "{$STLINK}"
 timed='&'
-flash probe-rs "$F;progresswait:Program 62%;progressdump;$end"
+flash probe-rs "$F;progresswait:Program 0%;progressdump;$end"
 want <<'EOF'
-button: ■ Program 62% 25.0 KB | row: Erase ✓ · Program 62% 25.0 KB
-button: ▶ fw · Flashed 40.2 KB in 1.8 s, verified | row: done · Flashed 40.2 KB in 1.8 s, verified
+button: ■ Program 0% | row: Erase ✓ · Program 0%
+button: ▶ fw · Flashed 1 KB in 2.1 s, verified | row: done · Flashed 1 KB in 2.1 s, verified
 probe-rs download --chip STM32F411CEUx --probe 0483:374e:004D00283133510F37363734 --non-interactive --verify --reset build/fw.elf
 EOF
 check "ST-LINK: probe-rs, its bars, the summary" "$expected"
@@ -233,6 +233,18 @@ BLIT_USB_ROOT="$dir/usb-v2"; export BLIT_USB_ROOT
 flash openocd "$F;$end"
 got=$(printf '%s' "$got" | tail -1)
 check "an ST-LINK V2 through OpenOCD: by where it is plugged in" "openocd -f interface/stlink.cfg -c 'adapter usb location 6-3' -f target/stm32h7x.cfg -c 'program build/fw.elf verify reset exit'"
+# Plugged in again, the clone gives another serial number (the lab box's,
+# the second time): the one ST-LINK V2 there is taken all the same, and
+# probe-rs given the serial number it has now.
+printf '7\303\277g\006BB20P!\010W\n' >"$dir/usb-v2/6-3/serial"
+flash openocd "$F;$end"
+got=$(printf '%s' "$got" | tail -1)
+check "(its serial number changed since: the one there is)" "openocd -f interface/stlink.cfg -c 'adapter usb location 6-3' -f target/stm32h7x.cfg -c 'program build/fw.elf verify reset exit'"
+board "{$(printf '%s' "$V2" | sed 's/"flash": "openocd"/"flash": "probe-rs"/')}"
+flash probe-rs "$F;$end"
+got=$(printf '%s' "$got" | tail -1)
+check "(and probe-rs given its serial number now)" 'probe-rs download --chip STM32H743XIHx --probe 0483:3748:37C3BF67064242323050210857 --non-interactive --verify --reset build/fw.elf'
+board "{$V2}"
 rm -rf "$dir/usb-v2/6-3"
 flash openocd "$F;$end"
 got=$(printf '%s' "$got" | tail -1)
@@ -738,7 +750,7 @@ done
 board "{$STLINK}"
 flash probe-rs "$F;$end;$F;buildwait;progressdump"
 want <<'EOF'
-button: ▶ fw · Flashed 40.2 KB in N s, verified | row: done · Flashed 40.2 KB in N s, verified
+button: ▶ fw · Flashed 1 KB in N s, verified | row: done · Flashed 1 KB in N s, verified
 button: ▶ fw · Not flashed: unchanged since the last flash | row: Not flashed: unchanged since the last flash
 probe-rs download --chip STM32F411CEUx --probe 0483:374e:004D00283133510F37363734 --non-interactive --verify --reset build/fw.elf
 EOF
@@ -747,7 +759,7 @@ flash probe-rs "$F;$end;lua:os.execute('touch $P/build/fw.elf');$F;buildwait;pro
 got=$(printf '%s' "$got" | sed -n '2,$p')
 want <<'EOF'
 button: ▶ fw · Not flashed: unchanged since the last flash | row: Not flashed: unchanged since the last flash
-button: ▶ fw · Flashed 40.2 KB in N s, verified | row: done · Flashed 40.2 KB in N s, verified
+button: ▶ fw · Flashed 1 KB in N s, verified | row: done · Flashed 1 KB in N s, verified
 probe-rs download --chip STM32F411CEUx --probe 0483:374e:004D00283133510F37363734 --non-interactive --verify --reset build/fw.elf
 probe-rs download --chip STM32F411CEUx --probe 0483:374e:004D00283133510F37363734 --non-interactive --verify --reset build/fw.elf
 EOF
@@ -756,7 +768,7 @@ flash probe-rs "$F;go:a;buildwait;lua:os.execute('$dir/mkelf $P/build/fw.elf A y
 got=$(printf '%s' "$got" | sed -n '1,2p'; printf '%s runs' "$(wc -l <"$LOG" | tr -d ' ')")
 want <<'EOF'
 button: ▶ fw · Not flashed: unchanged since the last flash | row: Not flashed: unchanged since the last flash
-button: ▶ fw · Flashed 40.2 KB in N s, verified | row: done · Flashed 40.2 KB in N s, verified
+button: ▶ fw · Flashed 1 KB in N s, verified | row: done · Flashed 1 KB in N s, verified
 2 runs
 EOF
 check "what no segment loads changed: the same image; what one loads changed: flashed" "$expected"
@@ -768,13 +780,13 @@ flash probe-rs-fail "$F;buildwait;progressdump;lua:io.open('$SAMPLE','w'):write(
 got=$(printf '%s' "$got" | sed -n '1,2p')
 want <<'EOF'
 button: ▶ fw · 1 error | row: failed: exited with code 1
-button: ▶ fw · Flashed 40.2 KB in N s, verified | row: done · Flashed 40.2 KB in N s, verified
+button: ▶ fw · Flashed 1 KB in N s, verified | row: done · Flashed 1 KB in N s, verified
 EOF
 check "a failed flash is not remembered: the same image again is flashed" "$expected"
-flash probe-rs "$F;go:a;buildwait;lua:os.remove('$REPLAY_HOLD/a');command:Flash anyway;flashwait;progresswait:Program 62%;command:Stop the build;buildwait;$F;go:a;buildwait;progressdump"
+flash probe-rs "$F;go:a;buildwait;lua:os.remove('$REPLAY_HOLD/a');command:Flash anyway;flashwait;progresswait:Program 0%;command:Stop the build;buildwait;$F;go:a;buildwait;progressdump"
 got=$(printf '%s' "$got" | sed -n '1p'; printf '%s runs' "$(wc -l <"$LOG" | tr -d ' ')")
 want <<'EOF'
-button: ▶ fw · Flashed 40.2 KB in N s, verified | row: done · Flashed 40.2 KB in N s, verified
+button: ▶ fw · Flashed 1 KB in N s, verified | row: done · Flashed 1 KB in N s, verified
 3 runs
 EOF
 check "a stopped flash is not remembered, and the one before it is forgotten: the same image again is flashed" "$expected"
@@ -813,7 +825,7 @@ echo 0 >"$dir/status"
 init="$dir/build.lua"
 flash probe-rs "$F;go:a;buildwait;progressdump"
 want <<'EOF'
-button: ▶ fw · Flashed 40.2 KB in N s, verified | row: done · Flashed 40.2 KB in N s, verified
+button: ▶ fw · Flashed 1 KB in N s, verified | row: done · Flashed 1 KB in N s, verified
 built
 probe-rs download --chip STM32F411CEUx --probe 0483:374e:004D00283133510F37363734 --non-interactive --verify --reset build/fw.elf
 EOF
@@ -840,7 +852,7 @@ check "the command search: Flash the board first, with its keys" "Flash the boar
 for k in "vim:gB" "key:$chord"; do
     flash probe-rs "open:$P/notes.txt;$k;flashwait;go:a;buildwait;progressdump"
     want <<'EOF'
-button: ▶ fw · Flashed 40.2 KB in N s, verified | row: done · Flashed 40.2 KB in N s, verified
+button: ▶ fw · Flashed 1 KB in N s, verified | row: done · Flashed 1 KB in N s, verified
 probe-rs download --chip STM32F411CEUx --probe 0483:374e:004D00283133510F37363734 --non-interactive --verify --reset build/fw.elf
 EOF
     check "$k flashes the board" "$expected"
@@ -942,7 +954,7 @@ timed='&'
 flash probe-rs "remotewait;frame;boarddump;$F;go:a;buildwait;progressdump" "ssh://box$T"
 got=$(printf '%s' "$got" | tail -2)
 want <<'EOF'
-button: ▶ fw · Flashed 40.2 KB in 1.8 s, verified | row: done · Flashed 40.2 KB in 1.8 s, verified
+button: ▶ fw · Flashed 1 KB in 2.1 s, verified | row: done · Flashed 1 KB in 2.1 s, verified
 probe-rs download --chip STM32F411CEUx --probe 0483:374e:004D00283133510F37363734 --non-interactive --verify --reset build/fw.elf
 EOF
 check "a board on another machine: flashed there" "$expected"

@@ -65,6 +65,13 @@ public:
     explicit BuildScan(std::string dir, std::function<bool(const std::string&)> exists = {}, std::function<std::string(const std::string&)> by_name = {});
 
     void feed(std::string_view bytes);
+    // An engine that draws its bars in place on a terminal, moving the
+    // cursor up and over them and letting a row wrap into the next
+    // (probe-rs 0.32.0's three, Erasing, Programming and Verifying, as
+    // indicatif draws them): its progress read from the rows the terminal
+    // shows, after each piece fed (screen), not from its bytes as lines.
+    bool wants_screen() const;
+    void screen(const std::vector<std::string>& rows);
     void finish();  // the end: the last line, and what waited on lines after it
     // init.lua's patterns the output is read with (blit.build.matcher), given
     // before the first bytes; none: none of them.
@@ -243,6 +250,7 @@ private:
     u64 progress_gen_ = 0, prog_key_ = 0;
     u8 engine_ = 0;
     bool line_new_ = false;  // (the line has changed since it was last looked at)
+    bool screen_row_ = false;  // (a row of the terminal's being read: screen)
     bool prog_verified_ = false, prog_unchanged_ = false, prog_flash_ = false, prog_wrote_ = false;
     u64 prog_bytes_ = 0;  // written, as the tool says
     double prog_seconds_ = -1, prog_took_ = -1, prog_start_ = 0;  // the writing's time and the run's, as the tool says; when its first line came

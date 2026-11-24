@@ -561,6 +561,8 @@ struct TermView {
                 crash_lines.clear();
                 if (crash) crash->feed(got, &crash_lines);
                 std::string reply;
+                std::vector<std::string> shown;  // (the rows to the cursor, for an engine that draws its bars in place: BuildScan::screen)
+                const bool in_place = scan && scan->wants_screen();
                 {
                     std::lock_guard lock(mu);
                     size_t at = 0;
@@ -571,10 +573,13 @@ struct TermView {
                     }
                     term.feed(got.substr(at));
                     reply = term.take_reply();
+                    if (in_place)
+                        for (u32 row = 0; row <= term.cursor_row() && row < term.rows(); ++row) shown.push_back(term.row_text(row));
                 }
                 if (!reply.empty()) send(reply);
                 if (scan) {  // (before the main thread is told: it takes what was found when it is)
                     scan->feed(std::string_view(buf, static_cast<size_t>(k)));
+                    if (in_place) scan->screen(shown);
                     scan_hand_over();
                 }
                 if (!told.exchange(true)) wake();
@@ -2325,8 +2330,11 @@ void App::term_stop(u64 doc, bool hard) {
 
 // Waits (10 s at most) until the program of the terminal in front has ended.
 void App::term_end() {
+    // (The terminal in front, else the hidden split's.)
+    std::shared_ptr<TermView> v = pane_->doc->term;
+    if (!v && dock_ && dock_->away && dock_->away->doc) v = dock_->away->doc->term;
     const u64 until = now_ns() + 10'000'000'000ull;
-    while (pane_->doc->term && !pane_->doc->term->ended && now_ns() < until) SDL_Delay(5);
+    while (v && !v->ended && now_ns() < until) SDL_Delay(5);
     term_sync();
 }
 

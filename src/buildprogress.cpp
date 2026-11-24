@@ -465,6 +465,18 @@ void BuildScan::use_command(std::string_view command) {
     }
 }
 
+bool BuildScan::wants_screen() const { return engine_ == kProbeRs; }
+
+// The terminal's rows as it shows them, each read for a bar as a line
+// being redrawn: probe-rs's idle bars (no bytes yet) pass, the one that
+// took its time is done, the one under way is the stage.
+void BuildScan::screen(const std::vector<std::string>& rows) {
+    screen_row_ = true;
+    for (const std::string& r : rows)
+        if (!r.empty()) progress_line(r, true);
+    screen_row_ = false;
+}
+
 bool BuildScan::progress_line(std::string_view text, bool unfinished) {
     // (After a failure whose words go on, the rest is its: held.)
     if (prog_holding_) {
@@ -510,7 +522,10 @@ bool BuildScan::progress_line(std::string_view text, bool unfinished) {
     if (!shape) return false;
     size_t after = shape->prefix.size();
     // (A line still being written is read only for its bar: the rest wait for its end.)
-    if (unfinished && shape->kind != kBar && shape->kind != kBarDone && shape->kind != kCount) return false;
+    // (A row the terminal shows, of an engine drawing in place: its bars,
+    // and its own count of its time, the row "Finished in 2.07s" that ends
+    // it, which comes as no line of its own.)
+    if (unfinished && shape->kind != kBar && shape->kind != kBarDone && shape->kind != kCount && !(screen_row_ && shape->kind == kTook)) return false;
     progress_engine(shape->engine);
     if (progress_.engine.empty()) progress_.engine = std::string(kEngineName[engine_]);
     if (prog_start_ == 0) prog_start_ = now_s();

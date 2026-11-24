@@ -153,7 +153,7 @@ void BuildScan::feed(std::string_view bytes) {
     // read for an engine's progress as it is now.
     if (line_new_ && !line_.empty()) {
         line_new_ = false;
-        progress_line(line_, true);
+        if (!wants_screen()) progress_line(line_, true);  // (one drawn in place: its rows, screen)
     }
 }
 

@@ -1,50 +1,129 @@
-# probe-rs 0.32.0 download (no board here): its bars from its source,
-# probe-rs-tools/src/bin/probe-rs/util/flash.rs lines 99, 128-138, 155-190
-# (v0.32.0), drawn as indicatif 0.18.0 draws them (src/draw_target.rs lines
-# 502-580): moved up to, cleared, written again. A 41200-byte image.
-@pace 5
-\e[32m\e[1m      Erasing\e[0m ⠁   0% [--------------------]
-\e[32m\e[1m  Programming\e[0m ⠁   0% [--------------------]
-\e[32m\e[1m    Verifying\e[0m ⠁   0% [--------------------]                                     \c
-\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ⠉  25% [######--------------]  16.00 KiB @  25.60 KiB/s (ETA 1s)
-\e[32m\e[1m  Programming\e[0m ⠉   0% [--------------------]
-\e[32m\e[1m    Verifying\e[0m ⠉   0% [--------------------]                                     \c
-\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ⠙  50% [###########---------]  32.00 KiB @  51.20 KiB/s (ETA 1s)
-\e[32m\e[1m  Programming\e[0m ⠙   0% [--------------------]
-\e[32m\e[1m    Verifying\e[0m ⠙   0% [--------------------]                                     \c
-\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ⠚  75% [################----]  48.00 KiB @  76.80 KiB/s (ETA 1s)
-\e[32m\e[1m  Programming\e[0m ⠚   0% [--------------------]
-\e[32m\e[1m    Verifying\e[0m ⠚   0% [--------------------]                                     \c
-\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
-\e[32m\e[1m  Programming\e[0m ⠒   0% [--------------------]
-\e[32m\e[1m    Verifying\e[0m ⠒   0% [--------------------]                                     \c
-\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
-\e[32m\e[1m  Programming\e[0m ⠂  19% [####----------------]   8.00 KiB @  12.80 KiB/s (ETA 1s)
-\e[32m\e[1m    Verifying\e[0m ⠂   0% [--------------------]                                     \c
-\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
-\e[32m\e[1m  Programming\e[0m ⠂  39% [########------------]  16.00 KiB @  25.60 KiB/s (ETA 1s)
-\e[32m\e[1m    Verifying\e[0m ⠂   0% [--------------------]                                     \c
-\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
-\e[32m\e[1m  Programming\e[0m ⠒  62% [#############-------]  24.95 KiB @  39.91 KiB/s (ETA 1s)
-\e[32m\e[1m    Verifying\e[0m ⠒   0% [--------------------]                                     \c
+# probe-rs 0.32.0 download --chip STM32H743XIHx --probe 0483:3748:SERIAL
+# --non-interactive --verify --reset build/fw.elf, an STM32H743 through an
+# ST-LINK V2 on the lab box, 2026-11-24, on a terminal of 80 columns (as
+# the task's is in these tests, never drawn): all it wrote, captured. Its
+# three bars (indicatif's) drawn in place: up to them (ESC [nA), each
+# cleared and written again, padded to the width and wrapping into the
+# next row, with no newline until "Finished". A redraw a piece; held once
+# Erasing is done and Programming under way.
+@pace 2
+░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0/131072\r\e[2K░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0/131072░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0/1024\c
+\e[1A\r\e[2K\e[1B\r\e[2K\c
+\e[1A\e[32m\e[1m      Erasing\e[0m ⠁   0% [--------------------]                                     ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0/1024\c
+\e[1A\r\e[2K\e[1B\r\e[2K\c
+\e[1A\e[32m\e[1m      Erasing\e[0m ⠁   0% [--------------------]                                     ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0/1024░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0/1024\c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠁   0% [--------------------]                                     \e[32m\e[1m  Programming\e[0m ⠁   0% [--------------------]                                     ░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░░ 0/1024\c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠁   0% [--------------------]                                     \e[32m\e[1m  Programming\e[0m ⠁   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠁   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠉   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠁   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠁   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠉   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠉   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠁   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠉   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠉   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠉   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠙   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠉   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠉   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠙   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠙   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠉   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠙   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠙   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠙   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠚   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠙   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠙   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠚   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠚   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠙   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠚   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠚   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠚   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠒   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠚   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠚   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠒   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠒   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠚   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠒   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠒   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠒   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠂   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠒   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠒   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠂   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠂   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠒   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠂   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠂   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠂   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠂   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠂   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠂   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠂   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠂   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠂   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠂   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠂   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠂   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠒   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠂   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠂   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠒   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠒   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠂   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠒   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠒   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠒   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠲   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠒   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠒   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠲   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠲   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠒   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠲   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠲   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠲   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠴   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠲   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠲   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠴   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠴   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠲   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠴   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠴   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠴   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠴   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠤   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠴   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠤   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠤   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠴   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠤   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠤   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠤   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠤   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠄   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠤   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠄   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠄   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠤   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠄   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠄   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠄   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠄   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠄   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠄   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠄   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠄   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠄   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠄   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠄   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠄   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠄   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠤   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠄   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠤   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠤   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠄   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠤   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠤   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠤   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠤   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠠   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠤   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠠   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠠   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠤   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠠   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠠   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠠   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠠   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠠   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠠   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠠   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠠   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠠   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠠   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠤   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠠   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠤   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠤   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠠   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠤   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠦   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠤   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠦   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠦   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠤   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠦   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠖   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠦   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ⠖   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m  Programming\e[0m ⠖   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠦   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################] 128.00 KiB @  68.98 KiB/s (took 2s) \e[32m\e[1m  Programming\e[0m ⠖   0% [--------------------]                                     \e[32m\e[1m    Verifying\e[0m ⠖   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################] 128.00 KiB @  68.98 KiB/s (took 2s) \e[32m\e[1m  Programming\e[0m ⠒   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m    Verifying\e[0m ⠖   0% [--------------------]                                     \c
 @hold a
-\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
-\e[32m\e[1m  Programming\e[0m ⠲  82% [#################---]  33.00 KiB @  52.80 KiB/s (ETA 1s)
-\e[32m\e[1m    Verifying\e[0m ⠲   0% [--------------------]                                     \c
-\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
-\e[32m\e[1m  Programming\e[0m ⠴ 100% [####################]  40.23 KiB @  64.38 KiB/s (ETA 1s)
-\e[32m\e[1m    Verifying\e[0m ⠴   0% [--------------------]                                     \c
-\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
-\e[32m\e[1m  Programming\e[0m ✔ 100% [####################]  40.23 KiB @  56.33 KiB/s (took 1s)
-\e[32m\e[1m    Verifying\e[0m ⠤   0% [--------------------]                                     \c
-\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
-\e[32m\e[1m  Programming\e[0m ✔ 100% [####################]  40.23 KiB @  56.33 KiB/s (took 1s)
-\e[32m\e[1m    Verifying\e[0m ⠄  49% [##########----------]  20.00 KiB @  32.00 KiB/s (ETA 1s)  \c
-\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
-\e[32m\e[1m  Programming\e[0m ✔ 100% [####################]  40.23 KiB @  56.33 KiB/s (took 1s)
-\e[32m\e[1m    Verifying\e[0m ⠄ 100% [####################]  40.23 KiB @  64.38 KiB/s (ETA 1s)  \c
-\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################]  64.00 KiB @  89.60 KiB/s (took 1s)
-\e[32m\e[1m  Programming\e[0m ✔ 100% [####################]  40.23 KiB @  56.33 KiB/s (took 1s)
-\e[32m\e[1m    Verifying\e[0m ✔ 100% [####################]  40.23 KiB @  56.33 KiB/s (took 1s) \c
-
-     \e[32m\e[1mFinished\e[0m in 1.80s
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################] 128.00 KiB @  68.98 KiB/s (took 2s) \e[32m\e[1m  Programming\e[0m ⠒   0% [--------------------]        0 B @        0 B/s (ETA 0s)  \e[32m\e[1m    Verifying\e[0m ⠒   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################] 128.00 KiB @  68.98 KiB/s (took 2s) \e[32m\e[1m  Programming\e[0m ✔ 100% [####################]   1.00 KiB @  10.31 KiB/s (took 0s) \e[32m\e[1m    Verifying\e[0m ⠒   0% [--------------------]                                     \c
+\e[2A\r\e[2K\e[1B\r\e[2K\e[1B\r\e[2K\c
+\e[2A\e[32m\e[1m      Erasing\e[0m ✔ 100% [####################] 128.00 KiB @  68.98 KiB/s (took 2s) \e[32m\e[1m  Programming\e[0m ✔ 100% [####################]   1.00 KiB @  10.31 KiB/s (took 0s) \e[32m\e[1m    Verifying\e[0m ✔ 100% [####################]   1.00 KiB @  66.02 KiB/s (took 0s)      \e[38;5;10m\e[1mFinished\e[0m in 2.07s\n\c

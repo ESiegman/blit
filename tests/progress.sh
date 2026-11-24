@@ -167,13 +167,14 @@ problems: 0
 EOF
 check "Espressif's OpenOCD: all already there" "$expected"
 
-# probe-rs: three bars drawn again and again (moved up to, cleared,
-# written), an idle one not under way, a done one staying done.
+# probe-rs (the H743's, captured): three bars drawn again and again in
+# place (moved up to, cleared, written, wrapping), read from the rows the
+# terminal shows: an idle one not under way, a done one staying done.
 timed='&'
-flash probe-rs probe-rs probe-rs "progresswait:Program 62%;progressdump;$end"
+flash probe-rs probe-rs probe-rs "progresswait:Program 0%;progressdump;$end"
 want <<'EOF'
-button: ■ Program 62% 25.0 KB | row: Erase ✓ · Program 62% 25.0 KB
-button: ▶ probe-rs · Flashed 40.2 KB in 1.8 s, verified | row: done · Flashed 40.2 KB in 1.8 s, verified
+button: ■ Program 0% | row: Erase ✓ · Program 0%
+button: ▶ probe-rs · Flashed 1 KB in 2.1 s, verified | row: done · Flashed 1 KB in 2.1 s, verified
 problems: 0
 EOF
 check "probe-rs: its bars, then the summary" "$expected"
