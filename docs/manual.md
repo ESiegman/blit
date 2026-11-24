@@ -3403,8 +3403,6 @@ Cmd+click on one opens its place. The dumps read:
   RISC-V (-C3, -C6, -H2, -P4), and `abort() was called at PC 0x...`. A
   backtrace with no crash (the task watchdog's, `esp_backtrace_print`'s)
   is decoded too, and is no problem.
-- **Zephyr** on Cortex-M: `Faulting instruction address (r15/pc)` and
-  the `r14/lr` before it, its reason from `>>> ZEPHYR FATAL ERROR`.
 - **Your own format**: `crash` in a run configuration, a Lua pattern
   (as `blit.build.matcher` takes them) or a list of them. A line one of
   them takes is a dump's, and the hexadecimal numbers in its first

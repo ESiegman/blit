@@ -14,8 +14,6 @@
 //   0x400d1234:0x3ffb1230 ..." (and of any backtrace it prints, a task
 //   watchdog's), the register dump's MEPC and RA on RISC-V, and abort()'s
 //   "abort() was called at PC 0x...";
-// - Zephyr's fatal error on Cortex-M: "Faulting instruction address
-//   (r15/pc): 0x..." and the r14/lr before it, to ">>> ZEPHYR FATAL ERROR";
 // - the program's own format: Lua patterns (a run configuration's "crash"
 //   in .blit/run.json), a line one takes being a dump's, the hexadecimal
 //   numbers in its first capture (the whole match, with none) its
@@ -113,7 +111,7 @@ private:
 
     // The dump being read: whose, why it stopped (the exception), its
     // frames so far (the backtrace's, once it has one), and how far it has gone.
-    enum : u8 { kNone, kEsp, kZephyr, kOwn };
+    enum : u8 { kNone, kEsp, kOwn };
     u8 dump_ = kNone;
     std::string reason_;
     std::vector<SourceFrame> frames_;

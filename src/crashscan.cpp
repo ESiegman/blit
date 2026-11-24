@@ -22,12 +22,6 @@
 // components/esp_libc/src/abort.c:16-17
 //                           "abort() was called at PC 0x" (itoa: lower case, no
 //                           leading zeros) " on core " core
-//
-// Zephyr v4.5.0:
-//   arch/arm/core/fatal.c:26-30  "r0/a1:  0x%08x  r1/a2: ..." "r3/a4:  0x%08x r12/ip:  0x%08x r14/lr:  0x%08x"
-//   arch/arm/core/fatal.c:90     "Faulting instruction address (r15/pc): 0x%08x"
-//   kernel/fatal.c:111           ">>> ZEPHYR FATAL ERROR %d: %s on CPU %d"
-//   (each through the logger, after its "[00:00:00.010,000] <err> os: ")
 #include "crashscan.hpp"
 
 #include <algorithm>
@@ -233,7 +227,7 @@ void CrashScan::end() {
     p.line = at->line;
     p.col = at->col;
     p.severity = 1;
-    p.code = !reason.empty() ? reason : kind == kZephyr ? "Zephyr fatal error" : kind == kOwn ? "panic" : "";
+    p.code = !reason.empty() ? reason : kind == kOwn ? "panic" : "";
     p.message = "Crash at " + base_name(at->path) + ":" + std::to_string(at->line) + (at->function.empty() ? std::string() : " in " + at->function) +
                 (reason.empty() ? std::string() : " (" + reason + ")");
     for (const SourceFrame& f : frames) {
@@ -331,19 +325,9 @@ void CrashScan::line(std::string_view text, size_t end_at, std::vector<Insert>* 
         return;
     }
     if (!hex) {
-        if (dump_ == kEsp) {
-            if (text.find("ELF file SHA256") != std::string_view::npos || text.find("Rebooting") != std::string_view::npos ||
-                text.find("Stack memory:") != std::string_view::npos || (backtrace_ && trimmed(text).empty()))
-                end();
-        } else if (dump_ == kZephyr && text.find(">>> ZEPHYR FATAL ERROR") != std::string_view::npos) {
-            const size_t colon = text.find(": ", text.find(">>> ZEPHYR FATAL ERROR"));
-            if (colon != std::string_view::npos) {
-                std::string_view why = text.substr(colon + 2);
-                if (const size_t on = why.rfind(" on CPU"); on != std::string_view::npos) why = why.substr(0, on);
-                reason_ = std::string(trimmed(why));
-            }
+        if (dump_ == kEsp && (text.find("ELF file SHA256") != std::string_view::npos || text.find("Rebooting") != std::string_view::npos ||
+                              text.find("Stack memory:") != std::string_view::npos || (backtrace_ && trimmed(text).empty())))
             end();
-        }
         return;
     }
     if (const size_t a = text.find("abort() was called at PC "); a != std::string_view::npos) {
@@ -377,33 +361,6 @@ void CrashScan::line(std::string_view text, size_t end_at, std::vector<Insert>* 
         u64 mepc, ra;
         if (hex_after(text, "MEPC", &mepc)) decode({mepc}, "MEPC", end_at, out, !backtrace_);
         if (hex_after(text, "RA ", &ra) || hex_after(text, "RA:", &ra)) decode({ra}, "RA", end_at, out, !backtrace_);
-        return;
-    }
-
-    // Zephyr's on Cortex-M.
-    if (text.find("r14/lr:") != std::string_view::npos) {
-        u64 lr;
-        if (dump_ != kZephyr) begin(kZephyr, {});
-        if (hex_after(text, "r14/lr:", &lr)) {
-            std::vector<SourceFrame> pc_frames = std::move(frames_);  // (lr after pc, whichever is said first)
-            frames_.clear();
-            decode({lr}, "lr", end_at, out, true);
-            std::vector<SourceFrame> lr_frames = std::move(frames_);
-            frames_ = std::move(pc_frames);
-            frames_.insert(frames_.end(), lr_frames.begin(), lr_frames.end());
-        }
-        return;
-    }
-    if (const size_t f = text.find("Faulting instruction address (r15/pc):"); f != std::string_view::npos) {
-        u64 pc;
-        if (dump_ != kZephyr) begin(kZephyr, {});
-        if (hex_after(text.substr(f), "(r15/pc):", &pc)) {
-            std::vector<SourceFrame> before = std::move(frames_);
-            frames_.clear();
-            decode({pc}, "pc", end_at, out, true);
-            frames_.insert(frames_.end(), before.begin(), before.end());
-        }
-        return;
     }
 }
 

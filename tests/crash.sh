@@ -2,7 +2,7 @@
 # Crash dumps in a run's output decoded in place (src/crashscan.*): a
 # firmware built here from tests/elf's sources (Arm's GNU toolchain for a
 # Cortex-M0+, else this machine's cc where it makes ELFs), and dumps printed
-# by tasks in the shapes ESP-IDF v6.1.1 and Zephyr v4.5.0 print them (their
+# by tasks in the shapes ESP-IDF v6.1.1 prints them (their
 # sources are cited in crashscan.cpp; no board is run here), with that
 # firmware's addresses in them. Each address's frames go into the terminal
 # under the dump's line, dim; the innermost frame of the project's own code
@@ -81,15 +81,6 @@ printf 'Core  0 register dump:\r\nMEPC    : 0x$(pad "$STORE")  RA      : 0x$(pad
 printf 'MSTATUS : 0x00001881  MTVEC   : 0x40380001  MCAUSE  : 0x00000007  MTVAL   : 0x00000000  \r\nMHARTID : 0x00000000  \r\n'
 printf '\r\nStack memory:\r\n3fc8f3b0: 0x00000000 0x00000000\r\n\r\nELF file SHA256: 2bd7d9c6b\r\n'
 EOF
-cat >"$P/zephyr.sh" <<EOF
-printf '[00:00:00.010,000] <err> os: ***** HARD FAULT *****\r\n'
-printf '[00:00:00.010,000] <err> os: r0/a1:  0x00000000  r1/a2:  0x00000004  r2/a3:  0x00000000\r\n'
-printf '[00:00:00.010,000] <err> os: r3/a4:  0x00000000 r12/ip:  0x00000000 r14/lr:  0x$(pad "$CALL")\r\n'
-printf '[00:00:00.010,000] <err> os:  xpsr:  0x61000000\r\n'
-printf '[00:00:00.010,000] <err> os: Faulting instruction address (r15/pc): 0x$(pad "$STORE")\r\n'
-printf '[00:00:00.010,000] <err> os: >>> ZEPHYR FATAL ERROR 0: CPU exception on CPU 0\r\n'
-printf '[00:00:00.010,000] <err> os: Current thread: 0x20000598 (main)\r\n'
-EOF
 cat >"$P/own.sh" <<EOF
 printf 'tick 41\r\nPANIC: hard fault\r\nbt: 0x$STORE 0x$CALL\r\nbt: 0x$MAIN\r\nhalted\r\n'
 EOF
@@ -121,7 +112,6 @@ cat >"$P/.blit/tasks.json" <<'EOF'
 { "tasks": [
   { "label": "xtensa", "command": "sh xtensa.sh" },
   { "label": "riscv", "command": "sh riscv.sh" },
-  { "label": "zephyr", "command": "sh zephyr.sh" },
   { "label": "own", "command": "sh own.sh" },
   { "label": "abort", "command": "sh abort.sh" },
   { "label": "vendor", "command": "sh vendor.sh" },
@@ -141,7 +131,7 @@ run() {
 # first row after them that is not one.
 decoded() {
     run "buildrun:$1;buildwait;frame;key:cmd+alt+Down;frame;termdump" | tail -1 | tr '|' '\n' |
-        awk -v from="${2:-Backtrace:}" 'index($0, from) { on = 1; next } on && /^(0x|MEPC 0x|RA 0x|pc 0x|lr 0x| \(inlined by\))/ { printf "%s%s", sep, $0; sep = " | "; next } on && sep != "" { exit }'
+        awk -v from="${2:-Backtrace:}" 'index($0, from) { on = 1; next } on && /^(0x|MEPC 0x|RA 0x| \(inlined by\))/ { printf "%s%s", sep, $0; sep = " | "; next } on && sep != "" { exit }'
 }
 problems() { run "buildrun:$1;buildwait;frame;scandump" | sed -n '/^problems:/,$p' | tr '\n' '|' | sed 's/|$//'; }
 x() { printf '0x%x' "0x$1"; }  # (an address as the dumps above are made to read here)
@@ -158,14 +148,6 @@ check "ESP-IDF on RISC-V: the register dump's MEPC and RA decoded under their li
     "MEPC $(x "$STORE"): store at $M/motor.c:9 |  (inlined by) pid_step at $M/motor.c:15 | RA $(x "$CALL"): motor_run at $M/motor.c:22"
 got=$(problems riscv)
 check "its problem" "problems: 1|E main/motor.c:9:13 [Store access fault] Crash at motor.c:9 in store (Store access fault)|  note main/motor.c:9:13 store (inlined)|  note main/motor.c:15:5 pid_step|  note main/motor.c:22:9 motor_run"
-got=$(decoded zephyr "r12/ip:")
-check "Zephyr on Cortex-M: lr decoded under its line" "lr $(x "$CALL"): motor_run at $M/motor.c:22"
-got=$(run "buildrun:zephyr;buildwait;frame;key:cmd+alt+Down;frame;termdump" | tail -1 | tr '|' '\n' | grep -A1 'Faulting instruction' | tail -1)
-check "and the faulting instruction's address under its own" "pc $(x "$STORE"): store at $M/motor.c:9"
-got=$(problems zephyr)
-check "its problem, at the faulting instruction, with the reason its fatal error gives" \
-    "problems: 1|E main/motor.c:9:13 [CPU exception] Crash at motor.c:9 in store (CPU exception)|  note main/motor.c:9:13 store (inlined)|  note main/motor.c:15:5 pid_step|  note main/motor.c:22:9 motor_run"
-
 # The program's own format: a pattern in run.json, its lines one dump.
 printf '{ "configurations": [ { "name": "fw", "program": "build/fw.elf", "board": { "elf": "build/fw.elf" }, "crash": "^bt:(.*)$" } ] }\n' >"$P/.blit/run.json"
 got=$(run "buildrun:own;buildwait;frame;key:cmd+alt+Down;frame;termdump" | tail -1 | tr '|' '\n' | sed -n '/^bt:/,/^halted/p' | tr '\n' '|' | sed 's/|$//')
