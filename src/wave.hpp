@@ -39,7 +39,7 @@ enum class ScopeKind : u8 {
 
 // The radix a dump asks a variable be shown in (an ILA capture's CSV says
 // it for each probe), else kNone.
-enum class DumpRadix : u8 { kNone, kBinary, kOctal, kHex, kUnsigned, kSigned };
+enum class DumpRadix : u8 { kNone, kBinary, kOctal, kHex, kUnsigned, kSigned, kAscii };
 
 enum class VarKind : u8 {
     kWire, kReg, kLogic, kBit, kInteger, kInt, kShortInt, kLongInt, kByte, kTime, kParameter,
@@ -211,6 +211,18 @@ private:
 // (-legacy_csv_file: its values cannot be read for sure), is said in
 // `error`; so is a line that is wrong, where it stops (keeping what came
 // before it).
+//
+// Two of Vivado's ways of showing a probe lose part of its value, and are
+// read for what they keep. ASCII writes the probe's lowest byte as a
+// character in quotes ("A"), and nothing ("") for a byte that is not
+// printable: such a probe is read as that byte (a wider one as its lowest
+// eight bits, "pair[7:0]"), x where it was not printable. A probe given
+// names for its values (add_hw_probe_enum) has those values written as
+// their names in quotes ("IDLE") and the rest in its radix, the names'
+// values said nowhere: its lane is the text as written (VarKind::kEnum).
+// (Neither quote is escaped: `"""` is a quote, `","` a comma.) The scopes
+// and variables are there (`header`) once it is read to its end, as a
+// probe is known to have names only once one comes.
 class IlaCsvReader {
 public:
     explicit IlaCsvReader(Wave* into, u64 max_bytes = 0);
@@ -229,6 +241,7 @@ private:
     void header(std::string_view l);
     void radixes(std::string_view l);
     void sample(std::string_view l);
+    void to_names(Column& c);
     void stop(std::string why);
 
     Wave* w_;
@@ -241,7 +254,7 @@ private:
     bool have_ = false;  // a sample read
     u64 last_ = 0;
     std::vector<std::string_view> fields_;
-    std::vector<u64> val_;
+    std::vector<u64> val_, xz_;
 };
 
 // What a dump is, from its first bytes (16 are enough): FST if they are an

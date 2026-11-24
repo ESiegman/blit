@@ -7,7 +7,18 @@
 //
 // (a probe's value in its radix: HEX, BINARY and OCTAL as digits, as many
 // as its width needs or fewer; UNSIGNED and SIGNED in decimal, SIGNED with
-// a minus where it is negative.)
+// a minus where it is negative.) With probes in ASCII, and one given names
+// for its values (tests/wave/ila_radix.txt):
+//
+//   Sample in Buffer,Sample in Window,TRIGGER,count[7:0],ch[7:0],pair[15:0],odd[11:0],state[2:0]
+//   Radix - UNSIGNED,UNSIGNED,UNSIGNED,HEX,ASCII,ASCII,ASCII,HEX
+//   7,7,0,e3,","," ",",","SHIFT"
+//   33,33,0,fd,"","","",7
+//
+// (ASCII: the lowest byte as a character in quotes, "" where it is not
+// printable, a quote or a comma in it as it is; a value with a name as
+// that name in quotes, whatever the radix row says, and one with none in
+// that radix.)
 #include <algorithm>
 #include <mutex>
 #include <string>
@@ -22,8 +33,14 @@ constexpr size_t kSlice = 1 << 20;  // the most read under one hold of the Wave'
 constexpr u32 kMaxWidth = 1 << 16;  // bits of a probe (an ILA's are at most 4096)
 
 constexpr std::pair<std::string_view, DumpRadix> kRadixes[] = {
-    {"BINARY", DumpRadix::kBinary}, {"OCTAL", DumpRadix::kOctal}, {"HEX", DumpRadix::kHex}, {"UNSIGNED", DumpRadix::kUnsigned}, {"SIGNED", DumpRadix::kSigned},
+    {"BINARY", DumpRadix::kBinary}, {"OCTAL", DumpRadix::kOctal},   {"HEX", DumpRadix::kHex},
+    {"UNSIGNED", DumpRadix::kUnsigned}, {"SIGNED", DumpRadix::kSigned}, {"ASCII", DumpRadix::kAscii},
 };
+
+std::string_view radix_name(DumpRadix r) {
+    const auto* k = std::find_if(std::begin(kRadixes), std::end(kRadixes), [&](const auto& e) { return e.second == r; });
+    return k == std::end(kRadixes) ? std::string_view("NONE") : k->first;
+}
 
 bool parse_u64(std::string_view s, u64* out) {
     if (s.empty() || s.size() > 19) return false;
@@ -54,7 +71,7 @@ void split_range(std::string_view s, WaveVar* v) {
 }
 
 // A value in its radix into `width` bits (words of 64, the lowest first);
-// false if it is not one, or does not fit.
+// false if it is not one, or does not fit. (Not ASCII: see sample().)
 bool parse_value(std::string_view s, DumpRadix radix, u32 width, std::vector<u64>* out) {
     const size_t words = (width + 63) / 64;
     out->assign(words, 0);
@@ -115,12 +132,57 @@ bool parse_value(std::string_view s, DumpRadix radix, u32 width, std::vector<u64
     }
 }
 
+// Change i of a probe's lane as Vivado writes it in `radix`: digits, as
+// many as the width needs; decimal; an ASCII character ("" for x).
+std::string vivado_text(const Lane& lane, u64 i, DumpRadix radix) {
+    const u32 width = lane.width();
+    if (radix == DumpRadix::kAscii) {
+        const u64 c = lane.bits(i, 0, std::min<u32>(width, 8));
+        return lane.xz(i, 0, std::min<u32>(width, 8)) ? std::string() : std::string(1, static_cast<char>(c));
+    }
+    if (radix == DumpRadix::kBinary || radix == DumpRadix::kOctal || radix == DumpRadix::kHex) {
+        const u32 bits = radix == DumpRadix::kBinary ? 1 : radix == DumpRadix::kOctal ? 3 : 4;
+        std::string out;
+        for (u32 at = (width + bits - 1) / bits * bits; at > 0; at -= bits) {
+            const u32 from = at - bits, n = std::min(bits, width - from);
+            out += "0123456789abcdef"[lane.bits(i, from, n)];
+        }
+        return out;
+    }
+    // Decimal: the value divided by ten again and again (two's complement negated first, if signed and negative).
+    std::vector<u64> v((width + 63) / 64);
+    for (u32 b = 0; b < width; b += 64) v[b / 64] = lane.bits(i, b, std::min<u32>(64, width - b));
+    const bool minus = radix == DumpRadix::kSigned && (v[(width - 1) / 64] >> ((width - 1) % 64) & 1);
+    if (minus) {
+        u64 carry = 1;
+        for (u64& w : v) {
+            w = ~w + carry;
+            carry = carry && w == 0;
+        }
+        if (width % 64) v.back() &= (1ull << (width % 64)) - 1;
+    }
+    std::string out;
+    do {
+        u64 rem = 0;
+        for (size_t k = v.size(); k-- > 0;) {
+            const unsigned __int128 x = static_cast<unsigned __int128>(rem) << 64 | v[k];
+            v[k] = static_cast<u64>(x / 10);
+            rem = static_cast<u64>(x % 10);
+        }
+        out += static_cast<char>('0' + rem);
+    } while (std::any_of(v.begin(), v.end(), [](u64 w) { return w != 0; }));
+    if (minus) out += '-';
+    std::reverse(out.begin(), out.end());
+    return out;
+}
+
 }  // namespace
 
 struct IlaCsvReader::Column {
     u32 lane = 0;
     u32 width = 1;
     DumpRadix radix = DumpRadix::kHex;
+    bool names = false;  // its values as written (some by their names): a lane of text
     std::string name;  // as the first line has it
 };
 
@@ -166,7 +228,7 @@ void IlaCsvReader::finish() {
     std::unique_lock lock(w_->mu);
     if (!stopped_ && !carry_.empty()) line(carry_);
     carry_.clear();
-    if (w_->error.empty() && (!w_->header || !have_)) w_->error = line_ == 0 ? "the capture is empty" : "the capture has no samples";
+    if (w_->error.empty() && (cols_.empty() || !have_)) w_->error = line_ == 0 ? "the capture is empty" : "the capture has no samples";
     w_->header = true;
     u64 changes = 0;
     for (Lane& l : w_->lanes) {
@@ -182,12 +244,21 @@ void IlaCsvReader::finish() {
 void IlaCsvReader::line(std::string_view l) {
     ++line_;
     if (!l.empty() && l.back() == '\r') l.remove_suffix(1);
+    // Its fields, at the commas: a quoted one (an ASCII character, a value's
+    // name) to the first quote after its own that a comma or the line's end
+    // follows, as Vivado escapes neither (`"""` is a quote, `","` a comma).
     fields_.clear();
     for (size_t at = 0;;) {
-        const size_t comma = l.find(',', at);
-        fields_.push_back(l.substr(at, comma == std::string_view::npos ? std::string_view::npos : comma - at));
-        if (comma == std::string_view::npos) break;
-        at = comma + 1;
+        size_t end = l.find(',', at);
+        if (at < l.size() && l[at] == '"')
+            for (size_t q = at + 1; q < l.size(); ++q)
+                if (l[q] == '"' && (q + 1 == l.size() || l[q + 1] == ',')) {
+                    end = q + 1 == l.size() ? std::string_view::npos : q + 1;
+                    break;
+                }
+        fields_.push_back(l.substr(at, end == std::string_view::npos ? std::string_view::npos : end - at));
+        if (end == std::string_view::npos) break;
+        at = end + 1;
     }
     if (line_ == 1) header(l);
     else if (line_ == 2) radixes(l);
@@ -239,6 +310,7 @@ void IlaCsvReader::radixes(std::string_view l) {
         w_->scopes[0].scopes.clear();
         w_->vars.clear();
         w_->lanes.clear();
+        cols_.clear();
         stop(std::move(why));
     };
     if (!l.starts_with("Radix - "))
@@ -251,10 +323,33 @@ void IlaCsvReader::radixes(std::string_view l) {
         const auto* r = std::find_if(std::begin(kRadixes), std::end(kRadixes), [&](const auto& k) { return k.first == fields_[i]; });
         if (r == std::end(kRadixes)) return none("line 2: " + c.name + " is in a radix this does not read: " + std::string(fields_[i].substr(0, 20)));
         c.radix = r->second;
-        if (c.lane != ~0u) w_->vars[c.lane].radix = c.radix;  // (a probe's lane is its variable's number)
+        if (c.lane == ~0u) continue;
+        WaveVar& v = w_->vars[c.lane];  // (a probe's lane is its variable's number)
+        v.radix = c.radix;
+        if (c.radix == DumpRadix::kAscii && c.width > 8) {
+            // (ASCII writes no more than its lowest byte: the probe is read as that.)
+            c.width = v.width = 8;
+            v.msb = v.msb > v.lsb ? v.lsb + 7 : v.lsb - 7;
+            w_->lanes[c.lane] = Lane(LaneKind::kBits, 8);
+        }
     }
     w_->samples = true;
-    w_->header = true;
+}
+
+// A probe's values as written from now on, and those read before (in its
+// radix, as Vivado wrote them): its first value given by its name has come.
+void IlaCsvReader::to_names(Column& c) {
+    Wave& w = *w_;
+    WaveVar& v = w.vars[c.lane];
+    split_range(c.name, &v);  // (all of it, if ASCII made it its lowest byte)
+    v.kind = VarKind::kEnum;
+    Lane text(LaneKind::kText, 0);
+    const Lane& was = w.lanes[c.lane];
+    for (u64 i = 0; i < was.size(); ++i) mem_ += text.add_text(was.time(i), vivado_text(was, i, c.radix));
+    mem_ -= std::min<u64>(mem_, was.bytes());
+    w.lanes[c.lane] = std::move(text);
+    c.width = v.width;
+    c.names = true;
 }
 
 // A sample: its number in the buffer is its time.
@@ -267,13 +362,38 @@ void IlaCsvReader::sample(std::string_view) {
     if (!parse_u64(fields_[static_cast<size_t>(in_buffer_)], &t)) return stop(at + "not a sample's number: " + std::string(fields_[static_cast<size_t>(in_buffer_)].substr(0, 20)));
     if (have_ && t <= last_) return stop(at + "sample " + std::to_string(t) + " after sample " + std::to_string(last_));
     for (size_t i = 0; i < cols_.size(); ++i) {
-        const Column& c = cols_[i];
+        Column& c = cols_[i];
         if (c.lane == ~0u) continue;
-        if (!parse_value(fields_[i], c.radix, c.width, &val_)) {
-            const auto* r = std::find_if(std::begin(kRadixes), std::end(kRadixes), [&](const auto& k) { return k.second == c.radix; });
-            return stop(at + c.name + ": not a " + std::string(r->first) + " value of " + std::to_string(c.width) + (c.width == 1 ? " bit: " : " bits: ") +
-                        std::string(fields_[i].substr(0, 40)));
+        const std::string_view f = fields_[i];
+        const bool quoted = f.size() >= 2 && f.front() == '"' && f.back() == '"';
+        const std::string_view in = quoted ? f.substr(1, f.size() - 2) : f;
+        auto wrong = [&] {
+            stop(at + c.name + ": not a" + (c.radix == DumpRadix::kAscii ? "n " : " ") + std::string(radix_name(c.radix)) + " value of " + std::to_string(c.width) +
+                 (c.width == 1 ? " bit: " : " bits: ") + std::string(f.substr(0, 40)));
+        };
+        // A name: quoted, and not an ASCII character.
+        if (!c.names && quoted && (c.radix != DumpRadix::kAscii || in.size() > 1) && !in.empty()) to_names(c);
+        if (c.names) {
+            // (One with no name is still in its radix: read so, to know it is one.)
+            if (!quoted && (c.radix == DumpRadix::kAscii || !parse_value(f, c.radix, c.width, &val_))) return wrong();
+            mem_ += w.lanes[c.lane].add_text(t, in);
+            continue;
         }
+        if (c.radix == DumpRadix::kAscii) {
+            // A printable character: its byte; none: not known (x), as Vivado leaves it out.
+            const size_t words = (c.width + 63) / 64;
+            val_.assign(words, 0);
+            xz_.assign(words, 0);
+            if (!quoted || (!in.empty() && (in[0] < 0x20 || in[0] > 0x7E || (c.width < 8 && static_cast<u8>(in[0]) >> c.width)))) return wrong();
+            if (in.empty()) {
+                val_[0] = xz_[0] = c.width >= 64 ? ~0ull : (1ull << c.width) - 1;
+            } else {
+                val_[0] = static_cast<u8>(in[0]);
+            }
+            mem_ += w.lanes[c.lane].add_bits(t, val_.data(), xz_.data());
+            continue;
+        }
+        if (!parse_value(f, c.radix, c.width, &val_)) return wrong();
         mem_ += w.lanes[c.lane].add_bits(t, val_.data(), nullptr);
     }
     if (in_window_ >= 0 && have_ && fields_[static_cast<size_t>(in_window_)] == "0") w.windows.push_back(t);

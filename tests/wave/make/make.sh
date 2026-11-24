@@ -5,7 +5,8 @@
 # Python 3.14). Each simulator's FST is the same run as its VCD; times-*.log
 # are what times.v prints under each. The ILA captures (ila_*) come from a
 # board, not a simulator: ila_build.tcl and ila_capture.tcl, in Vivado,
-# make them (../ila.txt says how).
+# make them (../ila.txt says how), and ila_radix_build.tcl and
+# ila_radix_capture.tcl the ila_radix ones (../ila_radix.txt).
 set -e
 here=$(cd "$(dirname "$0")" && pwd)
 

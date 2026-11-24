@@ -241,6 +241,7 @@ WaveRadix wave_radix_default(const WaveVar& v) {
         case DumpRadix::kHex: return WaveRadix::kHex;
         case DumpRadix::kUnsigned: return WaveRadix::kUnsigned;
         case DumpRadix::kSigned: return WaveRadix::kSigned;
+        case DumpRadix::kAscii: return WaveRadix::kAscii;
         case DumpRadix::kNone: break;
     }
     // (A Verilog integer, an int and their kin are signed.)

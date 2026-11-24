@@ -1,0 +1,37 @@
+ila_radix.vcd, ila_radix.csv, ila_radix2.vcd, ila_radix2.csv: ILA
+captures written by Vivado v2026.2 (64-bit, SW Build 6713330, Basic
+licence) with write_hw_ila_data, from a Digilent Basys 3
+(xc7a35tcpg236-1) on Arch Linux (x86-64), 24 Nov 2026.
+
+The design is make/ila_radix.sv (a counter on the board's 100 MHz clock
+stepping through sixteen bytes of text: "Hi, "ILA"", a newline, a NUL,
+"~", DEL, 0xff, a tab and "z"; ch the byte, pair it and the next, odd it
+under four bits of the counter, state a SystemVerilog enum decoded from
+the counter, IDLE 0, LOAD 1, SHIFT 4, DONE 6, and 7 with no name), with
+the ILA IP on five probes of 1024 samples, built in batch mode by
+make/ila_radix_build.tcl; make/ila_radix_capture.tcl programmed the
+FPGA (its configuration memory), named state's values with
+add_hw_probe_enum (the ILA IP's probes carry no enum from the source:
+the probes file has none, and the Basic licence has no create_debug_core
+to put an ILA on mark_debug nets), armed the ILA twice and wrote each
+capture.
+
+ila_radix: one window of 1024 samples, triggered where count is 0x40, at
+sample 100; ch, pair and odd shown in ASCII, state by its names (its
+DISPLAY_RADIX hex). ila_radix2: two windows of 512, each triggered at its
+sample 20; count octal, ch ASCII with 'A' named AYE, pair signed, odd
+unsigned with a name not shown (DISPLAY_AS_ENUM 0), state named, in
+binary.
+
+What they show, against the VCD form (which has every value, and no
+names): DISPLAY_RADIX takes ASCII but not ENUM ("Invalid probe property
+value 'ENUM'"); names show while DISPLAY_AS_ENUM is 1, as it is once a
+probe has them. In the CSV form an ASCII probe's radix row says ASCII
+and each value is its lowest byte as a character in quotes ("H"), or ""
+where that byte is not printable (below 0x20, 0x7f and above): pair's
+0x4869 is "i", 0x7e7f is ""; neither a quote nor a comma is escaped (a
+quote is written """, a comma ","). A probe with names keeps
+its DISPLAY_RADIX in the radix row (HEX, BINARY) and has each named value
+as its name in quotes ("SHIFT") and each other in that radix (7, 111);
+the names' values are not in the file. A name wins over ASCII ("AYE" for
+'A').

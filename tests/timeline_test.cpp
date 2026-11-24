@@ -693,6 +693,136 @@ std::string line_of(const std::string& text, size_t n) {
     return text.substr(a, text.find('\n', a) - a);
 }
 
+// The fields of a CSV line with no quotes in it.
+std::vector<std::string> fields_of(const std::string& line) {
+    std::vector<std::string> out;
+    for (size_t at = 0;;) {
+        const size_t comma = line.find(',', at);
+        out.push_back(line.substr(at, comma == std::string::npos ? std::string::npos : comma - at));
+        if (comma == std::string::npos) return out;
+        at = comma + 1;
+    }
+}
+
+// ASCII, and values given names (tests/wave/ila_radix.txt): ila_radix with
+// ch, pair and odd in ASCII and state's values named (IDLE 0, LOAD 1,
+// SHIFT 4, DONE 6) in hex; ila_radix2, two windows, with ch's 'A' named
+// AYE in ASCII, count octal, pair signed, odd unsigned (its name not
+// shown) and state named in binary. Each against its VCD, which has every
+// value as it was.
+void ila_radix_test(const std::string& dir, const std::string& one, const std::string& four) {
+    auto said = [&](const std::string& what, const std::string& text, const std::string& error, u64 end = ~0ull) {
+        auto b = read_csv(text);
+        check(b->done && b->error == error && (end == ~0ull || b->end == end), what + ": \"" + b->error + "\", to " + std::to_string(b->end));
+        return b;
+    };
+    auto low_byte = [](const std::string& bits) { return std::strtoull(bits.substr(bits.size() - 8).c_str(), nullptr, 2); };
+    auto printable = [](u64 b) { return b >= 0x20 && b <= 0x7E; };
+    static const char* const kNames[8] = {"IDLE", "LOAD", nullptr, nullptr, "SHIFT", nullptr, "DONE", nullptr};
+
+    const std::string rad = slurp(dir + "/ila_radix.csv");
+    const auto r = read_csv(rad);
+    expect("ila_radix.csv: the probes (ASCII's as their lowest byte, state as its values written)", listing(*r),
+           "dut.count reg 8 [7:0]\ndut.ch reg 8 [7:0]\ndut.pair reg 8 [7:0]\ndut.odd reg 8 [7:0]\ndut.state enum 3 [2:0]\n");
+    check(r->done && r->error.empty() && r->samples && r->start == 0 && r->end == 1023 && r->triggers == std::vector<u64>{100} && r->windows.empty(),
+          "ila_radix.csv: 1024 samples, the trigger at 100: " + r->error);
+    check(r->vars[1].radix == DumpRadix::kAscii && r->vars[2].radix == DumpRadix::kAscii && r->vars[3].radix == DumpRadix::kAscii && r->vars[4].radix == DumpRadix::kHex,
+          "ila_radix.csv: three in ASCII, state in hex (as its radix row says)");
+    check(r->lanes[4].kind() == LaneKind::kText && r->lanes[1].kind() == LaneKind::kBits && r->lanes[1].width() == 8, "ila_radix.csv: state's lane text, ch's a byte");
+    expect("ila_radix.csv: ch at the trigger: z", value_at(*r, "dut.ch", 100), "01111010");
+    expect("ila_radix.csv: a comma, written \",\"", value_at(*r, "dut.ch", 103), "00101100");
+    expect("ila_radix.csv: a quote, written \"\"\"", value_at(*r, "dut.ch", 105), "00100010");
+    expect("ila_radix.csv: a space", value_at(*r, "dut.ch", 104), "00100000");
+    expect("ila_radix.csv: a newline, written \"\": not known", value_at(*r, "dut.ch", 110), "xxxxxxxx");
+    expect("ila_radix.csv: pair's lowest byte", value_at(*r, "dut.pair", 101), "01101001");
+    expect("ila_radix.csv: state 7 (no name) in hex", value_at(*r, "dut.state", 100), "7");
+    expect("ila_radix.csv: state IDLE", value_at(*r, "dut.state", 101), "IDLE");
+    expect("ila_radix.csv: state DONE", value_at(*r, "dut.state", 149), "DONE");
+    {  // (The variables come once it is read to its end: a probe has names only once one comes.)
+        Wave part;
+        IlaCsvReader rd(&part);
+        rd.feed(rad);
+        const bool before = part.header;
+        rd.finish();
+        check(!before && part.header && part.done, "ila_radix.csv: its variables there once it is read to its end");
+    }
+    // Against its VCD at every sample: an ASCII probe's lowest byte where it
+    // is printable and x where not; state's names where it has one, else hex.
+    const auto rv = read_vcd(slurp(dir + "/ila_radix.vcd"));
+    std::string bad;
+    for (u64 s = 0; s <= 1023 && bad.empty(); ++s) {
+        if (value_at(*r, "dut.count", s) != value_at(*rv, "dut.count", s)) bad = "count at " + std::to_string(s);
+        for (const char* p : {"dut.ch", "dut.pair", "dut.odd"}) {
+            const std::string all = value_at(*rv, p, s), want = printable(low_byte(all)) ? all.substr(all.size() - 8) : "xxxxxxxx";
+            if (value_at(*r, p, s) != want) bad = std::string(p) + " at " + std::to_string(s) + ": " + value_at(*r, p, s) + ", its VCD " + all;
+        }
+        const u64 st = std::strtoull(value_at(*rv, "dut.state", s).c_str(), nullptr, 2);
+        const std::string want = kNames[st] ? kNames[st] : std::string(1, "0123456789abcdef"[st]);
+        if (value_at(*r, "dut.state", s) != want) bad = "state at " + std::to_string(s) + ": " + value_at(*r, "dut.state", s) + ", want " + want;
+    }
+    check(bad.empty() && rv->triggers == r->triggers, "ila_radix: its CSV as its VCD has it: " + bad);
+    for (size_t cut = 0; cut <= rad.size(); cut += 13)
+        if (const auto p = read_csv(rad, {cut}); !same_wave(*p, *r)) {
+            check(false, "ila_radix.csv: cut in two at byte " + std::to_string(cut));
+            break;
+        }
+
+    const std::string rad2 = slurp(dir + "/ila_radix2.csv");
+    const auto r2 = read_csv(rad2);
+    expect("ila_radix2.csv: the probes (ch as its values written: one has a name)", listing(*r2),
+           "dut.count reg 8 [7:0]\ndut.ch enum 8 [7:0]\ndut.pair reg 16 [15:0]\ndut.odd reg 12 [11:0]\ndut.state enum 3 [2:0]\n");
+    check(r2->done && r2->error.empty() && r2->end == 1023 && r2->triggers == std::vector<u64>{20, 532} && r2->windows == std::vector<u64>{512},
+          "ila_radix2.csv: two windows, a trigger each: " + r2->error);
+    check(r2->vars[0].radix == DumpRadix::kOctal && r2->vars[2].radix == DumpRadix::kSigned && r2->vars[3].radix == DumpRadix::kUnsigned && r2->vars[4].radix == DumpRadix::kBinary,
+          "ila_radix2.csv: octal, signed, unsigned, binary");
+    expect("ila_radix2.csv: AYE", value_at(*r2, "dut.ch", 28), "AYE");
+    expect("ila_radix2.csv: a value with no name in binary", value_at(*r2, "dut.state", 20), "111");
+    const auto rv2 = read_vcd(slurp(dir + "/ila_radix2.vcd"));
+    std::vector<size_t> bytes(rad2.size());
+    for (size_t i = 0; i < bytes.size(); ++i) bytes[i] = i;
+    for (u64 s = 0; s <= 1023 && bad.empty(); ++s) {
+        for (const char* p : {"dut.count", "dut.pair", "dut.odd"})
+            if (value_at(*r2, p, s) != value_at(*rv2, p, s)) bad = std::string(p) + " at " + std::to_string(s);
+        const u64 c = low_byte(value_at(*rv2, "dut.ch", s));
+        const std::string ch = c == 0x41 ? "AYE" : printable(c) ? std::string(1, static_cast<char>(c)) : "";
+        if (value_at(*r2, "dut.ch", s) != ch) bad = "ch at " + std::to_string(s) + ": \"" + value_at(*r2, "dut.ch", s) + "\", want \"" + ch + "\"";
+        const std::string st = value_at(*rv2, "dut.state", s), want = kNames[std::strtoull(st.c_str(), nullptr, 2)] ? kNames[std::strtoull(st.c_str(), nullptr, 2)] : st;
+        if (value_at(*r2, "dut.state", s) != want) bad = "state at " + std::to_string(s) + ": " + value_at(*r2, "dut.state", s) + ", want " + want;
+    }
+    check(bad.empty() && rv2->triggers == r2->triggers && rv2->windows == r2->windows, "ila_radix2: its CSV as its VCD has it: " + bad);
+    check(same_wave(*read_csv(rad2, bytes), *r2), "ila_radix2.csv: fed a byte at a time");
+
+    // A name coming in a probe of numbers: from then on its values as
+    // written, and those before as Vivado wrote them, in each radix (hex of
+    // 8, 2 and 1 bits, unsigned, binary; signed, octal).
+    for (const std::string* text : {&one, &four}) {
+        const std::string first = line_of(*text, 3), last = line_of(*text, 1026);
+        const std::string named = last.substr(0, last.find(',', last.find(',', last.find(',') + 1) + 1)) + ",\"N3\",\"N4\",\"N5\",\"N6\",\"N7\"";
+        const auto n = read_csv(with_line(*text, 1026, named));
+        check(n->error.empty() && n->vars.size() == 5, "a name in each probe: " + n->error);
+        for (size_t line = 3; line <= 1025 && bad.empty(); ++line) {
+            const std::vector<std::string> f = fields_of(line_of(*text, line));
+            for (size_t k = 3; k < f.size(); ++k)
+                if (value_at(*n, n->path(static_cast<u32>(k - 3)), std::strtoull(f[0].c_str(), nullptr, 10)) != f[k])
+                    bad = n->path(static_cast<u32>(k - 3)) + " at line " + std::to_string(line) + ": " +
+                          value_at(*n, n->path(static_cast<u32>(k - 3)), std::strtoull(f[0].c_str(), nullptr, 10)) + ", written " + f[k];
+        }
+        check(bad.empty() && n->vars[0].kind == VarKind::kEnum && value_at(*n, "dut.count", 1023) == "N3", "a name in each probe: the values before as written: " + bad + " (" + first + ")");
+    }
+
+    // ASCII's values that are not: unquoted, a character not printable, one
+    // wider than its probe; nothing in a probe of four bits is not known.
+    said("an ASCII value not quoted", with_line(rad, 3, "0,0,0,dc,~,\"\",\"~\",\"SHIFT\""), "line 3: ch[7:0]: not an ASCII value of 8 bits: ~");
+    said("an ASCII character not printable", with_line(rad, 3, "0,0,0,dc,\"\t\",\"\",\"~\",\"SHIFT\""), "line 3: ch[7:0]: not an ASCII value of 8 bits: \"\t\"");
+    const std::string four_bits = with_line(one, 2, "Radix - UNSIGNED,UNSIGNED,UNSIGNED,HEX,HEX,HEX,UNSIGNED,ASCII");
+    said("an ASCII character wider than its probe", with_line(four_bits, 3, "0,0,0,dc,0,3,219,\"A\""), "line 3: sw_q[3:0]: not an ASCII value of 4 bits: \"A\"");
+    const auto nothing = said("nothing, in four bits", with_line(four_bits, 3, "0,0,0,dc,0,3,219,\"\""), "line 4: sw_q[3:0]: not an ASCII value of 4 bits: 0000", 0);
+    expect("nothing, in four bits: not known", value_at(*nothing, "dut.sw_q", 0), "xxxx");
+    // A value with no name, in a probe that has names, is still in its radix.
+    const std::string ten = line_of(rad2, 10);
+    said("a value with no name not in its radix", with_line(rad2, 10, ten.substr(0, ten.rfind(',') + 1) + "8"), "line 10: state[2:0]: not a BINARY value of 3 bits: 8");
+}
+
 void ila_test(const std::string& dir) {
     // ila_one: one window, the trigger at sample 100; sum unsigned, sw_q binary, the rest hex.
     const std::string one = slurp(dir + "/ila_one.csv");
@@ -789,6 +919,8 @@ void ila_test(const std::string& dir) {
     const auto small = read_csv(one, {}, 4096);
     check(small->error.starts_with("the capture needs more memory than timeline.max_mb allows: read up to sample ") && small->end > 0 && small->end < 1023,
           "ila_one.csv over the budget: " + small->error);
+
+    ila_radix_test(dir, one, four);
 }
 
 // Times read from text, in a dump's units (Wave::time_of): "@ 50000" bare,

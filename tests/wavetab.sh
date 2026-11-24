@@ -456,6 +456,21 @@ check "the CSV form with no radix row: not shown, and why" "ila_one-legacy.csv: 
 printf 'a,b\n1,2\n' >"$W/table.csv"
 run 1600x900 "frame;wavedump" "$W/table.csv"
 check "a CSV that is not a capture: text" "no wave tab"
+# Probes in ASCII and with names for their values (tests/wave/ila_radix.txt):
+# ASCII's start in ASCII, a character each (a byte not printable x), a
+# wider one as its lowest byte; r goes round from there; state's values
+# as written, a name or a value with none (7, in hex).
+fresh
+run 1600x900 "frame;wavewait;wavedump;key:j;key:shift+N;wavedump;key:n;key:n;key:n;wavedump;key:j;key:j;key:j;key:n;wavedump" "$W/ila_radix.csv"
+check "ASCII and names: at the trigger, a byte not printable, a comma, a name" "ila_radix.csv: read, cursor 100, view 0 to 1023, triggers at 100 ;; >dut.count[7:0] = 40 hex ;;  dut.ch[7:0] = z ascii ;;  dut.pair[7:0] = H ascii ;;  dut.odd[7:0] = z ascii ;;  dut.state[2:0] = 7 ;; ila_radix.csv: read, cursor 97, view 0 to 1023, triggers at 100 ;;  dut.count[7:0] = 3d hex ;; >dut.ch[7:0] = x ascii ;;  dut.pair[7:0] = x ascii ;;  dut.odd[7:0] = x ascii ;;  dut.state[2:0] = 7 ;; ila_radix.csv: read, cursor 102, view 0 to 1023, triggers at 100 ;;  dut.count[7:0] = 42 hex ;; >dut.ch[7:0] = i ascii ;;  dut.pair[7:0] = , ascii ;;  dut.odd[7:0] = i ascii ;;  dut.state[2:0] = IDLE ;; ila_radix.csv: read, cursor 117, view 0 to 1023, triggers at 100 ;;  dut.count[7:0] = 51 hex ;;  dut.ch[7:0] = H ascii ;;  dut.pair[7:0] = i ascii ;;  dut.odd[7:0] = H ascii ;; >dut.state[2:0] = LOAD"
+r6="key:r;wavedump;key:r;wavedump;key:r;wavedump;key:r;wavedump;key:r;wavedump;key:r;wavedump"
+fresh
+run 1600x900 "frame;wavewait;key:j;$r6" "$W/ila_radix.csv"
+got=$(lines | grep 'dut.ch' | join)
+check "r on an ASCII probe: hex, unsigned, signed, binary, octal, ASCII" ">dut.ch[7:0] = 7a hex ;; >dut.ch[7:0] = 122 unsigned ;; >dut.ch[7:0] = 122 signed ;; >dut.ch[7:0] = 01111010 binary ;; >dut.ch[7:0] = 172 octal ;; >dut.ch[7:0] = z ascii"
+fresh
+run 1600x900 "frame;wavewait;wavedump;key:j;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;wavedump" "$W/ila_radix2.csv"
+check "a name among ASCII's characters, names in binary, octal, signed" "ila_radix2.csv: read, cursor 20, view 0 to 1023, triggers at 20 532, windows from 512 ;; >dut.count[7:0] = 100 octal ;;  dut.ch[7:0] = z ;;  dut.pair[15:0] = 31304 signed ;;  dut.odd[11:0] = 3962 unsigned ;;  dut.state[2:0] = 111 ;; ila_radix2.csv: read, cursor 28, view 0 to 1023, triggers at 20 532, windows from 512 ;;  dut.count[7:0] = 110 octal ;; >dut.ch[7:0] = AYE ;;  dut.pair[15:0] = 16674 signed ;;  dut.odd[11:0] = 1857 unsigned ;;  dut.state[2:0] = IDLE"
 # The trigger's line, in the errors' ink (red), and the cursor's, moved
 # ten samples on (n), in its own: four pixels about each.
 fresh

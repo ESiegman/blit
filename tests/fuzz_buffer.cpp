@@ -2424,6 +2424,75 @@ void wave_test(int seeds) {
 #endif
 }
 
+// The ILA capture's CSV reader (wave.hpp, IlaCsvReader) on Vivado's real
+// captures (tests/wave/ila_*.csv: hex, binary, octal, decimal, ASCII and
+// values given names, unescaped quotes and commas in quotes) mangled at
+// random and fed in pieces cut anywhere: it never fails, it is done with
+// its scopes and variables there, a probe's lane is text exactly when it is
+// one of names (and bits of at most a byte in ASCII), times go forward and
+// a lane's columns add up to its changes.
+void ila_csv_test(int seeds) {
+#if defined(BLIT_PROFILE_DATA)
+    static const char kCsv[] = "\",\n\r0123456789abcdefxzAZ -~\t";
+    static const char* const kWords[] = {"\"", "\"\"", "\"\"\"", "\",\"", ",\"", "\",", "\"AYE\"", "ASCII", "HEX", "SIGNED", "Radix - ", "\n", ",,", "-0", "18446744073709551616"};
+    for (const char* name : {"ila_one.csv", "ila_windows.csv", "ila_radix.csv", "ila_radix2.csv"}) {
+        std::string text;
+        if (FILE* f = std::fopen((std::string(BLIT_PROFILE_DATA) + "/../wave/" + name).c_str(), "rb")) {
+            char buf[4096];
+            for (size_t n; (n = std::fread(buf, 1, sizeof buf, f)) > 0;) text.append(buf, n);
+            std::fclose(f);
+        }
+        if (text.empty()) fail("ila csv: a real capture", 0, 0);
+        rng.seed(37);
+        for (int round = 0; round < seeds * 2; ++round) {
+            std::string t = text;
+            for (int k = 0, n = 1 + static_cast<int>(rnd(6)); k < n && !t.empty(); ++k) {
+                // (Mostly in the first lines, where the columns and radixes are, now and then anywhere.)
+                const size_t at = rnd(3) ? rnd(std::min<size_t>(t.size(), 600)) : rnd(t.size());
+                switch (rnd(5)) {
+                    case 0: t[at] = kCsv[rnd(sizeof kCsv - 1)]; break;
+                    case 1: t[at] = static_cast<char>(rnd(256)); break;
+                    case 2: t.insert(at, kWords[rnd(std::size(kWords))]); break;
+                    case 3: t.erase(at, rnd(40)); break;
+                    default: t.resize(at); break;
+                }
+            }
+            Wave w;
+            IlaCsvReader r(&w, rnd(4) ? 0 : 1 + rnd(1 << 16));
+            for (size_t at = 0; at < t.size();) {
+                const size_t n = 1 + rnd(rnd(2) ? 8 : 4096);
+                r.feed(std::string_view(t).substr(at, n));
+                at += n;
+            }
+            r.finish();
+            if (!w.done || !w.header) fail("ila csv: done, its variables there", 0, static_cast<u64>(round));
+            for (const WaveVar& v : w.vars) {
+                if (v.lane >= w.lanes.size() || v.scope >= w.scopes.size()) fail("ila csv: a variable's lane and scope", 0, static_cast<u64>(round));
+                const Lane& l = w.lanes[v.lane];
+                if ((v.kind == VarKind::kEnum) != (l.kind() == LaneKind::kText)) fail("ila csv: a lane of text exactly for names", 0, static_cast<u64>(round));
+                if (l.kind() == LaneKind::kBits && (l.width() != v.width || (v.radix == DumpRadix::kAscii && v.width > 8)))
+                    fail("ila csv: a probe's width as its lane's (ASCII's a byte at most)", 0, static_cast<u64>(round));
+            }
+            std::string s;
+            for (const Lane& l : w.lanes) {
+                for (u64 i = 1; i < l.size(); ++i)
+                    if (l.time(i) <= l.time(i - 1)) fail("ila csv: times go forward", 0, static_cast<u64>(round));
+                for (u64 i = 0; i < l.size(); ++i) l.format(i, &s);
+                std::vector<LaneColumn> cols(1 + rnd(40));
+                const u64 t0 = rnd(w.end + 2), t1 = t0 + rnd(w.end + 2);
+                l.columns(t0, t1, cols);
+                u64 sum = 0;
+                for (const LaneColumn& c : cols) sum += c.count;
+                if (cols[0].first != l.count_before(t0) || cols[0].first + sum != l.count_before(t1)) fail("ila csv: columns add up", 0, static_cast<u64>(round));
+            }
+            for (u32 v = 0; v < w.vars.size(); ++v) s = w.path(v);
+        }
+    }
+#else
+    (void)seeds;
+#endif
+}
+
 // Highlights::edit against a plain per-byte model: a style for every byte,
 // with bytes inserted and removed directly.
 void highlights_test() {
@@ -8072,6 +8141,7 @@ int main(int argc, char** argv) {
     match_test();
     read_problems_test();
     wave_test(seeds);
+    ila_csv_test(seeds);
     highlights_test();
     syntax_test();
     raster_test();
