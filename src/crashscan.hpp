@@ -70,6 +70,12 @@ public:
     };
     // The program's output as it comes (a terminal's bytes, escapes and all).
     void feed(std::string_view bytes, std::vector<Insert>* out);
+    // Or a line at a time, as a serial tab reads them (serialtab.hpp): a
+    // whole line without its line end (its escapes left out here, as feed
+    // leaves them out); the lines to show under it are added to `add` as
+    // plain text, for the caller to dim (feed's Inserts carry their own
+    // escapes, as a terminal's bytes must).
+    void take_line(std::string_view raw, std::vector<std::string>* add);
     // The end of the output: a dump still open is done (its problem added).
     void finish();
     // The problems found since this was last emptied (the caller takes
@@ -90,10 +96,14 @@ public:
     static constexpr u32 kMaxDumpLines = 200;  // lines a dump goes on for, at most
 
 private:
-    void line(std::string_view text, size_t end, std::vector<Insert>* out);
+    // The bytes from p onto the line being put together (escapes left out,
+    // a CR going back to its start), up to an LF (returned: where it is) or e.
+    const char* gather(const char* p, const char* e);
+    // A whole line looked at: what to show under it, a line each, plain.
+    void line(std::string_view text, std::vector<std::string>* add);
     // Each address's frames, as lines under the dump's line (`label`: the
     // register's name, if any); the frames kept for its problem if `keep`.
-    void decode(const std::vector<u64>& addrs, std::string_view label, size_t end, std::vector<Insert>* out, bool keep);
+    void decode(const std::vector<u64>& addrs, std::string_view label, std::vector<std::string>* add, bool keep);
     void begin(u8 kind, std::string reason);
     void end();
     bool own(const std::string& path) const;
@@ -108,6 +118,7 @@ private:
     enum : u8 { kText, kEsc, kEscMore, kCsi, kString, kStringEsc } esc_ = kText;
     bool cr_ = false;
     std::string line_;
+    std::vector<std::string> adding_;  // (feed's: a line's, before they are made a terminal's text)
 
     // The dump being read: whose, why it stopped (the exception), its
     // frames so far (the backtrace's, once it has one), and how far it has gone.

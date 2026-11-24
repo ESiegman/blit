@@ -109,10 +109,7 @@ bool CrashScan::decodes_itself(std::string_view command) {
     return idf || command.find("esp_idf_monitor") != std::string_view::npos || command.find("esp-idf-monitor") != std::string_view::npos;
 }
 
-void CrashScan::feed(std::string_view bytes, std::vector<Insert>* out) {
-    const char* const begin = bytes.data();
-    const char* p = begin;
-    const char* const e = p + bytes.size();
+const char* CrashScan::gather(const char* p, const char* const e) {
     while (p < e) {
         if (esc_ == kText) {
             const char* q = p;
@@ -123,12 +120,10 @@ void CrashScan::feed(std::string_view bytes, std::vector<Insert>* out) {
                 p = q;
                 continue;
             }
-            const char c = *p++;
-            if (c == '\n') {
-                cr_ = false;
-                line(line_, static_cast<size_t>(p - begin), out);
-                line_.clear();
-            } else if (c == '\r') {
+            const char c = *p;
+            if (c == '\n') return p;
+            ++p;
+            if (c == '\r') {
                 cr_ = true;
             } else if (c == '\x1b') {
                 esc_ = kEsc;
@@ -151,14 +146,40 @@ void CrashScan::feed(std::string_view bytes, std::vector<Insert>* out) {
             default: esc_ = kText; break;
         }
     }
+    return e;
+}
+
+void CrashScan::feed(std::string_view bytes, std::vector<Insert>* out) {
+    const char* const begin = bytes.data();
+    const char* const e = begin + bytes.size();
+    for (const char* p = begin; (p = gather(p, e)) < e;) {
+        ++p;  // (the LF)
+        cr_ = false;
+        adding_.clear();
+        line(line_, &adding_);
+        line_.clear();
+        if (adding_.empty()) continue;
+        // Each dim, from the line's start whatever the program left the cursor at.
+        std::string text = "\r";
+        for (const std::string& a : adding_) text.append(kDim).append(a).append(kPlain).append("\r\n");
+        out->push_back({static_cast<size_t>(p - begin), std::move(text)});
+    }
+}
+
+void CrashScan::take_line(std::string_view raw, std::vector<std::string>* add) {
+    const char* const e = raw.data() + raw.size();
+    for (const char* p = raw.data(); (p = gather(p, e)) < e;) ++p;  // (an LF in it is none of the line's)
+    cr_ = false;
+    line(line_, add);
+    line_.clear();
 }
 
 void CrashScan::finish() {
     if (!line_.empty()) {
-        std::vector<Insert> none;  // (nothing more is written: what it would add has nowhere to go)
+        std::vector<std::string> none;  // (nothing more is written: what it would add has nowhere to go)
         const bool quiet = o_.quiet;
         o_.quiet = true;
-        line(line_, 0, &none);
+        line(line_, &none);
         o_.quiet = quiet;
         line_.clear();
     }
@@ -245,15 +266,13 @@ void CrashScan::end() {
     if (found_.size() < BuildScan::kMaxProblems) found_.push_back(std::move(p));
 }
 
-void CrashScan::decode(const std::vector<u64>& addrs, std::string_view label, size_t end, std::vector<Insert>* out, bool keep) {
+void CrashScan::decode(const std::vector<u64>& addrs, std::string_view label, std::vector<std::string>* add, bool keep) {
     if (addrs.empty()) return;
     const AddrSource* src = source();
-    std::string text;
     if (!src) {
         if (!said_ && !o_.quiet) {
             said_ = true;
-            text = "\r" + std::string(kDim) + "Not decoded: " + why_ + std::string(kPlain) + "\r\n";
-            out->push_back({end, std::move(text)});
+            add->push_back("Not decoded: " + why_);
         }
         return;
     }
@@ -261,24 +280,24 @@ void CrashScan::decode(const std::vector<u64>& addrs, std::string_view label, si
     for (u64 a : addrs) {
         std::vector<SourceFrame> frames = src->lookup(a);
         if (frames.empty()) continue;  // (not in the program: the ROM's, a stack address)
-        char head[40];
-        std::snprintf(head, sizeof head, "0x%0*llx: ", static_cast<int>(width), static_cast<unsigned long long>(a));
-        for (size_t i = 0; i < frames.size(); ++i) {
-            text += kDim;
-            if (i == 0) {
-                if (!label.empty()) text.append(label).append(" ");
-                text += head;
+        if (!o_.quiet) {
+            char head[40];
+            std::snprintf(head, sizeof head, "0x%0*llx: ", static_cast<int>(width), static_cast<unsigned long long>(a));
+            for (size_t i = 0; i < frames.size(); ++i) {
+                std::string text;
+                if (i == 0) {
+                    if (!label.empty()) text.append(label).append(" ");
+                    text += head;
+                }
+                text += frame_words(frames[i], i > 0);
+                add->push_back(std::move(text));
             }
-            text += frame_words(frames[i], i > 0);
-            text += kPlain;
-            text += "\r\n";
         }
         if (keep && frames_.size() < BuildScan::kMaxNotes) frames_.insert(frames_.end(), frames.begin(), frames.end());
     }
-    if (!text.empty() && !o_.quiet) out->push_back({end, "\r" + text});  // (from the line's start, whatever the program left the cursor at)
 }
 
-void CrashScan::line(std::string_view text, size_t end_at, std::vector<Insert>* out) {
+void CrashScan::line(std::string_view text, std::vector<std::string>* add) {
     if (dump_ != kNone && ++dump_lines_ > kMaxDumpLines) end();
     const bool hex = text.find("0x") != std::string_view::npos;
 
@@ -290,7 +309,7 @@ void CrashScan::line(std::string_view text, size_t end_at, std::vector<Insert>* 
         if (n < 0) continue;
         taken = true;
         if (dump_ != kOwn) begin(kOwn, {});
-        decode(hexes(n > 0 ? caps[0] : text), {}, end_at, out, true);
+        decode(hexes(n > 0 ? caps[0] : text), {}, add, true);
         break;
     }
     if (taken) return;
@@ -334,7 +353,7 @@ void CrashScan::line(std::string_view text, size_t end_at, std::vector<Insert>* 
         u64 v;
         size_t e;
         if (dump_ == kNone) begin(kEsp, "abort()");
-        if (hex_at(text, a + 25, &v, &e)) decode({v}, {}, end_at, out, true);
+        if (hex_at(text, a + 25, &v, &e)) decode({v}, {}, add, true);
         return;
     }
     if (const size_t b = text.find("Backtrace:"); b != std::string_view::npos) {
@@ -353,14 +372,14 @@ void CrashScan::line(std::string_view text, size_t end_at, std::vector<Insert>* 
         }
         const bool in_dump = dump_ == kEsp;
         if (in_dump) frames_.clear();  // (the backtrace says more than the registers did)
-        decode(pcs, {}, end_at, out, in_dump);
+        decode(pcs, {}, add, in_dump);
         backtrace_ = in_dump;
         return;
     }
     if (dump_ == kEsp && text.find("MEPC") != std::string_view::npos) {  // RISC-V's register dump: where it stopped, and where it was called from
         u64 mepc, ra;
-        if (hex_after(text, "MEPC", &mepc)) decode({mepc}, "MEPC", end_at, out, !backtrace_);
-        if (hex_after(text, "RA ", &ra) || hex_after(text, "RA:", &ra)) decode({ra}, "RA", end_at, out, !backtrace_);
+        if (hex_after(text, "MEPC", &mepc)) decode({mepc}, "MEPC", add, !backtrace_);
+        if (hex_after(text, "RA ", &ra) || hex_after(text, "RA:", &ra)) decode({ra}, "RA", add, !backtrace_);
     }
 }
 
