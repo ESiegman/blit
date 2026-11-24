@@ -79,7 +79,7 @@ settle
 # A task (a build) runs on while away: its output, read for problems once back.
 mkdir -p "$W/mk" && printf 'all:\n\t@sleep 1\n\t@echo "x.c:2:5: error: boom" && false\n' >"$W/mk/Makefile" && printf 'int x;\nint y;\n' >"$W/mk/x.c"
 run "remotewait;frame;buildrun;wait:300;$cut;remoteback;buildwait;problemsdump" "$R/mk"
-check "a task that ran on while away: its problems once back" 'button: ▶ make · 1 error | Build 1 | file x.c | >E 2:5 boom'
+check "a task that ran on while away: its problems once back" 'button: ▶ make · 1 error | make 1 · failed (exit 2) | file x.c | >E 2:5 boom'
 settle
 
 # A cell running when the connection went: the kernel goes on there, and

@@ -231,7 +231,7 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | Find in this file; the next / previous match | Cmd+F; Cmd+G / Cmd+Shift+G | Ctrl+F (or Alt+F); F3 / Shift+F3 |
 | Replace in this file / in files (in Find or Search in files, the field Replace with) | Cmd+Option+F / Cmd+Shift+H | Ctrl+Alt+F / Ctrl+Shift+H |
 | The next / previous hit of Search in files (or of the references found, after them) | F4 / Shift+F4 | F4 / Shift+F4 |
-| The next / previous problem: the last build's, across files (else the language servers', across files) | F8 / Shift+F8 | F8 / Shift+F8 |
+| The next / previous problem: the open runs' of the Build tab, across runs and files (else the language servers', across files) | F8 / Shift+F8 | F8 / Shift+F8 |
 | Go to the definition; peek at it; find references; rename | F12; Option+Shift+F12; Shift+F12; F2 | F12; Alt+Shift+F12; Shift+F12; F2 |
 | Soft wrap on or off, for the file in front | Option+Z | Alt+Z |
 | Go to the implementation / the type definition; the header or source | Cmd+F12 / Cmd+Shift+F12; Option+F12 | Ctrl+F12 / Ctrl+Shift+F12; Alt+F12 |
@@ -608,7 +608,7 @@ the marks beside the line numbers count them, saved or not), how many files
 differ from the last commit (saved ones: what git sees), then the file's
 path in the repository, with a dot while it has unsaved changes. On its
 right: what a script put there (`blit.ui.status`), the errors and warnings
-(the language servers' in the open file and the last build's in all of
+(the language servers' in the open file and the open runs' in all of
 them, one that both found on the same line counted once), for a Python
 file its project's Python (`Python 3.12 (.venv)`; a click chooses another:
 see [The project's Python](#the-projects-python)), the cursor's
@@ -1756,17 +1756,24 @@ report on (each open file, and with a server that offers it the whole
 project's): each file with its icon and folder (one that is not open in
 quieter ink), and under it its problems by line; click one to go to it.
 While a build runs (see [Building](#building)) the problems its output
-reports come in at the top, in a **Build** section: each file with its
-icon and folder, and under it its errors (`E`) and warnings (`W`) by line,
-the files in the order the build came to them. Enter or a click goes to
-one, in its file; the language servers' follow under them. A problem with
+reports come in at the top, under a heading for the run: its name, how
+many, and how it goes (`Build (debug) 3 · running…`, then `done`,
+`stopped` or, in red, `failed (exit 2)`). Under it each file with its
+icon and folder, and under that its errors (`E`) and warnings (`W`) by
+line, the files in the order the run came to them. Each run whose tab is
+open has its group, the runs in the order they came, a blank line between
+them: a simulation's problems stay while a build runs beside it. A run's
+group goes when its tab is closed; run again, its new problems take its
+place. Enter or a click goes to one, in its file; the language servers'
+follow under them all. A problem with
 notes (a compiler's notes, the include chain and template instantiation
 that led to it, a sanitizer's stacks) has a small triangle before it:
 Right or a click on the triangle shows them under it, further in (each
 with its file, where that is another, and line), and Left hides them
 again, as folders open and shut in the Files tab. Up and Down go through
 the notes on show too; Enter or a click on one goes to its place. **F8** and **Shift+F8** go to the next and the previous
-problem from anywhere: the build's, across files, while there are any,
+problem from anywhere: the open runs', in the tab's order, across runs
+and files, while there are any,
 else the language servers', from the cursor on and across files (opening
 the next one if it is not open); the tab picks the one gone to and the
 bottom line says which of how many it is.
@@ -2732,18 +2739,22 @@ Ninja's progress line written over itself; the same problem twice (a
 header's, from each file that includes it) is one. A relative path is
 taken from the folder the task runs in, or one make or Ninja says it
 entered, or one `make -C` was told to go into: the one the file is in.
-They fill the **Build** section of the side panel's Problems tab (above),
-F8 goes through them, the status bar counts them, and the Run button says
-how many: `▶ Build (debug) · 3 errors` (warnings, when there are no
-errors). A run that failed with no error in its output says so instead:
-`▶ make · failed (exit 2)` on the Run button (with its warnings' count,
-if it has some), "make failed with exit code 2: no problem found in its
-output" in the Problems tab and from F8, which then has nowhere to go;
-never "No problems" under a red button. One whose program the shell could
-not find (its exit code 127) names it instead: `▶ Build · failed (cmake is
-not installed)`, "Build failed: cmake is not installed on this Mac" (or on
-the host the folder is on) in the Problems tab, from F8 and at the end of
-its tab, and "cmake is not installed" on its row. In the text they are marked as
+They fill the run's group in the side panel's Problems tab (above), F8
+goes through them (and every other open run's), the status bar counts
+all the open runs', and the Run button says how many its last run has:
+`▶ Build (debug) · 3 errors` (warnings, when there are no errors). A run
+that failed with no error in its output says so instead: `▶ make · failed
+(exit 2)` on the Run button (with its warnings' count, if it has some),
+`make · failed (exit 2)` over "no problem found in its output" in the
+Problems tab (with warnings, "no error found in its output", over them),
+and "make failed with exit code 2: no problem found in its output" from
+F8, which then has nowhere to go; never "No problems" under a red button.
+One whose program the shell could not find (its exit code 127) names it
+instead: `▶ Build · failed (cmake is not installed)`, "cmake is not
+installed on this Mac" (or on the host the folder is on) under its
+heading in the Problems tab, "Build failed: cmake is not installed on
+this Mac" from F8 and at the end of its tab, and "cmake is not installed"
+on its row. In the text they are marked as
 the language server's problems are, in the split with the keyboard: a
 wavy underline in the colour of the kind, from the column the tool gave
 over the word there (the line's text, where it gave no column), and the
@@ -2751,8 +2762,9 @@ cursor's line's first error in words after it (the server's, where the
 server has one on that line; `blit.opt.lsp.inline_diagnostics = false`
 leaves the words out). A mark moves with its line as lines are put in or
 taken out above it, and goes once its own line is changed: what the build
-said of it no longer stands. The next run starts with none, in the tab
-and in the text. A compiler's notes (`note:`), the include chain before
+said of it no longer stands. A run's marks go with its problems: when
+its tab is closed, or it runs again (and the next run in the shared
+terminal closes the last one's tab). A compiler's notes (`note:`), the include chain before
 its problem (`In file included from c.h:2`, GCC's lines of `from` under
 it, Clang's a line each) and GCC's instantiation context (`In
 instantiation of ...`, `required from here`) are that problem's notes, in
@@ -2915,7 +2927,10 @@ FPGA's flash `Load ✓ · Erase ✓ · Program`, then `Boot`). The Run button re
 and the bytes where the tool prints them (`■ Program 62% 12.0/22.0 KB`;
 a click still stops it), and the task's row the stages done before it
 (`Erase ✓ · Program 62% 25.0 KB`); both are drawn again only when the
-stage or its percent changes. After, what it came to is kept on the row
+stage or its percent changes. Where the side panel is too narrow for
+the whole row, the stage under way and its percent stay: the stages done
+are counted first (`flash · ✓ 2 · Program 62%`), then left out, then the
+kind of work, then the stage's bytes. After, what it came to is kept on the row
 and the button: `Flashed 40.2 KB in 1.8 s, verified` (the tool's own time
 where it says one), `Loaded into SRAM in 2.1 s`, `Unchanged, verified`
 (the tool found all of it there already, as Espressif's OpenOCD says), or,
@@ -3043,8 +3058,8 @@ blit.build.matcher("uvm", {
 ### Problems from a file
 
 **Read the problems from this file…** (in the command search) reads a
-file a tool wrote into the Build section of the Problems tab, in place
-of the last run's (the box that opens files starts at the file in front,
+file a tool wrote into the Problems tab, as a group of its own under the
+file's name after the open runs' (the box that opens files starts at the file in front,
 so a SARIF file open in a tab is Enter away; the file is read on a
 thread of its own, here or on another machine). It may be:
 
@@ -3065,8 +3080,8 @@ thread of its own, here or on another machine). It may be:
 - **anything else**, a log (a run in tmux, a CI step's, a Vivado log),
   read as a build's output is, from the log's folder.
 
-The bottom line says what it was read as and how many it had. The next
-run's problems take their place.
+The bottom line says what it was read as and how many it had. Another
+file read, or the next run, takes their place.
 
 ### The folder's own tasks
 
@@ -3121,11 +3136,12 @@ part of that string. `\${file}` and names that are not these
 
 **A long task** (`"long": true`: a simulation, a synthesis, a GPU
 profile) has an output tab of its own beside the other runs' terminal:
-the next run does not end it or take its place, and its row keeps
-saying how it goes. While it runs the Run button and its row show its
-time (`■ Stop Simulate 1:23`, "running… 1:23"), drawn again when a line
-comes or once a second while blit is in front (nothing ticks behind
-another window). Once it has run more than 10 s, anything that would end
+the next run does not end it or take its place, its row keeps
+saying how it goes, and its problems keep their group in the Problems
+tab. While it runs the Run button and its row show its time
+(`■ Stop Simulate 1:23`, "running… 1:23"), drawn again when a line comes
+or once a second while blit is in front (nothing ticks behind another
+window). Once it has run more than 10 s, anything that would end
 it asks first: Stop, running it again (its last run's tab goes with
 it), closing its tab or quitting.
 

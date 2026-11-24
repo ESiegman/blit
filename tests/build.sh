@@ -165,13 +165,13 @@ exit 2
 EOF
 printf 'errors:\n\tsh errs.sh\nok:\n\techo fine\n' >"$F/Makefile"
 run "$F" "buildrun:make errors;buildwait;problemsdump"
-check "a build's problems: a file's together, in the order the files came" 'button: ▶ make errors · 4 errors | Build 7 | file src/a.c | >E 3:9 '"'"'x'"'"' undeclared | E 7:9 second | file src/b.h | W 2:5 unused [-Wunused] | file lib/c.c | E 4:3 bad | file sub/d.c | W 2:1 in a folder make went into | file cmake/x.cmake | W 2 look here | file tool.py | E 2 ValueError: boom'
+check "a build's problems: a file's together, in the order the files came" 'button: ▶ make errors · 4 errors | make errors 7 · failed (exit 2) | file src/a.c | >E 3:9 '"'"'x'"'"' undeclared | E 7:9 second | file src/b.h | W 2:5 unused [-Wunused] | file lib/c.c | E 4:3 bad | file sub/d.c | W 2:1 in a folder make went into | file cmake/x.cmake | W 2 look here | file tool.py | E 2 ValueError: boom'
 run "$F" "buildrun:make errors;buildwait;frame;statusdump"
 check "counted in the status bar" 'NORMAL untitled | × 4 ▲ 3 Ln 1, Col 1 LF Plain text'
 run "$F" "buildrun:make errors;buildwait;key:F8;key:F8;key:F8;frame;statusdump"
 check "F8: the next problem, across files" 'NORMAL src/b.h | × 4 ▲ 3 Ln 2, Col 5 Tabs LF C++'
 run "$F" "buildrun:make errors;buildwait;key:F8;key:F8;key:F8;problemsdump"
-got=${got#*| Build 7 | }
+got="file ${got#* | file }"  # (the rows, from the first file's)
 check "and the Problems tab picks it" 'file src/a.c | E 3:9 '"'"'x'"'"' undeclared | E 7:9 second | file src/b.h | >W 2:5 unused [-Wunused] | file lib/c.c | E 4:3 bad | file sub/d.c | W 2:1 in a folder make went into | file cmake/x.cmake | W 2 look here | file tool.py | E 2 ValueError: boom'
 run "$F" "buildrun:make errors;buildwait;key:shift+F8;frame;statusdump"
 check "Shift+F8 from the start: the last" 'NORMAL tool.py | × 4 ▲ 3 Ln 2, Col 1 LF Python'
@@ -197,11 +197,11 @@ check "the cursor's line: its error in words" '3:9-9E 7:9-9E | 3: '"'"'x'"'"' un
 INIT="$dir/plain.lua"
 run "$F" "buildrun:make errors;buildwait;open:$F/src/b.h;buildmarks"
 check "a warning over its word" '2:5-10W'
-# Problems read from a file in place of the run's: the run's marks go from the text too.
+# Problems read from a file beside the run's: the run is still open, and so are its marks.
 printf 'elsewhere.c:1:1: error: not this file\n' >"$F/other.log"
 INIT="$dir/plain.lua"
 run "$F" "buildrun:make errors;buildwait;open:$F/src/a.c;frame;problemsread:$F/other.log;buildwait;frame;buildmarks"
-check "problems read from a file: the run's marks gone" 'none'
+check "problems read from a file: the run's marks kept" '3:9-9E 7:9-9E'
 INIT="$dir/plain.lua"
 run "$F" "buildrun:make errors;buildwait;open:$F/cmake/x.cmake;buildmarks"
 check "no column: the line's text" '2:1-28W'
@@ -241,7 +241,7 @@ EOF
 printf 'stack:\n\tsh stack.sh\n' >>"$F/Makefile"
 printf 'phantom:\n\t@echo "program_source:26:30: error: use of undeclared identifier '"'"'pulze'"'"'"; exit 1\n' >>"$F/Makefile"
 run "$F" "buildrun:make wrapped;buildwait;problemsdump"
-check "clang's message wrapped onto the lines under it: joined" 'button: ▶ make wrapped · 2 errors | Build 3 | file src/a.c | >E 5:1 use of undeclared identifier '"'"'x'"'"' | W 6:1 no member named '"'"'y'"'"' in '"'"'S'"'"' | E 7:1 not wrapped'
+check "clang's message wrapped onto the lines under it: joined" 'button: ▶ make wrapped · 2 errors | make wrapped 3 · failed (exit 2) | file src/a.c | >E 5:1 use of undeclared identifier '"'"'x'"'"' | W 6:1 no member named '"'"'y'"'"' in '"'"'S'"'"' | E 7:1 not wrapped'
 # With no line numbers (Clang before 17, -fno-diagnostics-show-line-numbers)
 # the source line is printed as it is: one six spaces in, with the carets
 # under it, is not more of the message.
@@ -253,11 +253,11 @@ exit 2
 EOF
 printf 'snippet:\n\tsh snippet.sh\n' >>"$F/Makefile"
 run "$F" "buildrun:make snippet;buildwait;problemsdump"
-check "a source line six spaces in, with no line number: not joined" 'button: ▶ make snippet · 2 errors | Build 3 | file src/b.c | >E 3:16 no member named '"'"'yyy'"'"' in '"'"'S'"'"' | W 6:11 unused variable '"'"'u'"'"' | E 8:7 wrapped onto the next line'
+check "a source line six spaces in, with no line number: not joined" 'button: ▶ make snippet · 2 errors | make snippet 3 · failed (exit 2) | file src/b.c | >E 3:16 no member named '"'"'yyy'"'"' in '"'"'S'"'"' | W 6:11 unused variable '"'"'u'"'"' | E 8:7 wrapped onto the next line'
 got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$F;frame;buildrun:make phantom;buildwait;problemsdump;key:F8" 2>&1 >/dev/null | sed -e "s#$dir#~#g" | tail -3 | tr '\n' '/')
-check "a problem whose file is nowhere (Metal's run-time program_source): counted and listed, F8 says it and goes nowhere" 'button: ▶ make phantom · 1 error | Build 1 | file program_source | >E 26:30 use of undeclared identifier '"'"'pulze'"'"'/blit: Problem 1 of 1: use of undeclared identifier '"'"'pulze'"'"'/'
+check "a problem whose file is nowhere (Metal's run-time program_source): counted and listed, F8 says it and goes nowhere" 'button: ▶ make phantom · 1 error | make phantom 1 · failed (exit 2) | file program_source | >E 26:30 use of undeclared identifier '"'"'pulze'"'"'/blit: Problem 1 of 1: use of undeclared identifier '"'"'pulze'"'"'/'
 run "$F" "buildrun:make stack;buildwait;problemsdump"
-check "CMake's error in its own module: at the project's frame of its call stack" 'button: ▶ make stack · 3 errors | Build 4 | file CMakeLists.txt | >E 9 Failed to find ROCm. (from /opt/cmake/Modules/CMakeDetermineHIPCompiler.cmake:210) | file cmake/x.cmake | W 2 First. (from /opt/cmake/Modules/Find.cmake:7) | E 2 In the project. | file /opt/cmake/Modules/Lone.cmake | E 1 No stack.'
+check "CMake's error in its own module: at the project's frame of its call stack" 'button: ▶ make stack · 3 errors | make stack 4 · failed (exit 2) | file CMakeLists.txt | >E 9 Failed to find ROCm. (from /opt/cmake/Modules/CMakeDetermineHIPCompiler.cmake:210) | file cmake/x.cmake | W 2 First. (from /opt/cmake/Modules/Find.cmake:7) | E 2 In the project. | file /opt/cmake/Modules/Lone.cmake | E 1 No stack.'
 # A compiler's notes, the include chain before its problem and GCC's
 # instantiation context: the problem's notes, shown under it in the
 # Problems tab once it is opened (Right; Left closes it). Real output, as
@@ -312,21 +312,21 @@ b.cpp:6:5: note: in instantiation of function template specialization 'h<int>' r
 EOF
 printf 'gcc:\n\t@cat gcc.txt; exit 1\nclang:\n\t@cat clang.txt; exit 1\n' >"$N/Makefile"
 run "$N" "buildrun:make gcc;buildwait;problemsdump"
-check "GCC's notes, include chain and instantiation: under their problems, shut (a triangle says so)" 'button: ▶ make gcc · 3 errors | Build 3 | file inc/a.h | >▸E 2:25 '"'"'y'"'"' was not declared in this scope | file b.cpp | ▸E 5:6 too many arguments to function '"'"'void g()'"'"' | ▸E 3:36 request for member '"'"'nope'"'"' in '"'"'t'"'"', which is of non-class type '"'"'int'"'"''
+check "GCC's notes, include chain and instantiation: under their problems, shut (a triangle says so)" 'button: ▶ make gcc · 3 errors | make gcc 3 · failed (exit 2) | file inc/a.h | >▸E 2:25 '"'"'y'"'"' was not declared in this scope | file b.cpp | ▸E 5:6 too many arguments to function '"'"'void g()'"'"' | ▸E 3:36 request for member '"'"'nope'"'"' in '"'"'t'"'"', which is of non-class type '"'"'int'"'"''
 open_all="key:cmd+shift+m;key:Right;key:Down;key:Down;key:Down;key:Right;key:Down;key:Down;key:Right;key:Down;key:Down"
 run "$N" "buildrun:make gcc;buildwait;$open_all;problemsdump"
-got=${got#*| Build 3 | }
+got="file ${got#* | file }"
 check "opened (Right on each, Down through them): the header's chain, the note, the instantiation" 'file inc/a.h | ▾E 2:25 '"'"'y'"'"' was not declared in this scope |   c.h:2 included here |   b.cpp:1 included here | file b.cpp | ▾E 5:6 too many arguments to function '"'"'void g()'"'"' |   2:6 declared here | ▾E 3:36 request for member '"'"'nope'"'"' in '"'"'t'"'"', which is of non-class type '"'"'int'"'"' |   In instantiation of '"'"'void h(T) [with T = int]'"'"' | >  6:6 required from here'
 run "$N" "buildrun:make clang;buildwait;$open_all;problemsdump"
-got=${got#*| Build 3 | }
+got="file ${got#* | file }"
 check "Clang's: its chain a line each, its instantiation a note" 'file inc/a.h | ▾E 2:25 use of undeclared identifier '"'"'y'"'"' |   b.cpp:1 included here |   c.h:2 included here | file b.cpp | ▾E 5:5 no matching function for call to '"'"'g'"'"' |   2:6 candidate function not viable: requires 0 arguments, but 1 was provided | ▾E 3:35 member reference base type '"'"'int'"'"' is not a structure or union | >  6:5 in instantiation of function template specialization '"'"'h<int>'"'"' requested here'
 run "$N" "buildrun:make gcc;buildwait;key:cmd+shift+m;key:Right;key:Down;key:Return;frame;statusdump"
 check "Enter on a note: its place" 'NORMAL inc/c.h | × 3 ▲ 0 Ln 2, Col 1 Tabs LF C++'
 run "$N" "buildrun:make gcc;buildwait;key:cmd+shift+m;key:Right;key:Right;key:Down;key:Left;problemsdump"
-got=${got#*| Build 3 | }
+got="file ${got#* | file }"
 check "Right on an open problem: its first note; Left: back to the problem" 'file inc/a.h | >▾E 2:25 '"'"'y'"'"' was not declared in this scope |   c.h:2 included here |   b.cpp:1 included here | file b.cpp | ▸E 5:6 too many arguments to function '"'"'void g()'"'"' | ▸E 3:36 request for member '"'"'nope'"'"' in '"'"'t'"'"', which is of non-class type '"'"'int'"'"''
 run "$N" "buildrun:make gcc;buildwait;key:cmd+shift+m;key:Right;key:Down;key:Left;key:Left;key:Down;problemsdump"
-got=${got#*| Build 3 | }
+got="file ${got#* | file }"
 check "and Left again shuts it: Down goes on to the next problem" 'file inc/a.h | ▸E 2:25 '"'"'y'"'"' was not declared in this scope | file b.cpp | >▸E 5:6 too many arguments to function '"'"'void g()'"'"' | ▸E 3:36 request for member '"'"'nope'"'"' in '"'"'t'"'"', which is of non-class type '"'"'int'"'"''
 run "$N" "buildrun:make gcc;buildwait;$open_all;key:Escape;key:F8;key:F8;frame;statusdump"
 check "F8 goes through the problems, not their notes" 'NORMAL b.cpp | × 3 ▲ 0 Ln 5, Col 6 Spaces: 4 LF C++'
@@ -337,11 +337,11 @@ at_row() { echo "$cell" | awk -v r="$1" '{ printf "%d", (r * $3 + $3 * 3 / 4) / 
 cw=$(echo "$cell" | awk '{ printf "%d", $2 / $1 }')
 y3=$(at_row 3) y4=$(at_row 4)
 run "$N" "buildrun:make gcc;buildwait;key:cmd+shift+m;frame;click:2,$y3;release;frame;problemsdump"
-got=${got#*| Build 3 | }
+got="file ${got#* | file }"
 got=${got%% | file b.cpp*}
 check "a click on the triangle: its notes shown" 'file inc/a.h | >▾E 2:25 '"'"'y'"'"' was not declared in this scope |   c.h:2 included here |   b.cpp:1 included here'
 run "$N" "buildrun:make gcc;buildwait;key:cmd+shift+m;frame;click:2,$y3;release;frame;click:2,$y3;release;frame;problemsdump"
-got=${got#*| Build 3 | }
+got="file ${got#* | file }"
 got=${got%% | file b.cpp*}
 check "and again: hidden" 'file inc/a.h | >▸E 2:25 '"'"'y'"'"' was not declared in this scope'
 run "$N" "buildrun:make gcc;buildwait;key:cmd+shift+m;frame;click:2,$y3;release;frame;click:$((cw * 12)),$y4;release;frame;statusdump"
@@ -424,14 +424,14 @@ exit 1
 EOF
 printf 'reports:\n\tsh reports.sh\nasan:\n\tcc -g -O0 -fsanitize=address -o a a.c && ./a\n' >"$S/Makefile"
 run "$S" "buildrun:make reports;buildwait;problemsdump"
-got=$(printf '%s' "$got" | sed -e 's/^button: [^|]*| //' -e 's/Build [0-9]* | //')
+got=$(printf '%s' "$got" | sed -e 's/^button: [^|]*| [^|]*| //')
 check "the sanitizers' reports: where in the program's own code, and what (each with its stack's frames, shut)" 'file a.c | >▸E 5:12 AddressSanitizer: heap-buffer-overflow: READ of size 4 | ▸E 3:5 LeakSanitizer: detected memory leaks: Indirect leak of 8 byte(s) in 1 object(s) | file t.c | E 2:5 runtime error: signed integer overflow: 2147483647 + 1 cannot be represented in type int | ▸E 1:5 ThreadSanitizer: data race: Write of size 4 | ▸E 3:5 LeakSanitizer: detected memory leaks: Direct leak of 64 byte(s) in 1 object(s)'
 run "$S" "buildrun:make reports;buildwait;key:cmd+shift+m;key:Right;key:Down;key:Down;key:Down;key:Down;key:Down;key:Right;key:Down;key:Down;key:Down;key:Down;key:Right;key:Down;key:Down;key:Down;key:Down;key:Down;key:Right;problemsdump"
-got=$(printf '%s' "$got" | sed -e 's/^button: [^|]*| //' -e 's/Build [0-9]* | //')
+got=$(printf '%s' "$got" | sed -e 's/^button: [^|]*| [^|]*| //')
 check "opened: every frame, a heading over each stack, a leak's own stack" 'file a.c | ▾E 5:12 AddressSanitizer: heap-buffer-overflow: READ of size 4 |   READ of size 4 thread T0 |   #0 memcpy (/usr/lib/libc.so.6+0x10) |   5:12 #1 main |   #2 start (/usr/lib/dyld+0x20) | ▾E 3:5 LeakSanitizer: detected memory leaks: Indirect leak of 8 byte(s) in 1 object(s) |   #0 malloc (/usr/lib/libasan.so+0x9) |   3:5 #1 main | file t.c | E 2:5 runtime error: signed integer overflow: 2147483647 + 1 cannot be represented in type int | ▾E 1:5 ThreadSanitizer: data race: Write of size 4 |   Write of size 4 by thread T1 |   1:5 #0 f |   Previous read of size 4 by main thread |   2:5 #0 g | >▾E 3:5 LeakSanitizer: detected memory leaks: Direct leak of 64 byte(s) in 1 object(s) |   #0 malloc (/usr/lib/libasan.so+0x9) |   3:5 #1 h'
 if (cd "$S" && printf 'int main(void){return 0;}\n' | cc -fsanitize=address -x c -o /dev/null - 2>/dev/null); then
     run "$S" "buildrun:make asan;buildwait;problemsdump"
-    got=$(printf '%s' "$got" | sed -e 's/^button: [^|]*| //' -e 's/Build [0-9]* | //' -e 's/E 5:[0-9]* /E 5 /')  # (a column, or none, as the symbolizer has it)
+    got=$(printf '%s' "$got" | sed -e 's/^button: [^|]*| [^|]*| //' -e 's/E 5:[0-9]* /E 5 /')  # (a column, or none, as the symbolizer has it)
     check "a program built with AddressSanitizer, run: its report read" 'file a.c | >▸E 5 AddressSanitizer: heap-buffer-overflow: READ of size 4'
 fi
 # On macOS ASan symbolises with atos, into bare names: each the project's
@@ -449,7 +449,7 @@ exit 1
 EOF
 printf 'asan:\n\tsh report.sh\n' >"$AS/Makefile"
 run "$AS" "buildrun:make asan;buildwait;problemsdump"
-check "a bare name: the project's file of it" 'button: ▶ make asan · 1 error | Build 1 | file src/ring.cpp | >▸E 5 AddressSanitizer: heap-buffer-overflow: WRITE of size 8'
+check "a bare name: the project's file of it" 'button: ▶ make asan · 1 error | make asan 1 · failed (exit 2) | file src/ring.cpp | >▸E 5 AddressSanitizer: heap-buffer-overflow: WRITE of size 8'
 run "$AS" "buildrun:make asan;buildwait;key:F8;frame;statusdump"
 check "F8 goes there" 'NORMAL ring.cpp | × 1 ▲ 0 Ln 5, Col 1 Tabs LF C++'
 run "$AS" "buildrun:make asan;frame;buildwait;frame;termclick:test_ring.cpp:3;frame;statusdump"
@@ -592,13 +592,13 @@ for f in race.lin heap.lin; do sed "s#@DIR@#$RS#g" "$RS/$f.txt" >"$RS/$f.out"; d
 printf 'tsan:\n\t@cat race.mac.txt; exit 1\ntsan-gcc:\n\t@cat race.lin.out; exit 1\nasan:\n\t@cat heap.mac.txt; exit 1\nasan-gcc:\n\t@cat heap.lin.out; exit 1\n' >"$RS/Makefile"
 opened="buildwait;key:cmd+shift+m;key:Right;problemsdump"
 run "$RS" "buildrun:make tsan;$opened"
-check "ThreadSanitizer's race (clang, macOS): one problem, both accesses' stacks and the threads' under it" 'button: ▶ make tsan · 1 error | Build 1 | file race.c | >▾E 6 ThreadSanitizer: data race: Write of size 4 |   Write of size 4 by thread T2 |   6 #0 bump |   10 #1 worker |   Previous write of size 4 by thread T1 |   6 #0 bump |   10 #1 worker |   Thread T2 (tid=13477301, running) created by main thread at |   #0 pthread_create <null> (libclang_rt.tsan_osx_dynamic.dylib:arm64e+0x33bac) |   17 #1 main |   Thread T1 (tid=13477300, finished) created by main thread at |   #0 pthread_create <null> (libclang_rt.tsan_osx_dynamic.dylib:arm64e+0x33bac) |   16 #1 main'
+check "ThreadSanitizer's race (clang, macOS): one problem, both accesses' stacks and the threads' under it" 'button: ▶ make tsan · 1 error | make tsan 1 · failed (exit 2) | file race.c | >▾E 6 ThreadSanitizer: data race: Write of size 4 |   Write of size 4 by thread T2 |   6 #0 bump |   10 #1 worker |   Previous write of size 4 by thread T1 |   6 #0 bump |   10 #1 worker |   Thread T2 (tid=13477301, running) created by main thread at |   #0 pthread_create <null> (libclang_rt.tsan_osx_dynamic.dylib:arm64e+0x33bac) |   17 #1 main |   Thread T1 (tid=13477300, finished) created by main thread at |   #0 pthread_create <null> (libclang_rt.tsan_osx_dynamic.dylib:arm64e+0x33bac) |   16 #1 main'
 run "$RS" "buildrun:make tsan-gcc;$opened"
-check "and GCC's (Linux): its build ids left out" 'button: ▶ make tsan-gcc · 1 error | Build 1 | file race.c | >▾E 6 ThreadSanitizer: data race: Read of size 4 |   Read of size 4 by thread T2 |   6 #0 bump |   10 #1 worker |   #2 <null> <null> (libtsan.so.2+0x557e9) |   Previous write of size 4 by thread T1 |   6 #0 bump |   10 #1 worker |   #2 <null> <null> (libtsan.so.2+0x557e9) |   Thread T2 (tid=153462, running) created by main thread at |   #0 pthread_create <null> (libtsan.so.2+0x616c9) |   17 #1 main |   Thread T1 (tid=153461, finished) created by main thread at |   #0 pthread_create <null> (libtsan.so.2+0x616c9) |   16 #1 main'
+check "and GCC's (Linux): its build ids left out" 'button: ▶ make tsan-gcc · 1 error | make tsan-gcc 1 · failed (exit 2) | file race.c | >▾E 6 ThreadSanitizer: data race: Read of size 4 |   Read of size 4 by thread T2 |   6 #0 bump |   10 #1 worker |   #2 <null> <null> (libtsan.so.2+0x557e9) |   Previous write of size 4 by thread T1 |   6 #0 bump |   10 #1 worker |   #2 <null> <null> (libtsan.so.2+0x557e9) |   Thread T2 (tid=153462, running) created by main thread at |   #0 pthread_create <null> (libtsan.so.2+0x616c9) |   17 #1 main |   Thread T1 (tid=153461, finished) created by main thread at |   #0 pthread_create <null> (libtsan.so.2+0x616c9) |   16 #1 main'
 run "$RS" "buildrun:make asan;$opened"
-check "AddressSanitizer's (clang, macOS): the access's stack, and the allocation's" 'button: ▶ make asan · 1 error | Build 1 | file heap.c | >▾E 3 AddressSanitizer: heap-buffer-overflow: READ of size 4 |   READ of size 4 thread T0 |   3 #0 last |   8 #1 main |   #2 start+0x19f8 (dyld:arm64e+0x31d78) |   allocated by thread T0 here |   #0 malloc+0x78 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x41274) |   6 #1 main |   #2 start+0x19f8 (dyld:arm64e+0x31d78)'
+check "AddressSanitizer's (clang, macOS): the access's stack, and the allocation's" 'button: ▶ make asan · 1 error | make asan 1 · failed (exit 2) | file heap.c | >▾E 3 AddressSanitizer: heap-buffer-overflow: READ of size 4 |   READ of size 4 thread T0 |   3 #0 last |   8 #1 main |   #2 start+0x19f8 (dyld:arm64e+0x31d78) |   allocated by thread T0 here |   #0 malloc+0x78 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x41274) |   6 #1 main |   #2 start+0x19f8 (dyld:arm64e+0x31d78)'
 run "$RS" "buildrun:make asan-gcc;$opened"
-check "and GCC's (Linux): a frame with no name, its module" 'button: ▶ make asan-gcc · 1 error | Build 1 | file heap.c | >▾E 3 AddressSanitizer: heap-buffer-overflow: READ of size 4 |   READ of size 4 thread T0 |   3 #0 last |   8 #1 main |   #2 (/usr/lib/libc.so.6+0x27780) |   #3 __libc_start_main (/usr/lib/libc.so.6+0x278b8) |   #4 _start (~/realsan/heap+0x10b4) |   allocated by thread T0 here |   #0 malloc (/usr/lib/libasan.so.8+0x12c0c1) |   6 #1 main |   #2 (/usr/lib/libc.so.6+0x27780) |   #3 __libc_start_main (/usr/lib/libc.so.6+0x278b8) |   #4 _start (~/realsan/heap+0x10b4)'
+check "and GCC's (Linux): a frame with no name, its module" 'button: ▶ make asan-gcc · 1 error | make asan-gcc 1 · failed (exit 2) | file heap.c | >▾E 3 AddressSanitizer: heap-buffer-overflow: READ of size 4 |   READ of size 4 thread T0 |   3 #0 last |   8 #1 main |   #2 (/usr/lib/libc.so.6+0x27780) |   #3 __libc_start_main (/usr/lib/libc.so.6+0x278b8) |   #4 _start (~/realsan/heap+0x10b4) |   allocated by thread T0 here |   #0 malloc (/usr/lib/libasan.so.8+0x12c0c1) |   6 #1 main |   #2 (/usr/lib/libc.so.6+0x27780) |   #3 __libc_start_main (/usr/lib/libc.so.6+0x278b8) |   #4 _start (~/realsan/heap+0x10b4)'
 run "$RS" "buildrun:make tsan;buildwait;key:cmd+shift+m;key:Right;key:Down;key:Down;key:Down;key:Down;key:Down;key:Down;key:Return;frame;statusdump"
 check "Enter on the other access's frame: there" 'NORMAL race.c | × 1 ▲ 0 Ln 10, Col 1 Spaces: 4 LF C'
 printf 'one\ntwo\n' >"$dir/notes.txt"
@@ -647,22 +647,22 @@ Timing constraints are not met.
 EOF
 last() { got=$(printf '%s' "$got" | sed 's/^.*\((last: \)/\1/'); }  # (builddump's: how the last run went, and what it came to)
 run "$TF" "buildrun:make gtest;buildwait;problemsdump"
-check "GoogleTest: each failure at its place, the test and its expectation" 'button: ▶ make gtest · 2 errors | Build 2 | file tests/gtest_math.cpp | >E 9 Math.Breaks: Expected equality of these values: add(1, 2); Which is: 3; 4 | E 10 Math.Breaks: Value of: add(2, 2) == 5; Actual: false; Expected: true; two and two'
+check "GoogleTest: each failure at its place, the test and its expectation" 'button: ▶ make gtest · 2 errors | make gtest 2 · failed (exit 2) | file tests/gtest_math.cpp | >E 9 Math.Breaks: Expected equality of these values: add(1, 2); Which is: 3; 4 | E 10 Math.Breaks: Value of: add(2, 2) == 5; Actual: false; Expected: true; two and two'
 run "$TF" "buildrun:make gtest;buildwait;builddump"
 last
 check "and its count on the task's row" '(last: 2) (1 passed, 1 failed, 1 skipped)'
 run "$TF" "buildrun:make catch2;buildwait;problemsdump"
-check "Catch2: the expression and its expansion" 'button: ▶ make catch2 · 2 errors | Build 2 | file tests/catch_math.cpp | >E 10 breaks on purpose: CHECK( x == 4 ); with expansion: 3 == 4 | E 11 breaks on purpose: REQUIRE( add(2, 2) == 5 ); with expansion: 4 == 5'
+check "Catch2: the expression and its expansion" 'button: ▶ make catch2 · 2 errors | make catch2 2 · failed (exit 2) | file tests/catch_math.cpp | >E 10 breaks on purpose: CHECK( x == 4 ); with expansion: 3 == 4 | E 11 breaks on purpose: REQUIRE( add(2, 2) == 5 ); with expansion: 4 == 5'
 run "$TF" "buildrun:make catch2;buildwait;builddump"
 last
 check "and Catch2's count" '(last: 2) (1 passed, 1 failed, 1 skipped)'
 run "$TF" "buildrun:make doctest;buildwait;problemsdump"
-check "doctest's failures, with their values" 'button: ▶ make doctest · 2 errors | Build 2 | file tests/doctest_math.cpp | >E 10 breaks on purpose: CHECK( add(1, 2) == 4 ) is NOT correct! values: CHECK( 3 == 4 ) | E 11 breaks on purpose: REQUIRE_EQ( add(2, 2), 5 ) is NOT correct! values: REQUIRE_EQ( 4, 5 )'
+check "doctest's failures, with their values" 'button: ▶ make doctest · 2 errors | make doctest 2 · failed (exit 2) | file tests/doctest_math.cpp | >E 10 breaks on purpose: CHECK( add(1, 2) == 4 ) is NOT correct! values: CHECK( 3 == 4 ) | E 11 breaks on purpose: REQUIRE_EQ( add(2, 2), 5 ) is NOT correct! values: REQUIRE_EQ( 4, 5 )'
 run "$TF" "buildrun:make doctest;buildwait;builddump"
 last
 check "and doctest's count" '(last: 2) (1 passed, 1 failed, 1 skipped)'
 run "$TF" "buildrun:make unity;buildwait;problemsdump"
-check "Unity's failure" 'button: ▶ make unity · 1 error | Build 1 | file tests/test_unity.c | >E 12 test_breaks: Expected 4 Was 3'
+check "Unity's failure" 'button: ▶ make unity · 1 error | make unity 1 · failed (exit 2) | file tests/test_unity.c | >E 12 test_breaks: Expected 4 Was 3'
 run "$TF" "buildrun:make unity;buildwait;builddump"
 last
 check "and Unity's count" '(last: 2) (1 passed, 1 failed, 1 skipped)'
@@ -670,7 +670,7 @@ run "$TF" "buildrun:make ctest;buildwait;builddump"
 last
 check "CTest's count, from its line for each test (the one skipped its own count calls passed)" '(last: 2) (1 passed, 1 failed, 1 skipped)'
 got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$TF;frame;buildrun:make unity;buildwait;problemsdump" 2>&1 >/dev/null | tail -1)
-check "on the Run button too, where it has room" 'button: ▶ make unity · 1 error · 1 passed, 1 failed, 1 skipped | Build 1 | file tests/test_unity.c | >E 12 test_breaks: Expected 4 Was 3'
+check "on the Run button too, where it has room" 'button: ▶ make unity · 1 error · 1 passed, 1 failed, 1 skipped | make unity 1 · failed (exit 2) | file tests/test_unity.c | >E 12 test_breaks: Expected 4 Was 3'
 run "$TF" "buildrun:make once;buildwait;builddump"
 last
 check "what a run came to" '(last: 0) (1 passed, 1 failed, 1 skipped)'
@@ -693,11 +693,11 @@ run "$TF" "buildrun:make pnr;buildwait;builddump"
 last
 check "a clock that misses" '(last: 2) (clk 122.7 MHz, slack -5.65 ns)'
 run "$TF" "buildrun:make pnr;buildwait;problemsdump"
-check "an error (nextpnr stopped for it) at the constraints file make echoed nextpnr's command with" 'button: ▶ make pnr · 1 error | Build 1 | file blink.pcf | >E 1 Timing not met: clock '"'"'clk'"'"' at 122.73 MHz, 400.00 MHz asked for (slack -5.65 ns)'
+check "an error (nextpnr stopped for it) at the constraints file make echoed nextpnr's command with" 'button: ▶ make pnr · 1 error | make pnr 1 · failed (exit 2) | file blink.pcf | >E 1 Timing not met: clock '"'"'clk'"'"' at 122.73 MHz, 400.00 MHz asked for (slack -5.65 ns)'
 run "$TF" "buildrun:make nopcf;buildwait;problemsdump"
-check "with none named: under the tool's name" 'button: ▶ make nopcf · 1 error | Build 1 | file nextpnr | >E 1 Timing not met: clock '"'"'clk'"'"' at 122.73 MHz, 400.00 MHz asked for (slack -5.65 ns)'
+check "with none named: under the tool's name" 'button: ▶ make nopcf · 1 error | make nopcf 1 · failed (exit 2) | file nextpnr | >E 1 Timing not met: clock '"'"'clk'"'"' at 122.73 MHz, 400.00 MHz asked for (slack -5.65 ns)'
 run "$TF" "buildrun:make vivado;buildwait;problemsdump"
-check "Vivado's: at the project's constraints file (not an IP's)" 'button: ▶ make vivado · 1 warning | Build 1 | file constrs/top.xdc | >W 1 Timing constraints are not met: WNS -0.842 ns, TNS -12.375 ns (31 failing endpoints)'
+check "Vivado's: at the project's constraints file (not an IP's)" 'button: ▶ make vivado · 1 warning | make vivado 1 · done | file constrs/top.xdc | >W 1 Timing constraints are not met: WNS -0.842 ns, TNS -12.375 ns (31 failing endpoints)'
 run "$TF" "buildrun:make vivado;buildwait;builddump"
 last
 check "and its summary" '(last: 0) (WNS -0.842 ns, TNS -12.375 ns, WHS +0.124 ns)'

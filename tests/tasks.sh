@@ -174,7 +174,7 @@ check "a long task that ends: its tab stays, saying how" 'Tasks: Sim Talk >Quick
 run "$L" "buildrun:Talk;wait:500;keyof:Stop the build;buildwait;builddump:text"
 check "Stop keeps the text, and says so" '|src/a.c:1:5: error: boom|[stopped after T]'
 run "$L" "buildrun:Talk;wait:500;keyof:Stop the build;buildwait;problemsdump"
-check "and the problems" 'button: ▶ Talk · 1 error | Build 1 | file src/a.c | >E 1:5 boom'
+check "and the problems" 'button: ▶ Talk · 1 error | Talk 1 · stopped | file src/a.c | >E 1:5 boom'
 run "$L" "buildrun:Talk;wait:500;keyof:Stop the build;buildwait;builddump"
 case "$got" in *'(last: '*') (stopped)') got='stopped' ;; esac
 check "the run: stopped" 'stopped'
@@ -182,6 +182,46 @@ run "$L" "buildpanel;buildrun:Talk;wait:500;keyof:Stop the build;buildwait;build
 check "its row says so" "Sim: simulation · printf 'simulating\\n'; sleep 30 | Talk: stopped | Quick: printf 'quick\\n' | make: make | make all: make all"
 run "$L" "buildrun:Sim;wait:300;keyof:Stop the build;buildwait;builddump"
 check "a long task stopped within 10 s: not asked, its tab kept" 'Tasks: >Sim Talk Quick | Make: make make all (last: 130) (stopped) [Sim: stopped]'
+
+# The Problems tab lists each open run's problems under a heading of its
+# own (its name, how many, how it goes), the runs in the order they came: a
+# long task's stay while another task runs. Its group goes when its tab is
+# closed; run again, its new problems take its place. One that failed with
+# none says so in its place. F8 goes through them all, in that order.
+G="$dir/groups"
+mkdir -p "$G/.blit"
+printf 'int a;\n' >"$G/a.c"
+printf 'module tb;\nendmodule\n' >"$G/tb.sv"
+printf 'all:\n\t@echo "a.c:1:5: error: boom"; exit 1\n' >"$G/Makefile"
+# (Each run of Sim says which it is; a line after its error lets it be
+# taken, not held for lines that may join it.)
+cat >"$G/sim.sh" <<'EOF'
+n=$(cat runs 2>/dev/null || echo 0)
+n=$((n + 1))
+echo $n >runs
+printf 'tb.sv:%s:1: error: sim run %s\nsimulating\n' $n $n
+sleep 30
+EOF
+cat >"$G/.blit/tasks.json" <<'EOF'
+{ "tasks": [
+  { "label": "Sim", "command": "sh sim.sh", "long": true, "kind": "simulation" },
+  { "label": "Lint", "command": "exit 3", "long": true } ] }
+EOF
+groups() { rm -f "$G/runs"; run "$G" "$1"; }
+groups "buildrun:Sim;wait:500;buildrun:make;buildwait;problemsdump"
+check "a long task's problems stay while another task runs, each run's under its heading" 'button: ▶ make · 1 error | Sim 1 · running… | file tb.sv | >E 1:1 sim run 1 |  | make 1 · failed (exit 2) | file a.c | E 1:5 boom'
+groups "buildrun:Sim;wait:500;buildrun:make;buildwait;buildrun:Sim;wait:500;problemsdump"
+check "run again: its new problems in its place" 'button: ■ Stop Sim 0:00 · 1 error | Sim 1 · running… | file tb.sv | >E 2:1 sim run 2 |  | make 1 · failed (exit 2) | file a.c | E 1:5 boom'
+groups "buildrun:Sim;wait:500;buildrun:make;buildwait;command:Go to the split below;command:Close the tab;wait:300;problemsdump"
+check "a run's tab closed: its problems go with it" 'button: ▶ make | Sim 1 · running… | file tb.sv | >E 1:1 sim run 1'
+groups "buildrun:Lint;buildwait;buildrun:Sim;wait:500;buildrun:make;buildwait;problemsdump"
+check "one that failed with none: why, under its heading" 'button: ▶ make · 1 error | Lint · failed (exit 3) | no problem found in its output |  | Sim 1 · running… | file tb.sv | >E 1:1 sim run 1 |  | make 1 · failed (exit 2) | file a.c | E 1:5 boom'
+rm -f "$G/runs"
+got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$G;frame;buildrun:Sim;wait:500;buildrun:make;buildwait;key:F8;key:F8;key:F8;key:shift+F8" 2>&1 >/dev/null | grep 'Problem ' | tr '\n' '/')
+check "F8 and Shift+F8 go through every run's, in their order" 'blit: Problem 1 of 2: sim run 1/blit: Problem 2 of 2: boom/blit: Problem 1 of 2: sim run 1/blit: Problem 2 of 2: boom/'
+rm -f "$G/runs"
+groups "buildrun:Sim;wait:500;buildrun:make;buildwait;frame;statusdump"
+check "the status bar counts them all" 'untitled | × 2 ▲ 0 Ln 1, Col 1 Tabs LF Plain text'
 
 # BuildStart and BuildDone: the task's name (as the pattern is matched
 # against), kind and command; how it went, its problems and whether it was

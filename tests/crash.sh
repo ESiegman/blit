@@ -169,7 +169,7 @@ check "a fetched component's frame (managed_components) is not the project's own
     "problems: 1|E main/motor.c:22:9 [StoreProhibited] Crash at motor.c:22 in motor_run (StoreProhibited)|  note managed_components/ring/ring.c:5:11 ring_put|  note main/motor.c:22:9 motor_run"
 got=$(run "buildrun:twice;buildwait;frame;problemsdump" | tail -1)
 check "the same crash again (a board that crashes at each start) is the one problem, counted" \
-    "button: ▶ twice · 1 error | Build 1 | file main/motor.c | >▸E 9:13 Crash at motor.c:9 in store (StoreProhibited) ×2"
+    "button: ▶ twice · 1 error | twice 1 · done | file main/motor.c | >▸E 9:13 Crash at motor.c:9 in store (StoreProhibited) ×2"
 got=$(decoded wdt)
 check "a backtrace with no crash (the task watchdog's) is decoded" "$(x "$CALL"): motor_run at $M/motor.c:22 | $(x "$MAIN"): main at $M/main.c:14"
 got=$(problems wdt)
