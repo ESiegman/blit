@@ -21,6 +21,7 @@
 #include <vector>
 
 #include "common.hpp"
+#include "loopback.hpp"
 
 namespace blit {
 
@@ -67,6 +68,15 @@ private:
     bool refused_ = false;   // (the listener's: too many at once, said)
     std::jthread listener_;  // (last: stopped and joined first)
 };
+
+// The loopback module's way of connecting (loopback.hpp) to a port on
+// `host`, the end as that machine names it ("127.0.0.1:19021"): blit's
+// agent there started as a pump (blit-agent --connect), its pipes handed
+// back as the link's, once it says it is connected (or why it could not:
+// "127.0.0.1:19021: connection refused on box"), and reaped once the link
+// closes them. What a board's RTT and semihosting tabs on another machine
+// connect with (apprtt.cpp).
+LoopbackDial forward_dial(const std::string& host);
 
 // An address here ("localhost:4444") for a TCP port `target` on the machine
 // `root` is on (a project's folder; ssh://host/... for another machine).

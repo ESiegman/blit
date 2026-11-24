@@ -168,6 +168,7 @@ void Forward::serve(int sock, std::stop_token stop) {
         if (k <= 0) break;
         said.append(buf, static_cast<size_t>(k));
     }
+    if (said.starts_with("connected\n")) said.erase(0, 10);  // (it was: what follows, if anything, is why it ended)
     while (!said.empty() && (said.back() == '\n' || said.back() == '\r')) said.pop_back();
     if (!said.empty()) error(host_ + ": " + said.substr(said.rfind('\n') + 1));
     ::close(sock);
@@ -179,6 +180,73 @@ void Forward::serve(int sock, std::stop_token stop) {
         c->wait(p.id, 3000);
     }
     --live_;
+}
+
+LoopbackDial forward_dial(const std::string& host) {
+    return [host](const LoopbackEnd& end, std::string* why) -> LoopbackConn {
+        const std::string root = remote_prefix(host) + "/";
+        std::string there;
+        const std::shared_ptr<Remote> c = remote_for(root, &there, 1000);
+        if (!c) {
+            *why = remote_error(root);
+            return {};
+        }
+        if (c->agent_level() < 6) {  // (blit brings its own agent: an older one is met only when the agents kept were built from older sources)
+            *why = "blit's agent on " + host + " is too old to reach a port there";
+            return {};
+        }
+        RemoteProc p;
+        std::string err;
+        if (!c->spawn({c->agent_path(), "--connect", end.text()}, {}, {}, &p, &err)) {
+            *why = "cannot start blit's agent on " + host + ": " + err;
+            return {};
+        }
+        // Its first line: "connected", or why not (it then ends).
+        std::string said;
+        char buf[512];
+        for (const u64 until = now_ns() + 12'000'000'000ull; said.find('\n') == std::string::npos && now_ns() < until;) {
+            pollfd e{p.err, POLLIN, 0};
+            if (::poll(&e, 1, 100) <= 0) continue;
+            const ssize_t k = ::read(p.err, buf, sizeof buf);
+            if (k <= 0) break;
+            said.append(buf, static_cast<size_t>(k));
+        }
+        const std::string first = said.substr(0, said.find('\n'));
+        // (Reaped on a thread of its own once it ends: when the link closes
+        // its pipes, or now, when it could not connect.)
+        auto reap = [c, p](bool now) {
+            std::thread([c, p, now] {
+                if (now) {
+                    ::close(p.in);
+                    ::close(p.out);
+                }
+                char sink[512];
+                while (::read(p.err, sink, sizeof sink) > 0) {}
+                ::close(p.err);
+                if (c->wait(p.id, now ? 3000 : -1) == -2) {
+                    c->kill(p.id, SIGKILL);
+                    c->wait(p.id, 3000);
+                }
+            }).detach();
+        };
+        if (first != "connected") {
+            // (In a link's words here, loopback.cpp's: "connection refused on box".)
+            std::string w = first;
+            if (const std::string pre = "Cannot connect to " + end.text() + ": "; w.starts_with(pre)) w.erase(0, pre.size());
+            std::string low;
+            for (const char ch : w) low += static_cast<char>(ch >= 'A' && ch <= 'Z' ? ch - 'A' + 'a' : ch);
+            if (first.empty()) w = "no answer";
+            else if (low == "connection refused") w = "connection refused";
+            else if (low == "connection timed out" || low == "operation timed out") w = "no answer";
+            else if (low == "no route to host" || low == "network is unreachable") w = "unreachable";
+            *why = w + " on " + host;
+            c->kill(p.id, SIGTERM);
+            reap(true);
+            return {};
+        }
+        reap(false);
+        return {p.out, p.in};
+    };
 }
 
 bool forward_local(const std::string& root, const std::string& target, std::shared_ptr<Forward>* keep, std::string* address, std::string* err) {

@@ -589,6 +589,11 @@ int pump_connect(const char* target) {
     }
     const int one = 1;
     ::setsockopt(s, IPPROTO_TCP, TCP_NODELAY, &one, sizeof one);  // (a debugger's packets, a console's keys: each at once)
+    // (Said, so that whoever started it knows the connection is there
+    // before either side has sent anything: a tool that speaks only when
+    // the board does, an RTT channel.)
+    std::fputs("connected\n", stderr);
+    std::fflush(stderr);
     PumpJoin j{0, 1, s, s};
     pump_join(j);
     ::close(s);

@@ -24,8 +24,8 @@
 //     A TCP connection to HOST:PORT made from that machine: the pump's input
 //     goes to it, and what comes back is its output. The end of its input
 //     ends the connection's sending side, and the connection's end ends its
-//     output. Why it could not connect is said on its errors, and it ends
-//     with 1.
+//     output. Once connected it says "connected" on its errors; why it could
+//     not connect is said there instead, and it ends with 1.
 //
 //   blit-agent --usb
 //     The machine's USB devices (usb.hpp's usb_text), for blit's probe and
