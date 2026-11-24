@@ -4779,6 +4779,7 @@ under the scope's name, a signal seen under another name (an alias, as
 | Choose a stretch of time | `v` from the cursor, then move it (`n`, `N`, `'`, a click); Esc lets go |
 | Zoom to it | `z` (with no stretch chosen: from the cursor to the last marker set) |
 | The row's next radix | `r` |
+| Colour the row (or the rows chosen) | `c`, then the colour |
 | Open a bus into its bits, shut it; shut or open a group | Enter |
 | Choose rows / group them | `V`, then `j` `k`; `g` `G` makes a group of their signals (or of the row) |
 | Remove the row / undo a change to the rows | `d` `d` / `u` |
@@ -4817,6 +4818,15 @@ no value to look for; nor has a row before its first change. They look
 through the row's changes from the cursor: two million in about a
 millisecond.
 
+**Colours.** `c` gives the row (or the rows chosen with `V`) a colour,
+picked from a list of the theme's own by their names there: `error`,
+`warning`, `hint`, `accent` and `keyword` (the colour of keywords in
+code), or `none`, which takes it away. Its name and its waves are drawn
+in it (x and z keep theirs), in the theme of the moment, light or dark.
+A group's heading gives the group the colour, and its signals with none
+of their own are drawn in it; a bit of a bus opened gives the bus its
+colour. `u` undoes it, as other changes to the rows.
+
 **The waves.** A bit is a line high or low; z a dashed line through the
 middle (in the theme's information colour); x a band filled in the
 warning colour. A bus is a run of hexagons, each value written in its own
@@ -4839,8 +4849,8 @@ them draws no tile again. Nothing is drawn while nothing changes.
 **The view is kept** beside the project, in `.blit/waves/` of the folder
 worked in (or, for a dump outside it, of the dump's own folder), as
 `DUMP.json` (data, not Lua): the rows by their paths, groups, radixes,
-fixed points, the names given to values, markers, the cursor and the
-stretch on show. It is written once the view has been changed by hand,
+fixed points, colours, the names given to values, markers, the cursor
+and the stretch on show. It is written once the view has been changed by hand,
 and it comes back when the dump is opened again; a row whose signal the
 dump no longer has is left out, and the bottom row says how many were.
 
@@ -4885,8 +4895,8 @@ A dump on **another machine** is fetched whole while it is no larger than
 
 **Run again.** A dump written again while its tab is open (the
 simulation run again) is read again, and the view stays as it was: the
-rows, groups and radixes, the names given to values, the markers, the
-cursor, and the stretch on show (or the whole run, if that was on show,
+rows, groups, radixes and colours, the names given to values, the
+markers, the cursor, and the stretch on show (or the whole run, if that was on show,
 to the new run's end). The run on show stays until the new one's
 signals are known; a row whose signal the new run has not got is left
 out, and the bottom row says how many were. blit hears of it as it
@@ -5422,8 +5432,7 @@ does not finish and takes all the memory the machine has.
   a larger one is not shown (an FST is fetched into blit's cache folder,
   which libfst reads it from, and that copy removed once read); a
   bus wider than 64 bits has no fixed point, float or names of values
-  (hex); analog rows and colours a row are not there yet. `*` and `#`
-  take no count.
+  (hex); analog rows are not there yet. `*` and `#` take no count.
 - Terminal: no ligatures. A screen with more than 32 text colours or 6
   background colours at once draws the rest in the nearest of those (5
   while a search's matches are lit). Its search (Cmd+F) looks at the lines

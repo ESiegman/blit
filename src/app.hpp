@@ -1204,6 +1204,7 @@ private:
     void wave_add(WaveView& v, u32 var);
     void wave_mark(WaveView& v, char letter, bool go);
     void wave_format(WaveView& v, bool names, const std::string& text);
+    void wave_colour(WaveView& v, u8 colour);
     bool waves_busy() const;
     void wave_wait(bool rows = false);
     std::string wave_dump(std::string_view what);

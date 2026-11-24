@@ -9,6 +9,8 @@
 // busy band (hatched). A bit is a line high or low, z a dashed line in the
 // middle, x a filled band in its own colour; a bus is a run of hexagons
 // with its value written in each that has room for it; an event a tick.
+// A row given a colour draws its lines, hexagons and ticks in it (x and z
+// keep theirs).
 // Zoomed in past a time unit a pixel, a column is a unit, so edges fall
 // where their times are.
 #include <condition_variable>
@@ -39,6 +41,7 @@ struct WaveLooks {
     float z[4] = {0.4f, 0.6f, 0.9f, 1};      // z
     float event[4] = {0.8f, 0.6f, 0.9f, 1};  // an event
     float text[4] = {0.9f, 0.9f, 0.9f, 1};   // a bus's values
+    float colours[kWaveColours + 1][4] = {};  // a row given a colour (waveview.hpp): its signal and its events in it ([0]: none)
     std::string font_path;
     int font_index = 0;
     std::vector<FontFile> fallbacks;
@@ -47,11 +50,13 @@ struct WaveLooks {
     u64 key = 0;
 };
 
-// A row of a tile: a lane (~0u: nothing, a group's heading) and how its
-// values are written (and which bit of it, for a bus opened).
+// A row of a tile: a lane (~0u: nothing, a group's heading), how its
+// values are written (and which bit of it, for a bus opened), and the
+// colour it was given (0: none).
 struct WaveTileRow {
     u32 lane = ~0u;
     WaveFormat fmt;
+    u8 colour = 0;
 };
 
 struct WaveTileJob {

@@ -159,6 +159,16 @@ bool parse_u64(std::string_view s, u64* out) {
 
 }  // namespace
 
+constexpr std::string_view kColourNames[kWaveColours + 1] = {"none", "error", "warning", "hint", "accent", "keyword"};
+
+std::string_view wave_colour_name(u8 c) { return kColourNames[c <= kWaveColours ? c : 0]; }
+
+bool wave_colour_parse(std::string_view s, u8* out) {
+    for (u8 k = 0; k <= kWaveColours; ++k)
+        if (kColourNames[k] == s) return *out = k, true;
+    return false;
+}
+
 std::string_view wave_radix_name(WaveRadix r) { return kRadixNames[std::min<u32>(static_cast<u32>(r), kWaveRadixCount - 1)]; }
 
 bool wave_radix_parse(std::string_view s, WaveRadix* out) {
@@ -365,6 +375,14 @@ WaveFormat wave_row_format(const std::vector<WaveItem>& items, const WaveRow& r)
     return f;
 }
 
+u8 wave_row_colour(const std::vector<WaveItem>& items, const WaveRow& r) {
+    if (r.item >= items.size()) return 0;
+    const WaveItem& it = items[r.item];
+    if (r.kind == WaveRow::kGroup) return it.colour;
+    const WaveSignal* s = wave_row_signal(items, r);
+    return s && s->colour ? s->colour : it.group ? it.colour : 0;
+}
+
 std::string wave_row_name(const std::vector<WaveItem>& items, const WaveRow& r, const Wave& w) {
     if (r.kind == WaveRow::kGroup) return r.item < items.size() ? items[r.item].name : std::string();
     const WaveSignal* s = wave_row_signal(items, r);
@@ -445,6 +463,7 @@ void write_signal(json::Writer& j, const Wave& w, const WaveSignal& s) {
     if (w.vars[s.var].width > 1) j.member("radix", wave_radix_name(s.fmt.radix));
     if (s.fmt.frac > 0 || !s.fmt.sign) j.member("q", s.fmt.q_text(w.vars[s.var].width));
     if (s.open) j.member("open", true);
+    if (s.colour) j.member("colour", wave_colour_name(s.colour));
     j.end_object();
 }
 
@@ -458,6 +477,7 @@ bool read_signal(const Wave& w, json::Value v, WaveSignal* out) {
     if (wave_radix_parse(v["radix"].str(), &r)) out->fmt.radix = r;
     if (v["q"].is_string()) WaveFormat::parse_q(v["q"].str(), wv.width, &out->fmt);
     out->open = v["open"].boolean();
+    wave_colour_parse(v["colour"].str(), &out->colour);
     return true;
 }
 
@@ -476,6 +496,7 @@ std::string wave_view_json(const Wave& w, const WaveSaved& s) {
         j.begin_object();
         j.member("group", it.name);
         j.member("open", it.open);
+        if (it.colour) j.member("colour", wave_colour_name(it.colour));
         j.key("rows").begin_array();
         for (const WaveSignal& m : it.members) write_signal(j, w, m);
         j.end_array();
@@ -522,6 +543,7 @@ bool wave_view_parse(const Wave& w, std::string_view text, WaveSaved* out, u32* 
             it.group = true;
             it.name = r["group"].str();
             it.open = r["open"].boolean(true);
+            wave_colour_parse(r["colour"].str(), &it.colour);
             for (const json::Value m : r["rows"]) {
                 WaveSignal s;
                 if (read_signal(w, m, &s)) attach(s), it.members.push_back(std::move(s));

@@ -127,6 +127,9 @@ void wave_paint_tile(const WaveTileJob& j, const DiagramFont* font, RasterImage*
     for (size_t r = 0; r < j.rows.size(); ++r) {
         const WaveTileRow& row = j.rows[r];
         if (row.lane >= w.lanes.size() || limit < 0) continue;
+        // (Its colour, if it was given one: its lines and ticks in it.)
+        const float* line = row.colour && row.colour <= kWaveColours ? lk.colours[row.colour] : lk.line;
+        const float* event = row.colour && row.colour <= kWaveColours ? lk.colours[row.colour] : lk.event;
         const Lane& lane = w.lanes[row.lane];
         const int y0 = static_cast<int>(r) * j.row_h;
         const int pad = std::max(2, static_cast<int>(std::lround(j.row_h * 0.14)));
@@ -143,13 +146,13 @@ void wave_paint_tile(const WaveTileJob& j, const DiagramFont* font, RasterImage*
                 if (cols[c].c.count > 1) {
                     size_t e = c;
                     while (e + 1 < cols.size() && cols[e + 1].c.count > 1 && cols[e + 1].x0 < limit) ++e;
-                    p.busy(cols[c].x0, hi, std::min(cols[e].x1, limit), lo, lk.event);
+                    p.busy(cols[c].x0, hi, std::min(cols[e].x1, limit), lo, event);
                     st->busy += static_cast<u32>(e - c + 1);
                     c = e;
                     continue;
                 }
-                p.rect(cols[c].x0, hi, cols[c].x0 + p.lw, lo, lk.event);
-                p.rect(cols[c].x0 - p.lw, hi, cols[c].x0 + 2 * p.lw, hi + p.lw, lk.event);
+                p.rect(cols[c].x0, hi, cols[c].x0 + p.lw, lo, event);
+                p.rect(cols[c].x0 - p.lw, hi, cols[c].x0 + 2 * p.lw, hi + p.lw, event);
                 ++st->edges;
             }
             continue;
@@ -162,8 +165,8 @@ void wave_paint_tile(const WaveTileJob& j, const DiagramFont* font, RasterImage*
                 x1 = std::min(x1, limit);
                 if (x1 <= x0) return;
                 switch (level(lane, cur, bit)) {
-                    case 0: p.rect(x0, lo - p.lw, x1, lo, lk.line); break;
-                    case 1: p.rect(x0, hi, x1, hi + p.lw, lk.line); break;
+                    case 0: p.rect(x0, lo - p.lw, x1, lo, line); break;
+                    case 1: p.rect(x0, hi, x1, hi + p.lw, line); break;
                     case 2: p.dashed(x0, x1, mid, lk.z); break;
                     case 3:
                         p.rect(x0, hi, x1, lo, lk.x, 0.3f);
@@ -179,7 +182,7 @@ void wave_paint_tile(const WaveTileJob& j, const DiagramFont* font, RasterImage*
                 flush(run, col.x0);
                 if (col.c.count == 1) {
                     const int was = level(lane, cur, bit), now = level(lane, col.c.first, bit);
-                    if (was >= 0) p.rect(col.x0, hi, col.x0 + p.lw, lo, now == 3 ? lk.x : now == 2 ? lk.z : lk.line);
+                    if (was >= 0) p.rect(col.x0, hi, col.x0 + p.lw, lo, now == 3 ? lk.x : now == 2 ? lk.z : line);
                     cur = col.c.first;
                     run = col.x0;
                     ++st->edges;
@@ -187,7 +190,7 @@ void wave_paint_tile(const WaveTileJob& j, const DiagramFont* font, RasterImage*
                 }
                 size_t e = c;
                 while (e + 1 < cols.size() && cols[e + 1].c.count > 1 && cols[e + 1].x0 < limit) ++e;
-                p.busy(col.x0, hi, std::min(cols[e].x1, limit), lo, lk.line);
+                p.busy(col.x0, hi, std::min(cols[e].x1, limit), lo, line);
                 st->busy += static_cast<u32>(e - c + 1);
                 cur = cols[e].c.first + cols[e].c.count - 1;
                 run = cols[e].x1;
@@ -255,7 +258,7 @@ void wave_paint_tile(const WaveTileJob& j, const DiagramFont* font, RasterImage*
         for (size_t k = 0; k < runs.size(); ++k) {
             const Run& u = runs[k];
             if (u.busy) {
-                p.busy(u.x0, hi, u.x1, lo, lk.line);
+                p.busy(u.x0, hi, u.x1, lo, line);
                 continue;
             }
             if (!shown(u)) continue;
@@ -273,7 +276,7 @@ void wave_paint_tile(const WaveTileJob& j, const DiagramFont* font, RasterImage*
                 continue;
             }
             const bool x = x_run(u);
-            const float* ink = x ? lk.x : lk.line;
+            const float* ink = x ? lk.x : line;
             p.rect(u.x0 + s0, hi, u.x1 - s1, hi + p.lw, ink);
             p.rect(u.x0 + s0, lo - p.lw, u.x1 - s1, lo, ink);
             if (s0) {
@@ -306,7 +309,7 @@ void wave_paint_tile(const WaveTileJob& j, const DiagramFont* font, RasterImage*
             RasterStroke style;
             style.width = static_cast<float>(p.lw);
             style.cap = RasterStroke::kButt;
-            out->fill(raster_stroke(strokes, style), lk.line);
+            out->fill(raster_stroke(strokes, style), line);
         }
         if (!labels.empty()) out->fill(raster_flatten(labels, 1, 0, 0), lk.text);
     }

@@ -279,6 +279,28 @@ run 1600x900 "frame;wavewait;key:j;key:k;wavedump" "$W/verilator.vcd"
 [ -d "$W/.blit" ] && got=kept || got="nothing kept"
 check "a dump only looked at: nothing written" "nothing kept"
 
+# Colours (c, a picker of the theme's colours by name): a row given one,
+# rows chosen (V) given one, a group's heading (its signals with none of
+# their own drawn in it), undone (u); kept in the view and brought back;
+# none clears it.
+colour() { printf 'key:c;text:%s;findwait;key:Return' "$1"; }
+coloured="frame;wavewait;key:j;key:j;key:j;key:j;$(colour warning);key:k;key:k;key:k;key:k;$(colour keyword);key:j;key:shift+V;key:j;$(colour hint)"
+fresh
+run 1600x900 "$coloured;wavedump" "$W/icarus.vcd"
+got=$(lines | sed -n 2,7p | sed -e 's/ = [^ ]*//' | join)
+check "c: a row, two rows chosen, a group (its others in its colour)" " tb (open) in keyword ;;    tb.done in hint ;; >  tb.wrap in hint ;;    tb.drv[3:0] hex in keyword ;;    tb.count[7:0] hex in warning ;;    tb.clk in keyword"
+got=$(tr ',' '\n' <"$W/.blit/waves/icarus.json" | grep -c '"colour"')
+check "kept in the view: the group's and three signals' own" "4"
+before=$(printf '%s' "$all" | tr '>' ' ')
+KEEP=1 run 1600x900 "frame;wavewait;wavedump" "$W/icarus.vcd"
+got=$(printf '%s' "$all" | tr '>' ' ')
+check "and brought back" "$before"
+run 1600x900 "$coloured;key:k;key:k;$(colour none);wavedump;key:u;wavedump;key:j;key:j;key:j;key:j;$(colour none);wavedump" "$W/icarus.vcd"
+got=$(lines | grep -E '^ ?>? *(tb \(|tb.count)' | sed -e 's/ = [^ ]*//' | join)
+check "cleared (none), undone (u); a signal's own cleared, its group's" ">tb (open) ;;    tb.count[7:0] hex in warning ;; >tb (open) in keyword ;;    tb.count[7:0] hex in warning ;;  tb (open) in keyword ;; >  tb.count[7:0] hex in keyword"
+grep -q '"colour":"warning"' "$W/.blit/waves/icarus.json" && got=kept || got="not kept"
+check "(and none kept)" "not kept"
+
 # Tiles: painted on workers, none to come once waited for; at this width
 # the clock is a busy band in places, zoomed out.
 fresh
@@ -332,6 +354,33 @@ filled 5 1000000 0 && got=filled || got="room between"
 check "a busy band: tb.clk zoomed out" "filled"
 got=$(rgb_is "$(pix 8 1500000 0 0)" bg && echo bg || echo "not bg")
 check "beside it, tb.rst low: nothing in the middle of the row" "bg"
+# A row given a colour: tb.rst's high line in the errors' colour (red, in
+# blit-dark) where it was the signal's own (green); still red when the
+# dump is opened again; green again once its colour is none.
+red() { set -- $1; [ $# = 3 ] && [ "$1" -gt $(($2 + 40)) ] && [ "$1" -gt $(($3 + 20)) ]; }
+to_rst="key:=;key:=;key:=;key:j;key:j;key:j;key:j;key:j;key:j;key:j;key:j;"
+ZOOM="$to_rst$(colour error);"
+c=$(pix 8 6000 0 -10)
+red "$c" && got=red || got="not red: $c"
+check "a row coloured: tb.rst's high line in the errors' colour" "red"
+c=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "frame;wavewait;wavedump:at:8,6000,0,-10,1" "$W/icarus.vcd" 2>&1 >/dev/null | grep '^at ' | sed -e 's/^at [-0-9,]* | //')
+red "$c" && got=red || got="not red: $c"
+check "(opened again: still red)" "red"
+ZOOM="$to_rst$(colour error);$(colour none);"
+c=$(pix 8 6000 0 -10)
+rgb_is "$c" line && got=line || got="not the line: $c"
+check "its colour none: the signal's own again" "line"
+ZOOM=
+# A colour given paints again only the tiles of its block of rows (16
+# rows): tb.wide opened into its bits (two blocks on show), tb.nib (in the
+# first) coloured: its block's two tiles, not the second block's.
+rm -rf "$W/.blit"
+got=$("$blit" --offscreen 1200x800 --shot "$dir/shot.bmp" --script "frame;wavewait;key:j;key:j;key:j;key:j;key:j;key:j;key:j;key:j;key:j;key:Return;wavewait;wavedump:tiles;key:k;key:k;$(colour hint);wavewait;wavedump:tiles" "$W/icarus.vcd" 2>&1 >/dev/null |
+    grep '^tiles' | sed -e 's/^tiles: \([0-9]*\) painted, \([0-9]*\) sharp.*/\1 \2/' | join)
+set -- $got
+[ $# = 5 ] && [ "$2" = 2 ] && [ "$5" = 2 ] && [ $(($4 - $1)) = 2 ] && got="its block's 2 tiles" || got="painted $got"
+check "a row coloured: only its block's tiles painted again" "its block's 2 tiles"
+
 # A dump past timeline.max_mb: what it read shows, and the tab says why it stopped.
 bin="$(cd "$(dirname "$blit")" && pwd)/blit_timeline_test"
 if [ -x "$bin" ]; then
