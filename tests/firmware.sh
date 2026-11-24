@@ -297,6 +297,16 @@ check "Upload: built, the Pico's port touched at 1200 baud, then picotool" "|Res
 start_fake
 run "$F" "buildpanel;buildrun:Monitor (pico);firmwarewait;serialstate:open;serialdump"
 check "Monitor: the Pico's port found, at the env's speed" "ttyACM9 115200: open ttyACM9 115200 8N1 return CR dtr on rts on serial FAKE0002 kept 0 gaps 0"
+# The project on another machine (tests/fake-ssh.sh standing in for ssh,
+# the same home there): the port its board is on there, opened there by
+# blit's agent (blit-agent --serial).
+start_fake
+mkdir -p "$dir/run" && chmod 700 "$dir/run"
+export BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$HOME" BLIT_AGENT_RUN="$dir/run" BLIT_AGENT_IDLE=4
+run "$F" "folder:ssh://box$F;remotewait;frame;buildpanel;buildrun:Monitor (pico);firmwarewait;serialstate:open;serialdump"
+unset BLIT_SSH BLIT_FAKE_HOME BLIT_AGENT_RUN BLIT_AGENT_IDLE
+pkill -9 -f "$HOME/.cache/blit/[b]lit-agent" 2>/dev/null
+check "Monitor on another machine: the Pico's port there, opened there" "ttyACM9 on box 115200: open ttyACM9 on box 115200 8N1 return CR dtr on rts on serial FAKE0002 kept 0 gaps 0"
 # (No such port: said.)
 stop_fake
 rm -rf "$USB" && mkdir -p "$USB"

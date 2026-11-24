@@ -120,13 +120,8 @@ void App::serial_pick() {
         std::vector<PortRow> rows;
         std::string why, host, there;
         if (split_remote(root, &host, &there)) {  // (the project's machine's first: its agent lists them, as the probe picker's)
-            const std::shared_ptr<Remote> r = remote_for(root, &there, kRemoteWaitMs);
-            const std::string agent = r ? r->agent_path() : std::string();
-            std::string out;
             std::vector<UsbDevice> devices;
-            if (agent.empty()) why = "No connection to " + host + ": its serial ports cannot be listed";
-            else if (!fs_run(root, sh_word(agent) + " --usb", &out, 20'000) || !usb_parse(out, &devices)) why = "Cannot list the USB devices on " + host;
-            else rows = port_rows(devices, host);
+            if (usb_list_at(root, &devices, &why)) rows = port_rows(devices, host);
         }
         std::vector<PortRow> here = port_rows(usb_list(), {});
         rows.insert(rows.end(), std::make_move_iterator(here.begin()), std::make_move_iterator(here.end()));

@@ -1,5 +1,9 @@
 #include "probes.hpp"
 
+#include "build.hpp"
+#include "fsio.hpp"
+#include "remote.hpp"
+
 #include <algorithm>
 #include <cstdio>
 #include <cstdlib>
@@ -561,6 +565,26 @@ void board_read(json::Value b, const std::string& config, Board* out, std::strin
         for (const std::string_view f : kFlashTools) tools += (tools.empty() ? "\"" : ", \"") + std::string(f) + "\"";
         *problem = std::string(kRunConfigs) + ": " + config + "'s board.flash is one of " + tools;
     }
+}
+
+bool usb_list_at(const std::string& root, std::vector<UsbDevice>* out, std::string* why) {
+    std::string host, there;
+    if (!split_remote(root, &host, &there)) {
+        *out = usb_list();
+        return true;
+    }
+    const std::shared_ptr<Remote> r = remote_for(root, &there, kRemoteWaitMs);
+    const std::string agent = r ? r->agent_path() : std::string();
+    if (agent.empty()) {
+        *why = "No connection to " + host + ": its USB devices cannot be listed";
+        return false;
+    }
+    std::string text;
+    if (!fs_run(root, sh_word(agent) + " --usb", &text, 20'000) || !usb_parse(text, out)) {
+        *why = "Cannot list the USB devices on " + host;
+        return false;
+    }
+    return true;
 }
 
 }  // namespace blit

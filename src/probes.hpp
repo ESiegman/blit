@@ -68,6 +68,12 @@ struct ProbeRow {
 // the machine they are on, which each row says ("" here).
 std::vector<ProbeRow> probe_rows(const std::vector<UsbDevice>& devices, const std::string& host = {});
 
+// The USB devices of the machine `root` is on: this one's (usb_list), or
+// on another machine its agent's (blit-agent --usb), waiting for its
+// connection. False, with why ("Cannot list the USB devices on box"), when
+// they cannot be had. A worker's call.
+bool usb_list_at(const std::string& root, std::vector<UsbDevice>* out, std::string* why);
+
 // The flash tools' names the board object takes (flash.cpp's table).
 inline constexpr std::string_view kFlashTools[] = {"esptool", "openocd", "probe-rs", "jlink", "picotool", "uf2", "dfu-util", "pyocd", "stm32cubeprogrammer", "openfpgaloader", "vivado", "iceprog", "ecpprog", "pgrcmd"};
 // And for its debug preset (boarddebug.hpp).

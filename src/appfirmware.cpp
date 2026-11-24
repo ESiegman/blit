@@ -94,20 +94,24 @@ void App::firmware_monitor(const BuildTask& task) {
     const BuildTask c = firmware_board(task);
     const std::string root = build_root();
     std::string host, there;
-    if (split_remote(root, &host, &there)) return notify(c.firmware + "'s board is on " + host + ": a serial port there cannot be opened from here yet", 1);
+    split_remote(root, &host, &there);  // (a board on another machine: its port opened there, by blit's agent)
     if (!firmwareui_) firmwareui_ = std::make_shared<FirmwareUi>();
     FirmwareUi& u = *firmwareui_;
     // Its port, as SerialTab::is takes it: its own (or the one chosen
     // before: firmware_board), else the probe's serial number (its first port).
     SerialPortId id;
     id.path = c.board.port;
+    id.host = host;
     if (id.path.empty()) id.serial = c.board.probe;
     if (id.path.empty() && id.serial.empty()) {  // (looked for among those plugged in: a worker's)
         if (u.busy) return;
         if (u.worker.joinable()) u.worker.join();
         u.busy = true;
-        u.worker = std::jthread([&u, c] {
-            FirmwareUi::Listed l{c, board_ports(c.board, usb_list())};
+        u.worker = std::jthread([&u, c, root] {
+            std::vector<UsbDevice> devices;
+            std::string why;
+            usb_list_at(root, &devices, &why);  // (none, when another machine's cannot be listed: said as none plugged in there)
+            FirmwareUi::Listed l{c, board_ports(c.board, devices)};
             {
                 std::lock_guard lock(u.mu);
                 u.listed = std::move(l);
@@ -118,7 +122,7 @@ void App::firmware_monitor(const BuildTask& task) {
     }
     // (Open already: its tab shown.)
     for (const auto& [d, s] : term_serials())
-        if (s->is(id.serial, id.path, {})) {
+        if (s->is(id.serial, id.path, host)) {
             Pane* p = nullptr;
             size_t i = 0;
             if (!find_doc(d->id, &p, &i) && dock_show(pane_)) find_doc(d->id, &p, &i);
@@ -148,6 +152,8 @@ void App::firmware_sync() {
     if (!l) return;
     u.busy = false;
     const std::string root = build_root();
+    std::string host, there;
+    split_remote(root, &host, &there);
     auto open = [this, root, task = l->task](const std::string& port) {
         if (!firmwareui_) return;
         firmwareui_->chosen[root] = port;
@@ -156,7 +162,7 @@ void App::firmware_sync() {
     if (l->ports.empty()) {
         const std::string family = esp_chip(l->task.board.chip) ? "an ESP32's" : rp_chip(l->task.board.chip) ? "an RP2040's" : std::string();
         return notify(family.empty() ? l->task.firmware + "'s board has no serial port (a run configuration's board.serial says it)"
-                                     : "No serial port of " + family + " is plugged in to " + machine_name({}),
+                                     : "No serial port of " + family + " is plugged in to " + machine_name(host),
                       1);
     }
     if (l->ports.size() == 1) return open(l->ports.front().port);
