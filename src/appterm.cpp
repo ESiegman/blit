@@ -166,7 +166,8 @@ struct TermView {
         if (reader.joinable()) reader.join();
         if (conn && proc.id) conn->kill(proc.id, SIGHUP);  // (started meanwhile)
         if (in >= 0 && in != out) ::close(in);
-        if (out >= 0) ::close(out);
+        if (out >= 0 && serial) serial_close(out);  // (its hold on the port let go of: serial.hpp)
+        else if (out >= 0) ::close(out);
         if (pty.pid > 0 && !ended) {  // (not one the reader has seen end and reaped)
             int st = 0;
             if (::waitpid(pty.pid, &st, WNOHANG) == 0) {
@@ -323,7 +324,7 @@ struct TermView {
         {
             std::lock_guard lock(out_mu);
             in = -1;
-            ::close(out);
+            serial_close(out);
             out = -1;
             backlog.clear();
             backlog_at = 0;

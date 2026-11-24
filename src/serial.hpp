@@ -37,6 +37,9 @@ bool serial_parse(std::string_view text, SerialConfig* c);
 // False, with why in words, naming the port: "cu.usbmodem1101 is in use by
 // another program", or on Linux the group a user needs to be in.
 bool serial_open(const std::string& path, const SerialConfig& c, int* fd, std::string* err);
+// The port closed, its hold on it let go of first (on Linux the hold
+// is the tty's, and stays while another program has it open).
+void serial_close(int fd);
 // The speed, framing and flow control of a port open already.
 bool serial_configure(int fd, const SerialConfig& c, std::string* err);
 // DTR and RTS set together (one change of the lines, not two): 1 on, 0

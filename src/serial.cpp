@@ -135,12 +135,18 @@ bool serial_open(const std::string& path, const SerialConfig& c, int* fd, std::s
     }
     ::ioctl(f, TIOCEXCL);
     if (!serial_configure(f, c, err)) {
-        ::close(f);
+        serial_close(f);
         return false;
     }
     ::tcflush(f, TCIOFLUSH);  // (what was waiting before it was opened is not the program's now)
     *fd = f;
     return true;
+}
+
+void serial_close(int fd) {
+    if (fd < 0) return;
+    ::ioctl(fd, TIOCNXCL);
+    ::close(fd);
 }
 
 bool serial_configure(int fd, const SerialConfig& c, std::string* err) {
