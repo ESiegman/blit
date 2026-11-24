@@ -393,6 +393,11 @@ void App::build_follow() {
     u.worker = std::jthread([&u, root, hidden = std::move(hidden)] {
         BuildUi::Found f;
         f.root = root;
+        // (A folder on another machine read once the connection to it is
+        // made, as it may still be being made when the folder is opened: read
+        // before, it was an empty folder, and kept so, no tasks and no run
+        // configurations, until it was looked at again.)
+        if (std::string there; is_remote(root) && !remote_for(root, &there, kRemoteWaitMs)) f.problem = remote_error(root);
         f.files = fs_list(root);
         // (The folder's own tasks first, then its run configurations, the first
         // of which is the Run button's.)

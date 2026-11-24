@@ -310,6 +310,18 @@ run "$F" "folder:ssh://box$F;remotewait;frame;buildpanel;buildrun:Monitor (pico)
 unset BLIT_SSH BLIT_FAKE_HOME BLIT_AGENT_RUN BLIT_AGENT_IDLE
 pkill -9 -f "$HOME/.cache/blit/[b]lit-agent" 2>/dev/null
 check "Monitor on another machine: the Pico's port there, opened there" "ttyACM9 on box 115200: open ttyACM9 on box 115200 8N1 return CR dtr on rts on serial FAKE0002 kept 0 gaps 0"
+# Asked for as the folder there is opened, the connection to it taking 2 s
+# to be made (an ssh that is slow to answer): its tasks read once it is,
+# not an empty folder's while it is being made (GitHub's runner, slow,
+# 2026-11-24: "no Monitor (pico)").
+start_fake
+printf '#!/bin/sh\nsleep 2\nexec "%s" "$@"\n' "$here/fake-ssh.sh" >"$dir/slow-ssh.sh"
+chmod +x "$dir/slow-ssh.sh"
+export BLIT_SSH="$dir/slow-ssh.sh" BLIT_FAKE_HOME="$HOME" BLIT_AGENT_RUN="$dir/run" BLIT_AGENT_IDLE=4
+run "$F" "folder:ssh://box$F;frame;buildpanel;buildrun:Monitor (pico);firmwarewait;serialstate:open;serialdump"
+unset BLIT_SSH BLIT_FAKE_HOME BLIT_AGENT_RUN BLIT_AGENT_IDLE
+pkill -9 -f "$HOME/.cache/blit/[b]lit-agent" 2>/dev/null
+check "and opened as the connection there is still being made: read once it is" "ttyACM9 on box 115200: open ttyACM9 on box 115200 8N1 return CR dtr on rts on serial FAKE0002 kept 0 gaps 0"
 # (No such port: said.)
 stop_fake
 rm -rf "$USB" && mkdir -p "$USB"
