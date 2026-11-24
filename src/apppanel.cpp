@@ -51,13 +51,15 @@ void light_row(TextBox& box, u32 row, bool focused) {
 }
 
 // The Problems tab's rows under its first line. With problems from the
-// build: each file's name and its problems, then (when the language servers
-// report any) a blank row and their heading. Then the language servers'
-// problems, every file's they have reported on (open or not): each file's
-// name and its problems. Under a problem that is open, its notes.
+// build: each run's (and a file's read) in a group, the first's heading on
+// the first line and each other's on a row after a blank one; in a group,
+// each file's name and its problems. Then (when the language servers report
+// any) a blank row and their heading, and their problems, every file's they
+// have reported on (open or not): each file's name and its problems. Under
+// a problem that is open, its notes.
 struct ProblemRow {
-    enum Kind : u8 { kFile, kBuild, kGap, kHead, kLspFile, kDiag, kNote } kind;
-    u32 index;    // kFile: its first problem; kBuild: the problem; kLspFile: the file; kDiag: the language servers' problem (counted across files); kNote: its problem (the build's first, then the language servers')
+    enum Kind : u8 { kFile, kBuild, kGap, kRun, kWhy, kHead, kLspFile, kDiag, kNote } kind;
+    u32 index;    // kFile: its first problem; kBuild: the problem; kRun, kWhy: its group; kLspFile: the file; kDiag: the language servers' problem (counted across files); kNote: its problem (the build's first, then the language servers')
     u32 sub = 0;  // kNote: which of its problem's notes
 };
 
@@ -126,21 +128,27 @@ u64 problem_key(const std::vector<BuildProblem>& b, const std::vector<ProblemFil
     return it ? (h(file->path) * 31 + h(it->message) * 7) ^ 1 : 0;
 }
 
-// (failed: a run that failed with none, said on the heading's line: the
-// language servers' have a heading of their own under it.)
-std::vector<ProblemRow> problem_rows(const std::vector<BuildProblem>& b, const std::vector<ProblemFile>& files, const std::unordered_set<u64>& open, bool failed = false) {
+// (A run that failed with none is a group too: under its heading, why.)
+std::vector<ProblemRow> problem_rows(const std::vector<BuildGroup>& groups, const std::vector<BuildProblem>& b, const std::vector<ProblemFile>& files, const std::unordered_set<u64>& open) {
     std::vector<ProblemRow> rows;
     auto notes = [&](size_t i) {
         const size_t n = note_count(b, files, i);
         if (n && open.contains(problem_key(b, files, i)))
             for (u32 k = 0; k < n; ++k) rows.push_back({ProblemRow::kNote, static_cast<u32>(i), k});
     };
-    for (u32 i = 0; i < b.size(); ++i) {
-        if (i == 0 || b[i].group != b[i - 1].group) rows.push_back({ProblemRow::kFile, i});
-        rows.push_back({ProblemRow::kBuild, i});
-        if (!open.empty()) notes(i);
+    for (u32 g = 0; g < groups.size(); ++g) {
+        if (g > 0) {
+            rows.push_back({ProblemRow::kGap, 0});
+            rows.push_back({ProblemRow::kRun, g});
+        }
+        if (!groups[g].why.empty()) rows.push_back({ProblemRow::kWhy, g});
+        for (u32 i = groups[g].first; i < groups[g].first + groups[g].count; ++i) {
+            if (i == groups[g].first || b[i].group != b[i - 1].group) rows.push_back({ProblemRow::kFile, i});
+            rows.push_back({ProblemRow::kBuild, i});
+            if (!open.empty()) notes(i);
+        }
     }
-    if ((!b.empty() || failed) && count_problems(files)) {
+    if (!groups.empty() && count_problems(files)) {
         rows.push_back({ProblemRow::kGap, 0});
         rows.push_back({ProblemRow::kHead, 0});
     }
@@ -182,6 +190,12 @@ u32 row_of_problem(const std::vector<ProblemRow>& rows, u32 problem, size_t buil
         }
     }
     return 0;
+}
+
+// A group's heading as the tests have it: its title, how many, and how its
+// run goes ("make 3 · failed (exit 2)"; one with none, not how many).
+std::string group_words(const BuildGroup& g) {
+    return g.title + (g.count ? " " + std::to_string(g.count) : "") + (g.state.empty() ? "" : " \xC2\xB7 " + g.state);
 }
 
 // A build problem's file as the tab names it: from the project folder, or from ~.
@@ -485,18 +499,20 @@ void App::lsp_go_problem(size_t i) {
 std::string App::problems_dump() {
     term_sync();
     const std::vector<BuildProblem>& bp = build_problems();
+    const std::vector<BuildGroup>& groups = build_groups();
     const std::vector<ProblemFile>& files = lsp_.problems();
     const size_t n = count_problems(files);
-    const std::string failed = build_failure();
-    std::string out = "button: " + build_label() + " | " + (!bp.empty() ? build_source() + " " + std::to_string(bp.size()) : (failed.empty() ? "" : failed + " | ") + "file " + std::to_string(n));
+    std::string out = "button: " + build_label() + " | " + (!groups.empty() ? group_words(groups[0]) : "file " + std::to_string(n));
     const Side& s = *side_;
     auto mark = [&](size_t i) -> std::string {
         if (!note_count(bp, files, i)) return "";
         return s.problem_open.contains(problem_key(bp, files, i)) ? "\xE2\x96\xBE" : "\xE2\x96\xB8";
     };
-    for (const ProblemRow& row : problem_rows(bp, files, s.problem_open, build_failed())) {
+    for (const ProblemRow& row : problem_rows(groups, bp, files, s.problem_open)) {
         out += " | ";
         if (row.kind == ProblemRow::kFile) out += bp[row.index].path.empty() ? std::string("no file") : "file " + shown_path(bp[row.index].path, panel_root());
+        else if (row.kind == ProblemRow::kRun) out += group_words(groups[row.index]);
+        else if (row.kind == ProblemRow::kWhy) out += groups[row.index].why;
         else if (row.kind == ProblemRow::kHead) out += "Problems " + std::to_string(n);
         else if (row.kind == ProblemRow::kLspFile) out += "file " + shown_path(files[row.index].path, panel_root()) + (files[row.index].key ? "" : " (not open)");
         else if (row.kind == ProblemRow::kBuild) {
@@ -1234,7 +1250,7 @@ bool App::panel_mouse_down(const SDL_MouseButtonEvent& b) {
     if (s.tab == kTabProblems) {
         const std::vector<BuildProblem>& bp = build_problems();
         const std::vector<ProblemFile>& files = lsp_.problems();
-        const std::vector<ProblemRow> pr = problem_rows(bp, files, s.problem_open, build_failed());
+        const std::vector<ProblemRow> pr = problem_rows(build_groups(), bp, files, s.problem_open);
         const u32 i = s.problem_top + static_cast<u32>(std::max(0, row - static_cast<int>(kHeadRows)));
         if (row >= static_cast<int>(kHeadRows) && i < pr.size()) {
             ProblemRow r = pr[i];
@@ -1418,7 +1434,7 @@ bool App::panel_wheel(const SDL_MouseWheelEvent& w) {
         s.top = static_cast<u32>(std::clamp<i64>(top, 0, last_top(rows, s.body_rows)));
     } else {
         const i64 top = static_cast<i64>(s.problem_top) - static_cast<i64>(std::lround(w.y * 3));
-        s.problem_top = static_cast<u32>(std::clamp<i64>(top, 0, last_top(problem_rows(build_problems(), lsp_.problems(), s.problem_open, build_failed()).size(), s.body_rows)));
+        s.problem_top = static_cast<u32>(std::clamp<i64>(top, 0, last_top(problem_rows(build_groups(), build_problems(), lsp_.problems(), s.problem_open).size(), s.body_rows)));
     }
     s.touch();
     dirty_ = true;
@@ -1604,9 +1620,10 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
         } else if (s.tab == kTabTests) {
             test_panel_draw(box, s.focus);
         } else {
-            // The build's problems, across files, then what the language
-            // servers report, across files too.
+            // The build's problems, each open run's under its heading, across
+            // files, then what the language servers report, across files too.
             const std::vector<BuildProblem>& bp = build_problems();
+            const std::vector<BuildGroup>& groups = build_groups();
             const std::vector<ProblemFile>& files = lsp_.problems();
             const size_t nl = count_problems(files);
             auto heading = [&](u32 r, const std::string& title, size_t n) {  // a name, and how many
@@ -1619,27 +1636,22 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
                 else if (!lsp_.attached() && server_text_doc(*pane_->doc)) put(box, font, r, 0, fit_text("No language server for this file", cols), ink::kMuted);
                 else put(box, font, r, 0, fit_text("No problems", cols), ink::kMuted);
             };
-            // (A run that failed with no error found says so on the line: never "No problems" under a red button.)
-            const int failed = build_failed();
-            if (!bp.empty()) {
-                const u32 c = heading(1, build_source(), bp.size());
-                if (failed && c + 3 < cols) put(box, font, 1, c + 1, fit_text("failed with exit code " + std::to_string(failed), cols - c - 1), ink::kError);
-            }
-            const std::vector<ProblemRow> pr = problem_rows(bp, files, s.problem_open, failed);
-            if (bp.empty() && failed) {
-                // (On the rows under it too, where nothing else is: the end of it is often what matters,
-                // "cmake is not installed on this Mac".)
-                const std::string said = build_failure();
-                if (!pr.empty() || width_of(said) <= cols) {
-                    put(box, font, 1, 0, fit_text(said, cols), ink::kError);
-                } else {
-                    u32 r = 1;
-                    for (const std::string& line : wrap_words(said, cols))
-                        if (r < rows) put(box, font, r++, 0, line, ink::kError);
-                }
-            } else if (bp.empty()) {
-                lsp_heading(1);
-            }
+            // A run's heading: its name, how many, and how it goes (in the
+            // error's ink when it failed). One that failed with no error
+            // found says why under it, never "No problems" under a red
+            // button.
+            auto run_heading = [&](u32 r, const BuildGroup& g) {
+                const std::string count = g.count ? std::to_string(g.count) : std::string();
+                const u32 state = g.state.empty() ? 0 : std::min<u32>(width_of(g.state) + 3, cols / 2);  // (the name has the room it can)
+                const u32 name = cols > count.size() + 1 + state ? cols - static_cast<u32>(count.size()) - 1 - state : 1;
+                u32 c = put(box, font, r, 0, fit_text(g.title, name), ink::kHeading);
+                if (!count.empty()) c = put(box, font, r, c + 1, count, ink::kMuted);
+                if (state && c + 4 < cols) c = put(box, font, r, c + 1, fit_text("\xC2\xB7 " + g.state, cols - c - 1), g.failed ? ink::kError : ink::kMuted);
+                return c;
+            };
+            const std::vector<ProblemRow> pr = problem_rows(groups, bp, files, s.problem_open);
+            if (groups.empty()) lsp_heading(1);
+            else run_heading(1, groups[0]);
             const u32 n = static_cast<u32>(bp.size() + nl);
             s.problem = n ? std::min(s.problem, n - 1) : 0;
             const bool picked_open = n && note_count(bp, files, s.problem) && s.problem_open.contains(problem_key(bp, files, s.problem));
@@ -1694,6 +1706,17 @@ void App::panel_layout(int w, int h, FrameDesc& fd) {
                     if (!place.empty()) c = put(box, font, r, c, fit_text(place, cols > c ? cols - c : 0), ink::kMuted) + 1;
                     put(box, font, r, c, fit_text(*note.message, cols > c ? cols - c : 0), place.empty() ? ink::kMuted : ink::kText);
                     if (row.index == s.problem && static_cast<i32>(row.sub) == s.problem_note) light_row(box, r, s.focus);
+                } else if (row.kind == ProblemRow::kRun) {
+                    run_heading(r, groups[row.index]);
+                } else if (row.kind == ProblemRow::kWhy) {  // (where nothing comes after it, on the rows under it too: the end is often what matters, "cmake is not installed on this Mac")
+                    const std::string& why = groups[row.index].why;
+                    if (i + 1 < pr.size() || width_of(why) <= cols - 2) {
+                        put(box, font, r, 2, fit_text(why, cols > 2 ? cols - 2 : 0), ink::kError);
+                    } else {
+                        for (const std::string& line : wrap_words(why, cols > 2 ? cols - 2 : 1))
+                            if (r < rows) put(box, font, r++, 2, line, ink::kError);
+                        --r;
+                    }
                 } else if (row.kind == ProblemRow::kHead) {
                     lsp_heading(r);
                 } else if (row.kind == ProblemRow::kLspFile) {

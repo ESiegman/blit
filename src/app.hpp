@@ -345,6 +345,18 @@ struct Pane {
     double thumb_x = -1, thumb_y = -1;
 };
 
+// The build's problems as the Problems tab heads them (appbuild.cpp): a
+// group for each open run that has some or failed with none, and one for a
+// file they were read from, in their order; each a stretch of
+// App::build_problems().
+struct BuildGroup {
+    std::string title;    // the run's name, or the file's
+    std::string state;    // how the run goes: "running…", "done", "stopped", "failed (exit 2)" ("" for a file)
+    bool failed = false;  // (that said as a failure)
+    std::string why;      // one that failed with no error in its output, under its heading: "no problem found in its output", "cmake is not installed on this Mac"
+    u32 first = 0, count = 0;
+};
+
 // How the window is split: a leaf shows a pane, anything else is two
 // halves, side by side or one above the other, each split further or not.
 struct SplitNode {
@@ -1503,9 +1515,10 @@ private:
     void script_build_event(bool done, const std::string& name, const std::string& kind, const std::string& command, int status, u32 errors, u32 warnings, bool stopped, double seconds);
     void build_older(int seconds);
     bool front_ = true;  // the window is in front (its focus events say)
-    // What the last run's output said was wrong (buildscan.hpp): taken from
-    // its terminal as it comes (term_sync), shown in the Problems tab's
-    // Build section, counted on the Run button and in the status bar.
+    // What each open run's output said was wrong (buildscan.hpp): taken from
+    // its terminal as it comes (term_sync), shown in the Problems tab under
+    // the run's heading, counted in the status bar (and the last run's on
+    // the Run button); gone with the run's tab, or when it runs again.
     void build_found(u64 doc, std::vector<BuildProblem> found);
     // And the tests' results it gave, for the Tests tab, and what it came to
     // (outcome, when that changed), for its task's row and the Run button.
@@ -1513,14 +1526,14 @@ private:
     void build_progress(u64 doc, const BuildScan::Progress& p);  // (how far an engine the task runs has got: the Run button and its row)
     std::string build_progress_dump();
     const std::vector<BuildProblem>& build_problems() const;
+    // Those problems as the Problems tab heads them (BuildGroup).
+    const std::vector<BuildGroup>& build_groups();
     std::string build_label() const;  // the Run button's words
-    // A run that failed and whose output gave no error: its exit code (0:
-    // not so), and what to say ("make failed with exit code 2: no problem
-    // found in its output"; "" when not so).
+    // The last run, if it failed and its output gave no error: its exit
+    // code (0: not so); and what to say of the first open run that did so
+    // ("" for none).
     int build_failed() const;
     std::string build_failure() const;
-    void build_unmark();               // the last problems' marks taken from the text
-    std::string build_source() const;  // what they are under in the Problems tab: "Build", or the file they were read from
     // "Read the problems from this file": a file chosen (the one in front to
     // begin with), read on a thread of its own (buildread.hpp) into the
     // build's problems, in place of the last run's.
