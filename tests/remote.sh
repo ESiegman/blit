@@ -758,6 +758,60 @@ if [ -x "$(dirname "$blit")/blit_fakelsp" ]; then
     check "a server there for Python files: told the project's Python there" 'python.pythonPath = "~/work/pyr/.venv/bin/python"'
 fi
 
+# A TCP port there reached as one here (blit-agent --connect, src/forward.cpp):
+# a server there that gives back what it is sent in capitals; a client here
+# that sends a word, ends its side, and prints what came back.
+cat >"$dir/tcp.py" <<'EOF'
+import socket, sys, threading
+if sys.argv[1] == "free":
+    s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); sys.exit(0)
+port = int(sys.argv[2])
+if sys.argv[1] == "server":
+    s = socket.socket(); s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1); s.bind(("127.0.0.1", port)); s.listen(8)
+    def serve(c):
+        while True:
+            b = c.recv(65536)
+            if not b: break
+            c.sendall(b.upper())
+        c.close()
+    while True:
+        c, _ = s.accept(); threading.Thread(target=serve, args=(c,), daemon=True).start()
+c = socket.create_connection(("localhost", port), timeout=10); c.sendall(sys.argv[3].encode()); c.shutdown(socket.SHUT_WR)
+got = b""
+while True:
+    b = c.recv(65536)
+    if not b: break
+    got += b
+print(got.decode() or "(nothing)")
+EOF
+there_port=$(python3 "$dir/tcp.py" free)
+here_port=$(python3 "$dir/tcp.py" free)
+none_port=$(python3 "$dir/tcp.py" free)
+python3 "$dir/tcp.py" server "$there_port" &
+server=$!
+trap 'kill $server 2>/dev/null; rm -rf "$dir"' EXIT
+sleep 0.3
+ports() { sed -e "s/$there_port/THERE/g" -e "s/$here_port/HERE/g" -e "s/$none_port/NONE/g" -e 's/localhost:[0-9][0-9]*/localhost:ANY/g'; }
+run "remotewait;forward:$here_port:localhost:$there_port;lua:os.execute('python3 $dir/tcp.py client $here_port hello > $dir/tcp1');forwarddump" "$R"
+got="$(printf '%s' "$got" | ports) | $(cat "$dir/tcp1")"
+check "a port there reached at a port here: what is sent there comes back" 'blit: localhost:HERE here reaches localhost:THERE on box ;; localhost:HERE localhost:THERE on box 0 | HELLO'
+run "remotewait;forward:$there_port;forwarddump" "$R"
+got=$(printf '%s' "$got" | ports)
+check "the same number here when it is free; another when not (said)" 'blit: localhost:ANY here reaches localhost:THERE on box (port THERE is in use here) ;; localhost:ANY localhost:THERE on box 0'
+run "remotewait;forward:$here_port:localhost:$none_port;lua:os.execute('python3 $dir/tcp.py client $here_port hello > $dir/tcp2');wait:300;forwarddump" "$R"
+got="$(printf '%s' "$got" | ports) | $(cat "$dir/tcp2")"
+check "nothing listening there: the connection ends, and why is said" 'blit: localhost:HERE here reaches localhost:NONE on box ;; blit: box: Cannot connect to localhost:NONE: Connection refused ;; localhost:HERE localhost:NONE on box 0 | (nothing)'
+run "remotewait;forward:$here_port:localhost:$there_port;command:Stop reaching a port on another machine…;finddump;key:Return;forwarddump;lua:os.execute('python3 $dir/tcp.py client $here_port hello > $dir/tcp3 2>&1')" "$R"
+got="$(printf '%s' "$got" | ports) | $(tail -1 "$dir/tcp3" | sed 's/:.*//')"
+check "stopped: no longer reached" 'blit: localhost:HERE here reaches localhost:THERE on box ;; pick [] 1 : >localhost:HERE  localhost:THERE on box ;; blit: localhost:HERE no longer reaches localhost:THERE on box ;; no ports reached | ConnectionRefusedError'
+run "remotewait;forward:a:b;forward:70000" "$R"
+check "not a port: said" 'blit: Not a port: a:b (a port, HOST:PORT, or LOCAL:HOST:PORT) ;; blit: Not a port: 70000 (a port, HOST:PORT, or LOCAL:HOST:PORT)'
+run "command:Reach a port on the project's machine…" "$dir/m.txt"
+check "a project here: nothing to reach" "blit: The project is on this machine: its ports are reached here as they are"
+got=$(BLIT_AGENT_LEVEL=5 BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1600x700 --shot "$dir/shot.bmp" --script "remotewait;forward:$here_port:localhost:$there_port;lua:os.execute('python3 $dir/tcp.py client $here_port hello > /dev/null 2>&1');forwarddump" "$R" 2>&1 >/dev/null | ports | join)
+check "an agent from before the pumps: said" "blit: localhost:HERE here reaches localhost:THERE on box ;; blit: blit's agent on box is too old to reach a port there ;; localhost:HERE localhost:THERE on box 0"
+kill $server 2>/dev/null; wait $server 2>/dev/null
+
 # The agent was copied there once, into the cache blit keeps in that home.
 got=$(ls "$T/.cache/blit" | sed -e 's/-[0-9a-f]*$//')
 check "the agent, copied once" "blit-agent-$(uname -s)-$(uname -m)"

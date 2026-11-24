@@ -1558,6 +1558,13 @@ void App::run_script(const char* script) {
             serial_release(b);
         } else if (verb == "serialreclaim") {  // and given back, as the flash's end does
             serial_reclaim();
+        } else if (verb == "forward") {  // forward:TYPED, a port on the project's machine reached here (as "Reach a port on the project's machine…" with TYPED)
+            std::string host, there;
+            if (split_remote(build_root(), &host, &there)) forward_open(host, arg);
+            else std::fprintf(stderr, "forward: the project is on this machine\n");
+        } else if (verb == "forwarddump") {  // each port reached here: its address, what it reaches, and its connections now (what went wrong with one said first)
+            forward_sync();
+            std::fprintf(stderr, "%s\n", forward_dump().c_str());
         } else if (verb == "probedump") {  // the probe picker's last listing (waited for): each row's role, kind, ids and text
             std::fprintf(stderr, "%s\n", probe_dump().c_str());
         } else if (verb == "probewait") {  // the probe picker has listed the devices (and opened the box with them), or written the board chosen

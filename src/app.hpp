@@ -1267,6 +1267,16 @@ private:
     void serial_release(const Board& b);
     void serial_reclaim();
     std::string serial_dump();  // (the tests: the tab in front, and the picker's last rows)
+    // Ports on another machine reached as ports here (appforward.cpp,
+    // forward.hpp): "Reach a port on the project's machine…" and "Stop
+    // reaching a port on another machine…"; what goes wrong with one said.
+    struct ForwardUi;
+    std::shared_ptr<ForwardUi> forwardui_;  // (made the first time)
+    void forward_pick();
+    void forward_open(const std::string& host, const std::string& typed);
+    void forward_stop_pick();
+    void forward_sync();
+    std::string forward_dump();  // (the tests: each port reached, and its connections now)
     // The project's Python (apppython.cpp): one for each project folder and
     // subproject, found on a worker and kept; everything that runs Python
     // takes it. py_known: a folder's, if it is known (else it is looked for,

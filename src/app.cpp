@@ -2074,6 +2074,10 @@ void App::handle_event(const SDL_Event& e) {
                 serial_sync();
                 break;
             }
+            if (e.user.code == 63) {  // a port on another machine reached here has something to say (appforward.cpp)
+                forward_sync();
+                break;
+            }
             break;
         }
         default:

@@ -361,6 +361,9 @@ void App::commands_create() {
     own("Reset the board through DTR/RTS (ESP32)", {}, [this] { serial_reset(true); });
     own("Reset the board through DTR (Arduino)", {}, [this] { serial_reset(false); });
     own("Send a break to the serial port", {}, [this] { serial_break(); });
+    // A TCP port on the project's machine reached as one here (appforward.cpp).
+    own("Reach a port on the project's machine\xE2\x80\xA6", {}, [this] { forward_pick(); });
+    own("Stop reaching a port on another machine\xE2\x80\xA6", {}, [this] { forward_stop_pick(); });
     own("Run the cell (# %%)", {}, [this] { if (!nb_run_cell()) notify("The file has no # %% cells"); });
     own("Run all the cells", {}, [this] { nb_run_all(); });
     own("Interrupt the kernel", {}, [this] { nb_interrupt(); });

@@ -348,6 +348,9 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
     target_sources(blit-agent PRIVATE src/serial_linux.cpp)
   endif()
 endif()
+# A TCP port on another machine reached as one here, through the agent run
+# as a pump there (src/forward.cpp, appforward.cpp).
+target_sources(blit PRIVATE src/forward.cpp src/appforward.cpp)
 # Flashing the board and programming an FPGA, and the Boards view.
 target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp src/boarddebug.cpp src/appcapture.cpp)
 # Crash dumps in a run's output, decoded against its ELF.
