@@ -111,6 +111,7 @@ public:
     void set_scan(std::unique_ptr<SerialScan> scan);
     void clear();  // what is kept and shown goes (Cmd+K), but a gap still open
     std::string dump();  // (the tests: state, and the line changes asked for)
+    u64 came();          // (the benchmarks: how many bytes the device has sent since the tab opened)
 
     // ---- the reader's thread
 

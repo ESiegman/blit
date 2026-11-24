@@ -1558,6 +1558,20 @@ void App::run_script(const char* script) {
             serial_release(b);
         } else if (verb == "serialreclaim") {  // and given back, as the flash's end does
             serial_reclaim();
+        } else if (verb == "serialrtt") {  // serialrtt:N, N keys typed one at a time to a board that echoes them, each waited for: the round trip's median and 90th percentile (for measuring)
+            Doc* d = nullptr;
+            const std::shared_ptr<SerialTab> s = serial_here(&d, false);
+            std::vector<double> ms;
+            for (int i = 0; s && d && i < std::max(1, std::atoi(arg.c_str())); ++i) {
+                const u64 had = s->came(), t0 = now_ns();
+                term_send(*d, "x");
+                while (s->came() == had && now_ns() - t0 < 5'000'000'000ull) std::this_thread::sleep_for(std::chrono::microseconds(50));
+                ms.push_back(static_cast<double>(now_ns() - t0) / 1e6);
+                std::this_thread::sleep_for(std::chrono::milliseconds(20));
+            }
+            std::ranges::sort(ms);
+            if (ms.empty()) std::fprintf(stderr, "serialrtt: no serial tab\n");
+            else std::fprintf(stderr, "serialrtt median %.2f ms, p90 %.2f ms, of %zu\n", ms[ms.size() / 2], ms[ms.size() * 9 / 10], ms.size());
         } else if (verb == "forward") {  // forward:TYPED, a port on the project's machine reached here (as "Reach a port on the project's machine…" with TYPED)
             std::string host, there;
             if (split_remote(build_root(), &host, &there)) forward_open(host, arg);

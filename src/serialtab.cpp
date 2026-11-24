@@ -363,6 +363,11 @@ std::string SerialTab::dump() {
     return out;
 }
 
+u64 SerialTab::came() {
+    std::lock_guard lock(mu_);
+    return base_ + bytes_.size();
+}
+
 // ---------------------------------------------------------------- the reader's
 
 bool SerialTab::release_wanted() { return want_release_; }

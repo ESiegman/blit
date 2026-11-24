@@ -18,6 +18,8 @@
 #   tryopen FILE    the port opened as a flash tool would (pyserial's
 #                   exclusive open, esptool's: the lock taken), "opened" or
 #                   "busy" written to FILE
+#   echo            from now on, what blit writes is written back too (a
+#                   board's console echoing keys: a keystroke's round trip)
 #   quit
 #
 #   tests/fake-serial.py DEV NAME HEARD CTL [IFACE]
@@ -66,6 +68,8 @@ class Port:
         if data:
             with open(heard, "ab") as f:
                 f.write(data)
+            if echo:
+                self.write(data)
 
     def close(self):
         os.unlink(self.link)
@@ -75,6 +79,7 @@ class Port:
         os.close(self.slave)
 
 
+echo = False
 port = Port(name)
 fifo = os.open(ctl, os.O_RDWR | os.O_NONBLOCK)
 pending = b""
@@ -119,5 +124,7 @@ while True:
                 said = "busy"
             with open(arg, "w") as f:
                 f.write(said + "\n")
+        elif verb == "echo":
+            echo = True
         elif verb == "quit":
             sys.exit(0)

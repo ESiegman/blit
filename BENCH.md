@@ -3332,6 +3332,49 @@ A dump's first address in a unit reads that unit's tables (a few
 milliseconds at worst on firmware); the ELF is kept between dumps until
 it changes.
 
+### Round 76: milestone 5b, the lab box's ports through the agent
+
+blit's agent runs itself as a pump for a serial port or a TCP port on the
+machine it is on (`blit-agent --serial`, `--connect`: `src/pump.cpp`,
+agent level 6), started as any program there is, so its bytes ride the
+existing streams and flow control. On AC power (`pmset`: powermode 2),
+the Mac loaded by other sessions' builds (load average 11 to 28), so the
+numbers are within this sitting only. Debug builds with Release's flags
+(`BLIT_OPTIMIZE_DEBUG`, no LTO), `main` at c37c564 against this branch.
+
+A serial tab on `tests/fake-serial.py`'s stand-in board, here and through
+the pump (`tests/fake-ssh.sh`: the "other machine" is this one), five
+runs each, alternating: 40 keys typed one at a time to a board that echoes
+them, each waited for (`serialrtt`, a new measuring verb), and a burst of
+40,000 coloured log lines (2.86 MB) until the last is on the screen:
+
+| | Here | Through the pump |
+|---|---:|---:|
+| A key's round trip, median | 0.13 to 0.20 ms | 0.25 to 0.31 ms |
+| The same, 90th percentile | 0.20 to 0.27 ms | 0.37 to 0.46 ms |
+| The burst | 235 to 246 ms (11.9 MB/s) | 236 to 246 ms |
+
+The burst is the stand-in's own speed either way (Python writing into a
+pseudo-terminal); the pump adds about 0.1 ms to a round trip (two more
+pipes and the agent's framing each way).
+
+Over the real network, this Mac's blit and a stand-in board on the Arch
+lab box (Wi-Fi to the Mac; ICMP ping 5.5 ms at best, 80 ms on average at
+the time): a key's round trip 5.7 to 6.3 ms median (90th percentile 7.9 to
+9.5 ms, one run 54 ms), the ping's best plus well under a millisecond;
+the burst in 142 to 324 ms including the ssh command that starts it (22 to
+218 ms by itself), about 120 ms on its own, some 24 MB/s, two thousand
+times what a 115200-baud board sends. The board itself (the box's ESP32-S3
+on its CH343): its reset through DTR/RTS from here, and its boot log in
+the tab.
+
+The agent's other paths, unchanged (whole runs from starting blit,
+through the stand-in ssh, medians of 5, alternating, each agent copied
+before): opening a 660 KB file 296 ms before and 302 after; every name
+under the SDK's `usr/include` 297 and 291; a word in none of them 313 and
+315. The program grows by the pumps and the forward: the Linux agents
+x86_64 2,720,664 to 2,933,680 bytes, aarch64 2,302,176 to 2,498,808.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
