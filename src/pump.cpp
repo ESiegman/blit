@@ -5,6 +5,7 @@
 #include <netinet/in.h>
 #include <netinet/tcp.h>
 #include <poll.h>
+#include <signal.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -20,6 +21,21 @@
 namespace blit {
 
 namespace {
+
+// Told to end (SIGTERM: the agent ends what blit started when blit has
+// gone; SIGHUP: the tab closed), so that the port is let go of properly
+// first. (A port killed while open stays exclusive while another program
+// still has its tty open, as a pseudo-terminal's other end does.)
+volatile sig_atomic_t told_to_end = 0;
+void on_end_signals() {
+    struct sigaction a {};
+    a.sa_handler = [](int) { told_to_end = 1; };
+    sigemptyset(&a.sa_mask);
+    a.sa_flags = 0;  // (no SA_RESTART: the poll it waits in returns)
+    ::sigaction(SIGTERM, &a, nullptr);
+    ::sigaction(SIGHUP, &a, nullptr);  // (the agent ignores it, and so would this, inherited)
+    ::sigaction(SIGINT, &a, nullptr);
+}
 
 constexpr size_t kBufMost = 256u << 10;  // what waits to go one way, at most, before the other side is read no more
 constexpr u64 kMs = 1'000'000ull;
@@ -136,7 +152,7 @@ public:
         no_wait(1);
         since_ = now_ns();
         char buf[65536];
-        for (;;) {
+        while (!told_to_end) {
             const u64 now = now_ns();
             if (fd_ < 0 && !released_ && now >= next_look_) look(now);
             if (fd_ >= 0) due(now);
@@ -148,7 +164,10 @@ public:
             int wait = 1000;
             if (fd_ < 0 && !released_) wait = static_cast<int>(std::min<u64>(next_look_ > now ? (next_look_ - now) / kMs + 1 : 0, 1000));
             if (fd_ >= 0 && !ops_.empty()) wait = static_cast<int>(std::min<u64>(ops_.front().due > now ? (ops_.front().due - now) / kMs + 1 : 0, 1000));
-            if (::poll(p, 3, wait) < 0 && errno != EINTR) return 1;
+            if (::poll(p, 3, wait) < 0) {
+                if (errno == EINTR) continue;
+                break;
+            }
             if (p[0].revents & (POLLIN | POLLHUP | POLLERR)) {
                 const ssize_t k = ::read(0, buf, sizeof buf);
                 if (k > 0) {
@@ -521,6 +540,7 @@ int pump_serial(int argc, char** argv) {
         say("error", {"blit-agent --serial PATH CONFIG [SERIAL VID:PID IFACE]"});
         return 2;
     }
+    on_end_signals();
     SerialPump p;
     p.id.path = argv[0];
     if (!serial_parse(argv[1], &p.cfg)) {
