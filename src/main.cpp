@@ -44,7 +44,7 @@ void usage() {
 #if BLIT_DEV
         "\n"
         "benchmarks and tests (Debug builds only):\n"
-        "  --bench NAME       startup | scroll | select | jump | hscroll | type | assist | popups | pace | keypress | motionkeys | idle\n"
+        "  --bench NAME       startup | scroll | select | jump | hscroll | type | assist | popups | pace | keypress | motionkeys | idle | term\n"
         "  --frames N         length of the benchmark\n"
         "  --offscreen WxH    render to a texture, no window\n"
         "  --scale S          pixels per point (default: from the display)\n"

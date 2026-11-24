@@ -33,6 +33,7 @@
 #include "picture.h"
 #include "pty.hpp"
 #include "remote.hpp"
+#include "serialtab.hpp"
 #include "term.hpp"
 #include "textbox.hpp"
 #include "utf8.hpp"
@@ -103,6 +104,9 @@ struct TermView {
     std::string command;  // (that command)
     std::string title;    // the tab's name, whatever the program calls itself
     std::string dir;      // the folder it was started in
+    // A serial monitor's (serialtab.hpp): the program is the device on a
+    // port, whose descriptor `in` and `out` are while it is open.
+    std::shared_ptr<SerialTab> serial;
     // A build's: its output read for problems, on the reader's thread, and
     // what that found, for the main thread to take (term_sync).
     std::unique_ptr<BuildScan> scan;
@@ -167,7 +171,8 @@ struct TermView {
         if (reader.joinable()) reader.join();
         if (conn && proc.id) conn->kill(proc.id, SIGHUP);  // (started meanwhile)
         if (in >= 0 && in != out) ::close(in);
-        if (out >= 0) ::close(out);
+        if (out >= 0 && serial) serial_close(out);  // (its hold on the port let go of: serial.hpp)
+        else if (out >= 0) ::close(out);
         if (pty.pid > 0 && !ended) {  // (not one the reader has seen end and reaped)
             int st = 0;
             if (::waitpid(pty.pid, &st, WNOHANG) == 0) {
@@ -271,8 +276,77 @@ struct TermView {
         scan_news = true;
     }
 
+    // A serial port's: opened by the tab (and opened again after a hang-up
+    // or a release for flashing, which it waits for), read here; what it
+    // sends kept and drawn by the tab, and what was asked of its lines done
+    // here, between reads. Nothing ends it but the tab closing.
+    void serial_loop(std::stop_token stop) {
+        SerialTab& s = *serial;
+        char buf[65536];
+        while (!stop.stop_requested()) {
+            if (out < 0) {
+                const int fd = s.open_wait(stop);
+                if (fd < 0) return;
+                std::lock_guard lock(out_mu);
+                backlog.clear();
+                backlog_at = 0;
+                backed = false;
+                out = fd;
+                in = fd;
+                continue;
+            }
+            const bool backed_up = backed.load();
+            pollfd p[2] = {{out, static_cast<short>(POLLIN | (backed_up ? POLLOUT : 0)), 0}, {s.wake_fd(), POLLIN, 0}};
+            const int r = ::poll(p, 2, s.wait_ms(100));
+            if (r < 0 && errno != EINTR) {
+                port_gone(std::strerror(errno));
+                continue;
+            }
+            if (r > 0 && (p[1].revents & POLLIN)) s.drain();
+            s.run_ops(out);
+            if (s.release_wanted()) {
+                port_gone(SerialTab::kReleasedWhy);
+                continue;
+            }
+            if (r <= 0) continue;
+            if (backed_up && (p[0].revents & (POLLOUT | POLLERR))) flush_backlog();
+            if (p[0].revents & POLLIN) {
+                const ssize_t k = ::read(out, buf, sizeof buf);
+                if (k > 0) {
+                    // (The tab's recogniser of lines, the crash decoder's
+                    // place, is fed here too, on this thread: SerialTab::set_scan.)
+                    const std::string reply = s.take(buf, static_cast<size_t>(k), SerialTab::wall_ns());
+                    if (!reply.empty()) send(reply);  // (the Term's answers: where the cursor is, what terminal this is)
+                    if (!told.exchange(true)) wake();
+                    continue;
+                }
+                if (k < 0 && (errno == EAGAIN || errno == EINTR)) continue;
+                port_gone(k == 0 || errno == EIO || errno == ENXIO || errno == ENODEV ? "hung up" : std::strerror(errno));
+            } else if (p[0].revents & (POLLHUP | POLLERR | POLLNVAL)) {
+                port_gone("hung up");
+            }
+        }
+    }
+
+    // The port closed (it hung up, or is let go of): nothing more is written
+    // to it, and the tab waits for it to come back.
+    void port_gone(const char* why) {
+        {
+            std::lock_guard lock(out_mu);
+            in = -1;
+            serial_close(out);
+            out = -1;
+            backlog.clear();
+            backlog_at = 0;
+            backed = false;
+        }
+        serial->lost(why, SerialTab::wall_ns());
+        if (!told.exchange(true)) wake();
+    }
+
     // What the program writes, onto the screen; what the screen answers, back to it.
     void read_loop(std::stop_token stop) {
+        if (serial) return serial_loop(stop);
         if (!remote_dir.empty() && !start_remote(stop)) {
             status = 1;
             unstarted = true;
@@ -375,9 +449,9 @@ struct TermView {
     std::atomic<bool> backed{false};
 
     void send(std::string_view s) {
+        std::lock_guard lock(out_mu);  // (first: a serial port may be closed meanwhile, under it)
         const int fd = in;
         if (fd < 0 || ended) return;
-        std::lock_guard lock(out_mu);
         if (backlog_at < backlog.size()) {  // (what is waiting goes first)
             backlog.append(s);
             return;
@@ -601,6 +675,69 @@ u64 App::term_open(const std::string& dir_given, const std::string& command, con
     return d->id;
 }
 
+// A serial monitor's tab (serialtab.hpp), in the terminals' split with the
+// keyboard on it: the device on the port, at that speed and framing, Return
+// sending `ret`.
+u64 App::term_open_serial(const SerialPortId& id, const SerialConfig& cfg, SerialReturn ret) {
+    auto v = std::make_shared<TermView>();
+    const std::string* root = panel_root();
+    v->dir = root ? *root : default_workdir();  // (Cmd+click on a place the device prints: from the project)
+    v->started_ns = now_ns();
+    v->serial = std::make_shared<SerialTab>(id, cfg, ret, v->mu, v->term);
+    TermView* raw = v.get();
+    v->serial->told = [raw] {
+        if (!raw->told.exchange(true)) wake();
+    };
+    static const bool reader = (Term::set_picture_reader(read_picture), true);
+    (void)reader;
+    v->gpu = &gpu_;
+    {
+        std::lock_guard lock(v->mu);
+        v->term.resize(80, 24);
+        v->term.set_cell_px(static_cast<u32>(font_->cell_w()), static_cast<u32>(font_->cell_h()));
+    }
+    v->reader = std::jthread([raw](std::stop_token stop) { raw->read_loop(stop); });
+    Pane* const from = pane_;
+    Pane* into = dock_show(from);
+    if (!into) into = from;
+    if (into != from && from != dock_pane()) term_dock().back = from->id;
+    pane_ = into;
+    const size_t at = std::min(into->tab + 1, into->docs.size());
+    Doc* d = add_doc(at);
+    d->title = v->serial->title();
+    d->read_only = true;
+    d->term = v;
+    tab_show(at);
+    pane_ = from;
+    focus_pane(into);
+    panel_focus(false);
+    if (into == dock_pane()) term_dock().term = d->id;
+    dirty_ = true;
+    return d->id;
+}
+
+std::shared_ptr<SerialTab> App::term_serial(const Doc& d) { return d.term ? d.term->serial : nullptr; }
+
+// Every serial monitor's tab, hidden ones too.
+std::vector<std::pair<Doc*, std::shared_ptr<SerialTab>>> App::term_serials() {
+    std::vector<std::pair<Doc*, std::shared_ptr<SerialTab>>> out;
+    auto look = [&](const Pane& p) {
+        for (const std::shared_ptr<Doc>& d : p.docs)
+            if (d->term && d->term->serial) out.emplace_back(d.get(), d->term->serial);
+    };
+    for (const std::unique_ptr<Pane>& p : panes_) look(*p);
+    if (dock_ && dock_->away) look(*dock_->away);
+    return out;
+}
+
+// Bytes to a terminal's program (a serial tab's device: a file sent to it),
+// as typing goes: what it takes now, the rest as it can.
+void App::term_send(const Doc& d, std::string_view bytes) {
+    if (!d.term) return;
+    d.term->scroll = 0;
+    d.term->send(bytes);
+}
+
 // The program has written something, or ended: its tab draws again; one
 // whose shell has ended goes (or says how it ended, if that was not well).
 // The terminals of the hidden split too.
@@ -613,6 +750,11 @@ void App::term_sync() {
             if (!d.term) continue;
             TermView& v = *d.term;
             v.told = false;
+            if (v.serial) {  // (a serial monitor's: named for its port and speed, and what its port's reader has to say)
+                for (auto& [text, level] : v.serial->take_news()) notify(text, level);
+                if (std::string t = v.serial->title(); d.title != t) d.title = std::move(t);
+                continue;
+            }
             if (!v.waiting.empty()) py_flush(v);  // (the console may take what was sent to it now)
             if (v.scan && v.scan_news.exchange(false)) {  // problems the build reported (before it is seen to end: the last ones count)
                 std::vector<BuildProblem> found;
@@ -1352,7 +1494,16 @@ void App::term_paste(TermView& v) {
     }
     if (text.empty()) return;
     std::string out;
-    for (const char c : text) out += c == '\n' ? '\r' : c;  // (a terminal sends Return)
+    if (v.serial) {  // (a line's end as Return sends it to the port: CR, LF or both)
+        const std::string ret = v.serial->return_bytes();
+        for (size_t i = 0; i < text.size(); ++i) {
+            if (text[i] == '\r' && i + 1 < text.size() && text[i + 1] == '\n') continue;
+            if (text[i] == '\n' || text[i] == '\r') out += ret;
+            else out += text[i];
+        }
+    } else {
+        for (const char c : text) out += c == '\n' ? '\r' : c;  // (a terminal sends Return)
+    }
     bool bracketed;
     {
         std::lock_guard lock(v.mu);
@@ -1386,6 +1537,13 @@ bool App::term_key(const SDL_KeyboardEvent& k) {
             v.selected = true;
             v.sel_line0 = 0, v.sel_col0 = 0;
             v.sel_line1 = v.term.history() + v.term.rows() - 1, v.sel_col1 = v.term.cols();
+            dirty_ = true;
+            return true;
+        }
+        if (k.key == SDLK_K && v.serial) {  // a serial tab's: what came goes (the device is not sent Ctrl+L)
+            v.serial->clear();
+            v.scroll = 0;
+            v.selected = false;
             dirty_ = true;
             return true;
         }
@@ -1424,7 +1582,7 @@ bool App::term_key(const SDL_KeyboardEvent& k) {
     std::string s;
     switch (k.key) {
         case SDLK_RETURN:
-        case SDLK_KP_ENTER: s = alt ? "\x1b\r" : "\r"; break;
+        case SDLK_KP_ENTER: s = alt ? "\x1b\r" : v.serial ? v.serial->return_bytes() : "\r"; break;  // (a serial tab's: CR, LF or both, as chosen)
         case SDLK_BACKSPACE: s = ctrl ? "\x08" : alt ? "\x1b\x7f" : "\x7f"; break;
         case SDLK_TAB:
             if (ctrl) return false;  // (the editor's: the next tab)

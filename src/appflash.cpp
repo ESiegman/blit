@@ -255,13 +255,17 @@ void App::flash_sync() {
         if (it != u.flashed.end() && it->second == p->key)
             return build_note(p->row, p->task.kind == "program" ? "Not programmed: unchanged since the last flash" : "Not flashed: unchanged since the last flash");
     }
+    // (Serial tabs on the board's port let go of it while the tool runs, and have it back once it has ended: appserial.cpp.)
+    if (const BuildTask* c = board_config()) serial_release(c->board);
     const u64 doc = build_run_on(p->row, build_root(), p->task);
+    if (!doc) serial_reclaim();
     if (!doc) return notify("Cannot run " + p->task.name, 1);
     u.run = {doc, p->board, p->key, p->keep};
 }
 
 void App::flash_ended(u64 doc, bool well) {
     if (!flashui_ || flashui_->run.doc != doc || !doc) return;
+    serial_reclaim();  // (the serial tabs let go of for it: appserial.cpp)
     FlashUi& u = *flashui_;
     if (u.run.keep) {
         if (well) u.flashed[u.run.board] = u.run.key;

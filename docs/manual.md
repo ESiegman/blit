@@ -3484,6 +3484,80 @@ esp-idf-monitor), which decodes its own, has no lines added, and a
 program whose own decoded lines are seen after a dump has none added to
 the dumps after; the problems are still added.
 
+### The serial monitor
+
+A serial port is a terminal tab whose program is the device: what the
+board sends is drawn as a terminal draws it (ANSI colours, Cmd+click on a
+`file:line`, Cmd+F, Shift+Page Up into the history, "Open the terminal's
+lines as text"), and what you type goes to the board. It opens in the
+terminals' split along the bottom, with the keyboard on it. blit opens
+the port itself, through termios, on both systems; no monitor program is
+run.
+
+- **"Open a serial port…"** lists the ports of the USB devices plugged
+  in, named as the probe picker names them, with their serial numbers
+  (`cu.usbmodem1101  Pico SDK USB serial (RP2040) (Pico)
+  A58565170D696C53`). On Linux each row ends with its
+  `/dev/serial/by-id` name, which the tab opens it by. A port already
+  open in a tab says `(open)`, and Enter on it shows that tab. A path
+  typed (`/dev/ttyAMA0`) opens that port.
+- **"Open the board's serial monitor"** opens the port of the board of
+  the run configuration the Run button runs (`serial.port`, else the
+  port of the device with the probe's serial number), at `serial.baud`,
+  in one step; a second time, it shows the tab it opened.
+
+The tab is named for its port and speed (`cu.usbmodem1101 115200`;
+`ttyACM0 230400 8E1` when the framing is not 8N1), and says `(opening)`,
+`(gone)` or `(released)` while the port is not open. A line from the
+board ending in LF alone starts a new line, as CR LF does; CR alone goes
+back along the line (a count written over itself). The port is opened
+for blit alone: another program that opens it (esptool, a second
+monitor) is refused, and a port another program has is said on the tab
+(`[ttyACM0 is in use by another program, trying again]`) and tried again
+until it is free. A port the user may not open says which group owns it
+(`it belongs to the uucp group, and eren is not in it`).
+
+**Resets and flashing.** When the board leaves USB (a reset, a flash, a
+cable pulled) the tab stays, says `[gone at 14:02:03.120 (hung up);
+waiting for A58565170D696C53]`, and waits for a device with the same
+serial number (and the same interface) to come back, at whatever path it
+comes back at, then opens it again; that line becomes `[gone from
+14:02:03.120 to 14:02:05.880, 2.8 s (hung up)]`. "Flash the board" lets
+go of the board's port (by its probe's serial number, or its port) before
+the flash tool starts, so the tool can open it, and opens it again when
+the tool has ended (`[released for flashing from ... to ..., 6.3 s]`).
+
+**Commands** (Command search; they act on the serial tab in front, else
+the one on show, else the only one open):
+
+| Command | |
+|---|---|
+| Change the port's speed and framing… | the speed (74880 typed, or any other), the framing (`8N1`, `8E1`, `7E1`, ...) and flow control (none, RTS/CTS, XON/XOFF); `115200 8E1` typed sets both |
+| Change what Return sends to the port… | CR (a terminal's own), LF, or CR LF, for this tab; a paste's line ends are sent the same way |
+| Show or hide the serial port's times | the host's time before each line (`14:02:03.120`), taken as the line's first byte came, so turning it on shows the times of what came before too |
+| Show the serial port's bytes as hex, or as text | the same bytes as hex rows (16 a row, 8 in a narrow tab, a row ending at the line's LF), with the place and the bytes as text after each |
+| Log the serial port to a file… | from now on, each line with its date and time before it (`2026-11-23 14:02:03.120 tick 5`), and the gaps' lines; "Stop logging the serial port" ends it |
+| Send a file to the serial port… | the file's bytes, raw, as fast as the port takes them |
+| Turn the port's DTR on or off, Turn the port's RTS on or off | the modem lines (both on when a port opens); set again when the port comes back |
+| Reset the board through DTR/RTS (ESP32) | both off, then RTS on with DTR off (EN low, IO0 high) for 0.2 s, then RTS off: esptool's hard reset, through a bridge's transistors (a CH343, a CP2102) or the ESP32-S3's USB-Serial/JTAG |
+| Reset the board through DTR (Arduino) | DTR and RTS off for 0.25 s, then on: the auto-reset capacitor's edge, as avrdude makes it |
+| Send a break to the serial port | a break condition |
+
+Cmd+K clears the tab and what it keeps (the board is sent nothing). The
+tab keeps the last 8 MB the board sent, with when each part came, which
+is what times and hex draw from; Cmd+F never sends what you type in the
+box to the board. There is no default key for any of these.
+
+**Settings:** `blit.opt.serial.baud` (115200: the speed when the board's
+configuration gives none) and `blit.opt.serial.line_end` (`"cr"`, `"lf"`
+or `"crlf"`: what Return sends in a new tab).
+
+**Limits:** serial ports here only: on a project on another machine the
+board's port there is not reachable yet (blit says so); USB serial ports
+are listed, other ports (a Pi's `/dev/ttyAMA0`) are opened by typing
+their path, and such a port, having no serial number, is waited for at
+its path after a hang-up.
+
 ## Tests
 
 The side panel's **Tests** tab lists the project's tests, found on a

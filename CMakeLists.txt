@@ -337,6 +337,12 @@ target_sources(blit PRIVATE src/appvalidusage.cpp)
 target_sources(blit PRIVATE src/notify.cpp)
 # The probe and port picker, and the board object on a run configuration.
 target_sources(blit PRIVATE src/probes.cpp src/appprobe.cpp)
+# Serial monitors: a terminal tab whose program is the device on a port,
+# through termios (serial.cpp: plain POSIX, for the agent too).
+target_sources(blit PRIVATE src/serial.cpp src/serialtab.cpp src/appserial.cpp)
+if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+  target_sources(blit PRIVATE src/serial_linux.cpp)
+endif()
 # Flashing the board and programming an FPGA, and the Boards view.
 target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp)
 # Crash dumps in a run's output, decoded against its ELF.
@@ -498,6 +504,8 @@ if(BLIT_DEV)
     add_test(NAME probes COMMAND sh ${CMAKE_SOURCE_DIR}/tests/probes.sh $<TARGET_FILE:blit>)
     # Flashing: each tool's command line, its progress, only if changed, the chord, the Boards view, here and on another machine.
     add_test(NAME flash COMMAND sh ${CMAKE_SOURCE_DIR}/tests/flash.sh $<TARGET_FILE:blit>)
+    # Serial monitor tabs, on a pseudo-terminal standing in for a board: what comes and goes, times, hex, a reset's gap, flashing, the picker.
+    add_test(NAME serial COMMAND sh ${CMAKE_SOURCE_DIR}/tests/serial.sh $<TARGET_FILE:blit>)
     # The project's Python: found for each project and subproject, and what takes it.
     add_test(NAME python COMMAND sh ${CMAKE_SOURCE_DIR}/tests/python.sh $<TARGET_FILE:blit>)
     # Characters of more than one code point (marks, emoji sequences, flags) and of other widths.
