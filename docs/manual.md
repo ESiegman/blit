@@ -3887,7 +3887,9 @@ board's ELF, their crashes in Problems under the tab's heading.
   install defmt-print`; its JSON is schema 1), and each log is drawn as
   a line: the target's timestamp, the level in its colour (as defmt
   colours it: trace grey, debug white, info green, warn yellow, error
-  red), the message, and its place, dim, a Cmd+click place. In that tab
+  red), the message, and its place, dim, a Cmd+click place. defmt-print
+  is looked for on the PATH, then where `cargo install` puts it
+  (`$CARGO_HOME/bin`, else `~/.cargo/bin`). In that tab
   the keys `1` to `5` show trace and up, debug and up, info and up, warn
   and up, or errors alone; the logs hidden are kept, and come back. A
   `defmt-print` missing or ending (a defmt version it does not read) is
@@ -3902,15 +3904,26 @@ board's ELF, their crashes in Problems under the tab's heading.
 ```
 
 F5 (or "Attach to the running board") then tells the preset's server to
-serve them, and opens the tabs before the debugger starts:
+serve them, and opens the tabs before the debugger starts. Each server
+a tool is told to start is on a port no one listens on, chosen as the
+session starts, so that two boards at once (or another program on
+J-Link's 19021) are not in each other's way; a board's `port` puts
+channel *n* on `port` + *n* instead, and `semihosting.port` its
+semihosting.
+
+**An ST-LINK board** names no preset of its own and is debugged through
+probe-rs; with `rtt` or `semihosting` on, it is debugged through
+`openocd` instead (`interface/stlink.cfg` and the chip's target script),
+which serves them while gdb debugs. A `"debug": "probe-rs"` written in
+the board is kept, and the session says RTT cannot run beside it.
 
 | Preset | RTT | Semihosting |
 |---|---|---|
-| `openocd` | its Tcl port opened on a free port; blit sets RTT up there at the ELF's `_SEGGER_RTT` (`rtt setup`), starts it again every 0.3 s until the program has made its control block (`rtt start` looks once), lists the channels and starts a server for each (`rtt server start`, channel *n* on `port` + *n*), and a tab connects to each | `arm semihosting enable` and `arm semihosting_redirect tcp PORT stdio` once attached; the tab connects to `port` |
+| `openocd` | its Tcl port opened on a free port; blit sets RTT up there at the ELF's `_SEGGER_RTT` (`rtt setup`), starts it again every 0.3 s until the program has made its control block (`rtt start` looks once), lists the channels and starts a server for each (`rtt server start`), and a tab connects to each | `arm semihosting enable` and `arm semihosting_redirect tcp PORT stdio` once attached, and the tab connects there |
 | `pyocd` | a config file for its gdb server (`--config`) with the control block and a server per channel in `channels` (pyOCD looks for the block itself while the board runs) | `-S`, its console on the telnet port (the gdb port + 1) |
-| `jlink` | `-RTTTelnetPort` (19021); `monitor exec SetRTTAddr` at the ELF's block; a tab per channel in `channels`, a channel other than 0 chosen by J-Link's config string as the tab connects | `monitor semihosting enable` and `monitor semihosting IOClient 1`, its output on the telnet port (the gdb port + 2) |
+| `jlink` | `-RTTTelnetPort` on a free port (its own 19021 is left alone); `monitor exec SetRTTAddr` at the ELF's block; a tab per channel in `channels`, a channel other than 0 chosen by J-Link's config string as the tab connects | `monitor semihosting enable` and `monitor semihosting IOClient 1`, its output on the telnet port (the gdb port + 2) |
 | `qemu` | none (QEMU has no RTT) | QEMU runs beside gdb with semihosting its own, its output in a file the tab reads as it grows (QEMU sends a `SYS_WRITE` to `:tt` to its own stdout alone) |
-| `probe-rs` | none: its gdb server has neither, and one probe-rs at a time has the probe; said as the session starts | none |
+| `probe-rs` (named in the board) | none: its gdb server has neither, and one probe-rs at a time has the probe; said as the session starts | none |
 
 `address` gives the control block's address where the ELF has no
 `_SEGGER_RTT`; `channels` the up-channels a tool that does not list them
@@ -3919,9 +3932,9 @@ one named `defmt`) a defmt tab, or not, whatever the ELF has;
 `semihosting.defmt` makes the board's output defmt's frames
 (defmt-semihosting). The tabs stay when the session ends: each says it
 is waiting (`RTT 0: Terminal (waiting)`, and a dim last line, `[gone at
-14:02:03.120 (closed by the other end); trying 127.0.0.1:19021]`), and
+14:02:03.120 (closed by the other end); trying 127.0.0.1:52817]`), and
 takes up again, one line marking the gap, when the next session serves
-the same port.
+it (at the ports that session chose).
 
 **On their own.** "Open the board's RTT" starts the preset's tool for RTT
 alone, for a board that runs, not halted and not reset: OpenOCD with its
