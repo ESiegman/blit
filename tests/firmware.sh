@@ -200,11 +200,20 @@ check "not ESP-IDF's: CMake's" "CMake: >Build Configure Test"
 
 # pio where PlatformIO's installer puts it, not on the PATH; the
 # raspberrypi platform installed, with the Pico's manifest (its firmware
-# reset by a 1200 baud touch, as Arduino's core for it needs).
+# reset by a 1200 baud touch, as Arduino's core for it needs). (A machine
+# with a pio of its own on the PATH, which blit rightly takes first: the
+# stand-in goes before it on the PATH instead, and the cases of PlatformIO's
+# own place, and of none at all, cannot be had there.)
 PIO="$HOME/.platformio"
-mkdir -p "$PIO/penv/bin" "$PIO/platforms/raspberrypi/boards"
-printf '#!/bin/sh\necho "pio $*"\n' >"$PIO/penv/bin/pio"
-chmod +x "$PIO/penv/bin/pio"
+penv="$PIO/penv/bin"
+real_pio=$(PATH=${PATH#"$B:"} command -v pio || PATH=${PATH#"$B:"} command -v platformio)
+if [ -n "$real_pio" ]; then
+    echo "SKIP: firmware.sh's cases of ~/.platformio/penv/bin, and of no pio, need no pio on the PATH ($real_pio is)"
+    penv="$B"
+fi
+mkdir -p "$penv" "$PIO/platforms/raspberrypi/boards"
+printf '#!/bin/sh\necho "pio $*"\n' >"$penv/pio"
+chmod +x "$penv/pio"
 printf '{ "build": { "mcu": "rp2040" }, "upload": { "use_1200bps_touch": true, "wait_for_upload_port": true } }\n' >"$PIO/platforms/raspberrypi/boards/pico.json"
 F="$dir/fw"
 mkdir -p "$F/src" "$F/test"
@@ -241,7 +250,7 @@ check "PlatformIO: each env's tasks, default_envs first, its Build the Run butto
 run "$F" "buildpanel;builddump:rows"
 check "rows: an RP2040's upload blit's picotool, others PlatformIO's; speeds through [env] and an env's own" "Build (pico2): pio run -e pico2 | Upload (pico2): flash · pio run -e pico2 -t upload | Monitor (pico2): serial port at 115200 baud | Test (pico2): pio test -e pico2 | Clean (pico2): pio run -e pico2 -t clean | Compile database (pico2): pio run -e pico2 -t compiledb | Build (pico): pio run -e pico | Upload (pico): flash · picotool .pio/build/pico/firmware.elf | Monitor (pico): serial port at 115200 baud | Test (pico): pio test -e pico | Clean (pico): pio run -e pico -t clean | Compile database (pico): pio run -e pico -t compiledb | Build (s3): pio run -e s3 | Upload (s3): flash · pio run -e s3 -t upload | Monitor (s3): serial port at 74880 baud | Test (s3): pio test -e s3 | Clean (s3): pio run -e s3 -t clean | Compile database (s3): pio run -e s3 -t compiledb"
 run "$F" "buildrun:Build (pico);buildwait;builddump:text"
-check "pio run, from ~/.platformio/penv/bin" "|pio run -e pico|[done in T]"
+check "pio run, from ~/.platformio/penv/bin (or the stand-in on the PATH)" "|pio run -e pico|[done in T]"
 
 # The Pico, plugged in (a stand-in), running Arduino's core: Upload builds,
 # finds its port, resets it into BOOTSEL with a 1200 baud touch, then
@@ -285,9 +294,11 @@ check "no port of its chip's: said" "blit: No serial port of an RP2040's is plug
 export BLIT_USB_ROOT="$dir/nousb" BLIT_USB_DEV="$dir/nousb"
 
 # No pio anywhere: said, on its rows and when run.
-mv "$PIO/penv" "$dir/penv-away"
-run "$F" "buildrun:Build (pico);buildwait"
-check "no PlatformIO: said, and where it was looked for" "blit: PlatformIO is not installed on $machine (no pio on the PATH, nor in ~/.platformio/penv/bin)"
-mv "$dir/penv-away" "$PIO/penv"
+if [ -z "$real_pio" ]; then
+    mv "$PIO/penv" "$dir/penv-away"
+    run "$F" "buildrun:Build (pico);buildwait"
+    check "no PlatformIO: said, and where it was looked for" "blit: PlatformIO is not installed on $machine (no pio on the PATH, nor in ~/.platformio/penv/bin)"
+    mv "$dir/penv-away" "$PIO/penv"
+fi
 
 exit $failed

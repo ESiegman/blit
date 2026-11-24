@@ -69,7 +69,13 @@ struct App::FirmwareUi {
 BuildTask App::firmware_board(const BuildTask& task) {
     BuildTask c = task;
     const BuildTask* user = board_config();  // (the Run button's run configuration if it has a board, else the first that has one)
-    if (!user || !user->config) return c;
+    if (!user || !user->config) {
+        // (The port chosen for its Monitor, from several: its Flash's too,
+        // so that a serial tab on it lets go of it for the flash.)
+        if (c.board.port.empty() && c.board.probe.empty() && firmwareui_)
+            if (const auto it = firmwareui_->chosen.find(build_root()); it != firmwareui_->chosen.end()) c.board.port = it->second;
+        return c;
+    }
     Board b = user->board;  // (its word first)
     const Board& own = task.board;
     if (b.elf.empty()) b.elf = own.elf;
@@ -90,13 +96,11 @@ void App::firmware_monitor(const BuildTask& task) {
     if (split_remote(root, &host, &there)) return notify(c.firmware + "'s board is on " + host + ": a serial port there cannot be opened from here yet", 1);
     if (!firmwareui_) firmwareui_ = std::make_shared<FirmwareUi>();
     FirmwareUi& u = *firmwareui_;
-    // Its port, as SerialTab::is takes it: its own, else the probe's serial
-    // number (its first port), else the one chosen before.
+    // Its port, as SerialTab::is takes it: its own (or the one chosen
+    // before: firmware_board), else the probe's serial number (its first port).
     SerialPortId id;
     id.path = c.board.port;
     if (id.path.empty()) id.serial = c.board.probe;
-    if (id.path.empty() && id.serial.empty())
-        if (const auto it = u.chosen.find(root); it != u.chosen.end()) id.path = it->second;
     if (id.path.empty() && id.serial.empty()) {  // (looked for among those plugged in: a worker's)
         if (u.busy) return;
         if (u.worker.joinable()) u.worker.join();
