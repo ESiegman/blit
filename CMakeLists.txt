@@ -204,6 +204,8 @@ target_link_libraries(blit_core PUBLIC Threads::Threads)
 # Timelines and waveforms: lanes of changes, and dumps read into them
 # (knowing no window, so that the agent can carry them later).
 target_sources(blit_core PRIVATE src/timeline.cpp src/wave.cpp src/waveila.cpp)
+# ELF files and address to source from their DWARF (also knowing no window).
+target_sources(blit_core PRIVATE src/elf.cpp src/addrsrc.cpp)
 # FST dumps are read through libfst (third_party/libfst, at the commit its
 # config.h names), compiled as C, as src/agent/build.sh compiles it for the
 # Linux agents, with zlib. Optimized in every build, and kept out of
@@ -419,6 +421,9 @@ if(BLIT_DEV)
   # The timeline model and the VCD reader, against real dumps (tests/wave.sh).
   add_executable(blit_timeline_test tests/timeline_test.cpp)
   target_link_libraries(blit_timeline_test PRIVATE blit_core)
+  # The ELF reader and address to source, against addr2line (tests/elf.sh).
+  add_executable(blit_elf_test tests/elf_test.cpp)
+  target_link_libraries(blit_elf_test PRIVATE blit_core)
 
   enable_testing()
   add_test(NAME fuzz COMMAND blit_fuzz 100 600)
@@ -496,6 +501,8 @@ if(BLIT_DEV)
     add_test(NAME wave COMMAND sh ${CMAKE_SOURCE_DIR}/tests/wave.sh $<TARGET_FILE:blit>)
     # The wave tab: a dump's waves, its keys, radixes, markers, groups, the view kept, its tiles' pixels.
     add_test(NAME wavetab COMMAND sh ${CMAKE_SOURCE_DIR}/tests/wavetab.sh $<TARGET_FILE:blit>)
+    # The ELF reader and address to source against addr2line (tests/elf.sh).
+    add_test(NAME elf COMMAND sh ${CMAKE_SOURCE_DIR}/tests/elf.sh $<TARGET_FILE:blit>)
     # Every suite sees the dark appearance, whatever the machine is set to
     # (GitHub's machines are light), and the cell macOS's own font has at
     # 13 pt (16 x 31 pixels at twice the density), whatever fonts the
