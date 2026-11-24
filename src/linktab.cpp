@@ -7,6 +7,7 @@
 #include <unistd.h>
 
 #include <cerrno>
+#include <cstdlib>
 #include <chrono>
 #include <cstring>
 #include <thread>
@@ -19,6 +20,17 @@ namespace blit {
 namespace {
 
 constexpr size_t kRecordsMost = 200'000;  // defmt's records kept, at most (the oldest go)
+
+// defmt-print where cargo installs it, when it is not on the PATH:
+// $CARGO_HOME/bin, else ~/.cargo/bin ("" when it is in neither).
+std::string cargo_defmt_print() {
+    std::string dir;
+    if (const char* c = std::getenv("CARGO_HOME"); c && *c) dir = c;
+    else if (const char* h = std::getenv("HOME"); h && *h) dir = std::string(h) + "/.cargo";
+    if (dir.empty()) return {};
+    const std::string path = dir + "/bin/defmt-print";
+    return ::access(path.c_str(), X_OK) == 0 ? path : std::string();
+}
 
 }  // namespace
 
@@ -69,8 +81,10 @@ void LinkTab::start() {
     if (spec_.plan.defmt) {
         std::string why;
         defmt_ = spawn_piped({"defmt-print", "-e", spec_.elf, "--json", "stdin"}, spec_.dir, true, true, true, &why);
+        if (const std::string cargo = defmt_.pid < 0 ? cargo_defmt_print() : std::string(); !cargo.empty())
+            defmt_ = spawn_piped({cargo, "-e", spec_.elf, "--json", "stdin"}, spec_.dir, true, true, true, &why);
         if (defmt_.pid < 0) {
-            if (why.find("is not installed") != std::string::npos) why += " (cargo install defmt-print)";
+            if (why.find("is not installed") != std::string::npos) why += " (nor in ~/.cargo/bin: cargo install defmt-print)";
             std::lock_guard lock(mu_);
             say(why, 1);
             note("[" + why + "]", wall_ns());

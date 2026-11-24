@@ -31,10 +31,18 @@ for d in $(printf '%s' "$PATH" | tr ':' ' '); do
         [ -z "$gdb" ] && [ -x "$d/$g" ] && [ "$("$d/$g" -q -batch -ex 'python print(41 + 1)' 2>/dev/null)" = 42 ] && gdb="$d/$g"
     done
 done
+# (defmt-print: on the PATH, else where cargo installs it, ~/.cargo/bin.)
+defmt=$(command -v defmt-print || { [ -x "$real_home/.cargo/bin/defmt-print" ] && echo "$real_home/.cargo/bin/defmt-print"; })
 export BLIT_INIT="$dir/init.lua" BLIT_RECENT_FILE="$dir/recent" HOME="$dir/home"
 LOG="$dir/log" P="$dir/fw" B="$dir/bin"
 export FAKE_RTT_LOG="$LOG"
 mkdir -p "$HOME" "$P/.blit" "$B"
+# (Linked into the test's ~/.cargo/bin: where it is not on the PATH, as
+# cargo leaves it, blit finds it there.)
+if [ -n "$defmt" ]; then
+    mkdir -p "$HOME/.cargo/bin"
+    ln -s "$defmt" "$HOME/.cargo/bin/defmt-print"
+fi
 case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
 # (Ports of this run's own: two runs at once do not meet.)
 base=$((30000 + $$ % 15000 * 2))
@@ -177,7 +185,7 @@ else
 
     # defmt over RTT: a channel named "defmt", an ELF with .defmt (the
     # frames tests/rtt/defmt-qemu.elf wrote, its block's address given).
-    if command -v defmt-print >/dev/null 2>&1; then
+    if [ -n "$defmt" ]; then
         mkdir -p "$P/src"
         cp "$here/rtt/defmt-qemu.elf" "$P/defmt.elf"
         cp "$here/rtt/defmt-qemu/src/main.rs" "$P/src/"
@@ -185,7 +193,7 @@ else
         export FAKE_RTT_FRAMES="$here/rtt/defmt-qemu.frames"
         path="$B:$PATH" size=2000x1400 lines=2 run "command:Open the board's RTT;rttwait:records 6;rttdump;key:ctrl+\`;text:\`;frame;termdump"
         got=$(printf '%s' "$got" | sed -E -e 's/ \| driver fw done tries [0-9]+ opens 1//' -e 's/^RTT 0: Terminal: [^|]*\| //')
-        check "defmt over RTT: the defmt channel through defmt-print, a record a line" \
+        check "defmt over RTT: the defmt channel through defmt-print (on the PATH, or in ~/.cargo/bin), a record a line" \
             "RTT 1: defmt: open rtt 1 port $((p + 1)) of fw kept 423 gaps 0 opens 1 defmt from TRACE records 6 ~ 0.000000 TRACE clock tree set up  ./src/main.rs:22|0.000125 DEBUG adc offset -12  ./src/main.rs:23|0.000250 INFO  motor controller ready, 3 phases  ./src/main.rs:24|0.000375 WARN  supply at 3.05 V, below 3.2  ./src/main.rs:25|0.000500 ERROR over-current on phase 2: 1840 mA  ./src/main.rs:26|0.000625 done  ./src/main.rs:27 @6,0 11x124"
         unset FAKE_RTT_FRAMES
         logged "^tcl rtt setup"
@@ -311,7 +319,6 @@ else
     qrun "key:F5;debugwait:stopped;key:F5;rttwait:kept 180;key:shift+F5;debugwait:idle;key:F5;debugwait:stopped;key:F5;rttwait:gaps 1;rttwait:kept 360;rttdump"
     check "F5 again: the same tab, the next run after a line marking the gap" "Board output: open semihosting file of fw kept 360 gaps 1"
 
-    defmt=$(command -v defmt-print)
     if [ -z "$defmt" ]; then
         echo "SKIP: rtt.sh's defmt cases need defmt-print (cargo install defmt-print)"
     else
@@ -333,8 +340,10 @@ else
         check "Cmd+click on a place opens it" "src/main.rs | Ln 26, Col 1 Spaces: 4"
         mkdir -p "$dir/nodefmt"
         for t in qemu-system-arm "$gdb"; do ln -sf "$(command -v "$t" || echo "$t")" "$dir/nodefmt/"; done
-        size=2000x1400 open=src/main.rs path="$dir/nodefmt:/usr/bin:/bin" qrun "key:F5;debugwait:stopped;key:ctrl+\`;text:\`;frame;termdump"
-        check "no defmt-print: said in the tab, and how to have it" "[defmt-print is not installed on $this (cargo install defmt-print)] @1,0 11x89"
+        rm "$HOME/.cargo/bin/defmt-print"
+        size=2400x1400 open=src/main.rs path="$dir/nodefmt:/usr/bin:/bin" qrun "key:F5;debugwait:stopped;key:ctrl+\`;text:\`;frame;termdump"
+        got=${got% @*}
+        check "no defmt-print, on the PATH or in ~/.cargo/bin: said in the tab, and how to have it" "[defmt-print is not installed on $this (nor in ~/.cargo/bin: cargo install defmt-print)]"
     fi
 fi
 
