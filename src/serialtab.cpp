@@ -383,7 +383,7 @@ std::vector<std::pair<std::string, int>> SerialTab::take_news() {
 }
 
 void SerialTab::set_scan(std::unique_ptr<SerialScan> scan) {
-    std::lock_guard lock(mu_);
+    std::lock_guard lock(scan_mu_);
     scan_ = std::move(scan);
     scan_line_.clear();
 }
@@ -490,15 +490,42 @@ int SerialTab::open_wait(std::stop_token stop) {
 }
 
 std::string SerialTab::take(const char* p, size_t n, u64 ns) {
+    // The lines looked at first, with the tab's mutex free (the drawing is
+    // not held up while a crash dump's ELF is read); what they added goes
+    // in after each, as the bytes are drawn and logged.
+    notes_.clear();
+    {
+        std::lock_guard lock(scan_mu_);
+        if (scan_) scan_lines(p, n, ns);
+    }
     std::lock_guard lock(mu_);
-    log_bytes(p, n, ns);
     keep(p, n, ns);
-    if (scan_) scan_lines(p, n, ns);
-    else render(p, n, ns);
+    size_t at = 0;
+    for (auto& [end, text] : notes_) {
+        log_bytes(p + at, end - at, ns);
+        render(p + at, end - at, ns);
+        at = end;
+        Event e;
+        e.at = render_at_;
+        e.ns = ns;
+        e.kind = kNote;
+        e.text = std::move(text);
+        end_line();
+        dim_line(e.text, false);
+        log_line(e.text, ns);
+        events_.push_back(std::move(e));
+    }
+    log_bytes(p + at, n - at, ns);
+    render(p + at, n - at, ns);
     return term_.take_reply();
 }
 
 void SerialTab::lost(const std::string& why, u64 ns) {
+    {
+        std::lock_guard lock(scan_mu_);  // (a line cut short by it is none; a dump it was in is over)
+        scan_line_.clear();
+        if (scan_) scan_->gone();
+    }
     {
         std::lock_guard lock(mu_);
         state_ = why == kReleasedWhy ? kReleased : kGone;
@@ -836,31 +863,26 @@ void SerialTab::log_line(const std::string& text, u64 ns) {
 
 // ---------------------------------------------------------------- a recogniser of lines
 
+// Each line that ends in what came told to the recogniser (one begun in
+// what came before put together with it); what it adds kept in notes_,
+// after the line's LF.
 void SerialTab::scan_lines(const char* p, size_t n, u64 ns) {
     size_t i = 0;
-    std::vector<std::string> add;
     while (i < n) {
         const void* nl = std::memchr(p + i, '\n', n - i);
-        const size_t end = nl ? static_cast<size_t>(static_cast<const char*>(nl) - p) + 1 : n;
-        render(p + i, end - i, ns);
-        scan_line_.append(p + i, end - i);
-        i = end;
-        if (!nl) break;
-        while (!scan_line_.empty() && (scan_line_.back() == '\n' || scan_line_.back() == '\r')) scan_line_.pop_back();
-        add.clear();
-        scan_->line(scan_line_, ns, &add);
-        scan_line_.clear();
-        for (std::string& a : add) {
-            Event e;
-            e.at = render_at_;
-            e.ns = ns;
-            e.kind = kNote;
-            e.text = std::move(a);
-            end_line();
-            dim_line(e.text, false);
-            log_line(e.text, ns);
-            events_.push_back(std::move(e));
+        if (!nl) {
+            scan_line_.append(p + i, n - i);
+            break;
         }
+        const size_t end = static_cast<size_t>(static_cast<const char*>(nl) - p) + 1;
+        std::string_view line(p + i, end - i);  // (whole in what came, as most are: not copied)
+        if (!scan_line_.empty()) line = scan_line_.append(line);
+        i = end;
+        while (!line.empty() && (line.back() == '\n' || line.back() == '\r')) line.remove_suffix(1);
+        scan_add_.clear();
+        scan_->line(line, ns, &scan_add_);
+        scan_line_.clear();
+        for (std::string& a : scan_add_) notes_.emplace_back(end, std::move(a));
     }
     if (scan_line_.size() > 64 * 1024) scan_line_.erase(0, scan_line_.size() - 64 * 1024);  // (a "line" that never ends is not kept whole)
 }
