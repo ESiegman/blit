@@ -2689,7 +2689,8 @@ it as it is ([Debugging the board](#debugging-the-board)).
 The side panel's **Build** tab (Cmd+Shift+U) lists what the working
 folder builds with, found from its files: CMake (its presets, and each
 folder it was configured in: `build*`, `cmake-build-*`, `out`), Meson,
-make (with its targets), autotools and Ninja for C, C++ and HIP, and uv
+make (with its targets), autotools and Ninja for C, C++ and HIP,
+[ESP-IDF and PlatformIO](#esp-idf-and-platformio) for firmware, and uv
 or pip for Python (its `.venv`, `pytest` when there are tests, `python -m`
 for a package with a `__main__`). Other languages' build systems are
 init.lua's to add, with `blit.build.add` (below). A build preset whose
@@ -3289,6 +3290,108 @@ button runs, Debug, Profile and the tests. Two kinds are capture presets:
   args`), and the frames you capture in it (RenderDoc's F12 or Print
   Screen in the program) are written there as `NAME_frameN.rdc`. Where
   `renderdoccmd` is not installed, the run says so.
+
+### ESP-IDF and PlatformIO
+
+A folder that is an ESP-IDF project or a PlatformIO one has its tasks
+in the Build tab with nothing to set up: blit reads the project's own
+files, and finds the SDK on the folder's machine (here, or the host of
+an ssh project) without its export script being sourced first.
+
+**ESP-IDF.** A project is ESP-IDF's when a line of its `CMakeLists.txt`,
+spaces left out, begins with `include($ENV{IDF_PATH}/tools/cmake/project.cmake)`
+(or v2's `tools/cmakev2/idf.cmake`), as idf.py itself tests (v6.1). Such a
+`CMakeLists.txt` is not offered to CMake as well. Its tasks, under
+**ESP-IDF**:
+
+| Task | What runs |
+|---|---|
+| Build (the Run button's) | `idf.py build` |
+| Flash | "Flash the board" (below): esptool with the files and addresses the build wrote in `build/flasher_args.json`, built first |
+| Monitor | the board's serial port in a [serial tab](#the-serial-monitor), at the project's speed (its sdkconfig's `CONFIG_ESPTOOLPY_MONITOR_BAUD`, else `CONFIG_ESP_CONSOLE_UART_BAUDRATE`, else 115200) |
+| Menuconfig | `idf.py menuconfig`, in a tab of its own that has the keyboard (a long task) |
+| Size | `idf.py size` |
+| Set target | `idf.py set-target TARGET`, the target chosen from ESP-IDF's own list (its preview ones with `--preview`) |
+| Reconfigure, Clean, Full clean | `idf.py reconfigure`, `clean`, `fullclean` |
+
+ESP-IDF is looked for in `IDF_PATH` (blit's environment here; the login
+shell's on a host), then where Espressif's installation manager says it
+put it (`~/.espressif/eim_idf.json`, the one chosen there first), then
+`~/esp/esp-idf`, then `~/esp/esp-idf-v6.1` or `~/esp/v6.1/esp-idf` (the
+newest); its Python environment where `install.sh` makes it
+(`~/.espressif/python_env/idf6.1_py3.14_env`, for that ESP-IDF's version
+and the newest Python, or where `IDF_TOOLS_PATH` says), or the manager's.
+Each command then runs after ESP-IDF's environment is set up as
+`export.sh` would (`idf_tools.py export`, run by that Python, puts its
+toolchains, its Python environment and its own tools on the PATH; about a
+tenth of a second, where sourcing `export.sh` takes most of one). What
+was found is kept for the machine while blit runs (looked for again
+a few seconds on if it was not). Where it is not installed, each of its
+rows says so, and so does running one: `ESP-IDF is not installed on this
+Mac (not in IDF_PATH, ~/esp or ~/.espressif)`, or `ESP-IDF's Python
+environment is not installed on lab: ~/esp/esp-idf/install.sh sets it
+up`. Errors in the build's output (GCC's, the linker's, CMake's) are
+problems, as any build's.
+
+**PlatformIO.** A folder with a `platformio.ini`. It is read as
+PlatformIO reads it: sections, `key = value` (or `key: value`), values
+going on over indented lines, `;` and `#` comments (inline ones after a
+space), each env's options through its `extends` and `[env]`,
+`${section.option}`, `${this.option}`, `${this.__env__}` and
+`${sysenv.NAME}` put in, and `[platformio]`'s `extra_configs` (paths from
+the folder, a wildcard in the last part). Each `[env:NAME]` has its
+tasks, those of `default_envs` first, the first env's Build the Run
+button's; with more than one env, each is named after its task, `Build
+(pico)`:
+
+| Task | What runs |
+|---|---|
+| Build | `pio run -e NAME` |
+| Upload | for an RP2040 or RP2350 (the `raspberrypi` platform, or a board whose MCU is one) uploaded with picotool (PlatformIO's default for it) or `mbed`: "Flash the board", picotool with `.pio/build/NAME/firmware.elf` (or the `.uf2` copied to the boot ROM's volume, for `mbed`), built first; any other: `pio run -e NAME -t upload` |
+| Monitor | the board's serial port in a serial tab, at the env's `monitor_speed` (PlatformIO's default, 9600, when none), its port its `monitor_port`, else `upload_port` (when either is a path and no wildcard) |
+| Test | `pio test -e NAME` (when the project has a `test` folder, or its `test_dir`) |
+| Clean | `pio run -e NAME -t clean` |
+| Compile database | `pio run -e NAME -t compiledb`, the `compile_commands.json` clangd reads |
+
+A board whose manifest (in the installed platform:
+`~/.platformio/platforms/raspberrypi/boards/pico.json`) says
+`use_1200bps_touch`, as Arduino's cores for the RP2040 do, runs firmware
+picotool cannot reset into BOOTSEL. Its upload first opens and closes its
+serial port at 1200 baud (`Resetting into BOOTSEL: /dev/cu.usbmodem1101
+at 1200 baud`), which such firmware takes as "into the boot ROM", and
+waits for the boot ROM (5 s at most) before picotool loads it.
+
+pio is the one on the PATH, else PlatformIO's own
+(`~/.platformio/penv/bin/pio`, as its installer and VS Code's extension
+put it) or `~/.local/bin/pio` (uv tool's, pipx's), put on the PATH for
+each task. Where there is none, its rows and runs say `PlatformIO is not
+installed on this Mac (no pio on the PATH, nor in
+~/.platformio/penv/bin)`.
+
+**Flash and Monitor** are blit's own: the board flashed as [Flashing the
+board](#flashing-the-board) says, progress and all, and its port opened as
+"Open the board's serial monitor" does. With no run configuration that
+has a board, the project's own is the board: its chip (ESP-IDF's target,
+or the PlatformIO board's MCU), its ELF and speed, and no probe; "Flash
+the board" and "Open the board's serial monitor" take it too. A board
+chosen with "Choose the probe…" (a run configuration's) is the one
+flashed and monitored, its probe and port first, what it does not say
+(its ELF, chip, speed) the project's. With no port known, Monitor opens
+the one port plugged in that a board of that chip could be on (for an
+ESP32, Espressif's USB-Serial/JTAG or a CP210x or CH34x bridge; for an
+RP2040 or RP2350, Raspberry Pi's devices); with several, they are offered
+to choose from (the choice kept for the folder while blit runs); with
+none, it says `No serial port of an ESP32's is plugged in to this Mac`.
+esptool with no port given is left to find the board itself, unless just
+one such port is plugged in. ESP-IDF's own esptool, in its Python
+environment (the version its build wrote `flasher_args.json` for, as
+`idf.py flash` takes it), is run before the PATH's. A serial tab on the
+board's port lets go of it while a flash runs, and has it back after.
+
+These replace the `blit.build.add` systems the embedded trial wrote for
+PlatformIO in init.lua; `blit.build.remove("ESP-IDF")` or
+`blit.build.remove("PlatformIO")` turns either off (an ESP-IDF project's
+`CMakeLists.txt` is then CMake's).
 
 ### The board: probe and port
 
