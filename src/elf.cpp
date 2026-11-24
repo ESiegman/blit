@@ -202,6 +202,7 @@ bool Elf::parse(std::string* why) {
             const std::string_view names = b.substr(static_cast<size_t>(strs.offset), static_cast<size_t>(strs.size));
             const u64 n = table->size / ent;
             std::string_view file;  // (the source file the symbols after an STT_FILE symbol came from)
+            bool file_seen = false;
             for (u64 i = 1; i < n; ++i) {  // (0 is the null symbol)
                 const u64 at = table->offset + i * ent;
                 ElfSymbol y;
@@ -227,9 +228,10 @@ bool Elf::parse(std::string* why) {
                 if (y.type == 4) {  // (STT_FILE)
                     const std::string_view r = name < names.size() ? names.substr(name) : std::string_view();
                     file = r.substr(0, std::min(r.find('\0'), r.size()));
+                    file_seen = true;
                     continue;
                 }
-                if (y.bind == 0) y.file = file;
+                if (y.bind == 0) y.file = file, y.unnamed_file = file_seen && file.empty();
                 if (y.shndx == 0 || y.shndx >= 0xff00 || (y.type != 0 && y.type != 1 && y.type != 2 && y.type != 10) || name >= names.size()) continue;
                 const std::string_view rest = names.substr(name);
                 y.name = rest.substr(0, std::min(rest.find('\0'), rest.size()));

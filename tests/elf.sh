@@ -105,6 +105,11 @@ if [ -n "$gcc" ] && [ -x "${gcc%gcc}addr2line" ]; then
             done
         done
     done
+    # LTO and no debug information: the local functions' FILE symbol has no
+    # name (the partition's), a file binutils writes as nothing (" at :?"),
+    # the global ones none (" at ??:?").
+    (cd "$dir/arm" && "$gcc" -mcpu=cortex-m0plus -mthumb -O2 -flto -nostdlib -e _start main.c motor.c ring.c -o lto.elf) || failed=1
+    same "$dir/arm/lto.elf" "${gcc%gcc}addr2line" "LTO, no debug information"
 else
     echo "SKIP: no arm-none-eabi-gcc and addr2line here: the reader is not checked against Arm's builds"
 fi

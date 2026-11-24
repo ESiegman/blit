@@ -41,6 +41,7 @@ struct ElfSymbol {
     u8 type = 0, bind = 0;    // STT_* (0 NOTYPE, 1 OBJECT, 2 FUNC, 10 GNU_IFUNC), STB_* (0 LOCAL, 1 GLOBAL, 2 WEAK)
     u16 shndx = 0;
     std::string_view file;  // a local symbol's source file, as the STT_FILE symbol before it names it ("" none)
+    bool unnamed_file = false;  // that STT_FILE symbol's name is empty (an LTO partition's): a file, though nameless
 };
 
 class Elf {

@@ -36,6 +36,7 @@ struct SourceFrame {
     std::string path;      // as the debug information has it (a full path, where it gives one); "" when not known
     u32 line = 0, col = 0; // from 1; 0 when not known
     bool inlined = false;  // this function's code was inlined into the next frame's
+    bool unnamed_file = false;  // no path, though the symbol table gives the code a file (one with no name: ElfSymbol)
 };
 
 class AddrSource {

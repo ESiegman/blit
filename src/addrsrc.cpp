@@ -838,7 +838,7 @@ std::vector<SourceFrame> AddrSource::lookup(u64 addr) const {
                 if (const ElfSymbol* y = elf_->function_at(addr); y && y->value == t.ranges[f->ranges_first].first) first.function = demangled(y->name);
         } else if (const ElfSymbol* y = elf_->function_at(addr)) {
             first.function = demangled(y->name);
-            if (first.path.empty()) first.path = y->file;
+            if (first.path.empty()) first.path = y->file, first.unnamed_file = y->unnamed_file;
         }
         out.push_back(std::move(first));
         // Out through what it was inlined into: each at the line of the call.
@@ -860,6 +860,7 @@ std::vector<SourceFrame> AddrSource::lookup(u64 addr) const {
         SourceFrame f;
         f.function = demangled(y->name);
         f.path = y->file;
+        f.unnamed_file = y->unnamed_file;
         out.push_back(std::move(f));
     }
     return out;
@@ -883,7 +884,7 @@ std::string frame_words(const SourceFrame& f, bool inlined_by) {
     std::string out = inlined_by ? " (inlined by) " : "";
     out += f.function.empty() ? "??" : f.function;
     out += " at ";
-    out += f.path.empty() ? "??" : f.path;
+    out += f.path.empty() && !f.unnamed_file ? "??" : f.path;  // (a nameless file binutils writes as nothing)
     out += ':';
     out += f.line ? std::to_string(f.line) : f.path.empty() && f.function.empty() ? "0" : "?";
     return out;
