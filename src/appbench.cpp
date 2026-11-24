@@ -21,6 +21,7 @@
 #include "notify.hpp"
 #include "profile.hpp"
 #include "remote.hpp"
+#include "serialtab.hpp"
 
 namespace blit {
 
@@ -611,6 +612,10 @@ int App::run_bench() {
     if (!std::strcmp(name, "keypress")) return b.keypress();
     if (!std::strcmp(name, "motionkeys")) return b.motionkeys();
     if (!std::strcmp(name, "idle")) return b.idle();
+    // The terminal in front (its scene set by the script: a shell's cat, a
+    // serial port's flood) drawn while what it is sent comes, taken in
+    // before each frame as the main loop takes it.
+    if (!std::strcmp(name, "term")) return b.frames("term", opt_.frames > 0 ? opt_.frames : 300, [&](int) { term_sync(); }), 0;
     if (!std::strcmp(name, "wavezoom") || !std::strcmp(name, "wavepan")) return b.wave(name);
     std::fprintf(stderr, "unknown benchmark: %s\n", name);
     return 1;
@@ -1520,6 +1525,33 @@ void App::run_script(const char* script) {
             system_notify_wait();
         } else if (verb == "tickdump") {  // how long blit would sleep before it draws again for a long task's time (-1: it would not)
             std::fprintf(stderr, "%d\n", build_wait_ms());
+        } else if (verb == "serial") {  // serial:PATH[,BAUD], a serial tab on that port (as "Open a serial port…" with a path typed)
+            const size_t comma = arg.find(',');
+            SerialPortId id;
+            id.path = arg.substr(0, comma);
+            SerialConfig cfg;
+            cfg.baud = comma == std::string::npos ? cfg_.serial_baud : static_cast<u32>(std::atol(arg.c_str() + comma + 1));
+            SerialReturn ret = SerialReturn::kCR;
+            serial_return_parse(cfg_.serial_line_end, &ret);
+            term_open_serial(id, cfg, ret);
+        } else if (verb == "serialwait") {  // "Open a serial port…" has listed the ports (and opened the box with them)
+            serial_settle();
+        } else if (verb == "serialdump") {  // the serial tab in front (else on show, else the only one): its title, state, settings, line changes done; then the picker's last rows
+            std::fprintf(stderr, "%s\n", serial_dump().c_str());
+        } else if (verb == "serialstate") {  // serialstate:STATE, the serial tab (as serialdump's) is open, gone, released or opening (10 s at most)
+            bool there = false;
+            for (const u64 until = now_ns() + 10'000'000'000ull; !there && now_ns() < until; SDL_Delay(5)) {
+                term_sync();
+                const std::shared_ptr<SerialTab> s = serial_here(nullptr, false);
+                there = s && s->dump().starts_with(arg + " ");
+            }
+            if (!there) std::fprintf(stderr, "serialstate: not %s: %s\n", arg.c_str(), serial_dump().c_str());
+        } else if (verb == "serialrelease") {  // serialrelease:SERIAL-OR-PORT, as a flash of a board with that probe or port lets go of it
+            Board b;
+            (arg.starts_with("/") ? b.port : b.probe) = arg;
+            serial_release(b);
+        } else if (verb == "serialreclaim") {  // and given back, as the flash's end does
+            serial_reclaim();
         } else if (verb == "probedump") {  // the probe picker's last listing (waited for): each row's role, kind, ids and text
             std::fprintf(stderr, "%s\n", probe_dump().c_str());
         } else if (verb == "probewait") {  // the probe picker has listed the devices (and opened the box with them), or written the board chosen
