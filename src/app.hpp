@@ -101,6 +101,7 @@ struct Profile;      // (profile.hpp)
 struct ProfileFunc;
 struct ProfView;     // a profile's tab (appprofile.cpp)
 struct TermView;     // a terminal's tab (appterm.cpp)
+struct CrashOptions; // what a run's crash dumps are decoded with (crashscan.hpp)
 // A terminal's stored lines (its history and its screen) as text, a line
 // as the program wrote it (the rows a wrap made joined again): where each
 // row starts in it, the first row's number (as the terminal counts its
@@ -1190,9 +1191,14 @@ private:
     // A terminal tab in dir (the working folder when none): a login shell, or
     // `command` run by sh, whose tab stays when it ends and says how (and
     // keeps `title`). Its document's id; 0 if it could not start.
-    // (A command's output is read for problems, with init.lua's `matchers`.)
+    // (A command's output is read for problems, with init.lua's `matchers`,
+    // and for crash dumps, decoded as `crash` says.)
     u64 term_open(const std::string& dir = {}, const std::string& command = {}, const std::string& title = {}, std::string_view hint = {}, bool console = false,
-                  std::shared_ptr<const BuildMatchers> matchers = {});
+                  std::shared_ptr<const BuildMatchers> matchers = {}, const CrashOptions* crash = nullptr);
+    // What a task's or a run's crash dumps are decoded with: the ELF of its
+    // run configuration's board (else the newest the build made), and its
+    // panic formats (appcrash.cpp).
+    CrashOptions crash_options(const BuildTask* task, const std::string& cmd);
     i64 term_pid(u64 doc);          // its program's process here, while it runs (0: there, ended, or none)
     std::string term_tty(u64 doc);  // its terminal's device here ("/dev/ttys003"; "": there, or none)
     void term_stop(u64 doc, bool hard);  // its program ended (hard: killed), its tab and text kept, saying it was stopped

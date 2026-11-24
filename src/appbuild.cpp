@@ -18,6 +18,7 @@
 
 #include "app.hpp"
 #include "buildread.hpp"
+#include "crashscan.hpp"
 #include "look.hpp"
 #include "missing.hpp"
 #include "notify.hpp"
@@ -582,7 +583,8 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     const u64 old = !lasting && u.term && find_doc(u.term) ? u.term : 0;
     if (u.first && !u.first->ended && u.first->doc == old) u.first.reset();  // (a build that something waited for, ended by this one: it is called off)
     pane_ = into;
-    const u64 doc = term_open(dir, cmd, title, {}, false, script_matchers(problems));
+    const CrashOptions crash = crash_options(task, cmd);
+    const u64 doc = term_open(dir, cmd, title, {}, false, script_matchers(problems), &crash);
     if (!doc && into->docs.empty()) remove_pane(into);  // (a split made for it, and it could not start)
     if (old) {
         Pane* p = nullptr;

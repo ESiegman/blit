@@ -209,8 +209,9 @@ int main(int argc, char** argv) {
             const auto& [lo, hi] = code[rng() % code.size()];
             frames += src.lookup(lo + rng() % (hi - lo)).size();
         }
+        AddrSource fresh(e);  // (every unit's tables read, none of them read before)
         const u64 t4 = now_ns();
-        src.read_all();
+        fresh.read_all();
         const u64 t5 = now_ns();
         std::printf("%s: %.1f MB, %zu units; read %.1f ms, units indexed %.1f ms, %d lookups %.1f ms (%zu frames), every unit's tables %.1f ms\n", argv[2],
                     static_cast<double>(e->bytes().size()) / 1e6, src.units(), secs(t0, t1) * 1e3, secs(t1, t2) * 1e3, n, secs(t3, t4) * 1e3, frames,

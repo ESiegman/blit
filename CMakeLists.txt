@@ -205,7 +205,7 @@ target_link_libraries(blit_core PUBLIC Threads::Threads)
 # (knowing no window, so that the agent can carry them later).
 target_sources(blit_core PRIVATE src/timeline.cpp src/wave.cpp src/waveila.cpp)
 # ELF files and address to source from their DWARF (also knowing no window).
-target_sources(blit_core PRIVATE src/elf.cpp src/addrsrc.cpp)
+target_sources(blit_core PRIVATE src/elf.cpp src/addrsrc.cpp src/crashscan.cpp)
 # FST dumps are read through libfst (third_party/libfst, at the commit its
 # config.h names), compiled as C, as src/agent/build.sh compiles it for the
 # Linux agents, with zlib. Optimized in every build, and kept out of
@@ -339,6 +339,8 @@ target_sources(blit PRIVATE src/notify.cpp)
 target_sources(blit PRIVATE src/probes.cpp src/appprobe.cpp)
 # Flashing the board and programming an FPGA, and the Boards view.
 target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp)
+# Crash dumps in a run's output, decoded against its ELF.
+target_sources(blit PRIVATE src/appcrash.cpp)
 # The wave tab: a dump's rows and their values (waveview.cpp), and its lanes
 # in tiles and the workers that paint them (wavetile.cpp: the same pixels on
 # every system, as the diagrams' below).
@@ -501,8 +503,10 @@ if(BLIT_DEV)
     add_test(NAME wave COMMAND sh ${CMAKE_SOURCE_DIR}/tests/wave.sh $<TARGET_FILE:blit>)
     # The wave tab: a dump's waves, its keys, radixes, markers, groups, the view kept, its tiles' pixels.
     add_test(NAME wavetab COMMAND sh ${CMAKE_SOURCE_DIR}/tests/wavetab.sh $<TARGET_FILE:blit>)
-    # The ELF reader and address to source against addr2line (tests/elf.sh).
+    # The ELF reader and address to source against addr2line (tests/elf.sh),
+    # and crash dumps in a run's output decoded in place (tests/crash.sh).
     add_test(NAME elf COMMAND sh ${CMAKE_SOURCE_DIR}/tests/elf.sh $<TARGET_FILE:blit>)
+    add_test(NAME crash COMMAND sh ${CMAKE_SOURCE_DIR}/tests/crash.sh $<TARGET_FILE:blit>)
     # Every suite sees the dark appearance, whatever the machine is set to
     # (GitHub's machines are light), and the cell macOS's own font has at
     # 13 pt (16 x 31 pixels at twice the density), whatever fonts the
