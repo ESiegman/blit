@@ -25,13 +25,14 @@ struct Board {
     std::string port;        // serial.port (or "serial": "PORT"): its console
     int baud = 0;            // serial.baud
     std::string chip, elf, svd;
-    std::string flash;  // flash.tool (or "flash": "TOOL"): "esptool", "openocd", "probe-rs", "jlink", "openfpgaloader"
+    std::string flash;  // flash.tool (or "flash": "TOOL"): "esptool", "openocd", "probe-rs", "jlink", "picotool", "uf2", ... (probes.hpp's kFlashTools)
     std::string debug;  // debug.preset (or "debug": "PRESET")
     // The rest of the flash object (flash.cpp): where a raw .bin goes
     // (address), openFPGALoader's board (-b) or cable (-c), OpenOCD's
-    // interface and target scripts, J-Link's device (else the chip); and an
-    // FPGA's bitstream (else the newest the build made).
-    std::string flash_address, flash_board, flash_cable, flash_interface, flash_target, flash_device;
+    // interface and target scripts, J-Link's and pyOCD's device (else the
+    // chip), dfu-util's alternate setting, pgrcmd's chain file (.xcf); and
+    // an FPGA's bitstream (else the newest the build made).
+    std::string flash_address, flash_board, flash_cable, flash_interface, flash_target, flash_device, flash_alt, flash_xcf;
     std::string bitstream;
 };
 

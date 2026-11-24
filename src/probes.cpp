@@ -85,11 +85,18 @@ const ProbeKind kKinds[] = {
     {0x0403, 0x6015, 0xffff, "", "ftdi-serial", "FTDI FT-X serial bridge", kSerial},
     // The RP2040's and RP2350's boot ROMs (BOOTSEL), and the Pico SDK's
     // USB serial: picotool 2.3.1 picoboot_connection/picoboot_connection.h
-    // (lines 19-25).
+    // (lines 19-25). Both are flashed with picotool (flash.cpp), which
+    // finds the board by the SDK's serial number, its flash's unique ID.
+    // (Seen on the owner's Pico through IOKit, 2026-11-23: 2e8a:000a
+    // "Pico" A58565170D696C53 with /dev/cu.usbmodem1101 running blinky;
+    // 2e8a:0003 "RP2 Boot" E0C9125B0D9B, no port, in BOOTSEL.)
     {0x2e8a, 0x0003, 0xffff, "", "rp-boot", "RP2040 boot ROM", kBoot},
     {0x2e8a, 0x000f, 0xffff, "", "rp-boot", "RP2350 boot ROM", kBoot},
     {0x2e8a, 0x000a, 0xffff, "", "pico-serial", "Pico SDK USB serial (RP2040)", kSerial},
     {0x2e8a, 0x0009, 0xffff, "", "pico-serial", "Pico SDK USB serial", kSerial},
+    // STM32's DfuSe boot ROM (system memory, BOOT0 high): dfu-util 0.11
+    // doc/60-dfuse.rules (line 4). Flashed with dfu-util.
+    {0x0483, 0xdf11, 0xffff, "", "dfu", "STM32 DFU boot ROM", kBoot},
     // Silicon Labs CP210x: Linux v6.12 drivers/usb/serial/cp210x.c (lines
     // 170-174: ea60 the CP2102, CP2104 and CP2102N, ea70 the CP2105, ea71
     // the CP2108).
@@ -171,6 +178,11 @@ std::vector<ProbeRow> probe_rows(const std::vector<UsbDevice>& devices, const st
             r.kind = k->kind;
             r.name = *k->name ? k->name : !d.product.empty() ? d.product : "CMSIS-DAP probe";
             if (r.kind == "stlink") r.serial = stlink_serial(d.serial);
+            // (The RP2040's boot ROM's serial number is its version, the
+            // chip's git reference and the ROM's, the same on every RP2040:
+            // boot ROM b2, bootrom/usb_boot_device.c lines 428-429. It names
+            // no board.)
+            if (d.vid == 0x2e8a && d.pid == 0x0003) r.serial.clear();
             const UsbPort* gdb = pick_port(d, k->gdb);
             if (const UsbPort* console = pick_port(d, k->console, gdb)) r.port = console->path;
             if (gdb) r.gdb = gdb->path;
@@ -395,9 +407,11 @@ bool board_set_probe(std::string& text, std::string_view config, const ProbeRow&
         if (d.parse(t.substr(name, skip_value(t, name) - name)) && d.root().str() == config) at = c.value;
     }
     if (at == std::string::npos) return *why = "it has no configuration called " + std::string(config), false;
-    // The probe (a port alone has none), and the port; nothing else of the board changes.
+    // The probe (a port alone has none, but for the Pico SDK's, which is
+    // the board itself: picotool finds it by that serial number), and the
+    // port; nothing else of the board changes.
     std::string probe;
-    if (row.role != ProbeRole::kSerial && !row.kind.empty()) {
+    if ((row.role != ProbeRole::kSerial || row.kind == "pico-serial") && !row.kind.empty()) {
         probe = "{\"kind\": " + quoted(row.kind);
         if (!row.serial.empty()) probe += ", \"serial\": " + quoted(row.serial);
         probe += ", \"usb\": " + quoted(row.usb);
@@ -510,6 +524,8 @@ void board_read(json::Value b, const std::string& config, Board* out, std::strin
         out->flash_interface = text_of(f["interface"]);
         out->flash_target = text_of(f["target"]);
         out->flash_device = text_of(f["device"]);
+        out->flash_alt = text_of(f["alt"]);
+        out->flash_xcf = text_of(f["xcf"]);
     }
     out->bitstream = text_of(b["bitstream"]);
     out->debug = b["debug"].is_string() ? text_of(b["debug"]) : text_of(b["debug"]["preset"]);
