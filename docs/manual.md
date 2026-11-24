@@ -5399,11 +5399,11 @@ does not finish and takes all the memory the machine has.
   `.fst`; a capture's CSV by its first line, here only: on another
   machine a `.csv` opens as text); a dump written again is read again
   (and one still being written followed) only while it is in the project
-  folder, on a Mac, or a task's run ends; one on another machine is read
-  again whole when its time stamp changes, not followed as it grows; one on another machine is
+  folder, on a Mac, or a task's run ends; one on another machine is
   fetched here whole, in parts with its progress on the bottom row (where
-  a click stops it), up to `blit.opt.wave.remote_fetch_mb` (512 MB), and a
-  larger one is not shown (an FST is fetched into blit's cache folder,
+  a click stops it), up to `blit.opt.wave.remote_fetch_mb` (512 MB), and
+  read again whole when its time stamp changes, not followed as it grows;
+  a larger one is not shown (an FST is fetched into blit's cache folder,
   which libfst reads it from, and that copy removed once read); a
   bus wider than 64 bits has no fixed point, float or names of values
   (hex); analog rows, colours a row and `*` `#` (the next time a row has
