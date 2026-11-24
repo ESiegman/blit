@@ -95,6 +95,48 @@ check "a bus opened: n on its bit 1 (from x to 0 at 5 ns, to 1 at 25 ns)" "icaru
 row "count\\[1\\]"
 check "bit 1 there" ">    count[1] = 1"
 
+# * and # (Vim's, for the value under the cursor): the cursor to the start
+# of the next run of the row's value at the cursor (#: of the last run of
+# it before the one the cursor is in), never a change inside a run, the
+# view moved to keep it in sight; at the ends, none, said. Values are their
+# bits: x matches x alone (tb.nib's 1x0z, partly x, is not x), z z alone;
+# a bus wider than 64 bits, a real, a string; a bit of a bus opened, that
+# bit's runs; a group's heading and an event have no value to look for.
+star="key:shift+8;wavedump"
+hash="key:shift+3;wavedump"
+# (The cursor and the row chosen after each, and what was said, " ;; " between.)
+seen() { got=$(lines | grep -E "^$1|^>|^blit: " | sed -e 's/, view [^,]*//' | join); }
+fresh
+run 1600x900 "frame;wavewait;key:j;key:j;key:j;key:j;key:n;key:n;key:n;key:n;key:shift+N;$star;$star;$hash;$hash" "$W/icarus.vcd"
+seen icarus.vcd
+check "*: tb.count's 02 again once it has gone round, then none; # back, then none" "icarus.vcd: read, cursor 2.605 us ;; >  tb.count[7:0] = 02 hex ;; blit: No later time with 02 ;; icarus.vcd: read, cursor 2.605 us ;; >  tb.count[7:0] = 02 hex ;; icarus.vcd: read, cursor 25 ns ;; >  tb.count[7:0] = 02 hex ;; blit: No earlier time with 02 ;; icarus.vcd: read, cursor 25 ns ;; >  tb.count[7:0] = 02 hex"
+run 1600x900 "frame;wavewait;key:j;key:j;key:j;key:j;key:=;key:=;key:=;key:=;key:=;key:n;key:n;key:n;key:n;key:shift+N;$star" "$W/icarus.vcd"
+head1
+check "*: the view moved to the cursor, zoomed in" "icarus.vcd: read, cursor 2.605 us, view 2.561688 us to 2.648313 us"
+run 1600x900 "frame;wavewait;key:j;key:j;key:j;key:j;key:Return;key:j;key:n;wavedump;$star;$star;$star;$hash;$hash" "$W/icarus.vcd"
+seen icarus.vcd
+check "* on bit 7 of tb.count opened: the next run of its 0 (after \$dumpoff's x, then after the wrap), not the bus's next change" "icarus.vcd: read, cursor 5 ns ;; >    count[7] = 0 ;; icarus.vcd: read, cursor 97 ns ;; >    count[7] = 0 ;; icarus.vcd: read, cursor 2.585 us ;; >    count[7] = 0 ;; blit: No later time with 0 ;; icarus.vcd: read, cursor 2.585 us ;; >    count[7] = 0 ;; icarus.vcd: read, cursor 97 ns ;; >    count[7] = 0 ;; icarus.vcd: read, cursor 5 ns ;; >    count[7] = 0"
+J7="key:j;key:j;key:j;key:j;key:j;key:j;key:j"
+run 1600x900 "frame;wavewait;$J7;$star;$star;key:shift+N;key:shift+N;key:shift+N;key:shift+N;key:n;wavedump;$star" "$W/icarus.vcd"
+seen icarus.vcd
+check "x: tb.nib's x again at \$dumpoff, not its 1x0z; that one (X) never again" "icarus.vcd: read, cursor 72 ns ;; >  tb.nib[3:0] = x hex ;; blit: No later time with x ;; icarus.vcd: read, cursor 72 ns ;; >  tb.nib[3:0] = x hex ;; icarus.vcd: read, cursor 32 ns ;; >  tb.nib[3:0] = X hex ;; blit: No later time with X ;; icarus.vcd: read, cursor 32 ns ;; >  tb.nib[3:0] = X hex"
+run 1600x900 "frame;wavewait;key:j;key:j;key:j;$star" "$W/icarus.vcd"
+seen icarus.vcd
+check "z: tb.drv floating again" "icarus.vcd: read, cursor 137 ns ;; >  tb.drv[3:0] = z hex"
+run 1600x900 "frame;wavewait;$J7;key:j;key:j;key:n;key:n;$star;$star" "$W/icarus.vcd"
+seen icarus.vcd
+check "96 bits: tb.wide's deadbeef... again after \$dumpoff" "icarus.vcd: read, cursor 97 ns ;; >  tb.wide[95:0] = deadbeef0123456789abcdef hex ;; blit: No later time with deadbeef0123456789abcdef ;; icarus.vcd: read, cursor 97 ns ;; >  tb.wide[95:0] = deadbeef0123456789abcdef hex"
+run 1600x900 "frame;wavewait;$J7;key:j;key:j;key:j;key:j;key:n;key:n;$star;key:shift+N;$star" "$W/icarus.vcd"
+seen icarus.vcd
+check "a real: tb.temp's -0.00225 again; its NaN (dumping off) never again" "icarus.vcd: read, cursor 97 ns ;; >  tb.temp = -0.00225 ;; blit: No later time with nan ;; icarus.vcd: read, cursor 72 ns ;; >  tb.temp = nan"
+run 1600x900 "frame;wavewait;$star;key:j;key:j;key:j;key:j;$star;$star;$hash;key:j;key:j;$star" "$W/pyvcd.vcd"
+seen pyvcd.vcd
+check "a string (top.uart.state), a group's heading and an event: none to look for" "blit: A group has no value of its own to look for ;; pyvcd.vcd: read, cursor 0 ns ;; >top (open) ;; pyvcd.vcd: read, cursor 420 ns ;; >  top.uart.state = IDLE ;; pyvcd.vcd: read, cursor 920 ns ;; >  top.uart.state = IDLE ;; pyvcd.vcd: read, cursor 420 ns ;; >  top.uart.state = IDLE ;; blit: An event has no value to look for ;; pyvcd.vcd: read, cursor 420 ns ;; >  top.uart.sent = "
+# (As a layout may give them: their own keys, * and #, as Command search runs them too.)
+run 1600x900 "frame;wavewait;key:j;key:j;key:j;key:j;key:n;key:n;key:n;key:n;key:shift+N;keyof:Waves: next time the row has the value at the cursor;wavedump;keyof:Waves: previous time the row had the value at the cursor;wavedump" "$W/icarus.vcd"
+got=$(lines | grep '^icarus' | sed -e 's/, view .*//' | join)
+check "* and # by their own keys" "icarus.vcd: read, cursor 2.605 us ;; icarus.vcd: read, cursor 25 ns"
+
 # Each radix in turn (r), and names given to values, and fixed point.
 fresh
 radix="frame;wavewait;key:j;key:j;key:j;key:j;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n;key:n"
@@ -290,7 +332,6 @@ filled 5 1000000 0 && got=filled || got="room between"
 check "a busy band: tb.clk zoomed out" "filled"
 got=$(rgb_is "$(pix 8 1500000 0 0)" bg && echo bg || echo "not bg")
 check "beside it, tb.rst low: nothing in the middle of the row" "bg"
-
 # A dump past timeline.max_mb: what it read shows, and the tab says why it stopped.
 bin="$(cd "$(dirname "$blit")" && pwd)/blit_timeline_test"
 if [ -x "$bin" ]; then

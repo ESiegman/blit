@@ -11,9 +11,11 @@
 //
 // Its keys are the timeline's (evaluation 6.13), each a command
 // (wave_commands, listed by appcommands.cpp), so that Command search finds
-// them. The view (rows, groups, radix, names of values, markers, cursor and
-// the stretch on show) is kept beside the project in .blit/waves/, data and
-// not Lua, and comes back when the dump is opened again.
+// them; * and # find the value at the cursor again in the row's changes
+// (Lane::same_next), as Vim's find the word. The view (rows, groups,
+// radix, names of values, markers, cursor and the stretch on show) is kept
+// beside the project in .blit/waves/, data and not Lua, and comes back when
+// the dump is opened again.
 //
 // A dump on another machine is fetched whole while it is no larger than a
 // reply may be (4 MB); larger ones wait for the agent's reads in parts
@@ -95,7 +97,7 @@ u64 row_key(u64 h, const WaveTileRow& r) {
 // The actions of the tab's keys and commands.
 enum WaveAct : u8 {
     kWavePanLeft, kWavePanRight, kWavePageLeft, kWavePageRight, kWaveZoomIn, kWaveZoomOut, kWaveFit,
-    kWaveDown, kWaveUp, kWaveMoveDown, kWaveMoveUp, kWaveNext, kWavePrev, kWaveAdd, kWaveMark, kWaveGoMark,
+    kWaveDown, kWaveUp, kWaveMoveDown, kWaveMoveUp, kWaveNext, kWavePrev, kWaveSameNext, kWaveSamePrev, kWaveAdd, kWaveMark, kWaveGoMark,
     kWaveRange, kWaveZoomRange, kWaveRadix, kWaveOpen, kWaveRows, kWaveGroup, kWaveRemove, kWaveUndo,
     kWaveCopyPath, kWaveCopyValue, kWaveNames, kWaveFixed, kWaveRename,
 };
@@ -125,6 +127,8 @@ constexpr WaveKey kWaveKeys[] = {
     {{"Waves: move the row up", SDLK_K, true}, kWaveMoveUp},
     {{"Waves: next change of the row", SDLK_N, false}, kWaveNext},
     {{"Waves: previous change of the row", SDLK_N, true}, kWavePrev},
+    {{"Waves: next time the row has the value at the cursor", SDLK_ASTERISK, false}, kWaveSameNext},       // * (Shift+8 too)
+    {{"Waves: previous time the row had the value at the cursor", SDLK_HASH, false}, kWaveSamePrev},     // # (Shift+3 too)
     {{"Waves: add a signal\xE2\x80\xA6", SDLK_SLASH, false}, kWaveAdd},
     {{"Waves: set a marker at the cursor\xE2\x80\xA6", 0, false}, kWaveMark},      // m{a-z}
     {{"Waves: go to a marker\xE2\x80\xA6", 0, false}, kWaveGoMark},                // '{a-z}
@@ -1286,6 +1290,33 @@ bool next_change(const Wave& w, const std::vector<WaveItem>& items, const WaveRo
     return *out = lane.time(j), true;
 }
 
+// * and #: the start of the next run of the value at the cursor on a row,
+// after the run the cursor is in (or of the last run of it before that
+// one), as Vim's * and # find the word under the cursor. The value is the
+// row's bits, x and z among them (x matches x alone, z z alone, a value
+// partly x the same bits x), or a real's, or a string; a bit of a bus
+// opened, that bit. False, with why in `why`, if there is none, or nothing
+// to look for (a group's heading, an event, before the row's first change).
+bool same_value(const Wave& w, const std::vector<WaveItem>& items, const WaveRow& row, u64 from, bool forward, u64* out, std::string* why) {
+    const WaveSignal* s = wave_row_signal(items, row);
+    if (!s || s->var >= w.vars.size()) return *why = "A group has no value of its own to look for", false;
+    const Lane& lane = w.lanes[w.vars[s->var].lane];
+    if (lane.kind() == LaneKind::kEvent) return *why = "An event has no value to look for", false;
+    const u64 i = lane.at(from);
+    if (i == ~0ull) return *why = "The row has no value at the cursor yet", false;
+    const u32 bit = row.kind == WaveRow::kBit ? row.bit : 0, n = row.kind == WaveRow::kBit ? 1 : lane.stride();
+    const u64 j = forward ? lane.same_next(i, bit, n) : lane.same_prev(i, bit, n);
+    if (j == ~0ull) {
+        std::string value;
+        wave_value(lane, i, wave_row_format(items, row), &value);
+        if (value.empty() || value.find(' ') != std::string::npos) value = "\"" + value + "\"";
+        *why = std::string(forward ? "No later time with " : "No earlier time with ") + value;
+        return false;
+    }
+    *out = lane.time(j);
+    return true;
+}
+
 }  // namespace
 
 // What a key or a command does to the wave tab in front.
@@ -1353,6 +1384,24 @@ void App::wave_act(int act) {
                 v.show_time(t);
                 v.touched = true;
             }
+            break;
+        }
+        case kWaveSameNext: case kWaveSamePrev: {
+            if (!row) break;
+            u64 t = 0;
+            std::string why;
+            bool found = false;
+            {
+                std::shared_lock lock(v.wave->mu);
+                found = same_value(w, v.items, *row, v.cursor, act == kWaveSameNext, &t, &why);
+            }
+            if (!found) {
+                notify(why);
+                break;
+            }
+            v.cursor = t;
+            v.show_time(t);
+            v.touched = true;
             break;
         }
         case kWaveAdd: {
@@ -1658,6 +1707,13 @@ bool App::wave_key(const SDL_KeyboardEvent& k) {
         case SDLK_DOWN: wave_act(kWaveDown); return took();
         case SDLK_UP: wave_act(kWaveUp); return took();
         case SDLK_KP_ENTER: wave_act(kWaveOpen); return took();
+        // (* and # as the layout gives them: their own keys, or Shift and 8 and 3.)
+        case SDLK_ASTERISK: case SDLK_KP_MULTIPLY: wave_act(kWaveSameNext); return took();
+        case SDLK_HASH: wave_act(kWaveSamePrev); return took();
+        case SDLK_8: case SDLK_3:
+            if (!shift) break;
+            wave_act(k.key == SDLK_8 ? kWaveSameNext : kWaveSamePrev);
+            return took();
         default: break;
     }
     for (const WaveKey& w : kWaveKeys)

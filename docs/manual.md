@@ -4773,6 +4773,7 @@ under the scope's name, a signal seen under another name (an alias, as
 | The next / previous row | `j` `k` (or Down / Up); the wheel scrolls the rows |
 | Move the row down / up | `J` / `K` |
 | The next / previous change of the row | `n` / `N` (a bus's next value; a bit of one opened, where that bit changes) |
+| The next / previous time the row has the value at the cursor | `*` / `#` (Shift+8 and Shift+3 too) |
 | Add a signal | `/`: every signal of the dump by its path, found as Go to file finds; Enter adds it after the row chosen (one listed already is chosen) |
 | A marker at the cursor / the cursor to a marker | `m` and a letter / `'` and the letter |
 | Choose a stretch of time | `v` from the cursor, then move it (`n`, `N`, `'`, a click); Esc lets go |
@@ -4800,6 +4801,21 @@ it has not got. A digit wholly x or z is `x` or `z`, one partly so `X` or
 `Z`; in a radix with no digits of its own, a value with any x is `x`
 (all z: `z`). A value with no name given is written in hex. Reals and
 strings are written as the dump has them.
+
+**A value again.** `*` moves the cursor to the next time the row has
+the value it has at the cursor, as Vim's `*` finds the word under the
+cursor: to the start of the next run of it, after the run the cursor is
+in, never a step inside one; `#` to the start of the last run of it
+before the one the cursor is in. The view moves to keep the cursor in
+sight, and pressed again each goes on to the next. Values are their bits,
+whatever the radix shows: x matches x alone and z z alone, and a value
+partly x (`1x0z`) only the same bits x; a bit of a bus opened is that bit
+alone; a real is its 64 bits (a NaN matches the same NaN), a string its
+text. With none, the cursor stays and blit says so ("No later time with
+3f", the value as the row shows it). A group's heading and an event have
+no value to look for; nor has a row before its first change. They look
+through the row's changes from the cursor: two million in about a
+millisecond.
 
 **The waves.** A bit is a line high or low; z a dashed line through the
 middle (in the theme's information colour); x a band filled in the
@@ -5406,8 +5422,8 @@ does not finish and takes all the memory the machine has.
   a larger one is not shown (an FST is fetched into blit's cache folder,
   which libfst reads it from, and that copy removed once read); a
   bus wider than 64 bits has no fixed point, float or names of values
-  (hex); analog rows, colours a row and `*` `#` (the next time a row has
-  the value under the cursor) are not there yet.
+  (hex); analog rows and colours a row are not there yet. `*` and `#`
+  take no count.
 - Terminal: no ligatures. A screen with more than 32 text colours or 6
   background colours at once draws the rest in the nearest of those (5
   while a search's matches are lit). Its search (Cmd+F) looks at the lines
