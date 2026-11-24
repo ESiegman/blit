@@ -7,7 +7,9 @@
 // (appterm.cpp, serialtab.hpp). The commands here act on the serial tab in
 // front, else the one on show, else the only one open. Flashing lets go of
 // the board's port while its tool runs, and gives it back after
-// (serial_release and serial_reclaim, called by appflash.cpp).
+// (serial_release and serial_reclaim, called by appflash.cpp). Crash dumps
+// in what a port sends are decoded in place, with its board's ELF
+// (serial_open; appterm.cpp's SerialCrash), and are problems.
 #include <SDL3/SDL.h>
 
 #include <algorithm>
@@ -17,6 +19,7 @@
 #include <thread>
 
 #include "app.hpp"
+#include "crashscan.hpp"
 #include "fsio.hpp"
 #include "probes.hpp"
 #include "remote.hpp"
@@ -158,7 +161,7 @@ void App::serial_sync() {
         cfg.baud = cfg_.serial_baud;
         SerialReturn ret = SerialReturn::kCR;
         serial_return_parse(cfg_.serial_line_end, &ret);
-        term_open_serial(id, cfg, ret);
+        serial_open(id, cfg, ret, nullptr);
     };
     find_choose_item("Serial port", std::move(items), [rows = *listed, take](int i) {
         if (i >= 0 && static_cast<size_t>(i) < rows.size()) take(rows[static_cast<size_t>(i)].id);
@@ -212,7 +215,16 @@ void App::serial_board() {
     cfg.baud = b.baud > 0 ? static_cast<u32>(b.baud) : cfg_.serial_baud;
     SerialReturn ret = SerialReturn::kCR;
     serial_return_parse(cfg_.serial_line_end, &ret);
-    term_open_serial(id, cfg, ret);
+    serial_open(id, cfg, ret, c);
+}
+
+// A port chosen from the picker, or typed, is decoded with the board's of
+// the run configuration whose port it is, if one is (by its serial.port, or
+// its probe's serial number); else with the newest ELF the build made, and
+// no patterns of a configuration's.
+void App::serial_open(const SerialPortId& id, const SerialConfig& cfg, SerialReturn ret, const BuildTask* board) {
+    if (!board) board = board_config_on(id);
+    term_open_serial(id, cfg, ret, crash_options_of(board));
 }
 
 // ---------------------------------------------------------------- the tab's commands
