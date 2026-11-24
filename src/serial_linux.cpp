@@ -1,6 +1,7 @@
 // A serial port's speed when termios has no name for it, on Linux: through
 // termios2 (BOTHER), whose header cannot be had with termios.h, so here
 // alone.
+#include <asm/ioctls.h>
 #include <asm/termbits.h>
 
 #include "common.hpp"
