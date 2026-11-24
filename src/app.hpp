@@ -2,6 +2,7 @@
 // The application: window, input, scrolling, and the frame loop.
 #include <SDL3/SDL.h>
 
+#include <array>
 #include <atomic>
 #include <functional>
 #include <map>
@@ -708,6 +709,10 @@ private:
     void find_choose(int mode, const std::string& prompt, const std::string& typed, std::function<void(const std::string&)> chose);
     void find_choose_item(const std::string& prompt, std::vector<std::string> items, std::function<void(int)> chose, const std::string& typed = {});
     void find_ask_footer(const std::string& question, bool warning = false);  // (warning: what went wrong, not a question)
+    // A list of blit's own just opened: a swatch of a colour before each of
+    // its rows (rgba, by item; alpha 0 for none), as a list of colours
+    // shows what each is. At most 16 colours apart; the rest none.
+    void find_swatches(const std::vector<std::array<float, 4>>& colours);
     void remote_asks();
     void save_named(const std::string& path, u64 doc);
     void remember_place();  // where the cursor is now is somewhere to come back to
@@ -1207,6 +1212,7 @@ private:
     void wave_add(WaveView& v, u32 var);
     void wave_mark(WaveView& v, char letter, bool go);
     void wave_format(WaveView& v, bool names, const std::string& text);
+    void wave_colour(WaveView& v, u8 colour);
     bool waves_busy() const;
     void wave_wait(bool rows = false);
     std::string wave_dump(std::string_view what);

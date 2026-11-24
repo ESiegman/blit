@@ -295,6 +295,63 @@ void Lane::columns(u64 t0, u64 t1, std::span<LaneColumn> out) const {
     }
 }
 
+namespace {
+
+// The walks of same_next and same_prev, given whether change j has the value.
+template <class Same>
+u64 run_after(u64 i, u64 count, Same same) {
+    bool before = true;  // (change j - 1 has it)
+    for (u64 j = i + 1; j < count; ++j) {
+        const bool s = same(j);
+        if (s && !before) return j;
+        before = s;
+    }
+    return ~0ull;
+}
+
+template <class Same>
+u64 run_before(u64 i, Same same) {
+    u64 j = i;
+    while (j > 0 && same(j - 1)) --j;  // (the start of the run i is in)
+    while (j > 0 && !same(j - 1)) --j;  // (the end of the run before it)
+    if (j == 0) return ~0ull;
+    --j;
+    while (j > 0 && same(j - 1)) --j;
+    return j;
+}
+
+}  // namespace
+
+u64 Lane::same_next(u64 i, u32 from, u32 n) const { return same_run(i, from, n, true); }
+u64 Lane::same_prev(u64 i, u32 from, u32 n) const { return same_run(i, from, n, false); }
+
+u64 Lane::same_run(u64 i, u32 from, u32 n, bool next) const {
+    if (kind_ == LaneKind::kEvent || i >= count_ || n == 0 || from >= stride_ || n > stride_ - from) return ~0ull;
+    const bool xz = !xz_.empty();
+    if (n <= 64) {  // (a word of each plane a change)
+        const u64 v = get(bits_, i * stride_ + from, n), q = xz ? get(xz_, i * stride_ + from, n) : 0;
+        auto same = [&](u64 j) {
+            const u64 at = j * stride_ + from;
+            return get(bits_, at, n) == v && (!xz || get(xz_, at, n) == q);
+        };
+        return next ? run_after(i, count_, same) : run_before(i, same);
+    }
+    std::vector<u64> v, q;  // (a bus wider than 64 bits: a word at a time, the first that differs ending it)
+    for (u32 k = 0; k < n; k += 64) {
+        v.push_back(get(bits_, i * stride_ + from + k, std::min<u32>(64, n - k)));
+        q.push_back(xz ? get(xz_, i * stride_ + from + k, std::min<u32>(64, n - k)) : 0);
+    }
+    auto same = [&](u64 j) {
+        const u64 at = j * stride_ + from;
+        for (u32 k = 0; k < n; k += 64) {
+            const u32 m = std::min<u32>(64, n - k);
+            if (get(bits_, at + k, m) != v[k / 64] || (xz && get(xz_, at + k, m) != q[k / 64])) return false;
+        }
+        return true;
+    };
+    return next ? run_after(i, count_, same) : run_before(i, same);
+}
+
 Bit Lane::bit(u64 i, u32 b) const {
     const u64 at = i * stride_ + b;
     const u64 v = get(bits_, at, 1);

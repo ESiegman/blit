@@ -11,8 +11,12 @@
 //
 // Its keys are the timeline's (evaluation 6.13), each a command
 // (wave_commands, listed by appcommands.cpp), so that Command search finds
-// them. The view (rows, groups, radix, names of values, markers, cursor and
-// the stretch on show) is kept beside the project in .blit/waves/, data and
+// them; * and # find the value at the cursor again in the row's changes
+// (Lane::same_next), as Vim's find the word. Rows take colours from the
+// theme's own by name, as inks of the tab's palette and in the tiles'
+// keys, so that a colour given paints again only its rows' tiles. The view
+// (rows, groups, radix, colours, names of values, markers, cursor and the
+// stretch on show) is kept beside the project in .blit/waves/, data and
 // not Lua, and comes back when the dump is opened again.
 //
 // A dump on another machine is fetched whole, in the agent's reads in parts
@@ -55,6 +59,9 @@ constexpr u32 kRulerRows = 2, kBottomRows = 1;
 
 constexpr Ink kMarkInk{kInkDiagnostic + 3, 0};  // markers and their deltas (the hints' ink: apart from the cursor's accent)
 constexpr Ink kTriggerInk{kInkDiagnostic, 0};    // an ILA capture's triggers (the errors' ink, as Vivado draws them red)
+// A row's colours (waveview.hpp) are inks of the tab's own palette, in
+// place of the syntax colours it has no use for: colour c is ink c.
+constexpr u32 kColourInk = 0;
 
 std::string g_wave_clipboard;  // (scripted runs: what y copied, here and not in the system's clipboard)
 
@@ -88,7 +95,7 @@ u64 row_key(u64 h, const WaveTileRow& r) {
     h = mix(h, r.lane);
     h = mix(h, static_cast<u64>(r.fmt.radix) | static_cast<u64>(static_cast<u32>(r.fmt.bit)) << 8 | static_cast<u64>(r.fmt.frac) << 40 | static_cast<u64>(r.fmt.sign) << 48);
     if (r.fmt.names) h = mix_text(h, r.fmt.names->text());
-    return h;
+    return mix(h, r.colour);
 }
 
 }  // namespace
@@ -96,9 +103,9 @@ u64 row_key(u64 h, const WaveTileRow& r) {
 // The actions of the tab's keys and commands.
 enum WaveAct : u8 {
     kWavePanLeft, kWavePanRight, kWavePageLeft, kWavePageRight, kWaveZoomIn, kWaveZoomOut, kWaveFit,
-    kWaveDown, kWaveUp, kWaveMoveDown, kWaveMoveUp, kWaveNext, kWavePrev, kWaveAdd, kWaveMark, kWaveGoMark,
+    kWaveDown, kWaveUp, kWaveMoveDown, kWaveMoveUp, kWaveNext, kWavePrev, kWaveSameNext, kWaveSamePrev, kWaveAdd, kWaveMark, kWaveGoMark,
     kWaveRange, kWaveZoomRange, kWaveRadix, kWaveOpen, kWaveRows, kWaveGroup, kWaveRemove, kWaveUndo,
-    kWaveCopyPath, kWaveCopyValue, kWaveNames, kWaveFixed, kWaveRename,
+    kWaveCopyPath, kWaveCopyValue, kWaveNames, kWaveFixed, kWaveRename, kWaveColour,
 };
 
 namespace {
@@ -126,6 +133,8 @@ constexpr WaveKey kWaveKeys[] = {
     {{"Waves: move the row up", SDLK_K, true}, kWaveMoveUp},
     {{"Waves: next change of the row", SDLK_N, false}, kWaveNext},
     {{"Waves: previous change of the row", SDLK_N, true}, kWavePrev},
+    {{"Waves: next time the row has the value at the cursor", SDLK_ASTERISK, false}, kWaveSameNext},       // * (Shift+8 too)
+    {{"Waves: previous time the row had the value at the cursor", SDLK_HASH, false}, kWaveSamePrev},     // # (Shift+3 too)
     {{"Waves: add a signal\xE2\x80\xA6", SDLK_SLASH, false}, kWaveAdd},
     {{"Waves: set a marker at the cursor\xE2\x80\xA6", 0, false}, kWaveMark},      // m{a-z}
     {{"Waves: go to a marker\xE2\x80\xA6", 0, false}, kWaveGoMark},                // '{a-z}
@@ -142,6 +151,7 @@ constexpr WaveKey kWaveKeys[] = {
     {{"Waves: name the row's values\xE2\x80\xA6", 0, false}, kWaveNames},
     {{"Waves: the row in fixed point\xE2\x80\xA6", 0, false}, kWaveFixed},
     {{"Waves: rename the group\xE2\x80\xA6", 0, false}, kWaveRename},
+    {{"Waves: colour the rows\xE2\x80\xA6", SDLK_C, false}, kWaveColour},
 };
 
 // One-pixel pictures of a colour, stretched for the cursor, markers, ticks and what is chosen.
@@ -249,6 +259,7 @@ struct WaveView {
         double tpp = 1, ta = 0, tb = 0;  // its zoom, and the times at its left and right edges
         i64 k = 0;
         u64 t1 = 0, upto = ~0ull;
+        bool again = false;  // (painted again as more is read, though read past its end: wave_paint_tile)
         u32 image = 0;
         int w = 0, h = 0;
         u64 used = 0;
@@ -330,6 +341,11 @@ struct App::Waves {
     std::unique_ptr<WavePainter> painter;
     std::shared_ptr<const WaveLooks> looks;
     std::map<u32, u32> dots;
+    // The rows' colours as the theme has them (as of theme_gen), and the
+    // tabs' palette: the theme's, with them in place of its first inks.
+    u64 theme_gen = ~0ull;
+    float colours[kWaveColours + 1][4] = {};
+    float palette[32][4] = {};
     // The views kept beside the projects: read and written on a thread of
     // their own (another machine's over its connection); and the time
     // stamps of dumps on another machine, asked there.
@@ -930,6 +946,7 @@ void App::wave_sync() {
             tile.ta = t.job.tpp >= 1 ? static_cast<double>(t.job.t0) : static_cast<double>(t.job.k) * kWaveTile * t.job.tpp;
             tile.tb = t.job.tpp >= 1 ? static_cast<double>(t.job.t1) : static_cast<double>(t.job.k + 1) * kWaveTile * t.job.tpp;
             tile.upto = t.upto;
+            tile.again = t.again;
             tile.image = id;
             tile.w = t.w, tile.h = t.h;
             tile.used = v.frames;
@@ -952,11 +969,26 @@ void App::wave_layout(FrameDesc& fd) {
     Font& font = *font_;
     const int cw = font.cell_w(), ch = font.cell_h();
     const Look lk = look();
+    // The colours rows can be given, the theme's of those names; and the
+    // tabs' palette, the theme's with them as inks 1 to kWaveColours.
+    if (waves_->theme_gen != theme_gen_) {
+        waves_->theme_gen = theme_gen_;
+        const ThemeColors& tc = cfg_.theme(dark());
+        const Rgb named[kWaveColours] = {tc.error, tc.warning, tc.hint, tc.accent, tc.syntax_color("keyword")};
+        for (u32 c = 1; c <= kWaveColours; ++c) {
+            const Rgb& x = named[c - 1];
+            waves_->colours[c][0] = x.r, waves_->colours[c][1] = x.g, waves_->colours[c][2] = x.b, waves_->colours[c][3] = 1;
+        }
+    }
+    std::memcpy(waves_->palette, theme_.palette, sizeof waves_->palette);
+    for (u32 c = 1; c <= kWaveColours; ++c) std::copy(waves_->colours[c], waves_->colours[c] + 4, waves_->palette[kColourInk + c]);
     // How tiles look (made again when the theme, the font or the density change).
     {
         u64 h = mix(mix(1469598103934665603ull, font.generation()), static_cast<u64>(scale_ * 1000));
         for (const u32 ink : {static_cast<u32>(kInkAdded), kInkDiagnostic + 1, kInkDiagnostic + 2, static_cast<u32>(kInkChanged), 0u})
             for (int c = 0; c < 4; ++c) h = mix(h, static_cast<u64>(theme_.palette[ink][c] * 1000));
+        for (u32 k = 1; k <= kWaveColours; ++k)
+            for (int c = 0; c < 4; ++c) h = mix(h, static_cast<u64>(waves_->colours[k][c] * 1000));
         if (!waves_->looks || waves_->looks->key != h) {
             auto l = std::make_shared<WaveLooks>();
             std::copy(theme_.palette[kInkAdded], theme_.palette[kInkAdded] + 4, l->line);
@@ -964,6 +996,7 @@ void App::wave_layout(FrameDesc& fd) {
             std::copy(theme_.palette[kInkDiagnostic + 2], theme_.palette[kInkDiagnostic + 2] + 4, l->z);
             std::copy(theme_.palette[kInkChanged], theme_.palette[kInkChanged] + 4, l->event);
             std::copy(theme_.palette[0], theme_.palette[0] + 4, l->text);
+            std::memcpy(l->colours, waves_->colours, sizeof l->colours);
             l->line[3] = l->x[3] = l->z[3] = l->event[3] = l->text[3] = 1;
             l->font_path = font.path();
             l->font_index = font.index();
@@ -1120,6 +1153,7 @@ void App::wave_layout(FrameDesc& fd) {
                         } else if (row.kind == WaveRow::kBit) {
                             ink = ink::kMuted;
                         }
+                        if (const u8 colour = wave_row_colour(v.items, row); colour && colour <= kWaveColours) ink.ink = kColourInk + colour;  // (its colour, as bold as it was)
                         put(v.box, font, at, edge + indent, fit_text(name, v.name_cols - indent, row.kind == WaveRow::kSignal), ink);
                         if (const WaveSignal* s = wave_row_signal(v.items, row); s && s->var < wv.vars.size() && lock.owns_lock()) {
                             const Lane& lane = wv.lanes[wv.vars[s->var].lane];
@@ -1149,6 +1183,7 @@ void App::wave_layout(FrameDesc& fd) {
         q.cells = v.box.cells.data();
         q.border_px = 0;
         q.bg = theme_.bg;
+        q.palette = &waves_->palette[0][0];
         if (!v.started) continue;
         // Pictures over the cells: tiles (or stand-ins), then the lines.
         const int clip[4] = {v.tx0, v.ty0, v.tx1, v.ty1};
@@ -1177,6 +1212,7 @@ void App::wave_layout(FrameDesc& fd) {
                 if (const WaveSignal* s = wave_row_signal(v.items, v.rows[r]); s && s->var < wv.vars.size()) {
                     tr.lane = wv.vars[s->var].lane;
                     tr.fmt = wave_row_format(v.items, v.rows[r]);
+                    tr.colour = wave_row_colour(v.items, v.rows[r]);
                 }
                 rows_key = row_key(rows_key, tr);
             }
@@ -1198,7 +1234,7 @@ void App::wave_layout(FrameDesc& fd) {
                     WaveView::Tile& t = it->second;
                     t.used = v.frames;
                     // (Painted while the dump was being read: again, once more of it has come.)
-                    const bool stale = t.upto != ~0ull && t.upto < t.t1 && (progressed_done || v.now.reached > t.upto);
+                    const bool stale = t.upto != ~0ull && (t.upto < t.t1 || t.again) && (progressed_done || v.now.reached > t.upto);
                     if (stale) (on_show ? want : later).push_back(job());
                     if (on_show) {
                         picture(t.image, sx0, by0, sx0 + t.w, by0 + t.h, clip);
@@ -1331,6 +1367,33 @@ bool next_change(const Wave& w, const std::vector<WaveItem>& items, const WaveRo
     return *out = lane.time(j), true;
 }
 
+// * and #: the start of the next run of the value at the cursor on a row,
+// after the run the cursor is in (or of the last run of it before that
+// one), as Vim's * and # find the word under the cursor. The value is the
+// row's bits, x and z among them (x matches x alone, z z alone, a value
+// partly x the same bits x), or a real's, or a string; a bit of a bus
+// opened, that bit. False, with why in `why`, if there is none, or nothing
+// to look for (a group's heading, an event, before the row's first change).
+bool same_value(const Wave& w, const std::vector<WaveItem>& items, const WaveRow& row, u64 from, bool forward, u64* out, std::string* why) {
+    const WaveSignal* s = wave_row_signal(items, row);
+    if (!s || s->var >= w.vars.size()) return *why = "A group has no value of its own to look for", false;
+    const Lane& lane = w.lanes[w.vars[s->var].lane];
+    if (lane.kind() == LaneKind::kEvent) return *why = "An event has no value to look for", false;
+    const u64 i = lane.at(from);
+    if (i == ~0ull) return *why = "The row has no value at the cursor yet", false;
+    const u32 bit = row.kind == WaveRow::kBit ? row.bit : 0, n = row.kind == WaveRow::kBit ? 1 : lane.stride();
+    const u64 j = forward ? lane.same_next(i, bit, n) : lane.same_prev(i, bit, n);
+    if (j == ~0ull) {
+        std::string value;
+        wave_value(lane, i, wave_row_format(items, row), &value);
+        if (value.empty() || value.find(' ') != std::string::npos) value = "\"" + value + "\"";
+        *why = std::string(forward ? "No later time with " : "No earlier time with ") + value;
+        return false;
+    }
+    *out = lane.time(j);
+    return true;
+}
+
 }  // namespace
 
 // What a key or a command does to the wave tab in front.
@@ -1399,6 +1462,40 @@ void App::wave_act(int act) {
                 v.touched = true;
             }
             break;
+        }
+        case kWaveSameNext: case kWaveSamePrev: {
+            if (!row) break;
+            u64 t = 0;
+            std::string why;
+            bool found = false;
+            {
+                std::shared_lock lock(v.wave->mu);
+                found = same_value(w, v.items, *row, v.cursor, act == kWaveSameNext, &t, &why);
+            }
+            if (!found) {
+                notify(why);
+                break;
+            }
+            v.cursor = t;
+            v.show_time(t);
+            v.touched = true;
+            break;
+        }
+        case kWaveColour: {
+            if (!row) break;
+            std::vector<std::string> names;
+            for (u8 c = 1; c <= kWaveColours; ++c) names.emplace_back(wave_colour_name(c));
+            names.emplace_back(wave_colour_name(0));
+            const u64 doc = pane_->doc->id;
+            find_choose_item(v.vrow >= 0 && v.vrow != static_cast<i64>(v.sel) ? "Colour the rows chosen" : "Colour the row", std::move(names), [this, doc](int i) {
+                Doc* d = find_doc(doc);
+                if (d && d->wave && i >= 0) wave_colour(*d->wave, i < kWaveColours ? static_cast<u8>(i + 1) : 0);
+            });
+            // (Each in its colour, before its name; none, none.)
+            std::vector<std::array<float, 4>> swatches(kWaveColours + 1);
+            for (u32 c = 1; c <= kWaveColours; ++c) std::copy(waves_->colours[c], waves_->colours[c] + 4, swatches[c - 1].begin());
+            find_swatches(swatches);
+            return;
         }
         case kWaveAdd: {
             std::vector<std::string> paths;
@@ -1658,6 +1755,25 @@ void App::wave_format(WaveView& v, bool names, const std::string& text) {
     dirty_ = true;
 }
 
+// The rows chosen (V), or the row, given a colour (0: none): a signal's
+// own (a bit's, its bus's), a group's heading the group's (its signals
+// with none of their own drawn in it).
+void App::wave_colour(WaveView& v, u8 colour) {
+    if (!v.started || v.rows.empty()) return;
+    const u32 a = v.vrow >= 0 ? static_cast<u32>(std::min<i64>(v.vrow, v.sel)) : v.sel, b = v.vrow >= 0 ? static_cast<u32>(std::max<i64>(v.vrow, v.sel)) : v.sel;
+    v.remember();
+    for (u32 r = a; r <= b && r < v.rows.size(); ++r) {
+        const WaveRow& row = v.rows[r];
+        if (row.kind == WaveRow::kGroup) v.items[row.item].colour = colour;
+        else if (WaveSignal* s = wave_row_signal(v.items, row)) s->colour = colour;
+    }
+    v.vrow = -1;
+    rows_again(v);
+    v.show_sel(v.lane_rows);
+    v.touched = true;
+    dirty_ = true;
+}
+
 bool App::wave_key(const SDL_KeyboardEvent& k) {
     if (!pane_->doc->wave || (k.mod & (SDL_KMOD_CTRL | SDL_KMOD_ALT | SDL_KMOD_GUI))) return false;
     if (cfg_.modal && vim_.mode() == Vim::kCommand) return false;  // (Vim's command line has the keys)
@@ -1703,6 +1819,13 @@ bool App::wave_key(const SDL_KeyboardEvent& k) {
         case SDLK_DOWN: wave_act(kWaveDown); return took();
         case SDLK_UP: wave_act(kWaveUp); return took();
         case SDLK_KP_ENTER: wave_act(kWaveOpen); return took();
+        // (* and # as the layout gives them: their own keys, or Shift and 8 and 3.)
+        case SDLK_ASTERISK: case SDLK_KP_MULTIPLY: wave_act(kWaveSameNext); return took();
+        case SDLK_HASH: wave_act(kWaveSamePrev); return took();
+        case SDLK_8: case SDLK_3:
+            if (!shift) break;
+            wave_act(k.key == SDLK_8 ? kWaveSameNext : kWaveSamePrev);
+            return took();
         default: break;
     }
     for (const WaveKey& w : kWaveKeys)
@@ -1966,8 +2089,10 @@ std::string App::wave_dump(std::string_view what) {
         for (u32 r = 0; r < v.rows.size(); ++r) {
             const WaveRow& row = v.rows[r];
             out += "\n" + std::string(r == v.sel ? ">" : " ") + std::string(row.depth * 2u, ' ') + wave_row_name(v.items, row, w);
+            const u8 colour = wave_row_colour(v.items, row);
             if (row.kind == WaveRow::kGroup) {
                 out += v.items[row.item].open ? " (open)" : " (shut)";
+                if (colour) out += " in " + std::string(wave_colour_name(colour));
                 continue;
             }
             const WaveSignal* s = wave_row_signal(v.items, row);
@@ -1977,6 +2102,7 @@ std::string App::wave_dump(std::string_view what) {
             wave_value(lane, lane.at(v.cursor), f, &value);
             out += " = " + value;
             if (lane.kind() == LaneKind::kBits && lane.width() > 1 && row.kind == WaveRow::kSignal) out += " " + std::string(wave_radix_name(f.radix));
+            if (colour) out += " in " + std::string(wave_colour_name(colour));
         }
         return out;
     }

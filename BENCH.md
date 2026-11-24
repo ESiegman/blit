@@ -3430,6 +3430,44 @@ under the SDK's `usr/include` 297 and 291; a word in none of them 313 and
 315. The program grows by the pumps and the forward: the Linux agents
 x86_64 2,720,664 to 2,933,680 bytes, aarch64 2,302,176 to 2,498,808.
 
+### Round 79: milestone 6, `*` and `#` and a row's colour in the wave tab
+
+`*` and `#` walk a row's changes from the cursor (`Lane::same_next`, a
+word or two of each plane a change); a row's colour is an ink of the
+tab's palette and part of its tiles' keys. On AC power (`pmset`:
+powermode 2), the Mac's load average 6 to 8 from other sessions, so
+within this sitting only. Debug builds with Release's flags, `main` at
+8389fef against this branch, turn about, at 2560x1600 offscreen, on
+Verilator's 228 MB dump of a million cycles (two million changes of its
+clock and of its 32-bit counter) and a 108,000-line C++ file; medians of
+four rounds on the Mac (Metal, M5 Pro), three on the Arch box (Vulkan,
+RX 7900 XT):
+
+| | Mac before | Mac after | Box before | Box after |
+|---|---:|---:|---:|---:|
+| A frame, the wave tab on show (CPU, p50 µs) | 72.3 | 72.3 | 62.4 | 62.6 |
+| Zooming, a step a frame (CPU, p50 µs) | 45.2 | 43.1 | 43.9 | 43.4 |
+| Panning, a step a frame (CPU, p50 µs) | 74.4 | 75.0 | 86.0 | 86.0 |
+| A zoom step to every tile sharp (p50 ms) | 1.02 | 1.03 | 1.14 | 1.07 |
+| A page's pan to every tile sharp (p50 ms) | 0.73 | 0.68 | 0.48 | 0.53 |
+| j or k in the wave tab and its frame (median ms, 400) | 0.073 | 0.073 | 0.085 | 0.085 |
+| The text: scroll / keys (CPU, p50 µs) | 56.5 / 49.9 | 56.5 / 49.9 | | |
+
+`*` itself, the key to the cursor moved (20 each, the whole of it on the
+main thread): its counter's 0 at the start, which never comes again (the
+walk to the end, two million changes), 0.94 ms on the Mac and 2.16 ms on
+the box; its 16-bit LFSR's value, found again 65,535 changes on, 0.032
+ms and 0.071 ms; `#` with nothing before, 0.001 ms.
+
+A bus's value is then written once in its run rather than once in each
+tile it crosses: placed by the run, from its times where it crosses a
+tile's edge (two `Lane::time` calls for each such run, at most two a row
+in a tile). The same turn about on the Mac, three rounds, `main` against
+it: a tile 0.49 and 0.53 ms panning, 0.65 and 0.64 ms zooming; to every
+tile sharp 0.69 and 0.62 ms (pan), 0.98 and 1.00 ms (zoom); a frame with
+the tab on show 72.2 µs both; j or k and its frame 0.073 and 0.074 ms
+(400 each, two rounds). No change past the noise.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups

@@ -3,7 +3,8 @@
 // dump, groups of them, a bus opened into its bits), each value written in
 // the row's radix, and the view as it is kept beside the project
 // (.blit/waves/<dump>.json): rows by hierarchical path, radix, groups,
-// names of values, markers, the cursor and the stretch of time on show.
+// colours, names of values, markers, the cursor and the stretch of time on
+// show.
 // Knows no window: the tab, the tile painter (wavetile.hpp) and the tests
 // share it.
 #include <map>
@@ -52,19 +53,29 @@ void wave_value(const Lane& lane, u64 i, const WaveFormat& f, std::string* out);
 // capture's CSV), signed for an integer, hex for another bus.
 WaveRadix wave_radix_default(const WaveVar& v);
 
+// The colours a row can be given, each one of the theme's own by its name
+// there (as the view file has it too): 0 is none, drawn as rows are. They
+// are the ones apart from each other, and from a signal's own colour (the
+// theme's diff.plus, else info), in each of blit's themes.
+inline constexpr u8 kWaveColours = 5;
+std::string_view wave_colour_name(u8 c);  // "error", "warning", "hint", "accent", "keyword"; "none"
+bool wave_colour_parse(std::string_view s, u8* out);
+
 // One signal in the list.
 struct WaveSignal {
     u32 var = 0;
     WaveFormat fmt;
     bool open = false;  // a bus shown bit by bit under it
+    u8 colour = 0;      // given it (0: none, the group's if it is in one that has one)
 };
 
 // One entry of the list: a signal, or a group of them under a name.
 struct WaveItem {
     bool group = false;
     WaveSignal sig;                   // (a signal)
-    std::string name;                 // (a group: its name, whether its rows show, and its signals)
+    std::string name;                 // (a group: its name, whether its rows show, its colour, and its signals)
     bool open = true;
+    u8 colour = 0;
     std::vector<WaveSignal> members;
 };
 
@@ -83,6 +94,8 @@ std::vector<WaveRow> wave_rows(const std::vector<WaveItem>& items, const Wave& w
 const WaveSignal* wave_row_signal(const std::vector<WaveItem>& items, const WaveRow& r);
 WaveSignal* wave_row_signal(std::vector<WaveItem>& items, const WaveRow& r);
 WaveFormat wave_row_format(const std::vector<WaveItem>& items, const WaveRow& r);
+// The colour a row is drawn in: its signal's own, else its group's (a bit's: its bus's); a group's heading, the group's.
+u8 wave_row_colour(const std::vector<WaveItem>& items, const WaveRow& r);
 // A variable as the names column and the picker say it: "tb.u_cnt.count[7:0]".
 std::string wave_var_name(const Wave& w, u32 var);
 // What the names column says: "tb.u_cnt.count[7:0]", "count[3]", a group's name.
