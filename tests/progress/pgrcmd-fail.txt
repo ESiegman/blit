@@ -1,0 +1,6 @@
+# Lattice's pgrcmd with no cable: WRITTEN, not captured (not installed
+# here). What pgrcmd prints is not documented; its return code -5, "Cable
+# not detected" (Radiant 2026.1 Help, pp. 1858-1861), is exit status 251,
+# which blit's command says in words after it (flash.cpp's kPgrcmdCodes).
+pgrcmd: cable not detected (return code -5)
+@exit 251

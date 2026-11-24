@@ -1,0 +1,7 @@
+# STM32CubeProgrammer's CLI with no ST-LINK: WRITTEN, not captured (not
+# installed here), from the words others' code looks for, "No debug probe
+# detected" (qMonstatek 3066b985c2 src/backend/updater/swd_recovery.cpp),
+# with "Error: " before it as adafruit/tinyuf2 b3d228897e quotes another of
+# its errors ("Error: Serial number not found"); it ended with 1.
+Error: No debug probe detected
+@exit 1

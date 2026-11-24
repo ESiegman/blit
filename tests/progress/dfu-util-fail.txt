@@ -1,0 +1,14 @@
+# dfu-util 0.11 (Homebrew, macOS) -d 0483:df11 -a 0 -s 0x08000000:leave -D
+# fw.bin on a pipe, with no DFU device plugged in, 2026-11-23: all it
+# printed, and it ended with 74 (EX_IOERR).
+dfu-util 0.11
+
+Copyright 2005-2009 Weston Schmidt, Harald Welte and OpenMoko Inc.
+Copyright 2010-2021 Tormod Volden and Stefan Schmidt
+This program is Free Software and has ABSOLUTELY NO WARRANTY
+Please report bugs to http://sourceforge.net/p/dfu-util/tickets/
+
+dfu-util: Warning: Invalid DFU suffix signature
+dfu-util: A valid DFU suffix will be required in a future dfu-util release
+dfu-util: No DFU capable USB device available
+@exit 74

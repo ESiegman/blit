@@ -1,0 +1,33 @@
+# picotool 2.3.1 (Homebrew, macOS) load -v -x on a terminal, the owner's Pico
+# in BOOTSEL, 2026-11-23 (captures/picotool-load-pty.raw, the terminal's own
+# ^D echo before it left out): its bars, each line ending \r\r\n as the terminal wrote it.
+@pace 5
+Loading into Flash:   [                              ]  0%\r\c
+Loading into Flash:   [===                           ]  13%\r\c
+Loading into Flash:   [=======                       ]  26%\r\c
+Loading into Flash:   [===========                   ]  39%\r\c
+Loading into Flash:   [===============               ]  52%\r\c
+@hold a
+Loading into Flash:   [===================           ]  65%\r\c
+Loading into Flash:   [=======================       ]  78%\r\c
+Loading into Flash:   [===========================   ]  91%\r\c
+Loading into Flash:   [==============================]  100%\r\c
+\r\c
+
+Verifying Flash:      [                              ]  0%\r\c
+Verifying Flash:      [===                           ]  13%\r\c
+Verifying Flash:      [=======                       ]  26%\r\c
+Verifying Flash:      [===========                   ]  39%\r\c
+Verifying Flash:      [===============               ]  52%\r\c
+Verifying Flash:      [===================           ]  65%\r\c
+Verifying Flash:      [=======================       ]  78%\r\c
+Verifying Flash:      [===========================   ]  91%\r\c
+Verifying Flash:      [==============================]  100%\r\c
+\r\c
+
+  OK\r\c
+
+\r\c
+
+The device was rebooted to start the application.\r\c
+

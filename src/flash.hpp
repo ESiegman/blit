@@ -2,9 +2,12 @@
 // Flashing a board, and programming an FPGA: which tool a board is flashed
 // with (its board object's `flash`, else the one its probe's kind says),
 // how each tool is run (a table, data, in flash.cpp: esptool, OpenOCD,
-// probe-rs, J-Link Commander, openFPGALoader), what its image is (an ELF,
-// ESP-IDF's flasher_args.json, a bitstream) and a hash of what it loads,
-// so that a flash of an image that has not changed is not run again.
+// probe-rs, J-Link Commander, picotool, dfu-util, pyOCD,
+// STM32CubeProgrammer, openFPGALoader, Vivado, iceprog, ecpprog, Lattice's
+// pgrcmd; and the copy of a .uf2 to an RP2040's or RP2350's boot ROM
+// volume), what its image is (an ELF, ESP-IDF's flasher_args.json, a .uf2,
+// a bitstream) and a hash of what it loads, so that a flash of an image
+// that has not changed is not run again.
 // appflash.cpp runs a flash as a task of the Build tab.
 #include <string>
 #include <string_view>
@@ -58,7 +61,9 @@ struct FlashImage {
     std::vector<std::string> options;  // ("--flash-mode", "dio", ...)
     std::string chip, before, after;
     bool no_stub = false;
-    int spi_width = 1;  // an FPGA's bitstream: the SPI bus width it boots with (bitstream_spi_width)
+    std::string volume;  // the UF2 copy's: the boot ROM's volume the .uf2 goes to,
+    u64 flash_bytes = 0;  // and what of it goes into flash (uf2_refused)
+    int spi_width = 1;    // an FPGA's bitstream: the SPI bus width it boots with (bitstream_spi_width)
 };
 // ESP-IDF's flasher_args.json (`dir`: the folder it is in, from the
 // project's): its flash_files at their addresses, write_flash_args, and
@@ -109,6 +114,26 @@ FlashPlan flash_plan(const Board& b, const std::string& tool, const std::string&
 // in /tools/Xilinx or /opt/Xilinx, as that machine's path; "" if none.
 // (A worker's call: folders are listed, there through the agent.)
 std::string vivado_installed(const std::string& there);
+
+// A Raspberry Pi boot ROM's volume (BOOTSEL), as mounted: its path, and
+// its INFO_UF2.TXT's Board-ID ("RPI-RP2" an RP2040's, "RP2350").
+struct RpVolume {
+    std::string path, board;
+};
+// Those mounted on the machine whose paths start with `there` ("" here,
+// "ssh://host" there): each folder in /Volumes, /media, /media/USER,
+// /run/media/USER whose INFO_UF2.TXT a Raspberry Pi boot ROM wrote
+// (BLIT_UF2_VOLUMES, folders split by ':', in their place, for the tests).
+// A worker's call: folders are listed, there through the agent.
+std::vector<RpVolume> rp_volumes(const std::string& there);
+// Why the boot ROM whose Board-ID is `board` would not take this .uf2 ("":
+// it would): it is not a UF2, or (an RP2040's) its blocks are not for the
+// RP2040's family; and the bytes it would write into flash (the blocks'
+// payloads it takes, half the file's as the Pico SDK writes them).
+std::string uf2_refused(std::string_view bytes, std::string_view board, u64* flash_bytes = nullptr);
+// A Pico SDK build's platform ("rp2040", "rp2350-arm-s", "rp2350-riscv"),
+// from its CMakeCache.txt's text; "" if it is not a Pico SDK build.
+std::string pico_platform(std::string_view cmake_cache);
 
 // openFPGALoader's cable (-c) for an FTDI chip, by its ids ("0403:6010"):
 // Digilent's (their boards' and cables' product strings say so) or the

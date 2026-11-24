@@ -1,5 +1,10 @@
-# picotool v2.3.1 (Homebrew, macOS) load app.bin -t bin -o 0x10000000 on a
-# terminal, with no board in BOOTSEL mode: all it printed (and it ended with
-# 249).
+# picotool 2.3.1 (Homebrew, macOS) load without -f on a pipe, the owner's
+# Pico running the Pico SDK's USB serial (no board in BOOTSEL), 2026-11-23:
+# all it printed, and it ended with 249 (captures/picotool-serial-noforce.raw).
 No accessible RP-series devices in BOOTSEL mode were found.
+
+but:
+
+RP2040 device at bus 1, address 2 appears to have a USB serial connection, so
+    consider -f (or -F) to force reboot in order to run the command.
 @exit 249

@@ -101,6 +101,7 @@ struct Profile;      // (profile.hpp)
 struct ProfileFunc;
 struct ProfView;     // a profile's tab (appprofile.cpp)
 struct TermView;     // a terminal's tab (appterm.cpp)
+struct CrashOptions; // what a run's crash dumps are decoded with (crashscan.hpp)
 // A terminal's stored lines (its history and its screen) as text, a line
 // as the program wrote it (the rows a wrap made joined again): where each
 // row starts in it, the first row's number (as the terminal counts its
@@ -131,6 +132,10 @@ struct WaveView;     // a dump's waves' tab (appwave.cpp)
 struct RemoteEntry;  // a folder's entry on another machine (remote.hpp)
 struct ProbeRow;     // a row of the probe picker (probes.hpp)
 struct BoardDebug;   // what a board's debug preset starts (boarddebug.hpp)
+struct SerialPortId;  // a serial port, and the USB device it is on (serialtab.hpp)
+struct SerialConfig;  // its speed and framing (serial.hpp)
+enum class SerialReturn : u8;  // what Return sends to it (serialtab.hpp)
+class SerialTab;     // a serial monitor's tab (serialtab.hpp)
 enum class FlashMode : u8;  // what a flash writes (flash.hpp)
 
 // A picture read from its file and put on the GPU (appimage.cpp).
@@ -344,6 +349,18 @@ struct Pane {
     bool has_thumb = false;  // there is something to scroll (set when it is laid out)
     u64 thumb_until_ns = 0;
     double thumb_x = -1, thumb_y = -1;
+};
+
+// The build's problems as the Problems tab heads them (appbuild.cpp): a
+// group for each open run that has some or failed with none, and one for a
+// file they were read from, in their order; each a stretch of
+// App::build_problems().
+struct BuildGroup {
+    std::string title;    // the run's name, or the file's
+    std::string state;    // how the run goes: "running…", "done", "stopped", "failed (exit 2)" ("" for a file)
+    bool failed = false;  // (that said as a failure)
+    std::string why;      // one that failed with no error in its output, under its heading: "no problem found in its output", "cmake is not installed on this Mac"
+    u32 first = 0, count = 0;
 };
 
 // How the window is split: a leaf shows a pane, anything else is two
@@ -1199,12 +1216,50 @@ private:
     // A terminal tab in dir (the working folder when none): a login shell, or
     // `command` run by sh, whose tab stays when it ends and says how (and
     // keeps `title`). Its document's id; 0 if it could not start.
-    // (A command's output is read for problems, with init.lua's `matchers`.)
+    // (A command's output is read for problems, with init.lua's `matchers`,
+    // and for crash dumps, decoded as `crash` says.)
     u64 term_open(const std::string& dir = {}, const std::string& command = {}, const std::string& title = {}, std::string_view hint = {}, bool console = false,
-                  std::shared_ptr<const BuildMatchers> matchers = {});
+                  std::shared_ptr<const BuildMatchers> matchers = {}, const CrashOptions* crash = nullptr);
+    // What a task's or a run's crash dumps are decoded with: the ELF of its
+    // run configuration's board (else the newest the build made), and its
+    // panic formats (appcrash.cpp).
+    CrashOptions crash_options(const BuildTask* task, const std::string& cmd);
     i64 term_pid(u64 doc);          // its program's process here, while it runs (0: there, ended, or none)
     std::string term_tty(u64 doc);  // its terminal's device here ("/dev/ttys003"; "": there, or none)
     void term_stop(u64 doc, bool hard);  // its program ended (hard: killed), its tab and text kept, saying it was stopped
+    // A serial monitor's tab (appterm.cpp): a terminal whose program is the
+    // device on a port, in the terminals' split; a tab's, if it is one; every
+    // one, hidden ones too; and bytes to a terminal's program, as typed.
+    u64 term_open_serial(const SerialPortId& id, const SerialConfig& cfg, SerialReturn ret);
+    std::shared_ptr<SerialTab> term_serial(const Doc& d);
+    std::vector<std::pair<Doc*, std::shared_ptr<SerialTab>>> term_serials();
+    void term_send(const Doc& d, std::string_view bytes);
+    // Serial monitors (appserial.cpp): "Open a serial port…" over the USB
+    // devices' ports (listed on a worker), the board's monitor in one step,
+    // and the commands on the tab in front (else one on show): speed and
+    // framing, what Return sends, times, hex, a log, a file sent, DTR and
+    // RTS, resets, a break. Flashing lets go of the board's port and gives
+    // it back (serial_release, serial_reclaim: appflash.cpp).
+    struct SerialUi;
+    std::shared_ptr<SerialUi> serialui_;  // (made the first time)
+    void serial_pick();
+    void serial_sync();
+    void serial_settle();  // (the tests: the listing waited for)
+    void serial_board();
+    std::shared_ptr<SerialTab> serial_here(Doc** doc = nullptr, bool say = true);  // (say: none is said)
+    void serial_speed_pick();
+    void serial_return_pick();
+    void serial_stamps();
+    void serial_hex();
+    void serial_log_pick();
+    void serial_log_stop();
+    void serial_send_pick();
+    void serial_line(bool dtr);
+    void serial_reset(bool esp);
+    void serial_break();
+    void serial_release(const Board& b);
+    void serial_reclaim();
+    std::string serial_dump();  // (the tests: the tab in front, and the picker's last rows)
     // The project's Python (apppython.cpp): one for each project folder and
     // subproject, found on a worker and kept; everything that runs Python
     // takes it. py_known: a folder's, if it is known (else it is looked for,
@@ -1526,9 +1581,10 @@ private:
     void script_build_event(bool done, const std::string& name, const std::string& kind, const std::string& command, int status, u32 errors, u32 warnings, bool stopped, double seconds);
     void build_older(int seconds);
     bool front_ = true;  // the window is in front (its focus events say)
-    // What the last run's output said was wrong (buildscan.hpp): taken from
-    // its terminal as it comes (term_sync), shown in the Problems tab's
-    // Build section, counted on the Run button and in the status bar.
+    // What each open run's output said was wrong (buildscan.hpp): taken from
+    // its terminal as it comes (term_sync), shown in the Problems tab under
+    // the run's heading, counted in the status bar (and the last run's on
+    // the Run button); gone with the run's tab, or when it runs again.
     void build_found(u64 doc, std::vector<BuildProblem> found);
     // And the tests' results it gave, for the Tests tab, and what it came to
     // (outcome, when that changed), for its task's row and the Run button.
@@ -1536,14 +1592,14 @@ private:
     void build_progress(u64 doc, const BuildScan::Progress& p);  // (how far an engine the task runs has got: the Run button and its row)
     std::string build_progress_dump();
     const std::vector<BuildProblem>& build_problems() const;
+    // Those problems as the Problems tab heads them (BuildGroup).
+    const std::vector<BuildGroup>& build_groups();
     std::string build_label() const;  // the Run button's words
-    // A run that failed and whose output gave no error: its exit code (0:
-    // not so), and what to say ("make failed with exit code 2: no problem
-    // found in its output"; "" when not so).
+    // The last run, if it failed and its output gave no error: its exit
+    // code (0: not so); and what to say of the first open run that did so
+    // ("" for none).
     int build_failed() const;
     std::string build_failure() const;
-    void build_unmark();               // the last problems' marks taken from the text
-    std::string build_source() const;  // what they are under in the Problems tab: "Build", or the file they were read from
     // "Read the problems from this file": a file chosen (the one in front to
     // begin with), read on a thread of its own (buildread.hpp) into the
     // build's problems, in place of the last run's.

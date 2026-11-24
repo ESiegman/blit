@@ -111,6 +111,11 @@ public:
     // every move. And whether it is told in SGR's form (1006) or X10's.
     u32 mouse_mode() const { return mouse_mode_; }
     bool mouse_sgr() const { return mouse_sgr_; }
+    // The pen the program writes with (its colours and attributes) as it is
+    // now, and set: text of blit's own put among the program's (a serial
+    // tab's times) is written with a pen of its own, and the program's put back.
+    const TermCell& pen() const { return pen_; }
+    void set_pen(const TermCell& p) { pen_ = p; }
     const std::string& title() const { return title_; }
     const std::string& cwd() const { return cwd_; }  // from OSC 7, a path
     u64 bells() const { return bells_; }

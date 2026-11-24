@@ -5,12 +5,15 @@
 # (and Flash anyway; a failed or stopped flash never remembered as done),
 # the build run first, a failure's problem, the keys, the Boards view
 # (openFPGALoader's --scan-usb and --detect beside the probe picker's rows),
-# and a board on another machine (tests/fake-ssh.sh stands in for ssh).
+# an RP2040's .uf2 copied to its boot ROM's volume, and a board on another
+# machine (tests/fake-ssh.sh stands in for ssh).
 #
 # Each tool is a stand-in on the PATH that writes its name and arguments to
 # a log, then replays a sample of the tool's output (tests/replay.sh; the
 # samples of tests/progress/, and tests/flash/ for the Boards view, each
-# saying where it is from).
+# saying where it is from). The boot ROMs' volumes are folders here
+# (BLIT_UF2_VOLUMES), each with the INFO_UF2.TXT its boot ROM writes, whose
+# board "restarts" (the file taken away) once the copy is whole.
 #
 #   tests/flash.sh path/to/blit            run the cases
 #   tests/flash.sh path/to/blit --print    show what each case gives
@@ -64,7 +67,7 @@ exec sh "$here/replay.sh" "\$(cat "\$SAMPLE")"
 EOF
     chmod +x "$B/$tool"
 }
-for tool in esptool openocd openocd-esp32 probe-rs JLinkExe openFPGALoader vivado; do standin $tool; done
+for tool in esptool openocd openocd-esp32 probe-rs JLinkExe openFPGALoader vivado picotool dfu-util pyocd STM32_Programmer_CLI iceprog ecpprog pgrcmd; do standin $tool; done
 export PATH="$B:$PATH"
 export OFL_LOG="$dir/ofl-log"
 
@@ -449,6 +452,239 @@ rm -f "$LOG"
 got=$(PATH="$dir/none:/usr/bin:/bin" BLIT_VIVADO_HOMES="$dir/none" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;command:Program the FPGA (SRAM);flashwait" 2>&1 >/dev/null | tail -1)
 check "Vivado nowhere: said" "blit: vivado is not installed on $this (nor in /tools/Xilinx or /opt/Xilinx)"
 
+# ---------------------------------------------------------------- RP2040 and RP2350
+
+# mkuf2 FILE BLOCKS [FAMILY]: a UF2 of BLOCKS 512-byte blocks, 256 bytes
+# of each for the flash from 0x10000000, of FAMILY (the RP2040's,
+# 0xe48bff56, unless said).
+cat >"$dir/mkuf2" <<'EOF'
+#!/bin/sh
+exec perl -e '
+    my ($file, $n, $family) = @ARGV;
+    $family = defined $family ? hex($family) : 0xe48bff56;
+    open(my $f, ">", $file) or die; binmode $f;
+    for my $i (0 .. $n - 1) {
+        print $f pack("VVVVVVVV", 0x0A324655, 0x9E5D5157, 0x2000, 0x10000000 + 256 * $i, 256, $i, $n, $family), chr($i % 256) x 256, "\0" x 220, pack("V", 0x0AB16F30);
+    }
+' "$@"
+EOF
+chmod +x "$dir/mkuf2"
+mkuf2() { "$dir/mkuf2" "$@"; }
+
+# A Pico SDK build's outputs beside each other, as on the owner's Pico's
+# blinky (pico-sdk 2.3.1: NAME.elf, NAME.uf2, NAME.bin); its CMakeCache.txt.
+mkelf "$P/build/blinky.elf" P x
+mkuf2 "$P/build/blinky.uf2" 16
+printf 'raw' >"$P/build/blinky.bin"
+printf 'PICO_SDK_PATH:PATH=/Users/eren/pico/pico-sdk\nPICO_PLATFORM:STRING=rp2040\n' >"$P/build/CMakeCache.txt"
+PICO='"probe": {"kind": "pico-serial", "serial": "A58565170D696C53", "usb": "2e8a:000a"}, "serial": {"port": "/dev/ttyACM7"}'
+BOOT='"probe": {"kind": "rp-boot", "usb": "2e8a:0003"}'
+picoboard() { printf '{"configurations": [{"name": "blinky", "program": "build/blinky", "board": %s}]}\n' "$1" >"$P/.blit/run.json"; }
+
+# The Pico running the SDK's USB serial, chosen in the picker: picotool,
+# its serial number, -f (it reboots the board into BOOTSEL), the ELF the
+# build made beside the configuration's program; its real output.
+picoboard "{$PICO}"
+flash picotool "$F;progresswait:Program 52%;progressdump;$end"
+want <<'EOF'
+button: ■ Program 52% | row: Reboot ✓ · Program 52%
+button: ▶ blinky · Flashed in N s, verified | row: done · Flashed in N s, verified
+picotool load -v -x build/blinky.elf --ser A58565170D696C53 -f
+EOF
+check "a Pico on its SDK's USB serial: picotool -f, its serial number, the ELF" "$expected"
+# Its boot ROM (BOOTSEL), which has no serial number of its own: -f still
+# (picotool takes a board in BOOTSEL as it is); a .uf2 named, or a .bin
+# at its address.
+picoboard "{$BOOT, \"elf\": \"build/blinky.uf2\"}"
+flash picotool-pty "$F;$end"
+got=$(printf '%s' "$got" | tail -1)
+check "the Pico in BOOTSEL: picotool without --ser, a .uf2" 'picotool load -v -x build/blinky.uf2 -f'
+picoboard "{$PICO, \"elf\": \"build/blinky.bin\", \"flash\": {\"address\": \"0x10004000\"}}"
+flash picotool "$F;$end"
+got=$(printf '%s' "$got" | tail -1)
+check "a .bin, at its address" 'picotool load -v -x build/blinky.bin -o 0x10004000 --ser A58565170D696C53 -f'
+picoboard "{$PICO, \"elf\": \"build/blinky.bin\"}"
+flash picotool "$F;$end"
+got=$(printf '%s' "$got" | tail -1)
+check "a .bin with no address: picotool's own, the start of flash" 'picotool load -v -x build/blinky.bin --ser A58565170D696C53 -f'
+# A file that is not there: said before picotool runs (with -f it would
+# have rebooted the board into BOOTSEL to find it missing).
+picoboard "{$PICO, \"elf\": \"build/gone.uf2\"}"
+flash picotool "$F;buildwait"
+check "a Pico's image not there: said, and picotool not run" "blit: Cannot read build/gone.uf2: there is no such file"
+# A board with only a serial port, or nothing, and a Pico SDK build (no
+# ESP-IDF one beside it): picotool.
+mv "$P/build/flasher_args.json" "$P/build/flasher_args.away"
+for b in '{"serial": {"port": "/dev/ttyACM7"}}' '{"chip": ""}'; do
+    picoboard "$b"
+    flash picotool "$F;$end"
+    got=$(printf '%s' "$got" | tail -1)
+    check "a board of $b, a Pico SDK build beside the ELF: picotool" 'picotool load -v -x build/blinky.elf -f'
+done
+mv "$P/build/CMakeCache.txt" "$P/build/CMakeCache.away"
+picoboard '{"chip": ""}'
+flash picotool "$F"
+check "neither build: said" "blit: blinky's board has no flash tool, and its probe says none"
+mv "$P/build/CMakeCache.away" "$P/build/CMakeCache.txt"
+mv "$P/build/flasher_args.away" "$P/build/flasher_args.json"
+
+# The UF2 copy ("flash": "uf2"): the .uf2 beside the ELF copied to the
+# boot ROM's volume (found by its INFO_UF2.TXT), its bytes for the flash as
+# it goes, then done once the volume goes (the board restarting: here a
+# watcher takes the volume's INFO_UF2.TXT away once the copy is whole).
+V="$dir/volumes"
+mkdir -p "$V/RPI-RP2" "$V/Other" "$V/RP2350"
+printf 'UF2 Bootloader v3.0\nModel: Raspberry Pi RP2\nBoard-ID: RPI-RP2\n' >"$V/RPI-RP2/INFO_UF2.TXT"
+printf 'UF2 Bootloader v1.0\nModel: Some Other Board\nBoard-ID: OTHER-1\n' >"$V/Other/INFO_UF2.TXT"
+export BLIT_UF2_VOLUMES="$dir/none:$V"
+restarts() {  # (the board taking the copy and restarting, as the copy finishes)
+    (for i in $(seq 1 200); do [ "$( (wc -c <"$1/blinky.uf2") 2>/dev/null | tr -d " ")" = 8192 ] && { rm -f "$1/INFO_UF2.TXT"; exit 0; }; sleep 0.05; done) &
+}
+picoboard "{$BOOT, \"flash\": \"uf2\"}"
+restarts "$V/RPI-RP2"
+flash picotool "$F;buildwait;progressdump;scandump"
+want <<'EOF'
+button: ▶ blinky · Flashed 4 KB in N s | row: done · Flashed 4 KB in N s
+problems: 0
+EOF
+check "the UF2 copy: to the RPI-RP2 volume, its bytes for the flash, done as the volume goes" "$expected"
+cmp -s "$P/build/blinky.uf2" "$V/RPI-RP2/blinky.uf2" && got=same || got=different
+check "(the copy, whole; picotool not run)" same
+printf 'UF2 Bootloader v3.0\nModel: Raspberry Pi RP2\nBoard-ID: RPI-RP2\n' >"$V/RPI-RP2/INFO_UF2.TXT"
+rm -f "$V/RPI-RP2/blinky.uf2"
+# What cannot be copied, said: a .uf2 for another family, a file that is no
+# UF2, no volume, two.
+mkuf2 "$P/build/other.uf2" 4 e48bff59
+picoboard "{$BOOT, \"flash\": \"uf2\", \"elf\": \"build/other.uf2\"}"
+flash picotool "$F"
+check "a .uf2 that is not the RP2040's: said" "blit: build/other.uf2 is not for the RP2040 (no block of it is of the RP2040's family, 0xe48bff56)"
+picoboard "{$BOOT, \"flash\": \"uf2\", \"elf\": \"build/blinky.bin\"}"
+printf '%512s' x >"$P/build/blinky.uf2.away"
+mv "$P/build/blinky.uf2" "$P/build/blinky.uf2.keep"
+mv "$P/build/blinky.uf2.away" "$P/build/blinky.uf2"
+flash picotool "$F"
+check "a .uf2 that is no UF2: said" "blit: build/blinky.uf2 is not a UF2 (a block's magic numbers are wrong)"
+mv "$P/build/blinky.uf2.keep" "$P/build/blinky.uf2"
+export BLIT_UF2_VOLUMES="$dir/none"
+flash picotool "$F"
+export BLIT_UF2_VOLUMES="$dir/none:$V"
+check "no volume: said" "blit: No RPI-RP2 volume is mounted on $this: hold BOOTSEL while plugging the board in"
+printf 'UF2 Bootloader v1.1\nModel: Raspberry Pi RP2350\nBoard-ID: RP2350\n' >"$V/RP2350/INFO_UF2.TXT"
+flash picotool "$F"
+check "two: said" "blit: 2 RP2 boot ROM volumes are mounted on $this (~/volumes/RP2350, ~/volumes/RPI-RP2): which is the board's is not known"
+rm "$V/RP2350/INFO_UF2.TXT"
+
+# ---------------------------------------------------------------- the other flash engines
+
+# dfu-util for an STM32's DFU boot ROM: the .bin beside the ELF, DfuSe's
+# address (then leave), the device by its ids and serial number; with no
+# .bin, said.
+printf 'raw' >"$P/build/fw.bin"
+DFU='"probe": {"kind": "dfu", "serial": "205F34915741", "usb": "0483:df11"}, "elf": "build/fw.elf", "flash": {"address": "0x08000000"}'
+board "{$DFU}"
+flash dfu-util "$F;progresswait:Program 50%;progressdump;$end"
+want <<'EOF'
+button: ■ Program 50% 20.1 KB | row: Erase ✓ · Program 50% 20.1 KB
+button: ▶ fw · Flashed 40.2 KB in N s | row: done · Flashed 40.2 KB in N s
+dfu-util -d 0483:df11 -S 205F34915741 -a 0 -s 0x08000000:leave -D build/fw.bin
+EOF
+check "dfu-util: the .bin beside the ELF, its address" "$expected"
+board '{"probe": {"kind": "dfu", "usb": "1d50:6017"}, "elf": "build/fw.bin", "flash": {"tool": "dfu-util", "alt": "1"}}'
+flash dfu-util "$F;$end"
+got=$(printf '%s' "$got" | tail -1)
+check "dfu-util, a DFU device (not DfuSe): its alternate setting, reset after" 'dfu-util -d 1d50:6017 -a 1 -D build/fw.bin -R'
+mv "$P/build/fw.bin" "$P/build/fw.away"
+board "{$DFU}"
+flash dfu-util "$F"
+mv "$P/build/fw.away" "$P/build/fw.bin"
+check "dfu-util with no .bin: said" "blit: dfu-util writes a .bin or a .dfu: no build/fw.bin beside build/fw.elf"
+
+# pyOCD: its target (flash.device, else the chip), the probe's unique ID.
+board '{"probe": {"kind": "cmsis-dap", "serial": "E6633861A3978538", "usb": "2e8a:000c"}, "chip": "STM32F411CEUx", "elf": "build/fw.elf", "flash": {"tool": "pyocd", "device": "STM32F411CE"}}'
+flash pyocd "$F;progresswait:Program 52%;progressdump;$end"
+want <<'EOF'
+button: ■ Program 52% | row: Erase ✓ · Program 52%
+button: ▶ fw · Flashed 16 KB in N s | row: done · Flashed 16 KB in N s
+pyocd load -W -t stm32f411ce -u E6633861A3978538 build/fw.elf
+EOF
+check "pyOCD: its target, the probe, its progress" "$expected"
+board '{"probe": {"kind": "cmsis-dap", "serial": "E6633861A3978538", "usb": "2e8a:000c"}, "elf": "build/fw.bin", "flash": {"tool": "pyocd", "address": "0x08000000"}}'
+flash pyocd "$F"
+check "pyOCD with no chip: said" "blit: pyOCD needs the board's chip (its target), or flash.device"
+
+# STM32CubeProgrammer: the ST-LINK by its serial number, verified, reset.
+board "{$STLINK, \"flash\": \"stm32cubeprogrammer\"}"
+flash stm32cube "$F;$end"
+got=$(printf '%s' "$got" | tail -2)
+want <<'EOF'
+button: ▶ fw · Flashed in N s, verified | row: done · Flashed in N s, verified
+STM32_Programmer_CLI -c port=SWD sn=004D00283133510F37363734 -w build/fw.elf -v -rst
+EOF
+check "STM32CubeProgrammer: the probe, -v, -rst" "$expected"
+board "{\"probe\": {\"kind\": \"stlink\", \"serial\": \"004D00283133510F37363734\", \"usb\": \"0483:374e\"}, \"elf\": \"build/fw.bin\", \"flash\": {\"tool\": \"stm32cubeprogrammer\", \"address\": \"0x08000000\"}}"
+flash stm32cube "$F;$end"
+got=$(printf '%s' "$got" | tail -1)
+check "STM32CubeProgrammer: a .bin at its address" "STM32_Programmer_CLI -c port=SWD sn=004D00283133510F37363734 -w build/fw.bin 0x08000000 -v -rst"
+
+# iceprog and ecpprog: the FTDI chip by its ids and serial number, into
+# SRAM (-S), or the flash.
+printf 'ice' >"$P/build/top.bin"
+rm -f "$P/build/top.bit"
+board '{"probe": {"kind": "ftdi", "serial": "FT6SK8LR", "usb": "0403:6010"}, "bitstream": "build/top.bin", "flash": "iceprog"}'
+flash iceprog-sram "command:Program the FPGA (SRAM);flashwait;progresswait:Load;progressdump;$end"
+want <<'EOF'
+button: ■ Load | row: Load
+button: ▶ fw · Loaded into SRAM in N s | row: done · Loaded into SRAM in N s
+iceprog -d s:0x0403:0x6010:FT6SK8LR -S build/top.bin
+EOF
+check "iceprog: the chip, into SRAM" "$expected"
+flash iceprog "command:Program the FPGA's flash;flashwait;progresswait:Program 49%;progressdump;$end"
+want <<'EOF'
+button: ■ Program 49% | row: Erase ✓ · Program 49%
+button: ▶ fw · Flashed 31.5 KB in N s, verified | row: done · Flashed 31.5 KB in N s, verified
+iceprog -d s:0x0403:0x6010:FT6SK8LR build/top.bin
+EOF
+check "iceprog: the flash, read back" "$expected"
+printf 'bits' >"$P/build/top.bit"
+board '{"probe": {"kind": "ftdi", "usb": "0403:6010"}, "flash": "ecpprog"}'
+flash ecpprog-sram "$F;$end"
+got=$(printf '%s' "$got" | tail -2)
+want <<'EOF'
+button: ▶ fw · Loaded into SRAM in N s | row: done · Loaded into SRAM in N s
+ecpprog -d i:0x0403:0x6010 -S build/top.bit
+EOF
+check "ecpprog: the chip by its ids alone, into SRAM" "$expected"
+
+# pgrcmd: the board's chain file (else the newest .xcf), run every time
+# (what it writes is the .xcf's to say); its return code in words.
+mkdir -p "$P/impl"
+printf '<ispXCF/>\n' >"$P/impl/top.xcf"
+board '{"flash": "pgrcmd"}'
+flash pgrcmd "$F;buildwait;progressdump;scandump;$F;buildwait"
+want <<'EOF'
+button: ▶ fw · 1 error | row: failed: exited with code 251
+problems: 1
+E pgrcmd:1 cable not detected (return code -5)
+pgrcmd -infile impl/top.xcf
+pgrcmd -infile impl/top.xcf
+EOF
+check "pgrcmd: the .xcf, its return code in words, run again" "$expected"
+rm -rf "$P/impl"
+flash pgrcmd "$F"
+check "pgrcmd with no .xcf: said" "blit: No chain file for pgrcmd: the board's flash.xcf, or an .xcf under the folder"
+
+# Each tool not installed: said, naming the program and this machine.
+# (One that is installed here is left out: blit would run it, on whatever
+# board is plugged in; the lab box has iceprog, and its FTDI chip is the
+# Basys 3's.)
+for t in "pyocd pyocd" "stm32cubeprogrammer STM32_Programmer_CLI" "iceprog iceprog" "ecpprog ecpprog" "pgrcmd pgrcmd"; do
+    set -- $t
+    for d in /usr/bin /bin /opt/homebrew/bin /usr/local/bin "$HOME/.local/bin"; do [ -x "$d/$2" ] && continue 2; done
+    board "{\"chip\": \"STM32F411CEUx\", \"elf\": \"build/fw.elf\", \"bitstream\": \"build/top.bit\", \"flash\": {\"tool\": \"$1\", \"xcf\": \"build/top.bit\"}}"
+    got=$(PATH="$dir/none:/usr/bin:/bin" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$P;frame;$F" 2>&1 >/dev/null | tail -1)
+    check "$2 not installed: said" "blit: $2 is not installed on $this"
+done
+
 # ---------------------------------------------------------------- only if changed
 
 # A flash that went well is not run again with the same image (the row and
@@ -689,7 +925,7 @@ chmod +x "$dir/plainsh"
 bare="$dir/bare"
 mkdir -p "$bare"
 ln -s /usr/bin/* /bin/* "$bare/" 2>/dev/null
-rm -f "$bare/probe-rs" "$bare/openFPGALoader"
+rm -f "$bare/probe-rs" "$bare/openFPGALoader" "$bare/picotool" "$bare/dfu-util"
 case $(uname -s) in Darwin) this="this Mac" ;; *) this="this machine" ;; esac
 kept=$PATH
 PATH=$bare SHELL="$dir/plainsh"
@@ -702,6 +938,27 @@ scan=basys3 detect=basys3
 flash probe-rs "remotewait;command:Choose the probe;probedump" "ssh://box$T"
 got=$(printf '%s\n' "$got" | grep -v '^blit: [^o]' | tail -2 | tr '\n' '/')
 check "the Boards view there without openFPGALoader: said" 'blit: openFPGALoader is not installed on box: the boards on its cables are not named/fpga ftdi 0403:6010: Digilent FT2232 (FPGA)  210183A8F2C1  /dev/ttyUSB1  on box | probe stlink 0483:374e: ST-LINK V3E  004D00283133510F37363734  /dev/ttyACM0  on box/'
+# A Pico on that machine with no picotool there: its .uf2 copied to the
+# boot ROM's volume there; with none mounted there, said.
+mkelf "$T/build/blinky.elf" P x
+mkuf2 "$T/build/blinky.uf2" 16
+printf '{"configurations": [{"name": "blinky", "program": "build/blinky", "board": {%s}}]}\n' "$BOOT" >"$T/.blit/run.json"
+printf 'UF2 Bootloader v3.0\nModel: Raspberry Pi RP2\nBoard-ID: RPI-RP2\n' >"$V/RPI-RP2/INFO_UF2.TXT"
+rm -f "$V/RPI-RP2/blinky.uf2"
+restarts "$V/RPI-RP2"
+flash picotool "remotewait;$F;buildwait;progressdump" "ssh://box$T"
+got=$(printf '%s\n' "$got" | tail -1)
+check "a Pico there with no picotool there: the UF2 copy there" 'button: ▶ blinky · Flashed 4 KB in N s | row: done · Flashed 4 KB in N s'
+export BLIT_UF2_VOLUMES="$dir/none"
+flash picotool "remotewait;$F;buildwait" "ssh://box$T"
+export BLIT_UF2_VOLUMES="$dir/none:$V"
+got=$(printf '%s\n' "$got" | grep '^blit: ' | tail -1)
+check "no picotool there, and no volume: said" 'blit: picotool is not installed on box, and no RPI-RP2 volume is mounted: hold BOOTSEL while plugging the board in'
+printf '{"configurations": [{"name": "fw", "program": "build/fw.elf", "board": {%s}}]}\n' "$DFU" >"$T/.blit/run.json"
+printf 'raw' >"$T/build/fw.bin"
+flash dfu-util "remotewait;$F;buildwait" "ssh://box$T"
+got=$(printf '%s\n' "$got" | grep '^blit: ' | tail -1)
+check "dfu-util not installed there: said" 'blit: dfu-util is not installed on box'
 PATH=$kept
 
 [ "$failed" = 0 ] && echo "flash: all passed"

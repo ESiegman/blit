@@ -1,0 +1,14 @@
+# ecpprog (1931c3e) -S, into an ECP5's SRAM, on a terminal: WRITTEN FROM
+# ITS SOURCE, not captured (no ECP5 board here). ecpprog/ecpprog.c: "init.."
+# (1101), "IDCODE: 0x%08x (%s)" (461), "reset.." (1134), the status register
+# (501), "programming.." (1146), the status register again (1166), "Bye."
+# (1316): its DONE bit (8, line 509) set once the FPGA is configured.
+@pace 5
+init..
+IDCODE: 0x41111043 (LFE5U-25)
+reset..
+ECP5 Status Register: 0x00200000
+programming..
+@hold a
+ECP5 Status Register: 0x00200100
+Bye.

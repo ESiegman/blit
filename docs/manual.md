@@ -231,7 +231,7 @@ Cmd](#keys-without-cmd). The "elsewhere" column is without modes.
 | Find in this file; the next / previous match | Cmd+F; Cmd+G / Cmd+Shift+G | Ctrl+F (or Alt+F); F3 / Shift+F3 |
 | Replace in this file / in files (in Find or Search in files, the field Replace with) | Cmd+Option+F / Cmd+Shift+H | Ctrl+Alt+F / Ctrl+Shift+H |
 | The next / previous hit of Search in files (or of the references found, after them) | F4 / Shift+F4 | F4 / Shift+F4 |
-| The next / previous problem: the last build's, across files (else the language servers', across files) | F8 / Shift+F8 | F8 / Shift+F8 |
+| The next / previous problem: the open runs' of the Build tab, across runs and files (else the language servers', across files) | F8 / Shift+F8 | F8 / Shift+F8 |
 | Go to the definition; peek at it; find references; rename | F12; Option+Shift+F12; Shift+F12; F2 | F12; Alt+Shift+F12; Shift+F12; F2 |
 | Soft wrap on or off, for the file in front | Option+Z | Alt+Z |
 | Go to the implementation / the type definition; the header or source | Cmd+F12 / Cmd+Shift+F12; Option+F12 | Ctrl+F12 / Ctrl+Shift+F12; Alt+F12 |
@@ -608,7 +608,7 @@ the marks beside the line numbers count them, saved or not), how many files
 differ from the last commit (saved ones: what git sees), then the file's
 path in the repository, with a dot while it has unsaved changes. On its
 right: what a script put there (`blit.ui.status`), the errors and warnings
-(the language servers' in the open file and the last build's in all of
+(the language servers' in the open file and the open runs' in all of
 them, one that both found on the same line counted once), for a Python
 file its project's Python (`Python 3.12 (.venv)`; a click chooses another:
 see [The project's Python](#the-projects-python)), the cursor's
@@ -1756,17 +1756,24 @@ report on (each open file, and with a server that offers it the whole
 project's): each file with its icon and folder (one that is not open in
 quieter ink), and under it its problems by line; click one to go to it.
 While a build runs (see [Building](#building)) the problems its output
-reports come in at the top, in a **Build** section: each file with its
-icon and folder, and under it its errors (`E`) and warnings (`W`) by line,
-the files in the order the build came to them. Enter or a click goes to
-one, in its file; the language servers' follow under them. A problem with
+reports come in at the top, under a heading for the run: its name, how
+many, and how it goes (`Build (debug) 3 · running…`, then `done`,
+`stopped` or, in red, `failed (exit 2)`). Under it each file with its
+icon and folder, and under that its errors (`E`) and warnings (`W`) by
+line, the files in the order the run came to them. Each run whose tab is
+open has its group, the runs in the order they came, a blank line between
+them: a simulation's problems stay while a build runs beside it. A run's
+group goes when its tab is closed; run again, its new problems take its
+place. Enter or a click goes to one, in its file; the language servers'
+follow under them all. A problem with
 notes (a compiler's notes, the include chain and template instantiation
 that led to it, a sanitizer's stacks) has a small triangle before it:
 Right or a click on the triangle shows them under it, further in (each
 with its file, where that is another, and line), and Left hides them
 again, as folders open and shut in the Files tab. Up and Down go through
 the notes on show too; Enter or a click on one goes to its place. **F8** and **Shift+F8** go to the next and the previous
-problem from anywhere: the build's, across files, while there are any,
+problem from anywhere: the open runs', in the tab's order, across runs
+and files, while there are any,
 else the language servers', from the cursor on and across files (opening
 the next one if it is not open); the tab picks the one gone to and the
 bottom line says which of how many it is.
@@ -2737,18 +2744,22 @@ Ninja's progress line written over itself; the same problem twice (a
 header's, from each file that includes it) is one. A relative path is
 taken from the folder the task runs in, or one make or Ninja says it
 entered, or one `make -C` was told to go into: the one the file is in.
-They fill the **Build** section of the side panel's Problems tab (above),
-F8 goes through them, the status bar counts them, and the Run button says
-how many: `▶ Build (debug) · 3 errors` (warnings, when there are no
-errors). A run that failed with no error in its output says so instead:
-`▶ make · failed (exit 2)` on the Run button (with its warnings' count,
-if it has some), "make failed with exit code 2: no problem found in its
-output" in the Problems tab and from F8, which then has nowhere to go;
-never "No problems" under a red button. One whose program the shell could
-not find (its exit code 127) names it instead: `▶ Build · failed (cmake is
-not installed)`, "Build failed: cmake is not installed on this Mac" (or on
-the host the folder is on) in the Problems tab, from F8 and at the end of
-its tab, and "cmake is not installed" on its row. In the text they are marked as
+They fill the run's group in the side panel's Problems tab (above), F8
+goes through them (and every other open run's), the status bar counts
+all the open runs', and the Run button says how many its last run has:
+`▶ Build (debug) · 3 errors` (warnings, when there are no errors). A run
+that failed with no error in its output says so instead: `▶ make · failed
+(exit 2)` on the Run button (with its warnings' count, if it has some),
+`make · failed (exit 2)` over "no problem found in its output" in the
+Problems tab (with warnings, "no error found in its output", over them),
+and "make failed with exit code 2: no problem found in its output" from
+F8, which then has nowhere to go; never "No problems" under a red button.
+One whose program the shell could not find (its exit code 127) names it
+instead: `▶ Build · failed (cmake is not installed)`, "cmake is not
+installed on this Mac" (or on the host the folder is on) under its
+heading in the Problems tab, "Build failed: cmake is not installed on
+this Mac" from F8 and at the end of its tab, and "cmake is not installed"
+on its row. In the text they are marked as
 the language server's problems are, in the split with the keyboard: a
 wavy underline in the colour of the kind, from the column the tool gave
 over the word there (the line's text, where it gave no column), and the
@@ -2756,8 +2767,9 @@ cursor's line's first error in words after it (the server's, where the
 server has one on that line; `blit.opt.lsp.inline_diagnostics = false`
 leaves the words out). A mark moves with its line as lines are put in or
 taken out above it, and goes once its own line is changed: what the build
-said of it no longer stands. The next run starts with none, in the tab
-and in the text. A compiler's notes (`note:`), the include chain before
+said of it no longer stands. A run's marks go with its problems: when
+its tab is closed, or it runs again (and the next run in the shared
+terminal closes the last one's tab). A compiler's notes (`note:`), the include chain before
 its problem (`In file included from c.h:2`, GCC's lines of `from` under
 it, Clang's a line each) and GCC's instantiation context (`In
 instantiation of ...`, `required from here`) are that problem's notes, in
@@ -2914,13 +2926,21 @@ while it runs, read from the tool's output as it comes, the bar it is
 redrawing in place included: OpenOCD's `program` (and Espressif's
 `program_esp`), probe-rs's download, J-Link Commander's `loadfile`,
 esptool's write-flash (each file of ESP-IDF's under way again from 0%),
-openFPGALoader's loads into SRAM and flash, picotool's `load`, and
+openFPGALoader's loads into SRAM and flash, picotool's `load` (`Reboot ✓
+· Program 52%` when `-f` rebooted the board into BOOTSEL first) and blit's
+own copy of a `.uf2` to a boot ROM's volume, dfu-util's download, pyOCD's
+`load`, STM32CubeProgrammer's (its lines saying the download is complete
+and verified: its bar is not read), iceprog and ecpprog (into SRAM, or
+the flash written and read back), and
 Vivado's hardware manager (its steps: `Connect ✓ · Load`, and into the
 FPGA's flash `Load ✓ · Erase ✓ · Program`, then `Boot`). The Run button reads the stage under way, its percent
 and the bytes where the tool prints them (`■ Program 62% 12.0/22.0 KB`;
 a click still stops it), and the task's row the stages done before it
 (`Erase ✓ · Program 62% 25.0 KB`); both are drawn again only when the
-stage or its percent changes. After, what it came to is kept on the row
+stage or its percent changes. Where the side panel is too narrow for
+the whole row, the stage under way and its percent stay: the stages done
+are counted first (`flash · ✓ 2 · Program 62%`), then left out, then the
+kind of work, then the stage's bytes. After, what it came to is kept on the row
 and the button: `Flashed 40.2 KB in 1.8 s, verified` (the tool's own time
 where it says one), `Loaded into SRAM in 2.1 s`, `Unchanged, verified`
 (the tool found all of it there already, as Espressif's OpenOCD says), or,
@@ -2929,7 +2949,11 @@ for a failed or stopped one, where it stopped (`stopped in Program at
 the whole does not fit, it has it without the time, `Flashed 40.2 KB,
 verified`, else the words before the time, `Flashed 40.2 KB`.) A failure is a problem with the tool's own words
 (`OpenOCD init failed: open failed`, `JTAG init failed with: unable to
-open ftdi device`), placed at the program's name. Whose output it is
+open ftdi device`), placed at the program's name; where the tool goes on
+after it (picotool's devices it saw, and its advice), that is a note on
+the problem. Lattice's pgrcmd prints nothing documented: its return code
+is said in Lattice's words after it (`pgrcmd: cable not detected (return
+code -5)`). Whose output it is
 comes from the task's command (or the command make echoes), and from the
 tool's own first lines.
 
@@ -3048,8 +3072,8 @@ blit.build.matcher("uvm", {
 ### Problems from a file
 
 **Read the problems from this file…** (in the command search) reads a
-file a tool wrote into the Build section of the Problems tab, in place
-of the last run's (the box that opens files starts at the file in front,
+file a tool wrote into the Problems tab, as a group of its own under the
+file's name after the open runs' (the box that opens files starts at the file in front,
 so a SARIF file open in a tab is Enter away; the file is read on a
 thread of its own, here or on another machine). It may be:
 
@@ -3070,8 +3094,8 @@ thread of its own, here or on another machine). It may be:
 - **anything else**, a log (a run in tmux, a CI step's, a Vivado log),
   read as a build's output is, from the log's folder.
 
-The bottom line says what it was read as and how many it had. The next
-run's problems take their place.
+The bottom line says what it was read as and how many it had. Another
+file read, or the next run, takes their place.
 
 ### The folder's own tasks
 
@@ -3126,11 +3150,12 @@ part of that string. `\${file}` and names that are not these
 
 **A long task** (`"long": true`: a simulation, a synthesis, a GPU
 profile) has an output tab of its own beside the other runs' terminal:
-the next run does not end it or take its place, and its row keeps
-saying how it goes. While it runs the Run button and its row show its
-time (`■ Stop Simulate 1:23`, "running… 1:23"), drawn again when a line
-comes or once a second while blit is in front (nothing ticks behind
-another window). Once it has run more than 10 s, anything that would end
+the next run does not end it or take its place, its row keeps
+saying how it goes, and its problems keep their group in the Problems
+tab. While it runs the Run button and its row show its time
+(`■ Stop Simulate 1:23`, "running… 1:23"), drawn again when a line comes
+or once a second while blit is in front (nothing ticks behind another
+window). Once it has run more than 10 s, anything that would end
 it asks first: Stop, running it again (its last run's tab goes with
 it), closing its tab or quitting.
 
@@ -3168,7 +3193,8 @@ another machine, a whole path for `program` is one there, and it runs
 there); `args` may also be one
 line (`"--steps 100"`), split as a shell splits it; `build`, a task of
 the Build tab's to run first, may be left out; `problems` names the
-patterns its output is read with, as a task's (above).
+patterns its output is read with, as a task's (above); `crash`, a
+firmware's own panic format (see "Crash dumps decoded").
 
 They are the Build tab's first tasks, under **Run**, and the first is the
 Run button's: Cmd+Shift+B runs its `build` task, then, if that went well,
@@ -3281,7 +3307,9 @@ Debug probes and FPGA programmers come first (ST-LINK V1 to V3 and the
 ST-LINKs on Nucleo and Discovery boards, SEGGER J-Link, the Raspberry Pi
 Debug Probe and any other CMSIS-DAP, Espressif's USB-Serial/JTAG on the
 ESP32-S3, C3 and C6, Black Magic, FTDI chips and Digilent's boards), then
-the RP2040's and RP2350's boot ROMs, then serial ports alone (CP210x,
+the RP2040's and RP2350's boot ROMs (an RP2040's with no serial number:
+its boot ROM's is its version, the same on every RP2040) and an STM32's
+DFU boot ROM, then serial ports alone (CP210x,
 CH340, FTDI's serial chips, a Pico's USB serial, any other). A probe and
 its serial port are one row: its name, its serial number (with two of
 the same probe, that is what tells them apart), and its port; a Black
@@ -3316,16 +3344,23 @@ it:
   (`"serial": "PORT"` is read too). Choosing a serial port alone (a
   CP210x on an ESP32 board) sets the port and takes the probe out;
   choosing a probe with no port takes the port out, and keeps the baud.
+  A Pico's USB serial (the Pico SDK's) is the board itself: choosing it
+  sets the port and a probe of kind `pico-serial` with its serial number,
+  which picotool finds the board by.
 - `chip`, `elf`, `svd` (paths from the folder), `flash` (the tool:
-  `"esptool"`, `"openocd"`, `"probe-rs"`, `"jlink"` or
-  `"openfpgaloader"`; `{ "tool": ... }` too) and `debug` (a preset's
+  `"esptool"`, `"openocd"`, `"probe-rs"`, `"jlink"`, `"picotool"`,
+  `"uf2"`, `"dfu-util"`, `"pyocd"`, `"stm32cubeprogrammer"`,
+  `"openfpgaloader"`, `"vivado"`, `"iceprog"`, `"ecpprog"` or `"pgrcmd"`;
+  `{ "tool": ... }` too) and `debug` (a preset's
   name; `{ "preset": ... }` too) are yours to write; choosing a probe
   leaves them as they are.
 - The `flash` object may also say where a raw `.bin` goes (`"address":
   "0x08000000"`), openFPGALoader's `board` (`"basys3"`) or `cable`
   (`"digilent"`), OpenOCD's `interface` and `target` scripts
-  (`"interface/stlink.cfg"`, `"target/stm32f4x.cfg"`), and J-Link's
-  `device` (else the `chip` is); `bitstream` beside it is an FPGA's.
+  (`"interface/stlink.cfg"`, `"target/stm32f4x.cfg"`), J-Link's and
+  pyOCD's `device` (else the `chip` is), dfu-util's `alt` (the alternate
+  setting, else 0) and pgrcmd's `xcf` (its chain file, else the newest
+  `.xcf` under the folder); `bitstream` beside it is an FPGA's.
 
 The Debug tab shows the board's probe and port under **Board** for a
 configuration that has one.
@@ -3372,7 +3407,12 @@ whose `chip` is an ESP32, or that is only a serial port, such as the
 DevKit's USB serial bridge chosen in the probe picker, when an ESP-IDF
 build wrote `flasher_args.json`, whose chip it takes), openFPGALoader for an FTDI
 chip (a Digilent board), probe-rs for an ST-LINK or a CMSIS-DAP, J-Link
-Commander for a J-Link. Each is run by its path on the machine the
+Commander for a J-Link, picotool for an RP2040 or RP2350 (its boot ROM,
+or a Pico SDK program's USB serial; and for a board with no probe, or
+only a serial port, whose ELF a Pico SDK build made: its `CMakeCache.txt`
+says so), dfu-util for an STM32's DFU boot ROM. pyOCD,
+STM32CubeProgrammer, iceprog, ecpprog and pgrcmd are run where the
+board's `flash` names them. Each is run by its path on the machine the
 project is on, and blit says so when it is not there:
 
 | Tool | What runs |
@@ -3383,13 +3423,45 @@ project is on, and blit says so when it is not there:
 | J-Link | `JLinkExe -NoGui 1 -ExitOnError 1 -USB SERIAL -CommandFile FILE`, the file made for the run: `device CHIP`, `si SWD`, `speed 4000`, `connect`, `loadfile build/fw.elf`, `r`, `g`, `exit` (loadfile reads back what it wrote) |
 | openFPGALoader | `openFPGALoader -b basys3 --usb-serial-num SERIAL build/top.bit` (or `-c digilent`), into SRAM; `-f --verify` for the FPGA's flash |
 | Vivado (`"flash": "vivado"`) | `vivado -mode batch -nojournal -nolog -notrace -source FILE`, the file made for the run: the hardware manager, the cable whose name has the probe's serial number, the device whose part begins the board's `chip` (`xc7a35t` for `xc7a35tcpg236-1`; else the first of AMD's), `program_hw_devices` with the bitstream into SRAM; for the FPGA's flash, `write_cfgmem` (an `.mcs` beside the file, the bitstream's own SPI bus width as `-interface`), `create_hw_cfgmem` with the board's flash part, `program_hw_cfgmem` (erase, program, verify), then `boot_hw_device` |
+| picotool | `picotool load -v -x build/blinky.elf --ser SERIAL -f`: read back, then run; `--ser` the board's serial number (left out for an RP2040's boot ROM, which has none of its own); `-f` always, which reboots a board running the Pico SDK's USB serial into BOOTSEL first and leaves one in BOOTSEL as it is; a `.uf2`, or a `.bin` with `-o ADDRESS` (the flash object's `address`, else the start of flash) |
+| UF2 copy (`"flash": "uf2"`) | the `.uf2` beside the ELF copied to the boot ROM's volume, then done once the board restarts (below) |
+| dfu-util | `dfu-util -d VID:PID -S SERIAL -a 0 -s ADDRESS:leave -D build/fw.bin` (DfuSe, the flash object's `address`; without one, `-R` after), the `.bin` (or `.dfu`) beside the ELF; it reads nothing back |
+| pyOCD (`"flash": "pyocd"`) | `pyocd load -W -t TARGET -u SERIAL build/fw.elf` (a `.bin` with `-a ADDRESS --format bin`), the target the flash object's `device`, else the `chip`, in lower case; it reads nothing back |
+| STM32CubeProgrammer (`"flash": "stm32cubeprogrammer"`) | `STM32_Programmer_CLI -c port=SWD sn=SERIAL -w build/fw.elf [ADDRESS] -v -rst` |
+| iceprog, ecpprog | `iceprog -d s:0x0403:0x6010:SERIAL -S build/top.bin` into SRAM; without `-S` the flash, read back after (ecpprog the same, for an ECP5 or a CrossLink-NX) |
+| pgrcmd (`"flash": "pgrcmd"`) | `pgrcmd -infile impl/top.xcf`: what it does (the device, the bitstream, the cable, SRAM or flash) is the chain file's to say, so it is run every time |
 
 What is written is the board's `elf` (else the configuration's
 `program`); for an ESP-IDF project (esptool, or OpenOCD for an ESP32),
 the files and addresses its build wrote in `flasher_args.json` beside the
 ELF (else in `build/`), with its flash options and chip; a `.bin` goes to
 the flash object's `address`. An FPGA's is the board's `bitstream`, else
-the newest `.bit` under the folder (else the newest `.bin`).
+the newest `.bit` under the folder (else the newest `.bin`). A tool that
+writes another kind of file than the ELF takes the one beside it of the
+same name, as the Pico SDK writes them (`build/blinky.uf2` and
+`build/blinky.bin` beside `build/blinky.elf`); a configuration's program
+named without its `.elf` (`build/blinky`, as one made for a folder is)
+is the `.elf` beside it. What is written is read before the tool runs:
+one that is not there is said, and the board is not touched (picotool
+with `-f` would have rebooted it into BOOTSEL first).
+
+**The UF2 copy.** Where picotool is not installed (or the board's
+`flash` is `"uf2"`), an RP2040 or RP2350 in BOOTSEL is flashed by copying
+the `.uf2` to its boot ROM's volume, found by the `INFO_UF2.TXT` its boot
+ROM writes (`Board-ID: RPI-RP2`, `RP2350`), not by its name: in
+`/Volumes` on a Mac, `/media`, `/media/USER` and `/run/media/USER` on
+Linux. It is copied a piece at a time, each flushed, the Run button
+showing the bytes that go into the flash (`Program 52% 16.0/30.8 KB`,
+half the file's: a UF2 block carries 256 bytes of flash), and is done
+when the volume goes, the boot ROM restarting the board once it has every
+block (`Flashed 30.8 KB in 3.0 s`); still there 10 s after, it failed. A
+`.uf2` that is not a UF2, or that has no block of the RP2040's family
+for an RP2040, is said before anything is copied. With no picotool and no
+volume, blit says so (`picotool is not installed on this Mac, and no
+RPI-RP2 volume is mounted: hold BOOTSEL while plugging the board in`);
+with two such volumes, which one is the board's is not known, and it
+says that. macOS may say the volume was not ejected properly as the
+board restarts.
 
 Vivado, when it is not on the PATH (its `settings64.sh` not sourced),
 is looked for where AMD installs it, the newest version there:
@@ -3401,10 +3473,14 @@ running already is left as it was, and one left by a run that failed or was
 stopped keeps the cable for about a minute. Choosing
 the board again in the probe picker keeps a board set to Vivado so.
 
-OpenOCD's, esptool's, openFPGALoader's and Vivado's output reaches the terminal
-through a pipe, where each prints a line for each step; probe-rs (whose
-bars are not drawn at all when its output is not a terminal) and J-Link
-Commander are given the terminal itself.
+OpenOCD's, esptool's, openFPGALoader's, Vivado's, picotool's,
+dfu-util's and iceprog's output reaches the terminal through a pipe, where
+each prints the same progress as on a terminal; probe-rs (whose bars are
+not drawn at all when its output is not a terminal), pyOCD (whose bar has
+no percent there), ecpprog (whose IDCODE and status lines a pipe holds
+back until it ends), J-Link Commander, STM32CubeProgrammer and pgrcmd are
+given the terminal itself.
+
 
 **Only if changed.** A flash that went well is remembered for the board,
 for as long as blit runs: a hash of what the image puts into the target
@@ -3522,6 +3598,138 @@ manager's `arm-none-eabi-gdb`, has Python), and the same for the gdb
 server. When the attach fails, what the server last said as an error
 follows gdb's words. In a project on another machine the gdb, the server
 and the probe are that machine's.
+
+### Crash dumps decoded
+
+When a firmware crashes and its dump comes out in a task's or a run's
+output, each address in it is told as its function and line of source,
+in dim lines under the line that gave it, and the innermost frame of the
+project's own code is a problem (`Crash at motor.c:9 in store
+(StoreProhibited)`), its frames the problem's notes:
+
+```
+Backtrace: 0x4200d676:0x3fc9a0a0 0x42009135:0x3fc9a0c0 0x42009121:0x3fc9a0e0
+0x4200d676: store at /home/me/crash/main/motor.c:8
+ (inlined by) pid_step at /home/me/crash/main/motor.c:14
+0x42009135: motor_run at /home/me/crash/main/motor.c:21
+0x42009121: app_main at /home/me/crash/main/crash_main.c:10
+```
+
+The lines are written into the terminal after the dump's, as `idf.py
+monitor` writes its own, so the transcript and a saved log keep them;
+Cmd+click on one opens its place. The dumps read:
+
+- **ESP-IDF** (and Arduino-ESP32, which is ESP-IDF underneath): `Guru
+  Meditation Error: Core  0 panic'ed (...)`, every PC of its `Backtrace:`
+  on Xtensa (ESP32, -S2, -S3), the register dump's `MEPC` and `RA` on
+  RISC-V (-C3, -C6, -H2, -P4), and `abort() was called at PC 0x...`. A
+  backtrace with no crash (the task watchdog's, `esp_backtrace_print`'s)
+  is decoded too, and is no problem.
+- **Your own format**: `crash` in a run configuration, a Lua pattern
+  (as `blit.build.matcher` takes them) or a list of them. A line one of
+  them takes is a dump's, and the hexadecimal numbers in its first
+  capture (the whole match, with no capture) are its addresses,
+  innermost first; lines one after another that they take are one dump:
+
+```json
+{ "name": "fw", "program": "build/fw.elf",
+  "board": { "elf": "build/fw.elf" },
+  "crash": "^bt:(.*)$" }
+```
+
+The ELF is the board's `elf` of the task's run configuration (for a
+task of the Build tab's, of the one the Run button runs, else the first
+with a board), else the newest `*.elf` or `*.axf` the build made in the
+project (`.pio` included). blit reads it itself (ELF32 and ELF64,
+DWARF 2 to 5, sections compressed with zlib; no `addr2line` is run), when
+a dump first needs it, and keeps it until it changes; a unit's line
+table and functions are read the first time an address in it is asked
+about (a 4 MB ESP32 ELF: under a millisecond to open, a few microseconds
+an address). In a project on another machine the ELF is read through
+the connection. An address the ELF has no code at (the ROM's) is left
+out; with no ELF at all, one line under the first dump says why. A
+frame's file is the project's own when it is under the project and not
+in `build`, `managed_components`, `.pio` or `_deps`; with none of its
+own, the problem is at the innermost frame with a place. The same crash
+again (a board that crashes at each start) is the one problem, its count
+on its row. A task whose command is `idf.py ... monitor` (or
+esp-idf-monitor), which decodes its own, has no lines added, and a
+program whose own decoded lines are seen after a dump has none added to
+the dumps after; the problems are still added.
+
+### The serial monitor
+
+A serial port is a terminal tab whose program is the device: what the
+board sends is drawn as a terminal draws it (ANSI colours, Cmd+click on a
+`file:line`, Cmd+F, Shift+Page Up into the history, "Open the terminal's
+lines as text"), and what you type goes to the board. It opens in the
+terminals' split along the bottom, with the keyboard on it. blit opens
+the port itself, through termios, on both systems; no monitor program is
+run.
+
+- **"Open a serial port…"** lists the ports of the USB devices plugged
+  in, named as the probe picker names them, with their serial numbers
+  (`cu.usbmodem1101  Pico SDK USB serial (RP2040) (Pico)
+  A58565170D696C53`). On Linux each row ends with its
+  `/dev/serial/by-id` name, which the tab opens it by. A port already
+  open in a tab says `(open)`, and Enter on it shows that tab. A path
+  typed (`/dev/ttyAMA0`) opens that port.
+- **"Open the board's serial monitor"** opens the port of the board of
+  the run configuration the Run button runs (`serial.port`, else the
+  port of the device with the probe's serial number), at `serial.baud`,
+  in one step; a second time, it shows the tab it opened.
+
+The tab is named for its port and speed (`cu.usbmodem1101 115200`;
+`ttyACM0 230400 8E1` when the framing is not 8N1), and says `(opening)`,
+`(gone)` or `(released)` while the port is not open. A line from the
+board ending in LF alone starts a new line, as CR LF does; CR alone goes
+back along the line (a count written over itself). The port is opened
+for blit alone: another program that opens it (esptool, a second
+monitor) is refused, and a port another program has is said on the tab
+(`[ttyACM0 is in use by another program, trying again]`) and tried again
+until it is free. A port the user may not open says which group owns it
+(`it belongs to the uucp group, and eren is not in it`).
+
+**Resets and flashing.** When the board leaves USB (a reset, a flash, a
+cable pulled) the tab stays, says `[gone at 14:02:03.120 (hung up);
+waiting for A58565170D696C53]`, and waits for a device with the same
+serial number (and the same interface) to come back, at whatever path it
+comes back at, then opens it again; that line becomes `[gone from
+14:02:03.120 to 14:02:05.880, 2.8 s (hung up)]`. "Flash the board" lets
+go of the board's port (by its probe's serial number, or its port) before
+the flash tool starts, so the tool can open it, and opens it again when
+the tool has ended (`[released for flashing from ... to ..., 6.3 s]`).
+
+**Commands** (Command search; they act on the serial tab in front, else
+the one on show, else the only one open):
+
+| Command | |
+|---|---|
+| Change the port's speed and framing… | the speed (74880 typed, or any other), the framing (`8N1`, `8E1`, `7E1`, ...) and flow control (none, RTS/CTS, XON/XOFF); `115200 8E1` typed sets both |
+| Change what Return sends to the port… | CR (a terminal's own), LF, or CR LF, for this tab; a paste's line ends are sent the same way |
+| Show or hide the serial port's times | the host's time before each line (`14:02:03.120`), taken as the line's first byte came, so turning it on shows the times of what came before too |
+| Show the serial port's bytes as hex, or as text | the same bytes as hex rows (16 a row, 8 in a narrow tab, a row ending at the line's LF), with the place and the bytes as text after each |
+| Log the serial port to a file… | from now on, each line with its date and time before it (`2026-11-23 14:02:03.120 tick 5`), and the gaps' lines; "Stop logging the serial port" ends it |
+| Send a file to the serial port… | the file's bytes, raw, as fast as the port takes them |
+| Turn the port's DTR on or off, Turn the port's RTS on or off | the modem lines (both on when a port opens); set again when the port comes back |
+| Reset the board through DTR/RTS (ESP32) | both off, then RTS on with DTR off (EN low, IO0 high) for 0.2 s, then RTS off: esptool's hard reset, through a bridge's transistors (a CH343, a CP2102) or the ESP32-S3's USB-Serial/JTAG |
+| Reset the board through DTR (Arduino) | DTR and RTS off for 0.25 s, then on: the auto-reset capacitor's edge, as avrdude makes it |
+| Send a break to the serial port | a break condition |
+
+Cmd+K clears the tab and what it keeps (the board is sent nothing). The
+tab keeps the last 8 MB the board sent, with when each part came, which
+is what times and hex draw from; Cmd+F never sends what you type in the
+box to the board. There is no default key for any of these.
+
+**Settings:** `blit.opt.serial.baud` (115200: the speed when the board's
+configuration gives none) and `blit.opt.serial.line_end` (`"cr"`, `"lf"`
+or `"crlf"`: what Return sends in a new tab).
+
+**Limits:** serial ports here only: on a project on another machine the
+board's port there is not reachable yet (blit says so); USB serial ports
+are listed, other ports (a Pi's `/dev/ttyAMA0`) are opened by typing
+their path, and such a port, having no serial number, is waited for at
+its path after a hang-up.
 
 ## Tests
 

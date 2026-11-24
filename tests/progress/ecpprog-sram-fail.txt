@@ -1,0 +1,11 @@
+# ecpprog (1931c3e) -S of a bitstream the ECP5 did not take: WRITTEN FROM
+# ITS SOURCE, not captured. As ecpprog-sram.txt, its last status register
+# with DONE (bit 8) clear and Fail (bit 13) set (ecpprog/ecpprog.c lines
+# 509, 514); ecpprog itself ends with 0.
+init..
+IDCODE: 0x41111043 (LFE5U-25)
+reset..
+ECP5 Status Register: 0x00200000
+programming..
+ECP5 Status Register: 0x00202000
+Bye.

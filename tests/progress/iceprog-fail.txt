@@ -1,0 +1,8 @@
+# iceprog (icestorm-nightly 1:20261122_v1.1_8_g00da9c3, Arch, the lab box)
+# -d s:0x0403:0x6010:NOSUCHSERIAL -S on a pipe, 2026-11-23: no FTDI chip
+# with that serial number (none was opened: the box's FT2232 is the Basys
+# 3's). All it printed, and it ended with 2.
+init..
+Can't find iCE FTDI USB device (device string s:0x0403:0x6010:NOSUCHSERIAL).
+ABORT.
+@exit 2

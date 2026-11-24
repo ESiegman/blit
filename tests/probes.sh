@@ -98,6 +98,12 @@ iface "$U" 1-12:1.1 01 "mbed Serial Port" ttyACM6
 dev "$U" 1-13 1366 1008 00 SEGGER J-Link 000801234568
 iface "$U" 1-13:1.0 00 "CMSIS-DAP" ""
 dev "$U" 1-14 05e3 0610 09 GenesysLogic "USB2.1 Hub" ""
+# A Pico running the Pico SDK's USB serial, and an STM32 in its DFU boot
+# ROM (the strings: the owner's Pico's, as IOKit had them; ST's, stand-ins).
+dev "$U" 1-15 2e8a 000a ef "Raspberry Pi" Pico A58565170D696C53
+iface "$U" 1-15:1.0 00 "Board CDC" ttyACM7
+iface "$U" 1-15:1.2 02 "Reset" ""
+dev "$U" 1-16 0483 df11 00 STMicroelectronics "STM32  BOOTLOADER" 205F34915741
 # Nothing but a keyboard and a hub; and nothing at all.
 O="$dir/others"
 dev "$O" 1-1 046d c52b 00 Logitech "USB Receiver" ""
@@ -124,11 +130,11 @@ run() {
 P="$dir/proj"
 mkdir -p "$P"
 run "$P" "command:Choose the probe;probedump"
-check "each probe, programmer, boot ROM and port named; a probe and its port one row; hubs, the keyboard and the rest left out" \
-    'probe blackmagic 1d50:6018: Black Magic Probe  7BB180B4  /dev/ttyACM5  gdb /dev/ttyACM4 | probe cmsis-dap 0d28:0204: DAPLink CMSIS-DAP  0240000034544e45  /dev/ttyACM6 | fpga ftdi 0403:6010: Digilent FT2232 (FPGA)  210183A8F2C1  /dev/ttyUSB1 | probe esp-usb-jtag 303a:1001: Espressif USB-Serial/JTAG  F4:12:FA:00:00:01  /dev/ttyACM3 | probe jlink 1366:1015: J-Link  000801234567  /dev/ttyACM1 | probe cmsis-dap 1366:1008: J-Link  000801234568 | probe cmsis-dap 2e8a:000c: Raspberry Pi Debug Probe  E6633861A3978538  /dev/ttyACM2 | probe stlink 0483:3748: ST-LINK V2  55FF6B064977565252381487 | probe stlink 0483:374e: ST-LINK V3E  004D00283133510F37363734  /dev/ttyACM0 | boot rp-boot 2e8a:0003: RP2040 boot ROM  E0C912D24340 | serial ch340 1a86:7523: CH340 serial bridge (USB Serial)  /dev/ttyUSB3 | serial cp210x 10c4:ea60: CP210x serial bridge (CP2102N USB to UART Bridge Controller)  0001  /dev/ttyUSB2'
+check "each probe, programmer, boot ROM and port named; a probe and its port one row; hubs, the keyboard and the rest left out; the RP2040 boot ROM's serial number (its version, the same on every RP2040) not shown" \
+    'probe blackmagic 1d50:6018: Black Magic Probe  7BB180B4  /dev/ttyACM5  gdb /dev/ttyACM4 | probe cmsis-dap 0d28:0204: DAPLink CMSIS-DAP  0240000034544e45  /dev/ttyACM6 | fpga ftdi 0403:6010: Digilent FT2232 (FPGA)  210183A8F2C1  /dev/ttyUSB1 | probe esp-usb-jtag 303a:1001: Espressif USB-Serial/JTAG  F4:12:FA:00:00:01  /dev/ttyACM3 | probe jlink 1366:1015: J-Link  000801234567  /dev/ttyACM1 | probe cmsis-dap 1366:1008: J-Link  000801234568 | probe cmsis-dap 2e8a:000c: Raspberry Pi Debug Probe  E6633861A3978538  /dev/ttyACM2 | probe stlink 0483:3748: ST-LINK V2  55FF6B064977565252381487 | probe stlink 0483:374e: ST-LINK V3E  004D00283133510F37363734  /dev/ttyACM0 | boot rp-boot 2e8a:0003: RP2040 boot ROM | boot dfu 0483:df11: STM32 DFU boot ROM  205F34915741 | serial ch340 1a86:7523: CH340 serial bridge (USB Serial)  /dev/ttyUSB3 | serial cp210x 10c4:ea60: CP210x serial bridge (CP2102N USB to UART Bridge Controller)  0001  /dev/ttyUSB2 | serial pico-serial 2e8a:000a: Pico SDK USB serial (RP2040) (Pico)  A58565170D696C53  /dev/ttyACM7'
 run "$P" "command:Choose the probe;probewait;finddump"
 check "the box lists them, in that order (those it has room for)" \
-    'pick [] 12 : >Black Magic Probe  7BB180B4  /dev/ttyACM5  gdb /dev/ttyACM4 DAPLink CMSIS-DAP  0240000034544e45  /dev/ttyACM6 Digilent FT2232 (FPGA)  210183A8F2C1  /dev/ttyUSB1 Espressif USB-Serial/JTAG  F4:12:FA:00:00:01  /dev/ttyACM3 J-Link  000801234567  /dev/ttyACM1 J-Link  000801234568'
+    'pick [] 14 : >Black Magic Probe  7BB180B4  /dev/ttyACM5  gdb /dev/ttyACM4 DAPLink CMSIS-DAP  0240000034544e45  /dev/ttyACM6 Digilent FT2232 (FPGA)  210183A8F2C1  /dev/ttyUSB1 Espressif USB-Serial/JTAG  F4:12:FA:00:00:01  /dev/ttyACM3 J-Link  000801234567  /dev/ttyACM1 J-Link  000801234568'
 USB=$O
 run "$P" "command:Choose the probe;probedump"
 check "nothing else there: the other devices (never a hub), with their ids" 'other usb 046d:c52b: USB Receiver  046d:c52b'
@@ -181,7 +187,23 @@ check "(its board made inline, as the configuration is written)" \
     '    { "name": "app",   "program": "build/app", "board": {"probe": {"kind": "cmsis-dap", "serial": "000801234568", "usb": "1366:1008"}} },'
 run "$R" "buildrun:fw;buildwait;command:Choose the probe;probewait;text:RP2040;key:Return;probewait;boarddump"
 check "a probe with no port: the port goes, its baud stays" \
-    'fw: probe rp-boot E0C912D24340 2e8a:0003 gdb= | port  baud 115200 | chip STM32F411CEUx elf  svd  flash probe-rs debug '
+    'fw: probe rp-boot  2e8a:0003 gdb= | port  baud 115200 | chip STM32F411CEUx elf  svd  flash probe-rs debug '
+
+# A Pico: its SDK's USB serial port is the board itself, written with its
+# serial number (picotool's --ser), and flashed with picotool; so is its
+# boot ROM (BOOTSEL), which has no serial number of its own. An STM32's
+# DFU boot ROM: dfu-util.
+Q="$dir/pico"
+mkdir -p "$Q"
+run "$Q" "command:Choose the probe;probewait;text:Pico SDK;key:Return;probewait;boarddump;flashdump"
+check "the Pico SDK's USB serial chosen: its probe and port, flashed with picotool" \
+    'pico: tool picotool | board  | cable  | interface  | target  | device  | address  | bitstream '
+got=$(sed -n 7,8p "$Q/.blit/run.json" | tr '\n' '|')
+check "(the file: its serial number, and its port)" '        "probe": {"kind": "pico-serial", "serial": "A58565170D696C53", "usb": "2e8a:000a"},|        "serial": {"port": "/dev/ttyACM7"}|'
+run "$Q" "command:Choose the probe;probewait;text:RP2040 boot;key:Return;probewait;flashdump"
+check "its boot ROM chosen: picotool" 'pico: tool picotool | board  | cable  | interface  | target  | device  | address  | bitstream '
+run "$Q" "command:Choose the probe;probewait;text:STM32 DFU;key:Return;probewait;boarddump;flashdump"
+check "an STM32's DFU boot ROM chosen: dfu-util" 'pico: tool dfu-util | board  | cable  | interface  | target  | device  | address  | bitstream '
 
 # The board read: every member, in either form; a flash tool it does not know said.
 B="$dir/board"
@@ -192,14 +214,14 @@ check "a board in the short forms: probe and serial as strings, flash and debug 
     'esp: probe  F4:12:FA:00:00:01  gdb= | port /dev/cu.usbmodem1101 baud 0 | chip esp32s3 elf build/app.elf svd esp32s3.svd flash esptool debug esp'
 printf '{"configurations": [{"name": "esp", "program": "build/app.elf", "board": {"flash": "avrdude"}}]}\n' >"$B/.blit/run.json"
 got=$(BLIT_USB_ROOT="$U" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$B;frame;builddump" 2>&1 >/dev/null | grep '^blit: ' | tail -1)
-check "a flash tool it does not know: said" 'blit: .blit/run.json: esp'"'"'s board.flash is one of "esptool", "openocd", "probe-rs", "jlink", "openfpgaloader", "vivado"'
+check "a flash tool it does not know: said" 'blit: .blit/run.json: esp'"'"'s board.flash is one of "esptool", "openocd", "probe-rs", "jlink", "picotool", "uf2", "dfu-util", "pyocd", "stm32cubeprogrammer", "openfpgaloader", "vivado", "iceprog", "ecpprog", "pgrcmd"'
 printf '{"configurations": [{"name": "esp", "program": "build/app.elf", "board": "ttyACM0"}]}\n' >"$B/.blit/run.json"
 got=$(BLIT_USB_ROOT="$U" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$B;frame;builddump" 2>&1 >/dev/null | grep '^blit: ' | tail -1)
 check "a board that is not an object: said" 'blit: .blit/run.json: esp'"'"'s board is an object'
 
 # The Debug tab shows the board; Enter there chooses again.
 run "$R" "buildrun:fw;buildwait;boarddump;debugpanel;debugrows:Board:2"
-check "the Debug tab: the board's probe and port" 'Board | RP2040 boot ROM E0C912D24340'
+check "the Debug tab: the board's probe and port" 'Board | RP2040 boot ROM'
 run "$R" "buildrun:fw;buildwait;debugpanel;debugpick:board;probewait;text:Espressif;key:Return;probewait;boarddump;debugrows:Board:2"
 check "Enter on it: the picker, and the one chosen shown" 'Board | Espressif USB-Serial/JTAG F4:12:FA:00:00:01 /dev/ttyACM3'
 run "$P" "boarddump;debugpanel;debugrows:Board:2"
@@ -214,7 +236,7 @@ check "(no run configuration: no board)" 'no Board'
 mkdir -p "$T/fw"
 run "ssh://box$T/fw" "remotewait;command:Choose the probe;probewait;finddump"
 check "another machine's devices, from its agent, each row saying where" \
-    'pick [] 12 : >Black Magic Probe  7BB180B4  /dev/ttyACM5  gdb /dev/ttyACM4  on box DAPLink CMSIS-DAP  0240000034544e45  /dev/ttyACM6  on box Digilent FT2232 (FPGA)  210183A8F2C1  /dev/ttyUSB1  on box Espressif USB-Serial/JTAG  F4:12:FA:00:00:01  /dev/ttyACM3  on box J-Link  000801234567  /dev/ttyACM1  on box J-Link  000801234568  on box'
+    'pick [] 14 : >Black Magic Probe  7BB180B4  /dev/ttyACM5  gdb /dev/ttyACM4  on box DAPLink CMSIS-DAP  0240000034544e45  /dev/ttyACM6  on box Digilent FT2232 (FPGA)  210183A8F2C1  /dev/ttyUSB1  on box Espressif USB-Serial/JTAG  F4:12:FA:00:00:01  /dev/ttyACM3  on box J-Link  000801234567  /dev/ttyACM1  on box J-Link  000801234568  on box'
 run "ssh://box$T/fw" "remotewait;command:Choose the probe;probewait;text:Digilent;key:Return;probewait;boarddump"
 check "chosen: written there, and read back" 'fw: probe ftdi 210183A8F2C1 0403:6010 gdb= | port /dev/ttyUSB1 baud 0 | chip  elf  svd  flash  debug '
 got=$(tr '\n' '|' <"$T/fw/.blit/run.json")

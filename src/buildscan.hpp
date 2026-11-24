@@ -246,6 +246,14 @@ private:
     u64 prog_bytes_ = 0;  // written, as the tool says
     double prog_seconds_ = -1, prog_took_ = -1, prog_start_ = 0;  // the writing's time and the run's, as the tool says; when its first line came
     std::string prog_error_;  // an error said before the failure it explains
+    // A failure whose words go on over the lines after it (picotool wraps
+    // them at its width), and the notes after it (the devices it saw), all
+    // held until the output ends.
+    bool prog_holding_ = false;
+    std::string prog_held_;
+    std::vector<std::string> prog_notes_;
+    void progress_hold(std::string_view text);
+    void progress_release();
     // buildtests.cpp:
 public:
     // A test's result as the run's output gave it: GoogleTest's

@@ -48,6 +48,14 @@ blit.build.add("Flash", {detect = function() return true end, tasks = {
   {name = "openFPGALoader", cmd = "$B/openFPGALoader -b basys3 top.bit"},
   {name = "picotool", cmd = "$B/picotool load -v -x app.uf2"},
   {name = "Vivado", cmd = "$B/vivado -mode batch -nojournal -nolog -notrace -source load.tcl"},
+  {name = "picotool -f", cmd = "$B/picotool load -v -x -f app.uf2"},
+  {name = "UF2", cmd = "$B/uf2copy"},
+  {name = "dfu-util", cmd = "$B/dfu-util -d 0483:df11 -a 0 -s 0x08000000:leave -D fw.bin"},
+  {name = "pyOCD", cmd = "$B/pyocd load -W -t stm32f411ce -u SERIAL build/fw.elf"},
+  {name = "STM32CubeProgrammer", cmd = "$B/STM32_Programmer_CLI -c port=SWD sn=SERIAL -w build/fw.elf -v -rst"},
+  {name = "iceprog", cmd = "$B/iceprog build/top.bin"},
+  {name = "ecpprog", cmd = "$B/ecpprog build/top.bit"},
+  {name = "pgrcmd", cmd = "$B/pgrcmd -infile impl/top.xcf"},
   {name = "make", cmd = "make flash"},
   {name = "plain", cmd = "$B/plain"},
 }})
@@ -210,14 +218,108 @@ problems: 0
 EOF
 check "openFPGALoader on a pipe: into flash, verified" "$expected"
 
-# picotool: "Loading into Flash: [====   ]  62%\r", the next drawn over it.
-flash picotool picotool picotool "progresswait:Program 62%;progressdump;$end"
+# picotool (its real output, on a pipe and on a terminal): with -f, the
+# board rebooted into BOOTSEL first; "Loading into Flash: [====   ]  52%\r",
+# the next drawn over it; "Verifying Flash:", then "  OK".
+flash "picotool -f" picotool picotool "progresswait:Program 52%;progressdump;$end"
 want <<'EOF'
-button: ■ Program 62% | row: Program 62%
+button: ■ Program 52% | row: Reboot ✓ · Program 52%
+button: ▶ picotool -f · Flashed in N s, verified | row: done · Flashed in N s, verified
+problems: 0
+EOF
+check "picotool -f: the reboot into BOOTSEL, the bar, then the summary" "$expected"
+flash picotool picotool picotool-pty "progresswait:Program 52%;progressdump;$end"
+want <<'EOF'
+button: ■ Program 52% | row: Program 52%
 button: ▶ picotool · Flashed in N s, verified | row: done · Flashed in N s, verified
 problems: 0
 EOF
-check "picotool: the bar, then the summary" "$expected"
+check "picotool on a terminal, a board in BOOTSEL: the bar, then the summary" "$expected"
+
+# blit's own copy of a .uf2 to a boot ROM's volume: the bytes for the
+# flash as it goes, then the board restarting, the summary.
+flash UF2 uf2copy uf2 "progresswait:Program 52%;progressdump;go:a;progresswait:Restart;buildwait;progressdump;scandump"
+want <<'EOF'
+button: ■ Program 52% 16.0/30.8 KB | row: Program 52% 16.0/30.8 KB
+button: ▶ UF2 · Flashed 30.8 KB in N s | row: done · Flashed 30.8 KB in N s
+problems: 0
+EOF
+check "the UF2 copy: its bytes, then the summary" "$expected"
+flash UF2 uf2copy uf2-fail "$end"
+want <<'EOF'
+button: ▶ UF2 · 1 error · stopped in Restart | row: failed: exited with code 1 · stopped in Restart
+problems: 1
+E uf2:1 /Volumes/RPI-RP2 is still there 10 s after the copy: the board did not take the image
+EOF
+check "the UF2 copy, the board not restarting" "$expected"
+
+# dfu-util (written from its source): Erase, then Download, its bytes.
+flash dfu-util dfu-util dfu-util "progresswait:Program 50%;progressdump;$end"
+want <<'EOF'
+button: ■ Program 50% 20.1 KB | row: Erase ✓ · Program 50% 20.1 KB
+button: ▶ dfu-util · Flashed 40.2 KB in N s | row: done · Flashed 40.2 KB in N s
+problems: 0
+EOF
+check "dfu-util: erase, download, the summary" "$expected"
+
+# pyOCD on a terminal (written from its source): its log lines, the same
+# bar for each stage, the summary's bytes programmed.
+flash pyOCD pyocd pyocd "progresswait:Program 52%;progressdump;$end"
+want <<'EOF'
+button: ■ Program 52% | row: Erase ✓ · Program 52%
+button: ▶ pyOCD · Flashed 16 KB in N s | row: done · Flashed 16 KB in N s
+problems: 0
+EOF
+check "pyOCD: erase, program, the summary" "$expected"
+
+# STM32CubeProgrammer (only the lines others' code reads it by).
+flash STM32CubeProgrammer STM32_Programmer_CLI stm32cube "progresswait:Program;go:a;$end"
+want <<'EOF'
+button: ▶ STM32CubeProgrammer · Flashed in N s, verified | row: done · Flashed in N s, verified
+problems: 0
+EOF
+check "STM32CubeProgrammer: downloaded, verified" "$expected"
+
+# iceprog (written from its source): the flash erased, written and read
+# back, its percent; into SRAM, CDONE high.
+flash iceprog iceprog iceprog "progresswait:Program 49%;progressdump;$end"
+want <<'EOF'
+button: ■ Program 49% | row: Erase ✓ · Program 49%
+button: ▶ iceprog · Flashed 31.5 KB in N s, verified | row: done · Flashed 31.5 KB in N s, verified
+problems: 0
+EOF
+check "iceprog: the flash written, verified" "$expected"
+flash iceprog iceprog iceprog-sram "progresswait:Load;progressdump;$end"
+want <<'EOF'
+button: ■ Load | row: Load
+button: ▶ iceprog · Loaded into SRAM in N s | row: done · Loaded into SRAM in N s
+problems: 0
+EOF
+check "iceprog -S: into SRAM" "$expected"
+
+# ecpprog on a terminal (written from its source): its counts of bytes;
+# into SRAM, the status register's DONE bit.
+flash ecpprog ecpprog ecpprog "progresswait:Program 50%;progressdump;$end"
+want <<'EOF'
+button: ■ Program 50% 96.0/192.0 KB | row: Erase ✓ · Program 50% 96.0/192.0 KB
+button: ▶ ecpprog · Flashed 192 KB in N s, verified | row: done · Flashed 192 KB in N s, verified
+problems: 0
+EOF
+check "ecpprog: the flash written, verified" "$expected"
+flash ecpprog ecpprog ecpprog-sram "progresswait:Load;progressdump;$end"
+want <<'EOF'
+button: ■ Load | row: Load
+button: ▶ ecpprog · Loaded into SRAM in N s | row: done · Loaded into SRAM in N s
+problems: 0
+EOF
+check "ecpprog -S: into SRAM, DONE set" "$expected"
+flash ecpprog ecpprog ecpprog-sram-fail "$end"
+want <<'EOF'
+button: ▶ ecpprog · 1 error · stopped in Load | row: done · stopped in Load
+problems: 1
+E ecpprog:1 ECP5 Status Register: 0x00202000 (DONE is not set)
+EOF
+check "ecpprog -S: DONE not set (ecpprog itself ends with 0)" "$expected"
 
 # Failures: the tool's own words, a problem at the program (not a file).
 flash openocd openocd openocd-fail "$end"
@@ -267,8 +369,64 @@ want <<'EOF'
 button: ▶ picotool · 1 error | row: failed: exited with code 249
 problems: 1
 E picotool:1 No accessible RP-series devices in BOOTSEL mode were found.
+  note RP2040 device at bus 1, address 2 appears to have a USB serial connection, so consider -f (or -F) to force reboot in order to run the command.
 EOF
-check "picotool with no board" "$expected"
+check "picotool with no board in BOOTSEL: the board it saw, and its advice, a note" "$expected"
+flash "picotool -f" picotool picotool-nofile "$end"
+want <<'EOF'
+button: ▶ picotool -f · 1 error · stopped in Reboot | row: failed: exited with code 252 · stopped in Reboot
+problems: 1
+E picotool:1 Could not open '/nonexistent.uf2'
+EOF
+check "picotool -f with no such file (after rebooting the board)" "$expected"
+cat >"$dir/held.txt" <<'EOF'
+No accessible RP-series devices in BOOTSEL mode were found with serial number
+E0C9125B0D9B.
+@exit 249
+EOF
+printf '#!/bin/sh\nexec sh "%s" "%s"\n' "$here/replay.sh" "$dir/held.txt" >"$B/picotool"
+chmod +x "$B/picotool"
+got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$T;frame;buildrun:picotool;buildwait;scandump" 2>&1 >/dev/null)
+want <<'EOF'
+problems: 1
+E picotool:1 No accessible RP-series devices in BOOTSEL mode were found with serial number E0C9125B0D9B.
+EOF
+check "picotool's words wrapped at 80 columns: one problem" "$expected"
+flash dfu-util dfu-util dfu-util-fail "$end"
+want <<'EOF'
+button: ▶ dfu-util · 1 error | row: failed: exited with code 74
+problems: 1
+E dfu-util:1 No DFU capable USB device available
+EOF
+check "dfu-util with no DFU device (its warnings no problem)" "$expected"
+flash pyOCD pyocd pyocd-fail "$end"
+want <<'EOF'
+button: ▶ pyOCD · 1 error | row: failed: exited with code 1
+problems: 1
+E pyocd:1 No connected debug probe matches unique ID '0670FF485550755187121723'
+EOF
+check "pyOCD with no probe" "$expected"
+flash STM32CubeProgrammer STM32_Programmer_CLI stm32cube-fail "$end"
+want <<'EOF'
+button: ▶ STM32CubeProgrammer · 1 error | row: failed: exited with code 1
+problems: 1
+E STM32_Programmer_CLI:1 No debug probe detected
+EOF
+check "STM32CubeProgrammer with no probe" "$expected"
+flash iceprog iceprog iceprog-fail "$end"
+want <<'EOF'
+button: ▶ iceprog · 1 error | row: failed: exited with code 2
+problems: 1
+E iceprog:1 Can't find iCE FTDI USB device (device string s:0x0403:0x6010:NOSUCHSERIAL).
+EOF
+check "iceprog with no such chip (its real output)" "$expected"
+flash pgrcmd pgrcmd pgrcmd-fail "$end"
+want <<'EOF'
+button: ▶ pgrcmd · 1 error | row: failed: exited with code 251
+problems: 1
+E pgrcmd:1 cable not detected (return code -5)
+EOF
+check "pgrcmd with no cable: its return code in words" "$expected"
 
 # Vivado's hardware manager: its steps (no percent), the load done when the
 # DONE pin is high; a failure the ERROR line's message, without its id.
@@ -358,6 +516,42 @@ E probe-rs:1 No connected probes were found.
 EOF
 check "make echoing probe-rs's command" "$expected"
 rm -f "$T/Makefile"
+
+# The task's row as the Build tab fits it (panel.width), at the stage under
+# way: that stage and its percent stay, whatever the room. The stages done
+# are said more briefly first ("✓ 2"), then left out, then the kind of
+# work, then the stage's sizes. (A task of the folder's own, for its kind.)
+K="$dir/kinds"
+mkdir -p "$K/.blit"
+cat >"$K/.blit/tasks.json" <<EOF
+{ "tasks": [
+  { "label": "FPGA", "command": "$B/openFPGALoader -b basys3 -f top.bit", "kind": "flash" },
+  { "label": "ESP", "command": "$B/esptool --chip esp32s3 write-flash 0x10000 app.bin", "kind": "flash" } ] }
+EOF
+# fitted TASK PROGRAM SAMPLE STAGE WIDTH: the task's row as shown, held at STAGE.
+fitted() {
+    rm -f "$REPLAY_HOLD"/*
+    printf '#!/bin/sh\nexec sh "%s" "%s"\n' "$here/replay.sh" "$here/progress/$3.txt" >"$B/$2"
+    chmod +x "$B/$2"
+    printf 'blit.opt.lsp.enabled = false\nblit.opt.git.enabled = false\nblit.opt.panel.width = %s\n' "$5" >"$dir/wide.lua"
+    go="lua:io.open('$REPLAY_HOLD/a','w'):close();lua:io.open('$REPLAY_HOLD/b','w'):close()"
+    got=$(BLIT_INIT="$dir/wide.lua" "$blit" --offscreen 3000x700 --shot "$dir/shot.bmp" --script "workdir:$K;frame;buildpanel;buildrun:$1;progresswait:$4;builddump:shown;$go;buildwait" 2>&1 >/dev/null |
+        grep '^FPGA: ' | awk -v t="$1: " 'BEGIN { RS = "\n" } { n = split($0, r, / \| /); for (i = 1; i <= n; ++i) if (index(r[i], t) == 1) print r[i] }')
+}
+fitted FPGA openFPGALoader ofl-flash 'Program 38%' 50
+check "room for it all: the stages done, then the one under way" 'FPGA: flash · Load ✓ · Erase ✓ · Program 38%'
+fitted FPGA openFPGALoader ofl-flash 'Program 38%' 40
+check "less: the stages done counted" 'FPGA: flash · ✓ 2 · Program 38%'
+fitted FPGA openFPGALoader ofl-flash 'Program 38%' 32
+check "the panel's own width: the stages done left out" 'FPGA: flash · Program 38%'
+fitted FPGA openFPGALoader ofl-flash 'Program 38%' 20
+check "narrower: the kind of work left out too" 'FPGA: Program 38%'
+fitted ESP esptool esptool5 'Program 38%' 40
+check "the stage's sizes, where they fit" 'ESP: flash · Program 38% 32.0/82.8 KB'
+fitted ESP esptool esptool5 'Program 38%' 32
+check "the kind of work left out before them" 'ESP: Program 38% 32.0/82.8 KB'
+fitted ESP esptool esptool5 'Program 38%' 24
+check "and where they do not fit, its percent alone" 'ESP: Program 38%'
 
 # Output that is no engine's leaves the button and the row as they were.
 cat >"$dir/plain.txt" <<'EOF'

@@ -18,6 +18,7 @@
 
 #include "app.hpp"
 #include "buildread.hpp"
+#include "crashscan.hpp"
 #include "look.hpp"
 #include "missing.hpp"
 #include "notify.hpp"
@@ -105,10 +106,18 @@ struct App::BuildUi {
     // The terminal the runs that are no long task's share: each one there
     // ends the one before (a long task's has a tab of its own).
     u64 term = 0;
+    // What holds problems in the Problems tab, under a heading of its own: a
+    // run, or a file read for them (build_read). Its place among the others
+    // (a run again takes the place of the one it replaced), the group of each
+    // of its files (BuildProblem::group), and how many of each kind it has.
+    struct Held {
+        u64 order = 0;
+        std::unordered_map<std::string, u32> files;
+        u32 errors = 0, warnings = 0;
+    };
     // The runs whose tabs are open: each one's task (task_key; empty: no
-    // task's, as the tests' run), what it is, and how it went (its problems
-    // counted: the last run's, as the Problems tab has them).
-    struct Run {
+    // task's, as the tests' run), what it is, how it went, and its problems.
+    struct Run : Held {
         u64 doc = 0;
         std::string key, name, kind, cmd;
         std::string dir;  // (where it ran)
@@ -117,7 +126,6 @@ struct App::BuildUi {
         std::string missing;  // (as last_missing)
         u64 started_ns = 0;
         i64 started_at = 0;  // (the clock's time, in seconds: for the files it wrote)
-        u32 errors = 0, warnings = 0;
     };
     std::vector<Run> runs;
     Run* run_of(u64 id) {
@@ -138,13 +146,34 @@ struct App::BuildUi {
     i64 clock_shown = -1;
 #if BLIT_DEV
     std::vector<std::string> drawn_rows;  // (tests) each task's row as the Build tab last drew it: its name, then its words
+    std::vector<std::string> drawn_shown;  // (and its words as they fitted)
 #endif
-    // What its output said was wrong: a file's problems together, the files
-    // in the order they came; how many of each kind; the one F8 last went to.
+    // What the open runs' output said was wrong, and a file read's: each
+    // run's together, in their order; in a run, a file's together, the files
+    // in the order they came. Each group's run's order (by
+    // BuildProblem::group; kGone once its run has gone), the last order
+    // given, and the order a run that is replacing another takes. The one
+    // F8 last went to.
     std::vector<BuildProblem> problems;
-    std::unordered_map<std::string, u32> groups;  // a file's place in that order
+    std::vector<u64> group_order;
+    static constexpr u64 kGone = ~0ull;
+    u64 orders = 0, take_order = 0;
     u32 seq = 0;
     i64 at = -1;
+    bool before(u32 a, u32 b) const {  // (group a's problems come before group b's)
+        const u64 x = group_order[a], y = group_order[b];
+        return x != y ? x < y : a < b;
+    }
+    void take(Held& h, std::vector<BuildProblem>& come, u32* errors, u32* warnings);
+    bool drop(Held& h, u32* errors, u32* warnings);
+    // How a run is going, for its heading ("running…", "failed (exit 2)"); and
+    // what to say of one that failed with no error in its output ("make
+    // failed with exit code 2: no problem found in its output"; "" when not so).
+    static std::string state_of(const Run& r);
+    static std::string failure_of(const Run& r);
+    // The Problems tab's groups (build_groups), as last made, and when.
+    std::vector<BuildGroup> group_list;
+    u64 groups_gen = 0;
     // What a task's run came to (its tests' count, sizes, timing: its
     // output's, buildtests.cpp), in words for its row and the Run button;
     // each task's sizes as its last run that gave them had them, and those
@@ -160,7 +189,7 @@ struct App::BuildUi {
     std::string said;
     bool unrun = false;  // the last "run" ran nothing: its summary says why (a flash whose image is unchanged: build_note)
     // A file read for problems (build_read), on a thread of its own, and
-    // what it gave; the file the problems are from, once taken.
+    // what it gave; the file the problems are from, once taken, and them.
     struct Read {
         std::string path, kind, why;  // (why: it could not be read)
         bool ok = false;
@@ -169,6 +198,7 @@ struct App::BuildUi {
     std::optional<Read> read;  // (mu)
     bool reading = false;
     std::string read_from;
+    Held held_read;
     // Those problems in an open file's text, by its document: each a line
     // (from 0) and the bytes of it underlined, made once when they come
     // (not each frame), moved as lines are put in or taken out above them,
@@ -178,6 +208,7 @@ struct App::BuildUi {
         u64 line = 0;
         u32 c0 = 0, c1 = 0;  // bytes into the line
         u32 len = 0;         // the line's bytes when the mark was made
+        u32 group = 0;       // its problem's (it goes when that run's problems do)
         u8 severity = 1;
         std::string message;  // (its first line)
     };
@@ -379,15 +410,12 @@ void App::build_sync() {
         const std::string name = r->path.substr(r->path.rfind('/') + 1);
         if (!r->ok) {
             notify(!r->why.empty() ? "Cannot read " + r->path + ": " + r->why : name + " is " + r->kind, 1);
-        } else {  // (in place of the last run's)
+        } else {  // (a group of their own, after the runs', in place of a file read before)
             const size_t n = r->found.size();
-            u.problems.clear();
-            u.groups.clear();
-            build_unmark();  // (the last run's marks go from the text too)
-            build_errors_ = build_warnings_ = 0;
-            u.at = -1;
+            u.drop(u.held_read, &build_errors_, &build_warnings_);
+            u.held_read.order = ++u.orders;
             u.read_from = r->path;
-            build_found(u.doc, std::move(r->found));
+            u.take(u.held_read, r->found, &build_errors_, &build_warnings_);
             ++build_prob_gen_;
             ++build_gen_;
             dirty_ = true;
@@ -591,9 +619,12 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     if (!near || !find_doc(near, &into)) into = dock_show(editing);
     if (!into) into = editing;  // (no room for another split)
     const u64 old = !lasting && u.term && find_doc(u.term) ? u.term : 0;
+    const BuildUi::Run* prev = u.run_of(old);
+    const u64 old_order = prev ? prev->order : 0;  // (its problems' place, which this run's take once it has gone)
     if (u.first && !u.first->ended && u.first->doc == old) u.first.reset();  // (a build that something waited for, ended by this one: it is called off)
     pane_ = into;
-    const u64 doc = term_open(dir, cmd, title, {}, false, script_matchers(problems));
+    const CrashOptions crash = crash_options(task, cmd);
+    const u64 doc = term_open(dir, cmd, title, {}, false, script_matchers(problems), &crash);
     if (!doc && into->docs.empty()) remove_pane(into);  // (a split made for it, and it could not start)
     if (old) {
         Pane* p = nullptr;
@@ -622,6 +653,10 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
         // (A task that runs a simulator is a simulation, said or not: simrun.hpp.)
         if (task) r.key = task_key(*task), r.kind = task->kind.empty() && !sim_tool(cmd).empty() ? "simulation" : task->kind, r.cmd = cmd;
         const std::string kind = r.kind;
+        // (In the Problems tab, in the place of the run it replaced, if that
+        // has gone: a long task's last run, or the terminal's; else last.)
+        r.order = u.take_order ? u.take_order : old && !u.run_of(old) ? old_order : 0;
+        if (!r.order) r.order = ++u.orders;
         u.runs.push_back(std::move(r));
         if (!lasting) u.term = doc;
         if (task) script_build_event(false, task->name, kind, cmd, 0, 0, 0, false, 0);
@@ -633,17 +668,16 @@ u64 App::build_command(const std::string& dir, const std::string& cmd, const std
     u.last_missing.clear();
     u.last_name = title;
     u.last_key.clear();
-    u.problems.clear();  // (the last run's go: this one's come as it goes)
-    u.groups.clear();
+    u.take_order = 0;
     u.summary.clear();
     u.progress = {};
     u.said.clear();
     u.unrun = false;
     u.sizes_before.clear();
+    // (The problems of the run this one replaced went with its tab; a
+    // file's read go now: this run's take their place.)
+    u.drop(u.held_read, &build_errors_, &build_warnings_);
     u.read_from.clear();
-    build_unmark();  // (and from the text)
-    build_errors_ = build_warnings_ = 0;
-    u.at = -1;
     ++build_prob_gen_;
     ++build_gen_;
     dirty_ = true;
@@ -709,6 +743,8 @@ void App::build_run(int index) {
                     return;
                 was = r.doc;
             }
+        const BuildUi::Run* last = u.run_of(was);
+        const u64 order = last ? last->order : 0;  // (its problems' place in the Problems tab: the next run's)
         Pane* p = nullptr;
         size_t at = 0;
         if (was && find_doc(was, &p, &at)) {
@@ -722,6 +758,7 @@ void App::build_run(int index) {
             term_stop(was, true);  // (its tab in the hidden split: ended there)
             build_forget(was);
         }
+        if (!u.run_of(was)) u.take_order = order;
     }
     build_command(t.cwd.empty() || !t.before.empty() ? u.root : u.root + "/" + t.cwd, with_vars(cmd, build_vars()), t.name, t.problems, &t);
     u.last_key = u.current;  // (how it goes shows on its row)
@@ -777,6 +814,7 @@ void App::build_stop() {
     r->stopped = true;
     term_stop(u.doc, again);
     u.first.reset();  // (and what waited for it, called off)
+    ++build_prob_gen_;  // (its heading in the Problems tab: stopping)
     ++build_gen_;
     dirty_ = true;
 }
@@ -797,6 +835,7 @@ void App::build_ended(u64 doc, int status, const std::string& missing) {
         r->running = false;
         r->status = status;
         r->missing = missing;
+        ++build_prob_gen_;  // (its heading in the Problems tab says how it went; one that failed with no problem found has one now)
         const double took = static_cast<double>(now_ns() - r->started_ns) * 1e-9;
         if (!r->key.empty()) script_build_event(true, r->name, r->kind, r->cmd, status, r->errors, r->warnings, r->stopped, took);
         // (A simulation: the dump it wrote opened in the wave tab, or read again, as its output and command say which: appsim.cpp.)
@@ -859,7 +898,13 @@ void App::build_forget(u64 doc) {
         ++build_gen_;
         dirty_ = true;
     }
-    if (std::erase_if(u.runs, [&](const BuildUi::Run& r) { return r.doc == doc; })) ++build_gen_;
+    if (BuildUi::Run* r = u.run_of(doc)) {  // (its problems go with it, from the Problems tab and the text)
+        u.drop(*r, &build_errors_, &build_warnings_);
+        std::erase_if(u.runs, [&](const BuildUi::Run& x) { return x.doc == doc; });
+        ++build_prob_gen_;
+        ++build_gen_;
+        dirty_ = true;
+    }
     if (u.term == doc) u.term = 0;
 }
 
@@ -915,47 +960,121 @@ void App::build_older(int seconds) {
 
 // ---------------------------------------------------------------- problems
 
-// Problems the run's output reported (found on its terminal's reading
-// thread): each after the others of its file, the files in the order they
-// came, as the Problems tab lists them and F8 goes through them.
+// Problems a run's output reported (found on its terminal's reading
+// thread): each after the others of its file in that run, the files in the
+// order they came, the runs in theirs, as the Problems tab lists them and
+// F8 goes through them.
 void App::build_found(u64 doc, std::vector<BuildProblem> found) {
     BuildUi& u = *buildui_;
     BuildUi::Run* const run = u.run_of(doc);
-    if (doc != u.doc) {  // (a long task's, while another run is the last: only counted, for its BuildDone and its notification)
-        if (run)
-            for (const BuildProblem& p : found) (p.severity == 1 ? run->errors : run->warnings) += 1;
-        return;
-    }
-    if (found.empty()) return;
-    const u32 was = u.at >= 0 ? u.problems[static_cast<size_t>(u.at)].seq : 0;
-    const size_t had = u.problems.size();
-    for (BuildProblem& p : found) {
-        if (p.count > 1) {  // (one said again, as a validation message every frame: the count on its row)
-            const auto same = std::find_if(u.problems.rbegin(), u.problems.rend(), [&](const BuildProblem& q) {
-                return q.severity == p.severity && q.line == p.line && q.col == p.col && q.code == p.code && q.message == p.message && q.path == p.path;
+    if (!run || found.empty()) return;
+    u.take(*run, found, &build_errors_, &build_warnings_);
+    ++build_prob_gen_;
+    ++build_gen_;
+    dirty_ = true;
+}
+
+void App::BuildUi::take(Held& h, std::vector<BuildProblem>& come, u32* errors, u32* warnings) {
+    const u32 was = at >= 0 ? problems[static_cast<size_t>(at)].seq : 0;
+    const size_t had = problems.size();
+    for (BuildProblem& p : come) {
+        const auto file = h.files.find(p.path);
+        if (p.count > 1 && file != h.files.end()) {  // (one said again, as a validation message every frame: the count on its row)
+            const auto same = std::find_if(problems.rbegin(), problems.rend(), [&](const BuildProblem& q) {
+                return q.group == file->second && q.severity == p.severity && q.line == p.line && q.col == p.col && q.code == p.code && q.message == p.message;
             });
-            if (same != u.problems.rend()) {
+            if (same != problems.rend()) {
                 same->count = std::max(same->count, p.count);
                 continue;
             }
         }
-        p.group = u.groups.try_emplace(p.path, static_cast<u32>(u.groups.size())).first->second;
-        p.seq = u.seq++;
-        (p.severity == 1 ? build_errors_ : build_warnings_) += 1;
-        if (run) (p.severity == 1 ? run->errors : run->warnings) += 1;
-        u.problems.push_back(std::move(p));
+        if (file != h.files.end()) {
+            p.group = file->second;
+        } else {
+            p.group = static_cast<u32>(group_order.size());
+            group_order.push_back(h.order);
+            h.files.emplace(p.path, p.group);
+        }
+        p.seq = seq++;
+        (p.severity == 1 ? *errors : *warnings) += 1;
+        (p.severity == 1 ? h.errors : h.warnings) += 1;
+        problems.push_back(std::move(p));
     }
     // (The new ones in order, then merged in: a step through them, not a sort of them all for each piece of output.)
-    const auto by_file = [](const BuildProblem& a, const BuildProblem& b) { return a.group < b.group; };
-    const auto mid = u.problems.begin() + static_cast<std::ptrdiff_t>(had);
-    std::stable_sort(mid, u.problems.end(), by_file);
-    std::inplace_merge(u.problems.begin(), mid, u.problems.end(), by_file);
-    if (u.at >= 0)  // (F8 goes on from the one it went to)
-        for (size_t i = 0; i < u.problems.size(); ++i)
-            if (u.problems[i].seq == was) u.at = static_cast<i64>(i);
-    ++build_prob_gen_;
-    ++build_gen_;
-    dirty_ = true;
+    const auto by_group = [this](const BuildProblem& a, const BuildProblem& b) { return before(a.group, b.group); };
+    const auto mid = problems.begin() + static_cast<std::ptrdiff_t>(had);
+    std::stable_sort(mid, problems.end(), by_group);
+    std::inplace_merge(problems.begin(), mid, problems.end(), by_group);
+    if (at >= 0)  // (F8 goes on from the one it went to)
+        for (size_t i = 0; i < problems.size(); ++i)
+            if (problems[i].seq == was) at = static_cast<i64>(i);
+}
+
+// A run's problems (or a file's read) taken out, and their marks from the
+// text: the run's tab has closed, or it is being run again. False: it had none.
+bool App::BuildUi::drop(Held& h, u32* errors, u32* warnings) {
+    if (h.files.empty()) return false;
+    for (const auto& [path, group] : h.files) group_order[group] = kGone;
+    const u32 was = at >= 0 ? problems[static_cast<size_t>(at)].seq : 0;
+    std::erase_if(problems, [&](const BuildProblem& p) { return group_order[p.group] == kGone; });
+    for (auto& [id, m] : marks) std::erase_if(m->marks, [&](const Mark& k) { return group_order[k.group] == kGone; });
+    if (at >= 0) {  // (F8 goes on from the one it went to, if that is still there)
+        at = -1;
+        for (size_t i = 0; i < problems.size(); ++i)
+            if (problems[i].seq == was) at = static_cast<i64>(i);
+    }
+    *errors -= h.errors;
+    *warnings -= h.warnings;
+    h.files.clear();
+    h.errors = h.warnings = 0;
+    return true;
+}
+
+std::string App::BuildUi::state_of(const Run& r) {
+    if (r.running) return r.stopped ? "stopping\xE2\x80\xA6" : "running\xE2\x80\xA6";
+    if (r.stopped) return "stopped";
+    if (r.status == 0) return "done";
+    if (r.status > 0) return "failed (" + (r.missing.empty() ? "exit " + std::to_string(r.status) : r.missing.substr(0, r.missing.find(" on "))) + ")";
+    return {};
+}
+
+std::string App::BuildUi::failure_of(const Run& r) {
+    if (r.running || r.stopped || r.status <= 0 || r.errors) return {};  // (Stop ended it: it did not fail)
+    if (!r.missing.empty()) return r.name + " failed: " + r.missing;
+    return r.name + " failed with exit code " + std::to_string(r.status) + ": no " + (r.warnings ? "error" : "problem") + " found in its output";
+}
+
+// The groups, made again when the problems or a run's state have changed:
+// the runs' (and the file's) in their order, each with how many problems it
+// has, those with none left out unless they failed.
+const std::vector<BuildGroup>& App::build_groups() {
+    BuildUi& u = *buildui_;
+    if (u.groups_gen == build_prob_gen_) return u.group_list;
+    u.groups_gen = build_prob_gen_;
+    u.group_list.clear();
+    std::vector<std::pair<u64, const BuildUi::Held*>> held;
+    for (const BuildUi::Run& r : u.runs) held.emplace_back(r.order, &r);
+    if (!u.read_from.empty()) held.emplace_back(u.held_read.order, &u.held_read);
+    std::ranges::sort(held, {}, &std::pair<u64, const BuildUi::Held*>::first);
+    size_t i = 0;
+    for (const auto& [order, h] : held) {
+        BuildGroup g;
+        g.first = static_cast<u32>(i);
+        while (i < u.problems.size() && u.group_order[u.problems[i].group] == order) ++i;
+        g.count = static_cast<u32>(i) - g.first;
+        if (h == &u.held_read) {
+            g.title = u.read_from.substr(u.read_from.find_last_of('/') + 1);
+        } else {
+            const BuildUi::Run& r = static_cast<const BuildUi::Run&>(*h);
+            g.title = r.name;
+            g.state = BuildUi::state_of(r);
+            g.failed = !r.running && !r.stopped && r.status > 0;
+            if (!BuildUi::failure_of(r).empty())
+                g.why = !r.missing.empty() ? r.missing : std::string("no ") + (r.warnings ? "error" : "problem") + " found in its output";
+        }
+        if (g.count || !g.why.empty()) u.group_list.push_back(std::move(g));
+    }
+    return u.group_list;
 }
 
 // What a task's run came to, and its tests' results, as its output gives
@@ -1009,25 +1128,15 @@ void App::BuildUi::Marks::on_edit(const TextEdit& e) {
 // server's, where it has one there). The marks of a file are made the first
 // time it is drawn after problems come, and the underlines again only when
 // the view, the text or the cursor's line changes: with no problems from
-// the build this is one test of a frame.
-// The marks the last problems made in the text, taken away (the problems
-// are going: a run starts, or a file's are read in their place).
-void App::build_unmark() {
-    BuildUi& u = *buildui_;
-    for (auto& [id, m] : u.marks)
-        if (Doc* d = m->listening ? find_doc(id) : nullptr) d->ed.unlisten(m.get());
-    u.marks.clear();
-}
-
-// The heading the build's problems are under in the Problems tab: "Build",
-// or the file they were read from.
-std::string App::build_source() const {
-    const BuildUi& u = *buildui_;
-    return u.read_from.empty() ? std::string("Build") : u.read_from.substr(u.read_from.find_last_of('/') + 1);
-}
-
+// the build this is one test of a frame. (Once every run's problems have
+// gone, their files are no longer listened to.)
 void App::build_marks(FrameDesc& fd) {
     BuildUi& u = *buildui_;
+    if (u.problems.empty() && !u.marks.empty()) {
+        for (auto& [id, m] : u.marks)
+            if (Doc* d = m->listening ? find_doc(id) : nullptr) d->ed.unlisten(m.get());
+        u.marks.clear();
+    }
     if (u.problems.empty() || focus_view_ >= fd.view_count) return;
     Doc& d = *pane_->doc;
     if (d.term || d.ed.path.empty()) return;
@@ -1035,12 +1144,14 @@ void App::build_marks(FrameDesc& fd) {
     if (!slot) slot = std::make_unique<BuildUi::Marks>();
     BuildUi::Marks& m = *slot;
     const Buffer& b = d.ed.buf;
-    if (m.gen != build_prob_gen_) {  // (problems came: those of this file not yet taken)
+    if (m.gen != build_prob_gen_) {  // (problems came: those of this file not yet taken, from each run that has some there)
         m.gen = build_prob_gen_;
         const std::string full = is_remote(d.ed.path) ? d.ed.path : full_path(d.ed.path);
-        if (const auto g = u.groups.find(full); g != u.groups.end()) {
-            const auto by_group = [](const BuildProblem& p, u32 group) { return p.group < group; };
-            const size_t had = m.marks.size();
+        const size_t had = m.marks.size();
+        auto file_of = [&](const BuildUi::Held& h) {
+            const auto g = h.files.find(full);
+            if (g == h.files.end()) return;
+            const auto by_group = [&u](const BuildProblem& p, u32 group) { return u.before(p.group, group); };
             for (auto it = std::lower_bound(u.problems.begin(), u.problems.end(), g->second, by_group); it != u.problems.end() && it->group == g->second; ++it) {
                 if (it->seq < m.next_seq) continue;
                 if (it->line == 0 || it->line > b.line_count()) continue;
@@ -1060,12 +1171,15 @@ void App::build_marks(FrameDesc& fd) {
                     k.c1 = k.len;
                     while (k.c1 > k.c0 && (text[k.c1 - 1] == ' ' || text[k.c1 - 1] == '\t' || text[k.c1 - 1] == '\r')) --k.c1;
                 }
+                k.group = it->group;
                 k.severity = it->severity;
                 k.message = it->message.substr(0, std::min<size_t>(it->message.find('\n'), 600));
                 m.marks.push_back(std::move(k));
             }
-            if (m.marks.size() != had) std::stable_sort(m.marks.begin(), m.marks.end(), [](const BuildUi::Mark& x, const BuildUi::Mark& y) { return x.line < y.line; });
-        }
+        };
+        for (const BuildUi::Run& r : u.runs) file_of(r);
+        if (!u.read_from.empty()) file_of(u.held_read);
+        if (m.marks.size() != had) std::stable_sort(m.marks.begin(), m.marks.end(), [](const BuildUi::Mark& x, const BuildUi::Mark& y) { return x.line < y.line; });
         m.next_seq = u.seq;
         if (!m.marks.empty() && !m.listening) {
             d.ed.listen(&m);
@@ -1189,6 +1303,7 @@ void App::build_panel_draw(TextBox& box, bool focused) {
     const bool looking = !u.looked || u.looking;
 #if BLIT_DEV
     u.drawn_rows.clear();
+    u.drawn_shown.clear();
 #endif
     u.rows.clear();
     u.body = 0;
@@ -1278,6 +1393,8 @@ void App::build_panel_draw(TextBox& box, bool focused) {
         for (size_t k = 0; !run && t.lasting && k < u.runs.size(); ++k)
             if (u.runs[k].lasting && u.runs[k].key == key) run = &u.runs[k];
         const bool last = !u.last_key.empty() && key == u.last_key && (!run || run->doc == u.doc);
+        bool staged = false;  // (an engine's stage under way, which its words then end with)
+        std::string ticking;  // (and a long task's time after them)
         if (last && u.unrun) {
             after = u.summary;  // (nothing ran, and why: "Not flashed: unchanged since the last flash")
         } else if (last || run) {
@@ -1287,8 +1404,10 @@ void App::build_panel_draw(TextBox& box, bool focused) {
             bool said = true;
             if (running) {
                 after = run && run->stopped ? "stopping\xE2\x80\xA6" : "running\xE2\x80\xA6";
-                if (last && !(run && run->stopped) && (!u.progress.stage.empty() || !u.progress.done.empty()))
+                if (last && !(run && run->stopped) && (!u.progress.stage.empty() || !u.progress.done.empty())) {
                     after = BuildScan::progress_words(u.progress, true);  // ("Erase \xE2\x9C\x93 \xC2\xB7 Program 62% 25.4/41.2 KB")
+                    staged = !u.progress.stage.empty();
+                }
             } else if (run && run->stopped) {
                 after = "stopped";
             } else if (status == 0) {
@@ -1298,14 +1417,42 @@ void App::build_panel_draw(TextBox& box, bool focused) {
             } else {
                 said = false;
             }
-            if (said && running && run && run->lasting) after += " " + clock_text(now_ns() - run->started_ns);
+            if (said && running && run && run->lasting) {
+                ticking = " " + clock_text(now_ns() - run->started_ns);
+                after += ticking;
+            }
             if (said && last && !u.summary.empty())  // (what it came to: "12 passed, 1 failed"; a flash stopped, where: "stopped in Program at 38%", said once)
                 after = after == "stopped" && u.summary.starts_with("stopped") ? u.summary : after + " \xC2\xB7 " + u.summary;
         }
-        if (!t.kind.empty()) after = t.kind + " \xC2\xB7 " + after;  // (the kind of work it is)
-        if (c + 4 < cols) put(box, font, y, c + 2, fit_text(after, cols - c - 2), in);
+        const std::string kind = t.kind.empty() ? std::string() : t.kind + " \xC2\xB7 ";  // (the kind of work it is)
+        after = kind + after;
+        // As much as there is room for. While an engine's stage is under way
+        // it stays, with its percent, whatever the room: the stages done are
+        // said more briefly first ("\xE2\x9C\x93 2"), then left out, then the kind
+        // of work, then the stage's sizes; only what the run has come to so
+        // far, after them, is cut.
+        const u32 room = c + 4 < cols ? cols - c - 2 : 0;
+        std::string shown = after;
+        if (staged && width_of(after) > room) {
+            BuildScan::Progress p = u.progress;
+            p.done.clear();
+            const std::string now = BuildScan::progress_words(p, false) + ticking;
+            p.bytes = p.total = 0;
+            const std::string bare = BuildScan::progress_words(p, false) + ticking;
+            const std::string done = u.progress.done.empty() ? std::string() : "\xE2\x9C\x93 " + std::to_string(u.progress.done.size()) + " \xC2\xB7 ";
+            const std::string tail = u.summary.empty() ? std::string() : " \xC2\xB7 " + u.summary;
+            shown = bare;
+            for (const std::string& s : {kind + BuildScan::progress_words(u.progress, true) + ticking, kind + done + now, kind + now, now, bare})
+                if (width_of(s) <= room) {
+                    shown = s + tail;
+                    break;
+                }
+        }
+        shown = fit_text(shown, room);
+        if (room) put(box, font, y, c + 2, shown, in);
 #if BLIT_DEV
         u.drawn_rows.push_back(t.name + ": " + after);
+        u.drawn_shown.push_back(t.name + ": " + (room ? shown : std::string()));
 #endif
         if (u.top + r == u.sel) light_row(box, y, focused);
     }
@@ -1477,17 +1624,15 @@ void App::build_option(int row) {
 // its problems are (the Run button, the Problems tab, F8), so that a red
 // button never stands over "No problems".
 int App::build_failed() const {
-    const BuildUi& u = *buildui_;
-    const BuildUi::Run* r = u.run_of(u.doc);
-    if (r && r->stopped) return 0;  // (Stop ended it: it did not fail)
-    return !u.running && u.last_status > 0 && !build_errors_ && u.read_from.empty() ? u.last_status : 0;
+    const BuildUi::Run* r = buildui_->run_of(buildui_->doc);
+    return r && !BuildUi::failure_of(*r).empty() ? r->status : 0;
 }
 
 std::string App::build_failure() const {
-    const int code = build_failed();
-    if (!code) return {};
-    if (!buildui_->last_missing.empty()) return buildui_->last_name + " failed: " + buildui_->last_missing;
-    return buildui_->last_name + " failed with exit code " + std::to_string(code) + ": no " + (build_warnings_ ? "error" : "problem") + " found in its output";
+    const BuildUi::Run* first = nullptr;
+    for (const BuildUi::Run& r : buildui_->runs)
+        if (!BuildUi::failure_of(r).empty() && (!first || r.order < first->order)) first = &r;
+    return first ? BuildUi::failure_of(*first) : std::string();
 }
 
 // ---------------------------------------------------------------- problems from a file
@@ -1549,10 +1694,13 @@ std::string App::build_label() const {
     if (staged) label = "\xE2\x96\xA0 " + BuildScan::progress_words(u.progress, false);  // (an engine's stage: "Program 62% 25.4/41.2 KB")
     if (const BuildUi::Run* r = u.running ? u.run_of(u.doc) : nullptr; r && r->lasting)  // (a long task: which, unless its stage says, and its time)
         label += (staged ? std::string() : " " + fit_text(r->name, 24)) + " " + clock_text(now_ns() - r->started_ns);
+    // (Its run's problems: the other runs' are theirs, in the Problems tab and the status bar.)
+    const BuildUi::Run* const last = u.run_of(u.doc);
+    const u32 errors = last ? last->errors : 0, warnings = last ? last->warnings : 0;
     const int failed = build_failed();
-    if (build_errors_) label += " \xC2\xB7 " + std::to_string(build_errors_) + (build_errors_ == 1 ? " error" : " errors");
+    if (errors) label += " \xC2\xB7 " + std::to_string(errors) + (errors == 1 ? " error" : " errors");
     else if (failed) label += " \xC2\xB7 failed (" + (u.last_missing.empty() ? "exit " + std::to_string(failed) : u.last_missing.substr(0, u.last_missing.find(" on "))) + ")";
-    if (!build_errors_ && build_warnings_) label += (failed ? ", " : " \xC2\xB7 ") + std::to_string(build_warnings_) + (build_warnings_ == 1 ? " warning" : " warnings");
+    if (!errors && warnings) label += (failed ? ", " : " \xC2\xB7 ") + std::to_string(warnings) + (warnings == 1 ? " warning" : " warnings");
     // What the last run came to, where it leaves the tabs there room (a third of the window at most);
     // where it does not, without its time ("Flashed 170.5 KB, verified"), else its words before it.
     if (!u.running && !u.summary.empty() && font_ && font_->cell_w() > 0) {
@@ -1593,7 +1741,7 @@ void App::build_measure() {
         const u32 cols = width_of(label) + 2;
         u.box.resize(cols, 1);
         const BuildUi::Run* last = u.run_of(u.doc);  // (one Stop ended did not fail)
-        u.box.put(font, 0, 1, label, u.running || (u.last_status > 0 && !(last && last->stopped)) || build_errors_ ? kInkDiagnostic : kInkAccent, Font::kBold);
+        u.box.put(font, 0, 1, label, u.running || (last && ((last->status > 0 && !last->stopped) || last->errors)) ? kInkDiagnostic : kInkAccent, Font::kBold);
         for (u32 c = 0; c < cols; ++c) u.box.cells[c] |= kCellHover;
     }
     u.reserve = static_cast<int>(u.box.cols) * cw + cw;
@@ -1640,12 +1788,12 @@ bool App::build_mouse_down(const SDL_MouseButtonEvent& b) {
 std::string App::build_dump(const std::string& what) {
     BuildUi& u = *buildui_;
 #if BLIT_DEV
-    if (what == "rows") {  // the Build tab's task rows as drawn at the next frame, " | " between them
+    if (what == "rows" || what == "shown") {  // the Build tab's task rows as drawn at the next frame (shown: as much as fitted), " | " between them
         build_settle();
         ++build_gen_;
         frame();
         std::string out;
-        for (const std::string& r : u.drawn_rows) out += (out.empty() ? "" : " | ") + r;
+        for (const std::string& r : what == "rows" ? u.drawn_rows : u.drawn_shown) out += (out.empty() ? "" : " | ") + r;
         return out.empty() ? "no rows" : out;
     }
 #endif

@@ -342,6 +342,13 @@ struct Parser {
             if (!as_bool(v, &c.build_notify)) warn("build.notify should be true or false");
             return;
         }
+        if (key == "serial.baud") return number(key, v, 50, 20'000'000, &c.serial_baud);
+        if (key == "serial.line_end") {
+            std::string s;
+            if (!as_string(v, &s) || (s != "cr" && s != "lf" && s != "crlf")) return warn("serial.line_end should be \"cr\", \"lf\" or \"crlf\"");
+            c.serial_line_end = s;
+            return;
+        }
         if (key == "timeline.max_mb") return number(key, v, 16, 1 << 20, &c.timeline_max_mb);
         if (key == "wave.remote_fetch_mb") return number(key, v, 1, 1 << 20, &c.wave_remote_fetch_mb);
         if (key == "syntax.enabled") {
@@ -829,6 +836,8 @@ const Getter kGetters[] = {
     BLIT_GET("lsp.reference_counts", flag(c.lsp_ref_counts)),
     BLIT_GET("git.enabled", flag(c.git)),
     BLIT_GET("build.notify", flag(c.build_notify)),
+    BLIT_GET("serial.baud", num(c.serial_baud)),
+    BLIT_GET("serial.line_end", str(c.serial_line_end)),
     BLIT_GET("timeline.max_mb", num(c.timeline_max_mb)),
     BLIT_GET("wave.remote_fetch_mb", num(c.wave_remote_fetch_mb)),
     BLIT_GET("debug.inline_values", flag(c.debug_inline_values)),

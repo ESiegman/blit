@@ -1,0 +1,8 @@
+# blit's copy of a .uf2 (flash.cpp's kUf2Script) when the board stays: its
+# volume still there 10 s after the copy, and it ended with 1.
+UF2 copy of build/blinky.uf2 to /Volumes/RPI-RP2: 31488 bytes into flash
+UF2 copied 52% 16384 B/31488 B
+UF2 copied 100% 31488 B/31488 B
+UF2 waiting for the board to restart
+UF2 copy failed: /Volumes/RPI-RP2 is still there 10 s after the copy: the board did not take the image
+@exit 1

@@ -55,6 +55,91 @@ constexpr FlashTool kTools[] = {
     // nothing in place (2026.2 on the lab box, loading the owner's Basys 3
     // and writing its flash, 2026-11-23).
     {"vivado", {"vivado", ""}, kPipe, "program", {"-mode batch", "-nojournal", "-nolog", "-notrace", "-source ${script}"}},
+    // picotool 2.3.1 (`picotool help load`): load, -v (read back what it
+    // wrote), -x (run it after), the file (a .uf2, an .elf, or a .bin with
+    // -o, else at the start of flash), then the board: --ser, its flash's
+    // unique ID (the Pico SDK's USB serial number, which picotool matches
+    // in BOOTSEL too), and -f, which reboots a board running the SDK's USB
+    // serial into BOOTSEL first and takes one in BOOTSEL as it is (both
+    // checked on the owner's Pico, 2026-11-23: the board's state when it
+    // was chosen is not its state now, as a flash from BOOTSEL leaves it
+    // running the app). A pipe: it draws the same \r bars on one (main.cpp
+    // line 4895 writes them whatever its output is; captured there too).
+    {"picotool", {"picotool", ""}, kPipe, "flash", {"load", "-v", "-x", "${image}", "-o ${address}", "--ser ${serial}", "-f"}},
+    // The .uf2 copied to the boot ROM's volume (kUf2Script): no program of
+    // its own, and its lines are blit's.
+    {"uf2", {"", ""}, kPty, "flash", {}},
+    // dfu-util 0.11 (src/main.c lines 168-201, its help): -d VID:PID, -S
+    // SERIAL, -a the alternate setting (an STM32's internal flash is 0),
+    // -s ADDRESS:leave (DfuSe's: write there, then run it; else -R, reset
+    // after), -D the file. A pipe: its bar is the same \r line on one, and
+    // its output is not buffered (src/dfu_file.c lines 121-161; main.c line
+    // 262).
+    {"dfu-util", {"dfu-util", ""}, kPipe, "flash", {"-d ${usb}", "-S ${serial}", "-a ${alt}", "-s ${address}", "-D ${image}", "${reset}"}},
+    // pyOCD v0.46.1 (pyocd/subcommands/load_cmd.py lines 57-69, base.py
+    // lines 82-96): load, -W (no waiting for a probe: it would wait for
+    // ever), -t the target, -u the probe's unique ID, -a and --format for a
+    // .bin; it resets after by itself, and reads nothing back (loader.py
+    // line 327). A terminal: its bar has a percent only on one
+    // (pyocd/utility/progress.py lines 137-145).
+    {"pyocd", {"pyocd", ""}, kPty, "flash", {"load", "-W", "-t ${target}", "-u ${serial}", "-a ${address}", "--format ${format}", "${image}"}},
+    // STM32CubeProgrammer's CLI: -c port=SWD sn=SERIAL, -w FILE [ADDRESS],
+    // -v (read back), -rst, as others run it (rusefi 7a0681f9b6
+    // java_console/ecu_shared/src/main/java/com/rusefi/maintenance/
+    // DfuFlasher.java line 544; qMonstatek 3066b985c2
+    // src/backend/updater/swd_recovery.cpp lines 216-220: ST's UM2237 could
+    // not be reached). A terminal: not installed here (ST's licence), so
+    // not checked.
+    {"stm32cubeprogrammer", {"STM32_Programmer_CLI", ""}, kPty, "flash", {"-c port=SWD", "sn=${serial}", "-w ${image}", "${address}", "-v", "-rst"}},
+    // iceprog (icestorm v1.1, f31c39c; iceprog/iceprog.c lines 496-500 and
+    // 603): -d s:VID:PID:SERIAL (libftdi's device string), -S into SRAM,
+    // else the flash, read back after. A pipe: all it prints is on stderr,
+    // its \r progress the same on one.
+    {"iceprog", {"iceprog", ""}, kPipe, "program", {"-d ${device}", "${sram}", "${image}"}},
+    // ecpprog (1931c3e; ecpprog/ecpprog.c lines 737-741 and 836): as
+    // iceprog. A terminal: its IDCODE and status register lines are
+    // printf's on stdout, which a pipe holds back until it ends (its other
+    // lines, on stderr, come at once).
+    {"ecpprog", {"ecpprog", ""}, kPty, "program", {"-d ${device}", "${sram}", "${image}"}},
+    // Lattice Radiant's (and Diamond's) pgrcmd with the board's chain file
+    // (an .xcf, which says the device, the bitstream, the cable and the
+    // operation): `pgrcmd -infile FILE` (Radiant 2026.1 Help, "Running
+    // Programmer from the Command Line", pp. 1858-1861). Its return code
+    // is said in words after it (kPgrcmdCodes): what it prints is not
+    // documented. A terminal: not installed here, so not checked.
+    {"pgrcmd", {"pgrcmd", ""}, kPty, "program", {"-infile ${xcf}"}},
+};
+
+// The UF2 copy, run where the board is: the .uf2 written to the volume a
+// piece at a time (each dd's write flushed: conv=fsync), its bytes said
+// after each, then waited for the volume to go: the boot ROM restarts the
+// board once it has every block (RP2040 boot ROM b2, bootrom/virtual_disk.c
+// line 443 on). Its bytes are those that go into flash (the file's in
+// proportion, as it is copied). Its lines are kShapes' "UF2 " ones
+// (buildprogress.cpp).
+constexpr std::string_view kUf2Script[] = {
+    "f=${image}; v=${volume}; p=${flash}; n=$(wc -c <\"$f\") || exit 1; n=$((n + 0))",
+    "echo \"UF2 copy of $f to $v: $p bytes into flash\"",
+    "b=$(( (n / 40 + 511) / 512 * 512 )); [ $b -lt 4096 ] && b=4096; i=0",
+    "while [ $((i * b)) -lt $n ]; do",
+    "  dd if=\"$f\" of=\"$v\"/${name} bs=$b skip=$i seek=$i count=1 conv=notrunc,fsync 2>/dev/null || { [ -e \"$v/INFO_UF2.TXT\" ] || break; echo \"UF2 copy failed: cannot write to $v\"; exit 1; }",
+    "  i=$((i + 1)); c=$((i * b)); [ $c -gt $n ] && c=$n",
+    "  echo \"UF2 copied $((c * 100 / n))% $((c * p / n)) B/$p B\"",
+    "done",
+    "sync; echo \"UF2 waiting for the board to restart\"; t=0",
+    "while [ -e \"$v/INFO_UF2.TXT\" ]; do",
+    "  t=$((t + 1)); [ $t -gt 100 ] && { echo \"UF2 copy failed: $v is still there 10 s after the copy: the board did not take the image\"; exit 1; }; sleep 0.1",
+    "done",
+    "echo \"UF2 wrote $p bytes into flash: the board restarted\"",
+};
+
+// pgrcmd's return codes in words, as Lattice's help gives them (Radiant
+// 2026.1 Help, pp. 1858-1861), by the exit status they come to (-5: 251).
+constexpr std::pair<int, std::string_view> kPgrcmdCodes[] = {
+    {255, "log file"},        {254, "check configuration setup"}, {253, "out of memory"},      {252, "NT driver"},  {251, "cable not detected"},
+    {250, "power detection"}, {249, "device not valid"},          {248, "file not found"},     {247, "file not valid"}, {246, "output file"},
+    {245, "verification"},    {244, "unsupported operation"},     {243, "file name"},          {242, "file read"},  {239, "build SVF file"},
+    {238, "build VME file"},  {237, "command line syntax"},
 };
 
 // J-Link Commander's command file, a line each (SEGGER's wiki, "J-Link
@@ -146,6 +231,7 @@ constexpr std::string_view kVivadoHomes[] = {"/tools/Xilinx", "/opt/Xilinx"};
 // The tool a probe's kind is flashed with, when the board says none.
 constexpr std::pair<std::string_view, std::string_view> kKindTool[] = {
     {"esp-usb-jtag", "esptool"}, {"ftdi", "openfpgaloader"}, {"stlink", "probe-rs"}, {"cmsis-dap", "probe-rs"}, {"jlink", "jlink"},
+    {"rp-boot", "picotool"},     {"pico-serial", "picotool"}, {"dfu", "dfu-util"},
 };
 
 // OpenOCD's interface script for a probe's kind (OpenOCD 0.12.0's
@@ -445,6 +531,51 @@ FlashPlan flash_plan(const Board& b, const std::string& tool_name, const std::st
                 if (expand(l.text, lines, &line)) script.push_back(line);
         vars = {{"script", "\"$f\""}};
         same += "|" + lower(part) + (into_flash ? "|" + cfgmem : std::string());
+    } else if (tool_name == "picotool") {
+        if (image.parts.size() > 1) return plan.why = "picotool loads one file", plan;
+        // (An RP2040's boot ROM's serial number is its version, the same on
+        // every RP2040: boot ROM b2, bootrom/usb_boot_device.c lines
+        // 428-429. Without --ser picotool takes the one board there is.)
+        const bool serial = b.probe_usb != "2e8a:0003";
+        vars = {{"image", word(first.path)}, {"address", word(first.address)}, {"serial", serial ? word(b.probe) : std::string()}};
+    } else if (tool_name == "uf2") {
+        if (image.parts.size() > 1 || !first.path.ends_with(".uf2")) return plan.why = "A boot ROM's volume takes one .uf2", plan;
+        if (image.volume.empty()) return plan.why = "No RPI-RP2 or RP2350 volume to copy " + first.path + " to", plan;
+        const size_t slash = first.path.rfind('/');
+        const Vars lines = {{"image", sh_word(first.path)},
+                            {"volume", sh_word(image.volume)},
+                            {"name", sh_word(first.path.substr(slash == std::string::npos ? 0 : slash + 1))},
+                            {"flash", std::to_string(image.flash_bytes)}};
+        std::string line;
+        for (const std::string_view l : kUf2Script)
+            if (expand(l, lines, &line)) script.push_back(line);
+    } else if (tool_name == "dfu-util") {
+        if (image.parts.size() > 1) return plan.why = "dfu-util writes one file", plan;
+        if (first.path.ends_with(".elf")) return plan.why = "dfu-util writes a .bin or a .dfu, not " + first.path, plan;
+        const bool dfuse = !first.address.empty();
+        vars = {{"usb", word(b.probe_usb)}, {"serial", word(b.probe)},  {"alt", word(!b.flash_alt.empty() ? b.flash_alt : std::string("0"))},
+                {"address", dfuse ? word(first.address + ":leave") : std::string()}, {"image", word(first.path)}, {"reset", dfuse ? "" : "-R"}};
+        same += "|" + b.flash_alt;
+    } else if (tool_name == "pyocd") {
+        if (image.parts.size() > 1) return plan.why = "pyOCD loads one file", plan;
+        const std::string target = lower(!b.flash_device.empty() ? b.flash_device : chip);
+        if (target.empty()) return plan.why = "pyOCD needs the board's chip (its target), or flash.device", plan;
+        const bool bin = !first.address.empty();
+        vars = {{"target", word(target)}, {"serial", word(b.probe)}, {"address", bin ? word(first.address) : std::string()}, {"format", bin ? "bin" : ""}, {"image", word(first.path)}};
+        same += "|" + target;
+    } else if (tool_name == "stm32cubeprogrammer") {
+        if (image.parts.size() > 1) return plan.why = "STM32CubeProgrammer writes one file", plan;
+        vars = {{"serial", word(b.probe)}, {"image", word(first.path)}, {"address", word(first.address)}};
+    } else if (tool_name == "iceprog" || tool_name == "ecpprog") {
+        if (image.parts.size() > 1) return plan.why = tool_name + " loads one bitstream", plan;
+        // (The FTDI chip by its ids and serial number, as libftdi takes it: "s:0x0403:0x6010:SERIAL".)
+        std::string device;
+        if (b.probe_usb.size() == 9) device = (b.probe.empty() ? "i:0x" : "s:0x") + b.probe_usb.substr(0, 4) + ":0x" + b.probe_usb.substr(5) + (b.probe.empty() ? "" : ":" + b.probe);
+        vars = {{"device", word(device)}, {"sram", mode == FlashMode::kFpgaFlash ? "" : "-S"}, {"image", word(first.path)}};
+    } else if (tool_name == "pgrcmd") {
+        if (image.parts.size() > 1) return plan.why = "pgrcmd runs one chain file (.xcf)", plan;
+        vars = {{"xcf", word(first.path)}};
+        mode = FlashMode::kSram;  // (what it writes is the .xcf's to say)
     } else if (fpga) {
         if (image.parts.size() > 1) return plan.why = "openFPGALoader loads one bitstream", plan;
         const std::string cable = b.flash_board.empty() ? ofl_cable_for(b) : std::string();
@@ -459,6 +590,15 @@ FlashPlan flash_plan(const Board& b, const std::string& tool_name, const std::st
     std::string cmd = sh_word(program), part;
     for (const std::string_view p : tool->parts)
         if (!p.empty() && expand(p, vars, &part) && !part.empty()) cmd += " " + part;
+    if (tool_name == "uf2") {  // (the copy is the shell's own: its lines, run as they are)
+        cmd.clear();
+        for (const std::string& l : script) cmd += (cmd.empty() ? "" : "\n") + l;
+        script.clear();
+    } else if (tool_name == "pgrcmd") {  // (its return code, which says what went wrong, in words)
+        cmd += "; s=$?; case $s in";
+        for (const auto& [status, words] : kPgrcmdCodes) cmd += " " + std::to_string(status) + ") echo " + sh_word("pgrcmd: " + std::string(words) + " (return code " + std::to_string(status - 256) + ")") + ";;";
+        cmd += " esac; exit $s";
+    }
     if (!script.empty()) {  // (J-Link's command file, Vivado's Tcl, made for the run and gone after, with what was written beside it: Vivado's .mcs and .prm)
         std::string lines;
         for (const std::string& l : script) lines += " " + sh_word(l);
@@ -528,6 +668,88 @@ std::string vivado_installed(const std::string& there) {
         }
     }
     return best;
+}
+
+std::vector<RpVolume> rp_volumes(const std::string& there) {
+    // (Where they are mounted: macOS's /Volumes; udisks2's /run/media/USER
+    // or /media/USER, and /media itself.)
+    std::vector<std::string> dirs;
+    if (const char* e = std::getenv("BLIT_UF2_VOLUMES"); e && *e) {
+        for (std::string_view l = e; !l.empty();) {
+            const size_t colon = l.find(':');
+            if (!l.substr(0, colon).empty()) dirs.emplace_back(l.substr(0, colon));
+            l = colon == std::string_view::npos ? std::string_view{} : l.substr(colon + 1);
+        }
+    } else {
+        dirs = {"/Volumes", "/media"};
+        for (const char* users : {"/media", "/run/media"})
+            for (const FsEntry& u : fs_list(there + users))
+                if (u.dir) dirs.push_back(std::string(users) + "/" + u.name);
+    }
+    std::vector<RpVolume> out;
+    for (const std::string& d : dirs)
+        for (const FsEntry& e : fs_list(there + d)) {
+            if (!e.dir) continue;
+            // INFO_UF2.TXT, as the boot ROMs write it: "UF2 Bootloader v3.0",
+            // "Model: Raspberry Pi RP2", "Board-ID: RPI-RP2" (RP2040 b2,
+            // bootrom/info_uf2.txt); the RP2350's "Board-ID: " is its OTP's,
+            // "RP2350" unless a board's maker wrote another (A4,
+            // src/nsboot/info_uf2_txt.h).
+            const std::string path = d + "/" + e.name;
+            std::string text;
+            if (!fs_read(there + path + "/INFO_UF2.TXT", &text, 4096) || !text.starts_with("UF2 Bootloader")) continue;
+            const size_t at = text.find("\nBoard-ID: ");
+            if (at == std::string::npos) continue;
+            std::string board = text.substr(at + 11, text.find_first_of("\r\n", at + 11) - at - 11);
+            if (board == "RPI-RP2" || board.starts_with("RP2350")) out.push_back({path, std::move(board)});
+        }
+    return out;
+}
+
+std::string uf2_refused(std::string_view b, std::string_view board, u64* flash_bytes) {
+    // A UF2 is 512-byte blocks, each with its magic numbers at 0, 4 and 508,
+    // its flags at 8 and (with flag 0x2000) its family at 28 (Microsoft's
+    // UF2 specification). The RP2040's boot ROM writes only blocks of its
+    // family, 0xe48bff56 (b2, bootrom/virtual_disk.c lines 443-445); the
+    // RP2350's takes others' too, as its partitions say. A block's payload's
+    // size is at 16; flag 0x1 marks one that is not for the flash.
+    auto u32_at = [&](size_t at) {
+        u32 v = 0;
+        for (int i = 3; i >= 0; --i) v = v << 8 | static_cast<u8>(b[at + static_cast<size_t>(i)]);
+        return v;
+    };
+    if (b.empty() || b.size() % 512 != 0) return "not a UF2 (its size is not whole 512-byte blocks)";
+    bool rp2040 = false;
+    u64 into = 0;
+    for (size_t at = 0; at < b.size(); at += 512) {
+        if (u32_at(at) != 0x0A324655 || u32_at(at + 4) != 0x9E5D5157 || u32_at(at + 508) != 0x0AB16F30) return "not a UF2 (a block's magic numbers are wrong)";
+        const u32 flags = u32_at(at + 8);
+        const bool ours = (flags & 0x2000) && u32_at(at + 28) == 0xe48bff56;
+        rp2040 = rp2040 || ours;
+        if (!(flags & 0x1) && (ours || board != "RPI-RP2")) into += std::min<u32>(u32_at(at + 16), 476);
+    }
+    if (board == "RPI-RP2" && !rp2040) return "not for the RP2040 (no block of it is of the RP2040's family, 0xe48bff56)";
+    if (flash_bytes) *flash_bytes = into;
+    return {};
+}
+
+std::string pico_platform(std::string_view cache) {
+    // (CMakeCache.txt's lines: "PICO_SDK_PATH:PATH=...", "PICO_PLATFORM:STRING=rp2040";
+    // without PICO_PLATFORM, the SDK's default, rp2040: pico-sdk 2.3.1
+    // cmake/pico_pre_load_platform.cmake lines 38-47.)
+    std::string platform;
+    bool sdk = false;
+    for (size_t at = 0; at < cache.size();) {
+        const size_t nl = std::min(cache.find('\n', at), cache.size());
+        const std::string_view line = cache.substr(at, nl - at);
+        at = nl + 1;
+        if (line.starts_with("PICO_SDK_PATH:")) sdk = true;
+        if (line.starts_with("PICO_PLATFORM:"))
+            if (const size_t eq = line.find('='); eq != std::string_view::npos) platform = std::string(line.substr(eq + 1));
+    }
+    if (!sdk) return {};
+    while (!platform.empty() && (platform.back() == '\r' || platform.back() == ' ')) platform.pop_back();
+    return platform.empty() ? std::string("rp2040") : platform;
 }
 
 std::string ofl_ftdi_cable(std::string_view usb, bool digilent) {

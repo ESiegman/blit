@@ -1,0 +1,13 @@
+# iceprog (icestorm v1.1, f31c39c) -S, into the FPGA's SRAM: WRITTEN FROM
+# ITS SOURCE, not captured (no iCE40 board here). iceprog/iceprog.c: "init.."
+# (860), "cdone: %s" (864, 907, 928), "reset.." (899), "programming.."
+# (914), "Bye." (1084): no progress, the FPGA configured when CDONE is high.
+@pace 5
+init..
+cdone: low
+reset..
+cdone: low
+programming..
+@hold a
+cdone: high
+Bye.

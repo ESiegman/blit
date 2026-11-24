@@ -1,0 +1,10 @@
+# STM32CubeProgrammer's CLI, -c port=SWD sn=SERIAL -w build/fw.elf -v -rst:
+# WRITTEN, not captured (not installed here: ST's licence) and only from
+# the lines others' code reads it by: "File download complete" (adafruit/
+# tinyuf2 b3d228897e .claude/skills/hil-contract/SKILL.md), "Download
+# verified successfully" after -v (rusefi 7a0681f9b6 DfuFlasher.java line
+# 438). Its other lines, and its bar, are not known here.
+@pace 5
+File download complete
+@hold a
+Download verified successfully

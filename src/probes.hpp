@@ -68,14 +68,15 @@ struct ProbeRow {
 // the machine they are on, which each row says ("" here).
 std::vector<ProbeRow> probe_rows(const std::vector<UsbDevice>& devices, const std::string& host = {});
 
-// The probe kinds' names the board object takes for its flash tool.
-inline constexpr std::string_view kFlashTools[] = {"esptool", "openocd", "probe-rs", "jlink", "openfpgaloader", "vivado"};
+// The flash tools' names the board object takes (flash.cpp's table).
+inline constexpr std::string_view kFlashTools[] = {"esptool", "openocd", "probe-rs", "jlink", "picotool", "uf2", "dfu-util", "pyocd", "stm32cubeprogrammer", "openfpgaloader", "vivado", "iceprog", "ecpprog", "pgrcmd"};
 // And for its debug preset (boarddebug.hpp).
 inline constexpr std::string_view kDebugPresets[] = {"probe-rs", "openocd", "jlink", "esp", "blackmagic", "pyocd", "qemu", "renode"};
 
 // The configuration named `config` in a .blit/run.json's text with its
 // board's probe and port set to the row's (probe.kind, probe.serial,
-// probe.usb, probe.gdb; serial.port), each member of the board the row has
+// probe.usb, probe.gdb; serial.port; a serial port alone has no probe,
+// but for a Pico SDK's, the board itself), each member of the board the row has
 // nothing for removed and the rest of the file kept as it was written:
 // its other configurations, members, order, spacing and comments-free
 // layout. A board object is made if it has none. A row of the Boards view

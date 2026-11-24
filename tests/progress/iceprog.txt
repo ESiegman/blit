@@ -1,0 +1,41 @@
+# iceprog (icestorm v1.1, f31c39c) writing the flash, read back after:
+# WRITTEN FROM ITS SOURCE, not captured (no iCE40 board here). All on
+# stderr (iceprog/iceprog.c): "init.." (860), "cdone: %s" (864, 941, 1074),
+# "reset.." (936), "flash ID:" (195-198), "file size: %ld" (971), "erase
+# 64kB sector at 0x%06X.." (343), "programming.." (1002), each page's
+# "                      \r" then "addr 0x%06X %3ld%%\r" (1010-1011), "done."
+# (1016-1017), "reading.." (1040) with the same, "VERIFY OK" (1059-1060),
+# "Bye." (1084).
+@pace 5
+init..
+cdone: low
+reset..
+cdone: low
+flash ID: 0xEF 0x40 0x16 0x00
+file size: 32220
+erase 64kB sector at 0x000000..
+programming..
+                      \r\c
+addr 0x000000   0%\r\c
+                      \r\c
+addr 0x001F00  24%\r\c
+                      \r\c
+addr 0x003E00  49%\r\c
+@hold a
+                      \r\c
+addr 0x005D00  73%\r\c
+                      \r\c
+addr 0x007D00  99%\r\c
+                      \r\c
+done.
+reading..
+                      \r\c
+addr 0x000000   0%\r\c
+                      \r\c
+addr 0x003E00  49%\r\c
+                      \r\c
+addr 0x007D00  99%\r\c
+                      \r\c
+VERIFY OK
+cdone: high
+Bye.
