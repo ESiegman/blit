@@ -3599,6 +3599,60 @@ server. When the attach fails, what the server last said as an error
 follows gdb's words. In a project on another machine the gdb, the server
 and the probe are that machine's.
 
+#### The fault report
+
+When the board stops in a fault, wherever it stopped (paused in a hung
+board's fault handler, at a breakpoint there, or on its own), a **Fault**
+section at the top of the Debug tab says what it is in a line, and the
+line that faulted says it too:
+
+```
+UsageFault: UNDEFINSTR, undefined instruction; thread stack (PSP); no FPU frame; stacked PC 0x08001a3c in motor.c:212
+```
+
+**Show the fault report** (that section's row, or Command search) opens
+it wide in a tab: every bit set in words, the stacked frame and the
+faulting address where it is valid. Enter on the stacked PC (or LR,
+mepc, EPC1, A0) shows its source and its instructions: the faulting
+frame chosen in the call stack where gdb unwound through the exception,
+else the line the ELF names, with the disassembly in the tab beside it.
+The section goes when the board runs on.
+
+- **Cortex-M.** A stop with IPSR 3 to 7 (HardFault, MemManage, BusFault,
+  UsageFault, SecureFault), or in a fault handler by its name (CMSIS's
+  `HardFault_Handler` and the rest, the Pico SDK's `isr_hardfault`,
+  libopencm3's `hard_fault_handler`). The report reads CPUID, CFSR, HFSR,
+  MMFAR, BFAR and AFSR (`0xE000ED28` to `0xE000ED3C`), and on ARMv8-M
+  with the Security Extension SFSR and SFAR; EXC_RETURN from LR, else
+  from gdb's frame for the exception: which stack the core stacked the
+  frame on (PSP, or MSP at the exception's entry) and whether it stacked
+  the FPU's state (26 words, not 8); then the stacked R0 to R3, R12, LR,
+  PC and xPSR, and the stack pointer before the exception. A HardFault
+  forced from a configurable fault says which. An imprecise bus fault
+  on a Cortex-M3 or M4 says that `ACTLR.DISDEFWBUF` makes such faults
+  precise (or that it is set already). A Cortex-M0, M0+ or M23 has no
+  fault status registers: the report says so and gives the stacked
+  frame.
+- **RISC-V.** A stop in the trap handler (its PC in the function at
+  mtvec's base) for an exception: mcause named from the privileged
+  specification, mepc, and mtval (the faulting address, or the
+  instruction's bits, as the cause has it).
+- **Xtensa (ESP32, ESP32-S3).** With a debugger attached, ESP-IDF's panic
+  handler sets a breakpoint at the instruction that faulted and returns
+  to it, so the board stops there: EXCCAUSE (named as ESP-IDF names it,
+  `StoreProhibited`), EPC1 and EXCVADDR, from the core's registers.
+  Stopped in the panic handler itself, they come from the frame it was
+  given (`xt_unhandled_exception`'s or `panicHandler`'s `frame`), with
+  A0's return address; ESP-IDF's own causes (an interrupt watchdog, a
+  double exception) are named. An ESP32-C3's RISC-V panic frame is read
+  the same way.
+
+The registers come from the debugger's Registers scope and the memory
+from its readMemory, so any of the presets' gdbs gives them; the names
+come from the board's ELF, read off the main thread. On QEMU every bus
+fault is precise, a store's too (a real Cortex-M3's write buffer makes a
+store's imprecise).
+
 ### Crash dumps decoded
 
 When a firmware crashes and its dump comes out in a task's or a run's
