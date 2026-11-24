@@ -298,6 +298,10 @@ printf '{"configurations": [{"name": "fw", "program": "build/fw.elf", "board": {
 # (boarddump: once the folder's run configurations there have been read.)
 run "folder:$R;remotewait;frame;boarddump;command:Open the board's serial monitor;serialstate:open;tabsdump"
 check "an ssh project's board monitor: its port there, at its speed" "ttyACM9 on box 230400"
+# Asked for before the folder there has been read: opened once it is, as
+# the folder's tasks come (GitHub's runner read it late, 2026-11-24).
+run "folder:$R;remotewait;command:Open the board's serial monitor;serialstate:open;tabsdump"
+check "and asked for before the folder there is read: opened once it is" "ttyACM9 on box 230400"
 rm -rf "$P/.blit"
 run "$far;fake:ticks 1;termwait:tick 1;lua:os.execute('pkill -9 -f \"$agent.*--attach\"');remotelost;fake:tryopen $dir/try3;remoteback;serialstate:open;fake:ticks 1;wait:300;termdump"
 got="$(cat "$dir/try3" | tr '\n' ' ')$got"

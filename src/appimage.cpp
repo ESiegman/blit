@@ -565,6 +565,18 @@ u32 App::picture_gpu(const std::string& path, double w, double h) {
     return id ? id : p.gpu;
 }
 
+// A frame has been drawn with no animation on show (its tab gone behind
+// another, or closed): the timer set for its next frame is let go, so that
+// nothing wakes the main loop for it. Shown again, it sets one again from
+// where it was (picture_gpu).
+void App::picture_drawn() {
+    if (!pictures_ || !pictures_->timer || pictures_->shown_in == frames_) return;
+    SDL_RemoveTimer(pictures_->timer);
+    pictures_->timer = 0;
+    pictures_->timer_due = 0;
+    ++pictures_->timer_number;  // (one that fired meanwhile, not yet heard: not this one's)
+}
+
 // The main loop woken when the soonest frame of an animation on show is due.
 void App::picture_due(u64 at_ns) {
     Pictures& s = *pictures_;

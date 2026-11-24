@@ -1780,6 +1780,7 @@ Renderer::Result App::frame(FrameStats* st) {
     dirty_ = false;
     ++frames_;
     Renderer::Result r = gpu_.draw(*font_, [this](int w, int h, FrameDesc& fd) { layout(w, h, fd); }, st);
+    if (r == Renderer::kDrawn) picture_drawn();
     last_frame_paced_ = st->wait_ns > frame_period_ns_ / 4;
     pane_->doc->syntax.release();  // the window is up: a big file's full parse may start
     if (lsp_pending_) {  // and so may a language server

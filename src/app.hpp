@@ -1146,6 +1146,7 @@ private:
     u32 picture_gpu(const std::string& path, double w, double h);
     void picture_due(u64 at_ns);  // the timer that wakes the loop for an animation's next frame
     void picture_sync();
+    void picture_drawn();  // (after a frame drawn: no animation on show in it, its timer let go)
     void picture_recheck();
     void picture_tidy();
     void picture_wait();

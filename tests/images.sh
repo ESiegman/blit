@@ -153,10 +153,19 @@ got=$(printf '%s' "$got" | sed -e 's/, woken [0-9]* times//g' | awk 'BEGIN { RS 
     END { print ((n == 2 && !bad) ? "as it says" : "the frame and its pixels apart") }')
 check "the frame drawn is the one it says it shows" "as it says"
 # (The other tab a new, empty file: one with text to read, parse and
-# check would wake blit for that, as it finishes, on a slow machine late.)
-run 800x600 "frame;imagewait;frame;command:New file;frame;imageframes:300;imageframes:800" "$pics/anim.gif"
+# check would wake blit for that, as it finishes, on a slow machine late.
+# And the folder's look for its tasks, which blit makes as it starts,
+# waited for: on GitHub's runner it can end in the second measured.)
+run 800x600 "frame;imagewait;buildsettle;frame;command:New file;frame;imageframes:300;imageframes:800" "$pics/anim.gif"
 got=$(printf '%s' "$got" | sed -e 's/^[^;]* ;; //')
 check "behind another tab: no frame drawn, nothing wakes blit" "0 frames drawn, woken 0 times"
+# Gone behind while its next frame is a long way off (anim.gif with each
+# frame shown 1.5 s): the timer for that frame let go with it, so that
+# nothing wakes blit when it would have come.
+perl -0777 -pe 's/\x21\xf9\x04(.)..(.)\x00/\x21\xf9\x04$1\x96\x00$2\x00/gs' "$pics/anim.gif" >"$dir/slow.gif"
+run 800x600 "frame;imagewait;buildsettle;frame;command:New file;frame;imageframes:300;imageframes:2500" "$dir/slow.gif"
+got=$(printf '%s' "$got" | sed -e 's/^[^;]* ;; //')
+check "behind another tab with its next frame far off: its timer let go, nothing wakes blit" "0 frames drawn, woken 0 times"
 
 # An SVG (tests/images/shapes.svg: a red half and a blue circle, 40 by 30
 # points) is text: it opens as text, and Cmd+Shift+V shows its picture

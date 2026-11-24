@@ -1584,9 +1584,13 @@ void App::run_script(const char* script) {
         } else if (verb == "serialdump") {  // the serial tab in front (else on show, else the only one): its title, state, settings, line changes done; then the picker's last rows
             std::fprintf(stderr, "%s\n", serial_dump().c_str());
         } else if (verb == "serialstate") {  // serialstate:STATE, the serial tab (as serialdump's) is open, gone, released or opening (10 s at most)
+            // (The main loop run meanwhile, as when one waits for it: a tab
+            // asked for before the folder's tasks were read opens once they
+            // are, as build_sync runs what waited for them.)
             bool there = false;
-            for (const u64 until = now_ns() + 10'000'000'000ull; !there && now_ns() < until; SDL_Delay(5)) {
-                term_sync();
+            for (const u64 until = now_ns() + 10'000'000'000ull; !there && now_ns() < until;) {
+                idle_step();
+                term_sync();  // (the tabs' titles from their state, as it is read just after)
                 const std::shared_ptr<SerialTab> s = serial_here(nullptr, false);
                 there = s && s->dump().starts_with(arg + " ");
             }
@@ -1663,6 +1667,8 @@ void App::run_script(const char* script) {
             if (!build_run_named(arg)) std::fprintf(stderr, "buildrun: no \"%s\"\n", arg.c_str());
         } else if (verb == "problemsread") {  // problemsread:PATH, "Read the problems from this file" with that file chosen (buildwait waits for it)
             build_read(arg);
+        } else if (verb == "buildsettle") {  // the folder looked at for its tasks, as blit does as it starts, and what it found taken
+            build_settle();
         } else if (verb == "buildwait") {  // the task run has ended, and the targets being listed are (60 s at most)
             build_wait();
         } else if (verb == "progressdump") {  // the Run button's words and the last run's task row's (an engine's stage, then what it came to)
