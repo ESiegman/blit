@@ -3464,7 +3464,7 @@ the one on show, else the only one open):
 | Log the serial port to a file… | from now on, each line with its date and time before it (`2026-11-23 14:02:03.120 tick 5`), and the gaps' lines; "Stop logging the serial port" ends it |
 | Send a file to the serial port… | the file's bytes, raw, as fast as the port takes them |
 | Turn the port's DTR on or off, Turn the port's RTS on or off | the modem lines (both on when a port opens); set again when the port comes back |
-| Reset the board through DTR/RTS (ESP32) | RTS on with DTR off (EN low, IO0 high) for 0.2 s: esptool's hard reset, through a bridge's transistors or the USB-Serial/JTAG |
+| Reset the board through DTR/RTS (ESP32) | both off, then RTS on with DTR off (EN low, IO0 high) for 0.2 s, then RTS off: esptool's hard reset, through a bridge's transistors (a CH343, a CP2102) or the ESP32-S3's USB-Serial/JTAG |
 | Reset the board through DTR (Arduino) | DTR and RTS off for 0.25 s, then on: the auto-reset capacitor's edge, as avrdude makes it |
 | Send a break to the serial port | a break condition |
 

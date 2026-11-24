@@ -32,7 +32,12 @@ mkdir -p "$HOME"
 DEV="$dir/dev" USB="$dir/usb" CTL="$dir/ctl" HEARD="$dir/heard" P="$dir/proj"
 export BLIT_USB_ROOT="$USB" BLIT_USB_DEV="$DEV"
 IFACE="$USB/1-3:1.0"
-case $(uname -s) in Darwin) find=cmd+f ;; *) find=ctrl+f ;; esac
+# The editor's keys over a terminal: Cmd's on a Mac; elsewhere Ctrl alone is the
+# program's (the board's), clearing is Ctrl+Shift+K, and Find is a command.
+case $(uname -s) in
+    Darwin) find=key:cmd+f clear=cmd+k ;;
+    *) find="command:Find in this file" clear=ctrl+shift+k ;;
+esac
 
 # The device: a Pico running the SDK's USB serial (2e8a:000a), serial
 # number FAKE0001, its port ttyACM9; started afresh for each case.
@@ -102,7 +107,7 @@ title=$got
 heard
 got="$got $title"
 check "serial.line_end and serial.baud in init.lua: what a new tab starts with" '\n ttyACM9 9600'
-run "$open;key:$find;text:secret;key:Escape;text:x;wait:200"
+run "$open;$find;text:secret;key:Escape;text:x;wait:200"
 heard
 check "Cmd+F over the tab: what is typed in the box never reaches the board" 'x'
 printf 'firmware\r\n\001\002' >"$P/image.bin"
@@ -127,7 +132,7 @@ run "$open;fake:say 0123456789abcdefXYZ\\\\001\\\\n;wait:300;command:Show the se
 check "16 a row where there is room, what is not printable a dot" "00000000  30 31 32 33 34 35 36 37  38 39 61 62 63 64 65 66  0123456789abcdef|00000010  58 59 5a 01 0a                                    XYZ.. @2,0 11x86"
 run "$open;command:Show the serial port's bytes as hex, or as text;fake:ticks 1;wait:300;command:Show or hide the serial port's times;frame;termdump"
 check "hex with times, as more comes" "HH:MM:SS.mmm 00000000  74 69 63 6b 20 31 0d 0a  tick 1.. @1,0 11x74"
-run "$open;fake:ticks 2;termwait:tick 2;key:cmd+k;fake:say after\\\\n;termwait:after;termdump"
+run "$open;fake:ticks 2;termwait:tick 2;key:$clear;fake:say after\\\\n;termwait:after;termdump"
 check "Cmd+K: what came goes (the board is sent nothing)" "after @1,0 11x74"
 
 # ---------------------------------------------------------------- the port going and coming back
@@ -207,8 +212,8 @@ check "a speed and framing typed (ESP8266's boot ROM's)" "ttyACM9 74880 8E1"
 run "$open;command:Change the port's speed and framing…;text:fast;key:Return"
 check "not a speed: said" "blit: Not a speed or a framing: fast"
 run "$open;command:Reset the board through DTR/RTS (ESP32);wait:400;serialdump"
-check "ESP32's reset: RTS on with DTR off, then RTS off (a pseudo-terminal has no such lines: said)" \
-    "ttyACM9 115200: open ttyACM9 115200 8N1 return CR dtr off rts off serial FAKE0001 kept 0 gaps 0 | dtr off rts on (failed) | rts off (failed)"
+check "ESP32's reset: both off, RTS on with DTR off, then RTS off (a pseudo-terminal has no such lines: said)" \
+    "ttyACM9 115200: open ttyACM9 115200 8N1 return CR dtr off rts off serial FAKE0001 kept 0 gaps 0 | dtr off rts off (failed) | rts on (failed) | rts off (failed)"
 run "$open;command:Reset the board through DTR (Arduino);wait:500;serialdump"
 check "Arduino's: both off, then on" \
     "ttyACM9 115200: open ttyACM9 115200 8N1 return CR dtr on rts on serial FAKE0001 kept 0 gaps 0 | dtr off rts off (failed) | dtr on rts on (failed)"

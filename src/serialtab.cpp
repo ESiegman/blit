@@ -256,12 +256,15 @@ void SerialTab::reset_esp() {
         news_.push_back({shown_ + " is not open", 1});
         return;
     }
-    // EN low (RTS on) with IO0 high (DTR off): the chip is held in reset,
-    // then let go of and starts its program (esptool's hard reset: 0.1 s
-    // through a bridge's two transistors, 0.2 s on the USB-Serial/JTAG).
+    // Both off first (a bridge's two transistors: EN and IO0 high, and the
+    // USB-Serial/JTAG resets on RTS rising while DTR is off), then EN low
+    // (RTS on) with IO0 high (DTR off): the chip held in reset, then let go
+    // of to start its program (esptool's hard reset: 0.1 s through a
+    // bridge, 0.2 s on the USB-Serial/JTAG).
     const u64 now = now_ns();
-    ops_.push_back({now, kLines, 0, 1, {}});
-    ops_.push_back({now + 200'000'000ull, kLines, -1, 0, "Reset through RTS (EN) on " + shown_});
+    ops_.push_back({now, kLines, 0, 0, {}});
+    ops_.push_back({now + 50'000'000ull, kLines, -1, 1, {}});
+    ops_.push_back({now + 250'000'000ull, kLines, -1, 0, "Reset through RTS (EN) on " + shown_});
     dtr_ = 0, rts_ = 0;
     lines_set_ = true;
     poke();
