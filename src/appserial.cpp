@@ -67,7 +67,10 @@ std::vector<PortRow> port_rows(const std::vector<UsbDevice>& devices) {
             r.id.name = name;
             r.text = base_name(p.path) + "  " + name;
             if (!d.serial.empty()) r.text += "  " + d.serial;
-            if (d.ports.size() > 1) r.text += !p.name.empty() ? "  " + p.name : "  interface " + std::to_string(p.iface);
+            if (d.ports.size() > 1) {  // (which of them: by its interface's name, else its number, as an FT2232's two say the same)
+                const bool own = !p.name.empty() && std::ranges::count(d.ports, p.name, &UsbPort::name) == 1;
+                r.text += own ? "  " + p.name : "  interface " + std::to_string(p.iface);
+            }
             if (!by_id.empty()) r.text += "  " + by_id;
             rows.push_back(std::move(r));
         }
