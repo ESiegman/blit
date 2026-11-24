@@ -103,7 +103,7 @@ struct RttDriver {
     std::unique_ptr<Loopback> link;
     std::mutex mu;
     std::string buf;  // (the link's thread) answers not ended yet
-    enum : u8 { kIdle, kSetup, kStart, kChannels, kWaiting, kServers, kDone } step = kIdle;  // (mu)
+    enum : u8 { kIdle, kSetup, kStart, kChannels, kWaiting, kServers, kDone, kNone } step = kIdle;  // (mu) (kNone: this OpenOCD has no RTT to set up)
     u64 due = 0;              // (mu) when kWaiting asks again
     int servers_left = 0;     // (mu)
     std::vector<RttChannel> found;  // (mu) for the main thread, once
@@ -142,6 +142,18 @@ struct RttDriver {
     void answer(const std::string& a) {
         switch (step) {
             case kSetup:
+                // (An OpenOCD whose rtt has only its server, as Espressif's
+                // for the ESP32 chips: each of setup, start and channels
+                // answered with that command's usage, "rtt\n  rtt server\n
+                // rtt server start <port> <channel> [message]..."
+                // (v0.12.0-esp32-20260831, on the owner's ESP32-S3,
+                // 2026-11-23). Asking again would never find a block.)
+                if (a.find("rtt server start <port>") != std::string::npos && a.find("rtt setup") == std::string::npos) {
+                    said.push_back("This OpenOCD has no RTT of its own (only rtt server), so the board's RTT cannot be read through it");
+                    news = true;
+                    step = kNone;
+                    break;
+                }
                 if (!a.empty() && a.find("rtt:") != std::string::npos) said.push_back("OpenOCD: " + a), news = true;
                 step = kStart;
                 send("rtt start");
@@ -841,7 +853,7 @@ std::string App::rtt_dump() {
     if (rttui_)
         for (const std::shared_ptr<RttDriver>& d : rttui_->drivers) {
             std::lock_guard lock(d->mu);
-            static const char* const kStep[] = {"idle", "setup", "start", "channels", "waiting", "servers", "done"};
+            static const char* const kStep[] = {"idle", "setup", "start", "channels", "waiting", "servers", "done", "none"};
             out += std::string(out.empty() ? "" : " | ") + "driver " + d->board + " " + kStep[d->step] + " tries " + std::to_string(d->tries) + " opens " +
                    std::to_string(d->link ? d->link->opens() : 0);
         }

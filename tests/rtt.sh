@@ -172,6 +172,17 @@ else
     check "what it was told: started with its Tcl port (no gdb port), set up at the ELF's _SEGGER_RTT, started until found, a server per channel" \
         "openocd -c gdb_port disabled -c telnet_port disabled -c tcl_port T -f interface/stlink.cfg -c adapter serial 004D00283133510F37363734 -f target/stm32f4x.cfg -c init ~ tcl rtt setup $rttaddr $rttsize {SEGGER RTT} ~ tcl rtt start ~ tcl rtt channels ~ tcl rtt start ~ tcl rtt channels ~ tcl rtt start ~ tcl rtt channels ~ tcl rtt server start $p 0 ~ tcl rtt server start $((p + 1)) 1"
 
+    # An OpenOCD whose rtt has only its server (Espressif's for the ESP32
+    # chips): said once, not asked again and again.
+    export FAKE_RTT_NO_SETUP=1
+    path="$B:$PATH" run "command:Open the board's RTT;rttwait:driver fw none;wait:700;rttdump"
+    unset FAKE_RTT_NO_SETUP
+    got=$(printf '%s' "$got" | sed -E 's/tries [0-9]+/tries N/')
+    check "an OpenOCD with no RTT of its own (Espressif's): said, and not asked again" \
+        "driver fw none tries N opens 1"
+    logged "^tcl rtt"
+    check "and asked once" "tcl rtt setup $rttaddr $rttsize {SEGGER RTT}"
+
     # A crash in what a channel sends: decoded with the board's ELF, a problem.
     pc=$("$nm" "$P/fw.elf" | awk '$3 == "fault" { print $1; exit }')
     pc=$(printf '0x%08x' $((0x$pc + 4)))

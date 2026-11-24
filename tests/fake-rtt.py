@@ -24,6 +24,9 @@
 # $FAKE_RTT_TAG, if set, goes before each line (which board's it is).
 # A channel named "defmt" sends the bytes of $FAKE_RTT_FRAMES instead, if set
 # (defmt's frames, as tests/rtt/defmt-qemu.elf wrote them on QEMU).
+# $FAKE_RTT_NO_SETUP, if set: an OpenOCD whose rtt has only its server
+# (Espressif's, v0.12.0-esp32-20260831), answering setup, start and
+# channels with that usage, as it did on the owner's ESP32-S3.
 # $FAKE_RTT_LOG, if set, gets a line for each command, connection and
 # config string, for the tests to read.
 import os
@@ -41,6 +44,7 @@ THEN = os.environ.get("FAKE_RTT_THEN", "").replace("\\n", "\n")
 FOUND_AT = int(os.environ.get("FAKE_RTT_FOUND_AT", "3"))
 UP = int(os.environ.get("FAKE_RTT_UP", "2"))
 FRAMES = os.environ.get("FAKE_RTT_FRAMES")
+NO_SETUP = os.environ.get("FAKE_RTT_NO_SETUP")  # (an OpenOCD whose rtt has only its server, as Espressif's: each of setup, start, channels answered with its usage)
 TAG = os.environ.get("FAKE_RTT_TAG", "").encode()  # (before each line: which board's it is)
 
 
@@ -149,6 +153,8 @@ def openocd(argv):
     def answer(cmd):
         log("tcl " + cmd)
         w = cmd.split()
+        if NO_SETUP and w[:2] in (["rtt", "setup"], ["rtt", "start"], ["rtt", "channels"]):
+            return "rtt\n  rtt server\n    rtt server start <port> <channel> [message]\n    rtt server stop <port>"
         if w[:2] == ["rtt", "setup"]:
             state["setup"] = w[2]
             return ""
