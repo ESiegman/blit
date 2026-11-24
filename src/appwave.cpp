@@ -1991,14 +1991,35 @@ std::string App::wave_frames(int ms) {
         return u64{0};
     };
     const u64 read = bytes();
-    while (now_ns() < until) {
-        SDL_Event e;
-        while (SDL_PollEvent(&e)) handle(e);
-        watch_tick();
-        if (dirty_) frame();
-        SDL_Delay(1);
-    }
+    while (now_ns() < until) idle_step();
     return std::to_string(frames_ - before) + " frames drawn, " + std::to_string(bytes() - read) + " bytes read";
+}
+
+// (The tests: the main loop run as when idle until the file at path is
+// there, as a writer leaves it when it has written all it will, and then
+// until it has drawn nothing for 300 ms, what that writer last wrote heard
+// and settled; 20 s at most. Whether it came.)
+bool App::wave_until(const std::string& path) {
+    const u64 limit = now_ns() + 20'000'000'000ull;
+    auto there = [&] { struct stat st{}; return ::stat(path.c_str(), &st) == 0; };
+    while (!there() && now_ns() < limit) idle_step();
+    if (!there()) return false;
+    u64 drawn = frames_, quiet = now_ns();
+    while (now_ns() - quiet < 300'000'000ull && now_ns() < limit) {
+        idle_step();
+        if (frames_ != drawn) drawn = frames_, quiet = now_ns();
+    }
+    return true;
+}
+
+// (One turn of the main loop as it runs when idle: events handled, what
+// changed on disk heard, a frame drawn if one is due.)
+void App::idle_step() {
+    SDL_Event e;
+    while (SDL_PollEvent(&e)) handle(e);
+    watch_tick();
+    if (dirty_) frame();
+    SDL_Delay(1);
 }
 
 // The wave tab in front (the first there is), as the tests see it:

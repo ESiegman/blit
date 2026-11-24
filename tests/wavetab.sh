@@ -49,12 +49,15 @@ check() {
 }
 join() { awk 'NR > 1 { printf " ;; " } { printf "%s", $0 }'; }
 # run SIZE SCRIPT FILE: what the run printed, its lines joined by " ;; ".
-# Each run starts with no view kept of any dump, unless KEEP is set.
+# Each run starts with no view kept of any dump, unless run through keep.
 run() {
     [ -n "${KEEP:-}" ] || rm -rf "$W/.blit"
     got=$("$blit" --offscreen "$1" --shot "$dir/shot.bmp" --script "$2" "$3" 2>&1 >/dev/null | grep -v '^\[' | sed -e "s#$dir#~#g" | join)
     all=$got
 }
+# keep run ...: a run that keeps the views saved before it. (KEEP=1 before a
+# function call stays set after it under sh, so it is set and cleared here.)
+keep() { KEEP=1; "$@"; KEEP=; }
 ZOOM=
 fresh() { rm -rf "$W/.blit"; }
 # What was printed, a line at a time again.
@@ -267,12 +270,12 @@ run 1600x900 "$marks;key:k;key:r;key:Return;key:=;wavedump" "$W/icarus.vcd"
 before=$(printf '%s' "$got" | tr '>' ' ')
 [ -f "$W/.blit/waves/icarus.json" ] && got=kept || got="not kept"
 check "the view kept in .blit/waves" "kept"
-KEEP=1 run 1600x900 "frame;wavewait;wavedump" "$W/icarus.vcd"
+keep run 1600x900 "frame;wavewait;wavedump" "$W/icarus.vcd"
 got=$(printf '%s' "$got" | tr '>' ' ')
 check "and brought back as it was (but for the row chosen)" "$before"
 # Rows of a kept view whose signals the dump has not: left out, and said.
 sed -e 's/"tb.wrap"/"tb.gone"/' "$W/.blit/waves/icarus.json" >"$dir/k" && mv "$dir/k" "$W/.blit/waves/icarus.json"
-KEEP=1 run 1600x900 "frame;wavewait;wavedump" "$W/icarus.vcd"
+keep run 1600x900 "frame;wavewait;wavedump" "$W/icarus.vcd"
 head1
 check "a kept row the dump has not got" "icarus.vcd: read, cursor 55 ns, view 27.5 ns to 1.4135 us, 1 kept rows dropped, markers a=15 ns(-40 ns) b=45 ns(-10 ns)"
 # Not changed by hand: nothing kept.
@@ -294,7 +297,7 @@ check "c: a row, two rows chosen, a group (its others in its colour)" " tb (open
 got=$(tr ',' '\n' <"$W/.blit/waves/icarus.json" | grep -c '"colour"')
 check "kept in the view: the group's and three signals' own" "4"
 before=$(printf '%s' "$all" | tr '>' ' ')
-KEEP=1 run 1600x900 "frame;wavewait;wavedump" "$W/icarus.vcd"
+keep run 1600x900 "frame;wavewait;wavedump" "$W/icarus.vcd"
 got=$(printf '%s' "$all" | tr '>' ' ')
 check "and brought back" "$before"
 run 1600x900 "$coloured;key:k;key:k;$(colour none);wavedump;key:u;wavedump;key:j;key:j;key:j;key:j;$(colour none);wavedump" "$W/icarus.vcd"
@@ -471,8 +474,9 @@ check "followed, a view not at the end: it stays" "grow.vcd: read, cursor 0 ps, 
 
 # Live, under the rule: while it is written (twenty pieces, 50 ms apart)
 # the tab reads it and draws it again (with what the watched folder draws
-# anyway) no more than 30 times a second; once it is not, nothing is drawn
-# and nothing read. Nor is anything drawn before it is.
+# anyway) no more than 30 times a second; once it is not (its writer done,
+# and what it last wrote read), nothing is drawn and nothing read. Nor is
+# anything drawn before it is.
 cat >"$dir/writer.sh" <<'EOF'
 size=$(wc -c <"$1" | tr -d ' ')
 piece=$(( (size + 19) / 20 ))
@@ -482,9 +486,10 @@ while [ $i -lt 20 ]; do
     i=$((i + 1))
     perl -e 'select(undef, undef, undef, 0.05)'
 done
+: >"$3"
 EOF
-fresh; cp "$dir/half.vcd" "$W/grow.vcd"
-run 1600x900 "$watched;frame;waveframes:300;waveframes:500;lua:os.execute('sh $dir/writer.sh $dir/rest.vcd $W/grow.vcd &');waveframes:2500;waveframes:1000;wavedump" "$W/grow.vcd"
+fresh; cp "$dir/half.vcd" "$W/grow.vcd"; rm -f "$dir/written"
+run 1600x900 "$watched;frame;waveframes:300;waveframes:500;lua:os.execute('sh $dir/writer.sh $dir/rest.vcd $W/grow.vcd $dir/written &');waveframes:2500;waveuntil:$dir/written;waveframes:1000;wavedump" "$W/grow.vcd"
 got=$(lines | sed -n 2p)  # (the first: what starting up still had to draw)
 check "nothing drawn before it is written to" "0 frames drawn, 0 bytes read"
 set -- $(lines | sed -n 3p)

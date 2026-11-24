@@ -1227,6 +1227,8 @@ private:
     void wave_again(WaveView& v, bool whole);
     void wave_show(const std::string& full, bool front, bool again);
     std::string wave_frames(int ms);  // (the tests: frames drawn while the main loop runs)
+    bool wave_until(const std::string& path);  // (the tests: the main loop run until a writer is done, and settled)
+    void idle_step();
 
     // Terminals (appterm.cpp): a tab running a shell, here or on another machine.
     // A terminal tab in dir (the working folder when none): a login shell, or

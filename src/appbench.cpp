@@ -1486,6 +1486,8 @@ void App::run_script(const char* script) {
             std::fprintf(stderr, "%s\n", wave_dump(arg).c_str());
         } else if (verb == "waveframes") {  // waveframes:MS, MS milliseconds of the main loop: frames drawn, and bytes of the wave tab's dump read
             std::fprintf(stderr, "%s\n", wave_frames(std::atoi(arg.c_str())).c_str());
+        } else if (verb == "waveuntil") {  // waveuntil:FILE, the main loop run until FILE is there (a writer done) and nothing more is drawn (20 s at most)
+            if (!wave_until(arg)) std::fprintf(stderr, "waveuntil: %s never came\n", arg.c_str());
         } else if (verb == "simwait") {  // the dumps of the simulation runs that ended looked for (20 s at most), and opened
             const u64 until = now_ns() + 20'000'000'000ull;
             while (sim_busy() && now_ns() < until) {
