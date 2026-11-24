@@ -3332,6 +3332,26 @@ A dump's first address in a unit reads that unit's tables (a few
 milliseconds at worst on firmware); the ELF is kept between dumps until
 it changes.
 
+### Round 76: milestone 5b, the loopback socket module and RTT tabs
+
+The serial tab's keeping and drawing of what comes moved into a base
+class (`StreamTab`, `src/streamtab.*`) that RTT and semihosting tabs
+share; the serial tab's reader path is the same code behind one more
+class. On AC power (`pmset`: powermode 2), load average 10 to 12 from
+other builds, so within this sitting only. A 40,000-line coloured flood
+(`tests/fake-serial.py`'s `flood 40000`) through a serial tab on a
+pseudo-terminal, the whole run (start, open, the flood until its last
+line is on the screen, the shot), turn about, eight rounds, Debug with
+Release's flags, against the build before it (c37c564):
+
+| | Before | After |
+|---|---:|---:|
+| Median of 8 (ms) | 578 | 567 |
+| Range, first round left out (ms) | 572 to 591 | 562 to 597 |
+
+The same flood through an RTT tab (a TCP server here, the loopback
+module's thread feeding the tab): 178 to 341 ms a run after the first.
+
 ### Tried and dropped
 
 - **Smaller or larger pieces** (1, 2, 8 KB instead of 4 KB): line lookups
