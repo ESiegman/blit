@@ -4819,9 +4819,10 @@ through the row's changes from the cursor: two million in about a
 millisecond.
 
 **Colours.** `c` gives the row (or the rows chosen with `V`) a colour,
-picked from a list of the theme's own by their names there: `error`,
-`warning`, `hint`, `accent` and `keyword` (the colour of keywords in
-code), or `none`, which takes it away. Its name and its waves are drawn
+picked from a list of the theme's own by their names there, each with a
+swatch of it before its name: `error`, `warning`, `hint`, `accent` and
+`keyword` (the colour of keywords in code), or `none`, which takes it
+away. Its name and its waves are drawn
 in it (x and z keep theirs), in the theme of the moment, light or dark.
 A group's heading gives the group the colour, and its signals with none
 of their own are drawn in it; a bit of a bus opened gives the bus its

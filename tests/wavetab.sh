@@ -300,6 +300,11 @@ got=$(lines | grep -E '^ ?>? *(tb \(|tb.count)' | sed -e 's/ = [^ ]*//' | join)
 check "cleared (none), undone (u); a signal's own cleared, its group's" ">tb (open) ;;    tb.count[7:0] hex in warning ;; >tb (open) in keyword ;;    tb.count[7:0] hex in warning ;;  tb (open) in keyword ;; >  tb.count[7:0] hex in keyword"
 grep -q '"colour":"warning"' "$W/.blit/waves/icarus.json" && got=kept || got="not kept"
 check "(and none kept)" "not kept"
+# The picker shows each colour before its name: a swatch drawn in it
+# (blit-dark's error, warning, hint, accent and keyword colours), none
+# before none; and the same as what is typed narrows the list.
+run 1600x900 "frame;wavewait;key:c;findwait;frame;finddump;text:war;findwait;frame;finddump" "$W/icarus.vcd"
+check "c: the picker's rows with their colours' swatches" "pick [] 6 : >#e06c75 error #e5c07b warning #56b6c2 hint #61afef accent #c678dd keyword - none ;; pick [war] 1 : >#e5c07b warning"
 
 # Tiles: painted on workers, none to come once waited for; at this width
 # the clock is a busy band in places, zoomed out.

@@ -1446,6 +1446,10 @@ void App::wave_act(int act) {
                 Doc* d = find_doc(doc);
                 if (d && d->wave && i >= 0) wave_colour(*d->wave, i < kWaveColours ? static_cast<u8>(i + 1) : 0);
             });
+            // (Each in its colour, before its name; none, none.)
+            std::vector<std::array<float, 4>> swatches(kWaveColours + 1);
+            for (u32 c = 1; c <= kWaveColours; ++c) std::copy(waves_->colours[c], waves_->colours[c] + 4, swatches[c - 1].begin());
+            find_swatches(swatches);
             return;
         }
         case kWaveAdd: {

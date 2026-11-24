@@ -35,6 +35,9 @@ constexpr u32 kFieldTone = 1;  // (Popup::tones: the field's cells)
 // palette, a syntax ink's (the box shows no code), in a colour that reads
 // on the chosen row's background.
 constexpr u32 kInkChosenMuted = 1;
+// A list's swatches (find_swatches): inks of the box's palette after that
+// one, in place of the rest of the syntax inks.
+constexpr u32 kInkSwatch = 2, kSwatchInks = kInkSyntaxEnd - kInkSwatch;
 constexpr size_t kMostRecent = 8;  // Go to file with nothing typed: how many files opened lately it lists
 
 // The keys the footer names, by what the box is for.
@@ -391,8 +394,12 @@ struct App::Find {
     u32 drawn_font = ~0u, drawn_cap = 0, drawn_rows = 0;
     u32 seen_cols = 0;  // the widest it has needed since it opened: it grows to fit, and does not shrink back and forth as rows come and go
     float tones[8][4] = {};
-    float palette[32][4] = {};  // the theme's inks, and the chosen row's muted (kInkChosenMuted)
+    float palette[32][4] = {};  // the theme's inks, the chosen row's muted (kInkChosenMuted) and the swatches' (kInkSwatch on)
     u64 palette_gen = ~0ull;    // the theme they were made from
+    // A list of blit's own with a colour before each row (find_swatches):
+    // each item's swatch, as an ink (0: none), and the colours of those inks.
+    std::vector<u8> swatch;
+    float swatch_rgb[kSwatchInks][4] = {};
     void touch() { ++state; }
 
     size_t count() const {
@@ -948,6 +955,7 @@ void App::find_open(int mode, const std::string& typed) {
     f.moved = nullptr;
     f.on_side = nullptr;
     f.question.clear();
+    f.swatch.clear();
     if (auto back = std::exchange(f.cancelled, nullptr)) back();  // (what a list tried out is put back)
     if (mode != kFindNames && mode != kFindText) f.into_pane = 0;  // (Tab between those two keeps it)
     if (find_open_ && f.mode == kFindAsk && mode != kFindAsk) {  // (ssh's question waits, and comes back when this box shuts)
@@ -1230,6 +1238,28 @@ void App::find_live_items(const std::string& prompt, std::function<void(const st
     f.typed_changed = std::move(typed);
     f.typed_asked = f.typed;
     f.typed_changed(f.typed);
+}
+
+void App::find_swatches(const std::vector<std::array<float, 4>>& colours) {
+    if (!find_open_ || find_->mode != kFindPick) return;
+    Find& f = *find_;
+    f.swatch.assign(f.items.size(), 0);
+    u32 used = 0;
+    for (size_t i = 0; i < f.items.size() && i < colours.size(); ++i) {
+        const std::array<float, 4>& c = colours[i];
+        if (!(c[3] > 0)) continue;
+        u32 k = 0;  // (one ink a colour)
+        while (k < used && !std::equal(c.begin(), c.begin() + 3, f.swatch_rgb[k])) ++k;
+        if (k == used) {
+            if (used == kSwatchInks) continue;
+            std::copy(c.begin(), c.end(), f.swatch_rgb[used++]);
+            f.swatch_rgb[k][3] = 1;
+        }
+        f.swatch[i] = static_cast<u8>(kInkSwatch + k);
+    }
+    f.palette_gen = ~0ull;  // (the palette made again, with them)
+    f.touch();
+    dirty_ = true;
 }
 
 // A list of blit's own that is a question about something (the rows its
@@ -2238,6 +2268,7 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
             if (contrast(lit, theme_.sel) >= 4.5f) break;
         }
         lit[3] = 1;
+        for (u32 k = 0; k < kSwatchInks; ++k) std::copy(f.swatch_rgb[k], f.swatch_rgb[k] + 4, f.palette[kInkSwatch + k]);
     }
 
     if (f.drawn != f.state || f.drawn_font != font.generation() || f.drawn_cap != cap || f.drawn_rows != rows) {
@@ -2386,6 +2417,9 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
         // column as wide as the widest of those on show (but no wider than
         // two fifths of the widest box), so that the lines start level.
         const u32 most = std::max<u32>(12, cap * 2 / 5);
+        // A list's swatches: a block in the item's colour, then a space, before each.
+        const u32 swatched = f.mode == kFindPick && !f.swatch.empty() ? 2 : 0;
+        const char* swatch_glyph = font.can_draw(0x25A0) ? "\xE2\x96\xA0" : font.can_draw(0x2588) ? "\xE2\x96\x88" : "#";
         std::vector<std::string> wheres;
         u32 where_cols = 0, need_rows = 0;
         for (u32 r = 0; r < f.list_rows && f.top + r < n; ++r) {
@@ -2409,7 +2443,7 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
             } else if (listed) {
                 const Find::Entry& e = f.entries[i];
                 const u32 kw = f.mode == kFindCommand ? width_of(f.item_syms[e.index]) : 0;
-                need = width_of(e.name) + (kw ? 3 + kw : 0);
+                need = swatched + width_of(e.name) + (kw ? 3 + kw : 0);
             } else {
                 const Find::Entry& e = f.entries[i];
                 need = 3 + (e.kind == Find::Entry::kHere     ? width_of("Use this folder") + 2 + width_of(here)
@@ -2607,7 +2641,8 @@ void App::find_layout(int w, int h, FrameDesc& fd) {
                 const std::string_view keys = f.mode == kFindCommand ? std::string_view(f.item_syms[e.index]) : std::string_view();
                 u32 kw = width_of(keys);
                 if (kw + 2 + 8 > cols) kw = 0;
-                marked(row, 0, e.name, at, 0, ink::kText, kw ? cols - kw - 2 : cols);
+                if (swatched && e.index < f.swatch.size() && f.swatch[e.index]) put(box, font, row, 0, swatch_glyph, Ink{f.swatch[e.index], 0});
+                marked(row, swatched, e.name, at, 0, ink::kText, (kw ? cols - kw - 2 : cols) - std::min(swatched, cols));
                 if (kw) put(box, font, row, cols - kw, keys, ink::kMuted);
             } else {
                 const Find::Entry& e = f.entries[i];
@@ -2773,6 +2808,15 @@ std::string App::find_dump() {
             }
         }
         else if (f.mode == kFindCommand) out += f.entries[i].name + (f.item_keys[f.entries[i].index].empty() ? "" : " (" + f.item_keys[f.entries[i].index] + ")");
+        else if (f.mode == kFindPick && !f.swatch.empty()) {  // (each row's swatch as last drawn: its first cell's ink's colour, or "-" for none)
+            const size_t cell = (static_cast<size_t>(f.fields()) + i - f.top) * f.box.cols;
+            char rgb[16] = "-";
+            if (i >= f.top && i < f.top + f.list_rows && cell < f.box.cells.size() && (f.box.cells[cell] & 0xFFFF) > 32) {
+                const float* c = f.palette[(f.box.cells[cell] >> kCellInkShift) & 31];
+                std::snprintf(rgb, sizeof rgb, "#%02x%02x%02x", static_cast<int>(c[0] * 255 + 0.5f), static_cast<int>(c[1] * 255 + 0.5f), static_cast<int>(c[2] * 255 + 0.5f));
+            }
+            out += std::string(rgb) + " " + f.entries[i].name;
+        }
         else out += f.entries[i].kind == Find::Entry::kNew ? "+" + f.entries[i].name : f.entries[i].name + (f.entries[i].dir ? "/" : "");
     }
     if ((f.mode == kFindNames || f.mode == kFindText) && f.shown && f.count() == 0 && !f.shown->note.empty()) out += " (" + f.shown->note + ")";  // (why there is nothing)
