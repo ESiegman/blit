@@ -32,6 +32,7 @@
 #include "missing.hpp"
 #include "picture.h"
 #include "pty.hpp"
+#include "pump.hpp"
 #include "remote.hpp"
 #include "serialtab.hpp"
 #include "term.hpp"
@@ -105,8 +106,12 @@ struct TermView {
     std::string title;    // the tab's name, whatever the program calls itself
     std::string dir;      // the folder it was started in
     // A serial monitor's (serialtab.hpp): the program is the device on a
-    // port, whose descriptor `in` and `out` are while it is open.
+    // port, whose descriptor `in` and `out` are while it is open. On another
+    // machine (pump: its id's host) they are the pipes of blit's agent there,
+    // run as the port's pump (pump.hpp), and far_err its news.
     std::shared_ptr<SerialTab> serial;
+    bool pump = false;
+    int far_err = -1;
     // A build's: its output read for problems, on the reader's thread, and
     // what that found, for the main thread to take (term_sync).
     std::unique_ptr<BuildScan> scan;
@@ -171,7 +176,8 @@ struct TermView {
         if (reader.joinable()) reader.join();
         if (conn && proc.id) conn->kill(proc.id, SIGHUP);  // (started meanwhile)
         if (in >= 0 && in != out) ::close(in);
-        if (out >= 0 && serial) serial_close(out);  // (its hold on the port let go of: serial.hpp)
+        if (far_err >= 0) ::close(far_err);
+        if (out >= 0 && serial && !pump) serial_close(out);  // (its hold on the port let go of: serial.hpp)
         else if (out >= 0) ::close(out);
         if (pty.pid > 0 && !ended) {  // (not one the reader has seen end and reaped)
             int st = 0;
@@ -344,8 +350,168 @@ struct TermView {
         if (!told.exchange(true)) wake();
     }
 
+    // A serial port on another machine: blit's agent there, run as the
+    // port's pump (blit-agent --serial, pump.hpp), opens it, waits for it
+    // when it hangs up, lets go of it for a flash and does what is asked of
+    // its lines and speed, each at its time, there; its output is what the
+    // device sends, and what it says of the port (its errors, a line each)
+    // is told to the tab, which is then as one here is. What is typed goes
+    // to its input with each 0xFF doubled (send), and what is asked of the
+    // port between, escaped. When the connection goes, so does the pump
+    // (it is not kept: the port is let go of there), and the tab waits for
+    // the connection to come back, then starts another.
+    void serial_far_loop(std::stop_token stop) {
+        SerialTab& s = *serial;
+        const std::string far = s.id().host;
+        const std::string root = remote_prefix(far) + "/";
+        char buf[65536];
+        // Waited for a while, or until the tab is asked something.
+        auto pause = [&](int ms) {
+            pollfd w{s.wake_fd(), POLLIN, 0};
+            for (const u64 until = now_ns() + static_cast<u64>(ms) * 1'000'000ull; !stop.stop_requested() && now_ns() < until;)
+                if (::poll(&w, 1, 100) > 0) s.drain();
+        };
+        u64 asked = 0;  // (when the connection was last asked for)
+        while (!stop.stop_requested()) {
+            // The connection: made when there is none. One that went is made
+            // again by Remote itself, on its own schedule, while this tab
+            // wants it (remote_sync); one that could not be made at all is
+            // asked for again now and then.
+            std::shared_ptr<Remote> c;
+            for (const std::shared_ptr<Remote>& r : Remote::all())
+                if (r->host() == far) c = r;
+            if (!c || (c->state() == Remote::kFailed && !c->retrying() && !c->stopped() && now_ns() - asked >= 10'000'000'000ull)) {
+                c = Remote::get(far);
+                asked = now_ns();
+            }
+            if (c->state() != Remote::kReady && !c->wait_ready(250)) {
+                s.waiting(remote_error(root));
+                pause(250);
+                continue;
+            }
+            if (c->agent_level() < 6) {  // (blit brings its own agent, so one older is met only when the agents kept were built from older sources)
+                s.waiting("blit's agent on " + far + " is too old to open a serial port there");
+                pause(5000);
+                continue;
+            }
+            const SerialPortId id = s.id();
+            std::vector<std::string> argv = {c->agent_path(), "--serial", id.path, serial_text(s.config())};
+            if (!id.serial.empty()) {  // (the device it is on, known: found again there by it, wherever it is now)
+                char ids[16];
+                std::snprintf(ids, sizeof ids, "%04x:%04x", id.vid, id.pid);
+                argv.insert(argv.end(), {id.serial, ids, std::to_string(id.iface)});
+            }
+            RemoteProc p;
+            std::string err;
+            if (!c->spawn(argv, {}, {}, &p, &err)) {
+                s.waiting("cannot start blit's agent on " + far + " (" + err + "), trying again");
+                pause(1000);
+                continue;
+            }
+            ::fcntl(p.in, F_SETFL, ::fcntl(p.in, F_GETFL) | O_NONBLOCK);
+            {
+                std::lock_guard lock(out_mu);
+                backlog.clear();
+                backlog_at = 0;
+                backed = false;
+                conn = c;
+                proc = p;
+                out = p.out;
+                in = p.in;
+                far_err = p.err;
+            }
+            bool released = false;  // (as the pump was last asked)
+            bool shown_released = false;  // (as the tab was last told)
+            std::string said;  // (its news, up to the end of a line)
+            auto news = [&](const std::string& line) {
+                PumpNews n;
+                if (!pump_news_parse(line, &n)) return;
+                switch (n.kind) {
+                    case PumpNews::kId: s.far_id(n.id); break;
+                    case PumpNews::kOpen: shown_released = false, s.far_open(n.text); break;
+                    case PumpNews::kWait: s.far_wait(n.text); break;
+                    case PumpNews::kGone: s.lost(n.text, SerialTab::wall_ns()); break;
+                    case PumpNews::kReleased:
+                        if (!shown_released) s.lost(SerialTab::kReleasedWhy, SerialTab::wall_ns());
+                        shown_released = true;
+                        break;
+                    case PumpNews::kDone: s.far_done(n.n, true, {}); break;
+                    case PumpNews::kFail: s.far_done(n.n, false, n.text); break;
+                    case PumpNews::kError: s.tell(n.text, 1); break;
+                }
+            };
+            auto read_news = [&]() {
+                const ssize_t k = ::read(far_err, buf, sizeof buf);
+                if (k <= 0) return k < 0 && (errno == EAGAIN || errno == EINTR);  // (false: it has ended)
+                said.append(buf, static_cast<size_t>(k));
+                for (size_t nl; (nl = said.find('\n')) != std::string::npos; said.erase(0, nl + 1)) news(said.substr(0, nl));
+                return true;
+            };
+            bool err_open = true;
+            while (!stop.stop_requested()) {
+                // What was asked of the port, and whether it is to be let go of, to the pump.
+                if (std::string ops = s.far_ops(); !ops.empty()) put(ops);
+                if (s.release_wanted() != released) {
+                    released = !released;
+                    put(released ? pump_release() : pump_reclaim());
+                }
+                const bool backed_up = backed.load();
+                pollfd f[4] = {{out, POLLIN, 0}, {err_open ? far_err : -1, POLLIN, 0}, {s.wake_fd(), POLLIN, 0}, {backed_up ? in.load() : -1, POLLOUT, 0}};
+                const int r = ::poll(f, 4, 100);
+                if (r < 0 && errno != EINTR) break;
+                if (r <= 0) continue;
+                if (f[2].revents & POLLIN) s.drain();
+                if (backed_up && (f[3].revents & (POLLOUT | POLLERR | POLLHUP))) flush_backlog();
+                if (f[1].revents & (POLLIN | POLLHUP | POLLERR)) err_open = read_news();
+                if (f[0].revents & (POLLIN | POLLHUP | POLLERR)) {
+                    const ssize_t k = ::read(out, buf, sizeof buf);
+                    if (k > 0) {
+                        const std::string reply = s.take(buf, static_cast<size_t>(k), SerialTab::wall_ns());
+                        if (!reply.empty()) send(reply);  // (the Term's answers)
+                        if (!told.exchange(true)) wake();
+                    } else if (k == 0 || (errno != EAGAIN && errno != EINTR)) {
+                        break;  // (the pump has ended)
+                    }
+                }
+            }
+            // The pump has ended (or the tab is closing): what it said last, then its end.
+            for (int i = 0; err_open && i < 50 && !stop.stop_requested(); ++i) {
+                pollfd f{far_err, POLLIN, 0};
+                if (::poll(&f, 1, 20) <= 0) break;
+                err_open = read_news();
+            }
+            if (stop.stop_requested()) return;  // (the destructor ends and reaps it)
+            {
+                std::lock_guard lock(out_mu);
+                in = -1;
+                ::close(p.in);
+                out = -1;
+                backlog.clear();
+                backlog_at = 0;
+                backed = false;
+            }
+            ::close(p.out);
+            ::close(far_err);
+            far_err = -1;
+            const int st = c->wait(p.id, 3000);
+            if (st == -2) c->kill(p.id, SIGKILL), c->wait(p.id, 3000);
+            proc = {};
+            s.far_lost();
+            const bool up = c->state() == Remote::kReady;
+            const std::string why = up ? "blit's agent on " + far + " stopped reading it" : "connection to " + far + " lost";
+            if (s.is_open()) s.lost(why, SerialTab::wall_ns());
+            if (st == 2) {  // (it said what it was given cannot be used: trying again will not make it better)
+                s.waiting("not opened");
+                while (!stop.stop_requested()) pause(1000);
+                return;
+            }
+            pause(up ? 1000 : 250);
+        }
+    }
+
     // What the program writes, onto the screen; what the screen answers, back to it.
     void read_loop(std::stop_token stop) {
+        if (serial && pump) return serial_far_loop(stop);
         if (serial) return serial_loop(stop);
         if (!remote_dir.empty() && !start_remote(stop)) {
             status = 1;
@@ -449,6 +615,11 @@ struct TermView {
     std::atomic<bool> backed{false};
 
     void send(std::string_view s) {
+        if (pump) return put(pump_escape(s));  // (a serial port on another machine: its pump takes each 0xFF doubled)
+        put(s);
+    }
+    // (What goes to the program as it is: to a pump, what is asked of the port too.)
+    void put(std::string_view s) {
         std::lock_guard lock(out_mu);  // (first: a serial port may be closed meanwhile, under it)
         const int fd = in;
         if (fd < 0 || ended) return;
@@ -717,6 +888,7 @@ u64 App::term_open_serial(const SerialPortId& id, const SerialConfig& cfg, Seria
     v->dir = root ? *root : default_workdir();  // (Cmd+click on a place the device prints: from the project)
     v->started_ns = now_ns();
     v->serial = std::make_shared<SerialTab>(id, cfg, ret, v->mu, v->term);
+    v->pump = !id.host.empty();  // (on another machine: its agent opens it, serial_far_loop)
     v->serial->set_scan(std::make_unique<SerialCrash>(crash, *v));
     TermView* raw = v.get();
     v->serial->told = [raw] {

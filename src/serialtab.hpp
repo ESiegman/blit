@@ -24,6 +24,7 @@
 #include <cstdio>
 #include <deque>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <stop_token>
@@ -101,8 +102,9 @@ public:
     void reclaim();
     bool released();
     bool is_open();
-    // This port: the USB serial number, or the port's path, is that.
-    bool is(const std::string& serial, const std::string& port);
+    // This port: the USB serial number, or the port's path, is that, on
+    // that machine ("" this one, else an ssh host).
+    bool is(const std::string& serial, const std::string& port, const std::string& host);
     // What the reader has to say (a line that could not be set, a reset
     // done), each with its level for notify; taken once.
     std::vector<std::pair<std::string, int>> take_news();
@@ -132,6 +134,28 @@ public:
     void run_ops(int fd);
     int wait_ms(int most);
 
+    // ---- the reader's thread, for a port on another machine: what blit's
+    // agent there, run as the port's pump (pump.hpp), says of it, and what
+    // is to be asked of it. The tab is as one here is: open, gone, released,
+    // its lines and speed changed as asked; but the pump opens it, waits for
+    // it, and does what is asked, each at its time, there.
+
+    void far_id(const SerialPortId& found);   // the USB device it is on
+    void far_open(const std::string& path);   // opened (again), at that path there
+    void far_wait(const std::string& why);    // not open, and waited for there (why "": not there)
+    // Not open, and waited for meanwhile here: what the tab's last line says
+    // ("connecting to box").
+    void waiting(const std::string& text);
+    // What has been asked of the port since (line changes, speeds, breaks),
+    // as the escapes its pump takes, each numbered and with its time from
+    // now; what each comes to, told back (lines that could not be set said,
+    // as here).
+    std::string far_ops();
+    void far_done(u32 n, bool ok, const std::string& err);
+    void far_lost();  // (the pump has ended: what it was asked, and is not yet done, is not)
+    // Said on the bottom line (notify's level).
+    void tell(const std::string& text, int level);
+
     static u64 wall_ns();  // (now, by the wall clock: what the times are)
     static constexpr const char* kReleasedWhy = "released for flashing";  // (lost's why, for a release)
 
@@ -151,6 +175,7 @@ private:
         u8 kind = 0;  // kLines, kConfig, kBreak
         int dtr = -1, rts = -1;
         std::string say;  // said once done ("" nothing)
+        bool quiet = false;  // (DTR and RTS as they were, set again: only a failure is said)
     };
     enum : u8 { kLines, kConfig, kBreak };
 
@@ -167,6 +192,10 @@ private:
     void status(const std::string& text);  // (the last line, rewritten as what is waited for changes)
     void status_end(const std::string& last);  // (and that line made `last`, or taken away: "")
     std::string gap_text(const Event& e, const std::string& waiting = {}) const;
+    void opened_at(const std::string& path);  // (mu_ held) open now, at that path: a gap that was open closed
+    std::string waiting_text(const std::string& why, u8 state) const;  // (mu_ held) the last line while it is waited for
+    void done_at(const Op& op, bool ok, const std::string& err, const SerialConfig& cfg);  // (mu_ held) an op done, or not: said
+    void show_waiting(const std::string& say);
     void rebuild();
     void log_bytes(const char* p, size_t n, u64 ns);
     void log_line(const std::string& text, u64 ns);
@@ -191,6 +220,12 @@ private:
     std::deque<Op> ops_;
     std::vector<std::pair<std::string, int>> news_;
     std::vector<std::string> asked_;  // (the tests: line changes as they were done)
+    // A port on another machine: the ops sent to its pump, by their number
+    // (0: those set again quietly), until it says how each went; and the
+    // last line said while it is waited for.
+    std::map<u32, Op> sent_;
+    u32 next_op_ = 1;
+    std::string far_shown_;
 
     // What came, kept: the bytes (`base_` is the place of the first, in all
     // that came since the tab opened), when each part came, and the gaps

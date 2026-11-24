@@ -1,7 +1,9 @@
 // Serial monitors: "Open a serial port…" lists the ports of the USB
 // devices plugged in here (named as the probe picker names them, probes.cpp;
 // on Linux each with its /dev/serial/by-id name, which the tab opens it
-// by), or takes a path typed; "Open the board's serial monitor" opens the
+// by), and on a project on another machine that machine's first (listed by
+// blit's agent there, blit-agent --usb, and opened by it: pump.hpp), or
+// takes a path typed (on the project's machine; ssh://host/dev/... names one); "Open the board's serial monitor" opens the
 // port of the board of the run configuration the Run button runs, at its
 // speed, in one step. The tab is a terminal whose program is the device
 // (appterm.cpp, serialtab.hpp). The commands here act on the serial tab in
@@ -19,6 +21,7 @@
 #include <thread>
 
 #include "app.hpp"
+#include "build.hpp"
 #include "crashscan.hpp"
 #include "fsio.hpp"
 #include "probes.hpp"
@@ -52,8 +55,10 @@ std::string base_name(const std::string& path) {
 // "cu.usbmodem1101  Pico SDK USB serial (RP2040) (Pico)  A58565170D696C53",
 // on Linux "ttyACM0  …  /dev/serial/by-id/usb-…", the device's name as the
 // probe picker has it, and the interface's name where a device has more
-// than one port (an FT2232's two channels).
-std::vector<PortRow> port_rows(const std::vector<UsbDevice>& devices) {
+// than one port (an FT2232's two channels). Those of another machine's
+// devices (`host`) say so last, "  on box", and are opened at their paths
+// there (found again by their serial numbers all the same).
+std::vector<PortRow> port_rows(const std::vector<UsbDevice>& devices, const std::string& host) {
     std::vector<PortRow> rows;
     for (const UsbDevice& d : devices) {
         if (d.ports.empty() || d.cls == 9) continue;
@@ -62,12 +67,13 @@ std::vector<PortRow> port_rows(const std::vector<UsbDevice>& devices) {
         for (size_t i = 0; i < d.ports.size(); ++i) {
             const UsbPort& p = d.ports[i];
             PortRow r;
-            const std::string by_id = serial_by_id(p.path);
+            const std::string by_id = host.empty() ? serial_by_id(p.path) : std::string();
             r.id.path = !by_id.empty() ? by_id : p.path;
             r.id.serial = d.serial;
             r.id.vid = d.vid, r.id.pid = d.pid;
             r.id.iface = p.iface;
             r.id.name = name;
+            r.id.host = host;
             r.text = base_name(p.path) + "  " + name;
             if (!d.serial.empty()) r.text += "  " + d.serial;
             if (d.ports.size() > 1) {  // (which of them: by its interface's name, else its number, as an FT2232's two say the same)
@@ -75,6 +81,7 @@ std::vector<PortRow> port_rows(const std::vector<UsbDevice>& devices) {
                 r.text += own ? "  " + p.name : "  interface " + std::to_string(p.iface);
             }
             if (!by_id.empty()) r.text += "  " + by_id;
+            if (!host.empty()) r.text += "  on " + host;
             rows.push_back(std::move(r));
         }
     }
@@ -93,6 +100,7 @@ constexpr const char* kFlows[] = {"No flow control", "RTS/CTS flow control", "XO
 struct App::SerialUi {
     std::mutex mu;
     std::optional<std::vector<PortRow>> listed;  // (mu)
+    std::string why;  // (mu) the other machine's could not be listed: why
     bool busy = false;
     std::vector<PortRow> rows;  // the last listing's, for the tests
     std::vector<std::weak_ptr<SerialTab>> released;  // let go of for a flash, to give back
@@ -108,11 +116,24 @@ void App::serial_pick() {
     if (u.busy) return;
     if (u.worker.joinable()) u.worker.join();
     u.busy = true;
-    u.worker = std::jthread([&u] {
-        std::vector<PortRow> rows = port_rows(usb_list());
+    u.worker = std::jthread([&u, root = build_root()] {
+        std::vector<PortRow> rows;
+        std::string why, host, there;
+        if (split_remote(root, &host, &there)) {  // (the project's machine's first: its agent lists them, as the probe picker's)
+            const std::shared_ptr<Remote> r = remote_for(root, &there, kRemoteWaitMs);
+            const std::string agent = r ? r->agent_path() : std::string();
+            std::string out;
+            std::vector<UsbDevice> devices;
+            if (agent.empty()) why = "No connection to " + host + ": its serial ports cannot be listed";
+            else if (!fs_run(root, sh_word(agent) + " --usb", &out, 20'000) || !usb_parse(out, &devices)) why = "Cannot list the USB devices on " + host;
+            else rows = port_rows(devices, host);
+        }
+        std::vector<PortRow> here = port_rows(usb_list(), {});
+        rows.insert(rows.end(), std::make_move_iterator(here.begin()), std::make_move_iterator(here.end()));
         {
             std::lock_guard lock(u.mu);
             u.listed = std::move(rows);
+            u.why = std::move(why);
         }
         wake();
     });
@@ -121,9 +142,9 @@ void App::serial_pick() {
 namespace {
 
 // The serial tab on that port, if one is open.
-Doc* open_on(const std::vector<std::pair<Doc*, std::shared_ptr<SerialTab>>>& tabs, const std::string& serial, const std::string& path) {
+Doc* open_on(const std::vector<std::pair<Doc*, std::shared_ptr<SerialTab>>>& tabs, const std::string& serial, const std::string& path, const std::string& host) {
     for (const auto& [d, s] : tabs)
-        if (s->is(serial, path)) return d;
+        if (s->is(serial, path, host)) return d;
     return nullptr;
 }
 
@@ -133,19 +154,21 @@ void App::serial_sync() {
     if (!serialui_) return;
     SerialUi& u = *serialui_;
     std::optional<std::vector<PortRow>> listed;
+    std::string why;
     {
         std::lock_guard lock(u.mu);
         listed.swap(u.listed);
+        why = u.why;
     }
     if (!listed) return;
     u.busy = false;
     u.rows = *listed;
     const auto tabs = term_serials();
     std::vector<std::string> items;
-    for (const PortRow& r : *listed) items.push_back(r.text + (open_on(tabs, r.id.serial, r.id.path) ? "  (open)" : ""));
+    for (const PortRow& r : *listed) items.push_back(r.text + (open_on(tabs, r.id.serial, r.id.path, r.id.host) ? "  (open)" : ""));
     auto take = [this](SerialPortId id) {
         const auto open = term_serials();
-        if (Doc* d = open_on(open, id.serial, id.path)) {  // (open already: its tab)
+        if (Doc* d = open_on(open, id.serial, id.path, id.host)) {  // (open already: its tab)
             Pane* p = nullptr;
             size_t i = 0;
             if (!find_doc(d->id, &p, &i) && dock_show(pane_)) find_doc(d->id, &p, &i);
@@ -166,15 +189,25 @@ void App::serial_sync() {
     find_choose_item("Serial port", std::move(items), [rows = *listed, take](int i) {
         if (i >= 0 && static_cast<size_t>(i) < rows.size()) take(rows[static_cast<size_t>(i)].id);
     });
-    find_take_typed([take](const std::string& typed) {  // (a port that is on no USB device: /dev/ttyAMA0, a path typed)
+    find_take_typed([this, take](const std::string& typed) {  // (a port that is on no USB device: /dev/ttyAMA0, a path typed)
         std::string path = typed;
         while (!path.empty() && path.back() == ' ') path.pop_back();
         if (path.empty()) return;
-        SerialPortId id;
-        id.path = path;
-        take(id);
+        take(serial_port_at(path));
     });
-    if (listed->empty()) find_ask_footer("No USB serial ports are plugged in; a port's path may be typed", true);
+    if (!why.empty()) find_ask_footer(why, true);
+    else if (listed->empty()) find_ask_footer("No USB serial ports are plugged in; a port's path may be typed", true);
+}
+
+// A port's path as typed (the picker's, the tests'): ssh://host/dev/ttyACM0
+// is one there; a bare path is on the project's machine.
+SerialPortId App::serial_port_at(const std::string& path) {
+    SerialPortId id;
+    std::string host, there;
+    if (split_remote(path, &host, &there) || split_remote(build_root(), &host, &there)) id.host = host;
+    if (!split_remote(path, &host, &there)) there = path;
+    id.path = there;
+    return id;
 }
 
 void App::serial_settle() {
@@ -194,9 +227,9 @@ void App::serial_board() {
     if (!c) return notify("No run configuration has a board");
     const Board& b = c->board;
     std::string host, there;
-    if (split_remote(build_root(), &host, &there)) return notify(c->name + "'s board is on " + host + ": a serial port there cannot be opened from here yet", 1);
+    split_remote(build_root(), &host, &there);  // (a board on another machine: its port opened there, by blit's agent)
     if (b.port.empty() && b.probe.empty()) return notify(c->name + "'s board has no serial port", 1);
-    if (Doc* d = open_on(term_serials(), b.probe, b.port)) {
+    if (Doc* d = open_on(term_serials(), b.probe, b.port, host)) {
         Pane* p = nullptr;
         size_t i = 0;
         if (!find_doc(d->id, &p, &i) && dock_show(pane_)) find_doc(d->id, &p, &i);
@@ -210,6 +243,7 @@ void App::serial_board() {
     }
     SerialPortId id;
     id.path = b.port;
+    id.host = host;
     if (b.port.empty()) id.serial = b.probe;  // (found by the probe's serial number: its first port)
     SerialConfig cfg;
     cfg.baud = b.baud > 0 ? static_cast<u32>(b.baud) : cfg_.serial_baud;
@@ -386,8 +420,10 @@ void App::serial_break() {
 void App::serial_release(const Board& b) {
     if (b.probe.empty() && b.port.empty()) return;
     if (!serialui_) serialui_ = std::make_shared<SerialUi>();
+    std::string host, there;
+    split_remote(build_root(), &host, &there);  // (the board is on the project's machine: a flash runs its tool there)
     for (const auto& [d, s] : term_serials()) {
-        if (s->released() || !s->is(b.probe, b.port)) continue;
+        if (s->released() || !s->is(b.probe, b.port, host)) continue;
         s->release();
         serialui_->released.push_back(s);
     }

@@ -10,6 +10,7 @@
 #include <ctime>
 #include <utility>
 
+#include "pump.hpp"
 #include "term.hpp"
 
 namespace blit {
@@ -113,7 +114,7 @@ void SerialTab::drain() {
 
 std::string SerialTab::title() {
     std::lock_guard lock(mu_);
-    std::string t = shown_ + " " + std::to_string(cfg_.baud);
+    std::string t = shown_ + (id_.host.empty() ? "" : " on " + id_.host) + " " + std::to_string(cfg_.baud);
     if (const std::string f = serial_framing(cfg_); f != "8N1") t += " " + f;
     if (state_ == kOpening) t += " (opening)";
     else if (state_ == kGone) t += " (gone)";
@@ -322,7 +323,7 @@ bool SerialTab::is_open() {
     return state_ == kOpen;
 }
 
-bool SerialTab::is(const std::string& serial, const std::string& port) {
+bool SerialTab::is(const std::string& serial, const std::string& port, const std::string& host) {
     SerialPortId id;
     std::string dev;
     {
@@ -330,9 +331,11 @@ bool SerialTab::is(const std::string& serial, const std::string& port) {
         id = id_;
         dev = device_;
     }
+    if (host != id.host) return false;
     if (!serial.empty() && serial == id.serial) return true;
     if (port.empty()) return false;
     if (port == id.path || port == dev) return true;
+    if (!id.host.empty()) return false;  // (a path there is not one to look at here)
     const std::string real = serial_device(port);
     return real == serial_device(id.path) || (!dev.empty() && real == serial_device(dev));
 }
@@ -351,7 +354,7 @@ void SerialTab::set_scan(std::unique_ptr<SerialScan> scan) {
 std::string SerialTab::dump() {
     std::lock_guard lock(mu_);
     static const char* const kState[] = {"opening", "open", "gone", "released"};
-    std::string out = std::string(kState[state_]) + " " + base_name(device_) + " " + serial_text(cfg_) + " return " + serial_return_name(ret_) +
+    std::string out = std::string(kState[state_]) + " " + base_name(device_) + (id_.host.empty() ? "" : " on " + id_.host) + " " + serial_text(cfg_) + " return " + serial_return_name(ret_) +
                       (stamps_ ? " times" : "") + (hex_ ? " hex" : "") + " dtr " + (dtr_ ? "on" : "off") + " rts " + (rts_ ? "on" : "off");
     if (!id_.serial.empty()) out += " serial " + id_.serial;
     if (log_) out += " log " + base_name(log_path_);
@@ -409,18 +412,7 @@ int SerialTab::open_wait(std::stop_token stop) {
                 if (opened) {
                     std::unique_lock lock(mu_);
                     if (lines_set_ && !serial_set_lines(fd, dtr_, rts_, &err)) news_.push_back({"Cannot set DTR and RTS on " + base_name(path) + ": " + err, 1});
-                    if (!lines_set_) dtr_ = rts_ = 1;
-                    device_ = path;
-                    shown_ = port_name(path);
-                    if ((state_ == kGone || state_ == kReleased) && !events_.empty() && events_.back().kind == kGap) {
-                        Event& e = events_.back();
-                        e.back = wall_ns();
-                        status_end(gap_text(e));
-                        log_line(gap_text(e), e.back);
-                    } else {
-                        status_end({});
-                    }
-                    state_ = kOpen;
+                    opened_at(path);
                     lock.unlock();
                     if (told) told();
                     return fd;
@@ -429,9 +421,7 @@ int SerialTab::open_wait(std::stop_token stop) {
             }
             if (!want_release_) {
                 std::lock_guard lock(mu_);
-                const std::string waiting = !why.empty() ? why + ", trying again" : "waiting for " + (id_.serial.empty() ? shown_ : id_.serial);
-                if (state == kOpening) say = "[" + waiting + "]";
-                else if (!events_.empty() && events_.back().kind == kGap) say = gap_text(events_.back(), waiting);
+                say = waiting_text(why, state);
             }
         }
         if (!say.empty() && say != shown) {
@@ -528,20 +518,50 @@ void SerialTab::run_ops(int fd) {
             ok = serial_set_lines(fd, op.dtr, op.rts, &err);
         }
         std::lock_guard lock(mu_);
-        if (op.kind == kLines) {
-            std::string a;
-            if (op.dtr >= 0) a += std::string("dtr ") + (op.dtr ? "on" : "off");
-            if (op.rts >= 0) a += std::string(a.empty() ? "" : " ") + "rts " + (op.rts ? "on" : "off");
-            asked_.push_back(a + (ok ? "" : " (failed)"));
-        }
-        if (!ok) {
-            const char* what = op.kind == kConfig ? "Cannot set " : op.kind == kBreak ? "Cannot send a break on " : "Cannot set DTR and RTS on ";
-            news_.push_back({what + (op.kind == kConfig ? serial_text(cfg) + " on " : std::string()) + shown_ + ": " + err, 1});
-        } else if (!op.say.empty()) {
-            news_.push_back({op.say, 0});
-        }
+        done_at(op, ok, err, cfg);
     }
     if (told) told();
+}
+
+void SerialTab::done_at(const Op& op, bool ok, const std::string& err, const SerialConfig& cfg) {
+    if (op.quiet) {
+        if (!ok) news_.push_back({"Cannot set DTR and RTS on " + shown_ + ": " + err, 1});
+        return;
+    }
+    if (op.kind == kLines) {
+        std::string a;
+        if (op.dtr >= 0) a += std::string("dtr ") + (op.dtr ? "on" : "off");
+        if (op.rts >= 0) a += std::string(a.empty() ? "" : " ") + "rts " + (op.rts ? "on" : "off");
+        asked_.push_back(a + (ok ? "" : " (failed)"));
+    }
+    if (!ok) {
+        const char* what = op.kind == kConfig ? "Cannot set " : op.kind == kBreak ? "Cannot send a break on " : "Cannot set DTR and RTS on ";
+        news_.push_back({what + (op.kind == kConfig ? serial_text(cfg) + " on " : std::string()) + shown_ + ": " + err, 1});
+    } else if (!op.say.empty()) {
+        news_.push_back({op.say, 0});
+    }
+}
+
+void SerialTab::opened_at(const std::string& path) {
+    if (!lines_set_) dtr_ = rts_ = 1;
+    device_ = path;
+    shown_ = port_name(path);
+    if ((state_ == kGone || state_ == kReleased) && !events_.empty() && events_.back().kind == kGap) {
+        Event& e = events_.back();
+        e.back = wall_ns();
+        status_end(gap_text(e));
+        log_line(gap_text(e), e.back);
+    } else {
+        status_end({});
+    }
+    state_ = kOpen;
+}
+
+std::string SerialTab::waiting_text(const std::string& why, u8 state) const {
+    const std::string waiting = !why.empty() ? why + ", trying again" : "waiting for " + (id_.serial.empty() ? shown_ : id_.serial);
+    if (state == kOpening) return "[" + waiting + "]";
+    if (!events_.empty() && events_.back().kind == kGap) return gap_text(events_.back(), waiting);
+    return {};
 }
 
 int SerialTab::wait_ms(int most) {
@@ -549,6 +569,103 @@ int SerialTab::wait_ms(int most) {
     if (ops_.empty()) return most;
     const u64 now = now_ns(), due = ops_.front().due;
     return due <= now ? 0 : static_cast<int>(std::min<u64>((due - now) / 1'000'000ull + 1, static_cast<u64>(most)));
+}
+
+// ---------------------------------------------------------------- a port on another machine
+
+void SerialTab::far_id(const SerialPortId& found) {
+    std::lock_guard lock(mu_);
+    if (id_.serial.empty() && !found.serial.empty()) {
+        id_.serial = found.serial;
+        id_.vid = found.vid, id_.pid = found.pid;
+        id_.iface = found.iface;
+        if (id_.name.empty()) id_.name = found.name;
+    }
+    identified_ = true;
+}
+
+void SerialTab::far_open(const std::string& path) {
+    {
+        std::lock_guard lock(mu_);
+        // (DTR and RTS set while it was not open: set now, as a port here is
+        // set as it opens; what the pump set before, it sets again itself.)
+        if (lines_set_) ops_.push_front({now_ns(), kLines, dtr_, rts_, {}, true});
+        opened_at(path);
+        far_shown_.clear();
+    }
+    poke();
+    if (told) told();
+}
+
+void SerialTab::far_wait(const std::string& why) {
+    std::string say;
+    {
+        std::lock_guard lock(mu_);
+        say = waiting_text(why, state_);
+    }
+    show_waiting(say);
+}
+
+void SerialTab::waiting(const std::string& text) {
+    std::string say;
+    {
+        std::lock_guard lock(mu_);
+        if (state_ == kOpening) say = "[" + text + "]";
+        else if (state_ != kOpen && !events_.empty() && events_.back().kind == kGap) say = gap_text(events_.back(), text);
+    }
+    show_waiting(say);
+}
+
+void SerialTab::show_waiting(const std::string& say) {
+    {
+        std::lock_guard lock(mu_);
+        if (say.empty() || say == far_shown_) return;
+        far_shown_ = say;
+        status(say);
+    }
+    if (told) told();
+}
+
+std::string SerialTab::far_ops() {
+    std::lock_guard lock(mu_);
+    std::string out;
+    const u64 now = now_ns();
+    for (; !ops_.empty(); ops_.pop_front()) {
+        Op& op = ops_.front();
+        const u32 n = op.quiet ? 0 : next_op_++;
+        const u32 after = op.due > now ? static_cast<u32>((op.due - now) / 1'000'000ull) : 0;
+        if (op.kind == kConfig) out += pump_config(n, after, cfg_);
+        else if (op.kind == kBreak) out += pump_break(n, after);
+        else out += pump_lines(n, after, op.dtr, op.rts);
+        sent_.insert_or_assign(n, std::move(op));
+    }
+    return out;
+}
+
+void SerialTab::far_done(u32 n, bool ok, const std::string& err) {
+    {
+        std::lock_guard lock(mu_);
+        const auto it = sent_.find(n);
+        if (it == sent_.end()) return;
+        const Op op = std::move(it->second);
+        sent_.erase(it);
+        done_at(op, ok, err, cfg_);
+    }
+    if (told) told();
+}
+
+void SerialTab::far_lost() {
+    std::lock_guard lock(mu_);
+    sent_.clear();  // (what a pump that has ended was asked will not be answered)
+    ops_.clear();
+}
+
+void SerialTab::tell(const std::string& text, int level) {
+    {
+        std::lock_guard lock(mu_);
+        news_.push_back({text, level});
+    }
+    if (told) told();
 }
 
 // ---------------------------------------------------------------- what came, kept

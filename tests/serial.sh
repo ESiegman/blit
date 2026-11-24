@@ -74,15 +74,16 @@ check() {
 # run SCRIPT: blit with the device started afresh; the last line it printed,
 # the folder written @, times as HH:MM:SS.mmm and spans as N s. In the
 # script, "fake:WORDS" tells the device WORDS (a line to its fifo). (size,
-# init, path and lines, set before it: the window, init.lua and PATH of one
-# run, and how many of its last lines to take, joined by " ~ ".)
+# init, path, lines, work and level, set before it: the window, init.lua
+# and PATH of one run, how many of its last lines to take, joined by " ~ ",
+# the folder it works in, and the level the agent there is taken to have.)
 port="$DEV/ttyACM9"
 run() {
     start_fake
     script=$(printf '%s' "$1" | sed -e "s#fake:\([^;]*\)#lua:local f=io.open('$CTL','w') f:write('\1\\\\n') f:close()#g")
-    got=$(BLIT_INIT="${init:-$dir/init.lua}" PATH="${path:-$PATH}" "$blit" --offscreen "${size:-1200x1400}" --shot "$dir/shot.bmp" --script "workdir:$P;frame;$script" 2>&1 >/dev/null |
+    got=$(BLIT_INIT="${init:-$dir/init.lua}" PATH="${path:-$PATH}" BLIT_AGENT_LEVEL="${level:-}" "$blit" --offscreen "${size:-1200x1400}" --shot "$dir/shot.bmp" --script "workdir:${work:-$P};frame;$script" 2>&1 >/dev/null |
         sed -E -e "s#$dir#@#g" -e 's/[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}/HH:MM:SS.mmm/g' -e 's/[0-9]+\.[0-9] s/N s/g' | tail -n "${lines:-1}" | awk 'NR > 1 { printf " ~ " } { printf "%s", $0 }')
-    size= init= path= lines=
+    size= init= path= lines= work= level=
 }
 # What the device has been sent, a byte a word (od -c's way: \r, 001).
 heard() { got=$(od -An -c "$HEARD" 2>/dev/null | tr -s ' \n' ' ' | sed -e 's/^ //' -e 's/ $//'); }
@@ -242,6 +243,75 @@ check "a line that cannot be set: said" "blit: Cannot set DTR and RTS on ttyACM9
 run "$open;command:Log the serial port to a file…;key:ctrl+u;text:$dir/board.log;key:Return;fake:ticks 2;termwait:tick 2;fake:hangup;serialstate:gone;command:Stop logging the serial port"
 got="$(sed -E -e 's/[0-9]{4}-[0-9]{2}-[0-9]{2} [0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}/DATE TIME/' -e 's/[0-9]{2}:[0-9]{2}:[0-9]{2}\.[0-9]{3}/HH:MM:SS.mmm/g' "$dir/board.log" | tr '\r\n' '<|')$got"
 check "a log: each line after its date and time, the gap's line too" "DATE TIME tick 1<|DATE TIME tick 2<|DATE TIME [gone at HH:MM:SS.mmm (hung up)]|blit: Logged to @/board.log"
+
+# ---------------------------------------------------------------- a port on another machine
+
+# The port on the far machine of an ssh project: blit's agent there opens it
+# (blit-agent --serial, src/pump.cpp), with tests/fake-ssh.sh standing in for
+# ssh (the "other machine" is this one, in a home of its own), and the same
+# device: the tab is as one here is.
+T="$dir/there"
+mkdir -p "$T" "$dir/run" && chmod 700 "$dir/run"
+export BLIT_SSH="$here/fake-ssh.sh" BLIT_FAKE_HOME="$T" BLIT_AGENT_RUN="$dir/run" BLIT_AGENT_IDLE=4
+agent="$T/.cache/blit/[b]lit-agent"
+trap 'stop_fake; pkill -9 -f "$agent" 2>/dev/null; rm -rf "$dir"' EXIT
+far="serial:ssh://box$port;frame;serialstate:open"
+R="ssh://box$P"
+
+run "$far;fake:ticks 3;termwait:tick 3;termdump"
+check "there: the device's lines on the tab" "tick 1|tick 2|tick 3 @3,0 11x74"
+run "$far;tabsdump"
+check "the tab names the port, the machine and its speed" "ttyACM9 on box 115200"
+printf 'a\377b\r' >"$P/ff.bin"
+run "$far;text:xy;key:Return;command:Send a file to the serial port…;text:ff.bin;key:Return;wait:500"
+heard
+check "typing and a file go to the board, a 0xFF byte as it is" 'x y \r a 377 b \r'
+run "$far;fake:ticks 2;termwait:tick 2;fake:hangup;serialstate:gone;fake:back ttyACM10;serialstate:open;fake:ticks 1;wait:300;termdump"
+check "hung up there and back at another path: found by its serial number, one line marking the gap" \
+    "tick 1|tick 2|[gone from HH:MM:SS.mmm to HH:MM:SS.mmm, N s (hung up)]|tick 1 @4,0 11x74"
+run "$far;command:Reset the board through DTR/RTS (ESP32);wait:600;serialdump"
+check "ESP32's reset, its steps timed there (a pseudo-terminal has no such lines: said)" \
+    "ttyACM9 on box 115200: open ttyACM9 on box 115200 8N1 return CR dtr off rts off serial FAKE0001 kept 0 gaps 0 | dtr off rts off (failed) | rts on (failed) | rts off (failed)"
+run "$far;command:Change the port's speed and framing…;text:57600 7E1;key:Return;wait:300;serialdump"
+check "a speed and framing there" "ttyACM9 on box 57600 7E1: open ttyACM9 on box 57600 7E1 return CR dtr on rts on serial FAKE0001 kept 0 gaps 0"
+work=$R
+run "remotewait;$open;fake:tryopen $dir/try1;wait:300;serialrelease:FAKE0001;serialstate:released;fake:tryopen $dir/try2;wait:300;serialreclaim;serialstate:open;termdump"
+got="$(cat "$dir/try1" "$dir/try2" | tr '\n' ' ')$got"
+check "an ssh project's board: let go of there for a flash tool, and given back" "busy opened [released for flashing from HH:MM:SS.mmm to HH:MM:SS.mmm, N s] @1,0 11x74"
+work=$R
+run "remotewait;$open;serialrelease:$port;serialstate:released;serialreclaim;serialstate:open;serialrelease:OTHER0002;wait:200;tabsdump"
+check "by its port there too; another board's flash leaves it alone" "ttyACM9 on box 115200"
+work=$R
+run "remotewait;command:Open a serial port…;serialwait;key:Down;key:Return;serialstate:open;serialrelease:FAKE0001;wait:300;tabsdump"
+check "a port here is not the board of a project there" "ttyACM9 115200"
+run "$far;serialrelease:FAKE0001;wait:300;tabsdump"
+check "nor one there the board of a project here" "ttyACM9 on box 115200"
+work=$R
+run "remotewait;command:Open a serial port…;serialwait;finddump"
+check "the picker of an ssh project: that machine's ports first, then this one's" \
+    "pick [] 2 : >ttyACM9  Pico SDK USB serial (RP2040) (Pico)  FAKE0001  on box ttyACM9  Pico SDK USB serial (RP2040) (Pico)  FAKE0001"
+work=$R
+run "remotewait;command:Open a serial port…;serialwait;key:Return;serialstate:open;fake:ticks 1;termwait:tick 1;tabsdump"
+check "chosen: opened there" "ttyACM9 on box 115200"
+mkdir -p "$P/.blit"
+printf '{"configurations": [{"name": "fw", "program": "build/fw.elf", "board": {"probe": {"kind": "stlink", "serial": "FAKE0001", "usb": "0483:374e"}, "serial": {"port": "%s", "baud": 230400}}}]}\n' "$port" >"$P/.blit/run.json"
+# (boarddump: once the folder's run configurations there have been read.)
+run "folder:$R;remotewait;frame;boarddump;command:Open the board's serial monitor;serialstate:open;tabsdump"
+check "an ssh project's board monitor: its port there, at its speed" "ttyACM9 on box 230400"
+rm -rf "$P/.blit"
+run "$far;fake:ticks 1;termwait:tick 1;lua:os.execute('pkill -9 -f \"$agent.*--attach\"');remotelost;fake:tryopen $dir/try3;remoteback;serialstate:open;fake:ticks 1;wait:300;termdump"
+got="$(cat "$dir/try3" | tr '\n' ' ')$got"
+check "the connection cut: the port let go of there, opened again once it is back" \
+    "opened tick 1|[gone from HH:MM:SS.mmm to HH:MM:SS.mmm, N s (connection to box lost)]|tick 1 @3,0 11x74"
+run "$far;fake:ticks 1;termwait:tick 1;quit"
+printf 'tryopen %s\n' "$dir/try4" >"$CTL"
+sleep 0.5
+got=$(cat "$dir/try4" 2>/dev/null)
+check "blit quit: the port let go of there" "opened"
+level=5
+run "serial:ssh://box$port;frame;wait:1500;termdump"
+check "an agent from before the pumps: said" "[blit's agent on box is too old to open a serial port there] @0,60 11x74"
+pkill -9 -f "$agent" 2>/dev/null
 
 # ---------------------------------------------------------------- crash dumps, decoded in place
 

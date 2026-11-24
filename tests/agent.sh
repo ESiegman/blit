@@ -138,6 +138,12 @@ run "remotewait;key:ctrl+\`;frame;termwait:\$;${first}quit;asked" "$R/notes.txt"
 got="$got | $(ends_within 1)"
 check "quit, nothing working: nothing asked, and the agent ends at once" 'nothing asked | gone'
 settle
+# A serial port there (blit-agent --serial, its pump: not kept, and not
+# work): quitting asks nothing, and the agent and the pump end at once.
+run "remotewait;serial:ssh://box$dir/no-port;frame;wait:1000;lua:os.execute('pgrep -f \"$agent.*--serial\" > $dir/k8');quit;asked" "$R/notes.txt"
+got="$got | $( [ -s "$dir/k8" ] && echo pumping || echo no pump) | $(ends_within 1) | $(pgrep -f "$agent.*--serial" >/dev/null && echo pump left || echo pump gone)"
+check "quit with a serial tab there: nothing asked, the agent and its pump end at once" 'nothing asked | pumping | gone | pump gone'
+settle
 # Quitting with a job: asked; kept, it runs on, and the agent ends after it.
 run "remotewait;key:ctrl+\`;frame;termwait:\$;${first}text:sleep 2 && touch $dir/k7;key:Return;wait:700;answer:keep;quit;asked" "$R/notes.txt"
 got="$got | $(serving) | $(ends_within 8) | $( [ -e "$dir/k7" ] && echo it ran to its end || echo it was ended)"

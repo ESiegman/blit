@@ -1532,10 +1532,9 @@ void App::run_script(const char* script) {
             system_notify_wait();
         } else if (verb == "tickdump") {  // how long blit would sleep before it draws again for a long task's time (-1: it would not)
             std::fprintf(stderr, "%d\n", build_wait_ms());
-        } else if (verb == "serial") {  // serial:PATH[,BAUD], a serial tab on that port (as "Open a serial port…" with a path typed)
+        } else if (verb == "serial") {  // serial:PATH[,BAUD], a serial tab on that port (as "Open a serial port…" with a path typed: ssh://host/dev/... there)
             const size_t comma = arg.find(',');
-            SerialPortId id;
-            id.path = arg.substr(0, comma);
+            const SerialPortId id = serial_port_at(arg.substr(0, comma));
             SerialConfig cfg;
             cfg.baud = comma == std::string::npos ? cfg_.serial_baud : static_cast<u32>(std::atol(arg.c_str() + comma + 1));
             SerialReturn ret = SerialReturn::kCR;

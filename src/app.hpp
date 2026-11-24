@@ -1248,6 +1248,7 @@ private:
     void serial_sync();
     void serial_settle();  // (the tests: the listing waited for)
     void serial_board();
+    SerialPortId serial_port_at(const std::string& path);  // a path typed: ssh://host/dev/... there, a bare one on the project's machine
     // A serial tab opened, its crash dumps decoded with the ELF and patterns
     // of `board` (the run configuration whose board's monitor it is), else
     // of the one whose board's port it is, else with the newest ELF.

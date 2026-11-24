@@ -727,17 +727,22 @@ const BuildTask* App::board_config() {
 }
 
 // (The Run button's first, if its board is on that port; the port as
-// SerialTab::is takes it: the USB serial number, or the device a path is.)
+// SerialTab::is takes it: the USB serial number, or the device a path is,
+// on the project's machine.)
 const BuildTask* App::board_config_on(const SerialPortId& port) {
     BuildUi& u = *buildui_;
     const std::string root = build_root();
     if ((!u.looked || u.root != root) && !is_remote(root)) build_settle();
     if (u.root != root) return nullptr;
+    std::string host, there;
+    split_remote(root, &host, &there);
+    if (port.host != host) return nullptr;
     std::string dev;
     auto on = [&](const Board& b) {
         if (!port.serial.empty() && b.probe == port.serial) return true;
         if (b.port.empty() || port.path.empty()) return false;
         if (b.port == port.path) return true;
+        if (!host.empty()) return false;  // (a path there is not one to look at here)
         if (dev.empty()) dev = serial_device(port.path);
         return serial_device(b.port) == dev;
     };

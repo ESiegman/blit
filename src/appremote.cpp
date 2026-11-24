@@ -17,6 +17,7 @@
 #include "notebook.hpp"
 #include "qos.hpp"
 #include "remote.hpp"
+#include "serialtab.hpp"
 
 namespace blit {
 
@@ -726,6 +727,8 @@ void App::remote_sync() {
         if (const std::string* root = panel_root()) add(*root);
         for (const std::unique_ptr<Pane>& p : panes_)
             for (const std::shared_ptr<Doc>& d : p->docs) add(d->term ? term_folder(*d->term) : d->ed.path);
+        for (const auto& [d, s] : term_serials())  // (a serial tab on a port there: its pump runs on the connection)
+            if (const std::string h = s->id().host; !h.empty()) add(remote_prefix(h) + "/");
         Remote::set_wanted(hosts);
     }
     // A connection that has come up (again): the files, git and the language
