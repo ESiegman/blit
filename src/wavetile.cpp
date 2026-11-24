@@ -106,12 +106,20 @@ int level(const Lane& lane, u64 i, u32 bit) { return i == ~0ull ? -1 : static_ca
 
 }  // namespace
 
-void wave_paint_tile(const WaveTileJob& j, const DiagramFont* font, RasterImage* out, u64* upto, WaveTileStats* st) {
+void wave_paint_tile(const WaveTileJob& j, const DiagramFont* font, RasterImage* out, u64* upto, WaveTileStats* st, bool* again) {
     WaveTileStats dummy;
     if (!st) st = &dummy;
+    bool again_dummy = false;
+    if (!again) again = &again_dummy;
+    *again = false;
     const Wave& w = *j.wave;
     const WaveLooks& lk = *j.looks;
     *upto = w.done ? ~0ull : w.reached;
+    // A time's place in this tile as a label is placed by it: t / tpp of
+    // the whole run, less the tile's start, the same in every tile (the
+    // columns' own place, zoomed out, is within a pixel of it).
+    const double tile_x0 = static_cast<double>(j.k) * kWaveTile;
+    auto label_x = [&](u64 t) { return static_cast<double>(t) / j.tpp - tile_x0; };
     // Nothing past where the dump has been read, or past its end.
     const u64 limit_t = w.done ? w.end : w.reached;
     // (Read whole: the column its last time is in, with any change there, too.)
@@ -291,15 +299,47 @@ void wave_paint_tile(const WaveTileJob& j, const DiagramFont* font, RasterImage*
                 xfill.begin(true);
                 xfill.add(fx0, fmid), xfill.add(fx0 + s0, fhi), xfill.add(fx1 - s1, fhi), xfill.add(fx1, fmid), xfill.add(fx1 - s1, flo), xfill.add(fx0 + s0, flo);
             }
-            // Its value, where it has room.
-            const float room = static_cast<float>(u.x1 - s1 - u.x0 - s0) - 4 * lk.scale;
-            if (!font || !font->ok() || room < size * 0.6f) continue;
+            // Its value, where it has room: once in the run, whatever tiles
+            // it crosses (each drawing its part), placed by the run alone so
+            // that tiles painted apart and kept while panning agree: centred
+            // in a run narrower than kWaveLabelEvery points, and in a wider
+            // one at the middle of each whole stretch of that from its start.
+            // A run in this tile alone is placed by its columns; one that
+            // goes on past an edge by its times. The last run of a dump still
+            // being read has no end yet: labelled only in its stretches read
+            // whole, and the tile painted again as more comes while its
+            // labels may still change.
+            if (!font || !font->ok()) continue;
+            const double every = kWaveLabelEvery * std::max(1.0f, lk.scale);
+            const bool inside = u.x0 > 0 && u.x1 < std::min(kWaveTile, limit);
+            double xs = u.x0, xe = u.x1, sa = s0, sb = s1;  // (the run, and how far its slants reach in)
+            bool open = false;
+            if (!inside) {
+                xs = label_x(lane.time(u.v));
+                open = u.v + 1 >= lane.size() && !w.done;
+                xe = label_x(u.v + 1 < lane.size() ? lane.time(u.v + 1) : limit_t);
+                sa = sb = slant;
+                if (open && xe < kWaveTile + every) *again = true;
+            }
+            const double run_w = xe - xs, margin = 4.0 * lk.scale;
+            if (run_w < every && (open || run_w - sa - sb - margin < size * 0.6)) continue;
             wave_value(lane, u.v, row.fmt, &text);
             if (text.empty()) continue;
-            const float tw = font->width(text, size);
-            if (tw > room) continue;
-            font->outline(text, (fx0 + s0 + fx1 - s1 - tw) / 2, base, size, false, &labels);
-            ++st->labels;
+            const double tw = font->width(text, size);
+            auto put = [&](double cx) {
+                if (cx + tw / 2 <= 0 || cx - tw / 2 >= kWaveTile) return;  // (another tile's)
+                font->outline(text, static_cast<float>(cx - tw / 2), base, size, false, &labels);
+                ++st->labels;
+            };
+            if (run_w < every) {
+                if (tw <= run_w - sa - sb - margin) put((xs + sa + xe - sb) / 2);
+                continue;
+            }
+            if (tw > every - 2.0 * slant - margin) continue;
+            const double whole = std::floor(run_w / every);  // (the stretches of it read whole)
+            const double first = std::max(0.0, std::floor((-tw - xs) / every));
+            const double last = std::min(whole - 1, std::floor((kWaveTile + tw - xs) / every));
+            for (double n = first; n <= last; ++n) put(xs + (n + 0.5) * every);
         }
         if (!xfill.pts.empty()) {
             float a[4] = {lk.x[0], lk.x[1], lk.x[2], lk.x[3] * 0.3f};
@@ -369,7 +409,7 @@ void WavePainter::run(std::stop_token st) {
         Done d;
         {
             std::shared_lock lock(job.wave->mu);
-            wave_paint_tile(job, &font, &img, &d.upto, &d.stats);
+            wave_paint_tile(job, &font, &img, &d.upto, &d.stats, &d.again);
         }
         d.w = img.w(), d.h = img.h();
         d.rgba = std::move(img.pixels());

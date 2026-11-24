@@ -354,7 +354,26 @@ filled 5 1000000 0 && got=filled || got="room between"
 check "a busy band: tb.clk zoomed out" "filled"
 got=$(rgb_is "$(pix 8 1500000 0 0)" bg && echo bg || echo "not bg")
 check "beside it, tb.rst low: nothing in the middle of the row" "bg"
-# A row given a colour: tb.rst's high line in the errors' colour (red, in
+# A bus's value written once in its run, though the run crosses from one
+# tile into the next (tb.temp's NaN, \$dumpoff's, 72 to 97 ns, zoomed in:
+# a tile ends at 88.7 ns), each tile drawing its part of the one label;
+# the same once the view has panned away and back (tiles kept, others
+# painted meanwhile). The text's pixels along the middle of the row, from
+# the run's start: where the first and last are (each tile wrote its own,
+# 140 pixels apart, before).
+text_span() {  # text_span KEYS: the first and last pixels of text along tb.temp's NaN run, after KEYS
+    rm -rf "$W/.blit"
+    "$blit" --offscreen 1600x900 --shot "$dir/shot.bmp" --script "frame;wavewait;key:=;key:=;key:=;key:=;key:=;$1wavewait;wavedump:at:11,72000,8,0,270" "$W/icarus.vcd" 2>&1 >/dev/null |
+        grep '^at ' | sed -e 's/^at [-0-9,]* | //' | awk 'BEGIN { RS = " [|] " } NF == 3 && $1 > 110 && ($1 - $2) ^ 2 < 625 && ($2 - $3) ^ 2 < 625 { if (first == "") first = NR; last = NR } END { print first, last }'
+}
+set -- $(text_span "key:l;")
+[ $# = 2 ] && [ $(($2 - $1)) -lt 60 ] && got="once, $1 to $2" || got="not once: $*"
+once=$got
+check "a run across two tiles: its value written once" "once, $1 to $2"
+set -- $(text_span "key:l;key:l;key:l;wavewait;key:h;key:h;")
+[ $# = 2 ] && [ $(($2 - $1)) -lt 60 ] && got="once, $1 to $2" || got="not once: $*"
+check "(panned away and back: the same)" "$once"
+
 # blit-dark) where it was the signal's own (green); still red when the
 # dump is opened again; green again once its colour is none.
 red() { set -- $1; [ $# = 3 ] && [ "$1" -gt $(($2 + 40)) ] && [ "$1" -gt $(($3 + 20)) ]; }

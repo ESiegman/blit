@@ -8,7 +8,9 @@
 // column with no change is the value before it, one an edge, two or more a
 // busy band (hatched). A bit is a line high or low, z a dashed line in the
 // middle, x a filled band in its own colour; a bus is a run of hexagons
-// with its value written in each that has room for it; an event a tick.
+// with its value written once in each that has room for it (where it
+// crosses tiles, each drawing its part), and again along a long one; an
+// event a tick.
 // A row given a colour draws its lines, hexagons and ticks in it (x and z
 // keep theirs).
 // Zoomed in past a time unit a pixel, a column is a unit, so edges fall
@@ -32,6 +34,7 @@ class DiagramFont;
 
 inline constexpr int kWaveTile = 1024;  // a tile's width, device pixels
 inline constexpr u32 kWaveTileRows = 16;  // rows a tile holds, at most
+inline constexpr double kWaveLabelEvery = 512;  // a bus's value is written once in a run narrower than this (points), every this in a wider one
 
 // How tiles look: colours (rgba, 0..1), the font the values are written in
 // and its size, and the display's density. `key` tells one set from another.
@@ -88,7 +91,10 @@ struct WaveTileStats {
 // A tile painted into `out` (kWaveTile by rows * row_h, clear where
 // nothing is). The caller holds the wave's lock shared. `upto`: the time
 // the dump was read up to (~0: all of it), past which nothing is drawn.
-void wave_paint_tile(const WaveTileJob& j, const DiagramFont* font, RasterImage* out, u64* upto, WaveTileStats* st = nullptr);
+// `again`: it is to be painted again once more is read, though the dump
+// is read past its end (the labels of a run whose end is not read yet may
+// still change in it).
+void wave_paint_tile(const WaveTileJob& j, const DiagramFont* font, RasterImage* out, u64* upto, WaveTileStats* st = nullptr, bool* again = nullptr);
 
 // Workers painting tiles: two to four of them, asked for a list of tiles
 // (the most wanted first) that replaces the last; `wake` is called (on a
@@ -100,6 +106,7 @@ public:
         std::vector<u8> rgba;
         int w = 0, h = 0;
         u64 upto = ~0ull;
+        bool again = false;  // (wave_paint_tile)
         u64 ns = 0;  // painting it took
         WaveTileStats stats;
     };

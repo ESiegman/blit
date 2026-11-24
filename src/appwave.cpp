@@ -258,6 +258,7 @@ struct WaveView {
         double tpp = 1, ta = 0, tb = 0;  // its zoom, and the times at its left and right edges
         i64 k = 0;
         u64 t1 = 0, upto = ~0ull;
+        bool again = false;  // (painted again as more is read, though read past its end: wave_paint_tile)
         u32 image = 0;
         int w = 0, h = 0;
         u64 used = 0;
@@ -900,6 +901,7 @@ void App::wave_sync() {
             tile.ta = t.job.tpp >= 1 ? static_cast<double>(t.job.t0) : static_cast<double>(t.job.k) * kWaveTile * t.job.tpp;
             tile.tb = t.job.tpp >= 1 ? static_cast<double>(t.job.t1) : static_cast<double>(t.job.k + 1) * kWaveTile * t.job.tpp;
             tile.upto = t.upto;
+            tile.again = t.again;
             tile.image = id;
             tile.w = t.w, tile.h = t.h;
             tile.used = v.frames;
@@ -1187,7 +1189,7 @@ void App::wave_layout(FrameDesc& fd) {
                     WaveView::Tile& t = it->second;
                     t.used = v.frames;
                     // (Painted while the dump was being read: again, once more of it has come.)
-                    const bool stale = t.upto != ~0ull && t.upto < t.t1 && (progressed_done || v.now.reached > t.upto);
+                    const bool stale = t.upto != ~0ull && (t.upto < t.t1 || t.again) && (progressed_done || v.now.reached > t.upto);
                     if (stale) (on_show ? want : later).push_back(job());
                     if (on_show) {
                         picture(t.image, sx0, by0, sx0 + t.w, by0 + t.h, clip);

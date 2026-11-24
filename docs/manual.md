@@ -4829,8 +4829,10 @@ colour. `u` undoes it, as other changes to the rows.
 
 **The waves.** A bit is a line high or low; z a dashed line through the
 middle (in the theme's information colour); x a band filled in the
-warning colour. A bus is a run of hexagons, each value written in its own
-when it has room. An event is a tick. Where two or more changes fall in
+warning colour. A bus is a run of hexagons, each value written once in
+its own, in the middle, when it has room; one wider than 512 points has
+it again every 512 points from its start, where it stays as the view
+pans. An event is a tick. Where two or more changes fall in
 one pixel, the row is a hatched band across its height (a fast clock seen
 from far off): the view is asked about once per pixel column, so drawing
 costs the same however many changes are under it. The **cursor** is a line
