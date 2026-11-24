@@ -2679,6 +2679,11 @@ and F5 again (or Shift+F5) calls it off. Stopping never waits for the
 debugger to end. Build what is debugged with `-g` (and `-O0` to step
 through it as written).
 
+A run configuration with a [board](#the-board-probe-and-port) is
+debugged on the board, through its preset: F5 builds it, flashes it,
+resets it and runs to `main`, and *Attach to the running board* looks at
+it as it is ([Debugging the board](#debugging-the-board)).
+
 ## Building
 
 The side panel's **Build** tab (Cmd+Shift+U) lists what the working
@@ -3251,7 +3256,39 @@ the session starts:
 
 (gdb's `attach` connects to its `target` as `target remote` would. With
 lldb-dap, the same board is `"arguments": { "gdb-remote-port": 3333 }`,
-or `"attachCommands": ["gdb-remote 3333"]`.)
+or `"attachCommands": ["gdb-remote 3333"]`. A configuration with a
+`board` needs none of this: its [preset](#debugging-the-board) says it.)
+
+**Environments.** Sets of variables kept once, beside the
+configurations, and laid over whichever configuration runs, so that
+validation, a HUD or a trace is a choice rather than a copy of each
+configuration:
+
+```json
+{ "environments": {
+    "validation": { "VK_INSTANCE_LAYERS": "VK_LAYER_KHRONOS_validation",
+                    "VK_LAYER_ENABLES": "VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT" },
+    "hud": { "MTL_HUD_ENABLED": "1" },
+    "frames": { "capture": "metal" },
+    "renderdoc": { "capture": "renderdoc" } },
+  "configurations": [ ... ] }
+```
+
+The Build tab's **Environment** row, under Run, chooses one (Enter: none,
+then each in turn). Its variables go after the configuration's own `env`
+(one of the same name takes its place, as `env` would) for what the Run
+button runs, Debug, Profile and the tests. Two kinds are capture presets:
+
+- `"capture": "metal"`: the program runs with `MTL_CAPTURE_ENABLED=1`, and
+  *Capture a frame* (Command search) takes one of it, as it runs from the
+  Run button, with Xcode's `gpucapture` (`gpucapture start -p PID -o
+  FILE`), into `.blit/captures/NAME-DATE-TIME.gputrace`, and says where.
+  The program must be using a Metal device; on a Mac only.
+- `"capture": "renderdoc"`: the Run button runs the program through
+  RenderDoc (`renderdoccmd capture -w -c .blit/captures/NAME program
+  args`), and the frames you capture in it (RenderDoc's F12 or Print
+  Screen in the program) are written there as `NAME_frameN.rdc`. Where
+  `renderdoccmd` is not installed, the run says so.
 
 ### The board: probe and port
 
@@ -3484,6 +3521,83 @@ and the summary is `Flashed in 54.0 s, verified` (the time
   "flash": {"tool": "vivado", "board": "basys3", "cfgmem": "mx25l3273f-spi-x1_x2_x4"}
 }
 ```
+
+### Debugging the board
+
+F5 on a run configuration with a board (one whose `debug` names no
+debugger of its own) debugs the board through its **preset**: the board's
+`debug`, else the one its probe's kind says (probe-rs for an ST-LINK or a
+CMSIS-DAP probe, `jlink` for a J-Link, `esp` for Espressif's
+USB-Serial/JTAG, `blackmagic` for a Black Magic Probe). It builds the
+configuration (its `build`, as Run does), flashes the board as [Flashing
+the board](#flashing-the-board) does (only if the image changed: else the
+row says `Not flashed: unchanged since the last flash`), then starts the
+preset's gdb server and the cross gdb, resets and halts the board, and
+runs to `main` (`app_main` on an ESP32), where it stops. The Debug tab
+says *Flashing the board…* meanwhile, and a flash that fails starts
+nothing. After a flash the probe is waited for, up to 10 s, until it is
+on the USB again (an ESP32's USB-Serial/JTAG comes back only once the
+program flashed has started). A board with no flash tool is loaded by gdb itself (`load`,
+after the reset). From there it is a debugging session as any other:
+breakpoints, steps, the call stack, the variables and the registers, the
+debug console (where `monitor ...` reaches the gdb server). An RTOS's
+tasks that the gdb server lists (OpenOCD's FreeRTOS support, on by default
+in Espressif's) are the Debug tab's threads. Restart builds, flashes (if
+changed), resets and runs to `main` again, the breakpoints kept (the last
+session's gdb server is gone before the next starts). Shift+F5 lets the
+board go, and it runs on; the gdb server ends with the session: none is
+left behind.
+
+*Attach to the running board* (Command search, or **Attach to the board**
+in the Debug tab) connects to the board as it is: nothing built, flashed
+or reset; it stops where it is, to look at a hung program, and Shift+F5
+lets it run on. (On an ESP32, Espressif's OpenOCD resets the chip as gdb
+connects when the program has turned on memory protection, as ESP-IDF's
+do, unless it is told the flash's size is 0; attaching tells it so, which
+leaves only the core's own breakpoints, two on an ESP32-S3.)
+
+```json
+"board": {
+  "probe": { "kind": "stlink", "serial": "004D00283133510F37363734", "usb": "0483:374e" },
+  "chip": "STM32F411CEUx",
+  "elf": "build/fw.elf",
+  "debug": { "preset": "openocd", "gdb": "arm-none-eabi-gdb", "port": 3333, "main": "main" }
+}
+```
+
+| Preset | What it starts |
+|---|---|
+| `probe-rs` | `probe-rs gdb --chip CHIP --probe VID:PID:SERIAL --non-interactive --gdb-connection-string 127.0.0.1:1337`, gdb attached to it; reset with `monitor reset halt` |
+| `openocd` | started by gdb itself through a pipe (`target remote \| openocd -c 'gdb_port pipe' -c 'tcl_port disabled' -c 'telnet_port disabled' -f INTERFACE -c 'adapter serial SERIAL' -f TARGET`, and the target resumed when gdb lets go), the same scripts as flashing takes (the flash object's `interface` and `target`, else the probe's and the chip's) |
+| `jlink` | `JLinkGDBServerCLExe -device CHIP -if SWD -speed 4000 -port 2331 -swoport 2332 -telnetport 2333 -select USB=SERIAL -singlerun -nogui`; reset with `monitor reset` |
+| `esp` | Espressif's OpenOCD (`openocd-esp32`, else `openocd`) through a pipe, as `openocd`, with `interface/esp_usb_jtag.cfg` and `target/esp32s3.cfg`; Espressif's gdb for the chip (`xtensa-esp32s3-elf-gdb`, `riscv32-esp-elf-gdb`); two hardware watchpoints; to `app_main` |
+| `blackmagic` | no server: the probe's own GDB port (`probe.gdb`, which the probe picker writes) as `-iex 'target extended-remote PORT' -iex 'monitor swd_scan'` on gdb's command line, then `attach 1`; loaded by gdb |
+| `pyocd` | `pyocd gdbserver -t CHIP -u SERIAL -p 3333 -T 3334` (the chip as pyOCD's target type, in lower case) |
+| `qemu` | QEMU started by gdb through a pipe: `qemu-system-arm -M MACHINE -nographic -monitor none -serial none -kernel ELF -S -gdb stdio` (`qemu-system-riscv32` for a RISC-V ELF); ended with the session. Attaching: to a QEMU already running with its gdb port (`-s`, or `-gdb tcp::PORT`) |
+| `renode` | `renode --disable-gui SCRIPT -e 'machine StartGdbServer 3333'`, or with no script `-e 'mach create' -e 'machine LoadPlatformDescription @PLATFORM' -e 'sysbus LoadELF @ELF'`; `monitor start`; ended with the session |
+
+The `debug` object's other members: `gdb`, the gdb to use (else the one
+for the ELF's machine: `arm-none-eabi-gdb` or `gdb-multiarch` for Arm,
+Espressif's for the chip for Xtensa, `riscv32-esp-elf-gdb`,
+`riscv64-unknown-elf-gdb`, `riscv-none-elf-gdb`, `riscv64-elf-gdb` or
+`gdb-multiarch` for RISC-V; read from the ELF's header, else guessed from
+the chip); `port`, the gdb server's (the defaults above); `machine`,
+QEMU's machine (`mps2-an385`, `netduinoplus2`, `olimex-stm32-h405`, ...)
+or Renode's platform (a `.repl`), else the chip; `script`, Renode's
+`.resc`, which loads the ELF; and `main`, where F5 runs to. The run
+configuration's own `debug.arguments` and `debug.after`, where it has
+them, are laid over the preset's and run after its commands.
+
+The gdb must be 14 or later, built with Python (gdb's DAP is written in
+it): where it is not installed, too old, or built without Python, F5 says
+so with the machine (`arm-none-eabi-gdb is not installed on this Mac (nor
+gdb-multiarch)`, `arm-none-eabi-gdb on this Mac was built without
+Python, which gdb -i dap needs`: the Arm GNU Toolchain's own
+`arm-none-eabi-gdb` is one; its `arm-none-eabi-gdb-py`, or a package
+manager's `arm-none-eabi-gdb`, has Python), and the same for the gdb
+server. When the attach fails, what the server last said as an error
+follows gdb's words. In a project on another machine the gdb, the server
+and the probe are that machine's.
 
 ### Crash dumps decoded
 

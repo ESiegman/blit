@@ -26,7 +26,9 @@
 
 #include "app.hpp"
 #include "base64.hpp"
+#include "boarddebug.hpp"
 #include "dap.hpp"
+#include "flash.hpp"
 #include "fsio.hpp"
 #include "highlight.hpp"
 #include "look.hpp"
@@ -109,7 +111,17 @@ std::string debugger_missing(std::string_view errors, const std::string& remote)
         std::string_view names = errors.substr(at + kNoDebugger.size());
         names = names.substr(0, names.find('\n'));
         if (names == "lldb-dap gdb") return "No debugger: neither lldb-dap nor gdb is installed on " + machine_name(host);
-        return not_installed(names, host);
+        return board_missing(names, host);  // (a board's preset: "a|b", the first looked for and the others)
+    }
+    // (A gdb built without Python, which its DAP is written in: the Arm GNU
+    // Toolchain's arm-none-eabi-gdb is one; a board's preset says which.)
+    if (errors.find("Interpreter `dap' unrecognized") != std::string_view::npos) {
+        std::string gdb = "gdb";
+        if (const size_t at = errors.rfind("blit-debugger: gdb ("); at != std::string_view::npos) {
+            const std::string_view rest = errors.substr(at + 20);
+            gdb = std::string(rest.substr(0, rest.find(')')));
+        }
+        return gdb + " on " + machine_name(host) + " was built without Python, which gdb -i dap needs";
     }
     if (const std::string program = shell_not_found(errors); !program.empty()) return not_installed(program, host);
     return {};
@@ -119,6 +131,21 @@ std::string debugger_missing(std::string_view errors, const std::string& remote)
 // What native() says on the error stream when the debugger it starts is gdb
 // (which counts a breakpoint's hits from 0, where the others count from 1).
 constexpr std::string_view kGdbSays = "blit-debugger: gdb";
+
+// What a board's gdb server said last as an error, among what it and gdb
+// wrote as errors (OpenOCD's "Error: ..." lines, probe-rs's), as more of
+// why an attach failed: " (WORDS)", or "" when it said none.
+std::string server_said(std::string_view errors) {
+    std::string last;
+    for (size_t at = 0; at < errors.size();) {
+        const size_t nl = std::min(errors.find('\n', at), errors.size());
+        std::string_view line = errors.substr(at, nl - at);
+        at = nl + 1;
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' ')) line.remove_suffix(1);
+        if (line.starts_with("Error") || line.starts_with("error") || line.starts_with("ERROR") || line.find(" ERROR ") != std::string_view::npos) last = line;
+    }
+    return last.empty() ? std::string() : " (" + last + ")";
+}
 
 // Why an expression could not be evaluated, in a line: a debugger's
 // "error:" line, without where in the expression it was ("<user
@@ -430,6 +457,11 @@ struct DebugSession {
     std::string began, began_args;
     std::function<void()> again;
     bool can_restart = false, by_f5 = false;
+    // A board's (boarddebug.hpp): where F5 runs it to once it is attached
+    // (a temporary breakpoint there: main), and whether what it debugs is a
+    // simulator started for the session (ended with it, not let go).
+    bool board = false, simulator = false;
+    std::string run_to;
     // F5's: the program's environment given in the launch's arguments too,
     // the run configuration's own laid over them (`over`), its input and
     // output in a terminal tab (`terminal`), and the debugger's commands
@@ -488,6 +520,8 @@ struct App::DebugUi : DebugSession {
     std::string program, args, cwd;
     std::vector<std::string> env;  // ("NAME=value": a run configuration's, given the debugger and so the program)
     BuildTask::Debug conf;         // (and its "debug": the debugger, the request, the arguments laid over blit's...)
+    bool board_waiting = false;    // F5 on a board: its build and flash under way, the session after them
+    std::shared_ptr<const std::atomic<bool>> board_gone;  // the last board session's debugger (and its gdb server) let go of
     // Breakpoints: by file (its full path, ssh:// for another machine's), by
     // line (from 0), each with what it waits for, if anything.
     struct Break {
@@ -595,7 +629,7 @@ struct App::DebugUi : DebugSession {
     };
     std::vector<Watch> watches;
     // The panel: a row for each thing shown, and the one chosen.
-    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData, kInstr, kSession, kWaves, kException, kRestart, kBoard };
+    enum Act : u8 { kNone, kProgram, kArgs, kCwd, kStart, kContinue, kPause, kOver, kInto, kOut, kStop, kThread, kFrame, kVar, kWatch, kWatchAdd, kBreak, kFunction, kData, kInstr, kSession, kWaves, kException, kRestart, kBoard, kAttachBoard };
     // A row: a mark (a triangle, an arrow) before its text, in an ink of its
     // own; the text; something quieter after it; and on the right its key.
     struct Row {
@@ -1234,6 +1268,8 @@ bool App::debug_open(const std::string& near, const std::string& dir, bool pytho
     u.asking = 0;
     u.again = {};  // (what started it says how to start it again, and the rest of what F5 gives)
     u.can_restart = u.by_f5 = u.configured = u.terminal = false;
+    u.board = u.simulator = false;
+    u.run_to.clear();
     u.over.clear();
     u.after.clear();
     u.term_doc = 0;
@@ -1349,6 +1385,12 @@ void App::debug_start() {
     if (u.state == DebugUi::kStopped) return debug_command("continue");
     if (u.state == DebugUi::kStarting) return debug_end();  // (F5 again while it starts: called off)
     if (u.state != DebugUi::kIdle) return;
+    if (u.board_waiting && (flash_busy() || build_first_busy())) return;  // (a board's build and flash under way: the session follows them)
+    // (The folder's run configurations read first, a board's among them:
+    // here at once; on another machine, waited for only when nothing says
+    // what to debug yet, else F5 goes on as it was.)
+    if (const std::string root = build_root(); !root.empty() && !build_ready_for(root) && u.program.empty()) return build_when_ready([this] { debug_start(); });
+    if (debug_board_config()) return debug_board(false);
     if (u.program.empty()) {  // first, what to debug
         if (!panel_px()) panel_toggle();
         panel_show_debug();
@@ -1423,6 +1465,137 @@ void App::debug_launch() {
                                (python ? std::string(",\"type\":\"python\",\"request\":\"launch\",\"console\":") + (terminal ? "\"integratedTerminal\"" : "\"internalConsole\"") + ",\"justMyCode\":true" : "") +
                                "}";
     debug_begin("launch", launch);
+}
+
+// ---------------------------------------------------------------- a board
+
+// The run configuration F5 debugs as a board, through its preset
+// (boarddebug.hpp): the Run button's, when its board has a preset (its own
+// or its probe's) and its debug names no debugger of its own.
+const BuildTask* App::debug_board_config() {
+    const BuildTask* c = run_config();
+    if (!c || !c->board.set || !c->debug.adapter.empty() || board_preset(c->board).empty()) return nullptr;
+    return c;
+}
+
+// The board F5 (or attaching) debugs, and what its preset starts (`why`
+// says when it cannot): false when no run configuration has a board. The
+// ELF is the board's (from the folder), else what the configuration runs.
+bool App::debug_board_plan(bool attach, BuildTask* c, std::string* elf, BoardDebug* plan) {
+    const std::string root = build_root();
+    const BuildTask* found = attach ? board_config() : debug_board_config();
+    if (!found) return false;
+    *c = *found;
+    const Board& b = c->board;
+    *elf = b.elf.empty() ? c->program : b.elf[0] == '/' ? b.elf : root + "/" + b.elf;
+    std::string host, there;
+    const bool load = flash_tool_for(b).empty();  // (no tool flashes it: gdb's load)
+    *plan = board_debug(b, split_remote(*elf, &host, &there) ? there : *elf, attach, load);  // (as its machine has it)
+    return true;
+}
+
+// (The tests: what F5, or attaching, would start for the board.)
+std::string App::debug_board_dump(bool attach) {
+    BuildTask c;
+    std::string elf;
+    BoardDebug p;
+    if (!debug_board_plan(attach, &c, &elf, &p)) return "no board";
+    if (!p.why.empty()) return p.preset + ": " + p.why;
+    std::string after;
+    for (const std::string& a : p.after) after += (after.empty() ? "" : "; ") + a;
+    return p.preset + " | " + p.shown + " | after: " + after + (p.run_to.empty() ? std::string() : " | to " + p.run_to) + (p.flash ? " | flashed first" : "") +
+           (p.simulator ? " | ended with it" : "") + " | " + p.arguments;
+}
+
+// F5 on a board: built, flashed (by its flash tool, through "Flash the
+// board": only if its image changed), then the session: attached, reset
+// and halted, run to main. Attaching (`attach`): the running board as it
+// is, nothing built, flashed or reset.
+void App::debug_board(bool attach) {
+    DebugUi& u = *debugui_;
+    if (build_root().empty()) return notify("Open a folder first");
+    BuildTask c;
+    std::string elf;
+    BoardDebug plan;
+    if (!debug_board_plan(attach, &c, &elf, &plan)) return notify("No run configuration has a board");
+    if (!plan.why.empty()) {
+        if (u.state == DebugUi::kIdle) u.error = plan.why;
+        if (!panel_px()) panel_toggle();
+        panel_show_debug();
+        ++debug_gen_;
+        dirty_ = true;
+        return;
+    }
+    if (attach) return debug_board_begin(c, plan, elf, true);
+    const bool load = flash_tool_for(c.board).empty();
+    u.board_waiting = true;
+    u.error.clear();
+    if (!panel_px()) panel_toggle();
+    panel_show_debug();
+    auto go = [this, c, plan, elf](bool well) {
+        debugui_->board_waiting = false;
+        ++debug_gen_;
+        dirty_ = true;
+        if (well) debug_board_begin(c, plan, elf, false);
+    };
+    if (plan.flash && !load) flash_board(FlashMode::kFlash, false, go);
+    else build_first("Debug", [go] { go(true); });
+    ++debug_gen_;
+    dirty_ = true;
+}
+
+// The board's session: its preset's debugger started and attached, with
+// the configuration's own arguments laid over the preset's and its own
+// commands after the preset's.
+void App::debug_board_begin(const BuildTask& c, const BoardDebug& plan, const std::string& elf, bool attach) {
+    DebugUi& u = *debugui_;
+    if (u.state != DebugUi::kIdle) debug_park();  // (beside the session under way)
+    // The last board session's gdb server gone first (it may hold the probe,
+    // or the port): its debugger is let go of within a second (debug_end's
+    // grace, then a signal), so Restart waits that long at most.
+    for (const u64 until = now_ns() + 2'000'000'000ull; u.board_gone && !*u.board_gone && now_ns() < until;) SDL_Delay(5);
+    u.board_gone.reset();
+    const std::string root = build_root();
+    if (!debug_open(elf, c.cwd.empty() ? root : root + "/" + c.cwd, false, plan.adapter)) return;
+    u.name = c.name;
+    u.board = true;
+    u.simulator = plan.simulator;
+    u.run_to = plan.run_to;
+    u.again = [this, attach] { debug_board(attach); };  // (built and flashed again first, as F5 does, unless attaching)
+    u.over = c.debug.arguments;
+    u.after = plan.after;
+    u.after.insert(u.after.end(), c.debug.after.begin(), c.debug.after.end());
+    debug_begin("attach", plan.arguments);
+}
+
+// A board's session stopped: where it stops once attached, for F5, goes on
+// to main (a temporary breakpoint there; one that cannot be set leaves it
+// where it is, and says why). True when the stop is passed over so.
+// (Here too goes what a board's stop says besides, from the core's own
+// registers: the fault report, E8.)
+bool App::debug_board_stopped(const json::Value& body) {
+    DebugUi& u = *debugui_;
+    if (u.run_to.empty() || body["reason"].str() != "attach") return false;
+    const std::string where = std::exchange(u.run_to, {});
+    const i64 thread = body["threadId"].integer(1);
+    ++u.asking;
+    u.dap->request("evaluate", "{\"expression\":" + quoted("tbreak " + where) + ",\"context\":\"repl\"}", [this, where, thread](const Dap::Message& r) {
+        DebugUi& v = *debugui_;
+        if (v.asking) --v.asking;
+        if (!v.dap) return;
+        if (r.success) {
+            v.dap->request("continue", "{\"threadId\":" + std::to_string(thread) + "}");
+        } else {  // (stopped where it attached, as attaching would)
+            v.print("tbreak " + where + ": " + why_not(r.message) + "\n");
+            v.state = DebugUi::kStopped;
+            v.thread = v.stopped_thread = thread;
+            v.reason = "attach";
+            debug_stack();
+        }
+        ++debug_gen_;
+        dirty_ = true;
+    });
+    return true;
 }
 
 // The debugger told what to do once it has said what it can: launch the
@@ -1506,6 +1679,7 @@ void App::debug_begin(const std::string& request, const std::string& args_in) {
                        v.dap->request(request, args, [this, request](const Dap::Message& r) {
                            if (!r.success) {
                                debugui_->error = (request == "launch" ? "cannot launch it: " : "cannot attach: ") + (r.message.empty() ? std::string("the debugger said no") : r.message);
+                               if (debugui_->board) debugui_->error += server_said(debugui_->dap->errors());
                                debugui_->end_soon = true;
                            } else if (debugui_->how == "attach") {
                                // (Attached, and connected to the target an attach names, a gdb
@@ -1529,8 +1703,9 @@ void App::debug_end() {
         for (auto& [l, b] : lines)
             if (b.by && b.by == u.dap.get()) b.id = 0, b.by = nullptr;
     if (u.dap && !u.dap->ended()) {
-        u.dap->request("disconnect", u.how == "attach" ? "{\"terminateDebuggee\":false}" : "{\"terminateDebuggee\":true}");
-        u.dap->stop(300);  // (the adapter lets go of the program as it ends)
+        u.dap->request("disconnect", u.how == "attach" && !u.simulator ? "{\"terminateDebuggee\":false}" : "{\"terminateDebuggee\":true}");
+        const auto gone = u.dap->stop(300);
+        if (u.board) u.board_gone = gone;  // (its gdb server goes with it: the next board session waits for that)  // (the adapter lets go of the program as it ends)
     }
     u.dap.reset();
     u.state = DebugUi::kIdle;
@@ -1941,6 +2116,7 @@ void App::debug_sync_session(bool* stopped) {
             // first such question with those it had at the start, whenever it is asked.)
             u.dap->request("threads");
         } else if (m.name == "stopped") {
+            if (u.board && debug_board_stopped(b)) continue;
             u.state = DebugUi::kStopped;
             *stopped = true;
             if (!u.run_to_path.empty()) {  // (run to the cursor: that breakpoint goes)
@@ -2052,7 +2228,7 @@ void App::debug_sync_session(bool* stopped) {
         if (u.state == DebugUi::kStarting || u.exit_code < 0) {
             std::string why = u.dap->errors();
             const std::string missing = debugger_missing(why, u.remote);
-            if (const size_t said = why.find(kGdbSays); said != std::string::npos) why.erase(said, kGdbSays.size() + 1);  // (with its new line)
+            if (const size_t said = why.find(kGdbSays); said != std::string::npos) why.erase(said, std::min(why.size(), why.find('\n', said) + 1) - said);  // (with its new line)
             while (!why.empty() && (why.back() == '\n' || why.back() == '\r')) why.pop_back();
             if (const size_t nl = why.rfind('\n'); nl != std::string::npos) why = why.substr(nl + 1);
             if (!u.python.empty() && (why.find("No module named 'debugpy'") != std::string::npos || why.find("No module named debugpy") != std::string::npos)) {
@@ -2619,6 +2795,8 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
     if (u.state == DebugUi::kStarting && !u.remote.empty()) status = "Starting on " + u.remote.substr(u.remote.find("://") + 3) + "\xE2\x80\xA6";  // (ssh://host, docker://name)
     if (u.state == DebugUi::kStopped && !u.reason.empty()) status += " (" + u.reason + ")";
     if (u.state == DebugUi::kIdle && u.exit_code >= 0) status += ": exited with code " + std::to_string(u.exit_code);
+    if (u.state == DebugUi::kIdle && u.board_waiting && flash_busy()) status = "Flashing the board\xE2\x80\xA6";  // (F5 on a board: the session follows)
+    else if (u.state == DebugUi::kIdle && u.board_waiting && build_first_busy()) status = "Building\xE2\x80\xA6";
     put(box, font, 1, 0, fit_text(status, cols), u.state == DebugUi::kStopped ? ink::kStrong : ink::kMuted);
     auto shown = [](const std::string& p) {
         std::string s = p;
@@ -2638,7 +2816,9 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
         const Board& b = rc->board;
         const std::string probe = board_probe_text(b);
         add(DebugUi::kBoard, 0, "Board", ink::kHeading);
-        Row& r = add(DebugUi::kBoard, 0, !probe.empty() ? probe : !b.port.empty() ? b.port : "Choose the probe\xE2\x80\xA6", probe.empty() && b.port.empty() ? ink::kMuted : ink::kText, 2);
+        const std::string preset = board_preset(b);  // (a simulator's board is the simulator's machine)
+        const std::string sim = preset == "qemu" ? "QEMU " + (!b.debug_machine.empty() ? b.debug_machine : b.chip) : preset == "renode" ? "Renode " + (!b.debug_script.empty() ? b.debug_script : b.debug_machine) : std::string();
+        Row& r = add(DebugUi::kBoard, 0, !probe.empty() ? probe : !sim.empty() ? sim : !b.port.empty() ? b.port : "Choose the probe\xE2\x80\xA6", probe.empty() && sim.empty() && b.port.empty() ? ink::kMuted : ink::kText, 2);
         if (!probe.empty()) r.after = b.port;
     }
     add(DebugUi::kNone, 0, "");
@@ -2653,6 +2833,8 @@ void App::debug_panel_draw(TextBox& box, bool focused) {
     };
     if (u.state == DebugUi::kIdle) {
         control(DebugUi::kStart, "\xE2\x96\xB6", "Start", "F5", ink::kAccentStrong);
+        const bool flashing = u.board_waiting && (flash_busy() || build_first_busy());  // (F5 on a board: its session follows)
+        if (const BuildTask* rc = run_config(); rc && rc->board.set && !board_preset(rc->board).empty() && !flashing) control(DebugUi::kAttachBoard, "\xE2\x86\xB3", "Attach to the board", "");
     } else if (u.state == DebugUi::kStarting) {  // (F5 again, or Shift+F5, calls it off)
         control(DebugUi::kStop, "\xE2\x96\xA0", "Cancel", "F5");
     } else if (u.state == DebugUi::kStopped) {
@@ -2878,6 +3060,7 @@ void App::debug_do(u32 i) {
         case DebugUi::kOut: debug_command("stepOut"); break;
         case DebugUi::kStop: debug_command("stop"); break;
         case DebugUi::kRestart: debug_restart(); break;
+        case DebugUi::kAttachBoard: debug_board(true); break;
         case DebugUi::kThread: debug_thread(row.index); break;
         case DebugUi::kWaves: u.waves_open = !u.waves_open; break;
         case DebugUi::kFrame: debug_frame(row.index, true); break;
@@ -3636,6 +3819,10 @@ void App::debug_set(const std::string& what, const std::string& value) {
 // Waits (20 s at most) until the session is stopped, or over.
 void App::debug_wait(const std::string& state) {
     build_first_settle();  // (what F5 builds first, and the session after it)
+    for (const u64 flashing = now_ns() + 120'000'000'000ull; debugui_->board_waiting && (flash_busy() || build_first_busy()) && now_ns() < flashing;) {  // (F5 on a board: its flash, then the session)
+        flash_settle();
+        if (flash_busy()) build_wait();
+    }
     const u64 until = now_ns() + 20'000'000'000ull;
     DebugUi& u = *debugui_;
     while (now_ns() < until) {

@@ -27,6 +27,11 @@ struct Board {
     std::string chip, elf, svd;
     std::string flash;  // flash.tool (or "flash": "TOOL"): "esptool", "openocd", "probe-rs", "jlink", "picotool", "uf2", ... (probes.hpp's kFlashTools)
     std::string debug;  // debug.preset (or "debug": "PRESET")
+    // The rest of the debug object (boarddebug.hpp): the gdb (else the one
+    // the ELF's machine says), the gdb server's port, QEMU's machine or
+    // Renode's platform (else the chip), Renode's script, and the function
+    // F5 runs to (else main; app_main on an ESP32).
+    std::string debug_gdb, debug_port, debug_machine, debug_script, debug_main;
     // The rest of the flash object (flash.cpp): where a raw .bin goes
     // (address), openFPGALoader's board (-b) or cable (-c), OpenOCD's
     // interface and target scripts, J-Link's and pyOCD's device (else the
@@ -48,8 +53,9 @@ struct BuildTask {
     bool config = false;
     std::string program;           // its full path (from the folder's, when written relative)
     std::string args;              // as one line, as a shell splits it
-    std::vector<std::string> env;  // "NAME=value"
-    std::string before;            // a task of the Build tab's to run first (its name)
+    std::vector<std::string> env;  // "NAME=value" (a run configuration's: its own, then the environment chosen's)
+    std::vector<std::string> own_env;  // (a run configuration's own, before the environment chosen)
+    std::string before;           // a task of the Build tab's to run first (its name)
     // init.lua's patterns its output is read with (blit.build.matcher): those
     // named; empty, all of them; {"none"}, nothing in it is a problem.
     std::vector<std::string> problems;
@@ -108,7 +114,30 @@ inline constexpr const char* kRunConfigs = ".blit/run.json";
 // an object; "after", a list; "console"), "board" (as Board), "crash" (a
 // Lua pattern, or a list of them: as BuildTask's) } ] }. `problem` says
 // what is wrong with the file, if anything is.
-std::vector<BuildTask> read_run_configs(const std::string& root, std::string* problem);
+struct RunEnvironments;
+std::vector<BuildTask> read_run_configs(const std::string& root, std::string* problem, RunEnvironments* environments = nullptr);
+
+// run.json's "environments": { NAME: { VARIABLE: value, ... } }, each a
+// set of variables laid over every configuration's own (for Run, Debug,
+// Profile and the tests), one chosen at a time in the Build tab, so that
+// validation, a HUD or a trace is a choice rather than a copy of each
+// configuration. A capture preset among them: "capture": "metal" (the
+// program run with MTL_CAPTURE_ENABLED=1, and "Capture a frame" takes one
+// with gpucapture) or "renderdoc" (the program run by `renderdoccmd
+// capture`, whose captures, as the program takes them, go to
+// .blit/captures).
+struct RunEnvironment {
+    std::string name, capture;
+    std::vector<std::string> env;  // "NAME=value"
+};
+struct RunEnvironments {
+    std::vector<RunEnvironment> list;  // (in the file's order)
+};
+inline constexpr const char* kCaptures = ".blit/captures";  // where captures go, from the folder
+// A run configuration in an environment (null: none): its env, its own and
+// then the environment's, and what the Run button runs, as
+// read_run_configs makes it (`root`: the folder, for the captures' place).
+void run_in_environment(BuildTask& t, const RunEnvironment* e, const std::string& root);
 // A word as sh reads it back (in single quotes when it needs them).
 std::string sh_word(std::string_view word);
 

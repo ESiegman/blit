@@ -292,18 +292,25 @@ struct App::FlashUi {
         bool keep = false;
     } run;
     std::unordered_map<std::string, std::string> flashed;  // by board: what it was last flashed with, well
+    // What waits for the flash (F5's debugging, appdebug.cpp): told once it
+    // has gone well or was not needed (unchanged), or that it failed.
+    std::function<void(bool)> then;
     // Last, so that it is joined first, while all it uses is still there.
     std::jthread worker;
 };
 
-void App::flash_board(FlashMode mode, bool force) {
+void App::flash_board(FlashMode mode, bool force, std::function<void(bool)> then) {
     const std::string root = build_root();
     if (root.empty()) return notify("Open a folder first");
     if (!flashui_) flashui_ = std::make_shared<FlashUi>();
-    if (flashui_->busy) return;
+    if (flashui_->busy) {
+        if (then) then(false);
+        return;
+    }
     // (A folder whose run configurations are still being read, on another
     // machine: the board is looked for once they have been.)
-    if (!build_ready_for(root)) return build_when_ready([this, mode, force] { flash_board(mode, force); });
+    if (!build_ready_for(root)) return build_when_ready([this, mode, force, then] { flash_board(mode, force, then); });
+    flashui_->then = std::move(then);
     const BuildTask* found = board_config();
     if (!found) return notify("No run configuration has a board");
     const BuildTask c = *found;
@@ -340,19 +347,28 @@ void App::flash_sync() {
     }
     if (!p) return;
     u.busy = false;
-    if (!p->why.empty()) return notify(p->why, 1);
+    if (!p->why.empty()) {
+        if (std::function<void(bool)> then = std::exchange(u.then, nullptr)) then(false);
+        return notify(p->why, 1);
+    }
     if (p->keep && !p->force) {
         const auto it = u.flashed.find(p->board);
-        if (it != u.flashed.end() && it->second == p->key)
-            return build_note(p->row, p->task.kind == "program" ? "Not programmed: unchanged since the last flash" : "Not flashed: unchanged since the last flash");
+        if (it != u.flashed.end() && it->second == p->key) {
+            build_note(p->row, p->task.kind == "program" ? "Not programmed: unchanged since the last flash" : "Not flashed: unchanged since the last flash");
+            if (std::function<void(bool)> then = std::exchange(u.then, nullptr)) then(true);
+            return;
+        }
     }
     // (Serial tabs on the board's port let go of it while the tool runs, and
     // have it back once it has ended: appserial.cpp. The board flashed is
     // the one prepared, which the Run button may no longer name.)
     serial_release(p->task.board);
     const u64 doc = build_run_on(p->row, build_root(), p->task);
-    if (!doc) serial_reclaim();
-    if (!doc) return notify("Cannot run " + p->task.name, 1);
+    if (!doc) {
+        serial_reclaim();
+        if (std::function<void(bool)> then = std::exchange(u.then, nullptr)) then(false);
+        return notify("Cannot run " + p->task.name, 1);
+    }
     u.run = {doc, p->board, p->key, p->keep};
 }
 
@@ -365,7 +381,10 @@ void App::flash_ended(u64 doc, bool well) {
         else u.flashed.erase(u.run.board);  // (half written, or not at all: what is on it is not known)
     }
     u.run = {};
+    if (std::function<void(bool)> then = std::exchange(u.then, nullptr)) then(well);
 }
+
+bool App::flash_busy() const { return flashui_ && (flashui_->busy || flashui_->run.doc); }
 
 void App::flash_settle() {
     const u64 until = now_ns() + 60'000'000'000ull;

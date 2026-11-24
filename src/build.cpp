@@ -468,7 +468,7 @@ std::string with_vars(std::string_view cmd, const TaskVars& vars) {
     return out;
 }
 
-std::vector<BuildTask> read_run_configs(const std::string& root, std::string* problem) {
+std::vector<BuildTask> read_run_configs(const std::string& root, std::string* problem, RunEnvironments* environments) {
     std::vector<BuildTask> out;
     std::string text;
     if (!fs_read(root + "/" + kRunConfigs, &text)) return out;
@@ -537,19 +537,58 @@ std::vector<BuildTask> read_run_configs(const std::string& root, std::string* pr
             *problem = std::string(kRunConfigs) + ": " + t.name + "'s crash pattern " + (pat.empty() ? std::string("is empty") : "\"" + pat + "\": " + why);
             return true;
         });
-        // What the Run button runs: the program, in its folder, with what it is given.
-        std::string cmd;
-        if (!t.env.empty()) {
-            cmd = "env";
-            for (const std::string& e : t.env) cmd += " " + sh_quote(e);
-            cmd += " ";
-        }
-        std::string h, program_there;
-        t.cmd = cmd + sh_quote(split_remote(t.program, &h, &program_there) ? program_there : t.program) + (t.args.empty() ? "" : " " + t.args);
+        t.own_env = t.env;
+        run_in_environment(t, nullptr, root);
         out.push_back(std::move(t));
     }
     if (!out.empty()) out.front().def = true;
+    if (environments) {
+        environments->list.clear();
+        const json::Value envs = doc.root()["environments"];
+        if (envs.exists() && !envs.is_object()) *problem = std::string(kRunConfigs) + ": \"environments\" is an object, each a name and its variables";
+        for (const json::Value e : envs) {
+            RunEnvironment r;
+            r.name = std::string(e.key());
+            if (!e.is_object()) {
+                *problem = std::string(kRunConfigs) + ": the environment " + r.name + " is an object of variables";
+                continue;
+            }
+            for (const json::Value v : e) {
+                if (v.key() == "capture") r.capture = std::string(v.str());
+                else r.env.push_back(std::string(v.key()) + "=" + (v.is_string() ? std::string(v.str()) : v.exists() ? std::to_string(v.integer()) : std::string()));
+            }
+            if (!r.capture.empty() && r.capture != "metal" && r.capture != "renderdoc")
+                *problem = std::string(kRunConfigs) + ": the environment " + r.name + "'s capture is \"metal\" or \"renderdoc\"";
+            if (r.capture == "metal") r.env.emplace_back("MTL_CAPTURE_ENABLED=1");  // (Metal lets gpucapture take a frame of a program run with it)
+            environments->list.push_back(std::move(r));
+        }
+    }
     return out;
+}
+
+void run_in_environment(BuildTask& t, const RunEnvironment* e, const std::string& root) {
+    t.env = t.own_env;
+    if (e) t.env.insert(t.env.end(), e->env.begin(), e->env.end());
+    // What the Run button runs: the program, in its folder, with what it is
+    // given; under RenderDoc, run by renderdoccmd (v1.47
+    // renderdoccmd/renderdoccmd.cpp lines 1565, 1621-1625: capture, -c the
+    // captures' name, frame numbers added; -w waits for the program), its
+    // captures in the folder's .blit/captures, named for the configuration.
+    std::string cmd;
+    if (!t.env.empty()) {
+        cmd = "env";
+        for (const std::string& v : t.env) cmd += " " + sh_quote(v);
+        cmd += " ";
+    }
+    std::string h, program_there, root_there;
+    const std::string program = sh_quote(split_remote(t.program, &h, &program_there) ? program_there : t.program);
+    if (e && e->capture == "renderdoc") {
+        const std::string captures = (split_remote(root, &h, &root_there) ? root_there : root) + "/" + kCaptures;
+        std::string name;
+        for (const char c : t.name) name += std::isalnum(static_cast<unsigned char>(c)) || c == '-' || c == '_' ? c : '-';
+        cmd = "mkdir -p " + sh_quote(captures) + " && " + cmd + "renderdoccmd capture -w -c " + sh_quote(captures + "/" + name) + " ";
+    }
+    t.cmd = cmd + program + (t.args.empty() ? "" : " " + t.args);
 }
 
 std::vector<BuildTask> detect_builds(const std::string& root, const std::vector<FsEntry>& files, const std::vector<std::string>& hidden) {

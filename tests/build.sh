@@ -791,6 +791,60 @@ run "$R" "buildrun:plain;buildwait;runconfdump"
 check "another chosen: theirs too" 'plain | debug: hello x y in rc | profile: hello x y in rc'
 run "$R" "builddump;buildpanel;frame;key:Home;key:Down;key:space;frame;runconfdump"
 check "and chosen with Space, not run: theirs too" 'plain | debug: hello x y in rc | profile: hello x y in rc'
+# Environments: run.json's sets of variables, one chosen in the Build tab
+# (Enter on its row: none, then each in turn), laid over each
+# configuration's own for Run, Debug and Profile. A capture preset among
+# them: Metal's adds MTL_CAPTURE_ENABLED=1; RenderDoc's runs the program by
+# renderdoccmd, its captures in .blit/captures (a stand-in that says what
+# it was given, then runs it).
+cp "$R/.blit/run.json" "$R/.blit/run.away"
+cat >"$R/.blit/run.json" <<'EOF'
+{ "environments": {
+    "validation": { "VK_INSTANCE_LAYERS": "VK_LAYER_KHRONOS_validation", "VK_LAYER_ENABLES": "VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT" },
+    "frames": { "capture": "metal" },
+    "renderdoc": { "capture": "renderdoc", "ENABLE_VULKAN_RENDERDOC_CAPTURE": "1" } },
+  "configurations": [
+    { "name": "hello", "program": "build/hello", "args": ["one"], "env": { "GREETING": "hi" }, "cwd": "build" } ] }
+EOF
+E="runconfdump;command:Show Build;frame;key:Home;frame"
+run "$R" "$E;builddump;runconfdump"
+check "environments: none chosen to begin with" "hello | debug: hello one in build GREETING=hi | profile: hello one in build GREETING=hi"
+run "$R" "$E;key:Return;frame;runconfdump"
+check "the first chosen: its variables after the configuration's own" \
+    "hello | debug: hello one in build GREETING=hi VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT | profile: hello one in build GREETING=hi VK_INSTANCE_LAYERS=VK_LAYER_KHRONOS_validation VK_LAYER_ENABLES=VK_VALIDATION_FEATURE_ENABLE_SYNCHRONIZATION_VALIDATION_EXT"
+run "$R" "$E;key:Return;key:Return;frame;runconfdump"
+check "Metal's capture preset: MTL_CAPTURE_ENABLED" "hello | debug: hello one in build GREETING=hi MTL_CAPTURE_ENABLED=1 | profile: hello one in build GREETING=hi MTL_CAPTURE_ENABLED=1"
+run "$R" "$E;key:Return;key:Return;key:Return;key:Return;frame;runconfdump"
+check "and round to none again" "hello | debug: hello one in build GREETING=hi | profile: hello one in build GREETING=hi"
+mkdir -p "$dir/rdbin"
+printf '#!/bin/sh\necho "renderdoccmd $1 $2 $3 $4"\nshift 4\nexec "$@"\n' >"$dir/rdbin/renderdoccmd"
+chmod +x "$dir/rdbin/renderdoccmd"
+was=$PATH
+PATH="$dir/rdbin:$PATH"
+run "$R" "$E;key:Return;key:Return;key:Return;frame;buildrun;buildwait;builddump:text"
+PATH=$was
+got="$(printf '%s' "$got" | sed 's/\[done in [0-9.]* s\]//') $(test -d "$R/.blit/captures" && echo made)"
+check "RenderDoc's: the program run by renderdoccmd capture, its captures in .blit/captures" \
+    "|renderdoccmd capture -w -c ~/rc/.blit/captures/hello|args: one greeting: hi in: ~/rc/build| made"
+# "Capture a frame" under Metal's preset: gpucapture takes one of the
+# program the Run button runs, into .blit/captures; not running, said.
+# (On a Mac with Xcode's gpucapture and a Metal device.)
+if [ "$(uname -s)" = Darwin ] && command -v gpucapture >/dev/null 2>&1; then
+    M="$dir/metal"
+    mkdir -p "$M/.blit"
+    clang -fobjc-arc -framework Metal -framework Foundation -o "$M/spin" "$(cd "$(dirname "$0")" && pwd)/capture/spin.m" || exit 1
+    printf '{ "environments": { "frames": { "capture": "metal" } }, "configurations": [ { "name": "spin", "program": "spin" } ] }\n' >"$M/.blit/run.json"
+    run "$M" "$E;key:Return;frame;command:Capture a frame"
+    c=$got
+    run "$M" "$E;key:Return;frame;buildrun;wait:1500;command:Capture a frame;capturewait"
+    pkill -x spin
+    got="$c ;; $(printf '%s' "$got" | sed 's/-[0-9]\{8\}-[0-9]\{6\}\./-TIME./') ;; $(ls "$M/.blit/captures" | sed 's/-[0-9]\{8\}-[0-9]\{6\}\./-TIME./')"
+    check "Capture a frame: gpucapture's, into .blit/captures" \
+        'blit: The program is not running: Run it first, in this environment ;; blit: Captured .blit/captures/spin-TIME.gputrace ;; spin-TIME.gputrace'
+else
+    echo "build: Capture a frame skipped (Metal's gpucapture is a Mac's)"
+fi
+mv "$R/.blit/run.away" "$R/.blit/run.json"
 printf '{ "configurations": [ { "name": "x" } ] }\n' >"$R/.blit/run.json"
 got=$(BLIT_INIT="$dir/init.lua" "$blit" --offscreen 1000x700 --shot "$dir/shot.bmp" --script "workdir:$R;frame;builddump" 2>&1 >/dev/null | grep '^blit: ' | tail -1)
 check "a configuration without its program: said" 'blit: .blit/run.json: a configuration needs a "name" and a "program"'

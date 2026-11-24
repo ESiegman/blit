@@ -89,6 +89,7 @@ struct App::BuildUi {
         std::string root;
         std::vector<FsEntry> files;
         std::vector<BuildTask> tasks;
+        RunEnvironments environments;  // (run.json's)
         std::string problem;  // what is wrong with .blit/run.json, if anything
     };
     std::mutex mu;
@@ -243,6 +244,10 @@ struct App::BuildUi {
     // CMake's build type and target, chosen in the Build tab (empty: the
     // project's own, and all), put into its tasks as they run.
     std::string cmake_type, cmake_target;
+    // run.json's environments, and the one chosen in the Build tab (empty:
+    // none), laid over each run configuration's own variables.
+    RunEnvironments environments;
+    std::string environment;
     // The build folder's targets, listed on a thread of its own (on another
     // machine the listing is a round trip), and what it found.
     struct Listed {
@@ -287,7 +292,8 @@ void App::build_create() { buildui_ = std::make_shared<BuildUi>(); }
 namespace {
 
 constexpr int kTypeRow = -2, kTargetRow = -3;  // (the Build tab's rows for CMake's build type and target)
-bool choosable(int task) { return task >= 0 || task == kTypeRow || task == kTargetRow; }
+constexpr int kEnvRow = -4;                     // (and for the run configurations' environment)
+bool choosable(int task) { return task >= 0 || task == kTypeRow || task == kTargetRow || task == kEnvRow; }
 
 // A CMake task's command with the build type and target chosen: a
 // configure given -DCMAKE_BUILD_TYPE (and, where a build is all it does, a
@@ -386,7 +392,7 @@ void App::build_follow() {
         // of which is the Run button's.)
         f.tasks = read_tasks(root, &f.problem);
         std::string run_problem;
-        std::vector<BuildTask> configs = read_run_configs(root, &run_problem);
+        std::vector<BuildTask> configs = read_run_configs(root, &run_problem, &f.environments);
         if (f.problem.empty()) f.problem = std::move(run_problem);
         f.tasks.insert(f.tasks.end(), std::make_move_iterator(configs.begin()), std::make_move_iterator(configs.end()));
         std::vector<BuildTask> found = detect_builds(root, f.files, hidden);
@@ -453,7 +459,9 @@ void App::build_sync() {
     u.looking = false;
     script_build(f->root, f->files, &f->tasks);
     u.tasks = std::move(f->tasks);
+    u.environments = std::move(f->environments);
     u.root = f->root;
+    build_environment_apply();  // (the one chosen stays chosen while the file has it)
     u.looked = !u.again;  // (what the worker found may be from before the change)
     u.again = false;
     // The task chosen stays chosen if it is still there; else a default one.
@@ -1380,6 +1388,7 @@ void App::build_panel_draw(TextBox& box, bool focused) {
                 u.rows.push_back({kTypeRow, "Build type", 0});
                 u.rows.push_back({kTargetRow, "Target", 0});
             }
+            if (t.config && !u.environments.list.empty()) u.rows.push_back({kEnvRow, "Environment", 0});  // (the run configurations', chosen here)
         }
         ++u.rows[heading].count;
         u.rows.push_back({static_cast<int>(i), t.name, 0});
@@ -1426,10 +1435,11 @@ void App::build_panel_draw(TextBox& box, bool focused) {
     for (u32 r = 0; r < u.body && u.top + r < u.rows.size(); ++r) {
         const BuildUi::Row& row = u.rows[u.top + r];
         const u32 y = 2 + r;
-        if (row.task == kTypeRow || row.task == kTargetRow) {  // CMake's build type and target: what is chosen, or the project's own
-            const std::string& v = row.task == kTypeRow ? u.cmake_type : u.cmake_target;
+        if (row.task == kTypeRow || row.task == kTargetRow || row.task == kEnvRow) {  // CMake's build type and target, the environment: what is chosen, or the project's own
+            const std::string& v = row.task == kTypeRow ? u.cmake_type : row.task == kTargetRow ? u.cmake_target : u.environment;
             const u32 c = put(box, font, y, 2, row.text, ink::kText);
-            if (c + 4 < cols) put(box, font, y, c + 2, fit_text(v.empty() ? (row.task == kTypeRow ? "the project's" : "all") : v, cols - c - 2), v.empty() ? ink::kMuted : ink::kAccent);
+            if (c + 4 < cols)
+                put(box, font, y, c + 2, fit_text(v.empty() ? (row.task == kTypeRow ? "the project's" : row.task == kEnvRow ? "none" : "all") : v, cols - c - 2), v.empty() ? ink::kMuted : ink::kAccent);
             if (u.top + r == u.sel) light_row(box, y, focused);
             continue;
         }
@@ -1532,7 +1542,7 @@ void App::build_panel_click(int row, int col, const SDL_MouseButtonEvent& b) {
     const u32 i = u.top + static_cast<u32>(row - 2);
     if (i >= u.rows.size() || !choosable(u.rows[i].task)) return;
     u.sel = i;
-    if (u.rows[i].task < 0) {  // CMake's build type or target: changed
+    if (u.rows[i].task < 0) {  // CMake's build type or target, the environment: changed
         build_option(u.rows[i].task);
         return;
     }
@@ -1587,12 +1597,54 @@ bool App::build_panel_key(const SDL_KeyboardEvent& k) {
     return true;
 }
 
+// The environment chosen laid over each run configuration's own variables
+// (none, where the file no longer has it): what Run runs, and Debug,
+// Profile and the tests take, from now.
+void App::build_environment_apply() {
+    BuildUi& u = *buildui_;
+    const RunEnvironment* e = nullptr;
+    for (const RunEnvironment& r : u.environments.list)
+        if (r.name == u.environment) e = &r;
+    if (!e) u.environment.clear();
+    for (BuildTask& t : u.tasks)
+        if (t.config) run_in_environment(t, e, u.root.empty() ? build_root() : u.root);
+    run_config_take();
+}
+
+// The environment chosen, if any.
+const RunEnvironment* App::run_environment() const {
+    if (!buildui_) return nullptr;
+    for (const RunEnvironment& r : buildui_->environments.list)
+        if (r.name == buildui_->environment) return &r;
+    return nullptr;
+}
+
+// The process the run of the Run button's configuration runs in, while it
+// runs here (its terminal's shell, whose program it is): 0 when none.
+i64 App::run_config_pid() {
+    const BuildTask* c = run_config();
+    if (!c) return 0;
+    for (const BuildUi::Run& r : buildui_->runs)
+        if (r.running && r.key == task_key(*c)) return term_pid(r.doc);
+    return 0;
+}
+
 // CMake's build type, the next in turn; or its target, chosen from those
 // the build folder has (CMake's own "help" target lists them, for make and
 // Ninja alike): the folder of the CMake task the Run button runs, or else
 // the first that builds.
 void App::build_option(int row) {
     BuildUi& u = *buildui_;
+    if (row == kEnvRow) {  // (none, then each in the file's order)
+        size_t at = 0;
+        for (size_t k = 0; k < u.environments.list.size(); ++k)
+            if (u.environments.list[k].name == u.environment) at = k + 1;
+        u.environment = at < u.environments.list.size() ? u.environments.list[at].name : std::string();
+        build_environment_apply();
+        ++build_gen_;
+        dirty_ = true;
+        return;
+    }
     if (row == kTypeRow) {
         static const char* const kTypes[] = {"", "Debug", "Release", "RelWithDebInfo", "MinSizeRel"};
         size_t at = 0;

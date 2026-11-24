@@ -344,7 +344,7 @@ if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   target_sources(blit PRIVATE src/serial_linux.cpp)
 endif()
 # Flashing the board and programming an FPGA, and the Boards view.
-target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp)
+target_sources(blit PRIVATE src/flash.cpp src/appflash.cpp src/boards.cpp src/boarddebug.cpp src/appcapture.cpp)
 # Crash dumps in a run's output, decoded against its ELF.
 target_sources(blit PRIVATE src/appcrash.cpp)
 # The wave tab: a dump's rows and their values (waveview.cpp), and its lanes
@@ -504,6 +504,8 @@ if(BLIT_DEV)
     add_test(NAME probes COMMAND sh ${CMAKE_SOURCE_DIR}/tests/probes.sh $<TARGET_FILE:blit>)
     # Flashing: each tool's command line, its progress, only if changed, the chord, the Boards view, here and on another machine.
     add_test(NAME flash COMMAND sh ${CMAKE_SOURCE_DIR}/tests/flash.sh $<TARGET_FILE:blit>)
+    # Boards on the debug door: each preset, F5 flashing first and running to main, attaching; against QEMU's Cortex-M3.
+    add_test(NAME boards COMMAND sh ${CMAKE_SOURCE_DIR}/tests/boards.sh $<TARGET_FILE:blit>)
     # Serial monitor tabs, on a pseudo-terminal standing in for a board: what comes and goes, times, hex, a reset's gap, flashing, the picker.
     add_test(NAME serial COMMAND sh ${CMAKE_SOURCE_DIR}/tests/serial.sh $<TARGET_FILE:blit>)
     # The project's Python: found for each project and subproject, and what takes it.

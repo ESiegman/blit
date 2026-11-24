@@ -70,6 +70,8 @@ std::vector<ProbeRow> probe_rows(const std::vector<UsbDevice>& devices, const st
 
 // The flash tools' names the board object takes (flash.cpp's table).
 inline constexpr std::string_view kFlashTools[] = {"esptool", "openocd", "probe-rs", "jlink", "picotool", "uf2", "dfu-util", "pyocd", "stm32cubeprogrammer", "openfpgaloader", "vivado", "iceprog", "ecpprog", "pgrcmd"};
+// And for its debug preset (boarddebug.hpp).
+inline constexpr std::string_view kDebugPresets[] = {"probe-rs", "openocd", "jlink", "esp", "blackmagic", "pyocd", "qemu", "renode"};
 
 // The configuration named `config` in a .blit/run.json's text with its
 // board's probe and port set to the row's (probe.kind, probe.serial,

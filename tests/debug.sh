@@ -687,20 +687,27 @@ if [ -x "$fakedap" ]; then
     # on this Mac: "GNU gdb (GDB) 15.1" is the first line of gdb's --version
     # as GNU's builds print it, from its documentation; the real gdb's own
     # checks are on the Linux box's list.)
-    # The PATH without the machine's lldb-dap, where it has one (a Linux box
-    # with lldb): each folder it is in stood in for by one of links to the
-    # rest of that folder's programs.
-    hide_lldb() {
-        out= n=0
+    # The PATH without some programs (the machine's lldb-dap, where it has
+    # one: a Linux box with lldb; arm-none-eabi-gdb, which the cases below
+    # say is not installed, whether or not it is): each folder one is in
+    # stood in for by one of links to the rest of that folder's programs.
+    hide() {
+        out= n=0 key=$(printf '%s' "$*" | tr -c 'a-z' '-')
         IFS=:
         for p in $PATH; do
             unset IFS
-            if [ -e "$p/lldb-dap" ] || [ -e "$p/lldb-vscode" ]; then
+            found=
+            for x in "$@"; do [ -e "$p/$x" ] && found=1; done
+            if [ -n "$found" ]; then
                 n=$((n + 1))
-                h="$dir/nolldb/$n"
+                h="$dir/hidden-$key/$n"
                 if [ ! -d "$h" ]; then
                     mkdir -p "$h"
-                    for f in "$p"/*; do case ${f##*/} in lldb-dap|lldb-vscode) ;; *) ln -s "$f" "$h/" ;; esac; done
+                    for f in "$p"/*; do
+                        keep=1
+                        for x in "$@"; do [ "${f##*/}" = "$x" ] && keep=; done
+                        [ -n "$keep" ] && ln -s "$f" "$h/"
+                    done
                 fi
                 p=$h
             fi
@@ -720,7 +727,7 @@ if [ -x "$fakedap" ]; then
         [ "$2" = yes ] && ln -s "$fakedap" "$L/bin/lldb-dap"
         rm -f "$F/log"
         was=$PATH
-        if [ "$2" = yes ]; then PATH="$L/bin:$PATH"; else PATH="$L/bin:$(hide_lldb)"; fi
+        if [ "$2" = yes ]; then PATH="$L/bin:$(hide arm-none-eabi-gdb)"; else PATH="$L/bin:$(hide lldb-dap lldb-vscode arm-none-eabi-gdb)"; fi
         BLIT_FAKE_DAP_LOG="$F/log" BLIT_FAKE_DAP_RAN="$L/ran"
         export BLIT_FAKE_DAP_LOG BLIT_FAKE_DAP_RAN
         run "$3" "${4:-$D/prog}"

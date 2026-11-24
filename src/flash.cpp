@@ -376,6 +376,10 @@ std::vector<std::string> flash_programs(const Board& b, const std::string& tool)
     return out;
 }
 
+std::string openocd_interface(const Board& b) { return !b.flash_interface.empty() ? b.flash_interface : std::string(look_up(kInterface, b.probe_kind)); }
+std::string openocd_target(const Board& b) { return !b.flash_target.empty() ? b.flash_target : std::string(look_up(kTarget, chip_key(b.chip), true)); }
+bool esp_chip(std::string_view chip) { return is_esp(chip); }
+
 bool esp_flasher_args(std::string_view text, const std::string& dir, FlashImage* out, std::string* why) {
     json::Doc doc;
     if (!doc.parse(std::string(text)) || !doc.root().is_object()) return *why = "flasher_args.json is not JSON", false;
