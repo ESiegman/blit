@@ -2500,7 +2500,10 @@ Where it stops, the line has an arrow in the gutter and says why, and its
 file comes to the front. The Debug tab shows the threads (when there is
 more than one: Enter on one shows its call stack, and the steps step it),
 the call stack (Enter on a frame shows its source and its variables), the
-variables (Right or Enter opens one a level, Left shuts it), the
+variables (Right or Enter opens one a level, Left shuts it; gdb gives a
+scope's members all or none, so where one cannot be read, a register
+QEMU's RISC-V does not give, the rest are read in pages and that one is
+shown as *cannot be read*, with the debugger's reason), the
 expressions watched, the breakpoints (Enter goes to one, Space disables
 it, Delete takes it away), and what the program printed.
 
