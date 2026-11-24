@@ -417,9 +417,9 @@ flash iceprog iceprog iceprog-fail "$end"
 want <<'EOF'
 button: ▶ iceprog · 1 error | row: failed: exited with code 2
 problems: 1
-E iceprog:1 Can't find iCE FTDI USB device (vendor_id 0x0403, device_id 0x6010 or 0x6014).
+E iceprog:1 Can't find iCE FTDI USB device (device string s:0x0403:0x6010:NOSUCHSERIAL).
 EOF
-check "iceprog with no board" "$expected"
+check "iceprog with no such chip (its real output)" "$expected"
 flash pgrcmd pgrcmd pgrcmd-fail "$end"
 want <<'EOF'
 button: ▶ pgrcmd · 1 error | row: failed: exited with code 251
